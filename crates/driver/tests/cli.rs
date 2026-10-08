@@ -153,3 +153,37 @@ fn run_rejects_an_extern() -> Test {
     assert_eq!(out.status.code(), Some(1));
     Ok(())
 }
+
+#[test]
+fn run_reports_a_checker_error_before_an_extern() -> Test {
+    let src = EXTERN.replace("(assign q a)", "(assign q b)");
+    let out = silicon(
+        &["run"],
+        &file("ext_err.sil", src.as_bytes())?,
+        "in=(a 1)\n",
+    )?;
+    assert!(text(&out).starts_with("error[E003]: "), "{}", text(&out));
+    assert_eq!(out.status.code(), Some(1));
+    Ok(())
+}
+
+#[test]
+fn run_rejects_a_blank_input_line() -> Test {
+    for (name, input) in [("blank.sil", "in=(rst 1 en 0)\n\n"), ("bare.sil", "in=\n")] {
+        let out = silicon(&["run"], &file(name, COUNTER.as_bytes())?, input)?;
+        assert_eq!(out.status.code(), Some(2), "{input:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn an_unknown_subcommand_is_a_usage_error() -> Test {
+    let out = silicon(
+        &["frobnicate"],
+        &file("unknown.sil", COUNTER.as_bytes())?,
+        "",
+    )?;
+    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(text(&out), "");
+    Ok(())
+}
