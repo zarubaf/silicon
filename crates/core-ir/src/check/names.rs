@@ -205,6 +205,8 @@ impl<'a> Resolver<'_, 'a> {
                             });
                         }
                     }
+                    // Pass 5 rejects the clock output port itself.
+                    Some(Binding::ClockOut) => {}
                     _ => self.unknown(out, "an output"),
                 }
             }
