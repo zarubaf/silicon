@@ -390,9 +390,7 @@ mod tests {
         assert!(fired(&check_paths("feat", &p), "commit-expectations-code"));
     }
 
-    fn run(dir: &Path, args: &[&str]) {
-        git(dir, args).unwrap();
-    }
+    use crate::testgit::run;
 
     fn init(dir: &Path) {
         run(dir, &["init", "--quiet"]);
