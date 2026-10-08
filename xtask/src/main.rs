@@ -44,7 +44,7 @@ enum Command {
     },
     /// Regenerate the vale vocabulary from `CONTEXT.md`.
     ValeVocab,
-    /// Regenerate the vale vocabulary, then lint every tracked Markdown file with vale.
+    /// Regenerate the vale vocabulary, then lint tracked Markdown with vale and lychee.
     Prose,
     /// Check one commit message file. The `commit-msg` hook calls this.
     CommitMsg {

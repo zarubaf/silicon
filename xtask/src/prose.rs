@@ -1,4 +1,5 @@
-//! Lints tracked Markdown prose with vale against the STE rules and the glossary.
+//! Lints tracked Markdown: vale checks the prose against the STE rules and the glossary,
+//! and lychee checks the internal links.
 
 use std::process::Command;
 
@@ -29,17 +30,37 @@ pub fn vale_args(files: &[TrackedFile]) -> Option<Vec<String>> {
     Some(args)
 }
 
-/// Regenerates the vocabulary, then runs vale over the tracked Markdown. Returns `true` on a pass.
+/// The lychee arguments for these files, or `None` when no Markdown is tracked.
+/// `--offline` limits the run to internal links, so it needs no network.
+pub fn lychee_args(files: &[TrackedFile]) -> Option<Vec<String>> {
+    let markdown = markdown_files(files);
+    if markdown.is_empty() {
+        return None;
+    }
+    let mut args = vec!["--offline".to_string(), "--no-progress".to_string()];
+    args.extend(markdown);
+    Some(args)
+}
+
+/// Regenerates the vocabulary, then runs vale and lychee over the tracked Markdown.
+/// Both tools always run. Returns `true` when both pass.
 pub fn run(repo: &Repo) -> Result<bool> {
     vocab::write(repo)?;
-    let Some(args) = vale_args(&repo.files) else {
+    let vale = tool(repo, "vale", vale_args(&repo.files))?;
+    let lychee = tool(repo, "lychee", lychee_args(&repo.files))?;
+    Ok(vale && lychee)
+}
+
+/// Runs `program` with `args` at the repository root. `None` skips the run and counts as a pass.
+fn tool(repo: &Repo, program: &str, args: Option<Vec<String>>) -> Result<bool> {
+    let Some(args) = args else {
         return Ok(true);
     };
-    let status = Command::new("vale")
+    let status = Command::new(program)
         .args(args)
         .current_dir(&repo.root)
         .status()
-        .context("running vale")?;
+        .with_context(|| format!("running {program}"))?;
     Ok(status.success())
 }
 
@@ -73,6 +94,19 @@ mod tests {
         assert_eq!(
             vale_args(&[file("CLAUDE.md", true), file("justfile", false)]),
             None
+        );
+    }
+
+    #[test]
+    fn lychee_args_check_internal_links_offline() {
+        assert_eq!(lychee_args(&[file("CLAUDE.md", true)]), None);
+        assert_eq!(
+            lychee_args(&[file("AGENTS.md", false), file("justfile", false)]),
+            Some(vec![
+                "--offline".to_string(),
+                "--no-progress".to_string(),
+                "AGENTS.md".to_string()
+            ])
         );
     }
 
