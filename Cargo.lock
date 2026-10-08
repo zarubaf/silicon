@@ -185,6 +185,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "driver"
+version = "0.0.0"
+dependencies = [
+ "clap",
+ "core-ir",
+]
+
+[[package]]
 name = "encode_unicode"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
