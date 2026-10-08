@@ -1,8 +1,9 @@
 //! Pass 4 (`E005`, declared sizes) and pass 7 (`E004`, operation widths).
 
-use super::rx::{Ex, ExModule, RawConst, RawModule, Rx, SizedModule, const_bits};
+use super::rx::{Ex, ExModule, RawConst, RawModule, Rx, SizedModule};
 use super::scope::{stmt_exprs, visit};
 use super::{error, first_error};
+use crate::Bits;
 use crate::ast::{BinOp, Design, Expr, Item, Num, Port, Stmt, Ty};
 use crate::diag::{Diagnostic, ErrorCode, Span};
 
@@ -26,8 +27,7 @@ pub(super) fn declared<'a>(
     let mut errors = sizes(design);
     let mut sized = Vec::new();
     for module in modules {
-        let mut constant = |width, raw: RawConst| match const_bits(width, raw.value, raw.value_span)
-        {
+        let mut constant = |width, raw: RawConst| match const_bits(width, &raw) {
             Ok(bits) => Some(bits),
             Err(d) => {
                 errors.push(d);
@@ -67,13 +67,36 @@ fn port_sizes(ports: &[Port], errors: &mut Vec<Diagnostic>) {
 
 /// A declared width is 1 to 65536.
 fn check_width(n: Num, what: &str, errors: &mut Vec<Diagnostic>) {
-    if !(1..=MAX_WIDTH).contains(&n.value) {
-        errors.push(error(
+    errors.extend(width_error(n, what));
+}
+
+fn width_error(n: Num, what: &str) -> Option<Diagnostic> {
+    (!(1..=MAX_WIDTH).contains(&n.value)).then(|| {
+        error(
             ErrorCode::E005,
             n.span,
             format!("{what} is {}, and a width is 1 to {MAX_WIDTH}", n.value),
-        ));
+        )
+    })
+}
+
+/// The value of a `const` form. Pass 4 checks each constant here only. `E005`
+/// is the error for a width outside 1 to 65536, at the width, and for a value
+/// that does not fit, at the value.
+fn const_bits(width: Num, raw: &RawConst) -> Result<Bits, Diagnostic> {
+    if let Some(d) = width_error(width, "the constant width") {
+        return Err(d);
     }
+    Bits::new(width.value, raw.value.clone()).ok_or_else(|| {
+        error(
+            ErrorCode::E005,
+            raw.value_span,
+            format!(
+                "the constant {} does not fit in {} bits",
+                raw.value, width.value
+            ),
+        )
+    })
 }
 
 fn stmt_sizes(stmt: &Stmt, errors: &mut Vec<Diagnostic>) {
@@ -102,17 +125,6 @@ fn stmt_sizes(stmt: &Stmt, errors: &mut Vec<Diagnostic>) {
 
 fn expr_sizes(expr: &Expr, errors: &mut Vec<Diagnostic>) {
     match expr {
-        Expr::Const {
-            width: w,
-            value,
-            value_span,
-            ..
-        } => {
-            check_width(*w, "the constant width", errors);
-            if let Err(d) = const_bits(*w, value, *value_span) {
-                errors.push(d);
-            }
-        }
         Expr::Replicate { count, .. } if count.value == 0 => {
             errors.push(error(
                 ErrorCode::E005,
