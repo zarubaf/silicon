@@ -3,6 +3,7 @@
 pub mod ast;
 pub mod diag;
 pub mod text;
+pub mod typed;
 mod value;
 
 pub use value::{Bits, Pred};
