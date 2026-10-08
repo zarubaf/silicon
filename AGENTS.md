@@ -59,13 +59,14 @@ Each rule is one list line. It ends with `Check:` and the check. A rule without 
 
 ## Where to read
 
-| Question                                   | Read                   |
-| ------------------------------------------ | ---------------------- |
-| What is the pipeline, and what is trusted? | `doc/architecture.md`  |
-| Why did we decide this?                    | `doc/adr/`             |
-| How does this part work?                   | `doc/design/`          |
-| How do I orchestrate agents? Which model?  | `doc/guide/agents.md`  |
-| How do I write commits and branches?       | `doc/guide/commits.md` |
-| How do I write prose and format files?     | `doc/guide/style.md`   |
-| What is the test oracle for a layer?       | `doc/guide/testing.md` |
-| What does a term mean?                     | `CONTEXT.md`           |
+| Question                                  | Read                   |
+| ----------------------------------------- | ---------------------- |
+| What is the pipeline?                     | `doc/architecture.md`  |
+| What is proven, validated, or trusted?    | `doc/trust.md`         |
+| Why did we decide this?                   | `doc/adr/`             |
+| How does this part work?                  | `doc/design/`          |
+| How do I orchestrate agents? Which model? | `doc/guide/agents.md`  |
+| How do I write commits and branches?      | `doc/guide/commits.md` |
+| How do I write prose and format files?    | `doc/guide/style.md`   |
+| What is the test oracle for a layer?      | `doc/guide/testing.md` |
+| What does a term mean?                    | `CONTEXT.md`           |

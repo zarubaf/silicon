@@ -18,5 +18,5 @@ The semantics of a hardware description language can need an LRM of many hundred
 
 - The semantics of each clock domain stays simple.
 - The toolchain does not check 4-state logic, CDC, or timing. Existing dedicated tools cover them.
-- Black boxes are on the trusted side of [the trust boundary](../architecture.md).
+- Black boxes are on the trusted side of [the trust boundary](../trust.md).
 - Reset semantics and the memory model are still open. See the open questions in [the architecture](../architecture.md).
