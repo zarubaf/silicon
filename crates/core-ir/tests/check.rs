@@ -309,7 +309,7 @@ fn e013_output_without_deps() {
     (output q (bits 1))
     (assign q (const 1 0))))
 ";
-    expect(src, ErrorCode::E013, 4, 5);
+    expect(src, ErrorCode::E013, 4, 13);
 }
 
 #[test]
@@ -654,4 +654,34 @@ fn e013_clock_input_in_a_deps_list() {
     (assign q (const 1 0))))
 ";
     expect(src, ErrorCode::E013, 5, 14);
+}
+
+#[test]
+fn e013_second_deps_entry_is_at_its_output_name() {
+    let src = "\
+(design top
+  (extern ext
+    (input a (bits 1))
+    (output o (bits 1))
+    (deps o (a))
+    (deps o (a)))
+  (module top
+    (output q (bits 1))
+    (assign q (const 1 0))))
+";
+    expect(src, ErrorCode::E013, 6, 11);
+}
+
+#[test]
+fn e009_assign_to_a_clock_output_is_reported_at_the_port() {
+    let src = "\
+(design top
+  (module top
+    (input clk clock)
+    (output c clock)
+    (output q (bits 1))
+    (assign c clk)
+    (assign q (const 1 0))))
+";
+    expect(src, ErrorCode::E009, 4, 5);
 }
