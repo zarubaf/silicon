@@ -46,7 +46,7 @@
             ]))
           ];
           RUSTC_WRAPPER = "sccache";
-          SILICON_Z3_LIB = "${pkgs.z3.lib}/lib/libz3.so";
+          SILICON_Z3_LIB = "${pkgs.z3.lib}/lib/libz3${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}";
         };
       });
 
