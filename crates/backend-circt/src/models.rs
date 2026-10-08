@@ -2,75 +2,48 @@
 //! users and the module that the LEC of spec section 8.1 puts in place of the
 //! extern.
 //!
-//! The model holds the words in one `seq.compreg` of type `!hw.array<DxiW>`
-//! with the name `silicon_reg_mem`. A read port gives the word of the current
-//! state with `hw.array_get`, so the read is combinational. The write ports
-//! apply to the old state in index order with `hw.array_inject`, so a higher
-//! port overwrites a lower port at the same address.
+//! The model holds one word for each address, `2^A` words for the address
+//! width `A`, in one `seq.compreg` of type `!hw.array<2^A x iW>` with the
+//! name `silicon_reg_mem`. A read port gives the word of the current state
+//! with `hw.array_get`, so the read is combinational. The write ports apply
+//! to the old state in index order with `hw.array_inject`, so a higher port
+//! overwrites a lower port at the same address.
 //!
-//! The guarded parent gives the model only addresses in range or the enable
-//! 0. For each other input, the model still follows spec section 5.2: a read
-//! out of range gives 0, and a write out of range does nothing. `circt-lec`
-//! gives `hw.array_get` and `hw.array_inject` out of range a free result, and
-//! a free array would replace each word. A depth that is a power of two has
-//! no address out of range, so its model has no such guard.
+//! The model has no guard. The guarded parent gives it only addresses below
+//! the depth `D` or the enable 0, and for those inputs it follows spec
+//! section 5.2. An address at `D` or above reads or writes its own word,
+//! which no address in range reaches. Thus a parent without a guard changes
+//! an output or the next state, and the LEC finds it. Each address is in the
+//! range of the array, so no tool gives an access a free result.
 
 use core_ir::typed::address_width;
 
-use crate::{MemConfig, full_range, mlir};
+use crate::{MemConfig, mlir};
 
 /// The MLIR text of the memory model of `config`: an `hw.module` with the
 /// name and the ports of the extern of spec section 7.3.
 #[must_use]
 pub fn memory_model(config: &MemConfig) -> String {
-    let (depth, width) = (config.depth, config.width);
-    let addr = address_width(depth);
-    let array = format!("!hw.array<{depth}xi{width}>");
-    let guarded = !full_range(depth);
+    let width = config.width;
+    let addr = address_width(config.depth);
+    let array = format!("!hw.array<{}xi{width}>", 1u64 << addr);
     let mut ops = Vec::new();
-    // Emits the guard `%<port>_ok` of the address of `port`, if one is needed.
-    let guard = |ops: &mut Vec<String>, port: &str| {
-        guarded.then(|| {
-            ops.push(format!(
-                "%{port}_ok = comb.icmp ult %{port}_addr, %depth : i{addr}"
-            ));
-            format!("%{port}_ok")
-        })
-    };
-    if guarded {
-        ops.push(format!("%depth = hw.constant {depth} : i{addr}"));
-        ops.push(format!("%zero = hw.constant 0 : i{width}"));
-    }
     let mut outputs = Vec::new();
     for n in 0..config.reads {
-        let port = format!("r{n}");
-        let get = format!("hw.array_get %silicon_reg_mem[%{port}_addr] : {array}, i{addr}");
-        if let Some(ok) = guard(&mut ops, &port) {
-            ops.push(format!("%{port}_word = {get}"));
-            ops.push(format!(
-                "%{port}_data = comb.mux {ok}, %{port}_word, %zero : i{width}"
-            ));
-        } else {
-            ops.push(format!("%{port}_data = {get}"));
-        }
-        outputs.push(format!("%{port}_data"));
+        ops.push(format!(
+            "%r{n}_data = hw.array_get %silicon_reg_mem[%r{n}_addr] : {array}, i{addr}"
+        ));
+        outputs.push(format!("%r{n}_data"));
     }
     let mut state = "%silicon_reg_mem".to_owned();
     for n in 0..config.writes {
-        let port = format!("w{n}");
         ops.push(format!(
-            "%{port}_set = hw.array_inject {state}[%{port}_addr], %{port}_data : {array}, i{addr}"
+            "%w{n}_set = hw.array_inject {state}[%w{n}_addr], %w{n}_data : {array}, i{addr}"
         ));
-        let en = if let Some(ok) = guard(&mut ops, &port) {
-            ops.push(format!("%{port}_on = comb.and %{port}_en, {ok} : i1"));
-            format!("%{port}_on")
-        } else {
-            format!("%{port}_en")
-        };
         ops.push(format!(
-            "%{port}_next = comb.mux {en}, %{port}_set, {state} : {array}"
+            "%w{n}_next = comb.mux %w{n}_en, %w{n}_set, {state} : {array}"
         ));
-        state = format!("%{port}_next");
+        state = format!("%w{n}_next");
     }
     ops.push(format!(
         "%silicon_reg_mem = seq.compreg {state}, %clk : {array}"
