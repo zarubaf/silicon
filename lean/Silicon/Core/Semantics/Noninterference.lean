@@ -88,17 +88,7 @@ theorem local_solution_cone (d : CertifiedDesign) (m : Typed.Module)
 theorem output_infer_entry (m : Core.Module) (children : String → Option Deps)
     (output : PortRef m.ports .output) :
     ∃ deps, (Deps.infer m children).lookup output.val.name = some deps := by
-  have total : ((Deps.infer m children).lookup output.val.name).isSome := by
-    apply List.lookup_isSome_iff.mpr
-    let graph := Deps.graph m children
-    let reached := Deps.visit graph (graph.length + 1) [.name output.val.name] []
-    let deps := (Deps.inputs m).filter fun name => reached.contains (.name name)
-    refine ⟨(output.val.name, deps), ?_, by simp⟩
-    apply List.mem_filterMap.mpr
-    exact ⟨output.val, output.property.1, by simp [output.property.2, deps, reached, graph]⟩
-  cases found : (Deps.infer m children).lookup output.val.name with
-  | none => simp [found] at total
-  | some deps => exact ⟨deps, rfl⟩
+  exact Deps.infer_output_entry m children output.val output.property.1 output.property.2
 
 /-! Inferred dependencies suffice to determine each declared data output. -/
 theorem local_deps_sound (d : CertifiedDesign) (m : Typed.Module)

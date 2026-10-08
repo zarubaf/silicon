@@ -10,13 +10,8 @@ theorem module_mem (d : Typed.Design) (m : Typed.Module) (hm : m ∈ d.bodies) :
 theorem port_found (d : Typed.Design) (wf : WellFormed d.erase) (m : Typed.Module)
     (hm : m ∈ d.bodies) (port : Port) (hp : port ∈ m.ports) (ht : port.ty = .bits width) :
     m.ctx.lookup (.name port.name) = some (.value (.bits width)) := by
-  have ports := (List.nodup_append.mp
-    (Check.module_scope_nodup d.erase m.erase wf.1 (module_mem d m hm))).1
-  have found := Check.find_port_of_mem m.ports port ports hp
   rw [m.context_eq]
-  unfold Typed.contextFromPorts
-  rw [Check.port_lookup m.ports _ port.name port found]
-  simp [ht]
+  exact Check.module_port_lookup d.erase m.erase wf (module_mem d m hm) port hp ht m.interfaces
 
 private theorem filterMap_unique {α β : Type} (xs : List α) (f : α → Option β)
     (unique : (xs.filterMap f).Nodup) (a b : α) (ha : a ∈ xs) (hb : b ∈ xs)
@@ -41,10 +36,11 @@ private theorem filterMap_unique {α β : Type} (xs : List α) (f : α → Optio
 
 theorem driver_unique (d : Core.Design) (wf : WellFormed d) (m : Core.Module)
     (hm : m ∈ Typed.modules d) (a b : Core.Stmt) (ha : a ∈ m.body) (hb : b ∈ m.body)
-    (name : String) (hna : Check.label a = some name) (hnb : Check.label b = some name) :
+    (name : String) (hna : Core.Stmt.driverName a = some name)
+    (hnb : Core.Stmt.driverName b = some name) :
     a = b := by
-  exact filterMap_unique m.body Check.label
-    (Check.labels_nodup d m wf.1 wf.2.1 wf.2.2.2.2.2.1 hm) a b ha hb name hna hnb
+  exact filterMap_unique m.body Core.Stmt.driverName
+    (Check.module_driver_names_nodup d m wf hm) a b ha hb name hna hnb
 
 /-! Grouping retains one name per equation and keeps all names distinct. -/
 def equationName : Typed.Equation ctx ports → String
@@ -52,16 +48,17 @@ def equationName : Typed.Equation ctx ports → String
   | .inst _ _ name .. | .assign _ _ name .. => name
 
 private theorem equation_labels (eq : Typed.Equation ctx ports) :
-    (eq.parts.map (fun part => part.2.erase)).filterMap Check.label = [equationName eq] := by
-  cases eq <;> simp [Typed.Equation.parts, Typed.Stmt.erase, Check.label, Rules.definition,
+    (eq.parts.map (fun part => part.2.erase)).filterMap Core.Stmt.driverName =
+      [equationName eq] := by
+  cases eq <;> simp [Typed.Equation.parts, Typed.Stmt.erase, Core.Stmt.driverName,
     equationName, List.filterMap_map, List.map_map, Function.comp_def]
 
 theorem equation_names_nodup (d : Typed.Design) (wf : WellFormed d.erase)
     (m : Typed.Module) (hm : m ∈ d.bodies) : (m.body.map equationName).Nodup := by
-  have raw := Check.labels_nodup d.erase m.erase wf.1 wf.2.1 wf.2.2.2.2.2.1
+  have raw := Check.module_driver_names_nodup d.erase m.erase wf
     (module_mem d m hm)
   have perm := ((List.mergeSort_perm (m.body.flatMap Typed.Equation.parts)
-    (fun a b => decide (a.1 ≤ b.1))).map (fun part => part.2.erase)).filterMap Check.label
+    (fun a b => decide (a.1 ≤ b.1))).map (fun part => part.2.erase)).filterMap Core.Stmt.driverName
   have unsorted := perm.nodup_iff.mp raw
   have flat : m.body.flatMap (fun eq => [equationName eq]) = m.body.map equationName := by
     induction m.body with
@@ -102,28 +99,5 @@ theorem output_assignment (d : Core.Design) (wf : WellFormed d) (m : Core.Module
   have eq := driver_unique d wf m hm _ _ hs' hs port.name rfl rfl
   cases eq
   exact ⟨rfl, rfl⟩
-
-/-! Input ports supply values directly; they cannot also name an equation. -/
-theorem input_not_driver (d : Core.Design) (wf : WellFormed d) (m : Core.Module)
-    (hm : m ∈ Typed.modules d) (port : Port) (hp : port ∈ m.ports)
-    (hi : port.dir = .input) (stmt : Core.Stmt) (hs : stmt ∈ m.body) :
-    Check.label stmt ≠ some port.name := by
-  have scope := List.nodup_append.mp (Check.module_scope_nodup d m wf.1 hm)
-  have noDefinition : Rules.definition stmt ≠ some port.name := by
-    intro hd
-    exact scope.2.2 port.name (List.mem_map.mpr ⟨port, hp, rfl⟩) port.name
-      (List.mem_filterMap.mpr ⟨stmt, hs, hd⟩) rfl
-  cases stmt with
-  | assign pos name expr =>
-    intro he
-    have he : name = port.name := Option.some.inj he
-    subst name
-    have resolved := (wf.2.1.2 m hm _ hs).1
-    change ((Rules.findPort m port.name).any fun p => p.dir == .output) = true at resolved
-    have found := Check.find_port_of_mem m.ports port scope.1 hp
-    change Rules.findPort m port.name = some port at found
-    rw [found] at resolved
-    simp [hi] at resolved
-  | _ => exact noDefinition
 
 end Silicon.Core.Semantics

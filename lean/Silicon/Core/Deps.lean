@@ -1,4 +1,5 @@
 import Silicon.Core.Syntax
+import Silicon.Core.GraphReach
 import Std.Data.HashMap.Lemmas
 import Std.Data.HashSet.Lemmas
 
@@ -64,10 +65,24 @@ def equations (children : String → Option Deps) : Stmt → List (Node × List 
         ((inputs.lookup input).toList.flatMap reads))
   | _ => []
 
-def inputs (m : Module) : List String :=
+private def inputs (m : Module) : List String :=
   m.ports.filterMap fun p => match p.dir, p.ty with
     | .input, .bits _ => some p.name
     | _, _ => none
+
+/-! Only data input ports can contribute current-cycle dependencies. -/
+def IsInput (m : Module) (name : String) : Prop :=
+  ∃ port ∈ m.ports, port.name = name ∧ port.dir = .input ∧ ∃ width, port.ty = .bits width
+
+private theorem mem_inputs (m : Module) (name : String) :
+    name ∈ inputs m ↔ IsInput m name := by
+  simp only [inputs, List.mem_filterMap, IsInput]
+  constructor
+  · rintro ⟨port, member, found⟩
+    cases hd : port.dir <;> cases ht : port.ty <;> simp_all
+    exact ⟨port, member, found, hd, _, ht⟩
+  · rintro ⟨port, member, rfl, dir, width, bits⟩
+    exact ⟨port, member, by simp [dir, bits]⟩
 
 /-!
 Each entry lists the direct reads of its node, including input leaves.
@@ -79,6 +94,24 @@ def graph (m : Module) (children : String → Option Deps) : List (Node × List 
   let eqs := m.body.flatMap (equations children)
   let nodes := eqs.map Prod.fst ++ (inputs m).map Node.name
   eqs.map fun (n, rs) => (n, rs.filter fun node => nodes.contains node)
+
+theorem graph_keys (m : Module) (children : String → Option Deps) :
+    (graph m children).map Prod.fst =
+      (m.body.flatMap (equations children)).map Prod.fst := by
+  simp [graph, List.map_map, Function.comp_def]
+
+/-! Graph rows retain exactly equation and data-input reads. -/
+theorem graph_row (m : Module) (children : String → Option Deps)
+    (row : Node × List Node) (member : row ∈ m.body.flatMap (equations children)) :
+    ∃ reads, (row.1, reads) ∈ graph m children ∧ ∀ dep,
+      dep ∈ reads ↔ dep ∈ row.2 ∧
+        (dep ∈ (graph m children).map Prod.fst ∨
+          ∃ input, IsInput m input ∧ dep = .name input) := by
+  refine ⟨_, List.mem_map.mpr ⟨row, member, rfl⟩, ?_⟩
+  intro dep
+  simp only [List.mem_filter, List.contains_iff_mem, List.mem_append, graph_keys,
+    List.mem_map, mem_inputs]
+  simp only [eq_comm]
 
 private def indexedGraph (m : Module) (children : String → Option Deps) :
     List (Node × List Node) :=
@@ -94,7 +127,7 @@ private def indexedGraph (m : Module) (children : String → Option Deps) :
 A search visits each node at most once. The bound covers every path to an input leaf.
 Cycles terminate and keep all reachable inputs. The checker rejects cycles separately.
 -/
-def visit (g : List (Node × List Node)) : Nat → List Node → List Node → List Node
+private def visit (g : List (Node × List Node)) : Nat → List Node → List Node → List Node
   | 0, _, seen => seen
   | fuel + 1, pending, seen =>
     let fresh := pending.foldl (fun acc n =>
@@ -115,6 +148,70 @@ def infer (m : Module) (children : String → Option Deps) : Deps :=
       let reached := visit g (g.length + 1) [.name p.name] []
       some (p.name, (inputs m).filter fun n => reached.contains (.name n))
     else none
+
+open GraphReach
+
+private theorem reaches_empty (g : List (Node × List Node)) (target : Node)
+    (fuel : Nat) (seen : List Node) : reachesSpec g target fuel [] seen = false := by
+  induction fuel with
+  | zero => rfl
+  | succ fuel ih => simpa [reachesSpec, freshNodes] using ih
+
+private theorem visit_mem (g : List (Node × List Node)) (fuel : Nat)
+    (pending seen : List Node) (target : Node) :
+    target ∈ visit g fuel pending seen ↔
+      target ∈ seen ∨ reachesSpec g target fuel pending seen = true := by
+  induction fuel generalizing pending seen with
+  | zero => simp [visit, reachesSpec]
+  | succ fuel ih =>
+    change target ∈ (if (frontier g seen pending).isEmpty then updated seen pending
+      else visit g fuel (frontier g seen pending) (updated seen pending)) ↔ _
+    rw [reachesSpec]
+    change _ ↔ target ∈ seen ∨ (if pending.contains target then true
+      else reachesSpec g target fuel (frontier g seen pending) (updated seen pending)) = true
+    by_cases he : (frontier g seen pending).isEmpty = true
+    · have hn : frontier g seen pending = [] := List.isEmpty_iff.mp he
+      rw [ite_eq_left he, mem_updated, hn, reaches_empty]
+      simp
+    · rw [ite_eq_right he, ih, mem_updated]
+      by_cases hp : target ∈ pending <;> simp [hp]
+
+private theorem mem_visit_iff_reachable (g : List (Node × List Node))
+    (pending : List Node) (target : Node) :
+    target ∈ visit g (g.length + 1) pending [] ↔
+      ∃ start ∈ pending, Reachable g start target := by
+  rw [visit_mem]
+  simpa using reaches_graph_iff g target pending
+
+theorem infer_entry_inputs (m : Module) (children : String → Option Deps)
+    (output : String) (deps : List String) (entry : List.Mem (output, deps) (infer m children))
+    (input : String) :
+    input ∈ deps ↔ IsInput m input ∧
+      Reachable (graph m children) (.name output) (.name input) := by
+  obtain ⟨port, _, hp⟩ := List.mem_filterMap.mp entry
+  split at hp
+  · have he := Option.some.inj hp
+    have hn := congrArg Prod.fst he
+    have hd := congrArg Prod.snd he
+    simp only at hn hd
+    rw [← hd, List.mem_filter, List.contains_iff_mem, mem_visit_iff_reachable]
+    simp [hn, mem_inputs]
+  · contradiction
+
+theorem infer_output_entry (m : Module) (children : String → Option Deps)
+    (port : Port) (member : port ∈ m.ports) (dir : port.dir = .output) :
+    ∃ deps, (infer m children).lookup port.name = some deps := by
+  have total : ((infer m children).lookup port.name).isSome := by
+    apply List.lookup_isSome_iff.mpr
+    let g := graph m children
+    let reached := visit g (g.length + 1) [.name port.name] []
+    let deps := (inputs m).filter fun name => reached.contains (.name name)
+    refine ⟨(port.name, deps), ?_, by simp⟩
+    apply List.mem_filterMap.mpr
+    exact ⟨port, member, by simp [dir, deps, reached, g]⟩
+  cases found : (infer m children).lookup port.name with
+  | none => simp [found] at total
+  | some deps => exact ⟨deps, rfl⟩
 
 end Deps
 end Silicon.Core

@@ -1,4 +1,4 @@
-import Silicon.Core.Deps
+import Std
 
 /-! Bounded graph searches follow the first entry for each source node. -/
 namespace Silicon.Core.GraphReach

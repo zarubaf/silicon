@@ -7,7 +7,7 @@ namespace Silicon.Core.Semantics
 
 private theorem equation_source (m : Typed.Module) (e : Typed.Equation m.ctx m.interfaces)
     (he : e ∈ m.body) :
-    ∃ stmt ∈ m.erase.body, Check.label stmt = some (equationName e) := by
+    ∃ stmt ∈ m.erase.body, Core.Stmt.driverName stmt = some (equationName e) := by
   cases e <;> (refine ⟨_, (Ownership.mem_equationsErase m.body _).mpr
     ⟨_, he, _, _, List.mem_cons_self .., rfl⟩, rfl⟩)
 
@@ -17,7 +17,7 @@ theorem input_not_equation (d : Typed.Design) (wf : WellFormed d.erase)
     equationName e ≠ port.name := by
   intro hn
   obtain ⟨stmt, hs, hl⟩ := equation_source m e he
-  exact input_not_driver d.erase wf m.erase (module_mem d m hm) port hp hi stmt hs
+  exact Check.input_not_driver d.erase wf m.erase (module_mem d m hm) port hp hi stmt hs
     (hl.trans (congrArg some hn))
 
 private theorem valueDriver_heq (d : Typed.Design) (wf : WellFormed d.erase)
@@ -62,8 +62,7 @@ private theorem valueDriver_heq (d : Typed.Design) (wf : WellFormed d.erase)
     cases he
     rfl
   case refl.input.input p hp hd ht q hq qd qt =>
-    have ports := (List.nodup_append.mp
-      (Check.module_scope_nodup d.erase m.erase wf.1 (module_mem d m hm))).1
+    have ports := Check.module_ports_nodup d.erase m.erase wf (module_mem d m hm)
     have he := Check.named_port_eq m.ports p q ports hp hq (Deps.Node.name.inj hn)
     cases he
     rfl
@@ -82,15 +81,6 @@ theorem ValueDriver.unique (d : Typed.Design) (wf : WellFormed d.erase)
     (m : Typed.Module) (hm : m ∈ d.bodies) (a b : ValueDriver m node width) : a = b :=
   eq_of_heq (valueDriver_heq d wf m hm a b rfl rfl)
 
-theorem ValueDriver.eval_unique (d : Typed.Design) (wf : WellFormed d.erase)
-    (m : Typed.Module) (hm : m ∈ d.bodies) (children : Children m)
-    (state : LocalState m children) (input : Input m) (values : Valuation m.ctx)
-    (memories : Memories m.ctx) (connections : ConnectionValues m)
-    (a b : ValueDriver m node width) :
-    a.eval m children state input values memories connections =
-      b.eval m children state input values memories connections := by
-  rw [ValueDriver.unique d wf m hm a b]
-
 theorem MemoryDriver.unique (d : Typed.Design) (wf : WellFormed d.erase)
     (m : Typed.Module) (hm : m ∈ d.bodies) (a b : MemoryDriver m name width depth) :
     a = b := by
@@ -101,11 +91,5 @@ theorem MemoryDriver.unique (d : Typed.Design) (wf : WellFormed d.erase)
       have he := equation_unique d wf m hm _ _ member member' rfl
       cases he
       rfl
-
-theorem MemoryDriver.eval_unique (d : Typed.Design) (wf : WellFormed d.erase)
-    (m : Typed.Module) (hm : m ∈ d.bodies) (children : Children m)
-    (state : LocalState m children) (a b : MemoryDriver m name width depth) :
-    a.eval m children state = b.eval m children state := by
-  rw [MemoryDriver.unique d wf m hm a b]
 
 end Silicon.Core.Semantics
