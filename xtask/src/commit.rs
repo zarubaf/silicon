@@ -1,7 +1,6 @@
 //! Commit conventions and the "refactor first, then change behavior" rule.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 
@@ -216,7 +215,7 @@ pub fn check_range(dir: &Path, range: &str, scopes: &[String]) -> Result<Vec<Str
 }
 
 fn git(dir: &Path, args: &[&str]) -> Result<String> {
-    let out = Command::new("git")
+    let out = crate::gitcmd::git()
         .args(args)
         .current_dir(dir)
         .output()

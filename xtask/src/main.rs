@@ -2,6 +2,7 @@
 
 mod commit;
 mod fmt;
+mod gitcmd;
 mod guidance;
 mod lean;
 mod prose;
