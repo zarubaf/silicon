@@ -143,13 +143,14 @@ fn item_ports(item: &Item) -> &[Port] {
     }
 }
 
-/// The position of the port `name` in `ports`. A name that is not a port,
-/// which only a design that fails the checker has, sorts last.
-fn port_position(ports: &[Port], name: &Name) -> usize {
-    ports
-        .iter()
-        .position(|p| p.name.text == name.text)
-        .unwrap_or(ports.len())
+/// The sort key of the port `name` in `ports`: its position in port order.
+/// `canonicalize` is defined only for checked designs, where the key always
+/// exists. A name that is not a port, or a unit that is not an item, has no
+/// key, and it sorts after every port. The sorts are stable, so such names
+/// keep their written order.
+fn port_key(ports: Option<&[Port]>, name: &Name) -> (bool, Option<usize>) {
+    let position = ports.and_then(|ports| ports.iter().position(|p| p.name.text == name.text));
+    (position.is_none(), position)
 }
 
 /// Sorts a design into the canonical order of spec section 3.3: the items by
@@ -170,14 +171,14 @@ pub fn canonicalize(design: &Design) -> Design {
                 m.stmts.sort_by(|a, b| stmt_key(a).cmp(&stmt_key(b)));
                 for stmt in &mut m.stmts {
                     if let Stmt::Inst { module, conns, .. } = stmt {
-                        let child = ports.get(module.text.as_str()).copied().unwrap_or(&[]);
-                        conns.sort_by_key(|c| port_position(child, &c.port));
+                        let child = ports.get(module.text.as_str()).copied();
+                        conns.sort_by_key(|c| port_key(child, &c.port));
                     }
                 }
             }
             Item::Extern(e) => {
-                let ports = &e.ports;
-                e.deps.sort_by_key(|d| port_position(ports, &d.out));
+                let ports = Some(&e.ports[..]);
+                e.deps.sort_by_key(|d| port_key(ports, &d.out));
             }
         }
     }
