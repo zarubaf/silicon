@@ -61,6 +61,9 @@ pub fn instance(
     args: &[String],
     results: &[String],
 ) -> String {
+    let count = |dir| pins.iter().filter(|p| p.dir == dir).count();
+    debug_assert_eq!(args.len(), count(Dir::In), "one argument per input pin");
+    debug_assert_eq!(results.len(), count(Dir::Out), "one result per output pin");
     let inputs: Vec<String> = pins
         .iter()
         .filter(|p| p.dir == Dir::In)
