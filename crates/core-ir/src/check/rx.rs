@@ -4,12 +4,11 @@
 //! the position of a form. Pass 4 turns each constant into [`Bits`], and pass 5
 //! removes the clock reads, so that the last form converts without an error.
 
-use super::error;
 use super::scope::Sig;
 use crate::Bits;
 use crate::Pred;
 use crate::ast::{BinOp, Name, Num, UnOp};
-use crate::diag::{Diagnostic, ErrorCode, Span};
+use crate::diag::Span;
 use crate::typed::{self, Callee, InputIdx, InstIdx, LetIdx, MemIdx, OutputIdx, RegIdx};
 use num_bigint::BigUint;
 
@@ -82,26 +81,6 @@ pub(super) enum Rx<K, C> {
 pub(super) type RawRx<'a> = Rx<Span, RawConst<'a>>;
 /// The tree after pass 5.
 pub(super) type Ex = Rx<Never, Bits>;
-
-/// The constant of a `const` form. `E005` is the error for a width of 0 and
-/// for a value that does not fit, at the number that breaks the rule.
-pub(super) fn const_bits(
-    width: Num,
-    value: &BigUint,
-    value_span: Span,
-) -> Result<Bits, Diagnostic> {
-    Bits::new(width.value, value.clone()).ok_or_else(|| {
-        if width.value == 0 {
-            error(ErrorCode::E005, width.span, "the constant width is 0")
-        } else {
-            error(
-                ErrorCode::E005,
-                value_span,
-                format!("the constant {value} does not fit in {} bits", width.value),
-            )
-        }
-    })
-}
 
 /// `Some` of all items if there is no `None`. The caller looked at every item
 /// before, so that each one recorded its errors.
