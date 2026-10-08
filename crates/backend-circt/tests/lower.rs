@@ -316,6 +316,48 @@ fn each_operation_parses() -> Test {
     Ok(())
 }
 
+/// Proves with `circt-lec` that the modules `c1` and `c2` of `mlir` are
+/// equal, or reports a counterexample as `false`. The registers become ports
+/// first, because `circt-lec` reads no `seq` dialect. The clock then drives
+/// nothing, and its type becomes `i1` for the same reason.
+fn equivalent(mlir: &str, c1: &str, c2: &str) -> Result<bool, Box<dyn Error>> {
+    let flat = common::run(
+        "circt-opt",
+        &[
+            "--hw-flatten-modules",
+            "--externalize-registers",
+            "--canonicalize",
+        ],
+        mlir,
+    )?;
+    let stderr = String::from_utf8_lossy(&flat.stderr);
+    assert!(flat.status.success(), "{stderr}\n{mlir}");
+    let flat = String::from_utf8(flat.stdout)?.replace("!seq.clock", "i1");
+    let z3 = std::env::var("SILICON_Z3_LIB").map_err(|_| "SILICON_Z3_LIB is not set")?;
+    let out = common::run(
+        "circt-lec",
+        &[
+            "-",
+            &format!("--c1={c1}"),
+            &format!("--c2={c2}"),
+            "--run",
+            &format!("--shared-libs={z3}"),
+        ],
+        &flat,
+    )?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "{stdout}{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    match stdout.trim() {
+        "c1 == c2" => Ok(true),
+        "c1 != c2" => Ok(false),
+        other => Err(format!("unexpected `circt-lec` output: {other}").into()),
+    }
+}
+
 /// CIRCT 1.160 gives a shift amount of the width or more the meaning of
 /// spec section 4.1, so the lowering emits no guard. The proof covers each
 /// amount, in range and out of range.
@@ -323,25 +365,96 @@ fn each_operation_parses() -> Test {
 fn a_shift_out_of_range_matches_the_spec() -> Test {
     let mlir = lowered(SHIFTS)?;
     assert!(!mlir.contains("comb.mux"), "{mlir}");
-    let z3 = std::env::var("SILICON_Z3_LIB").map_err(|_| "SILICON_Z3_LIB is not set")?;
-    let input = format!("{mlir}{SHIFTS_REFERENCE}");
-    let out = common::run(
-        "circt-lec",
-        &[
-            "-",
-            "--c1=shifts",
-            "--c2=reference",
-            "--run",
-            &format!("--shared-libs={z3}"),
-        ],
-        &input,
-    )?;
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        out.status.success() && stdout.contains("c1 == c2"),
-        "{stdout}{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    assert!(equivalent(
+        &format!("{mlir}{SHIFTS_REFERENCE}"),
+        "shifts",
+        "reference"
+    )?);
+    Ok(())
+}
+
+/// The counter with the reset as a mux in front of a register without reset.
+/// `{reset}` is the mux operands: `%c0, %n` gives the reset to 0 when `rst`
+/// is 1.
+const COUNTER_REFERENCE: &str = "
+hw.module @reference(in %clk : !seq.clock, in %rst : i1, in %en : i1, out q : i8) {
+  %c0 = hw.constant 0 : i8
+  %c1 = hw.constant 1 : i8
+  %inc = comb.add %silicon_reg_r, %c1 : i8
+  %n = comb.mux %en, %inc, %silicon_reg_r : i8
+  %m = comb.mux %rst, {reset} : i8
+  %silicon_reg_r = seq.compreg %m, %clk : i8
+  hw.output %silicon_reg_r : i8
+}
+";
+
+#[test]
+fn the_reset_is_active_high() -> Test {
+    let mlir = lowered(COUNTER)?;
+    for (reset, equal) in [("%c0, %n", true), ("%n, %c0", false)] {
+        let reference = COUNTER_REFERENCE.replace("{reset}", reset);
+        let input = format!("{mlir}{reference}");
+        assert_eq!(
+            equivalent(&input, "counter", "reference")?,
+            equal,
+            "{reset}"
+        );
+    }
+    Ok(())
+}
+
+/// A memory module without guards: `circt-lec` gives an access out of range
+/// a free value, so a missing guard in the parent shows as a difference.
+const PROBE_MEMORY: &str = "
+hw.module @silicon_mem_12x8_r2w1(in %clk : !seq.clock, in %r0_addr : i4, out r0_data : i8, in %r1_addr : i4, out r1_data : i8, in %w0_addr : i4, in %w0_data : i8, in %w0_en : i1) {
+  %r0 = hw.array_get %silicon_reg_mem[%r0_addr] : !hw.array<12xi8>, i4
+  %r1 = hw.array_get %silicon_reg_mem[%r1_addr] : !hw.array<12xi8>, i4
+  %set = hw.array_inject %silicon_reg_mem[%w0_addr], %w0_data : !hw.array<12xi8>, i4
+  %next = comb.mux %w0_en, %set, %silicon_reg_mem : !hw.array<12xi8>
+  %silicon_reg_mem = seq.compreg %next, %clk : !hw.array<12xi8>
+  hw.output %r0, %r1 : i8, i8
+}
+";
+
+/// The parent of `MEMORY` with the guards of spec section 5.2. `{read}` and
+/// `{write}` are the guards of the port `r0` and of the write enable.
+const MEMORY_REFERENCE: &str = "
+hw.module @reference(in %clk : !seq.clock, in %x : i4, in %y : i4, in %d : i8, in %we : i1, out p : i8, out q : i8) {
+  %c12 = hw.constant 12 : i4
+  %c0 = hw.constant 0 : i8
+  %a0, %b0 = hw.instance \"m\" @silicon_mem_12x8_r2w1(clk: %clk: !seq.clock, r0_addr: %x: i4, r1_addr: %y: i4, w0_addr: %x: i4, w0_data: %d: i8, w0_en: %en: i1) -> (r0_data: i8, r1_data: i8)
+  %xin = comb.icmp ult %x, %c12 : i4
+  %yin = comb.icmp ult %y, %c12 : i4
+  %true = hw.constant true
+  %en = comb.and %we, {write} : i1
+  %a = comb.mux {read}, %a0, %c0 : i8
+  %b = comb.mux %yin, %b0, %c0 : i8
+  hw.output %a, %b : i8, i8
+}
+";
+
+/// The read data is `mux(in range, data, 0)`, and the write enable is
+/// `en AND in range`. A reference without one of the guards differs.
+#[test]
+fn the_memory_guards_match_the_spec() -> Test {
+    let mlir = lowered(MEMORY)?;
+    let decl = line(&mlir, "hw.module.extern @silicon_mem_12x8_r2w1")?;
+    let mlir = mlir.replace(decl, PROBE_MEMORY);
+    for (read, write, equal) in [
+        ("%xin", "%xin", true),
+        ("%true", "%xin", false),
+        ("%xin", "%true", false),
+    ] {
+        let reference = MEMORY_REFERENCE
+            .replace("{read}", read)
+            .replace("{write}", write);
+        let input = format!("{mlir}{reference}");
+        assert_eq!(
+            equivalent(&input, "top", "reference")?,
+            equal,
+            "{read} {write}"
+        );
+    }
     Ok(())
 }
 
