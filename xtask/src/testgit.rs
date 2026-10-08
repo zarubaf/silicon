@@ -1,20 +1,12 @@
-//! Git helpers for tests. A hook or a temporary index leaves `GIT_*`
-//! variables in the environment, and git would then act on that
-//! repository instead of the test repository. Every test git call goes
-//! through here so it never sees them.
+//! Git helpers for tests. They build on `gitcmd::git`, which drops the
+//! `GIT_*` variables in test builds.
 
 use std::path::Path;
 use std::process::Command;
 
-/// A `git` command for `dir` with every inherited `GIT_*` variable removed.
 fn command(dir: &Path, args: &[&str]) -> Command {
-    let mut cmd = Command::new("git");
+    let mut cmd = crate::gitcmd::git();
     cmd.args(args).current_dir(dir);
-    for (name, _) in std::env::vars_os() {
-        if name.to_string_lossy().starts_with("GIT_") {
-            cmd.env_remove(name);
-        }
-    }
     cmd
 }
 
@@ -53,6 +45,11 @@ mod tests {
         std::fs::write(dir.join("f"), "x").unwrap();
         run(dir, &["add", "."]);
         run(dir, &["commit", "--quiet", "-m", "x"]);
+
+        let repo = crate::repo::Repo::discover_in(dir).unwrap();
+        assert_eq!(repo.files.len(), 1);
+        let problems = crate::commit::check_range(dir, "HEAD", &["xtask".to_string()]).unwrap();
+        assert_eq!(problems.len(), 1, "{problems:?}");
     }
 
     #[test]

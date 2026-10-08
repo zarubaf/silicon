@@ -1,5 +1,4 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 
@@ -54,7 +53,7 @@ impl Repo {
 }
 
 fn git(dir: &Path, args: &[&str]) -> Result<Vec<u8>> {
-    let out = Command::new("git")
+    let out = crate::gitcmd::git()
         .args(args)
         .current_dir(dir)
         .output()
