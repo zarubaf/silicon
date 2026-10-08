@@ -1,9 +1,26 @@
-; Purpose: a width above 64 bits, for the large-constant and wide-vector paths.
+; Purpose: widths above 64 bits: add, mul, shifts, a concat result above 64
+; bits, a large constant, and a wide register with a non-zero reset value.
 (design top
   (module top
+    (input clk clock)
+    (input rst (bits 1))
     (input a (bits 100))
     (input b (bits 100))
     (output s (bits 100))
+    (output p (bits 100))
+    (output l (bits 100))
+    (output u (bits 100))
+    (output g (bits 100))
+    (output j (bits 200))
     (output k (bits 100))
+    (output q (bits 100))
+    (reg w (bits 100) clk (reset sync rst (const 100 1267650600228229401496703205375)))
+    (next w (add w a))
     (assign s (add a b))
-    (assign k (const 100 1267650600228229401496703205375))))
+    (assign p (mul a b))
+    (assign l (shl a b))
+    (assign u (shru a b))
+    (assign g (shrs a b))
+    (assign j (concat a b))
+    (assign k (const 100 1267650600228229401496703205375))
+    (assign q w)))
