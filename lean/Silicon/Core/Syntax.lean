@@ -98,6 +98,21 @@ structure Extern where
   deps : List Dep
   deriving Repr, DecidableEq, BEq, Inhabited
 
+/-! Source trees retain atom positions for errors within a form. -/
+structure SourcePos where
+  pos : Pos
+  children : List Pos := []
+  deriving Repr, DecidableEq, BEq, Inhabited
+
+def SourcePos.locate (source : List SourcePos) : Pos → List Nat → Pos
+  | p, [] => p
+  | p, i :: path =>
+    match source.find? (·.pos == p) with
+    | some s => match s.children[i]? with
+      | some child => SourcePos.locate source child path
+      | none => p
+    | none => p
+
 /-! A design names its top module and stores modules and externs in input order. -/
 inductive Item where
   | module (value : Module)
@@ -107,7 +122,16 @@ inductive Item where
 structure Design where
   top : String
   items : List Item
+  source : List SourcePos := []
   deriving Repr, DecidableEq, BEq, Inhabited
+
+def Design.locate (d : Design) (p : Pos) (path : List Nat) : Pos :=
+  SourcePos.locate d.source p path
+
+def Design.topPos (d : Design) : Pos :=
+  match d.source with
+  | s :: _ => d.locate s.pos [1]
+  | [] => ⟨1, 1⟩
 
 /-! The shared error codes identify grammar, checker, and execution errors. -/
 inductive ErrorCode where
@@ -164,6 +188,7 @@ def Item.erasePos : Item → Item
   | .extern e => .extern
       { e with pos := ⟨0, 0⟩, ports := e.ports.map Port.erasePos, deps := e.deps.map Dep.erasePos }
 
-def Design.erasePos (d : Design) : Design := { d with items := d.items.map Item.erasePos }
+def Design.erasePos (d : Design) : Design :=
+  { d with items := d.items.map Item.erasePos, source := [] }
 
 end Silicon.Core

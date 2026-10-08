@@ -269,7 +269,7 @@ def counterDesign : Design := ⟨"counter", [.module ⟨zeroPos, "counter",
    .let_ zeroPos "inc" 8 (.bin zeroPos .add (.ref zeroPos "r") (.const zeroPos 8 1)),
    .next zeroPos "r" (.mux zeroPos (.ref zeroPos "en")
      (.ref zeroPos "inc") (.ref zeroPos "r")),
-   .assign zeroPos "q" (.ref zeroPos "r")]⟩]⟩
+   .assign zeroPos "q" (.ref zeroPos "r")]⟩], []⟩
 
 #guard (parse counter).toOption.map Design.erasePos == some counterDesign
 
