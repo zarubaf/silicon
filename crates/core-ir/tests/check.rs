@@ -1165,3 +1165,22 @@ fn extern_deps_follow_the_input_port_order() {
     let design = run(src).expect("the design checks");
     assert_eq!(indices(&design.externs[0].deps), [[0, 1]]);
 }
+
+#[test]
+fn e008_parent_loop_through_a_cyclic_child_is_at_the_parent() {
+    let src = "\
+(design top
+  (module top
+    (output q (bits 1))
+    (let x (bits 1) u.q)
+    (inst u child (a x))
+    (assign q x))
+  (module child
+    (input a (bits 1))
+    (output q (bits 1))
+    (let c (bits 1) d)
+    (let d (bits 1) c)
+    (assign q (and a c))))
+";
+    expect(src, ErrorCode::E008, 4, 5);
+}
