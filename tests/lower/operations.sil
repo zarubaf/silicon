@@ -1,0 +1,79 @@
+; CHECK-DAG: %o_add = comb.add %a, %b : i8
+; CHECK-DAG: %o_sub = comb.sub %a, %b : i8
+; CHECK-DAG: %o_mul = comb.mul %a, %b : i8
+; CHECK-DAG: %o_and = comb.and %a, %b : i8
+; CHECK-DAG: %o_or = comb.or %a, %b : i8
+; CHECK-DAG: %o_xor = comb.xor %a, %b : i8
+; CHECK-DAG: %o_shl = comb.shl %a, %b : i8
+; CHECK-DAG: %o_shru = comb.shru %a, %b : i8
+; CHECK-DAG: %o_shrs = comb.shrs %a, %b : i8
+; CHECK-DAG: %o_cat = comb.concat %a, %b : i8, i8
+; CHECK-DAG: %o_mux = comb.mux %s, %a, %b : i8
+; CHECK-DAG: %o_ext = comb.extract %a from 2 : (i8) -> i4
+; CHECK-DAG: %o_rep = comb.replicate %a : (i8) -> i16
+; CHECK-DAG: %[[ONES:.+]] = hw.constant -1 : i8
+; CHECK-DAG: %o_not = comb.xor %a, %[[ONES]] : i8
+; CHECK-DAG: %o_eq = comb.icmp eq %a, %b : i8
+; CHECK-DAG: %o_ne = comb.icmp ne %a, %b : i8
+; CHECK-DAG: %o_ult = comb.icmp ult %a, %b : i8
+; CHECK-DAG: %o_ule = comb.icmp ule %a, %b : i8
+; CHECK-DAG: %o_ugt = comb.icmp ugt %a, %b : i8
+; CHECK-DAG: %o_uge = comb.icmp uge %a, %b : i8
+; CHECK-DAG: %o_slt = comb.icmp slt %a, %b : i8
+; CHECK-DAG: %o_sle = comb.icmp sle %a, %b : i8
+; CHECK-DAG: %o_sgt = comb.icmp sgt %a, %b : i8
+; CHECK-DAG: %o_sge = comb.icmp sge %a, %b : i8
+; Each operation of the core IR once.
+(design ops
+  (module ops
+    (input a (bits 8))
+    (input b (bits 8))
+    (input s (bits 1))
+    (output o_add (bits 8))
+    (output o_sub (bits 8))
+    (output o_mul (bits 8))
+    (output o_and (bits 8))
+    (output o_or (bits 8))
+    (output o_xor (bits 8))
+    (output o_not (bits 8))
+    (output o_shl (bits 8))
+    (output o_shru (bits 8))
+    (output o_shrs (bits 8))
+    (output o_cat (bits 16))
+    (output o_mux (bits 8))
+    (output o_ext (bits 4))
+    (output o_rep (bits 16))
+    (output o_eq (bits 1))
+    (output o_ne (bits 1))
+    (output o_ult (bits 1))
+    (output o_ule (bits 1))
+    (output o_ugt (bits 1))
+    (output o_uge (bits 1))
+    (output o_slt (bits 1))
+    (output o_sle (bits 1))
+    (output o_sgt (bits 1))
+    (output o_sge (bits 1))
+    (assign o_add (add a b))
+    (assign o_sub (sub a b))
+    (assign o_mul (mul a b))
+    (assign o_and (and a b))
+    (assign o_or (or a b))
+    (assign o_xor (xor a b))
+    (assign o_not (not a))
+    (assign o_shl (shl a b))
+    (assign o_shru (shru a b))
+    (assign o_shrs (shrs a b))
+    (assign o_cat (concat a b))
+    (assign o_mux (mux s a b))
+    (assign o_ext (extract a 2 4))
+    (assign o_rep (replicate a 2))
+    (assign o_eq (icmp eq a b))
+    (assign o_ne (icmp ne a b))
+    (assign o_ult (icmp ult a b))
+    (assign o_ule (icmp ule a b))
+    (assign o_ugt (icmp ugt a b))
+    (assign o_uge (icmp uge a b))
+    (assign o_slt (icmp slt a b))
+    (assign o_sle (icmp sle a b))
+    (assign o_sgt (icmp sgt a b))
+    (assign o_sge (icmp sge a b))))

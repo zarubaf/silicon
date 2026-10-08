@@ -1,0 +1,20 @@
+; CHECK: hw.module @leaf(in %a : i4, out y : i4)
+; CHECK: hw.module @mid(in %a : i4, out y : i4)
+; CHECK: %l.y = hw.instance "l" @leaf(a: %a: i4) -> (y: i4)
+; CHECK: hw.module @top(in %a : i4, out q : i4)
+; CHECK: %m.y = hw.instance "m" @mid(a: %a: i4) -> (y: i4)
+(design top
+  (module leaf
+    (input a (bits 4))
+    (output y (bits 4))
+    (assign y (not a)))
+  (module mid
+    (input a (bits 4))
+    (output y (bits 4))
+    (inst l leaf (a a))
+    (assign y l.y))
+  (module top
+    (input a (bits 4))
+    (output q (bits 4))
+    (inst m mid (a a))
+    (assign q m.y)))
