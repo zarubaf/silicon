@@ -1,6 +1,6 @@
 # Repository Foundation
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-10-08
 
 ## 1. Purpose and scope

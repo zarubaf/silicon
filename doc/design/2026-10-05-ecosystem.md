@@ -1,6 +1,6 @@
 # Silicon Ecosystem Design
 
-- Status: proposed architecture
+- Status: accepted architecture
 - Date: 2026-10-05
 
 ## 1. Purpose
