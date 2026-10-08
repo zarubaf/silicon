@@ -10,7 +10,7 @@ Each layer has one oracle. An oracle is a tool or a model that can say "wrong" m
 | `lean/`                  | The Lean kernel, with warnings as errors. `xtask` rejects `sorry`, new `axiom`, and `native_decide` outside the allowlist. | `just lean`, `cargo xtask check` |
 | Compiler against Lean    | Translation validation (build step 2)                                                                                      | Not in `just ci` yet             |
 | Implementations together | Differential testing (build step 2)                                                                                        | Not in `just ci` yet             |
-| Emitted Verilog          | LEC with `circt-lec` (build step 3)                                                                                        | Not in `just ci` yet             |
+| Emitted Verilog          | LEC with `circt-lec` or Yosys equivalence                                                                                  | Not in `just ci` yet             |
 
 ## Rust crates
 
@@ -30,6 +30,6 @@ Fuzzing, translation validation, and LEC join `just ci` in build step 2, when th
 
 - Translation validation: each compiler run emits the core IR as a Lean term. A checker confirms the term.
 - Differential testing: random core IR generators drive the Lean interpreter, the Rust simulator, `arcilator`, and Verilator. A disagreement between them is a failure.
-- LEC: `circt-lec` checks the emitted Verilog against the core IR.
+- LEC: `circt-lec` or the Yosys equivalence tools compare the emitted Verilog with the core IR.
 
 The designs for validation and differential testing live in `tests/corpus/`.

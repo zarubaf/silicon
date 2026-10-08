@@ -9,7 +9,9 @@ A design can use two versions of one package. For example, a DMA uses `axi@1.8` 
 
 ## Decision
 
-Silicon does a mandatory uniquification step. It puts the package identity into each emitted name: a readable package and version prefix, and a suffix from a SHA-256 identity digest.
+Silicon does a mandatory uniquification step. It puts the package and version identity, or a deterministic identity from a SHA digest, into each emitted module name.
+
+The recommended default is a readable package and version prefix, and a suffix from a SHA-256 identity digest. This default is not a part of the decision.
 
 The ecosystem design raises these invariants (section 11, items 2 to 4):
 

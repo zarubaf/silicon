@@ -16,5 +16,5 @@ CIRCT has mature tools: the `hw`, `comb`, and `seq` dialects, `ExportVerilog`, `
 ## Consequences
 
 - Silicon reuses mature tools, but its foundation does not depend on CIRCT.
-- The trust gap of the CIRCT passes moves to the LEC tool. [The trust boundary](../architecture.md) lists the LEC tool as trusted.
-- LEC joins `just ci` in build step 2.
+- LEC closes the trust gap of the CIRCT passes.
+- LEC joins `just ci` when its oracle exists. See the build order in [the architecture](../architecture.md).

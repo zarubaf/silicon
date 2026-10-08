@@ -68,16 +68,18 @@ The handoff note recommends a short review of the crate layout and the core IR b
 
 The trust boundary separates the parts that are proven, the parts that are validated, and the parts that are trusted.
 
-| Part                                            | Status    | Oracle or reason                                                             |
-| ----------------------------------------------- | --------- | ---------------------------------------------------------------------------- |
-| Lemmas and theorems about the core IR semantics | Proven    | The Lean kernel                                                              |
-| The core IR of each compiler run                | Validated | The translation validator checks the core IR as a Lean term                  |
-| The emitted Verilog against the core IR         | Validated | LEC with `circt-lec` or Yosys. CIRCT passes have no proof.                   |
-| The Lean kernel and the pinned Lean toolchain   | Trusted   | They are the proof oracle                                                    |
-| The LEC tool                                    | Trusted   | It closes the gap behind CIRCT                                               |
-| Black boxes                                     | Trusted   | Their contracts are assumed                                                  |
-| Synthesis and physical implementation           | Trusted   | No validation or proof covers them yet. See the ecosystem design, section 8. |
-| 4-state behavior, CDC, and timing               | Trusted   | Out of scope. Existing dedicated tools cover them.                           |
+| Part                                            | Status            | Oracle or reason                                                             |
+| ----------------------------------------------- | ----------------- | ---------------------------------------------------------------------------- |
+| Lemmas and theorems about the core IR semantics | Proven            | The Lean kernel                                                              |
+| The core IR of each compiler run                | Validated         | The translation validator checks the core IR as a Lean term                  |
+| The emitted Verilog against the core IR         | Validated         | LEC with `circt-lec` or Yosys. CIRCT passes have no proof.                   |
+| Black boxes                                     | Trusted           | Their contracts are assumed                                                  |
+| The Lean kernel and the pinned Lean toolchain   | Proposed: trusted | They are the proof oracle                                                    |
+| The LEC tool                                    | Proposed: trusted | It closes the gap behind CIRCT                                               |
+| Synthesis and physical implementation           | Proposed: trusted | No validation or proof covers them yet. See the ecosystem design, section 8. |
+| 4-state behavior, CDC, and timing               | Out of scope      | Existing dedicated tools cover them                                          |
+
+The owner decides the trust boundary. A row with the status "Proposed" is not a decision. The sources do not classify these parts.
 
 A Lean proof shows that a theorem holds in the encoded model under its assumptions. A proof result names its model, its assumptions, its inputs, and its trusted bridges.
 
@@ -94,11 +96,12 @@ Three methods check the Lean model against SystemVerilog, for example legacy IP 
 - Cargo builds the Rust workspace. Lake builds the Lean project in `lean/`.
 - A Nix flake pins the toolchain. See [ADR 0008](adr/0008-nix-pins-toolchain.md).
 - The `justfile` is the only entry point.
+- The handoff note plans the recipes `just fuzz`, `just lec`, and `just spec`. They do not exist yet.
 - The project uses no Bazel for now. Revisit this choice only if builds stay slow with caching.
 
 ## Build order
 
-1. The core IR semantics and a reference interpreter in Lean.
+1. The core IR semantics and a reference interpreter in Lean (mostly human).
 2. The core IR in Rust, a shared serialization format, the translation validator, and differential testing. Agents scale from this step.
 3. The CIRCT backend with LEC.
 4. The source language and the elaborator.
@@ -114,3 +117,5 @@ Do not run many agents in parallel before steps 1 and 2 exist. Without an oracle
 - How the spec shows nondeterminism and implementation-defined behavior: parameters, oracles, or relations.
 - The waveform and debug map from the emitted Verilog back to the source.
 - The exact claim of the translation validator about the core IR term. The handoff note says only that a checker confirms the term.
+- Classify each bridge as trusted, validated, or proven. The trust boundary table marks the classifications that are only proposed.
+- When LEC joins `just ci`. The foundation spec, section 9, puts LEC in build step 2. The build order of the handoff note puts the CIRCT backend with LEC in step 3.
