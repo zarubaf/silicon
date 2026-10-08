@@ -173,8 +173,12 @@ fn run_reports_a_checker_error_before_an_extern() -> Test {
 
 #[test]
 fn run_rejects_a_blank_input_line() -> Test {
-    for (name, input) in [("blank.sil", "in=(rst 1 en 0)\n\n"), ("bare.sil", "in=\n")] {
+    for (name, input, printed) in [
+        ("blank.sil", "in=(rst 1 en 0)\n\n", "out=(q 0)\n"),
+        ("bare.sil", "in=\n", ""),
+    ] {
         let out = silicon(&["run"], &file(name, COUNTER.as_bytes())?, input)?;
+        assert_eq!(text(&out), printed, "{input:?}");
         assert_eq!(out.status.code(), Some(2), "{input:?}");
     }
     Ok(())
