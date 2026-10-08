@@ -198,6 +198,11 @@ fn scan(path: &Path, src: &str, allow: &Allowlist) -> Vec<Violation> {
     out
 }
 
+/// True when `path` is the library root `lean/Silicon.lean` or a module under `lean/Silicon/`.
+pub fn in_library(path: &Path) -> bool {
+    path == Path::new("lean/Silicon.lean") || path.starts_with("lean/Silicon")
+}
+
 pub fn check(repo: &Repo) -> Result<Vec<Violation>> {
     let allow_path = Path::new("lean/allowlist.toml");
     let allow = if repo.root.join(allow_path).exists() {
@@ -207,9 +212,20 @@ pub fn check(repo: &Repo) -> Result<Vec<Violation>> {
     };
     let mut out = Vec::new();
     for file in &repo.files {
-        let is_lean =
-            file.path.starts_with("lean") && file.path.extension().is_some_and(|e| e == "lean");
-        if is_lean && !file.is_symlink {
+        if file.path.extension().is_none_or(|e| e != "lean") {
+            continue;
+        }
+        if !in_library(&file.path) {
+            out.push(Violation {
+                path: file.path.clone(),
+                line: None,
+                rule: "lean-layout",
+                severity: Severity::Error,
+                message: "Lake builds only lean/Silicon.lean and lean/Silicon/; move the file"
+                    .into(),
+            });
+        }
+        if file.path.starts_with("lean") && !file.is_symlink {
             out.extend(scan(&file.path, &repo.read(&file.path)?, &allow));
         }
     }
@@ -338,10 +354,57 @@ mod tests {
             tracked("other/B.lean"),
         ];
         let repo = Repo::from_parts(root.to_path_buf(), files);
-        let got = check(&repo).unwrap();
-        assert_eq!(got.len(), 1);
-        assert_eq!(got[0].rule, "lean-sorry");
-        assert_eq!(got[0].path, Path::new("lean/Silicon.lean"));
+        let got: Vec<_> = check(&repo)
+            .unwrap()
+            .iter()
+            .map(|v| (v.rule, v.path.display().to_string()))
+            .collect();
+        let want = [
+            ("lean-sorry", "lean/Silicon.lean"),
+            ("lean-layout", "other/B.lean"),
+        ]
+        .map(|(r, p)| (r, p.to_owned()));
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn lean_sources_live_under_the_library_root() {
+        for ok in [
+            "lean/Silicon.lean",
+            "lean/Silicon/Core.lean",
+            "lean/Silicon/A/B.lean",
+        ] {
+            assert!(in_library(Path::new(ok)), "{ok}");
+        }
+        for bad in [
+            "lean/Other.lean",
+            "lean/Extra/A.lean",
+            "other/B.lean",
+            "Silicon.lean",
+        ] {
+            assert!(!in_library(Path::new(bad)), "{bad}");
+        }
+    }
+
+    #[test]
+    fn check_rejects_lean_outside_the_library() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        write(root, "lean/Silicon.lean", "def x := 1\n");
+        write(root, "lean/Silicon/Core.lean", "def y := 1\n");
+        write(root, "lean/Stray.lean", "def z := 1\n");
+        let files = vec![
+            tracked("lean/Silicon.lean"),
+            tracked("lean/Silicon/Core.lean"),
+            tracked("lean/Stray.lean"),
+        ];
+        let repo = Repo::from_parts(root.to_path_buf(), files);
+        let got: Vec<_> = check(&repo)
+            .unwrap()
+            .iter()
+            .map(|v| (v.rule, v.path.display().to_string()))
+            .collect();
+        assert_eq!(got, [("lean-layout", "lean/Stray.lean".to_owned())]);
     }
 
     #[test]

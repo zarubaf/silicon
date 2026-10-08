@@ -14,6 +14,7 @@ This directory owns the core IR semantics. Dispatch Lean work to Codex with `cod
 - Add no new `axiom`. Check: `cargo xtask check` (rule `lean-axiom`, with `allowlist.toml`).
 - Use `native_decide` only in files listed in `allowlist.toml`. Check: `cargo xtask check` (rule `lean-native-decide`).
 - Use at most 100 characters per line, no tabs, and no trailing spaces. Check: `cargo xtask check` (rule `lean-style`).
+- Put each Lean source in `Silicon.lean` or under `Silicon/`. Lake builds only these files. Check: `cargo xtask check` (rule `lean-layout`).
 - Treat build warnings as errors. Check: `lake -d lean build --wfail`.
 
 ## Dependencies
