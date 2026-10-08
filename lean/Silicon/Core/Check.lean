@@ -1772,7 +1772,7 @@ private theorem filterMap_nodup_counts {α β : Type} [DecidableEq β]
   rw [he]
   exact h b
 
-private theorem flatMap_nodup_owners {α β κ : Type} (xs : List α) (f : α → List β)
+theorem flatMap_nodup_owners {α β κ : Type} (xs : List α) (f : α → List β)
     (label : α → Option κ) (owner : β → κ)
     (labels : (xs.filterMap label).Nodup)
     (within : ∀ a ∈ xs, (f a).Nodup)
@@ -2438,7 +2438,7 @@ theorem body_complete (d : Design) (m : Module) (hm : m ∈ Typed.modules d)
   exact aux m.body (hw m hm)
 
 /-! A unique declaration fixes the context entry of each state equation. -/
-private theorem find_definition (ss : List Stmt) (s : Stmt) (n : String)
+theorem find_definition (ss : List Stmt) (s : Stmt) (n : String)
     (unique : (ss.filterMap Rules.definition).Nodup) (mem : s ∈ ss)
     (decl : Rules.definition s = some n) :
     ss.find? (fun x => Rules.definition x == some n) = some s := by
