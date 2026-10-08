@@ -1278,3 +1278,23 @@ fn e008_output_reads_itself() {
 ";
     expect(src, ErrorCode::E008, 5, 5);
 }
+
+#[test]
+fn e005_constant_width_in_an_assign_to_a_clock_output() {
+    expect(
+        "(design m (module m (output q clock) (assign q (const 0 0))))",
+        ErrorCode::E005,
+        1,
+        55,
+    );
+}
+
+#[test]
+fn e005_constant_value_in_an_assign_to_a_clock_output() {
+    expect(
+        "(design m (module m (output q clock) (assign q (const 1 2))))",
+        ErrorCode::E005,
+        1,
+        57,
+    );
+}

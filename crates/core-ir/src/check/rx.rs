@@ -278,6 +278,10 @@ pub(super) struct RxModule<'a, K, C> {
     pub assigns: Vec<Target<OutputIdx, K, C>>,
     pub writes: Vec<RxWrite<K, C>>,
     pub insts: Vec<RxInst<'a, K, C>>,
+    /// The operand of each `assign` to a clock output. Pass 4 and pass 5
+    /// check it like each other expression, and pass 5 rejects the clock
+    /// output port, so no later pass sees one.
+    pub clock_assigns: Vec<Rx<K, C>>,
 }
 
 pub(super) type RawModule<'a> = RxModule<'a, Span, RawConst<'a>>;
@@ -381,7 +385,9 @@ impl<'a, K, C> RxModule<'a, K, C> {
                 })
             })
             .collect());
+        let clock_assigns = all(self.clock_assigns.into_iter().map(&mut *f).collect());
         Some(RxModule {
+            clock_assigns: clock_assigns?,
             lets: lets?,
             regs: regs?,
             nexts: nexts?,
