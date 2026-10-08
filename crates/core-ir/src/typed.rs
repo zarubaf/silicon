@@ -11,7 +11,20 @@ macro_rules! index {
     ($(#[$doc:meta] $name:ident),* $(,)?) => {$(
         #[$doc]
         #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-        pub struct $name(pub u32);
+        pub struct $name(u32);
+
+        impl $name {
+            #[allow(dead_code)]
+            pub(crate) fn new(index: u32) -> Self {
+                Self(index)
+            }
+
+            /// The position in the table.
+            #[must_use]
+            pub fn index(self) -> usize {
+                self.0 as usize
+            }
+        }
     )*};
 }
 
@@ -226,25 +239,25 @@ mod tests {
                 width: 8,
                 next: Expr::Bin(
                     BinOp::Add,
-                    Box::new(Expr::Reg(RegIdx(0))),
+                    Box::new(Expr::Reg(RegIdx::new(0))),
                     Box::new(Expr::Const(one)),
                 ),
                 reset: None,
             }],
             mems: vec![],
             insts: vec![],
-            assigns: vec![Expr::Reg(RegIdx(0))],
+            assigns: vec![Expr::Reg(RegIdx::new(0))],
             schedule: vec![],
             deps: Deps::default(),
         };
         let design = Design {
             modules: vec![counter],
             externs: vec![],
-            top: ModIdx(0),
+            top: ModIdx::new(0),
         };
-        let top = &design.modules[design.top.0 as usize];
+        let top = &design.modules[design.top.index()];
         assert_eq!(top.name, "counter");
         assert!(top.has_clock);
-        assert_eq!(top.assigns, vec![Expr::Reg(RegIdx(0))]);
+        assert_eq!(top.assigns, vec![Expr::Reg(RegIdx::new(0))]);
     }
 }
