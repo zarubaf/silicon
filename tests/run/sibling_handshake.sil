@@ -1,0 +1,29 @@
+; Two siblings feed each other; the output of hold does not read its input in
+; the same cycle, so the graph has no cycle (spec 5.3). r' = r xor k.
+(design top
+  (module hold
+    (input clk clock)
+    (input x (bits 1))
+    (output y (bits 1))
+    (reg r (bits 1) clk)
+    (next r x)
+    (assign y r))
+  (module flip
+    (input x (bits 1))
+    (input k (bits 1))
+    (output y (bits 1))
+    (assign y (xor x k)))
+  (module top
+    (input clk clock)
+    (input k (bits 1))
+    (output p (bits 1))
+    (output q (bits 1))
+    (inst u hold (clk clk) (x v.y))
+    (inst v flip (x u.y) (k k))
+    (assign p u.y)
+    (assign q v.y)))
+; p = r, q = r xor k, then r = q
+; STEP in=(k 1) out=(p 0 q 1)
+; STEP in=(k 0) out=(p 1 q 1)
+; STEP in=(k 1) out=(p 1 q 0)
+; STEP in=(k 0) out=(p 0 q 0)

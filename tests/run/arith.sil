@@ -1,0 +1,18 @@
+; add, sub, and mul are modulo 2^w (spec 4.1).
+(design top
+  (module top
+    (input a (bits 4))
+    (input b (bits 4))
+    (output s (bits 4))
+    (output d (bits 4))
+    (output p (bits 4))
+    (assign s (add a b))
+    (assign d (sub a b))
+    (assign p (mul a b))))
+; 3 - 5 = -2 = 14 mod 16
+; STEP in=(a 3 b 5) out=(s 8 d 14 p 15)
+; 15 + 1 = 16 = 0 mod 16
+; STEP in=(a 15 b 1) out=(s 0 d 14 p 15)
+; 24 mod 16 = 8; 144 mod 16 = 0
+; STEP in=(a 12 b 12) out=(s 8 d 0 p 0)
+; STEP in=(a 0 b 0) out=(s 0 d 0 p 0)

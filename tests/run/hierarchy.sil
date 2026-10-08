@@ -1,0 +1,42 @@
+; Three levels with state at each level: an instance takes the next state of
+; its module (spec 5.2). top counts in t; mid delays x in d; leaf adds d to acc.
+(design top
+  (module top
+    (input clk clock)
+    (input x (bits 4))
+    (output q (bits 4))
+    (output c (bits 4))
+    (reg t (bits 4) clk)
+    (next t (add t (const 4 1)))
+    (inst m mid (clk clk) (x x))
+    (assign q m.y)
+    (assign c t))
+  (module mid
+    (input clk clock)
+    (input x (bits 4))
+    (output y (bits 4))
+    (reg d (bits 4) clk)
+    (next d x)
+    (inst l leaf (clk clk) (x d))
+    (assign y l.y))
+  (module leaf
+    (input clk clock)
+    (input x (bits 4))
+    (output y (bits 4))
+    (reg acc (bits 4) clk)
+    (next acc (add acc x))
+    (assign y acc)))
+; Each step: q = acc and c = t before the update; then t += 1, acc += d, d = x.
+; STEP in=(x 3) out=(q 0 c 0)
+; acc = 0 + 0, d = 3
+; STEP in=(x 5) out=(q 0 c 1)
+; acc = 0 + 3, d = 5
+; STEP in=(x 1) out=(q 3 c 2)
+; acc = 3 + 5, d = 1
+; STEP in=(x 0) out=(q 8 c 3)
+; acc = 8 + 1, d = 0
+; STEP in=(x 9) out=(q 9 c 4)
+; acc = 9 + 0, d = 9
+; STEP in=(x 0) out=(q 9 c 5)
+; acc = 9 + 9 = 18 mod 16 = 2
+; STEP in=(x 0) out=(q 2 c 6)
