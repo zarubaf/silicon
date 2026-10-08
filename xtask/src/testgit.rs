@@ -34,9 +34,7 @@ mod tests {
     #[test]
     #[ignore = "runs only as the child of the regression test"]
     fn child_uses_helpers() {
-        let Some(target) = std::env::var_os(TARGET) else {
-            return;
-        };
+        let target = std::env::var_os(TARGET).expect("run by the regression test only");
         let dir = Path::new(&target);
         run(dir, &["init", "--quiet"]);
         run(dir, &["config", "user.email", "t@example.com"]);

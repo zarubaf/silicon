@@ -9,7 +9,7 @@ use std::process::Command;
 #[cfg(test)]
 fn scrubbed(mut cmd: Command) -> Command {
     for (name, _) in std::env::vars_os() {
-        if name.to_string_lossy().starts_with("GIT_") {
+        if name.as_encoded_bytes().starts_with(b"GIT_") {
             cmd.env_remove(name);
         }
     }
