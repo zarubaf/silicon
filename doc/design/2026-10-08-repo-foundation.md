@@ -153,11 +153,10 @@ The first ADRs come from the two existing notes:
 All prose in Markdown follows ASD-STE100 Simplified Technical English. The output style `.claude/output-styles/ste.md` is the project default in `.claude/settings.json`. Agents thus write in this style without a reminder. `vale` checks these rules:
 
 - Sentence length, hedge stacking, and ellipsis, as errors.
-- Passive voice, as a warning.
-- `-ing` forms, as a suggestion.
+- Passive voice, as a warning. A warning prints but does not fail the check.
 - Glossary vocabulary from `CONTEXT.md`.
 
-Noun clusters and the other STE rules stay in the output style only. `Vale.Spelling` is off. `CONTEXT.md` is exempt from `Vale.Avoid`, because it names the rejected synonyms. Code, quotations, and exact strings are exempt.
+Noun clusters, `-ing` forms, and the other STE rules stay in the output style only. A `vale` rule for `-ing` forms also matched nouns such as "string". `Vale.Spelling` is off. `CONTEXT.md` is exempt from `Vale.Avoid`, because it names the rejected synonyms. Code, quotations, and exact strings are exempt.
 
 ## 6. Orchestration
 

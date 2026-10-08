@@ -14,16 +14,15 @@ Use the terms of [`CONTEXT.md`](../../CONTEXT.md) with their exact meaning. Do n
 
 `just prose` runs `cargo xtask prose`. It regenerates the vale vocabulary from `CONTEXT.md`, then runs `vale` and `lychee` over the tracked Markdown. `vale` checks these STE rules:
 
-| Rule                          | vale rule                  | Level      |
-| ----------------------------- | -------------------------- | ---------- |
-| At most 25 words per sentence | `Silicon.SentenceLength`   | Error      |
-| No hedge stacking             | `Silicon.HedgeStacking`    | Error      |
-| No ellipsis                   | `Silicon.NoEllipsis`       | Error      |
-| Glossary vocabulary           | `Vale.Terms`, `Vale.Avoid` | Error      |
-| Active voice                  | `Silicon.Passive`          | Warning    |
-| No `-ing` verb forms          | `Silicon.IngForms`         | Suggestion |
+| Rule                          | vale rule                  | Level   |
+| ----------------------------- | -------------------------- | ------- |
+| At most 25 words per sentence | `Silicon.SentenceLength`   | Error   |
+| No hedge stacking             | `Silicon.HedgeStacking`    | Error   |
+| No ellipsis                   | `Silicon.NoEllipsis`       | Error   |
+| Glossary vocabulary           | `Vale.Terms`, `Vale.Avoid` | Error   |
+| Active voice                  | `Silicon.Passive`          | Warning |
 
-`.vale.ini` sets `MinAlertLevel = error`. Warnings and suggestions thus do not show and do not fail the check. `Vale.Spelling` is off. `CONTEXT.md` is exempt from `Vale.Avoid`, because it names the rejected synonyms.
+`.vale.ini` sets `MinAlertLevel = warning`. Warnings show, but only errors fail the check. `Vale.Spelling` is off. `CONTEXT.md` is exempt from `Vale.Avoid`, because it names the rejected synonyms.
 
 `lychee --offline` checks the internal links. A link to a missing file fails the check.
 
@@ -36,6 +35,7 @@ No check enforces these STE rules. They stay in the output style only:
 - Use at most 20 words in an instruction.
 - Write one instruction per sentence.
 - Use simple tenses.
+- Use an `-ing` word only as a noun or in a technical term.
 - Use one term for one concept.
 - Choose the plainest word.
 - Define an uncommon term at its first use.
