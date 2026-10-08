@@ -1,12 +1,12 @@
-//! Pass 5 (`E009`): one clock input, no clock output, registers and memories
-//! on the clock, and no value that reads a clock.
+//! Pass 5 (`E009`): one clock input, no clock output, and no value that reads
+//! a clock.
 
 use super::error;
-use super::scope::{Binding, Env, Scope, visit};
+use super::scope::{Binding, PortRef, Scope, visit};
 use crate::ast::{Design, Dir, Expr, Item, Port, Ty};
 use crate::diag::{Diagnostic, ErrorCode};
 
-pub(super) fn check(design: &Design, env: &Env, scopes: &[Scope]) -> Vec<Diagnostic> {
+pub(super) fn check(design: &Design, scopes: &[Scope]) -> Vec<Diagnostic> {
     let mut errors = Vec::new();
     for item in &design.items {
         match item {
@@ -15,7 +15,7 @@ pub(super) fn check(design: &Design, env: &Env, scopes: &[Scope]) -> Vec<Diagnos
         }
     }
     for scope in scopes {
-        errors.extend(module(env, scope));
+        errors.extend(reads(scope));
     }
     errors
 }
@@ -44,40 +44,17 @@ fn ports(ports: &[Port]) -> Vec<Diagnostic> {
     errors
 }
 
-fn module(env: &Env, scope: &Scope) -> Vec<Diagnostic> {
+/// The values that read a clock input, a clock output, or a clock output of
+/// an instance.
+fn reads(scope: &Scope) -> Vec<Diagnostic> {
     let mut errors = Vec::new();
-    let on_clock = |clk: &str| matches!(scope.lookup(clk), Some(Binding::Clock));
-    for reg in &scope.regs {
-        if !on_clock(&reg.clk.text) {
-            errors.push(error(
-                ErrorCode::E009,
-                reg.span,
-                format!(
-                    "the register `{}` does not name the clock input",
-                    reg.name.text
-                ),
-            ));
-        }
-    }
-    for mem in &scope.mems {
-        if !on_clock(&mem.clk.text) {
-            errors.push(error(
-                ErrorCode::E009,
-                mem.span,
-                format!(
-                    "the memory `{}` does not name the clock input",
-                    mem.name.text
-                ),
-            ));
-        }
-    }
-    for root in scope.value_exprs(env) {
-        visit(root, &mut |e| {
-            if let Expr::Ref(name) = e
-                && matches!(
+    for root in scope.value_exprs() {
+        visit(root, &mut |e| match e {
+            Expr::Ref(name)
+                if matches!(
                     scope.lookup(&name.text),
-                    Some(Binding::Clock | Binding::Stray)
-                )
+                    Some(Binding::Clock | Binding::ClockOut)
+                ) =>
             {
                 errors.push(error(
                     ErrorCode::E009,
@@ -85,7 +62,29 @@ fn module(env: &Env, scope: &Scope) -> Vec<Diagnostic> {
                     format!("`{}` is a clock, and a value cannot read it", name.text),
                 ));
             }
+            Expr::InstOut { inst, port, span }
+                if reads_clock_output(scope, &inst.text, &port.text) =>
+            {
+                errors.push(error(
+                    ErrorCode::E009,
+                    *span,
+                    format!("`{}.{}` is a clock", inst.text, port.text),
+                ));
+            }
+            _ => {}
         });
     }
     errors
+}
+
+fn reads_clock_output(scope: &Scope, inst: &str, port: &str) -> bool {
+    let Some(Binding::Inst(i)) = scope.lookup(inst) else {
+        return false;
+    };
+    scope
+        .insts
+        .get(i.index())
+        .and_then(|d| d.sig)
+        .and_then(|sig| sig.port(port))
+        .is_some_and(|p| matches!(p, PortRef::ClockOut))
 }

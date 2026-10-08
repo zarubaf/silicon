@@ -1,7 +1,7 @@
 //! Pass 4 (`E005`, declared sizes) and pass 7 (`E004`, operation widths).
 
 use super::error;
-use super::scope::{Binding, Env, PortRef, Scope, stmt_exprs, visit};
+use super::scope::{Binding, PortRef, Scope, stmt_exprs, visit};
 use crate::ast::{BinOp, Design, Expr, Item, Num, Port, Stmt, Ty};
 use crate::diag::{Diagnostic, ErrorCode};
 
@@ -13,10 +13,6 @@ const MAX_DEPTH: u32 = 16_777_216;
 /// The address width of a memory: `max(1, ceil(log2 depth))`.
 pub(super) fn address_width(depth: u32) -> u32 {
     (u32::BITS - depth.saturating_sub(1).leading_zeros()).max(1)
-}
-
-fn valid_width(width: u32) -> bool {
-    (1..=MAX_WIDTH).contains(&width)
 }
 
 // Pass 4.
@@ -39,41 +35,37 @@ pub(super) fn declared(design: &Design) -> Vec<Diagnostic> {
 
 fn port_sizes(ports: &[Port], errors: &mut Vec<Diagnostic>) {
     for port in ports {
-        if let Ty::Bits(n) = port.ty
-            && !valid_width(n.value)
-        {
-            errors.push(bad_width(port.span, "the port", n.value));
+        if let Ty::Bits(n) = port.ty {
+            width(n, "the port width", errors);
         }
     }
 }
 
-fn bad_width(span: crate::diag::Span, what: &str, width: u32) -> Diagnostic {
-    error(
-        ErrorCode::E005,
-        span,
-        format!("{what} has the width {width}; a width is 1 to {MAX_WIDTH}"),
-    )
+/// A declared width is 1 to 65536.
+fn width(n: Num, what: &str, errors: &mut Vec<Diagnostic>) {
+    if !(1..=MAX_WIDTH).contains(&n.value) {
+        errors.push(error(
+            ErrorCode::E005,
+            n.span,
+            format!("{what} is {}, and a width is 1 to {MAX_WIDTH}", n.value),
+        ));
+    }
 }
 
 fn stmt_sizes(stmt: &Stmt, errors: &mut Vec<Diagnostic>) {
     match stmt {
-        Stmt::Let { width, span, .. } | Stmt::Reg { width, span, .. } => {
-            if !valid_width(width.value) {
-                errors.push(bad_width(*span, "the declaration", width.value));
-            }
+        Stmt::Let { width: w, .. } | Stmt::Reg { width: w, .. } => {
+            width(*w, "the width", errors);
         }
         Stmt::Mem {
-            width, depth, span, ..
+            width: w, depth, ..
         } => {
-            if !valid_width(width.value) {
-                errors.push(bad_width(*span, "the memory", width.value));
-            }
-            let depth = &depth.value;
-            if !(1..=MAX_DEPTH).contains(depth) {
+            width(*w, "the memory width", errors);
+            if !(1..=MAX_DEPTH).contains(&depth.value) {
                 errors.push(error(
                     ErrorCode::E005,
-                    *span,
-                    format!("the memory depth {depth} is not 1 to {MAX_DEPTH}"),
+                    depth.span,
+                    format!("the memory depth {} is not 1 to {MAX_DEPTH}", depth.value),
                 ));
             }
         }
@@ -87,32 +79,29 @@ fn stmt_sizes(stmt: &Stmt, errors: &mut Vec<Diagnostic>) {
 fn expr_sizes(expr: &Expr, errors: &mut Vec<Diagnostic>) {
     match expr {
         Expr::Const {
-            width, value, span, ..
+            width: w,
+            value,
+            value_span,
+            ..
         } => {
-            let width = &width.value;
-            if !valid_width(*width) {
-                errors.push(bad_width(*span, "the constant", *width));
-            } else if value.bits() > u64::from(*width) {
+            width(*w, "the constant width", errors);
+            if value.bits() > u64::from(w.value) {
                 errors.push(error(
                     ErrorCode::E005,
-                    *span,
-                    format!("the constant {value} does not fit in {width} bits"),
+                    *value_span,
+                    format!("the constant {value} does not fit in {} bits", w.value),
                 ));
             }
         }
-        Expr::Replicate {
-            count: Num { value: 0, .. },
-            span,
-            ..
-        } => {
-            errors.push(error(ErrorCode::E005, *span, "the replication count is 0"));
+        Expr::Replicate { count, .. } if count.value == 0 => {
+            errors.push(error(
+                ErrorCode::E005,
+                count.span,
+                "the replication count is 0",
+            ));
         }
-        Expr::Extract {
-            width: Num { value: 0, .. },
-            span,
-            ..
-        } => {
-            errors.push(error(ErrorCode::E005, *span, "the extracted width is 0"));
+        Expr::Extract { width: w, .. } if w.value == 0 => {
+            errors.push(error(ErrorCode::E005, w.span, "the extracted width is 0"));
         }
         _ => {}
     }
@@ -120,11 +109,10 @@ fn expr_sizes(expr: &Expr, errors: &mut Vec<Diagnostic>) {
 
 // Pass 7.
 
-pub(super) fn operations(env: &Env, scopes: &[Scope]) -> Vec<Diagnostic> {
+pub(super) fn operations(scopes: &[Scope]) -> Vec<Diagnostic> {
     let mut errors = Vec::new();
     for scope in scopes {
         let mut typer = Typer {
-            env,
             scope,
             errors: &mut errors,
         };
@@ -134,7 +122,6 @@ pub(super) fn operations(env: &Env, scopes: &[Scope]) -> Vec<Diagnostic> {
 }
 
 struct Typer<'e, 'a> {
-    env: &'e Env<'a>,
     scope: &'e Scope<'a>,
     errors: &'e mut Vec<Diagnostic>,
 }
@@ -180,11 +167,9 @@ impl Typer<'_, '_> {
                 }
                 Stmt::Assign { out, expr, span } => {
                     let width = match scope.lookup(&out.text) {
-                        Some(Binding::Output(o)) => self
-                            .env
-                            .module_sig(scope.index)
-                            .and_then(|sig| sig.outputs.get(o.index()))
-                            .map(|p| p.width),
+                        Some(Binding::Output(o)) => {
+                            scope.sig.outputs.get(o.index()).map(|p| p.width)
+                        }
                         _ => None,
                     };
                     match width {
@@ -218,7 +203,7 @@ impl Typer<'_, '_> {
             }
         }
         for inst in &scope.insts {
-            let sig = inst.callee.and_then(|c| self.env.sig(c));
+            let sig = inst.sig;
             for conn in inst.conns {
                 let want = sig.and_then(|s| match s.port(&conn.port.text) {
                     Some(PortRef::Input(i)) => s.inputs.get(i.index()).map(|p| p.width),
@@ -243,7 +228,7 @@ impl Typer<'_, '_> {
                 let Binding::Inst(i) = self.scope.lookup(&inst.text)? else {
                     return None;
                 };
-                let sig = self.env.sig(self.scope.insts.get(i.index())?.callee?)?;
+                let sig = self.scope.insts.get(i.index())?.sig?;
                 match sig.port(&port.text)? {
                     PortRef::Output(o) => sig.outputs.get(o.index()).map(|p| p.width),
                     _ => None,
@@ -347,12 +332,7 @@ impl Typer<'_, '_> {
     fn binding_width(&self, binding: Binding) -> Option<u32> {
         let scope = self.scope;
         match binding {
-            Binding::Input(i) => self
-                .env
-                .module_sig(scope.index)?
-                .inputs
-                .get(i.index())
-                .map(|p| p.width),
+            Binding::Input(i) => scope.sig.inputs.get(i.index()).map(|p| p.width),
             Binding::Let(i) => scope.lets.get(i.index()).map(|d| d.width),
             Binding::Reg(i) => scope.regs.get(i.index()).map(|d| d.width),
             _ => None,
