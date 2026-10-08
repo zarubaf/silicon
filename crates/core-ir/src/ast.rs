@@ -11,6 +11,22 @@ pub struct Name {
     pub span: Span,
 }
 
+/// A number of the source with the position of its digits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Num {
+    pub value: u32,
+    pub span: Span,
+}
+
+impl Num {
+    fn without_spans(self) -> Num {
+        Num {
+            value: self.value,
+            span: Span::default(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Design {
     pub top: Name,
@@ -57,7 +73,7 @@ pub enum Dir {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Ty {
     Clock,
-    Bits(u32),
+    Bits(Num),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -88,13 +104,13 @@ pub struct Conn {
 pub enum Stmt {
     Let {
         name: Name,
-        width: u32,
+        width: Num,
         expr: Expr,
         span: Span,
     },
     Reg {
         name: Name,
-        width: u32,
+        width: Num,
         clk: Name,
         reset: Option<Reset>,
         span: Span,
@@ -106,8 +122,8 @@ pub enum Stmt {
     },
     Mem {
         name: Name,
-        width: u32,
-        depth: u32,
+        width: Num,
+        depth: Num,
         clk: Name,
         span: Span,
     },
@@ -158,8 +174,10 @@ pub enum Expr {
     /// `NAME.PORT`: an output of an instance.
     InstOut { inst: Name, port: Name, span: Span },
     Const {
-        width: u32,
+        width: Num,
         value: BigUint,
+        /// The position of the value.
+        value_span: Span,
         span: Span,
     },
     Unary {
@@ -188,12 +206,12 @@ pub enum Expr {
     Extract {
         arg: Box<Expr>,
         lo: u32,
-        width: u32,
+        width: Num,
         span: Span,
     },
     Replicate {
         arg: Box<Expr>,
-        count: u32,
+        count: Num,
         span: Span,
     },
     Read {
@@ -276,7 +294,10 @@ impl Port {
         Port {
             dir: self.dir,
             name: self.name.without_spans(),
-            ty: self.ty,
+            ty: match self.ty {
+                Ty::Clock => Ty::Clock,
+                Ty::Bits(n) => Ty::Bits(n.without_spans()),
+            },
             span: Span::default(),
         }
     }
@@ -290,7 +311,7 @@ impl Stmt {
                 name, width, expr, ..
             } => Stmt::Let {
                 name: name.without_spans(),
-                width: *width,
+                width: width.without_spans(),
                 expr: expr.without_spans(),
                 span: s,
             },
@@ -302,7 +323,7 @@ impl Stmt {
                 ..
             } => Stmt::Reg {
                 name: name.without_spans(),
-                width: *width,
+                width: width.without_spans(),
                 clk: clk.without_spans(),
                 reset: reset.as_ref().map(|r| Reset {
                     signal: r.signal.without_spans(),
@@ -324,8 +345,8 @@ impl Stmt {
                 ..
             } => Stmt::Mem {
                 name: name.without_spans(),
-                width: *width,
-                depth: *depth,
+                width: width.without_spans(),
+                depth: depth.without_spans(),
                 clk: clk.without_spans(),
                 span: s,
             },
@@ -383,8 +404,9 @@ impl Expr {
                 span: s,
             },
             Expr::Const { width, value, .. } => Expr::Const {
-                width: *width,
+                width: width.without_spans(),
                 value: value.clone(),
+                value_span: s,
                 span: s,
             },
             Expr::Unary { op, arg, .. } => Expr::Unary {
@@ -415,12 +437,12 @@ impl Expr {
             Expr::Extract { arg, lo, width, .. } => Expr::Extract {
                 arg: bx(arg),
                 lo: *lo,
-                width: *width,
+                width: width.without_spans(),
                 span: s,
             },
             Expr::Replicate { arg, count, .. } => Expr::Replicate {
                 arg: bx(arg),
-                count: *count,
+                count: count.without_spans(),
                 span: s,
             },
             Expr::Read { mem, addr, .. } => Expr::Read {
