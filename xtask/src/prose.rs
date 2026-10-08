@@ -20,18 +20,6 @@ pub fn markdown_files(files: &[TrackedFile]) -> Vec<String> {
         .collect()
 }
 
-/// The vale arguments for these files, or `None` when no Markdown is tracked.
-/// Vale without file arguments reads standard input, so it must not run then.
-pub fn vale_args(files: &[TrackedFile]) -> Option<Vec<String>> {
-    let markdown = markdown_files(files);
-    if markdown.is_empty() {
-        return None;
-    }
-    let mut args = vec!["--no-wrap".to_string()];
-    args.extend(markdown);
-    Some(args)
-}
-
 /// The lychee arguments for these files, or `None` when no Markdown is tracked.
 /// `--offline` limits the run to internal links, so it needs no network.
 pub fn lychee_args(files: &[TrackedFile]) -> Option<Vec<String>> {
@@ -118,14 +106,14 @@ pub fn run(repo: &Repo) -> Result<bool> {
 
 /// Vale reports in line format, so that the Lean reports can map back to their source lines.
 fn run_vale(repo: &Repo, extracted: &[LeanProse]) -> Result<bool> {
-    let mut args = vale_args(&repo.files).unwrap_or_else(|| vec!["--no-wrap".to_string()]);
-    args.push("--output=line".to_string());
-    args.extend(extracted.iter().map(|e| e.markdown_path.clone()));
-    if args.len() == 2 {
+    let mut paths = markdown_files(&repo.files);
+    paths.extend(extracted.iter().map(|e| e.markdown_path.clone()));
+    if paths.is_empty() {
         return Ok(true);
     }
     let output = Command::new("vale")
-        .args(args)
+        .args(["--no-wrap", "--output=line"])
+        .args(paths)
         .current_dir(&repo.root)
         .output()
         .context("running vale")?;
@@ -175,15 +163,6 @@ mod tests {
     }
 
     #[test]
-    fn no_markdown_skips_vale() {
-        assert_eq!(vale_args(&[]), None);
-        assert_eq!(
-            vale_args(&[file("CLAUDE.md", true), file("justfile", false)]),
-            None
-        );
-    }
-
-    #[test]
     fn lychee_args_check_internal_links_offline() {
         assert_eq!(lychee_args(&[file("CLAUDE.md", true)]), None);
         assert_eq!(
@@ -213,14 +192,6 @@ mod tests {
         assert_eq!(
             rewrite_report_line("AGENTS.md:1:1:R:m", &extracted),
             "AGENTS.md:1:1:R:m"
-        );
-    }
-
-    #[test]
-    fn vale_args_list_markdown_files() {
-        assert_eq!(
-            vale_args(&[file("AGENTS.md", false)]),
-            Some(vec!["--no-wrap".to_string(), "AGENTS.md".to_string()])
         );
     }
 }
