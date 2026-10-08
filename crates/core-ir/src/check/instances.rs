@@ -122,10 +122,12 @@ fn connections<'r>(inst: &'r ExInst) -> Result<LinkedInst<'r>, Vec<Diagnostic>> 
     let mut data: HashMap<InputIdx, &'r Ex> = HashMap::new();
     let mut clocks = 0usize;
     for conn in &inst.conns {
+        // The port name of the second connection is the atom that breaks the
+        // rule, so the error is at that name.
         let repeated = || {
             error(
                 ErrorCode::E011,
-                conn.span,
+                conn.port.span,
                 format!("the input `{}` is connected twice", conn.port.text),
             )
         };
