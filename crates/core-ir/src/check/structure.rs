@@ -2,24 +2,24 @@
 //! write ports of each memory are numbered `0` to `k-1`.
 
 use super::error;
-use super::rx::{Rx, RxModule, RxWrite};
+use super::rx::{Ex, ExModule, ExWrite};
 use super::scope::Scope;
 use crate::diag::{Diagnostic, ErrorCode, Span};
 use crate::typed::{MemIdx, OutputIdx, RegIdx};
 use std::collections::HashMap;
 
 /// The unique definitions of a module, by table position.
-pub(super) struct Structure<'r, 'a> {
-    pub nexts: Vec<&'r Rx<'a>>,
-    pub assigns: Vec<&'r Rx<'a>>,
+pub(super) struct Structure<'r> {
+    pub nexts: Vec<&'r Ex>,
+    pub assigns: Vec<&'r Ex>,
     /// For each memory, its write ports ordered by port index.
-    pub writes: Vec<Vec<&'r RxWrite<'a>>>,
+    pub writes: Vec<Vec<&'r ExWrite>>,
 }
 
-pub(super) fn check<'r, 'a>(
+pub(super) fn check<'r>(
     scopes: &[Scope],
-    modules: &'r [RxModule<'a>],
-) -> Result<Vec<Structure<'r, 'a>>, Diagnostic> {
+    modules: &'r [ExModule],
+) -> Result<Vec<Structure<'r>>, Diagnostic> {
     let mut errors = Vec::new();
     let structures = scopes
         .iter()
@@ -59,11 +59,11 @@ fn only<'x, T>(
     Some(&first.1)
 }
 
-fn structure<'r, 'a>(
+fn structure<'r>(
     scope: &Scope,
-    module: &'r RxModule<'a>,
+    module: &'r ExModule,
     errors: &mut Vec<Diagnostic>,
-) -> Structure<'r, 'a> {
+) -> Structure<'r> {
     let nexts = group(module.nexts.iter().map(|n| (n.slot, (n.span, &n.expr))));
     let assigns = group(module.assigns.iter().map(|a| (a.slot, (a.span, &a.expr))));
     let mut next_exprs = Vec::new();
@@ -89,16 +89,13 @@ fn structure<'r, 'a>(
     let mut ordered = Vec::new();
     for (i, mem) in scope.mems.iter().enumerate() {
         let mut ports = writes.remove(&MemIdx::new(i)).unwrap_or_default();
-        let repeated = ports.iter().enumerate().any(|(j, w)| {
-            ports
-                .get(..j)
-                .is_some_and(|before| before.iter().any(|b| b.port == w.port))
-        });
+        let mut repeated = false;
         for (j, w) in ports.iter().enumerate() {
-            if ports
+            let seen = ports
                 .get(..j)
-                .is_some_and(|b| b.iter().any(|b| b.port == w.port))
-            {
+                .is_some_and(|b| b.iter().any(|b| b.port == w.port));
+            if seen {
+                repeated = true;
                 errors.push(error(
                     ErrorCode::E012,
                     w.span,

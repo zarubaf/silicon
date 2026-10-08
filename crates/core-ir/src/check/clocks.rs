@@ -1,12 +1,16 @@
 //! Pass 5 (`E009`): one clock input, no clock output, and no value that reads
 //! a clock.
 
-use super::error;
-use super::rx::RxModule;
+use super::rx::{ExModule, Never, SizedModule};
+use super::{error, first_error};
 use crate::ast::{Design, Dir, Item, Port, Ty};
 use crate::diag::{Diagnostic, ErrorCode};
 
-pub(super) fn check(design: &Design, modules: &[RxModule]) -> Vec<Diagnostic> {
+/// Pass 5. The resolved modules lose their clock reads.
+pub(super) fn check<'a>(
+    design: &Design,
+    modules: Vec<SizedModule<'a>>,
+) -> Result<Vec<ExModule<'a>>, Diagnostic> {
     let mut errors = Vec::new();
     for item in &design.items {
         match item {
@@ -14,20 +18,21 @@ pub(super) fn check(design: &Design, modules: &[RxModule]) -> Vec<Diagnostic> {
             Item::Extern(e) => errors.extend(ports(&e.ports)),
         }
     }
+    let mut checked = Vec::new();
     for module in modules {
-        let mut reads = Vec::new();
-        for obligation in module.obligations() {
-            obligation.expr.clock_reads(&mut reads);
-        }
-        errors.extend(reads.into_iter().map(|span| {
-            error(
+        let mut clock = |span| {
+            errors.push(error(
                 ErrorCode::E009,
                 span,
                 "a clock is not a value, and a value cannot read it",
-            )
-        }));
+            ));
+            None::<Never>
+        };
+        let converted = module.map_exprs(&mut |e| e.map(&mut clock, &mut |_, bits| Some(bits)));
+        checked.extend(converted);
     }
-    errors
+    first_error(errors)?;
+    Ok(checked)
 }
 
 fn ports(ports: &[Port]) -> Vec<Diagnostic> {

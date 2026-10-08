@@ -1,30 +1,30 @@
 //! Lowers a checked design to the typed core IR. The earlier passes resolved
-//! the names, the targets, the arguments, and the `deps`.
+//! the names, the targets, the arguments, the `deps`, the constants, and the
+//! clocks, so no step here can fail.
 
-use super::error;
 use super::instances::{Linked, LinkedInst};
-use super::rx::{Rx, RxModule};
+use super::rx::{Ex, ExModule};
 use super::scope::{DataPort, Env, Scope};
 use super::structure::Structure;
 use crate::ast::{Design, Item};
-use crate::diag::{Diagnostic, ErrorCode};
-use crate::typed::{self, Callee, Deps, Inst, Let, Mem, Module, Port, Reg, Write};
+use crate::typed::{self, Deps, Inst, Let, Mem, ModIdx, Module, Port, Reg, Write};
 
 pub(super) fn lower(
     design: &Design,
     env: &Env,
+    top: ModIdx,
     scopes: &[Scope],
-    resolved: &[RxModule],
+    resolved: &[ExModule],
     structures: &[Structure],
     linked: &Linked,
-) -> Result<typed::Design, Diagnostic> {
+) -> typed::Design {
     let modules = scopes
         .iter()
         .zip(resolved)
         .zip(structures)
         .zip(&linked.insts)
         .map(|(((scope, rx), structure), insts)| module(scope, rx, structure, insts))
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect();
     let externs = design
         .items
         .iter()
@@ -41,18 +41,11 @@ pub(super) fn lower(
             deps: deps.clone(),
         })
         .collect();
-    let Some(Callee::Module(top)) = env.callee(&design.top.text) else {
-        return Err(error(
-            ErrorCode::E003,
-            design.top.span,
-            "the top is not a module",
-        ));
-    };
-    Ok(typed::Design {
+    typed::Design {
         modules,
         externs,
         top,
-    })
+    }
 }
 
 fn ports(ports: &[DataPort]) -> Vec<Port> {
@@ -65,84 +58,65 @@ fn ports(ports: &[DataPort]) -> Vec<Port> {
         .collect()
 }
 
-fn all(exprs: &[&Rx]) -> Result<Vec<typed::Expr>, Diagnostic> {
+fn all(exprs: &[&Ex]) -> Vec<typed::Expr> {
     exprs.iter().map(|e| e.finish()).collect()
 }
 
-fn module(
-    scope: &Scope,
-    rx: &RxModule,
-    structure: &Structure,
-    insts: &[LinkedInst],
-) -> Result<Module, Diagnostic> {
+fn module(scope: &Scope, rx: &ExModule, structure: &Structure, insts: &[LinkedInst]) -> Module {
     let lets = scope
         .lets
         .iter()
         .zip(&rx.lets)
-        .map(|(d, l)| {
-            Ok(Let {
-                name: d.name.text.clone(),
-                width: d.width,
-                expr: l.expr.finish()?,
-            })
+        .map(|(d, l)| Let {
+            name: d.name.text.clone(),
+            width: d.width,
+            expr: l.expr.finish(),
         })
-        .collect::<Result<Vec<_>, Diagnostic>>()?;
-    let nexts = all(&structure.nexts)?;
+        .collect();
     let regs = scope
         .regs
         .iter()
         .zip(&rx.regs)
-        .zip(nexts)
-        .map(|((d, r), next)| {
-            let reset = r
+        .zip(all(&structure.nexts))
+        .map(|((d, r), next)| Reg {
+            name: d.name.text.clone(),
+            width: d.width,
+            next,
+            reset: r
                 .reset
                 .as_ref()
-                .map(|reset| Ok((reset.signal.finish()?, reset.value.finish()?)))
-                .transpose()?;
-            Ok(Reg {
-                name: d.name.text.clone(),
-                width: d.width,
-                next,
-                reset,
-            })
+                .map(|reset| (reset.signal.finish(), reset.value.finish())),
         })
-        .collect::<Result<Vec<_>, Diagnostic>>()?;
+        .collect();
     let mems = scope
         .mems
         .iter()
         .zip(&structure.writes)
-        .map(|(d, ports)| {
-            let writes = ports
+        .map(|(d, ports)| Mem {
+            name: d.name.text.clone(),
+            width: d.width,
+            depth: d.depth,
+            writes: ports
                 .iter()
-                .map(|w| {
-                    Ok(Write {
-                        addr: w.addr.finish()?,
-                        data: w.data.finish()?,
-                        en: w.en.finish()?,
-                    })
+                .map(|w| Write {
+                    addr: w.addr.finish(),
+                    data: w.data.finish(),
+                    en: w.en.finish(),
                 })
-                .collect::<Result<Vec<_>, Diagnostic>>()?;
-            Ok(Mem {
-                name: d.name.text.clone(),
-                width: d.width,
-                depth: d.depth,
-                writes,
-            })
+                .collect(),
         })
-        .collect::<Result<Vec<_>, Diagnostic>>()?;
+        .collect();
     let insts = scope
         .insts
         .iter()
         .zip(insts)
-        .map(|(decl, linked)| {
-            Ok(Inst {
-                name: decl.name.text.clone(),
-                callee: linked.callee,
-                inputs: all(&linked.inputs)?,
-            })
+        .map(|(decl, linked)| Inst {
+            name: decl.name.text.clone(),
+            callee: linked.callee,
+            inputs: all(&linked.inputs),
         })
-        .collect::<Result<Vec<_>, Diagnostic>>()?;
-    Ok(Module {
+        .collect();
+    Module {
         name: scope.module.name.text.clone(),
         inputs: ports(&scope.sig.inputs),
         outputs: ports(&scope.sig.outputs),
@@ -151,8 +125,8 @@ fn module(
         regs,
         mems,
         insts,
-        assigns: all(&structure.assigns)?,
+        assigns: all(&structure.assigns),
         schedule: Vec::new(),
         deps: Deps::default(),
-    })
+    }
 }

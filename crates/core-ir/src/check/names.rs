@@ -1,11 +1,13 @@
 //! Pass 2 (`E002`, unique names) and pass 3 (`E003`, name resolution).
 
-use super::rx::{ConnArg, Rx, RxConn, RxInst, RxLet, RxModule, RxReg, RxReset, RxWrite, Target};
+use super::rx::{
+    ConnArg, RawConst, RawModule, RawRx, Rx, RxConn, RxInst, RxLet, RxReg, RxReset, RxWrite, Target,
+};
 use super::scope::{Binding, Env, InstDecl, PortRef, Scope};
 use super::{error, first_error};
 use crate::ast::{Design, Expr, Item, Name, Port, Stmt};
 use crate::diag::{Diagnostic, ErrorCode, Span};
-use crate::typed::{Callee, MemIdx};
+use crate::typed::{Callee, MemIdx, ModIdx};
 use std::collections::HashSet;
 
 /// The lowering generates names with this prefix.
@@ -84,15 +86,17 @@ pub(super) fn resolve<'a>(
     design: &Design,
     env: &Env,
     scopes: &[Scope<'a>],
-) -> Result<Vec<RxModule<'a>>, Diagnostic> {
+) -> Result<(Vec<RawModule<'a>>, ModIdx), Diagnostic> {
     let mut errors = Vec::new();
-    if !matches!(env.callee(&design.top.text), Some(Callee::Module(_))) {
-        errors.push(error(
+    let top = match env.callee(&design.top.text) {
+        Some(Callee::Module(top)) => Ok(top),
+        _ => Err(error(
             ErrorCode::E003,
             design.top.span,
             format!("`{}` is not a module", design.top.text),
-        ));
-    }
+        )),
+    };
+    errors.extend(top.clone().err());
     let modules: Vec<_> = scopes
         .iter()
         .map(|scope| {
@@ -104,7 +108,7 @@ pub(super) fn resolve<'a>(
         })
         .collect();
     first_error(errors)?;
-    Ok(modules)
+    Ok((modules, top?))
 }
 
 struct Resolver<'e, 'a> {
@@ -123,9 +127,9 @@ impl<'a> Resolver<'_, 'a> {
         ));
     }
 
-    fn module(&mut self) -> RxModule<'a> {
+    fn module(&mut self) -> RawModule<'a> {
         let scope = self.scope;
-        let mut module = RxModule {
+        let mut module = RawModule {
             lets: Vec::new(),
             regs: Vec::new(),
             nexts: Vec::new(),
@@ -144,7 +148,7 @@ impl<'a> Resolver<'_, 'a> {
         module
     }
 
-    fn stmt(&mut self, stmt: &'a Stmt, module: &mut RxModule<'a>) {
+    fn stmt(&mut self, stmt: &'a Stmt, module: &mut RawModule<'a>) {
         match stmt {
             Stmt::Let {
                 width, expr, span, ..
@@ -255,7 +259,7 @@ impl<'a> Resolver<'_, 'a> {
         }
     }
 
-    fn inst(&mut self, inst: &InstDecl<'a>) -> Option<RxInst<'a>> {
+    fn inst(&mut self, inst: &InstDecl<'a>) -> Option<RxInst<'a, Span, RawConst<'a>>> {
         let (Some(callee), Some(sig)) = (inst.callee, inst.sig) else {
             self.unknown(inst.module, "a module or an extern");
             for conn in inst.conns {
@@ -305,7 +309,7 @@ impl<'a> Resolver<'_, 'a> {
         })
     }
 
-    fn expr(&mut self, expr: &'a Expr) -> Option<Rx<'a>> {
+    fn expr(&mut self, expr: &'a Expr) -> Option<RawRx<'a>> {
         match expr {
             Expr::Ref(name) => self.reference(name),
             Expr::InstOut { inst, port, span } => self.inst_out(inst, port, *span),
@@ -316,8 +320,10 @@ impl<'a> Resolver<'_, 'a> {
                 ..
             } => Some(Rx::Const {
                 width: *width,
-                value,
-                value_span: *value_span,
+                value: RawConst {
+                    value,
+                    value_span: *value_span,
+                },
             }),
             Expr::Unary { op, arg, .. } => Some(Rx::Un(*op, Box::new(self.expr(arg)?))),
             Expr::Binary { op, lhs, rhs, span } => {
@@ -388,7 +394,7 @@ impl<'a> Resolver<'_, 'a> {
         }
     }
 
-    fn reference(&mut self, name: &Name) -> Option<Rx<'a>> {
+    fn reference(&mut self, name: &Name) -> Option<RawRx<'a>> {
         let scope = self.scope;
         let found = match scope.lookup(&name.text) {
             Some(Binding::Input(i)) => scope
@@ -407,7 +413,7 @@ impl<'a> Resolver<'_, 'a> {
         found
     }
 
-    fn inst_out(&mut self, inst: &Name, port: &Name, span: Span) -> Option<Rx<'a>> {
+    fn inst_out(&mut self, inst: &Name, port: &Name, span: Span) -> Option<RawRx<'a>> {
         let Some(Binding::Inst(i)) = self.scope.lookup(&inst.text) else {
             self.unknown(inst, "an instance");
             return None;
