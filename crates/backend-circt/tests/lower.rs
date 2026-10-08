@@ -1,9 +1,9 @@
 //! Tests of the lowering to MLIR: each lowered design parses with
 //! `circt-opt`, and the names and ports follow spec section 7.3.
 
+mod common;
+
 use std::error::Error;
-use std::io::Write;
-use std::process::{Command, Output, Stdio};
 
 use backend_circt::{MemConfig, lower, memory_configs};
 use core_ir::check::check;
@@ -166,25 +166,10 @@ fn design(src: &str) -> Result<Design, Box<dyn Error>> {
     Ok(check(&ast).map_err(|d| d.to_string())?)
 }
 
-/// Runs `tool` with `args` and `stdin`.
-fn run(tool: &str, args: &[&str], stdin: &str) -> Result<Output, Box<dyn Error>> {
-    let mut child = Command::new(tool)
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("{tool}: {e}"))?;
-    if let Some(mut pipe) = child.stdin.take() {
-        pipe.write_all(stdin.as_bytes())?;
-    }
-    Ok(child.wait_with_output()?)
-}
-
 /// Lowers `src` and checks that `circt-opt` parses and verifies the result.
 fn lowered(src: &str) -> Result<String, Box<dyn Error>> {
     let mlir = lower(&design(src)?);
-    let out = run("circt-opt", &[], &mlir)?;
+    let out = common::run("circt-opt", &[], &mlir)?;
     assert!(
         out.status.success(),
         "{}\n{mlir}",
@@ -340,7 +325,7 @@ fn a_shift_out_of_range_matches_the_spec() -> Test {
     assert!(!mlir.contains("comb.mux"), "{mlir}");
     let z3 = std::env::var("SILICON_Z3_LIB").map_err(|_| "SILICON_Z3_LIB is not set")?;
     let input = format!("{mlir}{SHIFTS_REFERENCE}");
-    let out = run(
+    let out = common::run(
         "circt-lec",
         &[
             "-",
