@@ -10,7 +10,11 @@ Install Nix and direnv. Then run this command in the repository:
 direnv allow
 ```
 
-The Nix flake then loads the pinned toolchain.
+The Nix flake then loads the pinned toolchain. Then run this command once to install the git hooks:
+
+```sh
+just setup
+```
 
 ## Commands
 
@@ -19,6 +23,7 @@ The `justfile` is the only entry point.
 | Command                  | Action                                                    |
 | ------------------------ | --------------------------------------------------------- |
 | `just`                   | List the recipes                                          |
+| `just setup`             | Install the git hooks                                     |
 | `just fmt`               | Format all files                                          |
 | `just check`             | Run the formatter checks, the linters, and the Lean build |
 | `just test`              | Run the Rust tests                                        |

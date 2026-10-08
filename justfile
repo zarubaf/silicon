@@ -50,9 +50,12 @@ commit-msg file:
     cargo xtask commit-msg {{ file }}
 
 commit-check base="origin/main":
-    cargo xtask commit-check --range {{ base }}..HEAD
+    cargo xtask commit-check --base {{ base }}
 
 ci base="origin/main": check test (commit-check base)
+
+setup:
+    lefthook install
 
 review base="main":
     cargo xtask review --base {{ base }}

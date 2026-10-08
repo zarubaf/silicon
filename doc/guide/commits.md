@@ -53,7 +53,7 @@ Test expectations are the files under `snapshots/` directories and the `expected
 
 ## Hooks
 
-`lefthook` runs the git hooks. Nix pins it. `lefthook.yml` calls `just` recipes only:
+`lefthook` runs the git hooks. Nix pins it. Run `just setup` once in each clone to install them. `lefthook.yml` calls `just` recipes only:
 
 | Hook         | Recipe            |
 | ------------ | ----------------- |
