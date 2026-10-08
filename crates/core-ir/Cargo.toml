@@ -1,0 +1,12 @@
+[package]
+name = "core-ir"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+num-bigint = "0.4.6"
