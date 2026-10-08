@@ -14,13 +14,13 @@ use num_bigint::BigUint;
 
 use crate::Bits;
 use crate::ast::{BinOp, UnOp};
-use crate::diag::{Diagnostic, ErrorCode, Span};
-use crate::typed::{Callee, Design, Expr, ModIdx, Module, Node};
+use crate::diag::{Diagnostic, ErrorCode};
+use crate::typed::{Callee, Design, Expr, ExternIdx, ModIdx, Module, Node};
 
 /// A simulation of a design that has no extern. The start state is all zero.
 pub struct Sim<'d> {
     design: &'d Design,
-    top: Frame,
+    frames: Frames,
 }
 
 impl<'d> Sim<'d> {
@@ -32,16 +32,16 @@ impl<'d> Sim<'d> {
     pub fn new(design: &'d Design) -> Result<Sim<'d>, Diagnostic> {
         // Spec section 5.4: each extern gives E014, also an extern that no
         // instance runs, so the first extern item wins over the first instance.
-        let top = match design.externs.first() {
-            Some(ext) => Err(ext.span),
-            None => Frame::new(design, design.top),
+        let span = match (design.externs.first(), Frames::new(design)) {
+            (None, Ok(frames)) => return Ok(Sim { design, frames }),
+            (Some(ext), _) => ext.span,
+            (None, Err(ext)) => design.externs[ext.index()].span,
         };
-        let top = top.map_err(|span| Diagnostic {
+        Err(Diagnostic {
             code: ErrorCode::E014,
             span,
             message: "no environment for extern".into(),
-        })?;
-        Ok(Sim { design, top })
+        })
     }
 
     /// Runs one cycle: returns the outputs of the top module for the current
@@ -51,14 +51,15 @@ impl<'d> Sim<'d> {
     /// module of this design.
     #[must_use]
     pub fn step(&mut self, inputs: &Inputs) -> Outputs {
-        self.top.begin();
+        let frames = &mut self.frames;
+        frames.begin();
         for (i, value) in inputs.0.iter().enumerate() {
-            self.top.inputs.set(i, value.clone());
+            frames.0[TOP].inputs.set(i, value.clone());
         }
-        self.top.settle(self.design);
-        let outputs = Outputs(self.top.outs.values.clone());
-        self.top.finish(self.design);
-        self.top.update(self.design);
+        frames.settle(self.design, TOP);
+        let outputs = Outputs(frames.0[TOP].outs.values.clone());
+        frames.finish(self.design);
+        frames.update(self.design);
         outputs
     }
 }
@@ -102,7 +103,8 @@ struct Frame {
     /// The written words of each memory. A word that was never written is 0.
     /// A map keeps a deep memory cheap.
     mems: Vec<HashMap<u32, Bits>>,
-    children: Vec<Frame>,
+    /// The frame of each instance, by [`crate::typed::InstIdx`].
+    children: Vec<usize>,
     inputs: Slots,
     lets: Slots,
     outs: Slots,
@@ -111,119 +113,159 @@ struct Frame {
 }
 
 impl Frame {
-    /// The all-zero frame of `module`, or the position of an extern that an
-    /// instance below it runs.
-    fn new(design: &Design, module: ModIdx) -> Result<Frame, Span> {
-        let m = &design.modules[module.index()];
-        let children = m
-            .insts
-            .iter()
-            .map(|inst| match inst.callee {
-                Callee::Module(child) => Frame::new(design, child),
-                Callee::Extern(ext) => Err(design.externs[ext.index()].span),
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(Frame {
+    /// The all-zero frame of `module`, without its children.
+    fn new(m: &Module, module: ModIdx) -> Frame {
+        Frame {
             module,
             regs: m.regs.iter().map(|r| Bits::zero(r.width)).collect(),
             mems: m.mems.iter().map(|_| HashMap::new()).collect(),
-            children,
+            children: Vec::with_capacity(m.insts.len()),
             inputs: Slots::new(m.inputs.iter().map(|p| p.width)),
             lets: Slots::new(m.lets.iter().map(|l| l.width)),
             outs: Slots::new(m.outputs.iter().map(|p| p.width)),
             fresh: true,
-        })
+        }
+    }
+}
+
+/// The position of the frame of the top module.
+const TOP: usize = 0;
+
+/// The frames of all module instances in one flat table: the top first, and
+/// each child after its parent. Each walk over the hierarchy keeps its own
+/// stack, so a deep hierarchy cannot overflow the call stack.
+struct Frames(Vec<Frame>);
+
+impl Frames {
+    /// The all-zero frames below the top, or an extern that an instance runs.
+    fn new(design: &Design) -> Result<Frames, ExternIdx> {
+        let top = &design.modules[design.top.index()];
+        let mut frames = vec![Frame::new(top, design.top)];
+        let mut parent = 0;
+        while let Some(frame) = frames.get(parent) {
+            let m = &design.modules[frame.module.index()];
+            for inst in &m.insts {
+                let child = match inst.callee {
+                    Callee::Module(child) => child,
+                    Callee::Extern(ext) => return Err(ext),
+                };
+                let index = frames.len();
+                frames.push(Frame::new(&design.modules[child.index()], child));
+                frames[parent].children.push(index);
+            }
+            parent += 1;
+        }
+        Ok(Frames(frames))
     }
 
-    /// Forgets the values of the last cycle, in this frame and below.
+    /// Forgets the values of the last cycle.
     fn begin(&mut self) {
-        for slots in [&mut self.inputs, &mut self.lets, &mut self.outs] {
-            slots.known.fill(false);
-        }
-        self.fresh = true;
-        for child in &mut self.children {
-            child.begin();
+        for frame in &mut self.0 {
+            for slots in [&mut frame.inputs, &mut frame.lets, &mut frame.outs] {
+                slots.known.fill(false);
+            }
+            frame.fresh = true;
         }
     }
 
-    /// Computes each node of the schedule that the known values allow.
-    fn settle(&mut self, design: &Design) {
-        self.fresh = false;
-        let m = &design.modules[self.module.index()];
-        for node in &m.schedule {
-            match *node {
-                Node::Let(l) => {
-                    let (l, expr) = (l.index(), &m.lets[l.index()].expr);
-                    if !self.lets.known[l] && self.ready(expr) {
-                        let value = self.eval(m, expr);
-                        self.lets.set(l, value);
+    /// Computes each node of the schedule of frame `root` that the known
+    /// values allow. A child with new inputs computes what it can before the
+    /// parent goes on.
+    fn settle(&mut self, design: &Design, root: usize) {
+        // Each entry is a frame and the position in its schedule to go on at.
+        let mut stack = vec![(root, 0)];
+        'frames: while let Some((f, start)) = stack.pop() {
+            let m = &design.modules[self.0[f].module.index()];
+            if start == 0 {
+                self.0[f].fresh = false;
+            }
+            for (at, node) in m.schedule.iter().enumerate().skip(start) {
+                match *node {
+                    Node::Let(l) => {
+                        let (l, expr) = (l.index(), &m.lets[l.index()].expr);
+                        if !self.0[f].lets.known[l] && self.ready(f, expr) {
+                            let value = self.eval(m, f, expr);
+                            self.0[f].lets.set(l, value);
+                        }
+                    }
+                    Node::Output(o) => {
+                        let (o, expr) = (o.index(), &m.assigns[o.index()]);
+                        if !self.0[f].outs.known[o] && self.ready(f, expr) {
+                            let value = self.eval(m, f, expr);
+                            self.0[f].outs.set(o, value);
+                        }
+                    }
+                    Node::InstOut(u, _) => {
+                        if let Some(child) = self.feed(m, f, u.index()) {
+                            stack.push((f, at + 1));
+                            stack.push((child, 0));
+                            continue 'frames;
+                        }
                     }
                 }
-                Node::Output(o) => {
-                    let (o, expr) = (o.index(), &m.assigns[o.index()]);
-                    if !self.outs.known[o] && self.ready(expr) {
-                        let value = self.eval(m, expr);
-                        self.outs.set(o, value);
-                    }
-                }
-                Node::InstOut(u, _) => self.feed(design, m, u.index()),
             }
         }
     }
 
-    /// Passes each known input to child `u`, and lets the child compute what
-    /// it can when it has new inputs.
-    fn feed(&mut self, design: &Design, m: &Module, u: usize) {
+    /// Passes each known input of frame `f` to its child `u`. Returns the
+    /// frame of the child if it has new inputs or has not computed yet.
+    fn feed(&mut self, m: &Module, f: usize, u: usize) -> Option<usize> {
+        let child = self.0[f].children[u];
         let mut fed = false;
         for (i, expr) in m.insts[u].inputs.iter().enumerate() {
-            if !self.children[u].inputs.known[i] && self.ready(expr) {
-                let value = self.eval(m, expr);
-                self.children[u].inputs.set(i, value);
+            if !self.0[child].inputs.known[i] && self.ready(f, expr) {
+                let value = self.eval(m, f, expr);
+                self.0[child].inputs.set(i, value);
                 fed = true;
             }
         }
-        let child = &mut self.children[u];
-        if fed || child.fresh {
-            child.settle(design);
-        }
+        (fed || self.0[child].fresh).then_some(child)
     }
 
-    /// Completes the solution below a settled frame: each child gets all its
-    /// inputs, also the inputs that no output of the child depends on.
+    /// Completes the solution below the settled top: each child gets all its
+    /// inputs, also the inputs that no output of the child depends on. A
+    /// parent is complete before its children.
     fn finish(&mut self, design: &Design) {
-        let m = &design.modules[self.module.index()];
-        for u in 0..self.children.len() {
-            self.feed(design, m, u);
-            self.children[u].finish(design);
+        for f in 0..self.0.len() {
+            let m = &design.modules[self.0[f].module.index()];
+            for u in 0..self.0[f].children.len() {
+                if let Some(child) = self.feed(m, f, u) {
+                    self.settle(design, child);
+                }
+            }
         }
     }
 
-    /// Whether each value that `expr` reads is known in this cycle.
-    fn ready(&self, expr: &Expr) -> bool {
+    /// Whether each value that `expr` reads in frame `f` is known in this
+    /// cycle.
+    fn ready(&self, f: usize, expr: &Expr) -> bool {
+        let frame = &self.0[f];
         match expr {
-            Expr::Input(i) => self.inputs.known[i.index()],
-            Expr::Let(l) => self.lets.known[l.index()],
-            Expr::InstOut(u, o) => self.children[u.index()].outs.known[o.index()],
+            Expr::Input(i) => frame.inputs.known[i.index()],
+            Expr::Let(l) => frame.lets.known[l.index()],
+            Expr::InstOut(u, o) => self.0[frame.children[u.index()]].outs.known[o.index()],
             Expr::Reg(_) | Expr::Const(_) => true,
             Expr::Read(_, a) | Expr::Un(_, a) | Expr::Extract(a, ..) | Expr::Replicate(a, _) => {
-                self.ready(a)
+                self.ready(f, a)
             }
-            Expr::Bin(_, a, b) | Expr::Icmp(_, a, b) => self.ready(a) && self.ready(b),
-            Expr::Mux(c, t, e) => self.ready(c) && self.ready(t) && self.ready(e),
+            Expr::Bin(_, a, b) | Expr::Icmp(_, a, b) => self.ready(f, a) && self.ready(f, b),
+            Expr::Mux(c, t, e) => self.ready(f, c) && self.ready(f, t) && self.ready(f, e),
         }
     }
 
-    /// The value of `expr`. Each value that it reads must be known.
-    fn eval(&self, m: &Module, expr: &Expr) -> Bits {
+    /// The value of `expr` in frame `f` of module `m`. Each value that it
+    /// reads must be known.
+    fn eval(&self, m: &Module, f: usize, expr: &Expr) -> Bits {
+        let frame = &self.0[f];
         match expr {
-            Expr::Input(i) => self.inputs.values[i.index()].clone(),
-            Expr::Let(l) => self.lets.values[l.index()].clone(),
-            Expr::Reg(r) => self.regs[r.index()].clone(),
-            Expr::InstOut(u, o) => self.children[u.index()].outs.values[o.index()].clone(),
+            Expr::Input(i) => frame.inputs.values[i.index()].clone(),
+            Expr::Let(l) => frame.lets.values[l.index()].clone(),
+            Expr::Reg(r) => frame.regs[r.index()].clone(),
+            Expr::InstOut(u, o) => self.0[frame.children[u.index()]].outs.values[o.index()].clone(),
             Expr::Const(value) => value.clone(),
-            Expr::Un(UnOp::Not, a) => self.eval(m, a).not(),
+            Expr::Un(UnOp::Not, a) => self.eval(m, f, a).not(),
             Expr::Bin(op, a, b) => {
-                let (a, b) = (self.eval(m, a), self.eval(m, b));
+                let (a, b) = (self.eval(m, f, a), self.eval(m, f, b));
                 match op {
                     BinOp::Add => a.add(&b),
                     BinOp::Sub => a.sub(&b),
@@ -237,58 +279,62 @@ impl Frame {
                     BinOp::Concat => a.concat(&b),
                 }
             }
-            Expr::Icmp(pred, a, b) => self.eval(m, a).icmp(*pred, &self.eval(m, b)),
-            Expr::Mux(c, t, e) => {
-                if is_one(&self.eval(m, c)) {
-                    self.eval(m, t)
+            Expr::Icmp(pred, a, b) => self.eval(m, f, a).icmp(*pred, &self.eval(m, f, b)),
+            Expr::Mux(cond, then, els) => {
+                if is_one(&self.eval(m, f, cond)) {
+                    self.eval(m, f, then)
                 } else {
-                    self.eval(m, e)
+                    self.eval(m, f, els)
                 }
             }
-            Expr::Extract(a, lo, n) => self.eval(m, a).extract(*lo, *n),
-            Expr::Replicate(a, k) => self.eval(m, a).replicate(*k),
+            Expr::Extract(a, lo, n) => self.eval(m, f, a).extract(*lo, *n),
+            Expr::Replicate(a, k) => self.eval(m, f, a).replicate(*k),
             Expr::Read(mem, a) => {
                 let mem_def = &m.mems[mem.index()];
-                address(&self.eval(m, a), mem_def.depth)
-                    .and_then(|addr| self.mems[mem.index()].get(&addr).cloned())
+                address(&self.eval(m, f, a), mem_def.depth)
+                    .and_then(|addr| frame.mems[mem.index()].get(&addr).cloned())
                     .unwrap_or_else(|| Bits::zero(mem_def.width))
             }
         }
     }
 
-    /// Takes the next state from the complete solution of this cycle.
+    /// Takes the next state of each frame from the complete solution of this
+    /// cycle. A frame reads only its own state and the values of the cycle,
+    /// so the order of the frames does not matter.
     fn update(&mut self, design: &Design) {
-        let m = &design.modules[self.module.index()];
-        let regs: Vec<Bits> = m
-            .regs
-            .iter()
-            .map(|r| match &r.reset {
-                Some((signal, value)) if is_one(&self.eval(m, signal)) => self.eval(m, value),
-                _ => self.eval(m, &r.next),
-            })
-            .collect();
-        // All writes read the old state, so they are computed before any applies.
-        let writes: Vec<Vec<(u32, Bits)>> = m
-            .mems
-            .iter()
-            .map(|mem| {
-                mem.writes
-                    .iter()
-                    .filter(|w| is_one(&self.eval(m, &w.en)))
-                    .filter_map(|w| {
-                        address(&self.eval(m, &w.addr), mem.depth)
-                            .map(|addr| (addr, self.eval(m, &w.data)))
-                    })
-                    .collect()
-            })
-            .collect();
-        self.regs = regs;
-        // In port order: a higher port overwrites a lower port.
-        for (words, ports) in self.mems.iter_mut().zip(writes) {
-            words.extend(ports);
-        }
-        for child in &mut self.children {
-            child.update(design);
+        for f in 0..self.0.len() {
+            let m = &design.modules[self.0[f].module.index()];
+            let regs: Vec<Bits> = m
+                .regs
+                .iter()
+                .map(|r| match &r.reset {
+                    Some((signal, value)) if is_one(&self.eval(m, f, signal)) => {
+                        self.eval(m, f, value)
+                    }
+                    _ => self.eval(m, f, &r.next),
+                })
+                .collect();
+            // All writes read the old state, so they are computed before any applies.
+            let writes: Vec<Vec<(u32, Bits)>> = m
+                .mems
+                .iter()
+                .map(|mem| {
+                    mem.writes
+                        .iter()
+                        .filter(|w| is_one(&self.eval(m, f, &w.en)))
+                        .filter_map(|w| {
+                            address(&self.eval(m, f, &w.addr), mem.depth)
+                                .map(|addr| (addr, self.eval(m, f, &w.data)))
+                        })
+                        .collect()
+                })
+                .collect();
+            let frame = &mut self.0[f];
+            frame.regs = regs;
+            // In port order: a higher port overwrites a lower port.
+            for (words, ports) in frame.mems.iter_mut().zip(writes) {
+                words.extend(ports);
+            }
         }
     }
 }
