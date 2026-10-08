@@ -1,9 +1,10 @@
 //! Pass 4 (`E005`, declared sizes) and pass 7 (`E004`, operation widths).
 
 use super::error;
-use super::scope::{Binding, PortRef, Scope, stmt_exprs, visit};
+use super::rx::{Rx, RxModule, const_bits};
+use super::scope::{stmt_exprs, visit};
 use crate::ast::{BinOp, Design, Expr, Item, Num, Port, Stmt, Ty};
-use crate::diag::{Diagnostic, ErrorCode};
+use crate::diag::{Diagnostic, ErrorCode, Span};
 
 /// The largest width of a declared or computed value.
 const MAX_WIDTH: u32 = 65536;
@@ -36,13 +37,13 @@ pub(super) fn declared(design: &Design) -> Vec<Diagnostic> {
 fn port_sizes(ports: &[Port], errors: &mut Vec<Diagnostic>) {
     for port in ports {
         if let Ty::Bits(n) = port.ty {
-            width(n, "the port width", errors);
+            check_width(n, "the port width", errors);
         }
     }
 }
 
 /// A declared width is 1 to 65536.
-fn width(n: Num, what: &str, errors: &mut Vec<Diagnostic>) {
+fn check_width(n: Num, what: &str, errors: &mut Vec<Diagnostic>) {
     if !(1..=MAX_WIDTH).contains(&n.value) {
         errors.push(error(
             ErrorCode::E005,
@@ -55,12 +56,12 @@ fn width(n: Num, what: &str, errors: &mut Vec<Diagnostic>) {
 fn stmt_sizes(stmt: &Stmt, errors: &mut Vec<Diagnostic>) {
     match stmt {
         Stmt::Let { width: w, .. } | Stmt::Reg { width: w, .. } => {
-            width(*w, "the width", errors);
+            check_width(*w, "the width", errors);
         }
         Stmt::Mem {
             width: w, depth, ..
         } => {
-            width(*w, "the memory width", errors);
+            check_width(*w, "the memory width", errors);
             if !(1..=MAX_DEPTH).contains(&depth.value) {
                 errors.push(error(
                     ErrorCode::E005,
@@ -84,13 +85,9 @@ fn expr_sizes(expr: &Expr, errors: &mut Vec<Diagnostic>) {
             value_span,
             ..
         } => {
-            width(*w, "the constant width", errors);
-            if value.bits() > u64::from(w.value) {
-                errors.push(error(
-                    ErrorCode::E005,
-                    *value_span,
-                    format!("the constant {value} does not fit in {} bits", w.value),
-                ));
+            check_width(*w, "the constant width", errors);
+            if let Err(d) = const_bits(*w, value, *value_span) {
+                errors.push(d);
             }
         }
         Expr::Replicate { count, .. } if count.value == 0 => {
@@ -109,233 +106,138 @@ fn expr_sizes(expr: &Expr, errors: &mut Vec<Diagnostic>) {
 
 // Pass 7.
 
-pub(super) fn operations(scopes: &[Scope]) -> Vec<Diagnostic> {
+pub(super) fn operations(modules: &[RxModule]) -> Vec<Diagnostic> {
     let mut errors = Vec::new();
-    for scope in scopes {
-        let mut typer = Typer {
-            scope,
-            errors: &mut errors,
-        };
-        typer.module();
+    for module in modules {
+        for o in module.obligations() {
+            let got = width(o.expr, &mut errors);
+            if let (Some(got), Some(want)) = (got, o.want)
+                && got != want
+            {
+                errors.push(error(
+                    ErrorCode::E004,
+                    o.span,
+                    format!("{} has the width {want}, but its value has {got}", o.what),
+                ));
+            }
+        }
     }
     errors
 }
 
-struct Typer<'e, 'a> {
-    scope: &'e Scope<'a>,
-    errors: &'e mut Vec<Diagnostic>,
+fn fail(errors: &mut Vec<Diagnostic>, span: Span, message: impl Into<String>) {
+    errors.push(error(ErrorCode::E004, span, message));
 }
 
-impl Typer<'_, '_> {
-    fn fail(&mut self, span: crate::diag::Span, message: impl Into<String>) {
-        self.errors.push(error(ErrorCode::E004, span, message));
+fn equal(errors: &mut Vec<Diagnostic>, l: u32, r: u32, span: Span) -> bool {
+    if l != r {
+        fail(
+            errors,
+            span,
+            format!("the operand widths {l} and {r} differ"),
+        );
     }
+    l == r
+}
 
-    /// Checks that an expression has the width of its target.
-    fn target(&mut self, expr: &Expr, want: u32, span: crate::diag::Span, what: &str) {
-        if let Some(got) = self.width(expr)
-            && got != want
-        {
-            self.fail(
-                span,
-                format!("{what} has the width {want}, but its value has {got}"),
-            );
-        }
-    }
-
-    fn module(&mut self) {
-        let scope = self.scope;
-        for decl in &scope.lets {
-            self.target(decl.expr, decl.width, decl.span, "the `let`");
-        }
-        for reg in &scope.regs {
-            if let Some(reset) = reg.reset {
-                self.target(&reset.signal, 1, reset.span, "the reset signal");
-                self.target(&reset.value, reg.width, reset.span, "the register");
-            }
-        }
-        for stmt in &scope.module.stmts {
-            match stmt {
-                Stmt::Next { reg, expr, span } => {
-                    if let Some(Binding::Reg(i)) = scope.lookup(&reg.text)
-                        && let Some(decl) = scope.regs.get(i.index())
-                    {
-                        self.target(expr, decl.width, *span, "the register");
-                    } else {
-                        self.width(expr);
-                    }
-                }
-                Stmt::Assign { out, expr, span } => {
-                    let width = match scope.lookup(&out.text) {
-                        Some(Binding::Output(o)) => {
-                            scope.sig.outputs.get(o.index()).map(|p| p.width)
-                        }
-                        _ => None,
-                    };
-                    match width {
-                        Some(w) => self.target(expr, w, *span, "the output"),
-                        None => {
-                            self.width(expr);
-                        }
-                    }
-                }
-                Stmt::Write {
-                    mem,
-                    addr,
-                    data,
-                    en,
-                    span,
-                    ..
-                } => {
-                    if let Some(Binding::Mem(i)) = scope.lookup(&mem.text)
-                        && let Some(decl) = scope.mems.get(i.index())
-                    {
-                        self.target(addr, address_width(decl.depth), *span, "the address");
-                        self.target(data, decl.width, *span, "the memory word");
-                        self.target(en, 1, *span, "the write enable");
-                    } else {
-                        for e in [addr, data, en] {
-                            self.width(e);
-                        }
-                    }
-                }
-                Stmt::Let { .. } | Stmt::Reg { .. } | Stmt::Mem { .. } | Stmt::Inst { .. } => {}
-            }
-        }
-        for inst in &scope.insts {
-            let sig = inst.sig;
-            for conn in inst.conns {
-                let want = sig.and_then(|s| match s.port(&conn.port.text) {
-                    Some(PortRef::Input(i)) => s.inputs.get(i.index()).map(|p| p.width),
-                    _ => None,
-                });
-                match want {
-                    Some(w) => self.target(&conn.expr, w, conn.span, "the input"),
-                    None => {
-                        self.width(&conn.expr);
-                    }
-                }
-            }
-        }
-    }
-
-    /// The width of an expression. An error in an operand gives `None`: the
-    /// operand is reported, and its parent has no width to check.
-    fn width(&mut self, expr: &Expr) -> Option<u32> {
-        match expr {
-            Expr::Ref(name) => self.binding_width(self.scope.lookup(&name.text)?),
-            Expr::InstOut { inst, port, .. } => {
-                let Binding::Inst(i) = self.scope.lookup(&inst.text)? else {
-                    return None;
-                };
-                let sig = self.scope.insts.get(i.index())?.sig?;
-                match sig.port(&port.text)? {
-                    PortRef::Output(o) => sig.outputs.get(o.index()).map(|p| p.width),
-                    _ => None,
-                }
-            }
-            Expr::Const { width, .. } => Some(width.value),
-            Expr::Unary { arg, .. } => self.width(arg),
-            Expr::Binary {
-                op, lhs, rhs, span, ..
-            } => {
-                let (l, r) = (self.width(lhs), self.width(rhs));
-                let (l, r) = (l?, r?);
-                if *op == BinOp::Concat {
-                    let sum = l.saturating_add(r);
-                    if sum > MAX_WIDTH {
-                        self.fail(*span, format!("the concatenation has the width {sum}"));
-                        return None;
-                    }
-                    return Some(sum);
-                }
-                self.equal(l, r, *span).then_some(l)
-            }
-            Expr::Icmp { lhs, rhs, span, .. } => {
-                let (l, r) = (self.width(lhs), self.width(rhs));
-                self.equal(l?, r?, *span).then_some(1)
-            }
-            Expr::Mux {
-                cond,
-                then,
-                els,
-                span,
-            } => {
-                let (c, t, e) = (self.width(cond), self.width(then), self.width(els));
-                let (c, t, e) = (c?, t?, e?);
-                if c != 1 {
-                    self.fail(*span, format!("the condition has the width {c}, not 1"));
-                    return None;
-                }
-                self.equal(t, e, *span).then_some(t)
-            }
-            Expr::Extract {
-                arg,
-                lo,
-                width,
-                span,
-            } => {
-                let width = &width.value;
-                let w = self.width(arg)?;
-                if u64::from(*lo) + u64::from(*width) > u64::from(w) {
-                    self.fail(
+/// The width of an expression. An error in an operand gives `None`: the
+/// operand is reported, and its parent has no width to check.
+fn width(expr: &Rx, errors: &mut Vec<Diagnostic>) -> Option<u32> {
+    match expr {
+        Rx::Input(_, w) | Rx::Let(_, w) | Rx::Reg(_, w) | Rx::InstOut(_, _, w) => Some(*w),
+        Rx::Clock(_) => None,
+        Rx::Const { width, .. } => Some(width.value),
+        Rx::Un(_, arg) => width(arg, errors),
+        Rx::Bin {
+            op, lhs, rhs, span, ..
+        } => {
+            let (l, r) = (width(lhs, errors), width(rhs, errors));
+            let (l, r) = (l?, r?);
+            if *op == BinOp::Concat {
+                let sum = l.saturating_add(r);
+                if sum > MAX_WIDTH {
+                    fail(
+                        errors,
                         *span,
-                        format!(
-                            "the bits {lo} to {} are outside {w} bits",
-                            u64::from(*lo) + u64::from(*width)
-                        ),
+                        format!("the concatenation has the width {sum}"),
                     );
                     return None;
                 }
-                Some(*width)
+                return Some(sum);
             }
-            Expr::Replicate { arg, count, span } => {
-                let count = &count.value;
-                let w = self.width(arg)?;
-                let total = u64::from(w) * u64::from(*count);
-                if total > u64::from(MAX_WIDTH) {
-                    self.fail(*span, format!("the replication has the width {total}"));
-                    return None;
-                }
-                u32::try_from(total).ok()
-            }
-            Expr::Read { mem, addr, span } => {
-                let a = self.width(addr);
-                let Binding::Mem(i) = self.scope.lookup(&mem.text)? else {
-                    return None;
-                };
-                let decl = self.scope.mems.get(i.index())?;
-                let want = address_width(decl.depth);
-                let a = a?;
-                if a != want {
-                    self.fail(
-                        *span,
-                        format!(
-                            "the address has the width {a}, but `{}` needs {want}",
-                            mem.text
-                        ),
-                    );
-                    return None;
-                }
-                Some(decl.width)
-            }
+            equal(errors, l, r, *span).then_some(l)
         }
-    }
-
-    fn equal(&mut self, l: u32, r: u32, span: crate::diag::Span) -> bool {
-        if l != r {
-            self.fail(span, format!("the operand widths {l} and {r} differ"));
+        Rx::Icmp { lhs, rhs, span, .. } => {
+            let (l, r) = (width(lhs, errors), width(rhs, errors));
+            equal(errors, l?, r?, *span).then_some(1)
         }
-        l == r
-    }
-
-    fn binding_width(&self, binding: Binding) -> Option<u32> {
-        let scope = self.scope;
-        match binding {
-            Binding::Input(i) => scope.sig.inputs.get(i.index()).map(|p| p.width),
-            Binding::Let(i) => scope.lets.get(i.index()).map(|d| d.width),
-            Binding::Reg(i) => scope.regs.get(i.index()).map(|d| d.width),
-            _ => None,
+        Rx::Mux {
+            cond,
+            then,
+            els,
+            span,
+        } => {
+            let (c, t, e) = (width(cond, errors), width(then, errors), width(els, errors));
+            let (c, t, e) = (c?, t?, e?);
+            if c != 1 {
+                fail(
+                    errors,
+                    *span,
+                    format!("the condition has the width {c}, not 1"),
+                );
+                return None;
+            }
+            equal(errors, t, e, *span).then_some(t)
+        }
+        Rx::Extract {
+            arg,
+            lo,
+            width: n,
+            span,
+        } => {
+            let w = width(arg, errors)?;
+            let end = u64::from(*lo) + u64::from(n.value);
+            if end > u64::from(w) {
+                fail(
+                    errors,
+                    *span,
+                    format!("the bits {lo} to {end} are outside {w} bits"),
+                );
+                return None;
+            }
+            Some(n.value)
+        }
+        Rx::Replicate { arg, count, span } => {
+            let w = width(arg, errors)?;
+            let total = u64::from(w) * u64::from(count.value);
+            if total > u64::from(MAX_WIDTH) {
+                fail(
+                    errors,
+                    *span,
+                    format!("the replication has the width {total}"),
+                );
+                return None;
+            }
+            u32::try_from(total).ok()
+        }
+        Rx::Read {
+            data_width,
+            depth,
+            addr,
+            span,
+            ..
+        } => {
+            let a = width(addr, errors)?;
+            let want = address_width(*depth);
+            if a != want {
+                fail(
+                    errors,
+                    *span,
+                    format!("the address has the width {a}, but the memory needs {want}"),
+                );
+                return None;
+            }
+            Some(*data_width)
         }
     }
 }

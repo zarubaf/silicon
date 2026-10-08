@@ -6,6 +6,7 @@ mod clocks;
 mod instances;
 mod lower;
 mod names;
+mod rx;
 mod scope;
 mod structure;
 mod types;
@@ -25,15 +26,15 @@ pub fn check(design: &ast::Design) -> Result<typed::Design, Diagnostic> {
     first_error(names::duplicates(design))?;
     let env = Env::build(design);
     let scopes = Scope::build_all(design, &env);
-    first_error(names::unresolved(design, &env, &scopes))?;
+    let resolved = names::resolve(design, &env, &scopes)?;
     first_error(types::declared(design))?;
-    first_error(clocks::check(design, &scopes))?;
-    let linked = instances::check(design, env.externs(), &scopes)?;
-    first_error(types::operations(&scopes))?;
-    let structures = structure::check(&scopes)?;
+    first_error(clocks::check(design, &resolved))?;
+    let linked = instances::check(design, env.externs(), &resolved)?;
+    first_error(types::operations(&resolved))?;
+    let structures = structure::check(&scopes, &resolved)?;
     // Passes 9 and 10 (the instance and combinational cycles) and the schedule
     // are not part of this stage.
-    lower::lower(design, &env, &scopes, &structures, &linked)
+    lower::lower(design, &env, &scopes, &resolved, &structures, &linked)
 }
 
 fn error(code: ErrorCode, span: Span, message: impl Into<String>) -> Diagnostic {

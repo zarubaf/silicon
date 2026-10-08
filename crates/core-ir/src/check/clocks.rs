@@ -2,11 +2,11 @@
 //! a clock.
 
 use super::error;
-use super::scope::{Binding, PortRef, Scope, visit};
-use crate::ast::{Design, Dir, Expr, Item, Port, Ty};
+use super::rx::RxModule;
+use crate::ast::{Design, Dir, Item, Port, Ty};
 use crate::diag::{Diagnostic, ErrorCode};
 
-pub(super) fn check(design: &Design, scopes: &[Scope]) -> Vec<Diagnostic> {
+pub(super) fn check(design: &Design, modules: &[RxModule]) -> Vec<Diagnostic> {
     let mut errors = Vec::new();
     for item in &design.items {
         match item {
@@ -14,8 +14,18 @@ pub(super) fn check(design: &Design, scopes: &[Scope]) -> Vec<Diagnostic> {
             Item::Extern(e) => errors.extend(ports(&e.ports)),
         }
     }
-    for scope in scopes {
-        errors.extend(reads(scope));
+    for module in modules {
+        let mut reads = Vec::new();
+        for obligation in module.obligations() {
+            obligation.expr.clock_reads(&mut reads);
+        }
+        errors.extend(reads.into_iter().map(|span| {
+            error(
+                ErrorCode::E009,
+                span,
+                "a clock is not a value, and a value cannot read it",
+            )
+        }));
     }
     errors
 }
@@ -42,49 +52,4 @@ fn ports(ports: &[Port]) -> Vec<Diagnostic> {
         }
     }
     errors
-}
-
-/// The values that read a clock input, a clock output, or a clock output of
-/// an instance.
-fn reads(scope: &Scope) -> Vec<Diagnostic> {
-    let mut errors = Vec::new();
-    for root in scope.value_exprs() {
-        visit(root, &mut |e| match e {
-            Expr::Ref(name)
-                if matches!(
-                    scope.lookup(&name.text),
-                    Some(Binding::Clock | Binding::ClockOut)
-                ) =>
-            {
-                errors.push(error(
-                    ErrorCode::E009,
-                    name.span,
-                    format!("`{}` is a clock, and a value cannot read it", name.text),
-                ));
-            }
-            Expr::InstOut { inst, port, span }
-                if reads_clock_output(scope, &inst.text, &port.text) =>
-            {
-                errors.push(error(
-                    ErrorCode::E009,
-                    *span,
-                    format!("`{}.{}` is a clock", inst.text, port.text),
-                ));
-            }
-            _ => {}
-        });
-    }
-    errors
-}
-
-fn reads_clock_output(scope: &Scope, inst: &str, port: &str) -> bool {
-    let Some(Binding::Inst(i)) = scope.lookup(inst) else {
-        return false;
-    };
-    scope
-        .insts
-        .get(i.index())
-        .and_then(|d| d.sig)
-        .and_then(|sig| sig.port(port))
-        .is_some_and(|p| matches!(p, PortRef::ClockOut))
 }

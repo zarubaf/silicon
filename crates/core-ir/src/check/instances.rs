@@ -3,51 +3,64 @@
 //! of each instance.
 
 use super::error;
-use super::scope::{InstDecl, PortRef, Scope, Sig};
-use crate::ast::{Conn, Design, Expr, Extern, Item};
+use super::rx::{ConnArg, Rx, RxInst, RxModule};
+use super::scope::{PortRef, Sig};
+use crate::ast::{Design, Extern, Item};
 use crate::diag::{Diagnostic, ErrorCode};
 use crate::typed::{Callee, Deps, InputIdx};
+use std::collections::HashMap;
 
 /// The arguments of one instance.
-pub(super) struct LinkedInst<'a> {
+pub(super) struct LinkedInst<'r, 'a> {
     pub callee: Callee,
     /// By input of the callee. The clock input is not among them.
-    pub inputs: Vec<&'a Expr>,
+    pub inputs: Vec<&'r Rx<'a>>,
 }
 
-pub(super) struct Linked<'a> {
+pub(super) struct Linked<'r, 'a> {
     /// For each extern, its `deps` by output.
     pub extern_deps: Vec<Deps>,
     /// For each module, its instances.
-    pub insts: Vec<Vec<LinkedInst<'a>>>,
+    pub insts: Vec<Vec<LinkedInst<'r, 'a>>>,
 }
 
-pub(super) fn check<'a>(
+pub(super) fn check<'r, 'a>(
     design: &Design,
     externs: &[Sig],
-    scopes: &[Scope<'a>],
-) -> Result<Linked<'a>, Diagnostic> {
+    modules: &'r [RxModule<'a>],
+) -> Result<Linked<'r, 'a>, Diagnostic> {
     let mut errors = Vec::new();
     let units = design.items.iter().filter_map(|item| match item {
         Item::Extern(e) => Some(e),
         Item::Module(_) => None,
     });
-    let extern_deps = units
-        .zip(externs)
-        .map(|(ext, sig)| deps(sig, ext, &mut errors))
-        .collect();
-    let insts = scopes
-        .iter()
-        .map(|scope| connections(scope, &mut errors))
-        .collect();
+    let mut extern_deps = Vec::new();
+    for (ext, sig) in units.zip(externs) {
+        match deps(sig, ext) {
+            Ok(d) => extern_deps.push(d),
+            Err(found) => errors.extend(found),
+        }
+    }
+    let mut insts = Vec::new();
+    for module in modules {
+        let mut linked = Vec::new();
+        for inst in &module.insts {
+            match connections(inst) {
+                Ok(l) => linked.push(l),
+                Err(found) => errors.extend(found),
+            }
+        }
+        insts.push(linked);
+    }
     match errors.into_iter().min_by_key(|d| d.span) {
         Some(d) => Err(d),
         None => Ok(Linked { extern_deps, insts }),
     }
 }
 
-fn deps(sig: &Sig, ext: &Extern, errors: &mut Vec<Diagnostic>) -> Deps {
-    let mut by_output: Vec<Option<Vec<InputIdx>>> = sig.outputs.iter().map(|_| None).collect();
+fn deps(sig: &Sig, ext: &Extern) -> Result<Deps, Vec<Diagnostic>> {
+    let mut errors = Vec::new();
+    let mut by_output: HashMap<usize, Vec<InputIdx>> = HashMap::new();
     for dep in &ext.deps {
         let mut inputs: Vec<InputIdx> = Vec::new();
         for input in &dep.ins {
@@ -76,89 +89,92 @@ fn deps(sig: &Sig, ext: &Extern, errors: &mut Vec<Diagnostic>) -> Deps {
             ));
             continue;
         };
-        match by_output.get_mut(o.index()) {
-            Some(slot @ None) => *slot = Some(inputs),
-            _ => errors.push(error(
+        if by_output.insert(o.index(), inputs).is_some() {
+            errors.push(error(
                 ErrorCode::E013,
                 dep.span,
                 format!("`{}` has more than one deps entry", dep.out.text),
-            )),
-        }
-    }
-    for (output, entry) in sig.outputs.iter().zip(&by_output) {
-        if entry.is_none() {
-            errors.push(error(
-                ErrorCode::E013,
-                output.port.span,
-                format!("the output `{}` has no deps entry", output.port.name.text),
             ));
         }
     }
-    // An output without an entry is an error above, so the result is unused.
-    by_output
-        .into_iter()
-        .map(Option::unwrap_or_default)
-        .collect()
-}
-
-fn connections<'a>(scope: &Scope<'a>, errors: &mut Vec<Diagnostic>) -> Vec<LinkedInst<'a>> {
-    let mut linked = Vec::new();
-    for inst in &scope.insts {
-        // Pass 3 rejected an unresolved module.
-        let (Some(callee), Some(sig)) = (inst.callee, inst.sig) else {
-            continue;
-        };
-        let mut slots: Vec<Option<&'a Expr>> = sig.inputs.iter().map(|_| None).collect();
-        let mut clock_connected = false;
-        for conn in inst.conns {
-            match sig.port(&conn.port.text) {
-                Some(PortRef::Input(i)) => match slots.get_mut(i.index()) {
-                    Some(slot @ None) => *slot = Some(&conn.expr),
-                    _ => errors.push(repeated(conn)),
-                },
-                Some(PortRef::Clock) => {
-                    if std::mem::replace(&mut clock_connected, true) {
-                        errors.push(repeated(conn));
-                    }
-                    if !scope.is_clock_name(&conn.expr) {
-                        errors.push(error(
-                            ErrorCode::E011,
-                            conn.expr.span(),
-                            format!("the clock input `{}` needs a clock input", conn.port.text),
-                        ));
-                    }
-                }
-                // Pass 3 rejected a port that is not an input.
-                _ => {}
-            }
+    let mut deps = Vec::new();
+    for (i, output) in sig.outputs.iter().enumerate() {
+        match by_output.remove(&i) {
+            Some(inputs) => deps.push(inputs),
+            None => errors.push(error(
+                ErrorCode::E013,
+                output.port.span,
+                format!("the output `{}` has no deps entry", output.port.name.text),
+            )),
         }
-        if sig.clock.is_some() && !clock_connected {
-            errors.push(unconnected(inst, "the clock"));
-        }
-        let mut inputs = Vec::new();
-        for (input, slot) in sig.inputs.iter().zip(slots) {
-            match slot {
-                Some(expr) => inputs.push(expr),
-                None => errors.push(unconnected(inst, &input.port.name.text)),
-            }
-        }
-        linked.push(LinkedInst { callee, inputs });
     }
-    linked
+    if errors.is_empty() {
+        Ok(deps)
+    } else {
+        Err(errors)
+    }
 }
 
-fn repeated(conn: &Conn) -> Diagnostic {
-    error(
-        ErrorCode::E011,
-        conn.span,
-        format!("the input `{}` is connected twice", conn.port.text),
-    )
-}
-
-fn unconnected(inst: &InstDecl, port: &str) -> Diagnostic {
-    error(
-        ErrorCode::E011,
-        inst.span,
-        format!("`{port}` is not connected"),
-    )
+fn connections<'r, 'a>(inst: &'r RxInst<'a>) -> Result<LinkedInst<'r, 'a>, Vec<Diagnostic>> {
+    let mut errors = Vec::new();
+    let mut data: HashMap<InputIdx, &'r Rx<'a>> = HashMap::new();
+    let mut clocks = 0usize;
+    for conn in &inst.conns {
+        let repeated = || {
+            error(
+                ErrorCode::E011,
+                conn.span,
+                format!("the input `{}` is connected twice", conn.port.text),
+            )
+        };
+        match &conn.arg {
+            ConnArg::Data { input, expr, .. } => {
+                if data.insert(*input, expr).is_some() {
+                    errors.push(repeated());
+                }
+            }
+            ConnArg::ClockName => {
+                clocks += 1;
+                if clocks > 1 {
+                    errors.push(repeated());
+                }
+            }
+            ConnArg::ClockOther { expr_span, .. } => {
+                clocks += 1;
+                if clocks > 1 {
+                    errors.push(repeated());
+                }
+                errors.push(error(
+                    ErrorCode::E011,
+                    *expr_span,
+                    format!("the clock input `{}` needs a clock input", conn.port.text),
+                ));
+            }
+        }
+    }
+    let unconnected = |port: &str| {
+        error(
+            ErrorCode::E011,
+            inst.span,
+            format!("`{port}` is not connected"),
+        )
+    };
+    if inst.sig.clock.is_some() && clocks == 0 {
+        errors.push(unconnected("the clock"));
+    }
+    let mut inputs = Vec::new();
+    for (i, input) in inst.sig.inputs.iter().enumerate() {
+        match data.get(&InputIdx::new(i)) {
+            Some(expr) => inputs.push(*expr),
+            None => errors.push(unconnected(&input.port.name.text)),
+        }
+    }
+    if errors.is_empty() {
+        Ok(LinkedInst {
+            callee: inst.callee,
+            inputs,
+        })
+    } else {
+        Err(errors)
+    }
 }
