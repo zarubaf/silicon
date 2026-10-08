@@ -5,6 +5,7 @@
 //! module is the `has_clock` flag, and no [`Expr`] variant mentions it.
 
 use crate::ast::{BinOp, UnOp};
+use crate::diag::Span;
 use crate::{Bits, Pred};
 
 macro_rules! index {
@@ -205,6 +206,8 @@ pub struct Extern {
     pub outputs: Vec<Port>,
     /// The declared combinational dependencies of the outputs.
     pub deps: Deps,
+    /// The start of the `extern` item. `run` reports `E014` here.
+    pub span: Span,
 }
 
 /// A checked design.
@@ -212,7 +215,7 @@ pub struct Extern {
 pub struct Design {
     /// The modules, children first.
     pub modules: Vec<Module>,
-    /// The externs, by [`ExternIdx`].
+    /// The externs, by [`ExternIdx`], in source order.
     pub externs: Vec<Extern>,
     /// The top module.
     pub top: ModIdx,

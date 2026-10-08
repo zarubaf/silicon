@@ -39,6 +39,7 @@ pub(super) fn lower(
             inputs: ports(&sig.inputs),
             outputs: ports(&sig.outputs),
             deps: deps.clone(),
+            span: ext.span,
         })
         .collect();
     typed::Design {
