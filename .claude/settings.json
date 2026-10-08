@@ -18,11 +18,11 @@
   },
   "permissions": {
     "deny": [
-      "Read(target/**)",
-      "Read(.lake/**)",
-      "Read(out/**)",
-      "Read(result*)",
-      "Read(.claude/worktrees/**)"
+      "Read(/target/**)",
+      "Read(/.lake/**)",
+      "Read(/out/**)",
+      "Read(/result*)",
+      "Read(/.claude/worktrees/**)"
     ]
   }
 }
