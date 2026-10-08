@@ -1,0 +1,5 @@
+# Use each name as written after axiom so the scan can match it.
+axioms = []
+
+# Use repository-root-relative paths, such as lean/Silicon/Foo.lean, for file matches.
+native_decide_files = []

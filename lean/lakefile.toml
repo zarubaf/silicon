@@ -1,0 +1,8 @@
+name = "silicon"
+defaultTargets = ["Silicon"]
+
+[leanOptions]
+warningAsError = true
+
+[[lean_lib]]
+name = "Silicon"

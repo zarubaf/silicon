@@ -8,7 +8,7 @@ fmt-check: fmt-rust-check fmt-files-check fmt-just-check
 fmt-rust:
     cargo fmt
 
-check: fmt-check clippy repo-check deny machete
+check: fmt-check clippy repo-check deny machete lean
 
 fmt-rust-check:
     cargo fmt --check
@@ -36,6 +36,9 @@ deny:
 
 machete:
     cargo machete
+
+lean:
+    lake -d lean build --wfail
 
 test:
     cargo nextest run --workspace
