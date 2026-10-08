@@ -89,6 +89,8 @@ fn deps(sig: &Sig, ext: &Extern) -> Result<Deps, Vec<Diagnostic>> {
             ));
             continue;
         };
+        // The typed IR lists the inputs in port order.
+        inputs.sort_by_key(|i| i.index());
         if by_output.insert(o.index(), inputs).is_some() {
             errors.push(error(
                 ErrorCode::E013,
