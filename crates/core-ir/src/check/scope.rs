@@ -29,7 +29,8 @@ pub(super) struct DataPort<'a> {
 pub(super) struct Sig<'a> {
     pub inputs: Vec<DataPort<'a>>,
     pub outputs: Vec<DataPort<'a>>,
-    pub clock: Option<&'a Port>,
+    /// The first clock input and its position in the port list.
+    pub clock: Option<(usize, &'a Port)>,
     ports: HashMap<&'a str, PortRef>,
 }
 
@@ -41,7 +42,7 @@ impl<'a> Sig<'a> {
             clock: None,
             ports: HashMap::new(),
         };
-        for port in ports {
+        for (position, port) in ports.iter().enumerate() {
             let entry = match (port.dir, port.ty) {
                 (Dir::Input, Ty::Bits(width)) => {
                     let idx = InputIdx::new(sig.inputs.len());
@@ -55,7 +56,7 @@ impl<'a> Sig<'a> {
                 }
                 (Dir::Input, Ty::Clock) => {
                     // Pass 5 rejects a second clock input.
-                    sig.clock.get_or_insert(port);
+                    sig.clock.get_or_insert((position, port));
                     PortRef::Clock
                 }
                 (Dir::Output, Ty::Clock) => PortRef::ClockOut,

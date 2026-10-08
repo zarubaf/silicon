@@ -204,7 +204,19 @@ pub struct Module {
     pub deps: Deps,
 }
 
+/// A clock input port, kept for the signature of an extern.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClockPort {
+    /// The port name.
+    pub name: String,
+    /// The position of the port among all ports of its unit.
+    pub position: usize,
+}
+
 /// An extern unit: ports and a dependency declaration, no body.
+///
+/// An instance of a clocked extern gets the clock of its parent, as an
+/// instance of a clocked module does: a design has at most one clock.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Extern {
     /// The extern name.
@@ -213,6 +225,8 @@ pub struct Extern {
     pub inputs: Vec<Port>,
     /// The outputs, by [`OutputIdx`].
     pub outputs: Vec<Port>,
+    /// The clock input, if the extern has one.
+    pub clock: Option<ClockPort>,
     /// The declared combinational dependencies of the outputs.
     pub deps: Deps,
     /// The start of the `extern` item. `run` reports `E014` here.

@@ -45,6 +45,10 @@ pub(super) fn lower(
             name: ext.name.text.clone(),
             inputs: ports(&sig.inputs, &widths.inputs),
             outputs: ports(&sig.outputs, &widths.outputs),
+            clock: sig.clock.map(|(position, port)| typed::ClockPort {
+                name: port.name.text.clone(),
+                position,
+            }),
             deps: deps.clone(),
             span: ext.span,
         })
