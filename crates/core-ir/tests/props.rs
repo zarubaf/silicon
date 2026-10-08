@@ -289,6 +289,10 @@ impl Coverage {
     /// the parent combinationally.
     fn paths(&mut self, d: &typed::Design) {
         for m in &d.modules {
+            let nexts = m.regs.iter().map(|r| &r.next);
+            if m.assigns.iter().chain(nexts).any(reads_output) {
+                self.note("output-read");
+            }
             for assign in &m.assigns {
                 let through = inst_outs(assign).into_iter().any(|(u, o)| {
                     let inst = &m.insts[u.index()];
@@ -406,6 +410,26 @@ fn reads_input(e: &typed::Expr) -> bool {
     }
 }
 
+/// Whether a typed expression reads an output of its own module.
+fn reads_output(e: &typed::Expr) -> bool {
+    match e {
+        typed::Expr::Output(_) => true,
+        typed::Expr::Input(_)
+        | typed::Expr::InstOut(..)
+        | typed::Expr::Let(_)
+        | typed::Expr::Reg(_)
+        | typed::Expr::Const(_) => false,
+        typed::Expr::Un(_, a)
+        | typed::Expr::Extract(a, ..)
+        | typed::Expr::Replicate(a, _)
+        | typed::Expr::Read(_, a) => reads_output(a),
+        typed::Expr::Bin(_, a, b) | typed::Expr::Icmp(_, a, b) => {
+            reads_output(a) || reads_output(b)
+        }
+        typed::Expr::Mux(c, t, e) => reads_output(c) || reads_output(t) || reads_output(e),
+    }
+}
+
 /// The instance outputs that a typed expression reads directly, through
 /// slices and operations but not through `let` bindings.
 fn inst_outs(e: &typed::Expr) -> Vec<(typed::InstIdx, typed::OutputIdx)> {
@@ -480,6 +504,7 @@ fn the_generator_covers_the_core_ir() {
         "path-through-child",
         "handshake",
         "shuffled-conns",
+        "output-read",
     ];
     let missing: Vec<_> = forms.iter().filter(|f| !seen.forms.contains(**f)).collect();
     assert!(missing.is_empty(), "never generated: {missing:?}");

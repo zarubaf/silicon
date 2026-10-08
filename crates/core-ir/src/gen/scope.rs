@@ -12,7 +12,7 @@ pub(super) enum Source {
     Input(usize),
     /// A register. A read of it makes no edge.
     State,
-    /// A node of the graph: a `let` or an instance output.
+    /// A node of the graph: a `let`, an output, or an instance output.
     Node(usize),
 }
 

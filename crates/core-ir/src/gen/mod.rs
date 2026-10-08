@@ -15,7 +15,9 @@
 //!   this sequence reads only inputs, registers, memories, and earlier
 //!   entries. A deferred connection of an instance can also read later
 //!   entries, but no value that depends on an instance output that the
-//!   connection feeds. The combinational graph thus has no cycle.
+//!   connection feeds. The outputs follow in port order, and an output can
+//!   read the earlier outputs. The registers and the memories read the
+//!   complete scope. The combinational graph thus has no cycle.
 //! - A module instantiates only earlier modules. The top is the last module.
 //!   It instantiates each module that no other module instantiates, so it
 //!   reaches all modules, at most 3 levels deep.
@@ -282,9 +284,11 @@ impl Tape {
         }
         let children: Vec<&Interface> = chosen.iter().map(|&c| &library[c]).collect();
         self.definitions(&children, &mut body);
+        let (deps, assigns) = self.outputs(&pins, &mut body);
 
         let scope = &body.scope;
         let mut stmts = std::mem::take(&mut body.stmts);
+        stmts.extend(assigns);
         for (reg, width) in &regs {
             stmts.push(self.reg(reg, *width, scope));
             stmts.push(Stmt::Next {
@@ -295,18 +299,6 @@ impl Tape {
         }
         for mem in &mems {
             self.mem(mem, scope, &mut stmts);
-        }
-        let mut deps = Vec::new();
-        for pin in &pins {
-            if let Pin::Output(port, width) = pin {
-                let expr = self.expr(scope, *width, NESTING);
-                deps.push(body.graph.support(&scope.sources(&expr)).inputs);
-                stmts.push(Stmt::Assign {
-                    out: name(port.clone()),
-                    expr,
-                    span: Span::default(),
-                });
-            }
         }
         for mut inst in std::mem::take(&mut body.insts) {
             self.shuffle(&mut inst.conns);
@@ -333,6 +325,34 @@ impl Tape {
             span: Span::default(),
         };
         (interface, module, chosen)
+    }
+
+    /// The `assign` of each output in port order, and the inputs that each
+    /// output reads combinationally. Each output joins the scope after its
+    /// `assign`, so a later output, a register, or a memory can read it.
+    fn outputs(&mut self, pins: &[Pin], body: &mut Body) -> (Vec<BTreeSet<usize>>, Vec<Stmt>) {
+        let mut deps = Vec::new();
+        let mut assigns = Vec::new();
+        for pin in pins {
+            if let Pin::Output(port, width) = pin {
+                let expr = self.expr(&body.scope, *width, NESTING);
+                let sources = body.scope.sources(&expr);
+                let node = body.graph.node();
+                body.graph.read(node, &sources);
+                deps.push(body.graph.support(&sources).inputs);
+                body.scope.values.push(Value {
+                    expr: reference(port),
+                    width: *width,
+                    source: Source::Node(node),
+                });
+                assigns.push(Stmt::Assign {
+                    out: name(port.clone()),
+                    expr,
+                    span: Span::default(),
+                });
+            }
+        }
+        (deps, assigns)
     }
 
     /// The ports of a module in a random order.
