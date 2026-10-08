@@ -34,6 +34,7 @@ silicon/
 ├── CLAUDE.md              # symlink to AGENTS.md
 ├── CONTEXT.md             # project vocabulary
 ├── README.md              # what Silicon is, `just` entry points
+├── LICENSE                # Apache-2.0
 ├── flake.nix  flake.lock  .envrc
 ├── justfile               # the only entry point
 ├── Cargo.toml  Cargo.lock
@@ -200,7 +201,7 @@ The same file disables commit attribution.
 1. **Issue.** The issue template has three fields: Goal, Done criteria (mechanical), and Area.
 2. **Worktree.** Claude Code creates it at `.claude/worktrees/<branch>`. The branch name is `<type>/<issue>-<slug>`, for example `feat/42-core-ir-memories`.
 3. **Work.** Hand-off notes and plans go to `.scratch/`. Git ignores this directory, and it dies with the worktree.
-4. **Pull request.** The pull request must pass `just ci` and the cross-vendor review. The merge queue rebase-merges it. History stays linear, and each commit stays separate.
+4. **Pull request.** The pull request must pass `just ci` and the cross-vendor review. The orchestrator then rebase-merges it. History stays linear, and each commit stays separate.
 5. **Cleanup.** The worktree and the branch are deleted.
 
 Worktree hygiene:
@@ -229,6 +230,12 @@ It rejects:
 5. An attribution trailer.
 
 `lefthook` runs the git hooks. Nix pins it. `lefthook.yml` calls `just` recipes only.
+The `pre-push` hook runs `just ci`.
+
+The repository is private on a personal GitHub account and uses the Apache-2.0 license.
+A personal account has no merge queue, and branch rules on a private repository need GitHub Pro.
+The orchestrator thus merges only after CI passes on the pull request.
+A merge queue replaces this step when the repository moves to an organization.
 
 ## 8. Formatting
 
