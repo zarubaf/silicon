@@ -253,17 +253,11 @@ const PORTS: &str = "\
 
 #[test]
 fn input_lines_allow_spaces_tabs_and_leading_zeros() {
-    let design = design(PORTS);
-    for line in [
+    let lines = [
         "in=(a 1 x 1099511627775)",
         " \tin=( a\t001   x 1099511627775 )\t ",
-    ] {
-        let inputs = parse_input(line, top(&design)).expect("valid");
-        assert_eq!(
-            print_output(top(&design), &inputs),
-            "out=(p 1 q 1099511627775)\n"
-        );
-    }
+    ];
+    assert_eq!(run(PORTS, &lines), ["out=(p 1 q 1099511627775)\n"; 2]);
 }
 
 #[test]

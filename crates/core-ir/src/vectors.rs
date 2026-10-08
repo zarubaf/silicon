@@ -5,6 +5,7 @@ use std::fmt;
 use num_bigint::BigUint;
 
 use crate::Bits;
+use crate::interp::{Inputs, Outputs};
 use crate::typed::Module;
 
 /// A fault in an input line. `run` reports it as a usage error, not as a
@@ -49,7 +50,7 @@ fn is_blank(c: char) -> bool {
 ///
 /// # Errors
 /// Returns the first fault of the line.
-pub fn parse_input(line: &str, top: &Module) -> Result<Vec<Bits>, VectorError> {
+pub fn parse_input(line: &str, top: &Module) -> Result<Inputs, VectorError> {
     let body = line
         .trim_matches(is_blank)
         .strip_prefix("in=(")
@@ -85,16 +86,16 @@ pub fn parse_input(line: &str, top: &Module) -> Result<Vec<Bits>, VectorError> {
     if let Some(port) = top.inputs.get(values.len()) {
         return Err(VectorError::Missing(port.name.clone()));
     }
-    Ok(values)
+    Ok(Inputs(values))
 }
 
 /// Prints the `out=` line of the outputs `values` of `top`, with its LF.
 #[must_use]
-pub fn print_output(top: &Module, values: &[Bits]) -> String {
+pub fn print_output(top: &Module, values: &Outputs) -> String {
     let pairs: Vec<String> = top
         .outputs
         .iter()
-        .zip(values)
+        .zip(&values.0)
         .map(|(port, value)| format!("{} {}", port.name, value.to_biguint()))
         .collect();
     format!("out=({})\n", pairs.join(" "))
