@@ -3,7 +3,7 @@
 //! of each instance.
 
 use super::error;
-use super::rx::{ConnArg, Rx, RxInst, RxModule};
+use super::rx::{ConnArg, Ex, ExInst, ExModule};
 use super::scope::{PortRef, Sig};
 use crate::ast::{Design, Extern, Item};
 use crate::diag::{Diagnostic, ErrorCode};
@@ -11,24 +11,24 @@ use crate::typed::{Callee, Deps, InputIdx};
 use std::collections::HashMap;
 
 /// The arguments of one instance.
-pub(super) struct LinkedInst<'r, 'a> {
+pub(super) struct LinkedInst<'r> {
     pub callee: Callee,
     /// By input of the callee. The clock input is not among them.
-    pub inputs: Vec<&'r Rx<'a>>,
+    pub inputs: Vec<&'r Ex>,
 }
 
-pub(super) struct Linked<'r, 'a> {
+pub(super) struct Linked<'r> {
     /// For each extern, its `deps` by output.
     pub extern_deps: Vec<Deps>,
     /// For each module, its instances.
-    pub insts: Vec<Vec<LinkedInst<'r, 'a>>>,
+    pub insts: Vec<Vec<LinkedInst<'r>>>,
 }
 
-pub(super) fn check<'r, 'a>(
+pub(super) fn check<'r>(
     design: &Design,
     externs: &[Sig],
-    modules: &'r [RxModule<'a>],
-) -> Result<Linked<'r, 'a>, Diagnostic> {
+    modules: &'r [ExModule],
+) -> Result<Linked<'r>, Diagnostic> {
     let mut errors = Vec::new();
     let units = design.items.iter().filter_map(|item| match item {
         Item::Extern(e) => Some(e),
@@ -115,9 +115,9 @@ fn deps(sig: &Sig, ext: &Extern) -> Result<Deps, Vec<Diagnostic>> {
     }
 }
 
-fn connections<'r, 'a>(inst: &'r RxInst<'a>) -> Result<LinkedInst<'r, 'a>, Vec<Diagnostic>> {
+fn connections<'r>(inst: &'r ExInst) -> Result<LinkedInst<'r>, Vec<Diagnostic>> {
     let mut errors = Vec::new();
-    let mut data: HashMap<InputIdx, &'r Rx<'a>> = HashMap::new();
+    let mut data: HashMap<InputIdx, &'r Ex> = HashMap::new();
     let mut clocks = 0usize;
     for conn in &inst.conns {
         let repeated = || {

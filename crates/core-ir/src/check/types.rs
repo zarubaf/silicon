@@ -1,8 +1,8 @@
 //! Pass 4 (`E005`, declared sizes) and pass 7 (`E004`, operation widths).
 
-use super::error;
-use super::rx::{Rx, RxModule, const_bits};
+use super::rx::{Ex, ExModule, RawConst, RawModule, Rx, SizedModule, const_bits};
 use super::scope::{stmt_exprs, visit};
+use super::{error, first_error};
 use crate::ast::{BinOp, Design, Expr, Item, Num, Port, Stmt, Ty};
 use crate::diag::{Diagnostic, ErrorCode, Span};
 
@@ -18,7 +18,30 @@ pub(super) fn address_width(depth: u32) -> u32 {
 
 // Pass 4.
 
-pub(super) fn declared(design: &Design) -> Vec<Diagnostic> {
+/// Pass 4. The constants of the resolved modules become values.
+pub(super) fn declared<'a>(
+    design: &Design,
+    modules: Vec<RawModule<'a>>,
+) -> Result<Vec<SizedModule<'a>>, Diagnostic> {
+    let mut errors = sizes(design);
+    let mut sized = Vec::new();
+    for module in modules {
+        let mut constant = |width, raw: RawConst| match const_bits(width, raw.value, raw.value_span)
+        {
+            Ok(bits) => Some(bits),
+            Err(d) => {
+                errors.push(d);
+                None
+            }
+        };
+        let converted = module.map_exprs(&mut |e| e.map(&mut Some, &mut constant));
+        sized.extend(converted);
+    }
+    first_error(errors)?;
+    Ok(sized)
+}
+
+fn sizes(design: &Design) -> Vec<Diagnostic> {
     let mut errors = Vec::new();
     for item in &design.items {
         match item {
@@ -106,7 +129,7 @@ fn expr_sizes(expr: &Expr, errors: &mut Vec<Diagnostic>) {
 
 // Pass 7.
 
-pub(super) fn operations(modules: &[RxModule]) -> Vec<Diagnostic> {
+pub(super) fn operations(modules: &[ExModule]) -> Vec<Diagnostic> {
     let mut errors = Vec::new();
     for module in modules {
         for o in module.obligations() {
@@ -142,10 +165,10 @@ fn equal(errors: &mut Vec<Diagnostic>, l: u32, r: u32, span: Span) -> bool {
 
 /// The width of an expression. An error in an operand gives `None`: the
 /// operand is reported, and its parent has no width to check.
-fn width(expr: &Rx, errors: &mut Vec<Diagnostic>) -> Option<u32> {
+fn width(expr: &Ex, errors: &mut Vec<Diagnostic>) -> Option<u32> {
     match expr {
         Rx::Input(_, w) | Rx::Let(_, w) | Rx::Reg(_, w) | Rx::InstOut(_, _, w) => Some(*w),
-        Rx::Clock(_) => None,
+        Rx::Clock(never) => match *never {},
         Rx::Const { width, .. } => Some(width.value),
         Rx::Un(_, arg) => width(arg, errors),
         Rx::Bin {
