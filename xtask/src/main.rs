@@ -7,6 +7,8 @@ mod lean;
 mod prose;
 mod repo;
 mod review;
+#[cfg(test)]
+mod testgit;
 mod tree;
 mod violation;
 mod vocab;

@@ -72,14 +72,7 @@ fn git(dir: &Path, args: &[&str]) -> Result<Vec<u8>> {
 mod tests {
     use super::*;
 
-    fn git(dir: &std::path::Path, args: &[&str]) {
-        let status = Command::new("git")
-            .args(args)
-            .current_dir(dir)
-            .status()
-            .unwrap();
-        assert!(status.success(), "git {args:?} failed");
-    }
+    use crate::testgit::run as git;
 
     fn init(dir: &std::path::Path) {
         git(dir, &["init", "--quiet"]);
