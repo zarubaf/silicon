@@ -246,7 +246,11 @@ fn binary(op: BinOp, l: u32, r: u32, span: Span, errors: &mut Vec<Diagnostic>) -
 /// operand is reported, and its parent has no width to check.
 fn width(expr: &Ex, errors: &mut Vec<Diagnostic>) -> Option<u32> {
     match expr {
-        Rx::Input(_, w) | Rx::Let(_, w) | Rx::Reg(_, w) | Rx::InstOut(_, _, w) => Some(*w),
+        Rx::Input(_, w)
+        | Rx::Let(_, w)
+        | Rx::Reg(_, w)
+        | Rx::Output(_, w)
+        | Rx::InstOut(_, _, w) => Some(*w),
         Rx::Clock(never) => match *never {},
         Rx::Const { width, .. } => Some(width.value),
         Rx::Un(_, arg) => width(arg, errors),

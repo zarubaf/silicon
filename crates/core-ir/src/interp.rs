@@ -243,6 +243,7 @@ impl Frames {
         match expr {
             Expr::Input(i) => frame.inputs.known[i.index()],
             Expr::Let(l) => frame.lets.known[l.index()],
+            Expr::Output(o) => frame.outs.known[o.index()],
             Expr::InstOut(u, o) => self.0[frame.children[u.index()]].outs.known[o.index()],
             Expr::Reg(_) | Expr::Const(_) => true,
             Expr::Read(_, a) | Expr::Un(_, a) | Expr::Extract(a, ..) | Expr::Replicate(a, _) => {
@@ -260,6 +261,7 @@ impl Frames {
         match expr {
             Expr::Input(i) => frame.inputs.values[i.index()].clone(),
             Expr::Let(l) => frame.lets.values[l.index()].clone(),
+            Expr::Output(o) => frame.outs.values[o.index()].clone(),
             Expr::Reg(r) => frame.regs[r.index()].clone(),
             Expr::InstOut(u, o) => self.0[frame.children[u.index()]].outs.values[o.index()].clone(),
             Expr::Const(value) => value.clone(),

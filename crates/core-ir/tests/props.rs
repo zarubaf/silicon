@@ -394,6 +394,7 @@ fn reads_input(e: &typed::Expr) -> bool {
         typed::Expr::Input(_) => true,
         typed::Expr::InstOut(..)
         | typed::Expr::Let(_)
+        | typed::Expr::Output(_)
         | typed::Expr::Reg(_)
         | typed::Expr::Const(_) => false,
         typed::Expr::Un(_, a)
@@ -412,6 +413,7 @@ fn inst_outs(e: &typed::Expr) -> Vec<(typed::InstIdx, typed::OutputIdx)> {
         typed::Expr::InstOut(u, o) => vec![(*u, *o)],
         typed::Expr::Input(_)
         | typed::Expr::Let(_)
+        | typed::Expr::Output(_)
         | typed::Expr::Reg(_)
         | typed::Expr::Const(_) => vec![],
         typed::Expr::Un(_, a)
