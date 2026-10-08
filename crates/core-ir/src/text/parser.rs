@@ -388,15 +388,18 @@ impl Parser {
             Tok::Name(_) => Ok(Expr::Ref(self.name()?)),
             Tok::Dotted(inst, port) => {
                 let span = self.span();
-                if is_keyword(&inst) || is_keyword(&port) {
-                    return Err(self.fail("a name"));
-                }
-                self.bump();
                 let inst_len = inst.chars().fold(0u32, |n, _| n.saturating_add(1));
                 let port_span = Span {
                     line: span.line,
                     col: span.col.saturating_add(inst_len).saturating_add(1),
                 };
+                if is_keyword(&inst) {
+                    return Err(self.fail("a name"));
+                }
+                if is_keyword(&port) {
+                    return Err(syntax_error(port_span, "expected a name".to_string()));
+                }
+                self.bump();
                 Ok(Expr::InstOut {
                     inst: Name { text: inst, span },
                     port: Name {

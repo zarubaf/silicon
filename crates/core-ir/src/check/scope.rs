@@ -15,8 +15,8 @@ pub(super) enum PortRef {
     /// The one clock input.
     Clock,
     Output(OutputIdx),
-    /// A clock output or a second clock input. Pass 5 rejects both.
-    Stray,
+    /// A clock output. Pass 5 rejects it, and so it rejects every read of it.
+    ClockOut,
 }
 
 /// A data port with its width.
@@ -59,11 +59,12 @@ impl<'a> Sig<'a> {
                     });
                     PortRef::Output(idx)
                 }
-                (Dir::Input, Ty::Clock) if sig.clock.is_none() => {
-                    sig.clock = Some(port);
+                (Dir::Input, Ty::Clock) => {
+                    // Pass 5 rejects a second clock input.
+                    sig.clock.get_or_insert(port);
                     PortRef::Clock
                 }
-                (_, Ty::Clock) => PortRef::Stray,
+                (Dir::Output, Ty::Clock) => PortRef::ClockOut,
             };
             sig.ports.entry(&port.name.text).or_insert(entry);
         }
@@ -116,10 +117,6 @@ impl<'a> Env<'a> {
         self.items.get(name).copied()
     }
 
-    pub fn module_sig(&self, module: ModIdx) -> Option<&Sig<'a>> {
-        self.modules.get(module.index())
-    }
-
     pub fn sig(&self, callee: Callee) -> Option<&Sig<'a>> {
         match callee {
             Callee::Module(m) => self.modules.get(m.index()),
@@ -127,8 +124,8 @@ impl<'a> Env<'a> {
         }
     }
 
-    pub fn extern_sig(&self, ext: ExternIdx) -> Option<&Sig<'a>> {
-        self.externs.get(ext.index())
+    pub fn externs(&self) -> &[Sig<'a>] {
+        &self.externs
     }
 }
 
@@ -138,7 +135,7 @@ pub(super) enum Binding {
     Input(InputIdx),
     Clock,
     Output(OutputIdx),
-    Stray,
+    ClockOut,
     Let(LetIdx),
     Reg(RegIdx),
     Mem(MemIdx),
@@ -155,7 +152,6 @@ pub(super) struct LetDecl<'a> {
 pub(super) struct RegDecl<'a> {
     pub name: &'a Name,
     pub width: u32,
-    pub clk: &'a Name,
     pub reset: Option<&'a Reset>,
     pub span: Span,
 }
@@ -164,7 +160,6 @@ pub(super) struct MemDecl<'a> {
     pub name: &'a Name,
     pub width: u32,
     pub depth: u32,
-    pub clk: &'a Name,
     pub span: Span,
 }
 
@@ -174,13 +169,14 @@ pub(super) struct InstDecl<'a> {
     pub conns: &'a [Conn],
     /// `None` when the module name does not resolve; pass 3 reports that.
     pub callee: Option<Callee>,
+    pub sig: Option<&'a Sig<'a>>,
     pub span: Span,
 }
 
 /// The declarations and the names of one module body.
 pub(super) struct Scope<'a> {
     pub module: &'a Module,
-    pub index: ModIdx,
+    pub sig: &'a Sig<'a>,
     pub lets: Vec<LetDecl<'a>>,
     pub regs: Vec<RegDecl<'a>>,
     pub mems: Vec<MemDecl<'a>>,
@@ -190,37 +186,35 @@ pub(super) struct Scope<'a> {
 
 impl<'a> Scope<'a> {
     /// Builds the scope of every module, in item order.
-    pub fn build_all(design: &'a Design, env: &Env<'a>) -> Vec<Scope<'a>> {
+    pub fn build_all(design: &'a Design, env: &'a Env<'a>) -> Vec<Scope<'a>> {
         let modules = design.items.iter().filter_map(|item| match item {
             Item::Module(m) => Some(m),
             Item::Extern(_) => None,
         });
-        (0usize..)
-            .zip(modules)
-            .map(|(i, module)| Scope::build(module, ModIdx::new(i), env))
+        modules
+            .zip(&env.modules)
+            .map(|(module, sig)| Scope::build(module, sig, env))
             .collect()
     }
 
-    fn build(module: &'a Module, index: ModIdx, env: &Env<'a>) -> Scope<'a> {
+    fn build(module: &'a Module, sig: &'a Sig<'a>, env: &'a Env<'a>) -> Scope<'a> {
         let mut scope = Scope {
             module,
-            index,
+            sig,
             lets: Vec::new(),
             regs: Vec::new(),
             mems: Vec::new(),
             insts: Vec::new(),
             names: HashMap::new(),
         };
-        if let Some(sig) = env.module_sig(index) {
-            for (name, entry) in sig.entries() {
-                let binding = match entry {
-                    PortRef::Input(i) => Binding::Input(i),
-                    PortRef::Clock => Binding::Clock,
-                    PortRef::Output(o) => Binding::Output(o),
-                    PortRef::Stray => Binding::Stray,
-                };
-                scope.names.insert(name, binding);
-            }
+        for (name, entry) in sig.entries() {
+            let binding = match entry {
+                PortRef::Input(i) => Binding::Input(i),
+                PortRef::Clock => Binding::Clock,
+                PortRef::Output(o) => Binding::Output(o),
+                PortRef::ClockOut => Binding::ClockOut,
+            };
+            scope.names.insert(name, binding);
         }
         for stmt in &module.stmts {
             scope.declare(stmt, env);
@@ -228,7 +222,7 @@ impl<'a> Scope<'a> {
         scope
     }
 
-    fn declare(&mut self, stmt: &'a Stmt, env: &Env<'a>) {
+    fn declare(&mut self, stmt: &'a Stmt, env: &'a Env<'a>) {
         match stmt {
             Stmt::Let {
                 name,
@@ -248,15 +242,14 @@ impl<'a> Scope<'a> {
             Stmt::Reg {
                 name,
                 width,
-                clk,
                 reset,
                 span,
+                ..
             } => {
                 let idx = RegIdx::new(self.regs.len());
                 self.regs.push(RegDecl {
                     name,
                     width: width.value,
-                    clk,
                     reset: reset.as_ref(),
                     span: *span,
                 });
@@ -266,15 +259,14 @@ impl<'a> Scope<'a> {
                 name,
                 width,
                 depth,
-                clk,
                 span,
+                ..
             } => {
                 let idx = MemIdx::new(self.mems.len());
                 self.mems.push(MemDecl {
                     name,
                     width: width.value,
                     depth: depth.value,
-                    clk,
                     span: *span,
                 });
                 self.names.entry(&name.text).or_insert(Binding::Mem(idx));
@@ -291,6 +283,7 @@ impl<'a> Scope<'a> {
                     module,
                     conns,
                     callee: env.callee(&module.text),
+                    sig: env.callee(&module.text).and_then(|c| env.sig(c)),
                     span: *span,
                 });
                 self.names.entry(&name.text).or_insert(Binding::Inst(idx));
@@ -303,9 +296,9 @@ impl<'a> Scope<'a> {
         self.names.get(name).copied()
     }
 
-    /// The expressions of the body that compute values. The connections to
-    /// clock inputs of instances are not among them.
-    pub fn value_exprs(&self, env: &Env<'a>) -> Vec<&'a Expr> {
+    /// The expressions of the body that compute values. A single name of the
+    /// clock input, connected to a clock input of an instance, is not one.
+    pub fn value_exprs(&self) -> Vec<&'a Expr> {
         let mut roots = Vec::new();
         for stmt in &self.module.stmts {
             match stmt {
@@ -314,17 +307,25 @@ impl<'a> Scope<'a> {
             }
         }
         for inst in &self.insts {
-            let sig = inst.callee.and_then(|c| env.sig(c));
             for conn in inst.conns {
-                let is_clock = sig
+                let to_clock = inst
+                    .sig
                     .and_then(|s| s.port(&conn.port.text))
                     .is_some_and(|p| matches!(p, PortRef::Clock));
-                if !is_clock {
+                if !(to_clock && self.is_clock_name(&conn.expr)) {
                     roots.push(&conn.expr);
                 }
             }
         }
         roots
+    }
+
+    /// Whether the expression is a single name of a clock input.
+    pub fn is_clock_name(&self, expr: &Expr) -> bool {
+        matches!(
+            expr,
+            Expr::Ref(name) if matches!(self.lookup(&name.text), Some(Binding::Clock))
+        )
     }
 }
 

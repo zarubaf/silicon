@@ -2,7 +2,7 @@
 //! write ports of each memory are numbered `0` to `k-1`.
 
 use super::error;
-use super::scope::{Binding, DataPort, Env, Scope};
+use super::scope::{Binding, DataPort, Scope};
 use crate::ast::{Expr, Stmt};
 use crate::diag::{Diagnostic, ErrorCode, Span};
 
@@ -21,11 +21,11 @@ pub(super) struct Structure<'a> {
     pub writes: Vec<Vec<WritePort<'a>>>,
 }
 
-pub(super) fn check<'a>(env: &Env, scopes: &[Scope<'a>]) -> Result<Vec<Structure<'a>>, Diagnostic> {
+pub(super) fn check<'a>(scopes: &[Scope<'a>]) -> Result<Vec<Structure<'a>>, Diagnostic> {
     let mut errors = Vec::new();
     let mut structures = Vec::new();
     for scope in scopes {
-        structures.push(module(env, scope, &mut errors));
+        structures.push(module(scope, &mut errors));
     }
     match errors.into_iter().min_by_key(|d| d.span) {
         Some(d) => Err(d),
@@ -33,32 +33,28 @@ pub(super) fn check<'a>(env: &Env, scopes: &[Scope<'a>]) -> Result<Vec<Structure
     }
 }
 
-/// Adds `item` to the slot at `index` and reports a misuse: no such slot, or a
-/// slot that already held an item.
+/// Adds `item` to the slot at `index` and reports a slot that already held an
+/// item. Pass 3 rejected a target of the wrong kind, so `index` is `None` only
+/// for a design that already failed.
 fn define<T>(
     slots: &mut [Vec<T>],
     index: Option<usize>,
     item: T,
-    misuse: (ErrorCode, Span, &str, &str),
+    repeated: (ErrorCode, Span, &str),
     errors: &mut Vec<Diagnostic>,
 ) {
-    let (code, span, absent, repeated) = misuse;
-    match index.and_then(|i| slots.get_mut(i)) {
-        None => errors.push(error(code, span, absent)),
-        Some(slot) => {
-            if !slot.is_empty() {
-                errors.push(error(code, span, repeated));
-            }
-            slot.push(item);
+    let (code, span, message) = repeated;
+    if let Some(slot) = index.and_then(|i| slots.get_mut(i)) {
+        if !slot.is_empty() {
+            errors.push(error(code, span, message));
         }
+        slot.push(item);
     }
 }
 
-fn module<'a>(env: &Env, scope: &Scope<'a>, errors: &mut Vec<Diagnostic>) -> Structure<'a> {
+fn module<'a>(scope: &Scope<'a>, errors: &mut Vec<Diagnostic>) -> Structure<'a> {
     let mut nexts: Vec<Vec<&'a Expr>> = scope.regs.iter().map(|_| Vec::new()).collect();
-    let outputs = env
-        .module_sig(scope.index)
-        .map_or(&[][..], |s| &s.outputs[..]);
+    let outputs = &scope.sig.outputs;
     let mut assigns: Vec<Vec<&'a Expr>> = outputs.iter().map(|_| Vec::new()).collect();
     let mut writes: Vec<Vec<(u32, WritePort<'a>)>> =
         scope.mems.iter().map(|_| Vec::new()).collect();
@@ -69,26 +65,16 @@ fn module<'a>(env: &Env, scope: &Scope<'a>, errors: &mut Vec<Diagnostic>) -> Str
                     Some(Binding::Reg(i)) => Some(i.index()),
                     _ => None,
                 };
-                let misuse = (
-                    ErrorCode::E006,
-                    *span,
-                    "`next` does not name a register",
-                    "the register has a second `next`",
-                );
-                define(&mut nexts, target, expr, misuse, errors);
+                let repeated = (ErrorCode::E006, *span, "the register has a second `next`");
+                define(&mut nexts, target, expr, repeated, errors);
             }
             Stmt::Assign { out, expr, span } => {
                 let target = match scope.lookup(&out.text) {
                     Some(Binding::Output(o)) => Some(o.index()),
                     _ => None,
                 };
-                let misuse = (
-                    ErrorCode::E007,
-                    *span,
-                    "`assign` does not name an output",
-                    "the output has a second `assign`",
-                );
-                define(&mut assigns, target, expr, misuse, errors);
+                let repeated = (ErrorCode::E007, *span, "the output has a second `assign`");
+                define(&mut assigns, target, expr, repeated, errors);
             }
             Stmt::Write {
                 mem,

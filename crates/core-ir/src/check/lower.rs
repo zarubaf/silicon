@@ -1,24 +1,28 @@
-//! Lowers a checked design to the typed core IR. Every lookup here succeeded
-//! in an earlier pass; a lookup that fails reports the error of that pass.
+//! Lowers a checked design to the typed core IR. The earlier passes resolved
+//! the targets, the arguments, and the `deps`. The name lookups here repeat
+//! pass 3 and report its code if one ever fails.
 
 use super::error;
-use super::scope::{Binding, Env, PortRef, Scope};
+use super::instances::{Linked, LinkedInst};
+use super::scope::{Binding, DataPort, Env, PortRef, Scope};
 use super::structure::Structure;
 use crate::Bits;
 use crate::ast::{self, Design, Item};
-use crate::diag::{Diagnostic, ErrorCode, Span};
-use crate::typed::{self, Deps, ExternIdx, Inst, Let, Mem, Module, Port, Reg, Write};
+use crate::diag::{Diagnostic, ErrorCode};
+use crate::typed::{self, Callee, Deps, Inst, Let, Mem, Module, Port, Reg, Write};
 
 pub(super) fn lower(
     design: &Design,
     env: &Env,
     scopes: &[Scope],
     structures: &[Structure],
+    linked: &Linked,
 ) -> Result<typed::Design, Diagnostic> {
     let modules = scopes
         .iter()
         .zip(structures)
-        .map(|(scope, structure)| Lowerer { env, scope }.module(structure))
+        .zip(&linked.insts)
+        .map(|((scope, structure), insts)| Lowerer { scope }.module(structure, insts))
         .collect::<Result<Vec<_>, _>>()?;
     let externs = design
         .items
@@ -27,14 +31,22 @@ pub(super) fn lower(
             Item::Extern(e) => Some(e),
             Item::Module(_) => None,
         })
-        .zip(0usize..)
-        .map(|(ext, i)| lower_extern(env, ExternIdx::new(i), ext))
-        .collect::<Result<Vec<_>, _>>()?;
-    let top = scopes
-        .iter()
-        .find(|s| s.module.name.text == design.top.text)
-        .map(|s| s.index)
-        .ok_or_else(|| error(ErrorCode::E003, design.top.span, "the top is not a module"))?;
+        .zip(env.externs())
+        .zip(&linked.extern_deps)
+        .map(|((ext, sig), deps)| typed::Extern {
+            name: ext.name.text.clone(),
+            inputs: ports(&sig.inputs),
+            outputs: ports(&sig.outputs),
+            deps: deps.clone(),
+        })
+        .collect();
+    let Some(Callee::Module(top)) = env.callee(&design.top.text) else {
+        return Err(error(
+            ErrorCode::E003,
+            design.top.span,
+            "the top is not a module",
+        ));
+    };
     Ok(typed::Design {
         modules,
         externs,
@@ -42,7 +54,7 @@ pub(super) fn lower(
     })
 }
 
-fn ports(ports: &[super::scope::DataPort]) -> Vec<Port> {
+fn ports(ports: &[DataPort]) -> Vec<Port> {
     ports
         .iter()
         .map(|p| Port {
@@ -52,67 +64,13 @@ fn ports(ports: &[super::scope::DataPort]) -> Vec<Port> {
         .collect()
 }
 
-fn missing_sig(span: Span) -> Diagnostic {
-    error(ErrorCode::E003, span, "the unit has no interface")
-}
-
-fn lower_extern(
-    env: &Env,
-    index: ExternIdx,
-    ext: &ast::Extern,
-) -> Result<typed::Extern, Diagnostic> {
-    let sig = env.extern_sig(index).ok_or_else(|| missing_sig(ext.span))?;
-    let deps = sig
-        .outputs
-        .iter()
-        .map(|output| {
-            let dep = ext
-                .deps
-                .iter()
-                .find(|d| d.out.text == output.port.name.text)
-                .ok_or_else(|| {
-                    error(
-                        ErrorCode::E013,
-                        output.port.span,
-                        "the output has no deps entry",
-                    )
-                })?;
-            let mut ins = Vec::new();
-            for input in &dep.ins {
-                let Some(PortRef::Input(i)) = sig.port(&input.text) else {
-                    return Err(error(
-                        ErrorCode::E013,
-                        dep.span,
-                        "the dependency is not an input",
-                    ));
-                };
-                if !ins.contains(&i) {
-                    ins.push(i);
-                }
-            }
-            Ok(ins)
-        })
-        .collect::<Result<Deps, Diagnostic>>()?;
-    Ok(typed::Extern {
-        name: ext.name.text.clone(),
-        inputs: ports(&sig.inputs),
-        outputs: ports(&sig.outputs),
-        deps,
-    })
-}
-
 struct Lowerer<'e, 'a> {
-    env: &'e Env<'a>,
     scope: &'e Scope<'a>,
 }
 
 impl Lowerer<'_, '_> {
-    fn module(&self, structure: &Structure) -> Result<Module, Diagnostic> {
+    fn module(&self, structure: &Structure, insts: &[LinkedInst]) -> Result<Module, Diagnostic> {
         let scope = self.scope;
-        let sig = self
-            .env
-            .module_sig(scope.index)
-            .ok_or_else(|| missing_sig(scope.module.span))?;
         let lets = scope
             .lets
             .iter()
@@ -167,8 +125,20 @@ impl Lowerer<'_, '_> {
         let insts = scope
             .insts
             .iter()
-            .map(|d| self.inst(d))
-            .collect::<Result<Vec<_>, _>>()?;
+            .zip(insts)
+            .map(|(decl, linked)| {
+                let inputs = linked
+                    .inputs
+                    .iter()
+                    .map(|e| self.expr(e))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(Inst {
+                    name: decl.name.text.clone(),
+                    callee: linked.callee,
+                    inputs,
+                })
+            })
+            .collect::<Result<Vec<_>, Diagnostic>>()?;
         let assigns = structure
             .assigns
             .iter()
@@ -176,9 +146,9 @@ impl Lowerer<'_, '_> {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Module {
             name: scope.module.name.text.clone(),
-            inputs: ports(&sig.inputs),
-            outputs: ports(&sig.outputs),
-            has_clock: sig.clock.is_some(),
+            inputs: ports(&scope.sig.inputs),
+            outputs: ports(&scope.sig.outputs),
+            has_clock: scope.sig.clock.is_some(),
             lets,
             regs,
             mems,
@@ -186,39 +156,6 @@ impl Lowerer<'_, '_> {
             assigns,
             schedule: Vec::new(),
             deps: Deps::default(),
-        })
-    }
-
-    fn inst(&self, decl: &super::scope::InstDecl) -> Result<Inst, Diagnostic> {
-        let callee = decl.callee.ok_or_else(|| {
-            error(
-                ErrorCode::E003,
-                decl.module.span,
-                "the module does not resolve",
-            )
-        })?;
-        let sig = self.env.sig(callee).ok_or_else(|| missing_sig(decl.span))?;
-        let inputs = (0usize..)
-            .zip(&sig.inputs)
-            .map(|(i, input)| {
-                let conn = decl
-                    .conns
-                    .iter()
-                    .find(|c| matches!(sig.port(&c.port.text), Some(PortRef::Input(j)) if j.index() == i))
-                    .ok_or_else(|| {
-                        error(
-                            ErrorCode::E011,
-                            decl.span,
-                            format!("the input `{}` is not connected", input.port.name.text),
-                        )
-                    })?;
-                self.expr(&conn.expr)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(Inst {
-            name: decl.name.text.clone(),
-            callee,
-            inputs,
         })
     }
 
@@ -230,7 +167,7 @@ impl Lowerer<'_, '_> {
                 Some(Binding::Input(i)) => T::Input(i),
                 Some(Binding::Let(i)) => T::Let(i),
                 Some(Binding::Reg(i)) => T::Reg(i),
-                Some(Binding::Clock | Binding::Stray) => {
+                Some(Binding::Clock | Binding::ClockOut) => {
                     return Err(error(ErrorCode::E009, name.span, "a value reads a clock"));
                 }
                 _ => return Err(error(ErrorCode::E003, name.span, "the name is not a value")),
@@ -243,12 +180,7 @@ impl Lowerer<'_, '_> {
                         "the name is not an instance",
                     ));
                 };
-                let sig = self
-                    .scope
-                    .insts
-                    .get(i.index())
-                    .and_then(|d| d.callee)
-                    .and_then(|c| self.env.sig(c));
+                let sig = self.scope.insts.get(i.index()).and_then(|d| d.sig);
                 match sig.and_then(|s| s.port(&port.text)) {
                     Some(PortRef::Output(o)) => T::InstOut(i, o),
                     _ => return Err(error(ErrorCode::E003, *span, "the port is not an output")),

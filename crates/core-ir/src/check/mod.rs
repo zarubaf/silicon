@@ -27,13 +27,13 @@ pub fn check(design: &ast::Design) -> Result<typed::Design, Diagnostic> {
     let scopes = Scope::build_all(design, &env);
     first_error(names::unresolved(design, &env, &scopes))?;
     first_error(types::declared(design))?;
-    first_error(clocks::check(design, &env, &scopes))?;
-    first_error(instances::check(design, &env, &scopes))?;
-    first_error(types::operations(&env, &scopes))?;
-    let structures = structure::check(&env, &scopes)?;
+    first_error(clocks::check(design, &scopes))?;
+    let linked = instances::check(design, env.externs(), &scopes)?;
+    first_error(types::operations(&scopes))?;
+    let structures = structure::check(&scopes)?;
     // Passes 9 and 10 (the instance and combinational cycles) and the schedule
     // are not part of this stage.
-    lower::lower(design, &env, &scopes, &structures)
+    lower::lower(design, &env, &scopes, &structures, &linked)
 }
 
 fn error(code: ErrorCode, span: Span, message: impl Into<String>) -> Diagnostic {

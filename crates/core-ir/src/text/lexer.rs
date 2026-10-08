@@ -30,6 +30,35 @@ fn is_name_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_' || c == '$'
 }
 
+/// A token holds only these characters; one outside the set is an error at
+/// that character.
+fn is_token_char(c: char) -> bool {
+    is_name_char(c) || c == '.'
+}
+
+fn is_name(text: &str) -> bool {
+    let mut chars = text.chars();
+    chars.next().is_some_and(is_name_start) && chars.all(is_name_char)
+}
+
+/// A token of valid characters is a name, `NAME.PORT`, or a number. Anything
+/// else is invalid at the start of the token.
+fn classify(text: &str) -> Tok {
+    if is_name(text) {
+        return Tok::Name(text.to_string());
+    }
+    if !text.is_empty() && text.chars().all(|c| c.is_ascii_digit()) {
+        return Tok::Number(text.to_string());
+    }
+    if let Some((head, port)) = text.split_once('.')
+        && is_name(head)
+        && is_name(port)
+    {
+        return Tok::Dotted(head.to_string(), port.to_string());
+    }
+    Tok::Invalid(format!("malformed token `{text}`"))
+}
+
 struct Cursor<'a> {
     chars: std::iter::Peekable<std::str::Chars<'a>>,
     line: u32,
@@ -59,13 +88,23 @@ impl Cursor<'_> {
         Some(c)
     }
 
-    fn take_while(&mut self, pred: fn(char) -> bool) -> String {
+    /// Takes the maximal run of characters that are no whitespace, no
+    /// parenthesis, and no comment start. Also returns the position of the
+    /// first character outside the token set.
+    fn take_token(&mut self) -> (String, Option<Span>) {
         let mut text = String::new();
-        while let Some(c) = self.peek().filter(|c| pred(*c)) {
+        let mut bad = None;
+        while let Some(c) = self
+            .peek()
+            .filter(|c| !matches!(c, ' ' | '\t' | '\r' | '\n' | '(' | ')' | ';'))
+        {
+            if bad.is_none() && !is_token_char(c) {
+                bad = Some(self.span());
+            }
             text.push(c);
             self.bump();
         }
-        text
+        (text, bad)
     }
 }
 
@@ -79,7 +118,7 @@ pub fn lex(src: &str) -> Vec<Token> {
     };
     let mut tokens = Vec::new();
     loop {
-        let span = cur.span();
+        let mut span = cur.span();
         let tok = match cur.peek() {
             None => {
                 tokens.push(Token {
@@ -106,30 +145,15 @@ pub fn lex(src: &str) -> Vec<Token> {
                 cur.bump();
                 Tok::Close
             }
-            Some(c) if c.is_ascii_digit() => {
-                let digits = cur.take_while(|c| c.is_ascii_digit());
-                if cur.peek().is_some_and(is_name_char) {
-                    Tok::Invalid(format!("malformed number `{digits}...`"))
-                } else {
-                    Tok::Number(digits)
-                }
-            }
-            Some(c) if is_name_start(c) => {
-                let head = cur.take_while(is_name_char);
-                if cur.peek() == Some('.') {
-                    cur.bump();
-                    if cur.peek().is_some_and(is_name_start) {
-                        Tok::Dotted(head, cur.take_while(is_name_char))
-                    } else {
-                        Tok::Invalid(format!("expected a port name after `{head}.`"))
+            Some(_) => {
+                let (text, bad) = cur.take_token();
+                match bad {
+                    Some(at) => {
+                        span = at;
+                        Tok::Invalid("unexpected character".to_string())
                     }
-                } else {
-                    Tok::Name(head)
+                    None => classify(&text),
                 }
-            }
-            Some(c) => {
-                cur.bump();
-                Tok::Invalid(format!("unexpected character `{c}`"))
             }
         };
         let stop = matches!(tok, Tok::Invalid(_));
