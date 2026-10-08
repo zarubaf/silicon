@@ -15,7 +15,7 @@ Each layer has one oracle. An oracle is a tool or a model that can say "wrong" m
 ## Rust crates
 
 - Each compiler stage has snapshot tests with `insta`. A snapshot file is compiler output. The test compares it byte for byte.
-- CI runs `insta` with `INSTA_UPDATE=no`.
+- In CI, `insta` writes no snapshot files. GitHub Actions sets `CI=true`, and `insta` then compares only.
 - `cargo nextest` shows failures only.
 - A test expectation changes in its own commit. A `refactor` commit does not change test expectations. See [the commits guide](commits.md).
 

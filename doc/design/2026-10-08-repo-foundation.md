@@ -259,7 +259,7 @@ Rust:
 - `cargo-deny` for licenses, advisories, and duplicate crates.
 - `cargo-machete` for unused dependencies.
 - `cargo nextest` with failure-only output.
-- `insta` snapshots with `INSTA_UPDATE=no` in CI.
+- `insta` snapshots. In CI, `insta` writes no snapshot files, because GitHub Actions sets `CI=true`.
 
 Lean:
 
