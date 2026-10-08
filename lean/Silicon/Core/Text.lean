@@ -420,7 +420,7 @@ def Text.parseRaw (s : String) : Except Error Design := do
   let fs := fs ++ rest.map (fun t => Text.Form.bad t.pos)
   let (d, c) ← Text.form eof (fun _ => do
     Text.word "design"
-    return ⟨← Text.name, ← Text.remaining (Text.item eof fuel)⟩) ⟨fs, eof, true⟩
+    return ⟨← Text.name, ← Text.remaining (Text.item eof fuel), []⟩) ⟨fs, eof, true⟩
   let _ ← Text.finish c
   pure d
 
@@ -443,6 +443,17 @@ mutual
   def Form.findPosMany (p : Pos) : List Form → Option Form
     | [] => none
     | f :: fs => (f.findPos p).or (Form.findPosMany p fs)
+end
+
+/-! The checker needs atom positions as well as form positions. -/
+mutual
+  def Form.source : Form → List SourcePos
+    | .atom t => [⟨t.pos, []⟩]
+    | .bad p => [⟨p, []⟩]
+    | .list p fs _ => ⟨p, fs.map Form.pos⟩ :: Form.sources fs
+  def Form.sources : List Form → List SourcePos
+    | [] => []
+    | f :: fs => f.source ++ Form.sources fs
 end
 
 def locateLimit (fs : List Form) (l : TextLimit) : Pos :=
@@ -514,7 +525,7 @@ def parse (s : String) : Except Error Design :=
   match Text.parseRaw s with
   | .ok d =>
     match d.textLimits.find? (fun l => !l.ok) with
-    | none => .ok d
+    | none => .ok { d with source := Text.Form.sources fs }
     | some l => .error (Text.limitFailure (Text.locateLimit fs l))
   | .error e =>
     let e := Text.correctTokenError ts e
@@ -1827,7 +1838,7 @@ theorem design_read
     (eof : Pos) (c : Cursor) :
     ∃ a, (form eof (fun _ => do
       word "design"
-      return (⟨← name, ← remaining (item eof fuel)⟩ : Design)))
+      return (⟨← name, ← remaining (item eof fuel), []⟩ : Design)))
         { c with forms := f :: c.forms } = .ok (a, c) ∧ a.erasePos = d.erasePos := by
   cases hm with
   | list p close hm =>
@@ -1853,7 +1864,7 @@ theorem design_read
           · exact hmatch
         obtain ⟨is, his, hise⟩ := remaining_roundtrip (item eof fuel) encodeItem Item.erasePos
           d.items fs hm hir close true
-        refine ⟨⟨d.top, is⟩, ?_, ?_⟩
+        refine ⟨⟨d.top, is, []⟩, ?_, ?_⟩
         · cases c
           simp [form, take, inside, word, atom, name_read _ htop, finish,
             Bind.bind, Except.bind, Pure.pure, Except.pure, his]
@@ -2264,6 +2275,6 @@ theorem parse_print (d : Design) (h : d.ValidNames) (limits : d.WithinLimits) :
       intro l hm
       have := List.all_eq_true.mp ha l hm
       simp [this]
-    simp [parse, hr, hn, he, Except.map]
+    simpa [parse, hr, hn, Except.map, Design.erasePos] using he
 
 end Silicon.Core
