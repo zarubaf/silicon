@@ -1,0 +1,9 @@
+; The address of a read makes edges: (let a (bits 1) (read m a)) is E008 (spec 5.3).
+(design top
+  (module top
+    (input clk clock)
+    (output q (bits 1))
+    (mem m (bits 1) 2 clk)
+; expected-error E008 @+1
+    (let a (bits 1) (read m a))
+    (assign q a)))

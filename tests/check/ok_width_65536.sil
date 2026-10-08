@@ -1,0 +1,6 @@
+; A declared width of 65536 is the limit and passes (spec 4.1).
+(design top
+  (module top
+    (input a (bits 65536))
+    (output q (bits 65536))
+    (assign q a)))

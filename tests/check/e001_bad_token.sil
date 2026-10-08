@@ -1,0 +1,6 @@
+; The token 12abc is neither a name nor a number: E001 at its start (spec 3).
+(design top
+  (module top
+    (output q (bits 1))
+; expected-error E001 @+1
+    (assign q 12abc)))

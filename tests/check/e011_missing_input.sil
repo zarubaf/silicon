@@ -1,0 +1,11 @@
+; An instance that does not connect an input is E011 at the inst (spec 4.2, 6.4.1).
+(design top
+  (module pass
+    (input x (bits 1))
+    (output y (bits 1))
+    (assign y x))
+  (module top
+    (output q (bits 1))
+; expected-error E011 @+1
+    (inst u pass)
+    (assign q u.y)))

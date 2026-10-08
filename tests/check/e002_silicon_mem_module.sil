@@ -1,0 +1,9 @@
+; A user module silicon_mem_12x8 uses the reserved prefix: E002 at the name (spec 4.2, 9).
+(design top
+  (module top
+    (input a (bits 1))
+    (output q (bits 1))
+    (assign q a))
+; expected-error E002 @+1
+  (module silicon_mem_12x8
+    (input a (bits 1))))

@@ -1,0 +1,6 @@
+; The value of a const has no number limit: 2^80-1 at width 80 passes (spec 3 limits, 4.1).
+(design top
+  (module top
+    (input a (bits 80))
+    (output q (bits 80))
+    (assign q (xor a (const 80 1208925819614629174706175)))))

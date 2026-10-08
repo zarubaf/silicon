@@ -1,0 +1,8 @@
+; A token with a character outside [A-Za-z0-9_$.] is E001 at that character (spec 3).
+(design top
+  (module top
+    (input a (bits 1))
+    (output q (bits 1))
+; expected-error E001 @+1
+    (let aé (bits 1) a)
+    (assign q a)))

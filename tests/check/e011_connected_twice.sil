@@ -1,0 +1,14 @@
+; An input connected twice is E011 at the port name of the second connection (spec 6.4.1).
+(design top
+  (module pass
+    (input x (bits 1))
+    (output y (bits 1))
+    (assign y x))
+  (module top
+    (input a (bits 1))
+    (output q (bits 1))
+    (inst u pass
+      (x a)
+; expected-error E011 @+1
+      (x a))
+    (assign q u.y)))

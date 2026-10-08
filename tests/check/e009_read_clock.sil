@@ -1,0 +1,7 @@
+; A value expression that reads a clock is E009 at the name (spec 4.2, 6.4.1).
+(design top
+  (module top
+    (input clk clock)
+    (output q (bits 1))
+; expected-error E009 @+1
+    (assign q (not clk))))

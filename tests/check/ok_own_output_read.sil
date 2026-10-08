@@ -1,0 +1,8 @@
+; A value expression can read an output of its own module (spec 4.2).
+(design top
+  (module top
+    (input a (bits 1))
+    (output q (bits 1))
+    (output r (bits 1))
+    (assign q (not a))
+    (assign r (not q))))

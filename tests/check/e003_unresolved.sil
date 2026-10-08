@@ -1,0 +1,7 @@
+; An unresolved name is E003 at the name (spec 4.2, 6.4.1).
+(design top
+  (module top
+    (input a (bits 1))
+    (output q (bits 1))
+; expected-error E003 @+1
+    (assign q b)))

@@ -1,0 +1,11 @@
+; A loop through one instance output is E008 at the inst (spec 5.3, 6.4.1).
+(design top
+  (module pass
+    (input x (bits 1))
+    (output y (bits 1))
+    (assign y x))
+  (module top
+    (output q (bits 1))
+; expected-error E008 @+1
+    (inst u pass (x u.y))
+    (assign q u.y)))

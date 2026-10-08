@@ -1,0 +1,11 @@
+; A register with two next statements is E006 at the second (spec 4.2, 6.4.1).
+(design top
+  (module top
+    (input clk clock)
+    (input a (bits 1))
+    (output q (bits 1))
+    (reg r (bits 1) clk)
+    (next r a)
+; expected-error E006 @+1
+    (next r (not a))
+    (assign q r)))

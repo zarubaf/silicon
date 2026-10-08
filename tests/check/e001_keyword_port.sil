@@ -1,0 +1,12 @@
+; A keyword as the PORT part of NAME.PORT is E001 at that part (spec 3, keyword rule).
+(design top
+  (module child
+    (input x (bits 1))
+    (output y (bits 1))
+    (assign y x))
+  (module top
+    (input a (bits 1))
+    (output q (bits 1))
+    (inst u child (x a))
+; expected-error E001 @+1
+    (assign q u.next)))

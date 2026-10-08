@@ -1,0 +1,19 @@
+; Two siblings feed each other, but one output does not depend on its input: no cycle (spec 5.3).
+(design top
+  (module hold
+    (input clk clock)
+    (input x (bits 1))
+    (output y (bits 1))
+    (reg r (bits 1) clk)
+    (next r x)
+    (assign y r))
+  (module pass
+    (input x (bits 1))
+    (output y (bits 1))
+    (assign y x))
+  (module top
+    (input clk clock)
+    (output q (bits 1))
+    (inst u hold (clk clk) (x v.y))
+    (inst v pass (x u.y))
+    (assign q v.y)))

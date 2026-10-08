@@ -1,0 +1,8 @@
+; A keyword as a let name is E001 at the name (spec 3, keyword rule).
+(design top
+  (module top
+    (input a (bits 1))
+    (output q (bits 1))
+; expected-error E001 @+1
+    (let add (bits 1) a)
+    (assign q a)))
