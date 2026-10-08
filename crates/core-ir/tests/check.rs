@@ -56,7 +56,7 @@ fn well_formed_designs_check() {
     let counter = run(COUNTER).expect("counter checks");
     let top = &counter.modules[counter.top.index()];
     assert_eq!(top.name, "counter");
-    assert!(top.has_clock);
+    assert!(top.clock.is_some());
     assert_eq!(top.regs.len(), 1);
     run(EVERY_FORM).expect("every form checks");
 }
@@ -1322,7 +1322,7 @@ fn a_clocked_extern_keeps_its_clock_port_and_connection() {
     assert_eq!(ext.inputs.len(), 1);
     let top = &design.modules[design.top.index()];
     assert!(
-        top.has_clock,
+        top.clock.is_some(),
         "the parent has the clock that the instance gets"
     );
     let inst = &top.insts[0];

@@ -5,7 +5,7 @@
 
 use super::instances::{Linked, LinkedInst};
 use super::rx::{Ex, ExModule};
-use super::scope::{DataPort, Env, Scope};
+use super::scope::{DataPort, Env, Scope, Sig};
 use super::structure::Structure;
 use super::types::{ModuleWidths, Widths};
 use crate::ast::{Design, Item};
@@ -45,15 +45,19 @@ pub(super) fn lower(
             name: ext.name.text.clone(),
             inputs: ports(&sig.inputs, &widths.inputs),
             outputs: ports(&sig.outputs, &widths.outputs),
-            clock: sig.clock.map(|(position, port)| typed::ClockPort {
-                name: port.name.text.clone(),
-                position,
-            }),
+            clock: clock(sig),
             deps: deps.clone(),
             span: ext.span,
         })
         .collect();
     (modules, externs)
+}
+
+fn clock(sig: &Sig) -> Option<typed::ClockPort> {
+    sig.clock.map(|(position, port)| typed::ClockPort {
+        name: port.name.text.clone(),
+        position,
+    })
 }
 
 fn ports(ports: &[DataPort], widths: &[NonZeroU32]) -> Vec<Port> {
@@ -138,7 +142,7 @@ fn module(
         name: scope.module.name.text.clone(),
         inputs: ports(&scope.sig.inputs, &widths.ports.inputs),
         outputs: ports(&scope.sig.outputs, &widths.ports.outputs),
-        has_clock: scope.sig.clock.is_some(),
+        clock: clock(scope.sig),
         lets,
         regs,
         mems,
