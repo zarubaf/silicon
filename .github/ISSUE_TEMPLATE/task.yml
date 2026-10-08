@@ -1,0 +1,28 @@
+name: Task
+description: A unit of work with mechanical done criteria
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: State the result in one or two sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Done criteria
+      description: List checks that a command can verify. Each item names the command.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - lean
+        - doc
+        - ci
+        - xtask
+    validations:
+      required: true

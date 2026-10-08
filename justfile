@@ -53,3 +53,6 @@ commit-check base="origin/main":
     cargo xtask commit-check --range {{ base }}..HEAD
 
 ci base="origin/main": check test (commit-check base)
+
+review base="main":
+    cargo xtask review --base {{ base }}

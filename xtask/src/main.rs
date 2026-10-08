@@ -6,6 +6,7 @@ mod guidance;
 mod lean;
 mod prose;
 mod repo;
+mod review;
 mod tree;
 mod violation;
 mod vocab;
@@ -57,6 +58,12 @@ enum Command {
         #[arg(long)]
         range: String,
     },
+    /// Run the Codex adversarial review of the current branch.
+    Review {
+        /// Git ref to review against.
+        #[arg(long, default_value = "main")]
+        base: String,
+    },
 }
 
 fn main() -> Result<ExitCode> {
@@ -76,6 +83,10 @@ fn main() -> Result<ExitCode> {
             ExitCode::FAILURE
         }),
         Command::CommitMsg { file } => Ok(report(&commit::check_message_file(&file)?)),
+        Command::Review { base } => {
+            review::run(&Repo::discover()?.root, &base)?;
+            Ok(ExitCode::SUCCESS)
+        }
         Command::CommitCheck { range } => {
             let repo = Repo::discover()?;
             Ok(report(&commit::check_range(
