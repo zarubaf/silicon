@@ -1,0 +1,20 @@
+; and, or, xor, and not are bitwise; mux picks t if c = 1, else e (spec 4.1).
+(design top
+  (module top
+    (input c (bits 1))
+    (input a (bits 4))
+    (input b (bits 4))
+    (output n (bits 4))
+    (output x (bits 4))
+    (output o (bits 4))
+    (output y (bits 4))
+    (output m (bits 4))
+    (assign n (and a b))
+    (assign x (xor a b))
+    (assign o (or a b))
+    (assign y (not a))
+    (assign m (mux c a b))))
+; a = 1100, b = 1010: and 1000, xor 0110, or 1110, not a 0011
+; STEP in=(c 1 a 12 b 10) out=(n 8 x 6 o 14 y 3 m 12)
+; STEP in=(c 0 a 12 b 10) out=(n 8 x 6 o 14 y 3 m 10)
+; STEP in=(c 0 a 15 b 0) out=(n 0 x 15 o 15 y 0 m 0)

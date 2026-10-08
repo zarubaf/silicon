@@ -1,0 +1,13 @@
+; A read of an own output gives the expression of its assign (spec 4.2).
+(design top
+  (module top
+    (input a (bits 4))
+    (output q (bits 4))
+    (output r (bits 4))
+    (assign q (add a (const 4 1)))
+    (assign r (add q q))))
+; STEP in=(a 3) out=(q 4 r 8)
+; q = 8, r = 16 mod 16 = 0
+; STEP in=(a 7) out=(q 8 r 0)
+; q = 16 mod 16 = 0
+; STEP in=(a 15) out=(q 0 r 0)

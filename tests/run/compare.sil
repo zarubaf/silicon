@@ -1,0 +1,35 @@
+; icmp: unsigned and signed compares at the sign boundary (spec 4.1). Width 4:
+; 7 = 0111 (signed 7), 8 = 1000 (signed -8), 15 = 1111 (signed -1).
+(design top
+  (module top
+    (input a (bits 4))
+    (input b (bits 4))
+    (output ceq (bits 1))
+    (output cne (bits 1))
+    (output cult (bits 1))
+    (output cule (bits 1))
+    (output cugt (bits 1))
+    (output cuge (bits 1))
+    (output cslt (bits 1))
+    (output csle (bits 1))
+    (output csgt (bits 1))
+    (output csge (bits 1))
+    (assign ceq (icmp eq a b))
+    (assign cne (icmp ne a b))
+    (assign cult (icmp ult a b))
+    (assign cule (icmp ule a b))
+    (assign cugt (icmp ugt a b))
+    (assign cuge (icmp uge a b))
+    (assign cslt (icmp slt a b))
+    (assign csle (icmp sle a b))
+    (assign csgt (icmp sgt a b))
+    (assign csge (icmp sge a b))))
+; unsigned 7 < 8; signed 7 > -8
+; STEP in=(a 7 b 8) out=(ceq 0 cne 1 cult 1 cule 1 cugt 0 cuge 0 cslt 0 csle 0 csgt 1 csge 1)
+; unsigned 8 > 7; signed -8 < 7
+; STEP in=(a 8 b 7) out=(ceq 0 cne 1 cult 0 cule 0 cugt 1 cuge 1 cslt 1 csle 1 csgt 0 csge 0)
+; STEP in=(a 8 b 8) out=(ceq 1 cne 0 cult 0 cule 1 cugt 0 cuge 1 cslt 0 csle 1 csgt 0 csge 1)
+; unsigned 15 > 0; signed -1 < 0
+; STEP in=(a 15 b 0) out=(ceq 0 cne 1 cult 0 cule 0 cugt 1 cuge 1 cslt 1 csle 1 csgt 0 csge 0)
+; unsigned 0 < 15; signed 0 > -1
+; STEP in=(a 0 b 15) out=(ceq 0 cne 1 cult 1 cule 1 cugt 0 cuge 0 cslt 0 csle 0 csgt 1 csge 1)

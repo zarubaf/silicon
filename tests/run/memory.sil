@@ -1,0 +1,35 @@
+; A memory of depth 12 has the address width 4 (spec 4.1). read gives the
+; current state, or 0 out of range. The write ports apply in index order, so
+; port 1 wins at one address. A write with enable 0 or an address out of
+; range does nothing (spec 5.2).
+(design top
+  (module top
+    (input clk clock)
+    (input ra (bits 4))
+    (input rb (bits 4))
+    (input wa0 (bits 4))
+    (input wd0 (bits 8))
+    (input we0 (bits 1))
+    (input wa1 (bits 4))
+    (input wd1 (bits 8))
+    (input we1 (bits 1))
+    (output rd (bits 8))
+    (output re (bits 8))
+    (mem m (bits 8) 12 clk)
+    (write m 0 wa0 wd0 we0)
+    (write m 1 wa1 wd1 we1)
+    (assign rd (read m ra))
+    (assign re (read m rb))))
+; m[0] = 11, m[5] = 42; the reads see the old state
+; STEP in=(ra 0 rb 5 wa0 0 wd0 11 we0 1 wa1 5 wd1 42 we1 1) out=(rd 0 re 0)
+; writes to 12 and 15 are out of range
+; STEP in=(ra 0 rb 5 wa0 12 wd0 99 we0 1 wa1 15 wd1 98 we1 1) out=(rd 11 re 42)
+; reads of 12 and 15 are out of range: 0, not m[0] = 11
+; STEP in=(ra 12 rb 15 wa0 0 wd0 0 we0 0 wa1 0 wd1 0 we1 0) out=(rd 0 re 0)
+; m[0] and m[3] did not change; both ports write 3: port 1 wins; re sees old m[3]
+; STEP in=(ra 0 rb 3 wa0 3 wd0 10 we0 1 wa1 3 wd1 20 we1 1) out=(rd 11 re 0)
+; port 1 has enable 0: m[11] = 7
+; STEP in=(ra 3 rb 11 wa0 11 wd0 7 we0 1 wa1 11 wd1 200 we1 0) out=(rd 20 re 0)
+; STEP in=(ra 11 rb 3 wa0 0 wd0 0 we0 0 wa1 0 wd1 0 we1 0) out=(rd 7 re 20)
+; 12 and 15 also did not write 4 or 7
+; STEP in=(ra 4 rb 7 wa0 0 wd0 0 we0 0 wa1 0 wd1 0 we1 0) out=(rd 0 re 0)

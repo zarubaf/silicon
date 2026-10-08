@@ -1,0 +1,26 @@
+; shl, shru, and shrs read the amount as unsigned. An amount of w or more
+; gives 0, or the sign fill for shrs (spec 4.1). Here w = 4.
+(design top
+  (module top
+    (input a (bits 4))
+    (input n (bits 4))
+    (output l (bits 4))
+    (output u (bits 4))
+    (output s (bits 4))
+    (assign l (shl a n))
+    (assign u (shru a n))
+    (assign s (shrs a n))))
+; a = 1001 (signed -7)
+; STEP in=(a 9 n 0) out=(l 9 u 9 s 9)
+; 1001 << 3 = 1000; 1001 >>u 3 = 0001; 1001 >>s 3 = 1111
+; STEP in=(a 9 n 3) out=(l 8 u 1 s 15)
+; STEP in=(a 9 n 4) out=(l 0 u 0 s 15)
+; STEP in=(a 9 n 15) out=(l 0 u 0 s 15)
+; a = 0101 (signed 5): the sign fill is 0
+; STEP in=(a 5 n 0) out=(l 5 u 5 s 5)
+; 0101 << 3 = 1000
+; STEP in=(a 5 n 3) out=(l 8 u 0 s 0)
+; STEP in=(a 5 n 4) out=(l 0 u 0 s 0)
+; STEP in=(a 5 n 15) out=(l 0 u 0 s 0)
+; a = 1100: << 1 = 1000; >>u 1 = 0110; >>s 1 = 1110
+; STEP in=(a 12 n 1) out=(l 8 u 6 s 14)

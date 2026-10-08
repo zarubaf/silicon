@@ -1,0 +1,20 @@
+; run rejects a design with an extern: E014 at the start of the extern item
+; with the lowest position, here zz and not aa (spec 5.4, 6.4.3).
+(design top
+  (module top
+    (input a (bits 1))
+    (output q (bits 1))
+    (output r (bits 1))
+    (inst u zz (a a))
+    (inst v aa (a a))
+    (assign q u.y)
+    (assign r v.y))
+; expected-error E014 @+1
+  (extern zz
+    (input a (bits 1))
+    (output y (bits 1))
+    (deps y (a)))
+  (extern aa
+    (input a (bits 1))
+    (output y (bits 1))
+    (deps y (a))))

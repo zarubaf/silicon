@@ -27,3 +27,7 @@ harness = false
 [[test]]
 name = "check"
 harness = false
+
+[[test]]
+name = "run"
+harness = false

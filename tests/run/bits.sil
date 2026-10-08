@@ -1,0 +1,18 @@
+; concat puts a in the high bits; extract x LO N gives the bits LO to
+; LO + N - 1; replicate x K gives K copies of x (spec 4.1).
+(design top
+  (module top
+    (input a (bits 4))
+    (input b (bits 2))
+    (output c (bits 6))
+    (output x (bits 2))
+    (output h (bits 1))
+    (output r (bits 8))
+    (assign c (concat a b))
+    (assign x (extract a 1 2))
+    (assign h (extract a 3 1))
+    (assign r (replicate b 4))))
+; a = 0110, b = 10: c = 011010, x = a[2:1] = 11, h = a[3] = 0, r = 10101010
+; STEP in=(a 6 b 2) out=(c 26 x 3 h 0 r 170)
+; a = 1001, b = 01: c = 100101, x = 00, h = 1, r = 01010101
+; STEP in=(a 9 b 1) out=(c 37 x 0 h 1 r 85)
