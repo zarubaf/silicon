@@ -9,7 +9,7 @@ Two notes held the first decisions of the project: a handoff note and an ecosyst
 
 ## Decision
 
-Record each architecture decision as an ADR in `doc/adr/NNNN-title.md`. An ADR has a status, a date, and the headings Context, Decision, and Consequences. An accepted ADR does not change. A new ADR supersedes it.
+Record each architecture decision as an ADR in `doc/adr/NNNN-title.md`. An ADR has a metadata list with its status and its date. The headings Context, Decision, and Consequences follow it. An accepted ADR does not change. A new ADR supersedes it.
 
 The architecture moves to [`doc/architecture.md`](../architecture.md). The ecosystem note moves to [`doc/design/2026-10-05-ecosystem.md`](../design/2026-10-05-ecosystem.md). The owner deletes the handoff note after the move.
 
