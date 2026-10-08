@@ -15,4 +15,4 @@ jobs:
           fetch-depth: 0
       - uses: DeterminateSystems/nix-installer-action@v23
       - uses: DeterminateSystems/magic-nix-cache-action@v15
-      - run: nix develop -c just ci ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || 'HEAD~1' }}
+      - run: nix develop -c just ci ${{ github.event.pull_request.base.sha || github.event.before || github.event.merge_group.base_sha }}

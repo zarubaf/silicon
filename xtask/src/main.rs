@@ -54,9 +54,9 @@ enum Command {
     },
     /// Check every commit in a range against the commit conventions.
     CommitCheck {
-        /// Git revision range, for example `origin/main..HEAD`.
+        /// Base revision, for example `origin/main`. An empty or all-zeros base checks the whole history.
         #[arg(long)]
-        range: String,
+        base: String,
     },
     /// Run the Codex adversarial review of the current branch.
     Review {
@@ -87,11 +87,11 @@ fn main() -> Result<ExitCode> {
             review::run(&Repo::discover()?.root, &base)?;
             Ok(ExitCode::SUCCESS)
         }
-        Command::CommitCheck { range } => {
+        Command::CommitCheck { base } => {
             let repo = Repo::discover()?;
             Ok(report(&commit::check_range(
                 &repo.root,
-                &range,
+                &commit::range_for_base(&base),
                 &commit::allowed_scopes()?,
             )?))
         }

@@ -173,6 +173,17 @@ fn strip_comments(raw: &str) -> String {
         .join("\n")
 }
 
+/// The git revision range that `commit-check` covers for `base`.
+/// An empty base or GitHub's all-zeros SHA (a new branch) selects the whole history up to `HEAD`.
+pub fn range_for_base(base: &str) -> String {
+    let base = base.trim();
+    if base.is_empty() || base.bytes().all(|b| b == b'0') {
+        "HEAD".to_string()
+    } else {
+        format!("{base}..HEAD")
+    }
+}
+
 /// Checks every non-merge commit in `range`. Returns `sha: problem` lines.
 pub fn check_range(dir: &Path, range: &str, scopes: &[String]) -> Result<Vec<String>> {
     let shas = git(dir, &["log", "--no-merges", "--format=%H", "-z", range])?;
@@ -420,6 +431,26 @@ mod tests {
             &["merge", "--quiet", "--no-ff", "-m", "Merge side", "side"],
         );
         assert!(check_range(d, "HEAD", &scopes()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn range_for_base_selects_history() {
+        assert_eq!(range_for_base("main"), "main..HEAD");
+        assert_eq!(range_for_base(""), "HEAD");
+        assert_eq!(range_for_base(&"0".repeat(40)), "HEAD");
+    }
+
+    #[test]
+    fn zero_base_checks_root_and_normal_base_checks_tail() {
+        let tmp = tempfile::tempdir().unwrap();
+        let d = tmp.path();
+        init(d);
+        commit(d, "a", "bad root");
+        commit(d, "b", "feat: b");
+        let zeros = range_for_base(&"0".repeat(40));
+        assert_eq!(check_range(d, &zeros, &scopes()).unwrap().len(), 1);
+        let tail = range_for_base("HEAD~1");
+        assert!(check_range(d, &tail, &scopes()).unwrap().is_empty());
     }
 
     #[test]

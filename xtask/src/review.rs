@@ -36,8 +36,8 @@ fn parse_semver(name: &str) -> Option<(u64, u64, u64)> {
 }
 
 /// Runs the adversarial review of the current branch against `base`.
-/// Returns `true` when the Codex companion exits with success.
-pub fn run(root: &Path, base: &str) -> Result<bool> {
+/// Fails when the Codex companion exits with a nonzero status.
+pub fn run(root: &Path, base: &str) -> Result<()> {
     let home = std::env::var_os("HOME").context("HOME is not set; cannot find the Codex plugin")?;
     let plugins_root = Path::new(&home).join(".claude/plugins/cache");
     let companion = find_companion(&plugins_root)?;
@@ -50,7 +50,7 @@ pub fn run(root: &Path, base: &str) -> Result<bool> {
     if !status.success() {
         bail!("the Codex review failed: {status}");
     }
-    Ok(true)
+    Ok(())
 }
 
 #[cfg(test)]
