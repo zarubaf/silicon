@@ -2,7 +2,7 @@
 //!
 //! Every reference is a typed index into a table of its module. No name is a
 //! string after checking, and no expression can read a clock: the clock of a
-//! module is the `has_clock` flag, and no [`Expr`] variant mentions it.
+//! module is its [`ClockPort`], and no [`Expr`] variant mentions it.
 
 use crate::ast::{BinOp, UnOp};
 use crate::diag::Span;
@@ -186,8 +186,8 @@ pub struct Module {
     pub inputs: Vec<Port>,
     /// The outputs, by [`OutputIdx`].
     pub outputs: Vec<Port>,
-    /// Whether the module has a clock port.
-    pub has_clock: bool,
+    /// The clock input, if the module has one.
+    pub clock: Option<ClockPort>,
     /// The `let` bindings, by [`LetIdx`].
     pub lets: Vec<Let>,
     /// The registers, by [`RegIdx`].
@@ -204,7 +204,7 @@ pub struct Module {
     pub deps: Deps,
 }
 
-/// A clock input port, kept for the signature of an extern.
+/// A clock input port, kept for the signature of a module or an extern.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClockPort {
     /// The port name.
@@ -259,7 +259,10 @@ mod tests {
                 name: "q".into(),
                 width: eight,
             }],
-            has_clock: true,
+            clock: Some(ClockPort {
+                name: "clk".into(),
+                position: 0,
+            }),
             lets: vec![],
             regs: vec![Reg {
                 name: "count".into(),
@@ -284,7 +287,7 @@ mod tests {
         };
         let top = &design.modules[design.top.index()];
         assert_eq!(top.name, "counter");
-        assert!(top.has_clock);
+        assert!(top.clock.is_some());
         assert_eq!(top.assigns, vec![Expr::Reg(RegIdx::new(0))]);
     }
 }

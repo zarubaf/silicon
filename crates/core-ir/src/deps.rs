@@ -178,7 +178,7 @@ mod tests {
             name: "m".into(),
             inputs: inputs.iter().map(|n| port(n)).collect(),
             outputs: outputs.iter().map(|n| port(n)).collect(),
-            has_clock: false,
+            clock: None,
             lets: vec![],
             regs: vec![],
             mems: vec![],
