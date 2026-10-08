@@ -5,6 +5,8 @@ pub mod ast;
 pub mod check;
 pub mod deps;
 pub mod diag;
+#[cfg(feature = "gen")]
+pub mod r#gen;
 pub mod interp;
 mod scc;
 pub mod text;
