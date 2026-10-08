@@ -4,9 +4,9 @@ use super::{binop_keyword, pred_keyword, unop_keyword};
 use crate::ast::{Design, Dir, Expr, Extern, Item, Module, Port, Stmt, Ty};
 use std::fmt::Write;
 
-/// Prints the canonical layout: single spaces between atoms, a two-space
-/// indent per nesting level, and one item, port, or statement per line.
-/// The aligned columns of spec section 3.1 are only illustrative.
+/// Prints the canonical layout of spec section 3.3 byte for byte: single
+/// spaces between atoms, a two-space indent per nesting level, and one item,
+/// port, `deps` entry, or statement per line.
 #[must_use]
 pub fn print(design: &Design) -> String {
     let mut out = format!("(design {}", design.top.text);

@@ -13,7 +13,7 @@ This crate owns the bit-vector values and their comb operations. It also owns th
 - A `Bits` value has a width of at least 1, and its value fits the width. Check: `cargo nextest run -p core-ir`.
 - The operations match section 4.1 of the Lean spec. Check: `cargo nextest run -p core-ir`.
 - Each design from `gen` passes the checker. Check: `cargo nextest run -p core-ir --all-features`.
-- Non-test code has no `unwrap`, no `expect`, and no panic. Check: `just clippy`.
+- Non-test code has no `unwrap`, no `expect`, and no panic on user input. A documented internal precondition, such as a typed index into its table, can panic. Check: `just clippy`.
 
 ## Dependencies
 
