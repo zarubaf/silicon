@@ -215,6 +215,7 @@ mod tests {
         let tracked = |p: &str| TrackedFile {
             path: p.into(),
             is_symlink: false,
+            is_executable: false,
         };
         let files = vec![
             tracked("Cargo.toml"),

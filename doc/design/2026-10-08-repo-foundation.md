@@ -297,8 +297,9 @@ The tree check is part of `cargo xtask check`. It has no subcommand of its own. 
 
 1. A top-level entry that is not in the layout of section 3. Rule `tree-root`.
 2. A file that matches `*.sh`, `*.log`, `*.orig`, `*.rej`, `*.bak`, `TODO.md`, `NOTES.md`, or a path under a `superpowers/` directory. Rule `tree-banned`.
-3. A `TODO` or `FIXME` comment without an issue reference in the form `TODO(#123): ...`. Rule `tree-todo`.
-4. A multi-line `justfile` recipe, or a recipe line with `&&`, `||`, `;`, `$(`, or a backtick. Rule `tree-justfile`.
+3. A script: a file with git mode `100755`, or a file whose first line starts with `#!`. A Rust inner attribute (`#![`) is not a script. Rule `tree-banned`.
+4. A `TODO` or `FIXME` comment without an issue reference in the form `TODO(#123): ...`. Rule `tree-todo`.
+5. A multi-line `justfile` recipe, or a recipe line with `&&`, `||`, `|`, `;`, `$(`, or a backtick. Rule `tree-justfile`.
 
 Review rules (the cross-vendor reviewer enforces them):
 

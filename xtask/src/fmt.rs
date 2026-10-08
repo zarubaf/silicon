@@ -110,6 +110,7 @@ mod tests {
         TrackedFile {
             path: PathBuf::from(path),
             is_symlink,
+            is_executable: false,
         }
     }
 

@@ -186,6 +186,7 @@ mod tests {
             tracked.push(TrackedFile {
                 path: (*path).into(),
                 is_symlink,
+                is_executable: false,
             });
         }
         let repo = Repo::from_parts(tmp.path().to_path_buf(), tracked);

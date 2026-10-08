@@ -1,7 +1,8 @@
+use std::io::Read;
 use std::path::Path;
 use std::sync::LazyLock;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use regex::Regex;
 
 use crate::repo::Repo;
@@ -80,6 +81,23 @@ pub fn is_banned(path: &Path) -> bool {
         || path.components().any(|c| c.as_os_str() == "superpowers")
 }
 
+/// True for an executable file or a file whose first line is a shebang.
+///
+/// `#![` opens a Rust inner attribute, not a shebang.
+pub fn is_script(is_executable: bool, head: &[u8]) -> bool {
+    is_executable || (head.starts_with(b"#!") && !head.starts_with(b"#!["))
+}
+
+/// Returns the first three bytes of a file, or fewer for a shorter file.
+fn head(path: &Path) -> Result<Vec<u8>> {
+    let mut buf = Vec::with_capacity(3);
+    std::fs::File::open(path)
+        .with_context(|| format!("reading {}", path.display()))?
+        .take(3)
+        .read_to_end(&mut buf)?;
+    Ok(buf)
+}
+
 pub fn is_todo_scanned(path: &Path) -> bool {
     let name = path
         .file_name()
@@ -101,7 +119,7 @@ pub fn todo_violations(text: &str) -> Vec<usize> {
         .collect()
 }
 
-const CHAINING_TOKENS: &[&str] = &["&&", "||", ";", "$(", "`"];
+const CHAINING_TOKENS: &[&str] = &["&&", "||", "|", ";", "$(", "`"];
 
 /// Returns `(line, recipe, reason)` for each recipe that is not one command on one line.
 pub fn justfile_violations(text: &str) -> Vec<(usize, String, String)> {
@@ -161,13 +179,22 @@ pub fn check(repo: &Repo) -> Result<Vec<Violation>> {
         });
     }
     for file in &repo.files {
-        if is_banned(&file.path) {
+        let banned = if is_banned(&file.path) {
+            Some("file matches a banned artifact pattern")
+        } else if !file.is_symlink
+            && is_script(file.is_executable, &head(&repo.root.join(&file.path))?)
+        {
+            Some("file is a script (executable mode or `#!` line); move the logic to xtask")
+        } else {
+            None
+        };
+        if let Some(message) = banned {
             out.push(Violation {
                 path: file.path.clone(),
                 line: None,
                 rule: "tree-banned",
                 severity: Severity::Error,
-                message: "file matches a banned artifact pattern".into(),
+                message: message.into(),
             });
         }
         if file.is_symlink {
@@ -240,6 +267,16 @@ mod tests {
     }
 
     #[test]
+    fn executables_and_shebangs_are_scripts() {
+        assert!(is_script(true, b""));
+        assert!(is_script(false, b"#!/usr/bin/env python3\n"));
+        assert!(is_script(false, b"#! /bin/sh\n"));
+        assert!(!is_script(false, b"#![allow(clippy::x)]\n"));
+        assert!(!is_script(false, b"# Title\n"));
+        assert!(!is_script(false, b""));
+    }
+
+    #[test]
     fn todo_requires_issue() {
         assert_eq!(
             todo_violations(&mark("// T0: x\n// T0(#12): y\n// F1 z")),
@@ -267,7 +304,7 @@ mod tests {
 
     #[test]
     fn justfile_rejects_shell_chaining() {
-        for body in ["a && b", "a || b", "a; b", "echo $(x)", "echo `x`"] {
+        for body in ["a && b", "a || b", "a; b", "echo $(x)", "echo `x`", "a | b"] {
             let v = justfile_violations(&format!("r:\n    {body}\n"));
             assert_eq!(v.len(), 1, "{body}");
             assert_eq!(v[0].1, "r");
@@ -289,9 +326,13 @@ mod tests {
         std::fs::create_dir(root.join("xtask")).unwrap();
         std::fs::write(root.join("xtask/a.rs"), mark("// T0 fix\n")).unwrap();
         std::os::unix::fs::symlink("xtask/a.rs", root.join("xtask/link.rs")).unwrap();
+        std::fs::write(root.join("xtask/run"), "#!/bin/sh\necho\n").unwrap();
+        std::fs::write(root.join("xtask/tool"), "x").unwrap();
+        std::fs::write(root.join("xtask/main.rs"), "#![allow(x)]\n").unwrap();
         let file = |p: &str, is_symlink| TrackedFile {
             path: p.into(),
             is_symlink,
+            is_executable: p == "xtask/tool",
         };
         let repo = Repo::from_parts(
             root.to_path_buf(),
@@ -300,6 +341,9 @@ mod tests {
                 file("run.sh", false),
                 file("xtask/a.rs", false),
                 file("xtask/link.rs", true),
+                file("xtask/run", false),
+                file("xtask/tool", false),
+                file("xtask/main.rs", false),
             ],
         );
         let got: Vec<(String, String)> = check(&repo)
@@ -312,6 +356,8 @@ mod tests {
             ("tree-root", "run.sh"),
             ("tree-banned", "run.sh"),
             ("tree-todo", "xtask/a.rs"),
+            ("tree-banned", "xtask/run"),
+            ("tree-banned", "xtask/tool"),
         ]
         .map(|(r, p)| (r.to_owned(), p.to_owned()));
         assert_eq!(got, want);

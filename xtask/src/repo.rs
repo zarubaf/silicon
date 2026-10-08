@@ -8,6 +8,7 @@ use anyhow::{Context, Result, bail};
 pub struct TrackedFile {
     pub path: PathBuf,
     pub is_symlink: bool,
+    pub is_executable: bool,
 }
 
 /// The tracked files of a repository. Every check reads from this.
@@ -36,6 +37,7 @@ impl Repo {
             files.push(TrackedFile {
                 path: PathBuf::from(path),
                 is_symlink: meta.starts_with("120000 "),
+                is_executable: meta.starts_with("100755 "),
             });
         }
         Ok(Self::from_parts(root, files))
@@ -121,5 +123,31 @@ mod tests {
             .unwrap();
         assert!(link.is_symlink);
         assert!(!plain.is_symlink);
+    }
+
+    #[test]
+    fn marks_executables_from_index_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        init(tmp.path());
+        std::fs::write(tmp.path().join("run"), "x").unwrap();
+        std::fs::set_permissions(
+            tmp.path().join("run"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        std::fs::write(tmp.path().join("t.md"), "x").unwrap();
+        git(tmp.path(), &["add", "."]);
+        git(tmp.path(), &["commit", "--quiet", "-m", "x"]);
+        let repo = Repo::discover_in(tmp.path()).unwrap();
+        let mode = |p: &str| {
+            repo.files
+                .iter()
+                .find(|f| f.path == std::path::Path::new(p))
+                .unwrap()
+                .is_executable
+        };
+        assert!(mode("run"));
+        assert!(!mode("t.md"));
     }
 }
