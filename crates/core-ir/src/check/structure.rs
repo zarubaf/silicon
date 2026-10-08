@@ -2,7 +2,7 @@
 //! write ports of each memory are numbered `0` to `k-1`.
 
 use super::error;
-use super::rx::{Ex, ExModule, ExWrite};
+use super::rx::{Ex, ExAssign, ExModule, ExWrite};
 use super::scope::Scope;
 use crate::diag::{Diagnostic, ErrorCode, Span};
 use crate::typed::{MemIdx, OutputIdx, RegIdx};
@@ -11,7 +11,7 @@ use std::collections::HashMap;
 /// The unique definitions of a module, by table position.
 pub(super) struct Structure<'r> {
     pub nexts: Vec<&'r Ex>,
-    pub assigns: Vec<&'r Ex>,
+    pub assigns: Vec<&'r ExAssign>,
     /// For each memory, its write ports ordered by port index.
     pub writes: Vec<Vec<&'r ExWrite>>,
 }
@@ -65,7 +65,7 @@ fn structure<'r>(
     errors: &mut Vec<Diagnostic>,
 ) -> Structure<'r> {
     let nexts = group(module.nexts.iter().map(|n| (n.slot, (n.span, &n.expr))));
-    let assigns = group(module.assigns.iter().map(|a| (a.slot, (a.span, &a.expr))));
+    let assigns = group(module.assigns.iter().map(|a| (a.slot, (a.span, a))));
     let mut next_exprs = Vec::new();
     for (i, reg) in scope.regs.iter().enumerate() {
         let missing = (

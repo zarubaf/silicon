@@ -125,7 +125,7 @@ fn module(scope: &Scope, rx: &ExModule, structure: &Structure, insts: &[LinkedIn
         regs,
         mems,
         insts,
-        assigns: all(&structure.assigns),
+        assigns: structure.assigns.iter().map(|a| a.expr.finish()).collect(),
         schedule: Vec::new(),
         deps: Deps::default(),
     }
