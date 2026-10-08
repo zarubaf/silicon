@@ -2,7 +2,7 @@
 
 mod cli;
 
-use std::io;
+use std::io::{self, Write};
 use std::process::ExitCode;
 
 use clap::Parser;
@@ -10,6 +10,13 @@ use clap::Parser;
 fn main() -> ExitCode {
     let cli = cli::Cli::parse();
     let stdin = io::stdin().lock();
-    let stdout = io::stdout().lock();
-    cli::execute(&cli.command, stdin, stdout).into()
+    let mut stdout = io::stdout().lock();
+    let exit = cli::execute(&cli.command, stdin, &mut stdout);
+    // A failed flush loses output, which is an output error (exit 2).
+    if let Err(e) = stdout.flush() {
+        // A failed write to stderr has no better channel to report to.
+        let _ = writeln!(io::stderr(), "silicon: {e}");
+        return cli::Exit::UsageError.into();
+    }
+    exit.into()
 }
