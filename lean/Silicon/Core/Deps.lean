@@ -1,4 +1,6 @@
 import Silicon.Core.Syntax
+import Std.Data.HashMap.Lemmas
+import Std.Data.HashSet.Lemmas
 
 /-!
 Port dependencies describe input reads in the current cycle.
@@ -19,6 +21,31 @@ inductive Node where
   deriving Repr, DecidableEq, BEq
 
 deriving instance ReflBEq, LawfulBEq for Node
+
+instance : Hashable Node where
+  hash n := match n with
+    | .name s => hash ((s, none) : String × Option String)
+    | .port i p => hash ((i, some p) : String × Option String)
+
+instance : LawfulHashable Node :=
+  ⟨by intro a b h; exact congrArg hash (eq_of_beq h)⟩
+
+/-! The first source entry wins when a node occurs more than once. -/
+def Node.index (entries : List (Node × α)) : Std.HashMap Node α :=
+  match entries with
+  | [] => {}
+  | (n, v) :: rest => (Node.index rest).insert n v
+
+theorem Node.index_lookup (entries : List (Node × α)) (n : Node) :
+    (Node.index entries)[n]? = entries.lookup n := by
+  induction entries with
+  | nil => simp [Node.index]
+  | cons a rest ih =>
+    rcases a with ⟨k, v⟩
+    simp only [Node.index, Std.HashMap.getElem?_insert, List.lookup_cons, ih, beq_iff_eq]
+    by_cases h : k = n
+    · subst k; simp
+    · simp [h, show (n == k) = false from beq_eq_false_iff_ne.mpr (Ne.symm h)]
 
 /-! Memory contents come from state. Only the address contributes reads. -/
 def reads : Expr → List Node
@@ -51,7 +78,17 @@ Missing child contracts supply no equations here.
 def graph (m : Module) (children : String → Option Deps) : List (Node × List Node) :=
   let eqs := m.body.flatMap (equations children)
   let nodes := eqs.map Prod.fst ++ (inputs m).map Node.name
-  eqs.map fun (n, rs) => (n, rs.filter nodes.contains)
+  eqs.map fun (n, rs) => (n, rs.filter fun node => nodes.contains node)
+
+private def indexedGraph (m : Module) (children : String → Option Deps) :
+    List (Node × List Node) :=
+  let eqs := m.body.flatMap (equations children)
+  let nodes := Std.HashSet.ofList (eqs.map Prod.fst ++ (inputs m).map Node.name)
+  eqs.map fun (n, rs) => (n, rs.filter fun node => nodes.contains node)
+
+@[csimp] private theorem graph_indexed : graph = indexedGraph := by
+  funext m children
+  simp only [graph, indexedGraph, Std.HashSet.contains_ofList]
 
 /-!
 A search visits each node at most once. The bound covers every path to an input leaf.
