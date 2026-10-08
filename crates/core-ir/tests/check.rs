@@ -264,7 +264,24 @@ fn e011_input_connected_twice() {
     (inst u child (a (const 1 0)) (a (const 1 1)))
     (assign q u.o)))
 ";
-    expect(src, ErrorCode::E011, 8, 35);
+    expect(src, ErrorCode::E011, 8, 36);
+}
+
+#[test]
+fn e011_clock_input_connected_twice() {
+    let src = "\
+(design top
+  (module child
+    (input c clock)
+    (output o (bits 1))
+    (assign o (const 1 0)))
+  (module top
+    (input clk clock)
+    (output q (bits 1))
+    (inst u child (c clk) (c clk))
+    (assign q u.o)))
+";
+    expect(src, ErrorCode::E011, 9, 28);
 }
 
 #[test]
