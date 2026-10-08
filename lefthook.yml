@@ -1,0 +1,14 @@
+pre-commit:
+  commands:
+    fmt-check:
+      run: just fmt-check
+
+commit-msg:
+  commands:
+    commit-msg:
+      run: cargo xtask commit-msg {1}
+
+pre-push:
+  commands:
+    ci:
+      run: just ci main

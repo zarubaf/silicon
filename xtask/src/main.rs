@@ -1,5 +1,6 @@
 #![allow(clippy::print_stdout)] // xtask is a CLI; stdout is its interface.
 
+mod commit;
 mod fmt;
 mod guidance;
 mod lean;
@@ -8,6 +9,7 @@ mod tree;
 mod violation;
 mod workspace;
 
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use anyhow::Result;
@@ -38,6 +40,17 @@ enum Command {
         #[arg(long)]
         check: bool,
     },
+    /// Check one commit message file. The `commit-msg` hook calls this.
+    CommitMsg {
+        /// Path of the message file.
+        file: PathBuf,
+    },
+    /// Check every commit in a range against the commit conventions.
+    CommitCheck {
+        /// Git revision range, for example `origin/main..HEAD`.
+        #[arg(long)]
+        range: String,
+    },
 }
 
 fn main() -> Result<ExitCode> {
@@ -47,6 +60,26 @@ fn main() -> Result<ExitCode> {
             fmt::run(&Repo::discover()?, check)?;
             Ok(ExitCode::SUCCESS)
         }
+        Command::CommitMsg { file } => Ok(report(&commit::check_message_file(&file)?)),
+        Command::CommitCheck { range } => {
+            let repo = Repo::discover()?;
+            Ok(report(&commit::check_range(
+                &repo.root,
+                &range,
+                &commit::allowed_scopes()?,
+            )?))
+        }
+    }
+}
+
+fn report(problems: &[String]) -> ExitCode {
+    for problem in problems {
+        println!("[commit] {problem}");
+    }
+    if problems.is_empty() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
     }
 }
 

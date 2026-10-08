@@ -43,4 +43,7 @@ lean:
 test:
     cargo nextest run --workspace
 
-ci: check test
+commit-check base="origin/main":
+    cargo xtask commit-check --range {{ base }}..HEAD
+
+ci base="origin/main": check test (commit-check base)
