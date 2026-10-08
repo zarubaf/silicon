@@ -245,4 +245,7 @@ def Design.mapPos (f : Pos → Pos) (d : Design) : Design :=
     (d.mapPos f).erasePos = d.erasePos := by
   simp [Design.mapPos, Design.erasePos, List.map_map]
 
+deriving instance ReflBEq, LawfulBEq for Pos, Ty, UnOp, BinOp, Pred, Expr, ResetKind, Reset
+deriving instance ReflBEq, LawfulBEq for Stmt, PortDir, Port, Module
+
 end Silicon.Core

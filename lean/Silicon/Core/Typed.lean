@@ -1578,6 +1578,11 @@ def designDeps (d : Core.Design) (fuel : Nat) : String → Option Deps :=
   let table := dependencyTable d fuel
   fun name => table.lookup name
 
+/-!
+A typed module is meaningful only inside a `Design`.
+Its `Design.environments` proof ties its interfaces and children to the design.
+Module semantics must therefore use that enclosing design.
+-/
 structure Module where
   pos : Pos
   name : String

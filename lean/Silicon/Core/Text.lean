@@ -445,7 +445,10 @@ mutual
     | f :: fs => (f.findPos p).or (Form.findPosMany p fs)
 end
 
-/-! Diagnostics address fields at most two levels below their enclosing form. -/
+/-!
+The position index stores paths at most two levels below each form.
+A caller must use a path within this depth to obtain a field position.
+-/
 private def fieldPositions (depth : Nat) (f : Form) : List (List Nat × Nat × Nat) :=
   ([], f.pos.line, f.pos.col) :: match depth, f with
     | depth + 1, .list _ fs _ => fs.zipIdx.flatMap fun (child, index) =>
