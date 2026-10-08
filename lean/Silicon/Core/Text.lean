@@ -192,18 +192,6 @@ inductive Form where
   | bad (pos : Pos)
   deriving Repr, Inhabited
 
-mutual
-  def Form.positions : Form → List (List Nat × Nat × Nat)
-    | .atom t => [([], t.pos.line, t.pos.col)]
-    | .bad p => [([], p.line, p.col)]
-    | .list p fs _ => ([], p.line, p.col) :: Form.fieldPositions fs 0
-  def Form.fieldPositions : List Form → Nat → List (List Nat × Nat × Nat)
-    | [], _ => []
-    | f :: fs, index =>
-      (f.positions.map fun (path, line, col) => (index :: path, line, col)) ++
-        Form.fieldPositions fs (index + 1)
-end
-
 def Form.pos : Form → Pos
   | .atom t => t.pos
   | .list p .. | .bad p => p
@@ -457,18 +445,40 @@ mutual
     | f :: fs => (f.findPos p).or (Form.findPosMany p fs)
 end
 
+/-! Diagnostics address fields at most two levels below their enclosing form. -/
+private def fieldPositions (depth : Nat) (f : Form) : List (List Nat × Nat × Nat) :=
+  ([], f.pos.line, f.pos.col) :: match depth, f with
+    | depth + 1, .list _ fs _ => fs.zipIdx.flatMap fun (child, index) =>
+      (fieldPositions depth child).map fun (path, line, col) => (index :: path, line, col)
+    | _, _ => []
+
+private abbrev PositionIndex := Std.HashMap (Nat × Nat) Pos
+
+mutual
+  private def indexForm (f : Form) (index : PositionIndex) : PositionIndex :=
+    let p := { f.pos with atoms := fieldPositions 2 f }
+    let index := index.insert (p.line, p.col) p
+    match f with
+    | .list _ fs _ => indexForms fs index
+    | _ => index
+  private def indexForms (fs : List Form) (index : PositionIndex) : PositionIndex :=
+    match fs with
+    | [] => index
+    | f :: fs => indexForms fs (indexForm f index)
+end
+
+private def indexedPosition (index : PositionIndex) (p : Pos) : Pos :=
+  (index[(p.line, p.col)]?).getD p
+
 def attachPositions (fs : List Form) (d : Design) : Design :=
-  let locate := fun p => match fs.findSome? (fun f => f.findPos p) with
-    | some f => { p with atoms := f.positions }
-    | none => p
+  let index := indexForms fs {}
   let top := match fs with | f :: _ => f.atPath [1] | [] => d.topPos
-  { d.mapPos locate with topPos := top }
+  { d.mapPos (indexedPosition index) with topPos := top }
 
 @[simp] theorem attachPositions_erase (fs : List Form) (d : Design) :
     (attachPositions fs d).erasePos = d.erasePos := by
   simpa only [attachPositions, Design.erasePos] using
-    Design.mapPos_erase (fun p => match fs.findSome? (fun f => f.findPos p) with
-      | some f => { p with atoms := f.positions } | none => p) d
+    Design.mapPos_erase (indexedPosition (indexForms fs {})) d
 
 def locateLimit (fs : List Form) (l : TextLimit) : Pos :=
   match fs.findSome? (fun f => f.findPos l.pos) with

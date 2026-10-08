@@ -1,11 +1,5 @@
-import Silicon.Core.Typed
-
-namespace Silicon.Core
-
-deriving instance ReflBEq, LawfulBEq for Ty
-deriving instance ReflBEq, LawfulBEq for PortDir
-
-end Silicon.Core
+import Silicon.Core.Order
+import Std.Data.HashSet.Lemmas
 
 namespace Silicon.Core.Rules
 
@@ -198,7 +192,7 @@ open Rules
 Parsed source supplies atom positions. A constructed AST can lack this source tree.
 For that AST, diagnostics use the position that its enclosing form declares.
 -/
-def atomPos (_d : Design) (form : Pos) (path : List Nat) : Pos :=
+def atomPos (form : Pos) (path : List Nat) : Pos :=
   match form.locate path with
   | some atom => atom
   | none => form
@@ -232,6 +226,38 @@ private def duplicateNames : List String → List (String × Pos) → List Error
     require (!(seen.contains n) && !(n.startsWith "silicon_")) .E002 p "name is not unique" ++
       duplicateNames (n :: seen) rest
 
+private def indexedDuplicateNames (seen : Std.HashSet String) :
+    List (String × Pos) → List Error
+  | [] => []
+  | (n, p) :: rest =>
+    require (!(seen.contains n) && !(n.startsWith "silicon_")) .E002 p "name is not unique" ++
+      indexedDuplicateNames (seen.insert n) rest
+
+private theorem indexedDuplicateNames_eq (seen : List String)
+    (index : Std.HashSet String) (xs : List (String × Pos))
+    (hi : ∀ n, index.contains n = seen.contains n) :
+    indexedDuplicateNames index xs = duplicateNames seen xs := by
+  induction xs generalizing seen index with
+  | nil => rfl
+  | cons entry xs ih =>
+    obtain ⟨n, p⟩ := entry
+    simp only [indexedDuplicateNames, duplicateNames, hi]
+    congr 1
+    apply ih
+    intro k
+    simp only [Std.HashSet.contains_insert, List.contains_cons, hi]
+    by_cases h : n = k
+    · subst k; simp
+    · simp [h, show (k == n) = false from beq_eq_false_iff_ne.mpr (Ne.symm h)]
+
+private def duplicateNamesIndexed (seen : List String) (xs : List (String × Pos)) :
+    List Error := indexedDuplicateNames (Std.HashSet.ofList seen) xs
+
+@[csimp] private theorem duplicateNames_indexed : duplicateNames = duplicateNamesIndexed := by
+  funext seen xs
+  symm
+  exact indexedDuplicateNames_eq seen _ xs (fun _ => Std.HashSet.contains_ofList)
+
 theorem duplicateNames_spec (seen : List String) (xs : List (String × Pos)) :
     duplicateNames seen xs = [] ↔
       (xs.map Prod.fst).Nodup ∧
@@ -262,78 +288,127 @@ theorem duplicateNames_spec (seen : List String) (xs : List (String × Pos)) :
       exact hn (he ▸ ha)
 
 def e002 (d : Design) : List Error :=
-  duplicateNames [] (d.items.map fun i => (itemName i, atomPos d (itemPos i) [1])) ++
+  duplicateNames [] (d.items.map fun i => (itemName i, atomPos (itemPos i) [1])) ++
   d.items.flatMap fun i =>
-    let ports := (itemPorts i).map fun p => (p.name, atomPos d p.pos [1])
+    let ports := (itemPorts i).map fun p => (p.name, atomPos p.pos [1])
     let names := match i with
-      | .module m => m.body.filterMap fun s => (definition s).map (·, atomPos d (stmtPos s) [1])
+      | .module m => m.body.filterMap fun s => (definition s).map (·, atomPos (stmtPos s) [1])
       | _ => []
     duplicateNames [] (ports ++ names)
 
 private def foldExpr (f : Expr → List Error) (e : Expr) : List Error :=
   (exprNodes e).flatMap f
 
-private def resolvedExpr (d : Design) (m : Module) : Expr → List Error
-  | .ref p n => require (valueTy (Typed.context d m) n).isSome .E003 p "expected a value"
+private def resolvedExprUsing (typeOf : String → Option Ty)
+    (d : Design) (m : Module) : Expr → List Error
+  | .ref p n => require (typeOf n).isSome .E003 p "expected a value"
   | .port p i n => require ((instancePort d m i n).any (·.dir == .output))
       .E003 p "expected an instance output"
-  | .read p n _ => require (memory d m n).isSome .E003 (atomPos d p [1]) "expected a memory"
+  | .read p n _ => require (memory d m n).isSome .E003 (atomPos p [1]) "expected a memory"
   | _ => []
 
-private def resolvedStmt (d : Design) (m : Module) (s : Stmt) : List Error :=
+private def resolvedExpr (d : Design) (m : Module) : Expr → List Error :=
+  resolvedExprUsing (valueTy (Typed.context d m)) d m
+
+private def resolvedStmtUsing (resolve : Expr → List Error)
+    (d : Design) (m : Module) (s : Stmt) : List Error :=
   let target := match s with
     | .reg p _ _ c _ =>
-      require (clockName m c) .E003 (atomPos d p [3]) "expected a clock input"
+      require (clockName m c) .E003 (atomPos p [3]) "expected a clock input"
     | .mem p _ _ _ c =>
-      require (clockName m c) .E003 (atomPos d p [4]) "expected a clock input"
+      require (clockName m c) .E003 (atomPos p [4]) "expected a clock input"
     | .next p n _ => require (match findStmt m n with
-        | some (.reg ..) => true | _ => false) .E003 (atomPos d p [1]) "expected a register"
+        | some (.reg ..) => true | _ => false) .E003 (atomPos p [1]) "expected a register"
     | .write p n _ _ _ _ =>
-      require (memory d m n).isSome .E003 (atomPos d p [1]) "expected a memory"
+      require (memory d m n).isSome .E003 (atomPos p [1]) "expected a memory"
     | .assign p n _ => require ((findPort m n).any (·.dir == .output))
-        .E003 (atomPos d p [1]) "expected an output"
+        .E003 (atomPos p [1]) "expected an output"
     | .inst p _ child xs => match findItem d child with
-      | none => err .E003 (atomPos d p [2]) "expected a module or extern"
+      | none => err .E003 (atomPos p [2]) "expected a module or extern"
       | some i => xs.zipIdx.flatMap fun ((n, _), index) =>
         require ((itemPorts i).any fun q => q.name == n && q.dir == .input)
-          .E003 (atomPos d p [3 + index, 0]) "expected a child input"
+          .E003 (atomPos p [3 + index, 0]) "expected a child input"
     | _ => []
-  target ++ (stmtExprs s).flatMap (foldExpr (resolvedExpr d m))
+  target ++ (stmtExprs s).flatMap (foldExpr resolve)
+
+private def resolvedStmt (d : Design) (m : Module) : Stmt → List Error :=
+  resolvedStmtUsing (resolvedExpr d m) d m
+
+private def resolvedModule (d : Design) (m : Module) : List Error :=
+  m.body.flatMap (resolvedStmt d m)
+
+private def indexedValueTy (index : Std.HashMap Deps.Node Typed.Kind) (n : String) :
+    Option Ty :=
+  match index[Deps.Node.name n]? with
+  | some (.value ty) => some ty
+  | some .clock => some .clock
+  | _ => none
+
+private theorem indexedValueTy_eq (ctx : Typed.Ctx) (n : String) :
+    indexedValueTy (Deps.Node.index ctx) n = valueTy ctx n := by
+  simp only [indexedValueTy, Deps.Node.index_lookup, valueTy]
+  rfl
+
+private def indexedResolvedModule (d : Design) (m : Module) : List Error :=
+  let index := Deps.Node.index (Typed.context d m)
+  let typeOf := fun n => indexedValueTy index n
+  m.body.flatMap (resolvedStmtUsing (resolvedExprUsing typeOf d m) d m)
+
+@[csimp] private theorem resolvedModule_indexed : resolvedModule = indexedResolvedModule := by
+  funext d m
+  simp only [resolvedModule, indexedResolvedModule, resolvedStmt, resolvedExpr, indexedValueTy_eq]
 
 def e003 (d : Design) : List Error :=
   require ((findItem d d.top).any fun i => match i with
     | .module _ => true | _ => false) .E003 d.topPos "expected a top module" ++
-  (modules d).flatMap fun m => m.body.flatMap (resolvedStmt d m)
+  (modules d).flatMap (resolvedModule d)
 
 private def widthNumber (p : Pos) (w : Nat) : List Error :=
   require (0 < w && w ≤ 65536) .E005 p "width is outside the allowed range"
 
-private def declaredExpr (d : Design) : Expr → List Error
-  | .const p w v => widthNumber (atomPos d p [1]) w ++
-      require (v == 0 || Nat.log2 v < w) .E005 (atomPos d p [2]) "constant does not fit its width"
-  | .extract p _ _ w => require (0 < w) .E005 (atomPos d p [3]) "extract width is zero"
-  | .replicate p _ k => require (0 < k) .E005 (atomPos d p [2]) "replication count is zero"
+private def declaredExpr : Expr → List Error
+  | .const p w v => widthNumber (atomPos p [1]) w ++
+      require (v == 0 || Nat.log2 v < w) .E005 (atomPos p [2]) "constant does not fit its width"
+  | .extract p _ _ w => require (0 < w) .E005 (atomPos p [3]) "extract width is zero"
+  | .replicate p _ k => require (0 < k) .E005 (atomPos p [2]) "replication count is zero"
   | _ => []
 
 def e005 (d : Design) : List Error :=
   d.items.flatMap fun i =>
     (itemPorts i).flatMap (fun p => match p.ty with
-      | .bits w => widthNumber (atomPos d p.pos [2, 1]) w | _ => []) ++
+      | .bits w => widthNumber (atomPos p.pos [2, 1]) w | _ => []) ++
     match i with
     | .extern _ => []
     | .module m => m.body.flatMap fun s =>
       (match s with
-        | .let_ p _ w _ | .reg p _ w _ _ => widthNumber (atomPos d p [2, 1]) w
-        | .mem p _ w depth _ => widthNumber (atomPos d p [2, 1]) w ++
-          require (0 < depth && depth ≤ 16777216) .E005 (atomPos d p [3]) "invalid memory depth"
-        | _ => []) ++ (stmtExprs s).flatMap (foldExpr (declaredExpr d))
+        | .let_ p _ w _ | .reg p _ w _ _ => widthNumber (atomPos p [2, 1]) w
+        | .mem p _ w depth _ => widthNumber (atomPos p [2, 1]) w ++
+          require (0 < depth && depth ≤ 16777216) .E005 (atomPos p [3]) "invalid memory depth"
+        | _ => []) ++ (stmtExprs s).flatMap (foldExpr (declaredExpr))
 
-private def clocksExpr (d : Design) (m : Module) : Expr → List Error
-  | .ref p n => require (valueTy (Typed.context d m) n != some .clock)
+private def clocksExprUsing (typeOf : String → Option Ty)
+    (d : Design) (m : Module) : Expr → List Error
+  | .ref p n => require (typeOf n != some .clock)
       .E009 p "clock used as a value"
   | .port p i n => require (!((instancePort d m i n).any (·.ty == .clock)))
       .E009 p "clock used as a value"
   | _ => []
+
+private def clocksExpr (d : Design) (m : Module) : Expr → List Error :=
+  clocksExprUsing (valueTy (Typed.context d m)) d m
+
+private def clockBody (d : Design) (m : Module) : List Error :=
+  m.body.flatMap fun s => (valueExprs d m s).flatMap (foldExpr (clocksExpr d m))
+
+private def indexedClockBody (d : Design) (m : Module) : List Error :=
+  let index := Deps.Node.index (Typed.context d m)
+  let typeOf := fun n => indexedValueTy index n
+  m.body.flatMap fun s =>
+    (valueExprs d m s).flatMap (foldExpr (clocksExprUsing typeOf d m))
+
+@[csimp] private theorem clockBody_indexed : clockBody = indexedClockBody := by
+  funext d m
+  simp only [clockBody, indexedClockBody, clocksExpr, indexedValueTy_eq]
 
 def e009 (d : Design) : List Error :=
   d.items.flatMap fun i =>
@@ -343,8 +418,7 @@ def e009 (d : Design) : List Error :=
       (fun p => err .E009 p.pos "clock output") ++
     match i with
     | .extern _ => []
-    | .module m => m.body.flatMap fun s =>
-      (valueExprs d m s).flatMap (foldExpr (clocksExpr d m))
+    | .module m => clockBody d m
 
 def e011 (d : Design) : List Error :=
   (modules d).flatMap fun m => m.body.flatMap fun s => match s with
@@ -353,19 +427,22 @@ def e011 (d : Design) : List Error :=
       | some i => (itemPorts i).flatMap fun p =>
         if p.dir != .input then [] else
         let connections := xs.filter (·.1 == p.name)
-        require (connections.length == 1) .E011 pos "input must connect exactly once" ++
+        let duplicate := ((xs.zipIdx.filter (fun x => x.1.1 == p.name))[1]?).map
+          fun x => atomPos pos [3 + x.2, 0]
+        require (connections.length == 1) .E011 (duplicate.getD pos)
+          "input must connect exactly once" ++
         if p.ty == .clock then connections.flatMap fun (_, e) =>
           require (directClock m e) .E011 (exprPos e) "expected a parent clock input"
         else []
     | _ => []
 
-private def dependencyInputs (d : Design) (x : Extern) (dep : Dep) : List Error :=
+private def dependencyInputs (x : Extern) (dep : Dep) : List Error :=
   let entries := dep.inputs.zipIdx
   entries.flatMap fun (n, index) =>
     require (!(dep.inputs.take index).contains n)
-      .E013 (atomPos d dep.pos [2, index]) "duplicate dependency input" ++
+      .E013 (atomPos dep.pos [2, index]) "duplicate dependency input" ++
     require (x.ports.any fun p => p.name == n && p.dir == .input && p.ty != .clock)
-      .E013 (atomPos d dep.pos [2, index]) "dependency must be a bits input"
+      .E013 (atomPos dep.pos [2, index]) "dependency must be a bits input"
 
 def e013 (d : Design) : List Error :=
   d.items.flatMap fun i => match i with
@@ -374,45 +451,46 @@ def e013 (d : Design) : List Error :=
       x.ports.flatMap (fun p => if p.dir == .output then
         let entries := x.deps.filter (·.output == p.name)
         match entries with
-        | [] => err .E013 (atomPos d p.pos [1]) "missing dependency entry"
-        | _ :: second :: _ => err .E013 (atomPos d second.pos [1]) "duplicate dependency entry"
+        | [] => err .E013 (atomPos p.pos [1]) "missing dependency entry"
+        | _ :: second :: _ => err .E013 (atomPos second.pos [1]) "duplicate dependency entry"
         | [_] => []
         else []) ++
       x.deps.flatMap fun dep =>
         require (x.ports.any fun p => p.dir == .output && p.name == dep.output)
-          .E013 (atomPos d dep.pos [1]) "dependency target must be an output" ++
-        dependencyInputs d x dep
+          .E013 (atomPos dep.pos [1]) "dependency target must be an output" ++
+        dependencyInputs x dep
 
 /-! Diagnostics use the same typed inference as statement construction. -/
 def expressionTy (d : Design) (m : Module) (e : Expr) : Option Ty :=
   (Typed.infer (Typed.context d m) e).map Sigma.fst
 
-private def operandErrors (d : Design) (m : Module) (e : Expr) : List Error :=
-  if (children e).all (fun a => (expressionTy d m a).isSome) &&
-      (expressionTy d m e).isNone then err .E004 (exprPos e) "operand width mismatch" else []
+private def operandErrorsWith (typeOf : Expr → Option Ty) (e : Expr) : List Error :=
+  if (children e).all (fun a => (typeOf a).isSome) &&
+      (typeOf e).isNone then err .E004 (exprPos e) "operand width mismatch" else []
 
-private def targetWidth (d : Design) (m : Module) (p : Pos) (w : Nat)
+private def targetWidthWith (typeOf : Expr → Option Ty) (p : Pos) (w : Nat)
     (e : Expr) : List Error :=
-  match expressionTy d m e with
+  match typeOf e with
   | some actual => require (actual == .bits w) .E004 p "target width mismatch"
   | none => []
 
-def stmtErrors (d : Design) (m : Module) (s : Stmt) : List Error :=
-    (valueExprs d m s).flatMap (foldExpr (operandErrors d m)) ++
+private def stmtErrorsWith (d : Design) (m : Module)
+    (typeOf : Expr → Option Ty) (s : Stmt) : List Error :=
+    (valueExprs d m s).flatMap (foldExpr (operandErrorsWith typeOf)) ++
     match s with
-    | .let_ p _ w e => targetWidth d m p w e
+    | .let_ p _ w e => targetWidthWith typeOf p w e
     | .next p n e | .assign p n e => match valueTy (Typed.context d m) n with
-      | some (.bits w) => targetWidth d m p w e | _ => []
+      | some (.bits w) => targetWidthWith typeOf p w e | _ => []
     | .reg p _ w _ reset => reset.toList.flatMap fun r =>
-      if [r.signal, r.value].all (fun e => (expressionTy d m e).isSome) then
-        let pos := atomPos d p [4]
-        targetWidth d m pos 1 r.signal ++ targetWidth d m pos w r.value
+      if [r.signal, r.value].all (fun e => (typeOf e).isSome) then
+        let pos := atomPos p [4]
+        targetWidthWith typeOf pos 1 r.signal ++ targetWidthWith typeOf pos w r.value
       else []
     | .write p n _ a v en => match memory d m n with
       | some (w, depth) =>
-        if [a, v, en].all (fun e => (expressionTy d m e).isSome) then
-          targetWidth d m p (addressWidth depth) a ++
-            targetWidth d m p w v ++ targetWidth d m p 1 en
+        if [a, v, en].all (fun e => (typeOf e).isSome) then
+          targetWidthWith typeOf p (addressWidth depth) a ++
+            targetWidthWith typeOf p w v ++ targetWidthWith typeOf p 1 en
         else []
       | none => []
     | .inst p _ child xs => match findItem d child with
@@ -420,12 +498,36 @@ def stmtErrors (d : Design) (m : Module) (s : Stmt) : List Error :=
       | some i => xs.zipIdx.flatMap fun ((n, e), index) =>
         match (itemPorts i).find? (·.name == n) with
         | some port => match port.ty with
-          | .bits w => targetWidth d m (atomPos d p [3 + index]) w e | _ => []
+          | .bits w => targetWidthWith typeOf (atomPos p [3 + index]) w e | _ => []
         | none => []
     | _ => []
 
+private abbrev operandErrors (d : Design) (m : Module) :=
+  operandErrorsWith (expressionTy d m)
+
+private abbrev targetWidth (d : Design) (m : Module) :=
+  targetWidthWith (expressionTy d m)
+
+def stmtErrors (d : Design) (m : Module) : Stmt → List Error :=
+  stmtErrorsWith d m (expressionTy d m)
+
 def e004 (d : Design) : List Error :=
   (modules d).flatMap fun m => m.body.flatMap (stmtErrors d m)
+
+/-! The type pass shares one indexed context across all expressions of a module. -/
+private def indexedE004 (d : Design) : List Error :=
+  (modules d).flatMap fun m =>
+    let ctx := Typed.context d m
+    let index := Deps.Node.index ctx
+    let infer := Typed.inferWith ctx (fun n => index[n]?)
+      (fun n => Deps.Node.index_lookup ctx n)
+    let typeOf := fun e => (infer e).map Sigma.fst
+    m.body.flatMap (stmtErrorsWith d m typeOf)
+
+@[csimp] private theorem e004_eq_indexed : e004 = indexedE004 := by
+  funext d
+  simp only [e004, indexedE004, Typed.inferWith_eq]
+  rfl
 
 private def exactlyOne (code : ErrorCode) (p : Pos) (ps : List Pos) : List Error :=
   match ps with
@@ -467,7 +569,7 @@ private def freshNodes {α : Type} [BEq α] (seen pending acc : List α) : List 
     if seen.contains n || acc.contains n then acc else n :: acc) acc
 
 /-! Rank failure rejects a graph. A visited search locates its cycle nodes. -/
-private def reaches [BEq α] (g : List (α × List α)) (target : α) :
+private def reachesSpec [BEq α] (g : List (α × List α)) (target : α) :
     Nat → List α → List α → Bool
   | 0, _, _ => false
   | fuel + 1, pending, seen =>
@@ -475,7 +577,50 @@ private def reaches [BEq α] (g : List (α × List α)) (target : α) :
     let fresh := freshNodes seen pending []
     let seen := fresh ++ seen
     let next := fresh.flatMap fun n => (g.lookup n).getD []
-    reaches g target fuel (next.filter fun n => !seen.contains n) seen
+    reachesSpec g target fuel (next.filter fun n => !seen.contains n) seen
+
+private def reaches (g : Typed.Graph) (target : Deps.Node) := reachesSpec g target
+
+private def indexedReachesAux (g : Std.HashMap Deps.Node (List Deps.Node))
+    (target : Deps.Node) : Nat → List Deps.Node → Std.HashSet Deps.Node → Bool
+  | 0, _, _ => false
+  | fuel + 1, pending, seen =>
+    if pending.contains target then true else
+    let fresh := pending.foldl (fun acc n =>
+      if seen.contains n || acc.contains n then acc else n :: acc) []
+    let seen := seen.insertMany fresh
+    let next := fresh.flatMap fun n => (g[n]?).getD []
+    indexedReachesAux g target fuel (next.filter fun n => !seen.contains n) seen
+
+private theorem indexedReachesAux_eq (g : Typed.Graph) (target : Deps.Node)
+    (fuel : Nat) (pending seen : List Deps.Node) (index : Std.HashSet Deps.Node)
+    (hindex : ∀ n, index.contains n = seen.contains n) :
+    indexedReachesAux (Deps.Node.index g) target fuel pending index =
+      reachesSpec g target fuel pending seen := by
+  induction fuel generalizing pending seen index with
+  | zero => rfl
+  | succ fuel ih =>
+    simp only [indexedReachesAux, reachesSpec]
+    split
+    · rfl
+    · simp only [hindex, Deps.Node.index_lookup]
+      have hi (n : Deps.Node) :
+          (index.insertMany (freshNodes seen pending [])).contains n =
+            (freshNodes seen pending [] ++ seen).contains n := by
+        simp only [Std.HashSet.contains_insertMany_list, List.contains_append, hindex, Bool.or_comm]
+      simp only [freshNodes] at hi ⊢
+      simp only [hi]
+      apply ih
+      exact hi
+
+private def indexedReaches (g : Typed.Graph) (target : Deps.Node)
+    (fuel : Nat) (pending seen : List Deps.Node) : Bool :=
+  indexedReachesAux (Deps.Node.index g) target fuel pending (Std.HashSet.ofList seen)
+
+@[csimp] private theorem reaches_indexed : reaches = indexedReaches := by
+  funext g target fuel pending seen
+  symm
+  exact indexedReachesAux_eq g target fuel pending seen _ (fun _ => Std.HashSet.contains_ofList)
 
 section GraphSearch
 
@@ -533,15 +678,15 @@ private theorem reaches_of_walk (g : List (α × List α)) (target : α)
     (fuel length : Nat) (pending seen : List α) (start : α)
     (hw : Walk g length start target) (hb : length < fuel)
     (hs : start ∈ seen ∨ start ∈ pending) (ht : target ∉ seen)
-    (hc : Closed g seen pending) : reaches g target fuel pending seen = true := by
+    (hc : Closed g seen pending) : reachesSpec g target fuel pending seen = true := by
   induction fuel generalizing length pending seen start with
   | zero => omega
   | succ fuel ih =>
     by_cases hp : target ∈ pending
-    · simp only [reaches, List.contains_iff_mem.mpr hp, ite_true]
+    · simp only [reachesSpec, List.contains_iff_mem.mpr hp, ite_true]
     · have hcheck : pending.contains target = false := by simp [hp]
-      simp only [reaches, hcheck, Bool.false_eq_true, ite_false]
-      change reaches g target fuel (frontier g seen pending) (updated seen pending) = true
+      simp only [reachesSpec, hcheck, Bool.false_eq_true, ite_false]
+      change reachesSpec g target fuel (frontier g seen pending) (updated seen pending) = true
       cases hw with
       | refl => exact False.elim (hs.elim ht hp)
       | @step x y z k hedge htail =>
@@ -555,7 +700,7 @@ private theorem reaches_of_walk (g : List (α × List α)) (target : α)
 theorem reaches_initial (g : List (α × List α)) (target start : α)
     (fuel length : Nat) (pending : List α)
     (hw : Walk g length start target) (hb : length < fuel) (hs : start ∈ pending) :
-    reaches g target fuel pending [] = true := by
+    reachesSpec g target fuel pending [] = true := by
   apply reaches_of_walk g target fuel length pending [] start hw hb (Or.inr hs)
   · simp
   · intro x hx
@@ -662,7 +807,7 @@ end BoundedCycles
 
 def e010 (d : Design) : List Error :=
   let g := hierarchyGraph d
-  if Typed.Ranked g (Typed.graphRanks g g.length) then [] else
+  if (Typed.FastRanks.certificate g).isSome then [] else
   (modules d).flatMap fun m => m.body.flatMap fun s => match s with
     | .inst p _ child _ =>
       if reaches g (.name m.name) (g.length + 1) [.name child] [] then
@@ -677,13 +822,106 @@ private def nodePos (m : Module) (n : Deps.Node) : Pos :=
     | .port n _, .inst _ k _ _ => n == k
     | _, _ => false).map stmtPos).getD m.pos
 
-def e008 (d : Design) : List Error :=
+private def e008All (d : Design) : List Error :=
   (modules d).flatMap fun m =>
     let g := Deps.graph m (inferDeps d (d.items.length + 1))
-    if Typed.Ranked g (Typed.graphRanks g g.length) then [] else
+    if (Typed.FastRanks.certificate g).isSome then [] else
     g.flatMap fun (n, edges) =>
       if reaches g n (g.length + 1) edges [] then
         err .E008 (nodePos m n) "combinational cycle" else []
+
+/-! Stable position order lets cycle search stop at the first diagnostic. -/
+private def cycleCandidates (m : Module) (g : Typed.Graph) :
+    List (Pos × Deps.Node × List Deps.Node) :=
+  (g.map fun row => (nodePos m row.1, row)).mergeSort fun a b =>
+    a.1.line < b.1.line || (a.1.line == b.1.line && a.1.col ≤ b.1.col)
+
+private def positionEntries : List Stmt → List (Deps.Node × Pos)
+  | [] => []
+  | .let_ p n _ _ :: rest | .assign p n _ :: rest =>
+    (.name n, p) :: positionEntries rest
+  | .inst p n _ _ :: rest => (.port n "", p) :: positionEntries rest
+  | _ :: rest => positionEntries rest
+
+private def positionKey : Deps.Node → Deps.Node
+  | .name n => .name n
+  | .port n _ => .port n ""
+
+private theorem positionEntries_lookup (body : List Stmt) (n : Deps.Node) :
+    (positionEntries body).lookup (positionKey n) =
+      (body.find? fun s => match n, s with
+        | .name n, .let_ _ k _ _ | .name n, .assign _ k _ => n == k
+        | .port n _, .inst _ k _ _ => n == k
+        | _, _ => false).map stmtPos := by
+  have names (a b : String) : (Deps.Node.name a == .name b) = (a == b) := rfl
+  have ports (a b : String) : (Deps.Node.port a "" == .port b "") = (a == b) := by
+    change ((a == b) && ("" == "")) = (a == b)
+    simp
+  have mixed₁ (a b c : String) : (Deps.Node.name a == .port b c) = false := rfl
+  have mixed₂ (a b c : String) : (Deps.Node.port a b == .name c) = false := rfl
+  induction body with
+  | nil => rfl
+  | cons s body ih =>
+    cases s <;> cases n <;>
+      simp_all only [positionEntries, positionKey, List.lookup_cons, List.find?_cons]
+    all_goals split <;> simp_all [stmtPos]
+
+private def indexedCycleCandidates (m : Module) (g : Typed.Graph) :
+    List (Pos × Deps.Node × List Deps.Node) :=
+  let index := Deps.Node.index (positionEntries m.body)
+  (g.map fun row => ((index[positionKey row.1]?).getD m.pos, row)).mergeSort fun a b =>
+    a.1.line < b.1.line || (a.1.line == b.1.line && a.1.col ≤ b.1.col)
+
+@[csimp] private theorem cycleCandidates_indexed : cycleCandidates = indexedCycleCandidates := by
+  funext m g
+  simp only [cycleCandidates, indexedCycleCandidates, Deps.Node.index_lookup,
+    positionEntries_lookup, nodePos]
+
+private def cycleDiagnostic (m : Module) (g : Typed.Graph) : List Error :=
+  match (cycleCandidates m g).find? fun x => reaches g x.2.1 (g.length + 1) x.2.2 [] with
+  | some (pos, _) => err .E008 pos "combinational cycle"
+  | none => []
+
+def e008 (d : Design) : List Error :=
+  (modules d).flatMap fun m =>
+    let g := Deps.graph m (inferDeps d (d.items.length + 1))
+    if (Typed.FastRanks.certificate g).isSome then [] else cycleDiagnostic m g
+
+private theorem cycleDiagnostic_nil (m : Module) (g : Typed.Graph) :
+    cycleDiagnostic m g = [] ↔
+      (g.flatMap fun (n, edges) => if reaches g n (g.length + 1) edges [] then
+        err .E008 (nodePos m n) "combinational cycle" else []) = [] := by
+  unfold cycleDiagnostic
+  have hp : (cycleCandidates m g).Perm (g.map fun row => (nodePos m row.1, row)) :=
+    List.mergeSort_perm _ _
+  cases hf : (cycleCandidates m g).find?
+      (fun x => reaches g x.2.1 (g.length + 1) x.2.2 []) with
+  | none =>
+    simp only [List.flatMap_eq_nil_iff, true_iff]
+    intro row hr
+    have hm := hp.mem_iff.mpr (List.mem_map.mpr ⟨row,hr,rfl⟩)
+    have hn := List.find?_eq_none.mp hf _ hm
+    simp only at hn
+    simp [hn]
+  | some row =>
+    simp only [err, List.cons_ne_self, false_iff]
+    intro hnil
+    have hr := hp.mem_iff.mp (List.mem_of_find?_eq_some hf)
+    obtain ⟨original,hm,he⟩ := List.mem_map.mp hr
+    subst row
+    have hh := List.find?_some hf
+    have hn := List.flatMap_eq_nil_iff.mp hnil original hm
+    simp [hh] at hn
+
+private theorem e008_nil (d : Design) : e008 d = [] ↔ e008All d = [] := by
+  simp only [e008,e008All,List.flatMap_eq_nil_iff]
+  apply forall_congr'
+  intro m
+  apply forall_congr'
+  intro hm
+  split
+  · rfl
+  · exact cycleDiagnostic_nil _ _
 
 @[simp] theorem require_nil (ok : Bool) (code : ErrorCode) (p : Pos) (msg : String) :
     require ok code p msg = [] ↔ ok = true := by
@@ -699,8 +937,8 @@ private theorem constant_bound (v w : Nat) :
   · simp [h, Nat.two_pow_pos]
   · simp [h, Nat.log2_lt h]
 
-@[simp] theorem declaredExpr_nil (d : Design) (e : Expr) :
-    declaredExpr d e = [] ↔ Rules.DeclaredNode e := by
+@[simp] theorem declaredExpr_nil (e : Expr) :
+    declaredExpr e = [] ↔ Rules.DeclaredNode e := by
   cases e <;> simp [declaredExpr, Rules.DeclaredNode, widthNumber, Rules.Width,
     constant_bound]
 
@@ -724,7 +962,7 @@ theorem e005_spec (d : Design) : e005 d = [] ↔ Rules.Numbers d := by
 
 @[simp] theorem resolvedExpr_nil (d : Design) (m : Module) (e : Expr) :
     resolvedExpr d m e = [] ↔ Rules.ResolvedNode d m e := by
-  cases e <;> simp [resolvedExpr, Rules.ResolvedNode]
+  cases e <;> simp [resolvedExpr, resolvedExprUsing, Rules.ResolvedNode]
 
 @[simp] theorem forall_zipIdx (xs : List α) (P : α → Prop) (offset : Nat) :
     (∀ x ∈ xs.zipIdx offset, P x.1) ↔ ∀ x ∈ xs, P x := by
@@ -736,7 +974,7 @@ theorem e005_spec (d : Design) : e005 d = [] ↔ Rules.Numbers d := by
 theorem resolvedStmt_nil (d : Design) (m : Module) (s : Stmt) :
     resolvedStmt d m s = [] ↔ Rules.ResolvedTarget d m s ∧
       ∀ e ∈ stmtExprs s, ∀ node ∈ exprNodes e, Rules.ResolvedNode d m node := by
-  simp only [resolvedStmt, List.append_eq_nil_iff, List.flatMap_eq_nil_iff,
+  simp only [resolvedStmt, resolvedStmtUsing, List.append_eq_nil_iff, List.flatMap_eq_nil_iff,
     foldExpr_nil, resolvedExpr_nil]
   apply and_congr_left; intro _
   cases s <;> simp only [Rules.ResolvedTarget, require_nil]
@@ -750,14 +988,14 @@ theorem resolvedStmt_nil (d : Design) (m : Module) (s : Stmt) :
         (fun x => ((itemPorts i).any fun p => p.name == x.1 && p.dir == .input) = true) 0
 
 theorem e003_spec (d : Design) : e003 d = [] ↔ Rules.Resolved d := by
-  simp [e003, Rules.Resolved, List.flatMap_eq_nil_iff, resolvedStmt_nil]
+  simp [e003, resolvedModule, Rules.Resolved, List.flatMap_eq_nil_iff, resolvedStmt_nil]
 
 @[simp] theorem clocksExpr_nil (d : Design) (m : Module) (e : Expr) :
     clocksExpr d m e = [] ↔ Rules.ClockNode d m e := by
-  cases e <;> simp [clocksExpr, Rules.ClockNode]
+  cases e <;> simp [clocksExpr, clocksExprUsing, Rules.ClockNode]
 
 theorem e009_spec (d : Design) : e009 d = [] ↔ Rules.Clocks d := by
-  simp only [e009, Rules.Clocks, List.flatMap_eq_nil_iff, List.append_eq_nil_iff]
+  simp only [e009, clockBody, Rules.Clocks, List.flatMap_eq_nil_iff, List.append_eq_nil_iff]
   apply forall_congr'; intro i
   apply forall_congr'; intro _
   rw [and_assoc]
@@ -905,8 +1143,8 @@ theorem zipIdx_fresh_iff (xs : List α) :
     have heq := h.eq_of_getElem_eq (by omega : j < xs.length) hi (he.trans ha)
     omega
 
-theorem dependencyInputs_spec (d : Design) (x : Extern) (dep : Dep) :
-    dependencyInputs d x dep = [] ↔ dep.inputs.Nodup ∧ ∀ n ∈ dep.inputs,
+theorem dependencyInputs_spec (x : Extern) (dep : Dep) :
+    dependencyInputs x dep = [] ↔ dep.inputs.Nodup ∧ ∀ n ∈ dep.inputs,
       (x.ports.any fun p => p.name == n && p.dir == .input && p.ty != .clock) = true := by
   simp only [dependencyInputs, List.flatMap_eq_nil_iff, List.append_eq_nil_iff, require_nil]
   have fresh (seen : List String) (n : String) : (!seen.contains n) = true ↔ n ∉ seen := by
@@ -915,10 +1153,10 @@ theorem dependencyInputs_spec (d : Design) (x : Extern) (dep : Dep) :
   exact and_congr Iff.rfl (forall_zipIdx dep.inputs (fun n =>
     (x.ports.any fun p => p.name == n && p.dir == .input && p.ty != .clock) = true) 0)
 
-theorem depsCount_spec (d : Design) (p : Port) (entries : List Dep) :
+theorem depsCount_spec (p : Port) (entries : List Dep) :
     (match entries with
-      | [] => err .E013 (atomPos d p.pos [1]) "missing dependency entry"
-      | _ :: second :: _ => err .E013 (atomPos d second.pos [1]) "duplicate dependency entry"
+      | [] => err .E013 (atomPos p.pos [1]) "missing dependency entry"
+      | _ :: second :: _ => err .E013 (atomPos second.pos [1]) "duplicate dependency entry"
       | [_] => []) = [] ↔ entries.length = 1 := by
   cases entries with
   | nil => simp [err]
@@ -977,7 +1215,7 @@ private theorem operandErrors_spec (d : Design) (m : Module) (e : Expr) :
     operandErrors d m e = [] ↔
       ((children e).all (fun a => (expressionTy d m a).isSome) = true →
         (expressionTy d m e).isSome = true) := by
-  unfold operandErrors
+  unfold operandErrors operandErrorsWith
   cases hc : (children e).all (fun a => (expressionTy d m a).isSome) <;>
     cases he : expressionTy d m e <;> simp [err]
 
@@ -1027,7 +1265,7 @@ theorem targetWidth_spec (d : Design) (m : Module) (p : Pos) (w : Nat) (e : Expr
   rw [← expressionTy_spec]
   cases he : expressionTy d m e with
   | none => simp [he] at h
-  | some ty => simp [targetWidth, he]
+  | some ty => simp [targetWidth, targetWidthWith, he]
 
 
 
@@ -1076,7 +1314,7 @@ theorem stmtErrors_let (d : Design) (m : Module) (p : Pos) (n : String)
     stmtErrors d m (.let_ p n w e) = [] ↔
       Typed.HasStmt (Typed.context d m) (Typed.portsOf d) (.let_ p n w e) := by
   rw [Typed.hasStmt_let]
-  simpa [stmtErrors, valueExprs, stmtExprs] using operands_targetWidth d m p w e
+  simpa [stmtErrors, stmtErrorsWith, valueExprs, stmtExprs] using operands_targetWidth d m p w e
 
 theorem stmtErrors_next (d : Design) (m : Module) (p : Pos) (n : String)
     (e : Expr) (h : ∃ w, Typed.valueTy (Typed.context d m) n = some (.bits w)) :
@@ -1085,7 +1323,7 @@ theorem stmtErrors_next (d : Design) (m : Module) (p : Pos) (n : String)
   obtain ⟨w, hw⟩ := h
   rw [Typed.hasStmt_next]
   simp only [hw, Option.some.injEq, Ty.bits.injEq, exists_eq_left']
-  simpa [stmtErrors, valueExprs, stmtExprs, hw] using operands_targetWidth d m p w e
+  simpa [stmtErrors, stmtErrorsWith, valueExprs, stmtExprs, hw] using operands_targetWidth d m p w e
 
 theorem stmtErrors_assign (d : Design) (m : Module) (p : Pos) (n : String)
     (e : Expr) (h : ∃ w, Typed.valueTy (Typed.context d m) n = some (.bits w)) :
@@ -1094,16 +1332,17 @@ theorem stmtErrors_assign (d : Design) (m : Module) (p : Pos) (n : String)
   obtain ⟨w, hw⟩ := h
   rw [Typed.hasStmt_assign]
   simp only [hw, Option.some.injEq, Ty.bits.injEq, exists_eq_left']
-  simpa [stmtErrors, valueExprs, stmtExprs, hw] using operands_targetWidth d m p w e
+  simpa [stmtErrors, stmtErrorsWith, valueExprs, stmtExprs, hw] using operands_targetWidth d m p w e
 theorem stmtErrors_reg (d : Design) (m : Module) (p : Pos) (n : String)
     (w : Nat) (c : String) (r : Option Reset) :
     stmtErrors d m (.reg p n w c r) = [] ↔
       Typed.HasStmt (Typed.context d m) (Typed.portsOf d) (.reg p n w c r) := by
   rw [Typed.hasStmt_reg]
   cases r with
-  | none => simp [stmtErrors, valueExprs, stmtExprs]
+  | none => simp [stmtErrors, stmtErrorsWith, valueExprs, stmtExprs]
   | some r =>
-    simp only [stmtErrors, valueExprs, stmtExprs, Option.toList_some, List.flatMap_cons,
+    simp only [stmtErrors, stmtErrorsWith, valueExprs, stmtExprs, Option.toList_some,
+      List.flatMap_cons,
       List.flatMap_nil, List.append_nil, List.append_eq_nil_iff, operands_spec,
       List.all_cons, List.all_nil, Bool.and_true, Option.mem_some_iff]
     constructor
@@ -1124,7 +1363,8 @@ theorem stmtErrors_mem (d : Design) (m : Module) (p : Pos) (n : String)
     (w depth : Nat) (c : String) :
     stmtErrors d m (.mem p n w depth c) = [] ↔
       Typed.HasStmt (Typed.context d m) (Typed.portsOf d) (.mem p n w depth c) := by
-  simp only [stmtErrors, valueExprs, stmtExprs, List.flatMap_nil, List.append_nil]
+  simp only [stmtErrors, stmtErrorsWith, valueExprs, stmtExprs, List.flatMap_nil,
+    List.append_nil]
   exact iff_of_true trivial (Typed.hasStmt_mem _ _ _ _ _ _ _)
 
 theorem stmtErrors_write (d : Design) (m : Module) (p : Pos) (n : String)
@@ -1146,7 +1386,7 @@ theorem stmtErrors_write (d : Design) (m : Module) (p : Pos) (n : String)
     · rintro ⟨_, _, ⟨rfl, rfl⟩, h⟩; exact h
     · intro h; exact ⟨w, depth, ⟨rfl, rfl⟩, h⟩
   rw [rhs]
-  simp only [stmtErrors, valueExprs, stmtExprs, List.flatMap_cons, List.flatMap_nil,
+  simp only [stmtErrors, stmtErrorsWith, valueExprs, stmtExprs, List.flatMap_cons, List.flatMap_nil,
     List.append_nil, List.append_eq_nil_iff, operands_spec, memory, hm,
     List.all_cons, List.all_nil, Bool.and_true]
   constructor
@@ -1200,7 +1440,7 @@ theorem any_clock_port (ps : List Port) (p : Port) (n : String)
 
 theorem targetWidth_nil (d : Design) (m : Module) (p : Pos) (w : Nat) (e : Expr) :
     targetWidth d m p w e = [] ↔ (expressionTy d m e).all (· == .bits w) = true := by
-  cases he : expressionTy d m e <;> simp [targetWidth, he]
+  cases he : expressionTy d m e <;> simp [targetWidth, targetWidthWith, he]
 
 def connectionOK (d : Design) (m : Module) (ps : List Port) (x : String × Expr) : Prop :=
   ((ps.any (fun q => q.name == x.1 && q.ty == .clock) && directClock m x.2) = true ∨
@@ -1279,11 +1519,11 @@ theorem stmtErrors_inst_normalize (d : Design) (m : Module) (p : Pos) (n child :
     (xs : List (String × Expr)) (item : Item) (hi : findItem d child = some item) :
     stmtErrors d m (.inst p n child xs) = [] ↔
       ∀ x ∈ xs, connectionOK d m (itemPorts item) x := by
-  simp only [stmtErrors]
+  simp only [stmtErrors, stmtErrorsWith]
   rw [hi]
   change ((valueExprs d m (.inst p n child xs)).flatMap
     (foldExpr (operandErrors d m)) ++ xs.zipIdx.flatMap (fun x =>
-      connectionTarget d m (atomPos d p [3 + x.2]) (itemPorts item) x.1)) = [] ↔ _
+      connectionTarget d m (atomPos p [3 + x.2]) (itemPorts item) x.1)) = [] ↔ _
   rw [List.append_eq_nil_iff]
   rw [show valueExprs d m (.inst p n child xs) =
       xs.filterMap (fun x => if (itemPorts item).any
@@ -1385,7 +1625,7 @@ private def bodyContext (d : Design) (ss : List Stmt) : Ctx :=
 
 private theorem bodyContext_cons (d : Design) (s : Stmt) (ss : List Stmt) :
     bodyContext d (s :: ss) = bodyContext d [s] ++ bodyContext d ss := by
-  simp [bodyContext, context]
+  simp [bodyContext, context, contextFromPorts]
 
 private theorem entry_no_name (d : Design) (s : Stmt) (n : String)
     (h : definition s ≠ some n) : (bodyContext d [s]).lookup (.name n) = none := by
@@ -1393,10 +1633,11 @@ private theorem entry_no_name (d : Design) (s : Stmt) (n : String)
   | let_ p k w e | reg p k w c r | mem p k w depth c =>
     have hn : k ≠ n := by simpa [definition] using h
     have hb : (Deps.Node.name n == Deps.Node.name k) = false := by simp [Ne.symm hn]
-    simp [bodyContext, context, List.lookup, hb]
-  | next p k e | write p k i a v en | assign p k e => simp [bodyContext, context]
+    simp [bodyContext, context, contextFromPorts, List.lookup, hb]
+  | next p k e | write p k i a v en | assign p k e => simp [bodyContext, context, contextFromPorts]
   | inst p name child xs =>
-    simp only [bodyContext, context, List.map_nil, List.nil_append, List.flatMap_cons,
+    simp only [bodyContext, context, contextFromPorts, List.map_nil, List.nil_append,
+      List.flatMap_cons,
       List.flatMap_nil, List.append_nil]
     change ((portsOf d child).filterMap fun p =>
       if p.dir == .output then some (Deps.Node.port name p.name, Kind.value p.ty) else none).lookup
@@ -1418,7 +1659,7 @@ private theorem body_reg (d : Design) (ss : List Stmt) (n : String)
     by_cases hd : definition s = some n
     · simp [hd] at h
       subst s
-      simp [bodyContext, context]
+      simp [bodyContext, context, contextFromPorts]
     · simp [hd] at h
       rw [bodyContext_cons, List.lookup_append, entry_no_name d s n hd]
       simpa using ih h
@@ -1491,7 +1732,7 @@ theorem target_next (d : Design) (m : Module) (p : Pos) (n : String) (e : Expr)
     refine ⟨width, ?_⟩
     unfold valueTy
     have hc : (context d m).lookup (.name n) = some (.value (.bits width)) := by
-      rw [context, List.lookup_append, no_port_lookup m.ports n hp]
+      rw [context, contextFromPorts, List.lookup_append, no_port_lookup m.ports n hp]
       exact body_reg d m.body n pos width clock reset hf
     rw [hc]
 
@@ -1514,7 +1755,7 @@ theorem target_assign (d : Design) (m : Module) (p : Pos) (n : String) (e : Expr
     change (match (context d m).lookup (.name n) with
       | some (.value ty) => some ty | some .clock => some .clock | _ => none) = _
     rw [show (context d m).lookup (.name n) = some (.value (.bits width)) from
-      by simpa [context, bodyContext] using lookup]
+      by simpa [context, contextFromPorts, bodyContext] using lookup]
 
 
 theorem e004_spec (d : Design) (hn : Names d) (hr : Resolved d)
@@ -1948,12 +2189,20 @@ theorem graph_cycle_of_not_ranked (g : Typed.Graph) (hn : (g.map Prod.fst).Nodup
 /-! The cycle passes reject every graph without a decreasing rank. -/
 theorem e008_spec (d : Design) (hn : Rules.Names d) (hr : Rules.Resolved d)
     (ho : Rules.Outputs d) : e008 d = [] ↔ Rules.Combinational d := by
-  simp only [e008, List.flatMap_eq_nil_iff, Rules.Combinational]
+  rw [e008_nil]
+  simp only [e008All, List.flatMap_eq_nil_iff, Rules.Combinational]
   apply forall_congr'
   intro m
   apply forall_congr'
   intro hm
   let g := Deps.graph m (inferDeps d (d.items.length + 1))
+  have hkeys := combinational_graph_keys_nodup d m hn hr ho hm (d.items.length + 1)
+  have hc : (Typed.FastRanks.certificate g).isSome = true ↔
+      Typed.Ranked g (Typed.graphRanks g g.length) :=
+    (Option.isSome_iff_exists.trans (Typed.FastRanks.certificate_iff g hkeys)).trans
+      (Typed.graphRanks_iff g hkeys).symm
+  dsimp only [g] at hc
+  simp only [hc]
   by_cases hg : Typed.Ranked g (Typed.graphRanks g g.length)
   all_goals dsimp only [g] at hg
   · simp only [hg, ite_true]
@@ -1969,32 +2218,36 @@ theorem e008_spec (d : Design) (hn : Rules.Names d) (hr : Rules.Resolved d)
     · intro hnil
       have hrowNil := (List.flatMap_eq_nil_iff.mp hnil) (node, edges) hrow
       dsimp only [g] at hreach
-      simp [hreach, err] at hrowNil
+      simp [reaches, hreach, err] at hrowNil
     · intro h
       exact False.elim (hno h)
 
 theorem e010_spec (d : Design) (hn : Rules.Names d) :
     e010 d = [] ↔ Rules.Hierarchy d := by
-  unfold e010
+  unfold e010 reaches
   let g := Typed.hierarchyGraph d
-  by_cases hg : Typed.Ranked g (Typed.graphRanks g g.length)
-  all_goals dsimp only [g] at hg
-  · simp only [hg, ite_true]
-    exact iff_of_true trivial ((hierarchy_rank_iff d hn).mp hg)
-  · have hno : ¬Rules.Hierarchy d := fun h => hg ((hierarchy_rank_iff d hn).mpr h)
+  have equivalent := Typed.FastRanks.certificate_iff g (hierarchy_keys_nodup d hn)
+  by_cases hc : (Typed.FastRanks.certificate g).isSome = true
+  · dsimp only [g] at hc
+    simp only [hc, ite_true]
+    exact iff_of_true trivial (equivalent.mp (Option.isSome_iff_exists.mp hc))
+  · have hno : ¬Rules.Hierarchy d := fun h =>
+      hc (Option.isSome_iff_exists.mpr (equivalent.mpr h))
+    have hg : ¬Typed.Ranked g (Typed.graphRanks g g.length) := fun h => hno ⟨_, h⟩
     obtain ⟨k, n, hk, hw⟩ := graph_cycle_of_not_ranked g (hierarchy_keys_nodup d hn) hg
     obtain ⟨node, edges, child, length, hrow, hchild, hb, hp⟩ := bounded_cycle_row g k n hk hw
     obtain ⟨m, hm, he⟩ := List.mem_map.mp hrow
     cases he
-    obtain ⟨childName, hc, he⟩ := List.mem_map.mp hchild
+    obtain ⟨childName, hchildMem, he⟩ := List.mem_map.mp hchild
     subst child
-    obtain ⟨s, hs, he⟩ := List.mem_filterMap.mp hc
+    obtain ⟨s, hs, he⟩ := List.mem_filterMap.mp hchildMem
     cases s <;> simp only [Option.some.injEq, reduceCtorEq] at he
     rename_i p name module inputs
     subst childName
     have hreach := reaches_initial g (.name m.name) (.name module)
       (g.length + 1) length [.name module] hp hb (by simp)
-    simp only [hg, ite_false]
+    dsimp only [g] at hc
+    simp only [hc]
     constructor
     · intro hnil
       have hmNil := (List.flatMap_eq_nil_iff.mp hnil) m hm
@@ -2060,15 +2313,311 @@ theorem no_errors (d : Design) : firstError (errors d) = none ↔ WellFormed d :
       (e008_spec d hn hr hout).mpr hcomb, hclock, (e010_spec d hn).mpr hhier,
       hconn, hwrite, hdeps⟩
 
+/-! Declarative typed witnesses suffice to construct every statement in a body. -/
+theorem interface_unique (d : Design) (hn : Rules.Names d) :
+    ∀ n, ∀ a ∈ Typed.portsOf d n, ∀ b ∈ Typed.portsOf d n,
+      a.name = b.name → a = b := by
+  intro n a ha b hb he
+  cases hf : Rules.findItem d n with
+  | none =>
+    unfold Rules.findItem at hf
+    simp [Typed.portsOf, hf] at ha
+  | some item =>
+    have ps : Typed.portsOf d n = Typed.itemPorts item := by
+      unfold Rules.findItem at hf
+      simp [Typed.portsOf, hf]
+    rw [ps] at ha hb
+    exact named_port_eq _ a b (ports_nodup d item hn (List.mem_of_find?_eq_some hf)) ha hb he
+
+theorem body_complete (d : Design) (m : Module) (hm : m ∈ Typed.modules d)
+    (hn : Rules.Names d) (hw : Rules.Widths d) :
+    ∃ body, m.body.mapM (Typed.statement d (Typed.context d m)) = some body ∧
+      body.map Typed.Stmt.erase = m.body := by
+  have aux : ∀ ss : List Core.Stmt,
+      (∀ s ∈ ss, Typed.HasStmt (Typed.context d m) (Typed.portsOf d) s) →
+      ∃ body, ss.mapM (Typed.statement d (Typed.context d m)) = some body ∧
+        body.map Typed.Stmt.erase = ss := by
+    intro ss witnesses
+    induction ss with
+    | nil => exact ⟨[], rfl, rfl⟩
+    | cons s ss ih =>
+      obtain ⟨t, ht⟩ := witnesses s (by simp)
+      obtain ⟨ts, hts, erase⟩ := ih (fun s hs => witnesses s (by simp [hs]))
+      refine ⟨t :: ts, ?_, ?_⟩
+      · simp only [List.mapM_cons, ← ht,
+          Typed.statement_complete d _ (interface_unique d hn), hts]
+        rfl
+      · simp [ht, erase]
+  exact aux m.body (hw m hm)
+
+/-! A unique declaration fixes the context entry of each state equation. -/
+private theorem find_definition (ss : List Stmt) (s : Stmt) (n : String)
+    (unique : (ss.filterMap Rules.definition).Nodup) (mem : s ∈ ss)
+    (decl : Rules.definition s = some n) :
+    ss.find? (fun x => Rules.definition x == some n) = some s := by
+  induction ss with
+  | nil => simp at mem
+  | cons a ss ih =>
+    rcases List.mem_cons.mp mem with rfl | hs
+    · simp [decl]
+    · have tail : (ss.filterMap Rules.definition).Nodup := by
+        cases ha : Rules.definition a with
+        | none => simpa [List.filterMap_cons, ha] using unique
+        | some k =>
+          exact (List.nodup_cons.mp (by simpa only [List.filterMap_cons, ha] using unique)).2
+      have ne : Rules.definition a ≠ some n := by
+        intro he
+        have notmem : n ∉ ss.filterMap Rules.definition := by
+          exact (List.nodup_cons.mp (by simpa only [List.filterMap_cons, he] using unique)).1
+        exact notmem (List.mem_filterMap.mpr ⟨s, hs, decl⟩)
+      simp [ne, ih tail hs]
+
+private theorem declaration_no_port (d : Design) (m : Module) (s : Stmt) (n : String)
+    (hn : Rules.Names d) (hm : m ∈ Typed.modules d) (hs : s ∈ m.body)
+    (hd : Rules.definition s = some n) : Rules.findPort m n = none := by
+  have unique := (hn.2 (.module m) (module_mem d m hm)).1
+  change ((m.ports.map Port.name) ++ m.body.filterMap Rules.definition).Nodup at unique
+  have disjoint := (List.nodup_append.mp unique).2.2
+  apply List.find?_eq_none.mpr
+  intro p hp he
+  have name : p.name = n := by simpa using he
+  exact disjoint p.name (List.mem_map.mpr ⟨p, hp, rfl⟩) n
+    (List.mem_filterMap.mpr ⟨s, hs, hd⟩) name
+
+private theorem body_mem (d : Design) (ss : List Stmt) (n : String)
+    (p : Pos) (w depth : Nat) (clock : String)
+    (h : ss.find? (fun s => Rules.definition s == some n) = some (.mem p n w depth clock)) :
+    (bodyContext d ss).lookup (.name n) = some (.memory w depth) := by
+  induction ss with
+  | nil => simp at h
+  | cons s ss ih =>
+    by_cases hd : Rules.definition s = some n
+    · simp [hd] at h
+      subst s
+      simp [bodyContext, Typed.context, Typed.contextFromPorts]
+    · simp [hd] at h
+      rw [bodyContext_cons, List.lookup_append, entry_no_name d s n hd]
+      simpa using ih h
+
+theorem state_ready (d : Design) (m : Module) (hm : m ∈ Typed.modules d)
+    (hn : Rules.Names d) (regs : Rules.Registers d)
+    (body : List (Typed.Stmt (Typed.context d m) (Typed.portsOf d)))
+    (erase : body.map Typed.Stmt.erase = m.body) : Typed.StateReady body := by
+  have unique : (m.body.filterMap Rules.definition).Nodup := by
+    have h := (hn.2 (.module m) (module_mem d m hm)).1
+    exact (List.nodup_append.mp h).2.1
+  intro s hs
+  have raw : s.erase ∈ m.body := erase ▸ List.mem_map.mpr ⟨s, hs, rfl⟩
+  cases s
+  all_goals try trivial
+  case reg p n w c reset =>
+    have hp := declaration_no_port d m _ n hn hm raw rfl
+    have hf := find_definition m.body _ n unique raw (by rfl)
+    constructor
+    · unfold Typed.valueTy
+      have hc : (Typed.context d m).lookup (.name n) = some (.value (.bits w)) := by
+        rw [Typed.context, Typed.contextFromPorts, List.lookup_append,
+          no_port_lookup m.ports n hp]
+        exact body_reg d m.body n p w c (reset.map Typed.Reset.erase) hf
+      rw [hc]
+    · have count := regs m hm _ raw
+      change (Rules.nexts m n).length = 1 at count
+      unfold Rules.nexts at count
+      rw [← erase, List.filterMap_map] at count
+      have equal : (fun s : Typed.Stmt (Typed.context d m) (Typed.portsOf d) =>
+          match s.erase with
+          | .next p name _ => if name == n then some p else none
+          | _ => none) = (fun s => match s with
+          | .next p name _ _ _ => if name == n then some p else none
+          | _ => none) := by
+        funext s
+        cases s <;> rfl
+      simp only [Function.comp_def] at count
+      rw [equal] at count
+      apply Eq.trans ?_ count
+      congr 2
+      funext x
+      cases x <;> rfl
+  case mem p n w depth c =>
+    change (Typed.context d m).lookup (.name n) = some (.memory w depth)
+    have hp := declaration_no_port d m _ n hn hm raw rfl
+    have hf := find_definition m.body _ n unique raw (by rfl)
+    rw [Typed.context, Typed.contextFromPorts, List.lookup_append,
+      no_port_lookup m.ports n hp]
+    exact body_mem d m.body n p w depth c hf
+
+/-! Every state update has one declaration in the same body. -/
+private theorem declaration_count (ss : List Stmt) (n : String) (p : Stmt → Bool)
+    (unique : (ss.filterMap Rules.definition).Nodup)
+    (defines : ∀ s ∈ ss, p s = true → Rules.definition s = some n)
+    (witness : ∃ s ∈ ss, p s = true) : ss.countP p = 1 := by
+  have bound := countP_some_le_one ss Rules.definition unique n
+  have mono : ss.countP p ≤ ss.countP (fun s => decide (Rules.definition s = some n)) := by
+    apply List.countP_mono_left
+    intro s hs hp
+    exact decide_eq_true (defines s hs hp)
+  have positive := List.countP_pos_iff.mpr witness
+  omega
+
+private theorem memory_declaration (d : Design) (m : Module) (n : String) (w depth : Nat)
+    (lookup : (Typed.context d m).lookup (.name n) = some (.memory w depth)) :
+    ∃ p c, Stmt.mem p n w depth c ∈ m.body := by
+  obtain ⟨before, after, eq, _⟩ := List.lookup_eq_some_iff.mp lookup
+  have mem : (Deps.Node.name n, Typed.Kind.memory w depth) ∈ Typed.context d m := by
+    rw [eq]
+    simp
+  unfold Typed.context Typed.contextFromPorts at mem
+  rcases List.mem_append.mp mem with hp | hs
+  · obtain ⟨p, _, he⟩ := List.mem_map.mp hp
+    split at he <;> cases he
+  · obtain ⟨s, hs, he⟩ := List.mem_flatMap.mp hs
+    cases s <;> simp only [List.mem_singleton] at he
+    all_goals try contradiction
+    case let_ => cases he
+    case reg => cases he
+    case mem p name width size clock =>
+      cases he
+      exact ⟨p, clock, hs⟩
+    case inst p name child xs =>
+      obtain ⟨port, _, he⟩ := List.mem_filterMap.mp he
+      split at he <;> cases he
+
+private def registerName (n : String) : Stmt → Bool
+  | .reg _ name .. => name == n | _ => false
+
+private def memoryName (n : String) : Stmt → Bool
+  | .mem _ name .. => name == n | _ => false
+
+theorem update_owners (d : Design) (m : Module) (hm : m ∈ Typed.modules d)
+    (hn : Rules.Names d) (resolved : Rules.Resolved d)
+    (body : List (Typed.Stmt (Typed.context d m) (Typed.portsOf d)))
+    (erase : body.map Typed.Stmt.erase = m.body) : Typed.UpdateOwners body := by
+  have unique : (m.body.filterMap Rules.definition).Nodup := by
+    exact (List.nodup_append.mp (module_scope_nodup d m hn hm)).2.1
+  intro s hs
+  have raw : s.erase ∈ m.body := erase ▸ List.mem_map.mpr ⟨s, hs, rfl⟩
+  have target := (resolved.2 m hm _ raw).1
+  cases s
+  all_goals try trivial
+  case next p n w ht value =>
+    simp only [Typed.Stmt.erase, Rules.ResolvedTarget] at target
+    have witness : ∃ s ∈ m.body, registerName n s = true := by
+      cases hf : Rules.findStmt m n with
+      | none => simp [hf] at target
+      | some s =>
+        have mem := List.mem_of_find?_eq_some hf
+        have name := List.find?_some hf
+        cases s <;> simp only [hf, Bool.false_eq_true] at target
+        rename_i p name width clock reset
+        simp only [Rules.definition, beq_iff_eq, Option.some.injEq] at name
+        exact ⟨_, mem, by simp [registerName, name]⟩
+    have count := declaration_count m.body n (registerName n) unique (by
+      intro s _ hp
+      cases s <;> simp_all [registerName, Rules.definition]) witness
+    rw [← erase, List.countP_map] at count
+    dsimp only
+    rw [← List.countP_eq_length_filter]
+    apply Eq.trans ?_ count
+    congr 1
+    funext s
+    cases s <;> rfl
+  case write p n index w depth ht addr data enable =>
+    obtain ⟨mp, clock, mem⟩ := memory_declaration d m n w depth ht
+    have count := declaration_count m.body n (memoryName n) unique (by
+      intro s _ hp
+      cases s <;> simp_all [memoryName, Rules.definition])
+      ⟨.mem mp n w depth clock, mem, by simp [memoryName]⟩
+    rw [← erase, List.countP_map] at count
+    dsimp only
+    rw [← List.countP_eq_length_filter]
+    apply Eq.trans ?_ count
+    congr 1
+    funext s
+    cases s <;> rfl
+
+/-! Resolution supplies each child, and hierarchy ranks select a ready module. -/
+theorem hierarchy_order (d : Design) (resolved : Rules.Resolved d)
+    (hierarchy : Rules.Hierarchy d) :
+    ∃ sorted, Typed.orderModules (Typed.modules d).length (Typed.externNames d)
+      (Typed.modules d) = some sorted ∧ sorted.Perm (Typed.modules d) ∧
+      Typed.ordered (Typed.externNames d) sorted = true := by
+  obtain ⟨ranks, ranked⟩ := hierarchy
+  apply Typed.orderModules_complete _ _ _ (fun n => Typed.rank ranks (.name n))
+    (Nat.le_refl _)
+  intro m hm child hc
+  obtain ⟨s, hs, he⟩ := List.mem_filterMap.mp hc
+  cases s <;> simp only at he
+  all_goals try contradiction
+  rename_i pos name target inputs
+  cases he
+  obtain ⟨item, found, _⟩ := (resolved.2 m hm _ hs).1
+  have item_mem := List.mem_of_find?_eq_some found
+  have item_name : Typed.itemName item = child := by
+    simpa [Rules.findItem] using List.find?_some found
+  cases item with
+  | extern e =>
+    left
+    exact List.mem_filterMap.mpr ⟨.extern e, item_mem, by simpa [Typed.itemName] using item_name⟩
+  | module childModule =>
+    right
+    refine ⟨childModule, List.mem_filterMap.mpr ⟨.module childModule, item_mem, rfl⟩,
+      item_name, ?_⟩
+    apply ranked (.name m.name, (Typed.childNames m).map Deps.Node.name)
+      (List.mem_map.mpr ⟨m, hm, rfl⟩)
+    exact List.mem_map.mpr ⟨child, List.mem_filterMap.mpr ⟨_, hs, rfl⟩, rfl⟩
+
+/-! Semantic rules suffice for typed construction, grouping, and exact source erasure. -/
+theorem elaborate_complete (d : Design) (wf : WellFormed d) :
+    ∃ t, Typed.elaborateDesign d = some t := by
+  obtain ⟨hn, hr, hw, _, hreg, hout, hcomb, _, hhier, _, _, _⟩ := wf
+  obtain ⟨sorted, order, perm, hierarchy⟩ := hierarchy_order d hr hhier
+  have ready : ∀ m ∈ sorted, ∃ body groups,
+      m.body.mapM (Typed.statement d (Typed.context d m)) = some body ∧
+      Typed.groupStatements (Typed.context d m) (Typed.portsOf d) body = some groups ∧
+      Typed.equationsErase groups = m.body ∧
+      ∃ ranks, Typed.FastRanks.certificate
+        (Deps.graph m (Typed.designDeps d (d.items.length + 1))) = some ranks := by
+    intro m hm
+    have mem := perm.mem_iff.mp hm
+    obtain ⟨body, hb, erased⟩ := body_complete d m mem hn hw
+    obtain ⟨groups, hg⟩ := Typed.groupStatements_total body
+      (state_ready d m mem hn hreg body erased)
+    refine ⟨body, groups, hb, hg, ?_, ?_⟩
+    · rw [← erased]
+      exact Typed.equationsErase_of_raw_perm groups _
+        (Typed.groupStatements_coverage body (update_owners d m mem hn hr body erased) groups hg)
+    · exact Typed.FastRanks.certificate_complete _
+        (combinational_graph_keys_nodup d m hn hr hout mem _) (hcomb m mem)
+  obtain ⟨bodies, hb, erased⟩ := Typed.elaborateModules_of_groups d sorted ready
+  exact Typed.elaborateDesign_of_modules d sorted bodies hn.1.1 order perm hierarchy hb erased
+
 end Check
 
 /-! Diagnostics finish before elaboration constructs the typed design. -/
 def check (d : Design) : Except Error Typed.Design :=
-  match Check.firstError (Check.errors d) with
+  match he : Check.firstError (Check.errors d) with
   | some e => .error e
-  | none => match Typed.elaborateDesign d with
+  | none => match ht : Typed.elaborateDesign d with
     | some t => .ok t
-    | none => .error ⟨.E004, d.topPos, "typed elaboration failed"⟩
+    | none => False.elim (by
+        obtain ⟨t, accepted⟩ := Check.elaborate_complete d ((Check.no_errors d).mp he)
+        rw [ht] at accepted
+        contradiction)
+
+theorem check_sound_erase (d : Design) (t : Typed.Design) (h : check d = .ok t) :
+    t.erase = d := by
+  unfold check at h
+  split at h
+  · contradiction
+  · rename_i he
+    split at h
+    · rename_i typed accepted
+      cases h
+      exact Typed.elaborateDesign_erase d t accepted
+    · rename_i failure
+      obtain ⟨typed, accepted⟩ := Check.elaborate_complete d ((Check.no_errors d).mp he)
+      rw [failure] at accepted
+      contradiction
 
 theorem check_sound (d : Design) (t : Typed.Design) (h : check d = .ok t) :
     WellFormed d ∧ t.erase.erasePos = d.erasePos := by
@@ -2081,6 +2630,27 @@ theorem check_sound (d : Design) (t : Typed.Design) (h : check d = .ok t) :
       cases h
       exact ⟨(Check.no_errors d).mp he,
         congrArg Design.erasePos (Typed.elaborateDesign_erase d t ht)⟩
-    next => contradiction
+    next failure =>
+      obtain ⟨typed, accepted⟩ := Check.elaborate_complete d ((Check.no_errors d).mp he)
+      rw [failure] at accepted
+      contradiction
+
+/-! Every declaratively well-formed design has a typed checker result. -/
+theorem check_complete (d : Design) (wf : WellFormed d) : ∃ t, check d = .ok t := by
+  obtain ⟨t, ht⟩ := Check.elaborate_complete d wf
+  refine ⟨t, ?_⟩
+  unfold check
+  split
+  · rename_i failure
+    rw [(Check.no_errors d).mpr wf] at failure
+    contradiction
+  · split
+    · rename_i accepted
+      rw [ht] at accepted
+      cases accepted
+      rfl
+    · rename_i failure
+      rw [ht] at failure
+      contradiction
 
 end Silicon.Core

@@ -102,6 +102,10 @@ private def result (source : String) : Option (ErrorCode × Nat × Nat) :=
   "(write m 0 (const 1 0) (const 1 0) (const 1 0))\n" ++
   "(write m 0 (const 1 0) (const 1 0) (const 1 0))))") == some (.E012, 3, 1)
 
+/-! Cycle diagnostics follow source positions when graph nodes have a different order. -/
+#guard result ("(design top (module top (output q (bits 1))\n" ++
+  "(let x (bits 1) x)\n(assign q q)))") == some (.E008, 2, 1)
+
 /-! Cycle errors exclude nodes that only depend on a cycle. -/
 #guard result ("(design top (module top\n(let early (bits 1) a)\n" ++
   "(let a (bits 1) b)\n(let b (bits 1) a)))") == some (.E008, 3, 1)
@@ -144,6 +148,11 @@ private def result (source : String) : Option (ErrorCode × Nat × Nat) :=
 #guard result ("(design top (module top) (extern child (output q (bits 1)) " ++
   "(deps q ()) (deps\n q ())))") == some (.E013, 2, 2)
 
+/-! A duplicate connection points to the second port name. -/
+#guard result ("(design top (module child (input x (bits 1)))\n" ++
+  "(module top (inst u child (x (const 1 0))\n" ++
+  "(x (const 1 0)))))") == some (.E011, 3, 2)
+
 /-! Each level reads both nodes of the prior level. Shared paths must stay bounded. -/
 private def twoWideChain (depth : Nat) : String :=
   let start := "(design top (module top (input a0 (bits 1)) (input b0 (bits 1))"
@@ -154,7 +163,13 @@ private def twoWideChain (depth : Nat) : String :=
       "(let b" ++ next ++ " (bits 1) (or a" ++ prev ++ " b" ++ prev ++ "))") start
   body ++ "))"
 
-#guard result (twoWideChain 40) == none
+#guard result (twoWideChain 200) == none
+
+private def twoWideCycle (depth : Nat) : String :=
+  (twoWideChain depth).replace "(input a0 (bits 1)) (input b0 (bits 1))"
+    ("(input b0 (bits 1)) (let a0 (bits 1) a" ++ toString depth ++ ")")
+
+#guard (result (twoWideCycle 200)).map (fun (code, _, _) => code) == some .E008
 
 /-! Repeated child calls share one dependency table at each hierarchy depth. -/
 private def hierarchyDag (depth : Nat) : String :=
