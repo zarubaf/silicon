@@ -18,7 +18,7 @@ This crate owns the commands `check`, `fmt`, `run`, `lower`, and `verilog`, the 
 
 ## Dependencies
 
-This crate depends on `core-ir`, `backend-circt`, and `clap`. The command `verilog` runs `firtool`, and the tests run `circt-verilog`, from the development shell. It is the last stage of the pipeline.
+This crate depends on `core-ir`, `backend-circt`, and `clap`. The command `verilog` runs `firtool`, and the tests run `circt-verilog` and `FileCheck`, from the development shell. The files of `tests/lower/` hold `; CHECK:` lines for `FileCheck`. It is the last stage of the pipeline.
 
 ## How to test
 
