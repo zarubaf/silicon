@@ -1,22 +1,20 @@
 # Silicon
 
-Silicon is a hardware description language with synchronous, 2-state semantics.
-Lean 4 holds the normative spec, Rust holds the compiler, and translation validation closes the trust gap.
+Silicon is a hardware description language with synchronous, 2-state semantics. Lean 4 holds the normative spec, Rust holds the compiler, and translation validation closes the trust gap.
 
 ## Constraints
 
-When two principles collide, pick the one that cuts future cost in THIS codebase.
-HARD RULE: refactor to the principle FIRST, then change behavior.
+When two principles collide, pick the one that cuts future cost in THIS codebase. HARD RULE: refactor to the principle FIRST, then change behavior.
 
-1. Separation of Concerns - one kind of work per part (UI / domain / persistence / infra). Root principle.
-2. Encapsulation / Information Hiding - small stable contract; hide internals.
-3. High Cohesion + Loose Coupling - change-together lives together; independents talk narrow.
-4. DRY - one authoritative representation of each piece of *knowledge* (not every similar line). Avoid over-DRY.
-5. KISS - simplest design that works; complexity is the long-term tax.
-6. Single Responsibility - one reason to change.
-7. Depend on Abstractions - policy doesn't depend on details; both depend on contracts.
-8. YAGNI - no speculative features, frameworks, or "later" hooks.
-9. Composition over Inheritance - assemble pieces; don't grow fragile hierarchies.
+01. Separation of Concerns - one kind of work per part (UI / domain / persistence / infra). Root principle.
+02. Encapsulation / Information Hiding - small stable contract; hide internals.
+03. High Cohesion + Loose Coupling - change-together lives together; independents talk narrow.
+04. DRY - one authoritative representation of each piece of *knowledge* (not every similar line). Avoid over-DRY.
+05. KISS - simplest design that works; complexity is the long-term tax.
+06. Single Responsibility - one reason to change.
+07. Depend on Abstractions - policy doesn't depend on details; both depend on contracts.
+08. YAGNI - no speculative features, frameworks, or "later" hooks.
+09. Composition over Inheritance - assemble pieces; don't grow fragile hierarchies.
 10. Open/Closed (with discipline) - extend at stable boundaries; only where change showed up twice.
 11. Honorable: Law of Demeter • fail fast / illegal states unrepresentable • optimize for deletion.
 12. Unix do-one-thing + compose.
@@ -56,13 +54,13 @@ Each rule is one list line. It ends with `Check:` and the check. A rule without 
 
 ## Where to read
 
-| Question | Read |
-| --- | --- |
-| What is the pipeline, and what is trusted? | `doc/architecture.md` |
-| Why did we decide this? | `doc/adr/` |
-| How does this part work? | `doc/design/` |
-| How do I orchestrate agents? Which model? | `doc/guide/agents.md` |
-| How do I write commits and branches? | `doc/guide/commits.md` |
-| How do I write prose and format files? | `doc/guide/style.md` |
-| What is the test oracle for a layer? | `doc/guide/testing.md` |
-| What does a term mean? | `CONTEXT.md` |
+| Question                                   | Read                   |
+| ------------------------------------------ | ---------------------- |
+| What is the pipeline, and what is trusted? | `doc/architecture.md`  |
+| Why did we decide this?                    | `doc/adr/`             |
+| How does this part work?                   | `doc/design/`          |
+| How do I orchestrate agents? Which model?  | `doc/guide/agents.md`  |
+| How do I write commits and branches?       | `doc/guide/commits.md` |
+| How do I write prose and format files?     | `doc/guide/style.md`   |
+| What is the test oracle for a layer?       | `doc/guide/testing.md` |
+| What does a term mean?                     | `CONTEXT.md`           |

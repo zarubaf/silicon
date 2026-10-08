@@ -1,15 +1,12 @@
 # Repository Foundation
 
-Status: proposed
-Date: 2026-10-08
+Status: proposed Date: 2026-10-08
 
 ## 1. Purpose and scope
 
-This spec defines the foundation of the Silicon repository.
-It covers the layout, the agent guidance, the orchestration of agents, the task and commit lifecycle, formatting, quality gates, and clutter prevention.
+This spec defines the foundation of the Silicon repository. It covers the layout, the agent guidance, the orchestration of agents, the task and commit lifecycle, formatting, quality gates, and clutter prevention.
 
-The goal: a fresh agent can do a task with only the root `AGENTS.md`, the `AGENTS.md` of one area, and a task description.
-Mechanical checks reject bad formatting, bad commits, broken layering, and unproven Lean before a human reads the change.
+The goal: a fresh agent can do a task with only the root `AGENTS.md`, the `AGENTS.md` of one area, and a task description. Mechanical checks reject bad formatting, bad commits, broken layering, and unproven Lean before a human reads the change.
 
 Out of scope:
 
@@ -21,10 +18,7 @@ Out of scope:
 
 Guidance is a contract. Tools enforce it.
 
-Each hard rule in the guidance names the check that enforces it.
-A rule without a check is advisory.
-`xtask` warns about a hard rule without a named check.
-Section 12 is the authoritative index of rules and checks.
+Each hard rule in the guidance names the check that enforces it. A rule without a check is advisory. `xtask` warns about a hard rule without a named check. Section 12 is the authoritative index of rules and checks.
 
 ## 3. Repository layout
 
@@ -77,14 +71,13 @@ The two existing notes change as follows:
 
 ## 4. Guidance hierarchy
 
-| Level | File | Loaded | Limit |
-| --- | --- | --- | --- |
-| L0 | `AGENTS.md` at the root | Always | 100 lines |
-| L1 | `AGENTS.md` in a crate or in `lean/` | When an agent works in that directory | 60 lines |
-| L2 | `doc/**` | On demand, through a link from L0 or L1 | None |
+| Level | File                                 | Loaded                                  | Limit     |
+| ----- | ------------------------------------ | --------------------------------------- | --------- |
+| L0    | `AGENTS.md` at the root              | Always                                  | 100 lines |
+| L1    | `AGENTS.md` in a crate or in `lean/` | When an agent works in that directory   | 60 lines  |
+| L2    | `doc/**`                             | On demand, through a link from L0 or L1 | None      |
 
-Each directory with an `AGENTS.md` also has `CLAUDE.md` as a symlink to it.
-Claude Code and Codex thus read one source.
+Each directory with an `AGENTS.md` also has `CLAUDE.md` as a symlink to it. Claude Code and Codex thus read one source.
 
 ### 4.1 Root `AGENTS.md`
 
@@ -110,18 +103,17 @@ Each L1 file has these headings, in this order:
 
 The root `AGENTS.md` keeps this text as the owner wrote it. Only the numbering is fixed.
 
-> When two principles collide, pick the one that cuts future cost in THIS codebase.
-> HARD RULE: refactor to the principle FIRST, then change behavior.
+> When two principles collide, pick the one that cuts future cost in THIS codebase. HARD RULE: refactor to the principle FIRST, then change behavior.
 >
-> 1. Separation of Concerns - one kind of work per part (UI / domain / persistence / infra). Root principle.
-> 2. Encapsulation / Information Hiding - small stable contract; hide internals.
-> 3. High Cohesion + Loose Coupling - change-together lives together; independents talk narrow.
-> 4. DRY - one authoritative representation of each piece of *knowledge* (not every similar line). Avoid over-DRY.
-> 5. KISS - simplest design that works; complexity is the long-term tax.
-> 6. Single Responsibility - one reason to change.
-> 7. Depend on Abstractions - policy doesn't depend on details; both depend on contracts.
-> 8. YAGNI - no speculative features, frameworks, or "later" hooks.
-> 9. Composition over Inheritance - assemble pieces; don't grow fragile hierarchies.
+> 01. Separation of Concerns - one kind of work per part (UI / domain / persistence / infra). Root principle.
+> 02. Encapsulation / Information Hiding - small stable contract; hide internals.
+> 03. High Cohesion + Loose Coupling - change-together lives together; independents talk narrow.
+> 04. DRY - one authoritative representation of each piece of *knowledge* (not every similar line). Avoid over-DRY.
+> 05. KISS - simplest design that works; complexity is the long-term tax.
+> 06. Single Responsibility - one reason to change.
+> 07. Depend on Abstractions - policy doesn't depend on details; both depend on contracts.
+> 08. YAGNI - no speculative features, frameworks, or "later" hooks.
+> 09. Composition over Inheritance - assemble pieces; don't grow fragile hierarchies.
 > 10. Open/Closed (with discipline) - extend at stable boundaries; only where change showed up twice.
 > 11. Honorable: Law of Demeter • fail fast / illegal states unrepresentable • optimize for deletion.
 > 12. Unix do-one-thing + compose.
@@ -130,16 +122,16 @@ The root `AGENTS.md` keeps this text as the owner wrote it. Only the numbering i
 
 ## 5. `doc/` content
 
-| Path | Content |
-| --- | --- |
-| `doc/architecture.md` | The pipeline, the crates and their order, and the trust boundary: what is proven, what is validated, and what is trusted |
-| `doc/adr/NNNN-title.md` | One decision each. Headings: Context, Decision, Consequences, Status. An accepted ADR does not change. A new ADR supersedes it. |
-| `doc/design/YYYY-MM-DD-topic.md` | Specs that describe something that exists. A spec is deleted when its design is replaced. |
-| `doc/guide/agents.md` | Orchestration rules and model choice (section 6) |
-| `doc/guide/commits.md` | Commit and branch conventions (section 7) |
-| `doc/guide/style.md` | ASD-STE100 writing rules and formatting for each file type (section 8) |
-| `doc/guide/testing.md` | The test oracle for each layer |
-| `CONTEXT.md` | The glossary. Each term has one definition and `_Avoid_` lines for rejected synonyms. |
+| Path                             | Content                                                                                                                         |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `doc/architecture.md`            | The pipeline, the crates and their order, and the trust boundary: what is proven, what is validated, and what is trusted        |
+| `doc/adr/NNNN-title.md`          | One decision each. Headings: Context, Decision, Consequences, Status. An accepted ADR does not change. A new ADR supersedes it. |
+| `doc/design/YYYY-MM-DD-topic.md` | Specs that describe something that exists. A spec is deleted when its design is replaced.                                       |
+| `doc/guide/agents.md`            | Orchestration rules and model choice (section 6)                                                                                |
+| `doc/guide/commits.md`           | Commit and branch conventions (section 7)                                                                                       |
+| `doc/guide/style.md`             | ASD-STE100 writing rules and formatting for each file type (section 8)                                                          |
+| `doc/guide/testing.md`           | The test oracle for each layer                                                                                                  |
+| `CONTEXT.md`                     | The glossary. Each term has one definition and `_Avoid_` lines for rejected synonyms.                                           |
 
 The first ADRs come from the two existing notes:
 
@@ -153,23 +145,15 @@ The first ADRs come from the two existing notes:
 8. Nix flake pins the toolchain.
 9. Agents merge after a review by a model from a different vendor.
 
-`xtask` generates the vale vocabulary (accept and reject lists) from `CONTEXT.md`.
-Each term thus has one authoritative definition.
+`xtask` generates the vale vocabulary (accept and reject lists) from `CONTEXT.md`. Each term thus has one authoritative definition.
 
 ### 5.1 Writing style
 
-All prose in Markdown follows ASD-STE100 Simplified Technical English.
-The output style `.claude/output-styles/ste.md` is the project default in `.claude/settings.json`.
-Agents thus write in this style without a reminder.
-`vale` checks the countable rules: sentence length, passive voice, `-ing` forms, noun clusters, and vocabulary.
-Code, quotations, and exact strings are exempt.
+All prose in Markdown follows ASD-STE100 Simplified Technical English. The output style `.claude/output-styles/ste.md` is the project default in `.claude/settings.json`. Agents thus write in this style without a reminder. `vale` checks the countable rules: sentence length, passive voice, `-ing` forms, noun clusters, and vocabulary. Code, quotations, and exact strings are exempt.
 
 ## 6. Orchestration
 
-The orchestrator is the main Claude Code session on Opus.
-It reads issues, splits work, creates worktrees, dispatches subagents, reads their results, and merges.
-It does not write product code.
-It does not read large file dumps; a search goes to the built-in `Explore` subagent.
+The orchestrator is the main Claude Code session on Opus. It reads issues, splits work, creates worktrees, dispatches subagents, reads their results, and merges. It does not write product code. It does not read large file dumps; a search goes to the built-in `Explore` subagent.
 
 The workflow is the Superpowers workflow:
 
@@ -178,8 +162,7 @@ The workflow is the Superpowers workflow:
 3. `subagent-driven-development` in a worktree
 4. `finishing-a-development-branch`
 
-The repository defines no custom agent roles at the start.
-A role file in `.claude/agents/` comes into existence only when the same need shows up twice.
+The repository defines no custom agent roles at the start. A role file in `.claude/agents/` comes into existence only when the same need shows up twice.
 
 The repository adds three rules:
 
@@ -189,12 +172,9 @@ The repository adds three rules:
 
 Model choice is advisory: Opus for design, proofs, and hard bugs. Sonnet for implementation. Haiku for search.
 
-A subagent gets the task, the root `AGENTS.md`, and the L1 file of its area. It gets no chat history.
-A subagent returns a report of 20 lines or fewer: what changed, how it was verified, and open questions.
+A subagent gets the task, the root `AGENTS.md`, and the L1 file of its area. It gets no chat history. A subagent returns a report of 20 lines or fewer: what changed, how it was verified, and open questions.
 
-`.claude/settings.json` pins the plugins through `extraKnownMarketplaces` and `enabledPlugins`.
-A fresh clone thus gets Superpowers and the Codex plugin.
-The same file disables commit attribution.
+`.claude/settings.json` pins the plugins through `extraKnownMarketplaces` and `enabledPlugins`. A fresh clone thus gets Superpowers and the Codex plugin. The same file disables commit attribution.
 
 ## 7. Task and commit lifecycle
 
@@ -220,8 +200,7 @@ Commits:
 6. A breaking change uses `!` and a `BREAKING CHANGE:` footer.
 7. No AI attribution: no `Co-Authored-By` trailer for an agent, no "Generated with" line.
 
-`cargo xtask commit-check` runs in the `commit-msg` hook and in CI on each commit of a pull request.
-It rejects:
+`cargo xtask commit-check` runs in the `commit-msg` hook and in CI on each commit of a pull request. It rejects:
 
 1. A `refactor` commit that changes test expectations (`**/snapshots/**`, corpus expectations).
 2. A commit that changes `lean/` and `crates/` together.
@@ -229,32 +208,27 @@ It rejects:
 4. A subject that is not a Conventional Commit.
 5. An attribution trailer.
 
-`lefthook` runs the git hooks. Nix pins it. `lefthook.yml` calls `just` recipes only.
-The `pre-push` hook runs `just ci`.
+`lefthook` runs the git hooks. Nix pins it. `lefthook.yml` calls `just` recipes only. The `pre-push` hook runs `just ci`.
 
-The repository is private on a personal GitHub account and uses the Apache-2.0 license.
-A personal account has no merge queue, and branch rules on a private repository need GitHub Pro.
-The orchestrator thus merges only after CI passes on the pull request.
-A merge queue replaces this step when the repository moves to an organization.
+The repository is private on a personal GitHub account and uses the Apache-2.0 license. A personal account has no merge queue, and branch rules on a private repository need GitHub Pro. The orchestrator thus merges only after CI passes on the pull request. A merge queue replaces this step when the repository moves to an organization.
 
 ## 8. Formatting
 
 `just fmt` writes. `just check` verifies. The Nix flake pins every tool.
 
-| Files | Tool | Configuration |
-| --- | --- | --- |
-| Rust | `rustfmt` | Stable options only |
-| Markdown | `mdformat` with GFM and tables plugins | `wrap = "no"` |
-| Prose in Markdown | `vale` | Silicon STE style; vocabulary from `CONTEXT.md`; code blocks exempt |
-| Lean | Lean style linters, warnings as errors; `xtask` whitespace and line-length check | Lean 4 has no standard formatter. Adopt one when it exists. |
-| TOML | `taplo fmt` | |
-| Nix | `nixfmt` | RFC style |
-| YAML | `yamlfmt` | |
-| `justfile` | `just --fmt` | |
-| All files | `.editorconfig` | LF, final newline, no trailing whitespace |
+| Files             | Tool                                                                             | Configuration                                                       |
+| ----------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Rust              | `rustfmt`                                                                        | Stable options only                                                 |
+| Markdown          | `mdformat` with GFM and tables plugins                                           | `wrap = "no"`                                                       |
+| Prose in Markdown | `vale`                                                                           | Silicon STE style; vocabulary from `CONTEXT.md`; code blocks exempt |
+| Lean              | Lean style linters, warnings as errors; `xtask` whitespace and line-length check | Lean 4 has no standard formatter. Adopt one when it exists.         |
+| TOML              | `taplo fmt`                                                                      |                                                                     |
+| Nix               | `nixfmt`                                                                         | RFC style                                                           |
+| YAML              | `yamlfmt`                                                                        |                                                                     |
+| `justfile`        | `just --fmt`                                                                     |                                                                     |
+| All files         | `.editorconfig`                                                                  | LF, final newline, no trailing whitespace                           |
 
-Generated output, for example emitted Verilog in `out/`, is not formatted and not committed.
-Snapshot files are compiler output. Tests compare them byte for byte.
+Generated output, for example emitted Verilog in `out/`, is not formatted and not committed. Snapshot files are compiler output. Tests compare them byte for byte.
 
 ## 9. Quality gates
 
@@ -319,23 +293,23 @@ Agent context:
 
 ## 12. Enforcement index
 
-| Rule | Check |
-| --- | --- |
-| Refactor first, then change behavior | `commit-check`: `refactor` commits do not change test expectations |
-| Spec and implementation change in different commits | `commit-check`: no commit touches `lean/` and `crates/` |
-| Test expectations change alone | `commit-check` |
-| Conventional Commits, no attribution | `commit-check`, `commit-msg` hook |
-| No shell scripts | `tree-check`; `xtask` rejects multi-line `justfile` recipes |
-| No stray files | `tree-check` |
-| `TODO` needs an issue | `tree-check` |
-| Crate layering | `xtask` layering test |
-| Workspace lints everywhere | `xtask` |
-| Guidance limits and symlink pairs | `xtask` |
-| Formatting | `just check` (section 8) |
-| STE prose and vocabulary | `vale` |
-| No unproven Lean | `lake build` and `xtask` Lean scan |
-| Cross-vendor review | Pull request template checkbox and reviewer verdict; advisory until a GitHub check exists |
-| Comment and abstraction hygiene | Reviewer; advisory |
+| Rule                                                | Check                                                                                     |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Refactor first, then change behavior                | `commit-check`: `refactor` commits do not change test expectations                        |
+| Spec and implementation change in different commits | `commit-check`: no commit touches `lean/` and `crates/`                                   |
+| Test expectations change alone                      | `commit-check`                                                                            |
+| Conventional Commits, no attribution                | `commit-check`, `commit-msg` hook                                                         |
+| No shell scripts                                    | `tree-check`; `xtask` rejects multi-line `justfile` recipes                               |
+| No stray files                                      | `tree-check`                                                                              |
+| `TODO` needs an issue                               | `tree-check`                                                                              |
+| Crate layering                                      | `xtask` layering test                                                                     |
+| Workspace lints everywhere                          | `xtask`                                                                                   |
+| Guidance limits and symlink pairs                   | `xtask`                                                                                   |
+| Formatting                                          | `just check` (section 8)                                                                  |
+| STE prose and vocabulary                            | `vale`                                                                                    |
+| No unproven Lean                                    | `lake build` and `xtask` Lean scan                                                        |
+| Cross-vendor review                                 | Pull request template checkbox and reviewer verdict; advisory until a GitHub check exists |
+| Comment and abstraction hygiene                     | Reviewer; advisory                                                                        |
 
 ## 13. Items to verify during implementation
 
