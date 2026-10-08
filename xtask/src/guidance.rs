@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use crate::repo::Repo;
+use crate::repo::{Repo, TrackedFile};
 use crate::violation::{Severity, Violation};
 
 /// Level-2 headings of every L1 `AGENTS.md`, in order (design spec section 4.2).
@@ -79,10 +79,35 @@ fn violation(path: &Path, line: Option<usize>, rule: &'static str, message: Stri
     }
 }
 
+/// Returns the `guidance-pair` problem of a tracked `CLAUDE.md`, if any.
+fn claude_md_problem(repo: &Repo, claude: &TrackedFile) -> Option<&'static str> {
+    let agents = claude.path.with_file_name("AGENTS.md");
+    if !repo.files.iter().any(|f| f.path == agents) {
+        Some("CLAUDE.md has no AGENTS.md next to it")
+    } else if !claude.is_symlink {
+        Some("CLAUDE.md must be a symlink to AGENTS.md")
+    } else if std::fs::read_link(repo.root.join(&claude.path))
+        .ok()
+        .as_deref()
+        != Some(Path::new("AGENTS.md"))
+    {
+        Some("CLAUDE.md symlink target must be AGENTS.md")
+    } else {
+        None
+    }
+}
+
 pub fn check(repo: &Repo) -> Result<Vec<Violation>> {
     let mut out = Vec::new();
     for file in &repo.files {
-        if file.path.file_name().is_none_or(|n| n != "AGENTS.md") {
+        let name = file.path.file_name().unwrap_or_default();
+        if name == "CLAUDE.md" {
+            if let Some(message) = claude_md_problem(repo, file) {
+                out.push(violation(&file.path, None, "guidance-pair", message.into()));
+            }
+            continue;
+        }
+        if name != "AGENTS.md" {
             continue;
         }
         let is_root = file.path == Path::new("AGENTS.md");
@@ -100,30 +125,13 @@ pub fn check(repo: &Repo) -> Result<Vec<Violation>> {
         }
 
         let claude: PathBuf = file.path.with_file_name("CLAUDE.md");
-        match repo.files.iter().find(|f| f.path == claude) {
-            None => out.push(violation(
+        if !repo.files.iter().any(|f| f.path == claude) {
+            out.push(violation(
                 &claude,
                 None,
                 "guidance-pair",
                 "AGENTS.md has no CLAUDE.md next to it".into(),
-            )),
-            Some(f) if !f.is_symlink => out.push(violation(
-                &claude,
-                None,
-                "guidance-pair",
-                "CLAUDE.md must be a symlink to AGENTS.md".into(),
-            )),
-            Some(_) => {
-                let target = std::fs::read_link(repo.root.join(&claude)).ok();
-                if target.as_deref() != Some(Path::new("AGENTS.md")) {
-                    out.push(violation(
-                        &claude,
-                        None,
-                        "guidance-pair",
-                        "CLAUDE.md symlink target must be AGENTS.md".into(),
-                    ));
-                }
-            }
+            ));
         }
 
         if is_root {
@@ -153,7 +161,6 @@ pub fn check(repo: &Repo) -> Result<Vec<Violation>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::repo::TrackedFile;
 
     fn lines(n: usize) -> String {
         "x\n".repeat(n)
@@ -225,6 +232,19 @@ mod tests {
         std::fs::remove_file(tmp.path().join("CLAUDE.md")).unwrap();
         std::os::unix::fs::symlink("other.md", tmp.path().join("CLAUDE.md")).unwrap();
         assert_eq!(rules(&repo), ["guidance-pair"]);
+    }
+
+    #[test]
+    fn claude_md_without_agents_md_rejected() {
+        let (_t, link) = repo_with(&[("crates/x/CLAUDE.md", "")]);
+        assert_eq!(rules(&link), ["guidance-pair"]);
+
+        let (tmp, mut plain) = repo_with(&[("crates/x/CLAUDE.md", "")]);
+        let full = tmp.path().join("crates/x/CLAUDE.md");
+        std::fs::remove_file(&full).unwrap();
+        std::fs::write(&full, "# Rules\n").unwrap();
+        plain.files[0].is_symlink = false;
+        assert_eq!(rules(&plain), ["guidance-pair"]);
     }
 
     #[test]
