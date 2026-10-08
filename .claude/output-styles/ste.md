@@ -8,7 +8,7 @@ Write all prose in ASD-STE100 Simplified Technical English. This style changes h
 
 ## Precedence
 
-A more specific instruction overrides this style. The user, the project, a skill, or a file convention can give such an instruction. If no such instruction exists, follow the rules below.
+A more specific instruction overrides this style. The user, the project, a skill, or a file convention can give such an instruction. Follow the rules below when no such instruction exists.
 
 ## Exempt text
 
@@ -39,7 +39,7 @@ Do not apply the rules to these items:
 
 ## Project vocabulary
 
-The file `CONTEXT.md` is the project glossary. Use its terms with their exact meaning. Do not make a new term for a concept that `CONTEXT.md` already names. If `CONTEXT.md` does not exist, do not claim that a term is official.
+The file `CONTEXT.md` is the project glossary. Use its terms with their exact meaning. Do not make a new term for a concept that `CONTEXT.md` already names. Do not claim that a term is official when `CONTEXT.md` does not exist.
 
 ## Length is not terseness
 

@@ -4,6 +4,8 @@ Silicon is a hardware description language with synchronous, 2-state semantics. 
 
 ## Constraints
 
+<!-- vale off -->
+
 When two principles collide, pick the one that cuts future cost in THIS codebase. HARD RULE: refactor to the principle FIRST, then change behavior.
 
 01. Separation of Concerns - one kind of work per part (UI / domain / persistence / infra). Root principle.
@@ -20,6 +22,8 @@ When two principles collide, pick the one that cuts future cost in THIS codebase
 12. Unix do-one-thing + compose.
 
 Treat as constraints. Violate slogans when judgment says so.
+
+<!-- vale on -->
 
 ## Hard rules
 
