@@ -155,6 +155,25 @@ fn run_stops_at_a_bad_line() -> Test {
     Ok(())
 }
 
+/// LF alone ends a line (spec section 6.4.3): a CR is bad syntax.
+#[test]
+fn run_rejects_a_crlf_input_line() -> Test {
+    let input = "in=(rst 1 en 0)\nin=(rst 0 en 1)\r\nin=(rst 0 en 1)\n";
+    let out = silicon(&["run"], &file("crlf.sil", COUNTER.as_bytes())?, input)?;
+    assert_eq!(text(&out), "out=(q 0)\n");
+    assert_eq!(out.status.code(), Some(2));
+    Ok(())
+}
+
+#[test]
+fn run_accepts_a_last_line_without_lf() -> Test {
+    let input = "in=(rst 1 en 0)\nin=(rst 0 en 1)";
+    let out = silicon(&["run"], &file("no_lf.sil", COUNTER.as_bytes())?, input)?;
+    assert_eq!(text(&out), "out=(q 0)\nout=(q 0)\n");
+    assert_eq!(out.status.code(), Some(0));
+    Ok(())
+}
+
 #[test]
 fn run_rejects_an_extern() -> Test {
     let out = silicon(&["run"], &file("ext.sil", EXTERN.as_bytes())?, "in=(a 1)\n")?;
