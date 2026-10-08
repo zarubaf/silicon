@@ -1,0 +1,13 @@
+; Each connection of an inst is its own form: a width mismatch is E004 at that connection (spec 4.2, 6.4.1).
+(design top
+  (module child
+    (input a (bits 4))
+    (output y (bits 4))
+    (assign y a))
+  (module top
+    (input b (bits 8))
+    (output q (bits 4))
+    (inst u child
+; expected-error E004 @+1
+      (a b))
+    (assign q u.y)))

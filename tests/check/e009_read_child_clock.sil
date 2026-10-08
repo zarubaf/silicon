@@ -1,0 +1,13 @@
+; u.P where P is a clock output of the child is a clock read as a value: E009 at u.P (spec 4.2, 6.4.1).
+; The child's clock output is also E009, but at a higher position.
+(design top
+  (module top
+    (input clk clock)
+    (output q (bits 1))
+    (inst u child (clk clk))
+; expected-error E009 @+1
+    (assign q u.c))
+  (module child
+    (input clk clock)
+    (output c clock)
+    (assign c clk)))
