@@ -136,6 +136,7 @@ impl<'a> Resolver<'_, 'a> {
             assigns: Vec::new(),
             writes: Vec::new(),
             insts: Vec::new(),
+            clock_assigns: Vec::new(),
         };
         for stmt in &scope.module.stmts {
             self.stmt(stmt, &mut module);
@@ -209,8 +210,9 @@ impl<'a> Resolver<'_, 'a> {
                             });
                         }
                     }
-                    // Pass 5 rejects the clock output port itself.
-                    Some(Binding::ClockOut) => {}
+                    // Pass 5 rejects the clock output port itself, but pass 4
+                    // checks the constants of the operand first.
+                    Some(Binding::ClockOut) => module.clock_assigns.extend(expr),
                     _ => self.unknown(out, "an output"),
                 }
             }
