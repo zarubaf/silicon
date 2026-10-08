@@ -225,6 +225,23 @@ fn equal(errors: &mut Vec<Diagnostic>, l: u32, r: u32, span: Span) -> bool {
     l == r
 }
 
+/// The width of a binary operation on operands of the widths `l` and `r`.
+fn binary(op: BinOp, l: u32, r: u32, span: Span, errors: &mut Vec<Diagnostic>) -> Option<u32> {
+    if op != BinOp::Concat {
+        return equal(errors, l, r, span).then_some(l);
+    }
+    let sum = l.saturating_add(r);
+    if sum > MAX_WIDTH {
+        fail(
+            errors,
+            span,
+            format!("the concatenation has the width {sum}"),
+        );
+        return None;
+    }
+    Some(sum)
+}
+
 /// The width of an expression. An error in an operand gives `None`: the
 /// operand is reported, and its parent has no width to check.
 fn width(expr: &Ex, errors: &mut Vec<Diagnostic>) -> Option<u32> {
@@ -237,20 +254,7 @@ fn width(expr: &Ex, errors: &mut Vec<Diagnostic>) -> Option<u32> {
             op, lhs, rhs, span, ..
         } => {
             let (l, r) = (width(lhs, errors), width(rhs, errors));
-            let (l, r) = (l?, r?);
-            if *op == BinOp::Concat {
-                let sum = l.saturating_add(r);
-                if sum > MAX_WIDTH {
-                    fail(
-                        errors,
-                        *span,
-                        format!("the concatenation has the width {sum}"),
-                    );
-                    return None;
-                }
-                return Some(sum);
-            }
-            equal(errors, l, r, *span).then_some(l)
+            binary(*op, l?, r?, *span, errors)
         }
         Rx::Icmp { lhs, rhs, span, .. } => {
             let (l, r) = (width(lhs, errors), width(rhs, errors));
