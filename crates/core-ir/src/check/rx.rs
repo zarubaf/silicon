@@ -305,8 +305,8 @@ pub(super) type ExWrite = RxWrite<Never, Bits>;
 
 impl<'a, K, C> RxModule<'a, K, C> {
     /// Rebuilds the module with `f` applied to each expression. `f` returns
-    /// `None` after it recorded an error. Every expression is visited before
-    /// the result is `None`.
+    /// `None` after it recorded an error. Each category is mapped in full
+    /// before any `None` stops the result, so every expression is visited.
     pub fn map_exprs<K2, C2>(
         self,
         f: &mut impl FnMut(Rx<K, C>) -> Option<Rx<K2, C2>>,
@@ -321,7 +321,7 @@ impl<'a, K, C> RxModule<'a, K, C> {
                     expr: f(l.expr)?,
                 })
             })
-            .collect())?;
+            .collect());
         let regs = all(self
             .regs
             .into_iter()
@@ -342,9 +342,9 @@ impl<'a, K, C> RxModule<'a, K, C> {
                     reset,
                 })
             })
-            .collect())?;
-        let nexts = all(self.nexts.into_iter().map(|t| target(t, f)).collect())?;
-        let assigns = all(self.assigns.into_iter().map(|t| target(t, f)).collect())?;
+            .collect());
+        let nexts = all(self.nexts.into_iter().map(|t| target(t, f)).collect());
+        let assigns = all(self.assigns.into_iter().map(|t| target(t, f)).collect());
         let writes = all(self
             .writes
             .into_iter()
@@ -361,7 +361,7 @@ impl<'a, K, C> RxModule<'a, K, C> {
                     en: en?,
                 })
             })
-            .collect())?;
+            .collect());
         let insts = all(self
             .insts
             .into_iter()
@@ -396,14 +396,14 @@ impl<'a, K, C> RxModule<'a, K, C> {
                     conns,
                 })
             })
-            .collect())?;
+            .collect());
         Some(RxModule {
-            lets,
-            regs,
-            nexts,
-            assigns,
-            writes,
-            insts,
+            lets: lets?,
+            regs: regs?,
+            nexts: nexts?,
+            assigns: assigns?,
+            writes: writes?,
+            insts: insts?,
         })
     }
 }
