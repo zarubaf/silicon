@@ -21,8 +21,7 @@
       "Read(/target/**)",
       "Read(/.lake/**)",
       "Read(/out/**)",
-      "Read(/result*)",
-      "Read(/.claude/worktrees/**)"
+      "Read(/result*)"
     ]
   }
 }
