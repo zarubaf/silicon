@@ -180,7 +180,7 @@ fn model_equals_reference(config: &MemConfig, order: &[usize]) -> Result<bool, B
 
 /// The proof skips the models without a write: their register is its own
 /// next value, and `--externalize-registers` of CIRCT 1.160 crashes on such
-/// a register.
+/// a register (issue #20).
 #[test]
 fn each_model_equals_the_memory_semantics() -> Test {
     for config in CONFIGS.iter().filter(|c| c.writes > 0) {
