@@ -47,6 +47,23 @@ pub fn signature(pins: &[Pin]) -> String {
     format!("({})", ports.join(", "))
 }
 
+/// An `hw.module` with the ports `pins`. `body` holds the operations, each
+/// on its own line with an indent of two spaces. `outputs` gives the value of
+/// each output pin, in pin order.
+pub fn module(name: &str, pins: &[Pin], body: &str, outputs: &[(String, Ty)]) -> String {
+    let output = if outputs.is_empty() {
+        "hw.output".to_owned()
+    } else {
+        let names: Vec<&str> = outputs.iter().map(|(v, _)| v.as_str()).collect();
+        let types: Vec<String> = outputs.iter().map(|(_, ty)| ty.to_string()).collect();
+        format!("hw.output {} : {}", names.join(", "), types.join(", "))
+    };
+    format!(
+        "hw.module @{name}{} {{\n{body}  {output}\n}}\n",
+        signature(pins)
+    )
+}
+
 /// The declaration of an extern module.
 pub fn extern_module(name: &str, pins: &[Pin]) -> String {
     format!("hw.module.extern @{name}{}\n", signature(pins))
