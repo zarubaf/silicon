@@ -51,34 +51,52 @@ fn parse_subject(subject: &str) -> Option<&str> {
     Some(scope)
 }
 
+/// True when `word` occurs in `text` with no alphanumeric neighbor.
+fn contains_word(text: &str, word: &str) -> bool {
+    text.match_indices(word).any(|(i, _)| {
+        let before = text[..i].chars().next_back();
+        let after = text[i + word.len()..].chars().next();
+        !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric)
+    })
+}
+
 /// Checks a commit message. Returns one problem string per violation.
 pub fn check_message(msg: &str, scopes: &[String]) -> Vec<String> {
     let mut problems = Vec::new();
     let subject = msg.lines().next().unwrap_or("");
     match parse_subject(subject) {
         None => problems.push(format!(
-            "subject is not a Conventional Commit `type(scope): subject`: {subject:?}"
+            "[commit-subject] not a Conventional Commit `type(scope): subject`: {subject:?}"
         )),
         Some(scope) if !scope.is_empty() && !scopes.iter().any(|s| s == scope) => {
-            problems.push(format!("unknown scope `{scope}`"));
+            problems.push(format!("[commit-scope] unknown scope `{scope}`"));
         }
         Some(_) => {}
     }
     let length = subject.chars().count();
     if length > MAX_SUBJECT {
         problems.push(format!(
-            "subject has {length} characters; the limit is {MAX_SUBJECT}"
+            "[commit-length] subject has {length} characters; the limit is {MAX_SUBJECT}"
         ));
     }
     for line in msg.lines() {
         let lower = line.to_lowercase();
         if let Some(value) = lower.strip_prefix("co-authored-by:")
-            && FORBIDDEN_TRAILER_VALUES.iter().any(|f| value.contains(f))
+            && FORBIDDEN_TRAILER_VALUES
+                .iter()
+                .any(|f| contains_word(value, f))
         {
-            problems.push(format!("agent attribution trailer: {line:?}"));
+            problems.push(format!(
+                "[commit-attribution] agent attribution trailer: {line:?}"
+            ));
         }
-        if lower.contains("generated with") {
-            problems.push(format!("generated-with line: {line:?}"));
+        if lower
+            .trim_start_matches(|c: char| !c.is_alphanumeric())
+            .starts_with("generated with")
+        {
+            problems.push(format!(
+                "[commit-attribution] generated-with line: {line:?}"
+            ));
         }
     }
     problems
@@ -90,10 +108,17 @@ pub fn is_expectation(path: &Path) -> bool {
     if parts.iter().any(|p| p == "snapshots") {
         return true;
     }
-    parts
-        .windows(3)
-        .any(|w| w[0] == "tests" && w[1] == "corpus")
-        && parts.iter().any(|p| p == "expected")
+    // `tests/corpus/**/expected/**`: `expected` is a directory below the corpus.
+    let Some(start) = parts
+        .windows(2)
+        .position(|w| w[0] == "tests" && w[1] == "corpus")
+    else {
+        return false;
+    };
+    let dirs = parts
+        .get(start + 2..parts.len().saturating_sub(1))
+        .unwrap_or(&[]);
+    dirs.iter().any(|p| p == "expected")
 }
 
 fn is_test_code(path: &Path) -> bool {
@@ -105,16 +130,21 @@ pub fn check_paths(commit_type: &str, paths: &[PathBuf]) -> Vec<String> {
     let mut problems = Vec::new();
     let has_expectation = paths.iter().any(|p| is_expectation(p));
     if commit_type == "refactor" && has_expectation {
-        problems.push("a refactor commit must not change test expectations".to_owned());
+        problems.push(
+            "[commit-refactor-expectations] a refactor commit must not change test expectations"
+                .to_owned(),
+        );
     }
     let has_lean = paths.iter().any(|p| p.starts_with("lean"));
     let has_crates = paths.iter().any(|p| p.starts_with("crates"));
     if has_lean && has_crates {
-        problems.push("a commit must not change `lean/` and `crates/` together".to_owned());
+        problems.push(
+            "[commit-spec-impl] a commit must not change `lean/` and `crates/` together".to_owned(),
+        );
     }
     let has_other = paths.iter().any(|p| !is_expectation(p) && !is_test_code(p));
     if has_expectation && has_other {
-        problems.push("a commit must not change test expectations and non-test code".to_owned());
+        problems.push("[commit-expectations-code] a commit must not change test expectations and non-test code".to_owned());
     }
     problems
 }
@@ -131,12 +161,16 @@ fn commit_type(msg: &str) -> &str {
 pub fn check_message_file(file: &Path) -> Result<Vec<String>> {
     let msg =
         std::fs::read_to_string(file).with_context(|| format!("reading {}", file.display()))?;
-    let msg: String = msg
-        .lines()
+    Ok(check_message(&strip_comments(&msg), &allowed_scopes()?))
+}
+
+/// Drops git comment lines and everything after the scissors line.
+fn strip_comments(raw: &str) -> String {
+    raw.lines()
+        .take_while(|l| !l.starts_with("# ------------------------ >8"))
         .filter(|l| !l.starts_with('#'))
         .collect::<Vec<_>>()
-        .join("\n");
-    Ok(check_message(&msg, &allowed_scopes()?))
+        .join("\n")
 }
 
 /// Checks every non-merge commit in `range`. Returns `sha: problem` lines.
@@ -203,14 +237,78 @@ mod tests {
         assert!(check_message("feat!: x", &scopes()).is_empty());
     }
 
+    fn fired(problems: &[String], rule: &str) -> bool {
+        problems.iter().any(|p| p.starts_with(&format!("[{rule}]")))
+    }
+
+    #[test]
+    fn regenerated_with_is_not_attribution() {
+        let msg = "test: x\n\nSnapshots regenerated with insta";
+        assert!(check_message(msg, &scopes()).is_empty());
+    }
+
+    #[test]
+    fn emoji_generated_with_is_attribution() {
+        let msg =
+            "feat: x\n\n\u{1F916} Generated with [Claude Code](https://claude.com/claude-code)";
+        assert!(fired(&check_message(msg, &scopes()), "commit-attribution"));
+    }
+
+    #[test]
+    fn trailer_matching_uses_whole_words() {
+        for bad in [
+            "co-authored-by: claude <x@y>",
+            "Co-Authored-By: Codex <c@x>",
+            "Co-Authored-By: Bot <noreply@openai.com>",
+            "Co-Authored-By: GPT-5 <x@y>",
+        ] {
+            let msg = format!("feat: x\n\n{bad}");
+            assert!(
+                fired(&check_message(&msg, &scopes()), "commit-attribution"),
+                "{bad}"
+            );
+        }
+        let ok = "feat: x\n\nCo-Authored-By: Egypt Smith <e@x>";
+        assert!(check_message(ok, &scopes()).is_empty());
+    }
+
+    #[test]
+    fn breaking_marker_with_scope_passes() {
+        assert!(check_message("feat(xtask)!: x", &scopes()).is_empty());
+    }
+
+    #[test]
+    fn default_revert_subject_fails_closed() {
+        let problems = check_message("Revert \"feat(x): y\"", &scopes());
+        assert!(fired(&problems, "commit-subject"));
+    }
+
+    #[test]
+    fn scissors_line_ends_the_message() {
+        let raw = "feat: x\n# comment\n# ------------------------ >8 ------------------------\nGenerated with diff";
+        assert_eq!(strip_comments(raw), "feat: x");
+    }
+
+    #[test]
+    fn expected_must_be_below_the_corpus() {
+        assert!(!is_expectation(Path::new("expected/tests/corpus/b/o.v")));
+        assert!(!is_expectation(Path::new(
+            "crates/a/tests/corpus/b/expected"
+        )));
+        assert!(!is_expectation(Path::new("crates/a/tests/corpus/expected")));
+    }
+
     #[test]
     fn rejects_non_conventional_subject() {
-        assert!(!check_message("Add x", &scopes()).is_empty());
+        assert!(fired(&check_message("Add x", &scopes()), "commit-subject"));
     }
 
     #[test]
     fn rejects_unknown_scope() {
-        assert!(!check_message("feat(unknown): x", &scopes()).is_empty());
+        assert!(fired(
+            &check_message("feat(unknown): x", &scopes()),
+            "commit-scope"
+        ));
     }
 
     #[test]
@@ -219,15 +317,21 @@ mod tests {
         let long = format!("feat: {}", "a".repeat(72 - 5));
         assert!(check_message(&ok, &scopes()).is_empty());
         assert_eq!(long.chars().count(), 73);
-        assert!(!check_message(&long, &scopes()).is_empty());
+        assert!(fired(&check_message(&long, &scopes()), "commit-length"));
     }
 
     #[test]
     fn rejects_agent_attribution() {
         let claude = "feat: x\n\nCo-Authored-By: Claude <noreply@anthropic.com>";
-        assert!(!check_message(claude, &scopes()).is_empty());
+        assert!(fired(
+            &check_message(claude, &scopes()),
+            "commit-attribution"
+        ));
         let generated = "feat: x\n\nGenerated with a tool";
-        assert!(!check_message(generated, &scopes()).is_empty());
+        assert!(fired(
+            &check_message(generated, &scopes()),
+            "commit-attribution"
+        ));
     }
 
     #[test]
@@ -251,13 +355,16 @@ mod tests {
     #[test]
     fn refactor_must_not_change_expectations() {
         let p = paths(&["crates/a/snapshots/x.snap"]);
-        assert!(!check_paths("refactor", &p).is_empty());
+        assert!(fired(
+            &check_paths("refactor", &p),
+            "commit-refactor-expectations"
+        ));
     }
 
     #[test]
     fn lean_and_crates_do_not_mix() {
         let p = paths(&["lean/A.lean", "crates/a/src/lib.rs"]);
-        assert!(!check_paths("feat", &p).is_empty());
+        assert!(fired(&check_paths("feat", &p), "commit-spec-impl"));
     }
 
     #[test]
@@ -269,7 +376,7 @@ mod tests {
     #[test]
     fn expectations_and_code_do_not_mix() {
         let p = paths(&["crates/a/snapshots/x.snap", "crates/a/src/lib.rs"]);
-        assert!(!check_paths("feat", &p).is_empty());
+        assert!(fired(&check_paths("feat", &p), "commit-expectations-code"));
     }
 
     fn run(dir: &Path, args: &[&str]) {

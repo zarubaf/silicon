@@ -6,7 +6,7 @@ pre-commit:
 commit-msg:
   commands:
     commit-msg:
-      run: cargo xtask commit-msg {1}
+      run: just commit-msg {1}
 
 pre-push:
   commands:

@@ -74,7 +74,7 @@ fn main() -> Result<ExitCode> {
 
 fn report(problems: &[String]) -> ExitCode {
     for problem in problems {
-        println!("[commit] {problem}");
+        println!("{problem}");
     }
     if problems.is_empty() {
         ExitCode::SUCCESS

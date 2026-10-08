@@ -43,6 +43,9 @@ lean:
 test:
     cargo nextest run --workspace
 
+commit-msg file:
+    cargo xtask commit-msg {{ file }}
+
 commit-check base="origin/main":
     cargo xtask commit-check --range {{ base }}..HEAD
 
