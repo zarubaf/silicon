@@ -1,13 +1,15 @@
 //! Recursive-descent parser. It checks the grammar only; it resolves no names.
 
 use super::lexer::{Tok, Token, lex};
-use super::{BINOPS, PREDS, UNOPS, is_keyword, syntax_error};
+use super::{
+    BINOPS, PREDS, UNOPS, binop_keyword, is_keyword, pred_keyword, syntax_error, unop_keyword,
+};
 use crate::ast::{Conn, Dep, Design, Dir, Expr, Extern, Item, Module, Name, Port, Reset, Stmt, Ty};
 use crate::diag::{Diagnostic, Span};
 use num_bigint::BigUint;
 
 /// Bounds the recursion on hostile input.
-const MAX_DEPTH: u32 = 200;
+const MAX_DEPTH: u32 = 256;
 
 type Parsed<T> = Result<T, Diagnostic>;
 
@@ -366,17 +368,7 @@ impl Parser {
     }
 
     fn expr(&mut self) -> Parsed<Expr> {
-        self.depth += 1;
-        let result = if self.depth > MAX_DEPTH {
-            Err(syntax_error(
-                self.span(),
-                "expression nesting is too deep".to_string(),
-            ))
-        } else {
-            self.expr_inner()
-        };
-        self.depth -= 1;
-        result
+        self.expr_inner()
     }
 
     fn boxed(&mut self) -> Parsed<Box<Expr>> {
@@ -392,9 +384,10 @@ impl Parser {
                     return Err(self.fail("a name"));
                 }
                 self.bump();
+                let inst_len = inst.chars().fold(0u32, |n, _| n.saturating_add(1));
                 let port_span = Span {
                     line: span.line,
-                    col: span.col + u32::try_from(inst.len()).unwrap_or(0) + 1,
+                    col: span.col.saturating_add(inst_len).saturating_add(1),
                 };
                 Ok(Expr::InstOut {
                     inst: Name { text: inst, span },
@@ -411,6 +404,19 @@ impl Parser {
     }
 
     fn compound(&mut self) -> Parsed<Expr> {
+        if self.depth >= MAX_DEPTH {
+            return Err(syntax_error(
+                self.span(),
+                "expression nesting is too deep".to_string(),
+            ));
+        }
+        self.depth += 1;
+        let result = self.compound_inner();
+        self.depth -= 1;
+        result
+    }
+
+    fn compound_inner(&mut self) -> Parsed<Expr> {
         let span = self.open()?;
         let (word, _) = self.head().map_err(|_| self.fail("an operation"))?;
         let word = word.as_str();
@@ -419,13 +425,13 @@ impl Parser {
             let digits = self.number_text()?;
             let value = BigUint::parse_bytes(digits.as_bytes(), 10).unwrap_or_default();
             Expr::Const { width, value, span }
-        } else if let Some((_, op)) = UNOPS.iter().find(|(k, _)| *k == word) {
+        } else if let Some(op) = UNOPS.iter().find(|op| unop_keyword(**op) == word) {
             Expr::Unary {
                 op: *op,
                 arg: self.boxed()?,
                 span,
             }
-        } else if let Some((_, op)) = BINOPS.iter().find(|(k, _)| *k == word) {
+        } else if let Some(op) = BINOPS.iter().find(|op| binop_keyword(**op) == word) {
             Expr::Binary {
                 op: *op,
                 lhs: self.boxed()?,
@@ -476,7 +482,7 @@ impl Parser {
 
     fn pred(&mut self) -> Parsed<crate::Pred> {
         if let Tok::Name(word) = self.peek()
-            && let Some((_, pred)) = PREDS.iter().find(|(k, _)| k == word)
+            && let Some(pred) = PREDS.iter().find(|p| pred_keyword(**p) == *word)
         {
             let pred = *pred;
             self.bump();

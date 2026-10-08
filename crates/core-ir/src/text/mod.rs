@@ -37,33 +37,70 @@ const STRUCTURE_KEYWORDS: [&str; 22] = [
     "clock",
 ];
 
-const UNOPS: [(&str, UnOp); 1] = [("not", UnOp::Not)];
+const UNOPS: [UnOp; 1] = [UnOp::Not];
 
-const BINOPS: [(&str, BinOp); 10] = [
-    ("add", BinOp::Add),
-    ("sub", BinOp::Sub),
-    ("mul", BinOp::Mul),
-    ("and", BinOp::And),
-    ("or", BinOp::Or),
-    ("xor", BinOp::Xor),
-    ("shl", BinOp::Shl),
-    ("shru", BinOp::Shru),
-    ("shrs", BinOp::Shrs),
-    ("concat", BinOp::Concat),
+const BINOPS: [BinOp; 10] = [
+    BinOp::Add,
+    BinOp::Sub,
+    BinOp::Mul,
+    BinOp::And,
+    BinOp::Or,
+    BinOp::Xor,
+    BinOp::Shl,
+    BinOp::Shru,
+    BinOp::Shrs,
+    BinOp::Concat,
 ];
 
-const PREDS: [(&str, Pred); 10] = [
-    ("eq", Pred::Eq),
-    ("ne", Pred::Ne),
-    ("ult", Pred::Ult),
-    ("ule", Pred::Ule),
-    ("ugt", Pred::Ugt),
-    ("uge", Pred::Uge),
-    ("slt", Pred::Slt),
-    ("sle", Pred::Sle),
-    ("sgt", Pred::Sgt),
-    ("sge", Pred::Sge),
+const PREDS: [Pred; 10] = [
+    Pred::Eq,
+    Pred::Ne,
+    Pred::Ult,
+    Pred::Ule,
+    Pred::Ugt,
+    Pred::Uge,
+    Pred::Slt,
+    Pred::Sle,
+    Pred::Sgt,
+    Pred::Sge,
 ];
+
+// The matches are exhaustive: a new operator without a keyword does not compile.
+fn unop_keyword(op: UnOp) -> &'static str {
+    match op {
+        UnOp::Not => "not",
+    }
+}
+
+fn binop_keyword(op: BinOp) -> &'static str {
+    match op {
+        BinOp::Add => "add",
+        BinOp::Sub => "sub",
+        BinOp::Mul => "mul",
+        BinOp::And => "and",
+        BinOp::Or => "or",
+        BinOp::Xor => "xor",
+        BinOp::Shl => "shl",
+        BinOp::Shru => "shru",
+        BinOp::Shrs => "shrs",
+        BinOp::Concat => "concat",
+    }
+}
+
+fn pred_keyword(pred: Pred) -> &'static str {
+    match pred {
+        Pred::Eq => "eq",
+        Pred::Ne => "ne",
+        Pred::Ult => "ult",
+        Pred::Ule => "ule",
+        Pred::Ugt => "ugt",
+        Pred::Uge => "uge",
+        Pred::Slt => "slt",
+        Pred::Sle => "sle",
+        Pred::Sgt => "sgt",
+        Pred::Sge => "sge",
+    }
+}
 
 /// `bits` is a keyword only inside a type, but a name never equals it either.
 const TYPE_KEYWORD: &str = "bits";
@@ -71,13 +108,9 @@ const TYPE_KEYWORD: &str = "bits";
 fn is_keyword(text: &str) -> bool {
     STRUCTURE_KEYWORDS.contains(&text)
         || text == TYPE_KEYWORD
-        || UNOPS.iter().any(|(k, _)| *k == text)
-        || BINOPS.iter().any(|(k, _)| *k == text)
-        || PREDS.iter().any(|(k, _)| *k == text)
-}
-
-fn keyword_of<T: Copy + PartialEq>(table: &[(&'static str, T)], value: T) -> Option<&'static str> {
-    table.iter().find(|(_, v)| *v == value).map(|(k, _)| *k)
+        || UNOPS.iter().any(|op| unop_keyword(*op) == text)
+        || BINOPS.iter().any(|op| binop_keyword(*op) == text)
+        || PREDS.iter().any(|p| pred_keyword(*p) == text)
 }
 
 /// The position of a statement in canonical order (spec section 3.3):

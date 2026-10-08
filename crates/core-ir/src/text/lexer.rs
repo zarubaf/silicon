@@ -88,7 +88,7 @@ pub fn lex(src: &str) -> Vec<Token> {
                 });
                 return tokens;
             }
-            Some(c) if c.is_whitespace() => {
+            Some(' ' | '\t' | '\r' | '\n') => {
                 cur.bump();
                 continue;
             }

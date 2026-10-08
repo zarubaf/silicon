@@ -122,10 +122,77 @@ fn bad_character_is_e001() {
     );
 }
 
+fn nested_not(levels: usize) -> String {
+    format!(
+        "(design t\n(module t (output o (bits 1)) (assign o {}o{})))",
+        "(not ".repeat(levels),
+        ")".repeat(levels)
+    )
+}
+
 #[test]
-fn deep_nesting_is_an_error_not_a_crash() {
-    let d = err(&"(".repeat(100_000));
+fn nesting_limit_is_256_levels() {
+    assert!(parse(&nested_not(256)).is_ok());
+    let src = nested_not(257);
+    let d = err(&src);
+    // Level 257 opens after 256 copies of "(not " that follow the prefix.
+    let prefix = "(module t (output o (bits 1)) (assign o ".len();
+    let col = prefix + 256 * "(not ".len() + 1;
     assert_eq!(d.code, ErrorCode::E001);
+    assert_eq!(
+        d.span,
+        Span {
+            line: 2,
+            col: u32::try_from(col).expect("fits")
+        }
+    );
+}
+
+#[test]
+fn huge_unbalanced_input_is_an_error_not_a_crash() {
+    assert_eq!(err(&"(".repeat(100_000)).code, ErrorCode::E001);
+}
+
+#[test]
+fn only_ascii_space_tab_cr_lf_are_whitespace() {
+    assert!(parse("(design\t\r\n top )").is_ok());
+    let d = err("(design\u{a0}top)");
+    assert_eq!(
+        (d.code, d.span),
+        (ErrorCode::E001, Span { line: 1, col: 8 })
+    );
+    // Inside a comment any character is fine.
+    assert!(parse("; \u{a0}\n(design top)").is_ok());
+}
+
+#[test]
+fn numbers_are_u32_except_const_values() {
+    let m = |n: &str| format!("(design t (module t (mem m (bits {n}) 1 c)))");
+    assert!(parse(&m("4294967295")).is_ok());
+    let d = err(&m("4294967296"));
+    assert_eq!(
+        (d.code, d.span),
+        (ErrorCode::E001, Span { line: 1, col: 34 })
+    );
+    let big = "340282366920938463463374607431768211456";
+    let c = format!("(design t (module t (let x (bits 1) (const 1 {big}))))");
+    assert!(parse(&c).is_ok());
+}
+
+#[test]
+fn invalid_tokens_are_e001_at_the_token_start() {
+    for (src, col) in [
+        ("(design t (module t (let x (bits 1) 12abc)))", 37),
+        ("(design t (module t (let x (bits 1) a.1)))", 37),
+        ("(design t (module t (let x (bits 1) a.)))", 37),
+    ] {
+        let d = err(src);
+        assert_eq!(
+            (d.code, d.span),
+            (ErrorCode::E001, Span { line: 1, col }),
+            "{src}"
+        );
+    }
 }
 
 #[test]
