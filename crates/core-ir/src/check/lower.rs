@@ -254,7 +254,9 @@ impl Lowerer<'_, '_> {
                     _ => return Err(error(ErrorCode::E003, *span, "the port is not an output")),
                 }
             }
-            ast::Expr::Const { width, value, span } => Bits::new(*width, value.clone())
+            ast::Expr::Const {
+                width, value, span, ..
+            } => Bits::new(width.value, value.clone())
                 .map(T::Const)
                 .ok_or_else(|| error(ErrorCode::E005, *span, "the constant does not fit"))?,
             ast::Expr::Unary { op, arg, .. } => T::Un(*op, boxed(arg)?),
@@ -263,8 +265,8 @@ impl Lowerer<'_, '_> {
             ast::Expr::Mux {
                 cond, then, els, ..
             } => T::Mux(boxed(cond)?, boxed(then)?, boxed(els)?),
-            ast::Expr::Extract { arg, lo, width, .. } => T::Extract(boxed(arg)?, *lo, *width),
-            ast::Expr::Replicate { arg, count, .. } => T::Replicate(boxed(arg)?, *count),
+            ast::Expr::Extract { arg, lo, width, .. } => T::Extract(boxed(arg)?, *lo, width.value),
+            ast::Expr::Replicate { arg, count, .. } => T::Replicate(boxed(arg)?, count.value),
             ast::Expr::Read { mem, addr, span } => {
                 let Some(Binding::Mem(m)) = self.scope.lookup(&mem.text) else {
                     return Err(error(ErrorCode::E003, *span, "the name is not a memory"));

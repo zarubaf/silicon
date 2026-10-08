@@ -4,7 +4,9 @@ use super::lexer::{Tok, Token, lex};
 use super::{
     BINOPS, PREDS, UNOPS, binop_keyword, is_keyword, pred_keyword, syntax_error, unop_keyword,
 };
-use crate::ast::{Conn, Dep, Design, Dir, Expr, Extern, Item, Module, Name, Port, Reset, Stmt, Ty};
+use crate::ast::{
+    Conn, Dep, Design, Dir, Expr, Extern, Item, Module, Name, Num, Port, Reset, Stmt, Ty,
+};
 use crate::diag::{Diagnostic, Span};
 use num_bigint::BigUint;
 
@@ -138,10 +140,16 @@ impl Parser {
     }
 
     fn number(&mut self) -> Parsed<u32> {
+        self.num().map(|n| n.value)
+    }
+
+    fn num(&mut self) -> Parsed<Num> {
         let span = self.span();
         let text = self.number_text()?;
-        text.parse::<u32>()
-            .map_err(|_| syntax_error(span, format!("the number `{text}` is too large")))
+        let value = text
+            .parse::<u32>()
+            .map_err(|_| syntax_error(span, format!("the number `{text}` is too large")))?;
+        Ok(Num { value, span })
     }
 
     fn design(&mut self) -> Parsed<Design> {
@@ -234,10 +242,10 @@ impl Parser {
     }
 
     /// `(bits N)`
-    fn bits(&mut self) -> Parsed<u32> {
+    fn bits(&mut self) -> Parsed<Num> {
         self.open()?;
         self.keyword("bits")?;
-        let width = self.number()?;
+        let width = self.num()?;
         self.close()?;
         Ok(width)
     }
@@ -296,7 +304,7 @@ impl Parser {
             "mem" => {
                 let name = self.name()?;
                 let width = self.bits()?;
-                let depth = self.number()?;
+                let depth = self.num()?;
                 let clk = self.name()?;
                 Stmt::Mem {
                     name,
@@ -421,10 +429,16 @@ impl Parser {
         let (word, _) = self.head().map_err(|_| self.fail("an operation"))?;
         let word = word.as_str();
         let expr = if word == "const" {
-            let width = self.number()?;
+            let width = self.num()?;
+            let value_span = self.span();
             let digits = self.number_text()?;
             let value = BigUint::parse_bytes(digits.as_bytes(), 10).unwrap_or_default();
-            Expr::Const { width, value, span }
+            Expr::Const {
+                width,
+                value,
+                value_span,
+                span,
+            }
         } else if let Some(op) = UNOPS.iter().find(|op| unop_keyword(**op) == word) {
             Expr::Unary {
                 op: *op,
@@ -457,13 +471,13 @@ impl Parser {
             Expr::Extract {
                 arg: self.boxed()?,
                 lo: self.number()?,
-                width: self.number()?,
+                width: self.num()?,
                 span,
             }
         } else if word == "replicate" {
             Expr::Replicate {
                 arg: self.boxed()?,
-                count: self.number()?,
+                count: self.num()?,
                 span,
             }
         } else if word == "read" {

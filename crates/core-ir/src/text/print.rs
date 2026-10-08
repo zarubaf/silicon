@@ -56,7 +56,7 @@ fn port(out: &mut String, p: &Port) {
     match p.ty {
         Ty::Clock => out.push_str("clock"),
         Ty::Bits(n) => {
-            let _ = write!(out, "(bits {n})");
+            let _ = write!(out, "(bits {})", n.value);
         }
     }
     out.push(')');
@@ -70,7 +70,7 @@ fn stmt(out: &mut String, s: &Stmt) {
             expr: e,
             ..
         } => {
-            let _ = write!(out, "(let {} (bits {width}) ", name.text);
+            let _ = write!(out, "(let {} (bits {}) ", name.text, width.value);
             expr(out, e);
         }
         Stmt::Reg {
@@ -80,7 +80,11 @@ fn stmt(out: &mut String, s: &Stmt) {
             reset,
             ..
         } => {
-            let _ = write!(out, "(reg {} (bits {width}) {}", name.text, clk.text);
+            let _ = write!(
+                out,
+                "(reg {} (bits {}) {}",
+                name.text, width.value, clk.text
+            );
             if let Some(r) = reset {
                 out.push_str(" (reset sync ");
                 expr(out, &r.signal);
@@ -102,8 +106,8 @@ fn stmt(out: &mut String, s: &Stmt) {
         } => {
             let _ = write!(
                 out,
-                "(mem {} (bits {width}) {depth} {}",
-                name.text, clk.text
+                "(mem {} (bits {}) {} {}",
+                name.text, width.value, depth.value, clk.text
             );
         }
         Stmt::Write {
@@ -154,7 +158,7 @@ fn expr(out: &mut String, e: &Expr) {
             return;
         }
         Expr::Const { width, value, .. } => {
-            let _ = write!(out, "(const {width} {value}");
+            let _ = write!(out, "(const {} {value}", width.value);
         }
         Expr::Unary { op, arg, .. } => {
             let _ = write!(out, "({} ", unop_keyword(*op));
@@ -185,12 +189,12 @@ fn expr(out: &mut String, e: &Expr) {
         Expr::Extract { arg, lo, width, .. } => {
             out.push_str("(extract ");
             expr(out, arg);
-            let _ = write!(out, " {lo} {width}");
+            let _ = write!(out, " {lo} {}", width.value);
         }
         Expr::Replicate { arg, count, .. } => {
             out.push_str("(replicate ");
             expr(out, arg);
-            let _ = write!(out, " {count}");
+            let _ = write!(out, " {}", count.value);
         }
         Expr::Read { mem, addr, .. } => {
             let _ = write!(out, "(read {} ", mem.text);

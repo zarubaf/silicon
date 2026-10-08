@@ -45,12 +45,18 @@ impl<'a> Sig<'a> {
             let entry = match (port.dir, port.ty) {
                 (Dir::Input, Ty::Bits(width)) => {
                     let idx = InputIdx::new(sig.inputs.len());
-                    sig.inputs.push(DataPort { port, width });
+                    sig.inputs.push(DataPort {
+                        port,
+                        width: width.value,
+                    });
                     PortRef::Input(idx)
                 }
                 (Dir::Output, Ty::Bits(width)) => {
                     let idx = OutputIdx::new(sig.outputs.len());
-                    sig.outputs.push(DataPort { port, width });
+                    sig.outputs.push(DataPort {
+                        port,
+                        width: width.value,
+                    });
                     PortRef::Output(idx)
                 }
                 (Dir::Input, Ty::Clock) if sig.clock.is_none() => {
@@ -233,7 +239,7 @@ impl<'a> Scope<'a> {
                 let idx = LetIdx::new(self.lets.len());
                 self.lets.push(LetDecl {
                     name,
-                    width: *width,
+                    width: width.value,
                     expr,
                     span: *span,
                 });
@@ -249,7 +255,7 @@ impl<'a> Scope<'a> {
                 let idx = RegIdx::new(self.regs.len());
                 self.regs.push(RegDecl {
                     name,
-                    width: *width,
+                    width: width.value,
                     clk,
                     reset: reset.as_ref(),
                     span: *span,
@@ -266,8 +272,8 @@ impl<'a> Scope<'a> {
                 let idx = MemIdx::new(self.mems.len());
                 self.mems.push(MemDecl {
                     name,
-                    width: *width,
-                    depth: *depth,
+                    width: width.value,
+                    depth: depth.value,
                     clk,
                     span: *span,
                 });

@@ -2,7 +2,7 @@
 
 use super::error;
 use super::scope::{Binding, Env, PortRef, Scope, stmt_exprs, visit};
-use crate::ast::{BinOp, Design, Expr, Item, Port, Stmt, Ty};
+use crate::ast::{BinOp, Design, Expr, Item, Num, Port, Stmt, Ty};
 use crate::diag::{Diagnostic, ErrorCode};
 
 /// The largest width of a declared or computed value.
@@ -39,10 +39,10 @@ pub(super) fn declared(design: &Design) -> Vec<Diagnostic> {
 
 fn port_sizes(ports: &[Port], errors: &mut Vec<Diagnostic>) {
     for port in ports {
-        if let Ty::Bits(width) = port.ty
-            && !valid_width(width)
+        if let Ty::Bits(n) = port.ty
+            && !valid_width(n.value)
         {
-            errors.push(bad_width(port.span, "the port", width));
+            errors.push(bad_width(port.span, "the port", n.value));
         }
     }
 }
@@ -58,16 +58,17 @@ fn bad_width(span: crate::diag::Span, what: &str, width: u32) -> Diagnostic {
 fn stmt_sizes(stmt: &Stmt, errors: &mut Vec<Diagnostic>) {
     match stmt {
         Stmt::Let { width, span, .. } | Stmt::Reg { width, span, .. } => {
-            if !valid_width(*width) {
-                errors.push(bad_width(*span, "the declaration", *width));
+            if !valid_width(width.value) {
+                errors.push(bad_width(*span, "the declaration", width.value));
             }
         }
         Stmt::Mem {
             width, depth, span, ..
         } => {
-            if !valid_width(*width) {
-                errors.push(bad_width(*span, "the memory", *width));
+            if !valid_width(width.value) {
+                errors.push(bad_width(*span, "the memory", width.value));
             }
+            let depth = &depth.value;
             if !(1..=MAX_DEPTH).contains(depth) {
                 errors.push(error(
                     ErrorCode::E005,
@@ -88,6 +89,7 @@ fn expr_sizes(expr: &Expr, errors: &mut Vec<Diagnostic>) {
         Expr::Const {
             width, value, span, ..
         } => {
+            let width = &width.value;
             if !valid_width(*width) {
                 errors.push(bad_width(*span, "the constant", *width));
             } else if value.bits() > u64::from(*width) {
@@ -98,10 +100,18 @@ fn expr_sizes(expr: &Expr, errors: &mut Vec<Diagnostic>) {
                 ));
             }
         }
-        Expr::Replicate { count: 0, span, .. } => {
+        Expr::Replicate {
+            count: Num { value: 0, .. },
+            span,
+            ..
+        } => {
             errors.push(error(ErrorCode::E005, *span, "the replication count is 0"));
         }
-        Expr::Extract { width: 0, span, .. } => {
+        Expr::Extract {
+            width: Num { value: 0, .. },
+            span,
+            ..
+        } => {
             errors.push(error(ErrorCode::E005, *span, "the extracted width is 0"));
         }
         _ => {}
@@ -239,7 +249,7 @@ impl Typer<'_, '_> {
                     _ => None,
                 }
             }
-            Expr::Const { width, .. } => Some(*width),
+            Expr::Const { width, .. } => Some(width.value),
             Expr::Unary { arg, .. } => self.width(arg),
             Expr::Binary {
                 op, lhs, rhs, span, ..
@@ -280,6 +290,7 @@ impl Typer<'_, '_> {
                 width,
                 span,
             } => {
+                let width = &width.value;
                 let w = self.width(arg)?;
                 if u64::from(*lo) + u64::from(*width) > u64::from(w) {
                     self.fail(
@@ -294,6 +305,7 @@ impl Typer<'_, '_> {
                 Some(*width)
             }
             Expr::Replicate { arg, count, span } => {
+                let count = &count.value;
                 let w = self.width(arg)?;
                 let total = u64::from(w) * u64::from(*count);
                 if total > u64::from(MAX_WIDTH) {
