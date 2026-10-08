@@ -3,6 +3,25 @@ import Std
 /-! Bounded graph searches follow the first entry for each source node. -/
 namespace Silicon.Core.GraphReach
 
+theorem lookup_row_nodup [BEq α] [LawfulBEq α] (rows : List (α × β)) (n : α) (v : β)
+    (hu : (rows.map Prod.fst).Nodup) (hm : (n, v) ∈ rows) : rows.lookup n = some v := by
+  induction rows with
+  | nil => simp at hm
+  | cons row rows ih =>
+    rcases row with ⟨a, b⟩
+    have hd := List.nodup_cons.mp hu
+    rcases List.mem_cons.mp hm with hh | ht
+    · cases hh; simp
+    · have hne : n ≠ a := by
+        intro he
+        apply hd.1
+        subst n
+        exact List.mem_map.mpr ⟨(a, v), ht, rfl⟩
+      have hb : (n == a) = false := by simp [hne]
+      simpa [List.lookup, hb] using ih hd.2 ht
+
+
+
 def freshNodes {α : Type} [BEq α] (seen pending acc : List α) : List α :=
   pending.foldl (fun acc n =>
     if seen.contains n || acc.contains n then acc else n :: acc) acc

@@ -194,7 +194,7 @@ theorem hierarchy_output :
       (List.mem_cons_of_mem _ (List.mem_cons_self ..)))
   have child := values (.port "u" "q") 8 rfl
     (.inst 0 pos "u" "leaf" [] (List.mem_cons_self ..) q (List.mem_cons_self ..) rfl rfl)
-  change solution design env top top_member start input (.name "q") 8 _ = _
+  change solution design env top top_member start input (.name "q") 8 rfl = _
   apply out.trans
   apply child.trans
   have component := designChildren_inst_module design env top top_member

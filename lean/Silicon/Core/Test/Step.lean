@@ -138,7 +138,7 @@ private theorem counter_output (state : State counterDesign noExterns counter co
   have solved : solution counterDesign noExterns counter counter_member state input = values :=
     unique _ (localSolution_isSolution counterDesign counter counter_member
       (designChildren counterDesign noExterns counter counter_member) state input)
-  change solution counterDesign noExterns counter counter_member state input (.name "q") 8 _ = _
+  change solution counterDesign noExterns counter counter_member state input (.name "q") 8 rfl = _
   rw [solved]
   have q := hv (.name "q") 8 rfl
     (.assign 2 pos "q" 8 rfl (.ref pos (.name "r") rfl) (by
@@ -169,7 +169,9 @@ theorem counter_reset_output :
   simp only [step, nextLocalState, regRef, reg]
   change (if solution counterDesign noExterns counter counter_member
     (counterState (5#8)) (counterInput (1#1)) (.name "rst") 1 rfl = 1#1
-    then 17#8 else _) = _
+    then 17#8 else
+      solution counterDesign noExterns counter counter_member
+        (counterState (5#8)) (counterInput (1#1)) (.name "r") 8 rfl + 1#8) = _
   rw [show solution counterDesign noExterns counter counter_member
     (counterState (5#8)) (counterInput (1#1)) (.name "rst") 1 rfl = 1#1 from reset]
   rfl

@@ -7,7 +7,7 @@ Each child component comes from its module equations or the supplied extern envi
 -/
 namespace Silicon.Core.Semantics
 
-noncomputable def designChildren (d : CertifiedDesign) (env : Env d.design)
+def designChildren (d : CertifiedDesign) (env : Env d.design)
     (m : Typed.Module) (hm : m ∈ d.design.bodies) : Children m :=
   assembleChildren d.design d.wellFormed env
     (fun module member children => localComponent d module member children) m hm
@@ -70,7 +70,7 @@ abbrev State (d : CertifiedDesign) (env : Env d.design)
   rw [designChildren_inst_extern d env m hm index pos inst child inputs member absent e found he]
   exact externChild_state _ _ _ _ _ _ _ _ _
 
-noncomputable def solution (d : CertifiedDesign) (env : Env d.design)
+def solution (d : CertifiedDesign) (env : Env d.design)
     (m : Typed.Module) (hm : m ∈ d.design.bodies) (state : State d env m hm)
     (input : Input m) : Valuation m.ctx :=
   localSolution d m hm (designChildren d env m hm) state input
@@ -81,7 +81,7 @@ def IsSolution (d : CertifiedDesign) (env : Env d.design)
   IsLocalSolution d m hm (designChildren d env m hm) state input values
 
 /-! Outputs use current state. Every state cell then receives its next value together. -/
-noncomputable def step (d : CertifiedDesign) (env : Env d.design)
+def step (d : CertifiedDesign) (env : Env d.design)
     (m : Typed.Module) (hm : m ∈ d.design.bodies) (state : State d env m hm)
     (input : Input m) : State d env m hm × Output m :=
   let children := designChildren d env m hm
