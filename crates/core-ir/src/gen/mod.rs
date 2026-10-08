@@ -72,7 +72,7 @@ pub fn inputs(top: &typed::Module) -> impl Strategy<Value = String> + use<> {
         .inputs
         .iter()
         .map(|port| {
-            let (name, width) = (port.name.clone(), port.width);
+            let (name, width) = (port.name.clone(), port.width.get());
             vec(any::<u8>(), width.div_ceil(8) as usize)
                 .prop_map(move |bytes| {
                     let value = BigUint::from_bytes_le(&bytes) & mask(width);

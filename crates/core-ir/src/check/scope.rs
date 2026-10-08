@@ -1,7 +1,7 @@
 //! The symbol tables that the passes share: the interface of each unit and
 //! the names of each module body.
 
-use crate::ast::{Conn, Design, Dir, Expr, Item, Module, Name, Port, Stmt, Ty};
+use crate::ast::{Conn, Design, Dir, Expr, Item, Module, Name, Num, Port, Stmt, Ty};
 use crate::diag::Span;
 use crate::typed::{
     Callee, ExternIdx, InputIdx, InstIdx, LetIdx, MemIdx, ModIdx, OutputIdx, RegIdx,
@@ -19,10 +19,10 @@ pub(super) enum PortRef {
     ClockOut,
 }
 
-/// A data port with its width.
+/// A data port with its declared width. Pass 4 checks the width.
 pub(super) struct DataPort<'a> {
     pub port: &'a Port,
-    pub width: u32,
+    pub width: Num,
 }
 
 /// The interface of a module or an extern.
@@ -45,18 +45,12 @@ impl<'a> Sig<'a> {
             let entry = match (port.dir, port.ty) {
                 (Dir::Input, Ty::Bits(width)) => {
                     let idx = InputIdx::new(sig.inputs.len());
-                    sig.inputs.push(DataPort {
-                        port,
-                        width: width.value,
-                    });
+                    sig.inputs.push(DataPort { port, width });
                     PortRef::Input(idx)
                 }
                 (Dir::Output, Ty::Bits(width)) => {
                     let idx = OutputIdx::new(sig.outputs.len());
-                    sig.outputs.push(DataPort {
-                        port,
-                        width: width.value,
-                    });
+                    sig.outputs.push(DataPort { port, width });
                     PortRef::Output(idx)
                 }
                 (Dir::Input, Ty::Clock) => {
@@ -144,18 +138,18 @@ pub(super) enum Binding {
 
 pub(super) struct LetDecl<'a> {
     pub name: &'a Name,
-    pub width: u32,
+    pub width: Num,
 }
 
 pub(super) struct RegDecl<'a> {
     pub name: &'a Name,
-    pub width: u32,
+    pub width: Num,
     pub span: Span,
 }
 
 pub(super) struct MemDecl<'a> {
     pub name: &'a Name,
-    pub width: u32,
+    pub width: Num,
     pub depth: u32,
     pub span: Span,
 }
@@ -225,7 +219,7 @@ impl<'a> Scope<'a> {
                 let idx = LetIdx::new(self.lets.len());
                 self.lets.push(LetDecl {
                     name,
-                    width: width.value,
+                    width: *width,
                 });
                 self.names.entry(&name.text).or_insert(Binding::Let(idx));
             }
@@ -235,7 +229,7 @@ impl<'a> Scope<'a> {
                 let idx = RegIdx::new(self.regs.len());
                 self.regs.push(RegDecl {
                     name,
-                    width: width.value,
+                    width: *width,
                     span: *span,
                 });
                 self.names.entry(&name.text).or_insert(Binding::Reg(idx));
@@ -250,7 +244,7 @@ impl<'a> Scope<'a> {
                 let idx = MemIdx::new(self.mems.len());
                 self.mems.push(MemDecl {
                     name,
-                    width: width.value,
+                    width: *width,
                     depth: depth.value,
                     span: *span,
                 });

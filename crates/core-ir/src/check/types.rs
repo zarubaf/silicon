@@ -1,12 +1,13 @@
 //! Pass 4 (`E005`, declared sizes) and pass 7 (`E004`, operation widths).
 
 use super::rx::{Ex, ExModule, RawConst, RawModule, Rx, SizedModule};
-use super::scope::{stmt_exprs, visit};
+use super::scope::{Scope, Sig, stmt_exprs, visit};
 use super::{error, first_error};
 use crate::Bits;
-use crate::ast::{BinOp, Design, Expr, Item, Num, Port, Stmt, Ty};
+use crate::ast::{BinOp, Design, Expr, Item, Num, Stmt};
 use crate::diag::{Diagnostic, ErrorCode, Span};
 use crate::typed::address_width;
+use std::num::NonZeroU32;
 
 /// The largest width of a declared or computed value.
 const MAX_WIDTH: u32 = 65536;
@@ -15,12 +16,54 @@ const MAX_DEPTH: u32 = 16_777_216;
 
 // Pass 4.
 
-/// Pass 4. The constants of the resolved modules become values.
+/// The checked declared widths of a unit, by table position.
+pub(super) struct PortWidths {
+    pub inputs: Vec<NonZeroU32>,
+    pub outputs: Vec<NonZeroU32>,
+}
+
+/// The checked declared widths of a module, by table position.
+pub(super) struct ModuleWidths {
+    pub ports: PortWidths,
+    pub lets: Vec<NonZeroU32>,
+    pub regs: Vec<NonZeroU32>,
+    pub mems: Vec<NonZeroU32>,
+}
+
+/// The checked declared widths of a design.
+pub(super) struct Widths {
+    /// By module, in item order.
+    pub modules: Vec<ModuleWidths>,
+    /// By extern, in item order.
+    pub externs: Vec<PortWidths>,
+}
+
+/// Pass 4. The declared widths become non-zero widths, and the constants of
+/// the resolved modules become values.
 pub(super) fn declared<'a>(
     design: &Design,
+    scopes: &[Scope],
+    externs: &[Sig],
     modules: Vec<RawModule<'a>>,
-) -> Result<Vec<SizedModule<'a>>, Diagnostic> {
+) -> Result<(Vec<SizedModule<'a>>, Widths), Diagnostic> {
     let mut errors = sizes(design);
+    let externs = externs
+        .iter()
+        .map(|sig| port_widths(sig, &mut errors))
+        .collect();
+    let modules_widths = scopes
+        .iter()
+        .map(|scope| ModuleWidths {
+            ports: port_widths(scope.sig, &mut errors),
+            lets: widths(scope.lets.iter().map(|d| d.width), "the width", &mut errors),
+            regs: widths(scope.regs.iter().map(|d| d.width), "the width", &mut errors),
+            mems: widths(
+                scope.mems.iter().map(|d| d.width),
+                "the memory width",
+                &mut errors,
+            ),
+        })
+        .collect();
     let mut sized = Vec::new();
     for module in modules {
         let mut constant = |width, raw: RawConst| match const_bits(width, &raw) {
@@ -34,56 +77,65 @@ pub(super) fn declared<'a>(
         sized.extend(converted);
     }
     first_error(errors)?;
-    Ok(sized)
+    let widths = Widths {
+        modules: modules_widths,
+        externs,
+    };
+    Ok((sized, widths))
 }
 
+fn port_widths(sig: &Sig, errors: &mut Vec<Diagnostic>) -> PortWidths {
+    let what = "the port width";
+    PortWidths {
+        inputs: widths(sig.inputs.iter().map(|p| p.width), what, errors),
+        outputs: widths(sig.outputs.iter().map(|p| p.width), what, errors),
+    }
+}
+
+/// The checked widths. Each width that fails adds its error and has no
+/// entry: pass 4 then fails, and nobody reads the widths.
+fn widths(
+    nums: impl Iterator<Item = Num>,
+    what: &str,
+    errors: &mut Vec<Diagnostic>,
+) -> Vec<NonZeroU32> {
+    nums.filter_map(|n| checked_width(n, what).map_err(|d| errors.push(d)).ok())
+        .collect()
+}
+
+/// The memory depths and the numbers inside the expressions. The widths of
+/// the declarations are checked from the scopes.
 fn sizes(design: &Design) -> Vec<Diagnostic> {
     let mut errors = Vec::new();
     for item in &design.items {
-        match item {
-            Item::Module(m) => {
-                port_sizes(&m.ports, &mut errors);
-                for stmt in &m.stmts {
-                    stmt_sizes(stmt, &mut errors);
-                }
+        if let Item::Module(m) = item {
+            for stmt in &m.stmts {
+                stmt_sizes(stmt, &mut errors);
             }
-            Item::Extern(e) => port_sizes(&e.ports, &mut errors),
         }
     }
     errors
 }
 
-fn port_sizes(ports: &[Port], errors: &mut Vec<Diagnostic>) {
-    for port in ports {
-        if let Ty::Bits(n) = port.ty {
-            check_width(n, "the port width", errors);
-        }
-    }
-}
-
 /// A declared width is 1 to 65536.
-fn check_width(n: Num, what: &str, errors: &mut Vec<Diagnostic>) {
-    errors.extend(width_error(n, what));
-}
-
-fn width_error(n: Num, what: &str) -> Option<Diagnostic> {
-    (!(1..=MAX_WIDTH).contains(&n.value)).then(|| {
-        error(
-            ErrorCode::E005,
-            n.span,
-            format!("{what} is {}, and a width is 1 to {MAX_WIDTH}", n.value),
-        )
-    })
+fn checked_width(n: Num, what: &str) -> Result<NonZeroU32, Diagnostic> {
+    NonZeroU32::new(n.value)
+        .filter(|w| w.get() <= MAX_WIDTH)
+        .ok_or_else(|| {
+            error(
+                ErrorCode::E005,
+                n.span,
+                format!("{what} is {}, and a width is 1 to {MAX_WIDTH}", n.value),
+            )
+        })
 }
 
 /// The value of a `const` form. Pass 4 checks each constant here only. `E005`
 /// is the error for a width outside 1 to 65536, at the width, and for a value
 /// that does not fit, at the value.
 fn const_bits(width: Num, raw: &RawConst) -> Result<Bits, Diagnostic> {
-    if let Some(d) = width_error(width, "the constant width") {
-        return Err(d);
-    }
-    Bits::new(width.value, raw.value.clone()).ok_or_else(|| {
+    let w = checked_width(width, "the constant width")?;
+    Bits::new(w.get(), raw.value.clone()).ok_or_else(|| {
         error(
             ErrorCode::E005,
             raw.value_span,
@@ -96,23 +148,14 @@ fn const_bits(width: Num, raw: &RawConst) -> Result<Bits, Diagnostic> {
 }
 
 fn stmt_sizes(stmt: &Stmt, errors: &mut Vec<Diagnostic>) {
-    match stmt {
-        Stmt::Let { width: w, .. } | Stmt::Reg { width: w, .. } => {
-            check_width(*w, "the width", errors);
-        }
-        Stmt::Mem {
-            width: w, depth, ..
-        } => {
-            check_width(*w, "the memory width", errors);
-            if !(1..=MAX_DEPTH).contains(&depth.value) {
-                errors.push(error(
-                    ErrorCode::E005,
-                    depth.span,
-                    format!("the memory depth {} is not 1 to {MAX_DEPTH}", depth.value),
-                ));
-            }
-        }
-        Stmt::Next { .. } | Stmt::Write { .. } | Stmt::Inst { .. } | Stmt::Assign { .. } => {}
+    if let Stmt::Mem { depth, .. } = stmt
+        && !(1..=MAX_DEPTH).contains(&depth.value)
+    {
+        errors.push(error(
+            ErrorCode::E005,
+            depth.span,
+            format!("the memory depth {} is not 1 to {MAX_DEPTH}", depth.value),
+        ));
     }
     for root in stmt_exprs(stmt) {
         visit(root, &mut |e| expr_sizes(e, errors));

@@ -1,29 +1,36 @@
-//! Lowers a checked design to the typed core IR. The earlier passes resolved
-//! the names, the targets, the arguments, the `deps`, the constants, and the
-//! clocks, so no step here can fail.
+//! Lowers the modules and the externs of a checked design to the typed core
+//! IR. The earlier passes resolved the names, the targets, the arguments, the
+//! `deps`, the constants, the declared widths, and the clocks, so no step here
+//! can fail.
 
 use super::instances::{Linked, LinkedInst};
 use super::rx::{Ex, ExModule};
 use super::scope::{DataPort, Env, Scope};
 use super::structure::Structure;
+use super::types::{ModuleWidths, Widths};
 use crate::ast::{Design, Item};
-use crate::typed::{self, Deps, Inst, Let, Mem, ModIdx, Module, Port, Reg, Write};
+use std::num::NonZeroU32;
+
+use crate::typed::{self, Deps, Inst, Let, Mem, Module, Port, Reg, Write};
 
 pub(super) fn lower(
     design: &Design,
     env: &Env,
-    top: ModIdx,
+    widths: &Widths,
     scopes: &[Scope],
     resolved: &[ExModule],
     structures: &[Structure],
     linked: &Linked,
-) -> typed::Design {
+) -> (Vec<Module>, Vec<typed::Extern>) {
     let modules = scopes
         .iter()
         .zip(resolved)
         .zip(structures)
         .zip(&linked.insts)
-        .map(|(((scope, rx), structure), insts)| module(scope, rx, structure, insts))
+        .zip(&widths.modules)
+        .map(|((((scope, rx), structure), insts), widths)| {
+            module(scope, widths, rx, structure, insts)
+        })
         .collect();
     let externs = design
         .items
@@ -32,29 +39,26 @@ pub(super) fn lower(
             Item::Extern(e) => Some(e),
             Item::Module(_) => None,
         })
-        .zip(env.externs())
+        .zip(env.externs().iter().zip(&widths.externs))
         .zip(&linked.extern_deps)
-        .map(|((ext, sig), deps)| typed::Extern {
+        .map(|((ext, (sig, widths)), deps)| typed::Extern {
             name: ext.name.text.clone(),
-            inputs: ports(&sig.inputs),
-            outputs: ports(&sig.outputs),
+            inputs: ports(&sig.inputs, &widths.inputs),
+            outputs: ports(&sig.outputs, &widths.outputs),
             deps: deps.clone(),
             span: ext.span,
         })
         .collect();
-    typed::Design {
-        modules,
-        externs,
-        top,
-    }
+    (modules, externs)
 }
 
-fn ports(ports: &[DataPort]) -> Vec<Port> {
+fn ports(ports: &[DataPort], widths: &[NonZeroU32]) -> Vec<Port> {
     ports
         .iter()
-        .map(|p| Port {
+        .zip(widths)
+        .map(|(p, &width)| Port {
             name: p.port.name.text.clone(),
-            width: p.width,
+            width,
         })
         .collect()
 }
@@ -63,25 +67,33 @@ fn all(exprs: &[&Ex]) -> Vec<typed::Expr> {
     exprs.iter().map(|e| e.finish()).collect()
 }
 
-fn module(scope: &Scope, rx: &ExModule, structure: &Structure, insts: &[LinkedInst]) -> Module {
+fn module(
+    scope: &Scope,
+    widths: &ModuleWidths,
+    rx: &ExModule,
+    structure: &Structure,
+    insts: &[LinkedInst],
+) -> Module {
     let lets = scope
         .lets
         .iter()
+        .zip(&widths.lets)
         .zip(&rx.lets)
-        .map(|(d, l)| Let {
+        .map(|((d, &width), l)| Let {
             name: d.name.text.clone(),
-            width: d.width,
+            width,
             expr: l.expr.finish(),
         })
         .collect();
     let regs = scope
         .regs
         .iter()
+        .zip(&widths.regs)
         .zip(&rx.regs)
         .zip(all(&structure.nexts))
-        .map(|((d, r), next)| Reg {
+        .map(|(((d, &width), r), next)| Reg {
             name: d.name.text.clone(),
-            width: d.width,
+            width,
             next,
             reset: r
                 .reset
@@ -92,10 +104,11 @@ fn module(scope: &Scope, rx: &ExModule, structure: &Structure, insts: &[LinkedIn
     let mems = scope
         .mems
         .iter()
+        .zip(&widths.mems)
         .zip(&structure.writes)
-        .map(|(d, ports)| Mem {
+        .map(|((d, &width), ports)| Mem {
             name: d.name.text.clone(),
-            width: d.width,
+            width,
             depth: d.depth,
             writes: ports
                 .iter()
@@ -119,8 +132,8 @@ fn module(scope: &Scope, rx: &ExModule, structure: &Structure, insts: &[LinkedIn
         .collect();
     Module {
         name: scope.module.name.text.clone(),
-        inputs: ports(&scope.sig.inputs),
-        outputs: ports(&scope.sig.outputs),
+        inputs: ports(&scope.sig.inputs, &widths.ports.inputs),
+        outputs: ports(&scope.sig.outputs, &widths.ports.outputs),
         has_clock: scope.sig.clock.is_some(),
         lets,
         regs,
