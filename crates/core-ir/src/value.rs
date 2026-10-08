@@ -276,6 +276,49 @@ mod tests {
         assert_eq!(b(2, 0b10).concat(&b(2, 0b01)), b(4, 0b1001));
     }
     #[test]
+    fn sub_wraps_below_zero() {
+        assert_eq!(b(8, 0).sub(&b(8, 1)), b(8, 255));
+        assert_eq!(b(8, 3).sub(&b(8, 5)), b(8, 254));
+    }
+    #[test]
+    fn mul_wraps() {
+        assert_eq!(b(8, 16).mul(&b(8, 17)), b(8, 16));
+    }
+    #[test]
+    fn not_flips_each_bit() {
+        assert_eq!(b(4, 0b1010).not(), b(4, 0b0101));
+    }
+    #[test]
+    fn extract_takes_bits_from_lo() {
+        assert_eq!(b(8, 0b1011_0110).extract(2, 3), b(3, 0b101));
+    }
+    #[test]
+    fn replicate_repeats_the_bits() {
+        assert_eq!(b(2, 0b10).replicate(3), b(6, 0b10_1010));
+    }
+    #[test]
+    fn unsigned_and_equality_predicates() {
+        let (lo, hi) = (b(4, 3), b(4, 12));
+        let holds = |a: &Bits, p, c: &Bits| a.icmp(p, c) == b(1, 1);
+        assert!(holds(&lo, Pred::Ult, &hi) && holds(&lo, Pred::Ule, &hi));
+        assert!(!holds(&lo, Pred::Ugt, &hi) && !holds(&lo, Pred::Uge, &hi));
+        assert!(holds(&hi, Pred::Ugt, &lo) && holds(&hi, Pred::Uge, &lo));
+        assert!(holds(&lo, Pred::Ule, &lo) && holds(&lo, Pred::Uge, &lo));
+        assert!(!holds(&lo, Pred::Ult, &lo) && !holds(&lo, Pred::Ugt, &lo));
+        assert!(holds(&lo, Pred::Eq, &lo) && !holds(&lo, Pred::Eq, &hi));
+        assert!(holds(&lo, Pred::Ne, &hi) && !holds(&lo, Pred::Ne, &lo));
+    }
+    #[test]
+    fn shrs_fills_a_negative_value_with_ones() {
+        assert_eq!(b(4, 0b1000).shrs(&b(4, 1)), b(4, 0b1100));
+    }
+    #[test]
+    fn shl_below_the_width_drops_the_high_bits() {
+        assert_eq!(b(4, 0b0011).shl(&b(4, 2)), b(4, 0b1100));
+        assert_eq!(b(4, 0b0111).shl(&b(4, 2)), b(4, 0b1100));
+        assert_eq!(b(4, 0b0111).shl(&b(4, 3)), b(4, 0b1000));
+    }
+    #[test]
     fn rejects_zero_width_and_overflow() {
         assert!(Bits::new(0, BigUint::ZERO).is_none());
         assert!(Bits::new(2, BigUint::from(4u8)).is_none());
