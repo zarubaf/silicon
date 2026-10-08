@@ -1,0 +1,13 @@
+; Purpose: the arithmetic operations add, sub, mul, and const.
+(design top
+  (module top
+    (input a (bits 8))
+    (input b (bits 8))
+    (output s (bits 8))
+    (output d (bits 8))
+    (output p (bits 8))
+    (output k (bits 8))
+    (assign s (add a b))
+    (assign d (sub a b))
+    (assign p (mul a b))
+    (assign k (const 8 200))))

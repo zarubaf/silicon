@@ -1,0 +1,12 @@
+; Purpose: a memory of depth 1. The address width is 1 and address 1 is out of
+; range.
+(design top
+  (module top
+    (input clk clock)
+    (input a (bits 1))
+    (input d (bits 4))
+    (input we (bits 1))
+    (output p (bits 4))
+    (mem m (bits 4) 1 clk)
+    (write m 0 a d we)
+    (assign p (read m a))))

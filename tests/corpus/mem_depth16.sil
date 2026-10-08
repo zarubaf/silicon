@@ -1,0 +1,12 @@
+; Purpose: a memory of power-of-two depth 16. The address width is 4 and no
+; access needs a guard.
+(design top
+  (module top
+    (input clk clock)
+    (input a (bits 4))
+    (input d (bits 8))
+    (input we (bits 1))
+    (output p (bits 8))
+    (mem m (bits 8) 16 clk)
+    (write m 0 a d we)
+    (assign p (read m a))))

@@ -31,3 +31,7 @@ harness = false
 [[test]]
 name = "run"
 harness = false
+
+[[test]]
+name = "corpus"
+harness = false

@@ -1,0 +1,13 @@
+; Purpose: the bitwise operations and, or, xor, and not.
+(design top
+  (module top
+    (input a (bits 8))
+    (input b (bits 8))
+    (output n (bits 8))
+    (output o (bits 8))
+    (output x (bits 8))
+    (output y (bits 8))
+    (assign n (and a b))
+    (assign o (or a b))
+    (assign x (xor a b))
+    (assign y (not a))))
