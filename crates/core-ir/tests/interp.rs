@@ -338,3 +338,25 @@ fn a_deep_instance_chain_runs_on_a_small_stack() {
         .expect("the chain runs without a stack overflow");
     assert_eq!(lines, ["out=(q 0)\n", "out=(q 1)\n", "out=(q 2)\n"]);
 }
+
+#[test]
+fn a_value_reads_an_output_of_its_module() {
+    let src = "\
+(design top
+  (module top
+    (input clk clock)
+    (input a (bits 1))
+    (input b (bits 1))
+    (output q (bits 2))
+    (output p (bits 1))
+    (reg r (bits 1) clk)
+    (next r p)
+    (assign q (concat p r))
+    (assign p (and a b))))
+";
+    let lines = ["in=(a 1 b 1)", "in=(a 0 b 1)", "in=(a 1 b 1)"];
+    assert_eq!(
+        run(src, &lines),
+        ["out=(q 2 p 1)\n", "out=(q 1 p 0)\n", "out=(q 2 p 1)\n"]
+    );
+}

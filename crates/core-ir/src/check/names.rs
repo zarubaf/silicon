@@ -404,6 +404,11 @@ impl<'a> Resolver<'_, 'a> {
                 .map(|p| Rx::Input(i, p.width.value)),
             Some(Binding::Let(i)) => scope.lets.get(i.index()).map(|d| Rx::Let(i, d.width.value)),
             Some(Binding::Reg(i)) => scope.regs.get(i.index()).map(|d| Rx::Reg(i, d.width.value)),
+            Some(Binding::Output(o)) => scope
+                .sig
+                .outputs
+                .get(o.index())
+                .map(|p| Rx::Output(o, p.width.value)),
             Some(Binding::Clock | Binding::ClockOut) => Some(Rx::Clock(name.span)),
             _ => None,
         };

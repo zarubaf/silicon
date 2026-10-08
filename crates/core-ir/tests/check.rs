@@ -996,6 +996,7 @@ fn reads(expr: &typed::Expr, out: &mut Vec<typed::Node>) {
     use typed::{Expr, Node};
     match expr {
         Expr::Let(l) => out.push(Node::Let(*l)),
+        Expr::Output(o) => out.push(Node::Output(*o)),
         Expr::InstOut(u, o) => out.push(Node::InstOut(*u, *o)),
         Expr::Input(_) | Expr::Reg(_) | Expr::Const(_) => {}
         Expr::Un(_, a) | Expr::Extract(a, ..) | Expr::Replicate(a, _) | Expr::Read(_, a) => {
@@ -1243,4 +1244,37 @@ fn e003_output_of_an_instance_of_an_unknown_module() {
     (inst u nosuch)))
 ";
     expect(src, ErrorCode::E003, 4, 15);
+}
+
+const OUTPUT_READ: &str = "\
+(design top
+  (module top
+    (input clk clock)
+    (input a (bits 1))
+    (input b (bits 1))
+    (output q (bits 2))
+    (output p (bits 1))
+    (reg r (bits 1) clk)
+    (next r p)
+    (assign q (concat p r))
+    (assign p (and a b))))
+";
+
+#[test]
+fn a_value_reads_an_output_of_its_module() {
+    let design = run(OUTPUT_READ).expect("an output read checks");
+    assert_well_ordered(&design);
+    assert_eq!(indices(&design.modules[0].deps), [vec![0, 1], vec![0, 1]]);
+}
+
+#[test]
+fn e008_output_reads_itself() {
+    let src = "\
+(design top
+  (module top
+    (input a (bits 1))
+    (output q (bits 1))
+    (assign q (and q a))))
+";
+    expect(src, ErrorCode::E008, 5, 5);
 }

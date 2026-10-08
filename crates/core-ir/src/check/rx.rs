@@ -31,6 +31,8 @@ pub(super) enum Rx<K, C> {
     Input(InputIdx, u32),
     Let(LetIdx, u32),
     Reg(RegIdx, u32),
+    /// An output of the module itself.
+    Output(OutputIdx, u32),
     InstOut(InstIdx, OutputIdx, u32),
     /// A name of a clock in a value position.
     Clock(K),
@@ -101,6 +103,7 @@ impl<K, C> Rx<K, C> {
             Rx::Input(i, w) => Rx::Input(i, w),
             Rx::Let(i, w) => Rx::Let(i, w),
             Rx::Reg(i, w) => Rx::Reg(i, w),
+            Rx::Output(o, w) => Rx::Output(o, w),
             Rx::InstOut(i, o, w) => Rx::InstOut(i, o, w),
             Rx::Clock(k) => Rx::Clock(fk(k)?),
             Rx::Const { width, value } => Rx::Const {
@@ -187,6 +190,7 @@ impl Ex {
             Rx::Input(i, _) => T::Input(*i),
             Rx::Let(i, _) => T::Let(*i),
             Rx::Reg(i, _) => T::Reg(*i),
+            Rx::Output(o, _) => T::Output(*o),
             Rx::InstOut(i, o, _) => T::InstOut(*i, *o),
             Rx::Clock(never) => match *never {},
             Rx::Const { value, .. } => T::Const(value.clone()),

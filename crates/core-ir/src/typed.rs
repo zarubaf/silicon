@@ -76,6 +76,8 @@ pub enum Expr {
     Let(LetIdx),
     /// The current value of a register.
     Reg(RegIdx),
+    /// An output of the module itself: the value of its `assign`.
+    Output(OutputIdx),
     /// An output of an instance.
     InstOut(InstIdx, OutputIdx),
     /// A constant.

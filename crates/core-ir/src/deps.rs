@@ -2,7 +2,8 @@
 //! section 5.3).
 //!
 //! The graph has one node for each `let`, each output, and each instance
-//! output. A node reads the nodes and the inputs that its expression names.
+//! output. A node reads the nodes and the inputs that its expression names:
+//! a read of an output of the module reads the node of that output.
 //! A register read and the stored contents of a memory make no edge, and an
 //! instance output reads only the connections of the inputs in its
 //! dependencies. The inference is syntactic reachability with no
@@ -138,6 +139,7 @@ impl Graph {
         match expr {
             Expr::Input(i) => self.inputs[v].push(*i),
             Expr::Let(l) => self.reads[v].push(l.index()),
+            Expr::Output(o) => self.reads[v].push(self.output_base + o.index()),
             Expr::InstOut(u, q) => self.reads[v].push(inst_base[u.index()] + q.index()),
             Expr::Reg(_) | Expr::Const(_) => {}
             // The address makes edges; the stored contents make none.
