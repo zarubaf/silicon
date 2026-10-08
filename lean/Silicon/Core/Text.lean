@@ -143,7 +143,7 @@ structure Token where
   deriving Repr, DecidableEq, Inhabited
 
 def advance (p : Pos) (c : Char) : Pos :=
-  if c == '\n' then ⟨p.line + 1, 1⟩ else ⟨p.line, p.col + 1⟩
+  if c == '\n' then ⟨p.line + 1, 1, []⟩ else ⟨p.line, p.col + 1, []⟩
 
 def delimiter (c : Char) : Bool :=
   c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '(' || c == ')' || c == ';'
@@ -163,7 +163,7 @@ def lexLoop : List Char → Pos → Pos → List Char → Bool → List Token �
     else
       lexLoop cs (advance p c) (if word.isEmpty then p else start) (c :: word) false tokens
 
-def lex (s : String) : List Token × Pos := lexLoop s.toList ⟨1, 1⟩ ⟨1, 1⟩ [] false []
+def lex (s : String) : List Token × Pos := lexLoop s.toList ⟨1, 1, []⟩ ⟨1, 1, []⟩ [] false []
 
 /-! A malformed atom reports its first bad character rather than the atom's start. -/
 def tokenCharacter (c : Char) : Bool := nameRest c || c == '.'
@@ -173,7 +173,7 @@ def badTokenCharacter (t : Token) : Option Error :=
     let chars := t.text.toList
     let offset := chars.findIdx (!tokenCharacter ·)
     if offset < chars.length then
-      some ⟨.E001, ⟨t.pos.line, t.pos.col + offset⟩, "invalid character"⟩
+      some ⟨.E001, ⟨t.pos.line, t.pos.col + offset, []⟩, "invalid character"⟩
     else none
 
 def badCharacter : List Token → Option Error
@@ -191,6 +191,18 @@ inductive Form where
   | list (pos : Pos) (children : List Form) (close : Option Pos)
   | bad (pos : Pos)
   deriving Repr, Inhabited
+
+mutual
+  def Form.positions : Form → List (List Nat × Nat × Nat)
+    | .atom t => [([], t.pos.line, t.pos.col)]
+    | .bad p => [([], p.line, p.col)]
+    | .list p fs _ => ([], p.line, p.col) :: Form.fieldPositions fs 0
+  def Form.fieldPositions : List Form → Nat → List (List Nat × Nat × Nat)
+    | [], _ => []
+    | f :: fs, index =>
+      (f.positions.map fun (path, line, col) => (index :: path, line, col)) ++
+        Form.fieldPositions fs (index + 1)
+end
 
 def Form.pos : Form → Pos
   | .atom t => t.pos
@@ -420,7 +432,7 @@ def Text.parseRaw (s : String) : Except Error Design := do
   let fs := fs ++ rest.map (fun t => Text.Form.bad t.pos)
   let (d, c) ← Text.form eof (fun _ => do
     Text.word "design"
-    return ⟨← Text.name, ← Text.remaining (Text.item eof fuel), []⟩) ⟨fs, eof, true⟩
+    return ⟨← Text.name, ← Text.remaining (Text.item eof fuel), ⟨0, 0, []⟩⟩) ⟨fs, eof, true⟩
   let _ ← Text.finish c
   pure d
 
@@ -445,16 +457,18 @@ mutual
     | f :: fs => (f.findPos p).or (Form.findPosMany p fs)
 end
 
-/-! The checker needs atom positions as well as form positions. -/
-mutual
-  def Form.source : Form → List SourcePos
-    | .atom t => [⟨t.pos, []⟩]
-    | .bad p => [⟨p, []⟩]
-    | .list p fs _ => ⟨p, fs.map Form.pos⟩ :: Form.sources fs
-  def Form.sources : List Form → List SourcePos
-    | [] => []
-    | f :: fs => f.source ++ Form.sources fs
-end
+def attachPositions (fs : List Form) (d : Design) : Design :=
+  let locate := fun p => match fs.findSome? (fun f => f.findPos p) with
+    | some f => { p with atoms := f.positions }
+    | none => p
+  let top := match fs with | f :: _ => f.atPath [1] | [] => d.topPos
+  { d.mapPos locate with topPos := top }
+
+@[simp] theorem attachPositions_erase (fs : List Form) (d : Design) :
+    (attachPositions fs d).erasePos = d.erasePos := by
+  simpa only [attachPositions, Design.erasePos] using
+    Design.mapPos_erase (fun p => match fs.findSome? (fun f => f.findPos p) with
+      | some f => { p with atoms := f.positions } | none => p) d
 
 def locateLimit (fs : List Form) (l : TextLimit) : Pos :=
   match fs.findSome? (fun f => f.findPos l.pos) with
@@ -525,7 +539,7 @@ def parse (s : String) : Except Error Design :=
   match Text.parseRaw s with
   | .ok d =>
     match d.textLimits.find? (fun l => !l.ok) with
-    | none => .ok { d with source := Text.Form.sources fs }
+    | none => .ok (Text.attachPositions fs d)
     | some l => .error (Text.limitFailure (Text.locateLimit fs l))
   | .error e =>
     let e := Text.correctTokenError ts e
@@ -978,11 +992,11 @@ theorem lex_append_lf (s : String) : (lex (s ++ "\n")).1 = (lex s).1 := by
   exact lexLoop_append_lf_fst _ _ _ _ _ _
 
 theorem Tree.lex_render (t : Tree) (legal : t.Legal) (depth : Nat := 0) :
-    (lex (t.render depth)).1 = (t.place ⟨1, 1⟩ depth).tokens := by
-  change (lexLoop (String.ofList (t.chars depth)).toList ⟨1, 1⟩ ⟨1, 1⟩ [] false []).1 = _
+    (lex (t.render depth)).1 = (t.place ⟨1, 1, []⟩ depth).tokens := by
+  change (lexLoop (String.ofList (t.chars depth)).toList ⟨1, 1, []⟩ ⟨1, 1, []⟩ [] false []).1 = _
   simp only [String.toList_ofList]
   rw [← lexLoop_append_space_fst]
-  rw [t.lex_chars legal ⟨1, 1⟩ ' ' [] [] (by decide) depth]
+  rw [t.lex_chars legal ⟨1, 1, []⟩ ' ' [] [] (by decide) depth]
   simp [lexLoop, delimiter, flush]
 
 theorem legal_atom_ne (s : String) (h : (Tree.atom s).Legal) : s ≠ "(" ∧ s ≠ ")" := by
@@ -1052,9 +1066,9 @@ theorem Tree.tokens_length (t : Tree) (p : Pos) (depth : Nat := 0) :
 theorem Tree.forms_lex_render (t : Tree) (legal : t.Legal) (n : Nat)
     (hn : t.weight ≤ n) (depth : Nat := 0) :
     ∃ f, t.Matches f ∧ forms (n + 1) (lex (t.render depth)).1 = ([f], []) := by
-  refine ⟨t.place ⟨1, 1⟩ depth, t.place_matches _ depth, ?_⟩
+  refine ⟨t.place ⟨1, 1, []⟩ depth, t.place_matches _ depth, ?_⟩
   rw [t.lex_render legal depth]
-  have h := t.forms_tokens legal ⟨1, 1⟩ n hn [] depth
+  have h := t.forms_tokens legal ⟨1, 1, []⟩ n hn [] depth
   have hn0 : 0 < n := by
     have hw : 0 < t.weight := by cases t <;> simp [Tree.weight] <;> omega
     omega
@@ -1838,7 +1852,7 @@ theorem design_read
     (eof : Pos) (c : Cursor) :
     ∃ a, (form eof (fun _ => do
       word "design"
-      return (⟨← name, ← remaining (item eof fuel), []⟩ : Design)))
+      return (⟨← name, ← remaining (item eof fuel), ⟨0, 0, []⟩⟩ : Design)))
         { c with forms := f :: c.forms } = .ok (a, c) ∧ a.erasePos = d.erasePos := by
   cases hm with
   | list p close hm =>
@@ -1864,7 +1878,7 @@ theorem design_read
           · exact hmatch
         obtain ⟨is, his, hise⟩ := remaining_roundtrip (item eof fuel) encodeItem Item.erasePos
           d.items fs hm hir close true
-        refine ⟨⟨d.top, is, []⟩, ?_, ?_⟩
+        refine ⟨⟨d.top, is, ⟨0, 0, []⟩⟩, ?_, ?_⟩
         · cases c
           simp [form, take, inside, word, atom, name_read _ htop, finish,
             Bind.bind, Except.bind, Pure.pure, Except.pure, his]
@@ -2275,6 +2289,6 @@ theorem parse_print (d : Design) (h : d.ValidNames) (limits : d.WithinLimits) :
       intro l hm
       have := List.all_eq_true.mp ha l hm
       simp [this]
-    simpa [parse, hr, hn, Except.map, Design.erasePos] using he
+    simpa [parse, hr, hn, Except.map] using he
 
 end Silicon.Core

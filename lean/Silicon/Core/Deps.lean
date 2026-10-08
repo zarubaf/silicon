@@ -18,6 +18,8 @@ inductive Node where
   | port (inst output : String)
   deriving Repr, DecidableEq, BEq
 
+deriving instance ReflBEq, LawfulBEq for Node
+
 /-! Memory contents come from state. Only the address contributes reads. -/
 def reads : Expr → List Node
   | .ref _ n => [.name n]
@@ -27,7 +29,7 @@ def reads : Expr → List Node
   | .bin _ _ a b | .icmp _ _ a b => reads a ++ reads b
   | .mux _ c a b => reads c ++ reads a ++ reads b
 
-private def equations (children : String → Option Deps) : Stmt → List (Node × List Node)
+def equations (children : String → Option Deps) : Stmt → List (Node × List Node)
   | .let_ _ n _ e | .assign _ n e => [(.name n, reads e)]
   | .inst _ n child inputs =>
     ((children child).getD []).map fun (output, deps) =>
