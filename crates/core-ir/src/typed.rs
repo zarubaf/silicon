@@ -50,7 +50,8 @@ index! {
 
 /// The address width of a memory with `depth` words: `max(1, ceil(log2 depth))`
 /// (spec section 4.1).
-pub(crate) fn address_width(depth: u32) -> u32 {
+#[must_use]
+pub fn address_width(depth: u32) -> u32 {
     (u32::BITS - depth.saturating_sub(1).leading_zeros()).max(1)
 }
 
@@ -65,6 +66,9 @@ pub struct Port {
     pub name: String,
     /// The width in bits.
     pub width: NonZeroU32,
+    /// The position of the port among all ports of its unit, the clock
+    /// included.
+    pub position: usize,
 }
 
 /// A combinational expression. No variant refers to a clock.
@@ -258,6 +262,7 @@ mod tests {
             outputs: vec![Port {
                 name: "q".into(),
                 width: eight,
+                position: 1,
             }],
             clock: Some(ClockPort {
                 name: "clk".into(),
