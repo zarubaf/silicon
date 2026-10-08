@@ -1,4 +1,6 @@
-import Silicon.Core.Order
+import Silicon.Core.Complete
+import Silicon.Core.GraphReach
+import Silicon.Core.GraphCycleIndex
 import Std.Data.HashSet.Lemmas
 
 namespace Silicon.Core.Rules
@@ -186,11 +188,13 @@ end Silicon.Core.Rules
 
 namespace Silicon.Core.Check
 
-open Rules
+open Rules GraphReach
 
 /-!
-Parsed source supplies atom positions. A constructed AST can lack this source tree.
-For that AST, diagnostics use the position that its enclosing form declares.
+Parsed source supplies atom positions for paths with at most two entries.
+Callers must keep paths within that depth to obtain a field position.
+A deeper path or a constructed AST can lack this source entry.
+In that case, diagnostics use the position that the enclosing form declares.
 -/
 def atomPos (form : Pos) (path : List Nat) : Pos :=
   match form.locate path with
@@ -564,21 +568,6 @@ def e012 (d : Design) : List Error :=
           .E012 p "write indices must be contiguous from zero"
     | _ => []
 
-private def freshNodes {α : Type} [BEq α] (seen pending acc : List α) : List α :=
-  pending.foldl (fun acc n =>
-    if seen.contains n || acc.contains n then acc else n :: acc) acc
-
-/-! Rank failure rejects a graph. A visited search locates its cycle nodes. -/
-private def reachesSpec [BEq α] (g : List (α × List α)) (target : α) :
-    Nat → List α → List α → Bool
-  | 0, _, _ => false
-  | fuel + 1, pending, seen =>
-    if pending.contains target then true else
-    let fresh := freshNodes seen pending []
-    let seen := fresh ++ seen
-    let next := fresh.flatMap fun n => (g.lookup n).getD []
-    reachesSpec g target fuel (next.filter fun n => !seen.contains n) seen
-
 private def reaches (g : Typed.Graph) (target : Deps.Node) := reachesSpec g target
 
 private def indexedReachesAux (g : Std.HashMap Deps.Node (List Deps.Node))
@@ -622,101 +611,9 @@ private def indexedReaches (g : Typed.Graph) (target : Deps.Node)
   symm
   exact indexedReachesAux_eq g target fuel pending seen _ (fun _ => Std.HashSet.contains_ofList)
 
-section GraphSearch
-
-variable {α : Type} [BEq α] [LawfulBEq α]
-
-private theorem mem_fresh (seen pending acc : List α) (x : α) :
-    x ∈ freshNodes seen pending acc ↔ x ∈ acc ∨ x ∈ pending ∧ x ∉ seen := by
-  induction pending generalizing acc with
-  | nil => simp [freshNodes]
-  | cons n pending ih =>
-    simp only [freshNodes, List.foldl_cons]
-    change x ∈ freshNodes seen pending _ ↔ _
-    rw [ih]
-    by_cases hs : n ∈ seen <;> by_cases ha : n ∈ acc <;>
-      simp [hs, ha] <;> grind
-
-inductive Walk (g : List (α × List α)) : Nat → α → α → Prop
-  | refl (x : α) : Walk g 0 x x
-  | step {x y z : α} {k : Nat} : y ∈ (g.lookup x).getD [] →
-      Walk g k y z → Walk g (k + 1) x z
-
-private def updated (seen pending : List α) : List α := freshNodes seen pending [] ++ seen
-
-private def frontier (g : List (α × List α)) (seen pending : List α) : List α :=
-  ((freshNodes seen pending []).flatMap fun n => (g.lookup n).getD []).filter
-    fun n => !(updated seen pending).contains n
-
-private theorem mem_updated (seen pending : List α) (x : α) :
-    x ∈ updated seen pending ↔ x ∈ seen ∨ x ∈ pending := by
-  simp only [updated, List.mem_append, mem_fresh, List.not_mem_nil, false_or]
-  grind
-
-private def Closed (g : List (α × List α)) (seen pending : List α) : Prop :=
-  ∀ x ∈ seen, ∀ y ∈ (g.lookup x).getD [], y ∈ seen ∨ y ∈ pending
-
-private theorem closed_updated (g : List (α × List α)) (seen pending : List α)
-    (hc : Closed g seen pending) :
-    Closed g (updated seen pending) (frontier g seen pending) := by
-  intro x hx y hy
-  by_cases hm : y ∈ updated seen pending
-  · exact Or.inl hm
-  · apply Or.inr
-    unfold frontier
-    rw [List.mem_filter]
-    refine ⟨?_, by simpa using hm⟩
-    apply List.mem_flatMap.mpr
-    refine ⟨x, ?_, hy⟩
-    have hn : x ∉ seen := by
-      intro hs
-      exact hm ((mem_updated seen pending y).mpr (hc x hs y hy))
-    exact (mem_fresh seen pending [] x).mpr
-      (Or.inr ⟨((mem_updated seen pending x).mp hx).resolve_left hn, hn⟩)
-
-private theorem reaches_of_walk (g : List (α × List α)) (target : α)
-    (fuel length : Nat) (pending seen : List α) (start : α)
-    (hw : Walk g length start target) (hb : length < fuel)
-    (hs : start ∈ seen ∨ start ∈ pending) (ht : target ∉ seen)
-    (hc : Closed g seen pending) : reachesSpec g target fuel pending seen = true := by
-  induction fuel generalizing length pending seen start with
-  | zero => omega
-  | succ fuel ih =>
-    by_cases hp : target ∈ pending
-    · simp only [reachesSpec, List.contains_iff_mem.mpr hp, ite_true]
-    · have hcheck : pending.contains target = false := by simp [hp]
-      simp only [reachesSpec, hcheck, Bool.false_eq_true, ite_false]
-      change reachesSpec g target fuel (frontier g seen pending) (updated seen pending) = true
-      cases hw with
-      | refl => exact False.elim (hs.elim ht hp)
-      | @step x y z k hedge htail =>
-        have newclosed := closed_updated g seen pending hc
-        apply ih k (frontier g seen pending) (updated seen pending) y htail (by omega)
-        · exact newclosed start ((mem_updated seen pending start).mpr hs) y hedge
-        · intro hm
-          exact ((mem_updated seen pending target).mp hm).elim ht hp
-        · exact newclosed
-
-theorem reaches_initial (g : List (α × List α)) (target start : α)
-    (fuel length : Nat) (pending : List α)
-    (hw : Walk g length start target) (hb : length < fuel) (hs : start ∈ pending) :
-    reachesSpec g target fuel pending [] = true := by
-  apply reaches_of_walk g target fuel length pending [] start hw hb (Or.inr hs)
-  · simp
-  · intro x hx
-    simp at hx
-
-
-end GraphSearch
-
 section BoundedCycles
 
 variable {α : Type} [BEq α]
-
-inductive Trail (g : List (α × List α)) : List α → α → α → Prop
-  | refl (x) : Trail g [] x x
-  | step {x y z xs} : y ∈ (g.lookup x).getD [] → Trail g xs y z →
-      Trail g (x :: xs) x z
 
 theorem walk_trail (g : List (α × List α)) {k : Nat} {x y : α} (h : Walk g k x y) :
     ∃ xs, xs.length = k ∧ Trail g xs x y := by
@@ -725,12 +622,6 @@ theorem walk_trail (g : List (α × List α)) {k : Nat} {x y : α} (h : Walk g k
   | @step x y z k he hw ih =>
     obtain ⟨xs, hl, ht⟩ := ih
     exact ⟨x :: xs, by simp [hl], .step he ht⟩
-
-theorem trail_walk (g : List (α × List α)) {xs : List α} {x y : α}
-    (h : Trail g xs x y) : Walk g xs.length x y := by
-  induction h with
-  | refl x => exact .refl x
-  | step he ht ih => exact .step he ih
 
 theorem trail_mem_walk (g : List (α × List α)) {xs : List α} {x y n : α}
     (h : Trail g xs x y) (hm : n ∈ xs) :
@@ -744,23 +635,6 @@ theorem trail_mem_walk (g : List (α × List α)) {xs : List α} {x y n : α}
       exact ⟨k+1, by simp; omega, .step he hw⟩
 
 variable [LawfulBEq α]
-
-theorem edge_source_key (g : List (α × List α)) {x y : α}
-    (h : y ∈ (g.lookup x).getD []) : x ∈ g.map Prod.fst := by
-  have hs : (g.lookup x).isSome = true := by
-    cases he : g.lookup x <;> simp_all
-  obtain ⟨row, hr, he⟩ := List.lookup_isSome_iff.mp hs
-  exact List.mem_map.mpr ⟨row, hr, (eq_of_beq he).symm⟩
-
-theorem trail_subset (g : List (α × List α)) {xs : List α} {x y : α}
-    (h : Trail g xs x y) : xs ⊆ g.map Prod.fst := by
-  induction h with
-  | refl x => simp
-  | step he ht ih =>
-    intro n hn
-    rcases List.mem_cons.mp hn with rfl | hn
-    · exact edge_source_key g he
-    · exact ih hn
 
 theorem trail_repeat_cycle (g : List (α × List α)) {xs : List α} {x y : α}
     (h : Trail g xs x y) (hn : ¬xs.Nodup) :
@@ -2257,9 +2131,192 @@ theorem e010_spec (d : Design) (hn : Rules.Names d) :
     · intro h
       exact False.elim (hno h)
 
-def errors (d : Design) : List (List Error) :=
+/-! A component label answers all cycle queries for the same graph. -/
+private def cycleDiagnosticWith (m : Module) (g : Typed.Graph)
+    (label : Deps.Node → Nat) : List Error :=
+  match (cycleCandidates m g).find? fun x => GraphSCC.cyclic label x.2.1 x.2.2 with
+  | some (pos, _) => err .E008 pos "combinational cycle"
+  | none => []
+
+private theorem find_congr (xs : List α) (p q : α → Bool)
+    (h : ∀ x ∈ xs, p x = q x) : xs.find? p = xs.find? q := by
+  induction xs with
+  | nil => rfl
+  | cons x xs ih =>
+    simp only [List.find?_cons, h x (by simp)]
+    split
+    · rfl
+    · exact ih (fun x hx => h x (by simp [hx]))
+
+private theorem cycleDiagnosticWith_eq (m : Module) (g : Typed.Graph)
+    (unique : (g.map Prod.fst).Nodup) (c : GraphSCC.Certificate g) :
+    cycleDiagnosticWith m g c.label = cycleDiagnostic m g := by
+  unfold cycleDiagnosticWith cycleDiagnostic
+  have eq := find_congr (cycleCandidates m g)
+    (fun x => GraphSCC.cyclic c.label x.2.1 x.2.2)
+    (fun x => reaches g x.2.1 (g.length + 1) x.2.2 []) (by
+      intro row hr
+      have hp : (cycleCandidates m g).Perm (g.map fun row => (nodePos m row.1, row)) :=
+        List.mergeSort_perm _ _
+      obtain ⟨⟨n, edges⟩, hn, he⟩ := List.mem_map.mp (hp.mem_iff.mp hr)
+      subst row
+      have lookup := lookup_row_nodup g n edges unique hn
+      have eq := c.cyclic_eq_reaches n
+      simpa [lookup, reaches] using eq)
+  rw [eq]
+
+private def hierarchyDiagnosticWith (d : Design) (label : Deps.Node → Nat) : List Error :=
+  (modules d).flatMap fun m => m.body.flatMap fun s => match s with
+    | .inst p _ child _ =>
+      if label (.name child) == label (.name m.name) then err .E010 p "instance cycle" else []
+    | _ => []
+
+private theorem component_edge_query (g : Typed.Graph) (c : GraphSCC.Certificate g)
+    (x y : Deps.Node) (he : y ∈ (g.lookup x).getD []) :
+    (c.label y == c.label x) = reaches g x (g.length + 1) [y] [] := by
+  apply Bool.eq_iff_iff.mpr
+  simp only [beq_iff_eq, reaches, reaches_graph_iff, List.mem_singleton, exists_eq_left]
+  constructor
+  · intro h
+    have hs := c.edge_nodes x y he
+    exact c.connected y hs.2 x hs.1 h
+  · intro h
+    exact Nat.le_antisymm (c.edge_order x y he) (c.reachable_order h)
+
+private theorem flatMap_congr (xs : List α) (f g : α → List β)
+    (h : ∀ x ∈ xs, f x = g x) : xs.flatMap f = xs.flatMap g := by
+  induction xs with
+  | nil => rfl
+  | cons x xs ih => simp [h x (by simp), ih (fun x hx => h x (by simp [hx]))]
+
+private theorem hierarchyDiagnosticWith_eq (d : Design) (hn : Rules.Names d)
+    (c : GraphSCC.Certificate (Typed.hierarchyGraph d)) :
+    hierarchyDiagnosticWith d c.label =
+      ((modules d).flatMap fun m => m.body.flatMap fun s => match s with
+        | .inst p _ child _ =>
+          if reaches (Typed.hierarchyGraph d) (.name m.name) ((Typed.hierarchyGraph d).length + 1)
+              [.name child] [] then err .E010 p "instance cycle" else []
+        | _ => []) := by
+  apply flatMap_congr
+  intro m hm
+  apply flatMap_congr
+  intro s hs
+  cases s <;> try rfl
+  rename_i p name child inputs
+  have hrow : (.name m.name, (Typed.childNames m).map Deps.Node.name) ∈
+      Typed.hierarchyGraph d := List.mem_map.mpr ⟨m, hm, rfl⟩
+  have lookup := lookup_row_nodup (Typed.hierarchyGraph d) (.name m.name)
+    ((Typed.childNames m).map Deps.Node.name) (hierarchy_keys_nodup d hn) hrow
+  have edge : Deps.Node.name child ∈ ((Typed.hierarchyGraph d).lookup (.name m.name)).getD [] := by
+    rw [lookup]
+    exact List.mem_map.mpr ⟨child, List.mem_filterMap.mpr ⟨.inst p name child inputs,
+      hs, rfl⟩, rfl⟩
+  dsimp only
+  rw [component_edge_query _ c _ _ edge]
+
+private theorem ranked_walk_le (g : Typed.Graph) (r : Typed.Ranks)
+    (ranked : Typed.Ranked g r) {length : Nat} {x y : Deps.Node} (walk : Walk g length x y) :
+    Typed.rank r y ≤ Typed.rank r x := by
+  induction walk with
+  | refl => exact Nat.le_refl _
+  | @step x y z length edge _ ih =>
+    cases hl : g.lookup x with
+    | none => simp [hl] at edge
+    | some children =>
+      have row := GraphIndex.lookup_mem hl
+      have step := ranked (x, children) row y (by simpa [hl] using edge)
+      dsimp only at step
+      omega
+
+private theorem ranked_reaches_false (g : Typed.Graph) (r : Typed.Ranks)
+    (ranked : Typed.Ranked g r) (source : Deps.Node) (children : List Deps.Node)
+    (lower : ∀ child ∈ children, Typed.rank r child < Typed.rank r source) :
+    reaches g source (g.length + 1) children [] = false := by
+  apply Bool.eq_false_iff.mpr
+  intro h
+  obtain ⟨child, hc, length, walk⟩ := (reaches_graph_iff g source children).mp h
+  have := ranked_walk_le g r ranked walk
+  have := lower child hc
+  omega
+
+private theorem cycleDiagnostic_ranked (m : Module) (g : Typed.Graph) (r : Typed.Ranks)
+    (ranked : Typed.Ranked g r) : cycleDiagnostic m g = [] := by
+  unfold cycleDiagnostic
+  have none : (cycleCandidates m g).find?
+      (fun x => reaches g x.2.1 (g.length + 1) x.2.2 []) = none := by
+    apply List.find?_eq_none.mpr
+    intro row hr
+    have hp : (cycleCandidates m g).Perm (g.map fun row => (nodePos m row.1, row)) :=
+      List.mergeSort_perm _ _
+    obtain ⟨⟨n, edges⟩, hn, he⟩ := List.mem_map.mp (hp.mem_iff.mp hr)
+    subst row
+    simp only [ranked_reaches_false g r ranked n edges (ranked (n, edges) hn),
+      Bool.false_eq_true, not_false_eq_true]
+  rw [none]
+
+private theorem hierarchyDiagnosticWith_ranked (d : Design) (hn : Rules.Names d)
+    (c : GraphSCC.Certificate (Typed.hierarchyGraph d)) (r : Typed.Ranks)
+    (ranked : Typed.Ranked (Typed.hierarchyGraph d) r) :
+    hierarchyDiagnosticWith d c.label = [] := by
+  rw [hierarchyDiagnosticWith_eq d hn c]
+  apply List.flatMap_eq_nil_iff.mpr
+  intro m hm
+  apply List.flatMap_eq_nil_iff.mpr
+  intro s hs
+  cases s <;> try rfl
+  rename_i p name child inputs
+  have row : (.name m.name, (Typed.childNames m).map Deps.Node.name) ∈
+      Typed.hierarchyGraph d := List.mem_map.mpr ⟨m, hm, rfl⟩
+  have edge : Deps.Node.name child ∈ (Typed.childNames m).map Deps.Node.name :=
+    List.mem_map.mpr ⟨child, List.mem_filterMap.mpr ⟨.inst p name child inputs, hs, rfl⟩, rfl⟩
+  have no := ranked_reaches_false (Typed.hierarchyGraph d) r ranked (.name m.name)
+    [.name child] (by
+      intro n hn
+      have he : n = .name child := by simpa using hn
+      subst n
+      exact ranked _ row _ edge)
+  simp only [no, Bool.false_eq_true, ite_false]
+
+private def e008With (d : Design)
+    (certify : (g : Typed.Graph) → GraphSCC.Certificate g) : List Error :=
+  (modules d).flatMap fun m =>
+    let g := Deps.graph m (inferDeps d (d.items.length + 1))
+    cycleDiagnosticWith m g (certify g).label
+
+private theorem e008With_eq (d : Design) (hn : Rules.Names d) (hr : Rules.Resolved d)
+    (ho : Rules.Outputs d) (certify : (g : Typed.Graph) → GraphSCC.Certificate g) :
+    e008With d certify = e008 d := by
+  apply flatMap_congr
+  intro m hm
+  dsimp only
+  rw [cycleDiagnosticWith_eq m _ (combinational_graph_keys_nodup d m hn hr ho hm _) (certify _)]
+  split
+  · rename_i accepted
+    obtain ⟨r, found⟩ := Option.isSome_iff_exists.mp accepted
+    exact cycleDiagnostic_ranked m _ r (Typed.FastRanks.certificate_sound _ r found)
+  · rfl
+
+private def e010With (d : Design)
+    (certify : (g : Typed.Graph) → GraphSCC.Certificate g) : List Error :=
+  hierarchyDiagnosticWith d (certify (Typed.hierarchyGraph d)).label
+
+private theorem e010With_eq (d : Design) (hn : Rules.Names d)
+    (certify : (g : Typed.Graph) → GraphSCC.Certificate g) : e010With d certify = e010 d := by
+  unfold e010With e010
+  dsimp only
+  split
+  · rename_i accepted
+    obtain ⟨r, found⟩ := Option.isSome_iff_exists.mp accepted
+    exact hierarchyDiagnosticWith_ranked d hn (certify _) r
+      (Typed.FastRanks.certificate_sound _ r found)
+  · exact hierarchyDiagnosticWith_eq d hn (certify _)
+
+def localErrors (d : Design) : List (List Error) :=
   [e002 d, e003 d, e005 d, e009 d, e011 d ++ e013 d, e004 d,
-    e006 d ++ e007 d ++ e012 d, e010 d, e008 d]
+    e006 d ++ e007 d ++ e012 d]
+
+def errors (d : Design) : List (List Error) :=
+  localErrors d ++ [e010 d, e008 d]
 
 end Silicon.Core.Check
 
@@ -2284,6 +2341,9 @@ def firstError : List (List Error) → Option Error
   | [] => none
   | es :: rest => (lowest es).or (firstError rest)
 
+/-! This boundary permits compiled diagnostics to share graph results. -/
+def diagnostic (d : Design) : Option Error := firstError (errors d)
+
 theorem firstError_none (passes : List (List Error)) :
     firstError passes = none ↔ ∀ es ∈ passes, es = [] := by
   induction passes with
@@ -2291,12 +2351,59 @@ theorem firstError_none (passes : List (List Error)) :
   | cons es rest ih =>
     cases es <;> simp [firstError, lowest, Option.or, ih]
 
+private theorem firstError_append (xs ys : List (List Error)) :
+    firstError (xs ++ ys) = (firstError xs).or (firstError ys) := by
+  induction xs with
+  | nil => rfl
+  | cons xs rest ih =>
+    simp only [List.cons_append, firstError, ih]
+    cases lowest xs <;> rfl
+
+private theorem local_requirements (d : Design) (h : firstError (localErrors d) = none) :
+    Rules.Names d ∧ Rules.Resolved d ∧ Rules.Outputs d := by
+  have all := (firstError_none _).mp h
+  refine ⟨(e002_spec d).mp (all _ (by simp [localErrors])),
+    (e003_spec d).mp (all _ (by simp [localErrors])), ?_⟩
+  have outputs := all (e006 d ++ e007 d ++ e012 d) (by simp [localErrors])
+  have hnil := List.append_eq_nil_iff.mp (List.append_eq_nil_iff.mp outputs).1
+  exact (e007_spec d).mp hnil.2
+
+/-! Earlier diagnostics finish before either cycle pass constructs a graph index. -/
+private def diagnosticWith (certify : (g : Typed.Graph) → GraphSCC.Certificate g)
+    (d : Design) : Option Error :=
+  match firstError (localErrors d) with
+  | some e => some e
+  | none => match lowest (e010With d certify) with
+    | some e => some e
+    | none => lowest (e008With d certify)
+
+private theorem diagnosticWith_eq (certify : (g : Typed.Graph) → GraphSCC.Certificate g) :
+    diagnosticWith certify = diagnostic := by
+  funext d
+  unfold diagnostic errors
+  rw [firstError_append]
+  cases he : firstError (localErrors d) with
+  | some e => simp [diagnosticWith, he, Option.or]
+  | none =>
+    obtain ⟨hn, hr, ho⟩ := local_requirements d he
+    simp only [diagnosticWith, he, e010With_eq d hn, e008With_eq d hn hr ho,
+      firstError, Option.or_none]
+    cases lowest (e010 d) <;> rfl
+
+private def indexedDiagnostic : Design → Option Error :=
+  diagnosticWith (fun g => GraphCycleIndex.certificate g (Deps.Node.index g)
+    (Deps.Node.index_lookup g))
+
+@[csimp] private theorem diagnostic_components : diagnostic = indexedDiagnostic := by
+  exact (diagnosticWith_eq _).symm
+
 private theorem pass_results (d : Design) : firstError (errors d) = none ↔
     Rules.Names d ∧ Rules.Resolved d ∧ e004 d = [] ∧ Rules.Numbers d ∧
     Rules.Registers d ∧ Rules.Outputs d ∧ e008 d = [] ∧ Rules.Clocks d ∧
     e010 d = [] ∧ Rules.Connections d ∧ Rules.Writes d ∧ Rules.Dependencies d := by
   rw [firstError_none]
-  simp only [errors, List.mem_cons, List.not_mem_nil, or_false,
+  simp only [errors, localErrors, List.mem_append, List.mem_cons, List.not_mem_nil,
+    or_false, or_assoc,
     forall_eq_or_imp, List.append_eq_nil_iff, e002_spec, e003_spec, e005_spec,
     e006_spec, e007_spec, e009_spec, e011_spec, e012_spec, e013_spec]
   simp [and_assoc, and_left_comm, and_comm]
@@ -2595,7 +2702,7 @@ end Check
 
 /-! Diagnostics finish before elaboration constructs the typed design. -/
 def check (d : Design) : Except Error Typed.Design :=
-  match he : Check.firstError (Check.errors d) with
+  match he : Check.diagnostic d with
   | some e => .error e
   | none => match ht : Typed.elaborateDesign d with
     | some t => .ok t
@@ -2642,6 +2749,7 @@ theorem check_complete (d : Design) (wf : WellFormed d) : ∃ t, check d = .ok t
   unfold check
   split
   · rename_i failure
+    change Check.firstError (Check.errors d) = some _ at failure
     rw [(Check.no_errors d).mpr wf] at failure
     contradiction
   · split

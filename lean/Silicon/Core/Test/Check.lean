@@ -142,6 +142,18 @@ private def result (source : String) : Option (ErrorCode × Nat × Nat) :=
 #guard Pos.locate ⟨3, 7, [([0], 3, 8)]⟩ [1] == none
 #guard Pos.locate ⟨3, 7, [([0], 3, 8)]⟩ [0] == some ⟨3, 8, []⟩
 
+/-! Parsed positions cover two path entries; deeper paths use the form position. -/
+#guard match parse "(design top (module top (let x (bits 1) (const 1 0))))" with
+  | .ok d => match d.items with
+    | [.module m] => match m.body with
+      | [.let_ p _ _ _] =>
+        (p.locate [2, 1]).map (fun q => (q.line, q.col)) == some (1, 38) &&
+        (m.pos.locate [2, 2]).isSome && (m.pos.locate [2, 2, 1]).isNone &&
+        Core.Check.atomPos m.pos [2, 2, 1] == m.pos
+      | _ => false
+    | _ => false
+  | _ => false
+
 /-! Dependency errors point at output names, including names on separate lines. -/
 #guard result ("(design top (module top) (extern child (output\n q (bits 1))))") ==
   some (.E013, 2, 2)
@@ -169,7 +181,45 @@ private def twoWideCycle (depth : Nat) : String :=
   (twoWideChain depth).replace "(input a0 (bits 1)) (input b0 (bits 1))"
     ("(input b0 (bits 1)) (let a0 (bits 1) a" ++ toString depth ++ ")")
 
-#guard (result (twoWideCycle 200)).map (fun (code, _, _) => code) == some .E008
+#guard result (twoWideCycle 200) == some (.E008, 1, 45)
+
+/-! A late cycle does not require a new search from each preceding equation. -/
+private def lateCycle (depth : Nat) : String :=
+  let start := "(design top (module top (input x0 (bits 1))\n"
+  let body := (List.range depth).foldl (fun text i =>
+    text ++ "(let x" ++ toString (i + 1) ++ " (bits 1) x" ++ toString i ++ ")\n") start
+  body ++ "(let z (bits 1) z)))"
+
+#guard result (lateCycle 1600) == some (.E008, 1602, 1)
+
+/-! Ancestors outside a cycle must not take its diagnostic position. -/
+#guard result ("(design top (module top\n(let ancestor (bits 1) z)\n" ++
+  "(let z (bits 1) z)))") == some (.E008, 3, 1)
+#guard result ("(design top\n(module top (inst early leaf) (inst child cyc))\n" ++
+  "(module leaf)\n(module cyc\n(inst self cyc)))") == some (.E010, 5, 1)
+
+/-! Distinct cycle components retain the first source position. -/
+#guard result ("(design top (module top\n(let first (bits 1) first)\n" ++
+  "(let last (bits 1) last)))") == some (.E008, 2, 1)
+
+private def lateHierarchyCycle (depth : Nat) : String :=
+  let start := "(design h" ++ toString depth ++ "\n(module h0)\n"
+  let body := (List.range depth).foldl (fun text i =>
+    text ++ "(module h" ++ toString (i + 1) ++ " (inst u h" ++ toString i ++ "))\n") start
+  body ++ "(module cyc\n(inst self cyc)))"
+
+#guard result (lateHierarchyCycle 40) == some (.E010, 44, 1)
+
+/-! A wide cyclic node must not repeat its leaf visits before cycle classification. -/
+private def wideHierarchyCycle (width : Nat) : String :=
+  let calls := (List.range width).foldl (fun text i =>
+    text ++ "(inst u" ++ toString i ++ " a" ++ toString i ++ ")\n")
+    "(design top\n(module top\n"
+  let leaves := (List.range width).foldl (fun text i =>
+    text ++ "(module a" ++ toString i ++ ")\n") ""
+  calls ++ "(inst self top))\n" ++ leaves ++ ")"
+
+#guard result (wideHierarchyCycle 128) == some (.E010, 131, 1)
 
 /-! Repeated child calls share one dependency table at each hierarchy depth. -/
 private def hierarchyDag (depth : Nat) : String :=
