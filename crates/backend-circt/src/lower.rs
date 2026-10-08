@@ -12,8 +12,8 @@ use core_ir::ast::{BinOp, UnOp};
 use core_ir::typed::{Callee, ClockPort, Design, Expr, Module, Port, Reg, address_width};
 use core_ir::{Bits, Pred};
 
-use crate::MemConfig;
 use crate::mlir::{self, Dir, Pin, Ty};
+use crate::{MemConfig, full_range};
 
 /// A port of a unit. An input keeps its position among the data inputs.
 enum UnitPort<'a> {
@@ -386,10 +386,10 @@ impl<'a> Lowering<'a> {
     /// address is in range.
     fn in_range(&mut self, mem: usize, addr: &Value) -> Option<String> {
         let depth = self.module.mems[mem].depth;
-        let width = address_width(depth);
-        if u64::from(depth) == 1u64 << width {
+        if full_range(depth) {
             return None;
         }
+        let width = address_width(depth);
         let bound = self.constant(None, &depth.to_string(), width);
         let ok = self.op(
             None,
