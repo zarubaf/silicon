@@ -103,6 +103,7 @@ theorem typed_write_ports_nodup (d : CertifiedDesign) (m : Typed.Module)
     List.sublist_flatten_of_mem (List.mem_map.mpr
       ⟨.mem i p name width depth clock target writes, member, rfl⟩)
   have own := flat.sublist (sub.filterMap select)
-  simpa [Typed.Equation.parts, select, Typed.Stmt.erase, List.filterMap_map, Function.comp_def] using own
+  simpa [Typed.Equation.parts, select, Typed.Stmt.erase, List.filterMap_map,
+    Function.comp_def] using own
 
 end Silicon.Core.Semantics

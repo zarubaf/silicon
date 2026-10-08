@@ -10,7 +10,7 @@ inductive NamedCell where
   | register (width : Nat) (value : Value width)
   | memory (width depth : Nat) (values : Fin depth → Value width)
 
-private theorem child_exists (d : CertifiedDesign) (noExterns : d.design.externs = [])
+theorem instance_child_exists (d : CertifiedDesign) (noExterns : d.design.externs = [])
     (m : Typed.Module) (hm : m ∈ d.design.bodies)
     (index : Nat) (pos : Pos) (name child : String)
     (inputs : List ((p : {p : Port // p ∈ m.interfaces child}) × Typed.Expr m.ctx p.val.ty))
@@ -55,7 +55,7 @@ def namedState (d : CertifiedDesign) (env : Env d.design)
             c childFound) (state ⟨.inst i p n child inputs, member⟩)
           namedState d env noExterns c (List.mem_of_find?_eq_some childFound) childState rest
         | none => False.elim (by
-            obtain ⟨c, hc⟩ := child_exists d noExterns m hm i p n child inputs member
+            obtain ⟨c, hc⟩ := instance_child_exists d noExterns m hm i p n child inputs member
             rw [childFound] at hc
             contradiction)
       | .let_ .., _ | .assign .., _ => none
@@ -88,7 +88,8 @@ theorem namedState_register (d : CertifiedDesign) (env : Env d.design)
     (next : Typed.Expr m.ctx (.bits width))
     (member : .reg i p name width clock target reset ni np next ∈ m.body) :
     namedState d env noExterns m hm state [name] =
-      some (.register width (state ⟨.reg i p name width clock target reset ni np next, member⟩)) := by
+      some (.register width
+        (state ⟨.reg i p name width clock target reset ni np next, member⟩)) := by
   have found := find_equation d m hm _ member
   change m.body.find? (fun e => equationName e == name) = some _ at found
   rw [namedState]
@@ -108,7 +109,8 @@ theorem namedState_memory (d : CertifiedDesign) (env : Env d.design)
     (writes : List (Typed.Write m.ctx width depth))
     (member : .mem i p name width depth clock target writes ∈ m.body) :
     namedState d env noExterns m hm state [name] =
-      some (.memory width depth (state ⟨.mem i p name width depth clock target writes, member⟩)) := by
+      some (.memory width depth
+        (state ⟨.mem i p name width depth clock target writes, member⟩)) := by
   have found := find_equation d m hm _ member
   change m.body.find? (fun e => equationName e == name) = some _ at found
   rw [namedState]
@@ -175,7 +177,7 @@ theorem namedState_injective (d : CertifiedDesign) (env : Env d.design)
       writes member] at eq
     exact eq_of_heq (NamedCell.memory.inj (Option.some.inj eq)).2.2
   | inst i p name child inputs =>
-    obtain ⟨c, found⟩ := child_exists d noExterns m hm i p name child inputs member
+    obtain ⟨c, found⟩ := instance_child_exists d noExterns m hm i p name child inputs member
     let typeEq := State_inst_module d env m hm i p name child inputs member c found
     have eq := namedState_injective d env noExterns c (List.mem_of_find?_eq_some found)
       (cast typeEq (a ⟨.inst i p name child inputs, member⟩))

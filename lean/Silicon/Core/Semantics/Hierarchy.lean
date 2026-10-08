@@ -80,6 +80,30 @@ private theorem transportComponent_state {ports other : List Port} {deps otherDe
     (hp : ports = other) (hd : deps = otherDeps) (model : Component ports deps) :
     (transportComponent hp hd model).State = model.State := rfl
 
+private theorem transportComponent_out {ports other : List Port} {deps otherDeps : Deps}
+    (hp : ports = other) (hd : deps = otherDeps) (model : Component ports deps)
+    (state : (transportComponent hp hd model).State) (state' : model.State)
+    (input : PortValues other .input) (input' : PortValues ports .input)
+    (states : HEq state state') (inputs : HEq input input') :
+    HEq ((transportComponent hp hd model).out state input) (model.out state' input') := by
+  cases hp
+  cases hd
+  cases states
+  cases inputs
+  rfl
+
+private theorem transportComponent_next {ports other : List Port} {deps otherDeps : Deps}
+    (hp : ports = other) (hd : deps = otherDeps) (model : Component ports deps)
+    (state : (transportComponent hp hd model).State) (state' : model.State)
+    (input : PortValues other .input) (input' : PortValues ports .input)
+    (states : HEq state state') (inputs : HEq input input') :
+    HEq ((transportComponent hp hd model).next state input) (model.next state' input') := by
+  cases hp
+  cases hd
+  cases states
+  cases inputs
+  rfl
+
 def moduleChild (d : Typed.Design) (wf : WellFormed d.erase)
     (m c : Typed.Module) (hm : m ∈ d.bodies) (hc : c ∈ d.bodies)
     (child : String) (name : c.name = child)
@@ -101,6 +125,28 @@ def moduleChild (d : Typed.Design) (wf : WellFormed d.erase)
     (model : Component c.ports (Deps.infer c.erase c.children)) :
     (moduleChild d wf m c hm hc child name model).State = model.State :=
   transportComponent_state _ _ model
+
+theorem moduleChild_out (d : Typed.Design) (wf : WellFormed d.erase)
+    (m c : Typed.Module) (hm : m ∈ d.bodies) (hc : c ∈ d.bodies)
+    (child : String) (name : c.name = child)
+    (model : Component c.ports (Deps.infer c.erase c.children))
+    (state : (moduleChild d wf m c hm hc child name model).State) (state' : model.State)
+    (input : PortValues (m.interfaces child) .input) (input' : Input c)
+    (states : HEq state state') (inputs : HEq input input') :
+    HEq ((moduleChild d wf m c hm hc child name model).out state input)
+      (model.out state' input') :=
+  transportComponent_out _ _ model state state' input input' states inputs
+
+theorem moduleChild_next (d : Typed.Design) (wf : WellFormed d.erase)
+    (m c : Typed.Module) (hm : m ∈ d.bodies) (hc : c ∈ d.bodies)
+    (child : String) (name : c.name = child)
+    (model : Component c.ports (Deps.infer c.erase c.children))
+    (state : (moduleChild d wf m c hm hc child name model).State) (state' : model.State)
+    (input : PortValues (m.interfaces child) .input) (input' : Input c)
+    (states : HEq state state') (inputs : HEq input input') :
+    HEq ((moduleChild d wf m c hm hc child name model).next state input)
+      (model.next state' input') :=
+  transportComponent_next _ _ model state state' input input' states inputs
 
 def externChild (d : Typed.Design) (wf : WellFormed d.erase)
     (m : Typed.Module) (hm : m ∈ d.bodies) (e : Extern)
