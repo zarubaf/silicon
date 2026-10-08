@@ -1,0 +1,20 @@
+; A register with a non-zero reset value (spec 5.2). The start state is all
+; zero (spec 6.4.3), so 5 shows only after a cycle with rst = 1. q shows r
+; before the update.
+(design top
+  (module top
+    (input clk clock)
+    (input rst (bits 1))
+    (output q (bits 4))
+    (reg r (bits 4) clk (reset sync rst (const 4 5)))
+    (next r (add r (const 4 1)))
+    (assign q r)))
+; r = 0, no reset: r becomes 1
+; STEP in=(rst 0) out=(q 0)
+; reset cycle: q still 1, r becomes 5
+; STEP in=(rst 1) out=(q 1)
+; STEP in=(rst 0) out=(q 5)
+; STEP in=(rst 0) out=(q 6)
+; reset again from 7
+; STEP in=(rst 1) out=(q 7)
+; STEP in=(rst 0) out=(q 5)
