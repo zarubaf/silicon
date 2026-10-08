@@ -29,38 +29,47 @@ impl<'d> Sim<'d> {
     /// Returns `E014` at the first `extern` item if the design has an extern:
     /// no environment gives the extern a semantics (spec section 5.4).
     pub fn new(design: &'d Design) -> Result<Sim<'d>, Diagnostic> {
-        if let Some(ext) = design.externs.first() {
-            return Err(Diagnostic {
+        // Only an instance of an extern makes a frame fail, and then the
+        // design has a first extern.
+        let first = design.externs.first();
+        match (first, Frame::new(design, design.top)) {
+            (None, Some(top)) => Ok(Sim { design, top }),
+            _ => Err(Diagnostic {
                 code: ErrorCode::E014,
-                span: ext.span,
+                span: first.map(|ext| ext.span).unwrap_or_default(),
                 message: "no environment for extern".into(),
-            });
+            }),
         }
-        Ok(Sim {
-            design,
-            top: Frame::new(design, design.top),
-        })
     }
 
     /// Runs one cycle: returns the outputs of the top module for the current
     /// state and `inputs`, then updates the state.
     ///
-    /// # Panics
-    /// `inputs` must hold one value of the right width for each data input of
-    /// the top module, in port order, as [`crate::vectors::parse_input`] gives.
+    /// `inputs` must come from [`crate::vectors::parse_input`] with the top
+    /// module of this design.
     #[must_use]
-    pub fn step(&mut self, inputs: &[Bits]) -> Vec<Bits> {
+    pub fn step(&mut self, inputs: &Inputs) -> Outputs {
         self.top.begin();
-        for (i, value) in inputs.iter().enumerate() {
+        for (i, value) in inputs.0.iter().enumerate() {
             self.top.inputs.set(i, value.clone());
         }
         self.top.settle(self.design);
-        let outputs = self.top.outs.values.clone();
+        let outputs = Outputs(self.top.outs.values.clone());
         self.top.finish(self.design);
         self.top.update(self.design);
         outputs
     }
 }
+
+/// The values of the data inputs of a top module for one cycle: one value of
+/// the port width for each input, in port order. Only
+/// [`crate::vectors::parse_input`] builds them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Inputs(pub(crate) Vec<Bits>);
+
+/// The values of the outputs of a top module for one cycle, in port order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Outputs(pub(crate) Vec<Bits>);
 
 /// Values of one kind that a cycle computes, with a flag for each value that
 /// is known in this cycle.
@@ -100,26 +109,28 @@ struct Frame {
 }
 
 impl Frame {
-    fn new(design: &Design, module: ModIdx) -> Frame {
+    /// The all-zero frame of `module`, or `None` if an instance below it
+    /// runs an extern.
+    fn new(design: &Design, module: ModIdx) -> Option<Frame> {
         let m = &design.modules[module.index()];
-        Frame {
+        let children = m
+            .insts
+            .iter()
+            .map(|inst| match inst.callee {
+                Callee::Module(child) => Frame::new(design, child),
+                Callee::Extern(_) => None,
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some(Frame {
             module,
             regs: m.regs.iter().map(|r| Bits::zero(r.width)).collect(),
             mems: m.mems.iter().map(|_| HashMap::new()).collect(),
-            // `Sim::new` rejects each design with an extern.
-            children: m
-                .insts
-                .iter()
-                .filter_map(|inst| match inst.callee {
-                    Callee::Module(child) => Some(Frame::new(design, child)),
-                    Callee::Extern(_) => None,
-                })
-                .collect(),
+            children,
             inputs: Slots::new(m.inputs.iter().map(|p| p.width)),
             lets: Slots::new(m.lets.iter().map(|l| l.width)),
             outs: Slots::new(m.outputs.iter().map(|p| p.width)),
             fresh: true,
-        }
+        })
     }
 
     /// Forgets the values of the last cycle, in this frame and below.
