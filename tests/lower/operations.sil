@@ -1,4 +1,4 @@
-; CHECK-DAG: %o_add = comb.add %a, %b : i8
+; CHECK-DAG: %l = comb.add %a, %b : i8
 ; CHECK-DAG: %o_sub = comb.sub %a, %b : i8
 ; CHECK-DAG: %o_mul = comb.mul %a, %b : i8
 ; CHECK-DAG: %o_and = comb.and %a, %b : i8
@@ -13,6 +13,7 @@
 ; CHECK-DAG: %o_rep = comb.replicate %a : (i8) -> i16
 ; CHECK-DAG: %[[ONES:.+]] = hw.constant -1 : i8
 ; CHECK-DAG: %o_not = comb.xor %a, %[[ONES]] : i8
+; CHECK-DAG: %o_out = comb.xor %l, %{{.+}} : i8
 ; CHECK-DAG: %o_eq = comb.icmp eq %a, %b : i8
 ; CHECK-DAG: %o_ne = comb.icmp ne %a, %b : i8
 ; CHECK-DAG: %o_ult = comb.icmp ult %a, %b : i8
@@ -53,7 +54,10 @@
     (output o_sle (bits 1))
     (output o_sgt (bits 1))
     (output o_sge (bits 1))
-    (assign o_add (add a b))
+    (output o_out (bits 8))
+    (let l (bits 8) (add a b))
+    (assign o_add l)
+    (assign o_out (not o_add))
     (assign o_sub (sub a b))
     (assign o_mul (mul a b))
     (assign o_and (and a b))

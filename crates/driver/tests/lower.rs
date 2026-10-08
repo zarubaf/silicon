@@ -10,9 +10,16 @@ use std::process::Command;
 
 use common::spawn;
 
+/// True for a line that starts with a `FileCheck` directive.
+fn is_directive(line: &str) -> bool {
+    ["", "-DAG", "-NEXT", "-NOT", "-LABEL"]
+        .iter()
+        .any(|kind| line.starts_with(&format!("; CHECK{kind}:")))
+}
+
 fn lower(path: &Path) -> datatest_stable::Result<()> {
     let source = std::fs::read_to_string(path)?;
-    if !source.lines().any(|l| l.contains("; CHECK")) {
+    if !source.lines().any(is_directive) {
         return Err(format!("{}: no `; CHECK:` line", path.display()).into());
     }
     let mlir = spawn(
