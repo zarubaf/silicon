@@ -289,6 +289,59 @@ fn canonicalize_sorts_items_and_statements() {
 }
 
 #[test]
+fn canonicalize_sorts_connections_and_deps_by_port_order() {
+    let src = "\
+(design top
+  (module top
+    (input clk clock)
+    (input a (bits 1))
+    (output o (bits 1))
+    (inst u child (z a) (clk clk) (b a))
+    (inst v ext (y a) (x a))
+    (assign o (and u.q v.q)))
+  (module child
+    (input clk clock)
+    (input z (bits 1))
+    (output q (bits 1))
+    (input b (bits 1))
+    (assign q z))
+  (extern ext
+    (input x (bits 1))
+    (output p (bits 1))
+    (input y (bits 1))
+    (output q (bits 1))
+    (deps q (y x))
+    (deps p ())))
+";
+    let expected = "\
+(design top
+  (module child
+    (input clk clock)
+    (input z (bits 1))
+    (output q (bits 1))
+    (input b (bits 1))
+    (assign q z))
+  (extern ext
+    (input x (bits 1))
+    (output p (bits 1))
+    (input y (bits 1))
+    (output q (bits 1))
+    (deps p ())
+    (deps q (y x)))
+  (module top
+    (input clk clock)
+    (input a (bits 1))
+    (output o (bits 1))
+    (inst u child (clk clk) (z a) (b a))
+    (inst v ext (x a) (y a))
+    (assign o (and u.q v.q))))
+";
+    let design = parse(src).expect("parses");
+    assert!(core_ir::check::check(&design).is_ok());
+    assert_eq!(print(&canonicalize(&design)), expected);
+}
+
+#[test]
 fn counter_canonical_snapshot() {
     let design = parse(COUNTER).expect("counter parses");
     insta::assert_snapshot!(print(&canonicalize(&design)));
