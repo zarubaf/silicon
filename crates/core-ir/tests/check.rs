@@ -685,3 +685,69 @@ fn e009_assign_to_a_clock_output_is_reported_at_the_port() {
 ";
     expect(src, ErrorCode::E009, 4, 5);
 }
+
+#[test]
+fn e009_clock_read_in_an_assign_before_a_let() {
+    let src = "\
+(design top
+  (module top
+    (input clk clock)
+    (output q (bits 1))
+    (assign q clk)
+    (let a (bits 1) clk)))
+";
+    expect(src, ErrorCode::E009, 5, 15);
+}
+
+/// One statement of each kind. The last `clk` of each reads the clock.
+const CLOCK_READS: [&str; 7] = [
+    "(let x (bits 1) clk)",
+    "(reg s (bits 1) clk (reset sync clk (const 1 0)))",
+    "(next r clk)",
+    "(assign q clk)",
+    "(write m 0 (const 1 0) (const 1 0) clk)",
+    "(inst u child (c clk) (a clk))",
+    "(inst v child (a (const 1 0)) (c (not clk)))",
+];
+
+#[test]
+fn e009_lowest_clock_read_across_statement_kinds() {
+    for first in CLOCK_READS {
+        for second in CLOCK_READS.into_iter().filter(|s| *s != first) {
+            let src = format!(
+                "\
+(design top
+  (module child
+    (input a (bits 1))
+    (input c clock)
+    (output o (bits 1))
+    (assign o a))
+  (module top
+    (input clk clock)
+    (output q (bits 1))
+    (reg r (bits 1) clk)
+    (mem m (bits 1) 2 clk)
+    {first}
+    {second}))
+"
+            );
+            let Some(at) = first.rfind("clk") else {
+                panic!("each statement reads the clock");
+            };
+            let col = 5 + u32::try_from(at).expect("a short line");
+            expect(&src, ErrorCode::E009, 12, col);
+        }
+    }
+}
+
+#[test]
+fn e005_lowest_constant_across_statement_kinds() {
+    let src = "\
+(design top
+  (module top
+    (output q (bits 1))
+    (assign q (const 1 2))
+    (let a (bits 1) (const 1 3))))
+";
+    expect(src, ErrorCode::E005, 4, 24);
+}
