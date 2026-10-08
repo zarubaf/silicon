@@ -14,7 +14,6 @@ macro_rules! index {
         pub struct $name(u32);
 
         impl $name {
-            #[allow(dead_code)]
             pub(crate) fn new(index: u32) -> Self {
                 Self(index)
             }
