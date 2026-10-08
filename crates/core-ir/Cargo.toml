@@ -8,8 +8,17 @@ publish = false
 [lints]
 workspace = true
 
+[features]
+gen = ["dep:proptest"]
+
 [dependencies]
 num-bigint = "0.4.6"
+proptest = { version = "1.11.0", default-features = false, features = ["std"], optional = true }
 
 [dev-dependencies]
 insta = "1"
+proptest = { version = "1.11.0", default-features = false, features = ["std"] }
+
+[[test]]
+name = "props"
+required-features = ["gen"]

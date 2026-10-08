@@ -26,7 +26,7 @@ fmt-just-check:
     just --fmt --check --unstable
 
 clippy:
-    cargo clippy --workspace --all-targets --quiet -- -D warnings
+    cargo clippy --workspace --all-targets --all-features --quiet -- -D warnings
 
 repo-check:
     cargo xtask check
@@ -44,7 +44,7 @@ lean:
     lake -d lean build --wfail
 
 test:
-    cargo nextest run --workspace
+    cargo nextest run --workspace --all-features
 
 commit-msg file:
     cargo xtask commit-msg {{ file }}
