@@ -40,6 +40,24 @@ pub fn inherits_lints(manifest: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Returns each tracked `crates/*/Cargo.toml` that is not among the workspace `members`.
+pub fn non_member_crates<'a>(tracked: &[&'a Path], members: &[PathBuf]) -> Vec<&'a Path> {
+    tracked
+        .iter()
+        .copied()
+        .filter(|p| is_crate_manifest(p) && !members.iter().any(|m| m == p))
+        .collect()
+}
+
+/// True for a path of the form `crates/<name>/Cargo.toml`.
+fn is_crate_manifest(path: &Path) -> bool {
+    let parts: Vec<_> = path
+        .components()
+        .map(std::path::Component::as_os_str)
+        .collect();
+    matches!(parts.as_slice(), [c, _, m] if *c == "crates" && *m == "Cargo.toml")
+}
+
 fn violation(path: &Path, rule: &'static str, message: String) -> Violation {
     Violation {
         path: path.to_path_buf(),
@@ -73,18 +91,31 @@ pub fn check(repo: &Repo) -> Result<Vec<Violation>> {
         .iter()
         .map(|p| p.name.to_string())
         .collect();
+    let manifests: Vec<PathBuf> = metadata
+        .packages
+        .iter()
+        .map(|p| {
+            p.manifest_path
+                .as_std_path()
+                .strip_prefix(&repo.root)
+                .map_or_else(|_| p.manifest_path.clone().into(), Path::to_path_buf)
+        })
+        .collect();
+    let tracked: Vec<&Path> = repo.files.iter().map(|f| f.path.as_path()).collect();
     let mut out = Vec::new();
-    for package in &metadata.packages {
-        let manifest: PathBuf = package
-            .manifest_path
-            .as_std_path()
-            .strip_prefix(&repo.root)
-            .map_or_else(|_| package.manifest_path.clone().into(), Path::to_path_buf);
+    for path in non_member_crates(&tracked, &manifests) {
+        out.push(violation(
+            path,
+            "workspace-member",
+            "crate is not in `[workspace] members`, so no Rust gate checks it".into(),
+        ));
+    }
+    for (package, manifest) in metadata.packages.iter().zip(&manifests) {
         let name = package.name.to_string();
 
         if unplaced_crates(&order, std::slice::from_ref(&name)).len() == 1 {
             out.push(violation(
-                &manifest,
+                manifest,
                 "workspace-layers",
                 format!("crate `{name}` not placed in workspace.metadata.layers"),
             ));
@@ -96,14 +127,14 @@ pub fn check(repo: &Repo) -> Result<Vec<Violation>> {
             .map(|d| (name.clone(), d.name.clone()))
             .collect();
         for message in layer_violations(&order, &deps) {
-            out.push(violation(&manifest, "workspace-layers", message));
+            out.push(violation(manifest, "workspace-layers", message));
         }
 
         let text = std::fs::read_to_string(&package.manifest_path)
             .with_context(|| format!("reading {}", package.manifest_path))?;
         if !inherits_lints(&text) {
             out.push(violation(
-                &manifest,
+                manifest,
                 "workspace-lints",
                 "crate must set `[lints] workspace = true`".into(),
             ));
@@ -141,6 +172,65 @@ mod tests {
     fn unlisted_crate_rejected() {
         let members = names(&["syntax", "extra", "xtask"]);
         assert_eq!(unplaced_crates(&names(&["syntax"]), &members), ["extra"]);
+    }
+
+    #[test]
+    fn crate_manifest_outside_workspace_reported() {
+        let tracked = [
+            Path::new("crates/a/Cargo.toml"),
+            Path::new("crates/b/Cargo.toml"),
+            Path::new("crates/a/src/lib.rs"),
+            Path::new("crates/a/fuzz/Cargo.toml"),
+            Path::new("xtask/Cargo.toml"),
+        ];
+        let members = [PathBuf::from("crates/a/Cargo.toml")];
+        assert_eq!(
+            non_member_crates(&tracked, &members),
+            [Path::new("crates/b/Cargo.toml")]
+        );
+    }
+
+    #[test]
+    fn check_reports_crate_missing_from_members() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        write(
+            root,
+            "Cargo.toml",
+            "[workspace]\nresolver = \"3\"\nmembers = [\"crates/syntax\"]\n\
+             [workspace.metadata.layers]\norder = [\"syntax\"]\n\n[workspace.lints.rust]\nunused = \"warn\"\n",
+        );
+        write(
+            root,
+            "crates/syntax/Cargo.toml",
+            &crate_manifest("syntax", "", true),
+        );
+        write(root, "crates/syntax/src/lib.rs", "");
+        write(
+            root,
+            "crates/orphan/Cargo.toml",
+            &crate_manifest("orphan", "", true),
+        );
+        write(root, "crates/orphan/src/lib.rs", "");
+        let tracked = |p: &str| TrackedFile {
+            path: p.into(),
+            is_symlink: false,
+        };
+        let files = vec![
+            tracked("Cargo.toml"),
+            tracked("crates/syntax/Cargo.toml"),
+            tracked("crates/orphan/Cargo.toml"),
+        ];
+        let repo = Repo::from_parts(root.to_path_buf(), files);
+        let got: Vec<_> = check(&repo)
+            .unwrap()
+            .iter()
+            .map(|v| (v.path.display().to_string(), v.rule))
+            .collect();
+        assert_eq!(
+            got,
+            [("crates/orphan/Cargo.toml".to_owned(), "workspace-member")]
+        );
     }
 
     #[test]
