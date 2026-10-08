@@ -168,8 +168,12 @@ fn simulate(
             return Ok(Exit::DesignError);
         }
     };
-    for (number, line) in input.lines().enumerate() {
+    // LF alone ends a line (spec section 6.4.3), so a CR stays in the line
+    // and the parser rejects it. `lines` would remove a CR before an LF.
+    for (number, line) in input.split(b'\n').enumerate() {
         let line = line?;
+        let line = String::from_utf8(line)
+            .map_err(|_| Usage(format!("input line {}: not valid UTF-8", number + 1)))?;
         let inputs = parse_input(&line, top)
             .map_err(|e| Usage(format!("input line {}: {e}", number + 1)))?;
         out.write_all(print_output(top, &sim.step(&inputs)).as_bytes())?;
