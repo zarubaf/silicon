@@ -6,7 +6,7 @@ mod lec;
 
 use std::error::Error;
 
-use backend_circt::{MemConfig, lower, memory_configs};
+use backend_circt::{MemConfig, lower, memory_configs, memory_model};
 use core_ir::check::check;
 use core_ir::text::parse;
 use core_ir::typed::Design;
@@ -362,19 +362,6 @@ fn the_reset_is_active_high() -> Test {
     Ok(())
 }
 
-/// A memory module without guards: `circt-lec` gives an access out of range
-/// a free value, so a missing guard in the parent shows as a difference.
-const PROBE_MEMORY: &str = "
-hw.module @silicon_mem_12x8_r2w1(in %clk : !seq.clock, in %r0_addr : i4, out r0_data : i8, in %r1_addr : i4, out r1_data : i8, in %w0_addr : i4, in %w0_data : i8, in %w0_en : i1) {
-  %r0 = hw.array_get %silicon_reg_mem[%r0_addr] : !hw.array<12xi8>, i4
-  %r1 = hw.array_get %silicon_reg_mem[%r1_addr] : !hw.array<12xi8>, i4
-  %set = hw.array_inject %silicon_reg_mem[%w0_addr], %w0_data : !hw.array<12xi8>, i4
-  %next = comb.mux %w0_en, %set, %silicon_reg_mem : !hw.array<12xi8>
-  %silicon_reg_mem = seq.compreg %next, %clk : !hw.array<12xi8>
-  hw.output %r0, %r1 : i8, i8
-}
-";
-
 /// The parent of `MEMORY` with the guards of spec section 5.2. `{read}` and
 /// `{write}` are the guards of the port `r0` and of the write enable.
 const MEMORY_REFERENCE: &str = "
@@ -393,12 +380,21 @@ hw.module @reference(in %clk : !seq.clock, in %x : i4, in %y : i4, in %d : i8, i
 ";
 
 /// The read data is `mux(in range, data, 0)`, and the write enable is
-/// `en AND in range`. A reference without one of the guards differs.
+/// `en AND in range`. The memory model, which has no guard, replaces the
+/// extern on both sides. It stores a word for each address, so a parent
+/// without a guard reads or writes a word at the depth or above, and the
+/// output or the next state differs.
 #[test]
 fn the_memory_guards_match_the_spec() -> Test {
     let mlir = lowered(MEMORY)?;
     let decl = line(&mlir, "hw.module.extern @silicon_mem_12x8_r2w1")?;
-    let mlir = mlir.replace(decl, PROBE_MEMORY);
+    let model = memory_model(&MemConfig {
+        depth: 12,
+        width: 8,
+        reads: 2,
+        writes: 1,
+    });
+    let mlir = mlir.replace(decl, &model);
     for (read, write, equal) in [
         ("%xin", "%xin", true),
         ("%true", "%xin", false),
