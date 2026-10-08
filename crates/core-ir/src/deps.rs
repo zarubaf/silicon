@@ -15,6 +15,10 @@ use crate::typed::{Callee, Deps, Expr, InputIdx, InstIdx, LetIdx, Module, Node, 
 /// `child_deps` gives the dependencies of each module or extern that `module`
 /// instantiates. A cycle in the graph does not change the result: an output
 /// depends on each input that it reaches.
+///
+/// # Panics
+/// The module and the child dependencies must come from [`crate::check::check`].
+/// An index that is out of range in an inconsistent module panics.
 pub fn infer<'d>(module: &Module, child_deps: impl Fn(Callee) -> &'d Deps) -> Deps {
     analyze(module, child_deps).deps
 }
