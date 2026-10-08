@@ -62,7 +62,7 @@ Reference projects:
 - Kôika (MIT, Coq): a rule-based HDL with a formal semantics and a verified Verilog compiler.
 - Bluespec, Chisel and FIRRTL, Veryl, and Filament: sources of ideas for the language design.
 
-The handoff note recommends a short review of the crate layout and the core IR by a compiler engineer early in the project.
+The initial design notes (not in the repository) recommend an early review of the crate layout and the core IR by a compiler engineer.
 
 ## Trust boundary
 
@@ -96,7 +96,7 @@ Three methods check the Lean model against SystemVerilog, for example legacy IP 
 - Cargo builds the Rust workspace. Lake builds the Lean project in `lean/`.
 - A Nix flake pins the toolchain. See [ADR 0008](adr/0008-nix-pins-toolchain.md).
 - The `justfile` is the only entry point.
-- The handoff note plans the recipes `just fuzz`, `just lec`, and `just spec`. They do not exist yet.
+- The project plans the recipes `just fuzz`, `just lec`, and `just spec`. They do not exist yet.
 - The project uses no Bazel for now. Revisit this choice only if builds stay slow with caching.
 
 ## Build order
@@ -116,6 +116,6 @@ Do not run many agents in parallel before steps 1 and 2 exist. Without an oracle
 - The memory model in the core IR: ports and read-during-write behavior.
 - How the spec shows nondeterminism and implementation-defined behavior: parameters, oracles, or relations.
 - The waveform and debug map from the emitted Verilog back to the source.
-- The exact claim of the translation validator about the core IR term. The handoff note says only that a checker confirms the term.
+- The exact claim of the translation validator about the core IR term. The initial design notes (not in the repository) say only that a checker confirms the term.
 - Classify each bridge as trusted, validated, or proven. The trust boundary table marks the classifications that are only proposed.
-- When LEC joins `just ci`. The foundation spec, section 9, puts LEC in build step 2. The build order of the handoff note puts the CIRCT backend with LEC in step 3.
+- When LEC joins `just ci`. The foundation spec, section 9, puts LEC in build step 2. The build order above puts the CIRCT backend with LEC in step 3.

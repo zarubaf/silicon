@@ -18,4 +18,4 @@ Agents have merge authority at the start. A reviewer from the same model family 
 
 - The cross-vendor review is advisory until a GitHub check exists. The pull request template has a checkbox for it.
 - A merge queue replaces the manual merge step when the repository moves to an organization.
-- A later ADR adds human approval gates. The handoff note gives three areas for the human: the core IR semantics, the language design decisions, and the trust boundary.
+- A later ADR adds human approval gates. The initial design notes (not in the repository) give three areas for the human. The areas are the core IR semantics, the language design decisions, and the trust boundary.

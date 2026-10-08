@@ -5,7 +5,7 @@
 
 ## Context
 
-Silicon uses Rust, Lean, CIRCT, Verilator, Yosys, and many formatters and linters. Local runs, CI runs, and agent runs must use the same tool versions. The handoff note names a Nix flake or a devcontainer.
+Silicon uses Rust, Lean, CIRCT, Verilator, Yosys, and many formatters and linters. Local runs, CI runs, and agent runs must use the same tool versions. The initial design notes (not in the repository) name a Nix flake or a devcontainer.
 
 ## Decision
 
