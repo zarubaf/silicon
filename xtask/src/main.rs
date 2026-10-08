@@ -70,7 +70,7 @@ fn main() -> Result<ExitCode> {
             vocab::write(&Repo::discover()?)?;
             Ok(ExitCode::SUCCESS)
         }
-        Command::Prose => Ok(if prose::run(&Repo::discover()?)?.success() {
+        Command::Prose => Ok(if prose::run(&Repo::discover()?)? {
             ExitCode::SUCCESS
         } else {
             ExitCode::FAILURE

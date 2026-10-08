@@ -47,16 +47,19 @@ pub fn write(repo: &Repo) -> Result<()> {
     let vocab = parse(&repo.read(Path::new(GLOSSARY))?);
     let dir = repo.root.join(VOCAB_DIR);
     std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
-    for (name, entries) in [("accept.txt", &vocab.accept), ("reject.txt", &vocab.reject)] {
+    let files = [
+        ("accept.txt", lines(&vocab.accept, accept_pattern)),
+        ("reject.txt", lines(&vocab.reject, reject_pattern)),
+    ];
+    for (name, content) in files {
         let path = dir.join(name);
-        std::fs::write(&path, lines(entries))
-            .with_context(|| format!("writing {}", path.display()))?;
+        std::fs::write(&path, content).with_context(|| format!("writing {}", path.display()))?;
     }
     Ok(())
 }
 
 /// Writes one vale entry per line. Vale reads each entry as a regular expression.
-fn lines(entries: &[String]) -> String {
+fn lines(entries: &[String], pattern: fn(&str) -> String) -> String {
     let mut out = String::new();
     for entry in entries {
         out.push_str(&pattern(entry));
@@ -66,7 +69,7 @@ fn lines(entries: &[String]) -> String {
 }
 
 /// Escapes a term. A lowercase term also matches with a capital first letter at the start of a sentence.
-fn pattern(term: &str) -> String {
+fn accept_pattern(term: &str) -> String {
     let mut chars = term.chars();
     match chars.next() {
         Some(first) if first.is_lowercase() => {
@@ -75,6 +78,11 @@ fn pattern(term: &str) -> String {
         }
         _ => regex::escape(term),
     }
+}
+
+/// Escapes a rejected word. It matches in any case and in the plural.
+fn reject_pattern(word: &str) -> String {
+    format!("(?i:{}(?:s|es)?)", regex::escape(word))
 }
 
 #[cfg(test)]
@@ -125,9 +133,30 @@ mod tests {
     #[test]
     fn lowercase_terms_match_a_capital_first_letter() {
         assert_eq!(
-            lines(&strings(&["core IR", "LEC", "flip-flop"])),
+            lines(&strings(&["core IR", "LEC", "flip-flop"]), accept_pattern),
             "[Cc]ore IR\nLEC\n[Ff]lip\\-flop\n"
         );
+    }
+
+    fn rejects(word: &str, text: &str) -> bool {
+        regex::Regex::new(&format!("^{}$", reject_pattern(word)))
+            .unwrap()
+            .is_match(text)
+    }
+
+    #[test]
+    fn rejected_words_match_plural_forms() {
+        assert!(rejects("flop", "flops"));
+        assert!(rejects("flip-flop", "flip-flops"));
+        assert!(rejects("blackbox", "blackboxes"));
+    }
+
+    #[test]
+    fn rejected_words_match_any_case() {
+        assert!(rejects("flop", "FLOP"));
+        assert!(rejects("flop", "Flops"));
+        assert!(rejects("entity", "Entity"));
+        assert!(!rejects("flop", "flopped"));
     }
 
     #[test]
