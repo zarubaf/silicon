@@ -39,6 +39,7 @@
             (python3.withPackages (ps: [
               ps.mdformat
               ps.mdformat-gfm
+              ps.mdformat-frontmatter
             ]))
           ];
           RUSTC_WRAPPER = "sccache";
