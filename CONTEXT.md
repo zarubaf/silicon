@@ -14,7 +14,7 @@ _Avoid_: intermediate language
 
 The step that evaluates parameters, generics, and loops of the source. Its output is core IR without these constructs.
 
-_Avoid_: generation, unrolling
+_Avoid_: unrolling
 
 ### register
 
@@ -24,9 +24,7 @@ _Avoid_: flop, flip-flop
 
 ### memory
 
-An addressable array of state elements in the core IR. It updates once per clock edge, like a register.
-
-_Avoid_: RAM
+An addressable array of state elements in the core IR.
 
 ### module
 
@@ -37,8 +35,6 @@ _Avoid_: entity
 ### instance
 
 One use of a module inside another module. Each instance has its own state.
-
-_Avoid_: submodule
 
 ### instantiation
 
@@ -112,7 +108,7 @@ The identity of an instantiation: a `ModuleId` and the canonical elaboration inp
 
 The mandatory step that puts the package identity into each emitted module name. Two versions of one package then do not collide.
 
-_Avoid_: mangling, name mangling
+_Avoid_: name mangling
 
 ### emitted name
 
