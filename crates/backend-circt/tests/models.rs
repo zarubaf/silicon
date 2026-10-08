@@ -70,7 +70,12 @@ fn each_model_parses_and_has_the_extern_ports() -> Test {
             header.starts_with(&format!("hw.module @{name}(")),
             "{header}"
         );
-        assert!(model.contains("%silicon_reg_mem = seq.compreg "), "{model}");
+        let array = format!("!hw.array<{}xi{}>", words_of(config), config.width);
+        assert!(
+            model.contains("%silicon_reg_mem = seq.compreg ") && model.contains(&array),
+            "{model}"
+        );
+        assert!(!model.contains("comb.icmp"), "{model}");
         if let Some(decl) = mlir
             .lines()
             .find(|l| l.starts_with(&format!("hw.module.extern @{name}(")))
@@ -82,9 +87,15 @@ fn each_model_parses_and_has_the_extern_ports() -> Test {
     Ok(())
 }
 
-/// The semantics of spec section 5.2 element by element: a read gives the
-/// word at its address, or 0 out of range; each write port in `order` sets
-/// the word at its address if its enable is 1.
+/// The number of words of the model of `config`: one for each address.
+fn words_of(config: &MemConfig) -> u32 {
+    1 << address_width(config.depth)
+}
+
+/// The semantics of spec section 5.2 element by element, for each address:
+/// a read gives the word at its address, and each write port in `order` sets
+/// the word at its address if its enable is 1. For an address in range, this
+/// is the memory of depth `D`.
 fn reference(config: &MemConfig, order: &[usize]) -> Result<String, std::fmt::Error> {
     let model = memory_model(config);
     let header = model
@@ -92,7 +103,7 @@ fn reference(config: &MemConfig, order: &[usize]) -> Result<String, std::fmt::Er
         .find(|l| l.starts_with("hw.module @"))
         .unwrap_or_default()
         .replacen(&format!("@{}(", config.module_name()), "@reference(", 1);
-    let (d, w, a) = (config.depth, config.width, address_width(config.depth));
+    let (d, w, a) = (words_of(config), config.width, address_width(config.depth));
     let ty = format!("!hw.array<{d}xi{w}>");
     let mut body = format!("{header}\n  %zero = hw.constant 0 : i{w}\n");
     let mut outputs = Vec::new();
@@ -162,7 +173,7 @@ fn reference(config: &MemConfig, order: &[usize]) -> Result<String, std::fmt::Er
 /// `circt-lec` gives an array of a depth below a power of two free words
 /// above the depth, so the proof compares the words, not the array.
 fn words(config: &MemConfig, name: &str) -> Result<String, std::fmt::Error> {
-    let (d, w, a) = (config.depth, config.width, address_width(config.depth));
+    let (d, w, a) = (words_of(config), config.width, address_width(config.depth));
     let ty = format!("!hw.array<{d}xi{w}>");
     let mut inputs = vec![("clk".to_owned(), "i1".to_owned())];
     for n in 0..config.reads {
@@ -231,13 +242,12 @@ fn model_equals_reference(config: &MemConfig, order: &[usize]) -> Result<bool, B
     lec::prove(&input, &format!("{name}_words"), "reference_words")
 }
 
-/// CIRCT 1.160 cannot prove two configurations, so the proof skips them:
-/// `circt-lec` rejects `hw.array_get` on an array of depth 1 (`smt.bv.cmp`
-/// with operands of two types), and `--externalize-registers` crashes on a
-/// register that is its own next value, which is the model without a write.
+/// The proof skips the models without a write: their register is its own
+/// next value, and `--externalize-registers` of CIRCT 1.160 crashes on such
+/// a register.
 #[test]
 fn each_model_equals_the_memory_semantics() -> Test {
-    for config in CONFIGS.iter().filter(|c| c.depth > 1 && c.writes > 0) {
+    for config in CONFIGS.iter().filter(|c| c.writes > 0) {
         let order: Vec<usize> = (0..config.writes).collect();
         assert!(model_equals_reference(config, &order)?, "{config:?}");
     }
@@ -254,7 +264,7 @@ fn the_higher_write_port_wins() -> Test {
 fn the_verilog_of_a_model_has_the_array_register() -> Test {
     let sv = verilog(&memory_model(&config(12, 8, 2, 1)))?;
     assert!(sv.contains("module silicon_mem_12x8_r2w1("), "{sv}");
-    assert!(sv.contains("reg [11:0][7:0] silicon_reg_mem;"), "{sv}");
+    assert!(sv.contains("reg [15:0][7:0] silicon_reg_mem;"), "{sv}");
     assert!(!sv.contains("RANDOM"), "{sv}");
     Ok(())
 }

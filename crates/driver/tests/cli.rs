@@ -294,7 +294,7 @@ fn verilog_models_prints_one_model_per_configuration() -> Test {
         "{sv}"
     );
     assert_eq!(
-        sv.matches("reg [11:0][7:0] silicon_reg_mem;").count(),
+        sv.matches("reg [15:0][7:0] silicon_reg_mem;").count(),
         2,
         "{sv}"
     );
