@@ -6,3 +6,4 @@ warningAsError = true
 
 [[lean_lib]]
 name = "Silicon"
+globs = ["Silicon.*"]
