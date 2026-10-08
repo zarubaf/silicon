@@ -1,0 +1,14 @@
+; CHECK: %u.y = hw.instance "u" @blk(c: %clk: !seq.clock, a: %a: i4) -> (y: i4)
+; CHECK: hw.module.extern @blk(in %c : !seq.clock, in %a : i4, out y : i4)
+(design top
+  (extern blk
+    (input c clock)
+    (input a (bits 4))
+    (output y (bits 4))
+    (deps y (a)))
+  (module top
+    (input clk clock)
+    (input a (bits 4))
+    (output q (bits 4))
+    (inst u blk (c clk) (a a))
+    (assign q u.y)))
