@@ -26,9 +26,10 @@ Silicon is a standalone hardware description language. It is not a domain-specif
 
 ```text
 source → syntax → parse → resolve → typeck → elab → core-ir ─┬→ backend-circt → Verilog
-                                                             ├→ backend-verilog (small reference emitter)
-                                                             └→ Lean term → translation validator
+                                                             └→ .sil file → translation validator
 ```
+
+The translation validator `silicon-check` is a Lean executable. It also holds the reference lowering to MLIR. LEC compares the CIRCT output with the output of the reference lowering. [ADR 0010](adr/0010-lean-reference-lowering.md) gives the reasons.
 
 ## Crates
 
@@ -41,9 +42,8 @@ The Rust workspace has one crate per pipeline stage. A crate comes into existenc
 5. `elab`
 6. `core-ir`
 7. `backend-circt`: lowers the core IR to the CIRCT dialects `hw`, `comb`, and `seq`.
-8. `backend-verilog`: a small reference emitter.
 
-The crates `diagnostics`, `driver`, and `lsp` support the stages. The names `crates/fmt`, `crates/lint`, and `crates/lsp` are reserved for the Silicon tooling. A crate depends only on earlier pipeline stages. `cargo xtask check` enforces this order (rule `workspace-layers`).
+The crates `diagnostics`, `driver`, and `lsp` support the stages. `driver` holds the `silicon` command-line interface (CLI). The names `crates/fmt`, `crates/lint`, and `crates/lsp` are reserved for the Silicon tooling. A crate depends only on earlier pipeline stages. `cargo xtask check` enforces this order (rule `workspace-layers`).
 
 Libraries:
 
@@ -66,20 +66,7 @@ The initial design notes (not in the repository) recommend an early review of th
 
 ## Trust boundary
 
-The trust boundary separates the parts that are proven, the parts that are validated, and the parts that are trusted.
-
-| Part                                            | Status            | Oracle or reason                                                             |
-| ----------------------------------------------- | ----------------- | ---------------------------------------------------------------------------- |
-| Lemmas and theorems about the core IR semantics | Proven            | The Lean kernel                                                              |
-| The core IR of each compiler run                | Validated         | The translation validator checks the core IR as a Lean term                  |
-| The emitted Verilog against the core IR         | Validated         | LEC with `circt-lec` or Yosys. CIRCT passes have no proof.                   |
-| Black boxes                                     | Trusted           | Their contracts are assumed                                                  |
-| The Lean kernel and the pinned Lean toolchain   | Proposed: trusted | They are the proof oracle                                                    |
-| The LEC tool                                    | Proposed: trusted | It closes the gap behind CIRCT                                               |
-| Synthesis and physical implementation           | Proposed: trusted | No validation or proof covers them yet. See the ecosystem design, section 8. |
-| 4-state behavior, CDC, and timing               | Out of scope      | Existing dedicated tools cover them                                          |
-
-The owner decides the trust boundary. A row with the status "Proposed" is not a decision. The sources do not classify these parts.
+The trust boundary separates the parts that are proven, the parts that are validated, and the parts that are trusted. [The trust document](trust.md) is its authority.
 
 A Lean proof shows that a theorem holds in the encoded model under its assumptions. A proof result names its model, its assumptions, its inputs, and its trusted bridges.
 
@@ -111,11 +98,14 @@ Do not run many agents in parallel before steps 1 and 2 exist. Without an oracle
 
 ## Open questions
 
-- The serialization format of the core IR: S-expressions, JSON, or a custom text format.
-- Reset semantics: a core primitive or a library construct.
-- The memory model in the core IR: ports and read-during-write behavior.
 - How the spec shows nondeterminism and implementation-defined behavior: parameters, oracles, or relations.
 - The waveform and debug map from the emitted Verilog back to the source.
-- The exact claim of the translation validator about the core IR term. The initial design notes (not in the repository) say only that a checker confirms the term.
-- Classify each bridge as trusted, validated, or proven. The trust boundary table marks the classifications that are only proposed.
-- When LEC joins `just ci`. The foundation spec, section 9, puts LEC in build step 2. The build order above puts the CIRCT backend with LEC in step 3.
+- The trust status of the parts that [the trust document](trust.md) does not list: the Lean kernel, the pinned Lean toolchain, synthesis, and physical implementation.
+
+[The core IR spec](design/2026-10-08-core-ir.md) closes these questions:
+
+- The serialization format of the core IR: an S-expression text format. See section 3.
+- Reset semantics: synchronous reset is a primitive. See section 2, decision D3.
+- The memory model in the core IR: a combinational read, writes at the edge, and the higher write port wins. See section 2, decision D4.
+- The exact claim of the translation validator: `silicon-check check` elaborates the design into typed terms, and `check_sound` and `check_complete` prove the checker. See section 6.4.
+- When LEC joins `just ci`: in this iteration, together with the differential tests. See section 9.
