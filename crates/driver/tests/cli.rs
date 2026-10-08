@@ -68,7 +68,11 @@ fn silicon(args: &[&str], path: &PathBuf, stdin: &str) -> std::io::Result<Output
         .stderr(Stdio::piped())
         .spawn()?;
     if let Some(mut pipe) = child.stdin.take() {
-        pipe.write_all(stdin.as_bytes())?;
+        // A command that fails before it reads stdin closes the pipe.
+        match pipe.write_all(stdin.as_bytes()) {
+            Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => return Err(e),
+            _ => {}
+        }
     }
     child.wait_with_output()
 }
