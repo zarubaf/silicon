@@ -65,7 +65,7 @@ theorem external_exists (d : Typed.Design) (name : String)
     exact ⟨e, by simpa only [← hn, ← hname] using found, hi⟩
 
 /-! Interface equalities transport components without changing their state cells. -/
-private def transportComponent {ports other : List Port} {deps otherDeps : Deps}
+def transportComponent {ports other : List Port} {deps otherDeps : Deps}
     (hp : ports = other) (hd : deps = otherDeps) (model : Component ports deps) :
     Component other otherDeps where
   State := model.State

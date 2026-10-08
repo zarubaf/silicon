@@ -1,4 +1,4 @@
-import Silicon.Core.Interp
+import Silicon.Core.Interp.Named
 import Silicon.Core.Canonical.Reorder
 import Silicon.Core.Canonical.WellFormed
 
@@ -522,108 +522,6 @@ theorem named_solution_register (d : CertifiedDesign) (env : Env d.design)
 
 end Silicon.Core.Semantics
 
-/-!
-A named run reads inputs by port name and records outputs in port order.
-It starts with zero state and requires a design without externs.
--/
-namespace Silicon.Core
-
-open Semantics
-
-namespace NamedRun
-
-def inputValues (m : Typed.Module) (values : List (String × Nat)) : Input m :=
-  fun p => match p.val.ty with
-  | .clock => ()
-  | .bits w => BitVec.ofNat w ((values.lookup p.val.name).getD 0)
-
-def encodeOutputs (ports : List Port) (values : PortValues ports .output) :
-    List (String × Nat) :=
-  ports.attach.filterMap fun p =>
-    if h : p.val.dir = .output then
-      match ht : p.val.ty with
-      | .clock => none
-      | .bits _ => some (p.val.name,
-          (cast (congrArg TyValue ht) (values ⟨p.val, p.property, h⟩)).toNat)
-    else none
-
-def outputValues (m : Typed.Module) (values : Output m) : List (String × Nat) :=
-  encodeOutputs m.ports values
-
-def emptyEnv (t : CertifiedDesign) (noExterns : t.design.externs = []) : Env t.design :=
-  fun _ member => False.elim (by simp [noExterns] at member)
-
-theorem top_exists (t : CertifiedDesign) (noExterns : t.design.externs = []) :
-    ∃ m, t.design.bodies.find? (·.name == t.design.top) = some m := by
-  cases found : t.design.bodies.find? (·.name == t.design.top) with
-  | some m => exact ⟨m, rfl⟩
-  | none =>
-    have resolved := t.wellFormed.2.1.1
-    have item : ∃ i ∈ t.design.erase.items, Typed.itemName i = t.design.top := by
-      cases hi : Rules.findItem t.design.erase t.design.erase.top with
-      | none => simp [hi] at resolved
-      | some i =>
-        exact ⟨i, List.mem_of_find?_eq_some hi, by
-          simpa [Rules.findItem, Typed.Design.erase, Typed.assembleDesign] using
-            List.find?_some hi⟩
-    obtain ⟨e, he, _⟩ := external_exists t.design t.design.top item found
-    simp [noExterns] at he
-
-def top (t : CertifiedDesign) (noExterns : t.design.externs = []) :
-    {m : Typed.Module // m ∈ t.design.bodies} :=
-  match found : t.design.bodies.find? (·.name == t.design.top) with
-  | some m => ⟨m, List.mem_of_find?_eq_some found⟩
-  | none => False.elim (by
-      obtain ⟨m, hm⟩ := top_exists t noExterns
-      rw [found] at hm
-      contradiction)
-
-end NamedRun
-
-def namedRun (t : CertifiedDesign) (inputs : List (List (String × Nat)))
-    (noExterns : t.design.externs = []) : List (List (String × Nat)) :=
-  let env := NamedRun.emptyEnv t noExterns
-  let m := NamedRun.top t noExterns
-  (Interp.run t env m.val m.property (Interp.zeroState t env noExterns m.val m.property)
-    (inputs.map (NamedRun.inputValues m.val))).map (NamedRun.outputValues m.val)
-
-end Silicon.Core
-
-/-! A step simulation gives equal named traces for every finite input sequence. -/
-namespace Silicon.Core
-
-open Semantics
-
-namespace NamedRun
-
-theorem run_eq_of_named_step (d d' : CertifiedDesign) (env : Env d.design)
-    (env' : Env d'.design) (noExterns : d.design.externs = [])
-    (noExterns' : d'.design.externs = []) (m m' : Typed.Module)
-    (hm : m ∈ d.design.bodies) (hm' : m' ∈ d'.design.bodies)
-    (simulate : ∀ (a : State d env m hm) (b : State d' env' m' hm'),
-      namedState d env noExterns m hm a = namedState d' env' noExterns' m' hm' b →
-      ∀ vector : List (String × Nat),
-      let left := Interp.step d env m hm a (inputValues m vector)
-      let right := Interp.step d' env' m' hm' b (inputValues m' vector)
-      outputValues m left.2 = outputValues m' right.2 ∧
-        namedState d env noExterns m hm left.1 =
-          namedState d' env' noExterns' m' hm' right.1)
-    (a : State d env m hm) (b : State d' env' m' hm')
-    (same : namedState d env noExterns m hm a = namedState d' env' noExterns' m' hm' b)
-    (inputs : List (List (String × Nat))) :
-    (Interp.run d env m hm a (inputs.map (inputValues m))).map (outputValues m) =
-      (Interp.run d' env' m' hm' b (inputs.map (inputValues m'))).map (outputValues m') := by
-  induction inputs generalizing a b with
-  | nil => rfl
-  | cons vector rest ih =>
-    obtain ⟨outputs, states⟩ := simulate a b same vector
-    simp only [List.map_cons, Interp.run]
-    rw [outputs, ih _ _ states]
-
-end NamedRun
-
-end Silicon.Core
-
 /-! Zero state follows register and memory declarations through named instance paths. -/
 namespace Silicon.Core.Semantics
 
@@ -637,7 +535,7 @@ inductive ZeroPath (d : Core.Design) : Core.Module → List String → NamedCell
       (next : ZeroPath d c path cell) : ZeroPath d m (name :: path) cell
 
 theorem ZeroPath.reorder {d d' : Core.Design} (order : Reorder d d')
-    {m m' : Core.Module} (body : Permuted StmtReorder m.body m'.body)
+    {m m' : Core.Module} (body : Permuted (StmtReorder d.items) m.body m'.body)
     {path : List String} {cell : NamedCell} (zero : ZeroPath d m path cell) :
     ZeroPath d' m' path cell := by
   induction zero generalizing m' with
@@ -657,24 +555,6 @@ theorem ZeroPath.reorder {d d' : Core.Design} (order : Reorder d d')
       cases related with
       | same => exact .inst hs hi (hn.trans childName) (ih hb)
       | inst => exact .inst hs hi (hn.trans childName) (ih hb)
-
-theorem erased_module_found (d : Typed.Design) (c : Core.Module)
-    (member : Core.Item.module c ∈ d.erase.items) :
-    ∃ m, d.bodies.find? (·.name == c.name) = some m ∧ m.erase = c := by
-  obtain ⟨key, _, he⟩ := List.mem_filterMap.mp member
-  change (match d.bodies.find? (·.name == key) with
-    | some m => some (.module m.erase)
-    | none => (d.externs.find? (·.name == key)).map Item.extern) = some (.module c) at he
-  cases found : d.bodies.find? (·.name == key) with
-  | some m =>
-    simp only [found] at he
-    have erased := Core.Item.module.inj (Option.some.inj he)
-    have named : m.name = key := by simpa using List.find?_some found
-    exact ⟨m, by simpa only [← erased, Typed.Module.erase, named] using found, erased⟩
-  | none =>
-    simp only [found] at he
-    obtain ⟨e, _, impossible⟩ := Option.map_eq_some_iff.mp he
-    cases impossible
 
 theorem zeroState_instance (d : CertifiedDesign) (env : Env d.design)
     (noExterns : d.design.externs = []) (m : Typed.Module) (hm : m ∈ d.design.bodies)
@@ -811,7 +691,7 @@ theorem namedState_zero_reorder (d d' : CertifiedDesign) (env : Env d.design)
     (env' : Env d'.design) (noExterns : d.design.externs = [])
     (noExterns' : d'.design.externs = []) (order : Reorder d.design.erase d'.design.erase)
     (m m' : Typed.Module) (hm : m ∈ d.design.bodies) (hm' : m' ∈ d'.design.bodies)
-    (body : Permuted StmtReorder m.erase.body m'.erase.body) :
+    (body : Permuted (StmtReorder d.design.erase.items) m.erase.body m'.erase.body) :
     namedState d env noExterns m hm (Interp.zeroState d env noExterns m hm) =
       namedState d' env' noExterns' m' hm' (Interp.zeroState d' env' noExterns' m' hm') := by
   funext path
@@ -819,7 +699,7 @@ theorem namedState_zero_reorder (d d' : CertifiedDesign) (env : Env d.design)
   intro cell
   rw [namedState_zero_iff, namedState_zero_iff]
   exact ⟨fun h => h.reorder order body,
-    fun h => h.reorder order.symm (body.symm.imp fun _ _ h => h.symm)⟩
+    fun h => h.reorder order.symm (body.symm.imp fun _ _ h => h.symm.changeItems order.resolves)⟩
 
 end Silicon.Core.Semantics
 
@@ -828,38 +708,6 @@ namespace Silicon.Core
 
 open Semantics
 
-namespace Reorder
-
-theorem typed_module {d d' : CertifiedDesign} (order : Reorder d.design.erase d'.design.erase)
-    (m : Typed.Module) (hm : m ∈ d.design.bodies) :
-    ∃ m', d'.design.bodies.find? (·.name == m.name) = some m' ∧
-      ItemReorder (.module m.erase) (.module m'.erase) := by
-  obtain ⟨item, member, related⟩ := order.items.left (d.design.environments m hm).2.2
-  cases related with
-  | module raw raw' pos name ports body =>
-    obtain ⟨m', found, erased⟩ := erased_module_found d'.design raw' member
-    refine ⟨m', ?_, ?_⟩
-    · simpa only [name, Typed.Module.erase] using found
-    · rw [erased]
-      exact .module _ _ pos name ports body
-
-theorem typed_context {d d' : CertifiedDesign} (order : Reorder d.design.erase d'.design.erase)
-    (m m' : Typed.Module) (hm : m ∈ d.design.bodies) (hm' : m' ∈ d'.design.bodies)
-    (related : ItemReorder (.module m.erase) (.module m'.erase)) (node : Deps.Node) :
-    m.ctx.lookup node = m'.ctx.lookup node := by
-  rw [d.design.module_context m hm, d'.design.module_context m' hm']
-  cases related with
-  | module _ _ _ _ ports body =>
-    exact order.context_lookup d.wellFormed.1 (module_mem d.design m hm) ports body node
-
-theorem typed_interfaces {d d' : CertifiedDesign}
-    (order : Reorder d.design.erase d'.design.erase)
-    (m m' : Typed.Module) (hm : m ∈ d.design.bodies) (hm' : m' ∈ d'.design.bodies) :
-    m.interfaces = m'.interfaces := by
-  rw [(d.design.environments m hm).1, (d'.design.environments m' hm').1]
-  exact order.portsOf d.wellFormed.1
-
-end Reorder
 
 namespace NamedRun
 
@@ -875,7 +723,7 @@ theorem top_found (d : CertifiedDesign) (noExterns : d.design.externs = []) :
 
 theorem top_reorder (d d' : CertifiedDesign) (noExterns : d.design.externs = [])
     (noExterns' : d'.design.externs = []) (order : Reorder d.design.erase d'.design.erase) :
-    ItemReorder (.module (top d noExterns).val.erase)
+    ItemReorder d.design.erase.items (.module (top d noExterns).val.erase)
       (.module (top d' noExterns').val.erase) := by
   obtain ⟨m', found, related⟩ := order.typed_module (top d noExterns).val
     (top d noExterns).property

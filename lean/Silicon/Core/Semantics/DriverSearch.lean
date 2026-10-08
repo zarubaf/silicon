@@ -3,7 +3,7 @@ import Silicon.Core.Semantics.Driver
 /-! Finite driver lists permit execution without a choice of witnesses. -/
 namespace Silicon.Core.Semantics
 
-private abbrev PackedDriver (m : Typed.Module) :=
+abbrev PackedDriver (m : Typed.Module) :=
   (node : Deps.Node) × (width : Nat) × ValueDriver m node width
 
 private def inputDrivers (m : Typed.Module) (p : {p // p ∈ m.ports}) :
@@ -27,10 +27,10 @@ private def equationDrivers (m : Typed.Module) (e : EquationRef m) :
         [⟨.port n port.val.name, w, .inst i p n c xs h port.val port.property hd ht⟩]
       else []
 
-private def drivers (m : Typed.Module) : List (PackedDriver m) :=
+def drivers (m : Typed.Module) : List (PackedDriver m) :=
   m.ports.attach.flatMap (inputDrivers m) ++ m.body.attach.flatMap (equationDrivers m)
 
-private theorem driver_mem (m : Typed.Module) (v : ValueDriver m node width) :
+theorem driver_mem (m : Typed.Module) (v : ValueDriver m node width) :
     (⟨node, width, v⟩ : PackedDriver m) ∈ drivers m := by
   cases v with
   | input p hp hd ht =>

@@ -1,5 +1,6 @@
-import Silicon.Core.Canonical.Reorder
+import Silicon.Core.Canonical.Basic
 
+/-! Reordering preserves each checker rule and the context of each module. -/
 namespace Silicon.Core
 
 namespace Reorder
@@ -50,7 +51,7 @@ theorem dependencies {d d' : Design} (h : Reorder d d')
 theorem module_right {d d' : Design} (h : Reorder d d') {m' : Module}
     (hm' : m' ∈ Typed.modules d') : ∃ m ∈ Typed.modules d,
       m'.pos = m.pos ∧ m'.name = m.name ∧ m'.ports = m.ports ∧
-        Permuted StmtReorder m.body m'.body := by
+        Permuted (StmtReorder d.items) m.body m'.body := by
   obtain ⟨i', hi', ei'⟩ := List.mem_filterMap.mp hm'
   cases i' with
   | extern => cases ei'
@@ -165,7 +166,7 @@ private theorem find_named {xs : List α} (key : α → String)
 
 theorem Reorder.findItem {d d' : Design} (h : Reorder d d') (hn : Rules.Names d)
     {name : String} {i' : Item} (found : Rules.findItem d' name = some i') :
-    ∃ i, Rules.findItem d name = some i ∧ ItemReorder i i' := by
+    ∃ i, Rules.findItem d name = some i ∧ ItemReorder d.items i i' := by
   obtain ⟨i, hi, related⟩ := h.items.right (List.mem_of_find?_eq_some found)
   have key : Typed.itemName i' = name := by simpa [Rules.findItem] using List.find?_some found
   refine ⟨i, ?_, related⟩
@@ -300,7 +301,7 @@ namespace Reorder
 
 theorem context_lookup {d d' : Design} (h : Reorder d d') (hn : Rules.Names d)
     {m m' : Module} (hm : m ∈ Typed.modules d) (ports : m'.ports = m.ports)
-    (body : Permuted StmtReorder m.body m'.body) (node : Deps.Node) :
+    (body : Permuted (StmtReorder d.items) m.body m'.body) (node : Deps.Node) :
     (Typed.context d m).lookup node = (Typed.context d' m').lookup node := by
   have entries : (m.body.flatMap (contextEntry (Typed.portsOf d))).Perm
       (m'.body.flatMap (contextEntry (Typed.portsOf d'))) := by
@@ -316,9 +317,9 @@ theorem context_lookup {d d' : Design} (h : Reorder d d') (hn : Rules.Names d)
   exact lookup_perm perm (context_keys_nodup d m hn hm) node
 
 theorem findStmt {d : Design} (hn : Rules.Names d) {m m' : Module}
-    (hm : m ∈ Typed.modules d) (body : Permuted StmtReorder m.body m'.body)
+    (hm : m ∈ Typed.modules d) (body : Permuted (StmtReorder d.items) m.body m'.body)
     {n : String} {s' : Stmt} (found : Rules.findStmt m' n = some s') :
-    ∃ s, Rules.findStmt m n = some s ∧ StmtReorder s s' := by
+    ∃ s, Rules.findStmt m n = some s ∧ StmtReorder d.items s s' := by
   obtain ⟨s, member, related⟩ := body.right (List.mem_of_find?_eq_some found)
   have mi : Item.module m ∈ d.items := by
     obtain ⟨i, hi, eq⟩ := List.mem_filterMap.mp hm
@@ -348,12 +349,15 @@ theorem Permuted.imp {r s : α → β → Prop} {xs : List α} {ys : List β}
   obtain ⟨pairs, hp, hq, hr⟩ := h
   exact ⟨pairs, hp, hq, fun p member => f _ _ (hr p member)⟩
 
-theorem StmtReorder.symm {s s' : Stmt} (h : StmtReorder s s') : StmtReorder s' s := by
+theorem StmtReorder.symm {d : Design} {s s' : Stmt} (h : StmtReorder d.items s s') :
+    StmtReorder d.items s' s := by
   cases h with
   | same => exact .same _
-  | inst _ _ _ _ _ perm => exact .inst _ _ _ _ _ perm.symm
+  | inst _ _ _ _ _ perm resolved =>
+    exact .inst _ _ _ _ _ perm.symm (resolved.imp id Eq.symm)
 
-theorem ItemReorder.symm {i i' : Item} (h : ItemReorder i i') : ItemReorder i' i := by
+theorem ItemReorder.symm {d : Design} {i i' : Item} (h : ItemReorder d.items i i') :
+    ItemReorder d.items i' i := by
   cases h with
   | module m m' pos name ports body =>
     exact .module _ _ pos.symm name.symm ports.symm
@@ -361,31 +365,37 @@ theorem ItemReorder.symm {i i' : Item} (h : ItemReorder i i') : ItemReorder i' i
   | extern e e' pos name ports deps =>
     exact .extern _ _ pos.symm name.symm ports.symm deps.symm
 
-theorem Reorder.symm {d d' : Design} (h : Reorder d d') : Reorder d' d := by
+theorem StmtReorder.changeItems {items items' : List Item}
+    (same : ∀ child, items.any (·.name == child) = items'.any (·.name == child))
+    {s s' : Stmt} (h : StmtReorder items s s') : StmtReorder items' s s' := by
+  cases h with
+  | same => exact .same _
+  | inst p name child xs ys perm resolved =>
+    exact .inst p name child xs ys perm (by simpa only [same] using resolved)
+
+theorem ItemReorder.changeItems {items items' : List Item}
+    (same : ∀ child, items.any (·.name == child) = items'.any (·.name == child))
+    {i i' : Item} (h : ItemReorder items i i') : ItemReorder items' i i' := by
+  cases h with
+  | module m m' pos name ports body =>
+    exact .module _ _ pos name ports (body.imp fun _ _ h => h.changeItems same)
+  | extern e e' pos name ports deps => exact .extern _ _ pos name ports deps
+
+theorem Reorder.resolves {d d' : Design} (h : Reorder d d') (child : String) :
+    d.items.any (·.name == child) = d'.items.any (·.name == child) := by
   have names := h.items.map Item.name Item.name (fun _ _ related => related.name)
-  have frozen (i : Item) : frozenConnections d.items i = frozenConnections d'.items i := by
-    have any (child : String) : d.items.any (·.name == child) =
-        d'.items.any (·.name == child) := by
-      simpa only [List.any_map, Function.comp_def] using
-        names.any_eq (f := fun name => name == child)
-    cases i with
-    | extern => rfl
-    | module m =>
-      unfold frozenConnections
-      dsimp only
-      congr 1
-      funext stmt
-      cases stmt <;> simp only [unresolvedStmt, any]
-  refine ⟨h.1.symm, h.2.1.symm, ?_⟩
-  apply h.2.2.symm.imp
-  intro a b related
-  exact ⟨related.1.symm, by simpa only [← frozen] using related.2.symm⟩
+  simpa only [List.any_map, Function.comp_def] using
+    names.any_eq (f := fun name => name == child)
+
+theorem Reorder.symm {d d' : Design} (h : Reorder d d') : Reorder d' d := by
+  exact ⟨h.1.symm, h.2.1.symm,
+    h.items.symm.imp fun _ _ related => related.symm.changeItems h.resolves⟩
 
 namespace Reorder
 
 theorem instancePort {d d' : Design} (h : Reorder d d') (hn : Rules.Names d)
     {m m' : Module} (hm : m ∈ Typed.modules d) (hm' : m' ∈ Typed.modules d')
-    (body : Permuted StmtReorder m.body m'.body) (inst port : String) :
+    (body : Permuted (StmtReorder d.items) m.body m'.body) (inst port : String) :
     Rules.instancePort d m inst port = Rules.instancePort d' m' inst port := by
   have items (child : String) :
       (Rules.findItem d child).bind (fun i => (Typed.itemPorts i).find? (·.name == port)) =
@@ -408,7 +418,7 @@ theorem instancePort {d d' : Design} (h : Reorder d d') (hn : Rules.Names d)
       | none => rfl
       | some s =>
         obtain ⟨s', hs', _⟩ := findStmt (h.names hn) hm'
-          (body.symm.imp (fun _ _ h => h.symm)) old
+          (body.symm.imp (fun _ _ related => related.symm.changeItems h.resolves)) old
         rw [found] at hs'
         contradiction
     simp [Rules.instancePort, found, absent]
@@ -463,7 +473,7 @@ theorem resolved {d d' : Design} (h : Reorder d d') (hn : Rules.Names d)
             | none => simp [Rules.ResolvedTarget, foundOld] at old
             | some s =>
               obtain ⟨s', hs', _⟩ := findStmt (h.names hn) hm'
-                (body.symm.imp (fun _ _ h => h.symm)) foundOld
+                (body.symm.imp (fun _ _ related => related.symm.changeItems h.resolves)) foundOld
               rw [found] at hs'
               contradiction
           | some s' =>
@@ -483,7 +493,7 @@ namespace Reorder
 
 private theorem valueExprs {d d' : Design} (h : Reorder d d') (hn : Rules.Names d)
     {m m' : Module} (ports : m'.ports = m.ports) {s s' : Stmt}
-    (related : StmtReorder s s') :
+    (related : StmtReorder d.items s s') :
     (Rules.valueExprs d m s).Perm (Rules.valueExprs d' m' s') := by
   have direct : Rules.directClock m = Rules.directClock m' := by
     funext e
@@ -534,7 +544,7 @@ private theorem list_map_preimage (f : α → β) (ys : List β)
     obtain ⟨xs, rfl⟩ := ih (fun y hy => existsPreimage y (by simp [hy]))
     exact ⟨x :: xs, rfl⟩
 
-theorem StmtReorder.typed {s s' : Stmt} (related : StmtReorder s s')
+theorem StmtReorder.typed {d : Design} {s s' : Stmt} (related : StmtReorder d.items s s')
     (t : Typed.Stmt ctx ports) (erase : t.erase = s) :
     ∃ t' : Typed.Stmt ctx ports, t'.erase = s' := by
   cases related with
@@ -579,7 +589,7 @@ private theorem connection_keys_nodup (d : Design) (m : Module)
 
 private theorem module_graph_perm (d : Design) (m m' : Module)
     (hm : m ∈ Typed.modules d) (hr : Rules.Resolved d) (hc : Rules.Connections d)
-    (ports : m'.ports = m.ports) (body : Permuted StmtReorder m.body m'.body)
+    (ports : m'.ports = m.ports) (body : Permuted (StmtReorder d.items) m.body m'.body)
     (children : String → Option Deps) : (Deps.graph m children).Perm (Deps.graph m' children) := by
   apply Deps.graph_perm _ _ _ _ ports.symm
   obtain ⟨pairs, hp, hq, related⟩ := body

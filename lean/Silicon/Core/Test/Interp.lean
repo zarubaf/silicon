@@ -1,4 +1,4 @@
-import Silicon.Core.Canonical.View
+import Silicon.Core.Interp.Named
 import Silicon.Core.Text
 
 /-! Execution tests start from zero and use designs accepted by the checker. -/
@@ -76,6 +76,20 @@ private def handshake := "(design top
 #guard runText handshake [[("x", 42), ("ack", 1)], [("x", 17), ("ack", 0)]] ==
   some [[42, 1], [17, 0]]
 
+/-! A child state update must use connections that become ready after its first output. -/
+private def lateState := "(design top
+  (module child (input clk clock) (input x (bits 8)) (input later (bits 8))
+    (output y (bits 8)) (output q (bits 8))
+    (reg r (bits 8) clk) (next r later) (assign y x) (assign q r))
+  (module top (input clk clock) (input x (bits 8)) (output y (bits 8)) (output q (bits 8))
+    (inst c child (clk clk) (x x) (later late))
+    (let base (bits 8) (add x (const 8 1)))
+    (let late (bits 8) (add base (const 8 1)))
+    (assign y c.y) (assign q c.q)))"
+
+#guard runText lateState [[("x", 10)], [("x", 20)], [("x", 30)]] ==
+  some [[10, 0], [20, 12], [30, 22]]
+
 private def wideAdd := "(design wide
   (module wide (input x (bits 1000)) (input y (bits 1000)) (output q (bits 1000))
     (assign q (add x y))))"
@@ -94,24 +108,37 @@ private def canonicalRun (text : String) (vectors : List (List (String × Nat)))
 #guard canonicalRun handshake [[("x", 42), ("ack", 1)], [("x", 17), ("ack", 0)]] ==
   some [[42, 1], [17, 0]]
 
-private def chain (wide : Bool) : String :=
-  let rows := (List.range 40).map fun i =>
-    s!"(let x{i+1} (bits 64) (add x{i} x{i}))" ++
-      if wide then s!"(let y{i+1} (bits 64) (add x{i} y{i}))" else ""
-  "(design chain (module chain (input x0 (bits 64)) (output q (bits 64))" ++
-    (if wide then "(input y0 (bits 64)) (output r (bits 64))" else "") ++
-    String.join rows ++ "(assign q x40)" ++
-    (if wide then "(assign r y40)" else "") ++ "))"
+private def chain (depth : Nat) (wide : Bool) : String :=
+  let rows := (List.range depth).map fun i =>
+    s!"(let x{i+1} (bits 256) (add x{i} x{i}))" ++
+      if wide then s!"(let y{i+1} (bits 256) (add x{i} y{i}))" else ""
+  "(design chain (module chain (input x0 (bits 256)) (output q (bits 256))" ++
+    (if wide then "(input y0 (bits 256)) (output r (bits 256))" else "") ++
+    String.join rows ++ s!"(assign q x{depth})" ++
+    (if wide then s!"(assign r y{depth})" else "") ++ "))"
 
-#guard runText (chain false) [[("x0", 1)]] == some [[2^40]]
-#guard runText (chain true) [[("x0", 1), ("y0", 3)]] == some [[2^40, 2^40 + 2]]
+#guard runText (chain 200 false) [[("x0", 1)]] == some [[2^200]]
+#guard runText (chain 100 true) [[("x0", 1), ("y0", 3)]] == some [[2^100, 2^100 + 2]]
 
 private def hierarchyChain : String :=
-  (((chain false).replace "(design chain" "(design top").dropEnd 1).toString ++
-    "(module top (input x (bits 64)) (output q (bits 64))" ++
+  (((chain 200 false).replace "(design chain" "(design top").dropEnd 1).toString ++
+    "(module top (input x (bits 256)) (output q (bits 256))" ++
     "(inst c chain (x0 x)) (assign q c.q)))"
 
-#guard runText hierarchyChain [[("x", 1)]] == some [[2^40]]
+#guard runText hierarchyChain [[("x", 1)]] == some [[2^200]]
+
+private def multiOutputHierarchy (depth outputs : Nat) : String :=
+  let ports := String.join ((List.range outputs).map fun i => s!"(output q{i} (bits 32))")
+  let modules := (List.range (depth + 1)).map fun level =>
+    s!"(module level{level} (input x (bits 32))" ++ ports ++
+      (if level == 0 then "" else s!"(inst c level{level - 1} (x x))") ++
+      String.join ((List.range outputs).map fun i =>
+        s!"(assign q{i} " ++
+          (if level == 0 then "x" else s!"(add c.q0 c.q{outputs - 1})") ++ ")") ++ ")"
+  s!"(design level{depth} " ++ String.join modules ++ ")"
+
+#guard runText (multiOutputHierarchy 10 2) [[("x", 37)]] == some [[37 * 2^10, 37 * 2^10]]
+#guard runText (multiOutputHierarchy 6 4) [[("x", 53)]] == some [List.replicate 4 (53 * 2^6)]
 
 end Silicon.Core.Test.Interp
 
