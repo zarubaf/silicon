@@ -13,7 +13,7 @@ use num_bigint::BigUint;
 
 use crate::Bits;
 use crate::ast::{BinOp, UnOp};
-use crate::diag::{Diagnostic, ErrorCode};
+use crate::diag::{Diagnostic, ErrorCode, Span};
 use crate::typed::{Callee, Design, Expr, ModIdx, Module, Node};
 
 /// A simulation of a design that has no extern. The start state is all zero.
@@ -29,17 +29,18 @@ impl<'d> Sim<'d> {
     /// Returns `E014` at the first `extern` item if the design has an extern:
     /// no environment gives the extern a semantics (spec section 5.4).
     pub fn new(design: &'d Design) -> Result<Sim<'d>, Diagnostic> {
-        // Only an instance of an extern makes a frame fail, and then the
-        // design has a first extern.
-        let first = design.externs.first();
-        match (first, Frame::new(design, design.top)) {
-            (None, Some(top)) => Ok(Sim { design, top }),
-            _ => Err(Diagnostic {
-                code: ErrorCode::E014,
-                span: first.map(|ext| ext.span).unwrap_or_default(),
-                message: "no environment for extern".into(),
-            }),
-        }
+        // Spec section 5.4: each extern gives E014, also an extern that no
+        // instance runs, so the first extern item wins over the first instance.
+        let top = match design.externs.first() {
+            Some(ext) => Err(ext.span),
+            None => Frame::new(design, design.top),
+        };
+        let top = top.map_err(|span| Diagnostic {
+            code: ErrorCode::E014,
+            span,
+            message: "no environment for extern".into(),
+        })?;
+        Ok(Sim { design, top })
     }
 
     /// Runs one cycle: returns the outputs of the top module for the current
@@ -109,19 +110,19 @@ struct Frame {
 }
 
 impl Frame {
-    /// The all-zero frame of `module`, or `None` if an instance below it
-    /// runs an extern.
-    fn new(design: &Design, module: ModIdx) -> Option<Frame> {
+    /// The all-zero frame of `module`, or the position of an extern that an
+    /// instance below it runs.
+    fn new(design: &Design, module: ModIdx) -> Result<Frame, Span> {
         let m = &design.modules[module.index()];
         let children = m
             .insts
             .iter()
             .map(|inst| match inst.callee {
                 Callee::Module(child) => Frame::new(design, child),
-                Callee::Extern(_) => None,
+                Callee::Extern(ext) => Err(design.externs[ext.index()].span),
             })
-            .collect::<Option<Vec<_>>>()?;
-        Some(Frame {
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Frame {
             module,
             regs: m.regs.iter().map(|r| Bits::zero(r.width)).collect(),
             mems: m.mems.iter().map(|_| HashMap::new()).collect(),
