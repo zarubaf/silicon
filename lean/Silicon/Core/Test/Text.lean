@@ -68,9 +68,8 @@ def rhs : Expr := .ref zeroPos "b"
 #guard readsExpr "(read ram (add a b))"
   (.read zeroPos "ram" (.bin zeroPos .add lhs rhs))
 
-/-! Size limits belong to the checker. The parser retains all decimal natural numbers. -/
-#guard readsExpr "(const 18446744073709551616 0)"
-  (.const zeroPos 18446744073709551616 0)
+/-! Constant values have no limit. Other numbers have a 32-bit syntax limit. -/
+#guard readsExpr "(const 4294967295 0)" (.const zeroPos 4294967295 0)
 #guard readsExpr "(const 0 9)" (.const zeroPos 0 9)
 #guard readsExpr "(replicate a 0)" (.replicate zeroPos lhs 0)
 #guard readsExpr "(extract a 0 0)" (.extract zeroPos lhs 0 0)
@@ -99,7 +98,7 @@ def expectedStatements : List Stmt :=
 
 #guard match parse statements with
   | .ok d => match d.erasePos.items with
-    | [.module m] => m.body == expectedStatements && print d == statements
+    | [.module m] => m.body == expectedStatements
     | _ => false
   | .error _ => false
 
@@ -114,7 +113,7 @@ def externSource : String := "(design m (extern blackbox " ++
       e.ports == [⟨zeroPos, .input, "z", .clock⟩, ⟨zeroPos, .output, "q", .bits 8⟩,
         ⟨zeroPos, .input, "a", .bits 8⟩, ⟨zeroPos, .output, "p", .bits 8⟩] &&
       e.deps == [⟨zeroPos, "q", ["a", "z"]⟩, ⟨zeroPos, "p", []⟩] &&
-      print (canonicalize d) == externSource
+      canonicalize d == d
     | _ => false
   | .error _ => false
 
@@ -127,7 +126,7 @@ def externSource : String := "(design m (extern blackbox " ++
 #guard (["_", "A", "z", "_0$", "Az09_$", "add0", "Add"].all fun n =>
   (parse ("(design " ++ n ++ " (module " ++ n ++ "))")).isOk)
 #guard readsExpr "U_0.q$" (.port zeroPos "U_0" "q$")
-#guard (["0a", "$a", "a-b", "a.b", "é", "aé", "add", "sync", "eq"].all fun n =>
+#guard (["0a", "$a", "a.b", "é", "add", "sync", "eq"].all fun n =>
   match parse ("(design " ++ n ++ ")") with
   | .error e => e.code == .E001 && e.pos == ⟨1, 9⟩
   | .ok _ => false)
@@ -171,11 +170,122 @@ def sortedSource : String := "(design z " ++
   "(next r v) (write ram 2 a b en) (write ram 10 a b en) (assign zq r)))"
 
 #guard match parse unsortedSource with
-  | .ok d => print d == unsortedSource && print (canonicalize d) == sortedSource &&
+  | .ok d =>
     canonicalize (canonicalize d) == canonicalize d
   | .error _ => false
 #guard match parse unsortedSource, parse sortedSource with
   | .ok a, .ok b => print (canonicalize a) == print (canonicalize b)
   | _, _ => false
+
+/-! The counter fixes indentation, parentheses, and the final LF byte for byte. -/
+#guard (parse counter).toOption.map print == some (counter ++ "\n")
+#guard (parse "(design m)").toOption.map print == some "(design m)\n"
+#guard (parse "(design m (module m) (extern e (deps q ())))").toOption.map print ==
+  some "(design m\n  (module m)\n  (extern e\n    (deps q ())))\n"
+
+#guard rejectsAt "(design m (module m (assign q (const 4294967296 0))))" ⟨1, 38⟩
+#guard rejectsAt "(design m (module m (input a (bits 4294967296))))" ⟨1, 36⟩
+#guard rejectsAt "(design m (module m (mem ram (bits 8) 4294967296 clk)))" ⟨1, 39⟩
+#guard rejectsAt "(design m (module m (write ram 4294967296 a b en)))" ⟨1, 32⟩
+#guard rejectsAt "(design m (module m (assign q (extract a 4294967296 1))))" ⟨1, 42⟩
+#guard rejectsAt "(design m (module m (assign q (extract a 0 4294967296))))" ⟨1, 44⟩
+#guard rejectsAt "(design m (module m (assign q (replicate a 4294967296))))" ⟨1, 44⟩
+
+/-! Only compound expressions count toward the nesting limit. -/
+def nestedNot (depth : Nat) : String :=
+  String.join (List.replicate depth "(not ") ++ "a" ++
+    String.join (List.replicate depth ")")
+
+def assigned (expr : String) : String := "(design m (module m (assign q " ++ expr ++ ")))"
+
+set_option maxRecDepth 4096 in
+#guard (parse (assigned (nestedNot 256))).isOk
+set_option maxRecDepth 4096 in
+#guard rejectsAt (assigned (nestedNot 257)) ⟨1, 31 + 5 * 256⟩
+set_option maxRecDepth 4096 in
+#guard (parse ("(design m (module m (reg r (bits 1) clk (reset sync " ++
+  nestedNot 256 ++ " " ++ nestedNot 256 ++ "))))")).isOk
+set_option maxRecDepth 4096 in
+#guard (parse ("(design m (module m (inst u child (d " ++ nestedNot 256 ++ "))))")).isOk
+
+/-! Bad characters have their own position within a maximal token. -/
+#guard rejectsAt ("(design" ++ String.singleton (Char.ofNat 12) ++ "m)") ⟨1, 8⟩
+#guard rejectsAt "(design aé)" ⟨1, 10⟩
+#guard rejectsAt "(design a-b)" ⟨1, 10⟩
+#guard rejectsAt "(design 12abc)" ⟨1, 9⟩
+#guard rejectsAt (assigned "a.1") ⟨1, 31⟩
+#guard rejectsAt (assigned "a.") ⟨1, 31⟩
+#guard (parse "(design\tm\r\n(module m))").isOk
+
+/-! Port declarations determine dependency and connection order, not their names. -/
+def portOrderSource : String := "(design parent " ++
+  "(module parent (inst u child (a x) (z y)) " ++
+  "(inst v ext (a x) (z y)) (inst w missing (a x) (z y))) " ++
+  "(module child (input z (bits 1)) (input a (bits 1))) " ++
+  "(extern ext (input z (bits 1)) (input a (bits 1)) " ++
+  "(output q (bits 1)) (output p (bits 1)) (deps p (a z)) (deps q ())))"
+
+def portOrderExpected : String := "(design parent " ++
+  "(module child (input z (bits 1)) (input a (bits 1))) " ++
+  "(extern ext (input z (bits 1)) (input a (bits 1)) " ++
+  "(output q (bits 1)) (output p (bits 1)) (deps q ()) (deps p (a z))) " ++
+  "(module parent (inst u child (z y) (a x)) " ++
+  "(inst v ext (z y) (a x)) (inst w missing (a x) (z y))))"
+
+#guard match parse portOrderSource, parse portOrderExpected with
+  | .ok a, .ok b => (canonicalize a).erasePos == b.erasePos &&
+    canonicalize (canonicalize a) == canonicalize a
+  | _, _ => false
+
+/-! The first syntax error wins across numbers, grammar, and bad characters. -/
+#guard rejectsAt "(design m (module m (let x (bits 4294967296) a) (bad)))" ⟨1, 34⟩
+#guard rejectsAt "(design m (module m (bad) (assign q aé)))" ⟨1, 22⟩
+#guard rejectsAt "(design 12aé)" ⟨1, 12⟩
+set_option maxRecDepth 4096 in
+#guard rejectsAt ("(design m (module m (reg r (bits 1) clk (reset sync " ++
+  nestedNot 257 ++ " a))))") ⟨1, 53 + 5 * 256⟩
+set_option maxRecDepth 4096 in
+#guard rejectsAt ("(design m (module m (inst u child (d " ++ nestedNot 257 ++ "))))")
+  ⟨1, 38 + 5 * 256⟩
+set_option maxRecDepth 4096 in
+#guard rejectsAt (assigned (String.join (List.replicate 256 "(not ") ++
+  "(const 1 0)" ++ String.join (List.replicate 256 ")"))) ⟨1, 31 + 5 * 256⟩
+
+#guard (parse ("(design z (module z (output q (bits 1)) (input a (bits 1)) " ++
+  "(assign q a) (let x (bits 1) a)) (module a))")).toOption.map print ==
+  some ("(design z\n  (module z\n    (output q (bits 1))\n    (input a (bits 1))\n" ++
+    "    (assign q a)\n    (let x (bits 1) a))\n  (module a))\n")
+
+#guard (parse ("(design m (extern e (output q (bits 1)) (output p (bits 1)) " ++
+  "(deps p ()) (deps q ())) (module m (inst u e (p a) (q b))))")).toOption.map print ==
+  some ("(design m\n  (extern e\n    (output q (bits 1))\n    (output p (bits 1))\n" ++
+    "    (deps p ())\n    (deps q ()))\n  (module m\n    (inst u e (p a) (q b))))\n")
+
+/-! This concrete design is the counter after source positions are erased. -/
+def counterDesign : Design := ⟨"counter", [.module ⟨zeroPos, "counter",
+  [⟨zeroPos, .input, "clk", .clock⟩, ⟨zeroPos, .input, "rst", .bits 1⟩,
+   ⟨zeroPos, .input, "en", .bits 1⟩, ⟨zeroPos, .output, "q", .bits 8⟩],
+  [.reg zeroPos "r" 8 "clk" (some ⟨.sync, .ref zeroPos "rst", .const zeroPos 8 0⟩),
+   .let_ zeroPos "inc" 8 (.bin zeroPos .add (.ref zeroPos "r") (.const zeroPos 8 1)),
+   .next zeroPos "r" (.mux zeroPos (.ref zeroPos "en")
+     (.ref zeroPos "inc") (.ref zeroPos "r")),
+   .assign zeroPos "q" (.ref zeroPos "r")]⟩]⟩
+
+#guard (parse counter).toOption.map Design.erasePos == some counterDesign
+
+example : counterDesign.ValidNames := by
+  simp [Design.ValidNames, counterDesign, Item.names, Stmt.names, Reset.names, Expr.names]
+  decide
+
+#guard rejectsAt "(design m (module m (assign q (const 4294967296 nope))))" ⟨1, 38⟩
+#guard rejectsAt "(design m (module m (assign q (extract a 4294967296 nope))))" ⟨1, 42⟩
+#guard rejectsAt "(design m (module m (bad) (assign q (const 4294967296 0))))" ⟨1, 22⟩
+#guard (parse ("(design m (module m (input a (bits 4294967295)) " ++
+  "(mem ram (bits 4294967295) 4294967295 clk) " ++
+  "(write ram 4294967295 a a a)))")).isOk
+
+example : counterDesign.WithinLimits := by
+  unfold Design.WithinLimits
+  decide
 
 end Silicon.Core.Test

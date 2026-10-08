@@ -14,7 +14,7 @@ def keywords : List String :=
    "mul", "and", "or", "xor", "shl", "shru", "shrs", "concat", "icmp", "mux", "extract",
    "replicate", "read", "eq", "ne", "ult", "ule", "ugt", "uge", "slt", "sle", "sgt", "sge"]
 
-def nameStart (c : Char) : Bool := c.isAlpha && c.toNat < 128 || c == '_'
+def nameStart (c : Char) : Bool := c.isAlpha || c == '_'
 
 def nameRest (c : Char) : Bool := nameStart c || c.isDigit || c == '$'
 
@@ -50,6 +50,90 @@ def Item.names : Item → List String
 def Design.ValidNames (d : Design) : Prop :=
   ∀ n ∈ d.top :: d.items.flatMap Item.names, validName n = true
 
+/-! Parser limits concern expression depth and all numbers except constant values. -/
+structure TextLimit where
+  pos : Pos
+  path : List Nat
+  value : Nat
+  bound : Nat
+  deriving Repr
+
+def TextLimit.ok (l : TextLimit) : Bool := l.value ≤ l.bound
+
+def numberLimit (p : Pos) (path : List Nat) (n : Nat) : TextLimit :=
+  ⟨p, path, n, 4294967295⟩
+
+/-! A name has depth zero. Each compound expression adds one level. -/
+def Expr.textLimits (depth : Nat) : Expr → List TextLimit
+  | .ref .. | .port .. => []
+  | .const p w _ => [⟨p, [], depth + 1, 256⟩, numberLimit p [1] w]
+  | .un p _ a => ⟨p, [], depth + 1, 256⟩ :: a.textLimits (depth + 1)
+  | .bin p _ a b | .icmp p _ a b =>
+    ⟨p, [], depth + 1, 256⟩ :: (a.textLimits (depth + 1) ++ b.textLimits (depth + 1))
+  | .mux p a b c => ⟨p, [], depth + 1, 256⟩ ::
+    (a.textLimits (depth + 1) ++ b.textLimits (depth + 1) ++ c.textLimits (depth + 1))
+  | .extract p a l w => ⟨p, [], depth + 1, 256⟩ ::
+    (a.textLimits (depth + 1) ++ [numberLimit p [2] l, numberLimit p [3] w])
+  | .replicate p a n => ⟨p, [], depth + 1, 256⟩ ::
+    (a.textLimits (depth + 1) ++ [numberLimit p [2] n])
+  | .read p _ a => ⟨p, [], depth + 1, 256⟩ :: a.textLimits (depth + 1)
+
+def Reset.textLimits (r : Reset) : List TextLimit :=
+  r.signal.textLimits 0 ++ r.value.textLimits 0
+
+def Stmt.textLimits : Stmt → List TextLimit
+  | .let_ p _ w v => numberLimit p [2, 1] w :: v.textLimits 0
+  | .reg p _ w _ r => numberLimit p [2, 1] w :: r.toList.flatMap Reset.textLimits
+  | .mem p _ w d _ => [numberLimit p [2, 1] w, numberLimit p [3] d]
+  | .next _ _ v | .assign _ _ v => v.textLimits 0
+  | .write p _ i a d e => numberLimit p [2] i ::
+    (a.textLimits 0 ++ d.textLimits 0 ++ e.textLimits 0)
+  | .inst _ _ _ xs => xs.flatMap (fun x => x.2.textLimits 0)
+
+def Port.textLimits (p : Port) : List TextLimit :=
+  match p.ty with
+  | .clock => []
+  | .bits n => [numberLimit p.pos [2, 1] n]
+
+def Item.textLimits : Item → List TextLimit
+  | .module m => m.ports.flatMap Port.textLimits ++ m.body.flatMap Stmt.textLimits
+  | .extern e => e.ports.flatMap Port.textLimits
+
+def Design.textLimits (d : Design) : List TextLimit := d.items.flatMap Item.textLimits
+
+def Design.WithinLimits (d : Design) : Prop := d.textLimits.all TextLimit.ok = true
+
+/-! Source erasure leaves the values of all parser limits unchanged. -/
+@[simp] theorem Expr.textLimits_erase (e : Expr) (depth : Nat) :
+    (e.erasePos.textLimits depth).map TextLimit.ok = (e.textLimits depth).map TextLimit.ok := by
+  induction e generalizing depth <;>
+    simp_all [Expr.erasePos, Expr.textLimits, numberLimit, TextLimit.ok]
+
+@[simp] theorem Reset.textLimits_erase (r : Reset) :
+    r.erasePos.textLimits.map TextLimit.ok = r.textLimits.map TextLimit.ok := by
+  simp [Reset.erasePos, Reset.textLimits]
+
+@[simp] theorem Stmt.textLimits_erase (s : Stmt) :
+    s.erasePos.textLimits.map TextLimit.ok = s.textLimits.map TextLimit.ok := by
+  cases s <;> simp [Stmt.erasePos, Stmt.textLimits, numberLimit, TextLimit.ok,
+    List.map_flatMap, List.flatMap_map]
+  rename_i r
+  cases r <;> simp
+
+@[simp] theorem Port.textLimits_erase (p : Port) :
+    p.erasePos.textLimits.map TextLimit.ok = p.textLimits.map TextLimit.ok := by
+  cases p with
+  | mk pos dir name ty => cases ty <;> rfl
+
+@[simp] theorem Item.textLimits_erase (i : Item) :
+    i.erasePos.textLimits.map TextLimit.ok = i.textLimits.map TextLimit.ok := by
+  cases i <;> simp [Item.erasePos, Item.textLimits, List.map_flatMap, List.flatMap_map]
+
+@[simp] theorem Design.textLimits_erase (d : Design) :
+    d.erasePos.textLimits.map TextLimit.ok = d.textLimits.map TextLimit.ok := by
+  simp [Design.erasePos, Design.textLimits, List.map_flatMap, List.flatMap_map]
+
+
 /-! Tokens retain their first character position. The final position marks the end of the file. -/
 namespace Text
 
@@ -61,7 +145,8 @@ structure Token where
 def advance (p : Pos) (c : Char) : Pos :=
   if c == '\n' then ⟨p.line + 1, 1⟩ else ⟨p.line, p.col + 1⟩
 
-def delimiter (c : Char) : Bool := c.isWhitespace || c == '(' || c == ')' || c == ';'
+def delimiter (c : Char) : Bool :=
+  c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '(' || c == ')' || c == ';'
 
 def flush (start : Pos) (word : List Char) (tokens : List Token) : List Token :=
   if word.isEmpty then tokens else ⟨start, String.ofList word.reverse⟩ :: tokens
@@ -79,6 +164,26 @@ def lexLoop : List Char → Pos → Pos → List Char → Bool → List Token �
       lexLoop cs (advance p c) (if word.isEmpty then p else start) (c :: word) false tokens
 
 def lex (s : String) : List Token × Pos := lexLoop s.toList ⟨1, 1⟩ ⟨1, 1⟩ [] false []
+
+/-! A malformed atom reports its first bad character rather than the atom's start. -/
+def tokenCharacter (c : Char) : Bool := nameRest c || c == '.'
+
+def badTokenCharacter (t : Token) : Option Error :=
+  if t.text == "(" || t.text == ")" then none else
+    let chars := t.text.toList
+    let offset := chars.findIdx (!tokenCharacter ·)
+    if offset < chars.length then
+      some ⟨.E001, ⟨t.pos.line, t.pos.col + offset⟩, "invalid character"⟩
+    else none
+
+def badCharacter : List Token → Option Error
+  | [] => none
+  | t :: ts => (badTokenCharacter t).orElse (fun _ => badCharacter ts)
+
+def correctTokenError (tokens : List Token) (error : Error) : Error :=
+  match tokens.find? (·.pos == error.pos) with
+  | none => error
+  | some t => (badTokenCharacter t).getD error
 
 /-! A missing closing token stays in the tree so earlier grammar errors take priority. -/
 inductive Form where
@@ -307,8 +412,8 @@ def item (eof : Pos) (fuel : Nat) : Reader Item := form eof fun p => do
 
 end Text
 
-/-! Parsing uses the complete file length as a structural recursion bound. -/
-def parse (s : String) : Except Error Design := do
+/-! Parsing uses the token count as a structural recursion bound. -/
+def Text.parseRaw (s : String) : Except Error Design := do
   let (ts, eof) := Text.lex s
   let fuel := ts.length + 1
   let (fs, rest) := Text.forms fuel ts
@@ -318,6 +423,104 @@ def parse (s : String) : Except Error Design := do
     return ⟨← Text.name, ← Text.remaining (Text.item eof fuel)⟩) ⟨fs, eof, true⟩
   let _ ← Text.finish c
   pure d
+
+/-! Limits retain the position of the field that violates them. -/
+namespace Text
+
+def Form.atPath : Form → List Nat → Pos
+  | f, [] => f.pos
+  | .list p fs _, i :: path =>
+    match fs[i]? with
+    | some f => f.atPath path
+    | none => p
+  | f, _ => f.pos
+
+mutual
+  def Form.findPos (p : Pos) : Form → Option Form
+    | f@(.atom _) | f@(.bad _) => if f.pos == p then some f else none
+    | f@(.list _ fs _) =>
+      if f.pos == p then some f else Form.findPosMany p fs
+  def Form.findPosMany (p : Pos) : List Form → Option Form
+    | [] => none
+    | f :: fs => (f.findPos p).or (Form.findPosMany p fs)
+end
+
+def locateLimit (fs : List Form) (l : TextLimit) : Pos :=
+  match fs.findSome? (fun f => f.findPos l.pos) with
+  | some f => f.atPath l.path
+  | none => l.pos
+
+def limitFailure (p : Pos) : Error := ⟨.E001, p, "parser limit exceeded"⟩
+
+def earlier (a b : Error) : Error :=
+  if a.pos.line < b.pos.line || (a.pos.line == b.pos.line && a.pos.col ≤ b.pos.col)
+  then a else b
+
+def firstError (a b : Option Error) : Option Error :=
+  match a, b with
+  | none, b => b
+  | a, none => a
+  | some a, some b => some (earlier a b)
+
+/-! The source pass also finds limits before an incomplete grammar form. -/
+inductive LimitContext where
+  | syntax
+  | expr (depth : Nat)
+  | connection
+  | number
+  deriving DecidableEq
+
+def childContext (ctx : LimitContext) (tag : String) (i : Nat) : LimitContext :=
+  match ctx with
+  | .expr depth =>
+    if tag == "const" then (if i == 1 then .number else .syntax)
+    else if tag == "extract" && (i == 2 || i == 3) || tag == "replicate" && i == 2
+      then .number
+    else if i == 0 then .syntax else .expr (depth + 1)
+  | .connection => if i == 1 then .expr 0 else .syntax
+  | _ =>
+    if tag == "bits" && i == 1 || tag == "mem" && i == 3 || tag == "write" && i == 2
+      then .number
+    else if tag == "let" && i == 3 || (tag == "next" || tag == "assign") && i == 2 ||
+        tag == "write" && i ≥ 3 || tag == "reset" && i ≥ 2 then .expr 0
+    else if tag == "inst" && i ≥ 3 then .connection
+    else .syntax
+
+mutual
+  def sourceLimit (ctx : LimitContext) : Form → Option Error
+    | .atom t =>
+      if ctx == .number && t.text.toList.all Char.isDigit &&
+          Nat.ofDigitChars 10 t.text.toList 0 > 4294967295
+      then some (limitFailure t.pos) else none
+    | .bad _ => none
+    | .list p fs _ =>
+      let depthError := match ctx with
+        | .expr depth => if depth ≥ 256 then some (limitFailure p) else none
+        | _ => none
+      let tag := match fs with | .atom t :: _ => t.text | _ => ""
+      firstError depthError (sourceLimits ctx tag 0 fs)
+  def sourceLimits (ctx : LimitContext) (tag : String) (i : Nat) : List Form → Option Error
+    | [] => none
+    | f :: fs => firstError (sourceLimit (childContext ctx tag i) f)
+        (sourceLimits ctx tag (i + 1) fs)
+end
+
+end Text
+
+/-! Grammar, character, and limit errors compete by their source position. -/
+def parse (s : String) : Except Error Design :=
+  let (ts, _) := Text.lex s
+  let fs := (Text.forms (ts.length + 1) ts).1
+  match Text.parseRaw s with
+  | .ok d =>
+    match d.textLimits.find? (fun l => !l.ok) with
+    | none => .ok d
+    | some l => .error (Text.limitFailure (Text.locateLimit fs l))
+  | .error e =>
+    let e := Text.correctTokenError ts e
+    let other := Text.firstError (Text.badCharacter ts)
+      (Text.sourceLimits .syntax "" 0 fs)
+    .error (match other with | none => e | some other => Text.earlier e other)
 
 /-! Printing uses a single space between fields and never reorders them. -/
 namespace Text
@@ -358,13 +561,18 @@ def printPort (p : Port) : String :=
 
 def printDep (d : Dep) : String := list ["deps", d.output, list d.inputs]
 
+def block (header : List String) (entries : List String) (indent : String) : String :=
+  "(" ++ String.intercalate " " header ++
+    String.join (entries.map (fun entry => "\n" ++ indent ++ entry)) ++ ")"
+
 def printItem : Item → String
-  | .module m => list (["module", m.name] ++ m.ports.map printPort ++ m.body.map printStmt)
-  | .extern e => list (["extern", e.name] ++ e.ports.map printPort ++ e.deps.map printDep)
+  | .module m => block ["module", m.name] (m.ports.map printPort ++ m.body.map printStmt) "    "
+  | .extern e => block ["extern", e.name] (e.ports.map printPort ++ e.deps.map printDep) "    "
 
 end Text
 
-def print (d : Design) : String := Text.list (["design", d.top] ++ d.items.map Text.printItem)
+def print (d : Design) : String :=
+  Text.block ["design", d.top] (d.items.map Text.printItem) "  " ++ "\n"
 
 /-! Canonical order sorts items by name and statements by kind, name, then write port. -/
 def Stmt.sortKey : Stmt → Nat × String × Nat
@@ -385,10 +593,28 @@ def Stmt.before (a b : Stmt) : Bool :=
   let (kb, nb, pb) := b.sortKey
   ka < kb || (ka == kb && (na < nb || (na == nb && pa ≤ pb)))
 
+def Item.ports : Item → List Port
+  | .module m => m.ports
+  | .extern e => e.ports
+
+private def portIndex (ports : List Port) (name : String) : Nat :=
+  ports.findIdx (·.name == name)
+
+private def canonicalStmt (items : List Item) : Stmt → Stmt
+  | .inst p n child connections =>
+    match items.find? (·.name == child) with
+    | none => .inst p n child connections
+    | some item => .inst p n child (connections.mergeSort fun a b =>
+        portIndex item.ports a.1 ≤ portIndex item.ports b.1)
+  | stmt => stmt
+
 def canonicalize (d : Design) : Design :=
-  { d with items := (d.items.map fun
-      | .module m => .module { m with body := m.body.mergeSort Stmt.before }
-      | .extern e => .extern e).mergeSort (fun a b => a.name ≤ b.name) }
+  let items := d.items.map fun
+    | .module m => .module { m with
+        body := (m.body.map (canonicalStmt d.items)).mergeSort Stmt.before }
+    | .extern e => .extern { e with deps := e.deps.mergeSort (fun a b =>
+        portIndex e.ports a.output ≤ portIndex e.ports b.output) }
+  { d with items := items.mergeSort (fun a b => a.name ≤ b.name) }
 
 namespace Text
 
@@ -423,28 +649,28 @@ theorem lexLoop_space (rest : List Char) (p start : Pos)
     (word : List Char) (tokens : List Token) :
     lexLoop (' ' :: rest) p start word false tokens =
       lexLoop rest (advance p ' ') (advance p ' ') [] false (flush start word tokens) := by
-  simp [lexLoop, delimiter, Char.isWhitespace]
+  simp [lexLoop, delimiter]
 
 theorem lexLoop_lparen (rest : List Char) (p start : Pos)
     (word : List Char) (tokens : List Token) :
     lexLoop ('(' :: rest) p start word false tokens =
       lexLoop rest (advance p '(') (advance p '(') [] false
         (⟨p, "("⟩ :: flush start word tokens) := by
-  simp [lexLoop, delimiter, Char.isWhitespace]
+  simp [lexLoop, delimiter]
 
 theorem lexLoop_rparen (rest : List Char) (p start : Pos)
     (word : List Char) (tokens : List Token) :
     lexLoop (')' :: rest) p start word false tokens =
       lexLoop rest (advance p ')') (advance p ')') [] false
         (⟨p, ")"⟩ :: flush start word tokens) := by
-  simp [lexLoop, delimiter, Char.isWhitespace]
+  simp [lexLoop, delimiter]
 
 /-! Legal name characters cannot end an atom or start a comment. -/
 theorem nameRest_delimiter (c : Char) (h : nameRest c = true) : delimiter c = false := by
   cases hd : delimiter c with
   | false => rfl
   | true =>
-    simp only [delimiter, Char.isWhitespace, Bool.or_eq_true, decide_eq_true_eq,
+    simp only [delimiter, Bool.or_eq_true,
       beq_iff_eq] at hd
     rcases hd with ((((((hc | hc) | hc) | hc) | hc) | hc) | hc) <;>
       subst c <;> contradiction
@@ -539,30 +765,44 @@ inductive Tree where
   | list (children : List Tree)
   deriving Repr
 
+def Tree.separator (depth : Nat) (first : Bool) : List Char :=
+  if first then [' '] else
+    match depth with
+    | 0 => [' ']
+    | 1 => ['\n', ' ', ' ', ' ', ' ']
+    | _ => ['\n', ' ', ' ']
+
 mutual
-  def Tree.chars : Tree → List Char
-    | .atom s => s.toList
-    | .list xs => '(' :: Tree.forestChars xs ++ [')']
-  def Tree.forestChars : List Tree → List Char
-    | [] => []
-    | [x] => x.chars
-    | x :: y :: xs => x.chars ++ ' ' :: Tree.forestChars (y :: xs)
+  def Tree.chars : Tree → Nat → List Char
+    | .atom s, _ => s.toList
+    | .list xs, depth => '(' :: Tree.forestChars xs depth true ++ [')']
+  def Tree.forestChars : List Tree → Nat → Bool → List Char
+    | [], _, _ => []
+    | [x], depth, _ => x.chars (depth - 1)
+    | x :: y :: xs, depth, first =>
+      x.chars (depth - 1) ++ Tree.separator depth first ++
+        Tree.forestChars (y :: xs) depth false
 end
 
-def Tree.render (t : Tree) : String := String.ofList t.chars
+def Tree.render (t : Tree) (depth : Nat := 0) : String := String.ofList (t.chars depth)
 
-def Tree.after (t : Tree) (p : Pos) : Pos := t.chars.foldl advance p
+def Tree.after (t : Tree) (p : Pos) (depth : Nat := 0) : Pos :=
+  (t.chars depth).foldl advance p
 
 /-! Placement assigns the positions that scanning the rendered tree will produce. -/
 mutual
-  def Tree.place : Tree → Pos → Form
-    | .atom s, p => .atom ⟨p, s⟩
-    | .list xs, p =>
+  def Tree.place (t : Tree) (p : Pos) (depth : Nat := 0) : Form :=
+    match t with
+    | .atom s => .atom ⟨p, s⟩
+    | .list xs =>
       let inner := advance p '('
-      .list p (Tree.placeMany xs inner) (some ((Tree.forestChars xs).foldl advance inner))
-  def Tree.placeMany : List Tree → Pos → List Form
-    | [], _ => []
-    | x :: xs, p => x.place p :: Tree.placeMany xs (advance (x.after p) ' ')
+      .list p (Tree.placeMany xs inner depth true)
+        (some ((Tree.forestChars xs depth true).foldl advance inner))
+  def Tree.placeMany : List Tree → Pos → Nat → Bool → List Form
+    | [], _, _, _ => []
+    | x :: xs, p, depth, first =>
+      x.place p (depth - 1) :: Tree.placeMany xs
+        ((Tree.separator depth first).foldl advance (x.after p (depth - 1))) depth false
 end
 
 /-! A legal tree has nonempty atoms without token delimiters. -/
@@ -595,13 +835,15 @@ inductive Tree.MatchesMany : List Tree → List Form → Prop where
   | cons (h : Tree.Matches t f) (hs : MatchesMany ts fs) : MatchesMany (t :: ts) (f :: fs)
 end
 
-theorem Tree.place_matches (t : Tree) (p : Pos) : t.Matches (t.place p) := by
+theorem Tree.place_matches (t : Tree) (p : Pos) (depth : Nat := 0) :
+    t.Matches (t.place p depth) := by
   induction t using Tree.rec (motive_2 := fun xs =>
-      ∀ p, Tree.MatchesMany xs (Tree.placeMany xs p)) generalizing p with
+      ∀ p depth first, Tree.MatchesMany xs (Tree.placeMany xs p depth first))
+      generalizing p depth with
   | atom s => exact .atom p
-  | list xs ih => exact .list _ _ (ih _)
+  | list xs ih => exact .list _ _ (ih _ _ _)
   | nil => exact .nil
-  | cons x xs ih ihs => exact .cons (ih _) (ihs _)
+  | cons x xs ih ihs => exact .cons (ih _ _) (ihs _ _ _)
 
 /-! Flattening a positioned form recovers its token sequence. -/
 mutual
@@ -615,20 +857,45 @@ mutual
     | f :: fs => f.tokens ++ Form.tokensMany fs
 end
 
+theorem lexLoop_whitespace (chars rest : List Char) (p : Pos) (tokens : List Token)
+    (h : ∀ c ∈ chars, c = ' ' ∨ c = '\n') :
+    lexLoop (chars ++ rest) p p [] false tokens =
+      lexLoop rest (chars.foldl advance p) (chars.foldl advance p) [] false tokens := by
+  induction chars generalizing p with
+  | nil => rfl
+  | cons c cs ih =>
+    have hc := h c (by simp)
+    have ht : ∀ d ∈ cs, d = ' ' ∨ d = '\n' := fun d hd => h d (by simp [hd])
+    rcases hc with rfl | rfl <;>
+      simpa [lexLoop, delimiter, flush] using ih (advance p _) ht
+
+theorem Tree.separator_chars (depth : Nat) (first : Bool) :
+    ∀ c ∈ Tree.separator depth first, c = ' ' ∨ c = '\n' := by
+  cases first <;> cases depth with
+  | zero => simp [Tree.separator]
+  | succ n => cases n <;> simp [Tree.separator]
+
+theorem Tree.separator_ne (depth : Nat) (first : Bool) :
+    Tree.separator depth first ≠ [] := by
+  cases first <;> cases depth with
+  | zero => simp [Tree.separator]
+  | succ n => cases n <;> simp [Tree.separator]
+
 /-! Scanning a legal tree produces exactly its positioned tokens. -/
 theorem Tree.lex_chars (t : Tree) (legal : t.Legal) (p : Pos)
-    (c : Char) (rest : List Char) (tokens : List Token) (hc : delimiter c = true) :
-    lexLoop (t.chars ++ c :: rest) p p [] false tokens =
-      lexLoop (c :: rest) (t.after p) (t.after p) [] false
-        ((t.place p).tokens.reverse ++ tokens) := by
+    (c : Char) (rest : List Char) (tokens : List Token) (hc : delimiter c = true)
+    (depth : Nat := 0) :
+    lexLoop (t.chars depth ++ c :: rest) p p [] false tokens =
+      lexLoop (c :: rest) (t.after p depth) (t.after p depth) [] false
+        ((t.place p depth).tokens.reverse ++ tokens) := by
   induction t using Tree.rec (motive_2 := fun xs =>
       ∀ (legal : Tree.LegalMany xs) (p : Pos) (c : Char) (rest : List Char)
-        (tokens : List Token), delimiter c = true →
-        lexLoop (Tree.forestChars xs ++ c :: rest) p p [] false tokens =
-          lexLoop (c :: rest) ((Tree.forestChars xs).foldl advance p)
-            ((Tree.forestChars xs).foldl advance p) [] false
-            ((Form.tokensMany (Tree.placeMany xs p)).reverse ++ tokens))
-      generalizing p c rest tokens with
+        (tokens : List Token), delimiter c = true → ∀ depth first,
+        lexLoop (Tree.forestChars xs depth first ++ c :: rest) p p [] false tokens =
+          lexLoop (c :: rest) ((Tree.forestChars xs depth first).foldl advance p)
+            ((Tree.forestChars xs depth first).foldl advance p) [] false
+            ((Form.tokensMany (Tree.placeMany xs p depth first)).reverse ++ tokens))
+      generalizing p c rest tokens depth with
   | atom s =>
     rw [Tree.chars, lexLoop_atom_boundary s c rest p p tokens legal.1 legal.2 hc]
     simp [Tree.place, Form.tokens, Tree.after, Tree.chars, lexLoop, hc, flush]
@@ -642,27 +909,37 @@ theorem Tree.lex_chars (t : Tree) (legal : t.Legal) (p : Pos)
       List.reverse_append, flush, List.append_assoc]
   | nil => rfl
   | cons x xs ih ihs =>
-    rename_i legal p c rest tokens hc
+    rename_i legal p c rest tokens hc depth first
     cases xs with
     | nil =>
       simpa [Tree.forestChars, Tree.placeMany, Form.tokensMany, Tree.after] using
-        ih legal.1 p c rest tokens hc
+        ih legal.1 p c rest tokens hc (depth - 1)
     | cons y ys =>
-      simp only [Tree.forestChars, List.append_assoc, List.cons_append]
-      rw [ih legal.1 p ' ' (Tree.forestChars (y :: ys) ++ c :: rest) tokens (by decide)]
-      rw [lexLoop_space]
-      simp only [flush, List.isEmpty_nil, ↓reduceIte]
-      rw [ihs legal.2 (advance (x.after p) ' ') c rest
-        ((x.place p).tokens.reverse ++ tokens) hc]
-      simp [Tree.placeMany, Form.tokensMany, List.foldl_append, Tree.after,
-        List.reverse_append, List.append_assoc]
+      have hg := Tree.separator_chars depth first
+      have hn := Tree.separator_ne depth first
+      cases he : Tree.separator depth first with
+      | nil => exact False.elim (hn he)
+      | cons gap gaps =>
+        have hgap : delimiter gap = true := by
+          have h := hg gap (by simp [he])
+          rcases h with rfl | rfl <;> decide
+        simp only [Tree.forestChars, he, List.append_assoc, List.cons_append]
+        rw [ih legal.1 p gap (gaps ++ (Tree.forestChars (y :: ys) depth false ++ c :: rest))
+          tokens hgap (depth - 1)]
+        rw [show gap :: (gaps ++ (Tree.forestChars (y :: ys) depth false ++ c :: rest)) =
+          (gap :: gaps) ++ (Tree.forestChars (y :: ys) depth false ++ c :: rest) by simp]
+        rw [lexLoop_whitespace _ _ _ _ (by simpa [he] using hg)]
+        rw [ihs legal.2 _ c rest ((x.place p (depth - 1)).tokens.reverse ++ tokens)
+          hc depth false]
+        simp [Tree.placeMany, Form.tokensMany, List.foldl_append, Tree.after,
+          List.reverse_append, List.append_assoc, he]
 
 theorem lexLoop_append_space_fst (chars : List Char) (p start : Pos)
     (word : List Char) (comment : Bool) (tokens : List Token) :
     (lexLoop (chars ++ [' ']) p start word comment tokens).1 =
       (lexLoop chars p start word comment tokens).1 := by
   induction chars generalizing p start word comment tokens with
-  | nil => cases comment <;> simp [lexLoop, delimiter, Char.isWhitespace, flush]
+  | nil => cases comment <;> simp [lexLoop, delimiter, flush]
   | cons c cs ih =>
     simp only [List.cons_append, lexLoop]
     split
@@ -671,13 +948,31 @@ theorem lexLoop_append_space_fst (chars : List Char) (p start : Pos)
       · apply ih
       · apply ih
 
-theorem Tree.lex_render (t : Tree) (legal : t.Legal) :
-    (lex t.render).1 = (t.place ⟨1, 1⟩).tokens := by
-  change (lexLoop (String.ofList t.chars).toList ⟨1, 1⟩ ⟨1, 1⟩ [] false []).1 = _
+theorem lexLoop_append_lf_fst (chars : List Char) (p start : Pos)
+    (word : List Char) (comment : Bool) (tokens : List Token) :
+    (lexLoop (chars ++ ['\n']) p start word comment tokens).1 =
+      (lexLoop chars p start word comment tokens).1 := by
+  induction chars generalizing p start word comment tokens with
+  | nil => cases comment <;> simp [lexLoop, delimiter, flush]
+  | cons c cs ih =>
+    simp only [List.cons_append, lexLoop]
+    split
+    · apply ih
+    · split
+      · apply ih
+      · apply ih
+
+theorem lex_append_lf (s : String) : (lex (s ++ "\n")).1 = (lex s).1 := by
+  simp only [lex, String.toList_append]
+  exact lexLoop_append_lf_fst _ _ _ _ _ _
+
+theorem Tree.lex_render (t : Tree) (legal : t.Legal) (depth : Nat := 0) :
+    (lex (t.render depth)).1 = (t.place ⟨1, 1⟩ depth).tokens := by
+  change (lexLoop (String.ofList (t.chars depth)).toList ⟨1, 1⟩ ⟨1, 1⟩ [] false []).1 = _
   simp only [String.toList_ofList]
   rw [← lexLoop_append_space_fst]
-  rw [t.lex_chars legal ⟨1, 1⟩ ' ' [] [] (by decide)]
-  simp [lexLoop, delimiter, Char.isWhitespace, flush]
+  rw [t.lex_chars legal ⟨1, 1⟩ ' ' [] [] (by decide) depth]
+  simp [lexLoop, delimiter, flush]
 
 theorem legal_atom_ne (s : String) (h : (Tree.atom s).Legal) : s ≠ "(" ∧ s ≠ ")" := by
   constructor
@@ -692,15 +987,15 @@ theorem legal_atom_ne (s : String) (h : (Tree.atom s).Legal) : s ≠ "(" ∧ s �
 
 /-! The form reader reconstructs each legal tree within its token bound. -/
 theorem Tree.forms_tokens (t : Tree) (legal : t.Legal) (p : Pos)
-    (n : Nat) (hn : t.weight ≤ n) (rest : List Token) :
-    forms (n + 1) ((t.place p).tokens ++ rest) =
+    (n : Nat) (hn : t.weight ≤ n) (rest : List Token) (depth : Nat := 0) :
+    forms (n + 1) ((t.place p depth).tokens ++ rest) =
       let after := forms n rest
-      (t.place p :: after.1, after.2) := by
+      (t.place p depth :: after.1, after.2) := by
   induction t using Tree.rec (motive_2 := fun xs =>
       ∀ (legal : Tree.LegalMany xs) (p : Pos) (n : Nat), Tree.weightMany xs ≤ n →
-        ∀ (close : Pos) (rest : List Token),
-        forms (n + 1) (Form.tokensMany (Tree.placeMany xs p) ++ ⟨close, ")"⟩ :: rest) =
-          (Tree.placeMany xs p, ⟨close, ")"⟩ :: rest)) generalizing p n rest with
+        ∀ (close : Pos) (rest : List Token) (depth : Nat) (first : Bool),
+        forms (n + 1) (Form.tokensMany (Tree.placeMany xs p depth first) ++ ⟨close, ")"⟩ :: rest) =
+          (Tree.placeMany xs p depth first, ⟨close, ")"⟩ :: rest)) generalizing p n rest depth with
   | atom s =>
     have hs := legal_atom_ne s legal
     simp [Tree.place, Form.tokens, forms, hs]
@@ -717,7 +1012,7 @@ theorem Tree.forms_tokens (t : Tree) (legal : t.Legal) (p : Pos)
       rfl
   | nil => simp [Tree.placeMany, Form.tokensMany, forms]
   | cons x xs ih ihs =>
-    rename_i legal p n hn close rest
+    rename_i legal p n hn close rest depth first
     cases n with
     | zero =>
       have hx : 0 < x.weight := by cases x <;> simp [Tree.weight] <;> omega
@@ -730,24 +1025,25 @@ theorem Tree.forms_tokens (t : Tree) (legal : t.Legal) (p : Pos)
         simp only [Tree.weightMany] at hn
         omega
       simp only [Tree.placeMany, Form.tokensMany, List.append_assoc]
-      rw [ih legal.1 p (n + 1) hx]
-      rw [ihs legal.2 (advance (x.after p) ' ') n hxs]
+      rw [ih legal.1 p (n + 1) hx _ (depth - 1)]
+      rw [ihs legal.2 _ n hxs]
 
-theorem Tree.tokens_length (t : Tree) (p : Pos) : (t.place p).tokens.length = t.weight := by
-  induction t using Tree.rec (motive_2 := fun xs => ∀ p,
-      (Form.tokensMany (Tree.placeMany xs p)).length = Tree.weightMany xs)
-      generalizing p with
+theorem Tree.tokens_length (t : Tree) (p : Pos) (depth : Nat := 0) :
+    (t.place p depth).tokens.length = t.weight := by
+  induction t using Tree.rec (motive_2 := fun xs => ∀ p depth first,
+      (Form.tokensMany (Tree.placeMany xs p depth first)).length = Tree.weightMany xs)
+      generalizing p depth with
   | atom s => rfl
   | list xs ih => simp [Tree.place, Form.tokens, Tree.weight, ih, Nat.add_comm]; omega
   | nil => rfl
   | cons x xs ih ihs => simp [Tree.placeMany, Form.tokensMany, Tree.weightMany, ih, ihs]
 
 theorem Tree.forms_lex_render (t : Tree) (legal : t.Legal) (n : Nat)
-    (hn : t.weight ≤ n) :
-    ∃ f, t.Matches f ∧ forms (n + 1) (lex t.render).1 = ([f], []) := by
-  refine ⟨t.place ⟨1, 1⟩, t.place_matches _, ?_⟩
-  rw [t.lex_render legal]
-  have h := t.forms_tokens legal ⟨1, 1⟩ n hn []
+    (hn : t.weight ≤ n) (depth : Nat := 0) :
+    ∃ f, t.Matches f ∧ forms (n + 1) (lex (t.render depth)).1 = ([f], []) := by
+  refine ⟨t.place ⟨1, 1⟩ depth, t.place_matches _ depth, ?_⟩
+  rw [t.lex_render legal depth]
+  have h := t.forms_tokens legal ⟨1, 1⟩ n hn [] depth
   have hn0 : 0 < n := by
     have hw : 0 < t.weight := by cases t <;> simp [Tree.weight] <;> omega
     omega
@@ -755,38 +1051,63 @@ theorem Tree.forms_lex_render (t : Tree) (legal : t.Legal) (n : Nat)
   | zero => omega
   | succ n => simpa [forms] using h
 
-theorem Tree.forms_lex_render_length (t : Tree) (legal : t.Legal) :
+theorem Tree.forms_lex_render_length (t : Tree) (legal : t.Legal) (depth : Nat := 0) :
     ∃ f, t.Matches f ∧
-      forms ((lex t.render).1.length + 1) (lex t.render).1 = ([f], []) := by
-  apply t.forms_lex_render legal
-  rw [t.lex_render legal, t.tokens_length]
+      forms ((lex (t.render depth)).1.length + 1) (lex (t.render depth)).1 = ([f], []) := by
+  apply t.forms_lex_render legal _ _ depth
+  rw [t.lex_render legal depth, t.tokens_length _ depth]
   exact Nat.le_refl _
 
-@[simp] theorem Tree.render_atom (s : String) : (Tree.atom s).render = s := by
+@[simp] theorem Tree.render_atom (s : String) (depth : Nat := 0) :
+    (Tree.atom s).render depth = s := by
   simp [Tree.render, Tree.chars]
 
 /-! Tree rendering uses the same spacing as the public printer. -/
 theorem Tree.forestChars_render (xs : List Tree) :
-    String.ofList (Tree.forestChars xs) = String.intercalate " " (xs.map Tree.render) := by
+    ∀ first, String.ofList (Tree.forestChars xs 0 first) =
+      String.intercalate " " (xs.map Tree.render) := by
   induction xs with
   | nil => simp [Tree.forestChars]
   | cons x xs ih =>
+    intro first
     cases xs with
     | nil => simp [Tree.forestChars, Tree.render]
     | cons y ys =>
-      simp only [Tree.forestChars, String.ofList_append, List.map_cons,
-        String.intercalate_cons_cons]
-      rw [show ' ' :: Tree.forestChars (y :: ys) = [' '] ++
-        Tree.forestChars (y :: ys) from rfl, String.ofList_append, ih]
-      simp [Tree.render, String.append_assoc]
+      have hsep : Tree.separator 0 first = [' '] := by cases first <;> rfl
+      simp [Tree.forestChars, hsep, String.ofList_append, ih,
+        String.intercalate_cons_cons, Tree.render, String.append_assoc]
 
 @[simp] theorem Tree.render_list (xs : List Tree) :
     (Tree.list xs).render = Text.list (xs.map Tree.render) := by
   unfold Tree.render
   rw [Tree.chars]
-  change String.ofList (['('] ++ (Tree.forestChars xs ++ [')'])) = _
+  change String.ofList (['('] ++ (Tree.forestChars xs 0 true ++ [')'])) = _
   rw [String.ofList_append, String.ofList_append, Tree.forestChars_render]
   simp only [Text.list, String.append_assoc]; rfl
+
+theorem Tree.forestChars_prefixed (x : Tree) (xs : List Tree) (depth : Nat) :
+    String.ofList (Tree.forestChars (x :: xs) depth false) =
+      x.render (depth - 1) ++ String.join (xs.map fun t =>
+        String.ofList (Tree.separator depth false) ++ t.render (depth - 1)) := by
+  induction xs generalizing x with
+  | nil => simp [Tree.forestChars, Tree.render]
+  | cons y ys ih =>
+    simp [Tree.forestChars, String.ofList_append, ih, Tree.render, String.append_assoc]
+
+theorem Tree.render_block (a b : String) (xs : List Tree) (depth : Nat)
+    (hdepth : depth > 0 := by omega) :
+    (Tree.list (.atom a :: .atom b :: xs)).render depth =
+      Text.block [a, b] (xs.map fun t => t.render (depth - 1))
+        (if depth = 1 then "    " else "  ") := by
+  cases depth with
+  | zero => omega
+  | succ depth =>
+    simp only [Tree.render, Tree.chars, Tree.forestChars, Tree.separator,
+      List.cons_append, String.ofList_cons, String.ofList_append]
+    rw [Tree.forestChars_prefixed]
+    simp [Tree.render, Tree.chars, Text.block, String.append_assoc]
+    cases depth <;> simp only [Tree.separator, Bool.false_eq_true, ↓reduceIte,
+      Nat.succ_ne_zero, Function.comp_def, ← String.append_assoc] <;> rfl
 
 /-! The encoder gives each syntax node its grammar tree. -/
 def encodeTy : Ty → Tree
@@ -1546,14 +1867,18 @@ theorem parse_encode
       ∃ a, stmt eof fuel { c with forms := f :: c.forms } = .ok (a, c) ∧
         a.erasePos = s.erasePos)
     (d : Design) (hn : d.ValidNames) (hl : (encode d).Legal) :
-    (parse (encode d).render).map Design.erasePos = .ok d.erasePos := by
-  obtain ⟨f, hm, hf⟩ := (encode d).forms_lex_render_length hl
-  have hb : (encode d).weight < (lex (encode d).render).1.length + 1 := by
-    rw [(encode d).lex_render hl, Tree.tokens_length]
+    (parseRaw ((encode d).render 2 ++ "\n")).map Design.erasePos = .ok d.erasePos := by
+  obtain ⟨f, hm, hf⟩ := (encode d).forms_lex_render_length hl 2
+  have hf' : forms ((lex ((encode d).render 2 ++ "\n")).1.length + 1)
+      (lex ((encode d).render 2 ++ "\n")).1 = ([f], []) := by
+    simpa only [lex_append_lf] using hf
+  have hb : (encode d).weight < (lex ((encode d).render 2 ++ "\n")).1.length + 1 := by
+    rw [lex_append_lf, (encode d).lex_render hl 2, Tree.tokens_length _ _ 2]
     omega
-  obtain ⟨a, ha, hae⟩ := design_read hs d _ f hn hb hm (lex (encode d).render).2
-    ⟨[], (lex (encode d).render).2, true⟩
-  simp only [parse, hf, List.map_nil, List.append_nil]
+  obtain ⟨a, ha, hae⟩ := design_read hs d _ f hn hb hm
+    (lex ((encode d).render 2 ++ "\n")).2
+    ⟨[], (lex ((encode d).render 2 ++ "\n")).2, true⟩
+  simp only [parseRaw, hf', List.map_nil, List.append_nil]
   rw [ha]
   simp [finish, Bind.bind, Except.bind, Pure.pure, Except.pure, Except.map, hae]
 
@@ -1792,11 +2117,11 @@ theorem stmt_roundtrip (s : Stmt) (fuel : Nat) (f : Form)
 @[simp] theorem encodeDep_render (d : Dep) : (encodeDep d).render = printDep d := by
   simp [encodeDep, printDep, List.map_map, Function.comp_def]
 
-@[simp] theorem encodeItem_render (i : Item) : (encodeItem i).render = printItem i := by
-  cases i <;> simp [encodeItem, printItem, List.map_map, Function.comp_def]
+@[simp] theorem encodeItem_render (i : Item) : (encodeItem i).render 1 = printItem i := by
+  cases i <;> simp [encodeItem, printItem, Tree.render_block, List.map_map, Function.comp_def]
 
-theorem render_encode (d : Design) : (encode d).render = print d := by
-  simp [encode, print, List.map_map, Function.comp_def]
+theorem render_encode (d : Design) : (encode d).render 2 ++ "\n" = print d := by
+  simp [encode, print, Tree.render_block, List.map_map, Function.comp_def]
 
 @[simp] theorem legalMany_iff (xs : List Tree) :
     Tree.LegalMany xs ↔ ∀ x ∈ xs, x.Legal := by
@@ -1919,9 +2244,26 @@ theorem encode_legal (d : Design) (hn : d.ValidNames) : (encode d).Legal := by
 end Text
 
 /-! Printing and parsing preserve a valid design up to source positions. -/
-theorem parse_print (d : Design) (h : d.ValidNames) :
+theorem parse_print (d : Design) (h : d.ValidNames) (limits : d.WithinLimits) :
     (parse (print d)).map Design.erasePos = .ok d.erasePos := by
-  rw [← Text.render_encode]
-  exact Text.parse_encode Text.stmt_roundtrip d h (Text.encode_legal d h)
+  have raw : (Text.parseRaw (print d)).map Design.erasePos = .ok d.erasePos := by
+    rw [← Text.render_encode]
+    exact Text.parse_encode Text.stmt_roundtrip d h (Text.encode_legal d h)
+  cases hr : Text.parseRaw (print d) with
+  | error e => simp [hr, Except.map] at raw
+  | ok a =>
+    have he : a.erasePos = d.erasePos := by simpa [hr, Except.map, Except.bind] using raw
+    have hl : a.textLimits.map TextLimit.ok = d.textLimits.map TextLimit.ok := by
+      rw [← Design.textLimits_erase a, he, Design.textLimits_erase]
+    have ha : a.textLimits.all TextLimit.ok = true := by
+      have hmap := congrArg (fun xs : List Bool => xs.all id) hl
+      simp only [List.all_map, Function.comp_def, id_eq] at hmap
+      exact hmap.trans limits
+    have hn : a.textLimits.find? (fun l => !l.ok) = none := by
+      simp only [List.find?_eq_none]
+      intro l hm
+      have := List.all_eq_true.mp ha l hm
+      simp [this]
+    simp [parse, hr, hn, he, Except.map]
 
 end Silicon.Core
