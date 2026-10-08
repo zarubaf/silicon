@@ -1,23 +1,10 @@
-import Silicon.Core.Interp
+import Silicon.Core.Canonical.View
 import Silicon.Core.Text
 
 /-! Execution tests start from zero and use designs accepted by the checker. -/
 namespace Silicon.Core.Test.Interp
 
 open Semantics
-
-private def inputValues (m : Typed.Module) (values : List (String × Nat)) : Input m :=
-  fun p => match p.val.ty with
-  | .clock => ()
-  | .bits w => BitVec.ofNat w ((values.lookup p.val.name).getD 0)
-
-private def outputNumbers (m : Typed.Module) (values : Output m) : List Nat :=
-  m.ports.attach.filterMap fun p =>
-    if h : p.val.dir = .output then
-      match ht : p.val.ty with
-      | .clock => none
-      | .bits _ => some ((cast (congrArg TyValue ht) (values ⟨p.val, p.property, h⟩)).toNat)
-    else none
 
 private def runRaw (raw : Design) (vectors : List (List (String × Nat))) :
     Except String (List (List Nat)) :=
@@ -26,13 +13,7 @@ private def runRaw (raw : Design) (vectors : List (List (String × Nat))) :
   | .ok typed =>
     let d := CertifiedDesign.ofCheck raw typed accepted
     if noExterns : typed.externs = [] then
-      let env : Env typed := fun e he => False.elim (by simp [noExterns] at he)
-      match found : typed.bodies.find? (·.name == typed.top) with
-      | none => .error "top"
-      | some m =>
-        let hm := List.mem_of_find?_eq_some found
-        .ok ((Core.Interp.run d env m hm (Core.Interp.zeroState d env noExterns m hm)
-          (vectors.map (inputValues m))).map (outputNumbers m))
+      .ok ((namedRun d vectors noExterns).map (List.map Prod.snd))
     else .error "extern"
 
 private def runText (text : String) (vectors : List (List (String × Nat))) :
@@ -112,6 +93,25 @@ private def canonicalRun (text : String) (vectors : List (List (String × Nat)))
   some [[0], [1], [2], [3]]
 #guard canonicalRun handshake [[("x", 42), ("ack", 1)], [("x", 17), ("ack", 0)]] ==
   some [[42, 1], [17, 0]]
+
+private def chain (wide : Bool) : String :=
+  let rows := (List.range 40).map fun i =>
+    s!"(let x{i+1} (bits 64) (add x{i} x{i}))" ++
+      if wide then s!"(let y{i+1} (bits 64) (add x{i} y{i}))" else ""
+  "(design chain (module chain (input x0 (bits 64)) (output q (bits 64))" ++
+    (if wide then "(input y0 (bits 64)) (output r (bits 64))" else "") ++
+    String.join rows ++ "(assign q x40)" ++
+    (if wide then "(assign r y40)" else "") ++ "))"
+
+#guard runText (chain false) [[("x0", 1)]] == some [[2^40]]
+#guard runText (chain true) [[("x0", 1), ("y0", 3)]] == some [[2^40, 2^40 + 2]]
+
+private def hierarchyChain : String :=
+  (((chain false).replace "(design chain" "(design top").dropEnd 1).toString ++
+    "(module top (input x (bits 64)) (output q (bits 64))" ++
+    "(inst c chain (x0 x)) (assign q c.q)))"
+
+#guard runText hierarchyChain [[("x", 1)]] == some [[2^40]]
 
 end Silicon.Core.Test.Interp
 
@@ -265,6 +265,7 @@ private theorem counter_next (state : State counterDesign noExterns counter coun
       state (counterInput enable reset)).1 regRef =
         if reset = 1#1 then 0#8 else
           if enable = 1#1 then (show BitVec 8 from state regRef) + 1#8 else state regRef := by
+  rw [Core.Interp.step_eq_values]
   have values := interp_correct counterDesign noExterns counter counter_member
     state (counterInput enable reset)
   have rst := values (.name "rst") 1 rfl
@@ -336,8 +337,9 @@ theorem counter_four_cycles :
       [0#8, 1#8, 2#8, 3#8] := by
   have outputs (n : Nat) :
       (Core.Interp.step counterDesign noExterns counter counter_member
-        (countState n) (counterInput 1#1 0#1)).2 counterQ = BitVec.ofNat 8 n :=
-    (counter_output _ _).trans (counter_count n)
+        (countState n) (counterInput 1#1 0#1)).2 counterQ = BitVec.ofNat 8 n := by
+    rw [interp_step]
+    exact (counter_output _ _).trans (counter_count n)
   simp only [outputs]
   rfl
 

@@ -166,7 +166,7 @@ theorem counter_reset_output :
     (counterState (5#8)) (counterInput (1#1)) (.name "rst") 1 rfl
     (.input ⟨pos, .input, "rst", .bits 1⟩
       (List.mem_cons_of_mem _ (List.mem_cons_self ..)) rfl rfl)
-  simp only [step, nextLocalState, regRef, reg]
+  simp only [step, stepWithValues, localStepWithValues, nextLocalState, regRef, reg]
   change (if solution counterDesign noExterns counter counter_member
     (counterState (5#8)) (counterInput (1#1)) (.name "rst") 1 rfl = 1#1
     then 17#8 else
@@ -193,7 +193,7 @@ theorem counter_increment_output :
       (some ⟨.sync, .ref pos (.name "rst") rfl, .const pos 8 17⟩) 1 pos
       (.bin pos .add (by decide) (.ref pos (.name "r") rfl) (.const pos 8 1))
       (List.mem_cons_self ..))
-  simp only [step, nextLocalState, regRef, Core.Test.Step.reg]
+  simp only [step, stepWithValues, localStepWithValues, nextLocalState, regRef, Core.Test.Step.reg]
   change (if solution counterDesign noExterns counter counter_member
     (counterState (5#8)) (counterInput (0#1)) (.name "rst") 1 rfl = 1#1
     then 17#8 else solution counterDesign noExterns counter counter_member
