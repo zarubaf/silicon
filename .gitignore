@@ -1,0 +1,9 @@
+target/
+.lake/
+out/
+result*
+.scratch/
+.claude/worktrees/
+.direnv/
+.vale/styles/config/vocabularies/
+.superpowers/
