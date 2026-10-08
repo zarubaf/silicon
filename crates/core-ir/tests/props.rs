@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use core_ir::ast::{Design, Expr, Item, Stmt};
+use core_ir::ast::{Design, Expr, Item, Module, Stmt};
 use core_ir::check::check;
 use core_ir::r#gen;
 use core_ir::interp::Sim;
@@ -30,19 +30,58 @@ fn design_and_lines() -> impl Strategy<Value = (Design, Vec<String>)> {
     })
 }
 
-/// `d` with its items and statements in reverse order.
+/// `d` with its items, statements, and connections in reverse order.
 fn reversed(d: &Design) -> Design {
     let mut out = d.clone();
     out.items.reverse();
     for item in &mut out.items {
         if let Item::Module(m) = item {
             m.stmts.reverse();
+            for stmt in &mut m.stmts {
+                if let Stmt::Inst { conns, .. } = stmt {
+                    conns.reverse();
+                }
+            }
         }
     }
     out
 }
 
+/// The modules of `d` by name.
+fn modules(d: &Design) -> BTreeMap<&str, &Module> {
+    d.items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Module(m) => Some((m.name.text.as_str(), m)),
+            Item::Extern(_) => None,
+        })
+        .collect()
+}
+
+/// The names of the modules that module `m` instantiates.
+fn children(m: &Module) -> impl Iterator<Item = &str> {
+    m.stmts.iter().filter_map(|s| match s {
+        Stmt::Inst { module, .. } => Some(module.text.as_str()),
+        _ => None,
+    })
+}
+
+/// The levels of instances below module `name`.
+fn levels(modules: &BTreeMap<&str, &Module>, name: &str) -> u32 {
+    modules.get(name).map_or(0, |m| {
+        children(m)
+            .map(|c| levels(modules, c) + 1)
+            .max()
+            .unwrap_or(0)
+    })
+}
+
 proptest! {
+    #![proptest_config(ProptestConfig {
+        failure_persistence: None,
+        ..ProptestConfig::default()
+    })]
+
     #[test]
     fn generated_designs_check(d in r#gen::design()) {
         prop_assert!(check(&d).is_ok(), "{:?}\n{}", check(&d).err(), print(&d));
@@ -93,6 +132,21 @@ proptest! {
     }
 
     #[test]
+    fn the_top_reaches_every_module(d in r#gen::design()) {
+        let modules = modules(&d);
+        let mut reached = BTreeSet::from([d.top.text.as_str()]);
+        let mut work = vec![d.top.text.as_str()];
+        while let Some(name) = work.pop() {
+            for child in modules.get(name).into_iter().flat_map(|m| children(m)) {
+                if reached.insert(child) {
+                    work.push(child);
+                }
+            }
+        }
+        prop_assert_eq!(reached.len(), modules.len(), "{}", print(&d));
+    }
+
+    #[test]
     fn interpreter_never_panics((d, lines) in design_and_lines()) {
         let typed = checked(&d);
         let top = &typed.modules[typed.top.index()];
@@ -103,7 +157,9 @@ proptest! {
             match parse_input(line, top) {
                 Ok(inputs) => {
                     let out = print_output(top, &sim.step(&inputs));
-                    prop_assert!(out.starts_with("out=("));
+                    let pairs = out.trim_end().trim_start_matches("out=(").trim_end_matches(')');
+                    let tokens = pairs.split(' ').filter(|t| !t.is_empty()).count();
+                    prop_assert_eq!(tokens, 2 * top.outputs.len(), "{}", out);
                 }
                 Err(e) => prop_assert!(false, "{line}: {e}"),
             }
@@ -112,7 +168,8 @@ proptest! {
 }
 
 /// What a sample of designs uses: the operations, the reset kinds, the
-/// memory depths, the widths, and the instance levels.
+/// memory depths and write ports, the widths, the instance levels below the
+/// top, and the shapes of the instance connections.
 #[derive(Default)]
 struct Coverage {
     forms: BTreeSet<String>,
@@ -122,6 +179,10 @@ struct Coverage {
 }
 
 impl Coverage {
+    fn note(&mut self, form: &str) {
+        self.forms.insert(form.to_owned());
+    }
+
     fn expr(&mut self, e: &Expr) {
         let form = match e {
             Expr::Ref(_) => "ref".to_owned(),
@@ -166,27 +227,82 @@ impl Coverage {
     }
 
     fn design(&mut self, d: &Design) {
-        let mut levels: BTreeMap<&str, u32> = BTreeMap::new();
-        let mut modules: Vec<_> = d
-            .items
-            .iter()
-            .filter_map(|item| match item {
-                Item::Module(m) => Some(m),
-                Item::Extern(_) => None,
-            })
-            .collect();
-        // A child has a lower number than its parents.
-        modules.sort_by_key(|m| m.name.text[1..].parse::<u32>().unwrap_or(0));
-        for m in modules {
-            let mut level = 0;
+        let modules = modules(d);
+        self.levels = self.levels.max(levels(&modules, &d.top.text));
+        let instantiated: BTreeSet<&str> = modules.values().flat_map(|m| children(m)).collect();
+        for m in modules.values() {
             for s in &m.stmts {
                 self.stmt(s);
-                if let Stmt::Inst { module, .. } = s {
-                    level = level.max(levels.get(module.text.as_str()).map_or(0, |l| l + 1));
+            }
+            self.insts(&modules, m);
+            let reads = m.stmts.iter().any(|s| match s {
+                Stmt::Assign { expr, .. } => has_read(expr),
+                _ => false,
+            });
+            if reads && instantiated.contains(m.name.text.as_str()) {
+                self.note("read-in-child");
+            }
+        }
+        self.paths(&checked(d));
+    }
+
+    /// Notes connections out of port order and two siblings that read the
+    /// outputs of each other.
+    fn insts(&mut self, modules: &BTreeMap<&str, &Module>, m: &Module) {
+        let mut reads: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+        for s in &m.stmts {
+            if let Stmt::Inst {
+                name,
+                module,
+                conns,
+                ..
+            } = s
+            {
+                let mut insts = BTreeSet::new();
+                for c in conns {
+                    inst_reads(&c.expr, &mut insts);
+                }
+                reads.insert(&name.text, insts);
+                let child = modules
+                    .get(module.text.as_str())
+                    .map_or(&[][..], |c| &c.ports);
+                let positions: Vec<Option<usize>> = conns
+                    .iter()
+                    .map(|c| child.iter().position(|p| p.name == c.port))
+                    .collect();
+                if !positions.is_sorted() {
+                    self.note("shuffled-conns");
                 }
             }
-            levels.insert(&m.name.text, level);
-            self.levels = self.levels.max(level);
+        }
+        for (a, others) in &reads {
+            if others
+                .iter()
+                .any(|b| b != a && reads.get(b).is_some_and(|r| r.contains(a)))
+            {
+                self.note("handshake");
+            }
+        }
+    }
+
+    /// Notes an output that reads an instance output that reads an input of
+    /// the parent combinationally.
+    fn paths(&mut self, d: &typed::Design) {
+        for m in &d.modules {
+            for assign in &m.assigns {
+                let through = inst_outs(assign).into_iter().any(|(u, o)| {
+                    let inst = &m.insts[u.index()];
+                    let typed::Callee::Module(child) = inst.callee else {
+                        return false;
+                    };
+                    d.modules[child.index()].deps[o.index()]
+                        .iter()
+                        .any(|i| reads_input(&inst.inputs[i.index()]))
+                });
+                if through {
+                    self.note("path-through-child");
+                }
+            }
         }
     }
 
@@ -200,25 +316,118 @@ impl Coverage {
                 self.widths.insert(width.value);
                 match reset {
                     Some(r) => {
-                        self.forms.insert("reset".into());
+                        self.note("reset");
                         self.expr(&r.signal);
                         self.expr(&r.value);
                     }
-                    None => {
-                        self.forms.insert("no-reset".into());
-                    }
+                    None => self.note("no-reset"),
                 }
             }
             Stmt::Mem { depth, .. } => {
                 self.depths.insert(depth.value);
             }
             Stmt::Next { expr, .. } | Stmt::Assign { expr, .. } => self.expr(expr),
-            Stmt::Write { addr, data, en, .. } => {
+            Stmt::Write {
+                port,
+                addr,
+                data,
+                en,
+                ..
+            } => {
+                if *port == 1 {
+                    self.note("second-write-port");
+                }
                 self.expr(addr);
                 self.expr(data);
                 self.expr(en);
             }
             Stmt::Inst { conns, .. } => conns.iter().for_each(|c| self.expr(&c.expr)),
+        }
+    }
+}
+
+fn has_read(e: &Expr) -> bool {
+    match e {
+        Expr::Read { .. } => true,
+        Expr::Ref(_) | Expr::InstOut { .. } | Expr::Const { .. } => false,
+        Expr::Unary { arg, .. } | Expr::Extract { arg, .. } | Expr::Replicate { arg, .. } => {
+            has_read(arg)
+        }
+        Expr::Binary { lhs, rhs, .. } | Expr::Icmp { lhs, rhs, .. } => {
+            has_read(lhs) || has_read(rhs)
+        }
+        Expr::Mux {
+            cond, then, els, ..
+        } => has_read(cond) || has_read(then) || has_read(els),
+    }
+}
+
+/// The instances whose outputs `e` reads.
+fn inst_reads<'a>(e: &'a Expr, out: &mut BTreeSet<&'a str>) {
+    match e {
+        Expr::InstOut { inst, .. } => {
+            out.insert(&inst.text);
+        }
+        Expr::Ref(_) | Expr::Const { .. } => {}
+        Expr::Unary { arg, .. } | Expr::Extract { arg, .. } | Expr::Replicate { arg, .. } => {
+            inst_reads(arg, out);
+        }
+        Expr::Read { addr, .. } => inst_reads(addr, out),
+        Expr::Binary { lhs, rhs, .. } | Expr::Icmp { lhs, rhs, .. } => {
+            inst_reads(lhs, out);
+            inst_reads(rhs, out);
+        }
+        Expr::Mux {
+            cond, then, els, ..
+        } => {
+            inst_reads(cond, out);
+            inst_reads(then, out);
+            inst_reads(els, out);
+        }
+    }
+}
+
+/// Whether a typed expression reads an input directly, through slices and
+/// operations but not through `let` bindings.
+fn reads_input(e: &typed::Expr) -> bool {
+    match e {
+        typed::Expr::Input(_) => true,
+        typed::Expr::InstOut(..)
+        | typed::Expr::Let(_)
+        | typed::Expr::Reg(_)
+        | typed::Expr::Const(_) => false,
+        typed::Expr::Un(_, a)
+        | typed::Expr::Extract(a, ..)
+        | typed::Expr::Replicate(a, _)
+        | typed::Expr::Read(_, a) => reads_input(a),
+        typed::Expr::Bin(_, a, b) | typed::Expr::Icmp(_, a, b) => reads_input(a) || reads_input(b),
+        typed::Expr::Mux(c, t, e) => reads_input(c) || reads_input(t) || reads_input(e),
+    }
+}
+
+/// The instance outputs that a typed expression reads directly, through
+/// slices and operations but not through `let` bindings.
+fn inst_outs(e: &typed::Expr) -> Vec<(typed::InstIdx, typed::OutputIdx)> {
+    match e {
+        typed::Expr::InstOut(u, o) => vec![(*u, *o)],
+        typed::Expr::Input(_)
+        | typed::Expr::Let(_)
+        | typed::Expr::Reg(_)
+        | typed::Expr::Const(_) => vec![],
+        typed::Expr::Un(_, a)
+        | typed::Expr::Extract(a, ..)
+        | typed::Expr::Replicate(a, _)
+        | typed::Expr::Read(_, a) => inst_outs(a),
+        typed::Expr::Bin(_, a, b) | typed::Expr::Icmp(_, a, b) => {
+            let mut out = inst_outs(a);
+            out.extend(inst_outs(b));
+            out
+        }
+        typed::Expr::Mux(c, t, e) => {
+            let mut out = inst_outs(c);
+            out.extend(inst_outs(t));
+            out.extend(inst_outs(e));
+            out
         }
     }
 }
@@ -264,6 +473,11 @@ fn the_generator_covers_the_core_ir() {
         "read",
         "reset",
         "no-reset",
+        "second-write-port",
+        "read-in-child",
+        "path-through-child",
+        "handshake",
+        "shuffled-conns",
     ];
     let missing: Vec<_> = forms.iter().filter(|f| !seen.forms.contains(**f)).collect();
     assert!(missing.is_empty(), "never generated: {missing:?}");
@@ -272,5 +486,5 @@ fn the_generator_covers_the_core_ir() {
     assert!(seen.depths.iter().any(|d| !d.is_power_of_two()));
     assert!(seen.widths.iter().any(|w| *w > 64));
     assert!(seen.widths.iter().all(|w| (1..=300).contains(w)));
-    assert_eq!(seen.levels, 3);
+    assert_eq!(seen.levels, 3, "the top never has 3 levels below it");
 }
