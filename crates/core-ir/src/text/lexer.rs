@@ -1,13 +1,14 @@
 //! Splits `.sil` text into tokens with positions.
 
 use crate::diag::Span;
+use num_bigint::BigUint;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Tok {
     Open,
     Close,
     Name(String),
-    Number(String),
+    Number(BigUint),
     /// `NAME.PORT`
     Dotted(String, String),
     /// A character that starts no token. The parser reports it when it
@@ -41,6 +42,20 @@ fn is_name(text: &str) -> bool {
     chars.next().is_some_and(is_name_start) && chars.all(is_name_char)
 }
 
+/// The value of a run of decimal digits. Nine digits at a time keep the
+/// multiplications few.
+fn from_digits(digits: &str) -> BigUint {
+    digits
+        .as_bytes()
+        .chunks(9)
+        .fold(BigUint::default(), |acc, chunk| {
+            let (value, scale) = chunk.iter().fold((0u32, 1u32), |(value, scale), byte| {
+                (value * 10 + u32::from(byte - b'0'), scale * 10)
+            });
+            acc * scale + value
+        })
+}
+
 /// A token of valid characters is a name, `NAME.PORT`, or a number. Anything
 /// else is invalid at the start of the token.
 fn classify(text: &str) -> Tok {
@@ -48,7 +63,7 @@ fn classify(text: &str) -> Tok {
         return Tok::Name(text.to_string());
     }
     if !text.is_empty() && text.chars().all(|c| c.is_ascii_digit()) {
-        return Tok::Number(text.to_string());
+        return Tok::Number(from_digits(text));
     }
     if let Some((head, port)) = text.split_once('.')
         && is_name(head)
