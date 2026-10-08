@@ -214,7 +214,7 @@ Commits:
 6. A breaking change uses `!` and a `BREAKING CHANGE:` footer. No check enforces the footer. This rule is advisory.
 7. No AI attribution: no `Co-Authored-By` trailer for an agent, no "Generated with" line.
 
-`cargo xtask commit-check` runs in the `commit-msg` hook and in CI on each commit of a pull request. It rejects:
+`cargo xtask commit-check` runs in the `pre-push` hook (`just ci main`) and in CI on each commit of a pull request. It rejects:
 
 1. A `refactor` commit that changes test expectations (`**/snapshots/**`, corpus expectations). Rule `commit-refactor-expectations`.
 2. A commit that changes `lean/` and `crates/` together. Rule `commit-spec-impl`.
@@ -226,7 +226,7 @@ Commits:
 
 The `commit-subject` rule also rejects the subjects that git writes for `git revert`, `git commit --fixup`, and `git commit --squash`. Write a revert as `revert: <subject>`. Squash the fixup commits before the push.
 
-`lefthook` runs the git hooks. Nix pins it. `lefthook.yml` calls `just` recipes only. The `commit-msg` hook runs `just commit-msg`. The `pre-push` hook runs `just ci`.
+`lefthook` runs the git hooks. Nix pins it. `lefthook.yml` calls `just` recipes only. The `commit-msg` hook runs `just commit-msg`. It applies the message rules 4 to 7 only. The rules for changed paths run in the `pre-push` hook, which runs `just ci main`, and in CI.
 
 The repository is private on a personal GitHub account and uses the Apache-2.0 license. A personal account has no merge queue, and branch rules on a private repository need GitHub Pro. The orchestrator thus merges only after CI passes on the pull request. A merge queue replaces this step when the repository moves to an organization.
 
