@@ -22,7 +22,7 @@ def curryValues (values : RefValues ctx) : Valuation ctx :=
 def uncurryValues (values : Valuation ctx) : RefValues ctx :=
   fun ref => values ref.node ref.width ref.found
 
-noncomputable def stateMemories (m : Typed.Module) (children : Children m)
+def stateMemories (m : Typed.Module) (children : Children m)
     (state : LocalState m children) : Memories m.ctx :=
   fun name width depth found => (decodeMemory m name width depth found).eval m children state
 
@@ -50,7 +50,7 @@ theorem ValueDriver.eval_rank_congr (d : CertifiedDesign) (m : Typed.Module)
     exact instance_out_congr d m hm index pos name child inputs member
       ⟨port, portMember, dir⟩ children state a b memories agree
 
-noncomputable def localSystem (d : CertifiedDesign) (m : Typed.Module)
+def localSystem (d : CertifiedDesign) (m : Typed.Module)
     (hm : m ∈ d.design.bodies) (children : Children m) (state : LocalState m children)
     (input : Input m) : EquationSolution.System (ValueRef m.ctx) (fun ref => Value ref.width) where
   initial := fun _ => 0
@@ -66,7 +66,7 @@ noncomputable def localSystem (d : CertifiedDesign) (m : Typed.Module)
     intro dep width found lower
     exact agree ⟨dep, width, found⟩ lower
 
-noncomputable def localSolution (d : CertifiedDesign) (m : Typed.Module)
+def localSolution (d : CertifiedDesign) (m : Typed.Module)
     (hm : m ∈ d.design.bodies) (children : Children m) (state : LocalState m children)
     (input : Input m) : Valuation m.ctx :=
   curryValues (EquationSolution.solution (localSystem d m hm children state input))

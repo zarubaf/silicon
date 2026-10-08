@@ -7,7 +7,7 @@ Its output contract follows from the inferred dependency graph.
 -/
 namespace Silicon.Core.Semantics
 
-noncomputable def localComponent (d : CertifiedDesign) (m : Typed.Module)
+def localComponent (d : CertifiedDesign) (m : Typed.Module)
     (hm : m ∈ d.design.bodies) (children : Children m) :
     Component m.ports (Deps.infer m.erase m.children) where
   State := LocalState m children

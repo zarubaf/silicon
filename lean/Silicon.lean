@@ -21,6 +21,8 @@ import Silicon.Core.GraphCycleIndex
 import Silicon.Core.Check
 import Silicon.Core.Test.Check
 import Silicon.Core.Semantics
+import Silicon.Core.Interp
+import Silicon.Core.Test.Interp
 import Silicon.Core.Test.Semantics
 import Silicon.Core.Test.Step
 import Silicon.Core.Test.Hierarchy

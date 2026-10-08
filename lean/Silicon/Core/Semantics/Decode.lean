@@ -1,4 +1,4 @@
-import Silicon.Core.Semantics.Driver
+import Silicon.Core.Semantics.DriverSearch
 import Silicon.Core.Semantics.MemoryOwner
 import Silicon.Core.Semantics.Drivers
 
@@ -45,14 +45,14 @@ theorem memoryDriver_exists (m : Typed.Module) (name : String) (width depth : Na
     Ownership.memory_equation m name width depth found
   exact ⟨.mem index pos name width depth clock target writes member⟩
 
-noncomputable def decodeValue (d : Typed.Design) (wf : WellFormed d.erase)
+def decodeValue (d : Typed.Design) (wf : WellFormed d.erase)
     (m : Typed.Module) (hm : m ∈ d.bodies) (node : Deps.Node) (width : Nat)
     (found : m.ctx.lookup node = some (.value (.bits width))) : ValueDriver m node width :=
-  Classical.choice (valueDriver_exists d wf m hm node width found)
+  findValueDriver m node width (valueDriver_exists d wf m hm node width found)
 
-noncomputable def decodeMemory (m : Typed.Module) (name : String) (width depth : Nat)
+def decodeMemory (m : Typed.Module) (name : String) (width depth : Nat)
     (found : m.ctx.lookup (.name name) = some (.memory width depth)) :
     MemoryDriver m name width depth :=
-  Classical.choice (memoryDriver_exists m name width depth found)
+  findMemoryDriver m name width depth (memoryDriver_exists m name width depth found)
 
 end Silicon.Core.Semantics

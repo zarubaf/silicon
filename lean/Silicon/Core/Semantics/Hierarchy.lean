@@ -29,7 +29,7 @@ abbrev LocalBuilder (d : Typed.Design) :=
   (m : Typed.Module) → m ∈ d.bodies → Children m →
     Component m.ports (Deps.infer m.erase m.children)
 
-private theorem instance_member (m : Typed.Module)
+theorem instance_member (m : Typed.Module)
     (index : Nat) (pos : Pos) (inst child : String)
     (inputs : List ((p : {p : Port // p ∈ m.interfaces child}) × Typed.Expr m.ctx p.val.ty))
     (member : Typed.Equation.inst index pos inst child inputs ∈ m.body) :
@@ -39,7 +39,7 @@ private theorem instance_member (m : Typed.Module)
   exact ⟨.inst index pos inst child inputs, member, index,
     .inst pos inst child inputs, by simp [Typed.Equation.parts], rfl⟩
 
-private theorem external_exists (d : Typed.Design) (name : String)
+theorem external_exists (d : Typed.Design) (name : String)
     (existsItem : ∃ item ∈ d.erase.items, itemName item = name)
     (absent : d.bodies.find? (·.name == name) = none) :
     ∃ e, d.externs.find? (·.name == name) = some e ∧ Item.extern e ∈ d.erase.items := by
@@ -123,7 +123,7 @@ def externChild (d : Typed.Design) (wf : WellFormed d.erase)
   transportComponent_state _ _ model
 
 /-! Recursion follows the computed module positions, with externs at the leaves. -/
-noncomputable def assembleChildren (d : Typed.Design) (wf : WellFormed d.erase)
+def assembleChildren (d : Typed.Design) (wf : WellFormed d.erase)
     (env : Env d) (build : LocalBuilder d) (m : Typed.Module) (hm : m ∈ d.bodies) :
     Children m := fun ⟨equation, member⟩ => by
   cases equation with

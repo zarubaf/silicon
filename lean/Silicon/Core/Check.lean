@@ -1734,10 +1734,7 @@ private theorem design_deps_keys_nodup (d : Design) (h : Rules.Names d) (fuel : 
       exact inferred_keys_nodup m _ hp
 
 
-private def label (s : Stmt) : Option String :=
-  match s with
-  | .assign _ n _ => some n
-  | _ => Rules.definition s
+private def label := Stmt.driverName
 
 private def owner : Deps.Node → String
   | .name n | .port n _ => n
@@ -1869,7 +1866,7 @@ private theorem labels_nodup (d : Design) (m : Module)
       have hd : Rules.definition s ≠ some n := by
         intro he
         exact absent (List.mem_filterMap.mpr ⟨s, hs, he⟩)
-      cases s <;> simp_all [label, Rules.definition] <;> split <;> simp_all
+      cases s <;> simp_all [label, Stmt.driverName, Rules.definition] <;> split <;> simp_all
     rw [Rules.assignments, List.length_filterMap_eq_countP] at hout
     apply Nat.le_of_eq
     calc
@@ -1879,7 +1876,7 @@ private theorem labels_nodup (d : Design) (m : Module)
     · apply List.countP_mono_left
       intro s hs hl
       simp only [decide_eq_true_eq] at hl ⊢
-      cases s <;> simp_all [label, Rules.definition]
+      cases s <;> simp_all [label, Stmt.driverName, Rules.definition]
     · exact countP_some_le_one m.body Rules.definition hscope.2.1 n
 
 
@@ -1942,7 +1939,7 @@ private theorem graph_keys_nodup (d : Design) (m : Module) (children : String �
       rw [equations_keys_inst] at hn
       obtain ⟨entry, _, rfl⟩ := List.mem_map.mp hn
       rfl
-    | _ => simp_all [Deps.equations, label, Rules.definition, owner]
+    | _ => simp_all [Deps.equations, label, Stmt.driverName, owner]
 
 
 theorem combinational_graph_keys_nodup (d : Design) (m : Module)
@@ -2011,23 +2008,6 @@ private theorem rank_map_absent (keys : List Deps.Node) (q : Deps.Node → Nat) 
     exact h ha
   simp [Typed.rank, hn]
 
-private theorem lookup_row_nodup [BEq α] [LawfulBEq α] (rows : List (α × β)) (n : α) (v : β)
-    (hu : (rows.map Prod.fst).Nodup) (hm : (n, v) ∈ rows) : rows.lookup n = some v := by
-  induction rows with
-  | nil => simp at hm
-  | cons row rows ih =>
-    rcases row with ⟨a, b⟩
-    have hd := List.nodup_cons.mp hu
-    rcases List.mem_cons.mp hm with hh | ht
-    · cases hh; simp
-    · have hne : n ≠ a := by
-        intro he
-        apply hd.1
-        subst n
-        exact List.mem_map.mpr ⟨(a, v), ht, rfl⟩
-      have hb : (n == a) = false := by simp [hne]
-      simpa [List.lookup, hb] using ih hd.2 ht
-
 private theorem ranked_of_no_cycle (g : Typed.Graph) (hn : (g.map Prod.fst).Nodup)
     (noCycle : ∀ k x, 0 < k → ¬ Walk g k x x) : ∃ r, Typed.Ranked g r := by
   let keys := g.map Prod.fst
@@ -2035,7 +2015,7 @@ private theorem ranked_of_no_cycle (g : Typed.Graph) (hn : (g.map Prod.fst).Nodu
   refine ⟨ranks, ?_⟩
   intro row hr dep hd
   have hm : row.1 ∈ keys := List.mem_map.mpr ⟨row, hr, rfl⟩
-  have hl := lookup_row_nodup g row.1 row.2 hn hr
+  have hl := GraphReach.lookup_row_nodup g row.1 row.2 hn hr
   have hedge : dep ∈ (g.lookup row.1).getD [] := by simpa [hl] using hd
   have hc := counts_edge g row.1 dep hm hedge noCycle
   change Typed.rank (keys.map fun n => (n, countReach g n)) dep <
@@ -2160,7 +2140,7 @@ private theorem cycleDiagnosticWith_eq (m : Module) (g : Typed.Graph)
         List.mergeSort_perm _ _
       obtain ⟨⟨n, edges⟩, hn, he⟩ := List.mem_map.mp (hp.mem_iff.mp hr)
       subst row
-      have lookup := lookup_row_nodup g n edges unique hn
+      have lookup := GraphReach.lookup_row_nodup g n edges unique hn
       have eq := c.cyclic_eq_reaches n
       simpa [lookup, reaches] using eq)
   rw [eq]
@@ -2205,7 +2185,7 @@ private theorem hierarchyDiagnosticWith_eq (d : Design) (hn : Rules.Names d)
   rename_i p name child inputs
   have hrow : (.name m.name, (Typed.childNames m).map Deps.Node.name) ∈
       Typed.hierarchyGraph d := List.mem_map.mpr ⟨m, hm, rfl⟩
-  have lookup := lookup_row_nodup (Typed.hierarchyGraph d) (.name m.name)
+  have lookup := GraphReach.lookup_row_nodup (Typed.hierarchyGraph d) (.name m.name)
     ((Typed.childNames m).map Deps.Node.name) (hierarchy_keys_nodup d hn) hrow
   have edge : Deps.Node.name child ∈ ((Typed.hierarchyGraph d).lookup (.name m.name)).getD [] := by
     rw [lookup]
