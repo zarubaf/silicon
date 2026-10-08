@@ -27,6 +27,18 @@ pub fn prose_blocks(source: &str) -> Vec<ProseBlock> {
                     i += 1;
                 }
             }
+            'r' if raw_string_hashes(&chars, i).is_some() => {
+                let hashes = raw_string_hashes(&chars, i).unwrap_or(0);
+                i += hashes + 2;
+                // A raw string ends at a quote followed by as many `#` as its opener had.
+                while i < chars.len() && !(chars[i] == '"' && closes_raw(&chars, i, hashes)) {
+                    if chars[i] == '\n' {
+                        line += 1;
+                    }
+                    i += 1;
+                }
+                i += hashes + 1;
+            }
             '"' => {
                 i += 1;
                 while i < chars.len() && chars[i] != '"' {
@@ -92,6 +104,20 @@ pub fn to_markdown(blocks: &[ProseBlock]) -> (String, Vec<usize>) {
     (markdown, map)
 }
 
+/// The number of `#` of a raw string opener `r#"` at `i`, or `None` when no raw string starts
+/// there. An `r` that ends a longer identifier is not an opener.
+fn raw_string_hashes(chars: &[char], i: usize) -> Option<usize> {
+    if i > 0 && (chars[i - 1].is_alphanumeric() || matches!(chars[i - 1], '_' | '\'' | '.')) {
+        return None;
+    }
+    let hashes = chars[i + 1..].iter().take_while(|c| **c == '#').count();
+    (chars.get(i + 1 + hashes) == Some(&'"')).then_some(hashes)
+}
+
+fn closes_raw(chars: &[char], quote: usize, hashes: usize) -> bool {
+    (1..=hashes).all(|k| chars.get(quote + k) == Some(&'#'))
+}
+
 /// The indentation that all non-blank lines share. Markdown reads four spaces as code,
 /// so a docstring indented inside a `structure` must lose it. Extra indentation stays.
 fn common_indent(text: &str) -> usize {
@@ -145,6 +171,33 @@ mod tests {
     #[test]
     fn line_comment_hides_prose_opener() {
         assert!(prose_blocks("-- see /-! here\ndef x := 1\n").is_empty());
+    }
+
+    #[test]
+    fn raw_string_with_embedded_quote() {
+        let src = "def s := r#\"a \" b\"#\n/-- Doc. -/\ndef x := 1\n";
+        let b = prose_blocks(src);
+        assert_eq!((b.len(), b[0].first_line), (1, 2));
+    }
+
+    #[test]
+    fn raw_string_keeps_backslashes_literal() {
+        let src = "def s := r\"a\\\"\n/-- Doc. -/\n";
+        let b = prose_blocks(src);
+        assert_eq!((b.len(), b[0].first_line), (1, 2));
+    }
+
+    #[test]
+    fn raw_string_lines_are_counted() {
+        let src = "def s := r##\"a\n\"# b\n\"##\n/-- Doc. -/\n";
+        assert_eq!(prose_blocks(src)[0].first_line, 4);
+    }
+
+    #[test]
+    fn identifier_ending_in_r_is_not_raw() {
+        let src = "def s := bar\"\\\"\"\n/-- Doc. -/\n";
+        let b = prose_blocks(src);
+        assert_eq!((b.len(), b[0].first_line), (1, 2));
     }
 
     #[test]
