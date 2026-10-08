@@ -40,18 +40,24 @@ pub fn level2_headings(md: &str) -> Vec<String> {
     out
 }
 
-/// Returns the 1-based lines of list items under `## Hard rules` that lack `Check:`.
+/// Returns the 1-based lines of list items under `## Hard rules` that lack text after `Check:`.
 pub fn hard_rules_without_check(md: &str) -> Vec<usize> {
     let mut in_section = false;
     let mut out = Vec::new();
     for (i, line) in md.lines().enumerate() {
         if let Some(title) = line.strip_prefix("## ") {
             in_section = title.trim() == "Hard rules";
-        } else if in_section && is_list_item(line) && !line.contains("Check:") {
+        } else if in_section && is_list_item(line) && !has_check(line) {
             out.push(i + 1);
         }
     }
     out
+}
+
+/// True when non-whitespace text follows `Check:`.
+fn has_check(line: &str) -> bool {
+    line.split_once("Check:")
+        .is_some_and(|(_, rest)| !rest.trim().is_empty())
 }
 
 fn is_list_item(line: &str) -> bool {
@@ -256,6 +262,12 @@ mod tests {
     fn headings_ignore_code_fences_and_other_levels() {
         let md = "# T\n## A\n```\n## B\n```\n### C\n## D\n";
         assert_eq!(level2_headings(md), ["A", "D"]);
+    }
+
+    #[test]
+    fn bare_check_label_counts_as_missing() {
+        let md = "## Hard rules\n\n- Rule. Check:\n- Rule. Check:   \n- Rule. Check: `x`\n";
+        assert_eq!(hard_rules_without_check(md), [3, 4]);
     }
 
     #[test]
