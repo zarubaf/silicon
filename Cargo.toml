@@ -1,13 +1,13 @@
 [workspace]
 resolver = "3"
-members = ["crates/core-ir", "xtask"]
+members = ["crates/core-ir", "crates/driver", "xtask"]
 
 [workspace.package]
 edition = "2024"
 license = "Apache-2.0"
 
 [workspace.metadata.layers]
-order = ["core-ir"]
+order = ["core-ir", "driver"]
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
