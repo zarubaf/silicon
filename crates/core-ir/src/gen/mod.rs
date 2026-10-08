@@ -31,7 +31,8 @@ use proptest::prelude::*;
 
 use crate::ast::{Conn, Design, Dir, Expr, Item, Module, Name, Num, Port, Reset, Stmt, Ty};
 use crate::diag::Span;
-use crate::typed;
+use crate::typed::{self, address_width};
+use crate::value::mask;
 use expr::NESTING;
 use scope::{Graph, Mem, Scope, Source, Value};
 
@@ -81,16 +82,6 @@ pub fn inputs(top: &typed::Module) -> impl Strategy<Value = String> + use<> {
         })
         .collect();
     ports.prop_map(|pairs| format!("in=({})", pairs.join(" ")))
-}
-
-/// The value with the low `width` bits set.
-fn mask(width: u32) -> BigUint {
-    (BigUint::from(1u8) << width) - 1u8
-}
-
-/// The address width of a memory with `depth` words (spec section 4.1).
-fn address_width(depth: u32) -> u32 {
-    (u32::BITS - depth.saturating_sub(1).leading_zeros()).max(1)
 }
 
 fn name(text: String) -> Name {

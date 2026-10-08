@@ -3,10 +3,12 @@
 use num_bigint::BigUint;
 
 use super::scope::{Mem, Scope, Value};
-use super::{NARROW, Tape, address_width, mask, name, num};
+use super::{NARROW, Tape, name, num};
 use crate::Pred;
 use crate::ast::{BinOp, Expr, UnOp};
 use crate::diag::Span;
+use crate::typed::address_width;
+use crate::value::mask;
 
 const BINOPS: [BinOp; 9] = [
     BinOp::Add,

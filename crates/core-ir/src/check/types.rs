@@ -6,16 +6,12 @@ use super::{error, first_error};
 use crate::Bits;
 use crate::ast::{BinOp, Design, Expr, Item, Num, Port, Stmt, Ty};
 use crate::diag::{Diagnostic, ErrorCode, Span};
+use crate::typed::address_width;
 
 /// The largest width of a declared or computed value.
 const MAX_WIDTH: u32 = 65536;
 /// The largest memory depth.
 const MAX_DEPTH: u32 = 16_777_216;
-
-/// The address width of a memory: `max(1, ceil(log2 depth))`.
-pub(super) fn address_width(depth: u32) -> u32 {
-    (u32::BITS - depth.saturating_sub(1).leading_zeros()).max(1)
-}
 
 // Pass 4.
 
