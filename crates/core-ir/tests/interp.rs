@@ -306,3 +306,35 @@ fn a_top_without_inputs_reads_an_empty_list() {
 ";
     assert_eq!(run(src, &["in=()", "in=( )"]), ["out=(c 0)\n"; 2]);
 }
+
+/// A chain of `depth` instances above a counter. Module `m{k}` runs `m{k-1}`.
+fn deep_chain(depth: usize) -> String {
+    use std::fmt::Write;
+    let mut src = format!(
+        "(design m{depth}\n  (module m0\n    (input clk clock)\n    (input a (bits 8))\n    (output q (bits 8))\n    (reg r (bits 8) clk)\n    (next r (add r a))\n    (assign q r))\n"
+    );
+    for k in 1..=depth {
+        let j = k - 1;
+        // Writing to a `String` cannot fail.
+        let _ = writeln!(
+            src,
+            "  (module m{k}\n    (input clk clock)\n    (input a (bits 8))\n    (output q (bits 8))\n    (inst u m{j} (clk clk) (a a))\n    (assign q u.q))"
+        );
+    }
+    src.push_str(")\n");
+    src
+}
+
+#[test]
+fn a_deep_instance_chain_runs_on_a_small_stack() {
+    let src = deep_chain(20_000);
+    let run_chain = move || run(&src, &["in=(a 1)"; 3]);
+    let thread = std::thread::Builder::new()
+        .stack_size(256 * 1024)
+        .spawn(run_chain)
+        .expect("the thread starts");
+    let lines = thread
+        .join()
+        .expect("the chain runs without a stack overflow");
+    assert_eq!(lines, ["out=(q 0)\n", "out=(q 1)\n", "out=(q 2)\n"]);
+}
