@@ -1,7 +1,7 @@
 //! The symbol tables that the passes share: the interface of each unit and
 //! the names of each module body.
 
-use crate::ast::{Conn, Design, Dir, Expr, Item, Module, Name, Port, Reset, Stmt, Ty};
+use crate::ast::{Conn, Design, Dir, Expr, Item, Module, Name, Port, Stmt, Ty};
 use crate::diag::Span;
 use crate::typed::{
     Callee, ExternIdx, InputIdx, InstIdx, LetIdx, MemIdx, ModIdx, OutputIdx, RegIdx,
@@ -145,14 +145,11 @@ pub(super) enum Binding {
 pub(super) struct LetDecl<'a> {
     pub name: &'a Name,
     pub width: u32,
-    pub expr: &'a Expr,
-    pub span: Span,
 }
 
 pub(super) struct RegDecl<'a> {
     pub name: &'a Name,
     pub width: u32,
-    pub reset: Option<&'a Reset>,
     pub span: Span,
 }
 
@@ -224,33 +221,21 @@ impl<'a> Scope<'a> {
 
     fn declare(&mut self, stmt: &'a Stmt, env: &'a Env<'a>) {
         match stmt {
-            Stmt::Let {
-                name,
-                width,
-                expr,
-                span,
-            } => {
+            Stmt::Let { name, width, .. } => {
                 let idx = LetIdx::new(self.lets.len());
                 self.lets.push(LetDecl {
                     name,
                     width: width.value,
-                    expr,
-                    span: *span,
                 });
                 self.names.entry(&name.text).or_insert(Binding::Let(idx));
             }
             Stmt::Reg {
-                name,
-                width,
-                reset,
-                span,
-                ..
+                name, width, span, ..
             } => {
                 let idx = RegIdx::new(self.regs.len());
                 self.regs.push(RegDecl {
                     name,
                     width: width.value,
-                    reset: reset.as_ref(),
                     span: *span,
                 });
                 self.names.entry(&name.text).or_insert(Binding::Reg(idx));
@@ -294,30 +279,6 @@ impl<'a> Scope<'a> {
 
     pub fn lookup(&self, name: &str) -> Option<Binding> {
         self.names.get(name).copied()
-    }
-
-    /// The expressions of the body that compute values. A single name of the
-    /// clock input, connected to a clock input of an instance, is not one.
-    pub fn value_exprs(&self) -> Vec<&'a Expr> {
-        let mut roots = Vec::new();
-        for stmt in &self.module.stmts {
-            match stmt {
-                Stmt::Inst { .. } => {}
-                other => roots.extend(stmt_exprs(other)),
-            }
-        }
-        for inst in &self.insts {
-            for conn in inst.conns {
-                let to_clock = inst
-                    .sig
-                    .and_then(|s| s.port(&conn.port.text))
-                    .is_some_and(|p| matches!(p, PortRef::Clock));
-                if !(to_clock && self.is_clock_name(&conn.expr)) {
-                    roots.push(&conn.expr);
-                }
-            }
-        }
-        roots
     }
 
     /// Whether the expression is a single name of a clock input.
