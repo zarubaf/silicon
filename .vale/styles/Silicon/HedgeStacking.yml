@@ -1,0 +1,6 @@
+extends: existence
+message: "Do not put modal verbs in a chain: '%s'."
+level: error
+ignorecase: true
+tokens:
+  - '(?:may|might|could|would|should) have been'

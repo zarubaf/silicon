@@ -4,9 +4,11 @@ mod commit;
 mod fmt;
 mod guidance;
 mod lean;
+mod prose;
 mod repo;
 mod tree;
 mod violation;
+mod vocab;
 mod workspace;
 
 use std::path::PathBuf;
@@ -40,6 +42,10 @@ enum Command {
         #[arg(long)]
         check: bool,
     },
+    /// Regenerate the vale vocabulary from `CONTEXT.md`.
+    ValeVocab,
+    /// Regenerate the vale vocabulary, then lint every tracked Markdown file with vale.
+    Prose,
     /// Check one commit message file. The `commit-msg` hook calls this.
     CommitMsg {
         /// Path of the message file.
@@ -60,6 +66,15 @@ fn main() -> Result<ExitCode> {
             fmt::run(&Repo::discover()?, check)?;
             Ok(ExitCode::SUCCESS)
         }
+        Command::ValeVocab => {
+            vocab::write(&Repo::discover()?)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Prose => Ok(if prose::run(&Repo::discover()?)?.success() {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        }),
         Command::CommitMsg { file } => Ok(report(&commit::check_message_file(&file)?)),
         Command::CommitCheck { range } => {
             let repo = Repo::discover()?;

@@ -8,7 +8,7 @@ fmt-check: fmt-rust-check fmt-files-check fmt-just-check
 fmt-rust:
     cargo fmt
 
-check: fmt-check clippy repo-check deny machete lean
+check: fmt-check clippy repo-check prose deny machete lean
 
 fmt-rust-check:
     cargo fmt --check
@@ -30,6 +30,9 @@ clippy:
 
 repo-check:
     cargo xtask check
+
+prose:
+    cargo xtask prose
 
 deny:
     cargo deny --log-level error check

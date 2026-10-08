@@ -1,0 +1,7 @@
+extends: existence
+message: "Keep the subject, the verb, and the article. Do not use an ellipsis."
+level: error
+nonword: true
+tokens:
+  - '\.\.\.'
+  - '…'

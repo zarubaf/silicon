@@ -1,0 +1,6 @@
+extends: existence
+message: "Use the active voice: '%s'."
+level: warning
+ignorecase: true
+tokens:
+  - '(?:be|is|are|was|were|been|being)\s+\w+ed'

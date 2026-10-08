@@ -1,0 +1,6 @@
+extends: existence
+message: "Use an -ing word only as a noun or in a technical term: '%s'."
+level: suggestion
+ignorecase: true
+tokens:
+  - '\w+ing'
