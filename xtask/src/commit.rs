@@ -232,6 +232,7 @@ fn git(dir: &Path, args: &[&str]) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testgit::run;
 
     fn scopes() -> Vec<String> {
         ["xtask", "lean"].map(String::from).to_vec()
@@ -388,8 +389,6 @@ mod tests {
         let p = paths(&["crates/a/snapshots/x.snap", "crates/a/src/lib.rs"]);
         assert!(fired(&check_paths("feat", &p), "commit-expectations-code"));
     }
-
-    use crate::testgit::run;
 
     fn init(dir: &Path) {
         run(dir, &["init", "--quiet"]);

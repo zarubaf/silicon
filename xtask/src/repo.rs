@@ -70,7 +70,6 @@ fn git(dir: &Path, args: &[&str]) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     use crate::testgit::run as git;
 
     fn init(dir: &std::path::Path) {
