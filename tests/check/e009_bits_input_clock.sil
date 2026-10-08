@@ -1,0 +1,12 @@
+; A bits input of an instance connected to a clock name is E009 at the name (spec 4.2).
+(design top
+  (module pass
+    (input x (bits 1))
+    (output y (bits 1))
+    (assign y x))
+  (module top
+    (input clk clock)
+    (output q (bits 1))
+; expected-error E009 @+1
+    (inst u pass (x clk))
+    (assign q u.y)))

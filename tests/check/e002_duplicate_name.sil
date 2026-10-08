@@ -1,0 +1,8 @@
+; A port and a let share the body scope: the second definition is E002 at its name (spec 4.2, 6.4.1).
+(design top
+  (module top
+    (input a (bits 1))
+    (output q (bits 1))
+; expected-error E002 @+1
+    (let a (bits 1) (const 1 0))
+    (assign q (const 1 0))))

@@ -1,0 +1,7 @@
+; A declared width of 65537 is above the limit: E005 at the number (spec 4.1).
+(design top
+  (module top
+; expected-error E005 @+1
+    (input a (bits 65537))
+    (output q (bits 1))
+    (assign q (const 1 0))))

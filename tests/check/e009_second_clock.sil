@@ -1,0 +1,8 @@
+; A module with two clock inputs is E009 at the second clock port (spec 4.2, 6.4.1).
+(design top
+  (module top
+    (input c1 clock)
+; expected-error E009 @+1
+    (input c2 clock)
+    (output q (bits 1))
+    (assign q (const 1 0))))

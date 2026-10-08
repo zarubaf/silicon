@@ -1,0 +1,10 @@
+; A deps list that names an input twice is E013 at the second occurrence (spec 4.2, 6.4.1).
+(design top
+  (extern blk
+    (input a (bits 1))
+    (output y (bits 1))
+; expected-error E013 @+1
+    (deps y (a a)))
+  (module top
+    (output q (bits 1))
+    (assign q (const 1 0))))

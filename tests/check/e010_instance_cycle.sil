@@ -1,0 +1,7 @@
+; Two modules that instantiate each other are E010 at the lowest inst (spec 4.2, 6.4.1).
+(design a
+  (module a
+; expected-error E010 @+1
+    (inst u b))
+  (module b
+    (inst v a)))

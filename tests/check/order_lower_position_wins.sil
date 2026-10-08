@@ -1,0 +1,7 @@
+; Two E003 errors in one pass: the lower position wins, not the canonical order (spec 6.4.1).
+(design top
+  (module top
+    (output q (bits 1))
+; expected-error E003 @+1
+    (assign q b)
+    (let x (bits 1) c)))

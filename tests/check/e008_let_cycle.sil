@@ -1,0 +1,8 @@
+; Two lets that read each other form a cycle: E008 at the lowest node (spec 5.3, 6.4.1).
+(design top
+  (module top
+    (output q (bits 1))
+; expected-error E008 @+1
+    (let a (bits 1) (not b))
+    (let b (bits 1) (not a))
+    (assign q a)))

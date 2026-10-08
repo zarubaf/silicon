@@ -1,0 +1,11 @@
+; Two write ports with index 0 are E012 at the second write (spec 4.2, 6.4.1).
+(design top
+  (module top
+    (input clk clock)
+    (input a (bits 1))
+    (output q (bits 1))
+    (mem m (bits 1) 2 clk)
+    (write m 0 a a a)
+; expected-error E012 @+1
+    (write m 0 a (not a) a)
+    (assign q (read m a))))

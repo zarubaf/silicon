@@ -23,3 +23,7 @@ datatest-stable = "0.3.3"
 [[test]]
 name = "lower"
 harness = false
+
+[[test]]
+name = "check"
+harness = false

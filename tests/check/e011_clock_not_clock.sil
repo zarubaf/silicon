@@ -1,0 +1,17 @@
+; A clock input of an instance connected to a bits input is E011 at the expression (spec 4.2, 6.4.1).
+(design top
+  (module hold
+    (input clk clock)
+    (input x (bits 1))
+    (output y (bits 1))
+    (reg r (bits 1) clk)
+    (next r x)
+    (assign y r))
+  (module top
+    (input a (bits 1))
+    (output q (bits 1))
+    (inst u hold
+; expected-error E011 @+1
+      (clk a)
+      (x a))
+    (assign q u.y)))

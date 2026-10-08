@@ -1,0 +1,7 @@
+; A number above 4294967295 outside a const value is E001, before E005 (spec 3 limits, 6.4.1).
+(design top
+  (module top
+    (output q (bits 1))
+; expected-error E001 @+1
+    (let x (bits 4294967296) (const 1 0))
+    (assign q (const 1 0))))

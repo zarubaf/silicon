@@ -1,0 +1,8 @@
+; A memory depth of 16777217 is above the limit: E005 at the number (spec 4.1).
+(design top
+  (module top
+    (input clk clock)
+    (output q (bits 1))
+; expected-error E005 @+1
+    (mem m (bits 1) 16777217 clk)
+    (assign q (const 1 0))))

@@ -1,0 +1,7 @@
+; An assign to a clock output is E009 at the port; the port itself is E009 there too (spec 4.2, 6.4.1).
+(design top
+  (module top
+    (input clk clock)
+; expected-error E009 @+1
+    (output c clock)
+    (assign c clk)))

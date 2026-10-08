@@ -1,0 +1,8 @@
+; Level 257 is E001 at its opening parenthesis (spec 3 limits).
+(design top
+  (module top
+    (input a (bits 1))
+    (output q (bits 1))
+; expected-error E001 @+1
+    (let x (bits 1) (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not (not a))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))
+    (assign q x)))

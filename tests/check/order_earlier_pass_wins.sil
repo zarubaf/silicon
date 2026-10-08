@@ -1,0 +1,8 @@
+; E003 comes first in the file, but pass 2 (E002) runs before pass 3 (E003) (spec 6.4.1).
+(design top
+  (module top
+    (input a (bits 1))
+    (output q (bits 1))
+    (assign q b)
+; expected-error E002 @+1
+    (let a (bits 1) (const 1 0))))

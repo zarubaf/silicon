@@ -1,0 +1,13 @@
+; check accepts a design with an extern; only run reports E014 (spec 5.4).
+(design top
+  (extern blk
+    (input c clock)
+    (input a (bits 4))
+    (output y (bits 4))
+    (deps y (a)))
+  (module top
+    (input clk clock)
+    (input a (bits 4))
+    (output q (bits 4))
+    (inst u blk (c clk) (a a))
+    (assign q u.y)))

@@ -1,0 +1,10 @@
+; A reset kind other than sync is E001 (spec 3.2 notes).
+(design top
+  (module top
+    (input clk clock)
+    (input rst (bits 1))
+    (output q (bits 1))
+; expected-error E001 @+1
+    (reg r (bits 1) clk (reset async rst (const 1 0)))
+    (next r r)
+    (assign q r)))

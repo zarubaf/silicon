@@ -1,0 +1,11 @@
+; An extern output without a deps entry is E013 at that output port (spec 4.2, 6.4.1).
+(design top
+  (extern blk
+    (input a (bits 1))
+    (output y (bits 1))
+; expected-error E013 @+1
+    (output z (bits 1))
+    (deps y (a)))
+  (module top
+    (output q (bits 1))
+    (assign q (const 1 0))))
