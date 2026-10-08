@@ -1346,3 +1346,32 @@ fn a_module_keeps_its_clock_port() {
     let clock = top.clock.as_ref().expect("the module keeps its clock");
     assert_eq!((clock.name.as_str(), clock.position), ("tick", 1));
 }
+
+#[test]
+fn each_data_port_keeps_its_position() {
+    let src = "\
+(design top
+  (extern ext
+    (output y (bits 1))
+    (input c clock)
+    (input a (bits 1))
+    (deps y (a)))
+  (module top
+    (input a (bits 1))
+    (output q (bits 1))
+    (input clk clock)
+    (input b (bits 1))
+    (output p (bits 1))
+    (assign q a)
+    (assign p b)))
+";
+    let design = run(src).expect("the design checks");
+    let top = &design.modules[design.top.index()];
+    let positions =
+        |ports: &[typed::Port]| -> Vec<usize> { ports.iter().map(|p| p.position).collect() };
+    assert_eq!(positions(&top.inputs), vec![0, 3]);
+    assert_eq!(positions(&top.outputs), vec![1, 4]);
+    let ext = &design.externs[0];
+    assert_eq!(positions(&ext.inputs), vec![2]);
+    assert_eq!(positions(&ext.outputs), vec![0]);
+}
