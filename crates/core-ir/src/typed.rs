@@ -11,17 +11,17 @@ macro_rules! index {
     ($(#[$doc:meta] $name:ident),* $(,)?) => {$(
         #[$doc]
         #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-        pub struct $name(u32);
+        pub struct $name(usize);
 
         impl $name {
-            pub(crate) fn new(index: u32) -> Self {
+            pub(crate) fn new(index: usize) -> Self {
                 Self(index)
             }
 
             /// The position in the table.
             #[must_use]
             pub fn index(self) -> usize {
-                self.0 as usize
+                self.0
             }
         }
     )*};

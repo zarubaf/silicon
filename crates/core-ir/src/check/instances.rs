@@ -12,7 +12,7 @@ pub(super) fn check(design: &Design, env: &Env, scopes: &[Scope]) -> Vec<Diagnos
         Item::Extern(e) => Some(e),
         Item::Module(_) => None,
     });
-    for (i, ext) in (0u32..).zip(externs) {
+    for (i, ext) in (0usize..).zip(externs) {
         errors.extend(deps(env, i, ext));
     }
     for scope in scopes {
@@ -21,7 +21,7 @@ pub(super) fn check(design: &Design, env: &Env, scopes: &[Scope]) -> Vec<Diagnos
     errors
 }
 
-fn deps(env: &Env, index: u32, ext: &Extern) -> Vec<Diagnostic> {
+fn deps(env: &Env, index: usize, ext: &Extern) -> Vec<Diagnostic> {
     let mut errors = Vec::new();
     let Some(sig) = env.extern_sig(crate::typed::ExternIdx::new(index)) else {
         return errors;
