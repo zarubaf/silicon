@@ -123,16 +123,16 @@ The root `AGENTS.md` keeps this text as the owner wrote it. Only the numbering i
 
 ## 5. `doc/` content
 
-| Path                             | Content                                                                                                                         |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `doc/architecture.md`            | The pipeline, the crates and their order, and the trust boundary: what is proven, what is validated, and what is trusted        |
-| `doc/adr/NNNN-title.md`          | One decision each. Headings: Context, Decision, Consequences, Status. An accepted ADR does not change. A new ADR supersedes it. |
-| `doc/design/YYYY-MM-DD-topic.md` | Specs that describe something that exists. A spec is deleted when its design is replaced.                                       |
-| `doc/guide/agents.md`            | Orchestration rules and model choice (section 6)                                                                                |
-| `doc/guide/commits.md`           | Commit and branch conventions (section 7)                                                                                       |
-| `doc/guide/style.md`             | ASD-STE100 writing rules and formatting for each file type (section 8)                                                          |
-| `doc/guide/testing.md`           | The test oracle for each layer                                                                                                  |
-| `CONTEXT.md`                     | The glossary. Each term has one definition and `_Avoid_` lines for rejected synonyms.                                           |
+| Path                             | Content                                                                                                                                                                    |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `doc/architecture.md`            | The pipeline, the crates and their order, and the trust boundary: what is proven, what is validated, and what is trusted                                                   |
+| `doc/adr/NNNN-title.md`          | One decision each. A metadata list with Status and Date sits above the headings Context, Decision, Consequences. An accepted ADR does not change. A new ADR supersedes it. |
+| `doc/design/YYYY-MM-DD-topic.md` | Specs that describe something that exists. A spec is deleted when its design is replaced.                                                                                  |
+| `doc/guide/agents.md`            | Orchestration rules and model choice (section 6)                                                                                                                           |
+| `doc/guide/commits.md`           | Commit and branch conventions (section 7)                                                                                                                                  |
+| `doc/guide/style.md`             | ASD-STE100 writing rules and formatting for each file type (section 8)                                                                                                     |
+| `doc/guide/testing.md`           | The test oracle for each layer                                                                                                                                             |
+| `CONTEXT.md`                     | The glossary. Each term has one definition and `_Avoid_` lines for rejected synonyms.                                                                                      |
 
 The first ADRs come from the two existing notes:
 
@@ -174,7 +174,7 @@ The repository defines no custom agent roles at the start. A role file in `.clau
 
 The repository adds three rules:
 
-1. **Lean goes to Codex.** The orchestrator dispatches all Lean work to the `codex:codex-rescue` subagent with `--fresh`. Each task thus starts a new Codex thread. `.codex/config.toml` pins the Codex model. A change to Astra is a one-line change. The pin is `gpt-6-astra`. Do not use `/codex:transfer` for delegation: it copies the full Claude session, with its chat history, into Codex.
+1. **Lean goes to Codex.** The orchestrator dispatches all Lean work to the `codex:codex-rescue` subagent with `--fresh`. Each task thus starts a new Codex thread. `.codex/config.toml` pins the Codex model. A change of the Codex model is a one-line change. The pin is `gpt-6-astra`. Do not use `/codex:transfer` for delegation: it copies the full Claude session, with its chat history, into Codex.
 2. **Cross-vendor review before merge.** A Codex adversarial review (`adversarial-review --base main`) must pass on a branch that Claude wrote. It challenges the design, the assumptions, and the tradeoffs. Superpowers' own review covers defects. An Opus review must pass on a branch that Codex wrote. The reviewer gets the diff and the spec, not the reasoning of the author.
 3. **Superpowers paths are overridden.** Specs go to `doc/design/`. Plans go to `.scratch/` in the worktree.
 
