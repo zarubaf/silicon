@@ -27,10 +27,10 @@ def counter : String := "(design counter\n" ++
 
 /-! Keywords cannot name values. A missing closing token points to the end. -/
 #guard match parse "(design m (module m (let add (bits 1) (const 1 0))))" with
-  | .error e => e.code == .E001 && e.pos == ⟨1, 26⟩
+  | .error e => e.code == .E001 && e.pos == ⟨1, 26, []⟩
   | .ok _ => false
 #guard match parse "(design m" with
-  | .error e => e.code == .E001 && e.pos == ⟨1, 10⟩
+  | .error e => e.code == .E001 && e.pos == ⟨1, 10, []⟩
   | .ok _ => false
 
 /-! These checks compare syntax trees, so an operation cannot silently change its meaning. -/
@@ -44,7 +44,7 @@ def readsExpr (source : String) (expected : Expr) : Bool :=
     | _ => false
   | .error _ => false
 
-def zeroPos : Pos := ⟨0, 0⟩
+def zeroPos : Pos := ⟨0, 0, []⟩
 def lhs : Expr := .ref zeroPos "a"
 def rhs : Expr := .ref zeroPos "b"
 
@@ -120,7 +120,7 @@ def externSource : String := "(design m (extern blackbox " ++
 /-! A comment can contain tokens. Names allow ASCII letters and the stated suffixes. -/
 #guard match parse "; ) (ignored\n(design _; comment\n(module _)) ; trailing )" with
   | .ok d => d.top == "_" && match d.items with
-    | [.module m] => m.pos == ⟨3, 1⟩
+    | [.module m] => m.pos.line == 3 && m.pos.col == 1
     | _ => false
   | .error _ => false
 #guard (["_", "A", "z", "_0$", "Az09_$", "add0", "Add"].all fun n =>
@@ -128,7 +128,7 @@ def externSource : String := "(design m (extern blackbox " ++
 #guard readsExpr "U_0.q$" (.port zeroPos "U_0" "q$")
 #guard (["0a", "$a", "a.b", "é", "add", "sync", "eq"].all fun n =>
   match parse ("(design " ++ n ++ ")") with
-  | .error e => e.code == .E001 && e.pos == ⟨1, 9⟩
+  | .error e => e.code == .E001 && e.pos == ⟨1, 9, []⟩
   | .ok _ => false)
 
 /-! Grammar errors name the first bad token, even if a later closing token is absent. -/
@@ -137,22 +137,22 @@ def rejectsAt (source : String) (pos : Pos) : Bool :=
   | .error e => e.code == .E001 && e.pos == pos
   | .ok _ => false
 
-#guard rejectsAt "(design m (module m (assign q U_0.$q)))" ⟨1, 31⟩
-#guard rejectsAt "(design m (module m (let add (bits 1) (const 1 0))" ⟨1, 26⟩
-#guard rejectsAt "(design m) extra" ⟨1, 12⟩
-#guard rejectsAt "(design m))" ⟨1, 11⟩
-#guard rejectsAt "(design m) (design n)" ⟨1, 12⟩
-#guard rejectsAt "(design m\n; no close\n" ⟨3, 1⟩
-#guard rejectsAt "" ⟨1, 1⟩
-#guard rejectsAt "(design m (module m (assign q (add a))))" ⟨1, 37⟩
-#guard rejectsAt "(design m (module m (assign q (not a b))))" ⟨1, 38⟩
-#guard rejectsAt "(design m (module m (assign q (icmp bad a b))))" ⟨1, 37⟩
-#guard rejectsAt "(design m (module m (assign q (const 1 -1))))" ⟨1, 40⟩
-#guard rejectsAt "(design m (module m (assign q u.q.r)))" ⟨1, 31⟩
-#guard rejectsAt "(design m (module m (inst u child (d a b))))" ⟨1, 40⟩
-#guard rejectsAt "(design m (extern e (deps q a)))" ⟨1, 29⟩
-#guard rejectsAt "(design m (module m (let a clock b)))" ⟨1, 28⟩
-#guard rejectsAt "(design m (module m (assign q a) (input a (bits 1))))" ⟨1, 35⟩
+#guard rejectsAt "(design m (module m (assign q U_0.$q)))" ⟨1, 31, []⟩
+#guard rejectsAt "(design m (module m (let add (bits 1) (const 1 0))" ⟨1, 26, []⟩
+#guard rejectsAt "(design m) extra" ⟨1, 12, []⟩
+#guard rejectsAt "(design m))" ⟨1, 11, []⟩
+#guard rejectsAt "(design m) (design n)" ⟨1, 12, []⟩
+#guard rejectsAt "(design m\n; no close\n" ⟨3, 1, []⟩
+#guard rejectsAt "" ⟨1, 1, []⟩
+#guard rejectsAt "(design m (module m (assign q (add a))))" ⟨1, 37, []⟩
+#guard rejectsAt "(design m (module m (assign q (not a b))))" ⟨1, 38, []⟩
+#guard rejectsAt "(design m (module m (assign q (icmp bad a b))))" ⟨1, 37, []⟩
+#guard rejectsAt "(design m (module m (assign q (const 1 -1))))" ⟨1, 40, []⟩
+#guard rejectsAt "(design m (module m (assign q u.q.r)))" ⟨1, 31, []⟩
+#guard rejectsAt "(design m (module m (inst u child (d a b))))" ⟨1, 40, []⟩
+#guard rejectsAt "(design m (extern e (deps q a)))" ⟨1, 29, []⟩
+#guard rejectsAt "(design m (module m (let a clock b)))" ⟨1, 28, []⟩
+#guard rejectsAt "(design m (module m (assign q a) (input a (bits 1))))" ⟨1, 35, []⟩
 
 /-! Canonical form sorts all kinds, names, and numeric write indices across items. -/
 def unsortedSource : String := "(design z (module z " ++
@@ -183,13 +183,13 @@ def sortedSource : String := "(design z " ++
 #guard (parse "(design m (module m) (extern e (deps q ())))").toOption.map print ==
   some "(design m\n  (module m)\n  (extern e\n    (deps q ())))\n"
 
-#guard rejectsAt "(design m (module m (assign q (const 4294967296 0))))" ⟨1, 38⟩
-#guard rejectsAt "(design m (module m (input a (bits 4294967296))))" ⟨1, 36⟩
-#guard rejectsAt "(design m (module m (mem ram (bits 8) 4294967296 clk)))" ⟨1, 39⟩
-#guard rejectsAt "(design m (module m (write ram 4294967296 a b en)))" ⟨1, 32⟩
-#guard rejectsAt "(design m (module m (assign q (extract a 4294967296 1))))" ⟨1, 42⟩
-#guard rejectsAt "(design m (module m (assign q (extract a 0 4294967296))))" ⟨1, 44⟩
-#guard rejectsAt "(design m (module m (assign q (replicate a 4294967296))))" ⟨1, 44⟩
+#guard rejectsAt "(design m (module m (assign q (const 4294967296 0))))" ⟨1, 38, []⟩
+#guard rejectsAt "(design m (module m (input a (bits 4294967296))))" ⟨1, 36, []⟩
+#guard rejectsAt "(design m (module m (mem ram (bits 8) 4294967296 clk)))" ⟨1, 39, []⟩
+#guard rejectsAt "(design m (module m (write ram 4294967296 a b en)))" ⟨1, 32, []⟩
+#guard rejectsAt "(design m (module m (assign q (extract a 4294967296 1))))" ⟨1, 42, []⟩
+#guard rejectsAt "(design m (module m (assign q (extract a 0 4294967296))))" ⟨1, 44, []⟩
+#guard rejectsAt "(design m (module m (assign q (replicate a 4294967296))))" ⟨1, 44, []⟩
 
 /-! Only compound expressions count toward the nesting limit. -/
 def nestedNot (depth : Nat) : String :=
@@ -201,7 +201,7 @@ def assigned (expr : String) : String := "(design m (module m (assign q " ++ exp
 set_option maxRecDepth 4096 in
 #guard (parse (assigned (nestedNot 256))).isOk
 set_option maxRecDepth 4096 in
-#guard rejectsAt (assigned (nestedNot 257)) ⟨1, 31 + 5 * 256⟩
+#guard rejectsAt (assigned (nestedNot 257)) ⟨1, 31 + 5 * 256, []⟩
 set_option maxRecDepth 4096 in
 #guard (parse ("(design m (module m (reg r (bits 1) clk (reset sync " ++
   nestedNot 256 ++ " " ++ nestedNot 256 ++ "))))")).isOk
@@ -209,12 +209,12 @@ set_option maxRecDepth 4096 in
 #guard (parse ("(design m (module m (inst u child (d " ++ nestedNot 256 ++ "))))")).isOk
 
 /-! Bad characters have their own position within a maximal token. -/
-#guard rejectsAt ("(design" ++ String.singleton (Char.ofNat 12) ++ "m)") ⟨1, 8⟩
-#guard rejectsAt "(design aé)" ⟨1, 10⟩
-#guard rejectsAt "(design a-b)" ⟨1, 10⟩
-#guard rejectsAt "(design 12abc)" ⟨1, 9⟩
-#guard rejectsAt (assigned "a.1") ⟨1, 31⟩
-#guard rejectsAt (assigned "a.") ⟨1, 31⟩
+#guard rejectsAt ("(design" ++ String.singleton (Char.ofNat 12) ++ "m)") ⟨1, 8, []⟩
+#guard rejectsAt "(design aé)" ⟨1, 10, []⟩
+#guard rejectsAt "(design a-b)" ⟨1, 10, []⟩
+#guard rejectsAt "(design 12abc)" ⟨1, 9, []⟩
+#guard rejectsAt (assigned "a.1") ⟨1, 31, []⟩
+#guard rejectsAt (assigned "a.") ⟨1, 31, []⟩
 #guard (parse "(design\tm\r\n(module m))").isOk
 
 /-! Port declarations determine dependency and connection order, not their names. -/
@@ -238,18 +238,18 @@ def portOrderExpected : String := "(design parent " ++
   | _, _ => false
 
 /-! The first syntax error wins across numbers, grammar, and bad characters. -/
-#guard rejectsAt "(design m (module m (let x (bits 4294967296) a) (bad)))" ⟨1, 34⟩
-#guard rejectsAt "(design m (module m (bad) (assign q aé)))" ⟨1, 22⟩
-#guard rejectsAt "(design 12aé)" ⟨1, 12⟩
+#guard rejectsAt "(design m (module m (let x (bits 4294967296) a) (bad)))" ⟨1, 34, []⟩
+#guard rejectsAt "(design m (module m (bad) (assign q aé)))" ⟨1, 22, []⟩
+#guard rejectsAt "(design 12aé)" ⟨1, 12, []⟩
 set_option maxRecDepth 4096 in
 #guard rejectsAt ("(design m (module m (reg r (bits 1) clk (reset sync " ++
-  nestedNot 257 ++ " a))))") ⟨1, 53 + 5 * 256⟩
+  nestedNot 257 ++ " a))))") ⟨1, 53 + 5 * 256, []⟩
 set_option maxRecDepth 4096 in
 #guard rejectsAt ("(design m (module m (inst u child (d " ++ nestedNot 257 ++ "))))")
-  ⟨1, 38 + 5 * 256⟩
+  ⟨1, 38 + 5 * 256, []⟩
 set_option maxRecDepth 4096 in
 #guard rejectsAt (assigned (String.join (List.replicate 256 "(not ") ++
-  "(const 1 0)" ++ String.join (List.replicate 256 ")"))) ⟨1, 31 + 5 * 256⟩
+  "(const 1 0)" ++ String.join (List.replicate 256 ")"))) ⟨1, 31 + 5 * 256, []⟩
 
 #guard (parse ("(design z (module z (output q (bits 1)) (input a (bits 1)) " ++
   "(assign q a) (let x (bits 1) a)) (module a))")).toOption.map print ==
@@ -269,7 +269,7 @@ def counterDesign : Design := ⟨"counter", [.module ⟨zeroPos, "counter",
    .let_ zeroPos "inc" 8 (.bin zeroPos .add (.ref zeroPos "r") (.const zeroPos 8 1)),
    .next zeroPos "r" (.mux zeroPos (.ref zeroPos "en")
      (.ref zeroPos "inc") (.ref zeroPos "r")),
-   .assign zeroPos "q" (.ref zeroPos "r")]⟩], []⟩
+   .assign zeroPos "q" (.ref zeroPos "r")]⟩], zeroPos⟩
 
 #guard (parse counter).toOption.map Design.erasePos == some counterDesign
 
@@ -277,9 +277,9 @@ example : counterDesign.ValidNames := by
   simp [Design.ValidNames, counterDesign, Item.names, Stmt.names, Reset.names, Expr.names]
   decide
 
-#guard rejectsAt "(design m (module m (assign q (const 4294967296 nope))))" ⟨1, 38⟩
-#guard rejectsAt "(design m (module m (assign q (extract a 4294967296 nope))))" ⟨1, 42⟩
-#guard rejectsAt "(design m (module m (bad) (assign q (const 4294967296 0))))" ⟨1, 22⟩
+#guard rejectsAt "(design m (module m (assign q (const 4294967296 nope))))" ⟨1, 38, []⟩
+#guard rejectsAt "(design m (module m (assign q (extract a 4294967296 nope))))" ⟨1, 42, []⟩
+#guard rejectsAt "(design m (module m (bad) (assign q (const 4294967296 0))))" ⟨1, 22, []⟩
 #guard (parse ("(design m (module m (input a (bits 4294967295)) " ++
   "(mem ram (bits 4294967295) 4294967295 clk) " ++
   "(write ram 4294967295 a a a)))")).isOk

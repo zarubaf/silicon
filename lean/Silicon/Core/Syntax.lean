@@ -8,6 +8,7 @@ namespace Silicon.Core
 structure Pos where
   line : Nat
   col : Nat
+  atoms : List (List Nat × Nat × Nat) := []
   deriving Repr, DecidableEq, BEq, Inhabited
 
 /-! Clocks and bit vectors are distinct types. -/
@@ -98,20 +99,11 @@ structure Extern where
   deps : List Dep
   deriving Repr, DecidableEq, BEq, Inhabited
 
-/-! Source trees retain atom positions for errors within a form. -/
-structure SourcePos where
-  pos : Pos
-  children : List Pos := []
-  deriving Repr, DecidableEq, BEq, Inhabited
-
-def SourcePos.locate (source : List SourcePos) : Pos → List Nat → Pos
-  | p, [] => p
-  | p, i :: path =>
-    match source.find? (·.pos == p) with
-    | some s => match s.children[i]? with
-      | some child => SourcePos.locate source child path
-      | none => p
-    | none => p
+/-! Each form keeps the positions of its fields, indexed by paths within that form. -/
+def Pos.locate (p : Pos) (path : List Nat) : Option Pos :=
+  if path.isEmpty then some p else do
+    let entry ← p.atoms.find? (·.1 == path)
+    return ⟨entry.2.1, entry.2.2, []⟩
 
 /-! A design names its top module and stores modules and externs in input order. -/
 inductive Item where
@@ -122,16 +114,8 @@ inductive Item where
 structure Design where
   top : String
   items : List Item
-  source : List SourcePos := []
+  topPos : Pos := ⟨1, 1, []⟩
   deriving Repr, DecidableEq, BEq, Inhabited
-
-def Design.locate (d : Design) (p : Pos) (path : List Nat) : Pos :=
-  SourcePos.locate d.source p path
-
-def Design.topPos (d : Design) : Pos :=
-  match d.source with
-  | s :: _ => d.locate s.pos [1]
-  | [] => ⟨1, 1⟩
 
 /-! The shared error codes identify grammar, checker, and execution errors. -/
 inductive ErrorCode where
@@ -155,40 +139,110 @@ structure Error where
 
 /-! Position erasure removes source locations without changing the syntax. -/
 def Expr.erasePos : Expr → Expr
-  | .ref _ n => .ref ⟨0, 0⟩ n
-  | .port _ i n => .port ⟨0, 0⟩ i n
-  | .const _ w v => .const ⟨0, 0⟩ w v
-  | .un _ o a => .un ⟨0, 0⟩ o a.erasePos
-  | .bin _ o a b => .bin ⟨0, 0⟩ o a.erasePos b.erasePos
-  | .icmp _ o a b => .icmp ⟨0, 0⟩ o a.erasePos b.erasePos
-  | .mux _ a b c => .mux ⟨0, 0⟩ a.erasePos b.erasePos c.erasePos
-  | .extract _ a l w => .extract ⟨0, 0⟩ a.erasePos l w
-  | .replicate _ a n => .replicate ⟨0, 0⟩ a.erasePos n
-  | .read _ n a => .read ⟨0, 0⟩ n a.erasePos
+  | .ref _ n => .ref ⟨0, 0, []⟩ n
+  | .port _ i n => .port ⟨0, 0, []⟩ i n
+  | .const _ w v => .const ⟨0, 0, []⟩ w v
+  | .un _ o a => .un ⟨0, 0, []⟩ o a.erasePos
+  | .bin _ o a b => .bin ⟨0, 0, []⟩ o a.erasePos b.erasePos
+  | .icmp _ o a b => .icmp ⟨0, 0, []⟩ o a.erasePos b.erasePos
+  | .mux _ a b c => .mux ⟨0, 0, []⟩ a.erasePos b.erasePos c.erasePos
+  | .extract _ a l w => .extract ⟨0, 0, []⟩ a.erasePos l w
+  | .replicate _ a n => .replicate ⟨0, 0, []⟩ a.erasePos n
+  | .read _ n a => .read ⟨0, 0, []⟩ n a.erasePos
 
 def Reset.erasePos (r : Reset) : Reset :=
   { r with signal := r.signal.erasePos, value := r.value.erasePos }
 
 def Stmt.erasePos : Stmt → Stmt
-  | .let_ _ n w v => .let_ ⟨0, 0⟩ n w v.erasePos
-  | .reg _ n w c r => .reg ⟨0, 0⟩ n w c (r.map Reset.erasePos)
-  | .next _ n v => .next ⟨0, 0⟩ n v.erasePos
-  | .mem _ n w d c => .mem ⟨0, 0⟩ n w d c
-  | .write _ n i a d e => .write ⟨0, 0⟩ n i a.erasePos d.erasePos e.erasePos
-  | .inst _ n m xs => .inst ⟨0, 0⟩ n m (xs.map fun (k, v) => (k, v.erasePos))
-  | .assign _ n v => .assign ⟨0, 0⟩ n v.erasePos
+  | .let_ _ n w v => .let_ ⟨0, 0, []⟩ n w v.erasePos
+  | .reg _ n w c r => .reg ⟨0, 0, []⟩ n w c (r.map Reset.erasePos)
+  | .next _ n v => .next ⟨0, 0, []⟩ n v.erasePos
+  | .mem _ n w d c => .mem ⟨0, 0, []⟩ n w d c
+  | .write _ n i a d e => .write ⟨0, 0, []⟩ n i a.erasePos d.erasePos e.erasePos
+  | .inst _ n m xs => .inst ⟨0, 0, []⟩ n m (xs.map fun (k, v) => (k, v.erasePos))
+  | .assign _ n v => .assign ⟨0, 0, []⟩ n v.erasePos
 
-def Port.erasePos (p : Port) : Port := { p with pos := ⟨0, 0⟩ }
+def Port.erasePos (p : Port) : Port := { p with pos := ⟨0, 0, []⟩ }
 
-def Dep.erasePos (d : Dep) : Dep := { d with pos := ⟨0, 0⟩ }
+def Dep.erasePos (d : Dep) : Dep := { d with pos := ⟨0, 0, []⟩ }
 
 def Item.erasePos : Item → Item
   | .module m => .module
-      { m with pos := ⟨0, 0⟩, ports := m.ports.map Port.erasePos, body := m.body.map Stmt.erasePos }
+      { m with
+        pos := ⟨0, 0, []⟩
+        ports := m.ports.map Port.erasePos
+        body := m.body.map Stmt.erasePos }
   | .extern e => .extern
-      { e with pos := ⟨0, 0⟩, ports := e.ports.map Port.erasePos, deps := e.deps.map Dep.erasePos }
+      { e with
+        pos := ⟨0, 0, []⟩
+        ports := e.ports.map Port.erasePos
+        deps := e.deps.map Dep.erasePos }
 
 def Design.erasePos (d : Design) : Design :=
-  { d with items := d.items.map Item.erasePos, source := [] }
+  { d with items := d.items.map Item.erasePos, topPos := ⟨0, 0, []⟩ }
+
+/-! Position mapping changes source metadata without changing syntax. -/
+def Expr.mapPos (f : Pos → Pos) : Expr → Expr
+  | .ref p n => .ref (f p) n
+  | .port p i n => .port (f p) i n
+  | .const p w v => .const (f p) w v
+  | .un p o a => .un (f p) o (a.mapPos f)
+  | .bin p o a b => .bin (f p) o (a.mapPos f) (b.mapPos f)
+  | .icmp p o a b => .icmp (f p) o (a.mapPos f) (b.mapPos f)
+  | .mux p a b c => .mux (f p) (a.mapPos f) (b.mapPos f) (c.mapPos f)
+  | .extract p a l w => .extract (f p) (a.mapPos f) l w
+  | .replicate p a n => .replicate (f p) (a.mapPos f) n
+  | .read p n a => .read (f p) n (a.mapPos f)
+
+def Reset.mapPos (f : Pos → Pos) (r : Reset) : Reset :=
+  { r with signal := r.signal.mapPos f, value := r.value.mapPos f }
+
+def Stmt.mapPos (f : Pos → Pos) : Stmt → Stmt
+  | .let_ p n w v => .let_ (f p) n w (v.mapPos f)
+  | .reg p n w c r => .reg (f p) n w c (r.map (Reset.mapPos f))
+  | .next p n v => .next (f p) n (v.mapPos f)
+  | .mem p n w d c => .mem (f p) n w d c
+  | .write p n i a d e => .write (f p) n i (a.mapPos f) (d.mapPos f) (e.mapPos f)
+  | .inst p n m xs => .inst (f p) n m (xs.map fun (k, v) => (k, v.mapPos f))
+  | .assign p n v => .assign (f p) n (v.mapPos f)
+
+def Port.mapPos (f : Pos → Pos) (p : Port) : Port := { p with pos := f p.pos }
+
+def Dep.mapPos (f : Pos → Pos) (d : Dep) : Dep := { d with pos := f d.pos }
+
+def Item.mapPos (f : Pos → Pos) : Item → Item
+  | .module m => .module { m with
+      pos := f m.pos
+      ports := m.ports.map (Port.mapPos f)
+      body := m.body.map (Stmt.mapPos f) }
+  | .extern e => .extern { e with
+      pos := f e.pos
+      ports := e.ports.map (Port.mapPos f)
+      deps := e.deps.map (Dep.mapPos f) }
+
+def Design.mapPos (f : Pos → Pos) (d : Design) : Design :=
+  { d with items := d.items.map (Item.mapPos f), topPos := f d.topPos }
+
+@[simp] theorem Expr.mapPos_erase (f : Pos → Pos) (e : Expr) :
+    (e.mapPos f).erasePos = e.erasePos := by
+  induction e <;> simp_all [Expr.mapPos, Expr.erasePos]
+
+@[simp] theorem Reset.mapPos_erase (f : Pos → Pos) (r : Reset) :
+    (r.mapPos f).erasePos = r.erasePos := by
+  simp [Reset.mapPos, Reset.erasePos]
+
+@[simp] theorem Stmt.mapPos_erase (f : Pos → Pos) (s : Stmt) :
+    (s.mapPos f).erasePos = s.erasePos := by
+  cases s <;> simp [Stmt.mapPos, Stmt.erasePos, Option.map_map, List.map_map]
+  next reset => cases reset <;> simp
+
+@[simp] theorem Item.mapPos_erase (f : Pos → Pos) (i : Item) :
+    (i.mapPos f).erasePos = i.erasePos := by
+  cases i <;> simp [Item.mapPos, Item.erasePos, List.map_map,
+    Port.mapPos, Port.erasePos, Dep.mapPos, Dep.erasePos]
+
+@[simp] theorem Design.mapPos_erase (f : Pos → Pos) (d : Design) :
+    (d.mapPos f).erasePos = d.erasePos := by
+  simp [Design.mapPos, Design.erasePos, List.map_map]
 
 end Silicon.Core

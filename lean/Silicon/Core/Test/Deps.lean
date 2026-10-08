@@ -28,11 +28,11 @@ private def parent : Module := moduleOf
 
 /-! An extern supplies its declared dependencies through the same interface. -/
 private def external : Extern :=
-  ⟨⟨1, 1⟩, "child",
-    [⟨⟨1, 1⟩, .input, "clk", .clock⟩, ⟨⟨1, 1⟩, .input, "x", .bits 1⟩,
-     ⟨⟨1, 1⟩, .input, "y", .bits 1⟩, ⟨⟨1, 1⟩, .output, "q", .bits 1⟩,
-     ⟨⟨1, 1⟩, .output, "r", .bits 1⟩],
-    [⟨⟨1, 1⟩, "q", ["x"]⟩, ⟨⟨1, 1⟩, "r", []⟩]⟩
+  ⟨⟨1, 1, []⟩, "child",
+    [⟨⟨1, 1, []⟩, .input, "clk", .clock⟩, ⟨⟨1, 1, []⟩, .input, "x", .bits 1⟩,
+     ⟨⟨1, 1, []⟩, .input, "y", .bits 1⟩, ⟨⟨1, 1, []⟩, .output, "q", .bits 1⟩,
+     ⟨⟨1, 1, []⟩, .output, "r", .bits 1⟩],
+    [⟨⟨1, 1, []⟩, "q", ["x"]⟩, ⟨⟨1, 1, []⟩, "r", []⟩]⟩
 
 #guard Deps.infer parent (fun n =>
   if n == external.name then some (external.deps.map fun d => (d.output, d.inputs))
@@ -78,7 +78,7 @@ private def children (n : String) : Option Deps :=
 
 /-! Long paths and repeated branches retain an input exactly once. -/
 private def chain : Module :=
-  let p : Pos := ⟨1, 1⟩
+  let p : Pos := ⟨1, 1, []⟩
   let name := fun n : Nat => "v" ++ toString n
   { pos := p, name := "top",
     ports := [⟨p, .input, name 0, .bits 1⟩, ⟨p, .output, "q", .bits 1⟩],
