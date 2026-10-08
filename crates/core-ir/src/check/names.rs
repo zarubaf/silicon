@@ -418,8 +418,19 @@ impl<'a> Resolver<'_, 'a> {
             self.unknown(inst, "an instance");
             return None;
         };
-        // The unresolved module is reported on its own.
-        let sig = self.scope.insts.get(i.index())?.sig?;
+        let decl = self.scope.insts.get(i.index())?;
+        let Some(sig) = decl.sig else {
+            // The `NAME.PORT` cannot resolve: the module of the instance does not.
+            self.errors.push(error(
+                ErrorCode::E003,
+                span,
+                format!(
+                    "`{}.{}` has no module: `{}` is not a module or an extern",
+                    inst.text, port.text, decl.module.text
+                ),
+            ));
+            return None;
+        };
         match sig.port(&port.text) {
             Some(PortRef::Output(o)) => sig
                 .outputs
