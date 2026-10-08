@@ -82,7 +82,7 @@ _Avoid_: language version
 
 ### translation validation
 
-A check for each compiler run. The compiler emits the core IR as a Lean term, and a checker confirms it. It replaces a verified compiler.
+A check for each compiler run. The compiler emits the core IR as a `.sil` file, and the Lean checker `silicon-check` confirms it. It replaces a verified compiler.
 
 ### LEC
 

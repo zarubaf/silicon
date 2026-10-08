@@ -28,7 +28,7 @@ Each layer has one oracle. An oracle is a tool or a model that can say "wrong" m
 
 Fuzzing, translation validation, and LEC join `just ci` in build step 2, when their oracles exist. LEC needs the CIRCT backend, which comes in build step 3. See [the build order](../architecture.md).
 
-- Translation validation: each compiler run emits the core IR as a Lean term. A checker confirms the term.
+- Translation validation: each compiler run emits the core IR as a `.sil` file. The Lean checker `silicon-check` confirms it.
 - Differential testing: random core IR generators drive the Lean interpreter, the Rust simulator, `arcilator`, and Verilator. A disagreement between them is a failure.
 - LEC: `circt-lec` or the Yosys equivalence tools compare the emitted Verilog with the core IR.
 

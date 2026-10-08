@@ -1,6 +1,6 @@
 # Trust boundary
 
-This document is the authority for the trust boundary. It gives the status, the oracle, and the gap of each part. [The core IR spec](design/2026-10-08-core-ir.md), section 10, is the source.
+This document is the authority for the trust boundary. It gives the status, the oracle, the gap, and the issue of each part. [The core IR spec](design/2026-10-08-core-ir.md) defines the parts.
 
 ## Statuses
 
@@ -12,20 +12,20 @@ This document is the authority for the trust boundary. It gives the status, the 
 
 ## Parts
 
-| Part                                                                                         | Status        | Oracle                                                      | Gap                                                                            | Issue |
-| -------------------------------------------------------------------------------------------- | ------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------ | ----- |
-| The Lean theorems of the core IR spec, section 6.3, including the checker in both directions | Proven        | The Lean kernel                                             | None                                                                           |       |
-| The core IR of each compiler run                                                             | Validated     | `silicon-check check`                                       | None                                                                           |       |
-| The Rust checker and interpreter                                                             | Validated     | Differential tests against Lean                             | No proof                                                                       | #10   |
-| The Lean reference lowering and the Lean memory models                                       | Proven        | `lower_correct` and `mem_model_correct`                     | The `Mlir` semantics must match CIRCT. `arcilator` and `circt-lec` check this. |       |
-| The Rust memory models                                                                       | Validated     | LEC against the Lean memory models                          | None                                                                           |       |
-| The Rust lowering and the CIRCT passes                                                       | Validated     | LEC against the Lean reference MLIR                         | None                                                                           |       |
-| The compiled `silicon-check`                                                                 | Trusted       | None. It trusts the Lean compiler, as `native_decide` does. | The Lean compiler                                                              |       |
-| `circt-lec`, `circt-verilog`, Z3, and the MLIR parser                                        | Trusted       | None. They close the gap behind CIRCT.                      | The SMT lowering of `hw.array_inject` out of range                             |       |
-| Black boxes                                                                                  | Trusted       | None. The project assumes their contracts.                  | The contract of each black box                                                 |       |
-| Asynchronous reset, more than one clock domain, and CDC primitives                           | Not supported | The checker rejects them                                    | No semantics                                                                   | #11   |
-| Synchronous memory read ports and write masks                                                | Not supported | The text format has no syntax for them                      | No semantics                                                                   | #12   |
-| 4-state behavior, CDC verification, and timing                                               | Out of scope  | None. Existing dedicated tools cover them.                  | None                                                                           |       |
+| Part                                                                                         | Status        | Oracle                                                                                                   | Gap                                                                            | Issue |
+| -------------------------------------------------------------------------------------------- | ------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ----- |
+| The Lean theorems of the core IR spec, section 6.3, including the checker in both directions | Proven        | The Lean kernel                                                                                          | None                                                                           |       |
+| The core IR of each compiler run                                                             | Validated     | `silicon-check check`                                                                                    | None                                                                           |       |
+| The Rust checker and interpreter                                                             | Validated     | Differential tests against Lean                                                                          | No proof                                                                       | #10   |
+| The Lean reference lowering and the Lean memory models                                       | Proven        | `lower_correct` and `mem_model_correct`                                                                  | The `Mlir` semantics must match CIRCT. `arcilator` and `circt-lec` check this. |       |
+| The Rust memory models                                                                       | Validated     | LEC against the Lean memory models                                                                       | None                                                                           |       |
+| The Rust lowering and the CIRCT passes                                                       | Validated     | LEC against the Lean reference MLIR                                                                      | None                                                                           |       |
+| The compiled `silicon-check`                                                                 | Trusted       | None. It trusts the Lean compiler, as `native_decide` does.                                              | The Lean compiler                                                              |       |
+| `circt-lec`, `circt-verilog`, Z3, and the MLIR parser                                        | Trusted       | None. They close the gap behind CIRCT.                                                                   | The SMT lowering of `hw.array_inject` out of range                             |       |
+| Black boxes                                                                                  | Trusted       | None. The project assumes their contracts.                                                               | The contract of each black box                                                 |       |
+| Asynchronous reset, more than one clock domain, and CDC primitives                           | Not supported | The parser rejects a reset kind other than `sync` (`E001`). The checker rejects a second clock (`E009`). | No semantics                                                                   | #11   |
+| Synchronous memory read ports and write masks                                                | Not supported | The text format has no syntax for them                                                                   | No semantics                                                                   | #12   |
+| 4-state behavior, CDC verification, and timing                                               | Out of scope  | None. Existing dedicated tools cover them.                                                               | None                                                                           |       |
 
 ## Gaps
 
@@ -51,7 +51,7 @@ A black box has an assumed contract and no Silicon body. No check covers the con
 
 ### Asynchronous reset, more than one clock domain, and CDC
 
-The semantics has one clock and synchronous reset only. The checker rejects a second clock. The text format has no asynchronous reset. Issue #11 adds asynchronous reset, more than one clock domain, and CDC primitives.
+The semantics has one clock and synchronous reset only. The parser rejects a reset kind other than `sync` with `E001`. The checker rejects a second clock with `E009`. Issue #11 adds asynchronous reset, more than one clock domain, and CDC primitives.
 
 ### Synchronous memory read ports and write masks
 
