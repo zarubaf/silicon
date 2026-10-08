@@ -36,6 +36,9 @@
             yamlfmt
             nodejs
             git
+            circt
+            z3
+            llvmPackages.libllvm
             (python3.withPackages (ps: [
               ps.mdformat
               ps.mdformat-gfm
@@ -43,6 +46,7 @@
             ]))
           ];
           RUSTC_WRAPPER = "sccache";
+          SILICON_Z3_LIB = "${pkgs.z3.lib}/lib/libz3.so";
         };
       });
 
