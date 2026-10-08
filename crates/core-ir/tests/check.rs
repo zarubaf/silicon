@@ -1298,3 +1298,33 @@ fn e005_constant_value_in_an_assign_to_a_clock_output() {
         57,
     );
 }
+
+#[test]
+fn a_clocked_extern_keeps_its_clock_port_and_connection() {
+    let src = "\
+(design top
+  (extern ext
+    (input a (bits 1))
+    (input c clock)
+    (output b (bits 1))
+    (deps b ()))
+  (module top
+    (input clk clock)
+    (input a (bits 1))
+    (output q (bits 1))
+    (inst u ext (c clk) (a a))
+    (assign q u.b)))
+";
+    let design = run(src).expect("a clocked extern checks");
+    let ext = &design.externs[0];
+    let clock = ext.clock.as_ref().expect("the extern keeps its clock");
+    assert_eq!((clock.name.as_str(), clock.position), ("c", 1));
+    assert_eq!(ext.inputs.len(), 1);
+    let top = &design.modules[design.top.index()];
+    assert!(
+        top.has_clock,
+        "the parent has the clock that the instance gets"
+    );
+    let inst = &top.insts[0];
+    assert!(matches!(inst.callee, typed::Callee::Extern(e) if e.index() == 0));
+}
