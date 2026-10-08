@@ -23,6 +23,8 @@ pub(super) enum PortRef {
 pub(super) struct DataPort<'a> {
     pub port: &'a Port,
     pub width: Num,
+    /// The position of the port among all ports of its unit.
+    pub position: usize,
 }
 
 /// The interface of a module or an extern.
@@ -46,12 +48,20 @@ impl<'a> Sig<'a> {
             let entry = match (port.dir, port.ty) {
                 (Dir::Input, Ty::Bits(width)) => {
                     let idx = InputIdx::new(sig.inputs.len());
-                    sig.inputs.push(DataPort { port, width });
+                    sig.inputs.push(DataPort {
+                        port,
+                        width,
+                        position,
+                    });
                     PortRef::Input(idx)
                 }
                 (Dir::Output, Ty::Bits(width)) => {
                     let idx = OutputIdx::new(sig.outputs.len());
-                    sig.outputs.push(DataPort { port, width });
+                    sig.outputs.push(DataPort {
+                        port,
+                        width,
+                        position,
+                    });
                     PortRef::Output(idx)
                 }
                 (Dir::Input, Ty::Clock) => {

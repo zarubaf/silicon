@@ -166,18 +166,23 @@ mod tests {
     use crate::ast::BinOp;
     use crate::typed::{Inst, Port};
 
-    fn port(name: &str) -> Port {
+    fn port(name: &str, position: usize) -> Port {
         Port {
             name: name.into(),
             width: std::num::NonZeroU32::MIN,
+            position,
         }
     }
 
     fn module(inputs: &[&str], outputs: &[&str], insts: Vec<Inst>, assigns: Vec<Expr>) -> Module {
         Module {
             name: "m".into(),
-            inputs: inputs.iter().map(|n| port(n)).collect(),
-            outputs: outputs.iter().map(|n| port(n)).collect(),
+            inputs: inputs.iter().enumerate().map(|(i, n)| port(n, i)).collect(),
+            outputs: outputs
+                .iter()
+                .enumerate()
+                .map(|(i, n)| port(n, inputs.len() + i))
+                .collect(),
             clock: None,
             lets: vec![],
             regs: vec![],

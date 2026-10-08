@@ -67,6 +67,7 @@ fn ports(ports: &[DataPort], widths: &[NonZeroU32]) -> Vec<Port> {
         .map(|(p, &width)| Port {
             name: p.port.name.text.clone(),
             width,
+            position: p.position,
         })
         .collect()
 }
