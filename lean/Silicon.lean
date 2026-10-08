@@ -20,6 +20,7 @@ import Silicon.Core.GraphComponents
 import Silicon.Core.GraphCycleIndex
 import Silicon.Core.Check
 import Silicon.Core.Canonicalize
+import Silicon.Core.CanonicalizeSem
 import Silicon.Core.Test.Check
 import Silicon.Core.Semantics
 import Silicon.Core.Interp
