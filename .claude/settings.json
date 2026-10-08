@@ -1,0 +1,28 @@
+{
+  "outputStyle": "ASD-STE100",
+  "extraKnownMarketplaces": {
+    "openai-codex": {
+      "source": {
+        "source": "github",
+        "repo": "openai/codex-plugin-cc"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "superpowers@anthropic-plugin-directory": true,
+    "codex@openai-codex": true
+  },
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  },
+  "permissions": {
+    "deny": [
+      "Read(target/**)",
+      "Read(.lake/**)",
+      "Read(out/**)",
+      "Read(result*)",
+      "Read(.claude/worktrees/**)"
+    ]
+  }
+}
