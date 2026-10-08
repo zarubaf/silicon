@@ -46,7 +46,8 @@ index! {
     InstIdx,
 }
 
-/// For each output (by [`OutputIdx`]), the inputs it depends on combinationally.
+/// For each output (by [`OutputIdx`]), the inputs it depends on combinationally,
+/// in port order.
 pub type Deps = Vec<Vec<InputIdx>>;
 
 /// A data port. Clock ports are not ports of this form.

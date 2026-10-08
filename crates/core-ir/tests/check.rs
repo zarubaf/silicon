@@ -1148,3 +1148,20 @@ fn deep_two_wide_hierarchy_is_fast() {
     assert_eq!(top.name, "m40");
     assert_eq!(indices(&top.deps), [[0, 1]]);
 }
+
+#[test]
+fn extern_deps_follow_the_input_port_order() {
+    let src = "\
+(design top
+  (extern ext
+    (input x (bits 1))
+    (input y (bits 1))
+    (output b (bits 1))
+    (deps b (y x)))
+  (module top
+    (output q (bits 1))
+    (assign q (const 1 0))))
+";
+    let design = run(src).expect("the design checks");
+    assert_eq!(indices(&design.externs[0].deps), [[0, 1]]);
+}
