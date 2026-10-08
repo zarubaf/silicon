@@ -26,7 +26,8 @@ pub struct Bits {
     value: BigUint,
 }
 
-fn mask(width: u32) -> BigUint {
+/// The value with the low `width` bits set.
+pub(crate) fn mask(width: u32) -> BigUint {
     (BigUint::from(1u8) << width) - 1u8
 }
 

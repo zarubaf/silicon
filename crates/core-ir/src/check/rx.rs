@@ -436,7 +436,7 @@ impl ExModule<'_> {
             add(&a.expr, Some(a.width), a.span, "the output");
         }
         for w in &self.writes {
-            let addr = super::types::address_width(w.depth);
+            let addr = typed::address_width(w.depth);
             add(&w.addr, Some(addr), w.span, "the address");
             add(&w.data, Some(w.data_width), w.span, "the memory word");
             add(&w.en, Some(1), w.span, "the write enable");

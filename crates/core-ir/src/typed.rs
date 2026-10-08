@@ -47,6 +47,12 @@ index! {
     InstIdx,
 }
 
+/// The address width of a memory with `depth` words: `max(1, ceil(log2 depth))`
+/// (spec section 4.1).
+pub(crate) fn address_width(depth: u32) -> u32 {
+    (u32::BITS - depth.saturating_sub(1).leading_zeros()).max(1)
+}
+
 /// For each output (by [`OutputIdx`]), the inputs it depends on combinationally,
 /// in port order.
 pub type Deps = Vec<Vec<InputIdx>>;
