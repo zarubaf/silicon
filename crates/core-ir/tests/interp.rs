@@ -360,3 +360,25 @@ fn a_value_reads_an_output_of_its_module() {
         ["out=(q 2 p 1)\n", "out=(q 1 p 0)\n", "out=(q 2 p 1)\n"]
     );
 }
+
+#[test]
+fn an_unused_extern_fails_before_a_wide_hierarchy_expands() {
+    use std::fmt::Write;
+    let mut src = String::from(
+        "(design m40\n  (extern ext\n    (input a (bits 1))\n    (output b (bits 1))\n    (deps b (a)))\n  (module m0\n    (input a (bits 1))\n    (output q (bits 1))\n    (assign q a))\n",
+    );
+    for k in 1..=40 {
+        let j = k - 1;
+        // Writing to a `String` cannot fail.
+        let _ = writeln!(
+            src,
+            "  (module m{k}\n    (input a (bits 1))\n    (output q (bits 1))\n    (inst u m{j} (a a))\n    (inst v m{j} (a a))\n    (assign q (and u.q v.q)))"
+        );
+    }
+    src.push_str(")\n");
+    let design = design(&src);
+    let Err(d) = Sim::new(&design) else {
+        panic!("E014 expected");
+    };
+    assert_eq!((d.code, d.span.line, d.span.col), (ErrorCode::E014, 2, 3));
+}
