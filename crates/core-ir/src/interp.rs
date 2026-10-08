@@ -15,7 +15,7 @@ use num_bigint::BigUint;
 use crate::Bits;
 use crate::ast::{BinOp, UnOp};
 use crate::diag::{Diagnostic, ErrorCode};
-use crate::typed::{Callee, Design, Expr, ExternIdx, ModIdx, Module, Node};
+use crate::typed::{Callee, Design, Expr, ModIdx, Module, Node};
 
 /// A simulation of a design that has no extern. The start state is all zero.
 pub struct Sim<'d> {
@@ -29,18 +29,24 @@ impl<'d> Sim<'d> {
     /// # Errors
     /// Returns `E014` at the first `extern` item if the design has an extern:
     /// no environment gives the extern a semantics (spec section 5.4).
+    ///
+    /// # Panics
+    /// `design` must come from [`crate::check::check`]. An instance of an
+    /// extern that the design does not declare panics.
     pub fn new(design: &'d Design) -> Result<Sim<'d>, Diagnostic> {
         // Spec section 5.4: each extern gives E014, also an extern that no
-        // instance runs, so the first extern item wins over the first instance.
-        let span = match (design.externs.first(), Frames::new(design)) {
-            (None, Ok(frames)) => return Ok(Sim { design, frames }),
-            (Some(ext), _) => ext.span,
-            (None, Err(ext)) => design.externs[ext.index()].span,
-        };
-        Err(Diagnostic {
-            code: ErrorCode::E014,
-            span,
-            message: "no environment for extern".into(),
+        // instance runs, so the first extern item wins. The check comes
+        // before any frame: the hierarchy can be exponentially large.
+        if let Some(ext) = design.externs.first() {
+            return Err(Diagnostic {
+                code: ErrorCode::E014,
+                span: ext.span,
+                message: "no environment for extern".into(),
+            });
+        }
+        Ok(Sim {
+            design,
+            frames: Frames::new(design),
         })
     }
 
@@ -137,17 +143,22 @@ const TOP: usize = 0;
 struct Frames(Vec<Frame>);
 
 impl Frames {
-    /// The all-zero frames below the top, or an extern that an instance runs.
-    fn new(design: &Design) -> Result<Frames, ExternIdx> {
+    /// The all-zero frames of a design without externs: the top and every
+    /// instance below it.
+    ///
+    /// # Panics
+    /// An instance of an extern panics. [`Sim::new`] admits only a design
+    /// without externs, and a checked design has no instance of an extern
+    /// that it does not declare.
+    fn new(design: &Design) -> Frames {
         let top = &design.modules[design.top.index()];
         let mut frames = vec![Frame::new(top, design.top)];
         let mut parent = 0;
         while let Some(frame) = frames.get(parent) {
             let m = &design.modules[frame.module.index()];
             for inst in &m.insts {
-                let child = match inst.callee {
-                    Callee::Module(child) => child,
-                    Callee::Extern(ext) => return Err(ext),
+                let Callee::Module(child) = inst.callee else {
+                    unreachable!("a design without externs runs an extern");
                 };
                 let index = frames.len();
                 frames.push(Frame::new(&design.modules[child.index()], child));
@@ -155,7 +166,7 @@ impl Frames {
             }
             parent += 1;
         }
-        Ok(Frames(frames))
+        Frames(frames)
     }
 
     /// Forgets the values of the last cycle.
