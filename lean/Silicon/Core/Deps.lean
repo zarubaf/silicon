@@ -64,7 +64,7 @@ def equations (children : String → Option Deps) : Stmt → List (Node × List 
         ((inputs.lookup input).toList.flatMap reads))
   | _ => []
 
-private def inputs (m : Module) : List String :=
+def inputs (m : Module) : List String :=
   m.ports.filterMap fun p => match p.dir, p.ty with
     | .input, .bits _ => some p.name
     | _, _ => none
@@ -94,7 +94,7 @@ private def indexedGraph (m : Module) (children : String → Option Deps) :
 A search visits each node at most once. The bound covers every path to an input leaf.
 Cycles terminate and keep all reachable inputs. The checker rejects cycles separately.
 -/
-private def visit (g : List (Node × List Node)) : Nat → List Node → List Node → List Node
+def visit (g : List (Node × List Node)) : Nat → List Node → List Node → List Node
   | 0, _, seen => seen
   | fuel + 1, pending, seen =>
     let fresh := pending.foldl (fun acc n =>

@@ -1538,7 +1538,7 @@ private theorem body_reg (d : Design) (ss : List Stmt) (n : String)
       rw [bodyContext_cons, List.lookup_append, entry_no_name d s n hd]
       simpa using ih h
 
-private theorem port_lookup (ps : List Port) (tail : Ctx) (n : String) (p : Port)
+theorem port_lookup (ps : List Port) (tail : Ctx) (n : String) (p : Port)
     (h : ps.find? (·.name == n) = some p) :
     ((ps.map fun p => (Deps.Node.name p.name,
       if p.ty == .clock && p.dir == .input then Kind.clock else .value p.ty)) ++
@@ -1734,7 +1734,7 @@ private theorem design_deps_keys_nodup (d : Design) (h : Rules.Names d) (fuel : 
       exact inferred_keys_nodup m _ hp
 
 
-private def label (s : Stmt) : Option String :=
+def label (s : Stmt) : Option String :=
   match s with
   | .assign _ n _ => some n
   | _ => Rules.definition s
@@ -1833,7 +1833,7 @@ private theorem countP_some_le_one {α β : Type} [DecidableEq β]
     cases hf : f a <;> simp
   rwa [he] at hb
 
-private theorem module_scope_nodup (d : Design) (m : Module)
+theorem module_scope_nodup (d : Design) (m : Module)
     (names : Rules.Names d) (hm : m ∈ Typed.modules d) :
     (m.ports.map Port.name ++ m.body.filterMap Rules.definition).Nodup := by
   have hi : Item.module m ∈ d.items := by
@@ -1841,7 +1841,7 @@ private theorem module_scope_nodup (d : Design) (m : Module)
     cases i <;> simp_all [Typed.modules]
   exact (names.2 (.module m) hi).1
 
-private theorem labels_nodup (d : Design) (m : Module)
+theorem labels_nodup (d : Design) (m : Module)
     (names : Rules.Names d) (resolved : Rules.Resolved d) (outputs : Rules.Outputs d)
     (hm : m ∈ Typed.modules d) : (m.body.filterMap label).Nodup := by
   have hscope := List.nodup_append.mp (module_scope_nodup d m names hm)
@@ -1945,7 +1945,7 @@ private theorem graph_keys_nodup (d : Design) (m : Module) (children : String �
     | _ => simp_all [Deps.equations, label, Rules.definition, owner]
 
 
-private theorem combinational_graph_keys_nodup (d : Design) (m : Module)
+theorem combinational_graph_keys_nodup (d : Design) (m : Module)
     (names : Rules.Names d) (resolved : Rules.Resolved d) (outputs : Rules.Outputs d)
     (hm : m ∈ Typed.modules d) (fuel : Nat) :
     ((Deps.graph m (Typed.designDeps d fuel)).map Prod.fst).Nodup :=
@@ -2011,7 +2011,7 @@ private theorem rank_map_absent (keys : List Deps.Node) (q : Deps.Node → Nat) 
     exact h ha
   simp [Typed.rank, hn]
 
-private theorem lookup_row_nodup [BEq α] [LawfulBEq α] (rows : List (α × β)) (n : α) (v : β)
+theorem lookup_row_nodup [BEq α] [LawfulBEq α] (rows : List (α × β)) (n : α) (v : β)
     (hu : (rows.map Prod.fst).Nodup) (hm : (n, v) ∈ rows) : rows.lookup n = some v := by
   induction rows with
   | nil => simp at hm
