@@ -57,12 +57,6 @@ impl MemConfig {
     }
 }
 
-/// True if each address of a memory of `depth` words is in range: the depth
-/// is a power of two, so an access needs no guard.
-fn full_range(depth: u32) -> bool {
-    u64::from(depth) == 1u64 << address_width(depth)
-}
-
 /// The MLIR text of each module of `design`, and the memory configurations.
 fn modules(design: &Design) -> (String, BTreeSet<MemConfig>) {
     let mut text = String::new();

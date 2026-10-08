@@ -12,8 +12,14 @@ use core_ir::ast::{BinOp, UnOp};
 use core_ir::typed::{Callee, ClockPort, Design, Expr, Module, Port, Reg, address_width};
 use core_ir::{Bits, Pred};
 
+use crate::MemConfig;
 use crate::mlir::{self, Dir, Pin, Ty};
-use crate::{MemConfig, full_range};
+
+/// True if each address of a memory of `depth` words is in range: the depth
+/// is a power of two, so an access needs no guard.
+fn full_range(depth: u32) -> bool {
+    u64::from(depth) == 1u64 << address_width(depth)
+}
 
 /// A port of a unit. An input keeps its position among the data inputs.
 enum UnitPort<'a> {
