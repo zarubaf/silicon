@@ -92,7 +92,7 @@ fn deps(sig: &Sig, ext: &Extern) -> Result<Deps, Vec<Diagnostic>> {
         if by_output.insert(o.index(), inputs).is_some() {
             errors.push(error(
                 ErrorCode::E013,
-                dep.span,
+                dep.out.span,
                 format!("`{}` has more than one deps entry", dep.out.text),
             ));
         }
@@ -103,7 +103,7 @@ fn deps(sig: &Sig, ext: &Extern) -> Result<Deps, Vec<Diagnostic>> {
             Some(inputs) => deps.push(inputs),
             None => errors.push(error(
                 ErrorCode::E013,
-                output.port.span,
+                output.port.name.span,
                 format!("the output `{}` has no deps entry", output.port.name.text),
             )),
         }
