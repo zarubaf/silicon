@@ -16,4 +16,4 @@ Use translation validation. Each compiler run emits the core IR as a Lean term. 
 - Each compiler run gets its own guarantee. The cost is lower than the cost of a verified compiler.
 - The compiler itself stays unproven. A run without validation has no guarantee.
 - The translation validator joins `just ci` when its oracle exists. See the build order in [the architecture](../architecture.md).
-- The serialization format of the core IR is still open. See the open questions in [the architecture](../architecture.md).
+- The core IR has an S-expression text format. See [the core IR spec](../design/2026-10-08-core-ir.md), section 3.

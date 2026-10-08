@@ -8,6 +8,7 @@ This document is the authority for the trust boundary. It gives the status, the 
 - **Validated**: a mechanical oracle checks each run or each input of the corpus. No proof covers the part.
 - **Trusted**: no check covers the part. The project assumes that it is correct.
 - **Not supported**: the checker rejects the construct, or the text format has no syntax for it.
+- **Out of scope**: Silicon does not check the property. Existing dedicated tools cover it. See [ADR 0005](adr/0005-synchronous-two-state-semantics.md).
 
 ## Parts
 
@@ -24,6 +25,7 @@ This document is the authority for the trust boundary. It gives the status, the 
 | Black boxes                                                                                  | Trusted       | None. The project assumes their contracts.                  | The contract of each black box                                                 |       |
 | Asynchronous reset, more than one clock domain, and CDC primitives                           | Not supported | The checker rejects them                                    | No semantics                                                                   | #11   |
 | Synchronous memory read ports and write masks                                                | Not supported | The text format has no syntax for them                      | No semantics                                                                   | #12   |
+| 4-state behavior, CDC verification, and timing                                               | Out of scope  | None. Existing dedicated tools cover them.                  | None                                                                           |       |
 
 ## Gaps
 

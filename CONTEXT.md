@@ -96,7 +96,7 @@ The Lean function `lower` from the core IR to MLIR. LEC compares the output of t
 
 ### memory model
 
-The MLIR module for one memory configuration. Lean generates it, and the theorem `mem_model_correct` proves it.
+The MLIR module for one memory configuration. Lean generates the reference memory model, and the theorem `mem_model_correct` proves it. The Rust backend generates its own memory model. LEC validates it against the Lean memory model.
 
 ### trust boundary
 
