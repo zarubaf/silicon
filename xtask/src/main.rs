@@ -5,6 +5,7 @@ mod fmt;
 mod gitcmd;
 mod guidance;
 mod lean;
+mod lean_prose;
 mod prose;
 mod repo;
 mod review;

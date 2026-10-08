@@ -1,10 +1,12 @@
 //! Lints tracked Markdown: vale checks the prose against the STE rules and the glossary,
 //! and lychee checks the internal links.
 
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result};
 
+use crate::lean_prose;
 use crate::repo::{Repo, TrackedFile};
 use crate::vocab;
 
@@ -42,13 +44,96 @@ pub fn lychee_args(files: &[TrackedFile]) -> Option<Vec<String>> {
     Some(args)
 }
 
-/// Regenerates the vocabulary, then runs vale and lychee over the tracked Markdown.
+/// Where the Markdown extracted from Lean files goes. `target/` is git-ignored.
+const LEAN_PROSE_DIR: &str = "target/lean-prose";
+
+/// The Markdown extracted from one Lean file, with the map back to its Lean lines.
+struct LeanProse {
+    markdown_path: String,
+    lean_path: String,
+    line_map: Vec<usize>,
+}
+
+/// Tracked Lean files, without symlinks.
+fn lean_files(files: &[TrackedFile]) -> impl Iterator<Item = &TrackedFile> {
+    files
+        .iter()
+        .filter(|f| !f.is_symlink && f.path.extension().is_some_and(|e| e == "lean"))
+}
+
+/// Writes the prose of each tracked Lean file as Markdown under `target/lean-prose/`.
+/// Files without prose blocks produce nothing.
+fn extract_lean_prose(repo: &Repo) -> Result<Vec<LeanProse>> {
+    let mut extracted = Vec::new();
+    for file in lean_files(&repo.files) {
+        let blocks = lean_prose::prose_blocks(&repo.read(&file.path)?);
+        if blocks.is_empty() {
+            continue;
+        }
+        let (markdown, line_map) = lean_prose::to_markdown(&blocks);
+        let relative = Path::new(LEAN_PROSE_DIR).join(format!("{}.md", file.path.display()));
+        let target: PathBuf = repo.root.join(&relative);
+        if let Some(dir) = target.parent() {
+            std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+        }
+        std::fs::write(&target, markdown)
+            .with_context(|| format!("writing {}", target.display()))?;
+        extracted.push(LeanProse {
+            markdown_path: relative.to_string_lossy().into_owned(),
+            lean_path: file.path.to_string_lossy().into_owned(),
+            line_map,
+        });
+    }
+    Ok(extracted)
+}
+
+/// Rewrites one vale `--output=line` report (`path:line:col:rule:message`) from the
+/// extracted Markdown to the Lean file. Other lines stay unchanged.
+fn rewrite_report_line(line: &str, extracted: &[LeanProse]) -> String {
+    let mut parts = line.splitn(3, ':');
+    let (Some(path), Some(number), Some(rest)) = (parts.next(), parts.next(), parts.next()) else {
+        return line.to_string();
+    };
+    let lean_line = extracted
+        .iter()
+        .find(|e| e.markdown_path == path)
+        .zip(number.parse::<usize>().ok())
+        .and_then(|(e, n)| Some((e, e.line_map.get(n.checked_sub(1)?)?)));
+    match lean_line {
+        Some((e, lean_line)) => format!("{}:{lean_line}:{rest}", e.lean_path),
+        None => line.to_string(),
+    }
+}
+
+/// Regenerates the vocabulary, then runs vale over the tracked Markdown and the prose of the
+/// Lean files, and lychee over the tracked Markdown.
 /// Both tools always run. Returns `true` when both pass.
 pub fn run(repo: &Repo) -> Result<bool> {
     vocab::write(repo)?;
-    let vale = tool(repo, "vale", vale_args(&repo.files))?;
+    let extracted = extract_lean_prose(repo)?;
+    let vale = run_vale(repo, &extracted)?;
     let lychee = tool(repo, "lychee", lychee_args(&repo.files))?;
     Ok(vale && lychee)
+}
+
+/// Vale reports in line format, so that the Lean reports can map back to their source lines.
+fn run_vale(repo: &Repo, extracted: &[LeanProse]) -> Result<bool> {
+    let mut args = vale_args(&repo.files).unwrap_or_else(|| vec!["--no-wrap".to_string()]);
+    args.push("--output=line".to_string());
+    args.extend(extracted.iter().map(|e| e.markdown_path.clone()));
+    if args.len() == 2 {
+        return Ok(true);
+    }
+    let output = Command::new("vale")
+        .args(args)
+        .current_dir(&repo.root)
+        .output()
+        .context("running vale")?;
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        println!("{}", rewrite_report_line(line, extracted));
+    }
+    eprint!("{}", String::from_utf8_lossy(&output.stderr));
+    Ok(output.status.success())
 }
 
 /// Runs `program` with `args` at the repository root. `None` skips the run and counts as a pass.
@@ -108,6 +193,26 @@ mod tests {
                 "--no-progress".to_string(),
                 "AGENTS.md".to_string()
             ])
+        );
+    }
+
+    #[test]
+    fn rewrites_vale_report_to_lean_lines() {
+        let extracted = [LeanProse {
+            markdown_path: "target/lean-prose/lean/A.lean.md".to_string(),
+            lean_path: "lean/A.lean".to_string(),
+            line_map: vec![2, 3, 4],
+        }];
+        assert_eq!(
+            rewrite_report_line(
+                "target/lean-prose/lean/A.lean.md:2:5:Silicon.SentenceLength:Too long",
+                &extracted
+            ),
+            "lean/A.lean:3:5:Silicon.SentenceLength:Too long"
+        );
+        assert_eq!(
+            rewrite_report_line("AGENTS.md:1:1:R:m", &extracted),
+            "AGENTS.md:1:1:R:m"
         );
     }
 
