@@ -5,6 +5,7 @@ use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use backend_circt::{ToolError, lower, memory_configs, memory_model, verilog};
 use clap::{Parser, Subcommand};
 use core_ir::check::check;
 use core_ir::diag::Diagnostic;
@@ -28,6 +29,15 @@ pub enum Command {
     Fmt { file: PathBuf },
     /// Read `in=` lines from stdin and print one `out=` line for each.
     Run { file: PathBuf },
+    /// Print the MLIR of a checked design, with each memory as an extern.
+    Lower { file: PathBuf },
+    /// Print the Verilog of a checked design through CIRCT.
+    Verilog {
+        /// Print one memory model for each memory configuration instead.
+        #[arg(long)]
+        models: bool,
+        file: PathBuf,
+    },
 }
 
 /// The exit code of a command.
@@ -53,6 +63,12 @@ struct Usage(String);
 
 impl From<io::Error> for Usage {
     fn from(e: io::Error) -> Usage {
+        Usage(e.to_string())
+    }
+}
+
+impl From<ToolError> for Usage {
+    fn from(e: ToolError) -> Usage {
         Usage(e.to_string())
     }
 }
@@ -85,6 +101,19 @@ fn dispatch(command: &Command, input: impl BufRead, out: &mut impl Write) -> Res
         Command::Run { file } => {
             with_design(file, out, |_, design, out| simulate(&design, input, out))
         }
+        Command::Lower { file } => with_design(file, out, |_, design, out| {
+            out.write_all(lower(&design).as_bytes())?;
+            Ok(Exit::Success)
+        }),
+        Command::Verilog { models, file } => with_design(file, out, |_, design, out| {
+            let mlir = if *models {
+                memory_configs(&design).iter().map(memory_model).collect()
+            } else {
+                lower(&design)
+            };
+            out.write_all(verilog(&mlir)?.as_bytes())?;
+            Ok(Exit::Success)
+        }),
     }
 }
 

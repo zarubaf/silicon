@@ -51,6 +51,25 @@ const EXTERN: &str = "\
     (assign q a)))
 ";
 
+/// Depth 12 needs guards. The two memories have the configurations
+/// `12x8_r2w1` and `12x8_r1w0`.
+const MEMORY: &str = "\
+(design top
+  (module top
+    (input clk clock)
+    (input x (bits 4))
+    (input y (bits 4))
+    (input d (bits 8))
+    (input we (bits 1))
+    (output p (bits 8))
+    (output q (bits 8))
+    (mem m (bits 8) 12 clk)
+    (mem n (bits 8) 12 clk)
+    (write m 0 x d we)
+    (assign p (read m x))
+    (assign q (xor (read m y) (read n y)))))
+";
+
 type Test = Result<(), Box<dyn std::error::Error>>;
 
 fn file(name: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
@@ -60,9 +79,13 @@ fn file(name: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
 }
 
 fn silicon(args: &[&str], path: &PathBuf, stdin: &str) -> std::io::Result<Output> {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_silicon"))
-        .args(args)
-        .arg(path)
+    let mut command = Command::new(env!("CARGO_BIN_EXE_silicon"));
+    command.args(args).arg(path);
+    spawn(&mut command, stdin)
+}
+
+fn spawn(command: &mut Command, stdin: &str) -> std::io::Result<Output> {
+    let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -193,5 +216,136 @@ fn an_unknown_subcommand_is_a_usage_error() -> Test {
     )?;
     assert_eq!(out.status.code(), Some(2));
     assert_eq!(text(&out), "");
+    Ok(())
+}
+
+#[test]
+fn lower_prints_the_mlir() -> Test {
+    let out = silicon(&["lower"], &file("lower.sil", COUNTER.as_bytes())?, "")?;
+    assert!(
+        text(&out).starts_with("hw.module @counter(in %clk : !seq.clock, "),
+        "{}",
+        text(&out)
+    );
+    assert_eq!(out.status.code(), Some(0));
+    Ok(())
+}
+
+#[test]
+fn lower_reports_a_checker_error() -> Test {
+    let out = silicon(&["lower"], &file("lower_e004.sil", E004.as_bytes())?, "")?;
+    assert!(text(&out).starts_with("error[E004]: 6:"), "{}", text(&out));
+    assert_eq!(out.status.code(), Some(1));
+    Ok(())
+}
+
+#[test]
+fn lower_accepts_an_extern() -> Test {
+    let out = silicon(&["lower"], &file("lower_ext.sil", EXTERN.as_bytes())?, "")?;
+    assert!(
+        text(&out).contains("hw.module.extern @blk("),
+        "{}",
+        text(&out)
+    );
+    assert_eq!(out.status.code(), Some(0));
+    Ok(())
+}
+
+#[test]
+fn verilog_prints_the_counter() -> Test {
+    let out = silicon(
+        &["verilog"],
+        &file("v_counter.sil", COUNTER.as_bytes())?,
+        "",
+    )?;
+    assert!(text(&out).contains("module counter("), "{}", text(&out));
+    assert!(text(&out).contains("silicon_reg_r"), "{}", text(&out));
+    assert_eq!(out.status.code(), Some(0));
+    Ok(())
+}
+
+#[test]
+fn verilog_instantiates_each_memory_without_a_body() -> Test {
+    let out = silicon(&["verilog"], &file("v_mem.sil", MEMORY.as_bytes())?, "")?;
+    let sv = text(&out);
+    assert!(sv.contains("silicon_mem_12x8_r2w1 m ("), "{sv}");
+    assert!(sv.contains("silicon_mem_12x8_r1w0 n ("), "{sv}");
+    assert!(!sv.contains("module silicon_mem_"), "{sv}");
+    assert!(!sv.contains("silicon_reg_mem"), "{sv}");
+    assert_eq!(out.status.code(), Some(0));
+    Ok(())
+}
+
+#[test]
+fn verilog_models_prints_one_model_per_configuration() -> Test {
+    let out = silicon(
+        &["verilog", "--models"],
+        &file("models.sil", MEMORY.as_bytes())?,
+        "",
+    )?;
+    let sv = text(&out);
+    let modules: Vec<&str> = sv.lines().filter(|l| l.starts_with("module ")).collect();
+    assert_eq!(
+        modules,
+        [
+            "module silicon_mem_12x8_r1w0(",
+            "module silicon_mem_12x8_r2w1("
+        ],
+        "{sv}"
+    );
+    assert_eq!(
+        sv.matches("reg [11:0][7:0] silicon_reg_mem;").count(),
+        2,
+        "{sv}"
+    );
+    assert_eq!(out.status.code(), Some(0));
+    let out = silicon(
+        &["verilog", "--models"],
+        &file("no_models.sil", COUNTER.as_bytes())?,
+        "",
+    )?;
+    assert!(!text(&out).contains("module "), "{}", text(&out));
+    assert_eq!(out.status.code(), Some(0));
+    Ok(())
+}
+
+/// Step 3 of the LEC flow of spec section 8.1 reads both outputs together.
+#[test]
+fn circt_verilog_reads_the_design_and_the_models() -> Test {
+    let src = file("flow.sil", MEMORY.as_bytes())?;
+    let design = silicon(&["verilog"], &src, "")?;
+    let models = silicon(&["verilog", "--models"], &src, "")?;
+    let out_sv = file("flow_out.sv", &design.stdout)?;
+    let models_sv = file("flow_models.sv", &models.stdout)?;
+    let out = spawn(
+        Command::new("circt-verilog")
+            .args(["--ir-hw", "--detect-memories=false"])
+            .arg(&out_sv)
+            .arg(&models_sv),
+        "",
+    )?;
+    let stdout = text(&out);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(stdout.contains("hw.module @top("), "{stdout}");
+    assert!(stdout.contains("silicon_reg_mem"), "{stdout}");
+    Ok(())
+}
+
+#[test]
+fn a_missing_circt_tool_is_a_usage_error() -> Test {
+    let src = file("no_tool.sil", COUNTER.as_bytes())?;
+    for args in [&["verilog"][..], &["verilog", "--models"]] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_silicon"));
+        command.args(args).arg(&src).env("PATH", "");
+        let out = spawn(&mut command, "")?;
+        assert_eq!(out.status.code(), Some(2), "{args:?}");
+        assert_eq!(text(&out), "");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("firtool"), "{stderr}");
+    }
     Ok(())
 }

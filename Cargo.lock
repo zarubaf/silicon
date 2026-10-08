@@ -196,6 +196,7 @@ dependencies = [
 name = "driver"
 version = "0.0.0"
 dependencies = [
+ "backend-circt",
  "clap",
  "core-ir",
 ]
