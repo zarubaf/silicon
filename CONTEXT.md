@@ -80,7 +80,7 @@ _Avoid_: equivalence check
 
 ### trust boundary
 
-The line between the parts that are proven, the parts that are validated, and the parts that are trusted. `doc/architecture.md` describes it.
+The line between the parts that are proven, the parts that are validated, and the parts that are trusted. `doc/trust.md` describes it.
 
 ### oracle
 

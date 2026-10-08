@@ -23,5 +23,5 @@ These are the reasons:
 
 - LEC compares the output of the CIRCT pipeline with the output of `silicon-check lower`. Section 8.1 of the core IR spec gives the flow.
 - The Rust pipeline has one backend: `backend-circt`.
-- The Lean lowering has one assumption: the `Mlir` semantics in Lean must match the meaning that CIRCT gives to the same operations. `arcilator` and `circt-lec` check this assumption. The trust boundary records it.
+- The Lean lowering has one assumption: the `Mlir` semantics in Lean must match the meaning that CIRCT gives to the same operations. `arcilator` and `circt-lec` check this assumption. [The trust document](../trust.md) records it.
 - This ADR supersedes the reference emitter of ADR 0004. The other decisions of ADR 0004 stay.
