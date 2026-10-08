@@ -184,9 +184,18 @@ pub(super) fn operations(modules: &[ExModule]) -> Vec<Diagnostic> {
     let mut errors = Vec::new();
     for module in modules {
         for form in module.forms() {
-            for o in &form.operands {
-                let got = width(o.expr, &mut errors);
-                if let (Some(got), Some(want)) = (got, o.want)
+            let got: Vec<Option<u32>> = form
+                .operands
+                .iter()
+                .map(|o| width(o.expr, &mut errors))
+                .collect();
+            // Spec section 6.4.1: a form is an E004 error only when all its
+            // operands are well typed.
+            let Some(got) = got.into_iter().collect::<Option<Vec<u32>>>() else {
+                continue;
+            };
+            for (o, got) in form.operands.iter().zip(got) {
+                if let Some(want) = o.want
                     && got != want
                 {
                     errors.push(error(

@@ -1184,3 +1184,34 @@ fn e008_parent_loop_through_a_cyclic_child_is_at_the_parent() {
 ";
     expect(src, ErrorCode::E008, 4, 5);
 }
+
+#[test]
+fn e004_operand_of_a_write_wins_over_its_target_widths() {
+    let src = "\
+(design top
+  (module top
+    (input clk clock)
+    (input a (bits 4))
+    (input b (bits 2))
+    (mem m (bits 4) 4 clk)
+    (write m 0 a
+      (add a b)
+      (const 1 1))))
+";
+    expect(src, ErrorCode::E004, 8, 7);
+}
+
+#[test]
+fn e004_operand_of_a_reset_wins_over_its_target_widths() {
+    let src = "\
+(design top
+  (module top
+    (input clk clock)
+    (input a (bits 4))
+    (input b (bits 2))
+    (reg r (bits 4) clk (reset sync a
+      (add a b)))
+    (next r a)))
+";
+    expect(src, ErrorCode::E004, 7, 7);
+}
