@@ -150,7 +150,14 @@ The first ADRs come from the two existing notes:
 
 ### 5.1 Writing style
 
-All prose in Markdown follows ASD-STE100 Simplified Technical English. The output style `.claude/output-styles/ste.md` is the project default in `.claude/settings.json`. Agents thus write in this style without a reminder. `vale` checks the countable rules: sentence length, passive voice, `-ing` forms, noun clusters, and vocabulary. Code, quotations, and exact strings are exempt.
+All prose in Markdown follows ASD-STE100 Simplified Technical English. The output style `.claude/output-styles/ste.md` is the project default in `.claude/settings.json`. Agents thus write in this style without a reminder. `vale` checks these rules:
+
+- Sentence length, hedge stacking, and ellipsis, as errors.
+- Passive voice, as a warning.
+- `-ing` forms, as a suggestion.
+- Glossary vocabulary from `CONTEXT.md`.
+
+Noun clusters and the other STE rules stay in the output style only. `Vale.Spelling` is off. `CONTEXT.md` is exempt from `Vale.Avoid`, because it names the rejected synonyms. Code, quotations, and exact strings are exempt.
 
 ## 6. Orchestration
 
@@ -167,9 +174,15 @@ The repository defines no custom agent roles at the start. A role file in `.clau
 
 The repository adds three rules:
 
-1. **Lean goes to Codex.** The orchestrator dispatches all Lean work to the `codex:codex-rescue` subagent with `--fresh`. Each task thus starts a new Codex thread. `.codex/config.toml` pins the Codex model. A change to Astra is a one-line change. Do not use `/codex:transfer` for delegation: it copies the full Claude session, with its chat history, into Codex.
+1. **Lean goes to Codex.** The orchestrator dispatches all Lean work to the `codex:codex-rescue` subagent with `--fresh`. Each task thus starts a new Codex thread. `.codex/config.toml` pins the Codex model. A change to Astra is a one-line change. The pin is `gpt-6-astra`. Do not use `/codex:transfer` for delegation: it copies the full Claude session, with its chat history, into Codex.
 2. **Cross-vendor review before merge.** A Codex adversarial review (`adversarial-review --base main`) must pass on a branch that Claude wrote. It challenges the design, the assumptions, and the tradeoffs. Superpowers' own review covers defects. An Opus review must pass on a branch that Codex wrote. The reviewer gets the diff and the spec, not the reasoning of the author.
 3. **Superpowers paths are overridden.** Specs go to `doc/design/`. Plans go to `.scratch/` in the worktree.
+
+Codex runs inside the development shell:
+
+- Start Claude Code from a direnv-enabled shell in the repository. Codex then inherits the pinned toolchain.
+- Codex never runs `nix develop`. Its sandbox cannot reach the Nix daemon.
+- Codex cannot commit inside a git worktree. The orchestrator commits the Codex output after `just ci` passes.
 
 Model choice is advisory: Opus for design, proofs, and hard bugs. Sonnet for implementation. Haiku for search.
 
@@ -194,22 +207,26 @@ Worktree hygiene:
 Commits:
 
 1. The format is Conventional Commits: `type(scope): subject`.
-2. The scope is a crate name or one of `lean`, `doc`, `adr`, `ci`, `xtask`.
+2. The scope is a crate name or one of `lean`, `doc`, `adr`, `ci`, `xtask`, `design`.
 3. The subject is imperative and has 72 characters or fewer.
 4. The body states why and what the change means. It does not list files.
 5. One commit holds one logical change.
-6. A breaking change uses `!` and a `BREAKING CHANGE:` footer.
+6. A breaking change uses `!` and a `BREAKING CHANGE:` footer. No check enforces the footer. This rule is advisory.
 7. No AI attribution: no `Co-Authored-By` trailer for an agent, no "Generated with" line.
 
 `cargo xtask commit-check` runs in the `commit-msg` hook and in CI on each commit of a pull request. It rejects:
 
-1. A `refactor` commit that changes test expectations (`**/snapshots/**`, corpus expectations).
-2. A commit that changes `lean/` and `crates/` together.
-3. A commit that changes test expectations and non-test code together.
-4. A subject that is not a Conventional Commit.
-5. An attribution trailer.
+1. A `refactor` commit that changes test expectations (`**/snapshots/**`, corpus expectations). Rule `commit-refactor-expectations`.
+2. A commit that changes `lean/` and `crates/` together. Rule `commit-spec-impl`.
+3. A commit that changes test expectations and non-test code together. Rule `commit-expectations-code`.
+4. A subject that is not a Conventional Commit. Rule `commit-subject`.
+5. An attribution trailer. Rule `commit-attribution`.
+6. A scope that is not in the allowed list. Rule `commit-scope`.
+7. A subject longer than 72 characters. Rule `commit-length`.
 
-`lefthook` runs the git hooks. Nix pins it. `lefthook.yml` calls `just` recipes only. The `pre-push` hook runs `just ci`.
+The `commit-subject` rule also rejects the subjects that git writes for `git revert`, `git commit --fixup`, and `git commit --squash`. Write a revert as `revert: <subject>`. Squash the fixup commits before the push.
+
+`lefthook` runs the git hooks. Nix pins it. `lefthook.yml` calls `just` recipes only. The `commit-msg` hook runs `just commit-msg`. The `pre-push` hook runs `just ci`.
 
 The repository is private on a personal GitHub account and uses the Apache-2.0 license. A personal account has no merge queue, and branch rules on a private repository need GitHub Pro. The orchestrator thus merges only after CI passes on the pull request. A merge queue replaces this step when the repository moves to an organization.
 
@@ -220,7 +237,7 @@ The repository is private on a personal GitHub account and uses the Apache-2.0 l
 | Files             | Tool                                                                             | Configuration                                                       |
 | ----------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
 | Rust              | `rustfmt`                                                                        | Stable options only                                                 |
-| Markdown          | `mdformat` with GFM and tables plugins                                           | `wrap = "no"`                                                       |
+| Markdown          | `mdformat` with GFM, tables, and front-matter plugins                            | `wrap = "no"`                                                       |
 | Prose in Markdown | `vale`                                                                           | Silicon STE style; vocabulary from `CONTEXT.md`; code blocks exempt |
 | Lean              | Lean style linters, warnings as errors; `xtask` whitespace and line-length check | Lean 4 has no standard formatter. Adopt one when it exists.         |
 | TOML              | `taplo fmt`                                                                      |                                                                     |
@@ -260,7 +277,7 @@ Repository (`xtask`):
 - Each crate sets `lints.workspace = true`.
 - Guidance limits (section 4).
 - `AGENTS.md` and `CLAUDE.md` symlink pairs.
-- Tree check (section 11).
+- Tree check (section 11), in `cargo xtask check`.
 - `commit-check` (section 7).
 
 Fuzzing, translation validation, and LEC join `just ci` in build step 2, when their oracles exist.
@@ -276,11 +293,12 @@ This spec makes four commitments about the Silicon formatter, linter, and LSP:
 
 ## 11. Clutter prevention
 
-`cargo xtask tree-check` rejects:
+The tree check is part of `cargo xtask check`. It has no subcommand of its own. It rejects:
 
-1. A top-level entry that is not in the layout of section 3.
-2. A file that matches `*.sh`, `*.log`, `*.orig`, `*.rej`, `*.bak`, `TODO.md`, `NOTES.md`, or a path under a `superpowers/` directory.
-3. A `TODO` or `FIXME` comment without an issue reference in the form `TODO(#123): ...`.
+1. A top-level entry that is not in the layout of section 3. Rule `tree-root`.
+2. A file that matches `*.sh`, `*.log`, `*.orig`, `*.rej`, `*.bak`, `TODO.md`, `NOTES.md`, or a path under a `superpowers/` directory. Rule `tree-banned`.
+3. A `TODO` or `FIXME` comment without an issue reference in the form `TODO(#123): ...`. Rule `tree-todo`.
+4. A multi-line `justfile` recipe, or a recipe line with `&&`, `||`, `;`, `$(`, or a backtick. Rule `tree-justfile`.
 
 Review rules (the cross-vendor reviewer enforces them):
 
@@ -300,9 +318,9 @@ Agent context:
 | Spec and implementation change in different commits | `commit-check`: no commit touches `lean/` and `crates/`                                   |
 | Test expectations change alone                      | `commit-check`                                                                            |
 | Conventional Commits, no attribution                | `commit-check`, `commit-msg` hook                                                         |
-| No shell scripts                                    | `tree-check`; `xtask` rejects multi-line `justfile` recipes                               |
-| No stray files                                      | `tree-check`                                                                              |
-| `TODO` needs an issue                               | `tree-check`                                                                              |
+| No shell scripts                                    | `cargo xtask check`: rules `tree-banned`, `tree-justfile`                                 |
+| No stray files                                      | `cargo xtask check`: rules `tree-root`, `tree-banned`                                     |
+| `TODO` needs an issue                               | `cargo xtask check`: rule `tree-todo`                                                     |
 | Crate layering                                      | `xtask` layering test                                                                     |
 | Workspace lints everywhere                          | `xtask`                                                                                   |
 | Guidance limits and symlink pairs                   | `xtask`                                                                                   |
@@ -319,3 +337,11 @@ Agent context:
 3. The coverage of STE rules by `vale`. Rules that `vale` cannot check stay in the output style only.
 4. The orchestrator can start the adversarial review. The slash command sets `disable-model-invocation`, so the orchestrator calls `codex-companion.mjs adversarial-review` directly. Its path is in the versioned plugin cache. Find a stable way to call it, for example a `just review` recipe.
 5. `.claude/settings.json` supports `extraKnownMarketplaces`, `enabledPlugins`, and the attribution setting at project level.
+
+Resolution:
+
+1. Resolved. Codex reads the project `.codex/config.toml` for a trusted project. The model pin stays there.
+2. Resolved. nixpkgs has every tool. The flake needs no overlay.
+3. Resolved as section 5.1 states. The output style keeps the rules that `vale` does not check.
+4. Resolved. `cargo xtask review` is the entry point for the review. Plan task 11 adds it.
+5. Resolved. The settings keys match the Claude Code documentation.
