@@ -3,6 +3,7 @@
 //! that has an error.
 
 mod clocks;
+mod graph;
 mod instances;
 mod lower;
 mod names;
@@ -32,17 +33,19 @@ pub fn check(design: &ast::Design) -> Result<typed::Design, Diagnostic> {
     let linked = instances::check(design, env.externs(), &modules)?;
     first_error(types::operations(&modules))?;
     let structures = structure::check(&scopes, &modules)?;
-    // Passes 9 and 10 (the instance and combinational cycles) and the schedule
-    // are not part of this stage.
-    Ok(lower::lower(
-        design,
-        &env,
-        top,
-        &scopes,
-        &modules,
-        &structures,
-        &linked,
-    ))
+    let order = graph::instances(&scopes, &linked)?;
+    let lowered = lower::lower(design, &env, top, &scopes, &modules, &structures, &linked);
+    let sources: Vec<graph::Sources> = scopes
+        .iter()
+        .zip(&modules)
+        .zip(&structures)
+        .map(|((scope, rx), structure)| graph::Sources {
+            scope,
+            rx,
+            structure,
+        })
+        .collect();
+    graph::combinational(lowered, &order, &sources)
 }
 
 fn error(code: ErrorCode, span: Span, message: impl Into<String>) -> Diagnostic {
