@@ -44,6 +44,10 @@ A module together with its specific elaboration inputs, for example its paramete
 
 The full hierarchy of instances under one top module. Its semantics is a Mealy machine.
 
+### port dependencies
+
+The map from each output of a module to the inputs that the output reads in the same cycle. The checker infers them from the module body.
+
 ### step function
 
 The Lean function that defines one clock cycle of a design. It maps a state and an input to the next state and an output.
@@ -59,6 +63,14 @@ _Avoid_: blackbox
 ### clock domain
 
 The set of registers and memories that one clock drives. A crossing between two clock domains goes through an explicit primitive.
+
+### .sil file
+
+A core IR file in the text format.
+
+### .si file
+
+A Silicon source file.
 
 ### edition
 
@@ -77,6 +89,14 @@ A check for each compiler run. The compiler emits the core IR as a Lean term, an
 Logical equivalence checking. A tool, for example `circt-lec`, proves that the core IR and the emitted Verilog have the same behavior.
 
 _Avoid_: equivalence check
+
+### reference lowering
+
+The Lean function `lower` from the core IR to MLIR. LEC compares the output of the CIRCT pipeline against its output.
+
+### memory model
+
+The MLIR module for one memory configuration. Lean generates it, and the theorem `mem_model_correct` proves it.
 
 ### trust boundary
 
