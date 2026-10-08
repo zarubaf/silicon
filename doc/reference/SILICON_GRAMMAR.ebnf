@@ -1,0 +1,150 @@
+(* Silicon v0.1 PROPOSED normative grammar. Complete source grammar; manifests,
+   Lean and the model C ABI are distinct formats, not supplemental source rules.
+   EBNF: {x}=repetition, [x]=optional, | = alternative, terminals in quotes.
+   Tokens are maximal-munch, except comments/strings. Whitespace and comments
+   separate tokens and otherwise have no significance. No parsing decision
+   depends on type/stage/name resolution. Type contexts are syntactically marked.
+
+   UTF-8 source; identifiers [A-Za-z_][A-Za-z_0-9]*, excluding keywords:
+   import as pub const type struct comptime fn module extern let mut return if else
+   for in conforms using true false reg wire mem input output instance domains with.
+   Prelude type and primitive names are identifiers. The only @ operations
+   are @TypeOf, @typeInfo, @field, @Struct and @ports; other @ names reject.
+   Numbers: DEC=[0-9]+; HEX=0x[0-9A-Fa-f]+; BIN=0b[01]+. No suffix/underscore.
+   Signs are unary operators, not part of a number. A selector after '.' is DEC
+   or IDENT. String: double quotes, Unicode except controls/quote/backslash;
+   escapes only \" \\ \n \r \t. No interpolation. Comments: // to LF or EOF;
+   /* through first */ (not nested). Unterminated comment/string is an error.
+   Operators use longest match, including := :: -> .. +% -% *% == != <= >=
+   << >> && ||. Thus '>>' is shift, never type-argument closing punctuation.
+   IDENT excludes keywords; NUMBER is DEC | HEX | BIN. EOF is end of input.
+*)
+
+source = { item }, EOF ;
+item = import | [ "pub" ], ( constant | alias | structure | function | component | foreign ) ;
+import = "import", path, "as", IDENT, ";" ;
+path = IDENT, { "::", IDENT } ;
+constant = "const", IDENT, ":", type_expr, "=", expr, ";" ;
+alias = "type", IDENT, "=", type_expr, ";" ;
+structure = "struct", IDENT, [ "(", [ parameters ], ")" ],
+            "{", [ fields ], "}" ;
+fields = field, { ",", field }, [ "," ] ;
+field = IDENT, ":", type_expr ;
+function = [ "comptime" ], "fn", IDENT, "(", [ parameters ], ")",
+           "->", type_expr, block ;
+component = "module", IDENT, "(", [ static_parameters ], ")",
+            [ domain_clause ], [ attachment ], block ;
+static_parameters = static_parameter, { ",", static_parameter }, [ "," ] ;
+static_parameter = "comptime", IDENT, ":", type_expr ;
+parameters = parameter, { ",", parameter }, [ "," ] ;
+parameter = [ "comptime" | "mut" ], IDENT, ":", type_expr ;
+domain_annotation = "in", IDENT ;
+domain_clause = "domains", "(", [ domain_names ], ")" ;
+domain_names = IDENT, { ",", IDENT }, [ "," ] ;
+attachment = "conforms", application, "using", application ;
+application = path, "(", [ arguments ], ")" ;
+foreign = "extern", "module", IDENT, "(", [ static_parameters ], ")",
+          [ domain_clause ], [ attachment ], "=", STRING, block ;
+
+type_expr = function_type | type_postfix ;
+function_type = "fn", "(", [ type_arguments ], ")", "->", type_expr ;
+type_postfix = type_primary, { "[", arguments, "]" | "(", [ arguments ], ")" } ;
+type_primary = builtin | path | "(", ")" | "(", type_expr, ")" | "(", type_expr, ",",
+               [ type_expr, { ",", type_expr }, [ "," ] ], ")"
+             | "[", type_expr, ";", expr, "]" ;
+type_arguments = type_argument, { ",", type_argument }, [ "," ] ;
+type_argument = [ "mut" ], type_expr ;
+(* Type-index arguments use ordinary expressions, e.g. UInt[W + 1],
+   Reg[UInt[W]], Packet[W], List[Reg[UInt[W]]]. A type-primary occurring
+   as an expression follows the expression productions below; prelude names
+   and type-family indexing are ordinary names/postfix indexing to the parser.
+   Unit and tuple types have the parenthesized forms above in type contexts.
+   Arrows bind right and consume the complete return type: fn () -> UInt[8]
+   has the suffix [8] only on UInt, never on the function type. Applying a
+   suffix to a function type requires explicit grouping: (fn () -> UInt)[8].
+   Whether that grouped application denotes a valid type is a semantic check.
+*)
+
+block = "{", { statement }, "}" ;
+statement = local | alias | assignment | connection | resource | port | instantiation
+          | "return", [ expr ], ";" | ct_if | ct_for | block | expr, ";" ;
+local = "let", [ "mut" ], IDENT, [ ":", type_expr ], "=", expr, ";" ;
+assignment = place, "=", expr, ";" ;
+connection = place, ":=", expr, ";" ;
+resource = "reg", IDENT, ":", type_expr, [ domain_annotation ], "=", expr, ";"
+         | "wire", IDENT, ":", type_expr, [ domain_annotation ], ";"
+         | "mem", IDENT, ":", "[", type_expr, ";", expr, "]",
+           [ domain_annotation ], ";" ;
+port = ( "input" | "output" ), IDENT, [ "[", expr, "]" ],
+       ":", type_expr, [ domain_annotation ], [ "as", expr ], ";" ;
+place = place_base, { "[", expr, "]" | ".", ( IDENT | DEC ) } ;
+place_base = IDENT | "@field", "(", expr, ",", expr, ")" ;
+ct_if = "comptime", "if", "(", expr, ")", block, [ "else", block ] ;
+ct_for = "comptime", "for", IDENT, "in", expr, "..", expr, block ;
+
+(* Lowest to highest precedence. Binary levels are left-associative except
+   comparisons, which are non-associative; a < b < c is a syntax error.
+   Parentheses explicitly group. Assignment and range are statements only.
+   Conditional has lowest precedence and its arms contain only expressions.
+*)
+expr = conditional | logical_or ;
+conditional = "if", "(", expr, ")", "{", expr, "}",
+              "else", "{", expr, "}" ;
+logical_or = logical_and, { "||", logical_and } ;
+logical_and = bit_or, { "&&", bit_or } ;
+bit_or = bit_xor, { "|", bit_xor } ;
+bit_xor = bit_and, { "^", bit_and } ;
+bit_and = comparison, { "&", comparison } ;
+comparison = shift, [ ( "==" | "!=" | "<" | "<=" | ">" | ">=" ), shift ] ;
+shift = additive, { ( "<<" | ">>" ), additive } ;
+additive = multiplicative, { ( "+" | "-" | "+%" | "-%" ), multiplicative } ;
+multiplicative = unary, { ( "*" | "/" | "%" | "*%" ), unary } ;
+unary = ( "!" | "~" | "-" ), unary | function_type | postfix ;
+postfix = primary, { "(", [ arguments ], ")" | "[", arguments, "]"
+                    | ".", ( IDENT | DEC ) } ;
+arguments = expr, { ",", expr }, [ "," ] ;
+primary = builtin | path | NUMBER | STRING | "true" | "false" | "(", ")"
+        | "(", expr, ")"
+        | "(", expr, ",", [ expr, { ",", expr }, [ "," ] ], ")"
+        | "[", [ arguments ], "]"
+        | "[", type_expr, ";", expr, "]" ;
+builtin = ( "@TypeOf" | "@typeInfo" | "@field" | "@Struct" | "@ports" ),
+          "(", [ arguments ], ")" ;
+instantiation = "instance", IDENT, "=", path, "(", [ arguments ], ")",
+                [ domain_map ], ";" ;
+domain_map = "with", "{", [ domain_bindings ], "}" ;
+domain_bindings = domain_binding, { ",", domain_binding }, [ "," ] ;
+domain_binding = IDENT, "=", IDENT ;
+
+(* Syntactic examples: instance u = Counter(8) with { clock = rx }; UInt[8](3);
+   Packet[8](true, x); (x, true).0; list(Reg[UInt[8]]);
+   let f: fn (UInt[8]) -> UInt[8] = increment;
+   let z: fn () -> UInt[8] = make;
+   Bare function types are unary operands, not postfix primaries, so the
+   expression form has the same unique right-binding suffix rule as types.
+   array type expression [UInt[8]; 4] versus array value [a, b].
+   A postfix '[' with multiple arguments is for a static type family only;
+   collection indexing accepts exactly one statically bounded argument.
+   Type-context call suffixes permit existing pure-static type functions,
+   e.g. optional_meta(M), without making parsing depend on the returned type.
+   Type evaluation requires Type results and forbids graph/diagnostic effects.
+   An immediate .IDENT(...) suffix sequence is a lexical receiver call;
+   (obj.field)(...) calls a function-valued field. This is a syntax-directed
+   interpretation of the sole postfix parse, never a type-dependent choice.
+   Instances are named declarations of modules, never expressions/helper calls.
+   Module bodies reject return; foreign bodies permit only static interface
+   computation/port declarations. Ordinary fn has no domains/attachment.
+   Input/Instance are exact builder handle types; family indexing selects a
+   declared static port rather than a data array. @ builtins have ordinary
+   expression syntax, with exact arity/operand/effect restrictions in the spec;
+   @field places preserve the original root, never a temporary destination.
+   Computed as keys alter public names without altering the local binder.
+   Indexed declarations with as reject semantically; queries return Type
+   in type contexts only when their result is Type. These semantic restrictions
+   reject parses but never choose a parse.
+   'if' cannot occur as an unparenthesized operand at a tighter level;
+   write a +% (if (b) { x } else { y }). This avoids special precedence rules.
+   Semantic restrictions (types, static parameters, effects, domains, label
+   uniqueness) reject parses but never choose among parses. while, break,
+   continue and unary '+' have no source production; they are not keywords.
+*)
