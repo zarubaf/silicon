@@ -1,26 +1,11 @@
 import Silicon.Core.Semantics.Decode
 import Silicon.Core.DependencyTable
+import Silicon.Core.Semantics.HierarchyOrder
 
-/-! Hierarchy ranks build each module from the components of its children. -/
+/-! The checker order builds each module from the components of its children. -/
 namespace Silicon.Core.Semantics
 
 open Typed
-
-theorem erased_item_origin (d : Typed.Design) (item : Item) (hi : item ∈ d.erase.items) :
-    (∃ m ∈ d.bodies, item = .module m.erase) ∨
-      ∃ e ∈ d.externs, item = .extern e := by
-  obtain ⟨name, _, he⟩ := List.mem_filterMap.mp hi
-  change (match d.bodies.find? (·.name == name) with
-    | some m => some (.module m.erase)
-    | none => (d.externs.find? (·.name == name)).map Item.extern) = some item at he
-  cases hm : d.bodies.find? (·.name == name) with
-  | some m =>
-    simp only [hm] at he
-    exact Or.inl ⟨m, List.mem_of_find?_eq_some hm, (Option.some.inj he).symm⟩
-  | none =>
-    simp only [hm] at he
-    obtain ⟨e, he', he⟩ := Option.map_eq_some_iff.mp he
-    exact Or.inr ⟨e, List.mem_of_find?_eq_some he', he.symm⟩
 
 private theorem find_item_mem (items : List Item) (hn : (items.map itemName).Nodup)
     (item : Item) (hi : item ∈ items) :
@@ -40,124 +25,190 @@ theorem portsOf_item (d : Core.Design) (hn : (d.items.map itemName).Nodup)
     (item : Item) (hi : item ∈ d.items) : portsOf d (itemName item) = itemPorts item := by
   simp [portsOf, find_item_mem d.items hn item hi]
 
-abbrev NamedComponent (d : Typed.Design) (name : String) :=
-  Component (portsOf d.erase name)
-    ((designDeps d.erase (d.erase.items.length + 1) name).getD [])
-
 abbrev LocalBuilder (d : Typed.Design) :=
   (m : Typed.Module) → m ∈ d.bodies → Children m →
     Component m.ports (Deps.infer m.erase m.children)
 
-private noncomputable def namedComponent (d : Typed.Design) (wf : WellFormed d.erase)
-    (env : Env d) (build : LocalBuilder d) (q : Deps.Node → Nat)
-    (edges : ∀ row ∈ hierarchyGraph d.erase, ∀ dep ∈ row.2, q dep < q row.1)
-    (rank : Nat) : ∀ name, q (.name name) = rank →
-      ∀ item ∈ d.erase.items, itemName item = name → NamedComponent d name := by
-  induction rank using Nat.strongRecOn with
-  | ind rank ih =>
-    intro name hq item hi hn
-    classical
-    by_cases origin : ∃ m ∈ d.bodies, item = .module m.erase
-    · let m := origin.choose
-      have hm : m ∈ d.bodies := origin.choose_spec.1
-      have itemEq : item = .module m.erase := origin.choose_spec.2
-      have itemHi : Item.module m.erase ∈ d.erase.items := itemEq ▸ hi
-      have hname : m.name = name := by simpa [itemEq, itemName, Typed.Module.erase] using hn
-      rw [← hname] at hq ⊢
-      change q (.name m.name) = rank at hq
-      let children : Children m := by
-        intro ⟨equation, member⟩
-        cases equation with
-        | inst index pos inst child inputs =>
-          let raw := inputs.map fun input => (input.1.val.name, input.2.erase)
-          have stmt : Core.Stmt.inst pos inst child raw ∈ m.erase.body := by
-            apply (Ownership.mem_equationsErase m.body _).mpr
-            exact ⟨.inst index pos inst child inputs, member, index,
-              .inst pos inst child inputs, by simp [Typed.Equation.parts], rfl⟩
-          have resolved := (wf.2.1.2 m.erase (module_mem d m hm) _ stmt).1
-          let childItem := resolved.choose
-          have found := resolved.choose_spec.1
-          have childMem := List.mem_of_find?_eq_some found
-          have childName : itemName childItem = child := by
-            simpa [childItem, Rules.findItem] using List.find?_some found
-          have childNames : child ∈ Typed.childNames m.erase :=
-            List.mem_filterMap.mpr ⟨.inst pos inst child raw, stmt, rfl⟩
-          have lower := edges (.name m.name, (Typed.childNames m.erase).map Deps.Node.name)
-            (List.mem_map.mpr ⟨m.erase, module_mem d m hm, rfl⟩) (.name child)
-            (List.mem_map.mpr ⟨child, childNames, rfl⟩)
-          change q (.name child) < q (.name m.name) at lower
-          have model := ih (q (.name child)) (by omega) child rfl childItem childMem childName
-          have interfaces : m.interfaces = portsOf d.erase := (d.environments m hm).1
-          have dependencies : m.children = designDeps d.erase (d.erase.items.length + 1) :=
-            (d.environments m hm).2.1
-          simpa only [ChildModel, NamedComponent, interfaces, dependencies] using model
-        | _ => exact PUnit.unit
-      let result := build m hm children
-      have ports := portsOf_item d.erase wf.1.1.1 (.module m.erase) itemHi
-      have deps := d.dependencies wf m hm
-      simpa only [NamedComponent, deps, Option.getD_some, itemName, itemPorts,
-        Typed.Module.erase] using ports ▸ result
-    · have external := (erased_item_origin d item hi).resolve_left origin
-      let e := external.choose
-      have he : e ∈ d.externs := external.choose_spec.1
-      have itemEq : item = .extern e := external.choose_spec.2
-      have itemHi : Item.extern e ∈ d.erase.items := itemEq ▸ hi
-      have hname : e.name = name := by simpa [itemEq, itemName] using hn
-      rw [← hname] at hq ⊢
-      have ports := portsOf_item d.erase wf.1.1.1 (.extern e) itemHi
-      have deps := designDeps_extern d.erase wf.1.1.1 e itemHi d.erase.items.length
-      let result := env e he
-      simpa only [NamedComponent, deps, Option.getD_some, itemName, itemPorts] using ports ▸ result
+private theorem instance_member (m : Typed.Module)
+    (index : Nat) (pos : Pos) (inst child : String)
+    (inputs : List ((p : {p : Port // p ∈ m.interfaces child}) × Typed.Expr m.ctx p.val.ty))
+    (member : Typed.Equation.inst index pos inst child inputs ∈ m.body) :
+    Core.Stmt.inst pos inst child (inputs.map fun input => (input.1.val.name, input.2.erase)) ∈
+      m.erase.body := by
+  apply (Ownership.mem_equationsErase m.body _).mpr
+  exact ⟨.inst index pos inst child inputs, member, index,
+    .inst pos inst child inputs, by simp [Typed.Equation.parts], rfl⟩
 
-/-! The selected item owns its complete hierarchy state. -/
-noncomputable def assembleComponent (d : Typed.Design) (wf : WellFormed d.erase)
-    (env : Env d) (build : LocalBuilder d) (item : Item) (hi : item ∈ d.erase.items) :
-    NamedComponent d (itemName item) := by
-  let ranks := bounded_ranks (hierarchyGraph d.erase) wf.2.2.2.2.2.2.2.2.1
-  let q := ranks.choose
-  exact namedComponent d wf env build q ranks.choose_spec.2 (q (.name (itemName item)))
-    (itemName item) rfl item hi rfl
+private theorem external_exists (d : Typed.Design) (name : String)
+    (existsItem : ∃ item ∈ d.erase.items, itemName item = name)
+    (absent : d.bodies.find? (·.name == name) = none) :
+    ∃ e, d.externs.find? (·.name == name) = some e ∧ Item.extern e ∈ d.erase.items := by
+  obtain ⟨item, hi, hn⟩ := existsItem
+  obtain ⟨key, hk, he⟩ := List.mem_filterMap.mp hi
+  change (match d.bodies.find? (·.name == key) with
+    | some m => some (.module m.erase)
+    | none => (d.externs.find? (·.name == key)).map Item.extern) = some item at he
+  cases hm : d.bodies.find? (·.name == key) with
+  | some m =>
+    simp only [hm] at he
+    cases he
+    have hname : m.name = key := by simpa using List.find?_some hm
+    change m.name = name at hn
+    rw [← hname, hn, absent] at hm
+    contradiction
+  | none =>
+    simp only [hm] at he
+    obtain ⟨e, found, he⟩ := Option.map_eq_some_iff.mp he
+    subst item
+    have hname : e.name = key := by simpa using List.find?_some found
+    change e.name = name at hn
+    exact ⟨e, by simpa only [← hn, ← hname] using found, hi⟩
 
-/-! Expose the concrete child product for the module's equation and state interfaces. -/
+/-! Interface equalities transport components without changing their state cells. -/
+private def transportComponent {ports other : List Port} {deps otherDeps : Deps}
+    (hp : ports = other) (hd : deps = otherDeps) (model : Component ports deps) :
+    Component other otherDeps where
+  State := model.State
+  out := hp ▸ model.out
+  next := hp ▸ model.next
+  out_respects := by
+    cases hp
+    cases hd
+    exact model.out_respects
+
+private theorem transportComponent_state {ports other : List Port} {deps otherDeps : Deps}
+    (hp : ports = other) (hd : deps = otherDeps) (model : Component ports deps) :
+    (transportComponent hp hd model).State = model.State := rfl
+
+def moduleChild (d : Typed.Design) (wf : WellFormed d.erase)
+    (m c : Typed.Module) (hm : m ∈ d.bodies) (hc : c ∈ d.bodies)
+    (child : String) (name : c.name = child)
+    (model : Component c.ports (Deps.infer c.erase c.children)) :
+    Component (m.interfaces child) ((m.children child).getD []) :=
+  transportComponent (by
+    rw [(d.environments m hm).1, ← name]
+    exact (portsOf_item d.erase wf.1.1.1 (.module c.erase)
+      (d.environments c hc).2.2).symm) (by
+    rw [(d.environments m hm).2.1, ← name]
+    change Deps.infer c.erase c.children =
+      ((designDeps d.erase (d.erase.items.length + 1) c.name).getD [])
+    rw [d.dependencies wf c hc]
+    rfl) model
+
+@[simp] theorem moduleChild_state (d : Typed.Design) (wf : WellFormed d.erase)
+    (m c : Typed.Module) (hm : m ∈ d.bodies) (hc : c ∈ d.bodies)
+    (child : String) (name : c.name = child)
+    (model : Component c.ports (Deps.infer c.erase c.children)) :
+    (moduleChild d wf m c hm hc child name model).State = model.State :=
+  transportComponent_state _ _ model
+
+def externChild (d : Typed.Design) (wf : WellFormed d.erase)
+    (m : Typed.Module) (hm : m ∈ d.bodies) (e : Extern)
+    (he : Item.extern e ∈ d.erase.items) (child : String) (name : e.name = child)
+    (model : ExternSem e) :
+    Component (m.interfaces child) ((m.children child).getD []) :=
+  transportComponent (by
+    rw [(d.environments m hm).1, ← name]
+    exact (portsOf_item d.erase wf.1.1.1 (.extern e) he).symm) (by
+    rw [(d.environments m hm).2.1, ← name]
+    change externDeps e = ((designDeps d.erase (d.erase.items.length + 1) e.name).getD [])
+    rw [designDeps_extern d.erase wf.1.1.1 e he d.erase.items.length]
+    rfl) model
+
+@[simp] theorem externChild_state (d : Typed.Design) (wf : WellFormed d.erase)
+    (m : Typed.Module) (hm : m ∈ d.bodies) (e : Extern)
+    (he : Item.extern e ∈ d.erase.items) (child : String) (name : e.name = child)
+    (model : ExternSem e) :
+    (externChild d wf m hm e he child name model).State = model.State :=
+  transportComponent_state _ _ model
+
+/-! Recursion follows the computed module positions, with externs at the leaves. -/
 noncomputable def assembleChildren (d : Typed.Design) (wf : WellFormed d.erase)
     (env : Env d) (build : LocalBuilder d) (m : Typed.Module) (hm : m ∈ d.bodies) :
-    Children m := by
-  intro ⟨equation, member⟩
+    Children m := fun ⟨equation, member⟩ => by
   cases equation with
   | inst index pos inst child inputs =>
-    let raw := inputs.map fun input => (input.1.val.name, input.2.erase)
-    have stmt : Core.Stmt.inst pos inst child raw ∈ m.erase.body := by
-      apply (Ownership.mem_equationsErase m.body _).mpr
-      exact ⟨.inst index pos inst child inputs, member, index,
-        .inst pos inst child inputs, by simp [Typed.Equation.parts], rfl⟩
+    have stmt := instance_member m index pos inst child inputs member
     have resolved := (wf.2.1.2 m.erase (module_mem d m hm) _ stmt).1
-    let item := resolved.choose
-    have found := resolved.choose_spec.1
-    have member := List.mem_of_find?_eq_some found
-    have name : itemName item = child := by
-      simpa [item, Rules.findItem] using List.find?_some found
-    let model : NamedComponent d child := name ▸ assembleComponent d wf env build item member
-    have interfaces : m.interfaces = portsOf d.erase := (d.environments m hm).1
-    have dependencies : m.children = designDeps d.erase (d.erase.items.length + 1) :=
-      (d.environments m hm).2.1
-    simpa only [ChildModel, NamedComponent, interfaces, dependencies] using model
+    have existsItem : ∃ item ∈ d.erase.items, itemName item = child := by
+      obtain ⟨item, found, _⟩ := resolved
+      exact ⟨item, List.mem_of_find?_eq_some found, by
+        simpa [Rules.findItem] using List.find?_some found⟩
+    exact match found : d.bodies.find? (·.name == child) with
+    | some c => by
+      have hc := List.mem_of_find?_eq_some found
+      have name : c.name = child := by simpa using List.find?_some found
+      exact moduleChild d wf m c hm hc child name
+        (build c hc (assembleChildren d wf env build c hc))
+    | none => by
+      have existsExtern := external_exists d child existsItem found
+      let e := (d.externs.find? (·.name == child)).get (by
+        obtain ⟨e, he, _⟩ := existsExtern; simp [he])
+      have selected : d.externs.find? (·.name == child) = some e := (Option.some_get _).symm
+      have he : Item.extern e ∈ d.erase.items := by
+        obtain ⟨other, selectedOther, member⟩ := existsExtern
+        rw [selected] at selectedOther
+        exact Option.some.inj selectedOther ▸ member
+      exact externChild d wf m hm e he child
+        (by simpa using List.find?_some selected)
+        (env e (List.mem_of_find?_eq_some selected))
   | _ => exact PUnit.unit
+termination_by moduleLevel d.erase wf m.name
+decreasing_by
+  have childMem : child ∈ Typed.childNames m.erase :=
+    List.mem_filterMap.mpr ⟨_, stmt, rfl⟩
+  simpa only [name, Typed.Module.erase] using
+    moduleLevel_lower d.erase wf m.erase (module_mem d m hm) child childMem
 
-theorem topItem_exists (d : Typed.Design) (wf : WellFormed d.erase) :
-    ∃ item ∈ d.erase.items, itemName item = d.erase.top := by
-  have resolved := wf.2.1.1
-  cases found : Rules.findItem d.erase d.erase.top with
-  | none => simp [found] at resolved
-  | some item =>
-    refine ⟨item, List.mem_of_find?_eq_some found, ?_⟩
-    simpa [Rules.findItem] using List.find?_some found
+/-! These equations expose each child without the recursion proof. -/
+theorem assembleChildren_inst_module (d : Typed.Design) (wf : WellFormed d.erase)
+    (env : Env d) (build : LocalBuilder d) (m : Typed.Module) (hm : m ∈ d.bodies)
+    (index : Nat) (pos : Pos) (inst child : String)
+    (inputs : List ((p : {p : Port // p ∈ m.interfaces child}) × Typed.Expr m.ctx p.val.ty))
+    (member : Typed.Equation.inst index pos inst child inputs ∈ m.body)
+    (c : Typed.Module) (found : d.bodies.find? (·.name == child) = some c) :
+    assembleChildren d wf env build m hm ⟨.inst index pos inst child inputs, member⟩ =
+      moduleChild d wf m c hm (List.mem_of_find?_eq_some found) child
+        (by simpa using List.find?_some found)
+        (build c (List.mem_of_find?_eq_some found)
+          (assembleChildren d wf env build c (List.mem_of_find?_eq_some found))) := by
+  rw [assembleChildren]
+  dsimp only
+  change @Eq (Component (m.interfaces child) ((m.children child).getD [])) _ _
+  split
+  · rename_i other selected
+    have same := Option.some.inj (selected.symm.trans found)
+    subst other
+    rfl
+  · rename_i selected
+    rw [found] at selected
+    contradiction
 
-noncomputable def assembleTop (d : Typed.Design) (wf : WellFormed d.erase)
-    (env : Env d) (build : LocalBuilder d) : NamedComponent d d.erase.top := by
-  let origin := topItem_exists d wf
-  let item := origin.choose
-  have hi : item ∈ d.erase.items := origin.choose_spec.1
-  have hn : itemName item = d.erase.top := origin.choose_spec.2
-  exact hn ▸ assembleComponent d wf env build item hi
+theorem assembleChildren_inst_extern (d : Typed.Design) (wf : WellFormed d.erase)
+    (env : Env d) (build : LocalBuilder d) (m : Typed.Module) (hm : m ∈ d.bodies)
+    (index : Nat) (pos : Pos) (inst child : String)
+    (inputs : List ((p : {p : Port // p ∈ m.interfaces child}) × Typed.Expr m.ctx p.val.ty))
+    (member : Typed.Equation.inst index pos inst child inputs ∈ m.body)
+    (absent : d.bodies.find? (·.name == child) = none)
+    (e : Extern) (found : d.externs.find? (·.name == child) = some e)
+    (he : Item.extern e ∈ d.erase.items) :
+    assembleChildren d wf env build m hm ⟨.inst index pos inst child inputs, member⟩ =
+      externChild d wf m hm e he child (by simpa using List.find?_some found)
+        (env e (List.mem_of_find?_eq_some found)) := by
+  rw [assembleChildren]
+  dsimp only
+  split
+  · rename_i other selected
+    rw [absent] at selected
+    contradiction
+  · have congruent (other : Extern) (ho : Item.extern other ∈ d.erase.items)
+        (hn : other.name = child) (hm : other ∈ d.externs) (eq : other = e) :
+        externChild d wf m ‹m ∈ d.bodies› other ho child hn (env other hm) =
+          externChild d wf m ‹m ∈ d.bodies› e he child
+            (by simpa using List.find?_some found)
+            (env e (List.mem_of_find?_eq_some found)) := by
+      subst other
+      rfl
+    exact congruent _ _ _ _ (by simp [found])
 
 end Silicon.Core.Semantics

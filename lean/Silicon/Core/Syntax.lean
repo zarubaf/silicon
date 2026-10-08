@@ -66,6 +66,12 @@ inductive Stmt where
   | assign (pos : Pos) (name : String) (value : Expr)
   deriving Repr, DecidableEq, BEq, Inhabited
 
+/-! A driver supplies a named value, memory, or instance output. -/
+def Stmt.driverName : Stmt → Option String
+  | .let_ _ name .. | .reg _ name .. | .mem _ name ..
+  | .inst _ name .. | .assign _ name .. => some name
+  | _ => none
+
 /-! Port order is part of a module's interface. -/
 inductive PortDir where
   | input | output

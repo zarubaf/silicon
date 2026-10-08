@@ -1538,7 +1538,7 @@ private theorem body_reg (d : Design) (ss : List Stmt) (n : String)
       rw [bodyContext_cons, List.lookup_append, entry_no_name d s n hd]
       simpa using ih h
 
-theorem port_lookup (ps : List Port) (tail : Ctx) (n : String) (p : Port)
+private theorem port_lookup (ps : List Port) (tail : Ctx) (n : String) (p : Port)
     (h : ps.find? (·.name == n) = some p) :
     ((ps.map fun p => (Deps.Node.name p.name,
       if p.ty == .clock && p.dir == .input then Kind.clock else .value p.ty)) ++
@@ -1734,7 +1734,7 @@ private theorem design_deps_keys_nodup (d : Design) (h : Rules.Names d) (fuel : 
       exact inferred_keys_nodup m _ hp
 
 
-def label (s : Stmt) : Option String :=
+private def label (s : Stmt) : Option String :=
   match s with
   | .assign _ n _ => some n
   | _ => Rules.definition s
@@ -1833,7 +1833,7 @@ private theorem countP_some_le_one {α β : Type} [DecidableEq β]
     cases hf : f a <;> simp
   rwa [he] at hb
 
-theorem module_scope_nodup (d : Design) (m : Module)
+private theorem module_scope_nodup (d : Design) (m : Module)
     (names : Rules.Names d) (hm : m ∈ Typed.modules d) :
     (m.ports.map Port.name ++ m.body.filterMap Rules.definition).Nodup := by
   have hi : Item.module m ∈ d.items := by
@@ -1841,7 +1841,7 @@ theorem module_scope_nodup (d : Design) (m : Module)
     cases i <;> simp_all [Typed.modules]
   exact (names.2 (.module m) hi).1
 
-theorem labels_nodup (d : Design) (m : Module)
+private theorem labels_nodup (d : Design) (m : Module)
     (names : Rules.Names d) (resolved : Rules.Resolved d) (outputs : Rules.Outputs d)
     (hm : m ∈ Typed.modules d) : (m.body.filterMap label).Nodup := by
   have hscope := List.nodup_append.mp (module_scope_nodup d m names hm)
@@ -2011,7 +2011,7 @@ private theorem rank_map_absent (keys : List Deps.Node) (q : Deps.Node → Nat) 
     exact h ha
   simp [Typed.rank, hn]
 
-theorem lookup_row_nodup [BEq α] [LawfulBEq α] (rows : List (α × β)) (n : α) (v : β)
+private theorem lookup_row_nodup [BEq α] [LawfulBEq α] (rows : List (α × β)) (n : α) (v : β)
     (hu : (rows.map Prod.fst).Nodup) (hm : (n, v) ∈ rows) : rows.lookup n = some v := by
   induction rows with
   | nil => simp at hm
@@ -2697,6 +2697,51 @@ theorem elaborate_complete (d : Design) (wf : WellFormed d) :
         (combinational_graph_keys_nodup d m hn hr hout mem _) (hcomb m mem)
   obtain ⟨bodies, hb, erased⟩ := Typed.elaborateModules_of_groups d sorted ready
   exact Typed.elaborateDesign_of_modules d sorted bodies hn.1.1 order perm hierarchy hb erased
+
+/-! Semantic clients use checked port and driver facts without checker scope details. -/
+theorem module_ports_nodup (d : Design) (m : Module) (wf : WellFormed d)
+    (hm : m ∈ Typed.modules d) : (m.ports.map Port.name).Nodup :=
+  (List.nodup_append.mp (module_scope_nodup d m wf.1 hm)).1
+
+theorem module_port_lookup (d : Design) (m : Module) (wf : WellFormed d)
+    (hm : m ∈ Typed.modules d) (port : Port) (hp : port ∈ m.ports)
+    (ht : port.ty = .bits width) (interfaces : String → List Port) :
+    (Typed.contextFromPorts interfaces m).lookup (.name port.name) =
+      some (.value (.bits width)) := by
+  have found := find_port_of_mem m.ports port (module_ports_nodup d m wf hm) hp
+  unfold Typed.contextFromPorts
+  rw [port_lookup m.ports _ port.name port found]
+  simp [ht]
+
+theorem module_driver_names_nodup (d : Design) (m : Module) (wf : WellFormed d)
+    (hm : m ∈ Typed.modules d) : (m.body.filterMap Stmt.driverName).Nodup := by
+  have same : Stmt.driverName = label := by
+    funext stmt
+    cases stmt <;> rfl
+  rw [same]
+  exact labels_nodup d m wf.1 wf.2.1 wf.2.2.2.2.2.1 hm
+
+theorem input_not_driver (d : Design) (wf : WellFormed d) (m : Module)
+    (hm : m ∈ Typed.modules d) (port : Port) (hp : port ∈ m.ports)
+    (hi : port.dir = .input) (stmt : Stmt) (hs : stmt ∈ m.body) :
+    stmt.driverName ≠ some port.name := by
+  have scope := List.nodup_append.mp (module_scope_nodup d m wf.1 hm)
+  have noDefinition : Rules.definition stmt ≠ some port.name := by
+    intro hd
+    exact scope.2.2 port.name (List.mem_map.mpr ⟨port, hp, rfl⟩) port.name
+      (List.mem_filterMap.mpr ⟨stmt, hs, hd⟩) rfl
+  cases stmt with
+  | assign pos name expr =>
+    intro he
+    have he : name = port.name := Option.some.inj he
+    subst name
+    have resolved := (wf.2.1.2 m hm _ hs).1
+    change ((Rules.findPort m port.name).any fun p => p.dir == .output) = true at resolved
+    have found := find_port_of_mem m.ports port scope.1 hp
+    change Rules.findPort m port.name = some port at found
+    rw [found] at resolved
+    simp [hi] at resolved
+  | _ => exact noDefinition
 
 end Check
 

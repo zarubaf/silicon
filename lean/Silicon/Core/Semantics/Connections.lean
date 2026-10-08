@@ -77,20 +77,6 @@ theorem selected_port_eq (d : CertifiedDesign) (m : Typed.Module)
     port.val (Eq.mp (congrArg (fun ps => port.val ∈ ps child) interfaces) port.property.1)
     same
 
-theorem selectConnection_unique {ctx : Typed.Ctx} {ports : List Port}
-    (inputs : List (Connection ctx ports)) (name : String)
-    (count : (inputs.filter (fun input => input.1.val.name == name)).length = 1)
-    (input : Connection ctx ports) (member : input ∈ inputs)
-    (same : input.1.val.name = name) : input = (selectConnection inputs name count).val := by
-  obtain ⟨only, ho⟩ := List.length_eq_one_iff.mp count
-  have hi : input ∈ inputs.filter (fun input => input.1.val.name == name) :=
-    List.mem_filter.mpr ⟨member, by simpa using same⟩
-  let selected := selectConnection inputs name count
-  have hs : selected.val ∈ inputs.filter (fun input => input.1.val.name == name) :=
-    List.mem_filter.mpr ⟨selected.property.1, by simpa using selected.property.2⟩
-  rw [ho] at hi hs
-  exact (List.mem_singleton.mp hi).trans (List.mem_singleton.mp hs).symm
-
 private theorem lookup_connection_find {ctx : Typed.Ctx} {ports : List Port}
     (inputs : List (Connection ctx ports)) (name : String) (input : Connection ctx ports)
     (found : inputs.find? (fun input => input.1.val.name == name) = some input) :

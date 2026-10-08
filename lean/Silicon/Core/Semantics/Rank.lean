@@ -10,34 +10,19 @@ namespace Silicon.Core.Semantics
 def valueRank (m : Typed.Module) (node : Deps.Node) : Nat :=
   if node ∈ (Deps.graph m.erase m.children).map Prod.fst then Typed.rank m.ranks node + 1 else 0
 
-private theorem graph_keys (m : Core.Module) (children : String → Option Deps) :
-    (Deps.graph m children).map Prod.fst =
-      (m.body.flatMap (Deps.equations children)).map Prod.fst := by
-  simp [Deps.graph, List.map_map, Function.comp_def]
-
 /-! An unfiltered equation read is either a state leaf or a checked graph edge. -/
 theorem valueRank_read (m : Typed.Module) (row : Deps.Node × List Deps.Node)
     (member : row ∈ m.erase.body.flatMap (Deps.equations m.children))
     (dep : Deps.Node) (read : dep ∈ row.2) : valueRank m dep < valueRank m row.1 := by
   have own : row.1 ∈ (Deps.graph m.erase m.children).map Prod.fst := by
-    rw [graph_keys]
+    rw [Deps.graph_keys]
     exact List.mem_map.mpr ⟨row, member, rfl⟩
   unfold valueRank
   rw [ite_eq_left own]
   split
   next active =>
-    have equation : (row.1, row.2.filter fun node =>
-      ((m.erase.body.flatMap (Deps.equations m.children)).map Prod.fst ++
-        (Deps.inputs m.erase).map Deps.Node.name).contains node) ∈
-      Deps.graph m.erase m.children := List.mem_map.mpr ⟨row, member, rfl⟩
-    have edge : dep ∈ row.2.filter (fun node =>
-        ((m.erase.body.flatMap (Deps.equations m.children)).map Prod.fst ++
-          (Deps.inputs m.erase).map Deps.Node.name).contains node) := by
-      apply List.mem_filter.mpr
-      refine ⟨read, ?_⟩
-      rw [List.contains_iff_mem]
-      apply List.mem_append_left
-      rwa [graph_keys] at active
+    obtain ⟨reads, equation, retained⟩ := Deps.graph_row m.erase m.children row member
+    have edge : dep ∈ reads := (retained dep).mpr ⟨read, Or.inl active⟩
     have less := m.acyclic _ equation dep edge
     dsimp only at less
     omega

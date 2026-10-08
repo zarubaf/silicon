@@ -61,11 +61,6 @@ theorem unique (s : System α Value) (v : ∀ node, Value node)
   funext node
   exact eq_iterate s v hv (s.rank node + 1) node (by omega)
 
-theorem existsUnique (s : System α Value) :
-    ∃ v, (∀ node, v node = s.rhs v node) ∧
-      ∀ w, (∀ node, w node = s.rhs w node) → w = v := by
-  exact ⟨solution s, solution_eq s, fun v hv => unique s v hv⟩
-
 /-!
 Two systems have the same values on a closed set of dependencies when their equations
 agree there. The first system's ranks suffice to order the dependency proof.
