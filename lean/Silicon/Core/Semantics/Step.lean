@@ -80,15 +80,23 @@ def IsSolution (d : CertifiedDesign) (env : Env d.design)
     (input : Input m) (values : Valuation m.ctx) : Prop :=
   IsLocalSolution d m hm (designChildren d env m hm) state input values
 
-/-! Outputs use current state. Every state cell then receives its next value together. -/
-def step (d : CertifiedDesign) (env : Env d.design)
-    (m : Typed.Module) (hm : m ∈ d.design.bodies) (state : State d env m hm)
-    (input : Input m) : State d env m hm × Output m :=
-  let children := designChildren d env m hm
-  let values := solution d env m hm state input
+/-! Outputs and updates share one valuation of the current cycle. -/
+def localStepWithValues (d : CertifiedDesign) (m : Typed.Module)
+    (hm : m ∈ d.design.bodies) (children : Children m) (state : LocalState m children)
+    (values : Valuation m.ctx) : LocalState m children × Output m :=
   let memories := stateMemories m children state
   (nextLocalState m children state values memories (connectionValues d m hm values memories),
     outputValues d m hm values)
+
+def stepWithValues (d : CertifiedDesign) (env : Env d.design)
+    (m : Typed.Module) (hm : m ∈ d.design.bodies) (state : State d env m hm)
+    (values : Valuation m.ctx) : State d env m hm × Output m :=
+  localStepWithValues d m hm (designChildren d env m hm) state values
+
+def step (d : CertifiedDesign) (env : Env d.design)
+    (m : Typed.Module) (hm : m ∈ d.design.bodies) (state : State d env m hm)
+    (input : Input m) : State d env m hm × Output m :=
+  stepWithValues d env m hm state (solution d env m hm state input)
 
 theorem solution_unique (d : CertifiedDesign) (env : Env d.design)
     (m : Typed.Module) (hm : m ∈ d.design.bodies) (state : State d env m hm)

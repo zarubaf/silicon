@@ -1,3 +1,4 @@
+import Silicon.Core.List
 import Silicon.Core.Complete
 import Silicon.Core.GraphReach
 import Silicon.Core.GraphCycleIndex
@@ -1772,33 +1773,6 @@ private theorem filterMap_nodup_counts {α β : Type} [DecidableEq β]
   rw [he]
   exact h b
 
-theorem flatMap_nodup_owners {α β κ : Type} (xs : List α) (f : α → List β)
-    (label : α → Option κ) (owner : β → κ)
-    (labels : (xs.filterMap label).Nodup)
-    (within : ∀ a ∈ xs, (f a).Nodup)
-    (owns : ∀ a ∈ xs, ∀ b ∈ f a, label a = some (owner b)) :
-    (xs.flatMap f).Nodup := by
-  induction xs with
-  | nil => simp
-  | cons a xs ih =>
-    have wt : ∀ a ∈ xs, (f a).Nodup := fun a ha => within a (List.mem_cons_of_mem _ ha)
-    have ot : ∀ a ∈ xs, ∀ b ∈ f a, label a = some (owner b) :=
-      fun a ha => owns a (List.mem_cons_of_mem _ ha)
-    have lt : (xs.filterMap label).Nodup := by
-      cases hl : label a with
-      | none => simpa [List.filterMap_cons, hl] using labels
-      | some v => exact (List.nodup_cons.mp (by simpa [List.filterMap_cons, hl] using labels)).2
-    simp only [List.flatMap_cons, List.nodup_append]
-    refine ⟨within a (List.mem_cons_self ..), ih lt wt ot, ?_⟩
-    intro x hx y hy he
-    subst y
-    obtain ⟨b, hb, hxb⟩ := List.mem_flatMap.mp hy
-    have ha := owns a (List.mem_cons_self ..) x hx
-    have hb := ot b hb x hxb
-    simp only [List.filterMap_cons, ha, List.nodup_cons] at labels
-    apply labels.1
-    exact List.mem_filterMap.mpr ⟨b, by assumption, hb⟩
-
 private theorem countP_le_one_of_nodup {α : Type} [DecidableEq α] (xs : List α)
     (h : xs.Nodup) (a : α) : xs.countP (fun x => decide (x = a)) ≤ 1 := by
   induction xs with
@@ -1910,7 +1884,8 @@ private theorem graph_keys_nodup (d : Design) (m : Module) (children : String �
     (hc : ∀ name deps, children name = some deps → (deps.map Prod.fst).Nodup) :
     ((Deps.graph m children).map Prod.fst).Nodup := by
   rw [graph_keys]
-  apply flatMap_nodup_owners m.body (fun s => (Deps.equations children s).map Prod.fst) label owner
+  apply List.flatMap_nodup_owners m.body
+    (fun s => (Deps.equations children s).map Prod.fst) label owner
     (labels_nodup d m names resolved outputs hm)
   · intro s _
     cases s with

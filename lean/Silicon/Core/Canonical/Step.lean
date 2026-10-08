@@ -1,5 +1,167 @@
-import Silicon.Core.Semantics.NamedConnections
-import Silicon.Core.Semantics.NamedNext
+import Silicon.Core.Canonical.Local
+
+/-! Child component transport preserves the child's step and its port values. -/
+namespace Silicon.Core.Semantics
+
+private theorem Component.out_heq_of_eq {ports : List Port} {deps : Deps}
+    (a b : Component ports deps) (models : a = b) (state : a.State) (state' : b.State)
+    (states : HEq state state') (input : PortValues ports .input) :
+    HEq (a.out state input) (b.out state' input) := by
+  cases models
+  cases states
+  rfl
+
+private theorem Component.next_heq_of_eq {ports : List Port} {deps : Deps}
+    (a b : Component ports deps) (models : a = b) (state : a.State) (state' : b.State)
+    (states : HEq state state') (input : PortValues ports .input) :
+    HEq (a.next state input) (b.next state' input) := by
+  cases models
+  cases states
+  rfl
+
+theorem child_ports (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)
+    (c : Typed.Module) (child : String)
+    (found : d.design.bodies.find? (·.name == child) = some c) :
+    m.interfaces child = c.ports := by
+  have name : c.name = child := by simpa using List.find?_some found
+  rw [(d.design.environments m hm).1, ← name]
+  exact portsOf_item d.design.erase d.wellFormed.1.1.1 (.module c.erase)
+    (d.design.environments c (List.mem_of_find?_eq_some found)).2.2
+
+theorem designChildren_instance_out (d : CertifiedDesign) (env : Env d.design)
+    (m : Typed.Module) (hm : m ∈ d.design.bodies)
+    (i : Nat) (p : Pos) (name child : String)
+    (inputs : List (Connection m.ctx (m.interfaces child)))
+    (member : .inst i p name child inputs ∈ m.body) (c : Typed.Module)
+    (found : d.design.bodies.find? (·.name == child) = some c)
+    (state : State d env m hm) (childState : State d env c (List.mem_of_find?_eq_some found))
+    (states : HEq (state ⟨.inst i p name child inputs, member⟩) childState)
+    (input : PortValues (m.interfaces child) .input) (childInput : Input c)
+    (sameInput : HEq input childInput) :
+    HEq ((designChildren d env m hm ⟨.inst i p name child inputs, member⟩).out
+      (state ⟨.inst i p name child inputs, member⟩) input)
+      (Interp.step d env c (List.mem_of_find?_eq_some found) childState childInput).2 := by
+  rw [interp_step]
+  let eq := designChildren_inst_module d env m hm i p name child inputs member c found
+  let model := localComponent d c (List.mem_of_find?_eq_some found)
+    (designChildren d env c (List.mem_of_find?_eq_some found))
+  let transported := moduleChild d.design d.wellFormed m c hm
+    (List.mem_of_find?_eq_some found) child (by simpa using List.find?_some found) model
+  let intermediate : transported.State := cast (congrArg Component.State eq)
+    (state ⟨.inst i p name child inputs, member⟩)
+  have middle : HEq intermediate childState := (cast_heq _ _).trans states
+  exact (Component.out_heq_of_eq _ _ eq _ intermediate (cast_heq _ _).symm input).trans
+    (moduleChild_out d.design d.wellFormed m c hm (List.mem_of_find?_eq_some found) child
+      (by simpa using List.find?_some found) model intermediate childState input childInput
+      middle sameInput)
+
+theorem designChildren_instance_next (d : CertifiedDesign) (env : Env d.design)
+    (m : Typed.Module) (hm : m ∈ d.design.bodies)
+    (i : Nat) (p : Pos) (name child : String)
+    (inputs : List (Connection m.ctx (m.interfaces child)))
+    (member : .inst i p name child inputs ∈ m.body) (c : Typed.Module)
+    (found : d.design.bodies.find? (·.name == child) = some c)
+    (state : State d env m hm) (childState : State d env c (List.mem_of_find?_eq_some found))
+    (states : HEq (state ⟨.inst i p name child inputs, member⟩) childState)
+    (input : PortValues (m.interfaces child) .input) (childInput : Input c)
+    (sameInput : HEq input childInput) :
+    HEq ((designChildren d env m hm ⟨.inst i p name child inputs, member⟩).next
+      (state ⟨.inst i p name child inputs, member⟩) input)
+      (Interp.step d env c (List.mem_of_find?_eq_some found) childState childInput).1 := by
+  rw [interp_step]
+  let eq := designChildren_inst_module d env m hm i p name child inputs member c found
+  let model := localComponent d c (List.mem_of_find?_eq_some found)
+    (designChildren d env c (List.mem_of_find?_eq_some found))
+  let transported := moduleChild d.design d.wellFormed m c hm
+    (List.mem_of_find?_eq_some found) child (by simpa using List.find?_some found) model
+  let intermediate : transported.State := cast (congrArg Component.State eq)
+    (state ⟨.inst i p name child inputs, member⟩)
+  have middle : HEq intermediate childState := (cast_heq _ _).trans states
+  exact (Component.next_heq_of_eq _ _ eq _ intermediate (cast_heq _ _).symm input).trans
+    (moduleChild_next d.design d.wellFormed m c hm (List.mem_of_find?_eq_some found) child
+      (by simpa using List.find?_some found) model intermediate childState input childInput
+      middle sameInput)
+
+end Silicon.Core.Semantics
+
+/-! A permutation preserves the one expression connected to each input port. -/
+namespace Silicon.Core.Semantics
+
+private theorem lookup_perm_single (xs ys : List (String × α)) (perm : xs.Perm ys)
+    (name : String) (one : (xs.filter (fun x => x.1 == name)).length = 1)
+    (a b : α) (ha : xs.lookup name = some a) (hb : ys.lookup name = some b) : a = b := by
+  have member (zs : List (String × α)) (v : α) (h : zs.lookup name = some v) :
+      (name, v) ∈ zs := by
+    obtain ⟨before, after, rfl, _⟩ := List.lookup_eq_some_iff.mp h
+    simp
+  have ma : (name, a) ∈ xs.filter (fun x => x.1 == name) := by
+    simp only [List.mem_filter, beq_self_eq_true, and_true]
+    exact member xs a ha
+  have mb : (name, b) ∈ xs.filter (fun x => x.1 == name) := by
+    simp only [List.mem_filter, beq_self_eq_true, and_true]
+    exact perm.mem_iff.mpr (member ys b hb)
+  obtain ⟨entry, h⟩ := List.length_eq_one_iff.mp one
+  rw [h] at ma mb
+  exact congrArg Prod.snd ((List.eq_of_mem_singleton ma).trans
+    (List.eq_of_mem_singleton mb).symm)
+
+theorem connectionExpr_erase_reorder (d d' : CertifiedDesign)
+    (m m' : Typed.Module) (hm : m ∈ d.design.bodies) (hm' : m' ∈ d'.design.bodies)
+    (i i' : Nat) (p : Pos) (name child : String)
+    (inputs : List (Connection m.ctx (m.interfaces child)))
+    (inputs' : List (Connection m'.ctx (m'.interfaces child)))
+    (member : .inst i p name child inputs ∈ m.body)
+    (member' : .inst i' p name child inputs' ∈ m'.body)
+    (perm : (inputs.map fun x => (x.1.val.name, x.2.erase)).Perm
+      (inputs'.map fun x => (x.1.val.name, x.2.erase)))
+    (port : Port) (hp : port ∈ m.interfaces child) (hp' : port ∈ m'.interfaces child)
+    (dir : port.dir = .input) :
+    (connectionExpr d m hm i p name child inputs member ⟨port, hp, dir⟩).erase =
+      (connectionExpr d' m' hm' i' p name child inputs' member' ⟨port, hp', dir⟩).erase := by
+  apply lookup_perm_single _ _ perm port.name
+    (by simpa only [List.filter_map, List.length_map, Function.comp_def] using
+      typed_input_count d m hm i p name child inputs member ⟨port, hp, dir⟩)
+  · exact connectionExpr_lookup d m hm i p name child inputs member ⟨port, hp, dir⟩
+  · exact connectionExpr_lookup d' m' hm' i' p name child inputs' member' ⟨port, hp', dir⟩
+
+theorem connectionValues_reorder (d d' : CertifiedDesign)
+    (m m' : Typed.Module) (hm : m ∈ d.design.bodies) (hm' : m' ∈ d'.design.bodies)
+    (lookup : ∀ node, m.ctx.lookup node = m'.ctx.lookup node)
+    (values : NamedValues) (memories : NamedMemories)
+    (i i' : Nat) (p : Pos) (name child : String)
+    (inputs : List (Connection m.ctx (m.interfaces child)))
+    (inputs' : List (Connection m'.ctx (m'.interfaces child)))
+    (member : .inst i p name child inputs ∈ m.body)
+    (member' : .inst i' p name child inputs' ∈ m'.body)
+    (perm : (inputs.map fun x => (x.1.val.name, x.2.erase)).Perm
+      (inputs'.map fun x => (x.1.val.name, x.2.erase)))
+    (port : Port) (hp : port ∈ m.interfaces child) (hp' : port ∈ m'.interfaces child)
+    (dir : port.dir = .input) :
+    connectionValues d m hm (values.valuation m.ctx) (memories.typed m.ctx)
+      ⟨.inst i p name child inputs, member⟩ ⟨port, hp, dir⟩ =
+    connectionValues d' m' hm' (values.valuation m'.ctx) (memories.typed m'.ctx)
+      ⟨.inst i' p name child inputs', member'⟩ ⟨port, hp', dir⟩ := by
+  apply evalExpr_erase_eq lookup
+  exact connectionExpr_erase_reorder d d' m m' hm hm' i i' p name child inputs inputs'
+    member member' perm port hp hp' dir
+
+theorem portValues_heq {ports ports' : List Port} {dir : PortDir}
+    (same : ports = ports') (a : PortValues ports dir) (b : PortValues ports' dir)
+    (agree : ∀ p hp hp' hd, a ⟨p, hp, hd⟩ = b ⟨p, hp', hd⟩) : HEq a b := by
+  subst ports'
+  apply heq_of_eq
+  funext p
+  exact agree p.val p.property.1 p.property.1 p.property.2
+
+theorem portValues_eq_of_heq {ports ports' : List Port} {dir : PortDir}
+    (same : ports = ports') (a : PortValues ports dir) (b : PortValues ports' dir)
+    (agree : HEq a b) (p : Port) (hp : p ∈ ports) (hp' : p ∈ ports') (hd : p.dir = dir) :
+    a ⟨p, hp, hd⟩ = b ⟨p, hp', hd⟩ := by
+  subst ports'
+  cases agree
+  rfl
+
+end Silicon.Core.Semantics
 
 /-! A module simulation compares named state and port values for one cycle. -/
 namespace Silicon.Core
@@ -174,19 +336,22 @@ theorem namedStep_of_children (d d' : CertifiedDesign) (env : Env d.design)
     (unique values transported).trans (unique _
       (IsSolution.named d' env' m' hm' state' input' _
         (interp_correct d' env' m' hm' state' input'))).symm
+  simp only [Interp.step_eq_values]
   constructor
   · exact outputValues_named_heq d d' m m' hm hm' ports _ _ sameValues
   · have next := namedNextState_reorder d d' env env' noExterns noExterns' order m m' hm hm'
       related state state' same values instances.2
     have leftEq : nextFromValues d env m hm state values =
         (Interp.step d env m hm state input).1 := by
-      simp only [nextFromValues, values, Valuation.named_valuation, Interp.step]
+      simp only [nextFromValues, values, Valuation.named_valuation, Interp.step_eq_values,
+        stepWithValues, localStepWithValues]
     have rightEq : nextFromValues d' env' m' hm' state' values =
         (Interp.step d' env' m' hm' state' input').1 := by
       rw [sameValues]
-      simp only [nextFromValues, Valuation.named_valuation, Interp.step]
+      simp only [nextFromValues, Valuation.named_valuation, Interp.step_eq_values,
+        stepWithValues, localStepWithValues]
     rw [leftEq, rightEq] at next
-    exact next
+    simpa only [Interp.step_eq_values] using next
 
 theorem namedStep_reorder (d d' : CertifiedDesign) (env : Env d.design)
     (env' : Env d'.design) (noExterns : d.design.externs = [])

@@ -20,8 +20,6 @@ theorem lookup_row_nodup [BEq α] [LawfulBEq α] (rows : List (α × β)) (n : �
       have hb : (n == a) = false := by simp [hne]
       simpa [List.lookup, hb] using ih hd.2 ht
 
-
-
 def freshNodes {α : Type} [BEq α] (seen pending acc : List α) : List α :=
   pending.foldl (fun acc n =>
     if seen.contains n || acc.contains n then acc else n :: acc) acc
@@ -120,7 +118,6 @@ theorem reaches_initial (g : List (α × List α)) (target start : α)
   · simp
   · intro x hx
     simp at hx
-
 
 end GraphSearch
 
