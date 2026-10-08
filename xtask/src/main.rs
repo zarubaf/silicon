@@ -1,5 +1,6 @@
 #![allow(clippy::print_stdout)] // xtask is a CLI; stdout is its interface.
 
+mod fmt;
 mod guidance;
 mod lean;
 mod repo;
@@ -31,11 +32,21 @@ struct Cli {
 enum Command {
     /// Run every repository check.
     Check,
+    /// Format every tracked non-Rust file.
+    Fmt {
+        /// Report unformatted files instead of rewriting them.
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 fn main() -> Result<ExitCode> {
     match Cli::parse().command {
         Command::Check => run_checks(),
+        Command::Fmt { check } => {
+            fmt::run(&Repo::discover()?, check)?;
+            Ok(ExitCode::SUCCESS)
+        }
     }
 }
 

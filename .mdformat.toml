@@ -1,0 +1,4 @@
+wrap = "no"
+number = true
+end_of_line = "lf"
+exclude = [".claude/output-styles/ste.md"]
