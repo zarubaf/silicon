@@ -1,8 +1,10 @@
 //! Tests of the `silicon` binary: output bytes and exit codes.
 
-use std::io::Write;
+mod common;
+
+use common::spawn;
 use std::path::PathBuf;
-use std::process::{Command, Output, Stdio};
+use std::process::{Command, Output};
 
 const COUNTER: &str = "\
 (design counter
@@ -82,22 +84,6 @@ fn silicon(args: &[&str], path: &PathBuf, stdin: &str) -> std::io::Result<Output
     let mut command = Command::new(env!("CARGO_BIN_EXE_silicon"));
     command.args(args).arg(path);
     spawn(&mut command, stdin)
-}
-
-fn spawn(command: &mut Command, stdin: &str) -> std::io::Result<Output> {
-    let mut child = command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-    if let Some(mut pipe) = child.stdin.take() {
-        // A command that fails before it reads stdin closes the pipe.
-        match pipe.write_all(stdin.as_bytes()) {
-            Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => return Err(e),
-            _ => {}
-        }
-    }
-    child.wait_with_output()
 }
 
 fn text(out: &Output) -> String {
