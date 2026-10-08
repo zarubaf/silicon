@@ -1215,3 +1215,15 @@ fn e004_operand_of_a_reset_wins_over_its_target_widths() {
 ";
     expect(src, ErrorCode::E004, 7, 7);
 }
+
+#[test]
+fn e003_output_of_an_instance_of_an_unknown_module() {
+    let src = "\
+(design top
+  (module top
+    (output q (bits 1))
+    (assign q u.y)
+    (inst u nosuch)))
+";
+    expect(src, ErrorCode::E003, 4, 15);
+}
