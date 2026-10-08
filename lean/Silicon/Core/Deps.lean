@@ -213,5 +213,38 @@ theorem infer_output_entry (m : Module) (children : String → Option Deps)
   | none => simp [found] at total
   | some deps => exact ⟨deps, rfl⟩
 
+theorem graph_perm (m m' : Module) (children children' : String → Option Deps)
+    (ports : m.ports = m'.ports)
+    (equationsPerm : (m.body.flatMap (equations children)).Perm
+      (m'.body.flatMap (equations children'))) :
+    (graph m children).Perm (graph m' children') := by
+  have nodes := (equationsPerm.map Prod.fst).append_right ((inputs m).map Node.name)
+  have inputEq : inputs m = inputs m' := by simp only [inputs, ports]
+  rw [inputEq] at nodes
+  unfold graph
+  rw [inputEq]
+  simpa only [nodes.contains_eq] using equationsPerm.map (fun row =>
+    (row.1, row.2.filter fun node =>
+      ((m'.body.flatMap (equations children')).map Prod.fst ++
+        (inputs m').map Node.name).contains node))
+
+/-! Dependency search depends on named graph lookups, not row order. -/
+theorem infer_graph_congr (m m' : Module) (children children' : String → Option Deps)
+    (ports : m.ports = m'.ports)
+    (size : (graph m children).length = (graph m' children').length)
+    (lookup : ∀ n, (graph m children).lookup n = (graph m' children').lookup n) :
+    infer m children = infer m' children' := by
+  have visits : ∀ fuel pending seen,
+      visit (graph m children) fuel pending seen =
+        visit (graph m' children') fuel pending seen := by
+    intro fuel
+    induction fuel with
+    | zero => intros; rfl
+    | succ fuel ih =>
+      intro pending seen
+      simp only [visit, lookup, ih]
+  simp only [infer, visits, size, inputs, ports]
+  rfl
+
 end Deps
 end Silicon.Core

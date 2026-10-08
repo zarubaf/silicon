@@ -638,7 +638,7 @@ def Item.ports : Item → List Port
 private def portIndex (ports : List Port) (name : String) : Nat :=
   ports.findIdx (·.name == name)
 
-private def canonicalStmt (items : List Item) : Stmt → Stmt
+def canonicalStmt (items : List Item) : Stmt → Stmt
   | .inst p n child connections =>
     match items.find? (·.name == child) with
     | none => .inst p n child connections
@@ -653,6 +653,21 @@ def canonicalize (d : Design) : Design :=
     | .extern e => .extern { e with deps := e.deps.mergeSort (fun a b =>
         portIndex e.ports a.output ≤ portIndex e.ports b.output) }
   { d with items := items.mergeSort (fun a b => a.name ≤ b.name) }
+
+/-! Canonical order preserves the top module and each ordered port interface. -/
+@[simp] theorem canonicalize_top (d : Design) : (canonicalize d).top = d.top := rfl
+
+theorem canonicalize_interfaces (d : Design) :
+    ((canonicalize d).items.map fun i => (i.name, i.ports)).Perm
+      (d.items.map fun i => (i.name, i.ports)) := by
+  unfold canonicalize
+  dsimp only
+  refine (List.Perm.map _ (List.mergeSort_perm _ _)).trans ?_
+  simp only [List.map_map]
+  apply List.Perm.of_eq
+  apply List.map_congr_left
+  intro i _
+  cases i <;> rfl
 
 namespace Text
 
