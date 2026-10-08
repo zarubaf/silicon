@@ -132,7 +132,7 @@ fn e005_declared_width_over_the_limit() {
     (let a (bits 65537) (const 1 0))
     (assign q (const 1 0))))
 ";
-    expect(src, ErrorCode::E005, 4, 5);
+    expect(src, ErrorCode::E005, 4, 18);
 }
 
 #[test]
@@ -155,7 +155,7 @@ fn e005_zero_width_port() {
     (output q (bits 0))
     (assign q (const 1 0))))
 ";
-    expect(src, ErrorCode::E005, 3, 5);
+    expect(src, ErrorCode::E005, 3, 21);
 }
 
 #[test]
@@ -168,7 +168,7 @@ fn e005_memory_depth_over_the_limit() {
     (mem m (bits 1) 16777217 clk)
     (assign q (const 1 0))))
 ";
-    expect(src, ErrorCode::E005, 5, 5);
+    expect(src, ErrorCode::E005, 5, 21);
 }
 
 #[test]
@@ -179,7 +179,7 @@ fn e005_constant_does_not_fit() {
     (output q (bits 1))
     (assign q (const 1 2))))
 ";
-    expect(src, ErrorCode::E005, 4, 15);
+    expect(src, ErrorCode::E005, 4, 24);
 }
 
 #[test]
@@ -190,7 +190,7 @@ fn e005_replication_count_zero() {
     (output q (bits 1))
     (assign q (replicate (const 1 0) 0))))
 ";
-    expect(src, ErrorCode::E005, 4, 15);
+    expect(src, ErrorCode::E005, 4, 38);
 }
 
 #[test]
@@ -220,7 +220,7 @@ fn e009_second_clock_input() {
 }
 
 #[test]
-fn e009_register_names_a_non_clock() {
+fn e003_register_clock_is_not_a_clock_input() {
     let src = "\
 (design top
   (module top
@@ -231,7 +231,7 @@ fn e009_register_names_a_non_clock() {
     (next r d)
     (assign q r)))
 ";
-    expect(src, ErrorCode::E009, 6, 5);
+    expect(src, ErrorCode::E003, 6, 21);
 }
 
 #[test]
@@ -280,7 +280,7 @@ fn e011_clock_input_needs_a_clock() {
     (inst u child (clk (const 1 0)))
     (assign q u.o)))
 ";
-    expect(src, ErrorCode::E011, 9, 19);
+    expect(src, ErrorCode::E011, 9, 24);
 }
 
 #[test]
@@ -295,7 +295,7 @@ fn e013_deps_name_an_unknown_input() {
     (output q (bits 1))
     (assign q (const 1 0))))
 ";
-    expect(src, ErrorCode::E013, 5, 5);
+    expect(src, ErrorCode::E013, 5, 14);
 }
 
 #[test]
@@ -456,4 +456,202 @@ fn pass_8_write_port_gap() {
     (assign q (const 1 0))))
 ";
     expect(src, ErrorCode::E012, 5, 5);
+}
+
+#[test]
+fn e002_reserved_prefix() {
+    let src = "\
+(design top
+  (module top
+    (output q (bits 1))
+    (let silicon_x (bits 1) (const 1 0))
+    (assign q silicon_x)))
+";
+    expect(src, ErrorCode::E002, 4, 10);
+}
+
+#[test]
+fn e003_next_of_a_non_register() {
+    let src = "\
+(design top
+  (module top
+    (output q (bits 1))
+    (let a (bits 1) (const 1 0))
+    (next a a)
+    (assign q a)))
+";
+    expect(src, ErrorCode::E003, 5, 11);
+}
+
+#[test]
+fn e003_assign_of_a_non_output() {
+    let src = "\
+(design top
+  (module top
+    (output q (bits 1))
+    (let a (bits 1) (const 1 0))
+    (assign a a)
+    (assign q a)))
+";
+    expect(src, ErrorCode::E003, 5, 13);
+}
+
+#[test]
+fn e003_connection_to_a_port_that_is_not_an_input() {
+    let src = "\
+(design top
+  (module child
+    (output o (bits 1))
+    (assign o (const 1 0)))
+  (module top
+    (output q (bits 1))
+    (inst u child (o (const 1 0)))
+    (assign q u.o)))
+";
+    expect(src, ErrorCode::E003, 7, 20);
+}
+
+#[test]
+fn e003_in_a_connection_beats_e011() {
+    let src = "\
+(design top
+  (module child
+    (input clk clock)
+    (output o (bits 1))
+    (assign o (const 1 0)))
+  (module top
+    (output q (bits 1))
+    (inst u child (clk missing))
+    (assign q u.o)))
+";
+    expect(src, ErrorCode::E003, 8, 24);
+}
+
+#[test]
+fn e005_extract_of_zero_bits() {
+    let src = "\
+(design top
+  (module top
+    (input a (bits 4))
+    (output q (bits 1))
+    (assign q (extract a 0 0))))
+";
+    expect(src, ErrorCode::E005, 5, 28);
+}
+
+#[test]
+fn e009_clock_output_port() {
+    let src = "\
+(design top
+  (module top
+    (input clk clock)
+    (output c clock)
+    (output q (bits 1))
+    (assign q (const 1 0))))
+";
+    expect(src, ErrorCode::E009, 4, 5);
+}
+
+#[test]
+fn e009_read_of_a_clock_output_of_a_child() {
+    let src = "\
+(design top
+  (module top
+    (output q (bits 1))
+    (inst u child)
+    (let a (bits 1) u.c)
+    (assign q a))
+  (module child
+    (output c clock)
+    (output o (bits 1))
+    (assign o (const 1 0))))
+";
+    expect(src, ErrorCode::E009, 5, 21);
+}
+
+#[test]
+fn e009_clock_name_connected_to_a_bits_input() {
+    let src = "\
+(design top
+  (module child
+    (input a (bits 1))
+    (output o (bits 1))
+    (assign o a))
+  (module top
+    (input clk clock)
+    (output q (bits 1))
+    (inst u child (a clk))
+    (assign q u.o)))
+";
+    expect(src, ErrorCode::E009, 9, 22);
+}
+
+#[test]
+fn e009_clock_inside_a_clock_connection_expression() {
+    let src = "\
+(design top
+  (module child
+    (input c clock)
+    (output o (bits 1))
+    (assign o (const 1 0)))
+  (module top
+    (input clk clock)
+    (output q (bits 1))
+    (inst u child (c (not clk)))
+    (assign q u.o)))
+";
+    expect(src, ErrorCode::E009, 9, 27);
+}
+
+#[test]
+fn a_clock_name_connects_to_a_clock_input() {
+    let src = "\
+(design top
+  (module child
+    (input c clock)
+    (output o (bits 1))
+    (assign o (const 1 0)))
+  (module top
+    (input clk clock)
+    (output q (bits 1))
+    (inst u child (c clk))
+    (assign q u.o)))
+";
+    let design = run(src).expect("the clock connection checks");
+    assert!(
+        design
+            .modules
+            .iter()
+            .all(|m| m.insts.iter().all(|i| i.inputs.is_empty()))
+    );
+}
+
+#[test]
+fn e013_duplicate_input_in_a_deps_list() {
+    let src = "\
+(design top
+  (extern ext
+    (input a (bits 1))
+    (output o (bits 1))
+    (deps o (a a)))
+  (module top
+    (output q (bits 1))
+    (assign q (const 1 0))))
+";
+    expect(src, ErrorCode::E013, 5, 16);
+}
+
+#[test]
+fn e013_clock_input_in_a_deps_list() {
+    let src = "\
+(design top
+  (extern ext
+    (input c clock)
+    (output o (bits 1))
+    (deps o (c)))
+  (module top
+    (output q (bits 1))
+    (assign q (const 1 0))))
+";
+    expect(src, ErrorCode::E013, 5, 14);
 }

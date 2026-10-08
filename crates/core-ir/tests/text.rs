@@ -122,6 +122,45 @@ fn bad_character_is_e001() {
     );
 }
 
+fn at(src: &str, line: u32, col: u32) {
+    let d = err(src);
+    assert_eq!(
+        (d.code, d.span),
+        (ErrorCode::E001, Span { line, col }),
+        "{d}"
+    );
+}
+
+#[test]
+fn bad_character_inside_a_token_is_at_that_character() {
+    at("(design\x0cm)", 1, 8);
+    at("(design a\u{e9})", 1, 10);
+    at("(design a.\u{e9})", 1, 11);
+}
+
+#[test]
+fn malformed_token_is_at_its_start() {
+    at("(design 12abc)", 1, 9);
+    at("(design 12.5)", 1, 9);
+    at("(design a.b.c)", 1, 9);
+    at("(design a.)", 1, 9);
+}
+
+#[test]
+fn keyword_in_a_port_part_is_at_that_part() {
+    let src = "(design t\n(module t (output o (bits 1)) (assign o u.add)))";
+    at(src, 2, 43);
+    let src = "(design t\n(module t (output o (bits 1)) (assign o add.p)))";
+    at(src, 2, 41);
+}
+
+#[test]
+fn every_spec_keyword_is_rejected_as_a_name() {
+    for word in "design module extern input output clock bits deps let reg next mem write inst assign reset sync const not add sub mul and or xor shl shru shrs concat icmp eq ne ult ule ugt uge slt sle sgt sge mux extract replicate read".split(' ') {
+        at(&format!("(design {word})"), 1, 9);
+    }
+}
+
 fn nested_not(levels: usize) -> String {
     format!(
         "(design t\n(module t (output o (bits 1)) (assign o {}o{})))",
