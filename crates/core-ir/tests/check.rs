@@ -1,4 +1,5 @@
-//! Tests of the checker passes 1 to 7: the code and the position of each error.
+//! Tests of the checker: the code and the position of each error, the
+//! schedule, the port dependencies, and the module order.
 
 use core_ir::check::check;
 use core_ir::diag::{Diagnostic, ErrorCode};
@@ -750,4 +751,400 @@ fn e005_lowest_constant_across_statement_kinds() {
     (let a (bits 1) (const 1 3))))
 ";
     expect(src, ErrorCode::E005, 4, 24);
+}
+
+#[test]
+fn e010_instance_cycle_is_at_its_lowest_inst() {
+    let src = "\
+(design top
+  (module b
+    (output q (bits 1))
+    (inst u a)
+    (assign q u.q))
+  (module a
+    (output q (bits 1))
+    (inst v b)
+    (assign q v.q))
+  (module top
+    (output q (bits 1))
+    (inst w a)
+    (assign q w.q)))
+";
+    expect(src, ErrorCode::E010, 4, 5);
+}
+
+#[test]
+fn e010_module_instantiates_itself() {
+    let src = "\
+(design top
+  (module top
+    (output q (bits 1))
+    (assign q (const 1 0))
+    (inst u top)))
+";
+    expect(src, ErrorCode::E010, 5, 5);
+}
+
+#[test]
+fn e010_comes_before_e008() {
+    let src = "\
+(design top
+  (module top
+    (output q (bits 1))
+    (let a (bits 1) a)
+    (inst u loop)
+    (assign q a))
+  (module loop
+    (output q (bits 1))
+    (inst u loop)
+    (assign q u.q)))
+";
+    expect(src, ErrorCode::E010, 9, 5);
+}
+
+#[test]
+fn e008_let_cycle_is_at_its_lowest_node() {
+    let src = "\
+(design top
+  (module top
+    (output q (bits 1))
+    (assign q x)
+    (let y (bits 1) (not x))
+    (let x (bits 1) (and y (const 1 0)))))
+";
+    expect(src, ErrorCode::E008, 5, 5);
+}
+
+#[test]
+fn e008_lowest_node_across_cycles() {
+    let src = "\
+(design top
+  (module top
+    (output q (bits 1))
+    (let c (bits 1) d)
+    (let a (bits 1) b)
+    (let b (bits 1) a)
+    (let d (bits 1) c)
+    (assign q (const 1 0))))
+";
+    expect(src, ErrorCode::E008, 4, 5);
+}
+
+#[test]
+fn e008_read_address_reads_itself() {
+    let src = "\
+(design top
+  (module top
+    (input clk clock)
+    (output q (bits 1))
+    (mem m (bits 1) 2 clk)
+    (write m 0 (const 1 0) (const 1 0) (const 1 0))
+    (let a (bits 1) (read m a))
+    (assign q a)))
+";
+    expect(src, ErrorCode::E008, 7, 5);
+}
+
+#[test]
+fn a_register_breaks_a_loop() {
+    let src = "\
+(design top
+  (module top
+    (input clk clock)
+    (output q (bits 1))
+    (reg r (bits 1) clk)
+    (let x (bits 1) (not r))
+    (next r x)
+    (assign q x)))
+";
+    run(src).expect("a register read makes no edge");
+}
+
+#[test]
+fn memory_contents_break_a_loop() {
+    let src = "\
+(design top
+  (module top
+    (input clk clock)
+    (input a (bits 1))
+    (output q (bits 1))
+    (mem m (bits 1) 2 clk)
+    (let x (bits 1) (read m a))
+    (write m 0 a x (const 1 1))
+    (assign q x)))
+";
+    run(src).expect("the stored contents make no edge");
+}
+
+/// A child whose output `q` reads its input `a` in the same cycle.
+const PASS_THROUGH: &str = "\
+  (module child
+    (input a (bits 1))
+    (output q (bits 1))
+    (assign q (not a)))
+";
+
+#[test]
+fn loop_through_one_instance_fails() {
+    let src = format!(
+        "\
+(design top
+{PASS_THROUGH}  (module top
+    (output q (bits 1))
+    (inst u child (a u.q))
+    (assign q u.q)))
+"
+    );
+    expect(&src, ErrorCode::E008, 8, 5);
+}
+
+#[test]
+fn e008_feedback_through_a_child_memory_address() {
+    let src = "\
+(design top
+  (module child
+    (input clk clock)
+    (input a (bits 1))
+    (output q (bits 1))
+    (mem m (bits 1) 2 clk)
+    (write m 0 (const 1 0) (const 1 0) (const 1 0))
+    (assign q (read m a)))
+  (module top
+    (input clk clock)
+    (output q (bits 1))
+    (let x (bits 1) u.q)
+    (inst u child (clk clk) (a x))
+    (assign q x)))
+";
+    expect(src, ErrorCode::E008, 12, 5);
+}
+
+#[test]
+fn e008_loop_through_an_extern() {
+    let src = "\
+(design top
+  (extern ext
+    (input a (bits 1))
+    (output b (bits 1))
+    (deps b (a)))
+  (module top
+    (output q (bits 1))
+    (inst u ext (a u.b))
+    (assign q u.b)))
+";
+    expect(src, ErrorCode::E008, 8, 5);
+}
+
+#[test]
+fn an_extern_without_deps_breaks_a_loop() {
+    let src = "\
+(design top
+  (extern ext
+    (input a (bits 1))
+    (output b (bits 1))
+    (deps b ()))
+  (module top
+    (output q (bits 1))
+    (inst u ext (a u.b))
+    (assign q u.b)))
+";
+    run(src).expect("an output outside the deps makes no edge");
+}
+
+#[test]
+fn sibling_handshake_passes() {
+    let src = "\
+(design top
+  (module child
+    (input clk clock)
+    (input valid (bits 1))
+    (output ready (bits 1))
+    (reg r (bits 1) clk)
+    (next r valid)
+    (assign ready r))
+  (module top
+    (input clk clock)
+    (output q (bits 1))
+    (inst u child (clk clk) (valid v.ready))
+    (inst v child (clk clk) (valid u.ready))
+    (assign q (and u.ready v.ready))))
+";
+    let design = run(src).expect("the handshake has no combinational loop");
+    let child = &design.modules[0];
+    assert_eq!(child.name, "child");
+    assert_eq!(child.deps, vec![vec![]]);
+}
+
+fn reads(expr: &typed::Expr, out: &mut Vec<typed::Node>) {
+    use typed::{Expr, Node};
+    match expr {
+        Expr::Let(l) => out.push(Node::Let(*l)),
+        Expr::InstOut(u, o) => out.push(Node::InstOut(*u, *o)),
+        Expr::Input(_) | Expr::Reg(_) | Expr::Const(_) => {}
+        Expr::Un(_, a) | Expr::Extract(a, ..) | Expr::Replicate(a, _) | Expr::Read(_, a) => {
+            reads(a, out);
+        }
+        Expr::Bin(_, a, b) | Expr::Icmp(_, a, b) => {
+            reads(a, out);
+            reads(b, out);
+        }
+        Expr::Mux(a, b, c) => {
+            reads(a, out);
+            reads(b, out);
+            reads(c, out);
+        }
+    }
+}
+
+fn callee_deps(design: &typed::Design, callee: typed::Callee) -> &typed::Deps {
+    match callee {
+        typed::Callee::Module(m) => &design.modules[m.index()].deps,
+        typed::Callee::Extern(e) => &design.externs[e.index()].deps,
+    }
+}
+
+/// Each module comes after its children, and its schedule has each node once,
+/// after every node that it reads.
+fn assert_well_ordered(design: &typed::Design) {
+    use typed::Node;
+    for (index, module) in design.modules.iter().enumerate() {
+        let mut nodes = module.lets.len() + module.outputs.len();
+        for inst in &module.insts {
+            if let typed::Callee::Module(m) = inst.callee {
+                assert!(m.index() < index, "a child comes first");
+            }
+            nodes += callee_deps(design, inst.callee).len();
+        }
+        assert_eq!(module.schedule.len(), nodes, "each node once");
+        for (at, node) in module.schedule.iter().enumerate() {
+            let mut read = Vec::new();
+            match *node {
+                Node::Let(l) => reads(&module.lets[l.index()].expr, &mut read),
+                Node::Output(o) => reads(&module.assigns[o.index()], &mut read),
+                Node::InstOut(u, q) => {
+                    let inst = &module.insts[u.index()];
+                    for i in &callee_deps(design, inst.callee)[q.index()] {
+                        reads(&inst.inputs[i.index()], &mut read);
+                    }
+                }
+            }
+            assert_eq!(module.schedule.iter().filter(|n| *n == node).count(), 1);
+            for r in read {
+                let before = module.schedule.iter().position(|n| *n == r);
+                assert!(before.is_some_and(|b| b < at), "{r:?} before {node:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn schedules_and_module_order() {
+    let src = "\
+(design top
+  (module top
+    (input clk clock)
+    (input a (bits 1))
+    (output q (bits 1))
+    (output p (bits 1))
+    (let z (bits 1) (and y u.q))
+    (let y (bits 1) (or x a))
+    (inst u mid (clk clk) (a y))
+    (let x (bits 1) (not a))
+    (assign q z)
+    (assign p x))
+  (module mid
+    (input clk clock)
+    (input a (bits 1))
+    (output q (bits 1))
+    (inst v child (a a))
+    (inst w handshake (clk clk) (valid v.q))
+    (assign q (xor v.q w.ready)))
+  (module handshake
+    (input clk clock)
+    (input valid (bits 1))
+    (output ready (bits 1))
+    (reg r (bits 1) clk)
+    (next r valid)
+    (assign ready r))
+"
+    .to_owned()
+        + PASS_THROUGH
+        + ")\n";
+    let design = run(&src).expect("the design checks");
+    assert_well_ordered(&design);
+    assert_eq!(design.modules[design.top.index()].name, "top");
+    let names: Vec<&str> = design.modules.iter().map(|m| m.name.as_str()).collect();
+    assert_eq!(names.len(), 4);
+    let mid = design
+        .modules
+        .iter()
+        .find(|m| m.name == "mid")
+        .expect("mid");
+    assert_eq!(mid.deps.len(), 1);
+    assert_eq!(mid.deps[0].len(), 1, "mid.q reads mid.a through v");
+    let top = &design.modules[design.top.index()];
+    assert_eq!(top.deps.iter().map(Vec::len).collect::<Vec<_>>(), [1, 1]);
+}
+
+#[test]
+fn every_form_and_handshake_are_well_ordered() {
+    assert_well_ordered(&run(EVERY_FORM).expect("every form checks"));
+    assert_well_ordered(&run(COUNTER).expect("counter checks"));
+}
+
+/// A 2-wide chain of the given depth. An exponential search over the paths
+/// does not finish.
+fn wide_chain(depth: usize) -> String {
+    let lets = (1..=depth)
+        .map(|k| {
+            let j = k - 1;
+            format!(
+                "    (let a{k} (bits 1) (and a{j} b{j}))\n    (let b{k} (bits 1) (or a{j} b{j}))\n"
+            )
+        })
+        .collect::<Vec<_>>()
+        .concat();
+    format!(
+        "(design top\n  (module top\n    (input a0 (bits 1))\n    (input b0 (bits 1))\n    (output q (bits 1))\n{lets}    (assign q (xor a{depth} b{depth}))))\n"
+    )
+}
+
+fn indices(deps: &typed::Deps) -> Vec<Vec<usize>> {
+    deps.iter()
+        .map(|d| d.iter().map(|i| i.index()).collect())
+        .collect()
+}
+
+#[test]
+fn deep_two_wide_chain_is_fast() {
+    let design = run(&wide_chain(40)).expect("the chain checks");
+    assert_eq!(indices(&design.modules[0].deps), [[0, 1]]);
+}
+
+#[test]
+fn deep_two_wide_chain_cycle_is_fast() {
+    let src = wide_chain(40).replace("(and a0 b0)", "(and a0 a40)");
+    expect(&src, ErrorCode::E008, 6, 5);
+}
+
+#[test]
+fn deep_two_wide_hierarchy_is_fast() {
+    use std::fmt::Write;
+    let mut src = String::from(
+        "(design m40\n  (module m0\n    (input a (bits 1))\n    (input b (bits 1))\n    (output q (bits 1))\n    (assign q (and a b)))\n",
+    );
+    for k in 1..=40 {
+        let j = k - 1;
+        writeln!(
+            src,
+            "  (module m{k}\n    (input a (bits 1))\n    (input b (bits 1))\n    (output q (bits 1))\n    (inst u m{j} (a a) (b b))\n    (inst v m{j} (a u.q) (b b))\n    (assign q (or u.q v.q)))"
+        )
+        .expect("write");
+    }
+    src.push_str(")\n");
+    let design = run(&src).expect("the hierarchy checks");
+    assert_well_ordered(&design);
+    let top = &design.modules[design.top.index()];
+    assert_eq!(top.name, "m40");
+    assert_eq!(indices(&top.deps), [[0, 1]]);
 }

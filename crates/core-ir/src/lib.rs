@@ -2,7 +2,9 @@
 
 pub mod ast;
 pub mod check;
+pub mod deps;
 pub mod diag;
+mod scc;
 pub mod text;
 pub mod typed;
 mod value;
