@@ -30,10 +30,14 @@ pub fn prose_blocks(source: &str) -> Vec<ProseBlock> {
             '"' => {
                 i += 1;
                 while i < chars.len() && chars[i] != '"' {
-                    if chars[i] == '\n' {
+                    if chars[i] == '\\' {
+                        // An escape takes the next character, which may be a line break.
+                        i += 1;
+                    }
+                    if chars.get(i) == Some(&'\n') {
                         line += 1;
                     }
-                    i += if chars[i] == '\\' { 2 } else { 1 };
+                    i += 1;
                 }
                 i += 1;
             }
@@ -76,8 +80,9 @@ pub fn to_markdown(blocks: &[ProseBlock]) -> (String, Vec<usize>) {
     let mut markdown = String::new();
     let mut map = Vec::new();
     for block in blocks {
+        let indent = common_indent(&block.text);
         for (offset, text) in block.text.split('\n').enumerate() {
-            markdown.push_str(text);
+            markdown.push_str(text.chars().skip(indent).collect::<String>().trim_end());
             markdown.push('\n');
             map.push(block.first_line + offset);
         }
@@ -85,6 +90,16 @@ pub fn to_markdown(blocks: &[ProseBlock]) -> (String, Vec<usize>) {
         map.push(block.first_line);
     }
     (markdown, map)
+}
+
+/// The indentation that all non-blank lines share. Markdown reads four spaces as code,
+/// so a docstring indented inside a `structure` must lose it. Extra indentation stays.
+fn common_indent(text: &str) -> usize {
+    text.lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.len() - l.trim_start().len())
+        .min()
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -111,6 +126,25 @@ mod tests {
         let src = "def a := 1\n/-!\nLine one.\nLine two.\n-/\n";
         let (_, map) = to_markdown(&prose_blocks(src));
         assert!(map.contains(&3) && map.contains(&4));
+    }
+
+    #[test]
+    fn string_gap_counts_lines() {
+        let src = "def s := \"a\\\n  b\"\n/-! Prose. -/\n";
+        assert_eq!(prose_blocks(src)[0].first_line, 3);
+    }
+
+    #[test]
+    fn indented_field_doc_is_not_a_code_block() {
+        let src = "structure S where\n  /--\n    Doc text here.\n      code()\n  -/\n  x : Nat\n";
+        let (md, _) = to_markdown(&prose_blocks(src));
+        assert!(md.lines().any(|l| l == "Doc text here."));
+        assert!(md.lines().any(|l| l == "  code()"));
+    }
+
+    #[test]
+    fn line_comment_hides_prose_opener() {
+        assert!(prose_blocks("-- see /-! here\ndef x := 1\n").is_empty());
     }
 
     #[test]
