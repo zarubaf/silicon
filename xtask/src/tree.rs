@@ -101,34 +101,45 @@ pub fn todo_violations(text: &str) -> Vec<usize> {
         .collect()
 }
 
-/// Returns `(line, recipe)` for each recipe with more than one body line.
-pub fn justfile_violations(text: &str) -> Vec<(usize, String)> {
+const CHAINING_TOKENS: &[&str] = &["&&", "||", ";", "$(", "`"];
+
+/// Returns `(line, recipe, reason)` for each recipe that is not one command on one line.
+pub fn justfile_violations(text: &str) -> Vec<(usize, String, String)> {
     let mut out = Vec::new();
     let mut recipe: Option<(usize, &str, usize)> = None;
-    let mut flush = |recipe: Option<(usize, &str, usize)>| {
-        if let Some((line, name, body)) = recipe
-            && body > 1
-        {
-            out.push((line, name.to_owned()));
-        }
-    };
     for (i, line) in text.lines().enumerate() {
         if line.starts_with([' ', '\t']) {
-            if let Some((_, _, body)) = recipe.as_mut()
-                && !line.trim().is_empty()
-            {
-                *body += 1;
+            let body = line.trim();
+            let Some((header, name, count)) = recipe.as_mut() else {
+                continue;
+            };
+            if body.is_empty() || body.starts_with('#') {
+                continue;
+            }
+            *count += 1;
+            if *count == 2 {
+                out.push((
+                    *header,
+                    (*name).to_owned(),
+                    "has more than one body line".into(),
+                ));
+            }
+            if let Some(token) = CHAINING_TOKENS.iter().find(|t| body.contains(**t)) {
+                out.push((
+                    i + 1,
+                    (*name).to_owned(),
+                    format!("chains commands with `{token}`"),
+                ));
             }
         } else if !line.trim().is_empty() && !line.starts_with('#') {
-            flush(recipe.take());
-            let header = line.split(':').next().unwrap_or(line);
+            recipe = None;
             if line.contains(':') && !line.contains(":=") {
+                let header = line.split(':').next().unwrap_or(line);
                 let name = header.split_whitespace().next().unwrap_or(header);
                 recipe = Some((i + 1, name, 0));
             }
         }
     }
-    flush(recipe.take());
     out
 }
 
@@ -174,13 +185,13 @@ pub fn check(repo: &Repo) -> Result<Vec<Violation>> {
             }
         }
         if file.path == Path::new("justfile") {
-            for (line, name) in justfile_violations(&repo.read(&file.path)?) {
+            for (line, name, reason) in justfile_violations(&repo.read(&file.path)?) {
                 out.push(Violation {
                     path: file.path.clone(),
                     line: Some(line),
                     rule: "tree-justfile",
                     severity: Severity::Error,
-                    message: format!("recipe `{name}` has more than one body line"),
+                    message: format!("recipe `{name}` {reason}"),
                 });
             }
         }
@@ -191,6 +202,7 @@ pub fn check(repo: &Repo) -> Result<Vec<Violation>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::repo::TrackedFile;
     use std::path::Path;
 
     // Test inputs spell the markers `T0` and `F1` so this file passes its own scan.
@@ -251,5 +263,57 @@ mod tests {
         let v = justfile_violations(text);
         assert_eq!(v.len(), 1);
         assert_eq!(v[0].1, "bad");
+    }
+
+    #[test]
+    fn justfile_rejects_shell_chaining() {
+        for body in ["a && b", "a || b", "a; b", "echo $(x)", "echo `x`"] {
+            let v = justfile_violations(&format!("r:\n    {body}\n"));
+            assert_eq!(v.len(), 1, "{body}");
+            assert_eq!(v[0].1, "r");
+        }
+    }
+
+    #[test]
+    fn justfile_comment_lines_ignored() {
+        let text = "r:\n    # why; this && that\n    cargo fmt\n";
+        assert!(justfile_violations(text).is_empty());
+    }
+
+    #[test]
+    fn check_reports_stray_banned_todo_and_skips_symlinks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::write(root.join("stray.txt"), "x").unwrap();
+        std::fs::write(root.join("run.sh"), "x").unwrap();
+        std::fs::create_dir(root.join("xtask")).unwrap();
+        std::fs::write(root.join("xtask/a.rs"), mark("// T0 fix\n")).unwrap();
+        std::os::unix::fs::symlink("xtask/a.rs", root.join("xtask/link.rs")).unwrap();
+        let file = |p: &str, is_symlink| TrackedFile {
+            path: p.into(),
+            is_symlink,
+        };
+        let repo = Repo::from_parts(
+            root.to_path_buf(),
+            vec![
+                file("stray.txt", false),
+                file("run.sh", false),
+                file("xtask/a.rs", false),
+                file("xtask/link.rs", true),
+            ],
+        );
+        let got: Vec<(String, String)> = check(&repo)
+            .unwrap()
+            .iter()
+            .map(|v| (v.rule.to_owned(), v.path.display().to_string()))
+            .collect();
+        let want = [
+            ("tree-root", "stray.txt"),
+            ("tree-root", "run.sh"),
+            ("tree-banned", "run.sh"),
+            ("tree-todo", "xtask/a.rs"),
+        ]
+        .map(|(r, p)| (r.to_owned(), p.to_owned()));
+        assert_eq!(got, want);
     }
 }
