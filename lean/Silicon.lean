@@ -20,6 +20,8 @@ import Silicon.Core.GraphComponents
 import Silicon.Core.GraphCycleIndex
 import Silicon.Core.Check
 import Silicon.Core.Test.Check
+import Silicon.Core.Semantics
+import Silicon.Core.Test.Semantics
 
 /-!
 Core IR semantics live here. The Lean model is the normative spec.

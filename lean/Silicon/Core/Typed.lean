@@ -1315,6 +1315,13 @@ private theorem compressed_edges (g : Graph) (r : Ranks) (h : Ranked g r)
     · exact ⟨row, hr, by simp; omega, by simp⟩
   · simpa only [compressed, ite_eq_right hmdep] using compressed_pos g r row.1 hm
 
+/-! Finite graphs admit ranks bounded by their number of equations. -/
+theorem bounded_ranks (g : Graph) (h : ∃ r, Ranked g r) :
+    ∃ q : Deps.Node → Nat, (∀ n, q n ≤ g.length) ∧
+      ∀ row ∈ g, ∀ dep ∈ row.2, q dep < q row.1 := by
+  obtain ⟨r, hr⟩ := h
+  exact ⟨compressed g r, compressed_bound g r, compressed_edges g r hr⟩
+
 theorem graphRanks_complete (g : Graph) (hn : (g.map Prod.fst).Nodup)
     (h : ∃ r, Ranked g r) : Ranked g (graphRanks g g.length) := by
   rcases h with ⟨r, hr⟩
