@@ -4,6 +4,7 @@ mod guidance;
 mod repo;
 mod tree;
 mod violation;
+mod workspace;
 
 use std::process::ExitCode;
 
@@ -16,7 +17,7 @@ use violation::Violation;
 type Check = fn(&Repo) -> Result<Vec<Violation>>;
 
 /// Every registered check. Each check family adds one entry.
-const CHECKS: &[Check] = &[tree::check, guidance::check];
+const CHECKS: &[Check] = &[tree::check, guidance::check, workspace::check];
 
 #[derive(Parser)]
 #[command(about = "Repository tooling for Silicon")]
