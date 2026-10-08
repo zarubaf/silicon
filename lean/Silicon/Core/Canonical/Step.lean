@@ -182,7 +182,7 @@ private theorem instance_step_of_simulation (d d' : CertifiedDesign) (env : Env 
     (env' : Env d'.design) (noExterns : d.design.externs = [])
     (noExterns' : d'.design.externs = []) (order : Reorder d.design.erase d'.design.erase)
     (m m' : Typed.Module) (hm : m ∈ d.design.bodies) (hm' : m' ∈ d'.design.bodies)
-    (related : ItemReorder (.module m.erase) (.module m'.erase))
+    (related : ItemReorder d.design.erase.items (.module m.erase) (.module m'.erase))
     (state : State d env m hm) (state' : State d' env' m' hm')
     (same : namedState d env noExterns m hm state = namedState d' env' noExterns' m' hm' state')
     (simulate : ∀ child ∈ Typed.childNames m.erase, ∀ c c'
@@ -275,7 +275,7 @@ theorem instances_of_simulation (d d' : CertifiedDesign) (env : Env d.design)
     (env' : Env d'.design) (noExterns : d.design.externs = [])
     (noExterns' : d'.design.externs = []) (order : Reorder d.design.erase d'.design.erase)
     (m m' : Typed.Module) (hm : m ∈ d.design.bodies) (hm' : m' ∈ d'.design.bodies)
-    (related : ItemReorder (.module m.erase) (.module m'.erase))
+    (related : ItemReorder d.design.erase.items (.module m.erase) (.module m'.erase))
     (state : State d env m hm) (state' : State d' env' m' hm')
     (same : namedState d env noExterns m hm state = namedState d' env' noExterns' m' hm' state')
     (simulate : ∀ child ∈ Typed.childNames m.erase, ∀ c c'
@@ -315,7 +315,7 @@ theorem namedStep_of_children (d d' : CertifiedDesign) (env : Env d.design)
     (env' : Env d'.design) (noExterns : d.design.externs = [])
     (noExterns' : d'.design.externs = []) (order : Reorder d.design.erase d'.design.erase)
     (m m' : Typed.Module) (hm : m ∈ d.design.bodies) (hm' : m' ∈ d'.design.bodies)
-    (related : ItemReorder (.module m.erase) (.module m'.erase))
+    (related : ItemReorder d.design.erase.items (.module m.erase) (.module m'.erase))
     (simulate : ∀ child ∈ Typed.childNames m.erase, ∀ c c'
       (found : d.design.bodies.find? (·.name == child) = some c)
       (found' : d'.design.bodies.find? (·.name == child) = some c'),
@@ -357,7 +357,7 @@ theorem namedStep_reorder (d d' : CertifiedDesign) (env : Env d.design)
     (env' : Env d'.design) (noExterns : d.design.externs = [])
     (noExterns' : d'.design.externs = []) (order : Reorder d.design.erase d'.design.erase)
     (m m' : Typed.Module) (hm : m ∈ d.design.bodies) (hm' : m' ∈ d'.design.bodies)
-    (related : ItemReorder (.module m.erase) (.module m'.erase)) :
+    (related : ItemReorder d.design.erase.items (.module m.erase) (.module m'.erase)) :
     NamedStepSimulation d d' env env' noExterns noExterns' m m' hm hm' := by
   apply namedStep_of_children d d' env env' noExterns noExterns' order m m' hm hm' related
   intro child member c c' found found'

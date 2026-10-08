@@ -220,7 +220,7 @@ theorem named_solution_reorder (d d' : CertifiedDesign) (env : Env d.design)
     (env' : Env d'.design) (noExterns : d.design.externs = [])
     (noExterns' : d'.design.externs = []) (order : Reorder d.design.erase d'.design.erase)
     (m m' : Typed.Module) (hm : m ∈ d.design.bodies) (hm' : m' ∈ d'.design.bodies)
-    (related : ItemReorder (.module m.erase) (.module m'.erase))
+    (related : ItemReorder d.design.erase.items (.module m.erase) (.module m'.erase))
     (state : State d env m hm) (state' : State d' env' m' hm')
     (same : namedState d env noExterns m hm state = namedState d' env' noExterns' m' hm' state')
     (input : Input m) (input' : Input m')
@@ -329,7 +329,7 @@ private theorem unique_filterMap (f : α → Option β) (xs : List α)
 
 theorem next_erase_reorder (d : CertifiedDesign)
     (m m' : Typed.Module) (hm : m ∈ d.design.bodies)
-    (body : Permuted StmtReorder m.erase.body m'.erase.body)
+    (body : Permuted (StmtReorder d.design.erase.items) m.erase.body m'.erase.body)
     (i i' : Nat) (p p' : Pos) (name : String) (width : Nat) (clock clock' : String)
     (target : Typed.valueTy m.ctx name = some (.bits width))
     (target' : Typed.valueTy m'.ctx name = some (.bits width))
@@ -407,7 +407,7 @@ private theorem syntax_nodup (name : String) (writes : List (Typed.Write ctx wid
 
 theorem writeSyntax_perm (d d' : CertifiedDesign) (m m' : Typed.Module)
     (hm : m ∈ d.design.bodies) (hm' : m' ∈ d'.design.bodies)
-    (body : Permuted StmtReorder m.erase.body m'.erase.body)
+    (body : Permuted (StmtReorder d.design.erase.items) m.erase.body m'.erase.body)
     (i i' : Nat) (p p' : Pos) (name : String) (width depth : Nat) (clock clock' : String)
     (target : m.ctx.lookup (.name name) = some (.memory width depth))
     (target' : m'.ctx.lookup (.name name) = some (.memory width depth))
@@ -515,7 +515,7 @@ private theorem next_some_reorder (d d' : CertifiedDesign) (env : Env d.design)
     (env' : Env d'.design) (noExterns : d.design.externs = [])
     (noExterns' : d'.design.externs = []) (order : Reorder d.design.erase d'.design.erase)
     (m m' : Typed.Module) (hm : m ∈ d.design.bodies) (hm' : m' ∈ d'.design.bodies)
-    (related : ItemReorder (.module m.erase) (.module m'.erase))
+    (related : ItemReorder d.design.erase.items (.module m.erase) (.module m'.erase))
     (state : State d env m hm) (state' : State d' env' m' hm')
     (same : namedState d env noExterns m hm state = namedState d' env' noExterns' m' hm' state')
     (values : NamedValues)
@@ -633,7 +633,7 @@ theorem namedNextState_reorder (d d' : CertifiedDesign) (env : Env d.design)
     (env' : Env d'.design) (noExterns : d.design.externs = [])
     (noExterns' : d'.design.externs = []) (order : Reorder d.design.erase d'.design.erase)
     (m m' : Typed.Module) (hm : m ∈ d.design.bodies) (hm' : m' ∈ d'.design.bodies)
-    (related : ItemReorder (.module m.erase) (.module m'.erase))
+    (related : ItemReorder d.design.erase.items (.module m.erase) (.module m'.erase))
     (state : State d env m hm) (state' : State d' env' m' hm')
     (same : namedState d env noExterns m hm state = namedState d' env' noExterns' m' hm' state')
     (values : NamedValues)
@@ -647,7 +647,8 @@ theorem namedNextState_reorder (d d' : CertifiedDesign) (env : Env d.design)
   constructor
   · exact next_some_reorder d d' env env' noExterns noExterns' order m m' hm hm' related
       state state' same values children path cell
-  · apply next_some_reorder d' d env' env noExterns' noExterns order.symm m' m hm' hm related.symm
+  · apply next_some_reorder d' d env' env noExterns' noExterns order.symm m' m hm' hm
+      (related.symm.changeItems order.resolves)
       state' state same.symm values
     intro i p name child inputs member i' inputs' member' perm path
     exact (children i' p name child inputs' member' i inputs member perm.symm path).symm

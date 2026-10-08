@@ -11,48 +11,61 @@ open Semantics
 
 namespace Interp
 
+/-! One transport connects an interpreter child family to the semantic state type. -/
+def withOrderedChildren (d : CertifiedDesign) (env : Env d.design)
+    (m : Typed.Module) (hm : m ∈ d.design.bodies) (Result : Children m → Type)
+    (evaluate : (children : Children m) → Runners m children →
+      LocalState m children → Result children)
+    (state : State d env m hm) : Result (designChildren d env m hm) :=
+  let children := orderedChildren d env m hm
+  let same := orderedChildren_eq d env m hm
+  cast (congrArg Result same)
+    (evaluate children (orderedRunners d env m hm) (cast (congrArg (LocalState m) same.symm) state))
+
+theorem withOrderedChildren_eq (d : CertifiedDesign) (env : Env d.design)
+    (m : Typed.Module) (hm : m ∈ d.design.bodies) (Result : Children m → Type)
+    (evaluate : (children : Children m) → Runners m children →
+      LocalState m children → Result children)
+    (state : State d env m hm) :
+    withOrderedChildren d env m hm Result evaluate state =
+      evaluate (designChildren d env m hm)
+        (cast (congrArg (Runners m) (orderedChildren_eq d env m hm))
+          (orderedRunners d env m hm)) state := by
+  have transport (children : Children m) (same : children = designChildren d env m hm)
+      (runners : Runners m children) :
+      cast (congrArg Result same)
+        (evaluate children runners (cast (congrArg (LocalState m) same.symm) state)) =
+          evaluate (designChildren d env m hm) (cast (congrArg (Runners m) same) runners)
+            state := by
+    cases same
+    rfl
+  exact transport _ (orderedChildren_eq d env m hm) (orderedRunners d env m hm)
+
 def solve (d : CertifiedDesign) (env : Env d.design)
     (m : Typed.Module) (hm : m ∈ d.design.bodies) (state : State d env m hm)
     (input : Input m) : Valuation m.ctx :=
-  let children := orderedChildren d env m hm
-  let same := orderedChildren_eq d env m hm
-  orderedSolution d m hm children (cast (congrArg (LocalState m) same.symm) state) input
+  withOrderedChildren d env m hm (fun _ => Valuation m.ctx)
+    (fun children runners state => cachedSolution d m hm children runners state input) state
 
 theorem solve_eq_solution (d : CertifiedDesign) (env : Env d.design)
     (m : Typed.Module) (hm : m ∈ d.design.bodies) (state : State d env m hm)
     (input : Input m) : solve d env m hm state input =
       Semantics.solution d env m hm state input := by
-  have transport (children : Children m) (same : children = designChildren d env m hm) :
-      orderedSolution d m hm children (cast (congrArg (LocalState m) same.symm) state) input =
-        Semantics.solution d env m hm state input := by
-    cases same
-    exact orderedSolution_eq d m hm _ state input
-  exact transport _ (orderedChildren_eq d env m hm)
+  rw [solve, withOrderedChildren_eq, cachedSolution_eq]
+  rfl
 
 def step (d : CertifiedDesign) (env : Env d.design)
     (m : Typed.Module) (hm : m ∈ d.design.bodies) (state : State d env m hm)
     (input : Input m) : State d env m hm × Output m :=
-  let children := orderedChildren d env m hm
-  let same := orderedChildren_eq d env m hm
-  let result := orderedLocalStep d m hm children
-    (cast (congrArg (LocalState m) same.symm) state) input
-  (cast (congrArg (LocalState m) same) result.1, result.2)
+  withOrderedChildren d env m hm (fun children => LocalState m children × Output m)
+    (fun children runners state => cachedLocalStep d m hm children runners state input) state
 
 theorem step_eq_values (d : CertifiedDesign) (env : Env d.design)
     (m : Typed.Module) (hm : m ∈ d.design.bodies) (state : State d env m hm)
     (input : Input m) : step d env m hm state input =
       stepWithValues d env m hm state (solve d env m hm state input) := by
-  rw [solve_eq_solution]
-  have transport (children : Children m) (same : children = designChildren d env m hm) :
-      let result := orderedLocalStep d m hm children
-        (cast (congrArg (LocalState m) same.symm) state) input
-      (cast (congrArg (LocalState m) same) result.1, result.2) =
-        stepWithValues d env m hm state (Semantics.solution d env m hm state input) := by
-    cases same
-    dsimp only
-    rw [orderedLocalStep_eq]
-    rfl
-  exact transport _ (orderedChildren_eq d env m hm)
+  rw [step, withOrderedChildren_eq, cachedLocalStep_eq, solve_eq_solution]
+  rfl
 
 /-! Designs without externs have a recursive all-zero start state. -/
 def zeroState (d : CertifiedDesign) (env : Env d.design) (noExterns : d.design.externs = [])
