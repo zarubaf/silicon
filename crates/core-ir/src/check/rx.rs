@@ -281,6 +281,7 @@ pub(super) type SizedModule<'a> = RxModule<'a, Span, Bits>;
 pub(super) type ExModule<'a> = RxModule<'a, Never, Bits>;
 pub(super) type ExInst<'a> = RxInst<'a, Never, Bits>;
 pub(super) type ExWrite = RxWrite<Never, Bits>;
+pub(super) type ExAssign = Target<OutputIdx, Never, Bits>;
 
 impl<'a, K, C> RxModule<'a, K, C> {
     /// Rebuilds the module with `f` applied to each expression. `f` returns
