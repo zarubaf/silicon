@@ -1328,3 +1328,21 @@ fn a_clocked_extern_keeps_its_clock_port_and_connection() {
     let inst = &top.insts[0];
     assert!(matches!(inst.callee, typed::Callee::Extern(e) if e.index() == 0));
 }
+
+#[test]
+fn a_module_keeps_its_clock_port() {
+    let src = "\
+(design top
+  (module top
+    (input a (bits 1))
+    (input tick clock)
+    (output q (bits 1))
+    (reg r (bits 1) tick)
+    (next r a)
+    (assign q r)))
+";
+    let design = run(src).expect("the module checks");
+    let top = &design.modules[design.top.index()];
+    let clock = top.clock.as_ref().expect("the module keeps its clock");
+    assert_eq!((clock.name.as_str(), clock.position), ("tick", 1));
+}
