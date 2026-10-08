@@ -6,7 +6,7 @@ The `core-ir` crate is the Rust implementation of the core IR. It is the first s
 
 ## Owns
 
-This crate owns the bit-vector values and their comb operations. The AST, the checker, and the interpreter follow in this crate.
+This crate owns the bit-vector values and their comb operations. It also owns the diagnostics, the AST, and the `.sil` parser and printer. The checker and the interpreter follow in this crate.
 
 ## Invariants
 
