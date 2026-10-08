@@ -71,7 +71,8 @@ impl Parser {
         let found = match &token.tok {
             Tok::Open => "`(`".to_string(),
             Tok::Close => "`)`".to_string(),
-            Tok::Name(n) | Tok::Number(n) => format!("`{n}`"),
+            Tok::Name(n) => format!("`{n}`"),
+            Tok::Number(n) => format!("`{n}`"),
             Tok::Dotted(a, b) => format!("`{a}.{b}`"),
             Tok::Invalid(message) => return syntax_error(token.span, message.clone()),
             Tok::End => "the end of the file".to_string(),
@@ -129,10 +130,10 @@ impl Parser {
         }
     }
 
-    fn number_text(&mut self) -> Parsed<String> {
+    fn big(&mut self) -> Parsed<BigUint> {
         match self.peek() {
             Tok::Number(_) => match self.bump().tok {
-                Tok::Number(text) => Ok(text),
+                Tok::Number(value) => Ok(value),
                 _ => Err(self.fail("a number")),
             },
             _ => Err(self.fail("a number")),
@@ -145,10 +146,9 @@ impl Parser {
 
     fn num(&mut self) -> Parsed<Num> {
         let span = self.span();
-        let text = self.number_text()?;
-        let value = text
-            .parse::<u32>()
-            .map_err(|_| syntax_error(span, format!("the number `{text}` is too large")))?;
+        let big = self.big()?;
+        let value = u32::try_from(&big)
+            .map_err(|_| syntax_error(span, format!("the number `{big}` is too large")))?;
         Ok(Num { value, span })
     }
 
@@ -434,8 +434,7 @@ impl Parser {
         let expr = if word == "const" {
             let width = self.num()?;
             let value_span = self.span();
-            let digits = self.number_text()?;
-            let value = BigUint::parse_bytes(digits.as_bytes(), 10).unwrap_or_default();
+            let value = self.big()?;
             Expr::Const {
                 width,
                 value,
