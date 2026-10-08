@@ -183,16 +183,18 @@ fn expr_sizes(expr: &Expr, errors: &mut Vec<Diagnostic>) {
 pub(super) fn operations(modules: &[ExModule]) -> Vec<Diagnostic> {
     let mut errors = Vec::new();
     for module in modules {
-        for o in module.obligations() {
-            let got = width(o.expr, &mut errors);
-            if let (Some(got), Some(want)) = (got, o.want)
-                && got != want
-            {
-                errors.push(error(
-                    ErrorCode::E004,
-                    o.span,
-                    format!("{} has the width {want}, but its value has {got}", o.what),
-                ));
+        for form in module.forms() {
+            for o in &form.operands {
+                let got = width(o.expr, &mut errors);
+                if let (Some(got), Some(want)) = (got, o.want)
+                    && got != want
+                {
+                    errors.push(error(
+                        ErrorCode::E004,
+                        form.span,
+                        format!("{} has the width {want}, but its value has {got}", o.what),
+                    ));
+                }
             }
         }
     }

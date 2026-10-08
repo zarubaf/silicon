@@ -400,54 +400,69 @@ fn target<I, K, C, K2, C2>(
     })
 }
 
-/// One expression with the width it must have, if it has a target.
-pub(super) struct Obligation<'r> {
+/// One operand of a form, with the width that its target needs, if it has a
+/// target.
+pub(super) struct Operand<'r> {
     pub expr: &'r Ex,
     pub want: Option<u32>,
-    pub span: Span,
     pub what: &'static str,
 }
 
+/// A statement form, or a connection form, with its operands.
+pub(super) struct Form<'r> {
+    pub span: Span,
+    pub operands: Vec<Operand<'r>>,
+}
+
+fn op<'r>(expr: &'r Ex, want: Option<u32>, what: &'static str) -> Operand<'r> {
+    Operand { expr, want, what }
+}
+
 impl ExModule<'_> {
-    /// All expressions of the module.
-    pub fn obligations(&self) -> Vec<Obligation<'_>> {
+    /// All forms of the module that hold expressions.
+    pub fn forms(&self) -> Vec<Form<'_>> {
         let mut all = Vec::new();
-        let mut add = |expr, want, span, what| {
-            all.push(Obligation {
-                expr,
-                want,
-                span,
-                what,
-            });
-        };
+        let mut add = |span, operands| all.push(Form { span, operands });
         for l in &self.lets {
-            add(&l.expr, Some(l.width), l.span, "the `let`");
+            add(l.span, vec![op(&l.expr, Some(l.width), "the `let`")]);
         }
         for r in &self.regs {
             if let Some(reset) = &r.reset {
-                add(&reset.signal, Some(1), reset.span, "the reset signal");
-                add(&reset.value, Some(r.width), reset.span, "the register");
+                add(
+                    reset.span,
+                    vec![
+                        op(&reset.signal, Some(1), "the reset signal"),
+                        op(&reset.value, Some(r.width), "the register"),
+                    ],
+                );
             }
         }
         for n in &self.nexts {
-            add(&n.expr, Some(n.width), n.span, "the register");
+            add(n.span, vec![op(&n.expr, Some(n.width), "the register")]);
         }
         for a in &self.assigns {
-            add(&a.expr, Some(a.width), a.span, "the output");
+            add(a.span, vec![op(&a.expr, Some(a.width), "the output")]);
         }
         for w in &self.writes {
             let addr = typed::address_width(w.depth);
-            add(&w.addr, Some(addr), w.span, "the address");
-            add(&w.data, Some(w.data_width), w.span, "the memory word");
-            add(&w.en, Some(1), w.span, "the write enable");
+            add(
+                w.span,
+                vec![
+                    op(&w.addr, Some(addr), "the address"),
+                    op(&w.data, Some(w.data_width), "the memory word"),
+                    op(&w.en, Some(1), "the write enable"),
+                ],
+            );
         }
         for inst in &self.insts {
             for conn in &inst.conns {
                 match &conn.arg {
                     ConnArg::Data { width, expr, .. } => {
-                        add(expr, Some(*width), conn.span, "the input");
+                        add(conn.span, vec![op(expr, Some(*width), "the input")]);
                     }
-                    ConnArg::ClockOther { expr, .. } => add(expr, None, conn.span, "the clock"),
+                    ConnArg::ClockOther { expr, .. } => {
+                        add(conn.span, vec![op(expr, None, "the clock")]);
+                    }
                     ConnArg::ClockName => {}
                 }
             }
