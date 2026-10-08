@@ -13,5 +13,6 @@ name = "silicon"
 path = "src/main.rs"
 
 [dependencies]
+backend-circt = { path = "../backend-circt" }
 clap = { version = "4.6.7", features = ["derive"] }
 core-ir = { path = "../core-ir" }
