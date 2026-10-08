@@ -1,10 +1,12 @@
 //! Prints an AST as `.sil` text. The output keeps the order of the input.
 
-use super::{BINOPS, PREDS, UNOPS, keyword_of};
+use super::{binop_keyword, pred_keyword, unop_keyword};
 use crate::ast::{Design, Dir, Expr, Extern, Item, Module, Port, Stmt, Ty};
 use std::fmt::Write;
 
-/// Prints with two-space indentation and one port or statement per line.
+/// Prints the canonical layout: single spaces between atoms, a two-space
+/// indent per nesting level, and one item, port, or statement per line.
+/// The aligned columns of spec section 3.1 are only illustrative.
 #[must_use]
 pub fn print(design: &Design) -> String {
     let mut out = format!("(design {}", design.top.text);
@@ -155,21 +157,17 @@ fn expr(out: &mut String, e: &Expr) {
             let _ = write!(out, "(const {width} {value}");
         }
         Expr::Unary { op, arg, .. } => {
-            let _ = write!(out, "({} ", keyword_of(&UNOPS, *op).unwrap_or_default());
+            let _ = write!(out, "({} ", unop_keyword(*op));
             expr(out, arg);
         }
         Expr::Binary { op, lhs, rhs, .. } => {
-            let _ = write!(out, "({} ", keyword_of(&BINOPS, *op).unwrap_or_default());
+            let _ = write!(out, "({} ", binop_keyword(*op));
             expr(out, lhs);
             out.push(' ');
             expr(out, rhs);
         }
         Expr::Icmp { pred, lhs, rhs, .. } => {
-            let _ = write!(
-                out,
-                "(icmp {} ",
-                keyword_of(&PREDS, *pred).unwrap_or_default()
-            );
+            let _ = write!(out, "(icmp {} ", pred_keyword(*pred));
             expr(out, lhs);
             out.push(' ');
             expr(out, rhs);
