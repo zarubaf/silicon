@@ -17,3 +17,4 @@ Use translation validation. Each compiler run emits the core IR as a Lean term. 
 - The compiler itself stays unproven. A run without validation has no guarantee.
 - The translation validator joins `just ci` when its oracle exists. See the build order in [the architecture](../architecture.md).
 - The core IR has an S-expression text format. See [the core IR spec](../design/2026-10-08-core-ir.md), section 3.
+- Note of 2026-10-08: the core IR spec, section 6.4, fixes the form of the term. Each compiler run emits the core IR as a `.sil` file, and the Lean checker `silicon-check` confirms it.
