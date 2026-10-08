@@ -1,6 +1,6 @@
 # Silicon v0.1 language proposal
 
-This reference preserves the language proposal from the prototype. It is input for the new language design, not the implemented specification. Only the language reference and [grammar](SILICON_GRAMMAR.ebnf) are included. Library proposals, examples, tutorials, and design history are outside this import.
+This reference preserves the language proposal from the prototype. It is input for the new language design, not the implemented specification. Read the [contracts and interoperability overview](README.md) for the central ideas and a worked example. This directory also includes the [grammar](SILICON_GRAMMAR.ebnf). Library proposals, examples, tutorials, and design history are outside this import.
 
 <!-- vale off -->
 
