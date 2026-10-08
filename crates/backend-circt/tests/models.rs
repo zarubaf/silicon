@@ -96,12 +96,12 @@ fn words_of(config: &MemConfig) -> u32 {
 /// a read gives the word at its address, and each write port in `order` sets
 /// the word at its address if its enable is 1. For an address in range, this
 /// is the memory of depth `D`.
-fn reference(config: &MemConfig, order: &[usize]) -> Result<String, std::fmt::Error> {
+fn reference(config: &MemConfig, order: &[usize]) -> Result<String, Box<dyn Error>> {
     let model = memory_model(config);
     let header = model
         .lines()
         .find(|l| l.starts_with("hw.module @"))
-        .unwrap_or_default()
+        .ok_or("the memory model has no module header")?
         .replacen(&format!("@{}(", config.module_name()), "@reference(", 1);
     let (d, w, a) = (words_of(config), config.width, address_width(config.depth));
     let ty = format!("!hw.array<{d}xi{w}>");
