@@ -168,78 +168,14 @@ fn reference(config: &MemConfig, order: &[usize]) -> Result<String, std::fmt::Er
     Ok(body)
 }
 
-/// A module `<name>_words` around the module `name` with its register as
-/// ports. It gives the read data and each word of the next state.
-/// `circt-lec` gives an array of a depth below a power of two free words
-/// above the depth, so the proof compares the words, not the array.
-fn words(config: &MemConfig, name: &str) -> Result<String, std::fmt::Error> {
-    let (d, w, a) = (words_of(config), config.width, address_width(config.depth));
-    let ty = format!("!hw.array<{d}xi{w}>");
-    let mut inputs = vec![("clk".to_owned(), "i1".to_owned())];
-    for n in 0..config.reads {
-        inputs.push((format!("r{n}_addr"), format!("i{a}")));
-    }
-    for n in 0..config.writes {
-        inputs.push((format!("w{n}_addr"), format!("i{a}")));
-        inputs.push((format!("w{n}_data"), format!("i{w}")));
-        inputs.push((format!("w{n}_en"), "i1".to_owned()));
-    }
-    inputs.push(("silicon_reg_mem_state".to_owned(), ty.clone()));
-    let mut outputs: Vec<(String, String)> = (0..config.reads)
-        .map(|n| (format!("r{n}_data"), format!("i{w}")))
-        .collect();
-    let results: Vec<String> = outputs.iter().map(|(p, _)| format!("%{p}")).collect();
-    let mut ports: Vec<String> = inputs
-        .iter()
-        .map(|(p, t)| format!("in %{p} : {t}"))
-        .collect();
-    ports.extend(outputs.iter().map(|(p, t)| format!("out {p} : {t}")));
-    ports.extend((0..d).map(|i| format!("out word{i} : i{w}")));
-    let args: Vec<String> = inputs
-        .iter()
-        .map(|(p, t)| format!("{p}: %{p}: {t}"))
-        .collect();
-    let mut kinds = outputs.clone();
-    kinds.push(("silicon_reg_mem_next".to_owned(), ty.clone()));
-    let kinds: Vec<String> = kinds.iter().map(|(p, t)| format!("{p}: {t}")).collect();
-    let mut text = format!("hw.module @{name}_words({}) {{\n", ports.join(", "));
-    let mut names = results.clone();
-    names.push("%next".to_owned());
-    writeln!(
-        text,
-        "  {} = hw.instance \"u\" @{name}({}) -> ({})",
-        names.join(", "),
-        args.join(", "),
-        kinds.join(", ")
-    )?;
-    let mut values = results;
-    for i in 0..d {
-        writeln!(text, "  %i{i} = hw.constant {i} : i{a}")?;
-        writeln!(text, "  %word{i} = hw.array_get %next[%i{i}] : {ty}, i{a}")?;
-        values.push(format!("%word{i}"));
-        outputs.push((format!("word{i}"), format!("i{w}")));
-    }
-    let types: Vec<&str> = outputs.iter().map(|(_, t)| t.as_str()).collect();
-    writeln!(
-        text,
-        "  hw.output {} : {}\n}}",
-        values.join(", "),
-        types.join(", ")
-    )?;
-    Ok(text)
-}
-
 /// Proves the model of `config` equal to the reference with the write
 /// ports in `order`, or reports a counterexample as `false`.
 fn model_equals_reference(config: &MemConfig, order: &[usize]) -> Result<bool, Box<dyn Error>> {
     let name = config.module_name();
     let input = format!("{}{}", memory_model(config), reference(config, order)?);
-    let flat = lec::externalized(&input)?;
-    // The wrappers go into the `builtin.module` that `circt-opt` prints.
-    let end = flat.rfind('}').ok_or("no module")?;
-    let wrappers = format!("{}{}", words(config, &name)?, words(config, "reference")?);
-    let input = format!("{}{wrappers}{}", &flat[..end], &flat[end..]);
-    lec::prove(&input, &format!("{name}_words"), "reference_words")
+    // Each word of the array has an address, so `circt-lec` compares only
+    // words that the model can reach.
+    lec::prove(&lec::externalized(&input)?, &name, "reference")
 }
 
 /// The proof skips the models without a write: their register is its own
