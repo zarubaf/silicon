@@ -1,6 +1,7 @@
 //! Fixed-width bit-vector values and the combinational operations of the core IR.
 
 use num_bigint::BigUint;
+use std::num::NonZeroU32;
 
 /// Comparison predicate of `icmp`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -38,11 +39,19 @@ impl Bits {
         (width >= 1 && value.bits() <= u64::from(width)).then_some(Bits { width, value })
     }
 
-    /// The all-zero value. A width of 0 is clamped to 1 so the value stays valid.
+    /// The all-zero value.
     #[must_use]
-    pub fn zero(width: u32) -> Bits {
+    pub fn zero(width: NonZeroU32) -> Bits {
         Bits {
-            width: width.max(1),
+            width: width.get(),
+            value: BigUint::ZERO,
+        }
+    }
+
+    /// The all-zero value of the width of `self`.
+    fn zeros(&self) -> Bits {
+        Bits {
+            width: self.width,
             value: BigUint::ZERO,
         }
     }
@@ -138,7 +147,7 @@ impl Bits {
     pub fn shl(&self, other: &Bits) -> Bits {
         match self.amount(other) {
             Some(s) => Bits::wrap(self.width, &self.value << s),
-            None => Bits::zero(self.width),
+            None => self.zeros(),
         }
     }
 
@@ -149,7 +158,7 @@ impl Bits {
                 width: self.width,
                 value: &self.value >> s,
             },
-            None => Bits::zero(self.width),
+            None => self.zeros(),
         }
     }
 

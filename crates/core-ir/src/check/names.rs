@@ -185,7 +185,7 @@ impl<'a> Resolver<'_, 'a> {
                     self.unknown(reg, "a register");
                     return;
                 };
-                let width = self.scope.regs.get(i.index()).map(|d| d.width);
+                let width = self.scope.regs.get(i.index()).map(|d| d.width.value);
                 if let (Some(expr), Some(width)) = (expr, width) {
                     module.nexts.push(Target {
                         slot: i,
@@ -199,7 +199,7 @@ impl<'a> Resolver<'_, 'a> {
                 let expr = self.expr(expr);
                 match self.scope.lookup(&out.text) {
                     Some(Binding::Output(o)) => {
-                        let width = self.scope.sig.outputs.get(o.index()).map(|p| p.width);
+                        let width = self.scope.sig.outputs.get(o.index()).map(|p| p.width.value);
                         if let (Some(expr), Some(width)) = (expr, width) {
                             module.assigns.push(Target {
                                 slot: o,
@@ -232,7 +232,7 @@ impl<'a> Resolver<'_, 'a> {
                         mem: m,
                         port: *port,
                         span: *span,
-                        data_width: decl.width,
+                        data_width: decl.width.value,
                         depth: decl.depth,
                         addr,
                         data,
@@ -279,7 +279,7 @@ impl<'a> Resolver<'_, 'a> {
                     expr,
                 }),
                 Some(PortRef::Input(i)) => {
-                    let width = sig.inputs.get(i.index()).map(|p| p.width);
+                    let width = sig.inputs.get(i.index()).map(|p| p.width.value);
                     let expr = self.expr(&conn.expr);
                     width.zip(expr).map(|(width, expr)| ConnArg::Data {
                         input: i,
@@ -385,7 +385,7 @@ impl<'a> Resolver<'_, 'a> {
                 let decl = self.scope.mems.get(m.index())?;
                 Some(Rx::Read {
                     mem: m,
-                    data_width: decl.width,
+                    data_width: decl.width.value,
                     depth: decl.depth,
                     addr: Box::new(addr?),
                     span: *span,
@@ -401,9 +401,9 @@ impl<'a> Resolver<'_, 'a> {
                 .sig
                 .inputs
                 .get(i.index())
-                .map(|p| Rx::Input(i, p.width)),
-            Some(Binding::Let(i)) => scope.lets.get(i.index()).map(|d| Rx::Let(i, d.width)),
-            Some(Binding::Reg(i)) => scope.regs.get(i.index()).map(|d| Rx::Reg(i, d.width)),
+                .map(|p| Rx::Input(i, p.width.value)),
+            Some(Binding::Let(i)) => scope.lets.get(i.index()).map(|d| Rx::Let(i, d.width.value)),
+            Some(Binding::Reg(i)) => scope.regs.get(i.index()).map(|d| Rx::Reg(i, d.width.value)),
             Some(Binding::Clock | Binding::ClockOut) => Some(Rx::Clock(name.span)),
             _ => None,
         };
@@ -424,7 +424,7 @@ impl<'a> Resolver<'_, 'a> {
             Some(PortRef::Output(o)) => sig
                 .outputs
                 .get(o.index())
-                .map(|p| Rx::InstOut(i, o, p.width)),
+                .map(|p| Rx::InstOut(i, o, p.width.value)),
             Some(PortRef::ClockOut) => Some(Rx::Clock(span)),
             _ => {
                 self.errors.push(error(

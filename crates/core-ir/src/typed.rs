@@ -7,6 +7,7 @@
 use crate::ast::{BinOp, UnOp};
 use crate::diag::Span;
 use crate::{Bits, Pred};
+use std::num::NonZeroU32;
 
 macro_rules! index {
     ($(#[$doc:meta] $name:ident),* $(,)?) => {$(
@@ -63,7 +64,7 @@ pub struct Port {
     /// The port name, kept for printing only.
     pub name: String,
     /// The width in bits.
-    pub width: u32,
+    pub width: NonZeroU32,
 }
 
 /// A combinational expression. No variant refers to a clock.
@@ -101,7 +102,7 @@ pub struct Let {
     /// The name, kept for printing only.
     pub name: String,
     /// The width in bits.
-    pub width: u32,
+    pub width: NonZeroU32,
     /// The bound expression.
     pub expr: Expr,
 }
@@ -112,7 +113,7 @@ pub struct Reg {
     /// The name, kept for printing only.
     pub name: String,
     /// The width in bits.
-    pub width: u32,
+    pub width: NonZeroU32,
     /// The value after the next clock edge.
     pub next: Expr,
     /// The reset signal and the reset value.
@@ -136,7 +137,7 @@ pub struct Mem {
     /// The name, kept for printing only.
     pub name: String,
     /// The width of one word in bits.
-    pub width: u32,
+    pub width: NonZeroU32,
     /// The number of words.
     pub depth: u32,
     /// The write ports, by port index.
@@ -233,19 +234,20 @@ mod tests {
 
     #[test]
     fn counter_by_hand() {
-        let one = Bits::zero(8);
+        let eight = NonZeroU32::new(8).unwrap();
+        let one = Bits::zero(eight);
         let counter = Module {
             name: "counter".into(),
             inputs: vec![],
             outputs: vec![Port {
                 name: "q".into(),
-                width: 8,
+                width: eight,
             }],
             has_clock: true,
             lets: vec![],
             regs: vec![Reg {
                 name: "count".into(),
-                width: 8,
+                width: eight,
                 next: Expr::Bin(
                     BinOp::Add,
                     Box::new(Expr::Reg(RegIdx::new(0))),

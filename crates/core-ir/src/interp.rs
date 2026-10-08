@@ -8,6 +8,7 @@
 //! computed. Each node is computed once per cycle.
 
 use std::collections::HashMap;
+use std::num::NonZeroU32;
 
 use num_bigint::BigUint;
 
@@ -80,7 +81,7 @@ struct Slots {
 }
 
 impl Slots {
-    fn new(widths: impl Iterator<Item = u32>) -> Slots {
+    fn new(widths: impl Iterator<Item = NonZeroU32>) -> Slots {
         let values: Vec<Bits> = widths.map(Bits::zero).collect();
         Slots {
             known: vec![false; values.len()],

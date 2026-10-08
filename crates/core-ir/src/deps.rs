@@ -167,7 +167,7 @@ mod tests {
     fn port(name: &str) -> Port {
         Port {
             name: name.into(),
-            width: 1,
+            width: std::num::NonZeroU32::MIN,
         }
     }
 

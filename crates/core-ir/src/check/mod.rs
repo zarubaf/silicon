@@ -28,13 +28,26 @@ pub fn check(design: &ast::Design) -> Result<typed::Design, Diagnostic> {
     let env = Env::build(design);
     let scopes = Scope::build_all(design, &env);
     let (resolved, top) = names::resolve(design, &env, &scopes)?;
-    let sized = types::declared(design, resolved)?;
+    let (sized, widths) = types::declared(design, &scopes, env.externs(), resolved)?;
     let modules = clocks::check(design, sized)?;
     let linked = instances::check(design, env.externs(), &modules)?;
     first_error(types::operations(&modules))?;
     let structures = structure::check(&scopes, &modules)?;
     let order = graph::instances(&scopes, &linked)?;
-    let lowered = lower::lower(design, &env, top, &scopes, &modules, &structures, &linked);
+    let (typed_modules, externs) = lower::lower(
+        design,
+        &env,
+        &widths,
+        &scopes,
+        &modules,
+        &structures,
+        &linked,
+    );
+    let lowered = typed::Design {
+        modules: typed_modules,
+        externs,
+        top,
+    };
     let sources: Vec<graph::Sources> = scopes
         .iter()
         .zip(&modules)

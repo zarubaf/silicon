@@ -81,7 +81,7 @@ pub fn parse_input(line: &str, top: &Module) -> Result<Inputs, VectorError> {
             return Err(VectorError::Syntax);
         }
         let value = BigUint::parse_bytes(digits.as_bytes(), 10).ok_or(VectorError::Syntax)?;
-        values.push(Bits::new(port.width, value).ok_or(VectorError::TooWide(name.into()))?);
+        values.push(Bits::new(port.width.get(), value).ok_or(VectorError::TooWide(name.into()))?);
     }
     if let Some(port) = top.inputs.get(values.len()) {
         return Err(VectorError::Missing(port.name.clone()));
