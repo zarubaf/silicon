@@ -1,14 +1,19 @@
 //! Lowers the typed core IR to MLIR text in the CIRCT dialects `hw`, `comb`,
-//! and `seq` (spec section 7.3).
+//! and `seq` (spec section 7.3), emits the memory models, and exports Verilog
+//! through CIRCT.
 
 mod lower;
 mod mlir;
+mod models;
+mod verilog;
 
 use std::collections::BTreeSet;
 
 use core_ir::typed::{Design, address_width};
 
 use crate::mlir::{Dir, Pin, Ty};
+pub use crate::models::memory_model;
+pub use crate::verilog::{ToolError, verilog};
 
 /// The configuration `(D, W, R, P)` of a memory module.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

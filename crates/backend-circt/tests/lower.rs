@@ -324,7 +324,7 @@ fn each_operation_parses() -> Test {
 fn a_shift_out_of_range_matches_the_spec() -> Test {
     let mlir = lowered(SHIFTS)?;
     assert!(!mlir.contains("comb.mux"), "{mlir}");
-    assert!(lec::equivalent(
+    assert!(lec::prove(
         &format!("{mlir}{SHIFTS_REFERENCE}"),
         "shifts",
         "reference"
@@ -354,7 +354,7 @@ fn the_reset_is_active_high() -> Test {
         let reference = COUNTER_REFERENCE.replace("{reset}", reset);
         let input = format!("{mlir}{reference}");
         assert_eq!(
-            lec::equivalent(&input, "counter", "reference")?,
+            lec::prove(&lec::externalized(&input)?, "counter", "reference")?,
             equal,
             "{reset}"
         );
@@ -409,7 +409,7 @@ fn the_memory_guards_match_the_spec() -> Test {
             .replace("{write}", write);
         let input = format!("{mlir}{reference}");
         assert_eq!(
-            lec::equivalent(&input, "top", "reference")?,
+            lec::prove(&lec::externalized(&input)?, "top", "reference")?,
             equal,
             "{read} {write}"
         );
