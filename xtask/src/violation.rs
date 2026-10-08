@@ -4,10 +4,6 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
     Error,
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the first warning-level check constructs it")
-    )]
     Warning,
 }
 
