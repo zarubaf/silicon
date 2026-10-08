@@ -2,6 +2,7 @@
 //! `circt-opt`, and the names and ports follow spec section 7.3.
 
 mod common;
+mod lec;
 
 use std::error::Error;
 
@@ -316,48 +317,6 @@ fn each_operation_parses() -> Test {
     Ok(())
 }
 
-/// Proves with `circt-lec` that the modules `c1` and `c2` of `mlir` are
-/// equal, or reports a counterexample as `false`. The registers become ports
-/// first, because `circt-lec` reads no `seq` dialect. The clock then drives
-/// nothing, and its type becomes `i1` for the same reason.
-fn equivalent(mlir: &str, c1: &str, c2: &str) -> Result<bool, Box<dyn Error>> {
-    let flat = common::run(
-        "circt-opt",
-        &[
-            "--hw-flatten-modules",
-            "--externalize-registers",
-            "--canonicalize",
-        ],
-        mlir,
-    )?;
-    let stderr = String::from_utf8_lossy(&flat.stderr);
-    assert!(flat.status.success(), "{stderr}\n{mlir}");
-    let flat = String::from_utf8(flat.stdout)?.replace("!seq.clock", "i1");
-    let z3 = std::env::var("SILICON_Z3_LIB").map_err(|_| "SILICON_Z3_LIB is not set")?;
-    let out = common::run(
-        "circt-lec",
-        &[
-            "-",
-            &format!("--c1={c1}"),
-            &format!("--c2={c2}"),
-            "--run",
-            &format!("--shared-libs={z3}"),
-        ],
-        &flat,
-    )?;
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        out.status.success(),
-        "{stdout}{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    match stdout.trim() {
-        "c1 == c2" => Ok(true),
-        "c1 != c2" => Ok(false),
-        other => Err(format!("unexpected `circt-lec` output: {other}").into()),
-    }
-}
-
 /// CIRCT 1.160 gives a shift amount of the width or more the meaning of
 /// spec section 4.1, so the lowering emits no guard. The proof covers each
 /// amount, in range and out of range.
@@ -365,7 +324,7 @@ fn equivalent(mlir: &str, c1: &str, c2: &str) -> Result<bool, Box<dyn Error>> {
 fn a_shift_out_of_range_matches_the_spec() -> Test {
     let mlir = lowered(SHIFTS)?;
     assert!(!mlir.contains("comb.mux"), "{mlir}");
-    assert!(equivalent(
+    assert!(lec::equivalent(
         &format!("{mlir}{SHIFTS_REFERENCE}"),
         "shifts",
         "reference"
@@ -395,7 +354,7 @@ fn the_reset_is_active_high() -> Test {
         let reference = COUNTER_REFERENCE.replace("{reset}", reset);
         let input = format!("{mlir}{reference}");
         assert_eq!(
-            equivalent(&input, "counter", "reference")?,
+            lec::equivalent(&input, "counter", "reference")?,
             equal,
             "{reset}"
         );
@@ -450,7 +409,7 @@ fn the_memory_guards_match_the_spec() -> Test {
             .replace("{write}", write);
         let input = format!("{mlir}{reference}");
         assert_eq!(
-            equivalent(&input, "top", "reference")?,
+            lec::equivalent(&input, "top", "reference")?,
             equal,
             "{read} {write}"
         );
