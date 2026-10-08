@@ -1,0 +1,9 @@
+; Purpose: a width above 64 bits, for the large-constant and wide-vector paths.
+(design top
+  (module top
+    (input a (bits 100))
+    (input b (bits 100))
+    (output s (bits 100))
+    (output k (bits 100))
+    (assign s (add a b))
+    (assign k (const 100 1267650600228229401496703205375))))

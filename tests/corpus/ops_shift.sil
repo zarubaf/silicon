@@ -1,0 +1,11 @@
+; Purpose: the shifts shl, shru, and shrs with a variable amount.
+(design top
+  (module top
+    (input a (bits 8))
+    (input n (bits 8))
+    (output l (bits 8))
+    (output u (bits 8))
+    (output s (bits 8))
+    (assign l (shl a n))
+    (assign u (shru a n))
+    (assign s (shrs a n))))

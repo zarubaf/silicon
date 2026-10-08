@@ -1,0 +1,15 @@
+; Purpose: the selection and bit operations mux, concat, extract, and
+; replicate.
+(design top
+  (module top
+    (input c (bits 1))
+    (input a (bits 8))
+    (input b (bits 8))
+    (output m (bits 8))
+    (output j (bits 16))
+    (output e (bits 3))
+    (output r (bits 24))
+    (assign m (mux c a b))
+    (assign j (concat a b))
+    (assign e (extract a 2 3))
+    (assign r (replicate a 3))))

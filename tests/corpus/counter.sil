@@ -1,0 +1,11 @@
+; Purpose: the counter of spec 3.1, a register with a synchronous reset.
+(design counter
+  (module counter
+    (input clk clock)
+    (input rst (bits 1))
+    (input en (bits 1))
+    (output q (bits 8))
+    (reg r (bits 8) clk (reset sync rst (const 8 0)))
+    (let inc (bits 8) (add r (const 8 1)))
+    (next r (mux en inc r))
+    (assign q r)))

@@ -1,0 +1,24 @@
+; Purpose: a hierarchy with two levels and an extern black box with a clock
+; port and a dependency list.
+(design top
+  (extern blk
+    (input c clock)
+    (input a (bits 4))
+    (output y (bits 4))
+    (deps y (a)))
+  (module top
+    (input clk clock)
+    (input x (bits 4))
+    (output q (bits 4))
+    (output z (bits 4))
+    (inst u blk (c clk) (a x))
+    (inst m mid (clk clk) (x u.y))
+    (assign q m.y)
+    (assign z u.y))
+  (module mid
+    (input clk clock)
+    (input x (bits 4))
+    (output y (bits 4))
+    (reg d (bits 4) clk)
+    (next d (add d x))
+    (assign y d)))

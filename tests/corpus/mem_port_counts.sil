@@ -1,0 +1,22 @@
+; Purpose: two memories with the same depth and data width but different port
+; counts (spec 9). They lower to silicon_mem_12x8_r1w1 and
+; silicon_mem_12x8_r2w2, two different memory modules.
+(design top
+  (module top
+    (input clk clock)
+    (input a (bits 4))
+    (input b (bits 4))
+    (input d (bits 8))
+    (input e (bits 8))
+    (input we (bits 1))
+    (output p (bits 8))
+    (output q (bits 8))
+    (output s (bits 8))
+    (mem m (bits 8) 12 clk)
+    (mem n (bits 8) 12 clk)
+    (write m 0 a d we)
+    (write n 0 a d we)
+    (write n 1 b e we)
+    (assign p (read m a))
+    (assign q (read n a))
+    (assign s (read n b))))

@@ -1,0 +1,12 @@
+; Purpose: the mutation target of spec 9. The input r_state, the output
+; r_next, and the register r keep distinct names. The mutation gives r the
+; value of r_state in place of its own expression, and LEC must see it.
+(design top
+  (module top
+    (input clk clock)
+    (input r_state (bits 8))
+    (output r_next (bits 8))
+    (reg r (bits 8) clk)
+    (let sum (bits 8) (add r r_state))
+    (next r sum)
+    (assign r_next sum)))
