@@ -1,6 +1,6 @@
 # 4. CIRCT is a backend only, LEC closes the trust gap
 
-- Status: accepted
+- Status: accepted, partly superseded by ADR 0010
 - Date: 2026-10-08
 
 ## Context
