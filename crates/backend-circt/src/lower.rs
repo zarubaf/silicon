@@ -197,29 +197,17 @@ pub fn module(design: &Design, module: &Module) -> (String, Vec<MemConfig>) {
     };
     l.statements();
     let configs = l.memories();
-    let outputs: Vec<Value> = module
+    let outputs: Vec<(String, Ty)> = module
         .assigns
         .iter()
         .zip(&module.outputs)
-        .map(|(assign, port)| l.named(assign, &port.name, port.width.get()))
+        .map(|(assign, port)| {
+            let value = l.named(assign, &port.name, port.width.get());
+            (value.name, Ty::Int(value.width))
+        })
         .collect();
-    let output = if outputs.is_empty() {
-        "hw.output".to_owned()
-    } else {
-        let names: Vec<&str> = outputs.iter().map(|v| v.name.as_str()).collect();
-        let types: Vec<String> = outputs
-            .iter()
-            .map(|v| Ty::Int(v.width).to_string())
-            .collect();
-        format!("hw.output {} : {}", names.join(", "), types.join(", "))
-    };
     let ports = unit_ports(&module.inputs, &module.outputs, module.clock.as_ref());
-    let text = format!(
-        "hw.module @{}{} {{\n{}  {output}\n}}\n",
-        module.name,
-        mlir::signature(&pins(&ports)),
-        l.body
-    );
+    let text = mlir::module(&module.name, &pins(&ports), &l.body, &outputs);
     (text, configs)
 }
 

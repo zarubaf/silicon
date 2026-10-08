@@ -18,7 +18,8 @@
 
 use core_ir::typed::address_width;
 
-use crate::{MemConfig, mlir};
+use crate::MemConfig;
+use crate::mlir::{self, Ty};
 
 /// The MLIR text of the memory model of `config`: an `hw.module` with the
 /// name and the ports of the extern of spec section 7.3.
@@ -48,26 +49,10 @@ pub fn memory_model(config: &MemConfig) -> String {
     ops.push(format!(
         "%silicon_reg_mem = seq.compreg {state}, %clk : {array}"
     ));
-    if outputs.is_empty() {
-        ops.push("hw.output".to_owned());
-    } else {
-        let types = vec![format!("i{width}"); outputs.len()];
-        ops.push(format!(
-            "hw.output {} : {}",
-            outputs.join(", "),
-            types.join(", ")
-        ));
-    }
-    let mut text = format!(
-        "hw.module @{}{} {{\n",
-        config.module_name(),
-        mlir::signature(&config.pins())
-    );
-    for op in ops {
-        text.push_str("  ");
-        text.push_str(&op);
-        text.push('\n');
-    }
-    text.push_str("}\n");
-    text
+    let body: String = ops.iter().flat_map(|op| ["  ", op, "\n"]).collect();
+    let outputs: Vec<(String, Ty)> = outputs
+        .into_iter()
+        .map(|value| (value, Ty::Int(width)))
+        .collect();
+    mlir::module(&config.module_name(), &config.pins(), &body, &outputs)
 }
