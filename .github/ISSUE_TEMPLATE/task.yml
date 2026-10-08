@@ -22,6 +22,8 @@ body:
       options:
         - lean
         - doc
+        - design
+        - adr
         - ci
         - xtask
     validations:
