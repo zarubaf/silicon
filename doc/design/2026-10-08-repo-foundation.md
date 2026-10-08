@@ -39,6 +39,7 @@ silicon/
 ├── Cargo.toml  Cargo.lock
 ├── rustfmt.toml  clippy.toml  deny.toml  .config/nextest.toml
 ├── .mdformat.toml  .vale.ini  .vale/styles/Silicon/
+├── taplo.toml  .yamlfmt   # TOML and YAML formatter config
 ├── .editorconfig  .gitignore  lefthook.yml
 ├── .cargo/config.toml     # `cargo xtask` alias
 ├── crates/                # one crate per pipeline stage, created on demand
