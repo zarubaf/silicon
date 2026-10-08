@@ -5,7 +5,9 @@ mod parser;
 mod print;
 
 use crate::Pred;
-use crate::ast::{BinOp, Design, Item, Name, Stmt, UnOp};
+use std::collections::HashMap;
+
+use crate::ast::{BinOp, Design, Item, Name, Port, Stmt, UnOp};
 use crate::diag::Diagnostic;
 
 pub use parser::parse;
@@ -134,18 +136,53 @@ fn item_name(item: &Item) -> &Name {
     }
 }
 
-/// Sorts the items by name and the statements by kind, then name or port.
-/// The sorts are stable, so equal keys keep their order.
+fn item_ports(item: &Item) -> &[Port] {
+    match item {
+        Item::Module(m) => &m.ports,
+        Item::Extern(e) => &e.ports,
+    }
+}
+
+/// The position of the port `name` in `ports`. A name that is not a port,
+/// which only a design that fails the checker has, sorts last.
+fn port_position(ports: &[Port], name: &Name) -> usize {
+    ports
+        .iter()
+        .position(|p| p.name.text == name.text)
+        .unwrap_or(ports.len())
+}
+
+/// Sorts a design into the canonical order of spec section 3.3: the items by
+/// name, the statements by kind, then name or port, the connections of each
+/// instance and the `deps` entries of each extern by port order. The sorts
+/// are stable, so equal keys keep their order.
 #[must_use]
 pub fn canonicalize(design: &Design) -> Design {
+    let ports: HashMap<&str, &[Port]> = design
+        .items
+        .iter()
+        .map(|item| (item_name(item).text.as_str(), item_ports(item)))
+        .collect();
     let mut out = design.clone();
-    out.items
-        .sort_by(|a, b| item_name(a).text.cmp(&item_name(b).text));
     for item in &mut out.items {
-        if let Item::Module(m) = item {
-            m.stmts.sort_by(|a, b| stmt_key(a).cmp(&stmt_key(b)));
+        match item {
+            Item::Module(m) => {
+                m.stmts.sort_by(|a, b| stmt_key(a).cmp(&stmt_key(b)));
+                for stmt in &mut m.stmts {
+                    if let Stmt::Inst { module, conns, .. } = stmt {
+                        let child = ports.get(module.text.as_str()).copied().unwrap_or(&[]);
+                        conns.sort_by_key(|c| port_position(child, &c.port));
+                    }
+                }
+            }
+            Item::Extern(e) => {
+                let ports = &e.ports;
+                e.deps.sort_by_key(|d| port_position(ports, &d.out));
+            }
         }
     }
+    out.items
+        .sort_by(|a, b| item_name(a).text.cmp(&item_name(b).text));
     out
 }
 
