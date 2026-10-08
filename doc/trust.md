@@ -21,7 +21,7 @@ This document is the authority for the trust boundary. It gives the status, the 
 | The Rust memory models                                                                       | Validated     | LEC against the Lean memory models                                                                       | None                                                                           |       |
 | The Rust lowering and the CIRCT passes                                                       | Validated     | LEC against the Lean reference MLIR                                                                      | None                                                                           |       |
 | The compiled `silicon-check`                                                                 | Trusted       | None. It trusts the Lean compiler, as `native_decide` does.                                              | The Lean compiler                                                              |       |
-| `circt-lec`, `circt-verilog`, Z3, and the MLIR parser                                        | Trusted       | None. They close the gap behind CIRCT.                                                                   | The SMT lowering of `hw.array_inject` out of range                             |       |
+| `circt-lec`, `circt-verilog`, Z3, and the MLIR parser                                        | Trusted       | None. They close the gap behind CIRCT.                                                                   | The tools themselves                                                           |       |
 | A register whose next value is the register itself                                           | Trusted       | None. LEC skips such designs.                                                                            | `--externalize-registers` of CIRCT 1.160 crashes                               | #20   |
 | Black boxes                                                                                  | Trusted       | None. The project assumes their contracts.                                                               | The contract of each black box                                                 |       |
 | Asynchronous reset, more than one clock domain, and CDC primitives                           | Not supported | The parser rejects a reset kind other than `sync` (`E001`). The checker rejects a second clock (`E009`). | No semantics                                                                   | #11   |
@@ -41,10 +41,6 @@ Differential tests compare the Rust checker and interpreter with Lean. A test fi
 ### The compiled `silicon-check`
 
 Lake compiles `silicon-check` to native code. The Lean kernel does not check the compiled code. The checker thus trusts the Lean compiler, as `native_decide` does.
-
-### `hw.array_inject` out of range
-
-Phase 0 did not confirm how the SMT lowering of `circt-lec` models `hw.array_inject` with an address out of range. The guard mux in the parent module makes that value unused. A wrong model thus does not change the result of LEC.
 
 ### A register whose next value is the register itself
 
