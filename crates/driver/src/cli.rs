@@ -10,8 +10,8 @@ use core_ir::check::check;
 use core_ir::diag::Diagnostic;
 use core_ir::interp::Sim;
 use core_ir::text::{canonicalize, parse, print};
-use core_ir::typed;
 use core_ir::vectors::{parse_input, print_output};
+use core_ir::{ast, typed};
 
 #[derive(Parser)]
 #[command(name = "silicon", about = "The Silicon core IR tool")]
@@ -72,25 +72,18 @@ pub fn execute(command: &Command, input: impl BufRead, mut out: impl Write) -> E
 
 fn dispatch(command: &Command, input: impl BufRead, out: &mut impl Write) -> Result<Exit, Usage> {
     match command {
-        Command::Check { file } => with_design(file, out, |_, out| {
+        Command::Check { file } => with_design(file, out, |_, _, out| {
             writeln!(out, "ok")?;
             Ok(Exit::Success)
         }),
-        Command::Fmt { file } => {
-            let source = read_source(file)?;
-            // The formatter prints the canonical form of the parsed design
-            // once the checker accepts it.
-            report(
-                parse(&source).and_then(|ast| check(&ast).map(|_| ast)),
-                out,
-                |ast, out| {
-                    out.write_all(print(&canonicalize(&ast)).as_bytes())?;
-                    Ok(Exit::Success)
-                },
-            )
-        }
+        // The formatter prints the canonical form of the parsed design once
+        // the checker accepts it.
+        Command::Fmt { file } => with_design(file, out, |ast, _, out| {
+            out.write_all(print(&canonicalize(&ast)).as_bytes())?;
+            Ok(Exit::Success)
+        }),
         Command::Run { file } => {
-            with_design(file, out, |design, out| simulate(&design, input, out))
+            with_design(file, out, |_, design, out| simulate(&design, input, out))
         }
     }
 }
@@ -100,13 +93,19 @@ fn read_source(file: &Path) -> Result<String, Usage> {
     String::from_utf8(bytes).map_err(|_| Usage(format!("{}: not valid UTF-8", file.display())))
 }
 
+/// Reads, parses, and checks `file`, then continues with the parsed and the
+/// checked design, or prints the design error.
 fn with_design<W: Write>(
     file: &Path,
     out: &mut W,
-    then: impl FnOnce(typed::Design, &mut W) -> Result<Exit, Usage>,
+    then: impl FnOnce(ast::Design, typed::Design, &mut W) -> Result<Exit, Usage>,
 ) -> Result<Exit, Usage> {
     let source = read_source(file)?;
-    report(parse(&source).and_then(|ast| check(&ast)), out, then)
+    report(
+        parse(&source).and_then(|ast| check(&ast).map(|design| (ast, design))),
+        out,
+        |(ast, design), out| then(ast, design, out),
+    )
 }
 
 /// Continues with the value, or prints the design error.
@@ -129,7 +128,10 @@ fn simulate(
     input: impl BufRead,
     out: &mut impl Write,
 ) -> Result<Exit, Usage> {
-    let top = &design.modules[design.top.index()];
+    let top = design
+        .modules
+        .get(design.top.index())
+        .ok_or_else(|| Usage("internal error: the design has no top module".to_owned()))?;
     let mut sim = match Sim::new(design) {
         Ok(sim) => sim,
         Err(diagnostic) => {
