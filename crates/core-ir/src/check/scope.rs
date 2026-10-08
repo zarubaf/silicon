@@ -44,12 +44,12 @@ impl<'a> Sig<'a> {
         for port in ports {
             let entry = match (port.dir, port.ty) {
                 (Dir::Input, Ty::Bits(width)) => {
-                    let idx = InputIdx::new(next_index(sig.inputs.len()));
+                    let idx = InputIdx::new(sig.inputs.len());
                     sig.inputs.push(DataPort { port, width });
                     PortRef::Input(idx)
                 }
                 (Dir::Output, Ty::Bits(width)) => {
-                    let idx = OutputIdx::new(next_index(sig.outputs.len()));
+                    let idx = OutputIdx::new(sig.outputs.len());
                     sig.outputs.push(DataPort { port, width });
                     PortRef::Output(idx)
                 }
@@ -74,12 +74,6 @@ impl<'a> Sig<'a> {
     }
 }
 
-/// The table position of the next element. A table never holds 2^32 entries:
-/// the source text would not fit in memory first.
-fn next_index(len: usize) -> u32 {
-    u32::try_from(len).unwrap_or(u32::MAX)
-}
-
 /// The interfaces of all units of a design.
 pub(super) struct Env<'a> {
     modules: Vec<Sig<'a>>,
@@ -97,12 +91,12 @@ impl<'a> Env<'a> {
         for item in &design.items {
             let (name, callee) = match item {
                 Item::Module(m) => {
-                    let callee = Callee::Module(ModIdx::new(next_index(env.modules.len())));
+                    let callee = Callee::Module(ModIdx::new(env.modules.len()));
                     env.modules.push(Sig::new(&m.ports));
                     (&m.name, callee)
                 }
                 Item::Extern(e) => {
-                    let callee = Callee::Extern(ExternIdx::new(next_index(env.externs.len())));
+                    let callee = Callee::Extern(ExternIdx::new(env.externs.len()));
                     env.externs.push(Sig::new(&e.ports));
                     (&e.name, callee)
                 }
@@ -195,7 +189,7 @@ impl<'a> Scope<'a> {
             Item::Module(m) => Some(m),
             Item::Extern(_) => None,
         });
-        (0u32..)
+        (0usize..)
             .zip(modules)
             .map(|(i, module)| Scope::build(module, ModIdx::new(i), env))
             .collect()
@@ -236,7 +230,7 @@ impl<'a> Scope<'a> {
                 expr,
                 span,
             } => {
-                let idx = LetIdx::new(next_index(self.lets.len()));
+                let idx = LetIdx::new(self.lets.len());
                 self.lets.push(LetDecl {
                     name,
                     width: *width,
@@ -252,7 +246,7 @@ impl<'a> Scope<'a> {
                 reset,
                 span,
             } => {
-                let idx = RegIdx::new(next_index(self.regs.len()));
+                let idx = RegIdx::new(self.regs.len());
                 self.regs.push(RegDecl {
                     name,
                     width: *width,
@@ -269,7 +263,7 @@ impl<'a> Scope<'a> {
                 clk,
                 span,
             } => {
-                let idx = MemIdx::new(next_index(self.mems.len()));
+                let idx = MemIdx::new(self.mems.len());
                 self.mems.push(MemDecl {
                     name,
                     width: *width,
@@ -285,7 +279,7 @@ impl<'a> Scope<'a> {
                 conns,
                 span,
             } => {
-                let idx = InstIdx::new(next_index(self.insts.len()));
+                let idx = InstIdx::new(self.insts.len());
                 self.insts.push(InstDecl {
                     name,
                     module,

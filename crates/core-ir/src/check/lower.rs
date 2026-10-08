@@ -27,7 +27,7 @@ pub(super) fn lower(
             Item::Extern(e) => Some(e),
             Item::Module(_) => None,
         })
-        .zip(0u32..)
+        .zip(0usize..)
         .map(|(ext, i)| lower_extern(env, ExternIdx::new(i), ext))
         .collect::<Result<Vec<_>, _>>()?;
     let top = scopes
@@ -198,13 +198,13 @@ impl Lowerer<'_, '_> {
             )
         })?;
         let sig = self.env.sig(callee).ok_or_else(|| missing_sig(decl.span))?;
-        let inputs = (0u32..)
+        let inputs = (0usize..)
             .zip(&sig.inputs)
             .map(|(i, input)| {
                 let conn = decl
                     .conns
                     .iter()
-                    .find(|c| matches!(sig.port(&c.port.text), Some(PortRef::Input(j)) if j.index() == i as usize))
+                    .find(|c| matches!(sig.port(&c.port.text), Some(PortRef::Input(j)) if j.index() == i))
                     .ok_or_else(|| {
                         error(
                             ErrorCode::E011,
