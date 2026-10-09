@@ -13,6 +13,10 @@ use std::collections::HashSet;
 /// The lowering generates names with this prefix.
 const RESERVED_PREFIX: &str = "silicon_";
 
+/// The lowering names an instance result `<inst>.<port>`. The parser never
+/// produces this character in a name; a hand-built AST can.
+const RESERVED_CHAR: char = '.';
+
 /// The names defined in one scope.
 #[derive(Default)]
 struct Defs<'a> {
@@ -28,6 +32,16 @@ impl<'a> Defs<'a> {
                 name.span,
                 format!(
                     "`{}` starts with the reserved prefix `{RESERVED_PREFIX}`",
+                    name.text
+                ),
+            ));
+        }
+        if name.text.contains(RESERVED_CHAR) {
+            self.errors.push(error(
+                ErrorCode::E002,
+                name.span,
+                format!(
+                    "`{}` contains the reserved character `{RESERVED_CHAR}`",
                     name.text
                 ),
             ));
