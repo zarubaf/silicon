@@ -135,7 +135,7 @@ theorem next_register_value (s : State (certified raw t h) env m hm) (σ : Mlir.
     (i : Nat) (p : Pos) (n : String) (w : Nat) (clk : String) (target) (reset)
     (ni : Nat) (np : Pos) (next : Typed.Expr m.ctx (.bits w))
     (member : Typed.Equation.reg i p n w clk target reset ni np next ∈ m.body) :
-    (Mlir.nextHierarchyState ((lower t).withModels (memoryConfigs t)) (Lower.module m).1 σ
+    (Mlir.nextHierarchyState ((lower t).withModels (memoryConfigs t)) (Lower.module m).1
       all).cells []
       s!"silicon_reg_{n}" = some (.bits w (nextRegister (readBack m (all []))
         (stateMemories m (designChildren (certified raw t h) env m hm) s) reset next)) := by
@@ -204,7 +204,7 @@ theorem read_next (s : State (certified raw t h) env m hm) (σ : Mlir.ModuleStat
       ∀ c (found : t.bodies.find? (·.name == child) = some c),
         ModuleCorrect raw t h noExterns env c (List.mem_of_find?_eq_some found)) :
     Corresponds (certified raw t h) env noExterns m hm (step (certified raw t h) env m hm s input).1
-      (Mlir.nextHierarchyState ((lower t).withModels (memoryConfigs t)) (Lower.module m).1 σ
+      (Mlir.nextHierarchyState ((lower t).withModels (memoryConfigs t)) (Lower.module m).1
         all) := by
   let d := certified raw t h
   have same := backTranslation_eq_solution d env m hm s input _
@@ -264,7 +264,7 @@ theorem read_next (s : State (certified raw t h) env m hm) (σ : Mlir.ModuleStat
       obtain ⟨_, childNext⟩ := (children i p n child conns he c found _ _ corr' _ _
         agreeInputs).2 _ childSolution
       apply (cellCorresponds_instance _ n rest name cell).mp
-      rw [nextHierarchyState_child _ _ σ all n child args' fi _ hfind]
+      rw [nextHierarchyState_child _ _ all n child args' fi _ hfind]
       apply childNext rest name cell
       exact (child_next d env m hm i p n child conns he c found _ _) ▸ named
 

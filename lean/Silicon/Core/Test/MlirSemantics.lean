@@ -107,9 +107,9 @@ example : IsSolution counterDesign counterBody state (inputs 0) (values 0 []) :=
 example : IsSolution counterDesign counterBody state (inputs 1) (values 1 []) := by
   exact ⟨values 1, rfl, counterSolution 1⟩
 
-#guard (nextHierarchyState counterDesign counter state (values 0)).regs "silicon_reg_r" =
+#guard (nextHierarchyState counterDesign counter (values 0)).regs "silicon_reg_r" =
   some (bits 8 4)
-#guard (nextHierarchyState counterDesign counter state (values 1)).regs "silicon_reg_r" =
+#guard (nextHierarchyState counterDesign counter (values 1)).regs "silicon_reg_r" =
   some (bits 8 0)
 
 #guard (values 0 [] "silicon_reg_r") = some (bits 8 3)
@@ -182,9 +182,9 @@ private def siblingValues : Valuation := fun path name =>
   | [], "v.q" | ["v"], "r" | ["u"], "x" => some (bits 8 7)
   | _, _ => none
 
-#guard ((nextHierarchyState hierarchy siblings siblingState siblingValues).instance "u").regs "r" =
+#guard ((nextHierarchyState hierarchy siblings siblingValues).instance "u").regs "r" =
   some (bits 8 7)
-#guard ((nextHierarchyState hierarchy siblings siblingState siblingValues).instance "v").regs "r" =
+#guard ((nextHierarchyState hierarchy siblings siblingValues).instance "v").regs "r" =
   some (bits 8 3)
 
 example : LocalSolution hierarchy siblings siblingState.regs (inputs 0)

@@ -231,7 +231,7 @@ theorem next_memory_value (s : State (certified raw t h) env m hm) (σ : Mlir.Mo
     (i : Nat) (p : Pos) (n : String) (w depth : Nat) (clk : String) (target) (ws)
     (member : Typed.Equation.mem i p n w depth clk target ws ∈ m.body) :
     CellCorresponds
-      (Mlir.nextHierarchyState ((lower t).withModels (memoryConfigs t)) (Lower.module m).1 σ all)
+      (Mlir.nextHierarchyState ((lower t).withModels (memoryConfigs t)) (Lower.module m).1 all)
       [] n
       (.memory w depth (nextMemory (readBack m (all []))
         (stateMemories m (designChildren (certified raw t h) env m hm) s)
