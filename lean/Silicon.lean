@@ -40,7 +40,7 @@ import Silicon.Core.Lower
 import Silicon.Core.Proof.Lower.Names
 import Silicon.Core.Proof.Lower.Expressions
 import Silicon.Core.Proof.Lower.Emission
-import Silicon.Core.Proof.Lower.Defs
+import Silicon.Core.Proof.Lower.SsaNames
 import Silicon.Core.Proof.Lower.Growth
 import Silicon.Core.Proof.Lower.Resolve
 import Silicon.Core.Proof.Lower.Aliases

@@ -1,7 +1,7 @@
 import Silicon.Core.Proof.Lower.Emission
 import Std.Data.String.ToNat
 
-/-! Definition counts connect the emission image to fresh result names. -/
+/-! A lowered module defines each SSA name once. Source, temporary, and result names differ. -/
 namespace Silicon.Core.LowerProof
 
 theorem temporary_name_injective {i j : Nat}
