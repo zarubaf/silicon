@@ -1,0 +1,10 @@
+; Purpose: a register whose next value is the register itself. CIRCT 1.160
+; --externalize-registers crashes on it, so LEC skips this design (#20).
+(design top
+  (module top
+    (input clk clock)
+    (input a (bits 4))
+    (output q (bits 4))
+    (reg r (bits 4) clk)
+    (next r r)
+    (assign q (add r a))))
