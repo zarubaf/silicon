@@ -87,6 +87,8 @@ import Silicon.Core.Proof.Lower.ModuleExistParts
 import Silicon.Core.Proof.Lower.ModuleExist
 import Silicon.Core.Proof.Lower.ModuleKids
 import Silicon.Core.Proof.Lower.ModuleCorrect
+import Silicon.Core.Proof.Lower.HierarchyCorrect
+import Silicon.Core.Proof.Lower.Correct
 import Silicon.Core.Test.Mlir
 import Silicon.Core.Test.MemModel
 import Silicon.Core.Test.MemModelCorrect
