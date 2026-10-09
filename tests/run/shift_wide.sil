@@ -1,0 +1,25 @@
+; A shift amount of w or more gives 0, or the sign fill for shrs (spec 4.1).
+; The amount can be as large as 2^64 - 1. Here w = 64.
+(design top
+  (module top
+    (input a (bits 64))
+    (input n (bits 64))
+    (output l (bits 64))
+    (output u (bits 64))
+    (output s (bits 64))
+    (assign l (shl a n))
+    (assign u (shru a n))
+    (assign s (shrs a n))))
+; a = 2^63 + 255: the sign fill is all ones
+; STEP in=(a 9223372036854776063 n 4) out=(l 4080 u 576460752303423503 s 17870283321406128143)
+; STEP in=(a 9223372036854776063 n 63) out=(l 9223372036854775808 u 1 s 18446744073709551615)
+; STEP in=(a 9223372036854776063 n 64) out=(l 0 u 0 s 18446744073709551615)
+; STEP in=(a 9223372036854776063 n 65) out=(l 0 u 0 s 18446744073709551615)
+; STEP in=(a 9223372036854776063 n 9223372036854775808) out=(l 0 u 0 s 18446744073709551615)
+; STEP in=(a 9223372036854776063 n 18446744073709551615) out=(l 0 u 0 s 18446744073709551615)
+; a = 255: the sign fill is 0
+; STEP in=(a 255 n 4) out=(l 4080 u 15 s 15)
+; STEP in=(a 255 n 63) out=(l 9223372036854775808 u 0 s 0)
+; STEP in=(a 255 n 64) out=(l 0 u 0 s 0)
+; STEP in=(a 255 n 4294967296) out=(l 0 u 0 s 0)
+; STEP in=(a 255 n 18446744073709551615) out=(l 0 u 0 s 0)
