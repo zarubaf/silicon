@@ -1,6 +1,11 @@
 import Silicon.Core.Mlir.Syntax
 import Silicon.Core.Typed
 
+/-!
+Memory models use an array register and apply writes in port order.
+The parent module guards addresses outside the memory depth.
+-/
+
 namespace Silicon.Core
 
 structure MemConfig where
@@ -33,11 +38,11 @@ def memModel (c : MemConfig) : Mlir.Module :=
   let writes := (List.range c.writes).flatMap fun w =>
     let state := stateBefore w
     [([s!"w{w}_set"], Mlir.Op.arrayInject state s!"w{w}_addr" s!"w{w}_data" n c.width a),
-     ([s!"w{w}_next"], Mlir.Op.arrayMux s!"w{w}_en" s!"w{w}_set" state n c.width)]
+     ([s!"w{w}_next"], Mlir.Op.mux s!"w{w}_en" s!"w{w}_set" state (.array n c.width))]
   { name := c.moduleName
     ports := c.ports
     body := reads ++ writes ++
       [(["silicon_reg_mem"], .compreg (stateBefore c.writes) "clk" none (.array n c.width))]
-    outputs := (List.range c.reads).map fun r => (s!"r{r}_data", .int c.width) }
+    outputs := (List.range c.reads).map fun r => s!"r{r}_data" }
 
 end Silicon.Core

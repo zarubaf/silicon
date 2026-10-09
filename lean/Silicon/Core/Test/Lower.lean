@@ -176,7 +176,7 @@ private def operations : String := "(design ops
 #guard has (printed external) "hw.module.extern @blk"
 #guard has (printed external)
   "%u.y = hw.instance \"u\" @blk(c: %clk: !seq.clock, a: %a: i4) -> (y: i4)"
-#guard has (printed operations) "%o_out = comb.xor %o_add,"
+#guard has (printed operations) "%o_out = comb.xor %l,"
 #guard has (printed operations) "hw.constant 255 : i8"
 #guard has (printed operations) "%o_cat = comb.concat %a, %b : i8, i8"
 #guard has (printed operations) "%o_ext = comb.extract %a from 2 : (i8) -> i4"
@@ -218,11 +218,11 @@ private def readOrder : String := "(design top
 #guard has (printed readOrder) "@silicon_mem_2x1_r9w1"
 #guard has (printed readOrder) "reset %m.r0_data, %m.r1_data"
 #guard has (printed readOrder) "@child(x: %m.r2_data: i1)"
-#guard has (printed readOrder) "%l = comb.or %m.r3_data, %m.r3_data : i1"
+#guard !has (printed readOrder) "%l ="
 #guard has (printed readOrder) "seq.compreg %m.r4_data, %clk"
 #guard has (printed readOrder)
   "w0_addr: %m.r5_data: i1, w0_data: %m.r6_data: i1, w0_en: %m.r7_data: i1"
-#guard has (printed readOrder) "%q = comb.or %m.r8_data, %m.r8_data : i1"
+#guard has (printed readOrder) "hw.output %m.r8_data : i1"
 
 private def duplicateConfigs : String := "(design top
   (module z (input clk clock) (mem a (bits 1) 2 clk) (mem b (bits 1) 2 clk))
@@ -238,8 +238,54 @@ private def forwardOutput : String := "(design top (module top
   (input a (bits 8)) (output q (bits 8)) (output z (bits 8))
   (assign q (add z (const 8 1))) (assign z a)))"
 
-#guard has (printed forwardOutput) "%q = comb.add %z,"
-#guard has (printed forwardOutput) "%z = comb.or %a, %a : i8"
-#guard has (printed forwardOutput) "hw.output %q, %z : i8, i8"
+#guard has (printed forwardOutput) "%q = comb.add %a,"
+#guard !has (printed forwardOutput) "comb.or"
+#guard has (printed forwardOutput) "hw.output %q, %a : i8, i8"
+
+#guard has (printed counter) "hw.output %silicon_reg_r : i8"
+#guard !has (printed counter) "comb.or"
+#guard has (printed external) "hw.output %u.y : i4"
+#guard !has (printed external) "comb.or"
+#guard has (printed pow2) "hw.output %m.r0_data, %m.r1_data : i8, i8"
+#guard !has (printed pow2) "comb.or"
+
+private def aliasChain : String := "(design top (module top
+  (input a (bits 8)) (output q (bits 8))
+  (assign q x) (let x (bits 8) y) (let y (bits 8) z) (let z (bits 8) a)))"
+
+private def aliasChainText : String :=
+  "hw.module @top(in %a : i8, out q : i8) {\n  hw.output %a : i8\n}\n"
+
+#guard printed aliasChain == aliasChainText
+#guard (match parse aliasChain >>= check with
+  | .ok t => Mlir.print (lower t) == aliasChainText
+  | .error _ => false)
+
+private def aliasConsumers : String := "(design top
+  (extern child (input d (bits 8)) (output o (bits 8)) (deps o (d)))
+  (module top
+    (input clk clock) (input rst (bits 1)) (input a (bits 4)) (input d (bits 8))
+    (output q (bits 8))
+    (reg r (bits 8) clk (reset sync resetAlias dataAlias))
+    (next r resultAlias)
+    (inst u child (d dataAlias))
+    (mem m (bits 8) 12 clk)
+    (write m 0 addrAlias dataAlias resetAlias)
+    (assign q (read m addrAlias))
+    (let resultAlias (bits 8) u.o)
+    (let addrAlias (bits 4) a)
+    (let dataAlias (bits 8) d)
+    (let resetAlias (bits 1) rst)))"
+
+private def aliasConsumersCorrect (text : String) : Bool :=
+  has text "seq.compreg %u.o, %clk reset %rst, %d : i8" &&
+  has text "@child(d: %d: i8)" && has text "comb.icmp ult %a," &&
+  has text "comb.and %rst," && has text "r0_addr: %a: i4, w0_addr: %a: i4, w0_data: %d: i8" &&
+  !has text "Alias" && !has text "comb.or"
+
+#guard aliasConsumersCorrect (printed aliasConsumers)
+#guard (match parse aliasConsumers >>= check with
+  | .ok t => aliasConsumersCorrect (Mlir.print (lower t))
+  | .error _ => false)
 
 end Silicon.Core.Test.Lower
