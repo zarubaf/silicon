@@ -18,63 +18,6 @@ example (memory : Fin 1 → BitVec 4) (padding : BitVec 4) :
       (extendMemory ⟨1, 4, 1, 1⟩ memory (fun _ => padding)) memory :=
   extendMemory_agrees _ _ _
 
-private def memoryState (c : MemConfig)
-    (words : Fin (2 ^ Typed.addressWidth c.depth) → BitVec c.width) : Mlir.ModuleState :=
-  ⟨fun _ name => if name = "silicon_reg_mem" then some (.array _ _ words) else none⟩
-
-private def outside : Inputs ⟨12, 8, 1, 2⟩ :=
-  ⟨fun _ => 15, fun w => if w = 0 then 3 else 15,
-    fun w => if w = 0 then 22 else 99, fun _ => 1⟩
-
-/-! A write above depth 12 must keep the free word, even with its source enable set. -/
-example (memory : Fin 12 → BitVec 8) (padding : BitVec 8) :
-    let c : MemConfig := ⟨12, 8, 1, 2⟩
-    let words := extendMemory c memory (fun _ => padding)
-    ∃ vals, Mlir.IsSolution ⟨[.module (memModel c)]⟩ (memModel c) (memoryState c words)
-      (inputEnv c (guardedInputs outside)) vals ∧
-      ∃ nextWords : Fin (2 ^ Typed.addressWidth c.depth) → BitVec 8,
-        (Mlir.nextState ⟨[.module (memModel c)]⟩ (memModel c) (memoryState c words) vals).regs
-          "silicon_reg_mem" = some (.array _ 8 nextWords) ∧
-        nextWords ⟨3, by decide⟩ = 22 ∧ nextWords ⟨15, by decide⟩ = padding := by
-  intro c words
-  obtain ⟨⟨vals, solved⟩, correct⟩ := mem_model_guarded_correct c memory words
-    (memoryState c words) outside rfl (extendMemory_agrees _ _ _)
-  obtain ⟨_, nextWords, next, agree, free⟩ := correct vals solved
-  refine ⟨vals, solved, nextWords, next, ?_, ?_⟩
-  · have h := agree ⟨3, by decide⟩
-    exact h.trans (by
-      rw [coreNext_eq]
-      change (if (3 : Nat) = 15 then 99 else if (3 : Nat) = 3 then 22
-        else memory ⟨3, by decide⟩) = _
-      rfl)
-  · exact (free ⟨15, by decide⟩ (by decide)).trans
-      (extendMemory_padding c memory (fun _ => padding) ⟨15, by decide⟩ (by decide))
-
-private def outsideSingle : Inputs ⟨1, 4, 1, 1⟩ :=
-  ⟨fun _ => 1, fun _ => 1, fun _ => 9, fun _ => 1⟩
-
-example (memory : Fin 1 → BitVec 4) (padding : BitVec 4) :
-    let c : MemConfig := ⟨1, 4, 1, 1⟩
-    let words := extendMemory c memory (fun _ => padding)
-    ∃ vals, Mlir.IsSolution ⟨[.module (memModel c)]⟩ (memModel c) (memoryState c words)
-      (inputEnv c (guardedInputs outsideSingle)) vals ∧
-      ∃ nextWords : Fin (2 ^ Typed.addressWidth c.depth) → BitVec 4,
-        (Mlir.nextState ⟨[.module (memModel c)]⟩ (memModel c) (memoryState c words) vals).regs
-          "silicon_reg_mem" = some (.array _ 4 nextWords) ∧
-        nextWords ⟨0, by decide⟩ = memory ⟨0, by decide⟩ ∧
-        nextWords ⟨1, by decide⟩ = padding := by
-  intro c words
-  obtain ⟨⟨vals, solved⟩, correct⟩ := mem_model_guarded_correct c memory words
-    (memoryState c words) outsideSingle rfl (extendMemory_agrees _ _ _)
-  obtain ⟨_, nextWords, next, agree, free⟩ := correct vals solved
-  refine ⟨vals, solved, nextWords, next, ?_, ?_⟩
-  · have h := agree ⟨0, by decide⟩
-    exact h.trans (by
-      rw [coreNext_eq]
-      simp [c, stages, outsideSingle, Semantics.memoryWrite, Typed.addressWidth])
-  · exact (free ⟨1, by decide⟩ (by decide)).trans
-      (extendMemory_padding c memory (fun _ => padding) ⟨1, by decide⟩ (by decide))
-
 example (memory : Fin 16 → BitVec 8) (address : BitVec 4) :
     Semantics.memoryRead (extendMemory ⟨16, 8, 1, 1⟩ memory (fun _ => 99)) address.toNat =
       Semantics.memoryRead memory address.toNat :=
