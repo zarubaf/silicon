@@ -288,4 +288,30 @@ private def aliasConsumersCorrect (text : String) : Bool :=
   | .ok t => aliasConsumersCorrect (Mlir.print (lower t))
   | .error _ => false)
 
+private def unorderedExtern : String := "(design top
+  (extern blk (input c clock) (output y (bits 4)) (input a (bits 4)) (deps y (a)))
+  (module top (input clk clock) (input a (bits 4)) (output q (bits 4))
+    (inst u blk (a a) (c clk)) (assign q u.y)))"
+
+private def unorderedModule : String := "(design top
+  (module blk (input c clock) (output y (bits 4)) (input a (bits 4)) (assign y a))
+  (module top (input clk clock) (input a (bits 4)) (output q (bits 4))
+    (inst u blk (a a) (c clk)) (assign q u.y)))"
+
+#guard (match parse unorderedExtern >>= check with
+  | .ok t => has (Mlir.print (lower t))
+    "%u.y = hw.instance \"u\" @blk(c: %clk: !seq.clock, a: %a: i4) -> (y: i4)"
+  | .error _ => false)
+#guard (match parse unorderedModule >>= check with
+  | .ok t => has (Mlir.print (lower t))
+    "%u.y = hw.instance \"u\" @blk(c: %clk: !seq.clock, a: %a: i4) -> (y: i4)"
+  | .error _ => false)
+
+private def ownOutput : String := "(design top (module top
+  (input a (bits 8)) (output q (bits 8)) (output z (bits 8))
+  (assign q (add a a)) (assign z (add q q))))"
+
+#guard has (printed ownOutput) "%q = comb.add %a, %a : i8"
+#guard has (printed ownOutput) "%z = comb.add %q, %q : i8"
+
 end Silicon.Core.Test.Lower
