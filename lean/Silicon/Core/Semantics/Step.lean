@@ -110,7 +110,7 @@ theorem deps_sound (d : CertifiedDesign) (env : Env d.design)
     (m : Typed.Module) (hm : m ∈ d.design.bodies) (state : State d env m hm)
     (a b : Input m) (output : PortRef m.ports .output)
     (agree : ∀ input : PortRef m.ports .input,
-      input.val.name ∈ (((Typed.designDeps d.design.erase (d.design.erase.items.length + 1)
+      input.val.name ∈ (((Typed.designDeps d.design.erase d.design.erase.depsFuel
         m.name).getD []).lookup output.val.name).getD [] →
         a input = b input) :
     (step d env m hm state a).2 output = (step d env m hm state b).2 output := by

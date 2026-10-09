@@ -37,7 +37,7 @@ theorem top_exists (t : CertifiedDesign) (noExterns : t.design.externs = []) :
   | some m => exact ⟨m, rfl⟩
   | none =>
     have resolved := t.wellFormed.2.1.1
-    have item : ∃ i ∈ t.design.erase.items, Typed.itemName i = t.design.top := by
+    have item : ∃ i ∈ t.design.erase.items, Item.name i = t.design.top := by
       cases hi : Rules.findItem t.design.erase t.design.erase.top with
       | none => simp [hi] at resolved
       | some i =>

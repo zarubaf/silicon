@@ -261,7 +261,7 @@ set_option maxRecDepth 4096 in
   some ("(design m\n  (extern e\n    (output q (bits 1))\n    (output p (bits 1))\n" ++
     "    (deps p ())\n    (deps q ()))\n  (module m\n    (inst u e (p a) (q b))))\n")
 
-/-! This concrete design is the counter after source positions are erased. -/
+/-! This concrete counter design omits source positions. -/
 def counterDesign : Design := ⟨"counter", [.module ⟨zeroPos, "counter",
   [⟨zeroPos, .input, "clk", .clock⟩, ⟨zeroPos, .input, "rst", .bits 1⟩,
    ⟨zeroPos, .input, "en", .bits 1⟩, ⟨zeroPos, .output, "q", .bits 8⟩],

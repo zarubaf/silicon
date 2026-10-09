@@ -108,6 +108,40 @@ theorem canonicalize_noExterns (d : Design) (t t' : Typed.Design)
         | .extern e => some e | _ => none) := List.mem_filterMap.mpr ⟨_, ho, rfl⟩
     simp [noExterns] at member
 
+/-! Canonical order preserves each step from any pair of equal named states. -/
+open NamedRun in
+theorem canonicalize_step (d : Design) (t t' : Typed.Design)
+    (h : check d = .ok t) (h' : check (canonicalize d) = .ok t')
+    (noExterns : t.externs = []) :
+    let c := CertifiedDesign.ofCheck d t h
+    let c' := CertifiedDesign.ofCheck (canonicalize d) t' h'
+    let ne := canonicalize_noExterns d t t' h h' noExterns
+    let m := top c noExterns
+    let m' := top c' ne
+    ∀ (a : State c (emptyEnv c noExterns) m.val m.property)
+      (b : State c' (emptyEnv c' ne) m'.val m'.property),
+      namedState c (emptyEnv c noExterns) noExterns m.val m.property a =
+        namedState c' (emptyEnv c' ne) ne m'.val m'.property b →
+      ∀ vector : List (String × Nat),
+      let left := Interp.step c (emptyEnv c noExterns) m.val m.property a
+        (inputValues m.val vector)
+      let right := Interp.step c' (emptyEnv c' ne) m'.val m'.property b
+        (inputValues m'.val vector)
+      outputValues m.val left.2 = outputValues m'.val right.2 ∧
+        namedState c (emptyEnv c noExterns) noExterns m.val m.property left.1 =
+          namedState c' (emptyEnv c' ne) ne m'.val m'.property right.1 := by
+  intro c c' ne m m' a b same vector
+  have order : Reorder c.design.erase c'.design.erase := by
+    change Reorder t.erase t'.erase
+    rw [check_sound_erase d t h, check_sound_erase (canonicalize d) t' h']
+    exact canonicalize_reorder d
+  have related := top_reorder c c' noExterns ne order
+  have result := namedStep_reorder c c' (emptyEnv c noExterns) (emptyEnv c' ne)
+    noExterns ne order m.val m'.val m.property m'.property related a b same
+    (inputValues m.val vector) (inputValues m'.val vector)
+    (inputValues_heq m.val m'.val related.ports vector)
+  exact ⟨outputValues_eq m.val m'.val related.ports _ _ result.1, result.2⟩
+
 theorem canonicalize_sem (d : Design) (t t' : Typed.Design)
     (h : check d = .ok t) (h' : check (canonicalize d) = .ok t')
     (noExterns : t.externs = [])
@@ -115,9 +149,11 @@ theorem canonicalize_sem (d : Design) (t t' : Typed.Design)
     namedRun (Semantics.CertifiedDesign.ofCheck d t h) inputs noExterns =
       namedRun (Semantics.CertifiedDesign.ofCheck (canonicalize d) t' h') inputs
         (canonicalize_noExterns d t t' h h' noExterns) := by
-  apply namedRun_reorder _ _ _ noExterns _ inputs
-  change Reorder t.erase t'.erase
-  rw [check_sound_erase d t h, check_sound_erase (canonicalize d) t' h']
-  exact canonicalize_reorder d
+  apply NamedRun.run_eq_of_named_step
+  · exact canonicalize_step d t t' h h' noExterns
+  · apply NamedRun.zero_top_reorder
+    change Reorder t.erase t'.erase
+    rw [check_sound_erase d t h, check_sound_erase (canonicalize d) t' h']
+    exact canonicalize_reorder d
 
 end Silicon.Core

@@ -117,11 +117,22 @@ inductive Item where
   | extern (value : Extern)
   deriving Repr, DecidableEq, BEq, Inhabited
 
+def Item.name : Item → String
+  | .module m => m.name
+  | .extern e => e.name
+
+def Item.ports : Item → List Port
+  | .module m => m.ports
+  | .extern e => e.ports
+
 structure Design where
   top : String
   items : List Item
   topPos : Pos := ⟨1, 1, []⟩
   deriving Repr, DecidableEq, BEq, Inhabited
+
+/-! One extra level covers each item in the dependency traversal. -/
+abbrev Design.depsFuel (d : Design) : Nat := d.items.length + 1
 
 /-! The shared error codes identify grammar, checker, and execution errors. -/
 inductive ErrorCode where

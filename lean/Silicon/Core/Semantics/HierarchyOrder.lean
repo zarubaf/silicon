@@ -71,7 +71,7 @@ private theorem partition_names (items : List Item) :
     ((items.filterMap fun i => match i with
       | .module m => some m | _ => none).map (·.name) ++
       items.filterMap (fun i => match i with | .extern e => some e.name | _ => none)).Perm
-        (items.map itemName) := by
+        (items.map Item.name) := by
   induction items with
   | nil => exact .refl _
   | cons item rest ih =>

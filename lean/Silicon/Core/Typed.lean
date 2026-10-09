@@ -234,16 +234,8 @@ theorem infer_complete (e : Expr ctx ty) : infer ctx e.erase = some ⟨ty, e⟩ 
     · simp_all
 
 /-! Context construction exposes only data outputs of child instances. -/
-def itemName : Item → String
-  | .module m => m.name
-  | .extern e => e.name
-
-def itemPorts : Item → List Port
-  | .module m => m.ports
-  | .extern e => e.ports
-
 def portsOf (d : Core.Design) (name : String) : List Port :=
-  ((d.items.find? fun i => itemName i == name).map itemPorts).getD []
+  ((d.items.find? fun i => Item.name i == name).map Item.ports).getD []
 
 def contextFromPorts (interfaces : String → List Port) (m : Core.Module) : Ctx :=
   (m.ports.map fun p => (.name p.name,
@@ -1579,7 +1571,7 @@ def dependencyTable (d : Core.Design) : Nat → List (String × Deps)
       let deps := match i with
         | .extern e => externDeps e
         | .module m => Deps.infer m (fun name => previous.lookup name)
-      (itemName i, deps)
+      (Item.name i, deps)
 
 def designDeps (d : Core.Design) (fuel : Nat) : String → Option Deps :=
   let table := dependencyTable d fuel
@@ -1641,7 +1633,7 @@ structure Design where
   hierarchy : ordered (externs.map (·.name)) (bodies.map Module.erase) = true
   environments : ∀ m ∈ bodies,
     let d := assembleDesign top itemNames externs bodies topPos
-    m.interfaces = portsOf d ∧ m.children = designDeps d (d.items.length + 1) ∧
+    m.interfaces = portsOf d ∧ m.children = designDeps d d.depsFuel ∧
       Core.Item.module m.erase ∈ d.items
 
 def Design.erase (d : Design) : Core.Design :=
@@ -1667,7 +1659,7 @@ def elaborateModules (d : Core.Design) : List Core.Module → Option (List Modul
   | [] => some []
   | m :: rest => do
     let body ← statements d (context d m) m.body
-    let dependencies := dependencyTable d (d.items.length + 1)
+    let dependencies := dependencyTable d d.depsFuel
     let children := fun name => dependencies.lookup name
     let graph := Deps.graph m children
     match hcert : FastRanks.certificate graph with
@@ -1702,7 +1694,7 @@ theorem elaborateModules_erase (d : Core.Design) (raw : List Core.Module) (ts : 
 
 theorem elaborateModules_environment (d : Core.Design) (raw : List Core.Module) (ts : List Module)
     (h : elaborateModules d raw = some ts) :
-    ∀ m ∈ ts, m.interfaces = portsOf d ∧ m.children = designDeps d (d.items.length + 1) := by
+    ∀ m ∈ ts, m.interfaces = portsOf d ∧ m.children = designDeps d d.depsFuel := by
   induction raw generalizing ts with
   | nil => cases h; simp
   | cons m raw ih =>
@@ -1727,10 +1719,10 @@ def elaborateDesign (d : Core.Design) : Option Design := do
       let externs := d.items.filterMap fun i => match i with
         | .extern e => some e | _ => none
       if hh : ordered (externs.map (·.name)) (bodies.map Module.erase) = true then
-        let raw := assembleDesign d.top (d.items.map itemName) externs bodies d.topPos
+        let raw := assembleDesign d.top (d.items.map Item.name) externs bodies d.topPos
         if he : raw = d then
           have environment : ∀ m ∈ bodies,
-              m.interfaces = portsOf raw ∧ m.children = designDeps raw (raw.items.length + 1) ∧
+              m.interfaces = portsOf raw ∧ m.children = designDeps raw raw.depsFuel ∧
                 Core.Item.module m.erase ∈ raw.items := by
             intro m hm
             rw [he]
@@ -1742,7 +1734,7 @@ def elaborateDesign (d : Core.Design) : Option Design := do
             obtain ⟨item, mem, eq⟩ := List.mem_filterMap.mp mem
             cases item <;> cases eq
             exact mem
-          some ⟨d.top, d.items.map itemName, externs, bodies, d.topPos, hh, environment⟩
+          some ⟨d.top, d.items.map Item.name, externs, bodies, d.topPos, hh, environment⟩
         else none
       else none
   else none

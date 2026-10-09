@@ -189,21 +189,21 @@ end StmtReorder
 namespace ItemReorder
 
 theorem name {i i' : Item} (h : ItemReorder items i i') :
-    Typed.itemName i = Typed.itemName i' := by cases h <;> simp_all [Typed.itemName]
+    Item.name i = Item.name i' := by cases h <;> simp_all [Item.name]
 
 theorem ports {i i' : Item} (h : ItemReorder items i i') :
-    Typed.itemPorts i = Typed.itemPorts i' := by cases h <;> simp_all [Typed.itemPorts]
+    Item.ports i = Item.ports i' := by cases h <;> simp_all [Item.ports]
 
 theorem scope {i i' : Item} (h : ItemReorder items i i') :
     (Rules.scopeNames i).Perm (Rules.scopeNames i') := by
   cases h with
   | module m m' _ _ ports body =>
     unfold Rules.scopeNames
-    simp only [Typed.itemPorts, ports]
+    simp only [Item.ports, ports]
     apply List.Perm.append_left
     have hp := body.map Rules.definition Rules.definition (fun _ _ h => h.definition)
     simpa only [List.filterMap_map, Function.comp_def, id_eq] using hp.filterMap id
-  | extern e e' _ _ ports _ => simp [Rules.scopeNames, Typed.itemPorts, ports]
+  | extern e e' _ _ ports _ => simp [Rules.scopeNames, Item.ports, ports]
 
 end ItemReorder
 

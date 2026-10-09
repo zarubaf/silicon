@@ -83,7 +83,7 @@ def zeroState (d : CertifiedDesign) (env : Env d.design) (noExterns : d.design.e
     | inst index pos inst child inputs =>
       have stmt := instance_member m index pos inst child inputs member
       have resolved := (d.wellFormed.2.1.2 m.erase (module_mem d.design m hm) _ stmt).1
-      have existsItem : ∃ item ∈ d.design.erase.items, Typed.itemName item = child := by
+      have existsItem : ∃ item ∈ d.design.erase.items, Item.name item = child := by
         obtain ⟨item, found, _⟩ := resolved
         exact ⟨item, List.mem_of_find?_eq_some found, by
           simpa [Rules.findItem] using List.find?_some found⟩

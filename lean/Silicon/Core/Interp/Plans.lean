@@ -1,5 +1,7 @@
 import Silicon.Core.Interp.Prepared
 
+/-! Prepare module tables once for each interpreter run. -/
+
 namespace Silicon.Core.Interp
 
 open Semantics

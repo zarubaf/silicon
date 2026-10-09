@@ -272,7 +272,7 @@ private def counter : Typed.Module where
   ctx := ctx
   interfaces := Typed.portsOf raw
   body := [reg, inc, assign]
-  children := Typed.designDeps raw (raw.items.length + 1)
+  children := Typed.designDeps raw raw.depsFuel
   ranks := [(.name "inc", 1), (.name "q", 1)]
   acyclic := by
     simp [Typed.equationsErase, reg, inc, assign, List.mergeSort, Typed.Ranked,
