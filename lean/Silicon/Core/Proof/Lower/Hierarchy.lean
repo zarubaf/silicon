@@ -57,13 +57,12 @@ theorem hierarchy_child (d : Mlir.Design) (m : Mlir.Module) (σ : Mlir.ModuleSta
       h.2 (inst :: path) parent owner name target connections connectionFound
     exact ⟨next, nextFound, solved⟩
 
-theorem nextHierarchyState_child (d : Mlir.Design) (m : Mlir.Module)
-    (σ : Mlir.ModuleState) (vals : Mlir.Valuation)
+theorem nextHierarchyState_child (d : Mlir.Design) (m : Mlir.Module) (vals : Mlir.Valuation)
     (inst callee : String) (args : List (String × String × Mlir.Ty))
     (member : m.findInstance inst = some (callee, args)) (child : Mlir.Module)
     (found : d.findModule callee = some child) :
-    (Mlir.nextHierarchyState d m σ vals).instance inst =
-      Mlir.nextHierarchyState d child (σ.instance inst) (fun path => vals (inst :: path)) := by
+    (Mlir.nextHierarchyState d m vals).instance inst =
+      Mlir.nextHierarchyState d child (fun path => vals (inst :: path)) := by
   apply congrArg Mlir.ModuleState.mk
   funext path name
   simp [Mlir.nextHierarchyState, Mlir.Module.atPath, member, found]

@@ -46,7 +46,7 @@ def ModuleCorrect (raw : Core.Design) (t : Typed.Design) (h : check raw = .ok t)
         OutputsAgree c (step (certified raw t h) env c hc s input).2 (vals []) ∧
         Corresponds (certified raw t h) env noExterns c hc
           (step (certified raw t h) env c hc s input).1
-          (Mlir.nextHierarchyState ((lower t).withModels (memoryConfigs t)) (Lower.module c).1 σ
+          (Mlir.nextHierarchyState ((lower t).withModels (memoryConfigs t)) (Lower.module c).1
             vals)
 
 end Silicon.Core.LowerProof

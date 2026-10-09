@@ -167,8 +167,7 @@ def Op.nextValue (op : Op) (vals : Env) : Option Value := do
   | _ => none
 
 /-! Each cell uses operands at its own instance path and updates at the same edge. -/
-def nextHierarchyState (d : Design) (m : Module) (_σ : ModuleState)
-    (vals : Valuation) : ModuleState :=
+def nextHierarchyState (d : Design) (m : Module) (vals : Valuation) : ModuleState :=
   ⟨fun path name => do
     let owner ← m.atPath d path
     let (_, op) ← owner.body.find? (fun entry => entry.1 == [name])
@@ -215,6 +214,6 @@ theorem solutionValues_spec (h : IsSolution d m σ inputs vals) :
 
 noncomputable def nextState (d : Design) (m : Module) (σ : ModuleState)
     (vals : Env) : ModuleState :=
-  nextHierarchyState d m σ (solutionValues d m σ vals)
+  nextHierarchyState d m (solutionValues d m σ vals)
 
 end Silicon.Core.Mlir
