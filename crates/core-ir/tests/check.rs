@@ -1,6 +1,7 @@
 //! Tests of the checker: the code and the position of each error, the
 //! schedule, the port dependencies, and the module order.
 
+use core_ir::ast;
 use core_ir::check::check;
 use core_ir::diag::{Diagnostic, ErrorCode};
 use core_ir::text::parse;
@@ -486,6 +487,35 @@ fn e002_reserved_prefix() {
     (assign q silicon_x)))
 ";
     expect(src, ErrorCode::E002, 4, 10);
+}
+
+/// The parser rejects a dot in a name, so the test renames a port in the AST.
+#[test]
+fn e002_reserved_dot() {
+    let src = "\
+(design top
+  (module child
+    (output q (bits 1))
+    (assign q (const 1 1)))
+  (module top
+    (input uq (bits 1))
+    (inst u child)))
+";
+    let Ok(mut design) = parse(src) else {
+        panic!("the source must parse");
+    };
+    let Some(ast::Item::Module(top)) = design.items.get_mut(1) else {
+        panic!("the second item must be a module");
+    };
+    top.ports[0].name.text = "u.q".to_string();
+    let Err(d) = check(&design) else {
+        panic!("E002 expected, but the design checks");
+    };
+    assert_eq!(
+        (d.code, d.span.line, d.span.col),
+        (ErrorCode::E002, 6, 12),
+        "{d}"
+    );
 }
 
 #[test]
