@@ -149,9 +149,10 @@ example : ¬ (invalid [(["x"], .comb .add "missing" "missing" 8)]).WellFormed �
 
 #guard ([1, 12, 16].all fun depth =>
   let c : MemConfig := ⟨depth, 8, 1, 2⟩
-  (Mlir.Design.withModels ⟨[.extern c.moduleName c.ports]⟩).items = [.module (memModel c)])
-#guard (Mlir.Design.withModels ⟨[.extern "blackbox" []]⟩).items = [.extern "blackbox" []]
-#guard (Mlir.Design.withModels ⟨[.extern "silicon_mem_12x8_r1w2" []]⟩).items =
+  (Mlir.Design.withModels [c] ⟨[.extern c.moduleName c.ports]⟩).items = [.module (memModel c)])
+#guard (Mlir.Design.withModels [⟨12, 8, 1, 2⟩] ⟨[.extern "blackbox" []]⟩).items =
+  [.extern "blackbox" []]
+#guard (Mlir.Design.withModels [⟨12, 8, 1, 2⟩] ⟨[.extern "silicon_mem_12x8_r1w2" []]⟩).items =
   [.extern "silicon_mem_12x8_r1w2" []]
 
 private def child : Mlir.Module :=
