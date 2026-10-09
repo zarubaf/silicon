@@ -1,3 +1,4 @@
+import Silicon.Core.Test.Lower
 import Silicon.Core.Test.MemModel
 import Silicon.Core.Test.Mlir
 import Silicon.Core.Syntax
