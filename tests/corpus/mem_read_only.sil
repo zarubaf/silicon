@@ -1,0 +1,9 @@
+; Purpose: a memory without a write port. Its model register is its own next
+; value, so LEC skips this design and its model (#20).
+(design top
+  (module top
+    (input clk clock)
+    (input a (bits 2))
+    (output p (bits 4))
+    (mem m (bits 4) 3 clk)
+    (assign p (read m a))))
