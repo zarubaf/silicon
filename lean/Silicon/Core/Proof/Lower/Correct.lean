@@ -23,12 +23,41 @@ namespace Silicon.Core
 
 open Semantics LowerProof
 
+/-- The lowered module `(Lower.module m).1` pairs each output operand with an output port.
+At the operand for the lowering of each core output port `p`, `vals` holds the output of `p`. -/
+def LoweredOutputsAgree (m : Typed.Module) (output : Output m) (vals : Mlir.Env) : Prop :=
+  ∀ (p : PortRef m.ports .output) (operand : String),
+    (operand, Lower.port p.val) ∈ (Lower.module m).1.outputs.zip (Lower.module m).1.outputPorts →
+      vals operand = some (coreValue p.val.ty (output p))
+
+theorem LowerProof.zip_self_mem {α : Type} {a b : α} :
+    ∀ {l : List α}, (a, b) ∈ l.zip l → a = b
+  | [], member => by cases member
+  | x :: xs, member => by
+    rcases List.mem_cons.mp member with same | member
+    · cases same
+      rfl
+    · exact zip_self_mem member
+
+theorem LowerProof.lowered_outputs (m : Typed.Module) (output : Output m) (vals : Mlir.Env)
+    (agree : OutputsAgree m output vals) : LoweredOutputsAgree m output vals := by
+  intro p operand member
+  rw [outputs_filter, Mlir.Module.outputPorts, module_ports, ports_output_filter, List.zip_map,
+    List.mem_map] at member
+  obtain ⟨⟨a, b⟩, pair, same⟩ := member
+  cases zip_self_mem pair
+  simp only [Prod.map, Prod.mk.injEq] at same
+  obtain ⟨rfl, port⟩ := same
+  have named : a.name = p.val.name := congrArg Mlir.Port.name port
+  rw [named]
+  exact agree p
+
 /-- `lower_correct raw t h noExterns env top found` is the correctness of the reference lowering.
 Let `d` be the lowered design that uses the model of each memory extern. The top module of
 `d` is the lowering of the core top module. Take a core state `s` and an MLIR state `σ` that
 correspond, and a core input with matching MLIR inputs. Then (a) an MLIR solution exists.
-(b) Every MLIR solution gives the outputs of the core step. (c) The MLIR next state of that
-solution corresponds to the core next state. -/
+(b) Every MLIR solution has the core output of each output port at the output operand of that
+port. (c) The MLIR next state of that solution corresponds to the core next state. -/
 theorem lower_correct (raw : Core.Design) (t : Typed.Design) (h : check raw = .ok t)
     (noExterns : t.externs = []) (env : Env (CertifiedDesign.ofCheck raw t h).design)
     (top : Typed.Module) (found : t.bodies.find? (·.name == t.top) = some top) :
@@ -41,7 +70,7 @@ theorem lower_correct (raw : Core.Design) (t : Typed.Design) (h : check raw = .o
       ∀ (input : Input top) (inputs : Mlir.Env), InputsAgree top.ports input inputs →
         (∃ vals, Mlir.IsSolution d (Lower.module top).1 σ inputs vals) ∧
         ∀ vals, Mlir.IsSolution d (Lower.module top).1 σ inputs vals →
-          OutputsAgree top (step core env top hm s input).2 vals ∧
+          LoweredOutputsAgree top (step core env top hm s input).2 vals ∧
           Corresponds core env noExterns top hm (step core env top hm s input).1
             (Mlir.nextState d (Lower.module top).1 σ vals) := by
   intro core hm d
@@ -55,6 +84,7 @@ theorem lower_correct (raw : Core.Design) (t : Typed.Design) (h : check raw = .o
   refine ⟨?_, fun vals solved => ?_⟩
   · obtain ⟨all, valid, _⟩ := correct.1
     exact ⟨all [], all, rfl, valid⟩
-  · exact correct.2 _ (solution_hierarchy d _ σ inputs vals solved)
+  · have every := correct.2 _ (solution_hierarchy d _ σ inputs vals solved)
+    exact ⟨lowered_outputs top _ vals every.1, every.2⟩
 
 end Silicon.Core

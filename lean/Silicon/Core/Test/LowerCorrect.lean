@@ -382,7 +382,7 @@ def LowerCorrectInstance (raw : Core.Design) : Prop :=
     let input : Input top := fun p => zeroValue p.val.ty
     ∃ σ inputs, Corresponds core env noExterns top hm s σ ∧ InputsAgree top.ports input inputs ∧
       ∃ vals, Mlir.IsSolution d (Lower.module top).1 σ inputs vals ∧
-        OutputsAgree top (Semantics.step core env top hm s input).2 vals ∧
+        LoweredOutputsAgree top (Semantics.step core env top hm s input).2 vals ∧
         Corresponds core env noExterns top hm (Semantics.step core env top hm s input).1
           (Mlir.nextState d (Lower.module top).1 σ vals)
 
