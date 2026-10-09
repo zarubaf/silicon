@@ -49,7 +49,7 @@ def moduleProgram (d : CertifiedDesign) (m c : Typed.Module)
       (d.design.environments c hc).2.2).symm) (by
     rw [(d.design.environments m hm).2.1, ← name]
     change Deps.infer c.erase c.children =
-      ((designDeps d.design.erase (d.design.erase.items.length + 1) c.name).getD [])
+      ((designDeps d.design.erase d.design.erase.depsFuel c.name).getD [])
     rw [d.design.dependencies d.wellFormed c hc]
     rfl) program
 
@@ -79,7 +79,7 @@ def compileChildrenWith (d : CertifiedDesign) (env : Env d.design)
     | inst index pos inst child inputs =>
       have stmt := instance_member m index pos inst child inputs member
       have resolved := (d.wellFormed.2.1.2 m.erase (module_mem d.design m hm) _ stmt).1
-      have existsItem : ∃ item ∈ d.design.erase.items, itemName item = child := by
+      have existsItem : ∃ item ∈ d.design.erase.items, Item.name item = child := by
         obtain ⟨item, found, _⟩ := resolved
         exact ⟨item, List.mem_of_find?_eq_some found, by
           simpa [Rules.findItem] using List.find?_some found⟩

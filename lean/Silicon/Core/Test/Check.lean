@@ -134,7 +134,7 @@ private def result (source : String) : Option (ErrorCode × Nat × Nat) :=
 #guard ((parse ("(design top (module top) (extern child " ++
   "(input a (bits 1)) (input b (bits 1)) (output q (bits 1)) (output r (bits 1)) " ++
   "(deps r ()) (deps q (b a))))")).toOption.map
-  fun d => Typed.designDeps d (d.items.length + 1) "child") ==
+  fun d => Typed.designDeps d d.depsFuel "child") ==
   some (some [("q", ["a", "b"]), ("r", [])])
 
 /-! Missing source paths have no location. They must not reuse a form position. -/

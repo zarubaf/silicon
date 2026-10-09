@@ -58,7 +58,7 @@ theorem input_port_mem (m : Core.Module) (port : Port) (member : port ∈ m.port
 theorem typed_graph_unique (d : Typed.Design) (wf : WellFormed d.erase)
     (m : Typed.Module) (hm : m ∈ d.bodies) :
     ((Deps.graph m.erase m.children).map Prod.fst).Nodup := by
-  have children : m.children = Typed.designDeps d.erase (d.erase.items.length + 1) :=
+  have children : m.children = Typed.designDeps d.erase d.erase.depsFuel :=
     (d.environments m hm).2.1
   rw [children]
   exact Check.combinational_graph_keys_nodup d.erase m.erase wf.1 wf.2.1

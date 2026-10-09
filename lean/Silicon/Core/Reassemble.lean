@@ -20,11 +20,11 @@ private theorem find_named (xs : List α) (name : α → String) (x : α)
         · exact h
       simp [he, ih ht (fun y hy => unique y (by simp [hy]))]
 
-private theorem unique_item (d : Core.Design) (hn : (d.items.map itemName).Nodup)
+private theorem unique_item (d : Core.Design) (hn : (d.items.map Item.name).Nodup)
     (a b : Core.Item) (ha : a ∈ d.items) (hb : b ∈ d.items)
-    (he : itemName a = itemName b) : a = b := by
-  have general : ∀ (xs : List Core.Item), (xs.map itemName).Nodup →
-      ∀ a ∈ xs, ∀ b ∈ xs, itemName a = itemName b → a = b := by
+    (he : Item.name a = Item.name b) : a = b := by
+  have general : ∀ (xs : List Core.Item), (xs.map Item.name).Nodup →
+      ∀ a ∈ xs, ∀ b ∈ xs, Item.name a = Item.name b → a = b := by
     intro xs
     induction xs with
     | nil => simp
@@ -42,9 +42,9 @@ private theorem unique_item (d : Core.Design) (hn : (d.items.map itemName).Nodup
 
 theorem assembleDesign_erase_of_modules (d : Core.Design) (topName : String)
     (itemNames : List String) (externs : List Extern) (typedBodies : List Module) (topPos : Pos)
-    (hn : (d.items.map itemName).Nodup)
+    (hn : (d.items.map Item.name).Nodup)
     (top : topName = d.top) (pos : topPos = d.topPos)
-    (names : itemNames = d.items.map itemName)
+    (names : itemNames = d.items.map Item.name)
     (exts : externs = d.items.filterMap fun i => match i with
       | .extern e => some e | _ => none)
     (bodies : (typedBodies.map Module.erase).Perm (modules d)) :
@@ -62,9 +62,9 @@ theorem assembleDesign_erase_of_modules (d : Core.Design) (topName : String)
     cases i <;> cases he
     exact hi
   have select : ∀ i ∈ d.items,
-      (match typedBodies.find? (fun m => m.name == itemName i) with
+      (match typedBodies.find? (fun m => m.name == Item.name i) with
        | some m => some (.module m.erase)
-       | none => (externs.find? fun e => e.name == itemName i).map Core.Item.extern) =
+       | none => (externs.find? fun e => e.name == Item.name i).map Core.Item.extern) =
         some i := by
     intro i hi
     cases i with
@@ -79,7 +79,7 @@ theorem assembleDesign_erase_of_modules (d : Core.Design) (topName : String)
       have hc := member chosen (List.mem_of_find?_eq_some found)
       have hname : chosen.name = m.name := by simpa using List.find?_some found
       have eq := unique_item d hn _ _ hc hi hname
-      simpa only [itemName, found, Option.some.injEq] using eq
+      simpa only [Item.name, found, Option.some.injEq] using eq
     | extern e =>
       have absent : typedBodies.find? (fun m => m.name == e.name) = none := by
         apply List.find?_eq_none.mpr
@@ -95,8 +95,8 @@ theorem assembleDesign_erase_of_modules (d : Core.Design) (topName : String)
         have eq := unique_item d hn _ _ (ext_member other ho) hi he
         cases eq
         rfl)
-      simp [itemName, absent, found]
-  have items : (d.items.map itemName).filterMap (fun n =>
+      simp [Item.name, absent, found]
+  have items : (d.items.map Item.name).filterMap (fun n =>
       match typedBodies.find? (·.name == n) with
       | some m => some (.module m.erase)
       | none => (externs.find? (·.name == n)).map Core.Item.extern) = d.items := by

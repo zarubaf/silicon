@@ -22,7 +22,7 @@ theorem instance_child_exists (d : CertifiedDesign) (noExterns : d.design.extern
     have stmt := instance_member m index pos name child inputs member
     have resolved := (d.wellFormed.2.1.2 m.erase (module_mem d.design m hm) _ stmt).1
     obtain ⟨item, hi, _⟩ := resolved
-    have existsItem : ∃ i ∈ d.design.erase.items, Typed.itemName i = child :=
+    have existsItem : ∃ i ∈ d.design.erase.items, Item.name i = child :=
       ⟨item, List.mem_of_find?_eq_some hi, by
         simpa [Rules.findItem] using List.find?_some hi⟩
     obtain ⟨e, he, _⟩ := external_exists d.design child existsItem found

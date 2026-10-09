@@ -194,7 +194,7 @@ theorem stateMemories_named_eq (d d' : CertifiedDesign) (env : Env d.design)
           · rfl
         rw [absent _ _ found, absent _ _ found']
 
-/-! A child output is compared at the same port, with its parent's candidate values. -/
+/-! Compare child outputs at the same port with the parent's candidate values. -/
 def InstanceOutputsAgree (d d' : CertifiedDesign) (env : Env d.design)
     (env' : Env d'.design) (m m' : Typed.Module) (hm : m ∈ d.design.bodies)
     (hm' : m' ∈ d'.design.bodies) (state : State d env m hm) (state' : State d' env' m' hm')

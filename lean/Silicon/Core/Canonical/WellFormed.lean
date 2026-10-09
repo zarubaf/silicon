@@ -168,9 +168,9 @@ theorem Reorder.findItem {d d' : Design} (h : Reorder d d') (hn : Rules.Names d)
     {name : String} {i' : Item} (found : Rules.findItem d' name = some i') :
     ∃ i, Rules.findItem d name = some i ∧ ItemReorder d.items i i' := by
   obtain ⟨i, hi, related⟩ := h.items.right (List.mem_of_find?_eq_some found)
-  have key : Typed.itemName i' = name := by simpa [Rules.findItem] using List.find?_some found
+  have key : Item.name i' = name := by simpa [Rules.findItem] using List.find?_some found
   refine ⟨i, ?_, related⟩
-  have eq := find_named Typed.itemName hn.1.1 hi
+  have eq := find_named Item.name hn.1.1 hi
   simpa only [related.name, key, Rules.findItem] using eq
 
 theorem Reorder.connections {d d' : Design} (h : Reorder d d')
@@ -202,19 +202,19 @@ theorem Reorder.connections {d d' : Design} (h : Reorder d d')
 
 private theorem interfaces_lookup (items : List Item) (name : String) :
     (items.map fun i => (i.name, i.ports)).lookup name =
-      ((items.find? fun i => Typed.itemName i == name).map Typed.itemPorts) := by
+      ((items.find? fun i => Item.name i == name).map Item.ports) := by
   induction items with
   | nil => rfl
   | cons item items ih =>
     cases item <;>
       simp only [List.map_cons, Item.name, Item.ports, List.lookup_cons,
-        List.find?_cons, Typed.itemName]
+        List.find?_cons]
     all_goals
       rename_i value
       by_cases h : name = value.name
-      · simp [h, Typed.itemPorts]
+      · simp [h, Item.ports]
       · simpa only [beq_eq_false_iff_ne.mpr h,
-          beq_eq_false_iff_ne.mpr (Ne.symm h), Item.name, Item.ports, Typed.itemName] using ih
+          beq_eq_false_iff_ne.mpr (Ne.symm h), Item.name, Item.ports] using ih
 
 theorem Reorder.portsOf {d d' : Design} (h : Reorder d d')
     (hn : Rules.Names d) : Typed.portsOf d = Typed.portsOf d' := by
@@ -224,9 +224,9 @@ theorem Reorder.portsOf {d d' : Design} (h : Reorder d d')
     intro i i' related
     have name := related.name
     have ports := related.ports
-    cases i <;> cases i' <;> simp_all [Typed.itemName, Typed.itemPorts, Item.name, Item.ports]
+    cases i <;> cases i' <;> simp_all [Item.name, Item.ports]
   have unique : (d.items.map fun i => (i.name, i.ports)).map Prod.fst =
-      d.items.map Typed.itemName := by
+      d.items.map Item.name := by
     simp only [List.map_map]
     apply List.map_congr_left
     intro i _
@@ -265,7 +265,7 @@ private theorem context_keys_nodup (d : Design) (m : Module) (hn : Rules.Names d
   have portUnique (child : String) :
       ((Typed.portsOf d child).map Port.name).Nodup := by
     unfold Typed.portsOf
-    cases found : d.items.find? (fun i => Typed.itemName i == child) with
+    cases found : d.items.find? (fun i => Item.name i == child) with
     | none => simp
     | some item =>
       exact Check.ports_nodup d item hn (List.mem_of_find?_eq_some found)
@@ -398,8 +398,8 @@ theorem instancePort {d d' : Design} (h : Reorder d d') (hn : Rules.Names d)
     (body : Permuted (StmtReorder d.items) m.body m'.body) (inst port : String) :
     Rules.instancePort d m inst port = Rules.instancePort d' m' inst port := by
   have items (child : String) :
-      (Rules.findItem d child).bind (fun i => (Typed.itemPorts i).find? (·.name == port)) =
-      (Rules.findItem d' child).bind (fun i => (Typed.itemPorts i).find? (·.name == port)) := by
+      (Rules.findItem d child).bind (fun i => (Item.ports i).find? (·.name == port)) =
+      (Rules.findItem d' child).bind (fun i => (Item.ports i).find? (·.name == port)) := by
     cases found : Rules.findItem d' child with
     | none =>
       cases old : Rules.findItem d child with
@@ -499,7 +499,7 @@ private theorem valueExprs {d d' : Design} (h : Reorder d d') (hn : Rules.Names 
     funext e
     cases e <;> simp [Rules.directClock, Rules.clockName, Rules.findPort, ports]
   have anyPorts (design : Design) (child : String) (f : Port → Bool) :
-      (Rules.findItem design child).any (fun i => (Typed.itemPorts i).any f) =
+      (Rules.findItem design child).any (fun i => (Item.ports i).any f) =
         (Typed.portsOf design child).any f := by
     cases found : Rules.findItem design child <;>
       unfold Rules.findItem at found <;> simp [Typed.portsOf, found]
@@ -667,7 +667,7 @@ theorem Reorder.designDeps {d d' : Design} (h : Reorder d d')
       have hi : a ∈ d.items := hp.mem_iff.mp (List.mem_map.mpr ⟨(a, b), member, rfl⟩)
       cases rel with
       | module m m' _ name ports body =>
-        simp only [Function.comp_apply, Typed.itemName, name]
+        simp only [Function.comp_apply, Item.name, name]
         congr 1
         change Deps.infer m (Typed.designDeps d fuel) =
           Deps.infer m' (Typed.designDeps d' fuel)
@@ -677,7 +677,7 @@ theorem Reorder.designDeps {d d' : Design} (h : Reorder d d')
         exact Deps.infer_graph_congr m m' _ _ ports.symm perm.length_eq
           (lookup_perm perm (Check.combinational_graph_keys_nodup d m hn hr ho hm fuel))
       | extern e e' _ name ports deps =>
-        simp only [Function.comp_apply, Typed.itemName, name]
+        simp only [Function.comp_apply, Item.name, name]
         congr 1
         exact extern_deps_reorder e e' ports deps (hd _ hi)
     funext name
@@ -691,13 +691,13 @@ theorem Reorder.combinational {d d' : Design} (h : Reorder d d')
   intro m' hm'
   obtain ⟨m, hm, _, _, ports, body⟩ := h.module_right hm'
   obtain ⟨ranks, ranked⟩ := hg m hm
-  have size : d.items.length = d'.items.length := by
+  have size : d.depsFuel = d'.depsFuel := by
     have p := h.items.map (fun _ => ()) (fun _ => ()) (fun _ _ _ => rfl)
-    simpa using p.length_eq
-  have children := h.designDeps hn hr ho hc hd (d.items.length + 1)
+    simpa only [Design.depsFuel, Nat.add_left_inj, List.length_map] using p.length_eq
+  have children := h.designDeps hn hr ho hc hd d.depsFuel
   rw [size] at children
   have graph := module_graph_perm d m m' hm hr hc ports body
-    (Typed.designDeps d (d'.items.length + 1))
+    (Typed.designDeps d d'.depsFuel)
   refine ⟨ranks, ?_⟩
   intro row member dep read
   rw [← children] at member

@@ -21,7 +21,7 @@ theorem input_connection_count (d : Core.Design) (wf : WellFormed d)
     unfold Rules.findItem at hf
     simp [Typed.portsOf, hf] at hp
   | some item =>
-    have ports : Typed.portsOf d child = Typed.itemPorts item := by
+    have ports : Typed.portsOf d child = Item.ports item := by
       unfold Rules.findItem at hf
       simp [Typed.portsOf, hf]
     have hp' := Eq.mp (congrArg (fun ps => port.val ∈ ps) ports) hp

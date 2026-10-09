@@ -6,7 +6,7 @@ import Silicon.Core.StatementOrder
 namespace Silicon.Core.Typed
 
 theorem elaborateDesign_of_modules (d : Core.Design) (sorted : List Core.Module)
-    (bodies : List Module) (names : (d.items.map itemName).Nodup)
+    (bodies : List Module) (names : (d.items.map Item.name).Nodup)
     (order : orderModules (modules d).length (externNames d) (modules d) = some sorted)
     (permutation : sorted.Perm (modules d)) (hierarchy : ordered (externNames d) sorted = true)
     (elaborated : elaborateModules d sorted = some bodies)
@@ -49,7 +49,7 @@ theorem elaborateModules_of_groups (d : Core.Design) (ms : List Core.Module)
       m.body.mapM (statement d (context d m)) = some body ∧
       groupStatements (context d m) (portsOf d) body = some groups ∧
       equationsErase groups = m.body ∧
-      ∃ ranks, FastRanks.certificate (Deps.graph m (designDeps d (d.items.length + 1))) =
+      ∃ ranks, FastRanks.certificate (Deps.graph m (designDeps d d.depsFuel)) =
         some ranks) :
     ∃ bodies, elaborateModules d ms = some bodies ∧ bodies.map Module.erase = ms := by
   induction ms with

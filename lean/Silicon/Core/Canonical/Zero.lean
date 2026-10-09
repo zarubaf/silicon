@@ -151,7 +151,7 @@ theorem path_of_namedState_zero (d : CertifiedDesign) (env : Env d.design)
           have stmt := instance_member m i p name child inputs member
           obtain ⟨item, found, _⟩ :=
             (d.wellFormed.2.1.2 m.erase (module_mem d.design m hm) _ stmt).1
-          have existsItem : ∃ item ∈ d.design.erase.items, Typed.itemName item = child :=
+          have existsItem : ∃ item ∈ d.design.erase.items, Item.name item = child :=
             ⟨item, List.mem_of_find?_eq_some found, by
               simpa [Rules.findItem] using List.find?_some found⟩
           obtain ⟨e, he, _⟩ := external_exists d.design child existsItem absent

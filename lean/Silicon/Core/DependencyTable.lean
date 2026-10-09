@@ -24,46 +24,46 @@ theorem infer_congr_children (m : Core.Module) (left right : String → Option D
   rw [graph]
 
 private theorem lookup_map_item (items : List Item) (values : Item → Deps)
-    (hn : (items.map itemName).Nodup) (item : Item) (hi : item ∈ items) :
-    (items.map fun i => (itemName i, values i)).lookup (itemName item) = some (values item) := by
+    (hn : (items.map Item.name).Nodup) (item : Item) (hi : item ∈ items) :
+    (items.map fun i => (Item.name i, values i)).lookup (Item.name item) = some (values item) := by
   induction items with
   | nil => simp at hi
   | cons first rest ih =>
     simp only [List.map_cons, List.nodup_cons] at hn
     rcases List.mem_cons.mp hi with rfl | hi
     · simp
-    · have ne : itemName item ≠ itemName first := by
+    · have ne : Item.name item ≠ Item.name first := by
         intro he
         exact hn.1 (he ▸ List.mem_map.mpr ⟨item, hi, rfl⟩)
       simp only [List.map_cons, List.lookup_cons, beq_eq_false_iff_ne.mpr ne]
       exact ih hn.2 hi
 
 private theorem lookup_map_absent (items : List Item) (values : Item → Deps)
-    (name : String) (absent : ∀ i ∈ items, itemName i ≠ name) :
-    (items.map fun i => (itemName i, values i)).lookup name = none := by
+    (name : String) (absent : ∀ i ∈ items, Item.name i ≠ name) :
+    (items.map fun i => (Item.name i, values i)).lookup name = none := by
   rw [List.lookup_eq_none_iff]
   intro pair hp
   obtain ⟨i, hi, rfl⟩ := List.mem_map.mp hp
   simp [Ne.symm (absent i hi)]
 
-theorem designDeps_extern (d : Core.Design) (hn : (d.items.map itemName).Nodup)
+theorem designDeps_extern (d : Core.Design) (hn : (d.items.map Item.name).Nodup)
     (e : Extern) (he : Item.extern e ∈ d.items) (fuel : Nat) :
     designDeps d (fuel + 1) e.name = some (externDeps e) := by
   exact lookup_map_item d.items _ hn (.extern e) he
 
-theorem designDeps_module (d : Core.Design) (hn : (d.items.map itemName).Nodup)
+theorem designDeps_module (d : Core.Design) (hn : (d.items.map Item.name).Nodup)
     (m : Core.Module) (hm : Item.module m ∈ d.items) (fuel : Nat) :
     designDeps d (fuel + 1) m.name = some (Deps.infer m (designDeps d fuel)) := by
   exact lookup_map_item d.items _ hn (.module m) hm
 
 private theorem designDeps_absent (d : Core.Design) (name : String)
-    (absent : ∀ i ∈ d.items, itemName i ≠ name) (fuel : Nat) :
+    (absent : ∀ i ∈ d.items, Item.name i ≠ name) (fuel : Nat) :
     designDeps d fuel name = none := by
   cases fuel with
   | zero => rfl
   | succ fuel => exact lookup_map_absent d.items _ name absent
 
-theorem designDeps_stable (d : Core.Design) (hn : (d.items.map itemName).Nodup)
+theorem designDeps_stable (d : Core.Design) (hn : (d.items.map Item.name).Nodup)
     (q : Deps.Node → Nat)
     (edges : ∀ row ∈ hierarchyGraph d, ∀ dep ∈ row.2, q dep < q row.1)
     (fuel other : Nat) (name : String)
@@ -75,14 +75,14 @@ theorem designDeps_stable (d : Core.Design) (hn : (d.items.map itemName).Nodup)
     cases other with
     | zero => omega
     | succ other =>
-      by_cases existsItem : ∃ item ∈ d.items, itemName item = name
+      by_cases existsItem : ∃ item ∈ d.items, Item.name item = name
       · obtain ⟨item, hi, rfl⟩ := existsItem
         cases item with
         | extern e =>
-          simp only [itemName]
+          simp only [Item.name]
           rw [designDeps_extern d hn e hi, designDeps_extern d hn e hi]
         | module m =>
-          simp only [itemName]
+          simp only [Item.name]
           rw [designDeps_module d hn m hi, designDeps_module d hn m hi]
           congr 1
           apply infer_congr_children
@@ -92,34 +92,35 @@ theorem designDeps_stable (d : Core.Design) (hn : (d.items.map itemName).Nodup)
             (List.mem_map.mpr ⟨m, hm, rfl⟩) (.name child)
             (List.mem_map.mpr ⟨child, hc, rfl⟩)
           change q (.name child) < q (.name m.name) at he
-          apply ih other child <;> simp only [itemName] at hf ho <;> omega
-      · have absent : ∀ item ∈ d.items, itemName item ≠ name := by
+          apply ih other child <;> simp only [Item.name] at hf ho <;> omega
+      · have absent : ∀ item ∈ d.items, Item.name item ≠ name := by
           intro item hi he
           exact existsItem ⟨item, hi, he⟩
         rw [designDeps_absent d name absent, designDeps_absent d name absent]
 
 theorem designDeps_saturated (d : Core.Design) (wf : WellFormed d)
     (m : Core.Module) (hm : Item.module m ∈ d.items) :
-    designDeps d (d.items.length + 1) m.name =
-      some (Deps.infer m (designDeps d (d.items.length + 1))) := by
+    designDeps d d.depsFuel m.name =
+      some (Deps.infer m (designDeps d d.depsFuel)) := by
   obtain ⟨q, bound, edges⟩ := bounded_ranks (hierarchyGraph d) wf.2.2.2.2.2.2.2.2.1
   have lengthBound : (hierarchyGraph d).length ≤ d.items.length := by
     simp only [hierarchyGraph, List.length_map, modules]
     exact List.length_filterMap_le _ _
-  have stable : designDeps d (d.items.length + 1) m.name =
+  have stable : designDeps d d.depsFuel m.name =
       designDeps d (d.items.length + 2) m.name :=
-    designDeps_stable d wf.1.1.1 q edges _ _ _ (by have := bound (.name m.name); omega)
+    designDeps_stable d wf.1.1.1 q edges _ _ _
+      (by have := bound (.name m.name); unfold Core.Design.depsFuel; omega)
       (by have := bound (.name m.name); omega)
   rw [stable]
-  exact designDeps_module d wf.1.1.1 m hm (d.items.length + 1)
+  exact designDeps_module d wf.1.1.1 m hm d.depsFuel
 
 theorem Design.dependencies (d : Design) (wf : WellFormed d.erase)
     (m : Module) (hm : m ∈ d.bodies) :
-    designDeps d.erase (d.erase.items.length + 1) m.name =
+    designDeps d.erase d.erase.depsFuel m.name =
       some (Deps.infer m.erase m.children) := by
   have env := d.environments m hm
   have result := designDeps_saturated d.erase wf m.erase env.2.2
-  have children : m.children = designDeps d.erase (d.erase.items.length + 1) := env.2.1
+  have children : m.children = designDeps d.erase d.erase.depsFuel := env.2.1
   simpa only [← children, Module.erase] using result
 
 end Silicon.Core.Typed

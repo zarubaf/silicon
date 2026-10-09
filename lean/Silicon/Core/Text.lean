@@ -622,18 +622,10 @@ def Stmt.sortKey : Stmt → Nat × String × Nat
   | .write _ n p .. => (5, n, p)
   | .assign _ n .. => (6, n, 0)
 
-def Item.name : Item → String
-  | .module m => m.name
-  | .extern e => e.name
-
 def Stmt.before (a b : Stmt) : Bool :=
   let (ka, na, pa) := a.sortKey
   let (kb, nb, pb) := b.sortKey
   ka < kb || (ka == kb && (na < nb || (na == nb && pa ≤ pb)))
-
-def Item.ports : Item → List Port
-  | .module m => m.ports
-  | .extern e => e.ports
 
 private def portIndex (ports : List Port) (name : String) : Nat :=
   ports.findIdx (·.name == name)

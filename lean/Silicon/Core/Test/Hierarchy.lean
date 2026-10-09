@@ -27,7 +27,7 @@ private def leaf : Typed.Module where
   ctx := leafCtx
   interfaces := Typed.portsOf raw
   body := [leafAssign]
-  children := Typed.designDeps raw (raw.items.length + 1)
+  children := Typed.designDeps raw raw.depsFuel
   ranks := [(.name "q", 1)]
   acyclic := by
     simp [Typed.equationsErase, leafAssign, Typed.Equation.parts, Typed.Stmt.erase,
@@ -48,7 +48,7 @@ private def top : Typed.Module where
   ctx := topCtx
   interfaces := Typed.portsOf raw
   body := [inst, topAssign]
-  children := Typed.designDeps raw (raw.items.length + 1)
+  children := Typed.designDeps raw raw.depsFuel
   ranks := [(.port "u" "q", 1), (.name "q", 2)]
   acyclic := by
     simp [Typed.equationsErase, inst, topAssign, Typed.Equation.parts,

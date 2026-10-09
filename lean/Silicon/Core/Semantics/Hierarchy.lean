@@ -25,22 +25,22 @@ theorem erased_module_found (d : Typed.Design) (c : Core.Module)
     obtain ⟨e, _, impossible⟩ := Option.map_eq_some_iff.mp he
     cases impossible
 
-private theorem find_item_mem (items : List Item) (hn : (items.map itemName).Nodup)
+private theorem find_item_mem (items : List Item) (hn : (items.map Item.name).Nodup)
     (item : Item) (hi : item ∈ items) :
-    items.find? (fun i => itemName i == itemName item) = some item := by
+    items.find? (fun i => Item.name i == Item.name item) = some item := by
   induction items with
   | nil => simp at hi
   | cons first rest ih =>
     simp only [List.map_cons, List.nodup_cons] at hn
     rcases List.mem_cons.mp hi with rfl | hi
     · simp
-    · have ne : itemName first ≠ itemName item := by
+    · have ne : Item.name first ≠ Item.name item := by
         intro he
         exact hn.1 (he ▸ List.mem_map.mpr ⟨item, hi, rfl⟩)
       simpa [List.find?_cons, ne] using ih hn.2 hi
 
-theorem portsOf_item (d : Core.Design) (hn : (d.items.map itemName).Nodup)
-    (item : Item) (hi : item ∈ d.items) : portsOf d (itemName item) = itemPorts item := by
+theorem portsOf_item (d : Core.Design) (hn : (d.items.map Item.name).Nodup)
+    (item : Item) (hi : item ∈ d.items) : portsOf d (Item.name item) = Item.ports item := by
   simp [portsOf, find_item_mem d.items hn item hi]
 
 abbrev LocalBuilder (d : Typed.Design) :=
@@ -58,7 +58,7 @@ theorem instance_member (m : Typed.Module)
     .inst pos inst child inputs, by simp [Typed.Equation.parts], rfl⟩
 
 theorem external_exists (d : Typed.Design) (name : String)
-    (existsItem : ∃ item ∈ d.erase.items, itemName item = name)
+    (existsItem : ∃ item ∈ d.erase.items, Item.name item = name)
     (absent : d.bodies.find? (·.name == name) = none) :
     ∃ e, d.externs.find? (·.name == name) = some e ∧ Item.extern e ∈ d.erase.items := by
   obtain ⟨item, hi, hn⟩ := existsItem
@@ -133,7 +133,7 @@ def moduleChild (d : Typed.Design) (wf : WellFormed d.erase)
       (d.environments c hc).2.2).symm) (by
     rw [(d.environments m hm).2.1, ← name]
     change Deps.infer c.erase c.children =
-      ((designDeps d.erase (d.erase.items.length + 1) c.name).getD [])
+      ((designDeps d.erase d.erase.depsFuel c.name).getD [])
     rw [d.dependencies wf c hc]
     rfl) model
 
@@ -175,7 +175,7 @@ def externChild (d : Typed.Design) (wf : WellFormed d.erase)
     rw [(d.environments m hm).1, ← name]
     exact (portsOf_item d.erase wf.1.1.1 (.extern e) he).symm) (by
     rw [(d.environments m hm).2.1, ← name]
-    change externDeps e = ((designDeps d.erase (d.erase.items.length + 1) e.name).getD [])
+    change externDeps e = ((designDeps d.erase d.erase.depsFuel e.name).getD [])
     rw [designDeps_extern d.erase wf.1.1.1 e he d.erase.items.length]
     rfl) model
 
@@ -194,7 +194,7 @@ def assembleChildren (d : Typed.Design) (wf : WellFormed d.erase)
   | inst index pos inst child inputs =>
     have stmt := instance_member m index pos inst child inputs member
     have resolved := (wf.2.1.2 m.erase (module_mem d m hm) _ stmt).1
-    have existsItem : ∃ item ∈ d.erase.items, itemName item = child := by
+    have existsItem : ∃ item ∈ d.erase.items, Item.name item = child := by
       obtain ⟨item, found, _⟩ := resolved
       exact ⟨item, List.mem_of_find?_eq_some found, by
         simpa [Rules.findItem] using List.find?_some found⟩
