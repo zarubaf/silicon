@@ -12,6 +12,10 @@ def isInstance : Mlir.Op → Bool
   | .instance .. => true
   | _ => false
 
+def isCompreg : Mlir.Op → Bool
+  | .compreg .. => true
+  | _ => false
+
 def indicesOf (reads : List Lower.ReadPort) (memory : String) : List Nat :=
   (reads.filter (·.memory == memory)).map (·.index)
 

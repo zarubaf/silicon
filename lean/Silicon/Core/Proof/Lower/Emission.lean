@@ -40,11 +40,11 @@ def Image.Accounts (image : Image) (before after : Lower.State) : Prop :=
   ∀ name, (image.map Prod.fst).count name + (allocatedNames before).count name =
     (allocatedNames after).count name
 
-private theorem accounts_refl (s : Lower.State) : Image.Accounts [] s s := by
+theorem accounts_refl (s : Lower.State) : Image.Accounts [] s s := by
   intro name
   simp
 
-private theorem accounts_trans (a b c : Lower.State) (xs ys : Image)
+theorem accounts_trans (a b c : Lower.State) (xs ys : Image)
     (hx : xs.Accounts a b) (hy : ys.Accounts b c) : (xs ++ ys).Accounts a c := by
   intro name
   have ha := hx name
@@ -52,11 +52,11 @@ private theorem accounts_trans (a b c : Lower.State) (xs ys : Image)
   simp only [List.map_append, List.count_append]
   omega
 
-private theorem frame_refl (words : ModelMemories ctx) (env : Mlir.Env) (s : Lower.State) :
+theorem frame_refl (words : ModelMemories ctx) (env : Mlir.Env) (s : Lower.State) :
     EmissionFrame words env s s := by
   exact ⟨⟨[], by simp, by simp⟩, fun _ h => Or.inl h⟩
 
-private theorem frame_trans (words : ModelMemories ctx) (env : Mlir.Env)
+theorem frame_trans (words : ModelMemories ctx) (env : Mlir.Env)
     (a b c : Lower.State) (ab : EmissionFrame words env a b)
     (bc : EmissionFrame words env b c) : EmissionFrame words env a c := by
   obtain ⟨⟨xs, hx, ex⟩, rx⟩ := ab
@@ -71,18 +71,18 @@ private theorem frame_trans (words : ModelMemories ctx) (env : Mlir.Env)
     · exact rx r hr
     · exact Or.inr hr
 
-private def Emits (words : ModelMemories ctx) (action : Lower.Build α)
+def Emits (words : ModelMemories ctx) (action : Lower.Build α)
     (pre : Mlir.Env → Prop) (post : α → Mlir.Env → Prop) : Prop :=
   ∀ s, ∃ image : Image, image.Accounts s (action s).2 ∧
     ∀ env, image.Agrees env → pre env →
     EmissionFrame words env s (action s).2 ∧ post (action s).1 env
 
-private theorem emits_pure (words : ModelMemories ctx) (a : α) (p : Mlir.Env → Prop) :
+theorem emits_pure (words : ModelMemories ctx) (a : α) (p : Mlir.Env → Prop) :
     Emits words (pure a) p (fun result env => result = a ∧ p env) := by
   intro s
   exact ⟨[], accounts_refl s, fun env _ hp => ⟨frame_refl words env s, rfl, hp⟩⟩
 
-private theorem emits_bind (words : ModelMemories ctx) (a : Lower.Build α)
+theorem emits_bind (words : ModelMemories ctx) (a : Lower.Build α)
     (b : α → Lower.Build β) (p : Mlir.Env → Prop)
     (q : α → Mlir.Env → Prop) (r : β → Mlir.Env → Prop)
     (ha : Emits words a p q) (hb : ∀ x, Emits words (b x) (q x) r) :
@@ -96,7 +96,7 @@ private theorem emits_bind (words : ModelMemories ctx) (a : Lower.Build α)
   have by' := hy env (fun x h => agree x (List.mem_append_right _ h)) ax.2
   exact ⟨frame_trans words env _ _ _ ax.1 by'.1, by'.2⟩
 
-private theorem emits_weaken (words : ModelMemories ctx) (a : Lower.Build α)
+theorem emits_weaken (words : ModelMemories ctx) (a : Lower.Build α)
     (p p' : Mlir.Env → Prop) (q q' : α → Mlir.Env → Prop)
     (h : Emits words a p q) (hp : ∀ env, p' env → p env)
     (hq : ∀ x env, p' env → q x env → q' x env) : Emits words a p' q' := by
@@ -106,12 +106,12 @@ private theorem emits_weaken (words : ModelMemories ctx) (a : Lower.Build α)
   have got := hi env agree (hp env pre)
   exact ⟨got.1, hq _ env pre got.2⟩
 
-private theorem emits_keep (words : ModelMemories ctx) (a : Lower.Build α)
+theorem emits_keep (words : ModelMemories ctx) (a : Lower.Build α)
     (p : Mlir.Env → Prop) (q : α → Mlir.Env → Prop)
     (h : Emits words a p q) : Emits words a p (fun x env => p env ∧ q x env) :=
   emits_weaken words a p p q _ h (fun _ hp => hp) (fun _ _ hp hq => ⟨hp, hq⟩)
 
-private theorem emits_emit (words : ModelMemories ctx) (dest : Option String)
+theorem emits_emit (words : ModelMemories ctx) (dest : Option String)
     (op : Mlir.Op) (value : Mlir.Value) (p : Mlir.Env → Prop)
     (eval : ∀ env, p env → op.eval env = some value) :
     Emits words (Lower.emit dest op) p (fun name env => env name = some value) := by
@@ -154,7 +154,7 @@ private theorem emits_emit (words : ModelMemories ctx) (dest : Option String)
     · intro r hr
       exact Or.inl hr
 
-private theorem emits_named (words : ModelMemories ctx) (dest : Option String)
+theorem emits_named (words : ModelMemories ctx) (dest : Option String)
     (name : String) (p : Mlir.Env → Prop) :
     Emits words (Lower.named dest name) p (fun result env => result = name ∧ p env) := by
   intro s
@@ -188,7 +188,7 @@ def Legal : Typed.Expr ctx ty → Prop
   | .bin _ _ _ a b | .concat _ a b _ | .icmp _ _ a b => Legal a ∧ Legal b
   | .mux _ c a b => Legal c ∧ Legal a ∧ Legal b
 
-private theorem emits_read (words : ModelMemories ctx) (name : String) (index : Nat)
+theorem emits_read (words : ModelMemories ctx) (name : String) (index : Nat)
     (width depth : Nat) (found : ctx.lookup (.name name) = some (.memory width depth))
     (addr : String) (address : BitVec (Typed.addressWidth depth)) :
     Emits words (modify fun s => { s with reads := ⟨name, index, addr⟩ :: s.reads })
@@ -211,7 +211,7 @@ private theorem emits_read (words : ModelMemories ctx) (name : String) (index : 
   · exact Or.inr ⟨width, depth, found, address, ha, hd⟩
   · exact Or.inl hr
 
-private theorem emits_inRange (words : ModelMemories ctx) (depth : Nat) (addr : String)
+theorem emits_inRange (words : ModelMemories ctx) (depth : Nat) (addr : String)
     (address : BitVec (Typed.addressWidth depth)) :
     Emits words (Lower.inRange depth addr)
       (fun env => env addr = some (.bits _ address))
@@ -239,7 +239,7 @@ private theorem emits_inRange (words : ModelMemories ctx) (depth : Nat) (addr : 
       rw [← guard_value depth full address]
       exact eval_predicate env .ult addr bound _ _ h.1 h.2
 
-private theorem emits_expr (registers : List String) (values : Valuation ctx)
+theorem emits_expr (registers : List String) (values : Valuation ctx)
     (memories : Memories ctx) (words : ModelMemories ctx)
     (models : ∀ name width depth found,
       MemModelProof.Agrees ⟨depth, width, 0, 0⟩ (words name width depth found)
@@ -474,7 +474,7 @@ def ResolvedEmission (env : Mlir.Env) (before after : Lower.State)
       (Lower.substitute (Lower.resolve aliases fuel) op).eval env = env name) ∧
   env (Lower.resolve aliases fuel result) = some value
 
-private theorem resolve_emission (words : ModelMemories ctx) (env : Mlir.Env)
+theorem resolve_emission (words : ModelMemories ctx) (env : Mlir.Env)
     (before after : Lower.State) (result : String) (value : Mlir.Value)
     (frame : EmissionFrame words env before after) (atResult : env result = some value)
     (aliases : Std.HashMap String String) (fuel : Nat)

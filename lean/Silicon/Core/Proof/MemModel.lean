@@ -555,6 +555,99 @@ theorem next_value (c : MemConfig)
   rw [find_register]
   simp [Op.nextValue, Env.typed, hc, hn, keyValue, Name.ty, Value.ty]
 
+/-! The lemmas below hold in any design, because the model has no instance. -/
+
+theorem local_values (c : MemConfig) (words) (input : Inputs c) (state : Env)
+    (hs : state "silicon_reg_mem" = some (.array _ _ words)) (d : Mlir.Design)
+    (children : String → Env) :
+    LocalSolution d (memModel c) state (inputEnv c input) (values c words input) children := by
+  refine ⟨inputs_value c words input, ?_, (module_wellFormed c).2.2.2.2.1, ?_⟩
+  · intro entry he
+    have h := body_solution c words input ⟨fun _ => state⟩ hs entry he
+    cases entry with
+    | mk names op => cases op <;> first | exact h | exact False.elim h
+  · intro i
+    have hi : i.val < c.reads := by simpa [memModel] using i.isLt
+    refine ⟨keyValue c words input (.rd i.val), ?_, ?_⟩
+    · change values c words input ((memModel c).outputs[i.val]) = _
+      simpa [memModel, Name.text] using
+        values_key c words input (.rd i.val) (by simp [hi])
+    · rw [outputs_ports]
+      simp [List.getElem?_map, List.getElem?_range hi, keyValue, Value.ty]
+
+theorem findInstance_none (c : MemConfig) (name : String) :
+    (memModel c).findInstance name = none := no_instance c name
+
+theorem atPath_cons (c : MemConfig) (d : Mlir.Design) (name : String) (path : Mlir.Path) :
+    (memModel c).atPath d (name :: path) = none := by
+  rw [at_path]
+  simp
+
+theorem local_next (c : MemConfig)
+    (words : Fin (2 ^ Typed.addressWidth c.depth) → BitVec c.width) (input : Inputs c)
+    (h : LocalSolution d (memModel c) state (inputEnv c input) vals children)
+    (hs : state "silicon_reg_mem" = some (.array _ _ words)) :
+    ((memModel c).body.find? (fun entry => entry.1 == ["silicon_reg_mem"]) >>=
+      fun entry => entry.2.nextValue vals) =
+      some (.array _ _ (stages input words c.writes)) := by
+  have hc := input_at c input words h .clk (by simp) (input_port c .clk trivial) rfl
+  have hn := stages_value c words input h hs c.writes (Nat.le_refl _)
+  change ((memModel c).body.find? (fun entry => entry.1 == [Name.reg.text]) >>=
+    fun entry => entry.2.nextValue vals) = _
+  rw [find_register]
+  simp [Op.nextValue, Env.typed, hc, hn, keyValue, Name.ty, Value.ty]
+
+/-- The model inputs are the clock, the read addresses, and the write ports. -/
+theorem input_port_cases (c : MemConfig) (p : Mlir.Port) (hp : p ∈ (memModel c).inputPorts) :
+    p = ⟨.input, "clk", .clock⟩ ∨
+      (∃ r < c.reads, p = ⟨.input, s!"r{r}_addr", .int (Typed.addressWidth c.depth)⟩) ∨
+      ∃ w < c.writes, p = ⟨.input, s!"w{w}_addr", .int (Typed.addressWidth c.depth)⟩ ∨
+        p = ⟨.input, s!"w{w}_data", .int c.width⟩ ∨ p = ⟨.input, s!"w{w}_en", .int 1⟩ := by
+  have input : p.dir = .input := by
+    simp only [Module.inputPorts, List.mem_filter] at hp
+    simpa using hp.2
+  obtain ⟨k, hk, hn, ht, kind⟩ := input_member c p hp
+  obtain ⟨dir, name, ty⟩ := p
+  simp only at input hn ht
+  subst input hn ht
+  rcases kind with rfl | ⟨r, rfl⟩ | ⟨w, rfl | rfl | rfl⟩
+  · exact Or.inl rfl
+  · exact Or.inr (Or.inl ⟨r, by simpa [defKeys] using hk, rfl⟩)
+  all_goals exact Or.inr (Or.inr ⟨w, by simpa [defKeys] using hk, by simp [Name.text, Name.ty]⟩)
+
+/-- Port inputs read back from an environment that types every input port. -/
+def Inputs.ofEnv (c : MemConfig) (env : Env) : Inputs c :=
+  ⟨fun r => (env.bits s!"r{r}_addr" _).getD 0, fun w => (env.bits s!"w{w}_addr" _).getD 0,
+    fun w => (env.bits s!"w{w}_data" _).getD 0, fun w => (env.bits s!"w{w}_en" _).getD 0⟩
+
+private theorem bits_of_ty {v : Mlir.Value} {w : Nat} (h : v.ty = .int w) :
+    ∃ x, v = .bits w x := by
+  cases v with
+  | bits w' x =>
+    cases h
+    exact ⟨x, rfl⟩
+  | array => cases h
+  | clock => cases h
+
+theorem ofEnv_agrees (c : MemConfig) (env : Env)
+    (typed : ∀ p ∈ (memModel c).inputPorts, ∃ v, env p.name = some v ∧ v.ty = p.ty) :
+    ∀ p ∈ (memModel c).inputPorts, env p.name = inputEnv c (Inputs.ofEnv c env) p.name := by
+  intro p hp
+  obtain ⟨v, hv, ty⟩ := typed p hp
+  obtain ⟨k, hk, hn, ht, kind⟩ := input_member c p hp
+  have value := values_key c (fun _ => 0) (Inputs.ofEnv c env) k hk
+  change inputEnv c _ k.text = _ at value
+  rw [hn, value, ← hn, hv]
+  rw [ht] at ty
+  rcases kind with rfl | ⟨r, rfl⟩ | ⟨w, rfl | rfl | rfl⟩
+  · cases v <;> simp_all [Name.ty, Value.ty, keyValue]
+  all_goals
+    obtain ⟨x, rfl⟩ := bits_of_ty ty
+    rw [hn] at hv
+    simp only [Name.text] at hv
+    simp only [keyValue, Inputs.ofEnv, Env.bits, hv]
+    simp [Value.asBits]
+
 theorem depth_bound (c : MemConfig) : c.depth ≤ 2 ^ Typed.addressWidth c.depth := by
   have hpos := Nat.two_pow_pos (Typed.addressWidth c.depth)
   by_cases h : c.depth ≤ 1
