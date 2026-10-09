@@ -1,5 +1,6 @@
-//! The `tests/run` suite (spec section 9): `silicon run` runs on each `.sil`
-//! file. Each `; STEP in=(...) out=(...)` line is one clock cycle: the suite
+//! The `tests/run` suite (spec section 9): the `run` command of the binary
+//! under test (`silicon`, or `silicon-check` through `cargo xtask
+//! lean-check`) runs on each `.sil` file. Each `; STEP in=(...) out=(...)` line is one clock cycle: the suite
 //! feeds the `in=` parts to stdin, one per line, and compares stdout with the
 //! `out=` parts byte for byte. A file without STEP lines holds one
 //! `; expected-error EXXX @+N` instead (for `E014`), and the suite compares

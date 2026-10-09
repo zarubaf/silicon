@@ -1,11 +1,14 @@
-//! The `; expected-error EXXX @+N` expectation (spec section 9) and the
-//! error report `error[EXXX]: L:C: message` (spec 6.4.2) that the
-//! `tests/check` and `tests/run` suites share.
+//! The `; expected-error EXXX @+N` expectation (spec section 9), the
+//! error report `error[EXXX]: L:C: message` (spec 6.4.2), and the binary
+//! under test, which the `tests/check` and `tests/run` suites share.
 
 use std::path::PathBuf;
 
-/// The binary that the shared suites `check` and `run` test.
-/// `cargo xtask lean-check` sets `SILICON_BIN` to run them against `silicon-check`.
+/// The binary that the shared suites `check` and `run` test: `SILICON_BIN`
+/// if it is set, else `silicon`. `cargo xtask lean-check` sets `SILICON_BIN`
+/// to the absolute path of `silicon-check`. A relative path fails, because
+/// the tests run in another folder. A `SILICON_BIN` left in the shell also
+/// changes the binary of `just test`.
 pub fn binary() -> PathBuf {
     std::env::var_os("SILICON_BIN").map_or_else(
         || PathBuf::from(env!("CARGO_BIN_EXE_silicon")),
