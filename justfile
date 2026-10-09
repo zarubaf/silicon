@@ -46,6 +46,9 @@ lean:
 lean-check:
     cargo xtask lean-check
 
+diff:
+    cargo xtask diff
+
 test:
     cargo nextest run --workspace --all-features
 
