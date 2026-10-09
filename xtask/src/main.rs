@@ -1,6 +1,7 @@
 #![allow(clippy::print_stdout)] // xtask is a CLI; stdout is its interface.
 
 mod commit;
+mod diff;
 mod fmt;
 mod gitcmd;
 mod guidance;
@@ -65,6 +66,15 @@ enum Command {
     },
     /// Build `silicon-check` and run the shared `check` and `run` suites with it.
     LeanCheck,
+    /// Run the differential tests: random designs through the Lean interpreter, `silicon run`, and `arcilator`.
+    Diff {
+        /// The seed of the first design. Design `k` uses the seed plus `k`.
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+        /// The number of random designs.
+        #[arg(long, default_value_t = 200, value_parser = clap::value_parser!(u64).range(1..))]
+        count: u64,
+    },
     /// Run the Codex adversarial review of the current branch.
     Review {
         /// Git ref to review against.
@@ -90,6 +100,11 @@ fn main() -> Result<ExitCode> {
             ExitCode::FAILURE
         }),
         Command::LeanCheck => Ok(if lean_check::run(&Repo::discover()?)? {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        }),
+        Command::Diff { seed, count } => Ok(if diff::run(&Repo::discover()?, seed, count)? {
             ExitCode::SUCCESS
         } else {
             ExitCode::FAILURE
