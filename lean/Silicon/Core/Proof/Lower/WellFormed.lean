@@ -14,7 +14,8 @@ include h noExterns
 theorem design_names :
     (((lower t).withModels (memoryConfigs t)).items.map Mlir.Item.name).Nodup := by
   rw [withModels_items, List.map_map]
-  have same : Mlir.Item.name ∘ modelImage (memoryConfigs t) = Mlir.Item.name := funext image_name
+  have same : Mlir.Item.name ∘ Mlir.Item.withModels (memoryConfigs t) = Mlir.Item.name :=
+    funext image_name
   rw [same]
   apply ((lower_items t noExterns).map _).nodup_iff.mpr
   rw [List.map_append, List.map_map, List.map_map]
@@ -54,7 +55,7 @@ theorem body_in_design (b : Typed.Module) (hb : b ∈ t.bodies) :
 
 omit h in
 theorem config_in_design (c : MemConfig) (hc : c ∈ memoryConfigs t) :
-    modelImage (memoryConfigs t) (.extern c.moduleName c.ports) ∈
+    Mlir.Item.withModels (memoryConfigs t) (.extern c.moduleName c.ports) ∈
       ((lower t).withModels (memoryConfigs t)).items := by
   rw [withModels_items]
   apply List.mem_map.mpr
@@ -188,7 +189,7 @@ theorem lower_wellFormed (raw : Core.Design) (t : Typed.Design) (h : check raw =
   have source (item : Mlir.Item) (hi : item ∈ ((lower t).withModels (memoryConfigs t)).items) :
       ∃ item₀, ((∃ b ∈ t.bodies, item₀ = .module (Lower.module b).1) ∨
         ∃ c ∈ memoryConfigs t, item₀ = .extern c.moduleName c.ports) ∧
-        item = modelImage (memoryConfigs t) item₀ := by
+        item = Mlir.Item.withModels (memoryConfigs t) item₀ := by
     rw [withModels_items] at hi
     obtain ⟨item₀, h₀, rfl⟩ := List.mem_map.mp hi
     refine ⟨item₀, ?_, rfl⟩
