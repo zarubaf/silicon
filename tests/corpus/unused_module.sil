@@ -1,0 +1,21 @@
+; Purpose: modules that the top does not use. The module wrap instantiates the
+; top and discards its output, and the module other is independent. LEC must
+; compare the declared top, not a root of the instance graph.
+(design top
+  (module wrap
+    (input clk clock)
+    (input a (bits 4))
+    (output z (bits 4))
+    (inst t top (clk clk) (a a))
+    (assign z (const 4 0)))
+  (module other
+    (input b (bits 2))
+    (output w (bits 2))
+    (assign w b))
+  (module top
+    (input clk clock)
+    (input a (bits 4))
+    (output q (bits 4))
+    (reg r (bits 4) clk)
+    (next r a)
+    (assign q r)))
