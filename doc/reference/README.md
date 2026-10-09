@@ -17,7 +17,7 @@ Lean has two distinct roles in Silicon:
 
 Translation validation and reference lowering address compiler correctness. A component contract addresses design correctness. A correct compiler can compile a circuit that violates its intended contract.
 
-An independent contract has its own state, initial state, transition function, observations, and assumptions. Its executable functions support simulation. Its propositions support proofs over all admitted behaviors.
+An independent contract has its own state, initial state, next-state function, observations, and assumptions. Its executable functions support simulation. Its propositions support proofs over all admitted behaviors.
 
 The contract must not depend on generated implementation models or proof companions, even through another module. The proof companion can import both the contract and the generated model. Shared independent libraries are allowed.
 
