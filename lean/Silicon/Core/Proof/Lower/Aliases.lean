@@ -7,13 +7,6 @@ Source ranks decrease along aliases, so alias resolution reaches a defined name.
 -/
 namespace Silicon.Core.LowerProof
 
-def rawLetName : Core.Stmt → Option String
-  | .let_ _ name .. | .assign _ name .. => some name
-  | _ => none
-
-theorem letName_erase (stmt : Typed.Stmt ctx ports) : LetName stmt = rawLetName stmt.erase := by
-  cases stmt <;> rfl
-
 private theorem filterMap_sublist (xs : List α) (f g : α → Option β)
     (h : ∀ x, f x = none ∨ f x = g x) : (xs.filterMap f).Sublist (xs.filterMap g) := by
   induction xs with

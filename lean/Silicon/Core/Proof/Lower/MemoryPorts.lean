@@ -157,15 +157,6 @@ def SigOk (ports : List Mlir.Port) (args : List (String × String × Mlir.Ty))
     ((ports.filter (·.dir == .input)).map fun p => (p.name, p.ty)) ∧
   results = ((ports.filter (·.dir == .output)).map fun p => (p.name, p.ty))
 
-private theorem map_index {α β : Type} (l : List α) (index : α → Nat) (f : Nat → β) :
-    l.map (fun x => f (index x)) = (l.map index).map f := by
-  rw [List.map_map]
-  rfl
-
-private theorem flatMap_index {α β : Type} (l : List α) (index : α → Nat) (f : Nat → List β) :
-    l.flatMap (fun x => f (index x)) = (l.map index).flatMap f := by
-  rw [List.flatMap_map]
-
 private theorem flatMap_single {α β : Type} (l : List α) (f : α → β) :
     l.flatMap (fun a => [f a]) = l.map f := by
   induction l <;> simp_all

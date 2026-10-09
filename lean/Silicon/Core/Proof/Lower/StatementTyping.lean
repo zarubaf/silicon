@@ -23,10 +23,6 @@ def RegWidth : Typed.Stmt ctx ports → Prop
   | .reg _ name w _ _ => ctx.lookup (.name name) = some (.value (.bits w))
   | _ => True
 
-/-- An instance op types its operands when each argument has its port type. -/
-def Typing.GoodArgs (args : List (String × String × Mlir.Ty)) : Prop :=
-  ∀ arg ∈ args, E.Has arg.2.1 arg.2.2
-
 theorem Typing.step_mapM (xs : List α) (f : α → Lower.Build β) (P : β → Prop)
     (h : ∀ x ∈ xs, E.Step (f x) True P) :
     E.Step (xs.mapM f) True (fun ys => ∀ y ∈ ys, P y) := by

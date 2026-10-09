@@ -8,9 +8,6 @@ namespace Silicon.Core.LowerProof
 
 open Semantics
 
-theorem solutionValues_root (d : Mlir.Design) (m : Mlir.Module) (σ : Mlir.ModuleState)
-    (vals : Mlir.Env) : Mlir.solutionValues d m σ vals [] = vals := rfl
-
 theorem solution_hierarchy (d : Mlir.Design) (m : Mlir.Module) (σ : Mlir.ModuleState)
     (inputs vals : Mlir.Env) (h : Mlir.IsSolution d m σ inputs vals) :
     Mlir.IsHierarchySolution d m σ inputs (Mlir.solutionValues d m σ vals) := by

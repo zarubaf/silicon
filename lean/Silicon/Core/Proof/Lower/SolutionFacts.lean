@@ -112,15 +112,6 @@ theorem localSolution_inputs (agree : ∀ p ∈ m.inputPorts, inputs p.name = in
   obtain ⟨v, hi, ht, hv⟩ := h.1 p hp
   exact ⟨v, (agree p hp).symm.trans hi, ht, hv⟩
 
-theorem localSolution_design (plain : ∀ entry ∈ m.body, isInstance entry.2 = false)
-    (h : LocalSolution d m state inputs vals children) :
-    LocalSolution d' m state inputs vals children' := by
-  refine ⟨h.1, fun entry he => ?_, h.2.2⟩
-  have equation := h.2.1 entry he
-  have := plain entry he
-  obtain ⟨names, op⟩ := entry
-  cases op <;> first | exact equation | cases this
-
 theorem findModule_mem (d : Mlir.Design) (unique : (d.items.map Mlir.Item.name).Nodup)
     (M : Mlir.Module)
     (hm : Mlir.Item.module M ∈ d.items) : d.findModule M.name = some M := by

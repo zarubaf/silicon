@@ -18,15 +18,6 @@ theorem substitute_nextValue (rename : String → String) (op : Mlir.Op) (env : 
   | compreg next clk reset ty => cases reset <;> rfl
   | _ => rfl
 
-theorem resolve_eval (aliases : Std.HashMap String String) (env : Mlir.Env)
-    (agree : ∀ name next, aliases[name]? = some next → env name = env next)
-    (fuel : Nat) (op : Mlir.Op) :
-    (Lower.substitute (Lower.resolve aliases fuel) op).eval env = op.eval env := by
-  rw [substitute_eval]
-  congr 1
-  funext name
-  exact resolve_preserves aliases env agree fuel name
-
 theorem eval_constant (env : Mlir.Env) (w n : Nat) (bound : n < 2 ^ w) :
     (Op.constant w n).eval env = some (.bits w (BitVec.ofNat w n)) := by
   simp [Op.eval, bound]

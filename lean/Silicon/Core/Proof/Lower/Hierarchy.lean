@@ -23,20 +23,6 @@ theorem corresponds_instance (d : Semantics.CertifiedDesign) (env)
     Semantics.namedState_instance d env noExterns m hm s i p name child inputs member c found]
     using state
 
-theorem atPath_append (d : Mlir.Design) (m : Mlir.Module) (path rest : Mlir.Path) :
-    m.atPath d (path ++ rest) = (m.atPath d path >>= fun parent => parent.atPath d rest) := by
-  induction path generalizing m with
-  | nil => rfl
-  | cons name path ih =>
-    simp only [List.cons_append, Mlir.Module.atPath]
-    cases m.findInstance name with
-    | none => rfl
-    | some pair =>
-      dsimp only [bind, Option.bind]
-      cases d.findModule pair.1 with
-      | none => rfl
-      | some child => exact ih child
-
 theorem hierarchy_child (d : Mlir.Design) (m : Mlir.Module) (σ : Mlir.ModuleState)
     (inputs : Mlir.Env) (vals : Mlir.Valuation)
     (h : Mlir.IsHierarchySolution d m σ inputs vals)

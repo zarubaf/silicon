@@ -38,11 +38,4 @@ theorem backTranslation_eq_solution (d : Semantics.CertifiedDesign) (env)
     (unique _ (Semantics.localSolution_isSolution d m hm
       (Semantics.designChildren d env m hm) s input)).symm
 
-theorem backTranslation_step (d : Semantics.CertifiedDesign) (env)
-    (m : Typed.Module) (hm) (s : Semantics.State d env m hm) (input : Semantics.Input m)
-    (back : Semantics.Valuation m.ctx) (solves : Semantics.IsSolution d env m hm s input back) :
-    Semantics.stepWithValues d env m hm s back = Semantics.step d env m hm s input := by
-  rw [backTranslation_eq_solution d env m hm s input back solves]
-  rfl
-
 end Silicon.Core.LowerProof

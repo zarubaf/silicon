@@ -136,12 +136,6 @@ theorem sorted_index {α : Type} (l : List α) (key : α → Nat)
   rw [this]
   exact ⟨hj, rfl⟩
 
-theorem sorted_key {α : Type} (l : List α) (key : α → Nat)
-    (indexed : l.map key = List.range l.length) (k : Nat) (hk : k < l.length) :
-    key l[k] = k := by
-  have := congrArg (fun l => l[k]?) indexed
-  simpa [List.getElem?_map, List.getElem?_eq_getElem hk, List.getElem?_range hk] using this
-
 include h hm in
 theorem sorted_writes (i : Nat) (p : Pos) (n : String) (w depth : Nat) (clk : String)
     (target) (ws : List (Typed.Write m.ctx w depth))
