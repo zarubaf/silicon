@@ -71,8 +71,11 @@ def scopeNames (i : Item) : List String :=
     | .module m => m.body.filterMap definition
     | .extern _ => []
 
+/-! Lowering reserves a prefix for internal names and a dot for instance results. -/
+def reservedName (n : String) : Bool := n.startsWith "silicon_" || n.contains '.'
+
 def Unique (names : List String) : Prop :=
-  names.Nodup ∧ ∀ n ∈ names, n.startsWith "silicon_" = false
+  names.Nodup ∧ ∀ n ∈ names, Rules.reservedName n = false
 
 def Names (d : Design) : Prop :=
   Unique (d.items.map Item.name) ∧ ∀ i ∈ d.items, Unique (scopeNames i)
@@ -226,14 +229,14 @@ private def require (ok : Bool) (code : ErrorCode) (p : Pos) (msg : String) : Li
 private def duplicateNames : List String → List (String × Pos) → List Error
   | _, [] => []
   | seen, (n, p) :: rest =>
-    require (!(seen.contains n) && !(n.startsWith "silicon_")) .E002 p "name is not unique" ++
+    require (!(seen.contains n) && !(Rules.reservedName n)) .E002 p "name is not unique" ++
       duplicateNames (n :: seen) rest
 
 private def indexedDuplicateNames (seen : Std.HashSet String) :
     List (String × Pos) → List Error
   | [] => []
   | (n, p) :: rest =>
-    require (!(seen.contains n) && !(n.startsWith "silicon_")) .E002 p "name is not unique" ++
+    require (!(seen.contains n) && !(Rules.reservedName n)) .E002 p "name is not unique" ++
       indexedDuplicateNames (seen.insert n) rest
 
 private theorem indexedDuplicateNames_eq (seen : List String)
@@ -264,7 +267,7 @@ private def duplicateNamesIndexed (seen : List String) (xs : List (String × Pos
 theorem duplicateNames_spec (seen : List String) (xs : List (String × Pos)) :
     duplicateNames seen xs = [] ↔
       (xs.map Prod.fst).Nodup ∧
-      ∀ n ∈ xs.map Prod.fst, n ∉ seen ∧ n.startsWith "silicon_" = false := by
+      ∀ n ∈ xs.map Prod.fst, n ∉ seen ∧ Rules.reservedName n = false := by
   induction xs generalizing seen with
   | nil => simp [duplicateNames]
   | cons x xs ih =>
@@ -273,8 +276,8 @@ theorem duplicateNames_spec (seen : List String) (xs : List (String × Pos)) :
       List.nodup_cons, List.mem_cons, forall_eq_or_imp]
     have req (ok : Bool) : require ok .E002 p "name is not unique" = [] ↔ ok = true := by
       cases ok <;> simp [require, err]
-    have cond : (!seen.contains n && !n.startsWith "silicon_") = true ↔
-        n ∉ seen ∧ n.startsWith "silicon_" = false := by simp
+    have cond : (!seen.contains n && !Rules.reservedName n) = true ↔
+        n ∉ seen ∧ Rules.reservedName n = false := by simp
     simp only [req, cond, not_or]
     constructor
     · rintro ⟨⟨hn, hp⟩, hd, hr⟩

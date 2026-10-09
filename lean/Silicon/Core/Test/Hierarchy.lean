@@ -103,7 +103,7 @@ private def typed : Typed.Design where
 private theorem wf : WellFormed typed.erase := by
   change WellFormed (Typed.assembleDesign "top" ["top", "leaf"] [] [leaf, top] pos)
   rw [assembled]
-  have hn := (Check.e002_spec raw).mp (by rfl)
+  have hn := (Check.e002_spec raw).mp (by cbv)
   have hr := (Check.e003_spec raw).mp (by rfl)
   have hc := (Check.e009_spec raw).mp (by rfl)
   have hi := (Check.e011_spec raw).mp (by rfl)

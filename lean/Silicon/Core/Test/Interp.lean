@@ -308,7 +308,7 @@ private def counterTyped : Typed.Design where
     · contradiction
 
 private theorem counter_wf : WellFormed counterTyped.erase := by
-  have hn := (Check.e002_spec raw).mp (by rfl)
+  have hn := (Check.e002_spec raw).mp (by cbv)
   have hr := (Check.e003_spec raw).mp (by rfl)
   have erased : counterTyped.erase = raw := by
     change Typed.assembleDesign "counter" ["counter"] [] [counter] pos = raw

@@ -52,6 +52,14 @@ private def result (source : String) : Option (ErrorCode × Nat × Nat) :=
   "(let a (bits 1) (read m a))))") == some (.E008, 2, 1)
 #guard result "(design top (module top\n(input silicon_x (bits 1))))" == some (.E002, 2, 8)
 
+/-! AST declarations must not collide with generated instance result names. -/
+#guard
+  let p : Pos := ⟨2, 8, []⟩
+  let d : Design := ⟨"top", [.module ⟨p, "top", [⟨p, .input, "u.q", .bits 1⟩], []⟩], p⟩
+  match check d with
+  | .error e => (e.code, e.pos.line, e.pos.col) == (.E002, 2, 8)
+  | .ok _ => false
+
 /-! Atom positions survive line breaks inside declaration and expression forms. -/
 #guard result "(design top (module top (input\nsilicon_x (bits 1))))" == some (.E002, 2, 1)
 #guard result "(design top (module top (input x (bits\n0))))" == some (.E005, 2, 1)
