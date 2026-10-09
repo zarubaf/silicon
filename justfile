@@ -43,6 +43,9 @@ machete:
 lean:
     lake -d lean build --wfail
 
+lean-check:
+    cargo xtask lean-check
+
 test:
     cargo nextest run --workspace --all-features
 

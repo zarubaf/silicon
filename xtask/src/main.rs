@@ -5,6 +5,7 @@ mod fmt;
 mod gitcmd;
 mod guidance;
 mod lean;
+mod lean_check;
 mod lean_prose;
 mod prose;
 mod repo;
@@ -62,6 +63,8 @@ enum Command {
         #[arg(long)]
         base: String,
     },
+    /// Build `silicon-check` and run the shared `check` and `run` suites with it.
+    LeanCheck,
     /// Run the Codex adversarial review of the current branch.
     Review {
         /// Git ref to review against.
@@ -82,6 +85,11 @@ fn main() -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         Command::Prose => Ok(if prose::run(&Repo::discover()?)? {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        }),
+        Command::LeanCheck => Ok(if lean_check::run(&Repo::discover()?)? {
             ExitCode::SUCCESS
         } else {
             ExitCode::FAILURE

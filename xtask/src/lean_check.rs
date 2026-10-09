@@ -1,0 +1,66 @@
+//! Runs the shared `check` and `run` suites against the Lean `silicon-check`.
+
+use std::process::Command;
+
+use anyhow::{Context, Result};
+
+use crate::repo::Repo;
+
+/// Where Lake puts the executable, relative to the repository root.
+const BINARY: &str = "lean/.lake/build/bin/silicon-check";
+
+fn lake_build_args() -> Vec<&'static str> {
+    vec!["-d", "lean", "build", "silicon-check"]
+}
+
+fn nextest_args() -> Vec<&'static str> {
+    vec![
+        "nextest", "run", "-p", "driver", "--test", "check", "--test", "run",
+    ]
+}
+
+/// Builds `silicon-check`, then runs the shared suites with it as the binary under test.
+/// Returns whether both steps passed. The suites do not run after a failed build.
+pub fn run(repo: &Repo) -> Result<bool> {
+    let build = Command::new("lake")
+        .args(lake_build_args())
+        .current_dir(&repo.root)
+        .status()
+        .context("cannot run lake")?;
+    if !build.success() {
+        return Ok(false);
+    }
+    // The tests run in another working directory, so the path must be absolute.
+    let binary = repo
+        .root
+        .join(BINARY)
+        .canonicalize()
+        .with_context(|| format!("cannot find {BINARY} after the build"))?;
+    let tests = Command::new("cargo")
+        .args(nextest_args())
+        .env("SILICON_BIN", binary)
+        .current_dir(&repo.root)
+        .status()
+        .context("cannot run cargo nextest")?;
+    Ok(tests.success())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lake_builds_the_executable_of_the_lean_package() {
+        assert_eq!(lake_build_args(), ["-d", "lean", "build", "silicon-check"]);
+    }
+
+    #[test]
+    fn nextest_runs_the_two_shared_suites() {
+        assert_eq!(
+            nextest_args(),
+            [
+                "nextest", "run", "-p", "driver", "--test", "check", "--test", "run"
+            ]
+        );
+    }
+}
