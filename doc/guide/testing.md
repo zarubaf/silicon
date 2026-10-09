@@ -8,7 +8,7 @@ Each layer has one oracle. An oracle is a tool or a model that can say "wrong" m
 | ------------------------ | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
 | Rust crates              | Unit tests and `insta` snapshot tests; `proptest` property tests                                                           | `just test`                      |
 | `lean/`                  | The Lean kernel, with warnings as errors. `xtask` rejects `sorry`, new `axiom`, and `native_decide` outside the allowlist. | `just lean`, `cargo xtask check` |
-| Compiler against Lean    | Translation validation (build step 2)                                                                                      | Not in `just ci` yet             |
+| Compiler against Lean    | The shared `tests/check` and `tests/run` files run with `silicon-check`                                                    | `just lean-check`, in `just ci`  |
 | Implementations together | Differential testing (build step 2)                                                                                        | Not in `just ci` yet             |
 | Emitted Verilog          | LEC with `circt-lec` or Yosys equivalence                                                                                  | Not in `just ci` yet             |
 
