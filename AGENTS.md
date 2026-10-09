@@ -52,7 +52,7 @@ Each rule is one list line. It ends with `Check:` and the check. A rule without 
 4. Commit: one logical change per commit, in the format `type(scope): subject`.
 5. Pull request: it must pass `just ci`. The workflow also requires the cross-vendor review. Then rebase-merge.
 
-- Lean work goes to the `codex:codex-rescue` subagent with `--fresh`.
+- Lean work goes to a fresh Opus subagent, one bounded task at a time.
 - No check enforces the cross-vendor review yet. Run it with `just review`. A Codex review covers Claude branches. An Opus review covers Codex branches.
 - A comment explains why. It never narrates history. Add no unused abstraction and no fallback layer.
 - A subagent gets the task, this file, and the L1 file of its area. It returns a report of 20 lines or fewer.

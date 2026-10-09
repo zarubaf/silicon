@@ -6,7 +6,7 @@ The Lean model is the normative spec for Silicon.
 
 ## Owns
 
-This directory owns the core IR semantics. Dispatch Lean work to Codex with `codex:codex-rescue --fresh`.
+This directory owns the core IR semantics. Dispatch Lean work to a fresh Opus subagent.
 
 ## Invariants
 

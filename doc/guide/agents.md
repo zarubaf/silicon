@@ -27,7 +27,7 @@ The repository defines no custom agent roles at the start. A role file in `.clau
 
 The repository adds three rules to the Superpowers workflow:
 
-1. **Lean goes to Codex.** The orchestrator dispatches all Lean work to the `codex:codex-rescue` subagent with `--fresh`. Each task thus starts a new Codex thread. Do not use `/codex:transfer` for delegation. It copies the full Claude session, with its chat history, into Codex.
+1. **Lean goes to a fresh Opus subagent.** The orchestrator dispatches all Lean work to a new Opus subagent, one bounded task at a time. The subagent does not get the chat history of the orchestrator. The reason: on a long proof, a Codex run ends after 5 to 20 minutes with partial work.
 2. **Cross-vendor review before merge.** A Codex adversarial review (`adversarial-review --base main`) must pass on a branch that Claude wrote. It challenges the design, the assumptions, and the tradeoffs. Superpowers' own review covers defects. An Opus review must pass on a branch that Codex wrote. The reviewer gets the diff and the spec, not the reasoning of the author. See [ADR 0009](../adr/0009-cross-vendor-review-before-merge.md).
 3. **Superpowers paths are overridden.** Specs go to `doc/design/`. Plans go to `.scratch/` in the worktree.
 
