@@ -11,7 +11,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, anyhow};
-use cargo_metadata::MetadataCommand;
 use core_ir::check::check;
 use core_ir::r#gen;
 use core_ir::interp::Inputs;
@@ -24,14 +23,11 @@ use proptest::test_runner::{
     Config, RngAlgorithm, RngSeed, TestRng, TestRunner, noop_result_cache,
 };
 
-use crate::lean_check;
 use crate::repo::Repo;
+use crate::{corpus, lean_check, silicon};
 
 /// The clock cycles of each design.
 const CYCLES: usize = 8;
-
-/// The directory of the corpus that LEC and the differential tests share.
-const CORPUS: &str = "tests/corpus";
 
 /// The `out=` lines, without LF, that one tool prints for one design.
 #[derive(Debug, PartialEq, Eq)]
@@ -82,7 +78,7 @@ pub fn run(repo: &Repo, seed: u64, count: u64) -> Result<bool> {
     let Some(lean) = lean_check::build(repo)? else {
         return Ok(false);
     };
-    let Some(silicon) = build_silicon(&repo.root)? else {
+    let Some(silicon) = silicon::build(&repo.root)? else {
         return Ok(false);
     };
     let tools = Tools { lean, silicon };
@@ -99,24 +95,6 @@ pub fn run(repo: &Repo, seed: u64, count: u64) -> Result<bool> {
         seed.wrapping_add(count - 1)
     );
     Ok(true)
-}
-
-/// Builds `silicon` and returns its path, or `None` if the build fails.
-fn build_silicon(root: &Path) -> Result<Option<PathBuf>> {
-    let build = Command::new("cargo")
-        .args(["build", "--quiet", "-p", "driver", "--bin", "silicon"])
-        .current_dir(root)
-        .status()
-        .context("cannot run cargo build")?;
-    if !build.success() {
-        return Ok(None);
-    }
-    let metadata = MetadataCommand::new()
-        .current_dir(root)
-        .no_deps()
-        .exec()
-        .context("cannot read the cargo metadata")?;
-    Ok(Some(metadata.target_directory.join("debug/silicon").into()))
 }
 
 /// A test runner with the random numbers of `seed`. Each field of the
@@ -197,11 +175,7 @@ fn generate(seed: u64) -> Result<Case> {
 fn corpus(repo: &Repo, seed: u64) -> Result<Vec<Case>> {
     let mut runner = runner(seed);
     let mut cases = Vec::new();
-    let files =
-        repo.files.iter().map(|file| &file.path).filter(|path| {
-            path.starts_with(CORPUS) && path.extension().is_some_and(|e| e == "sil")
-        });
-    for path in files {
+    for path in &corpus::files(repo) {
         let name = path.display().to_string();
         let text = std::fs::read_to_string(repo.root.join(path))
             .with_context(|| format!("cannot read {name}"))?;

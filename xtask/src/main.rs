@@ -1,6 +1,7 @@
 #![allow(clippy::print_stdout)] // xtask is a CLI; stdout is its interface.
 
 mod commit;
+mod corpus;
 mod diff;
 mod fmt;
 mod gitcmd;
@@ -11,6 +12,7 @@ mod lean_prose;
 mod prose;
 mod repo;
 mod review;
+mod silicon;
 #[cfg(test)]
 mod testgit;
 mod tree;
