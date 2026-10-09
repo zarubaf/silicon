@@ -2,7 +2,7 @@
 
 use core_ir::check::check;
 use core_ir::diag::ErrorCode;
-use core_ir::interp::Sim;
+use core_ir::interp::{Outputs, Sim};
 use core_ir::text::parse;
 use core_ir::typed;
 use core_ir::vectors::{VectorError, parse_input, print_output};
@@ -381,4 +381,26 @@ fn an_unused_extern_fails_before_a_wide_hierarchy_expands() {
         panic!("E014 expected");
     };
     assert_eq!((d.code, d.span.line, d.span.col), (ErrorCode::E014, 2, 3));
+}
+
+#[test]
+fn the_vectors_of_another_simulator_go_through_the_same_format() {
+    let design = design(
+        "(design t (module t (input a (bits 4)) (input b (bits 70)) \
+         (output q (bits 4)) (output w (bits 70)) (assign q a) (assign w b)))",
+    );
+    let Ok(inputs) = parse_input("in=(a 9 b 1180591620717411303423)", top(&design)) else {
+        panic!("the line must parse");
+    };
+    let values: Vec<String> = inputs
+        .values()
+        .iter()
+        .map(|v| v.to_biguint().to_string())
+        .collect();
+    assert_eq!(values, ["9", "1180591620717411303423"]);
+    let outputs = Outputs::new(inputs.values().to_vec());
+    assert_eq!(
+        print_output(top(&design), &outputs),
+        "out=(q 9 w 1180591620717411303423)\n"
+    );
 }

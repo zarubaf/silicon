@@ -76,9 +76,27 @@ impl<'d> Sim<'d> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Inputs(pub(crate) Vec<Bits>);
 
+impl Inputs {
+    /// The values in port order.
+    #[must_use]
+    pub fn values(&self) -> &[Bits] {
+        &self.0
+    }
+}
+
 /// The values of the outputs of a top module for one cycle, in port order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Outputs(pub(crate) Vec<Bits>);
+
+impl Outputs {
+    /// The outputs of another simulator, one value for each output in port
+    /// order. The differential tests print them with
+    /// [`crate::vectors::print_output`].
+    #[must_use]
+    pub fn new(values: Vec<Bits>) -> Outputs {
+        Outputs(values)
+    }
+}
 
 /// Values of one kind that a cycle computes, with a flag for each value that
 /// is known in this cycle.
