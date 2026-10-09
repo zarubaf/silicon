@@ -6,13 +6,6 @@ distinct configurations have distinct names.
 -/
 namespace Silicon.Core.LowerProof
 
-theorem ofModuleName_name (name : String) (c : MemConfig)
-    (h : MemConfig.ofModuleName name = some c) : c.moduleName = name := by
-  unfold MemConfig.ofModuleName at h
-  simp only [bind, Option.bind] at h
-  repeat' (split at h <;> try simp only at h)
-  all_goals first | assumption | (cases h; assumption) | cases h
-
 theorem moduleName_reserved (c : MemConfig) : Rules.reservedName c.moduleName = true := by
   by_cases legal : Rules.reservedName c.moduleName = false
   · exact absurd (by

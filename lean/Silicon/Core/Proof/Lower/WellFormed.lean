@@ -12,9 +12,9 @@ variable (raw : Core.Design) (t : Typed.Design) (h : check raw = .ok t)
 include h noExterns
 
 theorem design_names :
-    ((lower t).withModels.items.map Mlir.Item.name).Nodup := by
+    (((lower t).withModels (memoryConfigs t)).items.map Mlir.Item.name).Nodup := by
   rw [withModels_items, List.map_map]
-  have same : Mlir.Item.name ∘ modelImage = Mlir.Item.name := funext image_name
+  have same : Mlir.Item.name ∘ modelImage (memoryConfigs t) = Mlir.Item.name := funext image_name
   rw [same]
   apply ((lower_items t noExterns).map _).nodup_iff.mpr
   rw [List.map_append, List.map_map, List.map_map]
@@ -46,7 +46,7 @@ theorem interfaces_item (b : Typed.Module) (hb : b ∈ t.bodies) (child : String
 
 omit h in
 theorem body_in_design (b : Typed.Module) (hb : b ∈ t.bodies) :
-    Mlir.Item.module (Lower.module b).1 ∈ (lower t).withModels.items := by
+    Mlir.Item.module (Lower.module b).1 ∈ ((lower t).withModels (memoryConfigs t)).items := by
   rw [withModels_items]
   apply List.mem_map.mpr
   refine ⟨_, (lower_items t noExterns).mem_iff.mpr
@@ -54,25 +54,26 @@ theorem body_in_design (b : Typed.Module) (hb : b ∈ t.bodies) :
 
 omit h in
 theorem config_in_design (c : MemConfig) (hc : c ∈ memoryConfigs t) :
-    modelImage (.extern c.moduleName c.ports) ∈ (lower t).withModels.items := by
+    modelImage (memoryConfigs t) (.extern c.moduleName c.ports) ∈
+      ((lower t).withModels (memoryConfigs t)).items := by
   rw [withModels_items]
   apply List.mem_map.mpr
   exact ⟨_, (lower_items t noExterns).mem_iff.mpr
     (List.mem_append_right _ (List.mem_map.mpr ⟨c, hc, rfl⟩)), rfl⟩
 
 theorem body_signature (b : Typed.Module) (hb : b ∈ t.bodies) :
-    (lower t).withModels.signature b.name = some (b.ports.map Lower.port) :=
+    ((lower t).withModels (memoryConfigs t)).signature b.name = some (b.ports.map Lower.port) :=
   signature_of_mem _ (design_names raw t h noExterns) _ (body_in_design t noExterns b hb)
 
 theorem config_signature (c : MemConfig) (hc : c ∈ memoryConfigs t) :
-    (lower t).withModels.signature c.moduleName = some c.ports := by
+    ((lower t).withModels (memoryConfigs t)).signature c.moduleName = some c.ports := by
   have sig := signature_of_mem _ (design_names raw t h noExterns) _
     (config_in_design t noExterns c hc)
   rw [image_name, image_ports] at sig
   exact sig
 
 theorem body_wellFormed (b : Typed.Module) (hb : b ∈ t.bodies) :
-    (Lower.module b).1.WellFormed (lower t).withModels := by
+    (Lower.module b).1.WellFormed ((lower t).withModels (memoryConfigs t)) := by
   apply lower_module_wellFormed raw t h b hb
   · intro p i child inputs hs
     have member := stmt_erase_member b _ hs
@@ -183,11 +184,11 @@ end
 /-- The reference lowering of a checked design without externs is well formed when it uses
 the model of each memory extern. -/
 theorem lower_wellFormed (raw : Core.Design) (t : Typed.Design) (h : check raw = .ok t)
-    (noExterns : t.externs = []) : Mlir.WellFormed (lower t).withModels := by
-  have source (item : Mlir.Item) (hi : item ∈ (lower t).withModels.items) :
+    (noExterns : t.externs = []) : Mlir.WellFormed ((lower t).withModels (memoryConfigs t)) := by
+  have source (item : Mlir.Item) (hi : item ∈ ((lower t).withModels (memoryConfigs t)).items) :
       ∃ item₀, ((∃ b ∈ t.bodies, item₀ = .module (Lower.module b).1) ∨
         ∃ c ∈ memoryConfigs t, item₀ = .extern c.moduleName c.ports) ∧
-        item = modelImage item₀ := by
+        item = modelImage (memoryConfigs t) item₀ := by
     rw [withModels_items] at hi
     obtain ⟨item₀, h₀, rfl⟩ := List.mem_map.mp hi
     refine ⟨item₀, ?_, rfl⟩
@@ -196,7 +197,7 @@ theorem lower_wellFormed (raw : Core.Design) (t : Typed.Design) (h : check raw =
       exact Or.inl ⟨b, hb, rfl⟩
     · obtain ⟨c, hc, rfl⟩ := List.mem_map.mp h₀
       exact Or.inr ⟨c, hc, rfl⟩
-  have modules (m : Mlir.Module) (hm : .module m ∈ (lower t).withModels.items) :
+  have modules (m : Mlir.Module) (hm : .module m ∈ ((lower t).withModels (memoryConfigs t)).items) :
       (∃ b ∈ t.bodies, m = (Lower.module b).1) ∨ ∃ c, m = memModel c := by
     obtain ⟨item₀, origin, image⟩ := source _ hm
     rcases image_module item₀ m image.symm with same | model
