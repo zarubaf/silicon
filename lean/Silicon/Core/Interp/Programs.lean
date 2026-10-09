@@ -1,4 +1,5 @@
 import Silicon.Core.Interp.Finish
+import Silicon.Core.Interp.Plans
 
 /-! The hierarchy carries executable cycles beside their semantic components. -/
 namespace Silicon.Core.Interp
@@ -21,9 +22,10 @@ def programRunners (m : Typed.Module) (programs : Programs m) :
   | ⟨.let_ .., _⟩ | ⟨.reg .., _⟩ | ⟨.mem .., _⟩ | ⟨.assign .., _⟩ => PUnit.unit
 
 def localProgram (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)
-    (programs : Programs m) : Program m.ports (Deps.infer m.erase m.children) where
+    (prepared : Prepared d m hm) (programs : Programs m) :
+    Program m.ports (Deps.infer m.erase m.children) where
   model := localComponent d m hm (programModels m programs)
-  evaluator := localEvaluator d m hm (programModels m programs) (programRunners m programs)
+  evaluator := localEvaluator d m hm (programModels m programs) (programRunners m programs) prepared
 
 def transportProgram {ports other : List Port} {deps otherDeps : Deps}
     (hp : ports = other) (hd : deps = otherDeps) (program : Program ports deps) :
@@ -68,8 +70,10 @@ def externProgram (model : Component ports deps) : Program ports deps where
       ⟨(model.out state input port, cache), model.out_respects state _ _ port agree⟩
     finish := fun state input _ => ⟨(model.next state input, model.out state input), rfl⟩ }
 
-def compileChildren (d : CertifiedDesign) (env : Env d.design)
-    (m : Typed.Module) (hm : m ∈ d.design.bodies) : Programs m :=
+def compileChildrenWith (d : CertifiedDesign) (env : Env d.design)
+    (limit : Nat) (plans : ModulePreparations d limit)
+    (m : Typed.Module) (hm : m ∈ d.design.bodies)
+    (bound : moduleLevel d.design.erase d.wellFormed m.name ≤ limit) : Programs m :=
   fun ⟨equation, member⟩ => by
     cases equation with
     | inst index pos inst child inputs =>
@@ -83,8 +87,14 @@ def compileChildren (d : CertifiedDesign) (env : Env d.design)
       | some c => by
         have hc := List.mem_of_find?_eq_some found
         have name : c.name = child := by simpa using List.find?_some found
+        have lower : moduleLevel d.design.erase d.wellFormed child <
+            moduleLevel d.design.erase d.wellFormed m.name := by
+          exact moduleLevel_lower d.design.erase d.wellFormed m.erase
+            (module_mem d.design m hm) child (List.mem_filterMap.mpr ⟨_, stmt, rfl⟩)
         exact moduleProgram d m c hm hc child name
-          (localProgram d c hc (compileChildren d env c hc))
+          (localProgram d c hc
+            (modulePrepared d limit plans child c found (Nat.lt_of_lt_of_le lower bound))
+            (compileChildrenWith d env limit plans c hc (by rw [name]; omega)))
       | none => by
         have existsExtern := external_exists d.design child existsItem found
         let e := (d.design.externs.find? (·.name == child)).get (by
@@ -107,23 +117,26 @@ decreasing_by
     moduleLevel_lower d.design.erase d.wellFormed m.erase (module_mem d.design m hm)
       child childMem
 
-theorem compileChildren_models (d : CertifiedDesign) (env : Env d.design)
-    (m : Typed.Module) (hm : m ∈ d.design.bodies) :
-    programModels m (compileChildren d env m hm) = designChildren d env m hm := by
+theorem compileChildrenWith_models (d : CertifiedDesign) (env : Env d.design)
+    (limit : Nat) (plans : ModulePreparations d limit)
+    (m : Typed.Module) (hm : m ∈ d.design.bodies)
+    (bound : moduleLevel d.design.erase d.wellFormed m.name ≤ limit) :
+    programModels m (compileChildrenWith d env limit plans m hm bound) =
+      designChildren d env m hm := by
   funext e
   obtain ⟨equation, member⟩ := e
   cases equation with
   | inst i p n child inputs =>
     dsimp only [programModels]
-    rw [compileChildren]
+    rw [compileChildrenWith]
     dsimp only
     split
     next c found =>
       rw [moduleProgram_model, designChildren_inst_module d env m hm i p n child inputs
         member c found]
       change moduleChild _ _ _ _ _ _ _ _
-        (localComponent d c _ (programModels c (compileChildren d env c _))) = _
-      rw [compileChildren_models d env c (List.mem_of_find?_eq_some found)]
+        (localComponent d c _ (programModels c (compileChildrenWith d env limit plans c _ _))) = _
+      rw [compileChildrenWith_models d env limit plans c (List.mem_of_find?_eq_some found)]
     next absent =>
       unfold designChildren
       rw [assembleChildren]
@@ -145,5 +158,16 @@ decreasing_by
   simpa only [name, Typed.Module.erase] using
     moduleLevel_lower d.design.erase d.wellFormed m.erase (module_mem d.design m hm)
       child childMem
+
+def compileChildren (d : CertifiedDesign) (env : Env d.design)
+    (m : Typed.Module) (hm : m ∈ d.design.bodies)
+    (plans : ModulePreparations d (moduleLevel d.design.erase d.wellFormed m.name)) : Programs m :=
+  compileChildrenWith d env _ plans m hm (Nat.le_refl _)
+
+theorem compileChildren_models (d : CertifiedDesign) (env : Env d.design)
+    (m : Typed.Module) (hm : m ∈ d.design.bodies)
+    (plans : ModulePreparations d (moduleLevel d.design.erase d.wellFormed m.name)) :
+    programModels m (compileChildren d env m hm plans) = designChildren d env m hm :=
+  compileChildrenWith_models d env _ _ m hm _
 
 end Silicon.Core.Interp
