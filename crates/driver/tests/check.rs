@@ -1,4 +1,5 @@
-//! The `tests/check` suite (spec section 9): `silicon check` runs on each
+//! The `tests/check` suite (spec section 9): the `check` command of the binary under test (`silicon`, or `silicon-check`
+//! through `cargo xtask lean-check`) runs on each
 //! `.sil` file. A file with `; expected-error EXXX @+N` (or `@-N`) expects
 //! that code on the line `N` lines after (or before) the comment. A file
 //! without it expects `ok`. The suite compares the code and the line only.
