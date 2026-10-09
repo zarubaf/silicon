@@ -65,12 +65,7 @@ fn run(path: &Path) -> datatest_stable::Result<()> {
         Expectation::Steps { stdin, .. } => stdin.as_str(),
         Expectation::Error(_) => "",
     };
-    let out = spawn(
-        Command::new(env!("CARGO_BIN_EXE_silicon"))
-            .arg("run")
-            .arg(path),
-        stdin,
-    )?;
+    let out = spawn(Command::new(expect::binary()).arg("run").arg(path), stdin)?;
     let stdout = String::from_utf8_lossy(&out.stdout);
     let code = out.status.code();
     match expected {
