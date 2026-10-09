@@ -509,7 +509,7 @@ private theorem stages_value (c : MemConfig)
         (congrArg some (memory_mux _ _ _ _)))
     simpa [before, stages] using next
 
-private theorem reads_value (c : MemConfig)
+theorem reads_value (c : MemConfig)
     (words : Fin (2 ^ Typed.addressWidth c.depth) → BitVec c.width) (input : Inputs c)
     (h : LocalSolution d (memModel c) state (inputEnv c input) vals children)
     (hs : state Name.reg.text = some (.array _ _ words)) (r : Nat) (hr : r < c.reads) :
@@ -539,7 +539,7 @@ private theorem find_register (c : MemConfig) :
     | exact Name.noConfusion (Name.text_injective (show (Name.ws _).text = Name.reg.text from hn))
     | exact Name.noConfusion (Name.text_injective (show (Name.wn _).text = Name.reg.text from hn))
 
-private theorem next_value (c : MemConfig)
+theorem next_value (c : MemConfig)
     (words : Fin (2 ^ Typed.addressWidth c.depth) → BitVec c.width)
     (input : Inputs c) (σ : ModuleState)
     (vals : Env) (h : IsSolution ⟨[.module (memModel c)]⟩ (memModel c) σ

@@ -10,37 +10,37 @@ Alias resolution preserves references to outputs and values defined later in the
 namespace Silicon.Core
 namespace Lower
 
-private def type (ty : Ty) : Mlir.Ty :=
+def type (ty : Ty) : Mlir.Ty :=
   match ty with
   | .bits w => .int w
   | .clock => .clock
 
-private def port (p : Port) : Mlir.Port :=
+def port (p : Port) : Mlir.Port :=
   ⟨match p.dir with | .input => .input | .output => .output, p.name, type p.ty⟩
 
-private def predicate : Pred → Mlir.Pred
+def predicate : Pred → Mlir.Pred
   | .eq => .eq | .ne => .ne | .ult => .ult | .ule => .ule | .ugt => .ugt
   | .uge => .uge | .slt => .slt | .sle => .sle | .sgt => .sgt | .sge => .sge
 
-private def binary (op : BinOp) (ordinary : op ≠ .concat) : Mlir.CombOp :=
+def binary (op : BinOp) (ordinary : op ≠ .concat) : Mlir.CombOp :=
   match op with
   | .add => .add | .sub => .sub | .mul => .mul | .and => .and | .or => .or
   | .xor => .xor | .shl => .shl | .shru => .shru | .shrs => .shrs
   | .concat => False.elim (ordinary rfl)
 
-private structure ReadPort where
+structure ReadPort where
   memory : String
   index : Nat
   addr : String
 
-private structure WritePort where
+structure WritePort where
   memory : String
   index : Nat
   addr : String
   data : String
   enable : String
 
-private structure State where
+structure State where
   aliases : Std.HashMap String String := {}
   nextTemp : Nat := 0
   body : Array (List String × Mlir.Op) := #[]
@@ -50,9 +50,9 @@ private structure State where
   nexts : List (String × String) := []
   resets : List (String × Option (String × String)) := []
 
-private abbrev Build := StateM State
+abbrev Build := StateM State
 
-private def emit (dest : Option String) (op : Mlir.Op) : Build String := do
+def emit (dest : Option String) (op : Mlir.Op) : Build String := do
   let name ← match dest with
     | some name => pure name
     | none => do
@@ -62,20 +62,20 @@ private def emit (dest : Option String) (op : Mlir.Op) : Build String := do
   modify fun s => { s with body := s.body.push ([name], op) }
   return name
 
-private def named (dest : Option String) (value : String) : Build String := do
+def named (dest : Option String) (value : String) : Build String := do
   if let some name := dest then
     modify fun s => { s with aliases := s.aliases.insert name value }
   return value
 
 /-! Source order permits forward references. Resolve aliases after all statements are complete.
 The acyclic source graph bounds each chain by the number of aliases. -/
-private def resolve (aliases : Std.HashMap String String) : Nat → String → String
+def resolve (aliases : Std.HashMap String String) : Nat → String → String
   | 0, value => value
   | fuel + 1, value => match aliases[value]? with
     | none => value
     | some next => resolve aliases fuel next
 
-private def substitute (value : String → String) : Mlir.Op → Mlir.Op
+def substitute (value : String → String) : Mlir.Op → Mlir.Op
   | .constant w n => .constant w n
   | .comb op a b w => .comb op (value a) (value b) w
   | .icmp p a b w => .icmp p (value a) (value b) w
@@ -90,18 +90,18 @@ private def substitute (value : String → String) : Mlir.Op → Mlir.Op
   | .instance inst callee args results =>
     .instance inst callee (args.map fun (pin, v, ty) => (pin, value v, ty)) results
 
-private def inRange (depth : Nat) (addr : String) : Build (Option String) := do
+def inRange (depth : Nat) (addr : String) : Build (Option String) := do
   let a := Typed.addressWidth depth
   if depth == 2 ^ a then return none
   let bound ← emit none (.constant a depth)
   return some (← emit none (.icmp .ult addr bound a))
 
-private def valueName (registers : List String) : Deps.Node → String
+def valueName (registers : List String) : Deps.Node → String
   | .name n => if registers.contains n then s!"silicon_reg_{n}" else n
   | .port inst p => s!"{inst}.{p}"
 
 /-! Reserve a read port before its address walk, even when the address reads memory. -/
-private def expr (registers : List String) : {ty : Ty} → Typed.Expr ctx ty →
+def expr (registers : List String) : {ty : Ty} → Typed.Expr ctx ty →
     Option String → Build String
   | _, .ref _ node _, dest => named dest (valueName registers node)
   | _, .clock _ name _, _ => pure name
@@ -145,7 +145,7 @@ private def expr (registers : List String) : {ty : Ty} → Typed.Expr ctx ty →
       let zero ← emit none (.constant w 0)
       emit dest (.mux ok data zero (.int w))
 
-private def statement (registers : List String) : Typed.Stmt ctx ports → Build Unit
+def statement (registers : List String) : Typed.Stmt ctx ports → Build Unit
   | .let_ _ name _ e | .assign _ name _ _ e => do
     let _ ← expr registers e (some name)
   | .reg _ name _ _ reset => do
@@ -177,13 +177,12 @@ private def statement (registers : List String) : Typed.Stmt ctx ports → Build
     let names := results.map fun p => s!"{name}.{p.1}"
     modify fun s => { s with body := s.body.push (names, .instance name child args results) }
 
-private def memories (m : Typed.Module) : Build (List MemConfig) := do
-  let mut configs := []
-  for eq in m.body do
-    match eq with
+def memoryEntries (m : Typed.Module) (s : State) :
+    List ((List String × Mlir.Op) × MemConfig) :=
+  m.body.filterMap fun eq => match eq with
     | .mem _ _ name w depth clk _ _ =>
-      let reads := ((← get).reads.filter (·.memory == name)).mergeSort (·.index ≤ ·.index)
-      let writes := ((← get).writes.filter (·.memory == name)).mergeSort (·.index ≤ ·.index)
+      let reads := (s.reads.filter (·.memory == name)).mergeSort (·.index ≤ ·.index)
+      let writes := (s.writes.filter (·.memory == name)).mergeSort (·.index ≤ ·.index)
       let config : MemConfig := ⟨depth, w, reads.length, writes.length⟩
       let a := Mlir.Ty.int (Typed.addressWidth depth)
       let args := [("clk", clk, Mlir.Ty.clock)] ++
@@ -193,38 +192,47 @@ private def memories (m : Typed.Module) : Build (List MemConfig) := do
            (s!"w{wr.index}_en", wr.enable, .int 1)])
       let results := reads.map fun r => (s!"r{r.index}_data", Mlir.Ty.int w)
       let names := reads.map fun r => s!"{name}.r{r.index}_data"
-      modify fun s => { s with
-        body := s.body.push (names, .instance name config.moduleName args results) }
-      configs := config :: configs
-    | _ => pure ()
-  return configs
-
-/-! Saved indices restore statement order from typed equations. -/
-private def module (m : Typed.Module) : Mlir.Module × List MemConfig := Id.run do
-  let registers := m.body.filterMap fun eq => match eq with
-    | .reg _ _ name _ _ _ _ _ _ _ => some name
+      some ((names, .instance name config.moduleName args results), config)
     | _ => none
-  let statements := ((m.body.flatMap Typed.Equation.parts).mergeSort (·.1 ≤ ·.1)).map Prod.snd
-  let build : Build (List MemConfig) := do
-    for stmt in statements do statement registers stmt
-    memories m
-  let (configs, state) := build.run {}
-  let regs := m.body.filterMap fun eq => match eq with
+
+def memories (m : Typed.Module) : Build (List MemConfig) := do
+  let entries := memoryEntries m (← get)
+  modify fun s => { s with body := s.body ++ (entries.map Prod.fst).toArray }
+  return (entries.map Prod.snd).reverse
+
+def registerEntries (m : Typed.Module) (state : State) : List (List String × Mlir.Op) :=
+  m.body.filterMap fun eq => match eq with
     | .reg _ _ name w clk _ _ _ _ _ => do
       let next ← state.nexts.lookup name
       let reset := (state.resets.lookup name).getD none
       some ([s!"silicon_reg_{name}"], Mlir.Op.compreg next clk reset (.int w))
     | _ => none
+
+def registers (m : Typed.Module) : List String :=
+  m.body.filterMap fun eq => match eq with
+    | .reg _ _ name _ _ _ _ _ _ _ => some name
+    | _ => none
+
+/-! Saved indices restore statement order from typed equations. -/
+def statements (m : Typed.Module) : List (Typed.Stmt m.ctx m.interfaces) :=
+  ((m.body.flatMap Typed.Equation.parts).mergeSort (·.1 ≤ ·.1)).map Prod.snd
+
+def statementState (m : Typed.Module) : State :=
+  ((do for stmt in statements m do statement (registers m) stmt) {}).2
+
+def module (m : Typed.Module) : Mlir.Module × List MemConfig := Id.run do
+  let (configs, state) := memories m (statementState m)
+  let regs := registerEntries m state
   let value := resolve state.aliases state.aliases.size
   let body := (state.body.toList ++ regs).map fun (names, op) => (names, substitute value op)
   let outputs := m.ports.filterMap fun p =>
     if p.dir == .output then some (value p.name) else none
   return (⟨m.name, m.ports.map port, body, outputs⟩, configs)
 
-private def uniqueConfigs (configs : List MemConfig) : List MemConfig :=
+def uniqueConfigs (configs : List MemConfig) : List MemConfig :=
   configs.eraseDups.mergeSort (fun a b => a.moduleName ≤ b.moduleName)
 
-private def itemName : Mlir.Item → String
+def itemName : Mlir.Item → String
   | .module m => m.name
   | .extern name _ => name
 
