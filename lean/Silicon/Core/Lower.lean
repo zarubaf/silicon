@@ -1,4 +1,5 @@
 import Silicon.Core.MemModel
+import Std.Data.HashMap
 
 /-!
 Reference lowering maps a typed design to the MLIR subset.
@@ -40,7 +41,7 @@ private structure WritePort where
   enable : String
 
 private structure State where
-  aliases : List (String × String) := []
+  aliases : Std.HashMap String String := {}
   nextTemp : Nat := 0
   body : Array (List String × Mlir.Op) := #[]
   readCounts : List (String × Nat) := []
@@ -63,14 +64,14 @@ private def emit (dest : Option String) (op : Mlir.Op) : Build String := do
 
 private def named (dest : Option String) (value : String) : Build String := do
   if let some name := dest then
-    modify fun s => { s with aliases := (name, value) :: s.aliases }
+    modify fun s => { s with aliases := s.aliases.insert name value }
   return value
 
 /-! Source order permits forward references. Resolve aliases after all statements are complete.
 The acyclic source graph bounds each chain by the number of aliases. -/
-private def resolve (aliases : List (String × String)) : Nat → String → String
+private def resolve (aliases : Std.HashMap String String) : Nat → String → String
   | 0, value => value
-  | fuel + 1, value => match aliases.lookup value with
+  | fuel + 1, value => match aliases[value]? with
     | none => value
     | some next => resolve aliases fuel next
 
@@ -214,7 +215,7 @@ private def module (m : Typed.Module) : Mlir.Module × List MemConfig := Id.run 
       let reset := (state.resets.lookup name).getD none
       some ([s!"silicon_reg_{name}"], Mlir.Op.compreg next clk reset (.int w))
     | _ => none
-  let value := resolve state.aliases state.aliases.length
+  let value := resolve state.aliases state.aliases.size
   let body := (state.body.toList ++ regs).map fun (names, op) => (names, substitute value op)
   let outputs := m.ports.filterMap fun p =>
     if p.dir == .output then some (value p.name) else none

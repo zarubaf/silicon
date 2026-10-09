@@ -36,6 +36,15 @@ def evalPred (pred : Pred) (a b : Value width) : Value 1 :=
   | .sgt => b.slt a
   | .sge => b.sle a
 
+/-! These operations also serve consumers with explicit runtime widths. -/
+def evalConcat (a : Value wa) (b : Value wb) : Value (wa + wb) := a.append b
+
+def evalExtract (a : Value w) (lo count : Nat) : Value count := a.extractLsb' lo count
+
+def evalReplicate (a : Value w) (count : Nat) : Value (w * count) := a.replicate count
+
+def evalMux (c : Value 1) (yes no : α) : α := if c = 1 then yes else no
+
 /-! A read outside the finite memory returns zero. -/
 def memoryRead (memory : Fin depth → Value width) (address : Nat) : Value width :=
   if h : address < depth then memory ⟨address, h⟩ else 0

@@ -28,14 +28,14 @@ def evalExpr (values : Valuation ctx) (memories : Memories ctx) :
   | .un _ .not arg => ~~~(evalExpr values memories arg)
   | .bin _ op ordinary lhs rhs =>
     evalOp op ordinary (evalExpr values memories lhs) (evalExpr values memories rhs)
-  | .concat _ lhs rhs _ => (evalExpr values memories lhs).append (evalExpr values memories rhs)
+  | .concat _ lhs rhs _ => evalConcat (evalExpr values memories lhs) (evalExpr values memories rhs)
   | .icmp _ pred lhs rhs =>
     evalPred pred (evalExpr values memories lhs) (evalExpr values memories rhs)
   | .mux _ cond yes no =>
-    if evalExpr values memories cond = 1 then evalExpr values memories yes
-    else evalExpr values memories no
-  | .extract _ arg lo count _ => (evalExpr values memories arg).extractLsb' lo count
-  | .replicate _ arg count _ => (evalExpr values memories arg).replicate count
+    evalMux (evalExpr values memories cond) (evalExpr values memories yes)
+      (evalExpr values memories no)
+  | .extract _ arg lo count _ => evalExtract (evalExpr values memories arg) lo count
+  | .replicate _ arg count _ => evalReplicate (evalExpr values memories arg) count
   | .read _ name found addr => memoryRead (memories name _ _ found)
       (evalExpr values memories addr).toNat
 
