@@ -10,8 +10,8 @@ Each layer has one oracle. An oracle is a tool or a model that can say "wrong" m
 | `lean/`                              | The Lean kernel, with warnings as errors. `xtask` rejects `sorry`, new `axiom`, and `native_decide` outside the allowlist. | `just lean`, `cargo xtask check` |
 | Checker and interpreter against Lean | The shared `tests/check` and `tests/run` files run with `silicon` and with `silicon-check`                                 | `just lean-check`, in `just ci`  |
 | Compiler against Lean                | Translation validation (build step 2)                                                                                      | Not in `just ci` yet             |
-| Implementations together             | The differential tests: random designs through the Lean interpreter, `silicon run`, and `arcilator`                        | `just diff`                      |
-| Emitted Verilog                      | LEC with `circt-lec` or Yosys equivalence                                                                                  | Not in `just ci` yet             |
+| Implementations together             | The differential tests: random designs through the Lean interpreter, `silicon run`, and `arcilator`                        | `just diff`, in `just ci`        |
+| Emitted Verilog                      | LEC with `circt-lec` against the Lean reference MLIR                                                                       | `just lec`, in `just ci`         |
 
 ## Rust crates
 
@@ -25,12 +25,15 @@ Each layer has one oracle. An oracle is a tool or a model that can say "wrong" m
 - `lake -d lean build --wfail` treats warnings as errors.
 - `cargo xtask check` rejects `sorry`, a new `axiom`, and `native_decide` outside `lean/allowlist.toml`.
 
+## LEC
+
+`just lec` runs `circt-lec` on each file of `tests/corpus/`. It compares the emitted Verilog and the Rust MLIR with the Lean reference MLIR. It also compares each Rust memory model with the Lean memory model. [The core IR spec](../design/2026-10-08-core-ir.md), section 8.1, gives the flow. Run it in the development shell.
+
 ## Later oracles
 
-Fuzzing, translation validation, and LEC join `just ci` in build step 2, when their oracles exist. LEC needs the CIRCT backend, which comes in build step 3. See [the build order](../architecture.md).
+Fuzzing and translation validation join `just ci` in build step 2, when their oracles exist. See [the build order](../architecture.md).
 
 - Translation validation: each compiler run emits the core IR as a `.sil` file. The Lean checker `silicon-check` confirms it.
-- LEC: `circt-lec` or the Yosys equivalence tools compare the emitted Verilog with the core IR.
 
 The designs for LEC and the differential tests live in `tests/corpus/`.
 
