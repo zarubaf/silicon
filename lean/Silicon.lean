@@ -35,9 +35,11 @@ import Silicon.Core.Mlir.Print
 import Silicon.Core.Mlir.Semantics
 import Silicon.Core.Mlir.WellFormed
 import Silicon.Core.MemModel
+import Silicon.Core.Proof.MemModel
 import Silicon.Core.Lower
 import Silicon.Core.Test.Mlir
 import Silicon.Core.Test.MemModel
+import Silicon.Core.Test.MemModelCorrect
 import Silicon.Core.Test.Lower
 import Silicon.Core.Test.MlirSemantics
 import Silicon.Core.Vectors
