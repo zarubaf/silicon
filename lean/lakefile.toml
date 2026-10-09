@@ -1,5 +1,5 @@
 name = "silicon"
-defaultTargets = ["Silicon"]
+defaultTargets = ["Silicon", "silicon-check"]
 
 [leanOptions]
 warningAsError = true
@@ -7,3 +7,7 @@ warningAsError = true
 [[lean_lib]]
 name = "Silicon"
 globs = ["Silicon.*"]
+
+[[lean_exe]]
+name = "silicon-check"
+root = "Silicon.Core.Main"

@@ -24,3 +24,5 @@ Lean has no dependencies on `crates/`.
 ## How to test
 
 Run `just check` from the repository root.
+
+Run `lake -d lean exe silicon-check check FILE` to check a design.
