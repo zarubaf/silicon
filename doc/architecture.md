@@ -83,7 +83,7 @@ Three methods check the Lean model against SystemVerilog, for example legacy IP 
 - Cargo builds the Rust workspace. Lake builds the Lean project in `lean/`.
 - A Nix flake pins the toolchain. See [ADR 0008](adr/0008-nix-pins-toolchain.md).
 - The `justfile` is the only entry point.
-- The project plans the recipes `just fuzz`, `just lec`, and `just spec`. They do not exist yet.
+- The project plans the recipes `just fuzz` and `just spec`. They do not exist yet.
 - The project uses no Bazel for now. Revisit this choice only if builds stay slow with caching.
 
 ## Build order
