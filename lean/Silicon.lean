@@ -94,6 +94,7 @@ import Silicon.Core.Test.MemModel
 import Silicon.Core.Test.MemModelCorrect
 import Silicon.Core.Test.Lower
 import Silicon.Core.Test.MlirSemantics
+import Silicon.Core.Test.LowerCorrect
 import Silicon.Core.Vectors
 import Silicon.Core.Main
 import Silicon.Core.Test.Vectors
