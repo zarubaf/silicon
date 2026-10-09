@@ -8,6 +8,12 @@ namespace Silicon.Core.Semantics
 
 abbrev Value (width : Nat) := BitVec width
 
+/-!
+A shift of the width or more gives the same result as a shift of the width.
+The bound keeps the compiled shift small, because a large `Nat` shift stops the runtime.
+-/
+def shiftAmount (b : Value width) : Nat := min b.toNat width
+
 /-! Concatenation has its own typed form because its result has a different width. -/
 def evalOp (op : BinOp) (ordinary : op ≠ .concat) (a b : Value width) : Value width :=
   match op with
@@ -17,10 +23,32 @@ def evalOp (op : BinOp) (ordinary : op ≠ .concat) (a b : Value width) : Value 
   | .and => a &&& b
   | .or => a ||| b
   | .xor => a ^^^ b
-  | .shl => a <<< b.toNat
-  | .shru => a >>> b.toNat
-  | .shrs => a.sshiftRight b.toNat
+  | .shl => a <<< shiftAmount b
+  | .shru => a >>> shiftAmount b
+  | .shrs => a.sshiftRight (shiftAmount b)
   | .concat => False.elim (ordinary rfl)
+
+/-! The bounded shifts are equal to the shifts by the full amount. -/
+theorem evalOp_shl (ordinary : BinOp.shl ≠ .concat) (a b : Value width) :
+    evalOp .shl ordinary a b = a <<< b.toNat := by
+  rcases Nat.le_total b.toNat width with h | h
+  · simp [evalOp, shiftAmount, Nat.min_eq_left h]
+  · simp [evalOp, shiftAmount, Nat.min_eq_right h, BitVec.shiftLeft_eq_zero h]
+
+theorem evalOp_shru (ordinary : BinOp.shru ≠ .concat) (a b : Value width) :
+    evalOp .shru ordinary a b = a >>> b.toNat := by
+  rcases Nat.le_total b.toNat width with h | h
+  · simp [evalOp, shiftAmount, Nat.min_eq_left h]
+  · simp [evalOp, shiftAmount, Nat.min_eq_right h, BitVec.ushiftRight_eq_zero h,
+      BitVec.ushiftRight_eq_zero (Nat.le_refl width)]
+
+theorem evalOp_shrs (ordinary : BinOp.shrs ≠ .concat) (a b : Value width) :
+    evalOp .shrs ordinary a b = a.sshiftRight b.toNat := by
+  rcases Nat.le_total b.toNat width with h | h
+  · simp [evalOp, shiftAmount, Nat.min_eq_left h]
+  · ext i hi
+    simp [evalOp, shiftAmount, Nat.min_eq_right h, BitVec.getElem_sshiftRight,
+      show ¬width + i < width by omega, show ¬b.toNat + i < width by omega]
 
 /-! Comparisons return one bit. Signed comparisons use two's complement values. -/
 def evalPred (pred : Pred) (a b : Value width) : Value 1 :=
