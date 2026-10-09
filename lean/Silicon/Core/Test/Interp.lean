@@ -185,6 +185,56 @@ private def handshakeHierarchy (depth : Nat) (registers : Bool) : String :=
 #guard runText (handshakeHierarchy 8 true) [[("x", 3), ("ack", 1)],
   [("x", 5), ("ack", 0)]] == some [[3, 1, 0], [5, 0, 768]]
 
+/-! Packed parent outputs retain every value without a wide checker interface. -/
+private def packExpr : List String → String
+  | [] => "(const 32 0)"
+  | [name] => name
+  | first :: second :: rest =>
+    let names := first :: second :: rest
+    let half := names.length / 2
+    "(concat " ++ packExpr (names.take half) ++ " " ++ packExpr (names.drop half) ++ ")"
+termination_by names => names.length
+decreasing_by all_goals simp_wf; omega
+
+private def packValues (values : List Nat) : Nat :=
+  values.foldl (fun packed value => packed * 2^32 + value) 0
+
+/-! Each child read makes the next connection available in the same cycle. -/
+private def zipper (count : Nat) : String :=
+  let inputs := String.join ((List.range count).map fun i => s!"(input a{i} (bits 32))")
+  let outputs := String.join ((List.range count).map fun i => s!"(output o{i} (bits 32))")
+  let assigns := String.join ((List.range count).map fun i => s!"(assign o{i} a{i})")
+  let connections := String.join ((List.range count).map fun i =>
+    s!"(a{i} " ++ (if i == 0 then "a0" else s!"(add c.o{i-1} a{i})") ++ ")")
+  "(design top (module child " ++ inputs ++ outputs ++ assigns ++ ")" ++
+    "(module top " ++ inputs ++ s!"(output packed (bits {32 * count}))" ++
+    "(inst c child " ++ connections ++ ")" ++
+    String.join ((List.range count).map fun i => s!"(let o{i} (bits 32) c.o{i})") ++
+    "(assign packed " ++ packExpr ((List.range count).map fun i => s!"o{i}") ++ ")))"
+
+#guard runText (zipper 128)
+  [(List.range 128).map (fun i => (s!"a{i}", 1)),
+    (List.range 128).map (fun i => (s!"a{i}", 2))] ==
+      some [[packValues ((List.range 128).map (· + 1))],
+        [packValues ((List.range 128).map (fun i => 2 * (i + 1)))]]
+
+/-! Siblings share a module but keep distinct state. -/
+private def siblings (count : Nat) : String :=
+  "(design top (module child (input clk clock) (input x (bits 32))" ++
+    "(output y (bits 32)) (output q (bits 32))" ++
+    "(reg r (bits 32) clk) (next r x) (assign y x) (assign q r))" ++
+    "(module top (input clk clock) (input x (bits 32))" ++
+    s!"(output y (bits {32 * count})) (output q (bits {32 * count}))" ++
+    String.join ((List.range count).map fun i =>
+      s!"(inst c{i} child (clk clk) (x (add x (const 32 {i}))))" ++
+      s!"(let y{i} (bits 32) c{i}.y) (let q{i} (bits 32) c{i}.q)") ++
+    "(assign y " ++ packExpr ((List.range count).map fun i => s!"y{i}") ++ ")" ++
+    "(assign q " ++ packExpr ((List.range count).map fun i => s!"q{i}") ++ ")))"
+
+#guard runText (siblings 50) [[("x", 3)], [("x", 5)]] ==
+  some [[packValues ((List.range 50).map (3 + ·)), 0],
+    [packValues ((List.range 50).map (5 + ·)), packValues ((List.range 50).map (3 + ·))]]
+
 end Silicon.Core.Test.Interp
 
 /-! The counter proofs use its typed equations to avoid reduction through the parser. -/

@@ -17,10 +17,12 @@ def withOrderedChildren (d : CertifiedDesign) (env : Env d.design)
     (evaluate : (children : Children m) → Runners m children →
       LocalState m children → Result children)
     (state : State d env m hm) : Result (designChildren d env m hm) :=
-  let children := orderedChildren d env m hm
-  let same := orderedChildren_eq d env m hm
+  let plans := prepareModules d (moduleLevel d.design.erase d.wellFormed m.name)
+  let children := orderedChildren d env m hm plans
+  let same := orderedChildren_eq d env m hm plans
   cast (congrArg Result same)
-    (evaluate children (orderedRunners d env m hm) (cast (congrArg (LocalState m) same.symm) state))
+    (evaluate children (orderedRunners d env m hm plans)
+      (cast (congrArg (LocalState m) same.symm) state))
 
 theorem withOrderedChildren_eq (d : CertifiedDesign) (env : Env d.design)
     (m : Typed.Module) (hm : m ∈ d.design.bodies) (Result : Children m → Type)
@@ -29,8 +31,10 @@ theorem withOrderedChildren_eq (d : CertifiedDesign) (env : Env d.design)
     (state : State d env m hm) :
     withOrderedChildren d env m hm Result evaluate state =
       evaluate (designChildren d env m hm)
-        (cast (congrArg (Runners m) (orderedChildren_eq d env m hm))
-          (orderedRunners d env m hm)) state := by
+        (cast (congrArg (Runners m) (orderedChildren_eq d env m hm
+          (prepareModules d (moduleLevel d.design.erase d.wellFormed m.name))))
+          (orderedRunners d env m hm
+            (prepareModules d (moduleLevel d.design.erase d.wellFormed m.name)))) state := by
   have transport (children : Children m) (same : children = designChildren d env m hm)
       (runners : Runners m children) :
       cast (congrArg Result same)
@@ -39,7 +43,8 @@ theorem withOrderedChildren_eq (d : CertifiedDesign) (env : Env d.design)
             state := by
     cases same
     rfl
-  exact transport _ (orderedChildren_eq d env m hm) (orderedRunners d env m hm)
+  exact transport _ (orderedChildren_eq d env m hm _)
+    (orderedRunners d env m hm _)
 
 def solve (d : CertifiedDesign) (env : Env d.design)
     (m : Typed.Module) (hm : m ∈ d.design.bodies) (state : State d env m hm)
@@ -100,13 +105,43 @@ decreasing_by
       child childMem
 
 /-! A run records current outputs before it uses the next state. -/
-def run (d : CertifiedDesign) (env : Env d.design)
-    (m : Typed.Module) (hm : m ∈ d.design.bodies) :
-    State d env m hm → List (Input m) → List (Output m)
+def runCycles {σ ι ο : Type} (tick : σ → ι → σ × ο) : σ → List ι → List ο
   | _, [] => []
   | state, input :: rest =>
-    let result := step d env m hm state input
-    result.2 :: run d env m hm result.1 rest
+    let result := tick state input
+    result.2 :: runCycles tick result.1 rest
+
+def run (d : CertifiedDesign) (env : Env d.design)
+    (m : Typed.Module) (hm : m ∈ d.design.bodies)
+    (state : State d env m hm) (inputs : List (Input m)) : List (Output m) :=
+  let prepared := prepareValues d m hm (Deps.graph m.erase m.children) rfl
+  withOrderedChildren d env m hm (fun _ => List (Output m))
+    (fun children runners state =>
+      runCycles (fun state input =>
+        (finishCache d m hm children runners prepared state input
+          (emptyCache d m hm children runners state input)).val) state inputs) state
+
+theorem run_eq_cycles (d : CertifiedDesign) (env : Env d.design)
+    (m : Typed.Module) (hm : m ∈ d.design.bodies)
+    (state : State d env m hm) (inputs : List (Input m)) :
+    run d env m hm state inputs = runCycles (step d env m hm) state inputs := by
+  rw [run, withOrderedChildren_eq]
+  apply congrArg (fun tick => runCycles tick state inputs)
+  funext state input
+  rw [(finishCache d m hm _ _ _ state input _).property]
+  exact ((step_eq_values d env m hm state input).trans
+    (congrArg (stepWithValues d env m hm state) (solve_eq_solution d env m hm state input))).symm
+
+theorem run_nil (d : CertifiedDesign) (env : Env d.design)
+    (m : Typed.Module) (hm : m ∈ d.design.bodies) (state : State d env m hm) :
+    run d env m hm state [] = [] := by rw [run_eq_cycles]; rfl
+
+theorem run_cons (d : CertifiedDesign) (env : Env d.design)
+    (m : Typed.Module) (hm : m ∈ d.design.bodies) (state : State d env m hm)
+    (input : Input m) (rest : List (Input m)) :
+    run d env m hm state (input :: rest) =
+      (step d env m hm state input).2 :: run d env m hm (step d env m hm state input).1 rest := by
+  simp only [run_eq_cycles, runCycles]
 
 end Interp
 

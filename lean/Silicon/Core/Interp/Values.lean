@@ -67,35 +67,4 @@ def indexedDriver (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.
     obtain ⟨v⟩ := valueDriver_exists d.design d.wellFormed m hm ref.node ref.width ref.found
     exact complete _ _ v)
 
-theorem indexedDriver_eq (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)
-    (table : DriverTable m) (complete : ∀ node width (_v : ValueDriver m node width),
-      (table.get? (node, width)).isSome) (ref : ValueRef m.ctx) :
-    indexedDriver d m hm table complete ref =
-      decodeValue d.design d.wellFormed m hm ref.node ref.width ref.found :=
-  ValueDriver.unique d.design d.wellFormed m hm _ _
-
-/-! One preparation supplies the ordered nodes and their driver index. -/
-structure Prepared (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies) where
-  nodes : List (ValueRef m.ctx)
-  complete : ∀ ref, ref ∈ nodes
-  sorted : nodes.Pairwise (fun a b => valueRank m a.node ≤ valueRank m b.node)
-  drivers : DriverTable m
-  total : ∀ node width (_v : ValueDriver m node width), (drivers.get? (node, width)).isSome
-
-def prepare (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies) :
-    Prepared d m hm :=
-  let active := (Deps.graph m.erase m.children).map Prod.fst
-  let ranks := indexed (fun ref : ValueRef m.ctx => valueRankWith m.ranks active ref.node)
-    (valueRefs m.ctx) valueRefs_complete
-  { nodes := (valueRefs m.ctx).mergeSort (fun a b => ranks.get a ≤ ranks.get b)
-    complete := fun ref => List.mem_mergeSort.mpr (valueRefs_complete ref)
-    sorted := by
-      simp only [Table.get_eq]
-      have sorted := List.pairwise_mergeSort
-        (le := fun a b : ValueRef m.ctx => decide (valueRank m a.node ≤ valueRank m b.node))
-        (by intros; simp_all; omega) (by intros; simp; omega) (valueRefs m.ctx)
-      exact sorted.imp (fun h => of_decide_eq_true h)
-    drivers := driverTable m (drivers m)
-    total := fun _ _ v => driverTable_total m (drivers m) v (driver_mem m v) }
-
 end Silicon.Core.Interp

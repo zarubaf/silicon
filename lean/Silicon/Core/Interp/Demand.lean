@@ -1,7 +1,4 @@
-import Silicon.Core.Interp.Values
-import Silicon.Core.Semantics.Step
-import Silicon.Core.GraphFlood
-import Silicon.Core.GraphIndex
+import Silicon.Core.Interp.Prepared
 
 /-!
 A cache belongs to one instance and one cycle. Its values remain valid as more
@@ -46,53 +43,16 @@ structure Selection (m : Typed.Module) (input target : Input m) where
 def allSelection (m : Typed.Module) (input : Input m) : Selection m input input :=
   ⟨fun _ => true, by simp, by simp⟩
 
-/-! One graph search supplies all membership tests for an output cone. -/
-def reachableNodes (graph : List (Deps.Node × List Deps.Node)) (root : Deps.Node) :
-    {seen : Std.HashSet Deps.Node //
-      ∀ node, seen.contains node = true ↔ GraphReach.Reachable graph root node} := by
-  let nodes := root :: GraphIndex.nodes graph
-  let edges := fun node => (graph.lookup node).getD []
-  let result := GraphFlood.fill edges (nodes.length + 1) root ∅
-  have spec := GraphFlood.fill_spec (g := graph) (nodes := nodes) edges (fun _ => rfl)
-    (fun x _ y edge => List.mem_cons_of_mem _ (GraphIndex.edge_nodes graph x y edge).2)
-    ∅ (by simp) root (List.mem_cons_self ..)
-  refine ⟨result.2, ?_⟩
-  intro node
-  rw [spec.2 node, spec.1 node]
-  simp
-
 def coneSelection (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)
-    (input target : Input m) (port : PortRef m.ports .output)
+    (input target : Input m) (port : PortRef m.ports .output) (cone : PortCone m port)
     (agree : ∀ p, p.val.name ∈ ((Deps.infer m.erase m.children).lookup
       port.val.name).getD [] → input p = target p) : Selection m input target := by
-  let graph := Deps.graph m.erase m.children
-  let active := graph.map Prod.fst ++
-    m.ports.filterMap (fun p => match p.dir, p.ty with
-      | .input, .bits _ => some (Deps.Node.name p.name)
-      | _, _ => none)
-  let reachable := reachableNodes graph (.name port.val.name)
-  let selected := fun node => reachable.val.contains node || !active.contains node
-  have active_eq (node) : node ∈ active ↔ Active m.erase m.children node := by
-    simp only [active, List.mem_append, List.mem_filterMap]
-    constructor
-    · rintro (h | ⟨p, hp, he⟩)
-      · exact Or.inl h
-      · cases hd : p.dir <;> cases ht : p.ty <;> simp [hd, ht] at he
-        next width =>
-          subst node
-          exact Or.inr ⟨p.name, ⟨p, hp, rfl, hd, width, ht⟩, rfl⟩
-    · rintro (h | ⟨name, ⟨p, hp, hn, hd, w, ht⟩, rfl⟩)
-      · exact Or.inl h
-      · exact Or.inr ⟨p, hp, by simp [hd, ht, hn]⟩
-  have selected_eq (node) : selected node = true ↔
-      Cone m.erase m.children (.name port.val.name) node := by
-    simp [selected, reachable.property, Cone, ← active_eq, graph]
-  refine ⟨selected, ?_, ?_⟩
+  refine ⟨cone.contains, ?_, ?_⟩
   · intro node dep selected edge
     obtain ⟨reads, row, read⟩ := edge
-    exact (selected_eq dep).mpr (cone_closed m.erase m.children
+    exact (cone.spec dep).mpr (cone_closed m.erase m.children
       (typed_graph_unique d.design d.wellFormed m hm) _ _ row
-      ((selected_eq node).mp selected) dep read)
+      ((cone.spec node).mp selected) dep read)
   · intro p selected
     by_cases clock : p.val.ty = .clock
     · haveI : Subsingleton (TyValue p.val.ty) := by rw [clock]; infer_instance
@@ -105,17 +65,7 @@ def coneSelection (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.
       apply agree
       simpa [entry] using cone_input_inferred m.erase m.children port.val.name p.val.name
         deps entry (input_port_mem m.erase p.val p.property.1 p.property.2 ht)
-        ((selected_eq _).mp selected)
-
-theorem coneSelection_self (d : CertifiedDesign) (m : Typed.Module)
-    (hm : m ∈ d.design.bodies) (input target : Input m) (port : PortRef m.ports .output)
-    (agree : ∀ p, p.val.name ∈ ((Deps.infer m.erase m.children).lookup
-      port.val.name).getD [] → input p = target p) :
-    (coneSelection d m hm input target port agree).contains (.name port.val.name) = true := by
-  change (_ || _) = true
-  rw [Bool.or_eq_true]
-  exact Or.inl ((reachableNodes _ _).property _ |>.mpr (GraphReach.Reachable.refl _ _))
-
+        ((cone.spec _).mp selected)
 
 /-! A selected driver reads only earlier selected values. -/
 theorem driver_congr (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)

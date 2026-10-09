@@ -25,10 +25,10 @@ theorem run_eq_of_named_step (d d' : CertifiedDesign) (env : Env d.design)
     (Interp.run d env m hm a (inputs.map (inputValues m))).map (outputValues m) =
       (Interp.run d' env' m' hm' b (inputs.map (inputValues m'))).map (outputValues m') := by
   induction inputs generalizing a b with
-  | nil => rfl
+  | nil => simp only [List.map_nil, Interp.run_nil]
   | cons vector rest ih =>
     obtain ⟨outputs, states⟩ := simulate a b same vector
-    simp only [List.map_cons, Interp.run]
+    simp only [List.map_cons, Interp.run_cons]
     rw [outputs, ih _ _ states]
 
 theorem inputValues_heq (m m' : Typed.Module) (ports : m.ports = m'.ports)
@@ -49,24 +49,25 @@ theorem outputValues_eq (m m' : Typed.Module) (ports : m.ports = m'.ports)
 
 end NamedRun
 
+open NamedRun in
 theorem namedRun_reorder (d d' : CertifiedDesign) (order : Reorder d.design.erase d'.design.erase)
     (noExterns : d.design.externs = []) (noExterns' : d'.design.externs = [])
     (inputs : List (List (String × Nat))) : namedRun d inputs noExterns =
       namedRun d' inputs noExterns' := by
-  let m := NamedRun.top d noExterns
-  let m' := NamedRun.top d' noExterns'
-  have related := NamedRun.top_reorder d d' noExterns noExterns' order
+  let m := top d noExterns
+  let m' := top d' noExterns'
+  have related := top_reorder d d' noExterns noExterns' order
   have ports : m.val.ports = m'.val.ports := related.ports
-  have step := namedStep_reorder d d' (NamedRun.emptyEnv d noExterns)
-    (NamedRun.emptyEnv d' noExterns') noExterns noExterns' order m.val m'.val
+  have step := namedStep_reorder d d' (emptyEnv d noExterns)
+    (emptyEnv d' noExterns') noExterns noExterns' order m.val m'.val
     m.property m'.property related
-  apply NamedRun.run_eq_of_named_step d d' _ _ noExterns noExterns' m.val m'.val
+  apply run_eq_of_named_step d d' _ _ noExterns noExterns' m.val m'.val
     m.property m'.property
   · intro a b same vector
-    have result := step a b same (NamedRun.inputValues m.val vector)
-      (NamedRun.inputValues m'.val vector) (NamedRun.inputValues_heq m.val m'.val ports vector)
-    exact ⟨NamedRun.outputValues_eq m.val m'.val ports _ _ result.1, result.2⟩
-  · exact NamedRun.zero_top_reorder d d' noExterns noExterns' order
+    have result := step a b same (inputValues m.val vector)
+      (inputValues m'.val vector) (inputValues_heq m.val m'.val ports vector)
+    exact ⟨outputValues_eq m.val m'.val ports _ _ result.1, result.2⟩
+  · exact zero_top_reorder d d' noExterns noExterns' order
 
 private theorem check_externs (d : Design) (t : Typed.Design) (h : check d = .ok t) :
     t.externs = d.items.filterMap (fun i => match i with

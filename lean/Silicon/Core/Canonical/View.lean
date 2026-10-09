@@ -5,7 +5,6 @@ namespace Silicon.Core
 
 open Semantics
 
-
 namespace NamedRun
 
 theorem top_found (d : CertifiedDesign) (noExterns : d.design.externs = []) :

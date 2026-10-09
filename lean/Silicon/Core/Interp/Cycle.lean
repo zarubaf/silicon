@@ -20,7 +20,28 @@ def CachedChild (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bo
 
 abbrev ChildCache (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)
     (children : Children m) (runners : Runners m children) (state : LocalState m children)
-    (target : Input m) := (e : EquationRef m) → CachedChild d m hm children runners state target e
+    (target : Input m) :=
+  @Std.DHashMap (EquationRef m) (CachedChild d m hm children runners state target)
+    ⟨fun a b => equationName a.val == equationName b.val⟩
+    ⟨fun e => hash (equationName e.val)⟩
+
+def ChildCache.get (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)
+    (children : Children m) (runners : Runners m children) (state : LocalState m children)
+    (target : Input m) (cache : ChildCache d m hm children runners state target)
+    (e : EquationRef m) : CachedChild d m hm children runners state target e := by
+  letI : BEq (EquationRef m) := ⟨fun a b => equationName a.val == equationName b.val⟩
+  letI : LawfulBEq (EquationRef m) := {
+    eq_of_beq := fun {a b} same => Subtype.ext
+      (equation_unique d.design d.wellFormed m hm _ _ a.property b.property
+        (eq_of_beq same))
+    rfl := by intro a; exact beq_self_eq_true (equationName a.val) }
+  exact match cache.get? e with
+  | some value => value
+  | none => match e with
+    | ⟨.inst i p n child inputs, member⟩ =>
+      let e : EquationRef m := ⟨.inst i p n child inputs, member⟩
+      (runners e).empty (state e) (finalConnections d m hm children state target e)
+    | ⟨.let_ .., _⟩ | ⟨.reg .., _⟩ | ⟨.mem .., _⟩ | ⟨.assign .., _⟩ => ()
 
 structure CycleCache (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)
     (children : Children m) (runners : Runners m children) (state : LocalState m children)
@@ -35,22 +56,7 @@ def emptyCache (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bod
     (target : Input m) : CycleCache d m hm children runners state target where
   values := ∅
   valid := by simp
-  children := fun e => match e with
-    | ⟨.inst i p n child inputs, member⟩ =>
-      let e : EquationRef m := ⟨.inst i p n child inputs, member⟩
-      (runners e).empty (state e) (finalConnections d m hm children state target e)
-    | ⟨.let_ .., _⟩ | ⟨.reg .., _⟩ | ⟨.mem .., _⟩ | ⟨.assign .., _⟩ => ()
-
-def updateChild (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)
-    (children : Children m) (runners : Runners m children) (state : LocalState m children)
-    (target : Input m) (cache : ChildCache d m hm children runners state target)
-    (e : EquationRef m) (value : CachedChild d m hm children runners state target e) :
-    ChildCache d m hm children runners state target :=
-  fun other => if same : equationName e.val = equationName other.val then
-    have eq : e = other := Subtype.ext
-      (equation_unique d.design d.wellFormed m hm e.val other.val e.property other.property same)
-    eq ▸ value
-  else cache other
+  children := ∅
 
 /-! Only a missing value invokes a driver or a child output request. -/
 def evalMissing (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)
@@ -80,9 +86,10 @@ def evalMissing (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bo
         apply connectionValues_congr
         intro dep read width found
         exact ready dep width found (instance_read_row d m hm i p n child inputs member
-          ⟨port, portMember, dir⟩ input dependency dep read)) (cache.children e)
+          ⟨port, portMember, dir⟩ input dependency dep read))
+      (ChildCache.get d m hm children runners state target cache.children e)
     exact ⟨(cast (congrArg TyValue bits) result.val.1,
-      updateChild d m hm children runners state target cache.children e result.val.2), by
+      cache.children.insert e result.val.2), by
         rw [result.property]
         exact solved.symm⟩
   | _ => exact ⟨(_, cache.children), correct.trans solved.symm⟩
@@ -91,7 +98,7 @@ def evalMissing (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bo
 def visitNode (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)
     (children : Children m) (runners : Runners m children) (state : LocalState m children)
     (input : Input m) {target : Input m} (selection : Selection m input target)
-    (prepared : Prepared d m hm) (cache : CycleCache d m hm children runners state target)
+    (prepared : OrderedValues d m hm) (cache : CycleCache d m hm children runners state target)
     (ref : ValueRef m.ctx)
     (ready : selection.contains ref.node = true → ∀ dep width found,
       ValueEdge m ref.node dep → cache.values.getD ⟨dep, width, found⟩ 0 =
@@ -135,7 +142,7 @@ def visitNode (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodi
 def fillNodes (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)
     (children : Children m) (runners : Runners m children) (state : LocalState m children)
     (input : Input m) {target : Input m} (selection : Selection m input target)
-    (prepared : Prepared d m hm) (nodes : List (ValueRef m.ctx))
+    (prepared : OrderedValues d m hm) (nodes : List (ValueRef m.ctx))
     (sorted : nodes.Pairwise (fun a b => valueRank m a.node ≤ valueRank m b.node))
     (cache : CycleCache d m hm children runners state target)
     (ready : ∀ r, selection.contains r.node = true → r ∉ nodes → cache.values.get? r =
@@ -175,8 +182,21 @@ termination_by nodes
 def fillCache (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)
     (children : Children m) (runners : Runners m children) (state : LocalState m children)
     (input : Input m) {target : Input m} (selection : Selection m input target)
-    (prepared : Prepared d m hm) (cache : CycleCache d m hm children runners state target) :=
+    (prepared : OrderedValues d m hm) (cache : CycleCache d m hm children runners state target) :=
   fillNodes d m hm children runners state input selection prepared prepared.nodes prepared.sorted
     cache (fun r _ absent => False.elim (absent (prepared.complete r)))
+
+/-! The final pass exposes the same complete valuation to outputs and state updates. -/
+def completeCache (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)
+    (children : Children m) (runners : Runners m children) (prepared : OrderedValues d m hm)
+    (state : LocalState m children) (input : Input m)
+    (cache : CycleCache d m hm children runners state input) :
+    {result : Valuation m.ctx × CycleCache d m hm children runners state input //
+      result.1 = localSolution d m hm children state input} := by
+  let filled := fillCache d m hm children runners state input (allSelection m input) prepared cache
+  refine ⟨(curryValues (fun ref => filled.val.values.getD ref 0), filled.val), ?_⟩
+  funext node width found
+  exact (Std.DHashMap.getD_eq_getD_get?).trans
+    (congrArg (fun x => x.getD 0) (filled.property ⟨node, width, found⟩ rfl))
 
 end Silicon.Core.Interp

@@ -22,7 +22,8 @@ def nextCached (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bod
       dsimp only [connections]
       rw [same]
       rfl
-    let childCache := cast (congrArg ((runners e).Cache (state e)) eq) (cache e)
+    let childCache := cast (congrArg ((runners e).Cache (state e)) eq)
+      (ChildCache.get d m hm children runners state input cache e)
     let result := (runners e).finish (state e) (connections e) childCache
     exact ⟨result.val.1, congrArg Prod.fst result.property⟩
   | reg _ _ _ _ _ _ reset _ _ next =>
@@ -43,22 +44,19 @@ private def equationDecEq (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d
       rfl)
 
 def finishCache (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)
-    (children : Children m) (runners : Runners m children) (prepared : Prepared d m hm)
+    (children : Children m) (runners : Runners m children) (prepared : OrderedValues d m hm)
     (state : LocalState m children) (input : Input m)
     (cache : CycleCache d m hm children runners state input) :
     {result : LocalState m children × Output m // result =
       localStepWithValues d m hm children state (localSolution d m hm children state input)} := by
-  let filled := fillCache d m hm children runners state input (allSelection m input) prepared cache
-  let values := curryValues (fun ref => filled.val.values.getD ref 0)
-  have same : values = localSolution d m hm children state input := by
-    funext node width found
-    exact (Std.DHashMap.getD_eq_getD_get?).trans
-      (congrArg (fun x => x.getD 0) (filled.property ⟨node, width, found⟩ rfl))
+  let filled := completeCache d m hm children runners prepared state input cache
+  let values := filled.val.1
+  have same : values = localSolution d m hm children state input := filled.property
   letI := equationDecEq d m hm
   letI : Hashable (EquationRef m) := ⟨fun e => hash (equationName e.val)⟩
   let next := indexed
     (fun e =>
-      (nextCached d m hm children runners state input values same filled.val.children e).val)
+      (nextCached d m hm children runners state input values same filled.val.2.children e).val)
     m.body.attach (fun e => List.mem_attach _ e)
   refine ⟨(next.get, outputValues d m hm values), ?_⟩
   apply Prod.ext
@@ -66,7 +64,7 @@ def finishCache (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bo
     rw [Table.get_eq]
     funext e
     exact (nextCached d m hm children runners state input values same
-      filled.val.children e).property
+      filled.val.2.children e).property
       |>.trans (by rw [same])
   · change outputValues d m hm values = _
     rw [same]
@@ -74,14 +72,16 @@ def finishCache (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bo
 
 /-! An output request fills only its dependency cone; the final pass fills the rest. -/
 def localEvaluator (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)
-    (children : Children m) (runners : Runners m children) :
+    (children : Children m) (runners : Runners m children) (prepared : Prepared d m hm) :
     Evaluator (localComponent d m hm children) :=
-  let prepared := prepare d m hm
   { Cache := CycleCache d m hm children runners
     empty := emptyCache d m hm children runners
     output := fun state {target} input port agree cache => by
-      let selection := coneSelection d m hm input target port agree
-      let filled := fillCache d m hm children runners state input selection prepared cache
+      let cone := prepared.cones port
+      let selection := coneSelection d m hm input target port cone agree
+      let filled := fillNodes d m hm children runners state input selection prepared.toOrderedValues
+        cone.nodes cone.sorted cache (fun r selected absent =>
+          False.elim (absent (cone.complete r selected)))
       let values := curryValues (fun ref => filled.val.values.getD ref 0)
       refine ⟨(outputValues d m hm values port, filled.val), ?_⟩
       rcases port with ⟨⟨pos, dir, name, ty⟩, member, direction⟩
@@ -89,25 +89,27 @@ def localEvaluator (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design
       | clock => rfl
       | bits width =>
         have selected : selection.contains (.name name) = true := by
-          exact coneSelection_self d m hm input target _ agree
+          exact (cone.spec _).mpr (cone_self m.erase m.children _)
         exact (Std.DHashMap.getD_eq_getD_get?).trans
           (congrArg (fun x => x.getD 0) (filled.property ⟨.name name, width,
             port_found d.design d.wellFormed m hm _ member rfl⟩ selected))
     finish := fun state input cache =>
-      finishCache d m hm children runners prepared state input cache }
+      finishCache d m hm children runners prepared.toOrderedValues state input cache }
 
 def cachedLocalStep (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)
     (children : Children m) (runners : Runners m children) (state : LocalState m children)
     (input : Input m) : LocalState m children × Output m :=
-  let evaluator := localEvaluator d m hm children runners
-  (evaluator.finish state input (evaluator.empty state input)).val
+  (finishCache d m hm children runners
+    (prepareValues d m hm (Deps.graph m.erase m.children) rfl) state input
+    (emptyCache d m hm children runners state input)).val
 
 theorem cachedLocalStep_eq (d : CertifiedDesign) (m : Typed.Module)
     (hm : m ∈ d.design.bodies) (children : Children m) (runners : Runners m children)
     (state : LocalState m children) (input : Input m) :
     cachedLocalStep d m hm children runners state input =
       localStepWithValues d m hm children state (localSolution d m hm children state input) :=
-  ((localEvaluator d m hm children runners).finish state input
-    ((localEvaluator d m hm children runners).empty state input)).property
+  (finishCache d m hm children runners
+    (prepareValues d m hm (Deps.graph m.erase m.children) rfl) state input
+    (emptyCache d m hm children runners state input)).property
 
 end Silicon.Core.Interp
