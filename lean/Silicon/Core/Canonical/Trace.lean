@@ -1,7 +1,6 @@
 import Silicon.Core.Canonical.Step
 
-/-! Canonical order preserves named traces from the all-zero initial state. -/
-/-! A step simulation gives equal named traces for every finite input sequence. -/
+/-! A step simulation preserves named traces from the all-zero initial state. -/
 namespace Silicon.Core
 
 open Semantics
@@ -31,16 +30,6 @@ theorem run_eq_of_named_step (d d' : CertifiedDesign) (env : Env d.design)
     obtain ⟨outputs, states⟩ := simulate a b same vector
     simp only [List.map_cons, Interp.run]
     rw [outputs, ih _ _ states]
-
-end NamedRun
-
-end Silicon.Core
-
-namespace Silicon.Core
-
-open Semantics
-
-namespace NamedRun
 
 theorem inputValues_heq (m m' : Typed.Module) (ports : m.ports = m'.ports)
     (vector : List (String × Nat)) : HEq (inputValues m vector) (inputValues m' vector) := by

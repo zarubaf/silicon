@@ -7,6 +7,24 @@ namespace Silicon.Core.Semantics
 
 open Typed
 
+theorem erased_module_found (d : Typed.Design) (c : Core.Module)
+    (member : Core.Item.module c ∈ d.erase.items) :
+    ∃ m, d.bodies.find? (·.name == c.name) = some m ∧ m.erase = c := by
+  obtain ⟨key, _, he⟩ := List.mem_filterMap.mp member
+  change (match d.bodies.find? (·.name == key) with
+    | some m => some (.module m.erase)
+    | none => (d.externs.find? (·.name == key)).map Item.extern) = some (.module c) at he
+  cases found : d.bodies.find? (·.name == key) with
+  | some m =>
+    simp only [found] at he
+    have erased := Core.Item.module.inj (Option.some.inj he)
+    have named : m.name = key := by simpa using List.find?_some found
+    exact ⟨m, by simpa only [← erased, Typed.Module.erase, named] using found, erased⟩
+  | none =>
+    simp only [found] at he
+    obtain ⟨e, _, impossible⟩ := Option.map_eq_some_iff.mp he
+    cases impossible
+
 private theorem find_item_mem (items : List Item) (hn : (items.map itemName).Nodup)
     (item : Item) (hi : item ∈ items) :
     items.find? (fun i => itemName i == itemName item) = some item := by

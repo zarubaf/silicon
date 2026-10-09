@@ -1667,7 +1667,9 @@ def elaborateModules (d : Core.Design) : List Core.Module → Option (List Modul
   | [] => some []
   | m :: rest => do
     let body ← statements d (context d m) m.body
-    let graph := Deps.graph m (designDeps d (d.items.length + 1))
+    let dependencies := dependencyTable d (d.items.length + 1)
+    let children := fun name => dependencies.lookup name
+    let graph := Deps.graph m children
     match hcert : FastRanks.certificate graph with
     | none => none
     | some ranks => do
@@ -1675,7 +1677,7 @@ def elaborateModules (d : Core.Design) : List Core.Module → Option (List Modul
       let groups ← groupStatements (context d m) (portsOf d) body
       if hg : equationsErase groups = m.body then
         let typed : Module := ⟨m.pos, m.name, m.ports, context d m, portsOf d, groups,
-          designDeps d (d.items.length + 1), ranks, by simpa [graph, hg] using h,
+          children, ranks, by simpa [graph, hg] using h,
           by rw [hg]; rfl⟩
         let rest ← elaborateModules d rest
         return typed :: rest
@@ -1714,7 +1716,7 @@ theorem elaborateModules_environment (d : Core.Design) (raw : List Core.Module) 
     obtain ⟨rest, hr, h⟩ := h
     cases h
     simp only [List.mem_cons, forall_eq_or_imp]
-    exact ⟨⟨trivial, trivial⟩, ih _ hr⟩
+    exact ⟨⟨trivial, rfl⟩, ih _ hr⟩
 
 def elaborateDesign (d : Core.Design) : Option Design := do
   let sorted ← orderModules (modules d).length (externNames d) (modules d)

@@ -56,6 +56,7 @@ theorem elaborateModules_of_groups (d : Core.Design) (ms : List Core.Module)
   | nil => exact ⟨[], rfl, rfl⟩
   | cons m ms ih =>
     obtain ⟨body, groups, hb, hg, he, ranks, hr⟩ := ready m (by simp)
+    simp only [designDeps] at hr
     obtain ⟨rest, hrest, erased⟩ := ih (fun m hm => ready m (by simp [hm]))
     unfold elaborateModules
     simp only [statements, hb, bind, Option.bind_some]
