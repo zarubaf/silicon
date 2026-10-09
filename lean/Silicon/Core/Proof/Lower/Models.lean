@@ -5,16 +5,8 @@ Model replacement keeps each item name and port list. A memory model has no inst
 -/
 namespace Silicon.Core.LowerProof
 
-def modelImage (configs : List MemConfig) (item : Mlir.Item) : Mlir.Item :=
-  match item with
-  | .extern name ports =>
-    match configs.find? (·.moduleName == name) with
-    | some c => if ports = c.ports then .module (memModel c) else item
-    | none => item
-  | .module _ => item
-
 theorem withModels_items (configs : List MemConfig) (d : Mlir.Design) :
-    (d.withModels configs).items = d.items.map (modelImage configs) := rfl
+    (d.withModels configs).items = d.items.map (Mlir.Item.withModels configs) := rfl
 
 theorem find_config (configs : List MemConfig) (c : MemConfig) (hc : c ∈ configs) :
     configs.find? (·.moduleName == c.moduleName) = some c := by
@@ -27,15 +19,15 @@ theorem find_config (configs : List MemConfig) (c : MemConfig) (hc : c ∈ confi
     rw [moduleName_injective same]
 
 theorem image_config (configs : List MemConfig) (c : MemConfig) (hc : c ∈ configs) :
-    modelImage configs (.extern c.moduleName c.ports) = .module (memModel c) := by
-  simp [modelImage, find_config configs c hc]
+    Mlir.Item.withModels configs (.extern c.moduleName c.ports) = .module (memModel c) := by
+  simp [Mlir.Item.withModels, find_config configs c hc]
 
 theorem image_name {configs : List MemConfig} (item : Mlir.Item) :
-    (modelImage configs item).name = item.name := by
+    (Mlir.Item.withModels configs item).name = item.name := by
   cases item with
   | module m => rfl
   | extern name ports =>
-    dsimp only [modelImage]
+    dsimp only [Mlir.Item.withModels]
     cases hc : configs.find? (·.moduleName == name) with
     | none => rfl
     | some c =>
@@ -46,11 +38,11 @@ theorem image_name {configs : List MemConfig} (item : Mlir.Item) :
       · rfl
 
 theorem image_ports {configs : List MemConfig} (item : Mlir.Item) :
-    (modelImage configs item).ports = item.ports := by
+    (Mlir.Item.withModels configs item).ports = item.ports := by
   cases item with
   | module m => rfl
   | extern name ports =>
-    dsimp only [modelImage]
+    dsimp only [Mlir.Item.withModels]
     cases hc : configs.find? (·.moduleName == name) with
     | none => rfl
     | some c =>
@@ -61,12 +53,12 @@ theorem image_ports {configs : List MemConfig} (item : Mlir.Item) :
       · rfl
 
 theorem image_module {configs : List MemConfig} (item : Mlir.Item) (m : Mlir.Module)
-    (h : modelImage configs item = .module m) :
+    (h : Mlir.Item.withModels configs item = .module m) :
     item = .module m ∨ ∃ c, m = memModel c := by
   cases item with
   | module m' => exact Or.inl h
   | extern name ports =>
-    dsimp only [modelImage] at h
+    dsimp only [Mlir.Item.withModels] at h
     cases hc : configs.find? (·.moduleName == name) with
     | none => rw [hc] at h; cases h
     | some c =>

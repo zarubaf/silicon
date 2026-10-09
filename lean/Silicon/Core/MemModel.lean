@@ -46,12 +46,15 @@ def memModel (c : MemConfig) : Mlir.Module :=
     outputs := (List.range c.reads).map fun r => s!"r{r}_data" }
 
 /-! Only a listed memory name with its exact signature identifies a replaceable extern. -/
+def Mlir.Item.withModels (configs : List MemConfig) (item : Mlir.Item) : Mlir.Item :=
+  match item with
+  | .extern name ports =>
+    match configs.find? (·.moduleName == name) with
+    | some c => if ports = c.ports then .module (memModel c) else item
+    | none => item
+  | .module _ => item
+
 def Mlir.Design.withModels (configs : List MemConfig) (d : Mlir.Design) : Mlir.Design :=
-  ⟨d.items.map fun item => match item with
-    | .extern name ports =>
-      match configs.find? (·.moduleName == name) with
-      | some c => if ports = c.ports then .module (memModel c) else item
-      | none => item
-    | .module _ => item⟩
+  ⟨d.items.map (Mlir.Item.withModels configs)⟩
 
 end Silicon.Core

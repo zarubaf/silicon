@@ -65,8 +65,8 @@ theorem memory_child (c : MemConfig) (hc : c ∈ memoryConfigs t) (child : Mlir.
   obtain ⟨member, named⟩ := findModule_some _ _ _ found
   have image := config_in_design t noExterns c hc
   have unique := design_names raw t h noExterns
-  have same : Mlir.Item.module child = modelImage (memoryConfigs t) (.extern c.moduleName
-    c.ports) := by
+  have same : Mlir.Item.module child =
+      Mlir.Item.withModels (memoryConfigs t) (.extern c.moduleName c.ports) := by
     have hfind := find_unique _ unique _ member
     have hfind' := find_unique _ unique _ image
     rw [image_name] at hfind'
