@@ -9,6 +9,7 @@ mod guidance;
 mod lean;
 mod lean_check;
 mod lean_prose;
+mod lec;
 mod prose;
 mod repo;
 mod review;
@@ -77,6 +78,8 @@ enum Command {
         #[arg(long, default_value_t = 200, value_parser = clap::value_parser!(u64).range(1..))]
         count: u64,
     },
+    /// Run the LEC of the core IR spec, section 8.1, over `tests/corpus`.
+    Lec,
     /// Run the Codex adversarial review of the current branch.
     Review {
         /// Git ref to review against.
@@ -107,6 +110,11 @@ fn main() -> Result<ExitCode> {
             ExitCode::FAILURE
         }),
         Command::Diff { seed, count } => Ok(if diff::run(&Repo::discover()?, seed, count)? {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        }),
+        Command::Lec => Ok(if lec::run(&Repo::discover()?)? {
             ExitCode::SUCCESS
         } else {
             ExitCode::FAILURE
