@@ -1,5 +1,6 @@
 //! Runs the shared `check` and `run` suites against the Lean `silicon-check`.
 
+use std::path::PathBuf;
 use std::process::Command;
 
 use anyhow::{Context, Result};
@@ -19,23 +20,32 @@ fn nextest_args() -> Vec<&'static str> {
     ]
 }
 
-/// Builds `silicon-check`, then runs the shared suites with it as the binary under test.
-/// Returns whether both steps passed. The suites do not run after a failed build.
-pub fn run(repo: &Repo) -> Result<bool> {
+/// Builds `silicon-check` and returns the absolute path of the executable,
+/// or `None` if the build fails.
+pub fn build(repo: &Repo) -> Result<Option<PathBuf>> {
     let build = Command::new("lake")
         .args(lake_build_args())
         .current_dir(&repo.root)
         .status()
         .context("cannot run lake")?;
     if !build.success() {
-        return Ok(false);
+        return Ok(None);
     }
-    // The tests run in another working directory, so the path must be absolute.
+    // The callers run it in other working directories, so the path must be absolute.
     let binary = repo
         .root
         .join(BINARY)
         .canonicalize()
         .with_context(|| format!("cannot find {BINARY} after the build"))?;
+    Ok(Some(binary))
+}
+
+/// Builds `silicon-check`, then runs the shared suites with it as the binary under test.
+/// Returns whether both steps passed. The suites do not run after a failed build.
+pub fn run(repo: &Repo) -> Result<bool> {
+    let Some(binary) = build(repo)? else {
+        return Ok(false);
+    };
     let tests = Command::new("cargo")
         .args(nextest_args())
         .env("SILICON_BIN", binary)
