@@ -49,6 +49,9 @@ lean-check:
 diff:
     cargo xtask diff
 
+lec:
+    cargo xtask lec
+
 test:
     cargo nextest run --workspace --all-features
 
@@ -58,7 +61,7 @@ commit-msg file:
 commit-check base="origin/main":
     cargo xtask commit-check --base {{ base }}
 
-ci base="origin/main": check test lean-check diff (commit-check base)
+ci base="origin/main": check test lean-check diff lec (commit-check base)
 
 setup:
     lefthook install
