@@ -9,16 +9,6 @@ Only the words below the core depth constrain the model array.
 namespace Silicon.Core
 namespace LowerProof
 
-def extendMemory (c : MemConfig) (memory : Fin c.depth → BitVec c.width)
-    (padding : Fin (2 ^ Typed.addressWidth c.depth) → BitVec c.width) :
-    Fin (2 ^ Typed.addressWidth c.depth) → BitVec c.width :=
-  fun i => if h : i.val < c.depth then memory ⟨i.val, h⟩ else padding i
-
-theorem extendMemory_agrees (c : MemConfig) (memory) (padding) :
-    MemModelProof.Agrees c (extendMemory c memory padding) memory := by
-  intro i
-  simp [extendMemory, i.isLt]
-
 def CellCorresponds (σ : Mlir.ModuleState) (path : List String) (name : String) :
     Semantics.NamedCell → Prop
   | .register width value =>

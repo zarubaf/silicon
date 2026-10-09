@@ -8,6 +8,16 @@ open MemModelProof
 set_option maxRecDepth 4096
 set_option maxHeartbeats 4000000
 
+private def extendMemory (c : MemConfig) (memory : Fin c.depth → BitVec c.width)
+    (padding : Fin (2 ^ Typed.addressWidth c.depth) → BitVec c.width) :
+    Fin (2 ^ Typed.addressWidth c.depth) → BitVec c.width :=
+  fun i => if h : i.val < c.depth then memory ⟨i.val, h⟩ else padding i
+
+private theorem extendMemory_agrees (c : MemConfig) (memory) (padding) :
+    MemModelProof.Agrees c (extendMemory c memory padding) memory := by
+  intro i
+  simp [extendMemory, i.isLt]
+
 example (memory : Fin 12 → BitVec 8) (padding : BitVec 8) :
     MemModelProof.Agrees ⟨12, 8, 1, 1⟩
       (extendMemory ⟨12, 8, 1, 1⟩ memory (fun _ => padding)) memory :=
