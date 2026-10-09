@@ -32,11 +32,17 @@ import Silicon.Core.Test.Step
 import Silicon.Core.Test.Hierarchy
 import Silicon.Core.Mlir.Syntax
 import Silicon.Core.Mlir.Print
+import Silicon.Core.Mlir.Semantics
+import Silicon.Core.Mlir.WellFormed
 import Silicon.Core.MemModel
 import Silicon.Core.Lower
 import Silicon.Core.Test.Mlir
 import Silicon.Core.Test.MemModel
 import Silicon.Core.Test.Lower
+import Silicon.Core.Test.MlirSemantics
+import Silicon.Core.Vectors
+import Silicon.Core.Main
+import Silicon.Core.Test.Vectors
 
 /-!
 Core IR semantics live here. The Lean model is the normative spec.

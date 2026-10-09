@@ -13,7 +13,7 @@ structure MemConfig where
   width : Nat
   reads : Nat
   writes : Nat
-  deriving DecidableEq, Ord
+  deriving DecidableEq
 
 def MemConfig.moduleName (c : MemConfig) : String :=
   s!"silicon_mem_{c.depth}x{c.width}_r{c.reads}w{c.writes}"
@@ -44,5 +44,23 @@ def memModel (c : MemConfig) : Mlir.Module :=
     body := reads ++ writes ++
       [(["silicon_reg_mem"], .compreg (stateBefore c.writes) "clk" none (.array n c.width))]
     outputs := (List.range c.reads).map fun r => s!"r{r}_data" }
+
+/-! Only the exact memory name and signature identify a replaceable external model. -/
+def MemConfig.ofModuleName (name : String) : Option MemConfig := do
+  let ["silicon", "mem", shape, ports] := name.splitOn "_" | none
+  let [depth, width] := shape.splitOn "x" | none
+  let [reads, writes] := ports.splitOn "w" | none
+  let some reads := reads.dropPrefix? "r" | none
+  let c : MemConfig := ⟨← depth.toNat?, ← width.toNat?,
+    ← reads.toString.toNat?, ← writes.toNat?⟩
+  if c.moduleName = name then some c else none
+
+def Mlir.Design.withModels (d : Mlir.Design) : Mlir.Design :=
+  ⟨d.items.map fun item => match item with
+    | .extern name ports =>
+      match MemConfig.ofModuleName name with
+      | some c => if ports = c.ports then .module (memModel c) else item
+      | none => item
+    | .module _ => item⟩
 
 end Silicon.Core

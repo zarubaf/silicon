@@ -2,11 +2,8 @@
 This AST defines the MLIR subset for the reference lowering and memory models.
 Value names have no percent sign. The printer adds it.
 A well-formed constant has `value < 2^w`. Operand types match the widths of each operation.
-`Lower` and `memModel` emit only such operations for valid source designs and memory configurations.
-Phase 4b makes evaluation partial or adds a typing judgment to enforce these conditions.
 Module outputs follow the output port order and have the types of those ports.
 Each operation in a module body except `instance` has exactly one result name.
-`Lower` and `memModel` emit only such bodies. Phase 4b checks this condition.
 -/
 
 namespace Silicon.Core.Mlir
