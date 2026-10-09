@@ -2,6 +2,17 @@
 //! error report `error[EXXX]: L:C: message` (spec 6.4.2) that the
 //! `tests/check` and `tests/run` suites share.
 
+use std::path::PathBuf;
+
+/// The binary that the shared suites `check` and `run` test.
+/// `cargo xtask lean-check` sets `SILICON_BIN` to run them against `silicon-check`.
+pub fn binary() -> PathBuf {
+    std::env::var_os("SILICON_BIN").map_or_else(
+        || PathBuf::from(env!("CARGO_BIN_EXE_silicon")),
+        PathBuf::from,
+    )
+}
+
 const MARKER: &str = "; expected-error ";
 
 /// The expected error of a file: its code and its 1-based line.

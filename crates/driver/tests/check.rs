@@ -16,12 +16,7 @@ fn check(path: &Path) -> datatest_stable::Result<()> {
     let bytes = std::fs::read(path)?;
     let source = String::from_utf8_lossy(&bytes);
     let expected = expectation(&source).map_err(|e| format!("{}: {e}", path.display()))?;
-    let out = spawn(
-        Command::new(env!("CARGO_BIN_EXE_silicon"))
-            .arg("check")
-            .arg(path),
-        "",
-    )?;
+    let out = spawn(Command::new(expect::binary()).arg("check").arg(path), "")?;
     let stdout = String::from_utf8_lossy(&out.stdout);
     let code = out.status.code();
     match expected {
