@@ -1,5 +1,11 @@
 import Silicon.Core.MemModel
 
+/-!
+Reference lowering maps a typed design to the MLIR subset.
+Instance arguments follow the child port order. Memory reads follow the source expression order.
+Alias resolution preserves references to outputs and values defined later in the module.
+-/
+
 namespace Silicon.Core
 namespace Lower
 
@@ -163,6 +169,8 @@ private def statement (registers : List String) : Typed.Stmt ctx ports → Build
     let args ← inputs.mapM fun input => do
       let value ← expr registers input.2 none
       return (input.1.val.name, value, type input.1.val.ty)
+    let args := (ports child).filterMap fun p =>
+      if p.dir == .input then args.find? (fun arg => arg.1 == p.name) else none
     let results := (ports child).filterMap fun p =>
       if p.dir == .output then some (p.name, type p.ty) else none
     let names := results.map fun p => s!"{name}.{p.1}"
@@ -224,6 +232,9 @@ end Lower
 def memoryConfigs (t : Typed.Design) : List MemConfig :=
   Lower.uniqueConfigs (t.bodies.flatMap fun m => (Lower.module m).2)
 
+/-- Lower a checked design. For canonical read-port numbering, the caller must pass the typed
+design from `check (canonicalize d)`.
+Instance arguments follow the child port order in all cases. -/
 def lower (t : Typed.Design) : Mlir.Design :=
   let modules := t.bodies.map Lower.module
   let configs := Lower.uniqueConfigs (modules.flatMap Prod.snd)
