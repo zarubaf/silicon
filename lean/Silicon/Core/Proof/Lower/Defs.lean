@@ -367,14 +367,14 @@ private theorem fresh_statement (registers : List String) (stmt : Typed.Stmt ctx
 private def Owned (owner name : String) : Prop :=
   name = owner ∨ name = s!"silicon_reg_{owner}" ∨ ∃ pin : String, name = s!"{owner}.{pin}"
 
-private theorem register_no_dot (owner : String) (legal : Rules.reservedName owner = false) :
+theorem register_no_dot (owner : String) (legal : Rules.reservedName owner = false) :
     '.' ∉ (s!"silicon_reg_{owner}").toList := by
   change '.' ∉ ("silicon_reg_" ++ owner).toList
   have absent := (Bool.or_eq_false_iff.mp legal).2
   simp only [String.contains_char_eq, decide_eq_false_iff_not] at absent
   simpa [String.toList_append] using absent
 
-private theorem register_ne_result (owner inst pin : String)
+theorem register_ne_result (owner inst pin : String)
     (legal : Rules.reservedName owner = false) :
     s!"silicon_reg_{owner}" ≠ s!"{inst}.{pin}" := by
   intro eq
@@ -582,7 +582,7 @@ private theorem static_names_nodup (d : Core.Design) (m : Core.Module)
   simpa [List.flatMap_append, rawGroups_names, inputs, List.flatMap_map,
     Function.comp_def, ← List.map_eq_flatMap, inputNames] using result
 
-private def rawRegisters : Core.Stmt → List String
+def rawRegisters : Core.Stmt → List String
   | .reg _ name .. => [s!"silicon_reg_{name}"]
   | _ => []
 
@@ -961,6 +961,13 @@ private theorem module_names (m : Typed.Module) :
       Lower.registerEntries m s).flatMap Prod.fst = _
   simp only [Array.toList_append, List.flatMap_append, List.flatMap_map, List.append_assoc]
   rfl
+
+/-- Statement results are unique and differ from input ports and registers. -/
+theorem statement_names_fresh (raw : Core.Design) (t : Typed.Design)
+    (h : check raw = .ok t) (m : Typed.Module) (hm : m ∈ t.bodies) :
+    (allocatedNames (Lower.statementState m) ++
+      (inputNames m.ports ++ m.erase.body.flatMap rawRegisters)).Nodup :=
+  (checked_statements_fresh raw t h m hm (Lower.registers m)).1
 
 /-- Each definition in a checked module has a unique name. -/
 theorem lower_module_defs_nodup (raw : Core.Design) (t : Typed.Design)
