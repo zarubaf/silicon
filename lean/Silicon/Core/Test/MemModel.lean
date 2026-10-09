@@ -1,6 +1,10 @@
 import Silicon.Core.MemModel
 import Silicon.Core.Mlir.Print
 
+/-!
+These tests check memory port order, array sizes, and write priority.
+-/
+
 namespace Silicon.Core.Test.MemModel
 
 open Silicon.Core.Mlir
@@ -26,7 +30,7 @@ private def registers (c : MemConfig) : List (List String × Op) :=
 #guard registers ⟨12, 8, 0, 0⟩ =
   [(["silicon_reg_mem"], .compreg "silicon_reg_mem" "clk" none (.array 16 8))]
 #guard (memModel ⟨12, 8, 0, 0⟩).outputs = []
-#guard (memModel ⟨12, 8, 2, 0⟩).outputs = [("r0_data", .int 8), ("r1_data", .int 8)]
+#guard (memModel ⟨12, 8, 2, 0⟩).outputs = ["r0_data", "r1_data"]
 #guard (memModel ⟨12, 8, 2, 0⟩).body.take 2 =
   [(["r0_data"], .arrayGet "silicon_reg_mem" "r0_addr" 16 8 4),
    (["r1_data"], .arrayGet "silicon_reg_mem" "r1_addr" 16 8 4)]

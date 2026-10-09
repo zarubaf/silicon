@@ -1,5 +1,9 @@
 import Silicon.Core.Mlir.Print
 
+/-!
+These tests check the exact MLIR text for each operation and module form.
+-/
+
 namespace Silicon.Core.Test.Mlir
 
 open Silicon.Core.Mlir
@@ -9,10 +13,10 @@ def counter : Design := ⟨[.module {
   ports := [⟨.input, "clk", .clock⟩, ⟨.input, "rst", .int 1⟩,
     ⟨.input, "en", .int 1⟩, ⟨.output, "q", .int 8⟩]
   body := [(["silicon_t0"], .constant 8 0), (["silicon_t1"], .constant 8 1),
-    (["silicon_t2"], .comb "add" ["silicon_reg_r", "silicon_t1"] 8),
-    (["silicon_t3"], .mux "en" "silicon_t2" "silicon_reg_r" 8),
+    (["silicon_t2"], .comb .add "silicon_reg_r" "silicon_t1" 8),
+    (["silicon_t3"], .mux "en" "silicon_t2" "silicon_reg_r" (.int 8)),
     (["silicon_reg_r"], .compreg "silicon_t3" "clk" (some ("rst", "silicon_t0")) (.int 8))]
-  outputs := [("silicon_reg_r", .int 8)]
+  outputs := ["silicon_reg_r"]
 }]⟩
 
 #guard print counter ==
@@ -41,7 +45,7 @@ private def expected (s : String) : String :=
   expected "hw.array_get %mem[%idx] : !hw.array<16xi8>, i4"
 #guard line (.arrayInject "mem" "idx" "data" 16 8 4) ==
   expected "hw.array_inject %mem[%idx], %data : !hw.array<16xi8>, i4"
-#guard line (.arrayMux "en" "new" "old" 16 8) ==
+#guard line (.mux "en" "new" "old" (.array 16 8)) ==
   expected "comb.mux %en, %new, %old : !hw.array<16xi8>"
 #guard line (.extract "a" 2 8 4) == expected "comb.extract %a from 2 : (i8) -> i4"
 #guard line (.concat "a" "b" 8 4) == expected "comb.concat %a, %b : i8, i4"
@@ -49,18 +53,20 @@ private def expected (s : String) : String :=
 #guard line (.constant 8 255) == expected "hw.constant 255 : i8"
 #guard line (.compreg "next" "clk" none (.int 8)) ==
   expected "seq.compreg %next, %clk : i8"
-#guard (["add", "sub", "mul", "and", "or", "xor", "shl", "shru", "shrs"].all fun n =>
-  line (.comb n ["a", "b"] 8) == expected ("comb." ++ n ++ " %a, %b : i8"))
+#guard ([(CombOp.add, "add"), (.sub, "sub"), (.mul, "mul"), (.and, "and"), (.or, "or"),
+    (.xor, "xor"), (.shl, "shl"), (.shru, "shru"), (.shrs, "shrs")].all fun (op, n) =>
+  line (.comb op "a" "b" 8) == expected ("comb." ++ n ++ " %a, %b : i8"))
 #guard ([(Pred.eq, "eq"), (.ne, "ne"), (.ult, "ult"), (.ule, "ule"), (.ugt, "ugt"),
     (.uge, "uge"), (.slt, "slt"), (.sle, "sle"), (.sgt, "sgt"), (.sge, "sge")].all
   fun (p, s) => line (.icmp p "a" "b" 8) == expected ("comb.icmp " ++ s ++ " %a, %b : i8"))
 #guard print ⟨[.module ⟨"empty", [], [], []⟩]⟩ ==
   "hw.module @empty() {\n  hw.output\n}\n"
-#guard print ⟨[.module ⟨"m", [],
+#guard print ⟨[.module ⟨"m", [⟨.output, "x", .int 4⟩, ⟨.input, "a", .int 1⟩,
+    ⟨.output, "y", .int 8⟩],
     [([], .instance "u" "sink" [] []),
      (["u.x", "u.y"], .instance "v" "pair" [] [("x", .int 4), ("y", .int 8)])],
-    [("u.x", .int 4), ("u.y", .int 8)]⟩]⟩ ==
-  "hw.module @m() {\n  hw.instance \"u\" @sink() -> ()\n" ++
+    ["u.x", "u.y"]⟩]⟩ ==
+  "hw.module @m(out x : i4, in %a : i1, out y : i8) {\n  hw.instance \"u\" @sink() -> ()\n" ++
   "  %u.x, %u.y = hw.instance \"v\" @pair() -> (x: i4, y: i8)\n" ++
   "  hw.output %u.x, %u.y : i4, i8\n}\n"
 

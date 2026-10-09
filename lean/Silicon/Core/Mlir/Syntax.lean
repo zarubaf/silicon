@@ -1,3 +1,12 @@
+/-!
+This AST defines the MLIR subset for the reference lowering and memory models.
+Value names have no percent sign. The printer adds it.
+A well-formed constant has `value < 2^w`. Operand types match the widths of each operation.
+`Lower` and `memModel` emit only such operations for valid source designs and memory configurations.
+Phase 4b makes evaluation partial or adds a typing judgment to enforce these conditions.
+Module outputs follow the output port order and have the types of those ports.
+-/
+
 namespace Silicon.Core.Mlir
 
 inductive Ty where
@@ -10,13 +19,15 @@ inductive Pred where
   | eq | ne | ult | ule | ugt | uge | slt | sle | sgt | sge
   deriving DecidableEq, Repr
 
-/-! Value names have no percent sign. The printer adds it. -/
+inductive CombOp where
+  | add | sub | mul | and | or | xor | shl | shru | shrs
+  deriving DecidableEq, Repr
+
 inductive Op where
   | constant (w value : Nat)
-  | comb (name : String) (args : List String) (w : Nat)
+  | comb (op : CombOp) (a b : String) (w : Nat)
   | icmp (p : Pred) (a b : String) (w : Nat)
-  | mux (c a b : String) (w : Nat)
-  | arrayMux (c a b : String) (n w : Nat)
+  | mux (c a b : String) (ty : Ty)
   | extract (a : String) (lo : Nat) (wIn wOut : Nat)
   | concat (a b : String) (wa wb : Nat)
   | replicate (a : String) (wIn wOut : Nat)
@@ -41,7 +52,7 @@ structure Module where
   name : String
   ports : List Port
   body : List (List String × Op)
-  outputs : List (String × Ty)
+  outputs : List String
   deriving DecidableEq, Repr
 
 inductive Item where

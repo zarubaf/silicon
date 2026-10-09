@@ -1,5 +1,9 @@
 import Silicon.Core.Mlir.Syntax
 
+/-!
+The printer emits the MLIR subset with types from the AST and the module ports.
+-/
+
 namespace Silicon.Core.Mlir
 
 private def tyText : Ty → String
@@ -22,15 +26,22 @@ private def predText : Pred → String
 private def values (names : List String) : String :=
   String.intercalate ", " (names.map ("%" ++ ·))
 
-private def muxText (c a b : String) (ty : Ty) : String :=
-  s!"comb.mux %{c}, %{a}, %{b} : {tyText ty}"
+private def combText : CombOp → String
+  | .add => "add"
+  | .sub => "sub"
+  | .mul => "mul"
+  | .and => "and"
+  | .or => "or"
+  | .xor => "xor"
+  | .shl => "shl"
+  | .shru => "shru"
+  | .shrs => "shrs"
 
 private def opText : Op → String
   | .constant w value => s!"hw.constant {value} : i{w}"
-  | .comb name args w => s!"comb.{name} {values args} : i{w}"
+  | .comb op a b w => s!"comb.{combText op} %{a}, %{b} : i{w}"
   | .icmp p a b w => s!"comb.icmp {predText p} %{a}, %{b} : i{w}"
-  | .mux c a b w => muxText c a b (.int w)
-  | .arrayMux c a b n w => muxText c a b (.array n w)
+  | .mux c a b ty => s!"comb.mux %{c}, %{a}, %{b} : {tyText ty}"
   | .extract a lo wi wo => s!"comb.extract %{a} from {lo} : (i{wi}) -> i{wo}"
   | .concat a b wa wb => s!"comb.concat %{a}, %{b} : i{wa}, i{wb}"
   | .replicate a wi wo => s!"comb.replicate %{a} : (i{wi}) -> i{wo}"
@@ -54,11 +65,11 @@ private def signature (ports : List Port) : String :=
     | .input => s!"in %{p.name} : {tyText p.ty}"
     | .output => s!"out {p.name} : {tyText p.ty}") ++ ")"
 
-private def outputText (outputs : List (String × Ty)) : String :=
+private def outputText (outputs : List String) (ports : List Port) : String :=
   match outputs with
   | [] => "hw.output"
-  | _ => "hw.output " ++ values (outputs.map Prod.fst) ++ " : " ++
-      String.intercalate ", " (outputs.map fun (_, ty) => tyText ty)
+  | _ => "hw.output " ++ values outputs ++ " : " ++
+      String.intercalate ", " ((ports.filter (·.dir == .output)).map fun p => tyText p.ty)
 
 private def itemText : Item → String
   | .extern name ports => s!"hw.module.extern @{name}{signature ports}\n"
@@ -67,7 +78,7 @@ private def itemText : Item → String
       let lhs := if results.isEmpty then "" else values results ++ " = "
       "  " ++ lhs ++ opText op ++ "\n")
     "hw.module @" ++ m.name ++ signature m.ports ++ " {\n" ++ body ++
-      "  " ++ outputText m.outputs ++ "\n}\n"
+      "  " ++ outputText m.outputs m.ports ++ "\n}\n"
 
 def print (d : Design) : String := String.join (d.items.map itemText)
 
