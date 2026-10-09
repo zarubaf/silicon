@@ -49,26 +49,6 @@ theorem outputValues_eq (m m' : Typed.Module) (ports : m.ports = m'.ports)
 
 end NamedRun
 
-open NamedRun in
-theorem namedRun_reorder (d d' : CertifiedDesign) (order : Reorder d.design.erase d'.design.erase)
-    (noExterns : d.design.externs = []) (noExterns' : d'.design.externs = [])
-    (inputs : List (List (String × Nat))) : namedRun d inputs noExterns =
-      namedRun d' inputs noExterns' := by
-  let m := top d noExterns
-  let m' := top d' noExterns'
-  have related := top_reorder d d' noExterns noExterns' order
-  have ports : m.val.ports = m'.val.ports := related.ports
-  have step := namedStep_reorder d d' (emptyEnv d noExterns)
-    (emptyEnv d' noExterns') noExterns noExterns' order m.val m'.val
-    m.property m'.property related
-  apply run_eq_of_named_step d d' _ _ noExterns noExterns' m.val m'.val
-    m.property m'.property
-  · intro a b same vector
-    have result := step a b same (inputValues m.val vector)
-      (inputValues m'.val vector) (inputValues_heq m.val m'.val ports vector)
-    exact ⟨outputValues_eq m.val m'.val ports _ _ result.1, result.2⟩
-  · exact zero_top_reorder d d' noExterns noExterns' order
-
 private theorem check_externs (d : Design) (t : Typed.Design) (h : check d = .ok t) :
     t.externs = d.items.filterMap (fun i => match i with
       | .extern e => some e | _ => none) := by
