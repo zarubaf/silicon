@@ -6,11 +6,6 @@ source names. Outputs follow the output ports and have the port types.
 -/
 namespace Silicon.Core.LowerProof
 
-theorem instName_substitute (f : String → String) (entry : List String × Mlir.Op) :
-    instName (entry.1, Lower.substitute f entry.2) = instName entry := by
-  obtain ⟨names, op⟩ := entry
-  cases op <;> rfl
-
 def rawInstances : Core.Stmt → List String
   | .inst _ name .. => [name]
   | _ => []

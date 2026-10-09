@@ -24,8 +24,6 @@ theorem heq_apply {a b : List Port} (same : a = b) {f : PortValues a dir} {g : P
   cases e
   rfl
 
-theorem cast_eq_cast {α β : Type} (h₁ h₂ : α = β) (x : α) : cast h₁ x = cast h₂ x := rfl
-
 section
 variable (d : CertifiedDesign) (env : Env d.design) (m : Typed.Module) (hm : m ∈ d.design.bodies)
   (i : Nat) (p : Pos) (n child : String)

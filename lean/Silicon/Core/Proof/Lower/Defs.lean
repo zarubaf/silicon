@@ -4,16 +4,6 @@ import Std.Data.String.ToNat
 /-! Definition counts connect the emission image to fresh result names. -/
 namespace Silicon.Core.LowerProof
 
-theorem accounts_nodup (image : Image) (before after : Lower.State)
-    (accounts : image.Accounts before after)
-    (fresh : (image.map Prod.fst ++ allocatedNames before).Nodup) :
-    (allocatedNames after).Nodup := by
-  apply List.nodup_iff_count.mpr
-  intro name
-  rw [← accounts name]
-  have bound := List.nodup_iff_count.mp fresh name
-  simpa only [List.count_append] using bound
-
 theorem temporary_name_injective {i j : Nat}
     (h : s!"silicon_t{i}" = s!"silicon_t{j}") : i = j := by
   apply Nat.repr_injective

@@ -19,11 +19,6 @@ theorem extendMemory_agrees (c : MemConfig) (memory) (padding) :
   intro i
   simp [extendMemory, i.isLt]
 
-theorem extendMemory_padding (c : MemConfig) (memory) (padding)
-    (i : Fin (2 ^ Typed.addressWidth c.depth)) (outside : c.depth ≤ i.val) :
-    extendMemory c memory padding i = padding i := by
-  simp [extendMemory, Nat.not_lt.mpr outside]
-
 def CellCorresponds (σ : Mlir.ModuleState) (path : List String) (name : String) :
     Semantics.NamedCell → Prop
   | .register width value =>

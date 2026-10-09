@@ -40,10 +40,6 @@ theorem emit_result (dest : Option String) (op : Mlir.Op) (s : Lower.State) :
     (Lower.emit dest op s).1 = dest.getD s!"silicon_t{s.nextTemp}" := by
   cases dest <;> rfl
 
-theorem emit_nextTemp (dest : Option String) (op : Mlir.Op) (s : Lower.State) :
-    (Lower.emit dest op s).2.nextTemp = if dest.isSome then s.nextTemp else s.nextTemp + 1 := by
-  cases dest <;> rfl
-
 theorem grows_emit (dest : Option String) (op : Mlir.Op) (s : Lower.State) :
     Grows s (Lower.emit dest op s).2 := by
   apply grows_of _ (emit_body dest op s) <;> cases dest <;> rfl
@@ -54,12 +50,6 @@ theorem emit_aliases (dest : Option String) (op : Mlir.Op) (s : Lower.State) :
 
 theorem emit_readCounts (dest : Option String) (op : Mlir.Op) (s : Lower.State) :
     (Lower.emit dest op s).2.readCounts = s.readCounts := by
-  cases dest <;> rfl
-
-theorem named_aliases (dest : Option String) (value : String) (s : Lower.State) :
-    (Lower.named dest value s).2.aliases = match dest with
-      | some name => s.aliases.insert name value
-      | none => s.aliases := by
   cases dest <;> rfl
 
 theorem named_result (dest : Option String) (value : String) (s : Lower.State) :
