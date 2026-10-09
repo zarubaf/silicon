@@ -10,7 +10,7 @@ Each layer has one oracle. An oracle is a tool or a model that can say "wrong" m
 | `lean/`                              | The Lean kernel, with warnings as errors. `xtask` rejects `sorry`, new `axiom`, and `native_decide` outside the allowlist. | `just lean`, `cargo xtask check` |
 | Checker and interpreter against Lean | The shared `tests/check` and `tests/run` files run with `silicon` and with `silicon-check`                                 | `just lean-check`, in `just ci`  |
 | Compiler against Lean                | Translation validation (build step 2)                                                                                      | Not in `just ci` yet             |
-| Implementations together             | Differential testing (build step 2)                                                                                        | Not in `just ci` yet             |
+| Implementations together             | The differential tests: random designs through the Lean interpreter, `silicon run`, and `arcilator`                        | `just diff`                      |
 | Emitted Verilog                      | LEC with `circt-lec` or Yosys equivalence                                                                                  | Not in `just ci` yet             |
 
 ## Rust crates
@@ -30,7 +30,15 @@ Each layer has one oracle. An oracle is a tool or a model that can say "wrong" m
 Fuzzing, translation validation, and LEC join `just ci` in build step 2, when their oracles exist. LEC needs the CIRCT backend, which comes in build step 3. See [the build order](../architecture.md).
 
 - Translation validation: each compiler run emits the core IR as a `.sil` file. The Lean checker `silicon-check` confirms it.
-- Differential testing: random core IR generators drive the Lean interpreter, the Rust simulator, `arcilator`, and Verilator. A disagreement between them is a failure.
 - LEC: `circt-lec` or the Yosys equivalence tools compare the emitted Verilog with the core IR.
 
-The designs for validation and differential testing live in `tests/corpus/`.
+The designs for LEC and the differential tests live in `tests/corpus/`.
+
+## Differential tests
+
+`cargo xtask diff` runs the designs of `tests/corpus/` and random designs from the generator of `core-ir`, with random inputs. It sends each design to the Lean interpreter, to `silicon run`, and to `arcilator` on the Lean reference MLIR. Each tool starts from the all-zero state. A disagreement is a failure. The failure prints the design and the input vectors as a `tests/run` file.
+
+- A corpus design with an extern prints `SKIP`. The interpreters reject it with `E014`.
+- The defaults are the seed 1 and 200 random designs. Use `--seed` and `--count` to change them.
+- A failure prints its seed. `cargo xtask diff --seed N --count 1` repeats it.
+- LEC covers the emitted Verilog, so the differential tests use no Verilator (core IR spec, section 8.2).
