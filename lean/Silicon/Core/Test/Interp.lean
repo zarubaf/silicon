@@ -140,6 +140,51 @@ private def multiOutputHierarchy (depth outputs : Nat) : String :=
 #guard runText (multiOutputHierarchy 10 2) [[("x", 37)]] == some [[37 * 2^10, 37 * 2^10]]
 #guard runText (multiOutputHierarchy 6 4) [[("x", 53)]] == some [List.replicate 4 (53 * 2^6)]
 
+/-! Late connections must not repeat work in nested instances. -/
+private def feedbackHierarchy (depth : Nat) : String :=
+  let modules := (List.range (depth + 1)).map fun level =>
+    s!"(module fb{level} (input clk clock) (input d (bits 32)) (output q (bits 32))" ++
+      (if level == 0 then
+        "(reg r (bits 32) clk) (next r d) (assign q r)"
+      else s!"(inst c fb{level - 1} (clk clk) (d (add c.q d))) (assign q c.q)") ++ ")"
+  s!"(design fb{depth} " ++ String.join modules ++ ")"
+
+private def lateHierarchy (depth : Nat) : String :=
+  let modules := (List.range (depth + 1)).map fun level =>
+    s!"(module late{level} (input clk clock) (input x (bits 32))" ++
+      "(input later (bits 32)) (output y (bits 32)) (output q (bits 32))" ++
+      (if level == 0 then
+        "(reg r (bits 32) clk) (next r later) (assign y x) (assign q r)"
+      else s!"(inst c late{level - 1} (clk clk) (x x) (later delayed))" ++
+        "(let base (bits 32) (add x (const 32 1)))" ++
+        "(let delayed (bits 32) (add base (const 32 1))) (assign y c.y) (assign q c.q)") ++ ")"
+  s!"(design late{depth} " ++ String.join modules ++ ")"
+
+private def handshakeHierarchy (depth : Nat) (registers : Bool) : String :=
+  let cell := if registers then
+    "(module cell (input clk clock) (input d (bits 32)) (output q (bits 32))" ++
+      "(reg r (bits 32) clk) (next r d) (assign q r))" else ""
+  let modules := (List.range (depth + 1)).map fun level =>
+    s!"(module hs{level} (input clk clock) (input x (bits 32)) (input ack (bits 1))" ++
+      "(output y (bits 32)) (output ready (bits 1))" ++
+      (if registers then "(output q (bits 32))" else "") ++
+      (if level == 0 then
+        "(assign y x) (assign ready ack)" ++
+          (if registers then
+            "(inst c cell (clk clk) (d (add c.q x))) (assign q c.q)" else "")
+      else s!"(inst a hs{level - 1} (clk clk) (x x) (ack b.ready))" ++
+        s!"(inst b hs{level - 1} (clk clk) (x a.y) (ack ack))" ++
+        "(assign y b.y) (assign ready a.ready)" ++
+        (if registers then "(assign q (add a.q b.q))" else "")) ++ ")"
+  s!"(design hs{depth} " ++ cell ++ String.join modules ++ ")"
+
+#guard runText (feedbackHierarchy 12) [[("d", 7)], [("d", 11)]] == some [[0], [7]]
+#guard runText (lateHierarchy 12) [[("x", 10)], [("x", 20)]] == some [[10, 0], [20, 12]]
+#guard runText (handshakeHierarchy 7 false) [[("x", 42), ("ack", 1)],
+  [("x", 17), ("ack", 0)]] == some [[42, 1], [17, 0]]
+#guard runText (handshakeHierarchy 8 true) [[("x", 3), ("ack", 1)],
+  [("x", 5), ("ack", 0)]] == some [[3, 1, 0], [5, 0, 768]]
+
 end Silicon.Core.Test.Interp
 
 /-! The counter proofs use its typed equations to avoid reduction through the parser. -/

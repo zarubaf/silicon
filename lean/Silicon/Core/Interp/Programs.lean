@@ -1,4 +1,4 @@
-import Silicon.Core.Interp.Cycle
+import Silicon.Core.Interp.Finish
 
 /-! The hierarchy carries executable cycles beside their semantic components. -/
 namespace Silicon.Core.Interp
@@ -17,15 +17,13 @@ def programModels (m : Typed.Module) (programs : Programs m) : Children m
 
 def programRunners (m : Typed.Module) (programs : Programs m) :
     Runners m (programModels m programs)
-  | ⟨.inst i p n c xs, h⟩ => (programs ⟨.inst i p n c xs, h⟩).cycle
-  | ⟨.let_ .., _⟩ | ⟨.reg .., _⟩ | ⟨.mem .., _⟩ | ⟨.assign .., _⟩ => ()
+  | ⟨.inst i p n c xs, h⟩ => (programs ⟨.inst i p n c xs, h⟩).evaluator
+  | ⟨.let_ .., _⟩ | ⟨.reg .., _⟩ | ⟨.mem .., _⟩ | ⟨.assign .., _⟩ => PUnit.unit
 
 def localProgram (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)
     (programs : Programs m) : Program m.ports (Deps.infer m.erase m.children) where
   model := localComponent d m hm (programModels m programs)
-  cycle := fun state input =>
-    ⟨cachedLocalStep d m hm (programModels m programs) (programRunners m programs) state input,
-      cachedLocalStep_eq d m hm _ _ state input⟩
+  evaluator := localEvaluator d m hm (programModels m programs) (programRunners m programs)
 
 def transportProgram {ports other : List Port} {deps otherDeps : Deps}
     (hp : ports = other) (hd : deps = otherDeps) (program : Program ports deps) :
@@ -63,7 +61,12 @@ theorem moduleProgram_model (d : CertifiedDesign) (m c : Typed.Module)
 
 def externProgram (model : Component ports deps) : Program ports deps where
   model := model
-  cycle := fun state input => ⟨(model.next state input, model.out state input), rfl⟩
+  evaluator := {
+    Cache := fun _ _ => Unit
+    empty := fun _ _ => ()
+    output := fun state {_target} input port agree cache =>
+      ⟨(model.out state input port, cache), model.out_respects state _ _ port agree⟩
+    finish := fun state input _ => ⟨(model.next state input, model.out state input), rfl⟩ }
 
 def compileChildren (d : CertifiedDesign) (env : Env d.design)
     (m : Typed.Module) (hm : m ∈ d.design.bodies) : Programs m :=

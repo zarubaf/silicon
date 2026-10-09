@@ -1,221 +1,182 @@
-import Silicon.Core.Interp.Values
-import Silicon.Core.Semantics.Step
+import Silicon.Core.Interp.Demand
 
-/-! A child call returns its outputs and next state in one record. -/
+/-! The value cache and child caches grow until the cycle's final state update. -/
 namespace Silicon.Core.Interp
 
 open Semantics
 
-structure CycleResult (model : Component ports deps) (state : model.State)
-    (input : PortValues ports .input) where
-  result : model.State × PortValues ports .output
-  correct : result = (model.next state input, model.out state input)
+def finalConnections (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)
+    (children : Children m) (state : LocalState m children) (target : Input m) :=
+  connectionValues d m hm (localSolution d m hm children state target)
+    (stateMemories m children state)
 
-structure Program (ports : List Port) (deps : Deps) where
-  model : Component ports deps
-  cycle : (state : model.State) → (input : PortValues ports .input) →
-    CycleResult model state input
-
-structure Snapshot (model : Component ports deps) (state : model.State) where
-  input : PortValues ports .input
-  cycle : CycleResult model state input
-
-private instance (ty : Ty) : DecidableEq (TyValue ty) := by
-  cases ty <;> infer_instance
-
-private def sameInputs (ports : List Port) (a b : PortValues ports .input) : Decidable (a = b) :=
-  decidable_of_iff (∀ p ∈ ports.attach, ∀ h : p.val.dir = .input,
-    a ⟨p.val, p.property, h⟩ = b ⟨p.val, p.property, h⟩) (by
-      constructor
-      · intro h
-        funext p
-        exact h ⟨p.val, p.property.1⟩ (by simp) p.property.2
-      · intro h
-        subst b
-        simp)
-
-def cachedCycle (model : Component ports deps)
-    (run : (state : model.State) → (input : PortValues ports .input) →
-      CycleResult model state input)
-    (state : model.State) (input : PortValues ports .input)
-    (cached : Option (Snapshot model state)) : CycleResult model state input :=
-  match cached with
-  | none => run state input
-  | some old =>
-    have := sameInputs ports old.input input
-    if same : old.input = input then same ▸ old.cycle else run state input
-
-def CycleRunner (m : Typed.Module) (children : Children m) :
-    (e : EquationRef m) → Type
+def CachedChild (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)
+    (children : Children m) (runners : Runners m children) (state : LocalState m children)
+    (target : Input m) : (e : EquationRef m) → Type
   | ⟨.inst i p n child inputs, member⟩ =>
     let e : EquationRef m := ⟨.inst i p n child inputs, member⟩
-    (state : (children e).State) → (input : PortValues (m.interfaces child) .input) →
-      CycleResult (children e) state input
+    (runners e).Cache (state e) (finalConnections d m hm children state target e)
   | _ => Unit
 
-abbrev Runners (m : Typed.Module) (children : Children m) :=
-  (e : EquationRef m) → CycleRunner m children e
+abbrev ChildCache (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)
+    (children : Children m) (runners : Runners m children) (state : LocalState m children)
+    (target : Input m) := (e : EquationRef m) → CachedChild d m hm children runners state target e
 
-def CachedChild (m : Typed.Module) (children : Children m) (state : LocalState m children) :
-    (e : EquationRef m) → Type
-  | ⟨.inst i p n child inputs, member⟩ =>
-    let e : EquationRef m := ⟨.inst i p n child inputs, member⟩
-    Option (Snapshot (children e) (state e))
-  | _ => Unit
+structure CycleCache (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)
+    (children : Children m) (runners : Runners m children) (state : LocalState m children)
+    (target : Input m) where
+  values : Std.DHashMap (ValueRef m.ctx) (fun ref => Value ref.width)
+  valid : ∀ ref value, values.get? ref = some value →
+    value = localSolution d m hm children state target ref.node ref.width ref.found
+  children : ChildCache d m hm children runners state target
 
-abbrev ChildCache (m : Typed.Module) (children : Children m) (state : LocalState m children) :=
-  (e : EquationRef m) → CachedChild m children state e
-
-def emptyChildren (m : Typed.Module) (children : Children m) (state : LocalState m children) :
-    ChildCache m children state
-  | ⟨.inst .., _⟩ => none
-  | ⟨.let_ .., _⟩ | ⟨.reg .., _⟩ | ⟨.mem .., _⟩ | ⟨.assign .., _⟩ => ()
+def emptyCache (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)
+    (children : Children m) (runners : Runners m children) (state : LocalState m children)
+    (target : Input m) : CycleCache d m hm children runners state target where
+  values := ∅
+  valid := by simp
+  children := fun e => match e with
+    | ⟨.inst i p n child inputs, member⟩ =>
+      let e : EquationRef m := ⟨.inst i p n child inputs, member⟩
+      (runners e).empty (state e) (finalConnections d m hm children state target e)
+    | ⟨.let_ .., _⟩ | ⟨.reg .., _⟩ | ⟨.mem .., _⟩ | ⟨.assign .., _⟩ => ()
 
 def updateChild (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)
-    (children : Children m) (state : LocalState m children) (cache : ChildCache m children state)
-    (e : EquationRef m) (value : CachedChild m children state e) : ChildCache m children state :=
+    (children : Children m) (runners : Runners m children) (state : LocalState m children)
+    (target : Input m) (cache : ChildCache d m hm children runners state target)
+    (e : EquationRef m) (value : CachedChild d m hm children runners state target e) :
+    ChildCache d m hm children runners state target :=
   fun other => if same : equationName e.val = equationName other.val then
     have eq : e = other := Subtype.ext
       (equation_unique d.design d.wellFormed m hm e.val other.val e.property other.property same)
     eq ▸ value
   else cache other
 
-/-! A snapshot is valid for its stored inputs, even when other parent values advance. -/
-def evalCached (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)
+/-! Only a missing value invokes a driver or a child output request. -/
+def evalMissing (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)
     (children : Children m) (runners : Runners m children) (state : LocalState m children)
-    (input : Input m) (values : Valuation m.ctx) (memories : Memories m.ctx)
-    (connections : ConnectionValues m) (cache : ChildCache m children state)
-    (driver : ValueDriver m node width) :
-    {result : Value width × ChildCache m children state //
-      result.1 = driver.eval m children state input values memories connections} := by
+    (input : Input m) {target : Input m} (selection : Selection m input target)
+    (cache : CycleCache d m hm children runners state target)
+    (ref : ValueRef m.ctx) (driver : ValueDriver m ref.node ref.width)
+    (selected : selection.contains ref.node = true)
+    (ready : ∀ dep width found, ValueEdge m ref.node dep →
+      cache.values.getD ⟨dep, width, found⟩ 0 =
+        localSolution d m hm children state target dep width found) :
+    {result : Value ref.width × ChildCache d m hm children runners state target //
+      result.1 = localSolution d m hm children state target ref.node ref.width ref.found} := by
+  obtain ⟨node, width, found⟩ := ref
+  let values := curryValues (fun ref => cache.values.getD ref 0)
+  let memories := stateMemories m children state
+  have solved := localSolution_isSolution d m hm children state target
+    node width found driver
+  have correct := driver_congr d m hm children state input target selection values
+    (localSolution d m hm children state target) driver selected ready
   cases driver with
   | inst i p n child inputs member port portMember dir bits =>
     let e : EquationRef m := ⟨.inst i p n child inputs, member⟩
-    let result := cachedCycle (children e) (runners e) (state e) (connections e) (cache e)
-    exact ⟨(cast (congrArg TyValue bits) (result.result.2 ⟨port, portMember, dir⟩),
-      updateChild d m hm children state cache e (some ⟨connections e, result⟩)), by
-        simp only [result.correct]
-        rfl⟩
-  | _ => exact ⟨(_, cache), rfl⟩
+    let result := (runners e).output (state e) (connectionValues d m hm values memories e)
+      ⟨port, portMember, dir⟩ (by
+        intro input dependency
+        apply connectionValues_congr
+        intro dep read width found
+        exact ready dep width found (instance_read_row d m hm i p n child inputs member
+          ⟨port, portMember, dir⟩ input dependency dep read)) (cache.children e)
+    exact ⟨(cast (congrArg TyValue bits) result.val.1,
+      updateChild d m hm children runners state target cache.children e result.val.2), by
+        rw [result.property]
+        exact solved.symm⟩
+  | _ => exact ⟨(_, cache.children), correct.trans solved.symm⟩
 
-abbrev CycleCache (m : Typed.Module) (children : Children m) (state : LocalState m children) :=
-  Std.DHashMap (ValueRef m.ctx) (fun ref => Value ref.width) × ChildCache m children state
-
-def evalNode (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)
+/-! A cache hit leaves the node and all its descendants untouched. -/
+def visitNode (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)
     (children : Children m) (runners : Runners m children) (state : LocalState m children)
-    (input : Input m) (table : DriverTable m)
-    (complete : ∀ node width (_v : ValueDriver m node width),
-      (table.get? (node, width)).isSome)
-    (cache : CycleCache m children state) (ref : ValueRef m.ctx) : CycleCache m children state :=
-  let values := curryValues (fun ref => cache.1.getD ref 0)
-  let memories := stateMemories m children state
-  let result := evalCached d m hm children runners state input values memories
-    (connectionValues d m hm values memories) cache.2 (indexedDriver d m hm table complete ref)
-  (cache.1.insert ref result.val.1, result.val.2)
+    (input : Input m) {target : Input m} (selection : Selection m input target)
+    (prepared : Prepared d m hm) (cache : CycleCache d m hm children runners state target)
+    (ref : ValueRef m.ctx)
+    (ready : selection.contains ref.node = true → ∀ dep width found,
+      ValueEdge m ref.node dep → cache.values.getD ⟨dep, width, found⟩ 0 =
+        localSolution d m hm children state target dep width found) :
+    {out : CycleCache d m hm children runners state target //
+      (∀ r v, cache.values.get? r = some v → out.values.get? r = some v) ∧
+      (selection.contains ref.node = true → out.values.get? ref =
+        some (localSolution d m hm children state target ref.node ref.width ref.found))} := by
+  match found : cache.values.get? ref with
+  | some value =>
+    exact ⟨cache, (by simp), fun _ => found.trans (congrArg some (cache.valid _ _ found))⟩
+  | none =>
+    if selected : selection.contains ref.node = true then
+      let result := evalMissing d m hm children runners state input selection cache ref
+        (indexedDriver d m hm prepared.drivers prepared.total ref) selected (ready selected)
+      refine ⟨⟨cache.values.insert ref result.val.1, ?_, result.val.2⟩, ?_, ?_⟩
+      · intro r v hv
+        simp only [Std.DHashMap.get?_insert] at hv
+        split at hv
+        next same =>
+          have eq := eq_of_beq same
+          subst r
+          cases hv
+          exact result.property
+        next => exact cache.valid _ _ hv
+      · intro r v hv
+        rw [Std.DHashMap.get?_insert]
+        split
+        next same =>
+          have eq := eq_of_beq same
+          subst r
+          rw [found] at hv
+          contradiction
+        next => exact hv
+      · intro _
+        simp only [Std.DHashMap.get?_insert, beq_self_eq_true, ↓reduceDIte]
+        exact congrArg some result.property
+    else exact ⟨cache, (by simp), fun h => False.elim (selected h)⟩
 
-theorem evalNode_values (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)
+/-! The ordered pass fills a cone without replacing any value already in the cache. -/
+def fillNodes (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)
     (children : Children m) (runners : Runners m children) (state : LocalState m children)
-    (input : Input m) (table : DriverTable m)
-    (complete : ∀ node width (_v : ValueDriver m node width),
-      (table.get? (node, width)).isSome)
-    (cache : CycleCache m children state) (ref : ValueRef m.ctx) :
-    (evalNode d m hm children runners state input table complete cache ref).1 =
-      cache.1.insert ref ((localSystem d m hm children state input).rhs
-        (fun ref => cache.1.getD ref 0) ref) := by
-  dsimp only [evalNode]
-  rw [(evalCached ..).property, indexedDriver_eq]
-  rfl
+    (input : Input m) {target : Input m} (selection : Selection m input target)
+    (prepared : Prepared d m hm) (nodes : List (ValueRef m.ctx))
+    (sorted : nodes.Pairwise (fun a b => valueRank m a.node ≤ valueRank m b.node))
+    (cache : CycleCache d m hm children runners state target)
+    (ready : ∀ r, selection.contains r.node = true → r ∉ nodes → cache.values.get? r =
+      some (localSolution d m hm children state target r.node r.width r.found)) :
+    {out : CycleCache d m hm children runners state target //
+      ∀ r, selection.contains r.node = true → out.values.get? r =
+        some (localSolution d m hm children state target r.node r.width r.found)} := by
+  match nodes with
+  | [] => exact ⟨cache, fun r hr => ready r hr (by simp)⟩
+  | node :: rest =>
+    obtain ⟨lower, sortedRest⟩ := List.pairwise_cons.mp sorted
+    let result := visitNode d m hm children runners state input selection prepared cache node (by
+      intro selected dep width found edge
+      have selectedDep := selection.closed node.node dep selected edge
+      obtain ⟨reads, row, read⟩ := edge
+      have rank : valueRank m dep < valueRank m node.node :=
+        valueRank_read m _ row dep read
+      have absent : (⟨dep, width, found⟩ : ValueRef m.ctx) ∉ node :: rest := by
+        intro member
+        rcases List.mem_cons.mp member with same | member
+        · cases same; simp only at rank; omega
+        · have := lower ⟨dep, width, found⟩ member
+          dsimp only at this
+          omega
+      simp only [Std.DHashMap.getD_eq_getD_get?, ready ⟨dep, width, found⟩ selectedDep absent,
+        Option.getD_some])
+    exact fillNodes d m hm children runners state input selection prepared rest sortedRest
+      result.val (by
+        intro r selected absent
+        by_cases same : r = node
+        · subst r
+          exact result.property.2 selected
+        · apply result.property.1
+          exact ready r selected (by simp [same, absent]))
+termination_by nodes
 
-def cycleCache (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)
+def fillCache (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)
     (children : Children m) (runners : Runners m children) (state : LocalState m children)
-    (input : Input m) : CycleCache m children state :=
-  let system := preparedSystem d m hm children state input
-  let table := driverTable m (drivers m)
-  let complete := fun node width (v : ValueDriver m node width) =>
-    driverTable_total m (drivers m) v (driver_mem m v)
-  ((valueRefs m.ctx).mergeSort (fun a b => system.rank a ≤ system.rank b)).foldl
-    (evalNode d m hm children runners state input table complete)
-    (∅, emptyChildren m children state)
-
-theorem cycleCache_values (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)
-    (children : Children m) (runners : Runners m children) (state : LocalState m children)
-    (input : Input m) : (cycleCache d m hm children runners state input).1 =
-      orderedCache (preparedSystem d m hm children state input) (valueRefs m.ctx) := by
-  have fold (nodes : List (ValueRef m.ctx)) (cache : CycleCache m children state) :
-      (nodes.foldl (evalNode d m hm children runners state input (driverTable m (drivers m))
-        (fun _ _ v => driverTable_total m (drivers m) v (driver_mem m v))) cache).1 =
-      evaluate (localSystem d m hm children state input) nodes cache.1 := by
-    induction nodes generalizing cache with
-    | nil => rfl
-    | cons node rest ih =>
-      simp only [List.foldl_cons, ih, evaluate, evalNode_values]
-      rfl
-  unfold cycleCache orderedCache
-  rw [preparedSystem_eq]
-  exact fold _ _
-
-def nextCached (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)
-    (children : Children m) (runners : Runners m children) (state : LocalState m children)
-    (values : Valuation m.ctx) (cache : ChildCache m children state) : LocalState m children :=
-  let memories := stateMemories m children state
-  let connections := connectionValues d m hm values memories
-  fun e => match e with
-  | ⟨.inst i p n child inputs, member⟩ =>
-    let e : EquationRef m := ⟨.inst i p n child inputs, member⟩
-    (cachedCycle (children e) (runners e) (state e) (connections e) (cache e)).result.1
-  | ⟨.reg _ _ _ _ _ _ r _ _ x, _⟩ => nextRegister values memories r x
-  | ⟨.mem i p n w size c t writes, h⟩ =>
-    nextMemory values memories (state ⟨.mem i p n w size c t writes, h⟩) writes
-  | ⟨.let_ .., _⟩ | ⟨.assign .., _⟩ => ()
-
-theorem nextCached_eq (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)
-    (children : Children m) (runners : Runners m children) (state : LocalState m children)
-    (values : Valuation m.ctx) (cache : ChildCache m children state) :
-    nextCached d m hm children runners state values cache =
-      (localStepWithValues d m hm children state values).1 := by
-  funext e
-  obtain ⟨e, member⟩ := e
-  cases e <;> try rfl
-  rename_i i p n child inputs
-  let e : EquationRef m := ⟨.inst i p n child inputs, member⟩
-  exact congrArg Prod.fst (cachedCycle (children e) (runners e) (state e)
-    (connectionValues d m hm values (stateMemories m children state) e) (cache e)).correct
-
-private def equationDecEq (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies) :
-    DecidableEq (EquationRef m) := fun a b =>
-  decidable_of_iff (equationName a.val = equationName b.val) (by
-    constructor
-    · intro same
-      exact Subtype.ext (equation_unique d.design d.wellFormed m hm _ _
-        a.property b.property same)
-    · intro same
-      subst b
-      rfl)
-
-/-! Materialize state cells before the result exposes its state lookup function. -/
-def cachedLocalStep (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)
-    (children : Children m) (runners : Runners m children) (state : LocalState m children)
-    (input : Input m) : LocalState m children × Output m :=
-  let cache := cycleCache d m hm children runners state input
-  let values := curryValues (fun ref => cache.1.getD ref 0)
-  letI := equationDecEq d m hm
-  letI : Hashable (EquationRef m) := ⟨fun e => hash (equationName e.val)⟩
-  let next := indexed (nextCached d m hm children runners state values cache.2)
-    m.body.attach (fun e => List.mem_attach _ e)
-  (next.get, outputValues d m hm values)
-
-theorem cachedLocalStep_eq (d : CertifiedDesign) (m : Typed.Module)
-    (hm : m ∈ d.design.bodies) (children : Children m) (runners : Runners m children)
-    (state : LocalState m children) (input : Input m) :
-    cachedLocalStep d m hm children runners state input =
-      localStepWithValues d m hm children state (localSolution d m hm children state input) := by
-  simp only [cachedLocalStep, Table.get_eq, nextCached_eq]
-  have values : curryValues
-      (fun ref => (cycleCache d m hm children runners state input).1.getD ref 0) =
-      localSolution d m hm children state input := by
-    rw [cycleCache_values]
-    exact orderedSolution_eq d m hm children state input
-  rw [values]
-  rfl
+    (input : Input m) {target : Input m} (selection : Selection m input target)
+    (prepared : Prepared d m hm) (cache : CycleCache d m hm children runners state target) :=
+  fillNodes d m hm children runners state input selection prepared prepared.nodes prepared.sorted
+    cache (fun r _ absent => False.elim (absent (prepared.complete r)))
 
 end Silicon.Core.Interp

@@ -74,49 +74,28 @@ theorem indexedDriver_eq (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.
       decodeValue d.design d.wellFormed m hm ref.node ref.width ref.found :=
   ValueDriver.unique d.design d.wellFormed m hm _ _
 
-/-! All comparisons and equation reads use the same graph and driver index. -/
-def preparedSystem (d : CertifiedDesign) (m : Typed.Module)
-    (hm : m ∈ d.design.bodies) (children : Children m) (state : LocalState m children)
-    (input : Input m) : EquationSolution.System (ValueRef m.ctx) (fun ref => Value ref.width) :=
-  let nodes := valueRefs m.ctx
+/-! One preparation supplies the ordered nodes and their driver index. -/
+structure Prepared (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies) where
+  nodes : List (ValueRef m.ctx)
+  complete : ∀ ref, ref ∈ nodes
+  sorted : nodes.Pairwise (fun a b => valueRank m a.node ≤ valueRank m b.node)
+  drivers : DriverTable m
+  total : ∀ node width (_v : ValueDriver m node width), (drivers.get? (node, width)).isSome
+
+def prepare (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies) :
+    Prepared d m hm :=
   let active := (Deps.graph m.erase m.children).map Prod.fst
-  let ranks := indexed (fun ref : ValueRef m.ctx =>
-    if ref.node ∈ active then Typed.rank m.ranks ref.node + 1 else 0) nodes valueRefs_complete
-  let table := driverTable m (drivers m)
-  let complete := fun node width (v : ValueDriver m node width) =>
-    driverTable_total m (drivers m) v (driver_mem m v)
-  let driver := indexedDriver d m hm table complete
-  { initial := fun _ => 0
-    rank := ranks.get
-    rhs := fun values ref =>
-      let memories := stateMemories m children state
-      (driver ref).eval m children state input (curryValues values) memories
-        (connectionValues d m hm (curryValues values) memories)
-    respects := by
-      intro ref a b agree
-      apply ValueDriver.eval_rank_congr
-      intro dep width found lower
-      apply agree ⟨dep, width, found⟩
-      simpa only [Table.get_eq, active, valueRank] using lower }
-
-theorem preparedSystem_eq (d : CertifiedDesign) (m : Typed.Module)
-    (hm : m ∈ d.design.bodies) (children : Children m) (state : LocalState m children)
-    (input : Input m) : preparedSystem d m hm children state input =
-      localSystem d m hm children state input := by
-  simp only [preparedSystem, Table.get_eq, indexedDriver_eq]
-  rfl
-
-def orderedSolution (d : CertifiedDesign) (m : Typed.Module)
-    (hm : m ∈ d.design.bodies) (children : Children m) (state : LocalState m children)
-    (input : Input m) : Valuation m.ctx :=
-  curryValues (ordered (preparedSystem d m hm children state input) (valueRefs m.ctx))
-
-theorem orderedSolution_eq (d : CertifiedDesign) (m : Typed.Module)
-    (hm : m ∈ d.design.bodies) (children : Children m) (state : LocalState m children)
-    (input : Input m) : orderedSolution d m hm children state input =
-      localSolution d m hm children state input := by
-  unfold orderedSolution localSolution
-  rw [preparedSystem_eq]
-  rw [ordered_eq_solution _ _ valueRefs_complete]
+  let ranks := indexed (fun ref : ValueRef m.ctx => valueRankWith m.ranks active ref.node)
+    (valueRefs m.ctx) valueRefs_complete
+  { nodes := (valueRefs m.ctx).mergeSort (fun a b => ranks.get a ≤ ranks.get b)
+    complete := fun ref => List.mem_mergeSort.mpr (valueRefs_complete ref)
+    sorted := by
+      simp only [Table.get_eq]
+      have sorted := List.pairwise_mergeSort
+        (le := fun a b : ValueRef m.ctx => decide (valueRank m a.node ≤ valueRank m b.node))
+        (by intros; simp_all; omega) (by intros; simp; omega) (valueRefs m.ctx)
+      exact sorted.imp (fun h => of_decide_eq_true h)
+    drivers := driverTable m (drivers m)
+    total := fun _ _ v => driverTable_total m (drivers m) v (driver_mem m v) }
 
 end Silicon.Core.Interp

@@ -22,15 +22,19 @@ theorem orderedChildren_eq (d : CertifiedDesign) (env : Env d.design)
 def cachedSolution (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)
     (children : Children m) (runners : Runners m children) (state : LocalState m children)
     (input : Input m) : Valuation m.ctx :=
-  let cache := cycleCache d m hm children runners state input
-  curryValues (fun ref => cache.1.getD ref 0)
+  let filled := fillCache d m hm children runners state input (allSelection m input)
+    (prepare d m hm) (emptyCache d m hm children runners state input)
+  curryValues (fun ref => filled.val.values.getD ref 0)
 
 theorem cachedSolution_eq (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies)
     (children : Children m) (runners : Runners m children) (state : LocalState m children)
     (input : Input m) : cachedSolution d m hm children runners state input =
       localSolution d m hm children state input := by
-  dsimp only [cachedSolution]
-  rw [cycleCache_values]
-  exact orderedSolution_eq d m hm children state input
+  funext node width found
+  exact (Std.DHashMap.getD_eq_getD_get?).trans
+    (congrArg (fun x => x.getD 0)
+      ((fillCache d m hm children runners state input (allSelection m input)
+        (prepare d m hm) (emptyCache d m hm children runners state input)).property
+          ⟨node, width, found⟩ rfl))
 
 end Silicon.Core.Interp

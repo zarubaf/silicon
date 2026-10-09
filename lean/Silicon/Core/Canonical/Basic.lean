@@ -56,7 +56,6 @@ def Stmt.recontext (h : âˆ€ n, ctx.lookup n = ctx'.lookup n) : Stmt ctx ports â†
 
 end Silicon.Core.Typed
 
-/-! Canonical order preserves the port interface used to type each instance. -/
 namespace Silicon.Core
 
 /-! A reorder keeps every equation and permits permutations at each unordered boundary. -/

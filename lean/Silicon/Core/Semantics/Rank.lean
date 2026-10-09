@@ -7,8 +7,12 @@ checked graph ranks, so every expression read has a smaller semantic rank.
 -/
 namespace Silicon.Core.Semantics
 
+abbrev valueRankWith (ranks : List (Deps.Node × Nat)) (active : List Deps.Node)
+    (node : Deps.Node) : Nat :=
+  if node ∈ active then Typed.rank ranks node + 1 else 0
+
 def valueRank (m : Typed.Module) (node : Deps.Node) : Nat :=
-  if node ∈ (Deps.graph m.erase m.children).map Prod.fst then Typed.rank m.ranks node + 1 else 0
+  valueRankWith m.ranks ((Deps.graph m.erase m.children).map Prod.fst) node
 
 /-! An unfiltered equation read is either a state leaf or a checked graph edge. -/
 theorem valueRank_read (m : Typed.Module) (row : Deps.Node × List Deps.Node)
@@ -17,7 +21,7 @@ theorem valueRank_read (m : Typed.Module) (row : Deps.Node × List Deps.Node)
   have own : row.1 ∈ (Deps.graph m.erase m.children).map Prod.fst := by
     rw [Deps.graph_keys]
     exact List.mem_map.mpr ⟨row, member, rfl⟩
-  unfold valueRank
+  unfold valueRank valueRankWith
   rw [ite_eq_left own]
   split
   next active =>
