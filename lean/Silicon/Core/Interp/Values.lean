@@ -36,6 +36,31 @@ theorem valueRefs_complete (ref : ValueRef ctx) : ref ∈ valueRefs ctx := by
       rfl
     next h => exact False.elim (h width found)⟩
 
+/-! A node index avoids a context scan for each reached cone node. -/
+def valueRef? (ctx : Typed.Ctx) (node : Deps.Node) : Option (ValueRef ctx) :=
+  match found : ctx.lookup node with
+  | some (.value (.bits width)) => some ⟨node, width, found⟩
+  | _ => none
+
+theorem valueRef?_self (ref : ValueRef ctx) : valueRef? ctx ref.node = some ref := by
+  cases ref with
+  | mk node width found =>
+    unfold valueRef?
+    split
+    next w hw =>
+      have eq : w = width := by simpa [found] using hw.symm
+      subst w
+      rfl
+    next h => exact False.elim (h width found)
+
+def valueRefIndex (ctx : Typed.Ctx) :=
+  tabulate (valueRef? ctx) ((valueRefs ctx).map (·.node))
+
+theorem valueRefIndex_get (ref : ValueRef ctx) :
+    ((valueRefIndex ctx).get? ref.node).getD none = some ref := by
+  rw [valueRefIndex, tabulate_get _ _ _
+    (List.mem_map.mpr ⟨ref, valueRefs_complete ref, rfl⟩), Option.getD_some, valueRef?_self]
+
 abbrev DriverKey := Deps.Node × Nat
 abbrev DriverTable (m : Typed.Module) :=
   Std.DHashMap DriverKey (fun key => ValueDriver m key.1 key.2)
