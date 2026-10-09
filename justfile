@@ -55,7 +55,7 @@ commit-msg file:
 commit-check base="origin/main":
     cargo xtask commit-check --base {{ base }}
 
-ci base="origin/main": check test (commit-check base)
+ci base="origin/main": check test lean-check (commit-check base)
 
 setup:
     lefthook install
