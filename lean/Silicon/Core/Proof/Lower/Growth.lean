@@ -1,4 +1,4 @@
-import Silicon.Core.Proof.Lower.Defs
+import Silicon.Core.Proof.Lower.SsaNames
 
 /-!
 A build step only appends ops and ports. Only a named statement result adds an alias.
