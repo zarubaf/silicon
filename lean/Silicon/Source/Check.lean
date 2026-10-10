@@ -127,15 +127,9 @@ def fnStatic : PrimFn → Nat → Bool
   | .staticAssert, _ | .error, _ => true
 
 /-!
-The name and the number of missing index arguments of a type in an expression: `T` or an index
-of it. A complete type misses none. Another expression is not a type.
+The type head of a type: its name and its number of missing index arguments. A complete type
+misses none.
 -/
-def typeHead : Resolve.Expr → Option (String × Nat)
-  | .name _ n (.type t) => some (s!"`{n}`", typeArity t)
-  | .index _ b _ => (typeHead b).map fun _ => ("a complete type", 0)
-  | _ => none
-
-/-! The same for a type expression. -/
 def typeHeadOf : Resolve.TypeExpr → String × Nat
   | .name _ n t => (s!"`{n}`", typeArity t)
   | .index .. => ("a complete type", 0)
@@ -150,10 +144,10 @@ def name (static : Bool) (pos : Pos) (n : String) : Ref → M Unit
   | _ => pure ()
 
 /-!
-The arity of a call at `pos` with the callee `f` and `got` arguments. The result tells which
-arguments are static positions, by index.
+The arity of a call at `pos` with the callee `f` and `got` arguments. `type` is true if `f` is a
+type. The result tells which arguments are static positions, by index.
 -/
-def call (pos : Pos) (f : Resolve.Expr) (got : Nat) : M (Nat → Bool) := do
+def call (pos : Pos) (f : Resolve.Expr) (type : Bool) (got : Nat) : M (Nat → Bool) := do
   match f with
   | .name _ g (.item i) =>
     match (← read)[i]? with
@@ -165,31 +159,49 @@ def call (pos : Pos) (f : Resolve.Expr) (got : Nat) : M (Nat → Bool) := do
     arity pos s!"`{g}`" (fnArity h) got
     return fnStatic h
   | _ =>
-    if (typeHead f).isSome then
+    if type then
       arity pos "a constructor" 1 got
       return fun _ => true
     return fun _ => false
 
-/-! An expression. `static` is true in a static position. -/
-def expr (static : Bool) : Resolve.Expr → M Unit
-  | .num .. | .bool .. | .str .. => pure ()
-  | .name p n r => name static p n r
-  | .unary _ _ a => expr static a
-  | .binary _ _ l r => do expr static l; expr static r
-  | .cond _ c y n => do expr static c; expr static y; expr static n
+/-!
+An expression. `static` is true in a static position. `base` is true for the base of an index,
+whose index holds the arguments of a type name. The result is the type head of a type in an
+expression: `T` or an index of it. Another expression gives `none`. Thus the walk visits each
+node once.
+-/
+def visit (static base : Bool) : Resolve.Expr → M (Option (String × Nat))
+  | .num .. | .bool .. | .str .. => return none
+  | .name p n (.type t) => do
+    unless base do arity p s!"`{n}`" (typeArity t) 0
+    return some (s!"`{n}`", typeArity t)
+  | .name p n r => do name static p n r; return none
+  | .unary _ _ a => do let _ ← visit static false a; return none
+  | .binary _ _ l r => do
+    let _ ← visit static false l
+    let _ ← visit static false r
+    return none
+  | .cond _ c y n => do
+    let _ ← visit static false c
+    let _ ← visit static false y
+    let _ ← visit static false n
+    return none
   | .call p f xs => do
-    expr true f
-    let st ← call p f xs.length
+    let h ← visit true false f
+    let st ← call p f h.isSome xs.length
     let mut k := 0
     for x in xs do
-      expr (static || st k) x
+      let _ ← visit (static || st k) false x
       k := k + 1
+    return none
   | .index p b xs => do
-    if let some (n, k) := typeHead b then arity p n k xs.length
-    -- The base type name of an index has its arguments, so it skips the check of a bare name.
-    unless b matches .name _ _ (.type _) do expr static b
-    for x in xs do expr true x
-  | .field _ b _ => expr static b
+    let h ← visit static true b
+    if let some (n, k) := h then arity p n k xs.length
+    for x in xs do let _ ← visit true false x
+    return h.map fun _ => ("a complete type", 0)
+  | .field _ b _ => do let _ ← visit static false b; return none
+
+def expr (static : Bool) (e : Resolve.Expr) : M Unit := do let _ ← visit static false e
 
 def typeExpr : Resolve.TypeExpr → M Unit
   | .name p n t => arity p s!"`{n}`" (typeArity t) 0
