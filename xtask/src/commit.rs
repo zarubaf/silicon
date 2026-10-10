@@ -101,23 +101,21 @@ pub fn check_message(msg: &str, scopes: &[String]) -> Vec<String> {
     problems
 }
 
-/// True for test expectation files: snapshots and corpus `expected` files.
+/// Directories of shared test data. Each file there is an oracle: an input
+/// with its expectation inline (`; expected-error`, `; STEP`, `; CHECK`) or
+/// beside it. Any change to such a file counts, so no list of forms can
+/// drift from the harnesses.
+const ORACLE_DIRS: &[&str] = &["check", "run", "lower", "corpus"];
+
+/// True for test expectation files: snapshots and files of the shared test
+/// data directories `tests/{check,run,lower,corpus}/`.
 pub fn is_expectation(path: &Path) -> bool {
     let parts: Vec<_> = path.iter().map(|p| p.to_string_lossy()).collect();
-    if parts.iter().any(|p| p == "snapshots") {
-        return true;
-    }
-    // `tests/corpus/**/expected/**`: `expected` is a directory below the corpus.
-    let Some(start) = parts
-        .windows(2)
-        .position(|w| w[0] == "tests" && w[1] == "corpus")
-    else {
-        return false;
-    };
-    let dirs = parts
-        .get(start + 2..parts.len().saturating_sub(1))
-        .unwrap_or(&[]);
-    dirs.iter().any(|p| p == "expected")
+    parts.iter().any(|p| p == "snapshots")
+        // Three components: `tests`, the directory, and a file below it.
+        || parts
+            .windows(3)
+            .any(|w| w[0] == "tests" && ORACLE_DIRS.contains(&&*w[1]))
 }
 
 fn is_test_code(path: &Path) -> bool {
@@ -301,12 +299,10 @@ mod tests {
     }
 
     #[test]
-    fn expected_must_be_below_the_corpus() {
-        assert!(!is_expectation(Path::new("expected/tests/corpus/b/o.v")));
-        assert!(!is_expectation(Path::new(
-            "crates/a/tests/corpus/b/expected"
-        )));
-        assert!(!is_expectation(Path::new("crates/a/tests/corpus/expected")));
+    fn oracle_directory_needs_a_file_below_it() {
+        assert!(!is_expectation(Path::new("tests/check")));
+        assert!(!is_expectation(Path::new("docs/check/a.sil")));
+        assert!(!is_expectation(Path::new("tests/other/a.sil")));
     }
 
     #[test]
@@ -354,13 +350,87 @@ mod tests {
     #[test]
     fn recognizes_expectations() {
         assert!(is_expectation(Path::new("crates/a/snapshots/x.snap")));
-        assert!(is_expectation(Path::new(
-            "crates/a/tests/corpus/b/expected/o.v"
-        )));
+        for dir in ["check", "run", "lower", "corpus"] {
+            assert!(is_expectation(Path::new(&format!("tests/{dir}/a.sil"))));
+        }
+        assert!(is_expectation(Path::new("tests/corpus/b/expected/o.v")));
         assert!(!is_expectation(Path::new("crates/a/src/lib.rs")));
-        assert!(!is_expectation(Path::new(
-            "crates/a/tests/corpus/b/input.si"
-        )));
+        assert!(!is_expectation(Path::new("crates/driver/tests/run.rs")));
+    }
+
+    #[test]
+    fn oracle_files_are_flagged_for_every_change_kind() {
+        // Add, delete, and content change all list the file by name.
+        for dir in ["check", "run", "lower", "corpus"] {
+            let p = paths(&[&format!("tests/{dir}/a.sil"), "crates/a/src/lib.rs"]);
+            assert!(fired(&check_paths("feat", &p), "commit-expectations-code"));
+            let p = paths(&[&format!("tests/{dir}/a.sil")]);
+            assert!(fired(
+                &check_paths("refactor", &p),
+                "commit-refactor-expectations"
+            ));
+            assert!(check_paths("test", &p).is_empty());
+        }
+    }
+
+    fn range_problems(
+        setup: &[(&str, &str)],
+        change: &[(&str, Option<&str>)],
+        msg: &str,
+    ) -> Vec<String> {
+        let tmp = tempfile::tempdir().unwrap();
+        let d = tmp.path();
+        init(d);
+        for (f, body) in setup {
+            std::fs::create_dir_all(d.join(f).parent().unwrap()).unwrap();
+            std::fs::write(d.join(f), body).unwrap();
+        }
+        run(d, &["add", "."]);
+        run(d, &["commit", "--quiet", "-m", "feat: base"]);
+        for (f, body) in change {
+            match body {
+                Some(b) => {
+                    std::fs::create_dir_all(d.join(f).parent().unwrap()).unwrap();
+                    std::fs::write(d.join(f), b).unwrap();
+                }
+                None => std::fs::remove_file(d.join(f)).unwrap(),
+            }
+        }
+        run(d, &["add", "-A"]);
+        run(d, &["commit", "--quiet", "-m", msg]);
+        check_range(d, "HEAD~1..HEAD", &scopes()).unwrap()
+    }
+
+    #[test]
+    fn range_flags_add_delete_and_edit_of_oracle_files_with_code() {
+        for dir in ["check", "run", "lower", "corpus"] {
+            let f = format!("tests/{dir}/a.sil");
+            let base = [(f.as_str(), "; x\n"), ("code.rs", "a")];
+            let changes: [Vec<(&str, Option<&str>)>; 3] = [
+                vec![(f.as_str(), Some("; y\n")), ("code.rs", Some("b"))],
+                vec![(f.as_str(), None), ("code.rs", Some("b"))],
+                vec![
+                    ("tests/new.sil", Some("; z")),
+                    (f.as_str(), Some("; y\n")),
+                    ("code.rs", Some("b")),
+                ],
+            ];
+            for change in changes {
+                let p = range_problems(&base, &change, "feat: x");
+                assert!(
+                    p.iter().any(|l| l.contains("[commit-expectations-code]")),
+                    "{p:?}"
+                );
+            }
+            let only = range_problems(&base, &[(f.as_str(), Some("; y\n"))], "test: x");
+            assert!(only.is_empty(), "{only:?}");
+            let refactor = range_problems(&base, &[(f.as_str(), Some("; y\n"))], "refactor: x");
+            assert!(
+                refactor
+                    .iter()
+                    .any(|l| l.contains("[commit-refactor-expectations]"))
+            );
+        }
     }
 
     #[test]
