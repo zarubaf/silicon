@@ -36,9 +36,15 @@ def ex (s : String) (depth : Nat := defaultSyntaxDepth) : String :=
   | .ok v => v.dump
   | .error e => errorText e
 
+/-!
+The body `s` of a `comptime fn`. The body starts on line 2. The parser accepts each statement
+there. The pre-check rejects a resource in it.
+-/
+def ctBody (s : String) : String := "comptime fn f() -> T {\n" ++ s ++ "\n}"
+
 /-! The dump of the one statement `s` in a function body. -/
 def st (s : String) (depth : Nat := defaultSyntaxDepth) : String :=
-  match parseSource depth ("fn f() -> T {\n" ++ s ++ "\n}") with
+  match parseSource depth (ctBody s) with
   | .ok [.fn _ _ _ _ _ [x]] => x.dump
   | .ok _ => "not one statement"
   | .error e => errorText e
@@ -46,7 +52,7 @@ def st (s : String) (depth : Nat := defaultSyntaxDepth) : String :=
 /-! `S001` or `S004` in the body `s` of a function, which starts on line 2. -/
 def stFails (s : String) (code : ErrorCode) (col : Nat)
     (depth : Nat := defaultSyntaxDepth) : Bool :=
-  fails ("fn f() -> T {\n" ++ s ++ "\n}") code 2 col depth
+  fails (ctBody s) code 2 col depth
 
 def roundtrip (items : List Item) : Bool :=
   match parseSource defaultSyntaxDepth (Print.print items) with
@@ -182,6 +188,22 @@ def roundtrip (items : List Item) : Bool :=
 #guard stFails "instance u = p::M();" .S004 15
 #guard stFails "a[0] = 1;" .S004 1
 #guard stFails "a.b[0] := 1;" .S004 1
+
+/-!
+`S004`: a `fn` without `comptime` declares no port, resource, or instance. The position is the
+keyword, also in a nested block. A `comptime fn` and a module parse these statements.
+-/
+def plainBody (s : String) : String := "fn f() -> T {\n" ++ s ++ "\n}"
+#guard fails (plainBody "input i: Bool;") .S004 2 1
+#guard fails (plainBody "output o: Bool;") .S004 2 1
+#guard fails (plainBody "reg r: Bool = false;") .S004 2 1
+#guard fails (plainBody "wire w: Bool;") .S004 2 1
+#guard fails (plainBody "instance u = M();") .S004 2 1
+#guard fails (plainBody "let x = 1;\n{\ncomptime if (c) { wire w: Bool; }\n}") .S004 4 19
+#guard fails (plainBody "comptime for i in 0..2 {\nreg r: Bool = false;\n}") .S004 3 1
+#guard (parseSource defaultSyntaxDepth (plainBody "let x = 1;\nx = 2;\nreturn x;")).toBool
+#guard (parseSource defaultSyntaxDepth (ctBody "wire w: Bool;\nreturn 1;")).toBool
+#guard (parseSource defaultSyntaxDepth "module M() {\nwire w: Bool;\n}").toBool
 #guard stFails "a.0 = 1;" .S004 1
 #guard stFails "a[b.0] = 1;" .S004 1
 #guard stFails "@field(x, \"f\") = 1;" .S004 1
