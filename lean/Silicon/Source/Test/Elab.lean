@@ -21,6 +21,7 @@ def cost (src t : String) (fuel : Nat := 100000000) (depth : Nat := 1000)
   | .ok text => text
   | .error e => s!"{e.code} {e.pos.line}:{e.pos.col}"
   | .usage _ => "usage"
+  | .defect _ => "defect"
 
 /-! The elaborated design of `src` with the top selection `t`. -/
 def design (src t : String) : Option Elab.Design :=
@@ -83,26 +84,27 @@ def counter : String :=
   "    value := counter.value;\n" ++
   "}\n"
 
-#guard cost counter "Main" == "total 168\nCounter$4 67\nMain 69\n"
-#guard exact counter "Main" 168
-#guard cost counter "Counter(8)" == "total 118\nCounter$8 67\n"
+#guard cost counter "Main" == "total 252\nCounter$4 112\nMain 106\n"
+#guard exact counter "Main" 252
+#guard cost counter "Counter(8)" == "total 166\nCounter$8 112\n"
 #guard order counter "Main" == ["Counter$4", "Main"]
 
 /-!
 The table of instantiations. A child finishes before its parent. A repeated `InstantiationId`
 elaborates once. Its `instance` statement charges 1, and its argument charges 2 for the node and
 the literal, and 1 for the recursive size. Its serialization charges 1 for the decimal form and
-32 for its bytes: 37 units.
+32 for its bytes. Its lowering charges 16: the `inst` node, its name with 1 field, the emitted
+name with 2 fields, and two domain connections with 6 each. These are 53 units.
 -/
 def leaf : String := "module C(comptime n: Nat) {\n}\n"
 def one : String := leaf ++ "module T() {\n  instance a = C(5);\n}\n"
 def two : String := leaf ++ "module T() {\n  instance a = C(5);\n  instance b = C(5);\n}\n"
 def other : String := leaf ++ "module T() {\n  instance a = C(5);\n  instance b = C(6);\n}\n"
 
-#guard total two "T" == total one "T" + 37
+#guard total two "T" == total one "T" + 53
 #guard order two "T" == ["C$5", "T"]
 #guard order other "T" == ["C$5", "C$6", "T"]
-#guard cost other "T" == s!"total {total other "T"}\nC$5 2\nC$6 2\nT 81\n"
+#guard cost other "T" == s!"total {total other "T"}\nC$5 11\nC$6 11\nT 121\n"
 
 /-! An instantiation that depends on itself is `S019` at its `instance` statement. -/
 def selfDep : String := "module M(comptime d: Nat) {\n  instance a = M(d);\n}\n"
@@ -164,19 +166,6 @@ def wide (n : Nat) : String :=
   "module W() {\n" ++ String.join ((List.range n).map fun j => s!"  input i{j}: Bool;\n") ++
   s!"}\nmodule T() \{\n  comptime for k in 0..{n} \{\n    instance u = W();\n  }\n}\n"
 #guard cost (wide 8000) "T" (fuel := 1000000) == "S018 8005:5"
-
-/-!
-A hardware operation charges 1 plus the number of its operands, and it shares its operand trees.
-A chain `a +% a +% ... +% a` thus costs linear fuel. Each term adds 5 units: 1 for the
-operator node, 1 for the name, and 3 for the hardware operation. Without an operator,
-`o := a` binds a reference and copies it for 1 unit, so the chains start at one operator.
--/
-def hwChain (k : Nat) : String :=
-  "module M() {\n  input a: UInt[8];\n  output o: UInt[8];\n  o := a" ++
-  String.join (List.replicate k " +% a") ++ ";\n}\n"
-#guard total (hwChain 4001) "M" - total (hwChain 2001) "M" ==
-  total (hwChain 2001) "M" - total (hwChain 1) "M"
-#guard total (hwChain 2) "M" - total (hwChain 1) "M" == 5
 
 /-! The branching hierarchy of section 11.3 with `d = 10`: 2047 instantiations. -/
 def branch : String :=

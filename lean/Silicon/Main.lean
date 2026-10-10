@@ -27,6 +27,7 @@ def main (args : List String) : IO UInt32 := do
       | "parse" :: rest => source "parse" rest
       | "eval" :: rest => source "eval" rest
       | "cost" :: rest => source "cost" rest
+      | "elab" :: rest => source "elab" rest
       | _ => usage
     (← IO.getStdout).flush
     return code
