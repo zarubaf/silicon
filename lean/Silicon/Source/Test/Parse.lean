@@ -240,8 +240,12 @@ def calls (n : Nat) : String := String.join (List.replicate n "f(") ++ "x" ++ ""
 #guard fails ("const N: T[" ++ chain 65 ++ "] = 1;") .S001 1 12
 #guard ex (parens 1000) == "error S001 1:950"
 
-/-! Statements have no nesting limit. -/
-#guard !((st ("".pushn '{' 200 ++ "".pushn '}' 200)).startsWith "error")
+/-! The block depth limit: the body and 63 nested blocks pass, and one more fails at its `{`. -/
+def blocks (n : Nat) : String := "".pushn '{' n ++ "".pushn '}' n
+#guard !((st (blocks 63)).startsWith "error")
+#guard stFails (blocks 64) .S001 64
+#guard stFails ("comptime if (c) " ++ blocks 64) .S001 80
+#guard fails ("module M() " ++ blocks 64 ++ "\n" ++ "x") .S001 2 1
 
 /-! The parser reads the text of the printer back to the same AST. -/
 def p : Pos := ⟨1, 1⟩

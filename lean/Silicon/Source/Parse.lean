@@ -52,7 +52,10 @@ pair of parentheses, has the height 1 plus the largest height of its parts. A ty
 same rule: a type name has height 1. Height 65 is `S001` at the first token of the first form
 that has it. That form is the first such form to end, because two forms of height 65 do not
 overlap. Thus `a + a + ... + a` with 65 operands fails at the first `a`. The limit bounds each
-recursive pass over the AST. Statements have no nesting limit.
+recursive pass over the AST.
+
+Blocks nest at most 64 levels deep. The body of an item is at depth 1, and each block in a
+block adds 1. A block at depth 65 is `S001` at its `{`.
 -/
 namespace Silicon.Source.Parse
 
@@ -392,9 +395,10 @@ def placeStmt (f : Nat) (start : Pos) (e : Node) (place : Bool) : P Stmt := do
     return .expr start e.expr
 
 mutual
-  def stmt : Nat → P Stmt
-    | 0 => exhausted
-    | f + 1 => do
+  /-- A statement in a block at the depth `b`. -/
+  def stmt : Nat → Nat → P Stmt
+    | 0, _ => exhausted
+    | f + 1, b => do
       let t ← peek
       match t.kind with
       | .keyword "let" =>
@@ -449,8 +453,8 @@ mutual
           sym "("
           let c ← value f
           sym ")"
-          let y ← block f
-          let n ← if ← acceptKw "else" then some <$> block f else pure none
+          let y ← block f (b + 1)
+          let n ← if ← acceptKw "else" then some <$> block f (b + 1) else pure none
           return .ctIf t.pos c y n
         else if isKw "for" u then
           bump
@@ -459,11 +463,11 @@ mutual
           let lo ← value f
           sym ".."
           let hi ← value f
-          return .ctFor t.pos i lo hi (← block f)
+          return .ctFor t.pos i lo hi (← block f (b + 1))
         else unexpected u "`if` or `for`"
       | .keyword "mem" => later t "a memory"
       | .keyword "type" => later t "a type alias"
-      | .symbol "{" => return .block t.pos (← block f)
+      | .symbol "{" => return .block t.pos (← block f (b + 1))
       | .ident _ =>
         if laterPlace (← rest) 0 false then later t "a place with an index or a tuple selector"
         let (e, place) ← postfixExpr f
@@ -487,20 +491,24 @@ mutual
       sym ";"
       return make t.pos n ty
 
-  def block : Nat → P (List Stmt)
-    | 0 => exhausted
-    | f + 1 => do
-      sym "{"
-      stmts f []
-
-  def stmts : Nat → List Stmt → P (List Stmt)
+  /-- A block at the depth `b`. The body of an item is at depth 1. -/
+  def block : Nat → Nat → P (List Stmt)
     | 0, _ => exhausted
-    | f + 1, acc => do
+    | f + 1, b => do
+      let t ← peek
+      sym "{"
+      if b > maxDepth then
+        throw ⟨.S001, t.pos, s!"blocks nest deeper than {maxDepth} levels"⟩
+      stmts f b []
+
+  def stmts : Nat → Nat → List Stmt → P (List Stmt)
+    | 0, _, _ => exhausted
+    | f + 1, b, acc => do
       let t ← peek
       if isSym "}" t then bump; return acc.reverse
       if t.kind == .eof then unexpected t "`}`"
-      let s ← stmt f
-      stmts f (s :: acc)
+      let s ← stmt f b
+      stmts f b (s :: acc)
 end
 
 /-!
@@ -541,7 +549,7 @@ def fnRest (f : Nat) (start : Pos) (comptime : Bool) : P Item := do
   let ps ← params f false []
   sym "->"
   let r := (← typeExpr f).1
-  return .fn start comptime n ps r (← block f)
+  return .fn start comptime n ps r (← block f 1)
 
 def moduleItem (f : Nat) (start : Pos) : P Item := do
   kw "module"
@@ -551,7 +559,7 @@ def moduleItem (f : Nat) (start : Pos) : P Item := do
   let ds ← if ← acceptKw "domains" then sym "(" *> some <$> domainNames else pure none
   let t ← peek
   if isKw "conforms" t then later t "a contract attachment"
-  return .module start n ps ds (← block f)
+  return .module start n ps ds (← block f 1)
 
 def laterItems : List (String × String) :=
   [("import", "an import"), ("pub", "`pub`"), ("type", "a type alias"),
