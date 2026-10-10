@@ -686,6 +686,22 @@ def parse (depth : Nat) (tokens : List Token) : Except Error (List Item) := do
   | some p => throw ⟨.S001, p, s!"an expression or a type is higher than {depth} levels"⟩
   | none => return items
 
+/-!
+An expression of the command line, such as the `EXPR` of `eval`, with the syntax depth `depth`.
+The positions are in the text of the expression. A token after the expression is `S001`.
+-/
+def parseExpr (depth : Nat) (s : String) : Except Error Expr := do
+  let ts := (lex depth s).toArray
+  let act : P Expr := do
+    let e ← value (32 * (ts.size + 1))
+    let t ← peek
+    unless t.kind == .eof do unexpected t "the end of the expression"
+    return e
+  let (e, st) ← (act.run ⟨Input.of ts, depth, false⟩).run ⟨0, none⟩
+  match st.high with
+  | some p => throw ⟨.S001, p, s!"an expression or a type is higher than {depth} levels"⟩
+  | none => return e
+
 /-! The items of a source text, with the syntax depth `depth`. -/
 def parseSource (depth : Nat) (s : String) : Except Error (List Item) :=
   parse depth (lex depth s)

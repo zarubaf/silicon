@@ -150,6 +150,19 @@ inductive Item where
       (body : List Stmt)
   deriving Repr, BEq, Inhabited
 
+/-! The position of the first token of a form. -/
+def Expr.pos : Expr → Pos
+  | .num p _ | .bool p _ | .str p _ | .name p .. | .unary p .. | .binary p ..
+  | .cond p .. | .call p .. | .index p .. | .field p .. => p
+
+def TypeExpr.pos : TypeExpr → Pos
+  | .name p .. | .index p .. => p
+
+def Stmt.pos : Stmt → Pos
+  | .local p .. | .assign p .. | .connect p .. | .reg p .. | .wire p .. | .input p ..
+  | .output p .. | .inst p .. | .ret p .. | .ctIf p .. | .ctFor p .. | .block p ..
+  | .expr p .. => p
+
 /-! Position order: the lower line, then the lower column. -/
 def before (a b : Pos) : Bool := a.line < b.line || (a.line == b.line && a.col < b.col)
 
@@ -330,20 +343,28 @@ def item : Source.Item → M Item
 def itemName : Source.Item → Ident
   | .const _ n .. | .fn _ _ n .. | .module _ n .. => n
 
-/-!
-The resolved items of a file, or the first error. The index of an item in the result is its
-index in `items`.
--/
-def resolve (items : List Source.Item) : Except Error (Array Item) :=
-  let walk : M (Array Item) := do
+/-! Runs `act` in the item scope of `items`. The result is the first error, if one occurs. -/
+def inFile (items : List Source.Item) (act : M α) : Except Error α :=
+  let walk : M α := do
     for (it, i) in items.zipIdx do
       bind (itemName it) (.item i)
     modify fun s => { s with scopes := 1 }
-    items.toArray.mapM item
+    act
   let (out, s) := (walk.run items.toArray).run ⟨{}, 0, 0, 0, none, none⟩
   match s.dup, s.unknown with
   | some e, _ => .error e
   | none, some e => .error e
   | none, none => .ok out
+
+/-!
+The resolved items of a file, or the first error. The index of an item in the result is its
+index in `items`.
+-/
+def resolve (items : List Source.Item) : Except Error (Array Item) :=
+  inFile items (items.toArray.mapM item)
+
+/-! An expression in the file scope, such as the `EXPR` of `eval`, or its first `S003`. -/
+def resolveExpr (items : List Source.Item) (e : Source.Expr) : Except Error Expr :=
+  inFile items (expr e)
 
 end Silicon.Source.Resolve

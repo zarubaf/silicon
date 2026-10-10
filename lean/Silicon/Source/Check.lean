@@ -274,4 +274,11 @@ def check (items : Array Resolve.Item) : Except Error (Array Resolve.Item) :=
   | some e => .error e
   | none => .ok items
 
+/-! A static expression in the file scope, such as the `EXPR` of `eval`, or its first error. -/
+def checkExpr (items : Array Resolve.Item) (e : Resolve.Expr) : Except Error Unit :=
+  let ((), s) := ((expr true e).run (items.map sig)).run ⟨#[], none⟩
+  match s.err with
+  | some e => .error e
+  | none => .ok ()
+
 end Silicon.Source.Check

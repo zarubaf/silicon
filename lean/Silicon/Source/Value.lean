@@ -58,6 +58,28 @@ def Ty.size : Ty → Nat
   | .bool | .nat | .int => 1
   | .uint w | .sint w => 1 + intSize w
 
+def Ty.text : Ty → String
+  | .bool => "Bool" | .nat => "Nat" | .int => "Int"
+  | .uint w => s!"UInt[{w}]" | .sint w => s!"SInt[{w}]"
+
+/-! The type of a value. A string and a type have no `Ty` in slice 1. -/
+def Value.ty? : Value → Option Ty
+  | .int _ => some .int
+  | .bool _ => some .bool
+  | .uint w _ => some (.uint w)
+  | .sint w _ => some (.sint w)
+  | .str _ | .type _ => none
+
+def Value.text : Value → String
+  | .str _ => "a string"
+  | .type _ => "a type"
+  | v => (v.ty?.map Ty.text).getD ""
+
+def Value.finiteTy? : Value → Option Ty
+  | .uint w _ => some (.uint w)
+  | .sint w _ => some (.sint w)
+  | _ => none
+
 /-! The canonical serialization of section 7.1. -/
 def Value.serialize : Value → String
   | .int n => Print.node "int" [toString n]
