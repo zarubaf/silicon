@@ -90,13 +90,16 @@ impl Parser<'_> {
     }
 
     fn fn_item(&mut self) -> Res {
-        self.eat(ComptimeKw);
+        let plain = !self.eat(ComptimeKw);
         self.bump();
         self.expect(Ident, "a name")?;
         self.param_list(false)?;
         self.expect(Arrow, "`->`")?;
         self.type_expr()?;
-        self.block()
+        self.in_plain_fn = plain;
+        let body = self.block();
+        self.in_plain_fn = false;
+        body
     }
 
     fn module_item(&mut self) -> Res {

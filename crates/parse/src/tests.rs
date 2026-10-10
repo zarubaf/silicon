@@ -502,6 +502,28 @@ fn the_first_error_is_the_first_in_position_order() {
 }
 
 #[test]
+fn a_plain_fn_has_no_hardware_statement() {
+    for stmt in [
+        "input a: Bool;",
+        "output a: Bool;",
+        "reg a: Bool = false;",
+        "wire a: Bool;",
+        "instance u = M();",
+    ] {
+        let src = format!("fn f() -> Nat {{\n  {stmt}\n  return 1;\n}}\n");
+        assert_eq!(first_error(&src), Some((Code::S004, 2, 3)), "{stmt}");
+        // `comptime fn` and `module` keep the statement. `typeck` checks the first.
+        let comptime = format!("comptime fn f() -> Nat {{\n  {stmt}\n  return 1;\n}}\n");
+        assert_eq!(first_error(&comptime), None, "{stmt}");
+        let module = format!("module M() {{\n  {stmt}\n}}\n");
+        assert_eq!(first_error(&module), None, "{stmt}");
+    }
+    // The rule ends with the body.
+    let src = "fn f() -> Nat { return 1; }\nmodule M() { wire w: Bool; }\n";
+    assert_eq!(first_error(src), None);
+}
+
+#[test]
 fn recovery_reports_later_errors() {
     let input = "const A: T = ;\ncomptime fn f() -> T { let = 1; reg r: T = 0; x +; }\nstruct S { }\nconst B: T = 1;\nconst C: T = ;";
     let parsed = parse(input);

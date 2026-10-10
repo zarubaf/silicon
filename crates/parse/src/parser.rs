@@ -51,6 +51,8 @@ pub(crate) struct Parser<'a> {
     pub place: bool,
     /// Whether the last postfix form has an index.
     pub indexed: bool,
+    /// Whether the body of a `fn` without `comptime` is open: it declares no hardware.
+    pub in_plain_fn: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -74,6 +76,7 @@ impl<'a> Parser<'a> {
             height: 0,
             place: false,
             indexed: false,
+            in_plain_fn: false,
         }
     }
 
