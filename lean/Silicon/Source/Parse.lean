@@ -14,7 +14,8 @@ if it gets to it. `S004` is at these tokens:
 
 - The keyword: `import`, `pub`, `type`, `struct`, and `extern` at an item. `type` and `mem`
   at a statement. `in`, `as`, `with`, and `conforms` after their forms. `mut` at a function
-  parameter. `fn` of a function type.
+  parameter. `fn` of a function type. `input`, `output`, `reg`, `wire`, and `instance` in the
+  body of a `fn` without `comptime`: a helper that declares resources is slice 3.
 - The opening token: `(` of `()` and of a tuple, and `[` of an array value or type. `(` of a
   unit, tuple, or grouped type. `@` of one of the five builtins.
 - A later token of the construct: the `::` of a path, and the number after `.`. The `(` after
@@ -106,10 +107,14 @@ def Input.of (ts : Array Token) : Input := Id.run do
       if let j :: _ := open_ then comma := comma.set! j true
   return ⟨ts, close, comma⟩
 
-/-! The context of the parser: the tokens and the syntax depth. -/
+/-!
+The context of the parser: the tokens, the syntax depth, and whether the parser is in the body
+of a function without `comptime`.
+-/
 structure Ctx where
   input : Input
   depth : Nat
+  plainFn : Bool
 
 /-!
 The state of the parser. `next` is the index of the next token. `high` is the first token of
@@ -467,11 +472,16 @@ def placeStmt (f : Nat) (start : Pos) (e : Node) (place : Bool) : P Stmt := do
     sym ";"
     return .expr start e.expr
 
+/-! The statements that declare a port, a resource, or an instance. -/
+def resourceKeywords : List String := ["input", "output", "reg", "wire", "instance"]
+
 mutual
   def stmt : Nat → P Stmt
     | 0 => exhausted
     | f + 1 => do
       let t ← peek
+      if (← read).plainFn && resourceKeywords.any (isKw · t) then
+        later t "a port, a resource, or an instance in a `fn` without `comptime`"
       match t.kind with
       | .keyword "let" =>
         bump
@@ -617,7 +627,8 @@ def fnRest (f : Nat) (start : Pos) (comptime : Bool) : P Item := do
   let ps ← params f false []
   sym "->"
   let r ← typeTop f
-  return .fn start comptime n ps r (← block f)
+  let b ← withReader (fun c => { c with plainFn := !comptime }) (block f)
+  return .fn start comptime n ps r b
 
 def moduleItem (f : Nat) (start : Pos) : P Item := do
   kw "module"
@@ -670,7 +681,7 @@ error comes only after a parse without another error.
 -/
 def parse (depth : Nat) (tokens : List Token) : Except Error (List Item) := do
   let ts := tokens.toArray
-  let (items, s) ← ((items (32 * (ts.size + 1)) []).run ⟨Input.of ts, depth⟩).run ⟨0, none⟩
+  let (items, s) ← ((items (32 * (ts.size + 1)) []).run ⟨Input.of ts, depth, false⟩).run ⟨0, none⟩
   match s.high with
   | some p => throw ⟨.S001, p, s!"an expression or a type is higher than {depth} levels"⟩
   | none => return items
