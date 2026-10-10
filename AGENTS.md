@@ -54,6 +54,7 @@ Each rule is one list line. It ends with `Check:` and the check. A rule without 
 
 - Lean work goes to a fresh Opus subagent, one bounded task at a time.
 - No check enforces the cross-vendor review yet. Run it with `just review`. A Codex review covers Claude branches. An Opus review covers Codex branches.
+- Run an architecture review on each pull request that touches an architecture path, after 15 merges or one week, and at each milestone. See ADR 0013.
 - A comment explains why. It never narrates history. Add no unused abstraction and no fallback layer.
 - A subagent gets the task, this file, and the L1 file of its area. It returns a report of 20 lines or fewer.
 
