@@ -15,7 +15,7 @@ This crate owns the commands `check`, `fmt`, `run`, `lower`, `verilog`, and `par
 - `run` prints the `out=` lines before a bad input line, then exits with 2. Check: `cargo nextest run -p driver`.
 - A missing CIRCT tool is a usage error with exit code 2, and the message names the tool. Check: `cargo nextest run -p driver`.
 - `lower` and `verilog` read the file once, check it with Rust, and then give the same bytes to `silicon-check check`. They fail when it rejects them. A rejection prints the Lean error line and exits with 1. A missing or failing checker is a usage error that names `--no-validate`. `--no-validate` prints `not validated` on stderr. Check: `cargo nextest run -p driver`.
-- `parse` prints the AST dump, or the first syntax error as `error[S0xx]: L:C: message` with exit code 1. `--syntax-depth N` sets the syntax depth, and 0 is a usage error. The front end runs on a thread with a stack for the depth. If the machine cannot give the stack, the command exits with 2 before it parses. Check: `cargo nextest run -p driver`.
+- `parse` prints the AST dump, or the first syntax error as `error[S0xx]: L:C: message` with exit code 1. `--syntax-depth N` sets the syntax depth from 1 to 65536, and another value is a usage error. The front end runs on a thread with a stack for the depth. If the machine cannot give the stack, the command exits with 2 before it parses. Check: `cargo nextest run -p driver`.
 - The code has no `unwrap`, no `expect`, and no panic on user input. Check: `just clippy`.
 
 ## Dependencies

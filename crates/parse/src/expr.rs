@@ -3,7 +3,7 @@
 
 use crate::ast::Nat;
 use crate::parser::{Parser, Res};
-use rowan::Checkpoint;
+use crate::tree::Checkpoint;
 use syntax::SyntaxKind::{self, *};
 
 /// The binding power of an infix operator. A higher number binds tighter.

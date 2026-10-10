@@ -509,14 +509,12 @@ fn parse_does_not_overflow_the_stack_at_the_default_depth() -> Test {
 }
 
 #[test]
-fn parse_fails_with_exit_2_when_the_stack_cannot_be_allocated() -> Test {
-    let path = file("huge.si", b"const X: T = 1;\n")?;
-    let out = silicon(
-        &["parse", "--syntax-depth", "18446744073709551615"],
-        &path,
-        "",
-    )?;
+fn parse_rejects_a_syntax_depth_above_the_cap() -> Test {
+    let path = file("cap.si", b"const X: T = 1;\n")?;
+    let out = silicon(&["parse", "--syntax-depth", "65537"], &path, "")?;
     assert_eq!((text(&out).as_str(), out.status.code()), ("", Some(2)));
+    let out = silicon(&["parse", "--syntax-depth", "65536"], &path, "")?;
+    assert_eq!(out.status.code(), Some(0));
     Ok(())
 }
 

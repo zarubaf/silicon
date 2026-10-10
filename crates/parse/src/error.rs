@@ -51,6 +51,30 @@ impl fmt::Display for StackError {
 
 impl std::error::Error for StackError {}
 
+/// Why a parse cannot start.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DepthError {
+    /// The syntax depth is not from 1 to `MAX_SYNTAX_DEPTH`.
+    Range(usize),
+    /// The machine cannot give the stack for the depth.
+    Stack(StackError),
+}
+
+impl fmt::Display for DepthError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DepthError::Range(depth) => write!(
+                f,
+                "the syntax depth {depth} is not from 1 to {}",
+                crate::MAX_SYNTAX_DEPTH
+            ),
+            DepthError::Stack(e) => e.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for DepthError {}
+
 /// Maps a byte offset to a line and a column. It remembers the last answer, so offsets in
 /// increasing order cost a linear scan of the input in total.
 pub(crate) struct LineIndex<'a> {
