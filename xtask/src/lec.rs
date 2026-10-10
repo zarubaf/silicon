@@ -50,8 +50,11 @@ impl Binaries {
         output(&self.lean, args, file)
     }
 
+    /// The LEC compares `silicon` with the Lean reference itself, so the
+    /// validation of `silicon` would run the same checker twice.
     fn rust(&self, args: &[&str], file: &Path) -> Result<String> {
-        output(&self.rust, args, file)
+        let args: Vec<&str> = args.iter().copied().chain(["--no-validate"]).collect();
+        output(&self.rust, &args, file)
     }
 }
 
