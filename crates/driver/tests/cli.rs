@@ -413,3 +413,103 @@ fn a_missing_file_is_a_usage_error_before_the_checker_runs() -> Test {
     assert!(!stderr.contains("--no-validate"), "{stderr}");
     Ok(())
 }
+
+const SOURCE: &str = "\
+const W: Nat = 8;
+module M(comptime n: Nat) domains(clk) {
+    input a: UInt[8];
+    let x = a + 1;
+}
+";
+
+#[test]
+fn parse_prints_the_ast_dump() -> Test {
+    let out = silicon(&["parse"], &file("ok.si", SOURCE.as_bytes())?, "")?;
+    assert_eq!(
+        text(&out),
+        "(const \"W\" (name \"Nat\") (num 8))\n\
+         (module \"M\" ((param true \"n\" (name \"Nat\"))) (some (\"clk\")) \
+         ((input \"a\" (index (name \"UInt\") ((num 8)))) \
+         (local false \"x\" none (binary add (name \"a\") (num 1)))))\n"
+    );
+    assert_eq!(out.status.code(), Some(0));
+    Ok(())
+}
+
+#[test]
+fn parse_prints_nothing_for_an_empty_file() -> Test {
+    let out = silicon(&["parse"], &file("empty.si", b"")?, "")?;
+    assert_eq!((text(&out).as_str(), out.status.code()), ("", Some(0)));
+    Ok(())
+}
+
+#[test]
+fn parse_reports_the_first_syntax_error() -> Test {
+    let out = silicon(&["parse"], &file("s001.si", b"const X: T = ;\n")?, "")?;
+    assert!(
+        text(&out).starts_with("error[S001]: 1:14: "),
+        "{}",
+        text(&out)
+    );
+    assert_eq!(out.status.code(), Some(1));
+    Ok(())
+}
+
+#[test]
+fn parse_reports_a_later_slice_with_s004() -> Test {
+    let out = silicon(&["parse"], &file("s004.si", b"struct S {}\n")?, "")?;
+    assert!(
+        text(&out).starts_with("error[S004]: 1:1: "),
+        "{}",
+        text(&out)
+    );
+    assert_eq!(out.status.code(), Some(1));
+    Ok(())
+}
+
+#[test]
+fn parse_takes_the_syntax_depth() -> Test {
+    let path = file("deep.si", b"const X: T = (((1)));\n")?;
+    let out = silicon(&["parse", "--syntax-depth", "4"], &path, "")?;
+    assert_eq!(out.status.code(), Some(0));
+    let out = silicon(&["parse", "--syntax-depth", "3"], &path, "")?;
+    assert!(
+        text(&out).starts_with("error[S001]: 1:14: "),
+        "{}",
+        text(&out)
+    );
+    assert_eq!(out.status.code(), Some(1));
+    Ok(())
+}
+
+#[test]
+fn parse_does_not_overflow_the_stack_at_the_default_depth() -> Test {
+    let deep = |n: usize| format!("const X: T = {}1{};\n", "(".repeat(n), ")".repeat(n));
+    let out = silicon(&["parse"], &file("d4095.si", deep(4095).as_bytes())?, "")?;
+    assert_eq!(out.status.code(), Some(0));
+    assert!(text(&out).ends_with("(num 1))\n"));
+    let out = silicon(&["parse"], &file("d4096.si", deep(4096).as_bytes())?, "")?;
+    assert!(text(&out).starts_with("error[S001]: 1:14: "));
+    assert_eq!(out.status.code(), Some(1));
+    let open = format!("const X: T = {}", "(".repeat(1_000_000));
+    let out = silicon(&["parse"], &file("open.si", open.as_bytes())?, "")?;
+    assert!(text(&out).starts_with("error[S001]: 1:14: "));
+    assert_eq!(out.status.code(), Some(1));
+    Ok(())
+}
+
+#[test]
+fn parse_rejects_a_syntax_depth_of_zero() -> Test {
+    let path = file("zero.si", b"")?;
+    let out = silicon(&["parse", "--syntax-depth", "0"], &path, "")?;
+    assert_eq!((text(&out).as_str(), out.status.code()), ("", Some(2)));
+    Ok(())
+}
+
+#[test]
+fn parse_of_a_missing_file_is_a_usage_error() -> Test {
+    let missing = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("missing.si");
+    let out = silicon(&["parse"], &missing, "")?;
+    assert_eq!(out.status.code(), Some(2));
+    Ok(())
+}

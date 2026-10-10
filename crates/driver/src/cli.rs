@@ -45,6 +45,13 @@ pub enum Command {
         validation: Validation,
         file: PathBuf,
     },
+    /// Print the AST of a Silicon source file, or the first syntax error.
+    Parse {
+        /// The most depth of the forms of an expression or a type, and of blocks.
+        #[arg(long, default_value_t = syntax_depth::DEFAULT, value_parser = syntax_depth::parse)]
+        syntax_depth: usize,
+        file: PathBuf,
+    },
     /// Print the Verilog of a checked design through CIRCT.
     Verilog {
         /// Print one memory model for each memory configuration instead.
@@ -54,6 +61,20 @@ pub enum Command {
         validation: Validation,
         file: PathBuf,
     },
+}
+
+/// The value of `--syntax-depth`.
+mod syntax_depth {
+    pub const DEFAULT: usize = parse::DEFAULT_SYNTAX_DEPTH;
+
+    /// A positive number.
+    pub fn parse(text: &str) -> Result<usize, String> {
+        match text.parse::<usize>() {
+            Ok(0) => Err("the syntax depth must be positive".to_owned()),
+            Ok(depth) => Ok(depth),
+            Err(e) => Err(e.to_string()),
+        }
+    }
 }
 
 /// The exit code of a command.
@@ -123,6 +144,11 @@ fn dispatch(command: &Command, input: impl BufRead, out: &mut impl Write) -> Res
                 Ok(Exit::Success)
             })
         }
+        Command::Parse { syntax_depth, file } => {
+            let (text, exit) = parse_source(&read_source(file)?, *syntax_depth)?;
+            out.write_all(text.as_bytes())?;
+            Ok(exit)
+        }
         Command::Verilog {
             models,
             validation,
@@ -137,6 +163,34 @@ fn dispatch(command: &Command, input: impl BufRead, out: &mut impl Write) -> Res
             Ok(Exit::Success)
         }),
     }
+}
+
+/// The output and the exit code of `parse`: the AST dump, or the first syntax error as a line.
+/// The front end recurses once for each level of the syntax depth, so it runs on a thread
+/// with a stack for the depth.
+fn parse_source(source: &str, depth: usize) -> Result<(String, Exit), Usage> {
+    let front_end = || {
+        let parsed = parse::parse_with_depth(source, depth);
+        match (parsed.errors.first(), &parsed.ast) {
+            (Some(e), _) => (
+                format!(
+                    "error[{}]: {}:{}: {}\n",
+                    e.code, e.pos.line, e.pos.col, e.message
+                ),
+                Exit::DesignError,
+            ),
+            (None, Some(items)) => (parse::dump(items), Exit::Success),
+            (None, None) => (String::new(), Exit::Success),
+        }
+    };
+    std::thread::scope(|scope| {
+        let handle = std::thread::Builder::new()
+            .stack_size(parse::stack_for(depth))
+            .spawn_scoped(scope, front_end)?;
+        handle
+            .join()
+            .map_err(|_| Usage("internal error: the front end failed".to_owned()))
+    })
 }
 
 fn read_source(file: &Path) -> Result<String, Usage> {
