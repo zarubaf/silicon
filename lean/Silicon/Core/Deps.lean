@@ -1,6 +1,7 @@
 import Silicon.Core.Syntax
 import Silicon.Core.GraphReach
 import Silicon.Core.Index
+import Silicon.Core.List
 import Std.Data.HashMap.Lemmas
 import Std.Data.HashSet.Lemmas
 
@@ -314,18 +315,102 @@ private theorem indexedVisit_contains (g : List (Node × List Node)) (fuel : Nat
     · exact seen' x
     · exact ih _ _ _ _ next seen'
 
+private theorem zipIdx_ordered (xs : List String) (k : Nat) :
+    (xs.zipIdx k).Pairwise fun a b => a.2 < b.2 := by
+  induction xs generalizing k with
+  | nil => simp
+  | cons x xs ih =>
+    simp only [List.zipIdx_cons, List.pairwise_cons]
+    exact ⟨fun b hb => List.le_snd_of_mem_zipIdx hb, ih (k + 1)⟩
+
+/-! Sorted input positions avoid a scan of all inputs for each output. -/
+private def reachedInputs (positions : Std.HashMap String (List (String × Nat)))
+    (reached : Std.HashSet Node) : List String :=
+  let found := reached.toList.flatMap fun node => match node with
+    | .name n => (positions[n]?).getD []
+    | .port .. => []
+  (found.mergeSort fun a b => a.2 ≤ b.2).map Prod.fst
+
+private theorem reachedInputs_eq (xs : List String) (reached : Std.HashSet Node) :
+    reachedInputs (groupIndex (xs.zipIdx.map fun e => (e.1, e))) reached =
+      xs.filter fun n => reached.contains (.name n) := by
+  have positions : ∀ n, ((groupIndex (xs.zipIdx.map fun e => (e.1, e)))[n]?).getD [] =
+      xs.zipIdx.filter (·.1 == n) := by
+    intro n
+    rw [groupIndex_values, List.filterMap_map, ← List.filterMap_eq_filter]
+    congr 1
+  have spec : (xs.filter fun n => reached.contains (.name n)) =
+      (xs.zipIdx.filter fun e => reached.contains (.name e.1)).map Prod.fst := by
+    conv => lhs; rw [← List.zipIdx_map_fst 0 xs]
+    rw [List.filter_map]
+    rfl
+  have ordered := zipIdx_ordered xs 0
+  have distinct : xs.zipIdx.Nodup := ordered.imp fun h he => by subst he; omega
+  let f : Node → List (String × Nat) := fun node => match node with
+    | .name n => xs.zipIdx.filter (·.1 == n)
+    | .port .. => []
+  have found : ∀ e, e ∈ reached.toList.flatMap f ↔
+      e ∈ xs.zipIdx.filter fun e => reached.contains (.name e.1) := by
+    intro e
+    simp only [List.mem_flatMap, List.mem_filter, Std.HashSet.mem_toList,
+      Std.HashSet.mem_iff_contains]
+    constructor
+    · rintro ⟨node, hn, he⟩
+      cases node with
+      | name n =>
+        simp only [f, List.mem_filter, beq_iff_eq] at he
+        obtain ⟨he, rfl⟩ := he
+        exact ⟨he, hn⟩
+      | port => simp [f] at he
+    · rintro ⟨he, hn⟩
+      exact ⟨.name e.1, hn, by simp [f, he]⟩
+  rw [spec]
+  unfold reachedInputs
+  simp only [positions]
+  change ((reached.toList.flatMap f).mergeSort fun a b => a.2 ≤ b.2).map Prod.fst = _
+  congr 1
+  apply List.Perm.eq_of_pairwise (le := fun a b => a.2 ≤ b.2)
+  · intro a b ha hb hab hba
+    have ha := ((found a).mp ((List.mergeSort_perm _ _).mem_iff.mp ha))
+    have ha := List.mem_zipIdx_iff_getElem?.mp (List.mem_filter.mp ha).1
+    have hb := List.mem_zipIdx_iff_getElem?.mp (List.mem_filter.mp hb).1
+    have he : a.2 = b.2 := by omega
+    rw [he, hb] at ha
+    exact Prod.ext (Option.some.inj ha).symm he
+  · exact (List.pairwise_mergeSort (fun a b c hab hbc => by simp at *; omega)
+      (fun a b => by simp; omega) _).imp (by simp)
+  · exact (ordered.filter _).imp Nat.le_of_lt
+  · apply (List.mergeSort_perm _ _).trans
+    apply (List.perm_ext_iff_of_nodup ?_ (distinct.filter _)).mpr found
+    apply List.flatMap_nodup_owners _ _ some (fun e => Node.name e.1)
+    · rw [List.filterMap_some]
+      exact (Std.HashSet.distinct_toList (m := reached)).imp fun h he => by
+        subst he; simp at h
+    · intro node _
+      cases node with
+      | name n => exact distinct.filter _
+      | port => simp [f]
+    · intro node _ e he
+      cases node with
+      | name n =>
+        simp only [f, List.mem_filter, beq_iff_eq] at he
+        rw [he.2]
+      | port => simp [f] at he
+
 private def indexedInfer (m : Module) (children : String → Option Deps) : Deps :=
   let g := graph m children
   let index := firstIndex g
+  let positions := groupIndex ((inputs m).zipIdx.map fun e => (e.1, e))
+  let fuel := g.length + 1
   m.ports.filterMap fun p =>
     if p.dir == .output then
-      let reached := indexedVisit index (g.length + 1) [.name p.name] {}
-      some (p.name, (inputs m).filter fun n => reached.contains (.name n))
+      let reached := indexedVisit index fuel [.name p.name] {}
+      some (p.name, reachedInputs positions reached)
     else none
 
 @[csimp] private theorem infer_indexed : infer = indexedInfer := by
   funext m children
-  simp only [infer, indexedInfer]
+  simp only [infer, indexedInfer, reachedInputs_eq]
   congr
   funext p
   split
