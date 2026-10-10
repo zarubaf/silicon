@@ -78,10 +78,10 @@ structure ChildDecl where
   iface : Iface
   pos : Pos
 
-/-! The target of a `:=` binding: an own resource, or an input of a child. -/
+/-! The target of a `:=` binding: an own resource, or an input of the child number `index`. -/
 inductive Sink where
-  | own (path : Path)
-  | child (inst : Path) (port : String)
+  | own (kind : Kind) (ty : Ty) (path : Path)
+  | child (index : Nat) (inst : Path) (port : String)
 
 structure Bind where
   sink : Sink
@@ -125,12 +125,16 @@ inductive Status where
   | inProgress
   | done (index : Nat)
 
-/-! A done instantiation: its identity, its interface, its description, and its units. -/
+/-!
+A done instantiation: its identity, its interface, its description, its units, and the position
+of its module item.
+-/
 structure Inst where
   id : InstantiationId
   iface : Iface
   body : Body
   units : Nat
+  pos : Pos
 
 /-!
 The state of an elaboration. `table` maps the serialization of each `InstantiationId` to its
@@ -189,7 +193,7 @@ def port (p : Pos) (input : Bool) (b : Binder) (t : Ty) : EM Val := do
 
 /-! The target of a `:=` binding. It refers, so it charges nothing. -/
 inductive Target where
-  | own (id : Nat) (ty : Ty) (path : Path)
+  | own (kind : Kind) (id : Nat) (ty : Ty) (path : Path)
   | child (inst : Nat) (path : Path) (port : Port)
 
 def target (p : Pos) (e : Resolve.Expr) : EM Target := do
@@ -198,7 +202,7 @@ def target (p : Pos) (e : Resolve.Expr) : EM Target := do
   match e with
   | .name _ _ (.local id) =>
     match ← slot id with
-    | some ⟨_, _, .handle (.res _ k t path)⟩ => return .own k t path
+    | some ⟨_, _, .handle (.res r k t path)⟩ => return .own r k t path
     | some ⟨_, _, .handle (.input k path q)⟩ => return .child k path q
     | _ => bad
   | .field _ (.name _ _ (.local id)) f =>
@@ -217,18 +221,18 @@ def bindTarget (p : Pos) (t : Target) (h : Hw) : EM Unit := do
   let second : Error := ⟨.S018, p, "a second binding of one target"⟩
   let w := (← get).work
   match t with
-  | .own k _ path =>
+  | .own r k t path =>
     let c := (w.needs[k]?.map (·.count)).getD 0
     if c == 1 then modify fun s => { s with work.dup := earlier s.work.dup second }
     modify fun s =>
       { s with work.needs := s.work.needs.modify k fun r => { r with count := c + 1 } }
-    modifyBody fun b => { b with binds := b.binds.push ⟨.own path, h, p⟩ }
+    modifyBody fun b => { b with binds := b.binds.push ⟨.own r t path, h, p⟩ }
   | .child k path q =>
     let c := w.inputs.getD (k, q.sym) 0
     if c == 0 then modify fun s => { s with work.bound := s.work.bound.modify k (· + 1) }
     if c == 1 then modify fun s => { s with work.dup := earlier s.work.dup second }
     modify fun s => { s with work.inputs := s.work.inputs.insert (k, q.sym) (c + 1) }
-    modifyBody fun b => { b with binds := b.binds.push ⟨.child path q.name, h, p⟩ }
+    modifyBody fun b => { b with binds := b.binds.push ⟨.child k path q.name, h, p⟩ }
 
 /-!
 The binding rule at the end of a body. A missing binding of an own resource is at its
@@ -307,7 +311,7 @@ mutual
           let o ← need v (← eval n v)
           copy p o
           let ty := match t with
-            | .own _ ty _ => ty
+            | .own _ _ ty _ => ty
             | .child _ _ q => q.ty
           let h ← match ← conformVal p ty o.value with
             | .static v => lit p v
@@ -396,7 +400,7 @@ mutual
       let k := (← get).done.size
       modify fun t => { t with
         table := t.table.insert key (.done k),
-        done := t.done.push ⟨id, c, body, used - w.spent⟩,
+        done := t.done.push ⟨id, c, body, used - w.spent, mp⟩,
         work := { parent with spent := parent.spent + used } }
       return (c, k)
   termination_by (n + 1, 0)

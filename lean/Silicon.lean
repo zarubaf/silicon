@@ -122,6 +122,8 @@ import Silicon.Source.Eval
 import Silicon.Source.Test.Eval
 import Silicon.Source.Elab
 import Silicon.Source.Test.Elab
+import Silicon.Source.Flatten
+import Silicon.Source.Test.Flatten
 import Silicon.Source.Cli
 import Silicon.Main
 
