@@ -46,6 +46,7 @@ impl Parser<'_> {
                 self.later_slice(start, "this type");
                 return None;
             }
+            Some(At) => return self.builtin(),
             _ => {
                 self.syntax_error("expected a type");
                 return None;

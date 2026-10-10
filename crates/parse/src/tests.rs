@@ -655,6 +655,10 @@ fn rules_of_the_lean_parser() {
         // A path is one name.
         ("module M() { instance u = a::B(); }", Code::S004, 1, 28),
         ("const X: a::T = 1;", Code::S004, 1, 11),
+        // A builtin in a type is S004, as in an expression. Another name is S001.
+        ("const X: @TypeOf(1) = 1;", Code::S004, 1, 10),
+        ("const X: @foo(1) = 1;", Code::S001, 1, 11),
+        ("const X: @ = 1;", Code::S001, 1, 12),
         // A second domain needs a name after the comma.
         ("module M() domains(a, b) { }", Code::S004, 1, 23),
         ("module M() domains(a, 1) { }", Code::S001, 1, 23),
