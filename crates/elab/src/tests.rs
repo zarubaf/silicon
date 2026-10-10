@@ -576,3 +576,43 @@ fn a_read_copies_nothing() {
     assert_eq!(out(src, "f()", 1_000_000, 1000), "(int 0)");
     assert!(start.elapsed() < std::time::Duration::from_secs(5));
 }
+
+/// A call binds its arguments before the caller frame ends: a local argument, a parameter
+/// forwarded through calls and recursion, a returned local, a conditional, and a loop value.
+#[test]
+fn arguments_bind_in_the_caller_frame() {
+    let id = "comptime fn id(x: Int) -> Int { return x; }\n";
+    let fwd = |src: &str| format!("{id}{src}");
+    assert_eq!(
+        out(
+            "comptime fn id(x: Bool) -> Bool { return x; }\n\
+             comptime fn f() -> Bool { let x = true; return id(x); }",
+            "f()",
+            100_000_000,
+            1000
+        ),
+        "(bool true)"
+    );
+    let int = fwd("comptime fn f() -> Int { let x = 5; return id(x); }");
+    assert_eq!(out(&int, "f()", 100_000_000, 1000), "(int 5)");
+    exact(&int, "f()", 19);
+    let two = fwd("comptime fn g(y: Int) -> Int { return id(y); }\n\
+         comptime fn f() -> Int { let x = 7; return g(x); }");
+    assert_eq!(out(&two, "f()", 100_000_000, 1000), "(int 7)");
+    let rec = "comptime fn f(n: Int, acc: Int) -> Int {\n\
+        \x20   comptime if (n == 0) { return acc; } return f(n - 1, acc + n); }\n\
+        comptime fn h(n: Int, acc: Int) -> Int {\n\
+        \x20   comptime if (n == 0) { return acc; } return h(n - 1, acc); }";
+    assert_eq!(out(rec, "f(4, 0)", 100_000_000, 1000), "(int 10)");
+    assert_eq!(out(rec, "h(3, 5)", 100_000_000, 1000), "(int 5)");
+    let ret = fwd("comptime fn g() -> Int { let x = 9; return x; }\n\
+         comptime fn f() -> Int { return id(g()); }");
+    assert_eq!(out(&ret, "f()", 100_000_000, 1000), "(int 9)");
+    let cond = fwd("comptime fn f(c: Bool) -> Int {\n\
+         \x20   let a = 3; let b = 4; return id(if (c) { a } else { b }); }");
+    assert_eq!(out(&cond, "f(true)", 100_000_000, 1000), "(int 3)");
+    assert_eq!(out(&cond, "f(false)", 100_000_000, 1000), "(int 4)");
+    let lp = fwd("comptime fn f() -> Int {\n\
+         \x20   let mut s = 0; comptime for i in 0..4 { s = s + id(i); } return s; }");
+    assert_eq!(out(&lp, "f()", 100_000_000, 1000), "(int 6)");
+}

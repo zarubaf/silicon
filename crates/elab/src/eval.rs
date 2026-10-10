@@ -37,7 +37,9 @@ enum Out {
     Made(Value),
     /// A new value that the cost model treats as a reference: a type name.
     Named(Value),
-    Local(DeclId),
+    /// A local of the frame at this index of the frame stack. A call evaluates its arguments
+    /// in the caller frame and binds them in a new frame, so a reference names its frame.
+    Local(usize, DeclId),
     Const(usize),
 }
 
@@ -52,18 +54,33 @@ impl Out {
 /// finds it.
 static ABSENT: Value = Value::Bool(false);
 
+type Frame = BTreeMap<DeclId, Slot>;
+
 /// The values that a result can refer to: the table of constants by item index, and the
-/// locals of the current frame. A frame holds only the bindings that ran.
+/// stack of frames. The last frame is the current frame. A frame holds only the bindings
+/// that ran.
 struct Store {
     consts: Vec<Entry>,
-    frame: BTreeMap<DeclId, Slot>,
+    frames: Vec<Frame>,
 }
 
 impl Store {
+    fn frame(&self) -> Option<&Frame> {
+        self.frames.last()
+    }
+
+    fn frame_mut(&mut self) -> Option<&mut Frame> {
+        self.frames.last_mut()
+    }
+
     fn view<'s>(&'s self, out: &'s Out) -> &'s Value {
         match out {
             Out::Made(v) | Out::Named(v) => v,
-            Out::Local(id) => self.frame.get(id).map_or(&ABSENT, |s| &s.value),
+            Out::Local(k, id) => self
+                .frames
+                .get(*k)
+                .and_then(|f| f.get(id))
+                .map_or(&ABSENT, |s| &s.value),
             Out::Const(i) => match self.consts.get(*i) {
                 Some(Entry::Done(v)) => v,
                 _ => &ABSENT,
@@ -191,7 +208,7 @@ pub(crate) fn run(
         fuel: Fuel::new(budget.fuel),
         store: Store {
             consts,
-            frame: BTreeMap::new(),
+            frames: vec![Frame::new()],
         },
     };
     let e = top.expr();
@@ -293,7 +310,9 @@ impl Evaluator<'_> {
     }
 
     fn bind(&mut self, id: DeclId, slot: Slot) {
-        self.store.frame.insert(id, slot);
+        if let Some(frame) = self.store.frame_mut() {
+            frame.insert(id, slot);
+        }
     }
 
     /// Runs `act` one level deeper, or gives `S015` at `pos` above the limit. A level that
@@ -322,13 +341,14 @@ impl Evaluator<'_> {
         r
     }
 
-    /// Runs `act` in the file scope with an empty frame of locals and the return type `ret`.
+    /// Runs `act` in the file scope with a new empty frame of locals and the return type
+    /// `ret`. The frames below stay, so a reference into them still finds its value.
     fn in_frame<T>(&mut self, ret: Option<Ty>, act: impl FnOnce(&mut Self) -> Res<T>) -> Res<T> {
-        let frame = std::mem::take(&mut self.store.frame);
+        self.store.frames.push(Frame::new());
         let saved_ret = std::mem::replace(&mut self.ret, ret);
         let names = std::mem::replace(&mut self.names, Names::File);
         let r = act(self);
-        self.store.frame = frame;
+        self.store.frames.pop();
         self.ret = saved_ret;
         self.names = names;
         r
@@ -514,8 +534,9 @@ impl Evaluator<'_> {
                     format!("`{x}` is a function; slice 1 has no function values"),
                 ),
                 _ => {
-                    if self.store.frame.contains_key(&id) {
-                        Ok(Out::Local(id))
+                    let k = self.store.frames.len().saturating_sub(1);
+                    if self.store.frame().is_some_and(|f| f.contains_key(&id)) {
+                        Ok(Out::Local(k, id))
                     } else {
                         fail(Code::S011, pos, format!("`{x}` is not a static value"))
                     }
@@ -794,8 +815,8 @@ impl Evaluator<'_> {
             Expr::Name { pos: tp, .. } => match self.target(*tp) {
                 Some(Target::Decl(id)) => self
                     .store
-                    .frame
-                    .get(&id)
+                    .frame()
+                    .and_then(|f| f.get(&id))
                     .filter(|s| s.mutable)
                     .map(|s| (id, s.ty)),
                 _ => None,
@@ -815,7 +836,11 @@ impl Evaluator<'_> {
         let y = if let Some(t) = ty {
             self.conform(pos, t, o)?
         } else {
-            let old = self.store.frame.get(&id).map_or(&ABSENT, |s| &s.value);
+            let old = self
+                .store
+                .frame()
+                .and_then(|f| f.get(&id))
+                .map_or(&ABSENT, |s| &s.value);
             let new = self.store.view(&o);
             if !same_form(old, new) {
                 return fail(
@@ -826,7 +851,7 @@ impl Evaluator<'_> {
             }
             self.store.take(o)
         };
-        if let Some(slot) = self.store.frame.get_mut(&id) {
+        if let Some(slot) = self.store.frame_mut().and_then(|f| f.get_mut(&id)) {
             slot.value = y;
         }
         Ok(None)
