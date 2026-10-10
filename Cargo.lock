@@ -233,7 +233,10 @@ dependencies = [
  "clap",
  "core-ir",
  "datatest-stable",
+ "elab",
  "parse",
+ "resolve",
+ "typeck",
 ]
 
 [[package]]

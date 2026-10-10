@@ -47,6 +47,16 @@ pub enum Command {
         validation: Validation,
         file: PathBuf,
     },
+    /// Print the canonical serialization of a static expression in the file scope of a
+    /// Silicon source file, or the first error.
+    Eval {
+        #[command(flatten)]
+        budget: Budgets,
+        file: PathBuf,
+        /// The expression, in source syntax.
+        #[arg(allow_hyphen_values = true)]
+        expr: String,
+    },
     /// Print the AST of a Silicon source file, or the first syntax error.
     Parse {
         /// The most depth of brackets, and the most height of an expression or a type.
@@ -63,6 +73,43 @@ pub enum Command {
         validation: Validation,
         file: PathBuf,
     },
+}
+
+/// The budgets of an elaboration (front-end spec, section 5.4).
+#[derive(Args)]
+pub struct Budgets {
+    /// The most depth of brackets, and the most height of an expression or a type.
+    #[arg(long, default_value_t = syntax_depth::DEFAULT, value_parser = syntax_depth::parse)]
+    syntax_depth: usize,
+    /// The cost units that the elaboration can use.
+    #[arg(long, default_value_t = elab::Budget::default().fuel, value_parser = natural)]
+    fuel: u64,
+    /// The most active calls, constants in progress, and instantiations in progress.
+    #[arg(long, default_value_t = elab::Budget::default().depth, value_parser = natural)]
+    depth: u64,
+}
+
+impl Budgets {
+    fn elab(&self) -> elab::Budget {
+        elab::Budget {
+            fuel: self.fuel,
+            depth: self.depth,
+        }
+    }
+}
+
+/// A natural number as `silicon-check` reads it: decimal digits, with one `_` between two
+/// digits. A number above `u64::MAX` is `u64::MAX`, which no elaboration can use up.
+fn natural(text: &str) -> Result<u64, String> {
+    let groups: Vec<&str> = text.split('_').collect();
+    if groups
+        .iter()
+        .any(|g| g.is_empty() || !g.bytes().all(|b| b.is_ascii_digit()))
+    {
+        return Err(format!("`{text}` is not a natural number"));
+    }
+    let digits: String = groups.concat();
+    Ok(digits.parse::<u64>().unwrap_or(u64::MAX))
 }
 
 /// The value of `--syntax-depth`.
@@ -149,6 +196,11 @@ fn dispatch(command: &Command, input: impl BufRead, out: &mut impl Write) -> Res
                 Ok(Exit::Success)
             })
         }
+        Command::Eval { budget, file, expr } => {
+            let (text, exit) = eval_source(&read_source(file)?, expr, budget)?;
+            out.write_all(text.as_bytes())?;
+            Ok(exit)
+        }
         Command::Parse { syntax_depth, file } => {
             let (text, exit) = parse_source(&read_source(file)?, *syntax_depth)?;
             out.write_all(text.as_bytes())?;
@@ -180,6 +232,70 @@ fn parse_source(source: &str, depth: usize) -> Result<(String, Exit), Usage> {
     }
     let dump = parsed.dump().map_err(|e| Usage(e.to_string()))?;
     Ok((dump.unwrap_or_default(), Exit::Success))
+}
+
+/// The output and the exit code of `eval`: the serialization of the value of `expr` in the
+/// file scope of `source`, or the first error of the file, then of the expression. Each pass
+/// runs on the front-end thread. If the machine cannot give a stack, the command fails.
+fn eval_source(source: &str, expr: &str, budget: &Budgets) -> Result<(String, Exit), Usage> {
+    let stack = |e: parse::StackError| Usage(e.to_string());
+    let depth = budget.syntax_depth;
+    let parsed = parse::parse_with_depth(source, depth).map_err(|e| Usage(e.to_string()))?;
+    let file = match resolve::resolve(parsed) {
+        Ok(file) => file,
+        Err(resolve::Failed::Parse(parsed)) => {
+            return Ok(match parsed.errors().first() {
+                Some(e) => error_line(e.code, e.pos, &e.message),
+                None => (String::new(), Exit::DesignError),
+            });
+        }
+        Err(resolve::Failed::Names(e)) => {
+            return Ok(first_line(&e, |e| (e.code, e.pos, &e.message)));
+        }
+        Err(resolve::Failed::Stack(e)) => return Err(stack(e)),
+    };
+    let file = match typeck::check(file) {
+        Ok(file) => file,
+        Err(typeck::Failed::Errors(e)) => {
+            return Ok(first_line(&e, |e| (e.code, e.pos, &e.message)));
+        }
+        Err(typeck::Failed::Stack(e)) => return Err(stack(e)),
+    };
+    let expr = match parse::parse_expr(expr, depth).map_err(|e| Usage(e.to_string()))? {
+        Ok(expr) => expr,
+        Err(e) => return Ok(first_line(&e, |e| (e.code, e.pos, &e.message))),
+    };
+    let expr = match resolve::resolve_expr(&file, expr).map_err(stack)? {
+        Ok(expr) => expr,
+        Err(e) => return Ok(first_line(&e, |e| (e.code, e.pos, &e.message))),
+    };
+    let expr = match typeck::check_expr(&file, expr) {
+        Ok(expr) => expr,
+        Err(typeck::Failed::Errors(e)) => {
+            return Ok(first_line(&e, |e| (e.code, e.pos, &e.message)));
+        }
+        Err(typeck::Failed::Stack(e)) => return Err(stack(e)),
+    };
+    Ok(
+        match elab::eval(&file, &expr, budget.elab()).map_err(stack)? {
+            Ok((value, _)) => (value.serialize() + "\n", Exit::Success),
+            Err(e) => error_line(e.code, e.pos, &e.message),
+        },
+    )
+}
+
+/// The line of the first error of a list in position order.
+fn first_line<E, C: fmt::Display>(
+    errors: &[E],
+    parts: impl Fn(&E) -> (C, Pos, &String),
+) -> (String, Exit) {
+    match errors.first() {
+        Some(e) => {
+            let (code, pos, message) = parts(e);
+            error_line(code, pos, message)
+        }
+        None => (String::new(), Exit::DesignError),
+    }
 }
 
 /// The line of the first error of a source command, as `silicon-check` prints it.

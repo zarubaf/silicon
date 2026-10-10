@@ -533,3 +533,121 @@ fn parse_of_a_missing_file_is_a_usage_error() -> Test {
     assert_eq!(out.status.code(), Some(2));
     Ok(())
 }
+
+/// Runs `silicon eval FILE EXPR` with the flags `flags` after the expression. Each call has
+/// its own file, because the tests run in parallel, also in other processes.
+fn eval(src: &str, expr: &str, flags: &[&str]) -> std::io::Result<(String, Option<i32>)> {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let path = file(
+        &format!("eval-{}-{n}.si", std::process::id()),
+        src.as_bytes(),
+    )?;
+    let mut command = checker::silicon();
+    command.arg("eval").arg(path).arg(expr).args(flags);
+    let out = spawn(&mut command, "")?;
+    Ok((text(&out), out.status.code()))
+}
+
+const FACT: &str = "\
+comptime fn fact(n: Nat) -> Nat {
+    comptime if (n == 0) { return 1; }
+    return n * fact(n - 1);
+}
+";
+
+#[test]
+fn eval_prints_the_serialization_of_the_value() -> Test {
+    assert_eq!(
+        eval(FACT, "fact(20)", &[])?,
+        ("(int 2432902008176640000)\n".to_owned(), Some(0))
+    );
+    assert_eq!(eval("", "-5", &[])?, ("(int -5)\n".to_owned(), Some(0)));
+    assert_eq!(
+        eval("", "\"a\\\"b\"", &[])?,
+        ("(string \"a\\\"b\")\n".to_owned(), Some(0))
+    );
+    Ok(())
+}
+
+#[test]
+fn eval_reports_the_first_error_of_the_file_then_of_the_expression() -> Test {
+    let first = |r: (String, Option<i32>)| (r.0.split(": ").next().map(str::to_owned), r.1);
+    let at = |s: &str| (Some(s.to_owned()), Some(1));
+    assert_eq!(
+        first(eval("const A: Nat = ;", "x", &[])?),
+        at("error[S001]")
+    );
+    assert_eq!(first(eval("", "1 +", &[])?), at("error[S001]"));
+    assert_eq!(first(eval("", "x", &[])?), at("error[S003]"));
+    assert_eq!(first(eval("", "UInt[8, 9]", &[])?), at("error[S007]"));
+    assert_eq!(first(eval(FACT, "fact(-1)", &[])?), at("error[S012]"));
+    let (out, code) = eval(FACT, "fact(3)", &["--depth", "2"])?;
+    assert!(out.starts_with("error[S015]: 3:16: "), "{out}");
+    assert_eq!(code, Some(1));
+    Ok(())
+}
+
+#[test]
+fn eval_takes_the_budgets() -> Test {
+    assert_eq!(eval("", "1 + 2", &["--fuel", "7"])?.1, Some(0));
+    assert!(
+        eval("", "1 + 2", &["--fuel", "6"])?
+            .0
+            .starts_with("error[S015]: 1:1: ")
+    );
+    assert_eq!(eval("", "1 + 2", &["--fuel", "1_000"])?.1, Some(0));
+    assert_eq!(
+        eval("", "1 + 2", &["--fuel", "99999999999999999999999"])?.1,
+        Some(0)
+    );
+    for bad in ["_1", "1__0", "1_", "-1", ""] {
+        assert_eq!(
+            eval("", "1", &["--fuel", bad])?,
+            (String::new(), Some(2)),
+            "{bad}"
+        );
+    }
+    assert_eq!(eval("", "(((1)))", &["--syntax-depth", "2"])?.1, Some(1));
+    assert_eq!(
+        eval("", "1", &["--syntax-depth", "0"])?,
+        (String::new(), Some(2))
+    );
+    Ok(())
+}
+
+#[test]
+fn eval_of_a_missing_file_is_a_usage_error() -> Test {
+    let missing = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("missing-eval.si");
+    let mut command = checker::silicon();
+    command.arg("eval").arg(missing).arg("1");
+    assert_eq!(spawn(&mut command, "")?.status.code(), Some(2));
+    Ok(())
+}
+
+#[test]
+fn eval_does_not_overflow_the_stack() -> Test {
+    // A deep recursion with a large nesting depth, and an expression at the syntax depth.
+    let deep = "comptime fn d(n: Nat) -> Nat {\n\
+        \x20   comptime if (n == 0) { return 0; }\n\
+        \x20   return d(n - 1);\n\
+        }\n";
+    assert_eq!(
+        eval(deep, "d(100000)", &["--depth", "1000000"])?,
+        ("(int 0)\n".to_owned(), Some(0))
+    );
+    let expr = format!("{}1{}", "(".repeat(4096), ")".repeat(4096));
+    assert_eq!(eval("", &expr, &[])?, ("(int 1)\n".to_owned(), Some(0)));
+    let expr = format!("{}1", "-".repeat(4095));
+    assert_eq!(eval("", &expr, &[])?, ("(int -1)\n".to_owned(), Some(0)));
+    // An argument has at most 128 KiB, so the file holds the million open brackets.
+    let expr = "(".repeat(100_000);
+    assert!(eval("", &expr, &[])?.0.starts_with("error[S001]: 1:4097: "));
+    let open = format!("const X: Nat = {}", "(".repeat(1_000_000));
+    assert!(
+        eval(&open, "1", &[])?
+            .0
+            .starts_with("error[S001]: 1:4112: ")
+    );
+    Ok(())
+}
