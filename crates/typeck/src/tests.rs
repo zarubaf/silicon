@@ -382,3 +382,15 @@ fn deep_and_wide_inputs_pass_on_a_test_thread() {
     ok(&mod_body(&format!("comptime if ({chain} > 0) {{}}")));
     ok(&mod_body(&"{ let a = W; }\n".repeat(20000)));
 }
+
+#[test]
+fn a_nested_index_chain_at_the_default_depth_checks_fast() {
+    let n = 4000;
+    let start = std::time::Instant::now();
+    let chain = format!("x{}", "[0]".repeat(n));
+    ok(&format!("fn f(x: Nat) -> Nat {{ return {chain}; }}"));
+    let types = format!("UInt{}", "[1]".repeat(n));
+    // The first index takes the one argument, and each further index is `S007`.
+    fails(&format!("const A: Nat = {types};"), S007, 1, 16);
+    assert!(start.elapsed().as_secs() < 5, "{:?}", start.elapsed());
+}

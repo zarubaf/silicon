@@ -58,19 +58,23 @@ pub(crate) fn run(resolved: &Resolved) -> Vec<Error> {
         resolved,
         sigs: &sigs,
         errors: Vec::new(),
+        seq: 0,
     };
     for item in resolved.ast() {
         walker.item(item);
     }
     // The sort is stable, so at one position the first error of the walk stays first.
-    walker.errors.sort_by_key(|e| e.pos);
-    walker.errors
+    walker.errors.sort_by_key(|(seq, e)| (e.pos, *seq));
+    walker.errors.into_iter().map(|(_, e)| e).collect()
 }
 
 struct Walker<'a> {
     resolved: &'a Resolved,
     sigs: &'a BTreeMap<DeclId, Sig>,
-    errors: Vec<Error>,
+    /// The errors with their order in the walk, which breaks a tie of positions.
+    errors: Vec<(usize, Error)>,
+    /// The next order number.
+    seq: usize,
 }
 
 fn type_arity(p: Prelude) -> usize {
@@ -98,14 +102,30 @@ fn resource(kind: Kind) -> Option<&'static str> {
 }
 
 impl<'a> Walker<'a> {
+    fn tick(&mut self) -> usize {
+        self.seq += 1;
+        self.seq
+    }
+
     fn report(&mut self, code: Code, pos: Pos, message: String) {
-        self.errors.push(Error { code, pos, message });
+        let seq = self.tick();
+        self.report_at(seq, code, pos, message);
+    }
+
+    fn report_at(&mut self, seq: usize, code: Code, pos: Pos, message: String) {
+        self.errors.push((seq, Error { code, pos, message }));
     }
 
     /// `S007` at `pos` if `what` has `got` arguments, not `want`.
     fn arity(&mut self, pos: Pos, what: &str, want: usize, got: usize) {
+        let seq = self.tick();
+        self.arity_at(seq, pos, what, want, got);
+    }
+
+    fn arity_at(&mut self, seq: usize, pos: Pos, what: &str, want: usize, got: usize) {
         if want != got {
-            self.report(
+            self.report_at(
+                seq,
                 Code::S007,
                 pos,
                 format!("{what} takes {want} argument(s), but it has {got}"),
@@ -206,21 +226,38 @@ impl<'a> Walker<'a> {
                 }
             }
             Expr::Index { pos, base, args } => {
-                if let Some((name, missing)) = self.type_head(base) {
-                    self.arity(*pos, &name, missing, args.len());
-                }
-                // The base type name has its arguments, so it skips the check of a bare name.
-                let bare_type =
-                    matches!(&**base, Expr::Name { pos, .. } if self.prelude_type(*pos).is_some());
-                if !bare_type {
-                    self.expr(is_static, base);
-                }
-                for arg in args {
-                    self.expr(true, arg);
-                }
+                self.index(is_static, *pos, base, args);
             }
             Expr::Field { base, .. } => self.expr(is_static, base),
         }
+    }
+
+    /// An index. It visits the base once and returns the type head of the whole index, which
+    /// is a complete type if the base chain starts at a type name.
+    fn index(&mut self, is_static: bool, pos: Pos, base: &Expr, args: &[Expr]) -> bool {
+        // The outer check ranks before the checks inside the base at one position.
+        let seq = self.tick();
+        let head = match base {
+            // The base type name has its arguments, so it skips the check of a bare name.
+            Expr::Name { pos, name } if self.prelude_type(*pos).is_some() => self
+                .prelude_type(*pos)
+                .map(|p| (format!("`{name}`"), type_arity(p))),
+            Expr::Index { pos, base, args } => self
+                .index(is_static, *pos, base, args)
+                .then(|| ("a complete type".to_owned(), 0)),
+            _ => {
+                self.expr(is_static, base);
+                None
+            }
+        };
+        let is_type = head.is_some();
+        if let Some((name, missing)) = head {
+            self.arity_at(seq, pos, &name, missing, args.len());
+        }
+        for arg in args {
+            self.expr(true, arg);
+        }
+        is_type
     }
 
     fn type_expr(&mut self, ty: &TypeExpr) {
