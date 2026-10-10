@@ -25,12 +25,23 @@ pub struct Parse {
     /// The syntax depth of the parse, which sizes the stack of each pass over the result.
     depth: usize,
     /// The errors in position order. The first one is the normative error.
-    pub errors: Vec<Error>,
+    errors: Vec<Error>,
     /// The AST, if the text has no error.
-    pub ast: Option<Vec<ast::Item>>,
+    ast: Option<Vec<ast::Item>>,
 }
 
 impl Parse {
+    /// The errors in position order. The first one is the normative error.
+    #[must_use]
+    pub fn errors(&self) -> &[Error] {
+        &self.errors
+    }
+
+    /// The AST, if the text has no error.
+    #[must_use]
+    pub fn ast(&self) -> Option<&[ast::Item]> {
+        self.ast.as_deref()
+    }
     /// The root of the lossless syntax tree. Its text equals the input. A node of `rowan`
     /// frees the tree by recursion, so only the tests of this crate see it.
     #[cfg(test)]

@@ -173,7 +173,7 @@ fn dispatch(command: &Command, input: impl BufRead, out: &mut impl Write) -> Res
 /// machine cannot give the stack, the command fails before it parses.
 fn parse_source(source: &str, depth: usize) -> Result<(String, Exit), Usage> {
     let parsed = parse::parse_with_depth(source, depth).map_err(|e| Usage(e.to_string()))?;
-    if let Some(e) = parsed.errors.first() {
+    if let Some(e) = parsed.errors().first() {
         let line = format!(
             "error[{}]: {}:{}: {}\n",
             e.code, e.pos.line, e.pos.col, e.message
