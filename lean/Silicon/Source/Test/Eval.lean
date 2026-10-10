@@ -287,6 +287,20 @@ def wideFor : String :=
 #guard exact wideFor "f()" (cost wideFor "f()")
 #guard cost wideFor "f()" == 731
 
+/-!
+A frame holds only the bindings that run. `f` and `r` declare `locals` locals in a branch that
+does not run, so a call does not pay for them in fuel or in memory.
+-/
+def skipped (locals : Nat) : String :=
+  let dead := String.join ((List.range locals).map fun i => s!"let x{i} = 0; ")
+  s!"comptime fn f() -> Int \{ comptime if (false) \{ {dead}} let y = 0; return y; }\n" ++
+  "comptime fn g(n: Nat) -> Int { comptime for i in 0..n { let z = f(); } return 0; }\n" ++
+  s!"comptime fn r(n: Nat) -> Int \{ comptime if (false) \{ {dead}}\n" ++
+  "  comptime if (n == 0) { return 0; } return r(n - 1); }\n"
+#guard out (skipped 2000) "g(100)" == "(int 0)"
+#guard out (skipped 2000) "r(500)" == "(int 0)"
+#guard cost (skipped 2000) "g(100)" == cost (skipped 1) "g(100)"
+
 /-! A right shift reads its operand in full, so it pays the size of its operand. -/
 #guard exact "" "-(1 << 6400) >> 6399" 312
 #guard out "" "UInt[8](1) << 100000000000" 20 == "(uint 8 0)"

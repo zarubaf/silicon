@@ -1,5 +1,6 @@
 import Silicon.Source.Resolve
 import Silicon.Source.Value
+import Std.Data.HashMap
 
 /-!
 The static evaluator of slice 1 with the budgets and the cost model of section 5.4 of the
@@ -84,7 +85,7 @@ structure Ctx where
 structure St where
   fuel : Nat
   consts : Array Entry
-  frame : Array (Option Slot)
+  frame : Std.HashMap Nat Slot
 
 abbrev M := ReaderT Ctx (StateT St (Except Error))
 
@@ -123,17 +124,17 @@ def nested (pos : Pos) (act : M α) : M α := do
 /-! Runs `act` with an empty frame and the return type `ret`. -/
 def inFrame (ret : Option Ty) (act : M α) : M α := do
   let saved := (← get).frame
-  modify fun s => { s with frame := #[] }
+  modify fun s => { s with frame := {} }
   let r ← withReader (fun c => { c with ret }) act
   modify fun s => { s with frame := saved }
   return r
 
-/-! Local numbers are dense in an item, so the frame stays small. -/
+/-!
+Local numbers are dense over the whole item, also in branches that do not run. The frame thus
+holds only the bindings that run, and each of them pays its charge.
+-/
 def bindLocal (id : Nat) (slot : Slot) : M Unit :=
-  modify fun s =>
-    let a := s.frame
-    let a := if a.size ≤ id then a ++ Array.replicate (id + 1 - a.size) none else a
-    { s with frame := a.set! id (some slot) }
+  modify fun s => { s with frame := s.frame.insert id slot }
 
 def setConst (i : Nat) (e : Entry) : M Unit :=
   modify fun s => { s with consts := s.consts.set! i e }
@@ -387,7 +388,7 @@ def test (pos : Pos) (o : Out) : M Bool :=
 def place : Resolve.Expr → M (Option (Nat × Slot))
   | .name _ _ (.local id) => do
     match (← get).frame[id]? with
-    | some (some s) => return if s.mutable then some (id, s) else none
+    | some s => return if s.mutable then some (id, s) else none
     | _ => return none
   | _ => return none
 
@@ -467,7 +468,7 @@ mutual
   def name (n : Nat) (p : Pos) (x : String) : Ref → M Out
     | .local id => do
       match (← get).frame[id]? with
-      | some (some s) => return ⟨s.value, true⟩
+      | some s => return ⟨s.value, true⟩
       | _ => fail .S011 p s!"`{x}` is not a static value"
     | .type k => do return ⟨.type (← prim p x k), true⟩
     | .fn _ => fail .S010 p s!"`{x}` is a function; slice 1 has no function values"
@@ -602,7 +603,7 @@ end
 def run (budget : Budget) (items : Array Resolve.Item) (act : Nat → M α) :
     Except Error (α × Nat) := do
   let ctx : Ctx := ⟨items, budget.depth, 0, none⟩
-  let st : St := ⟨budget.fuel, Array.replicate items.size .notStarted, #[]⟩
+  let st : St := ⟨budget.fuel, Array.replicate items.size .notStarted, {}⟩
   let (a, s) ← ((act budget.fuel).run ctx).run st
   return (a, budget.fuel - s.fuel)
 
