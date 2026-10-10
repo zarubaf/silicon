@@ -31,7 +31,9 @@ impl Prelude {
         })
     }
 
-    pub(crate) fn is_type(self) -> bool {
+    /// Whether the name is a scalar type of the prelude.
+    #[must_use]
+    pub fn is_type(self) -> bool {
         matches!(
             self,
             Prelude::Bool | Prelude::Nat | Prelude::Int | Prelude::UInt | Prelude::SInt
