@@ -573,3 +573,16 @@ fn a_missing_or_wrong_opening_delimiter_is_s001() {
         assert_eq!(first_error(input), Some((Code::S001, line, col)), "{input}");
     }
 }
+
+#[test]
+fn many_errors_on_one_line_scale_linearly() {
+    // Each `$` is an error token, so the line holds 50 000 errors. A quadratic scan
+    // would need more than 10^9 steps. The bound is generous, and the check is a
+    // count of errors with a coarse time limit.
+    let input = "$ ".repeat(50_000);
+    let start = std::time::Instant::now();
+    let parsed = parse(&input);
+    assert_eq!(parsed.errors.len(), 50_000);
+    assert_eq!(parsed.errors[49_999].pos, pos(1, 99_999));
+    assert!(start.elapsed() < std::time::Duration::from_secs(5));
+}

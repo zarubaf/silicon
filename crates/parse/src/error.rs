@@ -1,6 +1,7 @@
 //! Errors as data, and the map from a byte offset to a source position.
 
 use crate::ast::Pos;
+use std::cell::Cell;
 use std::fmt;
 
 /// The codes of pass 1 of the front end (design section 6).
@@ -30,10 +31,13 @@ pub struct Error {
     pub message: String,
 }
 
-/// Maps a byte offset to a line and a column.
+/// Maps a byte offset to a line and a column. It remembers the last answer, so offsets in
+/// increasing order cost a linear scan of the input in total.
 pub(crate) struct LineIndex<'a> {
     input: &'a str,
     line_starts: Vec<usize>,
+    /// The last offset asked, and the characters from its line start to it.
+    last: Cell<(usize, usize)>,
 }
 
 impl<'a> LineIndex<'a> {
@@ -41,20 +45,33 @@ impl<'a> LineIndex<'a> {
         let line_starts = std::iter::once(0)
             .chain(input.match_indices('\n').map(|(at, _)| at + 1))
             .collect();
-        LineIndex { input, line_starts }
+        LineIndex {
+            input,
+            line_starts,
+            last: Cell::new((0, 0)),
+        }
     }
 
     /// The position of a byte offset on a character boundary, or of the end of the input.
     pub(crate) fn pos(&self, offset: usize) -> Pos {
         let line = self.line_starts.partition_point(|&start| start <= offset) - 1;
         let start = self.line_starts[line];
-        let col = self
-            .input
-            .get(start..offset)
-            .map_or(0, |s| s.chars().count());
+        let (last_offset, last_chars) = self.last.get();
+        // Continue from the last answer when it is on this line and not after the offset.
+        let (from, chars) = if last_offset >= start && last_offset <= offset {
+            (last_offset, last_chars)
+        } else {
+            (start, 0)
+        };
+        let cols = chars
+            + self
+                .input
+                .get(from..offset)
+                .map_or(0, |s| s.chars().count());
+        self.last.set((offset, cols));
         Pos {
             line: line + 1,
-            col: col + 1,
+            col: cols + 1,
         }
     }
 }

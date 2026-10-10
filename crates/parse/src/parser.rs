@@ -3,6 +3,7 @@
 
 use crate::error::Code;
 use rowan::{Checkpoint, GreenNode, GreenNodeBuilder, Language};
+use std::collections::BTreeSet;
 use syntax::{SiliconLanguage, SyntaxKind, Token};
 
 /// The most levels of nesting of an expression, and of a block.
@@ -25,6 +26,8 @@ pub(crate) struct Parser<'a> {
     at: usize,
     builder: GreenNodeBuilder<'static>,
     pub errors: Vec<RawError>,
+    /// The offsets with an error, so that one place gets one error.
+    reported: BTreeSet<usize>,
     /// The nesting of expressions and blocks now open.
     depth: usize,
     /// The height of the last expression or type that a parse function completed.
@@ -39,6 +42,7 @@ impl<'a> Parser<'a> {
             at: 0,
             builder: GreenNodeBuilder::new(),
             errors: Vec::new(),
+            reported: BTreeSet::new(),
             depth: 0,
             height: 0,
         }
@@ -194,7 +198,7 @@ impl<'a> Parser<'a> {
             && self
                 .significant(0)
                 .is_some_and(|t| t.range.start == offset && t.kind == SyntaxKind::Error);
-        if on_error_token || self.errors.iter().any(|e| e.offset == offset) {
+        if on_error_token || !self.reported.insert(offset) {
             return;
         }
         self.errors.push(RawError {
