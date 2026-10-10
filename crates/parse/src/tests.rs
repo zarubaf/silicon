@@ -503,7 +503,7 @@ fn the_first_error_is_the_first_in_position_order() {
 
 #[test]
 fn recovery_reports_later_errors() {
-    let input = "const A: T = ;\nfn f() -> T { let = 1; reg r: T = 0; x +; }\nstruct S { }\nconst B: T = 1;\nconst C: T = ;";
+    let input = "const A: T = ;\ncomptime fn f() -> T { let = 1; reg r: T = 0; x +; }\nstruct S { }\nconst B: T = 1;\nconst C: T = ;";
     let parsed = parse(input);
     let found: Vec<_> = parsed.errors.iter().map(|e| (e.code, e.pos.line)).collect();
     assert_eq!(
