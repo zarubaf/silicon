@@ -13,11 +13,11 @@ The project rule is that a rule without a check is advisory.
 
 Continuous architecture review is a project goal. It has these triggers:
 
-- **Pull request.** A pull request that touches an architecture path needs an architecture review in addition to the diff review. `doc/architecture.md` lists the architecture paths. `cargo xtask review-scope` classifies the diff.
-- **Drift.** A drift review runs after 15 merged pull requests or after one week, whichever comes first. `cargo xtask review-due` reports a due review. The orchestrator runs it before each merge. `just ci` does not run it, because a time limit would make an old commit fail.
+- **Pull request.** A pull request that touches an architecture path needs an architecture review in addition to the diff review. `doc/architecture.md` lists the architecture paths. `just review-scope` classifies the diff. It lists the changed architecture files and exits with code 10 when there are any.
+- **Drift.** A drift review runs after 15 merged pull requests or after one week, whichever comes first. `just review-due` reports a due review and exits with code 10. It counts the merged pull requests with `gh`, because a rebase merge leaves no merge commit. Git decides which pull requests came after the tag. The orchestrator runs it before each merge. `just ci` does not run it, because a time limit would make an old commit fail.
 - **Milestone.** A full review runs at each milestone, for example at the end of a build step. Codex and Opus each do it independently. The orchestrator joins the two reports.
 
-The reviewer is from a different vendor than the author and has fresh context. It gets `doc/architecture.md`, `doc/trust.md`, the ADRs, the specs, the diff since the last review, and the output of `cargo xtask arch-summary`. It never gets the reasoning of the author. It returns a report of at most 20 lines.
+The reviewer is from a different vendor than the author and has fresh context. It gets `doc/architecture.md`, `doc/trust.md`, the ADRs, the specs, the diff since the last review, and the output of `just arch-summary`. It never gets the reasoning of the author. It returns a report of at most 20 lines.
 
 A finding goes to one of these places:
 
@@ -32,6 +32,6 @@ Each finding that a machine can check becomes an `xtask` rule. A checklist item 
 ## Consequences
 
 - The architecture docs stay true, because a reviewer compares them with the code on a fixed schedule.
-- Until `review-scope` and `review-due` exist, the triggers are advisory. The follow-up issues add them.
+- The triggers are mechanical. The reviewer still decides what to do with a due review.
 - A merge waits for the user when a finding is in a human gate area.
 - The review adds cost to each pull request that touches an architecture path.
