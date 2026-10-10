@@ -92,4 +92,19 @@ def failsAt (s : String) (line col : Nat) : Bool :=
 /-! The tokens before an error stay, so the parser can report an earlier error first. -/
 #guard kinds "import x $" == [.keyword "import", .ident "x", .error "unexpected character"]
 
+/-! A number literal is below 2^65536 in each radix. Leading zeros do not count. -/
+def top : Nat := 2 ^ 65536 - 1
+#guard kinds ("x " ++ toString top) == [.ident "x", .number top, .eof]
+#guard kinds ("0x" ++ "".pushn 'f' 16384) == [.number top, .eof]
+#guard kinds ("0b" ++ "".pushn '1' 65536) == [.number top, .eof]
+#guard kinds ("000" ++ toString top) == [.number top, .eof]
+#guard kinds ("0x00" ++ "".pushn 'f' 16384) == [.number top, .eof]
+#guard kinds ("0b00" ++ "".pushn '1' 65536) == [.number top, .eof]
+#guard failsAt ("x " ++ toString (top + 1)) 1 3
+#guard failsAt ("x 0x1" ++ "".pushn '0' 16384) 1 3
+#guard failsAt ("x 0b1" ++ "".pushn '0' 65536) 1 3
+
+/-! A long literal fails before its conversion, so it fails fast. -/
+#guard failsAt ("x " ++ "".pushn '9' 1000000 ++ " y") 1 3
+
 end Silicon.Source.Test

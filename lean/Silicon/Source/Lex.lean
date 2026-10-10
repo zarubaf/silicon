@@ -75,8 +75,8 @@ def isDigitOf (radix : Nat) (c : Char) : Bool :=
   (c.isDigit || ('a' ≤ c && c ≤ 'f') || ('A' ≤ c && c ≤ 'F')) && digitValue c < radix
 
 /-! The accumulators hold their characters in reverse order. -/
-def numberValue (radix : Nat) (acc : List Char) : Nat :=
-  acc.foldr (fun c n => n * radix + digitValue c) 0
+def numberValue (radix : Nat) (digits : List Char) : Nat :=
+  digits.foldl (fun n c => n * radix + digitValue c) 0
 
 def escaped : Char → Option Char
   | '"' => some '"' | '\\' => some '\\' | 'n' => some '\n' | 'r' => some '\r'
@@ -86,8 +86,21 @@ def wordToken (start : Pos) (acc : List Char) : Token :=
   let s := String.ofList acc.reverse
   ⟨start, if keywords.contains s then .keyword s else .ident s⟩
 
+/-! The most significant digits of 2^65536 in each radix. Leading zeros do not count. -/
+def maxDigits : Nat → Nat
+  | 2 => 65536 | 16 => 16384 | _ => 19729
+
+/-!
+A number literal is below 2^65536. The lexer counts the digits before it converts them. Thus a
+long literal fails in linear time, at the position of the literal.
+-/
 def numberToken (start : Pos) (radix : Nat) (acc : List Char) : Token :=
-  ⟨start, .number (numberValue radix acc)⟩
+  let digits := acc.reverse.dropWhile (· == '0')
+  let tooLarge : Token := ⟨start, .error "number literal is not below 2^65536"⟩
+  if digits.length > maxDigits radix then tooLarge
+  else
+    let v := numberValue radix digits
+    if v < 2 ^ 65536 then ⟨start, .number v⟩ else tooLarge
 
 /-! A prefix `0x` or `0b` needs a digit after it. Else the `0` is a decimal number. -/
 def radixAfter (c : Char) : List Char → Option Nat

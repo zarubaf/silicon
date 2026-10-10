@@ -220,6 +220,8 @@ def roundtrip (items : List Item) : Bool :=
 #guard fails "pub \"open" .S004 1 1
 #guard fails "const N: T = $; import x;" .S001 1 14
 #guard ex "(a, $)" == "error S004 1:14"
+#guard fails ("import x " ++ "".pushn '9' 20000) .S004 1 1
+#guard fails ("const N: T = " ++ "".pushn '9' 20000 ++ " 1;") .S001 1 14
 
 /-! The nesting limit: height 64 passes, and height 65 fails at the first token of its form. -/
 def parens (n : Nat) : String := "".pushn '(' n ++ "x" ++ "".pushn ')' n
