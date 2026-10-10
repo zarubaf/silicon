@@ -1,5 +1,6 @@
 //! Tooling for the continuous architecture review of ADR 0013.
 
+mod due;
 mod paths;
 mod scope;
 
@@ -28,6 +29,29 @@ pub fn review_scope(base: &str) -> Result<ExitCode> {
             "architecture review due: the branch changes {} architecture file(s)",
             files.len()
         );
+        ExitCode::from(REVIEW_DUE)
+    })
+}
+
+/// Reports whether a drift review is due on the base branch `base` of `origin`.
+/// Exits `0` when none is due, and `10` when one is due.
+pub fn review_due(base: &str) -> Result<ExitCode> {
+    let repo = Repo::discover()?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs();
+    due::fetch(&repo.root, base)?;
+    let remote_ref = format!("origin/{base}");
+    let verdict = due::check(&repo.root, &remote_ref, i64::try_from(now)?, |since| {
+        due::merged_prs(&repo.root, base, since)
+    })?;
+    println!("{}", verdict.summary);
+    for reason in &verdict.reasons {
+        println!("drift review due: {reason}");
+    }
+    Ok(if verdict.reasons.is_empty() {
+        ExitCode::SUCCESS
+    } else {
         ExitCode::from(REVIEW_DUE)
     })
 }
