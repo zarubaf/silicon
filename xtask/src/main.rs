@@ -1,6 +1,7 @@
 #![allow(clippy::print_stdout)] // xtask is a CLI; stdout is its interface.
 
 mod arch;
+mod arch_review;
 mod commit;
 mod corpus;
 mod diff;
@@ -87,6 +88,15 @@ enum Command {
     },
     /// Run the LEC of the core IR spec, section 8.1, over `tests/corpus`.
     Lec,
+    /// List the files of the branch that touch an architecture path of `doc/architecture.md`.
+    ///
+    /// Exit codes: 0 no architecture path changed, 10 an architecture review is due,
+    /// 1 an error (for example an unknown base or a malformed path list).
+    ReviewScope {
+        /// Git ref that the branch forked from, for example `origin/main`.
+        #[arg(long)]
+        base: String,
+    },
     /// Run the Codex adversarial review of the current branch.
     Review {
         /// Git ref to review against.
@@ -127,6 +137,7 @@ fn main() -> Result<ExitCode> {
             ExitCode::FAILURE
         }),
         Command::CommitMsg { file } => Ok(report(&commit::check_message_file(&file)?)),
+        Command::ReviewScope { base } => arch_review::review_scope(&base),
         Command::Review { base } => {
             review::run(&Repo::discover()?.root, &base)?;
             Ok(ExitCode::SUCCESS)
