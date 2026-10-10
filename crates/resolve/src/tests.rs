@@ -38,6 +38,13 @@ fn decl_at(resolved: &Resolved, at: Pos) -> &Decl {
     }
 }
 
+fn decl_at_use(resolved: &Resolved, at: Pos) -> Kind {
+    match resolved.target(at) {
+        Some(Target::Decl(id)) => resolved.decl(id).kind,
+        other => panic!("expected a declaration at {at:?}, got {other:?}"),
+    }
+}
+
 const S002: Code = Code::S002;
 const S003: Code = Code::S003;
 
@@ -165,20 +172,18 @@ fn a_declaration_can_shadow_a_prelude_name() {
 }
 
 #[test]
-fn a_shadowed_prelude_name_has_the_kind_of_the_declaration() {
-    // The constant `Bool` is no type.
+fn a_shadowed_prelude_type_is_no_type() {
+    // The constant `UInt` is no type.
     assert_eq!(
-        errors("const Bool: Nat = 1;\nconst A: Bool = true;\n"),
+        errors("const UInt: Nat = 8;\nconst A: UInt[8] = 0;\n"),
         [(S003, 2, 10)]
     );
-    // The prelude function `resize` is no value, and the local `resize` is no callee.
     assert_eq!(
-        errors("fn f() -> Nat {\n  let resize = 1;\n  return resize(UInt[8], 1);\n}\n"),
-        [(S003, 3, 10)]
+        errors("fn f(Bool: Nat, x: Bool) -> Nat { return x; }\n"),
+        [(S003, 1, 20)]
     );
+    ok("fn f(p: Bool) -> Bool {\n  { let Bool = 1; }\n  let x: Bool = p;\n  return x;\n}\n");
 }
-
-// S003
 
 #[test]
 fn an_unknown_name_is_s003_at_the_name() {
@@ -237,83 +242,190 @@ fn a_parameter_type_sees_only_the_earlier_parameters() {
 }
 
 #[test]
-fn a_type_position_needs_a_type() {
-    assert_eq!(
-        errors("const A: Nat = 1;\nconst B: A = 1;\n"),
-        [(S003, 2, 10)]
+fn only_a_module_is_wrong_in_an_expression() {
+    // A function, a type, and a domain are names in an expression.
+    ok(
+        "fn g() -> Nat { return 1; }\nconst A: Nat = g;\nconst B: Nat = UInt;\n\
+        module M() domains(d) {\n  let x = d;\n  let y = resize;\n}\n",
     );
-    assert_eq!(errors("fn f(x: Nat) -> x { return 1; }\n"), [(S003, 1, 17)]);
     assert_eq!(
-        errors("module M() {\n  wire w: UInt[8];\n  wire v: w[1];\n}\n"),
+        errors("module A() {}\nmodule B() {\n  let x = A;\n}\n"),
         [(S003, 3, 11)]
     );
-    // A type family in an expression is indexed by a type name.
     assert_eq!(
-        errors("const A: Nat = 1;\nconst B: Nat = A[1];\n"),
+        errors("module A() {}\nconst N: Nat = A();\n"),
         [(S003, 2, 16)]
     );
 }
 
 #[test]
-fn a_value_position_needs_a_value() {
+fn a_type_position_needs_a_prelude_type() {
     assert_eq!(
-        errors("fn f() -> Nat { return 1; }\nconst A: Nat = f;\n"),
-        [(S003, 2, 16)]
-    );
-    assert_eq!(errors("const A: Nat = UInt;\n"), [(S003, 1, 16)]);
-    assert_eq!(
-        errors("module C() {}\nconst A: Nat = C;\n"),
-        [(S003, 2, 16)]
+        errors("const N: Nat = 1;\nconst M: N = 1;\n"),
+        [(S003, 2, 10)]
     );
     assert_eq!(
-        errors("module M() domains(d) {\n  wire w: Bool;\n  w := d;\n}\n"),
-        [(S003, 3, 8)]
+        errors("fn g() -> Nat { return 1; }\nconst M: g[1] = 1;\n"),
+        [(S003, 2, 10)]
     );
-}
-
-#[test]
-fn a_callee_needs_a_function_or_a_type() {
-    ok("fn f(x: Nat) -> Nat { return x; }\n\
-        const A: UInt[8] = UInt[8](f(3));\n\
-        const B: Bool = Bool(true);\n\
-        const C: Nat = resize(UInt[8], A);\n");
     assert_eq!(
-        errors("const A: Nat = 1;\nconst B: Nat = A(2);\n"),
-        [(S003, 2, 16)]
+        errors("fn f(x: resize) -> Bool { return true; }\n"),
+        [(S003, 1, 9)]
     );
 }
 
 #[test]
-fn an_instance_needs_a_module() {
-    let src = "fn f() -> Nat { return 1; }\nmodule M() {\n  instance u = f();\n}\n";
-    assert_eq!(errors(src), [(S003, 3, 16)]);
+fn the_module_of_an_instance_needs_a_module_item() {
+    let g = "fn g() -> Nat { return 1; }\nmodule M() {\n  instance u = g();\n}\n";
+    assert_eq!(errors(g), [(S003, 3, 16)]);
+    assert_eq!(
+        errors("module M() {\n  instance u = resize();\n}\n"),
+        [(S003, 2, 16)]
+    );
     assert_eq!(
         errors("module M() {\n  instance u = N();\n}\n"),
         [(S003, 2, 16)]
     );
-    // A module can instantiate itself or a later module: the check is for the name only.
+    assert_eq!(
+        errors("module M() {\n  let N = 1;\n  instance u = N();\n}\n"),
+        [(S003, 3, 16)]
+    );
     ok("module M() {\n  instance u = N();\n}\nmodule N() {}\n");
+    ok("module A() { instance a = A(); }\n");
 }
 
 #[test]
-fn an_assignment_target_needs_a_value() {
+fn a_module_without_a_domains_clause_has_the_domain_clock() {
+    let r = ok("module M() {\n  let c = clock;\n}\n");
+    assert_eq!(decl_at_use(&r, pos(2, 11)), Kind::Domain);
     assert_eq!(
-        errors("fn f() -> Nat { return 1; }\nmodule M() {\n  f := 1;\n}\n"),
-        [(S003, 3, 3)]
+        errors("module M() {\n  wire clock: Bool;\n}\n"),
+        [(S002, 2, 8)]
     );
     assert_eq!(
-        errors("module M() {\n  let a = 1;\n  b = a;\n}\n"),
-        [(S003, 3, 3)]
+        errors("module M(comptime clock: Nat) {}\n"),
+        [(S002, 1, 19)]
+    );
+    // An explicit clause replaces the default.
+    ok("module M() domains(clock) {\n  let c = clock;\n}\n");
+    assert_eq!(
+        errors("module M() domains(clock) {\n  wire clock: Bool;\n}\n"),
+        [(S002, 2, 8)]
+    );
+    assert_eq!(
+        errors("module M() domains() {\n  let c = clock;\n}\n"),
+        [(S003, 2, 11)]
+    );
+    ok("module M() domains() {\n  wire clock: Bool;\n}\n");
+}
+
+#[test]
+fn the_name_after_a_dot_is_not_looked_up() {
+    ok("module B() {}\nmodule A() { instance b = B(); let y = b.zzz; }\n");
+    assert_eq!(
+        errors("module M(comptime W: Nat) {\n  let y = u.a;\n  instance u = M(1);\n}\n"),
+        [(S003, 2, 11)]
     );
 }
 
 #[test]
-fn a_selected_field_is_not_a_name() {
-    ok("module C() { output q: Bool; }\n\
-        module M() {\n  instance u = C();\n  wire w: Bool;\n  w := u.q;\n}\n");
+fn the_message_of_a_later_slice_name_names_the_slice() {
+    let message = |src: &str| match run(src) {
+        Err(Failed::Names(errors)) => errors[0].message.clone(),
+        _ => panic!("expected an error"),
+    };
+    assert_eq!(
+        message("fn f(x: String) -> Bool { return true; }\n"),
+        "`String` is not in slice 1; it comes in slice 2"
+    );
+    assert_eq!(
+        message("module M() {\n  reg r: Reg[Bool] = 0;\n}\n"),
+        "`Reg` is not in slice 1; it comes in slice 3"
+    );
+    assert_eq!(message("const A: Foo = 1;\n"), "`Foo` is not declared");
+    ok("const List: Nat = 1;\nconst N: Nat = List;\n");
 }
 
-// Pass order and report order
+#[test]
+fn a_nested_scope_shadows_as_in_lean() {
+    let ret = |src: &str| {
+        let r = ok(src);
+        let Some(parse::ast::Item::Fn { body, .. }) = r.ast().first() else {
+            panic!("expected a function");
+        };
+        let Some(parse::ast::Stmt::Ret {
+            value: Some(parse::ast::Expr::Name { pos, .. }),
+            ..
+        }) = body.last()
+        else {
+            panic!("expected a return of a name");
+        };
+        let target = r.target(*pos).unwrap();
+        match target {
+            Target::Decl(id) => (r.decl(id).kind, r.decl(id).pos),
+            Target::Prelude(_) => panic!("prelude"),
+        }
+    };
+    let fn_decl = |l, c| (Kind::Fn, pos(l, c));
+    assert_eq!(
+        ret("fn f() -> Nat { let x = 2; return x; }\nconst x: Nat = 1;\n"),
+        (Kind::Local, pos(1, 21))
+    );
+    assert_eq!(
+        ret("fn f() -> Nat { return x; }\nconst x: Nat = 1;\n"),
+        (Kind::Const, pos(2, 7))
+    );
+    assert_eq!(
+        ret("fn f(a: Nat) -> Nat { { let a = 1; } return a; }\n"),
+        (Kind::Param, pos(1, 6))
+    );
+    assert_eq!(
+        ret("fn f() -> Nat { return resize; }\nfn resize(x: Nat) -> Nat { return x; }\n"),
+        fn_decl(2, 4)
+    );
+    ok(
+        "fn f(p: Bool) -> Bool {\n  let x = 1;\n  comptime for x in 0..x { let y = x; }\n  return p;\n}\n",
+    );
+    ok(
+        "fn f(p: Bool) -> Bool {\n  comptime if (p) { let x = 1; } else { let x = 2; }\n  return p;\n}\n",
+    );
+}
+
+#[test]
+fn a_local_has_its_own_value_out_of_scope() {
+    assert_eq!(
+        errors("fn f(p: Bool) -> Bool {\n  comptime if (p) { let a = 1; }\n  return a;\n}\n"),
+        [(S003, 3, 10)]
+    );
+    assert_eq!(
+        errors("module M(comptime W: Nat) {\n  w := 1;\n  wire w: Bool;\n}\n"),
+        [(S003, 2, 3)]
+    );
+    assert_eq!(
+        errors("fn f(x: UInt[x]) -> Bool { return true; }\n"),
+        [(S003, 1, 14)]
+    );
+    assert_eq!(
+        errors("module M(comptime A: UInt[B], comptime B: Nat) {}\n"),
+        [(S003, 1, 27)]
+    );
+}
+
+#[test]
+fn an_earlier_s002_wins_over_an_earlier_s003() {
+    assert_eq!(
+        errors("const A: Foo = 1;\nmodule M() {\nwire a: Bool;\nwire a: Bool;\n}\n"),
+        [(S002, 4, 6)]
+    );
+    assert_eq!(
+        errors("fn f() -> Bool { return q; }\nconst f: Nat = 1;\n"),
+        [(S002, 2, 7)]
+    );
+    assert_eq!(
+        errors("fn f(p: Bool) -> Bool {\n  return a + b;\n}\n"),
+        [(S003, 2, 10), (S003, 2, 14)]
+    );
+}
 
 #[test]
 fn errors_are_in_position_order() {

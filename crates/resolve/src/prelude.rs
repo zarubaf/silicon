@@ -15,28 +15,6 @@ pub enum Prelude {
     Error,
 }
 
-/// What a name is, for the position that needs it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Class {
-    Value,
-    Function,
-    Type,
-    Module,
-    Domain,
-}
-
-impl Class {
-    pub(crate) fn describe(self) -> &'static str {
-        match self {
-            Class::Value => "a value",
-            Class::Function => "a function",
-            Class::Type => "a type",
-            Class::Module => "a module",
-            Class::Domain => "a domain",
-        }
-    }
-}
-
 impl Prelude {
     pub(crate) fn of(name: &str) -> Option<Prelude> {
         Some(match name {
@@ -53,14 +31,21 @@ impl Prelude {
         })
     }
 
-    pub(crate) fn class(self) -> Class {
-        match self {
-            Prelude::Bool | Prelude::Nat | Prelude::Int | Prelude::UInt | Prelude::SInt => {
-                Class::Type
-            }
-            Prelude::Resize | Prelude::Reinterpret | Prelude::StaticAssert | Prelude::Error => {
-                Class::Function
-            }
-        }
+    pub(crate) fn is_type(self) -> bool {
+        matches!(
+            self,
+            Prelude::Bool | Prelude::Nat | Prelude::Int | Prelude::UInt | Prelude::SInt
+        )
     }
+}
+
+/// The slice of a prelude name that a later slice adds, for the message of `S003`.
+pub(crate) fn later_slice(name: &str) -> Option<u8> {
+    Some(match name {
+        "String" | "Type" | "Unit" | "List" | "list" | "push" | "pop" | "len" | "str"
+        | "data_bits" | "diagnostic" => 2,
+        "Reg" | "Wire" | "Mem" | "Input" | "Instance" | "Domain" | "read" => 3,
+        "FieldInfo" | "TypeInfo" | "PortKey" | "PortInfo" => 4,
+        _ => return None,
+    })
 }

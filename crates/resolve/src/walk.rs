@@ -2,65 +2,11 @@
 //! of passes 2 and 3 apart, because pass 2 errors rank before pass 3 errors (design
 //! section 6.2). It recurses over the AST, so it runs on the front-end thread.
 
-use crate::prelude::{Class, Prelude};
+use crate::prelude::{Prelude, later_slice};
 use crate::scope::Scopes;
 use crate::{Code, Decl, DeclId, Error, Kind, Table, Target};
 use parse::ast::{Expr, Ident, Item, Param, Pos, Stmt, TypeExpr};
 use std::collections::BTreeMap;
-
-/// The kind of name that a position needs.
-#[derive(Clone, Copy)]
-enum Want {
-    /// A variable, a constant, a port, or an instance.
-    Value,
-    /// The callee of a call: a function, or a type for a conversion such as `UInt[8](3)`.
-    Callee,
-    /// A type, or the family that an index applies to.
-    Type,
-    /// An argument of a type family: a value, or a type as in `Reg[Bool]`.
-    Argument,
-    /// The module of an `instance` statement.
-    Module,
-}
-
-impl Want {
-    fn accepts(self, class: Class) -> bool {
-        match self {
-            Want::Value => class == Class::Value,
-            Want::Callee => matches!(class, Class::Function | Class::Type),
-            Want::Type => class == Class::Type,
-            Want::Argument => matches!(class, Class::Value | Class::Type),
-            Want::Module => class == Class::Module,
-        }
-    }
-
-    fn describe(self) -> &'static str {
-        match self {
-            Want::Value => Class::Value.describe(),
-            Want::Callee => "a function or a type",
-            Want::Type => Class::Type.describe(),
-            Want::Argument => "a value or a type",
-            Want::Module => Class::Module.describe(),
-        }
-    }
-}
-
-fn class_of(kind: Kind) -> Class {
-    match kind {
-        Kind::Fn => Class::Function,
-        Kind::Module => Class::Module,
-        Kind::Domain => Class::Domain,
-        Kind::Const
-        | Kind::Param
-        | Kind::Local
-        | Kind::Loop
-        | Kind::Reg
-        | Kind::Wire
-        | Kind::Input
-        | Kind::Output
-        | Kind::Instance => Class::Value,
-    }
-}
 
 /// Resolves the names of the items. Returns the table, or the errors of the first pass with
 /// an error.
@@ -150,11 +96,23 @@ impl Walker {
         }
     }
 
+    /// Declares a name that has no token. Its position is the module, so no token points to it.
+    fn declare_implicit(&mut self, name: &Ident, kind: Kind) {
+        let id = DeclId(self.decls.len());
+        self.decls.push(Decl {
+            kind,
+            name: name.name.clone(),
+            pos: name.pos,
+        });
+        // The scope is new, so the name cannot repeat.
+        let _ = self.scopes.declare_local(&name.name, id);
+    }
+
     fn item(&mut self, item: &Item) {
         match item {
             Item::Const { ty, value, .. } => {
                 self.ty(ty);
-                self.expr(value, Want::Value);
+                self.expr(value);
             }
             Item::Fn {
                 params, ret, body, ..
@@ -167,12 +125,22 @@ impl Walker {
                 self.scopes.close();
             }
             Item::Module {
+                pos,
                 params,
                 domains,
                 body,
                 ..
             } => {
                 self.scopes.open();
+                // Without a `domains` clause, the module has the default domain `clock`. It
+                // comes first, so a repeat of the name is an error at the later declaration.
+                if domains.is_none() {
+                    let clock = Ident {
+                        pos: *pos,
+                        name: "clock".to_owned(),
+                    };
+                    self.declare_implicit(&clock, Kind::Domain);
+                }
                 self.params(params);
                 for domain in domains.iter().flatten() {
                     self.declare(domain, Kind::Domain);
@@ -212,16 +180,16 @@ impl Walker {
                 if let Some(ty) = ty {
                     self.ty(ty);
                 }
-                self.expr(value, Want::Value);
+                self.expr(value);
                 self.declare(name, Kind::Local);
             }
             Stmt::Assign { target, value, .. } | Stmt::Connect { target, value, .. } => {
-                self.expr(target, Want::Value);
-                self.expr(value, Want::Value);
+                self.expr(target);
+                self.expr(value);
             }
             Stmt::Reg { name, ty, init, .. } => {
                 self.ty(ty);
-                self.expr(init, Want::Value);
+                self.expr(init);
                 self.declare(name, Kind::Reg);
             }
             Stmt::Wire { name, ty, .. } => {
@@ -239,19 +207,19 @@ impl Walker {
             Stmt::Inst {
                 name, module, args, ..
             } => {
-                self.use_name(module.pos, &module.name, Want::Module);
+                self.module_name(module.pos, &module.name);
                 for arg in args {
-                    self.expr(arg, Want::Value);
+                    self.expr(arg);
                 }
                 self.declare(name, Kind::Instance);
             }
             Stmt::Ret { value, .. } => {
                 if let Some(value) = value {
-                    self.expr(value, Want::Value);
+                    self.expr(value);
                 }
             }
             Stmt::CtIf { cond, yes, no, .. } => {
-                self.expr(cond, Want::Value);
+                self.expr(cond);
                 self.block(yes);
                 if let Some(no) = no {
                     self.block(no);
@@ -260,8 +228,8 @@ impl Walker {
             Stmt::CtFor {
                 var, lo, hi, body, ..
             } => {
-                self.expr(lo, Want::Value);
-                self.expr(hi, Want::Value);
+                self.expr(lo);
+                self.expr(hi);
                 // The variable and the top statements of the body share one scope.
                 self.scopes.open();
                 self.declare(var, Kind::Loop);
@@ -269,75 +237,112 @@ impl Walker {
                 self.scopes.close();
             }
             Stmt::Block { body, .. } => self.block(body),
-            Stmt::Expr { value, .. } => self.expr(value, Want::Value),
+            Stmt::Expr { value, .. } => self.expr(value),
         }
     }
 
     fn ty(&mut self, ty: &TypeExpr) {
         match ty {
-            TypeExpr::Name { pos, name } => self.use_name(*pos, name, Want::Type),
+            TypeExpr::Name { pos, name } => self.type_name(*pos, name),
             TypeExpr::Index { base, args, .. } => {
                 self.ty(base);
                 for arg in args {
-                    self.expr(arg, Want::Argument);
+                    self.expr(arg);
                 }
             }
         }
     }
 
-    /// `want` applies to a name. Another node passes the kind it needs to its parts.
-    fn expr(&mut self, expr: &Expr, want: Want) {
+    fn expr(&mut self, expr: &Expr) {
         match expr {
             Expr::Num { .. } | Expr::Bool { .. } | Expr::Str { .. } => {}
-            Expr::Name { pos, name } => self.use_name(*pos, name, want),
-            Expr::Unary { arg, .. } => self.expr(arg, Want::Value),
+            Expr::Name { pos, name } => self.value_name(*pos, name),
+            Expr::Unary { arg, .. } => self.expr(arg),
             Expr::Binary { lhs, rhs, .. } => {
-                self.expr(lhs, Want::Value);
-                self.expr(rhs, Want::Value);
+                self.expr(lhs);
+                self.expr(rhs);
             }
             Expr::Cond { cond, yes, no, .. } => {
-                self.expr(cond, Want::Value);
-                self.expr(yes, Want::Value);
-                self.expr(no, Want::Value);
+                self.expr(cond);
+                self.expr(yes);
+                self.expr(no);
             }
             Expr::Call { callee, args, .. } => {
-                self.expr(callee, Want::Callee);
+                self.expr(callee);
                 for arg in args {
-                    self.expr(arg, Want::Value);
+                    self.expr(arg);
                 }
             }
-            // Slice 1 indexes only a type family, such as `UInt[8]`.
             Expr::Index { base, args, .. } => {
-                self.expr(base, Want::Type);
+                self.expr(base);
                 for arg in args {
-                    self.expr(arg, Want::Argument);
+                    self.expr(arg);
                 }
             }
-            Expr::Field { base, .. } => self.expr(base, Want::Value),
+            Expr::Field { base, .. } => self.expr(base),
         }
     }
 
-    fn use_name(&mut self, pos: Pos, name: &str, want: Want) {
-        let found = match self.scopes.lookup(name) {
-            Some(id) => Some((Target::Decl(id), class_of(self.decls[id.0].kind))),
-            None => Prelude::of(name).map(|p| (Target::Prelude(p), p.class())),
-        };
-        let message = match found {
-            Some((target, class)) if want.accepts(class) => {
-                self.names.insert(pos, target);
-                return;
-            }
-            Some((_, class)) => format!(
-                "`{name}` is {}, but this position needs {}",
-                class.describe(),
-                want.describe()
-            ),
-            None => format!("unknown name `{name}`"),
-        };
+    fn lookup(&self, name: &str) -> Option<Target> {
+        match self.scopes.lookup(name) {
+            Some(id) => Some(Target::Decl(id)),
+            None => Prelude::of(name).map(Target::Prelude),
+        }
+    }
+
+    fn is_module(&self, target: Target) -> bool {
+        matches!(target, Target::Decl(id) if self.decls[id.0].kind == Kind::Module)
+    }
+
+    fn reject(&mut self, pos: Pos, message: String) {
         self.unresolved.push(Error {
             code: Code::S003,
             pos,
             message,
         });
+    }
+
+    fn unknown(&mut self, pos: Pos, name: &str) {
+        let message = match later_slice(name) {
+            Some(slice) => format!("`{name}` is not in slice 1; it comes in slice {slice}"),
+            None => format!("`{name}` is not declared"),
+        };
+        self.reject(pos, message);
+    }
+
+    /// A name in an expression is anything but a module.
+    fn value_name(&mut self, pos: Pos, name: &str) {
+        match self.lookup(name) {
+            Some(target) if self.is_module(target) => self.reject(
+                pos,
+                format!("`{name}` is not a value; a module is used only in an `instance`"),
+            ),
+            Some(target) => {
+                self.names.insert(pos, target);
+            }
+            None => self.unknown(pos, name),
+        }
+    }
+
+    /// A type name is a prelude type. Slice 1 has no type item.
+    fn type_name(&mut self, pos: Pos, name: &str) {
+        match self.lookup(name) {
+            Some(target @ Target::Prelude(p)) if p.is_type() => {
+                self.names.insert(pos, target);
+            }
+            Some(_) => self.reject(pos, format!("`{name}` is not a type")),
+            None => self.unknown(pos, name),
+        }
+    }
+
+    /// The module of an `instance` is a module item.
+    fn module_name(&mut self, pos: Pos, name: &str) {
+        match self.lookup(name) {
+            Some(target) if self.is_module(target) => {
+                self.names.insert(pos, target);
+            }
+            Some(_) => self.reject(pos, format!("`{name}` is not a module")),
+            None => self.unknown(pos, name),
+        }
     }
 }
