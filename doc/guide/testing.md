@@ -62,7 +62,7 @@ A directive is a comment line that gives the expectation of a test file. Both la
 
 Examples: `; expected-error E004 @+1`, `// expected-error S010 @+1`, and `; STEP in=(en 1 rst 0) out=(q 3)`.
 
-- `@+1` means the next line. A `check` file without `expected-error` must pass.
+- `@+1` means the next line. A `check` file without `expected-error` must pass. A `run` file can also have `expected-error`, for an error that only `run` reports.
 - The harness uses the real LLVM `FileCheck` from Nix.
 
 ## Measures
@@ -79,7 +79,7 @@ Three measures find a missing test. Each has an inventory of known gaps in `test
 
 `cargo xtask coverage` requires these tests:
 
-- **Error code.** At least 2 files in `check`: a minimal case and a case in another context. The codes come from the code tables of the two specs, as rule `arch-codes` reads them.
+- **Error code.** At least 2 files in the suite whose command reports the code: a minimal case and a case in another context. This suite is `check`, except for `E014`, which only `run` reports. The codes come from the code tables of the two specs, as rule `arch-codes` reads them.
 - **Construct.** At least 1 file in each behavior suite. These are `run` and `lower` for the core IR, and `run` and `elab` for the source. The constructs are the AST kinds of `core-ir` and of `parse`.
 - **Command.** At least 1 suite or CLI test for each command of `silicon` and `silicon-check`.
 - **Budget.** For each budget of the front-end spec, section 5.4, a file at the limit that passes, and one unit above that fails.
