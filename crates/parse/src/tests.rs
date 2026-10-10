@@ -682,3 +682,20 @@ fn rules_of_the_lean_parser() {
         assert_eq!(first_error(ok), None, "{ok}");
     }
 }
+
+#[test]
+fn lookahead_work_is_linear() {
+    // Each line would scan to the end of the input if the look ahead had no stop.
+    let n = 20_000;
+    for unit in ["a[;\n", "(;\n", "a.b[;\n", "a[{\n"] {
+        let input = format!("module M() {{ {}", unit.repeat(n));
+        let start = std::time::Instant::now();
+        let parsed = parse(&input);
+        assert!(!parsed.errors.is_empty());
+        assert_eq!(parsed.syntax().text().to_string(), input);
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(5),
+            "{unit:?}"
+        );
+    }
+}
