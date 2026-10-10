@@ -89,8 +89,11 @@ pub fn parse_with_depth(input: &str, depth: usize) -> Parse {
     })
 }
 
-/// The size of a stack for the syntax depth.
-fn stack_for(depth: usize) -> usize {
+/// The size of a stack for the syntax depth. The parse, the free of its tree, and a recursive
+/// pass over the AST, such as `dump`, fit in it. It is virtual memory: the pages that a pass
+/// does not touch cost nothing.
+#[must_use]
+pub fn stack_for(depth: usize) -> usize {
     depth
         .saturating_mul(STACK_PER_LEVEL)
         .saturating_add(1 << 20)
