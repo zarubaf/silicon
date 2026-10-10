@@ -7,7 +7,8 @@ use anyhow::{Context, Result};
 
 use crate::repo::Repo;
 
-/// Where Lake puts the executable, relative to the repository root.
+/// Where Lake puts the executable, relative to the repository root. The
+/// driver tests (`crates/driver/tests/checker/mod.rs`) use the same path.
 const BINARY: &str = "lean/.lake/build/bin/silicon-check";
 
 fn lake_build_args() -> Vec<&'static str> {
