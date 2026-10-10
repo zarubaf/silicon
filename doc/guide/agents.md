@@ -1,6 +1,6 @@
 # Agents
 
-This guide gives the orchestration rules and the model choice. [The foundation spec](../design/2026-10-08-repo-foundation.md), section 6, is the source.
+This guide is the authority for orchestration and model choice.
 
 ## Orchestrator
 
