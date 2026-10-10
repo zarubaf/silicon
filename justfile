@@ -68,3 +68,12 @@ setup:
 
 review base="main":
     cargo xtask review --base {{ base }}
+
+review-scope base="origin/main":
+    cargo xtask review-scope --base {{ base }}
+
+review-due:
+    cargo xtask review-due
+
+arch-summary:
+    cargo xtask arch-summary
