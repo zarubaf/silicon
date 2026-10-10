@@ -52,16 +52,17 @@ These rules settle the open points of the grammar:
 - The lexer gives the value of a hexadecimal or binary number. A value of 2^65536 or more is a
   lexical error at the literal.
 
-The nesting limit of section 6.1 is a limit on the height of each expression and each type.
-A name, a number, a string, and `true` or `false` have height 1. Each other node, and each
-pair of parentheses, has the height 1 plus the largest height of its parts. A type has the
-same rule: a type name has height 1. Height 65 is `S001` at the first token of the first form
-that has it. That form is the first such form to end, because two forms of height 65 do not
-overlap. Thus `a + a + ... + a` with 65 operands fails at the first `a`. The limit bounds each
-recursive pass over the AST.
+The syntax depth of section 5.4 limits the height of each expression and each type. Its
+default is 4096. A name, a number, a string, and `true` or `false` have height 1. Each other
+node, and each pair of parentheses, has the height 1 plus the largest height of its parts. A
+type has the same rule: a type name has height 1. A height above the syntax depth is `S001` at
+the first token of the first form that has it. That form is the first such form to end,
+because two forms of that height do not overlap. Thus `a + a + ... + a` with one operand more
+than the syntax depth fails at the first `a`. The limit bounds each recursive pass over the
+AST.
 
-Blocks nest at most 64 levels deep. The body of an item is at depth 1, and each block in a
-block adds 1. A block at depth 65 is `S001` at its `{`.
+Blocks nest at most as deep as the syntax depth. The body of an item is at depth 1, and each
+block in a block adds 1. A block deeper than the syntax depth is `S001` at its `{`.
 -/
 namespace Silicon.Source.Parse
 
@@ -76,17 +77,18 @@ def opening (t : Token) : Bool := isSym "(" t || isSym "[" t || isSym "{" t
 def closing (t : Token) : Bool := isSym ")" t || isSym "]" t || isSym "}" t
 
 /-!
-The tokens and the result of the bracket pass. `close` holds the index of the matching
-bracket of each opening bracket, or the size of the array if no bracket matches. `comma` is
-true at an opening bracket if a `,` comes at its depth before its match.
+The tokens, the syntax depth, and the result of the bracket pass. `close` holds the index of
+the matching bracket of each opening bracket, or the size of the array if no bracket matches.
+`comma` is true at an opening bracket if a `,` comes at its depth before its match.
 -/
 structure Input where
   tokens : Array Token
+  depth : Nat
   close : Array Nat
   comma : Array Bool
 
 /-! The bracket pass. It counts brackets of the three kinds as one depth. -/
-def Input.of (ts : Array Token) : Input := Id.run do
+def Input.of (ts : Array Token) (depth : Nat) : Input := Id.run do
   let mut close := Array.replicate ts.size ts.size
   let mut comma := Array.replicate ts.size false
   let mut open_ : List Nat := []
@@ -99,12 +101,13 @@ def Input.of (ts : Array Token) : Input := Id.run do
         open_ := rest
     else if isSym "," t then
       if let j :: _ := open_ then comma := comma.set! j true
-  return ⟨ts, close, comma⟩
+  return ⟨ts, depth, close, comma⟩
 
 /-! The parser reads the tokens and keeps the index of the next token. -/
 abbrev P := ReaderT Input (StateT Nat (Except Error))
 
-def maxDepth : Nat := 64
+/-! The default of the syntax depth. -/
+def defaultSyntaxDepth : Nat := 4096
 
 def builtins : List String := ["TypeOf", "typeInfo", "field", "Struct", "ports"]
 
@@ -178,11 +181,15 @@ def unOp (t : Token) : Option UnOp :=
 def exhausted : P α := do
   throw ⟨.S001, (← peek).pos, "parser fuel exhausted"⟩
 
-/-! The height of a node from the heights of its children. Height 65 is `S001` at `start`. -/
+/-!
+The height of a node from the heights of its children. A height above the syntax depth is
+`S001` at `start`.
+-/
 def height (start : Pos) (children : List Nat) : P Nat := do
   let h := children.foldl max 0 + 1
-  if h > maxDepth then
-    throw ⟨.S001, start, s!"expression nests deeper than {maxDepth} levels"⟩
+  let d := (← read).depth
+  if h > d then
+    throw ⟨.S001, start, s!"expression nests deeper than {d} levels"⟩
   return h
 
 /-! An expression with its height. -/
@@ -525,8 +532,9 @@ mutual
     | f + 1, b => do
       let t ← peek
       sym "{"
-      if b > maxDepth then
-        throw ⟨.S001, t.pos, s!"blocks nest deeper than {maxDepth} levels"⟩
+      let d := (← read).depth
+      if b > d then
+        throw ⟨.S001, t.pos, s!"blocks nest deeper than {d} levels"⟩
       stmts f b []
 
   def stmts : Nat → Nat → List Stmt → P (List Stmt)
@@ -625,13 +633,13 @@ The items of a token list, or the first error. The fuel bounds the depth of the 
 their number. On a chain of active calls the token index never decreases. A loop step starts
 after its previous step took a token. Fewer than 32 calls on a chain start at one index. The
 longest such run goes from `items` through `stmt` and `expr` to `primary`. Thus
-`32 * (n + 1)` fuel for `n` tokens never runs out.
+`32 * (n + 1)` fuel for `n` tokens never runs out. `depth` is the syntax depth.
 -/
-def parse (tokens : List Token) : Except Error (List Item) :=
+def parse (depth : Nat) (tokens : List Token) : Except Error (List Item) :=
   let ts := tokens.toArray
-  ((items (32 * (ts.size + 1)) []).run (Input.of ts)).run' 0
+  ((items (32 * (ts.size + 1)) []).run (Input.of ts depth)).run' 0
 
-/-! The items of a source text. -/
-def parseSource (s : String) : Except Error (List Item) := parse (lex s)
+/-! The items of a source text, with the syntax depth `depth`. -/
+def parseSource (depth : Nat) (s : String) : Except Error (List Item) := parse depth (lex s)
 
 end Silicon.Source.Parse

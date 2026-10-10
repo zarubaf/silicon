@@ -13,40 +13,42 @@ open Silicon.Source Parse
 def errorText (e : Error) : String := s!"error {e.code} {e.pos.line}:{e.pos.col}"
 
 def dump (s : String) : String :=
-  match parseSource s with
+  match parseSource defaultSyntaxDepth s with
   | .ok items => Print.dump items
   | .error e => errorText e
 
-def fails (s : String) (code : ErrorCode) (line col : Nat) : Bool :=
-  match parseSource s with
+def fails (s : String) (code : ErrorCode) (line col : Nat)
+    (depth : Nat := defaultSyntaxDepth) : Bool :=
+  match parseSource depth s with
   | .error e => e.code == code && e.pos == ⟨line, col⟩
   | .ok _ => false
 
 /-! The value of `const X: T = <s>;`. Its first token is at column 14. -/
-def constValue (s : String) : Except Error Expr :=
-  match parseSource ("const X: T = " ++ s ++ ";") with
+def constValue (s : String) (depth : Nat := defaultSyntaxDepth) : Except Error Expr :=
+  match parseSource depth ("const X: T = " ++ s ++ ";") with
   | .ok [.const _ _ _ v] => .ok v
   | .ok _ => .error ⟨.S001, ⟨0, 0⟩, "not one const"⟩
   | .error e => .error e
 
-def ex (s : String) : String :=
-  match constValue s with
+def ex (s : String) (depth : Nat := defaultSyntaxDepth) : String :=
+  match constValue s depth with
   | .ok v => v.dump
   | .error e => errorText e
 
 /-! The dump of the one statement `s` in a function body. -/
-def st (s : String) : String :=
-  match parseSource ("fn f() -> T {\n" ++ s ++ "\n}") with
+def st (s : String) (depth : Nat := defaultSyntaxDepth) : String :=
+  match parseSource depth ("fn f() -> T {\n" ++ s ++ "\n}") with
   | .ok [.fn _ _ _ _ _ [x]] => x.dump
   | .ok _ => "not one statement"
   | .error e => errorText e
 
 /-! `S001` or `S004` in the body `s` of a function, which starts on line 2. -/
-def stFails (s : String) (code : ErrorCode) (col : Nat) : Bool :=
-  fails ("fn f() -> T {\n" ++ s ++ "\n}") code 2 col
+def stFails (s : String) (code : ErrorCode) (col : Nat)
+    (depth : Nat := defaultSyntaxDepth) : Bool :=
+  fails ("fn f() -> T {\n" ++ s ++ "\n}") code 2 col depth
 
 def roundtrip (items : List Item) : Bool :=
-  match parseSource (Print.print items) with
+  match parseSource defaultSyntaxDepth (Print.print items) with
   | .ok parsed => Print.dump parsed == Print.dump items
   | .error _ => false
 
@@ -223,24 +225,35 @@ def roundtrip (items : List Item) : Bool :=
 #guard fails ("import x " ++ "".pushn '9' 20000) .S004 1 1
 #guard fails ("const N: T = " ++ "".pushn '9' 20000 ++ " 1;") .S001 1 14
 
-/-! The nesting limit: height 64 passes, and height 65 fails at the first token of its form. -/
+/-! A small syntax depth: height 64 passes, and height 65 fails at the first token of its form. -/
 def parens (n : Nat) : String := "".pushn '(' n ++ "x" ++ "".pushn ')' n
 def negs (n : Nat) : String := "".pushn '-' n ++ "x"
 def chain (n : Nat) : String := " + ".intercalate (List.replicate n "a")
 def calls (n : Nat) : String := String.join (List.replicate n "f(") ++ "x" ++ "".pushn ')' n
 
-#guard (constValue (parens 63)).toBool
-#guard ex (parens 64) == "error S001 1:14"
-#guard ex ("y + " ++ parens 64) == "error S001 1:18"
-#guard (constValue (negs 63)).toBool
-#guard ex (negs 64) == "error S001 1:14"
-#guard (constValue (chain 64)).toBool
-#guard ex (chain 65) == "error S001 1:14"
-#guard (constValue (calls 63)).toBool
-#guard ex (calls 64) == "error S001 1:14"
-#guard ex ("g(" ++ chain 65 ++ ")") == "error S001 1:16"
-#guard fails ("const N: T[" ++ chain 65 ++ "] = 1;") .S001 1 12
-#guard ex (parens 1000) == "error S001 1:950"
+#guard (constValue (parens 63) 64).toBool
+#guard ex (parens 64) 64 == "error S001 1:14"
+#guard ex ("y + " ++ parens 64) 64 == "error S001 1:18"
+#guard (constValue (negs 63) 64).toBool
+#guard ex (negs 64) 64 == "error S001 1:14"
+#guard (constValue (chain 64) 64).toBool
+#guard ex (chain 65) 64 == "error S001 1:14"
+#guard (constValue (calls 63) 64).toBool
+#guard ex (calls 64) 64 == "error S001 1:14"
+#guard ex ("g(" ++ chain 65 ++ ")") 64 == "error S001 1:16"
+#guard fails ("const N: T[" ++ chain 65 ++ "] = 1;") .S001 1 12 64
+#guard ex (parens 1000) 64 == "error S001 1:950"
+
+/-! The default syntax depth: height 4096 passes, and height 4097 fails. -/
+#guard (constValue (chain 4096)).toBool
+#guard ex (chain 4097) == "error S001 1:14"
+#guard (constValue (parens 4095)).toBool
+#guard ex (parens 4096) == "error S001 1:14"
+#guard ex ("y + " ++ parens 4096) == "error S001 1:18"
+
+/-! A raised syntax depth accepts a deeper input. -/
+#guard (constValue (parens 10000) 20000).toBool
+#guard (constValue (chain 10000) 20000).toBool
 
 /-!
 The parse is linear. A quadratic look ahead makes these inputs too slow for the build. Each
@@ -248,17 +261,22 @@ statement starts with a name or a `(`, and nests no deeper than the limit.
 -/
 def body (n : Nat) (s : String) : String :=
   "fn f() -> T {\n" ++ String.join (List.replicate n s) ++ "}"
-#guard (parseSource (body 20000 "x;\n")).toBool
-#guard (parseSource (body 20000 "(x);\n")).toBool
-#guard (parseSource (body 10000 "x.a = (f(y, z));\n")).toBool
-#guard ex (parens 20000) == "error S001 1:19950"
+#guard (parseSource defaultSyntaxDepth (body 20000 "x;\n")).toBool
+#guard (parseSource defaultSyntaxDepth (body 20000 "(x);\n")).toBool
+#guard (parseSource defaultSyntaxDepth (body 10000 "x.a = (f(y, z));\n")).toBool
+#guard ex (parens 20000) 64 == "error S001 1:19950"
 
-/-! The block depth limit: the body and 63 nested blocks pass, and one more fails at its `{`. -/
+/-! A small syntax depth: the body and 63 nested blocks pass, and one more fails at its `{`. -/
 def blocks (n : Nat) : String := "".pushn '{' n ++ "".pushn '}' n
-#guard !((st (blocks 63)).startsWith "error")
-#guard stFails (blocks 64) .S001 64
-#guard stFails ("comptime if (c) " ++ blocks 64) .S001 80
-#guard fails ("module M() " ++ blocks 64 ++ "\n" ++ "x") .S001 2 1
+#guard !((st (blocks 63) 64).startsWith "error")
+#guard stFails (blocks 64) .S001 64 64
+#guard stFails ("comptime if (c) " ++ blocks 64) .S001 80 64
+#guard fails ("module M() " ++ blocks 64 ++ "\n" ++ "x") .S001 2 1 64
+
+/-! The default syntax depth: the body and 4095 nested blocks pass, and one more fails. -/
+#guard !((st (blocks 4095)).startsWith "error")
+#guard stFails (blocks 4096) .S001 4096
+#guard !((st (blocks 10000) 20000).startsWith "error")
 
 /-! The parser reads the text of the printer back to the same AST. -/
 def p : Pos := ⟨1, 1⟩
@@ -300,7 +318,7 @@ def helper : Item :=
 
 /-! Parse, print, and parse again. The second parse gives the AST of the first. -/
 def reparse (s : String) : Bool :=
-  match parseSource s with
+  match parseSource defaultSyntaxDepth s with
   | .ok items => roundtrip items
   | .error _ => false
 

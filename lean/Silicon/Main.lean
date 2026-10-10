@@ -14,8 +14,13 @@ def main (args : List String) : IO UInt32 := do
       | ["run", file] => Core.Cli.execute .run file
       | ["lower", file] => Core.Cli.execute .lower file
       | ["lower", "--models", file] => Core.Cli.execute .models file
-      | ["parse", file] => Source.Cli.parse file
-      | _ => Core.Cli.usageError "usage: silicon-check {check|run|lower [--models]|parse} FILE"
+      | "parse" :: rest =>
+        match Source.Cli.parseArgs rest with
+        | some (file, depth) => Source.Cli.parse depth file
+        | none => Core.Cli.usageError "usage: silicon-check parse FILE [--syntax-depth N]"
+      | _ =>
+        Core.Cli.usageError
+          "usage: silicon-check {check|run|lower [--models]|parse [--syntax-depth N]} FILE"
     (← IO.getStdout).flush
     return code
   catch e => Core.Cli.usageError e.toString
