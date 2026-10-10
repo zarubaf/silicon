@@ -1,6 +1,6 @@
 # 11. A Lean reference elaborator defines the meaning of source
 
-- Status: accepted
+- Status: accepted, partly superseded by ADR 0017
 - Date: 2026-10-09
 
 ## Context
