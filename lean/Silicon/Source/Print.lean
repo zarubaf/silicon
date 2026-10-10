@@ -104,7 +104,7 @@ def Item.dump : Item → String
   | .fn _ c n ps r b =>
     node "fn" [boolean c, ident n, list (ps.map Param.dump), r.dump, list (b.map Stmt.dump)]
   | .module _ n ps ds b =>
-    node "module" [ident n, list (ps.map Param.dump), list (ds.map ident),
+    node "module" [ident n, list (ps.map Param.dump), option (ds.map (list ∘ List.map ident)),
       list (b.map Stmt.dump)]
 
 /-! The AST dump of a source file. -/
@@ -214,7 +214,9 @@ def Item.print : Item → String
   | .fn _ c n ps r b => (if c then "comptime " else "") ++ "fn " ++ n.name ++ "("
     ++ args (ps.map Param.print) ++ ") -> " ++ r.print ++ " " ++ Stmt.body 0 b ++ "\n"
   | .module _ n ps ds b =>
-    let domains := if ds.isEmpty then "" else " domains(" ++ args (ds.map (·.name)) ++ ")"
+    let domains := match ds with
+      | none => ""
+      | some ds => " domains(" ++ args (ds.map (·.name)) ++ ")"
     "module " ++ n.name ++ "(" ++ args (ps.map Param.print) ++ ")" ++ domains ++ " "
       ++ Stmt.body 0 b ++ "\n"
 

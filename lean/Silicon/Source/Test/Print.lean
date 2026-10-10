@@ -67,7 +67,7 @@ def exprText (e : Expr) : String := e.print 0
 
 /-! Each item kind and the parameter structure. -/
 def counter : Item :=
-  .module p (nm "Counter") [⟨p, true, nm "W", t "Nat"⟩] [nm "clk"]
+  .module p (nm "Counter") [⟨p, true, nm "W", t "Nat"⟩] (some [nm "clk"])
     [.output p (nm "q") (.index p (t "UInt") [v "W"])]
 
 def inc : Item :=
@@ -78,7 +78,7 @@ def inc : Item :=
   "(fn false \"inc\" ((param false \"x\" (index (name \"UInt\") ((num 8))))) " ++
   "(index (name \"UInt\") ((num 8))) ((ret (some (binary addw (name \"x\") (num 1))))))"
 #guard counter.dump ==
-  "(module \"Counter\" ((param true \"W\" (name \"Nat\"))) (\"clk\") " ++
+  "(module \"Counter\" ((param true \"W\" (name \"Nat\"))) (some (\"clk\")) " ++
   "((output \"q\" (index (name \"UInt\") ((name \"W\"))))))"
 
 /-! One line for each item, each line ends with LF, and no items give an empty dump. -/
