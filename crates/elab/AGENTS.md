@@ -8,7 +8,7 @@ The `elab` crate is the elaborator of the Rust front end. It is layer 6 of the p
 
 This crate owns the static values with their canonical serialization and their recursive size, and SHA-256 for the digest names. It also owns the static evaluator with the fuel, the nesting depth, the cost model, and the table of constants. The Lean modules `Source.Value`, `Source.Sha256`, and `Source.Eval` are the normative definitions. The instantiations and the lowering come in later parts of #72.
 
-The elaborator core keeps to the Rust subset of design section 4.5: plain owned data, `match`, `Vec`, `Box`, and no `Rc`, no `unsafe`, and no trait object. The module `int` holds the static integer behind a small interface. Only this module uses `num-bigint`.
+The elaborator core keeps to the Rust subset of design section 4.5: plain owned data, `match`, `Vec`, `Box`, and no `Rc`, no `unsafe`, and no trait object. The module `int` holds the static integer behind a small interface, and only this module computes with `num-bigint`. A finite value uses the bit vector of `core-ir`, as the core semantics does.
 
 ## Invariants
 

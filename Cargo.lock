@@ -239,6 +239,11 @@ dependencies = [
 [[package]]
 name = "elab"
 version = "0.0.0"
+dependencies = [
+ "core-ir",
+ "num-bigint",
+ "parse",
+]
 
 [[package]]
 name = "encode_unicode"
