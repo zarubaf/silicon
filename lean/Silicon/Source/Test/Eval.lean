@@ -260,7 +260,7 @@ sizes 2. A use of a done constant charges only its node.
 #guard exact "const A: Nat = 2;" "A + A" 8
 #guard exact "const A: Nat = 2;\nconst B: Nat = A;" "B" 7
 #guard exact "comptime fn f(n: Nat) -> Nat { return n; }" "f(1)" 11
-#guard exact "comptime fn s() -> Int { comptime for i in 0..3 {} return 0; }" "s()" 16
+#guard exact "comptime fn s() -> Int { comptime for i in 0..3 {} return 0; }" "s()" 21
 #guard exact "comptime fn s() -> Int { let x = 1; let y = x; return y; }" "s()" 13
 #guard exact program "fact(10)" (cost program "fact(10)")
 #guard exact program "sum(100)" (cost program "sum(100)")
@@ -277,6 +277,15 @@ sizes 2. A use of a done constant charges only its node.
 #guard out "" "0 >> 100000000000" 20 == "(int 0)"
 #guard out "" "1 >> 100000000000" 20 == "(int 0)"
 #guard out "" "-1 >> 100000000000" 20 == "(int -1)"
+
+/-! A `comptime for` pays its range and each loop value. A large offset thus pays its size. -/
+def bigFor : String :=
+  "comptime fn f() -> Int { let a = 1 << 64000000; comptime for i in a..a + 10000 {} return 0; }"
+#guard out bigFor "f()" 4000000 == "S015 1:49"
+def wideFor : String :=
+  "comptime fn f() -> Int { let a = 1 << 6400; comptime for i in a..a + 3 {} return 0; }"
+#guard exact wideFor "f()" (cost wideFor "f()")
+#guard cost wideFor "f()" == 731
 
 /-! A right shift reads its operand in full, so it pays the size of its operand. -/
 #guard exact "" "-(1 << 6400) >> 6399" 312
