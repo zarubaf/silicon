@@ -392,3 +392,35 @@ fn a_nested_index_chain_at_the_default_depth_checks() {
     // The first index takes the one argument, and each further index is `S007`.
     fails(&format!("const A: Nat = {types};"), S007, 1, 16);
 }
+
+/// The first error of the check of `expr` in the file scope of `src`.
+fn run_expr(src: &str, expr: &str) -> Found {
+    let resolved = check(resolve::resolve(parse::parse(src).unwrap()).ok().unwrap())
+        .ok()
+        .unwrap();
+    let expr = parse::parse_expr(expr, parse::DEFAULT_SYNTAX_DEPTH)
+        .unwrap()
+        .ok()
+        .unwrap();
+    let expr = resolve::resolve_expr(&resolved, expr)
+        .unwrap()
+        .ok()
+        .unwrap();
+    match crate::check_expr(&resolved, expr) {
+        Ok(_) => None,
+        Err(Failed::Errors(e)) => Some((e[0].code, e[0].pos.line, e[0].pos.col)),
+        Err(Failed::Stack(e)) => panic!("{e}"),
+    }
+}
+
+#[test]
+fn an_expression_is_checked_as_a_static_position() {
+    let src = "comptime fn f(n: Nat) -> Nat { return n; }\nconst A: Nat = 1;";
+    assert_eq!(run_expr(src, "f(A) + UInt[8](1)"), None);
+    assert_eq!(run_expr(src, "UInt[8, 9]"), Some((Code::S007, 1, 1)));
+    assert_eq!(run_expr(src, "1 + f(1, 2)"), Some((Code::S007, 1, 5)));
+    assert_eq!(run_expr(src, "UInt"), Some((Code::S007, 1, 1)));
+    assert_eq!(run_expr(src, "Bool(1, 2)"), Some((Code::S007, 1, 1)));
+    // The arity check reads the targets of the expression, not of the file at 1:1.
+    assert_eq!(run_expr(src, "f(1, 2)"), Some((Code::S007, 1, 1)));
+}

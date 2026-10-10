@@ -6,7 +6,7 @@ mod walk;
 
 use parse::StackError;
 use parse::ast::Pos;
-use resolve::Resolved;
+use resolve::{Resolved, ResolvedExpr};
 use std::fmt;
 
 /// The codes of pass 4 that slice 1 can report. `S008` cannot occur in slice 1: it has no
@@ -56,6 +56,21 @@ pub fn check(resolved: Resolved) -> Result<Resolved, Failed> {
         parse::on_stack(resolved.depth(), || walk::run(&resolved)).map_err(Failed::Stack)?;
     if errors.is_empty() {
         Ok(resolved)
+    } else {
+        Err(Failed::Errors(errors))
+    }
+}
+
+/// Checks an expression in the file scope of `resolved`, such as the `EXPR` of `eval`. The
+/// expression is a static position. The expression is unchanged.
+///
+/// # Errors
+/// Returns the errors of `S005` to `S007`, or an error if the machine cannot give the stack.
+pub fn check_expr(resolved: &Resolved, expr: ResolvedExpr) -> Result<ResolvedExpr, Failed> {
+    let errors = parse::on_stack(resolved.depth(), || walk::run_expr(resolved, &expr))
+        .map_err(Failed::Stack)?;
+    if errors.is_empty() {
+        Ok(expr)
     } else {
         Err(Failed::Errors(errors))
     }
