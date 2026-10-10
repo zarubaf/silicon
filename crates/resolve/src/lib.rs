@@ -6,7 +6,7 @@ mod prelude;
 mod scope;
 mod walk;
 
-use parse::ast::{Item, Pos};
+use parse::ast::{Expr, Item, Pos};
 use parse::{Parse, StackError};
 use std::collections::BTreeMap;
 use std::fmt;
@@ -151,6 +151,43 @@ pub fn resolve(parse: Parse) -> Result<Resolved, Failed> {
         items: table.items,
         names: table.names,
     })
+}
+
+/// An expression in the file scope, such as the `EXPR` of `eval`, with its names resolved.
+/// Its positions are in its own text, so it has its own map from the position of each name
+/// token to its target. A target indexes the declarations of the `Resolved` of its file.
+/// Dropping it is safe on any stack.
+pub struct ResolvedExpr {
+    expr: Expr,
+    names: BTreeMap<Pos, Target>,
+}
+
+impl ResolvedExpr {
+    /// The expression.
+    #[must_use]
+    pub fn expr(&self) -> &Expr {
+        &self.expr
+    }
+
+    /// What the name token at a position of the expression points to.
+    #[must_use]
+    pub fn target(&self, pos: Pos) -> Option<Target> {
+        self.names.get(&pos).copied()
+    }
+}
+
+/// Resolves the names of an expression in the file scope of `resolved`. A name in the
+/// expression is an item or a prelude name, and never a module. The result is the resolved
+/// expression, or the `S003` errors in position order.
+///
+/// # Errors
+/// Returns an error if the machine cannot give the stack for the syntax depth of `resolved`.
+pub fn resolve_expr(
+    resolved: &Resolved,
+    expr: Expr,
+) -> Result<Result<ResolvedExpr, Vec<Error>>, StackError> {
+    let names = parse::on_stack(resolved.depth, || walk::run_expr(resolved, &expr))?;
+    Ok(names.map(|names| ResolvedExpr { expr, names }))
 }
 
 /// The result of a successful walk.
