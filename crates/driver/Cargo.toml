@@ -36,3 +36,7 @@ harness = false
 [[test]]
 name = "corpus"
 harness = false
+
+[[test]]
+name = "parse"
+harness = false
