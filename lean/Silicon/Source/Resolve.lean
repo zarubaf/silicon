@@ -23,7 +23,9 @@ no name. These rules settle the open points:
   earlier declarations. Thus `let x = x;` reads an outer `x`.
 - A name in a nested scope can shadow a name of an outer scope. Two declarations of one name in
   one scope are `S002`.
-- A module without a `domains` clause has no domain name in scope.
+- A module without a `domains` clause has the default domain `clock` (section 7.5). The resolver
+  declares it before the parameters, because it has no token. Its position is the start of the
+  module. Thus a parameter `clock` is `S002` at the parameter. `domains()` declares no domain.
 
 The resolver does not look up the name after a `.`. The selection of a field or a port is a
 later check.
@@ -57,7 +59,7 @@ inductive PrimFn where
 /-!
 The declaration of a name. An `item` holds the index of the item in the file. A `local` holds
 the number of the local declaration in its item. The numbers start at 0 in each item, in source
-order: the parameters, the domain names, and then the statements.
+order: the implicit `clock`, the parameters, the domain names, and then the statements.
 -/
 inductive Ref where
   | type (t : PrimType)
@@ -136,12 +138,15 @@ structure Param where
   ty : TypeExpr
   deriving Repr, BEq, Inhabited
 
-/-! The resolved item. A `Ref.item` holds the index of an item in the resolved file. -/
+/-!
+The resolved item. A `Ref.item` holds the index of an item in the resolved file. The `domains`
+of a module without a clause hold the one default domain `clock`.
+-/
 inductive Item where
   | const (pos : Pos) (name : Ident) (ty : TypeExpr) (value : Expr)
   | fn (pos : Pos) (comptime : Bool) (name : Ident) (params : List Param) (ret : TypeExpr)
       (body : List Stmt)
-  | module (pos : Pos) (name : Ident) (params : List Param) (domains : Option (List Binder))
+  | module (pos : Pos) (name : Ident) (params : List Param) (domains : List Binder)
       (body : List Stmt)
   deriving Repr, BEq, Inhabited
 
@@ -314,8 +319,12 @@ def item : Source.Item → M Item
     let r ← typeExpr r
     return .fn p c n ps r (← stmts b)
   | .module p n ps ds b => body do
+    -- The implicit `clock` has no token, so it comes before the parameters.
+    let clock ← if ds.isNone then some <$> declare ⟨p, "clock"⟩ else pure none
     let ps ← ps.mapM param
-    let ds ← ds.mapM (·.mapM declare)
+    let ds ← match clock with
+      | some c => pure [c]
+      | none => (ds.getD []).mapM declare
     return .module p n ps ds (← stmts b)
 
 def itemName : Source.Item → Ident
