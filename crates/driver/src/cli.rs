@@ -1,5 +1,6 @@
 //! The commands of `silicon` and their exit codes (spec section 6.4.2).
 
+use std::fmt;
 use std::fs;
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -13,6 +14,7 @@ use core_ir::interp::Sim;
 use core_ir::text::{canonicalize, parse, print};
 use core_ir::vectors::{parse_input, print_output};
 use core_ir::{ast, typed};
+use parse::ast::Pos;
 
 use crate::validate::{Verdict, validate};
 
@@ -174,14 +176,16 @@ fn dispatch(command: &Command, input: impl BufRead, out: &mut impl Write) -> Res
 fn parse_source(source: &str, depth: usize) -> Result<(String, Exit), Usage> {
     let parsed = parse::parse_with_depth(source, depth).map_err(|e| Usage(e.to_string()))?;
     if let Some(e) = parsed.errors().first() {
-        let line = format!(
-            "error[{}]: {}:{}: {}\n",
-            e.code, e.pos.line, e.pos.col, e.message
-        );
-        return Ok((line, Exit::DesignError));
+        return Ok(error_line(e.code, e.pos, &e.message));
     }
     let dump = parsed.dump().map_err(|e| Usage(e.to_string()))?;
     Ok((dump.unwrap_or_default(), Exit::Success))
+}
+
+/// The line of the first error of a source command, as `silicon-check` prints it.
+fn error_line(code: impl fmt::Display, pos: Pos, message: &str) -> (String, Exit) {
+    let line = format!("error[{code}]: {}:{}: {message}\n", pos.line, pos.col);
+    (line, Exit::DesignError)
 }
 
 fn read_source(file: &Path) -> Result<String, Usage> {
