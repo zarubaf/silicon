@@ -97,6 +97,16 @@ enum Command {
         #[arg(long)]
         base: String,
     },
+    /// Report whether a drift review is due: 15 merged pull requests or 7 days since the newest `arch-review/<date>` tag.
+    ///
+    /// Counts pull requests with `gh`, because a rebase merge leaves no merge commit.
+    /// Exit codes: 0 no review is due, 10 a review is due (also when no tag exists), 1 an error
+    /// (also when a pull request commit is missing from the clone, or a tag `arch-review/*` is not a date).
+    ReviewDue {
+        /// The base branch of the pull requests. The command fetches it from `origin` first.
+        #[arg(long, default_value = "main")]
+        base: String,
+    },
     /// Run the Codex adversarial review of the current branch.
     Review {
         /// Git ref to review against.
@@ -138,6 +148,7 @@ fn main() -> Result<ExitCode> {
         }),
         Command::CommitMsg { file } => Ok(report(&commit::check_message_file(&file)?)),
         Command::ReviewScope { base } => arch_review::review_scope(&base),
+        Command::ReviewDue { base } => arch_review::review_due(&base),
         Command::Review { base } => {
             review::run(&Repo::discover()?.root, &base)?;
             Ok(ExitCode::SUCCESS)
