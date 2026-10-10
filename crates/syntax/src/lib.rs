@@ -2,6 +2,7 @@
 
 mod kind;
 mod lexer;
+mod number;
 
 pub use kind::{SiliconLanguage, SyntaxKind, SyntaxNode, SyntaxToken};
 pub use lexer::{LexError, Lexed, Token, lex};
