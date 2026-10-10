@@ -217,18 +217,47 @@ fn parse_here(input: &str, depth: usize) -> Parse {
     }
 }
 
+/// An expression of the command line with the syntax depth of its parse. A pass that
+/// recurses over it runs through [`on_stack`] with this depth. Dropping it is safe on any
+/// stack.
+pub struct ParsedExpr {
+    expr: ast::Expr,
+    depth: usize,
+}
+
+impl ParsedExpr {
+    /// The expression.
+    #[must_use]
+    pub fn expr(&self) -> &ast::Expr {
+        &self.expr
+    }
+
+    /// The syntax depth of the parse, which sizes the stack of each pass over the expression.
+    #[must_use]
+    pub fn depth(&self) -> usize {
+        self.depth
+    }
+
+    /// Splits the expression and the syntax depth.
+    #[must_use]
+    pub fn into_parts(self) -> (ast::Expr, usize) {
+        (self.expr, self.depth)
+    }
+}
+
 /// Parses an expression of the command line, such as the `EXPR` of `eval`, with a syntax
 /// depth. The positions are in the text of the expression. A token after the expression is
-/// `S001`. The result is the expression, or the errors in position order.
+/// `S001`. The result is the expression with the depth, or the errors in position order.
 ///
 /// # Errors
 /// Returns an error, before it parses, if the depth is not from 1 to `MAX_SYNTAX_DEPTH`, or
 /// if the machine cannot give the stack for the depth.
-pub fn parse_expr(input: &str, depth: usize) -> Result<Result<ast::Expr, Vec<Error>>, DepthError> {
+pub fn parse_expr(input: &str, depth: usize) -> Result<Result<ParsedExpr, Vec<Error>>, DepthError> {
     if !(1..=MAX_SYNTAX_DEPTH).contains(&depth) {
         return Err(DepthError::Range(depth));
     }
-    on_stack(depth, || parse_expr_here(input, depth)).map_err(DepthError::Stack)
+    let parsed = on_stack(depth, || parse_expr_here(input, depth)).map_err(DepthError::Stack)?;
+    Ok(parsed.map(|expr| ParsedExpr { expr, depth }))
 }
 
 fn parse_expr_here(input: &str, depth: usize) -> Result<ast::Expr, Vec<Error>> {
