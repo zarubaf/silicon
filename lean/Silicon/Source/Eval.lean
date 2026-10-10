@@ -97,6 +97,19 @@ structure Step where
   charge : Nat
   run : Unit → Except Fault Value
 
+/-!
+An integer in a message: decimal up to 256 bits, else its bit length. The bit length needs no
+decimal conversion, so a message stays small and cheap for any computed integer.
+-/
+def intText (n : Int) : String :=
+  let bits := n.natAbs.log2 + 1
+  if bits ≤ 256 then toString n
+  else s!"{if n < 0 then "a negative" else "an"} integer of {bits} bits"
+
+/-! A string in a message: at most 64 characters, then a note of the full length. -/
+def strText (m : String) : String :=
+  if m.length ≤ 64 then m else s!"{(m.take 64).toString}... ({m.length} characters)"
+
 def fail (code : ErrorCode) (pos : Pos) (msg : String) : M α := throw ⟨code, pos, msg⟩
 
 def lift (pos : Pos) : Except Fault α → M α
@@ -108,7 +121,7 @@ def typeError (msg : String) : Except Fault α := .error (.S010, msg)
 def charge (pos : Pos) (units : Nat) : M Unit := do
   let s ← get
   if units ≤ s.fuel then set { s with fuel := s.fuel - units }
-  else fail .S015 pos s!"the fuel cannot pay {units} unit(s); {s.fuel} remain"
+  else fail .S015 pos s!"the fuel cannot pay {intText units} unit(s); {intText s.fuel} remain"
 
 /-! The charge of an entry function at the bound 0. The fuel is 0 there, so it fails. -/
 def exhausted (pos : Pos) : M α := do
@@ -203,12 +216,12 @@ def convert (t : Ty) (v : Value) : Except Fault Step :=
   let wrong := typeError s!"expected {t.text}, but the value is {v.text}"
   match t, v with
   | .bool, .bool _ | .int, .int _ => same
-  | .nat, .int n => if 0 ≤ n then same else .error (.S012, s!"{n} is not a Nat")
+  | .nat, .int n => if 0 ≤ n then same else .error (.S012, s!"{intText n} is not a Nat")
   | .uint w, .uint u _ | .sint w, .sint u _ => if u == w then same else wrong
   | .uint w, .int n | .sint w, .int n =>
     .ok ⟨(Value.int n).size + widthSize w, fun _ =>
       if fits t n then .ok (finite (t matches .sint _) w (BitVec.ofInt w n))
-      else .error (.S012, s!"{n} does not fit {t.text}")⟩
+      else .error (.S012, s!"{intText n} does not fit {t.text}")⟩
   | _, _ => wrong
 
 /-! An operation runs in its step after the charge, so each result is a thunk. -/
@@ -252,7 +265,8 @@ def pred (op : BinOp) (signed : Bool) : Core.Pred :=
 
 def shift (op : BinOp) (a b : Value) : Except Fault Step := do
   let count : Except Fault Nat := match b with
-    | .int k => if k < 0 then .error (.S013, s!"the shift count {k} is negative") else .ok k.toNat
+    | .int k =>
+      if k < 0 then .error (.S013, s!"the shift count {intText k} is negative") else .ok k.toNat
     | .uint _ x => .ok x.toNat
     | _ => typeError s!"a shift count is UInt or a static Int, not {b.text}"
   match a with
@@ -343,7 +357,7 @@ def reinterpret (t : Ty) (v : Value) : Except Fault Step :=
 def family (t : PrimType) (args : List Value) : Except Fault Ty := do
   match t, args with
   | .uint, [.int w] | .sint, [.int w] =>
-    unless 1 ≤ w && w ≤ 65536 do .error (.S012, s!"the width {w} is not 1 to 65536")
+    unless 1 ≤ w && w ≤ 65536 do .error (.S012, s!"the width {intText w} is not 1 to 65536")
     .ok (if t == .uint then .uint w.toNat else .sint w.toNat)
   | .uint, [v] | .sint, [v] => typeError s!"a width is a static Int, not {v.text}"
   | _, _ => .error (.S007, "a type family takes one index argument")
@@ -517,8 +531,8 @@ mutual
       | .resize, [.type t, v] => return some ⟨← apply p (resize t v), false⟩
       | .reinterpret, [.type t, v] => return some ⟨← apply p (reinterpret t v), false⟩
       | .staticAssert, [.bool c, .str m] =>
-        if c then return none else fail .S014 p s!"static assertion failed: {m}"
-      | .error, [.str m] => fail .S014 p s!"error: {m}"
+        if c then return none else fail .S014 p s!"static assertion failed: {strText m}"
+      | .error, [.str m] => fail .S014 p s!"error: {strText m}"
       | _, vs => fail .S010 p s!"`{g}` does not accept {vs.map Value.text}"
     | _ =>
       let t ← need f (← eval n f)
