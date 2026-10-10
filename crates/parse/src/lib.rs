@@ -2,6 +2,7 @@
 //! the typed AST of the current slice. See [the front end design](../../doc/design/2026-10-09-frontend.md).
 
 pub mod ast;
+mod dump;
 mod error;
 mod expr;
 mod item;
@@ -9,6 +10,7 @@ mod lower;
 mod parser;
 mod stmt;
 
+pub use dump::dump;
 use error::LineIndex;
 pub use error::{Code, Error};
 use rowan::{GreenNode, Language};

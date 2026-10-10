@@ -6,7 +6,7 @@ The `parse` crate is the parser of the Rust front end. It is layer 3 of the pipe
 
 ## Owns
 
-This crate owns the grammar of the current slice, the error recovery, and the typed AST. The parser builds the lossless `rowan` tree from the tokens of `syntax`. Then it lowers an error-free tree into the AST. Errors are data: each has a code, a line, and a column, and the parser never prints. The parser and the free of the tree run on a thread with a stack for the depth. The AST dump is not here yet. It waits for the dump format of Lean.
+This crate owns the grammar of the current slice, the error recovery, and the typed AST. The parser builds the lossless `rowan` tree from the tokens of `syntax`. Then it lowers an error-free tree into the AST. Errors are data: each has a code, a line, and a column, and the parser never prints. The parser and the free of the tree run on a thread with a stack for the depth. The function `dump` prints the AST in the bytes of `Print.dump` in Lean. It recurses, so it needs a stack for the syntax depth.
 
 ## Invariants
 
@@ -15,6 +15,7 @@ This crate owns the grammar of the current slice, the error recovery, and the ty
 - The first error in position order is the normative error. It is `S001` or `S004` with the position rules of design section 6.2. Later errors have no oracle. Check: `cargo nextest run -p parse`.
 - Syntax of a later slice gives `S004`, never `S001`. An expression or a type has a height of at most the syntax depth, and blocks nest at most that deep. The error is at the first token of the outermost expression or type, or at the `{` of the block. The parser stops when its nesting is above the depth, so its recursion is bounded. The default is 4096, and a deeper input is `S001`, never a stack overflow. Check: `cargo nextest run -p parse`.
 - The AST exists only when the text has no error. Check: `cargo nextest run -p parse`.
+- `dump` gives the bytes of Lean `Print.dump` for each AST. Check: `cargo nextest run -p parse` and the comparison with `silicon-check parse`.
 - Non-test code has no `unwrap`, no `expect`, and no panic on user input. Check: `just clippy`.
 
 ## Dependencies
