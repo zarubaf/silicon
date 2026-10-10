@@ -1,0 +1,2 @@
+// S001: comptime needs if, for, or fn.
+module M() { comptime { } }

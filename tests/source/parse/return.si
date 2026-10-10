@@ -1,0 +1,7 @@
+// return with and without a value.
+comptime fn a() -> Nat { return 1; }
+comptime fn b() -> Nat { return; }
+comptime fn c(x: Nat) -> Nat {
+    comptime if (x > 0) { return x; }
+    return 0;
+}

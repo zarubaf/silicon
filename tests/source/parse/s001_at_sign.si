@@ -1,0 +1,2 @@
+// S001: an @ builtin belongs to a later slice, here it is no token.
+const A: T = @foo(1);

@@ -1,0 +1,10 @@
+// let, let mut, and the assignment of a local.
+comptime fn f() -> Nat {
+    let a = 1;
+    let b: Nat = 2;
+    let mut c = 3;
+    let mut d: Nat = 4;
+    c = a + b;
+    d = c;
+    return d;
+}

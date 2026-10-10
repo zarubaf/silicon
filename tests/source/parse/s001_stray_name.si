@@ -1,0 +1,4 @@
+// S001: a name at the top level.
+const A: T = 1;
+
+foo

@@ -1,0 +1,2 @@
+// S004: a function value belongs to a later slice.
+const A: T = fn () -> T;

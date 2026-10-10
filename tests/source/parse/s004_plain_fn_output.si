@@ -1,0 +1,12 @@
+// S004: a plain fn has no output statement. A comptime fn and a module keep it.
+fn f() -> Nat {
+    output a: Bool;
+    return 1;
+}
+comptime fn g() -> Nat {
+    output a: Bool;
+    return 1;
+}
+module M() {
+    output a: Bool;
+}

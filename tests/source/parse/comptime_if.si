@@ -1,0 +1,11 @@
+// comptime if with and without else.
+module M(comptime W: Nat) {
+    output o: UInt[8];
+    comptime if (W > 1) {
+        let a = 1;
+        o := 0;
+    } else {
+        let b = 2;
+    }
+    comptime if (true) { }
+}

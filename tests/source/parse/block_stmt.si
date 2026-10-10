@@ -1,0 +1,9 @@
+// A nested block, an expression statement, and a call statement.
+module M() {
+    {
+        let c = 1;
+    }
+    f(1);
+    f(1, 2,);
+    a.b.c;
+}

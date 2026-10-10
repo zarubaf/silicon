@@ -1,0 +1,2 @@
+// S001: an escape the grammar does not know.
+const A: Str = "a\qb";

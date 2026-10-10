@@ -1,0 +1,2 @@
+// S004: import belongs to a later slice.
+import a::b as c;

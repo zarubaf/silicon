@@ -1,0 +1,6 @@
+// A top-level const with a type, and consts of each literal kind.
+const W: Nat = 8;
+const NEG: Int = -3;
+const B: Bool = true;
+const S: Str = "text";
+const SUM: Nat = W + 1;

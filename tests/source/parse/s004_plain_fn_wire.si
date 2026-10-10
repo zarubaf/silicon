@@ -1,0 +1,12 @@
+// S004: a plain fn has no wire statement. A comptime fn and a module keep it.
+fn f() -> Nat {
+    wire a: Bool;
+    return 1;
+}
+comptime fn g() -> Nat {
+    wire a: Bool;
+    return 1;
+}
+module M() {
+    wire a: Bool;
+}

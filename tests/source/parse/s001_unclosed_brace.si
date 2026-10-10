@@ -1,0 +1,4 @@
+// S001: a bracket that is never closed.
+module M() {
+    let a = (1 + 2;
+}

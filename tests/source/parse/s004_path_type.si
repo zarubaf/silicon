@@ -1,0 +1,2 @@
+// S004: a path in a type belongs to a later slice.
+const A: a::T = f;

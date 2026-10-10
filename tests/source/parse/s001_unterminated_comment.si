@@ -1,0 +1,4 @@
+// S001: a block comment without the end.
+const A: T = 1;
+/* open
+const B: T = 2;

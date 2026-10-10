@@ -1,0 +1,2 @@
+// S004: extern module belongs to a later slice.
+extern module M() = "m" { }

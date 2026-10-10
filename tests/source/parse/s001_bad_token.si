@@ -1,0 +1,2 @@
+// S001: a character that is no token.
+const A: T = 1 $ 2;

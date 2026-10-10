@@ -1,0 +1,2 @@
+// S001: a module parameter needs comptime.
+module M(x: Nat) { }

@@ -1,0 +1,9 @@
+// instance statements with static arguments, and a connect to a child port.
+module Counter(comptime W: Nat, comptime up: Bool) {
+    input i: UInt[W];
+}
+module Top() {
+    instance u = Counter(8, true);
+    instance v = Counter(16, false,);
+    u.i := v.i;
+}

@@ -1,0 +1,7 @@
+// Input and output ports with computed widths.
+module M(comptime W: Nat) {
+    input a: UInt[W];
+    input b: SInt[W + 1];
+    input c: Bool;
+    output o: UInt[W * 2];
+}

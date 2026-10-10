@@ -1,0 +1,2 @@
+// S001: an assignment inside an expression.
+const A: T = a + b = c;

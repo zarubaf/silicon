@@ -1,0 +1,2 @@
+// S001: the lexical error at 1:9 comes before the later syntax error.
+const X $ = ;

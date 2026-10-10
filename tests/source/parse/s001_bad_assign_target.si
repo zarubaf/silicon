@@ -1,0 +1,2 @@
+// S001: the target of an assignment is a place.
+module M() { f(x) = 1; }

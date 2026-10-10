@@ -1,0 +1,4 @@
+// S001: the first error is the first in position order.
+const A: T = 1;
+const B: T = ;
+const C: T = ;

@@ -1,0 +1,2 @@
+// S001: a missing expression.
+const A: T = ;

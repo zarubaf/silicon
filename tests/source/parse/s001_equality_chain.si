@@ -1,0 +1,2 @@
+// S001: equality does not chain either.
+const A: T = a == b != c;

@@ -1,0 +1,6 @@
+// Modules with comptime parameters, trailing commas, and domains.
+module A(comptime W: Nat) { }
+module B(comptime W: Nat, comptime N: Int, comptime F: Bool,) { }
+module C(comptime W: Nat) domains(clk) { }
+module D() domains() { }
+module E() domains(clk) { }

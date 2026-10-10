@@ -1,0 +1,3 @@
+// S001 comes first by position: the bad token is before the struct.
+const A: T = $;
+struct S { }

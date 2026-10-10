@@ -1,0 +1,8 @@
+// Calls, indexing, fields, and the conditional expression.
+const A: T = f(1, 2,)(3);
+const B: T = UInt[W + 1];
+const C: T = (a.b.c)(1)[2];
+const D: T = f();
+const E: T = if (a) { 1 } else { b + 2 };
+const F: T = x +% (if (a) { 1 } else { 2 });
+const G: T = x[1, 2];

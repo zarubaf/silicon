@@ -1,0 +1,2 @@
+// S001: a keyword is no name.
+const module: T = 1;

@@ -1,0 +1,2 @@
+// S001: the grammar has no else if.
+const A: T = if (a) { 1 } else if (b) { 2 } else { 3 };
