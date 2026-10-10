@@ -6,7 +6,7 @@ The `typeck` crate is the generic pre-check of the Rust front end. It is layer 5
 
 ## Owns
 
-This crate owns pass 4 with `S005`, `S006`, and `S007`. These checks need no static value. They run on each item, also on an item that no instantiation uses. They run on both branches of a `comptime if`. Errors are data: each has a code, a line, and a column, and the check never prints. One walk finds all errors and sorts them by position. The check gives the resolved AST unchanged. `S008` has no code, because slice 1 has no `mut` formal and no expression that mutates a root. The Lean module `Source.Check` lists the static positions.
+This crate owns pass 4 with `S005`, `S006`, and `S007`. These checks need no static value. They run on each item, also on an item that no instantiation uses. They run on both branches of a `comptime if`. Errors are data: each has a code, a line, and a column, and the check never prints. One walk finds all errors and sorts them by position. The check gives the resolved AST unchanged. `S008` has no code, because slice 1 has no `mut` formal and no expression that mutates a root. The Lean module `Source.Check` lists the static positions. `check_expr` checks one expression in the file scope, such as the `EXPR` of `eval`, as a static position.
 
 ## Invariants
 

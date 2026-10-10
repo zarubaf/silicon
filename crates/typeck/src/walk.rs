@@ -3,7 +3,7 @@
 
 use crate::{Code, Error};
 use parse::ast::{Expr, Item, Param, Pos, Stmt, TypeExpr};
-use resolve::{DeclId, Kind, Prelude, Resolved, Target};
+use resolve::{DeclId, Kind, Prelude, Resolved, ResolvedExpr, Target};
 use std::collections::BTreeMap;
 
 /// The item whose body is open, for `S006`.
@@ -35,6 +35,37 @@ enum Callee<'a> {
 }
 
 pub(crate) fn run(resolved: &Resolved) -> Vec<Error> {
+    let sigs = sigs(resolved);
+    let mut walker = Walker {
+        resolved,
+        expr: None,
+        sigs: &sigs,
+        errors: Vec::new(),
+        seq: 0,
+    };
+    for item in resolved.ast() {
+        walker.item(item);
+    }
+    walker.finish()
+}
+
+/// Checks an expression in the file scope as a static position, as Lean `Check.checkExpr`
+/// does.
+pub(crate) fn run_expr(resolved: &Resolved, expr: &ResolvedExpr) -> Vec<Error> {
+    let sigs = sigs(resolved);
+    let mut walker = Walker {
+        resolved,
+        expr: Some(expr),
+        sigs: &sigs,
+        errors: Vec::new(),
+        seq: 0,
+    };
+    walker.expr(true, expr.expr());
+    walker.finish()
+}
+
+/// The signatures of the functions and the modules of the file.
+fn sigs(resolved: &Resolved) -> BTreeMap<DeclId, Sig> {
     let mut sigs = BTreeMap::new();
     for item in resolved.ast() {
         let (name, sig) = match item {
@@ -54,22 +85,13 @@ pub(crate) fn run(resolved: &Resolved) -> Vec<Error> {
             sigs.insert(id, sig);
         }
     }
-    let mut walker = Walker {
-        resolved,
-        sigs: &sigs,
-        errors: Vec::new(),
-        seq: 0,
-    };
-    for item in resolved.ast() {
-        walker.item(item);
-    }
-    // The sort is stable, so at one position the first error of the walk stays first.
-    walker.errors.sort_by_key(|(seq, e)| (e.pos, *seq));
-    walker.errors.into_iter().map(|(_, e)| e).collect()
+    sigs
 }
 
 struct Walker<'a> {
     resolved: &'a Resolved,
+    /// The expression of the command line, whose names have their own map of targets.
+    expr: Option<&'a ResolvedExpr>,
     sigs: &'a BTreeMap<DeclId, Sig>,
     /// The errors with their order in the walk, which breaks a tie of positions.
     errors: Vec<(usize, Error)>,
@@ -104,7 +126,17 @@ fn resource(kind: Kind) -> Option<&'static str> {
 impl<'a> Walker<'a> {
     /// What the name token at a position points to.
     fn target(&self, pos: Pos) -> Option<Target> {
-        self.resolved.target(pos)
+        match self.expr {
+            Some(expr) => expr.target(pos),
+            None => self.resolved.target(pos),
+        }
+    }
+
+    /// The errors in position order.
+    fn finish(mut self) -> Vec<Error> {
+        // The sort is stable, so at one position the first error of the walk stays first.
+        self.errors.sort_by_key(|(seq, e)| (e.pos, *seq));
+        self.errors.into_iter().map(|(_, e)| e).collect()
     }
 
     fn tick(&mut self) -> usize {
