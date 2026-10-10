@@ -9,6 +9,7 @@
 
 use crate::int::Int;
 use crate::ops::{self, Fault, Fuel, str_text};
+use crate::scan::{Numbers, Scan};
 use crate::value::{Ty, Value, int_size};
 use crate::{Budget, Code, Error};
 use parse::ast::{BinOp, Expr, Ident, Item, Param, Pos, Stmt, TypeExpr};
@@ -110,9 +111,8 @@ struct Evaluator<'a> {
     names: Names,
     /// The index of each item by the declaration of its name.
     items: BTreeMap<DeclId, usize>,
-    /// The value of each number literal that ran, by its map and its position. The decimal
-    /// conversion runs once for each literal, as in the parse of Lean.
-    numbers: BTreeMap<(bool, Pos), Int>,
+    /// The value of each number literal, from the pass before the evaluation.
+    numbers: Numbers,
     limit: u64,
     depth: u64,
     /// The stack of each thread of the evaluation.
@@ -183,7 +183,7 @@ pub(crate) fn run(
     file: &Resolved,
     top: &ResolvedExpr,
     budget: Budget,
-    stack: NestedStack,
+    scan: Scan,
 ) -> Res<(Value, u64)> {
     let mut items = BTreeMap::new();
     let mut consts = Vec::new();
@@ -199,10 +199,10 @@ pub(crate) fn run(
         top,
         names: Names::Top,
         items,
-        numbers: BTreeMap::new(),
+        numbers: scan.numbers,
         limit: budget.depth,
         depth: 0,
-        stack,
+        stack: scan.stack,
         ret: None,
         fuel: Fuel::new(budget.fuel),
         store: Store {
@@ -365,14 +365,13 @@ impl Evaluator<'_> {
         Ok(outs)
     }
 
-    fn number(&mut self, pos: Pos, digits: &str) -> Int {
-        let key = (self.names == Names::Top, pos);
-        if let Some(n) = self.numbers.get(&key) {
-            return n.clone();
-        }
-        let n = Int::from_decimal(digits).unwrap_or_else(Int::zero);
-        self.numbers.insert(key, n.clone());
-        n
+    /// A number literal. It pays the size of its value before it copies the value.
+    fn number(&mut self, pos: Pos) -> Res<Option<Out>> {
+        let Some(n) = self.numbers.get(&(self.names == Names::Top, pos)) else {
+            return fail(Code::S010, pos, "the literal has no value".to_owned());
+        };
+        self.fuel.pay(u128::from(int_size(n))).map_err(at(pos))?;
+        Ok(Some(Out::Made(Value::Int(n.clone()))))
     }
 
     fn made(&mut self, pos: Pos, v: Value) -> Res<Option<Out>> {
@@ -383,10 +382,7 @@ impl Evaluator<'_> {
     fn eval(&mut self, e: &Expr) -> Res<Option<Out>> {
         self.charge(expr_pos(e), 1)?;
         match e {
-            Expr::Num { pos, value } => {
-                let n = self.number(*pos, value.as_str());
-                self.made(*pos, Value::Int(n))
-            }
+            Expr::Num { pos, .. } => self.number(*pos),
             Expr::Bool { pos, value } => self.made(*pos, Value::Bool(*value)),
             Expr::Str { pos, value } => {
                 // The size counts the characters, and the charge comes before the copy.

@@ -1,27 +1,48 @@
-//! The heights that size the stack of the evaluator. The evaluator recurses over the AST, and
-//! each active call or constant in progress starts the recursion again in its item. One pass
-//! before the evaluation finds two heights: the highest node, and the highest node that can
-//! start a nested evaluation, a call or the use of a constant. `parse::NestedStack` sizes the
-//! stack from them.
+//! The pass before the evaluation. It finds the heights that size the stack of the evaluator,
+//! and the value of each number literal.
+//!
+//! The evaluator recurses over the AST, and each active call or constant in progress starts
+//! the recursion again in its item. The pass finds two heights: the highest node, and the
+//! highest node that can start a nested evaluation, a call or the use of a constant.
+//! `parse::NestedStack` sizes the stack from them.
+//!
+//! The decimal conversion of a literal is not a unit of the cost model: Lean parses a literal
+//! to its integer. Thus it runs here, once for each literal, and the evaluation only copies a
+//! value after it paid for it.
 
+use crate::int::Int;
 use parse::NestedStack;
-use parse::ast::{Expr, Item, Stmt, TypeExpr};
+use parse::ast::{Expr, Item, Pos, Stmt, TypeExpr};
 use resolve::{Kind, Resolved, ResolvedExpr, Target};
+use std::collections::BTreeMap;
 
-/// The stack for the evaluation of `top` in the file scope of `file`.
-pub(crate) fn of(file: &Resolved, top: &ResolvedExpr) -> NestedStack {
+/// The value of each number literal, by its map and its position. The key is `true` for a
+/// literal of the top expression, which has its own positions.
+pub(crate) type Numbers = BTreeMap<(bool, Pos), Int>;
+
+/// The result of the pass before the evaluation of `top` in the file scope of `file`.
+pub(crate) struct Scan {
+    pub stack: NestedStack,
+    pub numbers: Numbers,
+}
+
+pub(crate) fn of(file: &Resolved, top: &ResolvedExpr) -> Scan {
     let mut walk = Walk {
         file,
         top: Some(top),
         height: 0,
         nested: 0,
+        numbers: Numbers::new(),
     };
     walk.expr(top.expr(), 1);
     walk.top = None;
     for item in file.ast() {
         walk.item(item);
     }
-    NestedStack::new(walk.height, walk.nested)
+    Scan {
+        stack: NestedStack::new(walk.height, walk.nested),
+        numbers: walk.numbers,
+    }
 }
 
 struct Walk<'a> {
@@ -30,6 +51,7 @@ struct Walk<'a> {
     top: Option<&'a ResolvedExpr>,
     height: usize,
     nested: usize,
+    numbers: Numbers,
 }
 
 impl Walk<'_> {
@@ -137,7 +159,11 @@ impl Walk<'_> {
         self.reach(depth);
         let d = depth + 1;
         match e {
-            Expr::Num { .. } | Expr::Bool { .. } | Expr::Str { .. } => {}
+            Expr::Num { pos, value } => {
+                let n = Int::from_decimal(value.as_str()).unwrap_or_else(Int::zero);
+                self.numbers.insert((self.top.is_some(), *pos), n);
+            }
+            Expr::Bool { .. } | Expr::Str { .. } => {}
             Expr::Name { pos, .. } => {
                 if self.is_constant(*pos) {
                     self.nested = self.nested.max(depth);

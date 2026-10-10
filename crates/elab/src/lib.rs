@@ -5,8 +5,8 @@
 mod eval;
 pub mod int;
 mod ops;
+mod scan;
 pub mod sha256;
-mod stack;
 pub mod value;
 
 use parse::StackError;
@@ -93,8 +93,9 @@ pub fn eval(
     expr: &ResolvedExpr,
     budget: Budget,
 ) -> Result<Result<(Value, u64), Error>, StackError> {
-    let stack = parse::on_stack(expr.depth_with(file), || stack::of(file, expr))?;
-    let result = stack.run(|| eval::run(file, expr, budget, stack))?;
+    let scan = parse::on_stack(expr.depth_with(file), || scan::of(file, expr))?;
+    let stack = scan.stack;
+    let result = stack.run(|| eval::run(file, expr, budget, scan))?;
     match result {
         Ok(done) => Ok(Ok(done)),
         Err(eval::Stop::Error(e)) => Ok(Err(e)),
