@@ -25,7 +25,7 @@ impl Parser<'_> {
     /// A block: statements between braces. Statements recover from an error, so the block
     /// always ends at its closing brace or at the end of the input.
     pub(crate) fn block(&mut self) -> Res {
-        self.nested(|p| {
+        self.block_level(|p| {
             p.node(Block, |p| {
                 p.expect(LBrace, "`{`")?;
                 while !p.is(RBrace) && p.cur().is_some() {
@@ -161,7 +161,8 @@ impl Parser<'_> {
             self.later_slice(self.offset(), "a path");
             return None;
         }
-        self.arg_list(RParen, true)?;
+        let start = self.offset();
+        self.arg_list(RParen, true, start)?;
         if self.is(WithKw) {
             self.later_slice(self.offset(), "a domain map");
             return None;
@@ -209,50 +210,44 @@ impl Parser<'_> {
         }
     }
 
-    /// The operator `=` or `:=` if the tokens from the current one are a place followed by
-    /// it. A place is a name, then any number of `[index]` and `.field`.
-    fn assignment_operator(&self) -> Option<SyntaxKind> {
-        let mut kinds = self.kinds_from(0);
-        if kinds.next() != Some(Ident) {
+    /// An assignment, a connection, or an expression statement. A statement that starts with
+    /// a name parses its postfix form first, because it can be a place.
+    fn expr_or_assign(&mut self) -> Res {
+        if !self.is(Ident) {
+            return self.node(ExprStmt, |p| {
+                p.expr()?;
+                p.expect(Semi, "`;`")
+            });
+        }
+        let start = self.offset();
+        if self.at_later_place() {
+            self.later_slice(start, "a place with an index or a tuple selector");
             return None;
         }
-        loop {
-            match kinds.next() {
-                Some(op @ (Eq | ColonEq)) => return Some(op),
-                Some(Dot) if matches!(kinds.next(), Some(Ident | Dec)) => {}
-                Some(LBracket) => {
-                    let mut open = 1;
-                    while open > 0 {
-                        match kinds.next() {
-                            Some(LBracket) => open += 1,
-                            Some(RBracket) => open -= 1,
-                            Some(_) => {}
-                            None => return None,
-                        }
-                    }
+        let checkpoint = self.checkpoint();
+        self.postfix_expr()?;
+        let (place, indexed) = (self.place, self.indexed);
+        if let Some(op @ (Eq | ColonEq)) = self.cur() {
+            if !place {
+                if indexed {
+                    self.later_slice(start, "a place with an index");
+                } else {
+                    self.syntax_error("expected `;`");
                 }
-                _ => return None,
+                return None;
             }
-        }
-    }
-
-    fn expr_or_assign(&mut self) -> Res {
-        if let Some(op) = self.assignment_operator() {
             let kind = if op == ColonEq {
                 ConnectStmt
             } else {
                 AssignStmt
             };
-            return self.node(kind, |p| {
-                p.postfix_expr()?;
+            return self.node_at(checkpoint, kind, |p| {
                 p.bump();
                 p.expr()?;
                 p.expect(Semi, "`;`")
             });
         }
-        self.node(ExprStmt, |p| {
-            p.expr()?;
-            p.expect(Semi, "`;`")
-        })
+        self.climb(checkpoint, start, 0)?;
+        self.node_at(checkpoint, ExprStmt, |p| p.expect(Semi, "`;`"))
     }
 }

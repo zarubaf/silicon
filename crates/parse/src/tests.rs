@@ -157,6 +157,7 @@ fn module_with_domains() {
         panic!("{parsed:?}");
     };
     assert!(params[0].comptime);
+    let domains = domains.as_deref().unwrap_or_default();
     assert_eq!(domains.len(), 1);
     assert_eq!(
         (domains[0].pos, domains[0].name.as_str()),
@@ -165,7 +166,11 @@ fn module_with_domains() {
     assert!(body.is_empty());
     let none = parse("module M() { }");
     assert!(
-        matches!(none.ast.as_deref(), Some([Item::Module { domains, .. }]) if domains.is_empty())
+        matches!(none.ast.as_deref(), Some([Item::Module { domains, .. }]) if domains.is_none())
+    );
+    let empty = parse("module M() domains() { }");
+    assert!(
+        matches!(empty.ast.as_deref(), Some([Item::Module { domains: Some(d), .. }]) if d.is_empty())
     );
 }
 
@@ -213,7 +218,7 @@ fn statements() {
 
 #[test]
 fn assignment_targets() {
-    let stmts = body("a.b[1].c = 3; x := y;");
+    let stmts = body("a.b.c = 3; x := y;");
     let [
         Stmt::Assign { target, .. },
         Stmt::Connect { target: t2, .. },
@@ -221,7 +226,7 @@ fn assignment_targets() {
     else {
         panic!("{stmts:?}");
     };
-    assert_eq!(sx(target), "(field (index (field a b) 1) c)");
+    assert_eq!(sx(target), "(field (field a b) c)");
     assert_eq!(sx(t2), "x");
 }
 
@@ -301,7 +306,7 @@ fn postfix_and_conditional() {
     assert_eq!(shape("f(1, 2,)(3)"), "(call (call f 1 2) 3)");
     assert_eq!(shape("UInt[W + 1]"), "(index UInt (add W 1))");
     assert_eq!(
-        shape("a.b.c(1)[2]"),
+        shape("(a.b.c)(1)[2]"),
         "(index (call (field (field a b) c) 1) 2)"
     );
     assert_eq!(shape("f()"), "(call f )");
@@ -507,19 +512,42 @@ fn recovery_keeps_the_items_after_an_error() {
 }
 
 #[test]
-fn nesting_is_limited_to_64_levels() {
+fn height_is_limited_to_64() {
+    // A leaf has height 1, and each node and each pair of parentheses adds 1. The error is at
+    // the first token of the first form with height 65, which is the outermost form here.
+    let at = |n: usize| Some((Code::S001, 1, n));
     let nest = |n: usize| format!("const X: T = {}1{};", "(".repeat(n), ")".repeat(n));
     assert_eq!(first_error(&nest(63)), None);
-    assert_eq!(first_error(&nest(64)), Some((Code::S001, 1, 14 + 64)));
+    assert_eq!(first_error(&nest(64)), at(14));
     let call = |n: usize| format!("const X: T = {}1{};", "f(".repeat(n), ")".repeat(n));
     assert_eq!(first_error(&call(63)), None);
-    assert_eq!(first_error(&call(64)).map(|e| e.0), Some(Code::S001));
+    assert_eq!(first_error(&call(64)), at(14));
+    let unary = |n: usize| format!("const X: T = {}1;", "-".repeat(n));
+    assert_eq!(first_error(&unary(63)), None);
+    assert_eq!(first_error(&unary(64)), at(14));
     let chain = |n: usize| format!("const X: T = {};", vec!["a"; n].join(" + "));
     assert_eq!(first_error(&chain(64)), None);
-    assert_eq!(first_error(&chain(65)).map(|e| e.0), Some(Code::S001));
+    assert_eq!(first_error(&chain(65)), at(14));
+    // The form of height 65 is found when it ends, so a deeper form comes first.
+    let inner = format!("const X: T = 1 + {}1{};", "(".repeat(64), ")".repeat(64));
+    assert_eq!(first_error(&inner), at(18));
+    let ty = |n: usize| format!("const X: {}T{} = 1;", "A[".repeat(n), "]".repeat(n));
+    assert_eq!(first_error(&ty(63)), None);
+    assert_eq!(first_error(&ty(64)), at(10));
+    let chain_ty = |n: usize| format!("const X: T{} = 1;", "[1]".repeat(n));
+    assert_eq!(first_error(&chain_ty(63)), None);
+    assert_eq!(first_error(&chain_ty(64)), at(10));
+    // The height of a statement or an item is not limited.
+    let long = format!("module M() {{ {} }}", "x; ".repeat(1000));
+    assert_eq!(first_error(&long), None);
+}
+
+#[test]
+fn blocks_nest_at_most_64_deep() {
     let blocks = |n: usize| format!("module M() {}{}", "{".repeat(n), "}".repeat(n));
     assert_eq!(first_error(&blocks(64)), None);
-    assert_eq!(first_error(&blocks(65)).map(|e| e.0), Some(Code::S001));
+    // The 65th `{` is at column 12 + 64.
+    assert_eq!(first_error(&blocks(65)), Some((Code::S001, 1, 76)));
 }
 
 #[test]
@@ -585,4 +613,68 @@ fn many_errors_on_one_line_scale_linearly() {
     assert_eq!(parsed.errors.len(), 50_000);
     assert_eq!(parsed.errors[49_999].pos, pos(1, 99_999));
     assert!(start.elapsed() < std::time::Duration::from_secs(5));
+}
+
+#[test]
+fn rules_of_the_lean_parser() {
+    let cases = [
+        // Receiver call: S004 at the `(`. A grouped selection is a call of a field.
+        ("const X: T = x.f(1);", Code::S004, 1, 17),
+        ("const X: T = x.f.g(1);", Code::S004, 1, 19),
+        // `mut`: S001 at a module parameter, S004 at a function parameter.
+        ("module M(mut x: T) { }", Code::S001, 1, 10),
+        ("module M(comptime mut x: T) { }", Code::S001, 1, 19),
+        ("fn f(mut x: T) -> T { }", Code::S004, 1, 6),
+        // Tuples and units, with the look ahead for a comma.
+        ("const X: T = (a.0, b);", Code::S004, 1, 14),
+        ("const X: T = (f(a, b), (c)), d);", Code::S004, 1, 14),
+        ("const X: T = (a, b", Code::S004, 1, 14),
+        ("const X: T = (a $ , b);", Code::S001, 1, 17),
+        ("const X: T = (a[1, 2], b);", Code::S004, 1, 14),
+        ("const X: T = ((a, b));", Code::S004, 1, 15),
+        // Targets with an index or a tuple field: S004 at the first name.
+        ("module M() { x[i] = e; }", Code::S004, 1, 14),
+        ("module M() { a.b[0] := e; }", Code::S004, 1, 14),
+        ("module M() { a.0 = e; }", Code::S004, 1, 14),
+        ("module M() { a.0x1 = e; }", Code::S004, 1, 14),
+        ("module M() { a[1 +] = e; }", Code::S004, 1, 14),
+        (
+            "module M() { a[if (c) { 1 } else { 2 }] = e; }",
+            Code::S004,
+            1,
+            14,
+        ),
+        ("module M() { a[f(x)].b = e; }", Code::S004, 1, 14),
+        ("module M() { f(x)[0] = e; }", Code::S001, 1, 22),
+        ("module M() { f(x) = e; }", Code::S001, 1, 19),
+        // `x.0` in an expression, in any radix.
+        ("const X: T = x.0x1;", Code::S004, 1, 16),
+        ("const X: T = x.0b1;", Code::S004, 1, 16),
+        // A statement with `if` is an expression statement and needs a `;`.
+        ("module M() { if (a) { 1 } else { 2 } }", Code::S001, 1, 38),
+        // A path is one name.
+        ("module M() { instance u = a::B(); }", Code::S004, 1, 28),
+        ("const X: a::T = 1;", Code::S004, 1, 11),
+        // A second domain needs a name after the comma.
+        ("module M() domains(a, b) { }", Code::S004, 1, 23),
+        ("module M() domains(a, 1) { }", Code::S001, 1, 23),
+        ("module M() domains(a b) { }", Code::S001, 1, 22),
+    ];
+    let wrong: Vec<_> = cases
+        .iter()
+        .filter(|(input, code, line, col)| first_error(input) != Some((*code, *line, *col)))
+        .map(|(input, ..)| (input, first_error(input)))
+        .collect();
+    assert_eq!(wrong, []);
+    for ok in [
+        "const X: T = (x.f)(1);",
+        "const X: T = (a);",
+        "const X: T = (a[1, 2]);",
+        "const X: T = (a < b) < c;",
+        "module M() { if (a) { 1 } else { 2 }; }",
+        "module M() domains(a,) { }",
+        "module M() { a.b = 1; a.b.c := 2; }",
+    ] {
+        assert_eq!(first_error(ok), None, "{ok}");
+    }
 }

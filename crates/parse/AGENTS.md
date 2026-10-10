@@ -13,7 +13,7 @@ This crate owns the grammar of the current slice, the error recovery, and the ty
 - The AST mirrors `Silicon.Source.Syntax` in Lean: the same types, the same constructors, and the same field order. A column counts Unicode characters. Check: `cargo nextest run -p parse`.
 - The text of the tree equals the input, and `parse` never panics, for every string. Check: `cargo nextest run -p parse`.
 - The first error in position order is the normative error. It is `S001` or `S004` with the position rules of design section 6.2. Later errors have no oracle. Check: `cargo nextest run -p parse`.
-- Syntax of a later slice gives `S004`, never `S001`. An expression or a block nests at most 64 levels. Check: `cargo nextest run -p parse`.
+- Syntax of a later slice gives `S004`, never `S001`. An expression or a type has a height of at most 64, and blocks nest at most 64 deep. Check: `cargo nextest run -p parse`.
 - The AST exists only when the text has no error. Check: `cargo nextest run -p parse`.
 - Non-test code has no `unwrap`, no `expect`, and no panic on user input. Check: `just clippy`.
 

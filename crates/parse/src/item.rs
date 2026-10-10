@@ -129,7 +129,7 @@ impl Parser<'_> {
 
     fn param(&mut self, module: bool) -> Res {
         self.node(Param, |p| {
-            if p.is(MutKw) {
+            if p.is(MutKw) && !module {
                 p.later_slice(p.offset(), "a `mut` parameter");
                 return None;
             }
@@ -151,12 +151,13 @@ impl Parser<'_> {
             p.expect(LParen, "`(`")?;
             let mut names = 0;
             while !p.is(RParen) {
-                names += 1;
-                if names == 2 {
+                // Only a name after the comma is a second domain.
+                if names == 1 && p.is(Ident) {
                     p.later_slice(p.offset(), "a second clock domain");
                     return None;
                 }
                 p.expect(Ident, "a domain name")?;
+                names += 1;
                 if !p.eat(Comma) {
                     break;
                 }
