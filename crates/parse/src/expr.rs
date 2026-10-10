@@ -62,9 +62,10 @@ impl Parser<'_> {
         loop {
             match self.cur() {
                 Some(LBracket) => {
-                    self.node_at(checkpoint, IndexType, |p| p.arg_list(RBracket, false))?;
+                    self.chain_at(checkpoint, IndexType, height, |p| {
+                        p.arg_list(RBracket, false)
+                    })?;
                     height = height.max(self.height) + 1;
-                    self.check_height(height)?;
                 }
                 Some(LParen) => {
                     self.later_slice(self.offset(), "a call in a type");
@@ -82,7 +83,7 @@ impl Parser<'_> {
         let start = self.offset();
         self.outermost(start, |p| {
             if p.is(IfKw) {
-                p.form(Self::cond_form)
+                p.cond_form()
             } else {
                 p.binary(0)
             }
@@ -106,7 +107,7 @@ impl Parser<'_> {
                 }
             }
             p.height = height + 1;
-            p.check_height(p.height)
+            Some(())
         })
     }
 
@@ -123,12 +124,11 @@ impl Parser<'_> {
     pub(crate) fn climb(&mut self, checkpoint: Checkpoint, min: u8) -> Res {
         let mut height = self.height;
         while let Some(power) = self.cur().and_then(binding_power).filter(|&b| b >= min) {
-            self.node_at(checkpoint, BinExpr, |p| {
+            self.chain_at(checkpoint, BinExpr, height, |p| {
                 p.bump();
                 p.binary(power + 1)
             })?;
             height = height.max(self.height) + 1;
-            self.check_height(height)?;
             if power == COMPARISON && self.cur().and_then(binding_power) == Some(COMPARISON) {
                 self.syntax_error("a comparison does not chain");
                 return None;
@@ -138,19 +138,22 @@ impl Parser<'_> {
         Some(())
     }
 
+    /// A chain of unary operators. The loop opens one node for each operator, so the
+    /// recursion does not grow with the length of the chain.
     fn unary(&mut self) -> Res {
-        if matches!(self.cur(), Some(Bang | Tilde | Minus)) {
-            self.form(|p| {
-                p.node(UnaryExpr, |p| {
-                    p.bump();
-                    p.unary()
-                })
-            })?;
-            self.height += 1;
-            self.check_height(self.height)
-        } else {
-            self.postfix_expr()
+        let mut ops = 0;
+        while matches!(self.cur(), Some(Bang | Tilde | Minus)) {
+            self.start(UnaryExpr);
+            self.bump();
+            ops += 1;
         }
+        let res = self.postfix_expr();
+        for _ in 0..ops {
+            self.finish_node();
+        }
+        res?;
+        self.height += ops;
+        Some(())
     }
 
     /// A primary expression with its calls, indexes, and field selections.
@@ -166,15 +169,17 @@ impl Parser<'_> {
                 Some(LParen) => {
                     place = false;
                     called = true;
-                    self.node_at(checkpoint, CallExpr, |p| p.arg_list(RParen, true))?;
+                    self.chain_at(checkpoint, CallExpr, height, |p| p.arg_list(RParen, true))?;
                 }
                 Some(LBracket) => {
                     place = false;
                     indexed = true;
-                    self.node_at(checkpoint, IndexExpr, |p| p.arg_list(RBracket, false))?;
+                    self.chain_at(checkpoint, IndexExpr, height, |p| {
+                        p.arg_list(RBracket, false)
+                    })?;
                 }
                 Some(Dot) => {
-                    self.node_at(checkpoint, FieldExpr, |p| {
+                    self.chain_at(checkpoint, FieldExpr, height, |p| {
                         p.bump();
                         match p.cur() {
                             Some(Ident) => {
@@ -200,7 +205,6 @@ impl Parser<'_> {
                 _ => break,
             }
             height = height.max(self.height) + 1;
-            self.check_height(height)?;
         }
         self.height = height;
         self.place = place;
@@ -216,23 +220,21 @@ impl Parser<'_> {
         } else {
             (LBracket, "`[`")
         };
-        self.form(|p| {
-            p.node(ArgList, |p| {
-                p.expect(open, what)?;
-                let mut height = 0;
-                if !(may_be_empty && p.is(close)) {
-                    loop {
-                        p.expr()?;
-                        height = height.max(p.height);
-                        if !p.eat(Comma) || p.is(close) {
-                            break;
-                        }
+        self.node(ArgList, |p| {
+            p.expect(open, what)?;
+            let mut height = 0;
+            if !(may_be_empty && p.is(close)) {
+                loop {
+                    p.expr()?;
+                    height = height.max(p.height);
+                    if !p.eat(Comma) || p.is(close) {
+                        break;
                     }
                 }
-                p.expect(close, "a closing delimiter")?;
-                p.height = height;
-                Some(())
-            })
+            }
+            p.expect(close, "a closing delimiter")?;
+            p.height = height;
+            Some(())
         })
     }
 
@@ -291,22 +293,18 @@ impl Parser<'_> {
         None
     }
 
-    /// A parenthesized expression. The unit and the tuple belong to a later slice. Each
-    /// pair of parentheses adds 1 to the height.
+    /// A parenthesized expression. The unit and the tuple belong to a later slice.
+    /// Parentheses make no node of the AST, so they add nothing to the height.
     fn paren(&mut self) -> Res {
         let start = self.offset();
         if self.at_unit_or_tuple() {
             self.later_slice(start, "a unit or a tuple");
             return None;
         }
-        self.form(|p| {
-            p.node(ParenExpr, |p| {
-                p.bump();
-                p.expr()?;
-                p.expect(RParen, "`)`")
-            })
-        })?;
-        self.height += 1;
-        self.check_height(self.height)
+        self.node(ParenExpr, |p| {
+            p.bump();
+            p.expr()?;
+            p.expect(RParen, "`)`")
+        })
     }
 }

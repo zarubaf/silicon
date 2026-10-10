@@ -31,6 +31,26 @@ pub struct Error {
     pub message: String,
 }
 
+/// The machine cannot give the stack that the syntax depth needs. The recursion of the front
+/// end would overflow it, so the front end does not start.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StackError {
+    pub depth: usize,
+    pub bytes: usize,
+}
+
+impl fmt::Display for StackError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "cannot allocate a stack of {} bytes for the syntax depth {}",
+            self.bytes, self.depth
+        )
+    }
+}
+
+impl std::error::Error for StackError {}
+
 /// Maps a byte offset to a line and a column. It remembers the last answer, so offsets in
 /// increasing order cost a linear scan of the input in total.
 pub(crate) struct LineIndex<'a> {

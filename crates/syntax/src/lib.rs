@@ -16,7 +16,7 @@ mod tests {
         let input = "module M() { x := 1 >> 2; } /* open";
         let mut builder = GreenNodeBuilder::new();
         builder.start_node(SiliconLanguage::kind_to_raw(SyntaxKind::Root));
-        for token in lex(input).tokens {
+        for token in lex(input, 4096).tokens {
             builder.token(
                 SiliconLanguage::kind_to_raw(token.kind),
                 &input[token.range],

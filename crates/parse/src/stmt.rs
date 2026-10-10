@@ -25,28 +25,26 @@ impl Parser<'_> {
     /// A block: statements between braces. Statements recover from an error, so the block
     /// always ends at its closing brace or at the end of the input.
     pub(crate) fn block(&mut self) -> Res {
-        self.block_level(|p| {
-            p.node(Block, |p| {
-                p.expect(LBrace, "`{`")?;
-                while !p.is(RBrace) && p.cur().is_some() {
-                    let before = p.offset();
-                    let first = p.cur();
-                    if p.stmt().is_some() {
+        self.node(Block, |p| {
+            p.expect(LBrace, "`{`")?;
+            while !p.is(RBrace) && p.cur().is_some() {
+                let before = p.offset();
+                let first = p.cur();
+                if p.stmt().is_some() {
+                    continue;
+                }
+                // The failed statement may have consumed nothing, so the loop must move.
+                if p.offset() == before {
+                    p.start(ErrorNode);
+                    p.bump();
+                    p.finish_node();
+                    if first == Some(Semi) {
                         continue;
                     }
-                    // The failed statement may have consumed nothing, so the loop must move.
-                    if p.offset() == before {
-                        p.start(ErrorNode);
-                        p.bump();
-                        p.finish_node();
-                        if first == Some(Semi) {
-                            continue;
-                        }
-                    }
-                    p.skip_stmt();
                 }
-                p.expect(RBrace, "`}`")
-            })
+                p.skip_stmt();
+            }
+            p.expect(RBrace, "`}`")
         })
     }
 

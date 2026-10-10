@@ -1,15 +1,15 @@
 //! The AST dump of section 11.1 of the front-end design. The bytes follow the module doc of
 //! `Silicon/Source/Print.lean`, which is the normative text.
 //!
-//! The dump recurses over the AST, so its depth of calls is at most the syntax depth of the
-//! parse that made the AST. The caller needs a stack for that depth.
+//! The dump recurses over the AST, so its depth of calls is at most about twice the syntax
+//! depth of the parse that made the AST. `Parse::dump` runs it on a stack for that depth.
 
 use crate::ast::{Expr, Ident, Item, Param, Stmt, TypeExpr};
 use std::fmt::{Debug, Write};
 
 /// The dump of a file: one line for each item, and an LF ends each line.
 #[must_use]
-pub fn dump(items: &[Item]) -> String {
+pub(crate) fn dump(items: &[Item]) -> String {
     let mut out = String::new();
     for item in items {
         item_dump(item, &mut out);
@@ -256,11 +256,12 @@ fn item_dump(item: &Item, out: &mut String) {
 
 #[cfg(test)]
 mod tests {
-    use crate::{dump, parse};
+    use super::dump;
+    use crate::parse;
 
     /// The dump of a source text that has no error.
     fn dump_of(source: &str) -> String {
-        let parsed = parse(source);
+        let parsed = parse(source).unwrap();
         assert!(parsed.errors.is_empty(), "{source}: {:?}", parsed.errors);
         dump(parsed.ast.as_deref().unwrap_or_default())
     }
