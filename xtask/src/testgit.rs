@@ -16,6 +16,15 @@ pub fn run(dir: &Path, args: &[&str]) {
     assert!(status.success(), "git {args:?} failed");
 }
 
+/// Make `dir` a repository on `main` with a committer and no signing.
+pub fn init(dir: &Path) {
+    run(dir, &["init", "--quiet", "-b", "main"]);
+    run(dir, &["config", "user.email", "t@example.com"]);
+    run(dir, &["config", "user.name", "t"]);
+    run(dir, &["config", "commit.gpgsign", "false"]);
+    run(dir, &["config", "tag.gpgsign", "false"]);
+}
+
 /// Run git in `dir` and return its trimmed stdout.
 pub fn output(dir: &Path, args: &[&str]) -> String {
     let out = command(dir, args).output().unwrap();
