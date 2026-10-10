@@ -249,7 +249,7 @@ sizes 2. A use of a done constant charges only its node.
 #guard exact "" "\"abc\"" 5
 #guard exact "" "-5" 4
 #guard exact "" "UInt[8]" 6
-#guard exact "" "UInt[8](3)" 11
+#guard exact "" "UInt[8](3)" 12
 #guard exact "" "3 * 4" 6
 #guard exact "" "18446744073709551616 * 18446744073709551616" 11
 #guard exact "" "1 << 64" 7
@@ -262,6 +262,11 @@ sizes 2. A use of a done constant charges only its node.
 #guard exact "comptime fn f(n: Nat) -> Nat { return n; }" "f(1)" 11
 #guard exact "comptime fn s() -> Int { comptime for i in 0..3 {} return 0; }" "s()" 21
 #guard exact "comptime fn s() -> Int { let x = 1; let y = x; return y; }" "s()" 13
+/-! A block statement charges its unit once. A builtin argument is a copy: `resize` pays 3. -/
+#guard exact "comptime fn s() -> Int { { } return 0; }" "s()" 9
+#guard exact "comptime fn s() -> Int { return 0; }" "s()" 8
+#guard exact "" "resize(UInt[16], UInt[8](1))" 25
+#guard exact "comptime fn s() -> Int { static_assert(true, \"abc\"); return 0; }" "s()" 23
 #guard exact program "fact(10)" (cost program "fact(10)")
 #guard exact program "sum(100)" (cost program "sum(100)")
 
@@ -309,8 +314,8 @@ def skipped (locals : Nat) : String :=
 #guard Eval.strText (String.ofList (List.replicate 100 'a')) ==
   String.ofList (List.replicate 64 'a') ++ "... (100 characters)"
 #guard out "" "UInt[1 << 6400000]" 100008 == "S012 1:1"
-#guard out "" "Nat(-(1 << 6400000))" 300000 == "S012 1:1"
-#guard out "" "UInt[8](1 << 6400000)" 300000 == "S012 1:1"
+#guard out "" "Nat(-(1 << 6400000))" 400000 == "S012 1:1"
+#guard out "" "UInt[8](1 << 6400000)" 400000 == "S012 1:1"
 #guard out "" "1 << -(1 << 6400000)" 300000 == "S013 1:1"
 #guard out "" "1 << (1 << 6400)" 1000 == "S015 1:1"
 
