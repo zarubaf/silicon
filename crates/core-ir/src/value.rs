@@ -66,6 +66,12 @@ impl Bits {
         self.value.clone()
     }
 
+    /// The value without a copy, for a reader whose work must not grow with the width.
+    #[must_use]
+    pub fn value(&self) -> &BigUint {
+        &self.value
+    }
+
     /// Wraps `value` modulo `2^width`.
     fn wrap(width: u32, value: BigUint) -> Bits {
         Bits {
