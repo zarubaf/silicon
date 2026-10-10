@@ -107,6 +107,8 @@ enum Command {
         #[arg(long, default_value = "main")]
         base: String,
     },
+    /// Print the facts for an architecture reviewer: crate graph, layers, public items, line counts, trust table, and error codes.
+    ArchSummary,
     /// Run the Codex adversarial review of the current branch.
     Review {
         /// Git ref to review against.
@@ -149,6 +151,10 @@ fn main() -> Result<ExitCode> {
         Command::CommitMsg { file } => Ok(report(&commit::check_message_file(&file)?)),
         Command::ReviewScope { base } => arch_review::review_scope(&base),
         Command::ReviewDue { base } => arch_review::review_due(&base),
+        Command::ArchSummary => {
+            arch_review::arch_summary()?;
+            Ok(ExitCode::SUCCESS)
+        }
         Command::Review { base } => {
             review::run(&Repo::discover()?.root, &base)?;
             Ok(ExitCode::SUCCESS)
