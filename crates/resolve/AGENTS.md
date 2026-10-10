@@ -12,7 +12,7 @@ This crate owns the item table, the scopes, the prelude of slice 1, and the reso
 
 - A name is unique in its scope. A scope is the file, the parameters with the top statements of a body, or a block. A declaration can shadow an outer name and a prelude name. Check: `cargo nextest run -p resolve`.
 - The position of `S002` is the name in the later declaration. Check: `cargo nextest run -p resolve`.
-- Each name resolves, and a position that needs a kind gets a name of that kind. A local is in scope after its statement. Items have no order. Check: `cargo nextest run -p resolve`.
+- Each name resolves. A type name is a prelude type, the module of an `instance` is a module item, and a name in an expression is not a module. A local is in scope after its statement. A module without a `domains` clause has the domain `clock`. Items have no order. Check: `cargo nextest run -p resolve`.
 - The prelude has only the names of slice 1. A name of a later slice is `S003`. Check: `cargo nextest run -p resolve`.
 - The errors of pass 2 come before the errors of pass 3. Each pass reports in position order. Check: `cargo nextest run -p resolve`.
 - The walk runs through `parse::on_stack` with the syntax depth of the parse. This crate does not size a stack. The result is safe to drop on any stack, because it owns a `Parse`. Check: `cargo nextest run -p resolve`.
