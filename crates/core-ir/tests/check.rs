@@ -55,10 +55,10 @@ const EVERY_FORM: &str = "\
 #[test]
 fn well_formed_designs_check() {
     let counter = run(COUNTER).expect("counter checks");
-    let top = &counter.modules[counter.top.index()];
-    assert_eq!(top.name, "counter");
-    assert!(top.clock.is_some());
-    assert_eq!(top.regs.len(), 1);
+    let top = &counter.modules()[counter.top().index()];
+    assert_eq!(top.name(), "counter");
+    assert!(top.clock().is_some());
+    assert_eq!(top.regs().len(), 1);
     run(EVERY_FORM).expect("every form checks");
 }
 
@@ -674,9 +674,9 @@ fn a_clock_name_connects_to_a_clock_input() {
     let design = run(src).expect("the clock connection checks");
     assert!(
         design
-            .modules
+            .modules()
             .iter()
-            .all(|m| m.insts.iter().all(|i| i.inputs.is_empty()))
+            .all(|m| m.insts().iter().all(|i| i.inputs.is_empty()))
     );
 }
 
@@ -1023,9 +1023,9 @@ fn sibling_handshake_passes() {
     (assign q (and u.ready v.ready))))
 ";
     let design = run(src).expect("the handshake has no combinational loop");
-    let child = &design.modules[0];
-    assert_eq!(child.name, "child");
-    assert_eq!(child.deps, vec![vec![]]);
+    let child = &design.modules()[0];
+    assert_eq!(child.name(), "child");
+    assert_eq!(child.deps(), vec![vec![]]);
 }
 
 fn reads(expr: &typed::Expr, out: &mut Vec<typed::Node>) {
@@ -1050,10 +1050,10 @@ fn reads(expr: &typed::Expr, out: &mut Vec<typed::Node>) {
     }
 }
 
-fn callee_deps(design: &typed::Design, callee: typed::Callee) -> &typed::Deps {
+fn callee_deps(design: &typed::Design, callee: typed::Callee) -> &[Vec<typed::InputIdx>] {
     match callee {
-        typed::Callee::Module(m) => &design.modules[m.index()].deps,
-        typed::Callee::Extern(e) => &design.externs[e.index()].deps,
+        typed::Callee::Module(m) => design.modules()[m.index()].deps(),
+        typed::Callee::Extern(e) => design.externs()[e.index()].deps(),
     }
 }
 
@@ -1061,30 +1061,30 @@ fn callee_deps(design: &typed::Design, callee: typed::Callee) -> &typed::Deps {
 /// after every node that it reads.
 fn assert_well_ordered(design: &typed::Design) {
     use typed::Node;
-    for (index, module) in design.modules.iter().enumerate() {
-        let mut nodes = module.lets.len() + module.outputs.len();
-        for inst in &module.insts {
+    for (index, module) in design.modules().iter().enumerate() {
+        let mut nodes = module.lets().len() + module.outputs().len();
+        for inst in module.insts() {
             if let typed::Callee::Module(m) = inst.callee {
                 assert!(m.index() < index, "a child comes first");
             }
             nodes += callee_deps(design, inst.callee).len();
         }
-        assert_eq!(module.schedule.len(), nodes, "each node once");
-        for (at, node) in module.schedule.iter().enumerate() {
+        assert_eq!(module.schedule().len(), nodes, "each node once");
+        for (at, node) in module.schedule().iter().enumerate() {
             let mut read = Vec::new();
             match *node {
-                Node::Let(l) => reads(&module.lets[l.index()].expr, &mut read),
-                Node::Output(o) => reads(&module.assigns[o.index()], &mut read),
+                Node::Let(l) => reads(&module.lets()[l.index()].expr, &mut read),
+                Node::Output(o) => reads(&module.assigns()[o.index()], &mut read),
                 Node::InstOut(u, q) => {
-                    let inst = &module.insts[u.index()];
+                    let inst = &module.insts()[u.index()];
                     for i in &callee_deps(design, inst.callee)[q.index()] {
                         reads(&inst.inputs[i.index()], &mut read);
                     }
                 }
             }
-            assert_eq!(module.schedule.iter().filter(|n| *n == node).count(), 1);
+            assert_eq!(module.schedule().iter().filter(|n| *n == node).count(), 1);
             for r in read {
-                let before = module.schedule.iter().position(|n| *n == r);
+                let before = module.schedule().iter().position(|n| *n == r);
                 assert!(before.is_some_and(|b| b < at), "{r:?} before {node:?}");
             }
         }
@@ -1126,18 +1126,18 @@ fn schedules_and_module_order() {
         + ")\n";
     let design = run(&src).expect("the design checks");
     assert_well_ordered(&design);
-    assert_eq!(design.modules[design.top.index()].name, "top");
-    let names: Vec<&str> = design.modules.iter().map(|m| m.name.as_str()).collect();
+    assert_eq!(design.modules()[design.top().index()].name(), "top");
+    let names: Vec<&str> = design.modules().iter().map(typed::Module::name).collect();
     assert_eq!(names.len(), 4);
     let mid = design
-        .modules
+        .modules()
         .iter()
-        .find(|m| m.name == "mid")
+        .find(|m| m.name() == "mid")
         .expect("mid");
-    assert_eq!(mid.deps.len(), 1);
-    assert_eq!(mid.deps[0].len(), 1, "mid.q reads mid.a through v");
-    let top = &design.modules[design.top.index()];
-    assert_eq!(top.deps.iter().map(Vec::len).collect::<Vec<_>>(), [1, 1]);
+    assert_eq!(mid.deps().len(), 1);
+    assert_eq!(mid.deps()[0].len(), 1, "mid.q reads mid.a through v");
+    let top = &design.modules()[design.top().index()];
+    assert_eq!(top.deps().iter().map(Vec::len).collect::<Vec<_>>(), [1, 1]);
 }
 
 #[test]
@@ -1163,7 +1163,7 @@ fn wide_chain(depth: usize) -> String {
     )
 }
 
-fn indices(deps: &typed::Deps) -> Vec<Vec<usize>> {
+fn indices(deps: &[Vec<typed::InputIdx>]) -> Vec<Vec<usize>> {
     deps.iter()
         .map(|d| d.iter().map(|i| i.index()).collect())
         .collect()
@@ -1172,7 +1172,7 @@ fn indices(deps: &typed::Deps) -> Vec<Vec<usize>> {
 #[test]
 fn deep_two_wide_chain_is_fast() {
     let design = run(&wide_chain(40)).expect("the chain checks");
-    assert_eq!(indices(&design.modules[0].deps), [[0, 1]]);
+    assert_eq!(indices(design.modules()[0].deps()), [[0, 1]]);
 }
 
 #[test]
@@ -1198,9 +1198,9 @@ fn deep_two_wide_hierarchy_is_fast() {
     src.push_str(")\n");
     let design = run(&src).expect("the hierarchy checks");
     assert_well_ordered(&design);
-    let top = &design.modules[design.top.index()];
-    assert_eq!(top.name, "m40");
-    assert_eq!(indices(&top.deps), [[0, 1]]);
+    let top = &design.modules()[design.top().index()];
+    assert_eq!(top.name(), "m40");
+    assert_eq!(indices(top.deps()), [[0, 1]]);
 }
 
 #[test]
@@ -1217,7 +1217,7 @@ fn extern_deps_follow_the_input_port_order() {
     (assign q (const 1 0))))
 ";
     let design = run(src).expect("the design checks");
-    assert_eq!(indices(&design.externs[0].deps), [[0, 1]]);
+    assert_eq!(indices(design.externs()[0].deps()), [[0, 1]]);
 }
 
 #[test]
@@ -1300,7 +1300,10 @@ const OUTPUT_READ: &str = "\
 fn a_value_reads_an_output_of_its_module() {
     let design = run(OUTPUT_READ).expect("an output read checks");
     assert_well_ordered(&design);
-    assert_eq!(indices(&design.modules[0].deps), [vec![0, 1], vec![0, 1]]);
+    assert_eq!(
+        indices(design.modules()[0].deps()),
+        [vec![0, 1], vec![0, 1]]
+    );
 }
 
 #[test]
@@ -1352,16 +1355,16 @@ fn a_clocked_extern_keeps_its_clock_port_and_connection() {
     (assign q u.b)))
 ";
     let design = run(src).expect("a clocked extern checks");
-    let ext = &design.externs[0];
-    let clock = ext.clock.as_ref().expect("the extern keeps its clock");
+    let ext = &design.externs()[0];
+    let clock = ext.clock().expect("the extern keeps its clock");
     assert_eq!((clock.name.as_str(), clock.position), ("c", 1));
-    assert_eq!(ext.inputs.len(), 1);
-    let top = &design.modules[design.top.index()];
+    assert_eq!(ext.inputs().len(), 1);
+    let top = &design.modules()[design.top().index()];
     assert!(
-        top.clock.is_some(),
+        top.clock().is_some(),
         "the parent has the clock that the instance gets"
     );
-    let inst = &top.insts[0];
+    let inst = &top.insts()[0];
     assert!(matches!(inst.callee, typed::Callee::Extern(e) if e.index() == 0));
 }
 
@@ -1378,8 +1381,8 @@ fn a_module_keeps_its_clock_port() {
     (assign q r)))
 ";
     let design = run(src).expect("the module checks");
-    let top = &design.modules[design.top.index()];
-    let clock = top.clock.as_ref().expect("the module keeps its clock");
+    let top = &design.modules()[design.top().index()];
+    let clock = top.clock().expect("the module keeps its clock");
     assert_eq!((clock.name.as_str(), clock.position), ("tick", 1));
 }
 
@@ -1402,12 +1405,12 @@ fn each_data_port_keeps_its_position() {
     (assign p b)))
 ";
     let design = run(src).expect("the design checks");
-    let top = &design.modules[design.top.index()];
+    let top = &design.modules()[design.top().index()];
     let positions =
         |ports: &[typed::Port]| -> Vec<usize> { ports.iter().map(|p| p.position).collect() };
-    assert_eq!(positions(&top.inputs), vec![0, 3]);
-    assert_eq!(positions(&top.outputs), vec![1, 4]);
-    let ext = &design.externs[0];
-    assert_eq!(positions(&ext.inputs), vec![2]);
-    assert_eq!(positions(&ext.outputs), vec![0]);
+    assert_eq!(positions(top.inputs()), vec![0, 3]);
+    assert_eq!(positions(top.outputs()), vec![1, 4]);
+    let ext = &design.externs()[0];
+    assert_eq!(positions(ext.inputs()), vec![2]);
+    assert_eq!(positions(ext.outputs()), vec![0]);
 }

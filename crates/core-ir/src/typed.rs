@@ -185,27 +185,95 @@ pub enum Node {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Module {
     /// The module name.
-    pub name: String,
+    pub(crate) name: String,
     /// The data inputs, by [`InputIdx`].
-    pub inputs: Vec<Port>,
+    pub(crate) inputs: Vec<Port>,
     /// The outputs, by [`OutputIdx`].
-    pub outputs: Vec<Port>,
+    pub(crate) outputs: Vec<Port>,
     /// The clock input, if the module has one.
-    pub clock: Option<ClockPort>,
+    pub(crate) clock: Option<ClockPort>,
     /// The `let` bindings, by [`LetIdx`].
-    pub lets: Vec<Let>,
+    pub(crate) lets: Vec<Let>,
     /// The registers, by [`RegIdx`].
-    pub regs: Vec<Reg>,
+    pub(crate) regs: Vec<Reg>,
     /// The memories, by [`MemIdx`].
-    pub mems: Vec<Mem>,
+    pub(crate) mems: Vec<Mem>,
     /// The instances, by [`InstIdx`].
-    pub insts: Vec<Inst>,
+    pub(crate) insts: Vec<Inst>,
     /// The output assignments, by [`OutputIdx`].
-    pub assigns: Vec<Expr>,
+    pub(crate) assigns: Vec<Expr>,
     /// The evaluation order. The dependency analysis fills it.
-    pub schedule: Vec<Node>,
+    pub(crate) schedule: Vec<Node>,
     /// The combinational dependencies of the outputs. The analysis fills it.
-    pub deps: Deps,
+    pub(crate) deps: Deps,
+}
+
+impl Module {
+    /// The module name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The data inputs, by [`InputIdx`].
+    #[must_use]
+    pub fn inputs(&self) -> &[Port] {
+        &self.inputs
+    }
+
+    /// The outputs, by [`OutputIdx`].
+    #[must_use]
+    pub fn outputs(&self) -> &[Port] {
+        &self.outputs
+    }
+
+    /// The clock input, if the module has one.
+    #[must_use]
+    pub fn clock(&self) -> Option<&ClockPort> {
+        self.clock.as_ref()
+    }
+
+    /// The `let` bindings, by [`LetIdx`].
+    #[must_use]
+    pub fn lets(&self) -> &[Let] {
+        &self.lets
+    }
+
+    /// The registers, by [`RegIdx`].
+    #[must_use]
+    pub fn regs(&self) -> &[Reg] {
+        &self.regs
+    }
+
+    /// The memories, by [`MemIdx`].
+    #[must_use]
+    pub fn mems(&self) -> &[Mem] {
+        &self.mems
+    }
+
+    /// The instances, by [`InstIdx`].
+    #[must_use]
+    pub fn insts(&self) -> &[Inst] {
+        &self.insts
+    }
+
+    /// The output assignments, by [`OutputIdx`].
+    #[must_use]
+    pub fn assigns(&self) -> &[Expr] {
+        &self.assigns
+    }
+
+    /// The evaluation order.
+    #[must_use]
+    pub fn schedule(&self) -> &[Node] {
+        &self.schedule
+    }
+
+    /// The combinational dependencies of the outputs.
+    #[must_use]
+    pub fn deps(&self) -> &[Vec<InputIdx>] {
+        &self.deps
+    }
 }
 
 /// A clock input port, kept for the signature of a module or an extern.
@@ -224,28 +292,83 @@ pub struct ClockPort {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Extern {
     /// The extern name.
-    pub name: String,
+    pub(crate) name: String,
     /// The data inputs, by [`InputIdx`].
-    pub inputs: Vec<Port>,
+    pub(crate) inputs: Vec<Port>,
     /// The outputs, by [`OutputIdx`].
-    pub outputs: Vec<Port>,
+    pub(crate) outputs: Vec<Port>,
     /// The clock input, if the extern has one.
-    pub clock: Option<ClockPort>,
+    pub(crate) clock: Option<ClockPort>,
     /// The declared combinational dependencies of the outputs.
-    pub deps: Deps,
+    pub(crate) deps: Deps,
     /// The start of the `extern` item. `run` reports `E014` here.
-    pub span: Span,
+    pub(crate) span: Span,
+}
+
+impl Extern {
+    /// The extern name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The clock input, if the extern has one.
+    #[must_use]
+    pub fn clock(&self) -> Option<&ClockPort> {
+        self.clock.as_ref()
+    }
+
+    /// The data inputs, by [`InputIdx`].
+    #[must_use]
+    pub fn inputs(&self) -> &[Port] {
+        &self.inputs
+    }
+
+    /// The outputs, by [`OutputIdx`].
+    #[must_use]
+    pub fn outputs(&self) -> &[Port] {
+        &self.outputs
+    }
+
+    /// The declared combinational dependencies of the outputs.
+    #[must_use]
+    pub fn deps(&self) -> &[Vec<InputIdx>] {
+        &self.deps
+    }
 }
 
 /// A checked design.
+///
+/// Only the checker makes it. The fields are private, so a consumer cannot break
+/// the invariants that the backends rely on.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Design {
     /// The modules, children first.
-    pub modules: Vec<Module>,
+    pub(crate) modules: Vec<Module>,
     /// The externs, by [`ExternIdx`], in source order.
-    pub externs: Vec<Extern>,
+    pub(crate) externs: Vec<Extern>,
     /// The top module.
-    pub top: ModIdx,
+    pub(crate) top: ModIdx,
+}
+
+impl Design {
+    /// The modules, children first.
+    #[must_use]
+    pub fn modules(&self) -> &[Module] {
+        &self.modules
+    }
+
+    /// The externs, by [`ExternIdx`], in source order.
+    #[must_use]
+    pub fn externs(&self) -> &[Extern] {
+        &self.externs
+    }
+
+    /// The top module.
+    #[must_use]
+    pub fn top(&self) -> ModIdx {
+        self.top
+    }
 }
 
 #[cfg(test)]

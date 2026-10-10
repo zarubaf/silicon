@@ -162,8 +162,8 @@ fn case(
     runner: &mut TestRunner,
 ) -> Result<Case> {
     let top = design
-        .modules
-        .get(design.top.index())
+        .modules()
+        .get(design.top().index())
         .with_context(|| format!("{name} has no top module"))?
         .clone();
     let lines = vec(r#gen::inputs(&top), CYCLES)
@@ -213,7 +213,7 @@ fn corpus(repo: &Repo, seed: u64) -> Result<(Vec<Case>, Vec<String>)> {
         let design = parse(&text)
             .and_then(|ast| check(&ast))
             .map_err(|e| anyhow!("{name}: {e}"))?;
-        if !design.externs.is_empty() {
+        if !design.externs().is_empty() {
             println!(
                 "SKIP {name}: the design has an extern, and the interpreters reject it (E014)"
             );
@@ -268,7 +268,7 @@ impl Tools {
                 .arg(&design),
             "",
         )?;
-        let simulation = arcilator::simulation_mlir(&lowered, &models, &case.top.name);
+        let simulation = arcilator::simulation_mlir(&lowered, &models, case.top.name());
         Ok(vec![
             interpreter("lean", &self.lean)?,
             interpreter("silicon", &self.silicon)?,

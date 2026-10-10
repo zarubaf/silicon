@@ -70,33 +70,33 @@ fn pins(ports: &[UnitPort<'_>]) -> Vec<Pin> {
 fn callee_ports(design: &Design, callee: Callee) -> (&str, Vec<UnitPort<'_>>) {
     match callee {
         Callee::Module(m) => {
-            let m = &design.modules[m.index()];
-            let ports = unit_ports(&m.inputs, &m.outputs, m.clock.as_ref());
-            (&m.name, ports)
+            let m = &design.modules()[m.index()];
+            let ports = unit_ports(m.inputs(), m.outputs(), m.clock());
+            (m.name(), ports)
         }
         Callee::Extern(e) => {
-            let e = &design.externs[e.index()];
-            let ports = unit_ports(&e.inputs, &e.outputs, e.clock.as_ref());
-            (&e.name, ports)
+            let e = &design.externs()[e.index()];
+            let ports = unit_ports(e.inputs(), e.outputs(), e.clock());
+            (e.name(), ports)
         }
     }
 }
 
 fn callee_outputs(design: &Design, callee: Callee) -> &[Port] {
     match callee {
-        Callee::Module(m) => &design.modules[m.index()].outputs,
-        Callee::Extern(e) => &design.externs[e.index()].outputs,
+        Callee::Module(m) => design.modules()[m.index()].outputs(),
+        Callee::Extern(e) => design.externs()[e.index()].outputs(),
     }
 }
 
 /// The `hw.module.extern` declarations of the externs of a design.
 pub fn externs(design: &Design) -> String {
     design
-        .externs
+        .externs()
         .iter()
         .map(|e| {
-            let ports = unit_ports(&e.inputs, &e.outputs, e.clock.as_ref());
-            mlir::extern_module(&e.name, &pins(&ports))
+            let ports = unit_ports(e.inputs(), e.outputs(), e.clock());
+            mlir::extern_module(e.name(), &pins(&ports))
         })
         .collect()
 }
@@ -194,22 +194,22 @@ pub fn module(design: &Design, module: &Module) -> (String, Vec<MemConfig>) {
         module,
         body: String::new(),
         temps: 0,
-        reads: module.mems.iter().map(|_| Vec::new()).collect(),
-        writes: module.mems.iter().map(|_| Vec::new()).collect(),
+        reads: module.mems().iter().map(|_| Vec::new()).collect(),
+        writes: module.mems().iter().map(|_| Vec::new()).collect(),
     };
     l.statements();
     let configs = l.memories();
     let outputs: Vec<(String, Ty)> = module
-        .assigns
+        .assigns()
         .iter()
-        .zip(&module.outputs)
+        .zip(module.outputs())
         .map(|(assign, port)| {
             let value = l.named(assign, &port.name, port.width.get());
             (value.name, Ty::Int(value.width))
         })
         .collect();
-    let ports = unit_ports(&module.inputs, &module.outputs, module.clock.as_ref());
-    let text = mlir::module(&module.name, &pins(&ports), &l.body, &outputs);
+    let ports = unit_ports(module.inputs(), module.outputs(), module.clock());
+    let text = mlir::module(module.name(), &pins(&ports), &l.body, &outputs);
     (text, configs)
 }
 
@@ -241,7 +241,7 @@ impl<'a> Lowering<'a> {
     /// The clock of the module. A checked module with a register, a memory,
     /// or a clocked instance has one.
     fn clock(&self) -> String {
-        match &self.module.clock {
+        match self.module.clock() {
             Some(clock) => format!("%{}", clock.name),
             None => unreachable!("a checked module that uses a clock has one"),
         }
@@ -262,20 +262,20 @@ impl<'a> Lowering<'a> {
         loop {
             let (name, width) = match expr {
                 Expr::Input(i) => {
-                    let port = &m.inputs[i.index()];
+                    let port = &m.inputs()[i.index()];
                     (format!("%{}", port.name), port.width)
                 }
                 Expr::Reg(r) => {
-                    let reg = &m.regs[r.index()];
+                    let reg = &m.regs()[r.index()];
                     (reg_name(reg), reg.width)
                 }
                 Expr::InstOut(i, o) => {
-                    let inst = &m.insts[i.index()];
+                    let inst = &m.insts()[i.index()];
                     let port = &callee_outputs(self.design, inst.callee)[o.index()];
                     (format!("%{}.{}", inst.name, port.name), port.width)
                 }
                 Expr::Let(l) => {
-                    let decl = &m.lets[l.index()];
+                    let decl = &m.lets()[l.index()];
                     if is_name(&decl.expr) {
                         expr = &decl.expr;
                         continue;
@@ -283,12 +283,12 @@ impl<'a> Lowering<'a> {
                     (format!("%{}", decl.name), decl.width)
                 }
                 Expr::Output(o) => {
-                    let assign = &m.assigns[o.index()];
+                    let assign = &m.assigns()[o.index()];
                     if is_name(assign) {
                         expr = assign;
                         continue;
                     }
-                    let port = &m.outputs[o.index()];
+                    let port = &m.outputs()[o.index()];
                     (format!("%{}", port.name), port.width)
                 }
                 _ => return None,
@@ -304,31 +304,31 @@ impl<'a> Lowering<'a> {
     /// emits the instances and the registers.
     fn statements(&mut self) {
         let m = self.module;
-        let regs = by_name(&m.regs, |r| r.name.as_str());
+        let regs = by_name(m.regs(), |r| r.name.as_str());
         let resets: Vec<Option<(Value, Value)>> = regs
             .iter()
             .map(|&r| {
-                m.regs[r]
+                m.regs()[r]
                     .reset
                     .as_ref()
                     .map(|(signal, value)| (self.expr(signal, None), self.expr(value, None)))
             })
             .collect();
-        for i in by_name(&m.insts, |i| i.name.as_str()) {
+        for i in by_name(m.insts(), |i| i.name.as_str()) {
             self.instance(i);
         }
-        for l in by_name(&m.lets, |l| l.name.as_str()) {
-            let decl = &m.lets[l];
+        for l in by_name(m.lets(), |l| l.name.as_str()) {
+            let decl = &m.lets()[l];
             if !is_name(&decl.expr) {
                 self.expr(&decl.expr, Some(&decl.name));
             }
         }
         let nexts: Vec<Value> = regs
             .iter()
-            .map(|&r| self.expr(&m.regs[r].next, None))
+            .map(|&r| self.expr(&m.regs()[r].next, None))
             .collect();
-        for mem in by_name(&m.mems, |mem| mem.name.as_str()) {
-            for write in &m.mems[mem].writes {
+        for mem in by_name(m.mems(), |mem| mem.name.as_str()) {
+            for write in &m.mems()[mem].writes {
                 let addr = self.expr(&write.addr, None);
                 let data = self.expr(&write.data, None);
                 let en = self.expr(&write.en, None);
@@ -339,13 +339,13 @@ impl<'a> Lowering<'a> {
                 self.writes[mem].push(WritePort { addr, data, en });
             }
         }
-        for o in by_name(&m.outputs, |p| p.name.as_str()) {
-            if !is_name(&m.assigns[o]) {
-                self.expr(&m.assigns[o], Some(&m.outputs[o].name));
+        for o in by_name(m.outputs(), |p| p.name.as_str()) {
+            if !is_name(&m.assigns()[o]) {
+                self.expr(&m.assigns()[o], Some(&m.outputs()[o].name));
             }
         }
         for ((&r, next), reset) in regs.iter().zip(nexts).zip(resets) {
-            let reg = &m.regs[r];
+            let reg = &m.regs()[r];
             let reset = reset.map_or_else(String::new, |(signal, value)| {
                 format!(" reset {}, {}", signal.name, value.name)
             });
@@ -363,7 +363,7 @@ impl<'a> Lowering<'a> {
     /// Lowers the connections of instance `i` in the port order of the
     /// child, and emits the instance.
     fn instance(&mut self, i: usize) {
-        let inst = &self.module.insts[i];
+        let inst = &self.module.insts()[i];
         let (callee, ports) = callee_ports(self.design, inst.callee);
         let mut args = Vec::new();
         let mut results = Vec::new();
@@ -381,7 +381,7 @@ impl<'a> Lowering<'a> {
     /// The one-bit value `addr < D` of memory `mem`, or `None` if each
     /// address is in range.
     fn in_range(&mut self, mem: usize, addr: &Value) -> Option<String> {
-        let depth = self.module.mems[mem].depth;
+        let depth = self.module.mems()[mem].depth;
         if full_range(depth) {
             return None;
         }
@@ -399,7 +399,7 @@ impl<'a> Lowering<'a> {
     fn memories(&mut self) -> Vec<MemConfig> {
         let m = self.module;
         let mut configs = Vec::new();
-        for (index, mem) in m.mems.iter().enumerate() {
+        for (index, mem) in m.mems().iter().enumerate() {
             let reads = std::mem::take(&mut self.reads[index]);
             let writes = std::mem::take(&mut self.writes[index]);
             let config = MemConfig {
@@ -503,7 +503,7 @@ impl<'a> Lowering<'a> {
         let port = self.reads[mem].len();
         self.reads[mem].push(ReadPort::default());
         let addr = self.expr(addr, None);
-        let width = self.module.mems[mem].width.get();
+        let width = self.module.mems()[mem].width.get();
         let (data, value) = if let Some(ok) = self.in_range(mem, &addr) {
             let data = self.temp();
             let zero = self.constant(None, "0", width);
