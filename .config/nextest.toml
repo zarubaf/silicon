@@ -2,3 +2,6 @@
 failure-output = "final"
 success-output = "never"
 status-level = "fail"
+# A hang fails the run: a warning after 60 s, a stop after 5 minutes.
+# Tests assert no wall-clock limit, because shared CI runners vary in speed.
+slow-timeout = { period = "60s", terminate-after = 5 }
