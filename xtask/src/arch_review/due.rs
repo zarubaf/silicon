@@ -1,6 +1,6 @@
 //! `review-due`: is a drift review due?
 //!
-//! Rule: a review is due when the branch has no `arch-review/<date>` tag,
+//! Rule: a review is due when the branch has no review tag (ADR 0016),
 //! or when 15 pull requests merged since the newest tag, or when the tag is
 //! at least 7 days old. Git alone cannot count rebase-merged pull requests:
 //! the merge keeps no merge commit and no pull request number. So `gh`
@@ -94,7 +94,7 @@ fn tags(root: &Path, merged: Option<&str>) -> Result<Vec<(String, String)>> {
         .collect()
 }
 
-/// Fails on a tag `arch-review/*` whose name is not a date.
+/// Fails on a tag `arch-review/*` whose name is not a review tag (ADR 0016).
 pub fn latest_review_tag(root: &Path, branch: &str) -> Result<Option<Baseline>> {
     for (tag, _) in tags(root, None)? {
         if !is_review_tag(&tag) {
