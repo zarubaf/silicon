@@ -1,0 +1,16 @@
+[package]
+name = "parse"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+rowan = "0.16.1"
+syntax = { path = "../syntax" }
+
+[dev-dependencies]
+proptest = { version = "1.11.0", default-features = false, features = ["std"] }
