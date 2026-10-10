@@ -42,6 +42,9 @@ Each rule is one list line. It ends with `Check:` and the check. A rule without 
 - Every crate sets `[lints] workspace = true`. Check: `cargo xtask check` (rule `workspace-lints`).
 - Format all files with the pinned tools. Check: `just check`.
 - Write Markdown prose in ASD-STE100. Check: `vale`.
+- Keep the error codes of the spec, Lean, and Rust equal. Check: `cargo xtask check` (rule `arch-codes`).
+- Name each workspace crate and each `silicon-check` command in backticks in the Part column of a row of `doc/trust.md`. The crate `xtask` is exempt. Check: `cargo xtask check` (rule `arch-trust`).
+- Keep proof modules out of the imports of `silicon-check`. Check: `cargo xtask check` (rule `lean-exe-imports`).
 - Leave no unproven Lean: no `sorry`, no new `axiom`, no `native_decide` outside the allowlist. Check: `lake build` and the xtask Lean scan.
 
 ## Workflow
