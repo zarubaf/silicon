@@ -21,7 +21,7 @@ The repository has no merge queue. The orchestrator merges only after CI passes 
 5. The body states why and what the change means. It does not list files.
 6. One commit holds one logical change.
 7. A breaking change uses `!` and a `BREAKING CHANGE:` footer. No check enforces the footer. This rule is advisory.
-8. No AI attribution: no `Co-Authored-By` trailer for an agent, no "Generated with" line.
+8. No AI attribution: no `Co-Authored-By` trailer for an agent, no `Claude-Session` trailer, no "Generated with" line.
 
 Refactor first, then change behavior. Put the refactor in its own commit before the behavior change.
 
@@ -39,15 +39,15 @@ Write a revert as `revert: <subject>`. Squash the fixup commits before the push.
 
 `cargo xtask commit-check` checks each commit in a range. CI runs it on each commit of a pull request. `just ci` runs it through `just commit-check`. Each violation prints its rule id:
 
-| Rule id                        | Rejects                                                                       |
-| ------------------------------ | ----------------------------------------------------------------------------- |
-| `commit-subject`               | A subject that is not a Conventional Commit, including revert and fixup forms |
-| `commit-scope`                 | A scope that is not in the allowed list                                       |
-| `commit-length`                | A subject with more than 72 characters                                        |
-| `commit-attribution`           | An agent `Co-Authored-By` trailer or a "Generated with" line                  |
-| `commit-refactor-expectations` | A `refactor` commit that changes test expectations                            |
-| `commit-spec-impl`             | A commit that changes `lean/` and `crates/` together                          |
-| `commit-expectations-code`     | A commit that changes test expectations and non-test code together            |
+| Rule id                        | Rejects                                                                                   |
+| ------------------------------ | ----------------------------------------------------------------------------------------- |
+| `commit-subject`               | A subject that is not a Conventional Commit, including revert and fixup forms             |
+| `commit-scope`                 | A scope that is not in the allowed list                                                   |
+| `commit-length`                | A subject with more than 72 characters                                                    |
+| `commit-attribution`           | An agent `Co-Authored-By` trailer, a `Claude-Session` trailer, or a "Generated with" line |
+| `commit-refactor-expectations` | A `refactor` commit that changes test expectations                                        |
+| `commit-spec-impl`             | A commit that changes `lean/` and `crates/` together                                      |
+| `commit-expectations-code`     | A commit that changes test expectations and non-test code together                        |
 
 Test expectations are the files under `snapshots/` directories and every file of the shared test data directories `tests/check/`, `tests/run/`, `tests/lower/`, and `tests/corpus/`. Each such file is an oracle: an input with its expectation. Adding, deleting, or editing one of these files counts, whatever the line. A change to a `Cargo.toml`, such as a `[[test]]` entry, is non-test code and goes in its own commit. The suites find their files on their own.
 
