@@ -188,13 +188,13 @@ impl ResolvedExpr {
 /// expression, or the `S003` errors in position order.
 ///
 /// # Errors
-/// Returns an error if the machine cannot give the stack for the syntax depth of `resolved`.
+/// Returns an error if the machine cannot give the stack for the syntax depth of `expr`.
 pub fn resolve_expr(
     resolved: &Resolved,
     expr: ParsedExpr,
 ) -> Result<Result<ResolvedExpr, Vec<Error>>, StackError> {
     let (expr, depth) = expr.into_parts();
-    let names = parse::on_stack(resolved.depth, || walk::run_expr(resolved, &expr))?;
+    let names = parse::on_stack(depth, || walk::run_expr(resolved, &expr))?;
     Ok(names.map(|names| ResolvedExpr { expr, depth, names }))
 }
 

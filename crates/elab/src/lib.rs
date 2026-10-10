@@ -93,7 +93,7 @@ pub fn eval(
     expr: &ResolvedExpr,
     budget: Budget,
 ) -> Result<Result<(Value, u64), Error>, StackError> {
-    let stack = parse::on_stack(file.depth(), || stack::of(file, expr))?;
+    let stack = parse::on_stack(expr.depth_with(file), || stack::of(file, expr))?;
     let result = stack.run(|| eval::run(file, expr, budget, stack))?;
     match result {
         Ok(done) => Ok(Ok(done)),

@@ -616,3 +616,27 @@ fn arguments_bind_in_the_caller_frame() {
          \x20   let mut s = 0; comptime for i in 0..4 { s = s + id(i); } return s; }");
     assert_eq!(out(&lp, "f()", 100_000_000, 1000), "(int 6)");
 }
+
+/// Each pass over a standalone expression runs on a stack for the depth of its own parse, also
+/// when the file has a smaller depth. The test thread has a normal stack.
+#[test]
+fn a_deep_expression_keeps_the_depth_of_its_parse() {
+    let file = resolve::resolve(parse::parse_with_depth("", 1).unwrap())
+        .ok()
+        .unwrap();
+    let file = typeck::check(file).ok().unwrap();
+    let depth = parse::DEFAULT_SYNTAX_DEPTH;
+    for (text, value) in [
+        (format!("{}1", "-".repeat(depth - 1)), "(int -1)"),
+        (
+            format!("{}1{}", "(".repeat(depth), ")".repeat(depth)),
+            "(int 1)",
+        ),
+    ] {
+        let e = parse::parse_expr(&text, depth).unwrap().ok().unwrap();
+        let e = resolve::resolve_expr(&file, e).unwrap().ok().unwrap();
+        let e = typeck::check_expr(&file, e).ok().unwrap();
+        let (v, _) = eval(&file, &e, Budget::default()).unwrap().unwrap();
+        assert_eq!(v.serialize(), value);
+    }
+}
