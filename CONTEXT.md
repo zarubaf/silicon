@@ -190,6 +190,16 @@ A set of language features that one milestone adds. A slice closes the full orac
 
 An input line or an output line of a top module in source terms: source port names and source values.
 
+### diagnostic
+
+The report of one error of the front end. It has a code, spans, notes, help, and suggested edits. Only its code and its line are normative. The records of the source builtin `diagnostic` are observation records, not diagnostics.
+
+_Avoid_: hint
+
+### applicability
+
+The confidence of a suggested edit in a diagnostic: machine-applicable or maybe-incorrect. A tool applies only a machine-applicable edit without a human.
+
 ## Process
 
 ### architecture review
