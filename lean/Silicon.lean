@@ -116,6 +116,8 @@ import Silicon.Source.Value
 import Silicon.Source.Test.Value
 import Silicon.Source.Sha256
 import Silicon.Source.Test.Sha256
+import Silicon.Source.Eval
+import Silicon.Source.Test.Eval
 import Silicon.Source.Cli
 import Silicon.Main
 
