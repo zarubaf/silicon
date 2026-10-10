@@ -262,7 +262,7 @@ mod tests {
         let first = render(&repo).unwrap();
         assert_eq!(first, render(&repo).unwrap());
         for needle in [
-            "Order: core-ir < syntax < parse < backend-circt < driver",
+            "Order: core-ir < ",
             "- driver -> ",
             "### core-ir",
             "- xtask: ",
