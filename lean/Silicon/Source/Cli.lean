@@ -1,6 +1,7 @@
 import Silicon.Source.Parse
 import Silicon.Source.Check
-import Silicon.Source.Flatten
+import Silicon.Source.Vectors
+import Silicon.Core.Main
 
 /-! The `silicon-check` commands of the front end. The output follows the core IR spec. -/
 namespace Silicon.Source.Cli
@@ -9,8 +10,8 @@ def errorLine (e : Error) : String :=
   s!"error[{e.code}]: {e.pos.line}:{e.pos.col}: {e.msg}"
 
 def usage : String :=
-  "usage: silicon-check {parse FILE|eval FILE EXPR|cost FILE --top T|elab FILE --top T} " ++
-  "[--fuel N] [--depth N] [--syntax-depth N]"
+  "usage: silicon-check {parse FILE|eval FILE EXPR|cost FILE --top T|elab FILE --top T|" ++
+  "run FILE --top T|validate FILE --top T OUT} [--fuel N] [--depth N] [--syntax-depth N]"
 
 /-! The positional arguments and the flags of a command. -/
 structure Opts where
@@ -34,12 +35,13 @@ def opts : List String → Opts → Option Opts
   | a :: rest, o => if a.startsWith "--" then none else opts rest { o with args := a :: o.args }
 
 /-!
-The result of a command: its output, the first error, a usage error, or a defect of the
-reference elaborator.
+The result of a command: its output, the first error, a rejection of `validate`, a usage error,
+or a defect of the reference elaborator. A rejection is a core error or a mismatch line.
 -/
 inductive Outcome where
   | ok (text : String)
   | error (e : Error)
+  | reject (line : String)
   | usage (msg : String)
   | defect (msg : String)
 
@@ -122,16 +124,77 @@ def costText (o : Opts) (source t : String) (digest : String → String := Names
     .ok (Elab.costLines { d with insts } used)
   | .error out => out
 
+/-! An elaborated design that passed the check of pass 6, with its typed design. -/
+structure Checked where
+  elaborated : Elab.Design
+  design : Core.Design
+  typed : Core.Typed.Design
+  accepted : Core.check design = .ok typed
+
+/-! The elaboration of the top selection `t`, its lowering, and the check of pass 6. -/
+def elabChecked (o : Opts) (source t : String) (digest : String → String) :
+    Except Outcome Checked :=
+  match elabRun o source t digest with
+  | .ok (d, l, _) =>
+    match Flatten.checkDesign l.design with
+    | .ok ⟨typed, h⟩ => .ok ⟨d, l.design, typed, h⟩
+    | .error (.source e) => .error (.error e)
+    | .error (.defect msg) => .error (.defect msg)
+  | .error out => .error out
+
+/-! The canonical text of a design. -/
+def canonicalText (d : Core.Design) : String := Core.print (Core.canonicalize d)
+
 /-! `elab`: the canonical text of the lowered design. -/
 def elabText (o : Opts) (source t : String) (digest : String → String := Names.sha16) :
     Outcome :=
-  match elabRun o source t digest with
-  | .ok (_, l, _) =>
-    match Flatten.checkDesign l.design with
-    | .ok _ => .ok (Core.print (Core.canonicalize l.design))
-    | .error (.source e) => .error e
-    | .error (.defect msg) => .defect msg
+  match elabChecked o source t digest with
+  | .ok c => .ok (canonicalText c.design)
   | .error out => out
+
+/-!
+The first line that differs between the reference lines and the output lines, from the line
+number `n`. A missing line shows as `<end>`.
+-/
+def mismatch : List String → List String → Nat → String
+  | r :: rs, o :: os, n => if r == o then mismatch rs os (n + 1) else diff n (quote r) (quote o)
+  | r :: _, [], n => diff n (quote r) "<end>"
+  | [], o :: _, n => diff n "<end>" (quote o)
+  | [], [], n => diff n "<end>" "<end>"
+where
+  quote (line : String) : String := s!"`{line}`"
+  diff (n : Nat) (r o : String) : String := s!"mismatch at line {n}: expected {r}, found {o}"
+
+/-!
+`validate` (section 8) elaborates the source with the reference elaborator. It parses and checks
+the compiler output `out` with the core checker. Then it compares the canonical texts.
+-/
+def validateText (o : Opts) (source t out : String) (digest : String → String := Names.sha16) :
+    Outcome :=
+  match elabChecked o source t digest with
+  | .error r => r
+  | .ok c =>
+    match Core.parse out with
+    | .error e => .reject (Core.errorLine e)
+    | .ok raw =>
+      match Core.check raw with
+      | .error e => .reject (Core.errorLine e)
+      | .ok _ =>
+        let ref := canonicalText c.design
+        let got := canonicalText raw
+        if ref == got then .ok "ok\n"
+        else .reject (mismatch (ref.splitOn "\n") (got.splitOn "\n") 1)
+
+/-!
+The setup of `run`: the port schema of the top and the checked design. A schema that does not
+fit the lowered design is a defect.
+-/
+def runSetup (o : Opts) (source t : String) (digest : String → String := Names.sha16) :
+    Except Outcome (Vectors.Schema × Core.Semantics.CertifiedDesign) := do
+  let c ← elabChecked o source t digest
+  let some s := Vectors.schema c.elaborated | throw (.defect "the top is not a done instantiation")
+  unless Vectors.fits s c.design do throw (.defect "the port schema does not fit the top")
+  return (s, Core.Semantics.CertifiedDesign.ofCheck c.design c.typed c.accepted)
 
 def evalOutcome (o : Opts) (source expr : String) : Outcome :=
   match evalText o source expr with
@@ -150,7 +213,7 @@ error gives 2, and a defect of the reference elaborator gives 3.
 -/
 def exitCode : Outcome → UInt32
   | .ok _ => 0
-  | .error _ => 1
+  | .error _ | .reject _ => 1
   | .usage _ => 2
   | .defect _ => 3
 
@@ -159,6 +222,7 @@ def emit (out : Outcome) : IO (Except String UInt32) := do
   match out with
   | .ok text => (← IO.getStdout).putStr text
   | .error e => (← IO.getStdout).putStrLn (errorLine e)
+  | .reject line => (← IO.getStdout).putStrLn line
   | .usage msg => return .error msg
   | .defect msg => (← IO.getStderr).putStrLn s!"defect of the reference elaborator: {msg}"
   return .ok (exitCode out)
@@ -171,6 +235,13 @@ def execute (cmd : String) (rest : List String) : IO (Except String UInt32) := d
   | "eval", [file, expr], none => emit (evalOutcome o (← IO.FS.readFile file) expr)
   | "cost", [file], some t => emit (costText o (← IO.FS.readFile file) t)
   | "elab", [file], some t => emit (elabText o (← IO.FS.readFile file) t)
+  | "validate", [file, out], some t =>
+    emit (validateText o (← IO.FS.readFile file) t (← IO.FS.readFile out))
+  | "run", [file], some t =>
+    match runSetup o (← IO.FS.readFile file) t with
+    | .ok (s, d) =>
+      return .ok (← Core.Cli.runWith (fun _ => Vectors.parseLine s) (Vectors.printLine s) d)
+    | .error out => emit out
   | _, _, _ => return .error usage
 
 end Silicon.Source.Cli
