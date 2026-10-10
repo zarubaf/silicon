@@ -2,6 +2,7 @@
 //! of each `.sil` file, and LLVM `FileCheck` checks it against the `; CHECK:`
 //! lines of the same file.
 
+mod checker;
 mod common;
 
 use std::io::ErrorKind;
@@ -22,12 +23,7 @@ fn lower(path: &Path) -> datatest_stable::Result<()> {
     if !source.lines().any(is_directive) {
         return Err(format!("{}: no `; CHECK:` line", path.display()).into());
     }
-    let mlir = spawn(
-        Command::new(env!("CARGO_BIN_EXE_silicon"))
-            .arg("lower")
-            .arg(path),
-        "",
-    )?;
+    let mlir = spawn(checker::silicon().arg("lower").arg(path), "")?;
     if !mlir.status.success() {
         return Err(format!(
             "silicon lower failed: {}{}",
