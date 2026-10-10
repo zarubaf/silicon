@@ -232,18 +232,22 @@ def bindTarget (p : Pos) (t : Target) (h : Hw) : EM Unit := do
 
 /-!
 The binding rule at the end of a body. A missing binding of an own resource is at its
-declaration, and one of a child input is at the `instance` statement.
+declaration, and one of a child input is at the `instance` statement. The counts select the
+first child with a free input, so only the interface of that child is searched for its name.
 -/
 def bindings : EM Unit := do
   let w := (← get).work
   let mut err := w.dup
   for r in w.needs do
     if r.count == 0 then err := earlier err ⟨.S018, r.pos, s!"`{r.name}` has no binding"⟩
+  let mut first : Option (ChildDecl × Nat) := none
   for (c, k) in w.body.children.zipIdx do
     if w.bound.getD k 0 < c.iface.inputs then
-      let free := c.iface.ports.values.find? fun q => q.input && !w.inputs.contains (k, q.sym)
-      let x := (free.map (·.name)).getD ""
-      err := earlier err ⟨.S018, c.pos, s!"the input `{x}` of the child has no binding"⟩
+      if first.all fun (d, _) => before c.pos d.pos then first := some (c, k)
+  if let some (c, k) := first then
+    let free := c.iface.ports.values.find? fun q => q.input && !w.inputs.contains (k, q.sym)
+    let x := (free.map (·.name)).getD ""
+    err := earlier err ⟨.S018, c.pos, s!"the input `{x}` of the child has no binding"⟩
   if let some e := err then throw e
 
 /-! The interface of a done instantiation. -/
