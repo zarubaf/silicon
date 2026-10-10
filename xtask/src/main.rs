@@ -1,5 +1,6 @@
 #![allow(clippy::print_stdout)] // xtask is a CLI; stdout is its interface.
 
+mod arch;
 mod commit;
 mod corpus;
 mod diff;
@@ -33,7 +34,13 @@ use violation::Violation;
 type Check = fn(&Repo) -> Result<Vec<Violation>>;
 
 /// Every registered check. Each check family adds one entry.
-const CHECKS: &[Check] = &[tree::check, guidance::check, workspace::check, lean::check];
+const CHECKS: &[Check] = &[
+    tree::check,
+    guidance::check,
+    workspace::check,
+    lean::check,
+    arch::check,
+];
 
 #[derive(Parser)]
 #[command(about = "Repository tooling for Silicon")]

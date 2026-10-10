@@ -7,7 +7,7 @@ use crate::repo::Repo;
 use crate::violation::{Severity, Violation};
 
 /// The one crate that sits outside the pipeline layers.
-const EXEMPT: &str = "xtask";
+pub const EXEMPT: &str = "xtask";
 
 /// Returns one message per dependency `(from, to)` on a later stage.
 ///
