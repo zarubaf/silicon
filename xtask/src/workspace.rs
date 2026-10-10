@@ -68,13 +68,9 @@ fn violation(path: &Path, rule: &'static str, message: String) -> Violation {
     }
 }
 
-pub fn check(repo: &Repo) -> Result<Vec<Violation>> {
-    let metadata = MetadataCommand::new()
-        .manifest_path(repo.root.join("Cargo.toml"))
-        .no_deps()
-        .exec()
-        .context("reading cargo metadata")?;
-    let order: Vec<String> = metadata
+/// The crate names of `[workspace.metadata.layers] order`, empty when absent.
+pub fn layer_order(metadata: &cargo_metadata::Metadata) -> Vec<String> {
+    metadata
         .workspace_metadata
         .get("layers")
         .and_then(|l| l.get("order"))
@@ -84,7 +80,16 @@ pub fn check(repo: &Repo) -> Result<Vec<Violation>> {
                 .filter_map(|n| n.as_str().map(str::to_owned))
                 .collect()
         })
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
+
+pub fn check(repo: &Repo) -> Result<Vec<Violation>> {
+    let metadata = MetadataCommand::new()
+        .manifest_path(repo.root.join("Cargo.toml"))
+        .no_deps()
+        .exec()
+        .context("reading cargo metadata")?;
+    let order = layer_order(&metadata);
 
     let members: Vec<String> = metadata
         .packages
