@@ -169,6 +169,19 @@ def intShr (a : Int) (k : Nat) : Int :=
 def shlSize (a : Int) (k : Nat) : Nat :=
   if a == 0 then 1 else (a.natAbs.log2 + k) / 64 + 1
 
+/-!
+`a * 2^k` without the power `2^k`. The shift makes no value above the result, and a zero
+operand makes no value at all. Thus the work stays in the charge `shlSize a k`.
+-/
+def intShl (a : Int) (k : Nat) : Int :=
+  if a == 0 then 0 else a <<< k
+
+theorem intShl_eq (a : Int) (k : Nat) : intShl a k = a * 2 ^ k := by
+  unfold intShl
+  split
+  · simp_all
+  · exact Int.shiftLeft_eq a k
+
 /-! A count of a finite shift. The amount `min k w` fits `w` bits, because `w < 2^w`. -/
 def amount (w k : Nat) : BitVec w := BitVec.ofNat w (min k w)
 
@@ -241,7 +254,7 @@ def shift (op : BinOp) (a b : Value) : Except Fault Step := do
   | .int x =>
     unless b matches .int _ do typeError "an Int shift needs a static Int count"
     let k ← count
-    if op == .shl then .ok ⟨shlSize x k, fun _ => .ok (.int (x * 2 ^ k))⟩
+    if op == .shl then .ok ⟨shlSize x k, fun _ => .ok (.int (intShl x k))⟩
     else
       let r := intShr x k
       .ok ⟨(Value.int r).size, fun _ => .ok (.int r)⟩

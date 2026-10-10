@@ -270,6 +270,18 @@ sizes 2. A use of a done constant charges only its node.
 #guard out "" "1 << 6400000000" 100000000 == "S015 1:1"
 #guard cost "" "1 << 64000" == 1006
 
+/-! A shift with an enormous count makes no value above its charge. These pass with 20 units. -/
+#guard out "" "0 << 100000000000" 20 == "(int 0)"
+#guard out "" "0 << 18446744073709551616" 20 == "(int 0)"
+#guard out "" "-1 << 100000000000" 20 == "S015 1:1"
+#guard out "" "0 >> 100000000000" 20 == "(int 0)"
+#guard out "" "1 >> 100000000000" 20 == "(int 0)"
+#guard out "" "-1 >> 100000000000" 20 == "(int -1)"
+#guard out "" "UInt[8](1) << 100000000000" 20 == "(uint 8 0)"
+#guard out "" "SInt[8](-1) >> 100000000000" 20 == "(sint 8 -1)"
+#guard out "" "UInt[65536](1) << 100000000000" 20 == "S015 1:1"
+#guard out "" "resize(UInt[65536], UInt[8](1))" 20 == "S015 1:1"
+
 /-!
 The nesting depth counts active calls. `d(5)` has 6 active calls. The call that goes above the
 limit fails.
