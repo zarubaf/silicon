@@ -76,12 +76,16 @@ structure Param where
   ty : TypeExpr
   deriving Repr, BEq, Inhabited
 
-/-! A top-level item. The `domains` list of a module holds at most one name in slice 1. -/
+/-!
+A top-level item. The `domains` of a module are `none` without a `domains` clause, which
+means the one default domain `clock`. An empty list means no domain: a combinational module.
+The list holds at most one name in slice 1.
+-/
 inductive Item where
   | const (pos : Pos) (name : Ident) (ty : TypeExpr) (value : Expr)
   | fn (pos : Pos) (comptime : Bool) (name : Ident) (params : List Param) (ret : TypeExpr)
       (body : List Stmt)
-  | module (pos : Pos) (name : Ident) (params : List Param) (domains : List Ident)
+  | module (pos : Pos) (name : Ident) (params : List Param) (domains : Option (List Ident))
       (body : List Stmt)
   deriving Repr, BEq, Inhabited
 

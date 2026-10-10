@@ -4,6 +4,7 @@ import Silicon.Core.Canonical.WellFormed
 import Silicon.Core.Interp.Named
 import Silicon.Core.Lower
 import Silicon.Core.Mlir.Print
+import Silicon.Source.Cli
 
 /-! The command line checks source positions before execution or lowering. -/
 namespace Silicon.Core.Cli
@@ -86,7 +87,8 @@ def main (args : List String) : IO UInt32 := do
       | ["run", file] => execute .run file
       | ["lower", file] => execute .lower file
       | ["lower", "--models", file] => execute .models file
-      | _ => usageError "usage: silicon-check {check|run|lower [--models]} FILE"
+      | ["parse", file] => Source.Cli.parse file
+      | _ => usageError "usage: silicon-check {check|run|lower [--models]|parse} FILE"
     (← IO.getStdout).flush
     return code
   catch e => usageError e.toString
