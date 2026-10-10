@@ -1,6 +1,7 @@
 //! The `silicon` command-line tool.
 
 mod cli;
+mod validate;
 
 use std::io::{self, Write};
 use std::process::ExitCode;

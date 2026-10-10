@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use backend_circt::{ToolError, lower, memory_configs, memory_model, verilog};
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use core_ir::check::check;
 use core_ir::diag::Diagnostic;
 use core_ir::interp::Sim;
@@ -14,11 +14,21 @@ use core_ir::text::{canonicalize, parse, print};
 use core_ir::vectors::{parse_input, print_output};
 use core_ir::{ast, typed};
 
+use crate::validate::{Verdict, validate};
+
 #[derive(Parser)]
 #[command(name = "silicon", about = "The Silicon core IR tool")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
+}
+
+/// The option of the commands that emit from the core IR.
+#[derive(Args)]
+pub struct Validation {
+    /// Skip the check by the Lean `silicon-check`, whose path is in `SILICON_CHECK`.
+    #[arg(long)]
+    no_validate: bool,
 }
 
 #[derive(Subcommand)]
@@ -30,12 +40,18 @@ pub enum Command {
     /// Read `in=` lines from stdin and print one `out=` line for each.
     Run { file: PathBuf },
     /// Print the MLIR of a checked design, with each memory as an extern.
-    Lower { file: PathBuf },
+    Lower {
+        #[command(flatten)]
+        validation: Validation,
+        file: PathBuf,
+    },
     /// Print the Verilog of a checked design through CIRCT.
     Verilog {
         /// Print one memory model for each memory configuration instead.
         #[arg(long)]
         models: bool,
+        #[command(flatten)]
+        validation: Validation,
         file: PathBuf,
     },
 }
@@ -101,11 +117,17 @@ fn dispatch(command: &Command, input: impl BufRead, out: &mut impl Write) -> Res
         Command::Run { file } => {
             with_design(file, out, |_, design, out| simulate(&design, input, out))
         }
-        Command::Lower { file } => with_design(file, out, |_, design, out| {
-            out.write_all(lower(&design).as_bytes())?;
-            Ok(Exit::Success)
-        }),
-        Command::Verilog { models, file } => with_design(file, out, |_, design, out| {
+        Command::Lower { validation, file } => {
+            with_validated_design(file, validation, out, |_, design, out| {
+                out.write_all(lower(&design).as_bytes())?;
+                Ok(Exit::Success)
+            })
+        }
+        Command::Verilog {
+            models,
+            validation,
+            file,
+        } => with_validated_design(file, validation, out, |_, design, out| {
             let mlir = if *models {
                 memory_configs(&design).iter().map(memory_model).collect()
             } else {
@@ -129,9 +151,38 @@ fn with_design<W: Write>(
     out: &mut W,
     then: impl FnOnce(ast::Design, typed::Design, &mut W) -> Result<Exit, Usage>,
 ) -> Result<Exit, Usage> {
+    with_checked(&read_source(file)?, out, then)
+}
+
+/// Like `with_design`, but the Lean checker also accepts the same source
+/// before `then` runs. A Lean rejection prints the Lean error line and is a
+/// design error. With `--no-validate`, stderr says so, so that nobody
+/// mistakes the output for a validated one.
+fn with_validated_design<W: Write>(
+    file: &Path,
+    validation: &Validation,
+    out: &mut W,
+    then: impl FnOnce(ast::Design, typed::Design, &mut W) -> Result<Exit, Usage>,
+) -> Result<Exit, Usage> {
     let source = read_source(file)?;
+    with_checked(&source, out, |ast, design, out| {
+        if validation.no_validate {
+            writeln!(io::stderr(), "silicon: not validated")?;
+        } else if let Verdict::Rejected(report) = validate(source.as_bytes()).map_err(Usage)? {
+            out.write_all(&report)?;
+            return Ok(Exit::DesignError);
+        }
+        then(ast, design, out)
+    })
+}
+
+fn with_checked<W: Write>(
+    source: &str,
+    out: &mut W,
+    then: impl FnOnce(ast::Design, typed::Design, &mut W) -> Result<Exit, Usage>,
+) -> Result<Exit, Usage> {
     report(
-        parse(&source).and_then(|ast| check(&ast).map(|design| (ast, design))),
+        parse(source).and_then(|ast| check(&ast).map(|design| (ast, design))),
         out,
         |(ast, design), out| then(ast, design, out),
     )

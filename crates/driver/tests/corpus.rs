@@ -4,6 +4,7 @@
 //! no expectations. The LEC and the differential tests of spec section 8 are
 //! the oracles of their contents.
 
+mod checker;
 mod common;
 
 use std::io::ErrorKind;
@@ -14,12 +15,7 @@ use common::spawn;
 
 /// Runs `silicon` with `args` and returns its stdout, or the failure.
 fn silicon(args: &[&str], path: &Path) -> datatest_stable::Result<String> {
-    let out = spawn(
-        Command::new(env!("CARGO_BIN_EXE_silicon"))
-            .args(args)
-            .arg(path),
-        "",
-    )?;
+    let out = spawn(checker::silicon().args(args).arg(path), "")?;
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     } else {

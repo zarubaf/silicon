@@ -1,5 +1,6 @@
 //! Tests of the `silicon` binary: output bytes and exit codes.
 
+mod checker;
 mod common;
 
 use common::spawn;
@@ -81,7 +82,7 @@ fn file(name: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
 }
 
 fn silicon(args: &[&str], path: &PathBuf, stdin: &str) -> std::io::Result<Output> {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_silicon"));
+    let mut command = checker::silicon();
     command.args(args).arg(path);
     spawn(&mut command, stdin)
 }
@@ -344,7 +345,7 @@ fn circt_verilog_reads_the_design_and_the_models() -> Test {
 fn a_missing_circt_tool_is_a_usage_error() -> Test {
     let src = file("no_tool.sil", COUNTER.as_bytes())?;
     for args in [&["verilog"][..], &["verilog", "--models"]] {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_silicon"));
+        let mut command = checker::silicon();
         command.args(args).arg(&src).env("PATH", "");
         let out = spawn(&mut command, "")?;
         assert_eq!(out.status.code(), Some(2), "{args:?}");
@@ -352,5 +353,70 @@ fn a_missing_circt_tool_is_a_usage_error() -> Test {
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(stderr.contains("firtool"), "{stderr}");
     }
+    Ok(())
+}
+
+fn with_checker(checker: &str, args: &[&str], name: &str) -> std::io::Result<Output> {
+    let src = file(name, COUNTER.as_bytes())?;
+    let mut command = Command::new(env!("CARGO_BIN_EXE_silicon"));
+    command.args(args).arg(&src).env(checker::VARIABLE, checker);
+    spawn(&mut command, "")
+}
+
+#[test]
+fn a_failing_checker_fails_lower_and_verilog() -> Test {
+    for command in ["lower", "verilog"] {
+        let out = with_checker("false", &[command], "reject.sil")?;
+        assert_eq!(out.status.code(), Some(2), "{command}");
+        assert_eq!(text(&out), "", "{command}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_missing_checker_is_a_usage_error_that_names_the_flag() -> Test {
+    for command in ["lower", "verilog"] {
+        let out = with_checker("/no/such/silicon-check", &[command], "missing_checker.sil")?;
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "{command}");
+        assert_eq!(text(&out), "", "{command}");
+        assert!(stderr.contains("/no/such/silicon-check"), "{stderr}");
+        assert!(stderr.contains("--no-validate"), "{stderr}");
+    }
+    Ok(())
+}
+
+#[test]
+fn no_validate_skips_the_checker_and_says_so() -> Test {
+    for command in ["lower", "verilog"] {
+        let args = [command, "--no-validate"];
+        let out = with_checker("/no/such/silicon-check", &args, "skipped.sil")?;
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(0), "{command}: {stderr}");
+        assert_eq!(stderr.matches("not validated").count(), 1, "{stderr}");
+        assert!(!text(&out).is_empty(), "{command}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_validated_run_does_not_say_not_validated() -> Test {
+    let out = silicon(&["lower"], &file("validated.sil", COUNTER.as_bytes())?, "")?;
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&out.stderr), "");
+    let src = file("validated_models.sil", MEMORY.as_bytes())?;
+    let out = silicon(&["verilog", "--models"], &src, "")?;
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&out.stderr), "");
+    Ok(())
+}
+
+#[test]
+fn a_missing_file_is_a_usage_error_before_the_checker_runs() -> Test {
+    let missing = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("none.sil");
+    let out = silicon(&["lower"], &missing, "")?;
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(!stderr.contains("--no-validate"), "{stderr}");
     Ok(())
 }
