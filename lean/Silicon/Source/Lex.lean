@@ -3,7 +3,7 @@ import Silicon.Source.Syntax
 /-!
 The lexer of the full v0.1 token set. It covers the keywords of later slices, so the parser
 can reject their syntax with `S004` instead of `S001`. Each token takes the longest match.
-The lexer checks no rule between tokens: `12ab` is a number and an identifier, and `@` is a
+The lexer checks no rule between tokens: `12ab` is a number and an identifier. `@` is a
 symbol, so the parser checks the builtin name after it.
 
 The input is a `String`, so it is valid UTF-8. The command line rejects other bytes as a
