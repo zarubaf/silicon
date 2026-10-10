@@ -116,6 +116,11 @@ impl Lower<'_> {
         root.children().map(|n| self.item(&n)).collect()
     }
 
+    /// The expression of a tree from `Parser::finish_expr` without an error.
+    pub(crate) fn source_expr(&self, root: &SyntaxNode) -> Option<Expr> {
+        self.expr(&root.children().find(is_expr)?)
+    }
+
     fn item(&self, node: &SyntaxNode) -> Option<Item> {
         let pos = self.pos_of(node);
         let name = self.ident(node)?;

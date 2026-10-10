@@ -150,26 +150,7 @@ fn parse_here(input: &str, depth: usize) -> Parse {
     let lexed = syntax::lex(input, depth);
     let (green, raw, high) = parser::Parser::new(input, &lexed.tokens, depth).finish();
     let index = LineIndex::new(input);
-    let mut raw_all: Vec<(usize, Code, String)> = lexed
-        .errors
-        .iter()
-        .map(|e| (e.offset, Code::S001, e.message.to_owned()))
-        .chain(raw.into_iter().map(|e| (e.offset, e.code, e.message)))
-        .collect();
-    // A height error ranks below every other error, so it exists only without them.
-    if let (true, Some(offset)) = (raw_all.is_empty(), high) {
-        let message = format!("expression is higher than {depth} levels");
-        raw_all.push((offset, Code::S001, message));
-    }
-    raw_all.sort_by_key(|(offset, ..)| *offset);
-    let errors: Vec<Error> = raw_all
-        .into_iter()
-        .map(|(offset, code, message)| Error {
-            code,
-            pos: index.pos(offset),
-            message,
-        })
-        .collect();
+    let errors = all_errors(&index, depth, &lexed, raw, high);
     let ast = if errors.is_empty() {
         let root = SyntaxNode::new_root(green.clone());
         let lowered = lower::Lower { index }.source(&root);
@@ -184,6 +165,72 @@ fn parse_here(input: &str, depth: usize) -> Parse {
         errors,
         ast,
     }
+}
+
+/// Parses an expression of the command line, such as the `EXPR` of `eval`, with a syntax
+/// depth. The positions are in the text of the expression. A token after the expression is
+/// `S001`. The result is the expression, or the errors in position order.
+///
+/// # Errors
+/// Returns an error, before it parses, if the depth is not from 1 to `MAX_SYNTAX_DEPTH`, or
+/// if the machine cannot give the stack for the depth.
+pub fn parse_expr(input: &str, depth: usize) -> Result<Result<ast::Expr, Vec<Error>>, DepthError> {
+    if !(1..=MAX_SYNTAX_DEPTH).contains(&depth) {
+        return Err(DepthError::Range(depth));
+    }
+    on_stack(depth, || parse_expr_here(input, depth)).map_err(DepthError::Stack)
+}
+
+fn parse_expr_here(input: &str, depth: usize) -> Result<ast::Expr, Vec<Error>> {
+    let lexed = syntax::lex(input, depth);
+    let (green, raw, high) = parser::Parser::new(input, &lexed.tokens, depth).finish_expr();
+    let index = LineIndex::new(input);
+    let errors = all_errors(&index, depth, &lexed, raw, high);
+    // The tree drops here, on the stack for the depth.
+    let green = tree::Green::new(green);
+    if !errors.is_empty() {
+        return Err(errors);
+    }
+    let root = SyntaxNode::new_root(green.node().clone());
+    let lowered = lower::Lower { index }.source_expr(&root);
+    debug_assert!(lowered.is_some(), "the tree of a valid expression lowers");
+    lowered.ok_or_else(|| {
+        vec![Error {
+            code: Code::S001,
+            pos: ast::Pos { line: 1, col: 1 },
+            message: "the expression does not lower".to_owned(),
+        }]
+    })
+}
+
+/// The errors of the lexer and the parser in position order. A height error ranks below
+/// every other error, so it exists only without them.
+fn all_errors(
+    index: &LineIndex<'_>,
+    depth: usize,
+    lexed: &syntax::Lexed,
+    raw: Vec<parser::RawError>,
+    high: Option<usize>,
+) -> Vec<Error> {
+    let mut raw_all: Vec<(usize, Code, String)> = lexed
+        .errors
+        .iter()
+        .map(|e| (e.offset, Code::S001, e.message.to_owned()))
+        .chain(raw.into_iter().map(|e| (e.offset, e.code, e.message)))
+        .collect();
+    if let (true, Some(offset)) = (raw_all.is_empty(), high) {
+        let message = format!("expression is higher than {depth} levels");
+        raw_all.push((offset, Code::S001, message));
+    }
+    raw_all.sort_by_key(|(offset, ..)| *offset);
+    raw_all
+        .into_iter()
+        .map(|(offset, code, message)| Error {
+            code,
+            pos: index.pos(offset),
+            message,
+        })
+        .collect()
 }
 
 #[cfg(test)]

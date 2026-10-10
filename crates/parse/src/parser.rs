@@ -89,6 +89,23 @@ impl<'a> Parser<'a> {
         (self.builder.finish(), self.errors, self.high)
     }
 
+    /// Parses the whole input as one expression, such as the `EXPR` of `eval`. A token after
+    /// the expression is `S001`, and the tree keeps it in an error node.
+    pub(crate) fn finish_expr(mut self) -> (GreenNode, Vec<RawError>, Option<usize>) {
+        if self.expr().is_some() && self.cur().is_some() {
+            self.syntax_error("expected the end of the expression");
+        }
+        if self.cur().is_some() {
+            self.start(SyntaxKind::ErrorNode);
+            while self.cur().is_some() {
+                self.bump();
+            }
+            self.finish_node();
+        }
+        self.flush_trivia();
+        (self.builder.finish(), self.errors, self.high)
+    }
+
     // The cursor.
 
     fn significant(&self, n: usize) -> Option<&'a Token> {

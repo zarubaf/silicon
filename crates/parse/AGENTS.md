@@ -6,7 +6,7 @@ The `parse` crate is the parser of the Rust front end. It is layer 3 of the pipe
 
 ## Owns
 
-This crate owns the grammar of the current slice, the error recovery, and the typed AST. The parser builds the lossless `rowan` tree from the tokens of `syntax` with its own builder. The node cache of `rowan` takes time in the square of the depth. Then it lowers an error-free tree into the AST. Errors are data: each has a code, a line, and a column, and the parser never prints. The parser and `Parse::dump` run on a thread with a stack for the syntax depth. The tree and the AST free their nodes from a work list, with no recursion. If the machine cannot give the stack, the functions return an error value. `Parse::dump` prints the AST in the bytes of `Print.dump` in Lean.
+This crate owns the grammar of the current slice, the error recovery, and the typed AST. The parser builds the lossless `rowan` tree from the tokens of `syntax` with its own builder. The node cache of `rowan` takes time in the square of the depth. Then it lowers an error-free tree into the AST. Errors are data: each has a code, a line, and a column, and the parser never prints. The parser and `Parse::dump` run on a thread with a stack for the syntax depth. The tree and the AST free their nodes from a work list, with no recursion. If the machine cannot give the stack, the functions return an error value. `Parse::dump` prints the AST in the bytes of `Print.dump` in Lean. `parse_expr` parses one expression of the command line, such as the `EXPR` of `eval`. Its positions are in the text of the expression.
 
 ## Invariants
 

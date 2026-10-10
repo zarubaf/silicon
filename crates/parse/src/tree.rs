@@ -77,7 +77,6 @@ impl Green {
         Green(Some(root))
     }
 
-    #[cfg(test)]
     pub(crate) fn node(&self) -> &GreenNode {
         self.0.as_ref().unwrap_or_else(|| unreachable!())
     }

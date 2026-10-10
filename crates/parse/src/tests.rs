@@ -1060,3 +1060,35 @@ fn into_ast_gives_the_items_and_the_depth_or_the_parse() {
     assert_eq!((items.len(), depth), (1, 7));
     assert!(parse("const A: Nat = ;").into_ast().is_err());
 }
+
+/// The result of `parse_expr`: the shape, or the first error as code, line, and column.
+fn expr_result(input: &str, depth: usize) -> Result<String, (Code, usize, usize)> {
+    crate::parse_expr(input, depth)
+        .unwrap()
+        .map(|e| sx(&e))
+        .map_err(|errors| {
+            let e = &errors[0];
+            (e.code, e.pos.line, e.pos.col)
+        })
+}
+
+#[test]
+fn an_expression_of_the_command_line() {
+    let ok = |input: &str| expr_result(input, DEFAULT_SYNTAX_DEPTH);
+    assert_eq!(ok("1 + 2 * 3").unwrap(), "(add 1 (mul 2 3))");
+    assert_eq!(ok(" UInt[8](3) ").unwrap(), "(call (index UInt 8) 3)");
+    assert_eq!(ok("if (a) { b } else { c }").unwrap(), "(if a b c)");
+    assert_eq!(ok("1 +"), Err((Code::S001, 1, 4)));
+    assert_eq!(ok("1 2"), Err((Code::S001, 1, 3)));
+    assert_eq!(ok(""), Err((Code::S001, 1, 1)));
+    assert_eq!(ok("1; 2"), Err((Code::S001, 1, 2)));
+    assert_eq!(ok("1 $"), Err((Code::S001, 1, 3)));
+    // A bracket above the depth ranks before a height error.
+    assert_eq!(expr_result("((1)) $", 1), Err((Code::S001, 1, 2)));
+    assert_eq!(expr_result("-(-1)", 2), Err((Code::S001, 1, 1)));
+    assert_eq!(expr_result("-(-1)", 3).unwrap(), "(neg (neg 1))");
+    assert!(matches!(
+        crate::parse_expr("1", 0),
+        Err(crate::DepthError::Range(0))
+    ));
+}
