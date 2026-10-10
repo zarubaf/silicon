@@ -1577,6 +1577,26 @@ def designDeps (d : Core.Design) (fuel : Nat) : String → Option Deps :=
   let table := dependencyTable d fuel
   fun name => table.lookup name
 
+/-! The hash index of each round answers child reads in constant expected time. -/
+def dependencyIndex (d : Core.Design) : Nat → Std.HashMap String Deps
+  | 0 => {}
+  | fuel + 1 =>
+    let previous := dependencyIndex d fuel
+    firstIndex (d.items.map fun i =>
+      let deps := match i with
+        | .extern e => externDeps e
+        | .module m => Deps.infer m (fun name => previous[name]?)
+      (Item.name i, deps))
+
+theorem dependencyIndex_lookup (d : Core.Design) (fuel : Nat) (name : String) :
+    (dependencyIndex d fuel)[name]? = designDeps d fuel name := by
+  induction fuel generalizing name with
+  | zero => simp [dependencyIndex, designDeps, dependencyTable]
+  | succ fuel ih =>
+    have previous : (fun name => (dependencyIndex d fuel)[name]?) =
+        fun name => (dependencyTable d fuel).lookup name := funext ih
+    simp only [dependencyIndex, designDeps, dependencyTable, firstIndex_lookup, previous]
+
 /-!
 A typed module is meaningful only inside a `Design`.
 Its `Design.environments` proof ties its interfaces and children to the design.
@@ -1709,6 +1729,46 @@ theorem elaborateModules_environment (d : Core.Design) (raw : List Core.Module) 
     cases h
     simp only [List.mem_cons, forall_eq_or_imp]
     exact ⟨⟨trivial, rfl⟩, ih _ hr⟩
+
+/-! One dependency index serves every module of a design. -/
+private def elaborateModulesWith (d : Core.Design) (children : String → Option Deps) :
+    List Core.Module → Option (List Module)
+  | [] => some []
+  | m :: rest => do
+    let body ← statements d (context d m) m.body
+    let graph := Deps.graph m children
+    match hcert : FastRanks.certificate graph with
+    | none => none
+    | some ranks => do
+      have h := FastRanks.certificate_sound graph ranks hcert
+      let groups ← groupStatements (context d m) (portsOf d) body
+      if hg : equationsErase groups = m.body then
+        let typed : Module := ⟨m.pos, m.name, m.ports, context d m, portsOf d, groups,
+          children, ranks, by simpa [graph, hg] using h,
+          by rw [hg]; rfl⟩
+        let rest ← elaborateModulesWith d children rest
+        return typed :: rest
+      else none
+
+private theorem elaborateModulesWith_eq (d : Core.Design) (ms : List Core.Module) :
+    elaborateModulesWith d (designDeps d d.depsFuel) ms = elaborateModules d ms := by
+  induction ms with
+  | nil => rfl
+  | cons m ms ih =>
+    simp only [elaborateModulesWith, elaborateModules, ih]
+    rfl
+
+private def indexedElaborateModules (d : Core.Design) (ms : List Core.Module) :
+    Option (List Module) :=
+  let index := dependencyIndex d d.depsFuel
+  elaborateModulesWith d (fun name => index[name]?) ms
+
+@[csimp] private theorem elaborateModules_indexed :
+    elaborateModules = indexedElaborateModules := by
+  funext d ms
+  have children : (fun name => (dependencyIndex d d.depsFuel)[name]?) =
+      designDeps d d.depsFuel := funext (dependencyIndex_lookup d _)
+  simp only [indexedElaborateModules, children, elaborateModulesWith_eq]
 
 def elaborateDesign (d : Core.Design) : Option Design := do
   let sorted ← orderModules (modules d).length (externNames d) (modules d)
