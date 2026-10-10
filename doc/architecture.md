@@ -39,8 +39,8 @@ The translation validator `silicon-check` is a Lean executable. It also holds th
 The Rust workspace has one crate per pipeline stage. A crate comes into existence with its first task. The layers, in order:
 
 1. `core-ir`: the core IR, its parser, its printer, its checker, and its interpreter. Each later layer uses it.
-2. `syntax`: a lossless syntax tree with `rowan`, from its first commit.
-3. `parse`: the parser with recovery and the AST.
+2. `syntax`: the lexer and the types of the lossless syntax tree, with `rowan` from its first commit.
+3. `parse`: the parser with recovery. It makes the lossless syntax tree and the AST.
 4. `resolve`: the item table, the scopes, and the resolved AST.
 5. `typeck`: the generic pre-check. It needs no static values and checks each item.
 6. `elab`: the static evaluator, the checks for each instantiation, and the lowering to core IR.
