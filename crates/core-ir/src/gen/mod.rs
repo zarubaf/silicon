@@ -8,7 +8,7 @@
 //! Each design passes the checker by construction:
 //!
 //! - The names are a kind prefix and a number, or `clk`, so they are unique,
-//!   never a keyword, and never start with `silicon_`.
+//!   never a keyword, and match the name pattern.
 //! - Each expression is built for its target width, and each operation gets
 //!   operands of the widths that it needs.
 //! - The `let` bindings and the instances form a sequence. An expression of
@@ -199,6 +199,19 @@ impl Tape {
         }
     }
 
+    /// The name of the `n`th entity of a kind. Choice 0 is the plain name.
+    /// The other choices start with `silicon_` or have a `$` field, because
+    /// Silicon reserves no name (spec 3.4). The kind and the number keep the
+    /// names unique.
+    fn label(&mut self, kind: &str, n: impl std::fmt::Display) -> String {
+        match self.below(4) {
+            1 => format!("silicon_{kind}{n}"),
+            2 => format!("{kind}{n}$f"),
+            3 => format!("silicon_{kind}${n}"),
+            _ => format!("{kind}{n}"),
+        }
+    }
+
     /// A width, mostly up to 64 bits.
     fn width(&mut self) -> u32 {
         if self.below(16) == 15 {
@@ -255,7 +268,7 @@ impl Tape {
             });
         }
         let regs: Vec<(String, u32)> = (0..if has_clock { self.below(REGS + 1) } else { 0 })
-            .map(|r| (format!("r{r}"), self.width()))
+            .map(|r| (self.label("r", r), self.width()))
             .collect();
         for (reg, width) in &regs {
             body.scope.values.push(Value {
@@ -266,7 +279,7 @@ impl Tape {
         }
         let mems: Vec<Mem> = (0..if has_clock { self.below(MEMS + 1) } else { 0 })
             .map(|m| Mem {
-                name: format!("mem{m}"),
+                name: self.label("mem", m),
                 width: self.width(),
                 depth: self.between(1, DEPTH),
             })
@@ -362,10 +375,10 @@ impl Tape {
             pins.push(Pin::Clock);
         }
         for i in 0..self.below(INPUTS + 1) {
-            pins.push(Pin::Input(format!("i{i}"), self.width()));
+            pins.push(Pin::Input(self.label("i", i), self.width()));
         }
         for o in 0..self.below(OUTPUTS + 1) {
-            pins.push(Pin::Output(format!("o{o}"), self.width()));
+            pins.push(Pin::Output(self.label("o", o), self.width()));
         }
         self.shuffle(&mut pins);
         pins
@@ -402,7 +415,7 @@ impl Tape {
     /// The next `let` binding. It reads only the earlier entries.
     fn binding(&mut self, body: &mut Body) {
         let width = self.width();
-        let binding = format!("l{}", body.stmts.len());
+        let binding = self.label("l", body.stmts.len());
         let expr = self.expr(&body.scope, width, NESTING);
         let node = body.graph.node();
         body.graph.read(node, &body.scope.sources(&expr));
@@ -423,7 +436,7 @@ impl Tape {
     /// or it waits for the complete scope. The outputs of the instance join
     /// the scope after the connections that read the scope now.
     fn inst(&mut self, child: &Interface, body: &mut Body) {
-        let inst = format!("u{}", body.insts.len());
+        let inst = self.label("u", body.insts.len());
         let outputs: Vec<usize> = child.deps.iter().map(|_| body.graph.node()).collect();
         let mut conns = Vec::new();
         let mut position = 0;

@@ -224,6 +224,9 @@ fn invalid_tokens_are_e001_at_the_token_start() {
         ("(design t (module t (let x (bits 1) 12abc)))", 37),
         ("(design t (module t (let x (bits 1) a.1)))", 37),
         ("(design t (module t (let x (bits 1) a.)))", 37),
+        ("(design t (module t (let x (bits 1) a$$b)))", 37),
+        ("(design t (module t (let x (bits 1) a$)))", 37),
+        ("(design t (module t (let x (bits 1) $a)))", 37),
     ] {
         let d = err(src);
         assert_eq!(

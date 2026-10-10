@@ -478,7 +478,7 @@ fn pass_8_write_port_gap() {
 }
 
 #[test]
-fn e002_reserved_prefix() {
+fn a_name_may_start_with_silicon() {
     let src = "\
 (design top
   (module top
@@ -486,12 +486,18 @@ fn e002_reserved_prefix() {
     (let silicon_x (bits 1) (const 1 0))
     (assign q silicon_x)))
 ";
-    expect(src, ErrorCode::E002, 4, 10);
+    assert!(run(src).is_ok());
 }
 
-/// The parser rejects a dot in a name, so the test renames a port in the AST.
+/// The parser rejects these names, so the test renames a port in the AST.
 #[test]
-fn e002_reserved_dot() {
+fn e002_name_outside_the_pattern() {
+    for bad in ["u.q", "a$$b", "a$", "$a", ""] {
+        e002_after_rename(bad);
+    }
+}
+
+fn e002_after_rename(bad: &str) {
     let src = "\
 (design top
   (module child
@@ -507,14 +513,14 @@ fn e002_reserved_dot() {
     let Some(ast::Item::Module(top)) = design.items.get_mut(1) else {
         panic!("the second item must be a module");
     };
-    top.ports[0].name.text = "u.q".to_string();
+    top.ports[0].name.text = bad.to_string();
     let Err(d) = check(&design) else {
         panic!("E002 expected, but the design checks");
     };
     assert_eq!(
         (d.code, d.span.line, d.span.col),
         (ErrorCode::E002, 6, 12),
-        "{d}"
+        "{bad}: {d}"
     );
 }
 

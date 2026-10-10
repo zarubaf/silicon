@@ -1,5 +1,6 @@
 //! Splits `.sil` text into tokens with positions.
 
+use crate::ast::is_core_name as is_name;
 use crate::diag::Span;
 use num_bigint::BigUint;
 
@@ -23,10 +24,6 @@ pub struct Token {
     pub span: Span,
 }
 
-fn is_name_start(c: char) -> bool {
-    c.is_ascii_alphabetic() || c == '_'
-}
-
 fn is_name_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_' || c == '$'
 }
@@ -35,11 +32,6 @@ fn is_name_char(c: char) -> bool {
 /// that character.
 fn is_token_char(c: char) -> bool {
     is_name_char(c) || c == '.'
-}
-
-fn is_name(text: &str) -> bool {
-    let mut chars = text.chars();
-    chars.next().is_some_and(is_name_start) && chars.all(is_name_char)
 }
 
 /// The value of a run of decimal digits. Nine digits at a time keep the
