@@ -12,6 +12,7 @@ mod stmt;
 mod tree;
 
 use error::LineIndex;
+pub use dump::quote;
 pub use error::{Code, DepthError, Error, StackError};
 use syntax::SyntaxNode;
 
