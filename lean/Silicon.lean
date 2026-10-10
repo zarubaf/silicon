@@ -2,6 +2,7 @@ import Silicon.Core.Syntax
 import Silicon.Core.Text
 import Silicon.Core.Test.Text
 import Silicon.Core.GraphReach
+import Silicon.Core.Index
 import Silicon.Core.Deps
 import Silicon.Core.Test.Deps
 import Silicon.Core.Typed

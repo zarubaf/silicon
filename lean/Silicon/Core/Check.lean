@@ -351,12 +351,12 @@ private def indexedValueTy (index : Std.HashMap Deps.Node Typed.Kind) (n : Strin
   | _ => none
 
 private theorem indexedValueTy_eq (ctx : Typed.Ctx) (n : String) :
-    indexedValueTy (Deps.Node.index ctx) n = valueTy ctx n := by
-  simp only [indexedValueTy, Deps.Node.index_lookup, valueTy]
+    indexedValueTy (firstIndex ctx) n = valueTy ctx n := by
+  simp only [indexedValueTy, firstIndex_lookup, valueTy]
   rfl
 
 private def indexedResolvedModule (d : Design) (m : Module) : List Error :=
-  let index := Deps.Node.index (Typed.context d m)
+  let index := firstIndex (Typed.context d m)
   let typeOf := fun n => indexedValueTy index n
   m.body.flatMap (resolvedStmtUsing (resolvedExprUsing typeOf d m) d m)
 
@@ -407,7 +407,7 @@ private def clockBody (d : Design) (m : Module) : List Error :=
   m.body.flatMap fun s => (valueExprs d m s).flatMap (foldExpr (clocksExpr d m))
 
 private def indexedClockBody (d : Design) (m : Module) : List Error :=
-  let index := Deps.Node.index (Typed.context d m)
+  let index := firstIndex (Typed.context d m)
   let typeOf := fun n => indexedValueTy index n
   m.body.flatMap fun s =>
     (valueExprs d m s).flatMap (foldExpr (clocksExprUsing typeOf d m))
@@ -524,9 +524,9 @@ def e004 (d : Design) : List Error :=
 private def indexedE004 (d : Design) : List Error :=
   (modules d).flatMap fun m =>
     let ctx := Typed.context d m
-    let index := Deps.Node.index ctx
+    let index := firstIndex ctx
     let infer := Typed.inferWith ctx (fun n => index[n]?)
-      (fun n => Deps.Node.index_lookup ctx n)
+      (fun n => firstIndex_lookup ctx n)
     let typeOf := fun e => (infer e).map Sigma.fst
     m.body.flatMap (stmtErrorsWith d m typeOf)
 
@@ -586,7 +586,7 @@ private def indexedReachesAux (g : Std.HashMap Deps.Node (List Deps.Node))
 private theorem indexedReachesAux_eq (g : Typed.Graph) (target : Deps.Node)
     (fuel : Nat) (pending seen : List Deps.Node) (index : Std.HashSet Deps.Node)
     (hindex : ∀ n, index.contains n = seen.contains n) :
-    indexedReachesAux (Deps.Node.index g) target fuel pending index =
+    indexedReachesAux (firstIndex g) target fuel pending index =
       reachesSpec g target fuel pending seen := by
   induction fuel generalizing pending seen index with
   | zero => rfl
@@ -594,7 +594,7 @@ private theorem indexedReachesAux_eq (g : Typed.Graph) (target : Deps.Node)
     simp only [indexedReachesAux, reachesSpec]
     split
     · rfl
-    · simp only [hindex, Deps.Node.index_lookup]
+    · simp only [hindex, firstIndex_lookup]
       have hi (n : Deps.Node) :
           (index.insertMany (freshNodes seen pending [])).contains n =
             (freshNodes seen pending [] ++ seen).contains n := by
@@ -606,7 +606,7 @@ private theorem indexedReachesAux_eq (g : Typed.Graph) (target : Deps.Node)
 
 private def indexedReaches (g : Typed.Graph) (target : Deps.Node)
     (fuel : Nat) (pending seen : List Deps.Node) : Bool :=
-  indexedReachesAux (Deps.Node.index g) target fuel pending (Std.HashSet.ofList seen)
+  indexedReachesAux (firstIndex g) target fuel pending (Std.HashSet.ofList seen)
 
 @[csimp] private theorem reaches_indexed : reaches = indexedReaches := by
   funext g target fuel pending seen
@@ -742,13 +742,13 @@ private theorem positionEntries_lookup (body : List Stmt) (n : Deps.Node) :
 
 private def indexedCycleCandidates (m : Module) (g : Typed.Graph) :
     List (Pos × Deps.Node × List Deps.Node) :=
-  let index := Deps.Node.index (positionEntries m.body)
+  let index := firstIndex (positionEntries m.body)
   (g.map fun row => ((index[positionKey row.1]?).getD m.pos, row)).mergeSort fun a b =>
     a.1.line < b.1.line || (a.1.line == b.1.line && a.1.col ≤ b.1.col)
 
 @[csimp] private theorem cycleCandidates_indexed : cycleCandidates = indexedCycleCandidates := by
   funext m g
-  simp only [cycleCandidates, indexedCycleCandidates, Deps.Node.index_lookup,
+  simp only [cycleCandidates, indexedCycleCandidates, firstIndex_lookup,
     positionEntries_lookup, nodePos]
 
 private def cycleDiagnostic (m : Module) (g : Typed.Graph) : List Error :=
@@ -2345,8 +2345,8 @@ private theorem diagnosticWith_eq (certify : (g : Typed.Graph) → GraphSCC.Cert
     cases lowest (e010 d) <;> rfl
 
 private def indexedDiagnostic : Design → Option Error :=
-  diagnosticWith (fun g => GraphCycleIndex.certificate g (Deps.Node.index g)
-    (Deps.Node.index_lookup g))
+  diagnosticWith (fun g => GraphCycleIndex.certificate g (firstIndex g)
+    (firstIndex_lookup g))
 
 @[csimp] private theorem diagnostic_components : diagnostic = indexedDiagnostic := by
   exact (diagnosticWith_eq _).symm

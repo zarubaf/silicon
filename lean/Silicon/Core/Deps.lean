@@ -1,5 +1,6 @@
 import Silicon.Core.Syntax
 import Silicon.Core.GraphReach
+import Silicon.Core.Index
 import Std.Data.HashMap.Lemmas
 import Std.Data.HashSet.Lemmas
 
@@ -30,23 +31,6 @@ instance : Hashable Node where
 
 instance : LawfulHashable Node :=
   ⟨by intro a b h; exact congrArg hash (eq_of_beq h)⟩
-
-/-! The first source entry wins when a node occurs more than once. -/
-def Node.index (entries : List (Node × α)) : Std.HashMap Node α :=
-  match entries with
-  | [] => {}
-  | (n, v) :: rest => (Node.index rest).insert n v
-
-theorem Node.index_lookup (entries : List (Node × α)) (n : Node) :
-    (Node.index entries)[n]? = entries.lookup n := by
-  induction entries with
-  | nil => simp [Node.index]
-  | cons a rest ih =>
-    rcases a with ⟨k, v⟩
-    simp only [Node.index, Std.HashMap.getElem?_insert, List.lookup_cons, ih, beq_iff_eq]
-    by_cases h : k = n
-    · subst k; simp
-    · simp [h, show (n == k) = false from beq_eq_false_iff_ne.mpr (Ne.symm h)]
 
 /-! Memory contents come from state. Only the address contributes reads. -/
 def reads : Expr → List Node
