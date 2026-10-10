@@ -10,9 +10,8 @@ mod lower;
 mod parser;
 mod stmt;
 
-pub use dump::dump;
 use error::LineIndex;
-pub use error::{Code, Error};
+pub use error::{Code, Error, StackError};
 use rowan::{GreenNode, Language};
 use syntax::{SiliconLanguage, SyntaxKind, SyntaxNode};
 
@@ -20,7 +19,7 @@ use syntax::{SiliconLanguage, SyntaxKind, SyntaxNode};
 #[derive(Clone, Debug)]
 pub struct Parse {
     green: GreenNode,
-    /// The syntax depth of the parse, which sizes the stack that frees the tree.
+    /// The syntax depth of the parse, which sizes the stack of each pass over the result.
     depth: usize,
     /// The errors in position order. The first one is the normative error.
     pub errors: Vec<Error>,
@@ -34,74 +33,91 @@ impl Parse {
     pub fn syntax(&self) -> SyntaxNode {
         SyntaxNode::new_root(self.green.clone())
     }
+
+    /// The dump of the AST, or `None` if the text has an error. The dump recurses, so it runs
+    /// on a stack for the syntax depth of the parse.
+    ///
+    /// # Errors
+    /// Returns an error if the machine cannot give the stack.
+    pub fn dump(&self) -> Result<Option<String>, StackError> {
+        on_stack(self.depth, || self.ast.as_deref().map(dump::dump))
+    }
 }
 
 impl Drop for Parse {
-    /// Freeing a deep tree recurses, so it runs on a stack for the depth, as the parse does.
+    /// Freeing the tree and the AST recurses, so it runs on a stack for the depth, as the
+    /// parse does.
     fn drop(&mut self) {
         let empty = GreenNode::new(SiliconLanguage::kind_to_raw(SyntaxKind::Root), []);
         let green = std::mem::replace(&mut self.green, empty);
-        // If the thread does not start, the closure drops the tree here.
+        let ast = self.ast.take();
+        // If the thread does not start, the closure drops both here.
         let spawned = std::thread::Builder::new()
             .stack_size(stack_for(self.depth))
-            .spawn(move || drop(green));
+            .spawn(move || drop((green, ast)));
         if let Ok(handle) = spawned {
             handle.join().ok();
         }
     }
 }
 
-/// The default syntax depth: the most height of an expression or a type, and the most nesting
-/// of blocks. It is far above the depth of written or generated code.
+/// The default syntax depth N: the most depth of brackets, and the most height of an
+/// outermost expression or type. It is far above the depth of written or generated code.
 pub const DEFAULT_SYNTAX_DEPTH: usize = 4096;
 
-/// Parses a source text with the default syntax depth. It never fails: errors are data in
-/// the result.
-#[must_use]
-pub fn parse(input: &str) -> Parse {
+/// Parses a source text with the default syntax depth. Errors in the text are data in the
+/// result.
+///
+/// # Errors
+/// Returns an error if the machine cannot give the stack for the depth.
+pub fn parse(input: &str) -> Result<Parse, StackError> {
     parse_with_depth(input, DEFAULT_SYNTAX_DEPTH)
 }
 
-/// The stack for each level of the syntax depth. The parser stops when its nesting is above
-/// the depth, so its recursion and the recursion over the tree go one set of frames deep for
-/// each level.
+/// The stack for each level of the syntax depth. The lexer bounds the recursion of the parser
+/// by the depth of brackets, and the check after the parse bounds the recursion over the
+/// result by about two levels for each level of the depth.
 const STACK_PER_LEVEL: usize = 64 * 1024;
 
-/// Parses a source text with a syntax depth. A deeper expression, type, or block is `S001`.
+/// Parses a source text with a syntax depth. A bracket above the depth, and an outermost
+/// expression or type that is higher than the depth, are `S001`.
 ///
 /// The parser is recursive, so it runs on its own thread with a stack for the depth. The
 /// stack is virtual memory, and the pages of it that the parse does not touch cost nothing.
-#[must_use]
-pub fn parse_with_depth(input: &str, depth: usize) -> Parse {
-    std::thread::scope(|scope| {
-        std::thread::Builder::new()
-            .stack_size(stack_for(depth))
-            .spawn_scoped(scope, || parse_here(input, depth))
-            .map_or_else(
-                // No thread for such a stack: the depth is absurd, so use the stack at hand.
-                |_| parse_here(input, depth),
-                |handle| {
-                    handle
-                        .join()
-                        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-                },
-            )
-    })
+///
+/// # Errors
+/// Returns an error, before it parses, if the machine cannot give the stack for the depth.
+pub fn parse_with_depth(input: &str, depth: usize) -> Result<Parse, StackError> {
+    on_stack(depth, || parse_here(input, depth))
 }
 
-/// The size of a stack for the syntax depth. The parse, the free of its tree, and a recursive
-/// pass over the AST, such as `dump`, fit in it. It is virtual memory: the pages that a pass
+/// The size of a stack for the syntax depth. It is virtual memory: the pages that a pass
 /// does not touch cost nothing.
-#[must_use]
-pub fn stack_for(depth: usize) -> usize {
+fn stack_for(depth: usize) -> usize {
     depth
         .saturating_mul(STACK_PER_LEVEL)
         .saturating_add(1 << 20)
 }
 
+/// Runs a function on a thread with a stack for the syntax depth.
+fn on_stack<T: Send>(depth: usize, f: impl FnOnce() -> T + Send) -> Result<T, StackError> {
+    std::thread::scope(|scope| {
+        let handle = std::thread::Builder::new()
+            .stack_size(stack_for(depth))
+            .spawn_scoped(scope, f)
+            .map_err(|_| StackError {
+                depth,
+                bytes: stack_for(depth),
+            })?;
+        Ok(handle
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic)))
+    })
+}
+
 fn parse_here(input: &str, depth: usize) -> Parse {
-    let lexed = syntax::lex(input);
-    let (green, raw) = parser::Parser::new(input, &lexed.tokens, depth).finish();
+    let lexed = syntax::lex(input, depth);
+    let (green, raw, high) = parser::Parser::new(input, &lexed.tokens, depth).finish();
     let index = LineIndex::new(input);
     let mut raw_all: Vec<(usize, Code, String)> = lexed
         .errors
@@ -109,6 +125,11 @@ fn parse_here(input: &str, depth: usize) -> Parse {
         .map(|e| (e.offset, Code::S001, e.message.to_owned()))
         .chain(raw.into_iter().map(|e| (e.offset, e.code, e.message)))
         .collect();
+    // A height error ranks below every other error, so it exists only without them.
+    if let (true, Some(offset)) = (raw_all.is_empty(), high) {
+        let message = format!("expression is higher than {depth} levels");
+        raw_all.push((offset, Code::S001, message));
+    }
     raw_all.sort_by_key(|(offset, ..)| *offset);
     let errors: Vec<Error> = raw_all
         .into_iter()

@@ -31,9 +31,20 @@ pub struct Lexed {
 }
 
 /// Splits the input into tokens. The texts of the tokens, joined, equal the input.
+///
+/// Brackets of the three kinds nest at most `depth` deep. A bracket that opens at the depth
+/// `depth + 1` is an error token, and only the first one is a lexical error. A closing
+/// bracket closes the innermost open bracket if the kinds match, and it is ignored otherwise.
+/// Thus the open brackets that a parser can have are at most `depth`, for every input.
 #[must_use]
-pub fn lex(input: &str) -> Lexed {
-    let mut lexer = Lexer { input, pos: 0 };
+pub fn lex(input: &str, depth: usize) -> Lexed {
+    let mut lexer = Lexer {
+        input,
+        pos: 0,
+        depth,
+        open: Vec::new(),
+        too_deep: false,
+    };
     let mut out = Lexed {
         tokens: Vec::new(),
         errors: Vec::new(),
@@ -66,6 +77,12 @@ fn is_whitespace(c: char) -> bool {
 struct Lexer<'a> {
     input: &'a str,
     pos: usize,
+    /// The most open brackets.
+    depth: usize,
+    /// The kinds of the open brackets, the innermost last.
+    open: Vec<SyntaxKind>,
+    /// Whether a bracket above the depth has its lexical error.
+    too_deep: bool,
 }
 
 /// Operators, longest first within the same first character.
@@ -154,10 +171,36 @@ impl Lexer<'_> {
         }
         if let Some((text, kind)) = OPERATORS.iter().find(|(text, _)| rest.starts_with(text)) {
             self.pos += text.len();
-            return (*kind, None);
+            return self.bracket(*kind);
         }
         self.pos += first.len_utf8();
         (SyntaxKind::Error, Some("invalid character"))
+    }
+
+    /// Tracks the open brackets. A token that is not a bracket passes unchanged.
+    fn bracket(&mut self, kind: SyntaxKind) -> Scanned {
+        use SyntaxKind::{LBrace, LBracket, LParen, RBrace, RBracket, RParen};
+        let opened = match kind {
+            RParen => LParen,
+            RBracket => LBracket,
+            RBrace => LBrace,
+            LParen | LBracket | LBrace => {
+                if self.open.len() < self.depth {
+                    self.open.push(kind);
+                    return (kind, None);
+                }
+                let first = !std::mem::replace(&mut self.too_deep, true);
+                return (
+                    SyntaxKind::Error,
+                    first.then_some("brackets nest deeper than the syntax depth"),
+                );
+            }
+            _ => return (kind, None),
+        };
+        if self.open.last() == Some(&opened) {
+            self.open.pop();
+        }
+        (kind, None)
     }
 
     fn block_comment(&mut self) -> Scanned {
@@ -233,8 +276,10 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
 
+    const DEPTH: usize = 4096;
+
     fn kinds(input: &str) -> Vec<SyntaxKind> {
-        lex(input)
+        lex(input, DEPTH)
             .tokens
             .iter()
             .map(|t| t.kind)
@@ -267,7 +312,7 @@ mod tests {
         assert_eq!(kinds(" \t\r\n1 \n"), [SyntaxKind::Dec]);
         for c in ['\u{feff}', '\u{a0}', '\u{85}', '\u{2003}', '\u{b}', '\u{c}'] {
             let input = format!("1{c}2");
-            let lexed = lex(&input);
+            let lexed = lex(&input, DEPTH);
             assert_eq!(
                 lexed.tokens.iter().map(|t| t.kind).collect::<Vec<_>>(),
                 [SyntaxKind::Dec, SyntaxKind::Error, SyntaxKind::Dec],
@@ -291,7 +336,7 @@ mod tests {
     #[test]
     fn strings() {
         assert_eq!(kinds(r#""a\n\"\\b""#), [SyntaxKind::Str]);
-        let bad = lex(r#""a\qb""#);
+        let bad = lex(r#""a\qb""#, DEPTH);
         assert_eq!(bad.tokens.len(), 1);
         assert_eq!(bad.tokens[0].kind, SyntaxKind::Error);
     }
@@ -331,7 +376,7 @@ mod tests {
 
     #[test]
     fn errors_are_data() {
-        let lexed = lex("a $ \"x\n/* y");
+        let lexed = lex("a $ \"x\n/* y", DEPTH);
         let found: Vec<_> = lexed.errors.iter().map(|e| (e.code, e.offset)).collect();
         assert_eq!(found, [("S001", 2), ("S001", 4), ("S001", 7)]);
         let joined: String = lexed
@@ -342,10 +387,51 @@ mod tests {
         assert_eq!(joined, "a $ \"x\n/* y");
     }
 
+    /// The offsets of the lexical errors with the syntax depth 3.
+    fn errors_at_depth_3(input: &str) -> Vec<usize> {
+        lex(input, 3).errors.iter().map(|e| e.offset).collect()
+    }
+
+    #[test]
+    fn brackets_nest_at_most_the_depth() {
+        assert!(errors_at_depth_3("([{}])").is_empty());
+        assert!(errors_at_depth_3("(((  ))) (((  )))").is_empty());
+        // The 4th bracket is the first above the depth, for each mix of kinds.
+        assert_eq!(errors_at_depth_3("((((  ))))"), [3]);
+        assert_eq!(errors_at_depth_3("[{(["), [3]);
+        let lexed = lex("{{{{", 3);
+        assert_eq!(lexed.tokens[3].kind, SyntaxKind::Error);
+    }
+
+    #[test]
+    fn only_the_first_bracket_above_the_depth_is_an_error() {
+        let lexed = lex("(((((((", 3);
+        assert_eq!(lexed.errors.len(), 1);
+        let error_tokens = lexed.tokens.iter().filter(|t| t.kind == SyntaxKind::Error);
+        assert_eq!(error_tokens.count(), 4);
+    }
+
+    #[test]
+    fn a_closing_bracket_without_an_opener_does_not_hide_an_excess() {
+        assert_eq!(errors_at_depth_3(")))] (((("), [8]);
+        // A closer of another kind closes nothing, so the excess stays visible.
+        assert_eq!(errors_at_depth_3("{ ) { ) { ) {"), [12]);
+        assert_eq!(errors_at_depth_3("( ] ( ] ( ] ("), [12]);
+        // Closing the innermost bracket makes room.
+        assert!(errors_at_depth_3("((()))((()))").is_empty());
+    }
+
+    #[test]
+    fn a_million_open_brackets_lex_in_linear_time() {
+        let lexed = lex(&"(".repeat(1_000_000), DEPTH);
+        assert_eq!(lexed.errors.len(), 1);
+        assert_eq!(lexed.errors[0].offset, DEPTH);
+    }
+
     proptest! {
         #[test]
         fn lossless_and_total(input in any::<String>()) {
-            let lexed = lex(&input);
+            let lexed = lex(&input, DEPTH);
             let mut end = 0;
             for token in &lexed.tokens {
                 prop_assert_eq!(token.range.start, end);
@@ -359,7 +445,7 @@ mod tests {
 
         #[test]
         fn lossless_on_source_like_text(input in "[a-z0-9 \\n\"/*\\\\@:=<>+%.&|!{}()\\[\\]-]{0,80}") {
-            let lexed = lex(&input);
+            let lexed = lex(&input, DEPTH);
             let joined: String = lexed.tokens.iter().map(|t| &input[t.range.clone()]).collect();
             prop_assert_eq!(joined, input);
         }

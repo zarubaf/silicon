@@ -1,6 +1,15 @@
 use crate::ast::{Expr, Item, Pos, Stmt, TypeExpr};
-use crate::{Code, DEFAULT_SYNTAX_DEPTH, Parse, parse, parse_with_depth};
+use crate::{Code, DEFAULT_SYNTAX_DEPTH, Parse};
 use proptest::prelude::*;
+
+/// Parses with the default syntax depth. The stack is virtual memory, so the tests expect it.
+fn parse(input: &str) -> Parse {
+    crate::parse(input).unwrap()
+}
+
+fn parse_with_depth(input: &str, depth: usize) -> Parse {
+    crate::parse_with_depth(input, depth).unwrap()
+}
 
 fn pos(line: usize, col: usize) -> Pos {
     Pos { line, col }
@@ -521,12 +530,9 @@ fn recovery_keeps_the_items_after_an_error() {
 
 #[test]
 fn height_is_limited_to_64() {
-    // A leaf has height 1, and each node and each pair of parentheses adds 1. The error is at
-    // the first token of the outermost expression or type with height 65.
+    // A leaf has height 1, each node of the AST adds 1, and parentheses make no node. The
+    // error is at the first token of the outermost expression or type with height 65.
     let at = |n: usize| Some((Code::S001, 1, n));
-    let nest = |n: usize| format!("const X: T = {}1{};", "(".repeat(n), ")".repeat(n));
-    assert_eq!(first_error_64(&nest(63)), None);
-    assert_eq!(first_error_64(&nest(64)), at(14));
     let call = |n: usize| format!("const X: T = {}1{};", "f(".repeat(n), ")".repeat(n));
     assert_eq!(first_error_64(&call(63)), None);
     assert_eq!(first_error_64(&call(64)), at(14));
@@ -536,8 +542,11 @@ fn height_is_limited_to_64() {
     let chain = |n: usize| format!("const X: T = {};", vec!["a"; n].join(" + "));
     assert_eq!(first_error_64(&chain(64)), None);
     assert_eq!(first_error_64(&chain(65)), at(14));
+    let field = |n: usize| format!("const X: T = a{};", ".b".repeat(n));
+    assert_eq!(first_error_64(&field(63)), None);
+    assert_eq!(first_error_64(&field(64)), at(14));
     // The error is at the outermost expression, not at the deep form.
-    let inner = format!("const X: T = y + {}1{};", "(".repeat(64), ")".repeat(64));
+    let inner = format!("const X: T = y + {}1{};", "f(".repeat(64), ")".repeat(64));
     assert_eq!(first_error_64(&inner), at(14));
     let ty = |n: usize| format!("const X: {}T{} = 1;", "A[".repeat(n), "]".repeat(n));
     assert_eq!(first_error_64(&ty(63)), None);
@@ -547,24 +556,74 @@ fn height_is_limited_to_64() {
     assert_eq!(first_error_64(&chain_ty(64)), at(10));
     // The type and the value of one statement are two outermost forms.
     let two = format!(
-        "module M() {{ let x: {}T{} = {}1{}; }}",
-        "A[".repeat(64),
-        "]".repeat(64),
-        "(".repeat(64),
-        ")".repeat(64)
+        "module M() {{ let x: T{} = {}1; }}",
+        "[1]".repeat(64),
+        "-".repeat(64),
     );
     assert_eq!(first_error_64(&two), at(21));
+    // An `instance` argument is outermost.
+    let inst = format!("module M() {{ instance i = N({}1); }}", "-".repeat(64));
+    assert_eq!(first_error_64(&inst), at(29));
     // The height of a statement or an item is not limited.
     let long = format!("module M() {{ {} }}", "x; ".repeat(1000));
     assert_eq!(first_error_64(&long), None);
 }
 
 #[test]
-fn blocks_nest_at_most_64_deep() {
+fn parentheses_make_no_node() {
+    // Height 3: a name and two unary operators.
+    let input = "const X: T = (-(-a));";
+    assert!(parse_with_depth(input, 3).errors.is_empty());
+    let errors = parse_with_depth(input, 2).errors.clone();
+    assert_eq!(errors.len(), 1);
+    assert_eq!((errors[0].pos.line, errors[0].pos.col), (1, 14));
+}
+
+#[test]
+fn brackets_nest_at_most_64_deep() {
+    let at = |n: usize| Some((Code::S001, 1, n));
+    let paren = |n: usize| format!("const X: T = {}1{};", "(".repeat(n), ")".repeat(n));
+    assert_eq!(first_error_64(&paren(64)), None);
+    assert_eq!(first_error_64(&paren(65)), at(14 + 64));
     let blocks = |n: usize| format!("module M() {}{}", "{".repeat(n), "}".repeat(n));
-    assert_eq!(first_error_64(&blocks(64)), None);
-    // The 65th `{` is at column 12 + 64.
-    assert_eq!(first_error_64(&blocks(65)), Some((Code::S001, 1, 76)));
+    assert_eq!(first_error_64(&blocks(63)), None);
+    // The 65th bracket is the `{` at column 12 + 64, and `(` of the module is closed.
+    assert_eq!(first_error_64(&blocks(65)), at(12 + 64));
+    // The three kinds of brackets count together.
+    let mixed = format!("const X: T = {}1;", "f(a[(".repeat(22));
+    assert_eq!(first_error_64(&mixed), at(122));
+}
+
+#[test]
+fn a_height_error_loses_to_any_other_error() {
+    let high = "const X: T = a + a + a + a;";
+    assert_eq!(first_error_64(high), None);
+    let first = |input: &str, depth: usize| {
+        parse_with_depth(input, depth)
+            .errors
+            .first()
+            .map(|e| (e.code, e.pos.line, e.pos.col))
+    };
+    assert_eq!(first(high, 3), Some((Code::S001, 1, 14)));
+    // A syntax error after the high expression wins.
+    assert_eq!(
+        first("const X: T = a + a + a + a;\nconst Y: T = ;", 3),
+        Some((Code::S001, 2, 14))
+    );
+    // So does a later slice error, and a lexical error.
+    assert_eq!(
+        first("const X: T = a + a + a + a;\nstruct S {}", 3),
+        Some((Code::S004, 2, 1))
+    );
+    assert_eq!(
+        first("const X: T = a + a + a + a; $", 3),
+        Some((Code::S001, 1, 29))
+    );
+    // An error that comes before the high expression also wins, by position.
+    assert_eq!(
+        first("const X: T = ;\nconst Y: T = a + a + a + a;", 3),
+        Some((Code::S001, 1, 14))
+    );
 }
 
 #[test]
@@ -587,7 +646,26 @@ fn comments_and_whitespace_stay_in_the_tree() {
     assert_lossless(&parsed, input);
 }
 
+#[test]
+fn a_chain_of_else_if_is_a_syntax_error_without_deep_recursion() {
+    // The grammar of the slice has no `else if`, so the first `if` after `else` is the error.
+    let input = format!(
+        "const X: T = if (a) {{ 1 }}{};",
+        " else if (a) { 1 }".repeat(1_000_000)
+    );
+    let parsed = parse(&input);
+    assert_eq!(parsed.errors.first().map(|e| e.pos.col), Some(32));
+}
+
 proptest! {
+    #[test]
+    fn brackets_in_any_order_stay_in_the_stack_for_a_small_depth(
+        input in "[(){}\\[\\]a;+,-]{0,600}|((\\{|\\(|\\[|\\)|\\}|\\]|-|a|;|f\\(){0,600})"
+    ) {
+        let parsed = parse_with_depth(&input, 2);
+        assert_lossless(&parsed, &input);
+    }
+
     #[test]
     fn no_panic_and_lossless_on_any_string(input in any::<String>()) {
         let parsed = parse(&input);
@@ -759,47 +837,118 @@ fn the_default_syntax_depth_is_4096() {
     assert_eq!(max, 4096);
     let at = |n: usize| Some((Code::S001, 1, n));
     let nest = |n: usize| format!("const X: T = {}1{};", "(".repeat(n), ")".repeat(n));
-    assert_eq!(first_error(&nest(max - 1)), None);
-    assert_eq!(first_error(&nest(max)), at(14));
+    assert_eq!(first_error(&nest(max)), None);
+    assert_eq!(first_error(&nest(max + 1)), at(14 + max));
     let call = |n: usize| format!("const X: T = {}1{};", "f(".repeat(n), ")".repeat(n));
+    // The calls make the height, and the brackets are the limit for the error below it.
     assert_eq!(first_error(&call(max - 1)), None);
     assert_eq!(first_error(&call(max)), at(14));
+    assert_eq!(first_error(&call(max + 1)), at(15 + 2 * max));
     let ty = |n: usize| format!("const X: {}T{} = 1;", "A[".repeat(n), "]".repeat(n));
     assert_eq!(first_error(&ty(max - 1)), None);
     assert_eq!(first_error(&ty(max)), at(10));
+    assert_eq!(first_error(&ty(max + 1)), at(11 + 2 * max));
+    let blocks = |n: usize| format!("module M() {}{}", "{".repeat(n), "}".repeat(n));
+    assert_eq!(first_error(&blocks(max)), None);
+    assert_eq!(first_error(&blocks(max + 1)), at(12 + max));
+    // A chain has height 4096 and no bracket: it passes, and one more operand fails.
     let chain = |n: usize| format!("const X: T = {};", vec!["a"; n].join(" + "));
     assert_eq!(first_error(&chain(max)), None);
     assert_eq!(first_error(&chain(max + 1)), at(14));
-    assert_eq!(first_error(&chain(5000)), at(14));
-    let blocks = |n: usize| format!("module M() {}{}", "{".repeat(n), "}".repeat(n));
-    assert_eq!(first_error(&blocks(max)), None);
-    assert_eq!(
-        first_error(&blocks(max + 1)),
-        Some((Code::S001, 1, 12 + max))
-    );
+    let unary = |n: usize| format!("const X: T = {}1;", "-".repeat(n));
+    assert_eq!(first_error(&unary(max - 1)), None);
+    assert_eq!(first_error(&unary(max)), at(14));
 }
 
 #[test]
-fn the_parser_stops_when_its_nesting_is_above_the_depth() {
+fn a_million_open_brackets_give_s001_at_the_first_excess() {
     let max = DEFAULT_SYNTAX_DEPTH;
-    for open in ["(", "-", "f(", "a[", "if (a) { "] {
-        let input = format!("const X: T = {}", open.repeat(1_000_000));
-        assert_eq!(first_error(&input), Some((Code::S001, 1, 14)), "{open}");
+    let start = std::time::Instant::now();
+    for open in ["(", "f(", "a[", "if (a) { ", "{"] {
+        let input = format!("module M() {}", open.repeat(1_000_000));
+        let parsed = parse(&input);
+        let first = parsed.errors.first().map(|e| (e.code, e.pos.line));
+        assert_eq!(first, Some((Code::S001, 1)), "{open}");
     }
+    // The first bracket above the depth, with `(` of the module closed after its parameters.
     let input = format!("module M() {}", "{".repeat(1_000_000));
     assert_eq!(first_error(&input), Some((Code::S001, 1, 12 + max)));
-    // A chain of conditionals.
-    let arm = "if (a) { 1 } else { ";
-    let chain = |n: usize| format!("const X: T = {}1{};", arm.repeat(n), " }".repeat(n));
-    assert_eq!(first_error(&chain(max - 1)), None);
-    assert_eq!(first_error(&chain(5000)), Some((Code::S001, 1, 14)));
+    let input = format!("const X: T = {}", "(".repeat(1_000_000));
+    assert_eq!(first_error(&input), Some((Code::S001, 1, 14 + max)));
+    assert!(start.elapsed() < std::time::Duration::from_secs(20));
+}
+
+#[test]
+fn a_million_long_chain_gives_the_height_error_at_the_first_token() {
+    let start = std::time::Instant::now();
+    let at = Some((Code::S001, 1, 14));
+    let sum = format!("const X: T = {};", vec!["a"; 1_000_000].join("+"));
+    assert_eq!(first_error(&sum), at);
+    let neg = format!("const X: T = {}1;", "-".repeat(1_000_000));
+    assert_eq!(first_error(&neg), at);
+    let field = format!("const X: T = a{};", ".b".repeat(1_000_000));
+    assert_eq!(first_error(&field), at);
+    let index = format!("const X: T = a{};", "[1]".repeat(1_000_000));
+    assert_eq!(first_error(&index), Some((Code::S001, 1, 14)));
+    // The tree stays lossless and shallow, so freeing it needs a small stack.
+    let parsed = parse(&neg);
+    assert_lossless(&parsed, &neg);
+    let mut depth = 0;
+    let mut node = parsed.syntax();
+    while let Some(child) = node.first_child() {
+        node = child;
+        depth += 1;
+    }
+    assert!(depth <= 4 * DEFAULT_SYNTAX_DEPTH + 16, "{depth}");
+    assert!(start.elapsed() < std::time::Duration::from_secs(20));
+}
+
+#[test]
+fn a_small_depth_bounds_the_tree_of_any_input() {
+    // With the depth 1 the stack has about 1 MiB, so a deep tree would overflow it.
+    for input in [
+        format!("const X: T = {}1;", "-".repeat(200_000)),
+        format!("const X: T = {};", vec!["a"; 200_000].join("+")),
+        format!("module M() {}", "{ ) ".repeat(100_000)),
+        format!("module M() {}", "{ ] ( ".repeat(50_000)),
+    ] {
+        let parsed = parse_with_depth(&input, 1);
+        assert!(!parsed.errors.is_empty());
+        assert_lossless(&parsed, &input);
+    }
 }
 
 #[test]
 fn the_syntax_depth_is_a_parameter() {
     let input = "const X: T = ((1));";
-    assert!(parse_with_depth(input, 3).errors.is_empty());
-    let errors = parse_with_depth(input, 2).errors.clone();
+    assert!(parse_with_depth(input, 2).errors.is_empty());
+    let errors = parse_with_depth(input, 1).errors.clone();
     assert_eq!(errors.len(), 1);
-    assert!(errors[0].message.contains("deeper than 2 levels"));
+    assert_eq!((errors[0].pos.line, errors[0].pos.col), (1, 15));
+    let high = parse_with_depth("const X: T = a + b;", 1).errors.clone();
+    assert_eq!(high.len(), 1);
+    assert!(high[0].message.contains("higher than 1 levels"));
+}
+
+#[test]
+fn a_stack_that_the_machine_cannot_give_is_an_error_value() {
+    let err = crate::parse_with_depth("", usize::MAX).unwrap_err();
+    assert_eq!(err.depth, usize::MAX);
+    assert!(err.to_string().contains("cannot allocate a stack"));
+}
+
+#[test]
+fn a_deep_ast_dumps_and_drops_on_the_stack_for_the_depth() {
+    let max = DEFAULT_SYNTAX_DEPTH;
+    // Blocks and a chain at the limit: about two levels of the AST for each level of the depth.
+    let input = format!(
+        "module M() {}{};{}",
+        "{".repeat(max - 1),
+        vec!["a"; max].join(" + "),
+        " }".repeat(max - 1)
+    );
+    let parsed = parse(&input);
+    assert!(parsed.errors.is_empty(), "{:?}", parsed.errors.first());
+    let dump = parsed.dump().unwrap();
+    assert!(dump.is_some_and(|d| d.starts_with("(module")));
 }

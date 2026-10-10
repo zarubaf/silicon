@@ -469,32 +469,54 @@ fn parse_reports_a_later_slice_with_s004() -> Test {
 
 #[test]
 fn parse_takes_the_syntax_depth() -> Test {
+    // Brackets: the third pair of parentheses is the first bracket above the depth 2.
     let path = file("deep.si", b"const X: T = (((1)));\n")?;
-    let out = silicon(&["parse", "--syntax-depth", "4"], &path, "")?;
-    assert_eq!(out.status.code(), Some(0));
     let out = silicon(&["parse", "--syntax-depth", "3"], &path, "")?;
+    assert_eq!(out.status.code(), Some(0));
+    let out = silicon(&["parse", "--syntax-depth", "2"], &path, "")?;
     assert!(
-        text(&out).starts_with("error[S001]: 1:14: "),
+        text(&out).starts_with("error[S001]: 1:16: "),
         "{}",
         text(&out)
     );
     assert_eq!(out.status.code(), Some(1));
+    // Height: the first token of the expression.
+    let path = file("high.si", b"const X: T = a + b + c + d;\n")?;
+    let out = silicon(&["parse", "--syntax-depth", "3"], &path, "")?;
+    assert_eq!(out.status.code(), Some(1));
+    assert!(text(&out).starts_with("error[S001]: 1:14: "));
     Ok(())
 }
 
 #[test]
 fn parse_does_not_overflow_the_stack_at_the_default_depth() -> Test {
     let deep = |n: usize| format!("const X: T = {}1{};\n", "(".repeat(n), ")".repeat(n));
-    let out = silicon(&["parse"], &file("d4095.si", deep(4095).as_bytes())?, "")?;
+    let out = silicon(&["parse"], &file("d4096.si", deep(4096).as_bytes())?, "")?;
     assert_eq!(out.status.code(), Some(0));
     assert!(text(&out).ends_with("(num 1))\n"));
-    let out = silicon(&["parse"], &file("d4096.si", deep(4096).as_bytes())?, "")?;
-    assert!(text(&out).starts_with("error[S001]: 1:14: "));
+    let out = silicon(&["parse"], &file("d4097.si", deep(4097).as_bytes())?, "")?;
+    assert!(text(&out).starts_with("error[S001]: 1:4110: "));
     assert_eq!(out.status.code(), Some(1));
     let open = format!("const X: T = {}", "(".repeat(1_000_000));
     let out = silicon(&["parse"], &file("open.si", open.as_bytes())?, "")?;
+    assert!(text(&out).starts_with("error[S001]: 1:4110: "));
+    assert_eq!(out.status.code(), Some(1));
+    let chain = format!("const X: T = {}1;\n", "-".repeat(1_000_000));
+    let out = silicon(&["parse"], &file("chain.si", chain.as_bytes())?, "")?;
     assert!(text(&out).starts_with("error[S001]: 1:14: "));
     assert_eq!(out.status.code(), Some(1));
+    Ok(())
+}
+
+#[test]
+fn parse_fails_with_exit_2_when_the_stack_cannot_be_allocated() -> Test {
+    let path = file("huge.si", b"const X: T = 1;\n")?;
+    let out = silicon(
+        &["parse", "--syntax-depth", "18446744073709551615"],
+        &path,
+        "",
+    )?;
+    assert_eq!((text(&out).as_str(), out.status.code()), ("", Some(2)));
     Ok(())
 }
 

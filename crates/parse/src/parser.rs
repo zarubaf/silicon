@@ -19,9 +19,16 @@ pub(crate) struct RawError {
 pub(crate) struct Parser<'a> {
     input: &'a str,
     tokens: &'a [Token],
-    /// The syntax depth: the most height of an expression or a type, and the most nesting
-    /// of blocks.
+    /// The syntax depth: the most height of an outermost expression or type.
     depth: usize,
+    /// The most nodes open at once. A tree that passes the checks of the syntax depth is
+    /// below it, so only an erroneous input reaches it. Deeper nodes are not made, and their
+    /// tokens stay in the node around them.
+    node_cap: usize,
+    /// The number of nodes open now in the builder.
+    nodes: usize,
+    /// The number of open nodes that the cap kept out of the builder. They are the innermost.
+    skipped: usize,
     /// The index of the next token that the builder has not got.
     at: usize,
     builder: GreenNodeBuilder<'static>,
@@ -31,10 +38,8 @@ pub(crate) struct Parser<'a> {
     /// The start of the outermost expression or type that is open now: one that is not part
     /// of another.
     top: Option<usize>,
-    /// The number of forms of an expression or a type that are open now.
-    open: usize,
-    /// The nesting of the blocks now open.
-    blocks: usize,
+    /// The start of the first outermost expression or type whose height is above the depth.
+    high: Option<usize>,
     /// For each opening bracket, the index of the bracket that closes it.
     closer: Vec<Option<usize>>,
     /// For each opening bracket, whether a `,` comes before its closing bracket.
@@ -54,13 +59,15 @@ impl<'a> Parser<'a> {
             input,
             tokens,
             depth,
+            node_cap: depth.saturating_mul(4).saturating_add(16),
+            nodes: 0,
+            skipped: 0,
             at: 0,
             builder: GreenNodeBuilder::new(),
             errors: Vec::new(),
             reported: BTreeSet::new(),
             top: None,
-            open: 0,
-            blocks: 0,
+            high: None,
             closer,
             comma,
             height: 0,
@@ -69,15 +76,16 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Parses the whole input into a tree with the node `Root`.
-    pub(crate) fn finish(mut self) -> (GreenNode, Vec<RawError>) {
+    /// Parses the whole input into a tree with the node `Root`. The last value is the start
+    /// of the first outermost expression or type that is higher than the syntax depth.
+    pub(crate) fn finish(mut self) -> (GreenNode, Vec<RawError>, Option<usize>) {
         // The first trivia belong inside the root, so the root starts the tree.
         self.builder
             .start_node(SiliconLanguage::kind_to_raw(SyntaxKind::Root));
         self.source();
         self.flush_trivia();
         self.builder.finish_node();
-        (self.builder.finish(), self.errors)
+        (self.builder.finish(), self.errors, self.high)
     }
 
     // The cursor.
@@ -162,11 +170,21 @@ impl<'a> Parser<'a> {
     /// Opens a node. Trivia before the node stay outside of it.
     pub(crate) fn start(&mut self, kind: SyntaxKind) {
         self.flush_trivia();
-        self.builder.start_node(SiliconLanguage::kind_to_raw(kind));
+        if self.nodes < self.node_cap {
+            self.nodes += 1;
+            self.builder.start_node(SiliconLanguage::kind_to_raw(kind));
+        } else {
+            self.skipped += 1;
+        }
     }
 
     pub(crate) fn finish_node(&mut self) {
-        self.builder.finish_node();
+        if self.skipped > 0 {
+            self.skipped -= 1;
+        } else {
+            self.nodes -= 1;
+            self.builder.finish_node();
+        }
     }
 
     pub(crate) fn checkpoint(&mut self) -> Checkpoint {
@@ -189,49 +207,48 @@ impl<'a> Parser<'a> {
         kind: SyntaxKind,
         parts: impl FnOnce(&mut Self) -> Res,
     ) -> Res {
-        self.builder
-            .start_node_at(checkpoint, SiliconLanguage::kind_to_raw(kind));
+        if self.nodes < self.node_cap {
+            self.nodes += 1;
+            self.builder
+                .start_node_at(checkpoint, SiliconLanguage::kind_to_raw(kind));
+        } else {
+            self.skipped += 1;
+        }
         let res = parts(self);
         self.finish_node();
         res
     }
 
+    /// Like `node_at`, for a node that wraps a chain. A chain that is already higher than the
+    /// depth gets no more nodes: the input has a height error, and the nested nodes would make
+    /// a deep tree. The tokens stay in the node around the chain.
+    pub(crate) fn chain_at(
+        &mut self,
+        checkpoint: Checkpoint,
+        kind: SyntaxKind,
+        height: usize,
+        parts: impl FnOnce(&mut Self) -> Res,
+    ) -> Res {
+        if height > self.depth {
+            parts(self)
+        } else {
+            self.node_at(checkpoint, kind, parts)
+        }
+    }
+
     /// Runs the parts of an expression or a type. If none is open, this one is the outermost,
-    /// and it starts at `start`.
-    pub(crate) fn outermost<T>(&mut self, start: usize, parts: impl FnOnce(&mut Self) -> T) -> T {
+    /// and it starts at `start`. The height of a complete outermost one is checked after the
+    /// parse, because a height error ranks below every other error.
+    pub(crate) fn outermost(&mut self, start: usize, parts: impl FnOnce(&mut Self) -> Res) -> Res {
         if self.top.is_some() {
             return parts(self);
         }
         self.top = Some(start);
         let res = parts(self);
         self.top = None;
-        res
-    }
-
-    /// Runs the parts of a form of an expression. A form that is open inside `depth` other
-    /// forms makes the height of the outermost expression larger than `depth`, so it is an
-    /// error at once, and the recursion never goes deeper than the depth.
-    pub(crate) fn form(&mut self, parts: impl FnOnce(&mut Self) -> Res) -> Res {
-        if self.open >= self.depth {
-            self.too_deep();
-            return None;
+        if res.is_some() && self.height > self.depth && self.high.is_none() {
+            self.high = Some(start);
         }
-        self.open += 1;
-        let res = parts(self);
-        self.open -= 1;
-        res
-    }
-
-    /// Runs the statements of a block, which nests at most `depth` deep.
-    pub(crate) fn block_level(&mut self, parts: impl FnOnce(&mut Self) -> Res) -> Res {
-        if self.blocks >= self.depth {
-            let message = format!("blocks nest deeper than {} levels", self.depth);
-            self.syntax_error(&message);
-            return None;
-        }
-        self.blocks += 1;
-        let res = parts(self);
-        self.blocks -= 1;
         res
     }
 
@@ -348,23 +365,6 @@ impl<'a> Parser<'a> {
         } else {
             self.syntax_error(&format!("expected {what}"));
             None
-        }
-    }
-
-    /// Reports that the outermost expression or type is higher than the depth.
-    fn too_deep(&mut self) {
-        let at = self.top.unwrap_or_else(|| self.offset());
-        let message = format!("expression nests deeper than {} levels", self.depth);
-        self.syntax_error_at(at, &message);
-    }
-
-    /// Reports a height above the depth.
-    pub(crate) fn check_height(&mut self, height: usize) -> Res {
-        if height > self.depth {
-            self.too_deep();
-            None
-        } else {
-            Some(())
         }
     }
 }
