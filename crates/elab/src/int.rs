@@ -165,6 +165,16 @@ impl Int {
     }
 }
 
+/// `min(bits, limit)` for the bits of a finite value, read without a copy.
+#[must_use]
+pub fn min_unsigned(bits: &BigUint, limit: u32) -> u32 {
+    if *bits < BigUint::from(limit) {
+        bits.iter_u32_digits().next().unwrap_or(0)
+    } else {
+        limit
+    }
+}
+
 impl fmt::Debug for Int {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)

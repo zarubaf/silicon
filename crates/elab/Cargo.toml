@@ -12,3 +12,7 @@ workspace = true
 core-ir = { path = "../core-ir" }
 num-bigint = "0.4.6"
 parse = { path = "../parse" }
+resolve = { path = "../resolve" }
+
+[dev-dependencies]
+typeck = { path = "../typeck" }
