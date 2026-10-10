@@ -103,6 +103,15 @@ def Value.size : Value → Nat
   | .type t => t.size
 
 /-!
+The charge of the decimal forms in the serialization of a value. An integer and a finite value
+charge the square of their size (section 5.4). A naive decimal conversion takes this time.
+-/
+def Value.decimalCharge (v : Value) : Nat :=
+  match v with
+  | .int _ | .uint .. | .sint .. => v.size * v.size
+  | _ => 0
+
+/-!
 An `InstantiationId`: a module and its static arguments in order. Up to slice 5, the package of
 each module is the root package `root`.
 -/
@@ -111,7 +120,15 @@ structure InstantiationId where
   args : List Value
   deriving Repr, DecidableEq, BEq, Inhabited
 
+/-! The serialization of an `InstantiationId` from the serializations of its arguments. -/
+def InstantiationId.render (module : String) (args : List String) : String :=
+  Print.node "instantiation" ["root", module, Print.list args]
+
+/-! The byte length of `render module args`, known before the text exists. -/
+def InstantiationId.renderSize (module : String) (args : List String) : Nat :=
+  24 + module.utf8ByteSize + (args.map String.utf8ByteSize).sum + (args.length - 1)
+
 def InstantiationId.serialize (id : InstantiationId) : String :=
-  Print.node "instantiation" ["root", id.module, Print.list (id.args.map Value.serialize)]
+  InstantiationId.render id.module (id.args.map Value.serialize)
 
 end Silicon.Source

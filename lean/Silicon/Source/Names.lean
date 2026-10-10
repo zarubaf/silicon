@@ -157,21 +157,25 @@ def readable : Value → Option Field
   | .bool b => some (.bool b)
   | _ => none
 
-/-! The byte length of `encode p` for a name with more than one field. -/
+/-! The byte length of `encode p` for a name with a field after its first one. -/
 def multiSize (p : Name) : Nat :=
   p.rest.foldl (fun n f => n + 1 + (f.encode).utf8ByteSize) p.head.utf8ByteSize
 
+/-! The byte length of `encode p`, known in time linear in the number of fields. -/
+def byteSize (p : Name) : Nat := if keyword p then p.head.utf8ByteSize + 3 else multiSize p
+
 /-!
-The emitted module name of section 7.1 with the digest function `digest`. The size test reads
-the module name only for its byte length, so a long name costs no work here.
+The emitted module name of section 7.1 with the digest function `digest`. `serial` is the
+serialization of `id`. The size test reads the module name only for its byte length, so a
+long name costs no work here.
 -/
-def moduleName (digest : String → String) (id : InstantiationId) : Name :=
-  let hashed : Name := ⟨id.module, [.digest (digest id.serialize)]⟩
+def moduleName (digest : String → String) (id : InstantiationId)
+    (serial : String := id.serialize) : Name :=
+  let hashed : Name := ⟨id.module, [.digest (digest serial)]⟩
   match id.args.mapM readable with
   | some fs =>
     let p : Name := ⟨id.module, fs⟩
-    let size := if keyword p then p.head.utf8ByteSize + 3 else multiSize p
-    if size ≤ 64 then p else hashed
+    if byteSize p ≤ 64 then p else hashed
   | none => hashed
 
 end Silicon.Source.Names

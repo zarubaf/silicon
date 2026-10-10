@@ -97,6 +97,15 @@ def long (n : Nat) : String := String.ofList (List.replicate n 'a')
 /-! A keyword module without arguments keeps the readable form. -/
 #guard (moduleName sha16 (id "add" [])).rest.isEmpty
 
+/-! The sizes that the charges read equal the lengths of the texts. -/
+def ids : List InstantiationId :=
+  [id "C" [], id "Counter" [.int 8, .bool true], id "M" [.str "a\"b\n", .int (-5)],
+   id "M" [.type (.uint 8), .uint 8 3, .sint 4 (-1)]]
+#guard ids.all fun i => InstantiationId.renderSize i.module (i.args.map Value.serialize) ==
+  i.serialize.utf8ByteSize
+#guard ids.all fun i => byteSize (moduleName sha16 i) == (encode (moduleName sha16 i)).utf8ByteSize
+#guard names.all fun p => byteSize p == (encode p).utf8ByteSize
+
 /-! Each emitted name is a legal core name. -/
 #guard [id "Counter" [.int 8], id "add" [], id "M" [.str "x"], id (long 70) []].all
   fun i => legal (moduleName sha16 i) && roundTrip (moduleName sha16 i)

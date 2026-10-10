@@ -133,20 +133,21 @@ def Op.size : Op → Nat
 def Hw.mk (pos : Pos) (ty : Ty) (op : Op) (args : List Hw) : Hw :=
   .node pos ty (op.size + (args.map Hw.size).sum) op args
 
-/-! A port of an instantiation, as its parent sees it. -/
+/-! A port of an instantiation, as its parent sees it. `sym` is the symbol of its name. -/
 structure Port where
   name : String
+  sym : Nat
   input : Bool
   ty : Ty
   deriving Repr, Inhabited
 
 /-!
-The interface of a done instantiation: its emitted name, its ports by name, its number of
-inputs, and its domain. A combinational module has no domain.
+The interface of a done instantiation: its emitted name, its ports by the symbol of their
+name, its number of inputs, and its domain. A combinational module has no domain.
 -/
 structure Iface where
   name : Names.Name
-  ports : Std.TreeMap String Port compare
+  ports : Std.TreeMap Nat Port compare
   inputs : Nat
   domain : Option String
 
@@ -204,8 +205,20 @@ structure Frame where
   id : Nat
 
 /-!
+The symbols of a file. Each distinct identifier gets one number, so a lookup or a key compares
+numbers and not text. `binders` gives the symbol of each local number of each item. `fields`
+gives the symbol of each field name by its position in each item. `items` gives the symbol of
+each item name.
+-/
+structure Syms where
+  binders : Array (Array Nat)
+  fields : Array (Std.TreeMap Pos Nat Pos.compare)
+  items : Array Nat
+
+/-!
 The items, the depth limit, the current depth, and the return type of the current call. The
-item whose body runs, its call sites by position, and the current frame name the hardware.
+item whose body runs, its call sites by position, its symbols, and the current frame name the
+hardware.
 -/
 structure Ctx where
   items : Array Resolve.Item
@@ -214,7 +227,20 @@ structure Ctx where
   ret : Option Ty
   item : Nat
   calls : Array (Std.TreeMap Pos Nat Pos.compare)
+  syms : Syms
   frame : Frame
+
+/-! The symbol of the local number `id` in the current item. Each binder has one. -/
+def Ctx.binder (c : Ctx) (id : Nat) : Nat := ((c.syms.binders[c.item]?).bind (·[id]?)).getD 0
+
+/-! The symbol of the field name at `p` in the current item. -/
+def Ctx.field (c : Ctx) (p : Pos) : Option Nat := (c.syms.fields[c.item]?).bind (·[p]?)
+
+/-! The key of a binding in a frame: the symbol of its source name, or the result role. -/
+inductive Tag where
+  | sym (n : Nat)
+  | ret
+  deriving DecidableEq, BEq, Hashable
 
 /-! A named hardware binding: its core name, its value, and the position of the binding. -/
 structure Let where
@@ -224,12 +250,12 @@ structure Let where
 
 /-!
 The names of one instantiation. `frames` numbers each frame by its parent and its field pair.
-`versions` counts the bindings of each field in each frame. `lets` holds the named bindings in
+`versions` counts the bindings of each tag in each frame. `lets` holds the named bindings in
 evaluation order. Each table grows only with the bindings that run.
 -/
 structure Naming where
-  frames : Std.HashMap (Nat × String × Field) Nat := {}
-  versions : Std.HashMap (Nat × Field) Nat := {}
+  frames : Std.HashMap (Nat × Nat × Field) Nat := {}
+  versions : Std.HashMap (Nat × Tag) Nat := {}
   lets : Array Let := #[]
 
 /-!
@@ -711,9 +737,9 @@ def conformVal (pos : Pos) (t : Ty) (v : Val) : M Val := do
 The frame of the field pair `u` and `f` inside the current frame, with its path. Two frames
 with one path get one number, so their bindings share the versions.
 -/
-def frameOf (u : String) (f : Field) : M (Path × Frame) := do
+def frameOf (u : String) (sym : Nat) (f : Field) : M (Path × Frame) := do
   let c ← read
-  let key := (c.frame.id, u, f)
+  let key := (c.frame.id, sym, f)
   let path := (Path.child c.frame.path u).push f
   let s ← get
   match s.naming.frames[key]? with
@@ -726,24 +752,26 @@ def frameOf (u : String) (f : Field) : M (Path × Frame) := do
 def inFrameOf [Runs m] (fr : Frame) (act : m α) : m α :=
   withTheReader Ctx (fun c => { c with frame := fr }) act
 
-/-! The core name `base` of the field `key` in the current frame, or a version of it. -/
-def version (key : Field) (base : Path) : M Path := do
+/-! The core name `base` of the tag `key` in the current frame, or a version of it. -/
+def version (key : Tag) (base : Path) : M Path := do
   let k := (← read).frame.id
   let v := (← get).naming.versions.getD (k, key) 0
   modify fun s => { s with naming.versions := s.naming.versions.insert (k, key) (v + 1) }
   return if v == 0 then base else base.push (.version v)
 
-/-! The core name of the source name `u` in the current frame. -/
-def fresh (u : String) : M Path := do version (.user u) (Path.child (← read).frame.path u)
+/-! The core name of the local `id` with the source name `u` in the current frame. -/
+def fresh (id : Nat) (u : String) : M Path := do
+  let c ← read
+  version (.sym (c.binder id)) (Path.child c.frame.path u)
 
 /-! Binds the hardware value `h` to the core name `path`. The result refers to the name. -/
 def bindHw (pos : Pos) (path : Path) (h : Hw) : M Val := do
   modify fun s => { s with naming.lets := s.naming.lets.push ⟨path, h, pos⟩ }
   return .hw (.mk pos h.ty (.ref path) [])
 
-/-! A binding with the source name `u`. Only a hardware value gets a core name. -/
-def named (pos : Pos) (u : String) : Val → M Val
-  | .hw h => do bindHw pos (← fresh u) h
+/-! A binding of the local `id` with the source name `u`. Only hardware gets a core name. -/
+def named (pos : Pos) (id : Nat) (u : String) : Val → M Val
+  | .hw h => do bindHw pos (← fresh id u) h
   | v => pure v
 
 /-!
@@ -752,7 +780,7 @@ binds `i` in the loop frame `i$v` and runs `act`.
 -/
 def iteration [Runs m] (pos : Pos) (i : Binder) (v : Int) (act : m α) : m α := do
   monadLift (charge pos (Value.int v).size : M Unit)
-  let (_, fr) ← monadLift (frameOf i.name.name (.int v) : M _)
+  let (_, fr) ← monadLift (do frameOf i.name.name ((← read).binder i.id) (.int v) : M _)
   inFrameOf fr do
     monadLift (bindLocal i.id ⟨some .int, false, .static (.int v)⟩ : M Unit)
     act
@@ -816,7 +844,7 @@ mutual
       | .field p b f => do
         match (← need b (← eval n b)).value with
         | .handle (.inst id path iface) =>
-          match iface.ports[f.name]? with
+          match (← read).field f.pos >>= (iface.ports[·]?) with
           | some q =>
             if q.input then return some ⟨.handle (.input id path q), true⟩
             else return some ⟨.hw (.mk p q.ty (.out path q.name) []), true⟩
@@ -890,18 +918,18 @@ mutual
       -- A call outside a body runs on static values only, so its site never names hardware.
       let site := ((ctx.calls[ctx.item]?).bind (·[p]?)).getD 0
       nested p <| inFrame none do
-        let (path, fr) ← frameOf fname.name (.call site)
+        let (path, fr) ← frameOf fname.name (ctx.syms.items.getD i 0) (.call site)
         withReader (fun c => { c with item := i, frame := fr }) do
           for (q, v) in ps.zip vs do
             let t ← typeExpr n q.ty
             charge p v.size
             let x ← if c || q.comptime then do pure (.static (← conform p t (← static p v)))
               else conformVal p t v
-            bindLocal q.name.id ⟨some t, false, ← named p q.name.name.name x⟩
+            bindLocal q.name.id ⟨some t, false, ← named p q.name.id q.name.name.name x⟩
           let rt ← typeExpr n ret
           match ← withReader (fun c => { c with ret := some rt }) (block n ip body) with
           | some (.hw h) =>
-            let ret ← version (.role .ret) (path.push (.role .ret))
+            let ret ← version .ret (path.push (.role .ret))
             return some ⟨← bindHw p ret h, false⟩
           | some v => return some ⟨v, false⟩
           | none => fail .S010 p s!"`{fname.name}` ends without `return`"
@@ -955,7 +983,7 @@ mutual
         let x ← match t with
           | some t => conformVal p t o.value
           | none => pure o.value
-        let x ← named p b.name.name x
+        let x ← named p b.id b.name.name x
         bindLocal b.id ⟨t <|> x.ty?, m, x⟩
         return none
       | .assign p target v => do
@@ -968,7 +996,7 @@ mutual
           | none =>
             if sameForm slot.value o.value then pure o.value
             else fail .S010 p s!"expected {slot.value.text}, but the value is {o.value.text}"
-        bindLocal id { slot with value := ← named p x y }
+        bindLocal id { slot with value := ← named p id x y }
         return none
       | .ret p v => do
         let some rt := (← read).ret | fail .S006 p "only a function has `return`"
@@ -1012,63 +1040,136 @@ mutual
   termination_by (b, 1)
 end
 
-/-! The call sites of a body, in position order. -/
-def callsExpr : Resolve.Expr → StateM (List Pos) Unit
+/-!
+The scan of a body holds the names that elaboration looks up. These are the positions of the
+call nodes, the binders with their local numbers, and the field names with their positions.
+-/
+structure Scan where
+  calls : List Pos := []
+  binders : List (Nat × String) := []
+  fields : List (Pos × String) := []
+
+abbrev ScanM := StateM Scan
+
+def scanBinder (b : Binder) : ScanM Unit :=
+  modify fun s => { s with binders := (b.id, b.name.name) :: s.binders }
+
+def scanExpr : Resolve.Expr → ScanM Unit
   | .call p f xs => do
-    modify (p :: ·)
-    callsExpr f
-    for x in xs do callsExpr x
-  | .unary _ _ a | .field _ a _ => callsExpr a
-  | .binary _ _ l r => do callsExpr l; callsExpr r
-  | .cond _ c y n => do callsExpr c; callsExpr y; callsExpr n
+    modify fun s => { s with calls := p :: s.calls }
+    scanExpr f
+    for x in xs do scanExpr x
+  | .field _ a f => do
+    modify fun s => { s with fields := (f.pos, f.name) :: s.fields }
+    scanExpr a
+  | .unary _ _ a => scanExpr a
+  | .binary _ _ l r => do scanExpr l; scanExpr r
+  | .cond _ c y n => do scanExpr c; scanExpr y; scanExpr n
   | .index _ b xs => do
-    callsExpr b
-    for x in xs do callsExpr x
+    scanExpr b
+    for x in xs do scanExpr x
   | .num .. | .bool .. | .str .. | .name .. => pure ()
 
-def callsType : Resolve.TypeExpr → StateM (List Pos) Unit
+def scanType : Resolve.TypeExpr → ScanM Unit
   | .name .. => pure ()
   | .index _ b xs => do
-    callsType b
-    for x in xs do callsExpr x
+    scanType b
+    for x in xs do scanExpr x
 
 mutual
-  def callsStmt : Resolve.Stmt → StateM (List Pos) Unit
-    | .local _ _ _ ty v => do
-      if let some t := ty then callsType t
-      callsExpr v
-    | .assign _ t v | .connect _ t v => do callsExpr t; callsExpr v
-    | .reg _ _ ty i => do callsType ty; callsExpr i
-    | .wire _ _ ty | .input _ _ ty | .output _ _ ty => callsType ty
-    | .inst _ _ _ _ xs => for x in xs do callsExpr x
-    | .ret _ v => v.forM callsExpr
+  def scanStmt : Resolve.Stmt → ScanM Unit
+    | .local _ _ b ty v => do
+      if let some t := ty then scanType t
+      scanExpr v
+      scanBinder b
+    | .assign _ t v | .connect _ t v => do scanExpr t; scanExpr v
+    | .reg _ b ty i => do scanType ty; scanExpr i; scanBinder b
+    | .wire _ b ty | .input _ b ty | .output _ b ty => do scanType ty; scanBinder b
+    | .inst _ b _ _ xs => do
+      for x in xs do scanExpr x
+      scanBinder b
+    | .ret _ v => v.forM scanExpr
     | .ctIf _ c y n => do
-      callsExpr c
-      callsStmts y
-      if let some n := n then callsStmts n
-    | .ctFor _ _ lo hi b => do callsExpr lo; callsExpr hi; callsStmts b
-    | .block _ b => callsStmts b
-    | .expr _ v => callsExpr v
+      scanExpr c
+      scanStmts y
+      if let some n := n then scanStmts n
+    | .ctFor _ i lo hi b => do scanExpr lo; scanExpr hi; scanBinder i; scanStmts b
+    | .block _ b => scanStmts b
+    | .expr _ v => scanExpr v
 
-  def callsStmts (ss : List Resolve.Stmt) : StateM (List Pos) Unit := do
-    for s in ss do callsStmt s
+  def scanStmts (ss : List Resolve.Stmt) : ScanM Unit := do
+    for s in ss do scanStmt s
 end
+
+/-! The scan of an item. Only the call sites of the body count for the call frames. -/
+def scanItem (it : Resolve.Item) : Scan :=
+  let go : ScanM Unit := match it with
+    | .fn _ _ _ ps _ b => do
+      scanStmts b
+      let calls := (← get).calls
+      for q in ps do
+        scanBinder q.name
+        scanType q.ty
+      modify fun s => { s with calls }
+    | .module _ _ ps ds b => do
+      scanStmts b
+      let calls := (← get).calls
+      for q in ps do
+        scanBinder q.name
+        scanType q.ty
+      for d in ds do scanBinder d
+      modify fun s => { s with calls }
+    | .const .. => pure ()
+  (go.run {}).2
 
 /-!
 The number `k` of each call node in the body of an item: its index among the call nodes of
 the body, in position order. Section 7.3 names a call frame with it.
 -/
-def callSites (it : Resolve.Item) : Std.TreeMap Pos Nat Pos.compare :=
-  let body := match it with
-    | .fn _ _ _ _ _ b | .module _ _ _ _ b => b
-    | .const .. => []
-  let ((), ps) := (callsStmts body).run []
-  let sorted : Std.TreeMap Pos Unit Pos.compare := ps.foldl (fun m p => m.insert p ()) {}
+def callSites (sc : Scan) : Std.TreeMap Pos Nat Pos.compare :=
+  let sorted : Std.TreeMap Pos Unit Pos.compare := sc.calls.foldl (fun m p => m.insert p ()) {}
   sorted.keys.zipIdx.foldl (fun m (p, k) => m.insert p k) {}
+
+def itemName : Resolve.Item → String
+  | .const _ n .. | .fn _ _ n .. | .module _ n .. => n.name
+
+/-!
+The symbols of the items. The text table runs once for each elaboration, in time linear in
+the source up to a logarithmic factor, before the fuel counts.
+-/
+def symbols (items : Array Resolve.Item) (scans : Array Scan) : Syms := Id.run do
+  let mut table : Std.HashMap String Nat := {}
+  let intern := fun (t : Std.HashMap String Nat) (x : String) =>
+    match t[x]? with
+    | some k => (t, k)
+    | none => (t.insert x t.size, t.size)
+  let mut names := #[]
+  for it in items do
+    let (t, k) := intern table (itemName it)
+    table := t
+    names := names.push k
+  let mut binders := #[]
+  let mut fields := #[]
+  for sc in scans do
+    let size := sc.binders.foldl (fun m (id, _) => max m (id + 1)) 0
+    let mut arr := Array.replicate size 0
+    for (id, x) in sc.binders do
+      let (t, k) := intern table x
+      table := t
+      arr := arr.set! id k
+    let mut fm : Std.TreeMap Pos Nat Pos.compare := {}
+    for (p, x) in sc.fields do
+      let (t, k) := intern table x
+      table := t
+      fm := fm.insert p k
+    binders := binders.push arr
+    fields := fields.push fm
+  return ⟨binders, fields, names⟩
 
 /-! The context and the state of an elaboration with the budget `budget`. -/
 def start (budget : Budget) (items : Array Resolve.Item) : Ctx × St :=
-  (⟨items, budget.depth, 0, none, 0, items.map callSites, ⟨none, 0⟩⟩,
+  let scans := items.map scanItem
+  (⟨items, budget.depth, 0, none, 0, scans.map callSites, symbols items scans, ⟨none, 0⟩⟩,
    ⟨budget.fuel, Array.replicate items.size .notStarted, {}, {}⟩)
 
 /-! Runs `act` with the budget. The result has the used fuel. -/

@@ -343,8 +343,9 @@ def deep : String :=
 /-!
 A chain of 300 acyclic constants. `eval` nests the 300 constants. The top selection nests one
 level more, as section 11.3 states: the depth 301 passes, and 300 gives `S015`. The top adds
-19 units: its argument 2, the `instance` charge 1, the parameter type 9, its conversion 6, and
-its empty body 1.
+59 units. Its argument charges 2, the `instance` charge 1, and the decimal form 1. Its
+serialization charges 34 bytes and `Top$5` 5 bytes. The parameter type charges 9, its
+conversion 6, and its body 1.
 -/
 def chain : String := Id.run do
   let mut s := "const C0: Nat = 0;\n"
@@ -355,15 +356,16 @@ def chain : String := Id.run do
 #guard exact chain "C299" 2097
 #guard out chain "C299" (depth := 299) == "S015 2:17"
 #guard top chain "Top(5)" (depth := 301) ==
-  s!"total {cost chain "C299" + 19}\nTop$5 {cost chain "C299" + 16}\n"
+  s!"total {cost chain "C299" + 59}\nTop$5 {cost chain "C299" + 16}\n"
 #guard top chain "Top(5)" (depth := 300) == "S015 2:17"
 
 /-!
-`cost` covers the top selection: its arguments with their `instance` charge, then its
-instantiation with its parameter types and its body.
+`cost` covers the top selection: its arguments with their `instance` charge, its serialization
+of 50 bytes, and its emitted name of 12 bytes. Then its instantiation charges its parameter types
+and its body.
 -/
 def counter : String := "module Counter(comptime W: Nat, comptime E: Bool) {\n}"
-#guard top counter "Counter(8, true)" == "total 9\nCounter$8$1b 3\n"
+#guard top counter "Counter(8, true)" == "total 72\nCounter$8$1b 3\n"
 #guard top counter "Counter(8, true)" (fuel := 5) == "S015 1:1"
 #guard top counter "Counter(-1, true)" == "S012 1:1"
 #guard top counter "Counter(8, 1)" == "S010 1:1"
