@@ -4,6 +4,7 @@ members = [
   "crates/backend-circt",
   "crates/core-ir",
   "crates/driver",
+  "crates/elab",
   "crates/parse",
   "crates/resolve",
   "crates/typeck",
@@ -16,7 +17,7 @@ edition = "2024"
 license = "Apache-2.0"
 
 [workspace.metadata.layers]
-order = ["core-ir", "syntax", "parse", "resolve", "typeck", "backend-circt", "driver"]
+order = ["core-ir", "syntax", "parse", "resolve", "typeck", "elab", "backend-circt", "driver"]
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
