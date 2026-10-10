@@ -108,6 +108,8 @@ import Silicon.Source.Print
 import Silicon.Source.Test.Print
 import Silicon.Source.Parse
 import Silicon.Source.Test.Parse
+import Silicon.Source.Resolve
+import Silicon.Source.Test.Resolve
 import Silicon.Source.Cli
 import Silicon.Main
 
