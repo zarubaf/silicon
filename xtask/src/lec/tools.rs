@@ -6,7 +6,7 @@ use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
 
-use super::mlir::{self, WRAPPER};
+use super::mlir;
 
 /// The tools that the flow runs. The development shell has each of them.
 pub const REQUIRED: [&str; 3] = ["circt-opt", "circt-verilog", "circt-lec"];
@@ -139,8 +139,9 @@ pub fn compare(lean: &str, rust: &str, top: &str) -> Result<Verdict> {
         files.push(path);
     }
     let z3 = std::env::var(Z3).with_context(|| format!("`{Z3}` is not set"))?;
-    let c1 = format!("--c1={WRAPPER}");
-    let c2 = format!("--c2={WRAPPER}");
+    let wrapper = backend_circt::names::lec_wrapper(top);
+    let c1 = format!("--c1={wrapper}");
+    let c2 = format!("--c2={wrapper}");
     let libs = format!("--shared-libs={z3}");
     let stdout = run(
         "circt-lec",
@@ -205,10 +206,7 @@ mod tests {
         let sv = verilog(&model).unwrap();
         let rust = import(&sv, &name).unwrap();
         assert_eq!(compare(&model, &rust, &name).unwrap(), Verdict::Equal);
-        let swapped = sv.replace(
-            "silicon_reg_mem[r0_addr]",
-            "silicon_reg_mem[{r0_addr[0], r0_addr[3:1]}]",
-        );
+        let swapped = sv.replace("reg$$mem[r0_addr]", "reg$$mem[{r0_addr[0], r0_addr[3:1]}]");
         assert_ne!(swapped, sv);
         let rust = import(&swapped, &name).unwrap();
         assert!(differs(&compare(&model, &rust, &name).unwrap()));
@@ -272,10 +270,7 @@ mod tests {
     fn an_initial_value_fails_the_import() {
         let sv = verilog(&lowered(REG_STATE)).unwrap();
         import(&sv, "top").unwrap();
-        let mutated = sv.replace(
-            "reg  [7:0] silicon_reg_r;",
-            "reg  [7:0] silicon_reg_r = 8'h0;",
-        );
+        let mutated = sv.replace("reg  [7:0] reg$$r;", "reg  [7:0] reg$$r = 8'h0;");
         assert_ne!(mutated, sv);
         let error = import(&mutated, "top").unwrap_err().to_string();
         assert!(error.contains("initial value"), "{error}");

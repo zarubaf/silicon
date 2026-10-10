@@ -265,7 +265,7 @@ fn verilog_prints_the_counter() -> Test {
         "",
     )?;
     assert!(text(&out).contains("module counter("), "{}", text(&out));
-    assert!(text(&out).contains("silicon_reg_r"), "{}", text(&out));
+    assert!(text(&out).contains("reg$$r"), "{}", text(&out));
     assert_eq!(out.status.code(), Some(0));
     Ok(())
 }
@@ -274,10 +274,10 @@ fn verilog_prints_the_counter() -> Test {
 fn verilog_instantiates_each_memory_without_a_body() -> Test {
     let out = silicon(&["verilog"], &file("v_mem.sil", MEMORY.as_bytes())?, "")?;
     let sv = text(&out);
-    assert!(sv.contains("silicon_mem_12x8_r2w1 m ("), "{sv}");
-    assert!(sv.contains("silicon_mem_12x8_r1w0 n ("), "{sv}");
-    assert!(!sv.contains("module silicon_mem_"), "{sv}");
-    assert!(!sv.contains("silicon_reg_mem"), "{sv}");
+    assert!(sv.contains("mem$$12x8_r2w1 m ("), "{sv}");
+    assert!(sv.contains("mem$$12x8_r1w0 n ("), "{sv}");
+    assert!(!sv.contains("module mem$$"), "{sv}");
+    assert!(!sv.contains("reg$$mem"), "{sv}");
     assert_eq!(out.status.code(), Some(0));
     Ok(())
 }
@@ -293,17 +293,10 @@ fn verilog_models_prints_one_model_per_configuration() -> Test {
     let modules: Vec<&str> = sv.lines().filter(|l| l.starts_with("module ")).collect();
     assert_eq!(
         modules,
-        [
-            "module silicon_mem_12x8_r1w0(",
-            "module silicon_mem_12x8_r2w1("
-        ],
+        ["module mem$$12x8_r1w0(", "module mem$$12x8_r2w1("],
         "{sv}"
     );
-    assert_eq!(
-        sv.matches("reg [15:0][7:0] silicon_reg_mem;").count(),
-        2,
-        "{sv}"
-    );
+    assert_eq!(sv.matches("reg [15:0][7:0] reg$$mem;").count(), 2, "{sv}");
     assert_eq!(out.status.code(), Some(0));
     let out = silicon(
         &["verilog", "--models"],
@@ -337,7 +330,7 @@ fn circt_verilog_reads_the_design_and_the_models() -> Test {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(stdout.contains("hw.module @top("), "{stdout}");
-    assert!(stdout.contains("silicon_reg_mem"), "{stdout}");
+    assert!(stdout.contains("reg$$mem"), "{stdout}");
     Ok(())
 }
 

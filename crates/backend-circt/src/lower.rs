@@ -5,9 +5,9 @@
 //! order of the canonical text (spec section 3.3), and each `read` form gets
 //! the next read port of its memory in that order (spec section 7.3).
 //!
-//! The value names cannot collide. A user name has no `.` and does not start
-//! with `silicon_` (rule `E002`), a register name is a backend name from the
-//! module `names`, and a temporary value has a number as name.
+//! The value names cannot collide. A user name has no `.` (rule `E002`), a
+//! register name is a backend name (spec section 3.4), and a temporary value
+//! has a number as name.
 
 use core_ir::ast::{BinOp, UnOp};
 use core_ir::typed::{Callee, ClockPort, Design, Expr, Module, Port, Reg, address_width};
