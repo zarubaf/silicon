@@ -230,5 +230,112 @@ theorem infer_graph_congr (m m' : Module) (children children' : String → Optio
   simp only [infer, visits, size, inputs, ports]
   rfl
 
+/-! Hash sets keep each search linear in the nodes and edges that it reaches. -/
+private def indexedFresh (seen : Std.HashSet Node) (pending : List Node) :
+    Std.HashSet Node × List Node :=
+  pending.foldl (fun (seen, fresh) n =>
+    if seen.contains n then (seen, fresh) else (seen.insert n, n :: fresh)) (seen, [])
+
+private def indexedVisit (g : Std.HashMap Node (List Node)) :
+    Nat → List Node → Std.HashSet Node → Std.HashSet Node
+  | 0, _, seen => seen
+  | fuel + 1, pending, seen =>
+    let (seen, fresh) := indexedFresh seen pending
+    let next := (fresh.flatMap fun n => (g[n]?).getD []).filter fun n => !seen.contains n
+    if next.isEmpty then seen else indexedVisit g fuel next seen
+
+private theorem indexedFresh_foldl (pending fresh : List Node) (seen : Std.HashSet Node)
+    (x : Node) :
+    let out := pending.foldl (fun (seen, fresh) n =>
+      if seen.contains n then (seen, fresh) else (seen.insert n, n :: fresh)) (seen, fresh)
+    (out.1.contains x = true ↔ seen.contains x = true ∨ x ∈ pending) ∧
+      (x ∈ out.2 ↔ x ∈ fresh ∨ x ∈ pending ∧ seen.contains x = false) := by
+  induction pending generalizing seen fresh with
+  | nil => simp
+  | cons n pending ih =>
+    simp only [List.foldl_cons]
+    by_cases hn : seen.contains n = true
+    · simp only [hn, ite_true]
+      refine ⟨by rw [(ih fresh seen).1]; grind, ?_⟩
+      rw [(ih fresh seen).2]
+      grind
+    · simp only [hn, Bool.false_eq_true, ite_false]
+      refine ⟨?_, ?_⟩
+      · rw [(ih (n :: fresh) (seen.insert n)).1, Std.HashSet.contains_insert]
+        grind
+      · rw [(ih (n :: fresh) (seen.insert n)).2, Std.HashSet.contains_insert]
+        grind
+
+private theorem indexedVisit_contains (g : List (Node × List Node)) (fuel : Nat)
+    (pending pending' seen : List Node) (index : Std.HashSet Node)
+    (hp : ∀ x, x ∈ pending' ↔ x ∈ pending)
+    (hs : ∀ x, index.contains x = true ↔ x ∈ seen) (x : Node) :
+    (indexedVisit (firstIndex g) fuel pending' index).contains x = true ↔
+      x ∈ visit g fuel pending seen := by
+  induction fuel generalizing pending pending' seen index with
+  | zero => simpa [indexedVisit, visit] using hs x
+  | succ fuel ih =>
+    have fresh := fun y => indexedFresh_foldl pending' [] index y
+    simp only [List.not_mem_nil, false_or] at fresh
+    have seen' : ∀ y, (indexedFresh index pending').1.contains y = true ↔
+        y ∈ updated seen pending := by
+      intro y
+      rw [indexedFresh, (fresh y).1, mem_updated, hs, hp]
+    have next : ∀ y, y ∈ ((indexedFresh index pending').2.flatMap
+        fun n => ((firstIndex g)[n]?).getD []).filter
+          (fun n => !(indexedFresh index pending').1.contains n) ↔
+        y ∈ frontier g seen pending := by
+      intro y
+      simp only [frontier, List.mem_filter, List.mem_flatMap, mem_fresh, firstIndex_lookup,
+        Bool.not_eq_true', List.not_mem_nil, false_or]
+      rw [show ((indexedFresh index pending').1.contains y = false) ↔
+          ((updated seen pending).contains y = false) by
+        rw [← Bool.not_eq_true, ← Bool.not_eq_true, seen' y, List.contains_iff_mem]]
+      constructor
+      · rintro ⟨⟨n, hn, hy⟩, hu⟩
+        rw [indexedFresh, (fresh n).2, hp, ← Bool.not_eq_true, hs] at hn
+        exact ⟨⟨n, hn, hy⟩, hu⟩
+      · rintro ⟨⟨n, hn, hy⟩, hu⟩
+        refine ⟨⟨n, ?_, hy⟩, hu⟩
+        rw [indexedFresh, (fresh n).2, hp, ← Bool.not_eq_true, hs]
+        exact hn
+    change (indexedVisit (firstIndex g) (fuel + 1) pending' index).contains x = true ↔
+      x ∈ (if (frontier g seen pending).isEmpty then updated seen pending
+        else visit g fuel (frontier g seen pending) (updated seen pending))
+    simp only [indexedVisit]
+    have empty : (((indexedFresh index pending').2.flatMap
+        fun n => ((firstIndex g)[n]?).getD []).filter
+          (fun n => !(indexedFresh index pending').1.contains n)).isEmpty =
+        (frontier g seen pending).isEmpty := by
+      apply Bool.eq_iff_iff.mpr
+      simp only [List.isEmpty_iff, List.eq_nil_iff_forall_not_mem, next]
+    rw [empty]
+    split
+    · exact seen' x
+    · exact ih _ _ _ _ next seen'
+
+private def indexedInfer (m : Module) (children : String → Option Deps) : Deps :=
+  let g := graph m children
+  let index := firstIndex g
+  m.ports.filterMap fun p =>
+    if p.dir == .output then
+      let reached := indexedVisit index (g.length + 1) [.name p.name] {}
+      some (p.name, (inputs m).filter fun n => reached.contains (.name n))
+    else none
+
+@[csimp] private theorem infer_indexed : infer = indexedInfer := by
+  funext m children
+  simp only [infer, indexedInfer]
+  congr
+  funext p
+  split
+  · congr 2
+    apply List.filter_congr
+    intro n _
+    apply Bool.eq_iff_iff.mpr
+    rw [indexedVisit_contains _ _ [.name p.name] [.name p.name] [] {} (fun _ => Iff.rfl)
+      (by simp), List.contains_iff_mem]
+  · rfl
+
 end Deps
 end Silicon.Core

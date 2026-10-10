@@ -2231,15 +2231,23 @@ private theorem hierarchyDiagnosticWith_ranked (d : Design) (hn : Rules.Names d)
       exact ranked _ row _ edge)
   simp only [no, Bool.false_eq_true, ite_false]
 
+/-! One dependency index serves the graphs of all modules. -/
 private def e008With (d : Design)
     (certify : (g : Typed.Graph) → GraphSCC.Certificate g) : List Error :=
+  let index := Typed.dependencyIndex d d.depsFuel
   (modules d).flatMap fun m =>
-    let g := Deps.graph m (Typed.designDeps d d.depsFuel)
+    let g := Deps.graph m (fun name => index[name]?)
     cycleDiagnosticWith m g (certify g).label
 
 private theorem e008With_eq (d : Design) (hn : Rules.Names d) (hr : Rules.Resolved d)
     (ho : Rules.Outputs d) (certify : (g : Typed.Graph) → GraphSCC.Certificate g) :
     e008With d certify = e008 d := by
+  have children : (fun name => (Typed.dependencyIndex d d.depsFuel)[name]?) =
+      Typed.designDeps d d.depsFuel := funext (Typed.dependencyIndex_lookup d _)
+  change ((modules d).flatMap fun m =>
+    let g := Deps.graph m (fun name => (Typed.dependencyIndex d d.depsFuel)[name]?)
+    cycleDiagnosticWith m g (certify g).label) = _
+  rw [children]
   apply flatMap_congr
   intro m hm
   dsimp only
