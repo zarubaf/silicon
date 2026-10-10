@@ -92,11 +92,12 @@ pub enum Target {
 ///
 /// The map from a position to a target holds each name token of the AST: a declaration
 /// points to itself, and a use points to its declaration or to the prelude. The AST is still
-/// the AST of the parse, so it keeps the syntax depth of the parse. A pass that recurses over
-/// it runs through `parse::on_stack` with [`Resolved::depth`]. Dropping it is safe on any
-/// stack.
+/// the AST of the parse, moved out of it: the lossless tree is gone. It keeps the syntax depth
+/// of the parse. A pass that recurses over it runs through `parse::on_stack` with
+/// [`Resolved::depth`]. Dropping it is safe on any stack.
 pub struct Resolved {
-    parse: Parse,
+    ast: Vec<Item>,
+    depth: usize,
     decls: Vec<Decl>,
     items: BTreeMap<String, DeclId>,
     names: BTreeMap<Pos, Target>,
@@ -106,13 +107,13 @@ impl Resolved {
     /// The items of the file.
     #[must_use]
     pub fn ast(&self) -> &[Item] {
-        self.parse.ast().unwrap_or_default()
+        &self.ast
     }
 
     /// The syntax depth of the parse, which sizes the stack of each pass over the AST.
     #[must_use]
     pub fn depth(&self) -> usize {
-        self.parse.depth()
+        self.depth
     }
 
     /// The declaration of an id from this value.
@@ -140,13 +141,12 @@ impl Resolved {
 /// Returns `Failed::Parse` if the parse has an error, `Failed::Names` for `S002` or `S003`,
 /// and `Failed::Stack` if the machine cannot give the stack for the syntax depth.
 pub fn resolve(parse: Parse) -> Result<Resolved, Failed> {
-    let Some(ast) = parse.ast() else {
-        return Err(Failed::Parse(parse));
-    };
-    let table = parse::on_stack(parse.depth(), || walk::run(ast)).map_err(Failed::Stack)?;
+    let (ast, depth) = parse.into_ast().map_err(Failed::Parse)?;
+    let table = parse::on_stack(depth, || walk::run(&ast)).map_err(Failed::Stack)?;
     let table = table.map_err(Failed::Names)?;
     Ok(Resolved {
-        parse,
+        ast,
+        depth,
         decls: table.decls,
         items: table.items,
         names: table.names,
