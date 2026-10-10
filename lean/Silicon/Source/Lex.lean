@@ -141,6 +141,9 @@ def push (tokens : List Token) : Option Token → Except (List Token) (List Toke
 /-! The default of the syntax depth. -/
 def defaultSyntaxDepth : Nat := 4096
 
+/-! The largest syntax depth. The runtime stack of the executable is tested up to it. -/
+def maxSyntaxDepth : Nat := 65536
+
 /-! The three kinds of brackets count as one depth, in the lexer and in the parser. -/
 def opening (t : Token) : Bool :=
   t.kind == .symbol "(" || t.kind == .symbol "[" || t.kind == .symbol "{"
