@@ -126,6 +126,17 @@ def digests : String :=
    "M$0h" ++ Names.sha16 "(instantiation root M ((uint 8 2)))", "T"]
 
 /-!
+An emitted name is taken when its instantiation starts. A descendant that shares the emitted name
+of an active ancestor is thus `S019` at its own `instance` statement.
+-/
+def nested : String :=
+  "module M(comptime x: UInt[8]) {\n" ++
+  "  comptime if (x == UInt[8](1)) { instance a = M(UInt[8](0)); }\n}\n" ++
+  "module T() {\n  instance b = M(UInt[8](1));\n}\n"
+#guard (cost nested "T").startsWith "total"
+#guard cost nested "T" (digest := collide) == "S019 2:35"
+
+/-!
 A serialization charges its length in bytes, and an emitted name too. A module with a long name
 thus pays for each new instantiation, and 1000 of them fail with `S015` under a small fuel. A
 short name passes with the same fuel.
