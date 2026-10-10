@@ -277,6 +277,9 @@ sizes 2. A use of a done constant charges only its node.
 #guard out "" "0 >> 100000000000" 20 == "(int 0)"
 #guard out "" "1 >> 100000000000" 20 == "(int 0)"
 #guard out "" "-1 >> 100000000000" 20 == "(int -1)"
+
+/-! A right shift reads its operand in full, so it pays the size of its operand. -/
+#guard exact "" "-(1 << 6400) >> 6399" 312
 #guard out "" "UInt[8](1) << 100000000000" 20 == "(uint 8 0)"
 #guard out "" "SInt[8](-1) >> 100000000000" 20 == "(sint 8 -1)"
 #guard out "" "UInt[65536](1) << 100000000000" 20 == "S015 1:1"
