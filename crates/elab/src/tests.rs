@@ -640,3 +640,14 @@ fn a_deep_expression_keeps_the_depth_of_its_parse() {
         assert_eq!(v.serialize(), value);
     }
 }
+
+/// A number literal pays the size of its value before it copies the value, and the pass
+/// before the evaluation converts its digits. A literal of 19,000 digits has 987 words.
+#[test]
+fn a_literal_pays_before_its_copy() {
+    let lit = "9".repeat(19_000);
+    assert_eq!(out("", &lit, 1, 1000), "S015 1:1");
+    exact("", &lit, 988);
+    let src = format!("comptime fn f() -> Int {{ return {lit}; }}");
+    assert_eq!(out(&src, "f()", 10, 1000), "S015 1:33");
+}
