@@ -1075,3 +1075,10 @@ fn a_deep_result_is_safe_on_the_stack_of_a_test_thread() {
         drop(parsed);
     }
 }
+
+#[test]
+fn into_ast_gives_the_items_and_the_depth_or_the_parse() {
+    let (items, depth) = parse_with_depth("const A: Nat = 1;", 7).into_ast().unwrap();
+    assert_eq!((items.len(), depth), (1, 7));
+    assert!(parse("const A: Nat = ;").into_ast().is_err());
+}
