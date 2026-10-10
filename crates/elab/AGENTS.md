@@ -16,13 +16,13 @@ The elaborator core keeps to the Rust subset of design section 4.5: plain owned 
 - The digest equals the test vectors of FIPS 180-4. Check: `cargo nextest run -p elab`.
 - The evaluator charges each unit of `Source.Eval` in the same order and at the same node. The charge comes before the work, and each operation keeps its work and its memory in its charge. Thus the value, the used fuel, and the code and the position of the first error equal those of Lean. Check: `cargo nextest run -p elab` and the comparison with `silicon-check eval`.
 - An error message prints at most 256 bits of an integer and 64 characters of a string. Check: `cargo nextest run -p elab`.
-- The evaluator recurses, so it runs through `parse::on_stack`. The stack has room for the nesting depth. Check: `cargo nextest run -p elab`.
+- The evaluator recurses, so it runs through `parse::on_stack`. Each thread runs a group of nesting levels with a stack for the height of the AST, so any nesting depth is safe. A result that refers to a local or a constant copies nothing until a copy pays for it. Check: `cargo nextest run -p elab`.
 - The crate uses no `HashMap` and no `HashSet`. Check: `just clippy`.
 - Non-test code has no `unwrap`, no `expect`, and no panic on user input. Check: `just clippy`.
 
 ## Dependencies
 
-This crate uses `typeck` for the checked AST, `resolve` for the targets of names, `parse` for the AST and the front-end thread, and `core-ir` for the operations on finite values. The `driver` calls it.
+This crate reads a `Resolved` that passed `typeck`. It uses `resolve` for the targets of names, `parse` for the AST and the front-end thread, and `core-ir` for the operations on finite values. The tests use `typeck`. The `driver` calls it.
 
 ## How to test
 

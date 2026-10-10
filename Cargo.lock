@@ -243,6 +243,8 @@ dependencies = [
  "core-ir",
  "num-bigint",
  "parse",
+ "resolve",
+ "typeck",
 ]
 
 [[package]]
