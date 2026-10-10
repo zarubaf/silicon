@@ -144,6 +144,52 @@ A machine-readable map from source names to full identities, emitted names, and 
 
 A deterministic compiler output that holds the meaning of a package, for example its elaborated core IR. Proofs and synthesis depend on it.
 
+## Front end
+
+### front end
+
+The compiler stages from a `.si` file to core IR: `syntax`, `parse`, `resolve`, `typeck`, and `elab`.
+
+### reference elaborator
+
+The Lean function that elaborates a `.si` file and a top selection into core IR. Its output defines the meaning of a source design. `silicon-check validate` compares each Rust elaboration with it.
+
+### top selection
+
+The top module of a build and its static arguments, for example `Counter(8)`.
+
+### static value
+
+A value that elaboration knows completely, for example an integer, a Boolean, a string, or a type. A signal never becomes a static value.
+
+### comptime
+
+The keyword that marks a static parameter, a static function, a static branch, or a static loop. Elaboration executes these constructs.
+
+### generic pre-check
+
+The checks of `typeck` that need no static values. They run on each item, also on an item that no instantiation uses.
+
+### budget
+
+A limit of one elaboration: the fuel, which all parts of the elaboration share, or the nesting depth. An elaboration that goes above a budget fails with an error.
+
+### cost unit
+
+The unit of fuel. Elaboration charges cost units for each expression node and each statement. It also charges the size of each static value that it reads or makes, and each core node that it emits. This cost model is normative.
+
+### structural path
+
+The core IR name that elaboration gives to a declaration. It contains the enclosing loop values and call sites. It contains no byte offsets.
+
+### slice
+
+A set of language features that one milestone adds. A slice closes the full oracle loop before the next slice starts.
+
+### source vector
+
+An input line or an output line of a top module in source terms: source port names and source values.
+
 ## Process
 
 ### architecture review
