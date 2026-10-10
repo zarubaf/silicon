@@ -102,6 +102,11 @@ fn resource(kind: Kind) -> Option<&'static str> {
 }
 
 impl<'a> Walker<'a> {
+    /// What the name token at a position points to.
+    fn target(&self, pos: Pos) -> Option<Target> {
+        self.resolved.target(pos)
+    }
+
     fn tick(&mut self) -> usize {
         self.seq += 1;
         self.seq
@@ -134,7 +139,7 @@ impl<'a> Walker<'a> {
     }
 
     fn prelude_type(&self, pos: Pos) -> Option<Prelude> {
-        match self.resolved.target(pos) {
+        match self.target(pos) {
             Some(Target::Prelude(p)) if p.is_type() => Some(p),
             _ => None,
         }
@@ -156,7 +161,7 @@ impl<'a> Walker<'a> {
 
     /// A name. A type name has no index here. A resource in a static position is `S005`.
     fn name(&mut self, is_static: bool, pos: Pos, name: &str) {
-        match self.resolved.target(pos) {
+        match self.target(pos) {
             Some(Target::Prelude(p)) if p.is_type() => {
                 self.arity(pos, &format!("`{name}`"), type_arity(p), 0);
             }
@@ -176,7 +181,7 @@ impl<'a> Walker<'a> {
     /// Checks the arity of a call. The result tells which arguments are static positions.
     fn callee(&mut self, pos: Pos, callee: &Expr, got: usize) -> Callee<'a> {
         if let Expr::Name { pos: at, name } = callee {
-            match self.resolved.target(*at) {
+            match self.target(*at) {
                 Some(Target::Decl(id)) => {
                     if let Some(Sig::Fn(flags)) = self.sigs.get(&id) {
                         self.arity(pos, &format!("`{name}`"), flags.len(), got);
@@ -333,7 +338,7 @@ impl<'a> Walker<'a> {
                 pos, module, args, ..
             } => {
                 self.placement(owner, *pos, "instance");
-                if let Some(Target::Decl(id)) = self.resolved.target(module.pos)
+                if let Some(Target::Decl(id)) = self.target(module.pos)
                     && let Some(Sig::Module(want)) = self.sigs.get(&id)
                 {
                     let want = *want;
