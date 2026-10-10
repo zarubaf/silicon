@@ -240,6 +240,17 @@ def calls (n : Nat) : String := String.join (List.replicate n "f(") ++ "x" ++ ""
 #guard fails ("const N: T[" ++ chain 65 ++ "] = 1;") .S001 1 12
 #guard ex (parens 1000) == "error S001 1:950"
 
+/-!
+The parse is linear. A quadratic look ahead makes these inputs too slow for the build. Each
+statement starts with a name or a `(`, and nests no deeper than the limit.
+-/
+def body (n : Nat) (s : String) : String :=
+  "fn f() -> T {\n" ++ String.join (List.replicate n s) ++ "}"
+#guard (parseSource (body 20000 "x;\n")).toBool
+#guard (parseSource (body 20000 "(x);\n")).toBool
+#guard (parseSource (body 10000 "x.a = (f(y, z));\n")).toBool
+#guard ex (parens 20000) == "error S001 1:19950"
+
 /-! The block depth limit: the body and 63 nested blocks pass, and one more fails at its `{`. -/
 def blocks (n : Nat) : String := "".pushn '{' n ++ "".pushn '}' n
 #guard !((st (blocks 63)).startsWith "error")

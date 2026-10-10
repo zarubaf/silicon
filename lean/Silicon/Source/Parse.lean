@@ -28,6 +28,11 @@ bracket. At a statement that starts with a name, it skips `.` with a name or a n
 also skips a `[` up to its matching bracket. Then it looks for `=` or `:=`. Both scans count
 brackets of the three kinds as one depth.
 
+The parse is linear in the number of tokens. Before the parse, one pass finds the matching
+bracket of each opening bracket. It also records if a `,` comes directly in that bracket.
+Thus the look ahead at `(` takes constant time. The look ahead at a name jumps over each
+bracket, so it reads each token of its place only once.
+
 `@` followed by another name than a builtin is `S001` at that name: no slice has that syntax.
 A module parameter without `comptime` is `S001` at its name, and with `mut` it is `S001` at
 `mut`: the v0.1 grammar has only `comptime` module parameters. At the end of the file, the
@@ -61,8 +66,42 @@ namespace Silicon.Source.Parse
 
 open Lex
 
-/-! The parser reads the token array and keeps the index of the next token. -/
-abbrev P := ReaderT (Array Token) (StateT Nat (Except Error))
+def isSym (s : String) (t : Token) : Bool := t.kind == .symbol s
+
+def isKw (w : String) (t : Token) : Bool := t.kind == .keyword w
+
+def opening (t : Token) : Bool := isSym "(" t || isSym "[" t || isSym "{" t
+
+def closing (t : Token) : Bool := isSym ")" t || isSym "]" t || isSym "}" t
+
+/-!
+The tokens and the result of the bracket pass. `close` holds the index of the matching
+bracket of each opening bracket, or the size of the array if no bracket matches. `comma` is
+true at an opening bracket if a `,` comes at its depth before its match.
+-/
+structure Input where
+  tokens : Array Token
+  close : Array Nat
+  comma : Array Bool
+
+/-! The bracket pass. It counts brackets of the three kinds as one depth. -/
+def Input.of (ts : Array Token) : Input := Id.run do
+  let mut close := Array.replicate ts.size ts.size
+  let mut comma := Array.replicate ts.size false
+  let mut open_ : List Nat := []
+  for h : i in [0:ts.size] do
+    let t := ts[i]
+    if opening t then open_ := i :: open_
+    else if closing t then
+      if let j :: rest := open_ then
+        close := close.set! j i
+        open_ := rest
+    else if isSym "," t then
+      if let j :: _ := open_ then comma := comma.set! j true
+  return ⟨ts, close, comma⟩
+
+/-! The parser reads the tokens and keeps the index of the next token. -/
+abbrev P := ReaderT Input (StateT Nat (Except Error))
 
 def maxDepth : Nat := 64
 
@@ -73,17 +112,14 @@ def allBinOps : List BinOp :=
    .add, .sub, .addw, .subw, .mul, .div, .rem, .mulw]
 
 /-! The lexer ends the tokens with `eof` or `error`. The parser never reads past that token. -/
-def peekAt (k : Nat) : P Token := do
-  let ts ← read
-  return ts.getD ((← get) + k) (ts.getD (ts.size - 1) ⟨⟨1, 1⟩, .eof⟩)
+def tokenAt (inp : Input) (i : Nat) : Token :=
+  inp.tokens.getD i (inp.tokens.getD (inp.tokens.size - 1) ⟨⟨1, 1⟩, .eof⟩)
+
+def peekAt (k : Nat) : P Token := return tokenAt (← read) ((← get) + k)
 
 def peek : P Token := peekAt 0
 
 def bump : P Unit := modify (· + 1)
-
-def isSym (s : String) (t : Token) : Bool := t.kind == .symbol s
-
-def isKw (w : String) (t : Token) : Bool := t.kind == .keyword w
 
 /-! `S001` at `t`. A lexical error keeps the message of the lexer. -/
 def unexpected (t : Token) (what : String) : P α :=
@@ -155,43 +191,35 @@ structure Node where
 
 def leaf (e : Expr) : Node := ⟨e, 1⟩
 
-def opening (t : Token) : Bool := isSym "(" t || isSym "[" t || isSym "{" t
-
-def closing (t : Token) : Bool := isSym ")" t || isSym "]" t || isSym "}" t
-
-/-! True if a `,` comes before the bracket that closes the open bracket at depth `d + 1`. -/
-def commaAhead : List Token → Nat → Bool
-  | [], _ => false
-  | t :: ts, d =>
-    if opening t then commaAhead ts (d + 1)
-    else if closing t then d != 0 && commaAhead ts (d - 1)
-    else if isSym "," t then d == 0 || commaAhead ts d
-    else commaAhead ts d
+/-! True at `(` if `()` follows, or if a `,` comes before the matching bracket. -/
+def tupleAhead : P Bool := do
+  let inp ← read
+  return isSym ")" (← peekAt 1) || inp.comma.getD (← get) false
 
 /-!
-True if the tokens after a name continue a place of a later slice up to `=` or `:=`: they
-hold a `[` or a `.` with a number. Inside brackets the scan counts brackets of each kind.
+True if the tokens from the index `i` continue a place of a later slice up to `=` or `:=`:
+they hold a `[` or a `.` with a number. A `[` jumps to its matching bracket. Each step takes a
+token, so the fuel of the size of the token array never runs out.
 -/
-def laterPlace : List Token → Nat → Bool → Bool
-  | [], _, _ => false
-  | t :: ts, d + 1, seen =>
-    if opening t then laterPlace ts (d + 2) seen
-    else if closing t then laterPlace ts d seen
-    else laterPlace ts (d + 1) seen
-  | t :: ts, 0, seen =>
+def laterPlace (inp : Input) : Nat → Nat → Bool → Bool
+  | 0, _, _ => false
+  | f + 1, i, seen =>
+    let t := tokenAt inp i
     if isSym "=" t || isSym ":=" t then seen
-    else if isSym "[" t then laterPlace ts 1 true
+    else if isSym "[" t then
+      let j := inp.close.getD i inp.tokens.size
+      j < inp.tokens.size && laterPlace inp f (j + 1) true
     else if isSym "." t then
-      match ts with
-      | ⟨_, .ident _⟩ :: rest => laterPlace rest 0 seen
-      | ⟨_, .number _⟩ :: rest => laterPlace rest 0 true
+      match (tokenAt inp (i + 1)).kind with
+      | .ident _ => laterPlace inp f (i + 2) seen
+      | .number _ => laterPlace inp f (i + 2) true
       | _ => false
     else false
 
-/-! The tokens after the next token. -/
-def rest : P (List Token) := do
-  let ts ← read
-  return (ts.extract ((← get) + 1) ts.size).toList
+/-! True at a name if a place of a later slice starts at it. -/
+def laterPlaceAhead : P Bool := do
+  let inp ← read
+  return laterPlace inp inp.tokens.size ((← get) + 1) false
 
 /-!
 Each function takes one unit of fuel from its caller. The argument `l` is the binding level of
@@ -312,8 +340,7 @@ mutual
       | .keyword "true" => bump; return (leaf (.bool t.pos true), false)
       | .keyword "false" => bump; return (leaf (.bool t.pos false), false)
       | .symbol "(" =>
-        let ts ← rest
-        if ts.head?.any (isSym ")") || commaAhead ts 0 then later t "a unit or tuple value"
+        if ← tupleAhead then later t "a unit or tuple value"
         bump
         let e ← expr f
         sym ")"
@@ -469,7 +496,7 @@ mutual
       | .keyword "type" => later t "a type alias"
       | .symbol "{" => return .block t.pos (← block f (b + 1))
       | .ident _ =>
-        if laterPlace (← rest) 0 false then later t "a place with an index or a tuple selector"
+        if ← laterPlaceAhead then later t "a place with an index or a tuple selector"
         let (e, place) ← postfixExpr f
         placeStmt f t.pos e place
       | _ =>
@@ -601,7 +628,7 @@ longest such run goes from `items` through `stmt` and `expr` to `primary`. Thus
 -/
 def parse (tokens : List Token) : Except Error (List Item) :=
   let ts := tokens.toArray
-  ((items (32 * (ts.size + 1)) []).run ts).run' 0
+  ((items (32 * (ts.size + 1)) []).run (Input.of ts)).run' 0
 
 /-! The items of a source text. -/
 def parseSource (s : String) : Except Error (List Item) := parse (lex s)
