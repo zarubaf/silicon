@@ -26,7 +26,8 @@ The cost model. Elaboration charges these units, in evaluation order. A charge i
 its operation runs. When the fuel cannot pay it, the result is `S015` at the node of the charge.
 
 1. One unit before each expression node, each type node, and each statement. A block is a
-   statement: the body of a function, each branch of `comptime if`, and each loop iteration.
+   statement: the body of a function, each branch of `comptime if`, each loop iteration, and
+   a block statement `{ ... }`. Each block charges its one unit once.
 2. A literal makes a value: it charges the size of its value.
 3. A unary operator charges the size of its operand. A binary operator charges the sum of the
    sizes of its operands. `*`, `/`, `%`, and `*%` charge their product. A left shift charges
@@ -36,8 +37,10 @@ its operation runs. When the fuel cannot pay it, the result is `S015` at the nod
    `reinterpret`, and a typed use that makes a finite value from an `Int`.
 5. `UInt[w]` and `SInt[w]` charge the size of the type that they make.
 6. A copy charges the size of the copied value: each argument, each return, and a binding of a
-   reference. A binding is a `let`, an assignment, or a constant. A reference is a name, or a
-   conditional that selects a reference. The copy comes before the typed use.
+   reference. The arguments of a function, a prelude function, and a constructor `T(x)` are
+   copies. Each charges after all arguments of the call run. A binding is a `let`, an
+   assignment, or a constant. A reference is a name, or a conditional that selects a
+   reference. The copy comes before the typed use.
 7. The target of an assignment is a place, not an expression, so it charges nothing.
 8. A `comptime for` charges the sum of the sizes of its two bounds for the range. Each
    iteration charges the size of its loop value before it binds it.
@@ -527,7 +530,9 @@ mutual
         | none => fail .S010 p s!"`{fname.name}` ends without `return`"
     | .name fp g (.fn h) =>
       charge fp 1
-      match h, ← args xs with
+      let vs ← args xs
+      charge p (vs.map Value.size).sum
+      match h, vs with
       | .resize, [.type t, v] => return some ⟨← apply p (resize t v), false⟩
       | .reinterpret, [.type t, v] => return some ⟨← apply p (reinterpret t v), false⟩
       | .staticAssert, [.bool c, .str m] =>
@@ -539,6 +544,7 @@ mutual
       match t.value, xs with
       | .type t, [x] =>
         let a ← need x (← eval n x)
+        charge p a.value.size
         return some ⟨← conform p t a.value, false⟩
       | .type _, _ => fail .S007 p "a constructor takes 1 argument"
       | v, _ => fail .S010 p s!"{v.text} is not a function"
@@ -595,7 +601,10 @@ mutual
           if let some r ← block n p body then return some r
           v := v + 1
         return none
-      | .block p ss => block n p ss
+      | .block _ ss => do
+        for s in ss do
+          if let some r ← stmt n s then return some r
+        return none
       | .expr _ v => do let _ ← eval n v; return none
       | .connect p .. | .reg p .. | .wire p .. | .input p .. | .output p .. | .inst p .. =>
         fail .S011 p "a static evaluation makes no hardware"
