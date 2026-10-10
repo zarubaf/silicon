@@ -6,14 +6,6 @@ use rowan::{Checkpoint, GreenNode, GreenNodeBuilder, Language};
 use std::collections::BTreeSet;
 use syntax::{SiliconLanguage, SyntaxKind, Token};
 
-/// The most height of an expression or a type, and the most nesting of blocks.
-pub(crate) const MAX_DEPTH: usize = 64;
-
-/// The most open forms of an expression that the parser holds. It bounds the recursion, so
-/// no input overflows the stack. A form that has more than 64 forms inside it is already an
-/// error, so this limit only decides where a very deep input reports it.
-const MAX_OPEN_FORMS: usize = 256;
-
 /// The result of a parse function: `None` means it reported an error and the caller recovers.
 pub(crate) type Res = Option<()>;
 
@@ -27,14 +19,20 @@ pub(crate) struct RawError {
 pub(crate) struct Parser<'a> {
     input: &'a str,
     tokens: &'a [Token],
+    /// The syntax depth: the most height of an expression or a type, and the most nesting
+    /// of blocks.
+    depth: usize,
     /// The index of the next token that the builder has not got.
     at: usize,
     builder: GreenNodeBuilder<'static>,
     pub errors: Vec<RawError>,
     /// The offsets with an error, so that one place gets one error.
     reported: BTreeSet<usize>,
-    /// The start offsets of the forms of an expression that are open now.
-    forms: Vec<usize>,
+    /// The start of the outermost expression or type that is open now: one that is not part
+    /// of another.
+    top: Option<usize>,
+    /// The number of forms of an expression or a type that are open now.
+    open: usize,
     /// The nesting of the blocks now open.
     blocks: usize,
     /// For each opening bracket, the index of the bracket that closes it.
@@ -50,16 +48,18 @@ pub(crate) struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-    pub(crate) fn new(input: &'a str, tokens: &'a [Token]) -> Self {
+    pub(crate) fn new(input: &'a str, tokens: &'a [Token], depth: usize) -> Self {
         let (closer, comma) = bracket_tables(tokens);
         Parser {
             input,
             tokens,
+            depth,
             at: 0,
             builder: GreenNodeBuilder::new(),
             errors: Vec::new(),
             reported: BTreeSet::new(),
-            forms: Vec::new(),
+            top: None,
+            open: 0,
             blocks: 0,
             closer,
             comma,
@@ -196,25 +196,37 @@ impl<'a> Parser<'a> {
         res
     }
 
-    /// Runs the parts of a form of an expression that starts at `start`. It reports an
-    /// input with too many open forms. Such a form has a height above 64, so the error is
-    /// at the start of the open form that is 64 levels out.
-    pub(crate) fn form(&mut self, start: usize, parts: impl FnOnce(&mut Self) -> Res) -> Res {
-        if self.forms.len() >= MAX_OPEN_FORMS {
-            let outer = self.forms[self.forms.len() - MAX_DEPTH];
-            self.syntax_error_at(outer, "the nesting is deeper than 64 levels");
-            return None;
+    /// Runs the parts of an expression or a type. If none is open, this one is the outermost,
+    /// and it starts at `start`.
+    pub(crate) fn outermost<T>(&mut self, start: usize, parts: impl FnOnce(&mut Self) -> T) -> T {
+        if self.top.is_some() {
+            return parts(self);
         }
-        self.forms.push(start);
+        self.top = Some(start);
         let res = parts(self);
-        self.forms.pop();
+        self.top = None;
         res
     }
 
-    /// Runs the statements of a block, which nests at most 64 deep.
+    /// Runs the parts of a form of an expression. A form that is open inside `depth` other
+    /// forms makes the height of the outermost expression larger than `depth`, so it is an
+    /// error at once, and the recursion never goes deeper than the depth.
+    pub(crate) fn form(&mut self, parts: impl FnOnce(&mut Self) -> Res) -> Res {
+        if self.open >= self.depth {
+            self.too_deep();
+            return None;
+        }
+        self.open += 1;
+        let res = parts(self);
+        self.open -= 1;
+        res
+    }
+
+    /// Runs the statements of a block, which nests at most `depth` deep.
     pub(crate) fn block_level(&mut self, parts: impl FnOnce(&mut Self) -> Res) -> Res {
-        if self.blocks >= MAX_DEPTH {
-            self.syntax_error("the nesting of blocks is deeper than 64 levels");
+        if self.blocks >= self.depth {
+            let message = format!("blocks nest deeper than {} levels", self.depth);
+            self.syntax_error(&message);
             return None;
         }
         self.blocks += 1;
@@ -339,10 +351,17 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Reports a nesting that is too deep, when the height is above the limit.
-    pub(crate) fn check_height(&mut self, height: usize, offset: usize) -> Res {
-        if height > MAX_DEPTH {
-            self.syntax_error_at(offset, "the nesting is deeper than 64 levels");
+    /// Reports that the outermost expression or type is higher than the depth.
+    fn too_deep(&mut self) {
+        let at = self.top.unwrap_or_else(|| self.offset());
+        let message = format!("expression nests deeper than {} levels", self.depth);
+        self.syntax_error_at(at, &message);
+    }
+
+    /// Reports a height above the depth.
+    pub(crate) fn check_height(&mut self, height: usize) -> Res {
+        if height > self.depth {
+            self.too_deep();
             None
         } else {
             Some(())
