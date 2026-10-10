@@ -2,31 +2,31 @@ import Silicon.Source.Lex
 import Silicon.Source.Print
 
 /-!
-The parser of slice 1. It reads the tokens of `Source.Lex` and gives the items of the file,
-or the first error in position order: `S001` for a token that the grammar does not accept,
-and `S004` for the syntax of a later slice.
+The parser of slice 1. It reads the tokens of `Source.Lex`. It gives the items of the file,
+or the first error in position order. `S001` is a token that the grammar does not accept.
+`S004` is the syntax of a later slice.
 
 The parser reads the tokens from left to right. It stops at the first token that the slice 1
 grammar does not accept, or at the first token of a later construct. It thus finds the errors
 in position order, and it reports the first. This rule also orders a lexical error after an
-`S004`: the lexer ends the tokens with an `error` token, and the parser reports that token
-only if it gets to it. `S004` is at these tokens:
+`S004`. The lexer ends the tokens with an `error` token. The parser reports that token only
+if it gets to it. `S004` is at these tokens:
 
-- the keyword: `import`, `pub`, `type`, `struct`, and `extern` at an item; `type` and `mem` at
-  a statement; `in`, `as`, `with`, and `conforms` after their forms; `mut` at a function
-  parameter; `fn` of a function type.
-- the opening token: `(` of `()` and of a tuple, `[` of an array value or type, `(` of a
-  unit, tuple, or grouped type, and `@` of one of the five builtins.
-- a later token of the construct: the `::` of a path, the number after `.`, the `(` after
-  `.name` (a receiver call), the `(` after a type (a type function call), and the second name
-  in a `domains` clause.
-- the first name of an assignment or connection target that has a `[` or a `.` with a number,
-  for example `a[i] = x;`. Slice 1 has no arrays and no tuples, so a place is `x` or `x.f`.
+- The keyword: `import`, `pub`, `type`, `struct`, and `extern` at an item. `type` and `mem`
+  at a statement. `in`, `as`, `with`, and `conforms` after their forms. `mut` at a function
+  parameter. `fn` of a function type.
+- The opening token: `(` of `()` and of a tuple, and `[` of an array value or type. `(` of a
+  unit, tuple, or grouped type. `@` of one of the five builtins.
+- A later token of the construct: the `::` of a path, and the number after `.`. The `(` after
+  `.name`, which is a receiver call. The `(` after a type, which is a type function call. The
+  second name in a `domains` clause.
+- The first name of an assignment or connection target with a `[` or a `.` and a number, for
+  example `a[i] = x;`. Slice 1 has no arrays and no tuples, so a place is `x` or `x.f`.
 
 Two constructs need a look ahead. At `(`, the parser looks for a `,` before the matching
-bracket. At a statement that starts with a name, it skips `.` with a name or a number and a
-`[` up to its matching bracket, and then looks for `=` or `:=`. Both scans count brackets of
-the three kinds as one depth.
+bracket. At a statement that starts with a name, it skips `.` with a name or a number. It
+also skips a `[` up to its matching bracket. Then it looks for `=` or `:=`. Both scans count
+brackets of the three kinds as one depth.
 
 `@` followed by another name than a builtin is `S001` at that name: no slice has that syntax.
 A module parameter without `comptime` is `S001` at its name, and with `mut` it is `S001` at
@@ -587,8 +587,8 @@ def items : Nat → List Item → P (List Item)
 /-!
 The items of a token list, or the first error. The fuel bounds the depth of the calls, not
 their number. On a chain of active calls the token index never decreases. A loop step starts
-after its previous step took a token, and fewer than 32 calls on a chain start at one index:
-the longest such run goes from `items` through `stmt` and `expr` to `primary`. Thus
+after its previous step took a token. Fewer than 32 calls on a chain start at one index. The
+longest such run goes from `items` through `stmt` and `expr` to `primary`. Thus
 `32 * (n + 1)` fuel for `n` tokens never runs out.
 -/
 def parse (tokens : List Token) : Except Error (List Item) :=

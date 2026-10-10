@@ -1,9 +1,9 @@
 import Silicon.Source.Parse
 
 /-!
-These tests check the parser at its public boundary: the AST dump of each slice 1 construct,
-precedence and associativity, the code and the position of each error, and that the parser
-reads the text of the printer back to the same AST.
+These tests check the parser at its public boundary. They check the AST dump of each slice 1
+construct, and precedence and associativity. They check the code and the position of each
+error. They also check that the parser reads the text of the printer back to the same AST.
 -/
 
 namespace Silicon.Source.Test.Parse
