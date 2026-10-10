@@ -104,6 +104,8 @@ import Silicon.Core.Test.Vectors
 import Silicon.Source.Syntax
 import Silicon.Source.Lex
 import Silicon.Source.Test.Lex
+import Silicon.Source.Print
+import Silicon.Source.Test.Print
 
 /-!
 Core IR semantics live here. The Lean model is the normative spec.
