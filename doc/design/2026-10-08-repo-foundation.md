@@ -13,7 +13,7 @@ Out of scope:
 
 - The Silicon language, the core IR, and their semantics. A separate spec defines them.
 - The design of `silicon fmt`, `silicon lint`, and the Silicon LSP. This spec only reserves their place (section 10).
-- Human approval gates. Agents have merge authority at the start. A later ADR adds human gates.
+- Human approval gates. [ADR 0013](../adr/0013-continuous-architecture-review.md) sets them for the core IR semantics, the language design, and the trust boundary.
 
 ## 2. Meta-rule
 
@@ -173,7 +173,7 @@ The repository defines no custom agent roles at the start. A role file in `.clau
 
 The repository adds three rules:
 
-1. **Lean goes to Codex.** The orchestrator dispatches all Lean work to the `codex:codex-rescue` subagent with `--fresh`. Each task thus starts a new Codex thread. `.codex/config.toml` pins the Codex model. A change of the Codex model is a one-line change. The pin is `gpt-6-astra`. Do not use `/codex:transfer` for delegation: it copies the full Claude session, with its chat history, into Codex.
+1. **Lean goes to a fresh Opus subagent.** [The agents guide](../guide/agents.md) is the authority for this rule and for the model choice.
 2. **Cross-vendor review before merge.** A Codex adversarial review (`adversarial-review --base main`) must pass on a branch that Claude wrote. It challenges the design, the assumptions, and the tradeoffs. Superpowers' own review covers defects. An Opus review must pass on a branch that Codex wrote. The reviewer gets the diff and the spec, not the reasoning of the author.
 3. **Superpowers paths are overridden.** Specs go to `doc/design/`. Plans go to `.scratch/` in the worktree.
 
