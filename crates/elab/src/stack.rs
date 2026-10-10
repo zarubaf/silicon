@@ -1,28 +1,15 @@
-//! The size of the stack of the evaluator. The evaluator recurses over the AST, and each
-//! active call or constant in progress starts the recursion again in its item. One pass
-//! before the evaluation finds two heights: the highest node, and the highest node that
-//! can start a nested evaluation, a call or the use of a constant. The evaluation runs a
-//! group of nesting levels on each thread. A thread has room for the first height once and
-//! for the second height at each level of its group.
+//! The heights that size the stack of the evaluator. The evaluator recurses over the AST, and
+//! each active call or constant in progress starts the recursion again in its item. One pass
+//! before the evaluation finds two heights: the highest node, and the highest node that can
+//! start a nested evaluation, a call or the use of a constant. `parse::NestedStack` sizes the
+//! stack from them.
 
+use parse::NestedStack;
 use parse::ast::{Expr, Item, Stmt, TypeExpr};
 use resolve::{Kind, Resolved, ResolvedExpr, Target};
 
-/// The levels of stack of a group, for `parse::on_stack`, which gives each level the stack of
-/// a level of the syntax depth.
-const GROUP_LEVELS: u64 = 256;
-
-/// The stack of the threads of an evaluation.
-#[derive(Clone, Copy)]
-pub(crate) struct Stack {
-    /// The nesting levels that each thread runs.
-    pub levels_per_thread: u64,
-    /// The stack of each thread, in levels of `parse::on_stack`.
-    pub thread_levels: usize,
-}
-
 /// The stack for the evaluation of `top` in the file scope of `file`.
-pub(crate) fn of(file: &Resolved, top: &ResolvedExpr) -> Stack {
+pub(crate) fn of(file: &Resolved, top: &ResolvedExpr) -> NestedStack {
     let mut walk = Walk {
         file,
         top: Some(top),
@@ -34,20 +21,7 @@ pub(crate) fn of(file: &Resolved, top: &ResolvedExpr) -> Stack {
     for item in file.ast() {
         walk.item(item);
     }
-    let per_level = u64::try_from(walk.nested)
-        .unwrap_or(u64::MAX)
-        .saturating_add(2);
-    let base = u64::try_from(walk.height)
-        .unwrap_or(u64::MAX)
-        .saturating_add(2);
-    let levels_per_thread = (GROUP_LEVELS / per_level).max(1);
-    let levels = levels_per_thread
-        .saturating_mul(per_level)
-        .saturating_add(base);
-    Stack {
-        levels_per_thread,
-        thread_levels: usize::try_from(levels).unwrap_or(usize::MAX),
-    }
+    NestedStack::new(walk.height, walk.nested)
 }
 
 struct Walk<'a> {

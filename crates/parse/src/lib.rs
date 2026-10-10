@@ -147,6 +147,55 @@ pub fn on_stack<T: Send>(depth: usize, f: impl FnOnce() -> T + Send) -> Result<T
     })
 }
 
+/// The levels of stack of a group of nesting levels, in levels of the syntax depth.
+const GROUP_LEVELS: u64 = 256;
+
+/// The stack of a pass whose recursion starts again at each nesting level, such as the
+/// evaluator at each active call. A group of nesting levels runs on each thread, so the stack
+/// of each thread stays small for any nesting depth.
+#[derive(Clone, Copy, Debug)]
+pub struct NestedStack {
+    /// The nesting levels that each thread runs.
+    levels_per_thread: u64,
+    /// The stack of each thread, in levels of the syntax depth.
+    thread_depth: usize,
+}
+
+impl NestedStack {
+    /// The stack for a pass whose highest node is at `height`, and whose highest node that
+    /// starts a nesting level is at `per_level`. A thread has room for the first height once
+    /// and for the second height at each level of its group.
+    #[must_use]
+    pub fn new(height: usize, per_level: usize) -> NestedStack {
+        let per_level = u64::try_from(per_level)
+            .unwrap_or(u64::MAX)
+            .saturating_add(2);
+        let base = u64::try_from(height).unwrap_or(u64::MAX).saturating_add(2);
+        let levels_per_thread = (GROUP_LEVELS / per_level).max(1);
+        let levels = levels_per_thread
+            .saturating_mul(per_level)
+            .saturating_add(base);
+        NestedStack {
+            levels_per_thread,
+            thread_depth: usize::try_from(levels).unwrap_or(usize::MAX),
+        }
+    }
+
+    /// Whether the nesting level `level` starts a new thread.
+    #[must_use]
+    pub fn starts_thread(&self, level: u64) -> bool {
+        level.is_multiple_of(self.levels_per_thread)
+    }
+
+    /// Runs a function on a new thread with the stack of a group.
+    ///
+    /// # Errors
+    /// Returns an error if the machine cannot give the stack.
+    pub fn run<T: Send>(&self, f: impl FnOnce() -> T + Send) -> Result<T, StackError> {
+        on_stack(self.thread_depth, f)
+    }
+}
+
 fn parse_here(input: &str, depth: usize) -> Parse {
     let lexed = syntax::lex(input, depth);
     let (green, raw, high) = parser::Parser::new(input, &lexed.tokens, depth).finish();

@@ -9,11 +9,10 @@
 
 use crate::int::Int;
 use crate::ops::{self, Fault, Fuel, str_text};
-use crate::stack::Stack;
 use crate::value::{Ty, Value, int_size};
 use crate::{Budget, Code, Error};
-use parse::StackError;
 use parse::ast::{BinOp, Expr, Ident, Item, Param, Pos, Stmt, TypeExpr};
+use parse::{NestedStack, StackError};
 use resolve::{DeclId, Kind, Prelude, Resolved, ResolvedExpr, Target};
 use std::collections::BTreeMap;
 
@@ -117,7 +116,7 @@ struct Evaluator<'a> {
     limit: u64,
     depth: u64,
     /// The stack of each thread of the evaluation.
-    stack: Stack,
+    stack: NestedStack,
     ret: Option<Ty>,
     fuel: Fuel,
     store: Store,
@@ -184,7 +183,7 @@ pub(crate) fn run(
     file: &Resolved,
     top: &ResolvedExpr,
     budget: Budget,
-    stack: Stack,
+    stack: NestedStack,
 ) -> Res<(Value, u64)> {
     let mut items = BTreeMap::new();
     let mut consts = Vec::new();
@@ -331,9 +330,11 @@ impl Evaluator<'_> {
             );
         }
         self.depth += 1;
-        let r = if self.depth.is_multiple_of(self.stack.levels_per_thread) {
-            let levels = self.stack.thread_levels;
-            parse::on_stack(levels, || act(self)).unwrap_or_else(|e| Err(Stop::Stack(e)))
+        let r = if self.stack.starts_thread(self.depth) {
+            let stack = self.stack;
+            stack
+                .run(|| act(self))
+                .unwrap_or_else(|e| Err(Stop::Stack(e)))
         } else {
             act(self)
         };

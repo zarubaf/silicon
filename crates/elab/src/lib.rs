@@ -94,7 +94,7 @@ pub fn eval(
     budget: Budget,
 ) -> Result<Result<(Value, u64), Error>, StackError> {
     let stack = parse::on_stack(file.depth(), || stack::of(file, expr))?;
-    let result = parse::on_stack(stack.thread_levels, || eval::run(file, expr, budget, stack))?;
+    let result = stack.run(|| eval::run(file, expr, budget, stack))?;
     match result {
         Ok(done) => Ok(Ok(done)),
         Err(eval::Stop::Error(e)) => Ok(Err(e)),
