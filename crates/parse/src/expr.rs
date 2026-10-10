@@ -1,6 +1,7 @@
 //! The grammar of types and expressions, with the precedence of the grammar file.
 #![allow(clippy::enum_glob_use)] // The grammar names token kinds on almost every line.
 
+use crate::ast::Nat;
 use crate::parser::{Parser, Res};
 use rowan::Checkpoint;
 use syntax::SyntaxKind::{self, *};
@@ -243,6 +244,12 @@ impl Parser<'_> {
         let start = self.offset();
         match self.cur() {
             Some(Dec | Hex | Bin | Str | TrueKw | FalseKw) => {
+                if matches!(self.cur(), Some(Dec | Hex | Bin))
+                    && !Nat::literal_in_bounds(self.text())
+                {
+                    self.syntax_error("the value of a number is not below 2^65536");
+                    return None;
+                }
                 self.node(Literal, |p| {
                     p.bump();
                     Some(())
