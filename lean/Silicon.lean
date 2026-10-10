@@ -120,6 +120,8 @@ import Silicon.Source.Names
 import Silicon.Source.Test.Names
 import Silicon.Source.Eval
 import Silicon.Source.Test.Eval
+import Silicon.Source.Elab
+import Silicon.Source.Test.Elab
 import Silicon.Source.Cli
 import Silicon.Main
 

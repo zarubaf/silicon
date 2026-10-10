@@ -1,0 +1,404 @@
+import Silicon.Source.Eval
+
+/-!
+This module holds the instantiations of slice 1 and the checks for each instantiation.
+Sections 5.3, 6.1, and 6.2 of the front-end spec define them. `elaborate` runs the top
+selection and each instantiation that it reaches, in the evaluation order that section 5.2
+gives. Each instantiation gives a hardware description: its ports, registers, wires, named
+bindings, child instances, and `:=` bindings.
+`Source.Flatten` lowers the descriptions to core IR.
+
+The table of instantiations is normative. An `instance` statement works in these steps:
+
+1. It evaluates the arguments from left to right. Each argument is static (`S011`).
+2. It charges the recursive size of the arguments, also for a done instantiation.
+3. A clocked child in a combinational module is `S017` at the statement.
+4. An instantiation in progress is `S019` at the statement. A done one gives its interface.
+5. A new one nests one level deeper (`S015`). Its emitted name must be new (`S019`). Then it
+   goes in progress, runs its body, checks its bindings, and is done.
+
+The `InstantiationId` holds the arguments as they evaluate, before the typed use at the
+parameters. The parameters then bind in the body of the new instantiation, as a typed use.
+
+These rules settle the open points of slice 1:
+
+- A module statement runs in the walk of this module. A `let`, an assignment, and an
+  expression statement run in `Eval`, as in a function body.
+- A port keeps its source name. The root frame counts it with the other bindings of its name.
+  A second port with one name thus fails, and so does a port after a binding of its name.
+  The code is `S019`.
+- A port, a register, and a wire have the type `Bool`, `UInt[W]`, or `SInt[W]` (`S010`).
+- A register in a combinational module is `S017` at the statement, before its type.
+- A `:=` target resolves without a charge. A register, a wire, an own output, and a child input
+  are targets, also through a handle alias. Each other target fails with `S017` (rule).
+- The value of `:=` is a typed use. It copies a reference, as a `let` does.
+- `S018` errors wait for the end of the body. The second binding of a resource gives one.
+  A resource without a binding gives one at its declaration. A child input without a binding
+  gives one at the `instance` statement. The error with the lowest position wins.
+- `S016` cannot occur in slice 1. An arm of a hardware `if` is an expression. A function of
+  slice 1 declares no resource and binds nothing.
+- The owner guard of section 9.5 has no check in slice 1. Module arguments are static
+  (`S011`), and ports carry data, so a handle cannot reach another owner.
+- The units of an instantiation are its charges from the start of its parameters to the end
+  of its binding check. The units of its new children are not part of them. The charges of
+  an `instance` statement belong to the parent. The arguments of the top selection belong to
+  no instantiation.
+
+Each table grows only with charged work: a new instantiation charges its body, and each
+declaration, binding, and child charges its statement.
+-/
+namespace Silicon.Source.Elab
+
+open Resolve Names Eval
+
+/-! A port declaration. A port keeps its source name. -/
+structure PortDecl where
+  name : String
+  input : Bool
+  ty : Ty
+  pos : Pos
+
+structure RegDecl where
+  path : Path
+  ty : Ty
+  init : Value
+  pos : Pos
+
+structure WireDecl where
+  path : Path
+  ty : Ty
+  pos : Pos
+
+/-! A child instance: its path, the interface of its instantiation, and its statement. -/
+structure ChildDecl where
+  path : Path
+  iface : Iface
+  pos : Pos
+
+/-! The target of a `:=` binding: an own resource, or an input of a child. -/
+inductive Sink where
+  | own (path : Path)
+  | child (inst : Path) (port : String)
+
+structure Bind where
+  sink : Sink
+  value : Hw
+  pos : Pos
+
+/-!
+The hardware description of one instantiation, in evaluation order. A combinational module
+has no domain.
+-/
+structure Body where
+  domain : Option String
+  ports : Array PortDecl := #[]
+  regs : Array RegDecl := #[]
+  wires : Array WireDecl := #[]
+  lets : Array Let := #[]
+  children : Array ChildDecl := #[]
+  binds : Array Bind := #[]
+
+/-! A resource that needs one binding, by its number: its declaration and its bindings. -/
+structure Need where
+  name : String
+  pos : Pos
+  count : Nat
+
+/-!
+The work of the current instantiation. The resource number indexes `needs`, and the instance
+number indexes `bound`. `inputs` counts the bindings of each child input. `dup` holds the first
+`S018` of a second binding by position. `spent` is the fuel of the new children.
+-/
+structure Work where
+  body : Body
+  needs : Array Need := #[]
+  bound : Array Nat := #[]
+  inputs : Std.HashMap (Nat × String) Nat := {}
+  dup : Option Error := none
+  spent : Nat := 0
+
+/-! The state of an `InstantiationId` in the table of instantiations. -/
+inductive Status where
+  | inProgress
+  | done (index : Nat)
+
+/-! A done instantiation: its identity, its interface, its description, and its units. -/
+structure Inst where
+  id : InstantiationId
+  iface : Iface
+  body : Body
+  units : Nat
+
+/-!
+The state of an elaboration. `table` maps the serialization of each `InstantiationId` to its
+state, and `names` maps each emitted name to its instantiation. `digest` makes the digest of
+an emitted name, so a test can replace it.
+-/
+structure St where
+  digest : String → String
+  table : Std.HashMap String Status := {}
+  names : Std.HashMap String Nat := {}
+  done : Array Inst := #[]
+  work : Work
+
+abbrev EM := StateT St Eval.M
+
+instance : Runs EM := {}
+
+/-! A design: the done instantiations in the order they finish, and the top among them. -/
+structure Design where
+  insts : Array Inst
+  top : Nat
+
+def modifyBody (f : Body → Body) : EM Unit :=
+  modify fun s => { s with work.body := f s.work.body }
+
+def slot (id : Nat) : EM (Option Slot) := monadLift (do return (← get).frame[id]? : Eval.M _)
+
+/-! A port, a register, and a wire have a hardware type. -/
+def dataType (p : Pos) (t : Ty) : EM Ty :=
+  if t.finite || t == .bool then pure t
+  else fail .S010 p s!"a port, a register, and a wire have a hardware type, not {t.text}"
+
+/-! A resource that needs one binding. The result is its handle. -/
+def resource (k : Kind) (path : Path) (t : Ty) (p : Pos) (x : String) : EM Val := do
+  let id := (← get).work.needs.size
+  modify fun s => { s with work.needs := s.work.needs.push ⟨x, p, 0⟩ }
+  return .handle (.res k id t path)
+
+/-!
+The port `x`. Its core name is its source name. The root frame counts it with the bindings of
+its name, so a name that is taken is `S019`.
+-/
+def port (p : Pos) (input : Bool) (x : String) (t : Ty) : EM Val := do
+  let taken ← monadLift (do
+    let s ← get
+    let key := (0, Field.user x)
+    let v := s.naming.versions.getD key 0
+    set { s with naming.versions := s.naming.versions.insert key (v + 1) }
+    return v != 0 : Eval.M Bool)
+  if taken then fail .S019 p s!"two declarations have the core name `{x}`"
+  modifyBody fun b => { b with ports := b.ports.push ⟨x, input, t, p⟩ }
+  if input then return .hw (.mk p t (.ref ⟨x, []⟩) [])
+  else resource .output ⟨x, []⟩ t p x
+
+/-! The target of a `:=` binding. It refers, so it charges nothing. -/
+inductive Target where
+  | own (id : Nat) (ty : Ty) (path : Path)
+  | child (inst : Nat) (path : Path) (port : Port)
+
+def target (p : Pos) (e : Resolve.Expr) : EM Target := do
+  let bad : EM Target :=
+    fail .S017 p "a `:=` target is a wire, a register, an own output, or a child input"
+  match e with
+  | .name _ _ (.local id) =>
+    match ← slot id with
+    | some ⟨_, _, .handle (.res _ k t path)⟩ => return .own k t path
+    | some ⟨_, _, .handle (.input k path q)⟩ => return .child k path q
+    | _ => bad
+  | .field _ (.name _ _ (.local id)) f =>
+    match ← slot id with
+    | some ⟨_, _, .handle (.inst k path iface)⟩ =>
+      match iface.ports[f.name]? with
+      | some q =>
+        if q.input then return .child k path q
+        else fail .S017 p s!"`{f.name}` is an output of the child, not a target"
+      | none => fail .S010 p s!"the instance has no port `{f.name}`"
+    | _ => bad
+  | _ => bad
+
+/-! Records the binding of `t` to `h`. The second binding of one target is an `S018`. -/
+def bindTarget (p : Pos) (t : Target) (h : Hw) : EM Unit := do
+  let second : Error := ⟨.S018, p, "a second binding of one target"⟩
+  let w := (← get).work
+  match t with
+  | .own k _ path =>
+    let c := (w.needs[k]?.map (·.count)).getD 0
+    if c == 1 then modify fun s => { s with work.dup := earlier s.work.dup second }
+    modify fun s =>
+      { s with work.needs := s.work.needs.modify k fun r => { r with count := c + 1 } }
+    modifyBody fun b => { b with binds := b.binds.push ⟨.own path, h, p⟩ }
+  | .child k path q =>
+    let c := w.inputs.getD (k, q.name) 0
+    if c == 0 then modify fun s => { s with work.bound := s.work.bound.modify k (· + 1) }
+    if c == 1 then modify fun s => { s with work.dup := earlier s.work.dup second }
+    modify fun s => { s with work.inputs := s.work.inputs.insert (k, q.name) (c + 1) }
+    modifyBody fun b => { b with binds := b.binds.push ⟨.child path q.name, h, p⟩ }
+
+/-!
+The binding rule at the end of a body. A missing binding of an own resource is at its
+declaration, and one of a child input is at the `instance` statement.
+-/
+def bindings : EM Unit := do
+  let w := (← get).work
+  let mut err := w.dup
+  for r in w.needs do
+    if r.count == 0 then err := earlier err ⟨.S018, r.pos, s!"`{r.name}` has no binding"⟩
+  for (c, k) in w.body.children.zipIdx do
+    if w.bound.getD k 0 < c.iface.inputs then
+      let free := c.iface.ports.values.find? fun q => q.input && !w.inputs.contains (k, q.name)
+      let x := (free.map (·.name)).getD ""
+      err := earlier err ⟨.S018, c.pos, s!"the input `{x}` of the child has no binding"⟩
+  if let some e := err then throw e
+
+/-! The interface of a done instantiation. -/
+def iface (name : Name) (b : Body) : Iface :=
+  ⟨name, b.ports.foldl (fun m q => m.insert q.name ⟨q.name, q.input, q.ty⟩) {},
+   (b.ports.filter (·.input)).size, b.domain⟩
+
+def usedFuel : EM Nat := monadLift (do return (← get).fuel : Eval.M Nat)
+
+/-!
+The walk of a module body. `stmt` and `block` are entry functions as in `Eval`. A `let`, an
+assignment, a `return`, and an expression statement run in `Eval.stmt`, which charges them.
+-/
+mutual
+  def stmt (b : Nat) (s : Resolve.Stmt) : EM Unit :=
+    match s with
+    | .local .. | .assign .. | .ret .. | .expr .. => do let _ ← Eval.stmt b s
+    | _ =>
+      match b with
+      | 0 => exhausted s.pos
+      | n + 1 => do
+        charge s.pos 1
+        match s with
+        | .input p x ty | .output p x ty => do
+          let t ← dataType p (← typeExpr n ty)
+          let v ← port p (s matches .input ..) x.name.name t
+          bindLocal x.id ⟨some t, false, v⟩
+        | .reg p x ty init => do
+          if (← get).work.body.domain.isNone then
+            fail .S017 p "a combinational module has no register"
+          let t ← dataType p (← typeExpr n ty)
+          let o ← need init (← eval n init)
+          copy p o
+          let v ← conform p t (← static p o.value)
+          let path ← fresh x.name.name
+          modifyBody fun b => { b with regs := b.regs.push ⟨path, t, v, p⟩ }
+          bindLocal x.id ⟨some t, false, ← resource .reg path t p x.name.name⟩
+        | .wire p x ty => do
+          let t ← dataType p (← typeExpr n ty)
+          let path ← fresh x.name.name
+          modifyBody fun b => { b with wires := b.wires.push ⟨path, t, p⟩ }
+          bindLocal x.id ⟨some t, false, ← resource .wire path t p x.name.name⟩
+        | .connect p tgt v => do
+          let t ← target p tgt
+          let o ← need v (← eval n v)
+          copy p o
+          let ty := match t with
+            | .own _ ty _ => ty
+            | .child _ _ q => q.ty
+          let h ← match ← conformVal p ty o.value with
+            | .static v => lit p v
+            | .hw h => pure h
+            | v => fail .S010 p s!"{v.text} is not data"
+          bindTarget p t h
+        | .inst p u _ i xs => do
+          let vs ← xs.mapM fun x => do static p (← need x (← eval n x)).value
+          charge p (vs.map Value.size).sum
+          if let some (.module _ m _ ds _) := (← read).items[i]? then
+            if (← get).work.body.domain.isNone && !ds.isEmpty then
+              fail .S017 p s!"a combinational module has no clocked child `{m.name}`"
+          let (c, _) ← instantiate n p i vs
+          let path ← fresh u.name.name
+          let k := (← get).work.body.children.size
+          modifyBody fun b => { b with children := b.children.push ⟨path, c, p⟩ }
+          modify fun s => { s with work.bound := s.work.bound.push 0 }
+          bindLocal u.id ⟨none, false, .handle (.inst k path c)⟩
+        | .ctIf p c yes no => do
+          if ← test p (← need c (← eval n c)).value then block n p yes
+          else if let some ss := no then block n p ss
+        | .ctFor p i lo hi body => do
+          let a ← int p (← need lo (← eval n lo)).value
+          let z ← int p (← need hi (← eval n hi)).value
+          let count ← range p a z
+          let mut v := a
+          for _ in [0:count] do
+            iteration p i v (block n p body)
+            v := v + 1
+        | .block _ ss => for s in ss do stmt n s
+        | .local .. | .assign .. | .ret .. | .expr .. => pure ()
+  termination_by (b, 1)
+
+  /-- A block at `pos`. It charges as a statement. -/
+  def block (b : Nat) (pos : Pos) (ss : List Resolve.Stmt) : EM Unit :=
+    match b with
+    | 0 => exhausted pos
+    | n + 1 => do
+      charge pos 1
+      for s in ss do stmt n s
+  termination_by (b, 1)
+
+  /--
+  The instantiation of the module item `i` with the arguments `vs`, for the statement at `pos`.
+  The result is its interface and its index among the done instantiations.
+  -/
+  def instantiate (n : Nat) (pos : Pos) (i : Nat) (vs : List Value) : EM (Iface × Nat) := do
+    let some (.module mp m ps ds body) := (← read).items[i]?
+      | fail .S010 pos "an instance needs a module"
+    let id : InstantiationId := ⟨m.name, vs⟩
+    let key := id.serialize
+    let s ← get
+    match s.table[key]? with
+    | some .inProgress =>
+      fail .S019 pos s!"the instantiation of `{m.name}` depends on itself"
+    | some (.done k) =>
+      match s.done[k]? with
+      | some d => return (d.iface, k)
+      | none => fail .S019 pos s!"the instantiation of `{m.name}` is not in the table"
+    | none => nested pos do
+      let name := moduleName s.digest id
+      let text := encode name
+      if s.names.contains text then
+        fail .S019 pos s!"two instantiations have the emitted name `{text}`"
+      let parent := s.work
+      let naming ← monadLift (do return (← get).naming : Eval.M Naming)
+      set { s with table := s.table.insert key .inProgress,
+                   work := { body := { domain := ds.head?.map fun (d : Binder) => d.name.name } } }
+      monadLift (modify fun t => { t with naming := {} } : Eval.M Unit)
+      let start ← usedFuel
+      inFrame none <| withTheReader Ctx (fun c => { c with item := i, frame := ⟨none, 0⟩ }) do
+        for (q, v) in ps.zip vs do
+          let t ← typeExpr n q.ty
+          bindLocal q.name.id ⟨some t, false, .static (← conform pos t v)⟩
+        for d in ds do
+          bindLocal d.id ⟨none, false, .handle (.domain d.name.name)⟩
+        block n mp body
+      bindings
+      let lets ← monadLift (do return (← get).naming.lets : Eval.M (Array Let))
+      monadLift (modify fun t => { t with naming } : Eval.M Unit)
+      let used := start - (← usedFuel)
+      let w := (← get).work
+      let body := { w.body with lets }
+      let c := iface name body
+      let k := (← get).done.size
+      modify fun t => { t with
+        table := t.table.insert key (.done k), names := t.names.insert text k,
+        done := t.done.push ⟨id, c, body, used - w.spent⟩,
+        work := { parent with spent := parent.spent + used } }
+      return (c, k)
+  termination_by (n + 1, 0)
+end
+
+/-!
+The elaboration of the top selection at `pos`: the module item `top` with the literal
+arguments `xs`. The arguments charge as those of an `instance` statement. The result is the
+design and the used fuel.
+-/
+def elaborate (budget : Budget) (items : Array Resolve.Item) (digest : String → String)
+    (pos : Pos) (top : Nat) (xs : List Resolve.Expr) : Except Error (Design × Nat) :=
+  Eval.run budget items fun n => do
+    let go : EM Nat := do
+      let vs ← xs.mapM fun x => do static pos (← need x (← eval n x)).value
+      charge pos (vs.map Value.size).sum
+      return (← instantiate n pos top vs).2
+    let (k, s) ← go.run { digest, work := { body := { domain := none } } }
+    return ⟨s.done, k⟩
+
+/-! The output of `cost` (section 8): the total, then the units of each instantiation by name. -/
+def costLines (d : Design) (total : Nat) : String :=
+  let lines := d.insts.map fun i => (encode i.iface.name, i.units)
+  let sorted := lines.qsort fun a b => a.1 < b.1
+  sorted.foldl (fun s (x, u) => s ++ s!"{x} {u}\n") s!"total {total}\n"
+
+end Silicon.Source.Elab

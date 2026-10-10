@@ -1,6 +1,6 @@
 import Silicon.Source.Parse
 import Silicon.Source.Check
-import Silicon.Source.Eval
+import Silicon.Source.Elab
 
 /-! The `silicon-check` commands of the front end. The output follows the core IR spec. -/
 namespace Silicon.Source.Cli
@@ -61,10 +61,11 @@ def literal : Source.Expr → Option Resolve.Expr
 
 /-!
 The top selection `t`: a module name, then literal arguments in parentheses. The result is the
-position of the selection, the module parameters, and the arguments. Else a usage error.
+position of the selection, the module item, its parameters, and the arguments. Else a usage
+error.
 -/
 def topSelection (depth : Nat) (items : List Item) (checked : Array Resolve.Item) (t : String) :
-    Except String (Pos × List Resolve.Param × List Resolve.Expr) := do
+    Except String (Pos × Nat × List Resolve.Param × List Resolve.Expr) := do
   let bad := s!"the top selection `{t}` is not a module name with literal arguments"
   let (p, m, xs) ← match Parse.parseExpr depth t with
     | .ok (.call p (.name _ m) xs) => pure (p, m, xs)
@@ -74,25 +75,29 @@ def topSelection (depth : Nat) (items : List Item) (checked : Array Resolve.Item
   let isTop : Item → Bool
     | .module _ n .. => n.name == m
     | _ => false
-  match items.findIdx? isTop >>= (checked[·]?) with
-  | some (.module _ _ ps _ _) => return (p, ps, xs)
-  | _ => throw s!"`{m}` is not a module of the file"
+  match items.findIdx? isTop with
+  | some i =>
+    match checked[i]? with
+    | some (.module _ _ ps _ _) => return (p, i, ps, xs)
+    | _ => throw s!"`{m}` is not a module of the file"
+  | none => throw s!"`{m}` is not a module of the file"
 
 /-!
-`cost`: the fuel that the elaboration of the top selection uses. Before `Source.Elab` exists,
-this is the static part of the top selection: its arguments and its parameter types.
+`cost`: the fuel that the elaboration of the top selection uses, and the units of each
+instantiation. The lowering comes with `Source.Flatten`, so its charges are not yet here.
 -/
-def costText (o : Opts) (source t : String) : Outcome :=
+def costText (o : Opts) (source t : String) (digest : String → String := Names.sha16) :
+    Outcome :=
   match load o.syntaxDepth source with
   | .error e => .error e
   | .ok (items, checked) =>
     match topSelection o.syntaxDepth items checked t with
     | .error msg => .usage msg
-    | .ok (p, ps, xs) =>
+    | .ok (p, i, ps, xs) =>
       if ps.length != xs.length then
         .error ⟨.S007, p, s!"the top takes {ps.length} argument(s), but it has {xs.length}"⟩
-      else match Eval.top o.budget checked p ps xs with
-        | .ok used => .ok s!"total {used}\n"
+      else match Elab.elaborate o.budget checked digest p i xs with
+        | .ok (d, used) => .ok (Elab.costLines d used)
         | .error e => .error e
 
 def evalOutcome (o : Opts) (source expr : String) : Outcome :=
