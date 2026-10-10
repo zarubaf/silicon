@@ -49,6 +49,13 @@ impl Parse {
         SyntaxNode::new_root(self.green.node().clone())
     }
 
+    /// The syntax depth of the parse. A pass that recurses over the AST runs through
+    /// [`on_stack`] with this depth.
+    #[must_use]
+    pub fn depth(&self) -> usize {
+        self.depth
+    }
+
     /// The dump of the AST, or `None` if the text has an error. The dump recurses, so it runs
     /// on a stack for the syntax depth of the parse.
     ///
@@ -105,8 +112,13 @@ fn stack_for(depth: usize) -> usize {
         .saturating_add(1 << 20)
 }
 
-/// Runs a function on a thread with a stack for the syntax depth.
-fn on_stack<T: Send>(depth: usize, f: impl FnOnce() -> T + Send) -> Result<T, StackError> {
+/// Runs a function on a thread with a stack for the syntax depth. This is the one place that
+/// sizes the stack: each later pass that recurses over the AST of a parse calls it with
+/// [`Parse::depth`].
+///
+/// # Errors
+/// Returns an error if the machine cannot give the stack.
+pub fn on_stack<T: Send>(depth: usize, f: impl FnOnce() -> T + Send) -> Result<T, StackError> {
     std::thread::scope(|scope| {
         let handle = std::thread::Builder::new()
             .stack_size(stack_for(depth))
