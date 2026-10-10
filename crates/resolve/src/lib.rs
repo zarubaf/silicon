@@ -7,7 +7,7 @@ mod scope;
 mod walk;
 
 use parse::ast::{Expr, Item, Pos};
-use parse::{Parse, StackError};
+use parse::{Parse, ParsedExpr, StackError};
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -155,10 +155,11 @@ pub fn resolve(parse: Parse) -> Result<Resolved, Failed> {
 
 /// An expression in the file scope, such as the `EXPR` of `eval`, with its names resolved.
 /// Its positions are in its own text, so it has its own map from the position of each name
-/// token to its target. A target indexes the declarations of the `Resolved` of its file.
-/// Dropping it is safe on any stack.
+/// token to its target. A target indexes the declarations of the `Resolved` of its file. It
+/// keeps the syntax depth of its parse. Dropping it is safe on any stack.
 pub struct ResolvedExpr {
     expr: Expr,
+    depth: usize,
     names: BTreeMap<Pos, Target>,
 }
 
@@ -167,6 +168,12 @@ impl ResolvedExpr {
     #[must_use]
     pub fn expr(&self) -> &Expr {
         &self.expr
+    }
+
+    /// The syntax depth for a pass over the expression and the file of `resolved`.
+    #[must_use]
+    pub fn depth_with(&self, resolved: &Resolved) -> usize {
+        self.depth.max(resolved.depth)
     }
 
     /// What the name token at a position of the expression points to.
@@ -184,10 +191,11 @@ impl ResolvedExpr {
 /// Returns an error if the machine cannot give the stack for the syntax depth of `resolved`.
 pub fn resolve_expr(
     resolved: &Resolved,
-    expr: Expr,
+    expr: ParsedExpr,
 ) -> Result<Result<ResolvedExpr, Vec<Error>>, StackError> {
+    let (expr, depth) = expr.into_parts();
     let names = parse::on_stack(resolved.depth, || walk::run_expr(resolved, &expr))?;
-    Ok(names.map(|names| ResolvedExpr { expr, names }))
+    Ok(names.map(|names| ResolvedExpr { expr, depth, names }))
 }
 
 /// The result of a successful walk.

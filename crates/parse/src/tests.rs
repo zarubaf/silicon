@@ -1065,7 +1065,7 @@ fn into_ast_gives_the_items_and_the_depth_or_the_parse() {
 fn expr_result(input: &str, depth: usize) -> Result<String, (Code, usize, usize)> {
     crate::parse_expr(input, depth)
         .unwrap()
-        .map(|e| sx(&e))
+        .map(|e| sx(e.expr()))
         .map_err(|errors| {
             let e = &errors[0];
             (e.code, e.pos.line, e.pos.col)
