@@ -1,6 +1,19 @@
 # Testing
 
-Each layer has one oracle. An oracle is a tool or a model that can say "wrong" mechanically. Each agent works against an oracle.
+This guide is the single map of the tests. Each layer has one oracle. An oracle is a tool or a model that can say "wrong" mechanically. Each agent works against an oracle.
+
+[The testing spec](../design/2026-10-10-testing.md) and [ADR 0015](../adr/0015-unified-exhaustive-testing.md) give the decisions. Each language spec keeps only what is special to its language:
+
+- [The core IR spec](../design/2026-10-08-core-ir.md), section 9, for the `.sil` suites.
+- [The front-end spec](../design/2026-10-09-frontend.md), section 11.3, for the `.si` suites.
+
+## Status
+
+Issue #87 builds this layout in steps. Section 11 of the testing spec gives the order. Until a step lands, the old form stays in use:
+
+- Step 2 moves the core suites. Until then, they are in `tests/check/`, `tests/run/`, `tests/lower/`, and `tests/corpus/`. The inventories of LEC and the differential tests are `tests/lec-checks.txt` and `tests/diff-checks.txt`.
+- Steps 3 to 5 add spec coverage, code coverage, and mutation testing.
+- Phase 9 of the front end (#73) adds `tests/source/`. The front-end spec still calls it `tests/si/`.
 
 ## Oracles
 
@@ -8,10 +21,112 @@ Each layer has one oracle. An oracle is a tool or a model that can say "wrong" m
 | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
 | Rust crates                          | Unit tests and `insta` snapshot tests; `proptest` property tests                                                           | `just test`                      |
 | `lean/`                              | The Lean kernel, with warnings as errors. `xtask` rejects `sorry`, new `axiom`, and `native_decide` outside the allowlist. | `just lean`, `cargo xtask check` |
-| Checker and interpreter against Lean | The shared `tests/check` and `tests/run` files run with `silicon` and with `silicon-check`                                 | `just lean-check`, in `just ci`  |
+| Checker and interpreter against Lean | The shared files of the suites run with `silicon` and with `silicon-check`                                                 | `just lean-check`, in `just ci`  |
 | Compiler against Lean                | Translation validation (build step 2)                                                                                      | Not in `just ci` yet             |
 | Implementations together             | The differential tests: random designs through the Lean interpreter, `silicon run`, and `arcilator`                        | `just diff`, in `just ci`        |
 | Emitted Verilog                      | LEC with `circt-lec` against the Lean reference MLIR                                                                       | `just lec`, in `just ci`         |
+
+## Suites
+
+Each language has one tree. A suite is one directory of a tree. The directory selects the command, and the crate `testkit` runs it. The suites use no shell `RUN:` lines. They find their files on their own, so a new file needs no change to `Cargo.toml`.
+
+| Suite                  | Command                                                         | Oracle                                         | Directives                    |
+| ---------------------- | --------------------------------------------------------------- | ---------------------------------------------- | ----------------------------- |
+| `tests/core/check/`    | The Rust checker and the Lean checker                           | The same first code and line in both           | `expected-error`              |
+| `tests/core/run/`      | The Rust interpreter and the Lean interpreter                   | The expected outputs in both                   | `STEP`                        |
+| `tests/core/lower/`    | `silicon lower`                                                 | LLVM `FileCheck`                               | `CHECK` lines                 |
+| `tests/core/corpus/`   | LEC and the differential tests                                  | `circt-lec`, the interpreters, `arcilator`     | None                          |
+| `tests/source/parse/`  | `parse` in Rust and in Lean                                     | The AST dumps are equal byte for byte          | None                          |
+| `tests/source/check/`  | `elab` in Rust and in Lean                                      | The same first code and line in both           | `TOP`, `expected-error`       |
+| `tests/source/run/`    | `run` in Rust and in Lean                                       | The expected outputs in both                   | `TOP`, `STEP`                 |
+| `tests/source/elab/`   | `elab`, then `FileCheck` on both outputs                        | LLVM `FileCheck`                               | `TOP`, `CHECK` lines          |
+| `tests/source/budget/` | `elab` with the budgets of the file                             | Success at the limit, failure one unit above   | `TOP`, `FUEL`, `SYNTAX-DEPTH` |
+| `tests/source/corpus/` | `validate`, then LEC and the differential tests                 | `silicon-check`, `circt-lec`, the interpreters | `TOP`                         |
+| `tests/source/llm/`    | `elab`, and the quality loop of the front-end spec, section 6.3 | The expected first error, and a fixed version  | `TOP`, `expected-error`       |
+
+`commit-check` treats each file of a suite as a test expectation. See [the commits guide](commits.md).
+
+## Directives
+
+A directive is a comment line that gives the expectation of a test file. Both languages use the same names. Only the comment marker differs: `;` in a `.sil` file, `//` in a `.si` file.
+
+| Directive                                           | Meaning                                                                         |
+| --------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `expected-error CODE @+N`                           | The first error has the code `CODE` at N lines below the directive              |
+| `STEP in=(...) out=(...)`                           | One clock cycle: the inputs and the expected outputs                            |
+| `CHECK:`, `CHECK-DAG:`, `CHECK-NOT:`, `CHECK-NEXT:` | LLVM `FileCheck` reads these lines and checks the output                        |
+| `TOP M(args)`                                       | The top selection of a source file                                              |
+| `FUEL N`                                            | The file elaborates with the fuel N. With the fuel N - 1, it fails with `S015`. |
+| `SYNTAX-DEPTH N`                                    | The file parses with the syntax depth N. With the depth N - 1, it fails.        |
+
+Examples: `; expected-error E004 @+1`, `// expected-error S010 @+1`, and `; STEP in=(en 1 rst 0) out=(q 3)`.
+
+- `@+1` means the next line. A `check` file without `expected-error` must pass.
+- The harness uses the real LLVM `FileCheck` from Nix.
+
+## Measures
+
+Three measures find a missing test. Each has an inventory of known gaps in `tests/inventory/`.
+
+| Measure          | Question                                  | Tool             | Command                                      |
+| ---------------- | ----------------------------------------- | ---------------- | -------------------------------------------- |
+| Spec coverage    | Does each item of the spec have a test?   | `testkit`        | `cargo xtask coverage`, in `just ci`         |
+| Code coverage    | Does a test run each line of Rust?        | `cargo-llvm-cov` | `just coverage`, in `just ci`                |
+| Mutation testing | Does a test find each change of the code? | `cargo-mutants`  | On each pull request, and in a weekly CI job |
+
+### Spec coverage
+
+`cargo xtask coverage` requires these tests:
+
+- **Error code.** At least 2 files in `check`: a minimal case and a case in another context. The codes come from the code tables of the two specs, as rule `arch-codes` reads them.
+- **Construct.** At least 1 file in each behavior suite. These are `run` and `lower` for the core IR, and `run` and `elab` for the source. The constructs are the AST kinds of `core-ir` and of `parse`.
+- **Command.** At least 1 suite or CLI test for each command of `silicon` and `silicon-check`.
+- **Budget.** For each budget of the front-end spec, section 5.4, a file at the limit that passes, and one unit above that fails.
+
+`testkit` reads each file with the real parser and walks the AST. An `expected-error` line covers its code. A file has no hand-written coverage tags. A check that prints SKIP covers nothing. A failure prints the item and the suite that has no test for it.
+
+### Code coverage
+
+- `just coverage` runs all Rust tests with instrumentation, also the tests that start `silicon`.
+- The measure is the line coverage of each crate. `xtask` is exempt.
+- CI fails when a crate goes below its floor. The target is 90 % for each compiler crate.
+- A floor can rise in any commit. A commit that lowers a floor changes nothing else.
+- The unit tests and the `proptest` tests of the crates count toward code coverage only.
+
+### Mutation testing
+
+`cargo-mutants` changes the code, for example it replaces a condition with `true`. Each changed program is a mutant. A test kills a mutant when the test fails on it.
+
+- On each pull request, `cargo mutants --in-diff` makes mutants on the changed lines.
+- A weekly CI job makes mutants on all compiler crates.
+- A surviving mutant fails, unless the inventory lists it.
+
+### Lean
+
+Lean has no coverage tool and no mutation tool. The shared files cover Lean, because each file runs through both front ends.
+
+## Inventories
+
+A SKIP hides a check, and a vanished check hides a bug. Thus each tool compares its results with a reviewed inventory in `tests/inventory/`. A tool fails when its results differ from its inventory: a missing line, an extra line, and a changed line all fail. A stale line also fails. Thus a fixed gap forces its line to change.
+
+| File           | Tool                   | Line format                                          |
+| -------------- | ---------------------- | ---------------------------------------------------- |
+| `lec.txt`      | `just lec`             | `FILE CHECK PASS` or `FILE CHECK SKIP TAG`           |
+| `diff.txt`     | `cargo xtask diff`     | `FILE CHECK PASS` or `FILE CHECK SKIP TAG`           |
+| `coverage.txt` | `cargo xtask coverage` | `ITEM SKIP TAG`                                      |
+| `llvm-cov.txt` | `just coverage`        | `CRATE FLOOR`                                        |
+| `mutants.txt`  | `cargo-mutants`        | `#ISSUE MUTANT`, or `EQUIV MUTANT` and a reason line |
+
+The fields:
+
+- `FILE` is the corpus file. A model check of LEC uses `-`, because it belongs to a memory configuration, not to a file.
+- `CHECK` is the name in the output line, and it may hold spaces. `diff` uses `run`.
+- `TAG` is `#ISSUE` or an error code such as `E014`. It must equal the tag that the tool reports. `cargo xtask check` requires that `doc/trust.md` names the tag as a gap (rule `arch-skips`).
+- `ITEM` is an error code, a construct, a command, or a budget, as the failure of `cargo xtask coverage` prints it. Example: `S016 SKIP #11`. A new feature removes its exception.
+- `CRATE` is a crate name, and `FLOOR` is its line coverage in percent. The first floors are the values of rollout step 4, rounded down.
+- `MUTANT` is the name of a mutant, as `cargo-mutants` prints it. `#ISSUE` names the issue for the missing test. `EQUIV` marks a mutant with the same behavior as the original code. The next line gives the reason in one line.
+
+`lec.txt` and `diff.txt` also fail when they run no comparison. A run with only SKIP lines, or with an empty corpus, fails. `diff` fails on an empty corpus for each `--count`, because the random designs stay outside the inventory.
 
 ## Rust crates
 
@@ -20,41 +135,26 @@ Each layer has one oracle. An oracle is a tool or a model that can say "wrong" m
 - `cargo nextest` shows failures only.
 - A test expectation changes in its own commit. A `refactor` commit does not change test expectations. See [the commits guide](commits.md).
 
-## Lean
+## Lean kernel
 
 - `lake -d lean build --wfail` treats warnings as errors.
 - `cargo xtask check` rejects `sorry`, a new `axiom`, and `native_decide` outside `lean/allowlist.toml`.
 
 ## LEC
 
-`just lec` runs `circt-lec` on each file of `tests/corpus/`. It compares the emitted Verilog and the Rust MLIR with the Lean reference MLIR. It also compares each Rust memory model with the Lean memory model. [The core IR spec](../design/2026-10-08-core-ir.md), section 8.1, gives the flow. Run it in the development shell.
+`just lec` runs `circt-lec` on each file of the `corpus` suite. It compares the emitted Verilog and the Rust MLIR with the Lean reference MLIR. It also compares each Rust memory model with the Lean memory model. [The core IR spec](../design/2026-10-08-core-ir.md), section 8.1, gives the flow. Run it in the development shell.
 
-## Check inventory
+## Differential tests
 
-A SKIP hides a check, and a vanished check hides a bug. Thus `just lec` and `cargo xtask diff` compare their checks with a reviewed inventory. The files are `tests/lec-checks.txt` and `tests/diff-checks.txt`. Each tool fails for two separate causes:
+`cargo xtask diff` runs the designs of the `corpus` suite and random designs from the generator of `core-ir`, with random inputs. It sends each design to the Lean interpreter, to `silicon run`, and to `arcilator` on the Lean reference MLIR. Each tool starts from the all-zero state. A disagreement is a failure. The failure prints the design and the input vectors as a `run` file.
 
-- It runs no comparison. A run with only SKIP lines, or with an empty corpus, fails. `diff` fails on an empty corpus for each `--count`, because the random designs stay outside the inventory.
-- Its checks differ from the inventory. A missing line, an extra line, and a changed line all fail. Thus a fixed bug forces its `SKIP` line to become `PASS`.
-
-The format of a line is `FILE CHECK PASS` or `FILE CHECK SKIP TAG`.
-
-- `FILE` is the corpus file. A model check of LEC uses `-`, because it belongs to a memory configuration, not to a file.
-- `CHECK` is the name in the output line, and it may hold spaces. `diff` uses `run`.
-- `TAG` is `#ISSUE` or an error code such as `E014`. It must equal the tag that the tool reports. `cargo xtask check` requires that `doc/trust.md` names the tag as a gap (rule `arch-skips`).
+- A corpus design with an extern prints `SKIP`. The interpreters reject it with `E014`.
+- The defaults are the seed 1 and 200 random designs. Use `--seed` and `--count` to change them.
+- A failure prints its seed. `cargo xtask diff --seed N --count 1` repeats it.
+- LEC covers the emitted Verilog, so the differential tests use no Verilator (core IR spec, section 8.2).
 
 ## Later oracles
 
 Fuzzing and translation validation join `just ci` in build step 2, when their oracles exist. See [the build order](../architecture.md).
 
 - Translation validation: each compiler run emits the core IR as a `.sil` file. The Lean checker `silicon-check` confirms it.
-
-The designs for LEC and the differential tests live in `tests/corpus/`.
-
-## Differential tests
-
-`cargo xtask diff` runs the designs of `tests/corpus/` and random designs from the generator of `core-ir`, with random inputs. It sends each design to the Lean interpreter, to `silicon run`, and to `arcilator` on the Lean reference MLIR. Each tool starts from the all-zero state. A disagreement is a failure. The failure prints the design and the input vectors as a `tests/run` file.
-
-- A corpus design with an extern prints `SKIP`. The interpreters reject it with `E014`.
-- The defaults are the seed 1 and 200 random designs. Use `--seed` and `--count` to change them.
-- A failure prints its seed. `cargo xtask diff --seed N --count 1` repeats it.
-- LEC covers the emitted Verilog, so the differential tests use no Verilator (core IR spec, section 8.2).
