@@ -4,6 +4,7 @@ tests/corpus/mem_depth1.sil run PASS
 tests/corpus/mem_depth16.sil run PASS
 tests/corpus/mem_port_counts.sil run PASS
 tests/corpus/mem_read_only.sil run PASS
+tests/corpus/names_unreserved.sil run SKIP E014
 tests/corpus/ops_arith.sil run PASS
 tests/corpus/ops_bitwise.sil run PASS
 tests/corpus/ops_compare.sil run PASS
