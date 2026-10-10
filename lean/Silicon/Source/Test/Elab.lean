@@ -156,6 +156,15 @@ def bigArg : String :=
   "module M(comptime x: Int) {\n}\nmodule T() {\n  instance u = M(1 << 1000000);\n}\n"
 #guard cost bigArg "T" (fuel := 10000000) == "S015 4:3"
 
+/-!
+A child with a free input is `S018` at its `instance` statement. The counts select the first
+such child, so a module with 8000 inputs and 8000 children without bindings returns fast.
+-/
+def wide (n : Nat) : String :=
+  "module W() {\n" ++ String.join ((List.range n).map fun j => s!"  input i{j}: Bool;\n") ++
+  s!"}\nmodule T() \{\n  comptime for k in 0..{n} \{\n    instance u = W();\n  }\n}\n"
+#guard cost (wide 8000) "T" (fuel := 1000000) == "S018 8005:5"
+
 /-! The branching hierarchy of section 11.3 with `d = 10`: 2047 instantiations. -/
 def branch : String :=
   "module M(comptime d: Nat, comptime id: Nat) {\n" ++
