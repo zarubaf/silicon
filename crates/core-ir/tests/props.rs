@@ -462,7 +462,7 @@ fn inst_outs(e: &typed::Expr) -> Vec<(typed::InstIdx, typed::OutputIdx)> {
 fn the_generator_covers_the_core_ir() {
     let mut runner = TestRunner::deterministic();
     let mut seen = Coverage::default();
-    for _ in 0..200 {
+    for _ in 0..400 {
         let Ok(tree) = r#gen::design().new_tree(&mut runner) else {
             panic!("the generator never rejects");
         };
