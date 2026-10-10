@@ -1,8 +1,8 @@
 ; CHECK: hw.module @counter(in %clk : !seq.clock, in %rst : i1, in %en : i1, out q : i8)
-; CHECK: %[[INC:.+]] = comb.add %silicon_reg_r, %{{.+}} : i8
-; CHECK: %[[NEXT:.+]] = comb.mux %en, %[[INC]], %silicon_reg_r : i8
-; CHECK: %silicon_reg_r = seq.compreg %[[NEXT]], %clk reset %rst, %{{.+}} : i8
-; CHECK: hw.output %silicon_reg_r : i8
+; CHECK: %[[INC:.+]] = comb.add %reg$$r, %{{.+}} : i8
+; CHECK: %[[NEXT:.+]] = comb.mux %en, %[[INC]], %reg$$r : i8
+; CHECK: %reg$$r = seq.compreg %[[NEXT]], %clk reset %rst, %{{.+}} : i8
+; CHECK: hw.output %reg$$r : i8
 ; The counter of the spec.
 (design counter
   (module counter

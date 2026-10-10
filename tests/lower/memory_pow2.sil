@@ -2,8 +2,8 @@
 ; read ports and two write ports.
 ; CHECK: hw.module @top(
 ; CHECK-NOT: comb.icmp
-; CHECK: %p, %q = hw.instance "m" @silicon_mem_16x8_r2w2(clk: %clk: !seq.clock, r0_addr: %x: i4, r1_addr: %y: i4, w0_addr: %x: i4, w0_data: %d: i8, w0_en: %we: i1, w1_addr: %y: i4, w1_data: %d: i8, w1_en: %we: i1) -> (r0_data: i8, r1_data: i8)
-; CHECK: hw.module.extern @silicon_mem_16x8_r2w2(in %clk : !seq.clock, in %r0_addr : i4, out r0_data : i8, in %r1_addr : i4, out r1_data : i8, in %w0_addr : i4, in %w0_data : i8, in %w0_en : i1, in %w1_addr : i4, in %w1_data : i8, in %w1_en : i1)
+; CHECK: %p, %q = hw.instance "m" @mem$$16x8_r2w2(clk: %clk: !seq.clock, r0_addr: %x: i4, r1_addr: %y: i4, w0_addr: %x: i4, w0_data: %d: i8, w0_en: %we: i1, w1_addr: %y: i4, w1_data: %d: i8, w1_en: %we: i1) -> (r0_data: i8, r1_data: i8)
+; CHECK: hw.module.extern @mem$$16x8_r2w2(in %clk : !seq.clock, in %r0_addr : i4, out r0_data : i8, in %r1_addr : i4, out r1_data : i8, in %w0_addr : i4, in %w0_data : i8, in %w0_en : i1, in %w1_addr : i4, in %w1_data : i8, in %w1_en : i1)
 (design top
   (module top
     (input clk clock)
