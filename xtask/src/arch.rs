@@ -17,7 +17,6 @@ const LEAN_CODES: &str = "lean/Silicon/Core/Syntax.lean";
 const RUST_CODES: &str = "crates/core-ir/src/diag.rs";
 const TRUST: &str = "doc/trust.md";
 const INVENTORIES: [&str; 2] = ["tests/lec-checks.txt", "tests/diff-checks.txt"];
-const LEAN_MAIN: &str = "lean/Silicon/Core/Main.lean";
 const LAKEFILE: &str = "lean/lakefile.toml";
 const EXE: &str = "silicon-check";
 
@@ -244,7 +243,9 @@ pub fn commands(main: &str) -> Result<BTreeSet<String>> {
         .filter_map(|(line, _)| arm.captures(line).map(|c| c[1].to_owned()))
         .collect();
     if found.is_empty() {
-        bail!("{LEAN_MAIN} has no command arm `| [\"name\", ...] =>`; the parser needs an update");
+        bail!(
+            "the `{EXE}` root has no command arm `| [\"name\", ...] =>`; the parser needs an update"
+        );
     }
     Ok(found)
 }
@@ -441,16 +442,16 @@ pub fn check(repo: &Repo) -> Result<Vec<Violation>> {
         &lean_codes(&repo.read(Path::new(LEAN_CODES))?)?,
         &rust_codes(&repo.read(Path::new(RUST_CODES))?)?,
     );
+    let root = exe_root(&repo.read(Path::new(LAKEFILE))?)?;
     out.extend(trust_violations(
         &workspace_crates(repo)?,
-        &commands(&repo.read(Path::new(LEAN_MAIN))?)?,
+        &commands(&repo.read(Path::new(&module_path(&root)))?)?,
         &trust_names(&repo.read(Path::new(TRUST))?)?,
     ));
     let tags = trust_tags(&repo.read(Path::new(TRUST))?)?;
     for path in INVENTORIES {
         out.extend(skips_violations(path, &repo.read(Path::new(path))?, &tags)?);
     }
-    let root = exe_root(&repo.read(Path::new(LAKEFILE))?)?;
     out.extend(exe_import_violations(&root, &|module| {
         let path = module_path(module);
         if repo.root.join(&path).exists() {

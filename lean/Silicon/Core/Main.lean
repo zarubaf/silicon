@@ -4,9 +4,11 @@ import Silicon.Core.Canonical.WellFormed
 import Silicon.Core.Interp.Named
 import Silicon.Core.Lower
 import Silicon.Core.Mlir.Print
-import Silicon.Source.Cli
 
-/-! The command line checks source positions before execution or lowering. -/
+/-!
+The core IR commands of `silicon-check`. They check source positions before execution or
+lowering. `Silicon.Main` dispatches the command line to them.
+-/
 namespace Silicon.Core.Cli
 
 open Semantics NamedRun
@@ -15,7 +17,7 @@ private def designError (e : Error) : IO UInt32 := do
   (← IO.getStdout).putStrLn (errorLine e)
   return 1
 
-private def usageError (message : String) : IO UInt32 := do
+def usageError (message : String) : IO UInt32 := do
   (← IO.getStderr).putStrLn message
   return 2
 
@@ -56,10 +58,10 @@ private def canonicalTyped (d : Design) (t : Typed.Design) (h : check d = .ok t)
       rw [hc] at accepted
       contradiction)
 
-private inductive Command where
+inductive Command where
   | check | run | lower | models
 
-private def execute (command : Command) (file : String) : IO UInt32 := do
+def execute (command : Command) (file : String) : IO UInt32 := do
   let source ← IO.FS.readFile file
   match parse source with
   | .error e => designError e
@@ -80,19 +82,4 @@ private def execute (command : Command) (file : String) : IO UInt32 := do
         (← IO.getStdout).putStr (Mlir.print mlir)
         return 0
 
-def main (args : List String) : IO UInt32 := do
-  try
-    let code ← match args with
-      | ["check", file] => execute .check file
-      | ["run", file] => execute .run file
-      | ["lower", file] => execute .lower file
-      | ["lower", "--models", file] => execute .models file
-      | ["parse", file] => Source.Cli.parse file
-      | _ => usageError "usage: silicon-check {check|run|lower [--models]|parse} FILE"
-    (← IO.getStdout).flush
-    return code
-  catch e => usageError e.toString
-
 end Silicon.Core.Cli
-
-def main (args : List String) : IO UInt32 := Silicon.Core.Cli.main args

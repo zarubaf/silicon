@@ -10,4 +10,4 @@ globs = ["Silicon.*"]
 
 [[lean_exe]]
 name = "silicon-check"
-root = "Silicon.Core.Main"
+root = "Silicon.Main"
