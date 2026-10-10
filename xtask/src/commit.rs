@@ -16,6 +16,8 @@ const FORBIDDEN_TRAILER_VALUES: &[&str] = &[
     "noreply@anthropic.com",
     "noreply@openai.com",
 ];
+/// Trailer keys that link a commit to an agent session.
+const FORBIDDEN_TRAILER_KEYS: &[&str] = &["claude-session"];
 
 /// Scopes a commit may name: workspace members plus the fixed list.
 pub fn allowed_scopes() -> Result<Vec<String>> {
@@ -59,6 +61,13 @@ fn contains_word(text: &str, word: &str) -> bool {
     })
 }
 
+/// Splits a lowercase line into a trailer key and value. Git accepts
+/// spaces and tabs between the key and the colon.
+fn trailer(lower: &str) -> Option<(&str, &str)> {
+    let (key, value) = lower.split_once(':')?;
+    Some((key.trim_end_matches([' ', '\t']), value))
+}
+
 /// Checks a commit message. Returns one problem string per violation.
 pub fn check_message(msg: &str, scopes: &[String]) -> Vec<String> {
     let mut problems = Vec::new();
@@ -80,13 +89,21 @@ pub fn check_message(msg: &str, scopes: &[String]) -> Vec<String> {
     }
     for line in msg.lines() {
         let lower = line.to_lowercase();
-        if let Some(value) = lower.strip_prefix("co-authored-by:")
+        let trailer = trailer(&lower);
+        if let Some(("co-authored-by", value)) = trailer
             && FORBIDDEN_TRAILER_VALUES
                 .iter()
                 .any(|f| contains_word(value, f))
         {
             problems.push(format!(
                 "[commit-attribution] agent attribution trailer: {line:?}"
+            ));
+        }
+        if let Some((key, _)) = trailer
+            && FORBIDDEN_TRAILER_KEYS.contains(&key)
+        {
+            problems.push(format!(
+                "[commit-attribution] agent session trailer: {line:?}"
             ));
         }
         if lower
@@ -270,6 +287,7 @@ mod tests {
             "Co-Authored-By: Codex <c@x>",
             "Co-Authored-By: Bot <noreply@openai.com>",
             "Co-Authored-By: GPT-5 <x@y>",
+            "Co-Authored-By : Claude <x@y>",
         ] {
             let msg = format!("feat: x\n\n{bad}");
             assert!(
@@ -339,6 +357,24 @@ mod tests {
             &check_message(generated, &scopes()),
             "commit-attribution"
         ));
+    }
+
+    #[test]
+    fn session_trailer_is_attribution() {
+        for trailer in [
+            "Claude-Session: https://claude.ai/code/session_x",
+            "claude-session: anything",
+            "Claude-Session : x",
+            "Claude-Session\t: x",
+        ] {
+            let msg = format!("feat: x\n\n{trailer}");
+            assert!(
+                fired(&check_message(&msg, &scopes()), "commit-attribution"),
+                "{trailer}"
+            );
+        }
+        let prose = "feat: x\n\nThe Claude-Session: trailer is attribution.";
+        assert!(check_message(prose, &scopes()).is_empty());
     }
 
     #[test]
