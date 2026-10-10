@@ -70,7 +70,13 @@ impl Parser<'_> {
     }
 
     fn stmt(&mut self) -> Res {
-        match self.cur()? {
+        let kind = self.cur()?;
+        // A `comptime fn` has these statements and `typeck` rejects them with `S006`.
+        if self.in_plain_fn && matches!(kind, RegKw | WireKw | InputKw | OutputKw | InstanceKw) {
+            self.later_slice(self.offset(), "a hardware statement in a `fn`");
+            return None;
+        }
+        match kind {
             LetKw => self.node(LetStmt, Self::let_stmt),
             RegKw => self.node(RegStmt, Self::reg_stmt),
             WireKw => self.node(WireStmt, |p| p.declaration(true)),
