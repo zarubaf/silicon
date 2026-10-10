@@ -558,3 +558,18 @@ proptest! {
         prop_assert_eq!(parsed.ast.is_some(), parsed.errors.is_empty());
     }
 }
+
+#[test]
+fn a_missing_or_wrong_opening_delimiter_is_s001() {
+    let cases = [
+        ("module M() { instance u = Child 123); }", 1, 33),
+        ("module M() { instance u = Child[1]; }", 1, 32),
+        ("module M() { instance u = Child; }", 1, 32),
+        ("module M() { instance u = Child(; }", 1, 33),
+    ];
+    for (input, line, col) in cases {
+        let parsed = parse(input);
+        assert!(parsed.ast.is_none(), "{input}");
+        assert_eq!(first_error(input), Some((Code::S001, line, col)), "{input}");
+    }
+}
