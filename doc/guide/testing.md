@@ -30,19 +30,19 @@ Issue #87 builds this layout in steps. Section 11 of the testing spec gives the 
 
 Each language has one tree. A suite is one directory of a tree. The directory selects the command, and the crate `testkit` runs it. The suites use no shell `RUN:` lines. They find their files on their own, so a new file needs no change to `Cargo.toml`.
 
-| Suite                  | Command                                                         | Oracle                                         | Directives                    |
-| ---------------------- | --------------------------------------------------------------- | ---------------------------------------------- | ----------------------------- |
-| `tests/core/check/`    | The Rust checker and the Lean checker                           | The same first code and line in both           | `expected-error`              |
-| `tests/core/run/`      | The Rust interpreter and the Lean interpreter                   | The expected outputs in both                   | `STEP`                        |
-| `tests/core/lower/`    | `silicon lower`                                                 | LLVM `FileCheck`                               | `CHECK` lines                 |
-| `tests/core/corpus/`   | LEC and the differential tests                                  | `circt-lec`, the interpreters, `arcilator`     | None                          |
-| `tests/source/parse/`  | `parse` in Rust and in Lean                                     | The AST dumps are equal byte for byte          | None                          |
-| `tests/source/check/`  | `elab` in Rust and in Lean                                      | The same first code and line in both           | `TOP`, `expected-error`       |
-| `tests/source/run/`    | `run` in Rust and in Lean                                       | The expected outputs in both                   | `TOP`, `STEP`                 |
-| `tests/source/elab/`   | `elab`, then `FileCheck` on both outputs                        | LLVM `FileCheck`                               | `TOP`, `CHECK` lines          |
-| `tests/source/budget/` | `elab` with the budgets of the file                             | Success at the limit, failure one unit above   | `TOP`, `FUEL`, `SYNTAX-DEPTH` |
-| `tests/source/corpus/` | `validate`, then LEC and the differential tests                 | `silicon-check`, `circt-lec`, the interpreters | `TOP`                         |
-| `tests/source/llm/`    | `elab`, and the quality loop of the front-end spec, section 6.3 | The expected first error, and a fixed version  | `TOP`, `expected-error`       |
+| Suite                  | Command                                                         | Oracle                                         | Directives                             |
+| ---------------------- | --------------------------------------------------------------- | ---------------------------------------------- | -------------------------------------- |
+| `tests/core/check/`    | The Rust checker and the Lean checker                           | The same first code and line in both           | `expected-error`                       |
+| `tests/core/run/`      | The Rust interpreter and the Lean interpreter                   | The expected outputs in both                   | `STEP`                                 |
+| `tests/core/lower/`    | `silicon lower`                                                 | LLVM `FileCheck`                               | `CHECK` lines                          |
+| `tests/core/corpus/`   | LEC and the differential tests                                  | `circt-lec`, the interpreters, `arcilator`     | None                                   |
+| `tests/source/parse/`  | `parse` in Rust and in Lean                                     | The AST dumps are equal byte for byte          | None                                   |
+| `tests/source/check/`  | `elab` in Rust and in Lean                                      | The same first code and line in both           | `TOP`, `expected-error`                |
+| `tests/source/run/`    | `run` in Rust and in Lean                                       | The expected outputs in both                   | `TOP`, `STEP`                          |
+| `tests/source/elab/`   | `elab`, then `FileCheck` on both outputs                        | LLVM `FileCheck`                               | `TOP`, `CHECK` lines                   |
+| `tests/source/budget/` | `elab` with the budgets of the file                             | Success at the limit, failure one unit above   | `TOP`, `FUEL`, `DEPTH`, `SYNTAX-DEPTH` |
+| `tests/source/corpus/` | `validate`, then LEC and the differential tests                 | `silicon-check`, `circt-lec`, the interpreters | `TOP`                                  |
+| `tests/source/llm/`    | `elab`, and the quality loop of the front-end spec, section 6.3 | The expected first error, and a fixed version  | `TOP`, `expected-error`                |
 
 `commit-check` treats each file of a suite as a test expectation. See [the commits guide](commits.md).
 
@@ -50,14 +50,15 @@ Each language has one tree. A suite is one directory of a tree. The directory se
 
 A directive is a comment line that gives the expectation of a test file. Both languages use the same names. Only the comment marker differs: `;` in a `.sil` file, `//` in a `.si` file.
 
-| Directive                                           | Meaning                                                                         |
-| --------------------------------------------------- | ------------------------------------------------------------------------------- |
-| `expected-error CODE @+N`                           | The first error has the code `CODE` at N lines below the directive              |
-| `STEP in=(...) out=(...)`                           | One clock cycle: the inputs and the expected outputs                            |
-| `CHECK:`, `CHECK-DAG:`, `CHECK-NOT:`, `CHECK-NEXT:` | LLVM `FileCheck` reads these lines and checks the output                        |
-| `TOP M(args)`                                       | The top selection of a source file                                              |
-| `FUEL N`                                            | The file elaborates with the fuel N. With the fuel N - 1, it fails with `S015`. |
-| `SYNTAX-DEPTH N`                                    | The file parses with the syntax depth N. With the depth N - 1, it fails.        |
+| Directive                                           | Meaning                                                                                   |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `expected-error CODE @+N`                           | The first error has the code `CODE` at N lines below the directive                        |
+| `STEP in=(...) out=(...)`                           | One clock cycle: the inputs and the expected outputs                                      |
+| `CHECK:`, `CHECK-DAG:`, `CHECK-NOT:`, `CHECK-NEXT:` | LLVM `FileCheck` reads these lines and checks the output                                  |
+| `TOP M(args)`                                       | The top selection of a source file                                                        |
+| `FUEL N`                                            | The file elaborates with the fuel N. With the fuel N - 1, it fails with `S015`.           |
+| `DEPTH N`                                           | The file elaborates with the nesting depth N. With the depth N - 1, it fails with `S015`. |
+| `SYNTAX-DEPTH N`                                    | The file parses with the syntax depth N. With the depth N - 1, it fails.                  |
 
 Examples: `; expected-error E004 @+1`, `// expected-error S010 @+1`, and `; STEP in=(en 1 rst 0) out=(q 3)`.
 
