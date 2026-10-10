@@ -28,6 +28,8 @@ def main (args : List String) : IO UInt32 := do
       | "eval" :: rest => source "eval" rest
       | "cost" :: rest => source "cost" rest
       | "elab" :: rest => source "elab" rest
+      | "run" :: rest => source "run" rest
+      | "validate" :: rest => source "validate" rest
       | _ => usage
     (← IO.getStdout).flush
     return code

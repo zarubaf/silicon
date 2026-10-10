@@ -20,6 +20,7 @@ def cost (src t : String) (fuel : Nat := 100000000) (depth : Nat := 1000)
   match Cli.costText { budget := { fuel, depth } } src t digest with
   | .ok text => text
   | .error e => s!"{e.code} {e.pos.line}:{e.pos.col}"
+  | .reject line => line
   | .usage _ => "usage"
   | .defect _ => "defect"
 

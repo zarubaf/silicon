@@ -16,6 +16,7 @@ def sil (src t : String) (fuel : Nat := 100000000) : String :=
   match Cli.elabText { budget := { fuel } } src t with
   | .ok text => text
   | .error e => s!"{e.code} {e.pos.line}:{e.pos.col}"
+  | .reject line => line
   | .usage _ => "usage"
   | .defect m => s!"defect {m}"
 
