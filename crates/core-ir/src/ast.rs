@@ -5,6 +5,18 @@ use crate::Pred;
 use crate::diag::Span;
 use num_bigint::BigUint;
 
+/// True if `text` matches `[A-Za-z_][A-Za-z0-9_]*(\$[A-Za-z0-9_]+)*`: fields
+/// joined by one `$`. No core name contains `$$`, so the backend names, which
+/// do, never collide with one (spec 3.4).
+#[must_use]
+pub fn is_core_name(text: &str) -> bool {
+    let mut fields = text.split('$');
+    let field = |f: &str| f.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+    fields.next().is_some_and(|first| {
+        first.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_') && field(first)
+    }) && fields.all(|f| !f.is_empty() && field(f))
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Name {
     pub text: String,
