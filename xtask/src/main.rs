@@ -16,6 +16,7 @@ mod prose;
 mod repo;
 mod review;
 mod silicon;
+mod skips;
 #[cfg(test)]
 mod testgit;
 mod tree;

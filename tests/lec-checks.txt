@@ -1,0 +1,35 @@
+tests/corpus/counter.sil main PASS
+tests/corpus/counter.sil lowering PASS
+tests/corpus/hierarchy_extern.sil main PASS
+tests/corpus/hierarchy_extern.sil lowering PASS
+tests/corpus/mem_depth1.sil main PASS
+tests/corpus/mem_depth1.sil lowering PASS
+- model silicon_mem_1x4_r1w1 PASS
+tests/corpus/mem_depth16.sil main PASS
+tests/corpus/mem_depth16.sil lowering PASS
+- model silicon_mem_16x8_r1w1 PASS
+tests/corpus/mem_port_counts.sil main PASS
+tests/corpus/mem_port_counts.sil lowering PASS
+- model silicon_mem_12x8_r1w1 PASS
+- model silicon_mem_12x8_r2w2 PASS
+tests/corpus/mem_read_only.sil main SKIP #20
+tests/corpus/mem_read_only.sil lowering SKIP #20
+- model silicon_mem_3x4_r1w0 SKIP #20
+tests/corpus/ops_arith.sil main PASS
+tests/corpus/ops_arith.sil lowering PASS
+tests/corpus/ops_bitwise.sil main PASS
+tests/corpus/ops_bitwise.sil lowering PASS
+tests/corpus/ops_compare.sil main PASS
+tests/corpus/ops_compare.sil lowering PASS
+tests/corpus/ops_select.sil main PASS
+tests/corpus/ops_select.sil lowering PASS
+tests/corpus/ops_shift.sil main PASS
+tests/corpus/ops_shift.sil lowering PASS
+tests/corpus/reg_self.sil main SKIP #20
+tests/corpus/reg_self.sil lowering SKIP #20
+tests/corpus/reg_state.sil main PASS
+tests/corpus/reg_state.sil lowering PASS
+tests/corpus/unused_module.sil main PASS
+tests/corpus/unused_module.sil lowering PASS
+tests/corpus/wide.sil main PASS
+tests/corpus/wide.sil lowering PASS
