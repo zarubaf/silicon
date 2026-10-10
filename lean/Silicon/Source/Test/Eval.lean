@@ -301,6 +301,19 @@ def skipped (locals : Nat) : String :=
 #guard out (skipped 2000) "r(500)" == "(int 0)"
 #guard cost (skipped 2000) "g(100)" == cost (skipped 1) "g(100)"
 
+/-! A message prints a large integer as its bit length and cuts a long string. -/
+#guard Eval.intText (2 ^ 256 - 1) == toString ((2 : Int) ^ 256 - 1)
+#guard Eval.intText (2 ^ 256) == "an integer of 257 bits"
+#guard Eval.intText (-(2 ^ 6400000)) == "a negative integer of 6400001 bits"
+#guard Eval.strText "abc" == "abc"
+#guard Eval.strText (String.ofList (List.replicate 100 'a')) ==
+  String.ofList (List.replicate 64 'a') ++ "... (100 characters)"
+#guard out "" "UInt[1 << 6400000]" 100008 == "S012 1:1"
+#guard out "" "Nat(-(1 << 6400000))" 300000 == "S012 1:1"
+#guard out "" "UInt[8](1 << 6400000)" 300000 == "S012 1:1"
+#guard out "" "1 << -(1 << 6400000)" 300000 == "S013 1:1"
+#guard out "" "1 << (1 << 6400)" 1000 == "S015 1:1"
+
 /-! A right shift reads its operand in full, so it pays the size of its operand. -/
 #guard exact "" "-(1 << 6400) >> 6399" 312
 #guard out "" "UInt[8](1) << 100000000000" 20 == "(uint 8 0)"
