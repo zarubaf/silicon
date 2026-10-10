@@ -18,8 +18,9 @@ pub(crate) fn dump(items: &[Item]) -> String {
     out
 }
 
-/// A string literal with the escapes of the grammar.
-fn quote(text: &str, out: &mut String) {
+/// A string literal with the escapes of the grammar, as `Print.quote` in Lean writes it. The
+/// AST dump and the serialization of a static string share it.
+pub fn quote(text: &str, out: &mut String) {
     out.push('"');
     for c in text.chars() {
         match c {
