@@ -57,6 +57,12 @@ pub fn lex(input: &str) -> Lexed {
     out
 }
 
+/// Whitespace is space, tab, CR, and LF only. Every other character, also U+FEFF and
+/// Unicode whitespace, is an invalid character, as in the Lean lexer.
+fn is_whitespace(c: char) -> bool {
+    matches!(c, ' ' | '\t' | '\r' | '\n')
+}
+
 struct Lexer<'a> {
     input: &'a str,
     pos: usize,
@@ -123,8 +129,8 @@ impl Lexer<'_> {
         let Some(first) = rest.chars().next() else {
             return (SyntaxKind::Error, None);
         };
-        if first.is_whitespace() {
-            self.eat_while(char::is_whitespace);
+        if is_whitespace(first) {
+            self.eat_while(is_whitespace);
             return (SyntaxKind::Whitespace, None);
         }
         if rest.starts_with("//") {
@@ -254,6 +260,22 @@ mod tests {
         let lexed = kinds(words);
         assert_eq!(lexed.len(), 29);
         assert!(lexed.iter().all(|k| format!("{k:?}").ends_with("Kw")));
+    }
+
+    #[test]
+    fn only_four_characters_are_whitespace() {
+        assert_eq!(kinds(" \t\r\n1 \n"), [SyntaxKind::Dec]);
+        for c in ['\u{feff}', '\u{a0}', '\u{85}', '\u{2003}', '\u{b}', '\u{c}'] {
+            let input = format!("1{c}2");
+            let lexed = lex(&input);
+            assert_eq!(
+                lexed.tokens.iter().map(|t| t.kind).collect::<Vec<_>>(),
+                [SyntaxKind::Dec, SyntaxKind::Error, SyntaxKind::Dec],
+                "{c:?}"
+            );
+            assert_eq!(lexed.errors.len(), 1);
+            assert_eq!((lexed.errors[0].code, lexed.errors[0].offset), ("S001", 1));
+        }
     }
 
     #[test]
