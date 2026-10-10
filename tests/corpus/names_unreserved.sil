@@ -1,0 +1,36 @@
+; Purpose: user names that look like backend names. Silicon reserves no name
+; (spec 3.4), so a name can start with silicon_ or have `$` fields. A backend
+; name has `$$` and so never equals one of these.
+(design top
+  (extern silicon_blk
+    (input silicon_c clock)
+    (input silicon_a (bits 4))
+    (output silicon_y (bits 4))
+    (deps silicon_y (silicon_a)))
+  (module top
+    (input clk clock)
+    (input silicon_reg_r_state (bits 4))
+    (input a (bits 4))
+    (input d (bits 8))
+    (input we (bits 1))
+    (output q (bits 4))
+    (output p (bits 8))
+    (output z (bits 4))
+    (reg silicon_reg_r (bits 4) clk)
+    (reg reg$mem (bits 4) clk)
+    (mem silicon_mem_12x8_r1w1 (bits 8) 12 clk)
+    (next silicon_reg_r (add silicon_reg_r silicon_reg_r_state))
+    (next reg$mem (add reg$mem a))
+    (write silicon_mem_12x8_r1w1 0 a d we)
+    (inst u silicon_blk (silicon_c clk) (silicon_a a))
+    (inst m mem$12x8_r1w1 (clk clk) (x u.silicon_y))
+    (assign q (add silicon_reg_r reg$mem))
+    (assign p (read silicon_mem_12x8_r1w1 a))
+    (assign z m.y))
+  (module mem$12x8_r1w1
+    (input clk clock)
+    (input x (bits 4))
+    (output y (bits 4))
+    (reg w (bits 4) clk)
+    (next w x)
+    (assign y w)))

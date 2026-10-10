@@ -15,6 +15,8 @@ tests/corpus/mem_port_counts.sil lowering PASS
 tests/corpus/mem_read_only.sil main SKIP #20
 tests/corpus/mem_read_only.sil lowering SKIP #20
 - model mem$$3x4_r1w0 SKIP #20
+tests/corpus/names_unreserved.sil main PASS
+tests/corpus/names_unreserved.sil lowering PASS
 tests/corpus/ops_arith.sil main PASS
 tests/corpus/ops_arith.sil lowering PASS
 tests/corpus/ops_bitwise.sil main PASS
