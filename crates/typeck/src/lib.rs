@@ -67,8 +67,10 @@ pub fn check(resolved: Resolved) -> Result<Resolved, Failed> {
 /// # Errors
 /// Returns the errors of `S005` to `S007`, or an error if the machine cannot give the stack.
 pub fn check_expr(resolved: &Resolved, expr: ResolvedExpr) -> Result<ResolvedExpr, Failed> {
-    let errors = parse::on_stack(resolved.depth(), || walk::run_expr(resolved, &expr))
-        .map_err(Failed::Stack)?;
+    let errors = parse::on_stack(expr.depth_with(resolved), || {
+        walk::run_expr(resolved, &expr)
+    })
+    .map_err(Failed::Stack)?;
     if errors.is_empty() {
         Ok(expr)
     } else {
