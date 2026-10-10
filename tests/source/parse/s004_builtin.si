@@ -1,0 +1,2 @@
+// S004: a builtin belongs to a later slice.
+const A: T = @TypeOf(x);

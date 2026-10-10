@@ -1,0 +1,2 @@
+// S001: a hexadecimal literal without digits.
+const A: T = 0x;

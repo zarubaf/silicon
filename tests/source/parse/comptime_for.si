@@ -1,0 +1,7 @@
+// comptime for over a range with a computed bound.
+module M(comptime W: Nat) {
+    output o: UInt[8];
+    comptime for i in 0..W + 1 {
+        o := i;
+    }
+}

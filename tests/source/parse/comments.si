@@ -1,0 +1,6 @@
+// Comments between and inside items.
+const /* inside */ A: T = 1; // trailing
+/* block
+   comment */ const B: T = 2;
+module M() { /* empty */ } /* after */
+// the last line has no newline

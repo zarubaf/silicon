@@ -1,0 +1,10 @@
+// Registers, wires, and the connect operator :=.
+module M() {
+    input i: UInt[8];
+    output o: UInt[8];
+    reg r: UInt[8] = 0;
+    wire w: UInt[8];
+    w := i;
+    r := w +% 1;
+    o := r;
+}

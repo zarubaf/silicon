@@ -1,0 +1,2 @@
+// S004: an input with as belongs to a later slice.
+module M() { input i: T as 1; }

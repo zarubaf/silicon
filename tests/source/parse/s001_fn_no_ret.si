@@ -1,0 +1,2 @@
+// S001: a fn without a return type.
+fn f() { }

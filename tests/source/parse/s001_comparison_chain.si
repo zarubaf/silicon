@@ -1,0 +1,2 @@
+// S001: comparisons do not chain.
+const A: T = a < b < c;

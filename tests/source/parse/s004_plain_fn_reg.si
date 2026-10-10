@@ -1,0 +1,12 @@
+// S004: a plain fn has no reg statement. A comptime fn and a module keep it.
+fn f() -> Nat {
+    reg a: Bool = false;
+    return 1;
+}
+comptime fn g() -> Nat {
+    reg a: Bool = false;
+    return 1;
+}
+module M() {
+    reg a: Bool = false;
+}

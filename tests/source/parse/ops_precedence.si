@@ -1,0 +1,12 @@
+// Operators from the lowest to the highest precedence.
+const A: T = a || b && c;
+const B: T = a && b | c;
+const C: T = a | b ^ c;
+const D: T = a ^ b & c;
+const E: T = a & b == c;
+const F: T = a == b << c;
+const G: T = a << b + c;
+const H: T = a + b * c;
+const I: T = a * -b;
+const J: T = -a.b;
+const K: T = (a + b) * c;

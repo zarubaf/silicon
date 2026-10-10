@@ -1,0 +1,2 @@
+// S004: a wire in a named domain belongs to a later slice.
+module M() { wire w: T in d; }

@@ -1,0 +1,2 @@
+// S001: an empty statement.
+module M() { ; }

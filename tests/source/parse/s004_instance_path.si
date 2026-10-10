@@ -1,0 +1,2 @@
+// S004: a path in an instance belongs to a later slice.
+module M() { instance u = a::A(); }

@@ -1,0 +1,10 @@
+// resize, reinterpret, and the conversion T(n).
+module M() {
+    input a: UInt[8];
+    output o: UInt[16];
+    output p: SInt[8];
+    output q: UInt[8];
+    o := resize(a, 16);
+    p := reinterpret(a, SInt[8]);
+    q := UInt[8](5);
+}

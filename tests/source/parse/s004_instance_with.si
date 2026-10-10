@@ -1,0 +1,2 @@
+// S004: instance with belongs to a later slice.
+module M() { instance u = A() with { }; }

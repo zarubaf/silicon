@@ -1,0 +1,26 @@
+// Each binary and unary operator once.
+const A: T = a || b;
+const B: T = a && b;
+const C: T = a | b;
+const D: T = a ^ b;
+const E: T = a & b;
+const F: T = a == b;
+const G: T = a != b;
+const H: T = a < b;
+const I: T = a <= b;
+const J: T = a > b;
+const K: T = a >= b;
+const L: T = a << b;
+const M: T = a >> b;
+const N: T = a + b;
+const O: T = a - b;
+const P: T = a +% b;
+const Q: T = a -% b;
+const R: T = a * b;
+const S: T = a / b;
+const U: T = a % b;
+const V: T = a *% b;
+const W: T = -a;
+const X: T = !a;
+const Y: T = ~a;
+const Z: T = !~-a;

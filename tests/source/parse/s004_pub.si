@@ -1,0 +1,2 @@
+// S004: pub belongs to a later slice.
+pub fn f() -> T { }

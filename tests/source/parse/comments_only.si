@@ -1,0 +1,5 @@
+// Only comments and blank lines: the dump is empty.
+/* A block comment
+   over two lines. */
+
+// Another line comment.

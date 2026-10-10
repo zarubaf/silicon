@@ -1,0 +1,5 @@
+// A plain fn with parameters, a trailing comma, and a return type.
+fn add(a: UInt[8], b: UInt[8],) -> UInt[8] {
+    return a +% b;
+}
+fn nothing() -> Bool { }

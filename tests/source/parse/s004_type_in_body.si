@@ -1,0 +1,2 @@
+// S004: a type alias in a body belongs to a later slice.
+module M() { type A = T; }

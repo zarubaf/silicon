@@ -1,0 +1,2 @@
+// S001: an if expression needs else.
+const A: T = if (a) { 1 };

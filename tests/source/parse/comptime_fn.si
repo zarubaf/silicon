@@ -1,0 +1,8 @@
+// A comptime fn with a comptime parameter and recursion.
+comptime fn fact(comptime n: Nat) -> Nat {
+    comptime if (n == 0) {
+        return 1;
+    } else {
+        return n * fact(n - 1);
+    }
+}

@@ -1,0 +1,2 @@
+// S004: an input with an index belongs to a later slice.
+module M() { input i[2]: T; }

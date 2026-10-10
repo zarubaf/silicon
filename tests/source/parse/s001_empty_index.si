@@ -1,0 +1,2 @@
+// S001: an index without arguments.
+const A: T = x[];

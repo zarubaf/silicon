@@ -1,0 +1,2 @@
+// S004: a type alias belongs to a later slice.
+type A = T;

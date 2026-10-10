@@ -1,0 +1,4 @@
+// Unicode in comments: é ü 日本語 🙂
+/* block: ñ Ω 🙂 */
+const S: Str = "é🙂";
+const A: T = 1; // après

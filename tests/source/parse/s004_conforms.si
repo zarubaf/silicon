@@ -1,0 +1,2 @@
+// S004: conforms belongs to a later slice.
+module M() conforms A() using B() { }

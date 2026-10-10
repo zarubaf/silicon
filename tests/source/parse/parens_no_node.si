@@ -1,0 +1,2 @@
+// Parentheses make no node, so five of them pass at any height.
+const A: T = (((((a)))));

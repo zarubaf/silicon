@@ -1,0 +1,2 @@
+// S004: a path with :: belongs to a later slice.
+const A: T = a::b;

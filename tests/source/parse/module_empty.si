@@ -1,0 +1,2 @@
+// A module without parameters and without a body.
+module M() { }

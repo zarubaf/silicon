@@ -1,0 +1,7 @@
+// static_assert and error with string literals.
+module M(comptime W: Nat) {
+    static_assert(W > 0, "W is zero");
+    comptime if (W > 64) {
+        error("W is too wide");
+    }
+}

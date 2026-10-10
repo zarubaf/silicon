@@ -1,0 +1,2 @@
+// S001: a conditional expression is an operand only in parentheses.
+const A: T = x +% if (a) { 1 } else { 2 };

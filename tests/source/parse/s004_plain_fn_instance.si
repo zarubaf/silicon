@@ -1,0 +1,12 @@
+// S004: a plain fn has no instance statement. A comptime fn and a module keep it.
+fn f() -> Nat {
+    instance u = M();
+    return 1;
+}
+comptime fn g() -> Nat {
+    instance u = M();
+    return 1;
+}
+module M() {
+    instance u = M();
+}

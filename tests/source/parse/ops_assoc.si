@@ -1,0 +1,6 @@
+// Left associativity, and comparisons only with parentheses.
+const A: T = a - b - c;
+const B: T = a +% b -% c;
+const C: T = a * b / c % d *% e;
+const D: T = a >> b << c;
+const E: T = (a < b) == (c >= d);

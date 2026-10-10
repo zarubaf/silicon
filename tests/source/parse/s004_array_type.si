@@ -1,0 +1,2 @@
+// S004: an array type belongs to a later slice.
+const A: [T; 4] = f;

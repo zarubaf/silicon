@@ -1,0 +1,6 @@
+// String literals with every escape, and with non-ASCII characters.
+const A: Str = "";
+const B: Str = "a\nb";
+const C: Str = "quote \" and backslash \\";
+const D: Str = "tab \t and return \r";
+const E: Str = "UTF-8: é🙂";
