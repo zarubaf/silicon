@@ -134,8 +134,20 @@ def retRef (s : String) : Option Ref :=
 /-! The name after `.` is not resolved. -/
 #guard ok "module A() { instance b = B(); let y = b.zzz; }\nmodule B() {}"
 
-/-! A module without a `domains` clause has no domain name in scope. -/
-#guard fails (modBody "let c = clock;") .S003 2 9
+/-!
+A module without a `domains` clause has the default domain `clock`. It comes before the
+parameters, so a parameter `clock` is `S002` at the parameter. `domains()` declares no domain.
+-/
+#guard ok "module M() {\nlet c = clock;\n}"
+#guard ok "module M() domains(clock) {\nlet c = clock;\n}"
+#guard fails "module M() domains() {\nlet c = clock;\n}" .S003 2 9
+#guard ok "module M() domains() {\nwire clock: Bool;\n}"
+#guard fails "module M() {\nwire clock: Bool;\n}" .S002 2 6
+#guard fails "module M() domains(clock) {\nwire clock: Bool;\n}" .S002 2 6
+#guard fails "module M(comptime clock: Nat) {}" .S002 1 19
+#guard ok "module M(comptime clock: Nat) domains() {}"
+#guard fails "module M(comptime clock: Nat) domains(clock) {}" .S002 1 39
+#guard ok "module M() {\n{ let clock = 1; }\n}"
 
 /-! `S003`: a position that needs a fixed kind gets a name of that kind. -/
 #guard fails "const N: Nat = 1;\nconst M: N = 1;" .S003 2 10
