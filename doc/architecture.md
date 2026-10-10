@@ -84,9 +84,11 @@ These are the architecture paths. `cargo xtask review-scope` reads this list. Ea
 - `Cargo.toml` and each `crates/*/Cargo.toml`
 - `doc/architecture.md`, `doc/trust.md`, `doc/adr/`, and `doc/design/`
 - `CONTEXT.md`, `AGENTS.md`, `*/AGENTS.md`, and `crates/*/AGENTS.md`
-- `lean/lakefile.toml`, `lean/Silicon/*/Syntax.lean`, and `lean/Silicon/*/Main.lean`
-- The normative Lean definitions: `lean/Silicon/Core/Semantics.lean`, `lean/Silicon/Core/Semantics/`, `lean/Silicon/Core/Check.lean`, `lean/Silicon/Core/Text.lean`, `lean/Silicon/Core/MemModel.lean`, `lean/Silicon/Core/Lower.lean`, and `lean/Silicon/Core/Mlir/`
+- `lean/lakefile.toml`, `lean/lake-manifest.json`, `lean/allowlist.toml`, `lean/Silicon/*/Syntax.lean`, and `lean/Silicon/*/Main.lean`
+- The normative Lean definitions: `lean/Silicon/Core/Semantics.lean`, `lean/Silicon/Core/Semantics/`, `lean/Silicon/Core/Check.lean`, `lean/Silicon/Core/Typed.lean`, `lean/Silicon/Core/Deps.lean`, `lean/Silicon/Core/Text.lean`, `lean/Silicon/Core/MemModel.lean`, `lean/Silicon/Core/Lower.lean`, and `lean/Silicon/Core/Mlir/`
 - `justfile`, `.github/workflows/`, and `xtask/`
+- The translation validator `crates/driver/src/validate.rs`
+- The toolchain pins `flake.nix` and `flake.lock`
 
 ## Verification against existing SystemVerilog
 
