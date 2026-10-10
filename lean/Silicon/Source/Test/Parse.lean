@@ -225,7 +225,10 @@ def roundtrip (items : List Item) : Bool :=
 #guard fails ("import x " ++ "".pushn '9' 20000) .S004 1 1
 #guard fails ("const N: T = " ++ "".pushn '9' 20000 ++ " 1;") .S001 1 14
 
-/-! A small syntax depth: height 64 passes, and height 65 fails at the first token of its form. -/
+/-!
+A small syntax depth: height 64 passes, and height 65 fails at the first token of the
+outermost expression or type.
+-/
 def parens (n : Nat) : String := "".pushn '(' n ++ "x" ++ "".pushn ')' n
 def negs (n : Nat) : String := "".pushn '-' n ++ "x"
 def chain (n : Nat) : String := " + ".intercalate (List.replicate n "a")
@@ -233,23 +236,37 @@ def calls (n : Nat) : String := String.join (List.replicate n "f(") ++ "x" ++ ""
 
 #guard (constValue (parens 63) 64).toBool
 #guard ex (parens 64) 64 == "error S001 1:14"
-#guard ex ("y + " ++ parens 64) 64 == "error S001 1:18"
+#guard ex ("y + " ++ parens 64) 64 == "error S001 1:14"
 #guard (constValue (negs 63) 64).toBool
 #guard ex (negs 64) 64 == "error S001 1:14"
 #guard (constValue (chain 64) 64).toBool
 #guard ex (chain 65) 64 == "error S001 1:14"
 #guard (constValue (calls 63) 64).toBool
 #guard ex (calls 64) 64 == "error S001 1:14"
-#guard ex ("g(" ++ chain 65 ++ ")") 64 == "error S001 1:16"
-#guard fails ("const N: T[" ++ chain 65 ++ "] = 1;") .S001 1 12 64
-#guard ex (parens 1000) 64 == "error S001 1:950"
+#guard ex ("g(" ++ chain 65 ++ ")") 64 == "error S001 1:14"
+#guard fails ("const N: T[" ++ chain 65 ++ "] = 1;") .S001 1 10 64
+#guard ex (parens 1000) 64 == "error S001 1:14"
+#guard stFails ("y + " ++ parens 64 ++ ";") .S001 1 64
+#guard stFails ("x.a = " ++ parens 64 ++ ";") .S001 7 64
+#guard stFails ("instance u = M(a, " ++ parens 64 ++ ");") .S001 19 64
+#guard stFails ("let x: T[" ++ chain 65 ++ "] = 1;") .S001 8 64
 
 /-! The default syntax depth: height 4096 passes, and height 4097 fails. -/
 #guard (constValue (chain 4096)).toBool
 #guard ex (chain 4097) == "error S001 1:14"
 #guard (constValue (parens 4095)).toBool
 #guard ex (parens 4096) == "error S001 1:14"
-#guard ex ("y + " ++ parens 4096) == "error S001 1:18"
+#guard ex ("y + " ++ parens 4096) == "error S001 1:14"
+
+/-! Forms built in a loop or by right nesting, at the default syntax depth. -/
+def elifs (n : Nat) : String :=
+  String.join (List.replicate n "if (c) { x } else { ") ++ "x" ++ "".pushn '}' n
+def fields (n : Nat) : String := "x" ++ String.join (List.replicate n ".f")
+#guard ex (chain 5000) == "error S001 1:14"
+#guard (constValue (elifs 4095)).toBool
+#guard ex (elifs 4096) == "error S001 1:14"
+#guard (constValue (fields 4095)).toBool
+#guard ex (fields 4096) == "error S001 1:14"
 
 /-! A raised syntax depth accepts a deeper input. -/
 #guard (constValue (parens 10000) 20000).toBool
@@ -264,7 +281,7 @@ def body (n : Nat) (s : String) : String :=
 #guard (parseSource defaultSyntaxDepth (body 20000 "x;\n")).toBool
 #guard (parseSource defaultSyntaxDepth (body 20000 "(x);\n")).toBool
 #guard (parseSource defaultSyntaxDepth (body 10000 "x.a = (f(y, z));\n")).toBool
-#guard ex (parens 20000) 64 == "error S001 1:19950"
+#guard ex (parens 20000) 64 == "error S001 1:14"
 
 /-! A small syntax depth: the body and 63 nested blocks pass, and one more fails at its `{`. -/
 def blocks (n : Nat) : String := "".pushn '{' n ++ "".pushn '}' n
