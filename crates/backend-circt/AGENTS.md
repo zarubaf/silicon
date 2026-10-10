@@ -14,6 +14,7 @@ This crate owns the MLIR text of a design and the memory models. It also owns th
 - A module keeps the port order of its source. The clock port has the type `!seq.clock`. Check: `cargo nextest run -p backend-circt`.
 - A register has the MLIR name `reg$$<name>`. Check: `cargo nextest run -p backend-circt`.
 - A memory is an instance of `mem$$<D>x<W>_r<R>w<P>`, with the ports of spec section 7.3. The read ports follow the order of the `read` forms in the canonical text. Check: `cargo nextest run -p backend-circt`.
+- Each name that this crate makes contains `$$`, so it never equals a core name (spec section 3.4). Silicon reserves no user name. Check: `cargo nextest run -p backend-circt`.
 - The guards for an access out of range stay in the parent module. Check: `cargo nextest run -p backend-circt`.
 - A memory model is one `seq.compreg` with the name `reg$$mem` and one word for each address. A read is combinational, and a higher write port wins. The model has no guard. Check: `cargo nextest run -p backend-circt`.
 - The Verilog has no random initialization. A missing CIRCT tool is an error that names the tool. Check: `cargo nextest run -p backend-circt`.
