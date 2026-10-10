@@ -28,8 +28,9 @@ its operation runs. When the fuel cannot pay it, the result is `S015` at the nod
    statement: the body of a function, each branch of `comptime if`, and each loop iteration.
 2. A literal makes a value: it charges the size of its value.
 3. A unary operator charges the size of its operand. A binary operator charges the sum of the
-   sizes of its operands. `*`, `/`, `%`, and `*%` charge their product. A shift charges the
-   size of its result. `&&`, `||`, and a conditional select a value, so they charge no size.
+   sizes of its operands. `*`, `/`, `%`, and `*%` charge their product. A left shift charges
+   the size of its result. A right shift reads its operand in full, so it charges the size of
+   its operand. `&&`, `||`, and a conditional select a value, so they charge no size.
 4. A conversion charges the size of its operand plus the size of its result: `resize`,
    `reinterpret`, and a typed use that makes a finite value from an `Int`.
 5. `UInt[w]` and `SInt[w]` charge the size of the type that they make.
@@ -255,9 +256,7 @@ def shift (op : BinOp) (a b : Value) : Except Fault Step := do
     unless b matches .int _ do typeError "an Int shift needs a static Int count"
     let k ← count
     if op == .shl then .ok ⟨shlSize x k, fun _ => .ok (.int (intShl x k))⟩
-    else
-      let r := intShr x k
-      .ok ⟨(Value.int r).size, fun _ => .ok (.int r)⟩
+    else .ok ⟨a.size, fun _ => .ok (.int (intShr x k))⟩
   | .uint w x | .sint w x =>
     let k ← count
     let s := a matches .sint ..
