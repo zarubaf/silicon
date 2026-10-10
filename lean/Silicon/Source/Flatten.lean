@@ -11,15 +11,18 @@ and the statements, the ports, and the domain follow section 7.5.
 
 The lowering charges the fuel that elaboration leaves (section 5.4). A core node is one form of
 the text: the design, a module, a port, a statement, a reset, a connection, or an expression
-node. Each core node charges 1 unit. Each core name charges 1 unit for each of its fields, at
+node. Each core node charges 1 unit. Each field of a core name charges its length in bytes, at
 each place where it occurs. A charge comes before the node or the name that it pays. Above the
 fuel, the result is `S015` at the source position of the node.
 
 These rules settle the open points of the spec:
 
-- A made integer field charges the square of its size, at least 1. This is the charge of its
-  decimal form (section 5.4), so a large loop value pays for its digits.
-- An emitted module name charges 1 unit for each field, as each other core name.
+- A made field that holds an integer charges the square of the size of the integer, at least 1.
+  A call site, a version, and a temporary are such fields. Their bytes are at most 20 times
+  this charge.
+- The fields of an emitted module name charge as those of each other core name.
+- The height of a hardware value counts its nodes: a leaf has the height 1. A reference to a
+  named binding is a leaf. The value of a statement never binds for its height.
 - Each core node takes the position of the source node that made it. A statement of a `:=`
   binding takes the position of the binding. A temporary takes the position of its operand. A
   port takes its declaration, and a domain port takes the module.
@@ -66,19 +69,27 @@ def defect (msg : String) : FM α := throw (.defect msg)
 
 def cpos (p : Pos) : Core.Pos := ⟨p.line, p.col, []⟩
 
-/-! The charge of a field. An integer field pays its decimal form. -/
+/-!
+The charge of a field: its length in bytes, at least 1. A made field that holds an integer
+charges the square of the size of the integer instead, at least 1, before its decimal form.
+-/
 def fieldUnits : Field → Nat
+  | .user x => max 1 x.utf8ByteSize
   | .int v => (Value.int v).decimalCharge
-  | _ => 1
+  | .call k | .version k | .temp k => (Value.int k).decimalCharge
+  | .bool _ => 2
+  | .digest h => 2 + h.utf8ByteSize
+  | .role r => r.text.utf8ByteSize
 
-/-! The charge of a name: one unit for each field of `encode p`, with the field `0k`. -/
+/-! The charge of a name: the charge of each field of `encode p`, with the field `0k`. -/
 def nameUnits (p : Name) : Nat :=
-  if keyword p then 2 else p.rest.foldl (fun n f => n + fieldUnits f) 1
+  let head := fieldUnits (.user p.head)
+  if keyword p then head + 2 else p.rest.foldl (fun n f => n + fieldUnits f) head
 
 /-! The charge of the name of a path, from its fields in any order. -/
 def pathUnits (p : Path) : Nat :=
   if p.inner.isEmpty then nameUnits ⟨p.outer, []⟩
-  else p.inner.foldl (fun n f => n + fieldUnits f) 1
+  else p.inner.foldl (fun n f => n + fieldUnits f) (fieldUnits (.user p.outer))
 
 /-! The core name of a path. It charges the fields first. -/
 def pathText (pos : Pos) (p : Path) : FM String := do
@@ -103,14 +114,33 @@ def constOf (p : Core.Pos) : Value → Core.Expr
   | .uint w x | .sint w x => .const p w x.toNat
   | _ => .const p 1 0
 
-/-! A lowered expression. A leaf has the charge of a copy of it. -/
+/-!
+A lowered expression and the height of its hardware value. A leaf has the height 1 and the charge
+of a copy of it.
+-/
 structure Low where
   expr : Core.Expr
   copy : Option Nat
+  height : Nat
+
+/-! Binds `e` of width `w` to the next temporary `<target>$<k>t` at `opPos`. -/
+def bindTemp (pos : Pos) (target : Path) (w : Nat) (opPos : Pos) (e : Core.Expr) : FM Path := do
+  let s ← get
+  let path := target.push (.temp s.count)
+  set { s with count := s.count + 1 }
+  charge pos 1
+  let name ← pathText pos path
+  modify fun s => { s with temps := s.temps.push (.let_ (cpos opPos) name w e) }
+  return path
+
+/-! A reference to the temporary `path`. -/
+def tempRef (pos : Pos) (path : Path) : FM Core.Expr := do
+  charge pos 1
+  return .ref (cpos pos) (← pathText pos path)
 
 /-!
 The operand `lo` of width `w` for a rule that uses it twice. A leaf is copied. Another operand is
-bound to the temporary `<target>$<k>t` at the position `opPos`, and both uses refer to it.
+bound to a temporary at the position `opPos`, and both uses refer to it.
 -/
 def twice (pos : Pos) (target : Path) (w : Nat) (opPos : Pos) (lo : Low) :
     FM (Core.Expr × Core.Expr) := do
@@ -119,17 +149,17 @@ def twice (pos : Pos) (target : Path) (w : Nat) (opPos : Pos) (lo : Low) :
     charge pos u
     return (lo.expr, lo.expr)
   | none =>
-    let s ← get
-    let path := target.push (.temp s.count)
-    set { s with count := s.count + 1 }
-    charge pos 1
-    let name ← pathText pos path
-    modify fun s => { s with temps := s.temps.push (.let_ (cpos opPos) name w lo.expr) }
-    let r1 ← pathText pos path
-    charge pos 1
-    let r2 ← pathText pos path
-    charge pos 1
-    return (.ref (cpos pos) r1, .ref (cpos pos) r2)
+    let path ← bindTemp pos target w opPos lo.expr
+    return (← tempRef pos path, ← tempRef pos path)
+
+/-!
+A subexpression whose height is a positive multiple of 64 binds to a temporary, unless it is a
+leaf or the value of the statement. A core expression thus nests at most 256 levels.
+-/
+def deep (pos : Pos) (target : Path) (w : Nat) (root : Bool) (lo : Low) : FM Low := do
+  if root || lo.copy.isSome || lo.height % 64 != 0 then return lo
+  let path ← bindTemp pos target w pos lo.expr
+  return ⟨← tempRef pos path, some (1 + pathUnits path), lo.height⟩
 
 /-! The core operation of a binary node that is not a shift, or its predicate. -/
 def binOp (op : BinOp) (signed : Bool) : Option (Core.BinOp ⊕ Core.Pred) :=
@@ -147,36 +177,37 @@ def signed : Ty → Bool
 
 /-!
 The lowering of a hardware value for the statement of `target`. Each case charges its own core
-nodes, then lowers its operands from left to right.
+nodes, then lowers its operands from left to right. `root` marks the value of the statement.
 -/
-def lower (target : Path) : Hw → FM Low
+def lower (target : Path) (root : Bool) : Hw → FM Low
   | .node p t _ op args => do
     let c := cpos p
-    match op, args with
+    let up (h : Nat) := h + 1
+    let lo ← match op, args with
     | .ref path, [] =>
       let u := 1 + pathUnits path
       charge p 1
-      return ⟨.ref c (← pathText p path), some u⟩
+      pure ⟨.ref c (← pathText p path), some u, 1⟩
     | .out inst q, [] =>
       let u := 1 + pathUnits inst + nameUnits (portName q)
       charge p 1
       let i ← pathText p inst
-      return ⟨.port c i (← nameText p (portName q)), some u⟩
+      pure ⟨.port c i (← nameText p (portName q)), some u, 1⟩
     | .lit v, [] =>
       charge p 1
-      return ⟨constOf c v, some 1⟩
+      pure ⟨constOf c v, some 1, 1⟩
     | .un .not, [a] =>
       charge p 2
-      let a ← lower target a
-      return ⟨.bin c .xor a.expr (.const c 1 1), none⟩
+      let a ← lower target false a
+      pure ⟨.bin c .xor a.expr (.const c 1 1), none, up a.height⟩
     | .un .inv, [a] =>
       charge p 1
-      let a ← lower target a
-      return ⟨.un c .not a.expr, none⟩
+      let a ← lower target false a
+      pure ⟨.un c .not a.expr, none, up a.height⟩
     | .un .neg, [a] =>
       charge p 2
-      let a ← lower target a
-      return ⟨.bin c .sub (.const c (width t) 0) a.expr, none⟩
+      let a ← lower target false a
+      pure ⟨.bin c .sub (.const c (width t) 0) a.expr, none, up a.height⟩
     | .bin op, [a, n] =>
       if op == .shl || op == .shr then
         let w := width t
@@ -184,74 +215,82 @@ def lower (target : Path) : Hw → FM Low
         match n with
         | .node _ _ _ (.lit (.int v)) [] =>
           charge p 2
-          let a ← lower target a
-          return ⟨.bin c k a.expr (.const c w (min v.toNat w)), none⟩
+          let a ← lower target false a
+          pure ⟨.bin c k a.expr (.const c w (min v.toNat w)), none, up a.height⟩
         | _ =>
           let wc := width n.ty
           if wc == w then
             charge p 1
-            let a ← lower target a
-            let n ← lower target n
-            return ⟨.bin c k a.expr n.expr, none⟩
+            let a ← lower target false a
+            let n ← lower target false n
+            pure ⟨.bin c k a.expr n.expr, none, up (max a.height n.height)⟩
           else if wc < w then
             charge p 3
-            let a ← lower target a
-            let n ← lower target n
-            return ⟨.bin c k a.expr (.bin c .concat (.const c (w - wc) 0) n.expr), none⟩
+            let a ← lower target false a
+            let n ← lower target false n
+            let e := Core.Expr.bin c k a.expr (.bin c .concat (.const c (w - wc) 0) n.expr)
+            pure ⟨e, none, up (max a.height n.height)⟩
           else
             charge p (if k == .shrs then 7 else 6)
-            let la ← lower target a
-            let ln ← lower target n
+            let la ← lower target false a
+            let ln ← lower target false n
             let (a1, a2) ← if k == .shrs then twice p target w a.pos la
               else pure (la.expr, la.expr)
             let (n1, n2) ← twice p target wc n.pos ln
             let fill := if k == .shrs then .bin c .shrs a1 (.const c w (w - 1))
               else .const c w 0
             let over := Core.Expr.icmp c .uge n1 (.const c wc w)
-            return ⟨.mux c over fill (.bin c k a2 (.extract c n2 0 w)), none⟩
+            let e := Core.Expr.mux c over fill (.bin c k a2 (.extract c n2 0 w))
+            pure ⟨e, none, up (max la.height ln.height)⟩
       else
         match binOp op (signed a.ty) with
         | some (.inl k) =>
           charge p 1
-          let a ← lower target a
-          let b ← lower target n
-          return ⟨.bin c k a.expr b.expr, none⟩
+          let a ← lower target false a
+          let b ← lower target false n
+          pure ⟨.bin c k a.expr b.expr, none, up (max a.height b.height)⟩
         | some (.inr k) =>
           charge p 1
-          let a ← lower target a
-          let b ← lower target n
-          return ⟨.icmp c k a.expr b.expr, none⟩
+          let a ← lower target false a
+          let b ← lower target false n
+          pure ⟨.icmp c k a.expr b.expr, none, up (max a.height b.height)⟩
         | none => defect s!"no hardware node for `{op.text}`"
     | .mux, [s, a, b] =>
       charge p 1
-      let s ← lower target s
-      let a ← lower target a
-      let b ← lower target b
-      return ⟨.mux c s.expr a.expr b.expr, none⟩
+      let s ← lower target false s
+      let a ← lower target false a
+      let b ← lower target false b
+      pure ⟨.mux c s.expr a.expr b.expr, none, up (max s.height (max a.height b.height))⟩
     | .resize, [a] =>
       let n := width t
       let w := width a.ty
-      if n == w then lower target a
+      if n == w then
+        let a ← lower target false a
+        pure { a with height := up a.height }
       else if n < w then
         charge p 1
-        let a ← lower target a
-        return ⟨.extract c a.expr 0 n, none⟩
+        let a ← lower target false a
+        pure ⟨.extract c a.expr 0 n, none, up a.height⟩
       else if signed t then
         charge p 3
-        let la ← lower target a
+        let la ← lower target false a
         let (a1, a2) ← twice p target w a.pos la
-        return ⟨.bin c .concat (.replicate c (.extract c a1 (w - 1) 1) (n - w)) a2, none⟩
+        let e := Core.Expr.bin c .concat (.replicate c (.extract c a1 (w - 1) 1) (n - w)) a2
+        pure ⟨e, none, up la.height⟩
       else
         charge p 2
-        let a ← lower target a
-        return ⟨.bin c .concat (.const c (n - w) 0) a.expr, none⟩
-    | .reinterpret, [a] => lower target a
+        let a ← lower target false a
+        pure ⟨.bin c .concat (.const c (n - w) 0) a.expr, none, up a.height⟩
+    | .reinterpret, [a] =>
+      let a ← lower target false a
+      pure { a with height := up a.height }
     | _, _ => defect "a hardware node has the wrong number of operands"
+    deep p target (width t) root lo
 
 /-! The value of one statement with the target `target`. Its temporaries count from 0. -/
 def value (target : Path) (h : Hw) : FM Core.Expr := do
   modify fun s => { s with count := 0 }
-  return (← lower target h).expr
+  return (← lower target true h).expr
 
 /-! The domain ports `d$0clk` and `d$0rst`. -/
 def clockName (d : String) : Name := ⟨d, [.role .clk]⟩

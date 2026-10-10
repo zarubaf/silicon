@@ -84,27 +84,27 @@ def counter : String :=
   "    value := counter.value;\n" ++
   "}\n"
 
-#guard cost counter "Main" == "total 252\nCounter$4 112\nMain 106\n"
-#guard exact counter "Main" 252
-#guard cost counter "Counter(8)" == "total 166\nCounter$8 112\n"
+#guard cost counter "Main" == "total 427\nCounter$4 194\nMain 196\n"
+#guard exact counter "Main" 427
+#guard cost counter "Counter(8)" == "total 254\nCounter$8 194\n"
 #guard order counter "Main" == ["Counter$4", "Main"]
 
 /-!
 The table of instantiations. A child finishes before its parent. A repeated `InstantiationId`
 elaborates once. Its `instance` statement charges 1, and its argument charges 2 for the node and
 the literal, and 1 for the recursive size. Its serialization charges 1 for the decimal form and
-32 for its bytes. Its lowering charges 16: the `inst` node, its name with 1 field, the emitted
-name with 2 fields, and two domain connections with 6 each. These are 53 units.
+32 for its bytes. Its lowering charges 44. The `inst` node and its name charge 2, and the
+emitted name 2. Each of the two domain connections charges 20. These are 81 units.
 -/
 def leaf : String := "module C(comptime n: Nat) {\n}\n"
 def one : String := leaf ++ "module T() {\n  instance a = C(5);\n}\n"
 def two : String := leaf ++ "module T() {\n  instance a = C(5);\n  instance b = C(5);\n}\n"
 def other : String := leaf ++ "module T() {\n  instance a = C(5);\n  instance b = C(6);\n}\n"
 
-#guard total two "T" == total one "T" + 53
+#guard total two "T" == total one "T" + 81
 #guard order two "T" == ["C$5", "T"]
 #guard order other "T" == ["C$5", "C$6", "T"]
-#guard cost other "T" == s!"total {total other "T"}\nC$5 11\nC$6 11\nT 121\n"
+#guard cost other "T" == s!"total {total other "T"}\nC$5 25\nC$6 25\nT 191\n"
 
 /-! An instantiation that depends on itself is `S019` at its `instance` statement. -/
 def selfDep : String := "module M(comptime d: Nat) {\n  instance a = M(d);\n}\n"

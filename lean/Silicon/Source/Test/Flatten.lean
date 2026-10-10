@@ -238,18 +238,25 @@ def through : String :=
 #guard sil through "T" == "S020 8:3"
 
 /-!
-The charges of the lowering. `small` lowers with 44 units. The module node and its name charge
-2, the domain ports 6, the four ports 8, and the design node with its name 2. The `assign`
+The charges of the lowering. `small` lowers with 58 units. The module node and its name charge
+2, the domain ports 20, the four ports 8, and the design node with its name 2. The `assign`
 statement and its name charge 2, and its value 24. The shift charges 6 for its nodes, `a +% b`
 charges 5, and `c ^ 1` charges 4. Its temporary `y$0t` charges 3, and each of its two uses 3.
+A domain port charges 1 for its node, and 9 for the bytes of `clock` and `0clk` or `0rst`.
 -/
 def small : String :=
   "module M() {\n  input a: UInt[2];\n  input b: UInt[2];\n  input c: UInt[3];\n" ++
   "  output y: UInt[2];\n  y := (a +% b) << (c ^ 1);\n}\n"
-#guard Test.Elab.total small "M" == elabUsed small "M" + 44
+#guard Test.Elab.total small "M" == elabUsed small "M" + 58
 #guard Test.Elab.exact small "M" (Test.Elab.total small "M")
 #guard sil small "M" (Test.Elab.total small "M" - 1) == "S015 1:1"
-#guard sil small "M" (elabUsed small "M" + 10) == "S015 3:3"
+#guard sil small "M" (elabUsed small "M" + 24) == "S015 3:3"
+
+/-! Each field of a core name charges its bytes. A port name of 100 bytes occurs twice. -/
+def named (x : String) : String :=
+  s!"module M() domains() \{\n  input a: Bool;\n  output {x}: Bool;\n  {x} := a;\n}\n"
+def lowering (src : String) : Nat := Test.Elab.total src "M" - elabUsed src "M"
+#guard lowering (named (String.ofList (List.replicate 100 'q'))) == lowering (named "q") + 198
 
 /-!
 A loop value is a made integer field. It charges the square of its size in each name, so a large
@@ -259,6 +266,34 @@ def bigLoop : String :=
   "module M() {\n  input x: Bool;\n  output y: Bool;\n" ++
   "  comptime for i in (1 << 100000)..(1 << 100000) + 1 {\n    let t = x;\n    y := t;\n  }\n}\n"
 #guard Test.Elab.total bigLoop "M" > elabUsed bigLoop "M" + 2 * 1563 * 1563
+
+/-!
+A source subexpression whose height is a positive multiple of 64 binds to a temporary, so a core
+expression nests at most 256 levels. The value of a statement does not bind. `chain k` is the
+chain of `k` additions of `x`, with the height `k + 1`.
+-/
+def chain (k : Nat) (e : String) : String :=
+  (List.range k).foldl (fun e _ => s!"({e} +% x)") e
+def coreChain (k : Nat) (e : String) : String :=
+  (List.range k).foldl (fun e _ => s!"(add {e} x)") e
+def high (k : Nat) : String :=
+  "module D() domains() {\n  input x: UInt[8];\n  output y: UInt[8];\n" ++
+  s!"  y := {chain k "x"};\n}\n"
+def deepText (lets : List String) (y : String) : String := text ([
+  "(design D",
+  "  (module D",
+  "    (input x (bits 8))",
+  "    (output y (bits 8))"] ++ lets ++ [s!"    (assign y {y})))"])
+#guard sil (high 63) "D" == deepText [] (coreChain 63 "x")
+#guard sil (high 127) "D" ==
+  deepText [s!"    (let y$0t (bits 8) {coreChain 63 "x"})"] (coreChain 64 "y$0t")
+
+/-! A 4096-high source expression lowers to text that re-parses and passes `Core.check`. -/
+def highText : String := sil (high 4095) "D"
+#guard (highText.splitOn "(let y$").length - 1 == 63
+#guard match Core.parse highText with
+  | .ok d => (Core.check d).toBool
+  | .error _ => false
 
 /-! Each design of these tests that elaborates also passes `Core.check`. -/
 #guard [(Test.Elab.counter, "Main"), (Test.Elab.helpers, "M"), (Test.Elab.keywords, "next"),
