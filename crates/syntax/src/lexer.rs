@@ -161,7 +161,7 @@ impl Lexer<'_> {
             return self.string();
         }
         if first.is_ascii_digit() {
-            return self.number();
+            return self.bounded_number();
         }
         if first.is_ascii_alphabetic() || first == '_' {
             let start = self.pos;
@@ -232,6 +232,20 @@ impl Lexer<'_> {
         }
         self.eat_while(|c| c.is_ascii_digit());
         (SyntaxKind::Dec, None)
+    }
+
+    /// A number token, or an error token if the value is not below 2^65536.
+    fn bounded_number(&mut self) -> Scanned {
+        let start = self.pos;
+        let scanned = self.number();
+        if crate::number::literal_in_bounds(&self.input[start..self.pos]) {
+            scanned
+        } else {
+            (
+                SyntaxKind::Error,
+                Some("number literal is not below 2^65536"),
+            )
+        }
     }
 
     /// A string ends at its closing quote. An invalid escape or a control character makes

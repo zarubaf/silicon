@@ -1021,3 +1021,14 @@ fn lowering_is_linear() {
         start.elapsed()
     );
 }
+
+#[test]
+fn a_large_number_ends_the_look_ahead_like_a_lexical_error() {
+    // The token list of the Lean lexer ends at the number, so the look ahead does not see
+    // the delimiters after it, and the error is S001 at the number, not S004 before it.
+    let big = format!("0x1{}", "0".repeat(16384));
+    let tuple = format!("const X: T = ({big},1);");
+    assert_eq!(first_error(&tuple), Some((Code::S001, 1, 15)));
+    let place = format!("module M() {{ a[{big}] = 1; }}");
+    assert_eq!(first_error(&place), Some((Code::S001, 1, 16)));
+}
