@@ -931,10 +931,40 @@ fn the_syntax_depth_is_a_parameter() {
 }
 
 #[test]
-fn a_stack_that_the_machine_cannot_give_is_an_error_value() {
-    let err = crate::parse_with_depth("", usize::MAX).unwrap_err();
-    assert_eq!(err.depth, usize::MAX);
-    assert!(err.to_string().contains("cannot allocate a stack"));
+fn a_depth_outside_the_cap_is_an_error_value() {
+    for depth in [0, crate::MAX_SYNTAX_DEPTH + 1, usize::MAX] {
+        let err = crate::parse_with_depth("", depth).unwrap_err();
+        assert_eq!(err, crate::DepthError::Range(depth));
+    }
+}
+
+#[test]
+fn the_depth_65536_works_at_the_cap() {
+    let max = crate::MAX_SYNTAX_DEPTH;
+    let start = std::time::Instant::now();
+    let at = |n: usize| Some((Code::S001, 1, n));
+    let first = |input: &str| {
+        parse_with_depth(input, max)
+            .errors
+            .first()
+            .map(|e| (e.code, e.pos.line, e.pos.col))
+    };
+    let nest = |n: usize| format!("const X: T = {}1{};", "(".repeat(n), ")".repeat(n));
+    assert_eq!(first(&nest(max)), None);
+    assert_eq!(first(&nest(max + 1)), at(14 + max));
+    // Height 65536 inside brackets of depth 65536.
+    let input = format!(
+        "const X: T = {}{}1{};",
+        "(".repeat(max),
+        "-".repeat(max - 1),
+        ")".repeat(max)
+    );
+    let parsed = parse_with_depth(&input, max);
+    assert!(parsed.errors.is_empty(), "{:?}", parsed.errors.first());
+    assert!(parsed.dump().unwrap().is_some());
+    let high = format!("const X: T = {}1;", "-".repeat(max));
+    assert_eq!(first(&high), at(14));
+    assert!(start.elapsed() < std::time::Duration::from_secs(30));
 }
 
 #[test]

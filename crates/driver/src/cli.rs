@@ -67,11 +67,14 @@ pub enum Command {
 mod syntax_depth {
     pub const DEFAULT: usize = parse::DEFAULT_SYNTAX_DEPTH;
 
-    /// A positive number.
+    /// A number from 1 to the cap of the library.
     pub fn parse(text: &str) -> Result<usize, String> {
         match text.parse::<usize>() {
-            Ok(0) => Err("the syntax depth must be positive".to_owned()),
-            Ok(depth) => Ok(depth),
+            Ok(depth) if (1..=parse::MAX_SYNTAX_DEPTH).contains(&depth) => Ok(depth),
+            Ok(_) => Err(format!(
+                "the syntax depth must be from 1 to {}",
+                parse::MAX_SYNTAX_DEPTH
+            )),
             Err(e) => Err(e.to_string()),
         }
     }

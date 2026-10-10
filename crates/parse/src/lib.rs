@@ -9,9 +9,10 @@ mod item;
 mod lower;
 mod parser;
 mod stmt;
+mod tree;
 
 use error::LineIndex;
-pub use error::{Code, Error, StackError};
+pub use error::{Code, DepthError, Error, StackError};
 use rowan::{GreenNode, Language};
 use syntax::{SiliconLanguage, SyntaxKind, SyntaxNode};
 
@@ -65,12 +66,16 @@ impl Drop for Parse {
 /// outermost expression or type. It is far above the depth of written or generated code.
 pub const DEFAULT_SYNTAX_DEPTH: usize = 4096;
 
+/// The largest syntax depth. The stack for the depth is virtual memory, and this cap keeps it
+/// to a size that a machine gives.
+pub const MAX_SYNTAX_DEPTH: usize = 65536;
+
 /// Parses a source text with the default syntax depth. Errors in the text are data in the
 /// result.
 ///
 /// # Errors
 /// Returns an error if the machine cannot give the stack for the depth.
-pub fn parse(input: &str) -> Result<Parse, StackError> {
+pub fn parse(input: &str) -> Result<Parse, DepthError> {
     parse_with_depth(input, DEFAULT_SYNTAX_DEPTH)
 }
 
@@ -86,9 +91,13 @@ const STACK_PER_LEVEL: usize = 64 * 1024;
 /// stack is virtual memory, and the pages of it that the parse does not touch cost nothing.
 ///
 /// # Errors
-/// Returns an error, before it parses, if the machine cannot give the stack for the depth.
-pub fn parse_with_depth(input: &str, depth: usize) -> Result<Parse, StackError> {
-    on_stack(depth, || parse_here(input, depth))
+/// Returns an error, before it parses, if the depth is not from 1 to `MAX_SYNTAX_DEPTH`, or
+/// if the machine cannot give the stack for the depth.
+pub fn parse_with_depth(input: &str, depth: usize) -> Result<Parse, DepthError> {
+    if !(1..=MAX_SYNTAX_DEPTH).contains(&depth) {
+        return Err(DepthError::Range(depth));
+    }
+    on_stack(depth, || parse_here(input, depth)).map_err(DepthError::Stack)
 }
 
 /// The size of a stack for the syntax depth. It is virtual memory: the pages that a pass

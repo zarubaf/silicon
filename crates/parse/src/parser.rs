@@ -2,7 +2,8 @@
 //! The grammar is in `item`, `stmt`, and `expr`.
 
 use crate::error::Code;
-use rowan::{Checkpoint, GreenNode, GreenNodeBuilder, Language};
+use crate::tree::{Checkpoint, TreeBuilder};
+use rowan::{GreenNode, Language};
 use std::collections::BTreeSet;
 use syntax::{SiliconLanguage, SyntaxKind, Token};
 
@@ -31,7 +32,7 @@ pub(crate) struct Parser<'a> {
     skipped: usize,
     /// The index of the next token that the builder has not got.
     at: usize,
-    builder: GreenNodeBuilder<'static>,
+    builder: TreeBuilder,
     pub errors: Vec<RawError>,
     /// The offsets with an error, so that one place gets one error.
     reported: BTreeSet<usize>,
@@ -63,7 +64,7 @@ impl<'a> Parser<'a> {
             nodes: 0,
             skipped: 0,
             at: 0,
-            builder: GreenNodeBuilder::new(),
+            builder: TreeBuilder::new(SiliconLanguage::kind_to_raw(SyntaxKind::Root)),
             errors: Vec::new(),
             reported: BTreeSet::new(),
             top: None,
@@ -79,12 +80,9 @@ impl<'a> Parser<'a> {
     /// Parses the whole input into a tree with the node `Root`. The last value is the start
     /// of the first outermost expression or type that is higher than the syntax depth.
     pub(crate) fn finish(mut self) -> (GreenNode, Vec<RawError>, Option<usize>) {
-        // The first trivia belong inside the root, so the root starts the tree.
-        self.builder
-            .start_node(SiliconLanguage::kind_to_raw(SyntaxKind::Root));
+        // The first trivia belong inside the root, which the builder opens.
         self.source();
         self.flush_trivia();
-        self.builder.finish_node();
         (self.builder.finish(), self.errors, self.high)
     }
 
