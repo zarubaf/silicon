@@ -91,7 +91,8 @@ A construct ID is `LANG:Enum::Variant`, for example `core:BinOp::Shrs` or `sourc
 `testkit` writes a record for each check that ran and passed. `cargo xtask coverage` runs the tests and reads the records:
 
 - A check that failed or printed SKIP covers nothing.
-- A file covers constructs only when it passes and has no `expected-error`. `testkit` reads it with the real parser and walks the AST. A `run` file needs at least one `STEP`.
+- A file covers constructs only when it passes and has no `expected-error`. A `run` file needs at least one `STEP`.
+- A file covers only the constructs in the code that its top reaches. For the core IR, this is the top module and the modules that it instantiates, transitively. For the source, it is the items that `TOP` reaches through instances, calls, and constant uses, transitively. The reachability is syntactic: both branches of a reached `comptime if` count. An operator in an unused module thus stays uncovered.
 - An `expected-error` line covers its code, also in a file that does not parse. A `run` file that expects `E014` thus covers `E014`, but no construct.
 - A suite covers the command of its table row. A CLI test of `driver` starts its command through one `testkit` function that names the command.
 - A file has no hand-written coverage tags.
