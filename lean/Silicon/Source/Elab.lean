@@ -134,13 +134,13 @@ structure Inst where
 
 /-!
 The state of an elaboration. `table` maps the serialization of each `InstantiationId` to its
-state, and `names` maps each emitted name to its instantiation. `digest` makes the digest of
-an emitted name, so a test can replace it.
+state, and `names` holds the emitted name of each instantiation that is in progress or done.
+`digest` makes the digest of an emitted name, so a test can replace it.
 -/
 structure St where
   digest : String → String
   table : Std.HashMap String Status := {}
-  names : Std.HashMap String Nat := {}
+  names : Std.HashSet String := {}
   done : Array Inst := #[]
   work : Work
 
@@ -369,7 +369,7 @@ mutual
         fail .S019 pos s!"two instantiations have the emitted name `{text}`"
       let parent := s.work
       let naming ← monadLift (do return (← get).naming : Eval.M Naming)
-      set { s with table := s.table.insert key .inProgress,
+      set { s with table := s.table.insert key .inProgress, names := s.names.insert text,
                    work := { body := { domain := ds.head?.map fun (d : Binder) => d.name.name } } }
       monadLift (modify fun t => { t with naming := {} } : Eval.M Unit)
       let start ← usedFuel
@@ -389,7 +389,7 @@ mutual
       let c := iface name body
       let k := (← get).done.size
       modify fun t => { t with
-        table := t.table.insert key (.done k), names := t.names.insert text k,
+        table := t.table.insert key (.done k),
         done := t.done.push ⟨id, c, body, used - w.spent⟩,
         work := { parent with spent := parent.spent + used } }
       return (c, k)
