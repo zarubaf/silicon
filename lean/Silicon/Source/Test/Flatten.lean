@@ -322,6 +322,23 @@ def skip (i : Nat) : Nat :=
   (200, fun i => if i % 2 == 0 then 63 else 64), (257, fun i => skip i + i % 3)].all
   fun (n, f) => valid (sil (branchy n f) "D")
 
+/-!
+A core error other than `E008` in the lowered design is a defect of the reference elaborator,
+and `elab` exits with code 3. This design refers to an undeclared name.
+-/
+def broken : String := text [
+  "(design D",
+  "  (module D",
+  "    (output y (bits 8))",
+  "    (assign y z)))"]
+#guard match Core.parse broken with
+  | .ok d =>
+    match Flatten.checkDesign d with
+    | .error (.defect m) => m.startsWith "error[" && Cli.exitCode (.defect m) == 3
+    | _ => false
+  | .error _ => false
+#guard [Cli.exitCode (.ok ""), Cli.exitCode (.usage ""), Cli.exitCode (.defect "")] == [0, 2, 3]
+
 /-! Each design of these tests that elaborates also passes `Core.check`. -/
 #guard [(Test.Elab.counter, "Main"), (Test.Elab.helpers, "M"), (Test.Elab.keywords, "next"),
   (Test.Elab.branch, "M(3, 0)"), (Test.Elab.shared, "M(4)"), (Test.Elab.deepFirst, "Top"),

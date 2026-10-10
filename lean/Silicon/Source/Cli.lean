@@ -144,12 +144,24 @@ def parseOutcome (o : Opts) (source : String) : Outcome :=
   | .ok items => .ok (Print.dump items)
   | .error e => .error e
 
+/-!
+The exit code of an outcome (section 8). A result gives 0, and a design error gives 1. A usage
+error gives 2, and a defect of the reference elaborator gives 3.
+-/
+def exitCode : Outcome → UInt32
+  | .ok _ => 0
+  | .error _ => 1
+  | .usage _ => 2
+  | .defect _ => 3
+
 /-! Prints an outcome. The result is the exit code, or the message of a usage error. -/
-def emit : Outcome → IO (Except String UInt32)
-  | .ok text => do (← IO.getStdout).putStr text; return .ok 0
-  | .error e => do (← IO.getStdout).putStrLn (errorLine e); return .ok 1
+def emit (out : Outcome) : IO (Except String UInt32) := do
+  match out with
+  | .ok text => (← IO.getStdout).putStr text
+  | .error e => (← IO.getStdout).putStrLn (errorLine e)
   | .usage msg => return .error msg
-  | .defect msg => return .error s!"defect of the reference elaborator: {msg}"
+  | .defect msg => (← IO.getStderr).putStrLn s!"defect of the reference elaborator: {msg}"
+  return .ok (exitCode out)
 
 /-! Runs the front-end command `cmd`. The result is the exit code, or a usage error. -/
 def execute (cmd : String) (rest : List String) : IO (Except String UInt32) := do
