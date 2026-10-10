@@ -59,7 +59,7 @@ impl MemConfig {
 fn modules(design: &Design) -> (String, BTreeSet<MemConfig>) {
     let mut text = String::new();
     let mut configs = BTreeSet::new();
-    for module in &design.modules {
+    for module in design.modules() {
         let (module, used) = lower::module(design, module);
         text.push_str(&module);
         configs.extend(used);

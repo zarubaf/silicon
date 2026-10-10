@@ -72,7 +72,7 @@ pub fn run(
             .arg("--run")
             .arg(format!(
                 "--jit-entry={}",
-                backend_circt::names::diff_entry(&top.name)
+                backend_circt::names::diff_entry(top.name())
             ))
             .arg(&file),
         "",
@@ -83,14 +83,14 @@ pub fn run(
 /// The `func.func @main` that simulates the module `top` for one cycle for
 /// each element of `cycles`. It emits the outputs of each cycle in port order.
 fn testbench(top: &typed::Module, cycles: &[Inputs]) -> Result<String> {
-    let model = format!("!arc.sim.instance<@{}>", top.name);
+    let model = format!("!arc.sim.instance<@{}>", top.name());
     let mut out = format!(
         "func.func @{}() {{\n  arc.sim.instantiate @{} as %m {{\n",
-        backend_circt::names::diff_entry(&top.name),
-        top.name
+        backend_circt::names::diff_entry(top.name()),
+        top.name()
     );
     let clock = |out: &mut String, cycle: usize, level: u8| -> Result<()> {
-        if let Some(clk) = &top.clock {
+        if let Some(clk) = top.clock() {
             writeln!(out, "    %clk_{cycle}_{level} = hw.constant {level} : i1")?;
             writeln!(
                 out,
@@ -106,7 +106,7 @@ fn testbench(top: &typed::Module, cycles: &[Inputs]) -> Result<String> {
         Ok(())
     };
     for (cycle, inputs) in cycles.iter().enumerate() {
-        for (k, (value, port)) in inputs.values().iter().zip(&top.inputs).enumerate() {
+        for (k, (value, port)) in inputs.values().iter().zip(top.inputs()).enumerate() {
             let (name, width, value) = (&port.name, port.width, value.to_biguint());
             writeln!(out, "    %in_{cycle}_{k} = hw.constant {value} : i{width}")?;
             writeln!(
@@ -115,10 +115,10 @@ fn testbench(top: &typed::Module, cycles: &[Inputs]) -> Result<String> {
             )?;
         }
         clock(&mut out, cycle, 0)?;
-        if top.clock.is_none() {
+        if top.clock().is_none() {
             writeln!(out, "    arc.sim.step %m : {model}")?;
         }
-        for (k, port) in top.outputs.iter().enumerate() {
+        for (k, port) in top.outputs().iter().enumerate() {
             let (name, width) = (&port.name, port.width);
             writeln!(
                 out,
@@ -141,8 +141,8 @@ fn trace(stdout: &str, top: &typed::Module, cycles: usize) -> Result<Vec<String>
     let mut lines = stdout.lines();
     let mut trace = Vec::with_capacity(cycles);
     for cycle in 0..cycles {
-        let mut values = Vec::with_capacity(top.outputs.len());
-        for port in &top.outputs {
+        let mut values = Vec::with_capacity(top.outputs().len());
+        for port in top.outputs() {
             let line = lines
                 .next()
                 .with_context(|| format!("no value of `{}` in cycle {cycle}", port.name))?;
@@ -175,7 +175,7 @@ mod tests {
 
     fn top(source: &str) -> typed::Module {
         let design = check(&parse(source).unwrap()).unwrap();
-        design.modules[design.top.index()].clone()
+        design.modules()[design.top().index()].clone()
     }
 
     const COUNTER: &str = "(design top (module top (input clk clock) (input en (bits 1)) \

@@ -25,7 +25,7 @@ fn checked(d: &Design) -> typed::Design {
 fn design_and_lines() -> impl Strategy<Value = (Design, Vec<String>)> {
     r#gen::design().prop_flat_map(|d| {
         let typed = checked(&d);
-        let top = typed.modules[typed.top.index()].clone();
+        let top = typed.modules()[typed.top().index()].clone();
         (Just(d), vec(r#gen::inputs(&top), 1..=4))
     })
 }
@@ -149,7 +149,7 @@ proptest! {
     #[test]
     fn interpreter_never_panics((d, lines) in design_and_lines()) {
         let typed = checked(&d);
-        let top = &typed.modules[typed.top.index()];
+        let top = &typed.modules()[typed.top().index()];
         let Ok(mut sim) = Sim::new(&typed) else {
             return Err(TestCaseError::fail("a generated design has no extern"));
         };
@@ -159,7 +159,7 @@ proptest! {
                     let out = print_output(top, &sim.step(&inputs));
                     let pairs = out.trim_end().trim_start_matches("out=(").trim_end_matches(')');
                     let tokens = pairs.split(' ').filter(|t| !t.is_empty()).count();
-                    prop_assert_eq!(tokens, 2 * top.outputs.len(), "{}", out);
+                    prop_assert_eq!(tokens, 2 * top.outputs().len(), "{}", out);
                 }
                 Err(e) => prop_assert!(false, "{line}: {e}"),
             }
@@ -288,18 +288,18 @@ impl Coverage {
     /// Notes an output that reads an instance output that reads an input of
     /// the parent combinationally.
     fn paths(&mut self, d: &typed::Design) {
-        for m in &d.modules {
-            let nexts = m.regs.iter().map(|r| &r.next);
-            if m.assigns.iter().chain(nexts).any(reads_output) {
+        for m in d.modules() {
+            let nexts = m.regs().iter().map(|r| &r.next);
+            if m.assigns().iter().chain(nexts).any(reads_output) {
                 self.note("output-read");
             }
-            for assign in &m.assigns {
+            for assign in m.assigns() {
                 let through = inst_outs(assign).into_iter().any(|(u, o)| {
-                    let inst = &m.insts[u.index()];
+                    let inst = &m.insts()[u.index()];
                     let typed::Callee::Module(child) = inst.callee else {
                         return false;
                     };
-                    d.modules[child.index()].deps[o.index()]
+                    d.modules()[child.index()].deps()[o.index()]
                         .iter()
                         .any(|i| reads_input(&inst.inputs[i.index()]))
                 });

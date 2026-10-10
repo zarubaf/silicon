@@ -18,7 +18,7 @@ fn design(src: &str) -> typed::Design {
 }
 
 fn top(design: &typed::Design) -> &typed::Module {
-    &design.modules[design.top.index()]
+    &design.modules()[design.top().index()]
 }
 
 /// Runs one input line per cycle and returns the printed output lines.

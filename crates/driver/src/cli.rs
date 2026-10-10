@@ -209,8 +209,8 @@ fn simulate(
     out: &mut impl Write,
 ) -> Result<Exit, Usage> {
     let top = design
-        .modules
-        .get(design.top.index())
+        .modules()
+        .get(design.top().index())
         .ok_or_else(|| Usage("internal error: the design has no top module".to_owned()))?;
     let mut sim = match Sim::new(design) {
         Ok(sim) => sim,
