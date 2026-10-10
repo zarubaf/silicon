@@ -6,47 +6,22 @@
 
 mod checker;
 mod common;
+mod outcome;
 
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::Command;
 
 use common::spawn;
-
-/// What the two front ends must share for one file.
-#[derive(Debug, PartialEq, Eq)]
-struct Outcome {
-    code: Option<i32>,
-    /// The full dump on success, else the prefix `error[CODE]: LINE:COL:`.
-    report: String,
-}
-
-/// The part of the stdout that the two front ends must share.
-fn outcome(out: &Output) -> Outcome {
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let code = out.status.code();
-    let report = if code == Some(0) {
-        stdout.into_owned()
-    } else {
-        error_prefix(&stdout).unwrap_or(&stdout).to_owned()
-    };
-    Outcome { code, report }
-}
-
-/// The `error[CODE]: LINE:COL:` prefix of an error line.
-fn error_prefix(stdout: &str) -> Option<&str> {
-    let rest = stdout.strip_prefix("error[")?;
-    let (_, rest) = rest.split_once("]: ")?;
-    let (_, rest) = rest.split_once(':')?;
-    let (_, rest) = rest.split_once(':')?;
-    Some(&stdout[..stdout.len() - rest.len()])
-}
+use outcome::classify;
 
 fn compare(path: &Path) -> datatest_stable::Result<()> {
-    let lean = outcome(&spawn(
+    let lean = classify(&spawn(
         Command::new(checker::path()).arg("parse").arg(path),
         "",
-    )?);
-    let rust = outcome(&spawn(checker::silicon().arg("parse").arg(path), "")?);
+    )?)
+    .map_err(|e| format!("Lean `silicon-check parse` failed: {e}"))?;
+    let rust = classify(&spawn(checker::silicon().arg("parse").arg(path), "")?)
+        .map_err(|e| format!("Rust `silicon parse` failed: {e}"))?;
     if lean == rust {
         return Ok(());
     }
