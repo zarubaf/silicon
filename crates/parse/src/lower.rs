@@ -24,13 +24,6 @@ fn has(node: &SyntaxNode, kind: SyntaxKind) -> bool {
     token(node, kind).is_some()
 }
 
-/// The token that opens the form, so the node has no leading trivia.
-fn first_token(node: &SyntaxNode) -> Option<SyntaxToken> {
-    node.descendants_with_tokens()
-        .filter_map(NodeOrToken::into_token)
-        .find(|t| !t.kind().is_trivia())
-}
-
 fn unescape(literal: &str) -> String {
     let body = literal
         .strip_prefix('"')
@@ -94,8 +87,10 @@ fn binop(kind: SyntaxKind) -> Option<BinOp> {
 }
 
 impl Lower<'_> {
-    fn pos_of(&self, node: &SyntaxNode) -> Option<Pos> {
-        Some(self.pos_at(&first_token(node)?))
+    /// The position of the first token of the node. The parser opens each node after the
+    /// trivia, so the node starts at its first token, and this costs no walk of the node.
+    fn pos_of(&self, node: &SyntaxNode) -> Pos {
+        self.index.pos(usize::from(node.text_range().start()))
     }
 
     fn pos_at(&self, token: &SyntaxToken) -> Pos {
@@ -122,7 +117,7 @@ impl Lower<'_> {
     }
 
     fn item(&self, node: &SyntaxNode) -> Option<Item> {
-        let pos = self.pos_of(node)?;
+        let pos = self.pos_of(node);
         let name = self.ident(node)?;
         match node.kind() {
             SyntaxKind::ConstItem => Some(Item::Const {
@@ -168,7 +163,7 @@ impl Lower<'_> {
         list.children()
             .map(|param| {
                 Some(Param {
-                    pos: self.pos_of(&param)?,
+                    pos: self.pos_of(&param),
                     comptime: has(&param, SyntaxKind::ComptimeKw),
                     name: self.ident(&param)?,
                     ty: self.type_expr(&param.children().find(is_type)?)?,
@@ -186,11 +181,11 @@ impl Lower<'_> {
         use SyntaxKind::*;
         if node.kind() == Block {
             return Some(Stmt::Block {
-                pos: self.pos_of(node)?,
+                pos: self.pos_of(node),
                 body: self.block(node)?,
             });
         }
-        let pos = self.pos_of(node)?;
+        let pos = self.pos_of(node);
         let exprs: Vec<SyntaxNode> = node.children().filter(is_expr).collect();
         let types: Vec<SyntaxNode> = node.children().filter(is_type).collect();
         let nth_expr = |n: usize| self.expr(exprs.get(n)?);
@@ -282,7 +277,7 @@ impl Lower<'_> {
     }
 
     fn type_expr(&self, node: &SyntaxNode) -> Option<TypeExpr> {
-        let pos = self.pos_of(node)?;
+        let pos = self.pos_of(node);
         match node.kind() {
             SyntaxKind::NameType => Some(TypeExpr::Name {
                 pos,
@@ -300,7 +295,7 @@ impl Lower<'_> {
     fn expr(&self, node: &SyntaxNode) -> Option<Expr> {
         #[allow(clippy::enum_glob_use)]
         use SyntaxKind::*;
-        let pos = self.pos_of(node)?;
+        let pos = self.pos_of(node);
         let operands: Vec<SyntaxNode> = node.children().filter(is_expr).collect();
         let operand =
             |n: usize| -> Option<Box<Expr>> { Some(Box::new(self.expr(operands.get(n)?)?)) };
