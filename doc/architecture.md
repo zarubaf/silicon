@@ -11,6 +11,7 @@ Silicon is a standalone hardware description language. It is not a domain-specif
 - A compiler in Rust produces the core IR. Translation validation checks each compiler run against the Lean semantics.
 - A Lean model is the normative functional spec. Verso keeps prose and checked Lean code in one source.
 - The implementation (RTL) stays separate from the spec.
+- The architecture stays reviewed. A continuous architecture review compares the code with this file, the ADRs, and the trust document. See [ADR 0013](adr/0013-continuous-architecture-review.md) and the section [Architecture review](#architecture-review).
 
 4-state logic, clock domain crossing (CDC) verification, and timing are out of scope. Existing dedicated tools cover them. See [ADR 0005](adr/0005-synchronous-two-state-semantics.md).
 
@@ -69,6 +70,23 @@ The initial design notes (not in the repository) recommend an early review of th
 The trust boundary separates the parts that are proven, the parts that are validated, and the parts that are trusted. [The trust document](trust.md) is its authority.
 
 A Lean proof shows that a theorem holds in the encoded model under its assumptions. A proof result names its model, its assumptions, its inputs, and its trusted bridges.
+
+## Architecture review
+
+A continuous architecture review keeps the code and this file in agreement. [ADR 0013](adr/0013-continuous-architecture-review.md) defines the triggers, the reviewers, and the records of the findings:
+
+- A review of each pull request that touches an architecture path.
+- A drift review after 15 merged pull requests or after one week.
+- A milestone review at each milestone, for example at the end of a build step.
+
+These are the architecture paths. `cargo xtask review-scope` reads this list:
+
+- `Cargo.toml` and each `crates/*/Cargo.toml`
+- `doc/architecture.md`, `doc/trust.md`, `doc/adr/`, and `doc/design/`
+- `CONTEXT.md`, `AGENTS.md`, and each `AGENTS.md` of an area
+- `lean/lakefile.toml`, `lean/Silicon/*/Syntax.lean`, and `lean/Silicon/*/Main.lean`
+- The normative Lean definitions: `lean/Silicon/Core/Semantics.lean`, `Semantics/`, `Check.lean`, `Text.lean`, `MemModel.lean`, `Lower.lean`, and `Mlir/`
+- `justfile`, `.github/workflows/`, and `xtask/`
 
 ## Verification against existing SystemVerilog
 
