@@ -16,6 +16,7 @@ const SPEC: &str = "doc/design/2026-10-08-core-ir.md";
 const LEAN_CODES: &str = "lean/Silicon/Core/Syntax.lean";
 const RUST_CODES: &str = "crates/core-ir/src/diag.rs";
 const TRUST: &str = "doc/trust.md";
+const INVENTORIES: [&str; 2] = ["tests/lec-checks.txt", "tests/diff-checks.txt"];
 const LEAN_MAIN: &str = "lean/Silicon/Core/Main.lean";
 const LAKEFILE: &str = "lean/lakefile.toml";
 const EXE: &str = "silicon-check";
@@ -305,6 +306,40 @@ fn trust_violations(
         .collect()
 }
 
+/// The tags that `doc/trust.md` documents: the issue numbers of the Issue
+/// column, and each rule code in the table.
+pub fn trust_tags(trust: &str) -> Result<HashSet<String>> {
+    let (_, section) = block(trust, r"(?m)^## Parts$", "\n## ", TRUST)?;
+    let issue = Regex::new(r"#\d+")?;
+    let code = Regex::new(r"\bE\d+\b")?;
+    let mut tags = HashSet::new();
+    for row in section.lines().filter(|l| l.starts_with('|')).skip(2) {
+        let cells: Vec<&str> = row.trim_matches('|').split('|').collect();
+        if let Some(last) = cells.last() {
+            tags.extend(issue.find_iter(last).map(|m| m.as_str().to_owned()));
+        }
+        tags.extend(code.find_iter(row).map(|m| m.as_str().to_owned()));
+    }
+    Ok(tags)
+}
+
+/// Rule `arch-skips`: the tag of each SKIP of an inventory names a gap of
+/// `doc/trust.md`.
+fn skips_violations(path: &str, inventory: &str, tags: &HashSet<String>) -> Result<Vec<Violation>> {
+    Ok(crate::skips::parse(inventory)?
+        .into_iter()
+        .filter_map(|(line, entry)| match entry.verdict {
+            crate::skips::Verdict::Skip(tag) if !tags.contains(&tag) => Some(error(
+                path,
+                Some(line),
+                "arch-skips",
+                format!("the tag `{tag}` is no gap of {TRUST}"),
+            )),
+            _ => None,
+        })
+        .collect())
+}
+
 /// The path of a Lean module name, relative to `lean/`.
 fn module_path(module: &str) -> String {
     format!("lean/{}.lean", module.replace('.', "/"))
@@ -411,6 +446,10 @@ pub fn check(repo: &Repo) -> Result<Vec<Violation>> {
         &commands(&repo.read(Path::new(LEAN_MAIN))?)?,
         &trust_names(&repo.read(Path::new(TRUST))?)?,
     ));
+    let tags = trust_tags(&repo.read(Path::new(TRUST))?)?;
+    for path in INVENTORIES {
+        out.extend(skips_violations(path, &repo.read(Path::new(path))?, &tags)?);
+    }
     let root = exe_root(&repo.read(Path::new(LAKEFILE))?)?;
     out.extend(exe_import_violations(&root, &|module| {
         let path = module_path(module);
@@ -554,6 +593,26 @@ mod tests {
         );
         let crates = vec!["core-ir".to_owned(), "xtask".to_owned()];
         assert!(trust_violations(&crates, &set(&["check"]), &names).is_empty());
+    }
+
+    const TRUST_TABLE: &str = "## Parts\n\n| Part | Oracle | Issue |\n| --- | --- | --- |\n\
+        | A | None. It rejects an extern (`E014`). | #20, #21 |\n| B | #99 in prose | |\n\n## Gaps\n";
+
+    #[test]
+    fn trust_tags_are_issue_cells_and_rule_codes() {
+        let tags = trust_tags(TRUST_TABLE).unwrap();
+        assert_eq!(tags, set(&["#20", "#21", "E014"]).into_iter().collect());
+    }
+
+    #[test]
+    fn a_skip_tag_outside_the_trust_table_fails() {
+        let tags = trust_tags(TRUST_TABLE).unwrap();
+        let inventory =
+            "a.sil main SKIP #20\na.sil lowering SKIP #22\na.sil run SKIP E014\na.sil x PASS\n";
+        let found = skips_violations("inv.txt", inventory, &tags).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].line, Some(2));
+        assert_eq!(found[0].rule, "arch-skips");
     }
 
     #[test]
