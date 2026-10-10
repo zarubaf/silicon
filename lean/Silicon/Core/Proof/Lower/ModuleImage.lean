@@ -154,7 +154,7 @@ theorem register_not_allocated (i : Nat) (p : Pos) (n : String) (w : Nat) (clk :
     (List.mem_flatMap.mpr ⟨_, stmt, by simp [Typed.Stmt.erase, rawRegisters]⟩)) rfl
 
 omit h hm in
-theorem source_not_allocated (x : String) (legal : Rules.reservedName x = false)
+theorem source_not_allocated (x : String) (legal : Rules.invalidName x = false)
     (alloc : x ∈ allocatedNames (finalState m)) :
     ∃ stmt ∈ Lower.statements m, LetName stmt = some x ∧ StmtResult stmt [x] := by
   unfold allocatedNames at alloc
@@ -166,7 +166,7 @@ theorem source_not_allocated (x : String) (legal : Rules.reservedName x = false)
       rcases result hi with ⟨i, hi'⟩ | named
       · rw [hi'] at hx
         cases List.mem_singleton.mp hx
-        rw [temporary_reserved] at legal
+        rw [temporary_invalid] at legal
         cases legal
       · cases stmt <;> simp only at named
         case let_ p y w e =>
@@ -188,10 +188,10 @@ theorem source_not_allocated (x : String) (legal : Rules.reservedName x = false)
       case inst p n child inputs =>
         obtain ⟨_, _, rfl⟩ := shape
         obtain ⟨q, _, rfl⟩ := List.mem_map.mp hx
-        rw [result_reserved] at legal
+        rw [result_invalid] at legal
         cases legal
   · obtain ⟨r, _, rfl⟩ := List.mem_map.mp reads
-    have := readName_reserved r
+    have := readName_invalid r
     rw [show readName r = s!"{r.memory}.r{r.index}_data" from rfl] at this
     rw [this] at legal
     cases legal
@@ -235,7 +235,7 @@ theorem image_global (sol : Valuation m.ctx) (memories : Memories m.ctx) (image 
     subst same
     rcases result' with ⟨i, hi⟩ | fresh'
     · have legal := letName_legal raw t h m hm stmt' hs x letName
-      rw [List.singleton_inj.mp hi, temporary_reserved] at legal
+      rw [List.singleton_inj.mp hi, temporary_invalid] at legal
       cases legal
     · apply aliased
       cases stmt' <;> simp_all

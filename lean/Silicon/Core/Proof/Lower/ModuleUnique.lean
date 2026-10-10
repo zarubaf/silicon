@@ -382,7 +382,7 @@ theorem read_solution (s : State (certified raw t h) env m hm) (σ : Mlir.Module
     have inRegs : n ∈ Lower.registers m := List.mem_filterMap.mpr ⟨_, member, rfl⟩
     have contains : (Lower.registers m).contains n = true := by simpa using inRegs
     simp only [Lower.valueName, contains, ↓reduceIte]
-    rw [rename_reserved raw t h m hm _ (register_reserved n)]
+    rw [rename_invalid raw t h m hm _ (register_invalid n)]
     exact hval
   | inst i p n child conns member port portMember dir bits =>
     obtain ⟨c, found⟩ := instance_child_exists (certified raw t h) noExterns m hm i p n child
@@ -394,7 +394,7 @@ theorem read_solution (s : State (certified raw t h) env m hm) (σ : Mlir.Module
       conns member c found (children i p n child conns member c found) port portMember dir h₂
     apply readBack_eq
     simp only [Lower.valueName]
-    rw [rename_reserved raw t h m hm _ (result_reserved n port.name), value,
+    rw [rename_invalid raw t h m hm _ (result_invalid n port.name), value,
       coreValue_cast bits]
     simp only [ValueDriver.eval]
     exact congrArg (fun x => some (Mlir.Value.bits width (cast (congrArg TyValue bits) x)))

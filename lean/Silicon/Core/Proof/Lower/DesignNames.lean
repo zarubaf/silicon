@@ -6,8 +6,8 @@ distinct configurations have distinct names.
 -/
 namespace Silicon.Core.LowerProof
 
-theorem moduleName_reserved (c : MemConfig) : Rules.reservedName c.moduleName = true := by
-  by_cases legal : Rules.reservedName c.moduleName = false
+theorem moduleName_invalid (c : MemConfig) : Rules.invalidName c.moduleName = true := by
+  by_cases legal : Rules.invalidName c.moduleName = false
   · exact absurd (by
       change "silicon_" ++ "mem_" ++ toString c.depth ++ "x" ++ toString c.width ++ "_r" ++
           toString c.reads ++ "w" ++ toString c.writes =

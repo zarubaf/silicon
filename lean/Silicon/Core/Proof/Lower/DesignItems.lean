@@ -59,7 +59,7 @@ theorem body_names_nodup : (t.bodies.map Typed.Module.name).Nodup := by
   exact (perm.map _).nodup_iff.mpr (names.sublist modules)
 
 theorem body_name_legal (b : Typed.Module) (hb : b ∈ t.bodies) :
-    Rules.reservedName b.name = false :=
+    Rules.invalidName b.name = false :=
   (module_wf raw t h).1.1.2 b.name (List.mem_map.mpr ⟨.module b.erase,
     module_item raw t h b hb, rfl⟩)
 

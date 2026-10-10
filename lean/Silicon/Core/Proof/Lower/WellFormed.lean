@@ -28,7 +28,7 @@ theorem design_names :
     obtain ⟨body, hbody, rfl⟩ := List.mem_map.mp ha
     obtain ⟨c, _, eq⟩ := List.mem_map.mp hb
     have legal := body_name_legal raw t h body hbody
-    have reserved := moduleName_reserved c
+    have reserved := moduleName_invalid c
     simp only [Function.comp_def, Mlir.Item.name] at eq
     rw [eq] at reserved
     exact Bool.noConfusion (legal.symm.trans reserved)
@@ -175,7 +175,7 @@ theorem rank_decreases (b : Typed.Module) (hb : b ∈ t.bodies) (names : List St
       intro member
       obtain ⟨body, hbody, eq⟩ := List.mem_map.mp member
       have legal := body_name_legal raw t h body hbody
-      rw [eq, moduleName_reserved] at legal
+      rw [eq, moduleName_invalid] at legal
       cases legal
     simp only [bodyRank, absent, ↓reduceIte]
     omega

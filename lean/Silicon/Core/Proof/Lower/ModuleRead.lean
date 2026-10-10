@@ -148,7 +148,7 @@ theorem read_reads (σ : Mlir.ModuleState) (inputs : Mlir.Env) (all : Mlir.Valua
     simp [Mlir.Value.ty, Mlir.Value.asBits]
   rw [addrValue] at read
   refine ⟨w, depth, found, x, addr, ?_⟩
-  have reserved := rename_reserved raw t h m hm _ (readName_reserved r)
+  have reserved := rename_invalid raw t h m hm _ (readName_invalid r)
   change all [] (rename m (readName r)) = _
   rw [reserved]
   change all [] s!"{r.memory}.r{r.index}_data" = _

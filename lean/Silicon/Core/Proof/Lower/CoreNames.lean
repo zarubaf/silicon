@@ -14,21 +14,21 @@ variable (raw : Core.Design) (t : Typed.Design) (h : check raw = .ok t)
 include h hm
 
 theorem scope_legal (x : String) (hx : x ∈ Rules.scopeNames (.module m.erase)) :
-    Rules.reservedName x = false :=
+    Rules.invalidName x = false :=
   ((module_wf raw t h).1.2 (.module m.erase) (module_item raw t h m hm)).2 x hx
 
 /-- Each name and instance owner in the context is a source name. -/
 theorem ctx_owner_legal (node : Deps.Node) (kind : Typed.Kind)
     (found : m.ctx.lookup node = some kind) : match node with
-      | .name x => Rules.reservedName x = false
-      | .port i _ => Rules.reservedName i = false := by
+      | .name x => Rules.invalidName x = false
+      | .port i _ => Rules.invalidName i = false := by
   have member := lookup_member _ _ _ found
   rw [m.context_eq] at member
   rcases context_member _ _ _ _ member with ⟨p, hp, same, _⟩ | ⟨stmt, hs, decl⟩
   · subst same
     exact scope_legal raw t h m hm _ (List.mem_append_left _ (List.mem_map_of_mem hp))
   · have defined (n : String) (hn : Rules.definition stmt = some n) :
-        Rules.reservedName n = false :=
+        Rules.invalidName n = false :=
       scope_legal raw t h m hm _ (List.mem_append_right _ (List.mem_filterMap.mpr ⟨stmt, hs, hn⟩))
     cases stmt with
     | let_ _ n _ _ | reg _ n _ _ _ =>
