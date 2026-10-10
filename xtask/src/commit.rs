@@ -120,12 +120,12 @@ pub fn check_message(msg: &str, scopes: &[String]) -> Vec<String> {
 
 /// Directories of shared test data. Each file there is an oracle: an input
 /// with its expectation inline (`; expected-error`, `; STEP`, `; CHECK`) or
-/// beside it. Any change to such a file counts, so no list of forms can
-/// drift from the harnesses.
-const ORACLE_DIRS: &[&str] = &["check", "run", "lower", "corpus"];
+/// beside it. `si` holds the suites of the source front end. Any change to
+/// such a file counts, so no list of forms can drift from the harnesses.
+const ORACLE_DIRS: &[&str] = &["check", "run", "lower", "corpus", "si"];
 
 /// True for test expectation files: snapshots and files of the shared test
-/// data directories `tests/{check,run,lower,corpus}/`.
+/// data directories `tests/{check,run,lower,corpus,si}/`.
 pub fn is_expectation(path: &Path) -> bool {
     let parts: Vec<_> = path.iter().map(|p| p.to_string_lossy()).collect();
     parts.iter().any(|p| p == "snapshots")
@@ -390,6 +390,8 @@ mod tests {
             assert!(is_expectation(Path::new(&format!("tests/{dir}/a.sil"))));
         }
         assert!(is_expectation(Path::new("tests/corpus/b/expected/o.v")));
+        assert!(is_expectation(Path::new("tests/si/check/a.si")));
+        assert!(is_expectation(Path::new("tests/si/corpus/b.si")));
         assert!(!is_expectation(Path::new("crates/a/src/lib.rs")));
         assert!(!is_expectation(Path::new("crates/driver/tests/run.rs")));
     }
