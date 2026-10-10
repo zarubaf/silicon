@@ -110,6 +110,8 @@ import Silicon.Source.Parse
 import Silicon.Source.Test.Parse
 import Silicon.Source.Resolve
 import Silicon.Source.Test.Resolve
+import Silicon.Source.Check
+import Silicon.Source.Test.Check
 import Silicon.Source.Cli
 import Silicon.Main
 
