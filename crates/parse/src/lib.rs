@@ -38,32 +38,21 @@ pub fn parse(input: &str) -> Parse {
     let lexed = syntax::lex(input);
     let (green, raw) = parser::Parser::new(input, &lexed.tokens).finish();
     let index = LineIndex::new(input);
-    let mut errors: Vec<(usize, Error)> = lexed
+    let mut raw_all: Vec<(usize, Code, String)> = lexed
         .errors
         .iter()
-        .map(|e| {
-            (
-                e.offset,
-                Error {
-                    code: Code::S001,
-                    pos: index.pos(e.offset),
-                    message: e.message.to_owned(),
-                },
-            )
-        })
-        .chain(raw.into_iter().map(|e| {
-            (
-                e.offset,
-                Error {
-                    code: e.code,
-                    pos: index.pos(e.offset),
-                    message: e.message,
-                },
-            )
-        }))
+        .map(|e| (e.offset, Code::S001, e.message.to_owned()))
+        .chain(raw.into_iter().map(|e| (e.offset, e.code, e.message)))
         .collect();
-    errors.sort_by_key(|(offset, _)| *offset);
-    let errors: Vec<Error> = errors.into_iter().map(|(_, e)| e).collect();
+    raw_all.sort_by_key(|(offset, ..)| *offset);
+    let errors: Vec<Error> = raw_all
+        .into_iter()
+        .map(|(offset, code, message)| Error {
+            code,
+            pos: index.pos(offset),
+            message,
+        })
+        .collect();
     let ast = if errors.is_empty() {
         let root = SyntaxNode::new_root(green.clone());
         let lowered = lower::Lower { index }.source(&root);
