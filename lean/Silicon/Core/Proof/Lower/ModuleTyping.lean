@@ -6,12 +6,8 @@ The final module types every op, port, and update that its statements build.
 -/
 namespace Silicon.Core.LowerProof
 
-theorem temporary_invalid (i : Nat) : Rules.invalidName s!"silicon_t{i}" = true := by
-  by_cases legal : Rules.invalidName s!"silicon_t{i}" = false
-  · exact absurd (by
-      change "silicon_" ++ "t" ++ i.repr = "silicon_" ++ ("t" ++ i.repr)
-      simp only [String.append_assoc]) (source_ne_internal _ ("t" ++ i.repr) legal)
-  · simpa using legal
+theorem temporary_invalid (i : Nat) : Rules.invalidName (toString i) = true := by
+  simp only [Rules.invalidName, decimal_not_core, Bool.not_false]
 
 section
 variable (raw : Core.Design) (t : Typed.Design) (h : check raw = .ok t)

@@ -55,7 +55,7 @@ theorem register_entry_body (i : Nat) (p : Pos) (n : String) (w : Nat) (clk : St
     (target) (reset) (ni : Nat) (np : Pos) (next : Typed.Expr m.ctx (.bits w))
     (he : Typed.Equation.reg i p n w clk target reset ni np next ∈ m.body) :
     ∃ nextName, (finalState m).nexts.lookup n = some nextName ∧
-      ([s!"silicon_reg_{n}"], Lower.substitute (rename m) (.compreg nextName clk
+      ([(regName n)], Lower.substitute (rename m) (.compreg nextName clk
         (((finalState m).resets.lookup n).getD none) (.int w))) ∈ (Lower.module m).1.body := by
   have hs : Typed.Stmt.next np n w target next ∈ Lower.statements m :=
     (statement_of_eq m _).mpr ⟨_, he, (ni, .next np n w target next), by
@@ -69,7 +69,7 @@ theorem register_entry_body (i : Nat) (p : Pos) (n : String) (w : Nat) (clk : St
   refine ⟨x, hx, ?_⟩
   rw [module_body]
   apply List.mem_map.mpr
-  refine ⟨([s!"silicon_reg_{n}"], .compreg x clk
+  refine ⟨([(regName n)], .compreg x clk
     (((finalState m).resets.lookup n).getD none) (.int w)),
     List.mem_append_right _ (List.mem_filterMap.mpr ⟨_, he, ?_⟩), rfl⟩
   simp only [hx]
@@ -86,7 +86,7 @@ noncomputable def stateWords (s : State (certified raw t h) env m hm) (σ : Mlir
 theorem stateWords_spec (s : State (certified raw t h) env m hm) (σ : Mlir.ModuleState)
     (corr : Corresponds (certified raw t h) env noExterns m hm s σ) (name : String)
     (w depth : Nat) (found : m.ctx.lookup (.name name) = some (.memory w depth)) :
-    (σ.instance name).regs "silicon_reg_mem" =
+    (σ.instance name).regs "reg$$mem" =
       some (.array _ _ (stateWords raw t h noExterns m hm env s σ corr name w depth found)) ∧
     MemModelProof.Agrees ⟨depth, w, 0, 0⟩
       (stateWords raw t h noExterns m hm env s σ corr name w depth found)

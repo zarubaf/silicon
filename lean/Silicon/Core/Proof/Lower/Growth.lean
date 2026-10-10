@@ -33,11 +33,11 @@ theorem grows_push (s : Lower.State) (entry : List String × Mlir.Op) :
 
 theorem emit_body (dest : Option String) (op : Mlir.Op) (s : Lower.State) :
     (Lower.emit dest op s).2.body.toList =
-      s.body.toList ++ [([dest.getD s!"silicon_t{s.nextTemp}"], op)] := by
+      s.body.toList ++ [([dest.getD (toString s.nextTemp)], op)] := by
   cases dest <;> exact Array.toList_push ..
 
 theorem emit_result (dest : Option String) (op : Mlir.Op) (s : Lower.State) :
-    (Lower.emit dest op s).1 = dest.getD s!"silicon_t{s.nextTemp}" := by
+    (Lower.emit dest op s).1 = dest.getD (toString s.nextTemp) := by
   cases dest <;> rfl
 
 theorem grows_emit (dest : Option String) (op : Mlir.Op) (s : Lower.State) :

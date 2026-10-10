@@ -14,7 +14,7 @@ structure Typing (ctx : Typed.Ctx) where
   Has : String → Mlir.Ty → Prop
   defined : ∀ names op, (names, op) ∈ final.body.toList →
     ∀ pair ∈ names.zip op.resultTypes, rename pair.1 = pair.1 → Has pair.1 pair.2
-  temps : ∀ i : Nat, rename s!"silicon_t{i}" = s!"silicon_t{i}"
+  temps : ∀ i : Nat, rename (toString i) = (toString i)
   reads : ∀ r ∈ final.reads, ∀ w depth,
     ctx.lookup (.name r.memory) = some (.memory w depth) → Has (readName r) (.int w)
   refs : ∀ node w, ctx.lookup node = some (.value (.bits w)) →
@@ -117,11 +117,11 @@ theorem Typing.step_emit (dest : Option String) (op : Mlir.Op) (ty : Mlir.Ty)
       exact Or.inr ⟨by simp [result], (good hp).1, (good hp).2⟩
   all_goals try (left; cases dest <;> exact h)
   · rw [emit_result]
-    have member : ([dest.getD s!"silicon_t{s.nextTemp}"], op) ∈ E.final.body.toList := by
+    have member : ([dest.getD (toString s.nextTemp)], op) ∈ E.final.body.toList := by
       apply grows.body.subset
       rw [body]
       simp
-    apply E.defined _ op member (dest.getD s!"silicon_t{s.nextTemp}", ty) (by simp [result])
+    apply E.defined _ op member (dest.getD (toString s.nextTemp), ty) (by simp [result])
     cases dest with
     | none => exact E.temps _
     | some name => exact fresh hp name rfl

@@ -50,7 +50,15 @@ private def result (source : String) : Option (ErrorCode × Nat × Nat) :=
   "(assign q x))\n(module top\n(inst u child (x u.q))))") == some (.E008, 3, 1)
 #guard result ("(design top (module top (input clk clock) (mem m (bits 1) 2 clk)\n" ++
   "(let a (bits 1) (read m a))))") == some (.E008, 2, 1)
-#guard result "(design top (module top\n(input silicon_x (bits 1))))" == some (.E002, 2, 8)
+#guard result "(design top (module top\n(input silicon_x (bits 1))))" == none
+
+/-! A hand-built name outside the name pattern is an `E002` error at the name. -/
+#guard
+  let p : Pos := ⟨2, 8, []⟩
+  let d : Design := ⟨"top", [.module ⟨p, "top", [⟨p, .input, "a$$b", .bits 1⟩], []⟩], p⟩
+  match check d with
+  | .error e => (e.code, e.pos.line, e.pos.col) == (.E002, 2, 8)
+  | .ok _ => false
 
 /-! AST declarations must not collide with generated instance result names. -/
 #guard
@@ -61,7 +69,8 @@ private def result (source : String) : Option (ErrorCode × Nat × Nat) :=
   | .ok _ => false
 
 /-! Atom positions survive line breaks inside declaration and expression forms. -/
-#guard result "(design top (module top (input\nsilicon_x (bits 1))))" == some (.E002, 2, 1)
+#guard result "(design top (module top (input x (bits 1)) (input\nx (bits 1))))" ==
+  some (.E002, 2, 1)
 #guard result "(design top (module top (input x (bits\n0))))" == some (.E005, 2, 1)
 #guard result "(design top (module top (let x (bits 1) (const 1\n2))))" == some (.E005, 2, 1)
 #guard result "(design\nmissing (module top))" == some (.E003, 2, 1)

@@ -1,3 +1,4 @@
+import Silicon.Core.Names
 import Silicon.Core.List
 import Silicon.Core.Complete
 import Silicon.Core.GraphReach
@@ -71,8 +72,8 @@ def scopeNames (i : Item) : List String :=
     | .module m => m.body.filterMap definition
     | .extern _ => []
 
-/-! Lowering makes internal names that are invalid as source names. -/
-def invalidName (n : String) : Bool := n.startsWith "silicon_" || n.contains '.'
+/-! A name outside the name pattern is invalid. The lowering makes such names for itself. -/
+def invalidName (n : String) : Bool := !namePattern n
 
 def Unique (names : List String) : Prop :=
   names.Nodup ∧ ∀ n ∈ names, Rules.invalidName n = false

@@ -1,4 +1,5 @@
 import Silicon.Core.Syntax
+import Silicon.Core.Names
 import Std
 
 /-!
@@ -7,21 +8,20 @@ The reader preserves source positions. The printer preserves input order.
 -/
 namespace Silicon.Core
 
-/-! Keywords cannot be names. Names use ASCII letters, digits, underscores, and dollar signs. -/
+/-! Keywords cannot be names. A name matches the name pattern of `Names`. -/
 def keywords : List String :=
   ["design", "module", "extern", "input", "output", "clock", "bits", "deps", "let", "reg",
    "next", "mem", "write", "inst", "assign", "reset", "sync", "const", "not", "add", "sub",
    "mul", "and", "or", "xor", "shl", "shru", "shrs", "concat", "icmp", "mux", "extract",
    "replicate", "read", "eq", "ne", "ult", "ule", "ugt", "uge", "slt", "sle", "sgt", "sge"]
 
-def nameStart (c : Char) : Bool := c.isAlpha || c == '_'
-
 def nameRest (c : Char) : Bool := nameStart c || c.isDigit || c == '$'
 
-def validName (s : String) : Bool :=
-  match s.toList with
-  | [] => false
-  | c :: cs => nameStart c && cs.all nameRest && !keywords.contains s
+def validName (s : String) : Bool := namePattern s && !keywords.contains s
+
+theorem validName_pattern (s : String) (h : validName s = true) : namePattern s = true := by
+  simp only [validName, Bool.and_eq_true] at h
+  exact h.1
 
 /-! Name collection gives one lexical condition for every name in a design. -/
 def Expr.names : Expr → List String
@@ -721,22 +721,18 @@ theorem nameRest_delimiter (c : Char) (h : nameRest c = true) : delimiter c = fa
       subst c <;> contradiction
 
 theorem validName_nonempty (s : String) (h : validName s = true) : s.toList ≠ [] := by
-  intro he
-  simp [validName, he] at h
+  obtain ⟨c, cs, hs, -⟩ := namePattern_head s (validName_pattern s h)
+  simp [hs]
 
 theorem validName_delimiter (s : String) (h : validName s = true) :
     ∀ c ∈ s.toList, delimiter c = false := by
-  unfold validName at h
-  cases hs : s.toList with
-  | nil => simp [hs] at h
-  | cons d ds =>
-    simp only [hs, Bool.and_eq_true] at h
-    intro c hc
-    simp only [List.mem_cons] at hc
-    rcases hc with rfl | hc
-    · apply nameRest_delimiter
-      simp [nameRest, h.1.1]
-    · exact nameRest_delimiter c (List.all_eq_true.mp h.1.2 c hc)
+  intro c hc
+  apply nameRest_delimiter
+  rcases namePattern_chars s (validName_pattern s h) c hc with rfl | hc
+  · rfl
+  · simp only [fieldChar, Bool.or_eq_true] at hc
+    simp only [nameRest, Bool.or_eq_true]
+    exact .inl hc
 
 /-! Token accumulation does not change the text or order of an atom. -/
 theorem flush_reverse (chars : List Char) (p : Pos) (tokens : List Token)
@@ -1205,21 +1201,8 @@ def encodeItem : Item → Tree
 def encode (d : Design) : Tree := .list ([.atom "design", .atom d.top] ++ d.items.map encodeItem)
 
 /-! A dot separates two names and cannot occur within either name. -/
-theorem validName_no_dot (s : String) (h : validName s = true) : '.' ∉ s.toList := by
-  unfold validName at h
-  cases hs : s.toList with
-  | nil => simp
-  | cons c cs =>
-    simp only [hs, Bool.and_eq_true] at h
-    simp only [List.mem_cons, not_or]
-    constructor
-    · intro hc
-      subst c
-      have : nameStart '.' = false := rfl
-      simp [this] at h
-    · intro hc
-      have := List.all_eq_true.mp h.1.2 '.' hc
-      contradiction
+theorem validName_no_dot (s : String) (h : validName s = true) : '.' ∉ s.toList :=
+  namePattern_no_dot s (validName_pattern s h)
 
 theorem split_name (s : String) (h : validName s = true) :
     (s.toList.splitOn '.').map String.ofList = [s] := by

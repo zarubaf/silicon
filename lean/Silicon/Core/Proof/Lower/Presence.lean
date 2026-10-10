@@ -19,7 +19,7 @@ theorem statements_presence (registers : List String) (stmts : List (Typed.Stmt 
     · exact ih _ hs
 
 theorem emit_mem (dest : Option String) (op : Mlir.Op) (s : Lower.State) :
-    ([dest.getD s!"silicon_t{s.nextTemp}"], op) ∈ (Lower.emit dest op s).2.body.toList := by
+    ([dest.getD (toString s.nextTemp)], op) ∈ (Lower.emit dest op s).2.body.toList := by
   rw [emit_body]
   simp
 

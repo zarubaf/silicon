@@ -97,7 +97,7 @@ theorem read_reads (σ : Mlir.ModuleState) (inputs : Mlir.Env) (all : Mlir.Valua
     (hv : Mlir.IsHierarchySolution ((lower t).withModels (memoryConfigs t)) (Lower.module m).1 σ
       inputs all)
     (words : ModelMemories m.ctx)
-    (state : ∀ name w depth found, (σ.instance name).regs "silicon_reg_mem" =
+    (state : ∀ name w depth found, (σ.instance name).regs "reg$$mem" =
       some (.array _ _ (words name w depth found))) :
     ∀ r ∈ (finalState m).reads, ReadEquation words (all [] ∘ rename m) r := by
   intro r hr

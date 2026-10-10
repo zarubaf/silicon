@@ -137,7 +137,7 @@ theorem next_register_value (s : State (certified raw t h) env m hm) (σ : Mlir.
     (member : Typed.Equation.reg i p n w clk target reset ni np next ∈ m.body) :
     (Mlir.nextHierarchyState ((lower t).withModels (memoryConfigs t)) (Lower.module m).1
       all).cells []
-      s!"silicon_reg_{n}" = some (.bits w (nextRegister (readBack m (all []))
+      (regName n) = some (.bits w (nextRegister (readBack m (all []))
         (stateMemories m (designChildren (certified raw t h) env m hm) s) reset next)) := by
   let MU := readMeaning raw t h noExterns m hm env s σ corr inputs all hv
   obtain ⟨nextName, hnext, entry⟩ := register_entry_body m i p n w clk target reset ni np next

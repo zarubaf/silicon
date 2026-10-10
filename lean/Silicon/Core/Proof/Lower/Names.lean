@@ -12,10 +12,10 @@ namespace LowerProof
 def CellCorresponds (σ : Mlir.ModuleState) (path : List String) (name : String) :
     Semantics.NamedCell → Prop
   | .register width value =>
-      σ.cells path s!"silicon_reg_{name}" = some (.bits width value)
+      σ.cells path (regName name) = some (.bits width value)
   | .memory width depth memory =>
       ∃ words : Fin (2 ^ Typed.addressWidth depth) → BitVec width,
-        σ.cells (path ++ [name]) "silicon_reg_mem" = some (.array _ _ words) ∧
+        σ.cells (path ++ [name]) "reg$$mem" = some (.array _ _ words) ∧
         MemModelProof.Agrees ⟨depth, width, 0, 0⟩ words memory
 
 theorem cellCorresponds_instance (σ : Mlir.ModuleState) (inst : String)
@@ -62,7 +62,7 @@ theorem corresponds_register (d : Semantics.CertifiedDesign) (env)
     (reset : Option (Typed.Reset m.ctx width)) (ni : Nat) (np : Pos)
     (next : Typed.Expr m.ctx (.bits width))
     (member : .reg i p name width clock target reset ni np next ∈ m.body) :
-    σ.regs s!"silicon_reg_{name}" = some (.bits width
+    σ.regs (regName name) = some (.bits width
       (s ⟨.reg i p name width clock target reset ni np next, member⟩)) :=
   h [] name _ (Semantics.namedState_register d env noExterns m hm s
     i p name width clock target reset ni np next member)
@@ -73,7 +73,7 @@ theorem corresponds_memory (d : Semantics.CertifiedDesign) (env)
     (h : Corresponds d env noExterns m hm s σ) (name : String) (width depth : Nat)
     (found : m.ctx.lookup (.name name) = some (.memory width depth)) :
     ∃ words : Fin (2 ^ Typed.addressWidth depth) → BitVec width,
-      (σ.instance name).regs "silicon_reg_mem" = some (.array _ _ words) ∧
+      (σ.instance name).regs "reg$$mem" = some (.array _ _ words) ∧
       MemModelProof.Agrees ⟨depth, width, 0, 0⟩ words
         (Semantics.stateMemories m (Semantics.designChildren d env m hm) s
           name width depth found) :=

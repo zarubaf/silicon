@@ -160,19 +160,19 @@ private def operations : String := "(design ops
     (assign o_sgt (icmp sgt a b))
     (assign o_sge (icmp sge a b))))"
 
-#guard has (printed counter) "%silicon_reg_r = seq.compreg"
+#guard has (printed counter) "%reg$$r = seq.compreg"
 #guard has (printed counter) "reset %rst,"
-#guard has (printed memory) "@silicon_mem_12x8_r1w1"
+#guard has (printed memory) "@mem$$12x8_r1w1"
 #guard occurrences (printed memory) "comb.icmp ult" == 2
 #guard has (printed memory) "%p = comb.mux"
 #guard has (printed memory) "comb.and %we,"
 #guard occurrences (printed pow2) "comb.icmp ult" == 0
-#guard has (printed pow2) "@silicon_mem_16x8_r2w2"
+#guard has (printed pow2) "@mem$$16x8_r2w2"
 #guard occurrences (printed depth1) "comb.icmp ult" == 2
 #guard has (printed depth1) "hw.constant 1 : i1"
 #guard (match checked counts with
   | .ok t => (memoryConfigs t).map MemConfig.moduleName
-  | .error _ => []) == ["silicon_mem_12x8_r1w1", "silicon_mem_12x8_r2w2"]
+  | .error _ => []) == ["mem$$12x8_r1w1", "mem$$12x8_r2w2"]
 #guard has (printed external) "hw.module.extern @blk"
 #guard has (printed external)
   "%u.y = hw.instance \"u\" @blk(c: %clk: !seq.clock, a: %a: i4) -> (y: i4)"
@@ -193,7 +193,7 @@ private def nested : String := "(design top (module top
   (mem m (bits 1) 2 clk) (assign q (read m (read m a)))))"
 
 #guard has (printed nested) "r0_addr: %m.r1_data: i1, r1_addr: %a: i1"
-#guard has (printed nested) "@silicon_mem_2x1_r2w0"
+#guard has (printed nested) "@mem$$2x1_r2w0"
 
 private def unordered : String := "(design top (module top
   (input clk clock) (input rst (bits 1)) (output q (bits 8))
@@ -215,7 +215,7 @@ private def readOrder : String := "(design top
     (write m 0 (read m (const 1 1)) (read m (const 1 0)) (read m (const 1 1)))
     (assign q (read m (const 1 0)))))"
 
-#guard has (printed readOrder) "@silicon_mem_2x1_r9w1"
+#guard has (printed readOrder) "@mem$$2x1_r9w1"
 #guard has (printed readOrder) "reset %m.r0_data, %m.r1_data"
 #guard has (printed readOrder) "@child(x: %m.r2_data: i1)"
 #guard !has (printed readOrder) "%l ="
@@ -230,9 +230,9 @@ private def duplicateConfigs : String := "(design top
 
 #guard (match checked duplicateConfigs with
   | .ok t => (memoryConfigs t).map MemConfig.moduleName
-  | .error _ => []) == ["silicon_mem_2x1_r0w0"]
-#guard occurrences (printed duplicateConfigs) "hw.module.extern @silicon_mem_2x1_r0w0" == 1
-#guard (printed duplicateConfigs).startsWith "hw.module.extern @silicon_mem_2x1_r0w0"
+  | .error _ => []) == ["mem$$2x1_r0w0"]
+#guard occurrences (printed duplicateConfigs) "hw.module.extern @mem$$2x1_r0w0" == 1
+#guard (printed duplicateConfigs).startsWith "hw.module.extern @mem$$2x1_r0w0"
 
 private def forwardOutput : String := "(design top (module top
   (input a (bits 8)) (output q (bits 8)) (output z (bits 8))
@@ -242,7 +242,7 @@ private def forwardOutput : String := "(design top (module top
 #guard !has (printed forwardOutput) "comb.or"
 #guard has (printed forwardOutput) "hw.output %q, %a : i8, i8"
 
-#guard has (printed counter) "hw.output %silicon_reg_r : i8"
+#guard has (printed counter) "hw.output %reg$$r : i8"
 #guard !has (printed counter) "comb.or"
 #guard has (printed external) "hw.output %u.y : i4"
 #guard !has (printed external) "comb.or"

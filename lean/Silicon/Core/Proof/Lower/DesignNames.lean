@@ -1,20 +1,13 @@
 import Silicon.Core.Proof.Lower.ModuleWellFormed
 
 /-!
-Source module names are unique and not reserved. Memory model names use the reserved prefix, and
-distinct configurations have distinct names.
+Source module names are unique and match the name pattern. Memory model names are backend names,
+and distinct configurations have distinct names.
 -/
 namespace Silicon.Core.LowerProof
 
 theorem moduleName_invalid (c : MemConfig) : Rules.invalidName c.moduleName = true := by
-  by_cases legal : Rules.invalidName c.moduleName = false
-  · exact absurd (by
-      change "silicon_" ++ "mem_" ++ toString c.depth ++ "x" ++ toString c.width ++ "_r" ++
-          toString c.reads ++ "w" ++ toString c.writes =
-        "silicon_" ++ ("mem_" ++ toString c.depth ++ "x" ++ toString c.width ++ "_r" ++
-          toString c.reads ++ "w" ++ toString c.writes)
-      simp only [String.append_assoc]) (source_ne_internal _ _ legal)
-  · simpa using legal
+  simp [Rules.invalidName, MemConfig.moduleName, backend_name_not_core]
 
 private theorem split_injective {c : Char} {a b x y : List Char} (ha : c ∉ a) (hb : c ∉ b)
     (h : a ++ c :: x = b ++ c :: y) : a = b ∧ x = y := by
@@ -49,8 +42,9 @@ private theorem repr_injective {a b : Nat} (h : a.repr.toList = b.repr.toList) :
   Nat.repr_injective (String.toList_inj.mp h)
 
 theorem moduleName_injective {a b : MemConfig} (h : a.moduleName = b.moduleName) : a = b := by
-  change "silicon_mem_" ++ a.depth.repr ++ "x" ++ a.width.repr ++ "_r" ++ a.reads.repr ++ "w" ++
-      a.writes.repr = "silicon_mem_" ++ b.depth.repr ++ "x" ++ b.width.repr ++ "_r" ++
+  replace h := String.append_right_inj ("mem" ++ "$$") |>.mp h
+  change a.depth.repr ++ "x" ++ a.width.repr ++ "_r" ++ a.reads.repr ++ "w" ++
+      a.writes.repr = b.depth.repr ++ "x" ++ b.width.repr ++ "_r" ++
       b.reads.repr ++ "w" ++ b.writes.repr at h
   have chars := congrArg String.toList h
   have hx : "x".toList = ['x'] := rfl
@@ -58,8 +52,7 @@ theorem moduleName_injective {a b : MemConfig} (h : a.moduleName = b.moduleName)
   have hw : "w".toList = ['w'] := rfl
   simp only [String.toList_append, List.append_assoc, hx, hr, hw, List.cons_append,
     List.nil_append] at chars
-  have tail := List.append_cancel_left chars
-  obtain ⟨depth, tail⟩ := split_injective (digits _ 'x' rfl) (digits _ 'x' rfl) tail
+  obtain ⟨depth, tail⟩ := split_injective (digits _ 'x' rfl) (digits _ 'x' rfl) chars
   obtain ⟨width, tail⟩ := split_injective (digits _ '_' rfl) (digits _ '_' rfl) tail
   obtain ⟨reads, writes⟩ := split_injective (digits _ 'w' rfl) (digits _ 'w' rfl)
     (List.cons.inj tail).2

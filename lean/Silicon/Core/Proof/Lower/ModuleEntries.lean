@@ -46,7 +46,7 @@ theorem registerEntries_mem (m : Typed.Module) (s : Lower.State)
     ∃ i p n w clk target reset ni np next nextName,
       Typed.Equation.reg i p n w clk target reset ni np next ∈ m.body ∧
       s.nexts.lookup n = some nextName ∧
-      x = ([s!"silicon_reg_{n}"],
+      x = ([(regName n)],
         .compreg nextName clk ((s.resets.lookup n).getD none) (.int w)) := by
   obtain ⟨eq, he, found⟩ := List.mem_filterMap.mp hx
   cases eq <;> simp only [reduceCtorEq] at found
@@ -55,7 +55,7 @@ theorem registerEntries_mem (m : Typed.Module) (s : Lower.State)
     | none => simp [hn] at found
     | some nextName =>
       simp only [hn] at found
-      have found : some ([s!"silicon_reg_{n}"], Mlir.Op.compreg nextName clk
+      have found : some ([(regName n)], Mlir.Op.compreg nextName clk
           ((s.resets.lookup n).getD none) (.int w)) = some x := found
       exact ⟨i, p, n, w, clk, target, reset, ni, np, next, nextName, he, hn,
         (Option.some.inj found).symm⟩

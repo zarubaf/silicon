@@ -4,27 +4,40 @@ import Std.Data.String.ToNat
 /-! A lowered module defines each SSA name once. Source, temporary, and result names differ. -/
 namespace Silicon.Core.LowerProof
 
-theorem temporary_name_injective {i j : Nat}
-    (h : s!"silicon_t{i}" = s!"silicon_t{j}") : i = j := by
-  apply Nat.repr_injective
-  exact String.append_right_inj "silicon_t" |>.mp h
+theorem legal_pattern {x : String} (legal : Rules.invalidName x = false) :
+    namePattern x = true := by
+  simpa [Rules.invalidName] using legal
 
-theorem register_name_injective {a b : String}
-    (h : s!"silicon_reg_{a}" = s!"silicon_reg_{b}") : a = b :=
-  String.append_right_inj "silicon_reg_" |>.mp h
+theorem legal_no_dot {x : String} (legal : Rules.invalidName x = false) : '.' ∉ x.toList :=
+  namePattern_no_dot x (legal_pattern legal)
 
-theorem source_ne_internal (name suffix : String)
-    (legal : Rules.invalidName name = false) : name ≠ "silicon_" ++ suffix := by
+theorem temporary_name_injective {i j : Nat} (h : toString i = toString j) : i = j :=
+  Nat.repr_injective h
+
+theorem register_name_injective {a b : String} (h : regName a = regName b) : a = b :=
+  regName_injective h
+
+theorem source_ne_register (name owner : String) (legal : Rules.invalidName name = false) :
+    name ≠ regName owner := by
   intro same
-  subst name
-  simp [Rules.invalidName, String.toList_append] at legal
+  have pattern := legal_pattern legal
+  rw [same, regName_not_core] at pattern
+  cases pattern
+
+theorem source_ne_temporary (name : String) (i : Nat) (legal : Rules.invalidName name = false) :
+    name ≠ toString i := by
+  intro same
+  have pattern := legal_pattern legal
+  rw [same, decimal_not_core] at pattern
+  cases pattern
 
 theorem source_ne_result (name owner pin : String)
     (legal : Rules.invalidName name = false) : name ≠ s!"{owner}.{pin}" := by
   intro same
-  change name = owner ++ "." ++ pin at same
-  subst name
-  simp [Rules.invalidName, String.contains_char_eq, String.toList_append] at legal
+  have absent := legal_no_dot legal
+  rw [same] at absent
+  change '.' ∉ (owner ++ "." ++ pin).toList at absent
+  simp [String.toList_append] at absent
 
 private theorem separated_append_injective {a b c d : List Char}
     (ha : '.' ∉ a) (hb : '.' ∉ b) (h : a ++ '.' :: c = b ++ '.' :: d) :
@@ -52,10 +65,8 @@ private theorem separated_append_injective {a b c d : List Char}
 theorem result_name_injective {a b p q : String}
     (ha : Rules.invalidName a = false) (hb : Rules.invalidName b = false)
     (h : s!"{a}.{p}" = s!"{b}.{q}") : a = b ∧ p = q := by
-  have na : '.' ∉ a.toList := by
-    simpa [Rules.invalidName, String.contains_char_eq] using (Bool.or_eq_false_iff.mp ha).2
-  have nb : '.' ∉ b.toList := by
-    simpa [Rules.invalidName, String.contains_char_eq] using (Bool.or_eq_false_iff.mp hb).2
+  have na := legal_no_dot ha
+  have nb := legal_no_dot hb
   have chars := congrArg String.toList h
   simp only [String.toList_append, List.append_assoc] at chars
   have pairs := separated_append_injective na nb chars
@@ -74,18 +85,19 @@ theorem read_name_injective {a b : String} {i j : Nat}
   exact String.append_right_inj "r" |>.mp
     (String.append_left_inj "_data" |>.mp pair.2)
 
-private theorem temporary_no_dot (i : Nat) : '.' ∉ (s!"silicon_t{i}").toList := by
-  change '.' ∉ ("silicon_t" ++ i.repr).toList
-  simp only [String.toList_append, List.mem_append, not_or]
-  refine ⟨by decide, ?_⟩
+private theorem temporary_digit (i : Nat) (c : Char) (member : c ∈ (toString i).toList) :
+    c.isDigit = true :=
+  Nat.isDigit_of_mem_toDigits (by decide : 0 < 10) (by decide : 10 ≤ 10)
+    (show c ∈ Nat.toDigits 10 i from by
+      rw [← (Nat.toList_repr : (toString i).toList = Nat.toDigits 10 i)]; exact member)
+
+private theorem temporary_no_dot (i : Nat) : '.' ∉ (toString i).toList := by
   intro member
-  have digit := Nat.isDigit_of_mem_toDigits (by decide : 0 < 10)
-    (by decide : 10 ≤ 10)
-    (show '.' ∈ Nat.toDigits 10 i from by simpa only [Nat.toList_repr] using member)
+  have digit := temporary_digit i '.' member
   contradiction
 
 private theorem temporary_ne_result (i : Nat) (owner pin : String) :
-    s!"silicon_t{i}" ≠ s!"{owner}.{pin}" := by
+    (toString i) ≠ s!"{owner}.{pin}" := by
   intro same
   have absent := temporary_no_dot i
   rw [same] at absent
@@ -96,7 +108,7 @@ private def readCount (s : Lower.State) (name : String) : Nat :=
   (s.readCounts.lookup name).getD 0
 
 private def Future (memories : String → Prop) (s : Lower.State) (name : String) : Prop :=
-  (∃ i, s.nextTemp ≤ i ∧ name = s!"silicon_t{i}") ∨
+  (∃ i, s.nextTemp ≤ i ∧ name = (toString i)) ∨
   (∃ memory i, Rules.invalidName memory = false ∧
     memories memory ∧ readCount s memory ≤ i ∧ name = s!"{memory}.r{i}_data")
 
@@ -142,8 +154,8 @@ private theorem fresh_push (s : Lower.State) (names pending : List String) (op :
 private theorem fresh_temp (s : Lower.State) (pending : List String)
     (h : Fresh memories s pending) :
     Fresh memories { s with nextTemp := s.nextTemp + 1 }
-      (s!"silicon_t{s.nextTemp}" :: pending) := by
-  let name := s!"silicon_t{s.nextTemp}"
+      (toString s.nextTemp :: pending) := by
+  let name := (toString s.nextTemp)
   have absent := h.2 name (Or.inl ⟨s.nextTemp, Nat.le_refl _, rfl⟩)
   have perm : (allocatedNames s ++ name :: pending).Perm
       (name :: (allocatedNames s ++ pending)) := List.perm_middle
@@ -160,9 +172,9 @@ private theorem fresh_temp (s : Lower.State) (pending : List String)
       dsimp at hi
       omega
     · exact fun eq => temporary_ne_result s.nextTemp memory s!"r{i}_data" (by
-        change "silicon_t" ++ s.nextTemp.repr = memory ++ "." ++ ("r" ++ i.repr ++ "_data")
+        change toString s.nextTemp = memory ++ "." ++ ("r" ++ i.repr ++ "_data")
         change memory ++ ("." ++ "r") ++ i.repr ++ "_data" =
-          "silicon_t" ++ s.nextTemp.repr at eq
+          toString s.nextTemp at eq
         simpa only [String.append_assoc] using eq.symm)
   rcases List.mem_cons.mp (perm.mem_iff.mp member) with same | member
   · exact ne same
@@ -199,9 +211,9 @@ private theorem fresh_reserve (s : Lower.State) (pending : List String) (memory 
   have ne : other ≠ name := by
     rcases future with ⟨i, _, rfl⟩ | ⟨mem, i, valid, allowed, hi, rfl⟩
     · exact fun eq => temporary_ne_result i memory s!"r{readCount s memory}_data" (by
-        change "silicon_t" ++ i.repr =
+        change toString i =
           memory ++ "." ++ ("r" ++ (readCount s memory).repr ++ "_data")
-        change "silicon_t" ++ i.repr =
+        change toString i =
           memory ++ ("." ++ "r") ++ (readCount s memory).repr ++ "_data" at eq
         simpa only [String.append_assoc] using eq)
     · intro eq
@@ -355,18 +367,18 @@ private theorem fresh_statement (registers : List String) (stmt : Typed.Stmt ctx
       (fun i hi state hs => fresh_expr registers i.2 (legal i hi) state _ none hs) h
 
 private def Owned (owner name : String) : Prop :=
-  name = owner ∨ name = s!"silicon_reg_{owner}" ∨ ∃ pin : String, name = s!"{owner}.{pin}"
+  name = owner ∨ name = (regName owner) ∨ ∃ pin : String, name = s!"{owner}.{pin}"
 
 theorem register_no_dot (owner : String) (legal : Rules.invalidName owner = false) :
-    '.' ∉ (s!"silicon_reg_{owner}").toList := by
-  change '.' ∉ ("silicon_reg_" ++ owner).toList
-  have absent := (Bool.or_eq_false_iff.mp legal).2
-  simp only [String.contains_char_eq, decide_eq_false_iff_not] at absent
-  simpa [String.toList_append] using absent
+    '.' ∉ (regName owner).toList := by
+  have front : '.' ∉ ("reg" ++ "$$").toList := by decide
+  rw [regName_eq]
+  simp only [String.toList_append, List.mem_append, not_or] at front ⊢
+  exact ⟨front, legal_no_dot legal⟩
 
 theorem register_ne_result (owner inst pin : String)
     (legal : Rules.invalidName owner = false) :
-    s!"silicon_reg_{owner}" ≠ s!"{inst}.{pin}" := by
+    (regName owner) ≠ s!"{inst}.{pin}" := by
   intro eq
   have absent := register_no_dot owner legal
   rw [eq] at absent
@@ -380,17 +392,11 @@ private theorem owned_injective (a b name : String)
   · subst name
     rcases ob with eq | eq | ⟨q, eq⟩
     · exact eq
-    · exact False.elim (source_ne_internal a ("reg_" ++ b) ha (by
-        change a = "silicon_" ++ ("reg_" ++ b)
-        change a = ("silicon_" ++ "reg_") ++ b at eq
-        simpa only [String.append_assoc] using eq))
+    · exact False.elim (source_ne_register a b ha eq)
     · exact False.elim (source_ne_result a b q ha eq)
   · subst name
     rcases ob with eq | eq | ⟨q, eq⟩
-    · exact False.elim (source_ne_internal b ("reg_" ++ a) hb (by
-        change b = "silicon_" ++ ("reg_" ++ a)
-        change ("silicon_" ++ "reg_") ++ a = b at eq
-        simpa only [String.append_assoc] using eq.symm))
+    · exact False.elim (source_ne_register b a hb eq.symm)
     · exact register_name_injective eq
     · exact False.elim (register_ne_result a b q ha eq)
   · subst name
@@ -427,7 +433,7 @@ private theorem fresh_statements (registers : List String) (stmts : List (Typed.
 
 private def rawNames (ports : String → List Port) : Core.Stmt → List String
   | .let_ _ name .. | .assign _ name .. => [name]
-  | .reg _ name .. => [s!"silicon_reg_{name}"]
+  | .reg _ name .. => [(regName name)]
   | .inst _ name child _ => (ports child).filterMap fun p =>
       if p.dir == .output then some s!"{name}.{p.name}" else none
   | _ => []
@@ -573,7 +579,7 @@ private theorem static_names_nodup (d : Core.Design) (m : Core.Module)
     Function.comp_def, ← List.map_eq_flatMap, inputNames] using result
 
 def rawRegisters : Core.Stmt → List String
-  | .reg _ name .. => [s!"silicon_reg_{name}"]
+  | .reg _ name .. => [(regName name)]
   | _ => []
 
 private def rawStatementNames (ports : String → List Port) : Core.Stmt → List String
@@ -654,18 +660,19 @@ private theorem checked_statement_reads (d : Core.Design) (m : Typed.Module)
   | mem => trivial
 
 private theorem temporary_ne_register (i : Nat) (name : String) :
-    s!"silicon_t{i}" ≠ s!"silicon_reg_{name}" := by
+    (toString i) ≠ (regName name) := by
   intro eq
-  change "silicon_t" ++ i.repr = "silicon_reg_" ++ name at eq
-  have chars := congrArg String.toList eq
-  simp [String.toList_append] at chars
+  have member : 'r' ∈ (toString i).toList := by
+    rw [eq, regName_eq]
+    simp only [String.toList_append, List.mem_append]
+    exact .inl (.inl (by decide))
+  have digit := temporary_digit i 'r' member
+  contradiction
 
 private theorem source_not_future (m : Core.Module) (name : String)
     (legal : Rules.invalidName name = false) : ¬ Future (MemoryName m) {} name := by
   rintro (⟨i, _, eq⟩ | ⟨owner, i, _, _, _, eq⟩)
-  · exact source_ne_internal name ("t" ++ i.repr) legal (by
-      change name = ("silicon_" ++ "t") ++ i.repr at eq
-      simpa only [String.append_assoc] using eq)
+  · exact source_ne_temporary name i legal eq
   · exact source_ne_result name owner s!"r{i}_data" legal (by
       change name = owner ++ "." ++ ("r" ++ i.repr ++ "_data")
       change name = owner ++ ("." ++ "r") ++ i.repr ++ "_data" at eq
@@ -688,8 +695,8 @@ private theorem static_name_not_future (d : Core.Design) (m : Core.Module)
     rintro (⟨i, _, eq⟩ | ⟨memory, i, _, _, _, eq⟩)
     · exact temporary_ne_register i owner eq.symm
     · exact register_ne_result owner memory s!"r{i}_data" (legal owner rfl) (by
-        change "silicon_reg_" ++ owner = memory ++ "." ++ ("r" ++ i.repr ++ "_data")
-        change "silicon_reg_" ++ owner = memory ++ ("." ++ "r") ++ i.repr ++ "_data" at eq
+        change regName owner = memory ++ "." ++ ("r" ++ i.repr ++ "_data")
+        change regName owner = memory ++ ("." ++ "r") ++ i.repr ++ "_data" at eq
         simpa only [String.append_assoc] using eq)
   | inst p owner child inputs =>
     obtain ⟨port, _, hp⟩ := List.mem_filterMap.mp hn
@@ -804,7 +811,7 @@ private theorem filter_partition (keys : List String) (unique : keys.Nodup)
       · simpa [List.filter_cons, member] using ih)
 
 private def eqRegisters : Typed.Equation ctx ports → List String
-  | .reg _ _ name .. => [s!"silicon_reg_{name}"]
+  | .reg _ _ name .. => [(regName name)]
   | _ => []
 
 def rawMemories : Core.Stmt → List String
@@ -904,8 +911,8 @@ private theorem register_entries_sublist (m : Typed.Module) (s : Lower.State) :
       List.nil_append] <;> try exact ih
     rename_i index p name w clk target reset ni np next
     cases found : s.nexts.lookup name with
-    | none => simpa [found] using ih.cons s!"silicon_reg_{name}"
-    | some value => simpa [found] using ih.cons_cons s!"silicon_reg_{name}"
+    | none => simpa [found] using ih.cons (regName name)
+    | some value => simpa [found] using ih.cons_cons (regName name)
 
 private theorem zip_names_sublist (names : List String) (types : List Mlir.Ty) :
     ((names.zip types).map Prod.fst).Sublist names := by
