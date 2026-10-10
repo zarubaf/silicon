@@ -49,7 +49,8 @@ These rules settle the open points of the grammar:
 - The `domains` of a module are `none` without a clause and `some` with a clause.
 - Parentheses make no node. A node keeps the position of its first token, also if that token
   is a `(`: the `binary` node of `(a + b) * c` is at the `(`.
-- A number has no upper limit. The lexer gives the value of a hexadecimal or binary number.
+- The lexer gives the value of a hexadecimal or binary number. A value of 2^65536 or more is a
+  lexical error at the literal.
 
 The nesting limit of section 6.1 is a limit on the height of each expression and each type.
 A name, a number, a string, and `true` or `false` have height 1. Each other node, and each
