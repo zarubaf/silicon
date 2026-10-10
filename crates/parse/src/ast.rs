@@ -92,7 +92,7 @@ pub enum BinOp {
 }
 
 /// An expression. A type in an expression position, such as `UInt[8]`, is an `Index`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(Clone, Debug, PartialEq, Eq))]
 pub enum Expr {
     Num {
         pos: Pos,
@@ -145,7 +145,7 @@ pub enum Expr {
 }
 
 /// A type expression: a type name, or a type family with its static arguments.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(Clone, Debug, PartialEq, Eq))]
 pub enum TypeExpr {
     Name {
         pos: Pos,
@@ -160,7 +160,7 @@ pub enum TypeExpr {
 
 /// A statement. A target of `Assign` or `Connect` is a `Name`, a `Field`, or an `Index`
 /// expression.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(Clone, Debug, PartialEq, Eq))]
 pub enum Stmt {
     Local {
         pos: Pos,
@@ -234,7 +234,7 @@ pub enum Stmt {
 }
 
 /// A parameter of a function or a module. A module parameter always has `comptime`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(Clone, Debug, PartialEq, Eq))]
 pub struct Param {
     pub pos: Pos,
     pub comptime: bool,
@@ -244,7 +244,7 @@ pub struct Param {
 
 /// A top-level item. The `domains` of a module are `None` without a clause and `Some` with
 /// one. The list holds at most one name in slice 1.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(Clone, Debug, PartialEq, Eq))]
 pub enum Item {
     Const {
         pos: Pos,
@@ -267,4 +267,96 @@ pub enum Item {
         domains: Option<Vec<Ident>>,
         body: Vec<Stmt>,
     },
+}
+
+// The recursive types free their children from a work list, so that a drop uses no recursion
+// and is safe on any stack. Each `Drop` moves the children out and leaves a leaf behind.
+
+impl Expr {
+    fn leaf() -> Expr {
+        Expr::Bool {
+            pos: Pos { line: 0, col: 0 },
+            value: false,
+        }
+    }
+
+    fn take_children(&mut self, work: &mut Vec<Expr>) {
+        let mut take = |e: &mut Expr| work.push(std::mem::replace(e, Expr::leaf()));
+        match self {
+            Expr::Unary { arg, .. } => take(arg),
+            Expr::Binary { lhs, rhs, .. } => {
+                take(lhs);
+                take(rhs);
+            }
+            Expr::Cond { cond, yes, no, .. } => {
+                take(cond);
+                take(yes);
+                take(no);
+            }
+            Expr::Call { callee, args, .. } => {
+                take(callee);
+                work.append(args);
+            }
+            Expr::Index { base, args, .. } => {
+                take(base);
+                work.append(args);
+            }
+            Expr::Field { base, .. } => take(base),
+            Expr::Num { .. } | Expr::Bool { .. } | Expr::Str { .. } | Expr::Name { .. } => {}
+        }
+    }
+}
+
+impl Drop for Expr {
+    fn drop(&mut self) {
+        let mut work = Vec::new();
+        self.take_children(&mut work);
+        while let Some(mut e) = work.pop() {
+            e.take_children(&mut work);
+        }
+    }
+}
+
+impl Drop for TypeExpr {
+    fn drop(&mut self) {
+        let mut work = Vec::new();
+        let next = |t: &mut TypeExpr, work: &mut Vec<TypeExpr>| {
+            if let TypeExpr::Index { base, .. } = t {
+                let leaf = TypeExpr::Name {
+                    pos: Pos { line: 0, col: 0 },
+                    name: String::new(),
+                };
+                work.push(std::mem::replace(&mut **base, leaf));
+            }
+        };
+        next(self, &mut work);
+        while let Some(mut t) = work.pop() {
+            next(&mut t, &mut work);
+        }
+    }
+}
+
+impl Stmt {
+    fn take_children(&mut self, work: &mut Vec<Stmt>) {
+        match self {
+            Stmt::CtIf { yes, no, .. } => {
+                work.append(yes);
+                if let Some(no) = no {
+                    work.append(no);
+                }
+            }
+            Stmt::CtFor { body, .. } | Stmt::Block { body, .. } => work.append(body),
+            _ => {}
+        }
+    }
+}
+
+impl Drop for Stmt {
+    fn drop(&mut self) {
+        let mut work = Vec::new();
+        self.take_children(&mut work);
+        while let Some(mut s) = work.pop() {
+            s.take_children(&mut work);
+        }
+    }
 }
