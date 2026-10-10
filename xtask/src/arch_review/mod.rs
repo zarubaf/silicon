@@ -3,6 +3,7 @@
 mod due;
 mod paths;
 mod scope;
+mod summary;
 
 use std::process::ExitCode;
 
@@ -54,4 +55,10 @@ pub fn review_due(base: &str) -> Result<ExitCode> {
     } else {
         ExitCode::from(REVIEW_DUE)
     })
+}
+
+/// Prints the facts for an architecture reviewer.
+pub fn arch_summary() -> Result<()> {
+    print!("{}", summary::render(&Repo::discover()?)?);
+    Ok(())
 }
