@@ -982,3 +982,42 @@ fn a_deep_ast_dumps_and_drops_on_the_stack_for_the_depth() {
     let dump = parsed.dump().unwrap();
     assert!(dump.is_some_and(|d| d.starts_with("(module")));
 }
+
+#[test]
+fn a_node_starts_at_its_first_token() {
+    // Lowering takes the position of a node from its start, so no node may start with trivia.
+    let input = "// a\nconst /* b */ X: T = /* c */ ( /* d */ a /* e */ + b ) // f\n  + f(/* g */1,\n 2) + a.b;\nmodule M() { /* i */ let x = /* j */ -1; { /* k */ } if (a) { 1 } else { /* l */ 2 }; }";
+    let parsed = parse(input);
+    assert!(parsed.errors.is_empty(), "{:?}", parsed.errors.first());
+    // The root holds the first trivia, and lowering never asks for its position.
+    for node in parsed.syntax().descendants().skip(1) {
+        let first = node
+            .descendants_with_tokens()
+            .filter_map(rowan::NodeOrToken::into_token)
+            .find(|t| !t.kind().is_trivia());
+        if let Some(first) = first {
+            assert_eq!(
+                node.text_range().start(),
+                first.text_range().start(),
+                "{node:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn lowering_is_linear() {
+    // Both inputs parse without error, and lowering of each took the square of the length.
+    let start = std::time::Instant::now();
+    let chain = format!("const X: T = {};", vec!["a"; 4096].join(" + "));
+    assert!(parse(&chain).errors.is_empty());
+    let flat = format!("module M() {{ {} }}", "x := y;\n".repeat(100_000));
+    assert!(parse(&flat).errors.is_empty());
+    let items = "const X: T = 1;\n".repeat(100_000);
+    assert!(parse(&items).errors.is_empty());
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(10),
+        "{:?}",
+        start.elapsed()
+    );
+}
