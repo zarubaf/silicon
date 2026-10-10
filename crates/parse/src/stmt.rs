@@ -161,8 +161,7 @@ impl Parser<'_> {
             self.later_slice(self.offset(), "a path");
             return None;
         }
-        let start = self.offset();
-        self.arg_list(RParen, true, start)?;
+        self.arg_list(RParen, true)?;
         if self.is(WithKw) {
             self.later_slice(self.offset(), "a domain map");
             return None;
@@ -225,7 +224,7 @@ impl Parser<'_> {
             return None;
         }
         let checkpoint = self.checkpoint();
-        self.postfix_expr()?;
+        self.outermost(start, Self::postfix_expr)?;
         let (place, indexed) = (self.place, self.indexed);
         if let Some(op @ (Eq | ColonEq)) = self.cur() {
             if !place {
@@ -247,7 +246,7 @@ impl Parser<'_> {
                 p.expect(Semi, "`;`")
             });
         }
-        self.climb(checkpoint, start, 0)?;
+        self.outermost(start, |p| p.climb(checkpoint, 0))?;
         self.node_at(checkpoint, ExprStmt, |p| p.expect(Semi, "`;`"))
     }
 }

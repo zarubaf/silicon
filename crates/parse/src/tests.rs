@@ -1,5 +1,5 @@
 use crate::ast::{Expr, Item, Pos, Stmt, TypeExpr};
-use crate::{Code, Parse, parse};
+use crate::{Code, DEFAULT_SYNTAX_DEPTH, Parse, parse, parse_with_depth};
 use proptest::prelude::*;
 
 fn pos(line: usize, col: usize) -> Pos {
@@ -9,6 +9,14 @@ fn pos(line: usize, col: usize) -> Pos {
 /// The first error as code, line, and column.
 fn first_error(input: &str) -> Option<(Code, usize, usize)> {
     parse(input)
+        .errors
+        .first()
+        .map(|e| (e.code, e.pos.line, e.pos.col))
+}
+
+/// The first error as code, line, and column, with a syntax depth of 64.
+fn first_error_64(input: &str) -> Option<(Code, usize, usize)> {
+    parse_with_depth(input, 64)
         .errors
         .first()
         .map(|e| (e.code, e.pos.line, e.pos.col))
@@ -514,40 +522,49 @@ fn recovery_keeps_the_items_after_an_error() {
 #[test]
 fn height_is_limited_to_64() {
     // A leaf has height 1, and each node and each pair of parentheses adds 1. The error is at
-    // the first token of the first form with height 65, which is the outermost form here.
+    // the first token of the outermost expression or type with height 65.
     let at = |n: usize| Some((Code::S001, 1, n));
     let nest = |n: usize| format!("const X: T = {}1{};", "(".repeat(n), ")".repeat(n));
-    assert_eq!(first_error(&nest(63)), None);
-    assert_eq!(first_error(&nest(64)), at(14));
+    assert_eq!(first_error_64(&nest(63)), None);
+    assert_eq!(first_error_64(&nest(64)), at(14));
     let call = |n: usize| format!("const X: T = {}1{};", "f(".repeat(n), ")".repeat(n));
-    assert_eq!(first_error(&call(63)), None);
-    assert_eq!(first_error(&call(64)), at(14));
+    assert_eq!(first_error_64(&call(63)), None);
+    assert_eq!(first_error_64(&call(64)), at(14));
     let unary = |n: usize| format!("const X: T = {}1;", "-".repeat(n));
-    assert_eq!(first_error(&unary(63)), None);
-    assert_eq!(first_error(&unary(64)), at(14));
+    assert_eq!(first_error_64(&unary(63)), None);
+    assert_eq!(first_error_64(&unary(64)), at(14));
     let chain = |n: usize| format!("const X: T = {};", vec!["a"; n].join(" + "));
-    assert_eq!(first_error(&chain(64)), None);
-    assert_eq!(first_error(&chain(65)), at(14));
-    // The form of height 65 is found when it ends, so a deeper form comes first.
-    let inner = format!("const X: T = 1 + {}1{};", "(".repeat(64), ")".repeat(64));
-    assert_eq!(first_error(&inner), at(18));
+    assert_eq!(first_error_64(&chain(64)), None);
+    assert_eq!(first_error_64(&chain(65)), at(14));
+    // The error is at the outermost expression, not at the deep form.
+    let inner = format!("const X: T = y + {}1{};", "(".repeat(64), ")".repeat(64));
+    assert_eq!(first_error_64(&inner), at(14));
     let ty = |n: usize| format!("const X: {}T{} = 1;", "A[".repeat(n), "]".repeat(n));
-    assert_eq!(first_error(&ty(63)), None);
-    assert_eq!(first_error(&ty(64)), at(10));
+    assert_eq!(first_error_64(&ty(63)), None);
+    assert_eq!(first_error_64(&ty(64)), at(10));
     let chain_ty = |n: usize| format!("const X: T{} = 1;", "[1]".repeat(n));
-    assert_eq!(first_error(&chain_ty(63)), None);
-    assert_eq!(first_error(&chain_ty(64)), at(10));
+    assert_eq!(first_error_64(&chain_ty(63)), None);
+    assert_eq!(first_error_64(&chain_ty(64)), at(10));
+    // The type and the value of one statement are two outermost forms.
+    let two = format!(
+        "module M() {{ let x: {}T{} = {}1{}; }}",
+        "A[".repeat(64),
+        "]".repeat(64),
+        "(".repeat(64),
+        ")".repeat(64)
+    );
+    assert_eq!(first_error_64(&two), at(21));
     // The height of a statement or an item is not limited.
     let long = format!("module M() {{ {} }}", "x; ".repeat(1000));
-    assert_eq!(first_error(&long), None);
+    assert_eq!(first_error_64(&long), None);
 }
 
 #[test]
 fn blocks_nest_at_most_64_deep() {
     let blocks = |n: usize| format!("module M() {}{}", "{".repeat(n), "}".repeat(n));
-    assert_eq!(first_error(&blocks(64)), None);
+    assert_eq!(first_error_64(&blocks(64)), None);
     // The 65th `{` is at column 12 + 64.
-    assert_eq!(first_error(&blocks(65)), Some((Code::S001, 1, 76)));
+    assert_eq!(first_error_64(&blocks(65)), Some((Code::S001, 1, 76)));
 }
 
 #[test]
@@ -734,4 +751,55 @@ fn a_number_is_below_2_pow_65536() {
     assert_eq!(literal(&"9".repeat(1_000_000)), hit);
     assert_eq!(literal(&format!("0x{}", "f".repeat(1_000_000))), hit);
     assert!(start.elapsed() < std::time::Duration::from_secs(5));
+}
+
+#[test]
+fn the_default_syntax_depth_is_4096() {
+    let max = DEFAULT_SYNTAX_DEPTH;
+    assert_eq!(max, 4096);
+    let at = |n: usize| Some((Code::S001, 1, n));
+    let nest = |n: usize| format!("const X: T = {}1{};", "(".repeat(n), ")".repeat(n));
+    assert_eq!(first_error(&nest(max - 1)), None);
+    assert_eq!(first_error(&nest(max)), at(14));
+    let call = |n: usize| format!("const X: T = {}1{};", "f(".repeat(n), ")".repeat(n));
+    assert_eq!(first_error(&call(max - 1)), None);
+    assert_eq!(first_error(&call(max)), at(14));
+    let ty = |n: usize| format!("const X: {}T{} = 1;", "A[".repeat(n), "]".repeat(n));
+    assert_eq!(first_error(&ty(max - 1)), None);
+    assert_eq!(first_error(&ty(max)), at(10));
+    let chain = |n: usize| format!("const X: T = {};", vec!["a"; n].join(" + "));
+    assert_eq!(first_error(&chain(max)), None);
+    assert_eq!(first_error(&chain(max + 1)), at(14));
+    assert_eq!(first_error(&chain(5000)), at(14));
+    let blocks = |n: usize| format!("module M() {}{}", "{".repeat(n), "}".repeat(n));
+    assert_eq!(first_error(&blocks(max)), None);
+    assert_eq!(
+        first_error(&blocks(max + 1)),
+        Some((Code::S001, 1, 12 + max))
+    );
+}
+
+#[test]
+fn the_parser_stops_when_its_nesting_is_above_the_depth() {
+    let max = DEFAULT_SYNTAX_DEPTH;
+    for open in ["(", "-", "f(", "a[", "if (a) { "] {
+        let input = format!("const X: T = {}", open.repeat(1_000_000));
+        assert_eq!(first_error(&input), Some((Code::S001, 1, 14)), "{open}");
+    }
+    let input = format!("module M() {}", "{".repeat(1_000_000));
+    assert_eq!(first_error(&input), Some((Code::S001, 1, 12 + max)));
+    // A chain of conditionals.
+    let arm = "if (a) { 1 } else { ";
+    let chain = |n: usize| format!("const X: T = {}1{};", arm.repeat(n), " }".repeat(n));
+    assert_eq!(first_error(&chain(max - 1)), None);
+    assert_eq!(first_error(&chain(5000)), Some((Code::S001, 1, 14)));
+}
+
+#[test]
+fn the_syntax_depth_is_a_parameter() {
+    let input = "const X: T = ((1));";
+    assert!(parse_with_depth(input, 3).errors.is_empty());
+    let errors = parse_with_depth(input, 2).errors.clone();
+    assert_eq!(errors.len(), 1);
+    assert!(errors[0].message.contains("deeper than 2 levels"));
 }

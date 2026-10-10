@@ -28,3 +28,8 @@ expect_used = "deny"
 todo = "deny"
 dbg_macro = "deny"
 print_stdout = "deny"
+
+# The node cache of `rowan` hashes a nested tree again at each level, so a deep test input is
+# slow without optimization.
+[profile.dev.package.rowan]
+opt-level = 3
