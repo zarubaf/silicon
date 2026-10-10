@@ -79,13 +79,13 @@ A continuous architecture review keeps the code and this file in agreement. [ADR
 - A drift review after 15 merged pull requests or after one week.
 - A milestone review at each milestone, for example at the end of a build step.
 
-These are the architecture paths. `cargo xtask review-scope` reads this list:
+These are the architecture paths. `cargo xtask review-scope` reads this list. Each item in backticks is a path from the repository root. A path that ends in `/` names a directory. A `*` matches part of one path segment:
 
 - `Cargo.toml` and each `crates/*/Cargo.toml`
 - `doc/architecture.md`, `doc/trust.md`, `doc/adr/`, and `doc/design/`
-- `CONTEXT.md`, `AGENTS.md`, and each `AGENTS.md` of an area
+- `CONTEXT.md`, `AGENTS.md`, `*/AGENTS.md`, and `crates/*/AGENTS.md`
 - `lean/lakefile.toml`, `lean/Silicon/*/Syntax.lean`, and `lean/Silicon/*/Main.lean`
-- The normative Lean definitions: `lean/Silicon/Core/Semantics.lean`, `Semantics/`, `Check.lean`, `Text.lean`, `MemModel.lean`, `Lower.lean`, and `Mlir/`
+- The normative Lean definitions: `lean/Silicon/Core/Semantics.lean`, `lean/Silicon/Core/Semantics/`, `lean/Silicon/Core/Check.lean`, `lean/Silicon/Core/Text.lean`, `lean/Silicon/Core/MemModel.lean`, `lean/Silicon/Core/Lower.lean`, and `lean/Silicon/Core/Mlir/`
 - `justfile`, `.github/workflows/`, and `xtask/`
 
 ## Verification against existing SystemVerilog
