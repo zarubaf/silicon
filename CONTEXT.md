@@ -106,6 +106,26 @@ The line between the parts that are proven, the parts that are validated, and th
 
 A tool or a model that can say "wrong" mechanically. Each agent works against an oracle.
 
+### suite
+
+A directory of test files under `tests/core/` or `tests/source/`. The directory selects the command and the oracle. The crate `testkit` runs each suite.
+
+### directive
+
+A comment line in a test file that gives its expectation, for example `expected-error` or `STEP`. Both languages use the same directive names.
+
+### inventory
+
+A reviewed file in `tests/inventory/` that lists the expected results of a tool or its known gaps. A difference between the tool and its inventory fails the check.
+
+### spec coverage
+
+The check that each error code, construct, command, and budget of the specs has a test in the suites. `cargo xtask coverage` runs it.
+
+### mutant
+
+A copy of the code with one small change from `cargo-mutants`. A test kills the mutant when it fails on it. A surviving mutant shows a missing test.
+
 ## Packages and names
 
 ### package
