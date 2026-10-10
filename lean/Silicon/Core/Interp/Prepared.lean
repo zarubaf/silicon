@@ -134,7 +134,7 @@ def prepare (d : CertifiedDesign) (m : Typed.Module) (hm : m ∈ d.design.bodies
     if dir : p.val.dir = .output then some ⟨p.val, p.property, dir⟩ else none
   let nodes := GraphIndex.nodes graph
   let indexedGraph : ConeGraph m := ⟨graph, rfl, nodes, rfl, nodes.length, rfl,
-    Deps.Node.index graph, Deps.Node.index_lookup graph, Std.HashSet.ofList active, by
+    firstIndex graph, firstIndex_lookup graph, Std.HashSet.ofList active, by
       intro node
       simpa only [Std.HashSet.contains_ofList, List.contains_iff_mem] using active_eq node⟩
   let refs := valueRefIndex m.ctx

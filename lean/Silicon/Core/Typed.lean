@@ -340,8 +340,8 @@ def statements (d : Core.Design) (ctx : Ctx) (body : List Core.Stmt) :
 
 private def statementsIndexed (d : Core.Design) (ctx : Ctx) (body : List Core.Stmt) :
     Option (List (Stmt ctx (portsOf d))) :=
-  let index := Deps.Node.index ctx
-  let inferFn := inferWith ctx (fun n => index[n]?) (fun n => Deps.Node.index_lookup ctx n)
+  let index := firstIndex ctx
+  let inferFn := inferWith ctx (fun n => index[n]?) (fun n => firstIndex_lookup ctx n)
   body.mapM (statementWith d ctx inferFn)
 
 @[csimp] private theorem statements_indexed : statements = statementsIndexed := by
@@ -1135,11 +1135,11 @@ def Ranked (g : Graph) (r : Ranks) : Prop :=
   ∀ row ∈ g, ∀ dep ∈ row.2, rank r dep < rank r row.1
 
 private def ranked (g : Graph) (r : Ranks) : Bool :=
-  let index := Deps.Node.index r
+  let index := firstIndex r
   g.all fun row => row.2.all fun dep => (index[dep]?).getD 0 < (index[row.1]?).getD 0
 
 private theorem ranked_iff (g : Graph) (r : Ranks) : ranked g r = true ↔ Ranked g r := by
-  simp only [ranked, List.all_eq_true, decide_eq_true_eq, Deps.Node.index_lookup, Ranked]
+  simp only [ranked, List.all_eq_true, decide_eq_true_eq, firstIndex_lookup, Ranked]
   rfl
 
 instance (g : Graph) (r : Ranks) : Decidable (Ranked g r) :=
@@ -1445,7 +1445,7 @@ theorem rows_total (q : Deps.Node → Nat) (ns : List Deps.Node)
     simp [rows, hm, ho]
 
 def certificate (g : Graph) : Option Ranks := do
-  let (r, _) ← rows (visit (Deps.Node.index g) (g.length + 1)) (g.map Prod.fst) {}
+  let (r, _) ← rows (visit (firstIndex g) (g.length + 1)) (g.map Prod.fst) {}
   if Ranked g r then some r else none
 
 theorem certificate_sound (g : Graph) (r : Ranks) (h : certificate g = some r) : Ranked g r := by
@@ -1473,10 +1473,10 @@ theorem certificate_of_height (g : Graph) (q : Deps.Node → Nat)
     (decreasing : ∀ row ∈ g, ∀ dep ∈ row.2, q dep < q row.1) :
     ∃ r, certificate g = some r := by
   obtain ⟨cache, hc, _⟩ := rows_total q (g.map Prod.fst)
-    (visit (Deps.Node.index g) (g.length + 1)) (by
+    (visit (firstIndex g) (g.length + 1)) (by
       intro n _ cache hs
-      apply visit_total (Deps.Node.index g) q
-      · intro n; simpa only [Deps.Node.index_lookup] using height n
+      apply visit_total (firstIndex g) q
+      · intro n; simpa only [firstIndex_lookup] using height n
       · have := bounded n; omega
       · exact hs) {} (by intro n v h; simp at h)
   have ranks (n : Deps.Node) : rank ((g.map Prod.fst).map fun k => (k, q k)) n = q n := by
