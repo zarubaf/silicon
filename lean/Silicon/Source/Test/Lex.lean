@@ -9,12 +9,13 @@ namespace Silicon.Source.Test
 
 open Lex
 
-def kinds (s : String) : List Kind := (lex s).map (·.kind)
+def kinds (s : String) : List Kind := (lex defaultSyntaxDepth s).map (·.kind)
 
-def positions (s : String) : List (Nat × Nat) := (lex s).map fun t => (t.pos.line, t.pos.col)
+def positions (s : String) : List (Nat × Nat) :=
+  (lex defaultSyntaxDepth s).map fun t => (t.pos.line, t.pos.col)
 
-def failsAt (s : String) (line col : Nat) : Bool :=
-  match error? (lex s) with
+def failsAt (s : String) (line col : Nat) (depth : Nat := defaultSyntaxDepth) : Bool :=
+  match error? (lex depth s) with
   | some e => e.code == .S001 && e.pos == ⟨line, col⟩
   | none => false
 
@@ -87,7 +88,7 @@ def failsAt (s : String) (line col : Nat) : Bool :=
 #guard failsAt "a # b" 1 3
 #guard failsAt "ä" 1 1
 #guard failsAt "x \"a\x01b\" y" 1 3
-#guard error? (lex "a b") == none
+#guard error? (lex defaultSyntaxDepth "a b") == none
 
 /-! The tokens before an error stay, so the parser can report an earlier error first. -/
 #guard kinds "import x $" == [.keyword "import", .ident "x", .error "unexpected character"]
@@ -106,5 +107,22 @@ def top : Nat := 2 ^ 65536 - 1
 
 /-! A long literal fails before its conversion, so it fails fast. -/
 #guard failsAt ("x " ++ "".pushn '9' 1000000 ++ " y") 1 3
+
+/-!
+The three kinds of brackets nest together at most the syntax depth. The first opening bracket
+above it is `S001`. A closing bracket at the depth 0 keeps the depth at 0.
+-/
+#guard error? (lex 4 "([{(x)}])") == none
+#guard failsAt "([{((x))}])" 1 5 4
+#guard failsAt "{{{{{" 1 5 4
+#guard failsAt "[[[[[" 1 5 4
+#guard error? (lex 2 "(())(())[{}]") == none
+#guard failsAt ")]}(((" 1 6 2
+#guard failsAt "((\n  {x" 2 3 2
+#guard failsAt "$(((" 1 1 2
+#guard failsAt "((( \"open" 1 3 2
+#guard error? (lex defaultSyntaxDepth ("".pushn '(' 4096)) == none
+#guard failsAt ("".pushn '(' 4097) 1 4097
+#guard failsAt ("".pushn '{' 1000000) 1 4097
 
 end Silicon.Source.Test
