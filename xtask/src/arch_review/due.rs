@@ -44,10 +44,20 @@ pub struct Verdict {
     pub summary: String,
 }
 
-/// True for `arch-review/YYYY-MM-DD`. The date digits then sort as dates.
-fn is_review_tag(name: &str) -> bool {
-    let Some(date) = name.strip_prefix(TAG_PREFIX) else {
-        return false;
+/// The sort key of `arch-review/YYYY-MM-DD` or `arch-review/YYYY-MM-DD.N`.
+/// N starts at 2 for a second review on one day; a tag without N is 1.
+fn review_key(name: &str) -> Option<(String, u32)> {
+    let rest = name.strip_prefix(TAG_PREFIX)?;
+    let (date, seq) = match rest.split_once('.') {
+        Some((date, n)) => {
+            let ok = !n.is_empty() && !n.starts_with('0') && n.bytes().all(|b| b.is_ascii_digit());
+            let n: u32 = if ok { n.parse().ok()? } else { return None };
+            if n < 2 {
+                return None;
+            }
+            (date, n)
+        }
+        None => (rest, 1),
     };
     let shape = |i: usize, c: char| {
         if matches!(i, 4 | 7) {
@@ -56,7 +66,12 @@ fn is_review_tag(name: &str) -> bool {
             c.is_ascii_digit()
         }
     };
-    date.len() == 10 && date.chars().enumerate().all(|(i, c)| shape(i, c))
+    (date.len() == 10 && date.chars().enumerate().all(|(i, c)| shape(i, c)))
+        .then(|| (date.to_owned(), seq))
+}
+
+fn is_review_tag(name: &str) -> bool {
+    review_key(name).is_some()
 }
 
 fn tags(root: &Path, merged: Option<&str>) -> Result<Vec<(String, String)>> {
@@ -83,10 +98,15 @@ fn tags(root: &Path, merged: Option<&str>) -> Result<Vec<(String, String)>> {
 pub fn latest_review_tag(root: &Path, branch: &str) -> Result<Option<Baseline>> {
     for (tag, _) in tags(root, None)? {
         if !is_review_tag(&tag) {
-            bail!("the tag `{tag}` is not named `{TAG_PREFIX}YYYY-MM-DD`");
+            bail!(
+                "the tag `{tag}` is not named `{TAG_PREFIX}YYYY-MM-DD` or `{TAG_PREFIX}YYYY-MM-DD.N`"
+            );
         }
     }
-    let Some((tag, created)) = tags(root, Some(branch))?.into_iter().max() else {
+    let Some((tag, created)) = tags(root, Some(branch))?
+        .into_iter()
+        .max_by_key(|(tag, _)| review_key(tag))
+    else {
         return Ok(None);
     };
     let created = created
@@ -425,6 +445,32 @@ mod tests {
             assert!(!is_review_tag(bad), "{bad}");
         }
         assert!(is_review_tag("arch-review/2026-10-01"));
+    }
+
+    #[test]
+    fn a_second_review_on_one_day_has_a_sequence_number() {
+        for good in ["arch-review/2026-10-10.2", "arch-review/2026-10-10.10"] {
+            assert!(is_review_tag(good), "{good}");
+        }
+        for bad in [
+            "arch-review/2026-10-10.",
+            "arch-review/2026-10-10.0",
+            "arch-review/2026-10-10.1",
+            "arch-review/2026-10-10.02",
+            "arch-review/2026-10-10.x",
+        ] {
+            assert!(!is_review_tag(bad), "{bad}");
+        }
+        let tmp = repo();
+        let dir = tmp.path();
+        commit(dir, "a");
+        run(dir, &["tag", "-a", "-m", "r", "arch-review/2026-10-10"]);
+        commit(dir, "b");
+        run(dir, &["tag", "-a", "-m", "r", "arch-review/2026-10-10.2"]);
+        commit(dir, "c");
+        run(dir, &["tag", "-a", "-m", "r", "arch-review/2026-10-10.10"]);
+        let got = latest_review_tag(dir, "main").unwrap().unwrap();
+        assert_eq!(got.tag, "arch-review/2026-10-10.10");
     }
 
     fn tagged_repo() -> (tempfile::TempDir, String) {
