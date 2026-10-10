@@ -52,7 +52,8 @@ impl Repo {
     }
 }
 
-fn git(dir: &Path, args: &[&str]) -> Result<Vec<u8>> {
+/// Runs git in `dir` and returns its stdout. A nonzero exit is an error that carries stderr.
+pub fn git(dir: &Path, args: &[&str]) -> Result<Vec<u8>> {
     let out = crate::gitcmd::git()
         .args(args)
         .current_dir(dir)
@@ -70,13 +71,7 @@ fn git(dir: &Path, args: &[&str]) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testgit::run as git;
-
-    fn init(dir: &std::path::Path) {
-        git(dir, &["init", "--quiet"]);
-        git(dir, &["config", "user.email", "t@example.com"]);
-        git(dir, &["config", "user.name", "t"]);
-    }
+    use crate::testgit::{init, run as git};
 
     #[test]
     fn discovers_paths_with_spaces() {
