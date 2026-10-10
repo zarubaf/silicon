@@ -11,9 +11,6 @@ use anyhow::{Context, Result, bail, ensure};
 /// because rule `E002` reserves the prefix `silicon_`.
 pub const WRAPPER: &str = "silicon_lec";
 
-/// The prefix of a memory module (spec section 7.3).
-const MEMORY_PREFIX: &str = "silicon_mem_";
-
 const CLOCK: &str = "!seq.clock";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -281,7 +278,7 @@ fn extern_header(line: &str) -> Option<&str> {
 
 /// Whether `name` is a memory module (spec section 7.3) and not a black box.
 fn is_memory(name: &str) -> bool {
-    name.starts_with(MEMORY_PREFIX)
+    backend_circt::names::is_memory_module(name)
 }
 
 /// `mlir` with a definition in place of each extern: the module of `models`

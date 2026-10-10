@@ -5,6 +5,7 @@
 mod lower;
 mod mlir;
 mod models;
+pub mod names;
 mod verilog;
 
 use std::collections::BTreeSet;
@@ -29,13 +30,10 @@ pub struct MemConfig {
 }
 
 impl MemConfig {
-    /// The name `silicon_mem_<D>x<W>_r<R>w<P>`.
+    /// The name of the memory module (spec section 3.4).
     #[must_use]
     pub fn module_name(&self) -> String {
-        format!(
-            "silicon_mem_{}x{}_r{}w{}",
-            self.depth, self.width, self.reads, self.writes
-        )
+        names::memory_module(self)
     }
 
     /// The ports of the memory module, in the order of spec section 7.3.

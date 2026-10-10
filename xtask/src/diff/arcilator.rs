@@ -31,9 +31,15 @@ const ENTRY: &str = "silicon_diff_entry";
 /// The prefix of a module definition.
 const MODULE: &str = "hw.module @";
 
-/// The prefix of the extern declaration of a memory module in the Lean
-/// reference MLIR. No user name starts with `silicon_` (rule `E002`).
-const MEMORY_EXTERN: &str = "hw.module.extern @silicon_mem_";
+/// The prefix of an extern declaration.
+const EXTERN: &str = "hw.module.extern @";
+
+/// True for the extern declaration of a memory module in the Lean reference
+/// MLIR.
+fn is_memory_extern(line: &str) -> bool {
+    line.strip_prefix(EXTERN)
+        .is_some_and(backend_circt::names::is_memory_module)
+}
 
 /// The module that `arcilator` simulates: the reference MLIR `lowered` with
 /// each memory extern replaced by its Lean memory model from `models`. Each
@@ -44,7 +50,7 @@ pub fn simulation_mlir(lowered: &str, models: &str, top: &str) -> String {
     let root = format!("{MODULE}{top}(");
     lowered
         .lines()
-        .filter(|line| !line.starts_with(MEMORY_EXTERN))
+        .filter(|line| !is_memory_extern(line))
         .chain(models.lines())
         .flat_map(|line| match line.strip_prefix(MODULE) {
             Some(rest) if !line.starts_with(&root) => ["hw.module private @", rest, "\n"],
