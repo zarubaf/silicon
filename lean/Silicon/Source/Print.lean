@@ -118,7 +118,7 @@ module parameter has `comptime`. The printer does not keep comments.
 
 The binding power of an expression follows the levels of the grammar, from 0 for `if` to 11
 for a postfix form or a primary. A form prints in parentheses where its context needs a
-higher level.
+higher level. A `field` prints in parentheses also as the callee of a `call`.
 -/
 
 def BinOp.text : BinOp → String
@@ -160,7 +160,10 @@ def Expr.print (ctx : Nat) (e : Expr) : String :=
       l.print lhs ++ " " ++ op.text ++ " " ++ r.print (op.level + 1)
     | .cond _ c y n =>
       "if (" ++ c.print 0 ++ ") { " ++ y.print 0 ++ " } else { " ++ n.print 0 ++ " }"
-    | .call _ f xs => f.print postfixLevel ++ "(" ++ args (xs.map (Expr.print 0)) ++ ")"
+    | .call _ f xs =>
+      -- The parser reads `a.f(x)` as a receiver call, so a field callee needs parentheses.
+      let callee := if f matches .field .. then "(" ++ f.print 0 ++ ")" else f.print postfixLevel
+      callee ++ "(" ++ args (xs.map (Expr.print 0)) ++ ")"
     | .index _ b xs => b.print postfixLevel ++ "[" ++ args (xs.map (Expr.print 0)) ++ "]"
     | .field _ b f => b.print postfixLevel ++ "." ++ f.name
   if e.level < ctx then "(" ++ text ++ ")" else text

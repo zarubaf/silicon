@@ -296,4 +296,16 @@ def helper : Item :=
 #guard roundtrip [.module p (nm "C") [] (some []) [], .module p (nm "D") [] none []]
 #guard roundtrip []
 
+/-! Parse, print, and parse again. The second parse gives the AST of the first. -/
+def reparse (s : String) : Bool :=
+  match parseSource s with
+  | .ok items => roundtrip items
+  | .error _ => false
+
+#guard reparse "const X: T = (a.b)(x);"
+#guard reparse "const X: T = ((a.b)(x).c)(y)[0];"
+#guard reparse "fn f() -> T { (a.b)(x); return -(a.b)(x).c; }"
+#guard reparse "const X: T = 1.f + --x - -(if (c) { a } else { b }).g + (\"s\".h)(1)[2];"
+#guard reparse "fn f() -> T { x.a.b = y; comptime for i in a.b .. c {} (x)(y); }"
+
 end Silicon.Source.Test.Parse
