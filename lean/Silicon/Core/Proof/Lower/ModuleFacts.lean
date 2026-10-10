@@ -49,7 +49,7 @@ theorem has_of_mem (x : String) (ty : Mlir.Ty) (same : rename m x = x)
   rw [same]
   exact lookup_of_mem (defs_nodup raw t h m hm) member
 
-theorem rename_reserved (x : String) (reserved : Rules.reservedName x = true) :
+theorem rename_invalid (x : String) (reserved : Rules.invalidName x = true) :
     rename m x = x := by
   apply rename_none m
   cases found : (finalAliases m)[x]? with

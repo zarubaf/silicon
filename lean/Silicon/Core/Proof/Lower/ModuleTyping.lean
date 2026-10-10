@@ -6,8 +6,8 @@ The final module types every op, port, and update that its statements build.
 -/
 namespace Silicon.Core.LowerProof
 
-theorem temporary_reserved (i : Nat) : Rules.reservedName s!"silicon_t{i}" = true := by
-  by_cases legal : Rules.reservedName s!"silicon_t{i}" = false
+theorem temporary_invalid (i : Nat) : Rules.invalidName s!"silicon_t{i}" = true := by
+  by_cases legal : Rules.invalidName s!"silicon_t{i}" = false
   · exact absurd (by
       change "silicon_" ++ "t" ++ i.repr = "silicon_" ++ ("t" ++ i.repr)
       simp only [String.append_assoc]) (source_ne_internal _ ("t" ++ i.repr) legal)
@@ -26,7 +26,7 @@ def moduleTyping : Typing m.ctx where
   defined := fun names op he pair hp same =>
     has_of_mem raw t h m hm pair.1 pair.2 same
       (defs_body m (names, op) (List.mem_append_left _ (List.mem_append_left _ he)) pair hp)
-  temps := fun i => rename_reserved raw t h m hm _ (temporary_reserved i)
+  temps := fun i => rename_invalid raw t h m hm _ (temporary_invalid i)
   reads := fun r hr w depth found => reads_has raw t h m hm r hr w depth found
   refs := fun node w found => refs_has raw t h m hm node w found
   clocks := fun n found => clocks_has raw t h m hm n found

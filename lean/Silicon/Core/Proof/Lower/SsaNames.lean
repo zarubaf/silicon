@@ -14,17 +14,17 @@ theorem register_name_injective {a b : String}
   String.append_right_inj "silicon_reg_" |>.mp h
 
 theorem source_ne_internal (name suffix : String)
-    (legal : Rules.reservedName name = false) : name ≠ "silicon_" ++ suffix := by
+    (legal : Rules.invalidName name = false) : name ≠ "silicon_" ++ suffix := by
   intro same
   subst name
-  simp [Rules.reservedName, String.toList_append] at legal
+  simp [Rules.invalidName, String.toList_append] at legal
 
 theorem source_ne_result (name owner pin : String)
-    (legal : Rules.reservedName name = false) : name ≠ s!"{owner}.{pin}" := by
+    (legal : Rules.invalidName name = false) : name ≠ s!"{owner}.{pin}" := by
   intro same
   change name = owner ++ "." ++ pin at same
   subst name
-  simp [Rules.reservedName, String.contains_char_eq, String.toList_append] at legal
+  simp [Rules.invalidName, String.contains_char_eq, String.toList_append] at legal
 
 private theorem separated_append_injective {a b c d : List Char}
     (ha : '.' ∉ a) (hb : '.' ∉ b) (h : a ++ '.' :: c = b ++ '.' :: d) :
@@ -50,19 +50,19 @@ private theorem separated_append_injective {a b c d : List Char}
       exact ⟨rfl, rfl⟩
 
 theorem result_name_injective {a b p q : String}
-    (ha : Rules.reservedName a = false) (hb : Rules.reservedName b = false)
+    (ha : Rules.invalidName a = false) (hb : Rules.invalidName b = false)
     (h : s!"{a}.{p}" = s!"{b}.{q}") : a = b ∧ p = q := by
   have na : '.' ∉ a.toList := by
-    simpa [Rules.reservedName, String.contains_char_eq] using (Bool.or_eq_false_iff.mp ha).2
+    simpa [Rules.invalidName, String.contains_char_eq] using (Bool.or_eq_false_iff.mp ha).2
   have nb : '.' ∉ b.toList := by
-    simpa [Rules.reservedName, String.contains_char_eq] using (Bool.or_eq_false_iff.mp hb).2
+    simpa [Rules.invalidName, String.contains_char_eq] using (Bool.or_eq_false_iff.mp hb).2
   have chars := congrArg String.toList h
   simp only [String.toList_append, List.append_assoc] at chars
   have pairs := separated_append_injective na nb chars
   exact ⟨String.toList_inj.mp pairs.1, String.toList_inj.mp pairs.2⟩
 
 theorem read_name_injective {a b : String} {i j : Nat}
-    (ha : Rules.reservedName a = false) (hb : Rules.reservedName b = false)
+    (ha : Rules.invalidName a = false) (hb : Rules.invalidName b = false)
     (h : s!"{a}.r{i}_data" = s!"{b}.r{j}_data") : a = b ∧ i = j := by
   have pair := result_name_injective ha hb (p := s!"r{i}_data") (q := s!"r{j}_data") (by
     change a ++ "." ++ ("r" ++ i.repr ++ "_data") =
@@ -97,7 +97,7 @@ private def readCount (s : Lower.State) (name : String) : Nat :=
 
 private def Future (memories : String → Prop) (s : Lower.State) (name : String) : Prop :=
   (∃ i, s.nextTemp ≤ i ∧ name = s!"silicon_t{i}") ∨
-  (∃ memory i, Rules.reservedName memory = false ∧
+  (∃ memory i, Rules.invalidName memory = false ∧
     memories memory ∧ readCount s memory ≤ i ∧ name = s!"{memory}.r{i}_data")
 
 private def Fresh (memories : String → Prop) (s : Lower.State) (pending : List String) : Prop :=
@@ -176,7 +176,7 @@ private theorem fresh_emit (s : Lower.State) (pending : List String)
   | some name => exact fresh_push s [name] pending op h
 
 private theorem fresh_reserve (s : Lower.State) (pending : List String) (memory : String)
-    (legal : Rules.reservedName memory = false) (allowed : memories memory)
+    (legal : Rules.invalidName memory = false) (allowed : memories memory)
     (h : Fresh memories s pending) :
     Fresh memories { s with readCounts := (memory, readCount s memory + 1) :: s.readCounts }
       (s!"{memory}.r{readCount s memory}_data" :: pending) := by
@@ -231,7 +231,7 @@ private theorem fresh_inRange (s : Lower.State) (pending : List String) (depth :
 
 private def ReadNamesLegal (memories : String → Prop) : Typed.Expr ctx ty → Prop
   | .read _ name _ addr =>
-      Rules.reservedName name = false ∧ memories name ∧ ReadNamesLegal memories addr
+      Rules.invalidName name = false ∧ memories name ∧ ReadNamesLegal memories addr
   | .un _ _ a | .extract _ a .. | .replicate _ a .. => ReadNamesLegal memories a
   | .bin _ _ _ a b | .concat _ a b _ | .icmp _ _ a b =>
       ReadNamesLegal memories a ∧ ReadNamesLegal memories b
@@ -357,7 +357,7 @@ private theorem fresh_statement (registers : List String) (stmt : Typed.Stmt ctx
 private def Owned (owner name : String) : Prop :=
   name = owner ∨ name = s!"silicon_reg_{owner}" ∨ ∃ pin : String, name = s!"{owner}.{pin}"
 
-theorem register_no_dot (owner : String) (legal : Rules.reservedName owner = false) :
+theorem register_no_dot (owner : String) (legal : Rules.invalidName owner = false) :
     '.' ∉ (s!"silicon_reg_{owner}").toList := by
   change '.' ∉ ("silicon_reg_" ++ owner).toList
   have absent := (Bool.or_eq_false_iff.mp legal).2
@@ -365,7 +365,7 @@ theorem register_no_dot (owner : String) (legal : Rules.reservedName owner = fal
   simpa [String.toList_append] using absent
 
 theorem register_ne_result (owner inst pin : String)
-    (legal : Rules.reservedName owner = false) :
+    (legal : Rules.invalidName owner = false) :
     s!"silicon_reg_{owner}" ≠ s!"{inst}.{pin}" := by
   intro eq
   have absent := register_no_dot owner legal
@@ -374,7 +374,7 @@ theorem register_ne_result (owner inst pin : String)
   simp [String.toList_append] at absent
 
 private theorem owned_injective (a b name : String)
-    (ha : Rules.reservedName a = false) (hb : Rules.reservedName b = false)
+    (ha : Rules.invalidName a = false) (hb : Rules.invalidName b = false)
     (oa : Owned a name) (ob : Owned b name) : a = b := by
   rcases oa with oa | oa | ⟨p, oa⟩
   · subst name
@@ -401,7 +401,7 @@ private theorem owned_injective (a b name : String)
 
 private theorem owned_groups_nodup (groups : List (String × List String))
     (owners : (groups.map Prod.fst).Nodup)
-    (valid : ∀ g ∈ groups, Rules.reservedName g.1 = false ∧ g.2.Nodup ∧
+    (valid : ∀ g ∈ groups, Rules.invalidName g.1 = false ∧ g.2.Nodup ∧
       ∀ name ∈ g.2, Owned g.1 name) : (groups.flatMap Prod.snd).Nodup := by
   apply List.pairwise_flatMap.mpr
   refine ⟨fun g hg => (valid g hg).2.1, ?_⟩
@@ -476,7 +476,7 @@ private theorem rawNames_valid (ports : String → List Port)
 
 theorem checked_driver_legal (d : Core.Design) (m : Core.Module)
     (wf : WellFormed d) (hm : m ∈ Typed.modules d) (stmt : Core.Stmt) (hs : stmt ∈ m.body)
-    (name : String) (driver : stmt.driverName = some name) : Rules.reservedName name = false := by
+    (name : String) (driver : stmt.driverName = some name) : Rules.invalidName name = false := by
   have mi : Core.Item.module m ∈ d.items := by
     obtain ⟨item, hi, he⟩ := List.mem_filterMap.mp hm
     cases item <;> simp_all [Typed.modules]
@@ -661,7 +661,7 @@ private theorem temporary_ne_register (i : Nat) (name : String) :
   simp [String.toList_append] at chars
 
 private theorem source_not_future (m : Core.Module) (name : String)
-    (legal : Rules.reservedName name = false) : ¬ Future (MemoryName m) {} name := by
+    (legal : Rules.invalidName name = false) : ¬ Future (MemoryName m) {} name := by
   rintro (⟨i, _, eq⟩ | ⟨owner, i, _, _, _, eq⟩)
   · exact source_ne_internal name ("t" ++ i.repr) legal (by
       change name = ("silicon_" ++ "t") ++ i.repr at eq
@@ -675,7 +675,7 @@ private theorem static_name_not_future (d : Core.Design) (m : Core.Module)
     (wf : WellFormed d) (hm : m ∈ Typed.modules d) (stmt : Core.Stmt) (hs : stmt ∈ m.body)
     (name : String) (hn : name ∈ rawNames (Typed.portsOf d) stmt) :
     ¬ Future (MemoryName m) {} name := by
-  have legal : ∀ owner, stmt.driverName = some owner → Rules.reservedName owner = false :=
+  have legal : ∀ owner, stmt.driverName = some owner → Rules.invalidName owner = false :=
     checked_driver_legal d m wf hm stmt hs
   cases stmt with
   | let_ p owner w e | assign p owner e =>

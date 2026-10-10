@@ -44,7 +44,7 @@ theorem letNames_nodup (raw : Core.Design) (t : Typed.Design) (h : check raw = .
 theorem letName_legal (raw : Core.Design) (t : Typed.Design) (h : check raw = .ok t)
     (m : Typed.Module) (hm : m ∈ t.bodies) (stmt : Typed.Stmt m.ctx m.interfaces)
     (hs : stmt ∈ Lower.statements m) (name : String) (named : LetName stmt = some name) :
-    Rules.reservedName name = false := by
+    Rules.invalidName name = false := by
   have member : stmt.erase ∈ m.erase.body := by
     rw [← statements_erase m]
     exact List.mem_map_of_mem hs
@@ -78,24 +78,24 @@ theorem alias_source (raw : Core.Design) (t : Typed.Design) (h : check raw = .ok
 
 theorem alias_key_legal (raw : Core.Design) (t : Typed.Design) (h : check raw = .ok t)
     (m : Typed.Module) (hm : m ∈ t.bodies) (k : String) (hk : k ∈ finalAliases m) :
-    Rules.reservedName k = false := by
+    Rules.invalidName k = false := by
   obtain ⟨v, found⟩ := Option.isSome_iff_exists.mp
     (Std.HashMap.isSome_getElem?_iff_mem.mpr hk)
   obtain ⟨stmt, hs, named, _⟩ := alias_source raw t h m hm k v found
   exact letName_legal raw t h m hm stmt hs k named
 
-theorem readName_reserved (r : Lower.ReadPort) : Rules.reservedName (readName r) = true := by
+theorem readName_invalid (r : Lower.ReadPort) : Rules.invalidName (readName r) = true := by
   have ne := source_ne_result (readName r) r.memory s!"r{r.index}_data"
-  by_cases legal : Rules.reservedName (readName r) = false
+  by_cases legal : Rules.invalidName (readName r) = false
   · exact absurd (by
       change r.memory ++ ("." ++ "r") ++ r.index.repr ++ "_data" =
         r.memory ++ "." ++ ("r" ++ r.index.repr ++ "_data")
       simp only [String.append_assoc]) (ne legal)
   · simpa using legal
 
-theorem register_reserved (name : String) :
-    Rules.reservedName s!"silicon_reg_{name}" = true := by
-  by_cases legal : Rules.reservedName s!"silicon_reg_{name}" = false
+theorem register_invalid (name : String) :
+    Rules.invalidName s!"silicon_reg_{name}" = true := by
+  by_cases legal : Rules.invalidName s!"silicon_reg_{name}" = false
   · exact absurd (by
       change "silicon_" ++ "reg_" ++ name = "silicon_" ++ ("reg_" ++ name)
       simp only [String.append_assoc]) (source_ne_internal _ ("reg_" ++ name) legal)
@@ -152,7 +152,7 @@ theorem alias_decreasing (raw : Core.Design) (t : Typed.Design) (h : check raw =
         simp only [Lower.valueName, Option.some.injEq] at alias
         split at alias
         · subst alias
-          rw [register_reserved] at legal
+          rw [register_invalid] at legal
           cases legal
         · subst alias
           exact ref_edge m _ hs name v rfl key
@@ -162,7 +162,7 @@ theorem alias_decreasing (raw : Core.Design) (t : Typed.Design) (h : check raw =
     case read =>
       rcases alias with ⟨_, r, _, _, same⟩ | ⟨_, same⟩
       · cases same
-        rw [readName_reserved] at legal
+        rw [readName_invalid] at legal
         cases legal
       · cases same
 

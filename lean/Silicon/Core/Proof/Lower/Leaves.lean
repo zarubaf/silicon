@@ -23,9 +23,9 @@ theorem eq_of_raw (m : Typed.Module) (stmt : Core.Stmt) (hs : stmt ∈ m.erase.b
   obtain ⟨eq, he, part, hp, rfl⟩ := (statement_of_eq m typed).mp ht
   exact ⟨eq, he, part, hp, rfl⟩
 
-theorem result_reserved (owner pin : String) :
-    Rules.reservedName s!"{owner}.{pin}" = true := by
-  by_cases legal : Rules.reservedName s!"{owner}.{pin}" = false
+theorem result_invalid (owner pin : String) :
+    Rules.invalidName s!"{owner}.{pin}" = true := by
+  by_cases legal : Rules.invalidName s!"{owner}.{pin}" = false
   · exact absurd rfl (source_ne_result _ owner pin legal)
   · simpa using legal
 
@@ -51,7 +51,7 @@ include h hm
 theorem reads_has (r : Lower.ReadPort) (hr : r ∈ (Lower.statementState m).reads) (w depth : Nat)
     (found : m.ctx.lookup (.name r.memory) = some (.memory w depth)) :
     Has m (readName r) (.int w) := by
-  apply has_of_mem raw t h m hm _ _ (rename_reserved raw t h m hm _ (readName_reserved r))
+  apply has_of_mem raw t h m hm _ _ (rename_invalid raw t h m hm _ (readName_invalid r))
   have member := lookup_member _ _ _ found
   rw [m.context_eq] at member
   rcases context_member _ _ _ _ member with ⟨p, _, _, kind⟩ | ⟨stmt, hs, decl⟩
@@ -122,7 +122,7 @@ theorem register_has (i : Nat) (p : Pos) (n : String) (w : Nat) (clk : String)
     (ni : Nat) (np : Pos) (next : Typed.Expr m.ctx (.bits w))
     (he : .reg i p n w clk target reset ni np next ∈ m.body) :
     Has m s!"silicon_reg_{n}" (.int w) := by
-  apply has_of_mem raw t h m hm _ _ (rename_reserved raw t h m hm _ (register_reserved n))
+  apply has_of_mem raw t h m hm _ _ (rename_invalid raw t h m hm _ (register_invalid n))
   have hs : Typed.Stmt.next np n w target next ∈ Lower.statements m :=
     (statement_of_eq m _).mpr ⟨_, he, (ni, .next np n w target next), by
       simp [Typed.Equation.parts], rfl⟩
@@ -157,7 +157,7 @@ theorem instport_has (p : Pos) (i child : String) (xs : List (String × Core.Exp
     (hs : Core.Stmt.inst p i child xs ∈ m.erase.body) (port : Port)
     (hp : port ∈ m.interfaces child) (output : port.dir = .output) (w : Nat)
     (ty : port.ty = .bits w) : Has m s!"{i}.{port.name}" (.int w) := by
-  apply has_of_mem raw t h m hm _ _ (rename_reserved raw t h m hm _ (result_reserved i port.name))
+  apply has_of_mem raw t h m hm _ _ (rename_invalid raw t h m hm _ (result_invalid i port.name))
   obtain ⟨typed, ht, erased⟩ := typed_of_raw m _ hs
   cases typed <;> simp only [Typed.Stmt.erase, reduceCtorEq] at erased
   case inst p' i' child' inputs =>

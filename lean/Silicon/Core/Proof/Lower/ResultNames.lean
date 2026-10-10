@@ -251,7 +251,7 @@ theorem result_renamed (raw : Core.Design) (t : Typed.Design) (h : check raw = .
     ∃ n, entry.1 = [n] ∧ rename m n = n := by
   obtain ⟨stmt, hs, _, result⟩ := final_entries m entry he
   rcases result plain with ⟨i, hi⟩ | named
-  · exact ⟨_, hi, rename_reserved raw t h m hm _ (temporary_reserved i)⟩
+  · exact ⟨_, hi, rename_invalid raw t h m hm _ (temporary_invalid i)⟩
   · have fresh := stmt_fresh raw t h m hm stmt hs
     cases stmt <;> simp only at named
     case let_ p x w e => exact ⟨x, named.1, fresh named.2⟩
