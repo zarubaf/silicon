@@ -6,7 +6,8 @@
 //! the next read port of its memory in that order (spec section 7.3).
 //!
 //! The value names cannot collide. A user name has no `.` and does not start
-//! with `silicon_` (rule `E002`), and a temporary value has a number as name.
+//! with `silicon_` (rule `E002`), a register name is a backend name from the
+//! module `names`, and a temporary value has a number as name.
 
 use core_ir::ast::{BinOp, UnOp};
 use core_ir::typed::{Callee, ClockPort, Design, Expr, Module, Port, Reg, address_width};
@@ -14,6 +15,7 @@ use core_ir::{Bits, Pred};
 
 use crate::MemConfig;
 use crate::mlir::{self, Dir, Pin, Ty};
+use crate::names;
 
 /// True if each address of a memory of `depth` words is in range: the depth
 /// is a power of two, so an access needs no guard.
@@ -115,7 +117,7 @@ fn is_name(expr: &Expr) -> bool {
 }
 
 fn reg_name(reg: &Reg) -> String {
-    format!("%silicon_reg_{}", reg.name)
+    format!("%{}", names::register(&reg.name))
 }
 
 fn pred(p: Pred) -> &'static str {

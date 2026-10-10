@@ -4,7 +4,7 @@
 //!
 //! The model holds one word for each address, `2^A` words for the address
 //! width `A`, in one `seq.compreg` of type `!hw.array<2^A x iW>` with the
-//! name `silicon_reg_mem`. A read port gives the word of the current state
+//! name `MEMORY_REGISTER`. A read port gives the word of the current state
 //! with `hw.array_get`, so the read is combinational. The write ports apply
 //! to the old state in index order with `hw.array_inject`, so a higher port
 //! overwrites a lower port at the same address.
@@ -20,6 +20,7 @@ use core_ir::typed::address_width;
 
 use crate::MemConfig;
 use crate::mlir::{self, Ty};
+use crate::names::MEMORY_REGISTER as REG;
 
 /// The MLIR text of the memory model of `config`: an `hw.module` with the
 /// name and the ports of the extern of spec section 7.3.
@@ -32,11 +33,11 @@ pub fn memory_model(config: &MemConfig) -> String {
     let mut outputs = Vec::new();
     for n in 0..config.reads {
         ops.push(format!(
-            "%r{n}_data = hw.array_get %silicon_reg_mem[%r{n}_addr] : {array}, i{addr}"
+            "%r{n}_data = hw.array_get %{REG}[%r{n}_addr] : {array}, i{addr}"
         ));
         outputs.push(format!("%r{n}_data"));
     }
-    let mut state = "%silicon_reg_mem".to_owned();
+    let mut state = format!("%{REG}");
     for n in 0..config.writes {
         ops.push(format!(
             "%w{n}_set = hw.array_inject {state}[%w{n}_addr], %w{n}_data : {array}, i{addr}"
@@ -46,9 +47,7 @@ pub fn memory_model(config: &MemConfig) -> String {
         ));
         state = format!("%w{n}_next");
     }
-    ops.push(format!(
-        "%silicon_reg_mem = seq.compreg {state}, %clk : {array}"
-    ));
+    ops.push(format!("%{REG} = seq.compreg {state}, %clk : {array}"));
     let body: String = ops.iter().flat_map(|op| ["  ", op, "\n"]).collect();
     let outputs: Vec<(String, Ty)> = outputs
         .into_iter()
