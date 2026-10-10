@@ -83,25 +83,26 @@ def counter : String :=
   "    value := counter.value;\n" ++
   "}\n"
 
-#guard cost counter "Main" == "total 90\nCounter$4 69\nMain 21\n"
-#guard exact counter "Main" 90
-#guard cost counter "Counter(8)" == "total 72\nCounter$8 69\n"
+#guard cost counter "Main" == "total 170\nCounter$4 69\nMain 69\n"
+#guard exact counter "Main" 170
+#guard cost counter "Counter(8)" == "total 120\nCounter$8 69\n"
 #guard order counter "Main" == ["Counter$4", "Main"]
 
 /-!
 The table of instantiations. A child finishes before its parent. A repeated `InstantiationId`
 elaborates once. Its `instance` statement charges 1, and its argument charges 2 for the node and
-the literal, and 1 for the recursive size: 4 units.
+the literal, and 1 for the recursive size. Its serialization charges 1 for the decimal form and
+32 for its bytes: 37 units.
 -/
 def leaf : String := "module C(comptime n: Nat) {\n}\n"
 def one : String := leaf ++ "module T() {\n  instance a = C(5);\n}\n"
 def two : String := leaf ++ "module T() {\n  instance a = C(5);\n  instance b = C(5);\n}\n"
 def other : String := leaf ++ "module T() {\n  instance a = C(5);\n  instance b = C(6);\n}\n"
 
-#guard total two "T" == total one "T" + 4
+#guard total two "T" == total one "T" + 37
 #guard order two "T" == ["C$5", "T"]
 #guard order other "T" == ["C$5", "C$6", "T"]
-#guard cost other "T" == s!"total {total other "T"}\nC$5 2\nC$6 2\nT 9\n"
+#guard cost other "T" == s!"total {total other "T"}\nC$5 2\nC$6 2\nT 81\n"
 
 /-! An instantiation that depends on itself is `S019` at its `instance` statement. -/
 def selfDep : String := "module M(comptime d: Nat) {\n  instance a = M(d);\n}\n"
@@ -123,6 +124,26 @@ def digests : String :=
 #guard order digests "T" ==
   ["M$0h" ++ Names.sha16 "(instantiation root M ((uint 8 1)))",
    "M$0h" ++ Names.sha16 "(instantiation root M ((uint 8 2)))", "T"]
+
+/-!
+A serialization charges its length in bytes, and an emitted name too. A module with a long name
+thus pays for each new instantiation, and 1000 of them fail with `S015` under a small fuel. A
+short name passes with the same fuel.
+-/
+def longName (n : String) : String :=
+  s!"module {n}(comptime i: Int) \{\n}\nmodule T() \{\n  comptime for i in 0..1000 \{\n" ++
+  s!"    instance u = {n}(i);\n  }\n}\n"
+#guard cost (longName (String.ofList (List.replicate 100000 'a'))) "T" (fuel := 1000000) ==
+  "S015 5:5"
+#guard (cost (longName "L") "T" (fuel := 1000000)).startsWith "total"
+
+/-!
+The decimal form of an integer in a serialization charges the square of its size. The argument
+`1 << 1000000` has the size 15626, so its serialization fails with `S015` before it runs.
+-/
+def bigArg : String :=
+  "module M(comptime x: Int) {\n}\nmodule T() {\n  instance u = M(1 << 1000000);\n}\n"
+#guard cost bigArg "T" (fuel := 10000000) == "S015 4:3"
 
 /-! The branching hierarchy of section 11.3 with `d = 10`: 2047 instantiations. -/
 def branch : String :=
@@ -150,7 +171,7 @@ def shared : String :=
   "}\n"
 #guard (order shared "M(30)").length == 31
 #guard exact shared "M(30)" (total shared "M(30)")
-#guard total shared "M(30)" - total shared "M(29)" == total shared "M(2)" - total shared "M(1)"
+#guard total shared "M(30)" - total shared "M(29)" == total shared "M(20)" - total shared "M(19)"
 
 /-!
 A deep child first and a shallow child later, and the reverse order. The top and the chain

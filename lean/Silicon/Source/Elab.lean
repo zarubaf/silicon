@@ -11,11 +11,13 @@ bindings, child instances, and `:=` bindings.
 The table of instantiations is normative. An `instance` statement works in these steps:
 
 1. It evaluates the arguments from left to right. Each argument is static (`S011`).
-2. It charges the recursive size of the arguments, also for a done instantiation.
+2. It charges the recursive size of the arguments, also for a done instantiation. Then the
+   serialization charges the square of the size of each integer, and its length in bytes.
 3. A clocked child in a combinational module is `S017` at the statement.
 4. An instantiation in progress is `S019` at the statement. A done one gives its interface.
-5. A new one nests one level deeper (`S015`). Its emitted name must be new (`S019`). Then it
-   goes in progress, runs its body, checks its bindings, and is done.
+5. A new one nests one level deeper (`S015`). Its emitted name charges its length in bytes,
+   and it must be new (`S019`). Then it goes in progress, runs its body, checks its bindings,
+   and is done.
 
 The `InstantiationId` holds the arguments as they evaluate, before the typed use at the
 parameters. The parameters then bind in the body of the new instantiation, as a typed use.
@@ -54,6 +56,7 @@ open Resolve Names Eval
 /-! A port declaration. A port keeps its source name. -/
 structure PortDecl where
   name : String
+  sym : Nat
   input : Bool
   ty : Ty
   pos : Pos
@@ -113,7 +116,7 @@ structure Work where
   body : Body
   needs : Array Need := #[]
   bound : Array Nat := #[]
-  inputs : Std.HashMap (Nat × String) Nat := {}
+  inputs : Std.HashMap (Nat × Nat) Nat := {}
   dup : Option Error := none
   spent : Nat := 0
 
@@ -170,15 +173,17 @@ def resource (k : Kind) (path : Path) (t : Ty) (p : Pos) (x : String) : EM Val :
 The port `x`. Its core name is its source name. The root frame counts it with the bindings of
 its name, so a name that is taken is `S019`.
 -/
-def port (p : Pos) (input : Bool) (x : String) (t : Ty) : EM Val := do
+def port (p : Pos) (input : Bool) (b : Binder) (t : Ty) : EM Val := do
+  let x := b.name.name
+  let sym := (← readThe Ctx).binder b.id
   let taken ← monadLift (do
     let s ← get
-    let key := (0, Field.user x)
+    let key := (0, Tag.sym sym)
     let v := s.naming.versions.getD key 0
     set { s with naming.versions := s.naming.versions.insert key (v + 1) }
     return v != 0 : Eval.M Bool)
   if taken then fail .S019 p s!"two declarations have the core name `{x}`"
-  modifyBody fun b => { b with ports := b.ports.push ⟨x, input, t, p⟩ }
+  modifyBody fun d => { d with ports := d.ports.push ⟨x, sym, input, t, p⟩ }
   if input then return .hw (.mk p t (.ref ⟨x, []⟩) [])
   else resource .output ⟨x, []⟩ t p x
 
@@ -199,7 +204,7 @@ def target (p : Pos) (e : Resolve.Expr) : EM Target := do
   | .field _ (.name _ _ (.local id)) f =>
     match ← slot id with
     | some ⟨_, _, .handle (.inst k path iface)⟩ =>
-      match iface.ports[f.name]? with
+      match (← readThe Ctx).field f.pos >>= (iface.ports[·]?) with
       | some q =>
         if q.input then return .child k path q
         else fail .S017 p s!"`{f.name}` is an output of the child, not a target"
@@ -219,10 +224,10 @@ def bindTarget (p : Pos) (t : Target) (h : Hw) : EM Unit := do
       { s with work.needs := s.work.needs.modify k fun r => { r with count := c + 1 } }
     modifyBody fun b => { b with binds := b.binds.push ⟨.own path, h, p⟩ }
   | .child k path q =>
-    let c := w.inputs.getD (k, q.name) 0
+    let c := w.inputs.getD (k, q.sym) 0
     if c == 0 then modify fun s => { s with work.bound := s.work.bound.modify k (· + 1) }
     if c == 1 then modify fun s => { s with work.dup := earlier s.work.dup second }
-    modify fun s => { s with work.inputs := s.work.inputs.insert (k, q.name) (c + 1) }
+    modify fun s => { s with work.inputs := s.work.inputs.insert (k, q.sym) (c + 1) }
     modifyBody fun b => { b with binds := b.binds.push ⟨.child path q.name, h, p⟩ }
 
 /-!
@@ -236,15 +241,25 @@ def bindings : EM Unit := do
     if r.count == 0 then err := earlier err ⟨.S018, r.pos, s!"`{r.name}` has no binding"⟩
   for (c, k) in w.body.children.zipIdx do
     if w.bound.getD k 0 < c.iface.inputs then
-      let free := c.iface.ports.values.find? fun q => q.input && !w.inputs.contains (k, q.name)
+      let free := c.iface.ports.values.find? fun q => q.input && !w.inputs.contains (k, q.sym)
       let x := (free.map (·.name)).getD ""
       err := earlier err ⟨.S018, c.pos, s!"the input `{x}` of the child has no binding"⟩
   if let some e := err then throw e
 
 /-! The interface of a done instantiation. -/
 def iface (name : Name) (b : Body) : Iface :=
-  ⟨name, b.ports.foldl (fun m q => m.insert q.name ⟨q.name, q.input, q.ty⟩) {},
+  ⟨name, b.ports.foldl (fun m q => m.insert q.sym ⟨q.name, q.sym, q.input, q.ty⟩) {},
    (b.ports.filter (·.input)).size, b.domain⟩
+
+/-!
+The serialization of an `InstantiationId` at the statement `pos`. It charges the decimal forms
+of its integers, then its length in bytes, before it makes the text (section 5.4).
+-/
+def serialize (pos : Pos) (m : String) (vs : List Value) : EM String := do
+  charge pos (vs.map Value.decimalCharge).sum
+  let parts := vs.map Value.serialize
+  charge pos (InstantiationId.renderSize m parts)
+  return InstantiationId.render m parts
 
 def usedFuel : EM Nat := monadLift (do return (← get).fuel : Eval.M Nat)
 
@@ -264,7 +279,7 @@ mutual
         match s with
         | .input p x ty | .output p x ty => do
           let t ← dataType p (← typeExpr n ty)
-          let v ← port p (s matches .input ..) x.name.name t
+          let v ← port p (s matches .input ..) x t
           bindLocal x.id ⟨some t, false, v⟩
         | .reg p x ty init => do
           if (← get).work.body.domain.isNone then
@@ -273,12 +288,12 @@ mutual
           let o ← need init (← eval n init)
           copy p o
           let v ← conform p t (← static p o.value)
-          let path ← fresh x.name.name
+          let path ← fresh x.id x.name.name
           modifyBody fun b => { b with regs := b.regs.push ⟨path, t, v, p⟩ }
           bindLocal x.id ⟨some t, false, ← resource .reg path t p x.name.name⟩
         | .wire p x ty => do
           let t ← dataType p (← typeExpr n ty)
-          let path ← fresh x.name.name
+          let path ← fresh x.id x.name.name
           modifyBody fun b => { b with wires := b.wires.push ⟨path, t, p⟩ }
           bindLocal x.id ⟨some t, false, ← resource .wire path t p x.name.name⟩
         | .connect p tgt v => do
@@ -300,7 +315,7 @@ mutual
             if (← get).work.body.domain.isNone && !ds.isEmpty then
               fail .S017 p s!"a combinational module has no clocked child `{m.name}`"
           let (c, _) ← instantiate n p i vs
-          let path ← fresh u.name.name
+          let path ← fresh u.id u.name.name
           let k := (← get).work.body.children.size
           modifyBody fun b => { b with children := b.children.push ⟨path, c, p⟩ }
           modify fun s => { s with work.bound := s.work.bound.push 0 }
@@ -337,7 +352,7 @@ mutual
     let some (.module mp m ps ds body) := (← read).items[i]?
       | fail .S010 pos "an instance needs a module"
     let id : InstantiationId := ⟨m.name, vs⟩
-    let key := id.serialize
+    let key ← serialize pos m.name vs
     let s ← get
     match s.table[key]? with
     | some .inProgress =>
@@ -347,7 +362,8 @@ mutual
       | some d => return (d.iface, k)
       | none => fail .S019 pos s!"the instantiation of `{m.name}` is not in the table"
     | none => nested pos do
-      let name := moduleName s.digest id
+      let name := moduleName s.digest id key
+      charge pos (byteSize name)
       let text := encode name
       if s.names.contains text then
         fail .S019 pos s!"two instantiations have the emitted name `{text}`"
