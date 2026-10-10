@@ -146,6 +146,26 @@ A deterministic compiler output that holds the meaning of a package, for example
 
 ## Process
 
+### architecture review
+
+A review of the whole system against `doc/architecture.md`, the ADRs, and `doc/trust.md`. A reviewer from a different vendor with fresh context does it. It is separate from the review of a diff.
+
+### architecture path
+
+A path whose change requires an architecture review of the pull request. `doc/architecture.md` lists these paths.
+
+### drift review
+
+A periodic architecture review. It runs after 15 merged pull requests or after one week, whichever comes first.
+
+### milestone review
+
+A full architecture review at each milestone, for example at the end of a build step. Two reviewers from different vendors do it independently.
+
+### human gate
+
+An area where only the user accepts a decision. The areas are the core IR semantics, the language design, and the trust boundary.
+
 ### worktree
 
 A git worktree under `.claude/worktrees/`. Each task has its own worktree and its own branch.
