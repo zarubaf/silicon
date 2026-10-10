@@ -193,9 +193,9 @@ fn the_counter_parses() -> Test {
         line(&mlir, "hw.module @counter")?,
         "hw.module @counter(in %clk : !seq.clock, in %rst : i1, in %en : i1, out q : i8) {"
     );
-    let reg = line(&mlir, "%silicon_reg_r = seq.compreg ")?;
+    let reg = line(&mlir, "%reg$$r = seq.compreg ")?;
     assert!(reg.contains(", %clk reset %rst, "), "{reg}");
-    assert!(line(&mlir, "hw.output %silicon_reg_r : i8").is_ok());
+    assert!(line(&mlir, "hw.output %reg$$r : i8").is_ok());
     Ok(())
 }
 
@@ -203,8 +203,8 @@ fn the_counter_parses() -> Test {
 fn a_memory_is_an_extern_instance_with_the_spec_ports() -> Test {
     let mlir = lowered(MEMORY)?;
     assert_eq!(
-        line(&mlir, "hw.module.extern @silicon_mem_")?,
-        "hw.module.extern @silicon_mem_12x8_r2w1(in %clk : !seq.clock, \
+        line(&mlir, "hw.module.extern @mem$$")?,
+        "hw.module.extern @mem$$12x8_r2w1(in %clk : !seq.clock, \
          in %r0_addr : i4, out r0_data : i8, in %r1_addr : i4, out r1_data : i8, \
          in %w0_addr : i4, in %w0_data : i8, in %w0_en : i1)"
     );
@@ -213,7 +213,7 @@ fn a_memory_is_an_extern_instance_with_the_spec_ports() -> Test {
         .find(|l| l.contains("hw.instance \"m\""))
         .ok_or("no memory instance")?;
     assert!(
-        inst.contains("@silicon_mem_12x8_r2w1(clk: %clk: !seq.clock, r0_addr: %x: i4, r1_addr: %y: i4, w0_addr: %x: i4, w0_data: %d: i8, w0_en: "),
+        inst.contains("@mem$$12x8_r2w1(clk: %clk: !seq.clock, r0_addr: %x: i4, r1_addr: %y: i4, w0_addr: %x: i4, w0_data: %d: i8, w0_en: "),
         "{inst}"
     );
     assert_eq!(
@@ -251,7 +251,7 @@ fn other_port_counts_give_other_names() -> Test {
     let mlir = lowered(TWO_MEMORIES)?;
     let configs = memory_configs(&design(TWO_MEMORIES)?);
     let names: Vec<String> = configs.iter().map(MemConfig::module_name).collect();
-    assert_eq!(names, ["silicon_mem_8x4_r1w0", "silicon_mem_8x4_r1w1"]);
+    assert_eq!(names, ["mem$$8x4_r1w0", "mem$$8x4_r1w1"]);
     for name in &names {
         assert!(
             mlir.contains(&format!("hw.module.extern @{name}(")),
@@ -339,11 +339,11 @@ const COUNTER_REFERENCE: &str = "
 hw.module @reference(in %clk : !seq.clock, in %rst : i1, in %en : i1, out q : i8) {
   %c0 = hw.constant 0 : i8
   %c1 = hw.constant 1 : i8
-  %inc = comb.add %silicon_reg_r, %c1 : i8
-  %n = comb.mux %en, %inc, %silicon_reg_r : i8
+  %inc = comb.add %reg$$r, %c1 : i8
+  %n = comb.mux %en, %inc, %reg$$r : i8
   %m = comb.mux %rst, {reset} : i8
-  %silicon_reg_r = seq.compreg %m, %clk : i8
-  hw.output %silicon_reg_r : i8
+  %reg$$r = seq.compreg %m, %clk : i8
+  hw.output %reg$$r : i8
 }
 ";
 
@@ -368,7 +368,7 @@ const MEMORY_REFERENCE: &str = "
 hw.module @reference(in %clk : !seq.clock, in %x : i4, in %y : i4, in %d : i8, in %we : i1, out p : i8, out q : i8) {
   %c12 = hw.constant 12 : i4
   %c0 = hw.constant 0 : i8
-  %a0, %b0 = hw.instance \"m\" @silicon_mem_12x8_r2w1(clk: %clk: !seq.clock, r0_addr: %x: i4, r1_addr: %y: i4, w0_addr: %x: i4, w0_data: %d: i8, w0_en: %en: i1) -> (r0_data: i8, r1_data: i8)
+  %a0, %b0 = hw.instance \"m\" @mem$$12x8_r2w1(clk: %clk: !seq.clock, r0_addr: %x: i4, r1_addr: %y: i4, w0_addr: %x: i4, w0_data: %d: i8, w0_en: %en: i1) -> (r0_data: i8, r1_data: i8)
   %xin = comb.icmp ult %x, %c12 : i4
   %yin = comb.icmp ult %y, %c12 : i4
   %true = hw.constant true
@@ -387,7 +387,7 @@ hw.module @reference(in %clk : !seq.clock, in %x : i4, in %y : i4, in %d : i8, i
 #[test]
 fn the_memory_guards_match_the_spec() -> Test {
     let mlir = lowered(MEMORY)?;
-    let decl = line(&mlir, "hw.module.extern @silicon_mem_12x8_r2w1")?;
+    let decl = line(&mlir, "hw.module.extern @mem$$12x8_r2w1")?;
     let model = memory_model(&MemConfig {
         depth: 12,
         width: 8,

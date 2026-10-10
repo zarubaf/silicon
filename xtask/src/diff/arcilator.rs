@@ -24,10 +24,6 @@ use core_ir::{Bits, typed};
 
 use super::{ToolFailure, output};
 
-/// The function that `arcilator --run` calls. No user module can have this
-/// name, because rule `E002` rejects names that start with `silicon_`.
-const ENTRY: &str = "silicon_diff_entry";
-
 /// The prefix of a module definition.
 const MODULE: &str = "hw.module @";
 
@@ -74,7 +70,10 @@ pub fn run(
     let stdout = output(
         Command::new("arcilator")
             .arg("--run")
-            .arg(format!("--jit-entry={ENTRY}"))
+            .arg(format!(
+                "--jit-entry={}",
+                backend_circt::names::diff_entry(&top.name)
+            ))
             .arg(&file),
         "",
     )?;
@@ -86,7 +85,8 @@ pub fn run(
 fn testbench(top: &typed::Module, cycles: &[Inputs]) -> Result<String> {
     let model = format!("!arc.sim.instance<@{}>", top.name);
     let mut out = format!(
-        "func.func @{ENTRY}() {{\n  arc.sim.instantiate @{} as %m {{\n",
+        "func.func @{}() {{\n  arc.sim.instantiate @{} as %m {{\n",
+        backend_circt::names::diff_entry(&top.name),
         top.name
     );
     let clock = |out: &mut String, cycle: usize, level: u8| -> Result<()> {
@@ -184,15 +184,15 @@ mod tests {
 
     #[test]
     fn the_memory_externs_give_way_to_private_models() {
-        let lowered = "hw.module.extern @silicon_mem_2x8_r1w1(in %clk : !seq.clock)\n\
+        let lowered = "hw.module.extern @mem$$2x8_r1w1(in %clk : !seq.clock)\n\
                        hw.module @child() {\n  hw.output\n}\n\
                        hw.module @top() {\n  hw.output\n}\n";
-        let models = "hw.module @silicon_mem_2x8_r1w1(in %clk : !seq.clock) {\n}\n";
+        let models = "hw.module @mem$$2x8_r1w1(in %clk : !seq.clock) {\n}\n";
         assert_eq!(
             simulation_mlir(lowered, models, "top"),
             "hw.module private @child() {\n  hw.output\n}\n\
              hw.module @top() {\n  hw.output\n}\n\
-             hw.module private @silicon_mem_2x8_r1w1(in %clk : !seq.clock) {\n}\n"
+             hw.module private @mem$$2x8_r1w1(in %clk : !seq.clock) {\n}\n"
         );
     }
 

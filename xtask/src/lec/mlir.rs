@@ -6,10 +6,7 @@ use std::fmt::{self, Write as _};
 use std::num::NonZeroU32;
 
 use anyhow::{Context, Result, bail, ensure};
-
-/// The name of the wrapper module on both sides. No user module can have it,
-/// because rule `E002` reserves the prefix `silicon_`.
-pub const WRAPPER: &str = "silicon_lec";
+use backend_circt::names;
 
 const CLOCK: &str = "!seq.clock";
 
@@ -189,7 +186,7 @@ pub fn wrapper(top: &str, ports: &[Port], other: &[Port]) -> Result<String> {
     let mut result_types = Vec::new();
     for (i, p) in ports.iter().enumerate() {
         match p.dir {
-            Dir::In if p.is_clock() => args.push(format!("{:?}: %silicon_clock: i1", p.name)),
+            Dir::In if p.is_clock() => args.push(format!("{:?}: %0: i1", p.name)),
             Dir::In => args.push(format!("{:?}: %v{i}: {}", p.name, p.ty)),
             Dir::Out => {
                 results.push(format!("%v{i}"));
@@ -197,8 +194,12 @@ pub fn wrapper(top: &str, ports: &[Port], other: &[Port]) -> Result<String> {
             }
         }
     }
-    let mut out = format!("hw.module @{WRAPPER}({}) {{\n", header.join(", "));
-    out.push_str("  %silicon_clock = hw.constant false\n  ");
+    let mut out = format!(
+        "hw.module @{}({}) {{\n",
+        names::lec_wrapper(top),
+        header.join(", ")
+    );
+    out.push_str("  %0 = hw.constant false\n  ");
     if !results.is_empty() {
         let _ = write!(out, "{} = ", results.join(", "));
     }
@@ -316,13 +317,6 @@ struct BlackBox {
     data: Vec<(Port, NonZeroU32, String)>,
 }
 
-/// The stand-in register of the port `port` of the black box `name`. The
-/// name holds the black box, because the flattening keeps only the instance
-/// path. The length of `name` separates it from `port`.
-fn stand_in_register(name: &str, port: &str) -> String {
-    format!("silicon_reg_{}{name}_{port}", name.len())
-}
-
 /// A stand-in needs the clock of the black box for its registers.
 fn black_box(name: &str, header: &str) -> Result<BlackBox> {
     let ports = header_ports(header).with_context(|| format!("cannot read the extern `{name}`"))?;
@@ -341,7 +335,7 @@ fn black_box(name: &str, header: &str) -> Result<BlackBox> {
             .strip_prefix('i')
             .and_then(|w| w.parse().ok())
             .with_context(|| format!("the port `{port}` of `{name}` is not an integer"))?;
-        let register = stand_in_register(name, &port.name);
+        let register = names::stand_in_register(name, &port.name);
         data.push((port, width, register));
     }
     Ok(BlackBox { clock, data })
@@ -363,6 +357,7 @@ fn stand_in(name: &str, header: &str) -> Result<String> {
         header.replacen("hw.module.extern", "hw.module", 1)
     );
     let mut outputs = Vec::new();
+    let mut zeros = 0;
     for (port, width, reg) in &data {
         let p = &port.name;
         match port.dir {
@@ -370,11 +365,9 @@ fn stand_in(name: &str, header: &str) -> Result<String> {
                 let _ = writeln!(out, "  %{reg} = seq.compreg %{p}, %{clock} : i{width}");
             }
             Dir::Out => {
-                let _ = writeln!(out, "  %silicon_zero_{p} = hw.constant 0 : i{width}");
-                let _ = writeln!(
-                    out,
-                    "  %{reg} = seq.compreg %silicon_zero_{p}, %{clock} : i{width}"
-                );
+                let _ = writeln!(out, "  %{zeros} = hw.constant 0 : i{width}");
+                let _ = writeln!(out, "  %{reg} = seq.compreg %{zeros}, %{clock} : i{width}");
+                zeros += 1;
                 outputs.push((format!("%{reg}"), format!("i{width}")));
             }
         }
@@ -454,7 +447,7 @@ mod tests {
         }
     }
 
-    const HEADER: &str = r#"  hw.module @top(in %clk : !seq.clock, in %a : i4, in %m2Fsilicon_reg_mem_state "m/silicon_reg_mem_state" : !hw.array<16xi8>, out q : i8, out "m/silicon_reg_mem_next" : !hw.array<16xi8>) attributes {num_regs = 1 : i32} {"#;
+    const HEADER: &str = r#"  hw.module @top(in %clk : !seq.clock, in %a : i4, in %m2Freg$$mem_state "m/reg$$mem_state" : !hw.array<16xi8>, out q : i8, out "m/reg$$mem_next" : !hw.array<16xi8>) attributes {num_regs = 1 : i32} {"#;
 
     #[test]
     fn ports_read_plain_and_quoted_names() {
@@ -463,9 +456,9 @@ mod tests {
             [
                 p(Dir::In, "clk", "!seq.clock"),
                 p(Dir::In, "a", "i4"),
-                p(Dir::In, "m/silicon_reg_mem_state", "!hw.array<16xi8>"),
+                p(Dir::In, "m/reg$$mem_state", "!hw.array<16xi8>"),
                 p(Dir::Out, "q", "i8"),
-                p(Dir::Out, "m/silicon_reg_mem_next", "!hw.array<16xi8>"),
+                p(Dir::Out, "m/reg$$mem_next", "!hw.array<16xi8>"),
             ]
         );
     }
@@ -492,9 +485,9 @@ mod tests {
         ];
         assert_eq!(
             wrapper("top", &ours, &theirs).unwrap(),
-            "hw.module @silicon_lec(in %v3 \"a\" : i2, in %v1 \"b\" : i1, out \"q\" : i2) {\n  \
-             %silicon_clock = hw.constant false\n  \
-             %v2 = hw.instance \"dut\" @top(\"clk\": %silicon_clock: i1, \"b\": %v1: i1, \"a\": %v3: i2) -> (\"q\": i2)\n  \
+            "hw.module @lec$$top(in %v3 \"a\" : i2, in %v1 \"b\" : i1, out \"q\" : i2) {\n  \
+             %0 = hw.constant false\n  \
+             %v2 = hw.instance \"dut\" @top(\"clk\": %0: i1, \"b\": %v1: i1, \"a\": %v3: i2) -> (\"q\": i2)\n  \
              hw.output %v2 : i2\n}\n"
         );
     }
@@ -544,43 +537,40 @@ hw.module.extern @blk(in %c : !seq.clock, in %a : i4, out y : i2)
 hw.module @top(in %clk : !seq.clock) {
   hw.output
 }
-hw.module.extern @silicon_mem_1x4_r0w0(in %clk : !seq.clock)
+hw.module.extern @mem$$1x4_r0w0(in %clk : !seq.clock)
 ";
 
     #[test]
     fn a_model_replaces_its_extern_and_a_stand_in_replaces_a_black_box() {
-        let model = "hw.module @silicon_mem_1x4_r0w0(in %clk : !seq.clock) {\n  hw.output\n}\n";
+        let model = "hw.module @mem$$1x4_r0w0(in %clk : !seq.clock) {\n  hw.output\n}\n";
         let models = modules(model).unwrap();
         assert_eq!(
             defined(LEAN, &models).unwrap(),
             "hw.module @blk(in %c : !seq.clock, in %a : i4, out y : i2) {\n  \
-             %silicon_reg_3blk_a = seq.compreg %a, %c : i4\n  \
-             %silicon_zero_y = hw.constant 0 : i2\n  \
-             %silicon_reg_3blk_y = seq.compreg %silicon_zero_y, %c : i2\n  \
-             hw.output %silicon_reg_3blk_y : i2\n}\n\
+             %reg$$blk$$a = seq.compreg %a, %c : i4\n  \
+             %0 = hw.constant 0 : i2\n  \
+             %reg$$blk$$y = seq.compreg %0, %c : i2\n  \
+             hw.output %reg$$blk$$y : i2\n}\n\
              hw.module @top(in %clk : !seq.clock) {\n  hw.output\n}\n\
-             hw.module @silicon_mem_1x4_r0w0(in %clk : !seq.clock) {\n  hw.output\n}\n"
+             hw.module @mem$$1x4_r0w0(in %clk : !seq.clock) {\n  hw.output\n}\n"
         );
     }
 
     #[test]
     fn each_memory_needs_a_model_and_each_model_an_extern() {
         let error = defined(LEAN, &BTreeMap::new()).unwrap_err().to_string();
-        assert_eq!(error, "no memory model for `silicon_mem_1x4_r0w0`");
-        let models = modules("hw.module @silicon_mem_2x1_r0w0() {\n}\n").unwrap();
-        let mlir = "hw.module.extern @silicon_mem_1x4_r0w0()\n";
+        assert_eq!(error, "no memory model for `mem$$1x4_r0w0`");
+        let models = modules("hw.module @mem$$2x1_r0w0() {\n}\n").unwrap();
+        let mlir = "hw.module.extern @mem$$1x4_r0w0()\n";
         let error = defined(mlir, &models).unwrap_err().to_string();
-        assert_eq!(error, "no memory model for `silicon_mem_1x4_r0w0`");
-        let mlir =
-            "hw.module.extern @silicon_mem_1x4_r0w0()\nhw.module.extern @silicon_mem_1x4_r0w0()\n";
-        let models = modules(
-            "hw.module @silicon_mem_1x4_r0w0() {\n}\nhw.module @silicon_mem_2x1_r0w0() {\n}\n",
-        )
-        .unwrap();
+        assert_eq!(error, "no memory model for `mem$$1x4_r0w0`");
+        let mlir = "hw.module.extern @mem$$1x4_r0w0()\nhw.module.extern @mem$$1x4_r0w0()\n";
+        let models =
+            modules("hw.module @mem$$1x4_r0w0() {\n}\nhw.module @mem$$2x1_r0w0() {\n}\n").unwrap();
         let error = defined(mlir, &models).unwrap_err().to_string();
         assert_eq!(
             error,
-            "the memory model `silicon_mem_2x1_r0w0` has no extern with its name"
+            "the memory model `mem$$2x1_r0w0` has no extern with its name"
         );
     }
 
@@ -589,9 +579,9 @@ hw.module.extern @silicon_mem_1x4_r0w0(in %clk : !seq.clock)
         assert_eq!(
             verilog_stand_ins(LEAN).unwrap(),
             "module blk(\n  input c,\n  input [3:0] a,\n  output [1:0] y\n);\n  \
-             reg [3:0] silicon_reg_3blk_a;\n  reg [1:0] silicon_reg_3blk_y;\n  \
-             always_ff @(posedge c) begin\n    silicon_reg_3blk_a <= a;\n    silicon_reg_3blk_y <= '0;\n  end\n  \
-             assign y = silicon_reg_3blk_y;\nendmodule\n"
+             reg [3:0] reg$$blk$$a;\n  reg [1:0] reg$$blk$$y;\n  \
+             always_ff @(posedge c) begin\n    reg$$blk$$a <= a;\n    reg$$blk$$y <= '0;\n  end\n  \
+             assign y = reg$$blk$$y;\nendmodule\n"
         );
     }
 
@@ -617,13 +607,13 @@ hw.module.extern @silicon_mem_1x4_r0w0(in %clk : !seq.clock)
     #[test]
     fn a_register_that_is_its_own_next_value_is_found() {
         assert!(has_self_register(
-            "  %silicon_reg_r = seq.compreg %silicon_reg_r, %clk : i4\n"
+            "  %reg$$r = seq.compreg %reg$$r, %clk : i4\n"
         ));
         assert!(has_self_register(
-            "  %silicon_reg_s = seq.compreg %silicon_reg_s, %clk reset %rst, %c : i4\n"
+            "  %reg$$s = seq.compreg %reg$$s, %clk reset %rst, %c : i4\n"
         ));
         assert!(!has_self_register(
-            "  %silicon_reg_r = seq.compreg %silicon_reg_rx, %clk : i4\n"
+            "  %reg$$r = seq.compreg %reg$$rx, %clk : i4\n"
         ));
     }
 }

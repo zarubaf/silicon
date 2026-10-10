@@ -328,7 +328,7 @@ mod tests {
         let good = reference(UNUSED);
         let bad = good.replace(
             "hw.output %a : i4",
-            "%silicon_zero = hw.constant 0 : i4\n  hw.output %silicon_zero : i4",
+            "%0 = hw.constant 0 : i4\n  hw.output %0 : i4",
         );
         assert_seeded(UNUSED, &good, &bad);
     }
@@ -374,14 +374,14 @@ mod tests {
 
     #[test]
     fn a_model_without_a_write_port_is_skipped_once() {
-        let model = "hw.module @silicon_mem_1x4_r1w0(in %clk : !seq.clock) {\n  \
-                     %silicon_reg_mem = seq.compreg %silicon_reg_mem, %clk : !hw.array<2xi4>\n  \
+        let model = "hw.module @mem$$1x4_r1w0(in %clk : !seq.clock) {\n  \
+                     %reg$$mem = seq.compreg %reg$$mem, %clk : !hw.array<2xi4>\n  \
                      hw.output\n}\n";
         let models = mlir::modules(model).unwrap();
         let mut seen = BTreeSet::new();
         assert_eq!(
             model_checks(&models, "", &mut seen),
-            [("model silicon_mem_1x4_r1w0".to_owned(), SELF_REGISTER)]
+            [("model mem$$1x4_r1w0".to_owned(), SELF_REGISTER)]
         );
         assert_eq!(model_checks(&models, "", &mut seen), []);
     }

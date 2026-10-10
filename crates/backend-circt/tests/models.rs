@@ -72,7 +72,7 @@ fn each_model_parses_and_has_the_extern_ports() -> Test {
         );
         let array = format!("!hw.array<{}xi{}>", words_of(config), config.width);
         assert!(
-            model.contains("%silicon_reg_mem = seq.compreg ") && model.contains(&array),
+            model.contains("%reg$$mem = seq.compreg ") && model.contains(&array),
             "{model}"
         );
         assert!(!model.contains("comb.icmp"), "{model}");
@@ -109,10 +109,7 @@ fn reference(config: &MemConfig, order: &[usize]) -> Result<String, Box<dyn Erro
     let mut outputs = Vec::new();
     for i in 0..d {
         writeln!(body, "  %i{i} = hw.constant {i} : i{a}")?;
-        writeln!(
-            body,
-            "  %m{i} = hw.array_get %silicon_reg_mem[%i{i}] : {ty}, i{a}"
-        )?;
+        writeln!(body, "  %m{i} = hw.array_get %reg$$mem[%i{i}] : {ty}, i{a}")?;
     }
     for n in 0..config.reads {
         let mut acc = "%zero".to_owned();
@@ -153,7 +150,7 @@ fn reference(config: &MemConfig, order: &[usize]) -> Result<String, Box<dyn Erro
         "  %next = hw.array_create {} : i{w}",
         words.join(", ")
     )?;
-    writeln!(body, "  %silicon_reg_mem = seq.compreg %next, %clk : {ty}")?;
+    writeln!(body, "  %reg$$mem = seq.compreg %next, %clk : {ty}")?;
     let types = vec![format!("i{w}"); outputs.len()];
     if outputs.is_empty() {
         body.push_str("  hw.output\n}\n");
@@ -199,8 +196,8 @@ fn the_higher_write_port_wins() -> Test {
 #[test]
 fn the_verilog_of_a_model_has_the_array_register() -> Test {
     let sv = verilog(&memory_model(&config(12, 8, 2, 1)))?;
-    assert!(sv.contains("module silicon_mem_12x8_r2w1("), "{sv}");
-    assert!(sv.contains("reg [15:0][7:0] silicon_reg_mem;"), "{sv}");
+    assert!(sv.contains("module mem$$12x8_r2w1("), "{sv}");
+    assert!(sv.contains("reg [15:0][7:0] reg$$mem;"), "{sv}");
     assert!(!sv.contains("RANDOM"), "{sv}");
     Ok(())
 }
