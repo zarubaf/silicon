@@ -7,7 +7,7 @@ The final module keeps both names.
 namespace Silicon.Core.LowerProof
 
 def ResultName (dest : Option String) (fresh : Prop) (names : List String) : Prop :=
-  (∃ i : Nat, names = [s!"silicon_t{i}"]) ∨ ∃ x, dest = some x ∧ names = [x] ∧ fresh
+  (∃ i : Nat, names = [(toString i)]) ∨ ∃ x, dest = some x ∧ names = [x] ∧ fresh
 
 def NewNames (dest : Option String) (fresh : Prop) (s t : Lower.State) : Prop :=
   ∃ tail, t.body.toList = s.body.toList ++ tail ∧
@@ -108,7 +108,7 @@ theorem expr_names (registers : List String) (e : Typed.Expr ctx ty) (dest : Opt
       exact (base.trans (newNames_temp _ rfl _ True)).trans (newNames_emit dest _ rfl _ _ short)
 
 def StmtResult (stmt : Typed.Stmt ctx ports) (names : List String) : Prop :=
-  (∃ i : Nat, names = [s!"silicon_t{i}"]) ∨
+  (∃ i : Nat, names = [(toString i)]) ∨
     match stmt with
     | .let_ _ x _ e | .assign _ x _ _ e => names = [x] ∧ NotAliased e
     | _ => False

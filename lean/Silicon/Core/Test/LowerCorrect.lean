@@ -288,9 +288,8 @@ theorem externs_of_check (raw : Core.Design) (t : Typed.Design) (h : check raw =
   cases he
   rfl
 
-theorem reg_name_inj {x y : String} (h : s!"silicon_reg_{x}" = s!"silicon_reg_{y}") : x = y := by
-  have same : toString x = toString y := by simpa using h
-  exact same
+theorem reg_name_inj {x y : String} (h : regName x = regName y) : x = y :=
+  regName_injective h
 
 theorem nodup_inj {α β : Type} {f : α → β} :
     ∀ {l : List α}, (l.map f).Nodup → ∀ {x y}, x ∈ l → y ∈ l → f x = f y → x = y
@@ -312,12 +311,12 @@ noncomputable def witnessState (d : CertifiedDesign) (env : Env d.design)
     (s : State d env m hm) : Mlir.ModuleState := by
   classical
   exact ⟨fun path n =>
-    if h : ∃ x, n = s!"silicon_reg_{x}" ∧
+    if h : ∃ x, n = (regName x) ∧
         ∃ w v, namedState d env ne m hm s (path ++ [x]) = some (.register w v) then
       match namedState d env ne m hm s (path ++ [h.choose]) with
       | some (.register w v) => some (.bits w v)
       | _ => none
-    else if n = "silicon_reg_mem" then
+    else if n = "reg$$mem" then
       match namedState d env ne m hm s path with
       | some (.memory w depth memory) =>
         some (.array _ _ (extendMemory ⟨depth, w, 0, 0⟩ memory (fun _ => 0)))
@@ -331,16 +330,16 @@ theorem witness_corresponds (d : CertifiedDesign) (env : Env d.design)
   intro path name cell found
   cases cell with
   | register w v =>
-    have ex : ∃ x, s!"silicon_reg_{name}" = s!"silicon_reg_{x}" ∧
+    have ex : ∃ x, (regName name) = (regName x) ∧
         ∃ w v, namedState d env ne m hm s (path ++ [x]) = some (.register w v) :=
       ⟨name, rfl, w, v, found⟩
-    show (witnessState d env ne m hm s).cells path s!"silicon_reg_{name}" = _
+    show (witnessState d env ne m hm s).cells path (regName name) = _
     simp only [witnessState, dite_eq_left ex]
     have same : ex.choose = name := (reg_name_inj ex.choose_spec.1).symm
     rw [same, found]
   | memory w depth memory =>
     refine ⟨extendMemory ⟨depth, w, 0, 0⟩ memory (fun _ => 0), ?_, extendMemory_agrees _ _ _⟩
-    have nex : ¬ ∃ x, "silicon_reg_mem" = s!"silicon_reg_{x}" ∧
+    have nex : ¬ ∃ x, "reg$$mem" = (regName x) ∧
         ∃ w v, namedState d env ne m hm s ((path ++ [name]) ++ [x]) = some (.register w v) := by
       rintro ⟨x, _, w', v', hx⟩
       rw [namedState_extend d env ne m hm s (path ++ [name]) _ x [] found] at hx

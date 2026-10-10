@@ -118,17 +118,17 @@ theorem emits_emit (words : ModelMemories ctx) (dest : Option String)
   intro s
   cases dest with
   | none =>
-    refine ⟨[(s!"silicon_t{s.nextTemp}", value)], ?_, ?_⟩
+    refine ⟨[(toString s.nextTemp, value)], ?_, ?_⟩
     · intro name
       change (_ : Nat) + (allocatedNames s).count name =
         (allocatedNames { s with
           nextTemp := s.nextTemp + 1
-          body := s.body.push ([s!"silicon_t{s.nextTemp}"], op) }).count name
+          body := s.body.push ([(toString s.nextTemp)], op) }).count name
       simp [allocatedNames, List.flatMap_append, List.count_append, List.count_cons, Nat.add_comm,
         Nat.add_assoc]
     intro env agree hp
     have hv := agree _ (List.mem_singleton_self _)
-    refine ⟨⟨⟨[([s!"silicon_t{s.nextTemp}"], op)], ?_, ?_⟩, ?_⟩, hv⟩
+    refine ⟨⟨⟨[([(toString s.nextTemp)], op)], ?_, ?_⟩, ?_⟩, hv⟩
     · change (s.body.push _).toList = _
       rw [Array.toList_push]
     · intro names other h

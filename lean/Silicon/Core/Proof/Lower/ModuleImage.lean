@@ -145,7 +145,7 @@ theorem input_not_allocated (p : Port) (hp : p ∈ m.ports) (input : p.dir = .in
 theorem register_not_allocated (i : Nat) (p : Pos) (n : String) (w : Nat) (clk : String)
     (target) (reset) (ni : Nat) (np : Pos) (next : Typed.Expr m.ctx (.bits w))
     (member : Typed.Equation.reg i p n w clk target reset ni np next ∈ m.body) :
-    s!"silicon_reg_{n}" ∉ allocatedNames (finalState m) := by
+    (regName n) ∉ allocatedNames (finalState m) := by
   intro alloc
   have fresh := statement_names_fresh raw t h m hm
   have stmt := typed_erase_member m (Typed.Stmt.reg p n w clk reset) _ member

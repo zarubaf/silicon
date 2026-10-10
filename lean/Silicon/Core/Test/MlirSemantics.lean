@@ -56,7 +56,7 @@ private def counter : Mlir.Module :=
   (counterDesign.findModule "counter").getD ⟨"missing", [], [], []⟩
 
 #guard counter.name == "counter"
-#guard counter.outputs == ["silicon_reg_r"]
+#guard counter.outputs == ["reg$$r"]
 
 private def inputs (reset : Nat) : String → Option Mlir.Value
   | "clk" => some .clock
@@ -65,24 +65,24 @@ private def inputs (reset : Nat) : String → Option Mlir.Value
   | _ => none
 
 private def state : ModuleState := ⟨fun _ name =>
-  if name == "silicon_reg_r" then some (bits 8 3) else none⟩
+  if name == "reg$$r" then some (bits 8 3) else none⟩
 
 private def values (reset : Nat) : Valuation := fun _ name =>
   match name with
-  | "silicon_reg_r" => some (bits 8 3)
-  | "silicon_t0" => some (bits 8 0)
-  | "silicon_t1" => some (bits 8 1)
-  | "inc" | "silicon_t2" => some (bits 8 4)
+  | "reg$$r" => some (bits 8 3)
+  | "0" => some (bits 8 0)
+  | "1" => some (bits 8 1)
+  | "inc" | "2" => some (bits 8 4)
   | _ => inputs reset name
 
 private def counterBody : Mlir.Module :=
   ⟨"counter", [⟨.input, "clk", .clock⟩, ⟨.input, "rst", .int 1⟩,
     ⟨.input, "en", .int 1⟩, ⟨.output, "q", .int 8⟩],
-    [(["silicon_t0"], .constant 8 0), (["silicon_t1"], .constant 8 1),
-     (["inc"], .comb .add "silicon_reg_r" "silicon_t1" 8),
-     (["silicon_t2"], .mux "en" "inc" "silicon_reg_r" (.int 8)),
-     (["silicon_reg_r"], .compreg "silicon_t2" "clk"
-       (some ("rst", "silicon_t0")) (.int 8))], ["silicon_reg_r"]⟩
+    [(["0"], .constant 8 0), (["1"], .constant 8 1),
+     (["inc"], .comb .add "reg$$r" "1" 8),
+     (["2"], .mux "en" "inc" "reg$$r" (.int 8)),
+     (["reg$$r"], .compreg "2" "clk"
+       (some ("rst", "0")) (.int 8))], ["reg$$r"]⟩
 
 #guard counter = counterBody
 
@@ -107,15 +107,15 @@ example : IsSolution counterDesign counterBody state (inputs 0) (values 0 []) :=
 example : IsSolution counterDesign counterBody state (inputs 1) (values 1 []) := by
   exact ⟨values 1, rfl, counterSolution 1⟩
 
-#guard (nextHierarchyState counterDesign counter (values 0)).regs "silicon_reg_r" =
+#guard (nextHierarchyState counterDesign counter (values 0)).regs "reg$$r" =
   some (bits 8 4)
-#guard (nextHierarchyState counterDesign counter (values 1)).regs "silicon_reg_r" =
+#guard (nextHierarchyState counterDesign counter (values 1)).regs "reg$$r" =
   some (bits 8 0)
 
-#guard (values 0 [] "silicon_reg_r") = some (bits 8 3)
-example : (nextState counterDesign counterBody state (values 0 [])).regs "silicon_reg_r" =
+#guard (values 0 [] "reg$$r") = some (bits 8 3)
+example : (nextState counterDesign counterBody state (values 0 [])).regs "reg$$r" =
   some (bits 8 4) := by rfl
-example : (nextState counterDesign counterBody state (values 1 [])).regs "silicon_reg_r" =
+example : (nextState counterDesign counterBody state (values 1 [])).regs "reg$$r" =
   some (bits 8 0) := by rfl
 
 #guard (Op.constant 3 8).eval (fun _ => none) = none
@@ -152,8 +152,8 @@ example : ¬ (invalid [(["x"], .comb .add "missing" "missing" 8)]).WellFormed �
   (Mlir.Design.withModels [c] ⟨[.extern c.moduleName c.ports]⟩).items = [.module (memModel c)])
 #guard (Mlir.Design.withModels [⟨12, 8, 1, 2⟩] ⟨[.extern "blackbox" []]⟩).items =
   [.extern "blackbox" []]
-#guard (Mlir.Design.withModels [⟨12, 8, 1, 2⟩] ⟨[.extern "silicon_mem_12x8_r1w2" []]⟩).items =
-  [.extern "silicon_mem_12x8_r1w2" []]
+#guard (Mlir.Design.withModels [⟨12, 8, 1, 2⟩] ⟨[.extern "mem$$12x8_r1w2" []]⟩).items =
+  [.extern "mem$$12x8_r1w2" []]
 
 private def child : Mlir.Module :=
   ⟨"child", [⟨.input, "clk", .clock⟩, ⟨.input, "x", .int 8⟩,

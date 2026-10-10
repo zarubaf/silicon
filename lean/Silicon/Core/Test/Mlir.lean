@@ -12,21 +12,21 @@ def counter : Design := ⟨[.module {
   name := "counter"
   ports := [⟨.input, "clk", .clock⟩, ⟨.input, "rst", .int 1⟩,
     ⟨.input, "en", .int 1⟩, ⟨.output, "q", .int 8⟩]
-  body := [(["silicon_t0"], .constant 8 0), (["silicon_t1"], .constant 8 1),
-    (["silicon_t2"], .comb .add "silicon_reg_r" "silicon_t1" 8),
-    (["silicon_t3"], .mux "en" "silicon_t2" "silicon_reg_r" (.int 8)),
-    (["silicon_reg_r"], .compreg "silicon_t3" "clk" (some ("rst", "silicon_t0")) (.int 8))]
-  outputs := ["silicon_reg_r"]
+  body := [(["0"], .constant 8 0), (["1"], .constant 8 1),
+    (["2"], .comb .add "reg$$r" "1" 8),
+    (["3"], .mux "en" "2" "reg$$r" (.int 8)),
+    (["reg$$r"], .compreg "3" "clk" (some ("rst", "0")) (.int 8))]
+  outputs := ["reg$$r"]
 }]⟩
 
 #guard print counter ==
   "hw.module @counter(in %clk : !seq.clock, in %rst : i1, in %en : i1, out q : i8) {\n" ++
-  "  %silicon_t0 = hw.constant 0 : i8\n" ++
-  "  %silicon_t1 = hw.constant 1 : i8\n" ++
-  "  %silicon_t2 = comb.add %silicon_reg_r, %silicon_t1 : i8\n" ++
-  "  %silicon_t3 = comb.mux %en, %silicon_t2, %silicon_reg_r : i8\n" ++
-  "  %silicon_reg_r = seq.compreg %silicon_t3, %clk reset %rst, %silicon_t0 : i8\n" ++
-  "  hw.output %silicon_reg_r : i8\n}\n"
+  "  %0 = hw.constant 0 : i8\n" ++
+  "  %1 = hw.constant 1 : i8\n" ++
+  "  %2 = comb.add %reg$$r, %1 : i8\n" ++
+  "  %3 = comb.mux %en, %2, %reg$$r : i8\n" ++
+  "  %reg$$r = seq.compreg %3, %clk reset %rst, %0 : i8\n" ++
+  "  hw.output %reg$$r : i8\n}\n"
 
 #guard print ⟨[.extern "blk" [⟨.input, "c", .clock⟩, ⟨.input, "a", .int 4⟩,
     ⟨.output, "y", .int 4⟩], .module ⟨"top", [],

@@ -58,7 +58,7 @@ def emit (dest : Option String) (op : Mlir.Op) : Build String := do
     | none => do
       let n := (← get).nextTemp
       modify fun s => { s with nextTemp := n + 1 }
-      pure s!"silicon_t{n}"
+      pure (toString n)
   modify fun s => { s with body := s.body.push ([name], op) }
   return name
 
@@ -97,7 +97,7 @@ def inRange (depth : Nat) (addr : String) : Build (Option String) := do
   return some (← emit none (.icmp .ult addr bound a))
 
 def valueName (registers : List String) : Deps.Node → String
-  | .name n => if registers.contains n then s!"silicon_reg_{n}" else n
+  | .name n => if registers.contains n then regName n else n
   | .port inst p => s!"{inst}.{p}"
 
 /-! Reserve a read port before its address walk, even when the address reads memory. -/
@@ -205,7 +205,7 @@ def registerEntries (m : Typed.Module) (state : State) : List (List String × Ml
     | .reg _ _ name w clk _ _ _ _ _ => do
       let next ← state.nexts.lookup name
       let reset := (state.resets.lookup name).getD none
-      some ([s!"silicon_reg_{name}"], Mlir.Op.compreg next clk reset (.int w))
+      some ([regName name], Mlir.Op.compreg next clk reset (.int w))
     | _ => none
 
 def registers (m : Typed.Module) : List String :=

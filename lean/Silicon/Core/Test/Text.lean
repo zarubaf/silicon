@@ -123,10 +123,10 @@ def externSource : String := "(design m (extern blackbox " ++
     | [.module m] => m.pos.line == 3 && m.pos.col == 1
     | _ => false
   | .error _ => false
-#guard (["_", "A", "z", "_0$", "Az09_$", "add0", "Add"].all fun n =>
+#guard (["_", "A", "z", "_0$1", "Az09_$x", "a$b$0k", "silicon_reg_r", "add0", "Add"].all fun n =>
   (parse ("(design " ++ n ++ " (module " ++ n ++ "))")).isOk)
-#guard readsExpr "U_0.q$" (.port zeroPos "U_0" "q$")
-#guard (["0a", "$a", "a.b", "é", "add", "sync", "eq"].all fun n =>
+#guard readsExpr "U_0.q$1" (.port zeroPos "U_0" "q$1")
+#guard (["0a", "$a", "a$$b", "a$", "a$$", "a.b", "é", "add", "sync", "eq"].all fun n =>
   match parse ("(design " ++ n ++ ")") with
   | .error e => e.code == .E001 && e.pos == ⟨1, 9, []⟩
   | .ok _ => false)

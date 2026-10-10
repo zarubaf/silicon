@@ -121,7 +121,7 @@ theorem register_has (i : Nat) (p : Pos) (n : String) (w : Nat) (clk : String)
     (target : Typed.valueTy m.ctx n = some (.bits w)) (reset : Option (Typed.Reset m.ctx w))
     (ni : Nat) (np : Pos) (next : Typed.Expr m.ctx (.bits w))
     (he : .reg i p n w clk target reset ni np next ∈ m.body) :
-    Has m s!"silicon_reg_{n}" (.int w) := by
+    Has m (regName n) (.int w) := by
   apply has_of_mem raw t h m hm _ _ (rename_invalid raw t h m hm _ (register_invalid n))
   have hs : Typed.Stmt.next np n w target next ∈ Lower.statements m :=
     (statement_of_eq m _).mpr ⟨_, he, (ni, .next np n w target next), by

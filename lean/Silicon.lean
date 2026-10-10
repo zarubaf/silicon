@@ -1,4 +1,5 @@
 import Silicon.Core.Syntax
+import Silicon.Core.Names
 import Silicon.Core.Text
 import Silicon.Core.Test.Text
 import Silicon.Core.GraphReach

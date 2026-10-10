@@ -19,7 +19,7 @@ inductive Name where
   deriving DecidableEq
 
 def Name.text : Name → String
-  | .clk => "clk" | .reg => "silicon_reg_mem"
+  | .clk => "clk" | .reg => "reg$$mem"
   | .ra i => s!"r{i}_addr" | .rd i => s!"r{i}_data"
   | .wa i => s!"w{i}_addr" | .wd i => s!"w{i}_data"
   | .we i => s!"w{i}_en" | .ws i => s!"w{i}_set" | .wn i => s!"w{i}_next"
@@ -115,7 +115,7 @@ private theorem lookup_def (c : MemConfig) (k : Name) (hk : k ∈ defKeys c) :
 private def before (w : Nat) : Name := if w = 0 then .reg else .wn (w - 1)
 
 private theorem before_text (w : Nat) :
-    (before w).text = if w == 0 then "silicon_reg_mem" else s!"w{w - 1}_next" := by
+    (before w).text = if w == 0 then "reg$$mem" else s!"w{w - 1}_next" := by
   by_cases h : w = 0 <;> simp [before, Name.text, h]
 
 private theorem before_type (c : MemConfig) (w : Nat) :
@@ -345,7 +345,7 @@ private theorem inputs_value (c : MemConfig) (words) (input : Inputs c)
   rcases hc with rfl | ⟨r, rfl⟩ | ⟨w, rfl | rfl | rfl⟩ <;> rfl
 
 private theorem body_solution (c : MemConfig) (words) (input : Inputs c) (σ : ModuleState)
-    (hs : σ.regs "silicon_reg_mem" = some (.array _ _ words)) :
+    (hs : σ.regs "reg$$mem" = some (.array _ _ words)) :
     ∀ entry ∈ (memModel c).body, match entry with
     | (_, .instance ..) => False
     | (names, .compreg _ _ _ ty) => ∃ name v,
@@ -372,7 +372,7 @@ private theorem body_solution (c : MemConfig) (words) (input : Inputs c) (σ : M
     exact (eval_mux _ _ _ _ _ _ _ _ (vk (.we w) (by simp [hw]))
       (vk (.ws w) (by simp [hw])) (vb w (by omega)) rfl rfl).trans
         (congrArg some (memory_mux _ _ _ _))
-  · exact ⟨"silicon_reg_mem", .array _ _ words, rfl, hs, rfl, vk .reg (by simp)⟩
+  · exact ⟨"reg$$mem", .array _ _ words, rfl, hs, rfl, vk .reg (by simp)⟩
 
 private theorem no_instance (c : MemConfig) (name : String) :
     (memModel c).findInstance name = none := by
@@ -385,7 +385,7 @@ private theorem at_path (c : MemConfig) (d : Mlir.Design) (path : Mlir.Path) :
   cases path <;> simp [Module.atPath, no_instance]
 
 theorem solution (c : MemConfig) (words) (input : Inputs c) (σ : ModuleState)
-    (hs : σ.regs "silicon_reg_mem" = some (.array _ _ words)) :
+    (hs : σ.regs "reg$$mem" = some (.array _ _ words)) :
     IsSolution ⟨[.module (memModel c)]⟩ (memModel c) σ (inputEnv c input)
       (values c words input) := by
   refine ⟨fun _ => values c words input, rfl, ⟨?_, ?_⟩⟩
@@ -558,7 +558,7 @@ theorem next_value (c : MemConfig)
 /-! The lemmas below hold in any design, because the model has no instance. -/
 
 theorem local_values (c : MemConfig) (words) (input : Inputs c) (state : Env)
-    (hs : state "silicon_reg_mem" = some (.array _ _ words)) (d : Mlir.Design)
+    (hs : state "reg$$mem" = some (.array _ _ words)) (d : Mlir.Design)
     (children : String → Env) :
     LocalSolution d (memModel c) state (inputEnv c input) (values c words input) children := by
   refine ⟨inputs_value c words input, ?_, (module_wellFormed c).2.2.2.2.1, ?_⟩
@@ -586,8 +586,8 @@ theorem atPath_cons (c : MemConfig) (d : Mlir.Design) (name : String) (path : Ml
 theorem local_next (c : MemConfig)
     (words : Fin (2 ^ Typed.addressWidth c.depth) → BitVec c.width) (input : Inputs c)
     (h : LocalSolution d (memModel c) state (inputEnv c input) vals children)
-    (hs : state "silicon_reg_mem" = some (.array _ _ words)) :
-    ((memModel c).body.find? (fun entry => entry.1 == ["silicon_reg_mem"]) >>=
+    (hs : state "reg$$mem" = some (.array _ _ words)) :
+    ((memModel c).body.find? (fun entry => entry.1 == ["reg$$mem"]) >>=
       fun entry => entry.2.nextValue vals) =
       some (.array _ _ (stages input words c.writes)) := by
   have hc := input_at c input words h .clk (by simp) (input_port c .clk trivial) rfl
@@ -715,7 +715,7 @@ theorem mem_model_correct (c : MemConfig)
     (memory : Fin c.depth → BitVec c.width)
     (words : Fin (2 ^ Typed.addressWidth c.depth) → BitVec c.width)
     (σ : Mlir.ModuleState) (input : Inputs c)
-    (state : σ.regs "silicon_reg_mem" = some (.array _ _ words))
+    (state : σ.regs "reg$$mem" = some (.array _ _ words))
     (agree : Agrees c words memory)
     (inRange : (∀ r < c.reads, (input.readAddr r).toNat < c.depth) ∧
       (∀ w < c.writes, (input.writeAddr w).toNat < c.depth)) :
@@ -724,7 +724,7 @@ theorem mem_model_correct (c : MemConfig)
       (∀ r < c.reads, vals s!"r{r}_data" = some (.bits c.width
         (Semantics.memoryRead memory (input.readAddr r).toNat))) ∧
       ∃ nextWords, (Mlir.nextState ⟨[.module (memModel c)]⟩ (memModel c) σ vals).regs
-        "silicon_reg_mem" = some (.array _ _ nextWords) ∧
+        "reg$$mem" = some (.array _ _ nextWords) ∧
         Agrees c nextWords (input.coreNext memory) := by
   refine ⟨⟨values c words input, solution c words input σ state⟩, ?_⟩
   intro vals hv

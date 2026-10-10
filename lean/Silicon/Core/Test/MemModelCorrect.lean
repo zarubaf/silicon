@@ -9,7 +9,7 @@ open MemModelProof
 
 private def state (c : MemConfig)
     (words : Fin (2 ^ Typed.addressWidth c.depth) → BitVec c.width) : Mlir.ModuleState :=
-  ⟨fun _ name => if name = "silicon_reg_mem" then some (.array _ _ words) else none⟩
+  ⟨fun _ name => if name = "reg$$mem" then some (.array _ _ words) else none⟩
 
 private def collision : Inputs ⟨12, 8, 1, 2⟩ :=
   ⟨fun _ => 5, fun _ => 5, fun w => if w = 0 then 7 else 9, fun _ => 1⟩
@@ -23,7 +23,7 @@ example (tail : Nat → BitVec 8) :
       (inputEnv c collision) vals ∧ vals "r0_data" = some (.bits 8 3) ∧
       ∃ nextWords : Fin (2 ^ Typed.addressWidth c.depth) → BitVec 8,
         (Mlir.nextState ⟨[.module (memModel c)]⟩ (memModel c) (state c words) vals).regs
-          "silicon_reg_mem" = some (.array _ 8 nextWords) ∧ nextWords ⟨5, by decide⟩ = 9 := by
+          "reg$$mem" = some (.array _ 8 nextWords) ∧ nextWords ⟨5, by decide⟩ = 9 := by
   intro c words
   have h := mem_model_correct c (fun _ => 3) words (state c words) collision
     (by rfl) (by intro i; have hi : i.val < 12 := i.isLt; simp only [words, ite_eq_left hi])
@@ -47,7 +47,7 @@ example (freeWord : BitVec 4) :
       (inputEnv c single) vals ∧ vals "r0_data" = some (.bits 4 3) ∧
       ∃ nextWords : Fin (2 ^ Typed.addressWidth c.depth) → BitVec 4,
         (Mlir.nextState ⟨[.module (memModel c)]⟩ (memModel c) (state c words) vals).regs
-          "silicon_reg_mem" = some (.array _ 4 nextWords) ∧ nextWords ⟨0, by decide⟩ = 9 := by
+          "reg$$mem" = some (.array _ 4 nextWords) ∧ nextWords ⟨0, by decide⟩ = 9 := by
   intro c words
   have h := mem_model_correct c (fun _ => 3) words (state c words) single
     (by rfl) (by
@@ -74,7 +74,7 @@ example :
       (inputEnv c full) vals ∧ vals "r0_data" = some (.bits 8 3) ∧
       ∃ nextWords : Fin (2 ^ Typed.addressWidth c.depth) → BitVec 8,
         (Mlir.nextState ⟨[.module (memModel c)]⟩ (memModel c) (state c words) vals).regs
-          "silicon_reg_mem" = some (.array _ 8 nextWords) ∧ nextWords ⟨15, by decide⟩ = 9 := by
+          "reg$$mem" = some (.array _ 8 nextWords) ∧ nextWords ⟨15, by decide⟩ = 9 := by
   intro c words
   have h := mem_model_correct c (fun _ => 3) words (state c words) full
     (by rfl) (by intro i; rfl)

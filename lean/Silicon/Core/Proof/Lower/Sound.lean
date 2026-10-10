@@ -61,7 +61,7 @@ theorem Meaning.step_emit (dest : Option String) (op : Mlir.Op) (value : Mlir.Va
     M.Step (Lower.emit dest op) p (fun name => M.env name = some value) := by
   intro s
   refine ⟨grows_emit dest op s, fun grows hp => ?_⟩
-  have member : ([dest.getD s!"silicon_t{s.nextTemp}"], op) ∈ M.final.body.toList := by
+  have member : ([dest.getD (toString s.nextTemp)], op) ∈ M.final.body.toList := by
     apply grows.body.subset
     rw [emit_body]
     simp

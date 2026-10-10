@@ -1,3 +1,4 @@
+import Silicon.Core.Names
 import Silicon.Core.Mlir.Syntax
 import Silicon.Core.Typed
 
@@ -16,7 +17,7 @@ structure MemConfig where
   deriving DecidableEq
 
 def MemConfig.moduleName (c : MemConfig) : String :=
-  s!"silicon_mem_{c.depth}x{c.width}_r{c.reads}w{c.writes}"
+  backendName "mem" [s!"{c.depth}x{c.width}_r{c.reads}w{c.writes}"]
 
 def MemConfig.ports (c : MemConfig) : List Mlir.Port :=
   let addr := Mlir.Ty.int (Typed.addressWidth c.depth)
@@ -33,8 +34,8 @@ def memModel (c : MemConfig) : Mlir.Module :=
   let a := Typed.addressWidth c.depth
   let n := 2 ^ a
   let reads := (List.range c.reads).map fun r =>
-    ([s!"r{r}_data"], Mlir.Op.arrayGet "silicon_reg_mem" s!"r{r}_addr" n c.width a)
-  let stateBefore := fun w => if w == 0 then "silicon_reg_mem" else s!"w{w - 1}_next"
+    ([s!"r{r}_data"], Mlir.Op.arrayGet "reg$$mem" s!"r{r}_addr" n c.width a)
+  let stateBefore := fun w => if w == 0 then "reg$$mem" else s!"w{w - 1}_next"
   let writes := (List.range c.writes).flatMap fun w =>
     let state := stateBefore w
     [([s!"w{w}_set"], Mlir.Op.arrayInject state s!"w{w}_addr" s!"w{w}_data" n c.width a),
@@ -42,7 +43,7 @@ def memModel (c : MemConfig) : Mlir.Module :=
   { name := c.moduleName
     ports := c.ports
     body := reads ++ writes ++
-      [(["silicon_reg_mem"], .compreg (stateBefore c.writes) "clk" none (.array n c.width))]
+      [(["reg$$mem"], .compreg (stateBefore c.writes) "clk" none (.array n c.width))]
     outputs := (List.range c.reads).map fun r => s!"r{r}_data" }
 
 /-! Only a listed memory name with its exact signature identifies a replaceable extern. -/

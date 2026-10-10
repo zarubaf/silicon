@@ -94,12 +94,8 @@ theorem readName_invalid (r : Lower.ReadPort) : Rules.invalidName (readName r) =
   · simpa using legal
 
 theorem register_invalid (name : String) :
-    Rules.invalidName s!"silicon_reg_{name}" = true := by
-  by_cases legal : Rules.invalidName s!"silicon_reg_{name}" = false
-  · exact absurd (by
-      change "silicon_" ++ "reg_" ++ name = "silicon_" ++ ("reg_" ++ name)
-      simp only [String.append_assoc]) (source_ne_internal _ ("reg_" ++ name) legal)
-  · simpa using legal
+    Rules.invalidName (regName name) = true := by
+  simp [Rules.invalidName, regName_not_core]
 
 theorem stmt_erase_member (m : Typed.Module) (stmt : Typed.Stmt m.ctx m.interfaces)
     (hs : stmt ∈ Lower.statements m) : stmt.erase ∈ m.erase.body := by

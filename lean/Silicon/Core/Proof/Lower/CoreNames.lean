@@ -56,10 +56,8 @@ theorem valueName_injective (a b : Deps.Node) (ka kb : Typed.Kind)
       simp only [Lower.valueName] at same
       split at same <;> split at same
       · rw [register_name_injective same]
-      · exact absurd same.symm (source_ne_internal y ("reg_" ++ x) lb ∘ fun e => by
-          rw [e]; change ("silicon_" ++ "reg_") ++ x = _; simp only [String.append_assoc])
-      · exact absurd same (source_ne_internal x ("reg_" ++ y) la ∘ fun e => by
-          rw [e]; change ("silicon_" ++ "reg_") ++ y = _; simp only [String.append_assoc])
+      · exact absurd same.symm (source_ne_register y x lb)
+      · exact absurd same (source_ne_register x y la)
       · rw [same]
     | port i q =>
       simp only at la lb
