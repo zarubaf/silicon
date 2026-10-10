@@ -44,25 +44,27 @@ Each language has one tree. A suite is one directory of a tree. The directory se
 | `tests/source/corpus/` | `validate`, then LEC and the differential tests                 | `silicon-check`, `circt-lec`, the interpreters | `TOP`                                  |
 | `tests/source/llm/`    | `elab`, and the quality loop of the front-end spec, section 6.3 | The expected first error, and a fixed version  | `TOP`, `expected-error`                |
 
+The `corpus` suites keep their smoke checks: `silicon check` accepts each file, `circt-opt` parses the output of `silicon lower`, and `silicon verilog` succeeds with and without `--models`.
+
 `commit-check` treats each file of a suite as a test expectation. See [the commits guide](commits.md).
 
 ## Directives
 
 A directive is a comment line that gives the expectation of a test file. Both languages use the same names. Only the comment marker differs: `;` in a `.sil` file, `//` in a `.si` file.
 
-| Directive                                           | Meaning                                                                                   |
-| --------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `expected-error CODE @+N`                           | The first error has the code `CODE` at N lines below the directive                        |
-| `STEP in=(...) out=(...)`                           | One clock cycle: the inputs and the expected outputs                                      |
-| `CHECK:`, `CHECK-DAG:`, `CHECK-NOT:`, `CHECK-NEXT:` | LLVM `FileCheck` reads these lines and checks the output                                  |
-| `TOP M(args)`                                       | The top selection of a source file                                                        |
-| `FUEL N`                                            | The file elaborates with the fuel N. With the fuel N - 1, it fails with `S015`.           |
-| `DEPTH N`                                           | The file elaborates with the nesting depth N. With the depth N - 1, it fails with `S015`. |
-| `SYNTAX-DEPTH N`                                    | The file parses with the syntax depth N. With the depth N - 1, it fails.                  |
+| Directive                                                                             | Meaning                                                                                   |
+| ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `expected-error CODE @+N`                                                             | The first error has the code `CODE` at N lines below the directive                        |
+| `STEP in=(...) out=(...)`                                                             | One clock cycle: the inputs and the expected outputs                                      |
+| All `FileCheck` directives, for example `CHECK:`, `CHECK-NEXT:`, and `CHECK-COUNT-2:` | LLVM `FileCheck` reads these lines and checks the output                                  |
+| `TOP M(args)`                                                                         | The top selection of a source file                                                        |
+| `FUEL N`                                                                              | The file elaborates with the fuel N. With the fuel N - 1, it fails with `S015`.           |
+| `DEPTH N`                                                                             | The file elaborates with the nesting depth N. With the depth N - 1, it fails with `S015`. |
+| `SYNTAX-DEPTH N`                                                                      | The file parses with the syntax depth N. With the depth N - 1, it fails.                  |
 
 Examples: `; expected-error E004 @+1`, `// expected-error S010 @+1`, and `; STEP in=(en 1 rst 0) out=(q 3)`.
 
-- `@+1` means the next line. A `check` file without `expected-error` must pass. A `run` file can also have `expected-error`, for an error that only `run` reports.
+- `@+1` means the next line. A `check` file without `expected-error` must pass. A `run` file can also have `expected-error`, for an error that only `run` reports. An `llm` file has `expected-error` for its first error.
 - The harness uses the real LLVM `FileCheck` from Nix.
 
 ## Measures
@@ -79,12 +81,22 @@ Three measures find a missing test. Each has an inventory of known gaps in `test
 
 `cargo xtask coverage` requires these tests:
 
-- **Error code.** At least 2 files in the suite whose command reports the code: a minimal case and a case in another context. This suite is `check`, except for `E014`, which only `run` reports. The codes come from the code tables of the two specs, as rule `arch-codes` reads them.
-- **Construct.** At least 1 file in each behavior suite. These are `run` and `lower` for the core IR, and `run` and `elab` for the source. The constructs are the AST kinds of `core-ir` and of `parse`.
+- **Error code.** At least 2 different files in the suite whose command reports the code. This suite is `check`, except for `E014`, which only `run` reports. The codes come from the code tables of the two specs, as rule `arch-codes` reads them. The intent is a minimal case and a case in another context. The review checks the intent.
+- **Construct.** At least 1 file in each behavior suite. These are `run` and `lower` for the core IR, and `run` and `elab` for the source.
 - **Command.** At least 1 suite or CLI test for each command of `silicon` and `silicon-check`.
 - **Budget.** For each budget of the front-end spec, section 5.4, a file at the limit that passes, and one unit above that fails.
 
-`testkit` reads each file with the real parser and walks the AST. An `expected-error` line covers its code. A file has no hand-written coverage tags. A check that prints SKIP covers nothing. A failure prints the item and the suite that has no test for it.
+A construct ID is `LANG:Enum::Variant`, for example `core:BinOp::Shrs` or `source:Item::Fn`. The enums are `Item`, `Stmt`, `Expr`, `UnOp`, `BinOp`, and `Pred` of `core-ir`, and `Item`, `Stmt`, `Expr`, `TypeExpr`, `UnOp`, and `BinOp` of `parse`. Each operator variant is a separate construct.
+
+`testkit` writes a record for each check that ran and passed. `cargo xtask coverage` runs the tests and reads the records:
+
+- A check that failed or printed SKIP covers nothing.
+- A file covers constructs only when it passes and has no `expected-error`. `testkit` reads it with the real parser and walks the AST. A `run` file needs at least one `STEP`.
+- An `expected-error` line covers its code, also in a file that does not parse. A `run` file that expects `E014` thus covers `E014`, but no construct.
+- A suite covers the command of its table row. A CLI test of `driver` starts its command through one `testkit` function that names the command.
+- A file has no hand-written coverage tags.
+
+A failure prints the item and the suite that has no test for it. The testing spec, section 6, gives the full rules.
 
 ### Code coverage
 
@@ -92,7 +104,8 @@ Three measures find a missing test. Each has an inventory of known gaps in `test
 - The measure is the line coverage of each crate. `xtask` is exempt.
 - CI fails when a crate goes below its floor. The target is 90 % for each compiler crate.
 - A floor can rise in any commit. A commit that lowers a floor changes nothing else.
-- The unit tests and the `proptest` tests of the crates count toward code coverage only.
+- The run is deterministic: `just coverage` sets a fixed seed and a fixed case count for `proptest`.
+- The unit tests and the `proptest` tests of the crates count toward code coverage only. A CLI test of `driver` also covers its command.
 
 ### Mutation testing
 
@@ -101,6 +114,8 @@ Three measures find a missing test. Each has an inventory of known gaps in `test
 - On each pull request, `cargo mutants --in-diff` makes mutants on the changed lines.
 - A weekly CI job makes mutants on all compiler crates.
 - A surviving mutant fails, unless the inventory lists it.
+- A pull request run checks only the entries of the mutants that it made. The weekly run checks the full inventory.
+- Each mutant has a timeout, and the pull request job has a runtime limit. A mutant that runs into its timeout does not survive.
 
 ### Lean
 
@@ -108,7 +123,13 @@ Lean has no coverage tool and no mutation tool. The shared files cover Lean, bec
 
 ## Inventories
 
-A SKIP hides a check, and a vanished check hides a bug. Thus each tool compares its results with a reviewed inventory in `tests/inventory/`. A tool fails when its results differ from its inventory: a missing line, an extra line, and a changed line all fail. A stale line also fails. Thus a fixed gap forces its line to change.
+A SKIP hides a check, and a vanished check hides a bug. Thus each tool compares its results with a reviewed inventory in `tests/inventory/`. There are three kinds of inventory:
+
+| Kind         | Files                         | Rule                                                                                                                                |
+| ------------ | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Exact result | `lec.txt`, `diff.txt`         | Each result must equal its line. A missing line, an extra line, and a changed line all fail. A fixed gap forces its line to change. |
+| Gap          | `coverage.txt`, `mutants.txt` | Each line is an accepted gap. A stale line fails: an item that has its test, or a mutant that a test now kills.                     |
+| Threshold    | `llvm-cov.txt`                | Each measured value must be at or above its floor. The tool does not compare the value for equality.                                |
 
 | File           | Tool                   | Line format                                          |
 | -------------- | ---------------------- | ---------------------------------------------------- |
@@ -123,7 +144,7 @@ The fields:
 - `FILE` is the corpus file. A model check of LEC uses `-`, because it belongs to a memory configuration, not to a file.
 - `CHECK` is the name in the output line, and it may hold spaces. `diff` uses `run`.
 - `TAG` is `#ISSUE` or an error code such as `E014`. It must equal the tag that the tool reports. `cargo xtask check` requires that `doc/trust.md` names the tag as a gap (rule `arch-skips`).
-- `ITEM` is an error code, a construct, a command, or a budget, as the failure of `cargo xtask coverage` prints it. Example: `S016 SKIP #11`. A new feature removes its exception.
+- `ITEM` is an error code, a construct ID, a command, or a budget, as the failure of `cargo xtask coverage` prints it. Example: `S016 SKIP #11`. A new feature removes its exception.
 - `CRATE` is a crate name, and `FLOOR` is its line coverage in percent. The first floors are the values of rollout step 4, rounded down.
 - `MUTANT` is the name of a mutant, as `cargo-mutants` prints it. `#ISSUE` names the issue for the missing test. `EQUIV` marks a mutant with the same behavior as the original code. The next line gives the reason in one line.
 
