@@ -46,6 +46,11 @@ def intSize (n : Int) : Nat := n.natAbs.log2 / 64 + 1
 /-! The size of a finite value: 1 for each 64-bit word of its width, and at least 1. -/
 def widthSize (width : Nat) : Nat := max 1 ((width + 63) / 64)
 
+/-! A finite type: `UInt[W]` or `SInt[W]`. -/
+def Ty.finite : Ty → Bool
+  | .uint _ | .sint _ => true
+  | _ => false
+
 def Ty.serialize : Ty → String
   | .bool => "bool"
   | .nat => "nat"
