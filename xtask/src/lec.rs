@@ -14,11 +14,17 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, ensure};
 
 use crate::repo::Repo;
-use crate::{corpus, lean_check, silicon};
+use crate::{corpus, lean_check, silicon, skips};
 use tools::Verdict;
 
-/// The skip reason for a design that `--externalize-registers` cannot take.
-const SELF_REGISTER: &str = "#20: a register is its own next value";
+/// The skip of a design that `--externalize-registers` cannot take.
+const SELF_REGISTER: Outcome = Outcome::Skip {
+    tag: "#20",
+    why: "a register is its own next value",
+};
+
+/// The reviewed inventory of the checks of this tool.
+const INVENTORY: &str = "tests/lec-checks.txt";
 
 /// The result of one check of one file.
 #[derive(Debug, PartialEq, Eq)]
@@ -26,7 +32,11 @@ enum Outcome {
     Pass,
     /// The tool output or the error.
     Fail(String),
-    Skip(&'static str),
+    /// The tag names the gap in `doc/trust.md`.
+    Skip {
+        tag: &'static str,
+        why: &'static str,
+    },
 }
 
 impl From<Result<Verdict>> for Outcome {
@@ -64,8 +74,29 @@ fn output(binary: &Path, args: &[&str], file: &Path) -> Result<String> {
     tools::run(binary, &all, "")
 }
 
+/// The inventory entry of a check, or `None` for a failure. A model check
+/// belongs to its memory configuration, not to the file that ran it first.
+fn entry(file: &str, check: &str, outcome: &Outcome) -> Option<skips::Entry> {
+    let verdict = match outcome {
+        Outcome::Pass => skips::Verdict::Pass,
+        Outcome::Skip { tag, .. } => skips::Verdict::Skip((*tag).to_owned()),
+        Outcome::Fail(_) => return None,
+    };
+    let file = if check.starts_with("model ") {
+        skips::MODEL_FILE
+    } else {
+        file
+    };
+    Some(skips::Entry {
+        file: file.to_owned(),
+        check: check.to_owned(),
+        verdict,
+    })
+}
+
 /// Runs each check on each file of the corpus and prints one line for each.
-/// Returns whether no check failed.
+/// Returns whether no check failed, at least one check ran, and the SKIPs
+/// are those of `tests/lec-skips.txt`.
 pub fn run(repo: &Repo) -> Result<bool> {
     tools::require()?;
     let Some(lean) = lean_check::build(repo)? else {
@@ -77,23 +108,28 @@ pub fn run(repo: &Repo) -> Result<bool> {
     let bins = Binaries { lean, rust };
     let mut seen = BTreeSet::new();
     let mut passed = true;
+    let mut ran = Vec::new();
     for file in corpus::files(repo) {
         let checks = fetch(&bins, &repo.root.join(&file))
             .and_then(|outputs| checks(&outputs, &mut seen))
             .unwrap_or_else(|e| vec![("setup".to_owned(), Outcome::Fail(format!("{e:#}")))]);
         for (check, outcome) in checks {
             let file = file.display();
-            match outcome {
+            match &outcome {
                 Outcome::Pass => println!("PASS {file} {check}"),
-                Outcome::Skip(why) => println!("SKIP {file} {check} ({why})"),
+                Outcome::Skip { tag, why } => println!("SKIP {file} {check} ({tag}: {why})"),
                 Outcome::Fail(why) => {
-                    passed = false;
                     println!("FAIL {file} {check}\n{}", why.trim_end());
                 }
             }
+            match entry(&file.to_string(), &check, &outcome) {
+                Some(e) => ran.push(e),
+                None => passed = false,
+            }
         }
     }
-    Ok(passed)
+    let problems = skips::audit(&repo.read(Path::new(INVENTORY))?, &ran)?;
+    Ok(passed && skips::report(INVENTORY, &problems))
 }
 
 /// The outputs of both compilers for one file.
@@ -163,8 +199,8 @@ fn checks(outputs: &Outputs, seen: &mut BTreeSet<String>) -> Result<Vec<(String,
     let lean = mlir::defined(&outputs.reference, &models).context("the Lean reference")?;
     let mut out = Vec::new();
     if mlir::has_self_register(&lean) {
-        out.push(("main".to_owned(), Outcome::Skip(SELF_REGISTER)));
-        out.push(("lowering".to_owned(), Outcome::Skip(SELF_REGISTER)));
+        out.push(("main".to_owned(), SELF_REGISTER));
+        out.push(("lowering".to_owned(), SELF_REGISTER));
     } else {
         let sv = format!(
             "{}{}{}",
@@ -196,7 +232,7 @@ fn model_checks(
             continue;
         }
         let outcome = if mlir::has_self_register(model) {
-            Outcome::Skip(SELF_REGISTER)
+            SELF_REGISTER
         } else {
             tools::import(rust_models, name)
                 .and_then(|rust| tools::compare(model, &rust, name))
@@ -312,6 +348,31 @@ mod tests {
     }
 
     #[test]
+    fn a_check_gives_an_inventory_entry() {
+        let entry = |check, outcome| entry("f.sil", check, &outcome);
+        let e = |file: &str, check: &str, verdict| {
+            Some(skips::Entry {
+                file: file.to_owned(),
+                check: check.to_owned(),
+                verdict,
+            })
+        };
+        assert_eq!(
+            entry("main", Outcome::Pass),
+            e("f.sil", "main", skips::Verdict::Pass)
+        );
+        assert_eq!(
+            entry("lowering", SELF_REGISTER),
+            e("f.sil", "lowering", skips::Verdict::Skip("#20".to_owned()))
+        );
+        assert_eq!(
+            entry("model m", Outcome::Pass),
+            e("-", "model m", skips::Verdict::Pass)
+        );
+        assert_eq!(entry("main", Outcome::Fail(String::new())), None);
+    }
+
+    #[test]
     fn a_model_without_a_write_port_is_skipped_once() {
         let model = "hw.module @silicon_mem_1x4_r1w0(in %clk : !seq.clock) {\n  \
                      %silicon_reg_mem = seq.compreg %silicon_reg_mem, %clk : !hw.array<2xi4>\n  \
@@ -320,10 +381,7 @@ mod tests {
         let mut seen = BTreeSet::new();
         assert_eq!(
             model_checks(&models, "", &mut seen),
-            [(
-                "model silicon_mem_1x4_r1w0".to_owned(),
-                Outcome::Skip(SELF_REGISTER)
-            )]
+            [("model silicon_mem_1x4_r1w0".to_owned(), SELF_REGISTER)]
         );
         assert_eq!(model_checks(&models, "", &mut seen), []);
     }

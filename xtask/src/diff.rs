@@ -24,7 +24,17 @@ use proptest::test_runner::{
 };
 
 use crate::repo::Repo;
-use crate::{corpus, lean_check, silicon};
+use crate::{corpus, lean_check, silicon, skips};
+
+/// The reviewed inventory of the corpus checks of this tool. The random
+/// designs stay outside it.
+const INVENTORY: &str = "tests/diff-checks.txt";
+
+/// The tag of a corpus design with an extern, which the interpreters reject.
+const EXTERN: &str = "E014";
+
+/// The check of a corpus design in the inventory.
+const CHECK: &str = "run";
 
 /// The clock cycles of each design.
 const CYCLES: usize = 8;
@@ -83,18 +93,38 @@ pub fn run(repo: &Repo, seed: u64, count: u64) -> Result<bool> {
     };
     let tools = Tools { lean, silicon };
     let dir = tempfile::tempdir().context("cannot make a temporary directory")?;
-    let corpus = corpus(repo, seed)?;
+    let (corpus, skipped) = corpus(repo, seed)?;
+    let ran = inventory_entries(&corpus, &skipped);
     let random = (0..count).map(|k| generate(seed.wrapping_add(k)));
     for case in corpus.into_iter().map(Ok).chain(random) {
         if !tools.agree(&case?, dir.path())? {
             return Ok(false);
         }
     }
+    let problems = skips::audit(&repo.read(Path::new(INVENTORY))?, &ran)?;
+    if !skips::report(INVENTORY, &problems) {
+        return Ok(false);
+    }
     println!(
         "diff: the corpus and {count} random designs agree (seeds {seed} to {})",
         seed.wrapping_add(count - 1)
     );
     Ok(true)
+}
+
+/// The inventory entries of the corpus: a PASS for each case, which has run
+/// when the entries are used, and a SKIP for each design in `skipped`.
+fn inventory_entries(cases: &[Case], skipped: &[String]) -> Vec<skips::Entry> {
+    let entry = |file: &str, verdict| skips::Entry {
+        file: file.to_owned(),
+        check: CHECK.to_owned(),
+        verdict,
+    };
+    let passes = cases.iter().map(|c| entry(&c.name, skips::Verdict::Pass));
+    let skips = skipped
+        .iter()
+        .map(|name| entry(name, skips::Verdict::Skip(EXTERN.to_owned())));
+    passes.chain(skips).collect()
 }
 
 /// A test runner with the random numbers of `seed`. Each field of the
@@ -171,10 +201,11 @@ fn generate(seed: u64) -> Result<Case> {
 
 /// The cases of the tracked files of the corpus, with the inputs of `seed`.
 /// A design with an extern is a visible skip: the interpreters reject it
-/// with `E014` (spec section 5.4).
-fn corpus(repo: &Repo, seed: u64) -> Result<Vec<Case>> {
+/// with `E014` (spec section 5.4). The skips are returned as well.
+fn corpus(repo: &Repo, seed: u64) -> Result<(Vec<Case>, Vec<String>)> {
     let mut runner = runner(seed);
     let mut cases = Vec::new();
+    let mut skipped = Vec::new();
     for path in &corpus::files(repo) {
         let name = path.display().to_string();
         let text = std::fs::read_to_string(repo.root.join(path))
@@ -186,12 +217,13 @@ fn corpus(repo: &Repo, seed: u64) -> Result<Vec<Case>> {
             println!(
                 "SKIP {name}: the design has an extern, and the interpreters reject it (E014)"
             );
+            skipped.push(name);
             continue;
         }
         let repeat = format!("cargo xtask diff --seed {seed} --count 1");
         cases.push(case(name, repeat, text, &design, &mut runner)?);
     }
-    Ok(cases)
+    Ok((cases, skipped))
 }
 
 impl Tools {
@@ -331,6 +363,26 @@ mod tests {
             tool,
             lines: lines.iter().map(|&line| line.to_owned()).collect(),
         }
+    }
+
+    #[test]
+    fn corpus_cases_and_skips_give_inventory_entries() {
+        let case = Case {
+            name: "a.sil".to_owned(),
+            ..generate(1).unwrap()
+        };
+        let entries = inventory_entries(&[case], &["b.sil".to_owned()]);
+        let shown: Vec<_> = entries
+            .iter()
+            .map(|e| (e.file.as_str(), e.check.as_str(), e.verdict.clone()))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                ("a.sil", "run", skips::Verdict::Pass),
+                ("b.sil", "run", skips::Verdict::Skip("E014".to_owned())),
+            ]
+        );
     }
 
     #[test]
