@@ -355,6 +355,20 @@ private theorem indexedValueTy_eq (ctx : Typed.Ctx) (n : String) :
   simp only [indexedValueTy, firstIndex_lookup, valueTy]
   rfl
 
+private theorem indexedValueTy_fun (ctx : Typed.Ctx) :
+    indexedValueTy (firstIndex ctx) = valueTy ctx := funext (indexedValueTy_eq ctx)
+
+private def indexedMemory (index : Std.HashMap Deps.Node Typed.Kind) (n : String) :
+    Option (Nat × Nat) :=
+  match index[Deps.Node.name n]? with
+  | some (.memory w depth) => some (w, depth)
+  | _ => none
+
+private theorem indexedMemory_eq (d : Design) (m : Module) :
+    indexedMemory (firstIndex (Typed.context d m)) = memory d m := by
+  funext n
+  simp only [indexedMemory, firstIndex_lookup, memory]
+
 private def indexedResolvedModule (d : Design) (m : Module) : List Error :=
   let index := firstIndex (Typed.context d m)
   let typeOf := fun n => indexedValueTy index n
@@ -480,19 +494,20 @@ private def targetWidthWith (typeOf : Expr → Option Ty) (p : Pos) (w : Nat)
   | some actual => require (actual == .bits w) .E004 p "target width mismatch"
   | none => []
 
-private def stmtErrorsWith (d : Design) (m : Module)
-    (typeOf : Expr → Option Ty) (s : Stmt) : List Error :=
+private def stmtErrorsWith (d : Design) (m : Module) (typeOf : Expr → Option Ty)
+    (nameTy : String → Option Ty) (memoryOf : String → Option (Nat × Nat))
+    (s : Stmt) : List Error :=
     (valueExprs d m s).flatMap (foldExpr (operandErrorsWith typeOf)) ++
     match s with
     | .let_ p _ w e => targetWidthWith typeOf p w e
-    | .next p n e | .assign p n e => match valueTy (Typed.context d m) n with
+    | .next p n e | .assign p n e => match nameTy n with
       | some (.bits w) => targetWidthWith typeOf p w e | _ => []
     | .reg p _ w _ reset => reset.toList.flatMap fun r =>
       if [r.signal, r.value].all (fun e => (typeOf e).isSome) then
         let pos := atomPos p [4]
         targetWidthWith typeOf pos 1 r.signal ++ targetWidthWith typeOf pos w r.value
       else []
-    | .write p n _ a v en => match memory d m n with
+    | .write p n _ a v en => match memoryOf n with
       | some (w, depth) =>
         if [a, v, en].all (fun e => (typeOf e).isSome) then
           targetWidthWith typeOf p (Typed.addressWidth depth) a ++
@@ -514,8 +529,8 @@ private abbrev operandErrors (d : Design) (m : Module) :=
 private abbrev targetWidth (d : Design) (m : Module) :=
   targetWidthWith (expressionTy d m)
 
-def stmtErrors (d : Design) (m : Module) : Stmt → List Error :=
-  stmtErrorsWith d m (expressionTy d m)
+def stmtErrors (d : Design) (m : Module) (s : Stmt) : List Error :=
+  stmtErrorsWith d m (expressionTy d m) (valueTy (Typed.context d m)) (memory d m) s
 
 def e004 (d : Design) : List Error :=
   (modules d).flatMap fun m => m.body.flatMap (stmtErrors d m)
@@ -528,11 +543,11 @@ private def indexedE004 (d : Design) : List Error :=
     let infer := Typed.inferWith ctx (fun n => index[n]?)
       (fun n => firstIndex_lookup ctx n)
     let typeOf := fun e => (infer e).map Sigma.fst
-    m.body.flatMap (stmtErrorsWith d m typeOf)
+    m.body.flatMap (stmtErrorsWith d m typeOf (indexedValueTy index) (indexedMemory index))
 
 @[csimp] private theorem e004_eq_indexed : e004 = indexedE004 := by
   funext d
-  simp only [e004, indexedE004, Typed.inferWith_eq]
+  simp only [e004, indexedE004, Typed.inferWith_eq, indexedValueTy_fun, indexedMemory_eq]
   rfl
 
 private def exactlyOne (code : ErrorCode) (p : Pos) (ps : List Pos) : List Error :=

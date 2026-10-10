@@ -297,7 +297,9 @@ def expressionWith (ctx : Ctx) (inferFn : Core.Expr → Option (Term ctx))
 def expression (ctx : Ctx) (raw : Core.Expr) (ty : Ty) : Option (Expr ctx ty) :=
   expressionWith ctx (infer ctx) raw ty
 
-def statementWith (d : Core.Design) (ctx : Ctx) (inferFn : Core.Expr → Option (Term ctx)) :
+def statementWith (d : Core.Design) (ctx : Ctx) (inferFn : Core.Expr → Option (Term ctx))
+    (nameTy : String → Option Ty) (named : ∀ n, nameTy n = valueTy ctx n)
+    (lookup : Deps.Node → Option Kind) (correct : ∀ n, lookup n = ctx.lookup n) :
     Core.Stmt → Option (Stmt ctx (portsOf d))
   | .let_ p n w e => return .let_ p n w (← expressionWith ctx inferFn e (.bits w))
   | .reg p n w c r => do
@@ -307,17 +309,18 @@ def statementWith (d : Core.Design) (ctx : Ctx) (inferFn : Core.Expr → Option 
       return (⟨r.kind, signal, value⟩ : Reset ctx w)
     return .reg p n w c reset
   | .next p n e => do
-    match h : valueTy ctx n with
-    | some (.bits w) => return .next p n w h (← expressionWith ctx inferFn e (.bits w))
+    match h : nameTy n with
+    | some (.bits w) =>
+      return .next p n w ((named n).symm.trans h) (← expressionWith ctx inferFn e (.bits w))
     | _ => none
   | .mem p n w depth c => some (.mem p n w depth c)
   | .write p n index a v en => do
-    match h : ctx.lookup (.name n) with
+    match h : lookup (.name n) with
     | some (.memory w depth) =>
       let addr ← expressionWith ctx inferFn a (.bits (addressWidth depth))
       let data ← expressionWith ctx inferFn v (.bits w)
       let enable ← expressionWith ctx inferFn en (.bits 1)
-      return .write p n index w depth h addr data enable
+      return .write p n index w depth ((correct _).symm.trans h) addr data enable
     | _ => none
   | .inst p n child xs => do
     let inputs ← xs.mapM fun (k, raw) => do
@@ -326,28 +329,50 @@ def statementWith (d : Core.Design) (ctx : Ctx) (inferFn : Core.Expr → Option 
       return (⟨port, e⟩ : (p : {p : Port // p ∈ portsOf d child}) × Expr ctx p.val.ty)
     return .inst p n child inputs
   | .assign p n e => do
-    match h : valueTy ctx n with
-    | some (.bits w) => return .assign p n w h (← expressionWith ctx inferFn e (.bits w))
+    match h : nameTy n with
+    | some (.bits w) =>
+      return .assign p n w ((named n).symm.trans h) (← expressionWith ctx inferFn e (.bits w))
     | _ => none
 
 
 def statement (d : Core.Design) (ctx : Ctx) : Core.Stmt → Option (Stmt ctx (portsOf d)) :=
-  statementWith d ctx (infer ctx)
+  statementWith d ctx (infer ctx) (valueTy ctx) (fun _ => rfl) (List.lookup · ctx) (fun _ => rfl)
 
 def statements (d : Core.Design) (ctx : Ctx) (body : List Core.Stmt) :
     Option (List (Stmt ctx (portsOf d))) :=
   body.mapM (statement d ctx)
 
+private theorem statementWith_eq (d : Core.Design) (ctx : Ctx)
+    (inferFn : Core.Expr → Option (Term ctx))
+    (nameTy : String → Option Ty) (named : ∀ n, nameTy n = valueTy ctx n)
+    (lookup : Deps.Node → Option Kind) (correct : ∀ n, lookup n = ctx.lookup n) :
+    statementWith d ctx inferFn nameTy named lookup correct =
+      statementWith d ctx inferFn (valueTy ctx) (fun _ => rfl) (List.lookup · ctx)
+        (fun _ => rfl) := by
+  have names : nameTy = valueTy ctx := funext named
+  have lookups : lookup = (List.lookup · ctx) := funext correct
+  subst names lookups
+  rfl
+
 private def statementsIndexed (d : Core.Design) (ctx : Ctx) (body : List Core.Stmt) :
     Option (List (Stmt ctx (portsOf d))) :=
   let index := firstIndex ctx
-  let inferFn := inferWith ctx (fun n => index[n]?) (fun n => firstIndex_lookup ctx n)
-  body.mapM (statementWith d ctx inferFn)
+  let lookup := fun n => index[n]?
+  have correct := fun n => firstIndex_lookup ctx n
+  let nameTy := fun n => match lookup (.name n) with
+    | some (.value ty) => some ty
+    | some .clock => some .clock
+    | _ => none
+  have named : ∀ n, nameTy n = valueTy ctx n := fun n => by
+    simp only [nameTy, lookup, index, correct, valueTy]
+  body.mapM (statementWith d ctx (inferWith ctx lookup correct) nameTy named lookup correct)
 
 @[csimp] private theorem statements_indexed : statements = statementsIndexed := by
   funext d ctx body
-  simp only [statementsIndexed, inferWith_eq]
-  rfl
+  unfold statementsIndexed
+  dsimp only
+  rw [inferWith_eq]
+  exact congrArg (fun f => List.mapM f body) (statementWith_eq d ctx _ _ _ _ _).symm
 
 
 def HasExpr (ctx : Ctx) (ty : Ty) (e : Core.Expr) : Prop :=
