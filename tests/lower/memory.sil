@@ -6,8 +6,8 @@
 ; CHECK: %[[RIN:.+]] = comb.icmp ult %x, %[[RBOUND]] : i4
 ; CHECK: %[[ZERO:.+]] = hw.constant 0 : i8
 ; CHECK: %p = comb.mux %[[RIN]], %[[RD:.+]], %[[ZERO]] : i8
-; CHECK: %[[RD]] = hw.instance "m" @silicon_mem_12x8_r1w1(clk: %clk: !seq.clock, r0_addr: %x: i4, w0_addr: %x: i4, w0_data: %d: i8, w0_en: %[[EN]]: i1) -> (r0_data: i8)
-; CHECK: hw.module.extern @silicon_mem_12x8_r1w1(in %clk : !seq.clock, in %r0_addr : i4, out r0_data : i8, in %w0_addr : i4, in %w0_data : i8, in %w0_en : i1)
+; CHECK: %[[RD]] = hw.instance "m" @mem$$12x8_r1w1(clk: %clk: !seq.clock, r0_addr: %x: i4, w0_addr: %x: i4, w0_data: %d: i8, w0_en: %[[EN]]: i1) -> (r0_data: i8)
+; CHECK: hw.module.extern @mem$$12x8_r1w1(in %clk : !seq.clock, in %r0_addr : i4, out r0_data : i8, in %w0_addr : i4, in %w0_data : i8, in %w0_en : i1)
 ; Depth 12 needs guards. One read port, one write port.
 (design top
   (module top
