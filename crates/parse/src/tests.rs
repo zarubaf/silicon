@@ -1032,3 +1032,24 @@ fn a_large_number_ends_the_look_ahead_like_a_lexical_error() {
     let place = format!("module M() {{ a[{big}] = 1; }}");
     assert_eq!(first_error(&place), Some((Code::S001, 1, 16)));
 }
+
+#[test]
+fn a_deep_result_is_safe_on_the_stack_of_a_test_thread() {
+    // This thread has the default stack of a test. The parse and the dump run on their own
+    // thread with the stack for the depth. The drop, and the reads, run here.
+    let max = crate::MAX_SYNTAX_DEPTH;
+    let unary = format!("const X: T = {}1;", "-".repeat(max - 1));
+    let brackets = format!("const X: T = {}1{};", "(".repeat(max), ")".repeat(max));
+    for input in [unary, brackets] {
+        let parsed = parse_with_depth(&input, max);
+        assert!(parsed.errors.is_empty());
+        assert!(parsed.ast.is_some());
+        assert!(
+            parsed
+                .dump()
+                .unwrap()
+                .is_some_and(|d| d.starts_with("(const"))
+        );
+        drop(parsed);
+    }
+}

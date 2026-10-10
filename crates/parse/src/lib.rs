@@ -13,13 +13,15 @@ mod tree;
 
 use error::LineIndex;
 pub use error::{Code, DepthError, Error, StackError};
-use rowan::{GreenNode, Language};
-use syntax::{SiliconLanguage, SyntaxKind, SyntaxNode};
+use syntax::SyntaxNode;
 
 /// The result of parsing a source text.
-#[derive(Clone, Debug)]
+#[cfg_attr(test, derive(Debug))]
 pub struct Parse {
-    green: GreenNode,
+    /// The lossless tree. Only the tests read it, because a node of `rowan` frees the tree by
+    /// recursion.
+    #[cfg_attr(not(test), allow(dead_code))]
+    green: tree::Green,
     /// The syntax depth of the parse, which sizes the stack of each pass over the result.
     depth: usize,
     /// The errors in position order. The first one is the normative error.
@@ -29,10 +31,11 @@ pub struct Parse {
 }
 
 impl Parse {
-    /// The root of the lossless syntax tree. Its text equals the input.
-    #[must_use]
-    pub fn syntax(&self) -> SyntaxNode {
-        SyntaxNode::new_root(self.green.clone())
+    /// The root of the lossless syntax tree. Its text equals the input. A node of `rowan`
+    /// frees the tree by recursion, so only the tests of this crate see it.
+    #[cfg(test)]
+    fn syntax(&self) -> SyntaxNode {
+        SyntaxNode::new_root(self.green.node().clone())
     }
 
     /// The dump of the AST, or `None` if the text has an error. The dump recurses, so it runs
@@ -42,23 +45,6 @@ impl Parse {
     /// Returns an error if the machine cannot give the stack.
     pub fn dump(&self) -> Result<Option<String>, StackError> {
         on_stack(self.depth, || self.ast.as_deref().map(dump::dump))
-    }
-}
-
-impl Drop for Parse {
-    /// Freeing the tree and the AST recurses, so it runs on a stack for the depth, as the
-    /// parse does.
-    fn drop(&mut self) {
-        let empty = GreenNode::new(SiliconLanguage::kind_to_raw(SyntaxKind::Root), []);
-        let green = std::mem::replace(&mut self.green, empty);
-        let ast = self.ast.take();
-        // If the thread does not start, the closure drops both here.
-        let spawned = std::thread::Builder::new()
-            .stack_size(stack_for(self.depth))
-            .spawn(move || drop((green, ast)));
-        if let Ok(handle) = spawned {
-            handle.join().ok();
-        }
     }
 }
 
@@ -157,7 +143,7 @@ fn parse_here(input: &str, depth: usize) -> Parse {
         None
     };
     Parse {
-        green,
+        green: tree::Green::new(green),
         depth,
         errors,
         ast,

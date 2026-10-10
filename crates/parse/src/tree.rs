@@ -66,3 +66,34 @@ impl TreeBuilder {
         GreenNode::new(kind, children)
     }
 }
+
+/// A finished green tree. `rowan` frees a node by recursion, so this wrapper frees the tree
+/// from a work list, and a drop is safe on any stack.
+#[cfg_attr(test, derive(Debug))]
+pub(crate) struct Green(Option<GreenNode>);
+
+impl Green {
+    pub(crate) fn new(root: GreenNode) -> Self {
+        Green(Some(root))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn node(&self) -> &GreenNode {
+        self.0.as_ref().unwrap_or_else(|| unreachable!())
+    }
+}
+
+impl Drop for Green {
+    fn drop(&mut self) {
+        // Each child gets one more owner before its parent goes, so a parent frees only
+        // itself and the children go one at a time from the list.
+        let mut work: Vec<GreenNode> = self.0.take().into_iter().collect();
+        while let Some(node) = work.pop() {
+            for child in node.children() {
+                if let NodeOrToken::Node(child) = child {
+                    work.push(child.to_owned());
+                }
+            }
+        }
+    }
+}
