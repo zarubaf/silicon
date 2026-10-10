@@ -1,0 +1,174 @@
+//! The kinds of tokens and nodes, and the `rowan` language that names them.
+
+use rowan::Language;
+
+/// Declares `SyntaxKind` and the table of all kinds, in declaration order.
+macro_rules! kinds {
+    ($($(#[$m:meta])* $name:ident,)*) => {
+        /// The kind of a token or a node of the syntax tree.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+        #[repr(u16)]
+        pub enum SyntaxKind {
+            $($(#[$m])* $name,)*
+        }
+
+        impl SyntaxKind {
+            const ALL: &'static [SyntaxKind] = &[$(SyntaxKind::$name,)*];
+        }
+    };
+}
+
+kinds! {
+    // Trivia and errors.
+    Whitespace,
+    LineComment,
+    BlockComment,
+    /// An invalid character, an unterminated string, or an unterminated comment.
+    Error,
+    // Literals and names.
+    Ident,
+    Dec,
+    Hex,
+    Bin,
+    Str,
+    // Keywords.
+    ImportKw,
+    AsKw,
+    PubKw,
+    ConstKw,
+    TypeKw,
+    StructKw,
+    ComptimeKw,
+    FnKw,
+    ModuleKw,
+    ExternKw,
+    LetKw,
+    MutKw,
+    ReturnKw,
+    IfKw,
+    ElseKw,
+    ForKw,
+    InKw,
+    ConformsKw,
+    UsingKw,
+    TrueKw,
+    FalseKw,
+    RegKw,
+    WireKw,
+    MemKw,
+    InputKw,
+    OutputKw,
+    InstanceKw,
+    DomainsKw,
+    WithKw,
+    // Operators of two characters.
+    ColonEq,
+    ColonColon,
+    Arrow,
+    DotDot,
+    PlusPercent,
+    MinusPercent,
+    StarPercent,
+    EqEq,
+    BangEq,
+    LtEq,
+    GtEq,
+    Shl,
+    Shr,
+    AmpAmp,
+    PipePipe,
+    // Punctuation and operators of one character.
+    LParen,
+    RParen,
+    LBrace,
+    RBrace,
+    LBracket,
+    RBracket,
+    Comma,
+    Semi,
+    Colon,
+    Dot,
+    Eq,
+    Lt,
+    Gt,
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    Percent,
+    Amp,
+    Pipe,
+    Caret,
+    Tilde,
+    Bang,
+    At,
+    // Nodes.
+    Root,
+}
+
+impl SyntaxKind {
+    /// The keyword that the text spells, if any.
+    pub(crate) fn keyword(text: &str) -> Option<SyntaxKind> {
+        Some(match text {
+            "import" => Self::ImportKw,
+            "as" => Self::AsKw,
+            "pub" => Self::PubKw,
+            "const" => Self::ConstKw,
+            "type" => Self::TypeKw,
+            "struct" => Self::StructKw,
+            "comptime" => Self::ComptimeKw,
+            "fn" => Self::FnKw,
+            "module" => Self::ModuleKw,
+            "extern" => Self::ExternKw,
+            "let" => Self::LetKw,
+            "mut" => Self::MutKw,
+            "return" => Self::ReturnKw,
+            "if" => Self::IfKw,
+            "else" => Self::ElseKw,
+            "for" => Self::ForKw,
+            "in" => Self::InKw,
+            "conforms" => Self::ConformsKw,
+            "using" => Self::UsingKw,
+            "true" => Self::TrueKw,
+            "false" => Self::FalseKw,
+            "reg" => Self::RegKw,
+            "wire" => Self::WireKw,
+            "mem" => Self::MemKw,
+            "input" => Self::InputKw,
+            "output" => Self::OutputKw,
+            "instance" => Self::InstanceKw,
+            "domains" => Self::DomainsKw,
+            "with" => Self::WithKw,
+            _ => return None,
+        })
+    }
+
+    /// Whether the kind is whitespace or a comment.
+    #[must_use]
+    pub fn is_trivia(self) -> bool {
+        matches!(
+            self,
+            SyntaxKind::Whitespace | SyntaxKind::LineComment | SyntaxKind::BlockComment
+        )
+    }
+}
+
+/// The `rowan` language of Silicon.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum SiliconLanguage {}
+
+impl Language for SiliconLanguage {
+    type Kind = SyntaxKind;
+
+    fn kind_from_raw(raw: rowan::SyntaxKind) -> SyntaxKind {
+        // A raw kind comes only from `kind_to_raw`, so an index outside the table is a bug.
+        SyntaxKind::ALL[usize::from(raw.0)]
+    }
+
+    fn kind_to_raw(kind: SyntaxKind) -> rowan::SyntaxKind {
+        rowan::SyntaxKind(kind as u16)
+    }
+}
+
+pub type SyntaxNode = rowan::SyntaxNode<SiliconLanguage>;
+pub type SyntaxToken = rowan::SyntaxToken<SiliconLanguage>;
