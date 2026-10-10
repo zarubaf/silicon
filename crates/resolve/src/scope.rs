@@ -14,6 +14,14 @@ pub(crate) struct Scopes {
 }
 
 impl Scopes {
+    /// The scopes of the file scope: the items and no local.
+    pub(crate) fn of_items(items: BTreeMap<String, DeclId>) -> Scopes {
+        Scopes {
+            items,
+            ..Scopes::default()
+        }
+    }
+
     pub(crate) fn open(&mut self) {
         self.opened.push(Vec::new());
     }

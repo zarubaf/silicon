@@ -489,3 +489,41 @@ fn a_deep_nesting_with_shadowing_resolves_in_linear_time() {
     );
     ok(&src);
 }
+
+/// Resolves `expr` in the file scope of `src`.
+fn run_expr(src: &str, expr: &str) -> Result<crate::ResolvedExpr, Vec<(Code, usize, usize)>> {
+    let file = ok(src);
+    let expr = parse::parse_expr(expr, parse::DEFAULT_SYNTAX_DEPTH)
+        .unwrap()
+        .unwrap_or_else(|e| panic!("the expression must parse: {e:?}"));
+    crate::resolve_expr(&file, expr).unwrap().map_err(|errors| {
+        errors
+            .iter()
+            .map(|e| (e.code, e.pos.line, e.pos.col))
+            .collect()
+    })
+}
+
+#[test]
+fn an_expression_resolves_in_the_file_scope() {
+    let src = "const A: Nat = 1;\ncomptime fn f(n: Nat) -> Nat { return n; }\nmodule M() { }";
+    let file = ok(src);
+    let resolved = run_expr(src, "f(A) + UInt[8](1)").unwrap();
+    let kind = |at: Pos| match resolved.target(at) {
+        Some(Target::Decl(id)) => file.decl(id).kind,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(kind(pos(1, 1)), Kind::Fn);
+    assert_eq!(kind(pos(1, 3)), Kind::Const);
+    assert_eq!(
+        resolved.target(pos(1, 8)),
+        Some(Target::Prelude(Prelude::UInt))
+    );
+    // A local of an item is not in the file scope, and a module is not a value.
+    assert_eq!(run_expr(src, "n").err(), Some(vec![(S003, 1, 1)]));
+    assert_eq!(run_expr(src, "1 + M").err(), Some(vec![(S003, 1, 5)]));
+    assert_eq!(
+        run_expr(src, "y + x").err(),
+        Some(vec![(S003, 1, 1), (S003, 1, 5)])
+    );
+}

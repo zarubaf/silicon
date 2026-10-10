@@ -4,7 +4,7 @@
 
 use crate::prelude::{Prelude, later_slice};
 use crate::scope::Scopes;
-use crate::{Code, Decl, DeclId, Error, Kind, Table, Target};
+use crate::{Code, Decl, DeclId, Error, Kind, Resolved, Table, Target};
 use parse::ast::{Expr, Ident, Item, Param, Pos, Stmt, TypeExpr};
 use std::collections::BTreeMap;
 
@@ -36,6 +36,26 @@ pub(crate) fn run(items: &[Item]) -> Result<Table, Vec<Error>> {
             items: scopes.into_items(),
             names,
         });
+    }
+    errors.sort_by_key(|e| e.pos);
+    Err(errors)
+}
+
+/// Resolves the names of an expression in the file scope of `resolved`. Returns the map from
+/// the position of each name token of the expression to its target, or the `S003` errors.
+pub(crate) fn run_expr(
+    resolved: &Resolved,
+    expr: &Expr,
+) -> Result<BTreeMap<Pos, Target>, Vec<Error>> {
+    let mut walker = Walker {
+        decls: resolved.decls.clone(),
+        scopes: Scopes::of_items(resolved.items.clone()),
+        ..Walker::default()
+    };
+    walker.expr(expr);
+    let mut errors = walker.unresolved;
+    if errors.is_empty() {
+        return Ok(walker.names);
     }
     errors.sort_by_key(|e| e.pos);
     Err(errors)
