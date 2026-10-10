@@ -305,29 +305,44 @@ def e002 (d : Design) : List Error :=
 private def foldExpr (f : Expr → List Error) (e : Expr) : List Error :=
   (exprNodes e).flatMap f
 
-private def resolvedExprUsing (typeOf : String → Option Ty)
-    (d : Design) (m : Module) : Expr → List Error
-  | .ref p n => require (typeOf n).isSome .E003 p "expected a value"
-  | .port p i n => require ((instancePort d m i n).any (·.dir == .output))
+/-! Name passes take the lookups of a module as parameters, so that callers can index them. -/
+private structure Lookups where
+  valueTy : String → Option Ty
+  memory : String → Option (Nat × Nat)
+  port : String → Option Port
+  stmt : String → Option Stmt
+
+private def Lookups.spec (d : Design) (m : Module) : Lookups :=
+  ⟨Typed.valueTy (Typed.context d m), Rules.memory d m, findPort m, findStmt m⟩
+
+private def instancePortWith (l : Lookups) (d : Design) (i n : String) : Option Port := do
+  let .inst _ _ child _ ← l.stmt i | none
+  let item ← findItem d child
+  (Item.ports item).find? (·.name == n)
+
+private def resolvedExprUsing (l : Lookups) (d : Design) : Expr → List Error
+  | .ref p n => require (l.valueTy n).isSome .E003 p "expected a value"
+  | .port p i n => require ((instancePortWith l d i n).any (·.dir == .output))
       .E003 p "expected an instance output"
-  | .read p n _ => require (memory d m n).isSome .E003 (atomPos p [1]) "expected a memory"
+  | .read p n _ => require (l.memory n).isSome .E003 (atomPos p [1]) "expected a memory"
   | _ => []
 
 private def resolvedExpr (d : Design) (m : Module) : Expr → List Error :=
-  resolvedExprUsing (valueTy (Typed.context d m)) d m
+  resolvedExprUsing (Lookups.spec d m) d
 
-private def resolvedStmtUsing (resolve : Expr → List Error)
-    (d : Design) (m : Module) (s : Stmt) : List Error :=
+private def resolvedStmtUsing (resolve : Expr → List Error) (l : Lookups)
+    (d : Design) (s : Stmt) : List Error :=
+  let clock := fun c => (l.port c).any fun p => p.dir == .input && p.ty == .clock
   let target := match s with
     | .reg p _ _ c _ =>
-      require (clockName m c) .E003 (atomPos p [3]) "expected a clock input"
+      require (clock c) .E003 (atomPos p [3]) "expected a clock input"
     | .mem p _ _ _ c =>
-      require (clockName m c) .E003 (atomPos p [4]) "expected a clock input"
-    | .next p n _ => require (match findStmt m n with
+      require (clock c) .E003 (atomPos p [4]) "expected a clock input"
+    | .next p n _ => require (match l.stmt n with
         | some (.reg ..) => true | _ => false) .E003 (atomPos p [1]) "expected a register"
     | .write p n _ _ _ _ =>
-      require (memory d m n).isSome .E003 (atomPos p [1]) "expected a memory"
-    | .assign p n _ => require ((findPort m n).any (·.dir == .output))
+      require (l.memory n).isSome .E003 (atomPos p [1]) "expected a memory"
+    | .assign p n _ => require ((l.port n).any (·.dir == .output))
         .E003 (atomPos p [1]) "expected an output"
     | .inst p _ child xs => match findItem d child with
       | none => err .E003 (atomPos p [2]) "expected a module or extern"
@@ -338,7 +353,7 @@ private def resolvedStmtUsing (resolve : Expr → List Error)
   target ++ (stmtExprs s).flatMap (foldExpr resolve)
 
 private def resolvedStmt (d : Design) (m : Module) : Stmt → List Error :=
-  resolvedStmtUsing (resolvedExpr d m) d m
+  resolvedStmtUsing (resolvedExpr d m) (Lookups.spec d m) d
 
 private def resolvedModule (d : Design) (m : Module) : List Error :=
   m.body.flatMap (resolvedStmt d m)
@@ -369,14 +384,53 @@ private theorem indexedMemory_eq (d : Design) (m : Module) :
   funext n
   simp only [indexedMemory, firstIndex_lookup, memory]
 
+private def Lookups.indexed (d : Design) (m : Module) : Lookups :=
+  let ctx := firstIndex (Typed.context d m)
+  let ports := firstIndex (m.ports.map fun p => (p.name, p))
+  let stmts := firstIndex (m.body.filterMap fun s => (definition s).map fun n => (n, s))
+  ⟨indexedValueTy ctx, indexedMemory ctx, fun n => ports[n]?, fun n => stmts[n]?⟩
+
+private theorem lookup_ports (ports : List Port) (n : String) :
+    (ports.map fun p => (p.name, p)).lookup n = ports.find? (·.name == n) := by
+  induction ports with
+  | nil => rfl
+  | cons p ports ih =>
+    by_cases h : p.name = n
+    · simp [h]
+    · have left : (n == p.name) = false := by simp [Ne.symm h]
+      have right : (p.name == n) = false := by simp [h]
+      simp [List.lookup_cons, left, right, ih]
+
+private theorem lookup_definitions (body : List Stmt) (n : String) :
+    (body.filterMap fun s => (definition s).map fun n => (n, s)).lookup n =
+      body.find? fun s => definition s == some n := by
+  induction body with
+  | nil => rfl
+  | cons s body ih =>
+    simp only [List.filterMap_cons, List.find?_cons]
+    cases hd : definition s with
+    | none => simp [ih]
+    | some k =>
+      by_cases h : k = n
+      · simp [h]
+      · have left : (n == k) = false := by simp [Ne.symm h]
+        have right : (k == n) = false := by simp [h]
+        simp [List.lookup_cons, left, right, ih]
+
+private theorem Lookups.indexed_eq (d : Design) (m : Module) :
+    Lookups.indexed d m = Lookups.spec d m := by
+  simp only [Lookups.indexed, Lookups.spec, indexedValueTy_fun, indexedMemory_eq,
+    firstIndex_lookup, lookup_ports, lookup_definitions]
+  rfl
+
 private def indexedResolvedModule (d : Design) (m : Module) : List Error :=
-  let index := firstIndex (Typed.context d m)
-  let typeOf := fun n => indexedValueTy index n
-  m.body.flatMap (resolvedStmtUsing (resolvedExprUsing typeOf d m) d m)
+  let l := Lookups.indexed d m
+  m.body.flatMap (resolvedStmtUsing (resolvedExprUsing l d) l d)
 
 @[csimp] private theorem resolvedModule_indexed : resolvedModule = indexedResolvedModule := by
   funext d m
-  simp only [resolvedModule, indexedResolvedModule, resolvedStmt, resolvedExpr, indexedValueTy_eq]
+  simp only [resolvedModule, indexedResolvedModule, resolvedStmt, resolvedExpr,
+    Lookups.indexed_eq]
 
 def e003 (d : Design) : List Error :=
   require ((findItem d d.top).any fun i => match i with
@@ -406,29 +460,27 @@ def e005 (d : Design) : List Error :=
           require (0 < depth && depth ≤ 16777216) .E005 (atomPos p [3]) "invalid memory depth"
         | _ => []) ++ (stmtExprs s).flatMap (foldExpr (declaredExpr))
 
-private def clocksExprUsing (typeOf : String → Option Ty)
-    (d : Design) (m : Module) : Expr → List Error
-  | .ref p n => require (typeOf n != some .clock)
+private def clocksExprUsing (l : Lookups) (d : Design) : Expr → List Error
+  | .ref p n => require (l.valueTy n != some .clock)
       .E009 p "clock used as a value"
-  | .port p i n => require (!((instancePort d m i n).any (·.ty == .clock)))
+  | .port p i n => require (!((instancePortWith l d i n).any (·.ty == .clock)))
       .E009 p "clock used as a value"
   | _ => []
 
 private def clocksExpr (d : Design) (m : Module) : Expr → List Error :=
-  clocksExprUsing (valueTy (Typed.context d m)) d m
+  clocksExprUsing (Lookups.spec d m) d
 
 private def clockBody (d : Design) (m : Module) : List Error :=
   m.body.flatMap fun s => (valueExprs d m s).flatMap (foldExpr (clocksExpr d m))
 
 private def indexedClockBody (d : Design) (m : Module) : List Error :=
-  let index := firstIndex (Typed.context d m)
-  let typeOf := fun n => indexedValueTy index n
+  let l := Lookups.indexed d m
   m.body.flatMap fun s =>
-    (valueExprs d m s).flatMap (foldExpr (clocksExprUsing typeOf d m))
+    (valueExprs d m s).flatMap (foldExpr (clocksExprUsing l d))
 
 @[csimp] private theorem clockBody_indexed : clockBody = indexedClockBody := by
   funext d m
-  simp only [clockBody, indexedClockBody, clocksExpr, indexedValueTy_eq]
+  simp only [clockBody, indexedClockBody, clocksExpr, Lookups.indexed_eq]
 
 def e009 (d : Design) : List Error :=
   d.items.flatMap fun i =>
@@ -568,6 +620,48 @@ def e007 (d : Design) : List Error :=
     exactlyOne .E007 p.pos (m.body.filterMap fun s => match s with
       | .assign q n _ => if n == p.name then some q else none | _ => none)
 
+/-! One grouped index per module answers the driver queries of all its targets. -/
+private def indexedE006 (d : Design) : List Error :=
+  (modules d).flatMap fun m =>
+    let index := groupIndex (m.body.filterMap fun s => match s with
+      | .next q k _ => some (k, q) | _ => none)
+    m.body.flatMap fun s => match s with
+      | .reg p n _ _ _ => exactlyOne .E006 p ((index[n]?).getD [])
+      | _ => []
+
+private theorem nexts_index (m : Module) (n : String) :
+    ((groupIndex (m.body.filterMap fun s => match s with
+      | .next q k _ => some (k, q) | _ => none))[n]?).getD [] =
+    m.body.filterMap fun s => match s with
+      | .next q k _ => if k == n then some q else none | _ => none := by
+  rw [groupIndex_filterMap]
+  congr; funext s
+  cases s <;> simp
+
+@[csimp] private theorem e006_indexed : e006 = indexedE006 := by
+  funext d
+  simp only [e006, indexedE006, nexts_index]
+
+private def indexedE007 (d : Design) : List Error :=
+  (modules d).flatMap fun m =>
+    let index := groupIndex (m.body.filterMap fun s => match s with
+      | .assign q n _ => some (n, q) | _ => none)
+    m.ports.flatMap fun p =>
+      if p.dir != .output then [] else exactlyOne .E007 p.pos ((index[p.name]?).getD [])
+
+private theorem assignments_index (m : Module) (n : String) :
+    ((groupIndex (m.body.filterMap fun s => match s with
+      | .assign q k _ => some (k, q) | _ => none))[n]?).getD [] =
+    m.body.filterMap fun s => match s with
+      | .assign q k _ => if k == n then some q else none | _ => none := by
+  rw [groupIndex_filterMap]
+  congr; funext s
+  cases s <;> simp
+
+@[csimp] private theorem e007_indexed : e007 = indexedE007 := by
+  funext d
+  simp only [e007, indexedE007, assignments_index]
+
 private def duplicateWrites : List Nat → List (Nat × Pos) → List Error
   | _, [] => []
   | seen, (n, p) :: rest =>
@@ -584,6 +678,32 @@ def e012 (d : Design) : List Error :=
         require (writes.all fun (index, _) => index < writes.length)
           .E012 p "write indices must be contiguous from zero"
     | _ => []
+
+private def indexedE012 (d : Design) : List Error :=
+  (modules d).flatMap fun m =>
+    let index := groupIndex (m.body.filterMap fun s => match s with
+      | .write q k index _ _ _ => some (k, (index, q)) | _ => none)
+    m.body.flatMap fun s => match s with
+      | .mem p n _ _ _ =>
+        let writes := (index[n]?).getD []
+        let duplicates := duplicateWrites [] writes
+        if !duplicates.isEmpty then duplicates else
+          require (writes.all fun (index, _) => index < writes.length)
+            .E012 p "write indices must be contiguous from zero"
+      | _ => []
+
+private theorem writes_index (m : Module) (n : String) :
+    ((groupIndex (m.body.filterMap fun s => match s with
+      | .write q k index _ _ _ => some (k, (index, q)) | _ => none))[n]?).getD [] =
+    m.body.filterMap fun s => match s with
+      | .write q k index _ _ _ => if k == n then some (index, q) else none | _ => none := by
+  rw [groupIndex_filterMap]
+  congr; funext s
+  cases s <;> simp
+
+@[csimp] private theorem e012_indexed : e012 = indexedE012 := by
+  funext d
+  simp only [e012, indexedE012, writes_index]
 
 private def reaches (g : Typed.Graph) (target : Deps.Node) := reachesSpec g target
 
@@ -851,7 +971,8 @@ theorem e005_spec (d : Design) : e005 d = [] ↔ Rules.Numbers d := by
 
 @[simp] theorem resolvedExpr_nil (d : Design) (m : Module) (e : Expr) :
     resolvedExpr d m e = [] ↔ Rules.ResolvedNode d m e := by
-  cases e <;> simp [resolvedExpr, resolvedExprUsing, Rules.ResolvedNode]
+  cases e <;> simp [resolvedExpr, resolvedExprUsing, Rules.ResolvedNode, Lookups.spec,
+    instancePortWith, instancePort]
 
 @[simp] theorem forall_zipIdx (xs : List α) (P : α → Prop) (offset : Nat) :
     (∀ x ∈ xs.zipIdx offset, P x.1) ↔ ∀ x ∈ xs, P x := by
@@ -866,7 +987,7 @@ theorem resolvedStmt_nil (d : Design) (m : Module) (s : Stmt) :
   simp only [resolvedStmt, resolvedStmtUsing, List.append_eq_nil_iff, List.flatMap_eq_nil_iff,
     foldExpr_nil, resolvedExpr_nil]
   apply and_congr_left; intro _
-  cases s <;> simp only [Rules.ResolvedTarget, require_nil]
+  cases s <;> simp only [Rules.ResolvedTarget, require_nil, Lookups.spec, clockName]
   case inst pos name child xs _ =>
     cases h : findItem d child with
     | none => simp [err]
@@ -881,7 +1002,8 @@ theorem e003_spec (d : Design) : e003 d = [] ↔ Rules.Resolved d := by
 
 @[simp] theorem clocksExpr_nil (d : Design) (m : Module) (e : Expr) :
     clocksExpr d m e = [] ↔ Rules.ClockNode d m e := by
-  cases e <;> simp [clocksExpr, clocksExprUsing, Rules.ClockNode]
+  cases e <;> simp [clocksExpr, clocksExprUsing, Rules.ClockNode, Lookups.spec,
+    instancePortWith, instancePort]
 
 theorem e009_spec (d : Design) : e009 d = [] ↔ Rules.Clocks d := by
   simp only [e009, clockBody, Rules.Clocks, List.flatMap_eq_nil_iff, List.append_eq_nil_iff]
