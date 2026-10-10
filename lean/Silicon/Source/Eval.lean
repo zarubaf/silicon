@@ -38,6 +38,8 @@ its operation runs. When the fuel cannot pay it, the result is `S015` at the nod
    reference. A binding is a `let`, an assignment, or a constant. A reference is a name, or a
    conditional that selects a reference. The copy comes before the typed use.
 7. The target of an assignment is a place, not an expression, so it charges nothing.
+8. A `comptime for` charges the sum of the sizes of its two bounds for the range. Each
+   iteration charges the size of its loop value before it binds it.
 
 The nesting depth counts the active calls, the constants in progress, and the top selection.
 A call checks it after its arguments, and a constant before it starts. Above the limit, the
@@ -208,16 +210,17 @@ def convert (t : Ty) (v : Value) : Except Fault Step :=
       else .error (.S012, s!"{n} does not fit {t.text}")⟩
   | _, _ => wrong
 
+/-! An operation runs in its step after the charge, so each result is a thunk. -/
 def unary (op : UnOp) (a : Value) : Except Fault Step :=
-  let step (r : Value) : Except Fault Step := .ok ⟨a.size, fun _ => .ok r⟩
+  let step (r : Unit → Value) : Except Fault Step := .ok ⟨a.size, fun u => .ok (r u)⟩
   match op, a with
-  | .not, .bool b => step (.bool !b)
-  | .inv, .int n => step (.int (Int.not n))
-  | .neg, .int n => step (.int (-n))
-  | .inv, .uint w x => step (.uint w (~~~x))
-  | .inv, .sint w x => step (.sint w (~~~x))
-  | .neg, .uint w x => step (.uint w (Core.Semantics.evalOp .sub (by decide) 0 x))
-  | .neg, .sint w x => step (.sint w (Core.Semantics.evalOp .sub (by decide) 0 x))
+  | .not, .bool b => step fun _ => .bool !b
+  | .inv, .int n => step fun _ => .int (Int.not n)
+  | .neg, .int n => step fun _ => .int (-n)
+  | .inv, .uint w x => step fun _ => .uint w (~~~x)
+  | .inv, .sint w x => step fun _ => .sint w (~~~x)
+  | .neg, .uint w x => step fun _ => .uint w (Core.Semantics.evalOp .sub (by decide) 0 x)
+  | .neg, .sint w x => step fun _ => .sint w (Core.Semantics.evalOp .sub (by decide) 0 x)
   | _, _ => typeError s!"`{op.text}` does not accept {a.text}"
 
 /-! The ordinary operators on `Int`. They do not wrap. -/
@@ -264,24 +267,25 @@ def shift (op : BinOp) (a b : Value) : Except Fault Step := do
     .ok ⟨widthSize w, fun _ => .ok (finiteOp c s w x (amount w k))⟩
   | _ => typeError s!"`{op.text}` does not accept {a.text}"
 
-def equal (a b : Value) : Except Fault Bool :=
+/-! The type check of `==`, and the comparison as a thunk for the step after the charge. -/
+def equal (a b : Value) : Except Fault (Unit → Bool) :=
   match a, b with
-  | .int x, .int y => .ok (x == y)
-  | .bool x, .bool y => .ok (x == y)
-  | .str x, .str y => .ok (x == y)
-  | .type x, .type y => .ok (x == y)
+  | .int x, .int y => .ok fun _ => x == y
+  | .bool x, .bool y => .ok fun _ => x == y
+  | .str x, .str y => .ok fun _ => x == y
+  | .type x, .type y => .ok fun _ => x == y
   | _, _ =>
     match finitePair a b with
-    | some (_, ⟨_, x, y⟩) => .ok (x == y)
+    | some (_, ⟨_, x, y⟩) => .ok fun _ => x == y
     | none => typeError s!"`==` compares values of one type, not {a.text} and {b.text}"
 
-def order (op : BinOp) (a b : Value) : Except Fault Bool :=
+def order (op : BinOp) (a b : Value) : Except Fault (Unit → Bool) :=
   match a, b with
   | .int x, .int y =>
-    .ok (match op with | .lt => x < y | .le => x ≤ y | .gt => x > y | _ => x ≥ y)
+    .ok fun _ => match op with | .lt => x < y | .le => x ≤ y | .gt => x > y | _ => x ≥ y
   | _, _ =>
     match finitePair a b with
-    | some (s, ⟨_, x, y⟩) => .ok (Core.Semantics.evalPred (pred op s) x y == 1)
+    | some (s, ⟨_, x, y⟩) => .ok fun _ => Core.Semantics.evalPred (pred op s) x y == 1
     | none => typeError s!"`{op.text}` orders integers of one type, not {a.text} and {b.text}"
 
 /-! A binary operator other than `&&` and `||`, after its operands and the typed uses. -/
@@ -306,10 +310,10 @@ def binary (op : BinOp) (a b : Value) : Except Fault Step :=
     | _, _, _ => typeError s!"`{op.text}` needs integers of one type, not {a.text} and {b.text}"
   | .eq | .ne => do
     let r ← equal a b
-    .ok ⟨sum, fun _ => .ok (.bool (if op == .eq then r else !r))⟩
+    .ok ⟨sum, fun u => .ok (.bool (if op == .eq then r u else !r u))⟩
   | .lt | .le | .gt | .ge => do
     let r ← order op a b
-    .ok ⟨sum, fun _ => .ok (.bool r)⟩
+    .ok ⟨sum, fun u => .ok (.bool (r u))⟩
   | .shl | .shr => shift op a b
   | .land | .lor => typeError s!"`{op.text}` selects; it has no step"
 
@@ -567,9 +571,14 @@ mutual
       | .ctFor p i lo hi body => do
         let a ← int p (← need lo (← eval n lo))
         let z ← int p (← need hi (← eval n hi))
-        for k in [0:(z - a).toNat] do
-          bindLocal i.id ⟨some .int, false, .int (a + k)⟩
+        charge p ((Value.int a).size + (Value.int z).size)
+        -- The charge of the loop value `v` also pays the work of the next value `v + 1`.
+        let mut v := a
+        for _ in [0:(z - a).toNat] do
+          charge p (Value.int v).size
+          bindLocal i.id ⟨some .int, false, .int v⟩
           if let some r ← block n p body then return some r
+          v := v + 1
         return none
       | .block p ss => block n p ss
       | .expr _ v => do let _ ← eval n v; return none
