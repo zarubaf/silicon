@@ -21,7 +21,12 @@ def usageError (message : String) : IO UInt32 := do
   (← IO.getStderr).putStrLn message
   return 2
 
-private def run (d : CertifiedDesign) : IO UInt32 := do
+/-!
+Runs `d` on the input lines of stdin. `parse` reads the values of one line, and `print` gives the
+output line of the output values.
+-/
+def runWith (parse : Typed.Module → String → Except String (List (String × Nat)))
+    (print : List (String × Nat) → String) (d : CertifiedDesign) : IO UInt32 := do
   if noExterns : d.design.externs = [] then
     let env := emptyEnv d noExterns
     let m := top d noExterns
@@ -32,11 +37,11 @@ private def run (d : CertifiedDesign) : IO UInt32 := do
       let line ← stdin.getLine
       if line.isEmpty then return 0
       let line := if line.endsWith "\n" then (line.dropEnd 1).toString else line
-      match parseInputLine m.val line with
+      match parse m.val line with
       | .error message => return ← usageError message
       | .ok values =>
         let result := Interp.step d env m.val m.property state (inputValues m.val values)
-        stdout.putStr (printOutputLine (outputValues m.val result.2))
+        stdout.putStr (print (outputValues m.val result.2))
         stdout.flush
         state := result.1
     return 0
@@ -73,7 +78,8 @@ def execute (command : Command) (file : String) : IO UInt32 := do
       | .check =>
         (← IO.getStdout).putStrLn "ok"
         return 0
-      | .run => run (CertifiedDesign.ofCheck raw typed accepted)
+      | .run =>
+        runWith parseInputLine printOutputLine (CertifiedDesign.ofCheck raw typed accepted)
       | .lower | .models =>
         let canonical := canonicalTyped raw typed accepted
         let mlir := match command with

@@ -401,11 +401,17 @@ def lowerDesign (pos : Pos) (d : Elab.Design) : FM Lowered := do
   let top ← nameText pos t.iface.name
   return ⟨⟨top, items.toList, cpos pos⟩, units⟩
 
-/-! The check of pass 6. A core `E008` is `S020`, and each other core error is a defect. -/
-def checkDesign (d : Core.Design) : Except Failure Unit :=
-  match Core.check d with
-  | .ok _ => .ok ()
-  | .error e =>
+/-!
+The check of pass 6. The result is the typed design with its proof. A core `E008` is `S020`, and
+each other core error is a defect.
+-/
+def checkDesign (d : Core.Design) : Except Failure { t // Core.check d = .ok t } :=
+  go (Core.check d) rfl
+where
+  go : (r : Except Core.Error Core.Typed.Design) → Core.check d = r →
+      Except Failure { t // Core.check d = .ok t }
+  | .ok t, h => .ok ⟨t, h⟩
+  | .error e, _ =>
     if e.code == .E008 then
       let msg := "the lowered design has a combinational cycle"
       .error (.source ⟨.S020, ⟨e.pos.line, e.pos.col⟩, msg⟩)
