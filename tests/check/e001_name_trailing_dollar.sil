@@ -1,0 +1,8 @@
+; The name a$ has an empty field: E001 at the token start (spec 3, 3.4).
+(design top
+  (module top
+    (input a (bits 1))
+    (output q (bits 1))
+; expected-error E001 @+1
+    (let a$ (bits 1) a)
+    (assign q a)))
