@@ -112,6 +112,8 @@ import Silicon.Source.Resolve
 import Silicon.Source.Test.Resolve
 import Silicon.Source.Check
 import Silicon.Source.Test.Check
+import Silicon.Source.Value
+import Silicon.Source.Test.Value
 import Silicon.Source.Cli
 import Silicon.Main
 
