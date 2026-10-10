@@ -128,7 +128,7 @@ def elabText (o : Opts) (source t : String) (digest : String → String := Names
   match elabRun o source t digest with
   | .ok (_, l, _) =>
     match Flatten.checkDesign l.design with
-    | .ok () => .ok (Core.print (Core.canonicalize l.design))
+    | .ok _ => .ok (Core.print (Core.canonicalize l.design))
     | .error (.source e) => .error e
     | .error (.defect msg) => .defect msg
   | .error out => out
