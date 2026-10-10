@@ -8,6 +8,12 @@ symbol, so the parser checks the builtin name after it.
 
 The input is a `String`, so it is valid UTF-8. The command line rejects other bytes as a
 usage error before it calls the lexer.
+
+The lexer also bounds the brackets. `(`, `[`, and `{` together nest at most the syntax depth N
+of section 5.4. The first opening bracket at the depth N + 1 is an error token. Thus the
+recursion of the parser stays bounded for each input. A closing bracket at the depth 0 keeps
+the depth at 0, so an extra closing bracket cannot hide a later excess. The parser reports
+that closing bracket, because it comes first.
 -/
 namespace Silicon.Source.Lex
 
@@ -132,9 +138,35 @@ def push (tokens : List Token) : Option Token → Except (List Token) (List Toke
   | some t@⟨_, .error _⟩ => .error (t :: tokens)
   | some t => .ok (t :: tokens)
 
-/-! One step per character keeps the recursion structural. The tokens are in reverse order. -/
-def run : Mode → Pos → List Token → List Char → List Token
-  | mode, p, tokens, [] =>
+/-! The default of the syntax depth. -/
+def defaultSyntaxDepth : Nat := 4096
+
+/-! The three kinds of brackets count as one depth, in the lexer and in the parser. -/
+def opening (t : Token) : Bool :=
+  t.kind == .symbol "(" || t.kind == .symbol "[" || t.kind == .symbol "{"
+
+def closing (t : Token) : Bool :=
+  t.kind == .symbol ")" || t.kind == .symbol "]" || t.kind == .symbol "}"
+
+/-!
+The token `t` at the bracket depth `d`, and the depth after it. An opening bracket at the depth
+`depth + 1` becomes an error token. A closing bracket at the depth 0 keeps the depth at 0.
+-/
+def nest (depth d : Nat) : Option Token → Option Token × Nat
+  | none => (none, d)
+  | some t =>
+    if opening t then
+      if d < depth then (some t, d + 1)
+      else (some ⟨t.pos, .error s!"brackets nest deeper than {depth} levels"⟩, d)
+    else if closing t then (some t, d - 1)
+    else (some t, d)
+
+/-!
+One step per character keeps the recursion structural. The tokens are in reverse order. `d` is
+the bracket depth before the character.
+-/
+def run (depth : Nat) : Nat → Mode → Pos → List Token → List Char → List Token
+  | _, mode, p, tokens, [] =>
     let last : Option Token := match mode with
       | .word s acc => some (wordToken s acc)
       | .number s r acc => some (numberToken s r acc)
@@ -144,42 +176,47 @@ def run : Mode → Pos → List Token → List Char → List Token
     match push tokens last with
     | .ok tokens => ⟨p, .eof⟩ :: tokens
     | .error tokens => tokens
-  | mode, p, tokens, c :: cs =>
+  | d, mode, p, tokens, c :: cs =>
     let q := advance p c
     let start (tokens : List Token) (first : Option Token) : List Token :=
       match push tokens first with
       | .error tokens => tokens
       | .ok tokens =>
         let (mode, t) := begin p c cs
+        let (t, e) := nest depth d t
         match push tokens t with
         | .error tokens => tokens
-        | .ok tokens => run mode q tokens cs
+        | .ok tokens => run depth e mode q tokens cs
     match mode with
     | .top => start tokens none
-    | .skip next => run next q tokens cs
+    | .skip next => run depth d next q tokens cs
     | .word s acc =>
-      if identChar c then run (.word s (c :: acc)) q tokens cs
+      if identChar c then run depth d (.word s (c :: acc)) q tokens cs
       else start tokens (some (wordToken s acc))
     | .number s r acc =>
-      if isDigitOf r c then run (.number s r (c :: acc)) q tokens cs
+      if isDigitOf r c then run depth d (.number s r (c :: acc)) q tokens cs
       else start tokens (some (numberToken s r acc))
     | .string s acc true => match escaped c with
-      | some e => run (.string s (e :: acc) false) q tokens cs
+      | some e => run depth d (.string s (e :: acc) false) q tokens cs
       | none => ⟨s, .error "invalid escape"⟩ :: tokens
     | .string s acc false =>
-      if c == '"' then run .top q (⟨s, .string (String.ofList acc.reverse)⟩ :: tokens) cs
-      else if c == '\\' then run (.string s acc true) q tokens cs
+      if c == '"' then
+        run depth d .top q (⟨s, .string (String.ofList acc.reverse)⟩ :: tokens) cs
+      else if c == '\\' then run depth d (.string s acc true) q tokens cs
       else if control c then
         ⟨s, .error (if c == '\n' then "unterminated string" else "control character")⟩
           :: tokens
-      else run (.string s (c :: acc) false) q tokens cs
-    | .lineComment => run (if c == '\n' then .top else .lineComment) q tokens cs
+      else run depth d (.string s (c :: acc) false) q tokens cs
+    | .lineComment => run depth d (if c == '\n' then .top else .lineComment) q tokens cs
     | .blockComment s star =>
-      if star && c == '/' then run .top q tokens cs
-      else run (.blockComment s (c == '*')) q tokens cs
+      if star && c == '/' then run depth d .top q tokens cs
+      else run depth d (.blockComment s (c == '*')) q tokens cs
 
-/-! The tokens of a source text. The last token is `eof`, or `error` for `S001`. -/
-def lex (s : String) : List Token := (run .top ⟨1, 1⟩ [] s.toList).reverse
+/-!
+The tokens of a source text with the syntax depth `depth`. The last token is `eof`, or `error`
+for `S001`. The lexer stops at its first error, so that error is the first in position order.
+-/
+def lex (depth : Nat) (s : String) : List Token := (run depth 0 .top ⟨1, 1⟩ [] s.toList).reverse
 
 /-! The `S001` error of a token list, if the lexer stopped at an error. -/
 def error? (tokens : List Token) : Option Error :=

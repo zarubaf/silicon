@@ -23,7 +23,7 @@ The file and the syntax depth of the arguments of `parse`. The flag `--syntax-de
 before or after the file. `N` is a positive number. Other arguments give `none`.
 -/
 def parseArgs : List String → Option (String × Nat)
-  | [file] => some (file, Parse.defaultSyntaxDepth)
+  | [file] => some (file, Lex.defaultSyntaxDepth)
   | [file, "--syntax-depth", n] | ["--syntax-depth", n, file] =>
     match n.toNat? with
     | some d => if d > 0 then some (file, d) else none

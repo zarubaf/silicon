@@ -9,6 +9,7 @@ error. They also check that the parser reads the text of the printer back to the
 namespace Silicon.Source.Test.Parse
 
 open Silicon.Source Parse
+open Silicon.Source.Lex (defaultSyntaxDepth)
 
 def errorText (e : Error) : String := s!"error {e.code} {e.pos.line}:{e.pos.col}"
 
@@ -226,43 +227,65 @@ def roundtrip (items : List Item) : Bool :=
 #guard fails ("const N: T = " ++ "".pushn '9' 20000 ++ " 1;") .S001 1 14
 
 /-!
-A small syntax depth: height 64 passes, and height 65 fails at the first token of the
-outermost expression or type.
+A small syntax depth of 64. Brackets nest at most 64 deep, and the 65th is `S001` at that
+bracket. An outermost expression or type of height 65 is `S001` at its first token.
 -/
 def parens (n : Nat) : String := "".pushn '(' n ++ "x" ++ "".pushn ')' n
 def negs (n : Nat) : String := "".pushn '-' n ++ "x"
 def chain (n : Nat) : String := " + ".intercalate (List.replicate n "a")
 def calls (n : Nat) : String := String.join (List.replicate n "f(") ++ "x" ++ "".pushn ')' n
+def fields (n : Nat) : String := "x" ++ String.join (List.replicate n ".f")
+def blocks (n : Nat) : String := "".pushn '{' n ++ "".pushn '}' n
 
-#guard (constValue (parens 63) 64).toBool
-#guard ex (parens 64) 64 == "error S001 1:14"
-#guard ex ("y + " ++ parens 64) 64 == "error S001 1:14"
+#guard (constValue (parens 64) 64).toBool
+#guard ex (parens 65) 64 == "error S001 1:78"
+#guard ex (parens 1000) 64 == "error S001 1:78"
+#guard !((st (blocks 63) 64).startsWith "error")
+#guard stFails (blocks 64) .S001 64 64
+#guard stFails ("comptime if (c) " ++ blocks 64) .S001 80 64
+#guard fails ("module M() " ++ blocks 64 ++ "\n" ++ "x") .S001 2 1 64
+#guard !((st ("{ x[" ++ parens 61 ++ "]; }") 64).startsWith "error")
+#guard stFails ("{ x[" ++ parens 62 ++ "]; }") .S001 66 64
+
 #guard (constValue (negs 63) 64).toBool
 #guard ex (negs 64) 64 == "error S001 1:14"
 #guard (constValue (chain 64) 64).toBool
 #guard ex (chain 65) 64 == "error S001 1:14"
 #guard (constValue (calls 63) 64).toBool
 #guard ex (calls 64) 64 == "error S001 1:14"
+#guard ex ("y + " ++ negs 63) 64 == "error S001 1:14"
 #guard ex ("g(" ++ chain 65 ++ ")") 64 == "error S001 1:14"
 #guard fails ("const N: T[" ++ chain 65 ++ "] = 1;") .S001 1 10 64
-#guard ex (parens 1000) 64 == "error S001 1:14"
-#guard stFails ("y + " ++ parens 64 ++ ";") .S001 1 64
-#guard stFails ("x.a = " ++ parens 64 ++ ";") .S001 7 64
-#guard stFails ("instance u = M(a, " ++ parens 64 ++ ");") .S001 19 64
+#guard stFails ("y + " ++ negs 63 ++ ";") .S001 1 64
+#guard stFails ("x.a = " ++ negs 64 ++ ";") .S001 7 64
+#guard stFails (fields 64 ++ " = 1;") .S001 1 64
+#guard stFails ("instance u = M(a, " ++ negs 64 ++ ");") .S001 19 64
 #guard stFails ("let x: T[" ++ chain 65 ++ "] = 1;") .S001 8 64
 
-/-! The default syntax depth: height 4096 passes, and height 4097 fails. -/
-#guard (constValue (chain 4096)).toBool
-#guard ex (chain 4097) == "error S001 1:14"
-#guard (constValue (parens 4095)).toBool
-#guard ex (parens 4096) == "error S001 1:14"
-#guard ex ("y + " ++ parens 4096) == "error S001 1:14"
+/-!
+The height check runs only after a parse without another error. Thus an earlier and a later
+syntax error both win over a height error.
+-/
+def high : String := "const B: T = " ++ chain 65 ++ ";"
+#guard fails ("const A: T = ;\n" ++ high) .S001 1 14 64
+#guard fails (high ++ "\nconst A: T = ;") .S001 2 14 64
+#guard fails (high ++ "\nconst A: T = $;") .S001 2 14 64
+#guard fails (high ++ "\nconst A: T = " ++ parens 65 ++ ";") .S001 2 78 64
+#guard fails (high ++ "\nstruct S {}") .S004 2 1 64
+#guard fails (high ++ "\n" ++ high) .S001 1 14 64
 
-/-! Forms built in a loop or by right nesting, at the default syntax depth. -/
+/-! The default syntax depth: depth and height 4096 pass, and 4097 fails. -/
 def elifs (n : Nat) : String :=
   String.join (List.replicate n "if (c) { x } else { ") ++ "x" ++ "".pushn '}' n
-def fields (n : Nat) : String := "x" ++ String.join (List.replicate n ".f")
+#guard (constValue (parens 4096)).toBool
+#guard ex (parens 4097) == "error S001 1:4110"
+#guard !((st (blocks 4095)).startsWith "error")
+#guard stFails (blocks 4096) .S001 4096
+#guard (constValue (chain 4096)).toBool
+#guard ex (chain 4097) == "error S001 1:14"
 #guard ex (chain 5000) == "error S001 1:14"
+#guard (constValue (negs 4095)).toBool
+#guard ex (negs 5000) == "error S001 1:14"
 #guard (constValue (elifs 4095)).toBool
 #guard ex (elifs 4096) == "error S001 1:14"
 #guard (constValue (fields 4095)).toBool
@@ -274,26 +297,13 @@ def fields (n : Nat) : String := "x" ++ String.join (List.replicate n ".f")
 
 /-!
 The parse is linear. A quadratic look ahead makes these inputs too slow for the build. Each
-statement starts with a name or a `(`, and nests no deeper than the limit.
+statement starts with a name or a `(`.
 -/
 def body (n : Nat) (s : String) : String :=
   "fn f() -> T {\n" ++ String.join (List.replicate n s) ++ "}"
 #guard (parseSource defaultSyntaxDepth (body 20000 "x;\n")).toBool
 #guard (parseSource defaultSyntaxDepth (body 20000 "(x);\n")).toBool
 #guard (parseSource defaultSyntaxDepth (body 10000 "x.a = (f(y, z));\n")).toBool
-#guard ex (parens 20000) 64 == "error S001 1:14"
-
-/-! A small syntax depth: the body and 63 nested blocks pass, and one more fails at its `{`. -/
-def blocks (n : Nat) : String := "".pushn '{' n ++ "".pushn '}' n
-#guard !((st (blocks 63) 64).startsWith "error")
-#guard stFails (blocks 64) .S001 64 64
-#guard stFails ("comptime if (c) " ++ blocks 64) .S001 80 64
-#guard fails ("module M() " ++ blocks 64 ++ "\n" ++ "x") .S001 2 1 64
-
-/-! The default syntax depth: the body and 4095 nested blocks pass, and one more fails. -/
-#guard !((st (blocks 4095)).startsWith "error")
-#guard stFails (blocks 4096) .S001 4096
-#guard !((st (blocks 10000) 20000).startsWith "error")
 
 /-! The parser reads the text of the printer back to the same AST. -/
 def p : Pos := ⟨1, 1⟩
