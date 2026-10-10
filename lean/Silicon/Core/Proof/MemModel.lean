@@ -24,6 +24,8 @@ def Name.text : Name → String
   | .wa i => s!"w{i}_addr" | .wd i => s!"w{i}_data"
   | .we i => s!"w{i}_en" | .ws i => s!"w{i}_set" | .wn i => s!"w{i}_next"
 
+@[simp] private theorem reg_text : regName "mem" = "reg$$mem" := rfl
+
 theorem Name.text_injective : Function.Injective Name.text := by
   intro x y h
   cases x <;> cases y <;> simp only [Name.text] at h
