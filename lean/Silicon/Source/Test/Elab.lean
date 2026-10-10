@@ -83,9 +83,9 @@ def counter : String :=
   "    value := counter.value;\n" ++
   "}\n"
 
-#guard cost counter "Main" == "total 170\nCounter$4 69\nMain 69\n"
-#guard exact counter "Main" 170
-#guard cost counter "Counter(8)" == "total 120\nCounter$8 69\n"
+#guard cost counter "Main" == "total 168\nCounter$4 67\nMain 69\n"
+#guard exact counter "Main" 168
+#guard cost counter "Counter(8)" == "total 118\nCounter$8 67\n"
 #guard order counter "Main" == ["Counter$4", "Main"]
 
 /-!
@@ -164,6 +164,19 @@ def wide (n : Nat) : String :=
   "module W() {\n" ++ String.join ((List.range n).map fun j => s!"  input i{j}: Bool;\n") ++
   s!"}\nmodule T() \{\n  comptime for k in 0..{n} \{\n    instance u = W();\n  }\n}\n"
 #guard cost (wide 8000) "T" (fuel := 1000000) == "S018 8005:5"
+
+/-!
+A hardware operation charges 1 plus the number of its operands, and it shares its operand trees.
+A chain `a +% a +% ... +% a` thus costs linear fuel. Each term adds 5 units: 1 for the
+operator node, 1 for the name, and 3 for the hardware operation. Without an operator,
+`o := a` binds a reference and copies it for 1 unit, so the chains start at one operator.
+-/
+def hwChain (k : Nat) : String :=
+  "module M() {\n  input a: UInt[8];\n  output o: UInt[8];\n  o := a" ++
+  String.join (List.replicate k " +% a") ++ ";\n}\n"
+#guard total (hwChain 4001) "M" - total (hwChain 2001) "M" ==
+  total (hwChain 2001) "M" - total (hwChain 1) "M"
+#guard total (hwChain 2) "M" - total (hwChain 1) "M" == 5
 
 /-! The branching hierarchy of section 11.3 with `d = 10`: 2047 instantiations. -/
 def branch : String :=

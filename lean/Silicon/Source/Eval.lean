@@ -66,9 +66,9 @@ its operation runs. When the fuel cannot pay it, the result is `S015` at the nod
 7. The target of an assignment is a place, not an expression, so it charges nothing.
 8. A `comptime for` charges the sum of the sizes of its two bounds for the range. Each
    iteration charges the size of its loop value before it binds it.
-9. A hardware operation charges the size of the node that it makes: 1, plus the sizes of its
-   operands. A name in a hardware value has the size 1, and a constant node has the size of its
-   static value. A read of a handle and a lift of a static operand only refer, so they charge
+9. A hardware operation makes one node and charges 1 plus the number of its operands. Its
+   operand trees are shared, not copied. A hardware `&&`, `||`, and `if` are hardware
+   operations. A read of a handle and a lift of a static operand only refer, so they charge
    nothing.
 
 The nesting depth counts the active calls, the constants in progress, and the top selection.
@@ -147,7 +147,7 @@ name, its number of inputs, and its domain. A combinational module has no domain
 -/
 structure Iface where
   name : Names.Name
-  ports : Std.TreeMap Nat Port compare
+  ports : Std.HashMap Nat Port
   inputs : Nat
   domain : Option String
 
@@ -630,11 +630,13 @@ def range (pos : Pos) (a z : Int) : M Nat := do
   charge pos ((Value.int a).size + (Value.int z).size)
   return (z - a).toNat
 
-/-! Makes a hardware node. It charges the size of the node, as each value that it makes. -/
+/-!
+Makes a hardware node. It charges 1 plus the number of its operands. The operand trees are
+shared, so the work is constant per node.
+-/
 def node (pos : Pos) (ty : Ty) (op : Op) (args : List Hw) : M Val := do
-  let h := Hw.mk pos ty op args
-  charge pos h.size
-  return .hw h
+  charge pos (1 + args.length)
+  return .hw (Hw.mk pos ty op args)
 
 /-! A static value at a hardware use. Only a Boolean and a finite value have a hardware type. -/
 def lit (pos : Pos) : Value → M Hw
