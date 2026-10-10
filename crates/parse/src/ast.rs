@@ -242,7 +242,8 @@ pub struct Param {
     pub ty: TypeExpr,
 }
 
-/// A top-level item. The `domains` list of a module holds at most one name in slice 1.
+/// A top-level item. The `domains` of a module are `None` without a clause and `Some` with
+/// one. The list holds at most one name in slice 1.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Item {
     Const {
@@ -263,7 +264,7 @@ pub enum Item {
         pos: Pos,
         name: Ident,
         params: Vec<Param>,
-        domains: Vec<Ident>,
+        domains: Option<Vec<Ident>>,
         body: Vec<Stmt>,
     },
 }

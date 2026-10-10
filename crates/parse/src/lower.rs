@@ -146,16 +146,15 @@ impl Lower<'_> {
                 domains: node
                     .children()
                     .find(|n| n.kind() == SyntaxKind::DomainsClause)
-                    .map(|n| {
-                        tokens(&n)
+                    .map(|clause| {
+                        tokens(&clause)
                             .filter(|t| t.kind() == SyntaxKind::Ident)
                             .map(|t| Ident {
                                 pos: self.pos_at(&t),
                                 name: t.text().to_owned(),
                             })
                             .collect()
-                    })
-                    .unwrap_or_default(),
+                    }),
                 body: self.block(&node.children().find(|n| n.kind() == SyntaxKind::Block)?)?,
             }),
             _ => None,

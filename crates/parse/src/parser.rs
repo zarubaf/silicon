@@ -6,8 +6,13 @@ use rowan::{Checkpoint, GreenNode, GreenNodeBuilder, Language};
 use std::collections::BTreeSet;
 use syntax::{SiliconLanguage, SyntaxKind, Token};
 
-/// The most levels of nesting of an expression, and of a block.
+/// The most height of an expression or a type, and the most nesting of blocks.
 pub(crate) const MAX_DEPTH: usize = 64;
+
+/// The most open forms of an expression that the parser holds. It bounds the recursion, so
+/// no input overflows the stack. A form that has more than 64 forms inside it is already an
+/// error, so this limit only decides where a very deep input reports it.
+const MAX_OPEN_FORMS: usize = 256;
 
 /// The result of a parse function: `None` means it reported an error and the caller recovers.
 pub(crate) type Res = Option<()>;
@@ -28,14 +33,25 @@ pub(crate) struct Parser<'a> {
     pub errors: Vec<RawError>,
     /// The offsets with an error, so that one place gets one error.
     reported: BTreeSet<usize>,
-    /// The nesting of expressions and blocks now open.
-    depth: usize,
+    /// The start offsets of the forms of an expression that are open now.
+    forms: Vec<usize>,
+    /// The nesting of the blocks now open.
+    blocks: usize,
+    /// For each opening bracket, the index of the bracket that closes it.
+    closer: Vec<Option<usize>>,
+    /// For each opening bracket, whether a `,` comes before its closing bracket.
+    comma: Vec<bool>,
     /// The height of the last expression or type that a parse function completed.
     pub height: usize,
+    /// Whether the last postfix form is a place of slice 1: a name, or a field of a place.
+    pub place: bool,
+    /// Whether the last postfix form has an index.
+    pub indexed: bool,
 }
 
 impl<'a> Parser<'a> {
     pub(crate) fn new(input: &'a str, tokens: &'a [Token]) -> Self {
+        let (closer, comma) = bracket_tables(tokens);
         Parser {
             input,
             tokens,
@@ -43,8 +59,13 @@ impl<'a> Parser<'a> {
             builder: GreenNodeBuilder::new(),
             errors: Vec::new(),
             reported: BTreeSet::new(),
-            depth: 0,
+            forms: Vec::new(),
+            blocks: 0,
+            closer,
+            comma,
             height: 0,
+            place: false,
+            indexed: false,
         }
     }
 
@@ -97,15 +118,6 @@ impl<'a> Parser<'a> {
     pub(crate) fn offset_of(&self, n: usize) -> usize {
         self.significant(n)
             .map_or(self.input.len(), |t| t.range.start)
-    }
-
-    /// The kinds of the tokens that follow the current one, for a short look ahead.
-    pub(crate) fn kinds_from(&self, n: usize) -> impl Iterator<Item = SyntaxKind> + '_ {
-        self.tokens[self.at..]
-            .iter()
-            .filter(|t| !t.kind.is_trivia())
-            .skip(n)
-            .map(|t| t.kind)
     }
 
     // The tree.
@@ -178,16 +190,100 @@ impl<'a> Parser<'a> {
         res
     }
 
-    /// Runs `parts` one level deeper, or reports a nesting that is too deep.
-    pub(crate) fn nested(&mut self, parts: impl FnOnce(&mut Self) -> Res) -> Res {
-        if self.depth >= MAX_DEPTH {
-            self.syntax_error("the nesting is deeper than 64 levels");
+    /// Runs the parts of a form of an expression that starts at `start`. It reports an
+    /// input with too many open forms. Such a form has a height above 64, so the error is
+    /// at the start of the open form that is 64 levels out.
+    pub(crate) fn form(&mut self, start: usize, parts: impl FnOnce(&mut Self) -> Res) -> Res {
+        if self.forms.len() >= MAX_OPEN_FORMS {
+            let outer = self.forms[self.forms.len() - MAX_DEPTH];
+            self.syntax_error_at(outer, "the nesting is deeper than 64 levels");
             return None;
         }
-        self.depth += 1;
+        self.forms.push(start);
         let res = parts(self);
-        self.depth -= 1;
+        self.forms.pop();
         res
+    }
+
+    /// Runs the statements of a block, which nests at most 64 deep.
+    pub(crate) fn block_level(&mut self, parts: impl FnOnce(&mut Self) -> Res) -> Res {
+        if self.blocks >= MAX_DEPTH {
+            self.syntax_error("the nesting of blocks is deeper than 64 levels");
+            return None;
+        }
+        self.blocks += 1;
+        let res = parts(self);
+        self.blocks -= 1;
+        res
+    }
+
+    // The look ahead.
+
+    /// The index in the token list of the token `n` places after the current one.
+    pub(crate) fn raw_index(&self, n: usize) -> Option<usize> {
+        self.tokens[self.at..]
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| !t.kind.is_trivia())
+            .nth(n)
+            .map(|(i, _)| self.at + i)
+    }
+
+    /// The index of the first token from `from` on that is not trivia.
+    fn skip_trivia(&self, from: usize) -> usize {
+        from + self.tokens[from..]
+            .iter()
+            .take_while(|t| t.kind.is_trivia())
+            .count()
+    }
+
+    fn kind_at(&self, index: usize) -> Option<SyntaxKind> {
+        self.tokens.get(index).map(|t| t.kind)
+    }
+
+    /// Whether the current token is a `(` of a unit or a tuple: the next token is `)`, or a
+    /// `,` comes before the matching bracket.
+    pub(crate) fn at_unit_or_tuple(&self) -> bool {
+        let Some(open) = self.raw_index(0) else {
+            return false;
+        };
+        let next = self.skip_trivia(open + 1);
+        self.kind_at(next) == Some(SyntaxKind::RParen) || self.comma[open]
+    }
+
+    /// Whether the name at the current token starts a place of a later slice: after the
+    /// name come `.name`, `.number`, and `[...]`, then `=` or `:=`, and one of them is a
+    /// `[` or a `.number`.
+    pub(crate) fn at_later_place(&self) -> bool {
+        #[allow(clippy::enum_glob_use)]
+        use SyntaxKind::*;
+        let Some(name) = self.raw_index(0) else {
+            return false;
+        };
+        let mut seen = false;
+        let mut at = self.skip_trivia(name + 1);
+        loop {
+            match self.kind_at(at) {
+                Some(Eq | ColonEq) => return seen,
+                Some(LBracket) => {
+                    let Some(Some(close)) = self.closer.get(at) else {
+                        return false;
+                    };
+                    seen = true;
+                    at = self.skip_trivia(close + 1);
+                }
+                Some(Dot) => {
+                    let selector = self.skip_trivia(at + 1);
+                    match self.kind_at(selector) {
+                        Some(Ident) => {}
+                        Some(Dec | Hex | Bin) => seen = true,
+                        _ => return false,
+                    }
+                    at = self.skip_trivia(selector + 1);
+                }
+                _ => return false,
+            }
+        }
     }
 
     // The errors.
@@ -246,4 +342,33 @@ impl<'a> Parser<'a> {
             Some(())
         }
     }
+}
+
+/// For each opening bracket (of the three kinds, as one depth), its closing bracket and
+/// whether a `,` comes before it. The tables end at the first error token, because the
+/// token list of the reference lexer ends there.
+fn bracket_tables(tokens: &[Token]) -> (Vec<Option<usize>>, Vec<bool>) {
+    #[allow(clippy::enum_glob_use)]
+    use SyntaxKind::*;
+    let mut closer = vec![None; tokens.len()];
+    let mut comma = vec![false; tokens.len()];
+    let mut open: Vec<usize> = Vec::new();
+    for (i, token) in tokens.iter().enumerate() {
+        match token.kind {
+            Error => break,
+            LParen | LBracket | LBrace => open.push(i),
+            RParen | RBracket | RBrace => {
+                if let Some(start) = open.pop() {
+                    closer[start] = Some(i);
+                }
+            }
+            Comma => {
+                if let Some(&start) = open.last() {
+                    comma[start] = true;
+                }
+            }
+            _ => {}
+        }
+    }
+    (closer, comma)
 }

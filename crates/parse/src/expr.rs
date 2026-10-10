@@ -2,6 +2,7 @@
 #![allow(clippy::enum_glob_use)] // The grammar names token kinds on almost every line.
 
 use crate::parser::{Parser, Res};
+use rowan::Checkpoint;
 use syntax::SyntaxKind::{self, *};
 
 /// The binding power of an infix operator. A higher number binds tighter.
@@ -54,7 +55,9 @@ impl Parser<'_> {
         loop {
             match self.cur() {
                 Some(LBracket) => {
-                    self.node_at(checkpoint, IndexType, |p| p.arg_list(RBracket, false))?;
+                    self.node_at(checkpoint, IndexType, |p| {
+                        p.arg_list(RBracket, false, start)
+                    })?;
                     height = height.max(self.height) + 1;
                     self.check_height(height, start)?;
                 }
@@ -71,17 +74,19 @@ impl Parser<'_> {
 
     /// An expression: a conditional, or the operators by precedence.
     pub(crate) fn expr(&mut self) -> Res {
-        self.nested(|p| {
-            if p.is(IfKw) {
-                p.cond_expr()
-            } else {
-                p.binary(0)
-            }
-        })
+        if self.is(IfKw) {
+            self.cond_expr()
+        } else {
+            self.binary(0)
+        }
     }
 
     fn cond_expr(&mut self) -> Res {
         let start = self.offset();
+        self.form(start, |p| p.cond_form(start))
+    }
+
+    fn cond_form(&mut self, start: usize) -> Res {
         self.node(CondExpr, |p| {
             p.bump();
             p.expect(LParen, "`(`")?;
@@ -108,6 +113,12 @@ impl Parser<'_> {
         let start = self.offset();
         let checkpoint = self.checkpoint();
         self.unary()?;
+        self.climb(checkpoint, start, min)
+    }
+
+    /// The operators of at least `min` binding power after an operand that is already parsed.
+    /// The operand starts at the checkpoint and at the offset `start`.
+    pub(crate) fn climb(&mut self, checkpoint: Checkpoint, start: usize, min: u8) -> Res {
         let mut height = self.height;
         while let Some(power) = self.cur().and_then(binding_power).filter(|&b| b >= min) {
             self.node_at(checkpoint, BinExpr, |p| {
@@ -128,7 +139,7 @@ impl Parser<'_> {
     fn unary(&mut self) -> Res {
         if matches!(self.cur(), Some(Bang | Tilde | Minus)) {
             let start = self.offset();
-            self.nested(|p| {
+            self.form(start, |p| {
                 p.node(UnaryExpr, |p| {
                     p.bump();
                     p.unary()
@@ -145,15 +156,24 @@ impl Parser<'_> {
     pub(crate) fn postfix_expr(&mut self) -> Res {
         let start = self.offset();
         let checkpoint = self.checkpoint();
+        let mut place = self.is(Ident);
+        let mut indexed = false;
+        let mut called = false;
         self.primary()?;
         let mut height = self.height;
         loop {
             match self.cur() {
                 Some(LParen) => {
-                    self.node_at(checkpoint, CallExpr, |p| p.arg_list(RParen, true))?;
+                    place = false;
+                    called = true;
+                    self.node_at(checkpoint, CallExpr, |p| p.arg_list(RParen, true, start))?;
                 }
                 Some(LBracket) => {
-                    self.node_at(checkpoint, IndexExpr, |p| p.arg_list(RBracket, false))?;
+                    place = false;
+                    indexed = true;
+                    self.node_at(checkpoint, IndexExpr, |p| {
+                        p.arg_list(RBracket, false, start)
+                    })?;
                 }
                 Some(Dot) => {
                     self.node_at(checkpoint, FieldExpr, |p| {
@@ -161,9 +181,13 @@ impl Parser<'_> {
                         match p.cur() {
                             Some(Ident) => {
                                 p.bump();
+                                if p.is(LParen) {
+                                    p.later_slice(p.offset(), "a receiver call");
+                                    return None;
+                                }
                                 Some(())
                             }
-                            Some(Dec) => {
+                            Some(Dec | Hex | Bin) => {
                                 p.later_slice(p.offset(), "a tuple selector");
                                 None
                             }
@@ -181,32 +205,36 @@ impl Parser<'_> {
             self.check_height(height, start)?;
         }
         self.height = height;
+        self.place = place;
+        self.indexed = indexed && !called;
         Some(())
     }
 
     /// The arguments between a pair of delimiters, with an optional trailing comma. The
     /// opening delimiter is the one that pairs with `close`.
-    pub(crate) fn arg_list(&mut self, close: SyntaxKind, may_be_empty: bool) -> Res {
+    pub(crate) fn arg_list(&mut self, close: SyntaxKind, may_be_empty: bool, start: usize) -> Res {
         let (open, what) = if close == RParen {
             (LParen, "`(`")
         } else {
             (LBracket, "`[`")
         };
-        self.node(ArgList, |p| {
-            p.expect(open, what)?;
-            let mut height = 0;
-            if !(may_be_empty && p.is(close)) {
-                loop {
-                    p.expr()?;
-                    height = height.max(p.height);
-                    if !p.eat(Comma) || p.is(close) {
-                        break;
+        self.form(start, |p| {
+            p.node(ArgList, |p| {
+                p.expect(open, what)?;
+                let mut height = 0;
+                if !(may_be_empty && p.is(close)) {
+                    loop {
+                        p.expr()?;
+                        height = height.max(p.height);
+                        if !p.eat(Comma) || p.is(close) {
+                            break;
+                        }
                     }
                 }
-            }
-            p.expect(close, "a closing delimiter")?;
-            p.height = height;
-            Some(())
+                p.expect(close, "a closing delimiter")?;
+                p.height = height;
+                Some(())
+            })
         })
     }
 
@@ -238,14 +266,7 @@ impl Parser<'_> {
                 self.later_slice(start, "a function type");
                 return None;
             }
-            Some(At) => {
-                if self.next() == Some(Ident) && BUILTINS.contains(&self.next_text()) {
-                    self.later_slice(start, "a builtin");
-                } else {
-                    self.syntax_error_at(self.offset_of(1), "expected the name of a builtin");
-                }
-                return None;
-            }
+            Some(At) => return self.builtin(),
             _ => {
                 self.syntax_error("expected an expression");
                 return None;
@@ -255,21 +276,33 @@ impl Parser<'_> {
         Some(())
     }
 
-    /// A parenthesized expression. The unit and the tuple belong to a later slice.
+    /// `@` in an expression or a type: a builtin belongs to a later slice, and any other
+    /// name after `@` is a syntax error at that name.
+    fn builtin(&mut self) -> Res {
+        if self.next() == Some(Ident) && BUILTINS.contains(&self.next_text()) {
+            self.later_slice(self.offset(), "a builtin");
+        } else {
+            self.syntax_error_at(self.offset_of(1), "expected the name of a builtin");
+        }
+        None
+    }
+
+    /// A parenthesized expression. The unit and the tuple belong to a later slice. Each
+    /// pair of parentheses adds 1 to the height.
     fn paren(&mut self) -> Res {
         let start = self.offset();
-        self.node(ParenExpr, |p| {
-            p.bump();
-            if p.is(RParen) {
-                p.later_slice(start, "the unit value");
-                return None;
-            }
-            p.expr()?;
-            if p.is(Comma) {
-                p.later_slice(start, "a tuple");
-                return None;
-            }
-            p.expect(RParen, "`)`")
-        })
+        if self.at_unit_or_tuple() {
+            self.later_slice(start, "a unit or a tuple");
+            return None;
+        }
+        self.form(start, |p| {
+            p.node(ParenExpr, |p| {
+                p.bump();
+                p.expr()?;
+                p.expect(RParen, "`)`")
+            })
+        })?;
+        self.height += 1;
+        self.check_height(self.height, start)
     }
 }
