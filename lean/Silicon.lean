@@ -17,6 +17,7 @@ import Silicon.Core.GraphDFSInvariant
 import Silicon.Core.GraphDFSState
 import Silicon.Core.GraphDFS
 import Silicon.Core.GraphFlood
+import Silicon.Core.GraphDFSLoop
 import Silicon.Core.GraphComponents
 import Silicon.Core.GraphCycleIndex
 import Silicon.Core.Check
