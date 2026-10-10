@@ -136,7 +136,7 @@ A SKIP hides a check, and a vanished check hides a bug. Thus each tool compares 
 | -------------- | ---------------------- | ---------------------------------------------------- |
 | `lec.txt`      | `just lec`             | `FILE CHECK PASS` or `FILE CHECK SKIP TAG`           |
 | `diff.txt`     | `cargo xtask diff`     | `FILE CHECK PASS` or `FILE CHECK SKIP TAG`           |
-| `coverage.txt` | `cargo xtask coverage` | `ITEM SKIP TAG`                                      |
+| `coverage.txt` | `cargo xtask coverage` | `ITEM SUITE SKIP TAG`                                |
 | `llvm-cov.txt` | `just coverage`        | `CRATE FLOOR`                                        |
 | `mutants.txt`  | `cargo-mutants`        | `#ISSUE MUTANT`, or `EQUIV MUTANT` and a reason line |
 
@@ -145,7 +145,8 @@ The fields:
 - `FILE` is the corpus file. A model check of LEC uses `-`, because it belongs to a memory configuration, not to a file.
 - `CHECK` is the name in the output line, and it may hold spaces. `diff` uses `run`.
 - `TAG` is `#ISSUE` or an error code such as `E014`. It must equal the tag that the tool reports. `cargo xtask check` requires that `doc/trust.md` names the tag as a gap (rule `arch-skips`).
-- `ITEM` is an error code, a construct ID, a command, or a budget, as the failure of `cargo xtask coverage` prints it. Example: `S016 SKIP #11`. A new feature removes its exception.
+- `ITEM` is an error code, a construct ID, a command, or a budget, as the failure of `cargo xtask coverage` prints it. A new feature removes its exception.
+- `SUITE` is the suite that has no test. It is `-` for an error code, a command, and a budget. An exception covers one item in one suite only, and the stale check runs for each pair. Examples: `core:Item::Extern run SKIP E014`, which keeps the extern required in `lower`, and `S016 - SKIP #11`.
 - `CRATE` is a crate name, and `FLOOR` is its line coverage in percent. The first floors are the values of rollout step 4, rounded down.
 - `MUTANT` is the name of a mutant, as `cargo-mutants` prints it. `#ISSUE` names the issue for the missing test. `EQUIV` marks a mutant with the same behavior as the original code. The next line gives the reason in one line.
 
