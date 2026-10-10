@@ -98,11 +98,11 @@ enum Command {
         #[arg(long)]
         base: String,
     },
-    /// Report whether a drift review is due: 15 merged pull requests or 7 days since the newest `arch-review/<date>` tag.
+    /// Report whether a drift review is due: 15 merged pull requests or 7 days since the newest `arch-review/<date>` or `arch-review/<date>.N` tag.
     ///
     /// Counts pull requests with `gh`, because a rebase merge leaves no merge commit.
     /// Exit codes: 0 no review is due, 10 a review is due (also when no tag exists), 1 an error
-    /// (also when a pull request commit is missing from the clone, or a tag `arch-review/*` is not a date).
+    /// (also when a pull request commit is missing from the clone, or a tag `arch-review/*` is not a date with an optional sequence number).
     ReviewDue {
         /// The base branch of the pull requests. The command fetches it from `origin` first.
         #[arg(long, default_value = "main")]

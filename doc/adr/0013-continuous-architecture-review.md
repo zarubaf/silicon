@@ -25,7 +25,7 @@ A finding goes to one of these places:
 - Work becomes an issue with the label `architecture`.
 - A finding in a human gate area blocks the merge until the user decides. The areas are the core IR semantics, the language design, and the trust boundary.
 
-A periodic review ends with an annotated tag `arch-review/<date>` on the reviewed commit. The tag message holds the report. The drift count starts again from that tag.
+A periodic review ends with an annotated tag `arch-review/<date>` on the reviewed commit. A second review on the same day uses `arch-review/<date>.2`, then `.3`, and so on. The tag message holds the report. The drift count starts again from that tag.
 
 Each finding that a machine can check becomes an `xtask` rule. A checklist item that fails twice gets an issue for such a rule.
 
