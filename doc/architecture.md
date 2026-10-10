@@ -26,25 +26,28 @@ Silicon is a standalone hardware description language. It is not a domain-specif
 ## Pipeline
 
 ```text
-source → syntax → parse → resolve → typeck → elab → core-ir ─┬→ backend-circt → Verilog
-                                                             └→ .sil file → translation validator
+source → syntax → parse → resolve → typeck → elab → core IR ─┬→ backend-circt → Verilog
+                                                             └→ .sil file → silicon-check validate
 ```
+
+A Lean reference elaborator defines the meaning of a source design. `silicon-check validate` compares the `.sil` file of each Rust elaboration with its output, byte for byte after `canonicalize`. [ADR 0011](adr/0011-lean-reference-elaborator.md) gives the reasons. [The front-end spec](design/2026-10-09-frontend.md) gives the stages and their oracles.
 
 The translation validator `silicon-check` is a Lean executable. It also holds the reference lowering to MLIR. LEC compares the CIRCT output with the output of the reference lowering. [ADR 0010](adr/0010-lean-reference-lowering.md) gives the reasons.
 
 ## Crates
 
-The Rust workspace has one crate per pipeline stage. A crate comes into existence with its first task. The stages, in pipeline order:
+The Rust workspace has one crate per pipeline stage. A crate comes into existence with its first task. The layers, in order:
 
-1. `syntax`: a lossless syntax tree with `rowan`, from its first commit.
-2. `parse`
-3. `resolve`
-4. `typeck`
-5. `elab`
-6. `core-ir`
+1. `core-ir`: the core IR, its parser, its printer, its checker, and its interpreter. Each later layer uses it.
+2. `syntax`: a lossless syntax tree with `rowan`, from its first commit.
+3. `parse`: the parser with recovery and the AST.
+4. `resolve`: the item table, the scopes, and the resolved AST.
+5. `typeck`: the generic pre-check. It needs no static values and checks each item.
+6. `elab`: the static evaluator, the checks for each instantiation, and the lowering to core IR.
 7. `backend-circt`: lowers the core IR to the CIRCT dialects `hw`, `comb`, and `seq`.
+8. `driver`: the `silicon` CLI.
 
-The crates `diagnostics`, `driver`, and `lsp` support the stages. `driver` holds the `silicon` command-line interface (CLI). The names `crates/fmt`, `crates/lint`, and `crates/lsp` are reserved for the Silicon tooling. A crate depends only on earlier pipeline stages. `cargo xtask check` enforces this order (rule `workspace-layers`).
+[ADR 0012](adr/0012-front-end-layer-order.md) gives the reasons for this order and for the split of the type checks. The crates `diagnostics` and `lsp` support the stages. `driver` holds the `silicon` command-line interface (CLI). The names `crates/fmt`, `crates/lint`, and `crates/lsp` are reserved for the Silicon tooling. A crate depends only on earlier layers. `cargo xtask check` enforces this order (rule `workspace-layers`).
 
 Libraries:
 
@@ -111,7 +114,7 @@ Three methods check the Lean model against SystemVerilog, for example legacy IP 
 1. The core IR semantics and a reference interpreter in Lean (mostly human).
 2. The core IR in Rust, a shared serialization format, the translation validator, and differential testing. Agents scale from this step.
 3. The CIRCT backend with LEC.
-4. The source language and the elaborator.
+4. The source language and the elaborator. See [the front-end spec](design/2026-10-09-frontend.md).
 5. Tools: the LSP, the simulator user interface, the waveform map, and the Verso spec.
 
 Do not run many agents in parallel before steps 1 and 2 exist. Without an oracle, more agents only make more code without verification.
