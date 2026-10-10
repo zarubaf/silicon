@@ -29,6 +29,19 @@ Each layer has one oracle. An oracle is a tool or a model that can say "wrong" m
 
 `just lec` runs `circt-lec` on each file of `tests/corpus/`. It compares the emitted Verilog and the Rust MLIR with the Lean reference MLIR. It also compares each Rust memory model with the Lean memory model. [The core IR spec](../design/2026-10-08-core-ir.md), section 8.1, gives the flow. Run it in the development shell.
 
+## Check inventory
+
+A SKIP hides a check, and a vanished check hides a bug. Thus `just lec` and `cargo xtask diff` compare their checks with a reviewed inventory. The files are `tests/lec-checks.txt` and `tests/diff-checks.txt`. Each tool fails for two separate causes:
+
+- It runs no comparison. A run with only SKIP lines, or with an empty corpus, fails. `diff` fails on an empty corpus for each `--count`, because the random designs stay outside the inventory.
+- Its checks differ from the inventory. A missing line, an extra line, and a changed line all fail. Thus a fixed bug forces its `SKIP` line to become `PASS`.
+
+The format of a line is `FILE CHECK PASS` or `FILE CHECK SKIP TAG`.
+
+- `FILE` is the corpus file. A model check of LEC uses `-`, because it belongs to a memory configuration, not to a file.
+- `CHECK` is the name in the output line, and it may hold spaces. `diff` uses `run`.
+- `TAG` is `#ISSUE` or an error code such as `E014`. It must equal the tag that the tool reports. `cargo xtask check` requires that `doc/trust.md` names the tag as a gap (rule `arch-skips`).
+
 ## Later oracles
 
 Fuzzing and translation validation join `just ci` in build step 2, when their oracles exist. See [the build order](../architecture.md).
