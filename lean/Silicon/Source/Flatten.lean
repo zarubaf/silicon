@@ -115,8 +115,8 @@ def constOf (p : Core.Pos) : Value → Core.Expr
   | _ => .const p 1 0
 
 /-!
-A lowered expression and the height of its hardware value. A leaf has the height 1 and the charge
-of a copy of it.
+A lowered expression and its effective height. A leaf and a reference to a temporary have the
+height 1 and the charge of a copy of them.
 -/
 structure Low where
   expr : Core.Expr
@@ -139,27 +139,29 @@ def tempRef (pos : Pos) (path : Path) : FM Core.Expr := do
   return .ref (cpos pos) (← pathText pos path)
 
 /-!
-The operand `lo` of width `w` for a rule that uses it twice. A leaf is copied. Another operand is
-bound to a temporary at the position `opPos`, and both uses refer to it.
+The operand `lo` of width `w` for a rule that uses it twice, and its effective height. A leaf is
+copied. Another operand is bound to a temporary at the position `opPos`, both uses refer to it,
+and its effective height is 1.
 -/
 def twice (pos : Pos) (target : Path) (w : Nat) (opPos : Pos) (lo : Low) :
-    FM (Core.Expr × Core.Expr) := do
+    FM (Core.Expr × Core.Expr × Nat) := do
   match lo.copy with
   | some u =>
     charge pos u
-    return (lo.expr, lo.expr)
+    return (lo.expr, lo.expr, lo.height)
   | none =>
     let path ← bindTemp pos target w opPos lo.expr
-    return (← tempRef pos path, ← tempRef pos path)
+    return (← tempRef pos path, ← tempRef pos path, 1)
 
 /-!
-A subexpression whose height is a positive multiple of 64 binds to a temporary, unless it is a
-leaf or the value of the statement. A core expression thus nests at most 256 levels.
+A node whose effective height reaches 64 binds to a temporary, unless it is the value of the
+statement. Its operands have effective heights below 64. Each inline expression is thus at most
+64 nodes high, and a core expression nests at most 256 levels.
 -/
 def deep (pos : Pos) (target : Path) (w : Nat) (root : Bool) (lo : Low) : FM Low := do
-  if root || lo.copy.isSome || lo.height % 64 != 0 then return lo
+  if root || lo.height < 64 then return lo
   let path ← bindTemp pos target w pos lo.expr
-  return ⟨← tempRef pos path, some (1 + pathUnits path), lo.height⟩
+  return ⟨← tempRef pos path, some (1 + pathUnits path), 1⟩
 
 /-! The core operation of a binary node that is not a shift, or its predicate. -/
 def binOp (op : BinOp) (signed : Bool) : Option (Core.BinOp ⊕ Core.Pred) :=
@@ -234,14 +236,14 @@ def lower (target : Path) (root : Bool) : Hw → FM Low
             charge p (if k == .shrs then 7 else 6)
             let la ← lower target false a
             let ln ← lower target false n
-            let (a1, a2) ← if k == .shrs then twice p target w a.pos la
-              else pure (la.expr, la.expr)
-            let (n1, n2) ← twice p target wc n.pos ln
+            let (a1, a2, ha) ← if k == .shrs then twice p target w a.pos la
+              else pure (la.expr, la.expr, la.height)
+            let (n1, n2, hn) ← twice p target wc n.pos ln
             let fill := if k == .shrs then .bin c .shrs a1 (.const c w (w - 1))
               else .const c w 0
             let over := Core.Expr.icmp c .uge n1 (.const c wc w)
             let e := Core.Expr.mux c over fill (.bin c k a2 (.extract c n2 0 w))
-            pure ⟨e, none, up (max la.height ln.height)⟩
+            pure ⟨e, none, up (max ha hn)⟩
       else
         match binOp op (signed a.ty) with
         | some (.inl k) =>
@@ -274,9 +276,9 @@ def lower (target : Path) (root : Bool) : Hw → FM Low
       else if signed t then
         charge p 3
         let la ← lower target false a
-        let (a1, a2) ← twice p target w a.pos la
+        let (a1, a2, ha) ← twice p target w a.pos la
         let e := Core.Expr.bin c .concat (.replicate c (.extract c a1 (w - 1) 1) (n - w)) a2
-        pure ⟨e, none, up la.height⟩
+        pure ⟨e, none, up ha⟩
       else
         charge p 2
         let a ← lower target false a

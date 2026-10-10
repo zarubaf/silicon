@@ -268,9 +268,9 @@ def bigLoop : String :=
 #guard Test.Elab.total bigLoop "M" > elabUsed bigLoop "M" + 2 * 1563 * 1563
 
 /-!
-A source subexpression whose height is a positive multiple of 64 binds to a temporary, so a core
-expression nests at most 256 levels. The value of a statement does not bind. `chain k` is the
-chain of `k` additions of `x`, with the height `k + 1`.
+A node whose effective height reaches 64 binds to a temporary, and the temporary has the
+effective height 1. The value of a statement does not bind. `chain k` is the chain of `k`
+additions of `x`, so each 63 additions bind one temporary.
 -/
 def chain (k : Nat) (e : String) : String :=
   (List.range k).foldl (fun e _ => s!"({e} +% x)") e
@@ -285,15 +285,42 @@ def deepText (lets : List String) (y : String) : String := text ([
   "    (input x (bits 8))",
   "    (output y (bits 8))"] ++ lets ++ [s!"    (assign y {y})))"])
 #guard sil (high 63) "D" == deepText [] (coreChain 63 "x")
-#guard sil (high 127) "D" ==
-  deepText [s!"    (let y$0t (bits 8) {coreChain 63 "x"})"] (coreChain 64 "y$0t")
+#guard sil (high 64) "D" ==
+  deepText [s!"    (let y$0t (bits 8) {coreChain 63 "x"})"] (coreChain 1 "y$0t")
+#guard sil (high 127) "D" == deepText [s!"    (let y$0t (bits 8) {coreChain 63 "x"})",
+  s!"    (let y$1t (bits 8) {coreChain 63 "y$0t"})"] (coreChain 1 "y$1t")
+#guard sil (high 128) "D" == deepText [s!"    (let y$0t (bits 8) {coreChain 63 "x"})",
+  s!"    (let y$1t (bits 8) {coreChain 63 "y$0t"})"] (coreChain 2 "y$1t")
 
-/-! A 4096-high source expression lowers to text that re-parses and passes `Core.check`. -/
-def highText : String := sil (high 4095) "D"
-#guard (highText.splitOn "(let y$").length - 1 == 63
-#guard match Core.parse highText with
+/-! The `.sil` text `s` re-parses and passes `Core.check`. -/
+def valid (s : String) : Bool :=
+  match Core.parse s with
   | .ok d => (Core.check d).toBool
   | .error _ => false
+
+/-! A 4096-high source expression binds 64 temporaries and lowers to valid text. -/
+def highText : String := sil (high 4095) "D"
+#guard (highText.splitOn "(let y$").length - 1 == 64
+#guard valid highText
+
+/-!
+A spine of `n` additions whose step `i` adds the chain of `sib i` additions. A taller sibling
+lifts the height of the spine past a multiple of 64. A rule on the full height thus binds no node
+of the spine. The effective height still binds each 63 levels of the spine.
+-/
+def branchy (n : Nat) (sib : Nat → Nat) : String :=
+  let e := (List.range n).foldl (fun e i => s!"({e} +% {chain (sib i) "x"})") "x"
+  "module D() domains() {\n  input x: UInt[8];\n  output y: UInt[8];\n" ++
+  s!"  y := {e};\n}\n"
+def skip (i : Nat) : Nat :=
+  if i == 61 then 64 else if i == 123 then 128 else if i == 185 then 192 else
+  if i == 247 then 256 else 0
+#guard valid (sil (branchy 257 skip) "D")
+
+/-! Generated branching shapes all lower to text that re-parses and passes `Core.check`. -/
+#guard [(300, fun i => i % 70), (300, fun i => i * 7 % 130), (260, fun i => (i * 37) % 66),
+  (200, fun i => if i % 2 == 0 then 63 else 64), (257, fun i => skip i + i % 3)].all
+  fun (n, f) => valid (sil (branchy n f) "D")
 
 /-! Each design of these tests that elaborates also passes `Core.check`. -/
 #guard [(Test.Elab.counter, "Main"), (Test.Elab.helpers, "M"), (Test.Elab.keywords, "next"),
