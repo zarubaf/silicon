@@ -102,7 +102,7 @@ def inc : Item :=
 #guard exprText (bin .sub (v "a") (.unary p .neg (v "b"))) == "a - -b"
 #guard exprText (.field p (.unary p .inv (v "x")) (nm "0")) == "(~x).0"
 #guard exprText (.call p (.field p (v "a") (nm "f")) [n 1, bin .add (n 2) (n 3)]) ==
-  "a.f(1, 2 + 3)"
+  "(a.f)(1, 2 + 3)"
 #guard exprText (.index p (bin .add (v "a") (v "b")) [n 0]) == "(a + b)[0]"
 #guard exprText (bin .addw (v "a") (.cond p (v "c") (v "x") (v "y"))) ==
   "a +% (if (c) { x } else { y })"
