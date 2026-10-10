@@ -1,0 +1,95 @@
+import Silicon.Source.Lex
+
+/-!
+These tests check the lexer at its public boundary: the token kinds, the positions, and
+the position of each lexical error.
+-/
+
+namespace Silicon.Source.Test
+
+open Lex
+
+def kinds (s : String) : List Kind := (lex s).map (·.kind)
+
+def positions (s : String) : List (Nat × Nat) := (lex s).map fun t => (t.pos.line, t.pos.col)
+
+def failsAt (s : String) (line col : Nat) : Bool :=
+  match error? (lex s) with
+  | some e => e.code == .S001 && e.pos == ⟨line, col⟩
+  | none => false
+
+/-! Each token class. -/
+#guard kinds "" == [.eof]
+#guard kinds "abc _x A1_b" == [.ident "abc", .ident "_x", .ident "A1_b", .eof]
+#guard kinds "module modules" == [.keyword "module", .ident "modules", .eof]
+#guard keywords.all fun k => kinds k == [.keyword k, .eof]
+#guard kinds "static_assert error resize" ==
+  [.ident "static_assert", .ident "error", .ident "resize", .eof]
+#guard kinds "0 42 007 0x1F 0xff 0b101" ==
+  [.number 0, .number 42, .number 7, .number 31, .number 255, .number 5, .eof]
+#guard kinds "\"hi there\"" == [.string "hi there", .eof]
+#guard kinds "@TypeOf(x)" ==
+  [.symbol "@", .ident "TypeOf", .symbol "(", .ident "x", .symbol ")", .eof]
+#guard kinds "( ) [ ] { } , ; : . = + - * / % < > ! ~ & | ^ @" ==
+  ["(", ")", "[", "]", "{", "}", ",", ";", ":", ".", "=", "+", "-", "*", "/", "%", "<", ">",
+   "!", "~", "&", "|", "^", "@"].map Kind.symbol ++ [.eof]
+#guard longSymbols.all fun s => kinds s == [.symbol s, .eof]
+
+/-! Longest match: the two-character operator wins, also without spaces. -/
+#guard kinds "a>>b" == [.ident "a", .symbol ">>", .ident "b", .eof]
+#guard kinds "x:=y" == [.ident "x", .symbol ":=", .ident "y", .eof]
+#guard kinds "a+%1" == [.ident "a", .symbol "+%", .number 1, .eof]
+#guard kinds "a- -b" == [.ident "a", .symbol "-", .symbol "-", .ident "b", .eof]
+#guard kinds ">>>" == [.symbol ">>", .symbol ">", .eof]
+#guard kinds "0..N" == [.number 0, .symbol "..", .ident "N", .eof]
+#guard kinds "u.q x.0" ==
+  [.ident "u", .symbol ".", .ident "q", .ident "x", .symbol ".", .number 0, .eof]
+
+/-! Each token takes the longest match. A rule between tokens is a parser rule. -/
+#guard kinds "12ab" == [.number 12, .ident "ab", .eof]
+#guard kinds "0x" == [.number 0, .ident "x", .eof]
+#guard kinds "0xg" == [.number 0, .ident "xg", .eof]
+#guard kinds "0b2" == [.number 0, .ident "b2", .eof]
+#guard kinds "0b102" == [.number 2, .number 2, .eof]
+#guard kinds "1_000" == [.number 1, .ident "_000", .eof]
+#guard kinds "@foo" == [.symbol "@", .ident "foo", .eof]
+#guard kinds "fn()->UInt" ==
+  [.keyword "fn", .symbol "(", .symbol ")", .symbol "->", .ident "UInt", .eof]
+
+/-! Comments separate tokens and produce none. A block comment does not nest. -/
+#guard kinds "a // b c\nd" == [.ident "a", .ident "d", .eof]
+#guard kinds "a // to the end" == [.ident "a", .eof]
+#guard kinds "a/* b\n c */d" == [.ident "a", .ident "d", .eof]
+#guard kinds "/* /* */ x" == [.ident "x", .eof]
+#guard kinds "/**/x/***/y" == [.ident "x", .ident "y", .eof]
+#guard kinds "a/b" == [.ident "a", .symbol "/", .ident "b", .eof]
+#guard kinds "\"// no comment\"" == [.string "// no comment", .eof]
+
+/-! The five escapes. Other Unicode characters stand for themselves. -/
+#guard kinds "\"\\\" \\\\ \\n \\r \\t\"" == [.string "\" \\ \n \r \t", .eof]
+#guard kinds "\"größe\"" == [.string "größe", .eof]
+
+/-! Positions start at 1. LF starts a new line. CR and tab count as one column. -/
+#guard positions "let x\n  = 1;" == [(1, 1), (1, 5), (2, 3), (2, 5), (2, 6), (2, 7)]
+#guard positions "a\r\n\tb" == [(1, 1), (2, 2), (2, 3)]
+#guard positions "/* x\ny */ z" == [(2, 6), (2, 7)]
+#guard positions "\"ä\" b" == [(1, 1), (1, 5), (1, 6)]
+#guard positions "x\n" == [(1, 1), (2, 1)]
+
+/-! A lexical error is `S001` at the first character of the bad token. -/
+#guard failsAt "a \"open" 1 3
+#guard failsAt "a\n  \"open\nb\"" 2 3
+#guard failsAt "x /* open" 1 3
+#guard failsAt "x /* open *" 1 3
+#guard failsAt "\"bad \\q\"" 1 1
+#guard failsAt "\"tab\there\"" 1 1
+#guard failsAt "a $ b" 1 3
+#guard failsAt "a # b" 1 3
+#guard failsAt "ä" 1 1
+#guard failsAt "x \"a\x01b\" y" 1 3
+#guard error? (lex "a b") == none
+
+/-! The tokens before an error stay, so the parser can report an earlier error first. -/
+#guard kinds "import x $" == [.keyword "import", .ident "x", .error "unexpected character"]
+
+end Silicon.Source.Test
