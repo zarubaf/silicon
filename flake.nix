@@ -45,6 +45,11 @@
               ps.mdformat-frontmatter
             ]))
           ];
+          # The compile commands of `silicon` look for the Lean checker here
+          # after `lake -d lean build`.
+          shellHook = ''
+            export SILICON_CHECK="$(git rev-parse --show-toplevel)/lean/.lake/build/bin/silicon-check"
+          '';
           RUSTC_WRAPPER = "sccache";
           SILICON_Z3_LIB = "${pkgs.z3.lib}/lib/libz3${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}";
         };
