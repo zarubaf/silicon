@@ -181,4 +181,15 @@ def chain (n : Nat) : String := " + ".intercalate (List.replicate n "W")
 #guard ok (modBody ("comptime if (" ++ chain 4095 ++ " > 0) {}"))
 #guard ok (modBody (String.join (List.replicate 20000 "{ let a = W; }\n")))
 
+/-!
+The walk visits each index base once. A chain of indices at the default syntax depth, in an
+unused function, thus stays linear.
+-/
+def indices (n : Nat) : String := String.join (List.replicate n "[0]")
+def unusedFns (k : Nat) : String :=
+  String.join ((List.range k).map fun i =>
+    s!"fn f{i}(x: Nat) -> Nat \{ return x{indices 4095}; }\n")
+#guard ok (unusedFns 8)
+#guard fails ("fn unused(x: Nat) -> Nat { return UInt[8]" ++ indices 4094 ++ "; }") .S007 1 35
+
 end Silicon.Source.Test.Check
