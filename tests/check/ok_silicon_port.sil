@@ -1,7 +1,6 @@
-; A port silicon_x uses the reserved prefix: E002 at the name (spec 4.2).
+; A port silicon_x is a legal name: Silicon reserves no name (spec 3.4).
 (design top
   (module top
-; expected-error E002 @+1
     (input silicon_x (bits 1))
     (output q (bits 1))
     (assign q silicon_x)))
