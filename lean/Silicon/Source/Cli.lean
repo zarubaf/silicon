@@ -20,13 +20,14 @@ def parse (depth : Nat) (file : String) : IO UInt32 := do
 
 /-!
 The file and the syntax depth of the arguments of `parse`. The flag `--syntax-depth N` comes
-before or after the file. `N` is a positive number. Other arguments give `none`.
+before or after the file. `N` is a number from 1 to `Lex.maxSyntaxDepth`. Other arguments
+give `none`.
 -/
 def parseArgs : List String → Option (String × Nat)
   | [file] => some (file, Lex.defaultSyntaxDepth)
   | [file, "--syntax-depth", n] | ["--syntax-depth", n, file] =>
     match n.toNat? with
-    | some d => if d > 0 then some (file, d) else none
+    | some d => if 0 < d && d ≤ Lex.maxSyntaxDepth then some (file, d) else none
     | none => none
   | _ => none
 
