@@ -699,3 +699,39 @@ fn lookahead_work_is_linear() {
         );
     }
 }
+
+/// The decimal digits of 2^65536.
+fn two_pow_65536() -> String {
+    let hex = format!("1{}", "0".repeat(16384));
+    crate::ast::Nat::from_digits(&hex, 16).as_str().to_owned()
+}
+
+#[test]
+fn a_number_is_below_2_pow_65536() {
+    let literal = |text: &str| first_error(&format!("const X: T = {text};"));
+    let hit = Some((Code::S001, 1, 14));
+    // Hexadecimal and binary: 2^65536 - 1 passes and 2^65536 fails.
+    assert_eq!(literal(&format!("0x{}", "f".repeat(16384))), None);
+    assert_eq!(literal(&format!("0x1{}", "0".repeat(16384))), hit);
+    assert_eq!(literal(&format!("0b{}", "1".repeat(65536))), None);
+    assert_eq!(literal(&format!("0b1{}", "0".repeat(65536))), hit);
+    // Decimal, with the exact check at the boundary.
+    let limit = two_pow_65536();
+    assert_eq!(limit.len(), 19729);
+    let mut below = limit.clone().into_bytes();
+    assert_eq!(below.pop(), Some(b'6'));
+    below.push(b'5');
+    assert_eq!(literal(&String::from_utf8(below).unwrap_or_default()), None);
+    assert_eq!(literal(&limit), hit);
+    assert_eq!(literal(&format!("1{}", "0".repeat(19729))), hit);
+    // Leading zeros do not count.
+    assert_eq!(literal(&format!("0x{}f", "0".repeat(100_000))), None);
+    assert_eq!(literal(&format!("0b{}1", "0".repeat(100_000))), None);
+    assert_eq!(literal(&format!("{}7", "0".repeat(100_000))), None);
+    assert_eq!(literal(&format!("0x000{}", "f".repeat(16384))), None);
+    // A huge literal fails at once.
+    let start = std::time::Instant::now();
+    assert_eq!(literal(&"9".repeat(1_000_000)), hit);
+    assert_eq!(literal(&format!("0x{}", "f".repeat(1_000_000))), hit);
+    assert!(start.elapsed() < std::time::Duration::from_secs(5));
+}
