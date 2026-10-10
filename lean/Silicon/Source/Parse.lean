@@ -55,11 +55,17 @@ These rules settle the open points of the grammar:
 The syntax depth of section 5.4 limits the height of each expression and each type. Its
 default is 4096. A name, a number, a string, and `true` or `false` have height 1. Each other
 node, and each pair of parentheses, has the height 1 plus the largest height of its parts. A
-type has the same rule: a type name has height 1. A height above the syntax depth is `S001` at
-the first token of the first form that has it. That form is the first such form to end,
-because two forms of that height do not overlap. Thus `a + a + ... + a` with one operand more
-than the syntax depth fails at the first `a`. The limit bounds each recursive pass over the
-AST.
+type has the same rule: a type name has height 1. The limit bounds each recursive pass over
+the AST.
+
+A height above the syntax depth is `S001` at the first token of the outermost expression or
+type. An outermost expression or type is not part of another one. Thus `y + ((x))` fails at
+`y`, also if only `x` is too deep. Each argument of an `instance` is an outermost expression.
+
+The parser stops as soon as its own nesting is above the syntax depth. A part of a form is one
+level deeper than the form. A node built in a loop, such as a left chain, checks its depth
+plus its height. Thus the recursion of the parser stays below the syntax depth plus a small
+constant, for each input.
 
 Blocks nest at most as deep as the syntax depth. The body of an item is at depth 1, and each
 block in a block adds 1. A block deeper than the syntax depth is `S001` at its `{`.
@@ -77,18 +83,17 @@ def opening (t : Token) : Bool := isSym "(" t || isSym "[" t || isSym "{" t
 def closing (t : Token) : Bool := isSym ")" t || isSym "]" t || isSym "}" t
 
 /-!
-The tokens, the syntax depth, and the result of the bracket pass. `close` holds the index of
-the matching bracket of each opening bracket, or the size of the array if no bracket matches.
-`comma` is true at an opening bracket if a `,` comes at its depth before its match.
+The tokens and the result of the bracket pass. `close` holds the index of the matching bracket
+of each opening bracket, or the size of the array if no bracket matches. `comma` is true at an
+opening bracket if a `,` comes at its depth before its match.
 -/
 structure Input where
   tokens : Array Token
-  depth : Nat
   close : Array Nat
   comma : Array Bool
 
 /-! The bracket pass. It counts brackets of the three kinds as one depth. -/
-def Input.of (ts : Array Token) (depth : Nat) : Input := Id.run do
+def Input.of (ts : Array Token) : Input := Id.run do
   let mut close := Array.replicate ts.size ts.size
   let mut comma := Array.replicate ts.size false
   let mut open_ : List Nat := []
@@ -101,10 +106,20 @@ def Input.of (ts : Array Token) (depth : Nat) : Input := Id.run do
         open_ := rest
     else if isSym "," t then
       if let j :: _ := open_ then comma := comma.set! j true
-  return ⟨ts, depth, close, comma⟩
+  return ⟨ts, close, comma⟩
+
+/-!
+The context of the parser. `outer` is the first token of the outermost expression or type,
+which has the nesting 1. `nest` is the nesting of the current form in it.
+-/
+structure Ctx where
+  input : Input
+  depth : Nat
+  outer : Pos
+  nest : Nat
 
 /-! The parser reads the tokens and keeps the index of the next token. -/
-abbrev P := ReaderT Input (StateT Nat (Except Error))
+abbrev P := ReaderT Ctx (StateT Nat (Except Error))
 
 /-! The default of the syntax depth. -/
 def defaultSyntaxDepth : Nat := 4096
@@ -119,7 +134,7 @@ def allBinOps : List BinOp :=
 def tokenAt (inp : Input) (i : Nat) : Token :=
   inp.tokens.getD i (inp.tokens.getD (inp.tokens.size - 1) ⟨⟨1, 1⟩, .eof⟩)
 
-def peekAt (k : Nat) : P Token := return tokenAt (← read) ((← get) + k)
+def peekAt (k : Nat) : P Token := return tokenAt (← read).input ((← get) + k)
 
 def peek : P Token := peekAt 0
 
@@ -181,16 +196,34 @@ def unOp (t : Token) : Option UnOp :=
 def exhausted : P α := do
   throw ⟨.S001, (← peek).pos, "parser fuel exhausted"⟩
 
+/-! `S001` for the height, at the outermost expression or type. -/
+def tooDeep : P α := do
+  let c ← read
+  throw ⟨.S001, c.outer, s!"expression nests deeper than {c.depth} levels"⟩
+
 /-!
-The height of a node from the heights of its children. A height above the syntax depth is
-`S001` at `start`.
+The height of a node from the heights of its children. Its deepest leaf has the depth of the
+node plus its height minus 1. A depth above the syntax depth stops the parse.
 -/
-def height (start : Pos) (children : List Nat) : P Nat := do
+def height (children : List Nat) : P Nat := do
   let h := children.foldl max 0 + 1
-  let d := (← read).depth
-  if h > d then
-    throw ⟨.S001, start, s!"expression nests deeper than {d} levels"⟩
+  let c ← read
+  if c.nest + h - 1 > c.depth then tooDeep
   return h
+
+/-! A part of the current form, one level deeper. -/
+def part (x : P α) : P α := do
+  let c ← read
+  if c.nest + 1 > c.depth then tooDeep
+  withReader ({ · with nest := c.nest + 1 }) x
+
+/-! An outermost expression or type, which starts at the next token. -/
+def outermost (x : P α) : P α := do
+  let start := (← peek).pos
+  withReader ({ · with outer := start, nest := 1 }) x
+
+/-! An argument: an outermost expression if `top`, else a part of the current form. -/
+def argument (top : Bool) (x : P α) : P α := if top then outermost x else part x
 
 /-! An expression with its height. -/
 structure Node where
@@ -201,7 +234,7 @@ def leaf (e : Expr) : Node := ⟨e, 1⟩
 
 /-! True at `(` if `()` follows, or if a `,` comes before the matching bracket. -/
 def tupleAhead : P Bool := do
-  let inp ← read
+  let inp := (← read).input
   return isSym ")" (← peekAt 1) || inp.comma.getD (← get) false
 
 /-!
@@ -226,7 +259,7 @@ def laterPlace (inp : Input) : Nat → Nat → Bool → Bool
 
 /-! True at a name if a place of a later slice starts at it. -/
 def laterPlaceAhead : P Bool := do
-  let inp ← read
+  let inp := (← read).input
   return laterPlace inp inp.tokens.size ((← get) + 1) false
 
 /-!
@@ -241,16 +274,16 @@ mutual
       if isKw "if" t then
         bump
         sym "("
-        let c ← expr f
+        let c ← part (expr f)
         sym ")"
         sym "{"
-        let y ← expr f
+        let y ← part (expr f)
         sym "}"
         kw "else"
         sym "{"
-        let n ← expr f
+        let n ← part (expr f)
         sym "}"
-        let h ← height t.pos [c.height, y.height, n.height]
+        let h ← height [c.height, y.height, n.height]
         return ⟨.cond t.pos c.expr y.expr n.expr, h⟩
       else operand f 1
 
@@ -277,8 +310,8 @@ mutual
       | none => return lhs
       | some op =>
         bump
-        let rhs ← operand f (l + 1)
-        let e := ⟨.binary start op lhs.expr rhs.expr, ← height start [lhs.height, rhs.height]⟩
+        let rhs ← part (operand f (l + 1))
+        let e := ⟨.binary start op lhs.expr rhs.expr, ← height [lhs.height, rhs.height]⟩
         if op.associative then infixOps f l start e
         else
           let t ← peek
@@ -293,8 +326,8 @@ mutual
       match unOp t with
       | some op =>
         bump
-        let a ← unary f
-        return ⟨.unary t.pos op a.expr, ← height t.pos [a.height]⟩
+        let a ← part (unary f)
+        return ⟨.unary t.pos op a.expr, ← height [a.height]⟩
       | none =>
         if isKw "fn" t then later t "a function type"
         else return (← postfixExpr f).1
@@ -313,13 +346,13 @@ mutual
       let t ← peek
       if isSym "(" t then
         bump
-        let xs ← args f ")" true
-        let h ← height start (e.height :: xs.map (·.height))
+        let xs ← args f ")" true false
+        let h ← height (e.height :: xs.map (·.height))
         suffixes f start ⟨.call start e.expr (xs.map (·.expr)), h⟩ false
       else if isSym "[" t then
         bump
-        let xs ← args f "]" false
-        let h ← height start (e.height :: xs.map (·.height))
+        let xs ← args f "]" false false
+        let h ← height (e.height :: xs.map (·.height))
         suffixes f start ⟨.index start e.expr (xs.map (·.expr)), h⟩ false
       else if isSym "." t then
         bump
@@ -329,7 +362,7 @@ mutual
           bump
           let u ← peek
           if isSym "(" u then later u "a receiver call"
-          let h ← height start [e.height]
+          let h ← height [e.height]
           suffixes f start ⟨.field start e.expr ⟨s.pos, n⟩, h⟩ place
         | .number _ => later s "a tuple selector"
         | _ => unexpected s "a field name"
@@ -350,32 +383,35 @@ mutual
       | .symbol "(" =>
         if ← tupleAhead then later t "a unit or tuple value"
         bump
-        let e ← expr f
+        let e ← part (expr f)
         sym ")"
-        return (⟨e.expr, ← height t.pos [e.height]⟩, false)
+        return (⟨e.expr, ← height [e.height]⟩, false)
       | .symbol "[" => later t "an array"
       | .symbol "@" => builtin t
       | _ => unexpected t "an expression"
 
-  /-- A list of expressions up to `close`. A `,` can end the list. -/
-  def args : Nat → String → Bool → P (List Node)
-    | 0, _, _ => exhausted
-    | f + 1, close, allowEmpty => do
+  /--
+  A list of expressions up to `close`. A `,` can end the list. Each is an outermost expression
+  if `top`.
+  -/
+  def args : Nat → String → Bool → Bool → P (List Node)
+    | 0, _, _, _ => exhausted
+    | f + 1, close, allowEmpty, top => do
       if allowEmpty then
         if ← acceptSym close then return []
-      let e ← expr f
-      argsRest f close [e]
+      let e ← argument top (expr f)
+      argsRest f close top [e]
 
-  def argsRest : Nat → String → List Node → P (List Node)
-    | 0, _, _ => exhausted
-    | f + 1, close, acc => do
+  def argsRest : Nat → String → Bool → List Node → P (List Node)
+    | 0, _, _, _ => exhausted
+    | f + 1, close, top, acc => do
       if ← acceptSym close then return acc.reverse
       let t ← peek
       if isSym "," t then
         bump
         if ← acceptSym close then return acc.reverse
-        let e ← expr f
-        argsRest f close (e :: acc)
+        let e ← argument top (expr f)
+        argsRest f close top (e :: acc)
       else unexpected t s!"`,` or `{close}`"
 end
 
@@ -401,19 +437,22 @@ mutual
       let t ← peek
       if isSym "[" t then
         bump
-        let xs ← args f "]" false
-        let h ← height start (h :: xs.map (·.height))
+        let xs ← args f "]" false false
+        let h ← height (h :: xs.map (·.height))
         typeSuffix f start (.index start ty (xs.map (·.expr)), h)
       else if isSym "(" t then later t "a type function call"
       else return (ty, h)
 end
 
+/-! An outermost type. -/
+def typeTop (f : Nat) : P TypeExpr := return (← outermost (typeExpr f)).1
+
 def typeAnnotation (f : Nat) : P TypeExpr := do
   sym ":"
-  return (← typeExpr f).1
+  typeTop f
 
-/-! An expression directly in a statement or an item. -/
-def value (f : Nat) : P Expr := return (← expr f).expr
+/-! An outermost expression, directly in a statement or an item. -/
+def value (f : Nat) : P Expr := return (← outermost (expr f)).expr
 
 /-! `x = v;` or `x := v;` after the postfix form `e`, or else an expression statement. -/
 def placeStmt (f : Nat) (start : Pos) (e : Node) (place : Bool) : P Stmt := do
@@ -469,7 +508,7 @@ mutual
         sym "="
         let m ← path
         sym "("
-        let xs := (← args f ")" true).map (·.expr)
+        let xs := (← args f ")" true true).map (·.expr)
         let u ← peek
         if isKw "with" u then later u "a domain map"
         sym ";"
@@ -505,8 +544,9 @@ mutual
       | .symbol "{" => return .block t.pos (← block f (b + 1))
       | .ident _ =>
         if ← laterPlaceAhead then later t "a place with an index or a tuple selector"
-        let (e, place) ← postfixExpr f
-        placeStmt f t.pos e place
+        outermost do
+          let (e, place) ← postfixExpr f
+          placeStmt f t.pos e place
       | _ =>
         let e ← value f
         sym ";"
@@ -584,7 +624,7 @@ def fnRest (f : Nat) (start : Pos) (comptime : Bool) : P Item := do
   sym "("
   let ps ← params f false []
   sym "->"
-  let r := (← typeExpr f).1
+  let r ← typeTop f
   return .fn start comptime n ps r (← block f 1)
 
 def moduleItem (f : Nat) (start : Pos) : P Item := do
@@ -637,7 +677,7 @@ longest such run goes from `items` through `stmt` and `expr` to `primary`. Thus
 -/
 def parse (depth : Nat) (tokens : List Token) : Except Error (List Item) :=
   let ts := tokens.toArray
-  ((items (32 * (ts.size + 1)) []).run (Input.of ts depth)).run' 0
+  ((items (32 * (ts.size + 1)) []).run ⟨Input.of ts, depth, ⟨1, 1⟩, 1⟩).run' 0
 
 /-! The items of a source text, with the syntax depth `depth`. -/
 def parseSource (depth : Nat) (s : String) : Except Error (List Item) := parse depth (lex s)
