@@ -42,6 +42,19 @@ impl Parse {
     pub fn ast(&self) -> Option<&[ast::Item]> {
         self.ast.as_deref()
     }
+
+    /// Splits the AST and the syntax depth off the parse and drops the lossless tree. Gives
+    /// the parse back if the text has an error.
+    ///
+    /// # Errors
+    /// Returns the parse itself if it has no AST.
+    pub fn into_ast(self) -> Result<(Vec<ast::Item>, usize), Self> {
+        match self.ast {
+            Some(ast) => Ok((ast, self.depth)),
+            None => Err(self),
+        }
+    }
+
     /// The root of the lossless syntax tree. Its text equals the input. A node of `rowan`
     /// frees the tree by recursion, so only the tests of this crate see it.
     #[cfg(test)]
