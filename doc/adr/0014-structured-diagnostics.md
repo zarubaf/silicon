@@ -1,6 +1,6 @@
 # 14. The front end returns structured diagnostics, and only the first error is normative
 
-- Status: accepted
+- Status: accepted, partly superseded by ADR 0017
 - Date: 2026-10-10
 
 ## Context
