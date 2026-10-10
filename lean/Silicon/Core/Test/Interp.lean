@@ -231,9 +231,9 @@ private def siblings (count : Nat) : String :=
     "(assign y " ++ packExpr ((List.range count).map fun i => s!"y{i}") ++ ")" ++
     "(assign q " ++ packExpr ((List.range count).map fun i => s!"q{i}") ++ ")))"
 
-#guard runText (siblings 50) [[("x", 3)], [("x", 5)]] ==
-  some [[packValues ((List.range 50).map (3 + ·)), 0],
-    [packValues ((List.range 50).map (5 + ·)), packValues ((List.range 50).map (3 + ·))]]
+#guard runText (siblings 400) [[("x", 3)], [("x", 5)]] ==
+  some [[packValues ((List.range 400).map (3 + ·)), 0],
+    [packValues ((List.range 400).map (5 + ·)), packValues ((List.range 400).map (3 + ·))]]
 
 end Silicon.Core.Test.Interp
 
