@@ -65,8 +65,11 @@ const NESTING: u32 = 2;
 const ENVS: usize = 64;
 const INSTANCES: u32 = 3;
 const CONTEXTS: usize = 3;
+/// The largest first argument (the recursion count) of a `comptime fn`
+/// call: the sample check of each body covers `0..=COUNT`.
+const COUNT: u32 = 6;
 /// The sample of the other `Int` formals of a `comptime fn` body; the
-/// first formal takes `0..=6`.
+/// first formal takes `0..=COUNT`.
 const SAMPLE_INTS: [i64; 5] = [-6, -1, 0, 3, 6];
 
 /// Random well-typed slice-1 programs.
