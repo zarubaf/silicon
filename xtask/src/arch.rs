@@ -229,13 +229,14 @@ fn codes_violations(spec: &Codes, lean: &Codes, rust: &Codes) -> Vec<Violation> 
     out
 }
 
-/// The `silicon-check` commands: the first string of each `| ["name", ...] =>` arm.
+/// The `silicon-check` commands: the first string of each `| ["name", ...] =>` or
+/// `| "name" :: rest =>` arm.
 ///
 /// A comment can hold an arm, so the stripped text finds the arm lines and the original
 /// text gives the name, because stripping blanks strings.
 pub fn commands(main: &str) -> Result<BTreeSet<String>> {
-    let arm = Regex::new(r#"^\s*\|\s*\["([a-z][a-z-]*)""#)?;
-    let live = Regex::new(r"^\s*\|\s*\[")?;
+    let arm = Regex::new(r#"^\s*\|\s*(?:\[\s*|)"([a-z][a-z-]*)"\s*(?:,|\]|::)"#)?;
+    let live = Regex::new(r"^\s*\|")?;
     let stripped = strip_comments_and_strings(main);
     let found: BTreeSet<String> = main
         .lines()
@@ -245,7 +246,7 @@ pub fn commands(main: &str) -> Result<BTreeSet<String>> {
         .collect();
     if found.is_empty() {
         bail!(
-            "the `{EXE}` root has no command arm `| [\"name\", ...] =>`; the parser needs an update"
+            "the `{EXE}` root has no command arm `| [\"name\", ...] =>` or `| \"name\" :: rest =>`; the parser needs an update"
         );
     }
     Ok(found)
@@ -548,6 +549,12 @@ mod tests {
     fn commented_command_arms_do_not_count() {
         let main = "match args with\n  | [\"check\", f] => a\n  -- | [\"old\", f] => b\n  /- | [\"older\", f] => c -/\n  | _ => d\n";
         assert_eq!(commands(main).unwrap(), set(&["check"]));
+    }
+
+    #[test]
+    fn commands_parse_list_and_cons_arms() {
+        let main = "match args with\n  | [\"check\", file] => a\n  | \"parse\" :: rest => b\n  -- | \"ghost\" :: rest => c\n  | _ => d\n";
+        assert_eq!(commands(main).unwrap(), set(&["check", "parse"]));
     }
 
     #[test]
