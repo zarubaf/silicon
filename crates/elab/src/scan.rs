@@ -16,7 +16,7 @@
 use crate::int::Int;
 use crate::names::Sym;
 use parse::NestedStack;
-use parse::ast::{Expr, Ident, Item, Pos, Stmt, TypeExpr};
+use parse::ast::{Expr, Ident, Item, NodeId, Pos, Stmt, TypeExpr};
 use resolve::{DeclId, Kind, Resolved, ResolvedExpr, Target};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -95,10 +95,10 @@ struct Walk<'a> {
 }
 
 impl Walk<'_> {
-    fn is_constant(&self, pos: Pos) -> bool {
+    fn is_constant(&self, id: NodeId) -> bool {
         let target = match self.top {
-            Some(top) => top.target(pos),
-            None => self.file.target(pos),
+            Some(top) => top.target(id),
+            None => self.file.target(id),
         };
         matches!(target, Some(Target::Decl(id)) if self.file.decl(id).kind == Kind::Const)
     }
@@ -119,7 +119,7 @@ impl Walk<'_> {
 
     fn binder(&mut self, b: &Ident) {
         let s = self.intern(&b.name);
-        if let Some(Target::Decl(id)) = self.file.target(b.pos) {
+        if let Some(Target::Decl(id)) = self.file.target(b.id) {
             self.syms.decls.insert(id, s);
         }
     }
@@ -254,8 +254,8 @@ impl Walk<'_> {
                 self.numbers.insert((self.top.is_some(), *pos), n);
             }
             Expr::Bool { .. } | Expr::Str { .. } => {}
-            Expr::Name { pos, .. } => {
-                if self.is_constant(*pos) {
+            Expr::Name { id, .. } => {
+                if self.is_constant(*id) {
                     self.nested = self.nested.max(depth);
                 }
             }

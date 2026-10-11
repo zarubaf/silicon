@@ -201,7 +201,7 @@ fn top_selection(
             Expr::Name { name, .. } => (*pos, name, args),
             _ => return Err(bad()),
         },
-        Expr::Name { pos, name } => (*pos, name, &[]),
+        Expr::Name { pos, name, .. } => (*pos, name, &[]),
         _ => return Err(bad()),
     };
     let mut xs = Vec::with_capacity(args.len());

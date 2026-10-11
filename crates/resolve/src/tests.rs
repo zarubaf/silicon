@@ -1,9 +1,197 @@
 // SPDX-License-Identifier: Apache-2.0
 use crate::{Code, Decl, Failed, Kind, Prelude, Resolved, Target, resolve};
-use parse::ast::Pos;
+use parse::ast::{Expr, Ident, Item, NodeId, Param, Pos, Stmt, TypeExpr};
+use std::collections::BTreeMap;
 
 fn pos(line: usize, col: usize) -> Pos {
     Pos { line, col }
+}
+
+/// The id of each name node by its position, so that a test names a node by its position.
+#[derive(Default)]
+struct Ids(BTreeMap<Pos, NodeId>);
+
+impl Ids {
+    fn of_items(items: &[Item]) -> Ids {
+        let mut ids = Ids::default();
+        for item in items {
+            match item {
+                Item::Const {
+                    name, ty, value, ..
+                } => {
+                    ids.ident(name);
+                    ids.ty(ty);
+                    ids.expr(value);
+                }
+                Item::Fn {
+                    name,
+                    params,
+                    ret,
+                    body,
+                    ..
+                } => {
+                    ids.ident(name);
+                    ids.params(params);
+                    ids.ty(ret);
+                    ids.stmts(body);
+                }
+                Item::Module {
+                    name,
+                    params,
+                    domains,
+                    body,
+                    ..
+                } => {
+                    ids.ident(name);
+                    ids.params(params);
+                    for domain in domains.iter().flatten() {
+                        ids.ident(domain);
+                    }
+                    ids.stmts(body);
+                }
+            }
+        }
+        ids
+    }
+
+    fn of_expr(expr: &Expr) -> Ids {
+        let mut ids = Ids::default();
+        ids.expr(expr);
+        ids
+    }
+
+    /// The id of the name node at a position.
+    fn at(&self, at: Pos) -> NodeId {
+        *self
+            .0
+            .get(&at)
+            .unwrap_or_else(|| panic!("no name node at {at:?}"))
+    }
+
+    fn add(&mut self, at: Pos, id: NodeId) {
+        assert!(self.0.insert(at, id).is_none(), "two name nodes at {at:?}");
+    }
+
+    fn ident(&mut self, name: &Ident) {
+        self.add(name.pos, name.id);
+    }
+
+    fn params(&mut self, params: &[Param]) {
+        for param in params {
+            self.ident(&param.name);
+            self.ty(&param.ty);
+        }
+    }
+
+    fn stmts(&mut self, stmts: &[Stmt]) {
+        for stmt in stmts {
+            match stmt {
+                Stmt::Local {
+                    name, ty, value, ..
+                } => {
+                    self.ident(name);
+                    if let Some(ty) = ty {
+                        self.ty(ty);
+                    }
+                    self.expr(value);
+                }
+                Stmt::Assign { target, value, .. } | Stmt::Connect { target, value, .. } => {
+                    self.expr(target);
+                    self.expr(value);
+                }
+                Stmt::Reg { name, ty, init, .. } => {
+                    self.ident(name);
+                    self.ty(ty);
+                    self.expr(init);
+                }
+                Stmt::Wire { name, ty, .. }
+                | Stmt::Input { name, ty, .. }
+                | Stmt::Output { name, ty, .. } => {
+                    self.ident(name);
+                    self.ty(ty);
+                }
+                Stmt::Inst {
+                    name, module, args, ..
+                } => {
+                    self.ident(name);
+                    self.ident(module);
+                    self.exprs(args);
+                }
+                Stmt::Ret { value, .. } => {
+                    if let Some(value) = value {
+                        self.expr(value);
+                    }
+                }
+                Stmt::CtIf { cond, yes, no, .. } => {
+                    self.expr(cond);
+                    self.stmts(yes);
+                    if let Some(no) = no {
+                        self.stmts(no);
+                    }
+                }
+                Stmt::CtFor {
+                    var, lo, hi, body, ..
+                } => {
+                    self.ident(var);
+                    self.expr(lo);
+                    self.expr(hi);
+                    self.stmts(body);
+                }
+                Stmt::Block { body, .. } => self.stmts(body),
+                Stmt::Expr { value, .. } => self.expr(value),
+            }
+        }
+    }
+
+    fn ty(&mut self, ty: &TypeExpr) {
+        match ty {
+            TypeExpr::Name { pos, id, .. } => self.add(*pos, *id),
+            TypeExpr::Index { base, args, .. } => {
+                self.ty(base);
+                self.exprs(args);
+            }
+        }
+    }
+
+    fn exprs(&mut self, exprs: &[Expr]) {
+        for expr in exprs {
+            self.expr(expr);
+        }
+    }
+
+    fn expr(&mut self, expr: &Expr) {
+        match expr {
+            Expr::Num { .. } | Expr::Bool { .. } | Expr::Str { .. } => {}
+            Expr::Name { pos, id, .. } => self.add(*pos, *id),
+            Expr::Unary { arg, .. } => self.expr(arg),
+            Expr::Binary { lhs, rhs, .. } => {
+                self.expr(lhs);
+                self.expr(rhs);
+            }
+            Expr::Cond { cond, yes, no, .. } => {
+                self.expr(cond);
+                self.expr(yes);
+                self.expr(no);
+            }
+            Expr::Call { callee, args, .. } => {
+                self.expr(callee);
+                self.exprs(args);
+            }
+            Expr::Index { base, args, .. } => {
+                self.expr(base);
+                self.exprs(args);
+            }
+            Expr::Field { base, field, .. } => {
+                self.expr(base);
+                self.ident(field);
+            }
+        }
+    }
+}
+
+/// What the name node at a position of the file points to.
+fn target_at(resolved: &Resolved, at: Pos) -> Option<Target> {
+    resolved.target(Ids::of_items(resolved.ast()).at(at))
 }
 
 fn run(src: &str) -> Result<Resolved, Failed> {
@@ -33,14 +221,14 @@ fn errors(src: &str) -> Vec<(Code, usize, usize)> {
 }
 
 fn decl_at(resolved: &Resolved, at: Pos) -> &Decl {
-    match resolved.target(at) {
+    match target_at(resolved, at) {
         Some(Target::Decl(id)) => resolved.decl(id),
         other => panic!("expected a declaration at {at:?}, got {other:?}"),
     }
 }
 
 fn decl_at_use(resolved: &Resolved, at: Pos) -> Kind {
-    match resolved.target(at) {
+    match target_at(resolved, at) {
         Some(Target::Decl(id)) => resolved.decl(id).kind,
         other => panic!("expected a declaration at {at:?}, got {other:?}"),
     }
@@ -63,8 +251,14 @@ fn a_valid_file_resolves_every_name() {
     assert_eq!(r.decl(r.item("M").unwrap()).kind, Kind::Module);
     assert!(r.item("missing").is_none());
     // `Nat` at 1:10 is the prelude. `UInt` and `W` in `UInt[W]` on line 2.
-    assert_eq!(r.target(pos(1, 10)), Some(Target::Prelude(Prelude::Nat)));
-    assert_eq!(r.target(pos(2, 11)), Some(Target::Prelude(Prelude::UInt)));
+    assert_eq!(
+        target_at(&r, pos(1, 10)),
+        Some(Target::Prelude(Prelude::Nat))
+    );
+    assert_eq!(
+        target_at(&r, pos(2, 11)),
+        Some(Target::Prelude(Prelude::UInt))
+    );
     assert_eq!(decl_at(&r, pos(2, 16)).name, "W");
     // The use of `inc` points to the item, and the declaration points to itself.
     assert_eq!(decl_at(&r, pos(6, 8)).kind, Kind::Fn);
@@ -361,7 +555,7 @@ fn a_nested_scope_shadows_as_in_lean() {
         else {
             panic!("expected a return of a name");
         };
-        let target = r.target(*pos).unwrap();
+        let target = target_at(&r, *pos).unwrap();
         match target {
             Target::Decl(id) => (r.decl(id).kind, r.decl(id).pos),
             Target::Prelude(_) => panic!("prelude"),
@@ -510,14 +704,15 @@ fn an_expression_resolves_in_the_file_scope() {
     let src = "const A: Nat = 1;\ncomptime fn f(n: Nat) -> Nat { return n; }\nmodule M() { }";
     let file = ok(src);
     let resolved = run_expr(src, "f(A) + UInt[8](1)").unwrap();
-    let kind = |at: Pos| match resolved.target(at) {
+    let ids = Ids::of_expr(resolved.expr());
+    let kind = |at: Pos| match resolved.target(ids.at(at)) {
         Some(Target::Decl(id)) => file.decl(id).kind,
         other => panic!("{other:?}"),
     };
     assert_eq!(kind(pos(1, 1)), Kind::Fn);
     assert_eq!(kind(pos(1, 3)), Kind::Const);
     assert_eq!(
-        resolved.target(pos(1, 8)),
+        resolved.target(ids.at(pos(1, 8))),
         Some(Target::Prelude(Prelude::UInt))
     );
     // A local of an item is not in the file scope, and a module is not a value.

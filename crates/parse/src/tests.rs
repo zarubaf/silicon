@@ -109,14 +109,42 @@ fn const_item() {
     };
     assert_eq!(*p, pos(1, 1));
     assert_eq!((name.pos, name.name.as_str()), (pos(1, 7), "W"));
-    assert_eq!(
-        *ty,
-        TypeExpr::Name {
-            pos: pos(1, 10),
-            name: "Nat".into()
-        }
-    );
+    let TypeExpr::Name {
+        pos: ty_pos,
+        name: ty_name,
+        ..
+    } = ty
+    else {
+        panic!("expected a type name");
+    };
+    assert_eq!((*ty_pos, ty_name.as_str()), (pos(1, 10), "Nat"));
     assert_eq!(sx(value), "8");
+}
+
+#[test]
+fn name_nodes_have_ids_in_source_order() {
+    let parsed = parse("const W: Nat = a + b.c;");
+    let Some(
+        [
+            Item::Const {
+                name,
+                ty: TypeExpr::Name { id: ty, .. },
+                value: Expr::Binary { lhs, rhs, .. },
+                ..
+            },
+        ],
+    ) = parsed.ast.as_deref()
+    else {
+        panic!("{parsed:?}");
+    };
+    let (Expr::Name { id: a, .. }, Expr::Field { base, field, .. }) = (&**lhs, &**rhs) else {
+        panic!("expected `a + b.c`");
+    };
+    let Expr::Name { id: b, .. } = &**base else {
+        panic!("expected `b`");
+    };
+    let ids = [name.id, *ty, *a, *b, field.id];
+    assert!(ids.windows(2).all(|w| w[0] < w[1]), "{ids:?}");
 }
 
 #[test]

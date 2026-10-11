@@ -30,7 +30,7 @@ use crate::scan::Scan;
 use crate::value::{InstantiationId, Ty, Value, int_size};
 use crate::{Budget, Code};
 use parse::StackError;
-use parse::ast::{Expr, Ident, Item, Pos, Stmt, UnOp};
+use parse::ast::{Expr, Ident, Item, NodeId, Pos, Stmt, UnOp};
 use resolve::{Kind as DeclKind, Resolved, Target as Ref};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -424,9 +424,9 @@ impl Evaluator<'_> {
         })
     }
 
-    /// The local slot that a name at `pos` refers to.
-    fn slot_at(&self, pos: Pos) -> Option<&Slot> {
-        match self.file.target(pos) {
+    /// The local slot that the name node `id` refers to.
+    fn slot_of(&self, id: NodeId) -> Option<&Slot> {
+        match self.file.target(id) {
             Some(Ref::Decl(id))
                 if !matches!(
                     self.file.decl(id).kind,
@@ -560,7 +560,7 @@ impl Evaluator<'_> {
         for o in outs {
             vs.push(self.static_value(pos, o)?);
         }
-        let i = match self.file.target(module.pos) {
+        let i = match self.file.target(module.id) {
             Some(Ref::Decl(id)) => self.items.get(&id).copied(),
             _ => None,
         }
@@ -654,7 +654,7 @@ impl Evaluator<'_> {
             )
         };
         match e {
-            Expr::Name { pos: np, .. } => match self.slot_at(*np).map(|s| &s.value) {
+            Expr::Name { id: nid, .. } => match self.slot_of(*nid).map(|s| &s.value) {
                 Some(Val::Handle(Handle::Res { kind, id, ty, path })) => Ok(Target::Own {
                     kind: *kind,
                     id: *id,
@@ -669,11 +669,11 @@ impl Evaluator<'_> {
                 _ => bad(),
             },
             Expr::Field { base, field, .. } => {
-                let Expr::Name { pos: np, .. } = &**base else {
+                let Expr::Name { id: nid, .. } = &**base else {
                     return bad();
                 };
                 let Some(Val::Handle(Handle::Inst { id, path, inst })) =
-                    self.slot_at(*np).map(|s| &s.value)
+                    self.slot_of(*nid).map(|s| &s.value)
                 else {
                     return bad();
                 };

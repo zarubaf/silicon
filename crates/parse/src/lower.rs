@@ -2,13 +2,16 @@
 //! Lowers an error-free syntax tree into the AST. Every function returns `None` for a
 //! tree that does not have the shape that the parser builds.
 
-use crate::ast::{BinOp, Expr, Ident, Item, Nat, Param, Pos, Stmt, TypeExpr, UnOp};
+use crate::ast::{BinOp, Expr, Ident, Item, Nat, NodeId, Param, Pos, Stmt, TypeExpr, UnOp};
 use crate::error::LineIndex;
 use rowan::NodeOrToken;
+use std::cell::Cell;
 use syntax::{SyntaxKind, SyntaxNode, SyntaxToken};
 
 pub(crate) struct Lower<'a> {
-    pub index: LineIndex<'a>,
+    index: LineIndex<'a>,
+    /// The id of the next name node.
+    next: Cell<NodeId>,
 }
 
 fn tokens(node: &SyntaxNode) -> impl Iterator<Item = SyntaxToken> {
@@ -87,7 +90,21 @@ fn binop(kind: SyntaxKind) -> Option<BinOp> {
     })
 }
 
-impl Lower<'_> {
+impl<'a> Lower<'a> {
+    pub(crate) fn new(index: LineIndex<'a>) -> Lower<'a> {
+        Lower {
+            index,
+            next: Cell::new(NodeId::FIRST),
+        }
+    }
+
+    /// A new id for a name node. The lowering builds the nodes in source order.
+    fn id(&self) -> NodeId {
+        let id = self.next.get();
+        self.next.set(id.next());
+        id
+    }
+
     /// The position of the first token of the node. The parser opens each node after the
     /// trivia, so the node starts at its first token, and this costs no walk of the node.
     fn pos_of(&self, node: &SyntaxNode) -> Pos {
@@ -109,6 +126,7 @@ impl Lower<'_> {
             .nth(n)?;
         Some(Ident {
             pos: self.pos_at(&token),
+            id: self.id(),
             name: token.text().to_owned(),
         })
     }
@@ -152,6 +170,7 @@ impl Lower<'_> {
                             .filter(|t| t.kind() == SyntaxKind::Ident)
                             .map(|t| Ident {
                                 pos: self.pos_at(&t),
+                                id: self.id(),
                                 name: t.text().to_owned(),
                             })
                             .collect()
@@ -287,6 +306,7 @@ impl Lower<'_> {
         match node.kind() {
             SyntaxKind::NameType => Some(TypeExpr::Name {
                 pos,
+                id: self.id(),
                 name: token(node, SyntaxKind::Ident)?.text().to_owned(),
             }),
             SyntaxKind::IndexType => Some(TypeExpr::Index {
@@ -326,6 +346,7 @@ impl Lower<'_> {
             }
             NameExpr => Some(Expr::Name {
                 pos,
+                id: self.id(),
                 name: token(node, Ident)?.text().to_owned(),
             }),
             ParenExpr => self.expr(operands.first()?),

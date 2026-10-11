@@ -6,7 +6,7 @@
 use crate::prelude::{Prelude, later_slice};
 use crate::scope::Scopes;
 use crate::{Code, Decl, DeclId, Error, Kind, Resolved, Table, Target};
-use parse::ast::{Expr, Ident, Item, Param, Pos, Stmt, TypeExpr};
+use parse::ast::{Expr, Ident, Item, NodeId, Param, Pos, Stmt, TypeExpr};
 use std::collections::BTreeMap;
 
 /// Resolves the names of the items. Returns the table, or the errors of the first pass with
@@ -43,11 +43,11 @@ pub(crate) fn run(items: &[Item]) -> Result<Table, Vec<Error>> {
 }
 
 /// Resolves the names of an expression in the file scope of `resolved`. Returns the map from
-/// the position of each name token of the expression to its target, or the `S003` errors.
+/// the id of each name node of the expression to its target, or the `S003` errors.
 pub(crate) fn run_expr(
     resolved: &Resolved,
     expr: &Expr,
-) -> Result<BTreeMap<Pos, Target>, Vec<Error>> {
+) -> Result<BTreeMap<NodeId, Target>, Vec<Error>> {
     let mut walker = Walker {
         decls: resolved.decls.clone(),
         scopes: Scopes::of_items(resolved.items.clone()),
@@ -65,7 +65,7 @@ pub(crate) fn run_expr(
 #[derive(Default)]
 struct Walker {
     decls: Vec<Decl>,
-    names: BTreeMap<Pos, Target>,
+    names: BTreeMap<NodeId, Target>,
     scopes: Scopes,
     /// `S002`, pass 2.
     duplicates: Vec<Error>,
@@ -81,7 +81,7 @@ impl Walker {
             name: name.name.clone(),
             pos: name.pos,
         });
-        self.names.insert(name.pos, Target::Decl(id));
+        self.names.insert(name.id, Target::Decl(id));
         id
     }
 
@@ -117,16 +117,16 @@ impl Walker {
         }
     }
 
-    /// Declares a name that has no token. Its position is the module, so no token points to it.
-    fn declare_implicit(&mut self, name: &Ident, kind: Kind) {
+    /// Declares a name that has no token. Its position is the module, and no node points to it.
+    fn declare_implicit(&mut self, pos: Pos, name: &str, kind: Kind) {
         let id = DeclId(self.decls.len());
         self.decls.push(Decl {
             kind,
-            name: name.name.clone(),
-            pos: name.pos,
+            name: name.to_owned(),
+            pos,
         });
         // The scope is new, so the name cannot repeat.
-        let _ = self.scopes.declare_local(&name.name, id);
+        let _ = self.scopes.declare_local(name, id);
     }
 
     fn item(&mut self, item: &Item) {
@@ -156,11 +156,7 @@ impl Walker {
                 // Without a `domains` clause, the module has the default domain `clock`. It
                 // comes first, so a repeat of the name is an error at the later declaration.
                 if domains.is_none() {
-                    let clock = Ident {
-                        pos: *pos,
-                        name: "clock".to_owned(),
-                    };
-                    self.declare_implicit(&clock, Kind::Domain);
+                    self.declare_implicit(*pos, "clock", Kind::Domain);
                 }
                 self.params(params);
                 for domain in domains.iter().flatten() {
@@ -228,7 +224,7 @@ impl Walker {
             Stmt::Inst {
                 name, module, args, ..
             } => {
-                self.module_name(module.pos, &module.name);
+                self.module_name(module.pos, module.id, &module.name);
                 for arg in args {
                     self.expr(arg);
                 }
@@ -264,7 +260,7 @@ impl Walker {
 
     fn ty(&mut self, ty: &TypeExpr) {
         match ty {
-            TypeExpr::Name { pos, name } => self.type_name(*pos, name),
+            TypeExpr::Name { pos, id, name } => self.type_name(*pos, *id, name),
             TypeExpr::Index { base, args, .. } => {
                 self.ty(base);
                 for arg in args {
@@ -277,7 +273,7 @@ impl Walker {
     fn expr(&mut self, expr: &Expr) {
         match expr {
             Expr::Num { .. } | Expr::Bool { .. } | Expr::Str { .. } => {}
-            Expr::Name { pos, name } => self.value_name(*pos, name),
+            Expr::Name { pos, id, name } => self.value_name(*pos, *id, name),
             Expr::Unary { arg, .. } => self.expr(arg),
             Expr::Binary { lhs, rhs, .. } => {
                 self.expr(lhs);
@@ -332,24 +328,24 @@ impl Walker {
     }
 
     /// A name in an expression is anything but a module.
-    fn value_name(&mut self, pos: Pos, name: &str) {
+    fn value_name(&mut self, pos: Pos, id: NodeId, name: &str) {
         match self.lookup(name) {
             Some(target) if self.is_module(target) => self.reject(
                 pos,
                 format!("`{name}` is not a value; a module is used only in an `instance`"),
             ),
             Some(target) => {
-                self.names.insert(pos, target);
+                self.names.insert(id, target);
             }
             None => self.unknown(pos, name),
         }
     }
 
     /// A type name is a prelude type. Slice 1 has no type item.
-    fn type_name(&mut self, pos: Pos, name: &str) {
+    fn type_name(&mut self, pos: Pos, id: NodeId, name: &str) {
         match self.lookup(name) {
             Some(target @ Target::Prelude(p)) if p.is_type() => {
-                self.names.insert(pos, target);
+                self.names.insert(id, target);
             }
             Some(_) => self.reject(pos, format!("`{name}` is not a type")),
             None => self.unknown(pos, name),
@@ -357,10 +353,10 @@ impl Walker {
     }
 
     /// The module of an `instance` is a module item.
-    fn module_name(&mut self, pos: Pos, name: &str) {
+    fn module_name(&mut self, pos: Pos, id: NodeId, name: &str) {
         match self.lookup(name) {
             Some(target) if self.is_module(target) => {
-                self.names.insert(pos, target);
+                self.names.insert(id, target);
             }
             Some(_) => self.reject(pos, format!("`{name}` is not a module")),
             None => self.unknown(pos, name),
