@@ -89,6 +89,7 @@ These are the architecture paths. `cargo xtask review-scope` reads this list. Ea
 - `CONTEXT.md`, `AGENTS.md`, `*/AGENTS.md`, and `crates/*/AGENTS.md`
 - `lean/lakefile.toml`, `lean/lake-manifest.json`, `lean/allowlist.toml`, `lean/Silicon/*/Syntax.lean`, `lean/Silicon/*/Main.lean`, and `lean/Silicon/Main.lean`
 - The normative Lean definitions: `lean/Silicon/Core/Semantics.lean`, `lean/Silicon/Core/Semantics/`, `lean/Silicon/Core/Check.lean`, `lean/Silicon/Core/Names.lean`, `lean/Silicon/Core/Typed.lean`, `lean/Silicon/Core/Deps.lean`, `lean/Silicon/Core/Text.lean`, `lean/Silicon/Core/MemModel.lean`, `lean/Silicon/Core/Lower.lean`, and `lean/Silicon/Core/Mlir/`. The normative source definitions: `lean/Silicon/Source/*.lean`
+- The statements of the front-end theorems: `lean/Silicon/Source/Proof/ParsePrint.lean`, `lean/Silicon/Source/Proof/ParsePrint/Statement.lean`, `lean/Silicon/Source/Proof/ParsePrint/Erase.lean`, `lean/Silicon/Source/Proof/Names.lean`, `lean/Silicon/Source/Proof/StaticOps.lean`, `lean/Silicon/Source/Proof/WellFormed.lean`, and `lean/Silicon/Source/Proof/Fuel/Cost.lean`. The other proof modules of the front end are not architecture paths
 - `justfile`, `.github/workflows/`, `xtask/`, and `tests/inventory/`
 - The translation validator `crates/driver/src/validate.rs`
 - The toolchain pins `flake.nix` and `flake.lock`
