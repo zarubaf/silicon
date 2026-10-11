@@ -90,12 +90,15 @@ enum Command {
         #[arg(long, default_value_t = 200, value_parser = clap::value_parser!(u64).range(1..))]
         count: u64,
     },
-    /// Run the source differential tests: random core designs lifted to source programs through `silicon` and `silicon-check`.
+    /// Run the source differential tests: lifted core designs and typed source programs through `silicon` and `silicon-check`.
     DiffSi {
-        /// The seed of the first design. Design `k` uses the seed plus `k`.
+        /// The cases to run.
+        #[arg(long, value_enum, default_value_t = diff_si::Mode::All)]
+        mode: diff_si::Mode,
+        /// The seed of the first case. Case `k` uses the seed plus `k`.
         #[arg(long, default_value_t = 1)]
         seed: u64,
-        /// The number of lifted designs.
+        /// The number of cases of each mode.
         #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(u64).range(1..))]
         count: u64,
     },
@@ -156,11 +159,13 @@ fn main() -> Result<ExitCode> {
         } else {
             ExitCode::FAILURE
         }),
-        Command::DiffSi { seed, count } => Ok(if diff_si::run(&Repo::discover()?, seed, count)? {
-            ExitCode::SUCCESS
-        } else {
-            ExitCode::FAILURE
-        }),
+        Command::DiffSi { mode, seed, count } => {
+            Ok(if diff_si::run(&Repo::discover()?, mode, seed, count)? {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            })
+        }
         Command::Lec => Ok(if lec::run(&Repo::discover()?)? {
             ExitCode::SUCCESS
         } else {

@@ -16,7 +16,7 @@ use core_ir::vectors::parse_input;
 use proptest::strategy::{Just, Strategy};
 use syntax::r#gen::{lift, vector_in, vector_out};
 
-use super::{Tools, reproducer, run_trace, validated, verdict_of};
+use super::{Mode, Tools, repeat, reproducer, run_trace, validated, verdict_of};
 use crate::diff::{CYCLES, Trace, compare};
 
 /// A core design and its `in=` lines.
@@ -110,7 +110,7 @@ pub(super) fn report(seed: u64, case: &Case, message: &str) {
     if let (Ok(source), Ok(Ok(steps))) = (lift(&case.0), reference(case)) {
         print!("{}", reproducer(&source, &top_selection(&case.0), &steps));
     }
-    println!("Run `cargo xtask diff-si --seed {seed} --count 1` to repeat it.");
+    println!("Run `{}` to repeat it.", repeat(Mode::Lift, seed));
 }
 
 #[cfg(test)]
