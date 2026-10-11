@@ -512,12 +512,14 @@ fn validate_source(source: &str, top: &str, sil: &str, budget: &Budgets) -> Resu
 }
 
 /// The output and the exit code of `build`: the core IR in `PREFIX.sil` and the Verilog in
-/// `PREFIX.sv`. The Verilog comes from the text that Lean validates, and it is written after
-/// the verdict. A Lean rejection of a source that Rust accepted is a defect of the Rust front
-/// end, and it leaves no artifact. A write goes to a `.tmp` file and then renames, so no
-/// artifact is partial. Each exit leaves at most the pair of one build: the write of
-/// `PREFIX.sil` removes an old `PREFIX.sv` first, and a later failure removes both files and
-/// the temp files. No file is touched if an artifact path or its temp file is the input file.
+/// `PREFIX.sv`, in the order of spec section 8.1. Rust elaborates, the command writes
+/// `PREFIX.sil`, Lean validates, and then the backend runs on the text that Lean checks. So a
+/// failure of the backend cannot hide a disagreement of Lean. A Lean rejection of a source
+/// that Rust accepted is a defect of the Rust front end, and it leaves no artifact. A write
+/// goes to a `.tmp` file and then renames, so no artifact is partial. Each exit leaves at most
+/// the pair of one build: the write of `PREFIX.sil` removes an old `PREFIX.sv` first, and a
+/// later failure, also of the backend, removes both files and the temp files. No file is
+/// touched if an artifact path or its temp file is the input file.
 fn build_source(
     file: &Path,
     source: &str,
@@ -541,51 +543,69 @@ fn build_source(
         }
     }
     let sil = canonical(&c.lowered.design);
-    // The backend gets the text that Lean checks, as `lower` and `verilog` do.
-    let typed = match parse(&sil).and_then(|raw| check(&raw)) {
-        Ok(typed) => typed,
-        Err(diagnostic) => return Ok(defect(&diagnostic.to_string())),
-    };
-    // The tool runs before any file exists, so a missing tool leaves nothing behind.
-    let sv = verilog(&lower(&typed))?;
     let _ = fs::remove_file(&sv_path);
     write_artifact(&sil_path, &sil).inspect_err(|_| remove_artifacts(&sil_path, &sv_path))?;
+    let backend = || backend(&sil);
     if validation.no_validate {
-        write_artifact(&sv_path, &sv).inspect_err(|_| remove_artifacts(&sil_path, &sv_path))?;
-        return Ok(("not validated\n".to_owned(), Exit::Success));
+        return emit(backend, &sil_path, &sv_path, "not validated\n");
     }
     let flags = budget.flags();
     let verdict = validate_elaboration(source.as_bytes(), top, &sil_path, &flags);
-    finish(verdict, &sil_path, &sv_path, &sv, &mut io::stderr())
+    finish(verdict, &sil_path, &sv_path, backend, &mut io::stderr())
 }
 
-/// The step after the verdict of Lean: write `sv_path` if Lean accepted. Otherwise remove both
-/// artifacts, and a rejection is a defect of the Rust front end with the Lean text on `err`.
+/// The Verilog of the core IR text `sil`. The backend gets the text that Lean checks, as
+/// `lower` and `verilog` do, so a text that Rust cannot parse or check is a defect.
+fn backend(sil: &str) -> Result<Result<String, Output>, Usage> {
+    let typed = match parse(sil).and_then(|raw| check(&raw)) {
+        Ok(typed) => typed,
+        Err(diagnostic) => return Ok(Err(defect(&diagnostic.to_string()))),
+    };
+    Ok(Ok(verilog(&lower(&typed))?))
+}
+
+/// The step after the verdict of Lean: run `backend` and write `sv_path` if Lean accepted.
+/// Otherwise remove both artifacts, and a rejection is a defect of the Rust front end with the
+/// Lean text on `err`. The backend runs only after the verdict.
 fn finish(
     verdict: Result<Elaborated, String>,
     sil_path: &Path,
     sv_path: &Path,
-    sv: &str,
+    backend: impl FnOnce() -> Result<Result<String, Output>, Usage>,
     err: &mut impl Write,
 ) -> Result<Output, Usage> {
-    let remove = || remove_artifacts(sil_path, sv_path);
     match verdict {
-        Ok(Elaborated::Accepted) => {
-            write_artifact(sv_path, sv).inspect_err(|_| remove())?;
-            Ok(("validated\n".to_owned(), Exit::Success))
-        }
+        Ok(Elaborated::Accepted) => emit(backend, sil_path, sv_path, "validated\n"),
         Ok(Elaborated::Defect(report)) => {
-            remove();
+            remove_artifacts(sil_path, sv_path);
             // A failed write to stderr has no better channel to report to.
             let _ = write!(err, "silicon: defect of the front end: Lean disagrees: ");
             let _ = err.write_all(&report);
             Ok((String::new(), Exit::Defect))
         }
         Err(message) => {
-            remove();
+            remove_artifacts(sil_path, sv_path);
             Err(Usage(message))
         }
     }
+}
+
+/// Runs `backend`, writes its Verilog to `sv_path`, and prints `status`. A failure removes
+/// both artifacts.
+fn emit(
+    backend: impl FnOnce() -> Result<Result<String, Output>, Usage>,
+    sil_path: &Path,
+    sv_path: &Path,
+    status: &str,
+) -> Result<Output, Usage> {
+    let output = backend().and_then(|sv| match sv {
+        Ok(sv) => write_artifact(sv_path, &sv).map(|()| (status.to_owned(), Exit::Success)),
+        Err(output) => Ok(output),
+    });
+    if !matches!(output, Ok((_, Exit::Success))) {
+        remove_artifacts(sil_path, sv_path);
+    }
+    output
 }
 
 /// The path of an artifact: the prefix, then `.` and the extension.
@@ -865,6 +885,11 @@ mod tests {
         Ok((Folder(dir), sil, sv))
     }
 
+    /// A backend that fails as a missing `firtool` does.
+    fn no_firtool() -> Result<Result<String, Output>, Usage> {
+        Err(Usage("cannot run `firtool`".to_owned()))
+    }
+
     #[test]
     fn the_budgets_become_the_flags_of_the_checker() {
         let budgets = Budgets {
@@ -881,8 +906,8 @@ mod tests {
         let (_folder, sil, sv) = artifacts("defect")?;
         let mut err = Vec::new();
         let verdict = Ok(Elaborated::Defect(b"mismatch at line 1: x\n".to_vec()));
-        let output =
-            finish(verdict, &sil, &sv, "new", &mut err).map_err(|u| io::Error::other(u.0))?;
+        let output = finish(verdict, &sil, &sv, || Ok(Ok("new".to_owned())), &mut err)
+            .map_err(|u| io::Error::other(u.0))?;
         assert_eq!(output, (String::new(), Exit::Defect));
         assert!(!sil.exists() && !sv.exists());
         assert_eq!(
@@ -896,8 +921,13 @@ mod tests {
     fn a_checker_failure_is_a_usage_error_without_artifacts() -> io::Result<()> {
         let (_folder, sil, sv) = artifacts("failure")?;
         let mut err = Vec::new();
-        let Err(Usage(message)) = finish(Err("no checker".to_owned()), &sil, &sv, "new", &mut err)
-        else {
+        let Err(Usage(message)) = finish(
+            Err("no checker".to_owned()),
+            &sil,
+            &sv,
+            || Ok(Ok("new".to_owned())),
+            &mut err,
+        ) else {
             return Err(io::Error::other("expected a usage error"));
         };
         assert_eq!(message, "no checker");
@@ -911,7 +941,13 @@ mod tests {
         let (_folder, sil, sv) = artifacts("rename")?;
         fs::remove_file(&sv)?;
         fs::create_dir_all(sv.join("inner"))?;
-        let result = finish(Ok(Elaborated::Accepted), &sil, &sv, "new", &mut Vec::new());
+        let result = finish(
+            Ok(Elaborated::Accepted),
+            &sil,
+            &sv,
+            || Ok(Ok("new".to_owned())),
+            &mut Vec::new(),
+        );
         assert!(result.is_err());
         assert!(!sil.exists() && !sv.with_extension("sv.tmp").exists());
         assert!(sv.is_dir(), "only the folder of the test remains");
@@ -921,11 +957,47 @@ mod tests {
     #[test]
     fn an_accepted_design_writes_the_verilog() -> io::Result<()> {
         let (_folder, sil, sv) = artifacts("accepted")?;
-        let output = finish(Ok(Elaborated::Accepted), &sil, &sv, "new", &mut Vec::new())
-            .map_err(|u| io::Error::other(u.0))?;
+        let output = finish(
+            Ok(Elaborated::Accepted),
+            &sil,
+            &sv,
+            || Ok(Ok("new".to_owned())),
+            &mut Vec::new(),
+        )
+        .map_err(|u| io::Error::other(u.0))?;
         assert_eq!(output, ("validated\n".to_owned(), Exit::Success));
         assert_eq!(fs::read_to_string(&sv)?, "new");
         assert!(sil.exists());
+        Ok(())
+    }
+
+    /// The backend runs after the verdict, so a missing tool cannot hide a disagreement of Lean.
+    #[test]
+    fn a_lean_disagreement_wins_over_a_backend_failure() -> io::Result<()> {
+        let (_folder, sil, sv) = artifacts("order")?;
+        let verdict = Ok(Elaborated::Defect(b"mismatch at line 1: x\n".to_vec()));
+        let output = finish(verdict, &sil, &sv, no_firtool, &mut Vec::new())
+            .map_err(|u| io::Error::other(u.0))?;
+        assert_eq!(output, (String::new(), Exit::Defect));
+        assert!(!sil.exists() && !sv.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn a_backend_failure_after_acceptance_removes_both_artifacts() -> io::Result<()> {
+        let (_folder, sil, sv) = artifacts("backend")?;
+        let result = finish(
+            Ok(Elaborated::Accepted),
+            &sil,
+            &sv,
+            no_firtool,
+            &mut Vec::new(),
+        );
+        let Err(Usage(message)) = result else {
+            return Err(io::Error::other("expected a usage error"));
+        };
+        assert!(message.contains("firtool"), "{message}");
+        assert!(!sil.exists() && !sv.exists());
         Ok(())
     }
 }
