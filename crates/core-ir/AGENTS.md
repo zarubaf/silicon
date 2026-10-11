@@ -6,7 +6,7 @@ The `core-ir` crate is the Rust implementation of the core IR. It is the first s
 
 ## Owns
 
-This crate owns the bit-vector values and their comb operations. It also owns the diagnostics, the AST, the `.sil` parser and printer, the checker, the typed design, and the inference of the port dependencies. It owns the interpreter and the format of the input and output vectors too. The cargo feature `gen` adds the random generator of well-formed designs. `gen::Config` selects the forms. `Config::source()` is the configuration for designs that have a source form.
+This crate owns the bit-vector values and their comb operations. It also owns the diagnostics, the AST, the `.sil` parser and printer, the checker, the typed design, and the inference of the port dependencies. It owns the interpreter and the format of the input and output vectors too. The cargo feature `gen` adds the random generator of well-formed designs. `gen::Config` selects the forms. `Config::source()` is the configuration for designs that have a source form. `gen::lines` makes the input lines of a top module, and `gen::resets` makes the reset values of a run. A reset is likely in the first cycle and rare after it, so the state of a design lives for several cycles. The source generator of `syntax` reuses `gen::resets`.
 
 ## Invariants
 
