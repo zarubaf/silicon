@@ -18,12 +18,9 @@ use proptest::collection::vec;
 use proptest::strategy::{Just, Strategy, ValueTree};
 use syntax::r#gen::{lift, vector_in, vector_out};
 
-use crate::diff::{ToolFailure, Trace, compare, output, runner};
+use crate::diff::{CYCLES, ToolFailure, Trace, compare, output, runner};
 use crate::repo::Repo;
 use crate::{lean_check, silicon};
-
-/// The clock cycles of each design.
-const CYCLES: usize = 8;
 
 /// The most test runs of one shrink. Each run starts five processes.
 const SHRINK_RUNS: u32 = 256;
