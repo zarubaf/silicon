@@ -237,7 +237,8 @@ fn compare_below(kind: BudgetKind, rust: &Output, lean: &Output) -> Result<(), S
 /// Lean `silicon-check elab` run on each `.si` file with the top selection of its `// TOP`
 /// line, once for each `// FUEL N`, `// DEPTH N`, or `// SYNTAX-DEPTH N` line. With the
 /// budget N, both front ends succeed with the same design; the file has no `expected-error`. With N - 1, both front ends fail
-/// with `S015` (`S001` for `SYNTAX-DEPTH`) at the same line and column.
+/// with `S015` (`S001` for `SYNTAX-DEPTH`) at the same line and column. Last, `cost` with the
+/// default budgets prints the same stdout and exits with the same code in both.
 ///
 /// # Errors
 ///
@@ -268,7 +269,23 @@ pub fn budget(binary: &Path, file: &Path) -> datatest_stable::Result<()> {
         compare_below(budget.kind, &rust, &lean)
             .map_err(|e| in_file(format!("with `{flag} {below}`: {e}")))?;
     }
+    let (rust, lean) = both(binary, "cost", file, &top, &[], "")?;
+    compare_cost(&rust, &lean).map_err(in_file)?;
     Ok(())
+}
+
+/// Compares the `cost` runs of the two front ends: equal exit codes and byte-equal stdout.
+fn compare_cost(rust: &Output, lean: &Output) -> Result<(), String> {
+    if rust.status.code() == lean.status.code() && rust.stdout == lean.stdout {
+        return Ok(());
+    }
+    Err(format!(
+        "`cost` differs\nRust exit {:?}:\n{}\nLean exit {:?}:\n{}",
+        rust.status.code(),
+        String::from_utf8_lossy(&rust.stdout),
+        lean.status.code(),
+        String::from_utf8_lossy(&lean.stdout)
+    ))
 }
 
 /// The `corpus` suite (frontend spec section 8): the Rust `silicon elab` writes the core IR of
@@ -489,6 +506,16 @@ mod tests {
         assert!(compare_below(BudgetKind::Depth, &ok, &ok).is_err());
         let other_column = exited(1, "error[S015]: 4:9: x\n");
         assert!(compare_below(BudgetKind::Depth, &s015, &other_column).is_err());
+    }
+
+    #[test]
+    fn cost_needs_equal_stdout_and_exit() {
+        let a = exited(0, "cost 5\n");
+        assert_eq!(compare_cost(&a, &a), Ok(()));
+        let b = exited(0, "cost 6\n");
+        let err = compare_cost(&a, &b).unwrap_err();
+        assert!(err.contains("cost 5") && err.contains("cost 6"), "{err}");
+        assert!(compare_cost(&a, &exited(1, "cost 5\n")).is_err());
     }
 
     #[test]
