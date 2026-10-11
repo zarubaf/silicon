@@ -1,4 +1,4 @@
-//! `cargo xtask lec`: the LEC of spec section 8.1 over `tests/corpus`. It
+//! `cargo xtask lec`: the LEC of spec section 8.1 over the corpus. It
 //! compares the Lean reference with the Verilog of `silicon` (main), with the
 //! MLIR of `silicon lower` (lowering), and each Rust memory model with the
 //! Lean model of its configuration (model).
@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, ensure};
 
 use crate::repo::Repo;
-use crate::{corpus, lean_check, silicon, skips};
+use crate::{corpus, lean_check, paths, silicon, skips};
 use tools::Verdict;
 
 /// The skip of a design that `--externalize-registers` cannot take.
@@ -22,9 +22,6 @@ const SELF_REGISTER: Outcome = Outcome::Skip {
     tag: "#20",
     why: "a register is its own next value",
 };
-
-/// The reviewed inventory of the checks of this tool.
-const INVENTORY: &str = "tests/lec-checks.txt";
 
 /// The result of one check of one file.
 #[derive(Debug, PartialEq, Eq)]
@@ -128,8 +125,9 @@ pub fn run(repo: &Repo) -> Result<bool> {
             }
         }
     }
-    let problems = skips::audit(&repo.read(Path::new(INVENTORY))?, &ran)?;
-    Ok(passed && skips::report(INVENTORY, &problems))
+    let inventory = paths::lec_inventory(repo);
+    let problems = skips::audit(&repo.read(&inventory)?, &ran)?;
+    Ok(passed && skips::report(&inventory.to_string_lossy(), &problems))
 }
 
 /// The outputs of both compilers for one file.
@@ -251,7 +249,9 @@ mod tests {
 
     use super::*;
 
-    const REG_STATE: &str = include_str!("../../tests/corpus/reg_state.sil");
+    fn reg_state() -> String {
+        paths::corpus_file("reg_state.sil")
+    }
 
     /// The top `top` is `q = a`. The unused module `wrap` instantiates it and
     /// discards its output. The unused module `other` is independent.
@@ -316,9 +316,9 @@ mod tests {
     /// The mutation of spec section 9 in the Rust lowering.
     #[test]
     fn a_seeded_bug_fails_the_check_of_its_output() {
-        let good = reference(REG_STATE);
+        let good = reference(&reg_state());
         let bad = good.replace("seq.compreg %sum,", "seq.compreg %r_state,");
-        assert_seeded(REG_STATE, &good, &bad);
+        assert_seeded(&reg_state(), &good, &bad);
     }
 
     /// An unused module that instantiates the declared top hides no bug of

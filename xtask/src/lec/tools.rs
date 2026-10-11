@@ -171,8 +171,7 @@ mod tests {
 
     use super::*;
 
-    const REG_STATE: &str = include_str!("../../../tests/corpus/reg_state.sil");
-    const HIERARCHY: &str = include_str!("../../../tests/corpus/hierarchy_extern.sil");
+    use crate::paths::corpus_file;
 
     fn lowered(src: &str) -> String {
         lower(&check(&parse(src).unwrap()).unwrap())
@@ -186,7 +185,7 @@ mod tests {
     /// input `r_state` as its next value.
     #[test]
     fn the_spec_mutation_fails_the_lec() {
-        let mlir = lowered(REG_STATE);
+        let mlir = lowered(&corpus_file("reg_state.sil"));
         let rust = import(&verilog(&mlir).unwrap(), "top").unwrap();
         assert_eq!(compare(&mlir, &rust, "top").unwrap(), Verdict::Equal);
         let mutated = mlir.replace("seq.compreg %sum,", "seq.compreg %r_state,");
@@ -216,7 +215,7 @@ mod tests {
     /// input an output of the comparison.
     #[test]
     fn a_black_box_connection_counts() {
-        let mlir = lowered(HIERARCHY);
+        let mlir = lowered(&corpus_file("hierarchy_extern.sil"));
         let lean = mlir::defined(&mlir, &std::collections::BTreeMap::new()).unwrap();
         let sv = verilog(&mlir).unwrap() + &mlir::verilog_stand_ins(&mlir).unwrap();
         let rust = import(&sv, "top").unwrap();
@@ -268,7 +267,7 @@ mod tests {
     /// The import would drop an initial value, so it rejects one.
     #[test]
     fn an_initial_value_fails_the_import() {
-        let sv = verilog(&lowered(REG_STATE)).unwrap();
+        let sv = verilog(&lowered(&corpus_file("reg_state.sil"))).unwrap();
         import(&sv, "top").unwrap();
         let mutated = sv.replace("reg  [7:0] reg$$r;", "reg  [7:0] reg$$r = 8'h0;");
         assert_ne!(mutated, sv);

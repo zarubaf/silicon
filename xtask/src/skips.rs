@@ -142,12 +142,14 @@ mod tests {
 
     #[test]
     fn the_checked_in_inventories_parse() {
-        for text in [
-            include_str!("../../tests/lec-checks.txt"),
-            include_str!("../../tests/diff-checks.txt"),
+        let repo = crate::paths::this_repo();
+        for path in [
+            crate::paths::lec_inventory(&repo),
+            crate::paths::diff_inventory(&repo),
         ] {
-            assert!(!parse(text).unwrap().is_empty());
-            audit(text, &[]).unwrap();
+            let text = repo.read(&path).unwrap();
+            assert!(!parse(&text).unwrap().is_empty());
+            audit(&text, &[]).unwrap();
         }
     }
 
