@@ -1,4 +1,4 @@
-// Registers with reset values, one of them signed.
+// Registers with reset values, one of them signed. No register is its own next value.
 // TOP Resets()
 module Resets() {
     input d: UInt[8];
@@ -7,7 +7,7 @@ module Resets() {
     reg a: UInt[8] = 5;
     reg b: SInt[8] = -1;
     a := d;
-    b := b;
+    b := if (a == 0) { -b } else { b };
     u := a;
     s := b;
 }

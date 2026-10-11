@@ -43,5 +43,5 @@ tests/source/corpus/hierarchy_parameters.si main PASS
 tests/source/corpus/hierarchy_parameters.si lowering PASS
 tests/source/corpus/names_keywords.si main PASS
 tests/source/corpus/names_keywords.si lowering PASS
-tests/source/corpus/register_resets.si main SKIP #20
-tests/source/corpus/register_resets.si lowering SKIP #20
+tests/source/corpus/register_resets.si main PASS
+tests/source/corpus/register_resets.si lowering PASS
