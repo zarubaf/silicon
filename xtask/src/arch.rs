@@ -475,27 +475,24 @@ fn imports(src: &str) -> Vec<String> {
     out
 }
 
-/// Rule `lean-exe-imports`: no module under a `Proof` directory is a transitive import of `root`.
+/// Each module that `forbidden` accepts and that a transitive import of a root reaches, with
+/// one import chain from a root. The walk does not go into an accepted module.
 ///
 /// `read` gives the source of a module, or `None` for a module outside `lean/Silicon`.
-pub fn exe_import_violations(
-    root: &str,
+fn forbidden_imports(
+    roots: &[String],
     read: &dyn Fn(&str) -> Result<Option<String>>,
-) -> Result<Vec<Violation>> {
+    forbidden: &dyn Fn(&str) -> bool,
+) -> Result<Vec<(String, Vec<String>)>> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
-    let mut stack = vec![(root.to_owned(), vec![root.to_owned()])];
+    let mut stack: Vec<_> = roots.iter().map(|r| (r.clone(), vec![r.clone()])).collect();
     while let Some((module, chain)) = stack.pop() {
         if !seen.insert(module.clone()) {
             continue;
         }
-        if module.split('.').any(|part| part == "Proof") {
-            out.push(error(
-                &module_path(&module),
-                None,
-                "lean-exe-imports",
-                format!("`{EXE}` imports a proof module: {}", chain.join(" -> ")),
-            ));
+        if forbidden(&module) {
+            out.push((module, chain));
             continue;
         }
         let Some(src) = read(&module)? else { continue };
@@ -506,6 +503,27 @@ pub fn exe_import_violations(
         }
     }
     Ok(out)
+}
+
+/// Rule `lean-exe-imports`: no module under a `Proof` directory is a transitive import of `root`.
+///
+/// `read` gives the source of a module, or `None` for a module outside `lean/Silicon`.
+pub fn exe_import_violations(
+    root: &str,
+    read: &dyn Fn(&str) -> Result<Option<String>>,
+) -> Result<Vec<Violation>> {
+    let is_proof = |module: &str| module.split('.').any(|part| part == "Proof");
+    Ok(forbidden_imports(&[root.to_owned()], read, &is_proof)?
+        .into_iter()
+        .map(|(module, chain)| {
+            error(
+                &module_path(&module),
+                None,
+                "lean-exe-imports",
+                format!("`{EXE}` imports a proof module: {}", chain.join(" -> ")),
+            )
+        })
+        .collect())
 }
 
 /// The root module of the `silicon-check` executable.
