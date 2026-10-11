@@ -3,9 +3,10 @@
 //! it builds the tools, runs the seed loop, and shrinks the first failure.
 //! Each mode supplies a case strategy, a verdict, and a report. The lift
 //! mode lifts random core designs to source. The typed mode builds random
-//! typed programs and their twins.
+//! typed programs and their twins. The mutation mode mutates typed programs.
 
 mod lift;
+mod mutation;
 mod typed;
 
 use std::path::{Path, PathBuf};
@@ -13,6 +14,9 @@ use std::process::Command;
 
 use anyhow::{Context, Result, anyhow, bail};
 use proptest::strategy::{Strategy, ValueTree};
+use testkit::Outcome;
+use testkit::source::agree;
+use testkit::spawn::spawn;
 
 use crate::diff::{ToolFailure, Trace, output, runner};
 use crate::repo::Repo;
@@ -29,7 +33,9 @@ pub enum Mode {
     Lift,
     /// Random typed source programs and their twins.
     Typed,
-    /// The lift mode, then the typed mode.
+    /// Random typed source programs with one mutation.
+    Mutation,
+    /// The lift, typed, and mutation modes.
     All,
 }
 
@@ -39,7 +45,8 @@ impl Mode {
         match self {
             Mode::Lift => &[Mode::Lift],
             Mode::Typed => &[Mode::Typed],
-            Mode::All => &[Mode::Lift, Mode::Typed],
+            Mode::Mutation => &[Mode::Mutation],
+            Mode::All => &[Mode::Lift, Mode::Typed, Mode::Mutation],
         }
     }
 
@@ -48,6 +55,7 @@ impl Mode {
         match self {
             Mode::Lift => "lift",
             Mode::Typed => "typed",
+            Mode::Mutation => "mutation",
             Mode::All => "all",
         }
     }
@@ -87,7 +95,7 @@ pub fn run(repo: &Repo, mode: Mode, seed: u64, count: u64) -> Result<bool> {
             .context("the count must be at least 1")?,
     );
     for &mode in mode.modes() {
-        let (agree, what) = match mode {
+        let (agree, line) = match mode {
             Mode::Typed => (
                 search(
                     typed::cases(),
@@ -96,7 +104,7 @@ pub fn run(repo: &Repo, mode: Mode, seed: u64, count: u64) -> Result<bool> {
                     |case| typed::verdict(&tools, dir.path(), case),
                     |n, case, message| typed::report(&tools, dir.path(), n, case, message),
                 )?,
-                "typed programs",
+                format!("diff-si: {count} typed programs agree (seeds {seed} to {last})"),
             ),
             Mode::Lift => (
                 search(
@@ -106,14 +114,25 @@ pub fn run(repo: &Repo, mode: Mode, seed: u64, count: u64) -> Result<bool> {
                     |case| lift::verdict(&tools, dir.path(), case),
                     lift::report,
                 )?,
-                "lifted designs",
+                format!("diff-si: {count} lifted designs agree (seeds {seed} to {last})"),
             ),
+            Mode::Mutation => {
+                let mut tally = mutation::Tally::new();
+                let agree = search(
+                    mutation::cases(),
+                    seed,
+                    count,
+                    |case| mutation::verdict(&tools, dir.path(), case, &mut tally),
+                    |n, case, message| mutation::report(&tools, dir.path(), n, case, message),
+                )?;
+                (agree, mutation::summary(count, seed, last, &tally))
+            }
             Mode::All => bail!("the mode `all` is not one mode"),
         };
         if !agree {
             return Ok(false);
         }
-        println!("diff-si: {count} {what} agree (seeds {seed} to {last})");
+        println!("{line}");
     }
     Ok(true)
 }
@@ -155,6 +174,31 @@ fn verdict_of(result: Result<Option<String>>) -> Result<Option<String>> {
         }
         other => other,
     }
+}
+
+/// The outcome of `command` on `file` with the top selection `top` and the
+/// further `flags` in both front ends: the common outcome, or the message
+/// of the disagreement or of a front end that misbehaves. A spawn error is
+/// the outer `Err`.
+fn outcome(
+    tools: &Tools,
+    command: &str,
+    file: &Path,
+    top: &str,
+    flags: &[&str],
+) -> Result<std::result::Result<Outcome, String>> {
+    let run = |binary: &Path| {
+        let mut front_end = Command::new(binary);
+        front_end
+            .arg(command)
+            .arg(file)
+            .args(["--top", top])
+            .args(flags);
+        spawn(&mut front_end, "").with_context(|| format!("cannot run {}", binary.display()))
+    };
+    let rust = run(&tools.silicon)?;
+    let lean = run(&tools.lean)?;
+    Ok(agree(command, &rust, &lean))
 }
 
 /// Writes `text` to the file `name` in `dir` and returns its path.
@@ -270,9 +314,24 @@ mod tests {
     use proptest::prelude::any;
 
     #[test]
-    fn all_runs_lift_then_typed() {
-        assert_eq!(Mode::All.modes(), [Mode::Lift, Mode::Typed]);
-        assert_eq!(Mode::Typed.modes(), [Mode::Typed]);
+    fn all_runs_the_modes_in_order() {
+        assert_eq!(Mode::All.modes(), [Mode::Lift, Mode::Typed, Mode::Mutation]);
+        assert_eq!(Mode::Mutation.modes(), [Mode::Mutation]);
+    }
+
+    #[test]
+    fn the_modes_draw_one_program_per_seed() {
+        for seed in 1..=5 {
+            let typed = typed::cases()
+                .new_tree(&mut runner(seed))
+                .unwrap()
+                .current();
+            let (mutated, _, _) = mutation::cases()
+                .new_tree(&mut runner(seed))
+                .unwrap()
+                .current();
+            assert_eq!(typed.0.unwrap().text(), mutated.unwrap().text());
+        }
     }
 
     #[test]
@@ -280,6 +339,14 @@ mod tests {
         assert_eq!(
             repeat(Mode::Typed, 7),
             "cargo xtask diff-si --mode typed --seed 7 --count 1"
+        );
+    }
+
+    #[test]
+    fn the_repeat_command_names_the_mutation_mode() {
+        assert_eq!(
+            repeat(Mode::Mutation, 7),
+            "cargo xtask diff-si --mode mutation --seed 7 --count 1"
         );
     }
 
