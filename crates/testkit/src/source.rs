@@ -5,7 +5,7 @@ use std::path::Path;
 use std::process::{Command, Output};
 
 use crate::bins::{self, silicon_check};
-use crate::directive::{Expected, Marker, expected_error, top};
+use crate::directive::{Expectation, Expected, Marker, expectation, expected_error, top};
 use crate::outcome::classify;
 use crate::report::parse_report;
 use crate::spawn::spawn;
@@ -33,10 +33,15 @@ pub fn parse(binary: &Path, file: &Path) -> datatest_stable::Result<()> {
     Err(format!("the front ends disagree\nLean: {lean:?}\nRust: {rust:?}").into())
 }
 
-/// Compares the `elab` runs of the two front ends with the expectation of the file. Both
-/// must exit 0 with equal designs, or exit 1 with an equal code, line, and column. With an
-/// `expected-error`, the code and the line must also equal the directive.
-fn compare_check(rust: &Output, lean: &Output, want: Option<&Expected>) -> Result<(), String> {
+/// Compares the runs of the command `name` in the two front ends with the expectation of the
+/// file. Both must exit 0 with equal stdout, or exit 1 with an equal code, line, and column.
+/// With an `expected-error`, the code and the line must also equal the directive.
+fn compare_check(
+    name: &str,
+    rust: &Output,
+    lean: &Output,
+    want: Option<&Expected>,
+) -> Result<(), String> {
     let both = || {
         format!(
             "\nRust stdout:\n{}\nLean stdout:\n{}",
@@ -44,15 +49,15 @@ fn compare_check(rust: &Output, lean: &Output, want: Option<&Expected>) -> Resul
             String::from_utf8_lossy(&lean.stdout)
         )
     };
-    let r = classify(rust).map_err(|e| format!("Rust `silicon elab` failed: {e}{}", both()))?;
+    let r = classify(rust).map_err(|e| format!("Rust `silicon {name}` failed: {e}{}", both()))?;
     let l =
-        classify(lean).map_err(|e| format!("Lean `silicon-check elab` failed: {e}{}", both()))?;
+        classify(lean).map_err(|e| format!("Lean `silicon-check {name}` failed: {e}{}", both()))?;
     if r != l {
         return Err(format!("the front ends disagree{}", both()));
     }
     match want {
         None if r.code == 0 => Ok(()),
-        None => Err(format!("expected a design{}", both())),
+        None => Err(format!("expected success{}", both())),
         Some(want) => match parse_report(&String::from_utf8_lossy(&rust.stdout)) {
             Some(got) if got.code == want.code && got.line == want.line => Ok(()),
             _ => Err(format!(
@@ -63,6 +68,27 @@ fn compare_check(rust: &Output, lean: &Output, want: Option<&Expected>) -> Resul
             )),
         },
     }
+}
+
+/// Runs `command` of the two front ends on `file` with the top selection `top` and `stdin`.
+/// Returns the Rust output, then the Lean output.
+fn both(
+    binary: &Path,
+    command: &str,
+    file: &Path,
+    top: &str,
+    stdin: &str,
+) -> std::io::Result<(Output, Output)> {
+    let run = |mut front_end: Command| {
+        spawn(
+            front_end.arg(command).arg(file).arg("--top").arg(top),
+            stdin,
+        )
+    };
+    Ok((
+        run(bins::silicon(binary))?,
+        run(Command::new(silicon_check()))?,
+    ))
 }
 
 /// The `check` suite (frontend spec section 11.3): the Rust `silicon elab` and the Lean
@@ -79,11 +105,50 @@ pub fn check(binary: &Path, file: &Path) -> datatest_stable::Result<()> {
     let in_file = |e: String| format!("{}: {e}", file.display());
     let top = top(&source).map_err(in_file)?;
     let want = expected_error(&source, Marker::Si).map_err(in_file)?;
-    let elab =
-        |mut command: Command| spawn(command.arg("elab").arg(file).arg("--top").arg(&top), "");
-    let rust = elab(bins::silicon(binary))?;
-    let lean = elab(Command::new(silicon_check()))?;
-    Ok(compare_check(&rust, &lean, want.as_ref())?)
+    let (rust, lean) = both(binary, "elab", file, &top, "")?;
+    Ok(compare_check("elab", &rust, &lean, want.as_ref())?)
+}
+
+/// Compares the `run` runs of the two front ends with the expectation of the file. With
+/// STEP lines, both must exit 0 and print the `out=` lines byte for byte. With an
+/// `expected-error`, both must report it as `compare_check` says.
+fn compare_run(rust: &Output, lean: &Output, want: &Expectation) -> Result<(), String> {
+    match want {
+        Expectation::Error(error) => compare_check("run", rust, lean, Some(error)),
+        Expectation::Steps { stdout, .. } => {
+            compare_check("run", rust, lean, None)?;
+            if rust.stdout == stdout.as_bytes() {
+                return Ok(());
+            }
+            Err(format!(
+                "expected\n{stdout}got\n{}",
+                String::from_utf8_lossy(&rust.stdout)
+            ))
+        }
+    }
+}
+
+/// The `run` suite (frontend spec section 11.2): the Rust `silicon run` and the Lean
+/// `silicon-check run` run on each `.si` file with the top selection of its `// TOP` line.
+/// Each `// STEP in=(...) out=(...)` line is one clock cycle: the suite feeds the `in=`
+/// parts to stdin and compares stdout with the `out=` parts byte for byte, in both front
+/// ends. A file without STEP lines holds one `// expected-error` instead.
+///
+/// # Errors
+///
+/// Returns an error when a directive is missing or malformed, a front end misbehaves, the
+/// two disagree, or the result differs from the expectation.
+pub fn run(binary: &Path, file: &Path) -> datatest_stable::Result<()> {
+    let source = std::fs::read_to_string(file)?;
+    let in_file = |e: String| format!("{}: {e}", file.display());
+    let top = top(&source).map_err(in_file)?;
+    let want = expectation(&source, Marker::Si).map_err(in_file)?;
+    let stdin = match &want {
+        Expectation::Steps { stdin, .. } => stdin.as_str(),
+        Expectation::Error(_) => "",
+    };
+    let (rust, lean) = both(binary, "run", file, &top, stdin)?;
+    Ok(compare_run(&rust, &lean, &want).map_err(in_file)?)
 }
 
 #[cfg(test)]
@@ -111,35 +176,38 @@ mod tests {
     fn equal_errors_pass() {
         let rust = exited(1, "error[S010]: 4:8: one text\n");
         let lean = exited(1, "error[S010]: 4:8: another text\n");
-        assert_eq!(compare_check(&rust, &lean, Some(&s010_on(4))), Ok(()));
+        assert_eq!(
+            compare_check("elab", &rust, &lean, Some(&s010_on(4))),
+            Ok(())
+        );
     }
 
     #[test]
     fn a_column_difference_fails() {
         let rust = exited(1, "error[S010]: 4:8: x\n");
         let lean = exited(1, "error[S010]: 4:9: x\n");
-        assert!(compare_check(&rust, &lean, Some(&s010_on(4))).is_err());
+        assert!(compare_check("elab", &rust, &lean, Some(&s010_on(4))).is_err());
     }
 
     #[test]
     fn an_error_on_another_line_fails() {
         let out = exited(1, "error[S010]: 5:8: x\n");
-        assert!(compare_check(&out, &out, Some(&s010_on(4))).is_err());
+        assert!(compare_check("elab", &out, &out, Some(&s010_on(4))).is_err());
     }
 
     #[test]
     fn exit_2_fails_with_the_expected_text() {
         let rust = exited(2, "error[S010]: 4:8: x\n");
         let lean = exited(1, "error[S010]: 4:8: x\n");
-        assert!(compare_check(&rust, &lean, Some(&s010_on(4))).is_err());
-        assert!(compare_check(&lean, &rust, Some(&s010_on(4))).is_err());
+        assert!(compare_check("elab", &rust, &lean, Some(&s010_on(4))).is_err());
+        assert!(compare_check("elab", &lean, &rust, Some(&s010_on(4))).is_err());
     }
 
     #[test]
     fn different_designs_fail_and_show_both() {
         let rust = exited(0, "(design A)\n");
         let lean = exited(0, "(design B)\n");
-        let err = compare_check(&rust, &lean, None).unwrap_err();
+        let err = compare_check("elab", &rust, &lean, None).unwrap_err();
         assert!(
             err.contains("(design A)") && err.contains("(design B)"),
             "{err}"
@@ -149,8 +217,48 @@ mod tests {
     #[test]
     fn equal_designs_pass_and_an_error_fails_without_a_directive() {
         let ok = exited(0, "(design A)\n");
-        assert_eq!(compare_check(&ok, &ok, None), Ok(()));
+        assert_eq!(compare_check("elab", &ok, &ok, None), Ok(()));
         let err = exited(1, "error[S010]: 4:8: x\n");
-        assert!(compare_check(&err, &err, None).is_err());
+        assert!(compare_check("elab", &err, &err, None).is_err());
+    }
+
+    fn steps_of(stdout: &str) -> Expectation {
+        Expectation::Steps {
+            stdin: String::new(),
+            stdout: stdout.to_owned(),
+        }
+    }
+
+    #[test]
+    fn equal_steps_pass() {
+        let ok = exited(0, "out=(q 1)\n");
+        assert_eq!(compare_run(&ok, &ok, &steps_of("out=(q 1)\n")), Ok(()));
+    }
+
+    #[test]
+    fn other_steps_fail_and_show_both() {
+        let ok = exited(0, "out=(q 2)\n");
+        let err = compare_run(&ok, &ok, &steps_of("out=(q 1)\n")).unwrap_err();
+        assert!(
+            err.contains("out=(q 1)") && err.contains("out=(q 2)"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn steps_that_the_front_ends_disagree_on_fail() {
+        let rust = exited(0, "out=(q 1)\n");
+        let lean = exited(0, "out=(q 2)\n");
+        assert!(compare_run(&rust, &lean, &steps_of("out=(q 1)\n")).is_err());
+    }
+
+    #[test]
+    fn a_run_error_matches_code_and_line() {
+        let out = exited(1, "error[S010]: 4:8: x\n");
+        assert_eq!(
+            compare_run(&out, &out, &Expectation::Error(s010_on(4))),
+            Ok(())
+        );
+        assert!(compare_run(&out, &out, &Expectation::Error(s010_on(5))).is_err());
     }
 }

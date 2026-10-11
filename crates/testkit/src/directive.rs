@@ -78,6 +78,58 @@ pub fn expected_error(source: &str, marker: Marker) -> Result<Option<Expected>, 
     Ok(found)
 }
 
+/// What a file expects of `run`.
+pub(crate) enum Expectation {
+    /// The stdin lines and the expected stdout.
+    Steps {
+        stdin: String,
+        stdout: String,
+    },
+    Error(Expected),
+}
+
+/// Parses the `STEP in=(...) out=(...)` lines of `source`, each with its LF.
+///
+/// # Errors
+///
+/// Returns a message when a STEP line is malformed.
+pub(crate) fn steps(source: &str, marker: Marker) -> Result<(String, String), String> {
+    let prefix = format!("{} STEP ", marker.prefix());
+    let mut stdin = String::new();
+    let mut stdout = String::new();
+    for (index, text) in source.lines().enumerate() {
+        let Some(rest) = text.trim_start().strip_prefix(prefix.as_str()) else {
+            continue;
+        };
+        let (input, output) = rest
+            .split_once(" out=")
+            .filter(|(input, _)| input.starts_with("in="))
+            .ok_or_else(|| format!("line {}: malformed STEP line", index + 1))?;
+        stdin.push_str(input.trim_end());
+        stdin.push('\n');
+        stdout.push_str("out=");
+        stdout.push_str(output.trim_end());
+        stdout.push('\n');
+    }
+    Ok((stdin, stdout))
+}
+
+/// The expectation of a `run` file: STEP lines or one `expected-error`, never both and never
+/// neither.
+///
+/// # Errors
+///
+/// Returns a message when a directive is malformed or the file has both kinds or neither.
+pub(crate) fn expectation(source: &str, marker: Marker) -> Result<Expectation, String> {
+    let (stdin, stdout) = steps(source, marker)?;
+    match (expected_error(source, marker)?, stdin.is_empty()) {
+        (None, false) => Ok(Expectation::Steps { stdin, stdout }),
+        (Some(error), true) => Ok(Expectation::Error(error)),
+        (None, true) => Err("no STEP line and no expected-error".to_owned()),
+        (Some(_), false) => Err("both STEP lines and an expected-error".to_owned()),
+    }
+}
+
 const TOP: &str = "// TOP ";
 
 /// The top selection of a `.si` file: the text after `// TOP `.
@@ -170,5 +222,33 @@ mod tests {
         ] {
             assert!(expected_error(source, Marker::Sil).is_err(), "{source:?}");
         }
+    }
+
+    #[test]
+    fn steps_reads_both_markers() {
+        assert_eq!(
+            steps("; STEP in=(a 1) out=(b 2)", Marker::Sil),
+            Ok(("in=(a 1)\n".to_owned(), "out=(b 2)\n".to_owned()))
+        );
+        assert_eq!(
+            steps("// STEP in=(a 1) out=(b 2)", Marker::Si),
+            Ok(("in=(a 1)\n".to_owned(), "out=(b 2)\n".to_owned()))
+        );
+    }
+
+    #[test]
+    fn run_needs_steps_or_an_error() {
+        let steps = "// STEP in=(a 1) out=(b 2)\n";
+        let error = "// expected-error S010 @+1\nx\n";
+        assert!(matches!(
+            expectation(steps, Marker::Si),
+            Ok(Expectation::Steps { .. })
+        ));
+        assert!(matches!(
+            expectation(error, Marker::Si),
+            Ok(Expectation::Error(_))
+        ));
+        assert!(expectation("x\n", Marker::Si).is_err());
+        assert!(expectation(&format!("{steps}{error}"), Marker::Si).is_err());
     }
 }

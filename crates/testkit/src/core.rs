@@ -6,11 +6,9 @@ use std::path::Path;
 use std::process::{Command, Output};
 
 use crate::bins::{silicon, under_test};
-use crate::directive::{Expected, Marker, expected_error};
+use crate::directive::{Expectation, Expected, Marker, expectation, expected_error};
 use crate::report::parse_report;
 use crate::spawn::spawn;
-
-const STEP: &str = "; STEP ";
 
 /// True when `stdout` reports the error `want`: the code and the line only.
 fn reports(stdout: &str, want: &Expected) -> bool {
@@ -49,47 +47,6 @@ pub fn check(binary: &Path, file: &Path) -> datatest_stable::Result<()> {
     }
 }
 
-/// What a file expects of `silicon run`.
-enum Expectation {
-    /// The stdin lines and the expected stdout.
-    Steps {
-        stdin: String,
-        stdout: String,
-    },
-    Error(Expected),
-}
-
-/// Parses the STEP lines of `source`, each with its LF.
-fn steps(source: &str) -> Result<(String, String), String> {
-    let mut stdin = String::new();
-    let mut stdout = String::new();
-    for (index, text) in source.lines().enumerate() {
-        let Some(rest) = text.trim_start().strip_prefix(STEP) else {
-            continue;
-        };
-        let (input, output) = rest
-            .split_once(" out=")
-            .filter(|(input, _)| input.starts_with("in="))
-            .ok_or_else(|| format!("line {}: malformed STEP line", index + 1))?;
-        stdin.push_str(input.trim_end());
-        stdin.push('\n');
-        stdout.push_str("out=");
-        stdout.push_str(output.trim_end());
-        stdout.push('\n');
-    }
-    Ok((stdin, stdout))
-}
-
-fn expectation(source: &str) -> Result<Expectation, String> {
-    let (stdin, stdout) = steps(source)?;
-    match (expected_error(source, Marker::Sil)?, stdin.is_empty()) {
-        (None, false) => Ok(Expectation::Steps { stdin, stdout }),
-        (Some(error), true) => Ok(Expectation::Error(error)),
-        (None, true) => Err("no STEP line and no expected-error".to_owned()),
-        (Some(_), false) => Err("both STEP lines and an expected-error".to_owned()),
-    }
-}
-
 /// The `run` suite: the `run` command of the binary under test runs on each
 /// `.sil` file. Each `; STEP in=(...) out=(...)` line is one clock cycle: the
 /// suite feeds the `in=` parts to stdin, one per line, and compares stdout with
@@ -103,7 +60,8 @@ fn expectation(source: &str) -> Result<Expectation, String> {
 pub fn run(binary: &Path, file: &Path) -> datatest_stable::Result<()> {
     let bytes = std::fs::read(file)?;
     let source = String::from_utf8_lossy(&bytes);
-    let expected = expectation(&source).map_err(|e| format!("{}: {e}", file.display()))?;
+    let expected =
+        expectation(&source, Marker::Sil).map_err(|e| format!("{}: {e}", file.display()))?;
     let stdin = match &expected {
         Expectation::Steps { stdin, .. } => stdin.as_str(),
         Expectation::Error(_) => "",
