@@ -139,7 +139,7 @@ impl Tape {
     }
 
     /// A value below `2^width`: zero, one, all ones, or random bits.
-    fn constant(&mut self, width: u32) -> BigUint {
+    pub(super) fn constant(&mut self, width: u32) -> BigUint {
         match self.below(4) {
             0 => BigUint::ZERO,
             1 => BigUint::from(1u8),

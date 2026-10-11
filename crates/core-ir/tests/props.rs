@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use core_ir::ast::{Design, Expr, Item, Module, Stmt};
+use core_ir::ast::{Design, Dir, Expr, Item, Module, Stmt, Ty};
 use core_ir::check::check;
 use core_ir::r#gen;
 use core_ir::interp::Sim;
@@ -459,62 +459,165 @@ fn inst_outs(e: &typed::Expr) -> Vec<(typed::InstIdx, typed::OutputIdx)> {
     }
 }
 
-#[test]
-fn the_generator_covers_the_core_ir() {
+/// The forms that the generator makes with every configuration.
+const FORMS: &[&str] = &[
+    "ref",
+    "inst-out",
+    "const",
+    "Not",
+    "Add",
+    "Sub",
+    "Mul",
+    "And",
+    "Or",
+    "Xor",
+    "Shl",
+    "Shru",
+    "Shrs",
+    "Concat",
+    "Eq",
+    "Ne",
+    "Ult",
+    "Ule",
+    "Ugt",
+    "Uge",
+    "Slt",
+    "Sle",
+    "Sgt",
+    "Sge",
+    "mux",
+    "extract",
+    "replicate",
+    "reset",
+    "path-through-child",
+    "handshake",
+    "shuffled-conns",
+    "output-read",
+];
+
+/// The designs of 400 samples of `strategy`.
+fn sample(strategy: impl Strategy<Value = Design>) -> Coverage {
     let mut runner = TestRunner::deterministic();
     let mut seen = Coverage::default();
     for _ in 0..400 {
-        let Ok(tree) = r#gen::design().new_tree(&mut runner) else {
+        let Ok(tree) = strategy.new_tree(&mut runner) else {
             panic!("the generator never rejects");
         };
         seen.design(&tree.current());
     }
-    let forms = [
-        "ref",
-        "inst-out",
-        "const",
-        "Not",
-        "Add",
-        "Sub",
-        "Mul",
-        "And",
-        "Or",
-        "Xor",
-        "Shl",
-        "Shru",
-        "Shrs",
-        "Concat",
-        "Eq",
-        "Ne",
-        "Ult",
-        "Ule",
-        "Ugt",
-        "Uge",
-        "Slt",
-        "Sle",
-        "Sgt",
-        "Sge",
-        "mux",
-        "extract",
-        "replicate",
-        "read",
-        "reset",
-        "no-reset",
-        "second-write-port",
-        "read-in-child",
-        "path-through-child",
-        "handshake",
-        "shuffled-conns",
-        "output-read",
-    ];
+    seen
+}
+
+fn assert_covers(seen: &Coverage, forms: &[&str]) {
     let missing: Vec<_> = forms.iter().filter(|f| !seen.forms.contains(**f)).collect();
     assert!(missing.is_empty(), "never generated: {missing:?}");
+}
+
+#[test]
+fn the_generator_covers_the_core_ir() {
+    let seen = sample(r#gen::design());
+    assert_covers(
+        &seen,
+        &["read", "no-reset", "second-write-port", "read-in-child"],
+    );
+    assert_covers(&seen, FORMS);
     assert!(seen.depths.contains(&1) && seen.depths.contains(&20));
     assert!(seen.depths.iter().all(|d| (1..=20).contains(d)));
     assert!(seen.depths.iter().any(|d| !d.is_power_of_two()));
     assert!(seen.widths.iter().any(|w| *w > 64));
     assert!(seen.widths.iter().all(|w| (1..=300).contains(w)));
     assert_eq!(seen.levels, 3, "the top never has 3 levels below it");
+}
+
+fn source() -> impl Strategy<Value = Design> {
+    r#gen::design_with(r#gen::Config::source())
+}
+
+#[test]
+fn the_source_generator_covers_the_lift_forms() {
+    let seen = sample(source());
+    assert_covers(&seen, FORMS);
+    assert!(!seen.forms.contains("read"));
+}
+
+/// The statements of `m` that read a memory, write one, or declare one.
+fn has_mem_form(m: &Module) -> bool {
+    m.stmts.iter().any(|s| match s {
+        Stmt::Mem { .. } | Stmt::Write { .. } => true,
+        Stmt::Let { expr, .. } | Stmt::Next { expr, .. } | Stmt::Assign { expr, .. } => {
+            has_read(expr)
+        }
+        Stmt::Reg { .. } | Stmt::Inst { .. } => false,
+    })
+}
+
+/// Whether `m` has the 1-bit input `rst`.
+fn has_reset_input(m: &Module) -> bool {
+    m.ports.iter().any(|p| {
+        p.dir == Dir::Input
+            && p.name.text == r#gen::RESET
+            && matches!(&p.ty, Ty::Bits(w) if w.value == 1)
+    })
+}
+
+fn is_rst(e: &Expr) -> bool {
+    matches!(e, Expr::Ref(n) if n.text == r#gen::RESET)
+}
+
+fn source_forms(d: &Design) -> Result<(), String> {
+    if print(d).contains('$') {
+        return Err("a name has a $ field".to_owned());
+    }
+    let modules = modules(d);
+    for item in &d.items {
+        let Item::Module(m) = item else {
+            return Err("an extern".to_owned());
+        };
+        if has_mem_form(m) {
+            return Err(format!("{} has a memory form", m.name.text));
+        }
+        let clocked = m.ports.iter().any(|p| p.ty == Ty::Clock);
+        if clocked != has_reset_input(m) {
+            return Err(format!("{}: rst and clock differ", m.name.text));
+        }
+        for s in &m.stmts {
+            match s {
+                Stmt::Reg { reset, .. } => match reset {
+                    Some(r) if is_rst(&r.signal) && matches!(r.value, Expr::Const { .. }) => {}
+                    _ => return Err("a register has no module reset to a constant".to_owned()),
+                },
+                Stmt::Inst { module, conns, .. } => {
+                    let child = modules.get(module.text.as_str());
+                    let clocked = child.is_some_and(|c| c.ports.iter().any(|p| p.ty == Ty::Clock));
+                    let wired = conns
+                        .iter()
+                        .any(|c| c.port.text == r#gen::RESET && is_rst(&c.expr));
+                    if clocked != wired {
+                        return Err("an instance misses its rst connection".to_owned());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig {
+        failure_persistence: None,
+        ..ProptestConfig::default()
+    })]
+
+    #[test]
+    fn source_designs_check(d in source()) {
+        prop_assert!(check(&d).is_ok(), "{:?}\n{}", check(&d).err(), print(&d));
+    }
+
+    #[test]
+    fn source_designs_have_only_source_forms(d in source()) {
+        prop_assert_eq!(source_forms(&d), Ok(()), "{}", print(&d));
+    }
 }
 
 #[test]
