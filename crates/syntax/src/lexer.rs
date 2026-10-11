@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The lexer: text to tokens with byte ranges, lossless for every input.
 
 use crate::SyntaxKind;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Property tests over the random designs of `gen`.
 
 use std::collections::{BTreeMap, BTreeSet};

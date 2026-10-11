@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The parser state: the cursor over the tokens, the tree builder, and the errors.
 //! The grammar is in `item`, `stmt`, and `expr`.
 

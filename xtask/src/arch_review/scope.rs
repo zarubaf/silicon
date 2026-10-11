@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! `review-scope`: the changed files of a branch that touch an architecture path.
 
 use std::path::Path;

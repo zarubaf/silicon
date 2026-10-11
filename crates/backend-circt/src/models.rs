@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The memory model of each memory configuration: the simulation model for
 //! users and the module that the LEC of spec section 8.1 puts in place of the
 //! extern.

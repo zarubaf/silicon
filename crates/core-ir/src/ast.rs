@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The untyped AST of the core IR. Every node carries its source position.
 //! Names are not resolved here.
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Git helpers for tests. They build on `gitcmd::git`, which drops the
 //! `GIT_*` variables in test builds.
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Commit conventions and the "refactor first, then change behavior" rule.
 
 use std::path::{Path, PathBuf};

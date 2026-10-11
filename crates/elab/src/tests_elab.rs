@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The cases of `Silicon.Source.Test.Elab` in Lean, and the cases of the top selection of
 //! `Silicon.Source.Test.Eval`: the table of instantiations, the depth-first order, the charges
 //! of `instance` statements, each check for each instantiation at its position, and the core

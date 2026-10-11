@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The hardware operations of Lean `Source.Eval`. A hardware operation makes one node and
 //! charges 1 plus the number of its operands. Its operand trees are shared, so the work is
 //! constant per node. A read of a handle and a lift of a static operand only refer, so they

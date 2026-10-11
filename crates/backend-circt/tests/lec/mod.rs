@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The equivalence proof that the tests share: `circt-lec` on two modules.
 
 use std::error::Error;

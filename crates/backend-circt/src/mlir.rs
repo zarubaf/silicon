@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The MLIR text of the `hw` operations with a port list: module headers,
 //! extern declarations, and instances. The text follows the layout that
 //! `circt-opt` prints.

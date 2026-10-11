@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The build of `silicon`, the Rust binary that the Lean oracles check.
 
 use std::path::{Path, PathBuf};

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The architecture paths: the one list in `doc/architecture.md`.
 
 use anyhow::{Result, bail};

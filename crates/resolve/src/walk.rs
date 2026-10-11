@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! One walk over the AST. It declares each name, resolves each use, and collects the errors
 //! of passes 2 and 3 apart, because pass 2 errors rank before pass 3 errors (design
 //! section 6.2). It recurses over the AST, so it runs on the front-end thread.

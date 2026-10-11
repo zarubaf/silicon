@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The `.sil` text format: parser, printer, and canonical form.
 
 mod lexer;

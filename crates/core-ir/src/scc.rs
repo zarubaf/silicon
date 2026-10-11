@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The strongly connected components of a directed graph, by Tarjan's
 //! algorithm. The search keeps its own stack, so a deep graph cannot overflow
 //! the call stack, and it takes linear time.

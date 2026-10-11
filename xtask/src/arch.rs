@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Architecture rules: invariants that span the spec, Lean, Rust, and the trust document.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};

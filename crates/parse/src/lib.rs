@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The parser of the Silicon front end: a lossless `rowan` tree with error recovery, and
 //! the typed AST of the current slice. See [the front end design](../../doc/design/2026-10-09-frontend.md).
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The symbol tables that the passes share: the interface of each unit and
 //! the names of each module body.
 

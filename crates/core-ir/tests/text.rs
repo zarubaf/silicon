@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Tests of the `.sil` parser, printer, and canonical form.
 
 use core_ir::diag::{Diagnostic, ErrorCode, Span};

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The MLIR text that the LEC of spec section 8.1 reads and writes: module
 //! headers, the wrappers, and the definitions that replace the externs.
 

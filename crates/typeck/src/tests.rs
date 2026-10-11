@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The cases come from the `#guard` lines of `Silicon.Source.Test.Check` in Lean.
 
 use crate::{Code, Failed, check};

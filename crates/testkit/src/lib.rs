@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Helpers that the test suites of the compiler share.
 
 pub mod bins;

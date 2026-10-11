@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Translation validation of the input: the Lean `silicon-check` checks the
 //! bytes that the Rust compiler read, before it emits (spec sections 6.4.2
 //! and 8.1).

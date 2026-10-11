@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The cases of `Silicon.Source.Test.Vectors` in Lean: the port schema, the values of each
 //! type, the faults of an input line, and runs of the counter and of registers with a nonzero
 //! reset value.

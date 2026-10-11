@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Tests of the lowering to MLIR: each lowered design parses with
 //! `circt-opt`, and the names and ports follow spec section 7.3.
 

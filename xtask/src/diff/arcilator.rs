@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Runs a design in `arcilator` through an `arc.sim` testbench, so the
 //! differential tests need no C++ harness.
 //!

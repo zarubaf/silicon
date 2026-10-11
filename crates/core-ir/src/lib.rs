@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The Silicon core IR: typed bit-vector values, the AST, the text format,
 //! the checker, and the interpreter.
 

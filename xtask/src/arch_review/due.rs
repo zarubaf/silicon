@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! `review-due`: is a drift review due?
 //!
 //! Rule: a review is due when the branch has no review tag (ADR 0016),

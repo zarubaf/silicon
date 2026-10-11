@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Random expressions, each built for its target width.
 
 use num_bigint::BigUint;

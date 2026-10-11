@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Where the suites live.
 
 use std::path::Path;

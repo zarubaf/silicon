@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The Verilog of MLIR text through `firtool`, which runs as a process.
 
 use std::error::Error;

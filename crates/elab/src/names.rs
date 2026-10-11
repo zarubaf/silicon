@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The names of section 7 of the front-end spec, as Lean `Source.Names` defines them: the core
 //! name of a structural path, and the emitted module name of an `InstantiationId`.
 //!

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The fuel and the operations on static values, as the pure functions of Lean `Source.Eval`
 //! define them. Each operation checks the types of its operands, then pays its charge, and
 //! only then does its work. A type error thus costs no fuel, and a charge that the fuel cannot

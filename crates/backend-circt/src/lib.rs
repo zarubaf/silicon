@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Lowers the typed core IR to MLIR text in the CIRCT dialects `hw`, `comb`,
 //! and `seq` (spec section 7.3), emits the memory models, and exports Verilog
 //! through CIRCT.

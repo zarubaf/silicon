@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! `arch-summary`: the facts for an architecture reviewer, as Markdown.
 //!
 //! The output holds facts only, with no judgment. The order is fixed, so

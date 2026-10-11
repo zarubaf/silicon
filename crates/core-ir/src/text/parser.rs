@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Recursive-descent parser. It checks the grammar only; it resolves no names.
 
 use super::lexer::{Tok, Token, lex};

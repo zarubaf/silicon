@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The result of one `parse` command that the two front ends must share.
 
 use std::process::Output;

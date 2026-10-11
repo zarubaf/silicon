@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Each lowered random design parses with `circt-opt`.
 
 mod common;

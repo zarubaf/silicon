@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Pass 4 (`E005`, declared sizes) and pass 7 (`E004`, operation widths).
 
 use super::rx::{Ex, ExModule, RawConst, RawModule, Rx, SizedModule};

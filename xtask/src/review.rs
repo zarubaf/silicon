@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Runs the Codex adversarial review: the cross-vendor review required before merge.
 
 use std::path::{Path, PathBuf};

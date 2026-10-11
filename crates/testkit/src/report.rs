@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The error report `error[XNNN]: L:C: message` (spec 6.4.2).
 
 /// The code and the position of a reported error.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The evaluator of slice 1 with the budgets and the cost model of section 5.4 of the
 //! front-end spec. Lean `Source.Eval` is its normative definition: each charge here is a
 //! charge there, in the same order and at the same node. It reads the checked AST. It

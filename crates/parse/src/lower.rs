@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Lowers an error-free syntax tree into the AST. Every function returns `None` for a
 //! tree that does not have the shape that the parser builds.
 

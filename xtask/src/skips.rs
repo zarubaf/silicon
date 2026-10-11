@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The reviewed inventory of what `lec` and `diff` run on the corpus. A SKIP
 //! hides a check, and a vanished check hides a bug. Thus the inventory lists
 //! every check with its outcome, and a run must match it exactly.

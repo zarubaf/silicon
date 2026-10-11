@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Runs the shared `check` and `run` suites against the Lean `silicon-check`.
 
 use std::path::PathBuf;

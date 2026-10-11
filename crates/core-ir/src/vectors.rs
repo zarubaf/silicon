@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The `in=` and `out=` vector lines of `run` (spec section 6.4.3).
 
 use std::fmt;

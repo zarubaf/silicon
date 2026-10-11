@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The typed core IR that the checker produces and the interpreter runs.
 //!
 //! Every reference is a typed index into a table of its module. No name is a

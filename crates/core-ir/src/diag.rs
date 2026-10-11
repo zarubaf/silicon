@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Source positions and the diagnostics that the tools report.
 
 use std::fmt;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! One walk over the resolved AST in source order. It recurses over blocks and expressions,
 //! so it runs on the front-end thread.
 

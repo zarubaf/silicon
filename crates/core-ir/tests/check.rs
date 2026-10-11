@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Tests of the checker: the code and the position of each error, the
 //! schedule, the port dependencies, and the module order.
 

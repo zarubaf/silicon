@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The guard on the Verilog that LEC imports. `circt-verilog --ir-hw` drops
 //! the initial value of a register, so LEC cannot see it. A register with an
 //! initial value hides a missing reset in simulation. The guard rejects each

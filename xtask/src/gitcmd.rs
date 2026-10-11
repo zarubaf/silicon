@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The one place that builds a `git` command.
 //!
 //! Production commands inherit the environment: inside a hook, `GIT_DIR`
