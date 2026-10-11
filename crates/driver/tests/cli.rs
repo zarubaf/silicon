@@ -678,11 +678,11 @@ const TOPS: &str = "module Counter(comptime W: Nat, comptime E: Bool) {\n}\n\
 fn cost_prints_the_total_and_the_units_of_each_instantiation() -> Test {
     assert_eq!(
         cost(TOPS, "Counter(8, true)", &[])?,
-        ("total 72\nCounter$8$1b 3\n".to_owned(), Some(0))
+        ("total 114\nCounter$8$1b 34\n".to_owned(), Some(0))
     );
     assert_eq!(
         cost(TOPS, "Top", &[])?,
-        ("total 162\nCounter$8$1b 3\nTop 129\n".to_owned(), Some(0))
+        ("total 325\nCounter$8$1b 34\nTop 257\n".to_owned(), Some(0))
     );
     Ok(())
 }
@@ -694,11 +694,11 @@ fn cost_reports_the_first_error_and_takes_the_budgets() -> Test {
     assert_eq!(first(cost("module M( {}", "M", &[])?), at("error[S001]"));
     assert_eq!(first(cost(TOPS, "Counter(8)", &[])?), at("error[S007]"));
     assert_eq!(
-        first(cost(TOPS, "Counter(8, true)", &["--fuel", "71"])?),
+        first(cost(TOPS, "Counter(8, true)", &["--fuel", "113"])?),
         at("error[S015]")
     );
     assert_eq!(
-        cost(TOPS, "Counter(8, true)", &["--fuel", "72"])?.1,
+        cost(TOPS, "Counter(8, true)", &["--fuel", "114"])?.1,
         Some(0)
     );
     assert_eq!(
@@ -721,5 +721,116 @@ fn cost_of_a_bad_top_selection_is_a_usage_error() -> Test {
     let mut command = checker::silicon();
     command.arg("cost").arg(path);
     assert_eq!(spawn(&mut command, "")?.status.code(), Some(2));
+    Ok(())
+}
+
+/// Runs `silicon COMMAND FILE ARGS --top TOP` with the input `stdin`. Each call has its own
+/// file.
+fn source(
+    command: &str,
+    src: &str,
+    args: &[&str],
+    top: &str,
+    stdin: &str,
+) -> std::io::Result<(String, Option<i32>)> {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let path = file(
+        &format!("{command}-{}-{n}.si", std::process::id()),
+        src.as_bytes(),
+    )?;
+    let mut cmd = checker::silicon();
+    cmd.arg(command).arg(path).args(args).arg("--top").arg(top);
+    let out = spawn(&mut cmd, stdin)?;
+    Ok((text(&out), out.status.code()))
+}
+
+const COUNTER_SI: &str = "module Counter(comptime W: Nat) {\n  input i: UInt[W];\n  \
+    output q: UInt[W];\n  reg r: UInt[W] = 0;\n  r := r +% i;\n  q := r;\n}\n";
+
+/// The output of `silicon-check elab` for `COUNTER_SI` with the top `Counter(4)`.
+const COUNTER_SIL: &str = "(design Counter$4\n  (module Counter$4\n    \
+    (input clock$0clk clock)\n    (input clock$0rst (bits 1))\n    (input i (bits 4))\n    \
+    (output q (bits 4))\n    (reg r (bits 4) clock$0clk (reset sync clock$0rst (const 4 0)))\n    \
+    (next r (add r i))\n    (assign q r)))\n";
+
+#[test]
+fn elab_prints_the_canonical_core_ir() -> Test {
+    assert_eq!(
+        source("elab", COUNTER_SI, &[], "Counter(4)", "")?,
+        (COUNTER_SIL.to_owned(), Some(0))
+    );
+    Ok(())
+}
+
+#[test]
+fn elab_reports_the_first_error_and_takes_the_budgets() -> Test {
+    assert_eq!(
+        source("elab", COUNTER_SI, &[], "Counter(true)", "")?,
+        (
+            "error[S010]: 1:1: expected Nat, but the value is Bool\n".to_owned(),
+            Some(1)
+        )
+    );
+    let (out, code) = source("elab", COUNTER_SI, &["--fuel", "160"], "Counter(4)", "")?;
+    assert!(out.starts_with("error[S015]: 1:1: "), "{out}");
+    assert_eq!(code, Some(1));
+    assert_eq!(
+        source("elab", COUNTER_SI, &["--fuel", "161"], "Counter(4)", "")?,
+        (COUNTER_SIL.to_owned(), Some(0))
+    );
+    assert_eq!(
+        source("elab", COUNTER_SI, &[], "Counter(4 + 1)", "")?,
+        (String::new(), Some(2))
+    );
+    Ok(())
+}
+
+#[test]
+fn validate_compares_the_canonical_core_ir() -> Test {
+    let validate = |sil: &str| -> std::io::Result<(String, Option<i32>)> {
+        let path = file(
+            &format!("validate-{}-{}.sil", std::process::id(), sil.len()),
+            sil.as_bytes(),
+        )?;
+        let path = path.to_string_lossy().into_owned();
+        source("validate", COUNTER_SI, &[&path], "Counter(4)", "")
+    };
+    assert_eq!(validate(COUNTER_SIL)?, ("ok\n".to_owned(), Some(0)));
+    assert_eq!(
+        validate(&COUNTER_SIL.replace("(add r i)", "(sub r i)"))?,
+        (
+            "mismatch at line 8: expected `    (next r (add r i))`, found `    (next r (sub r i))`\n"
+                .to_owned(),
+            Some(1)
+        )
+    );
+    let (out, code) = validate("(design X\n")?;
+    assert!(out.starts_with("error[E001]: 2:1: "), "{out}");
+    assert_eq!(code, Some(1));
+    Ok(())
+}
+
+#[test]
+fn run_of_a_source_file_reads_source_vectors() -> Test {
+    let input = "in=(clock$0rst false i 3)\nin=(clock$0rst false i 15)\n\
+        in=(clock$0rst true i 1)\nin=(clock$0rst false i 0)\n";
+    assert_eq!(
+        source("run", COUNTER_SI, &[], "Counter(4)", input)?,
+        (
+            "out=(q 0)\nout=(q 3)\nout=(q 2)\nout=(q 0)\n".to_owned(),
+            Some(0)
+        )
+    );
+    assert_eq!(
+        source(
+            "run",
+            COUNTER_SI,
+            &[],
+            "Counter(4)",
+            "in=(clock$0rst false i 3)\nin=(i 3)\n"
+        )?,
+        ("out=(q 0)\n".to_owned(), Some(2))
+    );
     Ok(())
 }
