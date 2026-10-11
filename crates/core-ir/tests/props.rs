@@ -631,6 +631,61 @@ proptest! {
     }
 }
 
+/// Draws one value of `strategy` from `runner`.
+fn draw<S: Strategy>(strategy: &S, runner: &mut TestRunner) -> S::Value {
+    match strategy.new_tree(runner) {
+        Ok(tree) => tree.current(),
+        Err(e) => panic!("the strategy never rejects: {e}"),
+    }
+}
+
+#[test]
+fn resets_favor_the_first_line() {
+    let mut runner = TestRunner::deterministic();
+    let strategy = r#gen::resets(8);
+    let draws: Vec<Vec<bool>> = (0..2000).map(|_| draw(&strategy, &mut runner)).collect();
+    assert!(draws.iter().all(|d| d.len() == 8));
+    let first = draws.iter().filter(|d| d[0]).count();
+    assert!((1350..=1650).contains(&first), "line 0: {first} of 2000");
+    let later = draws.iter().flat_map(|d| &d[1..]).filter(|&&b| b).count();
+    // 9 % to 16 % of 2000 * 7 entries.
+    assert!(
+        (1260..=2240).contains(&later),
+        "later lines: {later} of 14000"
+    );
+    assert!(draw(&r#gen::resets(0), &mut runner).is_empty());
+}
+
+#[test]
+fn source_lines_take_the_reset_pattern() {
+    let mut runner = TestRunner::deterministic();
+    let (mut seen, mut first) = (0, 0);
+    while seen < 50 {
+        let design = draw(&source(), &mut runner);
+        let typed = checked(&design);
+        let top = typed.modules()[typed.top().index()].clone();
+        if !top.inputs().iter().any(|p| p.name == r#gen::RESET) {
+            continue;
+        }
+        let lines = draw(&r#gen::lines(&top, 8), &mut runner);
+        assert_eq!(lines.len(), 8);
+        for line in &lines {
+            assert!(parse_input(line, &top).is_ok(), "{line}");
+        }
+        let tokens: Vec<&str> = lines[0].split_whitespace().collect();
+        let at = tokens
+            .iter()
+            .position(|t| t.trim_start_matches("in=(") == r#gen::RESET);
+        let value = at
+            .and_then(|k| tokens.get(k + 1))
+            .map(|t| t.trim_end_matches(')'));
+        let resets = [value == Some("1")];
+        first += usize::from(resets[0]);
+        seen += 1;
+    }
+    assert!(first * 2 > seen, "line 0 resets in {first} of {seen}");
+}
+
 #[test]
 fn generator_designs_are_pinned() {
     let mut runner = TestRunner::deterministic();
