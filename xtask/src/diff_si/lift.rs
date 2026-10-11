@@ -100,7 +100,7 @@ fn try_verdict(tools: &Tools, dir: &Path, case: &Case) -> Result<Option<String>>
 /// Prints the failure of seed `seed`: the message, the core design, and the
 /// reproducer.
 pub(super) fn report(seed: u64, case: &Case, message: &str) {
-    println!("FAIL seed {seed}: {message}");
+    println!("FAIL seed {seed} (lift): {message}");
     println!("{}", print(&case.0));
     if let (Ok(source), Ok(Ok(steps))) = (lift(&case.0), reference(case)) {
         print!("{}", reproducer(&source, &top_selection(&case.0), &steps));
