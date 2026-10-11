@@ -136,6 +136,8 @@ import Silicon.Source.Proof.Fuel
 import Silicon.Source.Proof.Fuel.Elab
 import Silicon.Source.Proof.Fuel.Flatten
 import Silicon.Source.Proof.Fuel.Cost
+import Silicon.Source.Proof.ParsePrint.Erase
+import Silicon.Source.Proof.ParsePrint.Statement
 import Silicon.Main
 
 /-!
