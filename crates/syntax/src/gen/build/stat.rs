@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Static candidates and the fallbacks of the static positions (Ruling 2).
+//! Static candidates and the fallbacks of the static positions.
 //!
 //! A position takes a random candidate and evaluates it in each env of the
 //! current env set. A candidate that faults, leaves the bounds of the
@@ -14,7 +14,7 @@ use num_bigint::BigInt;
 /// The depth of a static candidate.
 pub(super) const DEPTH: u32 = 2;
 /// The largest first argument (the recursion count) of a `comptime fn`
-/// call: the sample check of Ruling 5 covers `0..=COUNT`.
+/// call: the sample check of each body covers `0..=COUNT`.
 const COUNT: i64 = 6;
 /// The largest static shift count of a hardware shift.
 const SHIFT: i64 = 70;
@@ -35,7 +35,7 @@ pub(super) fn kind(t: StaticTy) -> Kind {
 
 /// What a candidate can read: the static names, how many `comptime fn`s
 /// it can call, and the envs in which each call must evaluate (none in a
-/// `comptime fn` body, where the sample check of Ruling 5 covers calls).
+/// `comptime fn` body, where the sample check of the body covers calls).
 #[derive(Clone, Copy)]
 pub(super) struct Reach<'a> {
     pub(super) names: &'a [(String, StaticTy)],
@@ -241,7 +241,8 @@ impl Builder {
         }
     }
 
-    /// A width in `UInt[e]`/`SInt[e]`: `1..=64` in each env (F3).
+    /// A width in `UInt[e]`/`SInt[e]`: `1..=64` in each env, which keeps
+    /// the designs small and far from the width limit of the language.
     pub(super) fn width(&mut self, r: Reach<'_>, envs: &[Env]) -> SExpr {
         let names: Vec<String> = r
             .names
@@ -396,7 +397,8 @@ impl Builder {
     }
 }
 
-/// The range of a module argument of type `t` (F3).
+/// The range of a module argument of type `t`. Port widths hold over
+/// the whole range, so every argument tuple gives valid ports.
 pub(super) fn arg_range(t: StaticTy) -> (i64, i64) {
     match t {
         StaticTy::Nat => (1, 12),

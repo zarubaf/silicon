@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
-use crate::r#gen::program::Radix;
+use crate::r#gen::program::{Radix, SBin};
 use proptest::strategy::ValueTree;
 use proptest::test_runner::TestRunner;
 use std::collections::BTreeSet;

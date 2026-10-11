@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Hardware expressions for a wanted type (Ruling 4).
+//! Hardware expressions for a wanted type.
 //!
 //! A wanted type holds the concrete type in each env and, when one exists,
 //! a type expression that evaluates to it. An operator node gets operands

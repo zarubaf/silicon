@@ -33,20 +33,25 @@ macro_rules! note {
 }
 
 mod body;
+mod file;
 mod hw;
+mod lines;
 mod stat;
 
-use super::eval::{Env, Fault, Scope, Value, concrete, eval};
+pub use lines::lines;
+
+use super::eval::{Env, Fault, Scope, Value, concrete};
 use super::program::{
-    ComptimeFn, HExpr, Item, Place, Ports, Program, SBin, SExpr, Scalar, StaticTy, Stmt, Ty,
+    ComptimeFn, HExpr, Item, Place, Ports, Program, SExpr, Scalar, StaticTy, Stmt, Ty,
 };
-use num_bigint::{BigInt, BigUint};
+use num_bigint::BigInt;
 use proptest::collection::vec;
 use proptest::prelude::*;
-use stat::{Kind, Reach, bin, int};
+use stat::{Reach, int};
 use std::collections::BTreeMap;
 
-/// Size caps (Ruling 10).
+/// Size caps. They keep one program fast to elaborate in both front
+/// ends, and well below their default fuel and depth.
 const MODULES: u32 = 4;
 const PARAMS: u32 = 3;
 const INPUTS: u32 = 4;
@@ -60,54 +65,13 @@ const NESTING: u32 = 2;
 const ENVS: usize = 64;
 const INSTANCES: u32 = 3;
 const CONTEXTS: usize = 3;
-/// The sample of a `comptime fn` body (Ruling 5).
+/// The sample of the other `Int` formals of a `comptime fn` body; the
+/// first formal takes `0..=6`.
 const SAMPLE_INTS: [i64; 5] = [-6, -1, 0, 3, 6];
 
 /// Random well-typed slice-1 programs.
 pub fn typed() -> impl Strategy<Value = Program> {
     vec(any::<u32>(), 0..4096).prop_map(build)
-}
-
-/// `cycles` random `in=` lines for the top ports: the domain reset first for
-/// a clocked top, with the bias of `core_ir::gen::resets`, then each input
-/// in byte order.
-pub fn lines(ports: &Ports, cycles: usize) -> impl Strategy<Value = Vec<String>> + use<> {
-    let clocked = ports.clocked;
-    let names: Vec<String> = ports.inputs.iter().map(|(n, _)| n.clone()).collect();
-    let values: Vec<BoxedStrategy<String>> =
-        ports.inputs.iter().map(|(_, t)| port_value(*t)).collect();
-    (core_ir::r#gen::resets(cycles), vec(values, cycles)).prop_map(move |(resets, rows)| {
-        resets
-            .into_iter()
-            .zip(rows)
-            .map(|(reset, row)| {
-                let reset = clocked.then(|| format!("clock$0rst {reset}"));
-                let pairs = names.iter().zip(row).map(|(n, v)| format!("{n} {v}"));
-                let all: Vec<String> = reset.into_iter().chain(pairs).collect();
-                format!("in=({})", all.join(" "))
-            })
-            .collect()
-    })
-}
-
-/// A random value of a port type, in decimal.
-fn port_value(t: Scalar) -> BoxedStrategy<String> {
-    match t {
-        Scalar::Bool => any::<bool>().prop_map(|b| b.to_string()).boxed(),
-        Scalar::UInt(w) | Scalar::SInt(w) => {
-            let signed = matches!(t, Scalar::SInt(_));
-            vec(any::<u8>(), w.div_ceil(8) as usize)
-                .prop_map(move |bytes| {
-                    let bits = BigUint::from_bytes_le(&bytes) & ((BigUint::from(1u8) << w) - 1u8);
-                    let mut v = BigInt::from(bits);
-                    if signed && v >= BigInt::from(1) << (w - 1) {
-                        v -= BigInt::from(1) << w;
-                    }
-                    v.to_string()
-                })
-                .boxed()
-        }
-    }
 }
 
 /// The program of a tape.
@@ -186,7 +150,8 @@ pub(crate) fn ports(items: &[Item], top: &str, args: &[Value]) -> Result<Ports, 
 
 /// The tape of choices. A copy of `below`, `between`, `index`, and `flag`
 /// of the `Tape` of `core_ir::gen` (`crates/core-ir/src/gen/mod.rs`), which
-/// carries the core `Config` (Ruling 16).
+/// carries the core `Config`; a shared `Tape` would couple the two
+/// generators for ten lines.
 struct Tape {
     numbers: std::vec::IntoIter<u32>,
 }
@@ -385,23 +350,6 @@ impl Builder {
         }
     }
 
-    fn const_names(&self) -> Vec<(String, StaticTy)> {
-        self.consts
-            .iter()
-            .map(|(n, t, _)| (n.clone(), *t))
-            .collect()
-    }
-
-    fn file_items(&self) -> Vec<Item> {
-        let consts = self.consts.iter().map(|(name, ty, value)| Item::Const {
-            name: name.clone(),
-            ty: *ty,
-            value: value.clone(),
-        });
-        let fns = self.fns.iter().cloned().map(Item::ComptimeFn);
-        consts.chain(fns).collect()
-    }
-
     /// The items: consts, `comptime fn`s, helpers, and the reached modules.
     fn items(&self) -> Vec<Item> {
         let helpers = self.helpers.iter().map(|h| Item::Helper {
@@ -429,179 +377,6 @@ impl Builder {
             .chain(modules)
             .collect()
     }
-
-    /// The scope of the consts and `comptime fn`s so far. The builder adds
-    /// only consts that evaluate, so it does not fault.
-    fn refresh(&mut self) -> Result<(), Fault> {
-        self.scope = Scope::new(&self.file_items())?;
-        Ok(())
-    }
-
-    fn consts(&mut self) -> Result<(), Fault> {
-        let envs = [Env::default()];
-        for k in 0..self.tape.below(CONSTS + 1) {
-            let names = self.const_names();
-            let kind = if self.tape.below(3) == 2 {
-                Kind::Bool
-            } else {
-                Kind::Int
-            };
-            let r = Reach {
-                names: &names,
-                fns: 0,
-                envs: Some(&envs),
-            };
-            let (value, vs) = self.evaluated(kind, r, &envs);
-            let ty = self.static_ty(kind, &vs);
-            self.consts.push((format!("C{k}"), ty, value));
-            self.refresh()?;
-        }
-        Ok(())
-    }
-
-    /// `Nat` for most non-negative values (a negative `Nat` is `S012`),
-    /// else `Int`; or `Bool`.
-    fn static_ty(&mut self, kind: Kind, vs: &[Value]) -> StaticTy {
-        let natural = vs
-            .iter()
-            .all(|v| matches!(v, Value::Int(n) if *n >= BigInt::ZERO));
-        match kind {
-            Kind::Bool => StaticTy::Bool,
-            Kind::Int if natural && self.tape.below(4) != 0 => StaticTy::Nat,
-            Kind::Int => StaticTy::Int,
-        }
-    }
-
-    fn fns(&mut self) -> Result<(), Fault> {
-        for k in 0..self.tape.below(FNS + 1) {
-            let f = self.comptime_fn(k as usize);
-            self.fns.push(f);
-            self.refresh()?;
-        }
-        Ok(())
-    }
-
-    /// `f<k>` of Ruling 5, checked on the sample.
-    fn comptime_fn(&mut self, k: usize) -> ComptimeFn {
-        let name = format!("f{k}");
-        let mut params = vec![("x0".to_owned(), StaticTy::Nat)];
-        for i in 1..=self.tape.below(3) {
-            let t = if self.tape.flag() {
-                StaticTy::Bool
-            } else {
-                StaticTy::Int
-            };
-            params.push((format!("x{i}"), t));
-        }
-        let names: Vec<(String, StaticTy)> =
-            params.iter().cloned().chain(self.const_names()).collect();
-        let r = Reach {
-            names: &names,
-            fns: k,
-            envs: None,
-        };
-        let base = self.sexpr(Kind::Int, stat::DEPTH, r);
-        let step = self.step(&name, &params, r);
-        let fallback = bin(
-            SBin::Add,
-            self_call(&name, &params, |_, n| SExpr::Name(n.to_owned())),
-            int(1),
-        );
-        let literal = self.number(0, 16);
-        let mut f = ComptimeFn {
-            name,
-            params,
-            ret: StaticTy::Int,
-            base,
-            step,
-        };
-        let mut results = self.sample(&f);
-        if results.is_none() {
-            f.step = fallback;
-            results = self.sample(&f);
-        }
-        if results.is_none() {
-            f.base = literal;
-            results = self.sample(&f);
-        }
-        if let Some(vs) = results
-            && self.static_ty(Kind::Int, &vs) == StaticTy::Nat
-        {
-            f.ret = StaticTy::Nat;
-        }
-        f
-    }
-
-    /// One or two calls `f<k>((x0 - 1), ...)`, in an expression.
-    fn step(&mut self, name: &str, params: &[(String, StaticTy)], r: Reach<'_>) -> SExpr {
-        const OPS: [SBin; 8] = [
-            SBin::Add,
-            SBin::Sub,
-            SBin::Mul,
-            SBin::And,
-            SBin::Or,
-            SBin::Xor,
-            SBin::Div,
-            SBin::Rem,
-        ];
-        let arg = |b: &mut Builder, t: StaticTy| b.sexpr(stat::kind(t), 1, r);
-        let first = self_call(name, params, |t, _| arg(self, t));
-        let op = self.pick(&OPS);
-        match self.tape.below(3) {
-            0 => first,
-            1 => bin(op, first, self.sexpr(Kind::Int, 1, r)),
-            _ => {
-                let second = self_call(name, params, |t, _| arg(self, t));
-                bin(op, first, second)
-            }
-        }
-    }
-
-    /// The results of `f` on the sample, if none faults.
-    fn sample(&self, f: &ComptimeFn) -> Option<Vec<Value>> {
-        let mut items = self.file_items();
-        items.push(Item::ComptimeFn(f.clone()));
-        let scope = Scope::new(&items).ok()?;
-        let mut rows: Vec<Vec<SExpr>> = (0..=6).map(|n| vec![int(n)]).collect();
-        for (_, t) in f.params.iter().skip(1) {
-            let values: Vec<SExpr> = match t {
-                StaticTy::Bool => vec![SExpr::Bool(false), SExpr::Bool(true)],
-                _ => SAMPLE_INTS.iter().map(|n| int(*n)).collect(),
-            };
-            rows = rows
-                .into_iter()
-                .flat_map(|row| {
-                    values.iter().map(move |v| {
-                        let mut row = row.clone();
-                        row.push(v.clone());
-                        row
-                    })
-                })
-                .collect();
-        }
-        let mut out = Vec::new();
-        for row in rows {
-            let call = SExpr::Call(f.name.clone(), row);
-            out.push(eval(&call, &Env::default(), &scope).ok()?);
-        }
-        Some(out)
-    }
-}
-
-/// `f((x0 - 1), a1, ...)` with `a_i` from `arg(type, formal)`.
-fn self_call(
-    name: &str,
-    params: &[(String, StaticTy)],
-    mut arg: impl FnMut(StaticTy, &str) -> SExpr,
-) -> SExpr {
-    let first = params.first().map_or(int(0), |(x, _)| {
-        bin(SBin::Sub, SExpr::Name(x.clone()), int(1))
-    });
-    let rest = params.iter().skip(1).map(|(n, t)| arg(*t, n));
-    SExpr::Call(
-        name.to_owned(),
-        std::iter::once(first).chain(rest).collect(),
-    )
 }
 
 #[cfg(test)]
