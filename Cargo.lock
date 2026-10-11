@@ -246,6 +246,7 @@ dependencies = [
  "core-ir",
  "num-bigint",
  "parse",
+ "proptest",
  "resolve",
  "typeck",
 ]

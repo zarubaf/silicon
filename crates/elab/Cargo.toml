@@ -15,4 +15,5 @@ parse = { path = "../parse" }
 resolve = { path = "../resolve" }
 
 [dev-dependencies]
+proptest = { version = "1.11.0", default-features = false, features = ["std"] }
 typeck = { path = "../typeck" }

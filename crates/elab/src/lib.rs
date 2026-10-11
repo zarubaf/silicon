@@ -4,6 +4,7 @@
 
 mod eval;
 pub mod int;
+pub mod names;
 mod ops;
 mod scan;
 pub mod sha256;
