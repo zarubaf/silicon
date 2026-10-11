@@ -1,0 +1,19 @@
+// A comptime for and a comptime if build a sum, and a helper fn averages two values.
+// TOP Mix(4, true)
+fn avg(a: UInt[8], b: UInt[8]) -> UInt[8] {
+    return (a & b) +% ((a ^ b) >> 1);
+}
+module Mix(comptime N: Nat, comptime Extra: Bool) domains() {
+    input a: UInt[8];
+    input b: UInt[8];
+    output y: UInt[8];
+    let mut v = a;
+    comptime for i in 0..N {
+        v = v +% (b << i);
+    }
+    comptime if (Extra) {
+        y := avg(v, a);
+    } else {
+        y := v;
+    }
+}

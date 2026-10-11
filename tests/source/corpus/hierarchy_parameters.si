@@ -1,0 +1,18 @@
+// A parameterized hierarchy: the top gives its width to two instances of one child.
+// TOP Top(6)
+module Acc(comptime W: Nat) {
+    input d: UInt[W];
+    output q: UInt[W];
+    reg r: UInt[W] = 1;
+    r := r +% d;
+    q := r;
+}
+module Top(comptime W: Nat) {
+    input d: UInt[W];
+    output q: UInt[W];
+    instance first = Acc(W);
+    instance second = Acc(W);
+    first.d := d;
+    second.d := first.q;
+    q := second.q;
+}
