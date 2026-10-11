@@ -271,15 +271,17 @@ impl Design {
     }
 
     /// The emitted names in the order in which the instantiations finish.
+    #[cfg(test)]
     #[must_use]
-    pub fn order(&self) -> Vec<String> {
+    pub(crate) fn order(&self) -> Vec<String> {
         self.insts.iter().map(|i| encode(&i.iface.name)).collect()
     }
 
     /// The core names of the named bindings, the registers, the wires, and the children of
     /// the instantiation with the emitted name `module`.
+    #[cfg(test)]
     #[must_use]
-    pub fn core_names(&self, module: &str) -> Option<Vec<String>> {
+    pub(crate) fn core_names(&self, module: &str) -> Option<Vec<String>> {
         let i = self
             .insts
             .iter()
