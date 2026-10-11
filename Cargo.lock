@@ -688,6 +688,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
 
 [[package]]
+name = "srcgen"
+version = "0.0.0"
+dependencies = [
+ "core-ir",
+ "num-bigint",
+ "proptest",
+ "syntax",
+]
+
+[[package]]
 name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -719,8 +729,6 @@ dependencies = [
 name = "syntax"
 version = "0.0.0"
 dependencies = [
- "core-ir",
- "num-bigint",
  "proptest",
  "rowan",
 ]
@@ -903,7 +911,7 @@ dependencies = [
  "num-bigint",
  "proptest",
  "regex",
- "syntax",
+ "srcgen",
  "tempfile",
  "testkit",
  "toml",

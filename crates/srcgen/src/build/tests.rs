@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
-use crate::r#gen::program::{Place, Radix, SBin};
+use crate::program::{Place, Radix, SBin};
 use num_bigint::BigInt;
 use proptest::strategy::ValueTree;
 use proptest::test_runner::TestRunner;
@@ -52,7 +52,7 @@ proptest! {
     #[test]
     fn programs_lex(p in typed()) {
         let p = p.map_err(|e| TestCaseError::fail(e.to_string()))?;
-        let lexed = crate::lex(&p.text(), 4096);
+        let lexed = syntax::lex(&p.text(), 4096);
         prop_assert!(lexed.errors.is_empty(), "{:?}", lexed.errors);
     }
 }

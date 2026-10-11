@@ -8,8 +8,8 @@
 
 use super::stat::{self, Kind, Reach, bin, int};
 use super::{Builder, CONSTS, COUNT, FNS, SAMPLE_INTS};
-use crate::r#gen::eval::{Env, Fault, Scope, Value, eval};
-use crate::r#gen::program::{ComptimeFn, Item, SBin, SExpr, StaticTy};
+use crate::eval::{Env, Fault, Scope, Value, eval};
+use crate::program::{ComptimeFn, Item, SBin, SExpr, StaticTy};
 use num_bigint::BigInt;
 
 impl Builder {

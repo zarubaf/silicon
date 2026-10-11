@@ -7,6 +7,7 @@ members = [
   "crates/elab",
   "crates/parse",
   "crates/resolve",
+  "crates/srcgen",
   "crates/typeck",
   "crates/syntax",
   "crates/testkit",
@@ -21,6 +22,7 @@ license = "Apache-2.0"
 order = [
   "core-ir",
   "syntax",
+  "srcgen",
   "parse",
   "resolve",
   "typeck",
@@ -29,7 +31,7 @@ order = [
   "testkit",
   "driver",
 ]
-dev-only = ["testkit"]
+dev-only = ["srcgen", "testkit"]
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

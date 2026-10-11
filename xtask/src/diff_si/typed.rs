@@ -11,7 +11,7 @@ use std::process::Command;
 
 use anyhow::{Result, bail};
 use proptest::strategy::{Just, Strategy};
-use syntax::r#gen::{BuildFault, Program, lines, twin, typed};
+use srcgen::{BuildFault, Program, lines, twin, typed};
 
 use super::{Mode, Tools, repeat, reproducer, run_trace, stdin, validated, verdict_of, write};
 use crate::diff::{CYCLES, Trace, compare, difference, output};

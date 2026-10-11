@@ -44,10 +44,10 @@ impl Twin {
     /// formal, so it is no static prefix.
     #[must_use]
     pub fn static_names(&self) -> Vec<String> {
-        crate::lex(&self.text, usize::MAX)
+        syntax::lex(&self.text, usize::MAX)
             .tokens
             .iter()
-            .filter(|t| t.kind == crate::SyntaxKind::Ident)
+            .filter(|t| t.kind == syntax::SyntaxKind::Ident)
             .filter_map(|t| self.text.get(t.range.clone()))
             .filter(|n| {
                 let mut cs = n.chars();
@@ -627,7 +627,7 @@ mod tests {
             for word in ["comptime", "const ", "static_assert", "error("] {
                 prop_assert!(!t.text.contains(word), "{} in\n{}", word, t.text);
             }
-            let lexed = crate::lex(&t.text, 4096);
+            let lexed = syntax::lex(&t.text, 4096);
             prop_assert!(lexed.errors.is_empty(), "{:?}", lexed.errors);
             prop_assert!(t.top.ends_with("()"), "{}", t.top);
             let names = t.static_names();

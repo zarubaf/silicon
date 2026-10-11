@@ -3,12 +3,12 @@
 //! core vectors to source vectors.
 
 use super::expr::Env;
-use crate::SyntaxKind;
 use core_ir::ast::{Conn, Design, Dir, Expr, Item, Module, Port, Stmt, Ty};
 use core_ir::r#gen::RESET;
 use core_ir::{interp, typed};
 use std::collections::HashMap;
 use std::fmt;
+use syntax::SyntaxKind;
 
 /// A core form that has no slice-1 source form.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -300,10 +300,10 @@ pub fn vector_out(top: &typed::Module, outputs: &interp::Outputs) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lex;
     use core_ir::r#gen::{Config, design_with};
     use core_ir::{Bits, check::check, text::parse, vectors};
     use proptest::prelude::*;
+    use syntax::lex;
 
     fn lifted(core: &str) -> Result<String, Unsupported> {
         lift(&parse(core).unwrap())

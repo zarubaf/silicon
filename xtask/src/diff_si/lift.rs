@@ -14,7 +14,7 @@ use core_ir::interp::Sim;
 use core_ir::text::print;
 use core_ir::vectors::parse_input;
 use proptest::strategy::{Just, Strategy};
-use syntax::r#gen::{lift, vector_in, vector_out};
+use srcgen::{lift, vector_in, vector_out};
 
 use super::{Mode, Tools, repeat, reproducer, run_trace, stdin, validated, verdict_of};
 use crate::diff::{CYCLES, Trace, compare};

@@ -10,7 +10,7 @@
 
 use super::stat::int;
 use super::{Builder, Ctx, Hw};
-use crate::r#gen::program::{HBin, HExpr, Scalar, Ty, Un};
+use crate::program::{HBin, HExpr, Scalar, Ty, Un};
 
 /// The depth of a hardware expression.
 pub(super) const DEPTH: u32 = 4;

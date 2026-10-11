@@ -11,7 +11,7 @@ use std::process::Command;
 use anyhow::{Context, Result};
 use proptest::prelude::any;
 use proptest::strategy::{Just, Strategy};
-use syntax::r#gen::{BuildFault, Program, typed};
+use srcgen::{BuildFault, Program, typed};
 use testkit::{Outcome, parse_report};
 
 use super::{Mode, Tools, outcome, repeat, write};
