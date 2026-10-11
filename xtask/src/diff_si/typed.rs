@@ -9,7 +9,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use proptest::strategy::{Just, Strategy};
 use syntax::r#gen::{BuildFault, Program, lines, twin, typed};
 
@@ -68,6 +68,13 @@ fn try_verdict(tools: &Tools, dir: &Path, case: &Case) -> Result<Option<String>>
         return Ok(Some(format!("cost: {message}")));
     }
     let twin = twin(program);
+    let names = twin.static_names();
+    if !names.is_empty() {
+        bail!(
+            "the twin keeps the static names {names:?}, a fault of the builder:\n{}",
+            twin.text
+        );
+    }
     let twin_file = write(dir, "twin.si", &twin.text)?;
     let stdin = stdin(input.iter().map(String::as_str));
     let traces = [

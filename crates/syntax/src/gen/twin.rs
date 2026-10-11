@@ -19,9 +19,11 @@
 //! - `const`s, `comptime fn`s, static `let`s, and `static_assert`s go.
 //!
 //! A static fault is a builder bug. The twin then keeps the construct as it
-//! is, with its static names (`build::STATIC_PREFIXES` and digits). The
-//! tests look for these names in each twin, so they show the bug.
+//! is, with its static names (`build::STATIC_PREFIXES` and digits).
+//! `Twin::static_names` finds them: the tests and `diff-si` check each twin
+//! with it, so they show the bug.
 
+use super::build::STATIC_PREFIXES;
 use super::eval::{Env, Scope, Value, eval, loop_values};
 use super::program::{HExpr, Item, Place, Program, Radix, SExpr, Stmt, Ty, render_items};
 use num_bigint::Sign;
@@ -32,6 +34,30 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 pub struct Twin {
     pub text: String,
     pub top: String,
+}
+
+impl Twin {
+    /// The static names left in the text: identifiers of a static prefix
+    /// of the builder and digits (a parameter, const, `comptime fn`,
+    /// static `let`, or loop binder). A static fault of the twin leaves
+    /// them, so a twin of a built program has none. `x` is also a helper
+    /// formal, so it is no static prefix.
+    #[must_use]
+    pub fn static_names(&self) -> Vec<String> {
+        crate::lex(&self.text, usize::MAX)
+            .tokens
+            .iter()
+            .filter(|t| t.kind == crate::SyntaxKind::Ident)
+            .filter_map(|t| self.text.get(t.range.clone()))
+            .filter(|n| {
+                let mut cs = n.chars();
+                cs.next().is_some_and(|c| STATIC_PREFIXES.contains(c))
+                    && !cs.as_str().is_empty()
+                    && cs.all(|c| c.is_ascii_digit())
+            })
+            .map(str::to_owned)
+            .collect()
+    }
 }
 
 /// The twin of `program`.
@@ -324,7 +350,7 @@ impl Writer<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::build::{STATIC_PREFIXES, typed};
+    use super::super::build::typed;
     use super::super::eval::Value;
     use super::super::program::{
         ComptimeFn, HBin, HExpr, Item, Place, Ports, Radix, SBin, SExpr, StaticTy, Stmt, Ty,
@@ -573,25 +599,6 @@ mod tests {
         }
     }
 
-    /// The identifiers of `text` with a static prefix of the builder and
-    /// digits: a parameter, const, `comptime fn`, static `let`, or loop
-    /// binder. A twin has none. `x` is also a helper formal, so it is out.
-    fn static_names(text: &str) -> Vec<String> {
-        crate::lex(text, 4096)
-            .tokens
-            .iter()
-            .filter(|t| t.kind == crate::SyntaxKind::Ident)
-            .filter_map(|t| text.get(t.range.clone()))
-            .filter(|n| {
-                let mut cs = n.chars();
-                cs.next().is_some_and(|c| STATIC_PREFIXES.contains(c))
-                    && !cs.as_str().is_empty()
-                    && cs.all(|c| c.is_ascii_digit())
-            })
-            .map(str::to_owned)
-            .collect()
-    }
-
     #[test]
     fn a_static_fault_leaves_a_static_name() {
         let fault = sbin(SBin::Div, int(1), int(0));
@@ -601,13 +608,13 @@ mod tests {
             connect("o0", HExpr::Static(sname("s0"))),
         ];
         let p = program(vec![module("M0", &[], false, body)], Vec::new());
-        assert_eq!(static_names(&twin(&p).text), vec!["s0", "s0"]);
+        assert_eq!(twin(&p).static_names(), vec!["s0", "s0"]);
         let clean = program(vec![m1()], Vec::new());
         let clean = Program {
             top: "M1".to_owned(),
             ..clean
         };
-        assert!(static_names(&twin(&clean).text).is_empty());
+        assert!(twin(&clean).static_names().is_empty());
     }
 
     proptest! {
@@ -623,7 +630,7 @@ mod tests {
             let lexed = crate::lex(&t.text, 4096);
             prop_assert!(lexed.errors.is_empty(), "{:?}", lexed.errors);
             prop_assert!(t.top.ends_with("()"), "{}", t.top);
-            let names = static_names(&t.text);
+            let names = t.static_names();
             prop_assert!(names.is_empty(), "{:?} in\n{}", names, t.text);
         }
     }
