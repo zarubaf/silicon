@@ -62,7 +62,7 @@ fn compare_check(
         None if r.code == 0 => Ok(()),
         None => Err(format!("expected success{}", both())),
         Some(want) => match parse_report(&String::from_utf8_lossy(&rust.stdout)) {
-            Some(got) if got.code == want.code && got.line == want.line => Ok(()),
+            Some(got) if r.code == 1 && got.code == want.code && got.line == want.line => Ok(()),
             _ => Err(format!(
                 "expected error[{}] on line {}{}",
                 want.code,
@@ -367,6 +367,18 @@ mod tests {
     fn an_error_on_another_line_fails() {
         let out = exited(1, "error[S010]: 5:8: x\n");
         assert!(compare_check("elab", &out, &out, Some(&s010_on(4))).is_err());
+    }
+
+    #[test]
+    fn an_expected_error_needs_exit_1() {
+        let ok = exited(0, "error[S010]: 4:8: x\n");
+        assert!(compare_check("elab", &ok, &ok, Some(&s010_on(4))).is_err());
+    }
+
+    #[test]
+    fn below_a_budget_needs_exit_1() {
+        let ok = exited(0, "error[S015]: 4:8: x\n");
+        assert!(compare_below(BudgetKind::Fuel, &ok, &ok).is_err());
     }
 
     #[test]
