@@ -516,3 +516,16 @@ fn the_generator_covers_the_core_ir() {
     assert!(seen.widths.iter().all(|w| (1..=300).contains(w)));
     assert_eq!(seen.levels, 3, "the top never has 3 levels below it");
 }
+
+#[test]
+fn generator_designs_are_pinned() {
+    let mut runner = TestRunner::deterministic();
+    let mut texts = Vec::new();
+    for _ in 0..3 {
+        let Ok(tree) = r#gen::design().new_tree(&mut runner) else {
+            panic!("the generator never rejects");
+        };
+        texts.push(print(&tree.current()));
+    }
+    insta::assert_snapshot!(texts.join("\n"));
+}
