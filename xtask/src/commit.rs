@@ -122,10 +122,10 @@ pub fn check_message(msg: &str, scopes: &[String]) -> Vec<String> {
 /// with its expectation inline (`; expected-error`, `; STEP`, `; CHECK`) or
 /// beside it. `si` and `source` hold the suites of the source front end. Any change to
 /// such a file counts, so no list of forms can drift from the harnesses.
-const ORACLE_DIRS: &[&str] = &["check", "run", "lower", "corpus", "si", "source", "core"];
+const ORACLE_DIRS: &[&str] = &["si", "source", "core"];
 
 /// True for test expectation files: snapshots and files of the shared test
-/// data directories `tests/{check,run,lower,corpus,si,source,core}/`.
+/// data directories `tests/{si,source,core}/`.
 pub fn is_expectation(path: &Path) -> bool {
     let parts: Vec<_> = path.iter().map(|p| p.to_string_lossy()).collect();
     parts.iter().any(|p| p == "snapshots")
@@ -318,7 +318,7 @@ mod tests {
 
     #[test]
     fn oracle_directory_needs_a_file_below_it() {
-        assert!(!is_expectation(Path::new("tests/check")));
+        assert!(!is_expectation(Path::new("tests/core")));
         assert!(!is_expectation(Path::new("docs/check/a.sil")));
         assert!(!is_expectation(Path::new("tests/other/a.sil")));
     }
@@ -387,9 +387,14 @@ mod tests {
     fn recognizes_expectations() {
         assert!(is_expectation(Path::new("crates/a/snapshots/x.snap")));
         for dir in ["check", "run", "lower", "corpus"] {
-            assert!(is_expectation(Path::new(&format!("tests/{dir}/a.sil"))));
+            assert!(is_expectation(Path::new(&format!(
+                "tests/core/{dir}/a.sil"
+            ))));
+            assert!(!is_expectation(Path::new(&format!("tests/{dir}/a.sil"))));
         }
-        assert!(is_expectation(Path::new("tests/corpus/b/expected/o.v")));
+        assert!(is_expectation(Path::new(
+            "tests/core/corpus/b/expected/o.v"
+        )));
         assert!(is_expectation(Path::new("tests/si/check/a.si")));
         assert!(is_expectation(Path::new("tests/core/check/a.sil")));
         assert!(is_expectation(Path::new("tests/si/corpus/b.si")));
@@ -402,9 +407,9 @@ mod tests {
     fn oracle_files_are_flagged_for_every_change_kind() {
         // Add, delete, and content change all list the file by name.
         for dir in ["check", "run", "lower", "corpus"] {
-            let p = paths(&[&format!("tests/{dir}/a.sil"), "crates/a/src/lib.rs"]);
+            let p = paths(&[&format!("tests/core/{dir}/a.sil"), "crates/a/src/lib.rs"]);
             assert!(fired(&check_paths("feat", &p), "commit-expectations-code"));
-            let p = paths(&[&format!("tests/{dir}/a.sil")]);
+            let p = paths(&[&format!("tests/core/{dir}/a.sil")]);
             assert!(fired(
                 &check_paths("refactor", &p),
                 "commit-refactor-expectations"
@@ -444,7 +449,7 @@ mod tests {
     #[test]
     fn range_flags_add_delete_and_edit_of_oracle_files_with_code() {
         for dir in ["check", "run", "lower", "corpus"] {
-            let f = format!("tests/{dir}/a.sil");
+            let f = format!("tests/core/{dir}/a.sil");
             let base = [(f.as_str(), "; x\n"), ("code.rs", "a")];
             let changes: [Vec<(&str, Option<&str>)>; 3] = [
                 vec![(f.as_str(), Some("; y\n")), ("code.rs", Some("b"))],

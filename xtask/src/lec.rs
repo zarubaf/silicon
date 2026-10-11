@@ -125,7 +125,7 @@ pub fn run(repo: &Repo) -> Result<bool> {
             }
         }
     }
-    let inventory = paths::lec_inventory(repo);
+    let inventory = paths::lec_inventory();
     let problems = skips::audit(&repo.read(&inventory)?, &ran)?;
     Ok(passed && skips::report(&inventory.to_string_lossy(), &problems))
 }

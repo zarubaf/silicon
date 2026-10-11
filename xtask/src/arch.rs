@@ -449,7 +449,7 @@ pub fn check(repo: &Repo) -> Result<Vec<Violation>> {
         &trust_names(&repo.read(Path::new(TRUST))?)?,
     ));
     let tags = trust_tags(&repo.read(Path::new(TRUST))?)?;
-    for path in [paths::lec_inventory(repo), paths::diff_inventory(repo)] {
+    for path in [paths::lec_inventory(), paths::diff_inventory()] {
         let name = path.to_string_lossy();
         out.extend(skips_violations(&name, &repo.read(&path)?, &tags)?);
     }

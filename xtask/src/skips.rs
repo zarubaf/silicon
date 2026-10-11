@@ -144,8 +144,8 @@ mod tests {
     fn the_checked_in_inventories_parse() {
         let repo = crate::paths::this_repo();
         for path in [
-            crate::paths::lec_inventory(&repo),
-            crate::paths::diff_inventory(&repo),
+            crate::paths::lec_inventory(),
+            crate::paths::diff_inventory(),
         ] {
             let text = repo.read(&path).unwrap();
             assert!(!parse(&text).unwrap().is_empty());
