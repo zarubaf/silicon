@@ -12,8 +12,7 @@ output values to a source output line.
 
 These rules settle the open points of the spec:
 
-- Schema order is the byte order of the source names. It equals the core port order, because a
-  name that `encode` changes only gets `$0k`, and `$` sorts before each name character.
+- Schema order is the port layout of `Source.Layout`, without the clock.
 - An input line lists the reset `d$0rst` of the domain `d` first. A combinational top has none.
 - The reset is a `Bool` value. The clock has no entry.
 - An input value has the decimal forms of a core value. A `UInt` value and the magnitude of an
@@ -43,11 +42,11 @@ def schema (d : Elab.Design) : Option Schema := do
   let top ← d.insts[d.top]?
   let b := top.body
   let entry (q : Elab.PortDecl) : Entry := ⟨q.name, encode (Flatten.portName q.name), q.ty⟩
-  let ports := (b.ports.qsort fun x y => x.name < y.name).toList
   let reset := match b.domain with
     | some dom => let x := encode (Flatten.resetName dom); [⟨x, x, .bool⟩]
     | none => []
-  return ⟨reset ++ (ports.filter (·.input)).map entry, (ports.filter (!·.input)).map entry⟩
+  let layout := Layout.arrange reset (b.ports.map fun q => (q, entry q))
+  return ⟨layout.inputs, layout.outputs⟩
 
 /-!
 The schema fits the core design `d` when its core names are the port names of the top module of
