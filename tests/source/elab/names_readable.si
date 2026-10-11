@@ -1,4 +1,4 @@
-// A module with integer and Boolean arguments takes a readable emitted name.
+// A module with natural-number arguments takes a readable emitted name.
 // TOP Top(3)
 // CHECK: (design Top$3
 // CHECK: (module Leaf$8$1
