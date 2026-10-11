@@ -13,27 +13,53 @@ use crate::outcome::classify;
 use crate::report::parse_report;
 use crate::spawn::spawn;
 
+/// Runs `command` of the two front ends on `file` with the further arguments `args` and `stdin`.
+/// Returns the Rust output, then the Lean output.
+fn run_both(
+    binary: &Path,
+    command: &str,
+    file: &Path,
+    args: &[&str],
+    stdin: &str,
+) -> std::io::Result<(Output, Output)> {
+    let run = |mut front_end: Command| spawn(front_end.arg(command).arg(file).args(args), stdin);
+    Ok((
+        run(bins::silicon(binary))?,
+        run(Command::new(silicon_check()))?,
+    ))
+}
+
+/// Runs `command` of the two front ends on `file` with the arguments `args`. They must give the
+/// same exit code, 0 or 1. On success they must print the same stdout. On an error they must print
+/// the same code, line, and column; the message can differ (section 6.2). Returns the Rust output.
+///
+/// # Errors
+///
+/// Returns the reason when a front end misbehaves or the two disagree.
+pub fn agreed(binary: &Path, command: &str, file: &Path, args: &[&str]) -> Result<Output, String> {
+    let (rust, lean) = run_both(binary, command, file, args, "").map_err(|e| e.to_string())?;
+    let rust_outcome =
+        classify(&rust).map_err(|e| format!("Rust `silicon {command}` failed: {e}"))?;
+    let lean_outcome =
+        classify(&lean).map_err(|e| format!("Lean `silicon-check {command}` failed: {e}"))?;
+    if rust_outcome == lean_outcome {
+        return Ok(rust);
+    }
+    Err(format!(
+        "the front ends disagree\nRust: {rust_outcome:?}\nLean: {lean_outcome:?}"
+    ))
+}
+
 /// The `parse` suite (frontend spec sections 8 and 11.3): the Lean
 /// `silicon-check parse` and the Rust `silicon parse` run on each `.si` file.
-/// They must agree on the exit code. On success they must print the same dump.
-/// On an error they must print the same code and the same line and column. The
-/// message text can differ (section 6.2).
+/// They must agree as `agreed` says.
 ///
 /// # Errors
 ///
 /// Returns an error when a front end misbehaves or the two disagree.
 pub fn parse(binary: &Path, file: &Path) -> datatest_stable::Result<()> {
-    let lean = classify(&spawn(
-        Command::new(silicon_check()).arg("parse").arg(file),
-        "",
-    )?)
-    .map_err(|e| format!("Lean `silicon-check parse` failed: {e}"))?;
-    let rust = classify(&spawn(bins::silicon(binary).arg("parse").arg(file), "")?)
-        .map_err(|e| format!("Rust `silicon parse` failed: {e}"))?;
-    if lean == rust {
-        return Ok(());
-    }
-    Err(format!("the front ends disagree\nLean: {lean:?}\nRust: {rust:?}").into())
+    agreed(binary, "parse", file, &[])?;
+    Ok(())
 }
 
 /// Compares the runs of the command `name` in the two front ends with the expectation of the
@@ -84,21 +110,8 @@ fn both(
     flags: &[&str],
     stdin: &str,
 ) -> std::io::Result<(Output, Output)> {
-    let run = |mut front_end: Command| {
-        spawn(
-            front_end
-                .arg(command)
-                .arg(file)
-                .arg("--top")
-                .arg(top)
-                .args(flags),
-            stdin,
-        )
-    };
-    Ok((
-        run(bins::silicon(binary))?,
-        run(Command::new(silicon_check()))?,
-    ))
+    let args = [&["--top", top], flags].concat();
+    run_both(binary, command, file, &args, stdin)
 }
 
 /// The `check` suite (frontend spec section 11.3): the Rust `silicon elab` and the Lean

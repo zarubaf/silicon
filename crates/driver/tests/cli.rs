@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use testkit::bins::{self, CHECK_VARIABLE};
+use testkit::source;
 use testkit::spawn::spawn;
 
 /// A `silicon` command that validates with the real checker.
@@ -101,9 +102,9 @@ fn nested(n: usize) -> String {
     format!("const X: T = {}1{};\n", "(".repeat(n), ")".repeat(n))
 }
 
-/// A file with 1,000,000 open brackets.
-fn open_brackets() -> String {
-    format!("const X: T = {}", "(".repeat(1_000_000))
+/// A file with 1,000,000 open brackets in a constant of type `ty`.
+fn open_brackets(ty: &str) -> String {
+    format!("const X: {ty} = {}", "(".repeat(1_000_000))
 }
 
 /// A file with a chain of 1,000,000 prefix minus signs.
@@ -111,40 +112,11 @@ fn minus_chain() -> String {
     format!("const X: T = {}1;\n", "-".repeat(1_000_000))
 }
 
-/// Runs `silicon` and `silicon-check` as `COMMAND FILE ARGS...`. The two must give the same exit
-/// code, and on success the same stdout. On an error they must give the same code, line, and
-/// column (front-end spec section 6.2); the message can differ. Returns the output of `silicon`.
-fn agree(command: &str, flags: &[&str], path: &Path) -> std::io::Result<Output> {
-    let args = (command, flags);
-    let mut first = silicon_command();
-    first.arg(command).arg(path).args(flags);
-    let rust = spawn(&mut first, "")?;
-    let mut second = Command::new(bins::silicon_check());
-    second.arg(command).arg(path).args(flags);
-    let lean = spawn(&mut second, "")?;
-    for (name, out) in [("silicon", &rust), ("silicon-check", &lean)] {
-        assert!(
-            matches!(out.status.code(), Some(0 | 1)),
-            "{name} {args:?}: {:?}\nstdout: {}\nstderr: {}",
-            out.status,
-            text(out),
-            String::from_utf8_lossy(&out.stderr)
-        );
-    }
-    assert_eq!(rust.status.code(), lean.status.code(), "{args:?}");
-    if rust.status.success() {
-        assert_eq!(text(&rust), text(&lean), "{args:?}");
-    } else {
-        let site = |out: &Output| {
-            text(out)
-                .splitn(3, ": ")
-                .take(2)
-                .collect::<Vec<_>>()
-                .join(": ")
-        };
-        assert_eq!(site(&rust), site(&lean), "{args:?}");
-    }
-    Ok(rust)
+/// Runs `silicon` and `silicon-check` as `COMMAND FILE ARGS...` as `testkit::source::agreed`
+/// says. Returns the output of `silicon`.
+fn agree(command: &str, flags: &[&str], path: &Path) -> Result<Output, Box<dyn std::error::Error>> {
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_silicon"));
+    Ok(source::agreed(&binary, command, path, flags)?)
 }
 
 #[test]
@@ -552,7 +524,7 @@ fn parse_does_not_overflow_the_stack_at_the_default_depth() -> Test {
     let out = agree("parse", &[], &file("d4097.si", nested(4097).as_bytes())?)?;
     assert!(text(&out).starts_with("error[S001]: 1:4110: "));
     assert_eq!(out.status.code(), Some(1));
-    let open = open_brackets();
+    let open = open_brackets("T");
     let out = agree("parse", &[], &file("open.si", open.as_bytes())?)?;
     assert!(text(&out).starts_with("error[S001]: 1:4110: "));
     assert_eq!(out.status.code(), Some(1));
@@ -578,7 +550,7 @@ fn parse_does_not_overflow_the_stack_at_the_maximum_depth() -> Test {
         &file("d65537.si", nested(65537).as_bytes())?,
     )?;
     assert!(text(&out).starts_with("error[S001]: 1:65550: "));
-    let open = open_brackets();
+    let open = open_brackets("T");
     let out = agree("parse", &flags, &file("open-max.si", open.as_bytes())?)?;
     assert!(text(&out).starts_with("error[S001]: 1:65550: "));
     assert_eq!(out.status.code(), Some(1));
@@ -724,7 +696,7 @@ fn eval_does_not_overflow_the_stack() -> Test {
     // An argument has at most 128 KiB, so the file holds the million open brackets.
     let expr = "(".repeat(100_000);
     assert!(eval("", &expr, &[])?.0.starts_with("error[S001]: 1:4097: "));
-    let open = format!("const X: Nat = {}", "(".repeat(1_000_000));
+    let open = open_brackets("Nat");
     assert!(
         eval(&open, "1", &[])?
             .0
