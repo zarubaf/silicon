@@ -12,6 +12,12 @@ pub fn corpus_dir() -> PathBuf {
     PathBuf::from("tests/core/corpus")
 }
 
+/// The directory of the source designs that LEC and the differential tests
+/// share. Each check reads the elaboration of its `// TOP` line.
+pub fn source_corpus_dir() -> PathBuf {
+    PathBuf::from("tests/source/corpus")
+}
+
 /// The inventory of the LEC checks.
 pub fn lec_inventory() -> PathBuf {
     PathBuf::from("tests/inventory/lec.txt")
@@ -44,7 +50,12 @@ mod tests {
     #[test]
     fn the_paths_exist_in_this_tree() {
         let repo = this_repo();
-        for p in [corpus_dir(), lec_inventory(), diff_inventory()] {
+        for p in [
+            corpus_dir(),
+            source_corpus_dir(),
+            lec_inventory(),
+            diff_inventory(),
+        ] {
             assert!(repo.root.join(&p).exists(), "{}", p.display());
         }
     }
