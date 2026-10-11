@@ -6,7 +6,10 @@ The Lean model is the normative spec for Silicon.
 
 ## Owns
 
-This directory owns the core IR semantics. Dispatch Lean work to a fresh Opus subagent.
+This directory owns two models. Dispatch Lean work to a fresh Opus subagent.
+
+- `Silicon/Core/` holds the core IR semantics.
+- `Silicon/Source/` holds the reference front end: the lexer, the parser, the printer, the resolver, the generic pre-check, the evaluator, the elaborator, and the lowering. `Source/Test/` holds its `#guard` tests. Its spec is [the front-end spec](../doc/design/2026-10-09-frontend.md).
 
 ## Invariants
 
@@ -25,4 +28,4 @@ Lean has no dependencies on `crates/`.
 
 Run `just check` from the repository root.
 
-Run `lake -d lean exe silicon-check check FILE` to check a design.
+Run `lake -d lean exe silicon-check check FILE` to check a design. Run `silicon-check parse`, `eval`, `cost`, `elab`, or `validate` for the front end.

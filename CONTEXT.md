@@ -212,7 +212,7 @@ An input line or an output line of a top module in source terms: source port nam
 
 ### diagnostic
 
-The report of one error of the front end. It has a code, spans, notes, help, and suggested edits. Only its code and its line are normative. The records of the source builtin `diagnostic` are observation records, not diagnostics.
+The report of one error of the front end. It has a code, spans, notes, help, and suggested edits. Only its code, its line, and its column are normative. The records of the source builtin `diagnostic` are observation records, not diagnostics.
 
 _Avoid_: hint
 
