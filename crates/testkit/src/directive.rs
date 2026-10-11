@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The directives of a test file: `expected-error XNNN @+N` (spec section 9) and `TOP`.
+//! The directives of a test file: `expected-error XNNN @+N` (spec section 9), `TOP`, and the
+//! budgets `FUEL`, `DEPTH`, and `SYNTAX-DEPTH`.
 
 /// The comment marker of a source language.
 #[derive(Clone, Copy)]
@@ -160,6 +161,75 @@ pub(crate) fn top(source: &str) -> Result<String, String> {
     found.ok_or_else(|| "no TOP line".to_owned())
 }
 
+/// The kind of a budget directive.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BudgetKind {
+    Fuel,
+    Depth,
+    SyntaxDepth,
+}
+
+impl BudgetKind {
+    const ALL: [(BudgetKind, &'static str); 3] = [
+        (BudgetKind::Fuel, "// FUEL "),
+        (BudgetKind::Depth, "// DEPTH "),
+        (BudgetKind::SyntaxDepth, "// SYNTAX-DEPTH "),
+    ];
+
+    /// The `elab` flag that sets the budget.
+    pub(crate) fn flag(self) -> &'static str {
+        match self {
+            BudgetKind::Fuel => "--fuel",
+            BudgetKind::Depth => "--depth",
+            BudgetKind::SyntaxDepth => "--syntax-depth",
+        }
+    }
+
+    /// The error code when the budget runs out.
+    pub(crate) fn code(self) -> &'static str {
+        match self {
+            BudgetKind::Fuel | BudgetKind::Depth => "S015",
+            BudgetKind::SyntaxDepth => "S001",
+        }
+    }
+}
+
+/// A budget directive: the file passes with `limit` and fails with `limit - 1`.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Budget {
+    pub kind: BudgetKind,
+    pub limit: u64,
+}
+
+/// The budget directives of a `.si` file, in file order.
+///
+/// # Errors
+///
+/// Returns a message when a limit is not a number of at least 1, or a kind occurs twice.
+pub(crate) fn budgets(source: &str) -> Result<Vec<Budget>, String> {
+    let mut found: Vec<Budget> = Vec::new();
+    for (index, text) in source.lines().enumerate() {
+        let text = text.trim_start();
+        let Some((kind, rest)) = BudgetKind::ALL
+            .iter()
+            .find_map(|&(kind, prefix)| Some((kind, text.strip_prefix(prefix)?)))
+        else {
+            continue;
+        };
+        let limit = rest
+            .trim()
+            .parse::<u64>()
+            .ok()
+            .filter(|&limit| limit >= 1)
+            .ok_or_else(|| format!("line {}: malformed budget `{text}`", index + 1))?;
+        if found.iter().any(|budget| budget.kind == kind) {
+            return Err(format!("line {}: a second {kind:?} budget", index + 1));
+        }
+        found.push(Budget { kind, limit });
+    }
+    Ok(found)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,6 +286,34 @@ mod tests {
                 .unwrap_err()
                 .contains("line 2")
         );
+    }
+
+    #[test]
+    fn budgets_reads_each_kind() {
+        assert_eq!(
+            budgets("// FUEL 161\n// DEPTH 301\n// SYNTAX-DEPTH 10"),
+            Ok(vec![
+                Budget {
+                    kind: BudgetKind::Fuel,
+                    limit: 161
+                },
+                Budget {
+                    kind: BudgetKind::Depth,
+                    limit: 301
+                },
+                Budget {
+                    kind: BudgetKind::SyntaxDepth,
+                    limit: 10
+                },
+            ])
+        );
+    }
+
+    #[test]
+    fn budgets_rejects_bad_lines() {
+        for source in ["// FUEL 0", "// FUEL x", "// FUEL 1\n// FUEL 2"] {
+            assert!(budgets(source).is_err(), "{source:?}");
+        }
     }
 
     #[test]

@@ -52,6 +52,10 @@ mod source {
     pub fn elab(file: &Path) -> datatest_stable::Result<()> {
         testkit::source::elab(silicon(), file)
     }
+
+    pub fn budget(file: &Path) -> datatest_stable::Result<()> {
+        testkit::source::budget(silicon(), file)
+    }
 }
 
 datatest_stable::harness! {
@@ -63,4 +67,5 @@ datatest_stable::harness! {
     { test = source::check, root = testkit::root("source", "check"), pattern = r"\.si$" },
     { test = source::run, root = testkit::root("source", "run"), pattern = r"\.si$" },
     { test = source::elab, root = testkit::root("source", "elab"), pattern = r"\.si$" },
+    { test = source::budget, root = testkit::root("source", "budget"), pattern = r"\.si$" },
 }
