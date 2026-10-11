@@ -903,6 +903,7 @@ dependencies = [
  "num-bigint",
  "proptest",
  "regex",
+ "syntax",
  "tempfile",
  "toml",
 ]
