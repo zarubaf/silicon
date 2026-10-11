@@ -13,11 +13,12 @@ This crate owns the kinds of tokens and nodes, the `rowan` language of Silicon, 
 - The texts of the tokens, joined, equal the input for every string. Check: `cargo nextest run -p syntax`.
 - The lexer does not panic on any input. An invalid character, an unterminated string, or an unterminated comment gives an error token. Check: `cargo nextest run -p syntax`.
 - Operators use longest match, so `>>` is one token. Check: `cargo nextest run -p syntax`.
+- Each design of `Config::source()` lifts to a program that lexes with no error, or `lift` returns `Unsupported`. Check: `cargo nextest run -p syntax --all-features`.
 - Non-test code has no `unwrap`, no `expect`, and no panic on user input. Check: `just clippy`.
 
 ## Dependencies
 
-This crate uses `rowan` for the tree. The tests use `proptest`. Its other users are later front-end crates. The feature `gen` uses `core-ir` with its feature `gen`.
+This crate uses `rowan` for the tree. The tests use `proptest`. Its other users are later front-end crates. The feature `gen` uses `core-ir` with its feature `gen`, and `num-bigint`.
 
 ## How to test
 
