@@ -7,7 +7,7 @@ mod prelude;
 mod scope;
 mod walk;
 
-use parse::ast::{Expr, Item, Pos};
+use parse::ast::{Expr, Item, NodeId, Pos};
 use parse::{Parse, ParsedExpr, StackError};
 use std::collections::BTreeMap;
 use std::fmt;
@@ -91,8 +91,8 @@ pub enum Target {
 /// A parse with its names resolved. It is an owned value with no reference cycle: a name
 /// points to its declaration by index.
 ///
-/// The map from a position to a target holds each name token of the AST: a declaration
-/// points to itself, and a use points to its declaration or to the prelude. The AST is still
+/// The map from a node id to a target holds each name node of the AST: a declaration points
+/// to itself, and a use points to its declaration or to the prelude. The AST is still
 /// the AST of the parse, moved out of it: the lossless tree is gone. It keeps the syntax depth
 /// of the parse. A pass that recurses over it runs through `parse::on_stack` with
 /// [`Resolved::depth`]. Dropping it is safe on any stack.
@@ -101,7 +101,7 @@ pub struct Resolved {
     depth: usize,
     decls: Vec<Decl>,
     items: BTreeMap<String, DeclId>,
-    names: BTreeMap<Pos, Target>,
+    names: BTreeMap<NodeId, Target>,
 }
 
 impl Resolved {
@@ -129,10 +129,10 @@ impl Resolved {
         self.items.get(name).copied()
     }
 
-    /// What the name token at a position points to.
+    /// What the name node with an id points to.
     #[must_use]
-    pub fn target(&self, pos: Pos) -> Option<Target> {
-        self.names.get(&pos).copied()
+    pub fn target(&self, id: NodeId) -> Option<Target> {
+        self.names.get(&id).copied()
     }
 }
 
@@ -155,13 +155,12 @@ pub fn resolve(parse: Parse) -> Result<Resolved, Failed> {
 }
 
 /// An expression in the file scope, such as the `EXPR` of `eval`, with its names resolved.
-/// Its positions are in its own text, so it has its own map from the position of each name
-/// token to its target. A target indexes the declarations of the `Resolved` of its file. It
+/// It is its own parse, so it has its own map from the id of each name node to its target. A target indexes the declarations of the `Resolved` of its file. It
 /// keeps the syntax depth of its parse. Dropping it is safe on any stack.
 pub struct ResolvedExpr {
     expr: Expr,
     depth: usize,
-    names: BTreeMap<Pos, Target>,
+    names: BTreeMap<NodeId, Target>,
 }
 
 impl ResolvedExpr {
@@ -177,10 +176,10 @@ impl ResolvedExpr {
         self.depth.max(resolved.depth)
     }
 
-    /// What the name token at a position of the expression points to.
+    /// What the name node with an id of the expression points to.
     #[must_use]
-    pub fn target(&self, pos: Pos) -> Option<Target> {
-        self.names.get(&pos).copied()
+    pub fn target(&self, id: NodeId) -> Option<Target> {
+        self.names.get(&id).copied()
     }
 }
 
@@ -203,7 +202,7 @@ pub fn resolve_expr(
 struct Table {
     decls: Vec<Decl>,
     items: BTreeMap<String, DeclId>,
-    names: BTreeMap<Pos, Target>,
+    names: BTreeMap<NodeId, Target>,
 }
 
 #[cfg(test)]

@@ -3,7 +3,7 @@
 //! so it runs on the front-end thread.
 
 use crate::{Code, Error};
-use parse::ast::{Expr, Item, Param, Pos, Stmt, TypeExpr};
+use parse::ast::{Expr, Item, NodeId, Param, Pos, Stmt, TypeExpr};
 use resolve::{DeclId, Kind, Prelude, Resolved, ResolvedExpr, Target};
 use std::collections::BTreeMap;
 
@@ -82,7 +82,7 @@ fn sigs(resolved: &Resolved) -> BTreeMap<DeclId, Sig> {
             ),
             Item::Module { name, params, .. } => (name, Sig::Module(params.len())),
         };
-        if let Some(Target::Decl(id)) = resolved.target(name.pos) {
+        if let Some(Target::Decl(id)) = resolved.target(name.id) {
             sigs.insert(id, sig);
         }
     }
@@ -125,11 +125,11 @@ fn resource(kind: Kind) -> Option<&'static str> {
 }
 
 impl<'a> Walker<'a> {
-    /// What the name token at a position points to.
-    fn target(&self, pos: Pos) -> Option<Target> {
+    /// What the name node with an id points to.
+    fn target(&self, id: NodeId) -> Option<Target> {
         match self.expr {
-            Some(expr) => expr.target(pos),
-            None => self.resolved.target(pos),
+            Some(expr) => expr.target(id),
+            None => self.resolved.target(id),
         }
     }
 
@@ -171,8 +171,8 @@ impl<'a> Walker<'a> {
         }
     }
 
-    fn prelude_type(&self, pos: Pos) -> Option<Prelude> {
-        match self.target(pos) {
+    fn prelude_type(&self, id: NodeId) -> Option<Prelude> {
+        match self.target(id) {
             Some(Target::Prelude(p)) if p.is_type() => Some(p),
             _ => None,
         }
@@ -182,8 +182,8 @@ impl<'a> Walker<'a> {
     /// or an index of it. A complete type misses none. Another expression is not a type.
     fn type_head(&self, expr: &Expr) -> Option<(String, usize)> {
         match expr {
-            Expr::Name { pos, name } => self
-                .prelude_type(*pos)
+            Expr::Name { id, name, .. } => self
+                .prelude_type(*id)
                 .map(|p| (format!("`{name}`"), type_arity(p))),
             Expr::Index { base, .. } => self
                 .type_head(base)
@@ -193,8 +193,8 @@ impl<'a> Walker<'a> {
     }
 
     /// A name. A type name has no index here. A resource in a static position is `S005`.
-    fn name(&mut self, is_static: bool, pos: Pos, name: &str) {
-        match self.target(pos) {
+    fn name(&mut self, is_static: bool, pos: Pos, id: NodeId, name: &str) {
+        match self.target(id) {
             Some(Target::Prelude(p)) if p.is_type() => {
                 self.arity(pos, &format!("`{name}`"), type_arity(p), 0);
             }
@@ -213,8 +213,8 @@ impl<'a> Walker<'a> {
 
     /// Checks the arity of a call. The result tells which arguments are static positions.
     fn callee(&mut self, pos: Pos, callee: &Expr, got: usize) -> Callee<'a> {
-        if let Expr::Name { pos: at, name } = callee {
-            match self.target(*at) {
+        if let Expr::Name { id, name, .. } = callee {
+            match self.target(*id) {
                 Some(Target::Decl(id)) => {
                     if let Some(Sig::Fn(flags)) = self.sigs.get(&id) {
                         self.arity(pos, &format!("`{name}`"), flags.len(), got);
@@ -239,7 +239,7 @@ impl<'a> Walker<'a> {
     fn expr(&mut self, is_static: bool, expr: &Expr) {
         match expr {
             Expr::Num { .. } | Expr::Bool { .. } | Expr::Str { .. } => {}
-            Expr::Name { pos, name } => self.name(is_static, *pos, name),
+            Expr::Name { pos, id, name } => self.name(is_static, *pos, *id, name),
             Expr::Unary { arg, .. } => self.expr(is_static, arg),
             Expr::Binary { lhs, rhs, .. } => {
                 self.expr(is_static, lhs);
@@ -277,8 +277,8 @@ impl<'a> Walker<'a> {
         let seq = self.tick();
         let head = match base {
             // The base type name has its arguments, so it skips the check of a bare name.
-            Expr::Name { pos, name } if self.prelude_type(*pos).is_some() => self
-                .prelude_type(*pos)
+            Expr::Name { id, name, .. } if self.prelude_type(*id).is_some() => self
+                .prelude_type(*id)
                 .map(|p| (format!("`{name}`"), type_arity(p))),
             Expr::Index { pos, base, args } => self
                 .index(is_static, *pos, base, args)
@@ -300,16 +300,16 @@ impl<'a> Walker<'a> {
 
     fn type_expr(&mut self, ty: &TypeExpr) {
         match ty {
-            TypeExpr::Name { pos, name } => {
-                if let Some(p) = self.prelude_type(*pos) {
+            TypeExpr::Name { pos, id, name } => {
+                if let Some(p) = self.prelude_type(*id) {
                     self.arity(*pos, &format!("`{name}`"), type_arity(p), 0);
                 }
             }
             TypeExpr::Index { pos, base, args } => {
                 let (what, missing) = match &**base {
-                    TypeExpr::Name { pos, name } => (
+                    TypeExpr::Name { id, name, .. } => (
                         format!("`{name}`"),
-                        self.prelude_type(*pos).map_or(0, type_arity),
+                        self.prelude_type(*id).map_or(0, type_arity),
                     ),
                     TypeExpr::Index { .. } => ("a complete type".to_owned(), 0),
                 };
@@ -371,7 +371,7 @@ impl<'a> Walker<'a> {
                 pos, module, args, ..
             } => {
                 self.placement(owner, *pos, "instance");
-                if let Some(Target::Decl(id)) = self.target(module.pos)
+                if let Some(Target::Decl(id)) = self.target(module.id)
                     && let Some(Sig::Module(want)) = self.sigs.get(&id)
                 {
                     let want = *want;

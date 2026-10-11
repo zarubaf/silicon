@@ -25,7 +25,7 @@ use crate::ops::{self, Fault, Fuel, str_text};
 use crate::scan::{Numbers, Scan, Syms};
 use crate::value::{Ty, Value, int_size};
 use crate::{Budget, Code, Error};
-use parse::ast::{BinOp, Expr, Ident, Item, Param, Pos, Stmt, TypeExpr};
+use parse::ast::{BinOp, Expr, Ident, Item, NodeId, Param, Pos, Stmt, TypeExpr};
 use parse::{NestedStack, StackError};
 use resolve::{DeclId, Kind, Prelude, Resolved, ResolvedExpr, Target};
 use std::collections::BTreeMap;
@@ -128,7 +128,7 @@ impl Store {
     }
 }
 
-/// Which map of targets the names read: the top expression has its own positions.
+/// Which map of targets the names read: the top expression is its own parse, with its own ids.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Names {
     Top,
@@ -264,7 +264,7 @@ impl<'a> Evaluator<'a> {
         for (i, item) in file.ast().iter().enumerate() {
             let (Item::Const { name, .. } | Item::Fn { name, .. } | Item::Module { name, .. }) =
                 item;
-            if let Some(Target::Decl(id)) = file.target(name.pos) {
+            if let Some(Target::Decl(id)) = file.target(name.id) {
                 items.insert(id, i);
             }
             consts.push(Entry::NotStarted);
@@ -362,16 +362,16 @@ fn same_form(a: &Val, b: &Val) -> bool {
 }
 
 impl Evaluator<'_> {
-    fn target(&self, pos: Pos) -> Option<Target> {
+    fn target(&self, id: NodeId) -> Option<Target> {
         match self.names {
-            Names::Top => self.top.and_then(|t| t.target(pos)),
-            Names::File => self.file.target(pos),
+            Names::Top => self.top.and_then(|t| t.target(id)),
+            Names::File => self.file.target(id),
         }
     }
 
     /// The declaration of a binder. Each binder is in the body of an item of the file.
     fn decl(&self, name: &Ident) -> Res<DeclId> {
-        match self.file.target(name.pos) {
+        match self.file.target(name.id) {
             Some(Target::Decl(id)) => Ok(id),
             _ => fail(
                 Code::S010,
@@ -685,7 +685,7 @@ impl Evaluator<'_> {
                 self.charge(*pos, size)?;
                 Ok(Some(Out::Made(Val::Static(Value::Str(value.clone())))))
             }
-            Expr::Name { pos, name } => Ok(Some(self.name(*pos, name)?)),
+            Expr::Name { pos, id, name } => Ok(Some(self.name(*pos, *id, name)?)),
             Expr::Unary { pos, op, arg } => match self.operand(*pos, arg)? {
                 Opnd::Static(a) => {
                     let v =
@@ -734,8 +734,8 @@ impl Evaluator<'_> {
             },
             Expr::Call { pos, callee, args } => self.call(*pos, callee, args),
             Expr::Index { pos, base, args } => {
-                if let Expr::Name { pos: bp, .. } = &**base
-                    && let Some(Target::Prelude(k)) = self.target(*bp)
+                if let Expr::Name { pos: bp, id, .. } = &**base
+                    && let Some(Target::Prelude(k)) = self.target(*id)
                     && k.is_type()
                 {
                     self.charge(*bp, 1)?;
@@ -853,14 +853,14 @@ impl Evaluator<'_> {
     fn type_expr(&mut self, t: &TypeExpr) -> Res<Ty> {
         self.charge(type_pos(t), 1)?;
         match t {
-            TypeExpr::Name { pos, name } => match self.target(*pos) {
+            TypeExpr::Name { pos, id, name } => match self.target(*id) {
                 Some(Target::Prelude(k)) if k.is_type() => prim(*pos, name, k),
                 _ => fail(Code::S010, *pos, format!("`{name}` is not a type")),
             },
             TypeExpr::Index { pos, base, args } => match &**base {
-                TypeExpr::Name { pos: bp, name } => {
+                TypeExpr::Name { pos: bp, id, name } => {
                     self.charge(*bp, 1)?;
-                    match self.target(*bp) {
+                    match self.target(*id) {
                         Some(Target::Prelude(k)) if k.is_type() => self.index(*pos, k, args),
                         _ => fail(Code::S010, *bp, format!("`{name}` is not a type")),
                     }
@@ -891,8 +891,8 @@ impl Evaluator<'_> {
 
     /// A name. A constant evaluates at its first use, in the table of constants. A domain
     /// is a handle in the whole body of its module, so it needs no slot.
-    fn name(&mut self, pos: Pos, x: &str) -> Res<Out> {
-        match self.target(pos) {
+    fn name(&mut self, pos: Pos, node: NodeId, x: &str) -> Res<Out> {
+        match self.target(node) {
             Some(Target::Prelude(k)) if k.is_type() => {
                 Ok(Out::Named(Val::Static(Value::Type(prim(pos, x, k)?))))
             }
@@ -959,8 +959,13 @@ impl Evaluator<'_> {
 
     /// A call of a function item, a prelude function, or a type.
     fn call(&mut self, pos: Pos, f: &Expr, xs: &[Expr]) -> Res<Option<Out>> {
-        if let Expr::Name { pos: fp, name: g } = f {
-            match self.target(*fp) {
+        if let Expr::Name {
+            pos: fp,
+            id: fid,
+            name: g,
+        } = f
+        {
+            match self.target(*fid) {
                 Some(Target::Decl(id))
                     if matches!(
                         self.file.decl(id).kind,
@@ -1218,7 +1223,7 @@ impl Evaluator<'_> {
     /// An assignment to a `let mut` local. The target is a place, so it charges nothing.
     fn assign(&mut self, pos: Pos, target: &Expr, value: &Expr) -> Res<Option<Val>> {
         let place = match target {
-            Expr::Name { pos: tp, .. } => match self.target(*tp) {
+            Expr::Name { id: tid, .. } => match self.target(*tid) {
                 Some(Target::Decl(id)) => self
                     .store
                     .frame()

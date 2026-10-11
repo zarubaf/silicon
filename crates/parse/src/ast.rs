@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The source AST of slice 1. It mirrors `Silicon.Source.Syntax` in Lean: the same types,
-//! the same constructors, and the same field order. The Lean name of a constructor is the
+//! the same constructors, and the same field order. Only the `NodeId` of a name node is not
+//! in Lean. The Lean name of a constructor is the
 //! lowercase name of the variant here, so the AST dump can print both with one rule.
 
 use std::fmt::Write;
@@ -10,6 +11,26 @@ use std::fmt::Write;
 pub struct Pos {
     pub line: usize,
     pub col: usize,
+}
+
+/// The id of a name node: an `Ident`, an `Expr::Name`, or a `TypeExpr::Name`. The lowering
+/// gives each name node of one parse its own id, in source order. A later pass keys its facts
+/// about a node by the id and not by the position, because two nodes can share a position or
+/// have none. The id is not in the Lean AST, and the dump does not print it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct NodeId(usize);
+
+impl NodeId {
+    /// The first id of a parse.
+    pub(crate) const FIRST: NodeId = NodeId(0);
+
+    /// The id of a node that a `Drop` makes and frees at once. No pass sees it.
+    const DROPPED: NodeId = NodeId(usize::MAX);
+
+    /// The id after this one.
+    pub(crate) fn next(self) -> NodeId {
+        NodeId(self.0 + 1)
+    }
 }
 
 /// A natural number of any size, as its canonical decimal digits: no leading zero.
@@ -55,6 +76,7 @@ impl Nat {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Ident {
     pub pos: Pos,
+    pub id: NodeId,
     pub name: String,
 }
 
@@ -109,6 +131,7 @@ pub enum Expr {
     },
     Name {
         pos: Pos,
+        id: NodeId,
         name: String,
     },
     Unary {
@@ -150,6 +173,7 @@ pub enum Expr {
 pub enum TypeExpr {
     Name {
         pos: Pos,
+        id: NodeId,
         name: String,
     },
     Index {
@@ -325,6 +349,7 @@ impl Drop for TypeExpr {
             if let TypeExpr::Index { base, .. } = t {
                 let leaf = TypeExpr::Name {
                     pos: Pos { line: 0, col: 0 },
+                    id: NodeId::DROPPED,
                     name: String::new(),
                 };
                 work.push(std::mem::replace(&mut **base, leaf));

@@ -204,7 +204,7 @@ fn parse_here(input: &str, depth: usize) -> Parse {
     let errors = all_errors(&index, depth, &lexed, raw, high);
     let ast = if errors.is_empty() {
         let root = SyntaxNode::new_root(green.clone());
-        let lowered = lower::Lower { index }.source(&root);
+        let lowered = lower::Lower::new(index).source(&root);
         debug_assert!(lowered.is_some(), "the tree of a valid text lowers");
         lowered
     } else {
@@ -272,7 +272,7 @@ fn parse_expr_here(input: &str, depth: usize) -> Result<ast::Expr, Vec<Error>> {
         return Err(errors);
     }
     let root = SyntaxNode::new_root(green.node().clone());
-    let lowered = lower::Lower { index }.source_expr(&root);
+    let lowered = lower::Lower::new(index).source_expr(&root);
     debug_assert!(lowered.is_some(), "the tree of a valid expression lowers");
     lowered.ok_or_else(|| {
         vec![Error {
