@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Lifts generated core designs to slice-1 source programs. The lift fixes
-//! the source names, so the map from core vectors to source vectors lives
-//! here too. The map is independent of `elab::vectors` on purpose: the layer
-//! order puts `syntax` before `elab`, and the oracle of `diff-si` must not
-//! reuse the code under test.
+//! Generates slice-1 source programs for `diff-si`: lifted core designs
+//! (`lift`) and typed programs (`build`).
 //!
-//! The typed mode builds random programs in the form of `program` from a
-//! tape (`build`), and `eval` computes their static values. The `twin` of
-//! a typed program writes out each of its comptime constructs.
+//! The lift fixes the source names, so the map from core vectors to source
+//! vectors lives here too. The map is independent of `elab::vectors` on
+//! purpose: the layer order puts `syntax` before `elab`, and the oracle of
+//! `diff-si` must not reuse the code under test.
+//!
+//! The builder makes typed programs in the form of `program` from a tape,
+//! and `eval` computes their static values. The `twin` of a typed program
+//! writes out each of its comptime constructs.
 
 mod build;
 mod eval;
