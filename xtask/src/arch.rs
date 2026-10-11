@@ -526,6 +526,46 @@ pub fn exe_import_violations(
         .collect())
 }
 
+/// Rule `lean-core-imports`: no module under `Silicon.Source` is a transitive import of a
+/// module of `core`. The core IR spec does not depend on the front end.
+///
+/// `read` gives the source of a module, or `None` for a module outside `lean/Silicon`.
+pub fn core_import_violations(
+    core: &[String],
+    read: &dyn Fn(&str) -> Result<Option<String>>,
+) -> Result<Vec<Violation>> {
+    let is_source = |module: &str| module.starts_with("Silicon.Source.");
+    Ok(forbidden_imports(core, read, &is_source)?
+        .into_iter()
+        .map(|(_, chain)| {
+            // The direct importer is the file to fix. A root is never a `Source` module.
+            error(
+                &module_path(&chain[chain.len() - 2]),
+                None,
+                "lean-core-imports",
+                format!(
+                    "a core module imports the front end: {}",
+                    chain.join(" -> ")
+                ),
+            )
+        })
+        .collect())
+}
+
+/// The module names of the tracked Lean files under `lean/Silicon/Core/`.
+fn core_modules(repo: &Repo) -> Vec<String> {
+    repo.files
+        .iter()
+        .filter_map(|f| {
+            let rel = f.path.to_str()?.strip_prefix("lean/")?;
+            let module = rel.strip_suffix(".lean")?;
+            module
+                .starts_with("Silicon/Core/")
+                .then(|| module.replace('/', "."))
+        })
+        .collect()
+}
+
 /// The root module of the `silicon-check` executable.
 pub fn exe_root(lakefile: &str) -> Result<String> {
     let doc: toml::Table = lakefile
@@ -570,7 +610,7 @@ pub fn check(repo: &Repo) -> Result<Vec<Violation>> {
         let name = path.to_string_lossy();
         out.extend(skips_violations(&name, &repo.read(&path)?, &tags)?);
     }
-    out.extend(exe_import_violations(&root, &|module| {
+    let read = |module: &str| {
         let path = module_path(module);
         if repo.root.join(&path).exists() {
             repo.read(Path::new(&path)).map(Some)
@@ -579,7 +619,9 @@ pub fn check(repo: &Repo) -> Result<Vec<Violation>> {
         } else {
             Ok(None)
         }
-    })?);
+    };
+    out.extend(exe_import_violations(&root, &read)?);
+    out.extend(core_import_violations(&core_modules(repo), &read)?);
     Ok(out)
 }
 
@@ -894,6 +936,34 @@ mod tests {
             ("A.B", ""),
         ]);
         assert!(exe_import_violations("A.Main", &read).unwrap().is_empty());
+    }
+
+    #[test]
+    fn core_without_source_imports_passes() {
+        let read = reader(&[
+            ("Silicon.Core.A", "import Silicon.Core.B\nimport Std\n"),
+            ("Silicon.Core.B", ""),
+        ]);
+        let core = ["Silicon.Core.A".to_owned(), "Silicon.Core.B".to_owned()];
+        assert!(core_import_violations(&core, &read).unwrap().is_empty());
+    }
+
+    #[test]
+    fn core_with_transitive_source_import_fails() {
+        let read = reader(&[
+            ("Silicon.Core.A", "import Silicon.Util\n"),
+            ("Silicon.Util", "import Silicon.Source.Names\n"),
+            ("Silicon.Source.Names", ""),
+        ]);
+        let got = core_import_violations(&["Silicon.Core.A".to_owned()], &read).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].rule, "lean-core-imports");
+        assert_eq!(got[0].path, Path::new("lean/Silicon/Util.lean"));
+        assert!(
+            got[0]
+                .message
+                .contains("Silicon.Core.A -> Silicon.Util -> Silicon.Source.Names")
+        );
     }
 
     #[test]
