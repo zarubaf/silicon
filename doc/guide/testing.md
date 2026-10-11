@@ -185,6 +185,7 @@ The fields:
 
 - `silicon run` and `silicon-check run` run the source program. Both must print the `out=` lines of the core interpreter. `silicon elab` writes the core IR of the program, and `silicon-check validate` must print `ok`.
 - The defaults are the seed 1 and 100 designs. Use `--seed` and `--count` to change them.
+- `just ci` runs `diff-si` with the defaults.
 - A failure prints its seed. `cargo xtask diff-si --seed N --count 1` repeats it.
 - A failure shrinks first. The shrink makes at most 256 test runs. A tooling error, for example a missing tool, stops the shrink and the run.
 - The failure prints the shrunk core design and a reproducer. The reproducer is a file for the `run` suite of `tests/source`, with a `// TOP` line and `// STEP` lines. The outputs of the steps come from the core interpreter.
