@@ -15,7 +15,7 @@ mod hwops;
 mod inst;
 
 pub use inst::Design;
-pub(crate) use inst::{Elab, Literal, elaborate};
+pub(crate) use inst::{Bind, Elab, Inst, Literal, Sink, elaborate};
 
 use crate::hw::{Graph, Handle, HwId, Op, Val};
 use crate::int::Int;
@@ -153,9 +153,7 @@ enum Tag {
 /// A named hardware binding: its core name, its value, and the position of the binding.
 pub(crate) struct Let {
     pub path: PathId,
-    #[expect(dead_code, reason = "the lowering of #72 reads the bound values")]
     pub value: HwId,
-    #[expect(dead_code, reason = "the lowering of #72 reads the positions")]
     pub pos: Pos,
 }
 

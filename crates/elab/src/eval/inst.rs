@@ -28,29 +28,24 @@ use crate::names::{Name, PathId, Paths, Sym, encode, module_name};
 use crate::scan::Scan;
 use crate::value::{InstantiationId, Ty, Value, int_size};
 use crate::{Budget, Code};
+use parse::StackError;
 use parse::ast::{Expr, Ident, Item, Pos, Stmt, UnOp};
 use resolve::{Kind as DeclKind, Resolved, Target as Ref};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::Write;
 
 /// A port declaration. A port keeps its source name.
 pub(crate) struct PortDecl {
-    sym: Sym,
-    input: bool,
-    ty: Ty,
-    #[expect(dead_code, reason = "the lowering of #72 reads the positions")]
-    pos: Pos,
+    pub sym: Sym,
+    pub input: bool,
+    pub ty: Ty,
+    pub pos: Pos,
 }
 
-#[expect(
-    dead_code,
-    reason = "the lowering of #72 reads the types, values, and positions"
-)]
 pub(crate) struct RegDecl {
-    path: PathId,
-    ty: Ty,
-    init: Value,
-    pos: Pos,
+    pub path: PathId,
+    pub ty: Ty,
+    pub init: Value,
+    pub pos: Pos,
 }
 
 #[expect(
@@ -65,13 +60,12 @@ pub(crate) struct WireDecl {
 
 /// A child instance: its path, the index of its done instantiation, and its statement.
 pub(crate) struct ChildDecl {
-    path: PathId,
-    inst: usize,
-    pos: Pos,
+    pub path: PathId,
+    pub inst: usize,
+    pub pos: Pos,
 }
 
 /// The target of a `:=` binding: an own resource, or an input of the child number `index`.
-#[expect(dead_code, reason = "the lowering of #72 reads the targets")]
 pub(crate) enum Sink {
     Own {
         kind: Kind,
@@ -85,23 +79,22 @@ pub(crate) enum Sink {
     },
 }
 
-#[expect(dead_code, reason = "the lowering of #72 reads the bindings")]
 pub(crate) struct Bind {
-    sink: Sink,
-    value: HwId,
-    pos: Pos,
+    pub sink: Sink,
+    pub value: HwId,
+    pub pos: Pos,
 }
 
 /// The hardware description of one instantiation, in evaluation order. A combinational
 /// module has no domain.
 pub(crate) struct Body {
-    domain: Option<Sym>,
-    ports: Vec<PortDecl>,
-    regs: Vec<RegDecl>,
+    pub domain: Option<Sym>,
+    pub ports: Vec<PortDecl>,
+    pub regs: Vec<RegDecl>,
     wires: Vec<WireDecl>,
-    lets: Vec<Let>,
-    children: Vec<ChildDecl>,
-    binds: Vec<Bind>,
+    pub lets: Vec<Let>,
+    pub children: Vec<ChildDecl>,
+    pub binds: Vec<Bind>,
 }
 
 impl Body {
@@ -160,11 +153,10 @@ enum Status {
 /// The interface of a done instantiation: its emitted name, its ports by the symbol of their
 /// name, its number of inputs, and its domain.
 pub(crate) struct Iface {
-    name: Name,
+    pub name: Name,
     ports: BTreeMap<Sym, Port>,
     inputs: usize,
-    #[expect(dead_code, reason = "the lowering of #72 reads the domains")]
-    domain: Option<Sym>,
+    pub domain: Option<Sym>,
 }
 
 impl Iface {
@@ -191,16 +183,13 @@ impl Iface {
     }
 }
 
-/// A done instantiation: its identity, its interface, its description, its units, and the
-/// position of its module item.
+/// A done instantiation: its interface, its description, its units, and the position of its
+/// module item.
 pub(crate) struct Inst {
-    #[expect(dead_code, reason = "the lowering of #72 reads the identities")]
-    id: InstantiationId,
-    iface: Iface,
-    body: Body,
-    units: u64,
-    #[expect(dead_code, reason = "the lowering of #72 reads the positions")]
-    pos: Pos,
+    pub iface: Iface,
+    pub body: Body,
+    pub units: u64,
+    pub pos: Pos,
 }
 
 /// The state of the instantiations of an elaboration. `table` maps the serialization of each
@@ -236,17 +225,19 @@ impl Elab {
 }
 
 /// An elaborated design: the done instantiations in the order they finish, the top among
-/// them, and the used fuel. It keeps the arenas of the hardware values and of the paths that
-/// its descriptions refer to. Dropping it is safe on any stack: it holds no recursive value.
+/// them, the position of the top selection, the used fuel, and the fuel that remains for the
+/// lowering. It keeps the arenas of the hardware values and of the paths that its
+/// descriptions refer to, and the text of each symbol. Dropping it is safe on any stack: it
+/// holds no recursive value.
 pub struct Design {
-    insts: Vec<Inst>,
-    #[expect(dead_code, reason = "the lowering of #72 reads the top")]
-    top: usize,
+    pub(crate) insts: Vec<Inst>,
+    pub(crate) top: usize,
+    pub(crate) pos: Pos,
     used: u64,
-    #[expect(dead_code, reason = "the lowering of #72 reads the hardware values")]
-    graph: Graph,
-    paths: Paths,
-    texts: Vec<String>,
+    pub(crate) left: u64,
+    pub(crate) graph: Graph,
+    pub(crate) paths: Paths,
+    pub(crate) texts: Vec<String>,
 }
 
 impl Design {
@@ -256,21 +247,26 @@ impl Design {
         self.used
     }
 
-    /// The output of `cost` (section 8): the total, then the units of each instantiation,
-    /// sorted by its emitted name.
+    /// The output of `cost` (section 8) without the charges of the lowering: the total, then
+    /// the units of each instantiation, sorted by its emitted name.
     #[must_use]
     pub fn cost(&self) -> String {
-        let mut lines: Vec<(String, u64)> = self
+        let lines = self
             .insts
             .iter()
             .map(|i| (encode(&i.iface.name), i.units))
             .collect();
-        lines.sort();
-        let mut out = format!("total {}\n", self.used);
-        for (x, u) in lines {
-            let _ = writeln!(out, "{x} {u}");
-        }
-        out
+        crate::flatten::cost_lines(self.used, lines)
+    }
+
+    /// The lowering of the design to core IR with the fuel that its elaboration leaves.
+    /// The lowering recurses over the hardware values, so it runs on a thread with a stack
+    /// for the highest of them.
+    ///
+    /// # Errors
+    /// Returns an error if the machine cannot give the stack.
+    pub fn lower(&self) -> Result<Result<crate::Lowered, crate::Failure>, StackError> {
+        crate::flatten::lower(self)
     }
 
     /// The emitted names in the order in which the instantiations finish.
@@ -358,7 +354,9 @@ pub(crate) fn elaborate(
     Ok(Design {
         insts: ev.elab.done,
         top,
+        pos,
         used: budget.fuel - ev.fuel.left(),
+        left: ev.fuel.left(),
         graph: ev.graph,
         paths: ev.paths,
         texts: ev.syms.texts,
@@ -896,7 +894,6 @@ impl Evaluator<'_> {
             let k = ev.elab.done.len();
             ev.elab.table.insert(key, Status::Done(k));
             ev.elab.done.push(Inst {
-                id,
                 iface,
                 body,
                 units: used - w.spent,

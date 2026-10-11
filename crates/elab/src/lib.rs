@@ -3,6 +3,7 @@
 //! design](../../doc/design/2026-10-09-frontend.md), sections 4.4, 4.5, 5, and 7.
 
 mod eval;
+mod flatten;
 mod hw;
 pub mod int;
 pub mod names;
@@ -12,6 +13,7 @@ pub mod sha256;
 pub mod value;
 
 pub use eval::Design;
+pub use flatten::{Failure, Lowered, check};
 
 use eval::Literal;
 use parse::StackError;
@@ -47,6 +49,8 @@ pub enum Code {
     /// An identity rule: a constant or an instantiation that depends on itself, or two
     /// identities with one core name.
     S019,
+    /// A combinational cycle in the lowered design.
+    S020,
 }
 
 impl fmt::Display for Code {
@@ -63,6 +67,7 @@ impl fmt::Display for Code {
             Code::S017 => "S017",
             Code::S018 => "S018",
             Code::S019 => "S019",
+            Code::S020 => "S020",
         })
     }
 }
@@ -216,3 +221,6 @@ mod tests;
 
 #[cfg(test)]
 mod tests_elab;
+
+#[cfg(test)]
+mod tests_flatten;

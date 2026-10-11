@@ -12,7 +12,6 @@ use parse::ast::{BinOp, Pos, UnOp};
 pub(crate) struct HwId(usize);
 
 /// The operation of a node. Section 7.4 lowers each node to core operations.
-#[expect(dead_code, reason = "the lowering of #72 reads the operations")]
 pub(crate) enum Op {
     Ref(PathId),
     Out(PathId, Sym),
@@ -43,22 +42,21 @@ impl Op {
 }
 
 /// A node keeps the position of the source node that made it, and its recursive size, so a
-/// charge reads the size in one step.
+/// charge reads the size in one step. Its height sizes the stack of the lowering.
 pub(crate) struct Node {
-    #[expect(dead_code, reason = "the lowering of #72 reads the positions")]
-    pos: Pos,
-    ty: Ty,
+    pub pos: Pos,
+    pub ty: Ty,
     size: u64,
-    #[expect(dead_code, reason = "the lowering of #72 reads the operations")]
-    op: Op,
-    #[expect(dead_code, reason = "the lowering of #72 reads the operands")]
-    args: Vec<HwId>,
+    height: usize,
+    pub op: Op,
+    pub args: Vec<HwId>,
 }
 
 /// The nodes of the hardware values of one elaboration. It grows only with charged work.
 #[derive(Default)]
 pub(crate) struct Graph {
     nodes: Vec<Node>,
+    height: usize,
 }
 
 impl Graph {
@@ -66,17 +64,31 @@ impl Graph {
     /// caller pays a hardware operation; a reference and a constant only refer.
     pub(crate) fn mk(&mut self, pos: Pos, ty: Ty, op: Op, args: Vec<HwId>) -> HwId {
         let mut size = op.size();
+        let mut height = 0;
         for a in &args {
             size = size.saturating_add(self.size(*a));
+            height = height.max(self.nodes.get(a.0).map_or(0, |n| n.height));
         }
+        self.height = self.height.max(height + 1);
         self.nodes.push(Node {
             pos,
             ty,
             size,
+            height: height + 1,
             op,
             args,
         });
         HwId(self.nodes.len() - 1)
+    }
+
+    /// The node `h`. Each id of an elaboration indexes its arena.
+    pub(crate) fn node(&self, h: HwId) -> Option<&Node> {
+        self.nodes.get(h.0)
+    }
+
+    /// The height of the highest hardware value: a leaf has the height 1.
+    pub(crate) fn height(&self) -> usize {
+        self.height
     }
 
     pub(crate) fn ty(&self, h: HwId) -> Ty {
