@@ -142,6 +142,8 @@ import Silicon.Source.Proof.ParsePrint.Run
 import Silicon.Source.Proof.ParsePrint.Tokens
 import Silicon.Source.Proof.ParsePrint.Lex
 import Silicon.Source.Proof.ParsePrint.Parse.Input
+import Silicon.Source.Proof.ParsePrint.Parse.Runs
+import Silicon.Source.Proof.ParsePrint.Parse.Expr
 import Silicon.Main
 
 /-!
