@@ -298,7 +298,7 @@ fn dispatch(command: &Command, input: impl BufRead, out: &mut impl Write) -> Res
 /// The output and the exit code of `parse`: the AST dump, or the first syntax error as a line.
 /// The front end recurses, so `parse` runs it on a thread with a stack for the depth. If the
 /// machine cannot give the stack, the command fails before it parses.
-fn parse_source(source: &str, depth: usize) -> Result<(String, Exit), Usage> {
+fn parse_source(source: &str, depth: usize) -> Result<Output, Usage> {
     let parsed = parse::parse_with_depth(source, depth).map_err(|e| Usage(e.to_string()))?;
     if let Some(e) = parsed.errors().first() {
         return Ok(error_line(e.code, e.pos, &e.message));
@@ -309,7 +309,7 @@ fn parse_source(source: &str, depth: usize) -> Result<(String, Exit), Usage> {
 
 /// A source file after the passes before elaboration, or the line of its first error. Each
 /// pass runs on the front-end thread. If the machine cannot give a stack, the command fails.
-fn load(source: &str, depth: usize) -> Result<Result<resolve::Resolved, (String, Exit)>, Usage> {
+fn load(source: &str, depth: usize) -> Result<Result<resolve::Resolved, Output>, Usage> {
     let parsed = parse::parse_with_depth(source, depth).map_err(|e| Usage(e.to_string()))?;
     let file = match resolve::resolve(parsed) {
         Ok(file) => file,
@@ -337,7 +337,7 @@ fn stack(e: parse::StackError) -> Usage {
 
 /// The output and the exit code of `eval`: the serialization of the value of `expr` in the
 /// file scope of `source`, or the first error of the file, then of the expression.
-fn eval_source(source: &str, expr: &str, budget: &Budgets) -> Result<(String, Exit), Usage> {
+fn eval_source(source: &str, expr: &str, budget: &Budgets) -> Result<Output, Usage> {
     let depth = budget.syntax_depth;
     let file = match load(source, depth)? {
         Ok(file) => file,
@@ -398,11 +398,7 @@ struct Checked {
 }
 
 /// `lowered`, then the core check of pass 6.
-fn checked(
-    source: &str,
-    top: &str,
-    budget: &Budgets,
-) -> Result<Result<Checked, (String, Exit)>, Usage> {
+fn checked(source: &str, top: &str, budget: &Budgets) -> Result<Result<Checked, Output>, Usage> {
     Ok(match lowered(source, top, budget)? {
         Ok((design, lowered)) => match elab::check(&lowered.design) {
             Ok(typed) => Ok(Checked {
@@ -417,14 +413,14 @@ fn checked(
 }
 
 /// The output of a failure of the lowering or of its check. A defect prints on stderr.
-fn failure(f: elab::Failure) -> (String, Exit) {
+fn failure(f: elab::Failure) -> Output {
     match f {
         elab::Failure::Source(e) => error_line(e.code, e.pos, &e.message),
         elab::Failure::Defect(message) => defect(&message),
     }
 }
 
-fn defect(message: &str) -> (String, Exit) {
+fn defect(message: &str) -> Output {
     // A failed write to stderr has no better channel to report to.
     let _ = writeln!(io::stderr(), "silicon: defect of the elaborator: {message}");
     (String::new(), Exit::Defect)
@@ -434,7 +430,7 @@ fn defect(message: &str) -> (String, Exit) {
 /// selection `top` and its lowering use, then the units of each instantiation by emitted
 /// name, or the first error. It does not run the core check, so a design with a cycle has a
 /// cost.
-fn cost_source(source: &str, top: &str, budget: &Budgets) -> Result<(String, Exit), Usage> {
+fn cost_source(source: &str, top: &str, budget: &Budgets) -> Result<Output, Usage> {
     Ok(match lowered(source, top, budget)? {
         Ok((_, lowered)) => (lowered.cost(), Exit::Success),
         Err(line) => line,
@@ -442,7 +438,7 @@ fn cost_source(source: &str, top: &str, budget: &Budgets) -> Result<(String, Exi
 }
 
 /// The output and the exit code of `elab`: the canonical text of the lowered design.
-fn elab_source(source: &str, top: &str, budget: &Budgets) -> Result<(String, Exit), Usage> {
+fn elab_source(source: &str, top: &str, budget: &Budgets) -> Result<Output, Usage> {
     Ok(match checked(source, top, budget)? {
         Ok(c) => (canonical(&c.lowered.design), Exit::Success),
         Err(line) => line,
@@ -455,12 +451,7 @@ fn canonical(design: &ast::Design) -> String {
 
 /// The output and the exit code of `validate` (section 8): elaborate the source, parse and
 /// check `sil` with the core checker, then compare the canonical texts.
-fn validate_source(
-    source: &str,
-    top: &str,
-    sil: &str,
-    budget: &Budgets,
-) -> Result<(String, Exit), Usage> {
+fn validate_source(source: &str, top: &str, sil: &str, budget: &Budgets) -> Result<Output, Usage> {
     let c = match checked(source, top, budget)? {
         Ok(c) => c,
         Err(line) => return Ok(line),
@@ -538,10 +529,7 @@ fn run_source(
 }
 
 /// The line of the first error of a list in position order.
-fn first_line<E, C: fmt::Display>(
-    errors: &[E],
-    parts: impl Fn(&E) -> (C, Pos, &String),
-) -> (String, Exit) {
+fn first_line<E, C: fmt::Display>(errors: &[E], parts: impl Fn(&E) -> (C, Pos, &String)) -> Output {
     match errors.first() {
         Some(e) => {
             let (code, pos, message) = parts(e);
@@ -552,7 +540,7 @@ fn first_line<E, C: fmt::Display>(
 }
 
 /// The line of the first error of a source command, as `silicon-check` prints it.
-fn error_line(code: impl fmt::Display, pos: Pos, message: &str) -> (String, Exit) {
+fn error_line(code: impl fmt::Display, pos: Pos, message: &str) -> Output {
     let line = format!("error[{code}]: {}:{}: {message}\n", pos.line, pos.col);
     (line, Exit::DesignError)
 }
