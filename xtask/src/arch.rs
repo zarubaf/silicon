@@ -14,9 +14,6 @@ use crate::repo::Repo;
 use crate::violation::{Severity, Violation};
 use crate::workspace::EXEMPT;
 
-const SPEC: &str = "doc/design/2026-10-08-core-ir.md";
-const LEAN_CODES: &str = "lean/Silicon/Core/Syntax.lean";
-const RUST_CODES: &str = "crates/core-ir/src/diag.rs";
 const TRUST: &str = "doc/trust.md";
 const LAKEFILE: &str = "lean/lakefile.toml";
 const EXE: &str = "silicon-check";
@@ -34,9 +31,14 @@ fn error(path: &str, line: Option<usize>, rule: &'static str, message: String) -
 /// Each error code with the 1-based line of its first mention.
 type Codes = BTreeMap<String, usize>;
 
-/// Every error code that `lines` name, for example `E001`. `first_line` numbers the first line.
-fn codes_in<'a>(lines: impl Iterator<Item = &'a str>, first_line: usize) -> Result<Codes> {
-    let code = Regex::new(r"\bE\d{3}\b")?;
+/// Every error code with the prefix `letter` that `lines` name, for example `E001`.
+/// `first_line` numbers the first line.
+fn codes_in<'a>(
+    lines: impl Iterator<Item = &'a str>,
+    first_line: usize,
+    letter: char,
+) -> Result<Codes> {
+    let code = Regex::new(&format!(r"\b{letter}\d{{3}}\b"))?;
     let mut out = Codes::new();
     for (offset, line) in lines.enumerate() {
         for m in code.find_iter(line) {
@@ -61,16 +63,11 @@ fn block<'a>(src: &'a str, header: &str, end: &str, what: &str) -> Result<(usize
     Ok((line, &rest[..len]))
 }
 
-/// The error codes of the Lean `ErrorCode` inductive type.
-pub fn lean_codes(src: &str) -> Result<Codes> {
+/// The error codes of the Lean `ErrorCode` inductive type in `src`, the text of `path`.
+pub fn lean_codes(src: &str, path: &str, letter: char) -> Result<Codes> {
     let stripped = strip_comments_and_strings(src);
-    let (line, body) = block(
-        &stripped,
-        r"\binductive\s+ErrorCode\b",
-        "deriving",
-        LEAN_CODES,
-    )?;
-    nonempty(codes_in(body.lines(), line)?, LEAN_CODES)
+    let (line, body) = block(&stripped, r"\binductive\s+ErrorCode\b", "deriving", path)?;
+    nonempty(codes_in(body.lines(), line, letter)?, path)
 }
 
 /// Blanks Rust comments and string and char literals, keeping every line break.
@@ -166,18 +163,22 @@ fn char_literal_len(rest: &[char]) -> usize {
     }
 }
 
-/// The error codes of the Rust `ErrorCode` enum. Comments and literals do not count.
-pub fn rust_codes(src: &str) -> Result<Codes> {
+/// The error codes of the Rust enum `name` in `src`, the text of `path`. Comments and
+/// literals do not count.
+pub fn rust_codes(src: &str, path: &str, name: &str, letter: char) -> Result<Codes> {
     let stripped = strip_rust(src);
-    let (line, body) = block(&stripped, r"\bpub\s+enum\s+ErrorCode\b", "\n}", RUST_CODES)?;
-    nonempty(codes_in(body.lines(), line)?, RUST_CODES)
+    let header = format!(r"\bpub\s+enum\s+{name}\b");
+    let (line, body) = block(&stripped, &header, "\n}", path)?;
+    nonempty(codes_in(body.lines(), line, letter)?, path)
 }
 
-/// The error codes in the first cell of each row of the table of spec section 4.2.
+/// The error codes in the first cell of each row of the table of spec section `number`, which
+/// `text` holds as the file `path`.
 ///
 /// This includes `E014`, which only `run` reports. Codes in prose do not count.
-pub fn spec_codes(text: &str) -> Result<Codes> {
-    let (line, section) = block(text, r"(?m)^### 4\.2 ", "\n### ", SPEC)?;
+pub fn spec_codes(text: &str, path: &str, number: &str, letter: char) -> Result<Codes> {
+    let header = format!(r"(?m)^### {} ", regex::escape(number));
+    let (line, section) = block(text, &header, "\n### ", path)?;
     let rows = section
         .lines()
         .enumerate()
@@ -192,10 +193,10 @@ pub fn spec_codes(text: &str) -> Result<Codes> {
             .strip_prefix('`')
             .and_then(|c| c.strip_suffix('`'))
         {
-            out.extend(codes_in(std::iter::once(code), line + offset)?);
+            out.extend(codes_in(std::iter::once(code), line + offset, letter)?);
         }
     }
-    nonempty(out, SPEC)
+    nonempty(out, path)
 }
 
 fn nonempty(codes: Codes, what: &str) -> Result<Codes> {
@@ -205,18 +206,45 @@ fn nonempty(codes: Codes, what: &str) -> Result<Codes> {
     Ok(codes)
 }
 
-/// Rule `arch-codes`: the spec, Lean, and Rust define the same set of error codes.
-fn codes_violations(spec: &Codes, lean: &Codes, rust: &Codes) -> Vec<Violation> {
+/// The Lean and Rust sources that define one family of error codes, with the spec section
+/// that lists them.
+struct Family {
+    letter: char,
+    spec: &'static str,
+    spec_section: &'static str,
+    lean: &'static str,
+    /// Each Rust file with the name of its enum.
+    rust: &'static [(&'static str, &'static str)],
+}
+
+const FAMILIES: &[Family] = &[Family {
+    letter: 'E',
+    spec: "doc/design/2026-10-08-core-ir.md",
+    spec_section: "4.2",
+    lean: "lean/Silicon/Core/Syntax.lean",
+    rust: &[("crates/core-ir/src/diag.rs", "ErrorCode")],
+}];
+
+/// The codes one implementation defines, by file.
+struct Side {
+    name: &'static str,
+    files: Vec<(&'static str, Codes)>,
+}
+
+/// Rule `arch-codes`: the spec and an implementation define the same set of error codes.
+fn codes_violations(spec_path: &str, spec: &Codes, side: &Side) -> Vec<Violation> {
     let mut out = Vec::new();
-    for (path, name, set) in [(LEAN_CODES, "Lean", lean), (RUST_CODES, "Rust", rust)] {
-        for (code, line) in spec.iter().filter(|(c, _)| !set.contains_key(*c)) {
-            out.push(error(
-                SPEC,
-                Some(*line),
-                "arch-codes",
-                format!("`{code}` is in the spec but not in {name}"),
-            ));
-        }
+    let name = side.name;
+    let defined = |code: &String| side.files.iter().any(|(_, set)| set.contains_key(code));
+    for (code, line) in spec.iter().filter(|(c, _)| !defined(c)) {
+        out.push(error(
+            spec_path,
+            Some(*line),
+            "arch-codes",
+            format!("`{code}` is in the spec but not in {name}"),
+        ));
+    }
+    for (path, set) in &side.files {
         for (code, line) in set.iter().filter(|(c, _)| !spec.contains_key(*c)) {
             out.push(error(
                 path,
@@ -227,6 +255,34 @@ fn codes_violations(spec: &Codes, lean: &Codes, rust: &Codes) -> Vec<Violation> 
         }
     }
     out
+}
+
+fn family_violations(repo: &Repo, family: &Family) -> Result<Vec<Violation>> {
+    let letter = family.letter;
+    let spec = spec_codes(
+        &repo.read(Path::new(family.spec))?,
+        family.spec,
+        family.spec_section,
+        letter,
+    )?;
+    let lean = Side {
+        name: "Lean",
+        files: vec![(
+            family.lean,
+            lean_codes(&repo.read(Path::new(family.lean))?, family.lean, letter)?,
+        )],
+    };
+    let mut rust = Side {
+        name: "Rust",
+        files: Vec::new(),
+    };
+    for (path, name) in family.rust {
+        let codes = rust_codes(&repo.read(Path::new(path))?, path, name, letter)?;
+        rust.files.push((path, codes));
+    }
+    let mut out = codes_violations(family.spec, &spec, &lean);
+    out.extend(codes_violations(family.spec, &spec, &rust));
+    Ok(out)
 }
 
 /// The `silicon-check` commands: the first string of each `| ["name", ...] =>` or
@@ -439,11 +495,10 @@ fn workspace_crates(repo: &Repo) -> Result<Vec<String>> {
 }
 
 pub fn check(repo: &Repo) -> Result<Vec<Violation>> {
-    let mut out = codes_violations(
-        &spec_codes(&repo.read(Path::new(SPEC))?)?,
-        &lean_codes(&repo.read(Path::new(LEAN_CODES))?)?,
-        &rust_codes(&repo.read(Path::new(RUST_CODES))?)?,
-    );
+    let mut out = Vec::new();
+    for family in FAMILIES {
+        out.extend(family_violations(repo, family)?);
+    }
     let root = exe_root(&repo.read(Path::new(LAKEFILE))?)?;
     out.extend(trust_violations(
         &workspace_crates(repo)?,
@@ -477,6 +532,22 @@ mod tests {
         xs.iter().map(|s| ((*s).to_owned(), 1)).collect()
     }
 
+    fn side(name: &'static str, files: Vec<(&'static str, Codes)>) -> Side {
+        Side { name, files }
+    }
+
+    fn lean_e(src: &str) -> Result<Codes> {
+        lean_codes(src, "x.lean", 'E')
+    }
+
+    fn rust_e(src: &str) -> Result<Codes> {
+        rust_codes(src, "x.rs", "ErrorCode", 'E')
+    }
+
+    fn spec_e(text: &str) -> Result<Codes> {
+        spec_codes(text, "x.md", "4.2", 'E')
+    }
+
     fn keys(c: &Codes) -> Vec<&str> {
         c.keys().map(String::as_str).collect()
     }
@@ -488,13 +559,18 @@ mod tests {
     #[test]
     fn codes_equal_sets_pass() {
         let s = codes(&["E001", "E002"]);
-        assert!(codes_violations(&s, &s, &s).is_empty());
+        assert!(codes_violations("s.md", &s, &side("Lean", vec![("l", s.clone())])).is_empty());
     }
 
     #[test]
     fn codes_differing_sets_fail() {
         let spec = codes(&["E001", "E002"]);
-        let got = codes_violations(&spec, &codes(&["E001"]), &codes(&["E001", "E002", "E003"]));
+        let mut got = codes_violations("s.md", &spec, &side("Lean", vec![("l", codes(&["E001"]))]));
+        got.extend(codes_violations(
+            "s.md",
+            &spec,
+            &side("Rust", vec![("r", codes(&["E001", "E002", "E003"]))]),
+        ));
         let rules: Vec<_> = got.iter().map(|v| v.message.as_str()).collect();
         assert_eq!(
             rules,
@@ -509,39 +585,34 @@ mod tests {
     #[test]
     fn lean_and_rust_codes_parse() {
         let lean = "/-! E099 -/\ninductive ErrorCode where\n  | E001 | E002\n  | E003\n  deriving Repr\n\ndef x := \"E004\"\n";
-        let got = lean_codes(lean).unwrap();
+        let got = lean_e(lean).unwrap();
         assert_eq!(keys(&got), ["E001", "E002", "E003"]);
         assert_eq!(got["E003"], 4);
         let rust = "/// E099\npub enum ErrorCode {\n    E001,\n    E002, // E005\n    // E006\n}\nconst X: &str = \"E004\";\n";
-        assert_eq!(keys(&rust_codes(rust).unwrap()), ["E001", "E002"]);
+        assert_eq!(keys(&rust_e(rust).unwrap()), ["E001", "E002"]);
     }
 
     #[test]
     fn commented_or_quoted_codes_are_missing() {
         let rust = "pub enum ErrorCode {\n    E001,\n    /* E002, */\n    /* a /* E003, */ E004, */\n    #[doc = \"E005\"]\n    E006, // E007\n    /** E008 */\n}\n";
-        assert_eq!(keys(&rust_codes(rust).unwrap()), ["E001", "E006"]);
+        assert_eq!(keys(&rust_e(rust).unwrap()), ["E001", "E006"]);
         let lean = "inductive ErrorCode where\n  | E001\n  /- E014 -/\n  /-- E015 -/\n  | E002 -- E016\n  deriving Repr\n";
-        assert_eq!(keys(&lean_codes(lean).unwrap()), ["E001", "E002"]);
+        assert_eq!(keys(&lean_e(lean).unwrap()), ["E001", "E002"]);
         let spec = codes(&["E001", "E002", "E014"]);
-        let got = codes_violations(
-            &spec,
-            &lean_codes(lean).unwrap(),
-            &rust_codes(rust).unwrap(),
-        );
-        assert!(
-            got.iter()
-                .any(|v| v.message == "`E014` is in the spec but not in Lean")
-        );
-        assert!(
-            got.iter()
-                .any(|v| v.message == "`E014` is in the spec but not in Rust")
-        );
+        for (name, found) in [
+            ("Lean", lean_e(lean).unwrap()),
+            ("Rust", rust_e(rust).unwrap()),
+        ] {
+            let got = codes_violations("s.md", &spec, &side(name, vec![("f", found)]));
+            let want = format!("`E014` is in the spec but not in {name}");
+            assert!(got.iter().any(|v| v.message == want));
+        }
     }
 
     #[test]
     fn rust_stripper_keeps_lifetimes_and_raw_strings_apart() {
         let src = "fn f<'a>(x: &'a str) { let _ = r#\"E009 \" /*\"#; let c = '\"'; } // E010\npub enum ErrorCode {\n    E001,\n}\n";
-        assert_eq!(keys(&rust_codes(src).unwrap()), ["E001"]);
+        assert_eq!(keys(&rust_e(src).unwrap()), ["E001"]);
         assert_eq!(strip_rust(src).lines().count(), src.lines().count());
     }
 
@@ -559,29 +630,30 @@ mod tests {
 
     #[test]
     fn enum_names_need_a_word_boundary() {
-        assert!(lean_codes("inductive ErrorCodeKind where\n | E001\n deriving Repr").is_err());
-        assert!(rust_codes("pub enum ErrorCodes {\n    E001,\n}\n").is_err());
+        assert!(lean_e("inductive ErrorCodeKind where\n | E001\n deriving Repr").is_err());
+        assert!(rust_e("pub enum ErrorCodes {\n    E001,\n}\n").is_err());
     }
 
     const SPEC_DOC: &str = "### 4.2 Rules\n\n| Code | Rule |\n| --- | --- |\n| `E001` | Syntax. |\n| `E002` | Names, not `E009`. |\n\nProse names `E014`.\n\n### 4.3 Next\n| `E077` | x |\n";
 
     #[test]
     fn spec_codes_come_from_the_first_cell_of_the_table() {
-        let got = spec_codes(SPEC_DOC).unwrap();
+        let got = spec_e(SPEC_DOC).unwrap();
         assert_eq!(keys(&got), ["E001", "E002"]);
         assert_eq!(got["E002"], 6);
         let without_row = SPEC_DOC.replace("| `E002` | Names, not `E009`. |\n", "");
         let lean = codes(&["E001", "E002"]);
-        let got = spec_codes(&without_row).unwrap();
-        assert_eq!(codes_violations(&got, &lean, &lean).len(), 2);
+        let got = spec_e(&without_row).unwrap();
+        let both = side("Lean", vec![("l", lean)]);
+        assert_eq!(codes_violations("s.md", &got, &both).len(), 1);
     }
 
     #[test]
     fn unreadable_code_sources_fail_clearly() {
-        assert!(lean_codes("def x := 1").is_err());
-        assert!(lean_codes("inductive ErrorCode where\n deriving Repr").is_err());
-        assert!(rust_codes("pub enum Other {\n}\n").is_err());
-        assert!(spec_codes("no codes").is_err());
+        assert!(lean_e("def x := 1").is_err());
+        assert!(lean_e("inductive ErrorCode where\n deriving Repr").is_err());
+        assert!(rust_e("pub enum Other {\n}\n").is_err());
+        assert!(spec_e("no codes").is_err());
     }
 
     const TRUST_DOC: &str = "# T\n\n## Parts\n\n| Part | Status |\n| --- | --- |\n| The `core-ir` crate and `silicon-check check` | Proven |\n| Prose with `x` | Trusted |\n\n## Gaps\n\n| `other` |\n";
