@@ -519,7 +519,9 @@ fn validate_source(source: &str, top: &str, sil: &str, budget: &Budgets) -> Resu
 /// goes to a `.tmp` file and then renames, so no artifact is partial. Each exit leaves at most
 /// the pair of one build: the write of `PREFIX.sil` removes an old `PREFIX.sv` first, and a
 /// later failure, also of the backend, removes both files and the temp files. No file is
-/// touched if an artifact path or its temp file is the input file.
+/// touched if an artifact path or its temp file is the input file. The command takes no lock,
+/// as a compiler output does not: two builds at the same time into one prefix can mix their
+/// files.
 fn build_source(
     file: &Path,
     source: &str,
