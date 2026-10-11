@@ -133,16 +133,9 @@ fn run_silicon(binary: &Path, args: &[&str], file: &Path) -> datatest_stable::Re
     }
 }
 
-/// The `corpus` smoke suite: each `.sil` file passes `silicon check`, its
-/// `silicon lower` output parses with `circt-opt`, and `silicon verilog` and
-/// `silicon verilog --models` succeed. The files carry no expectations. The LEC
-/// and the differential tests of spec section 8 are the oracles of their
-/// contents.
-///
-/// # Errors
-///
-/// Returns an error when one of the commands fails.
-pub fn corpus(binary: &Path, file: &Path) -> datatest_stable::Result<()> {
+/// The smoke checks of a corpus file: `silicon check` prints `ok`, the `silicon lower` output
+/// parses with `circt-opt`, and `silicon verilog` and `silicon verilog --models` succeed.
+pub(crate) fn smoke(binary: &Path, file: &Path) -> datatest_stable::Result<()> {
     if run_silicon(binary, &["check"], file)? != "ok\n" {
         return Err("silicon check did not print `ok`".into());
     }
@@ -154,4 +147,17 @@ pub fn corpus(binary: &Path, file: &Path) -> datatest_stable::Result<()> {
     run_silicon(binary, &["verilog"], file)?;
     run_silicon(binary, &["verilog", "--models"], file)?;
     Ok(())
+}
+
+/// The `corpus` smoke suite: each `.sil` file passes `silicon check`, its
+/// `silicon lower` output parses with `circt-opt`, and `silicon verilog` and
+/// `silicon verilog --models` succeed. The files carry no expectations. The LEC
+/// and the differential tests of spec section 8 are the oracles of their
+/// contents.
+///
+/// # Errors
+///
+/// Returns an error when one of the commands fails.
+pub fn corpus(binary: &Path, file: &Path) -> datatest_stable::Result<()> {
+    smoke(binary, file)
 }
