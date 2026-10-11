@@ -19,8 +19,8 @@
 //! - `const`s, `comptime fn`s, static `let`s, and `static_assert`s go.
 //!
 //! A static fault is a builder bug. The twin then keeps the construct as it
-//! is, with its static names (`P`, `C`, `f`, `s`, `j` and digits). The tests
-//! look for these names in each twin, so they show the bug.
+//! is, with its static names (`build::STATIC_PREFIXES` and digits). The
+//! tests look for these names in each twin, so they show the bug.
 
 use super::eval::{Env, Scope, Value, eval, loop_values};
 use super::program::{HExpr, Item, Place, Program, Radix, SExpr, Stmt, Ty, render_items};
@@ -324,7 +324,7 @@ impl Writer<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::build::typed;
+    use super::super::build::{STATIC_PREFIXES, typed};
     use super::super::eval::Value;
     use super::super::program::{
         ComptimeFn, HBin, HExpr, Item, Place, Ports, Radix, SBin, SExpr, StaticTy, Stmt, Ty,
@@ -584,7 +584,7 @@ mod tests {
             .filter_map(|t| text.get(t.range.clone()))
             .filter(|n| {
                 let mut cs = n.chars();
-                cs.next().is_some_and(|c| "PCfsj".contains(c))
+                cs.next().is_some_and(|c| STATIC_PREFIXES.contains(c))
                     && !cs.as_str().is_empty()
                     && cs.all(|c| c.is_ascii_digit())
             })
