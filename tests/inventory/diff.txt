@@ -1,0 +1,16 @@
+tests/core/corpus/counter.sil run PASS
+tests/core/corpus/hierarchy_extern.sil run SKIP E014
+tests/core/corpus/mem_depth1.sil run PASS
+tests/core/corpus/mem_depth16.sil run PASS
+tests/core/corpus/mem_port_counts.sil run PASS
+tests/core/corpus/mem_read_only.sil run PASS
+tests/core/corpus/names_unreserved.sil run SKIP E014
+tests/core/corpus/ops_arith.sil run PASS
+tests/core/corpus/ops_bitwise.sil run PASS
+tests/core/corpus/ops_compare.sil run PASS
+tests/core/corpus/ops_select.sil run PASS
+tests/core/corpus/ops_shift.sil run PASS
+tests/core/corpus/reg_self.sil run PASS
+tests/core/corpus/reg_state.sil run PASS
+tests/core/corpus/unused_module.sil run PASS
+tests/core/corpus/wide.sil run PASS
