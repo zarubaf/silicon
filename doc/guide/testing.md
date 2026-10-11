@@ -62,7 +62,7 @@ A directive is a comment line that gives the expectation of a test file. Both la
 | `DEPTH N`                                                                             | The file elaborates with the nesting depth N. With the depth N - 1, it fails with `S015`. |
 | `SYNTAX-DEPTH N`                                                                      | The file parses with the syntax depth N. With the depth N - 1, it fails with `S001`.      |
 
-A budget file passes only when both front ends meet both conditions. A budget file has no `expected-error`. At N, both front ends succeed with the same design. The `cost` command with the default budgets gives the same output and exit code in both. At N - 1, each front end gives the exact code with the error exit code 1: `S015` for `FUEL` and `DEPTH`, `S001` for `SYNTAX-DEPTH`. A crash, a signal, a timeout, or a usage error with exit code 2 fails the test and covers nothing.
+A budget file passes only when both front ends meet both conditions. A budget file has no `expected-error`. At N, both front ends succeed with the same design. The `cost` command with the default budgets exits 0 in both and gives the same output. At N - 1, each front end gives the exact code with the error exit code 1: `S015` for `FUEL` and `DEPTH`, `S001` for `SYNTAX-DEPTH`. A crash, a signal, a timeout, or a usage error with exit code 2 fails the test and covers nothing.
 
 Examples: `; expected-error E004 @+1`, `// expected-error S010 @+1`, and `; STEP in=(en 1 rst 0) out=(q 3)`.
 
