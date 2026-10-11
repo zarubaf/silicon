@@ -118,7 +118,7 @@ pub fn run(repo: &Repo, mode: Mode, seed: u64, count: u64) -> Result<bool> {
                     seed,
                     count,
                     |case| lift::verdict(&tools, dir.path(), case),
-                    lift::report,
+                    |n, case, message| lift::report(n, case, message),
                 )?,
                 format!("diff-si: {count} lifted designs agree (seeds {seed} to {last})"),
             ),
@@ -156,13 +156,15 @@ pub fn run(repo: &Repo, mode: Mode, seed: u64, count: u64) -> Result<bool> {
 /// Draws a case from `strategy` for each of the seeds `seed`, `seed + 1`,
 /// and so on, `count` in all, and asks `verdict` about it. At the first
 /// failure it shrinks the case and calls `report` with the seed, the
-/// smallest case, and its message. Returns whether all cases agree.
-fn search<C: Clone + std::fmt::Debug>(
+/// smallest case, and its failure. A mode picks the type `F` of its
+/// failure, so that the report can read more than the message. Returns
+/// whether all cases agree.
+fn search<C: Clone + std::fmt::Debug, F: std::fmt::Display>(
     strategy: impl Strategy<Value = C>,
     seed: u64,
     count: u64,
-    mut verdict: impl FnMut(&C) -> Result<Option<String>>,
-    report: impl Fn(u64, &C, &str),
+    mut verdict: impl FnMut(&C) -> Result<Option<F>>,
+    report: impl Fn(u64, &C, &F),
 ) -> Result<bool> {
     for n in (0..count).map(|k| seed.wrapping_add(k)) {
         let mut tree = strategy
@@ -172,7 +174,7 @@ fn search<C: Clone + std::fmt::Debug>(
         let Some(message) = verdict(&case).with_context(|| format!("seed {n}"))? else {
             continue;
         };
-        let first = message.clone();
+        let first = message.to_string();
         let (case, message) = shrink(&mut tree, message, &mut verdict)
             .with_context(|| format!("seed {n}, while shrinking the failure: {first}"))?;
         report(n, &case, &message);
@@ -279,14 +281,14 @@ fn validated(tools: &Tools, file: &Path, top: &str) -> Result<Option<String>> {
 }
 
 /// Shrinks the failing value of `tree` with the proptest algorithm, with at
-/// most `SHRINK_RUNS` runs of `test`. `test` gives `Some(message)` for a
+/// most `SHRINK_RUNS` runs of `test`. `test` gives `Some(failure)` for a
 /// failure. An `Err` of `test` ends the shrink as an error. Returns the
-/// smallest failing value and its message.
-fn shrink<T: ValueTree>(
+/// smallest failing value and its failure.
+fn shrink<T: ValueTree, F>(
     tree: &mut T,
-    message: String,
-    mut test: impl FnMut(&T::Value) -> Result<Option<String>>,
-) -> Result<(T::Value, String)> {
+    message: F,
+    mut test: impl FnMut(&T::Value) -> Result<Option<F>>,
+) -> Result<(T::Value, F)> {
     let mut best = (tree.current(), message);
     let mut runs = 0;
     let mut simplify = true;
