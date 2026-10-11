@@ -9,7 +9,7 @@ use crate::core::{run_tool, smoke};
 use crate::directive::{
     BudgetKind, Expectation, Expected, Marker, budgets, expectation, expected_error, has_check, top,
 };
-use crate::outcome::classify;
+use crate::outcome::{Outcome, classify};
 use crate::report::parse_report;
 use crate::spawn::spawn;
 
@@ -38,12 +38,23 @@ fn run_both(
 /// Returns the reason when a front end misbehaves or the two disagree.
 pub fn agreed(binary: &Path, command: &str, file: &Path, args: &[&str]) -> Result<Output, String> {
     let (rust, lean) = run_both(binary, command, file, args, "").map_err(|e| e.to_string())?;
+    agree(command, &rust, &lean)?;
+    Ok(rust)
+}
+
+/// The agreement rule of the two front ends on one run of `command`: both exit 0 or 1, and they
+/// print the same dump or the same code, line, and column. Returns the common outcome.
+///
+/// # Errors
+///
+/// Returns the reason when a front end misbehaves or the two disagree.
+pub fn agree(command: &str, rust: &Output, lean: &Output) -> Result<Outcome, String> {
     let rust_outcome =
-        classify(&rust).map_err(|e| format!("Rust `silicon {command}` failed: {e}"))?;
+        classify(rust).map_err(|e| format!("Rust `silicon {command}` failed: {e}"))?;
     let lean_outcome =
-        classify(&lean).map_err(|e| format!("Lean `silicon-check {command}` failed: {e}"))?;
+        classify(lean).map_err(|e| format!("Lean `silicon-check {command}` failed: {e}"))?;
     if rust_outcome == lean_outcome {
-        return Ok(rust);
+        return Ok(rust_outcome);
     }
     Err(format!(
         "the front ends disagree\nRust: {rust_outcome:?}\nLean: {lean_outcome:?}"
@@ -377,6 +388,36 @@ mod tests {
             code: "S010".to_owned(),
             line,
         }
+    }
+
+    #[test]
+    fn agree_takes_equal_errors_with_other_messages() {
+        let rust = exited(1, "error[S010]: 4:8: one\n");
+        let lean = exited(1, "error[S010]: 4:8: another\n");
+        let got = agree("parse", &rust, &lean).unwrap();
+        assert_eq!(
+            got,
+            Outcome {
+                code: 1,
+                report: b"error[S010]: 4:8:".to_vec()
+            }
+        );
+    }
+
+    #[test]
+    fn agree_fails_on_another_column() {
+        let rust = exited(1, "error[S010]: 4:8: one\n");
+        let lean = exited(1, "error[S010]: 4:9: one\n");
+        let err = agree("parse", &rust, &lean).unwrap_err();
+        assert!(err.contains("the front ends disagree"), "{err}");
+    }
+
+    #[test]
+    fn agree_fails_on_exit_3() {
+        let rust = exited(3, "");
+        let lean = exited(0, "");
+        let err = agree("elab", &rust, &lean).unwrap_err();
+        assert!(err.starts_with("Rust `silicon elab` failed"), "{err}");
     }
 
     #[test]

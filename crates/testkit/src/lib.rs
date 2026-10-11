@@ -10,4 +10,6 @@ pub mod source;
 pub mod spawn;
 pub mod suite;
 
+pub use outcome::{Outcome, classify};
+pub use report::{Report, parse_report};
 pub use suite::root;
