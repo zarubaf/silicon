@@ -215,15 +215,37 @@ struct Family {
     lean: &'static str,
     /// Each Rust file with the name of its enum.
     rust: &'static [(&'static str, &'static str)],
+    /// The codes that the Rust side does not define yet.
+    later: &'static [&'static str],
 }
 
-const FAMILIES: &[Family] = &[Family {
-    letter: 'E',
-    spec: "doc/design/2026-10-08-core-ir.md",
-    spec_section: "4.2",
-    lean: "lean/Silicon/Core/Syntax.lean",
-    rust: &[("crates/core-ir/src/diag.rs", "ErrorCode")],
-}];
+/// The codes of later slices (mut formals, effects) that the Rust front end of slice 1 does
+/// not report yet; front-end spec, section 12.
+const LATER: &[&str] = &["S008", "S016"];
+
+const FAMILIES: &[Family] = &[
+    Family {
+        letter: 'E',
+        spec: "doc/design/2026-10-08-core-ir.md",
+        spec_section: "4.2",
+        lean: "lean/Silicon/Core/Syntax.lean",
+        rust: &[("crates/core-ir/src/diag.rs", "ErrorCode")],
+        later: &[],
+    },
+    Family {
+        letter: 'S',
+        spec: "doc/design/2026-10-09-frontend.md",
+        spec_section: "6.1",
+        lean: "lean/Silicon/Source/Syntax.lean",
+        rust: &[
+            ("crates/parse/src/error.rs", "Code"),
+            ("crates/resolve/src/lib.rs", "Code"),
+            ("crates/typeck/src/lib.rs", "Code"),
+            ("crates/elab/src/lib.rs", "Code"),
+        ],
+        later: LATER,
+    },
+];
 
 /// The codes one implementation defines, by file.
 struct Side {
@@ -232,11 +254,15 @@ struct Side {
 }
 
 /// Rule `arch-codes`: the spec and an implementation define the same set of error codes.
-fn codes_violations(spec_path: &str, spec: &Codes, side: &Side) -> Vec<Violation> {
+///
+/// `later` lists the spec codes that the side does not define yet. The side must not define
+/// one, so the list cannot go stale.
+fn codes_violations(spec_path: &str, spec: &Codes, side: &Side, later: &[&str]) -> Vec<Violation> {
     let mut out = Vec::new();
     let name = side.name;
     let defined = |code: &String| side.files.iter().any(|(_, set)| set.contains_key(code));
-    for (code, line) in spec.iter().filter(|(c, _)| !defined(c)) {
+    let expected = |code: &String| !later.contains(&code.as_str());
+    for (code, line) in spec.iter().filter(|(c, _)| expected(c) && !defined(c)) {
         out.push(error(
             spec_path,
             Some(*line),
@@ -251,6 +277,14 @@ fn codes_violations(spec_path: &str, spec: &Codes, side: &Side) -> Vec<Violation
                 Some(*line),
                 "arch-codes",
                 format!("`{code}` is in {name} but not in the spec"),
+            ));
+        }
+        for (code, line) in set.iter().filter(|(c, _)| later.contains(&c.as_str())) {
+            out.push(error(
+                path,
+                Some(*line),
+                "arch-codes",
+                format!("`{code}` is in {name}: remove it from `LATER`"),
             ));
         }
     }
@@ -280,8 +314,8 @@ fn family_violations(repo: &Repo, family: &Family) -> Result<Vec<Violation>> {
         let codes = rust_codes(&repo.read(Path::new(path))?, path, name, letter)?;
         rust.files.push((path, codes));
     }
-    let mut out = codes_violations(family.spec, &spec, &lean);
-    out.extend(codes_violations(family.spec, &spec, &rust));
+    let mut out = codes_violations(family.spec, &spec, &lean, &[]);
+    out.extend(codes_violations(family.spec, &spec, &rust, family.later));
     Ok(out)
 }
 
@@ -559,17 +593,25 @@ mod tests {
     #[test]
     fn codes_equal_sets_pass() {
         let s = codes(&["E001", "E002"]);
-        assert!(codes_violations("s.md", &s, &side("Lean", vec![("l", s.clone())])).is_empty());
+        assert!(
+            codes_violations("s.md", &s, &side("Lean", vec![("l", s.clone())]), &[]).is_empty()
+        );
     }
 
     #[test]
     fn codes_differing_sets_fail() {
         let spec = codes(&["E001", "E002"]);
-        let mut got = codes_violations("s.md", &spec, &side("Lean", vec![("l", codes(&["E001"]))]));
+        let mut got = codes_violations(
+            "s.md",
+            &spec,
+            &side("Lean", vec![("l", codes(&["E001"]))]),
+            &[],
+        );
         got.extend(codes_violations(
             "s.md",
             &spec,
             &side("Rust", vec![("r", codes(&["E001", "E002", "E003"]))]),
+            &[],
         ));
         let rules: Vec<_> = got.iter().map(|v| v.message.as_str()).collect();
         assert_eq!(
@@ -580,6 +622,35 @@ mod tests {
             ]
         );
         assert_eq!(got[0].line, Some(1));
+    }
+
+    #[test]
+    fn front_end_codes_compare_with_later_slices_left_out() {
+        let spec = codes(&["S001", "S008"]);
+        let ok = side("Rust", vec![("a", codes(&["S001"]))]);
+        assert!(codes_violations("s.md", &spec, &ok, &["S008"]).is_empty());
+        let lean = side("Lean", vec![("l", codes(&["S001"]))]);
+        let got = codes_violations("s.md", &spec, &lean, &[]);
+        assert_eq!(got[0].message, "`S008` is in the spec but not in Lean");
+        let extra = side(
+            "Rust",
+            vec![("a", codes(&["S001"])), ("b", codes(&["S009"]))],
+        );
+        let got = codes_violations("s.md", &spec, &extra, &["S008"]);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].message, "`S009` is in Rust but not in the spec");
+        assert_eq!(got[0].path, Path::new("b"));
+        let stale = side("Rust", vec![("a", codes(&["S001", "S008"]))]);
+        let got = codes_violations("s.md", &spec, &stale, &["S008"]);
+        assert_eq!(got.len(), 1);
+        assert!(got[0].message.contains("remove it from `LATER`"));
+    }
+
+    #[test]
+    fn spec_codes_read_the_letter_and_section_asked_for() {
+        let doc = "### 6.1 Codes\n\n| Code | Rule |\n| --- | --- |\n| `S001` | x |\n| `E001` | y |\n\n### 6.2 Next\n";
+        let got = spec_codes(doc, "x.md", "6.1", 'S').unwrap();
+        assert_eq!(keys(&got), ["S001"]);
     }
 
     #[test]
@@ -603,7 +674,7 @@ mod tests {
             ("Lean", lean_e(lean).unwrap()),
             ("Rust", rust_e(rust).unwrap()),
         ] {
-            let got = codes_violations("s.md", &spec, &side(name, vec![("f", found)]));
+            let got = codes_violations("s.md", &spec, &side(name, vec![("f", found)]), &[]);
             let want = format!("`E014` is in the spec but not in {name}");
             assert!(got.iter().any(|v| v.message == want));
         }
@@ -645,7 +716,7 @@ mod tests {
         let lean = codes(&["E001", "E002"]);
         let got = spec_e(&without_row).unwrap();
         let both = side("Lean", vec![("l", lean)]);
-        assert_eq!(codes_violations("s.md", &got, &both).len(), 1);
+        assert_eq!(codes_violations("s.md", &got, &both, &[]).len(), 1);
     }
 
     #[test]
