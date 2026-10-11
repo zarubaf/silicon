@@ -536,9 +536,10 @@ impl Evaluator<'_> {
         }
     }
 
-    /// Runs `act` one level deeper, or gives `S015` at `pos` above the limit. A level that
-    /// starts a new group of levels runs on a new thread with the stack of the group, so the
-    /// stack of each thread stays small for any nesting depth.
+    /// Runs `act` one level deeper, or gives `S015` at `pos` above the limit. The one call of
+    /// `NestedStack::nest` holds the thread: a level that starts a new group of levels runs on
+    /// a new thread with the stack of the group, so the stack of each thread stays small for
+    /// any nesting depth.
     fn nested<T: Send>(
         &mut self,
         pos: Pos,
@@ -552,14 +553,10 @@ impl Evaluator<'_> {
             );
         }
         self.depth += 1;
-        let r = if self.stack.starts_thread(self.depth) {
-            let stack = self.stack;
-            stack
-                .run(|| act(self))
-                .unwrap_or_else(|e| Err(Stop::Stack(e)))
-        } else {
-            act(self)
-        };
+        let stack = self.stack;
+        let r = stack
+            .nest(self.depth, self, act)
+            .unwrap_or_else(|e| Err(Stop::Stack(e)));
         self.depth -= 1;
         r
     }
