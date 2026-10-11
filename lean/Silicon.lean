@@ -125,6 +125,7 @@ import Silicon.Source.Elab
 import Silicon.Source.Test.Elab
 import Silicon.Source.Flatten
 import Silicon.Source.Test.Flatten
+import Silicon.Source.Proof.StaticOps
 import Silicon.Source.Vectors
 import Silicon.Source.Test.Vectors
 import Silicon.Source.Cli
