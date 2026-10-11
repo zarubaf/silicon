@@ -1,0 +1,15 @@
+[package]
+name = "srcgen"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+core-ir = { path = "../core-ir", features = ["gen"] }
+num-bigint = "0.4.6"
+proptest = { version = "1.11.0", default-features = false, features = ["std"] }
+syntax = { path = "../syntax" }

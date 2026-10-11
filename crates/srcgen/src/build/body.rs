@@ -8,8 +8,8 @@ use super::{
     Builder, Built, COUNT, Ctx, ENVS, HELPERS, Helper, Hw, INPUTS, INSTANCES, MODULE_STMTS,
     MODULES, Module, NESTED_STMTS, NESTING, Names, OUTPUTS, PARAMS, SAMPLE_INTS, Sig,
 };
-use crate::r#gen::eval::{Env, Fault, Value, concrete, eval, loop_values};
-use crate::r#gen::program::{HExpr, Place, SExpr, Scalar, StaticTy, Stmt, Ty};
+use crate::eval::{Env, Fault, Value, concrete, eval, loop_values};
+use crate::program::{HExpr, Place, SExpr, Scalar, StaticTy, Stmt, Ty};
 use num_bigint::BigInt;
 
 const STATIC_TYS: [StaticTy; 3] = [StaticTy::Nat, StaticTy::Int, StaticTy::Bool];

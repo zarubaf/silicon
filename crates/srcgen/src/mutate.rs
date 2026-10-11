@@ -769,7 +769,7 @@ mod tests {
                 for site in [0, 7919] {
                     let m = mutate(&p, kind, site);
                     assert_ne!(m.text, text, "{}", m.what);
-                    let lexed = crate::lex(&m.text, 4096);
+                    let lexed = syntax::lex(&m.text, 4096);
                     assert!(lexed.errors.is_empty(), "{}: {:?}", m.what, lexed.errors);
                 }
             }

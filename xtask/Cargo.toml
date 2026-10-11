@@ -17,7 +17,7 @@ core-ir = { path = "../crates/core-ir", features = ["gen"] }
 num-bigint = "0.4.6"
 proptest = { version = "1.11.0", default-features = false, features = ["std"] }
 regex = "1.13.1"
-syntax = { path = "../crates/syntax", features = ["gen"] }
+srcgen = { path = "../crates/srcgen" }
 tempfile = "3.27.0"
 testkit = { path = "../crates/testkit" }
 toml = "1.1.7"

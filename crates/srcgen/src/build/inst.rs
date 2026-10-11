@@ -5,8 +5,8 @@
 use super::hw::Want;
 use super::stat::value_expr;
 use super::{Builder, Built, CONTEXTS, Ctx, Hw, Module};
-use crate::r#gen::eval::{Env, Fault, Value};
-use crate::r#gen::program::{HExpr, Place, SExpr, Stmt};
+use crate::eval::{Env, Fault, Value};
+use crate::program::{HExpr, Place, SExpr, Stmt};
 
 impl Builder {
     /// Whether module `m` can instantiate module `j`: a later module, and a

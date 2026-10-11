@@ -12,7 +12,7 @@ use std::path::Path;
 use anyhow::{Context, Result, anyhow};
 use proptest::prelude::any;
 use proptest::strategy::{Just, Strategy};
-use syntax::r#gen::{BuildFault, Program, mutate, typed};
+use srcgen::{BuildFault, Program, mutate, typed};
 use testkit::{Outcome, Report, parse_report};
 
 use super::{Mode, Tools, outcome, repeat, write};

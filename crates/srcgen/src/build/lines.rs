@@ -3,8 +3,8 @@
 //! independent of `elab::vectors`, so that the oracle does not reuse the
 //! code under test.
 
-use crate::r#gen::in_line;
-use crate::r#gen::program::{Ports, Scalar};
+use crate::in_line;
+use crate::program::{Ports, Scalar};
 use num_bigint::{BigInt, BigUint};
 use proptest::collection::vec;
 use proptest::prelude::*;

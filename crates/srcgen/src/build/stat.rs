@@ -7,8 +7,8 @@
 //! fallback literal. So the predicate holds by evaluation, never by luck.
 
 use super::{Builder, COUNT};
-use crate::r#gen::eval::{BOUND, Env, Value, eval};
-use crate::r#gen::program::{Radix, SBin, SExpr, Scalar, StaticTy, Un};
+use crate::eval::{BOUND, Env, Value, eval};
+use crate::program::{Radix, SBin, SExpr, Scalar, StaticTy, Un};
 use num_bigint::BigInt;
 
 /// The depth of a static candidate.

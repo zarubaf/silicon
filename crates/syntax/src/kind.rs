@@ -143,7 +143,8 @@ kinds! {
 
 impl SyntaxKind {
     /// The keyword that the text spells, if any.
-    pub(crate) fn keyword(text: &str) -> Option<SyntaxKind> {
+    #[must_use]
+    pub fn keyword(text: &str) -> Option<SyntaxKind> {
         Some(match text {
             "import" => Self::ImportKw,
             "as" => Self::AsKw,
