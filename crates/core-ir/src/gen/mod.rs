@@ -58,6 +58,8 @@ const NARROW: u32 = 64;
 const WIDE: u32 = 300;
 /// The clock input of each module that has one.
 const CLOCK: &str = "clk";
+/// The reset input of each module that has a clock, with `Resets::Module`.
+pub const RESET: &str = "rst";
 
 /// How the registers of a design reset.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -76,6 +78,19 @@ pub struct Config {
     /// Names with a `$` field.
     pub dollar_names: bool,
     pub resets: Resets,
+}
+
+impl Config {
+    /// The forms that slice-1 source can express: no memory, no `$` in a
+    /// name, and each register resets on the reset of its module.
+    #[must_use]
+    pub fn source() -> Config {
+        Config {
+            mems: false,
+            dollar_names: false,
+            resets: Resets::Module,
+        }
+    }
 }
 
 impl Default for Config {
@@ -143,6 +158,8 @@ fn reference(text: &str) -> Expr {
 /// A port of a generated module.
 enum Pin {
     Clock,
+    /// The module reset, with `Resets::Module`. It is no data input.
+    Reset,
     Input(String, u32),
     Output(String, u32),
 }
@@ -151,6 +168,7 @@ impl Pin {
     fn port(&self) -> Port {
         let (dir, port, ty) = match self {
             Pin::Clock => (Dir::Input, CLOCK, Ty::Clock),
+            Pin::Reset => (Dir::Input, RESET, Ty::Bits(num(1))),
             Pin::Input(port, width) => (Dir::Input, port.as_str(), Ty::Bits(num(*width))),
             Pin::Output(port, width) => (Dir::Output, port.as_str(), Ty::Bits(num(*width))),
         };
@@ -205,7 +223,6 @@ struct Body {
 
 struct Tape {
     numbers: std::vec::IntoIter<u32>,
-    #[expect(dead_code, reason = "no branch reads the configuration yet")]
     config: Config,
 }
 
@@ -242,7 +259,8 @@ impl Tape {
     /// Silicon reserves no name (spec 3.4). The kind and the number keep the
     /// names unique.
     fn label(&mut self, kind: &str, n: impl std::fmt::Display) -> String {
-        match self.below(4) {
+        let choices = if self.config.dollar_names { 4 } else { 2 };
+        match self.below(choices) {
             1 => format!("silicon_{kind}{n}"),
             2 => format!("{kind}{n}$f"),
             3 => format!("silicon_{kind}${n}"),
@@ -296,7 +314,7 @@ impl Tape {
         let mut body = Body::default();
         let inputs = pins.iter().filter_map(|pin| match pin {
             Pin::Input(port, width) => Some((port, *width)),
-            Pin::Clock | Pin::Output(..) => None,
+            Pin::Clock | Pin::Reset | Pin::Output(..) => None,
         });
         for (i, (port, width)) in inputs.enumerate() {
             body.scope.values.push(Value {
@@ -315,7 +333,11 @@ impl Tape {
                 source: Source::State,
             });
         }
-        let mems: Vec<Mem> = (0..if has_clock { self.below(MEMS + 1) } else { 0 })
+        let mems: Vec<Mem> = (0..if has_clock && self.config.mems {
+            self.below(MEMS + 1)
+        } else {
+            0
+        })
             .map(|m| Mem {
                 name: self.label("mem", m),
                 width: self.width(),
@@ -411,6 +433,9 @@ impl Tape {
         let mut pins = Vec::new();
         if has_clock {
             pins.push(Pin::Clock);
+            if self.config.resets == Resets::Module {
+                pins.push(Pin::Reset);
+            }
         }
         for i in 0..self.below(INPUTS + 1) {
             pins.push(Pin::Input(self.label("i", i), self.width()));
@@ -485,6 +510,11 @@ impl Tape {
                     expr: reference(CLOCK),
                     span: Span::default(),
                 }),
+                Pin::Reset => conns.push(Conn {
+                    port: name(RESET.to_owned()),
+                    expr: reference(RESET),
+                    span: Span::default(),
+                }),
                 Pin::Input(port, width) => {
                     let feeds: BTreeSet<usize> = child
                         .deps
@@ -519,7 +549,7 @@ impl Tape {
         }
         let ports = child.pins.iter().filter_map(|pin| match pin {
             Pin::Output(port, width) => Some((port, *width)),
-            Pin::Clock | Pin::Input(..) => None,
+            Pin::Clock | Pin::Reset | Pin::Input(..) => None,
         });
         for ((port, width), node) in ports.zip(outputs) {
             body.scope.values.push(Value {
@@ -561,11 +591,23 @@ impl Tape {
     }
 
     fn reg(&mut self, reg: &str, width: u32, scope: &Scope) -> Stmt {
-        let reset = self.flag().then(|| Reset {
-            signal: self.expr(scope, 1, NESTING),
-            value: self.expr(scope, width, NESTING),
-            span: Span::default(),
-        });
+        let reset = match self.config.resets {
+            Resets::Random => self.flag().then(|| Reset {
+                signal: self.expr(scope, 1, NESTING),
+                value: self.expr(scope, width, NESTING),
+                span: Span::default(),
+            }),
+            Resets::Module => Some(Reset {
+                signal: reference(RESET),
+                value: Expr::Const {
+                    width: num(width),
+                    value: self.constant(width),
+                    value_span: Span::default(),
+                    span: Span::default(),
+                },
+                span: Span::default(),
+            }),
+        };
         Stmt::Reg {
             name: name(reg.to_owned()),
             width: num(width),
