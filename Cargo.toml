@@ -29,6 +29,7 @@ order = [
   "testkit",
   "driver",
 ]
+dev-only = ["testkit"]
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

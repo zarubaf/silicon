@@ -2,7 +2,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use cargo_metadata::MetadataCommand;
+use cargo_metadata::{DependencyKind, MetadataCommand};
 
 use crate::repo::Repo;
 use crate::violation::{Severity, Violation};
@@ -20,6 +20,17 @@ pub fn layer_violations(order: &[String], deps: &[(String, String)]) -> Vec<Stri
             let (from_at, to_at) = (position(from)?, position(to)?);
             (to_at > from_at).then(|| format!("`{from}` depends on later stage `{to}`"))
         })
+        .collect()
+}
+
+/// Returns one message per shipped dependency `(from, to)` on a dev-only crate.
+///
+/// `deps` holds only the normal and build dependencies; a dev-dependency may
+/// name a dev-only crate. The exempt tool crate may name one in any kind.
+pub fn dev_only_violations(dev_only: &[String], deps: &[(String, String)]) -> Vec<String> {
+    deps.iter()
+        .filter(|(from, to)| from != EXEMPT && dev_only.contains(to))
+        .map(|(from, to)| format!("`{from}` has a normal or build dependency on dev-only `{to}`"))
         .collect()
 }
 
@@ -71,10 +82,19 @@ fn violation(path: &Path, rule: &'static str, message: String) -> Violation {
 
 /// The crate names of `[workspace.metadata.layers] order`, empty when absent.
 pub fn layer_order(metadata: &cargo_metadata::Metadata) -> Vec<String> {
+    layers_list(metadata, "order")
+}
+
+/// The crate names of `[workspace.metadata.layers] dev-only`, empty when absent.
+fn dev_only(metadata: &cargo_metadata::Metadata) -> Vec<String> {
+    layers_list(metadata, "dev-only")
+}
+
+fn layers_list(metadata: &cargo_metadata::Metadata, key: &str) -> Vec<String> {
     metadata
         .workspace_metadata
         .get("layers")
-        .and_then(|l| l.get("order"))
+        .and_then(|l| l.get(key))
         .and_then(|o| o.as_array())
         .map(|a| {
             a.iter()
@@ -91,6 +111,7 @@ pub fn check(repo: &Repo) -> Result<Vec<Violation>> {
         .exec()
         .context("reading cargo metadata")?;
     let order = layer_order(&metadata);
+    let dev_only = dev_only(&metadata);
 
     let members: Vec<String> = metadata
         .packages
@@ -135,6 +156,15 @@ pub fn check(repo: &Repo) -> Result<Vec<Violation>> {
         for message in layer_violations(&order, &deps) {
             out.push(violation(manifest, "workspace-layers", message));
         }
+        let shipped: Vec<(String, String)> = package
+            .dependencies
+            .iter()
+            .filter(|d| matches!(d.kind, DependencyKind::Normal | DependencyKind::Build))
+            .map(|d| (name.clone(), d.name.clone()))
+            .collect();
+        for message in dev_only_violations(&dev_only, &shipped) {
+            out.push(violation(manifest, "workspace-dev-only", message));
+        }
 
         let text = std::fs::read_to_string(&package.manifest_path)
             .with_context(|| format!("reading {}", package.manifest_path))?;
@@ -172,6 +202,19 @@ mod tests {
     fn earlier_stage_dependency_allowed() {
         let got = layer_violations(&names(&["syntax", "parse"]), &[dep("parse", "syntax")]);
         assert!(got.is_empty());
+    }
+
+    #[test]
+    fn normal_dependency_on_dev_only_crate_rejected() {
+        let dev_only = names(&["testkit"]);
+        let got = dev_only_violations(&dev_only, &[dep("driver", "testkit")]);
+        assert_eq!(got.len(), 1);
+    }
+
+    #[test]
+    fn exempt_tool_may_name_dev_only_crate() {
+        let dev_only = names(&["testkit"]);
+        assert!(dev_only_violations(&dev_only, &[dep(EXEMPT, "testkit")]).is_empty());
     }
 
     #[test]
@@ -309,6 +352,52 @@ mod tests {
                 ("crates/stray/Cargo.toml".to_owned(), "workspace-layers"),
                 ("crates/syntax/Cargo.toml".to_owned(), "workspace-layers"),
             ]
+        );
+    }
+
+    #[test]
+    fn check_reports_normal_dependency_on_dev_only_crate() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        write(
+            root,
+            "Cargo.toml",
+            "[workspace]\nresolver = \"3\"\nmembers = [\"crates/*\"]\n\
+             [workspace.metadata.layers]\norder = [\"testkit\", \"parse\", \"driver\"]\n\
+             dev-only = [\"testkit\"]\n\n[workspace.lints.rust]\nunused = \"warn\"\n",
+        );
+        write(
+            root,
+            "crates/testkit/Cargo.toml",
+            &crate_manifest("testkit", "", true),
+        );
+        write(root, "crates/testkit/src/lib.rs", "");
+        write(
+            root,
+            "crates/parse/Cargo.toml",
+            &crate_manifest(
+                "parse",
+                "\n[dev-dependencies]\ntestkit = { path = \"../testkit\" }\n",
+                true,
+            ),
+        );
+        write(root, "crates/parse/src/lib.rs", "");
+        write(
+            root,
+            "crates/driver/Cargo.toml",
+            &crate_manifest("driver", "testkit = { path = \"../testkit\" }\n", true),
+        );
+        write(root, "crates/driver/src/lib.rs", "");
+        let repo = Repo::from_parts(root.to_path_buf(), Vec::<TrackedFile>::new());
+
+        let got: Vec<_> = check(&repo)
+            .unwrap()
+            .iter()
+            .map(|v| (v.path.display().to_string(), v.rule))
+            .collect();
+        assert_eq!(
+            got,
+            [("crates/driver/Cargo.toml".to_owned(), "workspace-dev-only")]
         );
     }
 }

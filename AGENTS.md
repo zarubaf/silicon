@@ -41,6 +41,7 @@ Each rule is one list line. It ends with `Check:` and the check. A rule without 
 - A new crate joins `[workspace] members` and `[workspace.metadata.layers] order`. Check: `cargo xtask check` (rules `workspace-member`, `workspace-layers`).
 - A crate depends only on earlier pipeline stages. Check: `cargo xtask check` (rule `workspace-layers`).
 - Every crate sets `[lints] workspace = true`. Check: `cargo xtask check` (rule `workspace-lints`).
+- A crate of `[workspace.metadata.layers] dev-only` is never a normal or build dependency. Only `xtask` and `[dev-dependencies]` name it. Check: `cargo xtask check` (rule `workspace-dev-only`).
 - Format all files with the pinned tools. Check: `just check`.
 - Write Markdown prose in ASD-STE100. Check: `vale`.
 - Keep the error codes of the spec, Lean, and Rust equal. The Rust front end can lack the codes of later slices that `LATER` in `xtask/src/arch.rs` lists. Check: `cargo xtask check` (rule `arch-codes`).

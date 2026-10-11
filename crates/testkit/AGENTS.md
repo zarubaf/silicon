@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The `testkit` crate holds the helpers that the test suites of the compiler share. It is a development tool. No shipped binary depends on it. Only `[dev-dependencies]` and `xtask` name it.
+The `testkit` crate holds the helpers that the test suites of the compiler share. It is a development tool. No shipped binary depends on it.
 
 ## Owns
 
@@ -12,6 +12,7 @@ It also owns one runner for each suite. The harness in `driver` is the table of 
 
 ## Invariants
 
+- Only `[dev-dependencies]` and `xtask` name this crate. Check: `cargo xtask check` (rule `workspace-dev-only`).
 - A file has at most one `expected-error` directive. A second directive and a malformed directive are errors. A `.si` file of the `check` suite has exactly one `TOP` line. Check: `cargo nextest run -p testkit`.
 - `SILICON_BIN` names the binary under test, else the caller gives a default. `SILICON_CHECK` names the checker, else the Lean package output. Check: `cargo nextest run -p testkit`.
 - The outcome check accepts only exit 0 and exit 1 with a valid diagnostic. A signal and every other exit code fail. Check: `cargo nextest run -p testkit`.
