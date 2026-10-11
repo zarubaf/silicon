@@ -263,6 +263,12 @@ impl Coverage {
                 for c in conns {
                     inst_reads(&c.expr, &mut insts);
                 }
+                if conns
+                    .iter()
+                    .any(|c| c.port.text == r#gen::RESET && is_rst(&c.expr))
+                {
+                    self.note("rst-conn");
+                }
                 reads.insert(&name.text, insts);
                 let child = modules
                     .get(module.text.as_str())
@@ -537,7 +543,9 @@ fn source() -> impl Strategy<Value = Design> {
 fn the_source_generator_covers_the_lift_forms() {
     let seen = sample(source());
     assert_covers(&seen, FORMS);
+    assert_covers(&seen, &["rst-conn"]);
     assert!(!seen.forms.contains("read"));
+    assert!(!seen.forms.contains("no-reset"));
 }
 
 /// The statements of `m` that read a memory, write one, or declare one.
@@ -547,7 +555,10 @@ fn has_mem_form(m: &Module) -> bool {
         Stmt::Let { expr, .. } | Stmt::Next { expr, .. } | Stmt::Assign { expr, .. } => {
             has_read(expr)
         }
-        Stmt::Reg { .. } | Stmt::Inst { .. } => false,
+        Stmt::Reg { reset, .. } => reset
+            .as_ref()
+            .is_some_and(|r| has_read(&r.signal) || has_read(&r.value)),
+        Stmt::Inst { conns, .. } => conns.iter().any(|c| has_read(&c.expr)),
     })
 }
 
