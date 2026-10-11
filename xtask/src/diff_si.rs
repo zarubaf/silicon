@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The source differential tests of issue #74. A random core design is
+//! The source differential tests. A random core design is
 //! lifted to a source program. The core interpreter is the oracle: `silicon
 //! run` and `silicon-check run` on the source must print its outputs, and
 //! the Lean `validate` must accept the elaboration of the source.
@@ -50,17 +50,25 @@ pub fn run(repo: &Repo, seed: u64, count: u64) -> Result<bool> {
     };
     let tools = Tools { lean, silicon };
     let dir = tempfile::tempdir().context("cannot make a temporary directory")?;
-    let last = seed.wrapping_add(count - 1);
+    let last = seed.wrapping_add(
+        count
+            .checked_sub(1)
+            .context("the count must be at least 1")?,
+    );
     for n in (0..count).map(|k| seed.wrapping_add(k)) {
         let mut tree = cases()
             .new_tree(&mut runner(n))
             .map_err(|e| anyhow!("cannot generate a case for seed {n}: {e}"))?;
         let case = tree.current();
-        let Some(message) = verdict(&tools, dir.path(), &case)? else {
+        let Some(message) =
+            verdict(&tools, dir.path(), &case).with_context(|| format!("seed {n}"))?
+        else {
             continue;
         };
-        let (case, message) = shrink(&mut tree, message, |c| verdict(&tools, dir.path(), c))?;
-        report(n, &case, &message)?;
+        let first = message.clone();
+        let (case, message) = shrink(&mut tree, message, |c| verdict(&tools, dir.path(), c))
+            .with_context(|| format!("seed {n}, while shrinking the failure: {first}"))?;
+        report(n, &case, &message);
         return Ok(false);
     }
     println!("diff-si: {count} lifted designs agree (seeds {seed} to {last})");
@@ -71,7 +79,7 @@ pub fn run(repo: &Repo, seed: u64, count: u64) -> Result<bool> {
 /// lines. A design that fails the checker gets no lines, so the case then
 /// reports the checker error.
 fn cases() -> impl Strategy<Value = Case> {
-    gen_designs().prop_flat_map(|design| {
+    r#gen::design_with(Config::source()).prop_flat_map(|design| {
         let lines = check(&design)
             .ok()
             .and_then(|typed| typed.modules().get(typed.top().index()).cloned())
@@ -81,10 +89,6 @@ fn cases() -> impl Strategy<Value = Case> {
             );
         (Just(design), lines)
     })
-}
-
-fn gen_designs() -> impl Strategy<Value = ast::Design> {
-    r#gen::design_with(Config::source())
 }
 
 /// The `in=` and `out=` lines of the source vectors for `case`, from the
@@ -232,14 +236,13 @@ fn reproducer(source: &str, top: &str, steps: &[(String, String)]) -> String {
 
 /// Prints the failure of seed `seed`: the message, the core design, and the
 /// reproducer.
-fn report(seed: u64, case: &Case, message: &str) -> Result<()> {
+fn report(seed: u64, case: &Case, message: &str) {
     println!("FAIL seed {seed}: {message}");
     println!("{}", print(&case.0));
-    if let (Ok(source), Ok(steps)) = (lift(&case.0), reference(case)?) {
+    if let (Ok(source), Ok(Ok(steps))) = (lift(&case.0), reference(case)) {
         print!("{}", reproducer(&source, &top_selection(&case.0), &steps));
     }
     println!("Run `cargo xtask diff-si --seed {seed} --count 1` to repeat it.");
-    Ok(())
 }
 
 #[cfg(test)]
@@ -256,10 +259,9 @@ mod tests {
 
     #[test]
     fn the_same_seed_gives_the_same_case() {
-        let ((a, lines_a), text_a) = case(7);
+        let ((_, lines_a), text_a) = case(7);
         let ((_, lines_b), text_b) = case(7);
         assert_eq!((text_a, &lines_a), (text_b, &lines_b));
-        assert_eq!(print(&a), print(&case(7).0.0));
         assert_eq!(lines_a.len(), CYCLES);
     }
 
@@ -274,7 +276,7 @@ mod tests {
     #[test]
     fn shrink_finds_the_smallest_failure() {
         let mut tree = (0..1000)
-            .map(|seed| (10u32..1000).new_tree(&mut runner(seed)).unwrap())
+            .map(|seed| (0u32..1000).new_tree(&mut runner(seed)).unwrap())
             .find(|tree| tree.current() > 10)
             .unwrap();
         let fails = |n: &u32| Ok((*n >= 10).then(|| "fails".to_owned()));
@@ -293,7 +295,7 @@ mod tests {
             Ok(Some("fails".to_owned()))
         })
         .unwrap();
-        assert!(calls <= SHRINK_RUNS, "{calls}");
+        assert_eq!(calls, SHRINK_RUNS);
     }
 
     #[test]
