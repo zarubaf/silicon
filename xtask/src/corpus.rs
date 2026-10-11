@@ -3,6 +3,7 @@
 //! the core files of `tests/core/corpus`, then the source files of
 //! `tests/source/corpus` through `silicon elab`.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -33,7 +34,8 @@ fn tracked(repo: &Repo, dir: &Path, ext: &str) -> Vec<PathBuf> {
 }
 
 /// The designs of both corpora. `silicon` elaborates each source file into
-/// `dir`. The corpus must elaborate, so a rejection is an error.
+/// the empty directory `dir`. The corpus must elaborate, so a rejection is an
+/// error.
 pub fn designs(repo: &Repo, silicon: &Path, dir: &Path) -> Result<Vec<Design>> {
     let core = tracked(repo, &paths::corpus_dir(), "sil")
         .into_iter()
@@ -52,8 +54,10 @@ pub fn designs(repo: &Repo, silicon: &Path, dir: &Path) -> Result<Vec<Design>> {
 
 /// Writes the core IR of the source file `name` (relative to `root`), with
 /// the top selection of its `// TOP` line, to a file in `dir`. Returns that
-/// file. The Rust front end is the shipped path, and the `corpus` suite
-/// proves its output equal to the Lean output.
+/// file. The file takes the stem of `name`, so two sources with one stem are
+/// an error: one artifact would stand for both designs. The Rust front end is
+/// the shipped path, and the `corpus` suite proves its output equal to the
+/// Lean output.
 fn elaborate(silicon: &Path, root: &Path, name: &Path, dir: &Path) -> Result<PathBuf> {
     let shown = name.display();
     let file = root.join(name);
@@ -76,7 +80,15 @@ fn elaborate(silicon: &Path, root: &Path, name: &Path, dir: &Path) -> Result<Pat
     }
     let stem = name.file_stem().context("a source file has no name")?;
     let sil = dir.join(stem).with_extension("sil");
-    std::fs::write(&sil, &out.stdout).with_context(|| format!("cannot write {}", sil.display()))?;
+    let artifact = sil.display();
+    let mut file = std::fs::File::create_new(&sil).map_err(|e| match e.kind() {
+        std::io::ErrorKind::AlreadyExists => {
+            anyhow!("{shown}: another source of the corpus already wrote {artifact}")
+        }
+        _ => anyhow!(e).context(format!("cannot write {artifact}")),
+    })?;
+    file.write_all(&out.stdout)
+        .with_context(|| format!("cannot write {artifact}"))?;
     Ok(sil)
 }
 
@@ -136,6 +148,24 @@ mod tests {
         assert!(
             format!("{error:#}").starts_with("tests/source/corpus/b.si: `silicon elab"),
             "{error:#}"
+        );
+    }
+
+    #[test]
+    fn two_source_designs_with_one_stem_are_an_error() {
+        let (_tmp, repo) = repo(&[
+            ("tests/source/corpus/a/example.si", "// TOP A()\n"),
+            ("tests/source/corpus/b/example.si", "// TOP B()\n"),
+        ]);
+        let out = tempfile::tempdir().unwrap();
+        let error = designs(&repo, Path::new("echo"), out.path()).err().unwrap();
+        let artifact = out.path().join("example.sil");
+        assert_eq!(
+            format!("{error:#}"),
+            format!(
+                "tests/source/corpus/b/example.si: another source of the corpus already wrote {}",
+                artifact.display()
+            )
         );
     }
 
