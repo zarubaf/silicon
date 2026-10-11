@@ -537,7 +537,7 @@ fn hexpr(e: &HExpr) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::super::eval::{Env, Scope, eval};
     use super::*;
 
@@ -651,7 +651,8 @@ mod tests {
         }
     }
 
-    fn program() -> Program {
+    /// A program with each construct of the printer.
+    pub(crate) fn program() -> Program {
         let helper = Item::Helper {
             name: "h0".to_owned(),
             params: vec![("x0".to_owned(), u8())],
@@ -728,7 +729,7 @@ mod tests {
         }
     }
 
-    const TEXT: &str = "\
+    pub(crate) const TEXT: &str = "\
 const C0: Nat = 4;
 comptime fn f0(x0: Nat, x1: Int) -> Int {
     comptime if ((x0 == 0)) {
