@@ -179,6 +179,16 @@ The fields:
 - A failure prints its seed. `cargo xtask diff --seed N --count 1` repeats it.
 - LEC covers the emitted Verilog, so the differential tests use no Verilator (core IR spec, section 8.2).
 
+## Source differential tests
+
+`cargo xtask diff-si` lifts random core designs to source programs. The generator of `core-ir` runs with the source configuration, which makes only designs that have a source form. `lift` in the `gen` feature of `syntax` writes each design as a source program. The core interpreter runs the original design with random inputs. It is the oracle.
+
+- `silicon run` and `silicon-check run` run the source program. Both must print the `out=` lines of the core interpreter. `silicon elab` writes the core IR of the program, and `silicon-check validate` must print `ok`.
+- The defaults are the seed 1 and 100 designs. Use `--seed` and `--count` to change them.
+- A failure prints its seed. `cargo xtask diff-si --seed N --count 1` repeats it.
+- A failure shrinks first. The shrink makes at most 256 test runs. A tooling error, for example a missing tool, stops the shrink and the run.
+- The failure prints the shrunk core design and a reproducer. The reproducer is a file for the `run` suite of `tests/source`, with a `// TOP` line and `// STEP` lines. The outputs of the steps come from the core interpreter.
+
 ## Later oracles
 
 Fuzzing and translation validation join `just ci` in build step 2, when their oracles exist. See [the build order](../architecture.md).
