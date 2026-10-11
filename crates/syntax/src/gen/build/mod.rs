@@ -127,13 +127,7 @@ pub(crate) fn ports(items: &[Item], top: &str, args: &[Value]) -> Result<Ports, 
     if params.len() != args.len() {
         return Err(Fault::Type);
     }
-    let env = Env {
-        statics: params
-            .iter()
-            .map(|(n, _)| n.clone())
-            .zip(args.iter().cloned())
-            .collect(),
-    };
+    let env = Env::of(params, args);
     let mut ports = Ports {
         clocked: *clocked,
         inputs: Vec::new(),

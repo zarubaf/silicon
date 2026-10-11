@@ -22,7 +22,7 @@
 //! is, with its static names (`P`, `C`, `f`, `s`, `j` and digits). The tests
 //! look for these names in each twin, so they show the bug.
 
-use super::eval::{Env, Scope, Value, eval};
+use super::eval::{Env, Scope, Value, eval, loop_values};
 use super::program::{HExpr, Item, Place, Program, Radix, SExpr, Stmt, Ty, render_items};
 use num_bigint::Sign;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -169,10 +169,10 @@ impl Writer<'_> {
                 body: vec![Stmt::Error(format!("no module {module}"))],
             };
         };
-        let mut fr = Frame::default();
-        for ((p, _), v) in params.iter().zip(args) {
-            fr.env.statics.insert(p.clone(), v.clone());
-        }
+        let mut fr = Frame {
+            env: Env::of(params, args),
+            ..Frame::default()
+        };
         Item::Module {
             name,
             params: Vec::new(),
@@ -304,14 +304,11 @@ impl Writer<'_> {
                     out.push(s.clone());
                     return;
                 };
-                let mut n = lo;
-                while n < hi {
-                    let value = Value::Int(n.clone());
+                for value in loop_values(&lo, &hi) {
                     let suffix = format!("_{binder}_{}{}", token(&value), fr.suffix);
                     let mut env = fr.env.clone();
                     env.statics.insert(binder.clone(), value);
                     out.push(self.block(body, fr, env, suffix));
-                    n += 1;
                 }
             }
             Stmt::Assert(c, _) => {
