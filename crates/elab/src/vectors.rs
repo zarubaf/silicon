@@ -1,0 +1,207 @@
+//! The source vectors of section 11.2 of the front-end spec and the port schema of the top, as
+//! Lean `Source.Vectors` defines them.
+//!
+//! A source vector has the form of a core vector (core IR spec, section 6.4.3), with source
+//! names and source values. The port schema maps each source port of the top to its core
+//! port. `parse_line` maps a source input line to the core input values, and `print_line`
+//! maps the core output values to a source output line.
+//!
+//! - Schema order is the byte order of the source names. It equals the core port order,
+//!   because a name that `encode` changes only gets `$0k`, and `$` sorts before each name
+//!   character.
+//! - An input line lists the reset `d$0rst` of the domain `d` first, as a `Bool`. A
+//!   combinational top has none, and the clock has no entry.
+//! - An input value has the decimal forms of a core value: leading zeros are allowed, and
+//!   `-0` is 0. An output value has no leading zeros, and only a negative `SInt` has `-`.
+
+use crate::Design;
+use crate::int::Int;
+use crate::names::{Field, Name, Role, encode};
+use crate::value::Ty;
+use core_ir::Bits;
+use core_ir::ast::{Design as CDesign, Dir, Item, Ty as CTy};
+
+/// One port of the schema: its name in a source vector, its core name, and its type.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Entry {
+    pub name: String,
+    pub core: String,
+    pub ty: Ty,
+}
+
+/// The port schema of the top: the inputs and the outputs, each in schema order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Schema {
+    pub inputs: Vec<Entry>,
+    pub outputs: Vec<Entry>,
+}
+
+impl Design {
+    /// The port schema of the top. The reset of the domain comes before the inputs. The
+    /// result is `None` when the top is not a done instantiation.
+    #[must_use]
+    pub fn schema(&self) -> Option<Schema> {
+        let top = self.insts.get(self.top)?;
+        let text = |s: usize| self.texts.get(s).cloned().unwrap_or_default();
+        let mut ports: Vec<(String, bool, Ty)> = top
+            .body
+            .ports
+            .iter()
+            .map(|q| (text(q.sym), q.input, q.ty))
+            .collect();
+        ports.sort_by(|x, y| x.0.cmp(&y.0));
+        let mut inputs = Vec::new();
+        if let Some(d) = top.body.domain {
+            let reset = encode(&Name {
+                head: text(d),
+                rest: vec![Field::Role(Role::Rst)],
+            });
+            inputs.push(Entry {
+                name: reset.clone(),
+                core: reset,
+                ty: Ty::Bool,
+            });
+        }
+        let mut outputs = Vec::new();
+        for (name, input, ty) in ports {
+            let core = encode(&Name {
+                head: name.clone(),
+                rest: Vec::new(),
+            });
+            let entry = Entry { name, core, ty };
+            if input {
+                inputs.push(entry);
+            } else {
+                outputs.push(entry);
+            }
+        }
+        Some(Schema { inputs, outputs })
+    }
+}
+
+impl Schema {
+    /// The schema fits the core design `d` when its core names are the port names of the top
+    /// module of `d`, in port order. The clock is not in the schema.
+    #[must_use]
+    pub fn fits(&self, d: &CDesign) -> bool {
+        let Some(m) = d.items.iter().find_map(|item| match item {
+            Item::Module(m) if m.name.text == d.top.text => Some(m),
+            _ => None,
+        }) else {
+            return false;
+        };
+        let names = |dir: Dir| {
+            m.ports
+                .iter()
+                .filter(move |p| p.dir == dir && p.ty != CTy::Clock)
+                .map(|p| p.name.text.as_str())
+        };
+        names(Dir::Input).eq(self.inputs.iter().map(|e| e.core.as_str()))
+            && names(Dir::Output).eq(self.outputs.iter().map(|e| e.core.as_str()))
+    }
+
+    /// The core input values of a source input line, in schema order. The tokens follow the
+    /// core vector format.
+    ///
+    /// # Errors
+    /// Returns the message of the first fault of the line.
+    pub fn parse_line(&self, line: &str) -> Result<Vec<Bits>, String> {
+        let tokens = input_tokens(line)?;
+        let mut rest = tokens.as_slice();
+        let mut values = Vec::with_capacity(self.inputs.len());
+        for e in &self.inputs {
+            let [name, value, tail @ ..] = rest else {
+                return Err("missing input".to_owned());
+            };
+            if *name != e.name {
+                return Err(format!("expected input {}", e.name));
+            }
+            values.push(parse_value(&e.name, e.ty, value)?);
+            rest = tail;
+        }
+        if rest.is_empty() {
+            Ok(values)
+        } else {
+            Err("extra input tokens".to_owned())
+        }
+    }
+
+    /// The source output line of the core output values `values`, in port order. The schema
+    /// fits the design, so the values and the outputs of the schema agree in order.
+    #[must_use]
+    pub fn print_line(&self, values: &[Bits]) -> String {
+        let pairs: Vec<String> = self
+            .outputs
+            .iter()
+            .zip(values)
+            .map(|(e, v)| format!("{} {}", e.name, value_text(e.ty, v)))
+            .collect();
+        format!("out=({})\n", pairs.join(" "))
+    }
+}
+
+/// The tokens of an input line `in=(...)`, without its LF.
+fn input_tokens(line: &str) -> Result<Vec<&str>, String> {
+    if line.contains(['\r', '\n']) {
+        return Err("invalid input line ending".to_owned());
+    }
+    let text = line.trim_matches([' ', '\t']);
+    let body = text
+        .strip_prefix("in=(")
+        .and_then(|rest| rest.strip_suffix(')'))
+        .ok_or_else(|| "expected in=(...)".to_owned())?;
+    Ok(body.split([' ', '\t']).filter(|t| !t.is_empty()).collect())
+}
+
+/// A decimal natural number with at least one digit.
+fn decimal(s: &str) -> Option<Int> {
+    if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) {
+        Int::from_decimal(s)
+    } else {
+        None
+    }
+}
+
+/// The core value of the source value `v` for the input `name` of type `t`.
+pub(crate) fn parse_value(name: &str, t: Ty, v: &str) -> Result<Bits, String> {
+    let bad = || format!("input {name} has no value of its type");
+    let wide = || format!("input {name} exceeds its width");
+    let (n, w) = match t {
+        Ty::Bool => match v {
+            "true" => (Int::from_u64(1), 1),
+            "false" => (Int::zero(), 1),
+            _ => return Err(bad()),
+        },
+        Ty::UInt(w) => {
+            let n = decimal(v).ok_or_else(bad)?;
+            if !n.fits_unsigned(u64::from(w)) {
+                return Err(wide());
+            }
+            (n, w)
+        }
+        Ty::SInt(w) => {
+            let (neg, digits) = match v.strip_prefix('-') {
+                Some(digits) => (true, digits),
+                None => (false, v),
+            };
+            let n = decimal(digits).ok_or_else(bad)?;
+            let n = if neg { n.neg() } else { n };
+            if !n.fits_signed(u64::from(w)) {
+                return Err(wide());
+            }
+            (n, w)
+        }
+        Ty::Nat | Ty::Int => return Err(bad()),
+    };
+    Bits::new(w, n.to_bits(w)).ok_or_else(bad)
+}
+
+/// The source text of the core value `v` of type `t`.
+pub(crate) fn value_text(t: Ty, v: &Bits) -> String {
+    match t {
+        Ty::Bool if Int::from_unsigned(&v.to_biguint()).is_zero() => "false".to_owned(),
+        Ty::Bool => "true".to_owned(),
+        Ty::SInt(w) => Int::from_signed(&v.to_biguint(), w).to_string(),
+        _ => Int::from_unsigned(&v.to_biguint()).to_string(),
+    }
+}
