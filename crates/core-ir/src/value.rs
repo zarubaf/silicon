@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Fixed-width bit-vector values and the combinational operations of the core IR.
 
 use num_bigint::BigUint;

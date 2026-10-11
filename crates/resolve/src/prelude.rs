@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The prelude of slice 1. A later slice adds its own names, so a use of one of them is
 //! `S003` until then.
 

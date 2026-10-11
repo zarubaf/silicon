@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The static values of slice 1, their canonical serialization, and their recursive size, as
 //! Lean `Source.Value` defines them. Section 7.1 of the front-end spec uses the serialization
 //! in an `InstantiationId`, and section 5.4 uses the size in the cost model.

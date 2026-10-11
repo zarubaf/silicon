@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Lowers the modules and the externs of a checked design to the typed core
 //! IR. The earlier passes resolved the names, the targets, the arguments, the
 //! `deps`, the constants, the declared widths, and the clocks, so no step here

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The CIRCT tools of the LEC flow, run as processes.
 
 use std::ffi::OsStr;

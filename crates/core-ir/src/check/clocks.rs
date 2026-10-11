@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Pass 5 (`E009`): one clock input, no clock output, and no value that reads
 //! a clock.
 

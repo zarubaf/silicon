@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The interpreter: it runs a typed design one clock cycle at a time (spec
 //! section 5.2).
 //!

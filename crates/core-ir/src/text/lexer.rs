@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Splits `.sil` text into tokens with positions.
 
 use crate::ast::is_core_name as is_name;

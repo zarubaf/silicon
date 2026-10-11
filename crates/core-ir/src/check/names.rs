@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Pass 2 (`E002`, unique names) and pass 3 (`E003`, name resolution).
 
 use super::rx::{

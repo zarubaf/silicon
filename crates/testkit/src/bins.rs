@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The binaries that the suites run.
 
 use std::path::{Path, PathBuf};

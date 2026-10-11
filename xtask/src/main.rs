@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 #![allow(clippy::print_stdout)] // xtask is a CLI; stdout is its interface.
 
 mod arch;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The kinds of tokens and nodes, and the `rowan` language that names them.
 
 use rowan::Language;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The port dependencies and the combinational graph of a module (spec
 //! section 5.3).
 //!

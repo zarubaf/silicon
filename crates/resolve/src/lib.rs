@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The name resolver of the Silicon front end: the item table, the scopes, and the resolved
 //! AST. See [the front end design](../../doc/design/2026-10-09-frontend.md), sections 4.1
 //! and 6.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The runner of the `tests/source` suites.
 
 use std::path::Path;

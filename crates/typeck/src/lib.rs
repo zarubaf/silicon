@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The generic pre-check of the Silicon front end: pass 4, with `S005` to `S007`. See [the
 //! front end design](../../doc/design/2026-10-09-frontend.md), sections 4.2 and 6. The check
 //! needs no static value, so it runs on each item.

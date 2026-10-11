@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Pass 8: each register has one `next`, each output has one `assign`, and the
 //! write ports of each memory are numbered `0` to `k-1`.
 

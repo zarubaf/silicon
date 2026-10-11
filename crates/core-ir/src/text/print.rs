@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Prints an AST as `.sil` text. The output keeps the order of the input.
 
 use super::{binop_keyword, pred_keyword, unop_keyword};

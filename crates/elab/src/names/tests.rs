@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The cases of `Silicon.Source.Test.Names` in Lean. The round trip `decode(encode(p)) ==
 //! Some(p)` holds on each name of a generated set and on random names. The set has user names
 //! equal to each core keyword, names close to the made fields, and each made field form. Each

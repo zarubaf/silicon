@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Builds the vale vocabulary from the `CONTEXT.md` glossary.
 
 use std::collections::BTreeSet;

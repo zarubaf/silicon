@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The cases of `Silicon.Source.Test.Flatten` in Lean: the exact canonical `.sil` text of
 //! small designs and of each operator row of section 7.4, the temporaries with the effective
 //! height, `S020` with its position, and the charges of the lowering.

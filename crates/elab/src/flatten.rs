@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The lowering of section 7 of the front-end spec, as Lean `Source.Flatten` defines it.
 //! `lower` maps the hardware descriptions of an elaborated design to a core design, and
 //! `check` runs the core checker on it, as pass 6.

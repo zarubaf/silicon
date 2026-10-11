@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The differential tests of spec section 8.2. The designs of the corpus
 //! and random designs, with random inputs, drive the Lean interpreter, the
 //! Rust interpreter, and `arcilator` on the Lean reference MLIR. Each tool

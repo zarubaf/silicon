@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The cases of `Silicon.Source.Test.Eval` in Lean: each operator with its boundary cases,
 //! the fit rule, the static faults, the table of constants, the calls, and the exact charges
 //! of the cost model at the budget limits. The cases of the top selection come with `cost`.

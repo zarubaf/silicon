@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The pass before the evaluation. It finds the heights that size the stack of the evaluator,
 //! the value of each number literal, the symbols of the source names, and the call sites.
 //!

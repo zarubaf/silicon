@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! `cargo xtask lec`: the LEC of spec section 8.1 over the corpus. It
 //! compares the Lean reference with the Verilog of `silicon` (main), with the
 //! MLIR of `silicon lower` (lowering), and each Rust memory model with the

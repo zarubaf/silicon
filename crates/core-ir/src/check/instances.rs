@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Pass 6: `E011` (instance connections) and `E013` (extern `deps`). The pass
 //! also returns what it resolved: the `deps` of each extern and the arguments
 //! of each instance.

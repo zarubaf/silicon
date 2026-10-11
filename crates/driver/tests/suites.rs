@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The file suites of `tests/` (spec section 9). The crate `testkit` holds the
 //! runners. Each module name gives the prefix of the test names, for example
 //! `core::check::<file>`, and `cargo xtask lean-check` selects tests by it.

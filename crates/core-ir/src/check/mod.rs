@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The checker. It applies the rules of spec section 4.2 in the pass order of
 //! section 6.4.1, and it reports the lowest-positioned error of the first pass
 //! that has an error.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The AST dump of section 11.1 of the front-end design. The bytes follow the module doc of
 //! `Silicon/Source/Print.lean`, which is the normative text.
 //!

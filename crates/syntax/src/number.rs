@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The bound of a number literal. The lexer applies it, so a literal that is not below
 //! 2^65536 is an error token, as in the Lean lexer.
 

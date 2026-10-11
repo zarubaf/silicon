@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Lints tracked Markdown: vale checks the prose against the STE rules and the glossary,
 //! and lychee checks the internal links.
 

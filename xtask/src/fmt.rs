@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Drives every non-Rust formatter from the tracked file list.
 
 use std::path::Path;

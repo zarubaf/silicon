@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 use crate::{Code, Decl, Failed, Kind, Prelude, Resolved, Target, resolve};
 use parse::ast::Pos;
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The runners of the `tests/core` suites (spec section 9).
 
 use std::io::ErrorKind;

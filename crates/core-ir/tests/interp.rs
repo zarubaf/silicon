@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Tests of the interpreter and of the `in=` and `out=` vector format.
 
 use core_ir::Bits;

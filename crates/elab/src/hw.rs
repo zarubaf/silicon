@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The values of the evaluator, as Lean `Source.Eval` defines them (section 5.1): a static
 //! value, a hardware value, or a handle. A hardware value is a typed tree of operations over
 //! core names. Its nodes live in one arena, so an operand tree is shared, not copied: a new

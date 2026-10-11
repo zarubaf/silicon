@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Tooling for the continuous architecture review of ADR 0013.
 
 mod due;

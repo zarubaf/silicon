@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Errors as data, and the map from a byte offset to a source position.
 
 use crate::ast::Pos;

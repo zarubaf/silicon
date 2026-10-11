@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The source vectors of section 11.2 of the front-end spec and the port schema of the top, as
 //! Lean `Source.Vectors` defines them.
 //!

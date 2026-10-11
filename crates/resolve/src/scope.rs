@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The item namespace and the stack of local scopes. A lookup is one map access, whatever
 //! the nesting: each name keeps a stack of its bindings with the level of each.
 

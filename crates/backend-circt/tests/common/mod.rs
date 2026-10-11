@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The helper that the tests share: run a CIRCT tool as a process.
 
 use std::io::Write;

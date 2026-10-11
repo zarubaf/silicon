@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Random well-formed designs for the property and differential tests.
 //!
 //! A design comes from a tape of random numbers. Each choice of the builder

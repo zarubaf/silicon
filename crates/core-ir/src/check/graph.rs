@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Pass 9 (`E010`, the instance graph) and pass 10 (`E008`, the combinational
 //! graph). After both passes, each module has its schedule and its
 //! dependencies, and the modules are in child-first order.

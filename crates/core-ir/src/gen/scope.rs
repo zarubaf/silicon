@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! What the expressions of a generated module can read, and the
 //! combinational graph that the generator keeps acyclic.
 

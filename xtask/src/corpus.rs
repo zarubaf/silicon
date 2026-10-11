@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The designs of the corpus, which LEC and the differential tests share.
 
 use std::path::PathBuf;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The elaborator of the Silicon front end: the static values, the evaluator with the budgets
 //! and the cost model, the instantiations, and the names. See [the front end
 //! design](../../doc/design/2026-10-09-frontend.md), sections 4.4, 4.5, 5, and 7.

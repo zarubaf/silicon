@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The grammar of blocks and statements.
 #![allow(clippy::enum_glob_use)] // The grammar names token kinds on almost every line.
 

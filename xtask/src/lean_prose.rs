@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Extracts the prose of Lean files (`/-! -/` and `/-- -/` blocks) as Markdown,
 //! so that vale checks it with the same rules as the Markdown docs.
 

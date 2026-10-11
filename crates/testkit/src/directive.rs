@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The `expected-error XNNN @+N` directive (spec section 9).
 
 /// The comment marker of a source language.

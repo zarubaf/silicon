@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Tests of the memory models and of the Verilog through CIRCT: each model
 //! parses, has the ports of the extern, and equals the memory semantics of
 //! spec section 5.2.

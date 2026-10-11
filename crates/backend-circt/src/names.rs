@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The names that the lowering and the oracles make for MLIR (spec section
 //! 3.4). A backend name is a kind and its arguments, joined by `$$`. No core
 //! name contains `$$`, so no backend name equals a core name. Each name has

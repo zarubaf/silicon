@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The static integer of any size. This module is the small interface of design section 4.5:
 //! only it uses `num-bigint`, so a proof can take a Lean model of it as an assumption.
 

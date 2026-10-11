@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The resolved form of the expressions and statements of a module, which
 //! pass 3 builds. Each name is an index, and each node that a later pass
 //! checks carries what that pass needs: the declared width of a reference,

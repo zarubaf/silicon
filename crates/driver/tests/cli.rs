@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Tests of the `silicon` binary: output bytes and exit codes.
 
 use std::path::{Path, PathBuf};

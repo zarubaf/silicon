@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The lowering of one checked module to an `hw.module`.
 //!
 //! The body of an `hw.module` is a graph region: an operation can use a value

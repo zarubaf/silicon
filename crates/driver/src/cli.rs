@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The commands of `silicon` and their exit codes (spec section 6.4.2).
 
 use std::fmt;

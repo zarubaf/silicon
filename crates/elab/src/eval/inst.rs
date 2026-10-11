@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The instantiations of slice 1 and the checks for each instantiation, as Lean
 //! `Source.Elab` defines them (sections 5.3, 6.1, and 6.2 of the front-end spec). `elaborate`
 //! runs the top selection and each instantiation that it reaches, in the evaluation order.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The lexer and the lossless syntax tree types of the Silicon front end.
 
 mod kind;

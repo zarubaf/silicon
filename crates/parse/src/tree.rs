@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The builder of the green tree. It makes each node directly. The builder of `rowan` caches
 //! its nodes and hashes a nested node again at each level, which costs time in the square of
 //! the depth for a deep tree.

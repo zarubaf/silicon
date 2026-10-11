@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Where the test data lives. Each reader asks here, so one move of a
 //! directory touches one file.
 
