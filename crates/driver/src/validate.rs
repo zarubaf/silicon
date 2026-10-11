@@ -5,7 +5,7 @@
 
 use std::ffi::{OsStr, OsString};
 use std::io::{self, Write};
-use std::process::{Command, Stdio};
+use std::process::{Command, Output, Stdio};
 
 /// The variable that names the checker. Without it, the search path finds
 /// `silicon-check`.
@@ -23,17 +23,20 @@ pub enum Verdict {
 
 /// Runs the Lean checker on `source`. The error is a usage error message.
 pub fn validate(source: &[u8]) -> Result<Verdict, String> {
-    let checker = std::env::var_os(VARIABLE).unwrap_or_else(|| OsString::from(DEFAULT));
-    validate_with(&checker, source)
+    validate_with(&checker(), source)
 }
 
-/// The checker gets the bytes on stdin, not the path of the file. A file that
-/// changes after the read thus cannot reach the output unchecked.
-fn validate_with(checker: &OsStr, source: &[u8]) -> Result<Verdict, String> {
+fn checker() -> OsString {
+    std::env::var_os(VARIABLE).unwrap_or_else(|| OsString::from(DEFAULT))
+}
+
+/// Runs the checker with `args` and gives it `stdin` as its input. The checker
+/// gets the bytes on stdin, not the path of the file. A file that changes
+/// after the read thus cannot reach the output unchecked.
+fn run_checker_with(checker: &OsStr, args: &[&OsStr], stdin: &[u8]) -> Result<Output, String> {
     let shown = checker.to_string_lossy();
     let mut child = Command::new(checker)
-        // `silicon-check` reads a file, and this path is the pipe.
-        .args(["check", "/dev/stdin"])
+        .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
@@ -42,25 +45,35 @@ fn validate_with(checker: &OsStr, source: &[u8]) -> Result<Verdict, String> {
     if let Some(mut pipe) = child.stdin.take() {
         // A checker that exits before it reads all input closes the pipe;
         // its exit code then tells the story.
-        match pipe.write_all(source) {
+        match pipe.write_all(stdin) {
             Err(e) if e.kind() != io::ErrorKind::BrokenPipe => {
                 return Err(format!("cannot write to the checker `{shown}`: {e}"));
             }
             _ => {}
         }
     }
-    let output = child
+    child
         .wait_with_output()
-        .map_err(|e| format!("the checker `{shown}` did not finish: {e}"))?;
+        .map_err(|e| format!("the checker `{shown}` did not finish: {e}"))
+}
+
+fn validate_with(checker: &OsStr, source: &[u8]) -> Result<Verdict, String> {
+    // `silicon-check` reads a file, and this path is the pipe.
+    let args = [OsStr::new("check"), OsStr::new("/dev/stdin")];
+    let output = run_checker_with(checker, &args, source)?;
     match output.status.code() {
         Some(0) => Ok(Verdict::Accepted),
         // Only an error line is a rejection of the design (spec section 6.4.2).
         Some(1) if output.stdout.starts_with(b"error[") => Ok(Verdict::Rejected(output.stdout)),
-        _ => Err(format!(
-            "the checker `{shown}` failed ({}). Use --no-validate to skip the validation.",
-            output.status
-        )),
+        _ => Err(failed(&checker.to_string_lossy(), &output)),
     }
+}
+
+fn failed(shown: &str, output: &Output) -> String {
+    format!(
+        "the checker `{shown}` failed ({}). Use --no-validate to skip the validation.",
+        output.status
+    )
 }
 
 fn start_error(shown: &str, error: &io::Error) -> String {
