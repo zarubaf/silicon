@@ -6,7 +6,7 @@ The `elab` crate is the elaborator of the Rust front end. It is layer 6 of the p
 
 ## Owns
 
-This crate owns the static values with their canonical serialization and their recursive size, and SHA-256 for the digest names. It also owns the evaluator with the fuel, the nesting depth, the cost model, the table of constants, and the hardware values. It owns the table of instantiations with the checks for each instantiation, the core names, and the emitted module names. It owns the lowering to core IR, and the port schema of the source vectors. The Lean modules `Source.Value`, `Source.Sha256`, `Source.Eval`, `Source.Elab`, `Source.Names`, `Source.Flatten`, and `Source.Vectors` are the normative definitions.
+This crate owns the static values with their canonical serialization and their recursive size, and SHA-256 for the digest names. It also owns the evaluator with the fuel, the nesting depth, the cost model, the table of constants, and the hardware values. It owns the table of instantiations with the checks for each instantiation, the core names, and the emitted module names. It owns the lowering to core IR, the port layout, and the port schema of the source vectors. The Lean modules `Source.Value`, `Source.Sha256`, `Source.Eval`, `Source.Elab`, `Source.Names`, `Source.Layout`, `Source.Flatten`, and `Source.Vectors` are the normative definitions.
 
 A hardware value is a node in one arena, so a new node shares its operand trees. A structural path is a node in a second arena, and a user field holds the symbol of its name. Thus a new node or a new name costs constant work and no copy.
 
