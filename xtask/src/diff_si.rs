@@ -22,7 +22,7 @@ use crate::diff::{CYCLES, ToolFailure, Trace, compare, output, runner};
 use crate::repo::Repo;
 use crate::{lean_check, silicon};
 
-/// The most test runs of one shrink. Each run starts five processes.
+/// The most test runs of one shrink. Each run starts four processes.
 const SHRINK_RUNS: u32 = 256;
 
 /// A core design and its `in=` lines.
@@ -132,7 +132,8 @@ fn try_verdict(tools: &Tools, dir: &Path, case: &Case) -> Result<Option<String>>
         Ok(steps) => steps,
         Err(message) => return Ok(Some(message)),
     };
-    let source = lift(&case.0).map_err(|e| anyhow!("the lift rejects the design: {e}"))?;
+    let source = lift(&case.0)
+        .map_err(|e| anyhow!("the lift rejects the design: {e}\n{}", print(&case.0)))?;
     let file = dir.join("design.si");
     std::fs::write(&file, &source).with_context(|| format!("cannot write {}", file.display()))?;
     let top = top_selection(&case.0);
