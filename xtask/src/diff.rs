@@ -1,4 +1,4 @@
-//! The differential tests of spec section 8.2. The designs of `tests/corpus`
+//! The differential tests of spec section 8.2. The designs of the corpus
 //! and random designs, with random inputs, drive the Lean interpreter, the
 //! Rust interpreter, and `arcilator` on the Lean reference MLIR. Each tool
 //! starts from the all-zero state.
@@ -24,11 +24,7 @@ use proptest::test_runner::{
 };
 
 use crate::repo::Repo;
-use crate::{corpus, lean_check, silicon, skips};
-
-/// The reviewed inventory of the corpus checks of this tool. The random
-/// designs stay outside it.
-const INVENTORY: &str = "tests/diff-checks.txt";
+use crate::{corpus, lean_check, paths, silicon, skips};
 
 /// The tag of a corpus design with an extern, which the interpreters reject.
 const EXTERN: &str = "E014";
@@ -101,8 +97,9 @@ pub fn run(repo: &Repo, seed: u64, count: u64) -> Result<bool> {
             return Ok(false);
         }
     }
-    let problems = skips::audit(&repo.read(Path::new(INVENTORY))?, &ran)?;
-    if !skips::report(INVENTORY, &problems) {
+    let inventory = paths::diff_inventory(repo);
+    let problems = skips::audit(&repo.read(&inventory)?, &ran)?;
+    if !skips::report(&inventory.to_string_lossy(), &problems) {
         return Ok(false);
     }
     println!(
@@ -228,7 +225,7 @@ fn corpus(repo: &Repo, seed: u64) -> Result<(Vec<Case>, Vec<String>)> {
 
 impl Tools {
     /// Whether the three tools agree on `case`. A failure prints the case as
-    /// a `tests/run` file. The files go to `dir`.
+    /// a run-suite file. The files go to `dir`.
     fn agree(&self, case: &Case, dir: &Path) -> Result<bool> {
         let failure = match self.traces(case, dir) {
             Ok(traces) => compare(&traces).map(|message| (message, Some(traces))),
@@ -342,7 +339,7 @@ fn compare(traces: &[Trace]) -> Option<String> {
     None
 }
 
-/// The design `text` and its input `lines` as the text of a `tests/run`
+/// The design `text` and its input `lines` as the text of a run-suite
 /// file, with the outputs of the trace `expected`.
 fn reproducer(text: &str, lines: &[String], expected: Option<&Trace>) -> String {
     let steps = lines.iter().enumerate().map(|(cycle, line)| {

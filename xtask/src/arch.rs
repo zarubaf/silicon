@@ -8,6 +8,7 @@ use cargo_metadata::MetadataCommand;
 use regex::Regex;
 
 use crate::lean::strip_comments_and_strings;
+use crate::paths;
 use crate::repo::Repo;
 use crate::violation::{Severity, Violation};
 use crate::workspace::EXEMPT;
@@ -16,7 +17,6 @@ const SPEC: &str = "doc/design/2026-10-08-core-ir.md";
 const LEAN_CODES: &str = "lean/Silicon/Core/Syntax.lean";
 const RUST_CODES: &str = "crates/core-ir/src/diag.rs";
 const TRUST: &str = "doc/trust.md";
-const INVENTORIES: [&str; 2] = ["tests/lec-checks.txt", "tests/diff-checks.txt"];
 const LAKEFILE: &str = "lean/lakefile.toml";
 const EXE: &str = "silicon-check";
 
@@ -449,8 +449,9 @@ pub fn check(repo: &Repo) -> Result<Vec<Violation>> {
         &trust_names(&repo.read(Path::new(TRUST))?)?,
     ));
     let tags = trust_tags(&repo.read(Path::new(TRUST))?)?;
-    for path in INVENTORIES {
-        out.extend(skips_violations(path, &repo.read(Path::new(path))?, &tags)?);
+    for path in [paths::lec_inventory(repo), paths::diff_inventory(repo)] {
+        let name = path.to_string_lossy();
+        out.extend(skips_violations(&name, &repo.read(&path)?, &tags)?);
     }
     out.extend(exe_import_violations(&root, &|module| {
         let path = module_path(module);

@@ -12,6 +12,7 @@ mod lean;
 mod lean_check;
 mod lean_prose;
 mod lec;
+mod paths;
 mod prose;
 mod repo;
 mod review;
@@ -87,7 +88,7 @@ enum Command {
         #[arg(long, default_value_t = 200, value_parser = clap::value_parser!(u64).range(1..))]
         count: u64,
     },
-    /// Run the LEC of the core IR spec, section 8.1, over `tests/corpus`.
+    /// Run the LEC of the core IR spec, section 8.1, over the corpus.
     Lec,
     /// List the files of the branch that touch an architecture path of `doc/architecture.md`.
     ///
