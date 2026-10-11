@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The result of one `parse` command that the two front ends must share.
+//! The result of one command that the two front ends must share.
 
 use std::process::Output;
 
@@ -31,12 +31,12 @@ fn diagnostic_prefix(stdout: &str) -> Option<&str> {
     Some(&stdout[..stdout.len() - rest.len()])
 }
 
-/// The outcome of a command, or why the command did not behave like `parse`. Only exit 0 and
+/// The outcome of a command, or why the command did not behave like a source command. Only exit 0 and
 /// exit 1 with a valid diagnostic count. A signal and every other exit code fail.
 ///
 /// # Errors
 ///
-/// Returns the reason, with the status and both streams, when the command is not a valid `parse` run.
+/// Returns the reason, with the status and both streams, when the command is not a valid run.
 pub fn classify(out: &Output) -> Result<Outcome, String> {
     let stdout = String::from_utf8_lossy(&out.stdout);
     let fail = |why: &str| {

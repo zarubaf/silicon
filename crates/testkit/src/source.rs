@@ -45,29 +45,30 @@ fn compare_check(
     lean: &Output,
     want: Option<&Expected>,
 ) -> Result<(), String> {
-    let both = || {
+    let outputs = || {
         format!(
             "\nRust stdout:\n{}\nLean stdout:\n{}",
             String::from_utf8_lossy(&rust.stdout),
             String::from_utf8_lossy(&lean.stdout)
         )
     };
-    let r = classify(rust).map_err(|e| format!("Rust `silicon {name}` failed: {e}{}", both()))?;
-    let l =
-        classify(lean).map_err(|e| format!("Lean `silicon-check {name}` failed: {e}{}", both()))?;
+    let r =
+        classify(rust).map_err(|e| format!("Rust `silicon {name}` failed: {e}{}", outputs()))?;
+    let l = classify(lean)
+        .map_err(|e| format!("Lean `silicon-check {name}` failed: {e}{}", outputs()))?;
     if r != l {
-        return Err(format!("the front ends disagree{}", both()));
+        return Err(format!("the front ends disagree{}", outputs()));
     }
     match want {
         None if r.code == 0 => Ok(()),
-        None => Err(format!("expected success{}", both())),
+        None => Err(format!("expected success{}", outputs())),
         Some(want) => match parse_report(&String::from_utf8_lossy(&rust.stdout)) {
             Some(got) if r.code == 1 && got.code == want.code && got.line == want.line => Ok(()),
             _ => Err(format!(
                 "expected error[{}] on line {}{}",
                 want.code,
                 want.line,
-                both()
+                outputs()
             )),
         },
     }

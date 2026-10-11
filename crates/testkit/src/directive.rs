@@ -22,13 +22,24 @@ impl Marker {
     }
 }
 
-/// True when a line of `source` starts with a `FileCheck` directive.
+/// True when a line of `source` holds a `FileCheck` directive: `<marker> CHECK`, then `:` or one
+/// of the suffixes `-NEXT`, `-NOT`, `-DAG`, `-LABEL`, `-SAME`, `-EMPTY`, and `-COUNT-<n>`, then `:`.
 pub(crate) fn has_check(source: &str, marker: Marker) -> bool {
+    let head = format!("{} CHECK", marker.prefix());
     source.lines().any(|line| {
-        ["", "-DAG", "-NEXT", "-NOT", "-LABEL"]
-            .iter()
-            .any(|kind| line.starts_with(&format!("{} CHECK{kind}:", marker.prefix())))
+        line.match_indices(&head).any(|(at, _)| {
+            let rest = &line[at + head.len()..];
+            let suffix = rest.split(':').next().unwrap_or_default();
+            rest.contains(':') && is_check_suffix(suffix)
+        })
     })
+}
+
+fn is_check_suffix(suffix: &str) -> bool {
+    match suffix.strip_prefix("-COUNT-") {
+        Some(n) => !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()),
+        None => ["", "-NEXT", "-NOT", "-DAG", "-LABEL", "-SAME", "-EMPTY"].contains(&suffix),
+    }
 }
 
 const KEYWORD: &str = " expected-error ";
@@ -233,6 +244,37 @@ pub(crate) fn budgets(source: &str) -> Result<Vec<Budget>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn has_check_accepts_every_form() {
+        for form in [
+            "CHECK:",
+            "CHECK-NEXT:",
+            "CHECK-NOT:",
+            "CHECK-DAG:",
+            "CHECK-LABEL:",
+            "CHECK-SAME:",
+            "CHECK-EMPTY:",
+            "CHECK-COUNT-2:",
+        ] {
+            let source = format!("// {form} x\n");
+            assert!(has_check(&source, Marker::Si), "{form}");
+        }
+        assert!(has_check("; CHECK-COUNT-2: x\n", Marker::Sil));
+    }
+
+    #[test]
+    fn has_check_rejects_other_text() {
+        for line in [
+            "// CHECK",
+            "// CHECK-COUNT-: x",
+            "// CHECK-COUNT-a: x",
+            "// CHECKED: x",
+        ] {
+            assert!(!has_check(line, Marker::Si), "{line}");
+        }
+        assert!(!has_check("// CHECK: x\n", Marker::Sil));
+    }
 
     #[test]
     fn expected_error_reads_both_markers() {
