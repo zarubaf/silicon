@@ -279,12 +279,7 @@ pub fn vector_in(top: &typed::Module, inputs: &interp::Inputs) -> String {
         }
     }
     others.sort();
-    let mut entries: Vec<String> = reset
-        .map(|r| format!("clock$0rst {r}"))
-        .into_iter()
-        .collect();
-    entries.extend(others.into_iter().map(|(n, v)| format!("{n} {v}")));
-    format!("in=({})", entries.join(" "))
+    super::in_line(reset, others)
 }
 
 /// The `out=` line for the core outputs `outputs` of `top`, by byte order of

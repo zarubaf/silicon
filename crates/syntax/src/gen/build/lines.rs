@@ -3,6 +3,7 @@
 //! independent of `elab::vectors`, so that the oracle does not reuse the
 //! code under test.
 
+use crate::r#gen::in_line;
 use crate::r#gen::program::{Ports, Scalar};
 use num_bigint::{BigInt, BigUint};
 use proptest::collection::vec;
@@ -20,12 +21,7 @@ pub fn lines(ports: &Ports, cycles: usize) -> impl Strategy<Value = Vec<String>>
         resets
             .into_iter()
             .zip(rows)
-            .map(|(reset, row)| {
-                let reset = clocked.then(|| format!("clock$0rst {reset}"));
-                let pairs = names.iter().zip(row).map(|(n, v)| format!("{n} {v}"));
-                let all: Vec<String> = reset.into_iter().chain(pairs).collect();
-                format!("in=({})", all.join(" "))
-            })
+            .map(|(reset, row)| in_line(clocked.then_some(reset), names.iter().zip(row)))
             .collect()
     })
 }
