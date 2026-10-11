@@ -34,7 +34,7 @@ const EXTERN: &str = "E014";
 const CHECK: &str = "run";
 
 /// The clock cycles of each design.
-const CYCLES: usize = 8;
+pub(crate) const CYCLES: usize = 8;
 
 /// The `out=` lines, without LF, that one tool prints for one design.
 #[derive(Debug, PartialEq, Eq)]
