@@ -5,7 +5,7 @@ use std::path::Path;
 use std::process::{Command, Output};
 
 use crate::bins::{self, silicon_check};
-use crate::core::run_tool;
+use crate::core::{run_tool, smoke};
 use crate::directive::{
     BudgetKind, Expectation, Expected, Marker, budgets, expectation, expected_error, has_check, top,
 };
@@ -250,6 +250,68 @@ pub fn budget(binary: &Path, file: &Path) -> datatest_stable::Result<()> {
             .map_err(|e| in_file(format!("with `{flag} {below}`: {e}")))?;
     }
     Ok(())
+}
+
+/// The `corpus` suite (frontend spec section 8): the Rust `silicon elab` writes the core IR of
+/// each `.si` file, with the top selection of its `// TOP` line, to a temporary `.sil` file.
+/// The Lean `silicon-check validate` must accept it. Then the smoke checks of the `corpus`
+/// suite of `tests/core` run on it. The files carry no other expectations.
+///
+/// # Errors
+///
+/// Returns an error when the `TOP` line is missing or malformed, `elab` fails, `validate`
+/// rejects the output, or a smoke check fails.
+pub fn corpus(binary: &Path, file: &Path) -> datatest_stable::Result<()> {
+    let source = std::fs::read_to_string(file)?;
+    let in_file = |e: String| format!("{}: {e}", file.display());
+    let top = top(&source).map_err(in_file)?;
+    let elab = spawn(
+        bins::silicon(binary)
+            .arg("elab")
+            .arg(file)
+            .arg("--top")
+            .arg(&top),
+        "",
+    )?;
+    if !elab.status.success() {
+        return Err(in_file(format!(
+            "Rust `silicon elab` failed: {}{}",
+            String::from_utf8_lossy(&elab.stdout),
+            String::from_utf8_lossy(&elab.stderr)
+        ))
+        .into());
+    }
+    let name = file.file_stem().unwrap_or_default().to_string_lossy();
+    let sil =
+        std::env::temp_dir().join(format!("testkit-corpus-{}-{name}.sil", std::process::id()));
+    std::fs::write(&sil, &elab.stdout)?;
+    let result = validate_and_smoke(binary, file, &top, &sil);
+    // The file is a scratch copy; a failed removal must not hide the result.
+    let _ = std::fs::remove_file(&sil);
+    Ok(result.map_err(in_file)?)
+}
+
+/// Lean `validate` of the core IR `sil` of `file`, then the smoke checks on `sil`.
+fn validate_and_smoke(binary: &Path, file: &Path, top: &str, sil: &Path) -> Result<(), String> {
+    let validated = spawn(
+        Command::new(silicon_check())
+            .arg("validate")
+            .arg(file)
+            .arg(sil)
+            .arg("--top")
+            .arg(top),
+        "",
+    )
+    .map_err(|e| e.to_string())?;
+    let stdout = String::from_utf8_lossy(&validated.stdout);
+    if validated.status.code() != Some(0) || stdout != "ok\n" {
+        return Err(format!(
+            "Lean `silicon-check validate` did not print `ok`: exit {:?}: {stdout}{}",
+            validated.status.code(),
+            String::from_utf8_lossy(&validated.stderr)
+        ));
+    }
+    smoke(binary, sil).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
