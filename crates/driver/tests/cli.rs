@@ -1135,3 +1135,26 @@ fn build_refuses_another_spelling_of_the_input() -> Test {
     assert!(path.exists() && !dir.join("x.sv").exists());
     Ok(())
 }
+
+/// `write_artifact` removes `PATH.tmp` first, so a temp path must not be the input either.
+#[test]
+fn build_refuses_an_input_at_a_temp_path() -> Test {
+    for name in ["x.sil.tmp", "x.sv.tmp"] {
+        let (dir, _) = build_folder(&format!("temp-{name}"), COUNTER_SI)?;
+        let path = dir.join(name);
+        std::fs::write(&path, COUNTER_SI)?;
+        let out = build(
+            &path,
+            "Counter(4)",
+            &["--out", &dir.join("x").to_string_lossy()],
+            None,
+        )?;
+        assert_eq!(out.status.code(), Some(2), "{name}");
+        assert_eq!(std::fs::read_to_string(&path)?, COUNTER_SI, "{name}");
+        assert!(
+            !dir.join("x.sil").exists() && !dir.join("x.sv").exists(),
+            "{name}"
+        );
+    }
+    Ok(())
+}
