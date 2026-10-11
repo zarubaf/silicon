@@ -181,14 +181,27 @@ The fields:
 
 ## Source differential tests
 
-`cargo xtask diff-si` lifts random core designs to source programs. The generator of `core-ir` runs with the source configuration, which makes only designs that have a source form. `lift` in the `gen` feature of `syntax` writes each design as a source program. The core interpreter runs the original design with random inputs. It is the oracle.
+`cargo xtask diff-si` has two modes. Use `--mode lift`, `--mode typed`, or `--mode all`. The default is `all`, which runs the lift mode and then the typed mode. The run stops at the first failure.
+
+The lift mode lifts random core designs to source programs. The generator of `core-ir` runs with the source configuration, which makes only designs that have a source form. `lift` in the `gen` feature of `syntax` writes each design as a source program. The core interpreter runs the original design with random inputs. It is the oracle.
 
 - `silicon run` and `silicon-check run` run the source program. Both must print the `out=` lines of the core interpreter. `silicon elab` writes the core IR of the program, and `silicon-check validate` must print `ok`.
-- The defaults are the seed 1 and 100 designs. Use `--seed` and `--count` to change them.
+
+The typed mode builds random typed source programs. The builder is `typed()` in the `gen` feature of `syntax`. A program has parameters, `const` items, `comptime` functions, helpers, `comptime if`, `comptime for`, and instances. The typed mode checks these oracles of the front-end spec, section 11.4:
+
+- `silicon-check validate` accepts the output of `silicon elab`.
+- The probe `eval` gives the same value in the static evaluator of the generator, in `silicon eval`, and in `silicon-check eval`.
+- `silicon cost` and `silicon-check cost` both exit 0 and print equal output.
+- The twin of the program gives the same `out=` lines as the program, in `silicon run` and in `silicon-check run`, on the same input lines. The twin writes out each comptime construct, so it has no static computation. The twin shows an error in the static part of the elaboration of each front end. It does not check the hardware semantics.
+
+The input lines come from `lines()`. They follow the ports of the top. The reset of the domain is likely in the first cycle and rare after it, in both modes. Thus the state of a design lives for several cycles.
+
+- The defaults are the seed 1 and 100 cases for each mode. Use `--seed` and `--count` to change them. The count applies to each mode.
 - `just ci` runs `diff-si` with the defaults.
-- A failure prints its seed. `cargo xtask diff-si --seed N --count 1` repeats it.
+- A failure prints its seed. `cargo xtask diff-si --mode typed --seed N --count 1` repeats it. The mode is `lift` or `typed`.
 - A failure shrinks first. The shrink makes at most 256 test runs. A tooling error, for example a missing tool, stops the shrink and the run.
-- The failure prints the shrunk core design and a reproducer. The reproducer is a file for the `run` suite of `tests/source`, with a `// TOP` line and `// STEP` lines. The outputs of the steps come from the core interpreter.
+- The failure prints a reproducer. The reproducer is a file for the `run` suite of `tests/source`, with a `// TOP` line and `// STEP` lines. In the lift mode, the outputs of the steps come from the core interpreter, and the failure also prints the core design. In the typed mode, the outputs come from `silicon-check run`, and the failure also prints the twin and the probe.
+- A failure of the typed mode is a defect of the generator or of a front end. If both front ends agree with each other and not with the generator, fix the generator.
 
 ## Later oracles
 
