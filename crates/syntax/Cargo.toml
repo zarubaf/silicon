@@ -9,11 +9,12 @@ publish = false
 workspace = true
 
 [features]
-gen = ["dep:core-ir", "dep:num-bigint", "core-ir/gen"]
+gen = ["dep:core-ir", "dep:num-bigint", "dep:proptest", "core-ir/gen"]
 
 [dependencies]
 core-ir = { path = "../core-ir", optional = true }
 num-bigint = { version = "0.4.6", optional = true }
+proptest = { version = "1.11.0", default-features = false, features = ["std"], optional = true }
 rowan = "0.16.1"
 
 [dev-dependencies]
