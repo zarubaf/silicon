@@ -6,7 +6,7 @@ The `syntax` crate is the lexer and the lossless syntax tree of the Rust front e
 
 ## Owns
 
-This crate owns the kinds of tokens and nodes, the `rowan` language of Silicon, and the lexer. The lexer reports each lexical error as data with the code `S001` and a byte offset. It never prints. It takes the syntax depth, and the first bracket above that depth is an error token. The feature `gen` adds the lift of a core design to a source program, and the map from core vectors to source vectors. It also adds the typed form of a generated program, its printer, and its static evaluator. Later steps add the typed AST wrappers of the syntax tree and its source printer.
+This crate owns the kinds of tokens and nodes, the `rowan` language of Silicon, and the lexer. The lexer reports each lexical error as data with the code `S001` and a byte offset. It never prints. It takes the syntax depth, and the first bracket above that depth is an error token. The feature `gen` adds the lift of a core design to a source program, and the map from core vectors to source vectors. It also adds the typed form of a generated program, its printer, and its static evaluator. Its builder makes random typed programs and their input lines. Later steps add the typed AST wrappers of the syntax tree and its source printer.
 
 ## Invariants
 
@@ -14,6 +14,7 @@ This crate owns the kinds of tokens and nodes, the `rowan` language of Silicon, 
 - The lexer does not panic on any input. An invalid character, an unterminated string, or an unterminated comment gives an error token. Check: `cargo nextest run -p syntax`.
 - Operators use longest match, so `>>` is one token. Check: `cargo nextest run -p syntax`.
 - Each design of `Config::source()` lifts to a program that lexes with no error, or `lift` returns `Unsupported`. Check: `cargo nextest run -p syntax --all-features`.
+- Each program of `typed()` lexes with no error, and its forms cover slice 1. Check: `cargo nextest run -p syntax --all-features`.
 - Non-test code has no `unwrap`, no `expect`, and no panic on user input. Check: `just clippy`.
 
 ## Dependencies
