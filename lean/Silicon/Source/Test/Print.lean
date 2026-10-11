@@ -88,8 +88,8 @@ def inc : Item :=
 #guard (Print.dump [inc, counter]).splitOn "\n" == [inc.dump, counter.dump, ""]
 
 /-!
-A deep chain and a long block dump in linear work and with no recursion over the statements of
-a block. Quadratic work or a deep recursion makes this test slow or fails it.
+A deep chain and a long block dump correctly. This test guards the linear dump against a
+regression at these sizes. A quadratic dump also passes it at these sizes.
 -/
 def chain : Expr := (List.range 4096).foldl (fun e _ => bin .add e (n 1)) (n 0)
 
