@@ -126,9 +126,8 @@ structure Low where
 
 /-! Binds `e` of width `w` to the next temporary `<target>$<k>t` at `opPos`. -/
 def bindTemp (pos : Pos) (target : Path) (w : Nat) (opPos : Pos) (e : Core.Expr) : FM Path := do
-  let s ← get
-  let path := target.push (.temp s.count)
-  set { s with count := s.count + 1 }
+  let path := target.push (.temp (← get).count)
+  modify fun s => { s with count := s.count + 1 }
   charge pos 1
   let name ← pathText pos path
   modify fun s => { s with temps := s.temps.push (.let_ (cpos opPos) name w e) }
@@ -381,6 +380,12 @@ def lowerInst (i : Inst) : FM Core.Module := do
   let temps := (← get).temps
   return ⟨mp, name, domain ++ sorted ins ++ sorted outs, (body ++ temps).toList⟩
 
+/-! The value of `act` and the fuel that it uses. -/
+def measure (act : FM α) : FM (α × Nat) := do
+  let start := (← get).fuel
+  let a ← act
+  return (a, start - (← get).fuel)
+
 /-! The result of a lowering: the core design and the units of each instantiation. -/
 structure Lowered where
   design : Core.Design
@@ -394,9 +399,9 @@ def lowerDesign (pos : Pos) (d : Elab.Design) : FM Lowered := do
   let mut items : Array Core.Item := #[]
   let mut units : Array Nat := #[]
   for i in d.insts do
-    let start := (← get).fuel
-    items := items.push (.module (← lowerInst i))
-    units := units.push (i.units + (start - (← get).fuel))
+    let (m, u) ← measure (lowerInst i)
+    items := items.push (.module m)
+    units := units.push (i.units + u)
   charge pos 1
   let some t := d.insts[d.top]? | defect "the top is not a done instantiation"
   let top ← nameText pos t.iface.name
