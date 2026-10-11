@@ -272,7 +272,12 @@ def serialize (pos : Pos) (m : String) (vs : List Value) : EM String := do
   charge pos (InstantiationId.renderSize m parts)
   return InstantiationId.render m parts
 
-def usedFuel : EM Nat := monadLift (do return (← get).fuel : Eval.M Nat)
+/-! Runs `act` and gives the fuel that it uses. The result reads only a difference of fuel. -/
+def measure (act : EM α) : EM (α × Nat) := do
+  let fuel : EM Nat := monadLift (do return (← get).fuel : Eval.M Nat)
+  let start ← fuel
+  let a ← act
+  return (a, start - (← fuel))
 
 /-!
 The walk of a module body. `stmt` and `block` are entry functions as in `Eval`. A `let`, an
@@ -383,18 +388,18 @@ mutual
       set { s with table := s.table.insert key .inProgress, names := s.names.insert text,
                    work := { body := { domain := ds.head?.map fun (d : Binder) => d.name.name } } }
       monadLift (modify fun t => { t with naming := {} } : Eval.M Unit)
-      let start ← usedFuel
-      inFrame none <| withTheReader Ctx (fun c => { c with item := i, frame := ⟨none, 0⟩ }) do
-        for (q, v) in ps.zip vs do
-          let t ← typeExpr n q.ty
-          bindLocal q.name.id ⟨some t, false, .static (← conform pos t v)⟩
-        for d in ds do
-          bindLocal d.id ⟨none, false, .handle (.domain d.name.name)⟩
-        block n mp body
-      bindings
-      let lets ← monadLift (do return (← get).naming.lets : Eval.M (Array Let))
-      monadLift (modify fun t => { t with naming } : Eval.M Unit)
-      let used := start - (← usedFuel)
+      let (lets, used) ← measure do
+        inFrame none <| withTheReader Ctx (fun c => { c with item := i, frame := ⟨none, 0⟩ }) do
+          for (q, v) in ps.zip vs do
+            let t ← typeExpr n q.ty
+            bindLocal q.name.id ⟨some t, false, .static (← conform pos t v)⟩
+          for d in ds do
+            bindLocal d.id ⟨none, false, .handle (.domain d.name.name)⟩
+          block n mp body
+        bindings
+        let lets ← monadLift (do return (← get).naming.lets : Eval.M (Array Let))
+        monadLift (modify fun t => { t with naming } : Eval.M Unit)
+        return lets
       let w := (← get).work
       let body := { w.body with lets }
       let c := iface name body
