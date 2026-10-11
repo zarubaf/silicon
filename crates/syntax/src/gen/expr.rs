@@ -5,6 +5,7 @@
 use super::lift::Unsupported;
 use core_ir::Pred;
 use core_ir::ast::{BinOp, Expr, Module, UnOp};
+use core_ir::r#gen::RESET;
 use num_bigint::BigUint;
 use std::collections::HashMap;
 
@@ -18,10 +19,14 @@ pub(super) struct Env<'a> {
 impl Env<'_> {
     pub(super) fn width(&self, e: &Expr) -> Result<u32, Unsupported> {
         Ok(match e {
-            Expr::Ref(n) => *self
-                .widths
-                .get(n.text.as_str())
-                .ok_or_else(|| Unsupported::Name(n.text.clone()))?,
+            Expr::Ref(n) => *self.widths.get(n.text.as_str()).ok_or_else(|| {
+                // Source cannot read the reset of the domain.
+                if n.text == RESET {
+                    Unsupported::Reset(n.text.clone())
+                } else {
+                    Unsupported::Name(n.text.clone())
+                }
+            })?,
             Expr::InstOut { inst, port, .. } => self.inst_out(&inst.text, &port.text)?,
             Expr::Const { width, .. } | Expr::Extract { width, .. } => width.value,
             Expr::Unary { arg, .. } => self.width(arg)?,
@@ -54,7 +59,10 @@ impl Env<'_> {
 
     pub(super) fn source(&self, e: &Expr) -> Result<String, Unsupported> {
         Ok(match e {
-            Expr::Ref(n) => n.text.clone(),
+            Expr::Ref(n) => {
+                self.width(e)?;
+                n.text.clone()
+            }
             Expr::InstOut { inst, port, .. } => format!("{}.{}", inst.text, port.text),
             Expr::Const { width, value, .. } => format!("UInt[{}]({value})", width.value),
             Expr::Unary {
