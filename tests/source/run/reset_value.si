@@ -1,0 +1,17 @@
+// Registers with a nonzero reset value, one of them signed, as in section 11.2.
+// TOP Resets()
+module Resets() {
+    input d: UInt[8];
+    output u: UInt[8];
+    output s: SInt[8];
+    reg a: UInt[8] = 5;
+    reg b: SInt[8] = -1;
+    a := d;
+    b := b;
+    u := a;
+    s := b;
+}
+// STEP in=(clock$0rst false d 9) out=(s 0 u 0)
+// STEP in=(clock$0rst true d 9) out=(s 0 u 9)
+// STEP in=(clock$0rst false d 7) out=(s -1 u 5)
+// STEP in=(clock$0rst false d 0) out=(s -1 u 7)

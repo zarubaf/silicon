@@ -1,0 +1,22 @@
+// A counter with an enable and a comptime width: it wraps at 2^3.
+// TOP Counter(3)
+module Counter(comptime W: Nat) {
+    input enable: Bool;
+    output value: UInt[W];
+    output full: Bool;
+    reg count: UInt[W] = 0;
+    count := if (enable) { count +% 1 } else { count };
+    value := count;
+    full := count == UInt[W]((1 << W) - 1);
+}
+// STEP in=(clock$0rst true enable false) out=(full false value 0)
+// STEP in=(clock$0rst false enable true) out=(full false value 0)
+// STEP in=(clock$0rst false enable true) out=(full false value 1)
+// STEP in=(clock$0rst false enable false) out=(full false value 2)
+// STEP in=(clock$0rst false enable true) out=(full false value 2)
+// STEP in=(clock$0rst false enable true) out=(full false value 3)
+// STEP in=(clock$0rst false enable true) out=(full false value 4)
+// STEP in=(clock$0rst false enable true) out=(full false value 5)
+// STEP in=(clock$0rst false enable true) out=(full false value 6)
+// STEP in=(clock$0rst false enable true) out=(full true value 7)
+// STEP in=(clock$0rst false enable true) out=(full false value 0)

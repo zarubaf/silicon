@@ -1,0 +1,20 @@
+// A helper fn is called from a module, twice and with different widths of state.
+// TOP Top()
+fn avg(a: UInt[8], b: UInt[8]) -> UInt[8] {
+    return (a & b) +% ((a ^ b) >> 1);
+}
+module Top() {
+    input a: UInt[8];
+    input b: UInt[8];
+    output now: UInt[8];
+    output held: UInt[8];
+    reg last: UInt[8] = 0;
+    last := avg(a, b);
+    now := avg(a, b);
+    held := avg(last, b);
+}
+// STEP in=(clock$0rst false a 10 b 20) out=(held 10 now 15)
+// STEP in=(clock$0rst false a 255 b 255) out=(held 135 now 255)
+// STEP in=(clock$0rst false a 0 b 1) out=(held 128 now 0)
+// STEP in=(clock$0rst true a 100 b 50) out=(held 25 now 75)
+// STEP in=(clock$0rst false a 100 b 50) out=(held 25 now 75)

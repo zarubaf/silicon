@@ -1,0 +1,22 @@
+// A child with a register: the reset of the parent reaches the child.
+// TOP Top(4)
+module Acc(comptime W: Nat) {
+    input d: UInt[W];
+    output q: UInt[W];
+    reg r: UInt[W] = 1;
+    r := r +% d;
+    q := r;
+}
+module Top(comptime W: Nat) {
+    input d: UInt[W];
+    output q: UInt[W];
+    instance a = Acc(W);
+    a.d := d;
+    q := a.q;
+}
+// STEP in=(clock$0rst true d 2) out=(q 0)
+// STEP in=(clock$0rst false d 2) out=(q 1)
+// STEP in=(clock$0rst false d 5) out=(q 3)
+// STEP in=(clock$0rst false d 15) out=(q 8)
+// STEP in=(clock$0rst true d 0) out=(q 7)
+// STEP in=(clock$0rst false d 0) out=(q 1)

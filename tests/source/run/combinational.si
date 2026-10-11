@@ -1,0 +1,45 @@
+// Combinational operators: no reset entry in the vector.
+// TOP Ops()
+module Ops() domains() {
+    input a: UInt[8];
+    input b: UInt[8];
+    input s: SInt[8];
+    input c: Bool;
+    output sum: UInt[8];
+    output diff: UInt[8];
+    output prod: UInt[8];
+    output lt: Bool;
+    output ge: Bool;
+    output slt: Bool;
+    output eq: Bool;
+    output both: UInt[8];
+    output either: UInt[8];
+    output flip: UInt[8];
+    output mix: UInt[8];
+    output shl: UInt[8];
+    output shr: UInt[8];
+    output sshr: SInt[8];
+    output pick: UInt[8];
+    output neg: SInt[8];
+    sum := a +% b;
+    diff := a -% b;
+    prod := a *% b;
+    lt := a < b;
+    ge := a >= b;
+    slt := s < SInt[8](0);
+    eq := a == b;
+    both := a & b;
+    either := a | b;
+    flip := ~a;
+    mix := a ^ b;
+    shl := a << 3;
+    shr := a >> 2;
+    sshr := s >> 2;
+    pick := if (c) { a } else { b };
+    neg := -s;
+}
+// STEP in=(a 200 b 100 c true s -100) out=(both 64 diff 100 either 236 eq false flip 55 ge true lt false mix 172 neg 100 pick 200 prod 32 shl 64 shr 50 slt true sshr -25 sum 44)
+// STEP in=(a 3 b 5 c false s 64) out=(both 1 diff 254 either 7 eq false flip 252 ge false lt true mix 6 neg -64 pick 5 prod 15 shl 24 shr 0 slt false sshr 16 sum 8)
+// STEP in=(a 255 b 255 c true s -128) out=(both 255 diff 0 either 255 eq true flip 0 ge true lt false mix 0 neg -128 pick 255 prod 1 shl 248 shr 63 slt true sshr -32 sum 254)
+// STEP in=(a 0 b 1 c false s 0) out=(both 0 diff 255 either 1 eq false flip 255 ge false lt true mix 1 neg 0 pick 1 prod 0 shl 0 shr 0 slt false sshr 0 sum 1)
+// STEP in=(a 170 b 85 c true s 127) out=(both 0 diff 85 either 255 eq false flip 85 ge true lt false mix 255 neg -127 pick 170 prod 114 shl 80 shr 42 slt false sshr 31 sum 255)
