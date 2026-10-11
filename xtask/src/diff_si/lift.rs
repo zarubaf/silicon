@@ -13,7 +13,6 @@ use core_ir::r#gen::{self, Config};
 use core_ir::interp::Sim;
 use core_ir::text::print;
 use core_ir::vectors::parse_input;
-use proptest::collection::vec;
 use proptest::strategy::{Just, Strategy};
 use syntax::r#gen::{lift, vector_in, vector_out};
 
@@ -33,7 +32,7 @@ pub(super) fn cases() -> impl Strategy<Value = Case> {
             .and_then(|typed| typed.modules().get(typed.top().index()).cloned())
             .map_or_else(
                 || Just(Vec::new()).boxed(),
-                |top| vec(r#gen::inputs(&top), CYCLES).boxed(),
+                |top| r#gen::lines(&top, CYCLES).boxed(),
             );
         (Just(design), lines)
     })
