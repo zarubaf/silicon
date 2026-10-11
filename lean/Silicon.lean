@@ -129,6 +129,7 @@ import Silicon.Source.Vectors
 import Silicon.Source.Test.Vectors
 import Silicon.Source.Cli
 import Silicon.Source.Test.Validate
+import Silicon.Source.Proof.Names
 import Silicon.Main
 
 /-!
