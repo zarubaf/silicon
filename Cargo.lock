@@ -719,6 +719,8 @@ dependencies = [
 name = "syntax"
 version = "0.0.0"
 dependencies = [
+ "core-ir",
+ "num-bigint",
  "proptest",
  "rowan",
 ]
