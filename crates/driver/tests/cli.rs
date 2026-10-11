@@ -96,6 +96,21 @@ fn text(out: &Output) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
+/// `const X: T = ((...1...));` with `n` pairs of parentheses.
+fn nested(n: usize) -> String {
+    format!("const X: T = {}1{};\n", "(".repeat(n), ")".repeat(n))
+}
+
+/// A file with 1,000,000 open brackets.
+fn open_brackets() -> String {
+    format!("const X: T = {}", "(".repeat(1_000_000))
+}
+
+/// A file with a chain of 1,000,000 prefix minus signs.
+fn minus_chain() -> String {
+    format!("const X: T = {}1;\n", "-".repeat(1_000_000))
+}
+
 /// Runs `silicon` and `silicon-check` as `COMMAND FILE ARGS...`. The two must give the same exit
 /// code, and on success the same stdout. On an error they must give the same code, line, and
 /// column (front-end spec section 6.2); the message can differ. Returns the output of `silicon`.
@@ -107,6 +122,15 @@ fn agree(command: &str, flags: &[&str], path: &Path) -> std::io::Result<Output> 
     let mut second = Command::new(bins::silicon_check());
     second.arg(command).arg(path).args(flags);
     let lean = spawn(&mut second, "")?;
+    for (name, out) in [("silicon", &rust), ("silicon-check", &lean)] {
+        assert!(
+            matches!(out.status.code(), Some(0 | 1)),
+            "{name} {args:?}: {:?}\nstdout: {}\nstderr: {}",
+            out.status,
+            text(out),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
     assert_eq!(rust.status.code(), lean.status.code(), "{args:?}");
     if rust.status.success() {
         assert_eq!(text(&rust), text(&lean), "{args:?}");
@@ -522,18 +546,17 @@ fn parse_takes_the_syntax_depth() -> Test {
 
 #[test]
 fn parse_does_not_overflow_the_stack_at_the_default_depth() -> Test {
-    let deep = |n: usize| format!("const X: T = {}1{};\n", "(".repeat(n), ")".repeat(n));
-    let out = agree("parse", &[], &file("d4096.si", deep(4096).as_bytes())?)?;
+    let out = agree("parse", &[], &file("d4096.si", nested(4096).as_bytes())?)?;
     assert_eq!(out.status.code(), Some(0));
     assert!(text(&out).ends_with("(num 1))\n"));
-    let out = agree("parse", &[], &file("d4097.si", deep(4097).as_bytes())?)?;
+    let out = agree("parse", &[], &file("d4097.si", nested(4097).as_bytes())?)?;
     assert!(text(&out).starts_with("error[S001]: 1:4110: "));
     assert_eq!(out.status.code(), Some(1));
-    let open = format!("const X: T = {}", "(".repeat(1_000_000));
+    let open = open_brackets();
     let out = agree("parse", &[], &file("open.si", open.as_bytes())?)?;
     assert!(text(&out).starts_with("error[S001]: 1:4110: "));
     assert_eq!(out.status.code(), Some(1));
-    let chain = format!("const X: T = {}1;\n", "-".repeat(1_000_000));
+    let chain = minus_chain();
     let out = agree("parse", &[], &file("chain.si", chain.as_bytes())?)?;
     assert!(text(&out).starts_with("error[S001]: 1:14: "));
     assert_eq!(out.status.code(), Some(1));
@@ -543,16 +566,23 @@ fn parse_does_not_overflow_the_stack_at_the_default_depth() -> Test {
 #[test]
 fn parse_does_not_overflow_the_stack_at_the_maximum_depth() -> Test {
     let flags = ["--syntax-depth", "65536"];
-    let deep = |n: usize| format!("const X: T = {}1{};\n", "(".repeat(n), ")".repeat(n));
-    let out = agree("parse", &flags, &file("d65536.si", deep(65536).as_bytes())?)?;
+    let out = agree(
+        "parse",
+        &flags,
+        &file("d65536.si", nested(65536).as_bytes())?,
+    )?;
     assert_eq!(out.status.code(), Some(0));
-    let out = agree("parse", &flags, &file("d65537.si", deep(65537).as_bytes())?)?;
+    let out = agree(
+        "parse",
+        &flags,
+        &file("d65537.si", nested(65537).as_bytes())?,
+    )?;
     assert!(text(&out).starts_with("error[S001]: 1:65550: "));
-    let open = format!("const X: T = {}", "(".repeat(1_000_000));
+    let open = open_brackets();
     let out = agree("parse", &flags, &file("open-max.si", open.as_bytes())?)?;
     assert!(text(&out).starts_with("error[S001]: 1:65550: "));
     assert_eq!(out.status.code(), Some(1));
-    let chain = format!("const X: T = {}1;\n", "-".repeat(1_000_000));
+    let chain = minus_chain();
     let out = agree("parse", &flags, &file("chain-max.si", chain.as_bytes())?)?;
     assert!(text(&out).starts_with("error[S001]: 1:14: "));
     assert_eq!(out.status.code(), Some(1));
