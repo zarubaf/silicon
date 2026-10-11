@@ -1126,8 +1126,8 @@ def scanItem (it : Resolve.Item) : Scan :=
   (go.run {}).2
 
 /-!
-The number `k` of each call node in the body of an item: its index among the call nodes of
-the body, in position order. Section 7.3 names a call frame with it.
+The number `k` of each call node in the body of an item: the index of its position among the
+distinct positions of the call nodes of the body. Section 7.3 names a call frame with it.
 -/
 def callSites (sc : Scan) : Std.TreeMap Pos Nat Pos.compare :=
   let sorted : Std.TreeMap Pos Unit Pos.compare := sc.calls.foldl (fun m p => m.insert p ()) {}
