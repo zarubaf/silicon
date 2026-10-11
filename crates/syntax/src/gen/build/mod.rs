@@ -35,6 +35,7 @@ macro_rules! note {
 mod body;
 mod file;
 mod hw;
+mod inst;
 mod lines;
 mod stat;
 
@@ -49,6 +50,10 @@ use proptest::collection::vec;
 use proptest::prelude::*;
 use stat::{Reach, int};
 use std::collections::BTreeMap;
+
+/// The result of a step whose faults the checks of the builder exclude.
+/// A fault reaches `build`, which the coverage test watches.
+type Built<T = ()> = Result<T, Fault>;
 
 /// Size caps. They keep one program fast to elaborate in both front
 /// ends, and well below their default fuel and depth.
