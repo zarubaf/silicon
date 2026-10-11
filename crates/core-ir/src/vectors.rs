@@ -46,18 +46,31 @@ fn is_blank(c: char) -> bool {
     c == ' ' || c == '\t'
 }
 
+/// The name and value tokens of an input line `in=(...)`, without its LF. Only spaces and
+/// tabs separate the tokens. A front end with its own values reads its lines with it.
+///
+/// # Errors
+/// Returns the message of the fault when the line has a CR or an LF, or lacks the form
+/// `in=(...)`.
+pub fn input_tokens(line: &str) -> Result<Vec<&str>, String> {
+    if line.contains(['\r', '\n']) {
+        return Err("invalid input line ending".to_owned());
+    }
+    let body = line
+        .trim_matches(is_blank)
+        .strip_prefix("in=(")
+        .and_then(|rest| rest.strip_suffix(')'))
+        .ok_or_else(|| "expected in=(...)".to_owned())?;
+    Ok(body.split(is_blank).filter(|t| !t.is_empty()).collect())
+}
+
 /// Reads one input line, without its LF, into the values of the data inputs
 /// of `top`, in port order.
 ///
 /// # Errors
 /// Returns the first fault of the line.
 pub fn parse_input(line: &str, top: &Module) -> Result<Inputs, VectorError> {
-    let body = line
-        .trim_matches(is_blank)
-        .strip_prefix("in=(")
-        .and_then(|rest| rest.strip_suffix(')'))
-        .ok_or(VectorError::Syntax)?;
-    let tokens: Vec<&str> = body.split(is_blank).filter(|t| !t.is_empty()).collect();
+    let tokens = input_tokens(line).map_err(|_| VectorError::Syntax)?;
     let valid = |t: &str| {
         t.chars()
             .all(|c| c.is_ascii_alphanumeric() || "_$".contains(c))
@@ -107,11 +120,23 @@ pub fn inputs(top: &Module, values: Vec<Bits>) -> Option<Inputs> {
 /// Prints the `out=` line of the outputs `values` of `top`, with its LF.
 #[must_use]
 pub fn print_output(top: &Module, values: &Outputs) -> String {
-    let pairs: Vec<String> = top
-        .outputs
-        .iter()
-        .zip(&values.0)
-        .map(|(port, value)| format!("{} {}", port.name, value.to_biguint()))
+    output_line(
+        top.outputs
+            .iter()
+            .zip(&values.0)
+            .map(|(port, value)| (&port.name, value.to_biguint())),
+    )
+}
+
+/// The `out=` line, with its LF, of the names and the printed values of the outputs, in port
+/// order. A front end with its own values prints its lines with it.
+#[must_use]
+pub fn output_line<N: fmt::Display, V: fmt::Display>(
+    values: impl IntoIterator<Item = (N, V)>,
+) -> String {
+    let pairs: Vec<String> = values
+        .into_iter()
+        .map(|(name, value)| format!("{name} {value}"))
         .collect();
     format!("out=({})\n", pairs.join(" "))
 }
