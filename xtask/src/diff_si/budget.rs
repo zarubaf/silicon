@@ -6,6 +6,7 @@
 //! outcome in both front ends, and only `S015` may reject.
 
 use std::path::Path;
+use std::process::Command;
 
 use anyhow::Result;
 use proptest::prelude::any;
@@ -57,91 +58,171 @@ fn show(outcome: &Outcome) -> String {
     )
 }
 
+/// An `elab` run with one budget flag, and the outcome that both front
+/// ends must give.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Run {
+    flag: &'static str,
+    value: u64,
+    expect: &'static str,
+}
+
+/// A failure of the budget mode: its message, the agreed total of `cost`
+/// if the front ends reached it, and the failing `elab` run, if any.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Failure {
+    message: String,
+    total: Option<u64>,
+    run: Option<Run>,
+}
+
+impl std::fmt::Display for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
 /// `None` if both front ends agree on all budget runs of `case`, else the
-/// message of the first difference. It names the flag and its value. A
-/// tooling error, and a fault of the builder, is an `Err`.
-pub(super) fn verdict(tools: &Tools, dir: &Path, case: &Case) -> Result<Option<String>> {
+/// first difference. Its message names the flag and its value. A tooling
+/// error, and a fault of the builder, is an `Err`.
+pub(super) fn verdict(tools: &Tools, dir: &Path, case: &Case) -> Result<Option<Failure>> {
     let (program, fuel_pick, depth_pick) = case;
     let program = program
         .as_ref()
         .map_err(|e| anyhow::Error::new(e.clone()))?;
     let file = write(dir, "budget.si", &program.text())?;
     let top = program.top();
+    let at_cost = |message: String| Failure {
+        message,
+        total: None,
+        run: None,
+    };
     let cost = match outcome(tools, "cost", &file, &top, &[])? {
         Ok(cost) if cost.code == 0 => cost,
-        Ok(cost) => return Ok(Some(format!("cost: rejected the program: {}", show(&cost)))),
-        Err(message) => return Ok(Some(format!("cost: {message}"))),
+        Ok(cost) => {
+            let message = format!("cost: rejected the program: {}", show(&cost));
+            return Ok(Some(at_cost(message)));
+        }
+        Err(message) => return Ok(Some(at_cost(format!("cost: {message}")))),
     };
     let Some(total) = total_of(&cost.report) else {
-        return Ok(Some(
-            "cost: the report has no `total N` first line".to_owned(),
-        ));
+        let message = "cost: the report has no `total N` first line".to_owned();
+        return Ok(Some(at_cost(message)));
     };
-    let run = |flag: &str, value: u64| -> Result<std::result::Result<Outcome, String>> {
-        let value = value.to_string();
-        Ok(outcome(tools, "elab", &file, &top, &[flag, &value])?
-            .map_err(|message| format!("with `{flag} {value}`: {message}")))
+    // `None` if both front ends give the outcome that `run` expects.
+    let check = |run: Run, allowed: &dyn Fn(&Outcome) -> bool| -> Result<Option<Failure>> {
+        let value = run.value.to_string();
+        let message = match outcome(tools, "elab", &file, &top, &[run.flag, &value])? {
+            Ok(out) if allowed(&out) => return Ok(None),
+            Ok(out) => format!(
+                "with `{} {value}`: expected {} (cost is {total}), both gave {}",
+                run.flag,
+                run.expect,
+                show(&out)
+            ),
+            Err(message) => format!("with `{} {value}`: {message}", run.flag),
+        };
+        Ok(Some(Failure {
+            message,
+            total: Some(total),
+            run: Some(run),
+        }))
     };
-    match run("--fuel", total)? {
-        Ok(at) if at.code == 0 => {}
-        Ok(at) => {
-            return Ok(Some(format!(
-                "with `--fuel {total}`: both front ends rejected: {}",
-                show(&at)
-            )));
-        }
-        Err(message) => return Ok(Some(message)),
+    let fuel = |value: u64, expect: &'static str| Run {
+        flag: "--fuel",
+        value,
+        expect,
+    };
+    if let Some(failure) = check(fuel(total, "success"), &|out| out.code == 0)? {
+        return Ok(Some(failure));
     }
     let lower = [total.checked_sub(1), fuel_below(total, *fuel_pick)];
-    for fuel in lower.into_iter().flatten() {
-        match run("--fuel", fuel)? {
-            Ok(rejected) if s015(&rejected) => {}
-            Ok(other) => {
-                return Ok(Some(format!(
-                    "with `--fuel {fuel}`: expected S015 (cost is {total}), both gave {}",
-                    show(&other)
-                )));
-            }
-            Err(message) => return Ok(Some(message)),
+    for value in lower.into_iter().flatten() {
+        if let Some(failure) = check(fuel(value, "S015"), &s015)? {
+            return Ok(Some(failure));
         }
     }
-    let depth = depth_of(*depth_pick);
-    match run("--depth", depth)? {
-        Ok(out) if out.code == 0 || s015(&out) => Ok(None),
-        Ok(other) => Ok(Some(format!(
-            "with `--depth {depth}`: expected success or S015, both gave {}",
-            show(&other)
-        ))),
-        Err(message) => Ok(Some(message)),
-    }
+    let depth = Run {
+        flag: "--depth",
+        value: depth_of(*depth_pick),
+        expect: "success or S015",
+    };
+    check(depth, &|out| out.code == 0 || s015(out))
 }
 
-/// Prints the failure of seed `seed`: the message, the program as a
-/// `tests/source/budget` file, and the repeat command. The fuel is the
-/// total of `silicon-check`, the reference.
-pub(super) fn report(tools: &Tools, dir: &Path, seed: u64, case: &Case, message: &str) {
-    println!("FAIL seed {seed} (budget): {message}");
+/// The failing run of `failure` that no budget file holds: a run below
+/// `total - 1`, or a `--depth` run. A budget file `// FUEL total` checks
+/// the runs at the total and one below it.
+fn unfiled(failure: &Failure) -> Option<&Run> {
+    let run = failure.run.as_ref()?;
+    let filed = run.flag == "--fuel" && failure.total.is_some_and(|t| run.value + 1 >= t);
+    (!filed).then_some(run)
+}
+
+/// Prints the failure of seed `seed`: the message, a reproducer, and the
+/// repeat command. The reproducer is a `tests/source/budget` file if one
+/// holds the failing run; its fuel is the agreed total, else the total of
+/// `silicon-check`, the reference. Else it is the failing commands and
+/// their outputs, for a test of `crates/driver/tests/cli.rs`.
+pub(super) fn report(tools: &Tools, dir: &Path, seed: u64, case: &Case, failure: &Failure) {
+    println!("FAIL seed {seed} (budget): {failure}");
     // A failure has a program: a builder fault is an error, not a failure.
     let (Ok(program), _, _) = case else {
         return;
     };
     let top = program.top();
     let text = program.text();
-    let total = |binary: &Path| -> Option<u64> {
-        let file = write(dir, "report.si", &text).ok()?;
-        let out = testkit::spawn::spawn(
-            std::process::Command::new(binary)
-                .arg("cost")
-                .arg(&file)
-                .args(["--top", &top]),
-            "",
-        )
-        .ok()?;
-        total_of(&out.stdout)
+    let file = write(dir, "report.si", &text);
+    let run_on = |binary: &Path, command: &str, flags: &[&str]| {
+        let file = file.as_ref().map_err(|e| format!("{e:#}"))?;
+        let mut front_end = Command::new(binary);
+        front_end
+            .arg(command)
+            .arg(file)
+            .args(["--top", &top])
+            .args(flags);
+        testkit::spawn::spawn(&mut front_end, "")
+            .map_err(|e| format!("cannot run {}: {e}", binary.display()))
     };
-    let fuel = total(&tools.lean).or_else(|| total(&tools.silicon));
-    print!("{}", budget_file(&text, &top, fuel));
+    if let Some(run) = unfiled(failure) {
+        let value = run.value.to_string();
+        let shown = |binary: &Path| match run_on(binary, "elab", &[run.flag, &value]) {
+            Ok(out) => format!(
+                "exit {:?}\n{}{}",
+                out.status.code(),
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+            Err(e) => e,
+        };
+        let outputs = (shown(&tools.silicon), shown(&tools.lean));
+        print!("{}", commands(&text, &top, run, &outputs));
+    } else {
+        let total = |binary: &Path| total_of(&run_on(binary, "cost", &[]).ok()?.stdout);
+        let fuel = failure
+            .total
+            .or_else(|| total(&tools.lean))
+            .or_else(|| total(&tools.silicon));
+        print!("{}", budget_file(&text, &top, fuel));
+    }
     println!("Run `{}` to repeat it.", repeat(Mode::Budget, seed));
+}
+
+/// The reproducer of the run `run` that no budget file holds: the program
+/// `text`, the two failing commands, and their `outputs`, Rust then Lean.
+fn commands(text: &str, top: &str, run: &Run, outputs: &(String, String)) -> String {
+    let args = format!("budget.si --top '{top}' {} {}", run.flag, run.value);
+    format!(
+        "No budget file holds the run with `{flag} {value}`; both front ends must give {expect}. \
+         Add a test to crates/driver/tests/cli.rs that runs these commands through `agree`:\n\
+         silicon elab {args}\nsilicon-check elab {args}\n\
+         Rust output: {rust}\nLean output: {lean}\nbudget.si:\n{text}",
+        flag = run.flag,
+        value = run.value,
+        expect = run.expect,
+        rust = outputs.0.trim_end(),
+        lean = outputs.1.trim_end(),
+    )
 }
 
 /// The text of a `tests/source/budget` file for the program `text`.
@@ -183,6 +264,72 @@ mod tests {
         assert!(s015(&rejected(1, "error[S015]: 3:5:")));
         assert!(!s015(&rejected(1, "error[S013]: 3:5:")));
         assert!(!s015(&rejected(0, "error[S015]: 3:5:")));
+    }
+
+    fn failure_at(flag: &'static str, value: u64) -> Failure {
+        Failure {
+            message: format!("with `{flag} {value}`: x"),
+            total: Some(928),
+            run: Some(Run {
+                flag,
+                value,
+                expect: "S015",
+            }),
+        }
+    }
+
+    /// The reproducer that `report` prints for `failure`, without the
+    /// tools: the commands, or the budget file at the agreed total.
+    fn reproducer_of(failure: &Failure) -> String {
+        let text = "module M0() domains() {\n}\n";
+        let outputs = (
+            "exit Some(0)\n(design)".to_owned(),
+            "exit Some(1)\nerror[S015]: 1:1: x".to_owned(),
+        );
+        match unfiled(failure) {
+            Some(run) => commands(text, "M0()", run, &outputs),
+            None => budget_file(text, "M0()", failure.total),
+        }
+    }
+
+    #[test]
+    fn a_lower_fuel_failure_prints_its_commands() {
+        let got = reproducer_of(&failure_at("--fuel", 37));
+        assert!(
+            got.contains("silicon elab budget.si --top 'M0()' --fuel 37\n"),
+            "{got}"
+        );
+        assert!(
+            got.contains("silicon-check elab budget.si --top 'M0()' --fuel 37\n"),
+            "{got}"
+        );
+        assert!(got.contains("must give S015"), "{got}");
+        assert!(got.contains("error[S015]: 1:1: x"), "{got}");
+        assert!(!got.contains("// FUEL"), "{got}");
+    }
+
+    #[test]
+    fn a_depth_failure_prints_its_commands() {
+        let got = reproducer_of(&failure_at("--depth", 3));
+        assert!(
+            got.contains("elab budget.si --top 'M0()' --depth 3\n"),
+            "{got}"
+        );
+        assert!(!got.contains("// FUEL"), "{got}");
+    }
+
+    #[test]
+    fn a_failure_at_the_cost_or_one_below_is_a_budget_file() {
+        for value in [927, 928] {
+            let got = reproducer_of(&failure_at("--fuel", value));
+            assert!(got.starts_with("// TOP M0()\n// FUEL 928\n"), "{got}");
+        }
+        let cost = Failure {
+            message: "cost: x".to_owned(),
+            total: None,
+            run: None,
+        };
+        assert_eq!(unfiled(&cost), None);
     }
 
     #[test]
