@@ -206,26 +206,21 @@ The mutation mode changes one site of a typed program and sends the mutant to bo
 The budget mode checks the fuel and the depth on a typed program. `silicon cost` and `silicon-check cost` must agree, and the first line gives `total N`. Then `elab` runs in both front ends with these limits:
 
 - `--fuel N` must succeed.
-
 - `--fuel N - 1` must give `S015`.
-
 - A random fuel from 1 to `N - 1` must give `S015`. It tests the order of the charges, which `cost` does not show.
-
 - A random `--depth` from 1 to 8 must give the same outcome in both front ends. Success and `S015` are the only allowed outcomes.
 
+These rules apply to all modes:
+
 - The defaults are the seed 1 and 100 cases for each mode. Use `--seed` and `--count` to change them. The count applies to each mode.
-
 - `just ci` runs `diff-si` with the defaults.
-
 - A failure prints its seed and its mode. `cargo xtask diff-si --mode MODE --seed N --count 1` repeats it. `MODE` is `lift`, `typed`, `mutation`, or `budget`.
-
 - A failure shrinks first. The shrink makes at most 256 test runs. A tooling error, for example a missing tool, stops the shrink and the run.
-
 - A fault of the builder and a static name in a twin are tooling errors with the seed, not failures. The checks of the builder exclude both, so each is a defect of the generator.
-
-- The failure prints a reproducer. The reproducer is a file for the `run` suite of `tests/source`, with a `// TOP` line and `// STEP` lines. In the lift mode, the outputs of the steps come from the core interpreter, and the failure also prints the core design. In the typed mode, the outputs come from `silicon-check run`, and the failure also prints the twin and the probe. The mutation mode prints a file for the `check` suite. It has the `// TOP` line, a `// mutation:` comment, the `// expected-error` directive from the Lean report, and the mutant. The budget mode prints a file for the `budget` suite, with the `// TOP` line, the `// FUEL` line, and the program. The message names the flag and the value of the failing run. If `silicon-check run` gives no outputs, the `in=` lines stay as `// in=` comments.
-
-- A disagreement in the mutation or budget mode is a finding, not a skip. Add the reproducer to the suite and fix the front end. A failure of the typed mode is a defect of the generator or of a front end. If both front ends agree with each other and not with the generator, examine the failure. Do not fix the generator before you know the cause. The two front ends can share a misreading of the language (front-end spec, section 10.4). Lean is normative. A change of the language goes through the human gate.
+- A failure prints a reproducer. In the lift and typed modes, the reproducer is a file for the `run` suite of `tests/source`, with a `// TOP` line and `// STEP` lines. In the lift mode, the outputs of the steps come from the core interpreter, and the failure also prints the core design. In the typed mode, the outputs come from `silicon-check run`, and the failure also prints the twin and the probe. If `silicon-check run` gives no outputs, the `in=` lines stay as `// in=` comments.
+- In the mutation mode, the reproducer is a file for the `check` suite. It has the `// TOP` line, a `// mutation:` comment, the `// expected-error` directive from the Lean report, and the mutant. If `silicon-check` gives no report, a comment that tells why replaces the directive.
+- In the budget mode, the reproducer is a file for the `budget` suite if the failing run is at the fuel `N` or `N - 1`, or if `cost` fails. The file has the `// TOP` line, the `// FUEL` line, and the program. A budget file checks only these runs. For a failure at a random fuel or at a random depth, the budget mode prints no budget file. It prints the failing command of each front end, the two outputs, and the program. The message names the flag and the value of the failing run.
+- A disagreement in the mutation or budget mode is a finding, not a skip. Add the reproducer to the suite and fix the front end. A budget file goes to `tests/source/budget/`. The commands of a random fuel or depth become a test in `crates/driver/tests/cli.rs` that compares the front ends with `agree`. A failure of the typed mode is a defect of the generator or of a front end. If both front ends agree with each other and not with the generator, examine the failure. Do not fix the generator before you know the cause. The two front ends can share a misreading of the language (front-end spec, section 10.4). Lean is normative. A change of the language goes through the human gate.
 
 ## Later oracles
 
