@@ -20,3 +20,18 @@ pub use build::{lines, typed};
 pub use lift::{Unsupported, lift, vector_in, vector_out};
 pub use program::{Ports, Program, Scalar};
 pub use twin::{Twin, twin};
+
+use std::fmt::Display;
+
+/// The `in=` line of a source run: the domain reset `clock$0rst` first if
+/// `reset` has a value, then the `pairs` of input name and value, in the
+/// given order. No LF. Both generators write source vectors with it.
+fn in_line<N: Display, V: Display>(
+    reset: Option<bool>,
+    pairs: impl IntoIterator<Item = (N, V)>,
+) -> String {
+    let reset = reset.map(|r| format!("clock$0rst {r}"));
+    let pairs = pairs.into_iter().map(|(n, v)| format!("{n} {v}"));
+    let entries: Vec<String> = reset.into_iter().chain(pairs).collect();
+    format!("in=({})", entries.join(" "))
+}
