@@ -889,3 +889,172 @@ fn run_of_a_source_file_reads_source_vectors() -> Test {
     );
     Ok(())
 }
+
+const COMBINATIONAL_SI: &str =
+    "module Id() domains() {\n  input a: UInt[4];\n  output q: UInt[4];\n  q := a;\n}\n";
+
+/// A fresh folder for the artifacts of one build test, with `src` in it as `x.si`. Returns the
+/// folder and the path of the source.
+fn build_folder(name: &str, src: &str) -> std::io::Result<(PathBuf, PathBuf)> {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("build-{name}"));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join("x.si");
+    std::fs::write(&path, src)?;
+    Ok((dir, path))
+}
+
+fn build(path: &Path, top: &str, args: &[&str], checker: Option<&str>) -> std::io::Result<Output> {
+    let mut command = silicon_command();
+    command
+        .arg("build")
+        .arg(path)
+        .args(args)
+        .arg("--top")
+        .arg(top);
+    if let Some(checker) = checker {
+        command.env(CHECK_VARIABLE, checker);
+    }
+    spawn(&mut command, "")
+}
+
+#[test]
+fn build_validates_and_writes_the_artifacts() -> Test {
+    let (dir, path) = build_folder("validated", COUNTER_SI)?;
+    let out = build(&path, "Counter(4)", &[], None)?;
+    assert_eq!(
+        (text(&out).as_str(), out.status.code()),
+        ("validated\n", Some(0))
+    );
+    assert_eq!(std::fs::read_to_string(dir.join("x.sil"))?, COUNTER_SIL);
+    assert!(!std::fs::read_to_string(dir.join("x.sv"))?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn build_without_validation_says_so() -> Test {
+    let (dir, path) = build_folder("skipped", COUNTER_SI)?;
+    let out = build(
+        &path,
+        "Counter(4)",
+        &["--no-validate"],
+        Some("/no/such/silicon-check"),
+    )?;
+    assert_eq!(
+        (text(&out).as_str(), out.status.code()),
+        ("not validated\n", Some(0))
+    );
+    assert!(dir.join("x.sil").is_file() && dir.join("x.sv").is_file());
+    Ok(())
+}
+
+#[test]
+fn build_out_names_the_artifacts() -> Test {
+    let (dir, path) = build_folder("out", COUNTER_SI)?;
+    std::fs::create_dir(dir.join("sub"))?;
+    let prefix = dir.join("sub/name");
+    let out = build(
+        &path,
+        "Counter(4)",
+        &["--out", &prefix.to_string_lossy()],
+        None,
+    )?;
+    assert_eq!(out.status.code(), Some(0));
+    assert!(dir.join("sub/name.sil").is_file() && dir.join("sub/name.sv").is_file());
+    assert!(!dir.join("x.sil").exists() && !dir.join("x.sv").exists());
+    Ok(())
+}
+
+#[test]
+fn build_of_a_bad_design_writes_nothing() -> Test {
+    let (dir, path) = build_folder(
+        "bad",
+        "module M() domains() {\n  output q: Bool;\n  q := nope;\n}\n",
+    )?;
+    let out = build(&path, "M()", &[], None)?;
+    assert!(text(&out).starts_with("error[S003]"), "{}", text(&out));
+    assert_eq!(out.status.code(), Some(1));
+    assert!(!dir.join("x.sil").exists() && !dir.join("x.sv").exists());
+    Ok(())
+}
+
+#[test]
+fn build_into_a_missing_folder_is_a_usage_error() -> Test {
+    let (dir, path) = build_folder("missing", COUNTER_SI)?;
+    let prefix = dir.join("missing/x");
+    let out = build(
+        &path,
+        "Counter(4)",
+        &["--out", &prefix.to_string_lossy()],
+        None,
+    )?;
+    assert_eq!((text(&out).as_str(), out.status.code()), ("", Some(2)));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("missing/x.sil"));
+    Ok(())
+}
+
+/// A folder in the place of `x.sil` makes the write fail, even for a user who may write
+/// anywhere.
+#[test]
+fn build_with_an_unwritable_sil_is_a_usage_error_without_sv() -> Test {
+    let (dir, path) = build_folder("unwritable", COUNTER_SI)?;
+    std::fs::create_dir(dir.join("x.sil"))?;
+    let out = build(&path, "Counter(4)", &[], None)?;
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("x.sil"));
+    assert!(!dir.join("x.sv").exists());
+    Ok(())
+}
+
+#[test]
+fn build_with_a_missing_checker_is_a_usage_error() -> Test {
+    let (dir, path) = build_folder("no-checker", COUNTER_SI)?;
+    let out = build(&path, "Counter(4)", &[], Some("/nonexistent"))?;
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr.contains("--no-validate"), "{stderr}");
+    assert!(!dir.join("x.sv").exists() && !dir.join("x.sil").exists());
+    Ok(())
+}
+
+/// `false` exits with 1 and prints no line, so it is no verdict on the design.
+#[test]
+fn build_with_a_checker_that_gives_no_verdict_is_a_usage_error() -> Test {
+    let (dir, path) = build_folder("no-verdict", COUNTER_SI)?;
+    let out = build(&path, "Counter(4)", &[], Some("false"))?;
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--no-validate"));
+    assert!(!dir.join("x.sv").exists() && !dir.join("x.sil").exists());
+    Ok(())
+}
+
+#[test]
+fn build_of_a_combinational_top_validates() -> Test {
+    let (dir, path) = build_folder("combinational", COMBINATIONAL_SI)?;
+    let out = build(&path, "Id()", &[], None)?;
+    assert_eq!(
+        (text(&out).as_str(), out.status.code()),
+        ("validated\n", Some(0))
+    );
+    assert!(dir.join("x.sil").is_file() && dir.join("x.sv").is_file());
+    Ok(())
+}
+
+#[test]
+fn build_gives_the_budgets_to_the_checker() -> Test {
+    let (_, path) = build_folder("budget", COUNTER_SI)?;
+    let out = build(
+        &path,
+        "Counter(4)",
+        &["--fuel", "161", "--depth", "50", "--syntax-depth", "100"],
+        None,
+    )?;
+    assert_eq!(
+        (text(&out).as_str(), out.status.code()),
+        ("validated\n", Some(0))
+    );
+    let out = build(&path, "Counter(4)", &["--fuel", "160"], None)?;
+    assert!(text(&out).starts_with("error[S015]"), "{}", text(&out));
+    assert_eq!(out.status.code(), Some(1));
+    Ok(())
+}

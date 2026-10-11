@@ -17,7 +17,7 @@ use core_ir::vectors::{parse_input, print_output};
 use core_ir::{ast, typed};
 use parse::ast::Pos;
 
-use crate::validate::{Verdict, validate};
+use crate::validate::{Elaborated, Verdict, validate, validate_elaboration};
 
 #[derive(Parser)]
 #[command(name = "silicon", about = "The Silicon core IR tool")]
@@ -87,6 +87,22 @@ pub enum Command {
         /// The top selection: a module name, then literal arguments in parentheses.
         #[arg(long, allow_hyphen_values = true)]
         top: String,
+    },
+    /// Elaborate a Silicon source file and write `F.sil` and `F.sv` next to it, or at `--out`.
+    /// The Lean `silicon-check` validates the elaboration first. Print `validated` or
+    /// `not validated`, or the first error.
+    Build {
+        #[command(flatten)]
+        budget: Budgets,
+        #[command(flatten)]
+        validation: Validation,
+        file: PathBuf,
+        /// The top selection: a module name, then literal arguments in parentheses.
+        #[arg(long, allow_hyphen_values = true)]
+        top: String,
+        /// The path of both artifacts without the extension `.sil` or `.sv`.
+        #[arg(long)]
+        out: Option<PathBuf>,
     },
     /// Print the fuel that the elaboration of a Silicon source file and its lowering use, then
     /// the units of each instantiation, or the first error.
@@ -264,6 +280,19 @@ fn dispatch(command: &Command, input: impl BufRead, out: &mut impl Write) -> Res
                 out.write_all(lower(&design).as_bytes())?;
                 Ok(Exit::Success)
             })
+        }
+        Command::Build {
+            budget,
+            validation,
+            file,
+            top,
+            out: prefix,
+        } => {
+            let source = read_source(file)?;
+            let prefix = prefix.clone().unwrap_or_else(|| file.with_extension(""));
+            let (text, exit) = build_source(&source, top, budget, validation, &prefix)?;
+            out.write_all(text.as_bytes())?;
+            Ok(exit)
         }
         Command::Eval { budget, file, expr } => {
             let (text, exit) = eval_source(&read_source(file)?, expr, budget)?;
@@ -468,6 +497,66 @@ fn validate_source(source: &str, top: &str, sil: &str, budget: &Budgets) -> Resu
     } else {
         (mismatch(&reference, &got) + "\n", Exit::DesignError)
     })
+}
+
+/// The output and the exit code of `build`: the core IR in `PREFIX.sil` and the Verilog in
+/// `PREFIX.sv`. Lean validates the elaboration before the Verilog is written. A Lean rejection
+/// of a source that Rust accepted is a defect of the Rust front end, and it leaves no artifact.
+fn build_source(
+    source: &str,
+    top: &str,
+    budget: &Budgets,
+    validation: &Validation,
+    prefix: &Path,
+) -> Result<Output, Usage> {
+    let c = match checked(source, top, budget)? {
+        Ok(c) => c,
+        Err(line) => return Ok(line),
+    };
+    // The tool runs before any file exists, so a missing tool leaves nothing behind.
+    let sv = verilog(&lower(&c.typed))?;
+    let (sil_path, sv_path) = (artifact(prefix, "sil"), artifact(prefix, "sv"));
+    write_artifact(&sil_path, &canonical(&c.lowered.design))?;
+    if validation.no_validate {
+        write_artifact(&sv_path, &sv)?;
+        return Ok(("not validated\n".to_owned(), Exit::Success));
+    }
+    let flags = [
+        "--syntax-depth".to_owned(),
+        budget.syntax_depth.to_string(),
+        "--fuel".to_owned(),
+        budget.fuel.to_string(),
+        "--depth".to_owned(),
+        budget.depth.to_string(),
+    ];
+    match validate_elaboration(source.as_bytes(), top, &sil_path, &flags) {
+        Ok(Elaborated::Accepted) => {
+            write_artifact(&sv_path, &sv)?;
+            Ok(("validated\n".to_owned(), Exit::Success))
+        }
+        Ok(Elaborated::Defect(report)) => {
+            // A failed write to stderr has no better channel to report to.
+            let _ = io::stderr().write_all(&report);
+            let _ = fs::remove_file(&sil_path);
+            Ok((String::new(), Exit::Defect))
+        }
+        Err(message) => {
+            let _ = fs::remove_file(&sil_path);
+            Err(Usage(message))
+        }
+    }
+}
+
+/// The path of an artifact: the prefix, then `.` and the extension.
+fn artifact(prefix: &Path, extension: &str) -> PathBuf {
+    let mut path = prefix.as_os_str().to_owned();
+    path.push(".");
+    path.push(extension);
+    PathBuf::from(path)
+}
+
+fn write_artifact(path: &Path, text: &str) -> Result<(), Usage> {
+    fs::write(path, text).map_err(|e| Usage(format!("{}: {e}", path.display())))
 }
 
 /// The first line that differs between the reference text and the output text, numbered from

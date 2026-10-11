@@ -5,6 +5,7 @@
 
 use std::ffi::{OsStr, OsString};
 use std::io::{self, Write};
+use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
 /// The variable that names the checker. Without it, the search path finds
@@ -57,6 +58,52 @@ fn run_checker_with(checker: &OsStr, args: &[&OsStr], stdin: &[u8]) -> Result<Ou
         .map_err(|e| format!("the checker `{shown}` did not finish: {e}"))
 }
 
+/// What the Lean checker said about the elaboration of a source file.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Elaborated {
+    Accepted,
+    /// The stdout of the checker. Rust accepted the source, so the Lean rejection or the
+    /// mismatch with the core IR of Rust is a defect of the Rust front end.
+    Defect(Vec<u8>),
+}
+
+/// Runs `silicon-check validate` on `source` and the core IR file `sil`. `budget` holds the
+/// budget flags, which the checker reads before the file. The error is a usage error message.
+pub fn validate_elaboration(
+    source: &[u8],
+    top: &str,
+    sil: &Path,
+    budget: &[String],
+) -> Result<Elaborated, String> {
+    let mut args: Vec<&OsStr> = vec![OsStr::new("validate")];
+    args.extend(budget.iter().map(OsStr::new));
+    args.extend([
+        // `silicon-check` reads a file, and this path is the pipe.
+        OsStr::new("/dev/stdin"),
+        OsStr::new("--top"),
+        OsStr::new(top),
+        sil.as_os_str(),
+    ]);
+    let checker = checker();
+    let output = run_checker_with(&checker, &args, source)?;
+    elaborated(&output).map_err(|()| failed(&checker.to_string_lossy(), &output))
+}
+
+/// Only `ok`, an error line, or a mismatch line is a verdict (spec section 6.4.2). Any other
+/// outcome is a failure of the checker.
+fn elaborated(output: &Output) -> Result<Elaborated, ()> {
+    match output.status.code() {
+        Some(0) => Ok(Elaborated::Accepted),
+        Some(1)
+            if output.stdout.starts_with(b"error[")
+                || output.stdout.starts_with(b"mismatch at line") =>
+        {
+            Ok(Elaborated::Defect(output.stdout.clone()))
+        }
+        _ => Err(()),
+    }
+}
+
 fn validate_with(checker: &OsStr, source: &[u8]) -> Result<Verdict, String> {
     // `silicon-check` reads a file, and this path is the pipe.
     let args = [OsStr::new("check"), OsStr::new("/dev/stdin")];
@@ -107,6 +154,43 @@ mod tests {
             panic!("the real checker accepted a bad design");
         };
         assert!(line.starts_with(b"error[E004]: "), "{line:?}");
+    }
+
+    fn exited(code: i32, stdout: &[u8]) -> Output {
+        use std::os::unix::process::ExitStatusExt;
+        Output {
+            status: std::process::ExitStatus::from_raw(code << 8),
+            stdout: stdout.to_vec(),
+            stderr: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_mismatch_line_is_a_defect() {
+        let line = b"mismatch at line 3: expected `a`, found `b`\n";
+        assert_eq!(
+            elaborated(&exited(1, line)),
+            Ok(Elaborated::Defect(line.to_vec()))
+        );
+    }
+
+    #[test]
+    fn a_lean_error_line_is_a_defect() {
+        let line = b"error[S003]: 1:1: unknown name\n";
+        assert_eq!(
+            elaborated(&exited(1, line)),
+            Ok(Elaborated::Defect(line.to_vec()))
+        );
+    }
+
+    #[test]
+    fn exit_1_with_another_line_is_a_checker_failure() {
+        assert_eq!(elaborated(&exited(1, b"other\n")), Err(()));
+    }
+
+    #[test]
+    fn exit_0_is_accepted() {
+        assert_eq!(elaborated(&exited(0, b"ok\n")), Ok(Elaborated::Accepted));
     }
 
     #[test]
