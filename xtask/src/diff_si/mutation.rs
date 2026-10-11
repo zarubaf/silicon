@@ -123,20 +123,19 @@ fn check_file(text: &str, top: &str, what: &str, lean: Option<&Report>) -> Strin
 /// The success line for `count` mutants of the seeds `seed` to `last`.
 pub(super) fn summary(count: u64, seed: u64, last: u64, tally: &Tally) -> String {
     let accepted = tally.get(ACCEPTED).copied().unwrap_or(0);
-    let rejected: Vec<String> = tally
+    let rejected: Vec<(&String, &u64)> = tally
         .iter()
         .filter(|(code, _)| code.as_str() != ACCEPTED)
-        .map(|(code, n)| format!("{code} {n}"))
         .collect();
-    let total: u64 = tally
-        .iter()
-        .filter(|(code, _)| code.as_str() != ACCEPTED)
-        .map(|(_, n)| n)
-        .sum();
+    let total: u64 = rejected.iter().map(|(_, n)| **n).sum();
     let codes = if rejected.is_empty() {
         String::new()
     } else {
-        format!(" ({})", rejected.join(", "))
+        let codes: Vec<String> = rejected
+            .iter()
+            .map(|(code, n)| format!("{code} {n}"))
+            .collect();
+        format!(" ({})", codes.join(", "))
     };
     format!(
         "diff-si: {count} mutants agree (seeds {seed} to {last}): {total} rejected{codes}, {accepted} accepted"
