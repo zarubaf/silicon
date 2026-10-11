@@ -14,7 +14,7 @@ This crate owns the kinds of tokens and nodes, the `rowan` language of Silicon, 
 - The lexer does not panic on any input. An invalid character, an unterminated string, or an unterminated comment gives an error token. Check: `cargo nextest run -p syntax`.
 - Operators use longest match, so `>>` is one token. Check: `cargo nextest run -p syntax`.
 - Each design of `Config::source()` lifts to a program that lexes with no error, or `lift` returns `Unsupported`. Check: `cargo nextest run -p syntax --all-features`.
-- Each program of `typed()` lexes with no error, and its forms cover slice 1. Check: `cargo nextest run -p syntax --all-features`.
+- The builder of `typed()` gives no fault on the tested tapes. Each program lexes with no error, and its forms cover slice 1. Check: `cargo nextest run -p syntax --all-features`.
 - Each twin of a `typed()` program lexes with no error, and it has no comptime construct and no static name. Check: `cargo nextest run -p syntax --all-features`.
 - Non-test code has no `unwrap`, no `expect`, and no panic on user input. Check: `just clippy`.
 
