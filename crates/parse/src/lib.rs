@@ -183,9 +183,27 @@ impl NestedStack {
     }
 
     /// Whether the nesting level `level` starts a new thread.
-    #[must_use]
-    pub fn starts_thread(&self, level: u64) -> bool {
+    fn starts_thread(&self, level: u64) -> bool {
         level.is_multiple_of(self.levels_per_thread)
+    }
+
+    /// Runs `act` on `state` at the nesting level `level`: on a new thread with the stack of a
+    /// group if the level starts a group, else on the current thread. The caller passes its
+    /// state, so its function captures no mutable value and the thread stays out of its code.
+    ///
+    /// # Errors
+    /// Returns an error if the machine cannot give the stack.
+    pub fn nest<S: Send, T: Send>(
+        &self,
+        level: u64,
+        state: &mut S,
+        act: impl FnOnce(&mut S) -> T + Send,
+    ) -> Result<T, StackError> {
+        if self.starts_thread(level) {
+            self.run(|| act(state))
+        } else {
+            Ok(act(state))
+        }
     }
 
     /// Runs a function on a new thread with the stack of a group.
