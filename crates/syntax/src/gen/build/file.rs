@@ -7,7 +7,7 @@
 //! of arguments before a call site uses it.
 
 use super::stat::{self, Kind, Reach, bin, int};
-use super::{Builder, CONSTS, FNS, SAMPLE_INTS};
+use super::{Builder, CONSTS, COUNT, FNS, SAMPLE_INTS};
 use crate::r#gen::eval::{Env, Fault, Scope, Value, eval};
 use crate::r#gen::program::{ComptimeFn, Item, SBin, SExpr, StaticTy};
 use num_bigint::BigInt;
@@ -163,7 +163,7 @@ impl Builder {
         let mut items = self.file_items();
         items.push(Item::ComptimeFn(f.clone()));
         let scope = Scope::new(&items).ok()?;
-        let mut rows: Vec<Vec<SExpr>> = (0..=6).map(|n| vec![int(n)]).collect();
+        let mut rows: Vec<Vec<SExpr>> = (0..=i64::from(COUNT)).map(|n| vec![int(n)]).collect();
         for (_, t) in f.params.iter().skip(1) {
             let values: Vec<SExpr> = match t {
                 StaticTy::Bool => vec![SExpr::Bool(false), SExpr::Bool(true)],

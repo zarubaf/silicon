@@ -6,16 +6,13 @@
 //! evaluator, or misses the predicate of its position gives way to a
 //! fallback literal. So the predicate holds by evaluation, never by luck.
 
-use super::Builder;
+use super::{Builder, COUNT};
 use crate::r#gen::eval::{Env, Value, eval};
 use crate::r#gen::program::{Radix, SBin, SExpr, Scalar, StaticTy, Un};
 use num_bigint::BigInt;
 
 /// The depth of a static candidate.
 pub(super) const DEPTH: u32 = 2;
-/// The largest first argument (the recursion count) of a `comptime fn`
-/// call: the sample check of each body covers `0..=COUNT`.
-const COUNT: i64 = 6;
 /// The largest static shift count of a hardware shift.
 const SHIFT: i64 = 70;
 
@@ -183,7 +180,7 @@ impl Builder {
         let first = if self.tape.below(4) == 3 {
             self.sexpr(Kind::Int, d, r)
         } else {
-            self.number(0, 6)
+            self.number(0, COUNT)
         };
         let rest: Vec<SExpr> = params
             .iter()
@@ -192,7 +189,7 @@ impl Builder {
             .collect();
         let counted = r
             .envs
-            .is_none_or(|envs| self.holds(&first, envs, |v| int_in(v, 0, COUNT)));
+            .is_none_or(|envs| self.holds(&first, envs, |v| int_in(v, 0, i64::from(COUNT))));
         let call = SExpr::Call(name.clone(), std::iter::once(first).chain(rest).collect());
         let Some(envs) = r.envs else {
             return call;

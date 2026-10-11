@@ -5,8 +5,8 @@
 use super::hw::{DEPTH, Want};
 use super::stat::{Kind, Reach, value_expr};
 use super::{
-    Builder, CONTEXTS, Ctx, ENVS, HELPERS, Helper, Hw, INPUTS, INSTANCES, MODULE_STMTS, MODULES,
-    Module, NESTED_STMTS, NESTING, Names, OUTPUTS, PARAMS, SAMPLE_INTS, Sig,
+    Builder, CONTEXTS, COUNT, Ctx, ENVS, HELPERS, Helper, Hw, INPUTS, INSTANCES, MODULE_STMTS,
+    MODULES, Module, NESTED_STMTS, NESTING, Names, OUTPUTS, PARAMS, SAMPLE_INTS, Sig,
 };
 use crate::r#gen::eval::{Env, Fault, Value, concrete, eval};
 use crate::r#gen::program::{HExpr, Place, SExpr, Scalar, StaticTy, Stmt, Ty};
@@ -659,7 +659,7 @@ impl Builder {
             for (k, (_, t)) in params.iter().enumerate() {
                 args.push(match t {
                     StaticTy::Bool => SExpr::Bool(self.tape.flag()),
-                    _ if k == 0 => self.number(0, 6),
+                    _ if k == 0 => self.number(0, COUNT),
                     _ => super::stat::int(self.pick(&SAMPLE_INTS)),
                 });
             }
