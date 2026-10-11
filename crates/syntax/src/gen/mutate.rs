@@ -134,7 +134,10 @@ fn apply(
 }
 
 /// Whether a name reference in `items` is `name`: a value, an assignment
-/// target, the instance of a field, an instance module, or a callee.
+/// target, the instance of a field, an instance module, or a callee. The
+/// guard `x == 0` of a `comptime fn` is no walked expression, so neither
+/// this check nor `Rename` sees it. That costs no prediction: the guard
+/// names the first parameter, and no mutation deletes a parameter.
 fn mentions(name: &str, items: &[Item]) -> bool {
     let mut w = Walk::new(Kind::Rename, "", None);
     w.items(&mut items.to_vec());
