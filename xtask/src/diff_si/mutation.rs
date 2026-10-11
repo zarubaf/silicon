@@ -13,7 +13,7 @@ use anyhow::{Context, Result, anyhow};
 use proptest::prelude::any;
 use proptest::strategy::{Just, Strategy};
 use syntax::r#gen::{BuildFault, Program, mutate, typed};
-use testkit::{Report, parse_report};
+use testkit::{Outcome, Report, parse_report};
 
 use super::{Mode, Tools, outcome, repeat, write};
 
@@ -57,23 +57,32 @@ pub(super) fn verdict(
         Ok(agreed) => agreed,
         Err(message) => return Ok(Some(message)),
     };
-    let code = if agreed.code == 0 {
-        ACCEPTED.to_owned()
-    } else {
-        parse_report(&String::from_utf8_lossy(&agreed.report))
-            .ok_or_else(|| anyhow!("the agreed rejection has no report"))?
-            .code
-    };
-    if let Some(expect) = mutant.expect
-        && expect != code
-    {
-        return Ok(Some(format!(
-            "gen: predicted {expect} for `{}`, both front ends gave {code}",
-            mutant.what
-        )));
+    let code = key(&agreed)?;
+    if let Some(message) = check_prediction(mutant.expect, &code, &mutant.what) {
+        return Ok(Some(message));
     }
     *tally.entry(code).or_default() += 1;
     Ok(None)
+}
+
+/// The tally key of the outcome `agreed`: its code, or `accepted`. A
+/// rejection without a report is an `Err`, since `agree` checks it.
+fn key(agreed: &Outcome) -> Result<String> {
+    if agreed.code == 0 {
+        return Ok(ACCEPTED.to_owned());
+    }
+    Ok(parse_report(&String::from_utf8_lossy(&agreed.report))
+        .ok_or_else(|| anyhow!("the agreed rejection has no report"))?
+        .code)
+}
+
+/// `None` if the prediction `expect` of the generator for the mutation
+/// `what` holds for the agreed `code`, else the failure of `gen`.
+fn check_prediction(expect: Option<&str>, code: &str, what: &str) -> Option<String> {
+    let expect = expect.filter(|&expect| expect != code)?;
+    Some(format!(
+        "gen: predicted {expect} for `{what}`, both front ends gave {code}"
+    ))
 }
 
 /// Prints the failure of seed `seed`: the message, the shrunk mutant as a
