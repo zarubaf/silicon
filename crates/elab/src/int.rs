@@ -187,7 +187,14 @@ pub fn nat(n: u64) -> Nat {
     BigUint::from(n)
 }
 
-/// The value of a core constant, a natural number.
+/// The value of a core constant of a finite value.
+#[must_use]
+pub fn constant(x: &Bits) -> Nat {
+    x.to_biguint()
+}
+
+/// The value of a core constant, a natural number. It is an alias and not a wrapper, because
+/// `Expr::Const` of `core-ir` takes a `BigUint`.
 pub type Nat = BigUint;
 
 /// `min(x, limit)` for the unsigned value of a finite value, read without a copy.
