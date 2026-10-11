@@ -2,9 +2,11 @@
 //! The source differential tests. This driver is independent of the mode:
 //! it builds the tools, runs the seed loop, and shrinks the first failure.
 //! Each mode supplies a case strategy, a verdict, and a report. The lift
-//! mode lifts random core designs to source.
+//! mode lifts random core designs to source. The typed mode builds random
+//! typed programs and their twins.
 
 mod lift;
+mod typed;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -19,17 +21,57 @@ use crate::{lean_check, silicon};
 /// The most test runs of one shrink. Each run starts four processes.
 const SHRINK_RUNS: u32 = 256;
 
+/// The cases that a run draws.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum Mode {
+    /// Random core designs lifted to source programs.
+    Lift,
+    /// Random typed source programs and their twins.
+    Typed,
+    /// The lift mode, then the typed mode.
+    All,
+}
+
+impl Mode {
+    /// The modes that a run of `self` executes, in order.
+    fn modes(self) -> &'static [Mode] {
+        match self {
+            Mode::Lift => &[Mode::Lift],
+            Mode::Typed => &[Mode::Typed],
+            Mode::All => &[Mode::Lift, Mode::Typed],
+        }
+    }
+
+    /// The name of the mode on the command line.
+    fn name(self) -> &'static str {
+        match self {
+            Mode::Lift => "lift",
+            Mode::Typed => "typed",
+            Mode::All => "all",
+        }
+    }
+}
+
+/// The command that repeats the case of `seed` in `mode`.
+fn repeat(mode: Mode, seed: u64) -> String {
+    format!(
+        "cargo xtask diff-si --mode {} --seed {seed} --count 1",
+        mode.name()
+    )
+}
+
 /// The tools under test.
 pub(super) struct Tools {
     lean: PathBuf,
     silicon: PathBuf,
 }
 
-/// Builds `silicon` and `silicon-check`, then lifts `count` random core
-/// designs, from the seeds `seed`, `seed + 1`, and so on. Returns whether
-/// all cases agree. The run stops at the first failure, which it shrinks. A
-/// tooling error, for example a missing tool, is an error, not a failure.
-pub fn run(repo: &Repo, seed: u64, count: u64) -> Result<bool> {
+/// Builds `silicon` and `silicon-check`, then runs the cases of `mode`,
+/// `count` of each, from the seeds `seed`, `seed + 1`, and so on. Returns
+/// whether all cases agree. The run stops at the first failure, which it
+/// shrinks. A tooling error, for example a missing tool, is an error, not a
+/// failure.
+pub fn run(repo: &Repo, mode: Mode, seed: u64, count: u64) -> Result<bool> {
     let Some(silicon) = silicon::build(&repo.root)? else {
         return Ok(false);
     };
@@ -43,17 +85,35 @@ pub fn run(repo: &Repo, seed: u64, count: u64) -> Result<bool> {
             .checked_sub(1)
             .context("the count must be at least 1")?,
     );
-    if search(
-        lift::cases(),
-        seed,
-        count,
-        |case| lift::verdict(&tools, dir.path(), case),
-        lift::report,
-    )? {
-        println!("diff-si: {count} lifted designs agree (seeds {seed} to {last})");
-        return Ok(true);
+    for &mode in mode.modes() {
+        let (agree, what) = match mode {
+            Mode::Typed => (
+                search(
+                    typed::cases(),
+                    seed,
+                    count,
+                    |case| typed::verdict(&tools, dir.path(), case),
+                    |n, case, message| typed::report(&tools, dir.path(), n, case, message),
+                )?,
+                "typed programs",
+            ),
+            _ => (
+                search(
+                    lift::cases(),
+                    seed,
+                    count,
+                    |case| lift::verdict(&tools, dir.path(), case),
+                    lift::report,
+                )?,
+                "lifted designs",
+            ),
+        };
+        if !agree {
+            return Ok(false);
+        }
+        println!("diff-si: {count} {what} agree (seeds {seed} to {last})");
     }
-    Ok(false)
+    Ok(true)
 }
 
 /// Draws a case from `strategy` for each of the seeds `seed`, `seed + 1`,
@@ -191,6 +251,21 @@ mod tests {
     use super::*;
     use proptest::collection::vec as pvec;
     use proptest::prelude::any;
+
+    #[test]
+    fn all_runs_lift_then_typed() {
+        assert_eq!(Mode::All.modes(), [Mode::Lift, Mode::Typed]);
+        assert_eq!(Mode::Typed.modes(), [Mode::Typed]);
+    }
+
+    #[test]
+    fn the_repeat_command_names_the_mode() {
+        assert_eq!(
+            repeat(Mode::Typed, 7),
+            "cargo xtask diff-si --mode typed --seed 7 --count 1"
+        );
+    }
+
     #[test]
     fn shrink_finds_the_smallest_failure() {
         let mut tree = (0..1000)
