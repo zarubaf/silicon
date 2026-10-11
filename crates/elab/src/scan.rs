@@ -18,11 +18,11 @@ use crate::names::Sym;
 use parse::NestedStack;
 use parse::ast::{Expr, Ident, Item, NodeId, Pos, Stmt, TypeExpr};
 use resolve::{DeclId, Kind, Resolved, ResolvedExpr, Target};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
-/// The value of each number literal, by its map and its position. The key is `true` for a
-/// literal of the top expression, which has its own positions.
-pub(crate) type Numbers = BTreeMap<(bool, Pos), Int>;
+/// The value of each number literal, by its parse and its node id. The key is `true` for a
+/// literal of the top expression, which is a different parse with its own ids.
+pub(crate) type Numbers = BTreeMap<(bool, NodeId), Int>;
 
 /// The symbols of a file. Each distinct source name gets one number, so a lookup or a key
 /// compares numbers and not text.
@@ -32,15 +32,16 @@ pub(crate) struct Syms {
     pub texts: Vec<String>,
     /// The symbol of each declaration of a binder of the AST.
     pub decls: BTreeMap<DeclId, Sym>,
-    /// The symbol of each field name, by its position.
-    pub fields: BTreeMap<Pos, Sym>,
+    /// The symbol of each field name, by its node id.
+    pub fields: BTreeMap<NodeId, Sym>,
     /// The symbol of the name of each item.
     pub items: Vec<Sym>,
     /// The symbol of `clock`, the default domain.
     pub clock: Sym,
     /// The number of each call node in the body of each item: its index among the call nodes
-    /// of the body, in position order. Section 7.3 names a call frame with it.
-    pub calls: Vec<BTreeMap<Pos, u64>>,
+    /// of the body, in position order, by its node id. Calls at one position share a number,
+    /// as in the Lean `callSites`. Section 7.3 names a call frame with it.
+    pub calls: Vec<BTreeMap<NodeId, u64>>,
 }
 
 /// The result of the pass before the evaluation of `top` in the file scope of `file`.
@@ -59,7 +60,7 @@ pub(crate) fn of(file: &Resolved, top: Option<&ResolvedExpr>) -> Scan {
         numbers: Numbers::new(),
         table: BTreeMap::new(),
         syms: Syms::default(),
-        calls: BTreeSet::new(),
+        calls: Vec::new(),
     };
     if let Some(top) = top {
         walk.expr(top.expr(), 1);
@@ -90,8 +91,8 @@ struct Walk<'a> {
     numbers: Numbers,
     table: BTreeMap<String, Sym>,
     syms: Syms,
-    /// The call nodes of the body of the current item.
-    calls: BTreeSet<Pos>,
+    /// The position and the node id of each call node of the body of the current item.
+    calls: Vec<(Pos, NodeId)>,
 }
 
 impl Walk<'_> {
@@ -162,9 +163,16 @@ impl Walk<'_> {
                 self.calls = calls;
             }
         }
+        self.calls.sort_unstable();
         let mut sites = BTreeMap::new();
-        for (k, p) in self.calls.iter().enumerate() {
-            sites.insert(*p, k as u64);
+        let mut k = 0u64;
+        let mut last = None;
+        for &(p, id) in &self.calls {
+            if last.is_some_and(|q| q != p) {
+                k += 1;
+            }
+            last = Some(p);
+            sites.insert(id, k);
         }
         self.syms.calls.push(sites);
     }
@@ -249,9 +257,9 @@ impl Walk<'_> {
         self.reach(depth);
         let d = depth + 1;
         match e {
-            Expr::Num { pos, value, .. } => {
+            Expr::Num { id, value, .. } => {
                 let n = Int::from_decimal(value.as_str()).unwrap_or_else(Int::zero);
-                self.numbers.insert((self.top.is_some(), *pos), n);
+                self.numbers.insert((self.top.is_some(), *id), n);
             }
             Expr::Bool { .. } | Expr::Str { .. } => {}
             Expr::Name { id, .. } => {
@@ -270,11 +278,14 @@ impl Walk<'_> {
                 self.expr(no, d);
             }
             Expr::Call {
-                pos, callee, args, ..
+                pos,
+                id,
+                callee,
+                args,
             } => {
                 self.nested = self.nested.max(depth);
                 if self.top.is_none() {
-                    self.calls.insert(*pos);
+                    self.calls.push((*pos, *id));
                 }
                 self.expr(callee, d);
                 for a in args {
@@ -290,7 +301,7 @@ impl Walk<'_> {
             Expr::Field { base, field, .. } => {
                 if self.top.is_none() {
                     let s = self.intern(&field.name);
-                    self.syms.fields.insert(field.pos, s);
+                    self.syms.fields.insert(field.id, s);
                 }
                 self.expr(base, d);
             }

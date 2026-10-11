@@ -661,8 +661,8 @@ impl Evaluator<'_> {
     }
 
     /// A number literal. It pays the size of its value before it copies the value.
-    fn number(&mut self, pos: Pos) -> Res<Option<Out>> {
-        let Some(n) = self.numbers.get(&(self.names == Names::Top, pos)) else {
+    fn number(&mut self, pos: Pos, id: NodeId) -> Res<Option<Out>> {
+        let Some(n) = self.numbers.get(&(self.names == Names::Top, id)) else {
             return fail(Code::S010, pos, "the literal has no value".to_owned());
         };
         self.fuel.pay(u128::from(int_size(n))).map_err(at(pos))?;
@@ -677,7 +677,7 @@ impl Evaluator<'_> {
     fn eval(&mut self, e: &Expr) -> Res<Option<Out>> {
         self.charge(expr_pos(e), 1)?;
         match e {
-            Expr::Num { pos, .. } => self.number(*pos),
+            Expr::Num { pos, id, .. } => self.number(*pos, *id),
             Expr::Bool { pos, value } => self.made(*pos, Value::Bool(*value)),
             Expr::Str { pos, value } => {
                 // The size counts the characters, and the charge comes before the copy.
@@ -733,8 +733,11 @@ impl Evaluator<'_> {
                 }
             },
             Expr::Call {
-                pos, callee, args, ..
-            } => self.call(*pos, callee, args),
+                pos,
+                id,
+                callee,
+                args,
+            } => self.call(*pos, *id, callee, args),
             Expr::Index { pos, base, args } => {
                 if let Expr::Name { pos: bp, id, .. } = &**base
                     && let Some(Target::Prelude(k)) = self.target(*id)
@@ -809,7 +812,7 @@ impl Evaluator<'_> {
         let (id, path, inst) = (*id, *path, *inst);
         let port = match self.names {
             Names::Top => None,
-            Names::File => self.syms.fields.get(&field.pos).copied(),
+            Names::File => self.syms.fields.get(&field.id).copied(),
         }
         .and_then(|s| self.elab.port(inst, s));
         match port {
@@ -960,7 +963,7 @@ impl Evaluator<'_> {
     }
 
     /// A call of a function item, a prelude function, or a type.
-    fn call(&mut self, pos: Pos, f: &Expr, xs: &[Expr]) -> Res<Option<Out>> {
+    fn call(&mut self, pos: Pos, node: NodeId, f: &Expr, xs: &[Expr]) -> Res<Option<Out>> {
         if let Expr::Name {
             pos: fp,
             id: fid,
@@ -974,7 +977,7 @@ impl Evaluator<'_> {
                         Kind::Const | Kind::Fn | Kind::Module
                     ) =>
                 {
-                    return self.call_fn(pos, *fp, g, id, xs);
+                    return self.call_fn(pos, node, *fp, g, id, xs);
                 }
                 Some(Target::Prelude(h)) if !h.is_type() => {
                     return self.call_prelude(pos, *fp, g, h, xs);
@@ -1005,7 +1008,15 @@ impl Evaluator<'_> {
 
     /// A call of a function item. It runs in the call frame `<fn>$<k>c`. A hardware argument
     /// and a hardware result get a core name in that frame.
-    fn call_fn(&mut self, pos: Pos, fp: Pos, g: &str, id: DeclId, xs: &[Expr]) -> Res<Option<Out>> {
+    fn call_fn(
+        &mut self,
+        pos: Pos,
+        node: NodeId,
+        fp: Pos,
+        g: &str,
+        id: DeclId,
+        xs: &[Expr],
+    ) -> Res<Option<Out>> {
         self.charge(fp, 1)?;
         let file = self.file;
         let i = self.items.get(&id).copied().unwrap_or(usize::MAX);
@@ -1037,7 +1048,7 @@ impl Evaluator<'_> {
             .syms
             .calls
             .get(self.item)
-            .and_then(|m| m.get(&pos))
+            .and_then(|m| m.get(&node))
             .copied()
             .unwrap_or(0);
         let u = self.syms.items.get(i).copied().unwrap_or(0);
