@@ -4,7 +4,7 @@ use std::io::ErrorKind;
 use std::path::Path;
 use std::process::{Command, Output};
 
-use crate::bins::{silicon_check, under_test};
+use crate::bins::{silicon, under_test};
 use crate::directive::{Expected, Marker, expected_error};
 use crate::report::parse_report;
 use crate::spawn::spawn;
@@ -21,13 +21,6 @@ fn wrong_error(want: &Expected, code: Option<i32>, stdout: &str) -> String {
         "expected error[{}] on line {}, got exit {code:?}: {stdout}",
         want.code, want.line
     )
-}
-
-/// The `silicon` command with the checker in its environment.
-fn silicon(silicon: &Path) -> Command {
-    let mut command = Command::new(silicon);
-    command.env("SILICON_CHECK", silicon_check());
-    command
 }
 
 /// The `check` suite: the `check` command of the binary under test (`silicon`,

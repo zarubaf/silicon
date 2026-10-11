@@ -23,8 +23,8 @@ This crate owns the commands `check`, `fmt`, `run`, `lower`, `verilog`, `parse`,
 
 ## Dependencies
 
-This crate depends on `core-ir`, `backend-circt`, `parse`, `resolve`, `typeck`, `elab`, and `clap`. The command `verilog` runs `firtool`, and the tests run `circt-verilog` and `FileCheck`, from the development shell. The files of `tests/lower/` hold `; CHECK:` lines for `FileCheck`. The variable `SILICON_CHECK` names the checker, else the search path finds `silicon-check`. The tests use `lean/.lake/build/bin/silicon-check`, which `just check` builds. It is the last stage of the pipeline.
+This crate depends on `core-ir`, `backend-circt`, `parse`, `resolve`, `typeck`, `elab`, and `clap`. The tests also use `testkit`, as a development dependency only. The command `verilog` runs `firtool`, and the tests run `circt-verilog` and `FileCheck`, from the development shell. The files of `tests/lower/` hold `; CHECK:` lines for `FileCheck`. The variable `SILICON_CHECK` names the checker, else the search path finds `silicon-check`. The tests use `lean/.lake/build/bin/silicon-check`, which `just check` builds. It is the last stage of the pipeline.
 
 ## How to test
 
-A fresh clone needs `lake -d lean build` (or `just check`) before `just test`. Run `cargo nextest run -p driver`, then `just check` from the repository root.
+A fresh clone needs `lake -d lean build` (or `just check`) before `just test`. Run `cargo nextest run -p driver`, then `just check` from the repository root. The test target `suites` runs the file suites of `tests/` through `testkit`. A test name starts with the tree and the suite, for example `core::check::`. `cargo xtask lean-check` uses this prefix to select the `check` and `run` suites.

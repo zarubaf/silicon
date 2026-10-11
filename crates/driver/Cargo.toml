@@ -23,23 +23,8 @@ typeck = { path = "../typeck" }
 
 [dev-dependencies]
 datatest-stable = "0.3.3"
+testkit = { path = "../testkit" }
 
 [[test]]
-name = "lower"
-harness = false
-
-[[test]]
-name = "check"
-harness = false
-
-[[test]]
-name = "run"
-harness = false
-
-[[test]]
-name = "corpus"
-harness = false
-
-[[test]]
-name = "parse"
+name = "suites"
 harness = false
