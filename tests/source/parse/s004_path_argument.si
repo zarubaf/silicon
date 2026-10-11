@@ -1,0 +1,2 @@
+// S004: a path in a call argument belongs to a later slice.
+const A: T = f(a::b);

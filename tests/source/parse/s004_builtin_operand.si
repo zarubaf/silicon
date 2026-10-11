@@ -1,0 +1,2 @@
+// S004: a builtin in an operand belongs to a later slice.
+const A: T = 1 + @TypeOf(x);

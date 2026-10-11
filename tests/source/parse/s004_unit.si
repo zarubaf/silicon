@@ -1,2 +1,0 @@
-// S004: the unit value belongs to a later slice.
-const A: T = ();

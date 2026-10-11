@@ -1,0 +1,2 @@
+// S004: a path in an operand belongs to a later slice.
+const A: T = 1 + a::b;

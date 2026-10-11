@@ -1,0 +1,2 @@
+// S004: a builtin in an index belongs to a later slice.
+const A: T = x[@TypeOf(y)];

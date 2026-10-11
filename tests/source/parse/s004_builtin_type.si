@@ -1,0 +1,2 @@
+// S004: a builtin in a type position belongs to a later slice.
+const A: @TypeOf(x) = f;

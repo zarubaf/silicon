@@ -1,2 +1,0 @@
-// S004: a mut parameter belongs to a later slice.
-fn f(mut x: T) -> T { }

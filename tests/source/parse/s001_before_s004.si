@@ -1,3 +1,3 @@
-// S001 comes first by position: the bad token is before the struct.
+// S001 comes first by position: the bad token is before the import.
 const A: T = $;
-struct S { }
+import x;

@@ -1,0 +1,2 @@
+// S004: a path in a return type belongs to a later slice.
+fn f() -> a::T { }

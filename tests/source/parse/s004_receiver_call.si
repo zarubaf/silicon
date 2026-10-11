@@ -1,2 +1,0 @@
-// S004: a call on a field name (a receiver call) belongs to a later slice.
-const A: T = x.f(1);

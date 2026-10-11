@@ -1,0 +1,2 @@
+// S004: pub belongs to a later slice, also on a const.
+pub const A: T = 1;

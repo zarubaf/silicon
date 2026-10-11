@@ -1,2 +1,0 @@
-// S004: a numeric field belongs to a later slice.
-const A: T = x.0;

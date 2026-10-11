@@ -1,0 +1,2 @@
+// S004: an input in a named domain belongs to a later slice.
+module M() { input i: T in d; }
