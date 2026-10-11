@@ -16,7 +16,7 @@ mod lift;
 mod program;
 mod twin;
 
-pub use build::{lines, typed};
+pub use build::{BuildFault, lines, typed};
 pub use lift::{Unsupported, lift, vector_in, vector_out};
 pub use program::{Ports, Program, Scalar};
 pub use twin::{Twin, twin};

@@ -42,14 +42,12 @@ mod stat;
 pub use lines::lines;
 
 use super::eval::{Env, Fault, Scope, Value, concrete};
-use super::program::{
-    ComptimeFn, HExpr, Item, Place, Ports, Program, SExpr, Scalar, StaticTy, Stmt, Ty,
-};
-use num_bigint::BigInt;
+use super::program::{ComptimeFn, HExpr, Item, Ports, Program, SExpr, Scalar, StaticTy, Stmt, Ty};
 use proptest::collection::vec;
 use proptest::prelude::*;
-use stat::{Reach, int};
+use stat::Reach;
 use std::collections::BTreeMap;
+use std::fmt;
 
 /// The name prefixes of the static kinds: `P` parameter, `C` const, `f`
 /// `comptime fn`, `s` static `let`, `j` loop binder. A static name is one
@@ -83,42 +81,33 @@ const COUNT: u32 = 6;
 /// first formal takes `0..=COUNT`.
 const SAMPLE_INTS: [i64; 5] = [-6, -1, 0, 3, 6];
 
-/// Random well-typed slice-1 programs.
-pub fn typed() -> impl Strategy<Value = Program> {
+/// Random well-typed slice-1 programs. A tape on which the builder faults
+/// gives its `BuildFault`, never a stand-in program, so that the fault
+/// reaches the test that drew the tape.
+pub fn typed() -> impl Strategy<Value = Result<Program, BuildFault>> {
     vec(any::<u32>(), 0..4096).prop_map(build)
 }
 
-/// The program of a tape.
-fn build(tape: Vec<u32>) -> Program {
-    Builder::new(tape).program().unwrap_or_else(|_| smallest())
+/// A static fault in the scope or the top ports of a program. The checks
+/// of the builder exclude it, so it is a bug of the builder.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BuildFault(Fault);
+
+impl fmt::Display for BuildFault {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "the builder of typed programs faults ({:?}), which its checks exclude",
+            self.0
+        )
+    }
 }
 
-/// The program of the empty tape. `build` returns it if the scope or the
-/// top ports of a program fault, which the checks of the builder exclude;
-/// `programs_cover_slice_1` checks that no program does.
-fn smallest() -> Program {
-    Program {
-        items: vec![Item::Module {
-            name: "M0".to_owned(),
-            params: Vec::new(),
-            clocked: false,
-            body: vec![
-                Stmt::Output("o0".to_owned(), Ty::Bool),
-                Stmt::Connect(
-                    Place::Name("o0".to_owned()),
-                    HExpr::Static(SExpr::Bool(false)),
-                ),
-            ],
-        }],
-        top: "M0".to_owned(),
-        args: Vec::new(),
-        ports: Ports {
-            clocked: false,
-            inputs: Vec::new(),
-            outputs: vec![("o0".to_owned(), Scalar::Bool)],
-        },
-        probe: (int(0), Value::Int(BigInt::ZERO)),
-    }
+impl std::error::Error for BuildFault {}
+
+/// The program of a tape.
+fn build(tape: Vec<u32>) -> Result<Program, BuildFault> {
+    Builder::new(tape).program().map_err(BuildFault)
 }
 
 /// The ports of the module `top` at the arguments `args`, byte-sorted.

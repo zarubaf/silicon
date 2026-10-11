@@ -1,18 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
-use crate::r#gen::program::{Radix, SBin};
+use crate::r#gen::program::{Place, Radix, SBin};
+use num_bigint::BigInt;
 use proptest::strategy::ValueTree;
 use proptest::test_runner::TestRunner;
 use std::collections::{BTreeMap, BTreeSet};
-
-/// The program of a tape, its statistics, and whether it is the program
-/// of the tape (not the fallback of `build`).
-fn built(tape: Vec<u32>) -> (Program, Stats, bool) {
-    let mut b = Builder::new(tape);
-    let p = b.program();
-    let ok = p.is_ok();
-    (p.unwrap_or_else(|_| smallest()), b.stats, ok)
-}
 
 fn tapes(count: usize) -> Vec<Vec<u32>> {
     let mut runner = TestRunner::deterministic();
@@ -24,8 +16,7 @@ fn tapes(count: usize) -> Vec<Vec<u32>> {
 
 #[test]
 fn an_empty_tape_gives_the_smallest_program() {
-    let (p, _, ok) = built(vec![]);
-    assert!(ok);
+    let p = build(vec![]).unwrap();
     assert_eq!(
         p.text(),
         "module M0() domains() {\n    output o0: Bool;\n    o0 := false;\n}\n"
@@ -49,7 +40,10 @@ fn the_same_tape_gives_the_same_program() {
             x
         })
         .collect();
-    assert_eq!(build(tape.clone()).text(), build(tape).text());
+    assert_eq!(
+        build(tape.clone()).unwrap().text(),
+        build(tape).unwrap().text()
+    );
 }
 
 proptest! {
@@ -57,6 +51,7 @@ proptest! {
 
     #[test]
     fn programs_lex(p in typed()) {
+        let p = p.map_err(|e| TestCaseError::fail(e.to_string()))?;
         let lexed = crate::lex(&p.text(), 4096);
         prop_assert!(lexed.errors.is_empty(), "{:?}", lexed.errors);
     }
