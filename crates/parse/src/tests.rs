@@ -444,33 +444,33 @@ fn later_slice_syntax_is_s004() {
     let cases = [
         ("import a::b as c;", 1, 1),
         ("pub fn f() -> T { }", 1, 1),
-        ("struct S { x: T }", 1, 1),
-        ("type A = T;", 1, 1),
+        ("import a;", 1, 1),
+        ("pub module M() { }", 1, 1),
         ("extern module M() = \"m\" { }", 1, 1),
         ("module M() conforms A() using B() { }", 1, 12),
         ("module M() domains(a, b) { }", 1, 23),
         ("module M(x: Nat) { }", 1, 10), // S001: a module parameter needs comptime
-        ("fn f(mut x: T) -> T { }", 1, 6),
-        ("module M() { mem m: [T; 4]; }", 1, 14),
-        ("module M() { type A = T; }", 1, 14),
+        ("fn f(x: a::T) -> T { }", 1, 10),
+        ("module M() { @TypeOf(x); }", 1, 14),
+        ("module M() { @field(x, \"f\") = 1; }", 1, 14),
         ("module M() { reg r: T in d = 0; }", 1, 23),
         ("module M() { wire w: T in d; }", 1, 24),
         ("module M() { input i[2]: T; }", 1, 21),
         ("module M() { input i: T as 1; }", 1, 25),
         ("module M() { instance u = A() with { }; }", 1, 31),
         ("module M() { instance u = a::A(); }", 1, 28),
-        ("const X: T = (1, 2);", 1, 14),
-        ("const X: T = ();", 1, 14),
-        ("const X: T = [1, 2];", 1, 14),
-        ("const X: T = x.0;", 1, 16),
+        ("const X: T = @typeInfo(T);", 1, 14),
+        ("const X: T = @Struct(T);", 1, 14),
+        ("const X: T = @ports(M);", 1, 14),
+        ("const X: T = -a::b;", 1, 16),
         ("const X: T = @TypeOf(x);", 1, 14),
         ("const X: T = a::b;", 1, 15),
-        ("const X: fn () -> T = f;", 1, 10),
-        ("const X: (T, T) = f;", 1, 10),
-        ("const X: [T; 4] = f;", 1, 10),
-        ("const X: T() = f;", 1, 11),
+        ("const X: @typeInfo(T) = f;", 1, 10),
+        ("const X: @Struct(T) = f;", 1, 10),
+        ("const X: @ports(M) = f;", 1, 10),
+        ("const X: T::U = f;", 1, 11),
         ("const X: a::T = f;", 1, 11),
-        ("const X: T = fn () -> T;", 1, 14),
+        ("const X: T = @field(x, \"f\");", 1, 14),
     ];
     let wrong: Vec<_> = cases
         .iter()
@@ -524,10 +524,10 @@ fn the_first_error_is_the_first_in_position_order() {
     // A lexical error after a syntax error does not come first.
     assert_eq!(first_error("const X = 1; $"), Some((Code::S001, 1, 9)));
     // A lexical error before the syntax error comes first.
-    assert_eq!(first_error("const X $ ; struct"), Some((Code::S001, 1, 9)));
+    assert_eq!(first_error("const X $ ; import"), Some((Code::S001, 1, 9)));
     // S004 and S001 compete by position only.
-    assert_eq!(first_error("struct S { } $"), Some((Code::S004, 1, 1)));
-    assert_eq!(first_error("$ struct S { }"), Some((Code::S001, 1, 1)));
+    assert_eq!(first_error("import x; $"), Some((Code::S004, 1, 1)));
+    assert_eq!(first_error("$ import x;"), Some((Code::S001, 1, 1)));
 }
 
 #[test]
@@ -554,7 +554,7 @@ fn a_plain_fn_has_no_hardware_statement() {
 
 #[test]
 fn recovery_reports_later_errors() {
-    let input = "const A: T = ;\ncomptime fn f() -> T { let = 1; reg r: T = 0; x +; }\nstruct S { }\nconst B: T = 1;\nconst C: T = ;";
+    let input = "const A: T = ;\ncomptime fn f() -> T { let = 1; reg r: T = 0; x +; }\nimport x;\nconst B: T = 1;\nconst C: T = ;";
     let parsed = parse(input);
     let found: Vec<_> = parsed.errors.iter().map(|e| (e.code, e.pos.line)).collect();
     assert_eq!(
@@ -663,7 +663,7 @@ fn a_height_error_loses_to_any_other_error() {
     );
     // So does a later slice error, and a lexical error.
     assert_eq!(
-        first("const X: T = a + a + a + a;\nstruct S {}", 3),
+        first("const X: T = a + a + a + a;\nimport x;", 3),
         Some((Code::S004, 2, 1))
     );
     assert_eq!(
@@ -761,38 +761,38 @@ fn many_errors_on_one_line_scale_linearly() {
 #[test]
 fn rules_of_the_lean_parser() {
     let cases = [
-        // Receiver call: S004 at the `(`. A grouped selection is a call of a field.
-        ("const X: T = x.f(1);", Code::S004, 1, 17),
-        ("const X: T = x.f.g(1);", Code::S004, 1, 19),
-        // `mut`: S001 at a module parameter, S004 at a function parameter.
+        // A path in an operand: S004 at the `::`, also after a field.
+        ("const X: T = x+a::f(1);", Code::S004, 1, 17),
+        ("const X: T = x.f+a::g(1);", Code::S004, 1, 19),
+        // `mut`: S001 at a module parameter. A path in a function parameter is S004.
         ("module M(mut x: T) { }", Code::S001, 1, 10),
         ("module M(comptime mut x: T) { }", Code::S001, 1, 19),
-        ("fn f(mut x: T) -> T { }", Code::S004, 1, 6),
-        // Tuples and units, with the look ahead for a comma.
-        ("const X: T = (a.0, b);", Code::S004, 1, 14),
-        ("const X: T = (f(a, b), (c)), d);", Code::S004, 1, 14),
-        ("const X: T = (a, b", Code::S004, 1, 14),
+        ("fn f(x: a::T) -> T { }", Code::S004, 1, 10),
+        // A builtin: S004 at the `@`, whatever its arguments are.
+        ("const X: T = @TypeOf(a.b, c);", Code::S004, 1, 14),
+        ("const X: T = @TypeOf(f(a, b), (c)), d);", Code::S004, 1, 14),
+        ("const X: T = @TypeOf(a, b", Code::S004, 1, 14),
         ("const X: T = (a $ , b);", Code::S001, 1, 17),
-        ("const X: T = (a[1, 2], b);", Code::S004, 1, 14),
-        ("const X: T = ((a, b));", Code::S004, 1, 15),
-        // Targets with an index or a tuple field: S004 at the first name.
-        ("module M() { x[i] = e; }", Code::S004, 1, 14),
-        ("module M() { a.b[0] := e; }", Code::S004, 1, 14),
-        ("module M() { a.0 = e; }", Code::S004, 1, 14),
-        ("module M() { a.0x1 = e; }", Code::S004, 1, 14),
-        ("module M() { a[1 +] = e; }", Code::S004, 1, 14),
+        ("const X: T = @field(a[1, 2], b);", Code::S004, 1, 14),
+        ("const X: T = (@TypeOf(a, b));", Code::S004, 1, 15),
+        // A target that starts with a builtin: S004 at the `@`.
+        ("module M() { @field(x, \"i\") = e; }", Code::S004, 1, 14),
+        ("module M() { @field(a.b, \"c\") := e; }", Code::S004, 1, 14),
+        ("module M() { @field(a, \"0\") = e; }", Code::S004, 1, 14),
+        ("module M() { @field(a, 0x1) = e; }", Code::S004, 1, 14),
+        ("module M() { @field(a, 1 +) = e; }", Code::S004, 1, 14),
         (
-            "module M() { a[if (c) { 1 } else { 2 }] = e; }",
+            "module M() { @field(a, if (c) { 1 } else { 2 }) = e; }",
             Code::S004,
             1,
             14,
         ),
-        ("module M() { a[f(x)].b = e; }", Code::S004, 1, 14),
+        ("module M() { @field(a, f(x)).b = e; }", Code::S004, 1, 14),
         ("module M() { f(x)[0] = e; }", Code::S001, 1, 22),
         ("module M() { f(x) = e; }", Code::S001, 1, 19),
-        // `x.0` in an expression, in any radix.
-        ("const X: T = x.0x1;", Code::S004, 1, 16),
-        ("const X: T = x.0b1;", Code::S004, 1, 16),
+        // A path in parentheses or after a longer name: S004 at the `::`.
+        ("const X: T = (a::b);", Code::S004, 1, 16),
+        ("const X: T = ab::c;", Code::S004, 1, 16),
         // A statement with `if` is an expression statement and needs a `;`.
         ("module M() { if (a) { 1 } else { 2 } }", Code::S001, 1, 38),
         // A path is one name.
