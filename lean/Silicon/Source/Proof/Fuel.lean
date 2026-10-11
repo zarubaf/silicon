@@ -553,9 +553,9 @@ theorem run_apply (budget : Budget) (items : Array Resolve.Item) (act : Nat → 
   cases act budget.fuel ctx st <;> rfl
 
 /--
-The budget boundary of `Eval.run`. An action whose runs follow each other at each pair of
-bounds uses the same fuel `u` with each budget: each fuel from `u` gives the same result, and
-each fuel below `u` gives `S015`.
+The budget boundary of `Eval.run`. Let the runs of an action follow each other at each pair
+of bounds. Then the action uses the same fuel `u` with each budget. Each fuel from `u` gives
+the same result, and each fuel below `u` gives `S015`.
 -/
 theorem run_budget {act : Nat → M α} (hact : ∀ n n', Follows n' (act n) (act n'))
     {budget : Budget} {items : Array Resolve.Item} {a : α} {u : Nat}
