@@ -1,0 +1,13 @@
+// Registers with reset values, one of them signed.
+// TOP Resets()
+module Resets() {
+    input d: UInt[8];
+    output u: UInt[8];
+    output s: SInt[8];
+    reg a: UInt[8] = 5;
+    reg b: SInt[8] = -1;
+    a := d;
+    b := b;
+    u := a;
+    s := b;
+}

@@ -1,0 +1,11 @@
+// A counter with a comptime width, an enable, and a wrap flag.
+// TOP Counter(8)
+module Counter(comptime W: Nat) {
+    input enable: Bool;
+    output value: UInt[W];
+    output full: Bool;
+    reg count: UInt[W] = 0;
+    count := if (enable) { count +% 1 } else { count };
+    value := count;
+    full := count == UInt[W]((1 << W) - 1);
+}
