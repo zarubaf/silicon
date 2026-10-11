@@ -1094,3 +1094,44 @@ fn build_with_budgets_validates() -> Test {
     assert_eq!(out.status.code(), Some(1));
     Ok(())
 }
+
+/// Runs `build` on `input` with `--out` set to the prefix, in `dir`, and checks that the
+/// command refuses and that the input bytes stay.
+fn build_refuses_alias(name: &str, alias: fn(&Path, &Path) -> std::io::Result<()>) -> Test {
+    let (dir, path) = build_folder(name, COUNTER_SI)?;
+    alias(&path, &dir.join("x.sil"))?;
+    let out = build(&path, "Counter(4)", &[], None)?;
+    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(std::fs::read_to_string(&path)?, COUNTER_SI);
+    assert!(!dir.join("x.sv").exists());
+    Ok(())
+}
+
+#[test]
+fn build_refuses_a_symlink_to_the_input() -> Test {
+    build_refuses_alias("symlink", |input, link| {
+        std::os::unix::fs::symlink(input, link)
+    })
+}
+
+#[test]
+fn build_refuses_a_hard_link_to_the_input() -> Test {
+    build_refuses_alias("hardlink", |input, link| std::fs::hard_link(input, link))
+}
+
+#[test]
+fn build_refuses_another_spelling_of_the_input() -> Test {
+    let (dir, path) = build_folder("spelling", COUNTER_SI)?;
+    let alias = dir.join("x.sil");
+    std::fs::write(&alias, COUNTER_SI)?;
+    let mut command = silicon_command();
+    command
+        .current_dir(&dir)
+        .args(["build", "x.sil", "--top", "Counter(4)", "--out"])
+        .arg(dir.join("x"));
+    let out = spawn(&mut command, "")?;
+    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(std::fs::read_to_string(&alias)?, COUNTER_SI);
+    assert!(path.exists() && !dir.join("x.sv").exists());
+    Ok(())
+}
