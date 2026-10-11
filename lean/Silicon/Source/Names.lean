@@ -120,9 +120,12 @@ def madeField (s : String) : Option Field :=
 def decodeField (s : String) : Option Field :=
   if userField s then some (.user s) else madeField s
 
-/-! The inverse of `encode` on valid names. Any other text gives `none`. -/
+/-!
+The inverse of `encode` on valid names. Any other text gives `none`. It splits the characters,
+because the list split has the lemmas that the round trip proof needs.
+-/
 def decode (s : String) : Option Name :=
-  match s.splitOn "$" with
+  match (s.toList.splitOn '$').map String.ofList with
   | [h, "0k"] => if Core.keywords.contains h then some ⟨h, []⟩ else none
   | h :: rest => do
     let p : Name := ⟨h, ← rest.mapM decodeField⟩
