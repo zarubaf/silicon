@@ -38,9 +38,9 @@ const CYCLES: usize = 8;
 
 /// The `out=` lines, without LF, that one tool prints for one design.
 #[derive(Debug, PartialEq, Eq)]
-struct Trace {
-    tool: &'static str,
-    lines: Vec<String>,
+pub(crate) struct Trace {
+    pub(crate) tool: &'static str,
+    pub(crate) lines: Vec<String>,
 }
 
 /// One design with its input lines.
@@ -58,7 +58,7 @@ struct Case {
 /// A tool ran and rejected the design or gave a malformed result. This is a
 /// failure of the case, not of the tooling.
 #[derive(Debug)]
-struct ToolFailure(String);
+pub(crate) struct ToolFailure(String);
 
 impl fmt::Display for ToolFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -127,7 +127,7 @@ fn inventory_entries(cases: &[Case], skipped: &[String]) -> Vec<skips::Entry> {
 
 /// A test runner with the random numbers of `seed`. Each field of the
 /// configuration is explicit, so no `PROPTEST_` variable changes the cases.
-fn runner(seed: u64) -> TestRunner {
+pub(crate) fn runner(seed: u64) -> TestRunner {
     let mut bytes = [0; 32];
     bytes[..8].copy_from_slice(&seed.to_le_bytes());
     let config = Config {
@@ -281,7 +281,7 @@ impl Tools {
 /// The stdout of `command` with `stdin` as its input. A failed exit is a
 /// [`ToolFailure`] with the stdout and the stderr of the command. A command
 /// that does not start is a tooling error.
-fn output(command: &mut Command, stdin: &str) -> Result<String> {
+pub(crate) fn output(command: &mut Command, stdin: &str) -> Result<String> {
     let name = format!("{command:?}");
     let mut child = command
         .stdin(Stdio::piped())
@@ -315,7 +315,7 @@ fn output(command: &mut Command, stdin: &str) -> Result<String> {
 }
 
 /// The first disagreement of a trace with the first trace, or `None`.
-fn compare(traces: &[Trace]) -> Option<String> {
+pub(crate) fn compare(traces: &[Trace]) -> Option<String> {
     let (reference, others) = traces.split_first()?;
     for other in others {
         let cycles = reference.lines.len().max(other.lines.len());
