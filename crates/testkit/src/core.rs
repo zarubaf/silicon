@@ -6,7 +6,7 @@ use std::path::Path;
 use std::process::{Command, Output};
 
 use crate::bins::{silicon, under_test};
-use crate::directive::{Expectation, Expected, Marker, expectation, expected_error};
+use crate::directive::{Expectation, Expected, Marker, expectation, expected_error, has_check};
 use crate::report::parse_report;
 use crate::spawn::spawn;
 
@@ -81,15 +81,8 @@ pub fn run(binary: &Path, file: &Path) -> datatest_stable::Result<()> {
     }
 }
 
-/// True for a line that starts with a `FileCheck` directive.
-fn is_directive(line: &str) -> bool {
-    ["", "-DAG", "-NEXT", "-NOT", "-LABEL"]
-        .iter()
-        .any(|kind| line.starts_with(&format!("; CHECK{kind}:")))
-}
-
 /// Runs the tool `name`, or says that it is not on `PATH`.
-fn run_tool(name: &str, args: &[&Path], stdin: &str) -> datatest_stable::Result<Output> {
+pub(crate) fn run_tool(name: &str, args: &[&Path], stdin: &str) -> datatest_stable::Result<Output> {
     match spawn(Command::new(name).args(args), stdin) {
         Err(e) if e.kind() == ErrorKind::NotFound => {
             Err(format!("{name} is not on PATH: run the tests in the dev shell").into())
@@ -107,7 +100,7 @@ fn run_tool(name: &str, args: &[&Path], stdin: &str) -> datatest_stable::Result<
 /// or `FileCheck` fails.
 pub fn lower(binary: &Path, file: &Path) -> datatest_stable::Result<()> {
     let source = std::fs::read_to_string(file)?;
-    if !source.lines().any(is_directive) {
+    if !has_check(&source, Marker::Sil) {
         return Err(format!("{}: no `; CHECK:` line", file.display()).into());
     }
     let mlir = spawn(silicon(binary).arg("lower").arg(file), "")?;
