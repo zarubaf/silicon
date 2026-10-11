@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Helpers, module signatures, and module bodies: frames and their
-//! statements (Rulings 3, 6, 19, 20).
+//! statements.
 
 use super::hw::{DEPTH, Want};
 use super::stat::{Kind, Reach, value_expr};
@@ -97,8 +97,9 @@ impl Builder {
         }
     }
 
-    /// `h<k>` of Ruling 6: `let`s, an optional loop over a `let mut`, and
-    /// the result. It calls only `h<j>`, `j < k`.
+    /// `h<k>`: `let`s, an optional loop over a `let mut`, and the result.
+    /// It has one type for each formal, so one context fits all its calls.
+    /// It calls only `h<j>`, `j < k`, so no call cycle occurs.
     fn helper(&mut self, k: usize) -> Helper {
         let mut names = Names::default();
         let mut params = Vec::new();
