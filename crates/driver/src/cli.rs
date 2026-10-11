@@ -234,32 +234,41 @@ fn parse_source(source: &str, depth: usize) -> Result<(String, Exit), Usage> {
     Ok((dump.unwrap_or_default(), Exit::Success))
 }
 
-/// The output and the exit code of `eval`: the serialization of the value of `expr` in the
-/// file scope of `source`, or the first error of the file, then of the expression. Each pass
-/// runs on the front-end thread. If the machine cannot give a stack, the command fails.
-fn eval_source(source: &str, expr: &str, budget: &Budgets) -> Result<(String, Exit), Usage> {
-    let stack = |e: parse::StackError| Usage(e.to_string());
-    let depth = budget.syntax_depth;
+/// A source file after the passes before elaboration, or the line of its first error. Each
+/// pass runs on the front-end thread. If the machine cannot give a stack, the command fails.
+fn load(source: &str, depth: usize) -> Result<Result<resolve::Resolved, (String, Exit)>, Usage> {
     let parsed = parse::parse_with_depth(source, depth).map_err(|e| Usage(e.to_string()))?;
     let file = match resolve::resolve(parsed) {
         Ok(file) => file,
         Err(resolve::Failed::Parse(parsed)) => {
-            return Ok(match parsed.errors().first() {
+            return Ok(Err(match parsed.errors().first() {
                 Some(e) => error_line(e.code, e.pos, &e.message),
                 None => (String::new(), Exit::DesignError),
-            });
+            }));
         }
         Err(resolve::Failed::Names(e)) => {
-            return Ok(first_line(&e, |e| (e.code, e.pos, &e.message)));
+            return Ok(Err(first_line(&e, |e| (e.code, e.pos, &e.message))));
         }
         Err(resolve::Failed::Stack(e)) => return Err(stack(e)),
     };
-    let file = match typeck::check(file) {
+    match typeck::check(file) {
+        Ok(file) => Ok(Ok(file)),
+        Err(typeck::Failed::Errors(e)) => Ok(Err(first_line(&e, |e| (e.code, e.pos, &e.message)))),
+        Err(typeck::Failed::Stack(e)) => Err(stack(e)),
+    }
+}
+
+fn stack(e: parse::StackError) -> Usage {
+    Usage(e.to_string())
+}
+
+/// The output and the exit code of `eval`: the serialization of the value of `expr` in the
+/// file scope of `source`, or the first error of the file, then of the expression.
+fn eval_source(source: &str, expr: &str, budget: &Budgets) -> Result<(String, Exit), Usage> {
+    let depth = budget.syntax_depth;
+    let file = match load(source, depth)? {
         Ok(file) => file,
-        Err(typeck::Failed::Errors(e)) => {
-            return Ok(first_line(&e, |e| (e.code, e.pos, &e.message)));
-        }
-        Err(typeck::Failed::Stack(e)) => return Err(stack(e)),
+        Err(line) => return Ok(line),
     };
     let expr = match parse::parse_expr(expr, depth).map_err(|e| Usage(e.to_string()))? {
         Ok(expr) => expr,
