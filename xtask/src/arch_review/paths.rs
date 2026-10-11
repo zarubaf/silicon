@@ -215,4 +215,23 @@ mod tests {
                 .any(|p| p.matches("crates/core-ir/src/ast.rs"))
         );
     }
+
+    #[test]
+    fn the_real_list_has_theorem_statements_but_not_pure_proofs() {
+        let patterns = parse(include_str!("../../../doc/architecture.md")).unwrap();
+        let listed = |path: &str| patterns.iter().any(|p| p.matches(path));
+        for statement in [
+            "lean/Silicon/Source/Proof/ParsePrint/Statement.lean",
+            "lean/Silicon/Source/Proof/ParsePrint/Erase.lean",
+            "lean/Silicon/Source/Proof/Fuel/Cost.lean",
+        ] {
+            assert!(listed(statement), "{statement}");
+        }
+        for proof in [
+            "lean/Silicon/Source/Proof/ParsePrint/Parse/Expr.lean",
+            "lean/Silicon/Source/Proof/Fuel/Elab.lean",
+        ] {
+            assert!(!listed(proof), "{proof}");
+        }
+    }
 }
