@@ -6,14 +6,14 @@
 //! generator in both front ends; `cost` is equal in both; and the program
 //! and its twin give equal outputs in `run` on the same input lines.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use proptest::strategy::{Just, Strategy};
 use syntax::r#gen::{BuildFault, Program, lines, twin, typed};
 
-use super::{Mode, Tools, repeat, reproducer, run_trace, stdin, validated, verdict_of};
+use super::{Mode, Tools, repeat, reproducer, run_trace, stdin, validated, verdict_of, write};
 use crate::diff::{CYCLES, Trace, compare, difference, output};
 
 /// A typed program, or the fault of its builder, and its `in=` lines.
@@ -93,12 +93,6 @@ fn try_verdict(tools: &Tools, dir: &Path, case: &Case) -> Result<Option<String>>
         return Ok(Some(format!("run: {message}")));
     }
     Ok(validated(tools, &twin_file, &twin.top)?.map(|m| format!("twin: {m}")))
-}
-
-fn write(dir: &Path, name: &str, text: &str) -> Result<PathBuf> {
-    let file = dir.join(name);
-    std::fs::write(&file, text).with_context(|| format!("cannot write {}", file.display()))?;
-    Ok(file)
 }
 
 /// The trace of `eval` for the expression `expr` in the file scope of `file`.

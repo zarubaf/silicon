@@ -157,6 +157,13 @@ fn verdict_of(result: Result<Option<String>>) -> Result<Option<String>> {
     }
 }
 
+/// Writes `text` to the file `name` in `dir` and returns its path.
+fn write(dir: &Path, name: &str, text: &str) -> Result<PathBuf> {
+    let file = dir.join(name);
+    std::fs::write(&file, text).with_context(|| format!("cannot write {}", file.display()))?;
+    Ok(file)
+}
+
 /// The standard input of a `run`: the input lines joined by LF, with a
 /// final LF.
 fn stdin<'a>(lines: impl IntoIterator<Item = &'a str>) -> String {
