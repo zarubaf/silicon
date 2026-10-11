@@ -155,6 +155,14 @@ fn verdict_of(result: Result<Option<String>>) -> Result<Option<String>> {
     }
 }
 
+/// The standard input of a `run`: the input lines joined by LF, with a
+/// final LF.
+fn stdin<'a>(lines: impl IntoIterator<Item = &'a str>) -> String {
+    let mut stdin = lines.into_iter().collect::<Vec<_>>().join("\n");
+    stdin.push('\n');
+    stdin
+}
+
 /// The trace of `tool` (the binary `binary`) for the program `file` with the
 /// top selection `top` on the input lines `stdin`.
 fn run_trace(

@@ -13,7 +13,7 @@ use anyhow::{Context, Result};
 use proptest::strategy::{Just, Strategy};
 use syntax::r#gen::{Program, lines, twin, typed};
 
-use super::{Mode, Tools, repeat, reproducer, run_trace, validated, verdict_of};
+use super::{Mode, Tools, repeat, reproducer, run_trace, stdin, validated, verdict_of};
 use crate::diff::{CYCLES, Trace, compare, output};
 
 /// A typed program and its `in=` lines.
@@ -62,7 +62,7 @@ fn try_verdict(tools: &Tools, dir: &Path, case: &Case) -> Result<Option<String>>
     }
     let twin = twin(program);
     let twin_file = write(dir, "twin.si", &twin.text)?;
-    let stdin = stdin(input);
+    let stdin = stdin(input.iter().map(String::as_str));
     let traces = [
         run_trace("silicon", &tools.silicon, &file, &top, &stdin)?,
         run_trace("lean", &tools.lean, &file, &top, &stdin)?,
@@ -85,12 +85,6 @@ fn write(dir: &Path, name: &str, text: &str) -> Result<PathBuf> {
     let file = dir.join(name);
     std::fs::write(&file, text).with_context(|| format!("cannot write {}", file.display()))?;
     Ok(file)
-}
-
-fn stdin(input: &[String]) -> String {
-    let mut stdin = input.join("\n");
-    stdin.push('\n');
-    stdin
 }
 
 /// The trace of `eval` for the expression `expr` in the file scope of `file`.
@@ -128,7 +122,15 @@ pub(super) fn report(tools: &Tools, dir: &Path, seed: u64, case: &Case, message:
     let source = program.text();
     let top = program.top();
     let outputs = write(dir, "report.si", &source)
-        .and_then(|file| run_trace("lean", &tools.lean, &file, &top, &stdin(input)))
+        .and_then(|file| {
+            run_trace(
+                "lean",
+                &tools.lean,
+                &file,
+                &top,
+                &stdin(input.iter().map(String::as_str)),
+            )
+        })
         .map(|trace| trace.lines)
         .ok()
         .filter(|outs| outs.len() == input.len());
