@@ -68,8 +68,20 @@ impl Design {
                 ty: q.ty,
             }
         };
-        let ports = top.body.ports.iter().map(|q| (q, entry(q))).collect();
-        let layout::Ports { inputs, outputs } = layout::arrange(&self.texts, reset, ports);
+        let ports = top
+            .body
+            .ports
+            .iter()
+            .map(|q| {
+                let value = entry(q);
+                layout::Declared {
+                    name: value.name.clone(),
+                    input: q.input,
+                    value,
+                }
+            })
+            .collect();
+        let layout::Ports { inputs, outputs } = layout::arrange(reset, ports);
         Some(Schema { inputs, outputs })
     }
 }

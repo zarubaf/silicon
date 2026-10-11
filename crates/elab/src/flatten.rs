@@ -688,9 +688,13 @@ impl Lower<'_> {
                 ty: CTy::Bits(num(width(decl.ty), at)),
                 span: at,
             };
-            ports.push((decl, port));
+            ports.push(layout::Declared {
+                name: self.text(decl.sym),
+                input: decl.input,
+                value: port,
+            });
         }
-        let layout = layout::arrange(&self.design.texts, domain, ports);
+        let layout = layout::arrange(domain, ports);
         let mut ports = layout.inputs;
         ports.extend(layout.outputs);
         Ok(ports)
