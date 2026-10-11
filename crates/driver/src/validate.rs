@@ -76,7 +76,7 @@ mod tests {
         b"(design d (module d (input a (bits 1)) (output q (bits 1)) (assign q a)))";
     const E004: &[u8] = b"(design d (module d (input a (bits 1)) (input b (bits 2)) (output q (bits 1)) (assign q (add a b))))";
 
-    /// The same rule as `tests/checker/mod.rs`: `SILICON_CHECK`, else the Lake build.
+    /// The same rule as `testkit::bins::silicon_check`: `SILICON_CHECK`, else the Lake build.
     fn real() -> OsString {
         std::env::var_os(VARIABLE).unwrap_or_else(|| {
             concat!(

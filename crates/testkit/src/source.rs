@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use crate::bins::silicon_check;
+use crate::bins::{self, silicon_check};
 use crate::outcome::classify;
 use crate::spawn::spawn;
 
@@ -22,14 +22,8 @@ pub fn parse(silicon: &Path, file: &Path) -> datatest_stable::Result<()> {
         "",
     )?)
     .map_err(|e| format!("Lean `silicon-check parse` failed: {e}"))?;
-    let rust = classify(&spawn(
-        Command::new(silicon)
-            .env("SILICON_CHECK", silicon_check())
-            .arg("parse")
-            .arg(file),
-        "",
-    )?)
-    .map_err(|e| format!("Rust `silicon parse` failed: {e}"))?;
+    let rust = classify(&spawn(bins::silicon(silicon).arg("parse").arg(file), "")?)
+        .map_err(|e| format!("Rust `silicon parse` failed: {e}"))?;
     if lean == rust {
         return Ok(());
     }

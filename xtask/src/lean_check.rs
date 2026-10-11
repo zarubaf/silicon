@@ -8,16 +8,24 @@ use anyhow::{Context, Result};
 use crate::repo::Repo;
 
 /// Where Lake puts the executable, relative to the repository root. The
-/// driver tests (`crates/driver/tests/checker/mod.rs`) use the same path.
+/// suites (`silicon_check` in `crates/testkit/src/bins.rs`) use the same path.
 const BINARY: &str = "lean/.lake/build/bin/silicon-check";
 
 fn lake_build_args() -> Vec<&'static str> {
     vec!["-d", "lean", "build", "silicon-check"]
 }
 
+/// The `check` and `run` suites of the target `suites`, by their test names.
 fn nextest_args() -> Vec<&'static str> {
     vec![
-        "nextest", "run", "-p", "driver", "--test", "check", "--test", "run",
+        "nextest",
+        "run",
+        "-p",
+        "driver",
+        "--test",
+        "suites",
+        "-E",
+        "test(/^core::(check|run)::/)",
     ]
 }
 
@@ -70,7 +78,14 @@ mod tests {
         assert_eq!(
             nextest_args(),
             [
-                "nextest", "run", "-p", "driver", "--test", "check", "--test", "run"
+                "nextest",
+                "run",
+                "-p",
+                "driver",
+                "--test",
+                "suites",
+                "-E",
+                "test(/^core::(check|run)::/)",
             ]
         );
     }

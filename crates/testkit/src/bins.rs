@@ -1,9 +1,10 @@
 //! The binaries that the suites run.
 
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
-/// The variable that names the Lean checker.
-const CHECK_VARIABLE: &str = "SILICON_CHECK";
+/// The variable that tells `silicon` where the Lean checker is.
+pub const CHECK_VARIABLE: &str = "SILICON_CHECK";
 
 /// The variable that names the binary under test.
 const BIN_VARIABLE: &str = "SILICON_BIN";
@@ -21,6 +22,14 @@ pub fn silicon_check() -> PathBuf {
         },
         PathBuf::from,
     )
+}
+
+/// A command that runs `silicon` with the checker of [`silicon_check`].
+#[must_use]
+pub fn silicon(silicon: &Path) -> Command {
+    let mut command = Command::new(silicon);
+    command.env(CHECK_VARIABLE, silicon_check());
+    command
 }
 
 /// The binary that the shared suites test: `SILICON_BIN` if it is set, else

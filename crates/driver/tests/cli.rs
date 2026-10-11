@@ -1,11 +1,15 @@
 //! Tests of the `silicon` binary: output bytes and exit codes.
 
-mod checker;
-mod common;
-
-use common::spawn;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+
+use testkit::bins::{self, CHECK_VARIABLE};
+use testkit::spawn::spawn;
+
+/// A `silicon` command that validates with the real checker.
+fn silicon_command() -> Command {
+    bins::silicon(Path::new(env!("CARGO_BIN_EXE_silicon")))
+}
 
 const COUNTER: &str = "\
 (design counter
@@ -82,7 +86,7 @@ fn file(name: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
 }
 
 fn silicon(args: &[&str], path: &PathBuf, stdin: &str) -> std::io::Result<Output> {
-    let mut command = checker::silicon();
+    let mut command = silicon_command();
     command.args(args).arg(path);
     spawn(&mut command, stdin)
 }
@@ -338,7 +342,7 @@ fn circt_verilog_reads_the_design_and_the_models() -> Test {
 fn a_missing_circt_tool_is_a_usage_error() -> Test {
     let src = file("no_tool.sil", COUNTER.as_bytes())?;
     for args in [&["verilog"][..], &["verilog", "--models"]] {
-        let mut command = checker::silicon();
+        let mut command = silicon_command();
         command.args(args).arg(&src).env("PATH", "");
         let out = spawn(&mut command, "")?;
         assert_eq!(out.status.code(), Some(2), "{args:?}");
@@ -352,7 +356,7 @@ fn a_missing_circt_tool_is_a_usage_error() -> Test {
 fn with_checker(checker: &str, args: &[&str], name: &str) -> std::io::Result<Output> {
     let src = file(name, COUNTER.as_bytes())?;
     let mut command = Command::new(env!("CARGO_BIN_EXE_silicon"));
-    command.args(args).arg(&src).env(checker::VARIABLE, checker);
+    command.args(args).arg(&src).env(CHECK_VARIABLE, checker);
     spawn(&mut command, "")
 }
 
@@ -543,7 +547,7 @@ fn eval(src: &str, expr: &str, flags: &[&str]) -> std::io::Result<(String, Optio
         &format!("eval-{}-{n}.si", std::process::id()),
         src.as_bytes(),
     )?;
-    let mut command = checker::silicon();
+    let mut command = silicon_command();
     command.arg("eval").arg(path).arg(expr).args(flags);
     let out = spawn(&mut command, "")?;
     Ok((text(&out), out.status.code()))
@@ -619,7 +623,7 @@ fn eval_takes_the_budgets() -> Test {
 #[test]
 fn eval_of_a_missing_file_is_a_usage_error() -> Test {
     let missing = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("missing-eval.si");
-    let mut command = checker::silicon();
+    let mut command = silicon_command();
     command.arg("eval").arg(missing).arg("1");
     assert_eq!(spawn(&mut command, "")?.status.code(), Some(2));
     Ok(())
@@ -660,7 +664,7 @@ fn cost(src: &str, top: &str, flags: &[&str]) -> std::io::Result<(String, Option
         &format!("cost-{}-{n}.si", std::process::id()),
         src.as_bytes(),
     )?;
-    let mut command = checker::silicon();
+    let mut command = silicon_command();
     command
         .arg("cost")
         .arg(path)
@@ -718,7 +722,7 @@ fn cost_of_a_bad_top_selection_is_a_usage_error() -> Test {
         assert_eq!(cost(TOPS, top, &[])?, (String::new(), Some(2)), "{top}");
     }
     let path = file("cost-no-top.si", TOPS.as_bytes())?;
-    let mut command = checker::silicon();
+    let mut command = silicon_command();
     command.arg("cost").arg(path);
     assert_eq!(spawn(&mut command, "")?.status.code(), Some(2));
     Ok(())
@@ -739,7 +743,7 @@ fn source(
         &format!("{command}-{}-{n}.si", std::process::id()),
         src.as_bytes(),
     )?;
-    let mut cmd = checker::silicon();
+    let mut cmd = silicon_command();
     cmd.arg(command).arg(path).args(args).arg("--top").arg(top);
     let out = spawn(&mut cmd, stdin)?;
     Ok((text(&out), out.status.code()))
