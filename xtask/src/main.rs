@@ -6,6 +6,7 @@ mod arch_review;
 mod commit;
 mod corpus;
 mod diff;
+mod diff_si;
 mod fmt;
 mod gitcmd;
 mod guidance;
@@ -89,6 +90,15 @@ enum Command {
         #[arg(long, default_value_t = 200, value_parser = clap::value_parser!(u64).range(1..))]
         count: u64,
     },
+    /// Run the source differential tests: random core designs lifted to source programs through `silicon` and `silicon-check`.
+    DiffSi {
+        /// The seed of the first design. Design `k` uses the seed plus `k`.
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+        /// The number of lifted designs.
+        #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(u64).range(1..))]
+        count: u64,
+    },
     /// Run the LEC of the core IR spec, section 8.1, over the corpus.
     Lec,
     /// List the files of the branch that touch an architecture path of `doc/architecture.md`.
@@ -142,6 +152,11 @@ fn main() -> Result<ExitCode> {
             ExitCode::FAILURE
         }),
         Command::Diff { seed, count } => Ok(if diff::run(&Repo::discover()?, seed, count)? {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        }),
+        Command::DiffSi { seed, count } => Ok(if diff_si::run(&Repo::discover()?, seed, count)? {
             ExitCode::SUCCESS
         } else {
             ExitCode::FAILURE
