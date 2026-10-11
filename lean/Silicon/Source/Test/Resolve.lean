@@ -163,14 +163,14 @@ parameters, so a parameter `clock` is `S002` at the parameter. `domains()` decla
 #guard fails "module A() {}\nconst N: Nat = A();" .S003 2 16
 
 /-! `S003`: a prelude name of a later slice. The message names the slice. -/
-#guard fails "fn f(x: String) -> Bool { return true; }" .S003 1 9
-#guard message "fn f(x: String) -> Bool { return true; }" ==
-  "`String` is not in slice 1; it comes in slice 2"
-#guard fails (fnBody "let xs = list(Nat);\nreturn p;") .S003 2 10
+#guard fails "fn f(x: TypeInfo) -> Bool { return true; }" .S003 1 9
+#guard message "fn f(x: TypeInfo) -> Bool { return true; }" ==
+  "`TypeInfo` is not in slice 1; it comes in slice 4"
+#guard fails (fnBody "let xs = read(p);\nreturn p;") .S003 2 10
 #guard fails (modBody "reg r: Reg[Bool] = 0;") .S003 2 8
 #guard message (modBody "reg r: Reg[Bool] = 0;") ==
   "`Reg` is not in slice 1; it comes in slice 3"
-#guard ok "const List: Nat = 1;\nconst N: Nat = List;"
+#guard ok "const Wire: Nat = 1;\nconst N: Nat = Wire;"
 
 /-! Each pass reports its first error by position. -/
 #guard fails (fnBody "return a + b;") .S003 2 8

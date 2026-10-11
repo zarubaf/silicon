@@ -165,21 +165,21 @@ def roundtrip (items : List Item) : Bool :=
 /-! `S004`: the syntax of a later slice, at the token of the module documentation. -/
 #guard fails "import a as b;" .S004 1 1
 #guard fails "pub const N: T = 1;" .S004 1 1
-#guard fails "type T = UInt[8];" .S004 1 1
-#guard fails "struct S {}" .S004 1 1
+#guard fails "pub module M() {}" .S004 1 1
+#guard fails "import a::b;" .S004 1 1
 #guard fails "extern module M() = \"m\" {}" .S004 1 1
 #guard fails "module M() conforms C() using D() {}" .S004 1 12
 #guard fails "module M() domains(a, b) {}" .S004 1 23
-#guard fails "fn f(mut x: T) -> T {}" .S004 1 6
-#guard fails "fn f() -> fn () -> T {}" .S004 1 11
-#guard fails "fn f() -> (T, T) {}" .S004 1 11
-#guard fails "fn f() -> () {}" .S004 1 11
-#guard fails "fn f() -> [T; 4] {}" .S004 1 11
+#guard fails "fn f(x: a::T) -> T {}" .S004 1 10
+#guard fails "fn f() -> @Struct(x) {}" .S004 1 11
+#guard fails "fn f() -> @typeInfo(x) {}" .S004 1 11
+#guard fails "fn f() -> @field(x, \"f\") {}" .S004 1 11
+#guard fails "fn f() -> @ports(M) {}" .S004 1 11
 #guard fails "fn f() -> a::T {}" .S004 1 12
-#guard fails "fn f() -> T(1) {}" .S004 1 12
+#guard fails "fn f() -> T::U {}" .S004 1 12
 #guard fails "fn f() -> @TypeOf(x) {}" .S004 1 11
-#guard stFails "type T = Bool;" .S004 1
-#guard stFails "mem m: [T; 4];" .S004 1
+#guard stFails "@TypeOf(x);" .S004 1
+#guard stFails "@typeInfo(T);" .S004 1
 #guard stFails "reg r: T in d = 0;" .S004 10
 #guard stFails "wire w: T in d;" .S004 11
 #guard stFails "input i: T in d;" .S004 12
@@ -187,8 +187,8 @@ def roundtrip (items : List Item) : Bool :=
 #guard stFails "output o: T as k;" .S004 13
 #guard stFails "instance u = M() with { clock = d };" .S004 18
 #guard stFails "instance u = p::M();" .S004 15
-#guard stFails "a[0] = 1;" .S004 1
-#guard stFails "a.b[0] := 1;" .S004 1
+#guard stFails "@field(a, \"i\") = 1;" .S004 1
+#guard stFails "@field(a.b, \"c\") := 1;" .S004 1
 
 /-!
 `S004`: a `fn` without `comptime` declares no port, resource, or instance. The position is the
@@ -205,20 +205,20 @@ def plainBody (s : String) : String := "fn f() -> T {\n" ++ s ++ "\n}"
 #guard (parseSource defaultSyntaxDepth (plainBody "let x = 1;\nx = 2;\nreturn x;")).toBool
 #guard (parseSource defaultSyntaxDepth (ctBody "wire w: Bool;\nreturn 1;")).toBool
 #guard (parseSource defaultSyntaxDepth "module M() {\nwire w: Bool;\n}").toBool
-#guard stFails "a.0 = 1;" .S004 1
-#guard stFails "a[b.0] = 1;" .S004 1
+#guard stFails "@field(a, \"0\") = 1;" .S004 1
+#guard stFails "@field(a, b) = 1;" .S004 1
 #guard stFails "@field(x, \"f\") = 1;" .S004 1
-#guard ex "(a, b)" == "error S004 1:14"
-#guard ex "(a.0, b)" == "error S004 1:14"
+#guard ex "@typeInfo(a, b)" == "error S004 1:14"
+#guard ex "@TypeOf(a.b, c)" == "error S004 1:14"
 #guard ex "(f(a, b))" == "(call (name \"f\") ((name \"a\") (name \"b\")))"
-#guard ex "()" == "error S004 1:14"
-#guard ex "[a, b]" == "error S004 1:14"
-#guard ex "[T; 4]" == "error S004 1:14"
-#guard ex "x.0" == "error S004 1:16"
-#guard ex "x.f(1)" == "error S004 1:17"
+#guard ex "@Struct(T)" == "error S004 1:14"
+#guard ex "@ports(M)" == "error S004 1:14"
+#guard ex "@field(x, \"f\")" == "error S004 1:14"
+#guard ex "-a::b" == "error S004 1:16"
+#guard ex "x+a::f(1)" == "error S004 1:17"
 #guard ex "a::b" == "error S004 1:15"
 #guard ex "@TypeOf(x)" == "error S004 1:14"
-#guard ex "fn (T) -> T" == "error S004 1:14"
+#guard ex "@TypeOf(f(a, b), (c)), d)" == "error S004 1:14"
 
 /-! `S001`: the first token that does not match, a lexical error, or the end of the file. -/
 #guard fails "x" .S001 1 1
@@ -245,7 +245,7 @@ def plainBody (s : String) : String := "fn f() -> T {\n" ++ s ++ "\n}"
 #guard fails "import x $" .S004 1 1
 #guard fails "pub \"open" .S004 1 1
 #guard fails "const N: T = $; import x;" .S001 1 14
-#guard ex "(a, $)" == "error S004 1:14"
+#guard ex "@TypeOf(a, $)" == "error S004 1:14"
 #guard fails ("import x " ++ "".pushn '9' 20000) .S004 1 1
 #guard fails ("const N: T = " ++ "".pushn '9' 20000 ++ " 1;") .S001 1 14
 
@@ -294,7 +294,7 @@ def high : String := "const B: T = " ++ chain 65 ++ ";"
 #guard fails (high ++ "\nconst A: T = ;") .S001 2 14 64
 #guard fails (high ++ "\nconst A: T = $;") .S001 2 14 64
 #guard fails (high ++ "\nconst A: T = " ++ parens 65 ++ ";") .S001 2 78 64
-#guard fails (high ++ "\nstruct S {}") .S004 2 1 64
+#guard fails (high ++ "\nimport x;") .S004 2 1 64
 #guard fails (high ++ "\n" ++ high) .S001 1 14 64
 
 /-! The default syntax depth: depth and height 4096 pass, and 4097 fails. -/
