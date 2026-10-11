@@ -13,7 +13,7 @@ Issue #87 builds this layout in steps. Section 11 of the testing spec gives the 
 
 - Step 2 has landed. The core suites are in `tests/core/`. The inventories of LEC and the differential tests are `tests/inventory/lec.txt` and `tests/inventory/diff.txt`.
 - Steps 3 to 5 add spec coverage, code coverage, and mutation testing.
-- Phase 9 of the front end (#73) has landed. The source suites are in `tests/source/`. The suites `llm`, the metamorphic tests, and LEC with the differential tests on the source corpus wait for #116, #117, and #118.
+- Phase 9 of the front end (#73) has landed. The source suites are in `tests/source/`. The suites `llm` and the metamorphic tests wait for #116 and #117.
 
 ## Oracles
 
@@ -23,8 +23,8 @@ Issue #87 builds this layout in steps. Section 11 of the testing spec gives the 
 | `lean/`                              | The Lean kernel, with warnings as errors. `xtask` rejects `sorry`, new `axiom`, and `native_decide` outside the allowlist. | `just lean`, `cargo xtask check` |
 | Checker and interpreter against Lean | The shared files of the suites run with `silicon` and with `silicon-check`                                                 | `just lean-check`, in `just ci`  |
 | Compiler against Lean                | Translation validation (build step 2)                                                                                      | Not in `just ci` yet             |
-| Implementations together             | The differential tests: random designs through the Lean interpreter, `silicon run`, and `arcilator`                        | `just diff`, in `just ci`        |
-| Emitted Verilog                      | LEC with `circt-lec` against the Lean reference MLIR                                                                       | `just lec`, in `just ci`         |
+| Implementations together             | The differential tests: the two corpora and random designs through the Lean interpreter, `silicon run`, and `arcilator`    | `just diff`, in `just ci`        |
+| Emitted Verilog                      | LEC with `circt-lec` against the Lean reference MLIR, on the two corpora                                                   | `just lec`, in `just ci`         |
 
 ## Suites
 
@@ -168,12 +168,15 @@ The fields:
 
 ## LEC
 
-`just lec` runs `circt-lec` on each file of the `corpus` suite. It compares the emitted Verilog and the Rust MLIR with the Lean reference MLIR. It also compares each Rust memory model with the Lean memory model. [The core IR spec](../design/2026-10-08-core-ir.md), section 8.1, gives the flow. Run it in the development shell.
+`just lec` runs `circt-lec` on each file of `tests/core/corpus/` and `tests/source/corpus/`. It compares the emitted Verilog and the Rust MLIR with the Lean reference MLIR. It also compares each Rust memory model with the Lean memory model. [The core IR spec](../design/2026-10-08-core-ir.md), section 8.1, gives the flow. Run it in the development shell.
+
+LEC and the differential tests read a source design as core IR. `silicon elab` makes the core IR from the `TOP` line of the file. The `corpus` suite shows that this output is equal to the Lean output. The report and the inventory use the path of the `.si` file. A source file that `silicon elab` rejects is an error, not a `SKIP`.
 
 ## Differential tests
 
-`cargo xtask diff` runs the designs of the `corpus` suite and random designs from the generator of `core-ir`, with random inputs. It sends each design to the Lean interpreter, to `silicon run`, and to `arcilator` on the Lean reference MLIR. Each tool starts from the all-zero state. A disagreement is a failure. The failure prints the design and the input vectors as a `run` file.
+`cargo xtask diff` runs the designs of `tests/core/corpus/` and `tests/source/corpus/`, and random designs from the generator of `core-ir`, with random inputs. It sends each design to the Lean interpreter, to `silicon run`, and to `arcilator` on the Lean reference MLIR. Each tool starts from the all-zero state. A disagreement is a failure. The failure prints the design and the input vectors as a `run` file.
 
+- A source design with a clock domain gets its reset `clock$0rst` as a usual input.
 - A corpus design with an extern prints `SKIP`. The interpreters reject it with `E014`.
 - The defaults are the seed 1 and 200 random designs. Use `--seed` and `--count` to change them.
 - A failure prints its seed. `cargo xtask diff --seed N --count 1` repeats it.
