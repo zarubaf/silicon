@@ -11,6 +11,7 @@ mod ops;
 mod scan;
 pub mod sha256;
 pub mod value;
+pub mod vectors;
 
 pub use eval::Design;
 pub use flatten::{Failure, Lowered, check};
@@ -224,3 +225,6 @@ mod tests_elab;
 
 #[cfg(test)]
 mod tests_flatten;
+
+#[cfg(test)]
+mod tests_vectors;
