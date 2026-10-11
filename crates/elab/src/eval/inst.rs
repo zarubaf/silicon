@@ -249,8 +249,8 @@ impl Design {
 
     /// The output of `cost` (section 8) without the charges of the lowering: the total, then
     /// the units of each instantiation, sorted by its emitted name.
-    #[must_use]
-    pub fn cost(&self) -> String {
+    #[cfg(test)]
+    pub(crate) fn cost(&self) -> String {
         let lines = self
             .insts
             .iter()
