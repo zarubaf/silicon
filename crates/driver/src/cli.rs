@@ -57,6 +57,16 @@ pub enum Command {
         #[arg(allow_hyphen_values = true)]
         expr: String,
     },
+    /// Print the fuel that the elaboration of a Silicon source file uses, then the units of
+    /// each instantiation, or the first error.
+    Cost {
+        #[command(flatten)]
+        budget: Budgets,
+        file: PathBuf,
+        /// The top selection: a module name, then literal arguments in parentheses.
+        #[arg(long, allow_hyphen_values = true)]
+        top: String,
+    },
     /// Print the AST of a Silicon source file, or the first syntax error.
     Parse {
         /// The most depth of brackets, and the most height of an expression or a type.
@@ -201,6 +211,11 @@ fn dispatch(command: &Command, input: impl BufRead, out: &mut impl Write) -> Res
             out.write_all(text.as_bytes())?;
             Ok(exit)
         }
+        Command::Cost { budget, file, top } => {
+            let (text, exit) = cost_source(&read_source(file)?, top, budget)?;
+            out.write_all(text.as_bytes())?;
+            Ok(exit)
+        }
         Command::Parse { syntax_depth, file } => {
             let (text, exit) = parse_source(&read_source(file)?, *syntax_depth)?;
             out.write_all(text.as_bytes())?;
@@ -291,6 +306,22 @@ fn eval_source(source: &str, expr: &str, budget: &Budgets) -> Result<(String, Ex
             Err(e) => error_line(e.code, e.pos, &e.message),
         },
     )
+}
+
+/// The output and the exit code of `cost`: the fuel that the elaboration of the top
+/// selection `top` uses, then the units of each instantiation by emitted name, or the first
+/// error. A top selection that is not a module name with literal arguments is a usage error.
+fn cost_source(source: &str, top: &str, budget: &Budgets) -> Result<(String, Exit), Usage> {
+    let file = match load(source, budget.syntax_depth)? {
+        Ok(file) => file,
+        Err(line) => return Ok(line),
+    };
+    match elab::elaborate(&file, top, budget.syntax_depth, budget.elab()) {
+        Ok(Ok(design)) => Ok((design.cost(), Exit::Success)),
+        Ok(Err(e)) => Ok(error_line(e.code, e.pos, &e.message)),
+        Err(elab::Abort::Usage(message)) => Err(Usage(message)),
+        Err(elab::Abort::Stack(e)) => Err(stack(e)),
+    }
 }
 
 /// The line of the first error of a list in position order.

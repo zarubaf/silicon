@@ -651,3 +651,75 @@ fn eval_does_not_overflow_the_stack() -> Test {
     );
     Ok(())
 }
+
+/// Runs `silicon cost FILE --top TOP` with the flags `flags`. Each call has its own file.
+fn cost(src: &str, top: &str, flags: &[&str]) -> std::io::Result<(String, Option<i32>)> {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let path = file(
+        &format!("cost-{}-{n}.si", std::process::id()),
+        src.as_bytes(),
+    )?;
+    let mut command = checker::silicon();
+    command
+        .arg("cost")
+        .arg(path)
+        .arg("--top")
+        .arg(top)
+        .args(flags);
+    let out = spawn(&mut command, "")?;
+    Ok((text(&out), out.status.code()))
+}
+
+const TOPS: &str = "module Counter(comptime W: Nat, comptime E: Bool) {\n}\n\
+    module Top() {\n    instance a = Counter(8, true);\n    instance b = Counter(8, true);\n}\n";
+
+#[test]
+fn cost_prints_the_total_and_the_units_of_each_instantiation() -> Test {
+    assert_eq!(
+        cost(TOPS, "Counter(8, true)", &[])?,
+        ("total 72\nCounter$8$1b 3\n".to_owned(), Some(0))
+    );
+    assert_eq!(
+        cost(TOPS, "Top", &[])?,
+        ("total 162\nCounter$8$1b 3\nTop 129\n".to_owned(), Some(0))
+    );
+    Ok(())
+}
+
+#[test]
+fn cost_reports_the_first_error_and_takes_the_budgets() -> Test {
+    let first = |r: (String, Option<i32>)| (r.0.split(": ").next().map(str::to_owned), r.1);
+    let at = |s: &str| (Some(s.to_owned()), Some(1));
+    assert_eq!(first(cost("module M( {}", "M", &[])?), at("error[S001]"));
+    assert_eq!(first(cost(TOPS, "Counter(8)", &[])?), at("error[S007]"));
+    assert_eq!(
+        first(cost(TOPS, "Counter(8, true)", &["--fuel", "71"])?),
+        at("error[S015]")
+    );
+    assert_eq!(
+        cost(TOPS, "Counter(8, true)", &["--fuel", "72"])?.1,
+        Some(0)
+    );
+    assert_eq!(
+        first(cost(TOPS, "Counter(8, true)", &["--depth", "0"])?),
+        at("error[S015]")
+    );
+    let wire = "module M() {\n  wire w: Bool;\n}\n";
+    let (out, code) = cost(wire, "M", &[])?;
+    assert!(out.starts_with("error[S018]: 2:3: "), "{out}");
+    assert_eq!(code, Some(1));
+    Ok(())
+}
+
+#[test]
+fn cost_of_a_bad_top_selection_is_a_usage_error() -> Test {
+    for top in ["Counter(8 + 1, true)", "Nope", "1"] {
+        assert_eq!(cost(TOPS, top, &[])?, (String::new(), Some(2)), "{top}");
+    }
+    let path = file("cost-no-top.si", TOPS.as_bytes())?;
+    let mut command = checker::silicon();
+    command.arg("cost").arg(path);
+    assert_eq!(spawn(&mut command, "")?.status.code(), Some(2));
+    Ok(())
+}
