@@ -203,6 +203,40 @@ mod tests {
     }
 
     #[test]
+    fn the_key_is_the_code_or_accepted() {
+        let outcome = |code, report: &str| Outcome {
+            code,
+            report: report.as_bytes().to_vec(),
+        };
+        assert_eq!(key(&outcome(0, "")).unwrap(), "accepted");
+        assert_eq!(key(&outcome(1, "error[S007]: 4:8:")).unwrap(), "S007");
+        assert!(key(&outcome(1, "no report")).is_err());
+    }
+
+    #[test]
+    fn a_failed_prediction_names_gen() {
+        assert_eq!(check_prediction(None, "S010", "x"), None);
+        assert_eq!(check_prediction(Some("S003"), "S003", "x"), None);
+        assert_eq!(
+            check_prediction(Some("S003"), "accepted", "rename w0 to q0 in M0").as_deref(),
+            Some("gen: predicted S003 for `rename w0 to q0 in M0`, both front ends gave accepted")
+        );
+    }
+
+    #[test]
+    fn an_empty_tally_counts_nothing() {
+        assert_eq!(
+            summary(2, 5, 6, &Tally::new()),
+            "diff-si: 2 mutants agree (seeds 5 to 6): 0 rejected, 0 accepted"
+        );
+        let accepted: Tally = [("accepted".to_owned(), 2)].into_iter().collect();
+        assert_eq!(
+            summary(2, 5, 6, &accepted),
+            "diff-si: 2 mutants agree (seeds 5 to 6): 0 rejected, 2 accepted"
+        );
+    }
+
+    #[test]
     fn the_tally_names_each_code() {
         let tally: Tally = [("S003", 2), ("S007", 1), ("accepted", 1)]
             .into_iter()
