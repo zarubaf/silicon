@@ -290,7 +290,7 @@ fn dispatch(command: &Command, input: impl BufRead, out: &mut impl Write) -> Res
         } => {
             let source = read_source(file)?;
             let prefix = prefix.clone().unwrap_or_else(|| file.with_extension(""));
-            let (text, exit) = build_source(&source, top, budget, validation, &prefix)?;
+            let (text, exit) = build_source(file, &source, top, budget, validation, &prefix)?;
             out.write_all(text.as_bytes())?;
             Ok(exit)
         }
@@ -500,9 +500,12 @@ fn validate_source(source: &str, top: &str, sil: &str, budget: &Budgets) -> Resu
 }
 
 /// The output and the exit code of `build`: the core IR in `PREFIX.sil` and the Verilog in
-/// `PREFIX.sv`. Lean validates the elaboration before the Verilog is written. A Lean rejection
-/// of a source that Rust accepted is a defect of the Rust front end, and it leaves no artifact.
+/// `PREFIX.sv`. The Verilog comes from the text that Lean validates, and it is written after
+/// the verdict. A Lean rejection of a source that Rust accepted is a defect of the Rust front
+/// end, and it leaves no artifact. Every failure removes an old `PREFIX.sv`, so the two files
+/// on disk never come from two builds.
 fn build_source(
+    file: &Path,
     source: &str,
     top: &str,
     budget: &Budgets,
@@ -513,10 +516,23 @@ fn build_source(
         Ok(c) => c,
         Err(line) => return Ok(line),
     };
-    // The tool runs before any file exists, so a missing tool leaves nothing behind.
-    let sv = verilog(&lower(&c.typed))?;
     let (sil_path, sv_path) = (artifact(prefix, "sil"), artifact(prefix, "sv"));
-    write_artifact(&sil_path, &canonical(&c.lowered.design))?;
+    if [&sil_path, &sv_path].contains(&&file.to_path_buf()) {
+        return Err(Usage(format!(
+            "{}: the output path is the input file",
+            file.display()
+        )));
+    }
+    let sil = canonical(&c.lowered.design);
+    // The backend gets the text that Lean checks, as `lower` and `verilog` do.
+    let typed = match parse(&sil).and_then(|raw| check(&raw)) {
+        Ok(typed) => typed,
+        Err(diagnostic) => return Ok(defect(&diagnostic.to_string())),
+    };
+    // The tool runs before any file exists, so a missing tool leaves nothing behind.
+    let sv = verilog(&lower(&typed))?;
+    let _ = fs::remove_file(&sv_path);
+    write_artifact(&sil_path, &sil)?;
     if validation.no_validate {
         write_artifact(&sv_path, &sv)?;
         return Ok(("not validated\n".to_owned(), Exit::Success));
@@ -529,19 +545,37 @@ fn build_source(
         "--depth".to_owned(),
         budget.depth.to_string(),
     ];
-    match validate_elaboration(source.as_bytes(), top, &sil_path, &flags) {
+    let verdict = validate_elaboration(source.as_bytes(), top, &sil_path, &flags);
+    finish(verdict, &sil_path, &sv_path, &sv, &mut io::stderr())
+}
+
+/// The step after the verdict of Lean: write `sv_path` if Lean accepted. Otherwise remove both
+/// artifacts, and a rejection is a defect of the Rust front end with the Lean text on `err`.
+fn finish(
+    verdict: Result<Elaborated, String>,
+    sil_path: &Path,
+    sv_path: &Path,
+    sv: &str,
+    err: &mut impl Write,
+) -> Result<Output, Usage> {
+    let remove = || {
+        let _ = fs::remove_file(sil_path);
+        let _ = fs::remove_file(sv_path);
+    };
+    match verdict {
         Ok(Elaborated::Accepted) => {
-            write_artifact(&sv_path, &sv)?;
+            write_artifact(sv_path, sv)?;
             Ok(("validated\n".to_owned(), Exit::Success))
         }
         Ok(Elaborated::Defect(report)) => {
+            remove();
             // A failed write to stderr has no better channel to report to.
-            let _ = io::stderr().write_all(&report);
-            let _ = fs::remove_file(&sil_path);
+            let _ = write!(err, "silicon: defect of the front end: Lean disagrees: ");
+            let _ = err.write_all(&report);
             Ok((String::new(), Exit::Defect))
         }
         Err(message) => {
-            let _ = fs::remove_file(&sil_path);
+            remove();
             Err(Usage(message))
         }
     }
@@ -762,4 +796,60 @@ fn simulate(
         Ok(())
     })?;
     Ok(Exit::Success)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A folder with both artifacts of an earlier build.
+    fn artifacts(name: &str) -> io::Result<(PathBuf, PathBuf)> {
+        let dir =
+            std::env::temp_dir().join(format!("silicon-finish-{}-{name}", std::process::id()));
+        fs::create_dir_all(&dir)?;
+        let (sil, sv) = (dir.join("x.sil"), dir.join("x.sv"));
+        fs::write(&sil, "sil")?;
+        fs::write(&sv, "old")?;
+        Ok((sil, sv))
+    }
+
+    #[test]
+    fn a_lean_rejection_is_a_defect_without_artifacts() -> io::Result<()> {
+        let (sil, sv) = artifacts("defect")?;
+        let mut err = Vec::new();
+        let verdict = Ok(Elaborated::Defect(b"mismatch at line 1: x\n".to_vec()));
+        let output =
+            finish(verdict, &sil, &sv, "new", &mut err).map_err(|u| io::Error::other(u.0))?;
+        assert_eq!(output, (String::new(), Exit::Defect));
+        assert!(!sil.exists() && !sv.exists());
+        assert_eq!(
+            String::from_utf8_lossy(&err),
+            "silicon: defect of the front end: Lean disagrees: mismatch at line 1: x\n"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_checker_failure_is_a_usage_error_without_artifacts() -> io::Result<()> {
+        let (sil, sv) = artifacts("failure")?;
+        let mut err = Vec::new();
+        let Err(Usage(message)) = finish(Err("no checker".to_owned()), &sil, &sv, "new", &mut err)
+        else {
+            return Err(io::Error::other("expected a usage error"));
+        };
+        assert_eq!(message, "no checker");
+        assert!(!sil.exists() && !sv.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn an_accepted_design_writes_the_verilog() -> io::Result<()> {
+        let (sil, sv) = artifacts("accepted")?;
+        let output = finish(Ok(Elaborated::Accepted), &sil, &sv, "new", &mut Vec::new())
+            .map_err(|u| io::Error::other(u.0))?;
+        assert_eq!(output, ("validated\n".to_owned(), Exit::Success));
+        assert_eq!(fs::read_to_string(&sv)?, "new");
+        assert!(sil.exists());
+        Ok(())
+    }
 }

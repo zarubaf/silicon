@@ -1028,6 +1028,42 @@ fn build_with_a_checker_that_gives_no_verdict_is_a_usage_error() -> Test {
     Ok(())
 }
 
+/// `true` exits with 0 and prints no `ok`, so it is no verdict on the design.
+#[test]
+fn build_with_a_checker_that_only_exits_0_is_a_usage_error() -> Test {
+    let (dir, path) = build_folder("exit-0", COUNTER_SI)?;
+    let out = build(&path, "Counter(4)", &[], Some("true"))?;
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--no-validate"));
+    assert!(!dir.join("x.sv").exists() && !dir.join("x.sil").exists());
+    Ok(())
+}
+
+#[test]
+fn a_failed_build_removes_an_old_sv() -> Test {
+    let (dir, path) = build_folder("stale", COUNTER_SI)?;
+    assert_eq!(
+        build(&path, "Counter(4)", &[], None)?.status.code(),
+        Some(0)
+    );
+    let out = build(&path, "Counter(4)", &[], Some("false"))?;
+    assert_eq!(out.status.code(), Some(2));
+    assert!(!dir.join("x.sv").exists() && !dir.join("x.sil").exists());
+    Ok(())
+}
+
+#[test]
+fn build_never_overwrites_its_input() -> Test {
+    let (dir, _) = build_folder("input", COUNTER_SI)?;
+    let path = dir.join("x.sil");
+    std::fs::write(&path, COUNTER_SI)?;
+    let out = build(&path, "Counter(4)", &[], None)?;
+    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(std::fs::read_to_string(&path)?, COUNTER_SI);
+    assert!(!dir.join("x.sv").exists());
+    Ok(())
+}
+
 #[test]
 fn build_of_a_combinational_top_validates() -> Test {
     let (dir, path) = build_folder("combinational", COMBINATIONAL_SI)?;
@@ -1041,7 +1077,7 @@ fn build_of_a_combinational_top_validates() -> Test {
 }
 
 #[test]
-fn build_gives_the_budgets_to_the_checker() -> Test {
+fn build_with_budgets_validates() -> Test {
     let (_, path) = build_folder("budget", COUNTER_SI)?;
     let out = build(
         &path,
