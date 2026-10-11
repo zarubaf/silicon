@@ -97,7 +97,7 @@ pub fn run(repo: &Repo, seed: u64, count: u64) -> Result<bool> {
             return Ok(false);
         }
     }
-    let inventory = paths::diff_inventory(repo);
+    let inventory = paths::diff_inventory();
     let problems = skips::audit(&repo.read(&inventory)?, &ran)?;
     if !skips::report(&inventory.to_string_lossy(), &problems) {
         return Ok(false);

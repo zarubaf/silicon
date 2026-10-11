@@ -7,7 +7,7 @@ use crate::repo::Repo;
 
 /// The tracked `.sil` files of the corpus, sorted, relative to the root.
 pub fn files(repo: &Repo) -> Vec<PathBuf> {
-    let dir = paths::corpus_dir(repo);
+    let dir = paths::corpus_dir();
     let mut files: Vec<PathBuf> = repo
         .files
         .iter()
