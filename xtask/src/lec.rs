@@ -107,12 +107,12 @@ pub fn run(repo: &Repo) -> Result<bool> {
     let mut seen = BTreeSet::new();
     let mut passed = true;
     let mut ran = Vec::new();
-    for file in corpus::files(repo) {
-        let checks = fetch(&bins, &repo.root.join(&file))
+    for design in corpus::designs(repo) {
+        let checks = fetch(&bins, &design.sil)
             .and_then(|outputs| checks(&outputs, &mut seen))
             .unwrap_or_else(|e| vec![("setup".to_owned(), Outcome::Fail(format!("{e:#}")))]);
         for (check, outcome) in checks {
-            let file = file.display();
+            let file = design.name.display();
             match &outcome {
                 Outcome::Pass => println!("PASS {file} {check}"),
                 Outcome::Skip { tag, why } => println!("SKIP {file} {check} ({tag}: {why})"),
