@@ -1,0 +1,13 @@
+// The register example of section 11.2: the value before the first reset edge is 0.
+// TOP Counter(4)
+module Counter(comptime W: Nat) {
+    input i: UInt[W];
+    output q: UInt[W];
+    reg r: UInt[W] = 0;
+    r := r +% i;
+    q := r;
+}
+// STEP in=(clock$0rst false i 3) out=(q 0)
+// STEP in=(clock$0rst false i 15) out=(q 3)
+// STEP in=(clock$0rst true i 1) out=(q 2)
+// STEP in=(clock$0rst false i 0) out=(q 0)

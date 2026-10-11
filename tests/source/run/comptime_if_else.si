@@ -1,0 +1,15 @@
+// The other branch of a comptime if: the register exists only when Registered holds.
+// TOP Pick(false)
+module Pick(comptime Registered: Bool) {
+    input a: UInt[4];
+    output y: UInt[4];
+    comptime if (Registered) {
+        reg r: UInt[4] = 0;
+        r := a;
+        y := r;
+    } else {
+        y := a;
+    }
+}
+// STEP in=(clock$0rst false a 6) out=(y 6)
+// STEP in=(clock$0rst false a 9) out=(y 9)

@@ -1,0 +1,19 @@
+// A comptime for builds a sum of shifted inputs, and a comptime if selects the last term.
+// TOP Mix(4, true)
+module Mix(comptime N: Nat, comptime Extra: Bool) domains() {
+    input a: UInt[8];
+    output y: UInt[8];
+    let mut v = a;
+    comptime for i in 0..N {
+        v = v +% (a << i);
+    }
+    comptime if (Extra) {
+        y := v +% 1;
+    } else {
+        y := v;
+    }
+}
+// STEP in=(a 0) out=(y 1)
+// STEP in=(a 1) out=(y 17)
+// STEP in=(a 3) out=(y 49)
+// STEP in=(a 255) out=(y 241)

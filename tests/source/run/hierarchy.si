@@ -1,0 +1,29 @@
+// A two-level hierarchy with parameters: Top holds two Pairs, each Pair holds two Stages.
+// TOP Top(3)
+module Stage(comptime W: Nat, comptime K: Nat) domains() {
+    input a: UInt[W];
+    output q: UInt[W];
+    q := a +% UInt[W](K);
+}
+module Pair(comptime W: Nat) domains() {
+    input a: UInt[W];
+    output q: UInt[W];
+    instance first = Stage(W, 1);
+    instance second = Stage(W, 2);
+    first.a := a;
+    second.a := first.q;
+    q := second.q;
+}
+module Top(comptime N: Nat) domains() {
+    input x: UInt[N + 5];
+    output y: UInt[N + 5];
+    instance left = Pair(N + 5);
+    instance right = Pair(N + 5);
+    left.a := x;
+    right.a := left.q;
+    y := right.q;
+}
+// STEP in=(x 0) out=(y 6)
+// STEP in=(x 10) out=(y 16)
+// STEP in=(x 250) out=(y 0)
+// STEP in=(x 255) out=(y 5)
