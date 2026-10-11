@@ -4,7 +4,8 @@
 //! the same source vectors and expects the same outputs.
 //!
 //! The twin walks from the top instantiation with the static env of each
-//! frame (Ruling 7 of the plan of #74, part 3):
+//! frame. Its modules have no parameters and its expressions no static
+//! names, so no static computation is left for a front end:
 //!
 //! - Each reached instantiation becomes a module without parameters, named
 //!   after its module and the argument tokens of front-end design 7.1 with
@@ -18,7 +19,8 @@
 //! - `const`s, `comptime fn`s, static `let`s, and `static_assert`s go.
 //!
 //! A static fault is a builder bug. The twin then keeps the construct as it
-//! is, so the checks of the twin show the bug.
+//! is, with its static names (`P`, `C`, `f`, `s`, `j` and digits). The tests
+//! look for these names in each twin, so they show the bug.
 
 use super::eval::{Env, Scope, Value, eval};
 use super::program::{HExpr, Item, Place, Program, Radix, SExpr, Stmt, Ty, render_items};
@@ -37,6 +39,9 @@ pub struct Twin {
 pub fn twin(program: &Program) -> Twin {
     let mut w = Writer {
         items: &program.items,
+        // A const that faults leaves an empty scope. Each fold that reads a
+        // const or a `comptime fn` then fails, and its static name stays in
+        // the twin, where the tests find it; `twin` returns no error.
         scope: Scope::new(&program.items).unwrap_or_default(),
         named: BTreeSet::new(),
         queue: VecDeque::new(),
@@ -571,6 +576,43 @@ mod tests {
         }
     }
 
+    /// The identifiers of `text` with a static prefix of the builder and
+    /// digits: a parameter, const, `comptime fn`, static `let`, or loop
+    /// binder. A twin has none. `x` is also a helper formal, so it is out.
+    fn static_names(text: &str) -> Vec<String> {
+        crate::lex(text, 4096)
+            .tokens
+            .iter()
+            .filter(|t| t.kind == crate::SyntaxKind::Ident)
+            .filter_map(|t| text.get(t.range.clone()))
+            .filter(|n| {
+                let mut cs = n.chars();
+                cs.next().is_some_and(|c| "PCfsj".contains(c))
+                    && !cs.as_str().is_empty()
+                    && cs.all(|c| c.is_ascii_digit())
+            })
+            .map(str::to_owned)
+            .collect()
+    }
+
+    #[test]
+    fn a_static_fault_leaves_a_static_name() {
+        let fault = sbin(SBin::Div, int(1), int(0));
+        let body = vec![
+            Stmt::Output("o0".to_owned(), uint(4)),
+            Stmt::StaticLet("s0".to_owned(), StaticTy::Int, fault),
+            connect("o0", HExpr::Static(sname("s0"))),
+        ];
+        let p = program(vec![module("M0", &[], false, body)], Vec::new());
+        assert_eq!(static_names(&twin(&p).text), vec!["s0", "s0"]);
+        let clean = program(vec![m1()], Vec::new());
+        let clean = Program {
+            top: "M1".to_owned(),
+            ..clean
+        };
+        assert!(static_names(&twin(&clean).text).is_empty());
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(64))]
 
@@ -583,6 +625,8 @@ mod tests {
             let lexed = crate::lex(&t.text, 4096);
             prop_assert!(lexed.errors.is_empty(), "{:?}", lexed.errors);
             prop_assert!(t.top.ends_with("()"), "{}", t.top);
+            let names = static_names(&t.text);
+            prop_assert!(names.is_empty(), "{:?} in\n{}", names, t.text);
         }
     }
 }
