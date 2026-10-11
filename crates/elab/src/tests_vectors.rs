@@ -144,7 +144,7 @@ fn the_port_schema() {
 fn value(t: Ty, v: &str) -> Option<String> {
     super::vectors::parse_value("x", t, v)
         .ok()
-        .map(|b| b.to_biguint().to_string())
+        .map(|b| crate::int::constant(&b).to_string())
 }
 
 /// The values of each type. An input value can have leading zeros.

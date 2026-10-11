@@ -24,7 +24,7 @@
 
 use crate::eval::{Bind, Design, Inst, Sink};
 use crate::hw::{HwId, Kind, Op};
-use crate::int::{Nat, nat};
+use crate::int::{Nat, constant, nat};
 use crate::layout;
 use crate::names::{Field, Name, PathId, Role, Sym, encode};
 use crate::value::{Ty, Value, int_size};
@@ -231,7 +231,7 @@ fn signed(t: Ty) -> bool {
 fn const_of(c: Span, v: &Value) -> Expr {
     match v {
         Value::Bool(b) => small(c, 1, u32::from(*b)),
-        Value::UInt(x) | Value::SInt(x) => konst(c, x.width(), x.to_biguint()),
+        Value::UInt(x) | Value::SInt(x) => konst(c, x.width(), constant(x)),
         _ => small(c, 1, 0),
     }
 }
