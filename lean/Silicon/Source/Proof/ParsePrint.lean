@@ -4,7 +4,7 @@ import Silicon.Source.Proof.ParsePrint.Statement
 import Silicon.Source.Proof.ParsePrint.Parse.Item
 
 /-!
-The theorem `parse_print` of section 10.3 of the front-end spec: the parser reads the printed
+The theorem `parse_print` of section 10.3 of the front-end spec. The parser reads the printed
 text of a printable AST back to the same AST, up to positions.
 
 The proof has three parts. `lex_print` gives the kinds of the tokens of the printed text.
@@ -47,8 +47,8 @@ theorem statement : Statement :=
     exact ⟨items', h, he'.trans he⟩
 
 /-!
-The theorem `parse_print`: for printable items and a syntax depth `N` of at least the length of
-the printed text, the parser gives the items back, up to positions.
+The theorem `parse_print`. Let the syntax depth `N` be at least the length of the printed text.
+Then the parser gives printable items back, up to positions.
 -/
 theorem parse_print (items : List Item) (h : Printable items)
     (N : Nat) (hN : (Print.print items).length ≤ N) :
