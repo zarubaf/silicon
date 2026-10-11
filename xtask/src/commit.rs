@@ -121,12 +121,13 @@ pub fn check_message(msg: &str, scopes: &[String]) -> Vec<String> {
 
 /// Directories of shared test data. Each file there is an oracle: an input
 /// with its expectation inline (`; expected-error`, `; STEP`, `; CHECK`) or
-/// beside it. `source` holds the suites of the source front end. Any change to
+/// beside it. `source` holds the suites of the source front end, and `inventory`
+/// holds the reviewed check inventories `lec.txt` and `diff.txt`. Any change to
 /// such a file counts, so no list of forms can drift from the harnesses.
-const ORACLE_DIRS: &[&str] = &["source", "core"];
+const ORACLE_DIRS: &[&str] = &["source", "core", "inventory"];
 
 /// True for test expectation files: snapshots and files of the shared test
-/// data directories `tests/{source,core}/`.
+/// data directories `tests/{source,core,inventory}/`.
 pub fn is_expectation(path: &Path) -> bool {
     let parts: Vec<_> = path.iter().map(|p| p.to_string_lossy()).collect();
     parts.iter().any(|p| p == "snapshots")
@@ -502,6 +503,13 @@ mod tests {
     #[test]
     fn expectations_and_code_do_not_mix() {
         let p = paths(&["crates/a/snapshots/x.snap", "crates/a/src/lib.rs"]);
+        assert!(fired(&check_paths("feat", &p), "commit-expectations-code"));
+    }
+
+    #[test]
+    fn inventories_are_expectations() {
+        assert!(is_expectation(Path::new("tests/inventory/lec.txt")));
+        let p = paths(&["tests/inventory/diff.txt", "xtask/src/diff.rs"]);
         assert!(fired(&check_paths("feat", &p), "commit-expectations-code"));
     }
 
