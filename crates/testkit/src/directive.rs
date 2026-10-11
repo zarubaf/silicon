@@ -21,6 +21,15 @@ impl Marker {
     }
 }
 
+/// True when a line of `source` starts with a `FileCheck` directive.
+pub(crate) fn has_check(source: &str, marker: Marker) -> bool {
+    source.lines().any(|line| {
+        ["", "-DAG", "-NEXT", "-NOT", "-LABEL"]
+            .iter()
+            .any(|kind| line.starts_with(&format!("{} CHECK{kind}:", marker.prefix())))
+    })
+}
+
 const KEYWORD: &str = " expected-error ";
 
 /// The expected error of a file: its code and its 1-based line.

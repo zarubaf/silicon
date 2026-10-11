@@ -5,7 +5,10 @@ use std::path::Path;
 use std::process::{Command, Output};
 
 use crate::bins::{self, silicon_check};
-use crate::directive::{Expectation, Expected, Marker, expectation, expected_error, top};
+use crate::core::run_tool;
+use crate::directive::{
+    Expectation, Expected, Marker, expectation, expected_error, has_check, top,
+};
 use crate::outcome::classify;
 use crate::report::parse_report;
 use crate::spawn::spawn;
@@ -151,6 +154,44 @@ pub fn run(binary: &Path, file: &Path) -> datatest_stable::Result<()> {
     Ok(compare_run(&rust, &lean, &want).map_err(in_file)?)
 }
 
+/// The `elab` suite (frontend spec section 11.3): the Rust `silicon elab` and the Lean
+/// `silicon-check elab` run on each `.si` file with the top selection of its `// TOP` line.
+/// LLVM `FileCheck` checks the output of each against the `// CHECK:` lines of the same
+/// file, so both front ends must pass the same checks.
+///
+/// # Errors
+///
+/// Returns an error when the file has no `CHECK` line, a directive is malformed, a front end
+/// fails, or `FileCheck` fails on either output.
+pub fn elab(binary: &Path, file: &Path) -> datatest_stable::Result<()> {
+    let source = std::fs::read_to_string(file)?;
+    let in_file = |e: String| format!("{}: {e}", file.display());
+    if !has_check(&source, Marker::Si) {
+        return Err(in_file("no `// CHECK:` line".to_owned()).into());
+    }
+    let top = top(&source).map_err(in_file)?;
+    let (rust, lean) = both(binary, "elab", file, &top, "")?;
+    for (front_end, out) in [("Rust `silicon", &rust), ("Lean `silicon-check", &lean)] {
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        if !out.status.success() {
+            return Err(in_file(format!(
+                "{front_end} elab` failed: {stdout}{}",
+                String::from_utf8_lossy(&out.stderr)
+            ))
+            .into());
+        }
+        let checked = run_tool("FileCheck", &[file], &stdout)?;
+        if !checked.status.success() {
+            return Err(in_file(format!(
+                "FileCheck failed on the output of {front_end} elab`: {}\n{stdout}",
+                String::from_utf8_lossy(&checked.stderr)
+            ))
+            .into());
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,6 +211,17 @@ mod tests {
             code: "S010".to_owned(),
             line,
         }
+    }
+
+    #[test]
+    fn elab_needs_a_check_line() {
+        let dir = std::env::temp_dir().join(format!("testkit-elab-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("none.si");
+        std::fs::write(&file, "// TOP M()\nmodule M() domains() {}\n").unwrap();
+        let err = elab(Path::new("/nonexistent"), &file).unwrap_err();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(err.to_string().contains("no `// CHECK:` line"), "{err}");
     }
 
     #[test]
