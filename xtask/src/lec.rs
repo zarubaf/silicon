@@ -103,11 +103,13 @@ pub fn run(repo: &Repo) -> Result<bool> {
     let Some(rust) = silicon::build(&repo.root)? else {
         return Ok(false);
     };
+    let elaborated = tempfile::tempdir().context("cannot make a temporary directory")?;
+    let designs = corpus::designs(repo, &rust, elaborated.path())?;
     let bins = Binaries { lean, rust };
     let mut seen = BTreeSet::new();
     let mut passed = true;
     let mut ran = Vec::new();
-    for design in corpus::designs(repo) {
+    for design in designs {
         let checks = fetch(&bins, &design.sil)
             .and_then(|outputs| checks(&outputs, &mut seen))
             .unwrap_or_else(|e| vec![("setup".to_owned(), Outcome::Fail(format!("{e:#}")))]);

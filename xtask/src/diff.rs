@@ -90,7 +90,9 @@ pub fn run(repo: &Repo, seed: u64, count: u64) -> Result<bool> {
     };
     let tools = Tools { lean, silicon };
     let dir = tempfile::tempdir().context("cannot make a temporary directory")?;
-    let (corpus, skipped) = corpus(repo, seed)?;
+    let elaborated = tempfile::tempdir().context("cannot make a temporary directory")?;
+    let designs = corpus::designs(repo, &tools.silicon, elaborated.path())?;
+    let (corpus, skipped) = corpus(designs, seed)?;
     let ran = inventory_entries(&corpus, &skipped);
     let random = (0..count).map(|k| generate(seed.wrapping_add(k)));
     for case in corpus.into_iter().map(Ok).chain(random) {
@@ -197,14 +199,14 @@ fn generate(seed: u64) -> Result<Case> {
     case(name, repeat, text, &typed, &mut runner)
 }
 
-/// The cases of the tracked files of the corpus, with the inputs of `seed`.
-/// A design with an extern is a visible skip: the interpreters reject it
-/// with `E014` (spec section 5.4). The skips are returned as well.
-fn corpus(repo: &Repo, seed: u64) -> Result<(Vec<Case>, Vec<String>)> {
+/// The cases of the corpus `designs`, with the inputs of `seed`. A design
+/// with an extern is a visible skip: the interpreters reject it with `E014`
+/// (spec section 5.4). The skips are returned as well.
+fn corpus(designs: Vec<corpus::Design>, seed: u64) -> Result<(Vec<Case>, Vec<String>)> {
     let mut runner = runner(seed);
     let mut cases = Vec::new();
     let mut skipped = Vec::new();
-    for design in corpus::designs(repo) {
+    for design in designs {
         let name = design.name.display().to_string();
         let text =
             std::fs::read_to_string(&design.sil).with_context(|| format!("cannot read {name}"))?;

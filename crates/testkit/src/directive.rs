@@ -158,7 +158,7 @@ const TOP: &str = "// TOP ";
 /// # Errors
 ///
 /// Returns a message when the file has no `TOP` line or more than one.
-pub(crate) fn top(source: &str) -> Result<String, String> {
+pub fn top(source: &str) -> Result<String, String> {
     let mut found = None;
     for (index, text) in source.lines().enumerate() {
         let Some(rest) = text.trim_start().strip_prefix(TOP) else {

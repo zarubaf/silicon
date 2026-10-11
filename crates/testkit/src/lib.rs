@@ -10,6 +10,7 @@ pub mod source;
 pub mod spawn;
 pub mod suite;
 
+pub use directive::top;
 pub use outcome::Outcome;
 pub use report::{Report, parse_report};
 pub use suite::root;
