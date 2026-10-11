@@ -7,6 +7,7 @@ mod eval;
 mod flatten;
 mod hw;
 pub mod int;
+mod layout;
 pub mod names;
 mod ops;
 mod scan;

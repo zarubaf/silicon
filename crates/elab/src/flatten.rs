@@ -24,6 +24,7 @@
 
 use crate::eval::{Bind, Design, Inst, Sink};
 use crate::hw::{HwId, Kind, Op};
+use crate::layout;
 use crate::names::{Field, Name, PathId, Role, Sym, encode};
 use crate::value::{Ty, Value, int_size};
 use crate::{Code, Error};
@@ -659,16 +660,16 @@ impl Lower<'_> {
         Ok(conns)
     }
 
-    /// The domain ports, then the ports sorted by name: the inputs, then the outputs.
+    /// The ports of `inst` in the port layout. They lower in declaration order.
     fn ports(&mut self, inst: &Inst) -> R<Vec<Port>> {
         let body = &inst.body;
         let at = span(inst.pos);
-        let mut ports = Vec::new();
-        if let Some(domain) = body.domain {
+        let mut domain = Vec::new();
+        if let Some(d) = body.domain {
             for (role, ty) in [(Role::Clk, CTy::Clock), (Role::Rst, CTy::Bits(num(1, at)))] {
                 self.charge(inst.pos, 1)?;
-                let name = self.name(inst.pos, &self.role(domain, role))?;
-                ports.push(Port {
+                let name = self.name(inst.pos, &self.role(d, role))?;
+                domain.push(Port {
                     dir: Dir::Input,
                     name: CName { span: at, ..name },
                     ty,
@@ -676,8 +677,7 @@ impl Lower<'_> {
                 });
             }
         }
-        let mut ins = Vec::new();
-        let mut outs = Vec::new();
+        let mut ports = Vec::with_capacity(body.ports.len());
         for decl in &body.ports {
             self.charge(decl.pos, 1)?;
             let name = self.name(decl.pos, &self.port_name(decl.sym))?;
@@ -688,16 +688,11 @@ impl Lower<'_> {
                 ty: CTy::Bits(num(width(decl.ty), at)),
                 span: at,
             };
-            if decl.input {
-                ins.push(port);
-            } else {
-                outs.push(port);
-            }
+            ports.push((decl, port));
         }
-        ins.sort_by(|x, y| x.name.text.cmp(&y.name.text));
-        outs.sort_by(|x, y| x.name.text.cmp(&y.name.text));
-        ports.append(&mut ins);
-        ports.append(&mut outs);
+        let layout = layout::arrange(&self.design.texts, domain, ports);
+        let mut ports = layout.inputs;
+        ports.extend(layout.outputs);
         Ok(ports)
     }
 
