@@ -24,6 +24,7 @@
 
 use crate::eval::{Bind, Design, Inst, Sink};
 use crate::hw::{HwId, Kind, Op};
+use crate::int::{Nat, nat};
 use crate::layout;
 use crate::names::{Field, Name, PathId, Role, Sym, encode};
 use crate::value::{Ty, Value, int_size};
@@ -34,7 +35,6 @@ use core_ir::ast::{
     Reset, Stmt, Ty as CTy, UnOp as CUn,
 };
 use core_ir::diag::{ErrorCode, Span};
-use num_bigint::BigUint;
 use parse::StackError;
 use parse::ast::{BinOp, Pos, UnOp};
 use std::fmt::Write;
@@ -166,7 +166,7 @@ fn num(value: u32, c: Span) -> Num {
     Num { value, span: c }
 }
 
-fn konst(c: Span, w: u32, v: BigUint) -> Expr {
+fn konst(c: Span, w: u32, v: Nat) -> Expr {
     Expr::Const {
         width: num(w, c),
         value: v,
@@ -176,7 +176,7 @@ fn konst(c: Span, w: u32, v: BigUint) -> Expr {
 }
 
 fn small(c: Span, w: u32, v: u32) -> Expr {
-    konst(c, w, BigUint::from(v))
+    konst(c, w, nat(u64::from(v)))
 }
 
 fn bin(c: Span, op: CBin, a: Expr, b: Expr) -> Expr {
