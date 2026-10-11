@@ -85,13 +85,18 @@ struct Sections {
     assigns: Vec<String>,
 }
 
-fn env_of<'a>(m: &'a Module, modules: &HashMap<&str, &'a Module>) -> Result<Env<'a>, Unsupported> {
+fn env_of<'a>(
+    m: &'a Module,
+    clocked: bool,
+    modules: &HashMap<&str, &'a Module>,
+) -> Result<Env<'a>, Unsupported> {
     let mut env = Env {
         widths: HashMap::new(),
         insts: HashMap::new(),
     };
     for p in &m.ports {
-        if let Some(w) = width(p) {
+        // The reset of a clocked module is its domain, not a value.
+        if let (Some(w), false) = (width(p), clocked && p.name.text == RESET) {
             env.widths.insert(p.name.text.as_str(), w);
         }
     }
@@ -120,20 +125,19 @@ fn module(m: &Module, modules: &HashMap<&str, &Module>) -> Result<String, Unsupp
     if clocked && !m.ports.iter().any(|p| p.name.text == RESET) {
         return Err(Unsupported::Reset(m.name.text.clone()));
     }
-    let env = env_of(m, modules)?;
+    let env = env_of(m, clocked, modules)?;
     let mut sections = Sections::default();
-    for p in &m.ports {
-        // The clock and the reset are the domain of the module.
-        let (Some(w), false) = (width(p), clocked && p.name.text == RESET) else {
-            continue;
-        };
-        let kw = match p.dir {
-            Dir::Input => "input",
-            Dir::Output => "output",
-        };
-        sections
-            .ports
-            .push(format!("    {kw} {}: UInt[{w}];", name(&p.name.text)?));
+    for dir in [Dir::Input, Dir::Output] {
+        for p in m.ports.iter().filter(|p| p.dir == dir) {
+            // The clock and the reset are the domain of the module.
+            let (Some(w), false) = (width(p), clocked && p.name.text == RESET) else {
+                continue;
+            };
+            let kw = if dir == Dir::Input { "input" } else { "output" };
+            sections
+                .ports
+                .push(format!("    {kw} {}: UInt[{w}];", name(&p.name.text)?));
+        }
     }
     for s in &m.stmts {
         statement(s, &env, &mut sections)?;
@@ -231,6 +235,12 @@ fn connection(inst: &str, c: &Conn, env: &Env<'_>) -> Result<Option<String>, Uns
         .insts
         .get(inst)
         .ok_or_else(|| Unsupported::Name(inst.to_owned()))?;
+    if matches!(&c.expr, Expr::Ref(n) if n.text == RESET) && !env.widths.contains_key(RESET) {
+        let child_clocked = child.ports.iter().any(|p| p.ty == Ty::Clock);
+        if !child_clocked {
+            return Err(Unsupported::Reset(inst.to_owned()));
+        }
+    }
     let child_port = child.ports.iter().find(|p| p.name.text == port);
     if child_port.is_some_and(|p| p.ty == Ty::Clock) {
         return Ok(None);
@@ -400,6 +410,98 @@ mod tests {
     }
 
     #[test]
+    fn nested_forms_take_the_width_of_their_operands() {
+        let one = "UInt[1](1)";
+        let zero = "UInt[1](0)";
+        let table: &[(u32, &str, String)] = &[
+            (
+                1,
+                "(icmp slt (concat i0 i1) (concat i0 i1))",
+                format!(
+                    "(if ((reinterpret(SInt[10], ((resize(UInt[10], i0) << 2) | resize(UInt[10], i1))) < \
+                     reinterpret(SInt[10], ((resize(UInt[10], i0) << 2) | resize(UInt[10], i1))))) \
+                     {{ {one} }} else {{ {zero} }})"
+                ),
+            ),
+            (
+                8,
+                "(replicate (replicate i1 2) 2)",
+                "(resize(UInt[8], (resize(UInt[4], i1) *% UInt[4](5))) *% UInt[8](17))".into(),
+            ),
+            (
+                3,
+                "(shrs (extract i0 1 3) (extract i0 1 3))",
+                "reinterpret(UInt[3], (reinterpret(SInt[3], resize(UInt[3], (i0 >> 1))) >> \
+                 resize(UInt[3], (i0 >> 1))))"
+                    .into(),
+            ),
+            (
+                9,
+                "(concat (icmp eq i0 i0) i0)",
+                format!(
+                    "((resize(UInt[9], (if ((i0 == i0)) {{ {one} }} else {{ {zero} }})) << 8) | \
+                     resize(UInt[9], i0))"
+                ),
+            ),
+            (
+                1,
+                "(icmp slt (replicate i1 3) (replicate i1 3))",
+                format!(
+                    "(if ((reinterpret(SInt[6], (resize(UInt[6], i1) *% UInt[6](21))) < \
+                     reinterpret(SInt[6], (resize(UInt[6], i1) *% UInt[6](21))))) \
+                     {{ {one} }} else {{ {zero} }})"
+                ),
+            ),
+            (
+                10,
+                "(shrs (mux (icmp eq i1 i1) (concat i0 i1) (concat i0 i1)) i0)",
+                {
+                    let cat = "((resize(UInt[10], i0) << 2) | resize(UInt[10], i1))";
+                    format!(
+                        "reinterpret(UInt[10], (reinterpret(SInt[10], (if (((if ((i1 == i1)) \
+                         {{ {one} }} else {{ {zero} }}) == {one})) {{ {cat} }} else {{ {cat} }})) >> i0))"
+                    )
+                },
+            ),
+            (
+                4,
+                "(extract (concat i0 i1) 3 4)",
+                "resize(UInt[4], (((resize(UInt[10], i0) << 2) | resize(UInt[10], i1)) >> 3))"
+                    .into(),
+            ),
+        ];
+        for (width, core, source) in table {
+            assert_eq!(&spelled(*width, core), source, "{core}");
+        }
+    }
+
+    #[test]
+    fn each_predicate_has_its_operator() {
+        let table = [
+            ("eq", "==", false),
+            ("ne", "!=", false),
+            ("ult", "<", false),
+            ("ule", "<=", false),
+            ("ugt", ">", false),
+            ("uge", ">=", false),
+            ("slt", "<", true),
+            ("sle", "<=", true),
+            ("sgt", ">", true),
+            ("sge", ">=", true),
+        ];
+        for (pred, op, signed) in table {
+            let side = if signed {
+                "reinterpret(SInt[8], i0)"
+            } else {
+                "i0"
+            };
+            let want =
+                format!("(if (({side} {op} {side})) {{ UInt[1](1) }} else {{ UInt[1](0) }})");
+            assert_eq!(spelled(1, &format!("(icmp {pred} i0 i0)")), want, "{pred}");
+        }
+    }
+
+    #[test]
     fn instances_connect_data_ports_only() {
         let core = "(design m1 \
             (module m0 (input clk clock) (input rst (bits 1)) (input i0 (bits 4)) \
@@ -442,6 +544,13 @@ mod tests {
         let bare = "(design m0 (module m0 (input clk clock) (input rst (bits 1)) \
                     (reg r0 (bits 4) clk) (next r0 r0)))";
         assert_eq!(lifted(bare), Err(Unsupported::Reset("r0".into())));
+        let read = "(design m0 (module m0 (input clk clock) (input rst (bits 1)) \
+                    (output o0 (bits 1)) (assign o0 rst)))";
+        assert_eq!(lifted(read), Err(Unsupported::Reset("rst".into())));
+        let comb_child = "(design m1 (module m0 (input rst (bits 1)) (output o0 (bits 1)) \
+                    (assign o0 rst)) (module m1 (input clk clock) (input rst (bits 1)) \
+                    (inst u0 m0 (rst rst))))";
+        assert_eq!(lifted(comb_child), Err(Unsupported::Reset("u0".into())));
         let no_rst = "(design m0 (module m0 (input clk clock)))";
         assert_eq!(lifted(no_rst), Err(Unsupported::Reset("m0".into())));
         let mut keyword = parse("(design m0 (module m0 (input i0 (bits 1))))").unwrap();
