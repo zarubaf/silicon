@@ -7,3 +7,6 @@ publish = false
 
 [lints]
 workspace = true
+
+[dependencies]
+datatest-stable = "0.3.3"

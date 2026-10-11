@@ -738,6 +738,9 @@ dependencies = [
 [[package]]
 name = "testkit"
 version = "0.0.0"
+dependencies = [
+ "datatest-stable",
+]
 
 [[package]]
 name = "text-size"
