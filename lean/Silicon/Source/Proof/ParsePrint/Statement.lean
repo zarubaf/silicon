@@ -3,8 +3,8 @@ import Silicon.Source.Parse
 import Silicon.Source.Proof.ParsePrint.Erase
 
 /-!
-The statement of `parse_print` (section 10.3 of the front-end spec). The proof is a later
-task, so this module states the theorem as the proposition `Statement`:
+The statement of `parse_print` (section 10.3 of the front-end spec). This module states the
+theorem as the proposition `Statement`. `Source.Proof.ParsePrint` proves it:
 
 ```lean
 theorem parse_print (items : List Item) (h : Printable items)
