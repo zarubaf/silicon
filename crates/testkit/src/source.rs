@@ -196,22 +196,27 @@ pub fn elab(binary: &Path, file: &Path) -> datatest_stable::Result<()> {
     }
     let top = top(&source).map_err(in_file)?;
     let (rust, lean) = both(binary, "elab", file, &top, &[], "")?;
-    for (front_end, out) in [("Rust `silicon", &rust), ("Lean `silicon-check", &lean)] {
+    Ok(filecheck_agreed(file, &rust, &lean).map_err(in_file)?)
+}
+
+/// Requires that the two outputs of `elab` agree as `agree` says, then runs `FileCheck` with
+/// `file` on each. A `CHECK` file can cover a part of the output, so `agree` comes first.
+fn filecheck_agreed(file: &Path, rust: &Output, lean: &Output) -> Result<(), String> {
+    let agreed = agree("elab", rust, lean)?;
+    if agreed.code != 0 {
+        return Err(format!(
+            "`elab` failed in both front ends: {}",
+            String::from_utf8_lossy(&rust.stdout)
+        ));
+    }
+    for (front_end, out) in [("Rust `silicon", rust), ("Lean `silicon-check", lean)] {
         let stdout = String::from_utf8_lossy(&out.stdout);
-        if !out.status.success() {
-            return Err(in_file(format!(
-                "{front_end} elab` failed: {stdout}{}",
-                String::from_utf8_lossy(&out.stderr)
-            ))
-            .into());
-        }
-        let checked = run_tool("FileCheck", &[file], &stdout)?;
+        let checked = run_tool("FileCheck", &[file], &stdout).map_err(|e| e.to_string())?;
         if !checked.status.success() {
-            return Err(in_file(format!(
+            return Err(format!(
                 "FileCheck failed on the output of {front_end} elab`: {}\n{stdout}",
                 String::from_utf8_lossy(&checked.stderr)
-            ))
-            .into());
+            ));
         }
     }
     Ok(())
@@ -412,6 +417,14 @@ mod tests {
         let lean = exited(0, "");
         let err = agree("elab", &rust, &lean).unwrap_err();
         assert!(err.starts_with("Rust `silicon elab` failed"), "{err}");
+    }
+
+    #[test]
+    fn elab_outputs_that_differ_fail_before_filecheck() {
+        let rust = exited(0, "(design A)\n");
+        let lean = exited(0, "(design A)\n(extra)\n");
+        let err = filecheck_agreed(Path::new("/nonexistent"), &rust, &lean).unwrap_err();
+        assert!(err.contains("the front ends disagree"), "{err}");
     }
 
     #[test]
