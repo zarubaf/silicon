@@ -11,7 +11,7 @@ use anyhow::Result;
 use proptest::prelude::any;
 use proptest::strategy::{Just, Strategy};
 use syntax::r#gen::{BuildFault, Program, typed};
-use testkit::Outcome;
+use testkit::{Outcome, parse_report};
 
 use super::{Mode, Tools, outcome, repeat, write};
 
@@ -44,7 +44,8 @@ fn depth_of(pick: u32) -> u64 {
 
 /// Whether `outcome` is a rejection with the code `S015`.
 fn s015(outcome: &Outcome) -> bool {
-    outcome.code == 1 && outcome.report.starts_with(b"error[S015]:")
+    outcome.code == 1
+        && parse_report(&String::from_utf8_lossy(&outcome.report)).is_some_and(|r| r.code == "S015")
 }
 
 /// The exit code and the report of `outcome`, for a message.
