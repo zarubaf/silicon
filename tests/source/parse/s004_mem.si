@@ -1,2 +1,0 @@
-// S004: a memory belongs to a later slice.
-module M() { mem m: [T; 4]; }

@@ -1,0 +1,2 @@
+// S004: a builtin in a type argument belongs to a later slice.
+const A: UInt[@TypeOf(x)] = f;

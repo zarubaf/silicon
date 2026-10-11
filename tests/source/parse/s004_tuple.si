@@ -1,2 +1,0 @@
-// S004: a tuple belongs to a later slice.
-const A: T = (1, 2);

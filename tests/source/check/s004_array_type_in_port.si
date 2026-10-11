@@ -1,6 +1,0 @@
-// S004: an array type on a port belongs to slice 2.
-// TOP M()
-module M() {
-    // expected-error S004 @+1
-    input a: [Bool; 4];
-}

@@ -1,0 +1,2 @@
+// S004: a builtin in a call argument belongs to a later slice.
+const A: T = f(@TypeOf(x));

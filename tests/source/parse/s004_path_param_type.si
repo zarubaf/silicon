@@ -1,0 +1,2 @@
+// S004: a path in a parameter type belongs to a later slice.
+module M(comptime W: a::T) { }

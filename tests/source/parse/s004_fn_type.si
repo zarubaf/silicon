@@ -1,2 +1,0 @@
-// S004: a function type belongs to a later slice.
-const A: fn () -> T = f;

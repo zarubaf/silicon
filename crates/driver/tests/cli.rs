@@ -485,7 +485,7 @@ fn parse_reports_the_first_syntax_error() -> Test {
 
 #[test]
 fn parse_reports_a_later_slice_with_s004() -> Test {
-    let out = silicon(&["parse"], &file("s004.si", b"struct S {}\n")?, "")?;
+    let out = silicon(&["parse"], &file("s004.si", b"import x;\n")?, "")?;
     assert!(
         text(&out).starts_with("error[S004]: 1:1: "),
         "{}",

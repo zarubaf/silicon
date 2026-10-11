@@ -1,2 +1,0 @@
-// S004: struct belongs to a later slice.
-struct S { x: T }

@@ -1,0 +1,2 @@
+// S004: a path in a type argument belongs to a later slice.
+const A: UInt[a::W] = f;

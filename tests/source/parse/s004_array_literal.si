@@ -1,2 +1,0 @@
-// S004: an array literal belongs to a later slice.
-const A: T = [1, 2];

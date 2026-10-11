@@ -1,2 +1,0 @@
-// S004: a tuple type belongs to a later slice.
-const A: (T, T) = f;

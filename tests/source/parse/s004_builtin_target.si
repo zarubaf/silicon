@@ -1,0 +1,2 @@
+// S004: a builtin as an assignment target belongs to a later slice.
+module M() { @field(x, "f") = 1; }
