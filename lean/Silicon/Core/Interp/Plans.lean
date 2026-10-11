@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.Interp.Prepared
 
 /-! Prepare module tables once for each interpreter run. -/

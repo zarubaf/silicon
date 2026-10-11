@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.Interp.Cycle
 
 /-! State updates use final connections and the values already stored for this cycle. -/

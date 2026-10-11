@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.Semantics.DriverSearch
 import Silicon.Core.Semantics.MemoryOwner
 import Silicon.Core.Semantics.Drivers

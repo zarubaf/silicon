@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.Canonical.State
 
 /-! Zero state follows register and memory declarations through named instance paths. -/

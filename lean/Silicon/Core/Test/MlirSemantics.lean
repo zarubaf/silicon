@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.Mlir.Semantics
 import Silicon.Core.Mlir.WellFormed
 import Silicon.Core.Lower

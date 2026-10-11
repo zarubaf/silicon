@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.MemModel
 import Silicon.Core.Mlir.Print
 

@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.Check
 
 /-! Hierarchy ranks bound the rounds needed to infer child dependencies. -/

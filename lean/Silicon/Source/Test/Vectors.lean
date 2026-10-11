@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Silicon.Source.Cli
 import Silicon.Source.Test.Elab
 import Silicon.Core.Interp.Named

@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.Deps
 
 /-! Graph reachability connects equation reads to inferred data-input dependencies. -/

@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.Canonical.Basic
 
 /-! Reordering preserves each checker rule and the context of each module. -/

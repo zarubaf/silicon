@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Std.Data.HashMap.Lemmas
 
 /-! A hash index answers association-list queries in constant expected time. -/

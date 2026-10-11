@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.Semantics
 
 /-! Primitive tests fix the boundary rules for shifts, signs, and memory addresses. -/

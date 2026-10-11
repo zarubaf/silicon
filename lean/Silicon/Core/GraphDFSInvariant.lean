@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.GraphReach
 
 /-! A finished node reaches only finished nodes or shares a cycle with an active ancestor. -/

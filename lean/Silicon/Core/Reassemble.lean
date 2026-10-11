@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.Typed
 
 /-! Unique item names make the source layout recoverable after module sorting. -/

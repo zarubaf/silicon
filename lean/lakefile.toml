@@ -1,5 +1,6 @@
 name = "silicon"
 defaultTargets = ["Silicon", "silicon-check"]
+license = "Apache-2.0"
 
 [leanOptions]
 warningAsError = true

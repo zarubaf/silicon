@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.Lower
 import Silicon.Core.Proof.MemModel
 import Silicon.Core.Canonical.State

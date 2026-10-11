@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.Semantics.Driver
 
 /-! Finite driver lists permit execution without a choice of witnesses. -/

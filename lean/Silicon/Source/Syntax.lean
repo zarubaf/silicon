@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 /-!
 The source AST of slice 1, its source positions, and the error codes of the front end.
 The AST dump prints each constructor name in lowercase, and the Rust front end uses the

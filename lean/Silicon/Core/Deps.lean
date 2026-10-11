@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.Syntax
 import Silicon.Core.GraphReach
 import Silicon.Core.Index

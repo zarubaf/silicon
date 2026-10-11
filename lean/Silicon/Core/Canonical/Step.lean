@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.Canonical.Local
 
 /-! Child component transport preserves the child's step and its port values. -/

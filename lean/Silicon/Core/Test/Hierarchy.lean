@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.Semantics
 
 /-! A two-level design exposes its child's output and admits an explicit start state. -/

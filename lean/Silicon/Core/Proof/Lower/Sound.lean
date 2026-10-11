@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.Proof.Lower.StatementTyping
 import Silicon.Core.Proof.Lower.Emission
 

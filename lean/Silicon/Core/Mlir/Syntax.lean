@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 /-!
 This AST defines the MLIR subset for the reference lowering and memory models.
 Value names have no percent sign. The printer adds it.

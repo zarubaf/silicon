@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.Typed
 
 /-! Source indices recover statement order after grouping of state updates. -/

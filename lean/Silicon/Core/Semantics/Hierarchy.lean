@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.Semantics.Decode
 import Silicon.Core.DependencyTable
 import Silicon.Core.Semantics.HierarchyOrder

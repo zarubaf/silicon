@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.GraphDFSBase
 
 /-! A visited search returns only the nodes that it adds to an existing closed set. -/

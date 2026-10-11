@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Std.Data.DHashMap.Lemmas
 
 /-! A finite table stores function values before their consumers request them. -/

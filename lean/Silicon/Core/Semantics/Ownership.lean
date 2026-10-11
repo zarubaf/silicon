@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.Typed
 
 /-! Context entries and erased statements retain their typed source declarations. -/

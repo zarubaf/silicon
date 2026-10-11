@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.Interp.Demand
 
 /-! The value cache and child caches grow until the cycle's final state update. -/

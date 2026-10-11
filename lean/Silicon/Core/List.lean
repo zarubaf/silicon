@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Std
 
 /-! Distinct owners give disjoint lists of entries. -/
