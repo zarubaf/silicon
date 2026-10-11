@@ -175,6 +175,13 @@ pub fn min_unsigned(bits: &BigUint, limit: u32) -> u32 {
     }
 }
 
+/// The size of the natural number of the bits of a finite value, as `intSize` of Lean: 1 for
+/// each 64-bit word, and at least 1.
+#[must_use]
+pub fn unsigned_size(bits: &BigUint) -> u64 {
+    bits.bits().saturating_sub(1) / 64 + 1
+}
+
 impl fmt::Debug for Int {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)

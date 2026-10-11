@@ -259,5 +259,90 @@ pub fn module_name(digest: fn(&str) -> String, id: &InstantiationId, serial: &st
     }
 }
 
+/// The symbol of a source name: its number in the text table of an elaboration.
+pub(crate) type Sym = usize;
+
+/// A field of a structural path. A user field holds the symbol of its source name, so a new
+/// path copies no text.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Step {
+    User(Sym),
+    Int(Int),
+    Call(u64),
+    Version(u64),
+    Role(Role),
+}
+
+/// A structural path: an index into the paths of an elaboration.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PathId(usize);
+
+/// A path is its first user field, or a field after a shorter path. A frame and each name
+/// inside it thus share their fields, so a new name costs one step and no copy.
+enum PathNode {
+    Outer(Sym),
+    Push(PathId, Step),
+}
+
+/// The paths of an elaboration. Each grows only with a charged statement or call.
+#[derive(Default)]
+pub(crate) struct Paths {
+    nodes: Vec<PathNode>,
+}
+
+impl Paths {
+    fn add(&mut self, node: PathNode) -> PathId {
+        self.nodes.push(node);
+        PathId(self.nodes.len() - 1)
+    }
+
+    /// The path of the user field `u` in the frame `frame`. The root frame is `None`.
+    pub(crate) fn child(&mut self, frame: Option<PathId>, u: Sym) -> PathId {
+        match frame {
+            None => self.add(PathNode::Outer(u)),
+            Some(p) => self.push(p, Step::User(u)),
+        }
+    }
+
+    pub(crate) fn push(&mut self, p: PathId, step: Step) -> PathId {
+        self.add(PathNode::Push(p, step))
+    }
+
+    /// The name of a path, with the text of each symbol from `texts`.
+    pub(crate) fn name(&self, p: PathId, texts: &[String]) -> Name {
+        let text = |s: Sym| texts.get(s).cloned().unwrap_or_default();
+        let mut rest = Vec::new();
+        let mut at = p;
+        loop {
+            match self.nodes.get(at.0) {
+                Some(PathNode::Push(parent, step)) => {
+                    rest.push(match step {
+                        Step::User(s) => Field::User(text(*s)),
+                        Step::Int(n) => Field::Int(n.clone()),
+                        Step::Call(k) => Field::Call(*k),
+                        Step::Version(k) => Field::Version(*k),
+                        Step::Role(r) => Field::Role(*r),
+                    });
+                    at = *parent;
+                }
+                Some(PathNode::Outer(s)) => {
+                    rest.reverse();
+                    return Name {
+                        head: text(*s),
+                        rest,
+                    };
+                }
+                None => {
+                    rest.reverse();
+                    return Name {
+                        head: String::new(),
+                        rest,
+                    };
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests;

@@ -1,47 +1,82 @@
 //! The pass before the evaluation. It finds the heights that size the stack of the evaluator,
-//! and the value of each number literal.
+//! the value of each number literal, the symbols of the source names, and the call sites.
 //!
-//! The evaluator recurses over the AST, and each active call or constant in progress starts
-//! the recursion again in its item. The pass finds two heights: the highest node, and the
-//! highest node that can start a nested evaluation, a call or the use of a constant.
-//! `parse::NestedStack` sizes the stack from them.
+//! The evaluator recurses over the AST, and each active call, constant in progress, or
+//! instantiation in progress starts the recursion again in its item. The pass finds two
+//! heights: the highest node, and the highest node that can start a nested evaluation, a
+//! call, the use of a constant, or an `instance` statement. `parse::NestedStack` sizes the
+//! stack from them.
 //!
 //! The decimal conversion of a literal is not a unit of the cost model: Lean parses a literal
 //! to its integer. Thus it runs here, once for each literal, and the evaluation only copies a
-//! value after it paid for it.
+//! value after it paid for it. The text table of the symbols runs here too, as the Lean
+//! `symbols` runs before the fuel counts.
 
 use crate::int::Int;
+use crate::names::Sym;
 use parse::NestedStack;
-use parse::ast::{Expr, Item, Pos, Stmt, TypeExpr};
-use resolve::{Kind, Resolved, ResolvedExpr, Target};
-use std::collections::BTreeMap;
+use parse::ast::{Expr, Ident, Item, Pos, Stmt, TypeExpr};
+use resolve::{DeclId, Kind, Resolved, ResolvedExpr, Target};
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The value of each number literal, by its map and its position. The key is `true` for a
 /// literal of the top expression, which has its own positions.
 pub(crate) type Numbers = BTreeMap<(bool, Pos), Int>;
 
+/// The symbols of a file. Each distinct source name gets one number, so a lookup or a key
+/// compares numbers and not text.
+#[derive(Default)]
+pub(crate) struct Syms {
+    /// The text of each symbol.
+    pub texts: Vec<String>,
+    /// The symbol of each declaration of a binder of the AST.
+    pub decls: BTreeMap<DeclId, Sym>,
+    /// The symbol of each field name, by its position.
+    pub fields: BTreeMap<Pos, Sym>,
+    /// The symbol of the name of each item.
+    pub items: Vec<Sym>,
+    /// The symbol of `clock`, the default domain.
+    pub clock: Sym,
+    /// The number of each call node in the body of each item: its index among the call nodes
+    /// of the body, in position order. Section 7.3 names a call frame with it.
+    pub calls: Vec<BTreeMap<Pos, u64>>,
+}
+
 /// The result of the pass before the evaluation of `top` in the file scope of `file`.
 pub(crate) struct Scan {
     pub stack: NestedStack,
     pub numbers: Numbers,
+    pub syms: Syms,
 }
 
-pub(crate) fn of(file: &Resolved, top: &ResolvedExpr) -> Scan {
+pub(crate) fn of(file: &Resolved, top: Option<&ResolvedExpr>) -> Scan {
     let mut walk = Walk {
         file,
-        top: Some(top),
+        top,
         height: 0,
         nested: 0,
         numbers: Numbers::new(),
+        table: BTreeMap::new(),
+        syms: Syms::default(),
+        calls: BTreeSet::new(),
     };
-    walk.expr(top.expr(), 1);
+    if let Some(top) = top {
+        walk.expr(top.expr(), 1);
+    }
     walk.top = None;
+    for item in file.ast() {
+        let (Item::Const { name, .. } | Item::Fn { name, .. } | Item::Module { name, .. }) = item;
+        let s = walk.intern(&name.name);
+        walk.syms.items.push(s);
+    }
+    walk.syms.clock = walk.intern("clock");
     for item in file.ast() {
         walk.item(item);
     }
     Scan {
         stack: NestedStack::new(walk.height, walk.nested),
         numbers: walk.numbers,
+        syms: walk.syms,
     }
 }
 
@@ -52,10 +87,14 @@ struct Walk<'a> {
     height: usize,
     nested: usize,
     numbers: Numbers,
+    table: BTreeMap<String, Sym>,
+    syms: Syms,
+    /// The call nodes of the body of the current item.
+    calls: BTreeSet<Pos>,
 }
 
 impl Walk<'_> {
-    fn is_constant(&self, pos: parse::ast::Pos) -> bool {
+    fn is_constant(&self, pos: Pos) -> bool {
         let target = match self.top {
             Some(top) => top.target(pos),
             None => self.file.target(pos),
@@ -67,28 +106,66 @@ impl Walk<'_> {
         self.height = self.height.max(depth);
     }
 
+    fn intern(&mut self, x: &str) -> Sym {
+        if let Some(&s) = self.table.get(x) {
+            return s;
+        }
+        let s = self.syms.texts.len();
+        self.syms.texts.push(x.to_owned());
+        self.table.insert(x.to_owned(), s);
+        s
+    }
+
+    fn binder(&mut self, b: &Ident) {
+        let s = self.intern(&b.name);
+        if let Some(Target::Decl(id)) = self.file.target(b.pos) {
+            self.syms.decls.insert(id, s);
+        }
+    }
+
     fn item(&mut self, item: &Item) {
+        self.calls.clear();
         match item {
             Item::Const { ty, value, .. } => {
                 self.ty(ty, 1);
                 self.expr(value, 1);
+                self.calls.clear();
             }
             Item::Fn {
                 params, ret, body, ..
             } => {
+                self.stmts(body, 1);
+                let calls = std::mem::take(&mut self.calls);
                 for p in params {
+                    self.binder(&p.name);
                     self.ty(&p.ty, 1);
                 }
                 self.ty(ret, 1);
-                self.stmts(body, 1);
+                self.calls = calls;
             }
-            Item::Module { params, body, .. } => {
+            Item::Module {
+                params,
+                domains,
+                body,
+                ..
+            } => {
+                self.stmts(body, 1);
+                let calls = std::mem::take(&mut self.calls);
                 for p in params {
+                    self.binder(&p.name);
                     self.ty(&p.ty, 1);
                 }
-                self.stmts(body, 1);
+                for d in domains.iter().flatten() {
+                    self.binder(d);
+                }
+                self.calls = calls;
             }
         }
+        let mut sites = BTreeMap::new();
+        for (k, p) in self.calls.iter().enumerate() {
+            sites.insert(*p, k as u64);
+        }
+        self.syms.calls.push(sites);
     }
 
     fn stmts(&mut self, ss: &[Stmt], depth: usize) {
@@ -101,27 +178,36 @@ impl Walk<'_> {
         self.reach(depth);
         let d = depth + 1;
         match s {
-            Stmt::Local { ty, value, .. } => {
+            Stmt::Local {
+                name, ty, value, ..
+            } => {
                 if let Some(ty) = ty {
                     self.ty(ty, d);
                 }
                 self.expr(value, d);
+                self.binder(name);
             }
             Stmt::Assign { target, value, .. } | Stmt::Connect { target, value, .. } => {
                 self.expr(target, d);
                 self.expr(value, d);
             }
-            Stmt::Reg { ty, init, .. } => {
+            Stmt::Reg { name, ty, init, .. } => {
                 self.ty(ty, d);
                 self.expr(init, d);
+                self.binder(name);
             }
-            Stmt::Wire { ty, .. } | Stmt::Input { ty, .. } | Stmt::Output { ty, .. } => {
+            Stmt::Wire { name, ty, .. }
+            | Stmt::Input { name, ty, .. }
+            | Stmt::Output { name, ty, .. } => {
                 self.ty(ty, d);
+                self.binder(name);
             }
-            Stmt::Inst { args, .. } => {
+            Stmt::Inst { name, args, .. } => {
+                self.nested = self.nested.max(depth);
                 for a in args {
                     self.expr(a, d);
                 }
+                self.binder(name);
             }
             Stmt::Ret { value, .. } => {
                 if let Some(v) = value {
@@ -135,9 +221,12 @@ impl Walk<'_> {
                     self.stmts(no, d + 1);
                 }
             }
-            Stmt::CtFor { lo, hi, body, .. } => {
+            Stmt::CtFor {
+                var, lo, hi, body, ..
+            } => {
                 self.expr(lo, d);
                 self.expr(hi, d);
+                self.binder(var);
                 self.stmts(body, d + 1);
             }
             Stmt::Block { body, .. } => self.stmts(body, d),
@@ -179,8 +268,11 @@ impl Walk<'_> {
                 self.expr(yes, d);
                 self.expr(no, d);
             }
-            Expr::Call { callee, args, .. } => {
+            Expr::Call { pos, callee, args } => {
                 self.nested = self.nested.max(depth);
+                if self.top.is_none() {
+                    self.calls.insert(*pos);
+                }
                 self.expr(callee, d);
                 for a in args {
                     self.expr(a, d);
@@ -192,7 +284,13 @@ impl Walk<'_> {
                     self.expr(a, d);
                 }
             }
-            Expr::Field { base, .. } => self.expr(base, d),
+            Expr::Field { base, field, .. } => {
+                if self.top.is_none() {
+                    let s = self.intern(&field.name);
+                    self.syms.fields.insert(field.pos, s);
+                }
+                self.expr(base, d);
+            }
         }
     }
 }

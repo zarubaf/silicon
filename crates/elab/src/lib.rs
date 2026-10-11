@@ -1,8 +1,9 @@
-//! The elaborator of the Silicon front end: the static values, the static evaluator with the
-//! budgets and the cost model, and the digest names. See [the front end
-//! design](../../doc/design/2026-10-09-frontend.md), sections 4.4, 4.5, and 5.
+//! The elaborator of the Silicon front end: the static values, the evaluator with the budgets
+//! and the cost model, the instantiations, and the names. See [the front end
+//! design](../../doc/design/2026-10-09-frontend.md), sections 4.4, 4.5, 5, and 7.
 
 mod eval;
+mod hw;
 pub mod int;
 pub mod names;
 mod ops;
@@ -10,13 +11,16 @@ mod scan;
 pub mod sha256;
 pub mod value;
 
+pub use eval::Design;
+
+use eval::Literal;
 use parse::StackError;
-use parse::ast::Pos;
+use parse::ast::{Expr, Item, Pos};
 use resolve::{Resolved, ResolvedExpr};
 use std::fmt;
 use value::Value;
 
-/// The codes of elaboration that the static evaluator can report (design section 6.1).
+/// The codes of elaboration that the evaluator can report (design section 6.1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Code {
     /// A `return` outside of a function.
@@ -35,7 +39,13 @@ pub enum Code {
     S014,
     /// The fuel or the nesting depth is exhausted.
     S015,
-    /// A constant depends on itself.
+    /// A resource rule: a bad `:=` target, a read of a child input, or a register or a
+    /// clocked child in a combinational module.
+    S017,
+    /// A binding rule: a resource or a child input without exactly one binding.
+    S018,
+    /// An identity rule: a constant or an instantiation that depends on itself, or two
+    /// identities with one core name.
     S019,
 }
 
@@ -50,6 +60,8 @@ impl fmt::Display for Code {
             Code::S013 => "S013",
             Code::S014 => "S014",
             Code::S015 => "S015",
+            Code::S017 => "S017",
+            Code::S018 => "S018",
             Code::S019 => "S019",
         })
     }
@@ -94,15 +106,113 @@ pub fn eval(
     expr: &ResolvedExpr,
     budget: Budget,
 ) -> Result<Result<(Value, u64), Error>, StackError> {
-    let scan = parse::on_stack(expr.depth_with(file), || scan::of(file, expr))?;
+    let scan = parse::on_stack(expr.depth_with(file), || scan::of(file, Some(expr)))?;
     let stack = scan.stack;
-    let result = stack.run(|| eval::run(file, expr, budget, scan))?;
-    match result {
+    finish(stack.run(|| eval::run(file, expr, budget, scan))?)
+}
+
+/// Why an elaboration does not start or does not end: a top selection that is not a module
+/// name with literal arguments, or a stack that the machine cannot give.
+#[derive(Debug)]
+pub enum Abort {
+    Usage(String),
+    Stack(StackError),
+}
+
+/// The elaboration of the top selection `top` in `file`, as Lean `Elab.elaborate` and the
+/// top selection of `silicon-check` give it. `top` is a module name, then literal arguments
+/// in parentheses. Its positions are in its own text, parsed with the syntax depth
+/// `syntax_depth`. The file passed the pre-check.
+///
+/// # Errors
+/// Returns `Abort::Usage` for a bad top selection, and `Abort::Stack` if the machine cannot
+/// give a stack.
+pub fn elaborate(
+    file: &Resolved,
+    top: &str,
+    syntax_depth: usize,
+    budget: Budget,
+) -> Result<Result<Design, Error>, Abort> {
+    elaborate_with(file, top, syntax_depth, budget, names::sha16)
+}
+
+/// `elaborate` with the digest function `digest` of the emitted names.
+fn elaborate_with(
+    file: &Resolved,
+    top: &str,
+    syntax_depth: usize,
+    budget: Budget,
+    digest: fn(&str) -> String,
+) -> Result<Result<Design, Error>, Abort> {
+    let (pos, item, params, xs) = top_selection(file, top, syntax_depth)?;
+    if params != xs.len() {
+        return Ok(Err(Error {
+            code: Code::S007,
+            pos,
+            message: format!(
+                "the top takes {params} argument(s), but it has {}",
+                xs.len()
+            ),
+        }));
+    }
+    let scan = parse::on_stack(file.depth(), || scan::of(file, None)).map_err(Abort::Stack)?;
+    let stack = scan.stack;
+    let run = stack
+        .run(|| eval::elaborate(file, budget, scan, digest, pos, item, xs))
+        .map_err(Abort::Stack)?;
+    finish(run).map_err(Abort::Stack)
+}
+
+/// The result of an evaluation, or the stack error that stopped it.
+fn finish<T>(r: Result<T, eval::Stop>) -> Result<Result<T, Error>, StackError> {
+    match r {
         Ok(done) => Ok(Ok(done)),
         Err(eval::Stop::Error(e)) => Ok(Err(e)),
         Err(eval::Stop::Stack(e)) => Err(e),
     }
 }
 
+/// The top selection `top`: the position of the selection, the index of the first module
+/// item with its name, its number of parameters, and the literal arguments.
+fn top_selection(
+    file: &Resolved,
+    top: &str,
+    depth: usize,
+) -> Result<(Pos, usize, usize, Vec<Literal>), Abort> {
+    let bad = || {
+        Abort::Usage(format!(
+            "the top selection `{top}` is not a module name with literal arguments"
+        ))
+    };
+    let parsed = match parse::parse_expr(top, depth) {
+        Ok(Ok(parsed)) => parsed,
+        Ok(Err(_)) | Err(parse::DepthError::Range(_)) => return Err(bad()),
+        Err(parse::DepthError::Stack(e)) => return Err(Abort::Stack(e)),
+    };
+    let (pos, m, args): (Pos, &str, &[Expr]) = match parsed.expr() {
+        Expr::Call { pos, callee, args } => match &**callee {
+            Expr::Name { name, .. } => (*pos, name, args),
+            _ => return Err(bad()),
+        },
+        Expr::Name { pos, name } => (*pos, name, &[]),
+        _ => return Err(bad()),
+    };
+    let mut xs = Vec::with_capacity(args.len());
+    for a in args {
+        xs.push(Literal::of(a).ok_or_else(bad)?);
+    }
+    for (i, item) in file.ast().iter().enumerate() {
+        if let Item::Module { name, params, .. } = item
+            && name.name == m
+        {
+            return Ok((pos, i, params.len(), xs));
+        }
+    }
+    Err(Abort::Usage(format!("`{m}` is not a module of the file")))
+}
+
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod tests_elab;

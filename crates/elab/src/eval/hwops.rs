@@ -1,0 +1,271 @@
+//! The hardware operations of Lean `Source.Eval`. A hardware operation makes one node and
+//! charges 1 plus the number of its operands. Its operand trees are shared, so the work is
+//! constant per node. A read of a handle and a lift of a static operand only refer, so they
+//! charge nothing.
+//!
+//! A constant node copies a Boolean or a finite value. A finite value has at most 1024 words,
+//! because a width is at most 65536, so the copy stays within a constant factor of the charge.
+
+use super::{Evaluator, Opnd, Res, at, fail};
+use crate::Code;
+use crate::hw::{HwId, Op, Val};
+use crate::int::unsigned_size;
+use crate::ops::{self, MAX_WIDTH, binop_text, int_text, unop_text};
+use crate::value::{Ty, Value, int_size};
+use parse::ast::{BinOp, Pos, UnOp};
+use resolve::Prelude;
+
+/// The amount of a static shift count that the lowering reads: `min k 65536`.
+fn amount(k: Option<u64>) -> u32 {
+    let k = k.map_or(MAX_WIDTH, |k| k.min(MAX_WIDTH));
+    u32::try_from(k).unwrap_or(u32::MAX)
+}
+
+impl Evaluator<'_> {
+    /// Makes a hardware node. It charges 1 plus the number of its operands.
+    fn node(&mut self, pos: Pos, ty: Ty, op: Op, args: Vec<HwId>) -> Res<Val> {
+        self.charge(pos, 1 + args.len() as u128)?;
+        Ok(Val::Hw(self.graph.mk(pos, ty, op, args)))
+    }
+
+    /// A static value at a hardware use. Only a Boolean and a finite value have a hardware
+    /// type.
+    pub(super) fn lit(&mut self, pos: Pos, v: Value) -> Res<HwId> {
+        match v {
+            Value::Bool(_) | Value::UInt(_) | Value::SInt(_) => {
+                let ty = v.ty().unwrap_or(Ty::Bool);
+                Ok(self.graph.mk(pos, ty, Op::Lit(v), Vec::new()))
+            }
+            v => fail(
+                Code::S010,
+                pos,
+                format!("hardware needs a Bool or a finite value, not {}", v.text()),
+            ),
+        }
+    }
+
+    /// A static operand next to a hardware operand of the type `t`. An integer takes the
+    /// type `t`.
+    fn lit_at(&mut self, pos: Pos, t: Ty, o: &super::Out) -> Res<HwId> {
+        let v = self.store.value(o);
+        let converted = if matches!(v, Value::Int(_)) && t.is_finite() {
+            ops::convert(t, v, &mut self.fuel).map_err(at(pos))?
+        } else {
+            None
+        };
+        let v = converted.unwrap_or_else(|| self.store.value(o).clone());
+        self.lit(pos, v)
+    }
+
+    /// Two data operands as hardware. At least one of them is hardware.
+    fn hw_pair(&mut self, pos: Pos, lhs: Opnd, rhs: Opnd) -> Res<(HwId, HwId)> {
+        match (lhs, rhs) {
+            (Opnd::Hw(left), Opnd::Hw(right)) => Ok((left, right)),
+            (Opnd::Hw(left), Opnd::Static(right)) => {
+                let ty = self.graph.ty(left);
+                Ok((left, self.lit_at(pos, ty, &right)?))
+            }
+            (Opnd::Static(left), Opnd::Hw(right)) => {
+                let ty = self.graph.ty(right);
+                Ok((self.lit_at(pos, ty, &left)?, right))
+            }
+            (Opnd::Static(left), Opnd::Static(right)) => fail(
+                Code::S010,
+                pos,
+                format!(
+                    "expected data operands, not {} and {}",
+                    self.store.value(&left).text(),
+                    self.store.value(&right).text()
+                ),
+            ),
+        }
+    }
+
+    pub(super) fn hw_unary(&mut self, pos: Pos, op: UnOp, a: HwId) -> Res<Val> {
+        let t = self.graph.ty(a);
+        match (op, t) {
+            (UnOp::Not, Ty::Bool) => self.node(pos, Ty::Bool, Op::Un(op), vec![a]),
+            (UnOp::Inv | UnOp::Neg, t) if t.is_finite() => self.node(pos, t, Op::Un(op), vec![a]),
+            _ => fail(
+                Code::S010,
+                pos,
+                format!("`{}` does not accept {}", unop_text(op), t.text()),
+            ),
+        }
+    }
+
+    /// A shift with a hardware operand. A static count becomes an `Int` constant of the
+    /// node, so the lowering can use the row "Shift by a static count" of section 7.4.
+    fn hw_shift(&mut self, pos: Pos, op: BinOp, a: Opnd, b: &Opnd) -> Res<Val> {
+        let count = match b {
+            Opnd::Static(o) => match self.store.value(o) {
+                Value::Int(k) if k.is_negative() => {
+                    return fail(
+                        Code::S013,
+                        pos,
+                        format!("the shift count {} is negative", int_text(k)),
+                    );
+                }
+                Value::Int(k) => {
+                    let (amount, size) = (amount(k.to_u64()), int_size(k));
+                    self.graph
+                        .mk(pos, Ty::Int, Op::Count { amount, size }, Vec::new())
+                }
+                Value::UInt(x) => {
+                    let amount = crate::int::min_unsigned(x.value(), 65536);
+                    let size = unsigned_size(x.value());
+                    self.graph
+                        .mk(pos, Ty::Int, Op::Count { amount, size }, Vec::new())
+                }
+                v => {
+                    return fail(
+                        Code::S010,
+                        pos,
+                        format!("a shift count is UInt or a static Int, not {}", v.text()),
+                    );
+                }
+            },
+            Opnd::Hw(c) => {
+                let ty = self.graph.ty(*c);
+                if matches!(ty, Ty::UInt(_)) {
+                    *c
+                } else {
+                    return fail(
+                        Code::S010,
+                        pos,
+                        format!("a shift count is UInt or a static Int, not {}", ty.text()),
+                    );
+                }
+            }
+        };
+        let left = match a {
+            Opnd::Hw(x) => x,
+            Opnd::Static(o) => self.lit_at(pos, Ty::Bool, &o)?,
+        };
+        let t = self.graph.ty(left);
+        if t.is_finite() {
+            self.node(pos, t, Op::Bin(op), vec![left, count])
+        } else {
+            fail(
+                Code::S010,
+                pos,
+                format!("`{}` does not accept {}", binop_text(op), t.text()),
+            )
+        }
+    }
+
+    /// A binary operator with at least one hardware operand. Both operands are data.
+    pub(super) fn hw_binary(&mut self, pos: Pos, op: BinOp, lhs: Opnd, rhs: Opnd) -> Res<Val> {
+        match op {
+            BinOp::Shl | BinOp::Shr => return self.hw_shift(pos, op, lhs, &rhs),
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => {
+                return fail(
+                    Code::S010,
+                    pos,
+                    format!(
+                        "`{}` accepts only Int and Nat; hardware has `+%`, `-%`, and `*%`",
+                        binop_text(op)
+                    ),
+                );
+            }
+            _ => {}
+        }
+        let (left, right) = self.hw_pair(pos, lhs, rhs)?;
+        let (ty, other) = (self.graph.ty(left), self.graph.ty(right));
+        let accepted = ty == other
+            && match op {
+                BinOp::Eq | BinOp::Ne => true,
+                BinOp::Land | BinOp::Lor => ty == Ty::Bool,
+                _ => ty.is_finite(),
+            };
+        if !accepted {
+            return fail(
+                Code::S010,
+                pos,
+                format!(
+                    "`{}` does not accept {} and {}",
+                    binop_text(op),
+                    ty.text(),
+                    other.text()
+                ),
+            );
+        }
+        let result = match op {
+            BinOp::Eq
+            | BinOp::Ne
+            | BinOp::Land
+            | BinOp::Lor
+            | BinOp::Lt
+            | BinOp::Le
+            | BinOp::Gt
+            | BinOp::Ge => Ty::Bool,
+            _ => ty,
+        };
+        self.node(pos, result, Op::Bin(op), vec![left, right])
+    }
+
+    /// A hardware `if` with the condition `cond`. A static arm takes the type of the other
+    /// arm. Both arms have one type.
+    pub(super) fn mux(&mut self, pos: Pos, cond: HwId, yes: Opnd, no: Opnd) -> Res<Val> {
+        let (left, right) = match (yes, no) {
+            (Opnd::Static(yes), Opnd::Static(no)) => {
+                let yes_ty = self.store.value(&yes).finite_ty();
+                let no_ty = self.store.value(&no).finite_ty();
+                match (yes_ty, no_ty) {
+                    (Some(ty), _) => {
+                        let value = self.store.value(&yes).clone();
+                        let left = self.lit(pos, value)?;
+                        (left, self.lit_at(pos, ty, &no)?)
+                    }
+                    (_, Some(ty)) => {
+                        let left = self.lit_at(pos, ty, &yes)?;
+                        let value = self.store.value(&no).clone();
+                        (left, self.lit(pos, value)?)
+                    }
+                    _ => {
+                        let value = self.store.value(&yes).clone();
+                        let left = self.lit(pos, value)?;
+                        let value = self.store.value(&no).clone();
+                        (left, self.lit(pos, value)?)
+                    }
+                }
+            }
+            (yes, no) => self.hw_pair(pos, yes, no)?,
+        };
+        let (ty, other) = (self.graph.ty(left), self.graph.ty(right));
+        if ty == other {
+            self.node(pos, ty, Op::Mux, vec![cond, left, right])
+        } else {
+            fail(
+                Code::S010,
+                pos,
+                format!(
+                    "the arms of an `if` have one type, not {} and {}",
+                    ty.text(),
+                    other.text()
+                ),
+            )
+        }
+    }
+
+    /// `resize` or `reinterpret` of a hardware value.
+    pub(super) fn hw_convert(&mut self, pos: Pos, f: Prelude, to: Ty, arg: HwId) -> Res<Val> {
+        let from = self.graph.ty(arg);
+        match (f, to, from) {
+            (Prelude::Resize, Ty::UInt(_), Ty::UInt(_))
+            | (Prelude::Resize, Ty::SInt(_), Ty::SInt(_)) => {
+                self.node(pos, to, Op::Resize, vec![arg])
+            }
+            (
+                Prelude::Reinterpret,
+                Ty::UInt(width) | Ty::SInt(width),
+                Ty::UInt(old) | Ty::SInt(old),
+            ) if old == width => self.node(pos, to, Op::Reinterpret, vec![arg]),
+            _ => fail(
+                Code::S010,
+                pos,
+                format!("no conversion of {} to {} here", from.text(), to.text()),
+            ),
+        }
+    }
+}
