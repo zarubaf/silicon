@@ -8,7 +8,8 @@ The port layout of section 7.5 of the front-end spec: the order of the core port
 The domain ports come first, then the inputs, then the outputs. In each group of inputs and
 outputs, the ports sort by the byte order of their source names. This order equals the order of
 the core names, because a name that `encode` changes only gets `$0k`, and `$` sorts before each
-name character.
+name character. The resolver makes the port names of a module unique, so this order has no ties,
+although `qsort` is not stable.
 -/
 namespace Silicon.Source.Layout
 

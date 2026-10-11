@@ -1,6 +1,7 @@
 -- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.Vectors
 import Silicon.Source.Flatten
+import Silicon.Source.Layout
 
 /-!
 The source vectors of section 11.2 of the front-end spec, and the port schema of the top.
