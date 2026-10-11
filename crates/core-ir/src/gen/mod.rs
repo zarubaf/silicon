@@ -120,22 +120,78 @@ pub fn design_with(config: Config) -> impl Strategy<Value = Design> {
     })
 }
 
+/// A random value for the input `port`, as the digits of an `in=` entry.
+fn port_value(port: &typed::Port) -> BoxedStrategy<String> {
+    let width = port.width.get();
+    vec(any::<u8>(), width.div_ceil(8) as usize)
+        .prop_map(move |bytes| (BigUint::from_bytes_le(&bytes) & mask(width)).to_string())
+        .boxed()
+}
+
 /// Random `in=` lines for the module `top` of a checked design.
 pub fn inputs(top: &typed::Module) -> impl Strategy<Value = String> + use<> {
     let ports: Vec<BoxedStrategy<String>> = top
         .inputs
         .iter()
         .map(|port| {
-            let (name, width) = (port.name.clone(), port.width.get());
-            vec(any::<u8>(), width.div_ceil(8) as usize)
-                .prop_map(move |bytes| {
-                    let value = BigUint::from_bytes_le(&bytes) & mask(width);
-                    format!("{name} {value}")
-                })
+            let name = port.name.clone();
+            port_value(port)
+                .prop_map(move |value| format!("{name} {value}"))
                 .boxed()
         })
         .collect();
     ports.prop_map(|pairs| format!("in=({})", pairs.join(" ")))
+}
+
+/// Whether the reset is active in each of `cycles` input lines. The first
+/// line resets with probability 3/4, so that the state starts defined. Each
+/// later line resets with probability 1/8, so that the state lives for about
+/// eight cycles.
+pub fn resets(cycles: usize) -> impl Strategy<Value = Vec<bool>> {
+    (
+        proptest::bool::weighted(0.75),
+        vec(proptest::bool::weighted(0.125), cycles.saturating_sub(1)),
+    )
+        .prop_map(move |(first, later)| {
+            std::iter::once(first)
+                .chain(later)
+                .take(cycles)
+                .collect::<Vec<bool>>()
+        })
+}
+
+/// `cycles` random `in=` lines for the module `top` of a checked design. The
+/// value of the input [`RESET`] comes from [`resets`], the others as in
+/// [`inputs`].
+pub fn lines(top: &typed::Module, cycles: usize) -> impl Strategy<Value = Vec<String>> + use<> {
+    let others: Vec<BoxedStrategy<String>> = top
+        .inputs
+        .iter()
+        .filter(|port| port.name != RESET)
+        .map(port_value)
+        .collect();
+    let names: Vec<String> = top.inputs.iter().map(|port| port.name.clone()).collect();
+    (resets(cycles), vec(others, cycles)).prop_map(move |(resets, rows)| {
+        resets
+            .into_iter()
+            .zip(rows)
+            .map(|(reset, row)| {
+                let mut row = row.into_iter();
+                let pairs: Vec<String> = names
+                    .iter()
+                    .filter_map(|name| {
+                        let value = if name == RESET {
+                            Some(String::from(if reset { "1" } else { "0" }))
+                        } else {
+                            row.next()
+                        };
+                        value.map(|value| format!("{name} {value}"))
+                    })
+                    .collect();
+                format!("in=({})", pairs.join(" "))
+            })
+            .collect()
+    })
 }
 
 fn name(text: String) -> Name {
