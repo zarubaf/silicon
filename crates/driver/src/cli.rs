@@ -39,8 +39,17 @@ pub enum Command {
     Check { file: PathBuf },
     /// Print the canonical text of a checked design.
     Fmt { file: PathBuf },
-    /// Read `in=` lines from stdin and print one `out=` line for each.
-    Run { file: PathBuf },
+    /// Read `in=` lines from stdin and print one `out=` line for each. With `--top`, the file
+    /// is a Silicon source file, and the lines are source vectors.
+    Run {
+        #[command(flatten)]
+        budget: Budgets,
+        file: PathBuf,
+        /// The top selection of a source file: a module name, then literal arguments in
+        /// parentheses.
+        #[arg(long, allow_hyphen_values = true)]
+        top: Option<String>,
+    },
     /// Print the MLIR of a checked design, with each memory as an extern.
     Lower {
         #[command(flatten)]
@@ -57,8 +66,29 @@ pub enum Command {
         #[arg(allow_hyphen_values = true)]
         expr: String,
     },
-    /// Print the fuel that the elaboration of a Silicon source file uses, then the units of
-    /// each instantiation, or the first error.
+    /// Print the canonical core IR of a Silicon source file, or the first error.
+    Elab {
+        #[command(flatten)]
+        budget: Budgets,
+        file: PathBuf,
+        /// The top selection: a module name, then literal arguments in parentheses.
+        #[arg(long, allow_hyphen_values = true)]
+        top: String,
+    },
+    /// Elaborate a Silicon source file and compare the canonical core IR with `out`: print
+    /// `ok`, or the first line that differs.
+    Validate {
+        #[command(flatten)]
+        budget: Budgets,
+        file: PathBuf,
+        /// The core IR to compare, such as the output of `elab`.
+        out: PathBuf,
+        /// The top selection: a module name, then literal arguments in parentheses.
+        #[arg(long, allow_hyphen_values = true)]
+        top: String,
+    },
+    /// Print the fuel that the elaboration of a Silicon source file and its lowering use, then
+    /// the units of each instantiation, or the first error.
     Cost {
         #[command(flatten)]
         budget: Budgets,
@@ -145,6 +175,8 @@ pub enum Exit {
     Success,
     DesignError,
     UsageError,
+    /// A core error other than a cycle in the lowered design: a defect of the elaborator.
+    Defect,
 }
 
 impl From<Exit> for ExitCode {
@@ -153,9 +185,13 @@ impl From<Exit> for ExitCode {
             Exit::Success => ExitCode::SUCCESS,
             Exit::DesignError => ExitCode::from(1),
             Exit::UsageError => ExitCode::from(2),
+            Exit::Defect => ExitCode::from(3),
         }
     }
 }
+
+/// The output text of a command and its exit code.
+type Output = (String, Exit);
 
 /// A usage error, an input error, or an output error, with its message.
 struct Usage(String);
@@ -197,8 +233,30 @@ fn dispatch(command: &Command, input: impl BufRead, out: &mut impl Write) -> Res
             out.write_all(print(&canonicalize(&ast)).as_bytes())?;
             Ok(Exit::Success)
         }),
-        Command::Run { file } => {
-            with_design(file, out, |_, design, out| simulate(&design, input, out))
+        Command::Run {
+            file, top: None, ..
+        } => with_design(file, out, |_, design, out| simulate(&design, input, out)),
+        Command::Run {
+            budget,
+            file,
+            top: Some(top),
+        } => run_source(&read_source(file)?, top, budget, input, out),
+        Command::Elab { budget, file, top } => {
+            let (text, exit) = elab_source(&read_source(file)?, top, budget)?;
+            out.write_all(text.as_bytes())?;
+            Ok(exit)
+        }
+        Command::Validate {
+            budget,
+            file,
+            out: sil,
+            top,
+        } => {
+            let source = read_source(file)?;
+            let sil = read_source(sil)?;
+            let (text, exit) = validate_source(&source, top, &sil, budget)?;
+            out.write_all(text.as_bytes())?;
+            Ok(exit)
         }
         Command::Lower { validation, file } => {
             with_validated_design(file, validation, out, |_, design, out| {
@@ -308,20 +366,175 @@ fn eval_source(source: &str, expr: &str, budget: &Budgets) -> Result<(String, Ex
     )
 }
 
-/// The output and the exit code of `cost`: the fuel that the elaboration of the top
-/// selection `top` uses, then the units of each instantiation by emitted name, or the first
-/// error. A top selection that is not a module name with literal arguments is a usage error.
-fn cost_source(source: &str, top: &str, budget: &Budgets) -> Result<(String, Exit), Usage> {
+/// The elaboration of the top selection `top` of `source` and its lowering, or the output and
+/// the exit code of the first failure. A top selection that is not a module name with
+/// literal arguments is a usage error.
+fn lowered(
+    source: &str,
+    top: &str,
+    budget: &Budgets,
+) -> Result<Result<(elab::Design, elab::Lowered), Output>, Usage> {
     let file = match load(source, budget.syntax_depth)? {
         Ok(file) => file,
+        Err(line) => return Ok(Err(line)),
+    };
+    let design = match elab::elaborate(&file, top, budget.syntax_depth, budget.elab()) {
+        Ok(Ok(design)) => design,
+        Ok(Err(e)) => return Ok(Err(error_line(e.code, e.pos, &e.message))),
+        Err(elab::Abort::Usage(message)) => return Err(Usage(message)),
+        Err(elab::Abort::Stack(e)) => return Err(stack(e)),
+    };
+    Ok(match design.lower().map_err(stack)? {
+        Ok(lowered) => Ok((design, lowered)),
+        Err(f) => Err(failure(f)),
+    })
+}
+
+/// A lowered design that passed the core check of pass 6.
+struct Checked {
+    design: elab::Design,
+    lowered: elab::Lowered,
+    typed: typed::Design,
+}
+
+/// `lowered`, then the core check of pass 6.
+fn checked(
+    source: &str,
+    top: &str,
+    budget: &Budgets,
+) -> Result<Result<Checked, (String, Exit)>, Usage> {
+    Ok(match lowered(source, top, budget)? {
+        Ok((design, lowered)) => match elab::check(&lowered.design) {
+            Ok(typed) => Ok(Checked {
+                design,
+                lowered,
+                typed,
+            }),
+            Err(f) => Err(failure(f)),
+        },
+        Err(line) => Err(line),
+    })
+}
+
+/// The output of a failure of the lowering or of its check. A defect prints on stderr.
+fn failure(f: elab::Failure) -> (String, Exit) {
+    match f {
+        elab::Failure::Source(e) => error_line(e.code, e.pos, &e.message),
+        elab::Failure::Defect(message) => defect(&message),
+    }
+}
+
+fn defect(message: &str) -> (String, Exit) {
+    // A failed write to stderr has no better channel to report to.
+    let _ = writeln!(io::stderr(), "silicon: defect of the elaborator: {message}");
+    (String::new(), Exit::Defect)
+}
+
+/// The output and the exit code of `cost`: the fuel that the elaboration of the top
+/// selection `top` and its lowering use, then the units of each instantiation by emitted
+/// name, or the first error. It does not run the core check, so a design with a cycle has a
+/// cost.
+fn cost_source(source: &str, top: &str, budget: &Budgets) -> Result<(String, Exit), Usage> {
+    Ok(match lowered(source, top, budget)? {
+        Ok((_, lowered)) => (lowered.cost(), Exit::Success),
+        Err(line) => line,
+    })
+}
+
+/// The output and the exit code of `elab`: the canonical text of the lowered design.
+fn elab_source(source: &str, top: &str, budget: &Budgets) -> Result<(String, Exit), Usage> {
+    Ok(match checked(source, top, budget)? {
+        Ok(c) => (canonical(&c.lowered.design), Exit::Success),
+        Err(line) => line,
+    })
+}
+
+fn canonical(design: &ast::Design) -> String {
+    print(&canonicalize(design))
+}
+
+/// The output and the exit code of `validate` (section 8): elaborate the source, parse and
+/// check `sil` with the core checker, then compare the canonical texts.
+fn validate_source(
+    source: &str,
+    top: &str,
+    sil: &str,
+    budget: &Budgets,
+) -> Result<(String, Exit), Usage> {
+    let c = match checked(source, top, budget)? {
+        Ok(c) => c,
         Err(line) => return Ok(line),
     };
-    match elab::elaborate(&file, top, budget.syntax_depth, budget.elab()) {
-        Ok(Ok(design)) => Ok((design.cost(), Exit::Success)),
-        Ok(Err(e)) => Ok(error_line(e.code, e.pos, &e.message)),
-        Err(elab::Abort::Usage(message)) => Err(Usage(message)),
-        Err(elab::Abort::Stack(e)) => Err(stack(e)),
+    let raw = match parse(sil).and_then(|raw| check(&raw).map(|_| raw)) {
+        Ok(raw) => raw,
+        Err(diagnostic) => return Ok((format!("{diagnostic}\n"), Exit::DesignError)),
+    };
+    let reference = canonical(&c.lowered.design);
+    let got = canonical(&raw);
+    Ok(if reference == got {
+        ("ok\n".to_owned(), Exit::Success)
+    } else {
+        (mismatch(&reference, &got) + "\n", Exit::DesignError)
+    })
+}
+
+/// The first line that differs between the reference text and the output text, numbered from
+/// 1. A missing line shows as `<end>`.
+fn mismatch(reference: &str, got: &str) -> String {
+    let quote = |line: Option<&str>| line.map_or_else(|| "<end>".to_owned(), |l| format!("`{l}`"));
+    let mut refs = reference.split('\n');
+    let mut gots = got.split('\n');
+    let mut n = 1;
+    loop {
+        let (r, o) = (refs.next(), gots.next());
+        if r != o || r.is_none() {
+            return format!(
+                "mismatch at line {n}: expected {}, found {}",
+                quote(r),
+                quote(o)
+            );
+        }
+        n += 1;
     }
+}
+
+/// `run` of a source file: one source output line for each source input line of `input`,
+/// from the zero state. A bad input line is a usage error after the earlier output lines.
+fn run_source(
+    source: &str,
+    top: &str,
+    budget: &Budgets,
+    input: impl BufRead,
+    out: &mut impl Write,
+) -> Result<Exit, Usage> {
+    let c = match checked(source, top, budget)? {
+        Ok(c) => c,
+        Err((text, exit)) => {
+            out.write_all(text.as_bytes())?;
+            return Ok(exit);
+        }
+    };
+    let Some(schema) = c.design.schema() else {
+        return Ok(defect("the top is not a done instantiation").1);
+    };
+    if !schema.fits(&c.lowered.design) {
+        return Ok(defect("the port schema does not fit the top").1);
+    }
+    let top = top_module(&c.typed)?;
+    let mut sim = match Sim::new(&c.typed) {
+        Ok(sim) => sim,
+        Err(diagnostic) => return Ok(defect(&diagnostic.to_string()).1),
+    };
+    for_each_line(input, |number, line| {
+        let values = schema
+            .parse_line(line)
+            .map_err(|e| Usage(format!("input line {number}: {e}")))?;
+        let inputs = core_ir::vectors::inputs(top, values)
+            .ok_or_else(|| Usage("internal error: the inputs do not fit the top".to_owned()))?;
+        out.write_all(schema.print_line(sim.step(&inputs).values()).as_bytes())?;
+        Ok(())
+    })?;
+    Ok(Exit::Success)
 }
 
 /// The line of the first error of a list in position order.
@@ -408,15 +621,34 @@ fn report<T, W: Write>(
     }
 }
 
+fn top_module(design: &typed::Design) -> Result<&typed::Module, Usage> {
+    design
+        .modules()
+        .get(design.top().index())
+        .ok_or_else(|| Usage("internal error: the design has no top module".to_owned()))
+}
+
+/// Calls `then` with the number and the text of each line of `input`. LF alone ends a line
+/// (spec section 6.4.3), so a CR stays in the line and the parser rejects it. `lines` would
+/// remove a CR before an LF.
+fn for_each_line(
+    input: impl BufRead,
+    mut then: impl FnMut(usize, &str) -> Result<(), Usage>,
+) -> Result<(), Usage> {
+    for (number, line) in input.split(b'\n').enumerate() {
+        let line = String::from_utf8(line?)
+            .map_err(|_| Usage(format!("input line {}: not valid UTF-8", number + 1)))?;
+        then(number + 1, &line)?;
+    }
+    Ok(())
+}
+
 fn simulate(
     design: &typed::Design,
     input: impl BufRead,
     out: &mut impl Write,
 ) -> Result<Exit, Usage> {
-    let top = design
-        .modules()
-        .get(design.top().index())
-        .ok_or_else(|| Usage("internal error: the design has no top module".to_owned()))?;
+    let top = top_module(design)?;
     let mut sim = match Sim::new(design) {
         Ok(sim) => sim,
         Err(diagnostic) => {
@@ -424,15 +656,11 @@ fn simulate(
             return Ok(Exit::DesignError);
         }
     };
-    // LF alone ends a line (spec section 6.4.3), so a CR stays in the line
-    // and the parser rejects it. `lines` would remove a CR before an LF.
-    for (number, line) in input.split(b'\n').enumerate() {
-        let line = line?;
-        let line = String::from_utf8(line)
-            .map_err(|_| Usage(format!("input line {}: not valid UTF-8", number + 1)))?;
-        let inputs = parse_input(&line, top)
-            .map_err(|e| Usage(format!("input line {}: {e}", number + 1)))?;
+    for_each_line(input, |number, line| {
+        let inputs =
+            parse_input(line, top).map_err(|e| Usage(format!("input line {number}: {e}")))?;
         out.write_all(print_output(top, &sim.step(&inputs)).as_bytes())?;
-    }
+        Ok(())
+    })?;
     Ok(Exit::Success)
 }
