@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use proptest::prelude::any;
 use proptest::strategy::{Just, Strategy};
 use syntax::r#gen::{BuildFault, Program, mutate, typed};
@@ -78,46 +78,70 @@ pub(super) fn verdict(
 
 /// Prints the failure of seed `seed`: the message, the shrunk mutant as a
 /// `tests/source/check` file, and the repeat command. The expected error
-/// comes from `silicon-check`, the reference elaborator.
-pub(super) fn report(tools: &Tools, dir: &Path, seed: u64, case: &Case, message: &str) {
+/// comes from `silicon-check`, the reference elaborator. A spawn error is
+/// an `Err`.
+pub(super) fn report(
+    tools: &Tools,
+    dir: &Path,
+    seed: u64,
+    case: &Case,
+    message: &str,
+) -> Result<()> {
     println!("FAIL seed {seed} (mutation): {message}");
     // A failure has a program: a builder fault is an error, not a failure.
     let (Ok(program), kind, site) = case else {
-        return;
+        return Ok(());
     };
     let mutant = mutate(program, *kind, *site);
     let top = program.top();
-    let lean = write(dir, "report.si", &mutant.text)
-        .and_then(|file| lean_report(tools, &file, &top))
-        .ok()
-        .flatten();
+    let file = write(dir, "report.si", &mutant.text)?;
+    let lean = lean_report(tools, &file, &top)?;
     print!(
         "{}",
         check_file(&mutant.text, &top, &mutant.what, lean.as_ref())
     );
     println!("Run `{}` to repeat it.", repeat(Mode::Mutation, seed));
+    Ok(())
 }
 
-/// The report of `silicon-check elab` on `file`, or `None` if it accepts.
-fn lean_report(tools: &Tools, file: &Path, top: &str) -> Result<Option<Report>> {
+/// The report of `silicon-check elab` on `file`, or why it has none. A
+/// spawn error is an `Err`.
+fn lean_report(
+    tools: &Tools,
+    file: &Path,
+    top: &str,
+) -> Result<std::result::Result<Report, String>> {
     let out = testkit::spawn::spawn(
         std::process::Command::new(&tools.lean)
             .arg("elab")
             .arg(file)
             .args(["--top", top]),
         "",
-    )?;
-    Ok(parse_report(&String::from_utf8_lossy(&out.stdout)))
+    )
+    .with_context(|| format!("cannot run {}", tools.lean.display()))?;
+    let code = out.status.code();
+    Ok(match parse_report(&String::from_utf8_lossy(&out.stdout)) {
+        Some(report) if code == Some(1) => Ok(report),
+        _ if code == Some(0) => Err("silicon-check accepts the mutant".to_owned()),
+        _ => Err(format!("silicon-check gave no report, exit {code:?}")),
+    })
 }
 
 /// The text of a `tests/source/check` file for the mutant `text`. The
 /// directive is on line 3, so mutant line `L` is file line `3 + L` and the
-/// offset is `L`.
-fn check_file(text: &str, top: &str, what: &str, lean: Option<&Report>) -> String {
-    let expected = lean
-        .map(|r| format!("// expected-error {} @+{}\n", r.code, r.line))
-        .unwrap_or_default();
-    format!("// TOP {top}\n// mutation: {what}\n{expected}{text}")
+/// offset is `L`. Without a Lean report, line 3 is a comment that says
+/// why, and the file expects success.
+fn check_file(
+    text: &str,
+    top: &str,
+    what: &str,
+    lean: std::result::Result<&Report, &String>,
+) -> String {
+    let line3 = match lean {
+        Ok(r) => format!("// expected-error {} @+{}\n", r.code, r.line),
+        Err(why) => format!("// {why}: no expected-error\n"),
+    };
+    format!("// TOP {top}\n// mutation: {what}\n{line3}{text}")
 }
 
 /// The success line for `count` mutants of the seeds `seed` to `last`.
@@ -155,14 +179,17 @@ mod tests {
             col: 1,
         };
         assert_eq!(
-            check_file(text, "M0()", "delete statement 2 of M0", Some(&lean)),
+            check_file(text, "M0()", "delete statement 2 of M0", Ok(&lean)),
             format!(
                 "// TOP M0()\n// mutation: delete statement 2 of M0\n// expected-error S018 @+1\n{text}"
             )
         );
+        let accepted = "silicon-check accepts the mutant".to_owned();
         assert_eq!(
-            check_file(text, "M0()", "delete statement 2 of M0", None),
-            format!("// TOP M0()\n// mutation: delete statement 2 of M0\n{text}")
+            check_file(text, "M0()", "delete statement 2 of M0", Err(&accepted)),
+            format!(
+                "// TOP M0()\n// mutation: delete statement 2 of M0\n// silicon-check accepts the mutant: no expected-error\n{text}"
+            )
         );
     }
 

@@ -8,7 +8,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use proptest::prelude::any;
 use proptest::strategy::{Just, Strategy};
 use syntax::r#gen::{BuildFault, Program, typed};
@@ -163,49 +163,61 @@ fn unfiled(failure: &Failure) -> Option<&Run> {
 /// repeat command. The reproducer is a `tests/source/budget` file if one
 /// holds the failing run; its fuel is the agreed total, else the total of
 /// `silicon-check`, the reference. Else it is the failing commands and
-/// their outputs, for a test of `crates/driver/tests/cli.rs`.
-pub(super) fn report(tools: &Tools, dir: &Path, seed: u64, case: &Case, failure: &Failure) {
+/// their outputs, for a test of `crates/driver/tests/cli.rs`. A spawn
+/// error is an `Err`.
+pub(super) fn report(
+    tools: &Tools,
+    dir: &Path,
+    seed: u64,
+    case: &Case,
+    failure: &Failure,
+) -> Result<()> {
     println!("FAIL seed {seed} (budget): {failure}");
     // A failure has a program: a builder fault is an error, not a failure.
     let (Ok(program), _, _) = case else {
-        return;
+        return Ok(());
     };
     let top = program.top();
     let text = program.text();
-    let file = write(dir, "report.si", &text);
+    let file = write(dir, "report.si", &text)?;
     let run_on = |binary: &Path, command: &str, flags: &[&str]| {
-        let file = file.as_ref().map_err(|e| format!("{e:#}"))?;
         let mut front_end = Command::new(binary);
         front_end
             .arg(command)
-            .arg(file)
+            .arg(&file)
             .args(["--top", &top])
             .args(flags);
         testkit::spawn::spawn(&mut front_end, "")
-            .map_err(|e| format!("cannot run {}: {e}", binary.display()))
+            .with_context(|| format!("cannot run {}", binary.display()))
     };
     if let Some(run) = unfiled(failure) {
         let value = run.value.to_string();
-        let shown = |binary: &Path| match run_on(binary, "elab", &[run.flag, &value]) {
-            Ok(out) => format!(
+        let shown = |binary: &Path| -> Result<String> {
+            let out = run_on(binary, "elab", &[run.flag, &value])?;
+            Ok(format!(
                 "exit {:?}\n{}{}",
                 out.status.code(),
                 String::from_utf8_lossy(&out.stdout),
                 String::from_utf8_lossy(&out.stderr)
-            ),
-            Err(e) => e,
+            ))
         };
-        let outputs = (shown(&tools.silicon), shown(&tools.lean));
+        let outputs = (shown(&tools.silicon)?, shown(&tools.lean)?);
         print!("{}", commands(&text, &top, run, &outputs));
     } else {
-        let total = |binary: &Path| total_of(&run_on(binary, "cost", &[]).ok()?.stdout);
-        let fuel = failure
-            .total
-            .or_else(|| total(&tools.lean))
-            .or_else(|| total(&tools.silicon));
+        let total = |binary: &Path| -> Result<Option<u64>> {
+            Ok(total_of(&run_on(binary, "cost", &[])?.stdout))
+        };
+        let fuel = match failure.total {
+            Some(fuel) => Some(fuel),
+            None => match total(&tools.lean)? {
+                Some(fuel) => Some(fuel),
+                None => total(&tools.silicon)?,
+            },
+        };
         print!("{}", budget_file(&text, &top, fuel));
     }
     println!("Run `{}` to repeat it.", repeat(Mode::Budget, seed));
+    Ok(())
 }
 
 /// The reproducer of the run `run` that no budget file holds: the program
