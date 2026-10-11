@@ -316,24 +316,31 @@ pub(crate) fn output(command: &mut Command, stdin: &str) -> Result<String> {
 
 /// The first disagreement of a trace with the first trace, or `None`.
 pub(crate) fn compare(traces: &[Trace]) -> Option<String> {
+    difference(traces).map(|(cycle, message)| format!("cycle {cycle}: {message}"))
+}
+
+/// The first disagreement of a trace with the first trace: the index of
+/// the line and what each tool prints there.
+pub(crate) fn difference(traces: &[Trace]) -> Option<(usize, String)> {
     let (reference, others) = traces.split_first()?;
     for other in others {
-        let cycles = reference.lines.len().max(other.lines.len());
-        for cycle in 0..cycles {
+        let count = reference.lines.len().max(other.lines.len());
+        for index in 0..count {
             let line = |trace: &'_ Trace| -> String {
                 trace
                     .lines
-                    .get(cycle)
+                    .get(index)
                     .map_or("no line".to_owned(), String::clone)
             };
-            if reference.lines.get(cycle) != other.lines.get(cycle) {
-                return Some(format!(
-                    "cycle {cycle}: {} prints `{}`, {} prints `{}`",
+            if reference.lines.get(index) != other.lines.get(index) {
+                let message = format!(
+                    "{} prints `{}`, {} prints `{}`",
                     reference.tool,
                     line(reference),
                     other.tool,
                     line(other),
-                ));
+                );
+                return Some((index, message));
             }
         }
     }
