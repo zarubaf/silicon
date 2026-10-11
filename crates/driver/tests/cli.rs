@@ -96,6 +96,33 @@ fn text(out: &Output) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
+/// Runs `silicon` and `silicon-check` as `COMMAND FILE ARGS...`. The two must give the same exit
+/// code, and on success the same stdout. On an error they must give the same code, line, and
+/// column (front-end spec section 6.2); the message can differ. Returns the output of `silicon`.
+fn agree(command: &str, flags: &[&str], path: &Path) -> std::io::Result<Output> {
+    let args = (command, flags);
+    let mut first = silicon_command();
+    first.arg(command).arg(path).args(flags);
+    let rust = spawn(&mut first, "")?;
+    let mut second = Command::new(bins::silicon_check());
+    second.arg(command).arg(path).args(flags);
+    let lean = spawn(&mut second, "")?;
+    assert_eq!(rust.status.code(), lean.status.code(), "{args:?}");
+    if rust.status.success() {
+        assert_eq!(text(&rust), text(&lean), "{args:?}");
+    } else {
+        let site = |out: &Output| {
+            text(out)
+                .splitn(3, ": ")
+                .take(2)
+                .collect::<Vec<_>>()
+                .join(": ")
+        };
+        assert_eq!(site(&rust), site(&lean), "{args:?}");
+    }
+    Ok(rust)
+}
+
 #[test]
 fn check_accepts_the_counter() -> Test {
     let out = silicon(&["check"], &file("ok.sil", COUNTER.as_bytes())?, "")?;
@@ -496,18 +523,37 @@ fn parse_takes_the_syntax_depth() -> Test {
 #[test]
 fn parse_does_not_overflow_the_stack_at_the_default_depth() -> Test {
     let deep = |n: usize| format!("const X: T = {}1{};\n", "(".repeat(n), ")".repeat(n));
-    let out = silicon(&["parse"], &file("d4096.si", deep(4096).as_bytes())?, "")?;
+    let out = agree("parse", &[], &file("d4096.si", deep(4096).as_bytes())?)?;
     assert_eq!(out.status.code(), Some(0));
     assert!(text(&out).ends_with("(num 1))\n"));
-    let out = silicon(&["parse"], &file("d4097.si", deep(4097).as_bytes())?, "")?;
+    let out = agree("parse", &[], &file("d4097.si", deep(4097).as_bytes())?)?;
     assert!(text(&out).starts_with("error[S001]: 1:4110: "));
     assert_eq!(out.status.code(), Some(1));
     let open = format!("const X: T = {}", "(".repeat(1_000_000));
-    let out = silicon(&["parse"], &file("open.si", open.as_bytes())?, "")?;
+    let out = agree("parse", &[], &file("open.si", open.as_bytes())?)?;
     assert!(text(&out).starts_with("error[S001]: 1:4110: "));
     assert_eq!(out.status.code(), Some(1));
     let chain = format!("const X: T = {}1;\n", "-".repeat(1_000_000));
-    let out = silicon(&["parse"], &file("chain.si", chain.as_bytes())?, "")?;
+    let out = agree("parse", &[], &file("chain.si", chain.as_bytes())?)?;
+    assert!(text(&out).starts_with("error[S001]: 1:14: "));
+    assert_eq!(out.status.code(), Some(1));
+    Ok(())
+}
+
+#[test]
+fn parse_does_not_overflow_the_stack_at_the_maximum_depth() -> Test {
+    let flags = ["--syntax-depth", "65536"];
+    let deep = |n: usize| format!("const X: T = {}1{};\n", "(".repeat(n), ")".repeat(n));
+    let out = agree("parse", &flags, &file("d65536.si", deep(65536).as_bytes())?)?;
+    assert_eq!(out.status.code(), Some(0));
+    let out = agree("parse", &flags, &file("d65537.si", deep(65537).as_bytes())?)?;
+    assert!(text(&out).starts_with("error[S001]: 1:65550: "));
+    let open = format!("const X: T = {}", "(".repeat(1_000_000));
+    let out = agree("parse", &flags, &file("open-max.si", open.as_bytes())?)?;
+    assert!(text(&out).starts_with("error[S001]: 1:65550: "));
+    assert_eq!(out.status.code(), Some(1));
+    let chain = format!("const X: T = {}1;\n", "-".repeat(1_000_000));
+    let out = agree("parse", &flags, &file("chain-max.si", chain.as_bytes())?)?;
     assert!(text(&out).starts_with("error[S001]: 1:14: "));
     assert_eq!(out.status.code(), Some(1));
     Ok(())
@@ -654,6 +700,8 @@ fn eval_does_not_overflow_the_stack() -> Test {
             .0
             .starts_with("error[S001]: 1:4112: ")
     );
+    let out = agree("eval", &["1"], &file("open-eval.si", open.as_bytes())?)?;
+    assert_eq!(out.status.code(), Some(1));
     Ok(())
 }
 
