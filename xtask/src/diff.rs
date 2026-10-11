@@ -204,10 +204,10 @@ fn corpus(repo: &Repo, seed: u64) -> Result<(Vec<Case>, Vec<String>)> {
     let mut runner = runner(seed);
     let mut cases = Vec::new();
     let mut skipped = Vec::new();
-    for path in &corpus::files(repo) {
-        let name = path.display().to_string();
-        let text = std::fs::read_to_string(repo.root.join(path))
-            .with_context(|| format!("cannot read {name}"))?;
+    for design in corpus::designs(repo) {
+        let name = design.name.display().to_string();
+        let text =
+            std::fs::read_to_string(&design.sil).with_context(|| format!("cannot read {name}"))?;
         let design = parse(&text)
             .and_then(|ast| check(&ast))
             .map_err(|e| anyhow!("{name}: {e}"))?;
