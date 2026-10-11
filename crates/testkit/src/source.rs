@@ -73,18 +73,24 @@ fn compare_check(
     }
 }
 
-/// Runs `command` of the two front ends on `file` with the top selection `top` and `stdin`.
-/// Returns the Rust output, then the Lean output.
+/// Runs `command` of the two front ends on `file` with the top selection `top`, the further
+/// arguments `flags`, and `stdin`. Returns the Rust output, then the Lean output.
 fn both(
     binary: &Path,
     command: &str,
     file: &Path,
     top: &str,
+    flags: &[&str],
     stdin: &str,
 ) -> std::io::Result<(Output, Output)> {
     let run = |mut front_end: Command| {
         spawn(
-            front_end.arg(command).arg(file).arg("--top").arg(top),
+            front_end
+                .arg(command)
+                .arg(file)
+                .arg("--top")
+                .arg(top)
+                .args(flags),
             stdin,
         )
     };
@@ -108,7 +114,7 @@ pub fn check(binary: &Path, file: &Path) -> datatest_stable::Result<()> {
     let in_file = |e: String| format!("{}: {e}", file.display());
     let top = top(&source).map_err(in_file)?;
     let want = expected_error(&source, Marker::Si).map_err(in_file)?;
-    let (rust, lean) = both(binary, "elab", file, &top, "")?;
+    let (rust, lean) = both(binary, "elab", file, &top, &[], "")?;
     Ok(compare_check("elab", &rust, &lean, want.as_ref())?)
 }
 
@@ -150,7 +156,7 @@ pub fn run(binary: &Path, file: &Path) -> datatest_stable::Result<()> {
         Expectation::Steps { stdin, .. } => stdin.as_str(),
         Expectation::Error(_) => "",
     };
-    let (rust, lean) = both(binary, "run", file, &top, stdin)?;
+    let (rust, lean) = both(binary, "run", file, &top, &[], stdin)?;
     Ok(compare_run(&rust, &lean, &want).map_err(in_file)?)
 }
 
@@ -170,7 +176,7 @@ pub fn elab(binary: &Path, file: &Path) -> datatest_stable::Result<()> {
         return Err(in_file("no `// CHECK:` line".to_owned()).into());
     }
     let top = top(&source).map_err(in_file)?;
-    let (rust, lean) = both(binary, "elab", file, &top, "")?;
+    let (rust, lean) = both(binary, "elab", file, &top, &[], "")?;
     for (front_end, out) in [("Rust `silicon", &rust), ("Lean `silicon-check", &lean)] {
         let stdout = String::from_utf8_lossy(&out.stdout);
         if !out.status.success() {
