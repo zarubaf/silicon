@@ -17,7 +17,7 @@ fn collide(_: &str) -> String {
 
 /// The checked file of `src`, or the code and the position of the first error before
 /// elaboration.
-fn load(src: &str) -> Result<resolve::Resolved, String> {
+pub(crate) fn load(src: &str) -> Result<resolve::Resolved, String> {
     let at = |code: &dyn std::fmt::Display, pos: parse::ast::Pos| {
         format!("{code} {}:{}", pos.line, pos.col)
     };

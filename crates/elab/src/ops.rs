@@ -365,7 +365,7 @@ fn int_arith(op: BinOp, x: &Int, y: &Int) -> Result<Value, Fault> {
 }
 
 /// The core predicate of an ordering, by signedness.
-fn pred(op: BinOp, signed: bool) -> Pred {
+pub(crate) fn pred(op: BinOp, signed: bool) -> Pred {
     match (op, signed) {
         (BinOp::Lt, false) => Pred::Ult,
         (BinOp::Le, false) => Pred::Ule,
