@@ -155,6 +155,7 @@ pub fn resets(cycles: usize) -> impl Strategy<Value = Vec<bool>> {
         .prop_map(move |(first, later)| {
             std::iter::once(first)
                 .chain(later)
+                // The first line exists even for no cycles.
                 .take(cycles)
                 .collect::<Vec<bool>>()
         })
@@ -179,6 +180,8 @@ pub fn lines(top: &typed::Module, cycles: usize) -> impl Strategy<Value = Vec<St
                 let mut row = row.into_iter();
                 let pairs: Vec<String> = names
                     .iter()
+                    // `row` holds one value per non-reset name, so only a
+                    // missing row value (never) drops a pair.
                     .filter_map(|name| {
                         let value = if name == RESET {
                             Some(String::from(if reset { "1" } else { "0" }))
