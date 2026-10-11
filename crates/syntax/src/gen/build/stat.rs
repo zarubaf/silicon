@@ -324,7 +324,8 @@ impl Builder {
         if self.holds(&span, envs, |v| int_in(v, 0, 4)) {
             return (lo, hi);
         }
-        let k = self.number(0, 4);
+        // The fallback loop runs: the candidate already gives empty loops.
+        let k = self.number(1, 4);
         (lo.clone(), bin(SBin::Add, lo, k))
     }
 

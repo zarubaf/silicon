@@ -8,9 +8,13 @@ use super::{
     Builder, CONTEXTS, Ctx, ENVS, HELPERS, Helper, Hw, INPUTS, INSTANCES, MODULE_STMTS, MODULES,
     Module, NESTED_STMTS, NESTING, Names, OUTPUTS, PARAMS, SAMPLE_INTS, Sig,
 };
-use crate::r#gen::eval::{Env, Value, concrete, eval};
+use crate::r#gen::eval::{Env, Fault, Value, concrete, eval};
 use crate::r#gen::program::{HExpr, Place, SExpr, Scalar, StaticTy, Stmt, Ty};
 use num_bigint::BigInt;
+
+/// The result of a step whose faults the checks of the builder exclude.
+/// A fault reaches `build`, which the coverage test watches.
+type Built<T = ()> = Result<T, Fault>;
 
 const STATIC_TYS: [StaticTy; 3] = [StaticTy::Nat, StaticTy::Int, StaticTy::Bool];
 
@@ -50,11 +54,12 @@ fn domain(params: &[(String, StaticTy)]) -> Vec<Env> {
 }
 
 impl Builder {
-    pub(super) fn helpers(&mut self) {
+    pub(super) fn helpers(&mut self) -> Built {
         for k in 0..self.tape.below(HELPERS + 1) {
-            let h = self.helper(k as usize);
+            let h = self.helper(k as usize)?;
             self.helpers.push(h);
         }
+        Ok(())
     }
 
     /// A helper type: `Bool`, or a width that is a literal or a `Nat`
@@ -100,7 +105,7 @@ impl Builder {
     /// `h<k>`: `let`s, an optional loop over a `let mut`, and the result.
     /// It has one type for each formal, so one context fits all its calls.
     /// It calls only `h<j>`, `j < k`, so no call cycle occurs.
-    fn helper(&mut self, k: usize) -> Helper {
+    fn helper(&mut self, k: usize) -> Built<Helper> {
         let mut names = Names::default();
         let mut params = Vec::new();
         for _ in 0..self.tape.between(1, 2) {
@@ -124,28 +129,34 @@ impl Builder {
         };
         let mut body = Vec::new();
         for _ in 0..self.tape.below(3) {
-            self.binding(&mut ctx, &mut names, &mut body, false);
+            self.binding(&mut ctx, &mut names, &mut body, false)?;
         }
         let want = Want {
             types: vec![ret.1],
             ty: Some(ret.0.clone()),
         };
         if self.tape.flag() {
-            self.accumulate(&mut ctx, &mut names, &mut body, &want);
+            self.accumulate(&mut ctx, &mut names, &mut body, &want)?;
         }
         let result = self.value(&ctx, &want, DEPTH);
-        Helper {
+        Ok(Helper {
             name: format!("h{k}"),
             params,
             ret,
             body,
             result,
-        }
+        })
     }
 
     /// `let mut v = ...; comptime for j in lo..hi { v = ...; }` with bounds
     /// over consts and literals.
-    fn accumulate(&mut self, ctx: &mut Ctx, names: &mut Names, body: &mut Vec<Stmt>, want: &Want) {
+    fn accumulate(
+        &mut self,
+        ctx: &mut Ctx,
+        names: &mut Names,
+        body: &mut Vec<Stmt>,
+        want: &Want,
+    ) -> Built {
         let v = names.fresh("v");
         let value = self.value(ctx, want, DEPTH);
         body.push(Stmt::Let {
@@ -168,8 +179,8 @@ impl Builder {
             envs: Some(&ctx.envs),
         };
         let (lo, hi) = self.bounds(r, &ctx.envs);
-        let Some(inner) = self.iterations(ctx, &binder, &lo, &hi) else {
-            return;
+        let Some(inner) = self.iterations(ctx, &binder, &lo, &hi)? else {
+            return Ok(());
         };
         // The accumulator is the last hardware name of `inner`.
         let stmts = match inner.hw.last().map(Want::of) {
@@ -179,18 +190,19 @@ impl Builder {
             _ => vec![Stmt::Error("dead".to_owned())],
         };
         body.push(Stmt::For(binder, lo, hi, stmts));
+        Ok(())
     }
 
     /// The scope of the body of `comptime for binder in lo..hi`, or `None`
     /// when the loop would pass `ENVS` envs.
-    fn iterations(&self, ctx: &Ctx, binder: &str, lo: &SExpr, hi: &SExpr) -> Option<Ctx> {
-        let los = self.values(lo, &ctx.envs)?;
-        let his = self.values(hi, &ctx.envs)?;
+    fn iterations(&self, ctx: &Ctx, binder: &str, lo: &SExpr, hi: &SExpr) -> Built<Option<Ctx>> {
+        let los = self.values(lo, &ctx.envs).ok_or(Fault::Type)?;
+        let his = self.values(hi, &ctx.envs).ok_or(Fault::Type)?;
         let mut parents = Vec::new();
         let mut envs = Vec::new();
         for (i, (env, (lo, hi))) in ctx.envs.iter().zip(los.iter().zip(&his)).enumerate() {
             let (Value::Int(lo), Value::Int(hi)) = (lo, hi) else {
-                return None;
+                return Err(Fault::Type);
             };
             let mut n = lo.clone();
             while n < *hi {
@@ -201,12 +213,12 @@ impl Builder {
                 n += 1;
             }
             if envs.len() > ENVS {
-                return None;
+                return Ok(None);
             }
         }
         let mut inner = ctx.derive(&parents, envs);
         inner.statics.push((binder.to_owned(), StaticTy::Int));
-        Some(inner)
+        Ok(Some(inner))
     }
 
     /// A random type with a width that holds in each env.
@@ -219,29 +231,24 @@ impl Builder {
     }
 
     /// The concrete type of `t` in each env.
-    fn types(&self, t: &Ty, envs: &[Env]) -> Option<Vec<Scalar>> {
+    fn types(&self, t: &Ty, envs: &[Env]) -> Built<Vec<Scalar>> {
         envs.iter()
-            .map(|env| concrete(t, env, &self.scope).ok())
+            .map(|env| concrete(t, env, &self.scope))
             .collect()
     }
 
     /// The type of a declaration: the type of a name in scope or a new one.
-    fn decl(&mut self, ctx: &Ctx) -> Option<Want> {
-        if self.tape.flag() {
-            let i = self.tape.index(ctx.hw.len());
-            if let Some(h) = ctx.hw.get(i) {
-                let w = Want::of(h);
-                if let Some(t) = w.printable() {
-                    return Some(Want {
-                        types: w.types,
-                        ty: Some(t),
-                    });
-                }
-            }
+    fn decl(&mut self, ctx: &Ctx) -> Built<(Ty, Want)> {
+        if self.tape.flag()
+            && let Some(h) = ctx.hw.get(self.tape.index(ctx.hw.len()))
+            && let Some(t) = Want::of(h).printable()
+        {
+            let types = h.types.clone();
+            return Ok((t.clone(), Want { types, ty: Some(t) }));
         }
         let t = self.decl_ty(self.reach(ctx), &ctx.envs);
         let types = self.types(&t, &ctx.envs)?;
-        Some(Want { types, ty: Some(t) })
+        Ok((t.clone(), Want { types, ty: Some(t) }))
     }
 
     pub(super) fn signatures(&mut self) {
@@ -258,10 +265,13 @@ impl Builder {
                 self.tape.flag()
             };
             let domain = domain(&params);
+            // Port widths read only `Nat` names: an `Int` parameter takes
+            // negative values over the domain, so it rarely gives a width.
             let statics: Vec<(String, StaticTy)> = self
                 .const_names()
                 .into_iter()
                 .chain(params.clone())
+                .filter(|(_, t)| *t == StaticTy::Nat)
                 .collect();
             // A port width holds in every context, so a call (which can be
             // costly over the whole domain) is not a candidate here.
@@ -270,8 +280,13 @@ impl Builder {
                 fns: 0,
                 envs: Some(&domain),
             };
+            // Most modules have inputs, so that their outputs vary.
+            let count = match self.tape.below(4 * INPUTS) {
+                0 => 0,
+                n => 1 + (n - 1) % INPUTS,
+            };
             let mut inputs = Vec::new();
-            for _ in 0..self.tape.below(INPUTS + 1) {
+            for _ in 0..count {
                 inputs.push((names.fresh("i"), self.decl_ty(r, &domain)));
             }
             let mut outputs = Vec::new();
@@ -289,13 +304,11 @@ impl Builder {
     }
 
     /// The body of module `k` in its contexts, if a parent reaches it.
-    pub(super) fn body(&mut self, k: usize) {
-        let Some(sig) = self.sigs.get(k).cloned() else {
-            return;
-        };
-        let tuples = self.contexts.get(k).cloned().unwrap_or_default();
+    pub(super) fn body(&mut self, k: usize) -> Built {
+        let sig = self.sigs.get(k).cloned().ok_or(Fault::Type)?;
+        let tuples = self.contexts.get(k).cloned().ok_or(Fault::Type)?;
         if tuples.is_empty() {
-            return;
+            return Ok(());
         }
         let mut ctx = Ctx {
             envs: tuples.iter().map(|a| env_of(&sig.params, a)).collect(),
@@ -306,9 +319,7 @@ impl Builder {
         let mut body = Vec::new();
         for (n, t) in &sig.inputs {
             body.push(Stmt::Input(n.clone(), t.clone()));
-            let Some(types) = self.types(t, &ctx.envs) else {
-                return;
-            };
+            let types = self.types(t, &ctx.envs)?;
             ctx.hw.push(Hw {
                 expr: HExpr::Name(n.clone()),
                 ty: Some(t.clone()),
@@ -319,9 +330,7 @@ impl Builder {
         let mut outputs = Vec::new();
         for (n, t) in &sig.outputs {
             body.push(Stmt::Output(n.clone(), t.clone()));
-            let Some(types) = self.types(t, &ctx.envs) else {
-                return;
-            };
+            let types = self.types(t, &ctx.envs)?;
             let ty = Some(t.clone());
             outputs.push((n.clone(), Want { types, ty }));
         }
@@ -330,20 +339,26 @@ impl Builder {
             clocked: sig.clocked,
             names: Names::default(),
         };
-        body.extend(self.frame(&mut ctx, &mut m, 0));
+        body.extend(self.frame(&mut ctx, &mut m, 0)?);
+        // The first module that no parent reaches yet gets this one as a
+        // parent, so that most signatures become modules of the tree.
+        let orphan = (k + 1..self.sigs.len())
+            .find(|&j| self.reachable(&m, j) && self.contexts.get(j).is_some_and(Vec::is_empty));
+        if let Some(j) = orphan {
+            self.instantiate(&mut ctx, &mut m, j, &mut body)?;
+        }
         for (n, w) in outputs {
-            body.push(Stmt::Connect(Place::Name(n), self.value(&ctx, &w, DEPTH)));
+            body.push(Stmt::Connect(Place::Name(n), self.driver(&ctx, &w)));
         }
-        if let Some(slot) = self.bodies.get_mut(k) {
-            *slot = Some(body);
-        }
+        *self.bodies.get_mut(k).ok_or(Fault::Type)? = Some(body);
+        Ok(())
     }
 
     /// The statements of a frame, then the `:=` of its registers. A frame
     /// with no env never runs, so it only holds `error("dead")`.
-    fn frame(&mut self, ctx: &mut Ctx, m: &mut Module, level: u32) -> Vec<Stmt> {
+    fn frame(&mut self, ctx: &mut Ctx, m: &mut Module, level: u32) -> Built<Vec<Stmt>> {
         if ctx.envs.is_empty() {
-            return vec![Stmt::Error("dead".to_owned())];
+            return Ok(vec![Stmt::Error("dead".to_owned())]);
         }
         let max = if level == 0 {
             MODULE_STMTS
@@ -355,37 +370,41 @@ impl Builder {
         let mut instances = 0;
         for _ in 0..self.tape.below(max + 1) {
             let nested = level < NESTING;
-            match self.tape.below(11) {
+            match self.tape.below(12) {
                 1 => self.static_let(ctx, &mut m.names, &mut out),
-                2 => self.binding(ctx, &mut m.names, &mut out, true),
-                3 => self.assign(ctx, &mut m.names, &mut out),
-                4 => self.wire(ctx, &mut m.names, &mut out),
-                5 if m.clocked => self.reg(ctx, &mut m.names, &mut out, &mut regs),
-                6 if instances < INSTANCES => {
-                    if self.instance(ctx, m, &mut out) {
+                2 => self.binding(ctx, &mut m.names, &mut out, true)?,
+                3 => self.assign(ctx, &mut m.names, &mut out)?,
+                4 => self.wire(ctx, &mut m.names, &mut out)?,
+                5 if m.clocked => self.reg(ctx, &mut m.names, &mut out, &mut regs)?,
+                6 | 7 if instances < INSTANCES => {
+                    if self.instance(ctx, m, &mut out)? {
                         instances += 1;
                     }
                 }
-                7 | 8 if nested => self.repeat(ctx, m, &mut out, level),
-                9 if nested => self.branch(ctx, m, &mut out, level),
-                10 => {
+                8 | 9 if nested => self.repeat(ctx, m, &mut out, level)?,
+                10 if nested => self.branch(ctx, m, &mut out, level)?,
+                11 => {
                     let c = self.assertion(self.reach(ctx), &ctx.envs);
                     out.push(Stmt::Assert(c, "holds".to_owned()));
                 }
-                _ => self.binding(ctx, &mut m.names, &mut out, false),
+                _ => self.binding(ctx, &mut m.names, &mut out, false)?,
             }
         }
         for (r, w) in regs {
-            out.push(Stmt::Connect(Place::Name(r), self.value(ctx, &w, DEPTH)));
+            out.push(Stmt::Connect(Place::Name(r), self.driver(ctx, &w)));
         }
-        out
+        Ok(out)
     }
 
     /// `let` or `let mut`, with or without its type.
-    fn binding(&mut self, ctx: &mut Ctx, names: &mut Names, out: &mut Vec<Stmt>, mutable: bool) {
-        let Some(want) = self.decl(ctx) else {
-            return;
-        };
+    fn binding(
+        &mut self,
+        ctx: &mut Ctx,
+        names: &mut Names,
+        out: &mut Vec<Stmt>,
+        mutable: bool,
+    ) -> Built {
+        let (t, want) = self.decl(ctx)?;
         let typed = self.tape.flag();
         // An untyped `let` of a static value is a static binding, so an
         // untyped one takes a hardware value.
@@ -394,9 +413,12 @@ impl Builder {
         } else {
             self.hw(ctx, &want, DEPTH)
         };
+        // An untyped `let mut` of a wire or a register names that wire or
+        // register, and `=` on it is no assignment; a typed one copies.
         let (ty, value) = match value {
-            Some(v) => (None, v),
-            None => (want.ty.clone(), self.value(ctx, &want, DEPTH)),
+            Some(v) if !(mutable && matches!(v, HExpr::Name(_) | HExpr::Field(..))) => (None, v),
+            Some(v) => (Some(t), v),
+            None => (Some(t), self.value(ctx, &want, DEPTH)),
         };
         let name = names.fresh(if mutable { "v" } else { "l" });
         out.push(Stmt::Let {
@@ -411,6 +433,7 @@ impl Builder {
             types: want.types,
             mutable,
         });
+        Ok(())
     }
 
     /// A static `let` of type `Nat`, `Int`, or `Bool`.
@@ -431,7 +454,7 @@ impl Builder {
     }
 
     /// `v = ...;` of a `let mut` in scope, or a new `let`.
-    fn assign(&mut self, ctx: &mut Ctx, names: &mut Names, out: &mut Vec<Stmt>) {
+    fn assign(&mut self, ctx: &mut Ctx, names: &mut Names, out: &mut Vec<Stmt>) -> Built {
         let targets: Vec<&Hw> = ctx.hw.iter().filter(|h| h.mutable).collect();
         let target = targets
             .get(self.tape.index(targets.len()))
@@ -443,22 +466,18 @@ impl Builder {
             Some((n, w)) => {
                 let value = self.value(ctx, &w, DEPTH);
                 out.push(Stmt::Assign(n, value));
+                Ok(())
             }
             None => self.binding(ctx, names, out, false),
         }
     }
 
     /// `wire w: T; w := ...;`.
-    fn wire(&mut self, ctx: &mut Ctx, names: &mut Names, out: &mut Vec<Stmt>) {
-        let Some(want) = self.decl(ctx) else {
-            return;
-        };
-        let Some(ty) = want.ty.clone() else {
-            return;
-        };
+    fn wire(&mut self, ctx: &mut Ctx, names: &mut Names, out: &mut Vec<Stmt>) -> Built {
+        let (ty, want) = self.decl(ctx)?;
         let name = names.fresh("w");
         out.push(Stmt::Wire(name.clone(), ty));
-        let value = self.value(ctx, &want, DEPTH);
+        let value = self.driver(ctx, &want);
         out.push(Stmt::Connect(Place::Name(name.clone()), value));
         ctx.hw.push(Hw {
             expr: HExpr::Name(name),
@@ -466,6 +485,7 @@ impl Builder {
             types: want.types,
             mutable: false,
         });
+        Ok(())
     }
 
     /// `reg r: T = reset;`; its `:=` comes at the end of the frame.
@@ -475,13 +495,8 @@ impl Builder {
         names: &mut Names,
         out: &mut Vec<Stmt>,
         regs: &mut Vec<(String, Want)>,
-    ) {
-        let Some(want) = self.decl(ctx) else {
-            return;
-        };
-        let Some(ty) = want.ty.clone() else {
-            return;
-        };
+    ) -> Built {
+        let (ty, want) = self.decl(ctx)?;
         let reset = self.fit(&want.types, self.reach(ctx), &ctx.envs);
         let name = names.fresh("r");
         out.push(Stmt::Reg(name.clone(), ty, reset));
@@ -492,42 +507,52 @@ impl Builder {
             mutable: false,
         });
         regs.push((name, want));
+        Ok(())
     }
 
-    /// `instance u = M<j>(args);` and the `:=` of each child input. A
+    /// Whether module `m` can instantiate module `j`: a later module, and a
     /// combinational parent takes only combinational children.
-    fn instance(&mut self, ctx: &mut Ctx, m: &mut Module, out: &mut Vec<Stmt>) -> bool {
+    fn reachable(&self, m: &Module, j: usize) -> bool {
+        j > m.index && (m.clocked || self.sigs.get(j).is_some_and(|s| !s.clocked))
+    }
+
+    /// An instance of a random child, if one is reachable.
+    fn instance(&mut self, ctx: &mut Ctx, m: &mut Module, out: &mut Vec<Stmt>) -> Built<bool> {
         let children: Vec<usize> = (m.index + 1..self.sigs.len())
-            .filter(|&j| m.clocked || self.sigs.get(j).is_some_and(|s| !s.clocked))
+            .filter(|&j| self.reachable(m, j))
             .collect();
         let Some(&j) = children.get(self.tape.index(children.len())) else {
-            return false;
+            return Ok(false);
         };
-        let Some(sig) = self.sigs.get(j).cloned() else {
-            return false;
-        };
+        self.instantiate(ctx, m, j, out)?;
+        Ok(true)
+    }
+
+    /// `instance u = M<j>(args);` and the `:=` of each child input.
+    fn instantiate(
+        &mut self,
+        ctx: &mut Ctx,
+        m: &mut Module,
+        j: usize,
+        out: &mut Vec<Stmt>,
+    ) -> Built {
+        let sig = self.sigs.get(j).cloned().ok_or(Fault::Type)?;
         let mut args = Vec::new();
         for (_, t) in &sig.params {
             args.push(self.argument(*t, self.reach(ctx), &ctx.envs));
         }
-        let Some(tuples) = self.tuples(j, &mut args, &ctx.envs) else {
-            return false;
-        };
+        let tuples = self.tuples(j, &mut args, &ctx.envs)?;
         let name = m.names.fresh("u");
         out.push(Stmt::Instance(name.clone(), sig.name.clone(), args));
         let envs: Vec<Env> = tuples.iter().map(|a| env_of(&sig.params, a)).collect();
         for (p, t) in &sig.inputs {
-            let Some(types) = self.types(t, &envs) else {
-                return true;
-            };
-            let value = self.value(ctx, &Want { types, ty: None }, DEPTH);
+            let types = self.types(t, &envs)?;
+            let value = self.driver(ctx, &Want { types, ty: None });
             let place = Place::Field(name.clone(), p.clone());
             out.push(Stmt::Connect(place, value));
         }
         for (q, t) in &sig.outputs {
-            let Some(types) = self.types(t, &envs) else {
-                return true;
-            };
+            let types = self.types(t, &envs)?;
             ctx.hw.push(Hw {
                 expr: HExpr::Field(name.clone(), q.clone()),
                 ty: None,
@@ -535,21 +560,22 @@ impl Builder {
                 mutable: false,
             });
         }
-        true
+        Ok(())
     }
 
     /// The argument tuple of each env, recorded as contexts of module `j`.
     /// When `j` would pass `CONTEXTS` tuples, the arguments become the
     /// literals of a tuple that it has.
-    fn tuples(&mut self, j: usize, args: &mut Vec<SExpr>, envs: &[Env]) -> Option<Vec<Vec<Value>>> {
+    fn tuples(&mut self, j: usize, args: &mut Vec<SExpr>, envs: &[Env]) -> Built<Vec<Vec<Value>>> {
         let columns: Vec<Vec<Value>> = args
             .iter()
             .map(|a| self.values(a, envs))
-            .collect::<Option<_>>()?;
+            .collect::<Option<_>>()
+            .ok_or(Fault::Type)?;
         let mut tuples: Vec<Vec<Value>> = (0..envs.len())
             .map(|i| columns.iter().filter_map(|c| c.get(i).cloned()).collect())
             .collect();
-        let known = self.contexts.get(j)?.clone();
+        let known = self.contexts.get(j).ok_or(Fault::Type)?.clone();
         let mut all = known.clone();
         for t in &tuples {
             if !all.contains(t) {
@@ -557,7 +583,7 @@ impl Builder {
             }
         }
         if all.len() > CONTEXTS {
-            let pick = known.first().or(tuples.first())?.clone();
+            let pick = known.first().or(tuples.first()).ok_or(Fault::Type)?.clone();
             *args = pick.iter().map(value_expr).collect();
             tuples = vec![pick.clone(); envs.len()];
             all = known;
@@ -565,27 +591,25 @@ impl Builder {
                 all.push(pick);
             }
         }
-        *self.contexts.get_mut(j)? = all;
-        Some(tuples)
+        *self.contexts.get_mut(j).ok_or(Fault::Type)? = all;
+        Ok(tuples)
     }
 
     /// `comptime for`, skipped when it would pass `ENVS` envs.
-    fn repeat(&mut self, ctx: &Ctx, m: &mut Module, out: &mut Vec<Stmt>, level: u32) {
+    fn repeat(&mut self, ctx: &Ctx, m: &mut Module, out: &mut Vec<Stmt>, level: u32) -> Built {
         let binder = m.names.fresh("j");
         let (lo, hi) = self.bounds(self.reach(ctx), &ctx.envs);
-        let Some(mut inner) = self.iterations(ctx, &binder, &lo, &hi) else {
-            return;
-        };
-        let body = self.frame(&mut inner, m, level + 1);
-        out.push(Stmt::For(binder, lo, hi, body));
+        if let Some(mut inner) = self.iterations(ctx, &binder, &lo, &hi)? {
+            let body = self.frame(&mut inner, m, level + 1)?;
+            out.push(Stmt::For(binder, lo, hi, body));
+        }
+        Ok(())
     }
 
     /// `comptime if`: each branch takes the envs that select it.
-    fn branch(&mut self, ctx: &Ctx, m: &mut Module, out: &mut Vec<Stmt>, level: u32) {
+    fn branch(&mut self, ctx: &Ctx, m: &mut Module, out: &mut Vec<Stmt>, level: u32) -> Built {
         let c = self.condition(self.reach(ctx), &ctx.envs);
-        let Some(vs) = self.values(&c, &ctx.envs) else {
-            return;
-        };
+        let vs = self.values(&c, &ctx.envs).ok_or(Fault::Type)?;
         let split = |want: bool| -> (Vec<usize>, Vec<Env>) {
             ctx.envs
                 .iter()
@@ -596,14 +620,15 @@ impl Builder {
                 .unzip()
         };
         let (parents, envs) = split(true);
-        let then = self.frame(&mut ctx.derive(&parents, envs), m, level + 1);
+        let then = self.frame(&mut ctx.derive(&parents, envs), m, level + 1)?;
         let els = if self.tape.flag() {
             let (parents, envs) = split(false);
-            Some(self.frame(&mut ctx.derive(&parents, envs), m, level + 1))
+            Some(self.frame(&mut ctx.derive(&parents, envs), m, level + 1)?)
         } else {
             None
         };
         out.push(Stmt::If(c, then, els));
+        Ok(())
     }
 
     /// The `eval` probe: a call at the root when a `comptime fn` exists,

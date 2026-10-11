@@ -307,7 +307,7 @@ impl Builder {
     fn program(&mut self) -> Result<Program, Fault> {
         self.consts()?;
         self.fns()?;
-        self.helpers();
+        self.helpers()?;
         self.signatures();
         let params = self
             .sigs
@@ -321,7 +321,7 @@ impl Builder {
         }
         self.bodies = vec![None; self.sigs.len()];
         for k in 0..self.sigs.len() {
-            self.body(k);
+            self.body(k)?;
         }
         let probe = self.probe();
         let items = self.items();

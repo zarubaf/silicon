@@ -3,7 +3,7 @@ use super::*;
 use crate::r#gen::program::{Radix, SBin};
 use proptest::strategy::ValueTree;
 use proptest::test_runner::TestRunner;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The program of a tape, its statistics, and whether it is the program
 /// of the tape (not the fallback of `build`).
@@ -62,24 +62,30 @@ proptest! {
     }
 }
 
-fn stmts_of(items: &[Item]) -> Vec<&Stmt> {
-    fn walk<'a>(body: &'a [Stmt], out: &mut Vec<&'a Stmt>) {
-        for s in body {
-            out.push(s);
-            match s {
-                Stmt::If(_, t, e) => {
-                    walk(t, out);
-                    walk(e.as_deref().unwrap_or_default(), out);
-                }
-                Stmt::For(_, _, _, b) => walk(b, out),
-                _ => {}
+/// The statements of a body, with those of nested frames.
+fn stmts_of_body(body: &[Stmt]) -> Vec<&Stmt> {
+    let mut out = Vec::new();
+    for s in body {
+        out.push(s);
+        match s {
+            Stmt::If(_, t, e) => {
+                out.extend(stmts_of_body(t));
+                out.extend(stmts_of_body(e.as_deref().unwrap_or_default()));
             }
+            Stmt::For(_, _, _, b) => out.extend(stmts_of_body(b)),
+            _ => {}
         }
     }
+    out
+}
+
+fn stmts_of(items: &[Item]) -> Vec<&Stmt> {
     let mut out = Vec::new();
     for item in items {
         match item {
-            Item::Module { body, .. } | Item::Helper { body, .. } => walk(body, &mut out),
+            Item::Module { body, .. } | Item::Helper { body, .. } => {
+                out.extend(stmts_of_body(body));
+            }
             _ => {}
         }
     }
@@ -240,6 +246,7 @@ fn programs_cover_slice_1() {
     .collect();
     let mut seen = BTreeSet::new();
     let mut total = Stats::default();
+    let mut shape = Shape::default();
     for tape in tapes(400) {
         let mut b = Builder::new(tape);
         let p = b.program();
@@ -247,6 +254,7 @@ fn programs_cover_slice_1() {
         let contexts = b.contexts.iter().map(Vec::len).max().unwrap_or(0);
         if let Ok(p) = p {
             seen.extend(features(&p, contexts));
+            shape.add(&p, contexts);
         }
         total.widths += b.stats.widths;
         total.width_fallbacks += b.stats.width_fallbacks;
@@ -263,6 +271,70 @@ fn programs_cover_slice_1() {
         total.call_fallbacks * 5 < total.calls,
         "call fallbacks: {total:?}"
     );
+    // The run oracle tests hardware only if outputs read names, and the
+    // twin is tested by hierarchy, contexts, and calls.
+    assert!(shape.reading * 4 >= shape.outputs * 3, "{shape:?}");
+    assert!(shape.modules * 5 >= 400 * 2, "{shape:?}");
+    assert!(shape.deep * 20 >= 400 * 3, "{shape:?}");
+    assert!(shape.calls * 10 >= 400 * 3, "{shape:?}");
+    assert!(shape.contexts * 10 >= 400, "{shape:?}");
+}
+
+/// The depth of the instance tree below module `m`.
+fn depth(m: &str, modules: &BTreeMap<&str, &[Stmt]>) -> usize {
+    stmts_of_body(modules.get(m).copied().unwrap_or_default())
+        .into_iter()
+        .filter_map(|s| match s {
+            Stmt::Instance(_, child, _) => Some(1 + depth(child, modules)),
+            _ => None,
+        })
+        .max()
+        .unwrap_or(0)
+}
+
+/// Counts of the program shapes that the oracles of `diff-si` need.
+#[derive(Debug, Default)]
+struct Shape {
+    /// Top outputs, and those whose `:=` reads a hardware name.
+    outputs: usize,
+    reading: usize,
+    /// Programs with two or more modules, an instance tree of depth two or
+    /// more, a helper call, and a module in two contexts.
+    modules: usize,
+    deep: usize,
+    calls: usize,
+    contexts: usize,
+}
+
+impl Shape {
+    fn add(&mut self, p: &Program, contexts: usize) {
+        let modules: BTreeMap<&str, &[Stmt]> = p
+            .items
+            .iter()
+            .filter_map(|i| match i {
+                Item::Module { name, body, .. } => Some((name.as_str(), body.as_slice())),
+                _ => None,
+            })
+            .collect();
+        if let Some(top) = modules.get("M0") {
+            for s in *top {
+                if let Stmt::Connect(Place::Name(n), e) = s
+                    && n.starts_with('o')
+                {
+                    self.outputs += 1;
+                    self.reading += usize::from(hw::reads_name(e));
+                }
+            }
+        }
+        self.modules += usize::from(modules.len() >= 2);
+        self.deep += usize::from(depth("M0", &modules) >= 2);
+        self.contexts += usize::from(contexts >= 2);
+        let mut hexprs = Vec::new();
+        for s in stmts_of(&p.items) {
+            hexprs_of(s, &mut hexprs);
+        }
+        self.calls += usize::from(hexprs.iter().any(|e| matches!(e, HExpr::Call(..))));
+    }
 }
 
 #[test]

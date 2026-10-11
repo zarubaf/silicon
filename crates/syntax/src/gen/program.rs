@@ -30,7 +30,7 @@ pub(crate) enum StaticTy {
 }
 
 /// A hardware data type. A width is a static expression.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Ty {
     Bool,
     UInt(SExpr),
@@ -89,7 +89,7 @@ pub(crate) enum HBin {
     Lor,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum SExpr {
     Int(BigInt, Radix),
     Bool(bool),
@@ -101,7 +101,7 @@ pub(crate) enum SExpr {
     If(Box<SExpr>, Box<SExpr>, Box<SExpr>),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum HExpr {
     Name(String),
     /// An output `u.q` of an instance.
