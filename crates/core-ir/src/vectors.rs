@@ -89,6 +89,20 @@ pub fn parse_input(line: &str, top: &Module) -> Result<Inputs, VectorError> {
     Ok(Inputs(values))
 }
 
+/// The inputs of `top` from one value for each data input, in port order. A front end with
+/// its own vector format builds them with it. The result is `None` if the number or the
+/// width of a value does not match the inputs.
+#[must_use]
+pub fn inputs(top: &Module, values: Vec<Bits>) -> Option<Inputs> {
+    let fits = values.len() == top.inputs.len()
+        && top
+            .inputs
+            .iter()
+            .zip(&values)
+            .all(|(port, value)| port.width.get() == value.width());
+    fits.then_some(Inputs(values))
+}
+
 /// Prints the `out=` line of the outputs `values` of `top`, with its LF.
 #[must_use]
 pub fn print_output(top: &Module, values: &Outputs) -> String {

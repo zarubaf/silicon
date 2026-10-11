@@ -53,8 +53,8 @@ impl<'d> Sim<'d> {
     /// Runs one cycle: returns the outputs of the top module for the current
     /// state and `inputs`, then updates the state.
     ///
-    /// `inputs` must come from [`crate::vectors::parse_input`] with the top
-    /// module of this design.
+    /// `inputs` must come from [`crate::vectors::parse_input`] or
+    /// [`crate::vectors::inputs`] with the top module of this design.
     #[must_use]
     pub fn step(&mut self, inputs: &Inputs) -> Outputs {
         let frames = &mut self.frames;
@@ -72,7 +72,7 @@ impl<'d> Sim<'d> {
 
 /// The values of the data inputs of a top module for one cycle: one value of
 /// the port width for each input, in port order. Only
-/// [`crate::vectors::parse_input`] builds them.
+/// [`crate::vectors::parse_input`] and [`crate::vectors::inputs`] build them.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Inputs(pub(crate) Vec<Bits>);
 
@@ -95,6 +95,12 @@ impl Outputs {
     #[must_use]
     pub fn new(values: Vec<Bits>) -> Outputs {
         Outputs(values)
+    }
+
+    /// The values in port order.
+    #[must_use]
+    pub fn values(&self) -> &[Bits] {
+        &self.0
     }
 }
 

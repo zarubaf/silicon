@@ -1,11 +1,12 @@
 //! Tests of the interpreter and of the `in=` and `out=` vector format.
 
+use core_ir::Bits;
 use core_ir::check::check;
 use core_ir::diag::ErrorCode;
 use core_ir::interp::{Outputs, Sim};
 use core_ir::text::parse;
 use core_ir::typed;
-use core_ir::vectors::{VectorError, parse_input, print_output};
+use core_ir::vectors::{VectorError, inputs, parse_input, print_output};
 
 fn design(src: &str) -> typed::Design {
     let Ok(ast) = parse(src) else {
@@ -51,6 +52,25 @@ const COUNTER: &str = "\
     (next r (mux en inc r))
     (assign q r)))
 ";
+
+/// Inputs built from values equal those of the same input line, and the outputs give their
+/// values in port order.
+#[test]
+fn inputs_from_values_equal_a_parsed_line() {
+    let design = design(COUNTER);
+    let top = top(&design);
+    let bits = |w: u32, v: u32| Bits::new(w, v.into()).unwrap();
+    let built = inputs(top, vec![bits(1, 0), bits(1, 1)]).unwrap();
+    assert_eq!(
+        Some(built.clone()),
+        parse_input("in=(rst 0 en 1)", top).ok()
+    );
+    assert!(inputs(top, vec![bits(1, 0)]).is_none());
+    assert!(inputs(top, vec![bits(1, 0), bits(2, 1)]).is_none());
+    let mut sim = Sim::new(&design).unwrap();
+    assert_eq!(sim.step(&built).values(), [bits(8, 0)]);
+    assert_eq!(sim.step(&built).values(), [bits(8, 1)]);
+}
 
 #[test]
 fn the_counter_counts_from_zero() {
