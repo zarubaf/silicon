@@ -96,7 +96,7 @@ fn env_of<'a>(
     };
     for p in &m.ports {
         // The reset of a clocked module is its domain, not a value.
-        if let (Some(w), false) = (width(p), clocked && p.name.text == RESET) {
+        if let (Some(w), false) = (width(p), is_domain_reset(clocked, &p.name.text)) {
             env.widths.insert(p.name.text.as_str(), w);
         }
     }
@@ -130,7 +130,7 @@ fn module(m: &Module, modules: &HashMap<&str, &Module>) -> Result<String, Unsupp
     for dir in [Dir::Input, Dir::Output] {
         for p in m.ports.iter().filter(|p| p.dir == dir) {
             // The clock and the reset are the domain of the module.
-            let (Some(w), false) = (width(p), clocked && p.name.text == RESET) else {
+            let (Some(w), false) = (width(p), is_domain_reset(clocked, &p.name.text)) else {
                 continue;
             };
             let kw = if dir == Dir::Input { "input" } else { "output" };
@@ -259,6 +259,12 @@ fn connection(inst: &str, c: &Conn, env: &Env<'_>) -> Result<Option<String>, Uns
     )))
 }
 
+/// Whether the input `name` of a module is its domain reset: the source has
+/// no declaration for it.
+fn is_domain_reset(clocked: bool, name: &str) -> bool {
+    clocked && name == RESET
+}
+
 /// The `in=` line of a source run for the core inputs `inputs` of `top`:
 /// the reset first, the other inputs by byte order of the name. No LF.
 #[must_use]
@@ -266,7 +272,7 @@ pub fn vector_in(top: &typed::Module, inputs: &interp::Inputs) -> String {
     let mut reset = None;
     let mut others = Vec::new();
     for (port, value) in top.inputs().iter().zip(inputs.values()) {
-        if top.clock().is_some() && port.name == RESET {
+        if is_domain_reset(top.clock().is_some(), &port.name) {
             reset = Some(value.to_biguint().bits() != 0);
         } else {
             others.push((port.name.as_str(), value.to_biguint().to_string()));
