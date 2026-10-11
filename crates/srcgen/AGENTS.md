@@ -1,0 +1,29 @@
+# Srcgen
+
+## Purpose
+
+The `srcgen` crate is the source generator of `cargo xtask diff-si`. It is a dev-only crate. No shipped binary depends on it. It comes after `syntax` and before `parse` in the layer order, so it cannot use the code of the stages that it tests. See [ADR 0018](../../doc/adr/0018-source-generator-crate.md) and [the front end design](../../doc/design/2026-10-09-frontend.md), section 11.4.
+
+## Owns
+
+This crate owns the lift of a core design to a source program, and the map from core vectors to source vectors. It also owns the typed form of a generated program, its printer, and its static evaluator. Its builder makes random typed programs and their input lines. The twin of a typed program writes out each comptime construct of the program. A mutation of a typed program changes one site, and it predicts the first error code where the pass order makes that code certain.
+
+The static evaluator models only the programs that the builder makes. It works on the typed program, never on source text or on a syntax tree. It can reject a program that the language accepts, but it must never give a value that differs from the language. It does not resolve names, check types, compute `cost`, or lower to core IR. A need outside these limits needs a new ADR.
+
+## Invariants
+
+- Only `[dev-dependencies]` and `xtask` name this crate. Check: `cargo xtask check` (rule `workspace-dev-only`).
+- This crate does not depend on `parse`, `resolve`, `typeck`, or `elab`. Check: `cargo xtask check` (rule `workspace-layers`).
+- Each design of `Config::source()` lifts to a program that lexes with no error, or `lift` returns `Unsupported`. Check: `cargo nextest run -p srcgen`.
+- The builder of `typed()` gives no fault on the tested tapes. Each program lexes with no error, and its forms cover slice 1. Check: `cargo nextest run -p srcgen`.
+- Each twin of a `typed()` program lexes with no error, and it has no comptime construct and no static name. Check: `cargo nextest run -p srcgen`.
+- Each mutant differs from its program and lexes with no error token. Check: `cargo nextest run -p srcgen`.
+- Non-test code has no `unwrap`, no `expect`, and no panic on user input. Check: `just clippy`.
+
+## Dependencies
+
+This crate uses `syntax` for the lexer, `core-ir` with its feature `gen`, `num-bigint`, and `proptest`. Its only normal user is `xtask`.
+
+## How to test
+
+Run `cargo nextest run -p srcgen`, then `just check` from the repository root.
