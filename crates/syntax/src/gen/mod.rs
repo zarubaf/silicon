@@ -9,17 +9,21 @@
 //!
 //! The builder makes typed programs in the form of `program` from a tape,
 //! and `eval` computes their static values. The `twin` of a typed program
-//! writes out each of its comptime constructs.
+//! writes out each of its comptime constructs. `mutate` applies one
+//! mutation to a typed program and predicts the first error code where the
+//! pass order makes it certain.
 
 mod build;
 mod eval;
 mod expr;
 mod lift;
+mod mutate;
 mod program;
 mod twin;
 
 pub use build::{BuildFault, lines, typed};
 pub use lift::{Unsupported, lift, vector_in, vector_out};
+pub use mutate::{Mutant, mutate};
 pub use program::{Ports, Program, Scalar};
 pub use twin::{Twin, twin};
 
