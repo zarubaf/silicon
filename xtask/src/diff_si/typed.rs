@@ -11,31 +11,38 @@ use std::process::Command;
 
 use anyhow::{Context, Result};
 use proptest::strategy::{Just, Strategy};
-use syntax::r#gen::{Program, lines, twin, typed};
+use syntax::r#gen::{BuildFault, Program, lines, twin, typed};
 
 use super::{Mode, Tools, repeat, reproducer, run_trace, stdin, validated, verdict_of};
 use crate::diff::{CYCLES, Trace, compare, output};
 
-/// A typed program and its `in=` lines.
-pub(super) type Case = (Program, Vec<String>);
+/// A typed program, or the fault of its builder, and its `in=` lines.
+pub(super) type Case = (Result<Program, BuildFault>, Vec<String>);
 
-/// Random typed programs, each with `CYCLES` input lines for its top.
+/// Random typed programs, each with `CYCLES` input lines for its top. A
+/// builder fault gets no lines; its verdict is a tooling error.
 pub(super) fn cases() -> impl Strategy<Value = Case> {
     typed().prop_flat_map(|program| {
-        let lines = lines(program.ports(), CYCLES);
+        let lines = match &program {
+            Ok(program) => lines(program.ports(), CYCLES).boxed(),
+            Err(_) => Just(Vec::new()).boxed(),
+        };
         (Just(program), lines)
     })
 }
 
 /// `None` if the front ends agree on `case` and the generator, else the
-/// message of the disagreement or of a tool failure. A tooling error is an
-/// `Err`.
+/// message of the disagreement or of a tool failure. A tooling error, and
+/// a fault of the builder, is an `Err`.
 pub(super) fn verdict(tools: &Tools, dir: &Path, case: &Case) -> Result<Option<String>> {
     verdict_of(try_verdict(tools, dir, case))
 }
 
 fn try_verdict(tools: &Tools, dir: &Path, case: &Case) -> Result<Option<String>> {
     let (program, input) = case;
+    let program = program
+        .as_ref()
+        .map_err(|e| anyhow::Error::new(e.clone()))?;
     let file = write(dir, "typed.si", &program.text())?;
     let top = program.top();
     if let Some(message) = validated(tools, &file, &top)? {
@@ -117,8 +124,11 @@ fn cost_trace(tool: &'static str, binary: &Path, file: &Path, top: &str) -> Resu
 /// outputs come from `silicon-check run`, the reference elaborator. If it
 /// gives none, the `in=` lines stay as comments.
 pub(super) fn report(tools: &Tools, dir: &Path, seed: u64, case: &Case, message: &str) {
-    let (program, input) = case;
     println!("FAIL seed {seed} (typed): {message}");
+    // A failure has a program: a builder fault is an error, not a failure.
+    let (Ok(program), input) = case else {
+        return;
+    };
     let source = program.text();
     let top = program.top();
     let outputs = write(dir, "report.si", &source)
@@ -164,7 +174,7 @@ mod tests {
     fn typed_cases_are_deterministic() {
         let (program_a, lines_a) = case(7);
         let (program_b, lines_b) = case(7);
-        assert_eq!(program_a.text(), program_b.text());
+        assert_eq!(program_a.unwrap().text(), program_b.unwrap().text());
         assert_eq!(lines_a, lines_b);
         assert_eq!(lines_a.len(), CYCLES);
     }
@@ -173,6 +183,7 @@ mod tests {
     fn typed_lines_follow_the_top() {
         for seed in 1..=20 {
             let (program, lines) = case(seed);
+            let program = program.unwrap();
             let ports = program.ports();
             for line in &lines {
                 let body = line.strip_prefix("in=(").and_then(|l| l.strip_suffix(')'));

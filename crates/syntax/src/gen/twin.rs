@@ -615,6 +615,7 @@ mod tests {
 
         #[test]
         fn twins_have_no_comptime_constructs(p in typed()) {
+            let p = p.map_err(|e| TestCaseError::fail(e.to_string()))?;
             let t = twin(&p);
             for word in ["comptime", "const ", "static_assert", "error("] {
                 prop_assert!(!t.text.contains(word), "{} in\n{}", word, t.text);
