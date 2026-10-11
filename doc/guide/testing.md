@@ -11,7 +11,7 @@ This guide is the single map of the tests. Each layer has one oracle. An oracle 
 
 Issue #87 builds this layout in steps. Section 11 of the testing spec gives the order. Until a step lands, the old form stays in use:
 
-- Step 2 moves the core suites. Until then, they are in `tests/check/`, `tests/run/`, `tests/lower/`, and `tests/corpus/`. The inventories of LEC and the differential tests are `tests/lec-checks.txt` and `tests/diff-checks.txt`.
+- Step 2 has landed. The core suites are in `tests/core/`. The inventories of LEC and the differential tests are `tests/inventory/lec.txt` and `tests/inventory/diff.txt`.
 - Steps 3 to 5 add spec coverage, code coverage, and mutation testing.
 - Phase 9 of the front end (#73) adds `tests/source/`. The front-end spec still calls it `tests/si/`.
 

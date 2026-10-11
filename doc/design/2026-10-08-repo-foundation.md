@@ -46,7 +46,7 @@ silicon/
 │   ├── adr/
 │   ├── design/
 │   └── guide/
-├── tests/corpus/          # designs for validation and differential testing
+├── tests/core/corpus/     # designs for validation and differential testing
 ├── .claude/
 │   ├── settings.json
 │   └── output-styles/ste.md
