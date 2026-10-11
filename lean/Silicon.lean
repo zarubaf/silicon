@@ -144,6 +144,7 @@ import Silicon.Source.Proof.ParsePrint.Lex
 import Silicon.Source.Proof.ParsePrint.Parse.Input
 import Silicon.Source.Proof.ParsePrint.Parse.Runs
 import Silicon.Source.Proof.ParsePrint.Parse.Expr
+import Silicon.Source.Proof.ParsePrint.Count
 import Silicon.Main
 
 /-!
