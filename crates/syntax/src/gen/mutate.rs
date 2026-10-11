@@ -75,25 +75,31 @@ const KINDS: [Kind; 8] = [
 #[must_use]
 pub fn mutate(program: &Program, kind: u32, site: u32) -> Mutant {
     let first = kind as usize % KINDS.len();
-    for kind in KINDS.iter().cycle().skip(first).take(KINDS.len()) {
-        let count = sites(*kind, &program.items, &program.top);
-        if count > 0 {
+    let mutant = KINDS
+        .iter()
+        .cycle()
+        .skip(first)
+        .take(KINDS.len())
+        .find_map(|&kind| {
+            let count = sites(kind, &program.items, &program.top);
+            if count == 0 {
+                return None;
+            }
             let mut items = program.items.clone();
-            let (what, expect) = apply(*kind, &mut items, &program.top, site as usize % count);
-            return Mutant {
+            let (what, expect) = apply(kind, &mut items, &program.top, site as usize % count)?;
+            Some(Mutant {
                 text: render_items(&items),
                 what,
                 expect,
-            };
-        }
-    }
+            })
+        });
     // A built program has the `:=` of a top output, a `Delete` site. The
     // equal text shows the bug to `diff-si`.
-    Mutant {
+    mutant.unwrap_or_else(|| Mutant {
         text: program.text(),
         what: "no mutation site".to_owned(),
         expect: None,
-    }
+    })
 }
 
 /// The number of sites of `kind` in `items`.
@@ -103,32 +109,28 @@ fn sites(kind: Kind, items: &[Item], top: &str) -> usize {
     w.seen
 }
 
-/// Applies `kind` at the site `site` (below `sites`) and gives what it
-/// did and the predicted code.
+/// Applies `kind` at the site `site` and gives what it did and the
+/// predicted code, or `None` if `site` is not below `sites`.
 fn apply(
     kind: Kind,
     items: &mut Vec<Item>,
     top: &str,
     site: usize,
-) -> (String, Option<&'static str>) {
+) -> Option<(String, Option<&'static str>)> {
     let mut w = Walk::new(kind, top, Some(site));
     w.items(items);
-    match w.hit {
-        Some(Hit { what, effect }) => {
-            let expect = match effect {
-                Effect::Code(c) => c,
-                Effect::Gone(name, scope) => {
-                    let scope = match scope {
-                        Some(i) => items.get(i..=i).unwrap_or_default(),
-                        None => items.as_slice(),
-                    };
-                    mentions(&name, scope).then_some("S003")
-                }
+    let Hit { what, effect } = w.hit?;
+    let expect = match effect {
+        Effect::Code(c) => c,
+        Effect::Gone(name, scope) => {
+            let scope = match scope {
+                Some(i) => items.get(i..=i).unwrap_or_default(),
+                None => items.as_slice(),
             };
-            (what, expect)
+            mentions(&name, scope).then_some("S003")
         }
-        None => ("no mutation site".to_owned(), None),
-    }
+    };
+    Some((what, expect))
 }
 
 /// Whether a name reference in `items` is `name`: a value, an assignment
