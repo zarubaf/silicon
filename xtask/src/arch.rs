@@ -262,6 +262,14 @@ fn codes_violations(spec_path: &str, spec: &Codes, side: &Side, later: &[&str]) 
     let name = side.name;
     let defined = |code: &String| side.files.iter().any(|(_, set)| set.contains_key(code));
     let expected = |code: &String| !later.contains(&code.as_str());
+    for code in later.iter().filter(|c| !spec.contains_key(**c)) {
+        out.push(error(
+            spec_path,
+            None,
+            "arch-codes",
+            format!("`{code}` is not in the spec: remove it from `LATER`"),
+        ));
+    }
     for (code, line) in spec.iter().filter(|(c, _)| expected(c) && !defined(c)) {
         out.push(error(
             spec_path,
@@ -640,6 +648,9 @@ mod tests {
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].message, "`S009` is in Rust but not in the spec");
         assert_eq!(got[0].path, Path::new("b"));
+        let got = codes_violations("s.md", &spec, &ok, &["S008", "S099"]);
+        assert_eq!(got.len(), 1);
+        assert!(got[0].message.contains("`S099` is not in the spec"));
         let stale = side("Rust", vec![("a", codes(&["S001", "S008"]))]);
         let got = codes_violations("s.md", &spec, &stale, &["S008"]);
         assert_eq!(got.len(), 1);
