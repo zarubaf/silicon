@@ -198,10 +198,11 @@ The input lines come from `lines()`. They follow the ports of the top. The reset
 
 - The defaults are the seed 1 and 100 cases for each mode. Use `--seed` and `--count` to change them. The count applies to each mode.
 - `just ci` runs `diff-si` with the defaults.
-- A failure prints its seed. `cargo xtask diff-si --mode typed --seed N --count 1` repeats it. The mode is `lift` or `typed`.
+- A failure prints its seed and its mode. `cargo xtask diff-si --mode MODE --seed N --count 1` repeats it. `MODE` is `lift` or `typed`.
 - A failure shrinks first. The shrink makes at most 256 test runs. A tooling error, for example a missing tool, stops the shrink and the run.
-- The failure prints a reproducer. The reproducer is a file for the `run` suite of `tests/source`, with a `// TOP` line and `// STEP` lines. In the lift mode, the outputs of the steps come from the core interpreter, and the failure also prints the core design. In the typed mode, the outputs come from `silicon-check run`, and the failure also prints the twin and the probe.
-- A failure of the typed mode is a defect of the generator or of a front end. If both front ends agree with each other and not with the generator, fix the generator.
+- A fault of the builder and a static name in a twin are tooling errors with the seed, not failures. The checks of the builder exclude both, so each is a defect of the generator.
+- The failure prints a reproducer. The reproducer is a file for the `run` suite of `tests/source`, with a `// TOP` line and `// STEP` lines. In the lift mode, the outputs of the steps come from the core interpreter, and the failure also prints the core design. In the typed mode, the outputs come from `silicon-check run`, and the failure also prints the twin and the probe. If `silicon-check run` gives no outputs, the `in=` lines stay as `// in=` comments.
+- A failure of the typed mode is a defect of the generator or of a front end. If both front ends agree with each other and not with the generator, examine the failure. Do not fix the generator before you know the cause. The two front ends can share a misreading of the language (front-end spec, section 10.4). Lean is normative. A change of the language goes through the human gate.
 
 ## Later oracles
 
