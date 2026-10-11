@@ -132,6 +132,7 @@ import Silicon.Source.Cli
 import Silicon.Source.Test.Validate
 import Silicon.Source.Proof.Names
 import Silicon.Source.Proof.WellFormed
+import Silicon.Source.Proof.Fuel
 import Silicon.Main
 
 /-!
