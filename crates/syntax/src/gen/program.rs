@@ -150,6 +150,9 @@ pub(crate) enum Stmt {
     For(String, SExpr, SExpr, Vec<Stmt>),
     Assert(SExpr, String),
     Error(String),
+    /// A block `{ ... }`. The twin writes a selected `comptime if` branch
+    /// and each iteration of a `comptime for` as one.
+    Block(Vec<Stmt>),
 }
 
 /// `comptime fn name(params) -> ret { comptime if ((x == 0)) { return base; } return step; }`,
@@ -379,6 +382,11 @@ fn stmt(out: &mut String, depth: usize, s: &Stmt) {
         }
         Stmt::Assert(c, m) => format!("static_assert({}, {});", sexpr(c), string(m)),
         Stmt::Error(m) => format!("error({});", string(m)),
+        Stmt::Block(body) => {
+            line(out, depth, "{");
+            stmts(out, depth + 1, body);
+            "}".to_owned()
+        }
     };
     line(out, depth, &text);
 }

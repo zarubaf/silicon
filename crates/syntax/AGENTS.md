@@ -6,7 +6,7 @@ The `syntax` crate is the lexer and the lossless syntax tree of the Rust front e
 
 ## Owns
 
-This crate owns the kinds of tokens and nodes, the `rowan` language of Silicon, and the lexer. The lexer reports each lexical error as data with the code `S001` and a byte offset. It never prints. It takes the syntax depth, and the first bracket above that depth is an error token. The feature `gen` adds the lift of a core design to a source program, and the map from core vectors to source vectors. It also adds the typed form of a generated program, its printer, and its static evaluator. Its builder makes random typed programs and their input lines. Later steps add the typed AST wrappers of the syntax tree and its source printer.
+This crate owns the kinds of tokens and nodes, the `rowan` language of Silicon, and the lexer. The lexer reports each lexical error as data with the code `S001` and a byte offset. It never prints. It takes the syntax depth, and the first bracket above that depth is an error token. The feature `gen` adds the lift of a core design to a source program, and the map from core vectors to source vectors. It also adds the typed form of a generated program, its printer, and its static evaluator. Its builder makes random typed programs and their input lines. The twin of a typed program writes out each comptime construct of the program. Later steps add the typed AST wrappers of the syntax tree and its source printer.
 
 ## Invariants
 

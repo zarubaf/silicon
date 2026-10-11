@@ -6,14 +6,17 @@
 //! reuse the code under test.
 //!
 //! The typed mode builds random programs in the form of `program` from a
-//! tape (`build`), and `eval` computes their static values.
+//! tape (`build`), and `eval` computes their static values. The `twin` of
+//! a typed program writes out each of its comptime constructs.
 
 mod build;
 mod eval;
 mod expr;
 mod lift;
 mod program;
+mod twin;
 
 pub use build::{lines, typed};
 pub use lift::{Unsupported, lift, vector_in, vector_out};
 pub use program::{Ports, Program, Scalar};
+pub use twin::{Twin, twin};
