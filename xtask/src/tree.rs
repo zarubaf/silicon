@@ -162,6 +162,20 @@ pub fn justfile_violations(text: &str) -> Vec<(usize, String, String)> {
     out
 }
 
+/// The first line a Rust or Lean source file must hold, or `None` for other files.
+fn spdx_header(path: &Path) -> Option<&'static str> {
+    match path.extension().and_then(|e| e.to_str()) {
+        Some("rs") => Some("// SPDX-License-Identifier: Apache-2.0"),
+        Some("lean") => Some("-- SPDX-License-Identifier: Apache-2.0"),
+        _ => None,
+    }
+}
+
+/// True when `text` starts with the SPDX line its file kind requires.
+pub fn spdx_ok(path: &Path, text: &str) -> bool {
+    spdx_header(path).is_none_or(|want| text.lines().next() == Some(want))
+}
+
 pub fn check(repo: &Repo) -> Result<Vec<Violation>> {
     let mut out = Vec::new();
     let paths: Vec<String> = repo
@@ -211,6 +225,15 @@ pub fn check(repo: &Repo) -> Result<Vec<Violation>> {
                     message: "task marker needs an issue reference, e.g. (#123)".into(),
                 });
             }
+        }
+        if spdx_header(&file.path).is_some() && !spdx_ok(&file.path, &repo.read(&file.path)?) {
+            out.push(Violation {
+                path: file.path.clone(),
+                line: Some(1),
+                rule: "tree-spdx",
+                severity: Severity::Error,
+                message: "first line must be the Apache-2.0 SPDX identifier".into(),
+            });
         }
         if file.path == Path::new("justfile") {
             for (line, name, reason) in justfile_violations(&repo.read(&file.path)?) {
@@ -296,6 +319,64 @@ mod tests {
     }
 
     #[test]
+    fn spdx_line_must_be_first() {
+        let rs = Path::new("a.rs");
+        let lean = Path::new("a.lean");
+        assert!(spdx_ok(
+            rs,
+            "// SPDX-License-Identifier: Apache-2.0\nfn f() {}\n"
+        ));
+        assert!(spdx_ok(
+            lean,
+            "-- SPDX-License-Identifier: Apache-2.0\nimport Std\n"
+        ));
+        assert!(!spdx_ok(rs, "fn f() {}\n"));
+        assert!(!spdx_ok(
+            rs,
+            "//! doc\n// SPDX-License-Identifier: Apache-2.0\n"
+        ));
+        assert!(!spdx_ok(
+            lean,
+            "-- SPDX-License-Identifier: Apache-2.0\n"
+                .replace("--", "//")
+                .as_str()
+        ));
+        assert!(spdx_ok(Path::new("a.md"), "text"));
+    }
+
+    #[test]
+    fn check_names_the_file_without_spdx() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir(root.join("xtask")).unwrap();
+        std::fs::write(
+            root.join("xtask/ok.rs"),
+            "// SPDX-License-Identifier: Apache-2.0\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("xtask/late.rs"),
+            "\n// SPDX-License-Identifier: Apache-2.0\n",
+        )
+        .unwrap();
+        let file = |p: &str| TrackedFile {
+            path: p.into(),
+            is_symlink: false,
+            is_executable: false,
+        };
+        let repo = Repo::from_parts(
+            root.to_path_buf(),
+            vec![file("xtask/ok.rs"), file("xtask/late.rs")],
+        );
+        let got: Vec<(String, String)> = check(&repo)
+            .unwrap()
+            .iter()
+            .map(|v| (v.rule.to_owned(), v.path.display().to_string()))
+            .collect();
+        assert_eq!(got, [("tree-spdx".to_owned(), "xtask/late.rs".to_owned())]);
+    }
+
+    #[test]
     fn justfile_recipe_bodies_are_one_line() {
         let text = "ci: check test\n\nfmt:\n    cargo fmt\n\nbad:\n    one\n    two\n";
         let v = justfile_violations(text);
@@ -325,11 +406,19 @@ mod tests {
         std::fs::write(root.join("stray.txt"), "x").unwrap();
         std::fs::write(root.join("run.sh"), "x").unwrap();
         std::fs::create_dir(root.join("xtask")).unwrap();
-        std::fs::write(root.join("xtask/a.rs"), mark("// T0 fix\n")).unwrap();
+        std::fs::write(
+            root.join("xtask/a.rs"),
+            mark("// SPDX-License-Identifier: Apache-2.0\n// T0 fix\n"),
+        )
+        .unwrap();
         std::os::unix::fs::symlink("xtask/a.rs", root.join("xtask/link.rs")).unwrap();
         std::fs::write(root.join("xtask/run"), "#!/bin/sh\necho\n").unwrap();
         std::fs::write(root.join("xtask/tool"), "x").unwrap();
-        std::fs::write(root.join("xtask/main.rs"), "#![allow(x)]\n").unwrap();
+        std::fs::write(
+            root.join("xtask/main.rs"),
+            "// SPDX-License-Identifier: Apache-2.0\n#![allow(x)]\n",
+        )
+        .unwrap();
         let file = |p: &str, is_symlink| TrackedFile {
             path: p.into(),
             is_symlink,
