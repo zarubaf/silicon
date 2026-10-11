@@ -514,9 +514,10 @@ fn validate_source(source: &str, top: &str, sil: &str, budget: &Budgets) -> Resu
 /// The output and the exit code of `build`: the core IR in `PREFIX.sil` and the Verilog in
 /// `PREFIX.sv`. The Verilog comes from the text that Lean validates, and it is written after
 /// the verdict. A Lean rejection of a source that Rust accepted is a defect of the Rust front
-/// end, and it leaves no artifact. Each exit leaves at most the pair of one build: a failure
-/// after the first write removes both files, and the write of `PREFIX.sil` removes an old
-/// `PREFIX.sv` first.
+/// end, and it leaves no artifact. A write goes to a `.tmp` file and then renames, so no
+/// artifact is partial. Each exit leaves at most the pair of one build: the write of
+/// `PREFIX.sil` removes an old `PREFIX.sv` first, and a later failure removes both files and
+/// the temp files. No file is touched if an artifact path is the input file.
 fn build_source(
     file: &Path,
     source: &str,
@@ -530,11 +531,13 @@ fn build_source(
         Err(line) => return Ok(line),
     };
     let (sil_path, sv_path) = (artifact(prefix, "sil"), artifact(prefix, "sv"));
-    if [&sil_path, &sv_path].contains(&&file.to_path_buf()) {
-        return Err(Usage(format!(
-            "{}: the output path is the input file",
-            file.display()
-        )));
+    for path in [&sil_path, &sv_path] {
+        if is_same_file(path, file) {
+            return Err(Usage(format!(
+                "{}: the output path is the input file",
+                path.display()
+            )));
+        }
     }
     let sil = canonical(&c.lowered.design);
     // The backend gets the text that Lean checks, as `lower` and `verilog` do.
@@ -545,9 +548,9 @@ fn build_source(
     // The tool runs before any file exists, so a missing tool leaves nothing behind.
     let sv = verilog(&lower(&typed))?;
     let _ = fs::remove_file(&sv_path);
-    write_artifact(&sil_path, &sil)?;
+    write_artifact(&sil_path, &sil).inspect_err(|_| remove_artifacts(&sil_path, &sv_path))?;
     if validation.no_validate {
-        write_artifact(&sv_path, &sv)?;
+        write_artifact(&sv_path, &sv).inspect_err(|_| remove_artifacts(&sil_path, &sv_path))?;
         return Ok(("not validated\n".to_owned(), Exit::Success));
     }
     let flags = budget.flags();
@@ -564,13 +567,10 @@ fn finish(
     sv: &str,
     err: &mut impl Write,
 ) -> Result<Output, Usage> {
-    let remove = || {
-        let _ = fs::remove_file(sil_path);
-        let _ = fs::remove_file(sv_path);
-    };
+    let remove = || remove_artifacts(sil_path, sv_path);
     match verdict {
         Ok(Elaborated::Accepted) => {
-            write_artifact(sv_path, sv)?;
+            write_artifact(sv_path, sv).inspect_err(|_| remove())?;
             Ok(("validated\n".to_owned(), Exit::Success))
         }
         Ok(Elaborated::Defect(report)) => {
@@ -595,8 +595,39 @@ fn artifact(prefix: &Path, extension: &str) -> PathBuf {
     PathBuf::from(path)
 }
 
+fn remove_artifacts(sil_path: &Path, sv_path: &Path) {
+    let _ = fs::remove_file(sil_path);
+    let _ = fs::remove_file(sv_path);
+}
+
+/// Whether `path` is the file `input`. A path that exists is the same file when device and
+/// inode are equal, which catches links and other spellings. A path that does not exist yet
+/// can only be the input by its text.
+fn is_same_file(path: &Path, input: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (fs::metadata(path), fs::metadata(input)) {
+        (Ok(a), Ok(b)) => (a.dev(), a.ino()) == (b.dev(), b.ino()),
+        _ => path == input,
+    }
+}
+
+/// Writes `text` to `path.tmp` and renames it, so `path` is never partial. A failure removes
+/// the temp file.
 fn write_artifact(path: &Path, text: &str) -> Result<(), Usage> {
-    fs::write(path, text).map_err(|e| Usage(format!("{}: {e}", path.display())))
+    let mut temp = path.as_os_str().to_owned();
+    temp.push(".tmp");
+    let temp = PathBuf::from(temp);
+    let _ = fs::remove_file(&temp);
+    let written = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp)
+        .and_then(|mut f| f.write_all(text.as_bytes()))
+        .and_then(|()| fs::rename(&temp, path));
+    written.map_err(|e| {
+        let _ = fs::remove_file(&temp);
+        Usage(format!("{}: {e}", path.display()))
+    })
 }
 
 /// The first line that differs between the reference text and the output text, numbered from
@@ -865,6 +896,19 @@ mod tests {
         };
         assert_eq!(message, "no checker");
         assert!(!sil.exists() && !sv.exists());
+        Ok(())
+    }
+
+    /// A folder at the final path makes the rename fail.
+    #[test]
+    fn a_failed_write_leaves_no_sv_and_no_temp_file() -> io::Result<()> {
+        let (_folder, sil, sv) = artifacts("rename")?;
+        fs::remove_file(&sv)?;
+        fs::create_dir_all(sv.join("inner"))?;
+        let result = finish(Ok(Elaborated::Accepted), &sil, &sv, "new", &mut Vec::new());
+        assert!(result.is_err());
+        assert!(!sil.exists() && !sv.with_extension("sv.tmp").exists());
+        assert!(sv.is_dir(), "only the folder of the test remains");
         Ok(())
     }
 
