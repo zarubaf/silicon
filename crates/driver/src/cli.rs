@@ -147,6 +147,18 @@ pub struct Budgets {
 }
 
 impl Budgets {
+    /// The flags that give these budgets to `silicon-check`.
+    fn flags(&self) -> [String; 6] {
+        [
+            "--syntax-depth".to_owned(),
+            self.syntax_depth.to_string(),
+            "--fuel".to_owned(),
+            self.fuel.to_string(),
+            "--depth".to_owned(),
+            self.depth.to_string(),
+        ]
+    }
+
     fn elab(&self) -> elab::Budget {
         elab::Budget {
             fuel: self.fuel,
@@ -502,8 +514,9 @@ fn validate_source(source: &str, top: &str, sil: &str, budget: &Budgets) -> Resu
 /// The output and the exit code of `build`: the core IR in `PREFIX.sil` and the Verilog in
 /// `PREFIX.sv`. The Verilog comes from the text that Lean validates, and it is written after
 /// the verdict. A Lean rejection of a source that Rust accepted is a defect of the Rust front
-/// end, and it leaves no artifact. Every failure removes an old `PREFIX.sv`, so the two files
-/// on disk never come from two builds.
+/// end, and it leaves no artifact. Each exit leaves at most the pair of one build: a failure
+/// after the first write removes both files, and the write of `PREFIX.sil` removes an old
+/// `PREFIX.sv` first.
 fn build_source(
     file: &Path,
     source: &str,
@@ -537,14 +550,7 @@ fn build_source(
         write_artifact(&sv_path, &sv)?;
         return Ok(("not validated\n".to_owned(), Exit::Success));
     }
-    let flags = [
-        "--syntax-depth".to_owned(),
-        budget.syntax_depth.to_string(),
-        "--fuel".to_owned(),
-        budget.fuel.to_string(),
-        "--depth".to_owned(),
-        budget.depth.to_string(),
-    ];
+    let flags = budget.flags();
     let verdict = validate_elaboration(source.as_bytes(), top, &sil_path, &flags);
     finish(verdict, &sil_path, &sv_path, &sv, &mut io::stderr())
 }
@@ -802,20 +808,40 @@ fn simulate(
 mod tests {
     use super::*;
 
+    /// The folder of a test, removed when the test ends.
+    struct Folder(PathBuf);
+
+    impl Drop for Folder {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
     /// A folder with both artifacts of an earlier build.
-    fn artifacts(name: &str) -> io::Result<(PathBuf, PathBuf)> {
+    fn artifacts(name: &str) -> io::Result<(Folder, PathBuf, PathBuf)> {
         let dir =
             std::env::temp_dir().join(format!("silicon-finish-{}-{name}", std::process::id()));
         fs::create_dir_all(&dir)?;
         let (sil, sv) = (dir.join("x.sil"), dir.join("x.sv"));
         fs::write(&sil, "sil")?;
         fs::write(&sv, "old")?;
-        Ok((sil, sv))
+        Ok((Folder(dir), sil, sv))
+    }
+
+    #[test]
+    fn the_budgets_become_the_flags_of_the_checker() {
+        let budgets = Budgets {
+            syntax_depth: 100,
+            fuel: 161,
+            depth: 50,
+        };
+        let flags = ["--syntax-depth", "100", "--fuel", "161", "--depth", "50"];
+        assert_eq!(budgets.flags(), flags.map(String::from));
     }
 
     #[test]
     fn a_lean_rejection_is_a_defect_without_artifacts() -> io::Result<()> {
-        let (sil, sv) = artifacts("defect")?;
+        let (_folder, sil, sv) = artifacts("defect")?;
         let mut err = Vec::new();
         let verdict = Ok(Elaborated::Defect(b"mismatch at line 1: x\n".to_vec()));
         let output =
@@ -831,7 +857,7 @@ mod tests {
 
     #[test]
     fn a_checker_failure_is_a_usage_error_without_artifacts() -> io::Result<()> {
-        let (sil, sv) = artifacts("failure")?;
+        let (_folder, sil, sv) = artifacts("failure")?;
         let mut err = Vec::new();
         let Err(Usage(message)) = finish(Err("no checker".to_owned()), &sil, &sv, "new", &mut err)
         else {
@@ -844,7 +870,7 @@ mod tests {
 
     #[test]
     fn an_accepted_design_writes_the_verilog() -> io::Result<()> {
-        let (sil, sv) = artifacts("accepted")?;
+        let (_folder, sil, sv) = artifacts("accepted")?;
         let output = finish(Ok(Elaborated::Accepted), &sil, &sv, "new", &mut Vec::new())
             .map_err(|u| io::Error::other(u.0))?;
         assert_eq!(output, ("validated\n".to_owned(), Exit::Success));
