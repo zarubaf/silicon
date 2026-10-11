@@ -220,6 +220,21 @@ fn decode_accepts_only_the_encoded_texts() {
     );
 }
 
+/// A path shares its frame. Its name lists the fields from the outside in.
+#[test]
+fn a_path_shares_its_frame() {
+    let texts = vec!["i".to_owned(), "r".to_owned()];
+    let mut paths = Paths::default();
+    let i = paths.child(None, 0);
+    let frame = paths.push(i, Step::Int(int("2")));
+    let r = paths.child(Some(frame), 1);
+    assert_eq!(
+        paths.name(r, &texts),
+        name("i", vec![Field::Int(int("2")), Field::User("r".into())])
+    );
+    assert_eq!(paths.name(i, &texts), name("i", vec![]));
+}
+
 fn id(module: &str, args: Vec<Value>) -> InstantiationId {
     InstantiationId {
         module: module.to_owned(),

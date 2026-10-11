@@ -1,15 +1,27 @@
-//! The static evaluator of slice 1 with the budgets and the cost model of section 5.4 of the
+//! The evaluator of slice 1 with the budgets and the cost model of section 5.4 of the
 //! front-end spec. Lean `Source.Eval` is its normative definition: each charge here is a
 //! charge there, in the same order and at the same node. It reads the checked AST. It
 //! recurses over the AST and the calls, so it runs on the front-end thread.
+//!
+//! A value is static, hardware, or a handle (section 5.1). The child module `hwops` makes the
+//! hardware nodes, and the child module `inst` runs the module statements and the
+//! instantiations of Lean `Source.Elab`.
 //!
 //! A result that refers to an existing value, such as a local or a constant, stays a
 //! reference until a copy pays for it. Thus a read that the cost model does not charge does
 //! no work in the size of the value.
 
+mod hwops;
+mod inst;
+
+pub use inst::Design;
+pub(crate) use inst::{Elab, Literal, elaborate};
+
+use crate::hw::{Graph, Handle, HwId, Op, Val};
 use crate::int::Int;
+use crate::names::{PathId, Paths, Role, Step, Sym};
 use crate::ops::{self, Fault, Fuel, str_text};
-use crate::scan::{Numbers, Scan};
+use crate::scan::{Numbers, Scan, Syms};
 use crate::value::{Ty, Value, int_size};
 use crate::{Budget, Code, Error};
 use parse::ast::{BinOp, Expr, Ident, Item, Param, Pos, Stmt, TypeExpr};
@@ -21,22 +33,24 @@ use std::collections::BTreeMap;
 enum Entry {
     NotStarted,
     InProgress,
-    Done(Value),
+    Done(Val),
 }
 
-/// A local of the current frame. A string and a type have no `Ty`, so their `ty` is `None`.
+/// A local of the current frame. A string, a type, and a handle have no `Ty`, so their `ty`
+/// is `None`.
 struct Slot {
     ty: Option<Ty>,
     mutable: bool,
-    value: Value,
+    value: Val,
 }
 
 /// The result of an expression. Only `Made` is a new value. The others are references, so a
 /// binding of them is a copy.
 enum Out {
-    Made(Value),
-    /// A new value that the cost model treats as a reference: a type name.
-    Named(Value),
+    Made(Val),
+    /// A new value that the cost model treats as a reference: a type name, a domain, a child
+    /// input, or a child output.
+    Named(Val),
     /// A local of the frame at this index of the frame stack. A call evaluates its arguments
     /// in the caller frame and binds them in a new frame, so a reference names its frame.
     Local(usize, DeclId),
@@ -49,10 +63,17 @@ impl Out {
     }
 }
 
+/// An operand at a use that reads it: a hardware value, or a static result.
+enum Opnd {
+    Hw(HwId),
+    Static(Out),
+}
+
 /// The value that a reference finds when its target is absent. The evaluator binds a local
 /// before a use reads it and sets a constant done before a use refers to it, so no reference
 /// finds it.
-static ABSENT: Value = Value::Bool(false);
+static ABSENT: Val = Val::Static(Value::Bool(false));
+static ABSENT_VALUE: Value = Value::Bool(false);
 
 type Frame = BTreeMap<DeclId, Slot>;
 
@@ -73,7 +94,7 @@ impl Store {
         self.frames.last_mut()
     }
 
-    fn view<'s>(&'s self, out: &'s Out) -> &'s Value {
+    fn view<'s>(&'s self, out: &'s Out) -> &'s Val {
         match out {
             Out::Made(v) | Out::Named(v) => v,
             Out::Local(k, id) => self
@@ -88,9 +109,17 @@ impl Store {
         }
     }
 
+    /// The static value of a result that is static.
+    fn value<'s>(&'s self, out: &'s Out) -> &'s Value {
+        match self.view(out) {
+            Val::Static(v) => v,
+            _ => &ABSENT_VALUE,
+        }
+    }
+
     /// The value of a result as an owned value. A reference copies its value, so the caller
     /// paid for the copy before.
-    fn take(&self, out: Out) -> Value {
+    fn take(&self, out: Out) -> Val {
         match out {
             Out::Made(v) | Out::Named(v) => v,
             other => self.view(&other).clone(),
@@ -105,14 +134,50 @@ enum Names {
     File,
 }
 
+/// A frame of section 7.3: its path, and its number in the table of frames. The root is 0.
+#[derive(Clone, Copy)]
+struct FrameRef {
+    path: Option<PathId>,
+    id: usize,
+}
+
+const ROOT: FrameRef = FrameRef { path: None, id: 0 };
+
+/// The key of a binding in a frame: the symbol of its source name, or the result role.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Tag {
+    Sym(Sym),
+    Ret,
+}
+
+/// A named hardware binding: its core name, its value, and the position of the binding.
+pub(crate) struct Let {
+    pub path: PathId,
+    #[expect(dead_code, reason = "the lowering of #72 reads the bound values")]
+    pub value: HwId,
+    #[expect(dead_code, reason = "the lowering of #72 reads the positions")]
+    pub pos: Pos,
+}
+
+/// The names of one instantiation. `frames` numbers each frame by its parent and its field
+/// pair. `versions` counts the bindings of each tag in each frame. `lets` holds the named
+/// bindings in evaluation order. Each table grows only with the bindings that run.
+#[derive(Default)]
+struct Naming {
+    frames: BTreeMap<(usize, Sym, Step), usize>,
+    versions: BTreeMap<(usize, Tag), u64>,
+    lets: Vec<Let>,
+}
+
 struct Evaluator<'a> {
     file: &'a Resolved,
-    top: &'a ResolvedExpr,
+    top: Option<&'a ResolvedExpr>,
     names: Names,
     /// The index of each item by the declaration of its name.
     items: BTreeMap<DeclId, usize>,
     /// The value of each number literal, from the pass before the evaluation.
     numbers: Numbers,
+    syms: Syms,
     limit: u64,
     depth: u64,
     /// The stack of each thread of the evaluation.
@@ -120,6 +185,13 @@ struct Evaluator<'a> {
     ret: Option<Ty>,
     fuel: Fuel,
     store: Store,
+    graph: Graph,
+    paths: Paths,
+    naming: Naming,
+    /// The item whose body runs, for its call sites.
+    item: usize,
+    frame: FrameRef,
+    elab: Elab,
 }
 
 /// Why an evaluation stops: its first error, or a deeper level for which the machine cannot
@@ -178,42 +250,74 @@ fn stmt_pos(s: &Stmt) -> Pos {
     }
 }
 
-/// The value of `expr` in the file scope of `file`, and the used fuel.
+impl<'a> Evaluator<'a> {
+    /// The evaluator of the file `file` with the budget `budget`. A top expression `top` has
+    /// its own map of targets.
+    fn new(
+        file: &'a Resolved,
+        top: Option<&'a ResolvedExpr>,
+        budget: Budget,
+        scan: Scan,
+        elab: Elab,
+    ) -> Evaluator<'a> {
+        let mut items = BTreeMap::new();
+        let mut consts = Vec::new();
+        for (i, item) in file.ast().iter().enumerate() {
+            let (Item::Const { name, .. } | Item::Fn { name, .. } | Item::Module { name, .. }) =
+                item;
+            if let Some(Target::Decl(id)) = file.target(name.pos) {
+                items.insert(id, i);
+            }
+            consts.push(Entry::NotStarted);
+        }
+        Evaluator {
+            file,
+            top,
+            names: if top.is_some() {
+                Names::Top
+            } else {
+                Names::File
+            },
+            items,
+            numbers: scan.numbers,
+            syms: scan.syms,
+            limit: budget.depth,
+            depth: 0,
+            stack: scan.stack,
+            ret: None,
+            fuel: Fuel::new(budget.fuel),
+            store: Store {
+                consts,
+                frames: vec![Frame::new()],
+            },
+            graph: Graph::default(),
+            paths: Paths::default(),
+            naming: Naming::default(),
+            item: 0,
+            frame: ROOT,
+            elab,
+        }
+    }
+}
+
+/// The value of `top` in the file scope of `file`, and the used fuel.
 pub(crate) fn run(
     file: &Resolved,
     top: &ResolvedExpr,
     budget: Budget,
     scan: Scan,
 ) -> Res<(Value, u64)> {
-    let mut items = BTreeMap::new();
-    let mut consts = Vec::new();
-    for (i, item) in file.ast().iter().enumerate() {
-        let (Item::Const { name, .. } | Item::Fn { name, .. } | Item::Module { name, .. }) = item;
-        if let Some(Target::Decl(id)) = file.target(name.pos) {
-            items.insert(id, i);
-        }
-        consts.push(Entry::NotStarted);
-    }
-    let mut ev = Evaluator {
+    let mut ev = Evaluator::new(
         file,
-        top,
-        names: Names::Top,
-        items,
-        numbers: scan.numbers,
-        limit: budget.depth,
-        depth: 0,
-        stack: scan.stack,
-        ret: None,
-        fuel: Fuel::new(budget.fuel),
-        store: Store {
-            consts,
-            frames: vec![Frame::new()],
-        },
-    };
+        Some(top),
+        budget,
+        scan,
+        Elab::new(crate::names::sha16),
+    );
     let e = top.expr();
     let out = ev.eval(e)?;
     let out = need(e, out)?;
-    let value = ev.store.take(out);
+    let value = ev.static_value(expr_pos(e), out)?;
     Ok((value, budget.fuel - ev.fuel.left()))
 }
 
@@ -225,18 +329,6 @@ fn need(e: &Expr, out: Option<Out>) -> Res<Out> {
             Code::S010,
             expr_pos(e),
             "`static_assert` gives no value".to_owned(),
-        ),
-    }
-}
-
-/// A static condition.
-fn test(pos: Pos, v: &Value) -> Res<bool> {
-    match v {
-        Value::Bool(b) => Ok(*b),
-        v => fail(
-            Code::S010,
-            pos,
-            format!("a condition is a Bool, not {}", v.text()),
         ),
     }
 }
@@ -255,18 +347,25 @@ fn prim(pos: Pos, name: &str, k: Prelude) -> Res<Ty> {
     }
 }
 
-/// A string and a type have no `Ty`, so an assignment keeps their form.
-fn same_form(a: &Value, b: &Value) -> bool {
-    matches!(
-        (a, b),
-        (Value::Str(_), Value::Str(_)) | (Value::Type(_), Value::Type(_))
-    )
+/// A string, a type, and a handle have no `Ty`, so an assignment keeps their form.
+fn same_form(a: &Val, b: &Val) -> bool {
+    match (a, b) {
+        (Val::Static(Value::Str(_)), Val::Static(Value::Str(_)))
+        | (Val::Static(Value::Type(_)), Val::Static(Value::Type(_))) => true,
+        (
+            Val::Handle(Handle::Res { kind, ty, .. }),
+            Val::Handle(Handle::Res {
+                kind: k2, ty: t2, ..
+            }),
+        ) => kind == k2 && ty == t2,
+        _ => false,
+    }
 }
 
 impl Evaluator<'_> {
     fn target(&self, pos: Pos) -> Option<Target> {
         match self.names {
-            Names::Top => self.top.target(pos),
+            Names::Top => self.top.and_then(|t| t.target(pos)),
             Names::File => self.file.target(pos),
         }
     }
@@ -283,12 +382,21 @@ impl Evaluator<'_> {
         }
     }
 
+    /// The symbol of the source name of a declaration.
+    fn sym(&self, id: DeclId) -> Sym {
+        self.syms.decls.get(&id).copied().unwrap_or(0)
+    }
+
     fn charge(&mut self, pos: Pos, units: u128) -> Res<()> {
         self.fuel.pay(units).map_err(at(pos))
     }
 
     fn size(&self, out: &Out) -> u128 {
-        u128::from(self.store.view(out).size())
+        u128::from(self.store.view(out).size(&self.graph))
+    }
+
+    fn text(&self, v: &Val) -> String {
+        v.text(&self.graph)
     }
 
     /// A binding copies a reference.
@@ -299,13 +407,128 @@ impl Evaluator<'_> {
         Ok(())
     }
 
-    /// A typed use of a result at the type `t`.
+    /// The value of a static position at the node `pos`. Another value there is `S011`.
+    fn static_value(&self, pos: Pos, out: Out) -> Res<Value> {
+        match self.store.take(out) {
+            Val::Static(v) => Ok(v),
+            v => fail(
+                Code::S011,
+                pos,
+                format!(
+                    "a static position needs a static value, not {}",
+                    self.text(&v)
+                ),
+            ),
+        }
+    }
+
+    /// The check of a static position, before the value is taken.
+    fn check_static(&self, pos: Pos, out: &Out) -> Res<()> {
+        match self.store.view(out) {
+            Val::Static(_) => Ok(()),
+            v => fail(
+                Code::S011,
+                pos,
+                format!(
+                    "a static position needs a static value, not {}",
+                    self.text(v)
+                ),
+            ),
+        }
+    }
+
+    /// A typed use of a static result at the type `t`. Another value is `S011`.
     fn conform(&mut self, pos: Pos, t: Ty, out: Out) -> Res<Value> {
-        let converted = ops::convert(t, self.store.view(&out), &mut self.fuel).map_err(at(pos))?;
-        Ok(match converted {
-            Some(v) => v,
-            None => self.store.take(out),
-        })
+        self.check_static(pos, &out)?;
+        let converted = ops::convert(t, self.store.value(&out), &mut self.fuel).map_err(at(pos))?;
+        match converted {
+            Some(v) => Ok(v),
+            None => self.static_value(pos, out),
+        }
+    }
+
+    /// A typed use of `out` at the type `t`. It reads a handle. A hardware value needs the
+    /// type `t`.
+    fn conform_val(&mut self, pos: Pos, t: Ty, out: Out) -> Res<Val> {
+        match self.data(pos, out)? {
+            Opnd::Static(o) => Ok(Val::Static(self.conform(pos, t, o)?)),
+            Opnd::Hw(h) => {
+                let ty = self.graph.ty(h);
+                if ty == t {
+                    Ok(Val::Hw(h))
+                } else {
+                    fail(
+                        Code::S010,
+                        pos,
+                        format!("expected {}, but the value is {}", t.text(), ty.text()),
+                    )
+                }
+            }
+        }
+    }
+
+    /// The data of a result at a use that reads it. A register, a wire, and an own output
+    /// give a reference to their name: the implicit read. A child input is never read
+    /// (`S017`). An instance and a domain are not data.
+    fn data(&mut self, pos: Pos, out: Out) -> Res<Opnd> {
+        match self.store.view(&out) {
+            Val::Static(_) => Ok(Opnd::Static(out)),
+            Val::Hw(h) => Ok(Opnd::Hw(*h)),
+            Val::Handle(Handle::Res { ty, path, .. }) => {
+                let (ty, path) = (*ty, *path);
+                Ok(Opnd::Hw(self.graph.mk(pos, ty, Op::Ref(path), Vec::new())))
+            }
+            Val::Handle(Handle::Input { .. }) => fail(
+                Code::S017,
+                pos,
+                "an input of a child is a target; it is never read".to_owned(),
+            ),
+            v @ Val::Handle(_) => fail(Code::S010, pos, format!("{} is not data", self.text(v))),
+        }
+    }
+
+    /// The operand `e` of the node at `pos`, at a use that reads it.
+    fn operand(&mut self, pos: Pos, e: &Expr) -> Res<Opnd> {
+        let o = self.eval(e)?;
+        let o = need(e, o)?;
+        self.data(pos, o)
+    }
+
+    /// A static condition.
+    fn test(&self, pos: Pos, v: &Val) -> Res<bool> {
+        match v {
+            Val::Static(Value::Bool(b)) => Ok(*b),
+            Val::Static(v) => fail(
+                Code::S010,
+                pos,
+                format!("a condition is a Bool, not {}", v.text()),
+            ),
+            v => fail(
+                Code::S011,
+                pos,
+                format!(
+                    "a static condition needs a static Bool, not {}",
+                    self.text(v)
+                ),
+            ),
+        }
+    }
+
+    /// A loop bound is a static `Int`.
+    fn bound(&self, pos: Pos, out: &Out) -> Res<()> {
+        match self.store.view(out) {
+            Val::Static(Value::Int(_)) => Ok(()),
+            Val::Static(v) => fail(
+                Code::S010,
+                pos,
+                format!("a loop bound is a static Int, not {}", v.text()),
+            ),
+            v => fail(
+                Code::S011,
+                pos,
+                format!("a loop bound is a static Int, not {}", self.text(v)),
+            ),
+        }
     }
 
     fn bind(&mut self, id: DeclId, slot: Slot) {
@@ -355,6 +578,79 @@ impl Evaluator<'_> {
         r
     }
 
+    /// Runs `act` in the item `item` and the naming frame `frame`.
+    fn in_item<T>(
+        &mut self,
+        item: usize,
+        frame: FrameRef,
+        act: impl FnOnce(&mut Self) -> Res<T>,
+    ) -> Res<T> {
+        let saved = (self.item, self.frame);
+        self.item = item;
+        self.frame = frame;
+        let r = act(self);
+        (self.item, self.frame) = saved;
+        r
+    }
+
+    /// The frame of the field pair `u` and `f` inside the current frame, with its path. Two
+    /// frames with one path get one number, so their bindings share the versions.
+    fn frame_of(&mut self, u: Sym, f: Step) -> (PathId, FrameRef) {
+        let key = (self.frame.id, u, f.clone());
+        let child = self.paths.child(self.frame.path, u);
+        let path = self.paths.push(child, f);
+        let next = self.naming.frames.len() + 1;
+        let id = *self.naming.frames.entry(key).or_insert(next);
+        (
+            path,
+            FrameRef {
+                path: Some(path),
+                id,
+            },
+        )
+    }
+
+    /// The core name `base` of the tag `key` in the current frame, or a version of it.
+    fn version(&mut self, key: Tag, base: PathId) -> PathId {
+        let k = (self.frame.id, key);
+        let v = self.naming.versions.get(&k).copied().unwrap_or(0);
+        self.naming.versions.insert(k, v + 1);
+        if v == 0 {
+            base
+        } else {
+            self.paths.push(base, Step::Version(v))
+        }
+    }
+
+    /// The core name of the local `id` in the current frame.
+    fn fresh(&mut self, id: DeclId) -> PathId {
+        let u = self.sym(id);
+        let base = self.paths.child(self.frame.path, u);
+        self.version(Tag::Sym(u), base)
+    }
+
+    /// Binds the hardware value `h` to the core name `path`. The result refers to the name.
+    fn bind_hw(&mut self, pos: Pos, path: PathId, h: HwId) -> Val {
+        self.naming.lets.push(Let {
+            path,
+            value: h,
+            pos,
+        });
+        let ty = self.graph.ty(h);
+        Val::Hw(self.graph.mk(pos, ty, Op::Ref(path), Vec::new()))
+    }
+
+    /// A binding of the local `id`. Only hardware gets a core name.
+    fn named(&mut self, pos: Pos, id: DeclId, v: Val) -> Val {
+        match v {
+            Val::Hw(h) => {
+                let path = self.fresh(id);
+                self.bind_hw(pos, path, h)
+            }
+            v => v,
+        }
+    }
+
     /// The results of the arguments of a call, in order.
     fn args(&mut self, xs: &[Expr]) -> Res<Vec<Out>> {
         let mut outs = Vec::with_capacity(xs.len());
@@ -371,12 +667,12 @@ impl Evaluator<'_> {
             return fail(Code::S010, pos, "the literal has no value".to_owned());
         };
         self.fuel.pay(u128::from(int_size(n))).map_err(at(pos))?;
-        Ok(Some(Out::Made(Value::Int(n.clone()))))
+        Ok(Some(Out::Made(Val::Static(Value::Int(n.clone())))))
     }
 
     fn made(&mut self, pos: Pos, v: Value) -> Res<Option<Out>> {
         self.charge(pos, u128::from(v.size()))?;
-        Ok(Some(Out::Made(v)))
+        Ok(Some(Out::Made(Val::Static(v))))
     }
 
     fn eval(&mut self, e: &Expr) -> Res<Option<Out>> {
@@ -388,48 +684,55 @@ impl Evaluator<'_> {
                 // The size counts the characters, and the charge comes before the copy.
                 let size = 1 + value.chars().count() as u128;
                 self.charge(*pos, size)?;
-                Ok(Some(Out::Made(Value::Str(value.clone()))))
+                Ok(Some(Out::Made(Val::Static(Value::Str(value.clone())))))
             }
             Expr::Name { pos, name } => Ok(Some(self.name(*pos, name)?)),
-            Expr::Unary { pos, op, arg } => {
-                let a = self.eval(arg)?;
-                let a = need(arg, a)?;
-                let v = ops::unary(*op, self.store.view(&a), &mut self.fuel).map_err(at(*pos))?;
-                Ok(Some(Out::Made(v)))
-            }
+            Expr::Unary { pos, op, arg } => match self.operand(*pos, arg)? {
+                Opnd::Static(a) => {
+                    let v =
+                        ops::unary(*op, self.store.value(&a), &mut self.fuel).map_err(at(*pos))?;
+                    Ok(Some(Out::Made(Val::Static(v))))
+                }
+                Opnd::Hw(a) => Ok(Some(Out::Made(self.hw_unary(*pos, *op, a)?))),
+            },
             Expr::Binary {
                 pos,
                 op: op @ (BinOp::Land | BinOp::Lor),
                 lhs,
                 rhs,
-            } => {
-                let a = self.eval(lhs)?;
-                let a = need(lhs, a)?;
-                let a = test(*pos, self.store.view(&a))?;
-                if a == (*op == BinOp::Lor) {
-                    return Ok(Some(Out::Made(Value::Bool(a))));
-                }
-                let b = self.eval(rhs)?;
-                let b = need(rhs, b)?;
-                let b = test(*pos, self.store.view(&b))?;
-                Ok(Some(Out::Made(Value::Bool(b))))
-            }
+            } => self.select(*pos, *op, lhs, rhs),
             Expr::Binary { pos, op, lhs, rhs } => {
-                let a = self.eval(lhs)?;
-                let a = need(lhs, a)?;
-                let b = self.eval(rhs)?;
-                let b = need(rhs, b)?;
-                Ok(Some(Out::Made(self.binary(*pos, *op, &a, &b)?)))
-            }
-            Expr::Cond { pos, cond, yes, no } => {
-                let c = self.eval(cond)?;
-                let c = need(cond, c)?;
-                if test(*pos, self.store.view(&c))? {
-                    self.eval(yes)
-                } else {
-                    self.eval(no)
+                let a = self.operand(*pos, lhs)?;
+                let b = self.operand(*pos, rhs)?;
+                match (a, b) {
+                    (Opnd::Static(a), Opnd::Static(b)) => Ok(Some(Out::Made(Val::Static(
+                        self.binary(*pos, *op, &a, &b)?,
+                    )))),
+                    (a, b) => Ok(Some(Out::Made(self.hw_binary(*pos, *op, a, b)?))),
                 }
             }
+            Expr::Cond { pos, cond, yes, no } => match self.operand(*pos, cond)? {
+                Opnd::Hw(c) => {
+                    let ty = self.graph.ty(c);
+                    if ty != Ty::Bool {
+                        return fail(
+                            Code::S010,
+                            *pos,
+                            format!("a condition is a Bool, not {}", ty.text()),
+                        );
+                    }
+                    let a = self.operand(*pos, yes)?;
+                    let b = self.operand(*pos, no)?;
+                    Ok(Some(Out::Made(self.mux(*pos, c, a, b)?)))
+                }
+                Opnd::Static(c) => {
+                    if self.test(*pos, self.store.view(&c))? {
+                        self.eval(yes)
+                    } else {
+                        self.eval(no)
+                    }
+                }
+            },
             Expr::Call { pos, callee, args } => self.call(*pos, callee, args),
             Expr::Index { pos, base, args } => {
                 if let Expr::Name { pos: bp, .. } = &**base
@@ -438,7 +741,7 @@ impl Evaluator<'_> {
                 {
                     self.charge(*bp, 1)?;
                     let t = self.index(*pos, k, args)?;
-                    return Ok(Some(Out::Made(Value::Type(t))));
+                    return Ok(Some(Out::Made(Val::Static(Value::Type(t)))));
                 }
                 fail(
                     Code::S010,
@@ -449,23 +752,87 @@ impl Evaluator<'_> {
             Expr::Field { pos, base, field } => {
                 let b = self.eval(base)?;
                 let b = need(base, b)?;
-                fail(
-                    Code::S010,
-                    *pos,
-                    format!(
-                        "{} has no field `{}`",
-                        self.store.view(&b).text(),
-                        field.name
-                    ),
-                )
+                self.field(*pos, &b, field)
             }
+        }
+    }
+
+    /// `&&` or `||`. A static left operand that decides gives its value. A static operand
+    /// that does not decide gives the right operand, also a hardware one.
+    fn select(&mut self, pos: Pos, op: BinOp, lhs: &Expr, rhs: &Expr) -> Res<Option<Out>> {
+        match self.operand(pos, lhs)? {
+            Opnd::Static(a) => {
+                let a = self.test(pos, self.store.view(&a))?;
+                if a == (op == BinOp::Lor) {
+                    return Ok(Some(Out::Made(Val::Static(Value::Bool(a)))));
+                }
+                match self.operand(pos, rhs)? {
+                    Opnd::Hw(h) => {
+                        let ty = self.graph.ty(h);
+                        if ty == Ty::Bool {
+                            Ok(Some(Out::Made(Val::Hw(h))))
+                        } else {
+                            fail(
+                                Code::S010,
+                                pos,
+                                format!("a condition is a Bool, not {}", ty.text()),
+                            )
+                        }
+                    }
+                    Opnd::Static(b) => {
+                        let b = self.test(pos, self.store.view(&b))?;
+                        Ok(Some(Out::Made(Val::Static(Value::Bool(b)))))
+                    }
+                }
+            }
+            a @ Opnd::Hw(_) => {
+                let b = self.operand(pos, rhs)?;
+                Ok(Some(Out::Made(self.hw_binary(pos, op, a, b)?)))
+            }
+        }
+    }
+
+    /// A port of an instance: a child input is a target, and a child output is hardware.
+    fn field(&mut self, pos: Pos, b: &Out, field: &Ident) -> Res<Option<Out>> {
+        let Val::Handle(Handle::Inst { id, path, inst }) = self.store.view(b) else {
+            return fail(
+                Code::S010,
+                pos,
+                format!(
+                    "{} has no field `{}`",
+                    self.text(self.store.view(b)),
+                    field.name
+                ),
+            );
+        };
+        let (id, path, inst) = (*id, *path, *inst);
+        let port = match self.names {
+            Names::Top => None,
+            Names::File => self.syms.fields.get(&field.pos).copied(),
+        }
+        .and_then(|s| self.elab.port(inst, s));
+        match port {
+            Some(q) if q.input => Ok(Some(Out::Named(Val::Handle(Handle::Input {
+                inst: id,
+                path,
+                port: q,
+            })))),
+            Some(q) => {
+                let h = self.graph.mk(pos, q.ty, Op::Out(path, q.sym), Vec::new());
+                Ok(Some(Out::Named(Val::Hw(h))))
+            }
+            None => fail(
+                Code::S010,
+                pos,
+                format!("the instance has no port `{}`", field.name),
+            ),
         }
     }
 
     /// A binary operator with static operands. A static integer next to a finite operand
     /// takes the type of that operand first.
     fn binary(&mut self, pos: Pos, op: BinOp, a: &Out, b: &Out) -> Res<Value> {
-        let (va, vb) = (self.store.view(a), self.store.view(b));
+        let (va, vb) = (self.store.value(a), self.store.value(b));
         let mut ca = None;
         let mut cb = None;
         if ops::unifies(op) {
@@ -510,18 +877,25 @@ impl Evaluator<'_> {
 
     /// `UInt[e]` or `SInt[e]` in a type or an expression. The base charged its node.
     fn index(&mut self, pos: Pos, k: Prelude, xs: &[Expr]) -> Res<Ty> {
-        let outs = self.args(xs)?;
-        let views: Vec<&Value> = outs.iter().map(|o| self.store.view(o)).collect();
+        let mut outs = Vec::with_capacity(xs.len());
+        for x in xs {
+            let o = self.eval(x)?;
+            let o = need(x, o)?;
+            self.check_static(pos, &o)?;
+            outs.push(o);
+        }
+        let views: Vec<&Value> = outs.iter().map(|o| self.store.value(o)).collect();
         let t = ops::family(k, &views).map_err(at(pos))?;
         self.charge(pos, u128::from(Value::Type(t).size()))?;
         Ok(t)
     }
 
-    /// A name. A constant evaluates at its first use, in the table of constants.
+    /// A name. A constant evaluates at its first use, in the table of constants. A domain
+    /// is a handle in the whole body of its module, so it needs no slot.
     fn name(&mut self, pos: Pos, x: &str) -> Res<Out> {
         match self.target(pos) {
             Some(Target::Prelude(k)) if k.is_type() => {
-                Ok(Out::Named(Value::Type(prim(pos, x, k)?)))
+                Ok(Out::Named(Val::Static(Value::Type(prim(pos, x, k)?))))
             }
             Some(Target::Decl(id)) => match self.file.decl(id).kind {
                 Kind::Const => self.constant(pos, x, id),
@@ -530,6 +904,7 @@ impl Evaluator<'_> {
                     pos,
                     format!("`{x}` is a function; slice 1 has no function values"),
                 ),
+                Kind::Domain => Ok(Out::Named(Val::Handle(Handle::Domain))),
                 _ => {
                     let k = self.store.frames.len().saturating_sub(1);
                     if self.store.frame().is_some_and(|f| f.contains_key(&id)) {
@@ -578,7 +953,7 @@ impl Evaluator<'_> {
                 ev.copy(*cp, &o)?;
                 ev.conform(*cp, t, o)
             })?;
-            ev.store.consts[i] = Entry::Done(c);
+            ev.store.consts[i] = Entry::Done(Val::Static(c));
             Ok(Out::Const(i))
         })
     }
@@ -604,32 +979,38 @@ impl Evaluator<'_> {
         let t = self.eval(f)?;
         let t = need(f, t)?;
         match (self.store.view(&t), xs) {
-            (Value::Type(t), [x]) => {
+            (Val::Static(Value::Type(t)), [x]) => {
                 let t = *t;
                 let a = self.eval(x)?;
                 let a = need(x, a)?;
                 self.charge(pos, self.size(&a))?;
-                Ok(Some(Out::Made(self.conform(pos, t, a)?)))
+                Ok(Some(Out::Made(Val::Static(self.conform(pos, t, a)?))))
             }
-            (Value::Type(_), _) => {
+            (Val::Static(Value::Type(_)), _) => {
                 fail(Code::S007, pos, "a constructor takes 1 argument".to_owned())
             }
-            (v, _) => fail(Code::S010, pos, format!("{} is not a function", v.text())),
+            (v, _) => fail(
+                Code::S010,
+                pos,
+                format!("{} is not a function", self.text(v)),
+            ),
         }
     }
 
+    /// A call of a function item. It runs in the call frame `<fn>$<k>c`. A hardware argument
+    /// and a hardware result get a core name in that frame.
     fn call_fn(&mut self, pos: Pos, fp: Pos, g: &str, id: DeclId, xs: &[Expr]) -> Res<Option<Out>> {
         self.charge(fp, 1)?;
         let file = self.file;
-        let item = self.items.get(&id).and_then(|&i| file.ast().get(i));
+        let i = self.items.get(&id).copied().unwrap_or(usize::MAX);
         let Some(Item::Fn {
             pos: ip,
-            name: fname,
+            comptime,
+            name: fn_name,
             params,
             ret,
             body,
-            ..
-        }) = item
+        }) = file.ast().get(i)
         else {
             return fail(Code::S010, fp, format!("`{g}` is not a function"));
         };
@@ -645,33 +1026,54 @@ impl Evaluator<'_> {
                 ),
             );
         }
+        // A call outside a body runs on static values only, so its site never names hardware.
+        let site = self
+            .syms
+            .calls
+            .get(self.item)
+            .and_then(|m| m.get(&pos))
+            .copied()
+            .unwrap_or(0);
+        let u = self.syms.items.get(i).copied().unwrap_or(0);
         self.nested(pos, |ev| {
             ev.in_frame(None, |ev| {
-                for (q, v) in params.iter().zip(vs) {
-                    ev.param(pos, q, v)?;
-                }
-                let rt = ev.type_expr(ret)?;
-                ev.ret = Some(rt);
-                match ev.block(*ip, body)? {
-                    Some(v) => Ok(Some(Out::Made(v))),
-                    None => fail(
-                        Code::S010,
-                        pos,
-                        format!("`{}` ends without `return`", fname.name),
-                    ),
-                }
+                let (path, frame) = ev.frame_of(u, Step::Call(site));
+                ev.in_item(i, frame, |ev| {
+                    for (q, v) in params.iter().zip(vs) {
+                        ev.param(pos, *comptime, q, v)?;
+                    }
+                    let rt = ev.type_expr(ret)?;
+                    ev.ret = Some(rt);
+                    match ev.block(*ip, body, false)? {
+                        Some(Val::Hw(h)) => {
+                            let role = ev.paths.push(path, Step::Role(Role::Ret));
+                            let name = ev.version(Tag::Ret, role);
+                            Ok(Some(Out::Made(ev.bind_hw(pos, name, h))))
+                        }
+                        Some(v) => Ok(Some(Out::Made(v))),
+                        None => fail(
+                            Code::S010,
+                            pos,
+                            format!("`{}` ends without `return`", fn_name.name),
+                        ),
+                    }
+                })
             })
         })
     }
 
-    /// Binds a parameter of a call. Its type can use the parameters before it.
-    fn param(&mut self, pos: Pos, q: &Param, v: Out) -> Res<()> {
+    /// Binds a parameter of a call. Its type can use the parameters before it. A static
+    /// parameter needs a static argument.
+    fn param(&mut self, pos: Pos, comptime: bool, q: &Param, v: Out) -> Res<()> {
         let t = self.type_expr(&q.ty)?;
         self.charge(pos, self.size(&v))?;
-        // A static and a hardware parameter conform alike: a static evaluation has only
-        // static values.
-        let x = self.conform(pos, t, v)?;
+        let x = if comptime || q.comptime {
+            Val::Static(self.conform(pos, t, v)?)
+        } else {
+            self.conform_val(pos, t, v)?
+        };
         let id = self.decl(&q.name)?;
+        let x = self.named(pos, id, x);
         self.bind(
             id,
             Slot {
@@ -698,46 +1100,64 @@ impl Evaluator<'_> {
             sizes += self.size(v);
         }
         self.charge(pos, sizes)?;
-        let views: Vec<&Value> = vs.iter().map(|o| self.store.view(o)).collect();
-        match (builtin, views.as_slice()) {
-            (Prelude::Resize | Prelude::Reinterpret, [ty, v]) => {
-                let Value::Type(ty) = ty else {
-                    return fail(
+        let mut vs = vs;
+        if matches!(builtin, Prelude::Resize | Prelude::Reinterpret) && vs.len() == 2 {
+            let (Some(v), Some(t)) = (vs.pop(), vs.pop()) else {
+                return fail(Code::S010, pos, format!("`{g}` needs two arguments"));
+            };
+            self.check_static(pos, &t)?;
+            let Value::Type(ty) = self.store.value(&t) else {
+                return fail(
+                    Code::S010,
+                    pos,
+                    format!("`{g}` needs a type, not {}", self.store.value(&t).text()),
+                );
+            };
+            let ty = *ty;
+            return match self.data(pos, v)? {
+                Opnd::Static(v) => {
+                    let v = self.store.value(&v);
+                    let made = if builtin == Prelude::Resize {
+                        ops::resize(ty, v, &mut self.fuel)
+                    } else {
+                        ops::reinterpret(ty, v, &mut self.fuel)
+                    };
+                    Ok(Some(Out::Made(Val::Static(made.map_err(at(pos))?))))
+                }
+                Opnd::Hw(x) => Ok(Some(Out::Made(self.hw_convert(pos, builtin, ty, x)?))),
+            };
+        }
+        match (builtin, vs.as_slice()) {
+            (Prelude::StaticAssert, [c, m]) => {
+                self.check_static(pos, c)?;
+                self.check_static(pos, m)?;
+                match (self.store.value(c), self.store.value(m)) {
+                    (Value::Bool(true), Value::Str(_)) => Ok(None),
+                    (Value::Bool(false), Value::Str(m)) => fail(
+                        Code::S014,
+                        pos,
+                        format!("static assertion failed: {}", str_text(m)),
+                    ),
+                    (c, m) => fail(
                         Code::S010,
                         pos,
-                        format!("`{g}` needs a type, not {}", ty.text()),
-                    );
-                };
-                let made = if builtin == Prelude::Resize {
-                    ops::resize(*ty, v, &mut self.fuel)
-                } else {
-                    ops::reinterpret(*ty, v, &mut self.fuel)
-                };
-                Ok(Some(Out::Made(made.map_err(at(pos))?)))
+                        format!("`{g}` does not accept [{}, {}]", c.text(), m.text()),
+                    ),
+                }
             }
-            (Prelude::StaticAssert, [c, m]) => match (c, m) {
-                (Value::Bool(true), Value::Str(_)) => Ok(None),
-                (Value::Bool(false), Value::Str(m)) => fail(
-                    Code::S014,
-                    pos,
-                    format!("static assertion failed: {}", str_text(m)),
-                ),
-                (c, m) => fail(
-                    Code::S010,
-                    pos,
-                    format!("`{g}` does not accept [{}, {}]", c.text(), m.text()),
-                ),
-            },
-            (Prelude::Error, [m]) => match m {
-                Value::Str(m) => fail(Code::S014, pos, format!("error: {}", str_text(m))),
-                m => fail(
-                    Code::S010,
-                    pos,
-                    format!("`{g}` does not accept {}", m.text()),
-                ),
-            },
+            (Prelude::Error, [m]) => {
+                self.check_static(pos, m)?;
+                match self.store.value(m) {
+                    Value::Str(m) => fail(Code::S014, pos, format!("error: {}", str_text(m))),
+                    m => fail(
+                        Code::S010,
+                        pos,
+                        format!("`{g}` does not accept {}", m.text()),
+                    ),
+                }
+            }
             (_, vs) => {
-                let texts: Vec<String> = vs.iter().map(|v| v.text()).collect();
+                let texts: Vec<String> = vs.iter().map(|v| self.text(self.store.view(v))).collect();
                 fail(
                     Code::S010,
                     pos,
@@ -747,31 +1167,20 @@ impl Evaluator<'_> {
         }
     }
 
-    /// A block at `pos`. It charges as a statement.
-    fn block(&mut self, pos: Pos, ss: &[Stmt]) -> Res<Option<Value>> {
+    /// A block at `pos`. It charges as a statement. The statements of a module body run as
+    /// module statements.
+    fn block(&mut self, pos: Pos, ss: &[Stmt], module: bool) -> Res<Option<Val>> {
         self.charge(pos, 1)?;
-        self.stmts(ss)
+        self.stmts(ss, module)
     }
 
-    fn stmts(&mut self, ss: &[Stmt]) -> Res<Option<Value>> {
+    fn stmts(&mut self, ss: &[Stmt], module: bool) -> Res<Option<Val>> {
         for s in ss {
-            if let Some(r) = self.stmt(s)? {
+            if let Some(r) = self.stmt(s, module)? {
                 return Ok(Some(r));
             }
         }
         Ok(None)
-    }
-
-    /// A loop bound is a static `Int`.
-    fn bound(&self, pos: Pos, out: &Out) -> Res<()> {
-        match self.store.view(out) {
-            Value::Int(_) => Ok(()),
-            v => fail(
-                Code::S010,
-                pos,
-                format!("a loop bound is a static Int, not {}", v.text()),
-            ),
-        }
     }
 
     fn local(
@@ -781,7 +1190,7 @@ impl Evaluator<'_> {
         name: &Ident,
         ty: Option<&TypeExpr>,
         value: &Expr,
-    ) -> Res<Option<Value>> {
+    ) -> Res<Option<Val>> {
         let t = match ty {
             Some(ty) => Some(self.type_expr(ty)?),
             None => None,
@@ -790,11 +1199,12 @@ impl Evaluator<'_> {
         let o = need(value, o)?;
         self.copy(pos, &o)?;
         let x = match t {
-            Some(t) => self.conform(pos, t, o)?,
+            Some(t) => self.conform_val(pos, t, o)?,
             None => self.store.take(o),
         };
         let id = self.decl(name)?;
-        let ty = t.or_else(|| x.ty());
+        let x = self.named(pos, id, x);
+        let ty = t.or_else(|| x.ty(&self.graph));
         self.bind(
             id,
             Slot {
@@ -807,7 +1217,7 @@ impl Evaluator<'_> {
     }
 
     /// An assignment to a `let mut` local. The target is a place, so it charges nothing.
-    fn assign(&mut self, pos: Pos, target: &Expr, value: &Expr) -> Res<Option<Value>> {
+    fn assign(&mut self, pos: Pos, target: &Expr, value: &Expr) -> Res<Option<Val>> {
         let place = match target {
             Expr::Name { pos: tp, .. } => match self.target(*tp) {
                 Some(Target::Decl(id)) => self
@@ -831,7 +1241,7 @@ impl Evaluator<'_> {
         let o = need(value, o)?;
         self.copy(pos, &o)?;
         let y = if let Some(t) = ty {
-            self.conform(pos, t, o)?
+            self.conform_val(pos, t, o)?
         } else {
             let old = self
                 .store
@@ -843,19 +1253,25 @@ impl Evaluator<'_> {
                 return fail(
                     Code::S010,
                     pos,
-                    format!("expected {}, but the value is {}", old.text(), new.text()),
+                    format!(
+                        "expected {}, but the value is {}",
+                        self.text(old),
+                        self.text(new)
+                    ),
                 );
             }
             self.store.take(o)
         };
+        let y = self.named(pos, id, y);
         if let Some(slot) = self.store.frame_mut().and_then(|f| f.get_mut(&id)) {
             slot.value = y;
         }
         Ok(None)
     }
 
-    /// A statement. The result is the value of a `return`.
-    fn stmt(&mut self, s: &Stmt) -> Res<Option<Value>> {
+    /// A statement. The result is the value of a `return`. A statement of a module body makes
+    /// hardware; elsewhere such a statement is `S011`.
+    fn stmt(&mut self, s: &Stmt, module: bool) -> Res<Option<Val>> {
         self.charge(stmt_pos(s), 1)?;
         match s {
             Stmt::Local {
@@ -880,16 +1296,18 @@ impl Evaluator<'_> {
                 let o = self.eval(value)?;
                 let o = need(value, o)?;
                 self.charge(*pos, self.size(&o))?;
-                Ok(Some(self.conform(*pos, rt, o)?))
+                let v = self.conform_val(*pos, rt, o)?;
+                // A module body runs on after a `return`, as the walk of Lean `Elab` does.
+                Ok((!module).then_some(v))
             }
             Stmt::CtIf { pos, cond, yes, no } => {
                 let c = self.eval(cond)?;
                 let c = need(cond, c)?;
-                if test(*pos, self.store.view(&c))? {
-                    self.block(*pos, yes)
+                if self.test(*pos, self.store.view(&c))? {
+                    self.block(*pos, yes, module)
                 } else {
                     match no {
-                        Some(no) => self.block(*pos, no),
+                        Some(no) => self.block(*pos, no, module),
                         None => Ok(None),
                     }
                 }
@@ -900,8 +1318,8 @@ impl Evaluator<'_> {
                 lo,
                 hi,
                 body,
-            } => self.ct_for(*pos, var, lo, hi, body),
-            Stmt::Block { body, .. } => self.stmts(body),
+            } => self.ct_for(*pos, var, lo, hi, body, module),
+            Stmt::Block { body, .. } => self.stmts(body, module),
             Stmt::Expr { value, .. } => {
                 self.eval(value)?;
                 Ok(None)
@@ -911,17 +1329,25 @@ impl Evaluator<'_> {
             | Stmt::Wire { pos, .. }
             | Stmt::Input { pos, .. }
             | Stmt::Output { pos, .. }
-            | Stmt::Inst { pos, .. } => fail(
-                Code::S011,
-                *pos,
-                "a static evaluation makes no hardware".to_owned(),
-            ),
+            | Stmt::Inst { pos, .. }
+                if !module =>
+            {
+                fail(
+                    Code::S011,
+                    *pos,
+                    "a static evaluation makes no hardware".to_owned(),
+                )
+            }
+            _ => {
+                self.module_stmt(s)?;
+                Ok(None)
+            }
         }
     }
 
     /// A `comptime for`. It charges the sizes of both bounds for the range, then each loop
-    /// value before it binds it. The charge of the loop value `v` also pays the work of the
-    /// next value `v + 1`.
+    /// value before it binds it in the loop frame `<var>$<value>`. The charge of the loop
+    /// value `v` also pays the work of the next value `v + 1`.
     fn ct_for(
         &mut self,
         pos: Pos,
@@ -929,34 +1355,41 @@ impl Evaluator<'_> {
         lo: &Expr,
         hi: &Expr,
         body: &[Stmt],
-    ) -> Res<Option<Value>> {
-        let a = self.eval(lo)?;
-        let a = need(lo, a)?;
-        self.bound(pos, &a)?;
-        let z = self.eval(hi)?;
-        let z = need(hi, z)?;
-        self.bound(pos, &z)?;
-        let sizes = self.size(&a) + self.size(&z);
+        module: bool,
+    ) -> Res<Option<Val>> {
+        let first = self.eval(lo)?;
+        let first = need(lo, first)?;
+        self.bound(pos, &first)?;
+        let end = self.eval(hi)?;
+        let end = need(hi, end)?;
+        self.bound(pos, &end)?;
+        let sizes = self.size(&first) + self.size(&end);
         self.charge(pos, sizes)?;
-        let (Value::Int(mut v), Value::Int(z)) = (self.store.take(a), self.store.take(z)) else {
+        let (Val::Static(Value::Int(mut value)), Val::Static(Value::Int(end))) =
+            (self.store.take(first), self.store.take(end))
+        else {
             return Ok(None);
         };
         let id = self.decl(var)?;
+        let sym = self.sym(id);
         let one = Int::from_u64(1);
-        while v < z {
-            self.charge(pos, u128::from(int_size(&v)))?;
-            self.bind(
-                id,
-                Slot {
-                    ty: Some(Ty::Int),
-                    mutable: false,
-                    value: Value::Int(v.clone()),
-                },
-            );
-            if let Some(r) = self.block(pos, body)? {
+        while value < end {
+            self.charge(pos, u128::from(int_size(&value)))?;
+            let (_, frame) = self.frame_of(sym, Step::Int(value.clone()));
+            let item = self.item;
+            let slot = Slot {
+                ty: Some(Ty::Int),
+                mutable: false,
+                value: Val::Static(Value::Int(value.clone())),
+            };
+            let r = self.in_item(item, frame, |ev| {
+                ev.bind(id, slot);
+                ev.block(pos, body, module)
+            })?;
+            if let Some(r) = r {
                 return Ok(Some(r));
             }
-            v = v.add(&one);
+            value = value.add(&one);
         }
         Ok(None)
     }
