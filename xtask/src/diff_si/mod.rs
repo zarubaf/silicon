@@ -25,7 +25,8 @@ use crate::repo::Repo;
 use crate::{lean_check, silicon};
 
 /// The most test runs of one shrink. Each run starts four processes in the
-/// lift mode and twelve in the typed mode.
+/// lift mode, twelve in the typed mode, two in the mutation mode, and at
+/// most ten in the budget mode.
 const SHRINK_RUNS: u32 = 256;
 
 /// The cases that a run draws.

@@ -90,7 +90,7 @@ enum Command {
         #[arg(long, default_value_t = 200, value_parser = clap::value_parser!(u64).range(1..))]
         count: u64,
     },
-    /// Run the source differential tests: lifted core designs, typed source programs, and their mutants through `silicon` and `silicon-check`.
+    /// Run the source differential tests: lifted core designs, typed source programs, their mutants, and their budgets through `silicon` and `silicon-check`.
     DiffSi {
         /// The cases to run.
         #[arg(long, value_enum, default_value_t = diff_si::Mode::All)]
