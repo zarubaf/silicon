@@ -511,21 +511,41 @@ fn run_source(
     if !schema.fits(&c.lowered.design) {
         return Ok(defect("the port schema does not fit the top").1);
     }
-    let top = top_module(&c.typed)?;
+    let Ok(top) = top_module(&c.typed) else {
+        return Ok(defect("the design has no top module").1);
+    };
     let mut sim = match Sim::new(&c.typed) {
         Ok(sim) => sim,
         Err(diagnostic) => return Ok(defect(&diagnostic.to_string()).1),
     };
-    for_each_line(input, |number, line| {
+    let lines = for_each_line(input, |number, line| {
         let values = schema
             .parse_line(line)
             .map_err(|e| Usage(format!("input line {number}: {e}")))?;
         let inputs = core_ir::vectors::inputs(top, values)
-            .ok_or_else(|| Usage("internal error: the inputs do not fit the top".to_owned()))?;
-        out.write_all(schema.print_line(sim.step(&inputs).values()).as_bytes())?;
+            .ok_or(Halt::Defect("the inputs do not fit the top"))?;
+        out.write_all(schema.print_line(sim.step(&inputs).values()).as_bytes())
+            .map_err(Usage::from)?;
         Ok(())
-    })?;
-    Ok(Exit::Success)
+    });
+    match lines {
+        Ok(()) => Ok(Exit::Success),
+        Err(Halt::Usage(usage)) => Err(usage),
+        Err(Halt::Defect(message)) => Ok(defect(message).1),
+    }
+}
+
+/// The reason a source `run` stops before the end of its input. A source vector that the
+/// schema accepts always fits the top, so a misfit is a defect and not a usage error.
+enum Halt {
+    Usage(Usage),
+    Defect(&'static str),
+}
+
+impl From<Usage> for Halt {
+    fn from(usage: Usage) -> Halt {
+        Halt::Usage(usage)
+    }
 }
 
 /// The line of the first error of a list in position order.
@@ -619,12 +639,13 @@ fn top_module(design: &typed::Design) -> Result<&typed::Module, Usage> {
 /// Calls `then` with the number and the text of each line of `input`. LF alone ends a line
 /// (spec section 6.4.3), so a CR stays in the line and the parser rejects it. `lines` would
 /// remove a CR before an LF.
-fn for_each_line(
+fn for_each_line<E: From<Usage>>(
     input: impl BufRead,
-    mut then: impl FnMut(usize, &str) -> Result<(), Usage>,
-) -> Result<(), Usage> {
+    mut then: impl FnMut(usize, &str) -> Result<(), E>,
+) -> Result<(), E> {
     for (number, line) in input.split(b'\n').enumerate() {
-        let line = String::from_utf8(line?)
+        let line = line.map_err(Usage::from)?;
+        let line = String::from_utf8(line)
             .map_err(|_| Usage(format!("input line {}: not valid UTF-8", number + 1)))?;
         then(number + 1, &line)?;
     }
@@ -644,7 +665,7 @@ fn simulate(
             return Ok(Exit::DesignError);
         }
     };
-    for_each_line(input, |number, line| {
+    for_each_line::<Usage>(input, |number, line| {
         let inputs =
             parse_input(line, top).map_err(|e| Usage(format!("input line {number}: {e}")))?;
         out.write_all(print_output(top, &sim.step(&inputs)).as_bytes())?;
