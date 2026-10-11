@@ -35,10 +35,6 @@ def node (name : String) (fields : List String) : String :=
 
 def list (xs : List String) : String := "(" ++ " ".intercalate xs ++ ")"
 
-def option : Option String → String
-  | none => "none"
-  | some x => node "some" [x]
-
 def boolean (b : Bool) : String := if b then "true" else "false"
 
 def ident (i : Ident) : String := quote i.name
@@ -64,53 +60,100 @@ def BinOp.name : BinOp → String
   | .add => "add" | .sub => "sub" | .addw => "addw" | .subw => "subw"
   | .mul => "mul" | .div => "div" | .rem => "rem" | .mulw => "mulw"
 
-def Expr.dump : Expr → String
-  | .num _ v => node "num" [toString v]
-  | .bool _ v => node "bool" [boolean v]
-  | .str _ v => node "str" [quote v]
-  | .name _ n => node "name" [quote n]
-  | .unary _ op a => node "unary" [op.name, a.dump]
-  | .binary _ op l r => node "binary" [op.name, l.dump, r.dump]
-  | .cond _ c y n => node "cond" [c.dump, y.dump, n.dump]
-  | .call _ f args => node "call" [f.dump, list (args.map Expr.dump)]
-  | .index _ b args => node "index" [b.dump, list (args.map Expr.dump)]
-  | .field _ b f => node "field" [b.dump, ident f]
+/-!
+The dump appends to an accumulator, so its work is linear in the size of its output. The
+elements of a list append in a loop, so no recursion grows with the length of a list.
+-/
 
-def TypeExpr.dump : TypeExpr → String
-  | .name _ n => node "name" [quote n]
-  | .index _ b args => node "index" [b.dump, list (args.map Expr.dump)]
+/-- `acc`, then the elements of `xs` as `f` writes them, with one space between two. -/
+def Print.sepTo (f : String → α → String) (acc : String) : List α → String
+  | [] => acc
+  | [x] => f acc x
+  | x :: xs => sepTo f (f acc x ++ " ") xs
 
-def Stmt.dump : Stmt → String
-  | .local _ m n ty v => node "local" [boolean m, ident n, option (ty.map TypeExpr.dump), v.dump]
-  | .assign _ t v => node "assign" [t.dump, v.dump]
-  | .connect _ t v => node "connect" [t.dump, v.dump]
-  | .reg _ n ty i => node "reg" [ident n, ty.dump, i.dump]
-  | .wire _ n ty => node "wire" [ident n, ty.dump]
-  | .input _ n ty => node "input" [ident n, ty.dump]
-  | .output _ n ty => node "output" [ident n, ty.dump]
-  | .inst _ n m args => node "inst" [ident n, ident m, list (args.map Expr.dump)]
-  | .ret _ v => node "ret" [option (v.map Expr.dump)]
-  | .ctIf _ c y none => node "ctif" [c.dump, list (y.map Stmt.dump), option none]
-  | .ctIf _ c y (some n) =>
-    node "ctif" [c.dump, list (y.map Stmt.dump), option (some (list (n.map Stmt.dump)))]
-  | .ctFor _ i lo hi b => node "ctfor" [ident i, lo.dump, hi.dump, list (b.map Stmt.dump)]
-  | .block _ b => node "block" [list (b.map Stmt.dump)]
-  | .expr _ v => node "expr" [v.dump]
+def Print.listTo (f : String → α → String) (acc : String) (xs : List α) : String :=
+  sepTo f (acc ++ "(") xs ++ ")"
 
-def Param.dump (p : Param) : String :=
-  node "param" [boolean p.comptime, ident p.name, p.ty.dump]
+def Print.optionTo (f : String → α → String) (acc : String) : Option α → String
+  | none => acc ++ "none"
+  | some x => f (acc ++ "(some ") x ++ ")"
 
-def Item.dump : Item → String
-  | .const _ n ty v => node "const" [ident n, ty.dump, v.dump]
+mutual
+  def Expr.dumpTo (acc : String) : Expr → String
+    | .num _ v => acc ++ "(num " ++ toString v ++ ")"
+    | .bool _ v => acc ++ "(bool " ++ boolean v ++ ")"
+    | .str _ v => acc ++ "(str " ++ quote v ++ ")"
+    | .name _ n => acc ++ "(name " ++ quote n ++ ")"
+    | .unary _ op a => a.dumpTo (acc ++ "(unary " ++ op.name ++ " ") ++ ")"
+    | .binary _ op l r => r.dumpTo (l.dumpTo (acc ++ "(binary " ++ op.name ++ " ") ++ " ") ++ ")"
+    | .cond _ c y n => n.dumpTo (y.dumpTo (c.dumpTo (acc ++ "(cond ") ++ " ") ++ " ") ++ ")"
+    | .call _ f xs => Expr.dumpsTo (f.dumpTo (acc ++ "(call ") ++ " (") xs ++ "))"
+    | .index _ b xs => Expr.dumpsTo (b.dumpTo (acc ++ "(index ") ++ " (") xs ++ "))"
+    | .field _ b f => b.dumpTo (acc ++ "(field ") ++ " " ++ ident f ++ ")"
+
+  /-- `sepTo Expr.dumpTo`, which the recursion over `Expr` needs as its own function. -/
+  def Expr.dumpsTo (acc : String) : List Expr → String
+    | [] => acc
+    | [e] => e.dumpTo acc
+    | e :: es => Expr.dumpsTo (e.dumpTo acc ++ " ") es
+end
+
+def TypeExpr.dumpTo (acc : String) : TypeExpr → String
+  | .name _ n => acc ++ "(name " ++ quote n ++ ")"
+  | .index _ b xs => listTo Expr.dumpTo (b.dumpTo (acc ++ "(index ") ++ " ") xs ++ ")"
+
+mutual
+  def Stmt.dumpTo (acc : String) : Stmt → String
+    | .local _ m n ty v =>
+      let acc := acc ++ "(local " ++ boolean m ++ " " ++ ident n ++ " "
+      v.dumpTo (optionTo TypeExpr.dumpTo acc ty ++ " ") ++ ")"
+    | .assign _ t v => v.dumpTo (t.dumpTo (acc ++ "(assign ") ++ " ") ++ ")"
+    | .connect _ t v => v.dumpTo (t.dumpTo (acc ++ "(connect ") ++ " ") ++ ")"
+    | .reg _ n ty i => i.dumpTo (ty.dumpTo (acc ++ "(reg " ++ ident n ++ " ") ++ " ") ++ ")"
+    | .wire _ n ty => ty.dumpTo (acc ++ "(wire " ++ ident n ++ " ") ++ ")"
+    | .input _ n ty => ty.dumpTo (acc ++ "(input " ++ ident n ++ " ") ++ ")"
+    | .output _ n ty => ty.dumpTo (acc ++ "(output " ++ ident n ++ " ") ++ ")"
+    | .inst _ n m xs =>
+      listTo Expr.dumpTo (acc ++ "(inst " ++ ident n ++ " " ++ ident m ++ " ") xs ++ ")"
+    | .ret _ v => optionTo Expr.dumpTo (acc ++ "(ret ") v ++ ")"
+    | .ctIf _ c y none => Stmt.dumpsTo (c.dumpTo (acc ++ "(ctif ") ++ " (") y ++ ") none)"
+    | .ctIf _ c y (some n) =>
+      let acc := Stmt.dumpsTo (c.dumpTo (acc ++ "(ctif ") ++ " (") y ++ ") (some ("
+      Stmt.dumpsTo acc n ++ ")))"
+    | .ctFor _ i lo hi b =>
+      let acc := hi.dumpTo (lo.dumpTo (acc ++ "(ctfor " ++ ident i ++ " ") ++ " ") ++ " ("
+      Stmt.dumpsTo acc b ++ "))"
+    | .block _ b => Stmt.dumpsTo (acc ++ "(block (") b ++ "))"
+    | .expr _ v => v.dumpTo (acc ++ "(expr ") ++ ")"
+
+  /-- `sepTo Stmt.dumpTo`, which the recursion over `Stmt` needs as its own function. -/
+  def Stmt.dumpsTo (acc : String) : List Stmt → String
+    | [] => acc
+    | [s] => s.dumpTo acc
+    | s :: ss => Stmt.dumpsTo (s.dumpTo acc ++ " ") ss
+end
+
+def Param.dumpTo (acc : String) (p : Param) : String :=
+  p.ty.dumpTo (acc ++ "(param " ++ boolean p.comptime ++ " " ++ ident p.name ++ " ") ++ ")"
+
+def Item.dumpTo (acc : String) : Item → String
+  | .const _ n ty v => v.dumpTo (ty.dumpTo (acc ++ "(const " ++ ident n ++ " ") ++ " ") ++ ")"
   | .fn _ c n ps r b =>
-    node "fn" [boolean c, ident n, list (ps.map Param.dump), r.dump, list (b.map Stmt.dump)]
+    let acc := listTo Param.dumpTo (acc ++ "(fn " ++ boolean c ++ " " ++ ident n ++ " ") ps
+    Stmt.dumpsTo (r.dumpTo (acc ++ " ") ++ " (") b ++ "))"
   | .module _ n ps ds b =>
-    node "module" [ident n, list (ps.map Param.dump), option (ds.map (list ∘ List.map ident)),
-      list (b.map Stmt.dump)]
+    let acc := listTo Param.dumpTo (acc ++ "(module " ++ ident n ++ " ") ps ++ " "
+    let acc := optionTo (listTo fun acc i => acc ++ ident i) acc ds
+    Stmt.dumpsTo (acc ++ " (") b ++ "))"
+
+def Expr.dump (e : Expr) : String := e.dumpTo ""
+def TypeExpr.dump (t : TypeExpr) : String := t.dumpTo ""
+def Stmt.dump (s : Stmt) : String := s.dumpTo ""
+def Item.dump (i : Item) : String := i.dumpTo ""
 
 /-! The AST dump of a source file. -/
 def Print.dump (items : List Item) : String :=
-  String.join (items.map fun i => i.dump ++ "\n")
+  items.foldl (fun acc i => i.dumpTo acc ++ "\n") ""
 
 /-!
 The source printer. Its text parses back to the same AST up to positions, if the parser can
