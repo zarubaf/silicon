@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The `expected-error XNNN @+N` directive (spec section 9).
+//! The directives of a test file: `expected-error XNNN @+N` (spec section 9) and `TOP`.
 
 /// The comment marker of a source language.
 #[derive(Clone, Copy)]
 pub enum Marker {
     /// A `.sil` file: `; expected-error`.
     Sil,
-    /// A `.si` file: `// expected-error`. Only the tests of the parser use it.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// A `.si` file: `// expected-error`.
     Si,
 }
 
@@ -79,6 +78,27 @@ pub fn expected_error(source: &str, marker: Marker) -> Result<Option<Expected>, 
     Ok(found)
 }
 
+const TOP: &str = "// TOP ";
+
+/// The top selection of a `.si` file: the text after `// TOP `.
+///
+/// # Errors
+///
+/// Returns a message when the file has no `TOP` line or more than one.
+pub(crate) fn top(source: &str) -> Result<String, String> {
+    let mut found = None;
+    for (index, text) in source.lines().enumerate() {
+        let Some(rest) = text.trim_start().strip_prefix(TOP) else {
+            continue;
+        };
+        if found.is_some() {
+            return Err(format!("line {}: a second TOP line", index + 1));
+        }
+        found = Some(rest.trim().to_owned());
+    }
+    found.ok_or_else(|| "no TOP line".to_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -116,6 +136,24 @@ mod tests {
         assert_eq!(
             expected_error(source, Marker::Sil),
             Err("line 2: a second directive".to_owned())
+        );
+    }
+
+    #[test]
+    fn top_reads_one_line() {
+        assert_eq!(
+            top("// TOP Counter(8, true)\nmodule ..."),
+            Ok("Counter(8, true)".to_owned())
+        );
+    }
+
+    #[test]
+    fn top_needs_exactly_one() {
+        assert!(top("module M() {}\n").unwrap_err().contains("no TOP"));
+        assert!(
+            top("// TOP M()\n// TOP N()\n")
+                .unwrap_err()
+                .contains("line 2")
         );
     }
 
