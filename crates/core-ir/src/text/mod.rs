@@ -107,7 +107,9 @@ fn pred_keyword(pred: Pred) -> &'static str {
 /// `bits` is a keyword only inside a type, but a name never equals it either.
 const TYPE_KEYWORD: &str = "bits";
 
-fn is_keyword(text: &str) -> bool {
+/// Whether `text` is a keyword of the text format. A core name never equals one.
+#[must_use]
+pub fn is_keyword(text: &str) -> bool {
     STRUCTURE_KEYWORDS.contains(&text)
         || text == TYPE_KEYWORD
         || UNOPS.iter().any(|op| unop_keyword(*op) == text)
