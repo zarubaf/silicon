@@ -49,7 +49,7 @@ Write a revert as `revert: <subject>`. Squash the fixup commits before the push.
 | `commit-spec-impl`             | A commit that changes `lean/` and `crates/` together                                      |
 | `commit-expectations-code`     | A commit that changes test expectations and non-test code together                        |
 
-Test expectations are the files under `snapshots/` directories and every file of the shared test data directories `tests/core/` and `tests/source/`. Each such file is an oracle: an input with its expectation. Adding, deleting, or editing one of these files counts, whatever the line. A change to a `Cargo.toml`, such as a `[[test]]` entry, is non-test code and goes in its own commit. The suites find their files on their own.
+Test expectations are the files under `snapshots/` directories and every file of the shared test data directories `tests/core/`, `tests/source/`, and `tests/inventory/`. Each such file is an oracle: an input with its expectation. Adding, deleting, or editing one of these files counts, whatever the line. A change to a `Cargo.toml`, such as a `[[test]]` entry, is non-test code and goes in its own commit. The suites find their files on their own.
 
 ## Hooks
 
