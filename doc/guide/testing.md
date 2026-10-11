@@ -37,7 +37,7 @@ Each language has one tree. A suite is one directory of a tree. The directory se
 | `tests/core/lower/`    | `silicon lower`                                                 | LLVM `FileCheck`                               | `CHECK` lines                          |
 | `tests/core/corpus/`   | LEC and the differential tests                                  | `circt-lec`, the interpreters, `arcilator`     | None                                   |
 | `tests/source/parse/`  | `parse` in Rust and in Lean                                     | The AST dumps are equal byte for byte          | None                                   |
-| `tests/source/check/`  | `elab` in Rust and in Lean                                      | The same first code and line in both           | `TOP`, `expected-error`                |
+| `tests/source/check/`  | `elab` in Rust and in Lean                                      | The same first code, line, and column in both  | `TOP`, `expected-error`                |
 | `tests/source/run/`    | `run` in Rust and in Lean                                       | The expected outputs in both                   | `TOP`, `STEP`                          |
 | `tests/source/elab/`   | `elab`, then `FileCheck` on both outputs                        | LLVM `FileCheck`                               | `TOP`, `CHECK` lines                   |
 | `tests/source/budget/` | `elab` with the budgets of the file                             | Success at the limit, failure one unit above   | `TOP`, `FUEL`, `DEPTH`, `SYNTAX-DEPTH` |
