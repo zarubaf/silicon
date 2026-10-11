@@ -1158,3 +1158,36 @@ fn build_refuses_an_input_at_a_temp_path() -> Test {
     }
     Ok(())
 }
+
+/// Lean validates before the backend runs, so without `firtool` the build fails after an
+/// accepted verdict and leaves no artifact, also none of an earlier build.
+#[test]
+fn build_without_firtool_leaves_no_artifact() -> Test {
+    let (dir, path) = build_folder("no-firtool", COUNTER_SI)?;
+    assert_eq!(
+        build(&path, "Counter(4)", &[], None)?.status.code(),
+        Some(0)
+    );
+    for args in [&[][..], &["--no-validate"]] {
+        let mut command = silicon_command();
+        command
+            .arg("build")
+            .arg(&path)
+            .args(args)
+            .args(["--top", "Counter(4)"])
+            .env("PATH", "");
+        let out = spawn(&mut command, "")?;
+        assert_eq!(
+            (text(&out).as_str(), out.status.code()),
+            ("", Some(2)),
+            "{args:?}"
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("firtool"), "{stderr}");
+        assert!(
+            !dir.join("x.sil").exists() && !dir.join("x.sv").exists(),
+            "{args:?}"
+        );
+    }
+    Ok(())
+}
