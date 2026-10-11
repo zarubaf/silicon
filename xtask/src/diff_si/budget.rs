@@ -81,7 +81,6 @@ pub(super) fn verdict(tools: &Tools, dir: &Path, case: &Case) -> Result<Option<S
         Ok(outcome(tools, "elab", &file, &top, &[flag, &value])?
             .map_err(|message| format!("with `{flag} {value}`: {message}")))
     };
-    let lower = [total.checked_sub(1), fuel_below(total, *fuel_pick)];
     match run("--fuel", total)? {
         Ok(at) if at.code == 0 => {}
         Ok(at) => {
@@ -92,6 +91,7 @@ pub(super) fn verdict(tools: &Tools, dir: &Path, case: &Case) -> Result<Option<S
         }
         Err(message) => return Ok(Some(message)),
     }
+    let lower = [total.checked_sub(1), fuel_below(total, *fuel_pick)];
     for fuel in lower.into_iter().flatten() {
         match run("--fuel", fuel)? {
             Ok(rejected) if s015(&rejected) => {}
