@@ -16,7 +16,7 @@ use core_ir::vectors::parse_input;
 use proptest::strategy::{Just, Strategy};
 use syntax::r#gen::{lift, vector_in, vector_out};
 
-use super::{Mode, Tools, repeat, reproducer, run_trace, validated, verdict_of};
+use super::{Mode, Tools, repeat, reproducer, run_trace, stdin, validated, verdict_of};
 use crate::diff::{CYCLES, Trace, compare};
 
 /// A core design and its `in=` lines.
@@ -82,12 +82,7 @@ fn try_verdict(tools: &Tools, dir: &Path, case: &Case) -> Result<Option<String>>
     let file = dir.join("design.si");
     std::fs::write(&file, &source).with_context(|| format!("cannot write {}", file.display()))?;
     let top = top_selection(&case.0);
-    let mut stdin = steps
-        .iter()
-        .map(|(line, _)| line.as_str())
-        .collect::<Vec<_>>()
-        .join("\n");
-    stdin.push('\n');
+    let stdin = stdin(steps.iter().map(|(line, _)| line.as_str()));
     let traces = [
         Trace {
             tool: "core",
