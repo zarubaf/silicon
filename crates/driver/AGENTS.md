@@ -23,7 +23,7 @@ This crate owns the commands `check`, `fmt`, `run`, `lower`, `verilog`, `parse`,
 
 ## Dependencies
 
-This crate depends on `core-ir`, `backend-circt`, `parse`, `resolve`, `typeck`, `elab`, and `clap`. The tests also use `testkit`, as a development dependency only. The command `verilog` runs `firtool`, and the tests run `circt-verilog` and `FileCheck`, from the development shell. The files of `tests/lower/` hold `; CHECK:` lines for `FileCheck`. The variable `SILICON_CHECK` names the checker, else the search path finds `silicon-check`. The tests use `lean/.lake/build/bin/silicon-check`, which `just check` builds. It is the last stage of the pipeline.
+This crate depends on `core-ir`, `backend-circt`, `parse`, `resolve`, `typeck`, `elab`, and `clap`. The tests also use `testkit`, as a development dependency only. The command `verilog` runs `firtool`, and the tests run `circt-verilog` and `FileCheck`, from the development shell. The files of `tests/core/lower/` hold `; CHECK:` lines for `FileCheck`. The variable `SILICON_CHECK` names the checker, else the search path finds `silicon-check`. The tests use `lean/.lake/build/bin/silicon-check`, which `just check` builds. It is the last stage of the pipeline.
 
 ## How to test
 

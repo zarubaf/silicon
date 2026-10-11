@@ -8,7 +8,7 @@ The `testkit` crate holds the helpers that the test suites of the compiler share
 
 This crate owns the parser of the directive `expected-error XNNN @+N` for both comment markers. It owns the parser of the report `error[XNNN]: L:C: message` and the check of the outcome of a `parse` command. It also picks the binary under test and the checker. A helper runs a command with a given standard input.
 
-It also owns the table of suites and one runner for each suite. `suites()` lists the pairs of tree and suite. `root(tree, suite)` gives the folder of a suite: the new path `tests/<tree>/<suite>` if it exists, else the old path. The runners are `core::{check, run, lower, corpus}` and `source::parse`. A runner takes the path of the `silicon` binary and the path of a file.
+It also owns the table of suites and one runner for each suite. `suites()` lists the pairs of tree and suite. `root(tree, suite)` gives the folder `tests/<tree>/<suite>` of a suite. The runners are `core::{check, run, lower, corpus}` and `source::parse`. A runner takes the path of the `silicon` binary and the path of a file.
 
 ## Invariants
 
