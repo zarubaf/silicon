@@ -22,7 +22,7 @@
 //! instantiation.
 
 use super::{Evaluator, Let, Out, ROOT, Res, Slot, Tag, fail, need};
-use crate::hw::{Handle, HwId, Kind, Op, Port, Val};
+use crate::hw::{Graph, Handle, HwId, Kind, Op, Port, Val};
 use crate::int::Int;
 use crate::names::{Name, PathId, Paths, Sym, encode, module_name};
 use crate::scan::Scan;
@@ -236,12 +236,15 @@ impl Elab {
 }
 
 /// An elaborated design: the done instantiations in the order they finish, the top among
-/// them, and the used fuel. Dropping it is safe on any stack: it holds no recursive value.
+/// them, and the used fuel. It keeps the arenas of the hardware values and of the paths that
+/// its descriptions refer to. Dropping it is safe on any stack: it holds no recursive value.
 pub struct Design {
     insts: Vec<Inst>,
     #[expect(dead_code, reason = "the lowering of #72 reads the top")]
     top: usize,
     used: u64,
+    #[expect(dead_code, reason = "the lowering of #72 reads the hardware values")]
+    graph: Graph,
     paths: Paths,
     texts: Vec<String>,
 }
@@ -356,6 +359,7 @@ pub(crate) fn elaborate(
         insts: ev.elab.done,
         top,
         used: budget.fuel - ev.fuel.left(),
+        graph: ev.graph,
         paths: ev.paths,
         texts: ev.syms.texts,
     })
