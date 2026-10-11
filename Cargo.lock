@@ -905,6 +905,7 @@ dependencies = [
  "regex",
  "syntax",
  "tempfile",
+ "testkit",
  "toml",
 ]
 
