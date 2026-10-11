@@ -7,7 +7,7 @@ use std::process::{Command, Output};
 use crate::bins::{self, silicon_check};
 use crate::core::run_tool;
 use crate::directive::{
-    Expectation, Expected, Marker, expectation, expected_error, has_check, top,
+    BudgetKind, Expectation, Expected, Marker, budgets, expectation, expected_error, has_check, top,
 };
 use crate::outcome::classify;
 use crate::report::parse_report;
@@ -198,6 +198,60 @@ pub fn elab(binary: &Path, file: &Path) -> datatest_stable::Result<()> {
     Ok(())
 }
 
+/// Compares the `elab` runs of the two front ends one unit below a budget of kind `kind`. Both
+/// must exit 1 with the code of `kind`, at the same line and column.
+fn compare_below(kind: BudgetKind, rust: &Output, lean: &Output) -> Result<(), String> {
+    let code = kind.code();
+    match parse_report(&String::from_utf8_lossy(&rust.stdout)) {
+        // The budget fixes only the code. `compare_check` makes the Lean report agree with the
+        // line and the column of the Rust report.
+        Some(got) => compare_check(
+            "elab",
+            rust,
+            lean,
+            Some(&Expected {
+                code: code.to_owned(),
+                line: got.line,
+            }),
+        ),
+        None => compare_check("elab", rust, lean, None)
+            .and_then(|()| Err(format!("expected error[{code}], got a success"))),
+    }
+}
+
+/// The `budget` suite (frontend spec sections 5.4 and 11.3): the Rust `silicon elab` and the
+/// Lean `silicon-check elab` run on each `.si` file with the top selection of its `// TOP`
+/// line, once for each `// FUEL N`, `// DEPTH N`, or `// SYNTAX-DEPTH N` line. With the
+/// budget N, the file meets the oracle of the `check` suite. With N - 1, both front ends fail
+/// with `S015` (`S001` for `SYNTAX-DEPTH`) at the same line and column.
+///
+/// # Errors
+///
+/// Returns an error when the file has no budget, a directive is malformed, a front end
+/// misbehaves, the two disagree, or a result differs from the expectation.
+pub fn budget(binary: &Path, file: &Path) -> datatest_stable::Result<()> {
+    let source = std::fs::read_to_string(file)?;
+    let in_file = |e: String| format!("{}: {e}", file.display());
+    let top = top(&source).map_err(in_file)?;
+    let want = expected_error(&source, Marker::Si).map_err(in_file)?;
+    let budgets = budgets(&source).map_err(in_file)?;
+    if budgets.is_empty() {
+        return Err(in_file("no budget line".to_owned()).into());
+    }
+    for budget in budgets {
+        let flag = budget.kind.flag();
+        let at = budget.limit.to_string();
+        let below = (budget.limit - 1).to_string();
+        let (rust, lean) = both(binary, "elab", file, &top, &[flag, &at], "")?;
+        compare_check("elab", &rust, &lean, want.as_ref())
+            .map_err(|e| in_file(format!("with `{flag} {at}`: {e}")))?;
+        let (rust, lean) = both(binary, "elab", file, &top, &[flag, &below], "")?;
+        compare_below(budget.kind, &rust, &lean)
+            .map_err(|e| in_file(format!("with `{flag} {below}`: {e}")))?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -308,6 +362,22 @@ mod tests {
         let rust = exited(0, "out=(q 1)\n");
         let lean = exited(0, "out=(q 2)\n");
         assert!(compare_run(&rust, &lean, &steps_of("out=(q 1)\n")).is_err());
+    }
+
+    #[test]
+    fn budget_needs_the_exact_code_one_below() {
+        let s015 = exited(1, "error[S015]: 4:8: x\n");
+        assert_eq!(compare_below(BudgetKind::Fuel, &s015, &s015), Ok(()));
+        let s001 = exited(1, "error[S001]: 4:8: x\n");
+        assert!(compare_below(BudgetKind::Fuel, &s001, &s001).is_err());
+        assert_eq!(compare_below(BudgetKind::SyntaxDepth, &s001, &s001), Ok(()));
+        let usage = exited(2, "error[S015]: 4:8: x\n");
+        assert!(compare_below(BudgetKind::Fuel, &usage, &s015).is_err());
+        assert!(compare_below(BudgetKind::Fuel, &s015, &usage).is_err());
+        let ok = exited(0, "(design A)\n");
+        assert!(compare_below(BudgetKind::Depth, &ok, &ok).is_err());
+        let other_column = exited(1, "error[S015]: 4:9: x\n");
+        assert!(compare_below(BudgetKind::Depth, &s015, &other_column).is_err());
     }
 
     #[test]
