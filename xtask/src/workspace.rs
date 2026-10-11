@@ -85,9 +85,41 @@ pub fn layer_order(metadata: &cargo_metadata::Metadata) -> Vec<String> {
     layers_list(metadata, "order")
 }
 
-/// The crate names of `[workspace.metadata.layers] dev-only`, empty when absent.
-fn dev_only(metadata: &cargo_metadata::Metadata) -> Vec<String> {
-    layers_list(metadata, "dev-only")
+/// Reads `[workspace.metadata.layers] dev-only` from the root manifest.
+///
+/// Returns the crate names and one message per defect. A missing key, a
+/// value that is not an array, an entry that is not a string, and a name
+/// that is not a workspace member are defects, so a bad list cannot turn
+/// the rule off.
+fn dev_only_list(root_manifest: &str, members: &[String]) -> (Vec<String>, Vec<String>) {
+    const KEY: &str = "`[workspace.metadata.layers] dev-only`";
+    let doc = root_manifest.parse::<toml::Table>().ok();
+    let value = doc.as_ref().and_then(|d| {
+        d.get("workspace")?
+            .get("metadata")?
+            .get("layers")?
+            .get("dev-only")
+    });
+    let Some(value) = value else {
+        return (Vec::new(), vec![format!("{KEY} is missing")]);
+    };
+    let Some(entries) = value.as_array() else {
+        return (Vec::new(), vec![format!("{KEY} is not an array")]);
+    };
+    let mut names = Vec::new();
+    let mut problems = Vec::new();
+    for entry in entries {
+        match entry.as_str() {
+            Some(name) if members.iter().any(|m| m == name) => names.push(name.to_owned()),
+            Some(name) => problems.push(format!(
+                "{KEY} names `{name}`, which is not a workspace member"
+            )),
+            None => problems.push(format!(
+                "{KEY} has the entry `{entry}`, which is not a string"
+            )),
+        }
+    }
+    (names, problems)
 }
 
 fn layers_list(metadata: &cargo_metadata::Metadata, key: &str) -> Vec<String> {
@@ -111,13 +143,15 @@ pub fn check(repo: &Repo) -> Result<Vec<Violation>> {
         .exec()
         .context("reading cargo metadata")?;
     let order = layer_order(&metadata);
-    let dev_only = dev_only(&metadata);
 
     let members: Vec<String> = metadata
         .packages
         .iter()
         .map(|p| p.name.to_string())
         .collect();
+    let root_manifest = std::fs::read_to_string(repo.root.join("Cargo.toml"))
+        .context("reading the root Cargo.toml")?;
+    let (dev_only, dev_only_problems) = dev_only_list(&root_manifest, &members);
     let manifests: Vec<PathBuf> = metadata
         .packages
         .iter()
@@ -129,7 +163,10 @@ pub fn check(repo: &Repo) -> Result<Vec<Violation>> {
         })
         .collect();
     let tracked: Vec<&Path> = repo.files.iter().map(|f| f.path.as_path()).collect();
-    let mut out = Vec::new();
+    let mut out: Vec<Violation> = dev_only_problems
+        .into_iter()
+        .map(|m| violation(Path::new("Cargo.toml"), "workspace-dev-only", m))
+        .collect();
     for path in non_member_crates(&tracked, &manifests) {
         out.push(violation(
             path,
@@ -217,6 +254,49 @@ mod tests {
         assert!(dev_only_violations(&dev_only, &[dep(EXEMPT, "testkit")]).is_empty());
     }
 
+    fn dev_only_of(layers: &str) -> (Vec<String>, Vec<String>) {
+        let manifest = format!("[workspace]\n[workspace.metadata.layers]\n{layers}");
+        dev_only_list(&manifest, &names(&["testkit", "srcgen"]))
+    }
+
+    #[test]
+    fn dev_only_list_of_members_accepted() {
+        let (got, problems) = dev_only_of("dev-only = [\"srcgen\", \"testkit\"]\n");
+        assert_eq!(got, ["srcgen", "testkit"]);
+        assert!(problems.is_empty());
+    }
+
+    #[test]
+    fn missing_dev_only_list_rejected() {
+        let (got, problems) = dev_only_of("order = []\n");
+        assert!(got.is_empty());
+        assert_eq!(problems.len(), 1);
+        assert!(problems[0].contains("is missing"), "{problems:?}");
+    }
+
+    #[test]
+    fn dev_only_list_that_is_no_array_rejected() {
+        let (_, problems) = dev_only_of("dev-only = \"testkit\"\n");
+        assert_eq!(problems.len(), 1);
+        assert!(problems[0].contains("not an array"), "{problems:?}");
+    }
+
+    #[test]
+    fn dev_only_entry_that_is_no_string_rejected() {
+        let (got, problems) = dev_only_of("dev-only = [\"testkit\", 7]\n");
+        assert_eq!(got, ["testkit"]);
+        assert_eq!(problems.len(), 1);
+        assert!(problems[0].contains("not a string"), "{problems:?}");
+    }
+
+    #[test]
+    fn dev_only_entry_that_is_no_member_rejected() {
+        let (got, problems) = dev_only_of("dev-only = [\"testkit\", \"tsetkit\"]\n");
+        assert_eq!(got, ["testkit"]);
+        assert_eq!(problems.len(), 1);
+        assert!(problems[0].contains("`tsetkit`"), "{problems:?}");
+    }
+
     #[test]
     fn unlisted_crate_rejected() {
         let members = names(&["syntax", "extra", "xtask"]);
@@ -247,7 +327,7 @@ mod tests {
             root,
             "Cargo.toml",
             "[workspace]\nresolver = \"3\"\nmembers = [\"crates/syntax\"]\n\
-             [workspace.metadata.layers]\norder = [\"syntax\"]\n\n[workspace.lints.rust]\nunused = \"warn\"\n",
+             [workspace.metadata.layers]\norder = [\"syntax\"]\ndev-only = []\n\n[workspace.lints.rust]\nunused = \"warn\"\n",
         );
         write(
             root,
@@ -317,7 +397,7 @@ mod tests {
             root,
             "Cargo.toml",
             "[workspace]\nresolver = \"3\"\nmembers = [\"crates/*\"]\n\
-             [workspace.metadata.layers]\norder = [\"syntax\", \"parse\"]\n\n[workspace.lints.rust]\nunused = \"warn\"\n",
+             [workspace.metadata.layers]\norder = [\"syntax\", \"parse\"]\ndev-only = []\n\n[workspace.lints.rust]\nunused = \"warn\"\n",
         );
         write(
             root,
@@ -399,5 +479,31 @@ mod tests {
             got,
             [("crates/driver/Cargo.toml".to_owned(), "workspace-dev-only")]
         );
+    }
+
+    #[test]
+    fn check_reports_missing_dev_only_list() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        write(
+            root,
+            "Cargo.toml",
+            "[workspace]\nresolver = \"3\"\nmembers = [\"crates/syntax\"]\n\
+             [workspace.metadata.layers]\norder = [\"syntax\"]\n\n[workspace.lints.rust]\nunused = \"warn\"\n",
+        );
+        write(
+            root,
+            "crates/syntax/Cargo.toml",
+            &crate_manifest("syntax", "", true),
+        );
+        write(root, "crates/syntax/src/lib.rs", "");
+        let repo = Repo::from_parts(root.to_path_buf(), Vec::<TrackedFile>::new());
+
+        let got: Vec<_> = check(&repo)
+            .unwrap()
+            .iter()
+            .map(|v| (v.path.display().to_string(), v.rule))
+            .collect();
+        assert_eq!(got, [("Cargo.toml".to_owned(), "workspace-dev-only")]);
     }
 }
