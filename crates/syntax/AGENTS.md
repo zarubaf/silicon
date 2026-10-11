@@ -6,7 +6,7 @@ The `syntax` crate is the lexer and the lossless syntax tree of the Rust front e
 
 ## Owns
 
-This crate owns the kinds of tokens and nodes, the `rowan` language of Silicon, and the lexer. The lexer reports each lexical error as data with the code `S001` and a byte offset. It never prints. It takes the syntax depth, and the first bracket above that depth is an error token. Later steps add the typed AST wrappers, the source printer, and the generator `gen`.
+This crate owns the kinds of tokens and nodes, the `rowan` language of Silicon, and the lexer. The lexer reports each lexical error as data with the code `S001` and a byte offset. It never prints. It takes the syntax depth, and the first bracket above that depth is an error token. The feature `gen` adds the lift of a core design to a source program, and the map from core vectors to source vectors. Later steps add the typed AST wrappers and the source printer.
 
 ## Invariants
 
@@ -17,8 +17,8 @@ This crate owns the kinds of tokens and nodes, the `rowan` language of Silicon, 
 
 ## Dependencies
 
-This crate uses `rowan` for the tree. The tests use `proptest`. Its other users are later front-end crates.
+This crate uses `rowan` for the tree. The tests use `proptest`. Its other users are later front-end crates. The feature `gen` uses `core-ir` with its feature `gen`.
 
 ## How to test
 
-Run `cargo nextest run -p syntax`, then `just check` from the repository root.
+Run `cargo nextest run -p syntax --all-features`, then `just check` from the repository root.
