@@ -36,6 +36,7 @@ Each rule is one list line. It ends with `Check:` and the check. A rule without 
 - Write no shell scripts. A `justfile` recipe runs one command. Check: `cargo xtask check` (rules `tree-banned`, `tree-justfile`).
 - Add no stray files or top-level entries. Check: `cargo xtask check` (rules `tree-root`, `tree-banned`).
 - Every `TODO` or `FIXME` needs an issue reference, for example `TODO(#123)`. Check: `cargo xtask check` (rule `tree-todo`).
+- Start each Rust and Lean source file with the SPDX line `Apache-2.0`. Check: `cargo xtask check` (rule `tree-spdx`).
 - Keep the guidance limits: 100 lines at the root, 60 lines per L1 file. Pair each `AGENTS.md` with a `CLAUDE.md` symlink. Check: `cargo xtask check` (rules `guidance-limit`, `guidance-pair`, `guidance-headings`).
 - A new crate joins `[workspace] members` and `[workspace.metadata.layers] order`. Check: `cargo xtask check` (rules `workspace-member`, `workspace-layers`).
 - A crate depends only on earlier pipeline stages. Check: `cargo xtask check` (rule `workspace-layers`).
