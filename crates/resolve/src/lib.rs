@@ -155,8 +155,9 @@ pub fn resolve(parse: Parse) -> Result<Resolved, Failed> {
 }
 
 /// An expression in the file scope, such as the `EXPR` of `eval`, with its names resolved.
-/// It is its own parse, so it has its own map from the id of each name node to its target. A target indexes the declarations of the `Resolved` of its file. It
-/// keeps the syntax depth of its parse. Dropping it is safe on any stack.
+/// It is its own parse, so it has its own map from the id of each name node to its target.
+/// A target indexes the declarations of the `Resolved` of its file. It keeps the syntax depth
+/// of its parse. Dropping it is safe on any stack.
 pub struct ResolvedExpr {
     expr: Expr,
     depth: usize,
