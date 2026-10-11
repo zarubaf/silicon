@@ -51,6 +51,12 @@ use proptest::prelude::*;
 use stat::{Reach, int};
 use std::collections::BTreeMap;
 
+/// The name prefixes of the static kinds: `P` parameter, `C` const, `f`
+/// `comptime fn`, `s` static `let`, `j` loop binder. A static name is one
+/// of them and digits; the twin must have none.
+#[cfg(test)]
+pub(super) const STATIC_PREFIXES: &str = "PCfsj";
+
 /// The result of a step whose faults the checks of the builder exclude.
 /// A fault reaches `build`, which the coverage test watches.
 type Built<T = ()> = Result<T, Fault>;
