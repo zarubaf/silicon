@@ -10,7 +10,7 @@ This crate owns the static values with their canonical serialization and their r
 
 A hardware value is a node in one arena, so a new node shares its operand trees. A structural path is a node in a second arena, and a user field holds the symbol of its name. Thus a new node or a new name costs constant work and no copy.
 
-The elaborator core keeps to the Rust subset of design section 4.5: plain owned data, `match`, `Vec`, `Box`, and no `Rc`, no `unsafe`, and no trait object. The module `int` holds the static integer behind a small interface, and only this module computes with `num-bigint`. A finite value uses the bit vector of `core-ir`, as the core semantics does.
+The elaborator core keeps to the Rust subset of design section 4.5: plain owned data, `match`, `Vec`, `Box`, and no `Rc`, no `unsafe`, and no trait object. The module `int` holds the static integer behind a small interface, and only this module computes with `num-bigint`. It also holds each conversion between an integer and a finite value. A finite value uses the bit vector of `core-ir`, as the core semantics does.
 
 ## Invariants
 

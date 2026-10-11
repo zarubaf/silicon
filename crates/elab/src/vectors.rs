@@ -187,15 +187,15 @@ pub(crate) fn parse_value(name: &str, t: Ty, v: &str) -> Result<Bits, String> {
         }
         Ty::Nat | Ty::Int => return Err(bad()),
     };
-    Bits::new(w, n.to_bits(w)).ok_or_else(bad)
+    n.to_finite(w).ok_or_else(bad)
 }
 
 /// The source text of the core value `v` of type `t`.
 pub(crate) fn value_text(t: Ty, v: &Bits) -> String {
     match t {
-        Ty::Bool if Int::from_unsigned(&v.to_biguint()).is_zero() => "false".to_owned(),
+        Ty::Bool if Int::from_unsigned(v).is_zero() => "false".to_owned(),
         Ty::Bool => "true".to_owned(),
-        Ty::SInt(w) => Int::from_signed(&v.to_biguint(), w).to_string(),
-        _ => Int::from_unsigned(&v.to_biguint()).to_string(),
+        Ty::SInt(w) => Int::from_signed(v, w).to_string(),
+        _ => Int::from_unsigned(v).to_string(),
     }
 }

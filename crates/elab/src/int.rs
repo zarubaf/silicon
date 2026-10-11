@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The static integer of any size. This module is the small interface of design section 4.5:
-//! only it uses `num-bigint`, so a proof can take a Lean model of it as an assumption.
+//! only it uses `num-bigint`, so a proof can take a Lean model of it as an assumption. It also
+//! holds each conversion between an integer and the bit vector of a finite value.
 
+use core_ir::Bits;
 use num_bigint::{BigInt, BigUint, Sign};
 use std::cmp::Ordering;
 use std::fmt;
@@ -27,17 +29,17 @@ impl Int {
         BigInt::parse_bytes(digits.as_bytes(), 10).map(Int)
     }
 
-    /// The unsigned value of the bits of a finite value.
+    /// The unsigned value of a finite value.
     #[must_use]
-    pub fn from_unsigned(bits: &BigUint) -> Int {
-        Int(BigInt::from_biguint(Sign::Plus, bits.clone()))
+    pub fn from_unsigned(x: &Bits) -> Int {
+        Int(BigInt::from_biguint(Sign::Plus, x.to_biguint()))
     }
 
-    /// The two's complement value of the bits of a finite value of the width `width`.
+    /// The two's complement value of the bits of a finite value, read at the width `width`.
     #[must_use]
-    pub fn from_signed(bits: &BigUint, width: u32) -> Int {
-        let unsigned = BigInt::from_biguint(Sign::Plus, bits.clone());
-        if width > 0 && bits.bit(u64::from(width - 1)) {
+    pub fn from_signed(x: &Bits, width: u32) -> Int {
+        let unsigned = BigInt::from_biguint(Sign::Plus, x.to_biguint());
+        if width > 0 && bit(x, width - 1) {
             Int(unsigned - (BigInt::from(1u8) << width))
         } else {
             Int(unsigned)
@@ -86,12 +88,12 @@ impl Int {
         }
     }
 
-    /// `BitVec.ofInt width self`: the value modulo `2^width`.
+    /// `BitVec.ofInt width self`: the value modulo `2^width`, or `None` for the width 0.
     #[must_use]
-    pub fn to_bits(&self, width: u32) -> BigUint {
+    pub fn to_finite(&self, width: u32) -> Option<Bits> {
         let modulus = BigInt::from(1u8) << width;
         let rem = ((&self.0 % &modulus) + &modulus) % &modulus;
-        rem.magnitude().clone()
+        Bits::new(width, rem.magnitude().clone())
     }
 
     #[must_use]
@@ -166,9 +168,32 @@ impl Int {
     }
 }
 
-/// `min(bits, limit)` for the bits of a finite value, read without a copy.
+/// The finite value of the width `width` with the unsigned value `n`, or `None` if `n` does not
+/// fit the width or the width is 0.
 #[must_use]
-pub fn min_unsigned(bits: &BigUint, limit: u32) -> u32 {
+pub fn finite(width: u32, n: u64) -> Option<Bits> {
+    Bits::new(width, BigUint::from(n))
+}
+
+/// The bit at the index `i` of a finite value, read without a copy.
+#[must_use]
+pub fn bit(x: &Bits, i: u32) -> bool {
+    x.value().bit(u64::from(i))
+}
+
+/// The natural number `n` as the value of a core constant.
+#[must_use]
+pub fn nat(n: u64) -> Nat {
+    BigUint::from(n)
+}
+
+/// The value of a core constant, a natural number.
+pub type Nat = BigUint;
+
+/// `min(x, limit)` for the unsigned value of a finite value, read without a copy.
+#[must_use]
+pub fn min_unsigned(x: &Bits, limit: u32) -> u32 {
+    let bits = x.value();
     if *bits < BigUint::from(limit) {
         bits.iter_u32_digits().next().unwrap_or(0)
     } else {
@@ -176,11 +201,11 @@ pub fn min_unsigned(bits: &BigUint, limit: u32) -> u32 {
     }
 }
 
-/// The size of the natural number of the bits of a finite value, as `intSize` of Lean: 1 for
-/// each 64-bit word, and at least 1.
+/// The size of the unsigned value of a finite value, as `intSize` of Lean: 1 for each 64-bit
+/// word, and at least 1.
 #[must_use]
-pub fn unsigned_size(bits: &BigUint) -> u64 {
-    bits.bits().saturating_sub(1) / 64 + 1
+pub fn unsigned_size(x: &Bits) -> u64 {
+    x.value().bits().saturating_sub(1) / 64 + 1
 }
 
 impl fmt::Debug for Int {

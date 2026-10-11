@@ -113,8 +113,8 @@ impl Evaluator<'_> {
                         .mk(pos, Ty::Int, Op::Count { amount, size }, Vec::new())
                 }
                 Value::UInt(x) => {
-                    let amount = crate::int::min_unsigned(x.value(), 65536);
-                    let size = unsigned_size(x.value());
+                    let amount = crate::int::min_unsigned(x, 65536);
+                    let size = unsigned_size(x);
                     self.graph
                         .mk(pos, Ty::Int, Op::Count { amount, size }, Vec::new())
                 }

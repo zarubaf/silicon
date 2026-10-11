@@ -124,12 +124,8 @@ impl Value {
                 out.push(')');
                 out
             }
-            Value::UInt(x) => format!("(uint {} {})", x.width(), x.value()),
-            Value::SInt(x) => format!(
-                "(sint {} {})",
-                x.width(),
-                Int::from_signed(x.value(), x.width())
-            ),
+            Value::UInt(x) => format!("(uint {} {})", x.width(), Int::from_unsigned(x)),
+            Value::SInt(x) => format!("(sint {} {})", x.width(), Int::from_signed(x, x.width())),
             Value::Type(t) => format!("(type {})", t.serialize()),
         }
     }
@@ -195,7 +191,6 @@ mod tests {
     //! The cases of `Silicon.Source.Test.Value` in Lean.
 
     use super::*;
-    use num_bigint::BigUint;
 
     fn int(digits: &str) -> Value {
         let (neg, digits) = match digits.strip_prefix('-') {
@@ -207,11 +202,11 @@ mod tests {
     }
 
     fn uint(w: u32, v: u64) -> Value {
-        Value::UInt(Bits::new(w, BigUint::from(v)).unwrap())
+        Value::UInt(crate::int::finite(w, v).unwrap())
     }
 
     fn sint(w: u32, v: u64) -> Value {
-        Value::SInt(Bits::new(w, BigUint::from(v)).unwrap())
+        Value::SInt(crate::int::finite(w, v).unwrap())
     }
 
     fn id(module: &str, args: Vec<Value>) -> InstantiationId {

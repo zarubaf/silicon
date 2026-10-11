@@ -248,11 +248,11 @@ fn emitted(i: &InstantiationId) -> String {
 }
 
 fn uint(w: u32, v: u64) -> Value {
-    Value::UInt(core_ir::Bits::new(w, num_bigint::BigUint::from(v)).unwrap())
+    Value::UInt(crate::int::finite(w, v).unwrap())
 }
 
 fn sint(w: u32, v: u64) -> Value {
-    Value::SInt(core_ir::Bits::new(w, num_bigint::BigUint::from(v)).unwrap())
+    Value::SInt(crate::int::finite(w, v).unwrap())
 }
 
 #[test]

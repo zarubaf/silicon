@@ -8,7 +8,6 @@ use crate::Code;
 use crate::int::Int;
 use crate::value::{Ty, Value, int_size, width_size};
 use core_ir::{Bits, Pred};
-use num_bigint::BigUint;
 use parse::ast::{BinOp, UnOp};
 use resolve::Prelude;
 
@@ -119,8 +118,8 @@ fn type_error<T>(message: String) -> Result<T, Fault> {
 }
 
 /// A bit vector whose value fits its width by construction.
-fn bits(width: u32, value: BigUint) -> Result<Bits, Fault> {
-    Bits::new(width, value).ok_or_else(|| (Code::S012, format!("no value of {width} bits")))
+fn bits(width: u32, value: Option<Bits>) -> Result<Bits, Fault> {
+    value.ok_or_else(|| (Code::S012, format!("no value of {width} bits")))
 }
 
 /// The finite value of a signedness.
@@ -190,7 +189,7 @@ pub(crate) fn convert(t: Ty, v: &Value, fuel: &mut Fuel) -> Result<Option<Value>
             if fits(t, n) {
                 Ok(Some(finite(
                     matches!(t, Ty::SInt(_)),
-                    bits(w, n.to_bits(w))?,
+                    bits(w, n.to_finite(w))?,
                 )))
             } else {
                 Err((
@@ -224,7 +223,7 @@ pub(crate) fn unary(op: UnOp, a: &Value, fuel: &mut Fuel) -> Result<Value, Fault
         }
         (UnOp::Neg, Value::UInt(x) | Value::SInt(x)) => {
             fuel.pay(size)?;
-            let zero = bits(x.width(), BigUint::ZERO)?;
+            let zero = bits(x.width(), crate::int::finite(x.width(), 0))?;
             Ok(finite(matches!(a, Value::SInt(_)), zero.sub(x)))
         }
         _ => type_error(format!("`{}` does not accept {}", unop_text(op), a.text())),
@@ -343,7 +342,7 @@ pub(crate) fn binary(op: BinOp, a: &Value, b: &Value, fuel: &mut Fuel) -> Result
             };
             fuel.pay(sum(a, b))?;
             let holds = x.icmp(pred(op, signed), y);
-            Ok(Value::Bool(holds.value().bit(0)))
+            Ok(Value::Bool(crate::int::bit(&holds, 0)))
         }
         BinOp::Shl | BinOp::Shr => shift(op, a, b, fuel),
         BinOp::Land | BinOp::Lor => type_error(format!("`{text}` selects; it has no step")),
@@ -413,7 +412,7 @@ fn shift(op: BinOp, a: &Value, b: &Value, fuel: &mut Fuel) -> Result<Value, Faul
                 Value::Int(count) => nonnegative(count)?.to_u64().map_or(width, |count| {
                     u32::try_from(count.min(u64::from(width))).unwrap_or(width)
                 }),
-                Value::UInt(count) => crate::int::min_unsigned(count.value(), width),
+                Value::UInt(count) => crate::int::min_unsigned(count, width),
                 _ => {
                     return type_error(format!(
                         "a shift count is UInt or a static Int, not {}",
@@ -422,7 +421,7 @@ fn shift(op: BinOp, a: &Value, b: &Value, fuel: &mut Fuel) -> Result<Value, Faul
                 }
             };
             fuel.pay(u128::from(width_size(width)))?;
-            let amount = bits(width, BigUint::from(amount))?;
+            let amount = bits(width, crate::int::finite(width, u64::from(amount)))?;
             let signed = matches!(a, Value::SInt(_));
             Ok(finite(
                 signed,
@@ -498,8 +497,8 @@ fn set_width(x: &Bits, w: u32, sign_extend: bool) -> Result<Bits, Fault> {
     if w <= u {
         return Ok(x.extract(0, w));
     }
-    let fill = bits(w - u, BigUint::ZERO)?;
-    let fill = if sign_extend && x.value().bit(u64::from(u - 1)) {
+    let fill = bits(w - u, crate::int::finite(w - u, 0))?;
+    let fill = if sign_extend && crate::int::bit(x, u - 1) {
         fill.not()
     } else {
         fill
