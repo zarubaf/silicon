@@ -10,7 +10,7 @@ use syntax::{SyntaxKind, SyntaxNode, SyntaxToken};
 
 pub(crate) struct Lower<'a> {
     index: LineIndex<'a>,
-    /// The id of the next name node.
+    /// The id of the next node that has one.
     next: Cell<NodeId>,
 }
 
@@ -98,7 +98,8 @@ impl<'a> Lower<'a> {
         }
     }
 
-    /// A new id for a name node. The lowering builds the nodes in source order.
+    /// A new id for a node. The lowering builds the nodes in source order, and a node takes
+    /// its id before its children.
     fn id(&self) -> NodeId {
         let id = self.next.get();
         self.next.set(id.next());
@@ -331,6 +332,7 @@ impl<'a> Lower<'a> {
                 Some(match token.kind() {
                     Dec | Hex | Bin => Expr::Num {
                         pos,
+                        id: self.id(),
                         value: number(token.text()),
                     },
                     Str => Expr::Str {
@@ -374,6 +376,7 @@ impl<'a> Lower<'a> {
             }),
             CallExpr => Some(Expr::Call {
                 pos,
+                id: self.id(),
                 callee: operand(0)?,
                 args: self.args(node)?,
             }),

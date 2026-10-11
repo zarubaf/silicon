@@ -249,7 +249,7 @@ impl Walk<'_> {
         self.reach(depth);
         let d = depth + 1;
         match e {
-            Expr::Num { pos, value } => {
+            Expr::Num { pos, value, .. } => {
                 let n = Int::from_decimal(value.as_str()).unwrap_or_else(Int::zero);
                 self.numbers.insert((self.top.is_some(), *pos), n);
             }
@@ -269,7 +269,9 @@ impl Walk<'_> {
                 self.expr(yes, d);
                 self.expr(no, d);
             }
-            Expr::Call { pos, callee, args } => {
+            Expr::Call {
+                pos, callee, args, ..
+            } => {
                 self.nested = self.nested.max(depth);
                 if self.top.is_none() {
                     self.calls.insert(*pos);

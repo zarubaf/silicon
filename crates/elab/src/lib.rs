@@ -198,7 +198,9 @@ fn top_selection(
         Err(parse::DepthError::Stack(e)) => return Err(Abort::Stack(e)),
     };
     let (pos, m, args): (Pos, &str, &[Expr]) = match parsed.expr() {
-        Expr::Call { pos, callee, args } => match &**callee {
+        Expr::Call {
+            pos, callee, args, ..
+        } => match &**callee {
             Expr::Name { name, .. } => (*pos, name, args),
             _ => return Err(bad()),
         },
