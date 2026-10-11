@@ -7,16 +7,16 @@
 //! port. `parse_line` maps a source input line to the core input values, and `print_line`
 //! maps the core output values to a source output line.
 //!
-//! - Schema order is the byte order of the source names. It equals the core port order,
-//!   because a name that `encode` changes only gets `$0k`, and `$` sorts before each name
-//!   character.
+//! - Schema order is the port layout of `layout`, without the clock.
 //! - An input line lists the reset `d$0rst` of the domain `d` first, as a `Bool`. A
 //!   combinational top has none, and the clock has no entry.
 //! - An input value has the decimal forms of a core value: leading zeros are allowed, and
 //!   `-0` is 0. An output value has no leading zeros, and only a negative `SInt` has `-`.
 
 use crate::Design;
+use crate::eval::PortDecl;
 use crate::int::Int;
+use crate::layout;
 use crate::names::{Field, Name, Role, encode};
 use crate::value::Ty;
 use core_ir::Bits;
@@ -44,38 +44,32 @@ impl Design {
     pub fn schema(&self) -> Option<Schema> {
         let top = self.insts.get(self.top)?;
         let text = |s: usize| self.texts.get(s).cloned().unwrap_or_default();
-        let mut ports: Vec<(String, bool, Ty)> = top
-            .body
-            .ports
-            .iter()
-            .map(|q| (text(q.sym), q.input, q.ty))
-            .collect();
-        ports.sort_by(|x, y| x.0.cmp(&y.0));
-        let mut inputs = Vec::new();
+        let mut reset = Vec::new();
         if let Some(d) = top.body.domain {
-            let reset = encode(&Name {
+            let name = encode(&Name {
                 head: text(d),
                 rest: vec![Field::Role(Role::Rst)],
             });
-            inputs.push(Entry {
-                name: reset.clone(),
-                core: reset,
+            reset.push(Entry {
+                name: name.clone(),
+                core: name,
                 ty: Ty::Bool,
             });
         }
-        let mut outputs = Vec::new();
-        for (name, input, ty) in ports {
+        let entry = |q: &PortDecl| {
+            let name = text(q.sym);
             let core = encode(&Name {
                 head: name.clone(),
                 rest: Vec::new(),
             });
-            let entry = Entry { name, core, ty };
-            if input {
-                inputs.push(entry);
-            } else {
-                outputs.push(entry);
+            Entry {
+                name,
+                core,
+                ty: q.ty,
             }
-        }
+        };
+        let ports = top.body.ports.iter().map(|q| (q, entry(q))).collect();
+        let layout::Ports { inputs, outputs } = layout::arrange(&self.texts, reset, ports);
         Some(Schema { inputs, outputs })
     }
 }
