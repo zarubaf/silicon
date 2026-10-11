@@ -403,7 +403,8 @@ fn list<T>(xs: &[T], f: fn(&T) -> String) -> String {
     xs.iter().map(f).collect::<Vec<_>>().join(", ")
 }
 
-/// A string literal with the escapes of the grammar.
+/// A string literal with the escapes of the grammar. The lexer has no escape
+/// for another control character, so a message of the builder has none.
 fn string(m: &str) -> String {
     let mut out = String::from("\"");
     for c in m.chars() {
@@ -762,6 +763,11 @@ module M1(comptime P0: Nat) domains() {
     o0 := i0;
 }
 ";
+
+    #[test]
+    fn strings_take_the_escapes_of_the_grammar() {
+        assert_eq!(string("a\"b\\c\nd\re\tf"), r#""a\"b\\c\nd\re\tf""#);
+    }
 
     #[test]
     fn the_printer_parenthesizes() {

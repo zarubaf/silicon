@@ -62,7 +62,9 @@ pub(crate) struct Scope {
 
 impl Scope {
     /// The scope of the items: all `comptime fn`s, then each `const` in item
-    /// order. A `const` can read only earlier ones.
+    /// order. A `const` can read only earlier ones. Each `const` evaluates
+    /// here, not at its first use, so a faulting `const` that nothing reads
+    /// faults here but not in the language: stricter on purpose.
     pub(crate) fn new(items: &[Item]) -> Result<Scope, Fault> {
         let mut scope = Scope::default();
         for item in items {
@@ -181,12 +183,16 @@ impl Evaluator<'_> {
         if self.calls > MAX_CALLS || self.depth >= MAX_DEPTH {
             return Err(Fault::Bound);
         }
-        let first = def
+        // The template compares the first formal with `0`; a `Bool` there is
+        // `S010` in both front ends.
+        let Some(Value::Int(first)) = def
             .params
             .first()
             .and_then(|(name, _)| inner.statics.get(name))
-            .ok_or(Fault::Type)?;
-        let body = if *first == Value::Int(BigInt::ZERO) {
+        else {
+            return Err(Fault::Type);
+        };
+        let body = if *first == BigInt::ZERO {
             &def.base
         } else {
             &def.step
@@ -414,6 +420,22 @@ mod tests {
         env.statics
             .insert("x1".to_owned(), Value::Int(BigInt::from(5)));
         assert_eq!(eval(&name("x1"), &env, &scope), value(5));
+    }
+
+    #[test]
+    fn a_bool_first_formal_is_a_type_fault() {
+        let f2 = Item::ComptimeFn(ComptimeFn {
+            name: "f2".to_owned(),
+            params: vec![("x0".to_owned(), StaticTy::Bool)],
+            ret: StaticTy::Int,
+            base: int(1),
+            step: int(2),
+        });
+        let Ok(scope) = Scope::new(&[f2]) else {
+            panic!("the scope faults");
+        };
+        let call = SExpr::Call("f2".to_owned(), vec![SExpr::Bool(true)]);
+        assert_eq!(eval(&call, &Env::default(), &scope), Err(Fault::Type));
     }
 
     #[test]
