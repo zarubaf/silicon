@@ -228,7 +228,7 @@ impl Program {
     /// The top selection, for example `M0(3, -5, true)`.
     #[must_use]
     pub fn top(&self) -> String {
-        let args: Vec<String> = self.args.iter().map(Value::token).collect();
+        let args: Vec<String> = self.args.iter().map(Value::spelling).collect();
         format!("{}({})", self.top, args.join(", "))
     }
 

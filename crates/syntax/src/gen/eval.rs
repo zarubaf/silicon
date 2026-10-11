@@ -24,7 +24,7 @@ impl Value {
     }
 
     /// The spelling of the value as an argument of the top selection.
-    pub(crate) fn token(&self) -> String {
+    pub(crate) fn spelling(&self) -> String {
         match self {
             Value::Int(n) => n.to_string(),
             Value::Bool(b) => b.to_string(),
