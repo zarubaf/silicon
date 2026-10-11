@@ -388,8 +388,8 @@ fn an_unknown_name_is_s003_at_the_name() {
 
 #[test]
 fn a_name_of_a_later_slice_prelude_is_s003() {
-    assert_eq!(errors("const A: List = 1;\n"), [(S003, 1, 10)]);
-    assert_eq!(errors("const A: Nat = len(1);\n"), [(S003, 1, 16)]);
+    assert_eq!(errors("const A: Wire = 1;\n"), [(S003, 1, 10)]);
+    assert_eq!(errors("const A: Nat = read(1);\n"), [(S003, 1, 16)]);
     assert_eq!(
         errors("module M() {\n  reg r: Reg[Bool] = false;\n}\n"),
         [(S003, 2, 10)]
@@ -530,15 +530,15 @@ fn the_message_of_a_later_slice_name_names_the_slice() {
         _ => panic!("expected an error"),
     };
     assert_eq!(
-        message("fn f(x: String) -> Bool { return true; }\n"),
-        "`String` is not in slice 1; it comes in slice 2"
+        message("fn f(x: TypeInfo) -> Bool { return true; }\n"),
+        "`TypeInfo` is not in slice 1; it comes in slice 4"
     );
     assert_eq!(
         message("module M() {\n  reg r: Reg[Bool] = 0;\n}\n"),
         "`Reg` is not in slice 1; it comes in slice 3"
     );
     assert_eq!(message("const A: Foo = 1;\n"), "`Foo` is not declared");
-    ok("const List: Nat = 1;\nconst N: Nat = List;\n");
+    ok("const Wire: Nat = 1;\nconst N: Nat = Wire;\n");
 }
 
 #[test]
