@@ -108,7 +108,10 @@ pub fn run(repo: &Repo, mode: Mode, seed: u64, count: u64) -> Result<bool> {
                     seed,
                     count,
                     |case| typed::verdict(&tools, dir.path(), case),
-                    |n, case, message| typed::report(&tools, dir.path(), n, case, message),
+                    |n, case, message| {
+                        typed::report(&tools, dir.path(), n, case, message);
+                        Ok(())
+                    },
                 )?,
                 format!("diff-si: {count} typed programs agree (seeds {seed} to {last})"),
             ),
@@ -118,7 +121,10 @@ pub fn run(repo: &Repo, mode: Mode, seed: u64, count: u64) -> Result<bool> {
                     seed,
                     count,
                     |case| lift::verdict(&tools, dir.path(), case),
-                    |n, case, message| lift::report(n, case, message),
+                    |n, case, message| {
+                        lift::report(n, case, message);
+                        Ok(())
+                    },
                 )?,
                 format!("diff-si: {count} lifted designs agree (seeds {seed} to {last})"),
             ),
@@ -157,14 +163,14 @@ pub fn run(repo: &Repo, mode: Mode, seed: u64, count: u64) -> Result<bool> {
 /// and so on, `count` in all, and asks `verdict` about it. At the first
 /// failure it shrinks the case and calls `report` with the seed, the
 /// smallest case, and its failure. A mode picks the type `F` of its
-/// failure, so that the report can read more than the message. Returns
-/// whether all cases agree.
+/// failure, so that the report can read more than the message. A tooling
+/// error of `report` is an error. Returns whether all cases agree.
 fn search<C: Clone + std::fmt::Debug, F: std::fmt::Display>(
     strategy: impl Strategy<Value = C>,
     seed: u64,
     count: u64,
     mut verdict: impl FnMut(&C) -> Result<Option<F>>,
-    report: impl Fn(u64, &C, &F),
+    report: impl Fn(u64, &C, &F) -> Result<()>,
 ) -> Result<bool> {
     for n in (0..count).map(|k| seed.wrapping_add(k)) {
         let mut tree = strategy
@@ -177,7 +183,8 @@ fn search<C: Clone + std::fmt::Debug, F: std::fmt::Display>(
         let first = message.to_string();
         let (case, message) = shrink(&mut tree, message, &mut verdict)
             .with_context(|| format!("seed {n}, while shrinking the failure: {first}"))?;
-        report(n, &case, &message);
+        report(n, &case, &message)
+            .with_context(|| format!("seed {n}, while printing the failure: {message}"))?;
         return Ok(false);
     }
     Ok(true)
