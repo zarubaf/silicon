@@ -6,7 +6,7 @@ The `driver` crate builds the binary `silicon`. It is the command-line front end
 
 ## Owns
 
-This crate owns the commands `check`, `fmt`, `run`, `lower`, `verilog`, `parse`, `eval`, `cost`, `elab`, and `validate`, the output bytes of each, and the exit codes. It owns no logic of the language: it calls `core-ir`, `backend-circt`, `parse`, `resolve`, `typeck`, and `elab`.
+This crate owns the commands `check`, `fmt`, `run`, `lower`, `verilog`, `parse`, `eval`, `cost`, `elab`, `validate`, and `build`, the output bytes of each, and the exit codes. It owns no logic of the language: it calls `core-ir`, `backend-circt`, `parse`, `resolve`, `typeck`, and `elab`.
 
 ## Invariants
 
@@ -19,6 +19,7 @@ This crate owns the commands `check`, `fmt`, `run`, `lower`, `verilog`, `parse`,
 - `eval F.si EXPR` prints the serialization of the value, or the first error of the file, then of the expression, with exit code 1. `--fuel N` and `--depth N` take the digits of a natural number with one `_` between two digits, as `silicon-check` does. The output and the exit code equal those of `silicon-check eval`, and only the message text can differ. Check: `cargo nextest run -p driver`.
 - `cost F.si --top T` prints `total <units>`, then one line `<emitted name> <units>` for each instantiation, sorted by name, or the first error with exit code 1. A top selection that is not a module name with literal arguments is a usage error. The lines equal those of `silicon-check cost`, with the charges of the lowering. Check: `cargo nextest run -p driver`.
 - `elab F.si --top T` prints the canonical core IR, or the first error with exit code 1. `validate F.si OUT --top T` prints `ok`, or the first line that differs from `OUT`, or the first error of `OUT`, with exit code 1. `run F.si --top T` reads source vectors. The output and the exit code equal those of `silicon-check`, and only the message text can differ. Check: `cargo nextest run -p driver`.
+- `build F.si --top T` writes `F.sil` and `F.sv` next to the source, or `PREFIX.sil` and `PREFIX.sv` with `--out PREFIX`. It prints `validated` or `not validated`, or the first error with exit code 1 and no file. Lean validates the elaboration of the same bytes before it writes `PREFIX.sv`. A Lean rejection or mismatch is a defect of the Rust front end. The Lean line goes to stderr, the command deletes `PREFIX.sil`, and the exit code is 3. A missing or failing checker is a usage error. An artifact path that is not writable is also a usage error. Both have exit code 2. Check: `cargo nextest run -p driver`.
 - The code has no `unwrap`, no `expect`, and no panic on user input. Check: `just clippy`.
 
 ## Dependencies
