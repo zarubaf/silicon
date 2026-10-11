@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.Check
 
 /-! The checker supplies a concrete child-first order for the certified design. -/

@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.Canonical.Zero
 
 /-! Reordered erased modules retain their named interfaces and context lookups. -/

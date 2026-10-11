@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.GraphComponents
 import Silicon.Core.GraphDFSLoop
 import Silicon.Core.GraphIndex

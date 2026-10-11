@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.GraphSCC
 
 /-! Depth-first traversal state records visited nodes and reverse finish order. -/

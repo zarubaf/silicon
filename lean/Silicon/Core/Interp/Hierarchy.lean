@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.Interp.Programs
 
 /-! Compiled children expose paired cycles and retain their semantic state types. -/

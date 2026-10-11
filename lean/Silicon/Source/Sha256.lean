@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 /-!
 SHA-256 of FIPS 180-4 over bytes. The digest names of section 7.1 of the front-end spec use it.
 The test vectors of FIPS 180-4 validate it. No proof covers it.

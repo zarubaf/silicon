@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 /-!
 The core syntax stores source positions and declared widths.
 The checker gives these terms their types.

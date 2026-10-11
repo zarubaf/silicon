@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.GraphReach
 
 /-! Indexed graph edges retain the first row for each source. -/

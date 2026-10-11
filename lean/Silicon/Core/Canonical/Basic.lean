@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.Typed
 import Silicon.Core.Check
 import Silicon.Core.Text

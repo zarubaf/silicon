@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.Canonical.Step
 
 /-! A step simulation preserves named traces from the all-zero initial state. -/

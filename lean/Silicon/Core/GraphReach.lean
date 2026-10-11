@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Std
 
 /-! Bounded graph searches follow the first entry for each source node. -/

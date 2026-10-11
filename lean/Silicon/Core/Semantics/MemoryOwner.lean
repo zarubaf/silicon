@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.Semantics.Ownership
 
 /-! Every typed memory read names a declared memory equation. -/

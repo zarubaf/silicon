@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.Typed
 
 /-! Vectors keep port order. Only spaces and tabs separate input tokens. -/

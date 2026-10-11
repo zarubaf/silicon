@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.Proof.Lower.Correct
 
 namespace Silicon.Core.Test.LowerCorrect

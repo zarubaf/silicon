@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 /-!
 Silicon reserves no name. A core name is a list of fields, joined by one `$`.
 A backend name joins its parts with `$$`, so it never equals a core name.

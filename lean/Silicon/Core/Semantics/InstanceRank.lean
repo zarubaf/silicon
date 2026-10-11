@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.Semantics.Connections
 import Silicon.Core.Semantics.Rank
 

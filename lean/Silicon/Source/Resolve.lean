@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Std.Data.TreeMap
 import Silicon.Source.Syntax
 

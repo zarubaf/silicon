@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.Interp.Values
 import Silicon.Core.Semantics.Step
 import Silicon.Core.GraphFlood
