@@ -75,7 +75,15 @@ pub fn validate_elaboration(
     sil: &Path,
     budget: &[String],
 ) -> Result<Elaborated, String> {
-    let mut args: Vec<&OsStr> = vec![OsStr::new("validate")];
+    let args = validate_args(top, sil, budget);
+    let checker = checker();
+    let output = run_checker_with(&checker, &args, source)?;
+    elaborated(&output).map_err(|()| failed(&checker.to_string_lossy(), &output))
+}
+
+/// The arguments of `silicon-check validate`: the budget flags come before the file.
+fn validate_args<'a>(top: &'a str, sil: &'a Path, budget: &'a [String]) -> Vec<&'a OsStr> {
+    let mut args = vec![OsStr::new("validate")];
     args.extend(budget.iter().map(OsStr::new));
     args.extend([
         // `silicon-check` reads a file, and this path is the pipe.
@@ -84,16 +92,14 @@ pub fn validate_elaboration(
         OsStr::new(top),
         sil.as_os_str(),
     ]);
-    let checker = checker();
-    let output = run_checker_with(&checker, &args, source)?;
-    elaborated(&output).map_err(|()| failed(&checker.to_string_lossy(), &output))
+    args
 }
 
 /// Only `ok`, an error line, or a mismatch line is a verdict (spec section 6.4.2). Any other
 /// outcome is a failure of the checker.
 fn elaborated(output: &Output) -> Result<Elaborated, ()> {
     match output.status.code() {
-        Some(0) => Ok(Elaborated::Accepted),
+        Some(0) if output.stdout == b"ok\n" => Ok(Elaborated::Accepted),
         Some(1)
             if output.stdout.starts_with(b"error[")
                 || output.stdout.starts_with(b"mismatch at line") =>
@@ -186,6 +192,32 @@ mod tests {
     #[test]
     fn exit_1_with_another_line_is_a_checker_failure() {
         assert_eq!(elaborated(&exited(1, b"other\n")), Err(()));
+    }
+
+    #[test]
+    fn exit_0_without_ok_is_a_checker_failure() {
+        assert_eq!(elaborated(&exited(0, b"")), Err(()));
+        assert_eq!(elaborated(&exited(0, b"ok")), Err(()));
+    }
+
+    #[test]
+    fn the_checker_gets_the_budgets_before_the_file() {
+        let budget = ["--syntax-depth", "100", "--fuel", "161", "--depth", "50"].map(String::from);
+        let args = validate_args("T(1)", Path::new("x.sil"), &budget);
+        let expected = [
+            "validate",
+            "--syntax-depth",
+            "100",
+            "--fuel",
+            "161",
+            "--depth",
+            "50",
+            "/dev/stdin",
+            "--top",
+            "T(1)",
+            "x.sil",
+        ];
+        assert_eq!(args, expected.map(OsStr::new));
     }
 
     #[test]
