@@ -1,0 +1,24 @@
+// The shallow child comes first: the deep chain reuses the modules of the shallow chain,
+// so fewer instantiations are in progress at the same time than in the reverse order.
+// DEPTH 19
+// TOP Top()
+module Chain(comptime d: Nat) domains() {
+    input a: UInt[1];
+    output q: UInt[1];
+    comptime if (d == 0) {
+        q := a;
+    } else {
+        instance c = Chain(d - 1);
+        c.a := a;
+        q := c.q;
+    }
+}
+module Top() domains() {
+    input a: UInt[1];
+    output q: UInt[1];
+    instance first = Chain(2);
+    instance second = Chain(20);
+    first.a := a;
+    second.a := first.q;
+    q := second.q;
+}
