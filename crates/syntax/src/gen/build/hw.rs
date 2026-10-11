@@ -104,12 +104,26 @@ impl Builder {
     /// A value for a typed slot: a hardware expression, or a static value
     /// that converts at the typed use. Choice 0 is the static value.
     pub(super) fn value(&mut self, ctx: &Ctx, w: &Want, depth: u32) -> HExpr {
-        if self.tape.below(4) != 0
+        if self.tape.below(8) != 0
             && let Some(e) = self.hw(ctx, w, depth)
         {
             return e;
         }
         HExpr::Static(self.fit(&w.types, self.reach(ctx), &ctx.envs))
+    }
+
+    /// The value of an output or a register. One that reads no name takes
+    /// a name in scope instead, so that the state and the outputs depend on
+    /// the inputs, and a run tests hardware, not constants.
+    pub(super) fn driver(&mut self, ctx: &Ctx, w: &Want) -> HExpr {
+        let e = self.value(ctx, w, DEPTH);
+        if reads_name(&e) {
+            return e;
+        }
+        let Some(h) = ctx.hw.get(self.tape.index(ctx.hw.len())) else {
+            return e;
+        };
+        adapt(h.expr.clone(), &Want::of(h), w).unwrap_or(e)
     }
 
     /// A hardware expression of the wanted type, or `None` when no leaf
@@ -165,12 +179,18 @@ impl Builder {
     /// `a op b` with a hardware `a` of type `l` and a value `b` of type `r`.
     fn binary(&mut self, ctx: &Ctx, op: HBin, lhs: &Want, rhs: &Want, d: u32) -> Option<HExpr> {
         let a = self.hw(ctx, lhs, d)?;
-        let b = self.value(ctx, rhs, d);
+        let mut b = self.value(ctx, rhs, d);
+        // `x op x` is often a constant, so the right side becomes static.
+        if a == b {
+            b = HExpr::Static(self.fit(&rhs.types, self.reach(ctx), &ctx.envs));
+        }
         Some(HExpr::Binary(op, Box::new(a), Box::new(b)))
     }
 
-    /// A name of the wanted type, or a constant `T(k)`, or for a Bool with
-    /// no such name a comparison.
+    /// A name of the wanted type, a name of another type that `adapt`
+    /// converts, or a constant `T(k)`; for a Bool with no such name, a
+    /// comparison. A leaf that reads a name keeps the outputs from being
+    /// constants.
     fn leaf(&mut self, ctx: &Ctx, w: &Want, shape: Shape) -> Option<HExpr> {
         let names: Vec<&Hw> = ctx.hw.iter().filter(|h| h.types == w.types).collect();
         let by_name = !names.is_empty() && (shape == Shape::Bool || self.tape.below(4) != 3);
@@ -181,13 +201,33 @@ impl Builder {
         if shape == Shape::Bool {
             return self.compare(ctx, 0);
         }
+        // A finite name converts by `resize`; a Bool only selects constants.
+        let finite: Vec<&Hw> = ctx
+            .hw
+            .iter()
+            .filter(|h| h.types.first().is_some_and(|t| *t != Scalar::Bool))
+            .collect();
+        let others = if finite.is_empty() {
+            ctx.hw.iter().collect()
+        } else {
+            finite
+        };
+        if self.tape.below(8) != 7
+            && let Some(h) = others.get(self.tape.index(others.len()))
+            && let Some(e) = adapt(h.expr.clone(), &Want::of(h), w)
+        {
+            return Some(e);
+        }
         match w.printable() {
-            Some(t) => {
-                let k = self.fit(&w.types, self.reach(ctx), &ctx.envs);
-                Some(HExpr::Make(t, k))
-            }
+            Some(t) => Some(self.make(ctx, t, w)),
             None => names.first().map(|h| h.expr.clone()),
         }
+    }
+
+    /// The constant `T(k)` of the wanted type `t`.
+    fn make(&mut self, ctx: &Ctx, t: Ty, w: &Want) -> HExpr {
+        let k = self.fit(&w.types, self.reach(ctx), &ctx.envs);
+        HExpr::Make(t, k)
     }
 
     /// The type of a name in scope with a shape that `keep` accepts, or a
@@ -237,23 +277,17 @@ impl Builder {
         Some(HExpr::If(Box::new(cond), Box::new(then), Box::new(els)))
     }
 
-    /// A call of a helper that returns the wanted type.
+    /// A call of a helper, converted to the wanted type by `adapt`.
     fn call(&mut self, ctx: &Ctx, w: &Want, d: u32) -> Option<HExpr> {
-        let fits: Vec<usize> = (0..ctx.helpers)
-            .filter(|&k| {
-                self.helpers
-                    .get(k)
-                    .is_some_and(|h| w.types.iter().all(|t| *t == h.ret.1))
-            })
-            .collect();
-        let k = *fits.get(self.tape.index(fits.len()))?;
-        let h = self.helpers.get(k)?;
-        let (name, params) = (h.name.clone(), h.params.clone());
+        let n = ctx.helpers.min(self.helpers.len());
+        let h = self.helpers.get(self.tape.index(n))?;
+        let (name, params, ret) = (h.name.clone(), h.params.clone(), h.ret.1);
         let args = params
             .iter()
             .map(|(_, _, t)| self.value(ctx, &Want::uniform(*t, ctx.envs.len()), d))
             .collect();
-        Some(HExpr::Call(name, args))
+        let ret = Want::uniform(ret, ctx.envs.len());
+        adapt(HExpr::Call(name, args), &ret, w)
     }
 
     /// `a << k` or `a >> k`: the count is static or a `UInt` value.
@@ -279,5 +313,53 @@ impl Builder {
         let from = self.operand(ctx, |s| s == shape, shape);
         let arg = self.hw(ctx, &from, d)?;
         Some(HExpr::Resize(ty, Box::new(arg)))
+    }
+}
+
+/// `e` of type `from` as a value of type `to`: `resize` within one
+/// signedness, `reinterpret` across, a Bool selects all zeros or all ones,
+/// and a finite value gives its low bit as a Bool.
+fn adapt(e: HExpr, from: &Want, to: &Want) -> Option<HExpr> {
+    if from.types == to.types {
+        return Some(e);
+    }
+    let (Some(have), Some(want)) = (from.shape(), to.shape()) else {
+        return None;
+    };
+    if want == Shape::Bool {
+        let bit = match have {
+            Shape::Bool => return None,
+            Shape::UInt => Ty::UInt(int(1)),
+            Shape::SInt => Ty::SInt(int(1)),
+        };
+        let low = HExpr::Resize(bit, Box::new(e));
+        let zero = HExpr::Static(int(0));
+        return Some(HExpr::Binary(HBin::Ne, Box::new(low), Box::new(zero)));
+    }
+    let t = to.printable()?;
+    match have {
+        Shape::Bool => {
+            let zero = HExpr::Make(t, int(0));
+            let ones = HExpr::Unary(Un::Inv, Box::new(zero.clone()));
+            Some(HExpr::If(Box::new(e), Box::new(zero), Box::new(ones)))
+        }
+        _ if have == want => Some(HExpr::Resize(t, Box::new(e))),
+        _ => {
+            let flipped = from.flip().printable()?;
+            let e = HExpr::Reinterpret(flipped, Box::new(e));
+            Some(HExpr::Resize(t, Box::new(e)))
+        }
+    }
+}
+
+/// Whether `e` reads a hardware name.
+pub(super) fn reads_name(e: &HExpr) -> bool {
+    match e {
+        HExpr::Name(_) | HExpr::Field(..) => true,
+        HExpr::Static(_) | HExpr::Make(..) => false,
+        HExpr::Unary(_, a) | HExpr::Resize(_, a) | HExpr::Reinterpret(_, a) => reads_name(a),
+        HExpr::Binary(_, a, b) => reads_name(a) || reads_name(b),
+        HExpr::If(c, t, e) => reads_name(c) || reads_name(t) || reads_name(e),
+        HExpr::Call(_, args) => args.iter().any(reads_name),
     }
 }
