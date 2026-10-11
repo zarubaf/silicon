@@ -1,0 +1,741 @@
+// User names that equal a core keyword, a made field form, or a backend name are legal.
+// A module, an instance, a port, a wire, a register, and a local variable each take them.
+// TOP Top()
+module design() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module bits() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module deps() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module next() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module write() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module inst() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module assign() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module reset() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module sync() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module not() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module add() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module sub() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module mul() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module and() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module or() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module xor() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module shl() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module shru() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module shrs() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module concat() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module icmp() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module mux() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module extract() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module replicate() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module read() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module eq() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module ne() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module ult() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module ule() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module ugt() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module uge() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module slt() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module sle() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module sgt() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module sge() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module clk() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module rst() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module ret() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module rdata() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module rvalid() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module ren() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module raddr() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module n() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module c() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module v() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module b() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module t() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module k() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module h() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module silicon_reg_r() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module Ports() {
+    input design: UInt[4];
+    input bits: UInt[4];
+    input deps: UInt[4];
+    input next: UInt[4];
+    input write: UInt[4];
+    input inst: UInt[4];
+    input assign: UInt[4];
+    input reset: UInt[4];
+    input sync: UInt[4];
+    input not: UInt[4];
+    input add: UInt[4];
+    input sub: UInt[4];
+    input mul: UInt[4];
+    input and: UInt[4];
+    input or: UInt[4];
+    input xor: UInt[4];
+    input shl: UInt[4];
+    input shru: UInt[4];
+    input shrs: UInt[4];
+    input concat: UInt[4];
+    input icmp: UInt[4];
+    input mux: UInt[4];
+    input extract: UInt[4];
+    input replicate: UInt[4];
+    input read: UInt[4];
+    input eq: UInt[4];
+    input ne: UInt[4];
+    input ult: UInt[4];
+    input ule: UInt[4];
+    input ugt: UInt[4];
+    input uge: UInt[4];
+    input slt: UInt[4];
+    input sle: UInt[4];
+    input sgt: UInt[4];
+    input sge: UInt[4];
+    input clk: UInt[4];
+    input rst: UInt[4];
+    input ret: UInt[4];
+    input rdata: UInt[4];
+    input rvalid: UInt[4];
+    input ren: UInt[4];
+    input raddr: UInt[4];
+    input n: UInt[4];
+    input c: UInt[4];
+    input v: UInt[4];
+    input b: UInt[4];
+    input t: UInt[4];
+    input k: UInt[4];
+    input h: UInt[4];
+    input silicon_reg_r: UInt[4];
+    output y: UInt[4];
+    y := design ^ bits ^ deps ^ next ^ write ^ inst ^ assign ^ reset ^ sync ^ not ^ add ^ sub ^ mul ^ and ^ or ^ xor ^ shl ^ shru ^ shrs ^ concat ^ icmp ^ mux ^ extract ^ replicate ^ read ^ eq ^ ne ^ ult ^ ule ^ ugt ^ uge ^ slt ^ sle ^ sgt ^ sge ^ clk ^ rst ^ ret ^ rdata ^ rvalid ^ ren ^ raddr ^ n ^ c ^ v ^ b ^ t ^ k ^ h ^ silicon_reg_r;
+}
+module Wires() {
+    input a: UInt[4];
+    output y: UInt[4];
+    let design = a +% 0;
+    let bits = a +% 1;
+    let deps = a +% 2;
+    let next = a +% 3;
+    let write = a +% 4;
+    let inst = a +% 5;
+    let assign = a +% 6;
+    let reset = a +% 7;
+    let sync = a +% 8;
+    let not = a +% 9;
+    let add = a +% 10;
+    let sub = a +% 11;
+    let mul = a +% 12;
+    let and = a +% 13;
+    let or = a +% 14;
+    let xor = a +% 15;
+    let shl = a +% 0;
+    let shru = a +% 1;
+    let shrs = a +% 2;
+    let concat = a +% 3;
+    let icmp = a +% 4;
+    let mux = a +% 5;
+    let extract = a +% 6;
+    let replicate = a +% 7;
+    let read = a +% 8;
+    let eq = a +% 9;
+    let ne = a +% 10;
+    let ult = a +% 11;
+    let ule = a +% 12;
+    let ugt = a +% 13;
+    let uge = a +% 14;
+    let slt = a +% 15;
+    let sle = a +% 0;
+    let sgt = a +% 1;
+    let sge = a +% 2;
+    let clk = a +% 3;
+    let rst = a +% 4;
+    let ret = a +% 5;
+    let rdata = a +% 6;
+    let rvalid = a +% 7;
+    let ren = a +% 8;
+    let raddr = a +% 9;
+    let n = a +% 10;
+    let c = a +% 11;
+    let v = a +% 12;
+    let b = a +% 13;
+    let t = a +% 14;
+    let k = a +% 15;
+    let h = a +% 0;
+    let silicon_reg_r = a +% 1;
+    y := design ^ bits ^ deps ^ next ^ write ^ inst ^ assign ^ reset ^ sync ^ not ^ add ^ sub ^ mul ^ and ^ or ^ xor ^ shl ^ shru ^ shrs ^ concat ^ icmp ^ mux ^ extract ^ replicate ^ read ^ eq ^ ne ^ ult ^ ule ^ ugt ^ uge ^ slt ^ sle ^ sgt ^ sge ^ clk ^ rst ^ ret ^ rdata ^ rvalid ^ ren ^ raddr ^ n ^ c ^ v ^ b ^ t ^ k ^ h ^ silicon_reg_r;
+}
+module Regs() {
+    input a: UInt[4];
+    output y: UInt[4];
+    reg design: UInt[4] = 0;
+    reg bits: UInt[4] = 1;
+    reg deps: UInt[4] = 2;
+    reg next: UInt[4] = 3;
+    reg write: UInt[4] = 4;
+    reg inst: UInt[4] = 5;
+    reg assign: UInt[4] = 6;
+    reg reset: UInt[4] = 7;
+    reg sync: UInt[4] = 8;
+    reg not: UInt[4] = 9;
+    reg add: UInt[4] = 10;
+    reg sub: UInt[4] = 11;
+    reg mul: UInt[4] = 12;
+    reg and: UInt[4] = 13;
+    reg or: UInt[4] = 14;
+    reg xor: UInt[4] = 15;
+    reg shl: UInt[4] = 0;
+    reg shru: UInt[4] = 1;
+    reg shrs: UInt[4] = 2;
+    reg concat: UInt[4] = 3;
+    reg icmp: UInt[4] = 4;
+    reg mux: UInt[4] = 5;
+    reg extract: UInt[4] = 6;
+    reg replicate: UInt[4] = 7;
+    reg read: UInt[4] = 8;
+    reg eq: UInt[4] = 9;
+    reg ne: UInt[4] = 10;
+    reg ult: UInt[4] = 11;
+    reg ule: UInt[4] = 12;
+    reg ugt: UInt[4] = 13;
+    reg uge: UInt[4] = 14;
+    reg slt: UInt[4] = 15;
+    reg sle: UInt[4] = 0;
+    reg sgt: UInt[4] = 1;
+    reg sge: UInt[4] = 2;
+    reg clk: UInt[4] = 3;
+    reg rst: UInt[4] = 4;
+    reg ret: UInt[4] = 5;
+    reg rdata: UInt[4] = 6;
+    reg rvalid: UInt[4] = 7;
+    reg ren: UInt[4] = 8;
+    reg raddr: UInt[4] = 9;
+    reg n: UInt[4] = 10;
+    reg c: UInt[4] = 11;
+    reg v: UInt[4] = 12;
+    reg b: UInt[4] = 13;
+    reg t: UInt[4] = 14;
+    reg k: UInt[4] = 15;
+    reg h: UInt[4] = 0;
+    reg silicon_reg_r: UInt[4] = 1;
+    design := a +% design;
+    bits := a +% bits;
+    deps := a +% deps;
+    next := a +% next;
+    write := a +% write;
+    inst := a +% inst;
+    assign := a +% assign;
+    reset := a +% reset;
+    sync := a +% sync;
+    not := a +% not;
+    add := a +% add;
+    sub := a +% sub;
+    mul := a +% mul;
+    and := a +% and;
+    or := a +% or;
+    xor := a +% xor;
+    shl := a +% shl;
+    shru := a +% shru;
+    shrs := a +% shrs;
+    concat := a +% concat;
+    icmp := a +% icmp;
+    mux := a +% mux;
+    extract := a +% extract;
+    replicate := a +% replicate;
+    read := a +% read;
+    eq := a +% eq;
+    ne := a +% ne;
+    ult := a +% ult;
+    ule := a +% ule;
+    ugt := a +% ugt;
+    uge := a +% uge;
+    slt := a +% slt;
+    sle := a +% sle;
+    sgt := a +% sgt;
+    sge := a +% sge;
+    clk := a +% clk;
+    rst := a +% rst;
+    ret := a +% ret;
+    rdata := a +% rdata;
+    rvalid := a +% rvalid;
+    ren := a +% ren;
+    raddr := a +% raddr;
+    n := a +% n;
+    c := a +% c;
+    v := a +% v;
+    b := a +% b;
+    t := a +% t;
+    k := a +% k;
+    h := a +% h;
+    silicon_reg_r := a +% silicon_reg_r;
+    y := design ^ bits ^ deps ^ next ^ write ^ inst ^ assign ^ reset ^ sync ^ not ^ add ^ sub ^ mul ^ and ^ or ^ xor ^ shl ^ shru ^ shrs ^ concat ^ icmp ^ mux ^ extract ^ replicate ^ read ^ eq ^ ne ^ ult ^ ule ^ ugt ^ uge ^ slt ^ sle ^ sgt ^ sge ^ clk ^ rst ^ ret ^ rdata ^ rvalid ^ ren ^ raddr ^ n ^ c ^ v ^ b ^ t ^ k ^ h ^ silicon_reg_r;
+}
+module Locals() {
+    input a: UInt[4];
+    output y: UInt[4];
+    let mut design = a;
+    design = design +% 0;
+    let mut bits = a;
+    bits = bits +% 1;
+    let mut deps = a;
+    deps = deps +% 2;
+    let mut next = a;
+    next = next +% 3;
+    let mut write = a;
+    write = write +% 4;
+    let mut inst = a;
+    inst = inst +% 5;
+    let mut assign = a;
+    assign = assign +% 6;
+    let mut reset = a;
+    reset = reset +% 7;
+    let mut sync = a;
+    sync = sync +% 8;
+    let mut not = a;
+    not = not +% 9;
+    let mut add = a;
+    add = add +% 10;
+    let mut sub = a;
+    sub = sub +% 11;
+    let mut mul = a;
+    mul = mul +% 12;
+    let mut and = a;
+    and = and +% 13;
+    let mut or = a;
+    or = or +% 14;
+    let mut xor = a;
+    xor = xor +% 15;
+    let mut shl = a;
+    shl = shl +% 0;
+    let mut shru = a;
+    shru = shru +% 1;
+    let mut shrs = a;
+    shrs = shrs +% 2;
+    let mut concat = a;
+    concat = concat +% 3;
+    let mut icmp = a;
+    icmp = icmp +% 4;
+    let mut mux = a;
+    mux = mux +% 5;
+    let mut extract = a;
+    extract = extract +% 6;
+    let mut replicate = a;
+    replicate = replicate +% 7;
+    let mut read = a;
+    read = read +% 8;
+    let mut eq = a;
+    eq = eq +% 9;
+    let mut ne = a;
+    ne = ne +% 10;
+    let mut ult = a;
+    ult = ult +% 11;
+    let mut ule = a;
+    ule = ule +% 12;
+    let mut ugt = a;
+    ugt = ugt +% 13;
+    let mut uge = a;
+    uge = uge +% 14;
+    let mut slt = a;
+    slt = slt +% 15;
+    let mut sle = a;
+    sle = sle +% 0;
+    let mut sgt = a;
+    sgt = sgt +% 1;
+    let mut sge = a;
+    sge = sge +% 2;
+    let mut clk = a;
+    clk = clk +% 3;
+    let mut rst = a;
+    rst = rst +% 4;
+    let mut ret = a;
+    ret = ret +% 5;
+    let mut rdata = a;
+    rdata = rdata +% 6;
+    let mut rvalid = a;
+    rvalid = rvalid +% 7;
+    let mut ren = a;
+    ren = ren +% 8;
+    let mut raddr = a;
+    raddr = raddr +% 9;
+    let mut n = a;
+    n = n +% 10;
+    let mut c = a;
+    c = c +% 11;
+    let mut v = a;
+    v = v +% 12;
+    let mut b = a;
+    b = b +% 13;
+    let mut t = a;
+    t = t +% 14;
+    let mut k = a;
+    k = k +% 15;
+    let mut h = a;
+    h = h +% 0;
+    let mut silicon_reg_r = a;
+    silicon_reg_r = silicon_reg_r +% 1;
+    y := design ^ bits ^ deps ^ next ^ write ^ inst ^ assign ^ reset ^ sync ^ not ^ add ^ sub ^ mul ^ and ^ or ^ xor ^ shl ^ shru ^ shrs ^ concat ^ icmp ^ mux ^ extract ^ replicate ^ read ^ eq ^ ne ^ ult ^ ule ^ ugt ^ uge ^ slt ^ sle ^ sgt ^ sge ^ clk ^ rst ^ ret ^ rdata ^ rvalid ^ ren ^ raddr ^ n ^ c ^ v ^ b ^ t ^ k ^ h ^ silicon_reg_r;
+}
+module Instances() {
+    input a: UInt[4];
+    output y: UInt[4];
+    instance design = design();
+    design.a := a;
+    instance bits = bits();
+    bits.a := a;
+    instance deps = deps();
+    deps.a := a;
+    instance next = next();
+    next.a := a;
+    instance write = write();
+    write.a := a;
+    instance inst = inst();
+    inst.a := a;
+    instance assign = assign();
+    assign.a := a;
+    instance reset = reset();
+    reset.a := a;
+    instance sync = sync();
+    sync.a := a;
+    instance not = not();
+    not.a := a;
+    instance add = add();
+    add.a := a;
+    instance sub = sub();
+    sub.a := a;
+    instance mul = mul();
+    mul.a := a;
+    instance and = and();
+    and.a := a;
+    instance or = or();
+    or.a := a;
+    instance xor = xor();
+    xor.a := a;
+    instance shl = shl();
+    shl.a := a;
+    instance shru = shru();
+    shru.a := a;
+    instance shrs = shrs();
+    shrs.a := a;
+    instance concat = concat();
+    concat.a := a;
+    instance icmp = icmp();
+    icmp.a := a;
+    instance mux = mux();
+    mux.a := a;
+    instance extract = extract();
+    extract.a := a;
+    instance replicate = replicate();
+    replicate.a := a;
+    instance read = read();
+    read.a := a;
+    instance eq = eq();
+    eq.a := a;
+    instance ne = ne();
+    ne.a := a;
+    instance ult = ult();
+    ult.a := a;
+    instance ule = ule();
+    ule.a := a;
+    instance ugt = ugt();
+    ugt.a := a;
+    instance uge = uge();
+    uge.a := a;
+    instance slt = slt();
+    slt.a := a;
+    instance sle = sle();
+    sle.a := a;
+    instance sgt = sgt();
+    sgt.a := a;
+    instance sge = sge();
+    sge.a := a;
+    instance clk = clk();
+    clk.a := a;
+    instance rst = rst();
+    rst.a := a;
+    instance ret = ret();
+    ret.a := a;
+    instance rdata = rdata();
+    rdata.a := a;
+    instance rvalid = rvalid();
+    rvalid.a := a;
+    instance ren = ren();
+    ren.a := a;
+    instance raddr = raddr();
+    raddr.a := a;
+    instance n = n();
+    n.a := a;
+    instance c = c();
+    c.a := a;
+    instance v = v();
+    v.a := a;
+    instance b = b();
+    b.a := a;
+    instance t = t();
+    t.a := a;
+    instance k = k();
+    k.a := a;
+    instance h = h();
+    h.a := a;
+    instance silicon_reg_r = silicon_reg_r();
+    silicon_reg_r.a := a;
+    y := design.q ^ bits.q ^ deps.q ^ next.q ^ write.q ^ inst.q ^ assign.q ^ reset.q ^ sync.q ^ not.q ^ add.q ^ sub.q ^ mul.q ^ and.q ^ or.q ^ xor.q ^ shl.q ^ shru.q ^ shrs.q ^ concat.q ^ icmp.q ^ mux.q ^ extract.q ^ replicate.q ^ read.q ^ eq.q ^ ne.q ^ ult.q ^ ule.q ^ ugt.q ^ uge.q ^ slt.q ^ sle.q ^ sgt.q ^ sge.q ^ clk.q ^ rst.q ^ ret.q ^ rdata.q ^ rvalid.q ^ ren.q ^ raddr.q ^ n.q ^ c.q ^ v.q ^ b.q ^ t.q ^ k.q ^ h.q ^ silicon_reg_r.q;
+}
+module Top() {
+    input a: UInt[4];
+    output y: UInt[4];
+    instance ports = Ports();
+    instance wires = Wires();
+    instance regs = Regs();
+    instance locals = Locals();
+    instance insts = Instances();
+    ports.design := a;
+    ports.bits := a;
+    ports.deps := a;
+    ports.next := a;
+    ports.write := a;
+    ports.inst := a;
+    ports.assign := a;
+    ports.reset := a;
+    ports.sync := a;
+    ports.not := a;
+    ports.add := a;
+    ports.sub := a;
+    ports.mul := a;
+    ports.and := a;
+    ports.or := a;
+    ports.xor := a;
+    ports.shl := a;
+    ports.shru := a;
+    ports.shrs := a;
+    ports.concat := a;
+    ports.icmp := a;
+    ports.mux := a;
+    ports.extract := a;
+    ports.replicate := a;
+    ports.read := a;
+    ports.eq := a;
+    ports.ne := a;
+    ports.ult := a;
+    ports.ule := a;
+    ports.ugt := a;
+    ports.uge := a;
+    ports.slt := a;
+    ports.sle := a;
+    ports.sgt := a;
+    ports.sge := a;
+    ports.clk := a;
+    ports.rst := a;
+    ports.ret := a;
+    ports.rdata := a;
+    ports.rvalid := a;
+    ports.ren := a;
+    ports.raddr := a;
+    ports.n := a;
+    ports.c := a;
+    ports.v := a;
+    ports.b := a;
+    ports.t := a;
+    ports.k := a;
+    ports.h := a;
+    ports.silicon_reg_r := a;
+    wires.a := a;
+    regs.a := a;
+    locals.a := a;
+    insts.a := a;
+    y := ports.y ^ wires.y ^ regs.y ^ locals.y ^ insts.y;
+}
