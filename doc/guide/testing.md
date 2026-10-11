@@ -188,11 +188,11 @@ LEC and the differential tests read a source design as core IR. `silicon elab` m
 
 `cargo xtask diff-si` has four modes. Use `--mode lift`, `--mode typed`, `--mode mutation`, `--mode budget`, or `--mode all`. The default is `all`, which runs the four modes in this order. The run stops at the first failure.
 
-The lift mode lifts random core designs to source programs. The generator of `core-ir` runs with the source configuration, which makes only designs that have a source form. `lift` in the `gen` feature of `syntax` writes each design as a source program. The core interpreter runs the original design with random inputs. It is the oracle.
+The lift mode lifts random core designs to source programs. The generator of `core-ir` runs with the source configuration, which makes only designs that have a source form. `lift` of the crate `srcgen` writes each design as a source program. The core interpreter runs the original design with random inputs. It is the oracle.
 
 - `silicon run` and `silicon-check run` run the source program. Both must print the `out=` lines of the core interpreter. `silicon elab` writes the core IR of the program, and `silicon-check validate` must print `ok`.
 
-The typed mode builds random typed source programs. The builder is `typed()` in the `gen` feature of `syntax`. A program has parameters, `const` items, `comptime` functions, helpers, `comptime if`, `comptime for`, and instances. The typed mode checks these oracles of the front-end spec, section 11.4:
+The typed mode builds random typed source programs. The builder is `typed()` of the crate `srcgen`. A program has parameters, `const` items, `comptime` functions, helpers, `comptime if`, `comptime for`, and instances. The typed mode checks these oracles of the front-end spec, section 11.4:
 
 - `silicon-check validate` accepts the output of `silicon elab`.
 - The probe `eval` gives the same value in the static evaluator of the generator, in `silicon eval`, and in `silicon-check eval`.
@@ -201,10 +201,10 @@ The typed mode builds random typed source programs. The builder is `typed()` in 
 
 The input lines come from `lines()`. They follow the ports of the top. The reset of the domain is likely in the first cycle and rare after it, in both modes. Thus the state of a design lives for several cycles.
 
-The mutation mode changes one site of a typed program and sends the mutant to both front ends. `mutate` in the `gen` feature of `syntax` makes the mutant. The kind and the site come from the tape, so they shrink with it. The kinds are `Delete`, `Duplicate`, `Rename`, `DropArg`, `AddArg`, `Widen`, `ZeroWidth`, and `Fault`. A kind with no site gives way to the next kind.
+The mutation mode changes one site of a typed program and sends the mutant to both front ends. `mutate` of the crate `srcgen` makes the mutant. The kind and the site come from the tape, so they shrink with it. The kinds are `Delete`, `Duplicate`, `Rename`, `DropArg`, `AddArg`, `Widen`, `ZeroWidth`, and `Fault`. A kind with no site gives way to the next kind.
 
 - `silicon elab` and `silicon-check elab` run the mutant. The oracle is `agree` of `testkit`. Both must exit 0 with the same design, or both must exit 1 with the same first code, line, and column. Any other exit code is a failure.
-- Where the pass order makes the first code certain, `gen` predicts it. It is a third trace. If both front ends agree on another code, the failure names `gen`.
+- Where the pass order makes the first code certain, `srcgen` predicts it. It is a third trace. If both front ends agree on another code, the failure names `gen`.
 - Both front ends can accept a mutant, and the run counts it. The success line counts the mutants by code, for example `diff-si: 100 mutants agree (seeds 1 to 100): 88 rejected (S002 12, S003 30), 12 accepted`. Read it to see a drop in the rejections.
 - The kinds do not reach all codes. Issue #130 tracks the codes that no mutation reaches yet. The mutation mode thus does not cover all rejections.
 

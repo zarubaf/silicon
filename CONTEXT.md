@@ -126,6 +126,10 @@ The check that each error code, construct, command, and budget of the specs has 
 
 A copy of the code with one small change from `cargo-mutants`. A test kills the mutant when it fails on it. A surviving mutant shows a missing test.
 
+### source generator
+
+The dev-only crate `srcgen`. It makes random source programs for `cargo xtask diff-si`: lifted core designs, typed programs, their twins, and their mutations. Its static evaluator models only the programs that its builder makes.
+
 ## Packages and names
 
 ### package
