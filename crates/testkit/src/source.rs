@@ -16,13 +16,13 @@ use crate::spawn::spawn;
 /// # Errors
 ///
 /// Returns an error when a front end misbehaves or the two disagree.
-pub fn parse(silicon: &Path, file: &Path) -> datatest_stable::Result<()> {
+pub fn parse(binary: &Path, file: &Path) -> datatest_stable::Result<()> {
     let lean = classify(&spawn(
         Command::new(silicon_check()).arg("parse").arg(file),
         "",
     )?)
     .map_err(|e| format!("Lean `silicon-check parse` failed: {e}"))?;
-    let rust = classify(&spawn(bins::silicon(silicon).arg("parse").arg(file), "")?)
+    let rust = classify(&spawn(bins::silicon(binary).arg("parse").arg(file), "")?)
         .map_err(|e| format!("Rust `silicon parse` failed: {e}"))?;
     if lean == rust {
         return Ok(());

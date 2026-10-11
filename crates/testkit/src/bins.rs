@@ -26,8 +26,8 @@ pub fn silicon_check() -> PathBuf {
 
 /// A command that runs `silicon` with the checker of [`silicon_check`].
 #[must_use]
-pub fn silicon(silicon: &Path) -> Command {
-    let mut command = Command::new(silicon);
+pub fn silicon(binary: &Path) -> Command {
+    let mut command = Command::new(binary);
     command.env(CHECK_VARIABLE, silicon_check());
     command
 }

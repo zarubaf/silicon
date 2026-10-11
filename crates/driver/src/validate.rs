@@ -76,26 +76,20 @@ mod tests {
         b"(design d (module d (input a (bits 1)) (output q (bits 1)) (assign q a)))";
     const E004: &[u8] = b"(design d (module d (input a (bits 1)) (input b (bits 2)) (output q (bits 1)) (assign q (add a b))))";
 
-    /// The same rule as `testkit::bins::silicon_check`: `SILICON_CHECK`, else the Lake build.
-    fn real() -> OsString {
-        std::env::var_os(VARIABLE).unwrap_or_else(|| {
-            concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../lean/.lake/build/bin/silicon-check"
-            )
-            .into()
-        })
-    }
-
     #[test]
     fn the_checker_accepts_the_bytes_it_gets() {
-        assert_eq!(validate_with(&real(), VALID), Ok(Verdict::Accepted));
+        assert_eq!(
+            validate_with(testkit::bins::silicon_check().as_os_str(), VALID),
+            Ok(Verdict::Accepted)
+        );
     }
 
     /// The bytes decide, so no file on disk can change the verdict.
     #[test]
     fn the_checker_rejects_bad_bytes_with_its_error_line() {
-        let Ok(Verdict::Rejected(line)) = validate_with(&real(), E004) else {
+        let Ok(Verdict::Rejected(line)) =
+            validate_with(testkit::bins::silicon_check().as_os_str(), E004)
+        else {
             panic!("the real checker accepted a bad design");
         };
         assert!(line.starts_with(b"error[E004]: "), "{line:?}");

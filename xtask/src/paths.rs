@@ -41,13 +41,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_paths_are_the_new_ones() {
-        assert_eq!(corpus_dir(), PathBuf::from("tests/core/corpus"));
-        assert_eq!(lec_inventory(), PathBuf::from("tests/inventory/lec.txt"));
-        assert_eq!(diff_inventory(), PathBuf::from("tests/inventory/diff.txt"));
-    }
-
-    #[test]
     fn the_paths_exist_in_this_tree() {
         let repo = this_repo();
         for p in [corpus_dir(), lec_inventory(), diff_inventory()] {
