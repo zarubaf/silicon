@@ -21,6 +21,7 @@ use crate::names::{Field, Name, Role, encode};
 use crate::value::Ty;
 use core_ir::Bits;
 use core_ir::ast::{Design as CDesign, Dir, Item, Ty as CTy};
+use core_ir::vectors::{input_tokens, output_line};
 
 /// One port of the schema: its name in a source vector, its core name, and its type.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -137,27 +138,13 @@ impl Schema {
     /// fits the design, so the values and the outputs of the schema agree in order.
     #[must_use]
     pub fn print_line(&self, values: &[Bits]) -> String {
-        let pairs: Vec<String> = self
-            .outputs
-            .iter()
-            .zip(values)
-            .map(|(e, v)| format!("{} {}", e.name, value_text(e.ty, v)))
-            .collect();
-        format!("out=({})\n", pairs.join(" "))
+        output_line(
+            self.outputs
+                .iter()
+                .zip(values)
+                .map(|(e, v)| (&e.name, value_text(e.ty, v))),
+        )
     }
-}
-
-/// The tokens of an input line `in=(...)`, without its LF.
-fn input_tokens(line: &str) -> Result<Vec<&str>, String> {
-    if line.contains(['\r', '\n']) {
-        return Err("invalid input line ending".to_owned());
-    }
-    let text = line.trim_matches([' ', '\t']);
-    let body = text
-        .strip_prefix("in=(")
-        .and_then(|rest| rest.strip_suffix(')'))
-        .ok_or_else(|| "expected in=(...)".to_owned())?;
-    Ok(body.split([' ', '\t']).filter(|t| !t.is_empty()).collect())
 }
 
 /// A decimal natural number with at least one digit.
