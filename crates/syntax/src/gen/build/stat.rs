@@ -7,7 +7,7 @@
 //! fallback literal. So the predicate holds by evaluation, never by luck.
 
 use super::{Builder, COUNT};
-use crate::r#gen::eval::{Env, Value, eval};
+use crate::r#gen::eval::{BOUND, Env, Value, eval};
 use crate::r#gen::program::{Radix, SBin, SExpr, Scalar, StaticTy, Un};
 use num_bigint::BigInt;
 
@@ -294,7 +294,7 @@ impl Builder {
             .iter()
             .filter_map(|t| range(*t).map(|(_, hi)| hi))
             .min()
-            .and_then(|hi| u32::try_from(hi.min(BigInt::from(1 << 20))).ok())
+            .and_then(|hi| u32::try_from(hi.min(BigInt::from(BOUND))).ok())
             .unwrap_or(0);
         let k = self.tape.below(max.saturating_add(1));
         self.literal(u64::from(k))
