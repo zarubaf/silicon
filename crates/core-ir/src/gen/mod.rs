@@ -77,6 +77,7 @@ pub struct Config {
     pub mems: bool,
     /// Names with a `$` field.
     pub dollar_names: bool,
+    /// How registers reset.
     pub resets: Resets,
 }
 
@@ -333,11 +334,12 @@ impl Tape {
                 source: Source::State,
             });
         }
-        let mems: Vec<Mem> = (0..if has_clock && self.config.mems {
+        let mem_count = if has_clock && self.config.mems {
             self.below(MEMS + 1)
         } else {
             0
-        })
+        };
+        let mems: Vec<Mem> = (0..mem_count)
             .map(|m| Mem {
                 name: self.label("mem", m),
                 width: self.width(),
