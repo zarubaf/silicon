@@ -170,6 +170,8 @@ The fields:
 
 `just lec` runs `circt-lec` on each file of `tests/core/corpus/` and `tests/source/corpus/`. It compares the emitted Verilog and the Rust MLIR with the Lean reference MLIR. It also compares each Rust memory model with the Lean memory model. [The core IR spec](../design/2026-10-08-core-ir.md), section 8.1, gives the flow. Run it in the development shell.
 
+LEC does not compare a design with a register whose next value is the register itself. It prints `SKIP` with #20 for that design. It also skips a memory model without a write port. See [the trust model](../trust.md#a-register-whose-next-value-is-the-register-itself).
+
 LEC and the differential tests read a source design as core IR. `silicon elab` makes the core IR from the `TOP` line of the file. The `corpus` suite shows that this output is equal to the Lean output. The report and the inventory use the path of the `.si` file. A source file that `silicon elab` rejects is an error, not a `SKIP`.
 
 ## Differential tests
