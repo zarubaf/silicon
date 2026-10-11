@@ -236,7 +236,7 @@ fn compare_below(kind: BudgetKind, rust: &Output, lean: &Output) -> Result<(), S
 /// The `budget` suite (frontend spec sections 5.4 and 11.3): the Rust `silicon elab` and the
 /// Lean `silicon-check elab` run on each `.si` file with the top selection of its `// TOP`
 /// line, once for each `// FUEL N`, `// DEPTH N`, or `// SYNTAX-DEPTH N` line. With the
-/// budget N, the file meets the oracle of the `check` suite. With N - 1, both front ends fail
+/// budget N, both front ends succeed with the same design; the file has no `expected-error`. With N - 1, both front ends fail
 /// with `S015` (`S001` for `SYNTAX-DEPTH`) at the same line and column.
 ///
 /// # Errors
@@ -247,7 +247,12 @@ pub fn budget(binary: &Path, file: &Path) -> datatest_stable::Result<()> {
     let source = std::fs::read_to_string(file)?;
     let in_file = |e: String| format!("{}: {e}", file.display());
     let top = top(&source).map_err(in_file)?;
-    let want = expected_error(&source, Marker::Si).map_err(in_file)?;
+    if expected_error(&source, Marker::Si)
+        .map_err(in_file)?
+        .is_some()
+    {
+        return Err(in_file("a budget file takes no `expected-error`".to_owned()).into());
+    }
     let budgets = budgets(&source).map_err(in_file)?;
     if budgets.is_empty() {
         return Err(in_file("no budget line".to_owned()).into());
@@ -257,7 +262,7 @@ pub fn budget(binary: &Path, file: &Path) -> datatest_stable::Result<()> {
         let at = budget.limit.to_string();
         let below = (budget.limit - 1).to_string();
         let (rust, lean) = both(binary, "elab", file, &top, &[flag, &at], "")?;
-        compare_check("elab", &rust, &lean, want.as_ref())
+        compare_check("elab", &rust, &lean, None)
             .map_err(|e| in_file(format!("with `{flag} {at}`: {e}")))?;
         let (rust, lean) = both(binary, "elab", file, &top, &[flag, &below], "")?;
         compare_below(budget.kind, &rust, &lean)
@@ -358,6 +363,24 @@ mod tests {
         let err = elab(Path::new("/nonexistent"), &file).unwrap_err();
         std::fs::remove_dir_all(&dir).unwrap();
         assert!(err.to_string().contains("no `// CHECK:` line"), "{err}");
+    }
+
+    #[test]
+    fn a_budget_file_takes_no_expected_error() {
+        let dir = std::env::temp_dir().join(format!("testkit-budget-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("err.si");
+        std::fs::write(
+            &file,
+            "// TOP M()\n// FUEL 5\n// expected-error S010 @+1\nmodule M() domains() {}\n",
+        )
+        .unwrap();
+        let err = budget(Path::new("/nonexistent"), &file).unwrap_err();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(
+            err.to_string().contains("takes no `expected-error`"),
+            "{err}"
+        );
     }
 
     #[test]
