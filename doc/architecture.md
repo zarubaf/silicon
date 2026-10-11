@@ -47,7 +47,7 @@ The Rust workspace has one crate per pipeline stage. A crate comes into existenc
 7. `backend-circt`: lowers the core IR to the CIRCT dialects `hw`, `comb`, and `seq`.
 8. `driver`: the `silicon` CLI.
 
-[ADR 0012](adr/0012-front-end-layer-order.md) gives the reasons for this order and for the split of the type checks. The crates `diagnostics` and `lsp` support the stages. `driver` holds the `silicon` command-line interface (CLI). The names `crates/fmt`, `crates/lint`, and `crates/lsp` are reserved for the Silicon tooling. A crate depends only on earlier layers. `cargo xtask check` enforces this order (rule `workspace-layers`).
+[ADR 0012](adr/0012-front-end-layer-order.md) gives the reasons for this order and for the split of the type checks. The crates `diagnostics` and `lsp` support the stages. `driver` holds the `silicon` command-line interface (CLI). The crate `testkit` holds the shared test runners, and only `[dev-dependencies]` name it. The names `crates/fmt`, `crates/lint`, and `crates/lsp` are reserved for the Silicon tooling. A crate depends only on earlier layers. `cargo xtask check` enforces this order (rule `workspace-layers`).
 
 Libraries:
 

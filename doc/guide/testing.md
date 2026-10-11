@@ -9,7 +9,7 @@ This guide is the single map of the tests. Each layer has one oracle. An oracle 
 
 ## Status
 
-Issue #87 builds this layout in steps. Section 11 of the testing spec gives the order. Until a step lands, the old form stays in use:
+Issue #87 builds this layout in steps. Section 11 of the testing spec gives the order. A step that has not landed keeps the old form:
 
 - Step 2 has landed. The core suites are in `tests/core/`. The inventories of LEC and the differential tests are `tests/inventory/lec.txt` and `tests/inventory/diff.txt`.
 - Steps 3 to 5 add spec coverage, code coverage, and mutation testing.
