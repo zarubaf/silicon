@@ -59,11 +59,46 @@ const WIDE: u32 = 300;
 /// The clock input of each module that has one.
 const CLOCK: &str = "clk";
 
+/// How the registers of a design reset.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Resets {
+    /// Any 1-bit expression resets, to any expression, or no reset.
+    Random,
+    /// Each register resets on the reset input of its module to a constant.
+    Module,
+}
+
+/// Which forms of the core IR the generator uses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Config {
+    /// Memories, write ports, and reads.
+    pub mems: bool,
+    /// Names with a `$` field.
+    pub dollar_names: bool,
+    pub resets: Resets,
+}
+
+impl Default for Config {
+    fn default() -> Config {
+        Config {
+            mems: true,
+            dollar_names: true,
+            resets: Resets::Random,
+        }
+    }
+}
+
 /// Random designs without externs that pass [`crate::check::check`].
 pub fn design() -> impl Strategy<Value = Design> {
-    vec(any::<u32>(), 0..4096).prop_map(|tape| {
+    design_with(Config::default())
+}
+
+/// Random designs of the forms that `config` allows.
+pub fn design_with(config: Config) -> impl Strategy<Value = Design> {
+    vec(any::<u32>(), 0..4096).prop_map(move |tape| {
         Tape {
             numbers: tape.into_iter(),
+            config,
         }
         .design()
     })
@@ -170,6 +205,8 @@ struct Body {
 
 struct Tape {
     numbers: std::vec::IntoIter<u32>,
+    #[expect(dead_code, reason = "no branch reads the configuration yet")]
+    config: Config,
 }
 
 impl Tape {
