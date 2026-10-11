@@ -87,6 +87,18 @@ def inc : Item :=
 #guard Print.dump [.const p (nm "N") (t "Nat") (n 3)] == "(const \"N\" (name \"Nat\") (num 3))\n"
 #guard (Print.dump [inc, counter]).splitOn "\n" == [inc.dump, counter.dump, ""]
 
+/-!
+A deep chain and a long block dump in linear work and with no recursion over the statements of
+a block. Quadratic work or a deep recursion makes this test slow or fails it.
+-/
+def chain : Expr := (List.range 4096).foldl (fun e _ => bin .add e (n 1)) (n 0)
+
+def long : Item := .fn p false (nm "f") [] (t "Unit") (List.replicate 100000 (.expr p (n 0)))
+
+#guard chain.dump.length == "(num 0)".length + 4096 * "(binary add  (num 1))".length
+#guard (Print.dump [long]).length ==
+  "(fn false \"f\" () (name \"Unit\") ())\n".length + 100000 * "(expr (num 0)) ".length - 1
+
 /-! The printer adds parentheses only where the precedence needs them. -/
 #guard exprText (bin .add (v "a") (bin .mul (v "b") (v "c"))) == "a + b * c"
 #guard exprText (bin .mul (bin .add (v "a") (v "b")) (v "c")) == "(a + b) * c"
