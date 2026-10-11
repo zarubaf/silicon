@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: Apache-2.0
 import Silicon.Core.Check
-import Silicon.Source.Elab
+import Silicon.Source.Layout
 
 /-!
 The lowering of section 7 of the front-end spec. `flatten` maps the hardware descriptions of
@@ -331,15 +331,13 @@ def lowerInst (i : Inst) : FM Core.Module := do
     charge i.pos 1
     let rst ← nameText i.pos (resetName d)
     domain := [⟨mp, .input, clk, .clock⟩, ⟨mp, .input, rst, .bits 1⟩]
-  let mut ins : Array Core.Port := #[]
-  let mut outs : Array Core.Port := #[]
+  let mut ports : Array (PortDecl × Core.Port) := #[]
   for q in b.ports do
     charge q.pos 1
     let x ← nameText q.pos (portName q.name)
     let dir : Core.PortDir := if q.input then .input else .output
-    let port : Core.Port := ⟨cpos q.pos, dir, x, .bits (width q.ty)⟩
-    if q.input then ins := ins.push port else outs := outs.push port
-  let sorted (ps : Array Core.Port) := (ps.qsort fun x y => x.name < y.name).toList
+    ports := ports.push (q, ⟨cpos q.pos, dir, x, .bits (width q.ty)⟩)
+  let layout := Layout.arrange domain ports
   let mut body : Array Core.Stmt := #[]
   for r in b.regs do
     let some d := b.domain | defect "a register in a combinational module"
@@ -378,7 +376,7 @@ def lowerInst (i : Inst) : FM Core.Module := do
     let ds ← domainConns c.pos c.iface.domain b.domain
     body := body.push (.inst (cpos c.pos) x m (ds ++ (conns.getD k #[]).toList))
   let temps := (← get).temps
-  return ⟨mp, name, domain ++ sorted ins ++ sorted outs, (body ++ temps).toList⟩
+  return ⟨mp, name, layout.inputs ++ layout.outputs, (body ++ temps).toList⟩
 
 /-! The value of `act` and the fuel that it uses. -/
 def measure (act : FM α) : FM (α × Nat) := do
