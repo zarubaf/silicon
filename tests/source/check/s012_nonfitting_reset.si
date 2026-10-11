@@ -1,0 +1,7 @@
+// S012: a reset value that does not fit its register.
+// TOP M()
+module M() {
+    // expected-error S012 @+1
+    reg r: UInt[4] = 16;
+    r := r;
+}

@@ -1,0 +1,8 @@
+// S005: a register in the condition of a comptime if.
+// TOP M()
+module M() {
+    reg r: UInt[8] = 0;
+    r := r;
+    // expected-error S005 @+1
+    comptime if (r == 0) { }
+}

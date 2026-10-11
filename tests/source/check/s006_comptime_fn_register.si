@@ -1,0 +1,9 @@
+// S006: a comptime fn declares no register.
+// TOP M()
+comptime fn f() -> Nat {
+    // expected-error S006 @+1
+    reg r: Bool = false;
+    return 1;
+}
+module M() {
+}

@@ -1,0 +1,9 @@
+// S010: an operation on two integers of different widths (v0.1 section 9).
+// TOP M()
+module M() {
+    input x: UInt[8];
+    input z: UInt[4];
+    output y: UInt[8];
+    // expected-error S010 @+1
+    y := x +% z;
+}

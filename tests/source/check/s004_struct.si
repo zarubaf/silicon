@@ -1,0 +1,6 @@
+// S004: `struct` belongs to slice 2.
+// TOP M()
+// expected-error S004 @+1
+struct P { }
+module M() {
+}

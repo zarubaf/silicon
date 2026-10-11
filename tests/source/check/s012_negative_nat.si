@@ -1,0 +1,5 @@
+// S012: a negative value for a Nat parameter of the top. The top selection is at 1:1.
+// TOP M(-1)
+// expected-error S012 @-2
+module M(comptime n: Nat) {
+}

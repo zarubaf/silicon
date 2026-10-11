@@ -1,0 +1,6 @@
+// S012: a width of zero.
+// TOP M()
+module M() {
+    // expected-error S012 @+1
+    input a: UInt[0];
+}

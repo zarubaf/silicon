@@ -1,0 +1,9 @@
+// S007: a call with more arguments than its declaration.
+// TOP M()
+comptime fn g(x: Nat) -> Nat {
+    return x;
+}
+// expected-error S007 @+1
+const N: Nat = g(1, 2);
+module M() {
+}

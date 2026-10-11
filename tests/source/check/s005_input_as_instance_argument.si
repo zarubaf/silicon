@@ -1,0 +1,9 @@
+// S005: an input as the static argument of an instance.
+// TOP M()
+module C(comptime N: Nat) {
+}
+module M() {
+    input a: UInt[8];
+    // expected-error S005 @+1
+    instance u = C(a);
+}

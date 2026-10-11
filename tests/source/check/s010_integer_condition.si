@@ -1,0 +1,8 @@
+// S010: an integer as the condition of a hardware if (Bool and integer confusion).
+// TOP M()
+module M() {
+    input c: UInt[2];
+    output y: Bool;
+    // expected-error S010 @+1
+    y := if (c) { true } else { false };
+}

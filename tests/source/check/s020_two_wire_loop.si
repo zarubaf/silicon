@@ -1,0 +1,12 @@
+// S020: two wires that read each other. The error is at the first binding on the cycle.
+// TOP M()
+module M() {
+    input a: Bool;
+    output y: Bool;
+    wire u: Bool;
+    wire v: Bool;
+    // expected-error S020 @+1
+    u := v && a;
+    v := u;
+    y := v;
+}

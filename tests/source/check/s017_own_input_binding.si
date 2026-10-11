@@ -1,0 +1,7 @@
+// S017: a binding of an own input (v0.1 section 9).
+// TOP M()
+module M() {
+    input x: Bool;
+    // expected-error S017 @+1
+    x := true;
+}

@@ -1,0 +1,8 @@
+// S011: a comptime if on a hardware value, a signal-dependent branch.
+// TOP M()
+module M() {
+    input x: Bool;
+    let a = x;
+    // expected-error S011 @+1
+    comptime if (a) { }
+}

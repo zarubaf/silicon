@@ -1,0 +1,11 @@
+// S018: a child input with two bindings.
+// TOP M()
+module C() domains() {
+    input a: Bool;
+}
+module M() domains() {
+    instance c = C();
+    c.a := true;
+    // expected-error S018 @+1
+    c.a := false;
+}

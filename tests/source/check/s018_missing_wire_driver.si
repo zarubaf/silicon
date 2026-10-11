@@ -1,0 +1,8 @@
+// S018: a wire without a driver, at its declaration.
+// TOP M()
+module M() {
+    output y: Bool;
+    // expected-error S018 @+1
+    wire w: Bool;
+    y := w;
+}

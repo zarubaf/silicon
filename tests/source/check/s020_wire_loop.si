@@ -1,0 +1,9 @@
+// S020: a wire that reads itself, a combinational loop.
+// TOP M()
+module M() {
+    output y: Bool;
+    wire w: Bool;
+    // expected-error S020 @+1
+    w := !w;
+    y := w;
+}

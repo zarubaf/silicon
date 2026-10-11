@@ -1,0 +1,6 @@
+// S014: a static_assert with a false condition.
+// TOP M()
+module M() {
+    // expected-error S014 @+1
+    static_assert(1 == 2, "no");
+}

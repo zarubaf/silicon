@@ -1,0 +1,7 @@
+// S013: a static division by zero in a constant.
+// TOP M(1)
+const Z: Nat = 0;
+// expected-error S013 @+1
+const Q: Nat = 8 / Z;
+module M(comptime W: UInt[Q]) {
+}

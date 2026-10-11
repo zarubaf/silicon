@@ -1,0 +1,7 @@
+// S002: an input and an output with one name in one module body.
+// TOP M()
+module M() {
+    input a: Bool;
+    // expected-error S002 @+1
+    output a: Bool;
+}

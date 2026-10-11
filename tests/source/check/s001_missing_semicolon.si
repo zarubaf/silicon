@@ -1,0 +1,7 @@
+// S001: a statement without its semicolon. The error is at the next token, the `}`.
+// TOP M()
+module M() {
+    output o: Bool;
+    // expected-error S001 @+2
+    o := true
+}

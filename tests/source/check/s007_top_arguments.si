@@ -1,0 +1,5 @@
+// S007: a top selection with fewer arguments than its module. The top selection is at 1:1.
+// TOP M(8)
+// expected-error S007 @-2
+module M(comptime W: Nat, comptime E: Bool) {
+}
