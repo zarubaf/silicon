@@ -14,7 +14,7 @@ use proptest::strategy::{Just, Strategy};
 use syntax::r#gen::{BuildFault, Program, lines, twin, typed};
 
 use super::{Mode, Tools, repeat, reproducer, run_trace, stdin, validated, verdict_of};
-use crate::diff::{CYCLES, Trace, compare, output};
+use crate::diff::{CYCLES, Trace, compare, difference, output};
 
 /// A typed program, or the fault of its builder, and its `in=` lines.
 pub(super) type Case = (Result<Program, BuildFault>, Vec<String>);
@@ -57,14 +57,14 @@ fn try_verdict(tools: &Tools, dir: &Path, case: &Case) -> Result<Option<String>>
         eval_trace("silicon", &tools.silicon, &file, &expr)?,
         eval_trace("lean", &tools.lean, &file, &expr)?,
     ];
-    if let Some(message) = compare(&traces) {
+    if let Some((_, message)) = difference(&traces) {
         return Ok(Some(format!("eval `{expr}`: {message}")));
     }
     let traces = [
         cost_trace("silicon", &tools.silicon, &file, &top)?,
         cost_trace("lean", &tools.lean, &file, &top)?,
     ];
-    if let Some(message) = compare(&traces) {
+    if let Some((_, message)) = difference(&traces) {
         return Ok(Some(format!("cost: {message}")));
     }
     let twin = twin(program);
@@ -90,7 +90,7 @@ fn try_verdict(tools: &Tools, dir: &Path, case: &Case) -> Result<Option<String>>
         run_trace("lean twin", &tools.lean, &twin_file, &twin.top, &stdin)?,
     ];
     if let Some(message) = compare(&traces) {
-        return Ok(Some(message));
+        return Ok(Some(format!("run: {message}")));
     }
     Ok(validated(tools, &twin_file, &twin.top)?.map(|m| format!("twin: {m}")))
 }
@@ -161,7 +161,7 @@ pub(super) fn report(tools: &Tools, dir: &Path, seed: u64, case: &Case, message:
         }
     }
     let twin = twin(program);
-    println!("// twin\n// TOP {}\n{}", twin.top, twin.text);
+    print!("// twin\n// TOP {}\n{}", twin.top, twin.text);
     let (expr, value) = program.probe();
     println!("// probe: eval `{expr}` gives `{value}` in the generator");
     println!("Run `{}` to repeat it.", repeat(Mode::Typed, seed));

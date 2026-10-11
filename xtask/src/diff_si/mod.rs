@@ -11,14 +11,15 @@ mod typed;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use proptest::strategy::{Strategy, ValueTree};
 
 use crate::diff::{ToolFailure, Trace, output, runner};
 use crate::repo::Repo;
 use crate::{lean_check, silicon};
 
-/// The most test runs of one shrink. Each run starts four processes.
+/// The most test runs of one shrink. Each run starts four processes in the
+/// lift mode and twelve in the typed mode.
 const SHRINK_RUNS: u32 = 256;
 
 /// The cases that a run draws.
@@ -97,7 +98,7 @@ pub fn run(repo: &Repo, mode: Mode, seed: u64, count: u64) -> Result<bool> {
                 )?,
                 "typed programs",
             ),
-            _ => (
+            Mode::Lift => (
                 search(
                     lift::cases(),
                     seed,
@@ -107,6 +108,7 @@ pub fn run(repo: &Repo, mode: Mode, seed: u64, count: u64) -> Result<bool> {
                 )?,
                 "lifted designs",
             ),
+            Mode::All => bail!("the mode `all` is not one mode"),
         };
         if !agree {
             return Ok(false);
