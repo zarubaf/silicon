@@ -74,8 +74,8 @@ pub fn parse(binary: &Path, file: &Path) -> datatest_stable::Result<()> {
 }
 
 /// Compares the runs of the command `name` in the two front ends with the expectation of the
-/// file. Both must exit 0 with equal stdout, or exit 1 with an equal code, line, and column.
-/// With an `expected-error`, the code and the line must also equal the directive.
+/// file. The two must agree as `agree` says. With an `expected-error`, the code and the line
+/// must also equal the directive; without it, both must succeed.
 fn compare_check(
     name: &str,
     rust: &Output,
@@ -89,13 +89,7 @@ fn compare_check(
             String::from_utf8_lossy(&lean.stdout)
         )
     };
-    let r =
-        classify(rust).map_err(|e| format!("Rust `silicon {name}` failed: {e}{}", outputs()))?;
-    let l = classify(lean)
-        .map_err(|e| format!("Lean `silicon-check {name}` failed: {e}{}", outputs()))?;
-    if r != l {
-        return Err(format!("the front ends disagree{}", outputs()));
-    }
+    let r = agree(name, rust, lean).map_err(|e| format!("{e}{}", outputs()))?;
     match want {
         None if r.code == 0 => Ok(()),
         None => Err(format!("expected success{}", outputs())),
