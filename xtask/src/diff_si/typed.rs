@@ -122,43 +122,46 @@ fn cost_trace(tool: &'static str, binary: &Path, file: &Path, top: &str) -> Resu
 
 /// Prints the failure of seed `seed`: the message, the reproducer of the
 /// program, the twin, the probe, and the repeat command. The `STEP`
-/// outputs come from `silicon-check run`, the reference elaborator. If it
-/// gives none, the `in=` lines stay as comments.
-pub(super) fn report(tools: &Tools, dir: &Path, seed: u64, case: &Case, message: &str) {
+/// outputs come from `silicon-check run`, the reference elaborator. A
+/// spawn or run error of it is an `Err`.
+pub(super) fn report(
+    tools: &Tools,
+    dir: &Path,
+    seed: u64,
+    case: &Case,
+    message: &str,
+) -> Result<()> {
     println!("FAIL seed {seed} (typed): {message}");
     // A failure has a program: a builder fault is an error, not a failure.
     let (Ok(program), input) = case else {
-        return;
+        return Ok(());
     };
     let source = program.text();
     let top = program.top();
-    let outputs = write(dir, "report.si", &source)
-        .and_then(|file| {
-            run_trace(
-                "lean",
-                &tools.lean,
-                &file,
-                &top,
-                &stdin(input.iter().map(String::as_str)),
-            )
-        })
-        .map(|trace| trace.lines)
-        .ok()
-        .filter(|outs| outs.len() == input.len());
-    if let Some(outs) = outputs {
-        let steps: Vec<(String, String)> = input.iter().cloned().zip(outs).collect();
-        print!("{}", reproducer(&source, &top, &steps));
-    } else {
-        print!("// TOP {top}\n{source}");
-        for line in input {
-            println!("// {line}");
-        }
+    let file = write(dir, "report.si", &source)?;
+    let trace = run_trace(
+        "lean",
+        &tools.lean,
+        &file,
+        &top,
+        &stdin(input.iter().map(String::as_str)),
+    )?;
+    if trace.lines.len() != input.len() {
+        bail!(
+            "{} gave {} output lines for {} input lines",
+            tools.lean.display(),
+            trace.lines.len(),
+            input.len()
+        );
     }
+    let steps: Vec<(String, String)> = input.iter().cloned().zip(trace.lines).collect();
+    print!("{}", reproducer(&source, &top, &steps));
     let twin = twin(program);
     print!("// twin\n// TOP {}\n{}", twin.top, twin.text);
     let (expr, value) = program.probe();
     println!("// probe: eval `{expr}` gives `{value}` in the generator");
     println!("Run `{}` to repeat it.", repeat(Mode::Typed, seed));
+    Ok(())
 }
 
 #[cfg(test)]
@@ -169,6 +172,18 @@ mod tests {
 
     fn case(seed: u64) -> Case {
         cases().new_tree(&mut runner(seed)).unwrap().current()
+    }
+
+    #[test]
+    fn a_run_error_in_the_report_is_a_tooling_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("no-such-tool");
+        let tools = Tools {
+            lean: missing.clone(),
+            silicon: missing,
+        };
+        let error = report(&tools, dir.path(), 7, &case(7), "x").unwrap_err();
+        assert!(format!("{error:#}").contains("no-such-tool"), "{error:#}");
     }
 
     #[test]

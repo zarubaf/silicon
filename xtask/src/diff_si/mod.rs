@@ -109,10 +109,7 @@ pub fn run(repo: &Repo, mode: Mode, seed: u64, count: u64) -> Result<bool> {
                     seed,
                     count,
                     |case| typed::verdict(&tools, dir.path(), case),
-                    |n, case, message| {
-                        typed::report(&tools, dir.path(), n, case, message);
-                        Ok(())
-                    },
+                    |n, case, message| typed::report(&tools, dir.path(), n, case, message),
                 )?,
                 format!("diff-si: {count} typed programs agree (seeds {seed} to {last})"),
             ),
