@@ -680,7 +680,7 @@ impl Evaluator<'_> {
                 let port = self
                     .syms
                     .fields
-                    .get(&field.pos)
+                    .get(&field.id)
                     .and_then(|s| self.elab.port(*inst, *s));
                 match port {
                     Some(q) if q.input => Ok(Target::Child {
