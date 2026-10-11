@@ -4,7 +4,9 @@
 //! Each mode supplies a case strategy, a verdict, and a report. The lift
 //! mode lifts random core designs to source. The typed mode builds random
 //! typed programs and their twins. The mutation mode mutates typed programs.
+//! The budget mode runs them at the fuel of their cost.
 
+mod budget;
 mod lift;
 mod mutation;
 mod typed;
@@ -35,7 +37,9 @@ pub enum Mode {
     Typed,
     /// Random typed source programs with one mutation.
     Mutation,
-    /// The lift, typed, and mutation modes.
+    /// Random typed source programs with the fuel at the cost.
+    Budget,
+    /// The lift, typed, mutation, and budget modes.
     All,
 }
 
@@ -46,7 +50,8 @@ impl Mode {
             Mode::Lift => &[Mode::Lift],
             Mode::Typed => &[Mode::Typed],
             Mode::Mutation => &[Mode::Mutation],
-            Mode::All => &[Mode::Lift, Mode::Typed, Mode::Mutation],
+            Mode::Budget => &[Mode::Budget],
+            Mode::All => &[Mode::Lift, Mode::Typed, Mode::Mutation, Mode::Budget],
         }
     }
 
@@ -56,6 +61,7 @@ impl Mode {
             Mode::Lift => "lift",
             Mode::Typed => "typed",
             Mode::Mutation => "mutation",
+            Mode::Budget => "budget",
             Mode::All => "all",
         }
     }
@@ -127,6 +133,16 @@ pub fn run(repo: &Repo, mode: Mode, seed: u64, count: u64) -> Result<bool> {
                 )?;
                 (agree, mutation::summary(count, seed, last, &tally))
             }
+            Mode::Budget => (
+                search(
+                    budget::cases(),
+                    seed,
+                    count,
+                    |case| budget::verdict(&tools, dir.path(), case),
+                    |n, case, message| budget::report(&tools, dir.path(), n, case, message),
+                )?,
+                format!("diff-si: {count} budgets agree (seeds {seed} to {last})"),
+            ),
             Mode::All => bail!("the mode `all` is not one mode"),
         };
         if !agree {
@@ -314,8 +330,11 @@ mod tests {
     use proptest::prelude::any;
 
     #[test]
-    fn all_runs_the_modes_in_order() {
-        assert_eq!(Mode::All.modes(), [Mode::Lift, Mode::Typed, Mode::Mutation]);
+    fn all_runs_the_four_modes_in_order() {
+        assert_eq!(
+            Mode::All.modes(),
+            [Mode::Lift, Mode::Typed, Mode::Mutation, Mode::Budget]
+        );
         assert_eq!(Mode::Mutation.modes(), [Mode::Mutation]);
     }
 
@@ -330,7 +349,13 @@ mod tests {
                 .new_tree(&mut runner(seed))
                 .unwrap()
                 .current();
-            assert_eq!(typed.0.unwrap().text(), mutated.unwrap().text());
+            let (budgeted, _, _) = budget::cases()
+                .new_tree(&mut runner(seed))
+                .unwrap()
+                .current();
+            let text = typed.0.unwrap().text();
+            assert_eq!(text, mutated.unwrap().text());
+            assert_eq!(text, budgeted.unwrap().text());
         }
     }
 
