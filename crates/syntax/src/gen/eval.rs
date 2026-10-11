@@ -83,7 +83,7 @@ impl Scope {
 }
 
 /// Every value that the generator makes stays within `-BOUND..=BOUND`.
-const BOUND: u32 = 1 << 20;
+pub(crate) const BOUND: u32 = 1 << 20;
 /// The largest count of an `Int` left shift.
 const MAX_SHIFT: u32 = 20;
 /// The most active `comptime fn` calls; the native stack stays small.
