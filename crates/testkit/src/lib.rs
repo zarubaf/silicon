@@ -2,11 +2,11 @@
 
 pub mod bins;
 pub mod core;
-pub mod directive;
-pub mod outcome;
-pub mod report;
+pub(crate) mod directive;
+pub(crate) mod outcome;
+pub(crate) mod report;
 pub mod source;
 pub mod spawn;
 pub mod suite;
 
-pub use suite::{root, suites};
+pub use suite::root;

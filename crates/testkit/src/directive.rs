@@ -5,7 +5,8 @@
 pub enum Marker {
     /// A `.sil` file: `; expected-error`.
     Sil,
-    /// A `.si` file: `// expected-error`.
+    /// A `.si` file: `// expected-error`. Only the tests of the parser use it.
+    #[cfg_attr(not(test), allow(dead_code))]
     Si,
 }
 

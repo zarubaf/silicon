@@ -32,12 +32,12 @@ fn wrong_error(want: &Expected, code: Option<i32>, stdout: &str) -> String {
 /// # Errors
 ///
 /// Returns an error when the output differs from the expectation.
-pub fn check(silicon: &Path, file: &Path) -> datatest_stable::Result<()> {
+pub fn check(binary: &Path, file: &Path) -> datatest_stable::Result<()> {
     let bytes = std::fs::read(file)?;
     let source = String::from_utf8_lossy(&bytes);
     let expected =
         expected_error(&source, Marker::Sil).map_err(|e| format!("{}: {e}", file.display()))?;
-    let out = spawn(Command::new(under_test(silicon)).arg("check").arg(file), "")?;
+    let out = spawn(Command::new(under_test(binary)).arg("check").arg(file), "")?;
     let stdout = String::from_utf8_lossy(&out.stdout);
     let code = out.status.code();
     match expected {
@@ -99,7 +99,7 @@ fn expectation(source: &str) -> Result<Expectation, String> {
 /// # Errors
 ///
 /// Returns an error when the output differs from the expectation.
-pub fn run(silicon: &Path, file: &Path) -> datatest_stable::Result<()> {
+pub fn run(binary: &Path, file: &Path) -> datatest_stable::Result<()> {
     let bytes = std::fs::read(file)?;
     let source = String::from_utf8_lossy(&bytes);
     let expected = expectation(&source).map_err(|e| format!("{}: {e}", file.display()))?;
@@ -107,10 +107,7 @@ pub fn run(silicon: &Path, file: &Path) -> datatest_stable::Result<()> {
         Expectation::Steps { stdin, .. } => stdin.as_str(),
         Expectation::Error(_) => "",
     };
-    let out = spawn(
-        Command::new(under_test(silicon)).arg("run").arg(file),
-        stdin,
-    )?;
+    let out = spawn(Command::new(under_test(binary)).arg("run").arg(file), stdin)?;
     let stdout = String::from_utf8_lossy(&out.stdout);
     let code = out.status.code();
     match expected {
