@@ -1,0 +1,7 @@
+// The brace of the module, four parentheses, and the bracket of `UInt[4]` nest six deep.
+// SYNTAX-DEPTH 6
+// TOP M()
+module M() domains() {
+    output q: UInt[4];
+    q := ((((UInt[4](1)))));
+}

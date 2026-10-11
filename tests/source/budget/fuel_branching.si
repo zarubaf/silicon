@@ -1,0 +1,17 @@
+// A branching hierarchy: each instance has its own arguments, so the design has 2047 modules.
+// The fuel equal to the total of `cost` succeeds.
+// FUEL 247516
+// TOP M(10, 0)
+module M(comptime d: Nat, comptime id: Nat) domains() {
+    input a: UInt[1];
+    output q: UInt[1];
+    comptime if (d == 0) {
+        q := a;
+    } else {
+        instance l = M(d - 1, 2 * id);
+        instance r = M(d - 1, 2 * id + 1);
+        l.a := a;
+        r.a := l.q;
+        q := r.q;
+    }
+}

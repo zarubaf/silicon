@@ -1,0 +1,24 @@
+// The deep child comes first: no module of the chain exists yet, so each level of it is
+// an instantiation in progress.
+// DEPTH 22
+// TOP Top()
+module Chain(comptime d: Nat) domains() {
+    input a: UInt[1];
+    output q: UInt[1];
+    comptime if (d == 0) {
+        q := a;
+    } else {
+        instance c = Chain(d - 1);
+        c.a := a;
+        q := c.q;
+    }
+}
+module Top() domains() {
+    input a: UInt[1];
+    output q: UInt[1];
+    instance first = Chain(20);
+    instance second = Chain(2);
+    first.a := a;
+    second.a := first.q;
+    q := second.q;
+}
