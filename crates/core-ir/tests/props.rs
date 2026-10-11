@@ -659,7 +659,7 @@ fn resets_favor_the_first_line() {
 #[test]
 fn source_lines_take_the_reset_pattern() {
     let mut runner = TestRunner::deterministic();
-    let (mut seen, mut first) = (0, 0);
+    let (mut seen, mut first, mut later) = (0, 0, 0);
     while seen < 50 {
         let design = draw(&source(), &mut runner);
         let typed = checked(&design);
@@ -672,18 +672,26 @@ fn source_lines_take_the_reset_pattern() {
         for line in &lines {
             assert!(parse_input(line, &top).is_ok(), "{line}");
         }
-        let tokens: Vec<&str> = lines[0].split_whitespace().collect();
-        let at = tokens
-            .iter()
-            .position(|t| t.trim_start_matches("in=(") == r#gen::RESET);
-        let value = at
-            .and_then(|k| tokens.get(k + 1))
-            .map(|t| t.trim_end_matches(')'));
-        let resets = [value == Some("1")];
-        first += usize::from(resets[0]);
+        first += usize::from(reset_of(&lines[0]));
+        later += lines[1..].iter().filter(|line| reset_of(line)).count();
         seen += 1;
     }
     assert!(first * 2 > seen, "line 0 resets in {first} of {seen}");
+    assert!(
+        later * 4 < seen * 7,
+        "later lines reset {later} of {}",
+        seen * 7
+    );
+}
+
+/// Whether the `in=` line `line` sets the input `rst` to 1.
+fn reset_of(line: &str) -> bool {
+    let tokens: Vec<&str> = line.split_whitespace().collect();
+    tokens
+        .iter()
+        .position(|t| t.trim_start_matches("in=(") == r#gen::RESET)
+        .and_then(|k| tokens.get(k + 1))
+        .is_some_and(|t| t.trim_end_matches(')') == "1")
 }
 
 #[test]
