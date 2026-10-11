@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The source AST of slice 1. It mirrors `Silicon.Source.Syntax` in Lean: the same types,
 //! the same constructors, and the same field order. Only the `NodeId` of a name node is not
-//! in Lean. The Lean name of a constructor is the
-//! lowercase name of the variant here, so the AST dump can print both with one rule.
+//! in Lean. The Lean name of a constructor is the lowercase name of the variant here, so the
+//! AST dump can print both with one rule.
 
 use std::fmt::Write;
 
