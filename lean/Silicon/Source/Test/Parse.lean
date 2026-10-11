@@ -378,4 +378,29 @@ def reparse (s : String) : Bool :=
 #guard reparse "const X: T = 1.f + --x - -(if (c) { a } else { b }).g + (\"s\".h)(1)[2];"
 #guard reparse "fn f() -> T { x.a.b = y; comptime for i in a.b .. c {} (x)(y); }"
 
+/-!
+The edge cases of the printer for `parse_print`. Each pair of operators nests in both
+operands, and a prefix operator is on each operand.
+-/
+def constRoundtrip (e : Expr) : Bool := roundtrip [.const p (nm "X") (t "T") e]
+def fnRoundtrip (ss : List Stmt) : Bool := roundtrip [.fn p false (nm "f") [] (t "T") ss]
+def unOps : List UnOp := [.neg, .not, .inv]
+
+#guard allBinOps.all fun o => allBinOps.all fun q =>
+  constRoundtrip (bin o (bin q (v "a") (v "b")) (v "c")) &&
+    constRoundtrip (bin o (v "a") (bin q (v "b") (v "c")))
+#guard allBinOps.all fun o => allBinOps.all fun q => unOps.all fun u =>
+  constRoundtrip (bin o (.unary p u (v "a")) (bin q (.unary p u (v "b")) (.unary p u (n 1))))
+#guard unOps.all fun u => unOps.all fun w => constRoundtrip (.unary p u (.unary p w (v "x")))
+#guard constRoundtrip (.call p (.field p (v "a") (nm "f")) [v "x"])
+#guard constRoundtrip (.field p (n 5) (nm "f")) && constRoundtrip (.field p (n 0) (nm "x"))
+#guard constRoundtrip (.str p "a\nb\rc\td\"e\\f") && constRoundtrip (.str p "")
+#guard constRoundtrip (n (2 ^ 65536 - 1)) && !constRoundtrip (n (2 ^ 65536))
+#guard fnRoundtrip [.expr p (.cond p (v "c") (v "a") (v "b")),
+  .expr p (bin .add (.cond p (v "c") (v "a") (v "b")) (n 1)),
+  .ctIf p (v "c") [] (some []), .ctIf p (v "c") [] none, .block p [],
+  .ctFor p (nm "i") (.field p (n 0) (nm "x")) (n 5) [],
+  .expr p (.index p (v "x") [n 1]), .expr p (bin .eq (.field p (v "x") (nm "y")) (v "y")),
+  .assign p (.field p (.field p (v "a") (nm "b")) (nm "c")) (v "d")]
+
 end Silicon.Source.Test.Parse
