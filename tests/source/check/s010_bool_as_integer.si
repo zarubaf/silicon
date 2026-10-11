@@ -1,0 +1,8 @@
+// S010: a Bool bound to an integer output (Bool and integer confusion).
+// TOP M()
+module M() {
+    input b: Bool;
+    output y: UInt[1];
+    // expected-error S010 @+1
+    y := b;
+}

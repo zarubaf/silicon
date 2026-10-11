@@ -1,0 +1,15 @@
+// S017: a binding of a child output (v0.1 section 9).
+// TOP M()
+module C() domains() {
+    input a: Bool;
+    output q: Bool;
+    q := a;
+}
+module M() domains() {
+    output y: Bool;
+    instance c = C();
+    c.a := false;
+    // expected-error S017 @+1
+    c.q := true;
+    y := c.q;
+}

@@ -1,0 +1,12 @@
+// S015: a recursion deeper than the default nesting depth of 1000.
+// TOP M()
+comptime fn down(n: Nat) -> Nat {
+    comptime if (n == 0) {
+        return 0;
+    }
+    // expected-error S015 @+1
+    return down(n - 1);
+}
+module M() {
+    static_assert(down(5000) == 0, "deep");
+}

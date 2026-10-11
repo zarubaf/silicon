@@ -1,0 +1,6 @@
+// S015: a static `1 << k` with a large `k` fails before it runs (section 11.3).
+// TOP M()
+module M() {
+    // expected-error S015 @+1
+    static_assert((1 << 1000000000000) > 0, "big");
+}

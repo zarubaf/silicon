@@ -1,0 +1,8 @@
+// S010: an SInt input bound to a UInt output, an implicit signedness change.
+// TOP M()
+module M() {
+    input x: SInt[8];
+    output y: UInt[8];
+    // expected-error S010 @+1
+    y := x;
+}

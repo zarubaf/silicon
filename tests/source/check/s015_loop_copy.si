@@ -1,0 +1,10 @@
+// S015: a loop that copies a large value. Slice 1 has no List, so a big integer stands in
+// for the large list of section 11.3. Each copy charges its recursive size of 15626.
+// TOP M()
+module M() {
+    let big = 1 << 1000000;
+    comptime for i in 0..10000 {
+        // expected-error S015 @+1
+        let c = big;
+    }
+}

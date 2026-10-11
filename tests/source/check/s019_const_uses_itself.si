@@ -1,0 +1,6 @@
+// S019: a constant that uses itself (section 11.3).
+// TOP M(1)
+// expected-error S019 @+1
+const A: Nat = A + 1;
+module M(comptime x: UInt[A]) {
+}

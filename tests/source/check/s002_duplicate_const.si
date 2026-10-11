@@ -1,0 +1,7 @@
+// S002: two constants with one name.
+// TOP M()
+const W: Nat = 8;
+// expected-error S002 @+1
+const W: Nat = 9;
+module M() {
+}

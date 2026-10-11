@@ -1,0 +1,6 @@
+// S006: a module body has no return (v0.1 section 9, module return).
+// TOP M()
+module M() {
+    // expected-error S006 @+1
+    return;
+}

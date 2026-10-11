@@ -1,0 +1,12 @@
+// S011: a comptime fn gets a hardware value.
+// TOP M()
+comptime fn f(b: Bool) -> Bool {
+    return b;
+}
+module M() {
+    input x: Bool;
+    output y: Bool;
+    let a = x;
+    // expected-error S011 @+1
+    y := f(a);
+}

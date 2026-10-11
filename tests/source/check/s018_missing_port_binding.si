@@ -1,0 +1,9 @@
+// S018: a child input without a binding, at the instance statement.
+// TOP M()
+module C() domains() {
+    input a: Bool;
+}
+module M() domains() {
+    // expected-error S018 @+1
+    instance c = C();
+}

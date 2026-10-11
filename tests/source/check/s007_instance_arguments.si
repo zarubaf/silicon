@@ -1,0 +1,8 @@
+// S007: an instance with fewer arguments than its module.
+// TOP M()
+module C(comptime W: Nat, comptime E: Bool) {
+}
+module M() {
+    // expected-error S007 @+1
+    instance u = C(8);
+}

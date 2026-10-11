@@ -1,0 +1,11 @@
+// S018: a register with two drivers.
+// TOP M()
+module M() {
+    input a: Bool;
+    output y: Bool;
+    reg r: Bool = false;
+    r := a;
+    // expected-error S018 @+1
+    r := !a;
+    y := r;
+}

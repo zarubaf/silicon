@@ -1,0 +1,8 @@
+// S018: a register without a driver, at its declaration.
+// TOP M()
+module M() {
+    output y: Bool;
+    // expected-error S018 @+1
+    reg r: Bool = false;
+    y := r;
+}

@@ -1,0 +1,11 @@
+// A comptime for that builds a chain of wires through a mutable local.
+// TOP Chain(3)
+module Chain(comptime N: Nat) domains() {
+    input a: UInt[8];
+    output y: UInt[8];
+    let mut v = a;
+    comptime for i in 0..N {
+        v = v +% UInt[8](i);
+    }
+    y := v;
+}

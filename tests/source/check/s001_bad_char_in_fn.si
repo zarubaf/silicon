@@ -1,0 +1,8 @@
+// S001: a character that is no token, in the body of a comptime fn.
+// TOP M()
+comptime fn f() -> Nat {
+    // expected-error S001 @+1
+    return 1 $ 2;
+}
+module M() {
+}

@@ -1,0 +1,8 @@
+// S013: a negative shift count.
+// TOP M()
+module M() {
+    input x: UInt[8];
+    output y: UInt[8];
+    // expected-error S013 @+1
+    y := x << -1;
+}

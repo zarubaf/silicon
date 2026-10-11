@@ -1,0 +1,11 @@
+// S018: a wire with two drivers.
+// TOP M()
+module M() {
+    input a: Bool;
+    output y: Bool;
+    wire w: Bool;
+    w := a;
+    // expected-error S018 @+1
+    w := true;
+    y := w;
+}

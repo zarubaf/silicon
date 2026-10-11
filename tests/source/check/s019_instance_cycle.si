@@ -1,0 +1,6 @@
+// S019: an instantiation that depends on itself.
+// TOP M(3)
+module M(comptime d: Nat) {
+    // expected-error S019 @+1
+    instance a = M(d);
+}

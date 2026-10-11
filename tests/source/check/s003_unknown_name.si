@@ -1,0 +1,7 @@
+// S003: a name without a declaration.
+// TOP M()
+module M() {
+    output o: UInt[8];
+    // expected-error S003 @+1
+    o := nope;
+}

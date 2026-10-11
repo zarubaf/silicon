@@ -1,0 +1,7 @@
+// S019: two constants that use each other (section 11.3).
+// TOP M(1)
+const A: Nat = B + 1;
+// expected-error S019 @+1
+const B: Nat = A + 1;
+module M(comptime x: UInt[A]) {
+}

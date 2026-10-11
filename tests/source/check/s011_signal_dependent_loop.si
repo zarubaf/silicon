@@ -1,0 +1,8 @@
+// S011: a comptime for bound by a hardware value, a signal-dependent graph size.
+// TOP M()
+module M() {
+    input x: UInt[8];
+    let a = x;
+    // expected-error S011 @+1
+    comptime for i in 0..a { }
+}

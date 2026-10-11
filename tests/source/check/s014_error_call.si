@@ -1,0 +1,13 @@
+// S014: an error call that executes in a comptime fn.
+// TOP M(70)
+comptime fn check(w: Nat) -> Nat {
+    comptime if (w > 64) {
+        // expected-error S014 @+1
+        error("too wide");
+    }
+    return w;
+}
+module M(comptime W: Nat) {
+    output o: UInt[check(W)];
+    o := 0;
+}

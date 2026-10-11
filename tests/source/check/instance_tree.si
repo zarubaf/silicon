@@ -1,0 +1,19 @@
+// A parent with two children of one module and a comptime fn for the width.
+// TOP Top(3)
+comptime fn twice(n: Nat) -> Nat {
+    return 2 * n;
+}
+module Leaf(comptime W: Nat) domains() {
+    input a: UInt[W];
+    output q: UInt[W];
+    q := a;
+}
+module Top(comptime N: Nat) domains() {
+    input x: UInt[twice(N)];
+    output y: UInt[twice(N)];
+    instance l = Leaf(twice(N));
+    instance r = Leaf(twice(N));
+    l.a := x;
+    r.a := l.q;
+    y := r.q;
+}
