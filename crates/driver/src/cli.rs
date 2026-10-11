@@ -517,7 +517,7 @@ fn validate_source(source: &str, top: &str, sil: &str, budget: &Budgets) -> Resu
 /// end, and it leaves no artifact. A write goes to a `.tmp` file and then renames, so no
 /// artifact is partial. Each exit leaves at most the pair of one build: the write of
 /// `PREFIX.sil` removes an old `PREFIX.sv` first, and a later failure removes both files and
-/// the temp files. No file is touched if an artifact path is the input file.
+/// the temp files. No file is touched if an artifact path or its temp file is the input file.
 fn build_source(
     file: &Path,
     source: &str,
@@ -531,7 +531,8 @@ fn build_source(
         Err(line) => return Ok(line),
     };
     let (sil_path, sv_path) = (artifact(prefix, "sil"), artifact(prefix, "sv"));
-    for path in [&sil_path, &sv_path] {
+    let temps = (temp(&sil_path), temp(&sv_path));
+    for path in [&sil_path, &temps.0, &sv_path, &temps.1] {
         if is_same_file(path, file) {
             return Err(Usage(format!(
                 "{}: the output path is the input file",
@@ -611,12 +612,17 @@ fn is_same_file(path: &Path, input: &Path) -> bool {
     }
 }
 
+/// The temp file of an artifact: the path, then `.tmp`.
+fn temp(path: &Path) -> PathBuf {
+    let mut temp = path.as_os_str().to_owned();
+    temp.push(".tmp");
+    PathBuf::from(temp)
+}
+
 /// Writes `text` to `path.tmp` and renames it, so `path` is never partial. A failure removes
 /// the temp file.
 fn write_artifact(path: &Path, text: &str) -> Result<(), Usage> {
-    let mut temp = path.as_os_str().to_owned();
-    temp.push(".tmp");
-    let temp = PathBuf::from(temp);
+    let temp = temp(path);
     let _ = fs::remove_file(&temp);
     let written = fs::OpenOptions::new()
         .write(true)
