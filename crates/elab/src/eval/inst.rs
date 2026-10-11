@@ -316,7 +316,7 @@ impl Literal {
     pub(crate) fn of(e: &Expr) -> Option<Literal> {
         let num = |v: &parse::ast::Nat| Int::from_decimal(v.as_str());
         match e {
-            Expr::Num { pos, value } => Some(Literal::Num(*pos, num(value)?)),
+            Expr::Num { pos, value, .. } => Some(Literal::Num(*pos, num(value)?)),
             Expr::Bool { pos, value } => Some(Literal::Bool(*pos, *value)),
             Expr::Str { pos, value } => Some(Literal::Str(*pos, value.clone())),
             Expr::Unary {
@@ -324,7 +324,7 @@ impl Literal {
                 op: UnOp::Neg,
                 arg,
             } => match &**arg {
-                Expr::Num { pos: q, value } => Some(Literal::Neg(*pos, *q, num(value)?)),
+                Expr::Num { pos: q, value, .. } => Some(Literal::Neg(*pos, *q, num(value)?)),
                 _ => None,
             },
             _ => None,

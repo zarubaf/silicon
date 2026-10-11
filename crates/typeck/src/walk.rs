@@ -250,7 +250,9 @@ impl<'a> Walker<'a> {
                 self.expr(is_static, yes);
                 self.expr(is_static, no);
             }
-            Expr::Call { pos, callee, args } => {
+            Expr::Call {
+                pos, callee, args, ..
+            } => {
                 self.expr(true, callee);
                 let kind = self.callee(*pos, callee, args.len());
                 for (k, arg) in args.iter().enumerate() {

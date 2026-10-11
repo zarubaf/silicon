@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The source AST of slice 1. It mirrors `Silicon.Source.Syntax` in Lean: the same types,
-//! the same constructors, and the same field order. Only the `NodeId` of a name node is not
-//! in Lean. The Lean name of a constructor is the lowercase name of the variant here, so the
+//! the same constructors, and the same field order. Only the `NodeId` of a node is not in
+//! Lean. The Lean name of a constructor is the lowercase name of the variant here, so the
 //! AST dump can print both with one rule.
 
 use std::fmt::Write;
@@ -13,10 +13,10 @@ pub struct Pos {
     pub col: usize,
 }
 
-/// The id of a name node: an `Ident`, an `Expr::Name`, or a `TypeExpr::Name`. The lowering
-/// gives each name node of one parse its own id, in source order. A later pass keys its facts
-/// about a node by the id and not by the position, because two nodes can share a position or
-/// have none. The id is not in the Lean AST, and the dump does not print it.
+/// The id of a node: an `Ident`, an `Expr::Name`, a `TypeExpr::Name`, an `Expr::Num`, or an
+/// `Expr::Call`. The lowering gives each such node of one parse its own id, in source order. A
+/// later pass keys its facts about a node by the id and not by the position, because two nodes
+/// can share a position or have none. The id is not in the Lean AST, and the dump does not print it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct NodeId(usize);
 
@@ -119,6 +119,7 @@ pub enum BinOp {
 pub enum Expr {
     Num {
         pos: Pos,
+        id: NodeId,
         value: Nat,
     },
     Bool {
@@ -153,6 +154,7 @@ pub enum Expr {
     },
     Call {
         pos: Pos,
+        id: NodeId,
         callee: Box<Expr>,
         args: Vec<Expr>,
     },

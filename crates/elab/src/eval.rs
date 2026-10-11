@@ -732,7 +732,9 @@ impl Evaluator<'_> {
                     }
                 }
             },
-            Expr::Call { pos, callee, args } => self.call(*pos, callee, args),
+            Expr::Call {
+                pos, callee, args, ..
+            } => self.call(*pos, callee, args),
             Expr::Index { pos, base, args } => {
                 if let Expr::Name { pos: bp, id, .. } = &**base
                     && let Some(Target::Prelude(k)) = self.target(*id)
