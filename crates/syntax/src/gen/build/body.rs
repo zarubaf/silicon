@@ -8,7 +8,7 @@ use super::{
     Builder, CONTEXTS, COUNT, Ctx, ENVS, HELPERS, Helper, Hw, INPUTS, INSTANCES, MODULE_STMTS,
     MODULES, Module, NESTED_STMTS, NESTING, Names, OUTPUTS, PARAMS, SAMPLE_INTS, Sig,
 };
-use crate::r#gen::eval::{Env, Fault, Value, concrete, eval};
+use crate::r#gen::eval::{Env, Fault, Value, concrete, eval, loop_values};
 use crate::r#gen::program::{HExpr, Place, SExpr, Scalar, StaticTy, Stmt, Ty};
 use num_bigint::BigInt;
 
@@ -17,17 +17,6 @@ use num_bigint::BigInt;
 type Built<T = ()> = Result<T, Fault>;
 
 const STATIC_TYS: [StaticTy; 3] = [StaticTy::Nat, StaticTy::Int, StaticTy::Bool];
-
-/// The env of a module context.
-fn env_of(params: &[(String, StaticTy)], args: &[Value]) -> Env {
-    Env {
-        statics: params
-            .iter()
-            .map(|(n, _)| n.clone())
-            .zip(args.iter().cloned())
-            .collect(),
-    }
-}
 
 /// One env per argument tuple in the ranges of the module arguments.
 fn domain(params: &[(String, StaticTy)]) -> Vec<Env> {
@@ -204,13 +193,11 @@ impl Builder {
             let (Value::Int(lo), Value::Int(hi)) = (lo, hi) else {
                 return Err(Fault::Type);
             };
-            let mut n = lo.clone();
-            while n < *hi {
+            for value in loop_values(lo, hi) {
                 let mut env = env.clone();
-                env.statics.insert(binder.to_owned(), Value::Int(n.clone()));
+                env.statics.insert(binder.to_owned(), value);
                 envs.push(env);
                 parents.push(i);
-                n += 1;
             }
             if envs.len() > ENVS {
                 return Ok(None);
@@ -311,7 +298,7 @@ impl Builder {
             return Ok(());
         }
         let mut ctx = Ctx {
-            envs: tuples.iter().map(|a| env_of(&sig.params, a)).collect(),
+            envs: tuples.iter().map(|a| Env::of(&sig.params, a)).collect(),
             statics: self.const_names().into_iter().chain(sig.params).collect(),
             hw: Vec::new(),
             helpers: self.helpers.len(),
@@ -544,7 +531,7 @@ impl Builder {
         let tuples = self.tuples(j, &mut args, &ctx.envs)?;
         let name = m.names.fresh("u");
         out.push(Stmt::Instance(name.clone(), sig.name.clone(), args));
-        let envs: Vec<Env> = tuples.iter().map(|a| env_of(&sig.params, a)).collect();
+        let envs: Vec<Env> = tuples.iter().map(|a| Env::of(&sig.params, a)).collect();
         for (p, t) in &sig.inputs {
             let types = self.types(t, &envs)?;
             let value = self.driver(ctx, &Want { types, ty: None });

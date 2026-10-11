@@ -53,6 +53,27 @@ pub(crate) struct Env {
     pub(crate) statics: BTreeMap<String, Value>,
 }
 
+impl Env {
+    /// The env of a module context: each parameter bound to its argument.
+    pub(crate) fn of(params: &[(String, StaticTy)], args: &[Value]) -> Env {
+        Env {
+            statics: params
+                .iter()
+                .map(|(n, _)| n.clone())
+                .zip(args.iter().cloned())
+                .collect(),
+        }
+    }
+}
+
+/// The binder values of `comptime for` over the half-open `lo..hi`.
+pub(crate) fn loop_values(lo: &BigInt, hi: &BigInt) -> impl Iterator<Item = Value> {
+    let hi = hi.clone();
+    std::iter::successors(Some(lo.clone()), |n| Some(n + 1))
+        .take_while(move |n| *n < hi)
+        .map(Value::Int)
+}
+
 /// The file scope: the `comptime fn`s and the values of the `const`s.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Scope {
