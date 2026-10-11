@@ -1,0 +1,11 @@
+// 30 nested right shifts of a signed value by an unsigned count: 2 `shrs` for each
+// source shift, 60 in all, and no more (frontend spec section 11.3).
+// TOP M()
+// CHECK-COUNT-60: shrs
+// CHECK-NOT: shrs
+module M() domains() {
+    input x: SInt[1];
+    input n: UInt[2];
+    output y: SInt[1];
+    y := ((((((((((((((((((((((((((((((x >> n) >> n) >> n) >> n) >> n) >> n) >> n) >> n) >> n) >> n) >> n) >> n) >> n) >> n) >> n) >> n) >> n) >> n) >> n) >> n) >> n) >> n) >> n) >> n) >> n) >> n) >> n) >> n) >> n) >> n);
+}

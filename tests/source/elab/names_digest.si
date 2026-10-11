@@ -1,0 +1,15 @@
+// A module name of more than 64 bytes takes the digest name: `$0h` and 16 hexadecimal digits.
+// TOP Top()
+// CHECK: (module LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL$0h{{[0-9a-f]+}}
+module LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL() domains() {
+    input a: UInt[1];
+    output q: UInt[1];
+    q := a;
+}
+module Top() domains() {
+    input x: UInt[1];
+    output y: UInt[1];
+    instance s = LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL();
+    s.a := x;
+    y := s.q;
+}

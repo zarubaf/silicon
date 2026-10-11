@@ -1,0 +1,17 @@
+// A module with integer and Boolean arguments takes a readable emitted name.
+// TOP Top(3)
+// CHECK: (design Top$3
+// CHECK: (module Leaf$8$1
+// CHECK: (module Top$3
+module Leaf(comptime W: Nat, comptime K: Nat) domains() {
+    input a: UInt[W];
+    output q: UInt[W];
+    q := a +% UInt[W](K);
+}
+module Top(comptime N: Nat) domains() {
+    input x: UInt[8];
+    output y: UInt[8];
+    instance s = Leaf(N + 5, 1);
+    s.a := x;
+    y := s.q;
+}

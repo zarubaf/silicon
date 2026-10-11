@@ -1,0 +1,18 @@
+// A module that instantiates the module of the next lower depth twice: 31 modules in the
+// design, one for each depth 0 to 30, because identical instances share one module.
+// TOP M(30)
+// CHECK-COUNT-31: (module
+// CHECK-NOT: (module
+module M(comptime d: Nat) domains() {
+    input a: UInt[1];
+    output q: UInt[1];
+    comptime if (d == 0) {
+        q := a;
+    } else {
+        instance l = M(d - 1);
+        instance r = M(d - 1);
+        l.a := a;
+        r.a := l.q;
+        q := r.q;
+    }
+}
