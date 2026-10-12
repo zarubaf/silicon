@@ -543,11 +543,11 @@ fn the_message_of_a_later_slice_name_names_the_slice() {
     };
     assert_eq!(
         message("fn f(x: TypeInfo) -> Bool { return true; }\n"),
-        "`TypeInfo` is not in slice 1; it comes in slice 4"
+        "`TypeInfo` is not supported yet; it comes in slice 4"
     );
     assert_eq!(
         message("module M() {\n  reg r: Reg[Bool] = 0;\n}\n"),
-        "`Reg` is not in slice 1; it comes in slice 3"
+        "`Reg` is not supported yet; it comes in slice 3"
     );
     assert_eq!(message("const A: Foo = 1;\n"), "`Foo` is not declared");
     ok("const Wire: Nat = 1;\nconst N: Nat = Wire;\n");

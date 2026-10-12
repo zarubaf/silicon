@@ -336,7 +336,7 @@ impl Walker {
 
     fn unknown(&mut self, pos: Pos, name: &str) {
         let message = match later_slice(name) {
-            Some(slice) => format!("`{name}` is not in slice 1; it comes in slice {slice}"),
+            Some(slice) => format!("`{name}` is not supported yet; it comes in slice {slice}"),
             None => format!("`{name}` is not declared"),
         };
         self.reject(pos, message);
