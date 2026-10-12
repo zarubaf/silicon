@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The pass before the evaluation. It finds the heights that size the stack of the evaluator,
-//! the value of each number literal, the symbols of the source names, and the call sites.
+//! the value of each number literal, and the symbols of the source names.
 //!
 //! The evaluator recurses over the AST, and each active call, constant in progress, or
 //! instantiation in progress starts the recursion again in its item. The pass finds two
@@ -16,7 +16,7 @@
 use crate::int::Int;
 use crate::names::Sym;
 use parse::NestedStack;
-use parse::ast::{Expr, Ident, Item, NodeId, Pos, Stmt, TypeExpr};
+use parse::ast::{Expr, Ident, Item, NodeId, Stmt, TypeExpr};
 use resolve::{DeclId, Kind, Resolved, ResolvedExpr, Target};
 use std::collections::BTreeMap;
 
@@ -41,10 +41,6 @@ pub(crate) struct Syms {
     pub struct_fields: Vec<BTreeMap<Sym, usize>>,
     /// The symbol of `clock`, the default domain.
     pub clock: Sym,
-    /// The number of each call node in the body of each item: its index among the call nodes
-    /// of the body, in position order, by its node id. Calls at one position share a number,
-    /// as in the Lean `callSites`. Section 7.3 names a call frame with it.
-    pub calls: Vec<BTreeMap<NodeId, u64>>,
 }
 
 /// The result of the pass before the evaluation of `top` in the file scope of `file`.
@@ -63,7 +59,6 @@ pub(crate) fn of(file: &Resolved, top: Option<&ResolvedExpr>) -> Scan {
         numbers: Numbers::new(),
         table: BTreeMap::new(),
         syms: Syms::default(),
-        calls: Vec::new(),
     };
     if let Some(top) = top {
         walk.expr(top.expr(), 1);
@@ -93,8 +88,6 @@ struct Walk<'a> {
     numbers: Numbers,
     table: BTreeMap<String, Sym>,
     syms: Syms,
-    /// The position and the node id of each call node of the body of the current item.
-    calls: Vec<(Pos, NodeId)>,
 }
 
 impl Walk<'_> {
@@ -138,25 +131,21 @@ impl Walk<'_> {
     }
 
     fn item(&mut self, item: &Item) {
-        self.calls.clear();
         let mut struct_fields = BTreeMap::new();
         match item {
             Item::Const { ty, value, .. } => {
                 self.ty(ty, 1);
                 self.expr(value, 1);
-                self.calls.clear();
             }
             Item::Fn {
                 params, ret, body, ..
             } => {
                 self.stmts(body, 1);
-                let calls = std::mem::take(&mut self.calls);
                 for p in params {
                     self.binder(&p.name);
                     self.ty(&p.ty, 1);
                 }
                 self.ty(ret, 1);
-                self.calls = calls;
             }
             Item::Module {
                 params,
@@ -165,7 +154,6 @@ impl Walk<'_> {
                 ..
             } => {
                 self.stmts(body, 1);
-                let calls = std::mem::take(&mut self.calls);
                 for p in params {
                     self.binder(&p.name);
                     self.ty(&p.ty, 1);
@@ -173,7 +161,6 @@ impl Walk<'_> {
                 for d in domains.iter().flatten() {
                     self.binder(d);
                 }
-                self.calls = calls;
             }
             Item::Struct { params, fields, .. } => {
                 for p in params {
@@ -190,18 +177,6 @@ impl Walk<'_> {
             }
             Item::Alias { ty, .. } => self.ty(ty, 1),
         }
-        self.calls.sort_unstable();
-        let mut sites = BTreeMap::new();
-        let mut k = 0u64;
-        let mut last = None;
-        for &(p, id) in &self.calls {
-            if last.is_some_and(|q| q != p) {
-                k += 1;
-            }
-            last = Some(p);
-            sites.insert(id, k);
-        }
-        self.syms.calls.push(sites);
         self.syms.struct_fields.push(struct_fields);
     }
 
@@ -327,23 +302,15 @@ impl Walk<'_> {
                 self.expr(yes, d);
                 self.expr(no, d);
             }
-            Expr::Call {
-                pos,
-                id,
-                callee,
-                args,
-            } => {
+            Expr::Call { callee, args, .. } => {
                 self.nested = self.nested.max(depth);
-                if self.top.is_none() {
-                    self.calls.push((*pos, *id));
-                }
                 self.expr(callee, d);
                 for a in args {
                     self.expr(a, d);
                 }
             }
-            // TODO(#179): number the call sites of receiver calls (plan step 28).
             Expr::Method { recv, args, .. } => {
+                self.nested = self.nested.max(depth);
                 self.expr(recv, d);
                 for a in args {
                     self.expr(a, d);

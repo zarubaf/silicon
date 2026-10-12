@@ -633,7 +633,12 @@ impl Evaluator<'_> {
     }
 
     fn size(&self, out: &Out) -> u128 {
-        u128::from(match self.store.seen(out) {
+        self.seen_size(self.store.seen(out))
+    }
+
+    /// The size of what a result is.
+    fn seen_size(&self, seen: Seen<'_>) -> u128 {
+        u128::from(match seen {
             Seen::Static(v) => v.size(),
             Seen::Hw(h) => self.graph.size(h),
             Seen::Handle(_) => 1,
@@ -936,8 +941,8 @@ impl Evaluator<'_> {
     }
 
     /// The results of the arguments of a call, in order.
-    fn args(&mut self, xs: &[Expr]) -> Res<Vec<Out>> {
-        let mut outs = Vec::with_capacity(xs.len());
+    fn args<'e>(&mut self, xs: impl IntoIterator<Item = &'e Expr>) -> Res<Vec<Out>> {
+        let mut outs = Vec::new();
         for x in xs {
             let out = self.eval(x)?;
             outs.push(need(x, out)?);
@@ -1027,12 +1032,13 @@ impl Evaluator<'_> {
                 callee,
                 args,
             } => self.call(*pos, *id, callee, args),
-            // TODO(#179): evaluate a receiver call (plan step 28).
-            Expr::Method { pos, name, .. } => fail(
-                Code::S010,
-                *pos,
-                format!("the receiver call `{}` is not supported yet", name.name),
-            ),
+            Expr::Method {
+                pos,
+                id,
+                recv,
+                name,
+                args,
+            } => self.method(*pos, *id, recv, name, args),
             Expr::Index { pos, base, args } => {
                 if let Expr::Name { pos: bp, id, .. } = &**base
                     && let Some(Target::Prelude(k)) = self.target(*id)

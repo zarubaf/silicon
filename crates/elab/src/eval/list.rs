@@ -69,7 +69,7 @@ impl Evaluator<'_> {
     /// the root comes from the element and the steps of the place (`S015`): the root is within
     /// the nesting depth, so only the element on the path can raise it, and no walk enters the
     /// list. The charge is the size of the element, before the element copies into the list.
-    pub(super) fn push(&mut self, pos: Pos, g: &str, xs: &[Expr]) -> Res<Option<Out>> {
+    pub(super) fn push(&mut self, pos: Pos, g: &str, xs: &[&Expr]) -> Res<Option<Out>> {
         let [list, x] = xs else {
             return fail(
                 Code::S007,
@@ -125,7 +125,7 @@ impl Evaluator<'_> {
     /// (`S010`) that is not empty (`S013`), and the mutation rule holds (`S016`). The charge is
     /// the size of the last element, and then the element leaves the list, in one walk down the
     /// path.
-    pub(super) fn pop(&mut self, pos: Pos, g: &str, xs: &[Expr]) -> Res<Option<Out>> {
+    pub(super) fn pop(&mut self, pos: Pos, g: &str, xs: &[&Expr]) -> Res<Option<Out>> {
         let [list] = xs else {
             return fail(
                 Code::S007,

@@ -3,16 +3,55 @@
 //! constructor. A call charges its callee name, evaluates its arguments, and binds them in a
 //! new call frame.
 
-use super::{Evaluator, Opnd, Out, Res, Slot, Tag, at, fail};
+use super::place::Place;
+use super::{Evaluator, Names, Opnd, Out, Res, Slot, Tag, at, expr_pos, fail, need};
 use crate::Code;
-use crate::hw::Val;
+use crate::hw::{Ref, Val};
 use crate::names::{Role, Step};
 use crate::ops::{self, str_text};
 use crate::value::Value;
-use parse::ast::{Expr, Item, NodeId, Param, ParamMode, Pos};
+use parse::ast::{Expr, Ident, Item, NodeId, Param, ParamMode, Pos};
 use resolve::{DeclId, Kind, Prelude, Target};
 
+/// What a call binds to a parameter: the result of its argument, or the place of a `mut`
+/// actual.
+enum Actual {
+    Value(Out),
+    Place(Place),
+}
+
+/// The parameter of the argument number `k` in the evaluation order of a call whose receiver
+/// binds at the parameter `bound`: the receiver evaluates first (`bound` is 0 for a plain call).
+fn parameter_of(k: usize, bound: usize) -> usize {
+    match k {
+        0 => bound,
+        k if k <= bound => k - 1,
+        k => k,
+    }
+}
+
+/// The values `vs` in the order of the parameters, when the first one is the receiver that
+/// binds at the parameter `bound`.
+fn in_parameter_order<T>(mut vs: Vec<T>, bound: usize) -> Vec<T> {
+    if bound > 0 && !vs.is_empty() {
+        let receiver = vs.remove(0);
+        vs.insert(bound.min(vs.len()), receiver);
+    }
+    vs
+}
+
 impl Evaluator<'_> {
+    /// The call site of the call node or the method node `node`: its number in the pre-order
+    /// of its item, from the resolver. A call outside a body runs on static values only, so its
+    /// site never names hardware.
+    fn site(&self, node: NodeId) -> u64 {
+        let site = match self.names {
+            Names::Top => self.top.and_then(|t| t.site(node)),
+            Names::File => self.file.site(node),
+        };
+        site.map_or(0, |k| k as u64)
+    }
+
     /// A call of a function item, a prelude function, or a type.
     pub(super) fn call(
         &mut self,
@@ -27,14 +66,15 @@ impl Evaluator<'_> {
             name: g,
         } = f
         {
+            let args: Vec<&Expr> = xs.iter().collect();
             match self.target(*fid) {
                 Some(Target::Decl(id))
                     if matches!(self.file.decl(id).kind, Kind::Fn | Kind::Module) =>
                 {
-                    return self.call_fn(pos, node, *fp, g, id, xs);
+                    return self.call_fn(pos, node, *fp, g, id, &args, 0);
                 }
                 Some(Target::Prelude(h)) if !h.is_type() => {
-                    return self.call_prelude(pos, *fp, g, h, xs);
+                    return self.call_prelude(pos, *fp, g, h, &args, 0);
                 }
                 _ => {}
             }
@@ -42,8 +82,80 @@ impl Evaluator<'_> {
         self.construct(pos, f, xs)
     }
 
+    /// A receiver call `recv.name(xs)`: the call of `name` with `recv` at the first parameter
+    /// without a written `comptime` mark. The receiver evaluates first, then the arguments.
+    /// The method name charges 1, as the callee name of a call does.
+    pub(super) fn method(
+        &mut self,
+        pos: Pos,
+        node: NodeId,
+        recv: &Expr,
+        name: &Ident,
+        xs: &[Expr],
+    ) -> Res<Option<Out>> {
+        let target = self.target(name.id);
+        let modes: Vec<ParamMode> = match target {
+            Some(Target::Decl(id)) => {
+                match self.items.get(&id).and_then(|&i| self.file.ast().get(i)) {
+                    Some(Item::Fn { params, .. }) => params.iter().map(|q| q.mode).collect(),
+                    _ => Vec::new(),
+                }
+            }
+            Some(Target::Prelude(h)) => h.modes().to_vec(),
+            None => Vec::new(),
+        };
+        let Some(bound) = modes.iter().position(|&m| m != ParamMode::Comptime) else {
+            return fail(
+                Code::S007,
+                pos,
+                format!(
+                    "`{}` has no parameter without `comptime` for the receiver",
+                    name.name
+                ),
+            );
+        };
+        let mut args: Vec<&Expr> = Vec::with_capacity(xs.len() + 1);
+        args.push(recv);
+        args.extend(xs);
+        match target {
+            Some(Target::Decl(id)) => {
+                self.call_fn(pos, node, name.pos, &name.name, id, &args, bound)
+            }
+            Some(Target::Prelude(h)) => {
+                self.call_prelude(pos, name.pos, &name.name, h, &args, bound)
+            }
+            None => fail(
+                Code::S010,
+                pos,
+                format!("`{}` is not a function", name.name),
+            ),
+        }
+    }
+
+    /// The arguments `xs` of a call in their evaluation order, as the actuals of the
+    /// parameters `params`, in the order of the parameters. A `mut` actual resolves its place by
+    /// the steps of an assignment target.
+    fn actuals(&mut self, params: &[Param], xs: &[&Expr], bound: usize) -> Res<Vec<Actual>> {
+        let mut slots: Vec<Option<Actual>> = xs.iter().map(|_| None).collect();
+        for (k, x) in xs.iter().enumerate() {
+            let at = parameter_of(k, bound);
+            let actual = if params.get(at).is_some_and(|q| q.mode == ParamMode::Mut) {
+                Actual::Place(self.place_at(expr_pos(x), Code::S008, x)?)
+            } else {
+                let o = self.eval(x)?;
+                Actual::Value(need(x, o)?)
+            };
+            if let Some(slot) = slots.get_mut(at) {
+                *slot = Some(actual);
+            }
+        }
+        Ok(slots.into_iter().flatten().collect())
+    }
+
     /// A call of a function item. It runs in the call frame `<fn>$<k>c`. A hardware argument
-    /// and a hardware result get a core name in that frame.
+    /// and a hardware result get a core name in that frame. The write-backs of its `mut`
+    /// actuals run in the frame of the caller, after the result.
+    #[allow(clippy::too_many_arguments)]
     fn call_fn(
         &mut self,
         pos: Pos,
@@ -51,7 +163,8 @@ impl Evaluator<'_> {
         fp: Pos,
         g: &str,
         id: DeclId,
-        xs: &[Expr],
+        xs: &[&Expr],
+        bound: usize,
     ) -> Res<Option<Out>> {
         self.charge(fp, 1)?;
         let file = self.file;
@@ -69,80 +182,140 @@ impl Evaluator<'_> {
         else {
             return fail(Code::S010, fp, format!("`{g}` is not a function"));
         };
-        let vs = self.args(xs)?;
-        if params.len() != vs.len() {
+        if params.len() != xs.len() {
+            self.args(xs.iter().copied())?;
             return fail(
                 Code::S007,
                 pos,
                 format!(
                     "`{g}` takes {} argument(s), but it has {}",
                     params.len(),
-                    vs.len()
+                    xs.len()
                 ),
             );
         }
-        // A call outside a body runs on static values only, so its site never names hardware.
-        let site = self
-            .syms
-            .calls
-            .get(self.item)
-            .and_then(|m| m.get(&node))
-            .copied()
-            .unwrap_or(0);
+        let acts = self.actuals(params, xs, bound)?;
+        let site = self.site(node);
         let u = self.syms.items.get(i).copied().unwrap_or(0);
-        self.nested(pos, |ev| {
+        let (result, written) = self.nested(pos, |ev| {
             ev.in_frame(None, |ev| {
                 let (path, frame) = ev.frame_of(u, Step::Call(site));
                 ev.in_item(i, frame, |ev| {
-                    for (q, v) in params.iter().zip(vs) {
-                        ev.param(pos, *comptime, q, v)?;
+                    let mut places = Vec::new();
+                    for (q, a) in params.iter().zip(acts) {
+                        ev.param(pos, *comptime, q, a, &mut places)?;
                     }
                     let rt = ev.type_expr(ret)?;
                     ev.ret = Some(rt);
-                    match ev.block(*ip, body, false)? {
+                    let result = match ev.block(*ip, body, false)? {
                         Some(Val::Hw(h)) => {
                             let role = ev.paths.push(path, Step::Role(Role::Ret));
                             let name = ev.version(Tag::Ret, role);
-                            Ok(Some(Out::Made(ev.bind_hw(pos, name, h))))
+                            Out::Made(ev.bind_hw(pos, name, h))
                         }
-                        Some(v) => Ok(Some(Out::Made(v))),
-                        None => fail(
-                            Code::S010,
-                            pos,
-                            format!("`{}` ends without `return`", fn_name.name),
-                        ),
-                    }
+                        Some(v) => Out::Made(v),
+                        None => {
+                            return fail(
+                                Code::S010,
+                                pos,
+                                format!("`{}` ends without `return`", fn_name.name),
+                            );
+                        }
+                    };
+                    Ok((result, ev.finals(places)))
                 })
             })
-        })
+        })?;
+        self.write_back(pos, written)?;
+        Ok(Some(result))
+    }
+
+    /// The final value of each `mut` formal with the place of its actual, in the order of the
+    /// parameters. The value leaves the frame of the callee, so it moves and no copy is made.
+    fn finals(&mut self, places: Vec<(DeclId, Place)>) -> Vec<(Place, Val)> {
+        let mut written = Vec::with_capacity(places.len());
+        for (id, place) in places {
+            if let Some(slot) = self.store.frame_mut().and_then(|f| f.get_mut(&id)) {
+                written.push((
+                    place,
+                    std::mem::replace(&mut slot.value, Val::Static(Value::Unit)),
+                ));
+            }
+        }
+        written
+    }
+
+    /// The write-backs of the call at `pos`, in the order of the parameters. Each checks the
+    /// mutation rule (`S016`), then charges the size of the final value, then writes it into
+    /// the live root.
+    fn write_back(&mut self, pos: Pos, written: Vec<(Place, Val)>) -> Res<()> {
+        for (place, value) in written {
+            self.mutation(pos)?;
+            self.charge(pos, self.seen_size(value.seen()))?;
+            self.store_at(pos, pos, &place, value)?;
+        }
+        Ok(())
     }
 
     /// Binds a parameter of a call. Its type can use the parameters before it. A static
-    /// parameter needs a static argument.
-    fn param(&mut self, pos: Pos, comptime: bool, q: &Param, v: Out) -> Res<()> {
+    /// parameter needs a static argument. A `mut` formal copies its place, after the charge,
+    /// and it is a mutable local of the callee.
+    fn param(
+        &mut self,
+        pos: Pos,
+        comptime: bool,
+        q: &Param,
+        actual: Actual,
+        places: &mut Vec<(DeclId, Place)>,
+    ) -> Res<()> {
         let t = self.type_expr(&q.ty)?;
-        self.charge(pos, self.size(&v))?;
-        // TODO(#179): bind a `mut` formal to its place (plan step 28).
-        if q.mode == ParamMode::Mut {
-            return fail(
-                Code::S010,
-                pos,
-                format!("the `mut` formal `{}` is not supported yet", q.name.name),
-            );
-        }
-        let x = if comptime || q.mode == ParamMode::Comptime {
-            let v = self.settle(pos, t, v)?;
-            Val::Static(self.conform(pos, t, v)?)
-        } else {
-            self.conform_val(pos, t, v)?
-        };
         let id = self.decl(&q.name)?;
+        let (x, mutable) = match actual {
+            Actual::Value(v) => {
+                self.charge(pos, self.size(&v))?;
+                let x = if comptime || q.mode == ParamMode::Comptime {
+                    let v = self.settle(pos, t, v)?;
+                    Val::Static(self.conform(pos, t, v)?)
+                } else {
+                    self.conform_val(pos, t, v)?
+                };
+                (x, false)
+            }
+            Actual::Place(place) => {
+                let part = Out::Ref(Ref {
+                    root: place.root,
+                    path: place.keys.clone(),
+                });
+                self.charge(pos, self.size(&part))?;
+                let ty = place
+                    .ty
+                    .or_else(|| self.store.seen(&part).ty(&self.graph, &mut self.tys));
+                if ty != Some(t) {
+                    return fail(
+                        Code::S010,
+                        pos,
+                        format!(
+                            "a `mut` actual has the type {}, not {}",
+                            self.tys.text(t),
+                            self.text(self.store.seen(&part))
+                        ),
+                    );
+                }
+                let x = if comptime {
+                    Val::Static(self.static_value(pos, part)?)
+                } else {
+                    self.store.take(part)
+                };
+                places.push((id, place));
+                (x, true)
+            }
+        };
         let x = self.named(pos, id, x);
         self.bind(
             id,
             Slot {
                 ty: Some(t),
-                mutable: false,
+                mutable,
                 value: x,
             },
         );
@@ -155,7 +328,8 @@ impl Evaluator<'_> {
         fp: Pos,
         g: &str,
         builtin: Prelude,
-        xs: &[Expr],
+        xs: &[&Expr],
+        bound: usize,
     ) -> Res<Option<Out>> {
         self.charge(fp, 1)?;
         match builtin {
@@ -163,7 +337,7 @@ impl Evaluator<'_> {
             Prelude::Pop => return self.pop(pos, g, xs),
             _ => {}
         }
-        let vs = self.args(xs)?;
+        let vs = in_parameter_order(self.args(xs.iter().copied())?, bound);
         if builtin == Prelude::Len {
             return self.len(pos, vs);
         }
