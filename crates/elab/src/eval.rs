@@ -17,6 +17,7 @@ mod container;
 mod hwops;
 mod inst;
 mod place;
+mod record;
 mod types;
 
 pub use inst::Design;
@@ -132,7 +133,9 @@ fn element<'a>(v: &'a Value, path: &[usize], steps: &Cell<u64>) -> &'a Value {
     let mut cur = v;
     for &k in path {
         cur = match cur {
-            Value::Array(_, xs) | Value::Tuple(xs) => xs.get(k).unwrap_or(&ABSENT_VALUE),
+            Value::Array(_, xs) | Value::Tuple(xs) | Value::Record(_, xs) => {
+                xs.get(k).unwrap_or(&ABSENT_VALUE)
+            }
             _ => &ABSENT_VALUE,
         };
     }
@@ -956,7 +959,7 @@ impl Evaluator<'_> {
             Expr::Field { pos, base, field } => {
                 let b = self.eval(base)?;
                 let b = need(base, b)?;
-                self.field(*pos, &b, field)
+                self.field(*pos, b, field)
             }
             Expr::Unit { .. } | Expr::Tuple { .. } | Expr::Array { .. } => self.container(e),
             Expr::Select { .. } => self.read(e),
@@ -1002,18 +1005,11 @@ impl Evaluator<'_> {
         }
     }
 
-    /// A port of an instance: a child input is a target, and a child output is hardware.
-    fn field(&mut self, pos: Pos, b: &Out, field: &Ident) -> Res<Option<Out>> {
-        let Seen::Handle(Handle::Inst { id, path, inst }) = self.store.seen(b) else {
-            return fail(
-                Code::S010,
-                pos,
-                format!(
-                    "{} has no field `{}`",
-                    self.text(self.store.seen(b)),
-                    field.name
-                ),
-            );
+    /// A field of a record, or a port of an instance: a child input is a target, and a child
+    /// output is hardware.
+    fn field(&mut self, pos: Pos, b: Out, field: &Ident) -> Res<Option<Out>> {
+        let Seen::Handle(Handle::Inst { id, path, inst }) = self.store.seen(&b) else {
+            return self.record_field(pos, b, field);
         };
         let (id, path, inst) = (*id, *path, *inst);
         let port = match self.names {
@@ -1163,10 +1159,7 @@ impl Evaluator<'_> {
         {
             match self.target(*fid) {
                 Some(Target::Decl(id))
-                    if matches!(
-                        self.file.decl(id).kind,
-                        Kind::Const | Kind::Fn | Kind::Module
-                    ) =>
+                    if matches!(self.file.decl(id).kind, Kind::Fn | Kind::Module) =>
                 {
                     return self.call_fn(pos, node, *fp, g, id, xs);
                 }
@@ -1176,25 +1169,7 @@ impl Evaluator<'_> {
                 _ => {}
             }
         }
-        let t = self.eval(f)?;
-        let t = need(f, t)?;
-        match (self.store.seen(&t), xs) {
-            (Seen::Static(Value::Type(t)), [x]) => {
-                let t = *t;
-                let a = self.eval(x)?;
-                let a = need(x, a)?;
-                self.charge(pos, self.size(&a))?;
-                Ok(Some(Out::Made(Val::Static(self.conform(pos, t, a)?))))
-            }
-            (Seen::Static(Value::Type(_)), _) => {
-                fail(Code::S007, pos, "a constructor takes 1 argument".to_owned())
-            }
-            (v, _) => fail(
-                Code::S010,
-                pos,
-                format!("{} is not a function", self.text(v)),
-            ),
-        }
+        self.construct(pos, f, xs)
     }
 
     /// A call of a function item. It runs in the call frame `<fn>$<k>c`. A hardware argument
@@ -1306,6 +1281,9 @@ impl Evaluator<'_> {
         let vs = self.args(xs)?;
         if builtin == Prelude::Len {
             return self.len(pos, vs);
+        }
+        if builtin == Prelude::DataBits {
+            return self.data_bits(pos, g, &vs);
         }
         let mut sizes = 0u128;
         for v in &vs {

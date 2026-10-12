@@ -36,6 +36,9 @@ pub(crate) struct Syms {
     pub fields: BTreeMap<NodeId, Sym>,
     /// The symbol of the name of each item.
     pub items: Vec<Sym>,
+    /// The number of each field of each struct item by the symbol of its name, in the order of
+    /// the items. An item that is not a struct has none.
+    pub struct_fields: Vec<BTreeMap<Sym, usize>>,
     /// The symbol of `clock`, the default domain.
     pub clock: Sym,
     /// The number of each call node in the body of each item: its index among the call nodes
@@ -136,6 +139,7 @@ impl Walk<'_> {
 
     fn item(&mut self, item: &Item) {
         self.calls.clear();
+        let mut struct_fields = BTreeMap::new();
         match item {
             Item::Const { ty, value, .. } => {
                 self.ty(ty, 1);
@@ -176,9 +180,13 @@ impl Walk<'_> {
                     self.binder(&p.name);
                     self.ty(&p.ty, 1);
                 }
-                for f in fields {
+                let mut numbers = BTreeMap::new();
+                for (k, f) in fields.iter().enumerate() {
+                    let s = self.intern(&f.name.name);
+                    numbers.entry(s).or_insert(k);
                     self.ty(&f.ty, 1);
                 }
+                struct_fields = numbers;
             }
             Item::Alias { ty, .. } => self.ty(ty, 1),
         }
@@ -194,6 +202,7 @@ impl Walk<'_> {
             sites.insert(id, k);
         }
         self.syms.calls.push(sites);
+        self.syms.struct_fields.push(struct_fields);
     }
 
     fn stmts(&mut self, ss: &[Stmt], depth: usize) {

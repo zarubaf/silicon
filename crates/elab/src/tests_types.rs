@@ -4,7 +4,7 @@
 //! The tests of the work count the steps of the table and not the time, so a walk that does
 //! not share the parts of a type fails them.
 
-use crate::tests::{message, out, serialized_len, type_work};
+use crate::tests::{exact, message, out, serialized_len, type_work};
 use std::fmt::Write;
 
 /// The result of `eval` with the default budgets.
@@ -192,4 +192,165 @@ fn a_join_of_shared_types_does_work_in_the_table() {
     let cost = |levels: usize| crate::tests::cost(&program(levels), "f()");
     let (small, large) = (cost(12), cost(14));
     assert!(large > 4 * small - 4 * 1000, "{small} {large}");
+}
+
+const RECORDS: &str = "struct P(comptime W: Nat) {\n\
+    \x20   a: UInt[W],\n\
+    \x20   b: (Bool, [UInt[W]; 2]),\n\
+    \x20   c: Bool,\n\
+    }\n\
+    struct Q {\n\
+    \x20   x: P[8],\n\
+    \x20   y: Unit,\n\
+    }\n\
+    struct E {}\n\
+    struct K {\n\
+    \x20   t: Type,\n\
+    \x20   n: Nat,\n\
+    }\n\
+    struct Wrap(comptime T: Type) {\n\
+    \x20   v: T,\n\
+    }\n\
+    fn place() -> P[8] {\n\
+    \x20   let mut r: P[8] = P[8]();\n\
+    \x20   r.a = 5;\n\
+    \x20   r.b.1[0] = 7;\n\
+    \x20   r.c = true;\n\
+    \x20   return r;\n\
+    }\n\
+    fn bad_place() -> P[8] {\n\
+    \x20   let mut r = P[8]();\n\
+    \x20   r.zz = 1;\n\
+    \x20   return r;\n\
+    }";
+
+const P8: &str = "(struct root P ((int 8)))";
+
+#[test]
+fn a_constructor_makes_a_record() {
+    assert_eq!(
+        o(RECORDS, "P[8](1, (true, [2, 3]), false)"),
+        format!(
+            "(record {P8} ((uint 8 1) (tuple ((bool true) (array (uint 8) ((uint 8 2) (uint 8 3))))) (bool false)))"
+        )
+    );
+    assert_eq!(o(RECORDS, "P[8](1)"), "S007 1:1");
+    assert_eq!(o(RECORDS, "P[8](1, 2, 3)"), "S010 1:1");
+    assert_eq!(o(RECORDS, "P[8](300, (true, [2, 3]), false)"), "S012 1:1");
+    assert_eq!(o(RECORDS, "P[8](1, (true, []), false)"), "S010 1:1");
+    assert_eq!(o(RECORDS, "Q(P[9](), ())"), "S010 1:1");
+    assert_eq!(
+        o(RECORDS, "K(Bool, 3)"),
+        "(record (struct root K ()) ((type bool) (int 3)))"
+    );
+    assert_eq!(
+        o(RECORDS, "Wrap[UInt[4]](3)"),
+        "(record (struct root Wrap ((type (uint 4)))) ((uint 4 3)))"
+    );
+    assert_eq!(o(RECORDS, "Wrap[UInt[4]](16)"), "S012 1:1");
+}
+
+#[test]
+fn the_zero_of_a_hardware_data_type() {
+    assert_eq!(
+        o(RECORDS, "P[8]()"),
+        format!(
+            "(record {P8} ((uint 8 0) (tuple ((bool false) (array (uint 8) ((uint 8 0) (uint 8 0))))) (bool false)))"
+        )
+    );
+    assert_eq!(o(RECORDS, "E()"), "(record (struct root E ()) ())");
+    assert_eq!(o("", "UInt[8]()"), "(uint 8 0)");
+    assert_eq!(
+        o("", "[Bool; 3]()"),
+        "(array bool ((bool false) (bool false) (bool false)))"
+    );
+    assert_eq!(o("", "Unit()"), "(unit)");
+    assert_eq!(o("", "Nat()"), "S010 1:1");
+    assert_eq!(o("", "(Bool, UInt[4])()"), "S010 1:1");
+    assert_eq!(o(RECORDS, "K()"), "S010 1:1");
+    assert_eq!(o(RECORDS, "Wrap[K]()"), "S010 1:1");
+    assert_eq!(o("", "Bool(1, 2)"), "S007 1:1");
+}
+
+#[test]
+fn a_field_refers_to_the_field() {
+    assert_eq!(o(RECORDS, "P[8]().a"), "(uint 8 0)");
+    assert_eq!(o(RECORDS, "P[8]().b.1[1]"), "(uint 8 0)");
+    assert_eq!(o(RECORDS, "K(Bool, 3).t"), "(type bool)");
+    assert_eq!(o(RECORDS, "Q().x.a"), "(uint 8 0)");
+    assert_eq!(o(RECORDS, "K(Bool, 3).m"), "S010 1:1");
+    assert_eq!(o(RECORDS, "P[8]().a.b"), "S010 1:1");
+    assert_eq!(o(RECORDS, "E().f"), "S010 1:1");
+    assert_eq!(o("", "(1).f"), "S010 1:1");
+}
+
+#[test]
+fn a_place_assigns_a_field() {
+    assert_eq!(
+        o(RECORDS, "place()"),
+        format!(
+            "(record {P8} ((uint 8 5) (tuple ((bool false) (array (uint 8) ((uint 8 7) (uint 8 0))))) (bool true)))"
+        )
+    );
+    assert_eq!(o(RECORDS, "bad_place()"), "S010 27:5");
+}
+
+#[test]
+fn a_record_equals_a_record_of_its_type() {
+    assert_eq!(o(RECORDS, "P[8]() == P[8]()"), "(bool true)");
+    assert_eq!(o(RECORDS, "P[8]() != P[8]()"), "(bool false)");
+    assert_eq!(o(RECORDS, "Q() == Q()"), "(bool true)");
+    assert_eq!(o(RECORDS, "P[8]() == P[9]()"), "S010 1:1");
+    assert_eq!(o(RECORDS, "P[8]() == (1,)"), "S010 1:1");
+}
+
+#[test]
+fn data_bits_reads_the_width_from_the_metadata() {
+    assert_eq!(o(RECORDS, "data_bits(P[8])"), "(int 26)");
+    assert_eq!(o(RECORDS, "data_bits(Q)"), "(int 26)");
+    assert_eq!(o(RECORDS, "data_bits(E)"), "(int 0)");
+    assert_eq!(o("", "data_bits(Nat)"), "S010 1:1");
+    assert_eq!(o("", "data_bits(1)"), "S010 1:1");
+    assert_eq!(o("", "data_bits()"), "S007 1:1");
+}
+
+/// A chain of structs that doubles at each step: `S(k+1) { a: S(k), b: S(k) }`. The term of
+/// the zero of `S(k)` has `2^k` leaves, and each struct stores its numbers.
+fn struct_doubling(levels: usize) -> String {
+    let mut src = "struct S0 { a: Bool }\n".to_owned();
+    for k in 1..=levels {
+        writeln!(src, "struct S{k} {{ a: S{}, b: S{} }}", k - 1, k - 1).unwrap();
+    }
+    src
+}
+
+#[test]
+fn data_bits_of_a_doubling_chain_does_constant_work() {
+    let src = struct_doubling(60);
+    assert_eq!(o(&src, "data_bits(S60)"), "(int 1152921504606846976)");
+    let base = type_work(&src, "S60");
+    let work = |calls: usize| {
+        let body = (0..calls)
+            .map(|_| "data_bits(S60)")
+            .collect::<Vec<_>>()
+            .join(", ");
+        type_work(&src, &format!("({body},)")) - base
+    };
+    assert_eq!(work(80) - work(40), 2 * (work(40) - work(20)));
+    assert!(work(40) - work(20) <= 20 * 20, "{}", work(40) - work(20));
+}
+
+/// The zero of `S60` has `2^61` nodes, so the test finishes only if the charge comes before the
+/// value.
+#[test]
+fn the_zero_of_a_doubling_chain_fails_before_it_builds() {
+    assert_eq!(o(&struct_doubling(60), "S60()"), "S015 1:1");
+}
+
+#[test]
+fn the_zero_charges_its_size_before_it_builds() {
+    let src = "struct P { a: [UInt[8]; 16], b: (Bool, UInt[4]) }";
+    // The units are those of `silicon-check eval`: the first use of the struct, then the zero
+    // with the size 1 + (1 + 16) + (1 + 1 + 1) from the metadata.
+    exact(src, "P()", 62);
 }
