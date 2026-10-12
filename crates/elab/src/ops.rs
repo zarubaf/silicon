@@ -334,7 +334,7 @@ pub(crate) fn binary(
 /// The join of two strings: one new string, with no copy of either operand beyond the result.
 fn join(x: &str, y: &str) -> String {
     #[cfg(test)]
-    crate::counters::add(&crate::counters::JOINED, (x.len() + y.len()) as u64);
+    crate::counters::add(crate::counters::Count::Joined, (x.len() + y.len()) as u64);
     let mut joined = String::with_capacity(x.len() + y.len());
     joined.push_str(x);
     joined.push_str(y);

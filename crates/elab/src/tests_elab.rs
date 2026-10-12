@@ -896,8 +896,7 @@ fn many_call_sites_keep_their_pre_order_numbers() {
 /// text once.
 #[test]
 fn a_list_argument_is_measured_and_charged_before_it_is_written() {
-    use crate::counters::{SERIALIZED, get};
-    use std::sync::atomic::Ordering;
+    use crate::counters::of;
     let make = |instance: &str| {
         format!(
             "module C(comptime xs: List[Int]) {{\n}}\n\
@@ -911,9 +910,8 @@ fn a_list_argument_is_measured_and_charged_before_it_is_written() {
     let text = format!("(list int ({}))", items.join(" "));
     let total = total(&with, "M");
     let written = |fuel: u64| {
-        SERIALIZED.store(0, Ordering::Relaxed);
         let _ = cost_fuel(&with, "M", fuel);
-        get(&SERIALIZED)
+        of(fuel).serialized
     };
     // The text is a length charge away from the fuel before the instance statement.
     let first = (0..=total).find(|&fuel| written(fuel) > 0).unwrap_or(total);
