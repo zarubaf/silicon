@@ -103,6 +103,25 @@ struct Store {
     /// The parameters of a frame that refer to an argument of the caller, by the number of
     /// the frame: a module argument refers until the instance statement pays its copy.
     links: BTreeMap<(usize, DeclId), Ref>,
+    /// The recursive size of the values that references copied, and the fuel budget of the
+    /// run, for the test of copies before a charge.
+    #[cfg(test)]
+    copied: (Cell<u64>, u64),
+}
+
+/// The copies of each run of a test, by its fuel budget: a test finds its run by a fuel that
+/// no other test uses, also when the tests share a process.
+#[cfg(test)]
+pub(crate) static COPIES: std::sync::Mutex<BTreeMap<u64, u64>> =
+    std::sync::Mutex::new(BTreeMap::new());
+
+#[cfg(test)]
+impl Drop for Store {
+    fn drop(&mut self) {
+        if let Ok(mut copies) = COPIES.lock() {
+            copies.insert(self.copied.1, self.copied.0.get());
+        }
+    }
 }
 
 /// The element of `v` at the numbers `path`, one for each container below it.
@@ -204,7 +223,11 @@ impl Store {
         match out {
             Out::Made(v) | Out::Named(v) => v,
             Out::Ref(r) => match self.at(&r) {
-                Seen::Static(v) => Val::Static(v.clone()),
+                Seen::Static(v) => {
+                    #[cfg(test)]
+                    self.copied.0.set(self.copied.0.get() + v.size());
+                    Val::Static(v.clone())
+                }
                 Seen::Hw(h) => Val::Hw(h),
                 Seen::Handle(h) => Val::Handle(h.clone()),
                 Seen::Pending(q, p) => Val::Pending(q, p.clone()),
@@ -386,6 +409,8 @@ impl<'a> Evaluator<'a> {
                 frames: vec![Frame::new()],
                 steps: Cell::new(0),
                 links: BTreeMap::new(),
+                #[cfg(test)]
+                copied: (Cell::new(0), budget.fuel),
             },
             graph: Graph::default(),
             paths: Paths::default(),
