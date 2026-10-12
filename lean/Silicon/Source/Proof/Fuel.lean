@@ -523,7 +523,7 @@ theorem finals_f (ps : List Resolve.Param) (acts : List Actual) :
 
 theorem writeBack_f (p : Pos) (outs : List (Place × Val)) :
     Follows cap (writeBack p outs) (writeBack p outs) := by
-  unfold writeBack; follows [mutation_f, store_f]
+  unfold writeBack; follows [mutation_f, bounded_f, store_f]
 
 theorem prim_f (p : Pos) (x : String) (k : PrimType) :
     Follows cap (prim p x k) (prim p x k) := by

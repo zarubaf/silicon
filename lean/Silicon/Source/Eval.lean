@@ -43,9 +43,10 @@ The operators follow v0.1 section 3. These rules settle the open points of slice
   parameters. The place has exactly the type of the formal, else `S010` at the call. In a
   `comptime fn`, its value is static (`S011`). The formal is a mutable local of the callee.
 - The write-backs of a call run after its result, in the order of the parameters. Each checks
-  the mutation rule (`S016`), then charges the size of the final value of the formal. Then it
-  writes the value into the live root, by the steps that the place got before the call. A
-  hardware value thus gives the caller root its next version.
+  the mutation rule (`S016`). A static value then checks the new depth of the root from the
+  value and the number of steps of the place (`S015`). Each then charges the size of the final
+  value of the formal. Then it writes the value into the live root, by the steps that the place
+  got before the call. A hardware value thus gives the caller root its next version.
 - Slice 1 has no function values: a function name is only a callee (`S010`).
 - `resize` keeps the signedness. `reinterpret` keeps the width.
 - A typed-use error is at the node of the typed use: the statement, the call, or the operator.
@@ -483,11 +484,14 @@ def finals (ps : List Resolve.Param) (acts : List Actual) : M (List (Place × Va
 
 /-!
 The write-backs of the call at `p` in the order of the parameters (section 9.1). Each checks the
-mutation rule (`S016`), then charges the copy of the value, then writes into the live root.
+mutation rule (`S016`), then the depth of the root, then charges the copy of the value, then
+writes into the live root.
 -/
 def writeBack (p : Pos) (outs : List (Place × Val)) : M Unit := do
   for (pl, v) in outs do
     mutation p
+    -- Another value has the type of the place, so it keeps the depth of the root.
+    if let .static w := v then bounded p (pl.keys.length + w.depth)
     charge p v.size
     store p p pl v
 
