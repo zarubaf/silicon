@@ -6,7 +6,8 @@ The evaluator of slice 1 with the budgets and the cost model of section 5.4 of t
 spec. It reads the resolved AST after the pre-check. It evaluates expressions, the bodies of
 `comptime fn` and `fn` items, and top-level constants. A value is static, hardware, or a handle
 (section 5.1). `Source.Elab` runs the module statements and the instantiations.
-`Source.Eval.Container` gives the rules of the static containers of slice 2.
+`Source.Eval.Container` gives the rules of the static containers of slice 2, and
+`Source.Eval.Types` the rules of the types as values.
 
 The operators follow v0.1 section 3. These rules settle the open points of slice 1:
 
@@ -56,7 +57,8 @@ its operation runs. When the fuel cannot pay it, the result is `S015` at the nod
    its operand. `&&`, `||`, and a conditional select a value, so they charge no size.
 4. A conversion charges the size of its operand plus the size of its result: `resize`,
    `reinterpret`, and a typed use that makes a finite value from an `Int`.
-5. `UInt[w]` and `SInt[w]` charge the size of the type that they make.
+5. `UInt[w]` and `SInt[w]` charge the size of the type that they make. The other type
+   constructors, the joins, and the struct specializations charge by `Source.Eval.Types`.
 6. A copy charges the size of the copied value: each argument, each return, and a binding of a
    reference. The arguments of a function, a prelude function other than `len`, and a
    constructor `T(x)` are copies. `len` only refers to its argument, so it copies nothing.
@@ -73,9 +75,10 @@ its operation runs. When the fuel cannot pay it, the result is `S015` at the nod
    operations. A read of a handle and a lift of a static operand only refer, so they charge
    nothing.
 
-The nesting depth counts the active calls, the constants in progress, and the top selection.
-A call checks it after its arguments, and a constant before it starts. Above the limit, the
-result is `S015` at the call or at the use of the constant.
+The nesting depth counts the active calls, the constants in progress, the struct
+specializations in progress, and the top selection. A call checks it after its arguments, and
+a constant and a specialization before they start. Above the limit, the result is `S015` at the
+call or at the use of the constant or the specialization.
 
 `Eval` is total by the fuel alone. Each recursive function takes a bound, and the first call
 gets the fuel as the bound. Each entry function charges one unit before it calls deeper with a
@@ -146,11 +149,11 @@ def family (t : PrimType) (args : List Value) : Except Fault Ty := do
   | _, _ => .error (.S007, "a type family takes one index argument")
 
 /-!
-The types as values of phase 3 resolve and pass the pre-check, but `Eval` does not evaluate them
+The struct values of phase 3 resolve and pass the pre-check, but `Eval` does not evaluate them
 yet. This stub reports `S004` at the form.
 -/
--- TODO(#178): evaluate the types as values, and remove this stub.
-abbrev typeStub (pos : Pos) : M α := fail .S004 pos "the types as values are not in this phase"
+-- TODO(#178): evaluate the struct values and `data_bits`, and remove this stub.
+abbrev typeStub (pos : Pos) : M α := fail .S004 pos "the struct values are not in this phase"
 
 def prim (pos : Pos) (x : String) : PrimType → M Ty
   | .bool => pure .bool
@@ -158,11 +161,11 @@ def prim (pos : Pos) (x : String) : PrimType → M Ty
   | .int => pure .int
   | .uint | .sint => fail .S007 pos s!"`{x}` takes 1 argument(s), but it has 0"
   | .unit => pure .unit
-  | .type => typeStub pos
+  | .type => pure .type
 
-/-! A string, a type, and a handle have no `Ty`, so an assignment keeps their form. -/
+/-! A string and a handle have no `Ty`, so an assignment keeps their form. -/
 def sameForm : Val → Val → Bool
-  | .static (.str _), .static (.str _) | .static (.type _), .static (.type _) => true
+  | .static (.str _), .static (.str _) => true
   | .handle (.res k _ t _), .handle (.res k' _ t' _) => k == k' && t == t'
   | _, _ => false
 
@@ -383,8 +386,9 @@ def iteration [Runs m] (pos : Pos) (i : Binder) (v : Int) (act : m α) : m α :=
 
 /-!
 The evaluator. `eval`, `typeExpr`, `stmt`, and `block` are the entry functions. Each charges
-one unit, then calls deeper with the bound `n`. The helpers `name`, `call`, and `index` get
-the bound `n` of their caller after its charge. They call only entry functions.
+one unit, then calls deeper with the bound `n`. The helpers `name`, `spec`, `call`, and
+`index` get the bound `n` of their caller after its charge. They call only entry functions and
+`spec`, which a name of a struct item uses.
 -/
 mutual
   def eval (b : Nat) (e : Resolve.Expr) : M (Option Out) :=
@@ -422,7 +426,7 @@ mutual
         match a, b with
         | .static a, .static b =>
           if composite a || composite b then
-            return some ⟨.static (← apply p (containerOp op a b)), false⟩
+            return some ⟨.static (← containerOp p op a b), false⟩
           let (a, b) ← unify p op a b
           return some ⟨.static (← apply p (binary op a b)), false⟩
         | a, b => return some ⟨← hwBinary p op a b, false⟩
@@ -435,14 +439,19 @@ mutual
           return some ⟨← mux p h a b, false⟩
         | v => if ← test p v then eval n y else eval n no
       | .call p f xs => call n p f xs
-      | .index p (.name bp _ (.type k)) xs => do
-        charge bp 1
-        return some ⟨.static (.type (← index n p k xs)), false⟩
-      | .index p b [x] => do
+      | .index p b xs => do
+        if let .name bp _ (.type k) := b then
+          charge bp 1
+          return some ⟨.static (.type (← index n p k xs)), false⟩
+        if let .name bp _ (.item i) := b then
+          if let some (.struct ..) := (← read).items[i]? then
+            charge bp 1
+            return some ⟨.static (.type (← spec n p i xs)), false⟩
+        let [x] := xs | fail .S010 p "an index of a value has one argument"
         let v ← data p (← need b (← eval n b)).value
+        if v matches .static (.type _) then fail .S007 p "a complete type takes no index"
         let i ← static x.pos (← need x (← eval n x)).value
         return some ⟨← pick p x.pos v i, true⟩
-      | .index p .. => fail .S010 p "an index of a value has one argument"
       | .field p b f => do
         match (← need b (← eval n b)).value with
         | .handle (.inst id path iface) =>
@@ -467,8 +476,11 @@ mutual
       | .select p b q i => do
         let v ← data p (← need b (← eval n b)).value
         return some ⟨← select p q i v, true⟩
-      | .arrayType p .. => typeStub p
-  termination_by (b, 1)
+      | .arrayType p t k => do
+        let e ← typeExpr n t
+        let t ← arrayTy p k.pos e (← static k.pos (← need k (← eval n k)).value)
+        return some ⟨.static (.type t), false⟩
+  termination_by (b, 2)
 
   def typeExpr (b : Nat) (t : Resolve.TypeExpr) : M Ty :=
     match b with
@@ -476,24 +488,20 @@ mutual
     | n + 1 => do
       charge t.pos 1
       match t with
-      | .name p x (.type k) => prim p x k
-      | .name p .. => typeStub p
+      | .name p x r => do typeOf p x (← name n p x r).value
       | .index p (.name bp _ (.type k)) xs => do
         charge bp 1
         index n p k xs
-      | .index p (.name ..) _ => typeStub p
+      | .index p (.name bp _ (.item i)) xs => do
+        charge bp 1
+        spec n p i xs
       | .index p .. => fail .S007 p "a complete type takes no more index"
       | .unit p => do charge p Ty.unit.size; return .unit
-      | .tuple p ts => do
-        let us ← ts.mapM (typeExpr n)
-        let t := Ty.tuple us.toArray
-        bounded p t.depth
-        charge p t.size
-        return t
+      | .tuple p ts => do tupleTy p (← ts.mapM (typeExpr n))
       | .array p t k => do
         let e ← typeExpr n t
         arrayTy p k.pos e (← static k.pos (← need k (← eval n k)).value)
-  termination_by (b, 1)
+  termination_by (b, 2)
 
   /-- `UInt[e]` or `SInt[e]` in a type or an expression. The base charged its node. -/
   def index (n : Nat) (p : Pos) (k : PrimType) (xs : List Resolve.Expr) : M Ty := do
@@ -503,7 +511,29 @@ mutual
     return t
   termination_by (n + 1, 0)
 
-  /-- A name. A constant evaluates at its first use, in the table of constants. -/
+  /--
+  A use of the struct item `i` at `p` with the arguments `xs`, in the table of specializations.
+  Each argument is static. The first use binds the parameters in the scope of the struct and
+  evaluates the field types there.
+  -/
+  def spec (n : Nat) (p : Pos) (i : Nat) (xs : List Resolve.Expr) : M Ty := do
+    let some (.struct _ x ps fs) := (← read).items[i]?
+      | fail .S007 p "a complete type takes no index"
+    let args ← xs.mapM fun e => do static p (← need e (← eval n e)).value
+    if ps.length != args.length then
+      fail .S007 p s!"`{x.name}` takes {ps.length} argument(s), but it has {args.length}"
+    specialize p x.name i args <| inFrame none <|
+      withReader (fun c => { c with item := i, frame := ⟨none, 0⟩ }) do
+        for (q, v) in ps.zip args do
+          let t ← typeExpr n q.ty
+          bindLocal q.name.id ⟨some t, false, .static (← conform p t v)⟩
+        fs.mapM fun f => typeExpr n f.ty
+  termination_by (n + 1, 0)
+
+  /--
+  A name. A constant and a `type` item evaluate at their first use, in the table of constants.
+  A struct item is a use of its specialization without arguments.
+  -/
   def name (n : Nat) (p : Pos) (x : String) : Ref → M Out
     | .local id => do
       match (← get).frame[id]? with
@@ -513,22 +543,18 @@ mutual
     | .fn _ => fail .S010 p s!"`{x}` is a function; slice 1 has no function values"
     | .item i => do
       match (← read).items[i]? with
-      | some (.const cp _ ty v) =>
-        match (← get).consts[i]? with
-        | some (.done c) => return ⟨.static c, true⟩
-        | some .inProgress => fail .S019 p s!"the constant `{x}` depends on itself"
-        | _ => nested p do
-          setConst i .inProgress
-          let c ← inFrame none do
-            let t ← typeExpr n ty
-            let o ← need v (← eval n v)
-            copy cp o
-            conform cp t (← static cp (← settle cp t o.value))
-          setConst i (.done c)
-          return ⟨.static c, true⟩
-      | some (.struct ..) | some (.alias ..) => typeStub p
+      | some (.const cp _ ty v) => do
+        let c ← constant p x i do
+          let t ← typeExpr n ty
+          let o ← need v (← eval n v)
+          copy cp o
+          conform cp t (← static cp (← settle cp t o.value))
+        return ⟨.static c, true⟩
+      | some (.alias _ _ ty) => do
+        return ⟨.static (← constant p x i do return .type (← typeExpr n ty)), true⟩
+      | some (.struct ..) => do return ⟨.static (.type (← spec n p i [])), true⟩
       | _ => fail .S010 p s!"`{x}` is a function; slice 1 has no function values"
-  termination_by (n + 1, 0)
+  termination_by (n + 1, 1)
 
   /--
   A call of a function item, a prelude function, or a type. A function item runs in the call
@@ -685,8 +711,10 @@ mutual
         return none
       | .connect p .. | .reg p .. | .wire p .. | .input p .. | .output p .. | .inst p .. =>
         fail .S011 p "a static evaluation makes no hardware"
-      | .alias p .. => typeStub p
-  termination_by (b, 1)
+      | .alias _ x ty => do
+        bindLocal x.id ⟨some .type, false, .static (.type (← typeExpr n ty))⟩
+        return none
+  termination_by (b, 2)
 
   /-- A block at `pos`. It charges as a statement. -/
   def block (b : Nat) (pos : Pos) (ss : List Resolve.Stmt) : M (Option Val) :=
@@ -697,7 +725,7 @@ mutual
       for s in ss do
         if let some r ← stmt n s then return some r
       return none
-  termination_by (b, 1)
+  termination_by (b, 2)
 end
 
 /-!
@@ -840,7 +868,7 @@ def symbols (items : Array Resolve.Item) (scans : Array Scan) : Syms := Id.run d
 def start (budget : Budget) (items : Array Resolve.Item) : Ctx × St :=
   let scans := items.map scanItem
   (⟨items, budget.depth, 0, none, 0, scans.map callSites, symbols items scans, ⟨none, 0⟩⟩,
-   ⟨budget.fuel, Array.replicate items.size .notStarted, {}, {}⟩)
+   ⟨budget.fuel, Array.replicate items.size .notStarted, #[], {}, {}⟩)
 
 /-! Runs `act` with the budget. The result has the used fuel. -/
 def run (budget : Budget) (items : Array Resolve.Item) (act : Nat → M α) :

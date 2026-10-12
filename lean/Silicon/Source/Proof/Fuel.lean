@@ -382,6 +382,20 @@ theorem known_f (v : Val) : Follows cap (known v) (known v) := by
 theorem bounded_f (p : Pos) (d : Nat) : Follows cap (bounded p d) (bounded p d) := by
   unfold bounded; follows
 
+theorem walked_f (p : Pos) (w : Walk α) : Follows cap (walked p w) (walked p w) := by
+  unfold walked; follows
+
+theorem containerOp_f (p : Pos) (op : BinOp) (a b : Value) :
+    Follows cap (containerOp p op a b) (containerOp p op a b) := by
+  unfold containerOp; follows [walked_f, apply_f]
+
+theorem typeOf_f (p : Pos) (x : String) (v : Val) :
+    Follows cap (typeOf p x v) (typeOf p x v) := by
+  unfold typeOf; follows
+
+theorem tupleTy_f (p : Pos) (ts : List Ty) : Follows cap (tupleTy p ts) (tupleTy p ts) := by
+  unfold tupleTy; follows [bounded_f]
+
 theorem element_f (p : Pos) (v : Val) : Follows cap (element p v) (element p v) := by
   unfold element; follows
 
@@ -394,7 +408,7 @@ theorem tupleOf_f (p : Pos) (vs : List Value) :
 
 theorem arrayOf_f (p : Pos) (vs : List Value) :
     Follows cap (arrayOf p vs) (arrayOf p vs) := by
-  unfold arrayOf; follows [conform_f, bounded_f]
+  unfold arrayOf; follows [walked_f, conform_f, bounded_f]
 
 mutual
   theorem build_f (p : Pos) : ∀ (t : Ty) (x : Part), Follows cap (build p t x) (build p t x)
@@ -496,6 +510,14 @@ theorem inFrameOf_f (fr : Frame) {x y : M α} (h : Follows cap x y) :
     Follows cap (inFrameOf fr x) (inFrameOf fr y) := by
   unfold inFrameOf; follows [h]
 
+theorem constant_f (p : Pos) (x : String) (i : Nat) {b b' : M Value} (h : Follows cap b b') :
+    Follows cap (constant p x i b) (constant p x i b') := by
+  unfold constant; follows [h, setConst_f, nested_f, inFrame_f]
+
+theorem specialize_f (p : Pos) (x : String) (i : Nat) (args : List Value) {f g : M (List Ty)}
+    (h : Follows cap f g) : Follows cap (specialize p x i args f) (specialize p x i args g) := by
+  unfold specialize; follows [h, nested_f, bounded_f]
+
 theorem iteration_f (p : Pos) (i : Binder) (v : Int) {x y : M α} (h : Follows cap x y) :
     Follows cap (iteration p i v x) (iteration p i v y) := by
   unfold iteration; follows [h, frameOf_f, inFrameOf_f, bindLocal_f]
@@ -515,12 +537,18 @@ theorem index_f (he : ∀ e, Follows m (eval k e) (eval m e)) (p : Pos) (kd : Pr
   rw [index.eq_def k, index.eq_def m]
   follows [he, static_f, need_f]
 
+theorem spec_f (he : ∀ e, Follows m (eval k e) (eval m e))
+    (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t)) (p : Pos) (i : Nat)
+    (xs : List Resolve.Expr) : Follows m (spec k p i xs) (spec m p i xs) := by
+  rw [spec.eq_def k, spec.eq_def m]
+  follows [he, ht, need_f, static_f, specialize_f, inFrame_f, conform_f, bindLocal_f]
+
 theorem name_f (he : ∀ e, Follows m (eval k e) (eval m e))
     (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t)) (p : Pos) (x : String) (r : Ref) :
     Follows m (name k p x r) (name m p x r) := by
   rw [name.eq_def k, name.eq_def m]
-  follows [he, ht, prim_f, need_f, copy_f, conform_f, static_f, settle_f, setConst_f, nested_f,
-    inFrame_f]
+  follows [he, ht, prim_f, need_f, copy_f, conform_f, static_f, settle_f, constant_f,
+    spec_f he ht]
 
 theorem call_f (he : ∀ e, Follows m (eval k e) (eval m e))
     (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t))
@@ -553,24 +581,28 @@ theorem follows_all : ∀ n,
       · rw [eval.eq_def (k + 1), eval.eq_def 0]
         apply Follows.exhaust (cap := k)
         intro _
-        follows [he k, index_f (he k), name_f (he k) (ht k), call_f (he k) (ht k) (hb k),
-          need_f, data_f, apply_f, hwUnary_f, test_f, hwBinary_f, unify_f, mux_f, static_f,
-          pick_f, element_f, tupleOf_f, arrayOf_f, select_f]
+        follows [he k, ht k, index_f (he k), name_f (he k) (ht k),
+          call_f (he k) (ht k) (hb k), spec_f (he k) (ht k), need_f, data_f, apply_f,
+          hwUnary_f, test_f, hwBinary_f, unify_f, mux_f, static_f, pick_f, element_f, tupleOf_f,
+          arrayOf_f, select_f, containerOp_f, arrayTy_f]
       · rw [eval.eq_def (k + 1), eval.eq_def (m + 1)]
         apply Follows.charge_one
         intro _
-        follows [he m, index_f (he m), name_f (he m) (ht m), call_f (he m) (ht m) (hb m),
-          need_f, data_f, apply_f, hwUnary_f, test_f, hwBinary_f, unify_f, mux_f, static_f,
-          pick_f, element_f, tupleOf_f, arrayOf_f, select_f]
+        follows [he m, ht m, index_f (he m), name_f (he m) (ht m),
+          call_f (he m) (ht m) (hb m), spec_f (he m) (ht m), need_f, data_f, apply_f,
+          hwUnary_f, test_f, hwBinary_f, unify_f, mux_f, static_f, pick_f, element_f, tupleOf_f,
+          arrayOf_f, select_f, containerOp_f, arrayTy_f]
     · rcases n' with _ | m
       · rw [typeExpr.eq_def (k + 1), typeExpr.eq_def 0]
         apply Follows.exhaust (cap := k)
         intro _
-        follows [he k, ht k, index_f (he k), prim_f, bounded_f, arrayTy_f, static_f, need_f]
+        follows [he k, ht k, index_f (he k), name_f (he k) (ht k), spec_f (he k) (ht k),
+          typeOf_f, tupleTy_f, arrayTy_f, static_f, need_f]
       · rw [typeExpr.eq_def (k + 1), typeExpr.eq_def (m + 1)]
         apply Follows.charge_one
         intro _
-        follows [he m, ht m, index_f (he m), prim_f, bounded_f, arrayTy_f, static_f, need_f]
+        follows [he m, ht m, index_f (he m), name_f (he m) (ht m), spec_f (he m) (ht m),
+          typeOf_f, tupleTy_f, arrayTy_f, static_f, need_f]
     · rcases n' with _ | m
       · rw [stmt.eq_def (k + 1), stmt.eq_def 0]
         apply Follows.exhaust (cap := k)

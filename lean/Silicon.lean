@@ -120,6 +120,7 @@ import Silicon.Source.Test.Sha256
 import Silicon.Source.Names
 import Silicon.Source.Test.Names
 import Silicon.Source.Eval.Basic
+import Silicon.Source.Eval.Types
 import Silicon.Source.Eval.Container
 import Silicon.Source.Eval
 import Silicon.Source.Test.Eval
