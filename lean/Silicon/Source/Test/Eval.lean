@@ -6,8 +6,9 @@ These tests check the static evaluator at the boundary of `eval` and `cost`. The
 operator with its boundary cases, the fit rule, the static faults, and the table of constants.
 They also check the calls and the exact charges of the cost model at the budget limits.
 
-Slice 1 has no lists and no arrays. The budget cases of section 11.3 with a list copy and with
-a nested doubling thus come with slice 2.
+The static containers of slice 2 come last. Their tests check the literals, the typed uses,
+the index, the selector, and `len`. They also check the equality, the depth bound, and the
+nested doubling of section 11.3.
 -/
 
 namespace Silicon.Source.Test.Eval
@@ -378,6 +379,161 @@ def counter : String := "module Counter(comptime W: Nat, comptime E: Bool) {\n}"
 #guard top counter "Counter(8, true)" (depth := 0) == "S015 1:1"
 #guard top counter "Counter(8 + 1, true)" == "usage"
 #guard top counter "Nope(8)" == "usage"
+
+/-! `()`, tuples, and arrays. A literal charges its node, its elements, and its size. -/
+#guard out "" "()" == "(unit)"
+#guard out "" "(1,)" == "(tuple ((int 1)))"
+#guard out "" "(1, true)" == "(tuple ((int 1) (bool true)))"
+#guard out "" "[1, 2]" == "(array int ((int 1) (int 2)))"
+#guard out "" "[[1, 2], [3, 4]]" ==
+  "(array (array int 2) ((array int ((int 1) (int 2))) (array int ((int 3) (int 4)))))"
+#guard exact "" "()" 2
+#guard exact "" "(1, true)" 8
+#guard exact "" "[1, 2]" 8
+
+/-!
+The elements of an array take their common type by the operand rule. `UInt[8](2)` charges 12,
+and the conversion of `1` charges 2.
+-/
+#guard out "" "[1, UInt[8](2)]" == "(array (uint 8) ((uint 8 1) (uint 8 2)))"
+#guard exact "" "[1, UInt[8](2)]" 20
+#guard out "" "[1, true]" == "S010 1:1"
+#guard out "" "[[1], [2, 3]]" == "S010 1:1"
+#guard out "" "[UInt[8](1), UInt[16](2)]" == "S010 1:1"
+#guard out "" "[(\"a\", 1)]" == "S010 1:1"
+#guard out "" "[300, UInt[8](1)]" == "S012 1:1"
+
+/-! `[]` takes its type only at a typed use. As an element or an operand, it is `S010` there. -/
+def empty : String :=
+  "fn f(x: [UInt[8]; 0]) -> Int { return len(x); }\n" ++
+  "fn g(comptime x: [Bool; 0]) -> Int { return len(x); }\n" ++
+  "fn h() -> [Bool; 0] { return []; }\n" ++
+  "const E: [Bool; 0] = [];"
+#guard out empty "f([])" == "(int 0)"
+#guard out empty "g([])" == "(int 0)"
+#guard out empty "h()" == "(array bool ())"
+#guard out empty "E" == "(array bool ())"
+#guard out "" "[]" == "S010 1:1"
+#guard out "" "[[]]" == "S010 1:2"
+#guard out "" "len([])" == "S010 1:5"
+#guard out "" "[] == []" == "S010 1:1"
+#guard out "fn f() -> Int { let a = []; return 0; }" "f()" == "S010 1:25"
+#guard out "fn f() -> Int { []; return 0; }" "f()" == "S010 1:17"
+#guard out "fn f() -> Int { let a: [Bool; 1] = []; return 0; }" "f()" == "S010 1:17"
+
+/-!
+A typed use of a container converts each element. It charges the size of the value plus the
+size of the result: 3 + 3 here. The type `[UInt[8]; 2]` charges 13.
+-/
+def typed (ty v : String) : String := s!"fn f() -> Int \{ let a: {ty} = {v}; return 0; }"
+#guard cost (typed "[UInt[8]; 2]" "[1, 2]") "f()" ==
+  cost "fn f() -> Int { let a = [1, 2]; return 0; }" "f()" + 13 + 6
+#guard out "fn f(a: [UInt[8]; 2]) -> UInt[8] { return a[1]; }" "f([1, 2])" == "(uint 8 2)"
+#guard out "fn f(a: [UInt[8]; 2]) -> UInt[8] { return a[1]; }" "f([1, 256])" == "S012 1:1"
+#guard out "fn f(a: [UInt[8]; 2]) -> UInt[8] { return a[1]; }" "f([1, 2, 3])" == "S010 1:1"
+#guard out "fn f() -> [Nat; 2] { let a: [Nat; 2] = [1, 2]; return a; }" "f()" ==
+  "(array nat ((int 1) (int 2)))"
+#guard out (typed "[Nat; 2]" "[1, -1]") "f()" == "S012 1:17"
+#guard out (typed "(UInt[8], Bool)" "(1, true)") "f()" == "(int 0)"
+#guard out (typed "(UInt[8], Bool)" "(1, 2)") "f()" == "S010 1:17"
+#guard out (typed "()" "()") "f()" == "(int 0)"
+#guard out (typed "Unit" "()") "f()" == "(int 0)"
+#guard out "fn f() -> Int { let mut a: [Int; 1] = [1]; a = [2]; return a[0]; }" "f()" ==
+  "(int 2)"
+
+/-!
+The length of an array type is a static `Nat` at its expression. A container type checks its
+depth.
+-/
+#guard out (typed "[Bool; -1]" "[]") "f()" == "S012 1:31"
+#guard out (typed "[Bool; true]" "[]") "f()" == "S010 1:31"
+#guard out (typed "[[Bool; 1]; 1]" "[[true]]") "f()" (depth := 3) == "(int 0)"
+#guard out (typed "[[Bool; 1]; 1]" "[[true]]") "f()" (depth := 2) == "S015 1:24"
+#guard out (typed "([Bool; 1],)" "([true],)") "f()" (depth := 2) == "S015 1:24"
+
+/-!
+An index and a selector refer to an element, and `len` refers to its array. They charge no
+size. The selector can be any number literal.
+-/
+#guard out "" "[1, 2][1]" == "(int 2)"
+#guard out "" "(1, true)[1]" == "(bool true)"
+#guard out "" "(1, 2).1" == "(int 2)"
+#guard out "" "(1, 2).0x1" == "(int 2)"
+#guard out "" "len([1, 2, 3])" == "(int 3)"
+#guard exact "" "[1, 2][0]" 11
+#guard exact "" "(1, 2).0" 9
+#guard exact "" "len([1, 2])" 10
+#guard out "" "[1, 2][2]" == "S013 1:8"
+#guard out "" "[1, 2][-1]" == "S013 1:8"
+#guard out "" "(1, 2).2" == "S013 1:8"
+#guard out "" "[1, 2][true]" == "S010 1:8"
+#guard out "" "[1, 2][0, 1]" == "S010 1:1"
+#guard out "" "[1, 2].0" == "S010 1:1"
+#guard out "" "1[0]" == "S010 1:1"
+#guard out "" "len(1)" == "S010 1:1"
+
+/-!
+A binding of an element copies it. `a[0]` charges 4 and its copy 3, where the literal `[1, 2]`
+charges 8.
+-/
+#guard cost "fn f() -> Int { let a = [[1, 2]]; let b = a[0]; return 0; }" "f()" ==
+  cost "fn f() -> Int { let a = [[1, 2]]; let b = [1, 2]; return 0; }" "f()" - 8 + 4 + 3
+
+/-!
+`==` and `!=` on containers need a common type for each pair of elements. They charge the sum
+of the sizes. The orderings take no container.
+-/
+#guard out "" "[1, 2] == [1, 2]" == "(bool true)"
+#guard out "" "[1, 2] != [1, 3]" == "(bool true)"
+#guard out "" "() == ()" == "(bool true)"
+#guard out "" "(1, (2, 3)) == (1, (2, 4))" == "(bool false)"
+#guard out "" "(\"a\", 1) == (\"a\", 1)" == "(bool true)"
+#guard out "" "[1, 2] == [UInt[8](1), 2]" == "(bool true)"
+#guard exact "" "[1, 2] == [1, 2]" 23
+#guard out "" "[300] == [UInt[8](1)]" == "S012 1:1"
+#guard out "" "[1] == [1, 2]" == "S010 1:1"
+#guard out "" "(1,) == (1, 2)" == "S010 1:1"
+#guard out "" "[1] == (1,)" == "S010 1:1"
+#guard out "" "[1] == 1" == "S010 1:1"
+#guard out "" "[1] < [2]" == "S010 1:1"
+#guard out "" "() >= ()" == "S010 1:1"
+#guard out "" "[1] + [2]" == "S010 1:1"
+
+/-! A new container above the nesting depth is `S015` at the node that makes it. -/
+#guard out "fn f() -> Int { let a = [[[1]]]; return 0; }" "f()" (depth := 4) == "(int 0)"
+#guard out "fn f() -> Int { let a = [[[1]]]; return 0; }" "f()" (depth := 3) == "S015 1:25"
+#guard out "fn f() -> Int { let a = (((1,),),); return 0; }" "f()" (depth := 3) == "S015 1:25"
+
+/-!
+In this phase a container holds only static values. A hardware element is `S010` at the
+element, and so is a handle. A hardware index is `S011` at the index.
+-/
+def hw (body : String) : String :=
+  "module M(comptime N: Nat) {\n  input x: UInt[8];\n  output y: UInt[8];\n" ++
+  "  reg r: UInt[8] = 0;\n" ++ body ++ "\n  r := x;\n  y := r;\n}\n"
+#guard top (hw "  let t = (1, x);") "M(1)" == "S010 5:15"
+#guard top (hw "  let t = [r];") "M(1)" == "S010 5:12"
+#guard top (hw "  let h = x +% 1;\n  let u = [1, 2][h];") "M(1)" == "S011 6:18"
+#guard top (hw "  let h = x +% 1;\n  let u: [Int; h] = [1];") "M(1)" == "S011 6:16"
+#guard top (hw "  let u = x.0;") "M(1)" == "S010 5:11"
+#guard top (hw "  let u = len(x);") "M(1)" == "S010 5:11"
+#guard top (hw "  let t = [1, 2] == x;") "M(1)" == "S010 5:11"
+#guard top (hw "  let t = [1, 2];\n  let u = t[N];") "M(2)" == "S013 6:13"
+#guard (top (hw "  let t = [1, 2];\n  let u = t[N];") "M(1)").startsWith "total"
+
+/-!
+The nested doubling of section 11.3: making `a_k` charges `2^(k + 2) - 1`. Each `let` adds 4
+units: the statement, the literal, and the two names. With the fuel 1000000, the sum first
+goes above the fuel at the `let` of `a17`.
+-/
+def doubling (k : Nat) : String :=
+  "fn d() -> Int {\n" ++ String.join ((List.range (k + 1)).map fun i =>
+    if i == 0 then "  let a0 = [0, 0];\n" else s!"  let a{i} = [a{i - 1}, a{i - 1}];\n") ++
+  "  return 0;\n}"
+#guard exact (doubling 0) "d()" 17
+#guard (List.range 6).all fun k =>
+  cost (doubling (k + 1)) "d()" == cost (doubling k) "d()" + 2 ^ (k + 3) - 1 + 4
+#guard out (doubling 20) "d()" 1000000 == "S015 19:13"
 
 /-! Errors of the earlier passes come first, also in `EXPR`. -/
 #guard out "const A: Nat = ;" "1" == "S001 1:16"
