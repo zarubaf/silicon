@@ -425,3 +425,80 @@ fn an_expression_is_checked_as_a_static_position() {
     // The arity check reads the targets of the expression, not of the file at 1:1.
     assert_eq!(run_expr(src, "f(1, 2)"), Some((Code::S007, 1, 1)));
 }
+
+#[test]
+fn s007_len_has_one_argument() {
+    fails(&fn_body("return len();"), S007, 2, 8);
+    fails(&fn_body("return len([p], [p]);"), S007, 2, 8);
+    assert_eq!(
+        message(&fn_body("return len([p], [p]);")),
+        "`len` takes 1 argument(s), but it has 2"
+    );
+    ok(&fn_body("let n = len([p, p]);\nreturn p;"));
+}
+
+#[test]
+fn s007_container_types_take_no_index() {
+    fails("const A: Unit[1] = ();", S007, 1, 10);
+    fails(&fn_body("return Unit[1];"), S007, 2, 8);
+    fails("const A: [Bool; 2][1] = [true, true];", S007, 1, 10);
+    fails("const A: (Bool,)[0] = (true,);", S007, 1, 10);
+    assert_eq!(
+        message("const A: (Bool,)[0] = (true,);"),
+        "a complete type takes 0 argument(s), but it has 1"
+    );
+    ok("const A: Unit = ();\nconst B: ((), [Unit; 0]) = ((), []);");
+}
+
+#[test]
+fn s007_a_part_of_a_container_has_its_index_arguments() {
+    fails("const A: (UInt, Bool) = (0, true);", S007, 1, 11);
+    fails("const A: [UInt; 2] = [0, 0];", S007, 1, 11);
+    fails("const A: [[Bool; 1][1]; 2] = [];", S007, 1, 11);
+    fails(&fn_body("return (p, SInt);"), S007, 2, 12);
+    fails(&fn_body("return [resize(p)].0;"), S007, 2, 9);
+}
+
+#[test]
+fn s005_the_container_index_and_the_array_length_are_static() {
+    fails(
+        &mod_body("reg r: UInt[W] = 0;\ncomptime if ((r, 1).0 == 0) {}"),
+        S005,
+        3,
+        15,
+    );
+    fails(
+        &mod_body("reg r: UInt[W] = 0;\ncomptime if ([r][0] == 0) {}"),
+        S005,
+        3,
+        15,
+    );
+    fails(
+        &mod_body("wire w: Nat;\nlet x: [Bool; w] = [];"),
+        S005,
+        3,
+        15,
+    );
+    fails(
+        &mod_body("input a: UInt[W];\nlet y = [1, 2][a];"),
+        S005,
+        3,
+        16,
+    );
+    fails(
+        &mod_body("input a: UInt[W];\nlet y = (1, 2)[a];"),
+        S005,
+        3,
+        16,
+    );
+}
+
+#[test]
+fn the_rules_that_need_static_values_are_left_to_elab() {
+    ok(&mod_body(
+        "input a: Bool;\nlet t = (a, ());\nlet n = len([a, a]);\nlet x = t.0;",
+    ));
+    ok(&fn_body(
+        "let t = (1, 2);\nlet x = t[0, 1];\nlet y = t < t;\nreturn [1] == [1, 2];",
+    ));
+}

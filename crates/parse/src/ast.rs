@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The source AST of slice 1. It mirrors `Silicon.Source.Syntax` in Lean: the same types,
+//! The source AST of slices 1 and 2. It mirrors `Silicon.Source.Syntax` in Lean: the same types,
 //! the same constructors, and the same field order. Only the `NodeId` of a node is not in
 //! Lean. The Lean name of a constructor is the lowercase name of the variant here, so the
 //! AST dump can print both with one rule.
@@ -168,9 +168,29 @@ pub enum Expr {
         base: Box<Expr>,
         field: Ident,
     },
+    Unit {
+        pos: Pos,
+    },
+    /// At least one element: `()` is `Unit`.
+    Tuple {
+        pos: Pos,
+        elems: Vec<Expr>,
+    },
+    Array {
+        pos: Pos,
+        elems: Vec<Expr>,
+    },
+    /// The selector `.N` of a tuple. `lit_pos` is the position of the number literal, for `S013`.
+    Select {
+        pos: Pos,
+        base: Box<Expr>,
+        lit_pos: Pos,
+        index: Nat,
+    },
 }
 
-/// A type expression: a type name, or a type family with its static arguments.
+/// A type expression: a type name, a type family with its static arguments, the unit type,
+/// a tuple type, or an array type `[T; N]`.
 #[cfg_attr(test, derive(Clone, Debug, PartialEq, Eq))]
 pub enum TypeExpr {
     Name {
@@ -182,6 +202,19 @@ pub enum TypeExpr {
         pos: Pos,
         base: Box<TypeExpr>,
         args: Vec<Expr>,
+    },
+    Unit {
+        pos: Pos,
+    },
+    /// At least one element type: `()` is `Unit`.
+    Tuple {
+        pos: Pos,
+        elems: Vec<TypeExpr>,
+    },
+    Array {
+        pos: Pos,
+        elem: Box<TypeExpr>,
+        len: Box<Expr>,
     },
 }
 
@@ -328,8 +361,13 @@ impl Expr {
                 take(base);
                 work.append(args);
             }
-            Expr::Field { base, .. } => take(base),
-            Expr::Num { .. } | Expr::Bool { .. } | Expr::Str { .. } | Expr::Name { .. } => {}
+            Expr::Field { base, .. } | Expr::Select { base, .. } => take(base),
+            Expr::Tuple { elems, .. } | Expr::Array { elems, .. } => work.append(elems),
+            Expr::Num { .. }
+            | Expr::Bool { .. }
+            | Expr::Str { .. }
+            | Expr::Name { .. }
+            | Expr::Unit { .. } => {}
         }
     }
 }
@@ -344,22 +382,31 @@ impl Drop for Expr {
     }
 }
 
+impl TypeExpr {
+    fn leaf() -> TypeExpr {
+        TypeExpr::Name {
+            pos: Pos { line: 0, col: 0 },
+            id: NodeId::DROPPED,
+            name: String::new(),
+        }
+    }
+
+    fn take_children(&mut self, work: &mut Vec<TypeExpr>) {
+        match self {
+            TypeExpr::Index { base, .. } => work.push(std::mem::replace(&mut **base, Self::leaf())),
+            TypeExpr::Array { elem, .. } => work.push(std::mem::replace(&mut **elem, Self::leaf())),
+            TypeExpr::Tuple { elems, .. } => work.append(elems),
+            TypeExpr::Name { .. } | TypeExpr::Unit { .. } => {}
+        }
+    }
+}
+
 impl Drop for TypeExpr {
     fn drop(&mut self) {
         let mut work = Vec::new();
-        let next = |t: &mut TypeExpr, work: &mut Vec<TypeExpr>| {
-            if let TypeExpr::Index { base, .. } = t {
-                let leaf = TypeExpr::Name {
-                    pos: Pos { line: 0, col: 0 },
-                    id: NodeId::DROPPED,
-                    name: String::new(),
-                };
-                work.push(std::mem::replace(&mut **base, leaf));
-            }
-        };
-        next(self, &mut work);
+        self.take_children(&mut work);
         while let Some(mut t) = work.pop() {
-            next(&mut t, &mut work);
+            t.take_children(&mut work);
         }
     }
 }

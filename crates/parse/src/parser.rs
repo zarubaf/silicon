@@ -42,23 +42,22 @@ pub(crate) struct Parser<'a> {
     top: Option<usize>,
     /// The start of the first outermost expression or type whose height is above the depth.
     high: Option<usize>,
-    /// For each opening bracket, the index of the bracket that closes it.
-    closer: Vec<Option<usize>>,
     /// For each opening bracket, whether a `,` comes before its closing bracket.
     comma: Vec<bool>,
+    /// For each opening bracket, whether a `;` comes before its closing bracket.
+    semi: Vec<bool>,
     /// The height of the last expression or type that a parse function completed.
     pub height: usize,
-    /// Whether the last postfix form is a place of slice 1: a name, or a field of a place.
+    /// Whether the last postfix form is a place: a name, or a field, an index, or a selector
+    /// of a place.
     pub place: bool,
-    /// Whether the last postfix form has an index.
-    pub indexed: bool,
     /// Whether the body of a `fn` without `comptime` is open: it declares no hardware.
     pub in_plain_fn: bool,
 }
 
 impl<'a> Parser<'a> {
     pub(crate) fn new(input: &'a str, tokens: &'a [Token], depth: usize) -> Self {
-        let (closer, comma) = bracket_tables(tokens);
+        let (comma, semi) = bracket_tables(tokens);
         Parser {
             input,
             tokens,
@@ -72,11 +71,10 @@ impl<'a> Parser<'a> {
             reported: BTreeSet::new(),
             top: None,
             high: None,
-            closer,
             comma,
+            semi,
             height: 0,
             place: false,
-            indexed: false,
             in_plain_fn: false,
         }
     }
@@ -299,39 +297,10 @@ impl<'a> Parser<'a> {
         self.kind_at(next) == Some(SyntaxKind::RParen) || self.comma[open]
     }
 
-    /// Whether the name at the current token starts a place of a later slice: after the
-    /// name come `.name`, `.number`, and `[...]`, then `=` or `:=`, and one of them is a
-    /// `[` or a `.number`.
-    pub(crate) fn at_later_place(&self) -> bool {
-        #[allow(clippy::enum_glob_use)]
-        use SyntaxKind::*;
-        let Some(name) = self.raw_index(0) else {
-            return false;
-        };
-        let mut seen = false;
-        let mut at = self.skip_trivia(name + 1);
-        loop {
-            match self.kind_at(at) {
-                Some(Eq | ColonEq) => return seen,
-                Some(LBracket) => {
-                    let Some(Some(close)) = self.closer.get(at) else {
-                        return false;
-                    };
-                    seen = true;
-                    at = self.skip_trivia(close + 1);
-                }
-                Some(Dot) => {
-                    let selector = self.skip_trivia(at + 1);
-                    match self.kind_at(selector) {
-                        Some(Ident) => {}
-                        Some(Dec | Hex | Bin) => seen = true,
-                        _ => return false,
-                    }
-                    at = self.skip_trivia(selector + 1);
-                }
-                _ => return false,
-            }
-        }
+    /// Whether the current token is a `[` of an array type `[T; N]`: a `;` comes before the
+    /// matching bracket.
+    pub(crate) fn at_array_type(&self) -> bool {
+        self.raw_index(0).is_some_and(|open| self.semi[open])
     }
 
     // The errors.
@@ -382,31 +351,34 @@ impl<'a> Parser<'a> {
     }
 }
 
-/// For each opening bracket (of the three kinds, as one depth), its closing bracket and
-/// whether a `,` comes before it. The tables end at the first error token, because the
-/// token list of the reference lexer ends there.
-fn bracket_tables(tokens: &[Token]) -> (Vec<Option<usize>>, Vec<bool>) {
+/// For each opening bracket (of the three kinds, as one depth), whether a `,` comes before its
+/// closing bracket, and whether a `;` does. The tables end at the first error token, because
+/// the token list of the reference lexer ends there.
+fn bracket_tables(tokens: &[Token]) -> (Vec<bool>, Vec<bool>) {
     #[allow(clippy::enum_glob_use)]
     use SyntaxKind::*;
-    let mut closer = vec![None; tokens.len()];
     let mut comma = vec![false; tokens.len()];
+    let mut semi = vec![false; tokens.len()];
     let mut open: Vec<usize> = Vec::new();
     for (i, token) in tokens.iter().enumerate() {
         match token.kind {
             Error => break,
             LParen | LBracket | LBrace => open.push(i),
             RParen | RBracket | RBrace => {
-                if let Some(start) = open.pop() {
-                    closer[start] = Some(i);
-                }
+                open.pop();
             }
             Comma => {
                 if let Some(&start) = open.last() {
                     comma[start] = true;
                 }
             }
+            Semi => {
+                if let Some(&start) = open.last() {
+                    semi[start] = true;
+                }
+            }
             _ => {}
         }
     }
-    (closer, comma)
+    (comma, semi)
 }

@@ -28,14 +28,14 @@ const COMPARISON: u8 = 6;
 const BUILTINS: [&str; 5] = ["TypeOf", "typeInfo", "field", "Struct", "ports"];
 
 impl Parser<'_> {
-    /// A type expression: a name, then any number of `[arguments]`.
+    /// A type expression: a name, `()`, a tuple type, an array type, or a grouped type, then
+    /// any number of `[arguments]`.
     pub(crate) fn type_expr(&mut self) -> Res {
         let start = self.offset();
         self.outermost(start, Self::type_form)
     }
 
     fn type_form(&mut self) -> Res {
-        let start = self.offset();
         let checkpoint = self.checkpoint();
         match self.cur() {
             Some(Ident) => {
@@ -47,9 +47,12 @@ impl Parser<'_> {
                     self.later_slice(self.offset(), "a path");
                     return None;
                 }
+                self.height = 1;
             }
-            Some(LParen | LBracket | FnKw) => {
-                self.later_slice(start, "this type");
+            Some(LParen) => self.paren_type()?,
+            Some(LBracket) => self.array_type()?,
+            Some(FnKw) => {
+                self.later_slice(self.offset(), "a function type");
                 return None;
             }
             Some(At) => return self.builtin(),
@@ -58,7 +61,7 @@ impl Parser<'_> {
                 return None;
             }
         }
-        let mut height = 1;
+        let mut height = self.height;
         loop {
             match self.cur() {
                 Some(LBracket) => {
@@ -76,6 +79,54 @@ impl Parser<'_> {
         }
         self.height = height;
         Some(())
+    }
+
+    /// `()`, a tuple type, or a grouped type. A group makes no node of the AST, so it adds
+    /// nothing to the height.
+    fn paren_type(&mut self) -> Res {
+        if self.at_unit_or_tuple() {
+            if self.next() == Some(RParen) {
+                self.height = 1;
+                return self.node(UnitType, |p| {
+                    p.bump();
+                    p.bump();
+                    Some(())
+                });
+            }
+            return self.node(TupleType, |p| {
+                p.bump();
+                let mut height = 0;
+                loop {
+                    p.type_expr()?;
+                    height = height.max(p.height);
+                    if !p.eat(Comma) || p.is(RParen) {
+                        break;
+                    }
+                }
+                p.expect(RParen, "`,` or `)`")?;
+                p.height = height + 1;
+                Some(())
+            });
+        }
+        self.node(ParenType, |p| {
+            p.bump();
+            p.type_expr()?;
+            p.expect(RParen, "`)`")
+        })
+    }
+
+    /// `[T; N]`
+    fn array_type(&mut self) -> Res {
+        self.node(ArrayType, |p| {
+            p.bump();
+            p.type_expr()?;
+            let elem = p.height;
+            p.expect(Semi, "`;`")?;
+            p.expr()?;
+            p.expect(RBracket, "`]`")?;
+            p.height = elem.max(p.height) + 1;
+            Some(())
+        })
     }
 
     /// An expression: a conditional, or the operators by precedence.
@@ -156,49 +207,43 @@ impl Parser<'_> {
         Some(())
     }
 
-    /// A primary expression with its calls, indexes, and field selections.
+    /// A primary expression with its calls, indexes, field selections, and selectors `.N`.
     pub(crate) fn postfix_expr(&mut self) -> Res {
         let checkpoint = self.checkpoint();
         let mut place = self.is(Ident);
-        let mut indexed = false;
-        let mut called = false;
         self.primary()?;
         let mut height = self.height;
         loop {
             match self.cur() {
                 Some(LParen) => {
                     place = false;
-                    called = true;
                     self.chain_at(checkpoint, CallExpr, height, |p| p.arg_list(RParen, true))?;
                 }
                 Some(LBracket) => {
-                    place = false;
-                    indexed = true;
                     self.chain_at(checkpoint, IndexExpr, height, |p| {
                         p.arg_list(RBracket, false)
                     })?;
                 }
+                Some(Dot) if matches!(self.next(), Some(Dec | Hex | Bin)) => {
+                    self.chain_at(checkpoint, SelectExpr, height, |p| {
+                        p.bump();
+                        p.bump();
+                        Some(())
+                    })?;
+                    self.height = 0;
+                }
                 Some(Dot) => {
                     self.chain_at(checkpoint, FieldExpr, height, |p| {
                         p.bump();
-                        match p.cur() {
-                            Some(Ident) => {
-                                p.bump();
-                                if p.is(LParen) {
-                                    p.later_slice(p.offset(), "a receiver call");
-                                    return None;
-                                }
-                                Some(())
-                            }
-                            Some(Dec | Hex | Bin) => {
-                                p.later_slice(p.offset(), "a tuple selector");
-                                None
-                            }
-                            _ => {
-                                p.syntax_error("expected a field name");
-                                None
-                            }
+                        if !p.eat(Ident) {
+                            p.syntax_error("expected a field name");
+                            return None;
                         }
+                        if p.is(LParen) {
+                            p.later_slice(p.offset(), "a receiver call");
+                            return None;
+                        }
+                        Some(())
                     })?;
                     self.height = 0;
                 }
@@ -208,7 +253,6 @@ impl Parser<'_> {
         }
         self.height = height;
         self.place = place;
-        self.indexed = indexed && !called;
         Some(())
     }
 
@@ -258,10 +302,7 @@ impl Parser<'_> {
                 }
             }
             Some(LParen) => return self.paren(),
-            Some(LBracket) => {
-                self.later_slice(start, "an array");
-                return None;
-            }
+            Some(LBracket) => return self.array(),
             Some(FnKw) => {
                 self.later_slice(start, "a function type");
                 return None;
@@ -287,18 +328,37 @@ impl Parser<'_> {
         None
     }
 
-    /// A parenthesized expression. The unit and the tuple belong to a later slice.
-    /// Parentheses make no node of the AST, so they add nothing to the height.
+    /// A parenthesized expression, `()`, or a tuple. Parentheses make no node of the AST, so a
+    /// group adds nothing to the height.
     fn paren(&mut self) -> Res {
-        let start = self.offset();
-        if self.at_unit_or_tuple() {
-            self.later_slice(start, "a unit or a tuple");
+        if !self.at_unit_or_tuple() {
+            return self.node(ParenExpr, |p| {
+                p.bump();
+                p.expr()?;
+                p.expect(RParen, "`)`")
+            });
+        }
+        if self.next() == Some(RParen) {
+            self.height = 1;
+            return self.node(UnitExpr, |p| {
+                p.bump();
+                p.bump();
+                Some(())
+            });
+        }
+        self.node(TupleExpr, |p| p.arg_list(RParen, true))?;
+        self.height += 1;
+        Some(())
+    }
+
+    /// An array value. `[T; N]` is an array type, which belongs to phase 3 of slice 2.
+    fn array(&mut self) -> Res {
+        if self.at_array_type() {
+            self.later_slice(self.offset(), "an array type in an expression");
             return None;
         }
-        self.node(ParenExpr, |p| {
-            p.bump();
-            p.expr()?;
-            p.expect(RParen, "`)`")
-        })
+        self.node(ArrayExpr, |p| p.arg_list(RBracket, true))?;
+        self.height += 1;
+        Some(())
     }
 }

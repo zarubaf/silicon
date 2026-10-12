@@ -224,20 +224,12 @@ impl Parser<'_> {
             });
         }
         let start = self.offset();
-        if self.at_later_place() {
-            self.later_slice(start, "a place with an index or a tuple selector");
-            return None;
-        }
         let checkpoint = self.checkpoint();
         self.outermost(start, Self::postfix_expr)?;
-        let (place, indexed) = (self.place, self.indexed);
+        let place = self.place;
         if let Some(op @ (Eq | ColonEq)) = self.cur() {
             if !place {
-                if indexed {
-                    self.later_slice(start, "a place with an index");
-                } else {
-                    self.syntax_error("expected `;`");
-                }
+                self.syntax_error("expected `;`");
                 return None;
             }
             let kind = if op == ColonEq {

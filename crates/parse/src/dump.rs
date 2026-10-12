@@ -137,6 +137,21 @@ fn expr(e: &Expr, out: &mut String) {
             sp(out);
             ident(field, out);
         }),
+        Expr::Unit { .. } => node("unit", out, |_| {}),
+        Expr::Tuple { elems, .. } => node("tuple", out, |out| {
+            sp(out);
+            list(elems, out, expr);
+        }),
+        Expr::Array { elems, .. } => node("array", out, |out| {
+            sp(out);
+            list(elems, out, expr);
+        }),
+        Expr::Select { base, index, .. } => node("select", out, |out| {
+            sp(out);
+            expr(base, out);
+            sp(out);
+            out.push_str(index.as_str());
+        }),
     }
 }
 
@@ -151,6 +166,17 @@ fn type_expr(t: &TypeExpr, out: &mut String) {
             type_expr(base, out);
             out.push(' ');
             list(args, out, expr);
+        }),
+        TypeExpr::Unit { .. } => node("unit", out, |_| {}),
+        TypeExpr::Tuple { elems, .. } => node("tuple", out, |out| {
+            out.push(' ');
+            list(elems, out, type_expr);
+        }),
+        TypeExpr::Array { elem, len, .. } => node("array", out, |out| {
+            out.push(' ');
+            type_expr(elem, out);
+            out.push(' ');
+            expr(len, out);
         }),
     }
 }

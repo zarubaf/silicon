@@ -267,12 +267,22 @@ impl Walker {
                     self.expr(arg);
                 }
             }
+            TypeExpr::Unit { .. } => {}
+            TypeExpr::Tuple { elems, .. } => {
+                for elem in elems {
+                    self.ty(elem);
+                }
+            }
+            TypeExpr::Array { elem, len, .. } => {
+                self.ty(elem);
+                self.expr(len);
+            }
         }
     }
 
     fn expr(&mut self, expr: &Expr) {
         match expr {
-            Expr::Num { .. } | Expr::Bool { .. } | Expr::Str { .. } => {}
+            Expr::Num { .. } | Expr::Bool { .. } | Expr::Str { .. } | Expr::Unit { .. } => {}
             Expr::Name { pos, id, name } => self.value_name(*pos, *id, name),
             Expr::Unary { arg, .. } => self.expr(arg),
             Expr::Binary { lhs, rhs, .. } => {
@@ -296,7 +306,12 @@ impl Walker {
                     self.expr(arg);
                 }
             }
-            Expr::Field { base, .. } => self.expr(base),
+            Expr::Field { base, .. } | Expr::Select { base, .. } => self.expr(base),
+            Expr::Tuple { elems, .. } | Expr::Array { elems, .. } => {
+                for elem in elems {
+                    self.expr(elem);
+                }
+            }
         }
     }
 

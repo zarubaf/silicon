@@ -245,10 +245,22 @@ impl Walk<'_> {
 
     fn ty(&mut self, t: &TypeExpr, depth: usize) {
         self.reach(depth);
-        if let TypeExpr::Index { base, args, .. } = t {
-            self.ty(base, depth + 1);
-            for a in args {
-                self.expr(a, depth + 1);
+        match t {
+            TypeExpr::Name { .. } | TypeExpr::Unit { .. } => {}
+            TypeExpr::Index { base, args, .. } => {
+                self.ty(base, depth + 1);
+                for a in args {
+                    self.expr(a, depth + 1);
+                }
+            }
+            TypeExpr::Tuple { elems, .. } => {
+                for e in elems {
+                    self.ty(e, depth + 1);
+                }
+            }
+            TypeExpr::Array { elem, len, .. } => {
+                self.ty(elem, depth + 1);
+                self.expr(len, depth + 1);
             }
         }
     }
@@ -261,7 +273,7 @@ impl Walk<'_> {
                 let n = Int::from_decimal(value.as_str()).unwrap_or_else(Int::zero);
                 self.numbers.insert((self.top.is_some(), *id), n);
             }
-            Expr::Bool { .. } | Expr::Str { .. } => {}
+            Expr::Bool { .. } | Expr::Str { .. } | Expr::Unit { .. } => {}
             Expr::Name { id, .. } => {
                 if self.is_constant(*id) {
                     self.nested = self.nested.max(depth);
@@ -304,6 +316,12 @@ impl Walk<'_> {
                     self.syms.fields.insert(field.id, s);
                 }
                 self.expr(base, d);
+            }
+            Expr::Select { base, .. } => self.expr(base, d),
+            Expr::Tuple { elems, .. } | Expr::Array { elems, .. } => {
+                for e in elems {
+                    self.expr(e, d);
+                }
             }
         }
     }

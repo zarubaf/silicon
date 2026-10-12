@@ -315,6 +315,20 @@ impl<'a> Lower<'a> {
                 base: Box::new(self.type_expr(&node.children().find(is_type)?)?),
                 args: self.args(node)?,
             }),
+            SyntaxKind::UnitType => Some(TypeExpr::Unit { pos }),
+            SyntaxKind::TupleType => Some(TypeExpr::Tuple {
+                pos,
+                elems: node
+                    .children()
+                    .map(|t| self.type_expr(&t))
+                    .collect::<Option<_>>()?,
+            }),
+            SyntaxKind::ArrayType => Some(TypeExpr::Array {
+                pos,
+                elem: Box::new(self.type_expr(&node.children().find(is_type)?)?),
+                len: Box::new(self.expr(&node.children().find(is_expr)?)?),
+            }),
+            SyntaxKind::ParenType => self.type_expr(&node.children().find(is_type)?),
             _ => None,
         }
     }
@@ -390,13 +404,39 @@ impl<'a> Lower<'a> {
                 base: operand(0)?,
                 field: self.ident(node)?,
             }),
+            SelectExpr => {
+                let literal = tokens(node).find(|t| matches!(t.kind(), Dec | Hex | Bin))?;
+                Some(Expr::Select {
+                    pos,
+                    base: operand(0)?,
+                    lit_pos: self.pos_at(&literal),
+                    index: number(literal.text()),
+                })
+            }
+            UnitExpr => Some(Expr::Unit { pos }),
+            TupleExpr => Some(Expr::Tuple {
+                pos,
+                elems: self.args(node)?,
+            }),
+            ArrayExpr => Some(Expr::Array {
+                pos,
+                elems: self.args(node)?,
+            }),
             _ => None,
         }
     }
 }
 
 fn is_type(node: &SyntaxNode) -> bool {
-    matches!(node.kind(), SyntaxKind::NameType | SyntaxKind::IndexType)
+    matches!(
+        node.kind(),
+        SyntaxKind::NameType
+            | SyntaxKind::IndexType
+            | SyntaxKind::UnitType
+            | SyntaxKind::TupleType
+            | SyntaxKind::ArrayType
+            | SyntaxKind::ParenType
+    )
 }
 
 fn is_expr(node: &SyntaxNode) -> bool {
@@ -413,5 +453,9 @@ fn is_expr(node: &SyntaxNode) -> bool {
             | CallExpr
             | IndexExpr
             | FieldExpr
+            | SelectExpr
+            | UnitExpr
+            | TupleExpr
+            | ArrayExpr
     )
 }

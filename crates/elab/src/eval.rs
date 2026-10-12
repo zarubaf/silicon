@@ -221,13 +221,21 @@ pub(crate) fn expr_pos(e: &Expr) -> Pos {
         | Expr::Cond { pos, .. }
         | Expr::Call { pos, .. }
         | Expr::Index { pos, .. }
-        | Expr::Field { pos, .. } => *pos,
+        | Expr::Field { pos, .. }
+        | Expr::Unit { pos }
+        | Expr::Tuple { pos, .. }
+        | Expr::Array { pos, .. }
+        | Expr::Select { pos, .. } => *pos,
     }
 }
 
 fn type_pos(t: &TypeExpr) -> Pos {
     match t {
-        TypeExpr::Name { pos, .. } | TypeExpr::Index { pos, .. } => *pos,
+        TypeExpr::Name { pos, .. }
+        | TypeExpr::Index { pos, .. }
+        | TypeExpr::Unit { pos }
+        | TypeExpr::Tuple { pos, .. }
+        | TypeExpr::Array { pos, .. } => *pos,
     }
 }
 
@@ -755,6 +763,15 @@ impl Evaluator<'_> {
                 let b = need(base, b)?;
                 self.field(*pos, &b, field)
             }
+            // TODO(#177): the values of the containers come in the next steps of phase 2.
+            Expr::Unit { pos }
+            | Expr::Tuple { pos, .. }
+            | Expr::Array { pos, .. }
+            | Expr::Select { pos, .. } => fail(
+                Code::S010,
+                *pos,
+                "the containers of slice 2 are not evaluated yet".to_owned(),
+            ),
         }
     }
 
@@ -867,12 +884,20 @@ impl Evaluator<'_> {
                         _ => fail(Code::S010, *bp, format!("`{name}` is not a type")),
                     }
                 }
-                TypeExpr::Index { .. } => fail(
+                _ => fail(
                     Code::S007,
                     *pos,
                     "a complete type takes no more index".to_owned(),
                 ),
             },
+            // TODO(#177): the container types come in the next steps of phase 2.
+            TypeExpr::Unit { pos } | TypeExpr::Tuple { pos, .. } | TypeExpr::Array { pos, .. } => {
+                fail(
+                    Code::S010,
+                    *pos,
+                    "the containers of slice 2 are not evaluated yet".to_owned(),
+                )
+            }
         }
     }
 
