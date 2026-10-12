@@ -456,7 +456,7 @@ fn parse_prints_the_ast_dump() -> Test {
     assert_eq!(
         text(&out),
         "(const \"W\" (name \"Nat\") (num 8))\n\
-         (module \"M\" ((param true \"n\" (name \"Nat\"))) (some (\"clk\")) \
+         (module \"M\" ((param comptime \"n\" (name \"Nat\"))) (some (\"clk\")) \
          ((input \"a\" (index (name \"UInt\") ((num 8)))) \
          (local false \"x\" none (binary add (name \"a\") (num 1)))))\n"
     );
