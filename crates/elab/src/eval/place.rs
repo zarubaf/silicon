@@ -604,6 +604,19 @@ impl Evaluator<'_> {
         })
     }
 
+    /// A mutation at `pos` of a binding of the current frame (section 9.4). The binding is older
+    /// than the innermost hardware arm when that arm started at the current depth: `S016`.
+    pub(super) fn mutation(&self, pos: Pos) -> Res<()> {
+        if self.arm == Some(self.depth) {
+            return fail(
+                Code::S016,
+                pos,
+                "a hardware arm changes a binding from before the arm".to_owned(),
+            );
+        }
+        Ok(())
+    }
+
     /// Writes `y` into the place (section 5.2). A place without a step binds its root again, so
     /// a hardware value gets the next version of the root. A step writes into the live value
     /// of the root. A list holds no hardware value: `S011` at `q`, the node of the value. A
