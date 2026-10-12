@@ -11,6 +11,7 @@ mod layout;
 pub mod names;
 mod ops;
 mod scan;
+mod serial;
 pub mod sha256;
 mod text;
 pub mod types;

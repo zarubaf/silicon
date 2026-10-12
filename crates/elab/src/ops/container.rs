@@ -8,7 +8,7 @@
 use super::{Fault, Fuel, finite, fits, int_text, type_error};
 use crate::Code;
 use crate::int::Int;
-use crate::types::{Ty, TyId, Types};
+use crate::types::{Joined, Ty, TyId, Types};
 use crate::value::{Value, int_size, width_size};
 use parse::ast::BinOp;
 use std::cmp::Ordering;
@@ -255,7 +255,7 @@ pub(crate) fn common_ty(lhs: TyId, rhs: TyId, tys: &mut Types) -> Option<TyId> {
             }
             Join::Visit(lhs, rhs) => {
                 if let Some(joined) = tys.joined(lhs, rhs) {
-                    ((lhs, rhs), *joined)
+                    ((lhs, rhs), joined.ty)
                 } else {
                     match (tys.get(lhs).clone(), tys.get(rhs).clone()) {
                         (Ty::Array(left, len), Ty::Array(right, other)) if len == other => {
@@ -296,12 +296,24 @@ pub(crate) fn common_ty(lhs: TyId, rhs: TyId, tys: &mut Types) -> Option<TyId> {
                 ((lhs, rhs), Some(tys.tuple(parts)))
             }
         };
-        tys.join(key, joined);
+        tys.join(
+            key,
+            Joined {
+                charge: Int::zero(),
+                ty: joined,
+            },
+        );
         let Some(t) = joined else {
             // Each open pair holds this pair, so none of them has a common type.
             for open in work {
                 if let Join::Array(l, r, _) | Join::Tuple(l, r, _) = open {
-                    tys.join((l, r), None);
+                    tys.join(
+                        (l, r),
+                        Joined {
+                            charge: Int::zero(),
+                            ty: None,
+                        },
+                    );
                 }
             }
             return None;
