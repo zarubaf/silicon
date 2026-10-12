@@ -624,6 +624,7 @@ impl Evaluator<'_> {
     pub(super) fn store_at(&mut self, pos: Pos, q: Pos, place: &Place, y: Val) -> Res<()> {
         if place.keys.is_empty() {
             let y = self.named(pos, place.id, y);
+            self.charge_held(pos, place.root)?;
             self.store.settle_root(place.root);
             if let Root::Local(frame, id) = place.root
                 && let Some(slot) = self
@@ -640,6 +641,7 @@ impl Evaluator<'_> {
             return fail(Code::S011, q, "a list holds no hardware value".to_owned());
         }
         let w = self.item(q, y)?;
+        self.charge_held(pos, place.root)?;
         if let Some(part) = self.store.part_mut(place.root, &place.keys) {
             *part = w;
         }
