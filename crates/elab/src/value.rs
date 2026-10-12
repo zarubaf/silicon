@@ -259,6 +259,8 @@ struct Entry {
 pub struct Types {
     entries: Vec<Entry>,
     index: BTreeMap<Ty, TyId>,
+    /// The common type of each pair of types that joined, or `None` if they have none.
+    joins: BTreeMap<(TyId, TyId), Option<TyId>>,
     /// The work of the lookups: 1 for each type and 1 for each part of a container type.
     #[cfg(test)]
     pub(crate) work: u64,
@@ -322,6 +324,17 @@ impl Types {
     #[must_use]
     pub fn tuple(&mut self, parts: Vec<TyId>) -> TyId {
         self.mk(Ty::Tuple(parts))
+    }
+
+    /// The common type of `lhs` and `rhs` if they joined before: `Some(None)` if they have
+    /// none.
+    pub(crate) fn joined(&self, lhs: TyId, rhs: TyId) -> Option<&Option<TyId>> {
+        self.joins.get(&(lhs, rhs))
+    }
+
+    /// Keeps the common type of the pair `key`.
+    pub(crate) fn join(&mut self, key: (TyId, TyId), joined: Option<TyId>) {
+        self.joins.insert(key, joined);
     }
 
     /// The type with the id `t`.
