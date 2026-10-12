@@ -102,6 +102,34 @@ def roundtrip (items : List Item) : Bool :=
 #guard st "x + 1;" == "(expr (binary add (name \"x\") (num 1)))"
 #guard st "x.y.z;" == "(expr (field (field (name \"x\") \"y\") \"z\"))"
 
+/-!
+A place is a name, or a field, an index, or a selector of a place. A call is no place. An
+index with two arguments parses: the type rules reject it.
+-/
+#guard st "a[i] = 1;" == "(assign (index (name \"a\") ((name \"i\"))) (num 1))"
+#guard st "t.0 := x;" == "(connect (select (name \"t\") 0) (name \"x\"))"
+#guard st "a[i].0x1.f[j] = 1;" ==
+  "(assign (index (field (select (index (name \"a\") ((name \"i\"))) 1) \"f\") " ++
+  "((name \"j\"))) (num 1))"
+#guard st "a[i, j] = 1;" ==
+  "(assign (index (name \"a\") ((name \"i\") (name \"j\"))) (num 1))"
+#guard st "a[i] + 1;" == "(expr (binary add (index (name \"a\") ((name \"i\"))) (num 1)))"
+#guard st "t.1;" == "(expr (select (name \"t\") 1))"
+#guard st "(a, b);" == "(expr (tuple ((name \"a\") (name \"b\"))))"
+#guard st "[a];" == "(expr (array ((name \"a\"))))"
+#guard stFails "f(x)[0] = 1;" .S001 9
+#guard stFails "a.0(x) = 1;" .S001 8
+#guard stFails "(a,) = 1;" .S001 6
+#guard stFails "[a][0] = 1;" .S001 8
+#guard stFails "a[] = 1;" .S001 3
+#guard stFails "a.x(1) = 1;" .S004 4
+#guard stFails "mem m: [T; 4];" .S004 1
+#guard stFails "[T; 4];" .S004 1
+#guard match parseSource defaultSyntaxDepth (ctBody "a.1[0] = x;") with
+  | .ok [.fn _ _ _ _ _ [.assign p (.index q (.select r _ l 1) _) _]] =>
+    p == ⟨2, 1⟩ && q == ⟨2, 1⟩ && r == ⟨2, 1⟩ && l == ⟨2, 3⟩
+  | _ => false
+
 /-! A statement that starts with `if` is an expression statement, and needs its `;`. -/
 #guard st "if (c) { a } else { b };" == "(expr (cond (name \"c\") (name \"a\") (name \"b\")))"
 #guard fails "fn f() -> T {\nif (c) { a } else { b }\n}" .S001 3 1
@@ -123,6 +151,66 @@ def roundtrip (items : List Item) : Bool :=
 #guard ex "if (c) { 1 } else { 2 }" == "(cond (name \"c\") (num 1) (num 2))"
 #guard ex "(if (c) { 1 } else { 2 }) + 1" ==
   "(binary add (cond (name \"c\") (num 1) (num 2)) (num 1))"
+
+/-!
+The container forms. `(a)` groups, and `(a,)` is a tuple. A selector `.N` takes each number
+literal. `t.0(x)` calls the element `t.0`.
+-/
+#guard ex "()" == "(unit)"
+#guard ex "(a)" == "(name \"a\")"
+#guard ex "(a,)" == "(tuple ((name \"a\")))"
+#guard ex "(a, (b, c),)" == "(tuple ((name \"a\") (tuple ((name \"b\") (name \"c\")))))"
+#guard ex "[]" == "(array ())"
+#guard ex "[a, [], ()]" == "(array ((name \"a\") (array ()) (unit)))"
+#guard ex "[if (c) { 1 } else { 2 },]" == "(array ((cond (name \"c\") (num 1) (num 2))))"
+#guard ex "t.0" == "(select (name \"t\") 0)"
+#guard ex "t.0x1.0b10" == "(select (select (name \"t\") 1) 2)"
+#guard ex "(x, true).0" == "(select (tuple ((name \"x\") (bool true))) 0)"
+#guard ex "t.0(x)" == "(call (select (name \"t\") 0) ((name \"x\")))"
+#guard ex "a[0].1.f" == "(field (select (index (name \"a\") ((num 0))) 1) \"f\")"
+#guard ex "-t.1" == "(unary neg (select (name \"t\") 1))"
+#guard match constValue "(a, b).0x1" with
+  | .ok (.select p (.tuple q _) l 1) => p == ⟨1, 14⟩ && q == ⟨1, 14⟩ && l == ⟨1, 21⟩
+  | _ => false
+#guard match constValue "[()]" with
+  | .ok (.array p [.unit q]) => p == ⟨1, 14⟩ && q == ⟨1, 15⟩
+  | _ => false
+
+/-! `S001` and `S004` at the container forms. An array type in an expression is `S004`. -/
+#guard ex "[UInt[8]; 4]" == "error S004 1:14"
+#guard ex "f(a, [T; 4])" == "error S004 1:19"
+#guard ex "[a, b; c]" == "error S004 1:14"
+#guard ex "(T; 4)" == "error S001 1:16"
+#guard ex "(,)" == "error S001 1:15"
+#guard ex "(a b)" == "error S001 1:17"
+#guard ex "(a,,)" == "error S001 1:17"
+#guard ex "[,]" == "error S001 1:15"
+#guard ex "[a b]" == "error S001 1:17"
+#guard ex "t.\"s\"" == "error S001 1:16"
+#guard ex "t.f(x)" == "error S004 1:17"
+#guard ex "t.0.f(x)" == "error S004 1:19"
+
+/-! The container types. `(T)` groups, and a suffix can follow each type form. -/
+#guard dump "const A: () = ();" == "(const \"A\" (unit) (unit))\n"
+#guard dump "const A: (T) = 0;" == "(const \"A\" (name \"T\") (num 0))\n"
+#guard dump "const A: (T,) = 0;" == "(const \"A\" (tuple ((name \"T\"))) (num 0))\n"
+#guard dump "const A: (T, (), [U; N + 1],) = 0;" ==
+  "(const \"A\" (tuple ((name \"T\") (unit) (array (name \"U\") " ++
+  "(binary add (name \"N\") (num 1))))) (num 0))\n"
+#guard dump "const A: [[Bool; 2]; 3] = 0;" ==
+  "(const \"A\" (array (array (name \"Bool\") (num 2)) (num 3)) (num 0))\n"
+#guard dump "const A: (T)[1] = 0;" ==
+  "(const \"A\" (index (name \"T\") ((num 1))) (num 0))\n"
+#guard fails "const A: (,) = 0;" .S001 1 11
+#guard fails "const A: (T U) = 0;" .S001 1 13
+#guard fails "const A: (T, U V) = 0;" .S001 1 16
+#guard fails "const A: [] = 0;" .S001 1 11
+#guard fails "const A: [T] = 0;" .S001 1 12
+#guard fails "const A: [T, U] = 0;" .S001 1 12
+#guard fails "const A: [T; ] = 0;" .S001 1 14
+#guard fails "const A: (fn() -> T,) = 0;" .S004 1 11
+#guard fails "const A: (T)(x) = 0;" .S004 1 13
+#guard fails "const A: [T; 2](x) = 0;" .S004 1 16
 
 /-! Precedence: each level binds tighter than the one before it. -/
 #guard ex "a || b && c" == "(binary lor (name \"a\") (binary land (name \"b\") (name \"c\")))"
@@ -327,6 +415,7 @@ def body (n : Nat) (s : String) : String :=
 #guard (parseSource defaultSyntaxDepth (body 20000 "x;\n")).toBool
 #guard (parseSource defaultSyntaxDepth (body 20000 "(x);\n")).toBool
 #guard (parseSource defaultSyntaxDepth (body 10000 "x.a = (f(y, z));\n")).toBool
+#guard (parseSource defaultSyntaxDepth (body 10000 "x[i].0 = ((y,), [z, ()]);\n")).toBool
 
 /-! The parser reads the text of the printer back to the same AST. -/
 def p : Pos := ⟨1, 1⟩
@@ -377,6 +466,8 @@ def reparse (s : String) : Bool :=
 #guard reparse "fn f() -> T { (a.b)(x); return -(a.b)(x).c; }"
 #guard reparse "const X: T = 1.f + --x - -(if (c) { a } else { b }).g + (\"s\".h)(1)[2];"
 #guard reparse "fn f() -> T { x.a.b = y; comptime for i in a.b .. c {} (x)(y); }"
+#guard reparse "fn f() -> T { x[i].0.b = (y,); t.1[f(())] := [[], (a, b)]; t.0(x); }"
+#guard reparse "const X: ((T,), [U[2]; 3], ()) = 0;"
 
 /-!
 The edge cases of the printer for `parse_print`. Each pair of operators nests in both
@@ -402,5 +493,24 @@ def unOps : List UnOp := [.neg, .not, .inv]
   .ctFor p (nm "i") (.field p (n 0) (nm "x")) (n 5) [],
   .expr p (.index p (v "x") [n 1]), .expr p (bin .eq (.field p (v "x") (nm "y")) (v "y")),
   .assign p (.field p (.field p (v "a") (nm "b")) (nm "c")) (v "d")]
+
+/-!
+The printer and the parser agree on the container forms. A tuple with no element prints as
+`()`, which is the unit value, so a tuple needs an element.
+-/
+def tupT (ts : List TypeExpr) : TypeExpr := .tuple p ts
+#guard constRoundtrip (.unit p) && constRoundtrip (.tuple p [v "a"])
+#guard constRoundtrip (.tuple p [.tuple p [n 1, .unit p], .array p []])
+#guard !constRoundtrip (.tuple p [])
+#guard constRoundtrip (.array p [.array p [n 0], .select p (v "t") p 2])
+#guard constRoundtrip (.call p (.select p (.select p (v "t") p 0) p 1) [])
+#guard constRoundtrip (.unary p .neg (.select p (.index p (v "a") [n 0]) p 0))
+#guard constRoundtrip (.select p (bin .add (v "a") (v "b")) p 3)
+#guard [TypeExpr.unit p, tupT [t "T"], tupT [t "T", .unit p], .array p (tupT [t "T"]) (n 4),
+  .index p (tupT [t "T"]) [n 1], .array p (.array p (t "T") (v "N")) (bin .add (n 1) (n 2))].all
+  fun ty => roundtrip [.const p (nm "X") ty (n 0)]
+#guard fnRoundtrip [.assign p (.index p (v "a") [n 0]) (n 1),
+  .connect p (.select p (.field p (v "u") (nm "d")) p 1) (v "x"),
+  .assign p (.field p (.index p (.select p (v "t") p 0) [v "i", v "j"]) (nm "f")) (v "y")]
 
 end Silicon.Source.Test.Parse
