@@ -572,6 +572,34 @@ fn a_message_bounds_the_text_of_a_type() {
     assert!(ty.ends_with("..."), "{text}");
 }
 
+/// An instance argument that waits for its type makes each argument take its value in the
+/// scope of the module. A reference argument stays a reference until the instance statement
+/// pays the sizes, so 1,000 references to an array of 1,000 elements copy nothing before
+/// `S015`.
+#[test]
+fn a_module_argument_copies_after_its_charge() {
+    let refs = vec!["a"; 1000].join(", ");
+    let params = (0..1000)
+        .map(|k| format!("comptime x{k}: [Int; 1000]"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let zeros = vec!["0"; 1000].join(", ");
+    let src = format!(
+        "const a: [Int; 1000] = [{zeros}];\n\
+         module C({params}, comptime e: [Bool; 0]) {{\n}}\n\
+         module T() {{\n  instance c = C({refs}, []);\n}}\n"
+    );
+    // The arguments and the constant cost far less than this fuel, and their copies far more.
+    let fuel = 100_003;
+    assert!(cost_fuel(&src, "T", fuel).starts_with("S015"));
+    let copies = crate::eval::COPIES
+        .lock()
+        .map(|c| c.get(&fuel).copied())
+        .ok()
+        .flatten();
+    assert_eq!(copies, Some(0));
+}
+
 fn container(ty: &str, arg: &str) -> String {
     format!("module C(comptime xs: {ty}) {{\n}}\nmodule T() {{\n  instance a = C({arg});\n}}\n")
 }
