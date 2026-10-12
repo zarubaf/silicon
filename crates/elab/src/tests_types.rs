@@ -312,6 +312,8 @@ fn data_bits_reads_the_width_from_the_metadata() {
     assert_eq!(o("", "data_bits(Nat)"), "S010 1:1");
     assert_eq!(o("", "data_bits(1)"), "S010 1:1");
     assert_eq!(o("", "data_bits()"), "S007 1:1");
+    assert_eq!(o(RECORDS, "Q.data_bits()"), "(int 26)");
+    assert_eq!(o("", "Int.data_bits()"), "S010 1:1");
 }
 
 /// A chain of structs that doubles at each step: `S(k+1) { a: S(k), b: S(k) }`. The term of

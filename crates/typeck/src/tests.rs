@@ -668,6 +668,7 @@ fn a_receiver_call_binds_its_receiver_to_the_first_parameter_without_comptime() 
         "let c = (1 == 1).static_assert(\"m\");\n\"m\".error();",
     ));
     ok("comptime fn h(x: Nat, comptime y: Nat) -> Nat { return x; }\nconst A: Nat = 1.h(2);");
+    ok(&lists("let t = Int.data_bits();"));
 }
 
 #[test]
@@ -677,7 +678,6 @@ fn s007_a_receiver_call_has_a_parameter_for_the_receiver_and_the_arity() {
         message(&lists("let t = Int.list();")),
         "`list` has no parameter without `comptime` for the receiver"
     );
-    fails(&lists("let t = Int.data_bits();"), S007, 6, 9);
     fails(
         "fn c(comptime n: Nat) -> Nat { return n; }\nfn g(k: Nat) -> Nat { return k.c(); }",
         S007,
