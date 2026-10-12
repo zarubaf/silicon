@@ -542,6 +542,9 @@ def reinterpret (t : Ty) (v : Value) : Except Fault Step :=
     if h : u = w then flip true w (h ▸ x) else typeError "`reinterpret` keeps the width"
   | _, _ => typeError s!"`reinterpret` needs finite types, not {v.text}"
 
+-- TODO(#177): evaluate the containers of slice 2.
+abbrev containers (pos : Pos) : M α := fail .S004 pos "containers are not in this phase"
+
 /-! `UInt[w]` or `SInt[w]`. The width is 1 to 65536. The charge is the size of the type. -/
 def family (t : PrimType) (args : List Value) : Except Fault Ty := do
   match t, args with
@@ -556,6 +559,7 @@ def prim (pos : Pos) (x : String) : PrimType → M Ty
   | .nat => pure .nat
   | .int => pure .int
   | .uint | .sint => fail .S007 pos s!"`{x}` takes 1 argument(s), but it has 0"
+  | .unit => containers pos
 
 /-! A string, a type, and a handle have no `Ty`, so an assignment keeps their form. -/
 def sameForm : Val → Val → Bool
@@ -853,6 +857,7 @@ mutual
             else return some ⟨.hw (.mk p q.ty (.out path q.name) []), true⟩
           | none => fail .S010 p s!"the instance has no port `{f.name}`"
         | v => fail .S010 p s!"{v.text} has no field `{f.name}`"
+      | .unit p | .tuple p _ | .array p _ | .select p .. => containers p
   termination_by (b, 1)
 
   def typeExpr (b : Nat) (t : Resolve.TypeExpr) : M Ty :=
@@ -866,6 +871,7 @@ mutual
         charge bp 1
         index n p k xs
       | .index p .. => fail .S007 p "a complete type takes no more index"
+      | .unit p | .tuple p _ | .array p .. => containers p
   termination_by (b, 1)
 
   /-- `UInt[e]` or `SInt[e]` in a type or an expression. The base charged its node. -/
@@ -1071,13 +1077,17 @@ def scanExpr : Resolve.Expr → ScanM Unit
   | .index _ b xs => do
     scanExpr b
     for x in xs do scanExpr x
-  | .num .. | .bool .. | .str .. | .name .. => pure ()
+  | .select _ a .. => scanExpr a
+  | .tuple _ xs | .array _ xs => for x in xs do scanExpr x
+  | .num .. | .bool .. | .str .. | .name .. | .unit _ => pure ()
 
 def scanType : Resolve.TypeExpr → ScanM Unit
-  | .name .. => pure ()
+  | .name .. | .unit _ => pure ()
   | .index _ b xs => do
     scanType b
     for x in xs do scanExpr x
+  | .tuple _ ts => for t in ts do scanType t
+  | .array _ t n => do scanType t; scanExpr n
 
 mutual
   def scanStmt : Resolve.Stmt → ScanM Unit

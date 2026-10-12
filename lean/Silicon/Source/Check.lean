@@ -2,8 +2,9 @@
 import Silicon.Source.Resolve
 
 /-!
-The generic pre-check of slice 1: pass 4 of the front end. It reads the resolved AST of
-`Source.Resolve`. It gives the same AST, or the first error of `S005` to `S007` by position.
+The generic pre-check of slice 1 and of the containers of slice 2: pass 4 of the front end. It
+reads the resolved AST of `Source.Resolve`. It gives the same AST, or the first error of `S005`
+to `S007` by position.
 
 These checks need no static values. Widths, types, and the dynamic stage rule are for `Elab`.
 The check runs on each item, also on an item that no instantiation uses. It checks both
@@ -12,9 +13,10 @@ branches of each `comptime if`.
 `S005`: a static position does not name a port, a register, a wire, or an instance. Slice 1 has
 no memory. The rule is syntactic. It looks only at names that resolve to the declaration of such
 a resource. A `let` alias of a resource and a domain name are for the stage rule `S011` of
-`Elab`. The error is at the name. These are the static positions of slice 1:
+`Elab`. The error is at the name. These are the static positions:
 
-1. Each argument of an index: `T[e]` in a type and `b[e]` in an expression.
+1. Each argument of an index: `T[e]` in a type and `b[e]` in an expression. Also the length `N`
+   of an array type `[T; N]`.
 2. The value of a `const` item.
 3. The condition of a `comptime if`, and both bounds of a `comptime for`.
 4. Each argument of an `instance`.
@@ -37,18 +39,23 @@ a resource. A `let` alias of a resource and a domain name are for the stage rule
 `S007` is at the call, the index, the type name, or the `instance` statement:
 
 - A call to a `fn` item has one argument for each parameter.
-- `resize`, `reinterpret`, and `static_assert` have two arguments, and `error` has one.
+- `resize`, `reinterpret`, and `static_assert` have two arguments. `error` and `len` have one.
 - A constructor `T(n)` has one argument. Slice 1 has no `T()`.
 - An `instance` has one argument for each parameter of its module.
-- `UInt` and `SInt` have one index argument. `Bool`, `Nat`, and `Int` have none. This also holds
-  for a type name in an expression. A complete type such as `UInt[8]` takes no more index.
+- `UInt` and `SInt` have one index argument. `Bool`, `Nat`, `Int`, and `Unit` have none. This
+  also holds for a type name in an expression. A complete type such as `UInt[8]`, `()`, a tuple
+  type, or an array type takes no index.
 
 A call through a local or a `const` has no known arity. `Elab` checks it with `S010`.
 
 `S008` cannot occur in slice 1, so this check has no code for it. The parser rejects a `mut`
-formal with `S004`, so no `mut` actual exists. A place is `x` or `x.f`, so it has no index
-expression. No expression mutates a root: an assignment is a statement, and slice 1 has no
-`push`, no `pop`, and no receiver call. Thus no window of section 9.1 holds a mutation.
+formal with `S004`, so no `mut` actual exists. No expression mutates a root. An assignment is a
+statement, also with an index or a selector `.N` in its place. The containers have no `push`,
+no `pop`, and no receiver call. Thus no window of section 9.1 holds a mutation.
+
+The other rules of the containers need static values, so they are for `Elab` (`S010`, `S011`,
+and `S013`). Among them are an index with two or more arguments, `<` on containers, and `==` on
+containers without a common type.
 
 Errors compete by position. At one position, the first error of the walk wins. Only two `S007`
 errors can share a position, so the code and the line do not depend on this order.
@@ -116,16 +123,17 @@ def arity (pos : Pos) (what : String) (want got : Nat) : M Unit :=
 
 def typeArity : PrimType → Nat
   | .uint | .sint => 1
-  | .bool | .nat | .int => 0
+  | .bool | .nat | .int | .unit => 0
 
 def fnArity : PrimFn → Nat
   | .resize | .reinterpret | .staticAssert => 2
-  | .error => 1
+  | .error | .len => 1
 
 /-! True for each static argument of a prelude function, by its index. -/
 def fnStatic : PrimFn → Nat → Bool
   | .resize, k | .reinterpret, k => k == 0
   | .staticAssert, _ | .error, _ => true
+  | .len, _ => false
 
 /-!
 The type head of a type: its name and its number of missing index arguments. A complete type
@@ -133,7 +141,7 @@ misses none.
 -/
 def typeHeadOf : Resolve.TypeExpr → String × Nat
   | .name _ n t => (s!"`{n}`", typeArity t)
-  | .index .. => ("a complete type", 0)
+  | _ => ("a complete type", 0)
 
 /-! A name. A type name has no index here. A resource in a static position is `S005`. -/
 def name (static : Bool) (pos : Pos) (n : String) : Ref → M Unit
@@ -200,7 +208,11 @@ def visit (static base : Bool) : Resolve.Expr → M (Option (String × Nat))
     if let some (n, k) := h then arity p n k xs.length
     for x in xs do let _ ← visit true false x
     return h.map fun _ => ("a complete type", 0)
-  | .field _ b _ => do let _ ← visit static false b; return none
+  | .field _ b _ | .select _ b .. => do let _ ← visit static false b; return none
+  | .unit _ => return none
+  | .tuple _ xs | .array _ xs => do
+    for x in xs do let _ ← visit static false x
+    return none
 
 def expr (static : Bool) (e : Resolve.Expr) : M Unit := do let _ ← visit static false e
 
@@ -209,8 +221,11 @@ def typeExpr : Resolve.TypeExpr → M Unit
   | .index p b xs => do
     let (n, k) := typeHeadOf b
     arity p n k xs.length
-    if b matches .index .. then typeExpr b
+    unless b matches .name .. do typeExpr b
     for x in xs do expr true x
+  | .unit _ => pure ()
+  | .tuple _ ts => for t in ts do typeExpr t
+  | .array _ t n => do typeExpr t; expr true n
 
 /-! `S006` at `pos` if a `comptime fn` has the statement `what`. -/
 def placement (o : Owner) (pos : Pos) (what : String) : M Unit :=
