@@ -1,0 +1,28 @@
+// A type argument always gives the digest name. An alias is transparent, so `A` and its type
+// share one module, and a different type gives a second module.
+// TOP Top()
+// CHECK-COUNT-2: (module Tab$0h{{[0-9a-f]{16}$}}
+// CHECK: (module Top
+// CHECK-COUNT-3: (inst
+type A = [UInt[4]; 3];
+module Tab(comptime T: Type) domains() {
+    input a: UInt[data_bits(T)];
+    output q: UInt[data_bits(T)];
+    q := a;
+}
+module Top() domains() {
+    input x: UInt[12];
+    input v: UInt[4];
+    output y: UInt[12];
+    output z: UInt[12];
+    output w: UInt[4];
+    instance t = Tab([UInt[4]; 3]);
+    instance u = Tab(A);
+    instance s = Tab(UInt[4]);
+    t.a := x;
+    u.a := t.q;
+    s.a := v;
+    y := u.q;
+    z := t.q;
+    w := s.q;
+}

@@ -1,0 +1,30 @@
+// A record module argument: the fields select static values, and the type of the parameter is a
+// specialization.
+// TOP Top()
+struct P(comptime W: Nat) {
+    a: UInt[W],
+    b: Bool,
+}
+module M(comptime R: P[8]) domains() {
+    input x: UInt[8];
+    output y: UInt[8];
+    output f: Bool;
+    comptime if (R.b) {
+        y := x +% R.a;
+    } else {
+        y := x;
+    }
+    f := R.b;
+}
+module Top() domains() {
+    input x: UInt[8];
+    output y: UInt[8];
+    output f: Bool;
+    instance m = M(P[8](5, true));
+    m.x := x;
+    y := m.y;
+    f := m.f;
+}
+// STEP in=(x 250) out=(f true y 255)
+// STEP in=(x 1) out=(f true y 6)
+// STEP in=(x 251) out=(f true y 0)

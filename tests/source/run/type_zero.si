@@ -1,0 +1,19 @@
+// `T()` is the static zero of a hardware data type: 0 for an integer leaf and false for a Bool leaf.
+// TOP M()
+struct P(comptime W: Nat) {
+    a: UInt[W],
+    b: Bool,
+}
+type T = ([UInt[8]; 2], Bool);
+module M() domains() {
+    input x: UInt[8];
+    output y: UInt[8];
+    output ok: Bool;
+    let z = P[8]();
+    let t = T();
+    let u = UInt[8]();
+    y := x +% z.a +% t.0[1] +% u;
+    ok := z.b == t.1;
+}
+// STEP in=(x 7) out=(ok true y 7)
+// STEP in=(x 255) out=(ok true y 255)

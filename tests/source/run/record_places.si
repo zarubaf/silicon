@@ -1,0 +1,24 @@
+// Field assignment of a record in a local, a nested record, and a record in a tuple.
+// TOP M()
+struct In {
+    n: UInt[4],
+}
+struct Out {
+    i: In,
+    k: Bool,
+}
+module M() domains() {
+    input x: UInt[4];
+    output y: UInt[4];
+    output k: Bool;
+    let mut r = Out(In(3), false);
+    r.i.n = 5;
+    r.k = true;
+    let mut t = (r, 2);
+    t.0.i.n = 6;
+    y := x +% t.0.i.n;
+    k := t.0.k && r.k;
+}
+// STEP in=(x 4) out=(k true y 10)
+// STEP in=(x 10) out=(k true y 0)
+// STEP in=(x 15) out=(k true y 5)

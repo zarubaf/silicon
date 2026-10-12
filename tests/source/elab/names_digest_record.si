@@ -1,0 +1,26 @@
+// A record argument always gives the digest name. Two equal records share one module, and a
+// different record gives a second module.
+// TOP Top()
+// CHECK-COUNT-2: (module Tab$0h{{[0-9a-f]{16}$}}
+// CHECK: (module Top
+// CHECK-COUNT-3: (inst
+struct P(comptime W: Nat) {
+    a: UInt[W],
+    b: Bool,
+}
+module Tab(comptime R: P[8]) domains() {
+    input a: UInt[8];
+    output q: UInt[8];
+    q := a +% R.a;
+}
+module Top() domains() {
+    input x: UInt[8];
+    output y: UInt[8];
+    instance t = Tab(P[8](1, true));
+    instance u = Tab(P[8](1, true));
+    instance v = Tab(P[8](2, true));
+    t.a := x;
+    u.a := t.q;
+    v.a := u.q;
+    y := v.q;
+}

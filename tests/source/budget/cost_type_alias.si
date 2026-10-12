@@ -1,0 +1,12 @@
+// A `type` alias charges the size of the type that it makes, and no copy. A use of the alias reads the local and charges its
+// node.
+// FUEL 146
+// TOP M()
+type A = [([UInt[8]; 4], Bool); 3];
+module M() domains() {
+    type B = [A; 2];
+    comptime for i in 0..8 {
+        type C = A;
+        type D = B;
+    }
+}

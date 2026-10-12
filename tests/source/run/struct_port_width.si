@@ -1,0 +1,14 @@
+// A port width from `data_bits` of a struct: `P[8]` has the fields UInt[8] and Bool, so 9 bits.
+// TOP M()
+struct P(comptime W: Nat) {
+    a: UInt[W],
+    b: Bool,
+}
+module M() domains() {
+    input x: UInt[data_bits(P[8])];
+    output y: UInt[data_bits(P[8])];
+    y := x +% 1;
+}
+// STEP in=(x 511) out=(y 0)
+// STEP in=(x 0) out=(y 1)
+// STEP in=(x 100) out=(y 101)

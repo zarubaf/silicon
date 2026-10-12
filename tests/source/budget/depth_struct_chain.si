@@ -1,0 +1,49 @@
+// A chain of structs that the module specializes one at a time, from the innermost outward: each `S_k` has one
+// field of `S_(k-1)`. Then `data_bits` and `T()` of the outer struct run at the exact value depth, and one
+// level above gives `S015`.
+// DEPTH 12
+// TOP M()
+struct S0 {
+    a: Bool,
+}
+struct S1 {
+    a: S0,
+}
+struct S2 {
+    a: S1,
+}
+struct S3 {
+    a: S2,
+}
+struct S4 {
+    a: S3,
+}
+struct S5 {
+    a: S4,
+}
+struct S6 {
+    a: S5,
+}
+struct S7 {
+    a: S6,
+}
+struct S8 {
+    a: S7,
+}
+struct S9 {
+    a: S8,
+}
+module M() domains() {
+    type T0 = S0;
+    type T1 = S1;
+    type T2 = S2;
+    type T3 = S3;
+    type T4 = S4;
+    type T5 = S5;
+    type T6 = S6;
+    type T7 = S7;
+    type T8 = S8;
+    type T9 = S9;
+    let bits = data_bits(T9);
+    let zero = T9();
+}

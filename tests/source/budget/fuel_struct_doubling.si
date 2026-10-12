@@ -1,0 +1,358 @@
+// A doubling chain of structs, specialized from the innermost outward: each `S_k` has two fields of `S_(k-1)`. `data_bits` of
+// the outer struct is the exponential width 2^69 at the charge of one node, because the type metadata holds it. The fuel equal
+// to the total of `cost` succeeds, and one unit less gives `S015`. A `T()` of the outer struct fails before it builds the value
+// (see the check file `s015_struct_doubling_zero.si`).
+// FUEL 822
+// TOP M()
+struct S0 {
+    a: Bool,
+}
+struct S1 {
+    a: S0,
+    b: S0,
+}
+struct S2 {
+    a: S1,
+    b: S1,
+}
+struct S3 {
+    a: S2,
+    b: S2,
+}
+struct S4 {
+    a: S3,
+    b: S3,
+}
+struct S5 {
+    a: S4,
+    b: S4,
+}
+struct S6 {
+    a: S5,
+    b: S5,
+}
+struct S7 {
+    a: S6,
+    b: S6,
+}
+struct S8 {
+    a: S7,
+    b: S7,
+}
+struct S9 {
+    a: S8,
+    b: S8,
+}
+struct S10 {
+    a: S9,
+    b: S9,
+}
+struct S11 {
+    a: S10,
+    b: S10,
+}
+struct S12 {
+    a: S11,
+    b: S11,
+}
+struct S13 {
+    a: S12,
+    b: S12,
+}
+struct S14 {
+    a: S13,
+    b: S13,
+}
+struct S15 {
+    a: S14,
+    b: S14,
+}
+struct S16 {
+    a: S15,
+    b: S15,
+}
+struct S17 {
+    a: S16,
+    b: S16,
+}
+struct S18 {
+    a: S17,
+    b: S17,
+}
+struct S19 {
+    a: S18,
+    b: S18,
+}
+struct S20 {
+    a: S19,
+    b: S19,
+}
+struct S21 {
+    a: S20,
+    b: S20,
+}
+struct S22 {
+    a: S21,
+    b: S21,
+}
+struct S23 {
+    a: S22,
+    b: S22,
+}
+struct S24 {
+    a: S23,
+    b: S23,
+}
+struct S25 {
+    a: S24,
+    b: S24,
+}
+struct S26 {
+    a: S25,
+    b: S25,
+}
+struct S27 {
+    a: S26,
+    b: S26,
+}
+struct S28 {
+    a: S27,
+    b: S27,
+}
+struct S29 {
+    a: S28,
+    b: S28,
+}
+struct S30 {
+    a: S29,
+    b: S29,
+}
+struct S31 {
+    a: S30,
+    b: S30,
+}
+struct S32 {
+    a: S31,
+    b: S31,
+}
+struct S33 {
+    a: S32,
+    b: S32,
+}
+struct S34 {
+    a: S33,
+    b: S33,
+}
+struct S35 {
+    a: S34,
+    b: S34,
+}
+struct S36 {
+    a: S35,
+    b: S35,
+}
+struct S37 {
+    a: S36,
+    b: S36,
+}
+struct S38 {
+    a: S37,
+    b: S37,
+}
+struct S39 {
+    a: S38,
+    b: S38,
+}
+struct S40 {
+    a: S39,
+    b: S39,
+}
+struct S41 {
+    a: S40,
+    b: S40,
+}
+struct S42 {
+    a: S41,
+    b: S41,
+}
+struct S43 {
+    a: S42,
+    b: S42,
+}
+struct S44 {
+    a: S43,
+    b: S43,
+}
+struct S45 {
+    a: S44,
+    b: S44,
+}
+struct S46 {
+    a: S45,
+    b: S45,
+}
+struct S47 {
+    a: S46,
+    b: S46,
+}
+struct S48 {
+    a: S47,
+    b: S47,
+}
+struct S49 {
+    a: S48,
+    b: S48,
+}
+struct S50 {
+    a: S49,
+    b: S49,
+}
+struct S51 {
+    a: S50,
+    b: S50,
+}
+struct S52 {
+    a: S51,
+    b: S51,
+}
+struct S53 {
+    a: S52,
+    b: S52,
+}
+struct S54 {
+    a: S53,
+    b: S53,
+}
+struct S55 {
+    a: S54,
+    b: S54,
+}
+struct S56 {
+    a: S55,
+    b: S55,
+}
+struct S57 {
+    a: S56,
+    b: S56,
+}
+struct S58 {
+    a: S57,
+    b: S57,
+}
+struct S59 {
+    a: S58,
+    b: S58,
+}
+struct S60 {
+    a: S59,
+    b: S59,
+}
+struct S61 {
+    a: S60,
+    b: S60,
+}
+struct S62 {
+    a: S61,
+    b: S61,
+}
+struct S63 {
+    a: S62,
+    b: S62,
+}
+struct S64 {
+    a: S63,
+    b: S63,
+}
+struct S65 {
+    a: S64,
+    b: S64,
+}
+struct S66 {
+    a: S65,
+    b: S65,
+}
+struct S67 {
+    a: S66,
+    b: S66,
+}
+struct S68 {
+    a: S67,
+    b: S67,
+}
+struct S69 {
+    a: S68,
+    b: S68,
+}
+module M() domains() {
+    type T0 = S0;
+    type T1 = S1;
+    type T2 = S2;
+    type T3 = S3;
+    type T4 = S4;
+    type T5 = S5;
+    type T6 = S6;
+    type T7 = S7;
+    type T8 = S8;
+    type T9 = S9;
+    type T10 = S10;
+    type T11 = S11;
+    type T12 = S12;
+    type T13 = S13;
+    type T14 = S14;
+    type T15 = S15;
+    type T16 = S16;
+    type T17 = S17;
+    type T18 = S18;
+    type T19 = S19;
+    type T20 = S20;
+    type T21 = S21;
+    type T22 = S22;
+    type T23 = S23;
+    type T24 = S24;
+    type T25 = S25;
+    type T26 = S26;
+    type T27 = S27;
+    type T28 = S28;
+    type T29 = S29;
+    type T30 = S30;
+    type T31 = S31;
+    type T32 = S32;
+    type T33 = S33;
+    type T34 = S34;
+    type T35 = S35;
+    type T36 = S36;
+    type T37 = S37;
+    type T38 = S38;
+    type T39 = S39;
+    type T40 = S40;
+    type T41 = S41;
+    type T42 = S42;
+    type T43 = S43;
+    type T44 = S44;
+    type T45 = S45;
+    type T46 = S46;
+    type T47 = S47;
+    type T48 = S48;
+    type T49 = S49;
+    type T50 = S50;
+    type T51 = S51;
+    type T52 = S52;
+    type T53 = S53;
+    type T54 = S54;
+    type T55 = S55;
+    type T56 = S56;
+    type T57 = S57;
+    type T58 = S58;
+    type T59 = S59;
+    type T60 = S60;
+    type T61 = S61;
+    type T62 = S62;
+    type T63 = S63;
+    type T64 = S64;
+    type T65 = S65;
+    type T66 = S66;
+    type T67 = S67;
+    type T68 = S68;
+    type T69 = S69;
+    let bits = data_bits(T69);
+}

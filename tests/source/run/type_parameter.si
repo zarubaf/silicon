@@ -1,0 +1,23 @@
+// A `Type` module argument: the port width comes from `data_bits` of the type, and the zero
+// from `T()`. `[UInt[4]; 3]` has 12 bits.
+// TOP Top()
+module M(comptime T: Type) domains() {
+    input x: UInt[data_bits(T)];
+    output y: UInt[data_bits(T)];
+    output z: UInt[4];
+    let zero = T();
+    y := x +% 1;
+    z := zero[2];
+}
+module Top() domains() {
+    input x: UInt[12];
+    output y: UInt[12];
+    output z: UInt[4];
+    instance m = M([UInt[4]; 3]);
+    m.x := x;
+    y := m.y;
+    z := m.z;
+}
+// STEP in=(x 4095) out=(y 0 z 0)
+// STEP in=(x 5) out=(y 6 z 0)
+// STEP in=(x 0) out=(y 1 z 0)
