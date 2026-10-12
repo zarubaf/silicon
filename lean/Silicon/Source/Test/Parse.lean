@@ -197,23 +197,22 @@ expression. A suffix can follow it.
   | _ => false
 
 /-!
-`S001` at an array type in an expression. An element that is no type, or no `;` after it, is
-`S001` at the first token that neither an array type nor an array literal accepts. For an
-element that is an expression, this is the `;`. An `S004` in the element stops the parse.
+`S001` at an array type in an expression. A `;` directly in the bracket makes an array type, so
+the element is a type. The first token that is not part of a type is `S001`.
 -/
-#guard ex "[0; 4]" == "error S001 1:16"
-#guard ex "[a, b; c]" == "error S001 1:19"
-#guard ex "[a + b; 4]" == "error S001 1:20"
-#guard ex "[a.b; 4]" == "error S001 1:18"
-#guard ex "[[a, b]; 4]" == "error S001 1:21"
-#guard ex "[[0; 2]; 4]" == "error S001 1:17"
+#guard ex "[0; 4]" == "error S001 1:15"
+#guard ex "[a, b; c]" == "error S001 1:16"
+#guard ex "[a + b; 4]" == "error S001 1:17"
+#guard ex "[a.b; 4]" == "error S001 1:16"
+#guard ex "[[a, b]; 4]" == "error S001 1:17"
+#guard ex "[[0; 2]; 4]" == "error S001 1:16"
 #guard ex "[T $; 4]" == "error S001 1:17"
 #guard ex "[$; 4]" == "error S001 1:15"
 #guard ex "[T; ]" == "error S001 1:18"
 #guard ex "[T; 4; 5]" == "error S001 1:19"
 #guard ex "[(a; b)]" == "error S001 1:17"
 #guard ex "[f(x); 4]" == "error S004 1:16"
-#guard ex "[a.f(x); 4]" == "error S004 1:18"
+#guard ex "[a.f(x); 4]" == "error S001 1:16"
 #guard ex "[fn() -> T; 4]" == "error S004 1:15"
 #guard ex "[@TypeOf(x); 4]" == "error S004 1:15"
 #guard ex "[a::T; 4]" == "error S004 1:16"
@@ -509,6 +508,8 @@ def body (n : Nat) (s : String) : String :=
 #guard (parseSource defaultSyntaxDepth (body 10000 "x.a = (f(y, z));\n")).toBool
 #guard (parseSource defaultSyntaxDepth (body 10000 "x[i].0 = ((y,), [z, ()]);\n")).toBool
 #guard (parseSource defaultSyntaxDepth (body 10000 "x = [[(T, U); 2]; 3]();\n")).toBool
+#guard ex ("".pushn '[' 4000 ++ "0" ++ String.join (List.replicate 4000 "; 1]")) ==
+  "error S001 1:4014"
 
 /-! The parser reads the text of the printer back to the same AST. -/
 def p : Pos := ⟨1, 1⟩
