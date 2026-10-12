@@ -1,6 +1,7 @@
 // A nested doubling (#161): `a_k = [a_(k-1), a_(k-1)]` charges 2^(k + 2) - 1, so each step doubles
 // the charge of the last. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
-// FUEL 524368
+// The join of the two element types of `a_k` visits `k` pairs of arrays and charges `k` more.
+// FUEL 524504
 // TOP M()
 module M() domains() {
     let a0 = [0, 0];
