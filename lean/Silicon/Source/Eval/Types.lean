@@ -25,7 +25,9 @@ follow sections 5.1, 5.4, 5.5, and 5.6. These rules settle their open points:
   struct and binds the parameters as typed uses, with their charges and errors. A first use
   then charges the size of the struct type and evaluates the field types. Then it checks the
   depth of the struct type (`S015`) and charges `Meta.structCharge`. A use in progress is
-  `S019`. A use of a done entry charges nothing more than its node and its parameters.
+  `S019`. A use of a done entry charges nothing more than its node and its parameters. A use
+  of a struct item while its own parameter types evaluate is `S019` too, because its key does
+  not exist yet.
 -/
 namespace Silicon.Source.Eval
 
