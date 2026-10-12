@@ -1034,6 +1034,15 @@ makes the typed use of its element, and a value that does not fit is `S012` at t
 #guard out lists "d()" (depth := 3) == "S015 10:51"
 #guard out lists "d()" (depth := 4) == "(int 0)"
 
+/-!
+The new depth of the root counts the steps of the place. Here the list is two tuples deep, so
+the push makes the root 5 deep: the limit 5 passes, and 4 fails at the call.
+-/
+def deepList : String :=
+  "comptime fn d() -> Int { let mut t = ((list(Type),),); push(t.0.0, List[Int]); return 0; }\n"
+#guard out deepList "d()" (depth := 5) == "(int 0)"
+#guard out deepList "d()" (depth := 4) == "S015 1:56"
+
 /-! `len` and an index refer to a list. An index of a list is also a step of a place. -/
 #guard out lists "len(f())" == "(int 2)"
 #guard out lists "f()[1]" == "(int 2)"
