@@ -6,7 +6,7 @@ The `elab` crate is the elaborator of the Rust front end. It is layer 6 of the p
 
 ## Owns
 
-This crate owns the static values with their canonical serialization and their recursive size, and SHA-256 for the digest names. It also owns the evaluator with the fuel, the nesting depth, the cost model, the table of constants, and the hardware values. It owns the table of instantiations with the checks for each instantiation, the core names, and the emitted module names. It owns the lowering to core IR, the port layout, and the port schema of the source vectors. The Lean modules `Source.Value`, `Source.Sha256`, `Source.Eval`, `Source.Elab`, `Source.Names`, `Source.Layout`, `Source.Flatten`, and `Source.Vectors` are the normative definitions.
+This crate owns the static values with their canonical serialization, their recursive size, and their depth. In slice 2, the static values include the containers `()`, tuples, and arrays. It also owns SHA-256 for the digest names. It owns the evaluator with the fuel, the nesting depth, the cost model, the table of constants, and the hardware values. It owns the table of instantiations with the checks for each instantiation, the core names, and the emitted module names. It owns the lowering to core IR, the port layout, and the port schema of the source vectors. The Lean modules `Source.Value`, `Source.Sha256`, `Source.Eval`, `Source.Elab`, `Source.Names`, `Source.Layout`, `Source.Flatten`, and `Source.Vectors` are the normative definitions.
 
 The scan keeps the values of the number literals, the symbols of the field names, and the call sites. Their keys are the node ids of the parser, not the positions. Only the number of a call site still comes from the rank of its position, as in Lean `callSites`. In later slices, two nodes can have the same position.
 
@@ -16,13 +16,13 @@ The elaborator core keeps to the Rust subset of design section 4.5: plain owned 
 
 ## Invariants
 
-- The serialization of a value equals the bytes of `Value.serialize` in Lean. The recursive size equals `Value.size`. Check: `cargo nextest run -p elab`.
+- The serialization of a value equals the bytes of `Value.serialize` in Lean. The recursive size equals `Value.size`, and the depth equals `Value.depth`. Check: `cargo nextest run -p elab`.
 - The digest equals the test vectors of FIPS 180-4. Check: `cargo nextest run -p elab`.
 - The evaluator charges each unit of `Source.Eval` in the same order and at the same node. The charge comes before the work, and each operation keeps its work and its memory in its charge. Thus the value, the used fuel, and the code and the position of the first error equal those of Lean. Check: `cargo nextest run -p elab` and the comparison with `silicon-check eval`.
 - The elaboration charges each unit of `Source.Elab` in the same order and at the same node. The units of each instantiation, the emitted names, and the code and the position of the first error equal those of Lean `Elab.elaborate`. Check: `cargo nextest run -p elab` and the comparison with `silicon-check cost`.
 - `decode(encode(p)) == Some(p)` for each valid name `p`, and each encoded name is a legal core name. Check: `cargo nextest run -p elab`.
 - An error message prints at most 256 bits of an integer and 64 characters of a string. Check: `cargo nextest run -p elab`.
-- The evaluator recurses, so it runs through `parse::NestedStack`, and it only finds the heights of the AST. A call, a constant, and an instantiation each start a nesting level. Each thread runs a group of nesting levels, so any nesting depth is safe. A design and an error hold no recursive value, so they drop safely on any stack. A result that refers to a local or a constant copies nothing until a copy pays for it. Check: `cargo nextest run -p elab`.
+- The evaluator recurses, so it runs through `parse::NestedStack`, and it only finds the heights of the AST. A call, a constant, and an instantiation each start a nesting level. Each thread runs a group of nesting levels, so any nesting depth is safe. A design and an error hold no recursive value, so they drop safely on any stack. A result that refers to a local or a constant copies nothing until a copy pays for it. An assignment to a place with an index copies only the containers on the path of the place. Check: `cargo nextest run -p elab`.
 - The crate uses no `HashMap` and no `HashSet`. Check: `just clippy`.
 - Non-test code has no `unwrap`, no `expect`, and no panic on user input. Check: `just clippy`.
 
