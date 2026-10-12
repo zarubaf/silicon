@@ -516,7 +516,7 @@ theorem constant_f (p : Pos) (x : String) (i : Nat) {b b' : M Value} (h : Follow
 
 theorem specialize_f (p : Pos) (x : String) (i : Nat) (args : List Value) {f g : M (List Ty)}
     (h : Follows cap f g) : Follows cap (specialize p x i args f) (specialize p x i args g) := by
-  unfold specialize; follows [h, nested_f, bounded_f]
+  unfold specialize; follows [h, bounded_f]
 
 theorem iteration_f (p : Pos) (i : Binder) (v : Int) {x y : M α} (h : Follows cap x y) :
     Follows cap (iteration p i v x) (iteration p i v y) := by
@@ -541,7 +541,7 @@ theorem spec_f (he : ∀ e, Follows m (eval k e) (eval m e))
     (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t)) (p : Pos) (i : Nat)
     (xs : List Resolve.Expr) : Follows m (spec k p i xs) (spec m p i xs) := by
   rw [spec.eq_def k, spec.eq_def m]
-  follows [he, ht, need_f, static_f, specialize_f, inFrame_f, conform_f, bindLocal_f]
+  follows [he, ht, need_f, static_f, specialize_f, nested_f, inFrame_f, conform_f, bindLocal_f]
 
 theorem name_f (he : ∀ e, Follows m (eval k e) (eval m e))
     (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t)) (p : Pos) (x : String) (r : Ref) :

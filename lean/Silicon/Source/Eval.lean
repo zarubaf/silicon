@@ -75,10 +75,11 @@ its operation runs. When the fuel cannot pay it, the result is `S015` at the nod
    operations. A read of a handle and a lift of a static operand only refer, so they charge
    nothing.
 
-The nesting depth counts the active calls, the constants in progress, the struct
-specializations in progress, and the top selection. A call checks it after its arguments, and
-a constant and a specialization before they start. Above the limit, the result is `S015` at the
-call or at the use of the constant or the specialization.
+The nesting depth counts the active calls, the constants in progress, the struct uses, and the
+top selection. A struct use counts while it binds its parameters and while its specialization
+is in progress. A call and a struct use check it after their arguments, and a constant before
+it starts. Above the limit, the result is `S015` at the call or at the use of the constant or
+the struct.
 
 `Eval` is total by the fuel alone. Each recursive function takes a bound, and the first call
 gets the fuel as the bound. Each entry function charges one unit before it calls deeper with a
@@ -513,8 +514,9 @@ mutual
 
   /--
   A use of the struct item `i` at `p` with the arguments `xs`, in the table of specializations.
-  Each argument is static. The first use binds the parameters in the scope of the struct and
-  evaluates the field types there.
+  Each argument is static. Each use binds the parameters in the scope of the struct, one level
+  deeper. The typed uses give the key of the table. The first use evaluates the field types
+  there.
   -/
   def spec (n : Nat) (p : Pos) (i : Nat) (xs : List Resolve.Expr) : M Ty := do
     let some (.struct _ x ps fs) := (← read).items[i]?
@@ -522,12 +524,13 @@ mutual
     let args ← xs.mapM fun e => do static p (← need e (← eval n e)).value
     if ps.length != args.length then
       fail .S007 p s!"`{x.name}` takes {ps.length} argument(s), but it has {args.length}"
-    specialize p x.name i args <| inFrame none <|
-      withReader (fun c => { c with item := i, frame := ⟨none, 0⟩ }) do
-        for (q, v) in ps.zip args do
-          let t ← typeExpr n q.ty
-          bindLocal q.name.id ⟨some t, false, .static (← conform p t v)⟩
-        fs.mapM fun f => typeExpr n f.ty
+    nested p <| inFrame none <| withReader (fun c => { c with item := i, frame := ⟨none, 0⟩ }) do
+      let keys ← (ps.zip args).mapM fun (q, v) => do
+        let t ← typeExpr n q.ty
+        let w ← conform p t v
+        bindLocal q.name.id ⟨some t, false, .static w⟩
+        return w
+      specialize p x.name i keys (fs.mapM fun f => typeExpr n f.ty)
   termination_by (n + 1, 0)
 
   /--
