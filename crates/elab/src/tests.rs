@@ -50,6 +50,28 @@ fn evaluated(src: &str, expr: &str, fuel: u64, depth: u64) -> Result<(Evaluated,
     }
 }
 
+/// The message of the error of `eval` for a source and an expression that pass the earlier
+/// passes.
+pub(crate) fn message(src: &str, expr: &str) -> String {
+    let depth_n = parse::DEFAULT_SYNTAX_DEPTH;
+    let parsed = parse::parse_with_depth(src, depth_n).unwrap();
+    let Ok(file) = resolve::resolve(parsed) else {
+        panic!("the source must resolve")
+    };
+    let Ok(file) = typeck::check(file) else {
+        panic!("the source must check")
+    };
+    let e = parse::parse_expr(expr, depth_n).unwrap().unwrap();
+    let e = resolve::resolve_expr(&file, e).unwrap().unwrap();
+    let Ok(e) = typeck::check_expr(&file, e) else {
+        panic!("the expression must check")
+    };
+    match eval(&file, &e, Budget::default()).unwrap() {
+        Ok(_) => panic!("the evaluation must fail"),
+        Err(e) => e.message,
+    }
+}
+
 /// The result of `eval`: the serialization, or the code and the position of the first error
 /// of any pass. The second value is the used fuel.
 fn run(src: &str, expr: &str, fuel: u64, depth: u64) -> (String, u64) {

@@ -6,7 +6,7 @@
 //! `S015`.
 
 use crate::names::sha16;
-use crate::tests::{cost, exact, out, path_steps, type_work};
+use crate::tests::{cost, exact, message, out, path_steps, type_work};
 use crate::tests_elab::{cost as top_cost, cost_fuel, order};
 use std::fmt::Write;
 
@@ -543,6 +543,33 @@ fn a_deep_update_of_a_tuple_with_a_string_types_its_element_once() {
     let d = 400;
     let each = (work(d, 30) - work(d, 10)) / 20;
     assert!(each <= 4 * d as u64, "{each} for a depth of {d}");
+}
+
+/// A message prints at most 256 bits of the length of an array type, and at most 1024 bytes
+/// of the text of a type, also when the last piece of the text goes past the limit.
+#[test]
+fn a_message_bounds_the_text_of_a_type() {
+    let big = message(
+        "fn f() -> Int { let a: [Int; 1 << 1000000] = 0; return 0; }",
+        "f()",
+    );
+    assert_eq!(
+        big,
+        "expected [Int; an integer of 1000001 bits], but the value is Int"
+    );
+    // The text of the type has 1015 bytes before its last piece `; 1000000]`, which goes
+    // past the limit.
+    let wide = format!("[({}); 1000000]", vec!["UInt[65536]"; 78].join(", "));
+    let text = message(
+        &format!("fn f() -> Int {{ let a: {wide} = 0; return 0; }}"),
+        "f()",
+    );
+    let ty = text
+        .strip_prefix("expected ")
+        .and_then(|t| t.split(", but the value is").next())
+        .unwrap_or_default();
+    assert_eq!(ty.len(), 1024 + 3, "{text}");
+    assert!(ty.ends_with("..."), "{text}");
 }
 
 fn container(ty: &str, arg: &str) -> String {
