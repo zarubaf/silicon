@@ -165,11 +165,11 @@ parameters, so a parameter `clock` is `S002` at the parameter. `domains()` decla
 /-! `S003`: a prelude name of a later slice. The message names the slice. -/
 #guard fails "fn f(x: TypeInfo) -> Bool { return true; }" .S003 1 9
 #guard message "fn f(x: TypeInfo) -> Bool { return true; }" ==
-  "`TypeInfo` is not in slice 1; it comes in slice 4"
+  "`TypeInfo` is not supported yet; it comes in slice 4"
 #guard fails (fnBody "let xs = read(p);\nreturn p;") .S003 2 10
 #guard fails (modBody "reg r: Reg[Bool] = 0;") .S003 2 8
 #guard message (modBody "reg r: Reg[Bool] = 0;") ==
-  "`Reg` is not in slice 1; it comes in slice 3"
+  "`Reg` is not supported yet; it comes in slice 3"
 #guard ok "const Wire: Nat = 1;\nconst N: Nat = Wire;"
 
 /-! The container forms of slice 2 resolve their parts. `Unit` and `len` are prelude names. -/

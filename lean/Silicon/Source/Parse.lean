@@ -158,7 +158,7 @@ def unexpected (t : Token) (what : String) : P α :=
   | _ => throw ⟨.S001, t.pos, "expected " ++ what⟩
 
 def later (t : Token) (what : String) : P α :=
-  throw ⟨.S004, t.pos, what ++ " is not in slice 1"⟩
+  throw ⟨.S004, t.pos, what ++ " is not supported yet"⟩
 
 def sym (s : String) : P Unit := do
   let t ← peek
