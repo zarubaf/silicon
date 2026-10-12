@@ -194,6 +194,18 @@ The keyword that marks a static parameter, a static function, a static branch, o
 
 The checks of `typeck` that need no static values. They run on each item, also on an item that no instantiation uses.
 
+### receiver call
+
+The call `x.m(args)`. It calls the function `m`, and its receiver `x` binds to the first parameter of `m` without a written `comptime` mark. The receiver evaluates before the explicit arguments.
+
+### pending root
+
+The root of a place while a `mut` actual or an assignment with that root runs. In its window, a second `mut` actual or an assignment with this root is `S008`.
+
+### window
+
+The part of the source in which a root stays pending. For a `mut` actual, it is the indices of the actual and each later argument of the call. For an assignment, it is the indices of the place and the right side.
+
 ### budget
 
 A limit of one elaboration: the fuel, which all parts of the elaboration share, or the nesting depth. An elaboration that goes above a budget fails with an error.
