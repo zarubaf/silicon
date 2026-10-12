@@ -52,7 +52,9 @@ The static containers of slice 2 follow section 5.1. These rules settle its open
 - An array literal takes the common type of its elements by the operand rule. The typed use of
   each element at that type charges as a conversion. Then the literal charges its size.
 - `[]` gets its type `[T; 0]` only at a typed use: an annotation, an assignment, an argument,
-  a return, or a constant. As an element or an operand, it is `S010` at the `[]`.
+  a return, a constant, or a module argument. A literal with `[]` as an element waits for its
+  type too. The typed use then gives each `[]` the type at its place, and each literal charges
+  as at its node. Without a typed use, it is `S010` at the first `[]`.
 - A typed use of a container at another type converts each element. It charges the size of
   the value plus the size of the result.
 - `==` and `!=` on containers need a common type for each pair of elements. They charge the
@@ -63,6 +65,11 @@ The static containers of slice 2 follow section 5.1. These rules settle its open
 - Each new container checks its depth before the charge of its size (`S015`). These are the
   literals, the tuple and array types, and `[]` at its typed use.
 - `()` charges the size 1 as a value and as a type.
+- An assignment to a place with indices and selectors `.N` evaluates its indices from left to
+  right. Each index checks when it evaluates: its stage (`S011`), the container and its own
+  type (`S010`), then its range (`S013`). Then the right side evaluates, with the element type as its type. The update
+  copies only the containers on the path of the place, so it charges nothing more. A binding
+  that shares a container paid its copy before.
 
 The cost model. Elaboration charges these units, in evaluation order. A charge is known before
 its operation runs. When the fuel cannot pay it, the result is `S015` at the node of the charge.
@@ -83,7 +90,8 @@ its operation runs. When the fuel cannot pay it, the result is `S015` at the nod
    copies. Each charges after all arguments of the call run. A binding is a `let`, an
    assignment, or a constant. A reference is a name, or a conditional that selects a
    reference. The copy comes before the typed use.
-7. The target of an assignment is a place, not an expression, so it charges nothing.
+7. The target of an assignment is a place, not an expression, so it charges nothing. Only the
+   index expressions of the place evaluate and charge.
 8. A `comptime for` charges the sum of the sizes of its two bounds for the range. Each
    iteration charges the size of its loop value before it binds it.
 9. A hardware operation makes one node and charges 1 plus the number of its operands. Its
@@ -187,25 +195,55 @@ inductive Handle where
   | domain (name : String)
 
 /-!
-A value of the evaluator: a static value, a hardware value, or a handle (section 5.1). `empty`
-is the literal `[]` at `pos` before a typed use gives it its type `[T; 0]`.
+A part of a literal that waits for its type: a value, the literal `[]` at `pos`, or an array or a
+tuple literal at `pos` with at least one part that waits.
+-/
+inductive Part where
+  | value (v : Value)
+  | empty (pos : Pos)
+  | array (pos : Pos) (elems : List Part)
+  | tuple (pos : Pos) (elems : List Part)
+
+/-! The size of a part: 1 for `[]`, and 1 more than its elements for a literal. -/
+mutual
+  def Part.size : Part → Nat
+    | .value v => v.size
+    | .empty _ => 1
+    | .array _ ps | .tuple _ ps => 1 + Part.sizeAll ps
+
+  def Part.sizeAll : List Part → Nat
+    | [] => 0
+    | p :: ps => p.size + Part.sizeAll ps
+end
+
+def Part.text : Part → String
+  | .value v => v.text
+  | .empty _ => "`[]`"
+  | .array .. => "an array literal with `[]`"
+  | .tuple .. => "a tuple literal with `[]`"
+
+/-!
+A value of the evaluator: a static value, a hardware value, or a handle (section 5.1).
+`pending` is a literal with `[]` before a typed use gives it its type. `first` is the position
+of its first `[]`.
 -/
 inductive Val where
   | static (v : Value)
   | hw (h : Hw)
   | handle (h : Handle)
-  | empty (pos : Pos)
+  | pending (first : Pos) (part : Part)
 
-/-! A handle has the size 1. `[]` has the size 1 with each element type. -/
+/-! A handle has the size 1. A literal that waits has the size of its parts. -/
 def Val.size : Val → Nat
   | .static v => v.size
   | .hw h => h.size
-  | .handle _ | .empty _ => 1
+  | .handle _ => 1
+  | .pending _ p => p.size
 
 def Val.ty? : Val → Option Ty
   | .static v => v.ty?
   | .hw h => some h.ty
-  | .handle _ | .empty _ => none
+  | .handle _ | .pending .. => none
 
 def Val.text : Val → String
   | .static v => v.text
@@ -216,7 +254,7 @@ def Val.text : Val → String
   | .handle (.inst ..) => "an instance"
   | .handle (.input ..) => "an input of a child"
   | .handle (.domain _) => "a domain"
-  | .empty _ => "`[]` without a type"
+  | .pending _ p => s!"{p.text} without a type"
 
 /-! A local. A string, a type, and a handle have no `Ty`, so their `ty` is `none`. -/
 structure Slot where
@@ -754,7 +792,7 @@ def copy (pos : Pos) (o : Out) : M Unit := if o.ref then charge pos o.value.size
 /-! The value of a static position at the node `pos`. Another value there is `S011`. -/
 def static (pos : Pos) : Val → M Value
   | .static v => pure v
-  | .empty q => fail .S010 q "`[]` needs the type [T; 0] from its context"
+  | .pending q _ => fail .S010 q "`[]` needs the type [T; 0] from its context"
   | v => fail .S011 pos s!"a static position needs a static value, not {v.text}"
 
 /-!
@@ -763,7 +801,7 @@ reference to their name: the implicit read. A child input is never read (`S017`)
 and a domain are not data.
 -/
 def data (pos : Pos) : Val → M Val
-  | .empty q => fail .S010 q "`[]` needs the type [T; 0] from its context"
+  | .pending q _ => fail .S010 q "`[]` needs the type [T; 0] from its context"
   | .handle (.res _ _ ty path) => pure (.hw (.mk pos ty (.ref path) []))
   | .handle (.input ..) => fail .S017 pos "an input of a child is a target; it is never read"
   | .handle h => fail .S010 pos s!"{(Val.handle h).text} is not data"
@@ -773,7 +811,7 @@ def data (pos : Pos) : Val → M Val
 def test (pos : Pos) : Val → M Bool
   | .static (.bool b) => pure b
   | .static v => fail .S010 pos s!"a condition is a Bool, not {v.text}"
-  | .empty q => fail .S010 q "`[]` needs the type [T; 0] from its context"
+  | .pending q _ => fail .S010 q "`[]` needs the type [T; 0] from its context"
   | v => fail .S011 pos s!"a static condition needs a static Bool, not {v.text}"
 
 /-! The local of an assignment target and its source name, if it is a `let mut` local. -/
@@ -787,7 +825,7 @@ def place : Resolve.Expr → M (Option (Nat × Slot × String))
 def int (pos : Pos) : Val → M Int
   | .static (.int n) => pure n
   | .static v => fail .S010 pos s!"a loop bound is a static Int, not {v.text}"
-  | .empty q => fail .S010 q "`[]` needs the type [T; 0] from its context"
+  | .pending q _ => fail .S010 q "`[]` needs the type [T; 0] from its context"
   | v => fail .S011 pos s!"a loop bound is a static Int, not {v.text}"
 
 /-! A static integer next to a finite operand takes the type of that operand. -/
@@ -901,7 +939,7 @@ def hwConvert (pos : Pos) (f : PrimFn) (t : Ty) (x : Hw) : M Val :=
 
 /-! `[]` outside a typed use has no type: `S010` at the `[]`. -/
 def known : Val → M Unit
-  | .empty q => fail .S010 q "`[]` needs the type [T; 0] from its context"
+  | .pending q _ => fail .S010 q "`[]` needs the type [T; 0] from its context"
   | _ => pure ()
 
 /-! A new value or type of the depth `d` at `pos`. Above the nesting depth, it is `S015`. -/
@@ -909,25 +947,29 @@ def bounded (pos : Pos) (d : Nat) : M Unit := do
   let c ← read
   if c.limit < d then fail .S015 pos s!"the depth {d} goes above the nesting depth {c.limit}"
 
-/-! `[]` at a typed use of the type `t`: it takes the type `t = [T; 0]`. -/
-def settle (pos : Pos) (t : Ty) : Val → M Val
-  | .empty q =>
-    match t with
-    | .array e 0 => do
-      bounded q (Value.array e #[]).depth
-      return .static (.array e #[])
-    | _ => fail .S010 pos s!"expected {t.text}, but the value is `[]`"
-  | v => pure v
-
 /-!
-An element of a container literal at `pos`. In this phase a container holds only static
-values. A hardware value is `S010`, and a handle is `S010` until slice 3.
+An element of a container literal at `pos`, and the position of its first `[]` if it waits for
+its type. In this phase a container holds only static values. A hardware value is `S010`, and a
+handle is `S010` until slice 3.
 -/
-def element (pos : Pos) : Val → M Value
-  | .static v => pure v
+def element (pos : Pos) : Val → M (Part × Option Pos)
+  | .static v => pure (.value v, none)
+  | .pending q p => pure (p, some q)
   | .hw _ => fail .S010 pos "a container holds only static values in this phase"
-  | .empty q => fail .S010 q "`[]` needs the type [T; 0] from its context"
   | .handle h => fail .S010 pos s!"{(Val.handle h).text} is not an element before slice 3"
+
+/-! The value of an element of a container in this phase. -/
+def item (pos : Pos) (v : Val) : M Value := do
+  match ← element pos v with
+  | (.value v, _) => pure v
+  | (_, q) => fail .S010 (q.getD pos) "`[]` needs the type [T; 0] from its context"
+
+/-! The first `[]` of the elements of a literal that waits for its type. -/
+def waiting (es : List (Part × Option Pos)) : Option Pos := (es.filterMap (·.2)).head?
+
+/-! The values of the elements of a literal that does not wait. -/
+def values (es : List (Part × Option Pos)) : List Value :=
+  es.filterMap fun | (.value v, _) => some v | _ => none
 
 /-! A tuple literal at `pos`: its depth, then the charge of its size. -/
 def tupleOf (pos : Pos) (vs : List Value) : M Value := do
@@ -958,16 +1000,68 @@ def arrayTy (pos q : Pos) (e : Ty) : Value → M Ty
     return t
   | v => fail .S010 q s!"the length of an array is a static Nat, not {v.text}"
 
-/-! The selector `.i` at `pos`, with its number literal at `q`. It refers to an element. -/
-def select (pos q : Pos) (i : Nat) : Val → M Val
+/-!
+A literal that waits, at a typed use of the type `t` at `pos`. The type flows into each
+element: `[]` takes the type `[T; 0]`, and a literal of the shape of `t` makes its elements at
+the element types of `t`. Then the literal charges as it does at its node. Another shape is
+`S010` at `pos`.
+-/
+mutual
+  def build (pos : Pos) (t : Ty) : Part → M Value
+    | .value v => pure v
+    | p@(.empty q) =>
+      match t with
+      | .array e 0 => do
+        bounded q (Value.array e #[]).depth
+        return .array e #[]
+      | _ => fail .S010 pos s!"expected {t.text}, but the value is {p.text}"
+    | p@(.array q ps) =>
+      match t with
+      | .array e k =>
+        if ps.length = k then do arrayOf q (← buildAll pos e ps)
+        else fail .S010 pos s!"expected {t.text}, but the value is {p.text}"
+      | _ => fail .S010 pos s!"expected {t.text}, but the value is {p.text}"
+    | p@(.tuple q ps) =>
+      match t with
+      | .tuple ⟨ts⟩ =>
+        if ps.length = ts.length then do tupleOf q (← buildZip pos ts ps)
+        else fail .S010 pos s!"expected {t.text}, but the value is {p.text}"
+      | _ => fail .S010 pos s!"expected {t.text}, but the value is {p.text}"
+
+  def buildAll (pos : Pos) (t : Ty) : List Part → M (List Value)
+    | [] => pure []
+    | p :: ps => do return (← build pos t p) :: (← buildAll pos t ps)
+
+  def buildZip (pos : Pos) : List Ty → List Part → M (List Value)
+    | t :: ts, p :: ps => do return (← build pos t p) :: (← buildZip pos ts ps)
+    | _, _ => pure []
+end
+
+/-! A typed use of the type `t` at `pos` gives a literal that waits its type. -/
+def settle (pos : Pos) (t : Ty) : Val → M Val
+  | .pending _ p => do return .static (← build pos t p)
+  | v => pure v
+
+/-!
+The selector `.i` at `pos`, with its number literal at `q`. The result is the number of the
+element and the element.
+-/
+def selectAt (pos q : Pos) (i : Nat) : Val → M (Nat × Value)
   | .static v@(.tuple xs) =>
     match xs[i]? with
-    | some x => pure (.static x)
+    | some x => pure (i, x)
     | none => fail .S013 q s!"the selector {i} is out of range for {v.text}"
   | v => fail .S010 pos s!"the selector `.{i}` needs a tuple, not {v.text}"
 
-/-! The static index `i` at `q` of an array or a tuple at `pos`. It refers to an element. -/
-def pick (pos q : Pos) (v : Val) (i : Value) : M Val := do
+/-! The selector `.i` refers to an element. -/
+def select (pos q : Pos) (i : Nat) (v : Val) : M Val := do
+  return .static (← selectAt pos q i v).2
+
+/-!
+The static index `i` at `q` of an array or a tuple at `pos`. The result is the number of the
+element and the element.
+-/
+def pickAt (pos q : Pos) (v : Val) (i : Value) : M (Nat × Value) := do
   let xs ← match v with
     | .static (.array _ xs) | .static (.tuple xs) => pure xs
     | v => fail .S010 pos s!"an index needs an array or a tuple, not {v.text}"
@@ -975,8 +1069,44 @@ def pick (pos q : Pos) (v : Val) (i : Value) : M Val := do
     | .int k => pure k
     | .uint _ x => pure (x.toNat : Int)
     | i => fail .S010 q s!"an index is a static integer, not {i.text}"
-  if h : 0 ≤ k ∧ k.toNat < xs.size then return .static xs[k.toNat]
+  if h : 0 ≤ k ∧ k.toNat < xs.size then return (k.toNat, xs[k.toNat])
   else fail .S013 q s!"the index {intText k} is out of range for {xs.size} element(s)"
+
+/-! A static index refers to an element. -/
+def pick (pos q : Pos) (v : Val) (i : Value) : M Val := do
+  return .static (← pickAt pos q v i).2
+
+/-! The type of the element `k` of a container type. -/
+def partTy : Ty → Nat → Option Ty
+  | .array e _, _ => some e
+  | .tuple ts, k => ts[k]?
+  | _, _ => none
+
+/-!
+A step of a place after its root: an index at `pos`, or a selector `.i` with its literal at
+`q`.
+-/
+inductive Sel where
+  | index (pos : Pos) (args : List Resolve.Expr)
+  | select (pos q : Pos) (i : Nat)
+
+/-! The root of a place and its steps from the root outward. Another target has no place. -/
+def chain (e : Resolve.Expr) (acc : List Sel := []) : Option (Resolve.Expr × List Sel) :=
+  match e with
+  | .index p b xs => chain b (.index p xs :: acc)
+  | .select p b q i => chain b (.select p q i :: acc)
+  | .name .. => some (e, acc)
+  | _ => none
+
+/-!
+The value `v` with the element at the numbers `ks` replaced by `w`. Each step copies only the
+container that it changes, so a part that another binding shares stays unchanged.
+-/
+def replace : Value → List Nat → Value → Value
+  | _, [], w => w
+  | .array t xs, k :: ks, w => .array t (xs.modify k (replace · ks w))
+  | .tuple xs, k :: ks, w => .tuple (xs.modify k (replace · ks w))
+  | v, _ :: _, _ => v
 
 /-! `len` of an array at the call `pos`. It refers to the array, so it charges no size. -/
 def lenOf (pos : Pos) : List Val → M Value
@@ -1120,12 +1250,16 @@ mutual
         | v => fail .S010 p s!"{v.text} has no field `{f.name}`"
       | .unit p => do charge p Value.unit.size; return some ⟨.static .unit, false⟩
       | .tuple p xs => do
-        let vs ← xs.mapM fun x => do element x.pos (← need x (← eval n x)).value
-        return some ⟨.static (← tupleOf p vs), false⟩
-      | .array p [] => do charge p 1; return some ⟨.empty p, false⟩
+        let es ← xs.mapM fun x => do element x.pos (← need x (← eval n x)).value
+        match waiting es with
+        | some q => return some ⟨.pending q (.tuple p (es.map (·.1))), false⟩
+        | none => return some ⟨.static (← tupleOf p (values es)), false⟩
+      | .array p [] => do charge p 1; return some ⟨.pending p (.empty p), false⟩
       | .array p xs => do
-        let vs ← xs.mapM fun x => do element x.pos (← need x (← eval n x)).value
-        return some ⟨.static (← arrayOf p vs), false⟩
+        let es ← xs.mapM fun x => do element x.pos (← need x (← eval n x)).value
+        match waiting es with
+        | some q => return some ⟨.pending q (.array p (es.map (·.1))), false⟩
+        | none => return some ⟨.static (← arrayOf p (values es)), false⟩
       | .select p b q i => do
         let v ← data p (← need b (← eval n b)).value
         return some ⟨← select p q i v, true⟩
@@ -1280,16 +1414,35 @@ mutual
         bindLocal b.id ⟨t <|> x.ty?, m, x⟩
         return none
       | .assign p target v => do
-        let some (id, slot, x) := ← place target
+        let some (root, sels) := chain target
           | fail .S010 p "an assignment target is a `let mut` local"
+        let some (id, slot, x) := ← place root
+          | fail .S010 p "an assignment target is a `let mut` local"
+        let mut cur := slot.value
+        let mut ty := slot.ty
+        let mut keys : Array Nat := #[]
+        for sel in sels do
+          let (k, w) ← match sel with
+            | .index q [i] => do pickAt q i.pos cur (← static i.pos (← need i (← eval n i)).value)
+            | .index q _ => fail .S010 q "an index of a value has one argument"
+            | .select q r i => selectAt q r i cur
+          ty := match ty with
+            | some t => partTy t k
+            | none => w.ty?
+          cur := .static w
+          keys := keys.push k
         let o ← need v (← eval n v)
         copy p o
-        let y ← match slot.ty with
+        let y ← match ty with
           | some t => conformVal p t o.value
           | none =>
-            if sameForm slot.value o.value then pure o.value
-            else fail .S010 p s!"expected {slot.value.text}, but the value is {o.value.text}"
-        bindLocal id { slot with value := ← named p id x y }
+            if sameForm cur o.value then pure o.value
+            else fail .S010 p s!"expected {cur.text}, but the value is {o.value.text}"
+        if keys.isEmpty then bindLocal id { slot with value := ← named p id x y }
+        else
+          let w ← item v.pos y
+          if let .static r := slot.value then
+            bindLocal id { slot with value := .static (replace r keys.toList w) }
         return none
       | .ret p v => do
         let some rt := (← read).ret | fail .S006 p "only a function has `return`"

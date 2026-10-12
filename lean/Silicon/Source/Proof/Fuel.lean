@@ -382,12 +382,11 @@ theorem known_f (v : Val) : Follows cap (known v) (known v) := by
 theorem bounded_f (p : Pos) (d : Nat) : Follows cap (bounded p d) (bounded p d) := by
   unfold bounded; follows
 
-theorem settle_f (p : Pos) (t : Ty) (v : Val) :
-    Follows cap (settle p t v) (settle p t v) := by
-  unfold settle; follows [bounded_f]
-
 theorem element_f (p : Pos) (v : Val) : Follows cap (element p v) (element p v) := by
   unfold element; follows
+
+theorem item_f (p : Pos) (v : Val) : Follows cap (item p v) (item p v) := by
+  unfold item; follows [element_f]
 
 theorem tupleOf_f (p : Pos) (vs : List Value) :
     Follows cap (tupleOf p vs) (tupleOf p vs) := by
@@ -397,17 +396,49 @@ theorem arrayOf_f (p : Pos) (vs : List Value) :
     Follows cap (arrayOf p vs) (arrayOf p vs) := by
   unfold arrayOf; follows [conform_f, bounded_f]
 
+mutual
+  theorem build_f (p : Pos) : ∀ (t : Ty) (x : Part), Follows cap (build p t x) (build p t x)
+    | t, .value v => by rw [build.eq_def]; dsimp only; follows
+    | t, .empty q => by rw [build.eq_def]; dsimp only; follows [bounded_f]
+    | t, .array q ps => by rw [build.eq_def]; dsimp only; follows [buildAll_f p, arrayOf_f]
+    | t, .tuple q ps => by rw [build.eq_def]; dsimp only; follows [buildZip_f p, tupleOf_f]
+
+  theorem buildAll_f (p : Pos) (t : Ty) :
+      ∀ xs : List Part, Follows cap (buildAll p t xs) (buildAll p t xs)
+    | [] => by rw [buildAll]; follows
+    | x :: xs => by rw [buildAll]; follows [build_f p t x, buildAll_f p t xs]
+
+  theorem buildZip_f (p : Pos) :
+      ∀ (ts : List Ty) (xs : List Part), Follows cap (buildZip p ts xs) (buildZip p ts xs)
+    | t :: ts, x :: xs => by
+      rw [buildZip.eq_def]; dsimp only; follows [build_f p t x, buildZip_f p ts xs]
+    | [], _ => by rw [buildZip.eq_def]; dsimp only; follows
+    | _ :: _, [] => by rw [buildZip.eq_def]; dsimp only; follows
+end
+
+theorem settle_f (p : Pos) (t : Ty) (v : Val) :
+    Follows cap (settle p t v) (settle p t v) := by
+  unfold settle; follows [build_f]
+
 theorem arrayTy_f (p q : Pos) (e : Ty) (v : Value) :
     Follows cap (arrayTy p q e v) (arrayTy p q e v) := by
   unfold arrayTy; follows [bounded_f]
 
+theorem selectAt_f (p q : Pos) (i : Nat) (v : Val) :
+    Follows cap (selectAt p q i v) (selectAt p q i v) := by
+  unfold selectAt; follows
+
 theorem select_f (p q : Pos) (i : Nat) (v : Val) :
     Follows cap (select p q i v) (select p q i v) := by
-  unfold select; follows
+  unfold select; follows [selectAt_f]
+
+theorem pickAt_f (p q : Pos) (v : Val) (i : Value) :
+    Follows cap (pickAt p q v i) (pickAt p q v i) := by
+  unfold pickAt; follows
 
 theorem pick_f (p q : Pos) (v : Val) (i : Value) :
     Follows cap (pick p q v i) (pick p q v i) := by
-  unfold pick; follows
+  unfold pick; follows [pickAt_f]
 
 theorem lenOf_f (p : Pos) (vs : List Val) : Follows cap (lenOf p vs) (lenOf p vs) := by
   unfold lenOf; follows [data_f]
@@ -545,12 +576,14 @@ theorem follows_all : ∀ n,
         apply Follows.exhaust (cap := k)
         intro _
         follows [he k, ht k, hs k, hb k, need_f, copy_f, conformVal_f, known_f, named_f,
-          bindLocal_f, place_f, test_f, int_f, range_f, iteration_f]
+          bindLocal_f, place_f, test_f, int_f, range_f, iteration_f, static_f, pickAt_f,
+          selectAt_f, item_f]
       · rw [stmt.eq_def (k + 1), stmt.eq_def (m + 1)]
         apply Follows.charge_one
         intro _
         follows [he m, ht m, hs m, hb m, need_f, copy_f, conformVal_f, known_f, named_f,
-          bindLocal_f, place_f, test_f, int_f, range_f, iteration_f]
+          bindLocal_f, place_f, test_f, int_f, range_f, iteration_f, static_f, pickAt_f,
+          selectAt_f, item_f]
     · rcases n' with _ | m
       · rw [block.eq_def (k + 1), block.eq_def 0]
         apply Follows.exhaust (cap := k)

@@ -261,6 +261,12 @@ theorem instantiate_e (ht : ∀ t, Follows m (Eval.typeExpr k t) (Eval.typeExpr 
   efollows [ht, hb, serialize_e, bindings_e, nested_e, inFrame_e, EFollows.measure, conform_f,
     bindLocal_f]
 
+theorem arguments_e (he : ∀ e, Follows m (Eval.eval k e) (Eval.eval m e))
+    (ht : ∀ t, Follows m (Eval.typeExpr k t) (Eval.typeExpr m t)) (pos : Pos) (i : Nat)
+    (xs : List Resolve.Expr) : EFollows m (arguments k pos i xs) (arguments m pos i xs) := by
+  unfold arguments
+  efollows [he, ht, need_f, static_f, settle_f, inFrame_e, bindLocal_f]
+
 end walk
 
 /--
@@ -289,11 +295,13 @@ theorem follows_all : ∀ n,
         | skip
       all_goals rcases n' with _ | m
       · refine EFollows.exhaust (cap := k) _ _ fun _ => ?_
-        efollows [hs k, hb k, instantiate_e (he.2.1 k) (hb k), he.1 k, he.2.1 k, need_f, copy_f,
+        efollows [hs k, hb k, instantiate_e (he.2.1 k) (hb k),
+          arguments_e (he.1 k) (he.2.1 k), he.1 k, he.2.1 k, need_f, copy_f,
           conform_f, static_f, conformVal_f, lit_f, fresh_f, bindLocal_f, test_f, int_f, range_f,
           iteration_e, dataType_e, port_e, resource_e, modifyBody_e, target_e, bindTarget_e]
       · refine EFollows.charge_one _ fun _ => ?_
-        efollows [hs m, hb m, instantiate_e (he.2.1 m) (hb m), he.1 m, he.2.1 m, need_f, copy_f,
+        efollows [hs m, hb m, instantiate_e (he.2.1 m) (hb m),
+          arguments_e (he.1 m) (he.2.1 m), he.1 m, he.2.1 m, need_f, copy_f,
           conform_f, static_f, conformVal_f, lit_f, fresh_f, bindLocal_f, test_f, int_f, range_f,
           iteration_e, dataType_e, port_e, resource_e, modifyBody_e, target_e, bindTarget_e]
     · rcases n' with _ | m
@@ -315,6 +323,7 @@ theorem elaborate_budget {budget : Budget} {items : Array Resolve.Item}
   refine run_budget (fun n n' => ?_) h F
   follows [EFollows.run]
   efollows [(Eval.Fuel.follows_all n).1 n', static_f, need_f,
-    instantiate_e ((Eval.Fuel.follows_all n).2.1 n') ((follows_all n).2 n')]
+    instantiate_e ((Eval.Fuel.follows_all n).2.1 n') ((follows_all n).2 n'),
+    arguments_e ((Eval.Fuel.follows_all n).1 n') ((Eval.Fuel.follows_all n).2.1 n')]
 
 end Silicon.Source.Elab.Fuel
