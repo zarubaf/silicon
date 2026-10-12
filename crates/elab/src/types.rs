@@ -114,21 +114,18 @@ impl Meta {
     }
 
     /// The sums of the parts of a tuple or a record: the zero value is a node with the zero of
-    /// each part.
+    /// each part. `touched` counts the words that the additions touch, for the tests.
     #[must_use]
-    pub fn sum<'a>(parts: impl IntoIterator<Item = &'a Meta>) -> Meta {
-        let (mut width, mut leaves, mut zero, mut data) =
-            (Int::zero(), Int::zero(), Int::from_u64(1), true);
-        for m in parts {
-            width = width.add(&m.width);
-            leaves = leaves.add(&m.leaves);
-            zero = zero.add(&m.zero_size);
+    pub fn sum<'a>(parts: impl IntoIterator<Item = &'a Meta>, touched: &mut u64) -> Meta {
+        let parts: Vec<&Meta> = parts.into_iter().collect();
+        let mut data = true;
+        for m in &parts {
             data &= m.data;
         }
         Meta {
-            width,
-            leaves,
-            zero_size: zero,
+            width: ascending_sum(parts.iter().map(|m| &m.width).collect(), 0, touched),
+            leaves: ascending_sum(parts.iter().map(|m| &m.leaves).collect(), 0, touched),
+            zero_size: ascending_sum(parts.iter().map(|m| &m.zero_size).collect(), 1, touched),
             data,
         }
     }
@@ -152,6 +149,34 @@ impl Meta {
             + u128::from(int_size(&self.zero_size))
             + u128::from(int_size(&Int::from_u64(depth)))
     }
+}
+
+/// `start` plus the sum of `terms`. Each addition is in place, and the terms come in the
+/// ascending order of their sizes. Thus the sum is never larger than a few words above the
+/// term that it adds, and a carry never runs through a large sum many times: the work is in
+/// the sum of the sizes of the terms and their number, which `read_charge` pays. `touched`
+/// counts the words of each term and of its carry.
+fn ascending_sum(mut terms: Vec<&Int>, start: u64, touched: &mut u64) -> Int {
+    terms.sort_by_key(|t| int_size(t));
+    let mut sum = Int::from_u64(start);
+    for t in terms {
+        #[cfg(test)]
+        let before = sum.words();
+        sum.add_assign(t);
+        *touched += int_size(t);
+        #[cfg(test)]
+        {
+            let after = sum.words();
+            let from = usize::try_from(int_size(t)).unwrap_or(usize::MAX);
+            *touched += after
+                .iter()
+                .enumerate()
+                .skip(from)
+                .filter(|(i, w)| before.get(*i) != Some(*w))
+                .count() as u64;
+        }
+    }
+    sum
 }
 
 /// One type of the table with its metadata.
@@ -455,17 +480,11 @@ impl Types {
     /// computes them. The work reads each integer of each part, which `read_charge` pays.
     #[must_use]
     pub fn sum(&self, parts: &[TyId]) -> Meta {
+        let mut touched = 0;
+        let meta = Meta::sum(parts.iter().map(|part| self.meta(*part)), &mut touched);
         #[cfg(test)]
-        self.tick(
-            parts
-                .iter()
-                .map(|part| {
-                    let m = self.meta(*part);
-                    int_size(&m.width) + int_size(&m.leaves) + int_size(&m.zero_size)
-                })
-                .sum(),
-        );
-        Meta::sum(parts.iter().map(|part| self.meta(*part)))
+        self.tick(touched);
+        meta
     }
 
     /// The charge of the reads of `sum` over `parts`, as Lean `Meta.readCharge`: the
