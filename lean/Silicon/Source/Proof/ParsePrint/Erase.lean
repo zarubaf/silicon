@@ -23,10 +23,14 @@ a check here:
   accepts each statement kind in each body, except a resource in a `fn` without `comptime`.
   Thus the flag `plain` also covers this clause.
 - No string has a control character other than LF, CR, and tab: `printableChar`.
-- Each number is below 2^65536: `Expr.printable` at `num`.
+- Each number is below 2^65536: `Expr.printable` at `num` and at `select`.
 
-The proof does not cover the container forms of slice 2 yet, so `Printable` excludes them. It
-includes a place with an index, because an index is a form of slice 1.
+One check has no clause in the spec yet: no tuple is empty, see `Expr.printable` at `tuple`.
+The printer writes an empty tuple as `()`, which is the unit value.
+
+The proof covers the container expressions of slice 2: the unit value, a tuple, an array, and
+a selector `.N`. It does not cover the container types yet, so `TypeExpr.printable` excludes
+them.
 -/
 namespace Silicon.Source
 
@@ -125,7 +129,10 @@ mutual
     | .call _ f xs => f.printable && Expr.printableAll xs
     | .index _ b xs => b.printable && !xs.isEmpty && Expr.printableAll xs
     | .field _ b f => b.printable && validName f.name
-    | .unit _ | .tuple .. | .array .. | .select .. => false
+    | .unit _ => true
+    | .tuple _ xs => !xs.isEmpty && Expr.printableAll xs
+    | .array _ xs => Expr.printableAll xs
+    | .select _ b _ i => b.printable && i < numberBound
 
   def Expr.printableAll : List Expr → Bool
     | [] => true
@@ -316,6 +323,10 @@ theorem Stmt.printableAll_eq (plain : Bool) (ss : List Stmt) :
     rw [all_congr_mem ih]
   | case9 _ f xs ihf ih =>
     simp only [Expr.erase, Expr.printable, ihf, Expr.printableAll_eq, List.all_map,
+      Function.comp_def, List.isEmpty_map]
+    rw [all_congr_mem ih]
+  | case12 _ xs ih | case13 _ xs ih =>
+    simp only [Expr.erase, Expr.printable, Expr.printableAll_eq, List.all_map,
       Function.comp_def, List.isEmpty_map]
     rw [all_congr_mem ih]
   | _ => simp_all [Expr.erase, Expr.printable]
