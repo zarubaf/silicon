@@ -11,7 +11,8 @@ bindings, child instances, and `:=` bindings.
 
 The table of instantiations is normative. An `instance` statement works in these steps:
 
-1. It evaluates the arguments from left to right. Each argument is static (`S011`).
+1. It evaluates the arguments from left to right. Each argument is static (`S011`). A literal
+   with `[]` takes the type of its parameter (`arguments`).
 2. It charges the recursive size of the arguments, also for a done instantiation. Then the
    serialization charges the square of the size of each integer, and its length in bytes.
 3. A clocked child in a combinational module is `S017` at the statement.
@@ -33,7 +34,8 @@ These rules settle the open points of slice 1:
 - A port, a register, and a wire have the type `Bool`, `UInt[W]`, or `SInt[W]` (`S010`).
 - A register in a combinational module is `S017` at the statement, before its type.
 - A `:=` target resolves without a charge. A register, a wire, an own output, and a child input
-  are targets, also through a handle alias. Each other target fails with `S017` (rule).
+  are targets, also through a handle alias. Each other target fails with `S017` (rule). A
+  target with an index or a selector `.N` is a part of a resource: `S017` at the target.
 - The value of `:=` is a typed use. It copies a reference, as a `let` does.
 - `S018` errors wait for the end of the body. The second binding of a resource gives one.
   A resource without a binding gives one at its declaration. A child input without a binding
@@ -215,6 +217,7 @@ def target (p : Pos) (e : Resolve.Expr) : EM Target := do
         else fail .S017 p s!"`{f.name}` is an output of the child, not a target"
       | none => fail .S010 p s!"the instance has no port `{f.name}`"
     | _ => bad
+  | .index q .. | .select q .. => fail .S017 q "a `:=` target is a whole resource, not a part"
   | _ => bad
 
 /-! Records the binding of `t` to `h`. The second binding of one target is an `S018`. -/
@@ -272,6 +275,30 @@ def serialize (pos : Pos) (m : String) (vs : List Value) : EM String := do
   charge pos (InstantiationId.renderSize m parts)
   return InstantiationId.render m parts
 
+/-!
+The arguments of an instantiation of the item `i` at `pos`, from left to right. Each argument is
+static (`S011`) when it evaluates. A literal with `[]` takes the type of its parameter, as the
+argument of a call does. Its parameter type then evaluates in the scope of the module, with each
+earlier parameter bound to its argument. The parent pays this work.
+-/
+def arguments (n : Nat) (pos : Pos) (i : Nat) (xs : List Resolve.Expr) : EM (List Value) := do
+  let vs ← xs.mapM fun x => do
+    match (← need x (← eval n x)).value with
+    | v@(.pending ..) => pure v
+    | v => return .static (← static pos v)
+  match (← read).items[i]? with
+  | some (.module _ _ ps _ _) =>
+    if vs.any (· matches .pending ..) && ps.length == vs.length then
+      inFrame none <| withTheReader Ctx (fun c => { c with item := i, frame := ⟨none, 0⟩ }) do
+        (ps.zip vs).mapM fun (q, v) => do
+          let x ← match v with
+            | .pending .. => do static pos (← settle pos (← typeExpr n q.ty) v)
+            | v => static pos v
+          bindLocal q.name.id ⟨x.ty?, false, .static x⟩
+          return x
+    else vs.mapM fun v => do static pos v
+  | _ => vs.mapM fun v => do static pos v
+
 /-! Runs `act` and gives the fuel that it uses. The result reads only a difference of fuel. -/
 def measure (act : EM α) : EM (α × Nat) := do
   let fuel : EM Nat := monadLift (do return (← get).fuel : Eval.M Nat)
@@ -325,7 +352,7 @@ mutual
             | v => fail .S010 p s!"{v.text} is not data"
           bindTarget p t h
         | .inst p u _ i xs => do
-          let vs ← xs.mapM fun x => do static p (← need x (← eval n x)).value
+          let vs ← arguments n p i xs
           charge p (vs.map Value.size).sum
           if let some (.module _ m _ ds _) := (← read).items[i]? then
             if (← get).work.body.domain.isNone && !ds.isEmpty then
@@ -421,7 +448,7 @@ def elaborate (budget : Budget) (items : Array Resolve.Item) (digest : String �
     (pos : Pos) (top : Nat) (xs : List Resolve.Expr) : Except Error (Design × Nat) :=
   Eval.run budget items fun n => do
     let go : EM Nat := do
-      let vs ← xs.mapM fun x => do static pos (← need x (← eval n x)).value
+      let vs ← arguments n pos top xs
       charge pos (vs.map Value.size).sum
       return (← instantiate n pos top vs).2
     let (k, s) ← go.run { digest, work := { body := { domain := none } } }
