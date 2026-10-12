@@ -46,6 +46,12 @@ def exprText (e : Expr) : String := e.print 0
 #guard exprDump (.array p [n 1, n 2]) == "(array ((num 1) (num 2)))"
 #guard exprDump (.select p (v "t") p 16) == "(select (name \"t\") 16)"
 
+/-! A receiver call prints its receiver, its name, and its arguments. -/
+#guard exprDump (.method p (v "xs") (nm "push") [n 1]) ==
+  "(method (name \"xs\") \"push\" ((num 1)))"
+#guard exprDump (.method p (.method p (v "x") (nm "f") []) (nm "g") [n 1, v "y"]) ==
+  "(method (method (name \"x\") \"f\" ()) \"g\" ((num 1) (name \"y\")))"
+
 /-! Each type kind. -/
 #guard u8.dump == "(index (name \"UInt\") ((num 8)))"
 #guard (t "Bool").dump == "(name \"Bool\")"
@@ -92,23 +98,27 @@ def exprText (e : Expr) : String := e.print 0
 
 /-! Each item kind and the parameter structure. -/
 def counter : Item :=
-  .module p (nm "Counter") [⟨p, true, nm "W", t "Nat"⟩] (some [nm "clk"])
+  .module p (nm "Counter") [⟨p, .comptime, nm "W", t "Nat"⟩] (some [nm "clk"])
     [.output p (nm "q") (.index p (t "UInt") [v "W"])]
 
 def inc : Item :=
-  .fn p false (nm "inc") [⟨p, false, nm "x", u8⟩] u8 [.ret p (some (bin .addw (v "x") (n 1)))]
+  .fn p false (nm "inc") [⟨p, .none, nm "x", u8⟩] u8 [.ret p (some (bin .addw (v "x") (n 1)))]
 
 #guard (Item.const p (nm "N") (t "Nat") (n 3)).dump == "(const \"N\" (name \"Nat\") (num 3))"
 #guard inc.dump ==
-  "(fn false \"inc\" ((param false \"x\" (index (name \"UInt\") ((num 8))))) " ++
+  "(fn false \"inc\" ((param none \"x\" (index (name \"UInt\") ((num 8))))) " ++
   "(index (name \"UInt\") ((num 8))) ((ret (some (binary addw (name \"x\") (num 1))))))"
+#guard (Item.fn p false (nm "push") [⟨p, .mut, nm "xs", t "L"⟩, ⟨p, .none, nm "x", t "T"⟩]
+    (.unit p) []).dump ==
+  "(fn false \"push\" ((param mut \"xs\" (name \"L\")) (param none \"x\" (name \"T\"))) " ++
+  "(unit) ())"
 #guard counter.dump ==
-  "(module \"Counter\" ((param true \"W\" (name \"Nat\"))) (some (\"clk\")) " ++
+  "(module \"Counter\" ((param comptime \"W\" (name \"Nat\"))) (some (\"clk\")) " ++
   "((output \"q\" (index (name \"UInt\") ((name \"W\"))))))"
 
 /-! A struct with parameters and fields, a struct without either, and a type alias. -/
 def packet : Item :=
-  .struct p (nm "P") [⟨p, true, nm "W", t "Nat"⟩]
+  .struct p (nm "P") [⟨p, .comptime, nm "W", t "Nat"⟩]
     [⟨nm "a", .index p (t "UInt") [v "W"]⟩, ⟨nm "b", t "Bool"⟩]
 
 def empty : Item := .struct p (nm "E") [] []
@@ -116,7 +126,7 @@ def empty : Item := .struct p (nm "E") [] []
 def bits : Item := .alias p (nm "B") (.array p (t "Bool") (n 4))
 
 #guard packet.dump ==
-  "(struct \"P\" ((param true \"W\" (name \"Nat\"))) " ++
+  "(struct \"P\" ((param comptime \"W\" (name \"Nat\"))) " ++
   "((structfield \"a\" (index (name \"UInt\") ((name \"W\")))) " ++
   "(structfield \"b\" (name \"Bool\"))))"
 #guard empty.dump == "(struct \"E\" () ())"
@@ -183,6 +193,18 @@ level 0. A `select` is a postfix form.
 #guard exprText (.index p (.select p (.array p [n 1]) p 0) [n 0]) == "[1].0[0]"
 #guard exprText (.field p (.select p (v "t") p 0) (nm "f")) == "t.0.f"
 
+/-!
+A receiver call is a postfix form. Its receiver prints at the postfix level, and its arguments
+at level 0.
+-/
+#guard exprText (.method p (v "xs") (nm "push") [bin .add (v "a") (n 1)]) == "xs.push(a + 1)"
+#guard exprText (.method p (v "x") (nm "f") []) == "x.f()"
+#guard exprText (.method p (bin .add (v "a") (v "b")) (nm "f") [n 1, n 2]) == "(a + b).f(1, 2)"
+#guard exprText (.method p (.method p (v "x") (nm "f") []) (nm "g") []) == "x.f().g()"
+#guard exprText (.method p (.select p (v "t") p 0) (nm "f") []) == "t.0.f()"
+#guard exprText (.unary p .neg (.method p (v "x") (nm "f") [])) == "-x.f()"
+#guard exprText (.index p (.method p (v "x") (nm "f") []) [n 0]) == "x.f()[0]"
+
 /-! A type prints `()`, a tuple type, and `[T; N]` with `N` at level 0. -/
 #guard (TypeExpr.unit p).print == "()"
 #guard (TypeExpr.tuple p [u8]).print == "(UInt[8],)"
@@ -210,6 +232,12 @@ level 0. A `select` is a postfix form.
 #guard (Stmt.ctFor p (nm "i") (n 0) (n 4) [.block p [.connect p (v "o") (v "i")]]).print 0 ==
   "comptime for i in 0 .. 4 {\n    {\n        o := i;\n    }\n}\n"
 #guard (Stmt.alias p (nm "B") (.tuple p [t "Bool"])).print 1 == "    type B = (Bool,);\n"
+
+/-! Each parameter mode prints its mark. -/
+#guard Print.print [.fn p true (nm "f")
+    [⟨p, .comptime, nm "T", t "Type"⟩, ⟨p, .mut, nm "xs", t "L"⟩, ⟨p, .none, nm "x", t "T"⟩]
+    (.unit p) []] ==
+  "comptime fn f(comptime T: Type, mut xs: L, x: T) -> () {}\n"
 
 /-!
 A struct without parameters prints without parentheses. Each field prints on its own line and

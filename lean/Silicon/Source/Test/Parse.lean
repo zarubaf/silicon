@@ -64,15 +64,15 @@ def roundtrip (items : List Item) : Bool :=
 #guard dump "" == ""
 #guard dump "const N: Nat = 3;" == "(const \"N\" (name \"Nat\") (num 3))\n"
 #guard dump "fn inc(x: UInt[8],) -> UInt[8] { return x +% 1; }" ==
-  "(fn false \"inc\" ((param false \"x\" (index (name \"UInt\") ((num 8))))) " ++
+  "(fn false \"inc\" ((param none \"x\" (index (name \"UInt\") ((num 8))))) " ++
   "(index (name \"UInt\") ((num 8))) ((ret (some (binary addw (name \"x\") (num 1))))))\n"
 #guard dump "comptime fn g(comptime n: Nat) -> Nat { return n; }" ==
-  "(fn true \"g\" ((param true \"n\" (name \"Nat\"))) (name \"Nat\") " ++
+  "(fn true \"g\" ((param comptime \"n\" (name \"Nat\"))) (name \"Nat\") " ++
   "((ret (some (name \"n\")))))\n"
 #guard dump "module M() {}" == "(module \"M\" () none ())\n"
 #guard dump "module M() domains() {}" == "(module \"M\" () (some ()) ())\n"
 #guard dump "module M(comptime W: Nat, comptime B: Bool,) domains(clk,) {}" ==
-  "(module \"M\" ((param true \"W\" (name \"Nat\")) (param true \"B\" (name \"Bool\"))) " ++
+  "(module \"M\" ((param comptime \"W\" (name \"Nat\")) (param comptime \"B\" (name \"Bool\"))) " ++
   "(some (\"clk\")) ())\n"
 #guard dump "const A: T = 1;\nconst B: T = 2;" ==
   "(const \"A\" (name \"T\") (num 1))\n(const \"B\" (name \"T\") (num 2))\n"
@@ -351,12 +351,12 @@ A struct, with and without parameters, and a `type` alias at an item and at a st
 struct without parentheses and a struct with `()` have no parameters. A `,` can end the fields.
 -/
 #guard dump "struct P(comptime W: Nat) { a: UInt[W], b: Bool, }" ==
-  "(struct \"P\" ((param true \"W\" (name \"Nat\"))) ((structfield \"a\" " ++
+  "(struct \"P\" ((param comptime \"W\" (name \"Nat\"))) ((structfield \"a\" " ++
   "(index (name \"UInt\") ((name \"W\")))) (structfield \"b\" (name \"Bool\"))))\n"
 #guard dump "struct P {}" == "(struct \"P\" () ())\n"
 #guard dump "struct P() {}" == "(struct \"P\" () ())\n"
 #guard dump "struct P(comptime A: Nat, comptime B: Type,) { a: [T; A] }" ==
-  "(struct \"P\" ((param true \"A\" (name \"Nat\")) (param true \"B\" (name \"Type\"))) " ++
+  "(struct \"P\" ((param comptime \"A\" (name \"Nat\")) (param comptime \"B\" (name \"Type\"))) " ++
   "((structfield \"a\" (array (name \"T\") (name \"A\")))))\n"
 #guard dump "type A = [UInt[8]; 4];" ==
   "(alias \"A\" (array (index (name \"UInt\") ((num 8))) (num 4)))\n"
@@ -530,7 +530,7 @@ def exprs : List Expr :=
    .field p (.unary p .inv (v "x")) (nm "y"), .index p (bin .add (v "a") (v "b")) [n 0]]
 
 def counter : Item :=
-  .module p (nm "Counter") [⟨p, true, nm "W", t "Nat"⟩] (some [nm "clk"])
+  .module p (nm "Counter") [⟨p, .comptime, nm "W", t "Nat"⟩] (some [nm "clk"])
     [.input p (nm "en") (t "Bool"), .output p (nm "q") (uint (v "W")),
      .reg p (nm "r") (uint (v "W")) (n 0), .wire p (nm "w") (t "Bool"),
      .connect p (v "q") (v "r"), .connect p (.field p (v "u") (nm "d")) (v "w"),
@@ -539,7 +539,7 @@ def counter : Item :=
      .ctFor p (nm "i") (n 0) (v "W") [.block p [], .ctIf p (v "c") [] (some [])]]
 
 def helper : Item :=
-  .fn p true (nm "g") [⟨p, true, nm "n", t "Nat"⟩, ⟨p, false, nm "x", uint (n 8)⟩] (t "Nat")
+  .fn p true (nm "g") [⟨p, .comptime, nm "n", t "Nat"⟩, ⟨p, .none, nm "x", uint (n 8)⟩] (t "Nat")
     [.local p true (nm "y") (some (t "Nat")) (v "n"), .local p false (nm "z") none (n 1),
      .assign p (v "y") (bin .add (v "y") (v "z")),
      .ctIf p (v "b") [.ret p (some (v "y"))] none, .ret p none]
@@ -609,7 +609,7 @@ def tupT (ts : List TypeExpr) : TypeExpr := .tuple p ts
 #guard constRoundtrip (.arrayType p (.array p (uint (n 8)) (n 2)) (bin .add (v "N") (n 1)))
 #guard constRoundtrip (.call p (.arrayType p (tupT [t "T", .unit p]) (n 4)) [])
 #guard constRoundtrip (.array p [.arrayType p (.index p (tupT [t "T"]) [n 1]) (n 0)])
-#guard roundtrip [.struct p (nm "P") [⟨p, true, nm "W", t "Nat"⟩]
+#guard roundtrip [.struct p (nm "P") [⟨p, .comptime, nm "W", t "Nat"⟩]
     [⟨nm "a", uint (v "W")⟩, ⟨nm "b", .array p (t "Bool") (n 2)⟩],
   .struct p (nm "Q") [] [], .alias p (nm "A") (tupT [t "T"]),
   .fn p false (nm "f") [] (t "T") [.alias p (nm "B") (.array p (t "A") (n 3))]]
