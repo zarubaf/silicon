@@ -15,24 +15,68 @@ enum Owner {
     ComptimeFn,
 }
 
-/// The signature of an item that a call or an instance needs.
+/// The signature of an item that a call, an instance, or a type name needs.
 enum Sig {
     /// A function: a flag for each parameter, true for a static one. Each parameter of a
     /// `comptime fn` is static.
     Fn(Vec<bool>),
     /// A module: its number of parameters.
     Module(usize),
+    /// A struct: its number of parameters and its number of fields.
+    Struct { params: usize, fields: usize },
+    /// A `type` item. Only elaboration knows its type.
+    Alias,
 }
 
-/// What a call's callee tells about the arguments.
-enum Callee<'a> {
-    /// A function item.
-    Fn(&'a [bool]),
-    Prelude(Prelude),
-    /// A type used as a constructor, `T(n)`.
-    Constructor,
-    /// A local, a constant, or another expression: elab checks it.
+/// The rule of a constructor call `T(...)`.
+#[derive(Clone, Copy)]
+enum Ctor {
+    /// A prelude type or an array type: no argument, or one static argument.
+    Convert,
+    /// A struct: no argument, or one argument for each field.
+    Record(usize),
+    /// A `type` item: elaboration checks the call.
     Unknown,
+}
+
+/// A type in an expression or a type name: its text for a message, the number of index
+/// arguments it misses, and its constructor rule.
+struct Head {
+    text: String,
+    missing: usize,
+    ctor: Ctor,
+}
+
+impl Head {
+    /// The head of a type that an index or an array type makes: a complete type.
+    fn complete(ctor: Ctor) -> Head {
+        Head {
+            text: "a complete type".to_owned(),
+            missing: 0,
+            ctor,
+        }
+    }
+}
+
+/// Which arguments of a call are static positions.
+enum Statics<'a> {
+    /// A flag for each argument of a function item.
+    Flags(&'a [bool]),
+    /// Only the first argument: `resize` and `reinterpret`.
+    First,
+    All,
+    Nobody,
+}
+
+impl Statics<'_> {
+    fn at(&self, k: usize) -> bool {
+        match self {
+            Statics::Flags(flags) => flags.get(k).copied().unwrap_or(false),
+            Statics::First => k == 0,
+            Statics::All => true,
+            Statics::Nobody => false,
+        }
+    }
 }
 
 pub(crate) fn run(resolved: &Resolved) -> Vec<Error> {
@@ -65,12 +109,12 @@ pub(crate) fn run_expr(resolved: &Resolved, expr: &ResolvedExpr) -> Vec<Error> {
     walker.finish()
 }
 
-/// The signatures of the functions and the modules of the file.
+/// The signatures of the functions, the modules, the structs, and the aliases of the file.
 fn sigs(resolved: &Resolved) -> BTreeMap<DeclId, Sig> {
     let mut sigs = BTreeMap::new();
     for item in resolved.ast() {
         let (name, sig) = match item {
-            Item::Const { .. } | Item::Struct { .. } | Item::Alias { .. } => continue,
+            Item::Const { .. } => continue,
             Item::Fn {
                 comptime,
                 name,
@@ -81,6 +125,19 @@ fn sigs(resolved: &Resolved) -> BTreeMap<DeclId, Sig> {
                 Sig::Fn(params.iter().map(|p| *comptime || p.comptime).collect()),
             ),
             Item::Module { name, params, .. } => (name, Sig::Module(params.len())),
+            Item::Struct {
+                name,
+                params,
+                fields,
+                ..
+            } => (
+                name,
+                Sig::Struct {
+                    params: params.len(),
+                    fields: fields.len(),
+                },
+            ),
+            Item::Alias { name, .. } => (name, Sig::Alias),
         };
         if let Some(Target::Decl(id)) = resolved.target(name.id) {
             sigs.insert(id, sig);
@@ -109,7 +166,7 @@ fn type_arity(p: Prelude) -> usize {
 
 fn fn_arity(p: Prelude) -> usize {
     match p {
-        Prelude::Error | Prelude::Len => 1,
+        Prelude::Error | Prelude::Len | Prelude::DataBits => 1,
         _ => 2,
     }
 }
@@ -147,23 +204,13 @@ impl<'a> Walker<'a> {
 
     fn report(&mut self, code: Code, pos: Pos, message: String) {
         let seq = self.tick();
-        self.report_at(seq, code, pos, message);
-    }
-
-    fn report_at(&mut self, seq: usize, code: Code, pos: Pos, message: String) {
         self.errors.push((seq, Error { code, pos, message }));
     }
 
     /// `S007` at `pos` if `what` has `got` arguments, not `want`.
     fn arity(&mut self, pos: Pos, what: &str, want: usize, got: usize) {
-        let seq = self.tick();
-        self.arity_at(seq, pos, what, want, got);
-    }
-
-    fn arity_at(&mut self, seq: usize, pos: Pos, what: &str, want: usize, got: usize) {
         if want != got {
-            self.report_at(
-                seq,
+            self.report(
                 Code::S007,
                 pos,
                 format!("{what} takes {want} argument(s), but it has {got}"),
@@ -171,161 +218,187 @@ impl<'a> Walker<'a> {
         }
     }
 
-    fn prelude_type(&self, id: NodeId) -> Option<Prelude> {
-        match self.target(id) {
-            Some(Target::Prelude(p)) if p.is_type() => Some(p),
-            _ => None,
+    /// The head of a type name. A struct misses its parameters. A `type` item is a complete
+    /// type. A local has no known head.
+    fn head(&self, id: NodeId, name: &str) -> Option<Head> {
+        let text = format!("`{name}`");
+        match self.target(id)? {
+            Target::Prelude(p) if p.is_type() => Some(Head {
+                text,
+                missing: type_arity(p),
+                ctor: Ctor::Convert,
+            }),
+            Target::Prelude(_) => None,
+            Target::Decl(id) => match self.sigs.get(&id)? {
+                Sig::Struct { params, fields } => Some(Head {
+                    text,
+                    missing: *params,
+                    ctor: Ctor::Record(*fields),
+                }),
+                Sig::Alias => Some(Head {
+                    text,
+                    missing: 0,
+                    ctor: Ctor::Unknown,
+                }),
+                Sig::Fn(_) | Sig::Module(_) => None,
+            },
         }
     }
 
-    /// The name and the number of missing index arguments of a type in an expression: `T`
-    /// or an index of it. A complete type misses none. Another expression is not a type.
-    fn type_head(&self, expr: &Expr) -> Option<(String, usize)> {
-        match expr {
-            Expr::Name { id, name, .. } => self
-                .prelude_type(*id)
-                .map(|p| (format!("`{name}`"), type_arity(p))),
-            Expr::Index { base, .. } => self
-                .type_head(base)
-                .map(|_| ("a complete type".to_owned(), 0)),
-            _ => None,
+    /// A name that is not a type. A resource in a static position is `S005`.
+    fn resource_name(&mut self, is_static: bool, pos: Pos, id: NodeId, name: &str) {
+        if let Some(Target::Decl(id)) = self.target(id)
+            && is_static
+            && let Some(what) = resource(self.resolved.decl(id).kind)
+        {
+            self.report(
+                Code::S005,
+                pos,
+                format!("`{name}` is {what}; a static position needs a static value"),
+            );
         }
     }
 
-    /// A name. A type name has no index here. A resource in a static position is `S005`.
-    fn name(&mut self, is_static: bool, pos: Pos, id: NodeId, name: &str) {
-        match self.target(id) {
-            Some(Target::Prelude(p)) if p.is_type() => {
-                self.arity(pos, &format!("`{name}`"), type_arity(p), 0);
-            }
-            Some(Target::Decl(id)) if is_static => {
-                if let Some(what) = resource(self.resolved.decl(id).kind) {
-                    self.report(
-                        Code::S005,
-                        pos,
-                        format!("`{name}` is {what}; a static position needs a static value"),
-                    );
-                }
-            }
-            _ => {}
-        }
-    }
-
-    /// Checks the arity of a call. The result tells which arguments are static positions.
-    fn callee(&mut self, pos: Pos, callee: &Expr, got: usize) -> Callee<'a> {
-        if let Expr::Name { id, name, .. } = callee {
-            match self.target(*id) {
-                Some(Target::Decl(id)) => {
-                    if let Some(Sig::Fn(flags)) = self.sigs.get(&id) {
-                        self.arity(pos, &format!("`{name}`"), flags.len(), got);
-                        return Callee::Fn(flags);
+    /// Checks the arity of a call at `pos` with `got` arguments. `head` is the type head of a
+    /// type callee. The result tells which arguments are static positions.
+    fn call(&mut self, pos: Pos, callee: &Expr, head: Option<&Head>, got: usize) -> Statics<'a> {
+        if let Some(head) = head {
+            return match head.ctor {
+                Ctor::Convert => {
+                    if got > 1 {
+                        self.report(
+                            Code::S007,
+                            pos,
+                            format!("a constructor takes 0 or 1 argument(s), but it has {got}"),
+                        );
                     }
-                    return Callee::Unknown;
+                    Statics::All
                 }
-                Some(Target::Prelude(p)) if !p.is_type() => {
-                    self.arity(pos, &format!("`{name}`"), fn_arity(p), got);
-                    return Callee::Prelude(p);
+                Ctor::Record(fields) => {
+                    if got != 0 && got != fields {
+                        self.report(
+                            Code::S007,
+                            pos,
+                            format!(
+                                "a struct constructor takes 0 or {fields} argument(s), but it has {got}"
+                            ),
+                        );
+                    }
+                    Statics::Nobody
                 }
-                _ => {}
+                Ctor::Unknown => Statics::Nobody,
+            };
+        }
+        let Expr::Name { id, name, .. } = callee else {
+            return Statics::Nobody;
+        };
+        match self.target(*id) {
+            Some(Target::Decl(id)) => {
+                if let Some(Sig::Fn(flags)) = self.sigs.get(&id) {
+                    self.arity(pos, &format!("`{name}`"), flags.len(), got);
+                    return Statics::Flags(flags);
+                }
+                Statics::Nobody
             }
+            Some(Target::Prelude(p)) if !p.is_type() => {
+                self.arity(pos, &format!("`{name}`"), fn_arity(p), got);
+                match p {
+                    Prelude::Resize | Prelude::Reinterpret => Statics::First,
+                    Prelude::StaticAssert | Prelude::Error => Statics::All,
+                    _ => Statics::Nobody,
+                }
+            }
+            _ => Statics::Nobody,
         }
-        if self.type_head(callee).is_some() {
-            self.arity(pos, "a constructor", 1, got);
-            return Callee::Constructor;
-        }
-        Callee::Unknown
     }
 
     fn expr(&mut self, is_static: bool, expr: &Expr) {
+        self.visit(is_static, false, expr);
+    }
+
+    /// An expression. `is_static` is true in a static position. `base` is true for the base of
+    /// an index, whose index holds the arguments of a type name. The result is the type head
+    /// of a type in an expression: a type name, an index of one, or `[T; N]`. Another
+    /// expression gives `None`. Thus the walk visits each node once.
+    fn visit(&mut self, is_static: bool, base: bool, expr: &Expr) -> Option<Head> {
         match expr {
-            Expr::Num { .. } | Expr::Bool { .. } | Expr::Str { .. } | Expr::Unit { .. } => {}
-            Expr::Name { pos, id, name } => self.name(is_static, *pos, *id, name),
-            Expr::Unary { arg, .. } => self.expr(is_static, arg),
+            Expr::Num { .. } | Expr::Bool { .. } | Expr::Str { .. } | Expr::Unit { .. } => None,
+            Expr::Name { pos, id, name } => {
+                let head = self.head(*id, name);
+                match &head {
+                    Some(h) if !base => self.arity(*pos, &h.text, h.missing, 0),
+                    Some(_) => {}
+                    None => self.resource_name(is_static, *pos, *id, name),
+                }
+                head
+            }
+            Expr::Unary { arg, .. } => {
+                self.expr(is_static, arg);
+                None
+            }
             Expr::Binary { lhs, rhs, .. } => {
                 self.expr(is_static, lhs);
                 self.expr(is_static, rhs);
+                None
             }
             Expr::Cond { cond, yes, no, .. } => {
                 self.expr(is_static, cond);
                 self.expr(is_static, yes);
                 self.expr(is_static, no);
+                None
             }
             Expr::Call {
                 pos, callee, args, ..
             } => {
-                self.expr(true, callee);
-                let kind = self.callee(*pos, callee, args.len());
+                let head = self.visit(true, false, callee);
+                let statics = self.call(*pos, callee, head.as_ref(), args.len());
                 for (k, arg) in args.iter().enumerate() {
-                    let arg_static = match &kind {
-                        Callee::Fn(flags) => flags.get(k).copied().unwrap_or(false),
-                        Callee::Prelude(Prelude::Resize | Prelude::Reinterpret) => k == 0,
-                        Callee::Prelude(Prelude::Len) | Callee::Unknown => false,
-                        Callee::Prelude(_) | Callee::Constructor => true,
-                    };
-                    self.expr(is_static || arg_static, arg);
+                    self.expr(is_static || statics.at(k), arg);
                 }
+                None
             }
             Expr::Index { pos, base, args } => {
-                self.index(is_static, *pos, base, args);
+                let head = self.visit(is_static, true, base);
+                if let Some(h) = &head {
+                    self.arity(*pos, &h.text, h.missing, args.len());
+                }
+                for arg in args {
+                    self.expr(true, arg);
+                }
+                head.map(|h| Head::complete(h.ctor))
             }
-            Expr::Field { base, .. } | Expr::Select { base, .. } => self.expr(is_static, base),
-            Expr::ArrayType { elem, len, .. } => {
-                self.type_expr(elem);
-                self.expr(true, len);
+            Expr::Field { base, .. } | Expr::Select { base, .. } => {
+                self.expr(is_static, base);
+                None
             }
             Expr::Tuple { elems, .. } | Expr::Array { elems, .. } => {
                 for elem in elems {
                     self.expr(is_static, elem);
                 }
-            }
-        }
-    }
-
-    /// An index. It visits the base once and returns the type head of the whole index, which
-    /// is a complete type if the base chain starts at a type name.
-    fn index(&mut self, is_static: bool, pos: Pos, base: &Expr, args: &[Expr]) -> bool {
-        // The outer check ranks before the checks inside the base at one position.
-        let seq = self.tick();
-        let head = match base {
-            // The base type name has its arguments, so it skips the check of a bare name.
-            Expr::Name { id, name, .. } if self.prelude_type(*id).is_some() => self
-                .prelude_type(*id)
-                .map(|p| (format!("`{name}`"), type_arity(p))),
-            Expr::Index { pos, base, args } => self
-                .index(is_static, *pos, base, args)
-                .then(|| ("a complete type".to_owned(), 0)),
-            _ => {
-                self.expr(is_static, base);
                 None
             }
-        };
-        let is_type = head.is_some();
-        if let Some((name, missing)) = head {
-            self.arity_at(seq, pos, &name, missing, args.len());
+            Expr::ArrayType { elem, len, .. } => {
+                self.type_expr(elem);
+                self.expr(true, len);
+                Some(Head::complete(Ctor::Convert))
+            }
         }
-        for arg in args {
-            self.expr(true, arg);
-        }
-        is_type
     }
 
     fn type_expr(&mut self, ty: &TypeExpr) {
         match ty {
             TypeExpr::Name { pos, id, name } => {
-                if let Some(p) = self.prelude_type(*id) {
-                    self.arity(*pos, &format!("`{name}`"), type_arity(p), 0);
+                if let Some(h) = self.head(*id, name) {
+                    self.arity(*pos, &h.text, h.missing, 0);
                 }
             }
             TypeExpr::Index { pos, base, args } => {
-                let (what, missing) = match &**base {
-                    TypeExpr::Name { id, name, .. } => (
-                        format!("`{name}`"),
-                        self.prelude_type(*id).map_or(0, type_arity),
-                    ),
-                    _ => ("a complete type".to_owned(), 0),
-                };
-                self.arity(*pos, &what, missing, args.len());
-                if !matches!(&**base, TypeExpr::Name { .. }) {
+                if let TypeExpr::Name { id, name, .. } = &**base {
+                    if let Some(h) = self.head(*id, name) {
+                        self.arity(*pos, &h.text, h.missing, args.len());
+                    }
+                } else {
+                    self.arity(*pos, "a complete type", 0, args.len());
                     self.type_expr(base);
                 }
                 for arg in args {
