@@ -2,14 +2,15 @@
 //! The prelude of slices 1 and 2. A later slice adds its own names, so a use of one of them is
 //! `S003` until then.
 
-/// A name of the prelude: the scalar types and functions of slice 1, and `Unit` and `len` of
-/// the containers of slice 2.
+/// A name of the prelude: the scalar types and functions of slice 1, `Unit` and `len` of the
+/// containers of slice 2, and `Type` and `data_bits` of the types as values.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Prelude {
     Bool,
     Nat,
     Int,
     Unit,
+    Type,
     UInt,
     SInt,
     Resize,
@@ -17,6 +18,7 @@ pub enum Prelude {
     StaticAssert,
     Error,
     Len,
+    DataBits,
 }
 
 impl Prelude {
@@ -26,6 +28,7 @@ impl Prelude {
             "Nat" => Prelude::Nat,
             "Int" => Prelude::Int,
             "Unit" => Prelude::Unit,
+            "Type" => Prelude::Type,
             "UInt" => Prelude::UInt,
             "SInt" => Prelude::SInt,
             "resize" => Prelude::Resize,
@@ -33,6 +36,7 @@ impl Prelude {
             "static_assert" => Prelude::StaticAssert,
             "error" => Prelude::Error,
             "len" => Prelude::Len,
+            "data_bits" => Prelude::DataBits,
             _ => return None,
         })
     }
@@ -46,6 +50,7 @@ impl Prelude {
                 | Prelude::Nat
                 | Prelude::Int
                 | Prelude::Unit
+                | Prelude::Type
                 | Prelude::UInt
                 | Prelude::SInt
         )
@@ -55,8 +60,7 @@ impl Prelude {
 /// The slice of a prelude name that a later slice adds, for the message of `S003`.
 pub(crate) fn later_slice(name: &str) -> Option<u8> {
     Some(match name {
-        "String" | "Type" | "List" | "list" | "push" | "pop" | "str" | "data_bits"
-        | "diagnostic" => 2,
+        "String" | "List" | "list" | "push" | "pop" | "str" | "diagnostic" => 2,
         "Reg" | "Wire" | "Mem" | "Input" | "Instance" | "Domain" | "read" => 3,
         "FieldInfo" | "TypeInfo" | "PortKey" | "PortInfo" => 4,
         _ => return None,

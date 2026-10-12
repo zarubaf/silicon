@@ -6,8 +6,8 @@
 use crate::prelude::{Prelude, later_slice};
 use crate::scope::Scopes;
 use crate::{Code, Decl, DeclId, Error, Kind, Resolved, Table, Target};
-use parse::ast::{Expr, Ident, Item, NodeId, Param, Pos, Stmt, TypeExpr};
-use std::collections::BTreeMap;
+use parse::ast::{Expr, Ident, Item, NodeId, Param, Pos, Stmt, StructField, TypeExpr};
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Resolves the names of the items. Returns the table, or the errors of the first pass with
 /// an error.
@@ -168,11 +168,10 @@ impl Walker {
                 self.scopes.close();
             }
             Item::Struct { params, fields, .. } => {
+                // The parameters and the field types share one scope.
                 self.scopes.open();
                 self.params(params);
-                for field in fields {
-                    self.ty(&field.ty);
-                }
+                self.fields(fields);
                 self.scopes.close();
             }
             Item::Alias { ty, .. } => self.ty(ty),
@@ -184,6 +183,21 @@ impl Walker {
         for param in params {
             self.ty(&param.ty);
             self.declare(&param.name, Kind::Param);
+        }
+    }
+
+    /// A field name is in no scope: only a second field with the name is an error.
+    fn fields(&mut self, fields: &[StructField]) {
+        let mut seen = BTreeSet::new();
+        for field in fields {
+            if !seen.insert(field.name.name.as_str()) {
+                self.duplicates.push(Error {
+                    code: Code::S002,
+                    pos: field.name.pos,
+                    message: format!("the field `{}` is already declared", field.name.name),
+                });
+            }
+            self.ty(&field.ty);
         }
     }
 
@@ -375,10 +389,20 @@ impl Walker {
         }
     }
 
-    /// A type name is a prelude type. Slice 1 has no type item.
+    /// Whether a name can stand in a type position: a prelude type, a `struct` item, a `type`
+    /// item, or a local. Only elaboration knows whether a local holds a type.
+    fn is_type(&self, target: Target) -> bool {
+        match target {
+            Target::Prelude(p) => p.is_type(),
+            Target::Decl(id) => {
+                !matches!(self.decls[id.0].kind, Kind::Const | Kind::Fn | Kind::Module)
+            }
+        }
+    }
+
     fn type_name(&mut self, pos: Pos, id: NodeId, name: &str) {
         match self.lookup(name) {
-            Some(target @ Target::Prelude(p)) if p.is_type() => {
+            Some(target) if self.is_type(target) => {
                 self.names.insert(id, target);
             }
             Some(_) => self.reject(pos, format!("`{name}` is not a type")),
