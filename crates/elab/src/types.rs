@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 /// A type as a static value: the scalar types of slice 1 with a width from 1 to 65536, `()`,
-/// `Type`, and the container types. A tuple type has at least one element type: `()` is
+/// `Type`, `String`, and the container types, which include `List[T]`. A tuple type has at least one element type: `()` is
 /// `Unit`. The length of an array type is any natural number, as the type does not hold the
 /// elements. A struct type is a specialization of the table.
 ///
@@ -33,6 +33,10 @@ pub enum Ty {
     Array(TyId, Int),
     Tuple(Vec<TyId>),
     Struct(SpecId),
+    /// `String`, a static type only.
+    String,
+    /// `List[T]`, a static type only. Its length is a value, not a part of the type.
+    List(TyId),
 }
 
 /// A type in the table `Types`. Two ids of one table are equal exactly if their types are
@@ -92,7 +96,8 @@ impl Meta {
     }
 
     /// The metadata of the scalar types. `Bool`, `UInt[W]`, `SInt[W]`, and `Unit` are hardware
-    /// data. `Nat`, `Int`, and `Type` are not, and their three numbers are 0.
+    /// data. `Nat`, `Int`, `Type`, `String`, and `List[T]` are not, and their three numbers are
+    /// 0. The depth of a list is in its id.
     fn scalar(ty: &Ty) -> Meta {
         match ty {
             Ty::Bool => Meta::new(1, 1, 1, true),
@@ -248,7 +253,7 @@ fn read_work(v: &Value) -> u64 {
         sum += match v {
             Value::Int(n) => int_size(n),
             Value::Str(s) => 1 + s.len() as u64,
-            Value::Array(_, xs) | Value::Tuple(xs) | Value::Record(_, xs) => {
+            Value::Array(_, xs) | Value::Tuple(xs) | Value::Record(_, xs) | Value::List(_, xs) => {
                 work.extend(xs);
                 1
             }
@@ -265,7 +270,7 @@ fn held_types(v: &Value, out: &mut Vec<TyId>) {
     while let Some(v) = work.pop() {
         match v {
             Value::Type(t) => out.push(*t),
-            Value::Array(t, xs) | Value::Record(t, xs) => {
+            Value::Array(t, xs) | Value::Record(t, xs) | Value::List(t, xs) => {
                 out.push(*t);
                 work.extend(xs);
             }
@@ -397,10 +402,13 @@ impl Types {
     #[must_use]
     pub fn shape(&self, ty: &Ty) -> (u64, u64) {
         match ty {
-            Ty::Bool | Ty::Nat | Ty::Int | Ty::Unit | Ty::Type | Ty::Struct(_) => (1, 1),
+            Ty::Bool | Ty::Nat | Ty::Int | Ty::Unit | Ty::Type | Ty::String | Ty::Struct(_) => {
+                (1, 1)
+            }
             Ty::UInt(w) | Ty::SInt(w) => (1 + int_size(&width_int(*w)), 1),
             Ty::Array(elem, len) => Types::array_shape(*elem, len),
             Ty::Tuple(parts) => Types::tuple_shape(parts),
+            Ty::List(elem) => (1u64.saturating_add(elem.size), 1 + elem.depth),
         }
     }
 
@@ -453,6 +461,11 @@ impl Types {
         self.mk(Ty::Tuple(parts))
     }
 
+    #[must_use]
+    pub fn list(&mut self, elem: TyId) -> TyId {
+        self.mk(Ty::List(elem))
+    }
+
     /// The join of `lhs` and `rhs` if they joined before.
     #[must_use]
     pub fn joined(&self, lhs: TyId, rhs: TyId) -> Option<&Joined> {
@@ -503,12 +516,12 @@ impl Types {
         self.entries.get(t.index).map_or(1, |e| e.zero_depth)
     }
 
-    /// The id of the part `k` of the container type `t`: the element type of an array, or
-    /// the type of the element `k` of a tuple.
+    /// The id of the part `k` of the container type `t`: the element type of an array or a
+    /// list, or the type of the element `k` of a tuple.
     #[must_use]
     pub fn part(&self, t: TyId, k: usize) -> Option<TyId> {
         match self.get(t) {
-            Ty::Array(elem, _) => Some(*elem),
+            Ty::Array(elem, _) | Ty::List(elem) => Some(*elem),
             Ty::Tuple(parts) => parts.get(k).copied(),
             _ => None,
         }
@@ -534,7 +547,7 @@ impl Types {
             }
             let mut parts = Vec::new();
             match self.get(t) {
-                Ty::Array(elem, _) => parts.push(*elem),
+                Ty::Array(elem, _) | Ty::List(elem) => parts.push(*elem),
                 Ty::Tuple(ts) => parts.extend(ts.iter().copied()),
                 Ty::Struct(s) => {
                     for arg in self.spec(*s).args() {
@@ -719,7 +732,7 @@ impl Types {
                         work.push(Step::Record(t, fields.len()));
                         work.extend(fields.iter().rev().map(|f| Step::Visit(*f)));
                     }
-                    Ty::Nat | Ty::Int | Ty::Type => return None,
+                    Ty::Nat | Ty::Int | Ty::Type | Ty::String | Ty::List(_) => return None,
                 },
                 Step::Array(elem, n) => {
                     let first = done.pop()?;

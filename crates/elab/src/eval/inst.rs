@@ -596,7 +596,7 @@ impl Evaluator<'_> {
             }
             let x = self.static_value(pos, o)?;
             let id = self.decl(&q.name)?;
-            let ty = x.ty(&mut self.tys);
+            let ty = Some(x.ty(&mut self.tys));
             self.bind(
                 id,
                 Slot {

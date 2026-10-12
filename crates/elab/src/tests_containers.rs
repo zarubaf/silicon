@@ -52,7 +52,6 @@ fn the_elements_take_their_common_type() {
     assert_eq!(o("", "[1, true]"), "S010 1:1");
     assert_eq!(o("", "[[1], [2, 3]]"), "S010 1:1");
     assert_eq!(o("", "[UInt[8](1), UInt[16](2)]"), "S010 1:1");
-    assert_eq!(o("", "[(\"a\", 1)]"), "S010 1:1");
     assert_eq!(o("", "[300, UInt[8](1)]"), "S012 1:1");
 }
 
