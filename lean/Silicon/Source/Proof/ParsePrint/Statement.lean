@@ -128,8 +128,22 @@ example : Printable [.fn p false (nm "f") [⟨p, .mut, nm "x", t "T"⟩, ⟨p, .
 example : ¬ Printable [.module p (nm "M") [⟨p, .mut, nm "W", t "Nat"⟩] none []] := by decide
 example : ¬ Printable [.struct p (nm "P") [⟨p, .mut, nm "W", t "Nat"⟩] []] := by decide
 
-/-! A receiver call: the proof does not cover it yet. -/
-example : ¬ Printable [.const p (nm "X") (t "T") (.method p (v "a") (nm "m") [])] := by decide
+/-!
+Receiver calls: on a name, a field, a sum, and a call result, then an index and a call of the
+result.
+-/
+example : Printable [.const p (nm "X") (t "T")
+    (.tuple p [.method p (v "a") (nm "m") [], .method p (.field p (v "a") (nm "b")) (nm "m")
+      [v "x", .num p 1], .method p (.binary p .add (v "a") (v "b")) (nm "m") [],
+      .index p (.method p (.method p (v "a") (nm "m") [v "x"]) (nm "n") []) [.num p 0],
+      .call p (.method p (v "a") (nm "m") []) [v "y"]])] := by decide +kernel
+example : Printable [.fn p false (nm "f") [] (t "T")
+    [.expr p (.method p (v "xs") (nm "push") [v "x"])]] := by decide +kernel
+
+/-! A keyword as a method name, and a receiver call as an assignment target. -/
+example : ¬ Printable [.const p (nm "X") (t "T") (.method p (v "a") (nm "in") [])] := by decide
+example : ¬ Printable [.fn p false (nm "f") [] (t "T")
+    [.assign p (.method p (v "a") (nm "m") []) (v "x")]] := by decide
 
 /-! A control character in a string, and a number that is too large. -/
 example : ¬ Printable [.const p (nm "X") (t "T") (.str p "\x01")] := by decide

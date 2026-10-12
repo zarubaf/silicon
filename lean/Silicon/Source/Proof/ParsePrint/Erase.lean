@@ -26,11 +26,12 @@ a check here:
 - No string has a control character other than LF, CR, and tab: `printableChar`.
 - Each number is below 2^65536: `Expr.printable` at `num` and at `select`.
 
+A method name is a name in the sense of the first clause: `Expr.printable` at `method`.
+
 The proof covers the container forms of slice 2. These are the unit value, the unit type, a
 tuple, an array, an array type `[T; N]` in a type and in an expression, and a selector `.N`. It
-also covers the type forms of phase 3: a `struct` item, and a `type` item or statement. Of the
-forms of phase 4, it covers a `mut` parameter of a function. `Printable` excludes a receiver
-call.
+also covers the type forms of phase 3: a `struct` item, and a `type` item or statement. It
+covers the forms of phase 4: a `mut` parameter of a function, and a receiver call `x.m(args)`.
 -/
 namespace Silicon.Source
 
@@ -143,7 +144,7 @@ mutual
     | .array _ xs => Expr.printableAll xs
     | .select _ b _ i => b.printable && i < numberBound
     | .arrayType _ t n => t.printable && n.printable
-    | .method .. => false
+    | .method _ r m xs => r.printable && validName m.name && Expr.printableAll xs
 
   def Expr.printableAll : List Expr → Bool
     | [] => true
@@ -428,6 +429,11 @@ private theorem printable_erase_all :
     intro p f xs ihf ih
     simp only [Expr.erase, Expr.printable, ihf, Expr.printableAll_eq, List.all_map,
       Function.comp_def, List.isEmpty_map]
+    rw [all_congr_mem ih]
+  case case16 =>
+    intro p r m xs ihr ih
+    simp only [Expr.erase, Expr.printable, ihr, Expr.printableAll_eq, List.all_map,
+      Function.comp_def, Ident.erase_name]
     rw [all_congr_mem ih]
   case case12 | case13 =>
     intro p xs ih
