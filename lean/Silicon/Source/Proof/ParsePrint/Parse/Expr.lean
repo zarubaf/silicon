@@ -568,7 +568,7 @@ theorem Runs.primary_array {xs : List Expr} {ctx : Ctx} {i f T B : Nat}
   simp only [hk]
   refine Runs.bind (Runs.arrayTypeAhead hs) fun b hb => ?_
   subst hb
-  simp only [Bool.false_eq_true, ite_false, pure_bind]
+  simp only [Bool.false_eq_true, ite_false]
   refine Runs.bump_bind ?_
   refine Runs.bind hargs fun ns hns => Runs.pure ⟨rfl, ?_, ?_⟩
   · simp only [Expr.erase, List.map_map, Function.comp_def]
