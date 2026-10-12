@@ -492,10 +492,134 @@ def writeBack (p : Pos) (outs : List (Place × Val)) : M Unit := do
     store p p pl v
 
 /-!
+Binds the actual `a` to the formal `q` of the type `t` in the frame of the callee (section 9.1).
+A value charges its copy, then its typed use. It is static in a `comptime fn` and at a `comptime`
+parameter. A place charges the copy of its part, and its type is exactly `t`, else `S010` at the
+call `p`. It is static in a `comptime fn`. Its formal is a mutable local.
+-/
+def copyIn (p : Pos) (c : Bool) (q : Resolve.Param) (t : Ty) : Actual → M Unit
+  | .value v => do
+    charge p v.size
+    let x ← if c || q.mode == .comptime then do
+        pure (.static (← conform p t (← static p (← settle p t v))))
+      else conformVal p t v
+    bindLocal q.name.id ⟨some t, false, ← named p q.name.id q.name.name.name x⟩
+  | .place pl => do
+    charge p pl.part.size
+    let pt := pl.ty <|> pl.part.ty?
+    unless pt == some t do
+      let u := match pt with | some u => u.text | none => pl.part.text
+      fail .S010 p s!"a `mut` actual has the type {u}, but its formal has {t.text}"
+    let x ← if c then pure (Val.static (← static p pl.part)) else pure pl.part
+    bindLocal q.name.id ⟨some t, true, ← named p q.name.id q.name.name.name x⟩
+
+/-!
+The result of the body of the function `u` in the call frame `path`. A hardware result gets the
+role `0ret` there. A body without `return` at its end is `S010` at the call `p`.
+-/
+def result (p : Pos) (path : Path) (u : String) : Option Val → M Val
+  | some (.hw h) => do bindHw p (← version .ret (path.push (.role .ret))) h
+  | some v => pure v
+  | none => fail .S010 p s!"`{u}` ends without `return`"
+
+/-!
+`push` at `p` of the value `v` at the node `x` onto the list at the place `pl`. `g` is the name
+of the callee. The module doc gives the steps. It checks the list and the mutation rule. Then it
+makes the typed use of the element, checks the depth, and charges the size of the element.
+-/
+def pushOnto (p x : Pos) (g : String) (pl : Place) (v : Val) : M (Option Out) := do
+  let .static (.list e _) := pl.part | fail .S010 p s!"`{g}` needs a list, not {pl.part.text}"
+  mutation p
+  let w ← match ← data x (← settle p e v) with
+    | .static w => conform p e w
+    | .hw _ => fail .S011 x "a list holds no hardware value"
+    | v => fail .S010 x s!"{v.text} is not an element of a list"
+  -- The root is within the nesting depth, so only the element on the path can raise it.
+  bounded p (pl.keys.length + 1 + w.depth)
+  charge p w.size
+  changeAt pl (fun | .list t ys => .list t (ys.push w) | v => v)
+  return some ⟨.static .unit, false⟩
+
+/-!
+`pop` at `p` of the list at the place `pl`. `g` is the name of the callee. An empty list is
+`S013`. Then it checks the mutation rule and charges the size of the element.
+-/
+def popFrom (p : Pos) (g : String) (pl : Place) : M (Option Out) := do
+  let .static (.list _ ys) := pl.part | fail .S010 p s!"`{g}` needs a list, not {pl.part.text}"
+  let some w := ys.back? | fail .S013 p "`pop` of an empty list"
+  mutation p
+  charge p w.size
+  changeAt pl (fun | .list t ys => .list t ys.pop | v => v)
+  return some ⟨.static w, false⟩
+
+/-!
+`data_bits` at `p` with the arguments `vs`. It charges the size of the width that it copies from
+the metadata of the type. `g` is the name of the callee.
+-/
+def dataBitsOf (p : Pos) (g : String) : List Val → M (Option Out)
+  | [.static (.type t)] => do
+    if t.info.data then
+      charge p (intSize t.info.width)
+      return some ⟨.static (.int t.info.width), false⟩
+    else fail .S010 p s!"`{g}` needs a hardware data type, not {t.text}"
+  | [v] => fail .S010 p s!"`{g}` needs a type, not {v.text}"
+  | vs => fail .S007 p s!"`{g}` takes 1 argument(s), but it has {vs.length}"
+
+/-!
+A call at `p` of the prelude function `h` other than `push` and `pop`, with the values `vs` of
+its arguments in the order of the parameters. `g` is the name of the callee. `len` only refers
+to its argument, and `data_bits` reads the metadata of its type. The others copy each argument.
+-/
+def primCall (p : Pos) (g : String) (h : PrimFn) (vs : List Val) : M (Option Out) := do
+  match h with
+  | .len => return some ⟨.static (← lenOf p vs), false⟩
+  | .dataBits => dataBitsOf p g vs
+  | h =>
+    charge p (vs.map Val.size).sum
+    match h, vs with
+    | .resize, [t, v] | .reinterpret, [t, v] =>
+      let t ← match ← static p t with
+        | .type t => pure t
+        | t => fail .S010 p s!"`{g}` needs a type, not {t.text}"
+      match ← data p v with
+      | .static v =>
+        let s := if h == .resize then resize t v else reinterpret t v
+        return some ⟨.static (← apply p s), false⟩
+      | .hw x => return some ⟨← hwConvert p h t x, false⟩
+      | v => fail .S010 p s!"{v.text} is not data"
+    | .staticAssert, [c, m] =>
+      match ← static p c, ← static p m with
+      | .bool c, .str m =>
+        if c then return none else fail .S014 p s!"static assertion failed: {strText m}"
+      | c, m => fail .S010 p s!"`{g}` does not accept {[c.text, m.text]}"
+    | .error, [m] =>
+      match ← static p m with
+      | .str m => fail .S014 p s!"error: {strText m}"
+      | m => fail .S010 p s!"`{g}` does not accept {m.text}"
+    | .list, [t] =>
+      match ← static p t with
+      | .type t =>
+        let v := Value.list t #[]
+        bounded p v.depth
+        charge p 1
+        return some ⟨.static v, false⟩
+      | t => fail .S010 p s!"`{g}` needs a type, not {t.text}"
+    | .str, [v] =>
+      match ← data p v with
+      | .static n@(.int k) =>
+        charge p (n.size * n.size)
+        let s := Value.str (toString k)
+        charge p s.size
+        return some ⟨.static s, false⟩
+      | v => fail .S010 p s!"`{g}` needs an Int, not {v.text}"
+    | _, vs => fail .S010 p s!"`{g}` does not accept {vs.map Val.text}"
+
+/-!
 The evaluator. `eval`, `typeExpr`, `stmt`, and `block` are the entry functions. Each charges
-one unit, then calls deeper with the bound `n`. The helpers `name`, `spec`, `call`, `index`,
-and `placeAt` get the bound `n` of their caller after its charge. They call only entry functions and
-`spec`, which a name of a struct item uses.
+one unit, then calls deeper with the bound `n`. The helpers `name`, `spec`, `index`, `placeAt`,
+`args`, `ctor`, `invoke`, and `call` get the bound `n` of their caller after its charge. They
+call entry functions, `spec`, which a name of a struct item uses, and the helpers that `call`
+uses.
 -/
 mutual
   def eval (b : Nat) (e : Resolve.Expr) : M (Option Out) :=
@@ -593,7 +717,7 @@ mutual
         let e ← typeExpr n t
         let t ← arrayTy p k.pos e (← static k.pos (← need k (← eval n k)).value)
         return some ⟨.static (.type t), false⟩
-  termination_by (b, 2)
+  termination_by (b, 3)
 
   def typeExpr (b : Nat) (t : Resolve.TypeExpr) : M Ty :=
     match b with
@@ -614,7 +738,7 @@ mutual
       | .array p t k => do
         let e ← typeExpr n t
         arrayTy p k.pos e (← static k.pos (← need k (← eval n k)).value)
-  termination_by (b, 2)
+  termination_by (b, 3)
 
   /-- `UInt[e]` or `SInt[e]` in a type or an expression. The base charged its node. -/
   def index (n : Nat) (p : Pos) (k : PrimType) (xs : List Resolve.Expr) : M Ty := do
@@ -717,158 +841,89 @@ mutual
     return ⟨id, slot, x, ty, cur, keys.toList, inList⟩
   termination_by (n + 1, 0)
 
+  /-- The values of the arguments `xs` in the order of the parameters, by `bound b`. -/
+  def args (n b : Nat) (xs : List Resolve.Expr) : M (List Val) := do
+    return bound b (← xs.mapM fun x => do return (← need x (← eval n x)).value)
+  termination_by (n + 1, 0)
+
+  /-- A constructor call at `p`: the callee `f` gives a type, and `xs` are its arguments. -/
+  def ctor (n : Nat) (p : Pos) (f : Resolve.Expr) (b : Nat) (xs : List Resolve.Expr) :
+      M (Option Out) := do
+    let o ← need f (← eval n f)
+    let .static (.type t) := o.value | fail .S010 p s!"{o.value.text} is not a function"
+    match t, xs with
+    | t, [] => return some ⟨.static (← zero p t), false⟩
+    | t@(.struct ..), xs =>
+      let some (_, fs) := fieldsIn (← get).specs t
+        | fail .S010 p s!"{t.text} has no specialization"
+      if fs.length != xs.length then
+        fail .S007 p
+          s!"a struct constructor takes 0 or {fs.length} argument(s), but it has {xs.length}"
+      let vs ← args n b xs
+      charge p (vs.map Val.size).sum
+      return some ⟨.static (← recordOf p t fs (xs.map (·.pos)) vs), false⟩
+    | t, [x] =>
+      let a ← need x (← eval n x)
+      charge p a.value.size
+      return some ⟨.static (← conform p t (← static p a.value)), false⟩
+    | _, _ => fail .S007 p "a constructor takes 0 or 1 argument(s)"
+  termination_by (n + 1, 1)
+
+  /--
+  The run at `p` of the function item `i` with the actuals `acts`, in the order of the
+  parameters `ps`. It runs in the call frame `<fn>$<k>c` of the call site `k`: the copy-in of
+  each actual, then the body `body` at `ip` with the return type `ret`. The write-backs of its
+  `mut` actuals then run in the frame of the caller. `c` is true for a `comptime fn`.
+  -/
+  def invoke (n : Nat) (p : Pos) (i k : Nat) (c : Bool) (u : Ident) (ps : List Resolve.Param)
+      (ret : Resolve.TypeExpr) (ip : Pos) (body : List Resolve.Stmt) (acts : List Actual) :
+      M (Option Out) := do
+    let ctx ← read
+    let (r, outs) ← nested p <| inFrame none do
+      let (path, fr) ← frameOf u.name (ctx.syms.items.getD i 0) (.call k)
+      withReader (fun c => { c with item := i, frame := fr }) do
+        for (q, a) in ps.zip acts do copyIn p c q (← typeExpr n q.ty) a
+        let rt ← typeExpr n ret
+        let o ← withReader (fun c => { c with ret := some rt }) (block n ip body)
+        return (← result p path u.name o, ← finals ps acts)
+    writeBack p outs
+    return some ⟨r, false⟩
+  termination_by (n + 1, 0)
+
   /--
   A call of a function item, a prelude function, or a type. The arguments `xs` are in their
   evaluation order, and the first binds at the parameter `b` (`bound`). A function item runs in
-  the call frame `<fn>$<k>c` of the call site `k`. A hardware argument and a hardware result get
-  a core name in that frame. The write-backs of its `mut` actuals run in the frame of the caller.
+  the call frame of the call site `k` (`invoke`). A `mut` actual resolves its place in the
+  evaluation order of the arguments.
   -/
   def call (n : Nat) (p : Pos) (f : Resolve.Expr) (xs : List Resolve.Expr) (b k : Nat) :
       M (Option Out) := do
-    let args (xs : List Resolve.Expr) : M (List Val) := do
-      return bound b (← xs.mapM fun x => do return (← need x (← eval n x)).value)
-    -- A callee that is not a function item or a prelude function is a type.
-    let ctor : M (Option Out) := do
-      let o ← need f (← eval n f)
-      let .static (.type t) := o.value | fail .S010 p s!"{o.value.text} is not a function"
-      match t, xs with
-      | t, [] => return some ⟨.static (← zero p t), false⟩
-      | t@(.struct ..), xs =>
-        let some (_, fs) := fieldsIn (← get).specs t
-          | fail .S010 p s!"{t.text} has no specialization"
-        if fs.length != xs.length then
-          fail .S007 p
-            s!"a struct constructor takes 0 or {fs.length} argument(s), but it has {xs.length}"
-        let vs ← args xs
-        charge p (vs.map Val.size).sum
-        return some ⟨.static (← recordOf p t fs (xs.map (·.pos)) vs), false⟩
-      | t, [x] =>
-        let a ← need x (← eval n x)
-        charge p a.value.size
-        return some ⟨.static (← conform p t (← static p a.value)), false⟩
-      | _, _ => fail .S007 p "a constructor takes 0 or 1 argument(s)"
     match f with
     | .name fp g (.item i) =>
-      let some (.fn ip c fname ps ret body) := (← read).items[i]? | ctor
+      let some (.fn ip c u ps ret body) := (← read).items[i]? | ctor n p f b xs
       charge fp 1
       if ps.length != xs.length then
-        let _ ← args xs
+        let _ ← args n b xs
         fail .S007 p s!"`{g}` takes {ps.length} argument(s), but it has {xs.length}"
       let acts ← (xs.zip (unbound b ps)).mapM fun (x, q) => do
         if q.mode == .mut then return Actual.place (← placeAt n x.pos .S008 x)
         else return Actual.value (← need x (← eval n x)).value
-      let acts := bound b acts
-      let ctx ← read
-      let (r, outs) ← nested p <| inFrame none do
-        let (path, fr) ← frameOf fname.name (ctx.syms.items.getD i 0) (.call k)
-        withReader (fun c => { c with item := i, frame := fr }) do
-          for (q, a) in ps.zip acts do
-            let t ← typeExpr n q.ty
-            match a with
-            | .value v =>
-              charge p v.size
-              let x ← if c || q.mode == .comptime then do
-                  pure (.static (← conform p t (← static p (← settle p t v))))
-                else conformVal p t v
-              bindLocal q.name.id ⟨some t, false, ← named p q.name.id q.name.name.name x⟩
-            | .place pl =>
-              charge p pl.part.size
-              let pt := pl.ty <|> pl.part.ty?
-              unless pt == some t do
-                let u := match pt with | some u => u.text | none => pl.part.text
-                fail .S010 p s!"a `mut` actual has the type {u}, but its formal has {t.text}"
-              let x ← if c then pure (Val.static (← static p pl.part)) else pure pl.part
-              bindLocal q.name.id ⟨some t, true, ← named p q.name.id q.name.name.name x⟩
-          let rt ← typeExpr n ret
-          let r ← match ← withReader (fun c => { c with ret := some rt }) (block n ip body) with
-            | some (.hw h) => do bindHw p (← version .ret (path.push (.role .ret))) h
-            | some v => pure v
-            | none => fail .S010 p s!"`{fname.name}` ends without `return`"
-          return (r, ← finals ps acts)
-      writeBack p outs
-      return some ⟨r, false⟩
-    | .name fp _ (.fn .len) =>
-      charge fp 1
-      return some ⟨.static (← lenOf p (← args xs)), false⟩
-    | .name fp g (.fn .dataBits) =>
-      charge fp 1
-      match ← args xs with
-      | [.static (.type t)] =>
-        if t.info.data then
-          charge p (intSize t.info.width)
-          return some ⟨.static (.int t.info.width), false⟩
-        else fail .S010 p s!"`{g}` needs a hardware data type, not {t.text}"
-      | [v] => fail .S010 p s!"`{g}` needs a type, not {v.text}"
-      | vs => fail .S007 p s!"`{g}` takes 1 argument(s), but it has {vs.length}"
+      invoke n p i k c u ps ret ip body (bound b acts)
     | .name fp g (.fn .push) =>
       charge fp 1
       let [l, x] := xs | fail .S007 p s!"`{g}` takes 2 argument(s), but it has {xs.length}"
       let pl ← placeAt n l.pos .S008 l
       let o ← need x (← eval n x)
-      let .static (.list e _) := pl.part | fail .S010 p s!"`{g}` needs a list, not {pl.part.text}"
-      mutation p
-      let w ← match ← data x.pos (← settle p e o.value) with
-        | .static w => conform p e w
-        | .hw _ => fail .S011 x.pos "a list holds no hardware value"
-        | v => fail .S010 x.pos s!"{v.text} is not an element of a list"
-      -- The root is within the nesting depth, so only the element on the path can raise it.
-      bounded p (pl.keys.length + 1 + w.depth)
-      charge p w.size
-      changeAt pl (fun | .list t ys => .list t (ys.push w) | v => v)
-      return some ⟨.static .unit, false⟩
+      pushOnto p x.pos g pl o.value
     | .name fp g (.fn .pop) =>
       charge fp 1
       let [l] := xs | fail .S007 p s!"`{g}` takes 1 argument(s), but it has {xs.length}"
-      let pl ← placeAt n l.pos .S008 l
-      let .static (.list _ ys) := pl.part | fail .S010 p s!"`{g}` needs a list, not {pl.part.text}"
-      let some w := ys.back? | fail .S013 p "`pop` of an empty list"
-      mutation p
-      charge p w.size
-      changeAt pl (fun | .list t ys => .list t ys.pop | v => v)
-      return some ⟨.static w, false⟩
+      popFrom p g (← placeAt n l.pos .S008 l)
     | .name fp g (.fn h) =>
       charge fp 1
-      let vs ← args xs
-      charge p (vs.map Val.size).sum
-      match h, vs with
-      | .resize, [t, v] | .reinterpret, [t, v] =>
-        let t ← match ← static p t with
-          | .type t => pure t
-          | t => fail .S010 p s!"`{g}` needs a type, not {t.text}"
-        match ← data p v with
-        | .static v =>
-          let s := if h == .resize then resize t v else reinterpret t v
-          return some ⟨.static (← apply p s), false⟩
-        | .hw x => return some ⟨← hwConvert p h t x, false⟩
-        | v => fail .S010 p s!"{v.text} is not data"
-      | .staticAssert, [c, m] =>
-        match ← static p c, ← static p m with
-        | .bool c, .str m =>
-          if c then return none else fail .S014 p s!"static assertion failed: {strText m}"
-        | c, m => fail .S010 p s!"`{g}` does not accept {[c.text, m.text]}"
-      | .error, [m] =>
-        match ← static p m with
-        | .str m => fail .S014 p s!"error: {strText m}"
-        | m => fail .S010 p s!"`{g}` does not accept {m.text}"
-      | .list, [t] =>
-        match ← static p t with
-        | .type t =>
-          let v := Value.list t #[]
-          bounded p v.depth
-          charge p 1
-          return some ⟨.static v, false⟩
-        | t => fail .S010 p s!"`{g}` needs a type, not {t.text}"
-      | .str, [v] =>
-        match ← data p v with
-        | .static n@(.int k) =>
-          charge p (n.size * n.size)
-          let s := Value.str (toString k)
-          charge p s.size
-          return some ⟨.static s, false⟩
-        | v => fail .S010 p s!"`{g}` needs an Int, not {v.text}"
-      | _, vs => fail .S010 p s!"`{g}` does not accept {vs.map Val.text}"
-    | _ => ctor
-  termination_by (n + 1, 1)
+      primCall p g h (← args n b xs)
+    | _ => ctor n p f b xs
+  termination_by (n + 1, 2)
 
   /-- A statement. The result is the value of a `return`. -/
   def stmt (b : Nat) (s : Resolve.Stmt) : M (Option Val) :=
@@ -931,7 +986,7 @@ mutual
       | .alias _ x ty => do
         bindLocal x.id ⟨some .type, false, .static (.type (← typeExpr n ty))⟩
         return none
-  termination_by (b, 2)
+  termination_by (b, 3)
 
   /-- A block at `pos`. It charges as a statement. -/
   def block (b : Nat) (pos : Pos) (ss : List Resolve.Stmt) : M (Option Val) :=
@@ -942,7 +997,7 @@ mutual
       for s in ss do
         if let some r ← stmt n s then return some r
       return none
-  termination_by (b, 2)
+  termination_by (b, 3)
 end
 
 /-!

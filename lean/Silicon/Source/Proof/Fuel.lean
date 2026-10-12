@@ -562,6 +562,31 @@ theorem iteration_f (p : Pos) (i : Binder) (v : Int) {x y : M α} (h : Follows c
     Follows cap (iteration p i v x) (iteration p i v y) := by
   unfold iteration; follows [h, frameOf_f, inFrameOf_f, bindLocal_f]
 
+theorem copyIn_f (p : Pos) (c : Bool) (q : Resolve.Param) (t : Ty) (a : Actual) :
+    Follows cap (copyIn p c q t a) (copyIn p c q t a) := by
+  unfold copyIn; follows [static_f, settle_f, conform_f, conformVal_f, named_f, bindLocal_f]
+
+theorem result_f (p : Pos) (path : Names.Path) (u : String) (o : Option Val) :
+    Follows cap (result p path u o) (result p path u o) := by
+  unfold result; follows [bindHw_f, version_f]
+
+theorem pushOnto_f (p x : Pos) (g : String) (pl : Place) (v : Val) :
+    Follows cap (pushOnto p x g pl v) (pushOnto p x g pl v) := by
+  unfold pushOnto; follows [mutation_f, data_f, settle_f, conform_f, bounded_f, changeAt_f]
+
+theorem popFrom_f (p : Pos) (g : String) (pl : Place) :
+    Follows cap (popFrom p g pl) (popFrom p g pl) := by
+  unfold popFrom; follows [mutation_f, changeAt_f]
+
+theorem dataBitsOf_f (p : Pos) (g : String) (vs : List Val) :
+    Follows cap (dataBitsOf p g vs) (dataBitsOf p g vs) := by
+  unfold dataBitsOf; follows
+
+theorem primCall_f (p : Pos) (g : String) (h : PrimFn) (vs : List Val) :
+    Follows cap (primCall p g h vs) (primCall p g h vs) := by
+  unfold primCall
+  follows [lenOf_f, dataBitsOf_f, static_f, data_f, apply_f, hwConvert_f, bounded_f]
+
 end helpers
 
 /-!
@@ -596,16 +621,33 @@ theorem placeAt_f (he : ∀ e, Follows m (eval k e) (eval m e)) (p : Pos) (c : E
   rw [placeAt.eq_def k, placeAt.eq_def m]
   follows [he, place_f, need_f, static_f, pickAt_f, selectAt_f, fieldAt_f]
 
+theorem args_f (he : ∀ e, Follows m (eval k e) (eval m e)) (b : Nat)
+    (xs : List Resolve.Expr) : Follows m (args k b xs) (args m b xs) := by
+  rw [args.eq_def k, args.eq_def m]
+  follows [he, need_f]
+
+theorem ctor_f (he : ∀ e, Follows m (eval k e) (eval m e)) (p : Pos) (f : Resolve.Expr)
+    (b : Nat) (xs : List Resolve.Expr) : Follows m (ctor k p f b xs) (ctor m p f b xs) := by
+  rw [ctor.eq_def k, ctor.eq_def m]
+  follows [he, args_f he, need_f, static_f, conform_f, zero_f, recordOf_f]
+
+theorem invoke_f (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t))
+    (hb : ∀ p ss, Follows m (block k p ss) (block m p ss)) (p : Pos) (i j : Nat) (c : Bool)
+    (u : Ident) (ps : List Resolve.Param) (ret : Resolve.TypeExpr) (ip : Pos)
+    (body : List Resolve.Stmt) (acts : List Actual) :
+    Follows m (invoke k p i j c u ps ret ip body acts)
+      (invoke m p i j c u ps ret ip body acts) := by
+  rw [invoke.eq_def k, invoke.eq_def m]
+  follows [ht, hb, copyIn_f, result_f, frameOf_f, nested_f, inFrame_f, finals_f, writeBack_f]
+
 theorem call_f (he : ∀ e, Follows m (eval k e) (eval m e))
     (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t))
     (hb : ∀ p ss, Follows m (block k p ss) (block m p ss)) (p : Pos) (f : Resolve.Expr)
     (xs : List Resolve.Expr) (b j : Nat) :
     Follows m (call k p f xs b j) (call m p f xs b j) := by
   rw [call.eq_def k, call.eq_def m]
-  follows [he, ht, hb, placeAt_f he, mutation_f, changeAt_f, bounded_f, need_f, static_f,
-    settle_f, data_f, conform_f, conformVal_f, apply_f, hwConvert_f, lenOf_f, named_f,
-    bindLocal_f, bindHw_f, version_f, frameOf_f, nested_f, inFrame_f, zero_f, recordOf_f,
-    finals_f, writeBack_f]
+  follows [he, placeAt_f he, args_f he, ctor_f he, invoke_f ht hb, need_f, pushOnto_f,
+    popFrom_f, primCall_f]
 
 set_option maxHeartbeats 400000 in
 /--
