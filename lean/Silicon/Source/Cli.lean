@@ -197,9 +197,20 @@ def runSetup (o : Opts) (source t : String) (digest : String → String := Names
   unless Vectors.fits s c.design do throw (.defect "the port schema does not fit the top")
   return (s, Core.Semantics.CertifiedDesign.ofCheck c.design c.typed c.accepted)
 
+/-!
+The outcome of `eval`. The result charges the length in bytes of its serialization against the
+fuel that remains. When the fuel cannot pay it, the result is `S015` at `1:1` (section 8). Only
+the charge is normative, so the reference makes the text first.
+-/
 def evalOutcome (o : Opts) (source expr : String) : Outcome :=
   match evalText o source expr with
-  | .ok (v, _) => .ok (v.serialize ++ "\n")
+  | .ok (v, used) =>
+    let text := v.serialize
+    let left := o.budget.fuel - used
+    if left < text.utf8ByteSize then
+      .error ⟨.S015, ⟨1, 1⟩,
+        s!"the fuel cannot pay {text.utf8ByteSize} unit(s) of the result; {left} remain"⟩
+    else .ok (text ++ "\n")
   | .error e => .error e
 
 /-! The parse result of `parse`: the AST dump. -/
