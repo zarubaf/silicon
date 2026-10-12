@@ -129,4 +129,91 @@ def doubling : Nat → Value
 #guard (Value.array (.uint 8) #[.uint 8 1, .uint 8 2]).measureCharge == 3
 #guard (Value.tuple #[.int 18446744073709551616, .tuple #[.bool true]]).measureCharge == 6
 
+/-! A struct type and a record: `struct Packet(comptime W: Nat) { a: UInt[W], b: Bool }`. -/
+def packet (w : Nat) : Ty := .struct "Packet" #[.int w] (Meta.struct [Meta.finite w, Meta.bool] [1])
+
+def empty : Ty := .struct "Empty" #[] (Meta.struct [] [])
+
+/-! `struct Wrap(comptime T: Type) {}` at `T = [[Bool; 1]; 1]`. -/
+def wrap : Ty := .struct "Wrap" #[.type (.array (.array .bool 1) 1)] (Meta.struct [] [3])
+
+/-! The forms of section 7.1 for types and records. -/
+#guard (Value.type .type).serialize == "(type type)"
+#guard (Value.type (packet 8)).serialize == "(type (struct root Packet ((int 8))))"
+#guard (Value.record (packet 8) #[.uint 8 3, .bool false]).serialize ==
+  "(record (struct root Packet ((int 8))) ((uint 8 3) (bool false)))"
+#guard (Value.record empty #[]).serialize == "(record (struct root Empty ()) ())"
+#guard wrap.serialize == "(struct root Wrap ((type (array (array bool 1) 1))))"
+#guard (Value.type (.tuple #[.type, .array empty 2])).serialize ==
+  "(type (tuple (type (array (struct root Empty ()) 2))))"
+
+/-! The text of a struct type names its item and its arguments. -/
+#guard Ty.type.text == "Type"
+#guard (packet 8).text == "Packet[8]"
+#guard empty.text == "Empty"
+#guard wrap.text == "Wrap[[[Bool; 1]; 1]]"
+#guard (Value.record (packet 8) #[.uint 8 3, .bool false]).text == "Packet[8]"
+#guard (Value.record (packet 8) #[.uint 8 3, .bool false]).literal == "Packet[8](3, false)"
+#guard (Value.record (packet 8) #[.uint 8 3, .bool false]).ty? == some (packet 8)
+
+/-! Equality of struct types compares the item and the arguments. -/
+#guard packet 8 == packet 8
+#guard packet 8 != packet 16
+#guard Value.record empty #[] != Value.tuple #[]
+#guard Value.type (packet 8) == Value.type (packet 8)
+
+/-! A struct type has the size 1 plus its arguments. A record does not count its type. -/
+#guard Ty.type.size == 1
+#guard (packet 8).size == 2
+#guard empty.size == 1
+#guard wrap.size == 6
+#guard (Value.record (packet 8) #[.uint 8 3, .bool false]).size == 3
+#guard (Value.record empty #[]).size == 1
+
+/-! The depth of a struct type counts its fields and its arguments. A record counts its type. -/
+#guard Ty.type.depth == 1
+#guard (packet 8).depth == 2
+#guard empty.depth == 1
+#guard wrap.depth == 4
+#guard (Value.type wrap).depth == 4
+#guard (Value.record (packet 8) #[.uint 8 3, .bool false]).depth == 3
+#guard (Value.record wrap #[]).depth == 5
+#guard (Ty.array (packet 8) 2).depth == 3
+
+/-! The metadata of the scalar types, of a tuple, and of a struct. -/
+#guard Ty.bool.info == ⟨1, 1, 1, 1, true⟩
+#guard (Ty.uint 65).info == ⟨65, 1, 2, 1, true⟩
+#guard Ty.unit.info == ⟨0, 0, 1, 1, true⟩
+#guard Ty.type.info == ⟨0, 0, 0, 1, false⟩
+#guard (Ty.tuple #[.bool, .int]).info == ⟨1, 1, 2, 2, false⟩
+#guard (packet 8).info == ⟨9, 2, 3, 2, true⟩
+#guard empty.info == ⟨0, 0, 1, 1, true⟩
+#guard wrap.info == ⟨0, 0, 1, 4, true⟩
+#guard Meta.structCharge [Meta.finite 8, Meta.bool] (packet 8).info == 6
+
+/-! `[T; N]` multiplies the numbers of `T` by `N`, and each product charges its two sizes. -/
+#guard (Ty.array (packet 8) 4).info == ⟨36, 8, 13, 3, true⟩
+#guard (Ty.array .bool 0).info == ⟨0, 0, 1, 2, true⟩
+#guard Meta.arrayCharge (packet 8).info 4 == 3
+#guard (Ty.array (.uint 8) (2 ^ 64)).info.width == 2 ^ 67
+#guard Meta.arrayCharge (Ty.uint 8).info (2 ^ 64) == 6
+
+/-!
+A chain of structs that doubles at each step: `S(k+1) { a: S(k), b: S(k) }`. The width grows
+exponentially, but each struct stores its numbers, so the metadata and the size stay cheap.
+-/
+def chain : Nat → Ty
+  | 0 => .struct "S0" #[] (Meta.struct [Meta.finite 1] [])
+  | k + 1 => let t := chain k; .struct s!"S{k + 1}" #[] (Meta.struct [t.info, t.info] [])
+
+#guard (chain 200).info == ⟨2 ^ 200, 2 ^ 200, 3 * 2 ^ 200 - 1, 202, true⟩
+#guard (chain 200).size == 1
+#guard (chain 200).depth == 202
+#guard Meta.structCharge [(chain 199).info, (chain 199).info] (chain 200).info == 15
+#guard (Value.type (chain 200)).serialize == "(type (struct root S200 ()))"
+
+/-! The walk that measures a record charges 1 for its node, and nothing for its type. -/
+#guard (Value.record (packet 8) #[.uint 8 3, .bool false]).measureCharge == 2
+#guard (Value.type (packet 8)).measureCharge == 0
+
 end Silicon.Source.Test.Value
