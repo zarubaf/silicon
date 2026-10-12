@@ -849,6 +849,12 @@ impl Evaluated {
     pub fn serialize(&self) -> String {
         self.value.serialize(&self.types)
     }
+
+    /// The length in bytes of `serialize`, without the text.
+    #[must_use]
+    pub fn serialized_len(&self) -> u64 {
+        self.value.serialized_len(&self.types)
+    }
 }
 
 /// An `InstantiationId`: a module and its static arguments in order. Up to slice 5, the
