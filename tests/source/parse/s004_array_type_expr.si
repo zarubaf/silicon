@@ -1,2 +1,0 @@
-// S004: a type `[T; N]` as a value belongs to a later slice. The error is at the `[`.
-const A: T = [UInt[8]; 4];

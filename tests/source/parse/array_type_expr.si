@@ -1,0 +1,2 @@
+// The type `[T; N]` as a value: a type expression in an expression position (phase 3).
+const A: T = [UInt[8]; 4];

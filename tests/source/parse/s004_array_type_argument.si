@@ -1,2 +1,0 @@
-// S004: a type `[T; N]` in a call argument belongs to a later slice.
-const A: T = f(a, [T; 4]);
