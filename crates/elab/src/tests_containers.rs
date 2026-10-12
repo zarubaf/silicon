@@ -716,7 +716,8 @@ fn an_update_in_a_wide_tuple_builds_no_type() {
 }
 
 /// The nested doubling of an array whose element type is wide copies the element type as an
-/// id: each level looks up a constant number of types, and the width counts once.
+/// id: each level looks up a constant number of types, and the width counts once. Each part of
+/// the wide tuple type counts its lookup and the three metadata integers that the sums read.
 #[test]
 fn a_doubling_with_a_wide_element_type_builds_one_type_per_level() {
     let work = |width: usize, levels: usize| {
@@ -735,5 +736,5 @@ fn a_doubling_with_a_wide_element_type_builds_one_type_per_level() {
     let (narrow, wider) = (work(300, 6), work(300, 12));
     assert!(wider - narrow <= 10 * 6, "{narrow} {wider}");
     let (small, large) = (work(100, 8), work(700, 8));
-    assert!(large - small <= 4 * 600 + 64, "{small} {large}");
+    assert!(large - small <= 7 * 600 + 64, "{small} {large}");
 }

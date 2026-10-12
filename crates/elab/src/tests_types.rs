@@ -347,12 +347,44 @@ fn the_zero_of_a_doubling_chain_fails_before_it_builds() {
     assert_eq!(o(&struct_doubling(60), "S60()"), "S015 1:1");
 }
 
+/// A struct and a tuple type with `parts` parts of an alias of a type with a large width. The
+/// alias charges only its node, but the metadata sums read each word of each part.
+fn wide_parts(parts: usize) -> String {
+    let names = (0..parts)
+        .map(|k| format!("f{k}: B"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let tuple = vec!["B"; parts].join(", ");
+    format!(
+        "type B = [Bool; 1 << 6400];\nstruct W {{ {names} }}\n\
+         fn f() -> Int {{ type T = ({tuple}); return 0; }}"
+    )
+}
+
+#[test]
+fn the_metadata_sums_pay_for_the_words_that_they_read() {
+    for expr in ["W", "f()"] {
+        let work = |parts: usize| type_work(&wide_parts(parts), expr);
+        let cost = |parts: usize| crate::tests::cost(&wide_parts(parts), expr);
+        let (work_100, work_200) = (work(100), work(200));
+        let (cost_100, cost_200) = (cost(100), cost(200));
+        assert!(
+            work_200 - work_100 > 100 * 300,
+            "{expr}: {work_100} {work_200}"
+        );
+        assert!(
+            cost_200 - cost_100 >= work_200 - work_100,
+            "{expr}: {cost_100} {cost_200} {work_100} {work_200}"
+        );
+    }
+}
+
 #[test]
 fn the_zero_charges_its_size_before_it_builds() {
     let src = "struct P { a: [UInt[8]; 16], b: (Bool, UInt[4]) }";
     // The units are those of `silicon-check eval`: the first use of the struct, then the zero
     // with the size 1 + (1 + 16) + (1 + 1 + 1) from the metadata.
-    exact(src, "P()", 62);
+    exact(src, "P()", 76);
 }
 
 /// The text of a struct type in a message prints its arguments, and it stops after 1024 bytes
