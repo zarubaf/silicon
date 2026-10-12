@@ -28,8 +28,8 @@ a resource. A `let` alias of a resource and a domain name are for the stage rule
    parameters first, so this also holds for the receiver and for each explicit argument.
 8. The first argument of `resize`, `reinterpret`, and `list`, and each argument of
    `static_assert` and `error`. These are the `comptime` parameters of the prelude, and the
-   arguments of the prelude functions that take a message. `data_bits(T)` has a `comptime`
-   parameter for the receiver binding, but its argument is not a static position (section 5.6).
+   arguments of the prelude functions that take a message. The argument of `data_bits(T)` is
+   not a static position (section 5.6).
 9. The argument of a constructor `T(n)`: a call whose callee is a prelude type, an index of
    one, or an array type `[T; N]`. The arguments of a struct constructor are not static
    positions.
@@ -49,8 +49,8 @@ a resource. A `let` alias of a resource and a domain name are for the stage rule
 - A receiver call `x.m(args)` binds its receiver to the first parameter of `m` without a written
   `comptime` mark, also in a `comptime fn`. A function without such a parameter is `S007` at the
   call. Then the receiver and the arguments together have one argument for each parameter. The
-  modes of the prelude are those of section 5.6: `T` of `resize`, `reinterpret`, `list`, and
-  `data_bits` is `comptime`, and the list of `push` and `pop` is `mut`.
+  modes of the prelude are those of section 5.6: `T` of `resize`, `reinterpret`, and `list` is
+  `comptime`, and the list of `push` and `pop` is `mut`. Thus `T.data_bits()` binds `T`.
 - A constructor `T(n)` of a prelude type or an array type has one argument. `T()` has none: it
   is the zero of `T`.
 - A struct constructor has one argument for each field. `P()` has none: it is the zero of `P`
@@ -182,17 +182,18 @@ def typeArity : PrimType → Nat
 /-! The parameter modes of a prelude function (section 5.6). -/
 def fnModes : PrimFn → Array ParamMode
   | .resize | .reinterpret => #[.comptime, .none]
-  | .list | .dataBits => #[.comptime]
+  | .list => #[.comptime]
   | .push => #[.mut, .none]
   | .pop => #[.mut]
   | .staticAssert => #[.none, .none]
-  | .error | .len | .str => #[.none]
+  | .error | .len | .dataBits | .str => #[.none]
 
-/-! True for each static argument of a prelude function, by its index. -/
-def fnStatic : PrimFn → Nat → Bool
-  | .resize, k | .reinterpret, k | .list, k => k == 0
-  | .staticAssert, _ | .error, _ => true
-  | .len, _ | .dataBits, _ | .push, _ | .pop, _ | .str, _ => false
+/-!
+True for each static argument of a prelude function, by its index. A `comptime` parameter is
+static. Each argument of a function that takes a message is static too (section 5.6).
+-/
+def fnStatic (f : PrimFn) (k : Nat) : Bool :=
+  f == .staticAssert || f == .error || (fnModes f)[k]? == some .comptime
 
 /-! A function that a call names: its parameter modes and its static parameters, by index. -/
 structure Callee where

@@ -905,6 +905,10 @@ the width. A value that is not a type and a type that is not hardware data are `
 #guard out recs "data_bits(Int)" == "S010 1:1"
 #guard out recs "data_bits(1)" == "S010 1:1"
 
+/-! `T.data_bits()` binds its receiver to `T`, the parameter without `comptime`. -/
+#guard out recs "Q.data_bits()" == "(int 19)"
+#guard out recs "Int.data_bits()" == "S010 1:1"
+
 /-!
 A field is a step of a place. Each step charges 1 before it applies. The right side is a typed
 use at the type of the field. Thus `q.p.b = false;` costs 4 units more than an empty block: the
