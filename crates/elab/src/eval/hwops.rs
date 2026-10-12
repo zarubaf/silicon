@@ -12,7 +12,7 @@ use crate::Code;
 use crate::hw::{HwId, Op, Val};
 use crate::int::unsigned_size;
 use crate::ops::{self, MAX_WIDTH, binop_text, int_text, unop_text};
-use crate::value::{Ty, Value, int_size};
+use crate::value::{Ty, TyId, Value, int_size};
 use parse::ast::{BinOp, Pos, UnOp};
 use resolve::Prelude;
 
@@ -34,13 +34,16 @@ impl Evaluator<'_> {
     pub(super) fn lit(&mut self, pos: Pos, v: Value) -> Res<HwId> {
         match v {
             Value::Bool(_) | Value::UInt(_) | Value::SInt(_) => {
-                let ty = v.ty().unwrap_or(Ty::Bool);
+                let ty = v.scalar_ty().unwrap_or(Ty::Bool);
                 Ok(self.graph.mk(pos, ty, Op::Lit(v), Vec::new()))
             }
             v => fail(
                 Code::S010,
                 pos,
-                format!("hardware needs a Bool or a finite value, not {}", v.text()),
+                format!(
+                    "hardware needs a Bool or a finite value, not {}",
+                    v.text(&self.tys)
+                ),
             ),
         }
     }
@@ -53,7 +56,10 @@ impl Evaluator<'_> {
             return fail(
                 Code::S010,
                 pos,
-                format!("hardware needs a Bool or a finite value, not {}", v.text()),
+                format!(
+                    "hardware needs a Bool or a finite value, not {}",
+                    v.text(&self.tys)
+                ),
             );
         }
         let v = v.clone();
@@ -65,7 +71,8 @@ impl Evaluator<'_> {
     fn lit_at(&mut self, pos: Pos, t: &Ty, o: &super::Out) -> Res<HwId> {
         let v = self.store.value(o);
         if matches!(v, Value::Int(_)) && t.is_finite() {
-            let converted = ops::convert(t, v, &mut self.fuel).map_err(at(pos))?;
+            let t = self.tys.mk(t.clone());
+            let converted = ops::convert(t, v, &mut self.fuel, &self.tys).map_err(at(pos))?;
             let v = converted.unwrap_or_else(|| self.store.value(o).clone());
             return self.lit(pos, v);
         }
@@ -89,8 +96,8 @@ impl Evaluator<'_> {
                 pos,
                 format!(
                     "expected data operands, not {} and {}",
-                    self.store.value(&left).text(),
-                    self.store.value(&right).text()
+                    self.store.value(&left).text(&self.tys),
+                    self.store.value(&right).text(&self.tys)
                 ),
             ),
         }
@@ -106,7 +113,11 @@ impl Evaluator<'_> {
             _ => fail(
                 Code::S010,
                 pos,
-                format!("`{}` does not accept {}", unop_text(op), t.text()),
+                format!(
+                    "`{}` does not accept {}",
+                    unop_text(op),
+                    self.tys.text_of(&t)
+                ),
             ),
         }
     }
@@ -138,7 +149,10 @@ impl Evaluator<'_> {
                     return fail(
                         Code::S010,
                         pos,
-                        format!("a shift count is UInt or a static Int, not {}", v.text()),
+                        format!(
+                            "a shift count is UInt or a static Int, not {}",
+                            v.text(&self.tys)
+                        ),
                     );
                 }
             },
@@ -150,7 +164,10 @@ impl Evaluator<'_> {
                     return fail(
                         Code::S010,
                         pos,
-                        format!("a shift count is UInt or a static Int, not {}", ty.text()),
+                        format!(
+                            "a shift count is UInt or a static Int, not {}",
+                            self.tys.text_of(&ty)
+                        ),
                     );
                 }
             }
@@ -166,7 +183,11 @@ impl Evaluator<'_> {
             fail(
                 Code::S010,
                 pos,
-                format!("`{}` does not accept {}", binop_text(op), t.text()),
+                format!(
+                    "`{}` does not accept {}",
+                    binop_text(op),
+                    self.tys.text_of(&t)
+                ),
             )
         }
     }
@@ -202,8 +223,8 @@ impl Evaluator<'_> {
                 format!(
                     "`{}` does not accept {} and {}",
                     binop_text(op),
-                    ty.text(),
-                    other.text()
+                    self.tys.text_of(&ty),
+                    self.tys.text_of(&other)
                 ),
             );
         }
@@ -254,16 +275,18 @@ impl Evaluator<'_> {
                 pos,
                 format!(
                     "the arms of an `if` have one type, not {} and {}",
-                    ty.text(),
-                    other.text()
+                    self.tys.text_of(&ty),
+                    self.tys.text_of(&other)
                 ),
             )
         }
     }
 
     /// `resize` or `reinterpret` of a hardware value.
-    pub(super) fn hw_convert(&mut self, pos: Pos, f: Prelude, to: &Ty, arg: HwId) -> Res<Val> {
+    pub(super) fn hw_convert(&mut self, pos: Pos, f: Prelude, to: TyId, arg: HwId) -> Res<Val> {
         let from = self.graph.ty(arg);
+        let to = self.tys.get(to).clone();
+        let to = &to;
         match (f, to, &from) {
             (Prelude::Resize, Ty::UInt(_), Ty::UInt(_))
             | (Prelude::Resize, Ty::SInt(_), Ty::SInt(_)) => {
@@ -277,7 +300,11 @@ impl Evaluator<'_> {
             _ => fail(
                 Code::S010,
                 pos,
-                format!("no conversion of {} to {} here", from.text(), to.text()),
+                format!(
+                    "no conversion of {} to {} here",
+                    self.tys.text_of(&from),
+                    self.tys.text_of(to)
+                ),
             ),
         }
     }

@@ -28,7 +28,7 @@ use crate::hw::{Graph, Handle, HwId, Kind, Op, Port, Seen, Val};
 use crate::int::Int;
 use crate::names::{Name, PathId, Paths, Sym, encode, module_name};
 use crate::scan::Scan;
-use crate::value::{InstantiationId, Ty, Value, int_size};
+use crate::value::{InstantiationId, Ty, TyId, Value, int_size};
 use crate::{Budget, Code};
 use parse::StackError;
 use parse::ast::{Expr, Ident, Item, NodeId, Param, Pos, Stmt, TypeExpr, UnOp};
@@ -444,14 +444,14 @@ impl Evaluator<'_> {
     pub(super) fn module_stmt(&mut self, s: &Stmt) -> Res<()> {
         match s {
             Stmt::Input { pos, name, ty } | Stmt::Output { pos, name, ty } => {
-                let t = self.type_expr(ty)?;
-                let t = data_type(*pos, t)?;
-                let v = self.port(*pos, matches!(s, Stmt::Input { .. }), name, t.clone())?;
+                let tid = self.type_expr(ty)?;
+                let t = self.data_type(*pos, tid)?;
+                let v = self.port(*pos, matches!(s, Stmt::Input { .. }), name, t)?;
                 let id = self.decl(name)?;
                 self.bind(
                     id,
                     Slot {
-                        ty: Some(t),
+                        ty: Some(tid),
                         mutable: false,
                         value: v,
                     },
@@ -464,8 +464,8 @@ impl Evaluator<'_> {
                 init,
             } => self.reg_stmt(*pos, name, ty, init)?,
             Stmt::Wire { pos, name, ty } => {
-                let t = self.type_expr(ty)?;
-                let t = data_type(*pos, t)?;
+                let tid = self.type_expr(ty)?;
+                let t = self.data_type(*pos, tid)?;
                 let id = self.decl(name)?;
                 let path = self.fresh(id);
                 self.elab.work.body.wires.push(WireDecl {
@@ -473,11 +473,11 @@ impl Evaluator<'_> {
                     ty: t.clone(),
                     pos: *pos,
                 });
-                let w = self.resource(Kind::Wire, path, t.clone(), *pos, self.sym(id));
+                let w = self.resource(Kind::Wire, path, t, *pos, self.sym(id));
                 self.bind(
                     id,
                     Slot {
-                        ty: Some(t),
+                        ty: Some(tid),
                         mutable: false,
                         value: w,
                     },
@@ -492,7 +492,8 @@ impl Evaluator<'_> {
                     Target::Own { ty, .. } => ty.clone(),
                     Target::Child { port, .. } => port.ty.clone(),
                 };
-                let h = match self.conform_val(*pos, &ty, o)? {
+                let ty = self.tys.mk(ty);
+                let h = match self.conform_val(*pos, ty, o)? {
                     Val::Static(v) => self.lit(*pos, v)?,
                     Val::Hw(h) => h,
                     v @ (Val::Handle(_) | Val::Pending(..)) => {
@@ -556,13 +557,13 @@ impl Evaluator<'_> {
         for (q, o) in params.iter().zip(outs) {
             let o = if matches!(self.store.seen(&o), Seen::Pending(..)) {
                 let t = self.type_expr(&q.ty)?;
-                self.settle(pos, &t, o)?
+                self.settle(pos, t, o)?
             } else {
                 o
             };
             let x = self.static_value(pos, o)?;
             let id = self.decl(&q.name)?;
-            let ty = x.ty();
+            let ty = x.ty(&mut self.tys);
             self.bind(
                 id,
                 Slot {
@@ -591,12 +592,12 @@ impl Evaluator<'_> {
                 "a combinational module has no register".to_owned(),
             );
         }
-        let ty = self.type_expr(ty)?;
-        let ty = data_type(pos, ty)?;
+        let tid = self.type_expr(ty)?;
+        let ty = self.data_type(pos, tid)?;
         let out = self.eval(init)?;
         let out = need(init, out)?;
         self.copy(pos, &out)?;
-        let init = self.conform(pos, &ty, out)?;
+        let init = self.conform(pos, tid, out)?;
         let id = self.decl(name)?;
         let path = self.fresh(id);
         self.elab.work.body.regs.push(RegDecl {
@@ -605,11 +606,11 @@ impl Evaluator<'_> {
             init,
             pos,
         });
-        let reg = self.resource(Kind::Reg, path, ty.clone(), pos, self.sym(id));
+        let reg = self.resource(Kind::Reg, path, ty, pos, self.sym(id));
         self.bind(
             id,
             Slot {
-                ty: Some(ty),
+                ty: Some(tid),
                 mutable: false,
                 value: reg,
             },
@@ -867,6 +868,21 @@ impl Evaluator<'_> {
         fail(Code::S018, pos, message)
     }
 
+    /// A port, a register, and a wire have a hardware type, a node with no part.
+    fn data_type(&self, pos: Pos, t: TyId) -> Res<Ty> {
+        match self.tys.get(t) {
+            node @ (Ty::Bool | Ty::UInt(_) | Ty::SInt(_)) => Ok(node.clone()),
+            _ => fail(
+                Code::S010,
+                pos,
+                format!(
+                    "a port, a register, and a wire have a hardware type, not {}",
+                    self.tys.text(t)
+                ),
+            ),
+        }
+    }
+
     /// The serialization of an `InstantiationId` at the statement `pos`. It charges the walk
     /// that measures it, then its length in bytes, before it makes the text.
     fn serialize(&mut self, pos: Pos, module: &str, vs: &[Value]) -> Res<String> {
@@ -875,11 +891,9 @@ impl Evaluator<'_> {
             measure += v.measure_charge();
         }
         self.charge(pos, measure)?;
-        let parts: Vec<String> = vs.iter().map(Value::serialize).collect();
-        self.charge(
-            pos,
-            u128::from(InstantiationId::render_size(module, &parts)),
-        )?;
+        let lens: Vec<u64> = vs.iter().map(|v| v.serialized_len(&self.tys)).collect();
+        self.charge(pos, u128::from(InstantiationId::render_size(module, &lens)))?;
+        let parts: Vec<String> = vs.iter().map(|v| v.serialize(&self.tys)).collect();
         Ok(InstantiationId::render(module, &parts))
     }
 
@@ -941,7 +955,7 @@ impl Evaluator<'_> {
                 ev.in_item(i, ROOT, |ev| {
                     for (q, v) in params.iter().zip(args) {
                         let t = ev.type_expr(&q.ty)?;
-                        let x = ev.conform(pos, &t, Out::Made(Val::Static(v)))?;
+                        let x = ev.conform(pos, t, Out::Made(Val::Static(v)))?;
                         let qid = ev.decl(&q.name)?;
                         ev.bind(
                             qid,
@@ -974,22 +988,6 @@ impl Evaluator<'_> {
             ev.elab.work.spent += used;
             Ok(k)
         })
-    }
-}
-
-/// A port, a register, and a wire have a hardware type.
-fn data_type(pos: Pos, t: Ty) -> Res<Ty> {
-    if t.is_finite() || t == Ty::Bool {
-        Ok(t)
-    } else {
-        fail(
-            Code::S010,
-            pos,
-            format!(
-                "a port, a register, and a wire have a hardware type, not {}",
-                t.text()
-            ),
-        )
     }
 }
 

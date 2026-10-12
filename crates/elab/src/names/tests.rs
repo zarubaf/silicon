@@ -5,7 +5,7 @@
 //! encoded name matches the core name pattern and is not a core keyword.
 
 use super::*;
-use crate::value::Ty;
+use crate::value::{Ty, Types};
 use proptest::prelude::*;
 
 const KEYWORDS: [&str; 44] = [
@@ -244,7 +244,11 @@ fn id(module: &str, args: Vec<Value>) -> InstantiationId {
 }
 
 fn emitted(i: &InstantiationId) -> String {
-    encode(&module_name(sha16, i, &i.serialize()))
+    emitted_in(i, &Types::default())
+}
+
+fn emitted_in(i: &InstantiationId, tys: &Types) -> String {
+    encode(&module_name(sha16, i, &i.serialize(tys)))
 }
 
 fn uint(w: u32, v: u64) -> Value {
@@ -272,8 +276,10 @@ fn the_readable_and_the_digest_module_names() {
         emitted(&id("M", vec![Value::Str("a".into())])),
         format!("M$0h{}", sha16("(instantiation root M ((string \"a\")))"))
     );
+    let mut tys = Types::default();
+    let bool_ty = tys.mk(Ty::Bool);
     assert_eq!(
-        emitted(&id("M", vec![Value::Type(Ty::Bool)])),
+        emitted_in(&id("M", vec![Value::Type(bool_ty)]), &tys),
         format!("M$0h{}", sha16("(instantiation root M ((type bool)))"))
     );
 }
@@ -310,6 +316,8 @@ fn the_limit_of_the_readable_form() {
 /// The sizes that the charges read equal the lengths of the texts.
 #[test]
 fn the_sizes_equal_the_lengths() {
+    let mut tys = Types::default();
+    let uint8 = tys.mk(Ty::UInt(8));
     let ids = [
         id("C", vec![]),
         id("Counter", vec![Value::Int(int("8")), Value::Bool(true)]),
@@ -317,15 +325,15 @@ fn the_sizes_equal_the_lengths() {
             "M",
             vec![Value::Str("a\"b\n".into()), Value::Int(int("-5"))],
         ),
-        id("M", vec![Value::Type(Ty::UInt(8)), uint(8, 3), sint(4, 15)]),
+        id("M", vec![Value::Type(uint8), uint(8, 3), sint(4, 15)]),
     ];
     for i in &ids {
-        let parts: Vec<String> = i.args.iter().map(Value::serialize).collect();
+        let lens: Vec<u64> = i.args.iter().map(|a| a.serialized_len(&tys)).collect();
         assert_eq!(
-            InstantiationId::render_size(&i.module, &parts),
-            i.serialize().len() as u64
+            InstantiationId::render_size(&i.module, &lens),
+            i.serialize(&tys).len() as u64
         );
-        let n = module_name(sha16, i, &i.serialize());
+        let n = module_name(sha16, i, &i.serialize(&tys));
         assert_eq!(n.byte_size(), encode(&n).len() as u64);
     }
 }
@@ -339,7 +347,7 @@ fn each_emitted_name_is_legal() {
         id("M", vec![Value::Str("x".into())]),
         id(&"a".repeat(70), vec![]),
     ] {
-        let n = module_name(sha16, &i, &i.serialize());
+        let n = module_name(sha16, &i, &i.serialize(&Types::default()));
         assert!(legal(&n) && round_trip(&n), "{n:?}");
     }
 }

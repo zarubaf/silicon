@@ -11,7 +11,7 @@ use super::{Evaluator, Out, Res, Store, at, fail, need};
 use crate::Code;
 use crate::hw::{Part, Seen, Val};
 use crate::ops::{self, Fuel};
-use crate::value::{Ty, Value};
+use crate::value::{Ty, TyId, Types, Value};
 use parse::ast::{Expr, Pos, TypeExpr};
 use std::borrow::Cow;
 use std::cmp::Ordering;
@@ -58,8 +58,14 @@ fn tuple_of(env: Env<'_>, fuel: &mut Fuel, pos: Pos, elems: Vec<Cow<'_, Value>>)
 
 /// An array literal at `pos`. Its elements take their common type. Then it checks its depth
 /// and charges its size.
-fn array_of<'x>(env: Env<'x>, fuel: &mut Fuel, pos: Pos, elems: Vec<Cow<'x, Value>>) -> Res<Value> {
-    let Some(t) = ops::common_of(elems.iter().map(|e| &**e)) else {
+fn array_of<'x>(
+    env: Env<'x>,
+    fuel: &mut Fuel,
+    tys: &mut Types,
+    pos: Pos,
+    elems: Vec<Cow<'x, Value>>,
+) -> Res<Value> {
+    let Some(t) = ops::common_of(elems.iter().map(|e| &**e), tys) else {
         return fail(
             Code::S010,
             pos,
@@ -68,7 +74,7 @@ fn array_of<'x>(env: Env<'x>, fuel: &mut Fuel, pos: Pos, elems: Vec<Cow<'x, Valu
     };
     let mut xs = Vec::with_capacity(elems.len());
     for e in elems {
-        xs.push(match ops::convert(&t, &e, fuel).map_err(at(pos))? {
+        xs.push(match ops::convert(t, &e, fuel, tys).map_err(at(pos))? {
             Some(v) => Cow::Owned(v),
             None => e,
         });
@@ -78,16 +84,16 @@ fn array_of<'x>(env: Env<'x>, fuel: &mut Fuel, pos: Pos, elems: Vec<Cow<'x, Valu
     let size = 1 + xs.iter().map(|x| u128::from(x.size())).sum::<u128>();
     fuel.pay(size).map_err(at(pos))?;
     Ok(Value::Array(
-        Box::new(t),
+        t,
         xs.into_iter().map(Cow::into_owned).collect(),
     ))
 }
 
-fn mismatch<T>(pos: Pos, t: &Ty, what: &str) -> Res<T> {
+fn mismatch<T>(pos: Pos, t: TyId, what: &str, tys: &Types) -> Res<T> {
     fail(
         Code::S010,
         pos,
-        format!("expected {}, but the value is {what}", t.text()),
+        format!("expected {}, but the value is {what}", tys.text(t)),
     )
 }
 
@@ -98,39 +104,42 @@ fn mismatch<T>(pos: Pos, t: &Ty, what: &str) -> Res<T> {
 fn build<'x>(
     env: Env<'x>,
     fuel: &mut Fuel,
+    tys: &mut Types,
     pos: Pos,
-    ty: &Ty,
+    ty: TyId,
     part: &'x Part,
 ) -> Res<Cow<'x, Value>> {
     match part {
         Part::Value(leaf) => Ok(Cow::Borrowed(env.store.leaf(leaf))),
-        Part::Empty(node) => match ty {
+        Part::Empty(node) => match tys.get(ty) {
             Ty::Array(elem, len) if len.cmp_u64(0) == Ordering::Equal => {
-                let empty = Value::Array(elem.clone(), Vec::new());
+                let empty = Value::Array(*elem, Vec::new());
                 bounded(env.limit, *node, empty.depth())?;
                 Ok(Cow::Owned(empty))
             }
-            _ => mismatch(pos, ty, "`[]`"),
+            _ => mismatch(pos, ty, "`[]`", tys),
         },
-        Part::Array(node, parts) => match ty {
+        Part::Array(node, parts) => match tys.get(ty) {
             Ty::Array(elem, len) if len.cmp_u64(parts.len() as u64) == Ordering::Equal => {
+                let elem = *elem;
                 let mut elems = Vec::with_capacity(parts.len());
                 for part in parts {
-                    elems.push(build(env, fuel, pos, elem, part)?);
+                    elems.push(build(env, fuel, tys, pos, elem, part)?);
                 }
-                array_of(env, fuel, *node, elems).map(Cow::Owned)
+                array_of(env, fuel, tys, *node, elems).map(Cow::Owned)
             }
-            _ => mismatch(pos, ty, "an array literal with `[]`"),
+            _ => mismatch(pos, ty, "an array literal with `[]`", tys),
         },
-        Part::Tuple(node, parts) => match ty {
+        Part::Tuple(node, parts) => match tys.get(ty) {
             Ty::Tuple(types) if types.len() == parts.len() => {
                 let mut elems = Vec::with_capacity(parts.len());
-                for (elem_ty, part) in types.iter().zip(parts) {
-                    elems.push(build(env, fuel, pos, elem_ty, part)?);
+                for (k, part) in parts.iter().enumerate() {
+                    let elem_ty = tys.part(ty, k).unwrap_or(ty);
+                    elems.push(build(env, fuel, tys, pos, elem_ty, part)?);
                 }
                 tuple_of(env, fuel, *node, elems).map(Cow::Owned)
             }
-            _ => mismatch(pos, ty, "a tuple literal with `[]`"),
+            _ => mismatch(pos, ty, "a tuple literal with `[]`", tys),
         },
     }
 }
@@ -176,16 +185,17 @@ impl Evaluator<'_> {
     }
 
     /// The tuple type of the element types `elems` at `pos`.
-    pub(super) fn tuple_type(&mut self, pos: Pos, elems: &[TypeExpr]) -> Res<Ty> {
+    pub(super) fn tuple_type(&mut self, pos: Pos, elems: &[TypeExpr]) -> Res<TyId> {
         let mut types = Vec::with_capacity(elems.len());
         for elem in elems {
             types.push(self.type_expr(elem)?);
         }
-        self.new_type(pos, Ty::Tuple(types))
+        let ty = self.tys.tuple(types);
+        self.new_type(pos, ty)
     }
 
     /// The array type `[elem; len]` at `pos`. The length is a static `Nat`.
-    pub(super) fn array_type(&mut self, pos: Pos, elem: &TypeExpr, len: &Expr) -> Res<Ty> {
+    pub(super) fn array_type(&mut self, pos: Pos, elem: &TypeExpr, len: &Expr) -> Res<TyId> {
         let elem = self.type_expr(elem)?;
         let out = self.eval(len)?;
         let out = need(len, out)?;
@@ -198,7 +208,7 @@ impl Evaluator<'_> {
                 format!("the length {} is not a Nat", ops::int_text(n)),
             ),
             Value::Int(n) => {
-                let ty = Ty::Array(Box::new(elem), n.clone());
+                let ty = self.tys.array(elem, n.clone());
                 self.new_type(pos, ty)
             }
             other => fail(
@@ -206,14 +216,14 @@ impl Evaluator<'_> {
                 at_len,
                 format!(
                     "the length of an array is a static Nat, not {}",
-                    other.text()
+                    other.text(&self.tys)
                 ),
             ),
         }
     }
 
     /// A new container type at `pos`: its depth, then the charge of its size.
-    fn new_type(&mut self, pos: Pos, ty: Ty) -> Res<Ty> {
+    fn new_type(&mut self, pos: Pos, ty: TyId) -> Res<TyId> {
         self.bounded(pos, ty.depth())?;
         self.charge(pos, u128::from(ty.size()))?;
         Ok(ty)
@@ -283,11 +293,11 @@ impl Evaluator<'_> {
             limit: self.limit,
         };
         let elems = outs.into_iter().map(|o| cow(env.store, o)).collect();
-        array_of(env, &mut self.fuel, pos, elems)
+        array_of(env, &mut self.fuel, &mut self.tys, pos, elems)
     }
 
     /// A typed use of the type `t` at `pos` gives a literal that waits its type.
-    pub(super) fn settle(&mut self, pos: Pos, t: &Ty, out: Out) -> Res<Out> {
+    pub(super) fn settle(&mut self, pos: Pos, t: TyId, out: Out) -> Res<Out> {
         let Out::Made(Val::Pending(_, part)) = out else {
             return Ok(out);
         };
@@ -295,7 +305,7 @@ impl Evaluator<'_> {
             store: &self.store,
             limit: self.limit,
         };
-        let v = build(env, &mut self.fuel, pos, t, &part)?.into_owned();
+        let v = build(env, &mut self.fuel, &mut self.tys, pos, t, &part)?.into_owned();
         Ok(Out::Made(Val::Static(v)))
     }
 }

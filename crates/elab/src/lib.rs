@@ -23,7 +23,7 @@ use parse::StackError;
 use parse::ast::{Expr, Item, Pos};
 use resolve::{Resolved, ResolvedExpr};
 use std::fmt;
-use value::Value;
+use value::Evaluated;
 
 /// The codes of elaboration that the evaluator can report (design section 6.1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -113,7 +113,7 @@ pub fn eval(
     file: &Resolved,
     expr: &ResolvedExpr,
     budget: Budget,
-) -> Result<Result<(Value, u64), Error>, StackError> {
+) -> Result<Result<(Evaluated, u64), Error>, StackError> {
     let scan = parse::on_stack(expr.depth_with(file), || scan::of(file, Some(expr)))?;
     let stack = scan.stack;
     finish(stack.run(|| eval::run(file, expr, budget, scan))?)

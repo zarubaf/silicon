@@ -10,7 +10,7 @@ pub(crate) use container::{common_of, composite, container_op};
 
 use crate::Code;
 use crate::int::Int;
-use crate::value::{Ty, Value, width_size};
+use crate::value::{Ty, TyId, Types, Value, width_size};
 use core_ir::{Bits, Pred};
 use parse::ast::{BinOp, UnOp};
 use resolve::Prelude;
@@ -165,14 +165,19 @@ fn fits(t: &Ty, n: &Int) -> bool {
 /// A typed use of `v` at the type `t`: the new value, or `None` if `v` itself is the result
 /// with no charge. A static integer takes a finite type, and a container converts element by
 /// element.
-pub(crate) fn convert(t: &Ty, v: &Value, fuel: &mut Fuel) -> Result<Option<Value>, Fault> {
-    match t {
-        Ty::Unit | Ty::Array(..) | Ty::Tuple(_) => container::convert(t, v, fuel),
-        _ => container::convert_scalar(t, v, fuel),
+pub(crate) fn convert(
+    t: TyId,
+    v: &Value,
+    fuel: &mut Fuel,
+    tys: &Types,
+) -> Result<Option<Value>, Fault> {
+    match tys.get(t) {
+        Ty::Unit | Ty::Array(..) | Ty::Tuple(_) => container::convert(t, v, fuel, tys),
+        scalar => container::convert_scalar(scalar, v, fuel, tys),
     }
 }
 
-pub(crate) fn unary(op: UnOp, a: &Value, fuel: &mut Fuel) -> Result<Value, Fault> {
+pub(crate) fn unary(op: UnOp, a: &Value, fuel: &mut Fuel, tys: &Types) -> Result<Value, Fault> {
     let size = u128::from(a.size());
     match (op, a) {
         (UnOp::Not, Value::Bool(b)) => {
@@ -196,7 +201,11 @@ pub(crate) fn unary(op: UnOp, a: &Value, fuel: &mut Fuel) -> Result<Value, Fault
             let zero = bits(x.width(), crate::int::finite(x.width(), 0))?;
             Ok(finite(matches!(a, Value::SInt(_)), zero.sub(x)))
         }
-        _ => type_error(format!("`{}` does not accept {}", unop_text(op), a.text())),
+        _ => type_error(format!(
+            "`{}` does not accept {}",
+            unop_text(op),
+            a.text(tys)
+        )),
     }
 }
 
@@ -220,15 +229,21 @@ pub(crate) fn unifies(op: BinOp) -> bool {
 }
 
 /// A binary operator other than `&&` and `||`, after its operands and the typed uses.
-pub(crate) fn binary(op: BinOp, a: &Value, b: &Value, fuel: &mut Fuel) -> Result<Value, Fault> {
+pub(crate) fn binary(
+    op: BinOp,
+    a: &Value,
+    b: &Value,
+    fuel: &mut Fuel,
+    tys: &Types,
+) -> Result<Value, Fault> {
     let text = binop_text(op);
     match op {
         BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => {
             let (Value::Int(x), Value::Int(y)) = (a, b) else {
                 return type_error(format!(
                     "`{text}` accepts only Int and Nat, not {} and {}",
-                    a.text(),
-                    b.text()
+                    a.text(tys),
+                    b.text(tys)
                 ));
             };
             let charge = if matches!(op, BinOp::Add | BinOp::Sub) {
@@ -270,13 +285,13 @@ pub(crate) fn binary(op: BinOp, a: &Value, b: &Value, fuel: &mut Fuel) -> Result
                 }
                 _ => type_error(format!(
                     "`{text}` needs integers of one type, not {} and {}",
-                    a.text(),
-                    b.text()
+                    a.text(tys),
+                    b.text(tys)
                 )),
             }
         }
         BinOp::Eq | BinOp::Ne => {
-            equal_check(a, b)?;
+            equal_check(a, b, tys)?;
             fuel.pay(sum(a, b))?;
             Ok(Value::Bool((a == b) == (op == BinOp::Eq)))
         }
@@ -293,21 +308,21 @@ pub(crate) fn binary(op: BinOp, a: &Value, b: &Value, fuel: &mut Fuel) -> Result
             let Some((signed, x, y)) = finite_pair(a, b) else {
                 return type_error(format!(
                     "`{text}` orders integers of one type, not {} and {}",
-                    a.text(),
-                    b.text()
+                    a.text(tys),
+                    b.text(tys)
                 ));
             };
             fuel.pay(sum(a, b))?;
             let holds = x.icmp(pred(op, signed), y);
             Ok(Value::Bool(crate::int::bit(&holds, 0)))
         }
-        BinOp::Shl | BinOp::Shr => shift(op, a, b, fuel),
+        BinOp::Shl | BinOp::Shr => shift(op, a, b, fuel, tys),
         BinOp::Land | BinOp::Lor => type_error(format!("`{text}` selects; it has no step")),
     }
 }
 
 /// The type check of `==` on two scalars.
-fn equal_check(a: &Value, b: &Value) -> Result<(), Fault> {
+fn equal_check(a: &Value, b: &Value, tys: &Types) -> Result<(), Fault> {
     let same = matches!(
         (a, b),
         (Value::Int(_), Value::Int(_))
@@ -320,8 +335,8 @@ fn equal_check(a: &Value, b: &Value) -> Result<(), Fault> {
     } else {
         type_error(format!(
             "`==` compares values of one type, not {} and {}",
-            a.text(),
-            b.text()
+            a.text(tys),
+            b.text(tys)
         ))
     }
 }
@@ -367,7 +382,7 @@ fn nonnegative(k: &Int) -> Result<&Int, Fault> {
     }
 }
 
-fn shift(op: BinOp, a: &Value, b: &Value, fuel: &mut Fuel) -> Result<Value, Fault> {
+fn shift(op: BinOp, a: &Value, b: &Value, fuel: &mut Fuel, tys: &Types) -> Result<Value, Fault> {
     match a {
         Value::Int(x) => {
             let Value::Int(k) = b else {
@@ -393,7 +408,7 @@ fn shift(op: BinOp, a: &Value, b: &Value, fuel: &mut Fuel) -> Result<Value, Faul
                 _ => {
                     return type_error(format!(
                         "a shift count is UInt or a static Int, not {}",
-                        b.text()
+                        b.text(tys)
                     ));
                 }
             };
@@ -409,7 +424,11 @@ fn shift(op: BinOp, a: &Value, b: &Value, fuel: &mut Fuel) -> Result<Value, Faul
                 },
             ))
         }
-        _ => type_error(format!("`{}` does not accept {}", binop_text(op), a.text())),
+        _ => type_error(format!(
+            "`{}` does not accept {}",
+            binop_text(op),
+            a.text(tys)
+        )),
     }
 }
 
@@ -450,9 +469,9 @@ fn int_shr(a: &Int, k: &Int) -> Int {
 }
 
 /// `resize`: it keeps the signedness. A `UInt` fills with zeros and an `SInt` with its sign.
-pub(crate) fn resize(t: &Ty, v: &Value, fuel: &mut Fuel) -> Result<Value, Fault> {
+pub(crate) fn resize(t: TyId, v: &Value, fuel: &mut Fuel, tys: &Types) -> Result<Value, Fault> {
     let charge = |w: u32| u128::from(v.size()) + u128::from(width_size(w));
-    match (t, v) {
+    match (tys.get(t), v) {
         (Ty::UInt(w), Value::UInt(x)) => {
             fuel.pay(charge(*w))?;
             Ok(Value::UInt(set_width(x, *w, false)?))
@@ -463,7 +482,7 @@ pub(crate) fn resize(t: &Ty, v: &Value, fuel: &mut Fuel) -> Result<Value, Fault>
         }
         _ => type_error(format!(
             "`resize` needs finite types of one signedness, not {}",
-            v.text()
+            v.text(tys)
         )),
     }
 }
@@ -484,7 +503,13 @@ fn set_width(x: &Bits, w: u32, sign_extend: bool) -> Result<Bits, Fault> {
 }
 
 /// `reinterpret`: it keeps the width and changes the signedness.
-pub(crate) fn reinterpret(t: &Ty, v: &Value, fuel: &mut Fuel) -> Result<Value, Fault> {
+pub(crate) fn reinterpret(
+    t: TyId,
+    v: &Value,
+    fuel: &mut Fuel,
+    tys: &Types,
+) -> Result<Value, Fault> {
+    let t = tys.get(t);
     match (t, v) {
         (Ty::UInt(w) | Ty::SInt(w), Value::UInt(x) | Value::SInt(x)) => {
             if x.width() != *w {
@@ -495,13 +520,13 @@ pub(crate) fn reinterpret(t: &Ty, v: &Value, fuel: &mut Fuel) -> Result<Value, F
         }
         _ => type_error(format!(
             "`reinterpret` needs finite types, not {}",
-            v.text()
+            v.text(tys)
         )),
     }
 }
 
 /// `UInt[w]` or `SInt[w]`. The width is 1 to 65536.
-pub(crate) fn family(k: Prelude, args: &[&Value]) -> Result<Ty, Fault> {
+pub(crate) fn family(k: Prelude, args: &[&Value], tys: &mut Types) -> Result<TyId, Fault> {
     match (k, args) {
         (Prelude::UInt | Prelude::SInt, [Value::Int(w)]) => {
             let width = w
@@ -514,14 +539,14 @@ pub(crate) fn family(k: Prelude, args: &[&Value]) -> Result<Ty, Fault> {
                     format!("the width {} is not 1 to 65536", int_text(w)),
                 ));
             };
-            Ok(if k == Prelude::UInt {
+            Ok(tys.mk(if k == Prelude::UInt {
                 Ty::UInt(width)
             } else {
                 Ty::SInt(width)
-            })
+            }))
         }
         (Prelude::UInt | Prelude::SInt, [v]) => {
-            type_error(format!("a width is a static Int, not {}", v.text()))
+            type_error(format!("a width is a static Int, not {}", v.text(tys)))
         }
         _ => Err((
             Code::S007,
