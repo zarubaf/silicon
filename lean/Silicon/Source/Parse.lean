@@ -14,9 +14,8 @@ position order, and it reports the first. This rule also orders a lexical error 
 if it gets to it. `S004` is at these tokens:
 
 - The keyword: `import`, `pub`, and `extern` at an item. `mem` at a statement. `in`, `as`,
-  `with`, and `conforms` after their forms. `fn` of a function type. `input`, `output`, `reg`,
-  `wire`, and `instance` in the body of a `fn` without `comptime`: a helper that declares
-  resources is slice 3.
+  `with`, and `conforms` after their forms. `input`, `output`, `reg`, `wire`, and `instance`
+  in the body of a `fn` without `comptime`: a helper that declares resources is slice 3.
 - The opening token: `@` of one of the five builtins.
 - A later token of the construct: the `::` of a path. The `(` after a type, which is a type
   function call. The second name in a `domains` clause.
@@ -63,6 +62,10 @@ These rules settle the open points of the grammar:
 - `x.m(args)` is a receiver call: a `method` node at the position of `x`. `t.0(x)` is a call of
   the element `t.0`, not a receiver call: a selector is no method name. `(x.m)(args)` calls the
   field `x.m`.
+- A function type `fn (T, mut U) -> V` is a type, and in an expression a unary operand. Its
+  result type takes each suffix after it: `fn () -> UInt[8]` indexes `UInt`. A `,` can end the
+  parameters. A `comptime` mark on a parameter is `S001` at the mark. `(fn () -> T)[8]` parses
+  as an index of a function type: pass 4 rejects it with `S007`.
 - The lexer gives the value of a hexadecimal or binary number. A value of 2^65536 or more is a
   lexical error at the literal. A selector `.N` takes each number literal, for example `t.0x1`.
 
@@ -72,14 +75,16 @@ pass over the AST:
 - The lexer rejects a bracket at the depth N + 1. Each recursive call of the parser that can
   repeat without limit first reads a bracket. Thus the recursion of the parser stays below a
   constant times N, for each input.
-- The parser builds each chain in a loop: binary operators, prefix operators, and suffixes.
-  It also reads the elements of a tuple, an array, or a tuple type in a loop. The branches of
+- The parser builds each chain in a loop: binary operators, prefix operators, suffixes, and
+  the arrows of function types. It also reads the elements of a tuple, an array, or a tuple
+  type, and the parameters of a function type, in a loop. The branches of
   `if` are in brackets.
 - The height of each outermost expression or type is at most N. A name, a number, a
   string, `true`, `false`, `()`, and `[]` have height 1. Each other node has the height 1 plus
   the largest height of its parts. Parentheses make no node. A type has the same rule: a type
-  name and `()` have height 1. Thus a recursive pass over the AST goes at most about 2N deep:
-  N for the blocks and N for an expression.
+  name and `()` have height 1. The parts of a function type are its parameter types and its
+  result type. A `mut` mark adds no height. Thus a recursive pass over the AST goes at most
+  about 2N deep: N for the blocks and N for an expression.
 
 An outermost expression or type is not part of another one. Each argument of an `instance` is
 an outermost expression. The parser computes each height when it builds the node, so it needs
@@ -227,6 +232,13 @@ def checkHeight (start : Pos) (h : Nat) : P Unit := do
   let d := (← read).depth
   modify fun s => if s.high.isNone && h > d then { s with high := some start } else s
 
+/-!
+The function types `acc` around the result type `r`, each with its height. `acc` holds the
+position and the parameters of each function type, the innermost first.
+-/
+def fnFold (acc : List (Pos × List (FnParam × Nat))) (r : TypeExpr × Nat) : TypeExpr × Nat :=
+  acc.foldl (fun r q => (.fn q.1 (q.2.map (·.1)) r.1, height (r.2 :: q.2.map (·.2)))) r
+
 /-! An expression with its height. -/
 structure Node where
   expr : Expr
@@ -312,8 +324,13 @@ mutual
         bump
         unary f ((t.pos, op) :: ops)
       | none =>
-        if isKw "fn" t then later t "a function type"
-        let a := (← postfixExpr f).1
+        let a ← if isKw "fn" t then do
+            let ps ← fnHead f
+            let (r, h) ← fnTypes f []
+            pure ⟨.fnType t.pos (ps.map (·.1)) r, height (h :: ps.map (·.2))⟩
+          else do
+            let (a, _) ← postfixExpr f
+            pure a
         return ops.foldl (fun a (p, op) => ⟨.unary p op a.expr, a.height + 1⟩) a
 
   /--
@@ -439,7 +456,7 @@ mutual
       | .ident n =>
         let _ ← path
         typeSuffix f t.pos (.name t.pos n, 1)
-      | .keyword "fn" => later t "a function type"
+      | .keyword "fn" => fnTypes f []
       | .symbol "(" =>
         if ← tupleAhead then
           bump
@@ -485,6 +502,48 @@ mutual
         typeSuffix f start (.index start ty (xs.map (·.expr)), height (h :: xs.map (·.height)))
       else if isSym "(" t then later t "a type function call"
       else return (ty, h)
+
+  /-- `fn (params) ->`: the parameters with their heights. -/
+  def fnHead : Nat → P (List (FnParam × Nat))
+    | 0 => exhausted
+    | f + 1 => do
+      kw "fn"
+      sym "("
+      let ps ← fnParams f []
+      sym "->"
+      return ps
+
+  /--
+  The parameters of a function type up to `)`, with their heights. A `,` can end the list. A
+  `comptime` mark is `S001` at the mark.
+  -/
+  def fnParams : Nat → List (FnParam × Nat) → P (List (FnParam × Nat))
+    | 0, _ => exhausted
+    | f + 1, acc => do
+      if ← acceptSym ")" then return acc.reverse
+      let t ← peek
+      if isKw "comptime" t then
+        throw ⟨.S001, t.pos, "a parameter of a function type has no `comptime` mark"⟩
+      let m ← acceptKw "mut"
+      let (ty, h) ← typeExpr f
+      let acc := (.mk m ty, h) :: acc
+      if ← acceptSym ")" then return acc.reverse
+      sym ","
+      fnParams f acc
+
+  /--
+  A chain of function types `fn (A) -> fn (B) -> T` in a loop, then the result type `T` of the
+  last. Arrows bind right. `acc` holds the position and the parameters of each `fn` before, in
+  reverse order.
+  -/
+  def fnTypes : Nat → List (Pos × List (FnParam × Nat)) → P (TypeExpr × Nat)
+    | 0, _ => exhausted
+    | f + 1, acc => do
+      let t ← peek
+      if isKw "fn" t then
+        let ps ← fnHead f
+        fnTypes f ((t.pos, ps) :: acc)
+      else return fnFold acc (← typeExpr f)
 end
 
 /-! An outermost type. -/
