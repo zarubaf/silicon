@@ -514,6 +514,12 @@ fn prim(pos: Pos, name: &str, k: Prelude) -> Res<Ty> {
         Prelude::Int => Ok(Ty::Int),
         Prelude::Unit => Ok(Ty::Unit),
         Prelude::Type => Ok(Ty::Type),
+        // TODO(#179): the types `String` and `List` (plan step 25).
+        Prelude::String | Prelude::List => fail(
+            Code::S010,
+            pos,
+            format!("the type `{name}` is not supported yet"),
+        ),
         _ => fail(
             Code::S007,
             pos,
@@ -1309,6 +1315,13 @@ impl Evaluator<'_> {
         xs: &[Expr],
     ) -> Res<Option<Out>> {
         self.charge(fp, 1)?;
+        // TODO(#179): `list`, `push`, `pop`, and `str` (plan steps 26 and 27).
+        if matches!(
+            builtin,
+            Prelude::ListFn | Prelude::Push | Prelude::Pop | Prelude::Str
+        ) {
+            return fail(Code::S010, pos, format!("`{g}` is not supported yet"));
+        }
         let vs = self.args(xs)?;
         if builtin == Prelude::Len {
             return self.len(pos, vs);

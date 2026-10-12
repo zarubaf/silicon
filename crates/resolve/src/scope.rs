@@ -64,6 +64,11 @@ impl Scopes {
         Ok(())
     }
 
+    /// The item with the name, past each local.
+    pub(crate) fn item(&self, name: &str) -> Option<DeclId> {
+        self.items.get(name).copied()
+    }
+
     /// The innermost local, else the item, with the name.
     pub(crate) fn lookup(&self, name: &str) -> Option<DeclId> {
         self.locals
