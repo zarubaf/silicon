@@ -890,3 +890,34 @@ fn many_call_sites_keep_their_pre_order_numbers() {
     let last = format!("add${}c$0ret", calls - 1);
     assert!(got.contains(&last), "{last}");
 }
+
+/// B9: a list argument is measured, then its length is charged, and only then does its text
+/// exist. A fuel that cannot pay the length writes no byte, and a fuel that can writes the whole
+/// text once.
+#[test]
+fn a_list_argument_is_measured_and_charged_before_it_is_written() {
+    use crate::counters::{SERIALIZED, get};
+    use std::sync::atomic::Ordering;
+    let make = |instance: &str| {
+        format!(
+            "module C(comptime xs: List[Int]) {{\n}}\n\
+             module M() {{\n  let mut xs = list(Int);\n\
+             \x20 comptime for i in 0..60 {{ xs.push(i); }}\n{instance}}}\n"
+        )
+    };
+    let (with, without) = (make("  instance c = C(xs);\n"), make(""));
+    let before = total(&without, "M");
+    let items: Vec<String> = (0..60).map(|i| format!("(int {i})")).collect();
+    let text = format!("(list int ({}))", items.join(" "));
+    let total = total(&with, "M");
+    let written = |fuel: u64| {
+        SERIALIZED.store(0, Ordering::Relaxed);
+        let _ = cost_fuel(&with, "M", fuel);
+        get(&SERIALIZED)
+    };
+    // The text is a length charge away from the fuel before the instance statement.
+    let first = (0..=total).find(|&fuel| written(fuel) > 0).unwrap_or(total);
+    assert!(first >= before + text.len() as u64, "{first} {before}");
+    assert_eq!(written(first), text.len() as u64);
+    assert_eq!(written(first - 1), 0);
+}
