@@ -46,6 +46,38 @@ theorem Runs.map {α β : Type} {m : P α} {g : α → β} {ctx : Ctx} {i j : Na
 
 /-! ## Parameters -/
 
+theorem Runs.paramMode {static : Bool} {c : ParamMode} (hc : c.printable static = true)
+    {ctx : Ctx} {i : Nat} {n : String} {R : List Kind}
+    (hw : Win ctx.input i (c.toks ++ .ident n :: R)) :
+    Runs (paramMode static) ctx i (i + c.toks.length) (· = c) := by
+  cases c with
+  | «mut» => simp [ParamMode.printable] at hc
+  | comptime =>
+    simp only [ParamMode.toks, List.cons_append, List.nil_append, List.length_singleton] at hw ⊢
+    cases static with
+    | true =>
+      rw [Parse.paramMode]
+      exact Runs.seqRight (Runs.kw hw.head) (Runs.pure rfl)
+    | false =>
+      rw [Parse.paramMode]
+      refine Runs.bind (Runs.acceptKw_true hw.head) fun b hb => ?_
+      subst b
+      reduce_checks
+      exact Runs.pure rfl
+  | none =>
+    simp only [ParamMode.toks, List.nil_append, List.length_nil, Nat.add_zero] at hw ⊢
+    cases static with
+    | true => simp [ParamMode.printable] at hc
+    | false =>
+      rw [Parse.paramMode]
+      refine Runs.bind (Runs.acceptKw_false (by rw [hw.head]; simp)) fun b hb => ?_
+      subst b
+      reduce_checks
+      refine Runs.bind (Runs.acceptKw_false (by rw [hw.head]; simp)) fun b hb => ?_
+      subst b
+      reduce_checks
+      exact Runs.pure rfl
+
 theorem Runs.param (q : Param) (static : Bool) (hp : q.printable static = true) (ctx : Ctx)
     (i f : Nat) (u : Kind) (R : List Kind) (hw : Win ctx.input i (q.toks ++ u :: R))
     (hu : u ≠ .symbol "[" ∧ u ≠ .symbol "(" ∧ u ≠ .symbol "::") (hf : 4 * q.ty.toks.length ≤ f)
@@ -55,58 +87,22 @@ theorem Runs.param (q : Param) (static : Bool) (hp : q.printable static = true) 
   simp only [Param.printable, Bool.and_eq_true] at hp
   obtain ⟨⟨hc, hn⟩, hty⟩ := hp
   simp only at hf hd
+  have e : (Param.toks ⟨pos, c, n, ty⟩) ++ u :: R =
+      c.toks ++ .ident n.name :: .symbol ":" :: (ty.toks ++ u :: R) := by
+    simp [Param.toks]
+  have hT : (Param.toks ⟨pos, c, n, ty⟩).length = c.toks.length + 2 + ty.toks.length := by
+    simp [Param.toks]; omega
+  rw [e] at hw
+  rw [hT]
   unfold Parse.param
-  cases c with
-  | «mut» => simp [ParamMode.printable] at hc
-  | comptime =>
-    have e : (Param.toks ⟨pos, .comptime, n, ty⟩) ++ u :: R =
-        .keyword "comptime" :: .ident n.name :: .symbol ":" :: (ty.toks ++ u :: R) := by
-      simp [Param.toks, ParamMode.toks]
-    have hT : (Param.toks ⟨pos, .comptime, n, ty⟩).length = ty.toks.length + 3 := by
-      simp [Param.toks, ParamMode.toks]
-    rw [e] at hw
-    rw [hT]
-    refine Runs.peek_bind ?_
-    simp only [isKw_of hw.head]
-    reduce_checks
-    cases static with
-    | true =>
-      simp only [ite_true]
-      refine Runs.bind (Runs.seqRight (Runs.kw hw.head) (Runs.pure (Q := (· = true)) rfl))
-        fun b hb => ?_
-      subst b
-      refine Runs.bind (Runs.ident hw.tail.head) fun id hid => ?_
-      refine Runs.bind (Runs.typeAnnotation ty hty ctx _ f _ _ hw.tail.tail hu hf hd)
-        fun ty' hty' => Runs.idx (by omega) (Runs.pure ?_)
-      simp [Param.erase, Ident.erase_of_name (b := n) hid, hty']
-    | false =>
-      simp only [Bool.false_eq_true, ite_false]
-      refine Runs.bind (Runs.acceptKw_true hw.head) fun b hb => ?_
-      subst b
-      refine Runs.bind (Runs.ident hw.tail.head) fun id hid => ?_
-      refine Runs.bind (Runs.typeAnnotation ty hty ctx _ f _ _ hw.tail.tail hu hf hd)
-        fun ty' hty' => Runs.idx (by omega) (Runs.pure ?_)
-      simp [Param.erase, Ident.erase_of_name (b := n) hid, hty']
-  | none =>
-    have e : (Param.toks ⟨pos, .none, n, ty⟩) ++ u :: R =
-        .ident n.name :: .symbol ":" :: (ty.toks ++ u :: R) := by
-      simp [Param.toks, ParamMode.toks]
-    have hT : (Param.toks ⟨pos, .none, n, ty⟩).length = ty.toks.length + 2 := by
-      simp [Param.toks, ParamMode.toks]
-    rw [e] at hw
-    rw [hT]
-    cases static with
-    | true => simp [ParamMode.printable] at hc
-    | false =>
-      refine Runs.peek_bind ?_
-      simp only [isKw_of hw.head]
-      reduce_checks
-      refine Runs.bind (Runs.acceptKw_false (by rw [hw.head]; simp)) fun b hb => ?_
-      subst b
-      refine Runs.bind (Runs.ident hw.head) fun id hid => ?_
-      refine Runs.bind (Runs.typeAnnotation ty hty ctx _ f _ _ hw.tail hu hf hd)
-        fun ty' hty' => Runs.idx (by omega) (Runs.pure ?_)
-      simp [Param.erase, Ident.erase_of_name (b := n) hid, hty']
+  refine Runs.peek_bind ?_
+  refine Runs.bind (Runs.paramMode hc hw) fun m hm => ?_
+  subst hm
+  have w := hw.drop
+  refine Runs.bind (Runs.ident w.head) fun id hid => ?_
+  refine Runs.bind (Runs.typeAnnotation ty hty ctx _ f _ _ w.tail hu hf hd)
+    fun ty' hty' => Runs.idx (by omega) (Runs.pure ?_)
+  simp [Param.erase, Ident.erase_of_name (b := n) hid, hty']
 
 theorem Param.headKind (q : Param) : ∃ k ks, q.toks = k :: ks ∧ k ≠ .symbol ")" ∧
     k ≠ .symbol "," := by
@@ -142,7 +138,7 @@ theorem Runs.params (static : Bool) (ps : List Param) : ∀ (ctx : Ctx) (i f : N
     obtain ⟨k, ks, hks, hk1, hk2⟩ := Param.headKind q
     have hty : q.ty.toks.length + 2 ≤ q.toks.length := by
       obtain ⟨pos, c, n, ty⟩ := q
-      cases c <;> simp [Param.toks]
+      cases c <;> simp [Param.toks, ParamMode.toks]
     obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
     rw [Parse.params]
     cases qs with
