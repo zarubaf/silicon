@@ -599,7 +599,8 @@ theorem placeAt_f (he : ∀ e, Follows m (eval k e) (eval m e)) (p : Pos) (c : E
 theorem call_f (he : ∀ e, Follows m (eval k e) (eval m e))
     (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t))
     (hb : ∀ p ss, Follows m (block k p ss) (block m p ss)) (p : Pos) (f : Resolve.Expr)
-    (xs : List Resolve.Expr) (b : Nat) : Follows m (call k p f xs b) (call m p f xs b) := by
+    (xs : List Resolve.Expr) (b j : Nat) :
+    Follows m (call k p f xs b j) (call m p f xs b j) := by
   rw [call.eq_def k, call.eq_def m]
   follows [he, ht, hb, placeAt_f he, mutation_f, changeAt_f, bounded_f, need_f, static_f,
     settle_f, data_f, conform_f, conformVal_f, apply_f, hwConvert_f, lenOf_f, named_f,
