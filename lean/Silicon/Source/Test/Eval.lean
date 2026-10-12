@@ -1047,6 +1047,17 @@ def deepList : String :=
 #guard out deepList "d()" (depth := 5) == "(int 0)"
 #guard out deepList "d()" (depth := 4) == "S015 1:56"
 
+/-!
+A `mut` write-back checks the new depth of the root as `push` does. The push in `add` makes its
+list 3 deep. The write-back adds the two steps of the place. Thus the limit 5 passes, and 4 fails
+at the call.
+-/
+def deepBack : String :=
+  "comptime fn add(mut xs: List[Type]) -> () { push(xs, List[Int]); return (); }\n" ++
+  "comptime fn d() -> Int { let mut t = ((list(Type),),); add(t.0.0); return 0; }\n"
+#guard out deepBack "d()" (depth := 5) == "(int 0)"
+#guard out deepBack "d()" (depth := 4) == "S015 2:56"
+
 /-! `len` and an index refer to a list. An index of a list is also a step of a place. -/
 #guard out lists "len(f())" == "(int 2)"
 #guard out lists "f()[1]" == "(int 2)"
