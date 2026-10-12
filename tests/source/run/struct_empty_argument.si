@@ -1,0 +1,19 @@
+// A literal with `[]` as a struct argument takes the type of its parameter, as a module argument
+// does. This holds also for a nested literal, and for a parameter type that depends on an earlier
+// argument. The key is the same as for the zero of the parameter type.
+// TOP M()
+struct P(comptime X: [Bool; 0]) {
+    a: Bool,
+}
+struct Q(comptime n: Nat, comptime X: [[Bool; 0]; n]) {
+    a: Bool,
+}
+module M() domains() {
+    input x: Bool;
+    output y: Bool;
+    static_assert(P[[]] == P[[Bool; 0]()], "empty");
+    static_assert(Q[2, [[], []]] == Q[2, [[Bool; 0]; 2]()], "nested");
+    y := !x;
+}
+// STEP in=(x true) out=(y false)
+// STEP in=(x false) out=(y true)
