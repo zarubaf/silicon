@@ -742,6 +742,17 @@ struct P(comptime W: Nat) { a: Bool }"
 #guard out norm "P[UInt[4](8)]" == "S010 1:1"
 
 /-!
+A use of a struct while its own parameter types evaluate is a cycle: `S019` at the use. This
+holds also for a cycle of two structs through their parameter types.
+-/
+def paramCycle : String :=
+  "struct P(comptime x: P[1]) { a: Bool }
+struct A(comptime x: B[1]) { a: Bool }
+struct B(comptime y: A[1]) { a: Bool }"
+#guard out paramCycle "P[1]" == "S019 1:22"
+#guard out paramCycle "A[1]" == "S019 3:22"
+
+/-!
 The struct chain of section 11.3, specialized from the innermost struct outward. `S_k` has the
 depth `k + 2`. It runs at the exact depth, and one level above it gives `S015` at its use.
 -/
