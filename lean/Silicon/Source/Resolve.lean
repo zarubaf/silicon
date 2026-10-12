@@ -249,7 +249,7 @@ def lookup (pos : Pos) (n : String) : M (Option Ref) := do
     | some r => return some r
     | none =>
       let msg := match laterPrelude.lookup n with
-        | some k => s!"`{n}` is not in slice 1; it comes in slice {k}"
+        | some k => s!"`{n}` is not supported yet; it comes in slice {k}"
         | none => s!"`{n}` is not declared"
       recordUnknown ⟨.S003, pos, msg⟩
       return none
