@@ -421,8 +421,42 @@ theorem Expr.lexes {D : Nat} (e : Expr) :
 
 theorem TypeExpr.lexes {D : Nat} (t : TypeExpr) :
     t.printable = true → Lexes D .sep t.print.toList t.toks := by
+  have ho : Lexes D .any "(".toList [.symbol "("] := Lexes.glue (by decide)
+  have hb : Lexes D .any "[".toList [.symbol "["] := Lexes.glue (by decide)
   induction t using TypeExpr.erase.induct with
-  | case3 | case4 | case5 => intro h; simp [TypeExpr.printable] at h
+  | case3 p =>
+    intro _
+    rw [TypeExpr.print, TypeExpr.toks]
+    simpa using Lexes.any (f := .sep) (Lexes.glue (D := D) (cs := "()".toList)
+      (ks := [.symbol "(", .symbol ")"]) (by decide))
+  | case4 p ts ih =>
+    intro h
+    simp only [TypeExpr.printable, Bool.and_eq_true, TypeExpr.printableAll_eq,
+      List.all_eq_true] at h
+    rw [TypeExpr.print, TypeExpr.toks]
+    have ha := Lexes.args (D := D) TypeExpr.print TypeExpr.toks ts fun x hx => ih x hx (h.2 x hx)
+    have hc : Lexes D .any (tupleEnd ts.length).toList
+        (if ts.length == 1 then [.symbol ",", .symbol ")"] else [.symbol ")"]) := by
+      unfold tupleEnd
+      split
+      · exact Lexes.glue (by decide)
+      · exact Lexes.glue (by decide)
+    have hs : Starts .sep (tupleEnd ts.length).toList := by
+      unfold tupleEnd
+      split
+      · exact Starts.lit (by decide)
+      · exact Starts.lit (by decide)
+    have := ho.append (ha.append hc hs) (Starts.any _)
+    simpa using Lexes.any (f := .sep) this
+  | case5 p t n iht =>
+    intro h
+    simp only [TypeExpr.printable, Bool.and_eq_true] at h
+    rw [TypeExpr.print, TypeExpr.toks]
+    have hs : Lexes D .any "; ".toList [.symbol ";"] := Lexes.glue (by decide)
+    have hc : Lexes D .any "]".toList [.symbol "]"] := Lexes.glue (by decide)
+    have := hb.append ((iht h.1).append (hs.append ((Expr.lexes n h.2 0).append hc
+      (Starts.lit (by decide))) (Starts.any _)) (Starts.glue "; " (by decide) _)) (Starts.any _)
+    simpa using Lexes.any (f := .sep) this
   | case1 p n =>
     intro h
     simp only [TypeExpr.printable] at h
@@ -433,10 +467,9 @@ theorem TypeExpr.lexes {D : Nat} (t : TypeExpr) :
     simp only [TypeExpr.printable, Bool.and_eq_true, Expr.printableAll_eq,
       List.all_eq_true] at h
     rw [TypeExpr.print, TypeExpr.toks]
-    have ho : Lexes D .any "[".toList [.symbol "["] := Lexes.glue (by decide)
     have ha := Lexes.argsClose (D := D) xs (fun x hx => Expr.lexes x (h.2 x hx) 0)
       (Lexes.glue (cs := "]".toList) (ks := [.symbol "]"]) (by decide)) (Starts.lit (by decide))
-    have := (ih h.1.1).append (ho.append ha (Starts.any _)) (Starts.glue "[" (by decide) _)
+    have := (ih h.1.1).append (hb.append ha (Starts.any _)) (Starts.glue "[" (by decide) _)
     simpa using Lexes.any (f := .sep) this
 
 theorem Lexes.lines {D : Nat} (b : List Stmt)

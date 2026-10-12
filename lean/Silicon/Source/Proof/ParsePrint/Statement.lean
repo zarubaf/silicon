@@ -85,6 +85,14 @@ example : Printable [.const p (nm "X") (t "T")
 /-! An empty tuple: the printer writes it as `()`, the unit value. -/
 example : ¬ Printable [.const p (nm "X") (t "T") (.tuple p [])] := by decide
 
+/-! The unit type, tuple types of one and two elements, and array types. -/
+example : Printable [.const p (nm "X")
+    (.tuple p [.unit p, .tuple p [t "T"], .array p (.tuple p [t "T", t "U"]) (.num p 4),
+      .index p (.array p (t "T") (v "N")) [.num p 0]]) (v "x")] := by decide +kernel
+
+/-! An empty tuple type: the printer writes it as `()`, the unit type. -/
+example : ¬ Printable [.const p (nm "X") (.tuple p []) (v "x")] := by decide
+
 /-! A module parameter without `comptime`, and two domains. -/
 example : ¬ Printable [.module p (nm "M") [⟨p, false, nm "W", t "Nat"⟩] none []] := by decide
 example : ¬ Printable [.module p (nm "M") [] (some [nm "a", nm "b"]) []] := by decide

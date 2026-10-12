@@ -27,6 +27,10 @@ The proof is an induction on the number of kinds. These parts of the parser need
 - `arrayTypeAhead`: the window gives a false semicolon flag at the `[` of an array.
 - `args`: a tuple of one element ends with `,)`, and `Runs.args_trail` reads it.
 - `checkHeight` in `value` and `typeTop`: each height is at most the syntax depth.
+- `typeExpr` at `(`: the window gives a true comma flag at the `(` of a tuple type. At `()`, a
+  `)` follows the `(`. `Runs.typeElems` reads the element types, with a `,` before the `)` if
+  the tuple has one element.
+- `typeExpr` at `[`: the parser reads an array type `[T; N]` without the semicolon flag.
 
 `Runs.value`, `Runs.args`, `Runs.type_end`, `Runs.typeTop`, `Runs.postfix_end`, and
 `Runs.postfix_climb` are the interfaces for the lemma of the statements.
@@ -1507,9 +1511,234 @@ def TGoal (ty : TypeExpr) : Prop :=
       Runs (typeSuffix f' (tokenAt ctx.input i).pos (ty', h)) ctx (i + ty.toks.length) l Q) →
     Runs (typeExpr f) ctx i l Q
 
+/-! The first kind of a type is no closing bracket. -/
+theorem TypeExpr.toks_head (ty : TypeExpr) : ∃ k ks, ty.toks = k :: ks ∧ NotClose k := by
+  induction ty using TypeExpr.erase.induct with
+  | case2 p b xs ihb =>
+    obtain ⟨k, ks, h, hk⟩ := ihb
+    exact ⟨k, ks ++ .symbol "[" :: argToks (xs.map (Expr.toks 0)) ++ [.symbol "]"],
+      by simp [TypeExpr.toks, h], hk⟩
+  | case1 => exact ⟨_, [], by rw [TypeExpr.toks], by simp [NotClose]⟩
+  | case3 => exact ⟨.symbol "(", _, by rw [TypeExpr.toks], by simp [NotClose]⟩
+  | case4 => exact ⟨.symbol "(", _, by rw [TypeExpr.toks, List.cons_append], by simp [NotClose]⟩
+  | case5 =>
+    exact ⟨.symbol "[", _, by rw [TypeExpr.toks, List.cons_append, List.cons_append],
+      by simp [NotClose]⟩
+
+/-! A type, then a kind that is no `[`, no `(`, and no `::`. -/
+theorem TGoal.type_end {ty : TypeExpr} (hT : TGoal ty) (hp : ty.printable = true) (ctx : Ctx)
+    (i f : Nat) (u : Kind) (R : List Kind) (hw : Win ctx.input i (ty.toks ++ u :: R))
+    (hu : u ≠ .symbol "[" ∧ u ≠ .symbol "(" ∧ u ≠ .symbol "::") (hf : 4 * ty.toks.length ≤ f) :
+    Runs (typeExpr f) ctx i (i + ty.toks.length)
+      (fun r => r.1.erase = ty.erase ∧ r.2 ≤ ty.toks.length) := by
+  have h1 : 1 ≤ ty.toks.length := by
+    obtain ⟨k, ks, h, -⟩ := TypeExpr.toks_head ty; rw [h]; simp
+  refine hT hp ctx i f u R hw hu.2.2 (by omega) _ _ ?_
+  intro ty' h f' hty hh hf'
+  obtain ⟨f'', rfl⟩ : ∃ g, f' = g + 1 := ⟨f' - 1, by omega⟩
+  rw [Parse.typeSuffix]
+  refine Runs.peek_bind ?_
+  have hw2 := hw.drop
+  simp only [isSym, hw2.head, beq_iff_eq, hu.1, hu.2.1, ite_false]
+  exact Runs.pure ⟨hty, hh⟩
+
+/-! The end of a tuple type: a `)`, after a `,` if `trail`. -/
+def tupleTail (trail : Bool) (R : List Kind) : List Kind :=
+  (if trail then [.symbol ","] else []) ++ .symbol ")" :: R
+
+theorem argToks_single (a : List Kind) : argToks [a] = a := by simp [Print.argToks]
+
+theorem argToks_cons_cons (a b : List Kind) (l : List (List Kind)) :
+    argToks (a :: b :: l) = a ++ .symbol "," :: argToks (b :: l) := by
+  simp [Print.argToks, List.intercalate_cons_cons]
+
+theorem argToks_head (a : List Kind) (l : List (List Kind)) :
+    ∃ r, argToks (a :: l) = a ++ r := by
+  cases l with
+  | nil => exact ⟨[], by simp [Print.argToks]⟩
+  | cons b l => exact ⟨_, argToks_cons_cons a b l⟩
+
+/-! `typeElems` reads the element types of a tuple type up to its `)`. -/
+theorem Runs.typeElems (trail : Bool) (ts : List TypeExpr) (hne : ts ≠ [])
+    (hT : ∀ t ∈ ts, TGoal t ∧ t.printable = true) :
+    ∀ (ctx : Ctx) (i f : Nat) (R : List Kind) (acc : List (TypeExpr × Nat)),
+    Win ctx.input i (argToks (ts.map TypeExpr.toks) ++ tupleTail trail R) →
+    4 * (argToks (ts.map TypeExpr.toks)).length + 4 ≤ f →
+    Runs (typeElems f acc) ctx i
+      (i + (argToks (ts.map TypeExpr.toks)).length + (if trail then 2 else 1))
+      (fun rs => ∃ ms, rs = acc.reverse ++ ms ∧ ms.map (·.1.erase) = ts.map TypeExpr.erase ∧
+        ∀ r ∈ ms, r.2 ≤ (argToks (ts.map TypeExpr.toks)).length) := by
+  induction ts with
+  | nil => exact absurd rfl hne
+  | cons t ts ih =>
+    intro ctx i f R acc hw hf
+    obtain ⟨hTt, hpt⟩ := hT t (by simp)
+    obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
+    rw [Parse.typeElems]
+    cases ts with
+    | nil =>
+      simp only [List.map_cons, List.map_nil, Print.argToks, List.intercalate_singleton] at hw hf ⊢
+      cases trail
+      · simp only [tupleTail, Bool.false_eq_true, ite_false, List.nil_append] at hw ⊢
+        refine Runs.bind (TGoal.type_end hTt hpt ctx i f _ R hw (by decide) (by omega))
+          fun r hr => ?_
+        refine Runs.bind (Runs.acceptSym_true hw.drop.head) fun b hb => ?_
+        subst hb
+        exact Runs.pure ⟨[r], by simp, by simp [hr.1], by simpa using hr.2⟩
+      · simp only [tupleTail, ite_true, List.singleton_append] at hw ⊢
+        refine Runs.bind (TGoal.type_end hTt hpt ctx i f _ _ hw (by decide) (by omega))
+          fun r hr => ?_
+        have hw2 := hw.drop
+        refine Runs.bind (Runs.acceptSym_false (by rw [hw2.head]; decide)) fun b hb => ?_
+        subst hb
+        simp only [Bool.false_eq_true, ite_false]
+        refine Runs.peek_bind ?_
+        simp only [isSym, hw2.head, beq_self_eq_true, ite_true]
+        refine Runs.bump_bind ?_
+        refine Runs.bind (Runs.acceptSym_true hw2.tail.head) fun b hb => ?_
+        subst hb
+        refine Runs.idx (by omega) (Runs.pure ⟨[r], by simp, by simp [hr.1], ?_⟩)
+        simpa using hr.2
+    | cons t2 ts =>
+      have hrest : ∀ y ∈ t2 :: ts, TGoal y ∧ y.printable = true := fun y hy =>
+        hT y (by simp [hy])
+      simp only [List.map_cons] at hw hf ih ⊢
+      rw [argToks_cons_cons] at hw hf ⊢
+      simp only [List.length_append, List.length_cons] at hf ⊢
+      rw [List.append_assoc] at hw
+      refine Runs.bind (TGoal.type_end hTt hpt ctx i f _ _ hw (by decide) (by omega))
+        fun r hr => ?_
+      have hw2 := hw.drop
+      refine Runs.bind (Runs.acceptSym_false (by rw [hw2.head]; decide)) fun b hb => ?_
+      subst hb
+      simp only [Bool.false_eq_true, ite_false]
+      refine Runs.peek_bind ?_
+      simp only [isSym, hw2.head, beq_self_eq_true, ite_true]
+      refine Runs.bump_bind ?_
+      obtain ⟨k, ks, hks, hk⟩ := TypeExpr.toks_head t2
+      have hw3 := hw2.tail
+      have hk1 : (tokenAt ctx.input (i + t.toks.length + 1)).kind = k := by
+        obtain ⟨r', hr'⟩ := argToks_head t2.toks (ts.map TypeExpr.toks)
+        have := hw3; rw [hr', hks] at this; simp only [List.cons_append] at this
+        exact this.head
+      refine Runs.bind (Runs.acceptSym_false (by rw [hk1]; exact hk.1)) fun b hb => ?_
+      subst hb
+      simp only [Bool.false_eq_true, ite_false]
+      refine Runs.idx (by split <;> omega) (Runs.mono (ih (by simp) hrest ctx _ f R (r :: acc)
+        hw3 (by omega)) ?_)
+      rintro rs ⟨ms, rfl, hm, hh⟩
+      refine ⟨r :: ms, by simp, by simp [hm, hr.1], ?_⟩
+      intro r' hr'
+      simp only [List.mem_cons] at hr'
+      rcases hr' with rfl | hr'
+      · have := hr.2; omega
+      · have := hh r' hr'; omega
+
 theorem Runs.type (ty : TypeExpr) : TGoal ty := by
   induction ty using TypeExpr.erase.induct with
-  | case3 | case4 | case5 => intro hp; simp [TypeExpr.printable] at hp
+  | case3 p =>
+    intro _ ctx i f u R hw hu hf l Q hk
+    simp only [TypeExpr.toks, List.length_cons, List.length_nil, List.cons_append,
+      List.nil_append] at hw hf hk
+    obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
+    rw [Parse.typeExpr]
+    refine Runs.peek_bind ?_
+    simp only [hw.head]
+    refine Runs.bind (Runs.tupleAhead_true (Or.inl hw.tail.head)) fun b hb => ?_
+    subst hb
+    simp only [ite_true]
+    refine Runs.bump_bind ?_
+    refine Runs.bind (Runs.acceptSym_true hw.tail.head) fun b hb => ?_
+    subst hb
+    simp only [ite_true]
+    exact Runs.idx (by omega) (hk _ 1 f (by simp [TypeExpr.erase]) (by omega) (by omega))
+  | case4 p ts ih =>
+    intro hp ctx i f u R hw hu hf l Q hk
+    simp only [TypeExpr.printable, Bool.and_eq_true, TypeExpr.printableAll_eq,
+      List.all_eq_true, Bool.not_eq_true', List.isEmpty_eq_false_iff] at hp
+    obtain ⟨hne, hpts⟩ := hp
+    have hT : ∀ t ∈ ts, TGoal t ∧ t.printable = true := fun t ht => ⟨ih t ht, hpts t ht⟩
+    have htoks : (TypeExpr.tuple p ts).toks =
+        .symbol "(" :: (argToks (ts.map TypeExpr.toks) ++ tupleTail (ts.length == 1) []) := by
+      simp only [TypeExpr.toks, tupleTail]
+      split <;> simp_all
+    have hlen : (TypeExpr.tuple p ts).toks.length =
+        (argToks (ts.map TypeExpr.toks)).length + (if ts.length == 1 then 2 else 1) + 1 := by
+      rw [htoks]; simp only [tupleTail]; split <;> simp
+    have hw' : Win ctx.input i (.symbol "(" :: (argToks (ts.map TypeExpr.toks) ++
+        tupleTail (ts.length == 1) (u :: R))) := by
+      rw [htoks] at hw; simpa [tupleTail] using hw
+    rw [hlen] at hf hk
+    obtain ⟨t, ts', rfl⟩ : ∃ t ts', ts = t :: ts' := List.exists_cons_of_ne_nil hne
+    obtain ⟨k, ks, hks, hkc⟩ := TypeExpr.toks_head t
+    have hta : ctx.input.comma.getD i false = true := by
+      have e : ∃ b, Kind.symbol "(" :: (argToks ((t :: ts').map TypeExpr.toks) ++
+          tupleTail ((t :: ts').length == 1) (u :: R)) =
+          [] ++ .symbol "(" :: (t.toks ++ .symbol "," :: b) := by
+        cases ts' with
+        | nil => exact ⟨.symbol ")" :: u :: R, by simp [Print.argToks, tupleTail]⟩
+        | cons t2 ts' =>
+          exact ⟨argToks ((t2 :: ts').map TypeExpr.toks) ++ tupleTail false (u :: R),
+            by simp [argToks_cons_cons, tupleTail]⟩
+      obtain ⟨b, e⟩ := e
+      simpa using hw'.tuple _ _ _ e (TypeExpr.trans false t).bal
+    have hk1 : (tokenAt ctx.input (i + 1)).kind = k := by
+      obtain ⟨r', hr'⟩ := argToks_head t.toks (ts'.map TypeExpr.toks)
+      have := hw'.tail; simp only [List.map_cons] at this; rw [hr', hks] at this
+      simp only [List.cons_append] at this
+      exact this.head
+    obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by split at hf <;> omega⟩
+    rw [Parse.typeExpr]
+    refine Runs.peek_bind ?_
+    simp only [hw'.head]
+    refine Runs.bind (Runs.tupleAhead_true (Or.inr hta)) fun b hb => ?_
+    subst hb
+    simp only [ite_true]
+    refine Runs.bump_bind ?_
+    refine Runs.bind (Runs.acceptSym_false (by rw [hk1]; exact hkc.1)) fun b hb => ?_
+    subst hb
+    simp only [Bool.false_eq_true, ite_false]
+    refine Runs.bind (Runs.typeElems _ _ hne hT ctx (i + 1) f (u :: R) [] hw'.tail
+      (by split at hf <;> omega)) fun rs hrs => ?_
+    obtain ⟨ms, rfl, hm, hh⟩ := hrs
+    refine Runs.start ?_ (hk _ _ f ?_ ?_ ?_)
+    · split <;> omega
+    · simp only [TypeExpr.erase, List.map_map, Function.comp_def]
+      rw [← hm]
+    · refine Nat.le_trans (height_le (B := (argToks ((t :: ts').map TypeExpr.toks)).length)
+        ?_) (by omega)
+      intro x hx
+      simp only [List.mem_map] at hx
+      obtain ⟨m, hm', rfl⟩ := hx
+      exact hh m hm'
+    · split <;> omega
+  | case5 p t n iht =>
+    intro hp ctx i f u R hw hu hf l Q hk
+    simp only [TypeExpr.printable, Bool.and_eq_true] at hp
+    simp only [TypeExpr.toks, List.length_cons, List.length_append, List.length_nil,
+      List.cons_append, List.append_assoc, List.nil_append] at hw hf hk
+    obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
+    rw [Parse.typeExpr]
+    refine Runs.peek_bind ?_
+    simp only [hw.head]
+    refine Runs.bump_bind ?_
+    refine Runs.bind (TGoal.type_end iht hp.1 ctx (i + 1) f _ _ hw.tail (by decide) (by omega))
+      ?_
+    rintro ⟨ty', h⟩ ⟨hty, hh⟩
+    have hw2 := hw.tail.drop
+    refine Runs.sym_bind hw2.head ?_
+    refine Runs.bind (Runs.expr_print n hp.2 ctx _ _ (u :: R) f hw2.tail (After.close (Or.inr rfl))
+      (by omega)) fun m hm => ?_
+    have hw3 := hw2.tail.drop
+    refine Runs.sym_bind hw3.head ?_
+    refine Runs.start (by omega) (hk _ _ f ?_ ?_ (by omega))
+    · simp [TypeExpr.erase, hty, hm.1]
+    · refine Nat.le_trans (height_le (B := t.toks.length + (n.toks 0).length) ?_) (by omega)
+      intro x hx
+      simp only [List.mem_cons, List.not_mem_nil, or_false] at hx
+      rcases hx with rfl | rfl
+      · omega
+      · have := hm.2; omega
   | case1 p n =>
     intro _ ctx i f u R hw hu hf l Q hk
     simp only [TypeExpr.toks, List.length_singleton, List.singleton_append] at hw hf hk
@@ -1554,16 +1783,8 @@ theorem Runs.type_end (ty : TypeExpr) (hp : ty.printable = true) (ctx : Ctx) (i 
     (u : Kind) (R : List Kind) (hw : Win ctx.input i (ty.toks ++ u :: R))
     (hu : u ≠ .symbol "[" ∧ u ≠ .symbol "(" ∧ u ≠ .symbol "::") (hf : 4 * ty.toks.length ≤ f) :
     Runs (typeExpr f) ctx i (i + ty.toks.length)
-      (fun r => r.1.erase = ty.erase ∧ r.2 ≤ ty.toks.length) := by
-  have h1 : 1 ≤ ty.toks.length := by cases ty <;> simp [TypeExpr.toks] <;> omega
-  refine Runs.type ty hp ctx i f u R hw hu.2.2 (by omega) _ _ ?_
-  intro ty' h f' hty hh hf'
-  obtain ⟨f'', rfl⟩ : ∃ g, f' = g + 1 := ⟨f' - 1, by omega⟩
-  rw [Parse.typeSuffix]
-  refine Runs.peek_bind ?_
-  have hw2 := hw.drop
-  simp only [isSym, hw2.head, beq_iff_eq, hu.1, hu.2.1, ite_false]
-  exact Runs.pure ⟨hty, hh⟩
+      (fun r => r.1.erase = ty.erase ∧ r.2 ≤ ty.toks.length) :=
+  TGoal.type_end (Runs.type ty) hp ctx i f u R hw hu hf
 
 /-! `typeTop` reads an outermost type. Its height is at most the syntax depth. -/
 theorem Runs.typeTop (ty : TypeExpr) (hp : ty.printable = true) (ctx : Ctx) (i f : Nat)
