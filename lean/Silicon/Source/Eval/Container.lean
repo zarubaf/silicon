@@ -24,8 +24,9 @@ The static containers of slice 2 follow section 5.1. These rules settle its open
   joins its element types and charges the visits of the join. Then the operator charges the sum
   of the two sizes. Each pair compares, so each conversion checks its fit (`S012`).
 - An index and a selector `.N` refer to an element, and `len` refers to its array. They charge
-  no size, so a binding of the result is a copy. An index with two or more arguments is `S010`
-  before its operands run.
+  no size, so a binding of the result is a copy. A string is the exception: its index and its
+  `len` scan it, so they charge its size, and the index makes a new string. An index with two
+  or more arguments is `S010` before its operands run.
 - Each new container checks its depth before the charge of its size (`S015`). These are the
   literals, the tuple and array types, and `[]` at its typed use.
 - `()` charges the size 1 as a value and as a type.
@@ -283,6 +284,12 @@ def selectAt (pos q : Pos) (i : Nat) : Val → M (Nat × Value)
 def select (pos q : Pos) (i : Nat) (v : Val) : M Val := do
   return .static (← selectAt pos q i v).2
 
+/-! The value of a static index at `q`. It is a static `Int` or `UInt`, else `S010`. -/
+def indexOf (q : Pos) : Value → M Int
+  | .int k => pure k
+  | .uint _ x => pure (x.toNat : Int)
+  | i => fail .S010 q s!"an index is a static integer, not {i.text}"
+
 /-!
 The static index `i` at `q` of an array or a tuple at `pos`. The result is the number of the
 element and the element.
@@ -291,12 +298,21 @@ def pickAt (pos q : Pos) (v : Val) (i : Value) : M (Nat × Value) := do
   let xs ← match v with
     | .static (.array _ xs) | .static (.tuple xs) => pure xs
     | v => fail .S010 pos s!"an index needs an array or a tuple, not {v.text}"
-  let k ← match i with
-    | .int k => pure k
-    | .uint _ x => pure (x.toNat : Int)
-    | i => fail .S010 q s!"an index is a static integer, not {i.text}"
+  let k ← indexOf q i
   if h : 0 ≤ k ∧ k.toNat < xs.size then return (k.toNat, xs[k.toNat])
   else fail .S013 q s!"the index {intText k} is out of range for {xs.size} element(s)"
+
+/-!
+The static index `i` at `q` of the string `s` at `pos`: a string with the scalar `i` of `s`. A
+UTF-8 string needs a scan, so the index charges the size of `s`. The charge comes after the type
+check of the index and before its range check (section 5.4).
+-/
+def strAt (pos q : Pos) (s : String) (i : Value) : M Value := do
+  let k ← indexOf q i
+  charge pos (Value.str s).size
+  match if 0 ≤ k then s.toList[k.toNat]? else none with
+  | some c => return .str (String.singleton c)
+  | none => fail .S013 q s!"the index {intText k} is out of range for {s.length} scalar(s)"
 
 /-! A static index refers to an element. -/
 def pick (pos q : Pos) (v : Val) (i : Value) : M Val := do
@@ -386,12 +402,18 @@ def zero (pos : Pos) (t : Ty) : M Value := do
   | some v => return v
   | none => fail .S010 pos s!"{t.text} has no zero"
 
-/-! `len` of an array at the call `pos`. It refers to the array, so it charges no size. -/
+/-!
+`len` of an array or a string at the call `pos`. It refers to an array, so it charges no size.
+A string needs a scan, so it charges the size of the string first.
+-/
 def lenOf (pos : Pos) : List Val → M Value
   | [v] => do
     match ← data pos v with
     | .static (.array _ xs) => return .int xs.size
-    | v => fail .S010 pos s!"`len` takes an array, not {v.text}"
+    | .static v@(.str s) => do
+      charge pos v.size
+      return .int s.length
+    | v => fail .S010 pos s!"`len` takes an array or a string, not {v.text}"
   | vs => fail .S007 pos s!"`len` takes 1 argument(s), but it has {vs.length}"
 
 end Silicon.Source.Eval

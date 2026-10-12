@@ -16,7 +16,11 @@ The operators follow v0.1 section 3. These rules settle the open points of slice
   an operand of `+%`, `-%`, `*%`, `&`, `|`, `^`, or a comparison with a finite operand.
 - A `Nat` is an `int` value. Only an annotation checks that it is not negative. A `let`
   without an annotation gets the type `Int` for an integer.
-- Strings are values for messages. Only `==` and `!=` accept them. Types compare the same way.
+- A string is a static sequence of Unicode scalars. `+` joins two strings and charges the sum
+  of their sizes. `==` and `!=` compare two strings, and no ordering takes them. Types compare
+  the same way.
+- `s[i]` and `len(s)` scan the string, so they charge its size (section 5.4). `str(n)` charges
+  the copy of `n`, the square of the size of `n`, and then the size of its result.
 - Slice 1 has no function values: a function name is only a callee (`S010`).
 - `resize` keeps the signedness. `reinterpret` keeps the width.
 - A typed-use error is at the node of the typed use: the statement, the call, or the operator.
@@ -101,6 +105,9 @@ def binary (op : BinOp) (a b : Value) : Except Fault Step :=
     match a, b with
     | .int x, .int y =>
       .ok ⟨if op == .add || op == .sub then sum else product, fun _ => intArith op x y⟩
+    | .str x, .str y =>
+      if op == .add then .ok ⟨sum, fun _ => .ok (.str (x ++ y))⟩
+      else typeError s!"`{op.text}` does not accept strings; `+` joins them"
     | _, _ => typeError s!"`{op.text}` accepts only Int and Nat, not {a.text} and {b.text}"
   | .addw | .subw | .mulw | .and | .or | .xor =>
     let c := (coreOp op).getD .add
@@ -158,8 +165,9 @@ def prim (pos : Pos) (x : String) : PrimType → M Ty
   | .uint | .sint => fail .S007 pos s!"`{x}` takes 1 argument(s), but it has 0"
   | .unit => pure .unit
   | .type => pure .type
-  -- TODO(#179): strings and lists come in the next steps of phase 4.
-  | .string | .list => fail .S004 pos s!"`{x}` is not supported yet"
+  | .string => pure .string
+  -- TODO(#179): lists come in the next step of phase 4.
+  | .list => fail .S004 pos s!"`{x}` is not supported yet"
 
 /-! A string and a handle have no `Ty`, so an assignment keeps their form. -/
 def sameForm : Val → Val → Bool
@@ -383,8 +391,8 @@ def iteration [Runs m] (pos : Pos) (i : Binder) (v : Int) (act : m α) : m α :=
     act
 
 /-!
-A place after its steps (section 5.2): the local number of its root, the slot and the source
-name of the root, the selected part with its type, and the number of each step.
+A place after its steps (section 5.2). It holds the local number, the slot, and the source name
+of its root. It also holds the selected part with its type, and the number of each step.
 -/
 structure Place where
   id : Nat
@@ -463,6 +471,7 @@ mutual
         let v ← data p (← need b (← eval n b)).value
         if v matches .static (.type _) then fail .S007 p "a complete type takes no index"
         let i ← static x.pos (← need x (← eval n x)).value
+        if let .static (.str s) := v then return some ⟨.static (← strAt p x.pos s i), false⟩
         return some ⟨← pick p x.pos v i, true⟩
       | .field p b f => do
         match (← need b (← eval n b)).value with
@@ -706,8 +715,16 @@ mutual
         match ← static p m with
         | .str m => fail .S014 p s!"error: {strText m}"
         | m => fail .S010 p s!"`{g}` does not accept {m.text}"
-      -- TODO(#179): strings and lists come in the next steps of phase 4.
-      | .list, _ | .push, _ | .pop, _ | .str, _ => fail .S004 p s!"`{g}` is not supported yet"
+      | .str, [v] =>
+        match ← data p v with
+        | .static n@(.int k) =>
+          charge p (n.size * n.size)
+          let s := Value.str (toString k)
+          charge p s.size
+          return some ⟨.static s, false⟩
+        | v => fail .S010 p s!"`{g}` needs an Int, not {v.text}"
+      -- TODO(#179): lists come in the next step of phase 4.
+      | .list, _ | .push, _ | .pop, _ => fail .S004 p s!"`{g}` is not supported yet"
       | _, vs => fail .S010 p s!"`{g}` does not accept {vs.map Val.text}"
     | _ => ctor
   termination_by (n + 1, 0)
