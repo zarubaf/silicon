@@ -2,7 +2,7 @@
 //! The index, the selector `.N`, `len`, and the places of Lean `Source.Eval`. An index and a
 //! selector refer to an element, so they charge no size and copy nothing: a binding of the
 //! result is the copy. An assignment to a place updates the one element in the local, because
-//! no other binding shares the container.
+//! no other binding shares the container. A read and a place each walk their path once.
 
 use super::{Evaluator, Frame, Opnd, Out, Res, Slot, expr_pos, fail, need, same_form};
 use crate::Code;
@@ -14,8 +14,9 @@ use parse::ast::{Expr, Nat, Pos};
 use resolve::Target;
 use std::borrow::Cow;
 
-/// A step of a place after its root: an index at the position with its arguments, or a
-/// selector `.N` with the positions of its node and of its number literal.
+/// A step of a place or a read after its root: an index at the position with its arguments,
+/// or a selector `.N` with the positions of its node and of its number literal.
+#[derive(Clone, Copy)]
 enum Sel<'a> {
     Index(Pos, &'a [Expr]),
     Select(Pos, Pos, &'a Nat),
@@ -163,11 +164,6 @@ impl Evaluator<'_> {
         }
     }
 
-    /// The index `i` at `q` of the operand `b` of an index at `pos`.
-    pub(super) fn pick_index(&self, pos: Pos, q: Pos, b: &Opnd, i: &Out) -> Res<usize> {
-        self.pick_at(pos, q, self.opnd_seen(b), &self.index_of(i))
-    }
-
     /// The number of the element that the selector `.index` with its literal at `q` picks
     /// from `base`, a result of a selector at `pos`.
     fn select_at(&self, pos: Pos, q: Pos, index: &Nat, base: Seen<'_>) -> Res<usize> {
@@ -199,31 +195,110 @@ impl Evaluator<'_> {
         }
     }
 
-    /// The selector `.index` of the operand `b`.
-    pub(super) fn select_index(&self, pos: Pos, q: Pos, index: &Nat, b: &Opnd) -> Res<usize> {
-        self.select_at(pos, q, index, self.opnd_seen(b))
+    /// The step of a read at `e` and its base: an index of a value or a selector `.N`.
+    /// Another expression, also an index of a type, is the root of the read.
+    fn read_step<'e>(&self, e: &'e Expr) -> Option<(Sel<'e>, &'e Expr)> {
+        match e {
+            Expr::Index { pos, base, args } => {
+                let ty = match &**base {
+                    Expr::Name { id, .. } => {
+                        matches!(self.target(*id), Some(Target::Prelude(k)) if k.is_type())
+                    }
+                    _ => false,
+                };
+                (!ty).then_some((Sel::Index(*pos, args), &**base))
+            }
+            Expr::Select {
+                pos,
+                base,
+                lit_pos,
+                index,
+            } => Some((Sel::Select(*pos, *lit_pos, index), &**base)),
+            _ => None,
+        }
     }
 
-    /// The index `x` of the value `base`, an expression at `pos`. The checks come in this
-    /// order: the stage of the index (`S011`), the container (`S010`), the type of the index
-    /// (`S010`), then its range (`S013`).
-    pub(super) fn index_value(&mut self, pos: Pos, base: &Expr, args: &[Expr]) -> Res<Option<Out>> {
-        let [x] = args else {
+    /// A read `e` through indices and selectors `.N`, whose node charged. Each node charges
+    /// before its base evaluates, from the outside in, and an index with more than one
+    /// argument fails before its base. Then the root evaluates, and each step from the root
+    /// outward reads its base as data and evaluates its index.
+    ///
+    /// Lean checks the container and the index of each step before the next index evaluates.
+    /// Here the checks run in one walk along the path after the indices, so no step walks
+    /// again from the root. A failed check comes before an error of a later index, so the
+    /// first error is that of Lean. Only a static container has elements, so each base after
+    /// the first is static data.
+    pub(super) fn read(&mut self, e: &Expr) -> Res<Option<Out>> {
+        let mut steps = Vec::new();
+        let mut next = self.read_step(e);
+        let mut root = e;
+        while let Some((step, base)) = next {
+            if let Sel::Index(q, args) = step
+                && args.len() != 1
+            {
+                return fail(
+                    Code::S010,
+                    q,
+                    "an index of a value has one argument".to_owned(),
+                );
+            }
+            steps.push(step);
+            next = self.read_step(base);
+            if next.is_some() {
+                self.charge(expr_pos(base), 1)?;
+            }
+            root = base;
+        }
+        steps.reverse();
+        let first = match steps.first() {
+            Some(Sel::Index(q, _) | Sel::Select(q, ..)) => *q,
+            None => {
+                return fail(
+                    Code::S010,
+                    expr_pos(e),
+                    "not a read of an element".to_owned(),
+                );
+            }
+        };
+        let b = self.eval(root)?;
+        let b = need(root, b)?;
+        let b = self.data(first, b)?;
+        let mut keyed = Vec::with_capacity(steps.len());
+        let mut stop = None;
+        for step in &steps {
+            match self.key(step) {
+                Ok(k) => keyed.push(k),
+                Err(e) => {
+                    stop = Some(e);
+                    break;
+                }
+            }
+        }
+        let mut keys = Vec::with_capacity(keyed.len());
+        let mut cur = self.opnd_seen(&b);
+        for key in &keyed {
+            let k = match key {
+                Key::Index(q, xp, i) => self.pick_at(*q, *xp, cur, i)?,
+                Key::Select(q, r, index) => self.select_at(*q, *r, index, cur)?,
+            };
+            cur = self.store.step(cur, k);
+            keys.push(k);
+        }
+        if let Some(e) = stop {
+            return Err(e);
+        }
+        let Some((&k, rest)) = keys.split_first() else {
             return fail(
                 Code::S010,
-                pos,
-                "an index of a value has one argument".to_owned(),
+                expr_pos(e),
+                "not a read of an element".to_owned(),
             );
         };
-        let b = self.eval(base)?;
-        let b = need(base, b)?;
-        let b = self.data(pos, b)?;
-        let i = self.eval(x)?;
-        let i = need(x, i)?;
-        let xp = expr_pos(x);
-        self.check_static(xp, &i)?;
-        let k = self.pick_index(pos, xp, &b, &i)?;
-        Ok(Some(elem(b, k)))
+        let mut out = elem(b, k);
+        for &k in rest {
+            out = elem(Opnd::Static(out), k);
+        }
+        Ok(Some(out))
     }
 
     /// `len` of an array at the call `pos`. It refers to the array, so it charges no size.
@@ -298,7 +373,8 @@ impl Evaluator<'_> {
         let mut keyed = Vec::with_capacity(steps.len());
         let mut stop = None;
         for step in &steps {
-            match self.key(step) {
+            let (Sel::Index(q, _) | Sel::Select(q, ..)) = *step;
+            match self.charge(q, 1).and_then(|()| self.key(step)) {
                 Ok(k) => keyed.push(k),
                 Err(e) => {
                     stop = Some(e);
@@ -349,11 +425,10 @@ impl Evaluator<'_> {
         Ok(None)
     }
 
-    /// The step `step` of a place: its charge, then its index with the static check.
+    /// The step `step` of a place or a read with its index, which gets its static check.
     fn key<'a>(&mut self, step: &Sel<'a>) -> Res<Key<'a>> {
         match *step {
             Sel::Index(q, args) => {
-                self.charge(q, 1)?;
                 let [i] = args else {
                     return fail(
                         Code::S010,
@@ -367,10 +442,7 @@ impl Evaluator<'_> {
                 self.check_static(xp, &o)?;
                 Ok(Key::Index(q, xp, self.index_of(&o)))
             }
-            Sel::Select(q, r, index) => {
-                self.charge(q, 1)?;
-                Ok(Key::Select(q, r, index))
-            }
+            Sel::Select(q, r, index) => Ok(Key::Select(q, r, index)),
         }
     }
 

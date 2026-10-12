@@ -909,16 +909,15 @@ impl Evaluator<'_> {
                     let t = self.index(*pos, k, args)?;
                     return Ok(Some(Out::Made(Val::Static(Value::Type(t)))));
                 }
-                self.index_value(*pos, base, args)
+                self.read(e)
             }
             Expr::Field { pos, base, field } => {
                 let b = self.eval(base)?;
                 let b = need(base, b)?;
                 self.field(*pos, &b, field)
             }
-            Expr::Unit { .. } | Expr::Tuple { .. } | Expr::Array { .. } | Expr::Select { .. } => {
-                self.container(e)
-            }
+            Expr::Unit { .. } | Expr::Tuple { .. } | Expr::Array { .. } => self.container(e),
+            Expr::Select { .. } => self.read(e),
         }
     }
 
