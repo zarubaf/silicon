@@ -19,6 +19,8 @@ The hardware conditional is pure: each arm holds one expression, not statements.
 - `match (x) { pattern => expr, ... }` is a pure expression. Each arm holds one expression, as each arm of the conditional does. The effect rules of the hardware conditional apply unchanged.
 - A pattern is a static integer, an enum variant with binders for its payload, or `_`.
 - A `match` is always exhaustive. The arms cover each value, or a `_` arm covers the rest. Two arms that match the same value are an error. A `_` arm that matches no value is an error.
+- Coverage counts each value of the tag type, not only the declared tags. A port, a memory, or `reinterpret` can give an enum value with an unused tag. For example, `Op` above can hold the tags 2 and 3. Thus a `match` on an enum with unused tags needs a `_` arm, and the `_` arm gives the value for each unused tag. An enum that declares each tag value needs no `_` arm, and a `_` arm there is an error. The result of a `match` is thus defined for each bit pattern, as the 2-state semantics require.
+- A payload binder reads the low bits of the payload field that its variant uses. The high bits do not change the result.
 - A hardware `match` lowers to a parallel mux, not to a priority chain. LEC proves the lowering.
 - The features come in slice 3, before the handle features of that slice. `enum` and `match` become keywords in slice 3.
 
@@ -28,5 +30,5 @@ The hardware conditional is pure: each arm holds one expression, not statements.
 - Slice 2 does not change. Its parser accepts `enum` and `match` as identifiers.
 - A program of slice 2 that uses `enum` or `match` as a name fails in slice 3.
 - Slice 4 (`@typeInfo`, `@Struct`) describes enums from its start.
-- The slice 3 spec update gives the grammar, the error codes, and the cost of a `match`.
+- The slice 3 spec update gives the grammar, the error codes, and the cost of a `match`. Its corpus tests a `match` on each unused tag of an input port, for example the tags 2 and 3 of `Op`.
 - Block expressions and tail expressions stay out (#193). A `match` does not need them.
