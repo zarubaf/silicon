@@ -1,0 +1,18 @@
+// The cost of the serialization (section 5.4): an `instance` with a container argument charges the
+// recursive size of the argument, then 1 for each container node and the length in bytes of the
+// serialization, and the length of the emitted name. The fuel equal to the total of `cost`
+// succeeds, and one unit less gives `S015`.
+// FUEL 423
+// TOP M()
+module Leaf(comptime T: ([Nat; 6], (Bool, Nat))) domains() {
+    input a: UInt[1];
+    output q: UInt[1];
+    q := a;
+}
+module M() domains() {
+    input x: UInt[1];
+    output y: UInt[1];
+    instance l = Leaf(([10, 200, 3000, 40000, 500000, 6000000], (true, 70000000)));
+    l.a := x;
+    y := l.q;
+}

@@ -37,6 +37,8 @@ tests/core/corpus/wide.sil main PASS
 tests/core/corpus/wide.sil lowering PASS
 tests/source/corpus/comptime_for_helpers.si main PASS
 tests/source/corpus/comptime_for_helpers.si lowering PASS
+tests/source/corpus/const_table.si main PASS
+tests/source/corpus/const_table.si lowering PASS
 tests/source/corpus/counter_width.si main PASS
 tests/source/corpus/counter_width.si lowering PASS
 tests/source/corpus/hierarchy_parameters.si main PASS

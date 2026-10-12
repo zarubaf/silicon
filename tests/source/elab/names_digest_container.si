@@ -1,0 +1,19 @@
+// A container argument always gives the digest name: `$0h` and 16 hexadecimal digits. Two
+// different containers give two different modules.
+// TOP Top()
+// CHECK-COUNT-2: (module Tab$0h{{[0-9a-f]{16}$}}
+// CHECK: (module Top
+module Tab(comptime T: ([Nat; 2], (Bool,))) domains() {
+    input a: UInt[1];
+    output q: UInt[1];
+    q := a;
+}
+module Top() domains() {
+    input x: UInt[1];
+    output y: UInt[1];
+    instance t = Tab(([1, 2], (true,)));
+    instance u = Tab(([2, 1], (true,)));
+    t.a := x;
+    u.a := t.q;
+    y := u.q;
+}

@@ -1,0 +1,18 @@
+// The depth of a value stays in the nesting depth (section 5.5). Each array wraps the one before it,
+// so `a11` has the depth 12. The depth 12 succeeds, and 11 gives `S015` at the `let` of `a11`.
+// DEPTH 12
+// TOP M()
+module M() domains() {
+    let a0 = 0;
+    let a1 = [a0];
+    let a2 = [a1];
+    let a3 = [a2];
+    let a4 = [a3];
+    let a5 = [a4];
+    let a6 = [a5];
+    let a7 = [a6];
+    let a8 = [a7];
+    let a9 = [a8];
+    let a10 = [a9];
+    let a11 = [a10];
+}
