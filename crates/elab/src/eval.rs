@@ -17,6 +17,7 @@ mod container;
 mod hwops;
 mod inst;
 mod place;
+mod types;
 
 pub use inst::Design;
 pub(crate) use inst::{Bind, Elab, Inst, Literal, PortDecl, Sink, elaborate};
@@ -1056,52 +1057,6 @@ impl Evaluator<'_> {
         let va = ca.as_ref().unwrap_or(va);
         let vb = cb.as_ref().unwrap_or(vb);
         ops::binary(op, va, vb, &mut self.fuel, &self.tys).map_err(at(pos))
-    }
-
-    fn type_expr(&mut self, t: &TypeExpr) -> Res<TyId> {
-        self.charge(type_pos(t), 1)?;
-        match t {
-            TypeExpr::Name { pos, id, name } => match self.target(*id) {
-                Some(Target::Prelude(k)) if k.is_type() => Ok(self.tys.mk(prim(*pos, name, k)?)),
-                _ => fail(Code::S010, *pos, format!("`{name}` is not a type")),
-            },
-            TypeExpr::Index { pos, base, args } => match &**base {
-                TypeExpr::Name { pos: bp, id, name } => {
-                    self.charge(*bp, 1)?;
-                    match self.target(*id) {
-                        Some(Target::Prelude(k)) if k.is_type() => self.index(*pos, k, args),
-                        _ => fail(Code::S010, *bp, format!("`{name}` is not a type")),
-                    }
-                }
-                _ => fail(
-                    Code::S007,
-                    *pos,
-                    "a complete type takes no more index".to_owned(),
-                ),
-            },
-            TypeExpr::Unit { pos } => {
-                let unit = self.tys.mk(Ty::Unit);
-                self.charge(*pos, u128::from(unit.size()))?;
-                Ok(unit)
-            }
-            TypeExpr::Tuple { pos, elems } => self.tuple_type(*pos, elems),
-            TypeExpr::Array { pos, elem, len } => self.array_type(*pos, elem, len),
-        }
-    }
-
-    /// `UInt[e]` or `SInt[e]` in a type or an expression. The base charged its node.
-    fn index(&mut self, pos: Pos, k: Prelude, xs: &[Expr]) -> Res<TyId> {
-        let mut outs = Vec::with_capacity(xs.len());
-        for x in xs {
-            let o = self.eval(x)?;
-            let o = need(x, o)?;
-            self.check_static(pos, &o)?;
-            outs.push(o);
-        }
-        let views: Vec<&Value> = outs.iter().map(|o| self.store.value(o)).collect();
-        let t = ops::family(k, &views, &mut self.tys).map_err(at(pos))?;
-        self.charge(pos, u128::from(t.size()))?;
-        Ok(t)
     }
 
     /// A name. A constant evaluates at its first use, in the table of constants. A domain
