@@ -52,6 +52,14 @@ impl Evaluator<'_> {
         site.map_or(0, |k| k as u64)
     }
 
+    /// The parameter that the receiver of the method node `node` binds to, from the resolver.
+    fn receiver(&self, node: NodeId) -> Option<usize> {
+        match self.names {
+            Names::Top => self.top.and_then(|t| t.receiver(node)),
+            Names::File => self.file.receiver(node),
+        }
+    }
+
     /// A call of a function item, a prelude function, or a type.
     pub(super) fn call(
         &mut self,
@@ -83,7 +91,7 @@ impl Evaluator<'_> {
     }
 
     /// A receiver call `recv.name(xs)`: the call of `name` with `recv` at the first parameter
-    /// without a written `comptime` mark. The receiver evaluates first, then the arguments.
+    /// that the resolver recorded. The receiver evaluates first, then the arguments.
     /// The method name charges 1, as the callee name of a call does.
     pub(super) fn method(
         &mut self,
@@ -94,17 +102,7 @@ impl Evaluator<'_> {
         xs: &[Expr],
     ) -> Res<Option<Out>> {
         let target = self.target(name.id);
-        let modes: Vec<ParamMode> = match target {
-            Some(Target::Decl(id)) => {
-                match self.items.get(&id).and_then(|&i| self.file.ast().get(i)) {
-                    Some(Item::Fn { params, .. }) => params.iter().map(|q| q.mode).collect(),
-                    _ => Vec::new(),
-                }
-            }
-            Some(Target::Prelude(h)) => h.modes().to_vec(),
-            None => Vec::new(),
-        };
-        let Some(bound) = modes.iter().position(|&m| m != ParamMode::Comptime) else {
+        let Some(bound) = self.receiver(node) else {
             return fail(
                 Code::S007,
                 pos,

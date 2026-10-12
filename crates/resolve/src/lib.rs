@@ -80,8 +80,17 @@ pub enum Kind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Decl {
     pub kind: Kind,
+    /// For a `fn` item, the parameter that a receiver binds to; see [`Resolved::receiver`].
+    pub receiver: Option<usize>,
     pub name: String,
     pub pos: Pos,
+}
+
+/// The call site of a call node or a method node, with the parameter that the receiver binds to.
+#[derive(Clone, Copy)]
+pub(crate) struct Call {
+    site: usize,
+    receiver: Option<usize>,
 }
 
 /// What a name points to: a declaration, or a name of the prelude.
@@ -105,7 +114,7 @@ pub struct Resolved {
     decls: Vec<Decl>,
     items: BTreeMap<String, DeclId>,
     names: BTreeMap<NodeId, Target>,
-    sites: BTreeMap<NodeId, usize>,
+    calls: BTreeMap<NodeId, Call>,
 }
 
 impl Resolved {
@@ -143,7 +152,14 @@ impl Resolved {
     /// among the calls of its item body, from 0.
     #[must_use]
     pub fn site(&self, id: NodeId) -> Option<usize> {
-        self.sites.get(&id).copied()
+        self.calls.get(&id).map(|c| c.site)
+    }
+
+    /// The parameter that the receiver of the method node with an id binds to: the first
+    /// parameter of the function without a written `comptime` mark. `None` if there is none.
+    #[must_use]
+    pub fn receiver(&self, id: NodeId) -> Option<usize> {
+        self.calls.get(&id).and_then(|c| c.receiver)
     }
 }
 
@@ -162,7 +178,7 @@ pub fn resolve(parse: Parse) -> Result<Resolved, Failed> {
         decls: table.decls,
         items: table.items,
         names: table.names,
-        sites: table.sites,
+        calls: table.calls,
     })
 }
 
@@ -174,7 +190,7 @@ pub struct ResolvedExpr {
     expr: Expr,
     depth: usize,
     names: BTreeMap<NodeId, Target>,
-    sites: BTreeMap<NodeId, usize>,
+    calls: BTreeMap<NodeId, Call>,
 }
 
 impl ResolvedExpr {
@@ -199,7 +215,13 @@ impl ResolvedExpr {
     /// The call site of the call node or the method node with an id, from 0 in pre-order.
     #[must_use]
     pub fn site(&self, id: NodeId) -> Option<usize> {
-        self.sites.get(&id).copied()
+        self.calls.get(&id).map(|c| c.site)
+    }
+
+    /// The parameter that the receiver of the method node with an id binds to, or `None`.
+    #[must_use]
+    pub fn receiver(&self, id: NodeId) -> Option<usize> {
+        self.calls.get(&id).and_then(|c| c.receiver)
     }
 }
 
@@ -215,11 +237,11 @@ pub fn resolve_expr(
 ) -> Result<Result<ResolvedExpr, Vec<Error>>, StackError> {
     let (expr, depth) = expr.into_parts();
     let names = parse::on_stack(depth, || walk::run_expr(resolved, &expr))?;
-    Ok(names.map(|(names, sites)| ResolvedExpr {
+    Ok(names.map(|(names, calls)| ResolvedExpr {
         expr,
         depth,
         names,
-        sites,
+        calls,
     }))
 }
 
@@ -228,7 +250,7 @@ struct Table {
     decls: Vec<Decl>,
     items: BTreeMap<String, DeclId>,
     names: BTreeMap<NodeId, Target>,
-    sites: BTreeMap<NodeId, usize>,
+    calls: BTreeMap<NodeId, Call>,
 }
 
 #[cfg(test)]

@@ -5,8 +5,8 @@
 
 use crate::prelude::{Prelude, later_slice};
 use crate::scope::Scopes;
-use crate::{Code, Decl, DeclId, Error, Kind, Resolved, Table, Target};
-use parse::ast::{Expr, Ident, Item, NodeId, Param, Pos, Stmt, StructField, TypeExpr};
+use crate::{Call, Code, Decl, DeclId, Error, Kind, Resolved, Table, Target};
+use parse::ast::{Expr, Ident, Item, NodeId, Param, ParamMode, Pos, Stmt, StructField, TypeExpr};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Resolves the names of the items. Returns the table, or the errors of the first pass with
@@ -25,7 +25,7 @@ pub(crate) fn run(items: &[Item]) -> Result<Table, Vec<Error>> {
         scopes,
         duplicates,
         unresolved,
-        sites,
+        calls,
         ..
     } = walker;
     let mut errors = if duplicates.is_empty() {
@@ -38,7 +38,7 @@ pub(crate) fn run(items: &[Item]) -> Result<Table, Vec<Error>> {
             decls,
             items: scopes.into_items(),
             names,
-            sites,
+            calls,
         });
     }
     errors.sort_by_key(|e| e.pos);
@@ -57,14 +57,14 @@ pub(crate) fn run_expr(resolved: &Resolved, expr: &Expr) -> Result<ExprTable, Ve
     walker.expr(expr);
     let mut errors = walker.unresolved;
     if errors.is_empty() {
-        return Ok((walker.names, walker.sites));
+        return Ok((walker.names, walker.calls));
     }
     errors.sort_by_key(|e| e.pos);
     Err(errors)
 }
 
 /// The targets of the name nodes and the call sites of the call nodes.
-pub(crate) type ExprTable = (BTreeMap<NodeId, Target>, BTreeMap<NodeId, usize>);
+pub(crate) type ExprTable = (BTreeMap<NodeId, Target>, BTreeMap<NodeId, Call>);
 
 #[derive(Default)]
 struct Walker {
@@ -75,17 +75,18 @@ struct Walker {
     duplicates: Vec<Error>,
     /// `S003`, pass 3.
     unresolved: Vec<Error>,
-    /// The call site of each call node and method node.
-    sites: BTreeMap<NodeId, usize>,
+    /// The call site of each call node and method node, and the receiver parameter.
+    calls: BTreeMap<NodeId, Call>,
     /// The next call site of the current item body.
     next_site: usize,
 }
 
 impl Walker {
-    fn new_decl(&mut self, name: &Ident, kind: Kind) -> DeclId {
+    fn new_decl(&mut self, name: &Ident, kind: Kind, receiver: Option<usize>) -> DeclId {
         let id = DeclId(self.decls.len());
         self.decls.push(Decl {
             kind,
+            receiver,
             name: name.name.clone(),
             pos: name.pos,
         });
@@ -106,14 +107,18 @@ impl Walker {
     }
 
     fn declare_item(&mut self, item: &Item) {
-        let (name, kind) = match item {
-            Item::Const { name, .. } => (name, Kind::Const),
-            Item::Fn { name, .. } => (name, Kind::Fn),
-            Item::Module { name, .. } => (name, Kind::Module),
-            Item::Struct { name, .. } => (name, Kind::Struct),
-            Item::Alias { name, .. } => (name, Kind::Alias),
+        let (name, kind, receiver) = match item {
+            Item::Const { name, .. } => (name, Kind::Const, None),
+            Item::Fn { name, params, .. } => (
+                name,
+                Kind::Fn,
+                params.iter().position(|q| q.mode != ParamMode::Comptime),
+            ),
+            Item::Module { name, .. } => (name, Kind::Module, None),
+            Item::Struct { name, .. } => (name, Kind::Struct, None),
+            Item::Alias { name, .. } => (name, Kind::Alias, None),
         };
-        let id = self.new_decl(name, kind);
+        let id = self.new_decl(name, kind, receiver);
         if let Err(first) = self.scopes.declare_item(&name.name, id) {
             self.duplicate(name, first);
         }
@@ -121,7 +126,7 @@ impl Walker {
 
     /// Declares a name in the innermost scope. A use resolves to it only after this call.
     fn declare(&mut self, name: &Ident, kind: Kind) {
-        let id = self.new_decl(name, kind);
+        let id = self.new_decl(name, kind, None);
         if let Err(first) = self.scopes.declare_local(&name.name, id) {
             self.duplicate(name, first);
         }
@@ -132,6 +137,7 @@ impl Walker {
         let id = DeclId(self.decls.len());
         self.decls.push(Decl {
             kind,
+            receiver: None,
             name: name.to_owned(),
             pos,
         });
@@ -352,6 +358,7 @@ impl Walker {
                 self.site(*id);
                 self.expr(recv);
                 self.method_name(name);
+                self.bind_receiver(*id, name);
                 for arg in args {
                     self.expr(arg);
                 }
@@ -377,8 +384,28 @@ impl Walker {
 
     /// Gives the call node or the method node with the id the next call site of the body.
     fn site(&mut self, id: NodeId) {
-        self.sites.insert(id, self.next_site);
+        let site = self.next_site;
+        self.calls.insert(
+            id,
+            Call {
+                site,
+                receiver: None,
+            },
+        );
         self.next_site += 1;
+    }
+
+    /// Records the parameter that the receiver of the method node `id` binds to, from the
+    /// function that its name points to.
+    fn bind_receiver(&mut self, id: NodeId, name: &Ident) {
+        let receiver = match self.names.get(&name.id) {
+            Some(Target::Decl(d)) => self.decls[d.0].receiver,
+            Some(Target::Prelude(p)) => p.receiver(),
+            None => None,
+        };
+        if let Some(call) = self.calls.get_mut(&id) {
+            call.receiver = receiver;
+        }
     }
 
     /// The function of a receiver call: a `fn` item, else a prelude function. A local does not
