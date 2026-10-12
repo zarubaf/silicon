@@ -445,3 +445,30 @@ fn an_empty_struct_argument_takes_its_parameter_type() {
     assert_eq!(o(EMPTIES, "Q[2, [[]]]"), "S010 1:1");
     assert_eq!(o(EMPTIES, "P[[[]]]"), "S010 1:1");
 }
+
+/// A struct and a tuple type with one part of a large width first, then `small` parts of
+/// `Bool`. The sums add each part in place, so a small part touches a few words, and not the
+/// words of the large sum.
+fn large_then_small(small: usize) -> String {
+    let names = (0..small)
+        .map(|k| format!("f{k}: Bool"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let tuple = vec!["Bool"; small].join(", ");
+    format!(
+        "type B = [Bool; (1 << 6400) - 1];\nstruct W {{ a: B, {names} }}\n\
+         fn f() -> Int {{ type T = (B, {tuple}); return 0; }}"
+    )
+}
+
+#[test]
+fn a_metadata_sum_adds_small_parts_in_place() {
+    for expr in ["W", "f()"] {
+        let work = |small: usize| type_work(&large_then_small(small), expr);
+        let (work_200, work_400) = (work(200), work(400));
+        assert!(
+            work_400 - work_200 <= 200 * 20,
+            "{expr}: {work_200} {work_400}"
+        );
+    }
+}
