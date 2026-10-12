@@ -227,57 +227,85 @@ pub(crate) fn convert(
     run(t, v, tys).map(Some)
 }
 
-/// A step of the common type: join two types, or make a container type of the last results.
+/// A step of the common type: join two types, or make the container type of the pair
+/// `(lhs, rhs)` from the last results.
 enum Join {
     Visit(TyId, TyId),
-    Array(Int),
-    Tuple(usize),
+    Array(TyId, TyId, Int),
+    Tuple(TyId, TyId, usize),
 }
 
 /// The common type of two types by the operand rule: a static integer takes the finite type
 /// of the other side. Arrays need one length and tuples one arity. Equal ids are the common
 /// type with no walk, so the walk goes only along the parts that differ. The parts join from
 /// left to right, and the first part without a common type ends the walk.
+///
+/// A type shares its parts, so its term can be exponentially larger than its table entries.
+/// The table keeps the join of each pair of ids, so each pair joins once in an elaboration
+/// and the walk is in the entries, not in the term.
 pub(crate) fn common_ty(lhs: TyId, rhs: TyId, tys: &mut Types) -> Option<TyId> {
     let mut done: Vec<TyId> = Vec::new();
     let mut work = vec![Join::Visit(lhs, rhs)];
     while let Some(step) = work.pop() {
-        match step {
-            Join::Visit(lhs, rhs) => done.push(if lhs == rhs {
-                lhs
-            } else {
-                match (tys.get(lhs).clone(), tys.get(rhs).clone()) {
-                    (Ty::Array(left, len), Ty::Array(right, other)) if len == other => {
-                        work.push(Join::Array(len));
-                        work.push(Join::Visit(left, right));
-                        continue;
+        let (key, joined) = match step {
+            Join::Visit(lhs, rhs) if lhs == rhs => {
+                done.push(lhs);
+                continue;
+            }
+            Join::Visit(lhs, rhs) => {
+                if let Some(joined) = tys.joined(lhs, rhs) {
+                    ((lhs, rhs), *joined)
+                } else {
+                    match (tys.get(lhs).clone(), tys.get(rhs).clone()) {
+                        (Ty::Array(left, len), Ty::Array(right, other)) if len == other => {
+                            work.push(Join::Array(lhs, rhs, len));
+                            work.push(Join::Visit(left, right));
+                            continue;
+                        }
+                        (Ty::Tuple(lefts), Ty::Tuple(rights)) if lefts.len() == rights.len() => {
+                            work.push(Join::Tuple(lhs, rhs, lefts.len()));
+                            work.extend(
+                                lefts
+                                    .into_iter()
+                                    .zip(rights)
+                                    .rev()
+                                    .map(|(l, r)| Join::Visit(l, r)),
+                            );
+                            continue;
+                        }
+                        (Ty::Int, Ty::Nat) | (Ty::Nat, Ty::Int) => {
+                            ((lhs, rhs), Some(tys.mk(Ty::Int)))
+                        }
+                        (Ty::Int | Ty::Nat, other) => {
+                            ((lhs, rhs), other.is_finite().then_some(rhs))
+                        }
+                        (other, Ty::Int | Ty::Nat) => {
+                            ((lhs, rhs), other.is_finite().then_some(lhs))
+                        }
+                        _ => ((lhs, rhs), None),
                     }
-                    (Ty::Tuple(lefts), Ty::Tuple(rights)) if lefts.len() == rights.len() => {
-                        work.push(Join::Tuple(lefts.len()));
-                        work.extend(
-                            lefts
-                                .into_iter()
-                                .zip(rights)
-                                .rev()
-                                .map(|(l, r)| Join::Visit(l, r)),
-                        );
-                        continue;
-                    }
-                    (Ty::Int, Ty::Nat) | (Ty::Nat, Ty::Int) => tys.mk(Ty::Int),
-                    (Ty::Int | Ty::Nat, other) => other.is_finite().then_some(rhs)?,
-                    (other, Ty::Int | Ty::Nat) => other.is_finite().then_some(lhs)?,
-                    _ => return None,
                 }
-            }),
-            Join::Array(len) => {
-                let elem = done.pop()?;
-                done.push(tys.array(elem, len));
             }
-            Join::Tuple(n) => {
+            Join::Array(lhs, rhs, len) => {
+                let elem = done.pop();
+                ((lhs, rhs), elem.map(|elem| tys.array(elem, len)))
+            }
+            Join::Tuple(lhs, rhs, n) => {
                 let parts = done.split_off(done.len().saturating_sub(n));
-                done.push(tys.tuple(parts));
+                ((lhs, rhs), Some(tys.tuple(parts)))
             }
-        }
+        };
+        tys.join(key, joined);
+        let Some(t) = joined else {
+            // Each open pair holds this pair, so none of them has a common type.
+            for open in work {
+                if let Join::Array(l, r, _) | Join::Tuple(l, r, _) = open {
+                    tys.join((l, r), None);
+                }
+            }
+            return None;
+        };
+        done.push(t);
     }
     done.pop()
 }
