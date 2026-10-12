@@ -195,7 +195,8 @@ structure Syms where
 /-!
 The items, the depth limit, the current depth, and the return type of the current call. The
 item whose body runs, its call sites by position, its symbols, and the current frame name the
-hardware. `binding` holds the struct items whose parameter types evaluate now.
+hardware. `binding` holds the struct items whose parameter types evaluate now. `arm` is the
+nesting depth at the start of the innermost hardware arm (section 9.4).
 -/
 structure Ctx where
   items : Array Resolve.Item
@@ -207,6 +208,7 @@ structure Ctx where
   syms : Syms
   frame : Frame
   binding : List Nat
+  arm : Option Nat
 
 /-! The symbol of the local number `id` in the current item. Each binder has one. -/
 def Ctx.binder (c : Ctx) (id : Nat) : Nat := ((c.syms.binders[c.item]?).bind (·[id]?)).getD 0
@@ -301,6 +303,16 @@ def nested [Runs m] (pos : Pos) (act : m α) : m α := do
   if c.limit ≤ c.depth then
     monadLift (fail .S015 pos s!"the nesting depth goes above {c.limit}" : M Unit)
   withTheReader Ctx (fun c => { c with depth := c.depth + 1 }) act
+
+/-!
+A mutation at `pos` of a binding of the current frame of locals (section 9.4). Each call, each
+constant, and each struct use nests one level deeper with a new frame. Thus the binding is
+older than the innermost hardware arm when that arm started at the current depth: `S016`.
+-/
+def mutation (pos : Pos) : M Unit := do
+  let c ← read
+  if c.arm == some c.depth then
+    fail .S016 pos "a hardware arm changes a binding from before the arm"
 
 /-! Runs `act` with an empty frame of locals and the return type `ret`. -/
 def inFrame [Runs m] (ret : Option Ty) (act : m α) : m α := do

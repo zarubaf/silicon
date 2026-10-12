@@ -21,8 +21,10 @@ The static containers of slice 2 follow section 5.1. These rules settle its open
 - A typed use of a container at another type converts each element. It charges the size of
   the value plus the size of the result.
 - `==` and `!=` on containers need a common type for each pair of elements. Each pair of arrays
-  joins its element types and charges the visits of the join. Then the operator charges the sum
-  of the two sizes. Each pair compares, so each conversion checks its fit (`S012`).
+  and each pair of lists joins its element types and charges the visits of the join. Then the
+  operator charges the sum of the two sizes. Each pair compares, so each conversion checks its
+  fit (`S012`). The length of a list is a value, not a part of its type, so two lists of
+  different lengths are unequal.
 - An index and a selector `.N` refer to an element, and `len` refers to its array. They charge
   no size, so a binding of the result is a copy. A string is the exception: its index and its
   `len` scan it, so they charge its size, and the index makes a new string. An index with two
@@ -61,6 +63,9 @@ mutual
         let (k, f) ← planEach t xs
         .ok (1 + k, fun u => do return .array t (← f u).toArray)
       else typeError s!"expected {(Ty.array t n).text}, but the value is {v.text}"
+    | .list t, .list _ ⟨xs⟩ => do
+      let (k, f) ← planEach t xs
+      .ok (1 + k, fun u => do return .list t (← f u).toArray)
     | .tuple ⟨ts⟩, v@(.tuple ⟨xs⟩) =>
       if ts.length = xs.length then do
         let (k, f) ← planZip ts xs
@@ -91,7 +96,7 @@ charges its size plus the size of the result, as a scalar conversion does.
 -/
 def convert (t : Ty) (v : Value) : Except Fault Step :=
   match t with
-  | .unit | .array .. | .tuple _ =>
+  | .unit | .array .. | .tuple _ | .list _ =>
     if v.ty? = some t then .ok ⟨0, fun _ => .ok v⟩
     else do
       let (k, f) ← plan t v
@@ -109,9 +114,9 @@ def commonOf : List Value → Walk (Option Ty)
     | some t, some u => joinTy t u
     | _, _ => return none
 
-/-! A container: `()`, an array, a tuple, or a record. -/
+/-! A container: `()`, an array, a tuple, a record, or a list. -/
 def composite : Value → Bool
-  | .unit | .array .. | .tuple _ | .record .. => true
+  | .unit | .array .. | .tuple _ | .record .. | .list .. => true
   | _ => false
 
 /-! `==` on two scalars in a container. A static integer takes the finite type of the other. -/
@@ -143,6 +148,11 @@ mutual
     | a@(.tuple ⟨xs⟩), b@(.tuple ⟨ys⟩) =>
       if xs.length == ys.length then sameAll xs ys
       else throw (.S010, s!"`==` needs a common type, not {a.text} and {b.text}")
+    | a@(.list s ⟨xs⟩), b@(.list t ⟨ys⟩) => do
+      let j ← joinTy s t
+      if j.isNone then throw (.S010, s!"`==` needs a common type, not {a.text} and {b.text}")
+      else if xs.length == ys.length then sameAll xs ys
+      else return fun _ => .ok false
     | a@(.record s ⟨xs⟩), b@(.record t ⟨ys⟩) => do
       let j ← joinTy s t
       if j.isSome then sameAll xs ys
@@ -291,13 +301,13 @@ def indexOf (q : Pos) : Value → M Int
   | i => fail .S010 q s!"an index is a static integer, not {i.text}"
 
 /-!
-The static index `i` at `q` of an array or a tuple at `pos`. The result is the number of the
-element and the element.
+The static index `i` at `q` of an array, a list, or a tuple at `pos`. The result is the number
+of the element and the element.
 -/
 def pickAt (pos q : Pos) (v : Val) (i : Value) : M (Nat × Value) := do
   let xs ← match v with
-    | .static (.array _ xs) | .static (.tuple xs) => pure xs
-    | v => fail .S010 pos s!"an index needs an array or a tuple, not {v.text}"
+    | .static (.array _ xs) | .static (.tuple xs) | .static (.list _ xs) => pure xs
+    | v => fail .S010 pos s!"an index needs an array, a list, or a tuple, not {v.text}"
   let k ← indexOf q i
   if h : 0 ≤ k ∧ k.toNat < xs.size then return (k.toNat, xs[k.toNat])
   else fail .S013 q s!"the index {intText k} is out of range for {xs.size} element(s)"
@@ -320,7 +330,7 @@ def pick (pos q : Pos) (v : Val) (i : Value) : M Val := do
 
 /-! The type of the element `k` of a container type. -/
 def partTy : Ty → Nat → Option Ty
-  | .array e _, _ => some e
+  | .array e _, _ | .list e, _ => some e
   | .tuple ts, k => ts[k]?
   | _, _ => none
 
@@ -347,15 +357,16 @@ def chain (e : Resolve.Expr) (acc : List Sel := []) : Option (Resolve.Expr × Li
   | _ => none
 
 /-!
-The value `v` with the element at the numbers `ks` replaced by `w`. Each step copies only the
+The value `v` with `f` applied to the element at the numbers `ks`. Each step copies only the
 container that it changes, so a part that another binding shares stays unchanged.
 -/
-def replace : Value → List Nat → Value → Value
-  | _, [], w => w
-  | .array t xs, k :: ks, w => .array t (xs.modify k (replace · ks w))
-  | .tuple xs, k :: ks, w => .tuple (xs.modify k (replace · ks w))
-  | .record t xs, k :: ks, w => .record t (xs.modify k (replace · ks w))
-  | v, _ :: _, _ => v
+def update (f : Value → Value) : Value → List Nat → Value
+  | v, [] => f v
+  | .array t xs, k :: ks => .array t (xs.modify k (update f · ks))
+  | .tuple xs, k :: ks => .tuple (xs.modify k (update f · ks))
+  | .record t xs, k :: ks => .record t (xs.modify k (update f · ks))
+  | .list t xs, k :: ks => .list t (xs.modify k (update f · ks))
+  | v, _ :: _ => v
 
 /-!
 The field `f` of a record at `pos`. The result is the number of the field, its value, and its
@@ -403,17 +414,17 @@ def zero (pos : Pos) (t : Ty) : M Value := do
   | none => fail .S010 pos s!"{t.text} has no zero"
 
 /-!
-`len` of an array or a string at the call `pos`. It refers to an array, so it charges no size.
-A string needs a scan, so it charges the size of the string first.
+`len` of an array, a list, or a string at the call `pos`. It refers to an array or a list, so
+it charges no size. A string needs a scan, so it charges the size of the string first.
 -/
 def lenOf (pos : Pos) : List Val → M Value
   | [v] => do
     match ← data pos v with
-    | .static (.array _ xs) => return .int xs.size
+    | .static (.array _ xs) | .static (.list _ xs) => return .int xs.size
     | .static v@(.str s) => do
       charge pos v.size
       return .int s.length
-    | v => fail .S010 pos s!"`len` takes an array or a string, not {v.text}"
+    | v => fail .S010 pos s!"`len` takes an array, a list, or a string, not {v.text}"
   | vs => fail .S007 pos s!"`len` takes 1 argument(s), but it has {vs.length}"
 
 end Silicon.Source.Eval
