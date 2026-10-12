@@ -27,7 +27,8 @@ The operators follow v0.1 section 3. These rules settle the open points of slice
   place resolves first, by the steps of an assignment target, and then `x` evaluates. The place
   must hold a list (`S010`). `pop` of an empty list is `S013`. Then each checks the mutation
   rule (`S016`). `push` then makes the typed use of `x` at the element type, and a hardware
-  element is `S011`. It checks the new depth from the element alone (`S015`). Each charges the
+  element is `S011`. It checks the new depth of the root from the element and the number of
+  steps of the place (`S015`). Each charges the
   size of the element before the change. `push` gives `()`, and `pop` gives the element.
 - A hardware arm starts at the current nesting depth. A `push` or a `pop` on a binding of that
   depth changes a binding from before the arm: `S016`. A call nests deeper with a new frame,
@@ -730,8 +731,8 @@ mutual
         | .static w => conform p e w
         | .hw _ => fail .S011 x.pos "a list holds no hardware value"
         | v => fail .S010 x.pos s!"{v.text} is not an element of a list"
-      -- The list is within the nesting depth, so only the element can raise its depth.
-      bounded p (1 + w.depth)
+      -- The root is within the nesting depth, so only the element on the path can raise it.
+      bounded p (pl.keys.length + 1 + w.depth)
       charge p w.size
       changeAt pl (fun | .list t ys => .list t (ys.push w) | v => v)
       return some ⟨.static .unit, false⟩
