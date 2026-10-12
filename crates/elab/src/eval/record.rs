@@ -10,7 +10,7 @@ use super::{Evaluator, Names, Opnd, Out, Res, at, expr_pos, fail, need};
 use crate::Code;
 use crate::hw::{Seen, Val};
 use crate::types::{Ty, TyId};
-use crate::value::Value;
+use crate::value::{Value, int_size};
 use parse::ast::{Expr, Ident, Item, Pos};
 
 impl Evaluator<'_> {
@@ -162,23 +162,24 @@ impl Evaluator<'_> {
     }
 
     /// `data_bits(T)` at the call `pos`: the width of a hardware data type, from its metadata.
-    /// It charges only its node, so the size of the type does not count.
+    /// It charges its node and the size of the width that it copies, so the size of the type
+    /// does not count.
     pub(super) fn data_bits(&mut self, pos: Pos, g: &str, vs: &[Out]) -> Res<Option<Out>> {
         match vs {
             [v] => match self.store.seen(v) {
                 Seen::Static(Value::Type(t)) => {
-                    let meta = self.tys.meta(*t);
+                    let t = *t;
+                    let meta = self.tys.meta(t);
                     if meta.data {
-                        let width = meta.width.clone();
+                        let units = u128::from(int_size(&meta.width));
+                        self.charge(pos, units)?;
+                        let width = self.tys.meta(t).width.clone();
                         Ok(Some(Out::Made(Val::Static(Value::Int(width)))))
                     } else {
                         fail(
                             Code::S010,
                             pos,
-                            format!(
-                                "`{g}` needs a hardware data type, not {}",
-                                self.tys.text(*t)
-                            ),
+                            format!("`{g}` needs a hardware data type, not {}", self.tys.text(t)),
                         )
                     }
                 }

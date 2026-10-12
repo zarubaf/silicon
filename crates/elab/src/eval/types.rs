@@ -13,7 +13,7 @@ use super::{Evaluator, Out, ROOT, Res, Slot, at, fail, need, type_pos};
 use crate::Code;
 use crate::hw::{Ref, Root, Seen, Val};
 use crate::ops;
-use crate::types::{Ty, TyId, Types};
+use crate::types::{Meta, Ty, TyId, Types};
 use crate::value::Value;
 use parse::ast::{Expr, Ident, Item, NodeId, Param, Pos, StructField, TypeExpr};
 use resolve::{DeclId, Prelude, Target};
@@ -106,7 +106,7 @@ impl Evaluator<'_> {
     }
 
     /// The tuple type of the element types `elems` at `pos`. It checks its depth, then charges
-    /// its size and the sizes of the four integers of its metadata, as a struct does.
+    /// its size and the sums of its metadata, as a struct does.
     pub(super) fn tuple_type(&mut self, pos: Pos, elems: &[TypeExpr]) -> Res<TyId> {
         let mut parts = Vec::with_capacity(elems.len());
         for elem in elems {
@@ -114,10 +114,19 @@ impl Evaluator<'_> {
         }
         let (size, depth) = Types::tuple_shape(&parts);
         self.bounded(pos, depth)?;
-        let ty = Ty::Tuple(parts);
-        let meta = self.tys.meta_of(&ty);
-        self.charge(pos, u128::from(size) + meta.int_charge(depth))?;
-        Ok(self.tys.mk_with(ty, meta))
+        self.charge(pos, u128::from(size))?;
+        let meta = self.sums(pos, &parts, depth)?;
+        Ok(self.tys.mk_with(Ty::Tuple(parts), meta))
+    }
+
+    /// The metadata sums of a tuple or a struct type of the depth `depth` with the parts
+    /// `parts`, as Lean `sums`. The sums read the four integers of each part, so they charge
+    /// their sizes first. Then they charge the sizes of the four new integers.
+    fn sums(&mut self, pos: Pos, parts: &[TyId], depth: u64) -> Res<Meta> {
+        self.charge(pos, self.tys.read_charge(parts))?;
+        let meta = self.tys.sum(parts);
+        self.charge(pos, meta.int_charge(depth))?;
+        Ok(meta)
     }
 
     /// The array type `[elem; len]` at `pos`. The length is a static `Nat`. It checks its
@@ -302,9 +311,9 @@ impl Evaluator<'_> {
         for f in fields {
             types.push(self.type_expr(&f.ty)?);
         }
-        let (meta, depth) = self.tys.struct_meta(s, &types);
+        let depth = self.tys.struct_depth(s, &types);
         self.bounded(pos, depth)?;
-        self.charge(pos, types.len() as u128 + meta.int_charge(depth))?;
+        let meta = self.sums(pos, &types, depth)?;
         Ok(self.tys.finish_spec(s, types, meta, depth))
     }
 }
