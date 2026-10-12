@@ -67,9 +67,9 @@ The static containers of slice 2 follow section 5.1. These rules settle its open
 - `()` charges the size 1 as a value and as a type.
 - An assignment to a place with indices and selectors `.N` evaluates its indices from left to
   right. Each index checks when it evaluates: its stage (`S011`), the container and its own
-  type (`S010`), then its range (`S013`). Then the right side evaluates, with the element type as its type. The update
-  copies only the containers on the path of the place, so it charges nothing more. A binding
-  that shares a container paid its copy before.
+  type (`S010`), then its range (`S013`). Then the right side evaluates, with the element type
+  as its type. The update copies only the containers on the path of the place, so it charges
+  nothing more. A binding that shares a container paid its copy before.
 
 The cost model. Elaboration charges these units, in evaluation order. A charge is known before
 its operation runs. When the fuel cannot pay it, the result is `S015` at the node of the charge.
@@ -195,8 +195,8 @@ inductive Handle where
   | domain (name : String)
 
 /-!
-A part of a literal that waits for its type: a value, the literal `[]` at `pos`, or an array or a
-tuple literal at `pos` with at least one part that waits.
+A part of a literal that waits for its type. It is a value, the literal `[]` at `pos`, or an
+array or a tuple literal at `pos`. Such a literal has at least one part that waits.
 -/
 inductive Part where
   | value (v : Value)
