@@ -979,4 +979,78 @@ size, and the size of the result. Thus `str(-5)` charges 4 for `-5`, then 1, 1, 
 #guard out "" "str(UInt[8](1))" == "S010 1:1"
 #guard out "" "str(\"a\")" == "S010 1:1"
 
+/-!
+`List[T]` is a type with the size 1 plus `T`. `list(T)` makes an empty list. It charges its
+node, the callee, the copy of `T`, and 1 for the list.
+-/
+#guard out "" "List[Int]" == "(type (list int))"
+#guard exact "" "List[Int]" 5
+#guard out "" "List" == "S007 1:1"
+#guard out "" "List[1]" == "S010 1:1"
+#guard out "" "list(Int)" == "(list int ())"
+#guard exact "" "list(Int)" 5
+#guard out "" "list(1)" == "S010 1:1"
+#guard out "" "List[List[Int]]" (depth := 2) == "S015 1:1"
+#guard out "" "list(List[Int])" (depth := 2) == "S015 1:1"
+
+/-! The list functions on a `let mut` place, each on its own line. -/
+def lists : String :=
+  "comptime fn f() -> List[Int] { let mut xs = list(Int); push(xs, 1); push(xs, 2); " ++
+    "return xs; }\n" ++
+  "comptime fn g() -> Int { let mut xs = list(Int); push(xs, 7); return pop(xs); }\n" ++
+  "comptime fn h() -> Int { let mut xs = list(Int); return pop(xs); }\n" ++
+  "comptime fn i() -> List[Int] { let mut xs = f(); xs[0] = 5; return xs; }\n" ++
+  "comptime fn u() -> List[UInt[8]] { let mut xs = list(UInt[8]); push(xs, 1); return xs; }\n" ++
+  "comptime fn v() -> Int { let mut xs = list(UInt[8]); push(xs, 300); return 0; }\n" ++
+  "comptime fn w() -> Int { let mut xs = list(Int); push(xs, true); return 0; }\n" ++
+  "comptime fn a() -> Int { let mut x = 1; push(x, 1); return 0; }\n" ++
+  "comptime fn t() -> (List[Int], Int) { let mut t = (list(Int), 1); push(t.0, 3); return t; }\n" ++
+  "comptime fn d() -> Int { let mut xs = list(Type); push(xs, List[List[Int]]); return 0; }\n" ++
+  "comptime fn e() -> List[[Int; 0]] { let mut xs = list([Int; 0]); push(xs, []); return xs; }\n"
+
+/-!
+`push` and `pop` change the list place. `pop` of an empty list is `S013` at the call. `push`
+makes the typed use of its element, and a value that does not fit is `S012` at the call.
+-/
+#guard out lists "f()" == "(list int ((int 1) (int 2)))"
+#guard out lists "g()" == "(int 7)"
+#guard out lists "h()" == "S013 3:57"
+#guard out lists "u()" == "(list (uint 8) ((uint 8 1)))"
+#guard out lists "v()" == "S012 6:54"
+#guard out lists "w()" == "S010 7:50"
+#guard out lists "a()" == "S010 8:41"
+#guard out lists "t()" == "(tuple ((list int ((int 3))) (int 1)))"
+#guard out lists "e()" == "(list (array int 0) ((array int ())))"
+
+/-!
+`f()` costs 31 units: the call 2, its result type 5, its body block 1, the `let` 6, each `push`
+6, and the `return` 5. Each `push` costs its statement 1, its node 1, its callee 1, the literal
+2, and the size of the element 1.
+-/
+#guard exact lists "f()" 31
+#guard exact lists "g()" 21
+
+/-! The new depth of a list comes from the element alone. -/
+#guard out lists "d()" (depth := 3) == "S015 10:51"
+#guard out lists "d()" (depth := 4) == "(int 0)"
+
+/-! `len` and an index refer to a list. An index of a list is also a step of a place. -/
+#guard out lists "len(f())" == "(int 2)"
+#guard out lists "f()[1]" == "(int 2)"
+#guard out lists "f()[2]" == "S013 1:5"
+#guard out lists "i()" == "(list int ((int 5) (int 2)))"
+
+/-!
+`==` on two lists joins their element types. Two lists of different lengths are unequal. No
+ordering takes a list. An array of lists joins the list types.
+-/
+#guard out lists "f() == f()" == "(bool true)"
+#guard out lists "f() == list(Int)" == "(bool false)"
+#guard out lists "f() == u()" == "(bool false)"
+#guard out lists "list(Int) == list(Bool)" == "S010 1:1"
+#guard out lists "f() < f()" == "S010 1:1"
+#guard out lists "[f(), list(Int)]" ==
+  "(array (list int) ((list int ((int 1) (int 2))) (list int ())))"
+#guard out "" "[(\"a\", 1)]" == "(array (tuple (string int)) ((tuple ((string \"a\") (int 1)))))"
+
 end Silicon.Source.Test.Eval

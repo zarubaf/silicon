@@ -417,4 +417,27 @@ def typed : String :=
 #guard cost (ps ++ "module C(comptime r: P[8]) {\n}\n" ++
   "module M() {\n  instance c = C(P[4](5, true));\n}\n") "M" == "S010 5:3"
 
+
+/-!
+A list holds no hardware value: `S011` at the element. A hardware arm cannot `push` or `pop` a
+binding from before the arm: `S016` at the call. A function that the arm calls can change its
+own list.
+-/
+def armLists (body : String) : String :=
+  "fn g() -> UInt[8] { let mut ys = list(UInt[8]); push(ys, 1); return pop(ys); }\n" ++
+  "module T() {\n  input c: Bool;\n  output o: UInt[8];\n" ++ body ++ "}\n"
+#guard cost (armLists "  let mut xs = list(Bool);\n  push(xs, c);\n  o := 0;\n") "T" ==
+  "S011 6:12"
+#guard cost (armLists "  let mut xs = list(Bool);\n  push(xs, true);\n  xs[0] = c;\n  o := 0;\n")
+  "T" == "S011 7:11"
+#guard cost (armLists
+  "  let mut xs = list(UInt[8]);\n  push(xs, 1);\n  o := if (c) { pop(xs) } else { 2 };\n")
+  "T" == "S016 7:17"
+#guard cost (armLists
+  "  let mut xs = list(UInt[8]);\n  push(xs, 1);\n  o := if (c) { 3 } else { pop(xs) };\n")
+  "T" == "S016 7:28"
+#guard cost (armLists "  let mut xs = list(UInt[8]);\n  o := if (c) { push(xs, 1) } else { 2 };\n")
+  "T" == "S016 6:17"
+#guard (cost (armLists "  o := if (c) { g() } else { 2 };\n") "T").startsWith "total"
+
 end Silicon.Source.Test.Elab
