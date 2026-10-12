@@ -122,7 +122,8 @@ index with two arguments parses: the type rules reject it.
 #guard stFails "(a,) = 1;" .S001 6
 #guard stFails "[a][0] = 1;" .S001 8
 #guard stFails "a[] = 1;" .S001 3
-#guard stFails "a.x(1) = 1;" .S004 4
+#guard stFails "a.x(1) = 1;" .S001 8
+#guard stFails "x.f().g = 1;" .S001 9
 #guard stFails "mem m: [T; 4];" .S004 1
 #guard st "[T; 4];" == "(expr (arraytype (name \"T\") (num 4)))"
 #guard stFails "[T; 4] = 1;" .S001 8
@@ -225,8 +226,36 @@ the element is a type. The first token that is not part of a type is `S001`.
 #guard ex "[,]" == "error S001 1:15"
 #guard ex "[a b]" == "error S001 1:17"
 #guard ex "t.\"s\"" == "error S001 1:16"
-#guard ex "t.f(x)" == "error S004 1:17"
-#guard ex "t.0.f(x)" == "error S004 1:19"
+
+/-!
+A receiver call `x.m(args)` is a `method` node at the position of the receiver. A suffix can
+follow it. `(x.m)(args)` calls the field `x.m`, and `t.0(x)` calls the element `t.0`.
+-/
+#guard ex "t.f(x)" == "(method (name \"t\") \"f\" ((name \"x\")))"
+#guard ex "t.0.f(x)" == "(method (select (name \"t\") 0) \"f\" ((name \"x\")))"
+#guard ex "xs.push(1,)" == "(method (name \"xs\") \"push\" ((num 1)))"
+#guard ex "x.f()" == "(method (name \"x\") \"f\" ())"
+#guard ex "a.b.c(1).d" ==
+  "(field (method (field (name \"a\") \"b\") \"c\" ((num 1))) \"d\")"
+#guard ex "x.f(a)(b)" == "(call (method (name \"x\") \"f\" ((name \"a\"))) ((name \"b\")))"
+#guard ex "x.f()[0].g(y.h())" ==
+  "(method (index (method (name \"x\") \"f\" ()) ((num 0))) \"g\" " ++
+  "((method (name \"y\") \"h\" ())))"
+#guard ex "-x.f() + 1" == "(binary add (unary neg (method (name \"x\") \"f\" ())) (num 1))"
+#guard ex "(x.f)(1)" == "(call (field (name \"x\") \"f\") ((num 1)))"
+#guard ex "(a + b).f(c)" ==
+  "(method (binary add (name \"a\") (name \"b\")) \"f\" ((name \"c\")))"
+#guard match constValue "(a).f(x)" with
+  | .ok (.method p (.name q _) m [.name r _]) =>
+    p == ⟨1, 14⟩ && q == ⟨1, 15⟩ && m.pos == ⟨1, 18⟩ && r == ⟨1, 20⟩
+  | _ => false
+#guard match constValue "x.f().g()" with
+  | .ok (.method p (.method q _ _ _) m []) => p == ⟨1, 14⟩ && q == ⟨1, 14⟩ && m.pos == ⟨1, 20⟩
+  | _ => false
+#guard st "xs.push(x);" == "(expr (method (name \"xs\") \"push\" ((name \"x\"))))"
+#guard ex "x.f(" == "error S001 1:18"
+#guard ex "x.f(a b)" == "error S001 1:20"
+#guard ex "x.f(a,,)" == "error S001 1:20"
 
 /-! The container types. `(T)` groups, and a suffix can follow each type form. -/
 #guard dump "const A: () = ();" == "(const \"A\" (unit) (unit))\n"
@@ -376,6 +405,32 @@ struct without parentheses and a struct with `()` have no parameters. A `,` can 
   | _ => false
 
 /-!
+A function parameter has the mode none, `comptime`, or `mut`. A `comptime fn` can have a `mut`
+parameter.
+-/
+#guard dump "fn f(mut xs: L, comptime T: Type, x: T) -> T {}" ==
+  "(fn false \"f\" ((param mut \"xs\" (name \"L\")) (param comptime \"T\" (name \"Type\")) " ++
+  "(param none \"x\" (name \"T\"))) (name \"T\") ())\n"
+#guard dump "comptime fn g(mut n: Nat) -> () {}" ==
+  "(fn true \"g\" ((param mut \"n\" (name \"Nat\"))) (unit) ())\n"
+#guard match parseSource defaultSyntaxDepth "fn f(x: T,\n  mut y: T) -> T {}" with
+  | .ok [.fn _ _ _ [_, q] _ _] => q.pos == ⟨2, 3⟩ && q.name.pos == ⟨2, 7⟩
+  | _ => false
+
+/-!
+`S001` at the second mark of a parameter, and at `mut` of a module or a struct parameter. The
+parser expects the name after the first mark.
+-/
+#guard fails "fn f(comptime mut x: T) -> T {}" .S001 1 15
+#guard fails "fn f(mut comptime x: T) -> T {}" .S001 1 10
+#guard fails "fn f(mut mut x: T) -> T {}" .S001 1 10
+#guard fails "fn f(comptime comptime x: T) -> T {}" .S001 1 15
+#guard fails "fn f(x: T, mut: T) -> T {}" .S001 1 15
+#guard fails "comptime fn f(comptime mut x: T) -> T {}" .S001 1 24
+#guard fails "module M(comptime mut W: Nat) {}" .S001 1 19
+#guard fails "struct P(comptime mut W: Nat) {}" .S001 1 19
+
+/-!
 `S001` at a struct and at an alias. A struct parameter without `comptime` is `S001` at its
 name, and with `mut` it is `S001` at `mut`, as at a module.
 -/
@@ -438,6 +493,7 @@ def chain (n : Nat) : String := " + ".intercalate (List.replicate n "a")
 def calls (n : Nat) : String := String.join (List.replicate n "f(") ++ "x" ++ "".pushn ')' n
 def fields (n : Nat) : String := "x" ++ String.join (List.replicate n ".f")
 def blocks (n : Nat) : String := "".pushn '{' n ++ "".pushn '}' n
+def methods (n : Nat) : String := "x" ++ String.join (List.replicate n ".f()")
 
 #guard (constValue (parens 64) 64).toBool
 #guard ex (parens 65) 64 == "error S001 1:78"
@@ -454,6 +510,9 @@ def blocks (n : Nat) : String := "".pushn '{' n ++ "".pushn '}' n
 #guard (constValue (chain 64) 64).toBool
 #guard ex (chain 65) 64 == "error S001 1:14"
 #guard (constValue (calls 63) 64).toBool
+#guard (constValue (methods 63) 64).toBool
+#guard ex (methods 64) 64 == "error S001 1:14"
+#guard stFails (methods 64 ++ ";") .S001 1 64
 #guard ex (calls 64) 64 == "error S001 1:14"
 #guard ex ("y + " ++ negs 63) 64 == "error S001 1:14"
 #guard ex ("g(" ++ chain 65 ++ ")") 64 == "error S001 1:14"
@@ -492,6 +551,8 @@ def elifs (n : Nat) : String :=
 #guard ex (elifs 4096) == "error S001 1:14"
 #guard (constValue (fields 4095)).toBool
 #guard ex (fields 4096) == "error S001 1:14"
+#guard (constValue (methods 4095)).toBool
+#guard ex (methods 4096) == "error S001 1:14"
 
 /-! A raised syntax depth accepts a deeper input. -/
 #guard (constValue (parens 10000) 20000).toBool
@@ -508,6 +569,7 @@ def body (n : Nat) (s : String) : String :=
 #guard (parseSource defaultSyntaxDepth (body 10000 "x.a = (f(y, z));\n")).toBool
 #guard (parseSource defaultSyntaxDepth (body 10000 "x[i].0 = ((y,), [z, ()]);\n")).toBool
 #guard (parseSource defaultSyntaxDepth (body 10000 "x = [[(T, U); 2]; 3]();\n")).toBool
+#guard (parseSource defaultSyntaxDepth (body 10000 "x.f(y).g(z.h());\n")).toBool
 #guard ex ("".pushn '[' 4000 ++ "0" ++ String.join (List.replicate 4000 "; 1]")) ==
   "error S001 1:4014"
 
@@ -565,6 +627,8 @@ def reparse (s : String) : Bool :=
 #guard reparse "struct P(comptime W: Nat,) { a: UInt[W], b: [(T, ()); W + 1], } struct Q() {}"
 #guard reparse "type A = [UInt[8]; 4]; fn f() -> T { type B = (A,); return [[A; 2]; 3](); }"
 #guard reparse "const X: T = f([T; 4], [(U); (n)][0], -[V; 1]().0);"
+#guard reparse "fn f(mut xs: L, comptime T: Type) -> T { xs.push(x.f(1).g()); return (a + b).h(); }"
+#guard reparse "comptime fn g(mut n: Nat, x: T) -> T { (x.f)(t.0.m()); return -x.f()[0]; }"
 
 /-!
 The edge cases of the printer for `parse_print`. Each pair of operators nests in both
