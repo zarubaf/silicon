@@ -635,8 +635,9 @@ mutual
         if keys.isEmpty then bindLocal id { slot with value := ← named p id x y }
         else
           let w ← item v.pos y
-          if let .static r := slot.value then
-            bindLocal id { slot with value := .static (replace r keys.toList w) }
+          -- The indices and the right side ran after `place`, so the update reads the live slot.
+          if let some s@{ value := .static r, .. } := (← get).frame[id]? then
+            bindLocal id { s with value := .static (replace r keys.toList w) }
         return none
       | .ret p v => do
         let some rt := (← read).ret | fail .S006 p "only a function has `return`"
