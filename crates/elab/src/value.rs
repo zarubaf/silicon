@@ -407,7 +407,8 @@ impl Types {
         self.text_of(self.get(t))
     }
 
-    /// The source form of the node `ty`, for a message.
+    /// The source form of the node `ty`, for a message. A text stops after `TEXT_LIMIT`
+    /// bytes, because a type shares its parts and its text can be far longer than its size.
     #[must_use]
     pub fn text_of(&self, ty: &Ty) -> String {
         let mut out = Text::default();
@@ -433,6 +434,9 @@ fn push_parts(work: &mut Vec<TyPiece<'_>>, parts: &[TyId], sep: &'static str) {
     }
 }
 
+/// The longest text of a type or a value in a message, before `...`.
+const TEXT_LIMIT: usize = 1024;
+
 /// A piece of the source form of a value or a type.
 enum Piece<'a> {
     Value(&'a Value),
@@ -442,7 +446,7 @@ enum Piece<'a> {
 }
 
 /// The source form of a type or of the type of a value, for a message. The walk keeps its
-/// own stack.
+/// own stack and stops after `TEXT_LIMIT` bytes.
 #[derive(Default)]
 struct Text<'a> {
     out: String,
@@ -506,9 +510,18 @@ impl<'a> Text<'a> {
         }
     }
 
-    /// The text after the walk of each piece on the stack.
+    /// The text after the walk of each piece on the stack, or its first `TEXT_LIMIT` bytes.
     fn finish(mut self, tys: &Types) -> String {
         while let Some(piece) = self.work.pop() {
+            if self.out.len() > TEXT_LIMIT {
+                let mut cut = TEXT_LIMIT;
+                while !self.out.is_char_boundary(cut) {
+                    cut -= 1;
+                }
+                self.out.truncate(cut);
+                self.out.push_str("...");
+                return self.out;
+            }
             match piece {
                 Piece::Value(v) => self.value(v),
                 Piece::Ty(t) => self.ty_node(tys.get(t)),
@@ -614,6 +627,7 @@ impl Value {
     }
 
     /// What the value is, for a message. Only a tuple has neither a type nor its own text.
+    /// The text of a type stops after `TEXT_LIMIT` bytes.
     #[must_use]
     pub fn text(&self, tys: &Types) -> String {
         match self {
