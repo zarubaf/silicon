@@ -51,7 +51,19 @@ theorem Runs.paramMode {static : Bool} {c : ParamMode} (hc : c.printable static 
     (hw : Win ctx.input i (c.toks ++ .ident n :: R)) :
     Runs (paramMode static) ctx i (i + c.toks.length) (· = c) := by
   cases c with
-  | «mut» => simp [ParamMode.printable] at hc
+  | «mut» =>
+    simp only [ParamMode.toks, List.cons_append, List.nil_append, List.length_singleton] at hw ⊢
+    cases static with
+    | true => simp [ParamMode.printable] at hc
+    | false =>
+      rw [Parse.paramMode]
+      refine Runs.bind (Runs.acceptKw_false (by rw [hw.head]; simp)) fun b hb => ?_
+      subst b
+      reduce_checks
+      refine Runs.bind (Runs.acceptKw_true hw.head) fun b hb => ?_
+      subst b
+      reduce_checks
+      exact Runs.pure rfl
   | comptime =>
     simp only [ParamMode.toks, List.cons_append, List.nil_append, List.length_singleton] at hw ⊢
     cases static with

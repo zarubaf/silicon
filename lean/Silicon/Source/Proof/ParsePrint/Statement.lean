@@ -122,8 +122,13 @@ example : ¬ Printable [.module p (nm "M") [] (some [nm "a", nm "b"]) []] := by 
 example : ¬ Printable [.fn p false (nm "f") [] (t "T") [.wire p (nm "w") (t "T")]] := by decide
 example : Printable [.fn p true (nm "f") [] (t "T") [.wire p (nm "w") (t "T")]] := by decide
 
-/-! A `mut` parameter and a receiver call: the proof does not cover them yet. -/
-example : ¬ Printable [.fn p false (nm "f") [⟨p, .mut, nm "x", t "T"⟩] (t "T") []] := by decide
+/-! A `mut` parameter of a function, but not of a module or a struct. -/
+example : Printable [.fn p false (nm "f") [⟨p, .mut, nm "x", t "T"⟩, ⟨p, .none, nm "y", t "T"⟩]
+    (t "T") []] := by decide +kernel
+example : ¬ Printable [.module p (nm "M") [⟨p, .mut, nm "W", t "Nat"⟩] none []] := by decide
+example : ¬ Printable [.struct p (nm "P") [⟨p, .mut, nm "W", t "Nat"⟩] []] := by decide
+
+/-! A receiver call: the proof does not cover it yet. -/
 example : ¬ Printable [.const p (nm "X") (t "T") (.method p (v "a") (nm "m") [])] := by decide
 
 /-! A control character in a string, and a number that is too large. -/
