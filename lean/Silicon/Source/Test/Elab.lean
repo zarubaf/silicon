@@ -466,4 +466,17 @@ def muts (body : String) : String :=
 #guard (cost (muts "  let mut q = [UInt[8](1)];\n  inc(q[0]);\n  y := 0;\n") "M").startsWith
   "total"
 
+/-!
+The call sites count the call nodes in pre-order (decision F18). The constructor call `T()(1)`
+has two call nodes at one position, so the later call of `add` has the site 2. A receiver call
+has its own site at its receiver.
+-/
+def sites : String :=
+  "comptime fn T() -> Type { return UInt[8]; }\n" ++
+  "fn add(a: UInt[8], b: UInt[8]) -> UInt[8] { return a +% b; }\n" ++
+  "module M() {\n  input x: UInt[8];\n  output y: UInt[8];\n" ++
+  "  let a = T()(1);\n  let s = add(x, a);\n  y := s.add(a);\n}\n"
+#guard names sites "M" "M" ==
+  ["add$2c$a", "add$2c$0ret", "s", "add$3c$a", "add$3c$0ret"]
+
 end Silicon.Source.Test.Elab
