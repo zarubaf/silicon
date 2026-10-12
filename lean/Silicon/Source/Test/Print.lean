@@ -80,6 +80,15 @@ def exprText (e : Expr) : String := e.print 0
 #guard stmtDump (.ctFor p (nm "i") (n 0) (n 4) []) == "(ctfor \"i\" (num 0) (num 4) ())"
 #guard stmtDump (.block p [.ret p none, .ret p none]) == "(block ((ret none) (ret none)))"
 #guard stmtDump (.expr p (v "x")) == "(expr (name \"x\"))"
+#guard stmtDump (.alias p (nm "B") (t "Bool")) == "(alias \"B\" (name \"Bool\"))"
+
+/-! An array type in an expression holds a type expression and an expression. -/
+#guard exprDump (.arrayType p u8 (n 4)) ==
+  "(arraytype (index (name \"UInt\") ((num 8))) (num 4))"
+#guard exprDump (.arrayType p (.array p (t "Bool") (n 2)) (v "N")) ==
+  "(arraytype (array (name \"Bool\") (num 2)) (name \"N\"))"
+#guard exprDump (.call p (.arrayType p (t "Bool") (n 2)) []) ==
+  "(call (arraytype (name \"Bool\") (num 2)) ())"
 
 /-! Each item kind and the parameter structure. -/
 def counter : Item :=
@@ -96,6 +105,22 @@ def inc : Item :=
 #guard counter.dump ==
   "(module \"Counter\" ((param true \"W\" (name \"Nat\"))) (some (\"clk\")) " ++
   "((output \"q\" (index (name \"UInt\") ((name \"W\"))))))"
+
+/-! A struct with parameters and fields, a struct without either, and a type alias. -/
+def packet : Item :=
+  .struct p (nm "P") [⟨p, true, nm "W", t "Nat"⟩]
+    [⟨nm "a", .index p (t "UInt") [v "W"]⟩, ⟨nm "b", t "Bool"⟩]
+
+def empty : Item := .struct p (nm "E") [] []
+
+def bits : Item := .alias p (nm "B") (.array p (t "Bool") (n 4))
+
+#guard packet.dump ==
+  "(struct \"P\" ((param true \"W\" (name \"Nat\"))) " ++
+  "((structfield \"a\" (index (name \"UInt\") ((name \"W\")))) " ++
+  "(structfield \"b\" (name \"Bool\"))))"
+#guard empty.dump == "(struct \"E\" () ())"
+#guard bits.dump == "(alias \"B\" (array (name \"Bool\") (num 4)))"
 
 /-! One line for each item, each line ends with LF, and no items give an empty dump. -/
 #guard Print.dump [] == ""
@@ -165,6 +190,13 @@ level 0. A `select` is a postfix form.
 #guard (TypeExpr.array p (.array p u8 (n 2)) (bin .add (v "N") (n 1))).print ==
   "[[UInt[8]; 2]; N + 1]"
 
+/-! An array type in an expression is a primary, and its length prints at level 0. -/
+#guard exprText (.arrayType p u8 (bin .add (v "N") (n 1))) == "[UInt[8]; N + 1]"
+#guard exprText (.call p (.arrayType p (.array p (t "Bool") (n 2)) (n 3)) []) ==
+  "[[Bool; 2]; 3]()"
+#guard exprText (.unary p .neg (.arrayType p (t "Bool") (n 2))) == "-[Bool; 2]"
+#guard exprText (.array p [.arrayType p (t "Bool") (n 2)]) == "[[Bool; 2]]"
+
 /-! Statements and items print as indented lines. -/
 #guard Print.print [counter, inc] ==
   "module Counter(comptime W: Nat) domains(clk) {\n" ++
@@ -177,5 +209,18 @@ level 0. A `select` is a postfix form.
   "comptime if (c) {\n    let mut x = 1;\n} else {}\n"
 #guard (Stmt.ctFor p (nm "i") (n 0) (n 4) [.block p [.connect p (v "o") (v "i")]]).print 0 ==
   "comptime for i in 0 .. 4 {\n    {\n        o := i;\n    }\n}\n"
+#guard (Stmt.alias p (nm "B") (.tuple p [t "Bool"])).print 1 == "    type B = (Bool,);\n"
+
+/-!
+A struct without parameters prints without parentheses. Each field prints on its own line and
+ends with `,`.
+-/
+#guard Print.print [packet, empty, bits] ==
+  "struct P(comptime W: Nat) {\n" ++
+  "    a: UInt[W],\n" ++
+  "    b: Bool,\n" ++
+  "}\n\n" ++
+  "struct E {}\n\n" ++
+  "type B = [Bool; 4];\n"
 
 end Silicon.Source.Test.Print
