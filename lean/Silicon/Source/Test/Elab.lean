@@ -387,4 +387,34 @@ the `instance` statement.
   "module M() {\n  output y: UInt[8];\n  instance c = C();\n  y := true;\n}\n") "M" ==
   "S018 2:3"
 
+/-!
+Until phase 6, a port, a register, and a wire have a scalar type. A struct type, an array type,
+or a tuple type there is `S010` at the statement. A record field holds only a static value, so a
+hardware argument of a constructor is `S010` at the argument.
+-/
+def ps : String := "struct P(comptime W: Nat) { a: UInt[W], b: Bool }\n"
+#guard cost (ps ++ "module M() {\n  input x: P[8];\n}\n") "M" == "S010 3:3"
+#guard cost (ps ++ "module M() {\n  output y: P[8];\n}\n") "M" == "S010 3:3"
+#guard cost (ps ++ "module M() {\n  reg r: P[8] = P[8]();\n}\n") "M" == "S010 3:3"
+#guard cost (ps ++ "module M() {\n  wire w: [Bool; 2];\n}\n") "M" == "S010 3:3"
+#guard cost (ps ++ "module M() {\n  wire w: (Bool, Bool);\n}\n") "M" == "S010 3:3"
+#guard cost (ps ++ "module M() {\n  input x: UInt[8];\n  let r = P[8](x, true);\n}\n") "M" ==
+  "S010 4:16"
+
+/-!
+A module parameter can be a type or a record. Such an argument gives the digest form of the
+emitted name, and the serialization holds the record with its struct type. A static field of a
+record drives a port.
+-/
+def typed : String :=
+  ps ++ "module C(comptime T: Type, comptime r: P[8]) {\n  output y: T;\n  y := r.a;\n}\n" ++
+  "module M() {\n  output y: UInt[8];\n  instance c = C(UInt[8], P[8](5, true));\n" ++
+  "  y := c.y;\n}\n"
+#guard order typed "M" ==
+  ["C$0h" ++ Names.sha16 ("(instantiation root C ((type (uint 8)) " ++
+    "(record (struct root P ((int 8))) ((uint 8 5) (bool true)))))"), "M"]
+#guard (cost typed "M").startsWith "total"
+#guard cost (ps ++ "module C(comptime r: P[8]) {\n}\n" ++
+  "module M() {\n  instance c = C(P[4](5, true));\n}\n") "M" == "S010 5:3"
+
 end Silicon.Source.Test.Elab
