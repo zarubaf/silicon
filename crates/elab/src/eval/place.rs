@@ -11,16 +11,25 @@ use crate::int::Int;
 use crate::ops::int_text;
 use crate::types::TyId;
 use crate::value::Value;
-use parse::ast::{Expr, Nat, Pos};
+use parse::ast::{Expr, Ident, Nat, Pos};
 use resolve::Target;
 use std::borrow::Cow;
 
 /// A step of a place or a read after its root: an index at the position with its arguments,
-/// or a selector `.N` with the positions of its node and of its number literal.
+/// a selector `.N` with the positions of its node and of its number literal, or a field `.f`.
 #[derive(Clone, Copy)]
 enum Sel<'a> {
     Index(Pos, &'a [Expr]),
     Select(Pos, Pos, &'a Nat),
+    Field(Pos, &'a Ident),
+}
+
+impl Sel<'_> {
+    /// The position of the node of the step, where the step charges.
+    fn pos(&self) -> Pos {
+        let (Sel::Index(q, _) | Sel::Select(q, ..) | Sel::Field(q, _)) = *self;
+        q
+    }
 }
 
 /// A step of a place whose index evaluated: an index at its node, with the position of its
@@ -28,6 +37,7 @@ enum Sel<'a> {
 enum Key<'a> {
     Index(Pos, Pos, Index),
     Select(Pos, Pos, &'a Nat),
+    Field(Pos, &'a Ident),
 }
 
 /// What the walk along a place knows of the type of the part: its type, no type, or the type
@@ -72,6 +82,10 @@ fn chain(e: &Expr) -> Option<(&Expr, Vec<Sel<'_>>)> {
                 steps.push(Sel::Select(*pos, *lit_pos, index));
                 cur = base;
             }
+            Expr::Field { pos, base, field } => {
+                steps.push(Sel::Field(*pos, field));
+                cur = base;
+            }
             Expr::Name { .. } => {
                 steps.reverse();
                 return Some((cur, steps));
@@ -87,7 +101,7 @@ fn replace(v: &mut Value, keys: &[usize], w: Value) {
     let mut cur = v;
     for &k in keys {
         cur = match cur {
-            Value::Array(_, xs) | Value::Tuple(xs) => match xs.get_mut(k) {
+            Value::Array(_, xs) | Value::Tuple(xs) | Value::Record(_, xs) => match xs.get_mut(k) {
                 Some(x) => x,
                 None => return,
             },
@@ -116,7 +130,7 @@ pub(super) fn elem(b: Opnd, k: usize) -> Out {
 /// The element `k` of an owned container.
 fn take_element(v: &mut Value, k: usize) -> Value {
     match v {
-        Value::Array(_, xs) | Value::Tuple(xs) => xs
+        Value::Array(_, xs) | Value::Tuple(xs) | Value::Record(_, xs) => xs
             .get_mut(k)
             .map_or(Value::Unit, |x| std::mem::replace(x, Value::Unit)),
         _ => Value::Unit,
@@ -267,7 +281,7 @@ impl Evaluator<'_> {
         }
         steps.reverse();
         let first = match steps.first() {
-            Some(Sel::Index(q, _) | Sel::Select(q, ..)) => *q,
+            Some(step) => step.pos(),
             None => {
                 return fail(
                     Code::S010,
@@ -304,6 +318,7 @@ impl Evaluator<'_> {
                 }
                 Key::Index(q, xp, i) => self.pick_at(*q, *xp, cur, i)?,
                 Key::Select(q, r, index) => self.select_at(*q, *r, index, cur)?,
+                Key::Field(q, f) => self.field_at(*q, f, cur)?.0,
             };
             cur = self.store.step(cur, k);
             keys.push(k);
@@ -403,8 +418,7 @@ impl Evaluator<'_> {
         let mut keyed = Vec::with_capacity(steps.len());
         let mut stop = None;
         for step in &steps {
-            let (Sel::Index(q, _) | Sel::Select(q, ..)) = *step;
-            match self.charge(q, 1).and_then(|()| self.key(step)) {
+            match self.charge(step.pos(), 1).and_then(|()| self.key(step)) {
                 Ok(k) => keyed.push(k),
                 Err(e) => {
                     stop = Some(e);
@@ -473,6 +487,7 @@ impl Evaluator<'_> {
                 Ok(Key::Index(q, xp, self.index_of(&o)))
             }
             Sel::Select(q, r, index) => Ok(Key::Select(q, r, index)),
+            Sel::Field(q, f) => Ok(Key::Field(q, f)),
         }
     }
 
@@ -497,14 +512,19 @@ impl Evaluator<'_> {
             None => Known::Absent,
         };
         for key in keyed {
-            let k = match key {
-                Key::Index(q, xp, i) => self.pick_at(*q, *xp, cur, i)?,
-                Key::Select(q, r, index) => self.select_at(*q, *r, index, cur)?,
+            let (k, field) = match key {
+                Key::Index(q, xp, i) => (self.pick_at(*q, *xp, cur, i)?, None),
+                Key::Select(q, r, index) => (self.select_at(*q, *r, index, cur)?, None),
+                Key::Field(q, f) => {
+                    let (k, ft) = self.field_at(*q, f, cur)?;
+                    (k, Some(ft))
+                }
             };
-            known = match (known, cur) {
-                (Known::Ty(t), _) => self.tys.part(t, k).map_or(Known::Absent, Known::Ty),
-                (Known::Element, Seen::Static(Value::Array(elem, _))) => Known::Ty(*elem),
-                (Known::Absent | Known::Element, _) => Known::Element,
+            known = match (field, known, cur) {
+                (Some(ft), _, _) => Known::Ty(ft),
+                (None, Known::Ty(t), _) => self.tys.part(t, k).map_or(Known::Absent, Known::Ty),
+                (None, Known::Element, Seen::Static(Value::Array(elem, _))) => Known::Ty(*elem),
+                (None, Known::Absent | Known::Element, _) => Known::Element,
             };
             cur = self.store.step(cur, k);
             keys.push(k);

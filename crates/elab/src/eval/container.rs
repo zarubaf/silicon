@@ -152,6 +152,26 @@ impl Evaluator<'_> {
         bounded(self.limit, pos, depth)
     }
 
+    /// Checks that `o` can be an element of a container at `pos`. In this phase a container
+    /// holds only static values. A hardware value is `S010`, and a handle is `S010` until
+    /// slice 3. A literal that waits for its type gives the position of its first `[]`.
+    pub(super) fn held(&self, pos: Pos, o: &Out) -> Res<Option<Pos>> {
+        match self.store.seen(o) {
+            Seen::Static(_) => Ok(None),
+            Seen::Pending(q, _) => Ok(Some(q)),
+            Seen::Hw(_) => fail(
+                Code::S010,
+                pos,
+                "a container holds only static values in this phase".to_owned(),
+            ),
+            s @ Seen::Handle(_) => fail(
+                Code::S010,
+                pos,
+                format!("{} is not an element before slice 3", self.text(s)),
+            ),
+        }
+    }
+
     /// The elements of a container literal, each checked as it evaluates. In this phase a
     /// container holds only static values. A hardware value is `S010`, and a handle is `S010`
     /// until slice 3. The position is that of the first `[]` among the elements that wait.
@@ -161,25 +181,8 @@ impl Evaluator<'_> {
         for x in xs {
             let o = self.eval(x)?;
             let o = need(x, o)?;
-            match self.store.seen(&o) {
-                Seen::Static(_) => {}
-                Seen::Pending(q, _) => {
-                    waiting.get_or_insert(q);
-                }
-                Seen::Hw(_) => {
-                    return fail(
-                        Code::S010,
-                        super::expr_pos(x),
-                        "a container holds only static values in this phase".to_owned(),
-                    );
-                }
-                s @ Seen::Handle(_) => {
-                    return fail(
-                        Code::S010,
-                        super::expr_pos(x),
-                        format!("{} is not an element before slice 3", self.text(s)),
-                    );
-                }
+            if let Some(q) = self.held(super::expr_pos(x), &o)? {
+                waiting.get_or_insert(q);
             }
             outs.push(o);
         }
