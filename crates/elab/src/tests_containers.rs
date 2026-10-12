@@ -512,6 +512,17 @@ fn a_deep_read_walks_its_path_once() {
     assert!(index(20) - index(10) <= 10 * 4 * 4);
 }
 
+/// A read takes back the result that it parked, also when a later index failed after it
+/// parked an operand of its own. Thus the fuel error of the index is the first error, as in
+/// Lean, and not an error of a step on that operand.
+#[test]
+fn a_failed_index_keeps_the_parked_base() {
+    let src = "comptime fn one() -> Int { return 1; }\n\
+        comptime fn f() -> Int { let a = [[1]]; return a[0][one() - 1]; }";
+    assert_eq!(out(src, "f()", 29, 1000), "S015 2:61");
+    assert_eq!(out(src, "f()", 30, 1000), "S015 2:61");
+}
+
 /// A read checks each step before the index of the next step, as in Lean, although the checks
 /// run after the indices.
 #[test]
