@@ -55,6 +55,10 @@ fn sx(e: &Expr) -> String {
         Expr::Call { callee, args, .. } => format!("(call {} {})", sx(callee), list(args)),
         Expr::Index { base, args, .. } => format!("(index {} {})", sx(base), list(args)),
         Expr::Field { base, field, .. } => format!("(field {} {})", sx(base), field.name),
+        Expr::Unit { .. } => "()".to_owned(),
+        Expr::Tuple { elems, .. } => format!("(tuple {})", list(elems)),
+        Expr::Array { elems, .. } => format!("(array {})", list(elems)),
+        Expr::Select { base, index, .. } => format!("(select {} {})", sx(base), index.as_str()),
     }
 }
 
@@ -824,6 +828,200 @@ fn rules_of_the_lean_parser() {
     ] {
         assert_eq!(first_error(ok), None, "{ok}");
     }
+}
+
+/// The AST of `const X: <ty> = 0;` as its dump, without the item around the type.
+fn type_dump(ty: &str) -> String {
+    let parsed = parse(&format!("const X: {ty} = 0;"));
+    assert!(parsed.errors.is_empty(), "{ty}: {:?}", parsed.errors);
+    let text = parsed.dump().unwrap().unwrap();
+    let body = text.strip_prefix("(const \"X\" ").unwrap_or(&text);
+    body.strip_suffix(" (num 0))\n").unwrap_or(body).to_owned()
+}
+
+#[test]
+fn container_expressions() {
+    for (input, want) in [
+        ("()", "()"),
+        ("(a)", "a"),
+        ("(a,)", "(tuple a)"),
+        ("(a, (b, c),)", "(tuple a (tuple b c))"),
+        ("[]", "(array )"),
+        ("[a, [], ()]", "(array a (array ) ())"),
+        ("[if (c) { 1 } else { 2 },]", "(array (if c 1 2))"),
+        ("t.0", "(select t 0)"),
+        ("t.0x1.0b10", "(select (select t 1) 2)"),
+        ("(x, true).0", "(select (tuple x true) 0)"),
+        ("t.0(x)", "(call (select t 0) x)"),
+        ("a[0].1.f", "(field (select (index a 0) 1) f)"),
+        ("-t.1", "(neg (select t 1))"),
+    ] {
+        assert_eq!(shape(input), want, "{input}");
+    }
+}
+
+#[test]
+fn container_expressions_dump_like_lean() {
+    let dump = |e: &str| {
+        let text = parse(&format!("const X: T = {e};"))
+            .dump()
+            .unwrap()
+            .unwrap();
+        text.strip_prefix("(const \"X\" (name \"T\") ")
+            .and_then(|t| t.strip_suffix(")\n"))
+            .unwrap_or(&text)
+            .to_owned()
+    };
+    assert_eq!(dump("()"), "(unit)");
+    assert_eq!(dump("(a,)"), "(tuple ((name \"a\")))");
+    assert_eq!(dump("[]"), "(array ())");
+    assert_eq!(
+        dump("[a, [], ()]"),
+        "(array ((name \"a\") (array ()) (unit)))"
+    );
+    assert_eq!(dump("t.0x1.0b10"), "(select (select (name \"t\") 1) 2)");
+    assert_eq!(
+        dump("t.0(x)"),
+        "(call (select (name \"t\") 0) ((name \"x\")))"
+    );
+}
+
+#[test]
+fn container_types_dump_like_lean() {
+    assert_eq!(type_dump("()"), "(unit)");
+    assert_eq!(type_dump("(T)"), "(name \"T\")");
+    assert_eq!(type_dump("(T,)"), "(tuple ((name \"T\")))");
+    assert_eq!(
+        type_dump("(T, (), [U; N + 1],)"),
+        "(tuple ((name \"T\") (unit) (array (name \"U\") (binary add (name \"N\") (num 1)))))"
+    );
+    assert_eq!(
+        type_dump("[[Bool; 2]; 3]"),
+        "(array (array (name \"Bool\") (num 2)) (num 3))"
+    );
+    assert_eq!(type_dump("(T)[1]"), "(index (name \"T\") ((num 1)))");
+}
+
+#[test]
+fn places_have_indexes_and_selectors() {
+    let stmts = body("a[i] = 1; t.0 := x; a[i].0x1.f[j] = 1; a[i, j] = 1;");
+    let targets: Vec<String> = stmts
+        .iter()
+        .map(|s| match s {
+            Stmt::Assign { target, .. } | Stmt::Connect { target, .. } => sx(target),
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        targets,
+        [
+            "(index a i)",
+            "(select t 0)",
+            "(index (field (select (index a i) 1) f) j)",
+            "(index a i j)",
+        ]
+    );
+    let stmts = body("a[i] + 1; t.1;");
+    assert!(matches!(
+        stmts.as_slice(),
+        [Stmt::Expr { .. }, Stmt::Expr { .. }]
+    ));
+}
+
+#[test]
+fn a_select_keeps_the_position_of_its_literal() {
+    let parsed = parse("module M() { a.1[0] = x; }");
+    let Some([Item::Module { body, .. }]) = parsed.ast.as_deref() else {
+        panic!("no module");
+    };
+    let [Stmt::Assign { pos: p, target, .. }] = body.as_slice() else {
+        panic!("no assignment");
+    };
+    let Expr::Index { pos: q, base, .. } = target else {
+        panic!("no index");
+    };
+    let Expr::Select {
+        pos: r, lit_pos, ..
+    } = &**base
+    else {
+        panic!("no select");
+    };
+    assert_eq!(
+        (*p, *q, *r, *lit_pos),
+        (pos(1, 14), pos(1, 14), pos(1, 14), pos(1, 16))
+    );
+}
+
+#[test]
+fn container_forms_give_s001_and_s004_like_lean() {
+    let cases = [
+        ("const X: T = [UInt[8]; 4];", Code::S004, 1, 14),
+        ("const X: T = f(a, [T; 4]);", Code::S004, 1, 19),
+        ("const X: T = [a, b; c];", Code::S004, 1, 14),
+        ("const X: T = (T; 4);", Code::S001, 1, 16),
+        ("const X: T = (,);", Code::S001, 1, 15),
+        ("const X: T = (a b);", Code::S001, 1, 17),
+        ("const X: T = (a,,);", Code::S001, 1, 17),
+        ("const X: T = [,];", Code::S001, 1, 15),
+        ("const X: T = [a b];", Code::S001, 1, 17),
+        ("const X: T = t.\"s\";", Code::S001, 1, 16),
+        ("const X: T = t.f(x);", Code::S004, 1, 17),
+        ("const X: T = t.0.f(x);", Code::S004, 1, 19),
+        ("module M() { f(x)[0] = 1; }", Code::S001, 1, 22),
+        ("module M() { a.0(x) = 1; }", Code::S001, 1, 21),
+        ("module M() { (a,) = 1; }", Code::S001, 1, 19),
+        ("module M() { [a][0] = 1; }", Code::S001, 1, 21),
+        ("module M() { a[] = 1; }", Code::S001, 1, 16),
+        ("module M() { a.x(1) = 1; }", Code::S004, 1, 17),
+        ("module M() { mem m: [T; 4]; }", Code::S004, 1, 14),
+        ("module M() { [T; 4]; }", Code::S004, 1, 14),
+        ("const A: (,) = 0;", Code::S001, 1, 11),
+        ("const A: (T U) = 0;", Code::S001, 1, 13),
+        ("const A: (T, U V) = 0;", Code::S001, 1, 16),
+        ("const A: [] = 0;", Code::S001, 1, 11),
+        ("const A: [T] = 0;", Code::S001, 1, 12),
+        ("const A: [T, U] = 0;", Code::S001, 1, 12),
+        ("const A: [T; ] = 0;", Code::S001, 1, 14),
+        ("const A: (fn() -> T,) = 0;", Code::S004, 1, 11),
+        ("const A: (T)(x) = 0;", Code::S004, 1, 13),
+        ("const A: [T; 2](x) = 0;", Code::S004, 1, 16),
+    ];
+    let wrong: Vec<_> = cases
+        .iter()
+        .filter(|(input, code, line, col)| first_error(input) != Some((*code, *line, *col)))
+        .map(|(input, ..)| (input, first_error(input)))
+        .collect();
+    assert_eq!(wrong, []);
+}
+
+#[test]
+fn container_heights_follow_the_ast() {
+    // A selector adds one to the height, and `[]` and `()` have height 1.
+    let selects = |n: usize| format!("const X: T = t{};", ".0".repeat(n));
+    assert_eq!(first_error_64(&selects(63)), None);
+    assert_eq!(first_error_64(&selects(64)), Some((Code::S001, 1, 14)));
+    let arrays = |n: usize| format!("const X: T = {}{};", "[".repeat(n), "]".repeat(n));
+    assert_eq!(first_error_64(&arrays(64)), None);
+    let tuples = format!("const X: T = {}x{};", "(".repeat(63), ",)".repeat(63));
+    assert_eq!(first_error_64(&tuples), None);
+    // A group adds nothing.
+    let groups = format!("const X: T = {}x{};", "(".repeat(60), ")".repeat(60));
+    assert_eq!(first_error_64(&groups), None);
+}
+
+#[test]
+fn a_deep_container_value_dumps_and_drops() {
+    let n = 3000;
+    let input = format!(
+        "const X: {}T{} = {}0{};",
+        "(".repeat(n),
+        ",)".repeat(n),
+        "[".repeat(n),
+        "]".repeat(n)
+    );
+    let parsed = crate::parse_with_depth(&input, 4096).unwrap();
+    assert!(parsed.errors.is_empty());
+    assert!(parsed.dump().unwrap().unwrap().len() > n);
 }
 
 #[test]

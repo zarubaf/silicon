@@ -109,7 +109,7 @@ fn type_arity(p: Prelude) -> usize {
 
 fn fn_arity(p: Prelude) -> usize {
     match p {
-        Prelude::Error => 1,
+        Prelude::Error | Prelude::Len => 1,
         _ => 2,
     }
 }
@@ -238,7 +238,7 @@ impl<'a> Walker<'a> {
 
     fn expr(&mut self, is_static: bool, expr: &Expr) {
         match expr {
-            Expr::Num { .. } | Expr::Bool { .. } | Expr::Str { .. } => {}
+            Expr::Num { .. } | Expr::Bool { .. } | Expr::Str { .. } | Expr::Unit { .. } => {}
             Expr::Name { pos, id, name } => self.name(is_static, *pos, *id, name),
             Expr::Unary { arg, .. } => self.expr(is_static, arg),
             Expr::Binary { lhs, rhs, .. } => {
@@ -259,8 +259,8 @@ impl<'a> Walker<'a> {
                     let arg_static = match &kind {
                         Callee::Fn(flags) => flags.get(k).copied().unwrap_or(false),
                         Callee::Prelude(Prelude::Resize | Prelude::Reinterpret) => k == 0,
+                        Callee::Prelude(Prelude::Len) | Callee::Unknown => false,
                         Callee::Prelude(_) | Callee::Constructor => true,
-                        Callee::Unknown => false,
                     };
                     self.expr(is_static || arg_static, arg);
                 }
@@ -268,7 +268,12 @@ impl<'a> Walker<'a> {
             Expr::Index { pos, base, args } => {
                 self.index(is_static, *pos, base, args);
             }
-            Expr::Field { base, .. } => self.expr(is_static, base),
+            Expr::Field { base, .. } | Expr::Select { base, .. } => self.expr(is_static, base),
+            Expr::Tuple { elems, .. } | Expr::Array { elems, .. } => {
+                for elem in elems {
+                    self.expr(is_static, elem);
+                }
+            }
         }
     }
 
@@ -313,15 +318,25 @@ impl<'a> Walker<'a> {
                         format!("`{name}`"),
                         self.prelude_type(*id).map_or(0, type_arity),
                     ),
-                    TypeExpr::Index { .. } => ("a complete type".to_owned(), 0),
+                    _ => ("a complete type".to_owned(), 0),
                 };
                 self.arity(*pos, &what, missing, args.len());
-                if matches!(&**base, TypeExpr::Index { .. }) {
+                if !matches!(&**base, TypeExpr::Name { .. }) {
                     self.type_expr(base);
                 }
                 for arg in args {
                     self.expr(true, arg);
                 }
+            }
+            TypeExpr::Unit { .. } => {}
+            TypeExpr::Tuple { elems, .. } => {
+                for elem in elems {
+                    self.type_expr(elem);
+                }
+            }
+            TypeExpr::Array { elem, len, .. } => {
+                self.type_expr(elem);
+                self.expr(true, len);
             }
         }
     }

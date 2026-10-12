@@ -116,6 +116,14 @@ kinds! {
     Block,
     NameType,
     IndexType,
+    /// `()`.
+    UnitType,
+    /// `(T, U)`: the element types are the children.
+    TupleType,
+    /// `[T; N]`: the element type, then the length expression.
+    ArrayType,
+    /// `(T)`: a grouped type. It makes no node of the AST.
+    ParenType,
     /// The delimited arguments of a call, an index, or a type family.
     ArgList,
     Literal,
@@ -127,6 +135,14 @@ kinds! {
     CallExpr,
     IndexExpr,
     FieldExpr,
+    /// `.N` after an expression.
+    SelectExpr,
+    /// `()`.
+    UnitExpr,
+    /// `(a, b)`: the elements are in an `ArgList`.
+    TupleExpr,
+    /// `[a, b]`: the elements are in an `ArgList`.
+    ArrayExpr,
     LetStmt,
     AssignStmt,
     ConnectStmt,

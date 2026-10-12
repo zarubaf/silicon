@@ -150,6 +150,16 @@ impl Ids {
                 self.ty(base);
                 self.exprs(args);
             }
+            TypeExpr::Unit { .. } => {}
+            TypeExpr::Tuple { elems, .. } => {
+                for elem in elems {
+                    self.ty(elem);
+                }
+            }
+            TypeExpr::Array { elem, len, .. } => {
+                self.ty(elem);
+                self.expr(len);
+            }
         }
     }
 
@@ -161,7 +171,7 @@ impl Ids {
 
     fn expr(&mut self, expr: &Expr) {
         match expr {
-            Expr::Num { .. } | Expr::Bool { .. } | Expr::Str { .. } => {}
+            Expr::Num { .. } | Expr::Bool { .. } | Expr::Str { .. } | Expr::Unit { .. } => {}
             Expr::Name { pos, id, .. } => self.add(*pos, *id),
             Expr::Unary { arg, .. } => self.expr(arg),
             Expr::Binary { lhs, rhs, .. } => {
@@ -185,6 +195,8 @@ impl Ids {
                 self.expr(base);
                 self.ident(field);
             }
+            Expr::Select { base, .. } => self.expr(base),
+            Expr::Tuple { elems, .. } | Expr::Array { elems, .. } => self.exprs(elems),
         }
     }
 }
@@ -722,4 +734,60 @@ fn an_expression_resolves_in_the_file_scope() {
         run_expr(src, "y + x").err(),
         Some(vec![(S003, 1, 1), (S003, 1, 5)])
     );
+}
+
+/// The body of a function. The body starts on line 2.
+fn fn_body(s: &str) -> String {
+    format!("fn f(p: Bool) -> Bool {{\n{s}\n}}")
+}
+
+#[test]
+fn the_container_forms_resolve_their_parts() {
+    ok(&fn_body(
+        "let t = (p, [p, p], ());\nlet x: (Bool, [Bool; 2], ()) = t;\nreturn t.0;",
+    ));
+    ok(&fn_body(
+        "let x: (Bool,) = (p,);\nlet n = len([x.0]);\nreturn x.0x0;",
+    ));
+    ok("const A: Unit = ();\nconst N: Nat = len([A, A]);");
+}
+
+#[test]
+fn unit_and_len_are_prelude_names() {
+    let r = ok("fn f() -> Nat { return len; }\nfn g() -> Nat { return Unit; }");
+    assert_eq!(
+        target_at(&r, pos(1, 24)),
+        Some(Target::Prelude(Prelude::Len))
+    );
+    assert_eq!(
+        target_at(&r, pos(2, 24)),
+        Some(Target::Prelude(Prelude::Unit))
+    );
+    assert_eq!(
+        target_at(&r, pos(2, 11)),
+        Some(Target::Prelude(Prelude::Nat))
+    );
+    // A parameter shadows the prelude name.
+    let r = ok("fn f(len: Nat) -> Nat { return len; }");
+    assert_eq!(decl_at(&r, pos(1, 32)).kind, Kind::Param);
+    assert_eq!(
+        errors("const Unit: Nat = 1;\nconst A: Unit = 1;"),
+        [(S003, 2, 10)]
+    );
+}
+
+#[test]
+fn an_unknown_name_in_a_container_form_is_s003_at_the_name() {
+    for (src, line, col) in [
+        (fn_body("return (p, q);"), 2, 12),
+        (fn_body("return [p, q];"), 2, 12),
+        (fn_body("return q.0;"), 2, 8),
+        (fn_body("return [p][q];"), 2, 12),
+        (fn_body("let x: [Bool; N] = [];\nreturn p;"), 2, 15),
+        (fn_body("let x: [Foo; 2] = [];\nreturn p;"), 2, 9),
+        (fn_body("let x: (Bool, Foo) = (p, p);\nreturn p;"), 2, 15),
+        ("const N: Nat = 1;\nconst A: (N,) = (1,);".to_owned(), 2, 11),
+    ] {
+        assert_eq!(errors(&src), [(S003, line, col)], "{src}");
+    }
 }
