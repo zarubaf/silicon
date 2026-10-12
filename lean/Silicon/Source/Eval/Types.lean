@@ -2,8 +2,9 @@
 import Silicon.Source.Eval.Basic
 
 /-!
-The types as values of the evaluator: the type constructors with their charges, the join of two
-types, the table of constants for the `type` aliases, and the table of struct specializations.
+The types as values of the evaluator. These are the type constructors with their charges and the
+join of two types. The table of constants for the `type` aliases and the table of struct
+specializations are here too.
 `Source.Eval` evaluates the type expressions with these rules. The types as values of slice 2
 follow sections 5.1, 5.4, 5.5, and 5.6. These rules settle their open points:
 
@@ -16,12 +17,15 @@ follow sections 5.1, 5.4, 5.5, and 5.6. These rules settle their open points:
   fails stops the walk, so the charge counts the pairs up to that visit.
 - A `type` item is a constant of type `Type` in the table of constants. Its first use evaluates
   its type expression, and a use while it is in progress is `S019`.
-- The table of struct specializations holds each struct item with its static arguments as they
-  evaluate, before the typed use at the parameters, as an `InstantiationId` does. The first use
-  counts toward the nesting depth (`S015`). It charges the size of the struct type, binds the
-  parameters as typed uses, and evaluates the field types in the scope of the struct. Then it
-  checks the depth of the struct type (`S015`) and charges `Meta.structCharge`. A use in progress
-  is `S019`. A use of a done entry charges nothing more than its node.
+- The key of a struct specialization is its struct item and its static arguments. Each
+  argument comes after its typed use at its parameter type: the normalized identity of v0.1.
+  Thus `P[8]` and
+  `P[UInt[4](8)]` are one type when the parameter of `P` has the type `UInt[4]`. Each use counts
+  toward the nesting depth (`S015`). It evaluates the parameter types in the scope of the
+  struct and binds the parameters as typed uses, with their charges and errors. A first use
+  then charges the size of the struct type and evaluates the field types. Then it checks the
+  depth of the struct type (`S015`) and charges `Meta.structCharge`. A use in progress is
+  `S019`. A use of a done entry charges nothing more than its node and its parameters.
 -/
 namespace Silicon.Source.Eval
 
@@ -110,8 +114,8 @@ def constant (p : Pos) (x : String) (i : Nat) (body : M Value) : M Value := do
     return c
 
 /-!
-A use at `p` of the struct item `i` with the name `x` and the static arguments `args`. The first
-use runs `fields`, which binds the parameters and evaluates the field types.
+A use at `p` of the struct item `i` with the name `x` and the normalized static arguments
+`args`. The first use runs `fields`, which evaluates the field types. The caller nests it.
 -/
 def specialize (p : Pos) (x : String) (i : Nat) (args : List Value) (fields : M (List Ty)) :
     M Ty := do
@@ -121,7 +125,7 @@ def specialize (p : Pos) (x : String) (i : Nat) (args : List Value) (fields : M 
   | some (.done t _) => return t
   | some .inProgress =>
     fail .S019 p s!"the specialization {(Ty.struct x args.toArray Meta.static).text} is in progress"
-  | none => nested p do
+  | none => do
     charge p (Ty.struct x args.toArray Meta.static).size
     let k := (← get).specs.size
     modify fun s => { s with specs := s.specs.push ⟨i, args, .inProgress⟩ }
