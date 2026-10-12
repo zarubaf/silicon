@@ -595,6 +595,48 @@ mod tests {
         });
     }
 
+    /// A record of depth 100,000 around `Bool`: `S(k+1) { f: S(k) }`, and its struct type.
+    fn deep_record(tys: &mut Types, depth: usize) -> (Value, TyId) {
+        let mut ty = tys.mk(Ty::Bool);
+        let mut value = Value::Bool(true);
+        for k in 0..depth {
+            let spec = tys.begin_spec(&format!("S{k}"), k, Vec::new());
+            let (meta, deepest) = tys.struct_meta(spec, &[ty]);
+            ty = tys.finish_spec(spec, vec![ty], meta, deepest);
+            value = Value::Record(ty, vec![value]);
+        }
+        (value, ty)
+    }
+
+    /// The walks over a record and its struct type keep their own stacks too.
+    #[test]
+    fn the_walks_over_a_deep_record_do_not_recurse() {
+        small_stack(|| {
+            const DEPTH: usize = 100_000;
+            let mut tys = Types::default();
+            let (v, t) = deep_record(&mut tys, DEPTH);
+            assert_eq!(v.size(), DEPTH as u64 + 1);
+            assert_eq!(t.depth(), DEPTH as u64 + 1);
+            assert_eq!(v.depth(), DEPTH as u64 + 2);
+            assert_eq!(v.measure_charge(), DEPTH as u128);
+            let text = v.serialize(&tys);
+            assert_eq!(text.len() as u64, v.serialized_len(&tys));
+            assert_eq!(v.ty(&mut tys), Some(t));
+            assert!(v.text(&tys).len() < 1100);
+            assert!(tys.text(t).len() < 1100);
+            let w = v.clone();
+            let same = v == w;
+            assert!(same);
+            let mut fuel = Fuel::new(u64::MAX);
+            let eq = container_op(BinOp::Eq, &v, &w, &mut fuel, &mut tys);
+            assert!(matches!(eq, Ok(Value::Bool(true))));
+            assert!(matches!(convert(t, &v, &mut fuel, &tys), Ok(None)));
+            let zero = tys.zero(t).map(|z| z.serialize(&tys));
+            assert_eq!(zero, Some(text.replace("(bool true)", "(bool false)")));
+            assert!(format!("{v:?}").len() > DEPTH);
+        });
+    }
+
     /// The type `(t, t)` doubled `levels` times: its term has `2^levels` leaves, and the
     /// table has one entry for each level.
     fn doubled(tys: &mut Types, mut t: TyId, levels: usize) -> TyId {
@@ -602,6 +644,20 @@ mod tests {
             t = tys.tuple(vec![t, t]);
         }
         t
+    }
+
+    /// A join that has fewer pairs in its budget than the fuel holds stops, and its units are
+    /// above any fuel. The walk makes no more than the budget of pairs.
+    #[test]
+    fn a_join_stops_at_its_budget() {
+        let mut tys = Types::default();
+        let (int, byte) = (tys.mk(Ty::Int), tys.mk(Ty::UInt(8)));
+        let (a, b) = (doubled(&mut tys, int, 100), doubled(&mut tys, byte, 100));
+        let before = tys.work();
+        let mut budget = 10;
+        let done = common_ty(a, b, &mut tys, &mut budget);
+        assert!(done.charge > Int::from_u64(u64::MAX));
+        assert!(tys.work() - before <= 4 * 10 + 8, "{}", tys.work() - before);
     }
 
     /// Two doubled types of 100 levels join in work linear in the levels, not in their terms.
