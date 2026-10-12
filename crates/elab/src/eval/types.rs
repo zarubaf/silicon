@@ -4,10 +4,11 @@
 //! specializations (design sections 5.1, 5.4, 5.5, and 5.6).
 //!
 //! A struct specialization is one entry of the table `Types` for its item and its static
-//! arguments after their typed use at the parameter types. A first use charges the size of the
-//! struct type, evaluates the field types, and charges the metadata. A later use finds the
-//! entry and charges nothing more than its node and its arguments. Thus a use of a struct
-//! type copies nothing: the arguments stay references until the first use pays for them.
+//! arguments after their typed use at the parameter types. Each use charges the sizes of its
+//! arguments before the lookup, because the lookup reads them in full. A first use then
+//! charges the size of the struct type, evaluates the field types, and charges the metadata. A
+//! later use finds the entry and charges nothing more. Thus a use of a struct type copies
+//! nothing: the arguments stay references until the first use pays for them.
 
 use super::{Evaluator, Out, ROOT, Res, Slot, at, fail, need, type_pos};
 use crate::Code;
@@ -275,9 +276,11 @@ impl Evaluator<'_> {
         }
     }
 
-    /// The specialization of the struct item `i` with the arguments `keys`. A done entry
-    /// charges nothing more. A first use charges the size of the struct type, evaluates the
-    /// field types, checks the depth of the struct type, and charges its metadata.
+    /// The specialization of the struct item `i` with the arguments `keys`. Each use charges
+    /// the sizes of the arguments before the lookup, which hashes and compares them in full.
+    /// A done entry charges nothing more. A first use charges the size of the struct type,
+    /// evaluates the field types, checks the depth of the struct type, and charges its
+    /// metadata.
     fn first_or_later_use(
         &mut self,
         pos: Pos,
@@ -287,6 +290,10 @@ impl Evaluator<'_> {
         fields: &[StructField],
     ) -> Res<TyId> {
         let values: Vec<&Value> = keys.iter().map(|o| self.store.value(o)).collect();
+        let sizes = values
+            .iter()
+            .fold(0u64, |sum, v| sum.saturating_add(v.size()));
+        self.fuel.pay(u128::from(sizes)).map_err(at(pos))?;
         match self.tys.find_spec(i, &values) {
             Some((_, Some(t))) => return Ok(t),
             Some((s, None)) => {
@@ -301,10 +308,7 @@ impl Evaluator<'_> {
             }
             None => {}
         }
-        let size = values
-            .iter()
-            .fold(1u64, |sum, v| sum.saturating_add(v.size()));
-        self.fuel.pay(u128::from(size)).map_err(at(pos))?;
+        self.fuel.pay(1 + u128::from(sizes)).map_err(at(pos))?;
         let args: Vec<Value> = values.into_iter().cloned().collect();
         let s = self.tys.begin_spec(&name.name, i, args);
         let mut types = Vec::with_capacity(fields.len());

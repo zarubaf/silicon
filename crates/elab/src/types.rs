@@ -211,6 +211,26 @@ fn fingerprint<'a>(item: usize, args: impl IntoIterator<Item = &'a Value>) -> u6
     h.finish()
 }
 
+/// The work of a hash and a comparison of `v`: 1 for each node and each word of an integer. A
+/// type is an id, so it is 1.
+#[cfg(test)]
+fn read_work(v: &Value) -> u64 {
+    let mut sum = 0;
+    let mut work = vec![v];
+    while let Some(v) = work.pop() {
+        sum += match v {
+            Value::Int(n) => int_size(n),
+            Value::Str(s) => 1 + s.len() as u64,
+            Value::Array(_, xs) | Value::Tuple(xs) | Value::Record(_, xs) => {
+                work.extend(xs);
+                1
+            }
+            _ => 1,
+        };
+    }
+    sum
+}
+
 /// The table of the static types of one elaboration. A structurally equal type has one id, so
 /// a copy of a type and an equality of two types are constant work. A container type holds
 /// the ids of its parts, so a new type costs work in its own arity only. The table grows only
@@ -501,11 +521,12 @@ impl Types {
     }
 
     /// The specialization of the struct item `item` with the arguments `args`, and its struct
-    /// type if it is done. The fingerprint narrows the search, and the arguments decide.
+    /// type if it is done. The fingerprint narrows the search, and the arguments decide. The
+    /// hash and the comparison read each argument in full, so the caller pays their sizes.
     #[must_use]
     pub fn find_spec(&self, item: usize, args: &[&Value]) -> Option<(SpecId, Option<TyId>)> {
         #[cfg(test)]
-        self.tick(1 + args.len() as u64);
+        self.tick(1 + args.iter().map(|v| read_work(v)).sum::<u64>());
         let bucket = self
             .spec_index
             .get(&fingerprint(item, args.iter().copied()))?;
