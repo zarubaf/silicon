@@ -35,6 +35,8 @@ pub enum Code {
     S006,
     /// A wrong number of arguments that only elaboration finds.
     S007,
+    /// A `mut` actual or a list place that is not a place.
+    S008,
     /// A type error.
     S010,
     /// A static position has a value that is not static.
@@ -47,6 +49,8 @@ pub enum Code {
     S014,
     /// The fuel or the nesting depth is exhausted.
     S015,
+    /// A hardware arm changes a binding from before the arm.
+    S016,
     /// A resource rule: a bad `:=` target, a read of a child input, or a register or a
     /// clocked child in a combinational module.
     S017,
@@ -64,12 +68,14 @@ impl fmt::Display for Code {
         f.write_str(match self {
             Code::S006 => "S006",
             Code::S007 => "S007",
+            Code::S008 => "S008",
             Code::S010 => "S010",
             Code::S011 => "S011",
             Code::S012 => "S012",
             Code::S013 => "S013",
             Code::S014 => "S014",
             Code::S015 => "S015",
+            Code::S016 => "S016",
             Code::S017 => "S017",
             Code::S018 => "S018",
             Code::S019 => "S019",
@@ -223,6 +229,9 @@ fn top_selection(
     }
     Err(Abort::Usage(format!("`{m}` is not a module of the file")))
 }
+
+#[cfg(test)]
+mod counters;
 
 #[cfg(test)]
 mod tests;

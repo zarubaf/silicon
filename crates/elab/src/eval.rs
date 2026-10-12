@@ -20,6 +20,7 @@ mod call;
 mod container;
 mod hwops;
 mod inst;
+mod list;
 mod place;
 mod record;
 mod string;
@@ -173,7 +174,7 @@ fn element<'a>(v: &'a Value, path: &[usize], steps: &Cell<u64>) -> &'a Value {
     let mut cur = v;
     for &k in path {
         cur = match cur {
-            Value::Array(_, xs) | Value::Tuple(xs) | Value::Record(_, xs) => {
+            Value::Array(_, xs) | Value::Tuple(xs) | Value::Record(_, xs) | Value::List(_, xs) => {
                 xs.get(k).unwrap_or(&ABSENT_VALUE)
             }
             _ => &ABSENT_VALUE,
@@ -193,6 +194,29 @@ impl Store {
 
     fn frame(&self) -> Option<&Frame> {
         self.frames.last()
+    }
+
+    /// The part of the live value of the local at `root` at the numbers `keys`, for a change in
+    /// place: one walk down the path. A root that is not a static local has no part.
+    fn part_mut(&mut self, root: Root, keys: &[usize]) -> Option<&mut Value> {
+        let Root::Local(frame, id) = root else {
+            return None;
+        };
+        self.steps.set(self.steps.get() + keys.len() as u64);
+        let Val::Static(value) = &mut self.frames.get_mut(frame)?.get_mut(&id)?.value else {
+            return None;
+        };
+        let mut cur = value;
+        for &k in keys {
+            cur = match cur {
+                Value::Array(_, xs)
+                | Value::Tuple(xs)
+                | Value::Record(_, xs)
+                | Value::List(_, xs) => xs.get_mut(k)?,
+                _ => return None,
+            };
+        }
+        Some(cur)
     }
 
     /// Links the parameter `id` of the frame `frame` to the argument `r` of the caller.
@@ -363,6 +387,8 @@ struct Evaluator<'a> {
     item: usize,
     frame: FrameRef,
     elab: Elab,
+    /// The nesting depth at the start of the innermost hardware arm (section 9.4).
+    arm: Option<u64>,
 }
 
 /// Why an evaluation stops: its first error, or a deeper level for which the machine cannot
@@ -485,6 +511,7 @@ impl<'a> Evaluator<'a> {
             item: 0,
             frame: ROOT,
             elab,
+            arm: None,
         }
     }
 }
@@ -978,8 +1005,12 @@ impl Evaluator<'_> {
                             format!("a condition is a Bool, not {}", self.tys.text_of(&ty)),
                         );
                     }
-                    let a = self.operand(*pos, yes)?;
-                    let b = self.operand(*pos, no)?;
+                    let saved = self.arm.replace(self.depth);
+                    let arms = self
+                        .operand(*pos, yes)
+                        .and_then(|a| Ok((a, self.operand(*pos, no)?)));
+                    self.arm = saved;
+                    let (a, b) = arms?;
                     Ok(Some(Out::Made(self.mux(*pos, c, a, b)?)))
                 }
                 Opnd::Static(c) => {

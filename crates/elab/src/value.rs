@@ -356,6 +356,8 @@ impl Value {
         let mut sum = 0u64;
         let mut work = vec![self];
         while let Some(v) = work.pop() {
+            #[cfg(test)]
+            crate::counters::add(&crate::counters::WALKED, 1);
             let own = match v {
                 Value::Int(n) => int_size(n),
                 Value::Bool(_) | Value::Unit => 1,
@@ -383,6 +385,8 @@ impl Value {
         let mut deepest = 0;
         let mut work = vec![(self, 0u64)];
         while let Some((v, above)) = work.pop() {
+            #[cfg(test)]
+            crate::counters::add(&crate::counters::WALKED, 1);
             let own = match v {
                 Value::Type(t) => t.depth(),
                 Value::Array(t, xs) | Value::Record(t, xs) | Value::List(t, xs) => {

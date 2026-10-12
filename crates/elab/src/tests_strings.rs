@@ -4,8 +4,10 @@
 //! formals. The charges are exact: the cost is the number, this fuel passes, and one unit less
 //! gives `S015`. The tests of the work count steps and copies and not the time.
 
+use crate::counters::{JOINED, WALKED, get};
 use crate::eval::{COPIES, COUNTS, Counts};
-use crate::tests::{cost, exact, out};
+use crate::tests::{cost, exact, out, path_steps};
+use std::sync::atomic::Ordering;
 
 /// The result of `eval` with the default budgets.
 fn o(src: &str, expr: &str) -> String {
@@ -172,4 +174,169 @@ fn a_join_in_a_loop_makes_one_string_for_each_step() {
     let fuel = 5_000_000 + 12;
     assert_eq!(out(&src, "f()", fuel, 1000), "(int 24)");
     assert_eq!(work(fuel).0, 0);
+}
+
+/// `list(T)` makes an empty list. It charges its node, the callee, the copy of `T`, and 1 for
+/// the list.
+#[test]
+fn the_empty_list() {
+    assert_eq!(o("", "list(Int)"), "(list int ())");
+    exact("", "list(Int)", 5);
+    assert_eq!(o("", "list(1)"), "S010 1:1");
+    assert_eq!(depth("", "list(List[Int])", 2), "S015 1:1");
+}
+
+/// The list functions on a `let mut` place, each on its own line.
+const LISTS: &str = "comptime fn f() -> List[Int] { let mut xs = list(Int); push(xs, 1); push(xs, 2); \
+    return xs; }\n\
+    comptime fn g() -> Int { let mut xs = list(Int); push(xs, 7); return pop(xs); }\n\
+    comptime fn h() -> Int { let mut xs = list(Int); return pop(xs); }\n\
+    comptime fn i() -> List[Int] { let mut xs = f(); xs[0] = 5; return xs; }\n\
+    comptime fn u() -> List[UInt[8]] { let mut xs = list(UInt[8]); push(xs, 1); return xs; }\n\
+    comptime fn v() -> Int { let mut xs = list(UInt[8]); push(xs, 300); return 0; }\n\
+    comptime fn w() -> Int { let mut xs = list(Int); push(xs, true); return 0; }\n\
+    comptime fn a() -> Int { let mut x = 1; push(x, 1); return 0; }\n\
+    comptime fn t() -> (List[Int], Int) { let mut t = (list(Int), 1); push(t.0, 3); return t; }\n\
+    comptime fn d() -> Int { let mut xs = list(Type); push(xs, List[List[Int]]); return 0; }\n\
+    comptime fn e() -> List[[Int; 0]] { let mut xs = list([Int; 0]); push(xs, []); return xs; }\n";
+
+/// `push` and `pop` change the list place. `pop` of an empty list is `S013` at the call.
+/// `push` makes the typed use of its element, and a value that does not fit is `S012` at the
+/// call. The source skips the pre-check where it names `S008`, so the cases run on the checked
+/// part only.
+#[test]
+fn push_and_pop() {
+    assert_eq!(o(LISTS, "f()"), "(list int ((int 1) (int 2)))");
+    assert_eq!(o(LISTS, "g()"), "(int 7)");
+    assert_eq!(o(LISTS, "h()"), "S013 3:57");
+    assert_eq!(o(LISTS, "u()"), "(list (uint 8) ((uint 8 1)))");
+    assert_eq!(o(LISTS, "v()"), "S012 6:54");
+    assert_eq!(o(LISTS, "w()"), "S010 7:50");
+    assert_eq!(o(LISTS, "a()"), "S010 8:41");
+    assert_eq!(o(LISTS, "t()"), "(tuple ((list int ((int 3))) (int 1)))");
+    assert_eq!(o(LISTS, "e()"), "(list (array int 0) ((array int ())))");
+}
+
+/// `f()` costs 31 units: the call 2, its result type 5, its body block 1, the `let` 6, each
+/// `push` 6, and the `return` 5. Each `push` costs its statement 1, its node 1, its callee 1,
+/// the literal 2, and the size of the element 1.
+#[test]
+fn the_charges_of_push_and_pop() {
+    exact(LISTS, "f()", 31);
+    exact(LISTS, "g()", 21);
+}
+
+/// The new depth of a list comes from the element alone.
+#[test]
+fn the_depth_of_a_push() {
+    assert_eq!(depth(LISTS, "d()", 3), "S015 10:51");
+    assert_eq!(depth(LISTS, "d()", 4), "(int 0)");
+    // The root counts the steps of the place: the list is two tuples deep, so the push makes the
+    // root 5 deep.
+    let deep = "comptime fn d() -> Int { let mut t = ((list(Type),),); \
+        push(t.0.0, List[Int]); return 0; }\n";
+    assert_eq!(depth(deep, "d()", 5), "(int 0)");
+    assert_eq!(depth(deep, "d()", 4), "S015 1:56");
+}
+
+/// `len` and an index refer to a list, and an index of a list is also a step of a place.
+#[test]
+fn the_index_and_the_length_of_a_list() {
+    assert_eq!(o(LISTS, "len(f())"), "(int 2)");
+    assert_eq!(o(LISTS, "f()[1]"), "(int 2)");
+    assert_eq!(o(LISTS, "f()[2]"), "S013 1:5");
+    assert_eq!(o(LISTS, "i()"), "(list int ((int 5) (int 2)))");
+}
+
+/// `==` on two lists joins their element types. Two lists of different lengths are unequal.
+/// No ordering takes a list. An array of lists joins the list types.
+#[test]
+fn the_equality_of_lists() {
+    assert_eq!(o(LISTS, "f() == f()"), "(bool true)");
+    assert_eq!(o(LISTS, "f() == list(Int)"), "(bool false)");
+    assert_eq!(o(LISTS, "f() == u()"), "(bool false)");
+    assert_eq!(o(LISTS, "list(Int) == list(Bool)"), "S010 1:1");
+    assert_eq!(o(LISTS, "f() < f()"), "S010 1:1");
+    assert_eq!(
+        o(LISTS, "[f(), list(Int)]"),
+        "(array (list int) ((list int ((int 1) (int 2))) (list int ())))"
+    );
+}
+
+/// B1: a join makes its string after its charge. The fuel 14 cannot pay the join, which is the
+/// last charge of 15, and so no byte joins.
+#[test]
+fn a_join_follows_its_charge() {
+    JOINED.store(0, Ordering::Relaxed);
+    assert!(out("", "\"ab\" + \"cd\"", 14, 1000).starts_with("S015"));
+    assert_eq!(get(&JOINED), 0);
+    assert_eq!(out("", "\"ab\" + \"cd\"", 15, 1000), "(string \"abcd\")");
+    assert_eq!(get(&JOINED), 4);
+}
+
+/// The list `f` that pushes `n` integers, then pops them.
+fn pushes(n: u64) -> String {
+    format!(
+        "comptime fn f() -> Int {{ let mut xs = list(Int); \
+         comptime for i in 0..{n} {{ push(xs, i); }} \
+         comptime for i in 0..{n} {{ let y = pop(xs); }} return 0; }}"
+    )
+}
+
+/// B5: a push reads the depth of its element and the length of its place path, and no walk
+/// enters the list. The nodes that the walks visit grow in the number of pushes, not in the
+/// square of it.
+#[test]
+fn a_push_does_not_walk_the_list() {
+    let walked = |n: u64| {
+        let src = pushes(n);
+        WALKED.store(0, Ordering::Relaxed);
+        assert_eq!(out(&src, "f()", 100_000_000, 1000), "(int 0)");
+        get(&WALKED)
+    };
+    let (small, large) = (walked(200), walked(400));
+    assert!(
+        large < 5 * small / 2,
+        "{small} nodes for 200 pushes, {large} for 400"
+    );
+}
+
+/// B4: a push or a pop changes its list in one walk down the path of the place, so the steps
+/// follow the length of the path and not the length of the list, and nothing copies the list.
+#[test]
+fn a_push_and_a_pop_walk_their_path_once() {
+    let steps = |depth: usize, n: u64| {
+        let (open, close) = ("(".repeat(depth), ",)".repeat(depth));
+        let place = format!("t{}", ".0".repeat(depth));
+        let src = format!(
+            "comptime fn f() -> Int {{ let mut t = {open}list(Int){close}; \
+             comptime for i in 0..{n} {{ push({place}, i); }} \
+             comptime for i in 0..{n} {{ let y = pop({place}); }} return 0; }}"
+        );
+        path_steps(&src, "f()")
+    };
+    let depth = 40usize;
+    let each = (steps(depth, 30) - steps(depth, 10)) / 40;
+    assert!(
+        each <= 2 * depth as u64 + 2,
+        "{each} steps for a depth of {depth}"
+    );
+}
+
+/// B2: an element that a reference names copies after its charge. A fuel that cannot pay the
+/// size of the element copies nothing, and a fuel that can copies the element once.
+#[test]
+fn a_pushed_element_copies_after_its_charge() {
+    let zeros = vec!["0"; 1000].join(", ");
+    let src = format!(
+        "const big: [Int; 1000] = [{zeros}];\n\
+         comptime fn f() -> Int {{ let mut xs = list([Int; 1000]); push(xs, big); return 0; }}"
+    );
+    let full = cost(&src, "f()");
+    // The size of the element, 1,001, is the charge before the last 4 units.
+    let short = full - 500;
+    assert!(out(&src, "f()", short, 1000).starts_with("S015"));
+    assert_eq!(work(short).0, 0);
+    assert_eq!(out(&src, "f()", full, 1000), "(int 0)");
+    assert_eq!(work(full).0, 1001);
 }

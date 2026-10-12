@@ -4,7 +4,7 @@
 //! result is the copy. An assignment to a place updates the one element in the local, because
 //! no other binding shares the container. A read and a place each walk their path once.
 
-use super::{Evaluator, Frame, Opnd, Out, Res, Slot, expr_pos, fail, need, same_form};
+use super::{Evaluator, Frame, Opnd, Out, Res, expr_pos, fail, need, same_form};
 use crate::Code;
 use crate::hw::{Ref, Root, Seen, Val};
 use crate::int::Int;
@@ -12,7 +12,7 @@ use crate::ops::int_text;
 use crate::types::TyId;
 use crate::value::Value;
 use parse::ast::{Expr, Ident, Nat, Pos};
-use resolve::Target;
+use resolve::{DeclId, Target};
 use std::borrow::Cow;
 
 /// A step of a place or a read after its root: an index at the position with its arguments,
@@ -47,6 +47,36 @@ enum Known {
     Ty(TyId),
     Absent,
     Element,
+}
+
+/// What the part of a place is, for the operations that change it in place.
+#[derive(Clone, Copy)]
+pub(super) enum Held {
+    /// A list with its element type and its length.
+    List {
+        elem: TyId,
+        len: usize,
+    },
+    Other,
+}
+
+/// The result of the walk along a place.
+struct Walked {
+    keys: Vec<usize>,
+    ty: Option<TyId>,
+    in_list: bool,
+    held: Held,
+}
+
+/// A place after its steps (section 5.2): its root, the number of each step, and the type and
+/// the kind of the part. `in_list` tells if the container of the last step is a list.
+pub(super) struct Place {
+    pub(super) root: Root,
+    pub(super) id: DeclId,
+    pub(super) keys: Vec<usize>,
+    pub(super) ty: Option<TyId>,
+    pub(super) in_list: bool,
+    pub(super) held: Held,
 }
 
 /// A static index, read once when it evaluates: its number, the text of an integer that no
@@ -95,22 +125,6 @@ fn chain(e: &Expr) -> Option<(&Expr, Vec<Sel<'_>>)> {
     }
 }
 
-/// The container `v` with the element at the numbers `keys` replaced by `w`. No other binding
-/// shares the container, so the update is in place.
-fn replace(v: &mut Value, keys: &[usize], w: Value) {
-    let mut cur = v;
-    for &k in keys {
-        cur = match cur {
-            Value::Array(_, xs) | Value::Tuple(xs) | Value::Record(_, xs) => match xs.get_mut(k) {
-                Some(x) => x,
-                None => return,
-            },
-            _ => return,
-        };
-    }
-    *cur = w;
-}
-
 /// The element `k` of the container `b`, as a reference to it. An index or a selector refers
 /// to an element, so a binding of the result is a copy.
 pub(super) fn elem(b: Opnd, k: usize) -> Out {
@@ -130,7 +144,7 @@ pub(super) fn elem(b: Opnd, k: usize) -> Out {
 /// The element `k` of an owned container.
 fn take_element(v: &mut Value, k: usize) -> Value {
     match v {
-        Value::Array(_, xs) | Value::Tuple(xs) | Value::Record(_, xs) => xs
+        Value::Array(_, xs) | Value::Tuple(xs) | Value::Record(_, xs) | Value::List(_, xs) => xs
             .get_mut(k)
             .map_or(Value::Unit, |x| std::mem::replace(x, Value::Unit)),
         _ => Value::Unit,
@@ -169,12 +183,15 @@ impl Evaluator<'_> {
     /// of the index (`S010`), then its range (`S013`).
     pub(super) fn pick_at(&self, pos: Pos, q: Pos, base: Seen<'_>, i: &Index) -> Res<usize> {
         let len = match base {
-            Seen::Static(Value::Array(_, xs) | Value::Tuple(xs)) => xs.len(),
+            Seen::Static(Value::Array(_, xs) | Value::Tuple(xs) | Value::List(_, xs)) => xs.len(),
             s => {
                 return fail(
                     Code::S010,
                     pos,
-                    format!("an index needs an array or a tuple, not {}", self.text(s)),
+                    format!(
+                        "an index needs an array, a list, or a tuple, not {}",
+                        self.text(s)
+                    ),
                 );
             }
         };
@@ -491,28 +508,57 @@ impl Evaluator<'_> {
         Ok(Some(Out::Made(Val::Static(Value::Int(Int::from_u64(n))))))
     }
 
-    /// An assignment to a `let mut` local, or to a part of it by indices and selectors `.N`.
-    /// The root name charges nothing. Each step charges 1 at its node, then its index
-    /// evaluates, from the root outward. Then the right side evaluates, with the type of the
-    /// element as its type.
+    /// An assignment to a `let mut` local, or to a part of it by indices, selectors `.N`, and
+    /// fields. The place resolves first (`place_at`). Then the right side evaluates, with the
+    /// type of the part as its type.
+    pub(super) fn assign(&mut self, pos: Pos, target: &Expr, value: &Expr) -> Res<Option<Val>> {
+        let place = self.place_at(pos, Code::S010, target)?;
+        let o = self.eval(value)?;
+        let o = need(value, o)?;
+        self.copy(pos, &o)?;
+        let y = if let Some(t) = place.ty {
+            self.conform_val(pos, t, o)?
+        } else {
+            let old = self.store.current(place.root, &place.keys);
+            let new = self.store.seen(&o);
+            if !same_form(old, new) {
+                return fail(
+                    Code::S010,
+                    pos,
+                    format!(
+                        "expected {}, but the value is {}",
+                        self.text(old),
+                        self.text(new)
+                    ),
+                );
+            }
+            self.store.take(o)
+        };
+        self.store_at(pos, expr_pos(value), &place, y)?;
+        Ok(None)
+    }
+
+    /// The place `target` at `pos` (section 5.2). Its root is a `let mut` local, else the error
+    /// is `code` at `pos`. The root name charges nothing. Each step charges 1 at its node, then
+    /// its index evaluates, from the root outward.
     ///
     /// Lean checks the container and the index of each step before the next step charges.
     /// Here the checks run in one walk along the path after the indices, so no step walks
     /// again from the root. `S008` keeps the root unchanged while the indices evaluate, and
     /// a failed check comes before an error of a later step. Thus the first error is that of
     /// Lean.
-    pub(super) fn assign(&mut self, pos: Pos, target: &Expr, value: &Expr) -> Res<Option<Val>> {
+    pub(super) fn place_at(&mut self, pos: Pos, code: Code, target: &Expr) -> Res<Place> {
         let bad = || {
             fail(
-                Code::S010,
+                code,
                 pos,
-                "an assignment target is a `let mut` local".to_owned(),
+                "the root of a place is a `let mut` local".to_owned(),
             )
         };
         let Some((Expr::Name { id: root_id, .. }, steps)) = chain(target) else {
             return bad();
         };
-        let place = match self.target(*root_id) {
+        let found = match self.target(*root_id) {
             Some(Target::Decl(id)) => self
                 .store
                 .frame()
@@ -521,7 +567,7 @@ impl Evaluator<'_> {
                 .map(|s| (id, s.ty)),
             _ => None,
         };
-        let Some((id, slot_ty)) = place else {
+        let Some((id, slot_ty)) = found else {
             return bad();
         };
         let frame = self.store.frames.len().saturating_sub(1);
@@ -537,47 +583,46 @@ impl Evaluator<'_> {
                 }
             }
         }
-        let (keys, ty) = self.walk(root, slot_ty, &keyed)?;
+        let walked = self.walk(root, slot_ty, &keyed)?;
         if let Some(e) = stop {
             return Err(e);
         }
-        let o = self.eval(value)?;
-        let o = need(value, o)?;
-        self.copy(pos, &o)?;
-        let y = if let Some(t) = ty {
-            self.conform_val(pos, t, o)?
-        } else {
-            let old = self.store.current(root, &keys);
-            let new = self.store.seen(&o);
-            if !same_form(old, new) {
-                return fail(
-                    Code::S010,
-                    pos,
-                    format!(
-                        "expected {}, but the value is {}",
-                        self.text(old),
-                        self.text(new)
-                    ),
-                );
-            }
-            self.store.take(o)
-        };
-        if keys.is_empty() {
-            let y = self.named(pos, id, y);
-            if let Some(slot) = self.store.frame_mut().and_then(|f| f.get_mut(&id)) {
+        Ok(Place {
+            root,
+            id,
+            keys: walked.keys,
+            ty: walked.ty,
+            in_list: walked.in_list,
+            held: walked.held,
+        })
+    }
+
+    /// Writes `y` into the place (section 5.2). A place without a step binds its root again, so
+    /// a hardware value gets the next version of the root. A step writes into the live value
+    /// of the root. A list holds no hardware value: `S011` at `q`, the node of the value. A
+    /// container holds no hardware value in this phase: `S010`.
+    pub(super) fn store_at(&mut self, pos: Pos, q: Pos, place: &Place, y: Val) -> Res<()> {
+        if place.keys.is_empty() {
+            let y = self.named(pos, place.id, y);
+            if let Root::Local(frame, id) = place.root
+                && let Some(slot) = self
+                    .store
+                    .frames
+                    .get_mut(frame)
+                    .and_then(|f| f.get_mut(&id))
+            {
                 slot.value = y;
             }
-            return Ok(None);
+            return Ok(());
         }
-        let w = self.item(expr_pos(value), y)?;
-        if let Some(Slot {
-            value: Val::Static(r),
-            ..
-        }) = self.store.frame_mut().and_then(|f| f.get_mut(&id))
-        {
-            replace(r, &keys, w);
+        if place.in_list && matches!(y, Val::Hw(_)) {
+            return fail(Code::S011, q, "a list holds no hardware value".to_owned());
         }
-        Ok(None)
+        let w = self.item(q, y)?;
+        if let Some(part) = self.store.part_mut(place.root, &place.keys) {
+            *part = w;
+        }
+        Ok(())
     }
 
     /// The step `step` of a place or a read with its index, which gets its static check.
@@ -610,14 +655,10 @@ impl Evaluator<'_> {
     /// step without a type the type stays that of the element until an array gives its
     /// element type. Thus the walk finds the type of a tuple element only once, at the end,
     /// and not at each step.
-    fn walk(
-        &mut self,
-        root: Root,
-        ty: Option<TyId>,
-        keyed: &[Key<'_>],
-    ) -> Res<(Vec<usize>, Option<TyId>)> {
+    fn walk(&mut self, root: Root, ty: Option<TyId>, keyed: &[Key<'_>]) -> Res<Walked> {
         let mut keys = Vec::with_capacity(keyed.len());
         let mut cur = self.store.current(root, &[]);
+        let mut in_list = false;
         let mut known = match ty {
             Some(t) => Known::Ty(t),
             None => Known::Absent,
@@ -634,18 +675,35 @@ impl Evaluator<'_> {
             known = match (field, known, cur) {
                 (Some(ft), _, _) => Known::Ty(ft),
                 (None, Known::Ty(t), _) => self.tys.part(t, k).map_or(Known::Absent, Known::Ty),
-                (None, Known::Element, Seen::Static(Value::Array(elem, _))) => Known::Ty(*elem),
+                (
+                    None,
+                    Known::Element,
+                    Seen::Static(Value::Array(elem, _) | Value::List(elem, _)),
+                ) => Known::Ty(*elem),
                 (None, Known::Absent | Known::Element, _) => Known::Element,
             };
+            in_list = matches!(cur, Seen::Static(Value::List(..)));
             cur = self.store.step(cur, k);
             keys.push(k);
         }
+        let held = match cur {
+            Seen::Static(Value::List(elem, xs)) => Held::List {
+                elem: *elem,
+                len: xs.len(),
+            },
+            _ => Held::Other,
+        };
         let ty = match known {
             Known::Ty(t) => Some(t),
             Known::Absent => None,
             Known::Element => cur.ty(&self.graph, &mut self.tys),
         };
-        Ok((keys, ty))
+        Ok(Walked {
+            keys,
+            ty,
+            in_list,
+            held,
+        })
     }
 
     /// The value of an element of a container in this phase. A hardware value is `S010`,
