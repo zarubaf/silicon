@@ -6,7 +6,7 @@
 
 use crate::counters::{JOINED, WALKED, get};
 use crate::eval::{COPIES, COUNTS, Counts};
-use crate::tests::{cost, exact, out, path_steps};
+use crate::tests::{cost, exact, message, out, path_steps};
 use std::sync::atomic::Ordering;
 
 /// The result of `eval` with the default budgets.
@@ -476,4 +476,16 @@ fn a_result_keeps_the_value_that_its_expression_read() {
     ] {
         assert_eq!(o(ALIAS, expr), expected, "{expr}");
     }
+}
+
+/// The message of a `mut` actual of another type names the type of the place and the type of
+/// the formal, as Lean does.
+#[test]
+fn the_message_of_a_mut_actual_names_both_types() {
+    let src = "comptime fn up(mut n: Int) -> Int { return n; }\n\
+        comptime fn f() -> Int { let mut x: Nat = 1; return up(x); }";
+    assert_eq!(
+        message(src, "f()"),
+        "a `mut` actual has the type Nat, but its formal has Int"
+    );
 }

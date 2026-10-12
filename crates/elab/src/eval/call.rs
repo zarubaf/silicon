@@ -299,13 +299,14 @@ impl Evaluator<'_> {
                     .ty
                     .or_else(|| self.store.seen(&part).ty(&self.graph, &mut self.tys));
                 if ty != Some(t) {
+                    let actual = ty
+                        .map_or_else(|| self.text(self.store.seen(&part)), |ty| self.tys.text(ty));
                     return fail(
                         Code::S010,
                         pos,
                         format!(
-                            "a `mut` actual has the type {}, not {}",
-                            self.tys.text(t),
-                            self.text(self.store.seen(&part))
+                            "a `mut` actual has the type {actual}, but its formal has {}",
+                            self.tys.text(t)
                         ),
                     );
                 }
