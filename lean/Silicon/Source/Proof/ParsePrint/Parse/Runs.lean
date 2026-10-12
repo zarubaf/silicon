@@ -166,7 +166,7 @@ theorem BinOp.level_pos (op : BinOp) : 1 ≤ op.level := by cases op <;> decide
 theorem BinOp.level_lt (op : BinOp) : op.level < 10 := by cases op <;> decide
 
 theorem Expr.toks_head11 (e : Expr) : ∃ k, (e.toks 11).head? = some k ∧ PStart k := by
-  induction e using Expr.erase.induct with
+  induction e using Expr.ind with
   | case1 p v => exact ⟨_, by simp [Expr.toks, Expr.level, postfixLevel], Or.inr (Or.inl ⟨v, rfl⟩)⟩
   | case2 p v => exact ⟨.keyword (boolean v), by simp [Expr.toks, Expr.level, postfixLevel], by
       cases v <;> simp [boolean, PStart]⟩
@@ -195,7 +195,7 @@ theorem Expr.toks_head11 (e : Expr) : ∃ k, (e.toks 11).head? = some k ∧ PSta
     exact ⟨k, by simp [Expr.toks, Expr.level, postfixLevel, List.head?_append, h], hk⟩
   | case11 | case12 => exact ⟨_, by simp [Expr.toks, Expr.level, postfixLevel],
       Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl rfl)))))⟩
-  | case13 => exact ⟨_, by simp [Expr.toks, Expr.level, postfixLevel],
+  | case13 | case15 => exact ⟨_, by simp [Expr.toks, Expr.level, postfixLevel],
       Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr rfl)))))⟩
   | case14 p b q i ihb =>
     obtain ⟨k, h, hk⟩ := ihb
@@ -214,7 +214,7 @@ theorem Expr.toks_head_post (e : Expr) (hl : e.level = 11) (c : Nat) :
     exact ⟨k, h, hk.ne⟩
 
 theorem Expr.toks_head (e : Expr) : ∀ c, ∃ k, (e.toks c).head? = some k ∧ NotClose k := by
-  induction e using Expr.erase.induct with
+  induction e using Expr.ind with
   | case5 p op a _ =>
     intro c; rw [Expr.toks_paren]; split
     · exact ⟨_, rfl, by simp [NotClose]⟩

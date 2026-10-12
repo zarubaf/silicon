@@ -28,8 +28,11 @@ a check here:
 - Each number is below 2^65536: `Expr.printable` at `num` and at `select`.
 
 The proof covers the container forms of slice 2. These are the unit value, the unit type, a
-tuple, an array, an array type `[T; N]`, and a selector `.N`.
+tuple, an array, an array type `[T; N]`, and a selector `.N`. It does not cover the type forms
+of phase 3 yet: a `struct` item, a `type` item or statement, and an array type in an expression.
+`Printable` excludes them.
 -/
+-- TODO(#178): extend the proof to the type forms of phase 3.
 namespace Silicon.Source
 
 /-! The erased position. -/
@@ -37,6 +40,7 @@ def Pos.zero : Pos := ⟨0, 0⟩
 
 def Ident.erase (i : Ident) : Ident := ⟨Pos.zero, i.name⟩
 
+mutual
 def Expr.erase : Expr → Expr
   | .num _ v => .num Pos.zero v
   | .bool _ v => .bool Pos.zero v
@@ -52,6 +56,7 @@ def Expr.erase : Expr → Expr
   | .tuple _ xs => .tuple Pos.zero (xs.map Expr.erase)
   | .array _ xs => .array Pos.zero (xs.map Expr.erase)
   | .select _ b _ i => .select Pos.zero b.erase Pos.zero i
+  | .arrayType _ t n => .arrayType Pos.zero t.erase n.erase
 
 def TypeExpr.erase : TypeExpr → TypeExpr
   | .name _ n => .name Pos.zero n
@@ -59,6 +64,7 @@ def TypeExpr.erase : TypeExpr → TypeExpr
   | .unit _ => .unit Pos.zero
   | .tuple _ ts => .tuple Pos.zero (ts.map TypeExpr.erase)
   | .array _ t n => .array Pos.zero t.erase n.erase
+end
 
 def Stmt.erase : Stmt → Stmt
   | .local _ m n ty v => .local Pos.zero m n.erase (ty.map TypeExpr.erase) v.erase
@@ -75,8 +81,11 @@ def Stmt.erase : Stmt → Stmt
   | .ctFor _ i lo hi b => .ctFor Pos.zero i.erase lo.erase hi.erase (b.map Stmt.erase)
   | .block _ b => .block Pos.zero (b.map Stmt.erase)
   | .expr _ v => .expr Pos.zero v.erase
+  | .alias _ n ty => .alias Pos.zero n.erase ty.erase
 
 def Param.erase (p : Param) : Param := ⟨Pos.zero, p.comptime, p.name.erase, p.ty.erase⟩
+
+def StructField.erase (f : StructField) : StructField := ⟨f.name.erase, f.ty.erase⟩
 
 def Item.erase : Item → Item
   | .const _ n ty v => .const Pos.zero n.erase ty.erase v.erase
@@ -85,6 +94,8 @@ def Item.erase : Item → Item
   | .module _ n ps ds b =>
     .module Pos.zero n.erase (ps.map Param.erase) (ds.map (·.map Ident.erase))
       (b.map Stmt.erase)
+  | .struct _ n ps fs => .struct Pos.zero n.erase (ps.map Param.erase) (fs.map StructField.erase)
+  | .alias _ n ty => .alias Pos.zero n.erase ty.erase
 
 namespace ParsePrint
 
@@ -131,6 +142,7 @@ mutual
     | .tuple _ xs => !xs.isEmpty && Expr.printableAll xs
     | .array _ xs => Expr.printableAll xs
     | .select _ b _ i => b.printable && i < numberBound
+    | .arrayType .. => false
 
   def Expr.printableAll : List Expr → Bool
     | [] => true
@@ -170,6 +182,7 @@ mutual
       validName i.name && lo.printable && hi.printable && Stmt.printableAll plain b
     | .block _ b => Stmt.printableAll plain b
     | .expr _ v => v.printable
+    | .alias .. => false
 
   def Stmt.printableAll (plain : Bool) : List Stmt → Bool
     | [] => true
@@ -187,6 +200,7 @@ def Item.printable : Item → Bool
   | .module _ n ps ds b => validName n.name && ps.all (Param.printable true)
       && ds.all (fun ds => ds.length ≤ 1 && ds.all (validName ·.name))
       && Stmt.printableAll false b
+  | .struct .. | .alias .. => false
 
 namespace ParsePrint
 
@@ -198,16 +212,63 @@ instance (items : List Item) : Decidable (Printable items) :=
 
 end ParsePrint
 
+/-!
+These two induction principles follow the cases of `Expr.erase` and `TypeExpr.erase`. The
+principle for an expression has no hypothesis for a type expression in it. The principle for a
+type expression has no hypothesis for an expression in it. A proof for a `Printable` AST needs
+no other hypothesis. `Printable` excludes an array type in an expression, and a proof for a type
+expression uses a separate lemma for an expression.
+-/
+
+theorem Expr.ind (motive : Expr → Prop)
+    (case1 : ∀ pos v, motive (.num pos v))
+    (case2 : ∀ pos v, motive (.bool pos v))
+    (case3 : ∀ pos v, motive (.str pos v))
+    (case4 : ∀ pos n, motive (.name pos n))
+    (case5 : ∀ pos op a, motive a → motive (.unary pos op a))
+    (case6 : ∀ pos op l r, motive l → motive r → motive (.binary pos op l r))
+    (case7 : ∀ pos c y n, motive c → motive y → motive n → motive (.cond pos c y n))
+    (case8 : ∀ pos f xs, motive f → (∀ x ∈ xs, motive x) → motive (.call pos f xs))
+    (case9 : ∀ pos b xs, motive b → (∀ x ∈ xs, motive x) → motive (.index pos b xs))
+    (case10 : ∀ pos b f, motive b → motive (.field pos b f))
+    (case11 : ∀ pos, motive (.unit pos))
+    (case12 : ∀ pos xs, (∀ x ∈ xs, motive x) → motive (.tuple pos xs))
+    (case13 : ∀ pos xs, (∀ x ∈ xs, motive x) → motive (.array pos xs))
+    (case14 : ∀ pos b litPos i, motive b → motive (.select pos b litPos i))
+    (case15 : ∀ pos t n, motive n → motive (.arrayType pos t n)) (e : Expr) : motive e :=
+  Expr.erase.induct motive (fun _ => True) case1 case2 case3 case4 case5 case6 case7 case8 case9
+    case10 case11 case12 case13 case14 (fun p t n _ ih => case15 p t n ih)
+    (fun _ _ => trivial) (fun _ _ _ _ _ => trivial) (fun _ => trivial) (fun _ _ _ => trivial)
+    (fun _ _ _ _ _ => trivial) e
+
+theorem TypeExpr.ind (motive : TypeExpr → Prop)
+    (case1 : ∀ pos n, motive (.name pos n))
+    (case2 : ∀ pos b xs, motive b → motive (.index pos b xs))
+    (case3 : ∀ pos, motive (.unit pos))
+    (case4 : ∀ pos ts, (∀ x ∈ ts, motive x) → motive (.tuple pos ts))
+    (case5 : ∀ pos t n, motive t → motive (.array pos t n)) (t : TypeExpr) : motive t :=
+  TypeExpr.erase.induct (fun _ => True) motive (fun _ _ => trivial) (fun _ _ => trivial)
+    (fun _ _ => trivial) (fun _ _ => trivial) (fun _ _ _ _ => trivial)
+    (fun _ _ _ _ _ _ => trivial) (fun _ _ _ _ _ _ _ => trivial)
+    (fun _ _ _ _ _ => trivial) (fun _ _ _ _ _ => trivial) (fun _ _ _ _ => trivial)
+    (fun _ => trivial) (fun _ _ _ => trivial) (fun _ _ _ => trivial)
+    (fun _ _ _ _ _ => trivial) (fun _ _ _ _ _ => trivial)
+    case1 (fun p b xs ih _ => case2 p b xs ih) case3 case4 (fun p t n ih _ => case5 p t n ih) t
+
 /-! The erasure is idempotent. -/
 
 @[simp] theorem Ident.erase_name (i : Ident) : i.erase.name = i.name := rfl
 @[simp] theorem Ident.erase_erase (i : Ident) : i.erase.erase = i.erase := rfl
 
-@[simp] theorem Expr.erase_erase (e : Expr) : e.erase.erase = e.erase := by
-  induction e using Expr.erase.induct <;> simp_all [Expr.erase, List.map_map]
+private theorem erase_erase_all :
+    (∀ e : Expr, e.erase.erase = e.erase) ∧ ∀ t : TypeExpr, t.erase.erase = t.erase := by
+  apply Expr.erase.mutual_induct <;> intros <;>
+    simp_all [Expr.erase, TypeExpr.erase, List.map_map]
 
-@[simp] theorem TypeExpr.erase_erase (t : TypeExpr) : t.erase.erase = t.erase := by
-  induction t using TypeExpr.erase.induct <;> simp_all [TypeExpr.erase, List.map_map]
+@[simp] theorem Expr.erase_erase (e : Expr) : e.erase.erase = e.erase := erase_erase_all.1 e
+
+@[simp] theorem TypeExpr.erase_erase (t : TypeExpr) : t.erase.erase = t.erase :=
+  erase_erase_all.2 t
 
 @[simp] theorem Stmt.erase_erase (s : Stmt) : s.erase.erase = s.erase := by
   induction s using Stmt.erase.induct <;>
@@ -215,6 +276,9 @@ end ParsePrint
 
 @[simp] theorem Param.erase_erase (p : Param) : p.erase.erase = p.erase := by
   simp [Param.erase]
+
+@[simp] theorem StructField.erase_erase (f : StructField) : f.erase.erase = f.erase := by
+  simp [StructField.erase]
 
 @[simp] theorem Item.erase_erase (i : Item) : i.erase.erase = i.erase := by
   cases i <;> simp [Item.erase, List.map_map, Option.map_map, Function.comp_def]
@@ -224,49 +288,58 @@ end ParsePrint
 @[simp] theorem Expr.level_erase (e : Expr) : e.erase.level = e.level := by
   cases e <;> simp [Expr.erase, Expr.level]
 
-theorem Expr.print_erase (e : Expr) : ∀ c, e.erase.print c = e.print c := by
-  induction e using Expr.erase.induct with
-  | case8 p f xs ihf ih =>
-    intro c
-    have hm : List.map (fun x => print 0 x.erase) xs = List.map (print 0) xs :=
+private theorem print_erase_all :
+    (∀ e : Expr, ∀ c, e.erase.print c = e.print c) ∧ ∀ t : TypeExpr, t.erase.print = t.print := by
+  apply Expr.erase.mutual_induct
+  case case8 =>
+    intro p f xs ihf ih c
+    have hm : List.map (fun x => Expr.print 0 x.erase) xs = List.map (Expr.print 0) xs :=
       List.map_congr_left fun x hx => ih x hx 0
     simp only [Expr.erase]
     conv => lhs; rw [Expr.print.eq_def]
     conv => rhs; rw [Expr.print.eq_def]
     simp only [Expr.level, ihf, List.map_map, Function.comp_def, hm]
     cases f <;> simp only [Expr.erase] <;> rfl
-  | case9 p f xs ihf ih =>
-    intro c
-    have hm : List.map (fun x => print 0 x.erase) xs = List.map (print 0) xs :=
+  case case9 =>
+    intro p f xs ihf ih c
+    have hm : List.map (fun x => Expr.print 0 x.erase) xs = List.map (Expr.print 0) xs :=
       List.map_congr_left fun x hx => ih x hx 0
     simp only [Expr.erase]
     conv => lhs; rw [Expr.print.eq_def]
     conv => rhs; rw [Expr.print.eq_def]
     simp only [Expr.level, ihf, List.map_map, Function.comp_def, hm] <;> rfl
-  | case12 p xs ih | case13 p xs ih =>
-    intro c
-    have hm : List.map (fun x => print 0 x.erase) xs = List.map (print 0) xs :=
+  case case12 | case13 =>
+    intro p xs ih c
+    have hm : List.map (fun x => Expr.print 0 x.erase) xs = List.map (Expr.print 0) xs :=
       List.map_congr_left fun x hx => ih x hx 0
     simp only [Expr.erase]
     conv => lhs; rw [Expr.print.eq_def]
     conv => rhs; rw [Expr.print.eq_def]
     simp only [Expr.level, List.map_map, Function.comp_def, hm, List.length_map] <;> rfl
-  | _ =>
-    intro c
+  case case17 =>
+    intro p b xs ihb ih
+    have hm : List.map (fun x => Expr.print 0 x.erase) xs = List.map (Expr.print 0) xs :=
+      List.map_congr_left fun x hx => ih x hx 0
+    simp [TypeExpr.erase, TypeExpr.print, List.map_map, Function.comp_def, hm, ihb]
+  case case19 =>
+    intro p ts ih
+    have hm : List.map (fun t => t.erase.print) ts = List.map TypeExpr.print ts :=
+      List.map_congr_left fun t ht => ih t ht
+    simp [TypeExpr.erase, TypeExpr.print, List.map_map, Function.comp_def, hm]
+  case case16 | case18 | case20 =>
+    intros
+    simp_all [TypeExpr.erase, TypeExpr.print]
+  all_goals
+    intros
     simp only [Expr.erase]
     conv => lhs; rw [Expr.print.eq_def]
     conv => rhs; rw [Expr.print.eq_def]
     simp_all [Expr.level] <;> rfl
 
-theorem TypeExpr.print_erase (t : TypeExpr) : t.erase.print = t.print := by
-  induction t using TypeExpr.erase.induct with
-  | case4 p ts ih =>
-    have hm : List.map (fun t => t.erase.print) ts = List.map TypeExpr.print ts :=
-      List.map_congr_left fun t ht => ih t ht
-    simp [TypeExpr.erase, TypeExpr.print, List.map_map, Function.comp_def, hm]
-  | _ =>
-    simp_all [TypeExpr.erase, TypeExpr.print, List.map_map, Function.comp_def,
-      Expr.print_erase]
+theorem Expr.print_erase (e : Expr) : ∀ c, e.erase.print c = e.print c :=
+  print_erase_all.1 e
+
+theorem TypeExpr.print_erase (t : TypeExpr) : t.erase.print = t.print := print_erase_all.2 t
 
 theorem Stmt.lines_erase (l : List Stmt) (h : ∀ s ∈ l, ∀ d, s.erase.print d = s.print d) :
     ∀ d, Stmt.lines d (l.map Stmt.erase) = Stmt.lines d l := by
@@ -295,10 +368,14 @@ theorem Stmt.print_erase (s : Stmt) : ∀ d, s.erase.print d = s.print d := by
 theorem Param.print_erase (p : Param) : p.erase.print = p.print := by
   simp only [Param.erase, Param.print, TypeExpr.print_erase, Ident.erase_name]; rfl
 
+theorem StructField.print_erase (f : StructField) : f.erase.print = f.print := by
+  simp only [StructField.erase, StructField.print, TypeExpr.print_erase, Ident.erase_name]
+
 theorem Item.print_erase (i : Item) : i.erase.print = i.print := by
-  rcases i with _ | _ | ⟨_, _, _, _ | _, _⟩ <;>
+  rcases i with _ | _ | ⟨_, _, _, _ | _, _⟩ | _ | _ <;>
     simp [Item.erase, Item.print, Expr.print_erase, TypeExpr.print_erase,
-      Param.print_erase, List.map_map, Function.comp_def, Stmt.body_erase, Stmt.print_erase]
+      Param.print_erase, StructField.print_erase, List.map_map, Function.comp_def,
+      Stmt.body_erase, Stmt.print_erase]
 
 theorem Print.print_erase (items : List Item) :
     Print.print (items.map Item.erase) = Print.print items := by
@@ -307,7 +384,7 @@ theorem Print.print_erase (items : List Item) :
 /-! `Printable` ignores positions. -/
 
 @[simp] theorem Expr.place_erase (e : Expr) : e.erase.place = e.place := by
-  induction e using Expr.erase.induct <;> simp_all [Expr.erase, Expr.place]
+  induction e using Expr.ind <;> simp_all [Expr.erase, Expr.place]
 
 private theorem all_congr_mem {l : List α} {f g : α → Bool} (h : ∀ x ∈ l, f x = g x) :
     l.all f = l.all g := by
@@ -326,7 +403,7 @@ theorem Stmt.printableAll_eq (plain : Bool) (ss : List Stmt) :
   induction ss <;> simp_all [Stmt.printableAll]
 
 @[simp] theorem Expr.printable_erase (e : Expr) : e.erase.printable = e.printable := by
-  induction e using Expr.erase.induct with
+  induction e using Expr.ind with
   | case8 _ f xs ihf ih =>
     simp only [Expr.erase, Expr.printable, ihf, Expr.printableAll_eq, List.all_map,
       Function.comp_def]
@@ -342,7 +419,7 @@ theorem Stmt.printableAll_eq (plain : Bool) (ss : List Stmt) :
   | _ => simp_all [Expr.erase, Expr.printable]
 
 @[simp] theorem TypeExpr.printable_erase (t : TypeExpr) : t.erase.printable = t.printable := by
-  induction t using TypeExpr.erase.induct with
+  induction t using TypeExpr.ind with
   | case4 _ ts ih =>
     simp only [TypeExpr.erase, TypeExpr.printable, TypeExpr.printableAll_eq, List.all_map,
       Function.comp_def, List.isEmpty_map]
@@ -380,7 +457,7 @@ theorem Stmt.printableAll_eq (plain : Bool) (ss : List Stmt) :
   simp [Param.erase, Param.printable]
 
 @[simp] theorem Item.printable_erase (i : Item) : i.erase.printable = i.printable := by
-  rcases i with _ | _ | ⟨_, _, _, _ | _, _⟩ <;>
+  rcases i with _ | _ | ⟨_, _, _, _ | _, _⟩ | _ | _ <;>
     simp [Item.erase, Item.printable, Stmt.printableAll_eq, List.all_map, Function.comp_def]
 
 theorem ParsePrint.printable_erase (items : List Item) :

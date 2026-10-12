@@ -259,6 +259,14 @@ def isModule (i : Nat) : M Bool := return (← read)[i]? matches some (.module .
 def wrongKind (pos : Pos) (n what : String) : M Unit :=
   recordUnknown ⟨.S003, pos, s!"`{n}` is not {what}"⟩
 
+/-!
+The type forms of phase 3: `struct`, `type`, and `[T; N]` in an expression. The parser does not
+give them yet, so this stub only keeps each match complete.
+-/
+-- TODO(#178): resolve the type forms of phase 3, and remove this stub.
+def typeFormStub (pos : Pos) : M Unit :=
+  recordUnknown ⟨.S004, pos, "the type forms are not in this phase"⟩
+
 def expr : Source.Expr → M Expr
   | .num p v => return .num p v
   | .bool p v => return .bool p v
@@ -278,6 +286,7 @@ def expr : Source.Expr → M Expr
   | .tuple p xs => return .tuple p (← xs.mapM expr)
   | .array p xs => return .array p (← xs.mapM expr)
   | .select p b l k => return .select p (← expr b) l k
+  | .arrayType p .. => do typeFormStub p; return .unit p
 
 def typeExpr : Source.TypeExpr → M TypeExpr
   | .name p n => do
@@ -334,6 +343,7 @@ mutual
         return .ctFor p i lo hi (← stmts b)
     | .block p b => return .block p (← inScope (stmts b))
     | .expr p v => return .expr p (← expr v)
+    | .alias p .. => do typeFormStub p; return .block p []
 
   /-- The statements of one scope, in a loop. -/
   def stmts (ss : List Source.Stmt) : M (List Stmt) := ss.mapM stmt
@@ -362,9 +372,10 @@ def item : Source.Item → M Item
       | some c => pure [c]
       | none => (ds.getD []).mapM declare
     return .module p n ps ds (← stmts b)
+  | .struct p n .. | .alias p n .. => do typeFormStub p; return .const p n (.unit p) (.unit p)
 
 def itemName : Source.Item → Ident
-  | .const _ n .. | .fn _ _ n .. | .module _ n .. => n
+  | .const _ n .. | .fn _ _ n .. | .module _ n .. | .struct _ n .. | .alias _ n .. => n
 
 /-! Runs `act` in the item scope of `items`. The result is the first error, if one occurs. -/
 def inFile (items : List Source.Item) (act : M α) : Except Error α :=

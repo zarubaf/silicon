@@ -10,7 +10,8 @@ The Rust front end copies the dump byte for byte, so these rules fix each byte:
   lowercase, then each field in declaration order. One space separates two parts. A node with
   no fields prints as `(<constructor>)`, for example `(unit)`. Thus `(` is followed by a name,
   except in an empty list.
-- The structure `Param` prints as `(param <comptime> <name> <ty>)`.
+- The structure `Param` prints as `(param <comptime> <name> <ty>)`. The structure `StructField`
+  prints as `(structfield <name> <ty>)`.
 - A `pos` field does not print. An `Ident` prints as its name, as a string.
 - A `String` prints in double quotes. It escapes `"`, `\`, LF, CR, and tab as `\"`, `\\`,
   `\n`, `\r`, and `\t`, the escapes of the grammar. Each other character prints as itself.
@@ -98,18 +99,17 @@ mutual
     | .tuple _ xs => Expr.dumpsTo (acc ++ "(tuple (") xs ++ "))"
     | .array _ xs => Expr.dumpsTo (acc ++ "(array (") xs ++ "))"
     | .select _ b _ i => b.dumpTo (acc ++ "(select ") ++ " " ++ toString i ++ ")"
+    | .arrayType _ t n => n.dumpTo (t.dumpTo (acc ++ "(arraytype ") ++ " ") ++ ")"
 
   /-- `sepTo Expr.dumpTo`, which the recursion over `Expr` needs as its own function. -/
   def Expr.dumpsTo (acc : String) : List Expr → String
     | [] => acc
     | [e] => e.dumpTo acc
     | e :: es => Expr.dumpsTo (e.dumpTo acc ++ " ") es
-end
 
-mutual
   def TypeExpr.dumpTo (acc : String) : TypeExpr → String
     | .name _ n => acc ++ "(name " ++ quote n ++ ")"
-    | .index _ b xs => listTo Expr.dumpTo (b.dumpTo (acc ++ "(index ") ++ " ") xs ++ ")"
+    | .index _ b xs => Expr.dumpsTo (b.dumpTo (acc ++ "(index ") ++ " (") xs ++ "))"
     | .unit _ => acc ++ "(unit)"
     | .tuple _ ts => TypeExpr.dumpsTo (acc ++ "(tuple (") ts ++ "))"
     | .array _ t n => n.dumpTo (t.dumpTo (acc ++ "(array ") ++ " ") ++ ")"
@@ -144,6 +144,7 @@ mutual
       Stmt.dumpsTo acc b ++ "))"
     | .block _ b => Stmt.dumpsTo (acc ++ "(block (") b ++ "))"
     | .expr _ v => v.dumpTo (acc ++ "(expr ") ++ ")"
+    | .alias _ n ty => ty.dumpTo (acc ++ "(alias " ++ ident n ++ " ") ++ ")"
 
   /-- `sepTo Stmt.dumpTo`, which the recursion over `Stmt` needs as its own function. -/
   def Stmt.dumpsTo (acc : String) : List Stmt → String
@@ -155,6 +156,9 @@ end
 def Param.dumpTo (acc : String) (p : Param) : String :=
   p.ty.dumpTo (acc ++ "(param " ++ boolean p.comptime ++ " " ++ ident p.name ++ " ") ++ ")"
 
+def StructField.dumpTo (acc : String) (f : StructField) : String :=
+  f.ty.dumpTo (acc ++ "(structfield " ++ ident f.name ++ " ") ++ ")"
+
 def Item.dumpTo (acc : String) : Item → String
   | .const _ n ty v => v.dumpTo (ty.dumpTo (acc ++ "(const " ++ ident n ++ " ") ++ " ") ++ ")"
   | .fn _ c n ps r b =>
@@ -164,6 +168,10 @@ def Item.dumpTo (acc : String) : Item → String
     let acc := listTo Param.dumpTo (acc ++ "(module " ++ ident n ++ " ") ps ++ " "
     let acc := optionTo (listTo fun acc i => acc ++ ident i) acc ds
     Stmt.dumpsTo (acc ++ " (") b ++ "))"
+  | .struct _ n ps fs =>
+    let acc := listTo Param.dumpTo (acc ++ "(struct " ++ ident n ++ " ") ps ++ " "
+    listTo StructField.dumpTo acc fs ++ ")"
+  | .alias _ n ty => ty.dumpTo (acc ++ "(alias " ++ ident n ++ " ") ++ ")"
 
 def Expr.dump (e : Expr) : String := e.dumpTo ""
 def TypeExpr.dump (t : TypeExpr) : String := t.dumpTo ""
@@ -177,14 +185,18 @@ def Print.dump (items : List Item) : String :=
 /-!
 The source printer. Its text parses back to the same AST up to positions, if the parser can
 give that AST. Thus each name is a valid identifier, each `index` has an argument, and each
-module parameter has `comptime`. The printer does not keep comments.
+module parameter and each struct parameter has `comptime`. The printer does not keep comments.
 
 The binding power of an expression follows the levels of the grammar, from 0 for `if` to 11
 for a postfix form or a primary. A form prints in parentheses where its context needs a
 higher level. A `field` prints in parentheses also as the callee of a `call`.
 
 A `tuple` of one element prints as `(a,)`, so that it differs from `a` in parentheses. A
-`select` is a postfix form, and its selector prints in decimal.
+`select` is a postfix form, and its selector prints in decimal. An array type `[T; N]` in an
+expression is a primary.
+
+A struct without parameters prints without parentheses. Each field of a struct prints on its own
+line and ends with `,`.
 -/
 
 def BinOp.text : BinOp → String
@@ -213,37 +225,40 @@ def Expr.level : Expr → Nat
   | .unary .. => unaryLevel
   | _ => postfixLevel
 
-/-! The text of `e` in a context that needs at least the level `ctx`. -/
-def Expr.print (ctx : Nat) (e : Expr) : String :=
-  let text := match e with
-    | .num _ v => toString v
-    | .bool _ v => boolean v
-    | .str _ v => quote v
-    | .name _ n => n
-    | .unary _ op a => op.text ++ a.print unaryLevel
-    | .binary _ op l r =>
-      let lhs := if op.associative then op.level else op.level + 1
-      l.print lhs ++ " " ++ op.text ++ " " ++ r.print (op.level + 1)
-    | .cond _ c y n =>
-      "if (" ++ c.print 0 ++ ") { " ++ y.print 0 ++ " } else { " ++ n.print 0 ++ " }"
-    | .call _ f xs =>
-      -- The parser reads `a.f(x)` as a receiver call, so a field callee needs parentheses.
-      let callee := if f matches .field .. then "(" ++ f.print 0 ++ ")" else f.print postfixLevel
-      callee ++ "(" ++ args (xs.map (Expr.print 0)) ++ ")"
-    | .index _ b xs => b.print postfixLevel ++ "[" ++ args (xs.map (Expr.print 0)) ++ "]"
-    | .field _ b f => b.print postfixLevel ++ "." ++ f.name
-    | .unit _ => "()"
-    | .tuple _ xs => "(" ++ args (xs.map (Expr.print 0)) ++ tupleEnd xs.length
-    | .array _ xs => "[" ++ args (xs.map (Expr.print 0)) ++ "]"
-    | .select _ b _ i => b.print postfixLevel ++ "." ++ toString i
-  if e.level < ctx then "(" ++ text ++ ")" else text
+mutual
+  /-- The text of `e` in a context that needs at least the level `ctx`. -/
+  def Expr.print (ctx : Nat) (e : Expr) : String :=
+    let text := match e with
+      | .num _ v => toString v
+      | .bool _ v => boolean v
+      | .str _ v => quote v
+      | .name _ n => n
+      | .unary _ op a => op.text ++ a.print unaryLevel
+      | .binary _ op l r =>
+        let lhs := if op.associative then op.level else op.level + 1
+        l.print lhs ++ " " ++ op.text ++ " " ++ r.print (op.level + 1)
+      | .cond _ c y n =>
+        "if (" ++ c.print 0 ++ ") { " ++ y.print 0 ++ " } else { " ++ n.print 0 ++ " }"
+      | .call _ f xs =>
+        -- The parser reads `a.f(x)` as a receiver call, so a field callee needs parentheses.
+        let callee := if f matches .field .. then "(" ++ f.print 0 ++ ")" else f.print postfixLevel
+        callee ++ "(" ++ args (xs.map (Expr.print 0)) ++ ")"
+      | .index _ b xs => b.print postfixLevel ++ "[" ++ args (xs.map (Expr.print 0)) ++ "]"
+      | .field _ b f => b.print postfixLevel ++ "." ++ f.name
+      | .unit _ => "()"
+      | .tuple _ xs => "(" ++ args (xs.map (Expr.print 0)) ++ tupleEnd xs.length
+      | .array _ xs => "[" ++ args (xs.map (Expr.print 0)) ++ "]"
+      | .select _ b _ i => b.print postfixLevel ++ "." ++ toString i
+      | .arrayType _ t n => "[" ++ t.print ++ "; " ++ n.print 0 ++ "]"
+    if e.level < ctx then "(" ++ text ++ ")" else text
 
-def TypeExpr.print : TypeExpr → String
-  | .name _ n => n
-  | .index _ b xs => b.print ++ "[" ++ args (xs.map (Expr.print 0)) ++ "]"
-  | .unit _ => "()"
-  | .tuple _ ts => "(" ++ args (ts.map TypeExpr.print) ++ tupleEnd ts.length
-  | .array _ t n => "[" ++ t.print ++ "; " ++ n.print 0 ++ "]"
+  def TypeExpr.print : TypeExpr → String
+    | .name _ n => n
+    | .index _ b xs => b.print ++ "[" ++ args (xs.map (Expr.print 0)) ++ "]"
+    | .unit _ => "()"
+    | .tuple _ ts => "(" ++ args (ts.map TypeExpr.print) ++ tupleEnd ts.length
+    | .array _ t n => "[" ++ t.print ++ "; " ++ n.print 0 ++ "]"
+end
 
 mutual
   /-- The lines of a statement at the nesting depth `d`. Each line ends with LF. -/
@@ -271,6 +286,7 @@ mutual
       ++ " .. " ++ hi.print 0 ++ " " ++ Stmt.body d b ++ "\n"
     | .block _ b => indent d ++ Stmt.body d b ++ "\n"
     | .expr _ v => indent d ++ v.print 0 ++ ";\n"
+    | .alias _ n ty => indent d ++ "type " ++ n.name ++ " = " ++ ty.print ++ ";\n"
 
   /-- A block at depth `d`: its statements one level deeper, and the `}` at depth `d`. -/
   def Stmt.body (d : Nat) : List Stmt → String
@@ -285,6 +301,8 @@ end
 def Param.print (p : Param) : String :=
   (if p.comptime then "comptime " else "") ++ p.name.name ++ ": " ++ p.ty.print
 
+def StructField.print (f : StructField) : String := f.name.name ++ ": " ++ f.ty.print
+
 def Item.print : Item → String
   | .const _ n ty v => "const " ++ n.name ++ ": " ++ ty.print ++ " = " ++ v.print 0 ++ ";\n"
   | .fn _ c n ps r b => (if c then "comptime " else "") ++ "fn " ++ n.name ++ "("
@@ -295,6 +313,12 @@ def Item.print : Item → String
       | some ds => " domains(" ++ args (ds.map (·.name)) ++ ")"
     "module " ++ n.name ++ "(" ++ args (ps.map Param.print) ++ ")" ++ domains ++ " "
       ++ Stmt.body 0 b ++ "\n"
+  | .struct _ n ps fs =>
+    let params := if ps.isEmpty then "" else "(" ++ args (ps.map Param.print) ++ ")"
+    let fields := if fs.isEmpty then "{}"
+      else "{\n" ++ String.join (fs.map fun f => indent 1 ++ f.print ++ ",\n") ++ "}"
+    "struct " ++ n.name ++ params ++ " " ++ fields ++ "\n"
+  | .alias _ n ty => "type " ++ n.name ++ " = " ++ ty.print ++ ";\n"
 
 /-! The source text of a file. A blank line separates two items. -/
 def Print.print (items : List Item) : String :=
