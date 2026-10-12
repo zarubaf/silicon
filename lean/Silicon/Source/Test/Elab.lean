@@ -440,4 +440,30 @@ def armLists (body : String) : String :=
   "T" == "S016 6:17"
 #guard (cost (armLists "  o := if (c) { g() } else { 2 };\n") "T").startsWith "total"
 
+/-!
+A hardware write-back gives the caller root its next version after the result of the call. The
+write-backs run in the order of the parameters. A write-back of a binding from before a hardware
+arm is `S016` at the call. A function that the arm calls can pass its own binding.
+-/
+def muts (body : String) : String :=
+  "fn inc(mut a: UInt[8]) -> () { a = a +% 1; return (); }\n" ++
+  "fn swap(mut a: UInt[8], mut b: UInt[8]) -> UInt[8] { let t = a; a = b; b = t; return t; }\n" ++
+  "fn own() -> UInt[8] { let mut z: UInt[8] = 1; inc(z); return z; }\n" ++
+  "module M() {\n  input c: Bool;\n  input x: UInt[8];\n  input w: UInt[8];\n" ++
+  "  output y: UInt[8];\n" ++ body ++ "}\n"
+#guard names (muts "  let mut q = x;\n  inc(q);\n  y := q;\n") "M" "M" ==
+  ["q", "inc$0c$a", "inc$0c$a$1v", "q$1v"]
+#guard names (muts "  let mut q = x;\n  q.inc();\n  q.inc();\n  y := q;\n") "M" "M" ==
+  ["q", "inc$0c$a", "inc$0c$a$1v", "q$1v", "inc$1c$a", "inc$1c$a$1v", "q$2v"]
+#guard names (muts "  let mut q = x;\n  let mut r = w;\n  let s = swap(q, r);\n  y := q +% r;\n")
+  "M" "M" ==
+  ["q", "r", "swap$0c$a", "swap$0c$b", "swap$0c$t", "swap$0c$a$1v", "swap$0c$b$1v",
+   "swap$0c$0ret", "q$1v", "r$1v", "s"]
+#guard cost (muts "  let mut q = x;\n  let mut r = w;\n  y := if (c) { swap(q, r) } else { 0 };\n")
+  "M" == "S016 11:17"
+#guard (cost (muts "  y := if (c) { own() } else { 0 };\n") "M").startsWith "total"
+#guard cost (muts "  let mut q: UInt[4] = 1;\n  inc(q);\n  y := 0;\n") "M" == "S010 10:3"
+#guard (cost (muts "  let mut q = [UInt[8](1)];\n  inc(q[0]);\n  y := 0;\n") "M").startsWith
+  "total"
+
 end Silicon.Source.Test.Elab

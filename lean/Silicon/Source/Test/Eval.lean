@@ -1062,4 +1062,58 @@ ordering takes a list. An array of lists joins the list types.
   "(array (list int) ((list int ((int 1) (int 2))) (list int ())))"
 #guard out "" "[(\"a\", 1)]" == "(array (tuple (string int)) ((tuple ((string \"a\") (int 1)))))"
 
+/-!
+A receiver call binds its receiver at the first parameter without `comptime`, and it charges as
+its plain call. The receiver evaluates first, so its `S013` comes before the `S013` of the
+argument. The prelude functions take a receiver too.
+-/
+def calls : String :=
+  "fn f(comptime n: Int, x: Int) -> Int { return n * 10 + x; }\n" ++
+  "fn g() -> Int { let a = 3; return a.f(7); }\n" ++
+  "fn h() -> Int { let a = 3; return f(7, a); }\n" ++
+  "fn p() -> Int { return [1][5].f(1 / 0); }\n" ++
+  "fn q() -> Int { let mut xs = list(Int); xs.push(4); xs.push(5); let y = xs.pop(); " ++
+    "return y + xs.len(); }\n" ++
+  "fn r() -> UInt[4] { return UInt[8](3).resize(UInt[4]); }\n" ++
+  "fn s() -> String { return 12.str(); }\n"
+#guard out calls "g()" == "(int 73)"
+#guard cost calls "g()" == cost calls "h()"
+#guard out calls "p()" == "S013 4:28"
+#guard out calls "q()" == "(int 6)"
+#guard out calls "r()" == "(uint 4 3)"
+#guard out calls "s()" == "(string \"12\")"
+
+/-!
+A `mut` actual copies its place into the formal. At the return, the final value of the formal
+goes back into the place, also through steps of the place and through a receiver. The place
+has the type of the formal, else `S010` at the call. A `comptime fn` writes back its static
+value.
+-/
+def muts : String :=
+  "fn inc(mut x: Int) -> () { x = x + 1; return (); }\n" ++
+  "fn two(mut x: Int, mut y: [Int; 2]) -> Int { x = x + y[0]; y[1] = 9; return x; }\n" ++
+  "comptime fn ct(mut x: Int) -> Int { x = 2; return 0; }\n" ++
+  "fn k() -> Int { let mut a = 1; inc(a); a.inc(); return a; }\n" ++
+  "fn l() -> [Int; 2] { let mut a = [1, 2]; inc(a[1]); return a; }\n" ++
+  "fn m() -> Int { let mut a: Nat = 1; inc(a); return a; }\n" ++
+  "fn o() -> (Int, [Int; 2]) { let mut a = 5; let mut b = [1, 2]; let r = two(a, b); " ++
+    "return (a, b); }\n" ++
+  "fn u() -> Int { let mut a = 1; let z = ct(a); return a; }\n"
+#guard out muts "k()" == "(int 3)"
+#guard out muts "l()" == "(array int ((int 1) (int 3)))"
+#guard out muts "m()" == "S010 6:37"
+#guard out muts "o()" == "(tuple ((int 6) (array int ((int 1) (int 9)))))"
+#guard out muts "u()" == "(int 2)"
+
+/-!
+A `mut` actual charges the copy in and the write-back, but its root name charges no node. With
+a value of size 2, the call thus costs one unit more than the call with a copy only.
+-/
+def keep : String :=
+  "fn keep(mut x: Int) -> () { return (); }\n" ++
+  "fn id(x: Int) -> () { return (); }\n" ++
+  "fn a() -> Int { let mut a = 18446744073709551616; keep(a); return 0; }\n" ++
+  "fn b() -> Int { let mut a = 18446744073709551616; id(a); return 0; }\n"
+#guard cost keep "a()" == cost keep "b()" + 1
+
 end Silicon.Source.Test.Eval
