@@ -103,6 +103,17 @@ example : Printable [.struct p (nm "P") [⟨p, true, nm "W", t "Nat"⟩]
 example : ¬ Printable [.struct p (nm "P") [⟨p, false, nm "W", t "Nat"⟩] []] := by decide
 example : ¬ Printable [.struct p (nm "P") [] [⟨nm "in", t "T"⟩]] := by decide
 
+/-! Array types in expressions: in an array, as the base of an index, and in a type argument. -/
+example : Printable [.const p (nm "X") (t "Type")
+    (.array p [.arrayType p (.array p (t "Bool") (.num p 2)) (v "N"),
+      .index p (.arrayType p (t "T") (.num p 1)) [.num p 0],
+      .call p (v "f") [.arrayType p (.index p (t "UInt") [.arrayType p (t "U") (v "M")])
+        (.num p 3)]])] := by decide +kernel
+
+/-! An array type in an expression with an empty tuple type as its element. -/
+example : ¬ Printable [.const p (nm "X") (t "Type") (.arrayType p (.tuple p []) (.num p 4))] := by
+  decide
+
 /-! A module parameter without `comptime`, and two domains. -/
 example : ¬ Printable [.module p (nm "M") [⟨p, false, nm "W", t "Nat"⟩] none []] := by decide
 example : ¬ Printable [.module p (nm "M") [] (some [nm "a", nm "b"]) []] := by decide

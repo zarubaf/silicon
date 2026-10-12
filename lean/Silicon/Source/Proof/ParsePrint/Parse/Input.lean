@@ -9,8 +9,9 @@ The token windows of the parser lemma of `parse_print`.
 It also gives results of the bracket pass `Input.of` for each balanced segment of `ks`. The
 pass matches the opening bracket of the segment. It finds no `,` directly in a `(` that holds
 an expression. It finds a `,` directly in the `(` of a tuple. It finds no `;` directly in the
-`[` of an array. `Input.of_win` proves these results for each token list. A window of the whole
-file thus gives a window of each part of the file.
+`[` of an array, and a `;` directly in the `[` of an array type. `Input.of_win` proves these
+results for each token list. A window of the whole file thus gives a window of each part of the
+file.
 
 The lemmas take a token list with the given kinds and with any positions. The parser puts a
 position only into a node or into an error, and `parse_print` erases the positions of the nodes.
@@ -36,32 +37,42 @@ def CloseK (k : Kind) : Prop := k = .symbol ")" ∨ k = .symbol "]" ∨ k = .sym
 instance (k : Kind) : Decidable (OpenK k) := inferInstanceAs (Decidable (_ ∨ _))
 instance (k : Kind) : Decidable (CloseK k) := inferInstanceAs (Decidable (_ ∨ _))
 
+/-! The separator that a scan rejects at the depth 0: none, `,`, or `;`. -/
+inductive Sep where
+  | none
+  | comma
+  | semi
+  deriving DecidableEq
+
 /-!
-The bracket depth after `ks` from the depth `d`. It fails at a closing bracket at the depth 0.
-If `strict`, it also fails at a `,` at the depth 0.
+The bracket depth after `ks` from the depth `d`. It fails at a closing bracket at the depth 0,
+and at the separator `s` at the depth 0.
 -/
-def scan (strict : Bool) : Nat → List Kind → Option Nat
+def scan (s : Sep) : Nat → List Kind → Option Nat
   | d, [] => some d
   | d, k :: ks =>
-    if OpenK k then scan strict (d + 1) ks
+    if OpenK k then scan s (d + 1) ks
     else if CloseK k then
       match d with
       | 0 => none
-      | d + 1 => scan strict d ks
-    else if k = .symbol "," ∧ strict = true ∧ d = 0 then none
-    else scan strict d ks
+      | d + 1 => scan s d ks
+    else if ((k = .symbol "," ∧ s = .comma) ∨ (k = .symbol ";" ∧ s = .semi)) ∧ d = 0 then none
+    else scan s d ks
 
 /-! A balanced segment. -/
-def Bal (ks : List Kind) : Prop := scan false 0 ks = some 0
+def Bal (ks : List Kind) : Prop := scan .none 0 ks = some 0
 
 /-! A balanced segment with no `,` at its own depth. -/
-def Seg (ks : List Kind) : Prop := scan true 0 ks = some 0
+def Seg (ks : List Kind) : Prop := scan .comma 0 ks = some 0
+
+/-! A balanced segment with no `;` at its own depth. -/
+def SemiSeg (ks : List Kind) : Prop := scan .semi 0 ks = some 0
 
 /-!
 The parser input holds the kinds `ks` from the index `i`. The bracket pass matches each opening
 bracket of `ks` that starts a balanced segment, and it finds no `,` in a `(` of a `Seg`. It finds
-a `,` in a `(` if the `,` follows a balanced segment. It finds no `;` in a `[` of a balanced
-segment that holds no `;`.
+a `,` in a `(` if the `,` follows a balanced segment. It finds no `;` in a `[` of a `SemiSeg`. It
+finds a `;` in a `[` if the `;` follows a balanced segment.
 -/
 structure Win (inp : Input) (i : Nat) (ks : List Kind) : Prop where
   kind : ∀ k (h : k < ks.length), (tokenAt inp (i + k)).kind = ks[k]
@@ -69,8 +80,10 @@ structure Win (inp : Input) (i : Nat) (ks : List Kind) : Prop where
     inp.comma.getD (i + a.length) false = false
   tuple : ∀ a m b, ks = a ++ .symbol "(" :: (m ++ .symbol "," :: b) → Bal m →
     inp.comma.getD (i + a.length) false = true
-  semi : ∀ a m b, ks = a ++ .symbol "[" :: (m ++ .symbol "]" :: b) → Bal m →
-    .symbol ";" ∉ m → inp.semi.getD (i + a.length) false = false
+  semi : ∀ a m b, ks = a ++ .symbol "[" :: (m ++ .symbol "]" :: b) → SemiSeg m →
+    inp.semi.getD (i + a.length) false = false
+  arrayType : ∀ a m b, ks = a ++ .symbol "[" :: (m ++ .symbol ";" :: b) → Bal m →
+    inp.semi.getD (i + a.length) false = true
   close : ∀ a o m c b, ks = a ++ o :: (m ++ c :: b) → OpenK o → CloseK c → Bal m →
     inp.close.getD (i + a.length) inp.tokens.size = i + a.length + 1 + m.length
 
@@ -90,8 +103,11 @@ theorem Win.drop {inp : Input} {i : Nat} {a ks : List Kind} (h : Win inp i (a ++
   tuple a' m b he hb := by
     have := h.tuple (a ++ a') m b (by rw [he, List.append_assoc]) hb
     simpa [Nat.add_assoc] using this
-  semi a' m b he hb hs := by
-    have := h.semi (a ++ a') m b (by rw [he, List.append_assoc]) hb hs
+  semi a' m b he hs := by
+    have := h.semi (a ++ a') m b (by rw [he, List.append_assoc]) hs
+    simpa [Nat.add_assoc] using this
+  arrayType a' m b he hb := by
+    have := h.arrayType (a ++ a') m b (by rw [he, List.append_assoc]) hb
     simpa [Nat.add_assoc] using this
   close a' o m c b he ho hc hb := by
     have := h.close (a ++ a') o m c b (by rw [he, List.append_assoc]) ho hc hb
@@ -104,52 +120,57 @@ theorem Win.tail {inp : Input} {i : Nat} {k : Kind} {ks : List Kind} (h : Win in
 /-! ## Transparent segments -/
 
 /-! `ks` leaves each depth as it is, and it never fails. -/
-def Trans (strict : Bool) (ks : List Kind) : Prop :=
-  ∀ d rest, scan strict d (ks ++ rest) = scan strict d rest
+def Trans (s : Sep) (ks : List Kind) : Prop :=
+  ∀ d rest, scan s d (ks ++ rest) = scan s d rest
 
 /-! `ks` leaves each positive depth as it is. A `,` can occur at its own depth. -/
-def Inner (strict : Bool) (ks : List Kind) : Prop :=
-  ∀ d rest, scan strict (d + 1) (ks ++ rest) = scan strict (d + 1) rest
+def Inner (s : Sep) (ks : List Kind) : Prop :=
+  ∀ d rest, scan s (d + 1) (ks ++ rest) = scan s (d + 1) rest
 
-theorem Trans.append {s : Bool} {a b : List Kind} (ha : Trans s a) (hb : Trans s b) :
+theorem Trans.append {s : Sep} {a b : List Kind} (ha : Trans s a) (hb : Trans s b) :
     Trans s (a ++ b) :=
   fun d rest => by rw [List.append_assoc, ha, hb]
 
-theorem Inner.append {s : Bool} {a b : List Kind} (ha : Inner s a) (hb : Inner s b) :
+theorem Inner.append {s : Sep} {a b : List Kind} (ha : Inner s a) (hb : Inner s b) :
     Inner s (a ++ b) :=
   fun d rest => by rw [List.append_assoc, ha, hb]
 
-theorem Trans.inner {s : Bool} {a : List Kind} (h : Trans s a) : Inner s a :=
+theorem Trans.inner {s : Sep} {a : List Kind} (h : Trans s a) : Inner s a :=
   fun d rest => h (d + 1) rest
 
-theorem Trans.nil {s : Bool} : Trans s [] := fun _ _ => rfl
+theorem Trans.nil {s : Sep} : Trans s [] := fun _ _ => rfl
 
-theorem Trans.seg {a : List Kind} (h : Trans true a) : Seg a := by
+theorem Trans.seg {a : List Kind} (h : Trans .comma a) : Seg a := by
   have := h 0 []
   simpa [Seg, scan] using this
 
-theorem Trans.bal {a : List Kind} (h : Trans false a) : Bal a := by
+theorem Trans.semiSeg {a : List Kind} (h : Trans .semi a) : SemiSeg a := by
+  have := h 0 []
+  simpa [SemiSeg, scan] using this
+
+theorem Trans.bal {a : List Kind} (h : Trans .none a) : Bal a := by
   have := h 0 []
   simpa [Bal, scan] using this
 
-theorem Inner.comma {s : Bool} : Inner s [.symbol ","] := fun d rest => by
+theorem Inner.comma {s : Sep} : Inner s [.symbol ","] := fun d rest => by
   simp [scan, OpenK, CloseK]
 
-theorem Trans.comma : Trans false [.symbol ","] := fun d rest => by
-  simp [scan, OpenK, CloseK]
+theorem Trans.comma {s : Sep} (hs : s ≠ .comma) : Trans s [.symbol ","] := fun d rest => by
+  simp [scan, OpenK, CloseK, hs]
 
-theorem Trans.single {s : Bool} {k : Kind}
+theorem Trans.single {s : Sep} {k : Kind}
     (h : k ≠ .symbol "(" ∧ k ≠ .symbol "[" ∧ k ≠ .symbol "{" ∧ k ≠ .symbol ")" ∧
-      k ≠ .symbol "]" ∧ k ≠ .symbol "}" ∧ k ≠ .symbol ",") : Trans s [k] := fun d rest => by
+      k ≠ .symbol "]" ∧ k ≠ .symbol "}" ∧ k ≠ .symbol "," ∧ k ≠ .symbol ";") :
+    Trans s [k] := fun d rest => by
   simp [scan, OpenK, CloseK, h.1, h.2.1, h.2.2.1, h.2.2.2.1, h.2.2.2.2.1, h.2.2.2.2.2.1,
-    h.2.2.2.2.2.2]
+    h.2.2.2.2.2.2.1, h.2.2.2.2.2.2.2]
 
-theorem Trans.paren {s : Bool} {m : List Kind} (h : Inner s m) :
+theorem Trans.paren {s : Sep} {m : List Kind} (h : Inner s m) :
     Trans s (.symbol "(" :: m ++ [.symbol ")"]) := fun d rest => by
   simp only [List.cons_append, List.append_assoc]
   simp [scan, OpenK, CloseK, h d]
 
-theorem Inner.argToks {s : Bool} {xss : List (List Kind)} (h : ∀ x ∈ xss, Trans s x) :
+theorem Inner.argToks {s : Sep} {xss : List (List Kind)} (h : ∀ x ∈ xss, Trans s x) :
     Inner s (argToks xss) := by
   induction xss with
   | nil => exact (Trans.nil).inner
@@ -161,9 +182,9 @@ theorem Inner.argToks {s : Bool} {xss : List (List Kind)} (h : ∀ x ∈ xss, Tr
       have := (h x (by simp)).inner.append (Inner.comma.append ih)
       simpa [Print.argToks, List.intercalate_cons_cons] using this
 
-/-! Without `strict`, a list of arguments is transparent: its `,` cannot fail. -/
-theorem Trans.argToks {xss : List (List Kind)} (h : ∀ x ∈ xss, Trans false x) :
-    Trans false (argToks xss) := by
+/-! Without the separator `,`, a list of arguments is transparent: its `,` cannot fail. -/
+theorem Trans.argToks {s : Sep} (hs : s ≠ .comma) {xss : List (List Kind)}
+    (h : ∀ x ∈ xss, Trans s x) : Trans s (argToks xss) := by
   induction xss with
   | nil => exact Trans.nil
   | cons x xs ih =>
@@ -171,24 +192,24 @@ theorem Trans.argToks {xss : List (List Kind)} (h : ∀ x ∈ xss, Trans false x
     cases xs with
     | nil => simpa [Print.argToks] using h x (by simp)
     | cons y ys =>
-      have := (h x (by simp)).append (Trans.comma.append ih)
+      have := (h x (by simp)).append ((Trans.comma hs).append ih)
       simpa [Print.argToks, List.intercalate_cons_cons] using this
 
-theorem Expr.trans_paren {s : Bool} (e : Expr) (h : Trans s (e.toks 0)) (c : Nat) :
+theorem Expr.trans_paren {s : Sep} (e : Expr) (h : Trans s (e.toks 0)) (c : Nat) :
     Trans s (e.toks c) := by
   rw [Expr.toks_paren]
   split
   · exact Trans.paren h.inner
   · exact h
 
-theorem BinOp.trans {s : Bool} (op : BinOp) : Trans s [.symbol op.text] :=
+theorem BinOp.trans {s : Sep} (op : BinOp) : Trans s [.symbol op.text] :=
   Trans.single (by cases op <;> decide)
 
-theorem UnOp.trans {s : Bool} (op : UnOp) : Trans s [.symbol op.text] :=
+theorem UnOp.trans {s : Sep} (op : UnOp) : Trans s [.symbol op.text] :=
   Trans.single (by cases op <;> decide)
 
 /-! The kinds of each expression and of each type expression have balanced brackets. -/
-private theorem trans_all (s : Bool) :
+private theorem trans_all (s : Sep) :
     (∀ e : Expr, ∀ c, Trans s (e.toks c)) ∧ ∀ t : TypeExpr, Trans s t.toks := by
   apply Expr.erase.mutual_induct
   case case5 =>
@@ -283,102 +304,17 @@ private theorem trans_all (s : Bool) :
     intro d rest
     simp [Expr.toks, scan, OpenK, CloseK]
 
-theorem Expr.trans (s : Bool) (e : Expr) : ∀ c, Trans s (e.toks c) := (trans_all s).1 e
+theorem Expr.trans (s : Sep) (e : Expr) : ∀ c, Trans s (e.toks c) := (trans_all s).1 e
 
-theorem TypeExpr.trans (s : Bool) (t : TypeExpr) : Trans s t.toks := (trans_all s).2 t
+theorem TypeExpr.trans (s : Sep) (t : TypeExpr) : Trans s t.toks := (trans_all s).2 t
 
 /-! The arguments of a call or an index are balanced. -/
 theorem Bal.args (xs : List Expr) : Bal (argToks (xs.map (Expr.toks 0))) :=
-  (Trans.argToks (by simpa using fun x _ => Expr.trans false x 0)).bal
+  (Trans.argToks (by decide) (by simpa using fun x _ => Expr.trans .none x 0)).bal
 
-/-! No kind of a `Printable` expression is `;`, so an array holds no `;`. -/
-theorem notMem_argToks {k : Kind} {xss : List (List Kind)} (hk : k ≠ .symbol ",")
-    (h : ∀ l ∈ xss, k ∉ l) : k ∉ argToks xss := by
-  induction xss with
-  | nil => simp [Print.argToks]
-  | cons x xs ih =>
-    have ih := ih fun y hy => h y (by simp [hy])
-    cases xs with
-    | nil => simpa [Print.argToks] using h x (by simp)
-    | cons y ys =>
-      have e : argToks (x :: y :: ys) = x ++ .symbol "," :: argToks (y :: ys) := by
-        simp [Print.argToks, List.intercalate_cons_cons]
-      rw [e]
-      simp only [List.mem_append, List.mem_cons, not_or]
-      exact ⟨h x (by simp), hk, ih⟩
-
-theorem Expr.semi_paren (e : Expr) (h : Kind.symbol ";" ∉ e.toks 0) (c : Nat) :
-    Kind.symbol ";" ∉ e.toks c := by
-  rw [Expr.toks_paren]
-  split
-  · simpa using h
-  · exact h
-
-theorem Expr.semi_notMem (e : Expr) :
-    e.printable = true → ∀ c, Kind.symbol ";" ∉ e.toks c := by
-  have hl : ∀ xs : List Expr,
-      (∀ x ∈ xs, x.printable = true → ∀ c, Kind.symbol ";" ∉ x.toks c) →
-      (∀ x ∈ xs, x.printable = true) → Kind.symbol ";" ∉ argToks (xs.map (Expr.toks 0)) :=
-    fun xs h hp => notMem_argToks (by decide) (by simpa using fun x hx => h x hx (hp x hx) 0)
-  induction e using Expr.ind with
-  | case5 p op a ih =>
-    intro hp
-    simp only [Expr.printable] at hp
-    refine Expr.semi_paren _ ?_
-    simp only [Expr.toks, Nat.not_lt_zero, ite_false, List.mem_cons, not_or]
-    exact ⟨by cases op <;> decide, ih hp _⟩
-  | case6 p op l r ihl ihr =>
-    intro hp
-    simp only [Expr.printable, Bool.and_eq_true] at hp
-    refine Expr.semi_paren _ ?_
-    simp only [Expr.toks, Nat.not_lt_zero, ite_false, List.mem_append, List.mem_cons, not_or]
-    exact ⟨ihl hp.1 _, by cases op <;> decide, ihr hp.2 _⟩
-  | case7 p c y n ihc ihy ihn =>
-    intro hp
-    simp only [Expr.printable, Bool.and_eq_true] at hp
-    refine Expr.semi_paren _ ?_
-    simp [Expr.toks, ihc hp.1.1, ihy hp.1.2, ihn hp.2]
-  | case8 p f xs ihf ih =>
-    intro hp
-    simp only [Expr.printable, Bool.and_eq_true, Expr.printableAll_eq, List.all_eq_true] at hp
-    refine Expr.semi_paren _ ?_
-    have ha := hl xs ih hp.2
-    rw [Expr.toks.eq_def]
-    simp only [Nat.not_lt_zero, ite_false]
-    split <;> simp [ihf hp.1, ha]
-  | case9 p b xs ihb ih =>
-    intro hp
-    simp only [Expr.printable, Bool.and_eq_true, Expr.printableAll_eq, List.all_eq_true] at hp
-    refine Expr.semi_paren _ ?_
-    simp [Expr.toks, ihb hp.1.1, hl xs ih hp.2]
-  | case10 p b f ih =>
-    intro hp
-    simp only [Expr.printable, Bool.and_eq_true] at hp
-    refine Expr.semi_paren _ ?_
-    simp [Expr.toks, ih hp.1]
-  | case12 p xs ih =>
-    intro hp
-    simp only [Expr.printable, Bool.and_eq_true, Expr.printableAll_eq, List.all_eq_true] at hp
-    refine Expr.semi_paren _ ?_
-    have ha := hl xs ih hp.2
-    simp only [Expr.toks, Nat.not_lt_zero, ite_false, List.mem_cons, List.mem_append, not_or]
-    refine ⟨⟨by decide, ha⟩, ?_⟩
-    split <;> simp
-  | case13 p xs ih =>
-    intro hp
-    simp only [Expr.printable, Expr.printableAll_eq, List.all_eq_true] at hp
-    refine Expr.semi_paren _ ?_
-    simp [Expr.toks, hl xs ih hp]
-  | case14 p b q i ih =>
-    intro hp
-    simp only [Expr.printable, Bool.and_eq_true] at hp
-    refine Expr.semi_paren _ ?_
-    simp [Expr.toks, ih hp.1]
-  | case15 => intro hp; simp [Expr.printable] at hp
-  | _ =>
-    intro _
-    refine Expr.semi_paren _ ?_
-    simp [Expr.toks]
+/-! The elements of an array have no `;` at their own depth. -/
+theorem SemiSeg.args (xs : List Expr) : SemiSeg (argToks (xs.map (Expr.toks 0))) :=
+  (Trans.argToks (by decide) (by simpa using fun x _ => Expr.trans .semi x 0)).semiSeg
 
 /-! ## The bracket pass -/
 
@@ -573,7 +509,7 @@ theorem foldl_range_succ {β : Type} (g : β → Nat → β) (init : β) (k : Na
     (List.range (k + 1)).foldl g init = g ((List.range k).foldl g init) k := by
   rw [List.range_succ, List.foldl_append]; rfl
 
-theorem scan_append (st : Bool) (d : Nat) (a b : List Kind) :
+theorem scan_append (st : Sep) (d : Nat) (a b : List Kind) :
     scan st d (a ++ b) = (scan st d a).bind (scan st · b) := by
   induction a generalizing d with
   | nil => rfl
@@ -589,8 +525,8 @@ theorem scan_append (st : Bool) (d : Nat) (a b : List Kind) :
         · rfl
         · exact ih _
 
-theorem scan_strict (d d' : Nat) (l : List Kind) (h : scan true d l = some d') :
-    scan false d l = some d' := by
+theorem scan_strict (st : Sep) (d d' : Nat) (l : List Kind) (h : scan st d l = some d') :
+    scan .none d l = some d' := by
   induction l generalizing d with
   | nil => exact h
   | cons k l ih =>
@@ -609,7 +545,9 @@ theorem scan_strict (d d' : Nat) (l : List Kind) (h : scan true d l = some d') :
         · cases h
         · simp; exact ih _ h
 
-theorem Seg.bal {m : List Kind} (h : Seg m) : Bal m := scan_strict 0 0 m h
+theorem Seg.bal {m : List Kind} (h : Seg m) : Bal m := scan_strict _ 0 0 m h
+
+theorem SemiSeg.bal {m : List Kind} (h : SemiSeg m) : Bal m := scan_strict _ 0 0 m h
 
 theorem opening_eq (t : Token) : opening t = decide (OpenK t.kind) := by
   unfold opening OpenK
@@ -632,7 +570,7 @@ theorem OpenK.not_close {k : Kind} (h : OpenK k) : ¬ CloseK k := by
 theorem CloseK.not_open {k : Kind} (h : CloseK k) : ¬ OpenK k := fun h' => h'.not_close h
 
 /-! The prefixes of a segment that does not fail do not fail. -/
-theorem scan_take_ne (st : Bool) (m : List Kind) (hm : scan st 0 m = some 0) (r : Nat) :
+theorem scan_take_ne (st : Sep) (m : List Kind) (hm : scan st 0 m = some 0) (r : Nat) :
     scan st 0 (m.take r) ≠ none := by
   intro h
   have := congrArg (scan st 0) (List.take_append_drop r m)
@@ -663,7 +601,7 @@ theorem Input.of_stateAt (ts : Array Token) :
 /-!
 The bracket pass on a segment `o m` with balanced `m` and with the index `j` of `o`. After `m`,
 the stack is `j` on the stack before `o`, and no bracket matches `o` yet. If `m` is a `Seg`, then
-the comma flag of `o` is false. If `m` holds no `;`, then the semicolon flag of `o` is false.
+the comma flag of `o` is false. If `m` is a `SemiSeg`, then the semicolon flag of `o` is false.
 -/
 theorem Input.of_open (toks : List Token) (a m b : List Kind) (o : Kind)
     (he : toks.map Token.kind = a ++ o :: (m ++ b)) (ho : OpenK o) (hb : Bal m) :
@@ -674,7 +612,7 @@ theorem Input.of_open (toks : List Token) (a m b : List Kind) (o : Kind)
         toks.length ∧
       (Seg m → (stateAt toks.toArray (a.length + 1 + m.length)).2.1.getD a.length false =
         false) ∧
-      (.symbol ";" ∉ m →
+      (SemiSeg m →
         (stateAt toks.toArray (a.length + 1 + m.length)).2.2.1.getD a.length false = false) := by
   let ts := toks.toArray
   let S := stateAt ts
@@ -730,10 +668,10 @@ theorem Input.of_open (toks : List Token) (a m b : List Kind) (o : Kind)
   let S0 := (S j).2.2.2
   -- Phase 2: in `m`, the stack holds `j` under the brackets that `m` opens.
   have p2 : ∀ r, r ≤ m.length → ∃ X : List Nat, (S (j + 1 + r)).2.2.2 = X ++ j :: S0 ∧
-      (∀ x ∈ X, j < x) ∧ scan false 0 (m.take r) = some X.length ∧
+      (∀ x ∈ X, j < x) ∧ scan .none 0 (m.take r) = some X.length ∧
       (S (j + 1 + r)).1.getD j toks.length = toks.length ∧
       (Seg m → (S (j + 1 + r)).2.1.getD j false = false) ∧
-      (.symbol ";" ∉ m → (S (j + 1 + r)).2.2.1.getD j false = false) := by
+      (SemiSeg m → (S (j + 1 + r)).2.2.1.getD j false = false) := by
     intro r
     induction r with
     | zero =>
@@ -755,15 +693,11 @@ theorem Input.of_open (toks : List Token) (a m b : List Kind) (o : Kind)
       have hsc : ∀ st, scan st 0 (m.take (r + 1)) = (scan st 0 (m.take r)).bind
           (scan st · [m[r]]) := fun st => by
         rw [List.take_succ_eq_append_getElem (by omega), scan_append]
-      have hne := scan_take_ne false m hb (r + 1)
+      have hne := scan_take_ne .none m hb (r + 1)
       rw [hsc, hXs] at hne
       simp only [Option.bind_some] at hne
-      have hsemi : .symbol ";" ∉ m → m[r] ≠ .symbol ";" := fun hs he =>
-        hs (he ▸ List.getElem_mem (by omega))
       rw [show j + 1 + (r + 1) = (j + 1 + r) + 1 by omega, hS]
       generalize ts.getD (j + 1 + r) ⟨⟨0, 0⟩, .eof⟩ = t at hk
-      have hsemi' : .symbol ";" ∉ m → isSym ";" t = false := fun hs => by
-        rw [isSym_eq, hk]; simpa using hsemi hs
       rw [hsc, hXs, Option.bind_some]
       by_cases h1 : OpenK m[r]
       · have hop : opening t = true := by rw [opening_eq, hk]; simpa using h1
@@ -800,10 +734,10 @@ theorem Input.of_open (toks : List Token) (a m b : List Kind) (o : Kind)
           · rw [stepT_comma _ _ _ _ (fun _ _ h => ?_)]
             · exact hXc hs
             · have hcm : m[r] = .symbol "," := by rw [isSym_eq, hk] at h; simpa using h
-              have hne2 := scan_take_ne true m hs (r + 1)
-              have hXs2 : scan true 0 (m.take r) = some X.length := by
-                obtain ⟨d', hd'⟩ := Option.ne_none_iff_exists'.1 (scan_take_ne true m hs r)
-                rw [hd', ← Option.some.inj ((scan_strict _ _ _ hd').symm.trans hXs)]
+              have hne2 := scan_take_ne .comma m hs (r + 1)
+              have hXs2 : scan .comma 0 (m.take r) = some X.length := by
+                obtain ⟨d', hd'⟩ := Option.ne_none_iff_exists'.1 (scan_take_ne .comma m hs r)
+                rw [hd', ← Option.some.inj ((scan_strict _ _ _ _ hd').symm.trans hXs)]
               rw [hsc, hXs2, Option.bind_some] at hne2
               simp only [hcm] at hne2
               simp [scan, OpenK, CloseK] at hne2
@@ -815,8 +749,24 @@ theorem Input.of_open (toks : List Token) (a m b : List Kind) (o : Kind)
               have := hXj x (by simp)
               simp only [List.cons_append, List.head?_cons, ne_eq, Option.some.injEq]
               omega
-          · rw [stepT_semi _ _ _ _ (fun _ _ _ h => by rw [hsemi' hs] at h; cases h)]
-            exact hXsm hs
+          · rw [stepT_semi _ _ _ _ (fun _ _ _ h => ?_)]
+            · exact hXsm hs
+            · have hcm : m[r] = .symbol ";" := by rw [isSym_eq, hk] at h; simpa using h
+              have hne2 := scan_take_ne .semi m hs (r + 1)
+              have hXs2 : scan .semi 0 (m.take r) = some X.length := by
+                obtain ⟨d', hd'⟩ := Option.ne_none_iff_exists'.1 (scan_take_ne .semi m hs r)
+                rw [hd', ← Option.some.inj ((scan_strict _ _ _ _ hd').symm.trans hXs)]
+              rw [hsc, hXs2, Option.bind_some] at hne2
+              simp only [hcm] at hne2
+              simp [scan, OpenK, CloseK] at hne2
+              obtain ⟨x, X', rfl⟩ : ∃ x X', X = x :: X' := by
+                cases X with
+                | nil => simp at hne2
+                | cons x X' => exact ⟨x, X', rfl⟩
+              rw [hX]
+              have := hXj x (by simp)
+              simp only [List.cons_append, List.head?_cons, ne_eq, Option.some.injEq]
+              omega
   obtain ⟨X, hX, -, hXs, hXm, hXc, hXsm⟩ := p2 m.length (Nat.le_refl _)
   rw [List.take_length] at hXs
   have hX0 : X = [] := by
@@ -826,7 +776,7 @@ theorem Input.of_open (toks : List Token) (a m b : List Kind) (o : Kind)
 
 /-!
 The bracket pass on a segment `o m c` with balanced `m`: the match of `o` is `c`. If `m` is a
-`Seg`, then the comma flag of `o` stays false. If `m` holds no `;`, then the semicolon flag of
+`Seg`, then the comma flag of `o` stays false. If `m` is a `SemiSeg`, then the semicolon flag of
 `o` stays false.
 -/
 theorem Input.of_seg (toks : List Token) (a m b : List Kind) (o c : Kind)
@@ -834,7 +784,7 @@ theorem Input.of_seg (toks : List Token) (a m b : List Kind) (o c : Kind)
     (hb : Bal m) :
     (Input.of toks.toArray).close.getD a.length toks.length = a.length + 1 + m.length ∧
       (Seg m → (Input.of toks.toArray).comma.getD a.length false = false) ∧
-      (.symbol ";" ∉ m → (Input.of toks.toArray).semi.getD a.length false = false) := by
+      (SemiSeg m → (Input.of toks.toArray).semi.getD a.length false = false) := by
   have hn : toks.length = a.length + 1 + m.length + 1 + b.length := by
     have := congrArg List.length he; simp at this; omega
   obtain ⟨hX, p1s, hXm, hXc, hXsm⟩ := Input.of_open toks a m (c :: b) o he ho hb
@@ -862,7 +812,7 @@ theorem Input.of_seg (toks : List Token) (a m b : List Kind) (o c : Kind)
         a.length + 1 + m.length ∧
       (Seg m → (stateAt toks.toArray (a.length + 2 + m.length + d)).2.1.getD a.length false =
         false) ∧
-      (.symbol ";" ∉ m →
+      (SemiSeg m →
         (stateAt toks.toArray (a.length + 2 + m.length + d)).2.2.1.getD a.length false =
           false) := by
     intro d
@@ -955,6 +905,84 @@ theorem Input.of_tuple (toks : List Token) (a m b : List Kind)
   simp only [Input.of_stateAt, List.size_toArray]
   exact h
 
+theorem stepT_semi_true (t : Token) (s : Array Nat × Array Bool × Array Bool × List Nat)
+    (i j : Nat) (h : s.2.2.1.getD j false = true) : (stepT t i s).2.2.1.getD j false = true := by
+  obtain ⟨c, cm, sm, o⟩ := s
+  cases o <;> by_cases h1 : opening t = true <;> by_cases h2 : closing t = true <;>
+    by_cases h3 : isSym "," t = true <;> by_cases h4 : isSym ";" t = true <;>
+    simp only [stepT, h1, h2, h3, h4, Bool.false_eq_true, ite_false, ite_true] <;>
+    first | exact h | exact getD_set_true h
+
+theorem stepT_size_semi (t : Token) (s : Array Nat × Array Bool × Array Bool × List Nat)
+    (i : Nat) : (stepT t i s).2.2.1.size = s.2.2.1.size := by
+  obtain ⟨c, cm, sm, o⟩ := s
+  cases o <;> by_cases h1 : opening t = true <;> by_cases h2 : closing t = true <;>
+    by_cases h3 : isSym "," t = true <;> by_cases h4 : isSym ";" t = true <;>
+    simp [stepT, h1, h2, h3, h4]
+
+theorem stateAt_size_semi (ts : Array Token) (k : Nat) :
+    (stateAt ts k).2.2.1.size = ts.size := by
+  induction k with
+  | zero => simp [stateAt]
+  | succ k ih => rw [stateAt_succ, stepT_size_semi]; exact ih
+
+/-! The bracket pass on `[ m ;` with balanced `m`: the semicolon flag of the `[` is true. -/
+theorem Input.of_semi (toks : List Token) (a m b : List Kind)
+    (he : toks.map Token.kind = a ++ .symbol "[" :: (m ++ .symbol ";" :: b)) (hb : Bal m) :
+    (Input.of toks.toArray).semi.getD a.length false = true := by
+  have hn : toks.length = a.length + 1 + m.length + 1 + b.length := by
+    have := congrArg List.length he; simp at this; omega
+  obtain ⟨hX, -, -, -, -⟩ := Input.of_open toks a m (.symbol ";" :: b) (.symbol "[") he
+    (Or.inr (Or.inl rfl)) hb
+  have hk? : ∀ i, i < toks.length → some (toks.toArray.getD i ⟨⟨0, 0⟩, .eof⟩).kind =
+      (a ++ .symbol "[" :: (m ++ .symbol ";" :: b))[i]? := by
+    intro i hi; rw [← he]; simp [Array.getD, hi]
+  have hkc : (toks.toArray.getD (a.length + 1 + m.length) ⟨⟨0, 0⟩, .eof⟩).kind =
+      .symbol ";" := by
+    have := hk? (a.length + 1 + m.length) (by omega)
+    have e2 : (a ++ .symbol "[" :: (m ++ .symbol ";" :: b))[a.length + 1 + m.length]? =
+        some (.symbol ";") := by
+      rw [show a.length + 1 + m.length = a.length + (m.length + 1) by omega,
+        List.getElem?_append_right (by omega),
+        show a.length + (m.length + 1) - a.length = m.length + 1 by omega,
+        List.getElem?_cons_succ, List.getElem?_append_right (Nat.le_refl _)]
+      simp
+    rw [e2] at this
+    exact Option.some.inj this
+  have hsz : a.length < (stateAt toks.toArray (a.length + 1 + m.length)).2.2.1.size := by
+    rw [stateAt_size_semi]; simp; omega
+  have h0 : (stateAt toks.toArray (a.length + 1 + m.length + 1)).2.2.1.getD a.length false =
+      true := by
+    rw [stateAt_succ]
+    revert hX hsz hkc
+    generalize toks.toArray.getD (a.length + 1 + m.length) ⟨⟨0, 0⟩, .eof⟩ = t
+    generalize stateAt toks.toArray (a.length + 1 + m.length) = s
+    intro hX hkc hsz
+    obtain ⟨c, cm, sm, o⟩ := s
+    simp only at hX hsz
+    subst hX
+    have h1 : opening t = false := by rw [opening_eq, hkc]; decide
+    have h2 : closing t = false := by rw [closing_eq, hkc]; decide
+    have h3 : isSym "," t = false := by rw [isSym_eq, hkc]; decide
+    have h4 : isSym ";" t = true := by rw [isSym_eq, hkc]; decide
+    simp only [stepT, h1, h2, h3, h4, Bool.false_eq_true, ite_false, ite_true]
+    exact getD_set_self hsz
+  have p : ∀ d, a.length + 1 + m.length + 1 + d ≤ toks.length →
+      (stateAt toks.toArray (a.length + 1 + m.length + 1 + d)).2.2.1.getD a.length false =
+        true := by
+    intro d
+    induction d with
+    | zero => intro _; exact h0
+    | succ d ih =>
+      intro hd
+      rw [show a.length + 1 + m.length + 1 + (d + 1) =
+        (a.length + 1 + m.length + 1 + d) + 1 by omega, stateAt_succ]
+      exact stepT_semi_true _ _ _ _ (ih (by omega))
+  have h := p b.length (by omega)
+  rw [show a.length + 1 + m.length + 1 + b.length = toks.length by omega] at h
+  simp only [Input.of_stateAt, List.size_toArray]
+  exact h
+
 /-! The bracket pass gives a window for the whole token list. -/
 theorem Input.of_win (toks : List Token) : Win (Input.of toks.toArray) 0 (toks.map Token.kind) where
   kind k hk := by
@@ -967,9 +995,13 @@ theorem Input.of_win (toks : List Token) : Win (Input.of toks.toArray) 0 (toks.m
   tuple a m b he hb := by
     rw [Nat.zero_add]
     exact Input.of_tuple toks a m b he hb
-  semi a m b he hb hs := by
+  semi a m b he hs := by
     rw [Nat.zero_add]
-    exact (Input.of_seg toks a m b _ _ he (Or.inr (Or.inl rfl)) (Or.inr (Or.inl rfl)) hb).2.2 hs
+    exact (Input.of_seg toks a m b _ _ he (Or.inr (Or.inl rfl)) (Or.inr (Or.inl rfl))
+      hs.bal).2.2 hs
+  arrayType a m b he hb := by
+    rw [Nat.zero_add]
+    exact Input.of_semi toks a m b he hb
   close a o m c b he ho hc hb := by
     simp only [Nat.zero_add, Input.of_tokens, List.size_toArray]
     exact (Input.of_seg toks a m b o c he ho hc hb).1
