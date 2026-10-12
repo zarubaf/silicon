@@ -254,11 +254,15 @@ impl Evaluator<'_> {
     }
 
     /// The write-backs of the call at `pos`, in the order of the parameters. Each checks the
-    /// mutation rule (`S016`), then charges the size of the final value, then writes it into
-    /// the live root.
+    /// mutation rule (`S016`), then the depth of the root, then charges the size of the final
+    /// value, then writes it into the live root.
     fn write_back(&mut self, pos: Pos, written: Vec<(Place, Val)>) -> Res<()> {
         for (place, value) in written {
             self.mutation(pos)?;
+            // Another value has the type of the place, so it keeps the depth of the root.
+            if let Val::Static(v) = &value {
+                self.bounded(pos, place.keys.len() as u64 + v.depth())?;
+            }
             self.charge(pos, self.seen_size(value.seen()))?;
             self.store_at(pos, pos, &place, value)?;
         }
