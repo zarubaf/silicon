@@ -340,3 +340,82 @@ fn a_pushed_element_copies_after_its_charge() {
     assert_eq!(out(&src, "f()", full, 1000), "(int 0)");
     assert_eq!(work(full).0, 1001);
 }
+
+/// A receiver call binds its receiver at the first parameter without `comptime`, and it
+/// charges as its plain call. The receiver evaluates first, so its `S013` comes before the
+/// `S013` of the argument. The prelude functions take a receiver too.
+const CALLS: &str = "fn f(comptime n: Int, x: Int) -> Int { return n * 10 + x; }\n\
+    fn g() -> Int { let a = 3; return a.f(7); }\n\
+    fn h() -> Int { let a = 3; return f(7, a); }\n\
+    fn p() -> Int { return [1][5].f(1 / 0); }\n\
+    fn q() -> Int { let mut xs = list(Int); xs.push(4); xs.push(5); let y = xs.pop(); \
+    return y + xs.len(); }\n\
+    fn r() -> UInt[4] { return UInt[8](3).resize(UInt[4]); }\n\
+    fn s() -> String { return 12.str(); }\n";
+
+#[test]
+fn a_receiver_call_binds_at_the_first_parameter_without_comptime() {
+    assert_eq!(o(CALLS, "g()"), "(int 73)");
+    assert_eq!(cost(CALLS, "g()"), cost(CALLS, "h()"));
+    assert_eq!(o(CALLS, "p()"), "S013 4:28");
+    assert_eq!(o(CALLS, "q()"), "(int 6)");
+    assert_eq!(o(CALLS, "r()"), "(uint 4 3)");
+    assert_eq!(o(CALLS, "s()"), "(string \"12\")");
+}
+
+/// A `mut` actual copies its place into the formal. At the return, the final value of the formal
+/// goes back into the place, also through steps of the place and through a receiver. The place
+/// has the type of the formal, else `S010` at the call. A `comptime fn` writes back its static
+/// value.
+const MUTS: &str = "fn inc(mut x: Int) -> () { x = x + 1; return (); }\n\
+    fn two(mut x: Int, mut y: [Int; 2]) -> Int { x = x + y[0]; y[1] = 9; return x; }\n\
+    comptime fn ct(mut x: Int) -> Int { x = 2; return 0; }\n\
+    fn k() -> Int { let mut a = 1; inc(a); a.inc(); return a; }\n\
+    fn l() -> [Int; 2] { let mut a = [1, 2]; inc(a[1]); return a; }\n\
+    fn m() -> Int { let mut a: Nat = 1; inc(a); return a; }\n\
+    fn o() -> (Int, [Int; 2]) { let mut a = 5; let mut b = [1, 2]; let r = two(a, b); \
+    return (a, b); }\n\
+    fn u() -> Int { let mut a = 1; let z = ct(a); return a; }\n";
+
+#[test]
+fn a_mut_actual_goes_back_into_its_place() {
+    assert_eq!(o(MUTS, "k()"), "(int 3)");
+    assert_eq!(o(MUTS, "l()"), "(array int ((int 1) (int 3)))");
+    assert_eq!(o(MUTS, "m()"), "S010 6:37");
+    assert_eq!(
+        o(MUTS, "o()"),
+        "(tuple ((int 6) (array int ((int 1) (int 9)))))"
+    );
+    assert_eq!(o(MUTS, "u()"), "(int 2)");
+}
+
+/// A `mut` actual charges the copy in and the write-back, but its root name charges no node. With
+/// a value of size 2, the call thus costs one unit more than the call with a copy only.
+#[test]
+fn the_charges_of_a_mut_formal() {
+    let keep = "fn keep(mut x: Int) -> () { return (); }\n\
+        fn id(x: Int) -> () { return (); }\n\
+        fn a() -> Int { let mut a = 18446744073709551616; keep(a); return 0; }\n\
+        fn b() -> Int { let mut a = 18446744073709551616; id(a); return 0; }\n";
+    assert_eq!(cost(keep, "a()"), cost(keep, "b()") + 1);
+}
+
+/// B2: a `mut` actual copies its place into the formal after the charge of its size, and the
+/// write-back moves the final value and copies nothing. A fuel that cannot pay the copy copies
+/// nothing, and a fuel that can copies the array once.
+#[test]
+fn a_mut_actual_copies_in_after_its_charge_and_writes_back_by_a_move() {
+    let zeros = vec!["0"; 1000].join(", ");
+    let src = format!(
+        "fn touch(mut a: [Int; 1000]) -> () {{ return (); }}\n\
+         fn f() -> Int {{ let mut xs: [Int; 1000] = [{zeros}]; touch(xs); return 0; }}"
+    );
+    let full = cost(&src, "f()");
+    // The copy-in is the first charge of the call, of 1,001 units. The call costs the write-back
+    // of 1,001 more, and a few units for the call and the return.
+    let short = full - 1_001 - 1_001 + 500;
+    assert!(out(&src, "f()", short, 1000).starts_with("S015"));
+    assert_eq!(work(short).0, 0);
+    assert_eq!(out(&src, "f()", full, 1000), "(int 0)");
+    assert_eq!(work(full).0, 1001);
+}

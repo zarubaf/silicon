@@ -795,3 +795,98 @@ fn a_list_holds_no_hardware_and_a_hardware_arm_cannot_change_one() {
     );
     assert!(at("  o := if (c) { g() } else { 2 };\n").starts_with("total"));
 }
+
+/// A hardware write-back gives the caller root its next version after the result of the call.
+/// The write-backs run in the order of the parameters. A write-back of a binding from before a
+/// hardware arm is `S016` at the call. A function that the arm calls can pass its own binding.
+fn muts(body: &str) -> String {
+    format!(
+        "fn inc(mut a: UInt[8]) -> () {{ a = a +% 1; return (); }}\n\
+         fn swap(mut a: UInt[8], mut b: UInt[8]) -> UInt[8] {{ let t = a; a = b; b = t; return t; }}\n\
+         fn own() -> UInt[8] {{ let mut z: UInt[8] = 1; inc(z); return z; }}\n\
+         module M() {{\n  input c: Bool;\n  input x: UInt[8];\n  input w: UInt[8];\n\
+         \x20 output y: UInt[8];\n{body}}}\n"
+    )
+}
+
+#[test]
+fn a_hardware_write_back_binds_the_next_version() {
+    let at = |body: &str| names(&muts(body), "M", "M");
+    assert_eq!(
+        at("  let mut q = x;\n  inc(q);\n  y := q;\n"),
+        ["q", "inc$0c$a", "inc$0c$a$1v", "q$1v"]
+    );
+    assert_eq!(
+        at("  let mut q = x;\n  q.inc();\n  q.inc();\n  y := q;\n"),
+        [
+            "q",
+            "inc$0c$a",
+            "inc$0c$a$1v",
+            "q$1v",
+            "inc$1c$a",
+            "inc$1c$a$1v",
+            "q$2v"
+        ]
+    );
+    assert_eq!(
+        at("  let mut q = x;\n  let mut r = w;\n  let s = swap(q, r);\n  y := q +% r;\n"),
+        [
+            "q",
+            "r",
+            "swap$0c$a",
+            "swap$0c$b",
+            "swap$0c$t",
+            "swap$0c$a$1v",
+            "swap$0c$b$1v",
+            "swap$0c$0ret",
+            "q$1v",
+            "r$1v",
+            "s"
+        ]
+    );
+    let cost_of = |body: &str| cost(&muts(body), "M");
+    assert_eq!(
+        cost_of("  let mut q = x;\n  let mut r = w;\n  y := if (c) { swap(q, r) } else { 0 };\n"),
+        "S016 11:17"
+    );
+    assert!(cost_of("  y := if (c) { own() } else { 0 };\n").starts_with("total"));
+    assert_eq!(
+        cost_of("  let mut q: UInt[4] = 1;\n  inc(q);\n  y := 0;\n"),
+        "S010 10:3"
+    );
+    assert!(cost_of("  let mut q = [UInt[8](1)];\n  inc(q[0]);\n  y := 0;\n").starts_with("total"));
+}
+
+/// The call sites count the call nodes in pre-order (decision F18). The constructor call
+/// `T()(1)` has two call nodes at one position, so the later call of `add` has the site 2. A
+/// receiver call has its own site at its receiver.
+#[test]
+fn the_call_sites_count_in_pre_order() {
+    let src = "comptime fn T() -> Type { return UInt[8]; }\n\
+        fn add(a: UInt[8], b: UInt[8]) -> UInt[8] { return a +% b; }\n\
+        module M() {\n  input x: UInt[8];\n  output y: UInt[8];\n\
+        \x20 let a = T()(1);\n  let s = add(x, a);\n  y := s.add(a);\n}\n";
+    assert_eq!(
+        names(src, "M", "M"),
+        ["add$2c$a", "add$2c$0ret", "s", "add$3c$a", "add$3c$0ret"]
+    );
+}
+
+/// B10: a body with many calls numbers them in one pre-order pass of the resolver, so the last
+/// call has the site of its rank, and the elaboration looks each site up by its node.
+#[test]
+fn many_call_sites_keep_their_pre_order_numbers() {
+    let calls = 1500;
+    let mut body = String::new();
+    for k in 0..calls {
+        writeln!(body, "  let a{k} = add(x, x);").unwrap();
+    }
+    let src = format!(
+        "fn add(a: UInt[8], b: UInt[8]) -> UInt[8] {{ return a +% b; }}\n\
+         module M() {{\n  input x: UInt[8];\n  output y: UInt[8];\n{body}  y := a0;\n}}\n"
+    );
+    let got = names(&src, "M", "M");
+    assert_eq!(got.len(), 4 * calls);
+    let last = format!("add${}c$0ret", calls - 1);
+    assert!(got.contains(&last), "{last}");
+}
