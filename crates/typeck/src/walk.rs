@@ -64,14 +64,10 @@ impl Head {
 /// Which parameters of a callee are static positions.
 #[derive(Clone, Copy)]
 enum Statics {
-    /// A `fn` item: every parameter of a `comptime fn`, else each `comptime` parameter.
-    Item {
-        comptime: bool,
-    },
-    /// Only the first parameter: `resize`, `reinterpret`, and `list`.
-    First,
+    /// A function: every parameter of a `comptime fn`, else each `comptime` parameter.
+    Params { comptime: bool },
+    /// Every argument: `static_assert` and `error` take messages.
     All,
-    Nobody,
 }
 
 /// A function that a call names: the modes of its parameters and its static positions. A
@@ -85,12 +81,10 @@ struct Callee<'a> {
 impl Callee<'_> {
     fn is_static(&self, k: usize) -> bool {
         match self.statics {
-            Statics::Item { comptime } => {
+            Statics::Params { comptime } => {
                 comptime || self.modes.get(k) == Some(&ParamMode::Comptime)
             }
-            Statics::First => k == 0,
             Statics::All => true,
-            Statics::Nobody => false,
         }
     }
 
@@ -102,9 +96,8 @@ impl Callee<'_> {
 
 fn prelude_statics(p: Prelude) -> Statics {
     match p {
-        Prelude::Resize | Prelude::Reinterpret | Prelude::ListFn => Statics::First,
         Prelude::StaticAssert | Prelude::Error => Statics::All,
-        _ => Statics::Nobody,
+        _ => Statics::Params { comptime: false },
     }
 }
 
@@ -305,7 +298,7 @@ impl<'a> Walker<'a> {
             Target::Decl(id) => match self.sigs.get(&id)? {
                 Sig::Fn { comptime, modes } => Some(Callee {
                     modes,
-                    statics: Statics::Item {
+                    statics: Statics::Params {
                         comptime: *comptime,
                     },
                 }),
