@@ -931,4 +931,52 @@ def place (s : String) : String :=
 #guard out "" "UInt[8, 9]" == "S007 1:1"
 #guard out "module M() { reg r: Bool = false; }" "M" == "S003 1:1"
 
+/-!
+Strings (section 5.1). `+` joins two strings and charges the sum of their sizes: 1 for the
+node, 4 for each literal, and 6 for the join. No ordering takes a string.
+-/
+#guard out "" "\"ab\" + \"cd\"" == "(string \"abcd\")"
+#guard exact "" "\"ab\" + \"cd\"" 15
+#guard out "" "\"a\" == \"a\"" == "(bool true)"
+#guard out "" "\"a\" != \"b\"" == "(bool true)"
+#guard out "" "\"a\" < \"b\"" == "S010 1:1"
+#guard out "" "\"a\" * \"b\"" == "S010 1:1"
+#guard out "" "\"a\" + 1" == "S010 1:1"
+#guard out "" "String" == "(type string)"
+#guard out "comptime fn f(s: String) -> String { return s + \"!\"; }" "f(\"a\")" ==
+  "(string \"a!\")"
+#guard out "comptime fn f() -> String { let mut s = \"a\"; s = s + \"b\"; return s; }" "f()" ==
+  "(string \"ab\")"
+#guard out "comptime fn f() -> String { let s: String = 1; return s; }" "f()" == "S010 1:29"
+
+/-!
+`s[i]` gives a string with the scalar `i` of `s`. It charges the size of `s` after the type of
+the index and before its range. The units are 1 for the node, 7 for the literal, 2 for the
+index, and 6 for the scan. Thus a fuel of 11 fails at the charge, and 12 reaches the range check.
+-/
+#guard out "" "\"héllo\"[1]" == "(string \"é\")"
+#guard exact "" "\"héllo\"[1]" 16
+#guard out "" "\"abc\"[UInt[8](2)]" == "(string \"c\")"
+#guard out "" "\"abc\"[3]" == "S013 1:7"
+#guard out "" "\"abc\"[-1]" == "S013 1:7"
+#guard out "" "\"abc\"[true]" == "S010 1:7"
+#guard out "" "\"abc\"[5]" (fuel := 11) == "S015 1:1"
+#guard out "" "\"abc\"[5]" (fuel := 12) == "S013 1:7"
+
+/-! `len(s)` counts the scalars and charges the size of `s` before the scan. -/
+#guard out "" "len(\"héllo\")" == "(int 5)"
+#guard out "" "len(\"\")" == "(int 0)"
+#guard exact "" "len(\"abc\")" 11
+
+/-!
+`str(n)` gives the decimal form of an `Int`. It charges the copy of `n`, the square of its
+size, and the size of the result. Thus `str(-5)` charges 4 for `-5`, then 1, 1, and 3.
+-/
+#guard out "" "str(-5)" == "(string \"-5\")"
+#guard exact "" "str(-5)" 11
+#guard out "" "str(1 << 64)" == "(string \"18446744073709551616\")"
+#guard exact "" "str(1 << 64)" (cost "" "1 << 64" + 2 + 2 + 4 + 21)
+#guard out "" "str(UInt[8](1))" == "S010 1:1"
+#guard out "" "str(\"a\")" == "S010 1:1"
+
 end Silicon.Source.Test.Eval
