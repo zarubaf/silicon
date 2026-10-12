@@ -795,6 +795,110 @@ def wide (k : Nat) : String :=
 #guard cost (wide 200) "f()" < 3000
 #guard out (wide 3) "S3" == "(type (struct root S3 ()))"
 
+/-!
+A record constructor charges the copies of its arguments, the typed use of each field in
+declaration order, and the size of the record. `P[8](1, true)` adds 12 units to `P[8]`: the call
+1, the arguments 4, their copies 2, the conversion of `1` 2, and the size 3. A field type that
+differs is `S010`, and a value that does not fit is `S012`. A field `.f` only refers, so it
+charges its node. A missing field is `S010`.
+-/
+def recs : String :=
+  "struct P(comptime W: Nat) { a: UInt[W], b: Bool }
+struct Q { p: P[8], q: [P[4]; 2] }
+struct E {}
+struct T { t: Type }
+type X = P[8];
+"
+#guard out recs "P[8](1, true)" == "(record (struct root P ((int 8))) ((uint 8 1) (bool true)))"
+#guard exact recs "P[8](1, true)" 31
+#guard exact recs "P[8](1, true).a" 32
+#guard out recs "P[8](1, true).a" == "(uint 8 1)"
+#guard out recs "X(1, true).b" == "(bool true)"
+#guard out recs "T(Bool).t" == "(type bool)"
+#guard out recs "E" == "(type (struct root E ()))"
+#guard out recs "P[8](256, true)" == "S012 1:1"
+#guard out recs "P[8](1, 2)" == "S010 1:1"
+#guard out recs "P[8]([], true)" == "S010 1:1"
+#guard out recs "P[8](1, true).c" == "S010 1:1"
+#guard out recs "(1, 2).a" == "S010 1:1"
+#guard out recs "X(1)" == "S007 1:1"
+#guard out recs "[P[8](1, true), P[8](2, false)]" ==
+  "(array (struct root P ((int 8))) " ++
+  "((record (struct root P ((int 8))) ((uint 8 1) (bool true))) " ++
+  "(record (struct root P ((int 8))) ((uint 8 2) (bool false)))))"
+
+/-!
+`==` on two records needs one struct type. The join of the two types charges as a type equality,
+2 + 2 here. The operator then charges the sum of the sizes, 3 + 3. The second constructor uses
+the done specialization.
+-/
+#guard out recs "P[8](1, true) == P[8](1, true)" == "(bool true)"
+#guard out recs "P[8](1, true) != P[8](1, false)" == "(bool true)"
+#guard exact recs "P[8](1, true) == P[8](1, true)" 59
+#guard out recs "P[8](1, true) == P[4](1, true)" == "S010 1:1"
+#guard out recs "P[8](1, true) == (1, true)" == "S010 1:1"
+#guard out recs "P[8](1, true) < P[8](1, true)" == "S010 1:1"
+
+/-!
+`T()` is the zero of a hardware data type, also of a struct type. It charges its node and the
+size of the zero from the metadata, before it exists. A type that is not hardware data is
+`S010`, also a struct with a field that is not. A struct without fields is hardware data with no
+bit. The zero checks its depth first: a record is one level deeper than its struct type.
+-/
+#guard out recs "Bool()" == "(bool false)"
+#guard out recs "SInt[8]()" == "(sint 8 0)"
+#guard out recs "Unit()" == "(unit)"
+#guard out recs "[UInt[8]; 2]()" == "(array (uint 8) ((uint 8 0) (uint 8 0)))"
+#guard out recs "P[8]()" == "(record (struct root P ((int 8))) ((uint 8 0) (bool false)))"
+#guard out recs "E()" == "(record (struct root E ()) ())"
+#guard out recs "Q()" ==
+  "(record (struct root Q ()) ((record (struct root P ((int 8))) ((uint 8 0) (bool false))) " ++
+  "(array (struct root P ((int 4))) " ++
+  "((record (struct root P ((int 4))) ((uint 4 0) (bool false))) " ++
+  "(record (struct root P ((int 4))) ((uint 4 0) (bool false)))))))"
+#guard exact recs "Bool()" 3
+#guard exact recs "P[8]()" 23
+#guard out recs "Int()" == "S010 1:1"
+#guard out recs "Type()" == "S010 1:1"
+#guard out recs "T()" == "S010 1:1"
+#guard out recs "[[UInt[8]; 1048576]; 1048576]()" == "S015 1:1"
+#guard out recs "[[Bool; 1]; 1]()" (depth := 3) ==
+  "(array (array bool 1) ((array bool ((bool false)))))"
+#guard out recs "Q()" (depth := 4) == "S015 1:1"
+#guard (out recs "Q()" (depth := 5)).startsWith "(record"
+
+/-!
+`data_bits(T)` charges only its node and its name: the metadata of `T` holds the width. A value
+that is not a type and a type that is not hardware data are `S010`.
+-/
+#guard out recs "data_bits(Q)" == "(int 19)"
+#guard out recs "data_bits([P[3]; 3])" == "(int 12)"
+#guard out recs "data_bits(E)" == "(int 0)"
+#guard out recs "data_bits(Unit)" == "(int 0)"
+#guard exact recs "data_bits(P[8])" 21
+#guard out recs "data_bits(T)" == "S010 1:1"
+#guard out recs "data_bits(Int)" == "S010 1:1"
+#guard out recs "data_bits(1)" == "S010 1:1"
+
+/-!
+A field is a step of a place. Each step charges 1 before it applies. The right side is a typed
+use at the type of the field. Thus `q.p.b = false;` costs 4 units more than an empty block: the
+statement 1, the two steps 2, and the literal 2, without the block 1. An error of a step or of
+the typed use is at 6:32, where the statement and its target start.
+-/
+def place (s : String) : String :=
+  recs ++ s!"fn f() -> Q \{ let mut q = Q(); {s} return q; }"
+#guard out (place "q.q[1].b = true; q.p.a = 300 - 45;") "f()" ==
+  "(record (struct root Q ()) ((record (struct root P ((int 8))) ((uint 8 255) (bool false))) " ++
+  "(array (struct root P ((int 4))) " ++
+  "((record (struct root P ((int 4))) ((uint 4 0) (bool false))) " ++
+  "(record (struct root P ((int 4))) ((uint 4 0) (bool true)))))))"
+#guard cost (place "q.p.b = false;") "f()" == cost (place "{ }") "f()" + 4
+#guard out (place "q.p.a = 256;") "f()" == "S012 6:32"
+#guard out (place "q.p.b = 1;") "f()" == "S010 6:32"
+#guard out (place "q.r = 1;") "f()" == "S010 6:32"
+#guard out (place "q.p = P[4](1, true);") "f()" == "S010 6:32"
+
 /-! Errors of the earlier passes come first, also in `EXPR`. -/
 #guard out "const A: Nat = ;" "1" == "S001 1:16"
 #guard out "" "x" == "S003 1:1"
