@@ -402,7 +402,19 @@ fn eval_source(source: &str, expr: &str, budget: &Budgets) -> Result<Output, Usa
     };
     Ok(
         match elab::eval(&file, &expr, budget.elab()).map_err(stack)? {
-            Ok((value, _)) => (value.serialize() + "\n", Exit::Success),
+            Ok((value, used)) => {
+                // The result pays its length in bytes from the fuel that remains, before the
+                // text exists (design section 8).
+                let len = value.serialized_len();
+                let left = budget.fuel.saturating_sub(used);
+                if left < len {
+                    let message =
+                        format!("the fuel cannot pay {len} unit(s) of the result; {left} remain");
+                    error_line(elab::Code::S015, Pos { line: 1, col: 1 }, &message)
+                } else {
+                    (value.serialize() + "\n", Exit::Success)
+                }
+            }
             Err(e) => error_line(e.code, e.pos, &e.message),
         },
     )
