@@ -335,6 +335,13 @@ impl Literal {
 
 /// The elaboration of the top selection at `pos`: the module item `top` with the literal
 /// arguments `xs`. The arguments charge as those of an `instance` statement.
+/// An argument after `settle_arguments`: kept as it is, or bound in the frame by its
+/// parameter.
+enum Kept {
+    Arg(Out),
+    Bound(resolve::DeclId),
+}
+
 pub(crate) fn elaborate(
     file: &Resolved,
     budget: Budget,
@@ -552,8 +559,26 @@ impl Evaluator<'_> {
     /// The arguments in the scope of the module: a literal that waits takes the type of its
     /// parameter. Each parameter stays bound for the types after it. The values leave the
     /// frame at the end.
+    ///
+    /// An argument that refers to a value of the caller stays a reference: its parameter
+    /// links to it, and the instance statement pays its copy after all arguments, as Lean
+    /// charges them. Thus no argument copies before its charge.
     fn settle_arguments(&mut self, pos: Pos, params: &[Param], outs: Vec<Out>) -> Res<Vec<Out>> {
-        let mut ids = Vec::with_capacity(outs.len());
+        let frame = self.store.frames.len().saturating_sub(1);
+        let settled = self.settle_linked(pos, params, outs, frame);
+        self.store.links.retain(|(k, _), _| *k != frame);
+        settled
+    }
+
+    /// `settle_arguments` in the frame `frame`.
+    fn settle_linked(
+        &mut self,
+        pos: Pos,
+        params: &[Param],
+        outs: Vec<Out>,
+        frame: usize,
+    ) -> Res<Vec<Out>> {
+        let mut kept = Vec::with_capacity(outs.len());
         for (q, o) in params.iter().zip(outs) {
             let o = if matches!(self.store.seen(&o), Seen::Pending(..)) {
                 let t = self.type_expr(&q.ty)?;
@@ -561,6 +586,13 @@ impl Evaluator<'_> {
             } else {
                 o
             };
+            if let Out::Ref(r) = &o {
+                self.check_static(pos, &o)?;
+                let id = self.decl(&q.name)?;
+                self.store.links.insert((frame, id), r.clone());
+                kept.push(Kept::Arg(o));
+                continue;
+            }
             let x = self.static_value(pos, o)?;
             let id = self.decl(&q.name)?;
             let ty = x.ty(&mut self.tys);
@@ -572,12 +604,19 @@ impl Evaluator<'_> {
                     value: Val::Static(x),
                 },
             );
-            ids.push(id);
+            kept.push(Kept::Bound(id));
         }
-        let mut done = Vec::with_capacity(ids.len());
-        for id in ids {
-            if let Some(Slot { value, .. }) = self.store.frame_mut().and_then(|f| f.remove(&id)) {
-                done.push(Out::Made(value));
+        let mut done = Vec::with_capacity(kept.len());
+        for k in kept {
+            match k {
+                Kept::Arg(o) => done.push(o),
+                Kept::Bound(id) => {
+                    if let Some(Slot { value, .. }) =
+                        self.store.frame_mut().and_then(|f| f.remove(&id))
+                    {
+                        done.push(Out::Made(value));
+                    }
+                }
             }
         }
         Ok(done)
