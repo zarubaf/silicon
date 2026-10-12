@@ -22,7 +22,10 @@ The proof is an induction on the number of kinds. These parts of the parser need
   order of their levels. `Runs.levels` reads them one level after the other.
 - `unary`: the prefix operators, in `wrap`.
 - `postfixExpr` and `suffixes`: `Runs.postfix` takes a continuation for the next suffix.
-- `tupleAhead`: the window gives a false comma flag at each `(` of an expression.
+- `tupleAhead`: the window gives a false comma flag at each `(` of an expression in
+  parentheses, and a true comma flag at the `(` of a tuple. At `()`, a `)` follows the `(`.
+- `arrayTypeAhead`: the window gives a false semicolon flag at the `[` of an array.
+- `args`: a tuple of one element ends with `,)`, and `Runs.args_trail` reads it.
 - `checkHeight` in `value` and `typeTop`: each height is at most the syntax depth.
 
 `Runs.value`, `Runs.args`, `Runs.type_end`, `Runs.typeTop`, `Runs.postfix_end`, and
@@ -460,6 +463,134 @@ theorem Expr.toks11_field (p : Pos) (b : Expr) (m : Ident) :
     (Expr.field p b m).toks 11 = b.toks 11 ++ [.symbol ".", .ident m.name] := by
   simp [Expr.toks, Expr.level, postfixLevel]
 
+/-! ## Containers -/
+
+theorem Runs.tupleAhead_true {ctx : Ctx} {i : Nat}
+    (h : (tokenAt ctx.input (i + 1)).kind = .symbol ")" ∨ ctx.input.comma.getD i false = true) :
+    Runs Parse.tupleAhead ctx i i (· = true) := by
+  intro hh
+  refine ⟨true, ?_, rfl⟩
+  show Except.ok ((isSym ")" (tokenAt ctx.input (i + 1)) || ctx.input.comma.getD i false), _) = _
+  rcases h with h | h
+  · have h1 : isSym ")" (tokenAt ctx.input (i + 1)) = true := by simp [isSym, h]
+    rw [h1, Bool.true_or]
+  · rw [h, Bool.or_true]
+
+theorem Runs.arrayTypeAhead {ctx : Ctx} {i : Nat} (h : ctx.input.semi.getD i false = false) :
+    Runs Parse.arrayTypeAhead ctx i i (· = false) := by
+  intro hh
+  refine ⟨false, ?_, rfl⟩
+  show Except.ok (ctx.input.semi.getD i false, _) = _
+  rw [h]
+
+/-! The elements of a tuple of one element: the element, `,`, and `)`. -/
+theorem Runs.args_trail {x : Expr} (hE : EGoal x) (hp : x.printable = true) (ctx : Ctx)
+    (i f : Nat) (R : List Kind)
+    (hw : Win ctx.input i (x.toks 0 ++ .symbol "," :: .symbol ")" :: R))
+    (hf : 4 * (x.toks 0).length + 4 ≤ f) :
+    Runs (Parse.args f ")" true false) ctx i (i + (x.toks 0).length + 2)
+      (fun ns => ns.map (·.expr.erase) = [x.erase] ∧
+        ∀ n ∈ ns, n.height ≤ (x.toks 0).length) := by
+  obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
+  rw [Parse.args]
+  obtain ⟨k, hk, hkc⟩ := Expr.toks_head x 0
+  obtain ⟨ks, hks⟩ : ∃ ks, x.toks 0 = k :: ks := List.head?_eq_some_iff.1 hk
+  have hk1 : (tokenAt ctx.input i).kind = k := by
+    have := hw; rw [hks] at this; exact this.head
+  simp only [ite_true]
+  refine Runs.bind (Runs.acceptSym_false (by rw [hk1]; exact hkc.1)) fun b hb => ?_
+  subst hb
+  simp only [Bool.false_eq_true, ite_false]
+  refine Runs.bind (Runs.argument hE hp (top := false) hw After.comma (by omega)
+    (fun h => by cases h)) fun n hn => ?_
+  have hw2 := hw.drop
+  obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
+  rw [Parse.argsRest]
+  refine Runs.bind (Runs.acceptSym_false (by rw [hw2.head]; decide)) fun b hb => ?_
+  subst hb
+  simp only [Bool.false_eq_true, ite_false]
+  refine Runs.peek_bind ?_
+  simp only [isSym, hw2.head, beq_self_eq_true, ite_true]
+  refine Runs.bump_bind ?_
+  refine Runs.bind (Runs.acceptSym_true hw2.tail.head) fun b hb => ?_
+  subst hb
+  simp only [ite_true]
+  refine Runs.idx (by omega) (Runs.pure ⟨by simp [hn.1], ?_⟩)
+  simpa using hn.2
+
+/-! `()` or a tuple: `tupleAhead` holds, then the elements up to `)`. -/
+theorem Runs.primary_tuple {xs : List Expr} {ctx : Ctx} {i f T B : Nat}
+    (hk : (tokenAt ctx.input i).kind = .symbol "(")
+    (hta : (tokenAt ctx.input (i + 1)).kind = .symbol ")" ∨ ctx.input.comma.getD i false = true)
+    (hargs : Runs (Parse.args f ")" true false) ctx (i + 1) (i + T)
+      (fun ns => ns.map (·.expr.erase) = xs.map Expr.erase ∧ ∀ n ∈ ns, n.height ≤ B)) :
+    Runs (primary (f + 1)) ctx i (i + T) (fun r => r.2 = false ∧
+      (xs = [] → r.1.expr.erase = .unit Pos.zero) ∧
+      (xs ≠ [] → r.1.expr.erase = .tuple Pos.zero (xs.map Expr.erase)) ∧
+      r.1.height ≤ B + 1) := by
+  rw [Parse.primary]
+  refine Runs.peek_bind ?_
+  simp only [hk]
+  refine Runs.bind (Runs.tupleAhead_true hta) fun b hb => ?_
+  subst hb
+  simp only [ite_true]
+  refine Runs.bump_bind ?_
+  refine Runs.bind hargs fun ns hns => Runs.pure ?_
+  cases ns with
+  | nil =>
+    have hx : xs = [] := by simpa using hns.1.symm
+    subst hx
+    exact ⟨rfl, fun _ => by simp [leaf, Expr.erase], fun h => absurd rfl h, by simp [leaf]⟩
+  | cons n ns =>
+    refine ⟨rfl, fun h => by subst h; simp at hns, fun _ => ?_, ?_⟩
+    · simp only [Expr.erase, List.map_map, Function.comp_def]
+      rw [← hns.1]
+    · refine height_le fun x hx => ?_
+      simp only [List.map_cons, List.mem_cons, List.mem_map] at hx
+      rcases hx with rfl | ⟨m, hm, rfl⟩
+      · exact hns.2 n (by simp)
+      · exact hns.2 m (by simp [hm])
+
+/-! An array: no `;` in its brackets, then the elements up to `]`. -/
+theorem Runs.primary_array {xs : List Expr} {ctx : Ctx} {i f T B : Nat}
+    (hk : (tokenAt ctx.input i).kind = .symbol "[")
+    (hs : ctx.input.semi.getD i false = false)
+    (hargs : Runs (Parse.args f "]" true false) ctx (i + 1) (i + T)
+      (fun ns => ns.map (·.expr.erase) = xs.map Expr.erase ∧ ∀ n ∈ ns, n.height ≤ B)) :
+    Runs (primary (f + 1)) ctx i (i + T) (fun r => r.2 = false ∧
+      r.1.expr.erase = .array Pos.zero (xs.map Expr.erase) ∧ r.1.height ≤ B + 1) := by
+  rw [Parse.primary]
+  refine Runs.peek_bind ?_
+  simp only [hk]
+  refine Runs.bind (Runs.arrayTypeAhead hs) fun b hb => ?_
+  subst hb
+  simp only [Bool.false_eq_true, ite_false]
+  refine Runs.bump_bind ?_
+  refine Runs.bind hargs fun ns hns => Runs.pure ⟨rfl, ?_, ?_⟩
+  · simp only [Expr.erase, List.map_map, Function.comp_def]
+    rw [← hns.1]
+  · refine height_le fun x hx => ?_
+    simp only [List.mem_map] at hx
+    obtain ⟨m, hm, rfl⟩ := hx
+    exact hns.2 m hm
+
+theorem Runs.suffixes_select {ctx : Ctx} {i f : Nat} {start : Pos} {n : Node} {pl : Bool}
+    {v : Nat} {R : List Kind} (hw : Win ctx.input i (.symbol "." :: .number v :: R))
+    {l : Nat} {Q : Node × Bool → Prop}
+    (hk : ∀ p, Runs (suffixes f start ⟨.select start n.expr p v, n.height + 1⟩ pl) ctx
+        (i + 2) l Q) :
+    Runs (suffixes (f + 1) start n pl) ctx i l Q := by
+  rw [Parse.suffixes]
+  refine Runs.peek_bind ?_
+  simp only [isSym, hw.head, beq_iff_eq, Kind.symbol.injEq]
+  simp only [show ("." : String) ≠ "(" by decide, show ("." : String) ≠ "[" by decide,
+    ite_false, ite_true]
+  refine Runs.bump_bind ?_
+  refine Runs.peek_bind ?_
+  simp only [hw.tail.head]
+  refine Runs.bump_bind ?_
+  exact hk _
+
 theorem Runs.postfix_base {ctx : Ctx} {i f T l : Nat} {u : Expr} {pl : Bool}
     {Q : Node × Bool → Prop}
     (hpr : Runs (primary f) ctx i (i + T) (fun r => Res u T r.1 ∧ r.2 = pl))
@@ -503,7 +634,126 @@ theorem Runs.postfix_paren (u : Expr) (hl : u.level < 11) (hpl : u.place = false
 
 theorem Runs.postfix (u : Expr) : PGoal u := by
   induction u using Expr.erase.induct with
-  | case11 | case12 | case13 | case14 => intro hp; simp [Expr.printable] at hp
+  | case11 p =>
+    intro hp hIH ctx i f t R hw ht _ hf l Q hk
+    unfold SufK at hk
+    have hT : (Expr.unit p).toks 11 = [.symbol "(", .symbol ")"] := by
+      simp [Expr.toks, Expr.level, postfixLevel]
+    rw [hT] at hw hf hk
+    simp only [List.length_cons, List.length_nil] at hf
+    obtain ⟨f, rfl⟩ : ∃ g, f = g + 2 := ⟨f - 2, by omega⟩
+    have hargs := Runs.args (xs := []) (Or.inl rfl) (allowEmpty := true) (top := false)
+      (fun _ h => by cases h) (fun _ => rfl) ctx (i + 1) f (t :: R)
+      (by simpa [Print.argToks] using hw.tail) (by simp [Print.argToks]; omega) (by simp)
+    refine Runs.postfix_base (T := 2) (u := .unit p) (pl := false)
+      (Runs.mono (Runs.primary_tuple (xs := []) hw.head (Or.inl hw.tail.head)
+        (Runs.idx (by simp [Print.argToks]) hargs)) ?_) ?_
+    · rintro r ⟨h1, h2, -, h4⟩
+      exact ⟨⟨by simp [h2 rfl, Expr.erase], by simp [Print.argToks] at h4; omega⟩, h1⟩
+    · intro n f' hn hf'; exact hk n f' hn (by simp; omega)
+  | case12 p xs _ =>
+    intro hp hIH ctx i f t R hw ht _ hf l Q hk
+    unfold SufK at hk
+    simp only [Expr.printable, Bool.and_eq_true, Expr.printableAll_eq, List.all_eq_true,
+      Bool.not_eq_true', List.isEmpty_eq_false_iff] at hp
+    obtain ⟨hne, hpxs⟩ := hp
+    have hres : ∀ r : Node × Bool, r.1.expr.erase = .tuple Pos.zero (xs.map Expr.erase) →
+        r.1.expr.erase = (Expr.tuple p xs).erase := fun r h => by
+      simp [h, Expr.erase]
+    by_cases h1 : xs.length = 1
+    · obtain ⟨x, rfl⟩ : ∃ x, xs = [x] := by
+        match xs, h1 with
+        | [x], _ => exact ⟨x, rfl⟩
+      have hT : (Expr.tuple p [x]).toks 11 =
+          .symbol "(" :: (x.toks 0 ++ [.symbol ",", .symbol ")"]) := by
+        simp [Expr.toks, Expr.level, postfixLevel, Print.argToks]
+      rw [hT] at hw hf hk hIH
+      simp only [List.length_cons, List.length_append, List.length_nil] at hf hk hIH
+      simp only [List.cons_append, List.append_assoc, List.nil_append] at hw
+      obtain ⟨f, rfl⟩ : ∃ g, f = g + 2 := ⟨f - 2, by omega⟩
+      have hEx : EGoal x := hIH x (by omega)
+      have hpx := hpxs x (by simp)
+      have hta : ctx.input.comma.getD i false = true := by
+        simpa using hw.tuple [] (x.toks 0) (.symbol ")" :: t :: R) (by simp)
+          (Expr.trans false x 0).bal
+      have hargs := Runs.args_trail hEx hpx ctx (i + 1) f (t :: R) hw.tail (by omega)
+      refine Runs.postfix_base (T := (x.toks 0).length + 3) (u := .tuple p [x]) (pl := false)
+        (Runs.mono (Runs.primary_tuple (xs := [x]) hw.head (Or.inr hta)
+          (Runs.idx (by omega) hargs)) ?_) ?_
+      · rintro r ⟨h1, -, h3, h4⟩
+        exact ⟨⟨hres r (h3 (by simp)), by omega⟩, h1⟩
+      · intro n f' hn hf'; exact hk n f' hn (by omega)
+    · have hT : (Expr.tuple p xs).toks 11 =
+          .symbol "(" :: (argToks (xs.map (Expr.toks 0)) ++ [.symbol ")"]) := by
+        have : (xs.length == 1) = false := by simpa using h1
+        simp [Expr.toks, Expr.level, postfixLevel, this]
+      rw [hT] at hw hf hk hIH
+      simp only [List.length_cons, List.length_append, List.length_nil] at hf hk hIH
+      simp only [List.cons_append, List.append_assoc, List.nil_append] at hw
+      obtain ⟨f, rfl⟩ : ∃ g, f = g + 2 := ⟨f - 2, by omega⟩
+      have hE : ∀ x ∈ xs, EGoal x ∧ x.printable = true := fun x hx =>
+        ⟨hIH x (by have := argToks_mem hx; omega), hpxs x hx⟩
+      obtain ⟨x, y, ys, rfl⟩ : ∃ x y ys, xs = x :: y :: ys := by
+        match xs, hne, h1 with
+        | x :: y :: ys, _, _ => exact ⟨x, y, ys, rfl⟩
+        | [_], _, h => exact absurd rfl h
+      have hta : ctx.input.comma.getD i false = true := by
+        have e : Kind.symbol "(" :: (argToks ((x :: y :: ys).map (Expr.toks 0)) ++
+            .symbol ")" :: t :: R) = [] ++ .symbol "(" :: (x.toks 0 ++ .symbol "," ::
+              (y.toks 0 ++ commaToks ys ++ .symbol ")" :: t :: R)) := by
+          rw [argToks_cons]; simp [commaToks]
+        simpa using hw.tuple _ _ _ e (Expr.trans false x 0).bal
+      have hargs := Runs.args (Or.inl rfl) (allowEmpty := true) (top := false) hE
+        (fun _ => rfl) ctx (i + 1) f (t :: R) hw.tail (by omega) (by simp)
+      refine Runs.postfix_base (T := (argToks ((x :: y :: ys).map (Expr.toks 0))).length + 2)
+        (u := .tuple p (x :: y :: ys)) (pl := false)
+        (Runs.mono (Runs.primary_tuple (xs := x :: y :: ys) hw.head (Or.inr hta)
+          (Runs.idx (by omega) hargs)) ?_) ?_
+      · rintro r ⟨h1, -, h3, h4⟩
+        exact ⟨⟨hres r (h3 (by simp)), by omega⟩, h1⟩
+      · intro n f' hn hf'; exact hk n f' hn (by omega)
+  | case13 p xs _ =>
+    intro hp hIH ctx i f t R hw ht _ hf l Q hk
+    unfold SufK at hk
+    simp only [Expr.printable, Expr.printableAll_eq, List.all_eq_true] at hp
+    have hT : (Expr.array p xs).toks 11 =
+        .symbol "[" :: (argToks (xs.map (Expr.toks 0)) ++ [.symbol "]"]) := by
+      simp [Expr.toks, Expr.level, postfixLevel]
+    rw [hT] at hw hf hk hIH
+    simp only [List.length_cons, List.length_append, List.length_nil] at hf hk hIH
+    simp only [List.cons_append, List.append_assoc, List.nil_append] at hw
+    obtain ⟨f, rfl⟩ : ∃ g, f = g + 2 := ⟨f - 2, by omega⟩
+    have hE : ∀ x ∈ xs, EGoal x ∧ x.printable = true := fun x hx =>
+      ⟨hIH x (by have := argToks_mem hx; omega), hp x hx⟩
+    have hs : ctx.input.semi.getD i false = false := by
+      simpa using hw.semi [] _ (t :: R) (by simp) (Bal.args xs)
+        (notMem_argToks (by decide) (by simpa using fun x _ => Expr.semi_notMem x 0))
+    have hargs := Runs.args (Or.inr rfl) (allowEmpty := true) (top := false) hE
+      (fun _ => rfl) ctx (i + 1) f (t :: R) hw.tail (by omega) (by simp)
+    refine Runs.postfix_base (T := (argToks (xs.map (Expr.toks 0))).length + 2)
+      (u := .array p xs) (pl := false)
+      (Runs.mono (Runs.primary_array (xs := xs) hw.head hs (Runs.idx (by omega) hargs)) ?_) ?_
+    · rintro r ⟨h1, h2, h4⟩
+      exact ⟨⟨by simp [h2, Expr.erase], by omega⟩, h1⟩
+    · intro n f' hn hf'; exact hk n f' hn (by omega)
+  | case14 p b q k ihb =>
+    intro hp hIH ctx i f t R hw ht _ hf l Q hk
+    unfold SufK at hk
+    simp only [Expr.printable, Bool.and_eq_true] at hp
+    have hT : (Expr.select p b q k).toks 11 = b.toks 11 ++ [.symbol ".", .number k] := by
+      simp [Expr.toks, Expr.level, postfixLevel]
+    rw [hT] at hw hf hk hIH
+    simp only [List.length_cons, List.length_append, List.length_nil] at hf hk hIH
+    simp only [List.cons_append, List.append_assoc, List.nil_append] at hw
+    refine ihb hp.1 (fun x hx => hIH x (by omega)) ctx i f (.symbol ".") _ hw (by decide)
+      (fun q b m _ => by decide) (by omega) l Q ?_
+    intro n f' hn hf'
+    obtain ⟨f'', rfl⟩ : ∃ g, f' = g + 1 := ⟨f' - 1, by omega⟩
+    refine Runs.suffixes_select hw.drop fun pos => ?_
+    have hres : (Expr.select (tokenAt ctx.input i).pos n.expr pos k).erase =
+        (Expr.select p b q k).erase := by
+      simp [Expr.erase, hn.1]
+    exact Runs.start (by omega) (hk _ f'' ⟨hres, by have := hn.2; simp only; omega⟩ (by omega))
   | case1 p v =>
     intro hp hIH ctx i f t R hw ht _ hf l Q hk
     unfold SufK at hk

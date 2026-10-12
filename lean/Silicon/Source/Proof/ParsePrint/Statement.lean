@@ -70,12 +70,20 @@ example : ¬ Printable [.const p (nm "X") (t "T") (.index p (v "a") [])] := by d
 example : ¬ Printable [.fn p false (nm "f") [] (t "T") [.assign p (.num p 0) (v "x")]] := by
   decide
 
-/-! A place with an index or a field, but no container form yet. -/
+/-! A place with an index, a field, or a selector. -/
 example : Printable [.fn p false (nm "f") [] (t "T")
     [.assign p (.field p (.index p (v "a") [.num p 0]) (nm "b")) (v "x")]] := by
   decide +kernel
-example : ¬ Printable [.fn p false (nm "f") [] (t "T")
-    [.assign p (.select p (v "a") p 0) (v "x")]] := by decide
+example : Printable [.fn p false (nm "f") [] (t "T")
+    [.assign p (.select p (v "a") p 0) (v "x")]] := by decide +kernel
+
+/-! The unit value, tuples of one and two elements, arrays, and a selector of a call. -/
+example : Printable [.const p (nm "X") (t "T")
+    (.tuple p [.unit p, .tuple p [v "a"], .array p [], .array p [.num p 1, v "b"],
+      .select p (.call p (v "g") []) p 1])] := by decide +kernel
+
+/-! An empty tuple: the printer writes it as `()`, the unit value. -/
+example : ¬ Printable [.const p (nm "X") (t "T") (.tuple p [])] := by decide
 
 /-! A module parameter without `comptime`, and two domains. -/
 example : ¬ Printable [.module p (nm "M") [⟨p, false, nm "W", t "Nat"⟩] none []] := by decide

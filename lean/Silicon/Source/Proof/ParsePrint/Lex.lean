@@ -26,7 +26,8 @@ open Lex Print
 
 /-! The first character of the text of an expression. -/
 def exprStart (x : Char) : Bool :=
-  identStart x || x.isDigit || x == '"' || x == '(' || x == '-' || x == '!' || x == '~'
+  identStart x || x.isDigit || x == '"' || x == '(' || x == '[' || x == '-' || x == '!' ||
+    x == '~'
 
 theorem sym_ok_exprStart {c x : Char} (h : exprStart x = true) :
     (Follow.sym c).ok (some x) = true := by
@@ -170,7 +171,20 @@ theorem head_append {s t : String} (h : ∃ x xs, s.toList = x :: xs ∧ exprSta
 theorem Expr.head (e : Expr) :
     e.printable = true → ∀ ctx, ∃ x xs, (e.print ctx).toList = x :: xs ∧ exprStart x = true := by
   induction e using Expr.erase.induct with
-  | case11 | case12 | case13 | case14 => intro h; simp [Expr.printable] at h
+  | case11 | case12 =>
+    intro _; apply Expr.head_paren
+    rw [Expr.print]
+    exact head_of_cons (x := '(') (by simp) (by decide)
+  | case13 =>
+    intro _; apply Expr.head_paren
+    rw [Expr.print]
+    exact head_of_cons (x := '[') (by simp) (by decide)
+  | case14 p b q i ihb =>
+    intro h; apply Expr.head_paren
+    rw [Expr.print]
+    simp only [Expr.printable, Bool.and_eq_true] at h
+    simp only [Nat.not_lt_zero, ite_false, String.append_assoc]
+    exact head_append (ihb h.1 _)
   | case1 p v =>
     intro _; apply Expr.head_paren
     rw [Expr.print]
@@ -271,7 +285,56 @@ theorem Expr.lexes {D : Nat} (e : Expr) :
   have hcs : Starts .sep ")".toList := Starts.lit (by decide)
   have hop : Lexes D .any "(".toList [.symbol "("] := Lexes.glue (by decide)
   induction e using Expr.erase.induct with
-  | case11 | case12 | case13 | case14 => intro h; simp [Expr.printable] at h
+  | case11 p =>
+    intro _; apply Lexes.wrap
+    rw [Expr.print, Expr.toks]
+    simpa using Lexes.any (f := .sep) (Lexes.glue (D := D) (cs := "()".toList)
+      (ks := [.symbol "(", .symbol ")"]) (by decide))
+  | case12 p xs ihx =>
+    intro h; apply Lexes.wrap
+    simp only [Expr.printable, Bool.and_eq_true, Expr.printableAll_eq, List.all_eq_true] at h
+    rw [Expr.print, Expr.toks]
+    have hx : ∀ x ∈ xs, Lexes D .sep (x.print 0).toList (x.toks 0) :=
+      fun x hx => ihx x hx (h.2 x hx) 0
+    have ha : Lexes D .any ((Print.args (xs.map (Expr.print 0))).toList ++
+        (tupleEnd xs.length).toList)
+        (argToks (xs.map (Expr.toks 0)) ++
+          (if xs.length == 1 then [.symbol ",", .symbol ")"] else [.symbol ")"])) := by
+      unfold tupleEnd
+      by_cases h1 : xs.length = 1
+      · simp only [h1, beq_self_eq_true, ite_true]
+        exact Lexes.argsClose xs hx (Lexes.glue (by decide)) (Starts.lit (by decide))
+      · have h1' : (xs.length == 1) = false := by simpa using h1
+        simp only [h1', Bool.false_eq_true, ite_false]
+        exact Lexes.argsClose xs hx hcl hcs
+    have := hop.append ha (Starts.any _)
+    simpa using Lexes.any (f := .sep) this
+  | case13 p xs ihx =>
+    intro h; apply Lexes.wrap
+    simp only [Expr.printable, Expr.printableAll_eq, List.all_eq_true] at h
+    rw [Expr.print, Expr.toks]
+    have ho : Lexes D .any "[".toList [.symbol "["] := Lexes.glue (by decide)
+    have ha := Lexes.argsClose (D := D) xs (fun x hx => ihx x hx (h x hx) 0)
+      (Lexes.glue (cs := "]".toList) (ks := [.symbol "]"]) (by decide)) (Starts.lit (by decide))
+    have := ho.append ha (Starts.any _)
+    simpa using Lexes.any (f := .sep) this
+  | case14 p b q i ihb =>
+    intro h; apply Lexes.wrap
+    simp only [Expr.printable, Bool.and_eq_true] at h
+    unfold numberBound at h
+    rw [Expr.print, Expr.toks]
+    have hd : Lexes D (.sym '.') ".".toList [.symbol "."] := Lexes.glue (by decide)
+    have hn := Lexes.number (D := D) (of_decide_eq_true h.2)
+    have hs : Starts (.sym '.') (Nat.toDigits 10 i) := by
+      cases hdg : Nat.toDigits 10 i with
+      | nil => exact absurd hdg Nat.toDigits_ne_nil
+      | cons x xs =>
+        have hx : x.isDigit = true :=
+          Nat.isDigit_of_mem_toDigits (b := 10) (by decide) (by decide)
+            (by rw [hdg]; exact List.mem_cons_self)
+        exact starts_of_exprStart (by decide) ⟨x, xs, rfl, by simp [exprStart, hx]⟩
+    have := (ihb h.1 postfixLevel).append (hd.append hn hs) (Starts.glue "." (by decide) _)
+    simpa using this
   | case1 p v =>
     intro h; apply Lexes.wrap
     simp only [Expr.printable] at h
