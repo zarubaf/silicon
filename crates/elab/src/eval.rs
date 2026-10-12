@@ -129,34 +129,7 @@ struct Store {
     /// run, for the test of copies before a charge.
     #[cfg(test)]
     copied: (Cell<u64>, u64),
-    /// The counters of the work of the string and list operations, for the tests.
-    #[cfg(test)]
-    work: Work,
 }
-
-/// The work of the operations that scan, convert, or walk, counted for the tests: they check
-/// the work and not the time. A test finds its counts by the fuel budget of its run, as it
-/// finds its copies.
-#[cfg(test)]
-#[derive(Default)]
-pub(crate) struct Work {
-    /// The scalars that the charged scans of strings visited.
-    pub scanned: Cell<u64>,
-    /// The digits that the conversions of `str` made.
-    pub converted: Cell<u64>,
-}
-
-/// The counts of a run, as `Work` held them at its end.
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct Counts {
-    pub scanned: u64,
-    pub converted: u64,
-}
-
-#[cfg(test)]
-pub(crate) static COUNTS: std::sync::Mutex<BTreeMap<u64, Counts>> =
-    std::sync::Mutex::new(BTreeMap::new());
 
 /// The copies of each run of a test, by its fuel budget: a test finds its run by a fuel that
 /// no other test uses, also when the tests share a process.
@@ -169,15 +142,6 @@ impl Drop for Store {
     fn drop(&mut self) {
         if let Ok(mut copies) = COPIES.lock() {
             copies.insert(self.copied.1, self.copied.0.get());
-        }
-        if let Ok(mut counts) = COUNTS.lock() {
-            counts.insert(
-                self.copied.1,
-                Counts {
-                    scanned: self.work.scanned.get(),
-                    converted: self.work.converted.get(),
-                },
-            );
         }
     }
 }
@@ -552,6 +516,8 @@ impl<'a> Evaluator<'a> {
             }
             consts.push(Entry::NotStarted);
         }
+        #[cfg(test)]
+        crate::counters::start(budget.fuel);
         Evaluator {
             file,
             top,
@@ -578,8 +544,6 @@ impl<'a> Evaluator<'a> {
                 links: BTreeMap::new(),
                 #[cfg(test)]
                 copied: (Cell::new(0), budget.fuel),
-                #[cfg(test)]
-                work: Work::default(),
             },
             graph: Graph::default(),
             paths: Paths::default(),
@@ -933,6 +897,14 @@ impl Evaluator<'_> {
         }
         self.depth += 1;
         let stack = self.stack;
+        #[cfg(test)]
+        let fuel = self.store.copied.1;
+        let act = move |ev: &mut Self| {
+            // A level that starts a thread counts into the run of its parent.
+            #[cfg(test)]
+            crate::counters::join(fuel);
+            act(ev)
+        };
         let r = stack
             .nest(self.depth, self, act)
             .unwrap_or_else(|e| Err(Stop::Stack(e)));

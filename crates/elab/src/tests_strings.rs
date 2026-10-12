@@ -4,10 +4,9 @@
 //! formals. The charges are exact: the cost is the number, this fuel passes, and one unit less
 //! gives `S015`. The tests of the work count steps and copies and not the time.
 
-use crate::counters::{JOINED, WALKED, get};
-use crate::eval::{COPIES, COUNTS, Counts};
+use crate::counters::{Counts, of};
+use crate::eval::COPIES;
 use crate::tests::{cost, exact, message, out, path_steps};
-use std::sync::atomic::Ordering;
 
 /// The result of `eval` with the default budgets.
 fn o(src: &str, expr: &str) -> String {
@@ -39,12 +38,7 @@ fn work(fuel: u64) -> (u64, Counts) {
         .ok()
         .and_then(|c| c.get(&fuel).copied())
         .unwrap_or(u64::MAX);
-    let counts = COUNTS
-        .lock()
-        .ok()
-        .and_then(|c| c.get(&fuel).copied())
-        .unwrap_or_default();
-    (copies, counts)
+    (copies, of(fuel))
 }
 
 /// `+` joins two strings and charges the sum of their sizes: 1 for the node, 4 for each
@@ -263,15 +257,17 @@ fn the_equality_of_lists() {
     );
 }
 
-/// B1: a join makes its string after its charge. The fuel 14 cannot pay the join, which is the
-/// last charge of 15, and so no byte joins.
+/// B1: a join makes its string after its charge. One unit less than the cost cannot pay the
+/// join, which is the last charge, and so no byte joins. The strings are long, so that no other
+/// test uses these fuels.
 #[test]
 fn a_join_follows_its_charge() {
-    JOINED.store(0, Ordering::Relaxed);
-    assert!(out("", "\"ab\" + \"cd\"", 14, 1000).starts_with("S015"));
-    assert_eq!(get(&JOINED), 0);
-    assert_eq!(out("", "\"ab\" + \"cd\"", 15, 1000), "(string \"abcd\")");
-    assert_eq!(get(&JOINED), 4);
+    let expr = "\"abcdefgh\" + \"ijklmnop\"";
+    let full = cost("", expr);
+    assert!(out("", expr, full - 1, 1000).starts_with("S015"));
+    assert_eq!(work(full - 1).1.joined, 0);
+    assert_eq!(out("", expr, full, 1000), "(string \"abcdefghijklmnop\")");
+    assert_eq!(work(full).1.joined, 16);
 }
 
 /// The list `f` that pushes `n` integers, then pops them.
@@ -290,9 +286,9 @@ fn pushes(n: u64) -> String {
 fn a_push_does_not_walk_the_list() {
     let walked = |n: u64| {
         let src = pushes(n);
-        WALKED.store(0, Ordering::Relaxed);
-        assert_eq!(out(&src, "f()", 100_000_000, 1000), "(int 0)");
-        get(&WALKED)
+        let fuel = 100_000_000 + n;
+        assert_eq!(out(&src, "f()", fuel, 1000), "(int 0)");
+        work(fuel).1.walked
     };
     let (small, large) = (walked(200), walked(400));
     assert!(

@@ -26,17 +26,8 @@ impl Evaluator<'_> {
         }
         let chars = s.chars().count() as u64;
         #[cfg(test)]
-        self.scanned(chars);
+        crate::counters::add(crate::counters::Count::Scanned, chars);
         self.charge(pos, 1 + u128::from(chars))
-    }
-
-    /// Counts `chars` scalars of a scan, for the tests of the work.
-    #[cfg(test)]
-    fn scanned(&self, chars: u64) {
-        self.store
-            .work
-            .scanned
-            .set(self.store.work.scanned.get() + chars);
     }
 
     /// The string with the scalar `i` of the string `base` at the index node `pos`, whose
@@ -93,19 +84,10 @@ impl Evaluator<'_> {
             _ => String::new(),
         };
         #[cfg(test)]
-        self.converted(digits.len() as u64);
+        crate::counters::add(crate::counters::Count::Converted, digits.len() as u64);
         let s = Value::Str(digits);
         self.charge(pos, u128::from(s.size()))?;
         Ok(Some(Out::Made(Val::Static(s))))
-    }
-
-    /// Counts `digits` of a decimal conversion, for the tests of the work.
-    #[cfg(test)]
-    fn converted(&self, digits: u64) {
-        self.store
-            .work
-            .converted
-            .set(self.store.work.converted.get() + digits);
     }
 }
 
