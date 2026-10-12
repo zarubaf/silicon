@@ -7,9 +7,10 @@
 //! A value is static, hardware, or a handle (section 5.1), or a literal with `[]` that waits for
 //! the type of a typed use. The child module `hwops` makes the hardware nodes, the child module
 //! `call` evaluates the calls, and the child modules `container` and `place` make and read the
-//! static containers. The child module `types` evaluates the type expressions and the struct
-//! specializations, the child module `record` makes and reads the records, and the child module
-//! `inst` runs the module statements and the instantiations of Lean `Source.Elab`.
+//! static containers. The child module `string` scans and converts the strings. The child module
+//! `types` evaluates the type expressions and the struct specializations, the child module
+//! `record` makes and reads the records, and the child module `inst` runs the module statements
+//! and the instantiations of Lean `Source.Elab`.
 //!
 //! A result that refers to an existing value, such as a local or a constant, stays a
 //! reference until a copy pays for it. Thus a read that the cost model does not charge does
@@ -21,6 +22,7 @@ mod hwops;
 mod inst;
 mod place;
 mod record;
+mod string;
 mod types;
 
 pub use inst::Design;
@@ -112,7 +114,34 @@ struct Store {
     /// run, for the test of copies before a charge.
     #[cfg(test)]
     copied: (Cell<u64>, u64),
+    /// The counters of the work of the string and list operations, for the tests.
+    #[cfg(test)]
+    work: Work,
 }
+
+/// The work of the operations that scan, convert, or walk, counted for the tests: they check
+/// the work and not the time. A test finds its counts by the fuel budget of its run, as it
+/// finds its copies.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct Work {
+    /// The scalars that the charged scans of strings visited.
+    pub scanned: Cell<u64>,
+    /// The digits that the conversions of `str` made.
+    pub converted: Cell<u64>,
+}
+
+/// The counts of a run, as `Work` held them at its end.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Counts {
+    pub scanned: u64,
+    pub converted: u64,
+}
+
+#[cfg(test)]
+pub(crate) static COUNTS: std::sync::Mutex<BTreeMap<u64, Counts>> =
+    std::sync::Mutex::new(BTreeMap::new());
 
 /// The copies of each run of a test, by its fuel budget: a test finds its run by a fuel that
 /// no other test uses, also when the tests share a process.
@@ -125,6 +154,15 @@ impl Drop for Store {
     fn drop(&mut self) {
         if let Ok(mut copies) = COPIES.lock() {
             copies.insert(self.copied.1, self.copied.0.get());
+        }
+        if let Ok(mut counts) = COUNTS.lock() {
+            counts.insert(
+                self.copied.1,
+                Counts {
+                    scanned: self.work.scanned.get(),
+                    converted: self.work.converted.get(),
+                },
+            );
         }
     }
 }
@@ -437,6 +475,8 @@ impl<'a> Evaluator<'a> {
                 links: BTreeMap::new(),
                 #[cfg(test)]
                 copied: (Cell::new(0), budget.fuel),
+                #[cfg(test)]
+                work: Work::default(),
             },
             graph: Graph::default(),
             paths: Paths::default(),
