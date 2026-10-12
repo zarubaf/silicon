@@ -145,12 +145,20 @@ def family (t : PrimType) (args : List Value) : Except Fault Ty := do
   | .uint, [v] | .sint, [v] => typeError s!"a width is a static Int, not {v.text}"
   | _, _ => .error (.S007, "a type family takes one index argument")
 
+/-!
+The types as values of phase 3 resolve and pass the pre-check, but `Eval` does not evaluate them
+yet. This stub reports `S004` at the form.
+-/
+-- TODO(#178): evaluate the types as values, and remove this stub.
+abbrev typeStub (pos : Pos) : M α := fail .S004 pos "the types as values are not in this phase"
+
 def prim (pos : Pos) (x : String) : PrimType → M Ty
   | .bool => pure .bool
   | .nat => pure .nat
   | .int => pure .int
   | .uint | .sint => fail .S007 pos s!"`{x}` takes 1 argument(s), but it has 0"
   | .unit => pure .unit
+  | .type => typeStub pos
 
 /-! A string, a type, and a handle have no `Ty`, so an assignment keeps their form. -/
 def sameForm : Val → Val → Bool
@@ -459,6 +467,7 @@ mutual
       | .select p b q i => do
         let v ← data p (← need b (← eval n b)).value
         return some ⟨← select p q i v, true⟩
+      | .arrayType p .. => typeStub p
   termination_by (b, 1)
 
   def typeExpr (b : Nat) (t : Resolve.TypeExpr) : M Ty :=
@@ -467,10 +476,12 @@ mutual
     | n + 1 => do
       charge t.pos 1
       match t with
-      | .name p x k => prim p x k
-      | .index p (.name bp _ k) xs => do
+      | .name p x (.type k) => prim p x k
+      | .name p .. => typeStub p
+      | .index p (.name bp _ (.type k)) xs => do
         charge bp 1
         index n p k xs
+      | .index p (.name ..) _ => typeStub p
       | .index p .. => fail .S007 p "a complete type takes no more index"
       | .unit p => do charge p Ty.unit.size; return .unit
       | .tuple p ts => do
@@ -515,6 +526,7 @@ mutual
             conform cp t (← static cp (← settle cp t o.value))
           setConst i (.done c)
           return ⟨.static c, true⟩
+      | some (.struct ..) | some (.alias ..) => typeStub p
       | _ => fail .S010 p s!"`{x}` is a function; slice 1 has no function values"
   termination_by (n + 1, 0)
 
@@ -580,6 +592,7 @@ mutual
         match ← static p m with
         | .str m => fail .S014 p s!"error: {strText m}"
         | m => fail .S010 p s!"`{g}` does not accept {m.text}"
+      | .dataBits, _ => typeStub p
       | _, vs => fail .S010 p s!"`{g}` does not accept {vs.map Val.text}"
     | _ =>
       let t ← need f (← eval n f)
@@ -672,6 +685,7 @@ mutual
         return none
       | .connect p .. | .reg p .. | .wire p .. | .input p .. | .output p .. | .inst p .. =>
         fail .S011 p "a static evaluation makes no hardware"
+      | .alias p .. => typeStub p
   termination_by (b, 1)
 
   /-- A block at `pos`. It charges as a statement. -/
@@ -700,31 +714,34 @@ abbrev ScanM := StateM Scan
 def scanBinder (b : Binder) : ScanM Unit :=
   modify fun s => { s with binders := (b.id, b.name.name) :: s.binders }
 
-def scanExpr : Resolve.Expr → ScanM Unit
-  | .call p f xs => do
-    modify fun s => { s with calls := p :: s.calls }
-    scanExpr f
-    for x in xs do scanExpr x
-  | .field _ a f => do
-    modify fun s => { s with fields := (f.pos, f.name) :: s.fields }
-    scanExpr a
-  | .unary _ _ a => scanExpr a
-  | .binary _ _ l r => do scanExpr l; scanExpr r
-  | .cond _ c y n => do scanExpr c; scanExpr y; scanExpr n
-  | .index _ b xs => do
-    scanExpr b
-    for x in xs do scanExpr x
-  | .select _ a .. => scanExpr a
-  | .tuple _ xs | .array _ xs => for x in xs do scanExpr x
-  | .num .. | .bool .. | .str .. | .name .. | .unit _ => pure ()
+mutual
+  def scanExpr : Resolve.Expr → ScanM Unit
+    | .call p f xs => do
+      modify fun s => { s with calls := p :: s.calls }
+      scanExpr f
+      for x in xs do scanExpr x
+    | .field _ a f => do
+      modify fun s => { s with fields := (f.pos, f.name) :: s.fields }
+      scanExpr a
+    | .unary _ _ a => scanExpr a
+    | .binary _ _ l r => do scanExpr l; scanExpr r
+    | .cond _ c y n => do scanExpr c; scanExpr y; scanExpr n
+    | .index _ b xs => do
+      scanExpr b
+      for x in xs do scanExpr x
+    | .select _ a .. => scanExpr a
+    | .tuple _ xs | .array _ xs => for x in xs do scanExpr x
+    | .arrayType _ t n => do scanType t; scanExpr n
+    | .num .. | .bool .. | .str .. | .name .. | .unit _ => pure ()
 
-def scanType : Resolve.TypeExpr → ScanM Unit
-  | .name .. | .unit _ => pure ()
-  | .index _ b xs => do
-    scanType b
-    for x in xs do scanExpr x
-  | .tuple _ ts => for t in ts do scanType t
-  | .array _ t n => do scanType t; scanExpr n
+  def scanType : Resolve.TypeExpr → ScanM Unit
+    | .name .. | .unit _ => pure ()
+    | .index _ b xs => do
+      scanType b
+      for x in xs do scanExpr x
+    | .tuple _ ts => for t in ts do scanType t
+    | .array _ t n => do scanType t; scanExpr n
+end
 
 mutual
   def scanStmt : Resolve.Stmt → ScanM Unit
@@ -746,6 +763,7 @@ mutual
     | .ctFor _ i lo hi b => do scanExpr lo; scanExpr hi; scanBinder i; scanStmts b
     | .block _ b => scanStmts b
     | .expr _ v => scanExpr v
+    | .alias _ b ty => do scanType ty; scanBinder b
 
   def scanStmts (ss : List Resolve.Stmt) : ScanM Unit := do
     for s in ss do scanStmt s
@@ -769,7 +787,8 @@ def scanItem (it : Resolve.Item) : Scan :=
         scanType q.ty
       for d in ds do scanBinder d
       modify fun s => { s with calls }
-    | .const .. => pure ()
+    -- TODO(#178): scan the parameters and the field types of a struct for its specializations.
+    | .const .. | .struct .. | .alias .. => pure ()
   (go.run {}).2
 
 /-!
@@ -782,7 +801,7 @@ def callSites (sc : Scan) : Std.TreeMap Pos Nat Pos.compare :=
   sorted.keys.zipIdx.foldl (fun m (p, k) => m.insert p k) {}
 
 def itemName : Resolve.Item → String
-  | .const _ n .. | .fn _ _ n .. | .module _ n .. => n.name
+  | .const _ n .. | .fn _ _ n .. | .module _ n .. | .struct _ n .. | .alias _ n .. => n.name
 
 /-!
 The symbols of the items. The text table runs once for each elaboration, in time linear in

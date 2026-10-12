@@ -313,7 +313,7 @@ assignment, a `return`, and an expression statement run in `Eval.stmt`, which ch
 mutual
   def stmt (b : Nat) (s : Resolve.Stmt) : EM Unit :=
     match s with
-    | .local .. | .assign .. | .ret .. | .expr .. => do let _ ← Eval.stmt b s
+    | .local .. | .assign .. | .ret .. | .expr .. | .alias .. => do let _ ← Eval.stmt b s
     | _ =>
       match b with
       | 0 => exhausted s.pos
@@ -375,7 +375,7 @@ mutual
             iteration p i v (block n p body)
             v := v + 1
         | .block _ ss => for s in ss do stmt n s
-        | .local .. | .assign .. | .ret .. | .expr .. => pure ()
+        | .local .. | .assign .. | .ret .. | .expr .. | .alias .. => pure ()
   termination_by (b, 1)
 
   /-- A block at `pos`. It charges as a statement. -/
