@@ -403,3 +403,27 @@ fn the_message_of_a_large_struct_type_is_short() {
     );
     assert!(text.len() < 1100 + 40, "{}", text.len());
 }
+
+/// `uses` later uses of a struct with an argument of `len` elements. The lookup hashes and
+/// compares the argument, so each use reads it in full.
+fn repeated_argument(len: usize, uses: usize) -> String {
+    let xs = vec!["0"; len].join(", ");
+    format!(
+        "struct A(comptime xs: [Nat; {len}]) {{ v: Bool }}\n\
+         const X: [Nat; {len}] = [{xs}];\n\
+         fn f() -> Int {{ comptime for i in 0..{uses} {{ type T = A[X]; }} return 0; }}"
+    )
+}
+
+#[test]
+fn a_later_use_pays_for_the_lookup_of_its_arguments() {
+    let work = |uses: usize| type_work(&repeated_argument(2000, uses), "f()");
+    let cost = |uses: usize| crate::tests::cost(&repeated_argument(2000, uses), "f()");
+    let (work_100, work_200) = (work(100), work(200));
+    let (cost_100, cost_200) = (cost(100), cost(200));
+    assert!(work_200 - work_100 > 100 * 2000, "{work_100} {work_200}");
+    assert!(
+        cost_200 - cost_100 >= work_200 - work_100,
+        "{cost_100} {cost_200} {work_100} {work_200}"
+    );
+}
