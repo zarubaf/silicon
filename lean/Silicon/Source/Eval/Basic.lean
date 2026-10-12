@@ -387,7 +387,7 @@ def convertLeaf (t : Ty) (v : Value) : Except Fault Step :=
   let same := Except.ok ⟨0, fun _ => .ok v⟩
   let wrong := typeError s!"expected {t.text}, but the value is {v.text}"
   match t, v with
-  | .unit, .unit | .bool, .bool _ | .int, .int _ | .type, .type _ => same
+  | .unit, .unit | .bool, .bool _ | .int, .int _ | .type, .type _ | .string, .str _ => same
   | .struct .., .record s _ => if s = t then same else wrong
   | .nat, .int n => if 0 ≤ n then same else .error (.S012, s!"{intText n} is not a Nat")
   | .uint w, .uint u _ | .sint w, .sint u _ => if u == w then same else wrong

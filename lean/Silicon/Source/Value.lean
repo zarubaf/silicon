@@ -26,6 +26,8 @@ These rules settle the open points of the spec:
 - An array value keeps its element type, so an empty array serializes and has a type. Its size
   does not count the element type (section 5.4). A record keeps its struct type for the same
   reason, and its size does not count the type either.
+- A list keeps its element type as an array does, with the same size and depth rules. It
+  serializes as `(list <type> (<element> ...))`, and `List[T]` as `(list <type>)`.
 - The depth of an array value counts its element type, and the depth of a record counts its
   struct type. The depth of a type value is the depth of the type. Thus the depth bounds each
   walk over the value, also over an empty array and a record without fields.
@@ -52,7 +54,7 @@ mutual
   A type as a static value. Its forms are the scalar types of slice 1 with a static width and
   the types of the static containers of slice 2. `Type` and the struct types are forms too. A
   tuple type has at least one element type: `()` is `unit`. A struct type is its item, its
-  static arguments, and its metadata.
+  static arguments, and its metadata. `String` and `List[T]` are static types only.
   -/
   inductive Ty where
     | bool | nat | int
@@ -63,10 +65,13 @@ mutual
     | array (elem : Ty) (len : Nat)
     | tuple (elems : Array Ty)
     | struct (item : String) (args : Array Value) (info : Meta)
+    | string
+    | list (elem : Ty)
 
   /--
   A static value of slice 1, or a static container of slice 2. An array keeps its element type,
-  and a record keeps its struct type. A tuple has at least one element: `()` is `unit`.
+  and a record keeps its struct type. A tuple has at least one element: `()` is `unit`. A list
+  keeps its element type, as an array does.
   -/
   inductive Value where
     | int (value : Int)
@@ -79,6 +84,7 @@ mutual
     | array (elem : Ty) (elems : Array Value)
     | tuple (elems : Array Value)
     | record (ty : Ty) (fields : Array Value)
+    | list (elem : Ty) (elems : Array Value)
 end
 
 deriving instance Repr for Ty, Value
@@ -89,9 +95,11 @@ instance : Inhabited Value := ⟨.unit⟩
 /-! A nested type has no derived `DecidableEq`. This structural test gives it. -/
 mutual
   def Ty.beq : Ty → Ty → Bool
-    | .bool, .bool | .nat, .nat | .int, .int | .unit, .unit | .type, .type => true
+    | .bool, .bool | .nat, .nat | .int, .int | .unit, .unit | .type, .type
+    | .string, .string => true
     | .uint a, .uint b | .sint a, .sint b => a == b
     | .array s n, .array t m => Ty.beq s t && n == m
+    | .list s, .list t => Ty.beq s t
     | .tuple ⟨xs⟩, .tuple ⟨ys⟩ => Ty.beqs xs ys
     | .struct i ⟨xs⟩ m, .struct j ⟨ys⟩ n => i == j && Value.beqs xs ys && decide (m = n)
     | _, _ => false
@@ -110,7 +118,8 @@ mutual
     | .unit, .unit => true
     | .array s ⟨xs⟩, .array t ⟨ys⟩ => Ty.beq s t && Value.beqs xs ys
     | .tuple ⟨xs⟩, .tuple ⟨ys⟩ => Value.beqs xs ys
-    | .record s ⟨xs⟩, .record t ⟨ys⟩ => Ty.beq s t && Value.beqs xs ys
+    | .record s ⟨xs⟩, .record t ⟨ys⟩ | .list s ⟨xs⟩, .list t ⟨ys⟩ =>
+      Ty.beq s t && Value.beqs xs ys
     | _, _ => false
 
   def Value.beqs : List Value → List Value → Bool
@@ -122,17 +131,20 @@ end
 mutual
   theorem Ty.eq_of_beq : ∀ a b : Ty, a.beq b = true → a = b
     | .bool, b, h | .nat, b, h | .int, b, h | .unit, b, h | .type, b, h | .uint _, b, h
-    | .sint _, b, h => by
+    | .sint _, b, h | .string, b, h => by
       cases b <;> simp_all [Ty.beq]
     | .array s n, b, h => by
       cases b <;> simp [Ty.beq] at h ⊢
       exact ⟨Ty.eq_of_beq _ _ h.1, h.2⟩
+    | .list s, b, h => by
+      cases b <;> simp [Ty.beq] at h ⊢
+      exact Ty.eq_of_beq _ _ h
     | .tuple ⟨xs⟩, b, h => by
-      rcases b with _ | _ | _ | _ | _ | _ | _ | _ | ⟨⟨ys⟩⟩ | ⟨_, ⟨ys⟩, _⟩ <;>
+      rcases b with _ | _ | _ | _ | _ | _ | _ | _ | ⟨⟨ys⟩⟩ | ⟨_, ⟨ys⟩, _⟩ | _ | _ <;>
         simp [Ty.beq] at h ⊢
       rw [Ty.eqs_of_beqs _ _ h]
     | .struct _ ⟨xs⟩ _, b, h => by
-      rcases b with _ | _ | _ | _ | _ | _ | _ | _ | ⟨⟨ys⟩⟩ | ⟨_, ⟨ys⟩, _⟩ <;>
+      rcases b with _ | _ | _ | _ | _ | _ | _ | _ | ⟨⟨ys⟩⟩ | ⟨_, ⟨ys⟩, _⟩ | _ | _ <;>
         simp [Ty.beq] at h ⊢
       exact ⟨h.1.1, by rw [Value.eqs_of_beqs _ _ h.1.2], h.2⟩
 
@@ -152,12 +164,12 @@ mutual
       cases b <;> simp [Value.beq] at h ⊢
       obtain ⟨rfl, h⟩ := h
       exact ⟨rfl, heq_of_eq (BitVec.eq_of_toNat_eq h)⟩
-    | .array _ ⟨xs⟩, b, h | .record _ ⟨xs⟩, b, h => by
-      rcases b with _ | _ | _ | _ | _ | _ | _ | ⟨_, ⟨ys⟩⟩ | ⟨⟨ys⟩⟩ | ⟨_, ⟨ys⟩⟩ <;>
+    | .array _ ⟨xs⟩, b, h | .record _ ⟨xs⟩, b, h | .list _ ⟨xs⟩, b, h => by
+      rcases b with _ | _ | _ | _ | _ | _ | _ | ⟨_, ⟨ys⟩⟩ | ⟨⟨ys⟩⟩ | ⟨_, ⟨ys⟩⟩ | ⟨_, ⟨ys⟩⟩ <;>
         simp [Value.beq] at h ⊢
       exact ⟨Ty.eq_of_beq _ _ h.1, by rw [Value.eqs_of_beqs _ _ h.2]⟩
     | .tuple ⟨xs⟩, b, h => by
-      rcases b with _ | _ | _ | _ | _ | _ | _ | ⟨_, ⟨ys⟩⟩ | ⟨⟨ys⟩⟩ | ⟨_, ⟨ys⟩⟩ <;>
+      rcases b with _ | _ | _ | _ | _ | _ | _ | ⟨_, ⟨ys⟩⟩ | ⟨⟨ys⟩⟩ | ⟨_, ⟨ys⟩⟩ | ⟨_, ⟨ys⟩⟩ <;>
         simp [Value.beq] at h ⊢
       rw [Value.eqs_of_beqs _ _ h]
 
@@ -170,8 +182,8 @@ end
 
 mutual
   theorem Ty.beq_self : ∀ a : Ty, a.beq a = true
-    | .bool | .nat | .int | .unit | .type | .uint _ | .sint _ => by simp [Ty.beq]
-    | .array s _ => by simp [Ty.beq, Ty.beq_self s]
+    | .bool | .nat | .int | .unit | .type | .uint _ | .sint _ | .string => by simp [Ty.beq]
+    | .array s _ | .list s => by simp [Ty.beq, Ty.beq_self s]
     | .tuple ⟨xs⟩ => by simp [Ty.beq, Ty.beqs_self xs]
     | .struct _ ⟨xs⟩ _ => by simp [Ty.beq, Value.beqs_self xs]
 
@@ -182,7 +194,8 @@ mutual
   theorem Value.beq_self : ∀ a : Value, a.beq a = true
     | .int _ | .bool _ | .str _ | .uint .. | .sint .. | .unit => by simp [Value.beq]
     | .type t => by simp [Value.beq, Ty.beq_self t]
-    | .array t ⟨xs⟩ | .record t ⟨xs⟩ => by simp [Value.beq, Ty.beq_self t, Value.beqs_self xs]
+    | .array t ⟨xs⟩ | .record t ⟨xs⟩ | .list t ⟨xs⟩ => by
+      simp [Value.beq, Ty.beq_self t, Value.beqs_self xs]
     | .tuple ⟨xs⟩ => by simp [Value.beq, Value.beqs_self xs]
 
   theorem Value.beqs_self : ∀ xs : List Value, Value.beqs xs xs = true
@@ -211,8 +224,9 @@ def Ty.finite : Ty → Bool
 
 /-!
 The metadata of the scalar types. `Bool`, `UInt[W]`, `SInt[W]`, and `Unit` are hardware data.
-`Unit` has no bit and no leaf, and its zero `()` has the size 1. `Nat`, `Int`, and `Type` are
-not hardware data, and their three numbers are 0.
+`Unit` has no bit and no leaf, and its zero `()` has the size 1. `Nat`, `Int`, `Type`, and
+`String` are not hardware data, and their three numbers are 0. `List[T]` is not hardware data
+either. Its depth is 1 more than the depth of `T`, so its metadata reads only that depth.
 -/
 def Meta.bool : Meta := ⟨1, 1, 1, 1, true⟩
 def Meta.finite (width : Nat) : Meta := ⟨width, 1, widthSize width, 1, true⟩
@@ -271,7 +285,8 @@ mutual
     | .bool => Meta.bool
     | .uint w | .sint w => Meta.finite w
     | .unit => Meta.unit
-    | .nat | .int | .type => Meta.static
+    | .nat | .int | .type | .string => Meta.static
+    | .list t => { Meta.static with depth := 1 + t.info.depth }
     | .array t n => t.info.array n
     | .tuple ⟨ts⟩ => Meta.tuple (Ty.infoAll ts)
     | .struct _ _ m => m
@@ -294,6 +309,8 @@ mutual
     | .array t n => Print.node "array" [t.serialize, toString n]
     | .tuple ⟨ts⟩ => Print.node "tuple" [Print.list (Ty.serializeAll ts)]
     | .struct i ⟨xs⟩ _ => Print.node "struct" ["root", i, Print.list (Value.serializeAll xs)]
+    | .string => "string"
+    | .list t => Print.node "list" [t.serialize]
 
   def Ty.serializeAll : List Ty → List String
     | [] => []
@@ -310,6 +327,7 @@ mutual
     | .array t ⟨xs⟩ => Print.node "array" [t.serialize, Print.list (Value.serializeAll xs)]
     | .tuple ⟨xs⟩ => Print.node "tuple" [Print.list (Value.serializeAll xs)]
     | .record t ⟨xs⟩ => Print.node "record" [t.serialize, Print.list (Value.serializeAll xs)]
+    | .list t ⟨xs⟩ => Print.node "list" [t.serialize, Print.list (Value.serializeAll xs)]
 
   def Value.serializeAll : List Value → List String
     | [] => []
@@ -322,9 +340,10 @@ each static argument in it adds its size.
 -/
 mutual
   def Ty.size : Ty → Nat
-    | .bool | .nat | .int | .unit | .type => 1
+    | .bool | .nat | .int | .unit | .type | .string => 1
     | .uint w | .sint w => 1 + intSize w
     | .array t n => 1 + t.size + intSize n
+    | .list t => 1 + t.size
     | .tuple ⟨ts⟩ => 1 + Ty.sizeAll ts
     | .struct _ ⟨xs⟩ _ => 1 + Value.sizeAll xs
 
@@ -338,7 +357,7 @@ mutual
     | .str s => 1 + s.length
     | .uint w _ | .sint w _ => widthSize w
     | .type t => t.size
-    | .array _ ⟨xs⟩ | .tuple ⟨xs⟩ | .record _ ⟨xs⟩ => 1 + Value.sizeAll xs
+    | .array _ ⟨xs⟩ | .tuple ⟨xs⟩ | .record _ ⟨xs⟩ | .list _ ⟨xs⟩ => 1 + Value.sizeAll xs
 
   def Value.sizeAll : List Value → Nat
     | [] => 0
@@ -351,7 +370,7 @@ has its stored depth, which counts its field types and its static arguments.
 -/
 mutual
   def Ty.depth : Ty → Nat
-    | .array t _ => 1 + t.depth
+    | .array t _ | .list t => 1 + t.depth
     | .tuple ⟨ts⟩ => 1 + Ty.depthAll ts
     | .struct _ _ m => m.depth
     | _ => 1
@@ -365,7 +384,7 @@ end
 mutual
   def Value.depth : Value → Nat
     | .type t => t.depth
-    | .array t ⟨xs⟩ | .record t ⟨xs⟩ => 1 + max t.depth (Value.depthAll xs)
+    | .array t ⟨xs⟩ | .record t ⟨xs⟩ | .list t ⟨xs⟩ => 1 + max t.depth (Value.depthAll xs)
     | .tuple ⟨xs⟩ => 1 + Value.depthAll xs
     | _ => 1
 
@@ -408,6 +427,8 @@ mutual
     | .tuple ⟨ts⟩ => "(" ++ ", ".intercalate (Ty.textAll ts) ++ ")"
     | .struct i ⟨[]⟩ _ => i
     | .struct i ⟨xs⟩ _ => i ++ "[" ++ ", ".intercalate (Value.literalAll xs) ++ "]"
+    | .string => "String"
+    | .list t => s!"List[{t.text}]"
 
   def Ty.textAll : List Ty → List String
     | [] => []
@@ -425,16 +446,15 @@ mutual
     | .tuple ⟨[x]⟩ => s!"({x.literal},)"
     | .tuple ⟨xs⟩ => "(" ++ ", ".intercalate (Value.literalAll xs) ++ ")"
     | .record t ⟨xs⟩ => t.text ++ "(" ++ ", ".intercalate (Value.literalAll xs) ++ ")"
+    | .list t ⟨[]⟩ => s!"list({t.text})"
+    | .list _ ⟨xs⟩ => "[" ++ ", ".intercalate (Value.literalAll xs) ++ "]"
 
   def Value.literalAll : List Value → List String
     | [] => []
     | x :: xs => x.literal :: Value.literalAll xs
 end
 
-/-!
-The type of a value. A type value has the type `Type`. A string and a container that holds one
-have no `Ty` yet.
--/
+/-! The type of a value. A type value has the type `Type`. -/
 mutual
   def Value.ty? : Value → Option Ty
     | .int _ => some .int
@@ -446,14 +466,15 @@ mutual
     | .tuple ⟨xs⟩ => (Value.tyAll? xs).map fun ts => .tuple ts.toArray
     | .record t _ => some t
     | .type _ => some .type
-    | .str _ => none
+    | .str _ => some .string
+    | .list t _ => some (.list t)
 
   def Value.tyAll? : List Value → Option (List Ty)
     | [] => some []
     | x :: xs => do return (← x.ty?) :: (← Value.tyAll? xs)
 end
 
-/-! The text of a value in a message. Only a tuple has neither a `Ty` nor its own text. -/
+/-! The text of a value in a message: its type, or its own text for a string and a type. -/
 def Value.text : Value → String
   | .str _ => "a string"
   | .type _ => "a type"
@@ -466,15 +487,16 @@ def Value.finiteTy? : Value → Option Ty
 
 /-!
 The charge of the walk that measures the serialization of a value, before the charge of its
-bytes (section 5.4). Each array, tuple, and record charges 1. Each integer and each finite value
-charge the square of their size, because a naive decimal conversion takes this time. A scalar
-thus keeps the charge of slice 1. A type charges nothing: an integer in a type gets no charge
-for its decimal form.
+bytes (section 5.4). Each array, tuple, record, and list charges 1. Each integer and each
+finite value charge the square of their size, because a naive decimal conversion takes this
+time. A scalar thus keeps the charge of slice 1. A type charges nothing: an integer in a type
+gets no charge for its decimal form.
 -/
 mutual
   def Value.measureCharge : Value → Nat
     | v@(.int _) | v@(.uint ..) | v@(.sint ..) => v.size * v.size
-    | .array _ ⟨xs⟩ | .tuple ⟨xs⟩ | .record _ ⟨xs⟩ => 1 + Value.measureChargeAll xs
+    | .array _ ⟨xs⟩ | .tuple ⟨xs⟩ | .record _ ⟨xs⟩ | .list _ ⟨xs⟩ =>
+      1 + Value.measureChargeAll xs
     | _ => 0
 
   def Value.measureChargeAll : List Value → Nat

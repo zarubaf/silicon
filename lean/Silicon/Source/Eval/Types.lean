@@ -181,7 +181,7 @@ def zeroOf (specs : Array Spec) : Nat → Ty → Option Value
     | .struct .. => do
       let (_, fs) ← fieldsIn specs t
       return .record t (← fs.mapM (zeroOf specs b)).toArray
-    | .nat | .int | .type => none
+    | .nat | .int | .type | .string | .list _ => none
 
 /-!
 The array type `[e; k]` at `pos`. The length at `q` is a static `Nat`. It charges its size and
