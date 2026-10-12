@@ -1,0 +1,27 @@
+// Receiver calls on a list and on a string decide the widths of the ports. A stack of widths
+// pops in the reverse order of the pushes, and the length of a built string gives a width.
+// TOP M()
+comptime fn pick() -> Nat {
+    let mut xs = list(Nat);
+    xs.push(3);
+    xs.push(5);
+    xs.push(xs.len());
+    let a = xs.pop();
+    let b = xs.pop();
+    return a + b + xs.len();
+}
+module M() domains() {
+    input a: UInt[pick()];
+    input b: UInt[("ab" + 12.str()).len()];
+    output y: UInt[8];
+    output z: UInt[8];
+    output wa: UInt[8];
+    output wb: UInt[8];
+    y := a.resize(UInt[8]);
+    z := b.resize(UInt[8]);
+    wa := UInt[8](data_bits(UInt[pick()]));
+    wb := UInt[8](data_bits(UInt[("ab" + 12.str()).len()]));
+}
+// STEP in=(a 0 b 0) out=(wa 8 wb 4 y 0 z 0)
+// STEP in=(a 7 b 15) out=(wa 8 wb 4 y 7 z 15)
+// STEP in=(a 255 b 3) out=(wa 8 wb 4 y 255 z 3)

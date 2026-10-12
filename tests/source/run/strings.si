@@ -1,0 +1,30 @@
+// The static strings of slice 2: join, an index by scalar, equality, the length in scalars, and
+// the decimal form of an integer. A scalar is one character, also if it takes several bytes.
+// TOP M()
+comptime fn digits(n: Int) -> Nat {
+    return len(str(n));
+}
+comptime fn repeat(s: String, n: Nat) -> String {
+    let mut r = "";
+    comptime for i in 0..n {
+        r = r + s;
+    }
+    return r;
+}
+module M() domains() {
+    input x: UInt[8];
+    output y: UInt[8];
+    output l: UInt[8];
+    output d: UInt[8];
+    let s = "héllo";
+    let t = repeat("ab", 3) + str(-120);
+    comptime if (s[1] == "é" && s != "hello" && t == "ababab-120") {
+        y := x +% 1;
+    } else {
+        y := x;
+    }
+    l := UInt[8](len(s));
+    d := UInt[8](digits(1 << 70) + len(t));
+}
+// STEP in=(x 5) out=(d 32 l 5 y 6)
+// STEP in=(x 255) out=(d 32 l 5 y 0)

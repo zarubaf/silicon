@@ -1,0 +1,21 @@
+// A hardware write-back binds the next version of the root after the call: `bump` runs twice on
+// `a`, so `a` has the versions `a$1v` and `a$2v`, and the output reads the last one.
+// TOP M()
+// CHECK: (let a (bits 8) x)
+// CHECK: (let a$1v (bits 8) bump$0c$a$1v)
+// CHECK: (let a$2v (bits 8) bump$1c$a$1v)
+// CHECK: (let bump$1c$a (bits 8) a$1v)
+// CHECK-NOT: a$3v
+// CHECK: (assign y a$2v)
+fn bump(mut a: UInt[8]) -> UInt[8] {
+    a = a +% 1;
+    return a;
+}
+module M() domains() {
+    input x: UInt[8];
+    output y: UInt[8];
+    let mut a = x;
+    a.bump();
+    bump(a);
+    y := a;
+}

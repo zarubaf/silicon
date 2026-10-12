@@ -1,0 +1,33 @@
+// A mut formal of a hardware value: the call passes the value in, and the write-back gives the
+// root its next version. A receiver call and a plain call write back alike, and a swap exchanges two roots.
+// TOP M()
+fn bump(mut a: UInt[8]) -> UInt[8] {
+    a = a +% 1;
+    return a;
+}
+fn swap(mut a: UInt[8], mut b: UInt[8]) -> UInt[8] {
+    let t = a;
+    a = b;
+    b = t;
+    return t;
+}
+module M() domains() {
+    input x: UInt[8];
+    input w: UInt[8];
+    output p: UInt[8];
+    output q: UInt[8];
+    output r: UInt[8];
+    output t: UInt[8];
+    let mut a = x;
+    let mut b = w;
+    let first = a.bump();
+    let second = bump(a);
+    let old = swap(a, b);
+    p := a;
+    q := b;
+    r := first +% second;
+    t := old;
+}
+// STEP in=(w 100 x 5) out=(p 100 q 7 r 13 t 7)
+// STEP in=(w 0 x 255) out=(p 0 q 1 r 1 t 1)
+// STEP in=(w 7 x 0) out=(p 7 q 2 r 3 t 2)

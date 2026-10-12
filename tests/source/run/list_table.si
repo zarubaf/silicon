@@ -1,0 +1,27 @@
+// A constant table that a list builds, read by a hardware index through a comptime loop.
+// The list is static: only the loop over its length and the compare with the index reach hardware.
+// TOP Table()
+comptime fn squares(comptime n: Nat) -> List[Nat] {
+    let mut xs = list(Nat);
+    comptime for i in 0..n {
+        xs.push(i * i);
+    }
+    return xs;
+}
+const TABLE: List[Nat] = squares(5);
+module Table() domains() {
+    input i: UInt[3];
+    output y: UInt[8];
+    let mut r = UInt[8](0);
+    comptime for k in 0..len(TABLE) {
+        r = if (i == k) { UInt[8](TABLE[k]) } else { r };
+    }
+    y := r;
+}
+// STEP in=(i 0) out=(y 0)
+// STEP in=(i 1) out=(y 1)
+// STEP in=(i 2) out=(y 4)
+// STEP in=(i 3) out=(y 9)
+// STEP in=(i 4) out=(y 16)
+// STEP in=(i 5) out=(y 0)
+// STEP in=(i 7) out=(y 0)
