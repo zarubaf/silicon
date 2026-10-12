@@ -124,7 +124,8 @@ index with two arguments parses: the type rules reject it.
 #guard stFails "a[] = 1;" .S001 3
 #guard stFails "a.x(1) = 1;" .S004 4
 #guard stFails "mem m: [T; 4];" .S004 1
-#guard stFails "[T; 4];" .S004 1
+#guard st "[T; 4];" == "(expr (arraytype (name \"T\") (num 4)))"
+#guard stFails "[T; 4] = 1;" .S001 8
 #guard match parseSource defaultSyntaxDepth (ctBody "a.1[0] = x;") with
   | .ok [.fn _ _ _ _ _ [.assign p (.index q (.select r _ l 1) _) _]] =>
     p == ⟨2, 1⟩ && q == ⟨2, 1⟩ && r == ⟨2, 1⟩ && l == ⟨2, 3⟩
@@ -176,10 +177,48 @@ literal. `t.0(x)` calls the element `t.0`.
   | .ok (.array p [.unit q]) => p == ⟨1, 14⟩ && q == ⟨1, 15⟩
   | _ => false
 
-/-! `S001` and `S004` at the container forms. An array type in an expression is `S004`. -/
-#guard ex "[UInt[8]; 4]" == "error S004 1:14"
-#guard ex "f(a, [T; 4])" == "error S004 1:19"
-#guard ex "[a, b; c]" == "error S004 1:14"
+/-!
+An array type `[T; N]` in an expression. Its element is a type, and its length is an
+expression. A suffix can follow it.
+-/
+#guard ex "[UInt[8]; 4]" == "(arraytype (index (name \"UInt\") ((num 8))) (num 4))"
+#guard ex "f(a, [T; 4])" == "(call (name \"f\") ((name \"a\") (arraytype (name \"T\") (num 4))))"
+#guard ex "[[T; 2]; N + 1]" ==
+  "(arraytype (array (name \"T\") (num 2)) (binary add (name \"N\") (num 1)))"
+#guard ex "[(T, ()); 4]" == "(arraytype (tuple ((name \"T\") (unit))) (num 4))"
+#guard ex "[(T); 4]" == "(arraytype (name \"T\") (num 4))"
+#guard ex "[T; 4]()" == "(call (arraytype (name \"T\") (num 4)) ())"
+#guard ex "[T; 4][1]" == "(index (arraytype (name \"T\") (num 4)) ((num 1)))"
+#guard ex "[[T; 2], [U; 3]]" ==
+  "(array ((arraytype (name \"T\") (num 2)) (arraytype (name \"U\") (num 3))))"
+#guard match constValue "[UInt[8]; (n)]" with
+  | .ok (.arrayType p (.index q (.name r _) [.num s 8]) (.name u _)) =>
+    p == ⟨1, 14⟩ && q == ⟨1, 15⟩ && r == ⟨1, 15⟩ && s == ⟨1, 20⟩ && u == ⟨1, 25⟩
+  | _ => false
+
+/-!
+`S001` at an array type in an expression. An element that is no type, or no `;` after it, is
+`S001` at the first token that neither an array type nor an array literal accepts. For an
+element that is an expression, this is the `;`. An `S004` in the element stops the parse.
+-/
+#guard ex "[0; 4]" == "error S001 1:16"
+#guard ex "[a, b; c]" == "error S001 1:19"
+#guard ex "[a + b; 4]" == "error S001 1:20"
+#guard ex "[a.b; 4]" == "error S001 1:18"
+#guard ex "[[a, b]; 4]" == "error S001 1:21"
+#guard ex "[[0; 2]; 4]" == "error S001 1:17"
+#guard ex "[T $; 4]" == "error S001 1:17"
+#guard ex "[$; 4]" == "error S001 1:15"
+#guard ex "[T; ]" == "error S001 1:18"
+#guard ex "[T; 4; 5]" == "error S001 1:19"
+#guard ex "[(a; b)]" == "error S001 1:17"
+#guard ex "[f(x); 4]" == "error S004 1:16"
+#guard ex "[a.f(x); 4]" == "error S004 1:18"
+#guard ex "[fn() -> T; 4]" == "error S004 1:15"
+#guard ex "[@TypeOf(x); 4]" == "error S004 1:15"
+#guard ex "[a::T; 4]" == "error S004 1:16"
+
+/-! `S001` and `S004` at the other container forms. -/
 #guard ex "(T; 4)" == "error S001 1:16"
 #guard ex "(,)" == "error S001 1:15"
 #guard ex "(a b)" == "error S001 1:17"
@@ -308,6 +347,59 @@ def plainBody (s : String) : String := "fn f() -> T {\n" ++ s ++ "\n}"
 #guard ex "@TypeOf(x)" == "error S004 1:14"
 #guard ex "@TypeOf(f(a, b), (c)), d)" == "error S004 1:14"
 
+/-!
+A struct, with and without parameters, and a `type` alias at an item and at a statement. A
+struct without parentheses and a struct with `()` have no parameters. A `,` can end the fields.
+-/
+#guard dump "struct P(comptime W: Nat) { a: UInt[W], b: Bool, }" ==
+  "(struct \"P\" ((param true \"W\" (name \"Nat\"))) ((structfield \"a\" " ++
+  "(index (name \"UInt\") ((name \"W\")))) (structfield \"b\" (name \"Bool\"))))\n"
+#guard dump "struct P {}" == "(struct \"P\" () ())\n"
+#guard dump "struct P() {}" == "(struct \"P\" () ())\n"
+#guard dump "struct P(comptime A: Nat, comptime B: Type,) { a: [T; A] }" ==
+  "(struct \"P\" ((param true \"A\" (name \"Nat\")) (param true \"B\" (name \"Type\"))) " ++
+  "((structfield \"a\" (array (name \"T\") (name \"A\")))))\n"
+#guard dump "type A = [UInt[8]; 4];" ==
+  "(alias \"A\" (array (index (name \"UInt\") ((num 8))) (num 4)))\n"
+#guard st "type A = (T, U);" == "(alias \"A\" (tuple ((name \"T\") (name \"U\"))))"
+#guard dump "fn f() -> T { type A = T; }" ==
+  "(fn false \"f\" () (name \"T\") ((alias \"A\" (name \"T\"))))\n"
+#guard match parseSource defaultSyntaxDepth "struct P(comptime W: Nat) {\n  a: T,\n}" with
+  | .ok [.struct p n [q] [f]] =>
+    p == ⟨1, 1⟩ && n.pos == ⟨1, 8⟩ && q.pos == ⟨1, 10⟩ && q.name.pos == ⟨1, 19⟩ &&
+      f.name.pos == ⟨2, 3⟩
+  | _ => false
+#guard match parseSource defaultSyntaxDepth "\ntype A = T;" with
+  | .ok [.alias p n (.name q _)] => p == ⟨2, 1⟩ && n.pos == ⟨2, 6⟩ && q == ⟨2, 10⟩
+  | _ => false
+#guard match parseSource defaultSyntaxDepth (ctBody "  type A = T;") with
+  | .ok [.fn _ _ _ _ _ [.alias p n _]] => p == ⟨2, 3⟩ && n.pos == ⟨2, 8⟩
+  | _ => false
+
+/-!
+`S001` at a struct and at an alias. A struct parameter without `comptime` is `S001` at its
+name, and with `mut` it is `S001` at `mut`, as at a module.
+-/
+#guard fails "struct P(W: Nat) {}" .S001 1 10
+#guard fails "struct P(mut W: Nat) {}" .S001 1 10
+#guard fails "struct P(comptime W: Nat, V: Nat) {}" .S001 1 27
+#guard fails "struct P(comptime W: Nat {}" .S001 1 26
+#guard fails "struct P { a: T b: U }" .S001 1 17
+#guard fails "struct P { a T }" .S001 1 14
+#guard fails "struct P { a: T,, }" .S001 1 17
+#guard fails "struct P { , }" .S001 1 12
+#guard fails "struct P;" .S001 1 9
+#guard fails "struct { }" .S001 1 8
+#guard fails "struct P { a: T" .S001 1 16
+#guard fails "type A = ;" .S001 1 10
+#guard fails "type A: T;" .S001 1 7
+#guard fails "type A = T" .S001 1 11
+#guard fails "type A = 1;" .S001 1 10
+#guard stFails "type A = T U;" .S001 12
+#guard fails "struct P { a: T(x) }" .S004 1 16
+#guard fails "pub struct P {}" .S004 1 1
+#guard fails "pub type A = T;" .S004 1 1
+
 /-! `S001`: the first token that does not match, a lexical error, or the end of the file. -/
 #guard fails "x" .S001 1 1
 #guard fails "comptime module M() {}" .S001 1 10
@@ -416,6 +508,7 @@ def body (n : Nat) (s : String) : String :=
 #guard (parseSource defaultSyntaxDepth (body 20000 "(x);\n")).toBool
 #guard (parseSource defaultSyntaxDepth (body 10000 "x.a = (f(y, z));\n")).toBool
 #guard (parseSource defaultSyntaxDepth (body 10000 "x[i].0 = ((y,), [z, ()]);\n")).toBool
+#guard (parseSource defaultSyntaxDepth (body 10000 "x = [[(T, U); 2]; 3]();\n")).toBool
 
 /-! The parser reads the text of the printer back to the same AST. -/
 def p : Pos := ⟨1, 1⟩
@@ -468,6 +561,9 @@ def reparse (s : String) : Bool :=
 #guard reparse "fn f() -> T { x.a.b = y; comptime for i in a.b .. c {} (x)(y); }"
 #guard reparse "fn f() -> T { x[i].0.b = (y,); t.1[f(())] := [[], (a, b)]; t.0(x); }"
 #guard reparse "const X: ((T,), [U[2]; 3], ()) = 0;"
+#guard reparse "struct P(comptime W: Nat,) { a: UInt[W], b: [(T, ()); W + 1], } struct Q() {}"
+#guard reparse "type A = [UInt[8]; 4]; fn f() -> T { type B = (A,); return [[A; 2]; 3](); }"
+#guard reparse "const X: T = f([T; 4], [(U); (n)][0], -[V; 1]().0);"
 
 /-!
 The edge cases of the printer for `parse_print`. Each pair of operators nests in both
@@ -509,6 +605,13 @@ def tupT (ts : List TypeExpr) : TypeExpr := .tuple p ts
 #guard [TypeExpr.unit p, tupT [t "T"], tupT [t "T", .unit p], .array p (tupT [t "T"]) (n 4),
   .index p (tupT [t "T"]) [n 1], .array p (.array p (t "T") (v "N")) (bin .add (n 1) (n 2))].all
   fun ty => roundtrip [.const p (nm "X") ty (n 0)]
+#guard constRoundtrip (.arrayType p (.array p (uint (n 8)) (n 2)) (bin .add (v "N") (n 1)))
+#guard constRoundtrip (.call p (.arrayType p (tupT [t "T", .unit p]) (n 4)) [])
+#guard constRoundtrip (.array p [.arrayType p (.index p (tupT [t "T"]) [n 1]) (n 0)])
+#guard roundtrip [.struct p (nm "P") [⟨p, true, nm "W", t "Nat"⟩]
+    [⟨nm "a", uint (v "W")⟩, ⟨nm "b", .array p (t "Bool") (n 2)⟩],
+  .struct p (nm "Q") [] [], .alias p (nm "A") (tupT [t "T"]),
+  .fn p false (nm "f") [] (t "T") [.alias p (nm "B") (.array p (t "A") (n 3))]]
 #guard fnRoundtrip [.assign p (.index p (v "a") [n 0]) (n 1),
   .connect p (.select p (.field p (v "u") (nm "d")) p 1) (v "x"),
   .assign p (.field p (.index p (.select p (v "t") p 0) [v "i", v "j"]) (nm "f")) (v "y")]
