@@ -517,6 +517,14 @@ theorem store_f (p q : Pos) (pl : Place) (y : Val) :
     Follows cap (store p q pl y) (store p q pl y) := by
   unfold store; follows [named_f, bindLocal_f, item_f, changeAt_f]
 
+theorem finals_f (ps : List Resolve.Param) (acts : List Actual) :
+    Follows cap (finals ps acts) (finals ps acts) := by
+  unfold finals; follows
+
+theorem writeBack_f (p : Pos) (outs : List (Place × Val)) :
+    Follows cap (writeBack p outs) (writeBack p outs) := by
+  unfold writeBack; follows [mutation_f, store_f]
+
 theorem prim_f (p : Pos) (x : String) (k : PrimType) :
     Follows cap (prim p x k) (prim p x k) := by
   unfold prim; follows
@@ -591,11 +599,12 @@ theorem placeAt_f (he : ∀ e, Follows m (eval k e) (eval m e)) (p : Pos) (c : E
 theorem call_f (he : ∀ e, Follows m (eval k e) (eval m e))
     (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t))
     (hb : ∀ p ss, Follows m (block k p ss) (block m p ss)) (p : Pos) (f : Resolve.Expr)
-    (xs : List Resolve.Expr) : Follows m (call k p f xs) (call m p f xs) := by
+    (xs : List Resolve.Expr) (b : Nat) : Follows m (call k p f xs b) (call m p f xs b) := by
   rw [call.eq_def k, call.eq_def m]
   follows [he, ht, hb, placeAt_f he, mutation_f, changeAt_f, bounded_f, need_f, static_f,
     settle_f, data_f, conform_f, conformVal_f, apply_f, hwConvert_f, lenOf_f, named_f,
-    bindLocal_f, bindHw_f, version_f, frameOf_f, nested_f, inFrame_f, zero_f, recordOf_f]
+    bindLocal_f, bindHw_f, version_f, frameOf_f, nested_f, inFrame_f, zero_f, recordOf_f,
+    finals_f, writeBack_f]
 
 set_option maxHeartbeats 400000 in
 /--

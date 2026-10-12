@@ -1,4 +1,5 @@
 -- SPDX-License-Identifier: Apache-2.0
+import Silicon.Source.Check
 import Silicon.Source.Eval.Container
 
 /-!
@@ -34,6 +35,17 @@ The operators follow v0.1 section 3. These rules settle the open points of slice
   depth changes a binding from before the arm: `S016`. A call nests deeper with a new frame,
   so a function that the arm calls can change its own bindings.
 - An element of a list, also through an assignment to `xs[i]`, is never hardware (`S011`).
+- A receiver call `x.m(a)` is the call of `m` with `x` at the first parameter without a written
+  `comptime` mark (section 5.6). Its name `m` charges 1, as the callee name of a call does. `x`
+  evaluates first, then the arguments. The copies then charge in the order of the parameters.
+- A `mut` actual resolves its place by the steps of an assignment target, in the evaluation
+  order of the arguments. Its copy charges with the other copies, in the order of the
+  parameters. The place has exactly the type of the formal, else `S010` at the call. In a
+  `comptime fn`, its value is static (`S011`). The formal is a mutable local of the callee.
+- The write-backs of a call run after its result, in the order of the parameters. Each checks
+  the mutation rule (`S016`), then charges the size of the final value of the formal. Then it
+  writes the value into the live root, by the steps that the place got before the call. A
+  hardware value thus gives the caller root its next version.
 - Slice 1 has no function values: a function name is only a callee (`S010`).
 - `resize` keeps the signedness. `reinterpret` keeps the width.
 - A typed-use error is at the node of the typed use: the statement, the call, or the operator.
@@ -440,6 +452,57 @@ def store (p q : Pos) (pl : Place) (y : Val) : M Unit := do
     let w ← item q y
     changeAt pl fun _ => w
 
+/-! An actual of a function item: a value, or the place of a `mut` actual. -/
+inductive Actual where
+  | value (v : Val)
+  | place (pl : Place)
+
+/-!
+The arguments `xs` in the order of the parameters. A receiver call evaluates its receiver first
+and binds it at the parameter `b`. A plain call has `b = 0`, so it keeps its order.
+-/
+def bound (b : Nat) : List α → List α
+  | x :: xs => xs.take b ++ x :: xs.drop b
+  | [] => []
+
+/-! The parameters `ps` in the evaluation order of their arguments: the inverse of `bound b`. -/
+def unbound (b : Nat) (ps : List α) : List α :=
+  match ps.drop b with
+  | q :: rest => q :: (ps.take b ++ rest)
+  | [] => ps
+
+/-!
+The parameter of the receiver of the function `f`: the first parameter without a written
+`comptime` mark, also in a `comptime fn` (section 5.6).
+-/
+def receiverAt (items : Array Resolve.Item) : Ref → Option Nat
+  | .item i =>
+    match items[i]? with
+    | some (.fn _ _ _ ps _ _) => ps.findIdx? (·.mode != .comptime)
+    | _ => none
+  | .fn g => (Check.fnModes g).findIdx? (· != .comptime)
+  | _ => none
+
+/-!
+The final value of each `mut` formal with the place of its actual, in the order of the
+parameters. It reads the frame of the callee before the call ends.
+-/
+def finals (ps : List Resolve.Param) (acts : List Actual) : M (List (Place × Val)) := do
+  let s ← get
+  return (ps.zip acts).filterMap fun
+    | (q, .place pl) => (s.frame[q.name.id]?).map fun (sl : Slot) => (pl, sl.value)
+    | (_, .value _) => none
+
+/-!
+The write-backs of the call at `p` in the order of the parameters (section 9.1). Each checks the
+mutation rule (`S016`), then charges the copy of the value, then writes into the live root.
+-/
+def writeBack (p : Pos) (outs : List (Place × Val)) : M Unit := do
+  for (pl, v) in outs do
+    mutation p
+    charge p v.size
+    store p p pl v
+
 /-!
 The evaluator. `eval`, `typeExpr`, `stmt`, and `block` are the entry functions. Each charges
 one unit, then calls deeper with the bound `n`. The helpers `name`, `spec`, `call`, `index`,
@@ -495,9 +558,11 @@ mutual
             return (a, ← data p (← need no (← eval n no)).value)
           return some ⟨← mux p h a b, false⟩
         | v => if ← test p v then eval n y else eval n no
-      | .call p f xs _ => call n p f xs
-      -- TODO(#179): receiver calls come in the next steps of phase 4.
-      | .method p .. => fail .S004 p "a receiver call is not supported yet"
+      | .call p f xs _ => call n p f xs 0
+      | .method p r m f xs _ => do
+        let some b := receiverAt (← read).items f
+          | fail .S007 p s!"`{m.name}` has no parameter without `comptime` for the receiver"
+        call n p (.name m.pos m.name f) (r :: xs) b
       | .index p b xs => do
         if let .name bp _ (.type k) := b then
           charge bp 1
@@ -665,12 +730,15 @@ mutual
   termination_by (n + 1, 0)
 
   /--
-  A call of a function item, a prelude function, or a type. A function item runs in the call
-  frame `<fn>$<k>c`. A hardware argument and a hardware result get a core name in that frame.
+  A call of a function item, a prelude function, or a type. The arguments `xs` are in their
+  evaluation order, and the first binds at the parameter `b` (`bound`). A function item runs in
+  the call frame `<fn>$<k>c`. A hardware argument and a hardware result get a core name in that
+  frame. The write-backs of its `mut` actuals run in the frame of the caller.
   -/
-  def call (n : Nat) (p : Pos) (f : Resolve.Expr) (xs : List Resolve.Expr) : M (Option Out) := do
-    let args (xs : List Resolve.Expr) : M (List Val) :=
-      xs.mapM fun x => do return (← need x (← eval n x)).value
+  def call (n : Nat) (p : Pos) (f : Resolve.Expr) (xs : List Resolve.Expr) (b : Nat) :
+      M (Option Out) := do
+    let args (xs : List Resolve.Expr) : M (List Val) := do
+      return bound b (← xs.mapM fun x => do return (← need x (← eval n x)).value)
     -- A callee that is not a function item or a prelude function is a type.
     let ctor : M (Option Out) := do
       let o ← need f (← eval n f)
@@ -695,31 +763,42 @@ mutual
     | .name fp g (.item i) =>
       let some (.fn ip c fname ps ret body) := (← read).items[i]? | ctor
       charge fp 1
-      let vs ← args xs
-      if ps.length != vs.length then
-        fail .S007 p s!"`{g}` takes {ps.length} argument(s), but it has {vs.length}"
-      -- TODO(#179): `mut` formals come in the next steps of phase 4.
-      if ps.any (·.mode == .mut) then fail .S004 p "a `mut` formal is not supported yet"
+      if ps.length != xs.length then
+        let _ ← args xs
+        fail .S007 p s!"`{g}` takes {ps.length} argument(s), but it has {xs.length}"
+      let acts ← (xs.zip (unbound b ps)).mapM fun (x, q) => do
+        if q.mode == .mut then return Actual.place (← placeAt n x.pos .S008 x)
+        else return Actual.value (← need x (← eval n x)).value
+      let acts := bound b acts
       let ctx ← read
       -- A call outside a body runs on static values only, so its site never names hardware.
       let site := ((ctx.calls[ctx.item]?).bind (·[p]?)).getD 0
-      nested p <| inFrame none do
+      let (r, outs) ← nested p <| inFrame none do
         let (path, fr) ← frameOf fname.name (ctx.syms.items.getD i 0) (.call site)
         withReader (fun c => { c with item := i, frame := fr }) do
-          for (q, v) in ps.zip vs do
+          for (q, a) in ps.zip acts do
             let t ← typeExpr n q.ty
-            charge p v.size
-            let x ← if c || q.mode == .comptime then do
-                pure (.static (← conform p t (← static p (← settle p t v))))
-              else conformVal p t v
-            bindLocal q.name.id ⟨some t, false, ← named p q.name.id q.name.name.name x⟩
+            match a with
+            | .value v =>
+              charge p v.size
+              let x ← if c || q.mode == .comptime then do
+                  pure (.static (← conform p t (← static p (← settle p t v))))
+                else conformVal p t v
+              bindLocal q.name.id ⟨some t, false, ← named p q.name.id q.name.name.name x⟩
+            | .place pl =>
+              charge p pl.part.size
+              unless (pl.ty <|> pl.part.ty?) == some t do
+                fail .S010 p s!"a `mut` actual has the type {t.text}, not {pl.part.text}"
+              let x ← if c then pure (Val.static (← static p pl.part)) else pure pl.part
+              bindLocal q.name.id ⟨some t, true, ← named p q.name.id q.name.name.name x⟩
           let rt ← typeExpr n ret
-          match ← withReader (fun c => { c with ret := some rt }) (block n ip body) with
-          | some (.hw h) =>
-            let ret ← version .ret (path.push (.role .ret))
-            return some ⟨← bindHw p ret h, false⟩
-          | some v => return some ⟨v, false⟩
-          | none => fail .S010 p s!"`{fname.name}` ends without `return`"
+          let r ← match ← withReader (fun c => { c with ret := some rt }) (block n ip body) with
+            | some (.hw h) => do bindHw p (← version .ret (path.push (.role .ret))) h
+            | some v => pure v
+            | none => fail .S010 p s!"`{fname.name}` ends without `return`"
+          return (r, ← finals ps acts)
+      writeBack p outs
+      return some ⟨r, false⟩
     | .name fp _ (.fn .len) =>
       charge fp 1
       return some ⟨.static (← lenOf p (← args xs)), false⟩
