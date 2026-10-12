@@ -510,14 +510,18 @@ mutual
   /--
   A use of the struct item `i` at `p` with the arguments `xs`, in the table of specializations.
   Each argument is static. Each use binds the parameters in the scope of the struct, one level
-  deeper. The typed uses give the key of the table. The first use evaluates the field types
-  there. The key exists only after the parameter types, so a use of the struct while its
-  parameter types evaluate is a cycle (`S019`).
+  deeper. A literal with `[]` takes the type of its parameter there, as a module argument does.
+  The typed uses give the key of the table. The first use evaluates the field types there. The
+  key exists only after the parameter types, so a use of the struct while its parameter types
+  evaluate is a cycle (`S019`).
   -/
   def spec (n : Nat) (p : Pos) (i : Nat) (xs : List Resolve.Expr) : M Ty := do
     let some (.struct _ x ps fs) := (← read).items[i]?
       | fail .S007 p "a complete type takes no index"
-    let args ← xs.mapM fun e => do static p (← need e (← eval n e)).value
+    let args ← xs.mapM fun e => do
+      match (← need e (← eval n e)).value with
+      | v@(.pending ..) => pure v
+      | v => return .static (← static p v)
     if ps.length != args.length then
       fail .S007 p s!"`{x.name}` takes {ps.length} argument(s), but it has {args.length}"
     if (← read).binding.contains i then
@@ -526,7 +530,7 @@ mutual
       let keys ← withReader (fun c => { c with binding := i :: c.binding }) <|
         (ps.zip args).mapM fun (q, v) => do
           let t ← typeExpr n q.ty
-          let w ← conform p t v
+          let w ← conform p t (← static p (← settle p t v))
           bindLocal q.name.id ⟨some t, false, .static w⟩
           return w
       specialize p x.name i keys (fs.mapM fun f => typeExpr n f.ty)
