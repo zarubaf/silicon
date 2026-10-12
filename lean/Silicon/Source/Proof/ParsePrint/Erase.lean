@@ -28,8 +28,9 @@ a check here:
 
 The proof covers the container forms of slice 2. These are the unit value, the unit type, a
 tuple, an array, an array type `[T; N]` in a type and in an expression, and a selector `.N`. It
-also covers the type forms of phase 3: a `struct` item, and a `type` item or statement. It does
-not cover the forms of phase 4 yet: `Printable` excludes a `mut` parameter and a receiver call.
+also covers the type forms of phase 3: a `struct` item, and a `type` item or statement. Of the
+forms of phase 4, it covers a `mut` parameter of a function. `Printable` excludes a receiver
+call.
 -/
 namespace Silicon.Source
 
@@ -188,13 +189,13 @@ mutual
 end
 
 /-!
-A parameter mode. A module parameter or a struct parameter (`static`) has `comptime`. No
-parameter has `mut` yet.
+A parameter mode. A module parameter or a struct parameter (`static`) has `comptime`. A function
+parameter has at most one mark, `comptime` or `mut`.
 -/
 def ParamMode.printable (static : Bool) : ParamMode → Bool
   | .none => !static
   | .comptime => true
-  | .mut => false
+  | .mut => !static
 
 def Param.printable (static : Bool) (p : Param) : Bool :=
   p.mode.printable static && validName p.name.name && p.ty.printable
