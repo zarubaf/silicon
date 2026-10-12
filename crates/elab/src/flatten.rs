@@ -216,14 +216,14 @@ fn extract(c: Span, a: Expr, lo: u32, w: u32) -> Expr {
 }
 
 /// The width of a hardware type.
-fn width(t: Ty) -> u32 {
+fn width(t: &Ty) -> u32 {
     match t {
-        Ty::UInt(w) | Ty::SInt(w) => w,
+        Ty::UInt(w) | Ty::SInt(w) => *w,
         _ => 1,
     }
 }
 
-fn signed(t: Ty) -> bool {
+fn signed(t: &Ty) -> bool {
     matches!(t, Ty::SInt(_))
 }
 
@@ -431,16 +431,16 @@ impl Lower<'_> {
         let Some(node) = graph.node(hw) else {
             return defect("a hardware id is outside its arena");
         };
-        let (pos, ty) = (node.pos, node.ty);
+        let (pos, ty) = (node.pos, node.ty.clone());
         let at = span(pos);
         let low = match (&node.op, node.args.as_slice()) {
             (op, []) => self.leaf(pos, op)?,
-            (Op::Un(op), [arg]) => self.unary(target, pos, ty, *op, *arg)?,
+            (Op::Un(op), [arg]) => self.unary(target, pos, &ty, *op, *arg)?,
             (Op::Bin(op @ (BinOp::Shl | BinOp::Shr)), [arg, count]) => {
-                self.shift(target, pos, ty, *op, *arg, *count)?
+                self.shift(target, pos, &ty, *op, *arg, *count)?
             }
             (Op::Bin(op), [lhs, rhs]) => {
-                let Some(core) = bin_op(*op, signed(graph.ty(*lhs))) else {
+                let Some(core) = bin_op(*op, signed(&graph.ty(*lhs))) else {
                     return defect("a binary node has no core operation");
                 };
                 self.charge(pos, 1)?;
@@ -461,7 +461,7 @@ impl Lower<'_> {
                 let height = up(sel.height.max(then.height).max(els.height));
                 inner(mux(at, sel.expr, then.expr, els.expr), height)
             }
-            (Op::Resize, [arg]) => self.resize(target, pos, ty, *arg)?,
+            (Op::Resize, [arg]) => self.resize(target, pos, &ty, *arg)?,
             (Op::Reinterpret, [arg]) => {
                 let arg = self.operand(target, *arg)?;
                 Low {
@@ -471,7 +471,7 @@ impl Lower<'_> {
             }
             _ => return defect("a hardware node has the wrong number of operands"),
         };
-        self.deep(pos, target, width(ty), root, low)
+        self.deep(pos, target, width(&ty), root, low)
     }
 
     /// A node without operands: a name, a child output, or a constant.
@@ -515,7 +515,7 @@ impl Lower<'_> {
     }
 
     /// `!a`, `~a`, and `-a`.
-    fn unary(&mut self, target: Target, pos: Pos, ty: Ty, op: UnOp, arg: HwId) -> R<Low> {
+    fn unary(&mut self, target: Target, pos: Pos, ty: &Ty, op: UnOp, arg: HwId) -> R<Low> {
         let at = span(pos);
         self.charge(pos, if op == UnOp::Inv { 1 } else { 2 })?;
         let arg = self.operand(target, arg)?;
@@ -536,7 +536,7 @@ impl Lower<'_> {
         &mut self,
         target: Target,
         pos: Pos,
-        ty: Ty,
+        ty: &Ty,
         op: BinOp,
         arg: HwId,
         count: HwId,
@@ -555,7 +555,7 @@ impl Lower<'_> {
             let expr = bin(at, core, arg.expr, small(at, w, amount));
             return Ok(inner(expr, up(arg.height)));
         }
-        let wc = width(self.ty(count));
+        let wc = width(&self.ty(count));
         if wc <= w {
             self.charge(pos, if wc == w { 1 } else { 3 })?;
             let arg = self.operand(target, arg)?;
@@ -589,9 +589,9 @@ impl Lower<'_> {
     }
 
     /// `resize` of `arg` to the type `ty`.
-    fn resize(&mut self, target: Target, pos: Pos, ty: Ty, arg: HwId) -> R<Low> {
+    fn resize(&mut self, target: Target, pos: Pos, ty: &Ty, arg: HwId) -> R<Low> {
         let at = span(pos);
-        let (to, from) = (width(ty), width(self.ty(arg)));
+        let (to, from) = (width(ty), width(&self.ty(arg)));
         if to == from {
             let arg = self.operand(target, arg)?;
             return Ok(Low {
@@ -685,7 +685,7 @@ impl Lower<'_> {
             let port = Port {
                 dir: if decl.input { Dir::Input } else { Dir::Output },
                 name,
-                ty: CTy::Bits(num(width(decl.ty), at)),
+                ty: CTy::Bits(num(width(&decl.ty), at)),
                 span: at,
             };
             ports.push(layout::Declared {
@@ -714,7 +714,7 @@ impl Lower<'_> {
             self.charge(reg.pos, 1)?;
             stmts.push(Stmt::Reg {
                 name,
-                width: num(width(reg.ty), at),
+                width: num(width(&reg.ty), at),
                 clk,
                 reset: Some(Reset {
                     signal,
@@ -745,7 +745,7 @@ impl Lower<'_> {
                 path: local.path,
                 port: None,
             };
-            let w = width(self.ty(local.value));
+            let w = width(&self.ty(local.value));
             let expr = self.value(target, local.value)?;
             stmts.push(Stmt::Let {
                 name: x,
@@ -790,7 +790,7 @@ impl Lower<'_> {
         let at = span(bind.pos);
         self.charge(bind.pos, 1)?;
         match bind.sink {
-            Sink::Own { kind, ty, path } => {
+            Sink::Own { kind, ref ty, path } => {
                 let x = self.name(bind.pos, &self.path(path))?;
                 let expr = self.value(Target { path, port: None }, bind.value)?;
                 stmts.push(match kind {

@@ -47,7 +47,7 @@ impl Evaluator<'_> {
 
     /// A static operand next to a hardware operand of the type `t`. An integer takes the
     /// type `t`.
-    fn lit_at(&mut self, pos: Pos, t: Ty, o: &super::Out) -> Res<HwId> {
+    fn lit_at(&mut self, pos: Pos, t: &Ty, o: &super::Out) -> Res<HwId> {
         let v = self.store.value(o);
         let converted = if matches!(v, Value::Int(_)) && t.is_finite() {
             ops::convert(t, v, &mut self.fuel).map_err(at(pos))?
@@ -64,11 +64,11 @@ impl Evaluator<'_> {
             (Opnd::Hw(left), Opnd::Hw(right)) => Ok((left, right)),
             (Opnd::Hw(left), Opnd::Static(right)) => {
                 let ty = self.graph.ty(left);
-                Ok((left, self.lit_at(pos, ty, &right)?))
+                Ok((left, self.lit_at(pos, &ty, &right)?))
             }
             (Opnd::Static(left), Opnd::Hw(right)) => {
                 let ty = self.graph.ty(right);
-                Ok((self.lit_at(pos, ty, &left)?, right))
+                Ok((self.lit_at(pos, &ty, &left)?, right))
             }
             (Opnd::Static(left), Opnd::Static(right)) => fail(
                 Code::S010,
@@ -84,9 +84,11 @@ impl Evaluator<'_> {
 
     pub(super) fn hw_unary(&mut self, pos: Pos, op: UnOp, a: HwId) -> Res<Val> {
         let t = self.graph.ty(a);
-        match (op, t) {
+        match (op, &t) {
             (UnOp::Not, Ty::Bool) => self.node(pos, Ty::Bool, Op::Un(op), vec![a]),
-            (UnOp::Inv | UnOp::Neg, t) if t.is_finite() => self.node(pos, t, Op::Un(op), vec![a]),
+            (UnOp::Inv | UnOp::Neg, t) if t.is_finite() => {
+                self.node(pos, t.clone(), Op::Un(op), vec![a])
+            }
             _ => fail(
                 Code::S010,
                 pos,
@@ -141,7 +143,7 @@ impl Evaluator<'_> {
         };
         let left = match a {
             Opnd::Hw(x) => x,
-            Opnd::Static(o) => self.lit_at(pos, Ty::Bool, &o)?,
+            Opnd::Static(o) => self.lit_at(pos, &Ty::Bool, &o)?,
         };
         let t = self.graph.ty(left);
         if t.is_finite() {
@@ -216,10 +218,10 @@ impl Evaluator<'_> {
                     (Some(ty), _) => {
                         let value = self.store.value(&yes).clone();
                         let left = self.lit(pos, value)?;
-                        (left, self.lit_at(pos, ty, &no)?)
+                        (left, self.lit_at(pos, &ty, &no)?)
                     }
                     (_, Some(ty)) => {
-                        let left = self.lit_at(pos, ty, &yes)?;
+                        let left = self.lit_at(pos, &ty, &yes)?;
                         let value = self.store.value(&no).clone();
                         (left, self.lit(pos, value)?)
                     }
@@ -250,18 +252,18 @@ impl Evaluator<'_> {
     }
 
     /// `resize` or `reinterpret` of a hardware value.
-    pub(super) fn hw_convert(&mut self, pos: Pos, f: Prelude, to: Ty, arg: HwId) -> Res<Val> {
+    pub(super) fn hw_convert(&mut self, pos: Pos, f: Prelude, to: &Ty, arg: HwId) -> Res<Val> {
         let from = self.graph.ty(arg);
-        match (f, to, from) {
+        match (f, to, &from) {
             (Prelude::Resize, Ty::UInt(_), Ty::UInt(_))
             | (Prelude::Resize, Ty::SInt(_), Ty::SInt(_)) => {
-                self.node(pos, to, Op::Resize, vec![arg])
+                self.node(pos, to.clone(), Op::Resize, vec![arg])
             }
             (
                 Prelude::Reinterpret,
                 Ty::UInt(width) | Ty::SInt(width),
                 Ty::UInt(old) | Ty::SInt(old),
-            ) if old == width => self.node(pos, to, Op::Reinterpret, vec![arg]),
+            ) if old == width => self.node(pos, to.clone(), Op::Reinterpret, vec![arg]),
             _ => fail(
                 Code::S010,
                 pos,

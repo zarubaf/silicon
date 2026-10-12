@@ -66,7 +66,7 @@ impl Design {
             Entry {
                 name,
                 core,
-                ty: q.ty,
+                ty: q.ty.clone(),
             }
         };
         let ports = top
@@ -124,7 +124,7 @@ impl Schema {
             if *name != e.name {
                 return Err(format!("expected input {}", e.name));
             }
-            values.push(parse_value(&e.name, e.ty, value)?);
+            values.push(parse_value(&e.name, &e.ty, value)?);
             rest = tail;
         }
         if rest.is_empty() {
@@ -142,7 +142,7 @@ impl Schema {
             self.outputs
                 .iter()
                 .zip(values)
-                .map(|(e, v)| (&e.name, value_text(e.ty, v))),
+                .map(|(e, v)| (&e.name, value_text(&e.ty, v))),
         )
     }
 }
@@ -157,7 +157,7 @@ fn decimal(s: &str) -> Option<Int> {
 }
 
 /// The core value of the source value `v` for the input `name` of type `t`.
-pub(crate) fn parse_value(name: &str, t: Ty, v: &str) -> Result<Bits, String> {
+pub(crate) fn parse_value(name: &str, t: &Ty, v: &str) -> Result<Bits, String> {
     let bad = || format!("input {name} has no value of its type");
     let wide = || format!("input {name} exceeds its width");
     let (n, w) = match t {
@@ -168,10 +168,10 @@ pub(crate) fn parse_value(name: &str, t: Ty, v: &str) -> Result<Bits, String> {
         },
         Ty::UInt(w) => {
             let n = decimal(v).ok_or_else(bad)?;
-            if !n.fits_unsigned(u64::from(w)) {
+            if !n.fits_unsigned(u64::from(*w)) {
                 return Err(wide());
             }
-            (n, w)
+            (n, *w)
         }
         Ty::SInt(w) => {
             let (neg, digits) = match v.strip_prefix('-') {
@@ -180,22 +180,22 @@ pub(crate) fn parse_value(name: &str, t: Ty, v: &str) -> Result<Bits, String> {
             };
             let n = decimal(digits).ok_or_else(bad)?;
             let n = if neg { n.neg() } else { n };
-            if !n.fits_signed(u64::from(w)) {
+            if !n.fits_signed(u64::from(*w)) {
                 return Err(wide());
             }
-            (n, w)
+            (n, *w)
         }
-        Ty::Nat | Ty::Int => return Err(bad()),
+        Ty::Nat | Ty::Int | Ty::Unit | Ty::Array(..) | Ty::Tuple(_) => return Err(bad()),
     };
     n.to_finite(w).ok_or_else(bad)
 }
 
 /// The source text of the core value `v` of type `t`.
-pub(crate) fn value_text(t: Ty, v: &Bits) -> String {
+pub(crate) fn value_text(t: &Ty, v: &Bits) -> String {
     match t {
         Ty::Bool if Int::from_unsigned(v).is_zero() => "false".to_owned(),
         Ty::Bool => "true".to_owned(),
-        Ty::SInt(w) => Int::from_signed(v, w).to_string(),
+        Ty::SInt(w) => Int::from_signed(v, *w).to_string(),
         _ => Int::from_unsigned(v).to_string(),
     }
 }

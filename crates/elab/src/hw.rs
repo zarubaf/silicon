@@ -93,7 +93,7 @@ impl Graph {
     }
 
     pub(crate) fn ty(&self, h: HwId) -> Ty {
-        self.nodes.get(h.0).map_or(Ty::Bool, |n| n.ty)
+        self.nodes.get(h.0).map_or(Ty::Bool, |n| n.ty.clone())
     }
 
     pub(crate) fn size(&self, h: HwId) -> u64 {
@@ -110,7 +110,7 @@ pub(crate) enum Kind {
 }
 
 /// A port of an instantiation, as its parent sees it. `sym` is the symbol of its name.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Port {
     pub sym: Sym,
     pub input: bool,
@@ -120,7 +120,7 @@ pub(crate) struct Port {
 /// A handle. Its number indexes the resources or the instances of its instantiation. An
 /// instance also holds the index of its done instantiation, and a child input the number of
 /// its instance.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) enum Handle {
     Res {
         kind: Kind,

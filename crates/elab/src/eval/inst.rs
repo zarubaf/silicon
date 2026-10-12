@@ -170,7 +170,7 @@ impl Iface {
                 Port {
                     sym: q.sym,
                     input: q.input,
-                    ty: q.ty,
+                    ty: q.ty.clone(),
                 },
             );
             inputs += usize::from(q.input);
@@ -221,7 +221,7 @@ impl Elab {
         self.done
             .get(inst)
             .and_then(|i| i.iface.ports.get(&sym))
-            .copied()
+            .cloned()
     }
 }
 
@@ -371,7 +371,7 @@ fn before(a: Pos, b: Pos) -> bool {
 }
 
 /// The target of a `:=` binding. It refers, so it charges nothing.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Target {
     Own {
         kind: Kind,
@@ -445,7 +445,7 @@ impl Evaluator<'_> {
             Stmt::Input { pos, name, ty } | Stmt::Output { pos, name, ty } => {
                 let t = self.type_expr(ty)?;
                 let t = data_type(*pos, t)?;
-                let v = self.port(*pos, matches!(s, Stmt::Input { .. }), name, t)?;
+                let v = self.port(*pos, matches!(s, Stmt::Input { .. }), name, t.clone())?;
                 let id = self.decl(name)?;
                 self.bind(
                     id,
@@ -474,16 +474,16 @@ impl Evaluator<'_> {
                 let out = self.eval(init)?;
                 let out = need(init, out)?;
                 self.copy(*pos, &out)?;
-                let init = self.conform(*pos, ty, out)?;
+                let init = self.conform(*pos, &ty, out)?;
                 let id = self.decl(name)?;
                 let path = self.fresh(id);
                 self.elab.work.body.regs.push(RegDecl {
                     path,
-                    ty,
+                    ty: ty.clone(),
                     init,
                     pos: *pos,
                 });
-                let reg = self.resource(Kind::Reg, path, ty, *pos, self.sym(id));
+                let reg = self.resource(Kind::Reg, path, ty.clone(), *pos, self.sym(id));
                 self.bind(
                     id,
                     Slot {
@@ -500,10 +500,10 @@ impl Evaluator<'_> {
                 let path = self.fresh(id);
                 self.elab.work.body.wires.push(WireDecl {
                     path,
-                    ty: t,
+                    ty: t.clone(),
                     pos: *pos,
                 });
-                let w = self.resource(Kind::Wire, path, t, *pos, self.sym(id));
+                let w = self.resource(Kind::Wire, path, t.clone(), *pos, self.sym(id));
                 self.bind(
                     id,
                     Slot {
@@ -518,11 +518,11 @@ impl Evaluator<'_> {
                 let o = self.eval(value)?;
                 let o = need(value, o)?;
                 self.copy(*pos, &o)?;
-                let ty = match t {
-                    Target::Own { ty, .. } => ty,
-                    Target::Child { port, .. } => port.ty,
+                let ty = match &t {
+                    Target::Own { ty, .. } => ty.clone(),
+                    Target::Child { port, .. } => port.ty.clone(),
                 };
-                let h = match self.conform_val(*pos, ty, o)? {
+                let h = match self.conform_val(*pos, &ty, o)? {
                     Val::Static(v) => self.lit(*pos, v)?,
                     Val::Hw(h) => h,
                     v @ Val::Handle(_) => {
@@ -632,7 +632,7 @@ impl Evaluator<'_> {
         self.elab.work.body.ports.push(PortDecl {
             sym,
             input,
-            ty,
+            ty: ty.clone(),
             pos,
         });
         let path = self.paths.child(None, sym);
@@ -658,13 +658,13 @@ impl Evaluator<'_> {
                 Some(Val::Handle(Handle::Res { kind, id, ty, path })) => Ok(Target::Own {
                     kind: *kind,
                     id: *id,
-                    ty: *ty,
+                    ty: ty.clone(),
                     path: *path,
                 }),
                 Some(Val::Handle(Handle::Input { inst, path, port })) => Ok(Target::Child {
                     inst: *inst,
                     path: *path,
-                    port: *port,
+                    port: port.clone(),
                 }),
                 _ => bad(),
             },
@@ -798,14 +798,14 @@ impl Evaluator<'_> {
         fail(Code::S018, pos, message)
     }
 
-    /// The serialization of an `InstantiationId` at the statement `pos`. It charges the
-    /// decimal forms of its integers, then its length in bytes, before it makes the text.
+    /// The serialization of an `InstantiationId` at the statement `pos`. It charges the walk
+    /// that measures it, then its length in bytes, before it makes the text.
     fn serialize(&mut self, pos: Pos, module: &str, vs: &[Value]) -> Res<String> {
-        let mut decimal = 0u128;
+        let mut measure = 0u128;
         for v in vs {
-            decimal += u128::from(v.decimal_charge());
+            measure += v.measure_charge();
         }
-        self.charge(pos, decimal)?;
+        self.charge(pos, measure)?;
         let parts: Vec<String> = vs.iter().map(Value::serialize).collect();
         self.charge(
             pos,
@@ -872,7 +872,7 @@ impl Evaluator<'_> {
                 ev.in_item(i, ROOT, |ev| {
                     for (q, v) in params.iter().zip(args) {
                         let t = ev.type_expr(&q.ty)?;
-                        let x = ev.conform(pos, t, Out::Made(Val::Static(v)))?;
+                        let x = ev.conform(pos, &t, Out::Made(Val::Static(v)))?;
                         let qid = ev.decl(&q.name)?;
                         ev.bind(
                             qid,
