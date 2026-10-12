@@ -256,9 +256,9 @@ impl Evaluator<'_> {
                 Ok(Out::Ref(r))
             }
             (converted, o) => {
-                let value = match (converted, self.store.take(o)) {
-                    (Some(v), _) | (None, Val::Static(v)) => v,
-                    (None, _) => Value::Unit,
+                let value = match converted {
+                    Some(v) => v,
+                    None => self.static_value(pos, o)?,
                 };
                 self.bind(
                     id,

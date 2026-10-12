@@ -1091,7 +1091,9 @@ impl Evaluator<'_> {
                 Kind::Const => self.constant(pos, x, id),
                 Kind::Alias if self.items.contains_key(&id) => self.constant(pos, x, id),
                 Kind::Struct => {
-                    let i = self.items.get(&id).copied().unwrap_or(usize::MAX);
+                    let Some(&i) = self.items.get(&id) else {
+                        return fail(Code::S010, pos, format!("`{x}` is not an item"));
+                    };
                     let t = self.spec(pos, i, &[])?;
                     Ok(Out::Named(Val::Static(Value::Type(t))))
                 }
@@ -1202,7 +1204,9 @@ impl Evaluator<'_> {
     ) -> Res<Option<Out>> {
         self.charge(fp, 1)?;
         let file = self.file;
-        let i = self.items.get(&id).copied().unwrap_or(usize::MAX);
+        let Some(&i) = self.items.get(&id) else {
+            return fail(Code::S010, fp, format!("`{g}` is not a function"));
+        };
         let Some(Item::Fn {
             pos: ip,
             comptime,
