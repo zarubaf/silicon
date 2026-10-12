@@ -26,5 +26,6 @@ The records also need an output. The `elab` command prints the `.sil` text on st
 - The cost of the records stays in the cost model. A shared hierarchy stays linear.
 - A user who needs the records of one occurrence finds the instance path from the emitted module name and the design.
 - The outputs of `elab` and `build` do not change.
-- The source suites compare the `observe` output of both front ends byte for byte. This is the done criterion of slice 2 for the records.
+- The source suites compare the record lines of `observe` in both front ends byte for byte. This is the done criterion of slice 2 for the records.
+- A final error line compares only by code, line, and column, as each error line does ([ADR 0017](0017-error-column-is-normative.md)).
 - `doc/trust.md` gets a row for `silicon-check observe`.
