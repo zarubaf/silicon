@@ -464,6 +464,43 @@ mod tests {
     }
 
     #[test]
+    fn receiver_calls() {
+        assert_eq!(
+            expr_of("t.f(x)"),
+            "(method (name \"t\") \"f\" ((name \"x\")))"
+        );
+        assert_eq!(
+            expr_of("t.0.f(x)"),
+            "(method (select (name \"t\") 0) \"f\" ((name \"x\")))"
+        );
+        assert_eq!(
+            expr_of("xs.push(1,)"),
+            "(method (name \"xs\") \"push\" ((num 1)))"
+        );
+        assert_eq!(expr_of("x.f()"), "(method (name \"x\") \"f\" ())");
+        assert_eq!(
+            expr_of("a.b.c(1).d"),
+            "(field (method (field (name \"a\") \"b\") \"c\" ((num 1))) \"d\")"
+        );
+        assert_eq!(
+            expr_of("x.f(a)(b)"),
+            "(call (method (name \"x\") \"f\" ((name \"a\"))) ((name \"b\")))"
+        );
+        assert_eq!(
+            expr_of("(x.f)(1)"),
+            "(call (field (name \"x\") \"f\") ((num 1)))"
+        );
+        assert_eq!(
+            expr_of("(a + b).f(c)"),
+            "(method (binary add (name \"a\") (name \"b\")) \"f\" ((name \"c\")))"
+        );
+        assert_eq!(
+            stmt_of("xs.push(x);"),
+            "(expr (method (name \"xs\") \"push\" ((name \"x\"))))"
+        );
+    }
+
+    #[test]
     fn type_forms() {
         assert_eq!(
             expr_of("[UInt[8]; 4]"),
@@ -479,7 +516,7 @@ mod tests {
         );
         assert_eq!(
             dump_of("struct P(comptime W: Nat) { a: UInt[W], b: Bool, }"),
-            "(struct \"P\" ((param true \"W\" (name \"Nat\"))) ((structfield \"a\" \
+            "(struct \"P\" ((param comptime \"W\" (name \"Nat\"))) ((structfield \"a\" \
              (index (name \"UInt\") ((name \"W\")))) (structfield \"b\" (name \"Bool\"))))\n"
         );
         assert_eq!(dump_of("struct P {}"), "(struct \"P\" () ())\n");
@@ -502,12 +539,22 @@ mod tests {
         );
         assert_eq!(
             dump_of("comptime fn f(a: T, comptime n: Nat) -> T { return a; }"),
-            "(fn true \"f\" ((param false \"a\" (name \"T\")) (param true \"n\" (name \"Nat\"))) \
+            "(fn true \"f\" ((param none \"a\" (name \"T\")) (param comptime \"n\" (name \"Nat\"))) \
              (name \"T\") ((ret (some (name \"a\")))))\n"
         );
         assert_eq!(
             dump_of("module M(comptime n: Nat) { }"),
-            "(module \"M\" ((param true \"n\" (name \"Nat\"))) none ())\n"
+            "(module \"M\" ((param comptime \"n\" (name \"Nat\"))) none ())\n"
+        );
+        assert_eq!(
+            dump_of("fn f(mut xs: L, comptime T: Type, x: T) -> T {}"),
+            "(fn false \"f\" ((param mut \"xs\" (name \"L\")) \
+             (param comptime \"T\" (name \"Type\")) (param none \"x\" (name \"T\"))) \
+             (name \"T\") ())\n"
+        );
+        assert_eq!(
+            dump_of("comptime fn g(mut n: Nat) -> () {}"),
+            "(fn true \"g\" ((param mut \"n\" (name \"Nat\"))) (unit) ())\n"
         );
         assert_eq!(
             dump_of("module M() domains(clk) { }"),
