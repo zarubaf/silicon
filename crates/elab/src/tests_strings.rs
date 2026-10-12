@@ -485,6 +485,23 @@ fn a_result_keeps_the_value_that_its_expression_read() {
     }
 }
 
+/// A mutation of a held root charges the size of the root before it copies the parked
+/// references to it (design section 5.4). `let y = xs[xs.pop()];` on a list of `n` elements
+/// thus copies the list at each `pop`, about `n * n / 2` elements in all, and the fuel pays for
+/// each copy.
+#[test]
+fn a_mutation_of_a_held_root_pays_for_its_copies() {
+    let src = "comptime fn f(n: Nat) -> Int { let mut xs = list(Int); \
+        comptime for i in 0..n { xs.push(i); } \
+        comptime for i in 0..n { let y = xs[xs.pop()]; } return 0; }";
+    let full = cost(src, "f(300)");
+    assert!(out(src, "f(300)", full - 1, 1000).starts_with("S015"));
+    assert_eq!(out(src, "f(300)", full, 1000), "(int 0)");
+    let (copies, _) = work(full);
+    assert!(copies >= 300 * 300 / 2, "{copies} copies");
+    assert!(copies <= full, "{copies} copies for {full} units");
+}
+
 /// The message of a `mut` actual of another type names the type of the place and the type of
 /// the formal, as Lean does.
 #[test]
