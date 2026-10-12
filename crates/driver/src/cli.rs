@@ -402,7 +402,7 @@ fn eval_source(source: &str, expr: &str, budget: &Budgets) -> Result<Output, Usa
     };
     Ok(
         match elab::eval(&file, &expr, budget.elab()).map_err(stack)? {
-            Ok((value, used)) => {
+            Ok((mut value, used)) => {
                 // The result pays its length in bytes from the fuel that remains, before the
                 // text exists (design section 8).
                 let len = value.serialized_len();

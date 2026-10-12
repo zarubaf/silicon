@@ -931,7 +931,7 @@ impl Evaluator<'_> {
             measure += v.measure_charge();
         }
         self.charge(pos, measure)?;
-        let lens: Vec<u64> = vs.iter().map(|v| v.serialized_len(&self.tys)).collect();
+        let lens: Vec<u64> = vs.iter().map(|v| v.serialized_len(&mut self.tys)).collect();
         self.charge(pos, u128::from(InstantiationId::render_size(module, &lens)))?;
         let parts: Vec<String> = vs.iter().map(|v| v.serialize(&self.tys)).collect();
         Ok(InstantiationId::render(module, &parts))
