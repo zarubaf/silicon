@@ -2,7 +2,7 @@
 // recursive size of the argument, then 1 for each container node and the length in bytes of the
 // serialization, and the length of the emitted name. The fuel equal to the total of `cost`
 // succeeds, and one unit less gives `S015`.
-// FUEL 434
+// FUEL 450
 // TOP M()
 module Leaf(comptime T: ([Nat; 6], (Bool, Nat))) domains() {
     input a: UInt[1];

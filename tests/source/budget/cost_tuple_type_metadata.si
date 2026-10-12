@@ -1,6 +1,6 @@
-// A tuple type charges the recursive size of the type and the sizes of its new metadata integers, as a struct does. The numbers
-// of a tuple of arrays grow with the product of the lengths.
-// FUEL 393
+// A tuple type charges the recursive size of the type, the sizes of the metadata integers of its parts, and the sizes of its new
+// metadata integers, as a struct does. The numbers of a tuple of arrays grow with the product of the lengths.
+// FUEL 527
 // TOP M()
 struct P {
     a: UInt[1000],

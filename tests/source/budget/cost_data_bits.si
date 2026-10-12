@@ -1,5 +1,6 @@
-// `data_bits(T)` charges only its node, so the size of the type does not count. Eight calls on a large type cost eight nodes.
-// FUEL 139
+// `data_bits(T)` charges its node and the size of the width that it copies, so the size of the type does not count. Eight calls
+// on a large type cost eight nodes and eight widths.
+// FUEL 161
 // TOP M()
 struct P {
     a: [[UInt[8]; 16]; 16],
