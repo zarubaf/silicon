@@ -58,8 +58,9 @@ its operation runs. When the fuel cannot pay it, the result is `S015` at the nod
    `reinterpret`, and a typed use that makes a finite value from an `Int`.
 5. `UInt[w]` and `SInt[w]` charge the size of the type that they make.
 6. A copy charges the size of the copied value: each argument, each return, and a binding of a
-   reference. The arguments of a function, a prelude function, and a constructor `T(x)` are
-   copies. Each charges after all arguments of the call run. A binding is a `let`, an
+   reference. The arguments of a function, a prelude function other than `len`, and a
+   constructor `T(x)` are copies. `len` only refers to its argument, so it copies nothing.
+   Each copy charges after all arguments of the call run. A binding is a `let`, an
    assignment, or a constant. A reference is a name, or a conditional that selects a
    reference. The copy comes before the typed use.
 7. The target of an assignment is a place, not an expression, so it charges nothing. Only the
