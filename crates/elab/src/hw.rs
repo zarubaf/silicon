@@ -145,7 +145,7 @@ pub(crate) enum Handle {
 
 /// Where a reference starts: the local of the frame at this index of the frame stack, or the
 /// constant at this index of the table of constants.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Root {
     Local(usize, DeclId),
     Const(usize),
@@ -160,19 +160,12 @@ pub(crate) struct Ref {
     pub path: Vec<usize>,
 }
 
-/// A static element of a literal that waits for its type: a new value, or a reference.
-#[derive(Clone)]
-pub(crate) enum Leaf {
-    Owned(Value),
-    Ref(Ref),
-}
-
 /// A part of a literal that waits for its type. It is a static value, the literal `[]` at the
 /// position, or an array or a tuple literal at the position. Such a literal has at least one
 /// part that waits.
 #[derive(Clone)]
 pub(crate) enum Part {
-    Value(Leaf),
+    Value(Value),
     Empty(Pos),
     Array(Pos, Vec<Part>),
     Tuple(Pos, Vec<Part>),

@@ -112,7 +112,7 @@ fn build<'x>(
     part: &'x Part,
 ) -> Res<Cow<'x, Value>> {
     match part {
-        Part::Value(leaf) => Ok(Cow::Borrowed(env.store.leaf(leaf))),
+        Part::Value(v) => Ok(Cow::Borrowed(v)),
         Part::Empty(node) => match tys.get(ty) {
             Ty::Array(elem, len) if len.cmp_u64(0) == Ordering::Equal => {
                 let empty = Value::Array(*elem, Vec::new());
@@ -176,7 +176,7 @@ impl Evaluator<'_> {
     /// container holds only static values. A hardware value is `S010`, and a handle is `S010`
     /// until slice 3. The position is that of the first `[]` among the elements that wait.
     pub(super) fn elements(&mut self, xs: &[Expr]) -> Res<(Vec<Out>, Option<Pos>)> {
-        let mut outs = Vec::with_capacity(xs.len());
+        let base = self.store.parked.len();
         let mut waiting = None;
         for x in xs {
             let o = self.eval(x)?;
@@ -184,9 +184,9 @@ impl Evaluator<'_> {
             if let Some(q) = self.held(super::expr_pos(x), &o)? {
                 waiting.get_or_insert(q);
             }
-            outs.push(o);
+            self.store.park(o);
         }
-        Ok((outs, waiting))
+        Ok((self.store.resume(base), waiting))
     }
 
     /// A container expression: `()`, a tuple or an array literal, or a selector `.N`. A literal
@@ -197,7 +197,7 @@ impl Evaluator<'_> {
             Expr::Tuple { pos, elems } => {
                 let (outs, waiting) = self.elements(elems)?;
                 if let Some(q) = waiting {
-                    let parts = outs.into_iter().map(Out::into_part).collect();
+                    let parts = outs.into_iter().map(|o| self.store.part(o)).collect();
                     return Ok(Some(Out::Made(Val::Pending(q, Part::Tuple(*pos, parts)))));
                 }
                 let v = self.tuple_of(*pos, outs)?;
@@ -210,7 +210,7 @@ impl Evaluator<'_> {
             Expr::Array { pos, elems } => {
                 let (outs, waiting) = self.elements(elems)?;
                 if let Some(q) = waiting {
-                    let parts = outs.into_iter().map(Out::into_part).collect();
+                    let parts = outs.into_iter().map(|o| self.store.part(o)).collect();
                     return Ok(Some(Out::Made(Val::Pending(q, Part::Array(*pos, parts)))));
                 }
                 let v = self.array_of(*pos, outs)?;

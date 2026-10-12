@@ -93,13 +93,14 @@ impl Evaluator<'_> {
 
     /// `UInt[e]` or `SInt[e]` in a type or an expression. The base charged its node.
     pub(super) fn index(&mut self, pos: Pos, k: Prelude, xs: &[Expr]) -> Res<TyId> {
-        let mut outs = Vec::with_capacity(xs.len());
+        let base = self.store.parked.len();
         for x in xs {
             let o = self.eval(x)?;
             let o = need(x, o)?;
             self.check_static(pos, &o)?;
-            outs.push(o);
+            self.store.park(o);
         }
+        let outs = self.store.resume(base);
         let views: Vec<&Value> = outs.iter().map(|o| self.store.value(o)).collect();
         let t = ops::family(k, &views, &mut self.tys).map_err(at(pos))?;
         if matches!(self.tys.get(t), Ty::List(_)) {
@@ -183,15 +184,16 @@ impl Evaluator<'_> {
         else {
             return fail(Code::S007, pos, "a complete type takes no index".to_owned());
         };
-        let mut args = Vec::with_capacity(xs.len());
+        let base = self.store.parked.len();
         for x in xs {
             let o = self.eval(x)?;
             let o = need(x, o)?;
             if !matches!(self.store.seen(&o), Seen::Pending(..)) {
                 self.check_static(pos, &o)?;
             }
-            args.push(o);
+            self.store.park(o);
         }
+        let args = self.store.resume(base);
         if params.len() != args.len() {
             return fail(
                 Code::S007,

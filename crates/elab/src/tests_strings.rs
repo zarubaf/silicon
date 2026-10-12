@@ -419,3 +419,61 @@ fn a_mut_actual_copies_in_after_its_charge_and_writes_back_by_a_move() {
     assert_eq!(out(&src, "f()", full, 1000), "(int 0)");
     assert_eq!(work(full).0, 1001);
 }
+
+/// A result keeps the value that its expression read, also when a later argument or operand
+/// mutates the root of the result. Each case is a path that holds a result while another
+/// expression evaluates. The expected values are those of Lean.
+const ALIAS: &str = "comptime fn bump(mut x: Int) -> Int { x = x + 1; return x; }\n\
+    comptime fn first(a: Int, b: Int) -> Int { return a; }\n\
+    comptime fn zero(mut ys: [Int; 2]) -> Nat { ys[0] = 7; return 0; }\n\
+    comptime fn bumpt(mut t: (Int, Int)) -> Int { t.0 = 9; return 0; }\n\
+    comptime fn setl(mut ys: List[Int]) -> Nat { pop(ys); push(ys, 7); return 0; }\n\
+    comptime fn bumpn(mut x: Nat) -> Nat { x = x + 1; return x; }\n\
+    comptime fn first_l(a: List[Int], b: Nat) -> List[Int] { return a; }\n\
+    struct P { a: Int, b: Int }\n\
+    struct W(comptime A: Nat, comptime B: Nat) { f: UInt[A] }\n\
+    comptime fn call() -> Int { let mut x = 1; return first(x, bump(x)); }\n\
+    comptime fn recv() -> Int { let mut x = 1; return x.first(bump(x)); }\n\
+    comptime fn bin() -> Int { let mut x = 1; return x + bump(x); }\n\
+    comptime fn mul() -> Int { let mut x = 2; return x * bump(x) * x; }\n\
+    comptime fn tup() -> (Int, Int) { let mut x = 1; return (x, bump(x)); }\n\
+    comptime fn arr() -> [Int; 2] { let mut x = 1; return [x, bump(x)]; }\n\
+    comptime fn wait() -> ([Int; 0], Int, Int) { let mut x = 1; \
+        let t: ([Int; 0], Int, Int) = ([], x, bump(x)); return t; }\n\
+    comptime fn idx() -> Int { let mut xs: [Int; 2] = [1, 2]; return xs[zero(xs)]; }\n\
+    comptime fn sel() -> Int { let mut t = (1, 2); return first(t.0, bumpt(t)); }\n\
+    comptime fn ctor() -> P { let mut x = 1; return P(x, bump(x)); }\n\
+    comptime fn range() -> Int { let mut x = 1; let mut s = 0; \
+        comptime for i in x..bump(x) { s = s + 10; } return s; }\n\
+    comptime fn nest() -> Int { let mut x = 1; return first(x, first(bump(x), bump(x))) + x; }\n\
+    comptime fn spec() -> Nat { let mut x: Nat = 1; return data_bits(W[x, bumpn(x)]); }\n\
+    comptime fn lst() -> List[Int] { let mut xs = list(Int); push(xs, 1); push(xs, 2); \
+        return first_l(xs, setl(xs)); }\n\
+    comptime fn at() -> Int { let mut xs = list(Int); push(xs, 1); push(xs, 2); \
+        return xs[setl(xs)]; }\n\
+    comptime fn own() -> List[Int] { let mut xs = list(Int); push(xs, 1); push(xs, xs[0]); \
+        push(xs, len(xs)); return xs; }\n";
+
+#[test]
+fn a_result_keeps_the_value_that_its_expression_read() {
+    for (expr, expected) in [
+        ("call()", "(int 1)"),
+        ("recv()", "(int 1)"),
+        ("bin()", "(int 3)"),
+        ("mul()", "(int 18)"),
+        ("tup()", "(tuple ((int 1) (int 2)))"),
+        ("arr()", "(array int ((int 1) (int 2)))"),
+        ("wait()", "(tuple ((array int ()) (int 1) (int 2)))"),
+        ("idx()", "(int 1)"),
+        ("sel()", "(int 1)"),
+        ("ctor()", "(record (struct root P ()) ((int 1) (int 2)))"),
+        ("range()", "(int 10)"),
+        ("nest()", "(int 4)"),
+        ("spec()", "(int 1)"),
+        ("lst()", "(list int ((int 1) (int 2)))"),
+        ("at()", "(int 1)"),
+        ("own()", "(list int ((int 1) (int 1) (int 2)))"),
+    ] {
+        assert_eq!(o(ALIAS, expr), expected, "{expr}");
+    }
+}
