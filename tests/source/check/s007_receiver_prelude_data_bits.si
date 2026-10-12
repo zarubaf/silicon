@@ -1,6 +1,0 @@
-// S007: `data_bits` has only a comptime parameter, so it takes no receiver.
-// TOP M()
-module M() {
-    // expected-error S007 @+1
-    let n = Bool.data_bits();
-}

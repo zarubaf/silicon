@@ -1,0 +1,11 @@
+// `T.data_bits()` binds its receiver to `T`, because the parameter of `data_bits` has no
+// `comptime` mark. `[UInt[4]; 3]` has 12 bits, so the ports have 12 bits.
+// TOP M()
+// CHECK: (input a (bits 12))
+// CHECK-NEXT: (output y (bits 12))
+// CHECK: (assign y a)
+module M() domains() {
+    input a: UInt[[UInt[4]; 3].data_bits()];
+    output y: UInt[Bool.data_bits() * 12];
+    y := a;
+}
