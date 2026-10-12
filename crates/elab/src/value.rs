@@ -479,7 +479,8 @@ impl<'a> Text<'a> {
             Ty::SInt(w) => write!(self.out, "SInt[{w}]").unwrap_or_default(),
             Ty::Array(elem, len) => {
                 self.out.push('[');
-                self.work.push(Piece::Owned(format!("; {len}]")));
+                self.work
+                    .push(Piece::Owned(format!("; {}]", crate::ops::int_text(len))));
                 self.work.push(Piece::Ty(*elem));
             }
             Ty::Tuple(parts) => {
@@ -525,23 +526,26 @@ impl<'a> Text<'a> {
     }
 
     /// The text after the walk of each piece on the stack, or its first `TEXT_LIMIT` bytes.
+    /// A length prints at most 256 bits, so each piece is short and the walk stops soon after
+    /// the limit.
     fn finish(mut self, tys: &Types) -> String {
-        while let Some(piece) = self.work.pop() {
-            if self.out.len() > TEXT_LIMIT {
-                let mut cut = TEXT_LIMIT;
-                while !self.out.is_char_boundary(cut) {
-                    cut -= 1;
-                }
-                self.out.truncate(cut);
-                self.out.push_str("...");
-                return self.out;
-            }
+        while self.out.len() <= TEXT_LIMIT
+            && let Some(piece) = self.work.pop()
+        {
             match piece {
                 Piece::Value(v) => self.value(v),
                 Piece::Ty(t) => self.ty_node(tys.get(t)),
                 Piece::Text(text) => self.out.push_str(text),
                 Piece::Owned(text) => self.out.push_str(&text),
             }
+        }
+        if self.out.len() > TEXT_LIMIT {
+            let mut cut = TEXT_LIMIT;
+            while !self.out.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            self.out.truncate(cut);
+            self.out.push_str("...");
         }
         self.out
     }
