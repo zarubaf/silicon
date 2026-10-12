@@ -449,9 +449,16 @@ theorem select_f (p q : Pos) (i : Nat) (v : Val) :
     Follows cap (select p q i v) (select p q i v) := by
   unfold select; follows [selectAt_f]
 
+theorem indexOf_f (q : Pos) (i : Value) : Follows cap (indexOf q i) (indexOf q i) := by
+  unfold indexOf; follows
+
 theorem pickAt_f (p q : Pos) (v : Val) (i : Value) :
     Follows cap (pickAt p q v i) (pickAt p q v i) := by
-  unfold pickAt; follows
+  unfold pickAt; follows [indexOf_f]
+
+theorem strAt_f (p q : Pos) (s : String) (i : Value) :
+    Follows cap (strAt p q s i) (strAt p q s i) := by
+  unfold strAt; follows [indexOf_f]
 
 theorem pick_f (p q : Pos) (v : Val) (i : Value) :
     Follows cap (pick p q v i) (pick p q v i) := by
@@ -579,9 +586,11 @@ theorem call_f (he : ∀ e, Follows m (eval k e) (eval m e))
     hwConvert_f, lenOf_f, named_f, bindLocal_f, bindHw_f, version_f, frameOf_f, nested_f,
     inFrame_f, zero_f, recordOf_f]
 
+set_option maxHeartbeats 400000 in
 /--
 Each function of the evaluator at any bound `n` is followed by the same function at the
-bound `n'`, with each fuel up to `n'`.
+bound `n'`, with each fuel up to `n'`. The proof splits each branch of the evaluator, so it
+needs more than the default heartbeats.
 -/
 theorem follows_all : ∀ n,
     (∀ n' e, Follows n' (eval n e) (eval n' e)) ∧
@@ -604,14 +613,14 @@ theorem follows_all : ∀ n,
         follows [he k, ht k, index_f (he k), name_f (he k) (ht k),
           call_f (he k) (ht k) (hb k), spec_f (he k) (ht k), need_f, data_f, apply_f,
           hwUnary_f, test_f, hwBinary_f, unify_f, mux_f, static_f, pick_f, element_f, tupleOf_f,
-          arrayOf_f, select_f, containerOp_f, arrayTy_f, fieldAt_f]
+          arrayOf_f, select_f, containerOp_f, arrayTy_f, fieldAt_f, strAt_f]
       · rw [eval.eq_def (k + 1), eval.eq_def (m + 1)]
         apply Follows.charge_one
         intro _
         follows [he m, ht m, index_f (he m), name_f (he m) (ht m),
           call_f (he m) (ht m) (hb m), spec_f (he m) (ht m), need_f, data_f, apply_f,
           hwUnary_f, test_f, hwBinary_f, unify_f, mux_f, static_f, pick_f, element_f, tupleOf_f,
-          arrayOf_f, select_f, containerOp_f, arrayTy_f, fieldAt_f]
+          arrayOf_f, select_f, containerOp_f, arrayTy_f, fieldAt_f, strAt_f]
     · rcases n' with _ | m
       · rw [typeExpr.eq_def (k + 1), typeExpr.eq_def 0]
         apply Follows.exhaust (cap := k)
