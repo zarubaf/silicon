@@ -498,6 +498,16 @@ def store (p q : Pos) (pl : Place) (y : Val) : M Unit := do
     bounded p (pl.keys.length + w.depth)
     changeAt p pl fun _ => w
 
+/-!
+The callee of a call after its one evaluation. The name of a function item or of a prelude
+function selects it without a value. Each other callee evaluates to a value.
+-/
+inductive Callee where
+  | item (name : String) (i : Nat) (pos : Pos) (comptime : Bool) (u : Ident)
+      (params : List Resolve.Param) (ret : Resolve.TypeExpr) (body : List Resolve.Stmt)
+  | prim (name : String) (h : PrimFn)
+  | value (o : Out)
+
 /-! An actual of a function item: a value, or the place of a `mut` actual. -/
 inductive Actual where
   | value (v : Val)
@@ -922,10 +932,9 @@ mutual
     return os.map (·.1)
   termination_by (n, 4)
 
-  /-- A constructor call at `p`: the callee `f` gives a type, and `xs` are its arguments. -/
-  def ctor (n : Nat) (p : Pos) (f : Resolve.Expr) (b : Nat) (xs : List Resolve.Expr) :
+  /-- A constructor call at `p`: the callee result `o` gives a type, and `xs` are its arguments. -/
+  def ctor (n : Nat) (p : Pos) (o : Out) (b : Nat) (xs : List Resolve.Expr) :
       M (Option Out) := do
-    let o ← need f (← eval n f)
     let .static (.type t) := o.value | fail .S010 p s!"{o.value.text} is not a function"
     match t, xs with
     | t, [] => return some ⟨.static (← zero p t), false, none⟩
@@ -967,17 +976,27 @@ mutual
   termination_by (n + 1, 0)
 
   /--
-  A call of a function item, a prelude function, or a type. The arguments `xs` are in their
+  A call of a function item, a prelude function, or a type. The callee `f` evaluates once,
+  before the arguments, and its result selects the call. The arguments `xs` are in their
   evaluation order, and the first binds at the parameter `b` (`bound`). A function item runs in
   the call frame of the call site `k` (`invoke`). A `mut` actual resolves its place in the
   evaluation order of the arguments.
   -/
   def call (n : Nat) (p : Pos) (f : Resolve.Expr) (xs : List Resolve.Expr) (b k : Nat) :
       M (Option Out) := do
-    match f with
-    | .name fp g (.item i) =>
-      let some (.fn ip c u ps ret body) := (← read).items[i]? | ctor n p f b xs
-      charge fp 1
+    let callee ← match f with
+      | .name fp g (.item i) => do
+        match (← read).items[i]? with
+        | some (.fn ip c u ps ret body) => do
+          charge fp 1
+          pure (Callee.item g i ip c u ps ret body)
+        | _ => pure (Callee.value (← need f (← eval n f)))
+      | .name fp g (.fn h) => do
+        charge fp 1
+        pure (Callee.prim g h)
+      | _ => pure (Callee.value (← need f (← eval n f)))
+    match callee with
+    | .item g i ip c u ps ret body =>
       if ps.length != xs.length then
         let _ ← args n b xs
         fail .S007 p s!"`{g}` takes {ps.length} argument(s), but it has {xs.length}"
@@ -989,20 +1008,16 @@ mutual
           return (Actual.value o.value, some o)
       for (_, o) in acts do if let some o := o then release o
       invoke n p i k c u ps ret ip body (bound b (acts.map (·.1)))
-    | .name fp g (.fn .push) =>
-      charge fp 1
+    | .prim g .push =>
       let [l, x] := xs | fail .S007 p s!"`{g}` takes 2 argument(s), but it has {xs.length}"
       let pl ← placeAt n l.pos .S008 l
       let o ← need x (← eval n x)
       pushOnto p x.pos g pl o.value
-    | .name fp g (.fn .pop) =>
-      charge fp 1
+    | .prim g .pop =>
       let [l] := xs | fail .S007 p s!"`{g}` takes 1 argument(s), but it has {xs.length}"
       popFrom p g (← placeAt n l.pos .S008 l)
-    | .name fp g (.fn h) =>
-      charge fp 1
-      primCall p g h (← args n b xs)
-    | _ => ctor n p f b xs
+    | .prim g h => primCall p g h (← args n b xs)
+    | .value o => ctor n p o b xs
   termination_by (n + 1, 2)
 
   /-- A statement. The result is the value of a `return`. -/

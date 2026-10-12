@@ -641,8 +641,8 @@ theorem args_f (he : ∀ e, Follows m (eval k e) (eval m e)) (b : Nat)
   rw [args.eq_def k, args.eq_def m]
   follows [operands_f he, need_f]
 
-theorem ctor_f (he : ∀ e, Follows m (eval k e) (eval m e)) (p : Pos) (f : Resolve.Expr)
-    (b : Nat) (xs : List Resolve.Expr) : Follows m (ctor k p f b xs) (ctor m p f b xs) := by
+theorem ctor_f (he : ∀ e, Follows m (eval k e) (eval m e)) (p : Pos) (o : Out)
+    (b : Nat) (xs : List Resolve.Expr) : Follows m (ctor k p o b xs) (ctor m p o b xs) := by
   rw [ctor.eq_def k, ctor.eq_def m]
   follows [he, args_f he, need_f, static_f, conform_f, zero_f, recordOf_f]
 
