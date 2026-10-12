@@ -755,3 +755,43 @@ fn the_emitted_names_of_a_design() {
     assert_eq!(order(&long(64), &"a".repeat(64)), ["a".repeat(64)]);
     assert!(order(&long(65), &"a".repeat(65))[0].starts_with(&format!("{}$0h", "a".repeat(65))));
 }
+
+/// A list holds no hardware value: `S011` at the element. A hardware arm cannot `push` or `pop`
+/// a binding from before the arm: `S016` at the call. A function that the arm calls can change
+/// its own list.
+fn arm_lists(body: &str) -> String {
+    format!(
+        "fn g() -> UInt[8] {{ let mut ys = list(UInt[8]); push(ys, 1); return pop(ys); }}\n\
+         module T() {{\n  input c: Bool;\n  output o: UInt[8];\n{body}}}\n"
+    )
+}
+
+#[test]
+fn a_list_holds_no_hardware_and_a_hardware_arm_cannot_change_one() {
+    let at = |body: &str| cost(&arm_lists(body), "T");
+    assert_eq!(
+        at("  let mut xs = list(Bool);\n  push(xs, c);\n  o := 0;\n"),
+        "S011 6:12"
+    );
+    assert_eq!(
+        at("  let mut xs = list(Bool);\n  push(xs, true);\n  xs[0] = c;\n  o := 0;\n"),
+        "S011 7:11"
+    );
+    assert_eq!(
+        at(
+            "  let mut xs = list(UInt[8]);\n  push(xs, 1);\n  o := if (c) { pop(xs) } else { 2 };\n"
+        ),
+        "S016 7:17"
+    );
+    assert_eq!(
+        at(
+            "  let mut xs = list(UInt[8]);\n  push(xs, 1);\n  o := if (c) { 3 } else { pop(xs) };\n"
+        ),
+        "S016 7:28"
+    );
+    assert_eq!(
+        at("  let mut xs = list(UInt[8]);\n  o := if (c) { push(xs, 1) } else { 2 };\n"),
+        "S016 6:17"
+    );
+    assert!(at("  o := if (c) { g() } else { 2 };\n").starts_with("total"));
+}

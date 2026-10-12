@@ -158,9 +158,10 @@ impl Evaluator<'_> {
         xs: &[Expr],
     ) -> Res<Option<Out>> {
         self.charge(fp, 1)?;
-        // TODO(#179): `list`, `push`, and `pop` (plan step 27).
-        if matches!(builtin, Prelude::ListFn | Prelude::Push | Prelude::Pop) {
-            return fail(Code::S010, pos, format!("`{g}` is not supported yet"));
+        match builtin {
+            Prelude::Push => return self.push(pos, g, xs),
+            Prelude::Pop => return self.pop(pos, g, xs),
+            _ => {}
         }
         let vs = self.args(xs)?;
         if builtin == Prelude::Len {
@@ -177,6 +178,12 @@ impl Evaluator<'_> {
         let mut vs = vs;
         if matches!(builtin, Prelude::Resize | Prelude::Reinterpret) && vs.len() == 2 {
             return self.convert_call(pos, g, builtin, vs);
+        }
+        if builtin == Prelude::ListFn && vs.len() == 1 {
+            let Some(t) = vs.pop() else {
+                return fail(Code::S010, pos, format!("`{g}` needs one argument"));
+            };
+            return self.list_new(pos, g, &t);
         }
         if builtin == Prelude::Str && vs.len() == 1 {
             let Some(v) = vs.pop() else {
