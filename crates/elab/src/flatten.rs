@@ -27,7 +27,8 @@ use crate::hw::{HwId, Kind, Op};
 use crate::int::{Nat, constant, nat};
 use crate::layout;
 use crate::names::{Field, Name, PathId, Role, Sym, encode};
-use crate::value::{Ty, Value, int_size};
+use crate::types::Ty;
+use crate::value::{Value, int_size};
 use crate::{Code, Error};
 use core_ir::Pred;
 use core_ir::ast::{

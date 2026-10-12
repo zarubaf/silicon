@@ -12,6 +12,8 @@ pub mod names;
 mod ops;
 mod scan;
 pub mod sha256;
+mod text;
+pub mod types;
 pub mod value;
 pub mod vectors;
 

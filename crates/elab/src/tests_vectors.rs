@@ -4,7 +4,7 @@
 //! reset value.
 
 use crate::tests_elab::load;
-use crate::value::Ty;
+use crate::types::Ty;
 use crate::{Budget, Failure, check, elaborate};
 use core_ir::interp::Sim;
 use core_ir::vectors::inputs;

@@ -10,7 +10,8 @@ pub(crate) use container::{common_of, composite, container_op};
 
 use crate::Code;
 use crate::int::Int;
-use crate::value::{Ty, TyId, Types, Value, width_size};
+use crate::types::{Ty, TyId, Types};
+use crate::value::{Value, width_size};
 use core_ir::{Bits, Pred};
 use parse::ast::{BinOp, UnOp};
 use resolve::Prelude;
