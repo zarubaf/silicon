@@ -12,7 +12,7 @@ use crate::hw::{Part, Seen, Val};
 use crate::ops::{self, Fuel};
 use crate::types::{Ty, TyId, Types};
 use crate::value::Value;
-use parse::ast::{Expr, Pos, TypeExpr};
+use parse::ast::{Expr, Pos};
 use std::borrow::Cow;
 use std::cmp::Ordering;
 
@@ -182,51 +182,6 @@ impl Evaluator<'_> {
             outs.push(o);
         }
         Ok((outs, waiting))
-    }
-
-    /// The tuple type of the element types `elems` at `pos`.
-    pub(super) fn tuple_type(&mut self, pos: Pos, elems: &[TypeExpr]) -> Res<TyId> {
-        let mut types = Vec::with_capacity(elems.len());
-        for elem in elems {
-            types.push(self.type_expr(elem)?);
-        }
-        let ty = self.tys.tuple(types);
-        self.new_type(pos, ty)
-    }
-
-    /// The array type `[elem; len]` at `pos`. The length is a static `Nat`.
-    pub(super) fn array_type(&mut self, pos: Pos, elem: &TypeExpr, len: &Expr) -> Res<TyId> {
-        let elem = self.type_expr(elem)?;
-        let out = self.eval(len)?;
-        let out = need(len, out)?;
-        let at_len = super::expr_pos(len);
-        self.check_static(at_len, &out)?;
-        match self.store.value(&out) {
-            Value::Int(n) if n.is_negative() => fail(
-                Code::S012,
-                at_len,
-                format!("the length {} is not a Nat", ops::int_text(n)),
-            ),
-            Value::Int(n) => {
-                let ty = self.tys.array(elem, n.clone());
-                self.new_type(pos, ty)
-            }
-            other => fail(
-                Code::S010,
-                at_len,
-                format!(
-                    "the length of an array is a static Nat, not {}",
-                    other.text(&self.tys)
-                ),
-            ),
-        }
-    }
-
-    /// A new container type at `pos`: its depth, then the charge of its size.
-    fn new_type(&mut self, pos: Pos, ty: TyId) -> Res<TyId> {
-        self.bounded(pos, ty.depth())?;
-        self.charge(pos, u128::from(ty.size()))?;
-        Ok(ty)
     }
 
     /// A container expression: `()`, a tuple or an array literal, or a selector `.N`. A literal
