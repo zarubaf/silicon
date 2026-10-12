@@ -738,3 +738,72 @@ fn a_doubling_with_a_wide_element_type_builds_one_type_per_level() {
     let (small, large) = (work(100, 8), work(700, 8));
     assert!(large - small <= 7 * 600 + 64, "{small} {large}");
 }
+
+/// The kinds of step of a chain of `d` structs: each struct `S{k}` holds the struct before it
+/// in its field `x`, directly, as the element of an array, or as the element `.0` of a tuple.
+#[derive(Clone, Copy)]
+enum Chain {
+    Field,
+    FieldIndex,
+    FieldSelect,
+}
+
+/// The items of a chain of depth `d`, a literal of the outer struct, and the place of its leaf
+/// after the root `a`. An array root `[...]` starts the place with an index, so the place
+/// mixes the steps in both orders.
+fn record_chain(d: usize, kind: Chain) -> (String, String, String) {
+    let mut items = "struct S0 { x: Int }\n".to_owned();
+    let mut lit = "S0(1)".to_owned();
+    let mut place = String::new();
+    for k in 1..=d {
+        let (ty, wrap, step) = match kind {
+            Chain::Field => (format!("S{}", k - 1), lit.clone(), ".x"),
+            Chain::FieldIndex => (format!("[S{}; 1]", k - 1), format!("[{lit}]"), ".x[0]"),
+            Chain::FieldSelect => (
+                format!("(S{}, Bool)", k - 1),
+                format!("({lit}, true)"),
+                ".x.0",
+            ),
+        };
+        writeln!(items, "struct S{k} {{ x: {ty} }}").unwrap();
+        lit = format!("S{k}({wrap})");
+        place = format!("{step}{place}");
+    }
+    (items, format!("[{lit}]"), format!("a[0]{place}.x"))
+}
+
+/// A read and an update of a place through record fields, also mixed with indices and
+/// selectors, walk the path a constant number of times: `O(d)` steps for each, not one walk
+/// from the root for each step.
+#[test]
+fn a_deep_record_place_walks_its_path_once() {
+    let d = 150;
+    for kind in [Chain::Field, Chain::FieldIndex, Chain::FieldSelect] {
+        let (items, lit, place) = record_chain(d, kind);
+        let depth = place.matches(['.', '[']).count() as u64;
+        let reads = |n: usize| {
+            let src = format!(
+                "{items}fn f() -> Int {{ let a = {lit}; let mut s = 0; {} return s; }}",
+                format!("s = s + {place}; ").repeat(n)
+            );
+            path_steps(&src, "f()")
+        };
+        let each = (reads(30) - reads(10)) / 20;
+        assert!(
+            each <= 4 * depth,
+            "read: {each} steps for a depth of {depth}"
+        );
+        let updates = |n: usize| {
+            let src = format!(
+                "{items}fn f() -> Int {{ let mut a = {lit}; {} return 0; }}",
+                format!("{place} = 2; ").repeat(n)
+            );
+            path_steps(&src, "f()")
+        };
+        let each = (updates(30) - updates(10)) / 20;
+        assert!(
+            each <= 4 * depth,
+            "update: {each} steps for a depth of {depth}"
+        );
+    }
+}
