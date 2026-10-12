@@ -214,6 +214,22 @@ A set of language features that one milestone adds. A slice closes the full orac
 
 An input line or an output line of a top module in source terms: source port names and source values.
 
+### leaf
+
+A part of a value or of a hardware data type that is not a container: a `Bool`, a `UInt[W]`, or an `SInt[W]`. Elaboration lowers an aggregate to one core value for each leaf.
+
+### packing order
+
+The order of the leaves of a hardware data type. Array index 0, tuple element 0, and the first record field come first, recursively. A memory word puts the first leaf in the least significant bits.
+
+### port layout
+
+The order of the core ports of a module: the domain ports, the inputs, then the outputs, each group sorted by source name. The leaves of one port follow in packing order. `Source.Layout` and `elab::layout` define it.
+
+### observation record
+
+The record that one call of the source builtin `diagnostic` appends during elaboration. The command `observe` prints the records. An observation record is not a diagnostic.
+
 ### diagnostic
 
 The report of one error of the front end. It has a code, spans, notes, help, and suggested edits. Only its code, its line, and its column are normative. The records of the source builtin `diagnostic` are observation records, not diagnostics.
