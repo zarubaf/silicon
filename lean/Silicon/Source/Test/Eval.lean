@@ -535,6 +535,63 @@ def doubling (k : Nat) : String :=
   cost (doubling (k + 1)) "d()" == cost (doubling k) "d()" + 2 ^ (k + 3) - 1 + 4
 #guard out (doubling 20) "d()" 1000000 == "S015 19:13"
 
+/-!
+The expected type flows into the elements of a literal, so a nested `[]` takes its type there.
+Without a typed use, the first `[]` is `S010`. The shape of the literal must match the type.
+-/
+#guard out "fn f() -> [[Bool; 0]; 1] { let x: [[Bool; 0]; 1] = [[]]; return x; }" "f()" ==
+  "(array (array bool 0) ((array bool ())))"
+#guard out "fn f() -> ([Bool; 0], Int) { return ([], 1); }" "f()" ==
+  "(tuple ((array bool ()) (int 1)))"
+#guard out "fn g(x: [[Bool; 0]; 2]) -> Int { return len(x); }" "g([[], []])" == "(int 2)"
+#guard out "fn f() -> Int { let x: [Bool; 0] = [[]]; return 0; }" "f()" == "S010 1:17"
+#guard out "fn f() -> Int { let x = ([], 1); return 0; }" "f()" == "S010 1:26"
+#guard out "" "[1, []]" == "S010 1:5"
+
+/-!
+An assignment to a place with an index or a selector `.N` replaces the selected part. The
+right side takes the element type. A binding that shares the root keeps its value.
+-/
+def body (s : String) : String := s!"fn f() -> Int \{ {s} }"
+#guard out (body "let mut a = [1, 2]; a[0] = 5; return a[0];") "f()" == "(int 5)"
+#guard out "fn f() -> [[Int; 2]; 2] { let mut a = [[1, 2], [3, 4]]; a[1][0] = 9; return a; }"
+  "f()" == "(array (array int 2) ((array int ((int 1) (int 2))) (array int ((int 9) (int 4)))))"
+#guard out ("fn f() -> (Int, (Bool, Int)) { let mut a = (1, (true, 2)); a.1.0 = false; " ++
+  "a.1.1 = 7; return a; }") "f()" == "(tuple ((int 1) (tuple ((bool false) (int 7)))))"
+#guard out "fn f() -> [(Int, Int); 1] { let mut a = [(1, 2)]; a[0].1 = 5; return a; }" "f()" ==
+  "(array (tuple (int int)) ((tuple ((int 1) (int 5)))))"
+#guard out "fn f() -> [[Int; 2]; 1] { let mut a = [[1, 2]]; let b = a; a[0][0] = 9; return b; }"
+  "f()" == "(array (array int 2) ((array int ((int 1) (int 2)))))"
+#guard out "fn f() -> Int { let mut x: [[Bool; 0]; 1] = [[]]; x[0] = []; return len(x[0]); }"
+  "f()" == "(int 0)"
+
+/-!
+The indices of the place evaluate first, from left to right, each with its checks. Then the
+right side evaluates.
+-/
+#guard out (body "let mut a = [[1, 2]]; a[1 / 0][0] = 1 / 0; return 0;") "f()" == "S013 1:41"
+#guard out (body "let mut a = [[1, 2]]; a[0][1 / 0] = 1 / 0; return 0;") "f()" == "S013 1:44"
+#guard out (body "let mut a = [[1, 2]]; a[0][5] = 1 / 0; return 0;") "f()" == "S013 1:44"
+#guard out (body "let mut a = [[1, 2]]; a[0][0] = 1 / 0; return 0;") "f()" == "S013 1:49"
+#guard out (body "let mut a = (1, 2); a.2 = 3; return 0;") "f()" == "S013 1:39"
+#guard out (body "let mut a: [UInt[8]; 2] = [1, 2]; a[0] = 256; return 0;") "f()" ==
+  "S012 1:51"
+#guard out (body "let mut a: [UInt[8]; 2] = [1, 2]; a[0] = true; return 0;") "f()" ==
+  "S010 1:51"
+#guard out (body "let a = [1, 2]; a[0] = 3; return 0;") "f()" == "S010 1:33"
+#guard out (body "let mut a = [1, 2]; a[0, 1] = 3; return 0;") "f()" == "S010 1:37"
+#guard out (body "let mut a = 1; a[0] = 3; return 0;") "f()" == "S010 1:32"
+
+/-!
+The update copies only the containers on its path, so it charges nothing more: the statement,
+the index `0`, and the right side `5` add 5 units. A reference on the right side pays its copy:
+the name `b` charges 1, and its copy 3.
+-/
+#guard cost (body "let mut a = [1, 2]; a[0] = 5; return 0;") "f()" ==
+  cost (body "let mut a = [1, 2]; return 0;") "f()" + 5
+#guard cost (body "let mut a = [[1, 2]]; let b = [3, 4]; a[0] = b; return 0;") "f()" ==
+  cost (body "let mut a = [[1, 2]]; let b = [3, 4]; return 0;") "f()" + 1 + 2 + 1 + 3
+
 /-! Errors of the earlier passes come first, also in `EXPR`. -/
 #guard out "const A: Nat = ;" "1" == "S001 1:16"
 #guard out "" "x" == "S003 1:1"

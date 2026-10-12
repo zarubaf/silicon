@@ -315,9 +315,45 @@ static position with `S005`, so these cases use a `let` binding of a port.
   "S013 4:8"
 #guard cost "module M() {\n  static_assert(1 == 2, \"no\");\n}\n" "M" == "S014 2:3"
 
+/-!
+A container argument gives the digest form of the emitted name. The serialization holds the
+argument as it evaluates. A `[]` argument takes the type of its parameter, also nested.
+-/
+def container (ty arg : String) : String :=
+  s!"module C(comptime xs: {ty}) \{\n}\nmodule T() \{\n  instance a = C({arg});\n}\n"
+#guard order (container "[UInt[8]; 2]" "[1, 2]") "T" ==
+  ["C$0h" ++ Names.sha16 "(instantiation root C ((array int ((int 1) (int 2)))))", "T"]
+#guard order (container "[Bool; 0]" "[]") "T" ==
+  ["C$0h" ++ Names.sha16 "(instantiation root C ((array bool ())))", "T"]
+#guard order (container "([Bool; 0], Int)" "([], 1)") "T" ==
+  ["C$0h" ++ Names.sha16 "(instantiation root C ((tuple ((array bool ()) (int 1)))))", "T"]
+#guard cost (container "[Bool; 0]" "[[]]") "T" == "S010 4:3"
+#guard (cost ("module C(comptime n: Nat, comptime xs: [[Bool; 0]; n]) {\n}\n" ++
+  "module T() {\n  instance a = C(2, [[], []]);\n}\n") "T").startsWith "total"
+
+/-!
+The serialization of a container charges 1 for each container node, then its bytes. The parent
+pays it. `[[1, 2]]` costs `T` 31 units more than `[1, 2]`. The outer literal charges 1 for its
+node and 4 for its size. The copy adds 1, the walk 1, and the serialization 24 bytes.
+-/
+#guard (cost (container "[UInt[8]; 2]" "[1, 2]") "T").endsWith "\nT 173\n"
+#guard (cost (container "[[UInt[8]; 2]; 1]" "[[1, 2]]") "T").endsWith "\nT 204\n"
+
+/-! The nested doubling of section 11.3 in a module: `S015` at the `let` of `a17`. -/
+def doubling (k : Nat) : String :=
+  "module T() {\n" ++ String.join ((List.range (k + 1)).map fun i =>
+    if i == 0 then "  let a0 = [0, 0];\n" else s!"  let a{i} = [a{i - 1}, a{i - 1}];\n") ++ "}\n"
+#guard cost (doubling 20) "T" (fuel := 1000000) == "S015 19:13"
+#guard (cost (doubling 16) "T" (fuel := 1000000)).startsWith "total"
+
 /-! `S017`: the resource rule. -/
 #guard cost "module M() {\n  input x: Bool;\n  x := true;\n}\n" "M" == "S017 3:3"
 #guard cost "module M() domains() {\n  reg r: Bool = false;\n}\n" "M" == "S017 2:3"
+#guard cost "module M() domains() {\n  wire w: UInt[8];\n  w.0 := 1;\n}\n" "M" == "S017 3:3"
+#guard cost "module M() domains() {\n  wire w: UInt[8];\n  w[1 / 0] := 1;\n}\n" "M" ==
+  "S017 3:3"
+#guard cost ("module C() {\n  input a: Bool;\n}\nmodule M() {\n  instance c = C();\n" ++
+  "  c.a[0] := true;\n}\n") "M" == "S017 6:3"
 #guard cost ("module C() {\n}\nmodule M() domains() {\n  instance c = C();\n}\n") "M" == "S017 4:3"
 #guard cost ("module C() domains() {\n  input a: Bool;\n  output q: Bool;\n  q := a;\n}\n" ++
   "module M() domains() {\n  output y: Bool;\n  instance c = C();\n  c.a := false;\n" ++
