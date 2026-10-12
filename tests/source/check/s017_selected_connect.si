@@ -1,0 +1,7 @@
+// S017: a := target is a whole resource, never a part such as .0.
+// TOP M()
+module M() {
+    let t = (1, 2);
+    // expected-error S017 @+1
+    t.0 := 1;
+}

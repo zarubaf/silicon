@@ -1,0 +1,7 @@
+// S013: a selector .N above the last element of a tuple.
+// TOP M()
+module M() {
+    let t = (1, 2);
+    // expected-error S013 @+1
+    let b = t.2;
+}

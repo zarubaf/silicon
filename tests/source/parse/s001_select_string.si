@@ -1,0 +1,2 @@
+// S001: a selector after the dot is a name or a number.
+const A: T = t."s";

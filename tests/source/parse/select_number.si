@@ -1,0 +1,10 @@
+// A selector `.N` takes any number literal. The dump shows its value.
+const A: T = t.0;
+const B: T = t.12;
+const C: T = t.0x1;
+const D: T = t.0b10;
+const E: T = t.0x1.0b1;
+const G: T = t.0(x);
+const H: T = a[0].1.f;
+const I: T = (x, y).1;
+const J: T = -t.1 + u.0;

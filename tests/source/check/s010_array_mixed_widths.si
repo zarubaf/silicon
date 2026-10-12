@@ -1,0 +1,6 @@
+// S010: two finite element types of different widths have no common type.
+// TOP M()
+module M() {
+    // expected-error S010 @+1
+    let a = [UInt[8](1), UInt[16](2)];
+}

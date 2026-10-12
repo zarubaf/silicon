@@ -1,0 +1,6 @@
+// S010: a tuple element has no common type with the annotated element type.
+// TOP M()
+module M() {
+    // expected-error S010 @+1
+    let t: (Nat, Bool) = (1, 2);
+}

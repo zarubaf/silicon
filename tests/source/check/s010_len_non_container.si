@@ -1,0 +1,6 @@
+// S010: len takes an array, a list, or a string.
+// TOP M()
+module M() {
+    // expected-error S010 @+1
+    let n = len(1);
+}

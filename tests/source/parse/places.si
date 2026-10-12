@@ -1,0 +1,11 @@
+// The places of an assignment: an index and a selector, after a name or a field.
+module M() domains() {
+    a[0] = 1;
+    a[i + 1][2] = 2;
+    t.0 = 3;
+    t.1.0 = 4;
+    p.f[0].1 = 5;
+    r.x.y = 6;
+    a[0][1] := 7;
+    t.0.f := 8;
+}

@@ -1,0 +1,2 @@
+// S001: the type `[T; N]` needs a length.
+const A: [Nat; ] = x;

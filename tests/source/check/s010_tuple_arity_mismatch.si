@@ -1,0 +1,6 @@
+// S010: a tuple of 3 elements does not have the annotated arity 2.
+// TOP M()
+module M() {
+    // expected-error S010 @+1
+    let t: (Nat, Nat) = (1, 2, 3);
+}

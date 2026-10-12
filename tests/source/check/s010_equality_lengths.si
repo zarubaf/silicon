@@ -1,0 +1,6 @@
+// S010: two arrays of different lengths have no common type for ==.
+// TOP M()
+module M() {
+    // expected-error S010 @+1
+    let b = [1] == [1, 2];
+}

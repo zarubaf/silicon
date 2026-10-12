@@ -1,0 +1,6 @@
+// The unit value and the unit type. `()` is an expression and a type.
+const U: () = ();
+const V: Unit = ();
+fn f() -> () {
+    return ();
+}

@@ -1,0 +1,7 @@
+// S010: a hardware value as an element of a container belongs to a later phase.
+// TOP M()
+module M() {
+    input x: Bool;
+    // expected-error S010 @+1
+    let a = [x];
+}
