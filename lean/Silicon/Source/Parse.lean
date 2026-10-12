@@ -14,13 +14,12 @@ position order, and it reports the first. This rule also orders a lexical error 
 if it gets to it. `S004` is at these tokens:
 
 - The keyword: `import`, `pub`, and `extern` at an item. `mem` at a statement. `in`, `as`,
-  `with`, and `conforms` after their forms. `mut` at a function parameter. `fn` of a function
-  type. `input`, `output`, `reg`, `wire`, and `instance` in the body of a `fn` without
-  `comptime`: a helper that declares resources is slice 3.
+  `with`, and `conforms` after their forms. `fn` of a function type. `input`, `output`, `reg`,
+  `wire`, and `instance` in the body of a `fn` without `comptime`: a helper that declares
+  resources is slice 3.
 - The opening token: `@` of one of the five builtins.
-- A later token of the construct: the `::` of a path. The `(` after `.name`, which is a
-  receiver call. The `(` after a type, which is a type function call. The second name in a
-  `domains` clause.
+- A later token of the construct: the `::` of a path. The `(` after a type, which is a type
+  function call. The second name in a `domains` clause.
 
 Two constructs need a look ahead. At `(`, the parser looks for `)` as the next token, or for
 a `,` directly in the bracket: these give `()` or a tuple, else the bracket groups. At `[` in an
@@ -39,7 +38,9 @@ bracket. Thus each look ahead takes constant time.
 `@` followed by another name than a builtin is `S001` at that name: no slice has that syntax.
 A module parameter or a struct parameter without `comptime` is `S001` at its name. With `mut`,
 it is `S001` at `mut`. The v0.1 grammar has only `comptime` module parameters, and the front-end
-spec keeps this rule for a struct (section 5.6). At the end of the file, the position is the
+spec keeps this rule for a struct (section 5.6). A function parameter has at most one mark,
+`comptime` or `mut`. A second mark is `S001` at that mark, because the parser expects the name
+there. At the end of the file, the position is the
 end of the text of the lexer: the line after a final LF.
 
 These rules settle the open points of the grammar:
@@ -59,7 +60,9 @@ These rules settle the open points of the grammar:
   can follow each type form.
 - A place is a name, or a field, an index, or a selector `.N` of a place. The parser accepts
   an index with more than one argument as a place. The type rules reject it.
-- `t.0(x)` is a call of the element `t.0`, not a receiver call: a selector is no method name.
+- `x.m(args)` is a receiver call: a `method` node at the position of `x`. `t.0(x)` is a call of
+  the element `t.0`, not a receiver call: a selector is no method name. `(x.m)(args)` calls the
+  field `x.m`.
 - The lexer gives the value of a hexadecimal or binary number. A value of 2^65536 or more is a
   lexical error at the literal. A selector `.N` takes each number literal, for example `t.0x1`.
 
@@ -344,9 +347,11 @@ mutual
         match s.kind with
         | .ident n =>
           bump
-          let u ← peek
-          if isSym "(" u then later u "a receiver call"
-          suffixes f start ⟨.field start e.expr ⟨s.pos, n⟩, e.height + 1⟩ place
+          if ← acceptSym "(" then
+            let xs ← args f ")" true false
+            let h := height (e.height :: xs.map (·.height))
+            suffixes f start ⟨.method start e.expr ⟨s.pos, n⟩ (xs.map (·.expr)), h⟩ false
+          else suffixes f start ⟨.field start e.expr ⟨s.pos, n⟩, e.height + 1⟩ place
         | .number v =>
           bump
           suffixes f start ⟨.select start e.expr s.pos v, e.height + 1⟩ place
@@ -642,16 +647,21 @@ mutual
 end
 
 /-!
-A parameter. A module parameter and a struct parameter need `comptime`, and a function parameter
-can have it. `mut` is a later slice at a function parameter and no syntax at a module parameter
-or a struct parameter.
+The mode of a parameter. A module parameter and a struct parameter need `comptime`. A function
+parameter can have `comptime` or `mut`.
 -/
+def paramMode : Bool → P ParamMode
+  | true => kw "comptime" *> pure .comptime
+  | false => do
+    if ← acceptKw "comptime" then return .comptime
+    if ← acceptKw "mut" then return .mut
+    return .none
+
 def param (f : Nat) (static : Bool) : P Param := do
   let t ← peek
-  if isKw "mut" t && !static then later t "a `mut` formal"
-  let c ← if static then kw "comptime" *> pure true else acceptKw "comptime"
+  let m ← paramMode static
   let n ← ident
-  return ⟨t.pos, if c then .comptime else .none, n, ← typeAnnotation f⟩
+  return ⟨t.pos, m, n, ← typeAnnotation f⟩
 
 def params : Nat → Bool → List Param → P (List Param)
   | 0, _, _ => exhausted

@@ -400,8 +400,9 @@ theorem Runs.suffixes_field {ctx : Ctx} {i f : Nat} {start : Pos} {n : Node} {pl
   refine Runs.peek_bind ?_
   simp only [hw.tail.head]
   refine Runs.bump_bind ?_
-  refine Runs.peek_bind ?_
-  simp only [hw.tail.tail.head, ht, ite_false]
+  refine Runs.bind (Runs.acceptSym_false (by rw [hw.tail.tail.head]; exact ht)) fun b hb => ?_
+  subst hb
+  simp only [Bool.false_eq_true, ite_false]
   exact hk _
 
 
