@@ -10,7 +10,7 @@ use std::fmt;
 pub enum Code {
     /// The file is not valid tokens, or it does not match the grammar.
     S001,
-    /// The syntax belongs to a later slice.
+    /// The syntax of a later slice, or of a later phase of the current slice.
     S004,
 }
 

@@ -333,11 +333,7 @@ impl<'a> Parser<'a> {
 
     /// The syntax of a later slice, `S004`, at an offset.
     pub(crate) fn later_slice(&mut self, offset: usize, what: &str) {
-        self.report(
-            Code::S004,
-            offset,
-            format!("{what} belongs to a later slice"),
-        );
+        self.report(Code::S004, offset, format!("{what} is not supported yet"));
     }
 
     /// Moves the current token into the tree, or reports that the kind is missing.
