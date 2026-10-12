@@ -224,8 +224,8 @@ impl Evaluator<'_> {
         }
     }
 
-    /// The step of a read at `e` and its base: an index of a value or a selector `.N`.
-    /// Another expression, also an index of a type, is the root of the read.
+    /// The step of a read at `e` and its base: an index of a value, a selector `.N`, or a
+    /// field `.f`. Another expression, also an index of a type, is the root of the read.
     fn read_step<'e>(&self, e: &'e Expr) -> Option<(Sel<'e>, &'e Expr)> {
         match e {
             Expr::Index { pos, base, args } => {
@@ -244,11 +244,12 @@ impl Evaluator<'_> {
                 lit_pos,
                 index,
             } => Some((Sel::Select(*pos, *lit_pos, index), &**base)),
+            Expr::Field { pos, base, field } => Some((Sel::Field(*pos, field), &**base)),
             _ => None,
         }
     }
 
-    /// A read `e` through indices and selectors `.N`, whose node charged. Each node charges
+    /// A read `e` through indices, selectors `.N`, and fields `.f`, whose node charged. Each node charges
     /// before its base evaluates, from the outside in, and an index with more than one
     /// argument fails before its base. Then the root evaluates, and each step from the root
     /// outward reads its base as data and evaluates its index.
@@ -257,7 +258,8 @@ impl Evaluator<'_> {
     /// Here the checks run in one walk along the path after the indices, so no step walks
     /// again from the root. A failed check comes before an error of a later index, so the
     /// first error is that of Lean. Only a static container has elements, so each base after
-    /// the first is static data.
+    /// the first is static data. A field of a root that is not static, for example a port of
+    /// an instance, applies at once by the rule of `field`, before the walk.
     pub(super) fn read(&mut self, e: &Expr) -> Res<Option<Out>> {
         let mut steps = Vec::new();
         let mut next = self.read_step(e);
@@ -280,18 +282,19 @@ impl Evaluator<'_> {
             root = base;
         }
         steps.reverse();
-        let first = match steps.first() {
-            Some(step) => step.pos(),
-            None => {
-                return fail(
-                    Code::S010,
-                    expr_pos(e),
-                    "not a read of an element".to_owned(),
-                );
-            }
-        };
         let b = self.eval(root)?;
-        let b = need(root, b)?;
+        let mut b = need(root, b)?;
+        let mut done = 0;
+        while let Some(Sel::Field(q, f)) = steps.get(done)
+            && !matches!(self.store.seen(&b), Seen::Static(_))
+        {
+            b = self.field(*q, b, f)?;
+            done += 1;
+        }
+        let steps = steps.split_off(done.min(steps.len()));
+        let Some(first) = steps.first().map(Sel::pos) else {
+            return Ok(Some(b));
+        };
         let b = self.data(first, b)?;
         if let Some(Sel::Index(q, _)) = steps.first()
             && matches!(self.opnd_seen(&b), Seen::Static(Value::Type(_)))
