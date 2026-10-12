@@ -1131,4 +1131,22 @@ def keep : String :=
   "fn b() -> Int { let mut a = 18446744073709551616; id(a); return 0; }\n"
 #guard cost keep "a()" == cost keep "b()" + 1
 
+/-!
+A mutation of a held root charges the size of the root before the change (section 5.4). In
+`a()`, the argument `xs` waits while `xs.pop()` evaluates, so the `pop` charges the size 3 of
+the list `[1, 2]`, and the copy of `xs` is 1 unit larger than in `b()`. In `b()`, `xs` evaluates
+after the `pop`, so nothing holds it. The index in `c()` reads the list before the `pop`.
+-/
+def holds : String :=
+  "fn firstl(a: List[Int], b: Int) -> Int { return len(a); }\n" ++
+  "fn secondl(b: Int, a: List[Int]) -> Int { return len(a); }\n" ++
+  "fn mk() -> List[Int] { let mut xs = list(Int); xs.push(1); xs.push(2); return xs; }\n" ++
+  "fn a() -> Int { let mut xs = mk(); return firstl(xs, xs.pop()); }\n" ++
+  "fn b() -> Int { let mut xs = mk(); return secondl(xs.pop(), xs); }\n" ++
+  "fn c() -> Int { let mut xs = mk(); return xs[xs.pop() - 1]; }\n"
+#guard out holds "a()" == "(int 2)"
+#guard out holds "b()" == "(int 1)"
+#guard out holds "c()" == "(int 2)"
+#guard cost holds "a()" == cost holds "b()" + 4
+
 end Silicon.Source.Test.Eval
