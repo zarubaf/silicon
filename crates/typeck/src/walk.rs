@@ -5,7 +5,7 @@
 use crate::{Code, Error};
 use parse::ast::{Expr, Item, NodeId, Param, ParamMode, Pos, Stmt, TypeExpr};
 use resolve::{DeclId, Kind, Prelude, Resolved, ResolvedExpr, Target};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The item whose body is open, for `S006`.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -17,9 +17,12 @@ enum Owner {
 
 /// The signature of an item that a call, an instance, or a type name needs.
 enum Sig {
-    /// A function: a flag for each parameter, true for a static one. Each parameter of a
+    /// A function: its `comptime` mark and the mode of each parameter. Each parameter of a
     /// `comptime fn` is static.
-    Fn(Vec<bool>),
+    Fn {
+        comptime: bool,
+        modes: Vec<ParamMode>,
+    },
     /// A module: its number of parameters.
     Module(usize),
     /// A struct: its number of parameters and its number of fields.
@@ -58,25 +61,69 @@ impl Head {
     }
 }
 
-/// Which arguments of a call are static positions.
-enum Statics<'a> {
-    /// A flag for each argument of a function item.
-    Flags(&'a [bool]),
-    /// Only the first argument: `resize` and `reinterpret`.
+/// Which parameters of a callee are static positions.
+#[derive(Clone, Copy)]
+enum Statics {
+    /// A `fn` item: every parameter of a `comptime fn`, else each `comptime` parameter.
+    Item {
+        comptime: bool,
+    },
+    /// Only the first parameter: `resize`, `reinterpret`, and `list`.
     First,
     All,
     Nobody,
 }
 
-impl Statics<'_> {
-    fn at(&self, k: usize) -> bool {
-        match self {
-            Statics::Flags(flags) => flags.get(k).copied().unwrap_or(false),
+/// A function that a call names: the modes of its parameters and its static positions. A
+/// constructor `T(n)` has no modes, and its argument is static.
+#[derive(Clone, Copy)]
+struct Callee<'a> {
+    modes: &'a [ParamMode],
+    statics: Statics,
+}
+
+impl Callee<'_> {
+    fn is_static(&self, k: usize) -> bool {
+        match self.statics {
+            Statics::Item { comptime } => {
+                comptime || self.modes.get(k) == Some(&ParamMode::Comptime)
+            }
             Statics::First => k == 0,
             Statics::All => true,
             Statics::Nobody => false,
         }
     }
+
+    /// The mode of the parameter `k`.
+    fn mode(&self, k: usize) -> ParamMode {
+        self.modes.get(k).copied().unwrap_or(ParamMode::None)
+    }
+}
+
+/// The parameter modes of a prelude function (design section 5.6).
+fn prelude_modes(p: Prelude) -> &'static [ParamMode] {
+    use ParamMode::{Comptime, Mut, None};
+    match p {
+        Prelude::Resize | Prelude::Reinterpret => &[Comptime, None],
+        Prelude::ListFn | Prelude::DataBits => &[Comptime],
+        Prelude::Push => &[Mut, None],
+        Prelude::Pop => &[Mut],
+        Prelude::StaticAssert => &[None, None],
+        _ => &[None],
+    }
+}
+
+fn prelude_statics(p: Prelude) -> Statics {
+    match p {
+        Prelude::Resize | Prelude::Reinterpret | Prelude::ListFn => Statics::First,
+        Prelude::StaticAssert | Prelude::Error => Statics::All,
+        _ => Statics::Nobody,
+    }
+}
+
+/// Whether a call or a static position makes an expression static: the context, or the callee.
+fn static_at(is_static: bool, callee: Option<&Callee<'_>>, k: usize) -> bool {
+    is_static || callee.is_some_and(|c| c.is_static(k))
 }
 
 pub(crate) fn run(resolved: &Resolved) -> Vec<Error> {
@@ -87,6 +134,8 @@ pub(crate) fn run(resolved: &Resolved) -> Vec<Error> {
         sigs: &sigs,
         errors: Vec::new(),
         seq: 0,
+        mutable: BTreeSet::new(),
+        pending: BTreeMap::new(),
     };
     for item in resolved.ast() {
         walker.item(item);
@@ -104,6 +153,8 @@ pub(crate) fn run_expr(resolved: &Resolved, expr: &ResolvedExpr) -> Vec<Error> {
         sigs: &sigs,
         errors: Vec::new(),
         seq: 0,
+        mutable: BTreeSet::new(),
+        pending: BTreeMap::new(),
     };
     walker.expr(true, expr.expr());
     walker.finish()
@@ -122,12 +173,10 @@ fn sigs(resolved: &Resolved) -> BTreeMap<DeclId, Sig> {
                 ..
             } => (
                 name,
-                Sig::Fn(
-                    params
-                        .iter()
-                        .map(|p| *comptime || p.mode == ParamMode::Comptime)
-                        .collect(),
-                ),
+                Sig::Fn {
+                    comptime: *comptime,
+                    modes: params.iter().map(|p| p.mode).collect(),
+                },
             ),
             Item::Module { name, params, .. } => (name, Sig::Module(params.len())),
             Item::Struct {
@@ -160,19 +209,17 @@ struct Walker<'a> {
     errors: Vec<(usize, Error)>,
     /// The next order number.
     seq: usize,
+    /// The `let mut` locals and the `mut` formals: the mutable roots.
+    mutable: BTreeSet<DeclId>,
+    /// For each root, the number of open windows that hold it as pending. A `mut` actual reads
+    /// and changes only the counter of its root, so it needs no scan of the open windows.
+    pending: BTreeMap<DeclId, usize>,
 }
 
 fn type_arity(p: Prelude) -> usize {
     match p {
-        Prelude::UInt | Prelude::SInt => 1,
+        Prelude::UInt | Prelude::SInt | Prelude::List => 1,
         _ => 0,
-    }
-}
-
-fn fn_arity(p: Prelude) -> usize {
-    match p {
-        Prelude::Error | Prelude::Len | Prelude::DataBits => 1,
-        _ => 2,
     }
 }
 
@@ -245,7 +292,7 @@ impl<'a> Walker<'a> {
                     missing: 0,
                     ctor: Ctor::Unknown,
                 }),
-                Sig::Fn(_) | Sig::Module(_) => None,
+                Sig::Fn { .. } | Sig::Module(_) => None,
             },
         }
     }
@@ -264,9 +311,36 @@ impl<'a> Walker<'a> {
         }
     }
 
+    /// The function that a name node points to: a `fn` item or a prelude function. Another
+    /// name has no known parameters.
+    fn callee(&self, id: NodeId) -> Option<Callee<'a>> {
+        match self.target(id)? {
+            Target::Decl(id) => match self.sigs.get(&id)? {
+                Sig::Fn { comptime, modes } => Some(Callee {
+                    modes,
+                    statics: Statics::Item {
+                        comptime: *comptime,
+                    },
+                }),
+                _ => None,
+            },
+            Target::Prelude(p) if p.is_type() => None,
+            Target::Prelude(p) => Some(Callee {
+                modes: prelude_modes(p),
+                statics: prelude_statics(p),
+            }),
+        }
+    }
+
     /// Checks the arity of a call at `pos` with `got` arguments. `head` is the type head of a
-    /// type callee. The result tells which arguments are static positions.
-    fn call(&mut self, pos: Pos, callee: &Expr, head: Option<&Head>, got: usize) -> Statics<'a> {
+    /// type callee. The result is the callee.
+    fn call(
+        &mut self,
+        pos: Pos,
+        callee: &Expr,
+        head: Option<&Head>,
+        got: usize,
+    ) -> Option<Callee<'a>> {
         if let Some(head) = head {
             return match head.ctor {
                 Ctor::Convert => {
@@ -277,7 +351,10 @@ impl<'a> Walker<'a> {
                             format!("a constructor takes 0 or 1 argument(s), but it has {got}"),
                         );
                     }
-                    Statics::All
+                    Some(Callee {
+                        modes: &[],
+                        statics: Statics::All,
+                    })
                 }
                 Ctor::Record(fields) => {
                     if got != 0 && got != fields {
@@ -289,31 +366,114 @@ impl<'a> Walker<'a> {
                             ),
                         );
                     }
-                    Statics::Nobody
+                    None
                 }
-                Ctor::Unknown => Statics::Nobody,
+                Ctor::Unknown => None,
             };
         }
         let Expr::Name { id, name, .. } = callee else {
-            return Statics::Nobody;
+            return None;
         };
-        match self.target(*id) {
-            Some(Target::Decl(id)) => {
-                if let Some(Sig::Fn(flags)) = self.sigs.get(&id) {
-                    self.arity(pos, &format!("`{name}`"), flags.len(), got);
-                    return Statics::Flags(flags);
+        let callee = self.callee(*id)?;
+        self.arity(pos, &format!("`{name}`"), callee.modes.len(), got);
+        Some(callee)
+    }
+
+    /// Binds the receiver of the receiver call at `pos` to the function with the name node
+    /// `id`, which has `got` explicit arguments. The receiver binds to the first parameter
+    /// without a written `comptime` mark. The result is the callee and the index of that
+    /// parameter, or `None` after an `S007`.
+    fn receiver(
+        &mut self,
+        pos: Pos,
+        id: NodeId,
+        name: &str,
+        got: usize,
+    ) -> Option<(Callee<'a>, usize)> {
+        let callee = self.callee(id)?;
+        let Some(bound) = callee.modes.iter().position(|&m| m != ParamMode::Comptime) else {
+            self.report(
+                Code::S007,
+                pos,
+                format!("`{name}` has no parameter without `comptime` for the receiver"),
+            );
+            return None;
+        };
+        self.arity(pos, &format!("`{name}`"), callee.modes.len(), got + 1);
+        Some((callee, bound))
+    }
+
+    /// The root of a place: the declaration of the name at its base.
+    fn root(&self, expr: &Expr) -> Option<DeclId> {
+        let mut cur = expr;
+        loop {
+            match cur {
+                Expr::Name { id, .. } => {
+                    return match self.target(*id)? {
+                        Target::Decl(id) => Some(id),
+                        Target::Prelude(_) => None,
+                    };
                 }
-                Statics::Nobody
-            }
-            Some(Target::Prelude(p)) if !p.is_type() => {
-                self.arity(pos, &format!("`{name}`"), fn_arity(p), got);
-                match p {
-                    Prelude::Resize | Prelude::Reinterpret => Statics::First,
-                    Prelude::StaticAssert | Prelude::Error => Statics::All,
-                    _ => Statics::Nobody,
+                Expr::Index { base, .. } | Expr::Select { base, .. } | Expr::Field { base, .. } => {
+                    cur = base;
                 }
+                _ => return None,
             }
-            _ => Statics::Nobody,
+        }
+    }
+
+    /// Makes the root pending for one more window.
+    fn hold(&mut self, root: DeclId) {
+        *self.pending.entry(root).or_insert(0) += 1;
+    }
+
+    /// Ends the windows of the roots.
+    fn release(&mut self, roots: &[DeclId]) {
+        for root in roots {
+            if let Some(n) = self.pending.get_mut(root) {
+                *n = n.saturating_sub(1);
+            }
+        }
+    }
+
+    /// The `mut` actual `x`, before its parts. It is `S008` if it is not a place with a
+    /// mutable root, or if its root is pending. Then its root is pending. The result is the
+    /// root, for `release`.
+    fn mut_actual(&mut self, x: &Expr) -> Option<DeclId> {
+        let Some(root) = self.root(x) else {
+            self.report(
+                Code::S008,
+                expr_pos(x),
+                "a `mut` actual is a place".to_owned(),
+            );
+            return None;
+        };
+        if !self.mutable.contains(&root) {
+            self.report(
+                Code::S008,
+                expr_pos(x),
+                "a `mut` actual has a `let mut` local or a `mut` formal as its root".to_owned(),
+            );
+            return None;
+        }
+        if self.pending.get(&root).copied().unwrap_or(0) > 0 {
+            self.report(
+                Code::S008,
+                expr_pos(x),
+                "the root of this `mut` actual is pending in its window".to_owned(),
+            );
+        }
+        self.hold(root);
+        Some(root)
+    }
+
+    /// The check of the actual `x` at the parameter `k` of the callee, before its parts. The
+    /// result is the root that it makes pending.
+    fn pre(&mut self, callee: Option<&Callee<'_>>, k: usize, x: &Expr) -> Option<DeclId> {
+        if callee.is_some_and(|c| c.mode(k) == ParamMode::Mut) {
+            self.mut_actual(x)
+        } else {
+            None
         }
     }
 
@@ -356,17 +516,37 @@ impl<'a> Walker<'a> {
                 pos, callee, args, ..
             } => {
                 let head = self.visit(true, false, callee);
-                let statics = self.call(*pos, callee, head.as_ref(), args.len());
+                let target = self.call(*pos, callee, head.as_ref(), args.len());
+                let mut roots = Vec::new();
                 for (k, arg) in args.iter().enumerate() {
-                    self.expr(is_static || statics.at(k), arg);
+                    roots.extend(self.pre(target.as_ref(), k, arg));
+                    self.expr(static_at(is_static, target.as_ref(), k), arg);
                 }
+                self.release(&roots);
                 None
             }
-            Expr::Method { recv, args, .. } => {
-                self.expr(is_static, recv);
-                for arg in args {
-                    self.expr(is_static, arg);
+            Expr::Method {
+                pos,
+                recv,
+                name,
+                args,
+                ..
+            } => {
+                // The receiver evaluates first. It binds to the parameter `bound`, so the
+                // argument `k` binds to the parameter `k` before `bound` and to `k + 1` from
+                // `bound` on.
+                let bound = self.receiver(*pos, name.id, &name.name, args.len());
+                let callee = bound.map(|(c, _)| c);
+                let at = bound.map_or(0, |(_, b)| b);
+                let mut held = Vec::new();
+                held.extend(self.pre(callee.as_ref(), at, recv));
+                self.expr(static_at(is_static, callee.as_ref(), at), recv);
+                for (k, arg) in args.iter().enumerate() {
+                    let j = if k < at { k } else { k + 1 };
+                    held.extend(self.pre(callee.as_ref(), j, arg));
+                    self.expr(static_at(is_static, callee.as_ref(), j), arg);
                 }
+                self.release(&held);
                 None
             }
             Expr::Index { pos, base, args } => {
@@ -445,15 +625,29 @@ impl<'a> Walker<'a> {
 
     fn stmt(&mut self, owner: Owner, stmt: &Stmt) {
         match stmt {
-            Stmt::Local { ty, value, .. } => {
+            Stmt::Local {
+                mutable,
+                name,
+                ty,
+                value,
+                ..
+            } => {
                 if let Some(ty) = ty {
                     self.type_expr(ty);
                 }
                 self.expr(false, value);
+                if *mutable {
+                    self.declare_mutable(name.id);
+                }
             }
             Stmt::Assign { target, value, .. } => {
+                let root = self.root(target);
+                if let Some(root) = root {
+                    self.hold(root);
+                }
                 self.expr(false, target);
                 self.expr(false, value);
+                self.release(root.as_slice());
             }
             Stmt::Connect { pos, target, value } => {
                 self.placement(owner, *pos, "`:=`");
@@ -516,6 +710,16 @@ impl<'a> Walker<'a> {
     fn params(&mut self, params: &[Param]) {
         for param in params {
             self.type_expr(&param.ty);
+            if param.mode == ParamMode::Mut {
+                self.declare_mutable(param.name.id);
+            }
+        }
+    }
+
+    /// Records the declaration of the name node as a mutable root.
+    fn declare_mutable(&mut self, id: NodeId) {
+        if let Some(Target::Decl(decl)) = self.target(id) {
+            self.mutable.insert(decl);
         }
     }
 
@@ -553,5 +757,27 @@ impl<'a> Walker<'a> {
             }
             Item::Alias { ty, .. } => self.type_expr(ty),
         }
+    }
+}
+
+/// The position of an expression.
+fn expr_pos(expr: &Expr) -> Pos {
+    match expr {
+        Expr::Num { pos, .. }
+        | Expr::Bool { pos, .. }
+        | Expr::Str { pos, .. }
+        | Expr::Name { pos, .. }
+        | Expr::Unary { pos, .. }
+        | Expr::Binary { pos, .. }
+        | Expr::Cond { pos, .. }
+        | Expr::Call { pos, .. }
+        | Expr::Method { pos, .. }
+        | Expr::Index { pos, .. }
+        | Expr::Field { pos, .. }
+        | Expr::Unit { pos }
+        | Expr::Tuple { pos, .. }
+        | Expr::Array { pos, .. }
+        | Expr::Select { pos, .. }
+        | Expr::ArrayType { pos, .. } => *pos,
     }
 }

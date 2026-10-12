@@ -219,9 +219,9 @@ struct Family {
     later: &'static [&'static str],
 }
 
-/// The codes of later slices (mut formals, effects) that the Rust front end of slice 1 does
+/// The codes of later slices (effects) that the Rust front end of slice 1 does
 /// not report yet; front-end spec, section 12.
-const LATER: &[&str] = &["S008", "S016"];
+const LATER: &[&str] = &["S016"];
 
 const FAMILIES: &[Family] = &[
     Family {

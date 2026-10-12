@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The generic pre-check of the Silicon front end: pass 4, with `S005` to `S007`. See [the
+//! The generic pre-check of the Silicon front end: pass 4, with `S005` to `S008`. See [the
 //! front end design](../../doc/design/2026-10-09-frontend.md), sections 4.2 and 6. The check
 //! needs no static value, so it runs on each item.
 
@@ -10,8 +10,7 @@ use parse::ast::Pos;
 use resolve::{Resolved, ResolvedExpr};
 use std::fmt;
 
-/// The codes of pass 4 that slice 1 can report. `S008` cannot occur in slice 1: it has no
-/// `mut` formal, no receiver call, and no expression that mutates a root.
+/// The codes of pass 4.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Code {
     /// A static position names a port, a register, a wire, or an instance.
@@ -20,6 +19,8 @@ pub enum Code {
     S006,
     /// A call, an instance, or a type family has the wrong number of arguments.
     S007,
+    /// A `mut` actual is not a place with a mutable root, or its root is pending in its window.
+    S008,
 }
 
 impl fmt::Display for Code {
@@ -28,6 +29,7 @@ impl fmt::Display for Code {
             Code::S005 => "S005",
             Code::S006 => "S006",
             Code::S007 => "S007",
+            Code::S008 => "S008",
         })
     }
 }
@@ -51,7 +53,7 @@ pub enum Failed {
 /// Checks the items of a resolved AST. The AST is unchanged.
 ///
 /// # Errors
-/// Returns the errors of `S005` to `S007`, or an error if the machine cannot give the stack.
+/// Returns the errors of `S005` to `S008`, or an error if the machine cannot give the stack.
 pub fn check(resolved: Resolved) -> Result<Resolved, Failed> {
     let errors =
         parse::on_stack(resolved.depth(), || walk::run(&resolved)).map_err(Failed::Stack)?;
