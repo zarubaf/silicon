@@ -31,6 +31,14 @@ The operators follow v0.1 section 3. These rules settle the open points of slice
   element is `S011`. It checks the new depth of the root from the element and the number of
   steps of the place (`S015`). Each charges the
   size of the element before the change. `push` gives `()`, and `pop` gives the element.
+- The result of an operand waits while the later operands of its node evaluate. The left
+  operand of a binary operator other than `&&` and `||` waits, and so does the first arm of a
+  hardware `if`. Each argument of a call, of an instance, of a type family, and of a struct use
+  waits. Each element of a literal, the base of an index, and the lower bound of a `comptime
+  for` wait too. A waiting result that refers to a static value in a local holds the local
+  (`hold`). A mutation of a held local charges the size of the local before the change
+  (`held`). The charge is the last step before the change, and it comes once for each mutation.
+  The mutations are an assignment, `push`, `pop`, and a write-back.
 - A hardware arm starts at the current nesting depth. A `push` or a `pop` on a binding of that
   depth changes a binding from before the arm: `S016`. A call nests deeper with a new frame,
   so a function that the arm calls can change its own bindings.
@@ -203,10 +211,15 @@ def sameForm : Val → Val → Bool
   | .handle (.res k _ t _), .handle (.res k' _ t' _) => k == k' && t == t'
   | _, _ => false
 
-/-! The result of an expression, and whether it is a reference to an existing value. -/
+/-!
+The result of an expression, and whether it is a reference to an existing value. `root` is the
+local that the result refers to, if any. The result is then a name of the local, or a part of
+the local that a step selects.
+-/
 structure Out where
   value : Val
   ref : Bool
+  root : Option Nat
 
 /-! The value of `e`. Only `static_assert` and `error` give no value. -/
 def need (e : Resolve.Expr) : Option Out → M Out
@@ -215,6 +228,29 @@ def need (e : Resolve.Expr) : Option Out → M Out
 
 /-! A binding copies a reference. -/
 def copy (pos : Pos) (o : Out) : M Unit := if o.ref then charge pos o.value.size else pure ()
+
+/-!
+The result `o` of an operand waits while a later operand of its node evaluates (section 5.4).
+A static value in a local holds the local: `hold` counts the wait, and `release` ends it.
+-/
+def waits (o : Out) (f : Nat → Nat) : M Unit :=
+  match o.root, o.value with
+  | some id, .static _ =>
+    modify fun s => { s with holds := s.holds.insert id (f (s.holds.getD id 0)) }
+  | _, _ => pure ()
+
+def hold (o : Out) : M Unit := waits o (· + 1)
+
+def release (o : Out) : M Unit := waits o (· - 1)
+
+/-!
+A mutation at `p` of the local `id` that a waiting result holds charges the size of the local
+before the change (section 5.4). Thus a later copy of the waiting results is paid.
+-/
+def held (p : Pos) (id : Nat) : M Unit := do
+  let s ← get
+  if s.holds.getD id 0 != 0 then
+    if let some sl := s.frame[id]? then charge p sl.value.size
 
 /-! The value of a static position at the node `pos`. Another value there is `S011`. -/
 def static (pos : Pos) : Val → M Value
@@ -433,10 +469,12 @@ structure Place where
   inList : Bool
 
 /-!
-Applies `f` to the selected part of the place `pl` in the live value of its root. The indices of
-the place and the other operands ran after the root was read, so the change reads the live slot.
+Applies `f` at `p` to the selected part of the place `pl` in the live value of its root. The
+indices of the place and the other operands ran after the root was read, so the change reads the
+live slot. A held root first charges its size.
 -/
-def changeAt (pl : Place) (f : Value → Value) : M Unit := do
+def changeAt (p : Pos) (pl : Place) (f : Value → Value) : M Unit := do
+  held p pl.id
   if let some s@{ value := .static r, .. } := (← get).frame[pl.id]? then
     bindLocal pl.id { s with value := .static (update f r pl.keys) }
 
@@ -447,11 +485,14 @@ A container holds no hardware value: `S011` at `q` in a list, else `S010`. `q` i
 the value.
 -/
 def store (p q : Pos) (pl : Place) (y : Val) : M Unit := do
-  if pl.keys.isEmpty then bindLocal pl.id { pl.slot with value := ← named p pl.id pl.name y }
+  if pl.keys.isEmpty then
+    let v ← named p pl.id pl.name y
+    held p pl.id
+    bindLocal pl.id { pl.slot with value := v }
   else
     if pl.inList && y matches .hw _ then fail .S011 q "a list holds no hardware value"
     let w ← item q y
-    changeAt pl fun _ => w
+    changeAt p pl fun _ => w
 
 /-! An actual of a function item: a value, or the place of a `mut` actual. -/
 inductive Actual where
@@ -541,8 +582,8 @@ def pushOnto (p x : Pos) (g : String) (pl : Place) (v : Val) : M (Option Out) :=
   -- The root is within the nesting depth, so only the element on the path can raise it.
   bounded p (pl.keys.length + 1 + w.depth)
   charge p w.size
-  changeAt pl (fun | .list t ys => .list t (ys.push w) | v => v)
-  return some ⟨.static .unit, false⟩
+  changeAt p pl (fun | .list t ys => .list t (ys.push w) | v => v)
+  return some ⟨.static .unit, false, none⟩
 
 /-!
 `pop` at `p` of the list at the place `pl`. `g` is the name of the callee. An empty list is
@@ -553,8 +594,8 @@ def popFrom (p : Pos) (g : String) (pl : Place) : M (Option Out) := do
   let some w := ys.back? | fail .S013 p "`pop` of an empty list"
   mutation p
   charge p w.size
-  changeAt pl (fun | .list t ys => .list t ys.pop | v => v)
-  return some ⟨.static w, false⟩
+  changeAt p pl (fun | .list t ys => .list t ys.pop | v => v)
+  return some ⟨.static w, false, none⟩
 
 /-!
 `data_bits` at `p` with the arguments `vs`. It charges the size of the width that it copies from
@@ -564,7 +605,7 @@ def dataBitsOf (p : Pos) (g : String) : List Val → M (Option Out)
   | [.static (.type t)] => do
     if t.info.data then
       charge p (intSize t.info.width)
-      return some ⟨.static (.int t.info.width), false⟩
+      return some ⟨.static (.int t.info.width), false, none⟩
     else fail .S010 p s!"`{g}` needs a hardware data type, not {t.text}"
   | [v] => fail .S010 p s!"`{g}` needs a type, not {v.text}"
   | vs => fail .S007 p s!"`{g}` takes 1 argument(s), but it has {vs.length}"
@@ -576,7 +617,7 @@ to its argument, and `data_bits` reads the metadata of its type. The others copy
 -/
 def primCall (p : Pos) (g : String) (h : PrimFn) (vs : List Val) : M (Option Out) := do
   match h with
-  | .len => return some ⟨.static (← lenOf p vs), false⟩
+  | .len => return some ⟨.static (← lenOf p vs), false, none⟩
   | .dataBits => dataBitsOf p g vs
   | h =>
     charge p (vs.map Val.size).sum
@@ -588,8 +629,8 @@ def primCall (p : Pos) (g : String) (h : PrimFn) (vs : List Val) : M (Option Out
       match ← data p v with
       | .static v =>
         let s := if h == .resize then resize t v else reinterpret t v
-        return some ⟨.static (← apply p s), false⟩
-      | .hw x => return some ⟨← hwConvert p h t x, false⟩
+        return some ⟨.static (← apply p s), false, none⟩
+      | .hw x => return some ⟨← hwConvert p h t x, false, none⟩
       | v => fail .S010 p s!"{v.text} is not data"
     | .staticAssert, [c, m] =>
       match ← static p c, ← static p m with
@@ -606,7 +647,7 @@ def primCall (p : Pos) (g : String) (h : PrimFn) (vs : List Val) : M (Option Out
         let v := Value.list t #[]
         bounded p v.depth
         charge p 1
-        return some ⟨.static v, false⟩
+        return some ⟨.static v, false, none⟩
       | t => fail .S010 p s!"`{g}` needs a type, not {t.text}"
     | .str, [v] =>
       match ← data p v with
@@ -614,7 +655,7 @@ def primCall (p : Pos) (g : String) (h : PrimFn) (vs : List Val) : M (Option Out
         charge p (n.size * n.size)
         let s := Value.str (toString k)
         charge p s.size
-        return some ⟨.static s, false⟩
+        return some ⟨.static s, false, none⟩
       | v => fail .S010 p s!"`{g}` needs an Int, not {v.text}"
     | _, vs => fail .S010 p s!"`{g}` does not accept {vs.map Val.text}"
 
@@ -632,47 +673,54 @@ mutual
     | n + 1 => do
       charge e.pos 1
       match e with
-      | .num p v => let x : Value := .int v; charge p x.size; return some ⟨.static x, false⟩
-      | .bool p v => let x : Value := .bool v; charge p x.size; return some ⟨.static x, false⟩
-      | .str p v => let x : Value := .str v; charge p x.size; return some ⟨.static x, false⟩
+      | .num p v => let x : Value := .int v; charge p x.size; return some ⟨.static x, false, none⟩
+      | .bool p v => let x : Value := .bool v; charge p x.size; return some ⟨.static x, false, none⟩
+      | .str p v => let x : Value := .str v; charge p x.size; return some ⟨.static x, false, none⟩
       | .name p x r => return some (← name n p x r)
       | .unary p op a => do
         match ← data p (← need a (← eval n a)).value with
-        | .static a => return some ⟨.static (← apply p (unary op a)), false⟩
-        | .hw a => return some ⟨← hwUnary p op a, false⟩
+        | .static a => return some ⟨.static (← apply p (unary op a)), false, none⟩
+        | .hw a => return some ⟨← hwUnary p op a, false, none⟩
         | v => fail .S010 p s!"`{op.text}` does not accept {v.text}"
       | .binary p .land l r | .binary p .lor l r => do
         let op : BinOp := if e matches .binary _ .lor .. then .lor else .land
         match ← data p (← need l (← eval n l)).value with
         | .static a => do
           let a ← test p (.static a)
-          if a == (op == .lor) then return some ⟨.static (.bool a), false⟩
+          if a == (op == .lor) then return some ⟨.static (.bool a), false, none⟩
           match ← data p (← need r (← eval n r)).value with
           | .hw h =>
-            if h.ty == .bool then return some ⟨.hw h, false⟩
+            if h.ty == .bool then return some ⟨.hw h, false, none⟩
             else fail .S010 p s!"a condition is a Bool, not {h.ty.text}"
-          | v => return some ⟨.static (.bool (← test p v)), false⟩
+          | v => return some ⟨.static (.bool (← test p v)), false, none⟩
         | a => do
           let b ← data p (← need r (← eval n r)).value
-          return some ⟨← hwBinary p op a b, false⟩
+          return some ⟨← hwBinary p op a b, false, none⟩
       | .binary p op l r => do
-        let a ← data p (← need l (← eval n l)).value
+        let o ← need l (← eval n l)
+        let a ← data p o.value
+        hold o
         let b ← data p (← need r (← eval n r)).value
+        release o
         match a, b with
         | .static a, .static b =>
           if composite a || composite b then
-            return some ⟨.static (← containerOp p op a b), false⟩
+            return some ⟨.static (← containerOp p op a b), false, none⟩
           let (a, b) ← unify p op a b
-          return some ⟨.static (← apply p (binary op a b)), false⟩
-        | a, b => return some ⟨← hwBinary p op a b, false⟩
+          return some ⟨.static (← apply p (binary op a b)), false, none⟩
+        | a, b => return some ⟨← hwBinary p op a b, false, none⟩
       | .cond p c y no => do
         match ← data p (← need c (← eval n c)).value with
         | .hw h =>
           unless h.ty == .bool do fail .S010 p s!"a condition is a Bool, not {h.ty.text}"
           let (a, b) ← withReader (fun c => { c with arm := some c.depth }) do
-            let a ← data p (← need y (← eval n y)).value
-            return (a, ← data p (← need no (← eval n no)).value)
-          return some ⟨← mux p h a b, false⟩
+            let o ← need y (← eval n y)
+            let a ← data p o.value
+            hold o
+            let b ← data p (← need no (← eval n no)).value
+            release o
+            return (a, b)
+          return some ⟨← mux p h a b, false, none⟩
         | v => if ← test p v then eval n y else eval n no
       | .call p f xs k => call n p f xs 0 k
       | .method p r m f b xs k => do
@@ -682,45 +730,50 @@ mutual
       | .index p b xs => do
         if let .name bp _ (.type k) := b then
           charge bp 1
-          return some ⟨.static (.type (← index n p k xs)), false⟩
+          return some ⟨.static (.type (← index n p k xs)), false, none⟩
         if let .name bp _ (.item i) := b then
           if let some (.struct ..) := (← read).items[i]? then
             charge bp 1
-            return some ⟨.static (.type (← spec n p i xs)), false⟩
+            return some ⟨.static (.type (← spec n p i xs)), false, none⟩
         let [x] := xs | fail .S010 p "an index of a value has one argument"
-        let v ← data p (← need b (← eval n b)).value
+        let o ← need b (← eval n b)
+        let v ← data p o.value
         if v matches .static (.type _) then fail .S007 p "a complete type takes no index"
+        hold o
         let i ← static x.pos (← need x (← eval n x)).value
-        if let .static (.str s) := v then return some ⟨.static (← strAt p x.pos s i), false⟩
-        return some ⟨← pick p x.pos v i, true⟩
+        release o
+        if let .static (.str s) := v then
+          return some ⟨.static (← strAt p x.pos s i), false, none⟩
+        return some ⟨← pick p x.pos v i, true, o.root⟩
       | .field p b f => do
-        match (← need b (← eval n b)).value with
+        let o ← need b (← eval n b)
+        match o.value with
         | .handle (.inst id path iface) =>
           match (← read).field f.pos >>= (iface.ports[·]?) with
           | some q =>
-            if q.input then return some ⟨.handle (.input id path q), true⟩
-            else return some ⟨.hw (.mk p q.ty (.out path q.name) []), true⟩
+            if q.input then return some ⟨.handle (.input id path q), true, none⟩
+            else return some ⟨.hw (.mk p q.ty (.out path q.name) []), true, none⟩
           | none => fail .S010 p s!"the instance has no port `{f.name}`"
-        | v => return some ⟨.static (← fieldAt p f v).2.1, true⟩
-      | .unit p => do charge p Value.unit.size; return some ⟨.static .unit, false⟩
+        | v => return some ⟨.static (← fieldAt p f v).2.1, true, o.root⟩
+      | .unit p => do charge p Value.unit.size; return some ⟨.static .unit, false, none⟩
       | .tuple p xs => do
-        let es ← xs.mapM fun x => do element x.pos (← need x (← eval n x)).value
+        let es ← operands n xs fun x o => element x.pos o.value
         match waiting es with
-        | some q => return some ⟨.pending q (.tuple p (es.map (·.1))), false⟩
-        | none => return some ⟨.static (← tupleOf p (values es)), false⟩
-      | .array p [] => do charge p 1; return some ⟨.pending p (.empty p), false⟩
+        | some q => return some ⟨.pending q (.tuple p (es.map (·.1))), false, none⟩
+        | none => return some ⟨.static (← tupleOf p (values es)), false, none⟩
+      | .array p [] => do charge p 1; return some ⟨.pending p (.empty p), false, none⟩
       | .array p xs => do
-        let es ← xs.mapM fun x => do element x.pos (← need x (← eval n x)).value
+        let es ← operands n xs fun x o => element x.pos o.value
         match waiting es with
-        | some q => return some ⟨.pending q (.array p (es.map (·.1))), false⟩
-        | none => return some ⟨.static (← arrayOf p (values es)), false⟩
+        | some q => return some ⟨.pending q (.array p (es.map (·.1))), false, none⟩
+        | none => return some ⟨.static (← arrayOf p (values es)), false, none⟩
       | .select p b q i => do
-        let v ← data p (← need b (← eval n b)).value
-        return some ⟨← select p q i v, true⟩
+        let o ← need b (← eval n b)
+        return some ⟨← select p q i (← data p o.value), true, o.root⟩
       | .arrayType p t k => do
         let e ← typeExpr n t
         let t ← arrayTy p k.pos e (← static k.pos (← need k (← eval n k)).value)
-        return some ⟨.static (.type t), false⟩
+        return some ⟨.static (.type t), false, none⟩
   termination_by (b, 3)
 
   def typeExpr (b : Nat) (t : Resolve.TypeExpr) : M Ty :=
@@ -746,7 +799,7 @@ mutual
 
   /-- `UInt[e]` or `SInt[e]` in a type or an expression. The base charged its node. -/
   def index (n : Nat) (p : Pos) (k : PrimType) (xs : List Resolve.Expr) : M Ty := do
-    let args ← xs.mapM fun x => do static p (← need x (← eval n x)).value
+    let args ← operands n xs fun _ o => static p o.value
     let t ← lift p (family k args)
     if t matches .list _ then bounded p t.depth
     charge p (Value.type t).size
@@ -764,8 +817,8 @@ mutual
   def spec (n : Nat) (p : Pos) (i : Nat) (xs : List Resolve.Expr) : M Ty := do
     let some (.struct _ x ps fs) := (← read).items[i]?
       | fail .S007 p "a complete type takes no index"
-    let args ← xs.mapM fun e => do
-      match (← need e (← eval n e)).value with
+    let args ← operands n xs fun _ o => do
+      match o.value with
       | v@(.pending ..) => pure v
       | v => return .static (← static p v)
     if ps.length != args.length then
@@ -789,9 +842,9 @@ mutual
   def name (n : Nat) (p : Pos) (x : String) : Ref → M Out
     | .local id => do
       match (← get).frame[id]? with
-      | some s => return ⟨s.value, true⟩
+      | some s => return ⟨s.value, true, some id⟩
       | _ => fail .S011 p s!"`{x}` is not a static value"
-    | .type k => do return ⟨.static (.type (← prim p x k)), true⟩
+    | .type k => do return ⟨.static (.type (← prim p x k)), true, none⟩
     | .fn _ => fail .S010 p s!"`{x}` is a function; slice 1 has no function values"
     | .item i => do
       match (← read).items[i]? with
@@ -801,10 +854,10 @@ mutual
           let o ← need v (← eval n v)
           copy cp o
           conform cp t (← static cp (← settle cp t o.value))
-        return ⟨.static c, true⟩
+        return ⟨.static c, true, none⟩
       | some (.alias _ _ ty) => do
-        return ⟨.static (← constant p x i do return .type (← typeExpr n ty)), true⟩
-      | some (.struct ..) => do return ⟨.static (.type (← spec n p i [])), true⟩
+        return ⟨.static (← constant p x i do return .type (← typeExpr n ty)), true, none⟩
+      | some (.struct ..) => do return ⟨.static (.type (← spec n p i [])), true, none⟩
       | _ => fail .S010 p s!"`{x}` is a function; slice 1 has no function values"
   termination_by (n + 1, 1)
 
@@ -847,8 +900,23 @@ mutual
 
   /-- The values of the arguments `xs` in the order of the parameters, by `bound b`. -/
   def args (n b : Nat) (xs : List Resolve.Expr) : M (List Val) := do
-    return bound b (← xs.mapM fun x => do return (← need x (← eval n x)).value)
+    return bound b (← operands n xs fun _ o => pure o.value)
   termination_by (n + 1, 0)
+
+  /--
+  The results of `xs` in their order, each after the check `f`. Each result waits while the
+  later ones evaluate (`hold`).
+  -/
+  def operands (n : Nat) (xs : List Resolve.Expr) (f : Resolve.Expr → Out → M α) :
+      M (List α) := do
+    let os ← xs.mapM fun x => do
+      let o ← need x (← eval n x)
+      let a ← f x o
+      hold o
+      return (a, o)
+    for (_, o) in os do release o
+    return os.map (·.1)
+  termination_by (n, 4)
 
   /-- A constructor call at `p`: the callee `f` gives a type, and `xs` are its arguments. -/
   def ctor (n : Nat) (p : Pos) (f : Resolve.Expr) (b : Nat) (xs : List Resolve.Expr) :
@@ -856,7 +924,7 @@ mutual
     let o ← need f (← eval n f)
     let .static (.type t) := o.value | fail .S010 p s!"{o.value.text} is not a function"
     match t, xs with
-    | t, [] => return some ⟨.static (← zero p t), false⟩
+    | t, [] => return some ⟨.static (← zero p t), false, none⟩
     | t@(.struct ..), xs =>
       let some (_, fs) := fieldsIn (← get).specs t
         | fail .S010 p s!"{t.text} has no specialization"
@@ -865,11 +933,11 @@ mutual
           s!"a struct constructor takes 0 or {fs.length} argument(s), but it has {xs.length}"
       let vs ← args n b xs
       charge p (vs.map Val.size).sum
-      return some ⟨.static (← recordOf p t fs (xs.map (·.pos)) vs), false⟩
+      return some ⟨.static (← recordOf p t fs (xs.map (·.pos)) vs), false, none⟩
     | t, [x] =>
       let a ← need x (← eval n x)
       charge p a.value.size
-      return some ⟨.static (← conform p t (← static p a.value)), false⟩
+      return some ⟨.static (← conform p t (← static p a.value)), false, none⟩
     | _, _ => fail .S007 p "a constructor takes 0 or 1 argument(s)"
   termination_by (n + 1, 1)
 
@@ -891,7 +959,7 @@ mutual
         let o ← withReader (fun c => { c with ret := some rt }) (block n ip body)
         return (← result p path u.name o, ← finals ps acts)
     writeBack p outs
-    return some ⟨r, false⟩
+    return some ⟨r, false, none⟩
   termination_by (n + 1, 0)
 
   /--
@@ -910,9 +978,13 @@ mutual
         let _ ← args n b xs
         fail .S007 p s!"`{g}` takes {ps.length} argument(s), but it has {xs.length}"
       let acts ← (xs.zip (unbound b ps)).mapM fun (x, q) => do
-        if q.mode == .mut then return Actual.place (← placeAt n x.pos .S008 x)
-        else return Actual.value (← need x (← eval n x)).value
-      invoke n p i k c u ps ret ip body (bound b acts)
+        if q.mode == .mut then return (Actual.place (← placeAt n x.pos .S008 x), none)
+        else
+          let o ← need x (← eval n x)
+          hold o
+          return (Actual.value o.value, some o)
+      for (_, o) in acts do if let some o := o then release o
+      invoke n p i k c u ps ret ip body (bound b (acts.map (·.1)))
     | .name fp g (.fn .push) =>
       charge fp 1
       let [l, x] := xs | fail .S007 p s!"`{g}` takes 2 argument(s), but it has {xs.length}"
@@ -969,8 +1041,11 @@ mutual
           | some ss => block n p ss
           | none => return none
       | .ctFor p i lo hi body => do
-        let a ← int p (← need lo (← eval n lo)).value
+        let o ← need lo (← eval n lo)
+        let a ← int p o.value
+        hold o
         let z ← int p (← need hi (← eval n hi)).value
+        release o
         let count ← range p a z
         -- The charge of the loop value `v` also pays the work of the next value `v + 1`.
         let mut v := a
@@ -1136,7 +1211,7 @@ def symbols (items : Array Resolve.Item) (scans : Array Scan) : Syms := Id.run d
 def start (budget : Budget) (items : Array Resolve.Item) : Ctx × St :=
   let scans := items.map scanItem
   (⟨items, budget.depth, 0, none, 0, symbols items scans, ⟨none, 0⟩, [], none⟩,
-   ⟨budget.fuel, Array.replicate items.size .notStarted, #[], {}, {}⟩)
+   ⟨budget.fuel, Array.replicate items.size .notStarted, #[], {}, {}, {}⟩)
 
 /-! Runs `act` with the budget. The result has the used fuel. -/
 def run (budget : Budget) (items : Array Resolve.Item) (act : Nat → M α) :

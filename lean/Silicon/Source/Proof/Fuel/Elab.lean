@@ -265,7 +265,7 @@ theorem arguments_e (he : ∀ e, Follows m (Eval.eval k e) (Eval.eval m e))
     (ht : ∀ t, Follows m (Eval.typeExpr k t) (Eval.typeExpr m t)) (pos : Pos) (i : Nat)
     (xs : List Resolve.Expr) : EFollows m (arguments k pos i xs) (arguments m pos i xs) := by
   unfold arguments
-  efollows [he, ht, need_f, static_f, settle_f, inFrame_e, bindLocal_f]
+  efollows [he, ht, need_f, static_f, settle_f, inFrame_e, bindLocal_f, hold_f, release_f]
 
 end walk
 
@@ -298,12 +298,14 @@ theorem follows_all : ∀ n,
         efollows [hs k, hb k, instantiate_e (he.2.1 k) (hb k),
           arguments_e (he.1 k) (he.2.1 k), he.1 k, he.2.1 k, need_f, copy_f,
           conform_f, static_f, conformVal_f, lit_f, fresh_f, bindLocal_f, test_f, int_f, range_f,
-          iteration_e, dataType_e, port_e, resource_e, modifyBody_e, target_e, bindTarget_e]
+          iteration_e, dataType_e, port_e, resource_e, modifyBody_e, target_e, bindTarget_e,
+          hold_f, release_f]
       · refine EFollows.charge_one _ fun _ => ?_
         efollows [hs m, hb m, instantiate_e (he.2.1 m) (hb m),
           arguments_e (he.1 m) (he.2.1 m), he.1 m, he.2.1 m, need_f, copy_f,
           conform_f, static_f, conformVal_f, lit_f, fresh_f, bindLocal_f, test_f, int_f, range_f,
-          iteration_e, dataType_e, port_e, resource_e, modifyBody_e, target_e, bindTarget_e]
+          iteration_e, dataType_e, port_e, resource_e, modifyBody_e, target_e, bindTarget_e,
+          hold_f, release_f]
     · rcases n' with _ | m
       · rw [block.eq_def (k + 1), block.eq_def 0]
         exact EFollows.exhaust (cap := k) _ _ fun _ => by efollows [hs k]

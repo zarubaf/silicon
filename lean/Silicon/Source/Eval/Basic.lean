@@ -240,13 +240,15 @@ structure Naming where
 /-!
 The state holds the fuel, the table of constants by item index, and the table of struct
 specializations. It also holds the locals of the current frame and the names of the current
-instantiation.
+instantiation. `holds` counts the waiting results that hold each local of the frame (section
+5.4).
 -/
 structure St where
   fuel : Nat
   consts : Array Entry
   specs : Array Spec
   frame : Std.HashMap Nat Slot
+  holds : Std.HashMap Nat Nat
   naming : Naming
 
 abbrev M := ReaderT Ctx (StateT St (Except Error))
@@ -313,12 +315,15 @@ def mutation (pos : Pos) : M Unit := do
   if c.arm == some c.depth then
     fail .S016 pos "a hardware arm changes a binding from before the arm"
 
-/-! Runs `act` with an empty frame of locals and the return type `ret`. -/
+/-!
+Runs `act` with an empty frame of locals and the return type `ret`. A waiting result of the
+caller holds no local of the new frame.
+-/
 def inFrame [Runs m] (ret : Option Ty) (act : m α) : m α := do
-  let saved ← monadLift (do return (← get).frame : M _)
-  monadLift (modify fun s => { s with frame := {} } : M Unit)
+  let saved ← monadLift (do let s ← get; return (s.frame, s.holds) : M _)
+  monadLift (modify fun s => { s with frame := {}, holds := {} } : M Unit)
   let r ← withTheReader Ctx (fun c => { c with ret }) act
-  monadLift (modify fun s => { s with frame := saved } : M Unit)
+  monadLift (modify fun s => { s with frame := saved.1, holds := saved.2 } : M Unit)
   return r
 
 /-!
