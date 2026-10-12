@@ -301,6 +301,9 @@ impl Evaluator<'_> {
         {
             return fail_type_index(*q);
         }
+        if self.string_before_last(&b, &steps) {
+            return self.read_exact(b, &steps);
+        }
         let mut keyed = Vec::with_capacity(steps.len());
         let mut stop = None;
         for step in &steps {
@@ -312,44 +315,142 @@ impl Evaluator<'_> {
                 }
             }
         }
-        let mut keys = Vec::with_capacity(keyed.len());
-        let mut cur = self.opnd_seen(&b);
-        for key in &keyed {
-            let k = match key {
-                Key::Index(q, ..) if matches!(cur, Seen::Static(Value::Type(_))) => {
-                    return fail_type_index(*q);
-                }
-                Key::Index(q, xp, i) => self.pick_at(*q, *xp, cur, i)?,
-                Key::Select(q, r, index) => self.select_at(*q, *r, index, cur)?,
-                Key::Field(q, f) => self.field_at(*q, f, cur)?.0,
-            };
-            cur = self.store.step(cur, k);
-            keys.push(k);
-        }
+        let (out, at_type) = self.follow(b, &keyed)?;
         if let Some(e) = stop {
             // The base of the step whose index failed is a type: that check comes first.
             if let Some(Sel::Index(q, _)) = steps.get(keyed.len())
-                && matches!(cur, Seen::Static(Value::Type(_)))
+                && at_type
             {
                 return fail_type_index(*q);
             }
             return Err(e);
         }
-        let Some((&k, rest)) = keys.split_first() else {
-            return fail(
-                Code::S010,
-                expr_pos(e),
-                "not a read of an element".to_owned(),
-            );
-        };
-        let mut out = elem(b, k);
-        for &k in rest {
-            out = elem(Opnd::Static(out), k);
-        }
         Ok(Some(out))
     }
 
-    /// `len` of an array at the call `pos`. It refers to the array, so it charges no size.
+    /// The walk of a read along the evaluated indices `keyed`, in one pass: the result, and
+    /// whether the container after the last step is a type. A string container ends a segment:
+    /// its index makes a new string, which is the base of the next segment.
+    fn follow(&mut self, base: Opnd, keyed: &[Key<'_>]) -> Res<(Out, bool)> {
+        let mut base = base;
+        let mut rest = keyed;
+        loop {
+            let mut cur = self.opnd_seen(&base);
+            let mut numbers = Vec::with_capacity(rest.len());
+            let mut string_step = None;
+            for (at, key) in rest.iter().enumerate() {
+                let number = match key {
+                    Key::Index(q, ..) if matches!(cur, Seen::Static(Value::Type(_))) => {
+                        return fail_type_index(*q);
+                    }
+                    Key::Index(..) if matches!(cur, Seen::Static(Value::Str(_))) => {
+                        string_step = Some(at);
+                        break;
+                    }
+                    Key::Index(q, xp, i) => self.pick_at(*q, *xp, cur, i)?,
+                    Key::Select(q, r, index) => self.select_at(*q, *r, index, cur)?,
+                    Key::Field(q, f) => self.field_at(*q, f, cur)?.0,
+                };
+                cur = self.store.step(cur, number);
+                numbers.push(number);
+            }
+            let at_type = matches!(cur, Seen::Static(Value::Type(_)));
+            let mut path = numbers.into_iter();
+            let mut out = match path.next() {
+                Some(number) => elem(base, number),
+                None => match base {
+                    Opnd::Static(o) => o,
+                    Opnd::Hw(h) => Out::Made(Val::Hw(h)),
+                },
+            };
+            for number in path {
+                out = elem(Opnd::Static(out), number);
+            }
+            let Some(at) = string_step else {
+                return Ok((out, at_type));
+            };
+            let Some(Key::Index(q, xp, i)) = rest.get(at) else {
+                return Ok((out, at_type));
+            };
+            base = Opnd::Static(self.str_at(*q, *xp, &out, i)?);
+            rest = rest.get(at + 1..).unwrap_or_default();
+        }
+    }
+
+    /// Whether a step of the read other than the last indexes a string, or might. Such a read
+    /// runs its steps one by one (`read_exact`), because the scan of the string charges before
+    /// the next index evaluates. Only the first index step of the path needs a look: its
+    /// container holds a string if it is one, or if its element type holds one. The steps
+    /// before it have fixed numbers.
+    fn string_before_last(&self, base: &Opnd, steps: &[Sel<'_>]) -> bool {
+        let mut cur = self.opnd_seen(base);
+        for (n, step) in steps.iter().enumerate() {
+            let k = match *step {
+                Sel::Index(..) => {
+                    return n + 1 < steps.len()
+                        && match cur {
+                            Seen::Static(Value::Str(_) | Value::Tuple(_)) => true,
+                            Seen::Static(Value::Array(t, _) | Value::List(t, _)) => {
+                                t.holds_string()
+                            }
+                            _ => false,
+                        };
+                }
+                Sel::Select(q, r, index) => self.select_at(q, r, index, cur),
+                Sel::Field(q, f) => self.field_at(q, f, cur).map(|(k, _)| k),
+            };
+            match k {
+                Ok(k) => cur = self.store.step(cur, k),
+                Err(_) => return false,
+            }
+        }
+        false
+    }
+
+    /// A read whose steps run one by one, in the order of Lean `Source.Eval`: each step checks
+    /// its container, evaluates its index, and then applies, before the next step starts. The
+    /// result of a step refers to its container, so a step finds its container by the path from
+    /// the root. The path is short where a string is on it, so the walk stays within a small
+    /// factor of the steps.
+    fn read_exact(&mut self, b: Opnd, steps: &[Sel<'_>]) -> Res<Option<Out>> {
+        let mut cur = b;
+        for step in steps {
+            if let Sel::Index(q, _) = step
+                && matches!(self.opnd_seen(&cur), Seen::Static(Value::Type(_)))
+            {
+                return fail_type_index(*q);
+            }
+            let key = self.key(step)?;
+            let out = match key {
+                Key::Index(q, xp, i) => {
+                    if let Opnd::Static(o) = &cur
+                        && matches!(self.store.seen(o), Seen::Static(Value::Str(_)))
+                    {
+                        self.str_at(q, xp, o, &i)?
+                    } else {
+                        let k = self.pick_at(q, xp, self.opnd_seen(&cur), &i)?;
+                        elem(cur, k)
+                    }
+                }
+                Key::Select(q, r, index) => {
+                    let k = self.select_at(q, r, index, self.opnd_seen(&cur))?;
+                    elem(cur, k)
+                }
+                Key::Field(q, f) => {
+                    let k = self.field_at(q, f, self.opnd_seen(&cur))?.0;
+                    elem(cur, k)
+                }
+            };
+            cur = Opnd::Static(out);
+        }
+        match cur {
+            Opnd::Static(o) => Ok(Some(o)),
+            Opnd::Hw(h) => Ok(Some(Out::Made(Val::Hw(h)))),
+        }
+    }
+
+    /// `len` of an array, a list, or a string at the call `pos`. It refers to an array or a
+    /// list, so it charges no size. A string needs a scan, so it charges its size first.
     pub(super) fn len(&mut self, pos: Pos, mut vs: Vec<Out>) -> Res<Option<Out>> {
         let (Some(v), true) = (vs.pop(), vs.is_empty()) else {
             return fail(
@@ -360,12 +461,19 @@ impl Evaluator<'_> {
         };
         let n = match self.data(pos, v)? {
             Opnd::Static(o) => match self.store.value(&o) {
-                Value::Array(_, xs) => xs.len() as u64,
+                Value::Array(_, xs) | Value::List(_, xs) => xs.len() as u64,
+                Value::Str(_) => {
+                    let n = self.str_len(pos, &o)?;
+                    return Ok(Some(Out::Made(Val::Static(n))));
+                }
                 v => {
                     return fail(
                         Code::S010,
                         pos,
-                        format!("`len` takes an array, not {}", v.text(&self.tys)),
+                        format!(
+                            "`len` takes an array, a list, or a string, not {}",
+                            v.text(&self.tys)
+                        ),
                     );
                 }
             },

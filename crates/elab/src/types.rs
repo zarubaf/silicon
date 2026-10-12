@@ -47,6 +47,7 @@ pub struct TyId {
     index: usize,
     size: u64,
     depth: u64,
+    strings: bool,
 }
 
 impl TyId {
@@ -65,6 +66,13 @@ impl TyId {
     #[must_use]
     pub fn depth(self) -> u64 {
         self.depth
+    }
+
+    /// Whether `String` is `self` or a part of it, at any depth. A value of another type
+    /// holds no string.
+    #[must_use]
+    pub fn holds_string(self) -> bool {
+        self.strings
     }
 }
 
@@ -377,14 +385,21 @@ impl Types {
     /// Adds the type `ty` with its metadata to the table.
     fn insert(&mut self, ty: Ty, meta: Meta) -> TyId {
         let (size, depth) = self.shape(&ty);
-        self.insert_shaped(ty, size, depth, meta)
+        let strings = match &ty {
+            Ty::String => true,
+            Ty::Array(elem, _) | Ty::List(elem) => elem.strings,
+            Ty::Tuple(parts) => parts.iter().any(|part| part.strings),
+            _ => false,
+        };
+        self.insert_shaped(ty, size, depth, strings, meta)
     }
 
-    fn insert_shaped(&mut self, ty: Ty, size: u64, depth: u64, meta: Meta) -> TyId {
+    fn insert_shaped(&mut self, ty: Ty, size: u64, depth: u64, strings: bool, meta: Meta) -> TyId {
         let id = TyId {
             index: self.entries.len(),
             size,
             depth,
+            strings,
         };
         let zero_depth = self.zero_depth_of(&ty, depth);
         self.entries.push(Entry {
@@ -674,7 +689,8 @@ impl Types {
             .args
             .iter()
             .fold(1u64, |sum, arg| sum.saturating_add(arg.size()));
-        let ty = self.insert_shaped(Ty::Struct(s), size, depth, meta);
+        let strings = fields.iter().any(|field| field.strings);
+        let ty = self.insert_shaped(Ty::Struct(s), size, depth, strings, meta);
         if let Some(spec) = self.specs.get_mut(s.0) {
             spec.state = SpecState::Done { ty, fields };
         }

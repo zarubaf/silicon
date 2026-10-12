@@ -158,11 +158,8 @@ impl Evaluator<'_> {
         xs: &[Expr],
     ) -> Res<Option<Out>> {
         self.charge(fp, 1)?;
-        // TODO(#179): `list`, `push`, `pop`, and `str` (plan steps 26 and 27).
-        if matches!(
-            builtin,
-            Prelude::ListFn | Prelude::Push | Prelude::Pop | Prelude::Str
-        ) {
+        // TODO(#179): `list`, `push`, and `pop` (plan step 27).
+        if matches!(builtin, Prelude::ListFn | Prelude::Push | Prelude::Pop) {
             return fail(Code::S010, pos, format!("`{g}` is not supported yet"));
         }
         let vs = self.args(xs)?;
@@ -206,6 +203,13 @@ impl Evaluator<'_> {
                 }
                 Opnd::Hw(x) => Ok(Some(Out::Made(self.hw_convert(pos, builtin, ty, x)?))),
             };
+        }
+        if builtin == Prelude::Str && vs.len() == 1 {
+            let Some(v) = vs.pop() else {
+                return fail(Code::S010, pos, format!("`{g}` needs one argument"));
+            };
+            let v = self.data(pos, v)?;
+            return self.str_of(pos, g, v);
         }
         match (builtin, vs.as_slice()) {
             (Prelude::StaticAssert, [c, m]) => {
