@@ -454,6 +454,33 @@ mod tests {
     }
 
     #[test]
+    fn type_forms() {
+        assert_eq!(
+            expr_of("[UInt[8]; 4]"),
+            "(arraytype (index (name \"UInt\") ((num 8))) (num 4))"
+        );
+        assert_eq!(
+            expr_of("[T; 4]()"),
+            "(call (arraytype (name \"T\") (num 4)) ())"
+        );
+        assert_eq!(
+            stmt_of("type A = [UInt[8]; 4];"),
+            "(alias \"A\" (array (index (name \"UInt\") ((num 8))) (num 4)))"
+        );
+        assert_eq!(
+            dump_of("struct P(comptime W: Nat) { a: UInt[W], b: Bool, }"),
+            "(struct \"P\" ((param true \"W\" (name \"Nat\"))) ((structfield \"a\" \
+             (index (name \"UInt\") ((name \"W\")))) (structfield \"b\" (name \"Bool\"))))\n"
+        );
+        assert_eq!(dump_of("struct P {}"), "(struct \"P\" () ())\n");
+        assert_eq!(dump_of("struct P() {}"), "(struct \"P\" () ())\n");
+        assert_eq!(
+            dump_of("type A = (T, U);"),
+            "(alias \"A\" (tuple ((name \"T\") (name \"U\"))))\n"
+        );
+    }
+
+    #[test]
     fn items() {
         assert_eq!(
             dump_of("const C: T = 1;\nconst D: T = 2;"),
