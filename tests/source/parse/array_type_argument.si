@@ -1,0 +1,2 @@
+// The type `[T; N]` in a call argument.
+const A: T = f(a, [T; 4]);
