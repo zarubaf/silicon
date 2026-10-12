@@ -363,7 +363,7 @@ theorem Runs.suffixes_index {ctx : Ctx} {i f : Nat} {start : Pos} {n : Node} {pl
     (hk : ∀ ns : List Node, ns.map (·.expr.erase) = xs.map Expr.erase →
       (∀ m ∈ ns, m.height ≤ (argToks (xs.map (Expr.toks 0))).length) →
       Runs (suffixes f start ⟨.index start n.expr (ns.map (·.expr)),
-        height (n.height :: ns.map (·.height))⟩ false) ctx
+        height (n.height :: ns.map (·.height))⟩ pl) ctx
         (i + (argToks (xs.map (Expr.toks 0))).length + 2) l Q) :
     Runs (suffixes (f + 1) start n pl) ctx i l Q := by
   rw [Parse.suffixes]

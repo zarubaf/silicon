@@ -239,22 +239,29 @@ theorem Bal.args (xs : List Expr) : Bal (argToks (xs.map (Expr.toks 0))) :=
 
 /-! ## The bracket pass -/
 
-/-! One step of the loop of `Input.of`, on the close array, the comma array, and the stack. -/
-def stepT (t : Token) (i : Nat) (s : Array Nat × Array Bool × List Nat) :
-    Array Nat × Array Bool × List Nat :=
-  if opening t then (s.1, s.2.1, i :: s.2.2)
+/-!
+One step of the loop of `Input.of`, on the close array, the comma array, the semicolon array,
+and the stack.
+-/
+def stepT (t : Token) (i : Nat) (s : Array Nat × Array Bool × Array Bool × List Nat) :
+    Array Nat × Array Bool × Array Bool × List Nat :=
+  if opening t then (s.1, s.2.1, s.2.2.1, i :: s.2.2.2)
   else if closing t then
-    match s.2.2 with
-    | j :: rest => (s.1.set! j i, s.2.1, rest)
+    match s.2.2.2 with
+    | j :: rest => (s.1.set! j i, s.2.1, s.2.2.1, rest)
     | [] => s
   else if isSym "," t then
-    match s.2.2 with
-    | j :: _ => (s.1, s.2.1.set! j true, s.2.2)
+    match s.2.2.2 with
+    | j :: _ => (s.1, s.2.1.set! j true, s.2.2.1, s.2.2.2)
+    | [] => s
+  else if isSym ";" t then
+    match s.2.2.2 with
+    | j :: _ => (s.1, s.2.1, s.2.2.1.set! j true, s.2.2.2)
     | [] => s
   else s
 
-def stepB (ts : Array Token) (s : Array Nat × Array Bool × List Nat) (i : Nat) :
-    Array Nat × Array Bool × List Nat :=
+def stepB (ts : Array Token) (s : Array Nat × Array Bool × Array Bool × List Nat) (i : Nat) :
+    Array Nat × Array Bool × Array Bool × List Nat :=
   stepT (ts.getD i ⟨⟨0, 0⟩, .eof⟩) i s
 
 theorem forIn'_id_foldl {β : Type} {l : List Nat}
@@ -267,13 +274,14 @@ theorem forIn'_id_foldl {β : Type} {l : List Nat}
   simp
 
 /-! The state after the loop of `Input.of`. -/
-def bracketState (ts : Array Token) : Array Nat × Array Bool × List Nat :=
+def bracketState (ts : Array Token) : Array Nat × Array Bool × Array Bool × List Nat :=
   (List.range ts.size).foldl (stepB ts)
-    (Array.replicate ts.size ts.size, Array.replicate ts.size false, [])
+    (Array.replicate ts.size ts.size, Array.replicate ts.size false,
+      Array.replicate ts.size false, [])
 
 /-! The loop of `Input.of` is a fold of `stepB`. -/
 theorem Input.of_eq (ts : Array Token) :
-    Input.of ts = ⟨ts, (bracketState ts).1, (bracketState ts).2.1⟩ := by
+    Input.of ts = ⟨ts, (bracketState ts).1, (bracketState ts).2.1, (bracketState ts).2.2.1⟩ := by
   unfold Input.of
   simp only [Std.Legacy.Range.forIn'_eq_forIn'_range', Std.Legacy.Range.size, Nat.sub_zero,
     Nat.add_sub_cancel, Nat.div_one, ← List.range_eq_range']
@@ -282,7 +290,7 @@ theorem Input.of_eq (ts : Array Token) :
   · intro a m s
     have ha : a < ts.size := by simpa using m
     have : ts.getD a ⟨⟨0, 0⟩, .eof⟩ = ts[a] := by simp [Array.getD, ha]
-    obtain ⟨c, cm, o⟩ := s
+    obtain ⟨c, cm, sm, o⟩ := s
     simp only [stepB, stepT, this]
     split
     · rfl
@@ -290,7 +298,9 @@ theorem Input.of_eq (ts : Array Token) :
       · cases o <;> rfl
       · split
         · cases o <;> rfl
-        · rfl
+        · split
+          · cases o <;> rfl
+          · rfl
 
 theorem Input.of_tokens (ts : Array Token) : (Input.of ts).tokens = ts := rfl
 
@@ -307,40 +317,47 @@ theorem getD_set_self {α : Type} {a : Array α} {j : Nat} {v d : α} (h : j < a
   simp [h]
 
 /-! A step keeps the comma flag at `j` if it sets no flag at `j`. -/
-theorem stepT_comma (t : Token) (s : Array Nat × Array Bool × List Nat) (i j : Nat)
-    (h : opening t = false → closing t = false → isSym "," t = true → s.2.2.head? ≠ some j) :
+theorem stepT_comma (t : Token) (s : Array Nat × Array Bool × Array Bool × List Nat) (i j : Nat)
+    (h : opening t = false → closing t = false → isSym "," t = true → s.2.2.2.head? ≠ some j) :
     (stepT t i s).2.1.getD j false = s.2.1.getD j false := by
-  obtain ⟨c, cm, o⟩ := s
+  obtain ⟨c, cm, sm, o⟩ := s
   cases o with
   | nil =>
     by_cases h1 : opening t = true <;> by_cases h2 : closing t = true <;>
-    by_cases h3 : isSym "," t = true <;> simp only [stepT, h1, h2, h3] <;> rfl
+    by_cases h3 : isSym "," t = true <;> by_cases h4 : isSym ";" t = true <;>
+    simp only [stepT, h1, h2, h3, h4] <;> rfl
   | cons x o =>
     by_cases h1 : opening t = true <;> by_cases h2 : closing t = true <;>
-    by_cases h3 : isSym "," t = true <;> try (simp only [stepT, h1, h2, h3]; rfl)
-    have hx : x ≠ j := by simpa [h1, h2, h3] using h
-    simp only [stepT, h1, h2, h3, Bool.false_eq_true, ite_false, ite_true, getD_set_ne hx]
+    by_cases h3 : isSym "," t = true <;> by_cases h4 : isSym ";" t = true <;>
+    try (simp only [stepT, h1, h2, h3, h4]; rfl)
+    all_goals
+      have hx : x ≠ j := by simpa [h1, h2, h3] using h
+      simp only [stepT, h1, h2, h3, Bool.false_eq_true, ite_false, ite_true, getD_set_ne hx]
 
 /-! A step keeps the match at `j` if it closes no bracket at `j`. -/
-theorem stepT_close (t : Token) (s : Array Nat × Array Bool × List Nat) (i j d : Nat)
-    (h : opening t = false → closing t = true → s.2.2.head? ≠ some j) :
+theorem stepT_close (t : Token) (s : Array Nat × Array Bool × Array Bool × List Nat)
+    (i j d : Nat)
+    (h : opening t = false → closing t = true → s.2.2.2.head? ≠ some j) :
     (stepT t i s).1.getD j d = s.1.getD j d := by
-  obtain ⟨c, cm, o⟩ := s
+  obtain ⟨c, cm, sm, o⟩ := s
   cases o with
   | nil =>
     by_cases h1 : opening t = true <;> by_cases h2 : closing t = true <;>
-    by_cases h3 : isSym "," t = true <;> simp only [stepT, h1, h2, h3] <;> rfl
+    by_cases h3 : isSym "," t = true <;> by_cases h4 : isSym ";" t = true <;>
+    simp only [stepT, h1, h2, h3, h4] <;> rfl
   | cons x o =>
     by_cases h1 : opening t = true <;> by_cases h2 : closing t = true <;>
     try (simp only [stepT, h1, h2]; rfl)
     · have hx : x ≠ j := by simpa [h1, h2] using h
       simp only [stepT, h1, h2, Bool.false_eq_true, ite_false, ite_true, getD_set_ne hx]
-    · by_cases h3 : isSym "," t = true <;> simp only [stepT, h1, h2, h3] <;> rfl
+    · by_cases h3 : isSym "," t = true <;> by_cases h4 : isSym ";" t = true <;>
+        simp only [stepT, h1, h2, h3, h4] <;> rfl
 
-theorem stepT_close_self (t : Token) (s : Array Nat × Array Bool × List Nat) (i j d : Nat)
-    (h1 : opening t = false) (h2 : closing t = true) (hj : s.2.2.head? = some j)
+theorem stepT_close_self (t : Token) (s : Array Nat × Array Bool × Array Bool × List Nat)
+    (i j d : Nat)
+    (h1 : opening t = false) (h2 : closing t = true) (hj : s.2.2.2.head? = some j)
     (hs : j < s.1.size) : (stepT t i s).1.getD j d = i := by
-  obtain ⟨c, cm, o⟩ := s
+  obtain ⟨c, cm, sm, o⟩ := s
   cases o with
   | nil => cases hj
   | cons x o =>
@@ -349,18 +366,20 @@ theorem stepT_close_self (t : Token) (s : Array Nat × Array Bool × List Nat) (
     simp only [stepT, h1, h2, Bool.false_eq_true, ite_false, ite_true]
     exact getD_set_self hs
 
-theorem stepT_size (t : Token) (s : Array Nat × Array Bool × List Nat) (i : Nat) :
+theorem stepT_size (t : Token) (s : Array Nat × Array Bool × Array Bool × List Nat) (i : Nat) :
     (stepT t i s).1.size = s.1.size := by
-  obtain ⟨c, cm, o⟩ := s
+  obtain ⟨c, cm, sm, o⟩ := s
   cases o <;> by_cases h1 : opening t = true <;> by_cases h2 : closing t = true <;>
-    by_cases h3 : isSym "," t = true <;> simp [stepT, h1, h2, h3]
+    by_cases h3 : isSym "," t = true <;> by_cases h4 : isSym ";" t = true <;>
+    simp [stepT, h1, h2, h3, h4]
 
-theorem stepT_stack (t : Token) (s : Array Nat × Array Bool × List Nat) (i : Nat) :
-    (stepT t i s).2.2 = if opening t then i :: s.2.2
-      else if closing t then s.2.2.tail else s.2.2 := by
-  obtain ⟨c, cm, o⟩ := s
+theorem stepT_stack (t : Token) (s : Array Nat × Array Bool × Array Bool × List Nat) (i : Nat) :
+    (stepT t i s).2.2.2 = if opening t then i :: s.2.2.2
+      else if closing t then s.2.2.2.tail else s.2.2.2 := by
+  obtain ⟨c, cm, sm, o⟩ := s
   cases o <;> by_cases h1 : opening t = true <;> by_cases h2 : closing t = true <;>
-    by_cases h3 : isSym "," t = true <;> simp only [stepT, h1, h2, h3] <;> rfl
+    by_cases h3 : isSym "," t = true <;> by_cases h4 : isSym ";" t = true <;>
+    simp only [stepT, h1, h2, h3, h4] <;> rfl
 
 theorem foldl_range_succ {β : Type} (g : β → Nat → β) (init : β) (k : Nat) :
     (List.range (k + 1)).foldl g init = g ((List.range k).foldl g init) k := by
@@ -442,9 +461,11 @@ theorem Input.of_seg (toks : List Token) (a m b : List Kind) (o c : Kind)
     (Input.of toks.toArray).close.getD a.length toks.length = a.length + 1 + m.length ∧
       (Seg m → (Input.of toks.toArray).comma.getD a.length false = false) := by
   let ts := toks.toArray
-  let init : Array Nat × Array Bool × List Nat :=
-    (Array.replicate ts.size ts.size, Array.replicate ts.size false, [])
-  let S : Nat → Array Nat × Array Bool × List Nat := fun k => (List.range k).foldl (stepB ts) init
+  let init : Array Nat × Array Bool × Array Bool × List Nat :=
+    (Array.replicate ts.size ts.size, Array.replicate ts.size false,
+      Array.replicate ts.size false, [])
+  let S : Nat → Array Nat × Array Bool × Array Bool × List Nat := fun k =>
+    (List.range k).foldl (stepB ts) init
   have hS : ∀ k, S (k + 1) = stepT (ts.getD k ⟨⟨0, 0⟩, .eof⟩) k (S k) := fun k =>
     foldl_range_succ _ _ k
   have hsize : ∀ k, (S k).1.size = toks.length := by
@@ -480,7 +501,7 @@ theorem Input.of_seg (toks : List Token) (a m b : List Kind) (o c : Kind)
     rw [e2] at this
     exact Option.some.inj this
   -- Phase 1: before `o`, each index on the stack is below the current index.
-  have p1 : ∀ k, k ≤ j → (∀ x ∈ (S k).2.2, x < k) ∧ (S k).2.1.getD j false = false ∧
+  have p1 : ∀ k, k ≤ j → (∀ x ∈ (S k).2.2.2, x < k) ∧ (S k).2.1.getD j false = false ∧
       (S k).1.getD j toks.length = toks.length := by
     intro k
     induction k with
@@ -507,9 +528,9 @@ theorem Input.of_seg (toks : List Token) (a m b : List Kind) (o c : Kind)
           have := ih1 j (List.mem_of_head? h); omega)]
         exact ih3
   obtain ⟨p1s, p1c, p1m⟩ := p1 j (Nat.le_refl _)
-  let S0 := (S j).2.2
+  let S0 := (S j).2.2.2
   -- Phase 2: in `m`, the stack holds `j` under the brackets that `m` opens.
-  have p2 : ∀ r, r ≤ m.length → ∃ X : List Nat, (S (j + 1 + r)).2.2 = X ++ j :: S0 ∧
+  have p2 : ∀ r, r ≤ m.length → ∃ X : List Nat, (S (j + 1 + r)).2.2.2 = X ++ j :: S0 ∧
       (∀ x ∈ X, j < x) ∧ scan false 0 (m.take r) = some X.length ∧
       (S (j + 1 + r)).1.getD j toks.length = toks.length ∧
       (Seg m → (S (j + 1 + r)).2.1.getD j false = false) := by
@@ -597,7 +618,7 @@ theorem Input.of_seg (toks : List Token) (a m b : List Kind) (o c : Kind)
     rw [opening_eq, hkc]; simpa using hc.not_open
   -- Phase 3: after `c`, `j` is never on the stack.
   have p3 : ∀ d, j + 2 + m.length + d ≤ toks.length →
-      j ∉ (S (j + 2 + m.length + d)).2.2 ∧
+      j ∉ (S (j + 2 + m.length + d)).2.2.2 ∧
       (S (j + 2 + m.length + d)).1.getD j toks.length = j + 1 + m.length ∧
       (Seg m → (S (j + 2 + m.length + d)).2.1.getD j false = false) := by
     intro d
