@@ -1,0 +1,6 @@
+// S010: an empty array in an array literal without a contextual type.
+// TOP M()
+module M() {
+    // expected-error S010 @+1
+    let a = [[]];
+}

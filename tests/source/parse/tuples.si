@@ -1,0 +1,6 @@
+// Tuples: a trailing comma makes a tuple of one element, and parentheses without one group.
+const A: (Nat, Bool) = (1, true);
+const B: (Nat,) = (1,);
+const C: Nat = (1);
+const D: (Nat, (Bool, ()), Nat) = (1, (true, ()), 2,);
+const E: Nat = (1, 2).0;

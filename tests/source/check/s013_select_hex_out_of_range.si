@@ -1,0 +1,7 @@
+// S013: a selector .N takes a number literal, so .0x2 selects the element 2.
+// TOP M()
+module M() {
+    let t = (1, 2);
+    // expected-error S013 @+1
+    let b = t.0x2;
+}

@@ -1,0 +1,7 @@
+// S013: a static index above the last element.
+// TOP M()
+module M() {
+    let a = [1, 2];
+    // expected-error S013 @+1
+    let b = a[2];
+}

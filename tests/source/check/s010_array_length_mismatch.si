@@ -1,0 +1,6 @@
+// S010: an array of 1 element does not have the annotated length 2.
+// TOP M()
+module M() {
+    // expected-error S010 @+1
+    let a: [Bool; 2] = [true];
+}

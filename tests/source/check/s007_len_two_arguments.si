@@ -1,0 +1,7 @@
+// S007: len takes one argument.
+// TOP M()
+module M() {
+    let a = [1];
+    // expected-error S007 @+1
+    let n = len(a, a);
+}

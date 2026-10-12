@@ -1,0 +1,6 @@
+// S010: the elements of an array literal have no common type.
+// TOP M()
+module M() {
+    // expected-error S010 @+1
+    let a = [1, true];
+}

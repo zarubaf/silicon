@@ -1,0 +1,14 @@
+// The types of the containers: arrays, tuples, nesting, a length expression, and grouping.
+const A: [UInt[8]; 4] = x;
+const B: (Bool, UInt[8]) = x;
+const C: (Bool,) = x;
+const D: [[Bool; 2]; 3] = x;
+const E: (T) = x;
+const F: [T; N + 1] = x;
+const G: [(Bool, [SInt[4]; 2]); 2] = x;
+fn f(a: [Nat; 2], b: (Nat, Bool)) -> [(Nat, Nat); 1] {
+    return g(a, b);
+}
+module M(comptime T: [Nat; 2]) domains() {
+    input p: UInt[8];
+}

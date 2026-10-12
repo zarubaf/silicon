@@ -1,0 +1,2 @@
+// S001: a tuple needs an expression between two commas.
+const A: T = (a,,);

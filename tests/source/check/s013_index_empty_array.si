@@ -1,0 +1,7 @@
+// S013: an index of an empty array.
+// TOP M()
+module M() {
+    let a: [Nat; 0] = [];
+    // expected-error S013 @+1
+    let b = a[0];
+}

@@ -1,0 +1,2 @@
+// S004: a receiver call belongs to a later slice. The error is at the `(`.
+const A: T = t.f(x);

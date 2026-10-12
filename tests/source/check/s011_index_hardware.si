@@ -1,0 +1,9 @@
+// S011: an index of an array is static, so a hardware value is no index.
+// TOP M()
+module M() {
+    input i: UInt[1];
+    let h = i;
+    let a = [1, 2];
+    // expected-error S011 @+1
+    let b = a[h];
+}
