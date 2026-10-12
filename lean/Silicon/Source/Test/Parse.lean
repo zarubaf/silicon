@@ -214,7 +214,7 @@ the element is a type. The first token that is not part of a type is `S001`.
 #guard ex "[(a; b)]" == "error S001 1:17"
 #guard ex "[f(x); 4]" == "error S004 1:16"
 #guard ex "[a.f(x); 4]" == "error S001 1:16"
-#guard ex "[fn() -> T; 4]" == "error S004 1:15"
+#guard ex "[fn() -> T; 4]" == "(arraytype (fn () (name \"T\")) (num 4))"
 #guard ex "[@TypeOf(x); 4]" == "error S004 1:15"
 #guard ex "[a::T; 4]" == "error S004 1:16"
 
@@ -257,6 +257,52 @@ follow it. `(x.m)(args)` calls the field `x.m`, and `t.0(x)` calls the element `
 #guard ex "x.f(a b)" == "error S001 1:20"
 #guard ex "x.f(a,,)" == "error S001 1:20"
 
+/-!
+A function type `fn (T, mut U) -> V` is a type. Arrows bind right, and the result type takes
+each suffix after it. A `,` can end the parameters. `(fn () -> T)[8]` is an index of a function
+type: the parser accepts it, and pass 4 rejects it.
+-/
+#guard dump "const A: fn (fn () -> Bool) -> fn () -> UInt[8] = 0;" ==
+  "(const \"A\" (fn ((fnparam false (fn () (name \"Bool\")))) " ++
+  "(fn () (index (name \"UInt\") ((num 8))))) (num 0))\n"
+#guard dump "const A: fn (T,) -> U = 0;" ==
+  "(const \"A\" (fn ((fnparam false (name \"T\"))) (name \"U\")) (num 0))\n"
+#guard dump "const A: fn (mut T, U) -> V = 0;" ==
+  "(const \"A\" (fn ((fnparam true (name \"T\")) (fnparam false (name \"U\"))) " ++
+  "(name \"V\")) (num 0))\n"
+#guard dump "const A: List[fn () -> Bool] = 0;" ==
+  "(const \"A\" (index (name \"List\") ((fntype () (name \"Bool\")))) (num 0))\n"
+#guard dump "const A: (fn () -> UInt)[8] = 0;" ==
+  "(const \"A\" (index (fn () (name \"UInt\")) ((num 8))) (num 0))\n"
+#guard match parseSource defaultSyntaxDepth "const A: (fn (B) -> C)[8] = 0;" with
+  | .ok [.const _ _ (.index p (.fn q [.mk false (.name r _)] _) _) _] =>
+    p == ⟨1, 10⟩ && q == ⟨1, 11⟩ && r == ⟨1, 15⟩
+  | _ => false
+
+/-! In an expression, a function type is a unary operand. A suffix after it is on its result. -/
+#guard ex "fn () -> UInt[8]" == "(fntype () (index (name \"UInt\") ((num 8))))"
+#guard ex "-fn (A) -> B + 1" ==
+  "(binary add (unary neg (fntype ((fnparam false (name \"A\"))) (name \"B\"))) (num 1))"
+#guard ex "(fn () -> B)(x)" == "(call (fntype () (name \"B\")) ((name \"x\")))"
+#guard ex "f(List[fn () -> Bool])" ==
+  "(call (name \"f\") ((index (name \"List\") ((fntype () (name \"Bool\"))))))"
+#guard st "fn () -> T;" == "(expr (fntype () (name \"T\")))"
+#guard match constValue "fn (mut A) -> B" with
+  | .ok (.fnType p [.mk true (.name q _)] (.name r _)) =>
+    p == ⟨1, 14⟩ && q == ⟨1, 22⟩ && r == ⟨1, 28⟩
+  | _ => false
+
+/-! `S001` at a function type, and at a `comptime` mark on a parameter type. -/
+#guard ex "fn () -> B.x" == "error S001 1:24"
+#guard ex "fn (,) -> B" == "error S001 1:18"
+#guard ex "fn (T U) -> B" == "error S001 1:20"
+#guard ex "fn () B" == "error S001 1:20"
+#guard ex "fn () -> fn" == "error S001 1:25"
+#guard ex "fn () -> UInt(8)" == "error S004 1:27"
+#guard fails "const A: fn (comptime T) -> V = 0;" .S001 1 14
+#guard fails "const A: fn (T, comptime U) -> V = 0;" .S001 1 17
+#guard fails "const A: fn (mut comptime U) -> V = 0;" .S001 1 18
+
 /-! The container types. `(T)` groups, and a suffix can follow each type form. -/
 #guard dump "const A: () = ();" == "(const \"A\" (unit) (unit))\n"
 #guard dump "const A: (T) = 0;" == "(const \"A\" (name \"T\") (num 0))\n"
@@ -275,7 +321,7 @@ follow it. `(x.m)(args)` calls the field `x.m`, and `t.0(x)` calls the element `
 #guard fails "const A: [T] = 0;" .S001 1 12
 #guard fails "const A: [T, U] = 0;" .S001 1 12
 #guard fails "const A: [T; ] = 0;" .S001 1 14
-#guard fails "const A: (fn() -> T,) = 0;" .S004 1 11
+#guard dump "const A: (fn() -> T,) = 0;" == "(const \"A\" (tuple ((fn () (name \"T\")))) (num 0))\n"
 #guard fails "const A: (T)(x) = 0;" .S004 1 13
 #guard fails "const A: [T; 2](x) = 0;" .S004 1 16
 
@@ -494,6 +540,7 @@ def calls (n : Nat) : String := String.join (List.replicate n "f(") ++ "x" ++ ""
 def fields (n : Nat) : String := "x" ++ String.join (List.replicate n ".f")
 def blocks (n : Nat) : String := "".pushn '{' n ++ "".pushn '}' n
 def methods (n : Nat) : String := "x" ++ String.join (List.replicate n ".f()")
+def fnChain (n : Nat) : String := String.join (List.replicate n "fn () -> ") ++ "T"
 
 #guard (constValue (parens 64) 64).toBool
 #guard ex (parens 65) 64 == "error S001 1:78"
@@ -513,6 +560,9 @@ def methods (n : Nat) : String := "x" ++ String.join (List.replicate n ".f()")
 #guard (constValue (methods 63) 64).toBool
 #guard ex (methods 64) 64 == "error S001 1:14"
 #guard stFails (methods 64 ++ ";") .S001 1 64
+#guard (constValue (fnChain 63) 64).toBool
+#guard ex (fnChain 64) 64 == "error S001 1:14"
+#guard fails ("const A: " ++ fnChain 64 ++ " = 0;") .S001 1 10 64
 #guard ex (calls 64) 64 == "error S001 1:14"
 #guard ex ("y + " ++ negs 63) 64 == "error S001 1:14"
 #guard ex ("g(" ++ chain 65 ++ ")") 64 == "error S001 1:14"
@@ -553,6 +603,8 @@ def elifs (n : Nat) : String :=
 #guard ex (fields 4096) == "error S001 1:14"
 #guard (constValue (methods 4095)).toBool
 #guard ex (methods 4096) == "error S001 1:14"
+#guard (constValue (fnChain 4095)).toBool
+#guard ex (fnChain 4096) == "error S001 1:14"
 
 /-! A raised syntax depth accepts a deeper input. -/
 #guard (constValue (parens 10000) 20000).toBool
@@ -629,6 +681,10 @@ def reparse (s : String) : Bool :=
 #guard reparse "const X: T = f([T; 4], [(U); (n)][0], -[V; 1]().0);"
 #guard reparse "fn f(mut xs: L, comptime T: Type) -> T { xs.push(x.f(1).g()); return (a + b).h(); }"
 #guard reparse "comptime fn g(mut n: Nat, x: T) -> T { (x.f)(t.0.m()); return -x.f()[0]; }"
+#guard reparse ("const X: (fn (mut A, fn () -> B) -> fn () -> C)[1] = " ++
+  "(fn () -> UInt)[8] + -fn () -> D;")
+#guard reparse ("fn f(g: fn (mut L,) -> ()) -> fn () -> T { fn () -> T; " ++
+  "let h: List[fn () -> Bool] = g; return (fn () -> T)(x).y; }")
 
 /-!
 The edge cases of the printer for `parse_print`. Each pair of operators nests in both
@@ -680,5 +736,18 @@ def tupT (ts : List TypeExpr) : TypeExpr := .tuple p ts
 #guard fnRoundtrip [.assign p (.index p (v "a") [n 0]) (n 1),
   .connect p (.select p (.field p (v "u") (nm "d")) p 1) (v "x"),
   .assign p (.field p (.index p (.select p (v "t") p 0) [v "i", v "j"]) (nm "f")) (v "y")]
+
+/-! The printer and the parser agree on function types, in a type and in an expression. -/
+def fnT (ps : List FnParam) (r : TypeExpr) : TypeExpr := .fn p ps r
+#guard [fnT [] (t "T"), fnT [.mk true (t "A"), .mk false (fnT [] (t "B"))] (fnT [] (uint (n 8))),
+  .index p (fnT [] (t "T")) [n 8], tupT [fnT [] (t "T")], .array p (fnT [] (t "T")) (n 2),
+  .index p (t "List") [.fnType p [] (t "Bool")]].all
+  fun ty => roundtrip [.const p (nm "X") ty (n 0)]
+#guard constRoundtrip (.fnType p [.mk true (fnT [] (t "A"))] (fnT [] (t "B")))
+#guard constRoundtrip (.call p (.fnType p [] (t "T")) [v "x"])
+#guard constRoundtrip (.index p (.fnType p [] (t "T")) [n 1])
+#guard constRoundtrip (.unary p .neg (.fnType p [] (t "T")))
+#guard constRoundtrip (bin .add (.fnType p [] (t "T")) (.fnType p [] (t "U")))
+#guard fnRoundtrip [.expr p (.fnType p [] (t "T"))]
 
 end Silicon.Source.Test.Parse
