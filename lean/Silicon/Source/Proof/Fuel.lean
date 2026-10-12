@@ -506,6 +506,13 @@ theorem setConst_f (i : Nat) (e : Entry) :
     Follows cap (setConst i e) (setConst i e) := by
   unfold setConst; follows
 
+theorem mutation_f (p : Pos) : Follows cap (mutation p) (mutation p) := by
+  unfold mutation; follows
+
+theorem changeAt_f (pl : Place) (f : Value → Value) :
+    Follows cap (changeAt pl f) (changeAt pl f) := by
+  unfold changeAt; follows [bindLocal_f]
+
 theorem prim_f (p : Pos) (x : String) (k : PrimType) :
     Follows cap (prim p x k) (prim p x k) := by
   unfold prim; follows
@@ -556,7 +563,7 @@ variable {k m : Nat}
 theorem index_f (he : ∀ e, Follows m (eval k e) (eval m e)) (p : Pos) (kd : PrimType)
     (xs : List Resolve.Expr) : Follows m (index k p kd xs) (index m p kd xs) := by
   rw [index.eq_def k, index.eq_def m]
-  follows [he, static_f, need_f]
+  follows [he, static_f, need_f, bounded_f]
 
 theorem spec_f (he : ∀ e, Follows m (eval k e) (eval m e))
     (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t)) (p : Pos) (i : Nat)
@@ -582,9 +589,9 @@ theorem call_f (he : ∀ e, Follows m (eval k e) (eval m e))
     (hb : ∀ p ss, Follows m (block k p ss) (block m p ss)) (p : Pos) (f : Resolve.Expr)
     (xs : List Resolve.Expr) : Follows m (call k p f xs) (call m p f xs) := by
   rw [call.eq_def k, call.eq_def m]
-  follows [he, ht, hb, need_f, static_f, settle_f, data_f, conform_f, conformVal_f, apply_f,
-    hwConvert_f, lenOf_f, named_f, bindLocal_f, bindHw_f, version_f, frameOf_f, nested_f,
-    inFrame_f, zero_f, recordOf_f]
+  follows [he, ht, hb, placeAt_f he, mutation_f, changeAt_f, bounded_f, need_f, static_f,
+    settle_f, data_f, conform_f, conformVal_f, apply_f, hwConvert_f, lenOf_f, named_f,
+    bindLocal_f, bindHw_f, version_f, frameOf_f, nested_f, inFrame_f, zero_f, recordOf_f]
 
 set_option maxHeartbeats 400000 in
 /--
@@ -637,12 +644,14 @@ theorem follows_all : ∀ n,
         apply Follows.exhaust (cap := k)
         intro _
         follows [he k, ht k, hs k, hb k, placeAt_f (he k), need_f, copy_f, conformVal_f,
-          known_f, named_f, bindLocal_f, test_f, int_f, range_f, iteration_f, static_f, item_f]
+          known_f, named_f, bindLocal_f, test_f, int_f, range_f, iteration_f, static_f, item_f,
+          changeAt_f]
       · rw [stmt.eq_def (k + 1), stmt.eq_def (m + 1)]
         apply Follows.charge_one
         intro _
         follows [he m, ht m, hs m, hb m, placeAt_f (he m), need_f, copy_f, conformVal_f,
-          known_f, named_f, bindLocal_f, test_f, int_f, range_f, iteration_f, static_f, item_f]
+          known_f, named_f, bindLocal_f, test_f, int_f, range_f, iteration_f, static_f, item_f,
+          changeAt_f]
     · rcases n' with _ | m
       · rw [block.eq_def (k + 1), block.eq_def 0]
         apply Follows.exhaust (cap := k)

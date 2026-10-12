@@ -21,6 +21,18 @@ The operators follow v0.1 section 3. These rules settle the open points of slice
   the same way.
 - `s[i]` and `len(s)` scan the string, so they charge its size (section 5.4). `str(n)` charges
   the copy of `n`, the square of the size of `n`, and then the size of its result.
+- `List[T]` charges its size after its depth check. `list(T)` charges the copy of `T`, checks
+  the depth of the empty list, and charges 1 for it.
+- `push(xs, x)` and `pop(xs)` change the place `xs` directly, with no copy of the list. The
+  place resolves first, by the steps of an assignment target, and then `x` evaluates. The place
+  must hold a list (`S010`). `pop` of an empty list is `S013`. Then each checks the mutation
+  rule (`S016`). `push` then makes the typed use of `x` at the element type, and a hardware
+  element is `S011`. It checks the new depth from the element alone (`S015`). Each charges the
+  size of the element before the change. `push` gives `()`, and `pop` gives the element.
+- A hardware arm starts at the current nesting depth. A `push` or a `pop` on a binding of that
+  depth changes a binding from before the arm: `S016`. A call nests deeper with a new frame,
+  so a function that the arm calls can change its own bindings.
+- An element of a list, also through an assignment to `xs[i]`, is never hardware (`S011`).
 - Slice 1 has no function values: a function name is only a callee (`S010`).
 - `resize` keeps the signedness. `reinterpret` keeps the width.
 - A typed-use error is at the node of the typed use: the statement, the call, or the operator.
@@ -149,9 +161,13 @@ def reinterpret (t : Ty) (v : Value) : Except Fault Step :=
     if h : u = w then flip true w (h ▸ x) else typeError "`reinterpret` keeps the width"
   | _, _ => typeError s!"`reinterpret` needs finite types, not {v.text}"
 
-/-! `UInt[w]` or `SInt[w]`. The width is 1 to 65536. The charge is the size of the type. -/
+/-!
+`UInt[w]`, `SInt[w]`, or `List[T]`. The width is 1 to 65536. The charge is the size of the type.
+-/
 def family (t : PrimType) (args : List Value) : Except Fault Ty := do
   match t, args with
+  | .list, [.type e] => .ok (.list e)
+  | .list, [v] => typeError s!"the element of a list is a type, not {v.text}"
   | .uint, [.int w] | .sint, [.int w] =>
     unless 1 ≤ w && w ≤ 65536 do .error (.S012, s!"the width {intText w} is not 1 to 65536")
     .ok (if t == .uint then .uint w.toNat else .sint w.toNat)
@@ -162,12 +178,10 @@ def prim (pos : Pos) (x : String) : PrimType → M Ty
   | .bool => pure .bool
   | .nat => pure .nat
   | .int => pure .int
-  | .uint | .sint => fail .S007 pos s!"`{x}` takes 1 argument(s), but it has 0"
+  | .uint | .sint | .list => fail .S007 pos s!"`{x}` takes 1 argument(s), but it has 0"
   | .unit => pure .unit
   | .type => pure .type
   | .string => pure .string
-  -- TODO(#179): lists come in the next step of phase 4.
-  | .list => fail .S004 pos s!"`{x}` is not supported yet"
 
 /-! A string and a handle have no `Ty`, so an assignment keeps their form. -/
 def sameForm : Val → Val → Bool
@@ -393,6 +407,7 @@ def iteration [Runs m] (pos : Pos) (i : Binder) (v : Int) (act : m α) : m α :=
 /-!
 A place after its steps (section 5.2). It holds the local number, the slot, and the source name
 of its root. It also holds the selected part with its type, and the number of each step.
+`inList` tells if the last step selects an element of a list.
 -/
 structure Place where
   id : Nat
@@ -401,6 +416,15 @@ structure Place where
   ty : Option Ty
   part : Val
   keys : List Nat
+  inList : Bool
+
+/-!
+Applies `f` to the selected part of the place `pl` in the live value of its root. The indices of
+the place and the other operands ran after the root was read, so the change reads the live slot.
+-/
+def changeAt (pl : Place) (f : Value → Value) : M Unit := do
+  if let some s@{ value := .static r, .. } := (← get).frame[pl.id]? then
+    bindLocal pl.id { s with value := .static (update f r pl.keys) }
 
 /-!
 The evaluator. `eval`, `typeExpr`, `stmt`, and `block` are the entry functions. Each charges
@@ -452,8 +476,9 @@ mutual
         match ← data p (← need c (← eval n c)).value with
         | .hw h =>
           unless h.ty == .bool do fail .S010 p s!"a condition is a Bool, not {h.ty.text}"
-          let a ← data p (← need y (← eval n y)).value
-          let b ← data p (← need no (← eval n no)).value
+          let (a, b) ← withReader (fun c => { c with arm := some c.depth }) do
+            let a ← data p (← need y (← eval n y)).value
+            return (a, ← data p (← need no (← eval n no)).value)
           return some ⟨← mux p h a b, false⟩
         | v => if ← test p v then eval n y else eval n no
       | .call p f xs _ => call n p f xs
@@ -528,6 +553,7 @@ mutual
   def index (n : Nat) (p : Pos) (k : PrimType) (xs : List Resolve.Expr) : M Ty := do
     let args ← xs.mapM fun x => do static p (← need x (← eval n x)).value
     let t ← lift p (family k args)
+    if t matches .list _ then bounded p t.depth
     charge p (Value.type t).size
     return t
   termination_by (n + 1, 0)
@@ -600,6 +626,7 @@ mutual
     let mut cur := slot.value
     let mut ty := slot.ty
     let mut keys : Array Nat := #[]
+    let mut inList := false
     for sel in sels do
       charge sel.pos 1
       let (k, w, ft) ← match sel with
@@ -617,9 +644,10 @@ mutual
         | some t, _ => some t
         | none, some t => partTy t k
         | none, none => w.ty?
+      inList := cur matches .static (.list ..)
       cur := .static w
       keys := keys.push k
-    return ⟨id, slot, x, ty, cur, keys.toList⟩
+    return ⟨id, slot, x, ty, cur, keys.toList, inList⟩
   termination_by (n + 1, 0)
 
   /--
@@ -691,6 +719,32 @@ mutual
         else fail .S010 p s!"`{g}` needs a hardware data type, not {t.text}"
       | [v] => fail .S010 p s!"`{g}` needs a type, not {v.text}"
       | vs => fail .S007 p s!"`{g}` takes 1 argument(s), but it has {vs.length}"
+    | .name fp g (.fn .push) =>
+      charge fp 1
+      let [l, x] := xs | fail .S007 p s!"`{g}` takes 2 argument(s), but it has {xs.length}"
+      let pl ← placeAt n l.pos .S008 l
+      let o ← need x (← eval n x)
+      let .static (.list e _) := pl.part | fail .S010 p s!"`{g}` needs a list, not {pl.part.text}"
+      mutation p
+      let w ← match ← data x.pos (← settle p e o.value) with
+        | .static w => conform p e w
+        | .hw _ => fail .S011 x.pos "a list holds no hardware value"
+        | v => fail .S010 x.pos s!"{v.text} is not an element of a list"
+      -- The list is within the nesting depth, so only the element can raise its depth.
+      bounded p (1 + w.depth)
+      charge p w.size
+      changeAt pl (fun | .list t ys => .list t (ys.push w) | v => v)
+      return some ⟨.static .unit, false⟩
+    | .name fp g (.fn .pop) =>
+      charge fp 1
+      let [l] := xs | fail .S007 p s!"`{g}` takes 1 argument(s), but it has {xs.length}"
+      let pl ← placeAt n l.pos .S008 l
+      let .static (.list _ ys) := pl.part | fail .S010 p s!"`{g}` needs a list, not {pl.part.text}"
+      let some w := ys.back? | fail .S013 p "`pop` of an empty list"
+      mutation p
+      charge p w.size
+      changeAt pl (fun | .list t ys => .list t ys.pop | v => v)
+      return some ⟨.static w, false⟩
     | .name fp g (.fn h) =>
       charge fp 1
       let vs ← args xs
@@ -715,6 +769,14 @@ mutual
         match ← static p m with
         | .str m => fail .S014 p s!"error: {strText m}"
         | m => fail .S010 p s!"`{g}` does not accept {m.text}"
+      | .list, [t] =>
+        match ← static p t with
+        | .type t =>
+          let v := Value.list t #[]
+          bounded p v.depth
+          charge p 1
+          return some ⟨.static v, false⟩
+        | t => fail .S010 p s!"`{g}` needs a type, not {t.text}"
       | .str, [v] =>
         match ← data p v with
         | .static n@(.int k) =>
@@ -723,11 +785,9 @@ mutual
           charge p s.size
           return some ⟨.static s, false⟩
         | v => fail .S010 p s!"`{g}` needs an Int, not {v.text}"
-      -- TODO(#179): lists come in the next step of phase 4.
-      | .list, _ | .push, _ | .pop, _ => fail .S004 p s!"`{g}` is not supported yet"
       | _, vs => fail .S010 p s!"`{g}` does not accept {vs.map Val.text}"
     | _ => ctor
-  termination_by (n + 1, 0)
+  termination_by (n + 1, 1)
 
   /-- A statement. The result is the value of a `return`. -/
   def stmt (b : Nat) (s : Resolve.Stmt) : M (Option Val) :=
@@ -757,10 +817,9 @@ mutual
             else fail .S010 p s!"expected {pl.part.text}, but the value is {o.value.text}"
         if pl.keys.isEmpty then bindLocal pl.id { pl.slot with value := ← named p pl.id pl.name y }
         else
+          if pl.inList && y matches .hw _ then fail .S011 v.pos "a list holds no hardware value"
           let w ← item v.pos y
-          -- The indices and the right side ran after `place`, so the update reads the live slot.
-          if let some s@{ value := .static r, .. } := (← get).frame[pl.id]? then
-            bindLocal pl.id { s with value := .static (replace r pl.keys w) }
+          changeAt pl fun _ => w
         return none
       | .ret p v => do
         let some rt := (← read).ret | fail .S006 p "only a function has `return`"
@@ -961,7 +1020,7 @@ def symbols (items : Array Resolve.Item) (scans : Array Scan) : Syms := Id.run d
 def start (budget : Budget) (items : Array Resolve.Item) : Ctx × St :=
   let scans := items.map scanItem
   (⟨items, budget.depth, 0, none, 0, scans.map callSites, symbols items scans, ⟨none, 0⟩,
-    []⟩,
+    [], none⟩,
    ⟨budget.fuel, Array.replicate items.size .notStarted, #[], {}, {}⟩)
 
 /-! Runs `act` with the budget. The result has the used fuel. -/

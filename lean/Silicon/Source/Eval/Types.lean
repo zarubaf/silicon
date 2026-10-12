@@ -12,9 +12,9 @@ follow sections 5.1, 5.4, 5.5, and 5.6. These rules settle their open points:
 - `[T; N]` charges its size and the three products of its metadata (`Meta.arrayCharge`). A tuple
   type charges its size, then the sums of its metadata (`sums`), as a struct does.
 - A join walks two types together. It charges 1 before it visits each pair of container types:
-  arrays, tuples, and struct types. A pair of two struct types charges as a type equality, the
-  sum of the two sizes, and compares the identities. Another pair charges nothing. A visit that
-  fails stops the walk, so the charge counts the pairs up to that visit.
+  arrays, tuples, lists, and struct types. A pair of two struct types charges as a type
+  equality, the sum of the two sizes, and compares the identities. Another pair charges nothing.
+  A visit that fails stops the walk, so the charge counts the pairs up to that visit.
 - A `type` item is a constant of type `Type` in the table of constants. Its first use evaluates
   its type expression, and a use while it is in progress is `S019`.
 - The key of a struct specialization is its struct item and its static arguments. Each
@@ -60,9 +60,9 @@ def sums (pos : Pos) (parts : List Meta) (m : Meta) : M Unit := do
   charge pos (Meta.readCharge parts)
   charge pos m.intCharge
 
-/-! A container type: an array, a tuple, or a struct type. -/
+/-! A container type: an array, a tuple, a list, or a struct type. -/
 def containerTy : Ty → Bool
-  | .array .. | .tuple _ | .struct .. => true
+  | .array .. | .tuple _ | .list _ | .struct .. => true
   | _ => false
 
 /-! The common type of two types that are not two arrays or two tuples: the operand rule. -/
@@ -75,7 +75,8 @@ def scalarJoin : Ty → Ty → Option Ty
 
 /-!
 The join of two types: their common type by the operand rule. A static integer takes the finite
-type of the other side. Arrays need one length and tuples one arity.
+type of the other side. Arrays need one length and tuples one arity. Two lists join their
+element types.
 -/
 mutual
   def joinTy : Ty → Ty → StateM Nat (Option Ty)
@@ -85,6 +86,9 @@ mutual
         let r ← joinTy s t
         return r.map (.array · n)
       else return none
+    | .list s, .list t => do
+      modify (· + 1)
+      return (← joinTy s t).map .list
     | .tuple ⟨ss⟩, .tuple ⟨ts⟩ => do
       modify (· + 1)
       if ss.length = ts.length then
