@@ -37,9 +37,24 @@ def exprText (e : Expr) : String := e.print 0
 #guard exprDump (.index p (v "UInt") [n 8]) == "(index (name \"UInt\") ((num 8)))"
 #guard exprDump (.field p (v "x") (nm "0")) == "(field (name \"x\") \"0\")"
 
+
+/-! Each container form of slice 2. A `select` prints its selector in decimal. -/
+#guard exprDump (.unit p) == "(unit)"
+#guard exprDump (.tuple p [n 1]) == "(tuple ((num 1)))"
+#guard exprDump (.tuple p [n 1, v "x"]) == "(tuple ((num 1) (name \"x\")))"
+#guard exprDump (.array p []) == "(array ())"
+#guard exprDump (.array p [n 1, n 2]) == "(array ((num 1) (num 2)))"
+#guard exprDump (.select p (v "t") p 16) == "(select (name \"t\") 16)"
+
 /-! Each type kind. -/
 #guard u8.dump == "(index (name \"UInt\") ((num 8)))"
 #guard (t "Bool").dump == "(name \"Bool\")"
+#guard (TypeExpr.unit p).dump == "(unit)"
+#guard (TypeExpr.tuple p [u8]).dump == "(tuple ((index (name \"UInt\") ((num 8)))))"
+#guard (TypeExpr.tuple p [t "Bool", .unit p]).dump == "(tuple ((name \"Bool\") (unit)))"
+#guard (TypeExpr.array p (t "Bool") (v "N")).dump == "(array (name \"Bool\") (name \"N\"))"
+#guard (TypeExpr.array p (.array p u8 (n 2)) (n 3)).dump ==
+  "(array (array (index (name \"UInt\") ((num 8))) (num 2)) (num 3))"
 
 /-! The escapes of the grammar, and a non-ASCII character as itself. -/
 #guard exprDump (.str p "a\"b\\c\nd\re\tf") == "(str \"a\\\"b\\\\c\\nd\\re\\tf\")"
@@ -122,6 +137,33 @@ def long : Item := .fn p false (nm "f") [] (t "Unit") (List.replicate 100000 (.e
 #guard exprText (.cond p (.cond p (v "c") (v "d") (v "e")) (v "x") (bin .add (v "y") (n 1))) ==
   "if (if (c) { d } else { e }) { x } else { y + 1 }"
 #guard exprText (.str p "a\"b") == "\"a\\\"b\""
+
+/-!
+A tuple of one element ends with `,)`. A container is a primary, and its elements print at
+level 0. A `select` is a postfix form.
+-/
+#guard exprText (.unit p) == "()"
+#guard exprText (.tuple p [v "a"]) == "(a,)"
+#guard exprText (.tuple p [bin .add (v "a") (n 1), .unit p]) == "(a + 1, ())"
+#guard exprText (.tuple p [.tuple p [v "a"]]) == "((a,),)"
+#guard exprText (.array p []) == "[]"
+#guard exprText (.array p [.cond p (v "c") (n 1) (n 0), n 2]) ==
+  "[if (c) { 1 } else { 0 }, 2]"
+#guard exprText (.select p (v "t") p 0) == "t.0"
+#guard exprText (.select p (.select p (v "t") p 1) p 2) == "t.1.2"
+#guard exprText (.select p (.tuple p [n 1, n 2]) p 1) == "(1, 2).1"
+#guard exprText (.select p (bin .add (v "a") (v "b")) p 0) == "(a + b).0"
+#guard exprText (.select p (.unary p .neg (v "t")) p 0) == "(-t).0"
+#guard exprText (.unary p .neg (.select p (v "t") p 0)) == "-t.0"
+#guard exprText (.index p (.select p (.array p [n 1]) p 0) [n 0]) == "[1].0[0]"
+#guard exprText (.field p (.select p (v "t") p 0) (nm "f")) == "t.0.f"
+
+/-! A type prints `()`, a tuple type, and `[T; N]` with `N` at level 0. -/
+#guard (TypeExpr.unit p).print == "()"
+#guard (TypeExpr.tuple p [u8]).print == "(UInt[8],)"
+#guard (TypeExpr.tuple p [t "Bool", .unit p]).print == "(Bool, ())"
+#guard (TypeExpr.array p (.array p u8 (n 2)) (bin .add (v "N") (n 1))).print ==
+  "[[UInt[8]; 2]; N + 1]"
 
 /-! Statements and items print as indented lines. -/
 #guard Print.print [counter, inc] ==
