@@ -2,6 +2,8 @@
 //! The prelude of slices 1 and 2. A later slice adds its own names, so a use of one of them is
 //! `S003` until then.
 
+use parse::ast::ParamMode;
+
 /// A name of the prelude: the scalar types and functions of slice 1, `Unit` and `len` of the
 /// containers of slice 2, `Type` and `data_bits` of the types as values, and `String`, `List`,
 /// `list`, `push`, `pop`, and `str` of the strings and the lists.
@@ -69,6 +71,20 @@ impl Prelude {
                 | Prelude::String
                 | Prelude::List
         )
+    }
+
+    /// The parameter modes of a prelude function (design section 5.6). A name that is not a
+    /// function has one parameter without a mark, as `error`, `len`, and `str` have.
+    #[must_use]
+    pub fn modes(self) -> &'static [ParamMode] {
+        match self {
+            Prelude::Resize | Prelude::Reinterpret => &[ParamMode::Comptime, ParamMode::None],
+            Prelude::ListFn | Prelude::DataBits => &[ParamMode::Comptime],
+            Prelude::Push => &[ParamMode::Mut, ParamMode::None],
+            Prelude::Pop => &[ParamMode::Mut],
+            Prelude::StaticAssert => &[ParamMode::None, ParamMode::None],
+            _ => &[ParamMode::None],
+        }
     }
 
     /// Whether the name is a function of the prelude.

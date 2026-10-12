@@ -100,19 +100,6 @@ impl Callee<'_> {
     }
 }
 
-/// The parameter modes of a prelude function (design section 5.6).
-fn prelude_modes(p: Prelude) -> &'static [ParamMode] {
-    use ParamMode::{Comptime, Mut, None};
-    match p {
-        Prelude::Resize | Prelude::Reinterpret => &[Comptime, None],
-        Prelude::ListFn | Prelude::DataBits => &[Comptime],
-        Prelude::Push => &[Mut, None],
-        Prelude::Pop => &[Mut],
-        Prelude::StaticAssert => &[None, None],
-        _ => &[None],
-    }
-}
-
 fn prelude_statics(p: Prelude) -> Statics {
     match p {
         Prelude::Resize | Prelude::Reinterpret | Prelude::ListFn => Statics::First,
@@ -326,7 +313,7 @@ impl<'a> Walker<'a> {
             },
             Target::Prelude(p) if p.is_type() => None,
             Target::Prelude(p) => Some(Callee {
-                modes: prelude_modes(p),
+                modes: p.modes(),
                 statics: prelude_statics(p),
             }),
         }
