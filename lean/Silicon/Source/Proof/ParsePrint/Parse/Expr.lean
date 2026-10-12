@@ -405,6 +405,34 @@ theorem Runs.suffixes_field {ctx : Ctx} {i f : Nat} {start : Pos} {n : Node} {pl
   simp only [Bool.false_eq_true, ite_false]
   exact hk _
 
+theorem Runs.suffixes_method {ctx : Ctx} {i f : Nat} {start : Pos} {n : Node} {pl : Bool}
+    {m : String} {xs : List Expr} (hE : ∀ x ∈ xs, EGoal x ∧ x.printable = true) {R : List Kind}
+    (hw : Win ctx.input i (.symbol "." :: .ident m :: .symbol "(" ::
+      (argToks (xs.map (Expr.toks 0)) ++ .symbol ")" :: R)))
+    (hf : 4 * (argToks (xs.map (Expr.toks 0))).length + 3 ≤ f) {l : Nat}
+    {Q : Node × Bool → Prop}
+    (hk : ∀ p (ns : List Node), ns.map (·.expr.erase) = xs.map Expr.erase →
+      (∀ m' ∈ ns, m'.height ≤ (argToks (xs.map (Expr.toks 0))).length) →
+      Runs (suffixes f start ⟨.method start n.expr ⟨p, m⟩ (ns.map (·.expr)),
+        height (n.height :: ns.map (·.height))⟩ false) ctx
+        (i + (argToks (xs.map (Expr.toks 0))).length + 4) l Q) :
+    Runs (suffixes (f + 1) start n pl) ctx i l Q := by
+  rw [Parse.suffixes]
+  refine Runs.peek_bind ?_
+  simp only [isSym, hw.head, beq_iff_eq, Kind.symbol.injEq]
+  simp only [show ("." : String) ≠ "(" by decide, show ("." : String) ≠ "[" by decide,
+    ite_false, ite_true]
+  refine Runs.bump_bind ?_
+  refine Runs.peek_bind ?_
+  simp only [hw.tail.head]
+  refine Runs.bump_bind ?_
+  refine Runs.bind (Runs.acceptSym_true hw.tail.tail.head) fun b hb => ?_
+  subst hb
+  simp only [ite_true]
+  refine Runs.bind (Runs.args (Or.inl rfl) (allowEmpty := true) (top := false) hE (fun _ => rfl)
+    ctx (i + 1 + 1 + 1) f R hw.tail.tail.tail hf (by simp)) fun ns hns => ?_
+  exact Runs.start (by omega) (hk _ ns hns.1 hns.2)
+
 
 /-! ## Postfix forms -/
 
@@ -464,6 +492,11 @@ theorem Expr.toks11_call (p : Pos) (g : Expr) (xs : List Expr)
 theorem Expr.toks11_index (p : Pos) (b : Expr) (xs : List Expr) :
     (Expr.index p b xs).toks 11 =
       b.toks 11 ++ .symbol "[" :: (argToks (xs.map (Expr.toks 0)) ++ [.symbol "]"]) := by
+  simp [Expr.toks, Expr.level, postfixLevel]
+
+theorem Expr.toks11_method (p : Pos) (r : Expr) (m : Ident) (xs : List Expr) :
+    (Expr.method p r m xs).toks 11 = r.toks 11 ++ .symbol "." :: .ident m.name :: .symbol "(" ::
+      (argToks (xs.map (Expr.toks 0)) ++ [.symbol ")"]) := by
   simp [Expr.toks, Expr.level, postfixLevel]
 
 theorem Expr.toks11_field (p : Pos) (b : Expr) (m : Ident) :
@@ -984,7 +1017,34 @@ theorem Runs.postfix_paren (u : Expr) (hl : u.level < 11) (hpl : u.place = false
 
 theorem Runs.postfix (u : Expr) : PGoal u := by
   induction u using Expr.ind with
-  | case16 => intro hp; simp [Expr.printable] at hp
+  | case16 p r m xs ihr _ =>
+    intro hp hIH ctx i f t R hw ht _ hf l Q hk
+    unfold SufK at hk
+    simp only [Expr.printable, Bool.and_eq_true, Expr.printableAll_eq, List.all_eq_true] at hp
+    obtain ⟨⟨hpr, -⟩, hpxs⟩ := hp
+    rw [Expr.toks11_method] at hw hf hk hIH
+    simp only [List.length_cons, List.length_append, List.length_nil] at hf hk hIH
+    simp only [List.cons_append, List.append_assoc, List.nil_append] at hw
+    have hE : ∀ x ∈ xs, EGoal x ∧ x.printable = true := fun x hx =>
+      ⟨hIH x (by have := argToks_mem hx; omega), hpxs x hx⟩
+    refine ihr hpr (fun x hx => hIH x (by omega)) ctx i f (.symbol ".") _ hw (by decide)
+      (fun q b m _ => by decide) (by omega) l Q ?_
+    intro n f' hn hf'
+    obtain ⟨f'', rfl⟩ : ∃ g, f' = g + 1 := ⟨f' - 1, by omega⟩
+    refine Runs.suffixes_method hE hw.drop (by omega) ?_
+    intro pos ns hns hh
+    have hres : (Expr.method (tokenAt ctx.input i).pos n.expr ⟨pos, m.name⟩
+        (ns.map (·.expr))).erase = (Expr.method p r m xs).erase := by
+      simp only [Expr.erase, hn.1, List.map_map, Function.comp_def, Ident.erase]
+      rw [← hns]
+    refine Runs.start (by omega) (hk _ f'' ⟨hres, ?_⟩ (by omega))
+    refine Nat.le_trans (height_le (B := (Expr.toks 11 r).length +
+      (argToks (List.map (Expr.toks 0) xs)).length + 3) ?_) (by omega)
+    intro x hx
+    simp only [List.mem_cons, List.mem_map] at hx
+    rcases hx with rfl | ⟨m', hm', rfl⟩
+    · have := hn.2; omega
+    · have := hh m' hm'; omega
   | case15 p t n _ =>
     intro hp hIH ctx i f u R hw ht _ hf l Q hk
     unfold SufK at hk

@@ -171,7 +171,12 @@ theorem head_append {s t : String} (h : ∃ x xs, s.toList = x :: xs ∧ exprSta
 theorem Expr.head (e : Expr) :
     e.printable = true → ∀ ctx, ∃ x xs, (e.print ctx).toList = x :: xs ∧ exprStart x = true := by
   induction e using Expr.ind with
-  | case16 => intro h; simp [Expr.printable] at h
+  | case16 p r m xs ihr _ =>
+    intro h; apply Expr.head_paren
+    rw [Expr.print]
+    simp only [Expr.printable, Bool.and_eq_true] at h
+    simp only [Nat.not_lt_zero, ite_false, String.append_assoc]
+    exact head_append (ihr h.1.1 _)
   | case13 | case15 =>
     intro _; apply Expr.head_paren
     rw [Expr.print]
@@ -289,8 +294,17 @@ private theorem lexes_all (D : Nat) :
   have hb : Lexes D .any "[".toList [.symbol "["] := Lexes.glue (by decide)
   apply Expr.erase.mutual_induct
   case case16 =>
-    intro _ _ _ _ _ _ h
-    simp [Expr.printable] at h
+    intro p r m xs ihr ihx h; apply Lexes.wrap
+    simp only [Expr.printable, Bool.and_eq_true, Expr.printableAll_eq, List.all_eq_true] at h
+    rw [Expr.print, Expr.toks]
+    have hd : Lexes D (.sym '.') ".".toList [.symbol "."] := Lexes.glue (by decide)
+    have ha := Lexes.argsClose (D := D) xs (fun x hx => ihx x hx (h.2 x hx) 0) hcl hcs
+    have hm := (Lexes.name h.1.2).append (hop.append ha (Starts.any _))
+      (Starts.glue "(" (by decide) _)
+    have := (ihr h.1.1 postfixLevel).append (hd.append hm
+      ((starts_of_exprStart (by decide) (name_exprStart h.1.2)).append _))
+      (Starts.glue "." (by decide) _)
+    simpa using Lexes.any (f := .sep) this
   case case15 =>
     intro p t n iht ihn h; apply Lexes.wrap
     simp only [Expr.printable, Bool.and_eq_true] at h
