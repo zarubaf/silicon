@@ -194,9 +194,9 @@ structure Syms where
 
 /-!
 The items, the depth limit, the current depth, and the return type of the current call. The
-item whose body runs, its call sites by position, its symbols, and the current frame name the
-hardware. `binding` holds the struct items whose parameter types evaluate now. `arm` is the
-nesting depth at the start of the innermost hardware arm (section 9.4).
+item whose body runs, its symbols, and the current frame name the hardware. `binding` holds
+the struct items whose parameter types evaluate now. `arm` is the nesting depth at the start of
+the innermost hardware arm (section 9.4).
 -/
 structure Ctx where
   items : Array Resolve.Item
@@ -204,7 +204,6 @@ structure Ctx where
   depth : Nat
   ret : Option Ty
   item : Nat
-  calls : Array (Std.TreeMap Pos Nat Pos.compare)
   syms : Syms
   frame : Frame
   binding : List Nat

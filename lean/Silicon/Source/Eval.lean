@@ -69,9 +69,9 @@ Hardware values follow v0.1 sections 1 and 3:
 - A `let`, an assignment, and a hardware argument of a function bind a hardware value to a
   core name of section 7.3. The hardware result of a function gets the role `0ret` in the call
   frame. A static value and a handle alias get no core name.
-- The call site `k` of a call frame `<fn>$<k>c` counts the call nodes of the body of the
-  enclosing item in position order. A call outside a body has only static values, so it
-  never names hardware.
+- `Source.Resolve` gives each call node its call site `k`: its number in the pre-order of the
+  body of the enclosing item. The call frame is `<fn>$<k>c`. A call outside a body has only
+  static values, so it never names hardware.
 
 The cost model. Elaboration charges these units, in evaluation order. A charge is known before
 its operation runs. When the fuel cannot pay it, the result is `S015` at the node of the charge.
@@ -558,11 +558,11 @@ mutual
             return (a, ← data p (← need no (← eval n no)).value)
           return some ⟨← mux p h a b, false⟩
         | v => if ← test p v then eval n y else eval n no
-      | .call p f xs _ => call n p f xs 0
-      | .method p r m f xs _ => do
+      | .call p f xs k => call n p f xs 0 k
+      | .method p r m f xs k => do
         let some b := receiverAt (← read).items f
           | fail .S007 p s!"`{m.name}` has no parameter without `comptime` for the receiver"
-        call n p (.name m.pos m.name f) (r :: xs) b
+        call n p (.name m.pos m.name f) (r :: xs) b k
       | .index p b xs => do
         if let .name bp _ (.type k) := b then
           charge bp 1
@@ -732,10 +732,10 @@ mutual
   /--
   A call of a function item, a prelude function, or a type. The arguments `xs` are in their
   evaluation order, and the first binds at the parameter `b` (`bound`). A function item runs in
-  the call frame `<fn>$<k>c`. A hardware argument and a hardware result get a core name in that
-  frame. The write-backs of its `mut` actuals run in the frame of the caller.
+  the call frame `<fn>$<k>c` of the call site `k`. A hardware argument and a hardware result get
+  a core name in that frame. The write-backs of its `mut` actuals run in the frame of the caller.
   -/
-  def call (n : Nat) (p : Pos) (f : Resolve.Expr) (xs : List Resolve.Expr) (b : Nat) :
+  def call (n : Nat) (p : Pos) (f : Resolve.Expr) (xs : List Resolve.Expr) (b k : Nat) :
       M (Option Out) := do
     let args (xs : List Resolve.Expr) : M (List Val) := do
       return bound b (← xs.mapM fun x => do return (← need x (← eval n x)).value)
@@ -771,10 +771,8 @@ mutual
         else return Actual.value (← need x (← eval n x)).value
       let acts := bound b acts
       let ctx ← read
-      -- A call outside a body runs on static values only, so its site never names hardware.
-      let site := ((ctx.calls[ctx.item]?).bind (·[p]?)).getD 0
       let (r, outs) ← nested p <| inFrame none do
-        let (path, fr) ← frameOf fname.name (ctx.syms.items.getD i 0) (.call site)
+        let (path, fr) ← frameOf fname.name (ctx.syms.items.getD i 0) (.call k)
         withReader (fun c => { c with item := i, frame := fr }) do
           for (q, a) in ps.zip acts do
             let t ← typeExpr n q.ty
@@ -958,11 +956,10 @@ mutual
 end
 
 /-!
-The scan of a body holds the names that elaboration looks up. These are the positions of the
-call nodes, the binders with their local numbers, and the field names with their positions.
+The scan of an item holds the names that elaboration looks up. These are the binders with their
+local numbers, and the field names with their positions.
 -/
 structure Scan where
-  calls : List Pos := []
   binders : List (Nat × String) := []
   fields : List (Pos × String) := []
 
@@ -973,12 +970,10 @@ def scanBinder (b : Binder) : ScanM Unit :=
 
 mutual
   def scanExpr : Resolve.Expr → ScanM Unit
-    | .call p f xs _ => do
-      modify fun s => { s with calls := p :: s.calls }
+    | .call _ f xs _ => do
       scanExpr f
       for x in xs do scanExpr x
-    | .method p r _ _ xs _ => do
-      modify fun s => { s with calls := p :: s.calls }
+    | .method _ r _ _ xs _ => do
       scanExpr r
       for x in xs do scanExpr x
     | .field _ a f => do
@@ -1030,44 +1025,27 @@ mutual
     for s in ss do scanStmt s
 end
 
-/-!
-The scan of an item. Only the call sites of the body count for the call frames, so a struct,
-which has no body, has none. Its parameters bind in its specializations.
--/
+/-! The scan of an item. The parameters of a struct bind in its specializations. -/
 def scanItem (it : Resolve.Item) : Scan :=
   let go : ScanM Unit := match it with
     | .fn _ _ _ ps _ b => do
       scanStmts b
-      let calls := (← get).calls
       for q in ps do
         scanBinder q.name
         scanType q.ty
-      modify fun s => { s with calls }
     | .module _ _ ps ds b => do
       scanStmts b
-      let calls := (← get).calls
       for q in ps do
         scanBinder q.name
         scanType q.ty
       for d in ds do scanBinder d
-      modify fun s => { s with calls }
     | .struct _ _ ps fs => do
       for q in ps do
         scanBinder q.name
         scanType q.ty
       for f in fs do scanType f.ty
-      modify fun s => { s with calls := [] }
     | .const .. | .alias .. => pure ()
   (go.run {}).2
-
-/-!
-The number `k` of each call node in the body of an item. It is the index of its position
-among the distinct positions of the call nodes of the body. Section 7.3 names a call frame with
-it.
--/
-def callSites (sc : Scan) : Std.TreeMap Pos Nat Pos.compare :=
-  let sorted : Std.TreeMap Pos Unit Pos.compare := sc.calls.foldl (fun m p => m.insert p ()) {}
-  sorted.keys.zipIdx.foldl (fun m (p, k) => m.insert p k) {}
 
 def itemName : Resolve.Item → String
   | .const _ n .. | .fn _ _ n .. | .module _ n .. | .struct _ n .. | .alias _ n .. => n.name
@@ -1108,8 +1086,7 @@ def symbols (items : Array Resolve.Item) (scans : Array Scan) : Syms := Id.run d
 /-! The context and the state of an elaboration with the budget `budget`. -/
 def start (budget : Budget) (items : Array Resolve.Item) : Ctx × St :=
   let scans := items.map scanItem
-  (⟨items, budget.depth, 0, none, 0, scans.map callSites, symbols items scans, ⟨none, 0⟩,
-    [], none⟩,
+  (⟨items, budget.depth, 0, none, 0, symbols items scans, ⟨none, 0⟩, [], none⟩,
    ⟨budget.fuel, Array.replicate items.size .notStarted, #[], {}, {}⟩)
 
 /-! Runs `act` with the budget. The result has the used fuel. -/
