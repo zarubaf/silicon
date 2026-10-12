@@ -1,0 +1,9 @@
+// S007: a struct specialization has the number of arguments of its declaration.
+// TOP M()
+struct P(comptime W: Nat) {
+    a: UInt[W],
+}
+module M() domains() {
+    // expected-error S007 @+1
+    type A = P[8, 9];
+}

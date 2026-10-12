@@ -1,0 +1,10 @@
+// S010: a record has no field that its struct does not declare.
+// TOP M()
+struct P {
+    a: Bool,
+}
+module M() domains() {
+    let r = P(true);
+    // expected-error S010 @+1
+    let b = r.c;
+}

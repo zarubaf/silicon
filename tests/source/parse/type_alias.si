@@ -1,0 +1,14 @@
+// A `type` alias at the item level and in a block.
+type A = [UInt[8]; 4];
+type B = (A, Bool);
+type C = P[8];
+fn f() -> Nat {
+    type D = (B, ());
+    {
+        type E = D;
+    }
+    return 0;
+}
+module M() domains() {
+    type F = [Bool; 2];
+}

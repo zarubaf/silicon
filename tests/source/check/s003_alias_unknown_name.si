@@ -1,0 +1,6 @@
+// S003: an alias names a declaration.
+// TOP M()
+// expected-error S003 @+1
+type A = Missing;
+module M() domains() {
+}

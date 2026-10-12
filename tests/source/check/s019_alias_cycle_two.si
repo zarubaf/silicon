@@ -1,0 +1,8 @@
+// S019: two aliases that use each other. The first use of `A` evaluates `B`, and `B` uses `A` in progress.
+// TOP M()
+type A = (B, Bool);
+// expected-error S019 @+1
+type B = [A; 2];
+module M() domains() {
+    type C = A;
+}

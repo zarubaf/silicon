@@ -1,0 +1,9 @@
+// S012: a struct argument of type Nat is not negative.
+// TOP M()
+struct P(comptime W: Nat) {
+    a: Bool,
+}
+module M() domains() {
+    // expected-error S012 @+1
+    type A = P[0 - 1];
+}

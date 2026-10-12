@@ -1,0 +1,10 @@
+// S005: a register is not a static position, also in a type annotation.
+// TOP M()
+struct P(comptime W: Nat) {
+    a: Bool,
+}
+module M() {
+    reg c: UInt[4] = 0;
+    // expected-error S005 @+1
+    type A = P[c];
+}

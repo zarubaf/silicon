@@ -1,0 +1,11 @@
+// S011: a static position gets a static value.
+// TOP M()
+struct P(comptime W: Nat) {
+    a: Bool,
+}
+module M() {
+    input x: UInt[4];
+    let y = x +% 1;
+    // expected-error S011 @+1
+    let r = P[y](true);
+}

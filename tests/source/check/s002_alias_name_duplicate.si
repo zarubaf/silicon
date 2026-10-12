@@ -1,0 +1,7 @@
+// S002: a type alias and a struct share one namespace of items.
+// TOP M()
+struct P {}
+// expected-error S002 @+1
+type P = Bool;
+module M() domains() {
+}

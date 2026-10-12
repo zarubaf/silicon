@@ -1,0 +1,9 @@
+// S019: a specialization whose field uses the same specialization is in progress.
+// TOP M()
+struct P(comptime W: Nat) {
+    // expected-error S019 @+1
+    a: P[W],
+}
+module M() domains() {
+    type A = P[8];
+}

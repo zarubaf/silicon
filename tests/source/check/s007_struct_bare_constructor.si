@@ -1,0 +1,9 @@
+// S007: a constructor of a struct with parameters needs the specialization.
+// TOP M()
+struct P(comptime W: Nat) {
+    a: UInt[W],
+}
+module M() domains() {
+    // expected-error S007 @+1
+    let r = P(1);
+}

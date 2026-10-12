@@ -1,0 +1,10 @@
+// S019: a struct reaches itself through an alias.
+// TOP M()
+struct P {
+    a: A,
+}
+// expected-error S019 @+1
+type A = (Bool, P);
+module M() domains() {
+    type B = P;
+}

@@ -1,0 +1,9 @@
+// S012: a static field value fits the finite field type.
+// TOP M()
+struct P {
+    a: UInt[4],
+}
+module M() domains() {
+    // expected-error S012 @+1
+    let r = P(16);
+}

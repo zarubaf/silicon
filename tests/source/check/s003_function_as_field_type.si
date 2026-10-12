@@ -1,0 +1,11 @@
+// S003: a function is not a type.
+// TOP M()
+fn g() -> Nat {
+    return 1;
+}
+struct S {
+    // expected-error S003 @+1
+    a: g,
+}
+module M() domains() {
+}

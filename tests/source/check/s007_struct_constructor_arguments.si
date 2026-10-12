@@ -1,0 +1,10 @@
+// S007: a struct constructor has one argument for each field.
+// TOP M()
+struct P {
+    a: Bool,
+    b: Nat,
+}
+module M() domains() {
+    // expected-error S007 @+1
+    let r = P(true);
+}

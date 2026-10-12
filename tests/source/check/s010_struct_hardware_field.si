@@ -1,0 +1,10 @@
+// S010: a record holds only static values in this phase, so a hardware value is no field.
+// TOP M()
+struct P {
+    a: Bool,
+}
+module M() {
+    input x: Bool;
+    // expected-error S010 @+1
+    let r = P(x);
+}

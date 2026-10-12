@@ -1,0 +1,7 @@
+// S007: a type alias takes no arguments.
+// TOP M()
+type A = Bool;
+module M() domains() {
+    // expected-error S007 @+1
+    type B = A[1];
+}

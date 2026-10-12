@@ -1,0 +1,7 @@
+// S019: an alias that depends on itself.
+// TOP M()
+// expected-error S019 @+1
+type A = A;
+module M() domains() {
+    type B = A;
+}

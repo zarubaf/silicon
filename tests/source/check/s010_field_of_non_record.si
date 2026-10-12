@@ -1,0 +1,7 @@
+// S010: a field selector needs a record or a tuple.
+// TOP M()
+module M() domains() {
+    let n = 3;
+    // expected-error S010 @+1
+    let b = n.a;
+}

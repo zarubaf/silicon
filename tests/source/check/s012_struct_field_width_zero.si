@@ -1,0 +1,9 @@
+// S012: a width is 1 to 65536, also in the field type of a specialization. The error is at the field type.
+// TOP M()
+struct P(comptime W: Nat) {
+    // expected-error S012 @+1
+    a: UInt[W],
+}
+module M() domains() {
+    type A = P[0];
+}

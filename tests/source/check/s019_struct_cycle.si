@@ -1,0 +1,9 @@
+// S019: a struct that has itself as a field depends on itself.
+// TOP M()
+struct P {
+    // expected-error S019 @+1
+    a: P,
+}
+module M() domains() {
+    let z = P();
+}

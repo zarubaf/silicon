@@ -1,0 +1,6 @@
+// S007: `data_bits` takes one argument.
+// TOP M()
+module M() domains() {
+    // expected-error S007 @+1
+    let n = data_bits(Bool, Bool);
+}

@@ -1,0 +1,12 @@
+// S019: two structs that use each other depend on themselves. The error is at the use that closes the cycle.
+// TOP M()
+struct P {
+    a: Q,
+}
+struct Q {
+    // expected-error S019 @+1
+    a: P,
+}
+module M() domains() {
+    type A = P;
+}

@@ -1,0 +1,9 @@
+// S007: a struct constructor with too many arguments.
+// TOP M()
+struct P {
+    a: Bool,
+}
+module M() domains() {
+    // expected-error S007 @+1
+    let r = P(true, false);
+}

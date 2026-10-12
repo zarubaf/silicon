@@ -1,0 +1,9 @@
+// S002: a field name is unique in its struct.
+// TOP M()
+struct P {
+    a: Bool,
+    // expected-error S002 @+1
+    a: Bool,
+}
+module M() domains() {
+}

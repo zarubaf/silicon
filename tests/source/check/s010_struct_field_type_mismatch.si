@@ -1,0 +1,10 @@
+// S010: a field of a record has the declared type.
+// TOP M()
+struct P {
+    a: Bool,
+    b: UInt[8],
+}
+module M() domains() {
+    // expected-error S010 @+1
+    let r = P(1, 2);
+}

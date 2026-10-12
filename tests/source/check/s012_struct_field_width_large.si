@@ -1,0 +1,9 @@
+// S012: a width of 65537 is above the limit.
+// TOP M()
+struct P {
+    // expected-error S012 @+1
+    a: UInt[65537],
+}
+module M() domains() {
+    let z = P();
+}

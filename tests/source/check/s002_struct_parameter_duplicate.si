@@ -1,0 +1,6 @@
+// S002: a struct parameter name is unique.
+// TOP M()
+// expected-error S002 @+1
+struct P(comptime W: Nat, comptime W: Nat) {}
+module M() domains() {
+}

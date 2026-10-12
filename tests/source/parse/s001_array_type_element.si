@@ -1,0 +1,2 @@
+// S001: the element of an array type in an expression is a type, so a number there is no type.
+const A: T = [0; 4];

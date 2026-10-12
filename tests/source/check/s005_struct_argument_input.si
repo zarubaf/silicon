@@ -1,0 +1,10 @@
+// S005: an input is not a static position, also in the argument of a struct.
+// TOP M()
+struct P(comptime W: Nat) {
+    a: Bool,
+}
+module M() {
+    input w: UInt[4];
+    // expected-error S005 @+1
+    let r = P[w](true);
+}
