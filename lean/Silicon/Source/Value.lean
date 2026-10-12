@@ -3,10 +3,10 @@ import Silicon.Core.Semantics.Value
 import Silicon.Source.Print
 
 /-!
-The static values of slice 1 and the static containers of slice 2, their canonical
-serialization, their recursive size, and their depth. Section 7.1 of the front-end spec uses the
-serialization in an `InstantiationId`. Section 5.4 uses the recursive size in the cost model, and
-section 5.5 bounds the depth. The Rust front end copies all three byte for byte.
+The static values of slice 1 and the static containers, types, and records of slice 2, their
+canonical serialization, their recursive size, and their depth. Section 7.1 of the front-end spec
+uses the serialization in an `InstantiationId`. Section 5.4 uses the recursive size in the cost
+model, and section 5.5 bounds the depth. The Rust front end copies all three byte for byte.
 
 These rules settle the open points of the spec:
 
@@ -21,102 +21,96 @@ These rules settle the open points of the spec:
 - An integer has the size 1 for each 64-bit word of its magnitude, and at least 1.
 - A finite value has the size 1 for each 64-bit word of its width, and at least 1. The width,
   not the value, sets the work of a finite operation.
-- A type has the size 1 for its node, plus the size of each integer in it.
+- A type has the size 1 for its node, plus the size of each integer in it. A struct type has
+  the size 1 plus the sizes of its static arguments, because its identity is nominal.
 - An array value keeps its element type, so an empty array serializes and has a type. Its size
-  does not count the element type (section 5.4).
-- The depth of an array value counts its element type, and the depth of a type value is the
-  depth of the type. Thus the depth bounds each walk over the value, also over an empty array.
+  does not count the element type (section 5.4). A record keeps its struct type for the same
+  reason, and its size does not count the type either.
+- The depth of an array value counts its element type, and the depth of a record counts its
+  struct type. The depth of a type value is the depth of the type. Thus the depth bounds each
+  walk over the value, also over an empty array and a record without fields.
 -/
 namespace Silicon.Source
 
 /-!
-A type as a static value. Its forms are the scalar types of slice 1 with a static width and
-the types of the static containers of slice 2. A tuple type has at least one element type:
-`()` is `unit`.
+The type metadata of section 5.4. It holds the bit width as hardware data, the leaf count, the
+recursive size of the zero value, and the depth. It also tells if the type is hardware data. A
+struct type stores it, so no operation walks the field types again. The three numbers of a type
+that is not hardware data have no meaning. Both front ends set them equally, so they charge the
+same.
 -/
-inductive Ty where
-  | bool | nat | int
-  | uint (width : Nat)
-  | sint (width : Nat)
-  | unit
-  | array (elem : Ty) (len : Nat)
-  | tuple (elems : Array Ty)
-  deriving Repr, Inhabited
+structure Meta where
+  width : Nat
+  leaves : Nat
+  zeroSize : Nat
+  depth : Nat
+  data : Bool
+  deriving Repr, DecidableEq, BEq, Inhabited
 
-/-!
-A static value of slice 1, or a static container of slice 2. An array keeps its element type. A
-tuple has at least one element: `()` is `unit`.
--/
-inductive Value where
-  | int (value : Int)
-  | bool (value : Bool)
-  | str (value : String)
-  | uint (width : Nat) (bits : Core.Semantics.Value width)
-  | sint (width : Nat) (bits : Core.Semantics.Value width)
-  | type (ty : Ty)
-  | unit
-  | array (elem : Ty) (elems : Array Value)
-  | tuple (elems : Array Value)
-  deriving Repr, Inhabited
+mutual
+  /--
+  A type as a static value. Its forms are the scalar types of slice 1 with a static width and
+  the types of the static containers of slice 2. `Type` and the struct types are forms too. A
+  tuple type has at least one element type: `()` is `unit`. A struct type is its item, its
+  static arguments, and its metadata.
+  -/
+  inductive Ty where
+    | bool | nat | int
+    | uint (width : Nat)
+    | sint (width : Nat)
+    | unit
+    | type
+    | array (elem : Ty) (len : Nat)
+    | tuple (elems : Array Ty)
+    | struct (item : String) (args : Array Value) (info : Meta)
+
+  /--
+  A static value of slice 1, or a static container of slice 2. An array keeps its element type,
+  and a record keeps its struct type. A tuple has at least one element: `()` is `unit`.
+  -/
+  inductive Value where
+    | int (value : Int)
+    | bool (value : Bool)
+    | str (value : String)
+    | uint (width : Nat) (bits : Core.Semantics.Value width)
+    | sint (width : Nat) (bits : Core.Semantics.Value width)
+    | type (ty : Ty)
+    | unit
+    | array (elem : Ty) (elems : Array Value)
+    | tuple (elems : Array Value)
+    | record (ty : Ty) (fields : Array Value)
+end
+
+deriving instance Repr for Ty, Value
+
+instance : Inhabited Ty := ⟨.unit⟩
+instance : Inhabited Value := ⟨.unit⟩
 
 /-! A nested type has no derived `DecidableEq`. This structural test gives it. -/
 mutual
   def Ty.beq : Ty → Ty → Bool
-    | .bool, .bool | .nat, .nat | .int, .int | .unit, .unit => true
+    | .bool, .bool | .nat, .nat | .int, .int | .unit, .unit | .type, .type => true
     | .uint a, .uint b | .sint a, .sint b => a == b
     | .array s n, .array t m => Ty.beq s t && n == m
     | .tuple ⟨xs⟩, .tuple ⟨ys⟩ => Ty.beqs xs ys
+    | .struct i ⟨xs⟩ m, .struct j ⟨ys⟩ n => i == j && Value.beqs xs ys && decide (m = n)
     | _, _ => false
 
   def Ty.beqs : List Ty → List Ty → Bool
     | [], [] => true
     | x :: xs, y :: ys => Ty.beq x y && Ty.beqs xs ys
     | _, _ => false
-end
 
-mutual
-  theorem Ty.eq_of_beq : ∀ a b : Ty, a.beq b = true → a = b
-    | .bool, b, h | .nat, b, h | .int, b, h | .unit, b, h | .uint _, b, h | .sint _, b, h => by
-      cases b <;> simp_all [Ty.beq]
-    | .array s n, b, h => by
-      cases b <;> simp [Ty.beq] at h ⊢
-      exact ⟨Ty.eq_of_beq _ _ h.1, h.2⟩
-    | .tuple ⟨xs⟩, b, h => by
-      cases b <;> simp [Ty.beq] at h ⊢
-      rw [Ty.eqs_of_beqs _ _ h]
-
-  theorem Ty.eqs_of_beqs : ∀ xs ys : List Ty, Ty.beqs xs ys = true → xs = ys
-    | [], ys, h => by cases ys <;> simp_all [Ty.beqs]
-    | x :: xs, ys, h => by
-      cases ys <;> simp [Ty.beqs] at h ⊢
-      exact ⟨Ty.eq_of_beq _ _ h.1, Ty.eqs_of_beqs _ _ h.2⟩
-end
-
-mutual
-  theorem Ty.beq_self : ∀ a : Ty, a.beq a = true
-    | .bool | .nat | .int | .unit | .uint _ | .sint _ => by simp [Ty.beq]
-    | .array s _ => by simp [Ty.beq, Ty.beq_self s]
-    | .tuple ⟨xs⟩ => by simp [Ty.beq, Ty.beqs_self xs]
-
-  theorem Ty.beqs_self : ∀ xs : List Ty, Ty.beqs xs xs = true
-    | [] => by simp [Ty.beqs]
-    | x :: xs => by simp [Ty.beqs, Ty.beq_self x, Ty.beqs_self xs]
-end
-
-instance : DecidableEq Ty := fun a b =>
-  if h : a.beq b then isTrue (Ty.eq_of_beq a b h)
-  else isFalse fun e => h (e ▸ Ty.beq_self a)
-
-mutual
   def Value.beq : Value → Value → Bool
     | .int a, .int b => a == b
     | .bool a, .bool b => a == b
     | .str a, .str b => a == b
     | .uint w x, .uint v y | .sint w x, .sint v y => w == v && x.toNat == y.toNat
-    | .type s, .type t => decide (s = t)
+    | .type s, .type t => Ty.beq s t
     | .unit, .unit => true
-    | .array s ⟨xs⟩, .array t ⟨ys⟩ => decide (s = t) && Value.beqs xs ys
+    | .array s ⟨xs⟩, .array t ⟨ys⟩ => Ty.beq s t && Value.beqs xs ys
     | .tuple ⟨xs⟩, .tuple ⟨ys⟩ => Value.beqs xs ys
+    | .record s ⟨xs⟩, .record t ⟨ys⟩ => Ty.beq s t && Value.beqs xs ys
     | _, _ => false
 
   def Value.beqs : List Value → List Value → Bool
@@ -126,18 +120,45 @@ mutual
 end
 
 mutual
+  theorem Ty.eq_of_beq : ∀ a b : Ty, a.beq b = true → a = b
+    | .bool, b, h | .nat, b, h | .int, b, h | .unit, b, h | .type, b, h | .uint _, b, h
+    | .sint _, b, h => by
+      cases b <;> simp_all [Ty.beq]
+    | .array s n, b, h => by
+      cases b <;> simp [Ty.beq] at h ⊢
+      exact ⟨Ty.eq_of_beq _ _ h.1, h.2⟩
+    | .tuple ⟨xs⟩, b, h => by
+      rcases b with _ | _ | _ | _ | _ | _ | _ | _ | ⟨⟨ys⟩⟩ | ⟨_, ⟨ys⟩, _⟩ <;>
+        simp [Ty.beq] at h ⊢
+      rw [Ty.eqs_of_beqs _ _ h]
+    | .struct _ ⟨xs⟩ _, b, h => by
+      rcases b with _ | _ | _ | _ | _ | _ | _ | _ | ⟨⟨ys⟩⟩ | ⟨_, ⟨ys⟩, _⟩ <;>
+        simp [Ty.beq] at h ⊢
+      exact ⟨h.1.1, by rw [Value.eqs_of_beqs _ _ h.1.2], h.2⟩
+
+  theorem Ty.eqs_of_beqs : ∀ xs ys : List Ty, Ty.beqs xs ys = true → xs = ys
+    | [], ys, h => by cases ys <;> simp_all [Ty.beqs]
+    | x :: xs, ys, h => by
+      cases ys <;> simp [Ty.beqs] at h ⊢
+      exact ⟨Ty.eq_of_beq _ _ h.1, Ty.eqs_of_beqs _ _ h.2⟩
+
   theorem Value.eq_of_beq : ∀ a b : Value, a.beq b = true → a = b
-    | .int _, b, h | .bool _, b, h | .str _, b, h | .type _, b, h | .unit, b, h => by
+    | .int _, b, h | .bool _, b, h | .str _, b, h | .unit, b, h => by
       cases b <;> simp_all [Value.beq]
+    | .type _, b, h => by
+      cases b <;> simp [Value.beq] at h ⊢
+      exact Ty.eq_of_beq _ _ h
     | .uint _ x, b, h | .sint _ x, b, h => by
       cases b <;> simp [Value.beq] at h ⊢
       obtain ⟨rfl, h⟩ := h
       exact ⟨rfl, heq_of_eq (BitVec.eq_of_toNat_eq h)⟩
-    | .array _ ⟨xs⟩, b, h => by
-      cases b <;> simp [Value.beq] at h ⊢
-      exact ⟨h.1, by rw [Value.eqs_of_beqs _ _ h.2]⟩
+    | .array _ ⟨xs⟩, b, h | .record _ ⟨xs⟩, b, h => by
+      rcases b with _ | _ | _ | _ | _ | _ | _ | ⟨_, ⟨ys⟩⟩ | ⟨⟨ys⟩⟩ | ⟨_, ⟨ys⟩⟩ <;>
+        simp [Value.beq] at h ⊢
+      exact ⟨Ty.eq_of_beq _ _ h.1, by rw [Value.eqs_of_beqs _ _ h.2]⟩
     | .tuple ⟨xs⟩, b, h => by
-      cases b <;> simp [Value.beq] at h ⊢
+      rcases b with _ | _ | _ | _ | _ | _ | _ | ⟨_, ⟨ys⟩⟩ | ⟨⟨ys⟩⟩ | ⟨_, ⟨ys⟩⟩ <;>
+        simp [Value.beq] at h ⊢
       rw [Value.eqs_of_beqs _ _ h]
 
   theorem Value.eqs_of_beqs : ∀ xs ys : List Value, Value.beqs xs ys = true → xs = ys
@@ -148,15 +169,30 @@ mutual
 end
 
 mutual
+  theorem Ty.beq_self : ∀ a : Ty, a.beq a = true
+    | .bool | .nat | .int | .unit | .type | .uint _ | .sint _ => by simp [Ty.beq]
+    | .array s _ => by simp [Ty.beq, Ty.beq_self s]
+    | .tuple ⟨xs⟩ => by simp [Ty.beq, Ty.beqs_self xs]
+    | .struct _ ⟨xs⟩ _ => by simp [Ty.beq, Value.beqs_self xs]
+
+  theorem Ty.beqs_self : ∀ xs : List Ty, Ty.beqs xs xs = true
+    | [] => by simp [Ty.beqs]
+    | x :: xs => by simp [Ty.beqs, Ty.beq_self x, Ty.beqs_self xs]
+
   theorem Value.beq_self : ∀ a : Value, a.beq a = true
-    | .int _ | .bool _ | .str _ | .uint .. | .sint .. | .type _ | .unit => by simp [Value.beq]
-    | .array _ ⟨xs⟩ => by simp [Value.beq, Value.beqs_self xs]
+    | .int _ | .bool _ | .str _ | .uint .. | .sint .. | .unit => by simp [Value.beq]
+    | .type t => by simp [Value.beq, Ty.beq_self t]
+    | .array t ⟨xs⟩ | .record t ⟨xs⟩ => by simp [Value.beq, Ty.beq_self t, Value.beqs_self xs]
     | .tuple ⟨xs⟩ => by simp [Value.beq, Value.beqs_self xs]
 
   theorem Value.beqs_self : ∀ xs : List Value, Value.beqs xs xs = true
     | [] => by simp [Value.beqs]
     | x :: xs => by simp [Value.beqs, Value.beq_self x, Value.beqs_self xs]
 end
+
+instance : DecidableEq Ty := fun a b =>
+  if h : a.beq b then isTrue (Ty.eq_of_beq a b h)
+  else isFalse fun e => h (e ▸ Ty.beq_self a)
 
 instance : DecidableEq Value := fun a b =>
   if h : a.beq b then isTrue (Value.eq_of_beq a b h)
@@ -173,6 +209,76 @@ def Ty.finite : Ty → Bool
   | .uint _ | .sint _ => true
   | _ => false
 
+/-!
+The metadata of the scalar types. `Bool`, `UInt[W]`, `SInt[W]`, and `Unit` are hardware data.
+`Unit` has no bit and no leaf, and its zero `()` has the size 1. `Nat`, `Int`, and `Type` are
+not hardware data, and their three numbers are 0.
+-/
+def Meta.bool : Meta := ⟨1, 1, 1, 1, true⟩
+def Meta.finite (width : Nat) : Meta := ⟨width, 1, widthSize width, 1, true⟩
+def Meta.unit : Meta := ⟨0, 0, 1, 1, true⟩
+def Meta.static : Meta := ⟨0, 0, 0, 1, false⟩
+
+/-!
+The metadata of `[T; N]` from the metadata `m` of `T`: the product rule of section 5.4. The zero
+value is a node with `N` zeros of `T`.
+-/
+def Meta.array (m : Meta) (n : Nat) : Meta :=
+  ⟨n * m.width, n * m.leaves, 1 + n * m.zeroSize, 1 + m.depth, m.data⟩
+
+/-!
+The charge of `Meta.array m n`, at the node of `[T; N]` before the type exists. Each of the three
+products charges as a multiplication of static integers: the product of the two sizes.
+-/
+def Meta.arrayCharge (m : Meta) (n : Nat) : Nat :=
+  intSize n * (intSize m.width + intSize m.leaves + intSize m.zeroSize)
+
+/-!
+The sums of the parts of a tuple or a record. The zero value is a node with the zero of each
+part. The depth is 1 more than the deepest part and each extra depth in `extra`.
+-/
+def Meta.sum (parts : List Meta) (extra : List Nat) : Meta :=
+  ⟨(parts.map (·.width)).sum, (parts.map (·.leaves)).sum, 1 + (parts.map (·.zeroSize)).sum,
+   1 + ((parts.map (·.depth)) ++ extra).foldl max 0, parts.all (·.data)⟩
+
+/-! The metadata of a tuple type from the metadata of its element types. -/
+def Meta.tuple (elems : List Meta) : Meta := Meta.sum elems []
+
+/-!
+The metadata of a struct specialization. It is made once, when the specialization completes.
+It uses the stored metadata of the field types and the depths of the static arguments (section
+5.5). A struct without fields
+is hardware data with no bit and no leaf (decision Q4 of issue #178).
+-/
+def Meta.struct (fields : List Meta) (argDepths : List Nat) : Meta := Meta.sum fields argDepths
+
+/-!
+The charge of `Meta.struct fields _ = m`: 1 for each field, plus the sizes of the four new
+integers of `m`.
+-/
+def Meta.structCharge (fields : List Meta) (m : Meta) : Nat :=
+  fields.length + intSize m.width + intSize m.leaves + intSize m.zeroSize + intSize m.depth
+
+/-!
+The metadata of a type. A type constructor computes it from its parts. A struct type stores
+it, so this walk never enters the field types of a struct.
+-/
+mutual
+  def Ty.info : Ty → Meta
+    | .bool => Meta.bool
+    | .uint w | .sint w => Meta.finite w
+    | .unit => Meta.unit
+    | .nat | .int | .type => Meta.static
+    | .array t n => t.info.array n
+    | .tuple ⟨ts⟩ => Meta.tuple (Ty.infoAll ts)
+    | .struct _ _ m => m
+
+  def Ty.infoAll : List Ty → List Meta
+    | [] => []
+    | t :: ts => t.info :: Ty.infoAll ts
+end
+
+/-! The canonical serialization of section 7.1. -/
 mutual
   def Ty.serialize : Ty → String
     | .bool => "bool"
@@ -181,32 +287,70 @@ mutual
     | .uint w => Print.node "uint" [toString w]
     | .sint w => Print.node "sint" [toString w]
     | .unit => "unit"
+    | .type => "type"
     | .array t n => Print.node "array" [t.serialize, toString n]
     | .tuple ⟨ts⟩ => Print.node "tuple" [Print.list (Ty.serializeAll ts)]
+    | .struct i ⟨xs⟩ _ => Print.node "struct" ["root", i, Print.list (Value.serializeAll xs)]
 
   def Ty.serializeAll : List Ty → List String
     | [] => []
     | t :: ts => t.serialize :: Ty.serializeAll ts
+
+  def Value.serialize : Value → String
+    | .int n => Print.node "int" [toString n]
+    | .bool b => Print.node "bool" [Print.boolean b]
+    | .str s => Print.node "string" [Print.quote s]
+    | .uint w v => Print.node "uint" [toString w, toString v.toNat]
+    | .sint w v => Print.node "sint" [toString w, toString v.toInt]
+    | .type t => Print.node "type" [t.serialize]
+    | .unit => "(unit)"
+    | .array t ⟨xs⟩ => Print.node "array" [t.serialize, Print.list (Value.serializeAll xs)]
+    | .tuple ⟨xs⟩ => Print.node "tuple" [Print.list (Value.serializeAll xs)]
+    | .record t ⟨xs⟩ => Print.node "record" [t.serialize, Print.list (Value.serializeAll xs)]
+
+  def Value.serializeAll : List Value → List String
+    | [] => []
+    | x :: xs => x.serialize :: Value.serializeAll xs
 end
 
-/-! The number of nodes of the type term, plus the size of each integer in it (section 5.4). -/
+/-!
+The recursive size of section 5.4. A type has the number of nodes of its term. Each integer and
+each static argument in it adds its size.
+-/
 mutual
   def Ty.size : Ty → Nat
-    | .bool | .nat | .int | .unit => 1
+    | .bool | .nat | .int | .unit | .type => 1
     | .uint w | .sint w => 1 + intSize w
     | .array t n => 1 + t.size + intSize n
     | .tuple ⟨ts⟩ => 1 + Ty.sizeAll ts
+    | .struct _ ⟨xs⟩ _ => 1 + Value.sizeAll xs
 
   def Ty.sizeAll : List Ty → Nat
     | [] => 0
     | t :: ts => t.size + Ty.sizeAll ts
+
+  def Value.size : Value → Nat
+    | .int n => intSize n
+    | .bool _ | .unit => 1
+    | .str s => 1 + s.length
+    | .uint w _ | .sint w _ => widthSize w
+    | .type t => t.size
+    | .array _ ⟨xs⟩ | .tuple ⟨xs⟩ | .record _ ⟨xs⟩ => 1 + Value.sizeAll xs
+
+  def Value.sizeAll : List Value → Nat
+    | [] => 0
+    | x :: xs => x.size + Value.sizeAll xs
 end
 
-/-! The depth of section 5.5: 1 for a scalar type, and 1 more than its deepest part. -/
+/-!
+The depth of section 5.5: 1 for a scalar type, and 1 more than its deepest part. A struct type
+has its stored depth, which counts its field types and its static arguments.
+-/
 mutual
   def Ty.depth : Ty → Nat
     | .array t _ => 1 + t.depth
     | .tuple ⟨ts⟩ => 1 + Ty.depthAll ts
+    | .struct _ _ m => m.depth
     | _ => 1
 
   def Ty.depthAll : List Ty → Nat
@@ -214,21 +358,61 @@ mutual
     | t :: ts => max t.depth (Ty.depthAll ts)
 end
 
+/-! The depth of section 5.5: 1 for a scalar value, and 1 more than its deepest part. -/
+mutual
+  def Value.depth : Value → Nat
+    | .type t => t.depth
+    | .array t ⟨xs⟩ | .record t ⟨xs⟩ => 1 + max t.depth (Value.depthAll xs)
+    | .tuple ⟨xs⟩ => 1 + Value.depthAll xs
+    | _ => 1
+
+  def Value.depthAll : List Value → Nat
+    | [] => 0
+    | x :: xs => max x.depth (Value.depthAll xs)
+end
+
+/-!
+The text of a type in a message, and the source text of a static argument in it. A struct type
+prints its item, with its arguments in brackets when it has any: `P[8]`.
+-/
 mutual
   def Ty.text : Ty → String
     | .bool => "Bool" | .nat => "Nat" | .int => "Int"
     | .uint w => s!"UInt[{w}]" | .sint w => s!"SInt[{w}]"
     | .unit => "Unit"
+    | .type => "Type"
     | .array t n => s!"[{t.text}; {n}]"
     | .tuple ⟨[t]⟩ => s!"({t.text},)"
     | .tuple ⟨ts⟩ => "(" ++ ", ".intercalate (Ty.textAll ts) ++ ")"
+    | .struct i ⟨[]⟩ _ => i
+    | .struct i ⟨xs⟩ _ => i ++ "[" ++ ", ".intercalate (Value.literalAll xs) ++ "]"
 
   def Ty.textAll : List Ty → List String
     | [] => []
     | t :: ts => t.text :: Ty.textAll ts
+
+  def Value.literal : Value → String
+    | .int n => toString n
+    | .bool b => Print.boolean b
+    | .str s => Print.quote s
+    | .uint _ v => toString v.toNat
+    | .sint _ v => toString v.toInt
+    | .type t => t.text
+    | .unit => "()"
+    | .array _ ⟨xs⟩ => "[" ++ ", ".intercalate (Value.literalAll xs) ++ "]"
+    | .tuple ⟨[x]⟩ => s!"({x.literal},)"
+    | .tuple ⟨xs⟩ => "(" ++ ", ".intercalate (Value.literalAll xs) ++ ")"
+    | .record t ⟨xs⟩ => t.text ++ "(" ++ ", ".intercalate (Value.literalAll xs) ++ ")"
+
+  def Value.literalAll : List Value → List String
+    | [] => []
+    | x :: xs => x.literal :: Value.literalAll xs
 end
 
-/-! The type of a value. A string, a type, and a tuple that holds them have no `Ty`. -/
+/-!
+The type of a value. A string, a type, and a tuple that holds them have no `Ty` yet: the
+evaluator gives a type value its type `Type` in a later step.
+-/
 mutual
   def Value.ty? : Value → Option Ty
     | .int _ => some .int
@@ -238,6 +422,7 @@ mutual
     | .unit => some .unit
     | .array t xs => some (.array t xs.size)
     | .tuple ⟨xs⟩ => (Value.tyAll? xs).map fun ts => .tuple ts.toArray
+    | .record t _ => some t
     | .str _ | .type _ => none
 
   def Value.tyAll? : List Value → Option (List Ty)
@@ -256,62 +441,17 @@ def Value.finiteTy? : Value → Option Ty
   | .sint w _ => some (.sint w)
   | _ => none
 
-/-! The canonical serialization of section 7.1. -/
-mutual
-  def Value.serialize : Value → String
-    | .int n => Print.node "int" [toString n]
-    | .bool b => Print.node "bool" [Print.boolean b]
-    | .str s => Print.node "string" [Print.quote s]
-    | .uint w v => Print.node "uint" [toString w, toString v.toNat]
-    | .sint w v => Print.node "sint" [toString w, toString v.toInt]
-    | .type t => Print.node "type" [t.serialize]
-    | .unit => "(unit)"
-    | .array t ⟨xs⟩ => Print.node "array" [t.serialize, Print.list (Value.serializeAll xs)]
-    | .tuple ⟨xs⟩ => Print.node "tuple" [Print.list (Value.serializeAll xs)]
-
-  def Value.serializeAll : List Value → List String
-    | [] => []
-    | x :: xs => x.serialize :: Value.serializeAll xs
-end
-
-/-! The recursive size of section 5.4. -/
-mutual
-  def Value.size : Value → Nat
-    | .int n => intSize n
-    | .bool _ | .unit => 1
-    | .str s => 1 + s.length
-    | .uint w _ | .sint w _ => widthSize w
-    | .type t => t.size
-    | .array _ ⟨xs⟩ | .tuple ⟨xs⟩ => 1 + Value.sizeAll xs
-
-  def Value.sizeAll : List Value → Nat
-    | [] => 0
-    | x :: xs => x.size + Value.sizeAll xs
-end
-
-/-! The depth of section 5.5: 1 for a scalar value, and 1 more than its deepest part. -/
-mutual
-  def Value.depth : Value → Nat
-    | .type t => t.depth
-    | .array t ⟨xs⟩ => 1 + max t.depth (Value.depthAll xs)
-    | .tuple ⟨xs⟩ => 1 + Value.depthAll xs
-    | _ => 1
-
-  def Value.depthAll : List Value → Nat
-    | [] => 0
-    | x :: xs => max x.depth (Value.depthAll xs)
-end
-
 /-!
 The charge of the walk that measures the serialization of a value, before the charge of its
-bytes (section 5.4). Each array and each tuple charge 1. Each integer and each finite value
+bytes (section 5.4). Each array, tuple, and record charges 1. Each integer and each finite value
 charge the square of their size, because a naive decimal conversion takes this time. A scalar
-thus keeps the charge of slice 1.
+thus keeps the charge of slice 1. A type charges nothing: an integer in a type gets no charge
+for its decimal form.
 -/
 mutual
   def Value.measureCharge : Value → Nat
     | v@(.int _) | v@(.uint ..) | v@(.sint ..) => v.size * v.size
-    | .array _ ⟨xs⟩ | .tuple ⟨xs⟩ => 1 + Value.measureChargeAll xs
+    | .array _ ⟨xs⟩ | .tuple ⟨xs⟩ | .record _ ⟨xs⟩ => 1 + Value.measureChargeAll xs
     | _ => 0
 
   def Value.measureChargeAll : List Value → Nat
