@@ -7,10 +7,11 @@
 //! A value is static, hardware, or a handle (section 5.1), or a literal with `[]` that waits for
 //! the type of a typed use. The child module `hwops` makes the hardware nodes, the child module
 //! `call` evaluates the calls, and the child modules `container` and `place` make and read the
-//! static containers. The child module `string` scans and converts the strings. The child module
-//! `types` evaluates the type expressions and the struct specializations, the child module
-//! `record` makes and reads the records, and the child module `inst` runs the module statements
-//! and the instantiations of Lean `Source.Elab`.
+//! static containers. The child module `string` scans and converts the strings, and the child
+//! module `list` makes the lists and changes them in place. The child module `types` evaluates
+//! the type expressions and the struct specializations, the child module `record` makes and
+//! reads the records, and the child module `inst` runs the module statements and the
+//! instantiations of Lean `Source.Elab`.
 //!
 //! A result that refers to an existing value, such as a local or a constant, stays a
 //! reference until a copy pays for it. Thus a read that the cost model does not charge does
