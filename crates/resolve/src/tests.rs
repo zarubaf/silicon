@@ -407,10 +407,8 @@ fn a_shadowed_prelude_type_is_no_type() {
         errors("const UInt: Nat = 8;\nconst A: UInt[8] = 0;\n"),
         [(S003, 2, 10)]
     );
-    assert_eq!(
-        errors("fn f(Bool: Nat, x: Bool) -> Nat { return x; }\n"),
-        [(S003, 1, 20)]
-    );
+    // A local in a type position can hold a type, so only elaboration checks it.
+    ok("fn f(Bool: Nat, x: Bool) -> Nat { return x; }\n");
     ok("fn f(p: Bool) -> Bool {\n  { let Bool = 1; }\n  let x: Bool = p;\n  return x;\n}\n");
 }
 
@@ -812,4 +810,135 @@ fn an_unknown_name_in_a_container_form_is_s003_at_the_name() {
     ] {
         assert_eq!(errors(&src), [(S003, line, col)], "{src}");
     }
+}
+
+// The type forms of slice 2, phase 3.
+
+#[test]
+fn struct_and_alias_items_are_in_the_item_scope() {
+    let r = ok(
+        "struct P(comptime W: Nat) { a: UInt[W], b: Bool }\nconst A: P[8] = P[8](1, true);\n\
+         type B = UInt[8];\nconst C: B = B(3);\n",
+    );
+    assert_eq!(r.decl(r.item("P").unwrap()).kind, Kind::Struct);
+    assert_eq!(r.decl(r.item("B").unwrap()).kind, Kind::Alias);
+    // `P` in the type of `A`, and `B` in the type of `C`.
+    assert_eq!(decl_at_use(&r, pos(2, 10)), Kind::Struct);
+    assert_eq!(decl_at_use(&r, pos(4, 10)), Kind::Alias);
+    // An alias is visible before its declaration.
+    ok("const A: T = 1;\ntype T = Bool;\n");
+    ok("type A = A;\n");
+    assert_eq!(
+        errors("const A: Nat = 1;\ntype A = Bool;\n"),
+        [(S002, 2, 6)]
+    );
+    assert_eq!(errors("struct A {}\nmodule A() {}\n"), [(S002, 2, 8)]);
+    assert_eq!(errors("struct A {}\nstruct A {}\n"), [(S002, 2, 8)]);
+}
+
+#[test]
+fn type_and_data_bits_are_prelude_names() {
+    let r = ok("const A: Type = Bool;\nfn f() -> Nat { return data_bits; }\n");
+    assert_eq!(
+        target_at(&r, pos(1, 10)),
+        Some(Target::Prelude(Prelude::Type))
+    );
+    assert_eq!(
+        target_at(&r, pos(2, 24)),
+        Some(Target::Prelude(Prelude::DataBits))
+    );
+    ok("fn f(comptime T: Type, x: T) -> T { return x; }");
+    ok("fn f(comptime T: Type) -> Nat { let x: T = T(); return data_bits(T); }");
+}
+
+#[test]
+fn the_parameters_of_a_struct_are_visible_in_the_later_types() {
+    ok("struct P(comptime T: Type, comptime x: T) { a: T, b: [T; 2] }");
+    ok("struct P(comptime a: Nat) { a: UInt[a] }");
+    assert_eq!(
+        errors("struct P(comptime W: UInt[W]) { a: Bool }"),
+        [(S003, 1, 27)]
+    );
+    assert_eq!(
+        errors("struct P(comptime A: UInt[B], comptime B: Nat) {}"),
+        [(S003, 1, 27)]
+    );
+    assert_eq!(
+        errors("struct P(comptime W: Nat) { a: Bool }\nconst N: Nat = W;"),
+        [(S003, 2, 16)]
+    );
+    assert_eq!(errors("struct P { a: UInt[W] }"), [(S003, 1, 20)]);
+    assert_eq!(
+        errors("struct P(comptime a: Nat, comptime a: Nat) {}"),
+        [(S002, 1, 36)]
+    );
+}
+
+#[test]
+fn a_second_field_with_a_name_is_s002_at_its_name() {
+    assert_eq!(errors("struct S { a: Bool, a: Bool }"), [(S002, 1, 21)]);
+    assert_eq!(
+        errors("struct S {\na: Bool,\nb: Bool,\na: UInt[8],\n}"),
+        [(S002, 4, 1)]
+    );
+    assert_eq!(
+        errors("const A: Foo = 1;\nstruct S { a: Bool, a: Bool }"),
+        [(S002, 2, 21)]
+    );
+}
+
+#[test]
+fn a_type_statement_declares_a_local() {
+    ok(&fn_body("type T = Bool;\nlet x: T = p;\nreturn x;"));
+    ok("type T = Bool;\nfn f() -> Nat { type T = T; let x: T = true; return 1; }");
+    assert_eq!(errors(&fn_body("type T = T;\nreturn p;")), [(S003, 2, 10)]);
+    assert_eq!(
+        errors(&fn_body("type T = Bool;\ntype T = Bool;\nreturn p;")),
+        [(S002, 3, 6)]
+    );
+    assert_eq!(
+        errors(&fn_body("let T = 1;\ntype T = Bool;\nreturn p;")),
+        [(S002, 3, 6)]
+    );
+    assert_eq!(
+        errors(&fn_body("{ type T = Bool; }\nlet x: T = p;\nreturn p;")),
+        [(S003, 3, 8)]
+    );
+}
+
+#[test]
+fn an_array_type_in_an_expression_resolves_its_parts() {
+    ok(&fn_body(
+        "let t = [Bool; 2];\nlet u = [[UInt[8]; 2]; 3]();\nreturn p;",
+    ));
+    assert_eq!(
+        errors(&fn_body("let t = [Foo; 2];\nreturn p;")),
+        [(S003, 2, 10)]
+    );
+    assert_eq!(
+        errors(&fn_body("let t = [Bool; N];\nreturn p;")),
+        [(S003, 2, 16)]
+    );
+    assert_eq!(
+        errors("const N: Nat = 1;\nconst A: Type = [N; 2];"),
+        [(S003, 2, 18)]
+    );
+}
+
+#[test]
+fn a_module_a_const_or_a_function_is_no_type() {
+    assert_eq!(errors("module M() {}\nconst A: M = 1;"), [(S003, 2, 10)]);
+    assert_eq!(
+        errors("fn g() -> Nat { return 1; }\nstruct S { a: g }"),
+        [(S003, 2, 15)]
+    );
+    assert_eq!(errors("const N: Nat = 1;\ntype A = N;"), [(S003, 2, 10)]);
+    assert_eq!(
+        errors("struct S {}\nmodule M() {\ninstance u = S();\n}"),
+        [(S003, 3, 14)]
+    );
+    assert_eq!(
+        errors("type A = Bool;\nmodule M() {\ninstance u = A();\n}"),
+        [(S003, 3, 14)]
+    );
 }
