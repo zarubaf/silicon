@@ -316,6 +316,15 @@ theorem copy_f (p : Pos) (o : Out) :
     Follows cap (copy p o) (copy p o) := by
   unfold copy; follows
 
+theorem hold_f (o : Out) : Follows cap (hold o) (hold o) := by
+  unfold hold waits; follows
+
+theorem release_f (o : Out) : Follows cap (release o) (release o) := by
+  unfold release waits; follows
+
+theorem held_f (p : Pos) (i : Nat) : Follows cap (held p i) (held p i) := by
+  unfold held; follows
+
 theorem static_f (p : Pos) (v : Val) :
     Follows cap (static p v) (static p v) := by
   unfold static; follows
@@ -509,13 +518,13 @@ theorem setConst_f (i : Nat) (e : Entry) :
 theorem mutation_f (p : Pos) : Follows cap (mutation p) (mutation p) := by
   unfold mutation; follows
 
-theorem changeAt_f (pl : Place) (f : Value → Value) :
-    Follows cap (changeAt pl f) (changeAt pl f) := by
-  unfold changeAt; follows [bindLocal_f]
+theorem changeAt_f (p : Pos) (pl : Place) (f : Value → Value) :
+    Follows cap (changeAt p pl f) (changeAt p pl f) := by
+  unfold changeAt; follows [held_f, bindLocal_f]
 
 theorem store_f (p q : Pos) (pl : Place) (y : Val) :
     Follows cap (store p q pl y) (store p q pl y) := by
-  unfold store; follows [named_f, bindLocal_f, item_f, changeAt_f]
+  unfold store; follows [named_f, held_f, bindLocal_f, item_f, changeAt_f]
 
 theorem finals_f (ps : List Resolve.Param) (acts : List Actual) :
     Follows cap (finals ps acts) (finals ps acts) := by
@@ -597,17 +606,23 @@ its lemma takes the facts of the entry functions at the bounds `k` and `m`.
 section evaluator
 variable {k m : Nat}
 
+theorem operands_f (he : ∀ e, Follows m (eval k e) (eval m e)) (xs : List Resolve.Expr)
+    {f : Resolve.Expr → Out → M α} (hf : ∀ x o, Follows m (f x o) (f x o)) :
+    Follows m (operands k xs f) (operands m xs f) := by
+  rw [operands.eq_def k, operands.eq_def m]
+  follows [he, hf, need_f, hold_f, release_f]
+
 theorem index_f (he : ∀ e, Follows m (eval k e) (eval m e)) (p : Pos) (kd : PrimType)
     (xs : List Resolve.Expr) : Follows m (index k p kd xs) (index m p kd xs) := by
   rw [index.eq_def k, index.eq_def m]
-  follows [he, static_f, need_f, bounded_f]
+  follows [he, operands_f he, static_f, need_f, bounded_f]
 
 theorem spec_f (he : ∀ e, Follows m (eval k e) (eval m e))
     (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t)) (p : Pos) (i : Nat)
     (xs : List Resolve.Expr) : Follows m (spec k p i xs) (spec m p i xs) := by
   rw [spec.eq_def k, spec.eq_def m]
-  follows [he, ht, need_f, static_f, settle_f, specialize_f, nested_f, inFrame_f, conform_f,
-    bindLocal_f]
+  follows [he, ht, operands_f he, need_f, static_f, settle_f, specialize_f, nested_f,
+    inFrame_f, conform_f, bindLocal_f]
 
 theorem name_f (he : ∀ e, Follows m (eval k e) (eval m e))
     (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t)) (p : Pos) (x : String) (r : Ref) :
@@ -624,7 +639,7 @@ theorem placeAt_f (he : ∀ e, Follows m (eval k e) (eval m e)) (p : Pos) (c : E
 theorem args_f (he : ∀ e, Follows m (eval k e) (eval m e)) (b : Nat)
     (xs : List Resolve.Expr) : Follows m (args k b xs) (args m b xs) := by
   rw [args.eq_def k, args.eq_def m]
-  follows [he, need_f]
+  follows [operands_f he, need_f]
 
 theorem ctor_f (he : ∀ e, Follows m (eval k e) (eval m e)) (p : Pos) (f : Resolve.Expr)
     (b : Nat) (xs : List Resolve.Expr) : Follows m (ctor k p f b xs) (ctor m p f b xs) := by
@@ -646,8 +661,8 @@ theorem call_f (he : ∀ e, Follows m (eval k e) (eval m e))
     (xs : List Resolve.Expr) (b j : Nat) :
     Follows m (call k p f xs b j) (call m p f xs b j) := by
   rw [call.eq_def k, call.eq_def m]
-  follows [he, placeAt_f he, args_f he, ctor_f he, invoke_f ht hb, need_f, pushOnto_f,
-    popFrom_f, primCall_f]
+  follows [he, placeAt_f he, args_f he, ctor_f he, invoke_f ht hb, need_f, hold_f, release_f,
+    pushOnto_f, popFrom_f, primCall_f]
 
 set_option maxHeartbeats 400000 in
 /--
@@ -676,14 +691,16 @@ theorem follows_all : ∀ n,
         follows [he k, ht k, index_f (he k), name_f (he k) (ht k),
           call_f (he k) (ht k) (hb k), spec_f (he k) (ht k), need_f, data_f, apply_f,
           hwUnary_f, test_f, hwBinary_f, unify_f, mux_f, static_f, pick_f, element_f, tupleOf_f,
-          arrayOf_f, select_f, containerOp_f, arrayTy_f, fieldAt_f, strAt_f]
+          arrayOf_f, select_f, containerOp_f, arrayTy_f, fieldAt_f, strAt_f, hold_f, release_f,
+          operands_f (he k)]
       · rw [eval.eq_def (k + 1), eval.eq_def (m + 1)]
         apply Follows.charge_one
         intro _
         follows [he m, ht m, index_f (he m), name_f (he m) (ht m),
           call_f (he m) (ht m) (hb m), spec_f (he m) (ht m), need_f, data_f, apply_f,
           hwUnary_f, test_f, hwBinary_f, unify_f, mux_f, static_f, pick_f, element_f, tupleOf_f,
-          arrayOf_f, select_f, containerOp_f, arrayTy_f, fieldAt_f, strAt_f]
+          arrayOf_f, select_f, containerOp_f, arrayTy_f, fieldAt_f, strAt_f, hold_f, release_f,
+          operands_f (he m)]
     · rcases n' with _ | m
       · rw [typeExpr.eq_def (k + 1), typeExpr.eq_def 0]
         apply Follows.exhaust (cap := k)
@@ -701,13 +718,13 @@ theorem follows_all : ∀ n,
         intro _
         follows [he k, ht k, hs k, hb k, placeAt_f (he k), need_f, copy_f, conformVal_f,
           known_f, named_f, bindLocal_f, test_f, int_f, range_f, iteration_f, static_f,
-          store_f]
+          store_f, hold_f, release_f]
       · rw [stmt.eq_def (k + 1), stmt.eq_def (m + 1)]
         apply Follows.charge_one
         intro _
         follows [he m, ht m, hs m, hb m, placeAt_f (he m), need_f, copy_f, conformVal_f,
           known_f, named_f, bindLocal_f, test_f, int_f, range_f, iteration_f, static_f,
-          store_f]
+          store_f, hold_f, release_f]
     · rcases n' with _ | m
       · rw [block.eq_def (k + 1), block.eq_def 0]
         apply Follows.exhaust (cap := k)

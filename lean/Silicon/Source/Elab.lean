@@ -286,10 +286,15 @@ argument of a call does. Its parameter type then evaluates in the scope of the m
 earlier parameter bound to its argument. The parent pays this work.
 -/
 def arguments (n : Nat) (pos : Pos) (i : Nat) (xs : List Resolve.Expr) : EM (List Value) := do
-  let vs ← xs.mapM fun x => do
-    match (← need x (← eval n x)).value with
-    | v@(.pending ..) => pure v
-    | v => return .static (← static pos v)
+  let os ← xs.mapM fun x => do
+    let o ← need x (← eval n x)
+    let v ← match o.value with
+      | v@(.pending ..) => pure v
+      | v => pure (.static (← static pos v))
+    hold o
+    return (v, o)
+  for (_, o) in os do release o
+  let vs := os.map (·.1)
   match (← read).items[i]? with
   | some (.module _ _ ps _ _) =>
     if vs.any (· matches .pending ..) && ps.length == vs.length then
@@ -371,8 +376,11 @@ mutual
           if ← test p (← need c (← eval n c)).value then block n p yes
           else if let some ss := no then block n p ss
         | .ctFor p i lo hi body => do
-          let a ← int p (← need lo (← eval n lo)).value
+          let o ← need lo (← eval n lo)
+          let a ← int p o.value
+          hold o
           let z ← int p (← need hi (← eval n hi)).value
+          release o
           let count ← range p a z
           let mut v := a
           for _ in [0:count] do
