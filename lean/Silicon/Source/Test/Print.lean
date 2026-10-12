@@ -96,6 +96,27 @@ def exprText (e : Expr) : String := e.print 0
 #guard exprDump (.call p (.arrayType p (t "Bool") (n 2)) []) ==
   "(call (arraytype (name \"Bool\") (num 2)) ())"
 
+/-!
+A function type holds its parameter types with their `mut` marks, and its result type. In an
+expression, it is a `fntype`.
+-/
+def fnU8 : TypeExpr := .fn p [.mk false u8, .mk true (t "Bool")] (.unit p)
+
+#guard fnU8.dump ==
+  "(fn ((fnparam false (index (name \"UInt\") ((num 8)))) " ++
+  "(fnparam true (name \"Bool\"))) (unit))"
+#guard (TypeExpr.fn p [] (t "Bool")).dump == "(fn () (name \"Bool\"))"
+#guard (TypeExpr.fn p [.mk false (.fn p [] u8)] (.fn p [] (t "Bool"))).dump ==
+  "(fn ((fnparam false (fn () (index (name \"UInt\") ((num 8)))))) (fn () (name \"Bool\")))"
+#guard (TypeExpr.index p (.fn p [] (t "UInt")) [n 8]).dump ==
+  "(index (fn () (name \"UInt\")) ((num 8)))"
+#guard exprDump (.fnType p [.mk true u8] (t "Bool")) ==
+  "(fntype ((fnparam true (index (name \"UInt\") ((num 8))))) (name \"Bool\"))"
+#guard exprDump (.index p (v "List") [.fnType p [] (t "Bool")]) ==
+  "(index (name \"List\") ((fntype () (name \"Bool\"))))"
+#guard stmtDump (.alias p (nm "F") (.fn p [] (t "Bool"))) ==
+  "(alias \"F\" (fn () (name \"Bool\")))"
+
 /-! Each item kind and the parameter structure. -/
 def counter : Item :=
   .module p (nm "Counter") [⟨p, .comptime, nm "W", t "Nat"⟩] (some [nm "clk"])
@@ -218,6 +239,29 @@ at level 0.
   "[[Bool; 2]; 3]()"
 #guard exprText (.unary p .neg (.arrayType p (t "Bool") (n 2))) == "-[Bool; 2]"
 #guard exprText (.array p [.arrayType p (t "Bool") (n 2)]) == "[[Bool; 2]]"
+
+/-!
+A function type prints `mut` before a marked parameter type. Its result type takes each postfix
+after it. Thus a function type as the base of an index prints in parentheses. This applies in a
+type and in an expression. The arrow binds to the right.
+-/
+#guard fnU8.print == "fn (UInt[8], mut Bool) -> ()"
+#guard (TypeExpr.fn p [] u8).print == "fn () -> UInt[8]"
+#guard (TypeExpr.fn p [] (.fn p [.mk true u8] (t "Bool"))).print ==
+  "fn () -> fn (mut UInt[8]) -> Bool"
+#guard (TypeExpr.fn p [.mk false (.fn p [] u8)] (t "Bool")).print ==
+  "fn (fn () -> UInt[8]) -> Bool"
+#guard (TypeExpr.index p (.fn p [] (t "UInt")) [n 8]).print == "(fn () -> UInt)[8]"
+#guard (TypeExpr.array p (.fn p [] (t "Bool")) (n 2)).print == "[fn () -> Bool; 2]"
+#guard (TypeExpr.tuple p [.fn p [] (t "Bool")]).print == "(fn () -> Bool,)"
+#guard exprText (.fnType p [.mk true u8] (t "Bool")) == "fn (mut UInt[8]) -> Bool"
+#guard exprText (.index p (v "List") [.fnType p [] (t "Bool")]) == "List[fn () -> Bool]"
+#guard exprText (.index p (.fnType p [] (t "UInt")) [n 8]) == "(fn () -> UInt)[8]"
+#guard exprText (.call p (.fnType p [] (t "Bool")) []) == "(fn () -> Bool)()"
+#guard exprText (.unary p .neg (.fnType p [] (t "Bool"))) == "-fn () -> Bool"
+#guard exprText (bin .eq (.fnType p [] (t "Bool")) (v "f")) == "fn () -> Bool == f"
+#guard (Stmt.local p false (nm "f") (some (.fn p [.mk false u8] u8)) (v "inc")).print 0 ==
+  "let f: fn (UInt[8]) -> UInt[8] = inc;\n"
 
 /-! Statements and items print as indented lines. -/
 #guard Print.print [counter, inc] ==
