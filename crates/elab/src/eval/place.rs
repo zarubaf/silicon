@@ -618,8 +618,9 @@ impl Evaluator<'_> {
     }
 
     /// Writes `y` into the place (section 5.2). A place without a step binds its root again, so
-    /// a hardware value gets the next version of the root. A step writes into the live value
-    /// of the root. A list holds no hardware value: `S011` at `q`, the node of the value. A
+    /// a hardware value gets the next version of the root. A place with a step checks the new
+    /// depth of the root: the number of steps plus the depth of the value (`S015` at `pos`).
+    /// Then it writes into the live value of the root. A list holds no hardware value: `S011` at `q`, the node of the value. A
     /// container holds no hardware value in this phase: `S010`.
     pub(super) fn store_at(&mut self, pos: Pos, q: Pos, place: &Place, y: Val) -> Res<()> {
         if place.keys.is_empty() {
@@ -641,6 +642,8 @@ impl Evaluator<'_> {
             return fail(Code::S011, q, "a list holds no hardware value".to_owned());
         }
         let w = self.item(q, y)?;
+        // The root is within the nesting depth, so only the value on the path can raise it.
+        self.bounded(pos, place.keys.len() as u64 + w.depth())?;
         self.charge_held(pos, place.root)?;
         if let Some(part) = self.store.part_mut(place.root, &place.keys) {
             *part = w;
