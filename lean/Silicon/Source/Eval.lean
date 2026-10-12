@@ -383,9 +383,21 @@ def iteration [Runs m] (pos : Pos) (i : Binder) (v : Int) (act : m α) : m α :=
     act
 
 /-!
+A place after its steps (section 5.2): the local number of its root, the slot and the source
+name of the root, the selected part with its type, and the number of each step.
+-/
+structure Place where
+  id : Nat
+  slot : Slot
+  name : String
+  ty : Option Ty
+  part : Val
+  keys : List Nat
+
+/-!
 The evaluator. `eval`, `typeExpr`, `stmt`, and `block` are the entry functions. Each charges
-one unit, then calls deeper with the bound `n`. The helpers `name`, `spec`, `call`, and
-`index` get the bound `n` of their caller after its charge. They call only entry functions and
+one unit, then calls deeper with the bound `n`. The helpers `name`, `spec`, `call`, `index`,
+and `placeAt` get the bound `n` of their caller after its charge. They call only entry functions and
 `spec`, which a name of a struct item uses.
 -/
 mutual
@@ -567,6 +579,41 @@ mutual
   termination_by (n + 1, 1)
 
   /--
+  The place `target` at `p` (section 5.2). Its root is a `let mut` local, else it is `code` at
+  `p`. Each step charges 1 before it applies. Then the index of an index step evaluates and
+  checks against the live value of the root.
+  -/
+  def placeAt (n : Nat) (p : Pos) (code : ErrorCode) (target : Resolve.Expr) : M Place := do
+    let some (root, sels) := chain target
+      | fail code p "the root of a place is a `let mut` local"
+    let some (id, slot, x) := ← place root
+      | fail code p "the root of a place is a `let mut` local"
+    let mut cur := slot.value
+    let mut ty := slot.ty
+    let mut keys : Array Nat := #[]
+    for sel in sels do
+      charge sel.pos 1
+      let (k, w, ft) ← match sel with
+        | .index q [i] => do
+          let (k, w) ← pickAt q i.pos cur (← static i.pos (← need i (← eval n i)).value)
+          pure (k, w, none)
+        | .index q _ => fail .S010 q "an index of a value has one argument"
+        | .select q r i => do
+          let (k, w) ← selectAt q r i cur
+          pure (k, w, none)
+        | .field q f => do
+          let (k, w, ft) ← fieldAt q f cur
+          pure (k, w, some ft)
+      ty := match ft, ty with
+        | some t, _ => some t
+        | none, some t => partTy t k
+        | none, none => w.ty?
+      cur := .static w
+      keys := keys.push k
+    return ⟨id, slot, x, ty, cur, keys.toList⟩
+  termination_by (n + 1, 0)
+
+  /--
   A call of a function item, a prelude function, or a type. A function item runs in the call
   frame `<fn>$<k>c`. A hardware argument and a hardware result get a core name in that frame.
   -/
@@ -683,45 +730,20 @@ mutual
         bindLocal b.id ⟨t <|> x.ty?, m, x⟩
         return none
       | .assign p target v => do
-        let some (root, sels) := chain target
-          | fail .S010 p "an assignment target is a `let mut` local"
-        let some (id, slot, x) := ← place root
-          | fail .S010 p "an assignment target is a `let mut` local"
-        let mut cur := slot.value
-        let mut ty := slot.ty
-        let mut keys : Array Nat := #[]
-        for sel in sels do
-          charge sel.pos 1
-          let (k, w, ft) ← match sel with
-            | .index q [i] => do
-              let (k, w) ← pickAt q i.pos cur (← static i.pos (← need i (← eval n i)).value)
-              pure (k, w, none)
-            | .index q _ => fail .S010 q "an index of a value has one argument"
-            | .select q r i => do
-              let (k, w) ← selectAt q r i cur
-              pure (k, w, none)
-            | .field q f => do
-              let (k, w, ft) ← fieldAt q f cur
-              pure (k, w, some ft)
-          ty := match ft, ty with
-            | some t, _ => some t
-            | none, some t => partTy t k
-            | none, none => w.ty?
-          cur := .static w
-          keys := keys.push k
+        let pl ← placeAt n p .S010 target
         let o ← need v (← eval n v)
         copy p o
-        let y ← match ty with
+        let y ← match pl.ty with
           | some t => conformVal p t o.value
           | none =>
-            if sameForm cur o.value then pure o.value
-            else fail .S010 p s!"expected {cur.text}, but the value is {o.value.text}"
-        if keys.isEmpty then bindLocal id { slot with value := ← named p id x y }
+            if sameForm pl.part o.value then pure o.value
+            else fail .S010 p s!"expected {pl.part.text}, but the value is {o.value.text}"
+        if pl.keys.isEmpty then bindLocal pl.id { pl.slot with value := ← named p pl.id pl.name y }
         else
           let w ← item v.pos y
           -- The indices and the right side ran after `place`, so the update reads the live slot.
-          if let some s@{ value := .static r, .. } := (← get).frame[id]? then
-            bindLocal id { s with value := .static (replace r keys.toList w) }
+          if let some s@{ value := .static r, .. } := (← get).frame[pl.id]? then
+            bindLocal pl.id { s with value := .static (replace r pl.keys w) }
         return none
       | .ret p v => do
         let some rt := (← read).ret | fail .S006 p "only a function has `return`"

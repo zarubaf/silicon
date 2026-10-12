@@ -565,6 +565,11 @@ theorem name_f (he : ∀ e, Follows m (eval k e) (eval m e))
   follows [he, ht, prim_f, need_f, copy_f, conform_f, static_f, settle_f, constant_f,
     spec_f he ht]
 
+theorem placeAt_f (he : ∀ e, Follows m (eval k e) (eval m e)) (p : Pos) (c : ErrorCode)
+    (t : Resolve.Expr) : Follows m (placeAt k p c t) (placeAt m p c t) := by
+  rw [placeAt.eq_def k, placeAt.eq_def m]
+  follows [he, place_f, need_f, static_f, pickAt_f, selectAt_f, fieldAt_f]
+
 theorem call_f (he : ∀ e, Follows m (eval k e) (eval m e))
     (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t))
     (hb : ∀ p ss, Follows m (block k p ss) (block m p ss)) (p : Pos) (f : Resolve.Expr)
@@ -622,15 +627,13 @@ theorem follows_all : ∀ n,
       · rw [stmt.eq_def (k + 1), stmt.eq_def 0]
         apply Follows.exhaust (cap := k)
         intro _
-        follows [he k, ht k, hs k, hb k, need_f, copy_f, conformVal_f, known_f, named_f,
-          bindLocal_f, place_f, test_f, int_f, range_f, iteration_f, static_f, pickAt_f,
-          selectAt_f, item_f, fieldAt_f]
+        follows [he k, ht k, hs k, hb k, placeAt_f (he k), need_f, copy_f, conformVal_f,
+          known_f, named_f, bindLocal_f, test_f, int_f, range_f, iteration_f, static_f, item_f]
       · rw [stmt.eq_def (k + 1), stmt.eq_def (m + 1)]
         apply Follows.charge_one
         intro _
-        follows [he m, ht m, hs m, hb m, need_f, copy_f, conformVal_f, known_f, named_f,
-          bindLocal_f, place_f, test_f, int_f, range_f, iteration_f, static_f, pickAt_f,
-          selectAt_f, item_f, fieldAt_f]
+        follows [he m, ht m, hs m, hb m, placeAt_f (he m), need_f, copy_f, conformVal_f,
+          known_f, named_f, bindLocal_f, test_f, int_f, range_f, iteration_f, static_f, item_f]
     · rcases n' with _ | m
       · rw [block.eq_def (k + 1), block.eq_def 0]
         apply Follows.exhaust (cap := k)
