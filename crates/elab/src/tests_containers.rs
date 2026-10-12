@@ -523,6 +523,28 @@ fn a_read_checks_each_step_before_a_later_index() {
     assert_eq!(at("let a = [[1, 2]]; return a[0][0, 1];"), "S010 1:42");
 }
 
+/// A local whose tuple holds a string has no type, so the update of an element finds the
+/// type of the element. It finds it once, so an update of depth `d` does work in `d`, not one
+/// walk of the subtree at each step.
+#[test]
+fn a_deep_update_of_a_tuple_with_a_string_types_its_element_once() {
+    let work = |d: usize, updates: usize| {
+        let mut lit = "(\"s\", 0)".to_owned();
+        for _ in 1..d {
+            lit = format!("({lit}, 0)");
+        }
+        let place = format!("a{}.1", ".0".repeat(d - 1));
+        let src = body(&format!(
+            "let mut a = {lit}; {} return 0;",
+            format!("{place} = 1; ").repeat(updates)
+        ));
+        type_work(&src, "f()")
+    };
+    let d = 400;
+    let each = (work(d, 30) - work(d, 10)) / 20;
+    assert!(each <= 4 * d as u64, "{each} for a depth of {d}");
+}
+
 fn container(ty: &str, arg: &str) -> String {
     format!("module C(comptime xs: {ty}) {{\n}}\nmodule T() {{\n  instance a = C({arg});\n}}\n")
 }

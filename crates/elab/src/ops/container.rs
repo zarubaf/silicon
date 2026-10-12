@@ -422,3 +422,84 @@ pub(crate) fn container_op(
         )),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ops::Fuel;
+
+    /// Runs `f` on a thread with a small stack, so a walk that recurses over a deep value
+    /// overflows it.
+    fn small_stack(f: impl FnOnce() + Send) {
+        std::thread::scope(|scope| {
+            let worker = std::thread::Builder::new()
+                .stack_size(256 * 1024)
+                .spawn_scoped(scope, f);
+            assert!(worker.is_ok_and(|w| w.join().is_ok()));
+        });
+    }
+
+    /// The tuple `((x,),)` of depth `depth` around `x`, and its type around the type `t`.
+    fn deep(tys: &mut Types, depth: usize, x: Value, mut t: TyId) -> (Value, TyId) {
+        let mut v = x;
+        for _ in 0..depth {
+            v = Value::Tuple(vec![v]);
+            t = tys.tuple(vec![t]);
+        }
+        (v, t)
+    }
+
+    /// Each walk over a value or a type keeps its own stack, so a value of depth 100,000
+    /// needs no deep stack.
+    #[test]
+    fn the_walks_over_a_deep_value_do_not_recurse() {
+        small_stack(|| {
+            const DEPTH: usize = 100_000;
+            let mut tys = Types::default();
+            let (int, nat) = (tys.mk(Ty::Int), tys.mk(Ty::Nat));
+            let (v, t) = deep(&mut tys, DEPTH, Value::Int(Int::from_u64(7)), int);
+            let (_, tn) = deep(&mut tys, DEPTH, Value::Unit, nat);
+            assert_eq!(v.size(), DEPTH as u64 + 1);
+            assert_eq!(v.depth(), DEPTH as u64 + 1);
+            assert_eq!(v.measure_charge(), DEPTH as u128 + 1);
+            let text = v.serialize(&tys);
+            assert_eq!(text.len() as u64, v.serialized_len(&tys));
+            assert_eq!(v.ty(&mut tys), Some(t));
+            assert!(v.text(&tys).ends_with("..."));
+            assert!(tys.text(t).len() < 1100);
+            let w = v.clone();
+            // `assert_eq` would print the deep value with the recursive `Debug`.
+            let same = v == w;
+            assert!(same);
+            let mut fuel = Fuel::new(u64::MAX);
+            let n = convert(tn, &v, &mut fuel, &tys);
+            assert!(matches!(n, Ok(Some(_))));
+            let eq = container_op(BinOp::Eq, &v, &w, &mut fuel, &mut tys);
+            assert!(matches!(eq, Ok(Value::Bool(true))));
+            assert_eq!(common_ty(t, tn, &mut tys), Some(t));
+        });
+    }
+
+    /// The type `(t, t)` doubled `levels` times: its term has `2^levels` leaves, and the
+    /// table has one entry for each level.
+    fn doubled(tys: &mut Types, mut t: TyId, levels: usize) -> TyId {
+        for _ in 0..levels {
+            t = tys.tuple(vec![t, t]);
+        }
+        t
+    }
+
+    /// Two doubled types of 100 levels join in work linear in the levels, not in their terms.
+    #[test]
+    fn a_join_of_shared_types_walks_each_pair_once() {
+        let mut tys = Types::default();
+        let (int, byte) = (tys.mk(Ty::Int), tys.mk(Ty::UInt(8)));
+        let (a, b) = (doubled(&mut tys, int, 100), doubled(&mut tys, byte, 100));
+        let before = tys.work;
+        assert_eq!(common_ty(a, b, &mut tys), Some(b));
+        assert!(tys.work - before <= 4 * 100, "{}", tys.work - before);
+        let again = tys.work;
+        assert_eq!(common_ty(a, b, &mut tys), Some(b));
+        assert_eq!(tys.work, again);
+    }
+}

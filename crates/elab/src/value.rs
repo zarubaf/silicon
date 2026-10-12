@@ -261,7 +261,8 @@ pub struct Types {
     index: BTreeMap<Ty, TyId>,
     /// The common type of each pair of types that joined, or `None` if they have none.
     joins: BTreeMap<(TyId, TyId), Option<TyId>>,
-    /// The work of the lookups: 1 for each type and 1 for each part of a container type.
+    /// The work of the lookups: 1 for each type and 1 for each part of a container type. The
+    /// type of a value adds 1 for each node that its walk visits.
     #[cfg(test)]
     pub(crate) work: u64,
 }
@@ -557,6 +558,10 @@ impl Ty {
 impl Value {
     /// The type of a value. A string, a type, and a tuple that holds them have no type.
     pub fn ty(&self, tys: &mut Types) -> Option<TyId> {
+        #[cfg(test)]
+        {
+            tys.work += self.typing_nodes();
+        }
         if !self.has_type() {
             return None;
         }
@@ -590,6 +595,22 @@ impl Value {
             }
         }
         true
+    }
+
+    /// The nodes that `has_type` visits, for the test of the work of a type.
+    #[cfg(test)]
+    fn typing_nodes(&self) -> u64 {
+        let mut nodes = 0;
+        let mut work = vec![self];
+        while let Some(v) = work.pop() {
+            nodes += 1;
+            match v {
+                Value::Str(_) | Value::Type(_) => return nodes,
+                Value::Tuple(xs) => work.extend(xs),
+                _ => {}
+            }
+        }
+        nodes
     }
 
     /// The type of a value that is not a tuple.
