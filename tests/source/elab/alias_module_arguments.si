@@ -1,0 +1,33 @@
+// The arguments of an instance and the bounds of a loop keep the values that they read. The
+// instance `u` gets `A = 1` and `B = 2`, so the inputs `p` and `q` fit its ports. The loop
+// `x..bump(x)` runs once, so the input `c` has 10 bits.
+// TOP M()
+// CHECK: (input c (bits 10))
+// CHECK-NEXT: (input p (bits 1))
+// CHECK-NEXT: (input q (bits 2))
+// CHECK-NEXT: (inst u Sub$1$2 (a p) (b q))
+comptime fn bump(mut x: Nat) -> Nat {
+    x = x + 1;
+    return x;
+}
+comptime fn count() -> Nat {
+    let mut x: Nat = 1;
+    let mut s: Nat = 0;
+    comptime for i in x..bump(x) {
+        s = s + 10;
+    }
+    return s;
+}
+module Sub(comptime A: Nat, comptime B: Nat) domains() {
+    input a: UInt[A];
+    input b: UInt[B];
+}
+module M() domains() {
+    let mut x: Nat = 1;
+    instance u = Sub(x, bump(x));
+    input p: UInt[1];
+    input q: UInt[2];
+    u.a := p;
+    u.b := q;
+    input c: UInt[count()];
+}

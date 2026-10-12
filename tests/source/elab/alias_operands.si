@@ -1,0 +1,22 @@
+// An operand keeps the value that it read. `x + bump(x)` reads `x = 1` for the left operand, so
+// the sum is 1 + 2 and the first port has 3 bits. In `x * bump(x) * x`, the left product is
+// 2 * 3, and the last operand reads 3, so the second port has 18 bits.
+// TOP M()
+// CHECK: (input a (bits 3))
+// CHECK-NEXT: (input b (bits 18))
+comptime fn bump(mut x: Nat) -> Nat {
+    x = x + 1;
+    return x;
+}
+comptime fn sum() -> Nat {
+    let mut x: Nat = 1;
+    return x + bump(x);
+}
+comptime fn product() -> Nat {
+    let mut x: Nat = 2;
+    return x * bump(x) * x;
+}
+module M() domains() {
+    input a: UInt[sum()];
+    input b: UInt[product()];
+}
