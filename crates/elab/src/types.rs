@@ -300,7 +300,7 @@ impl Types {
     pub fn meta_of(&self, ty: &Ty) -> Meta {
         match ty {
             Ty::Array(elem, len) => self.meta(*elem).array(len),
-            Ty::Tuple(parts) => Meta::sum(parts.iter().map(|part| self.meta(*part))),
+            Ty::Tuple(parts) => self.sum(parts),
             scalar => Meta::scalar(scalar),
         }
     }
@@ -414,6 +414,33 @@ impl Types {
         self.entries.get(t.index).map_or(&ABSENT_META, |e| &e.meta)
     }
 
+    /// The metadata sums of the parts `parts` of a tuple or a struct type, as Lean `Meta.sum`
+    /// computes them. The work reads each integer of each part, which `read_charge` pays.
+    #[must_use]
+    pub fn sum(&self, parts: &[TyId]) -> Meta {
+        #[cfg(test)]
+        self.tick(
+            parts
+                .iter()
+                .map(|part| {
+                    let m = self.meta(*part);
+                    int_size(&m.width) + int_size(&m.leaves) + int_size(&m.zero_size)
+                })
+                .sum(),
+        );
+        Meta::sum(parts.iter().map(|part| self.meta(*part)))
+    }
+
+    /// The charge of the reads of `sum` over `parts`, as Lean `Meta.readCharge`: the
+    /// sizes of the four integers of each part. It bounds the work of the additions.
+    #[must_use]
+    pub fn read_charge(&self, parts: &[TyId]) -> u128 {
+        parts
+            .iter()
+            .map(|part| self.meta(*part).int_charge(part.depth))
+            .sum()
+    }
+
     /// The depth of the zero value of `t`, from the type alone.
     #[must_use]
     pub fn zero_depth(&self, t: TyId) -> u64 {
@@ -514,10 +541,7 @@ impl Types {
     /// Lean `Meta.struct` computes them: the depth counts the static arguments too.
     #[must_use]
     pub fn struct_meta(&self, s: SpecId, fields: &[TyId]) -> (Meta, u64) {
-        (
-            Meta::sum(fields.iter().map(|f| self.meta(*f))),
-            self.struct_depth(s, fields),
-        )
+        (self.sum(fields), self.struct_depth(s, fields))
     }
 
     /// The depth of the struct type of `s` from its field types `fields`: 1 more than the
