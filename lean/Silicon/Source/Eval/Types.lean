@@ -22,12 +22,13 @@ follow sections 5.1, 5.4, 5.5, and 5.6. These rules settle their open points:
   Thus `P[8]` and
   `P[UInt[4](8)]` are one type when the parameter of `P` has the type `UInt[4]`. Each use counts
   toward the nesting depth (`S015`). It evaluates the parameter types in the scope of the
-  struct and binds the parameters as typed uses, with their charges and errors. A first use
-  then charges the size of the struct type and evaluates the field types. Then it checks the
-  depth of the struct type (`S015`) and charges the sums of its metadata. A use in progress is
-  `S019`. A use of a done entry charges nothing more than its node and its parameters. A use
-  of a struct item while its own parameter types evaluate is `S019` too, because its key does
-  not exist yet.
+  struct and binds the parameters as typed uses, with their charges and errors. Then it
+  charges the sum of the sizes of the arguments, before the lookup, because the lookup reads
+  them in full. A first use then charges the size of the struct type and evaluates the field
+  types. Then it checks the depth of the struct type (`S015`) and charges the sums of its
+  metadata. A use in progress is `S019`. A use of a done entry charges nothing more. A use of
+  a struct item while its own parameter types evaluate is `S019` too, because its key does not
+  exist yet.
 -/
 namespace Silicon.Source.Eval
 
@@ -126,10 +127,12 @@ def constant (p : Pos) (x : String) (i : Nat) (body : M Value) : M Value := do
 
 /-!
 A use at `p` of the struct item `i` with the name `x` and the normalized static arguments
-`args`. The first use runs `fields`, which evaluates the field types. The caller nests it.
+`args`. It charges their sizes before the lookup. The first use runs `fields`, which evaluates
+the field types. The caller nests it.
 -/
 def specialize (p : Pos) (x : String) (i : Nat) (args : List Value) (fields : M (List Ty)) :
     M Ty := do
+  charge p (Value.sizeAll args)
   let found : Option SpecState :=
     ((← get).specs.find? fun e => e.item == i && e.args == args).map (·.state)
   match found with
