@@ -323,6 +323,10 @@ inductive Sel where
   | index (pos : Pos) (args : List Resolve.Expr)
   | select (pos q : Pos) (i : Nat)
 
+/-! The position of the node of a step, where the step charges. -/
+def Sel.pos : Sel → Pos
+  | .index p _ | .select p _ _ => p
+
 /-! The root of a place and its steps from the root outward. Another target has no place. -/
 def chain (e : Resolve.Expr) (acc : List Sel := []) : Option (Resolve.Expr × List Sel) :=
   match e with

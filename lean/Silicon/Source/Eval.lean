@@ -63,8 +63,9 @@ its operation runs. When the fuel cannot pay it, the result is `S015` at the nod
    Each copy charges after all arguments of the call run. A binding is a `let`, an
    assignment, or a constant. A reference is a name, or a conditional that selects a
    reference. The copy comes before the typed use.
-7. The target of an assignment is a place, not an expression, so it charges nothing. Only the
-   index expressions of the place evaluate and charge.
+7. The target of an assignment is a place, not an expression, so its root name charges
+   nothing. Each step of the place, an index or a selector `.N`, charges 1 before it applies,
+   so the charge pays for the walk over the path. The index expressions evaluate and charge.
 8. A `comptime for` charges the sum of the sizes of its two bounds for the range. Each
    iteration charges the size of its loop value before it binds it.
 9. A hardware operation makes one node and charges 1 plus the number of its operands. Its
@@ -617,6 +618,7 @@ mutual
         let mut ty := slot.ty
         let mut keys : Array Nat := #[]
         for sel in sels do
+          charge sel.pos 1
           let (k, w) ← match sel with
             | .index q [i] => do pickAt q i.pos cur (← static i.pos (← need i (← eval n i)).value)
             | .index q _ => fail .S010 q "an index of a value has one argument"
