@@ -216,7 +216,11 @@ An input line or an output line of a top module in source terms: source port nam
 
 ### leaf
 
-A part of a value or of a hardware data type that is not a container: a `Bool`, a `UInt[W]`, or an `SInt[W]`. Elaboration lowers an aggregate to one core value for each leaf.
+A part of a value or of a type, at any depth, that is not a container and not `()`. A leaf of a value is a static value or a hardware value. A leaf of a hardware data type has the type `Bool`, `UInt[W]`, or `SInt[W]`. A type without a leaf, for example `Unit` or `[T; 0]`, is empty.
+
+### hardware leaf
+
+A leaf of a value that is a hardware value. Elaboration lowers each hardware leaf of an aggregate to one core value.
 
 ### packing order
 
