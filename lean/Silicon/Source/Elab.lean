@@ -31,7 +31,10 @@ These rules settle the open points of slice 1:
 - A port keeps its source name. The root frame counts it with the other bindings of its name.
   A second port with one name thus fails, and so does a port after a binding of its name.
   The code is `S019`.
-- A port, a register, and a wire have the type `Bool`, `UInt[W]`, or `SInt[W]` (`S010`).
+- A port, a register, and a wire have the type `Bool`, `UInt[W]`, or `SInt[W]` (`S010`). Until
+  phase 6 of section 14.2, a struct type, an array type, or a tuple type there is `S010`.
+- A module parameter can be a type or a record. Such an argument gives the digest form of the
+  emitted name (section 7.1).
 - A register in a combinational module is `S017` at the statement, before its type.
 - A `:=` target resolves without a charge. A register, a wire, an own output, and a child input
   are targets, also through a handle alias. Each other target fails with `S017` (rule). A
@@ -165,10 +168,11 @@ def modifyBody (f : Body → Body) : EM Unit :=
 
 def slot (id : Nat) : EM (Option Slot) := monadLift (do return (← get).frame[id]? : Eval.M _)
 
-/-! A port, a register, and a wire have a hardware type. -/
+/-! A port, a register, and a wire have a scalar hardware type until phase 6. -/
 def dataType (p : Pos) (t : Ty) : EM Ty :=
   if t.finite || t == .bool then pure t
-  else fail .S010 p s!"a port, a register, and a wire have a hardware type, not {t.text}"
+  else fail .S010 p
+    s!"a port, a register, and a wire have the type Bool, UInt[W], or SInt[W], not {t.text}"
 
 /-! A resource that needs one binding. The result is its handle. -/
 def resource (k : Kind) (path : Path) (t : Ty) (p : Pos) (x : String) : EM Val := do

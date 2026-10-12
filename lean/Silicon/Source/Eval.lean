@@ -59,6 +59,7 @@ its operation runs. When the fuel cannot pay it, the result is `S015` at the nod
    `reinterpret`, and a typed use that makes a finite value from an `Int`.
 5. `UInt[w]` and `SInt[w]` charge the size of the type that they make. The other type
    constructors, the joins, and the struct specializations charge by `Source.Eval.Types`.
+   `data_bits(T)` charges only its node, because the metadata of `T` holds its width.
 6. A copy charges the size of the copied value: each argument, each return, and a binding of a
    reference. The arguments of a function, a prelude function other than `len`, and a
    constructor `T(x)` are copies. `len` only refers to its argument, so it copies nothing.
@@ -148,13 +149,6 @@ def family (t : PrimType) (args : List Value) : Except Fault Ty := do
     .ok (if t == .uint then .uint w.toNat else .sint w.toNat)
   | .uint, [v] | .sint, [v] => typeError s!"a width is a static Int, not {v.text}"
   | _, _ => .error (.S007, "a type family takes one index argument")
-
-/-!
-The struct values of phase 3 resolve and pass the pre-check, but `Eval` does not evaluate them
-yet. This stub reports `S004` at the form.
--/
--- TODO(#178): evaluate the struct values and `data_bits`, and remove this stub.
-abbrev typeStub (pos : Pos) : M α := fail .S004 pos "the struct values are not in this phase"
 
 def prim (pos : Pos) (x : String) : PrimType → M Ty
   | .bool => pure .bool
@@ -461,7 +455,7 @@ mutual
             if q.input then return some ⟨.handle (.input id path q), true⟩
             else return some ⟨.hw (.mk p q.ty (.out path q.name) []), true⟩
           | none => fail .S010 p s!"the instance has no port `{f.name}`"
-        | v => fail .S010 p s!"{v.text} has no field `{f.name}`"
+        | v => return some ⟨.static (← fieldAt p f v).2.1, true⟩
       | .unit p => do charge p Value.unit.size; return some ⟨.static .unit, false⟩
       | .tuple p xs => do
         let es ← xs.mapM fun x => do element x.pos (← need x (← eval n x)).value
@@ -566,11 +560,30 @@ mutual
   def call (n : Nat) (p : Pos) (f : Resolve.Expr) (xs : List Resolve.Expr) : M (Option Out) := do
     let args (xs : List Resolve.Expr) : M (List Val) :=
       xs.mapM fun x => do return (← need x (← eval n x)).value
+    -- A callee that is not a function item or a prelude function is a type.
+    let ctor : M (Option Out) := do
+      let o ← need f (← eval n f)
+      let .static (.type t) := o.value | fail .S010 p s!"{o.value.text} is not a function"
+      match t, xs with
+      | t, [] => return some ⟨.static (← zero p t), false⟩
+      | t@(.struct ..), xs =>
+        let some (_, fs) := fieldsIn (← get).specs t
+          | fail .S010 p s!"{t.text} has no specialization"
+        if fs.length != xs.length then
+          fail .S007 p
+            s!"a struct constructor takes 0 or {fs.length} argument(s), but it has {xs.length}"
+        let vs ← args xs
+        charge p (vs.map Val.size).sum
+        return some ⟨.static (← recordOf p t fs (xs.map (·.pos)) vs), false⟩
+      | t, [x] =>
+        let a ← need x (← eval n x)
+        charge p a.value.size
+        return some ⟨.static (← conform p t (← static p a.value)), false⟩
+      | _, _ => fail .S007 p "a constructor takes 0 or 1 argument(s)"
     match f with
     | .name fp g (.item i) =>
+      let some (.fn ip c fname ps ret body) := (← read).items[i]? | ctor
       charge fp 1
-      let some (.fn ip c fname ps ret body) := (← read).items[i]?
-        | fail .S010 fp s!"`{g}` is not a function"
       let vs ← args xs
       if ps.length != vs.length then
         fail .S007 p s!"`{g}` takes {ps.length} argument(s), but it has {vs.length}"
@@ -597,6 +610,14 @@ mutual
     | .name fp _ (.fn .len) =>
       charge fp 1
       return some ⟨.static (← lenOf p (← args xs)), false⟩
+    | .name fp g (.fn .dataBits) =>
+      charge fp 1
+      match ← args xs with
+      | [.static (.type t)] =>
+        if t.info.data then return some ⟨.static (.int t.info.width), false⟩
+        else fail .S010 p s!"`{g}` needs a hardware data type, not {t.text}"
+      | [v] => fail .S010 p s!"`{g}` needs a type, not {v.text}"
+      | vs => fail .S007 p s!"`{g}` takes 1 argument(s), but it has {vs.length}"
     | .name fp g (.fn h) =>
       charge fp 1
       let vs ← args xs
@@ -621,17 +642,8 @@ mutual
         match ← static p m with
         | .str m => fail .S014 p s!"error: {strText m}"
         | m => fail .S010 p s!"`{g}` does not accept {m.text}"
-      | .dataBits, _ => typeStub p
       | _, vs => fail .S010 p s!"`{g}` does not accept {vs.map Val.text}"
-    | _ =>
-      let t ← need f (← eval n f)
-      match t.value, xs with
-      | .static (.type t), [x] =>
-        let a ← need x (← eval n x)
-        charge p a.value.size
-        return some ⟨.static (← conform p t (← static p a.value)), false⟩
-      | .static (.type _), _ => fail .S007 p "a constructor takes 1 argument"
-      | v, _ => fail .S010 p s!"{v.text} is not a function"
+    | _ => ctor
   termination_by (n + 1, 0)
 
   /-- A statement. The result is the value of a `return`. -/
@@ -661,13 +673,21 @@ mutual
         let mut keys : Array Nat := #[]
         for sel in sels do
           charge sel.pos 1
-          let (k, w) ← match sel with
-            | .index q [i] => do pickAt q i.pos cur (← static i.pos (← need i (← eval n i)).value)
+          let (k, w, ft) ← match sel with
+            | .index q [i] => do
+              let (k, w) ← pickAt q i.pos cur (← static i.pos (← need i (← eval n i)).value)
+              pure (k, w, none)
             | .index q _ => fail .S010 q "an index of a value has one argument"
-            | .select q r i => selectAt q r i cur
-          ty := match ty with
-            | some t => partTy t k
-            | none => w.ty?
+            | .select q r i => do
+              let (k, w) ← selectAt q r i cur
+              pure (k, w, none)
+            | .field q f => do
+              let (k, w, ft) ← fieldAt q f cur
+              pure (k, w, some ft)
+          ty := match ft, ty with
+            | some t, _ => some t
+            | none, some t => partTy t k
+            | none, none => w.ty?
           cur := .static w
           keys := keys.push k
         let o ← need v (← eval n v)
@@ -800,7 +820,10 @@ mutual
     for s in ss do scanStmt s
 end
 
-/-! The scan of an item. Only the call sites of the body count for the call frames. -/
+/-!
+The scan of an item. Only the call sites of the body count for the call frames, so a struct,
+which has no body, has none. Its parameters bind in its specializations.
+-/
 def scanItem (it : Resolve.Item) : Scan :=
   let go : ScanM Unit := match it with
     | .fn _ _ _ ps _ b => do
@@ -818,8 +841,13 @@ def scanItem (it : Resolve.Item) : Scan :=
         scanType q.ty
       for d in ds do scanBinder d
       modify fun s => { s with calls }
-    -- TODO(#178): scan the parameters and the field types of a struct for its specializations.
-    | .const .. | .struct .. | .alias .. => pure ()
+    | .struct _ _ ps fs => do
+      for q in ps do
+        scanBinder q.name
+        scanType q.ty
+      for f in fs do scanType f.ty
+      modify fun s => { s with calls := [] }
+    | .const .. | .alias .. => pure ()
   (go.run {}).2
 
 /-!

@@ -5,6 +5,7 @@ import Silicon.Source.Eval.Types
 The static containers of the evaluator. These are the typed use of a container, the common type,
 `==` on containers, and the literals with their depth and their charge. The literals that wait
 for their type, the index, the selector `.N`, `len`, and the places of an assignment are here too.
+So are the records of section 5.6: the constructor, the field `.f`, and the zero `T()`.
 
 The static containers of slice 2 follow section 5.1. These rules settle its open points:
 
@@ -28,8 +29,17 @@ The static containers of slice 2 follow section 5.1. These rules settle its open
 - Each new container checks its depth before the charge of its size (`S015`). These are the
   literals, the tuple and array types, and `[]` at its typed use.
 - `()` charges the size 1 as a value and as a type.
-- An assignment to a place with indices and selectors `.N` evaluates its indices from left to
-  right. Each index checks when it evaluates: its stage (`S011`), the container and its own
+- A record constructor `P[8](a, b)` charges the copies of its arguments. Then it makes the typed
+  use of each field in declaration order (`S010` and `S012`), and it charges its size. In this
+  phase a field holds only a static value: a hardware argument is `S010`. A struct type of a
+  local or of a `type` item checks the number of its arguments here (`S007`).
+- `==` on two records needs one struct type. The join of the two types charges as a type
+  equality. Then the operator charges the sum of the two sizes.
+- A field `.f` refers to the field, so it charges no size. A missing field is `S010`.
+- `T()` is the zero of a hardware data type, also of a struct type. Another type is `S010`. The
+  zero checks its depth (`Ty.zeroDepth`) and charges its size from the metadata before it exists.
+- An assignment to a place with indices, selectors `.N`, and fields evaluates its indices from
+  left to right. Each index checks when it evaluates: its stage (`S011`), the container and its own
   type (`S010`), then its range (`S013`). Then the right side evaluates, with the element type
   as its type. The update copies only the containers on the path of the place, so it charges
   nothing more. A binding that shares a container paid its copy before.
@@ -98,9 +108,9 @@ def commonOf : List Value → Walk (Option Ty)
     | some t, some u => joinTy t u
     | _, _ => return none
 
-/-! A container: `()`, an array, or a tuple. -/
+/-! A container: `()`, an array, a tuple, or a record. -/
 def composite : Value → Bool
-  | .unit | .array .. | .tuple _ => true
+  | .unit | .array .. | .tuple _ | .record .. => true
   | _ => false
 
 /-! `==` on two scalars in a container. A static integer takes the finite type of the other. -/
@@ -131,6 +141,10 @@ mutual
       else throw (.S010, s!"`==` needs a common type, not {a.text} and {b.text}")
     | a@(.tuple ⟨xs⟩), b@(.tuple ⟨ys⟩) =>
       if xs.length == ys.length then sameAll xs ys
+      else throw (.S010, s!"`==` needs a common type, not {a.text} and {b.text}")
+    | a@(.record s ⟨xs⟩), b@(.record t ⟨ys⟩) => do
+      let j ← joinTy s t
+      if j.isSome then sameAll xs ys
       else throw (.S010, s!"`==` needs a common type, not {a.text} and {b.text}")
     | a, b =>
       if composite a || composite b then
@@ -295,22 +309,24 @@ def partTy : Ty → Nat → Option Ty
   | _, _ => none
 
 /-!
-A step of a place after its root: an index at `pos`, or a selector `.i` with its literal at
-`q`.
+A step of a place after its root: an index at `pos`, a selector `.i` with its literal at `q`, or
+a field `.f`.
 -/
 inductive Sel where
   | index (pos : Pos) (args : List Resolve.Expr)
   | select (pos q : Pos) (i : Nat)
+  | field (pos : Pos) (f : Ident)
 
 /-! The position of the node of a step, where the step charges. -/
 def Sel.pos : Sel → Pos
-  | .index p _ | .select p _ _ => p
+  | .index p _ | .select p _ _ | .field p _ => p
 
 /-! The root of a place and its steps from the root outward. Another target has no place. -/
 def chain (e : Resolve.Expr) (acc : List Sel := []) : Option (Resolve.Expr × List Sel) :=
   match e with
   | .index p b xs => chain b (.index p xs :: acc)
   | .select p b q i => chain b (.select p q i :: acc)
+  | .field p b f => chain b (.field p f :: acc)
   | .name .. => some (e, acc)
   | _ => none
 
@@ -322,7 +338,53 @@ def replace : Value → List Nat → Value → Value
   | _, [], w => w
   | .array t xs, k :: ks, w => .array t (xs.modify k (replace · ks w))
   | .tuple xs, k :: ks, w => .tuple (xs.modify k (replace · ks w))
+  | .record t xs, k :: ks, w => .record t (xs.modify k (replace · ks w))
   | v, _ :: _, _ => v
+
+/-!
+The field `f` of a record at `pos`. The result is the number of the field, its value, and its
+type. A field selection refers to the field, so it charges no size.
+-/
+def fieldAt (pos : Pos) (f : Ident) : Val → M (Nat × Value × Ty)
+  | .static v@(.record t xs) => do
+    let some (i, fs) := fieldsIn (← get).specs t
+      | fail .S010 pos s!"{v.text} has no specialization"
+    let some (.struct _ _ _ decl) := (← read).items[i]?
+      | fail .S010 pos s!"{v.text} has no struct item"
+    match ((decl.zip fs).zipIdx.find? fun ((d, _), _) => d.name.name == f.name) with
+    | some ((_, ft), k) =>
+      match xs[k]? with
+      | some x => return (k, x, ft)
+      | none => fail .S010 pos s!"{v.text} has no field `{f.name}`"
+    | none => fail .S010 pos s!"{v.text} has no field `{f.name}`"
+  | v => fail .S010 pos s!"{v.text} has no field `{f.name}`"
+
+/-!
+A record constructor of the struct type `t` with the field types `fs` at `pos`. The arguments
+`vs` at the positions `ps` paid their copies. Each field is a typed use in declaration order. A
+literal with `[]` takes the type of its field. In this phase a field holds only a static value,
+so a hardware argument is `S010` at the argument. Then the record checks its depth and charges
+its size.
+-/
+def recordOf (pos : Pos) (t : Ty) (fs : List Ty) (ps : List Pos) (vs : List Val) : M Value := do
+  let xs ← (fs.zip (ps.zip vs)).mapM fun (ft, q, v) => do
+    conform pos ft (← item q (← settle pos ft v))
+  let r := Value.record t xs.toArray
+  bounded pos r.depth
+  charge pos r.size
+  return r
+
+/-!
+The zero `T()` of the type `t` at `pos` (section 5.6). A type that is not hardware data is
+`S010`. The zero checks its depth and charges its size from the metadata before it exists.
+-/
+def zero (pos : Pos) (t : Ty) : M Value := do
+  unless t.info.data do fail .S010 pos s!"a zero `T()` needs a hardware data type, not {t.text}"
+  bounded pos t.zeroDepth
+  charge pos t.info.zeroSize
+  match zeroOf (← get).specs t.depth t with
+  | some v => return v
+  | none => fail .S010 pos s!"{t.text} has no zero"
 
 /-! `len` of an array at the call `pos`. It refers to the array, so it charges no size. -/
 def lenOf (pos : Pos) : List Val → M Value

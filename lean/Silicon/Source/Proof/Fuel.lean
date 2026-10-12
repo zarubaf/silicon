@@ -457,6 +457,17 @@ theorem pick_f (p q : Pos) (v : Val) (i : Value) :
 theorem lenOf_f (p : Pos) (vs : List Val) : Follows cap (lenOf p vs) (lenOf p vs) := by
   unfold lenOf; follows [data_f]
 
+theorem fieldAt_f (p : Pos) (f : Ident) (v : Val) :
+    Follows cap (fieldAt p f v) (fieldAt p f v) := by
+  unfold fieldAt; follows
+
+theorem recordOf_f (p : Pos) (t : Ty) (fs : List Ty) (ps : List Pos) (vs : List Val) :
+    Follows cap (recordOf p t fs ps vs) (recordOf p t fs ps vs) := by
+  unfold recordOf; follows [conform_f, item_f, settle_f, bounded_f]
+
+theorem zero_f (p : Pos) (t : Ty) : Follows cap (zero p t) (zero p t) := by
+  unfold zero; follows [bounded_f]
+
 theorem conformVal_f (p : Pos) (t : Ty) (v : Val) :
     Follows cap (conformVal p t v) (conformVal p t v) := by
   unfold conformVal; follows [settle_f, data_f, conform_f]
@@ -557,7 +568,7 @@ theorem call_f (he : ∀ e, Follows m (eval k e) (eval m e))
   rw [call.eq_def k, call.eq_def m]
   follows [he, ht, hb, need_f, static_f, settle_f, data_f, conform_f, conformVal_f, apply_f,
     hwConvert_f, lenOf_f, named_f, bindLocal_f, bindHw_f, version_f, frameOf_f, nested_f,
-    inFrame_f]
+    inFrame_f, zero_f, recordOf_f]
 
 /--
 Each function of the evaluator at any bound `n` is followed by the same function at the
@@ -584,14 +595,14 @@ theorem follows_all : ∀ n,
         follows [he k, ht k, index_f (he k), name_f (he k) (ht k),
           call_f (he k) (ht k) (hb k), spec_f (he k) (ht k), need_f, data_f, apply_f,
           hwUnary_f, test_f, hwBinary_f, unify_f, mux_f, static_f, pick_f, element_f, tupleOf_f,
-          arrayOf_f, select_f, containerOp_f, arrayTy_f]
+          arrayOf_f, select_f, containerOp_f, arrayTy_f, fieldAt_f]
       · rw [eval.eq_def (k + 1), eval.eq_def (m + 1)]
         apply Follows.charge_one
         intro _
         follows [he m, ht m, index_f (he m), name_f (he m) (ht m),
           call_f (he m) (ht m) (hb m), spec_f (he m) (ht m), need_f, data_f, apply_f,
           hwUnary_f, test_f, hwBinary_f, unify_f, mux_f, static_f, pick_f, element_f, tupleOf_f,
-          arrayOf_f, select_f, containerOp_f, arrayTy_f]
+          arrayOf_f, select_f, containerOp_f, arrayTy_f, fieldAt_f]
     · rcases n' with _ | m
       · rw [typeExpr.eq_def (k + 1), typeExpr.eq_def 0]
         apply Follows.exhaust (cap := k)
@@ -609,13 +620,13 @@ theorem follows_all : ∀ n,
         intro _
         follows [he k, ht k, hs k, hb k, need_f, copy_f, conformVal_f, known_f, named_f,
           bindLocal_f, place_f, test_f, int_f, range_f, iteration_f, static_f, pickAt_f,
-          selectAt_f, item_f]
+          selectAt_f, item_f, fieldAt_f]
       · rw [stmt.eq_def (k + 1), stmt.eq_def (m + 1)]
         apply Follows.charge_one
         intro _
         follows [he m, ht m, hs m, hb m, need_f, copy_f, conformVal_f, known_f, named_f,
           bindLocal_f, place_f, test_f, int_f, range_f, iteration_f, static_f, pickAt_f,
-          selectAt_f, item_f]
+          selectAt_f, item_f, fieldAt_f]
     · rcases n' with _ | m
       · rw [block.eq_def (k + 1), block.eq_def 0]
         apply Follows.exhaust (cap := k)

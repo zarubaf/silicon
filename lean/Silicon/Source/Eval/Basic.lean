@@ -378,14 +378,16 @@ def fits (t : Ty) (n : Int) : Bool :=
   | _ => true
 
 /-!
-A typed use of a scalar or `()` at `t`. Only a static integer at a finite type converts. A `()`
-part of a container comes here, because it has no elements.
+A typed use of a scalar, `()`, or a record at `t`. Only a static integer at a finite type
+converts. A `()` part of a container comes here, because it has no elements. A record needs its
+own struct type, because a struct type is nominal.
 -/
 def convertLeaf (t : Ty) (v : Value) : Except Fault Step :=
   let same := Except.ok ⟨0, fun _ => .ok v⟩
   let wrong := typeError s!"expected {t.text}, but the value is {v.text}"
   match t, v with
   | .unit, .unit | .bool, .bool _ | .int, .int _ | .type, .type _ => same
+  | .struct .., .record s _ => if s = t then same else wrong
   | .nat, .int n => if 0 ≤ n then same else .error (.S012, s!"{intText n} is not a Nat")
   | .uint w, .uint u _ | .sint w, .sint u _ => if u == w then same else wrong
   | .uint w, .int n | .sint w, .int n =>
