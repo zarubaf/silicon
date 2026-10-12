@@ -172,6 +172,26 @@ parameters, so a parameter `clock` is `S002` at the parameter. `domains()` decla
   "`Reg` is not in slice 1; it comes in slice 3"
 #guard ok "const Wire: Nat = 1;\nconst N: Nat = Wire;"
 
+/-! The container forms of slice 2 resolve their parts. `Unit` and `len` are prelude names. -/
+#guard ok (fnBody "let t = (p, [p, p], ());\nlet x: (Bool, [Bool; 2], ()) = t;\nreturn t.0;")
+#guard ok (fnBody "let x: (Bool,) = (p,);\nlet n = len([x.0]);\nreturn x.0x0;")
+#guard ok "const A: Unit = ();\nconst N: Nat = len([A, A]);"
+#guard retRef "fn f() -> Nat { return len; }" == some (.fn .len)
+#guard retRef "fn f() -> Nat { return Unit; }" == some (.type .unit)
+#guard retRef "fn f(len: Nat) -> Nat { return len; }" == some (.local 0)
+#guard fails "const Unit: Nat = 1;\nconst A: Unit = 1;" .S003 2 10
+
+/-! `S003` in a part of a container form. The position is the name. -/
+#guard fails (fnBody "return (p, q);") .S003 2 12
+#guard fails (fnBody "return [p, q];") .S003 2 12
+#guard fails (fnBody "return q.0;") .S003 2 8
+#guard fails (fnBody "return [p][q];") .S003 2 12
+#guard fails (fnBody "let x: [Bool; N] = [];\nreturn p;") .S003 2 15
+#guard fails (fnBody "let x: [Foo; 2] = [];\nreturn p;") .S003 2 9
+#guard fails (fnBody "let x: (Bool, Foo) = (p, p);\nreturn p;") .S003 2 15
+#guard fails "const N: Nat = 1;\nconst A: (N,) = (1,);" .S003 2 11
+#guard message "const N: Nat = 1;\nconst A: (N,) = (1,);" == "`N` is not a type"
+
 /-! Each pass reports its first error by position. -/
 #guard fails (fnBody "return a + b;") .S003 2 8
 #guard fails "fn f() -> Bool { let x = true; let x = true; return x; }\nconst f: Nat = 1;"

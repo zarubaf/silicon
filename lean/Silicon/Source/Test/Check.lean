@@ -141,6 +141,46 @@ def modBody (s : String) : String := "module M(comptime W: Nat) {\n" ++ s ++ "\n
 #guard fails (fnBody "return resize(UInt[8][1], p);") .S007 2 15
 #guard ok (fnBody "let x: Nat = 1;\nreturn resize(Bool, p);")
 
+/-! `S007`: `len` has one argument. The position is the call. -/
+#guard fails (fnBody "return len();") .S007 2 8
+#guard fails (fnBody "return len([p], [p]);") .S007 2 8
+#guard message (fnBody "return len([p], [p]);") == "`len` takes 1 argument(s), but it has 2"
+#guard ok (fnBody "let n = len([p, p]);\nreturn p;")
+
+/-! `S007`: `Unit`, `()`, a tuple type, and an array type take no index. -/
+#guard fails "const A: Unit[1] = ();" .S007 1 10
+#guard fails (fnBody "return Unit[1];") .S007 2 8
+#guard fails "const A: [Bool; 2][1] = [true, true];" .S007 1 10
+#guard fails "const A: (Bool,)[0] = (true,);" .S007 1 10
+#guard message "const A: (Bool,)[0] = (true,);" ==
+  "a complete type takes 0 argument(s), but it has 1"
+#guard ok "const A: Unit = ();\nconst B: ((), [Unit; 0]) = ((), []);"
+
+/-! `S007`: a part of a container type or a container expression has its index arguments. -/
+#guard fails "const A: (UInt, Bool) = (0, true);" .S007 1 11
+#guard fails "const A: [UInt; 2] = [0, 0];" .S007 1 11
+#guard fails "const A: [[Bool; 1][1]; 2] = [];" .S007 1 11
+#guard fails (fnBody "return (p, SInt);") .S007 2 12
+#guard fails (fnBody "return [resize(p)].0;") .S007 2 9
+
+/-!
+`S005`: a part of a container in a static position, the length of an array type, and the index
+of a container are static positions.
+-/
+#guard fails (modBody "reg r: UInt[W] = 0;\ncomptime if ((r, 1).0 == 0) {}") .S005 3 15
+#guard fails (modBody "reg r: UInt[W] = 0;\ncomptime if ([r][0] == 0) {}") .S005 3 15
+#guard fails (modBody "wire w: Nat;\nlet x: [Bool; w] = [];") .S005 3 15
+#guard fails (modBody "input a: UInt[W];\nlet y = [1, 2][a];") .S005 3 16
+#guard fails (modBody "input a: UInt[W];\nlet y = (1, 2)[a];") .S005 3 16
+
+/-!
+A hardware element and a hardware argument of `len` pass this check. The rules of the
+containers that need static values are for `Elab`: an index with two arguments, `<` on
+containers, and `==` on containers without a common type.
+-/
+#guard ok (modBody "input a: Bool;\nlet t = (a, ());\nlet n = len([a, a]);\nlet x = t.0;")
+#guard ok (fnBody "let t = (1, 2);\nlet x = t[0, 1];\nlet y = t < t;\nreturn [1] == [1, 2];")
+
 /-! The check runs on each item, also on an item that no instantiation uses. -/
 #guard fails "module Top() {}\nmodule Unused() {\nreturn;\n}" .S006 3 1
 #guard fails "module Top() {}\ncomptime fn unused() -> Nat {\nwire w: Bool;\nreturn 1;\n}"
