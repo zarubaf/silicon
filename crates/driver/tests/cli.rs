@@ -700,6 +700,37 @@ fn eval_takes_the_budgets() -> Test {
     Ok(())
 }
 
+/// An empty array costs one unit but prints its element type. 1,000 references to an empty
+/// array of a tuple type of 1,000 `Bool` print about 5 MB, so the result pays its length in
+/// bytes before the text exists: the message names the length that the driver measured.
+#[test]
+fn eval_pays_the_length_of_its_result() -> Test {
+    let wide = format!("({})", vec!["Bool"; 1000].join(", "));
+    let src = format!(
+        "fn f() -> [[{wide}; 0]; 1000] {{ let e: [{wide}; 0] = []; return [{}]; }}\n",
+        vec!["e"; 1000].join(", ")
+    );
+    let path = file("eval-result.si", src.as_bytes())?;
+    let full = agree("eval", &["f()"], &path)?;
+    let len = text(&full).len() - 1;
+    assert!(len > 5_000_000, "{len}");
+    let short = text(&agree("eval", &["f()", "--fuel", "20000"], &path)?);
+    let paid = format!("error[S015]: 1:1: the fuel cannot pay {len} unit(s) of the result; ");
+    let left: u64 = short
+        .strip_prefix(&paid)
+        .and_then(|rest| rest.split(' ').next())
+        .and_then(|n| n.parse().ok())
+        .ok_or(short.clone())?;
+    let used = 20_000 - left;
+    let exact = (used + len as u64).to_string();
+    let out = agree("eval", &["f()", "--fuel", &exact], &path)?;
+    assert_eq!(out.status.code(), Some(0));
+    let less = (used + len as u64 - 1).to_string();
+    let out = agree("eval", &["f()", "--fuel", &less], &path)?;
+    assert!(text(&out).starts_with("error[S015]: 1:1: "));
+    Ok(())
+}
+
 #[test]
 fn eval_of_a_missing_file_is_a_usage_error() -> Test {
     let missing = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("missing-eval.si");
