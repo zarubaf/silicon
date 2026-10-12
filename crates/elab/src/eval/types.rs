@@ -164,7 +164,8 @@ impl Evaluator<'_> {
     }
 
     /// A use at `pos` of the struct item `i` with the arguments `xs`. Each argument is static.
-    /// Each use binds the parameters in the scope of the struct, one level deeper. The typed
+    /// Each use binds the parameters in the scope of the struct, one level deeper. A literal
+    /// with `[]` takes the type of its parameter there, as a module argument does. The typed
     /// uses give the key of the table. The first use evaluates the field types there. The key
     /// exists only after the parameter types, so a use of the struct while its parameter types
     /// evaluate is a cycle (`S019`).
@@ -183,7 +184,9 @@ impl Evaluator<'_> {
         for x in xs {
             let o = self.eval(x)?;
             let o = need(x, o)?;
-            self.check_static(pos, &o)?;
+            if !matches!(self.store.seen(&o), Seen::Pending(..)) {
+                self.check_static(pos, &o)?;
+            }
             args.push(o);
         }
         if params.len() != args.len() {
@@ -236,6 +239,12 @@ impl Evaluator<'_> {
         let mut keys = Vec::with_capacity(args.len());
         for (q, o) in params.iter().zip(args) {
             let t = self.type_expr(&q.ty)?;
+            let o = if matches!(self.store.seen(&o), Seen::Pending(..)) {
+                self.settle(pos, t, o)?
+            } else {
+                o
+            };
+            self.check_static(pos, &o)?;
             let id = self.decl(&q.name)?;
             keys.push(self.bind_argument(pos, t, id, o)?);
         }
