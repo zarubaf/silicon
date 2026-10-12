@@ -189,7 +189,8 @@ def wrap : Ty := .struct "Wrap" #[.type (.array (.array .bool 1) 1)] (Meta.struc
 #guard (packet 8).info == ⟨9, 2, 3, 2, true⟩
 #guard empty.info == ⟨0, 0, 1, 1, true⟩
 #guard wrap.info == ⟨0, 0, 1, 4, true⟩
-#guard Meta.structCharge [Meta.finite 8, Meta.bool] (packet 8).info == 6
+#guard Meta.readCharge [Meta.finite 8, Meta.bool] == 8
+#guard (packet 8).info.intCharge == 4
 
 /-! `[T; N]` multiplies the numbers of `T` by `N`, and each product charges its two sizes. -/
 #guard (Ty.array (packet 8) 4).info == ⟨36, 8, 13, 3, true⟩
@@ -209,7 +210,8 @@ def chain : Nat → Ty
 #guard (chain 200).info == ⟨2 ^ 200, 2 ^ 200, 3 * 2 ^ 200 - 1, 202, true⟩
 #guard (chain 200).size == 1
 #guard (chain 200).depth == 202
-#guard Meta.structCharge [(chain 199).info, (chain 199).info] (chain 200).info == 15
+#guard Meta.readCharge [(chain 199).info, (chain 199).info] == 26
+#guard (chain 200).info.intCharge == 13
 #guard (Value.type (chain 200)).serialize == "(type (struct root S200 ()))"
 
 /-! The walk that measures a record charges 1 for its node, and nothing for its type. -/

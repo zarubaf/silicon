@@ -649,14 +649,15 @@ and the three products of its metadata, 3.
 #guard out "" "[[Bool; 1]; 1]" (depth := 2) == "S015 1:1"
 
 /-!
-A tuple type charges its size and the sizes of the four integers of its metadata. Here these
-are the node 1, the two names 2, the size 3, and the metadata 4.
+A tuple type charges its size, then the sums of its metadata. The sums charge the sizes of the
+four integers of each element, then the sizes of the four new integers. Here these are the node
+1, the two names 2, the size 3, the reads 8, and the metadata 4, less the node of `Bool`.
 -/
 def body2 (s : String) : String := s!"fn f() -> Type \{ {s} }"
 #guard out (body2 "type X = (Bool, UInt[8]); return X;") "f()" ==
   "(type (tuple (bool (uint 8))))"
 #guard cost (body "type X = (Bool, Bool); return 0;") "f()" ==
-  cost (body "type X = Bool; return 0;") "f()" + 9
+  cost (body "type X = Bool; return 0;") "f()" + 17
 
 /-!
 A local of type `Type` is a static value and can be a type. A local that holds another value is
@@ -692,7 +693,7 @@ const C: Type = [T; 2];
 A struct type is a static value. Its identity is the struct item and its static arguments. The
 first use charges the size of the struct type, evaluates the field types in the scope of the
 struct, and charges the metadata. `P[8]` charges its node, its name, the argument 2, the size
-2, the parameter type 1, the field types 6, and the metadata 2 + 4. A later use charges only
+2, the parameter type 1, the field types 6, and the metadata 8 + 4. A later use charges only
 its node, its name, its argument, and its parameter type.
 -/
 def structs : String :=
@@ -715,8 +716,8 @@ type X = S;
 #guard out structs "P[8] == P[8]" == "(bool true)"
 #guard out structs "P[8] == P[9]" == "(bool false)"
 #guard out structs "[P[8]; 2]" == "(type (array (struct root P ((int 8))) 2))"
-#guard exact structs "P[8]" 19
-#guard exact structs "P[8] == P[8]" 29
+#guard exact structs "P[8]" 25
+#guard exact structs "P[8] == P[8]" 35
 #guard out structs "P[-1]" == "S012 1:1"
 #guard out structs "P[true]" == "S010 1:1"
 #guard out structs "F[1]" == "S012 9:32"
@@ -735,8 +736,8 @@ struct P(comptime W: Nat) { a: Bool }"
 #guard out norm "N[8]" == "(type (struct root N ((uint 4 8))))"
 #guard out norm "N[UInt[4](8)]" == "(type (struct root N ((uint 4 8))))"
 #guard out norm "N[8] == N[UInt[4](8)]" == "(bool true)"
-#guard exact norm "N[8] == N[8]" 37
-#guard exact norm "N[8] == N[UInt[4](8)]" 45
+#guard exact norm "N[8] == N[8]" 40
+#guard exact norm "N[8] == N[UInt[4](8)]" 48
 #guard out norm "N[16]" == "S012 1:1"
 #guard out norm "N[UInt[8](8)]" == "S010 1:1"
 #guard out norm "P[UInt[4](8)]" == "S010 1:1"
@@ -793,8 +794,8 @@ def nest (k : Nat) : String :=
 
 /-!
 The doubling chain of section 11.3: each `S_k` has two fields of `S_(k-1)`, so its width is
-`64 * 2^k`. The metadata stays cheap: each step charges 11 units while the four integers fit
-one word, and 200 steps charge less than 3000 units.
+`64 * 2^k`. The metadata stays cheap: each step charges 17 units while the four integers fit
+one word, and 200 steps charge less than 6000 units.
 -/
 def wide (k : Nat) : String :=
   "struct S0 { a: UInt[64] }
@@ -802,8 +803,8 @@ def wide (k : Nat) : String :=
   String.join ((List.range k).map fun i => s!"struct S{i + 1} \{ a: S{i}, b: S{i} }\n") ++
   "fn f() -> Int {\n" ++
   String.join ((List.range (k + 1)).map fun i => s!"  type T{i} = S{i};\n") ++ "  return 0;\n}"
-#guard (List.range 50).all fun k => cost (wide (k + 1)) "f()" == cost (wide k) "f()" + 11
-#guard cost (wide 200) "f()" < 3000
+#guard (List.range 50).all fun k => cost (wide (k + 1)) "f()" == cost (wide k) "f()" + 17
+#guard cost (wide 200) "f()" < 6000
 #guard out (wide 3) "S3" == "(type (struct root S3 ()))"
 
 /-!
@@ -821,8 +822,8 @@ struct T { t: Type }
 type X = P[8];
 "
 #guard out recs "P[8](1, true)" == "(record (struct root P ((int 8))) ((uint 8 1) (bool true)))"
-#guard exact recs "P[8](1, true)" 31
-#guard exact recs "P[8](1, true).a" 32
+#guard exact recs "P[8](1, true)" 37
+#guard exact recs "P[8](1, true).a" 38
 #guard out recs "P[8](1, true).a" == "(uint 8 1)"
 #guard out recs "X(1, true).b" == "(bool true)"
 #guard out recs "T(Bool).t" == "(type bool)"
@@ -845,7 +846,7 @@ the done specialization.
 -/
 #guard out recs "P[8](1, true) == P[8](1, true)" == "(bool true)"
 #guard out recs "P[8](1, true) != P[8](1, false)" == "(bool true)"
-#guard exact recs "P[8](1, true) == P[8](1, true)" 59
+#guard exact recs "P[8](1, true) == P[8](1, true)" 65
 #guard out recs "P[8](1, true) == P[4](1, true)" == "S010 1:1"
 #guard out recs "P[8](1, true) == (1, true)" == "S010 1:1"
 #guard out recs "P[8](1, true) < P[8](1, true)" == "S010 1:1"
@@ -868,7 +869,7 @@ bit. The zero checks its depth first: a record is one level deeper than its stru
   "((record (struct root P ((int 4))) ((uint 4 0) (bool false))) " ++
   "(record (struct root P ((int 4))) ((uint 4 0) (bool false)))))))"
 #guard exact recs "Bool()" 3
-#guard exact recs "P[8]()" 23
+#guard exact recs "P[8]()" 29
 #guard out recs "Int()" == "S010 1:1"
 #guard out recs "Type()" == "S010 1:1"
 #guard out recs "T()" == "S010 1:1"
@@ -879,14 +880,14 @@ bit. The zero checks its depth first: a record is one level deeper than its stru
 #guard (out recs "Q()" (depth := 5)).startsWith "(record"
 
 /-!
-`data_bits(T)` charges only its node and its name: the metadata of `T` holds the width. A value
-that is not a type and a type that is not hardware data are `S010`.
+`data_bits(T)` charges its node, its name, and the size of the width: the metadata of `T` holds
+the width. A value that is not a type and a type that is not hardware data are `S010`.
 -/
 #guard out recs "data_bits(Q)" == "(int 19)"
 #guard out recs "data_bits([P[3]; 3])" == "(int 12)"
 #guard out recs "data_bits(E)" == "(int 0)"
 #guard out recs "data_bits(Unit)" == "(int 0)"
-#guard exact recs "data_bits(P[8])" 21
+#guard exact recs "data_bits(P[8])" 28
 #guard out recs "data_bits(T)" == "S010 1:1"
 #guard out recs "data_bits(Int)" == "S010 1:1"
 #guard out recs "data_bits(1)" == "S010 1:1"
