@@ -3,13 +3,13 @@ import Silicon.Source.Lex
 import Silicon.Source.Print
 
 /-!
-The parser of slice 1. It reads the tokens of `Source.Lex`. It gives the items of the file,
-or the first error in position order. `S001` is a token that the grammar does not accept.
-`S004` is the syntax of a later slice.
+The parser of slices 1 and 2. It reads the tokens of `Source.Lex`. It gives the items of the
+file, or the first error in position order. `S001` is a token that the grammar does not accept.
+`S004` is the syntax of a later slice or of a later phase of slice 2.
 
-The parser reads the tokens from left to right. It stops at the first token that the slice 1
-grammar does not accept, or at the first token of a later construct. It thus finds the errors
-in position order, and it reports the first. This rule also orders a lexical error after an
+The parser reads the tokens from left to right. It stops at the first token that the grammar
+does not accept, or at the first token of a later construct. It thus finds the errors in
+position order, and it reports the first. This rule also orders a lexical error after an
 `S004`. The lexer ends the tokens with an `error` token. The parser reports that token only
 if it gets to it. `S004` is at these tokens:
 
@@ -17,23 +17,20 @@ if it gets to it. `S004` is at these tokens:
   at a statement. `in`, `as`, `with`, and `conforms` after their forms. `mut` at a function
   parameter. `fn` of a function type. `input`, `output`, `reg`, `wire`, and `instance` in the
   body of a `fn` without `comptime`: a helper that declares resources is slice 3.
-- The opening token: `(` of `()` and of a tuple, and `[` of an array value or type. `(` of a
-  unit, tuple, or grouped type. `@` of one of the five builtins.
-- A later token of the construct: the `::` of a path, and the number after `.`. The `(` after
-  `.name`, which is a receiver call. The `(` after a type, which is a type function call. The
-  second name in a `domains` clause.
-- The first name of an assignment or connection target with a `[` or a `.` and a number, for
-  example `a[i] = x;`. Slice 1 has no arrays and no tuples, so a place is `x` or `x.f`.
+- The opening token: `[` of an array type `[T; N]` in an expression, which phase 3 of slice 2
+  brings. `@` of one of the five builtins.
+- A later token of the construct: the `::` of a path. The `(` after `.name`, which is a
+  receiver call. The `(` after a type, which is a type function call. The second name in a
+  `domains` clause.
 
-Two constructs need a look ahead. At `(`, the parser looks for a `,` before the matching
-bracket. At a statement that starts with a name, it skips `.` with a name or a number. It
-also skips a `[` up to its matching bracket. Then it looks for `=` or `:=`. Both scans count
-brackets of the three kinds as one depth.
+Two constructs need a look ahead. At `(`, the parser looks for `)` as the next token, or for
+a `,` directly in the bracket: these give `()` or a tuple, else the bracket groups. At `[` in an
+expression, it looks for a `;` directly in the bracket: this is an array type. Both scans
+count brackets of the three kinds as one depth.
 
 The parse is linear in the number of tokens. Before the parse, one pass finds the matching
-bracket of each opening bracket. It also records if a `,` comes directly in that bracket.
-Thus the look ahead at `(` takes constant time. The look ahead at a name jumps over each
-bracket, so it reads each token of its place only once.
+bracket of each opening bracket. It also records if a `,` or a `;` comes directly in that
+bracket. Thus each look ahead takes constant time.
 
 `@` followed by another name than a builtin is `S001` at that name: no slice has that syntax.
 A module parameter without `comptime` is `S001` at its name, and with `mut` it is `S001` at
@@ -46,13 +43,19 @@ These rules settle the open points of the grammar:
   statement, so the conditional needs its `;`, and its arms hold only expressions.
 - A comparison does not chain. `a < b < c` is `S001` at the second `<`. Parentheses group:
   `(a < b) < c`.
-- Slice 1 has no packages, so a path is one identifier: a `name` expression, a `name` type, or
+- Slice 2 has no packages, so a path is one identifier: a `name` expression, a `name` type, or
   the module of an `inst`. A `::` after it is `S004`.
 - The `domains` of a module are `none` without a clause and `some` with a clause.
 - Parentheses make no node. A node keeps the position of its first token, also if that token
   is a `(`: the `binary` node of `(a + b) * c` is at the `(`.
+- `(a)` groups, `(a,)` is a tuple of one element, and `()` is the unit value. The same holds
+  for a type: `(T)` groups, `(T,)` is a tuple type, and `()` is the unit type. A type suffix
+  can follow each type form.
+- A place is a name, or a field, an index, or a selector `.N` of a place. The parser accepts
+  an index with more than one argument as a place. The type rules reject it.
+- `t.0(x)` is a call of the element `t.0`, not a receiver call: a selector is no method name.
 - The lexer gives the value of a hexadecimal or binary number. A value of 2^65536 or more is a
-  lexical error at the literal.
+  lexical error at the literal. A selector `.N` takes each number literal, for example `t.0x1`.
 
 The syntax depth N of section 5.4 bounds the native stack of the parser and of each later
 pass over the AST:
@@ -60,13 +63,14 @@ pass over the AST:
 - The lexer rejects a bracket at the depth N + 1. Each recursive call of the parser that can
   repeat without limit first reads a bracket. Thus the recursion of the parser stays below a
   constant times N, for each input.
-- The parser builds each chain in a loop: binary operators, prefix operators, fields, calls,
-  and indexes. The branches of `if` are in brackets.
+- The parser builds each chain in a loop: binary operators, prefix operators, and suffixes.
+  It also reads the elements of a tuple, an array, or a tuple type in a loop. The branches of
+  `if` are in brackets.
 - The height of each outermost expression or type is at most N. A name, a number, a
-  string, and `true` or `false` have height 1. Each other node has the height 1 plus the
-  largest height of its parts. Parentheses make no node. A type has the same rule: a type name
-  has height 1. Thus a recursive pass over the AST goes at most about 2N deep: N for the
-  blocks and N for an expression.
+  string, `true`, `false`, `()`, and `[]` have height 1. Each other node has the height 1 plus
+  the largest height of its parts. Parentheses make no node. A type has the same rule: a type
+  name and `()` have height 1. Thus a recursive pass over the AST goes at most about 2N deep:
+  N for the blocks and N for an expression.
 
 An outermost expression or type is not part of another one. Each argument of an `instance` is
 an outermost expression. The parser computes each height when it builds the node, so it needs
@@ -85,17 +89,19 @@ def isKw (w : String) (t : Token) : Bool := t.kind == .keyword w
 /-!
 The tokens and the result of the bracket pass. `close` holds the index of the matching bracket
 of each opening bracket, or the size of the array if no bracket matches. `comma` is true at an
-opening bracket if a `,` comes at its depth before its match.
+opening bracket if a `,` comes at its depth before its match. `semi` is the same for `;`.
 -/
 structure Input where
   tokens : Array Token
   close : Array Nat
   comma : Array Bool
+  semi : Array Bool
 
 /-! The bracket pass. It counts brackets of the three kinds as one depth. -/
 def Input.of (ts : Array Token) : Input := Id.run do
   let mut close := Array.replicate ts.size ts.size
   let mut comma := Array.replicate ts.size false
+  let mut semi := Array.replicate ts.size false
   let mut open_ : List Nat := []
   for h : i in [0:ts.size] do
     let t := ts[i]
@@ -106,7 +112,9 @@ def Input.of (ts : Array Token) : Input := Id.run do
         open_ := rest
     else if isSym "," t then
       if let j :: _ := open_ then comma := comma.set! j true
-  return ⟨ts, close, comma⟩
+    else if isSym ";" t then
+      if let j :: _ := open_ then semi := semi.set! j true
+  return ⟨ts, close, comma, semi⟩
 
 /-!
 The context of the parser: the tokens, the syntax depth, and whether the parser is in the body
@@ -222,30 +230,9 @@ def tupleAhead : P Bool := do
   let inp := (← read).input
   return isSym ")" (← peekAt 1) || inp.comma.getD (← get).next false
 
-/-!
-True if the tokens from the index `i` continue a place of a later slice up to `=` or `:=`:
-they hold a `[` or a `.` with a number. A `[` jumps to its matching bracket. Each step takes a
-token, so the fuel of the size of the token array never runs out.
--/
-def laterPlace (inp : Input) : Nat → Nat → Bool → Bool
-  | 0, _, _ => false
-  | f + 1, i, seen =>
-    let t := tokenAt inp i
-    if isSym "=" t || isSym ":=" t then seen
-    else if isSym "[" t then
-      let j := inp.close.getD i inp.tokens.size
-      j < inp.tokens.size && laterPlace inp f (j + 1) true
-    else if isSym "." t then
-      match (tokenAt inp (i + 1)).kind with
-      | .ident _ => laterPlace inp f (i + 2) seen
-      | .number _ => laterPlace inp f (i + 2) true
-      | _ => false
-    else false
-
-/-! True at a name if a place of a later slice starts at it. -/
-def laterPlaceAhead : P Bool := do
-  let inp := (← read).input
-  return laterPlace inp inp.tokens.size ((← get).next + 1) false
+/-! True at `[` if a `;` comes before the matching bracket: an array type `[T; N]`. -/
+def arrayTypeAhead : P Bool := do
+  return (← read).input.semi.getD (← get).next false
 
 /-!
 Each function takes one unit of fuel from its caller. The argument `l` is the binding level of
@@ -320,7 +307,10 @@ mutual
         let a := (← postfixExpr f).1
         return ops.foldl (fun a (p, op) => ⟨.unary p op a.expr, a.height + 1⟩) a
 
-  /-- A postfix form, and whether it is a place of slice 1: a name or a field of a place. -/
+  /--
+  A postfix form, and whether it is a place: a name, or a field, an index, or a selector of a
+  place.
+  -/
   def postfixExpr : Nat → P (Node × Bool)
     | 0 => exhausted
     | f + 1 => do
@@ -341,7 +331,7 @@ mutual
         bump
         let xs ← args f "]" false false
         let h := height (e.height :: xs.map (·.height))
-        suffixes f start ⟨.index start e.expr (xs.map (·.expr)), h⟩ false
+        suffixes f start ⟨.index start e.expr (xs.map (·.expr)), h⟩ place
       else if isSym "." t then
         bump
         let s ← peek
@@ -351,7 +341,9 @@ mutual
           let u ← peek
           if isSym "(" u then later u "a receiver call"
           suffixes f start ⟨.field start e.expr ⟨s.pos, n⟩, e.height + 1⟩ place
-        | .number _ => later s "a tuple selector"
+        | .number v =>
+          bump
+          suffixes f start ⟨.select start e.expr s.pos v, e.height + 1⟩ place
         | _ => unexpected s "a field name"
       else return (e, place)
 
@@ -368,12 +360,22 @@ mutual
       | .keyword "true" => bump; return (leaf (.bool t.pos true), false)
       | .keyword "false" => bump; return (leaf (.bool t.pos false), false)
       | .symbol "(" =>
-        if ← tupleAhead then later t "a unit or tuple value"
+        if ← tupleAhead then
+          bump
+          let xs ← args f ")" true false
+          let e : Node := match xs with
+            | [] => leaf (.unit t.pos)
+            | _ => ⟨.tuple t.pos (xs.map (·.expr)), height (xs.map (·.height))⟩
+          return (e, false)
         bump
         let e ← expr f
         sym ")"
         return (e, false)
-      | .symbol "[" => later t "an array"
+      | .symbol "[" =>
+        if ← arrayTypeAhead then later t "an array type in an expression"
+        bump
+        let xs ← args f "]" true false
+        return (⟨.array t.pos (xs.map (·.expr)), height (xs.map (·.height))⟩, false)
       | .symbol "@" => builtin t
       | _ => unexpected t "an expression"
 
@@ -422,10 +424,40 @@ mutual
         let _ ← path
         typeSuffix f t.pos (.name t.pos n, 1)
       | .keyword "fn" => later t "a function type"
-      | .symbol "(" => later t "a unit, tuple, or grouped type"
-      | .symbol "[" => later t "an array type"
+      | .symbol "(" =>
+        if ← tupleAhead then
+          bump
+          if ← acceptSym ")" then typeSuffix f t.pos (.unit t.pos, 1)
+          else
+            let ts ← typeElems f []
+            typeSuffix f t.pos (.tuple t.pos (ts.map (·.1)), height (ts.map (·.2)))
+        else
+          bump
+          let ty ← typeExpr f
+          sym ")"
+          typeSuffix f t.pos ty
+      | .symbol "[" =>
+        bump
+        let (ty, h) ← typeExpr f
+        sym ";"
+        let n ← expr f
+        sym "]"
+        typeSuffix f t.pos (.array t.pos ty n.expr, height [h, n.height])
       | .symbol "@" => builtin t
       | _ => unexpected t "a type"
+
+  /-- The element types of a tuple type up to `)`. A `,` can end the list. -/
+  def typeElems : Nat → List (TypeExpr × Nat) → P (List (TypeExpr × Nat))
+    | 0, _ => exhausted
+    | f + 1, acc => do
+      let acc := (← typeExpr f) :: acc
+      if ← acceptSym ")" then return acc.reverse
+      let t ← peek
+      if isSym "," t then
+        bump
+        if ← acceptSym ")" then return acc.reverse
+        typeElems f acc
+      else unexpected t "`,` or `)`"
 
   def typeSuffix : Nat → Pos → TypeExpr × Nat → P (TypeExpr × Nat)
     | 0, _, _ => exhausted
@@ -552,7 +584,6 @@ mutual
       | .keyword "type" => later t "a type alias"
       | .symbol "{" => return .block t.pos (← block f)
       | .ident _ =>
-        if ← laterPlaceAhead then later t "a place with an index or a tuple selector"
         let (e, place) ← postfixExpr f
         placeStmt f t.pos e place
       | _ =>

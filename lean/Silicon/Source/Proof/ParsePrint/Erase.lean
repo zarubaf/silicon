@@ -25,7 +25,8 @@ a check here:
 - No string has a control character other than LF, CR, and tab: `printableChar`.
 - Each number is below 2^65536: `Expr.printable` at `num`.
 
-The parser does not give the container forms of slice 2 yet, so `Printable` excludes them.
+The proof does not cover the container forms of slice 2 yet, so `Printable` excludes them. It
+includes a place with an index, because an index is a form of slice 1.
 -/
 namespace Silicon.Source
 
@@ -106,10 +107,10 @@ end ParsePrint
 
 open ParsePrint
 
-/-! A place of slice 1: a name, or a field of a place. -/
+/-! A place: a name, or a field, an index, or a selector of a place. -/
 def Expr.place : Expr → Bool
   | .name .. => true
-  | .field _ b _ => b.place
+  | .field _ b _ | .index _ b _ | .select _ b .. => b.place
   | _ => false
 
 mutual

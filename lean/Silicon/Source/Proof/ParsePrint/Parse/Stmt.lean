@@ -17,10 +17,9 @@ after a statement is never `else`, so a `comptime if` without `else` stops after
 The fuel is linear in the number of kinds, so a block needs no more than four units of fuel
 for each of its kinds.
 
-The proof is an induction on the number of kinds. A statement that starts with a name needs
-`laterPlace` to give false. `laterPlace_expr` follows the scan over the postfix form at the
-start of the statement. The scan stops at an operator, at a call, or at the end of the form.
-A place has no index, so the scan gives false at the `=` or `:=` after it.
+The proof is an induction on the number of kinds. A statement that starts with a name reads
+a postfix form. A place gives the flag `true`, and `=` or `:=` follows it. Another form starts
+an expression statement.
 -/
 namespace Silicon.Source.ParsePrint
 
@@ -124,37 +123,6 @@ theorem EHead.ne_ident {k : Kind} (h : EHead k) (_hn : ∀ n, k ≠ .ident n) :
   · exact Or.inr hw
   · exact Or.inl (h.ne_kw (by simp_all))
 
-/-! ## The scan for a place of a later slice -/
-
-theorem laterPlace_stop {inp : Input} {j f : Nat} {seen : Bool}
-    (h1 : (tokenAt inp j).kind ≠ .symbol "=") (h2 : (tokenAt inp j).kind ≠ .symbol ":=")
-    (h3 : (tokenAt inp j).kind ≠ .symbol "[") (h4 : (tokenAt inp j).kind ≠ .symbol ".") :
-    laterPlace inp f j seen = false := by
-  cases f with
-  | zero => rfl
-  | succ f => simp [laterPlace, isSym, h1, h2, h3, h4]
-
-theorem laterPlace_op {inp : Input} {j f : Nat} {seen : Bool} {s : String}
-    (h : (tokenAt inp j).kind = .symbol s) (hs : s ≠ "=" ∧ s ≠ ":=" ∧ s ≠ "[" ∧ s ≠ ".") :
-    laterPlace inp f j seen = false :=
-  laterPlace_stop (by simp [h, hs.1]) (by simp [h, hs.2.1]) (by simp [h, hs.2.2.1])
-    (by simp [h, hs.2.2.2])
-
-/-!
-The scan from `j` gives false, or it gives the scan from `j'`. The scan keeps its flag if `pl`
-holds: the form is a place.
--/
-def LPCont (inp : Input) (f j : Nat) (seen : Bool) (j' : Nat) (pl : Bool) : Prop :=
-  laterPlace inp f j seen = false ∨
-    ∃ f' seen', laterPlace inp f j seen = laterPlace inp f' j' seen' ∧ (pl = true → seen' = seen)
-
-theorem LPCont.stop {inp : Input} {f j j' : Nat} {seen pl : Bool} {s : String}
-    (h : LPCont inp f j seen j' pl) (hk : (tokenAt inp j').kind = .symbol s)
-    (hs : s ≠ "=" ∧ s ≠ ":=" ∧ s ≠ "[" ∧ s ≠ ".") : laterPlace inp f j seen = false := by
-  rcases h with h | ⟨f', seen', h, -⟩
-  · exact h
-  · rw [h]; exact laterPlace_op hk hs
-
 theorem Expr.toks_noparen {e : Expr} {c : Nat} (h : ¬ e.level < c) : e.toks c = e.toks 0 := by
   rw [Expr.toks_paren, ite_eq_right_iff.2 (fun h' => absurd h' h)]
 
@@ -178,158 +146,6 @@ theorem head?_append_ne {a b : List Kind} (h : a ≠ []) : (a ++ b).head? = a.he
 theorem Expr.toks_ne_nil (e : Expr) (c : Nat) : e.toks c ≠ [] := by
   obtain ⟨k, hk, -⟩ := Expr.toks_head e c
   intro h; rw [h] at hk; simp at hk
-
-/-! The scan over a form that starts with a name. -/
-theorem laterPlace_expr (e : Expr) : ∀ (c : Nat) (inp : Input) (i : Nat) (R : List Kind)
-    (n : String) (f : Nat) (seen : Bool), (e.toks c).head? = some (.ident n) →
-    Win inp i (e.toks c ++ R) → LPCont inp f (i + 1) seen (i + (e.toks c).length) e.place := by
-  induction e using Expr.erase.induct with
-  | case1 p v =>
-    intro c inp i R n f seen hh _
-    have hl := Expr.noparen_of_ident hh
-    rw [Expr.toks_noparen hl] at hh
-    simp [Expr.toks] at hh
-  | case2 p v =>
-    intro c inp i R n f seen hh _
-    have hl := Expr.noparen_of_ident hh
-    rw [Expr.toks_noparen hl] at hh
-    simp [Expr.toks] at hh
-  | case3 p v =>
-    intro c inp i R n f seen hh _
-    have hl := Expr.noparen_of_ident hh
-    rw [Expr.toks_noparen hl] at hh
-    simp [Expr.toks] at hh
-  | case4 p m =>
-    intro c inp i R n f seen hh _
-    have hl := Expr.noparen_of_ident hh
-    rw [Expr.toks_noparen hl]
-    exact Or.inr ⟨f, seen, by simp [Expr.toks], fun _ => rfl⟩
-  | case5 p op a _ =>
-    intro c inp i R n f seen hh _
-    have hl := Expr.noparen_of_ident hh
-    rw [Expr.toks_noparen hl] at hh
-    simp [Expr.toks] at hh
-  | case6 p op l r ihl _ =>
-    intro c inp i R n f seen hh hw
-    have hl := Expr.noparen_of_ident hh
-    rw [Expr.toks_noparen hl] at hh hw ⊢
-    have hT : (Expr.binary p op l r).toks 0 =
-        l.toks (lhsLevel op) ++ .symbol op.text :: r.toks (op.level + 1) := by
-      simp [Expr.toks, lhsLevel]
-    rw [hT] at hh hw ⊢
-    rw [head?_append_ne (Expr.toks_ne_nil _ _)] at hh
-    rw [List.append_assoc] at hw
-    have := ihl (lhsLevel op) inp i _ n f seen hh hw
-    exact Or.inl (this.stop hw.drop.head (by cases op <;> decide))
-  | case7 =>
-    intro c inp i R n f seen hh _
-    have hl := Expr.noparen_of_ident hh
-    rw [Expr.toks_noparen hl] at hh
-    simp [Expr.toks] at hh
-  | case8 p g xs ihg _ =>
-    intro c inp i R n f seen hh hw
-    have hl := Expr.noparen_of_ident hh
-    have h11 : (Expr.call p g xs).toks c = (Expr.call p g xs).toks 11 := by
-      rw [Expr.toks_noparen hl, Expr.toks_noparen (c := 11) (by simp [Expr.level, postfixLevel])]
-    rw [h11] at hh hw ⊢
-    by_cases hg : ∃ q b m, g = .field q b m
-    · obtain ⟨q, b, m, rfl⟩ := hg
-      rw [Expr.toks11_call_field] at hh; simp at hh
-    · have hg' : ∀ q b m, g ≠ .field q b m := fun q b m h => hg ⟨q, b, m, h⟩
-      rw [Expr.toks11_call _ _ _ hg'] at hh hw ⊢
-      rw [head?_append_ne (Expr.toks_ne_nil _ _)] at hh
-      rw [List.append_assoc] at hw
-      exact Or.inl ((ihg 11 inp i _ n f seen hh hw).stop hw.drop.head (by decide))
-  | case9 p b xs ihb _ =>
-    intro c inp i R n f seen hh hw
-    have hl := Expr.noparen_of_ident hh
-    have h11 : (Expr.index p b xs).toks c = (Expr.index p b xs).toks 11 := by
-      rw [Expr.toks_noparen hl, Expr.toks_noparen (c := 11) (by simp [Expr.level, postfixLevel])]
-    rw [h11, Expr.toks11_index] at hh hw ⊢
-    rw [head?_append_ne (Expr.toks_ne_nil _ _)] at hh
-    simp only [List.append_assoc, List.cons_append, List.nil_append] at hw
-    unfold LPCont
-    rcases ihb 11 inp i _ n f seen hh hw with h | ⟨f', seen', h, -⟩
-    · exact Or.inl h
-    · rw [h]
-      have hk := hw.drop.head
-      cases f' with
-      | zero => exact Or.inl rfl
-      | succ f' =>
-        have hc := hw.close (b.toks 11) _ _ _ _ rfl (Or.inr (Or.inl rfl)) (Or.inr (Or.inl rfl))
-          (Bal.args xs)
-        simp only [laterPlace, isSym, hk, Kind.beq_eq]
-        simp only [hc, show (Kind.symbol "[" = Kind.symbol "=") = False by decide,
-          show (Kind.symbol "[" = Kind.symbol ":=") = False by decide, decide_false,
-          decide_true, Bool.or_false, Bool.false_eq_true, ite_false, ite_true]
-        by_cases hs : i + (b.toks 11).length + 1 + (argToks (xs.map (Expr.toks 0))).length <
-          inp.tokens.size
-        · refine Or.inr ⟨f', true, ?_, fun h => by simp [Expr.place] at h⟩
-          simp only [hs, decide_true, Bool.true_and]
-          congr 1
-          simp; omega
-        · exact Or.inl (by simp [hs])
-  | case10 p b m ihb =>
-    intro c inp i R n f seen hh hw
-    have hl := Expr.noparen_of_ident hh
-    have h11 : (Expr.field p b m).toks c = (Expr.field p b m).toks 11 := by
-      rw [Expr.toks_noparen hl, Expr.toks_noparen (c := 11) (by simp [Expr.level, postfixLevel])]
-    rw [h11, Expr.toks11_field] at hh hw ⊢
-    rw [head?_append_ne (Expr.toks_ne_nil _ _)] at hh
-    simp only [List.append_assoc, List.cons_append, List.nil_append] at hw
-    unfold LPCont
-    rcases ihb 11 inp i _ n f seen hh hw with h | ⟨f', seen', h, hpl⟩
-    · exact Or.inl h
-    · rw [h]
-      have w := hw.drop
-      cases f' with
-      | zero => exact Or.inl rfl
-      | succ f' =>
-        refine Or.inr ⟨f', seen', ?_, fun h => hpl (by simpa [Expr.place] using h)⟩
-        simp only [laterPlace, isSym, w.head, w.tail.head, Kind.beq_eq]
-        simp only [show (Kind.symbol "." = Kind.symbol "=") = False by decide,
-          show (Kind.symbol "." = Kind.symbol ":=") = False by decide,
-          show (Kind.symbol "." = Kind.symbol "[") = False by decide, decide_false,
-          decide_true, Bool.or_false, Bool.false_eq_true, ite_false, ite_true]
-        congr 1
-        simp; omega
-  | case11 | case12 | case13 =>
-    intro c inp i R n f seen hh _
-    have hl := Expr.noparen_of_ident hh
-    rw [Expr.toks_noparen hl] at hh
-    simp [Expr.toks] at hh
-  | case14 p b q k ihb =>
-    intro c inp i R n f seen hh hw
-    have hl := Expr.noparen_of_ident hh
-    have h11 : (Expr.select p b q k).toks c = b.toks 11 ++ [.symbol ".", .number k] := by
-      rw [Expr.toks_noparen hl]; simp [Expr.toks, Expr.level, postfixLevel]
-    rw [h11] at hh hw ⊢
-    rw [head?_append_ne (Expr.toks_ne_nil _ _)] at hh
-    simp only [List.append_assoc, List.cons_append, List.nil_append] at hw
-    unfold LPCont
-    rcases ihb 11 inp i _ n f seen hh hw with h | ⟨f', seen', h, -⟩
-    · exact Or.inl h
-    · rw [h]
-      have w := hw.drop
-      cases f' with
-      | zero => exact Or.inl rfl
-      | succ f' =>
-        refine Or.inr ⟨f', true, ?_, fun h => by simp [Expr.place] at h⟩
-        simp only [laterPlace, isSym, w.head, w.tail.head, Kind.beq_eq]
-        simp only [show (Kind.symbol "." = Kind.symbol "=") = False by decide,
-          show (Kind.symbol "." = Kind.symbol ":=") = False by decide,
-          show (Kind.symbol "." = Kind.symbol "[") = False by decide, decide_false,
-          decide_true, Bool.or_false, Bool.false_eq_true, ite_false, ite_true]
-        congr 1
-        simp; omega
-
-theorem Runs.laterPlaceAhead {ctx : Ctx} {i : Nat}
-    (h : laterPlace ctx.input ctx.input.tokens.size (i + 1) false = false) :
-    Runs laterPlaceAhead ctx i i (· = false) := by
-  intro hh
-  refine ⟨false, ?_, rfl⟩
-  show Except.ok (laterPlace ctx.input ctx.input.tokens.size (i + 1) false, (⟨i, hh⟩ : St)) = _
-  rw [h]
 
 theorem Runs.map_bind {α β γ : Type} {m : P α} {g : α → β} {k : β → P γ} {ctx : Ctx}
     {i j l : Nat} {Q : α → Prop} {R : γ → Prop} (hm : Runs m ctx i j Q)
@@ -837,7 +653,6 @@ theorem Runs.stmt_fallback {ctx : Ctx} {i f l : Nat} {k : Kind} {Q : Stmt → Pr
 /-! A statement that starts with a name. -/
 theorem Runs.stmt_ident {ctx : Ctx} {i f j l : Nat} {n : String} {Q : Stmt → Prop}
     {P' : Node × Bool → Prop} (hk : (tokenAt ctx.input i).kind = .ident n)
-    (hlp : laterPlace ctx.input ctx.input.tokens.size (i + 1) false = false)
     (hpost : Runs (postfixExpr f) ctx i j P')
     (hplace : ∀ e pl, P' (e, pl) → Runs (placeStmt f (tokenAt ctx.input i).pos e pl) ctx j l Q) :
     Runs (stmt (f + 1)) ctx i l Q := by
@@ -845,9 +660,6 @@ theorem Runs.stmt_ident {ctx : Ctx} {i f j l : Nat} {n : String} {Q : Stmt → P
   refine Runs.peek_bind (Runs.read_bind ?_)
   simp only [stmt_res_nkw (ctx := ctx) (tok := tokenAt ctx.input i) (by simp [hk]), hk,
     Bool.false_eq_true, ite_false]
-  refine Runs.bind (Runs.laterPlaceAhead hlp) fun b hb => ?_
-  subst b
-  reduce_checks
   refine Runs.bind hpost ?_
   rintro ⟨e, pl⟩ h
   exact hplace e pl h
@@ -867,9 +679,7 @@ theorem Runs.stmt_expr (p : Pos) (v : Expr) : SGoal (.expr p v) := by
   · obtain ⟨n, rfl⟩ := hid
     obtain ⟨T1, hT1, htok, hpost⟩ :=
       Runs.postfix_climb v hp ⟨n, hk⟩ ctx i f _ (t :: R) hw After.semi (by omega)
-    have hlp := (laterPlace_expr v 0 ctx.input i _ n ctx.input.tokens.size false hk hw).stop
-      hw.drop.head (by decide)
-    refine Runs.stmt_ident hk0 hlp hpost ?_
+    refine Runs.stmt_ident hk0 hpost ?_
     rintro e pl ⟨-, hclimb⟩
     rw [Parse.placeStmt]
     refine Runs.peek_bind ?_
@@ -907,6 +717,23 @@ theorem Expr.place_head (e : Expr) : e.place = true → ∃ n, (e.toks 0).head? 
     rw [← Expr.toks_place (e := .field p b m) (by simpa [Expr.place] using h) 11 (Nat.le_refl _),
       Expr.toks11_field, Expr.toks_place h 11 (Nat.le_refl _)]
     exact head?_append_of hn
+  | case9 p b xs ihb _ =>
+    intro h
+    simp only [Expr.place] at h
+    obtain ⟨n, hn⟩ := ihb h
+    refine ⟨n, ?_⟩
+    rw [← Expr.toks_place (e := .index p b xs) (by simpa [Expr.place] using h) 11
+      (Nat.le_refl _), Expr.toks11_index, Expr.toks_place h 11 (Nat.le_refl _)]
+    exact head?_append_of hn
+  | case14 p b q k ihb =>
+    intro h
+    simp only [Expr.place] at h
+    obtain ⟨n, hn⟩ := ihb h
+    refine ⟨n, ?_⟩
+    have h11 : (Expr.select p b q k).toks 0 = b.toks 11 ++ [.symbol ".", .number k] := by
+      simp [Expr.toks, Expr.level, postfixLevel]
+    rw [h11, Expr.toks_place h 11 (Nat.le_refl _)]
+    exact head?_append_of hn
   | _ => intro h; simp [Expr.place] at h
 
 /-! An assignment or a connection: a place, `=` or `:=`, a value, and `;`. -/
@@ -922,22 +749,12 @@ theorem Runs.stmt_place {ctx : Ctx} {i f : Nat} {t : Kind} {R : List Kind} (p : 
   obtain ⟨n, hn⟩ := Expr.place_head tg hpl
   have hk0 := hw.head' hn
   have hsy' : (tokenAt ctx.input (i + (tg.toks 0).length)).kind = .symbol sy := hw.drop.head
-  have hlp : laterPlace ctx.input ctx.input.tokens.size (i + 1) false = false := by
-    rcases laterPlace_expr tg 0 ctx.input i _ n ctx.input.tokens.size false hn hw with
-      h | ⟨f', seen', h, hs⟩
-    · exact h
-    · rw [h, hs hpl]
-      cases f' with
-      | zero => rfl
-      | succ f' =>
-        simp only [laterPlace, isSym, hsy', Kind.beq_eq]
-        rcases hsy with rfl | rfl <;> simp
   have h11 := Expr.toks_place hpl 11 (Nat.le_refl _)
   have hpost := Runs.postfix_end tg hpt (fun x _ => Runs.expr_print x) ctx i f (.symbol sy) _
     (by rw [h11]; exact hw) (by rcases hsy with rfl | rfl <;> decide)
     (by rcases hsy with rfl | rfl <;> decide) (by rw [h11]; omega)
   rw [h11] at hpost
-  refine Runs.stmt_ident hk0 hlp hpost ?_
+  refine Runs.stmt_ident hk0 hpost ?_
   rintro e pl ⟨hres, hpl'⟩
   simp only at hpl'
   subst pl

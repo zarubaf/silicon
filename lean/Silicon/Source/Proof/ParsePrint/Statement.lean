@@ -70,6 +70,13 @@ example : ¬ Printable [.const p (nm "X") (t "T") (.index p (v "a") [])] := by d
 example : ¬ Printable [.fn p false (nm "f") [] (t "T") [.assign p (.num p 0) (v "x")]] := by
   decide
 
+/-! A place with an index or a field, but no container form yet. -/
+example : Printable [.fn p false (nm "f") [] (t "T")
+    [.assign p (.field p (.index p (v "a") [.num p 0]) (nm "b")) (v "x")]] := by
+  decide +kernel
+example : ¬ Printable [.fn p false (nm "f") [] (t "T")
+    [.assign p (.select p (v "a") p 0) (v "x")]] := by decide
+
 /-! A module parameter without `comptime`, and two domains. -/
 example : ¬ Printable [.module p (nm "M") [⟨p, false, nm "W", t "Nat"⟩] none []] := by decide
 example : ¬ Printable [.module p (nm "M") [] (some [nm "a", nm "b"]) []] := by decide
