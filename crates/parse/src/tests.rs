@@ -974,9 +974,7 @@ fn a_select_keeps_the_position_of_its_literal() {
 #[test]
 fn container_forms_give_s001_and_s004_like_lean() {
     let cases = [
-        ("const X: T = [UInt[8]; 4];", Code::S004, 1, 14),
-        ("const X: T = f(a, [T; 4]);", Code::S004, 1, 19),
-        ("const X: T = [a, b; c];", Code::S004, 1, 14),
+        ("const X: T = [a, b; c];", Code::S001, 1, 16),
         ("const X: T = (T; 4);", Code::S001, 1, 16),
         ("const X: T = (,);", Code::S001, 1, 15),
         ("const X: T = (a b);", Code::S001, 1, 17),
@@ -993,7 +991,6 @@ fn container_forms_give_s001_and_s004_like_lean() {
         ("module M() { a[] = 1; }", Code::S001, 1, 16),
         ("module M() { a.x(1) = 1; }", Code::S004, 1, 17),
         ("module M() { mem m: [T; 4]; }", Code::S004, 1, 14),
-        ("module M() { [T; 4]; }", Code::S004, 1, 14),
         ("const A: (,) = 0;", Code::S001, 1, 11),
         ("const A: (T U) = 0;", Code::S001, 1, 13),
         ("const A: (T, U V) = 0;", Code::S001, 1, 16),
@@ -1011,6 +1008,109 @@ fn container_forms_give_s001_and_s004_like_lean() {
         .map(|(input, ..)| (input, first_error(input)))
         .collect();
     assert_eq!(wrong, []);
+}
+
+#[test]
+fn array_types_in_expressions_give_s001_at_the_first_non_type_token() {
+    let cases = [
+        ("const X: T = [0; 4];", Code::S001, 1, 15),
+        ("const X: T = [a + b; 4];", Code::S001, 1, 17),
+        ("const X: T = [a.b; 4];", Code::S001, 1, 16),
+        ("const X: T = [[a, b]; 4];", Code::S001, 1, 17),
+        ("const X: T = [[0; 2]; 4];", Code::S001, 1, 16),
+        ("const X: T = [T $; 4];", Code::S001, 1, 17),
+        ("const X: T = [T; ];", Code::S001, 1, 18),
+        ("const X: T = [T; 4; 5];", Code::S001, 1, 19),
+        ("const X: T = [(a; b)];", Code::S001, 1, 17),
+        ("const X: T = [f(x); 4];", Code::S004, 1, 16),
+        ("const X: T = [a.f(x); 4];", Code::S001, 1, 16),
+        ("const X: T = [fn() -> T; 4];", Code::S004, 1, 15),
+        ("const X: T = [@TypeOf(x); 4];", Code::S004, 1, 15),
+        ("const X: T = [a::T; 4];", Code::S004, 1, 16),
+        ("struct P(W: Nat) { }", Code::S001, 1, 10),
+        ("struct P(mut comptime W: Nat) { }", Code::S001, 1, 10),
+        ("struct P { a }", Code::S001, 1, 14),
+        ("struct P { a: T(x) }", Code::S004, 1, 16),
+        ("type A = ;", Code::S001, 1, 10),
+        ("pub struct P { }", Code::S004, 1, 1),
+    ];
+    let wrong: Vec<_> = cases
+        .iter()
+        .filter(|(input, code, line, col)| first_error(input) != Some((*code, *line, *col)))
+        .map(|(input, ..)| (input, first_error(input)))
+        .collect();
+    assert_eq!(wrong, []);
+}
+
+#[test]
+fn array_types_in_expressions_parse() {
+    for (input, shape_text) in [
+        ("[UInt[8]; 4]", "(arraytype (index UInt 8) 4)"),
+        ("f(a, [T; 4])", "(call f a (arraytype T 4))"),
+        ("[[T; 2]; N]", "(arraytype (array T 2) N)"),
+        ("[(T, ()); 4]", "(arraytype (tuple T ()) 4)"),
+        ("[(T); 4]", "(arraytype T 4)"),
+        ("[T; 4]()", "(call (arraytype T 4) )"),
+        ("[T; 4][1]", "(index (arraytype T 4) 1)"),
+        (
+            "[[T; 2], [U; 3]]",
+            "(array (arraytype T 2) (arraytype U 3))",
+        ),
+    ] {
+        assert_eq!(shape(input), shape_text, "{input}");
+    }
+    let stmts = body("[T; 4]; type A = [T; 4];");
+    assert!(matches!(
+        stmts.as_slice(),
+        [Stmt::Expr { .. }, Stmt::Alias { .. }]
+    ));
+}
+
+#[test]
+fn a_chain_of_array_types_and_type_arguments_drops_without_recursion() {
+    let n = 1000;
+    let input = format!("const X: T = {}0{};", "[U[".repeat(n), "]; 1]".repeat(n));
+    let parsed = parse(&input);
+    assert!(parsed.errors.is_empty(), "{:?}", parsed.errors.first());
+    drop(parsed);
+}
+
+#[test]
+fn struct_and_alias_items_keep_their_positions() {
+    let parsed = parse("struct P(comptime W: Nat) {\n  a: T,\n}\ntype A = T;");
+    let Some(
+        [
+            Item::Struct {
+                pos: p,
+                name,
+                params,
+                fields,
+            },
+            Item::Alias {
+                pos: q,
+                name: alias,
+                ..
+            },
+        ],
+    ) = parsed.ast.as_deref()
+    else {
+        panic!("{parsed:?}");
+    };
+    assert_eq!(
+        (*p, name.pos, params[0].pos),
+        (pos(1, 1), pos(1, 8), pos(1, 10))
+    );
+    assert_eq!(
+        (params[0].name.pos, fields[0].name.pos),
+        (pos(1, 19), pos(2, 3))
+    );
+    assert_eq!((*q, alias.pos), (pos(4, 1), pos(4, 6)));
+    let none = parse("struct P {} struct Q() {}");
+    assert!(matches!(
+        none.ast.as_deref(),
+        Some([Item::Struct { params: a, .. }, Item::Struct { params: b, .. }])
+            if a.is_empty() && b.is_empty()
+    ));
 }
 
 #[test]
