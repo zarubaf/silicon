@@ -257,10 +257,10 @@ def Meta.intCharge (m : Meta) : Nat :=
   intSize m.width + intSize m.leaves + intSize m.zeroSize + intSize m.depth
 
 /-!
-The charge of `Meta.struct fields _ = m`: 1 for each field, plus the sizes of the four new
-integers of `m`.
+The charge of the reads of `Meta.sum parts _`: the sizes of the four integers of each part. It
+bounds the work of the additions, so it comes before them.
 -/
-def Meta.structCharge (fields : List Meta) (m : Meta) : Nat := fields.length + m.intCharge
+def Meta.readCharge (parts : List Meta) : Nat := (parts.map Meta.intCharge).sum
 
 /-!
 The metadata of a type. A type constructor computes it from its parts. A struct type stores

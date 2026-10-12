@@ -382,6 +382,9 @@ theorem known_f (v : Val) : Follows cap (known v) (known v) := by
 theorem bounded_f (p : Pos) (d : Nat) : Follows cap (bounded p d) (bounded p d) := by
   unfold bounded; follows
 
+theorem sums_f (p : Pos) (ps : List Meta) (m : Meta) : Follows cap (sums p ps m) (sums p ps m) := by
+  unfold sums; follows
+
 theorem walked_f (p : Pos) (w : Walk α) : Follows cap (walked p w) (walked p w) := by
   unfold walked; follows
 
@@ -394,7 +397,7 @@ theorem typeOf_f (p : Pos) (x : String) (v : Val) :
   unfold typeOf; follows
 
 theorem tupleTy_f (p : Pos) (ts : List Ty) : Follows cap (tupleTy p ts) (tupleTy p ts) := by
-  unfold tupleTy; follows [bounded_f]
+  unfold tupleTy; follows [bounded_f, sums_f]
 
 theorem element_f (p : Pos) (v : Val) : Follows cap (element p v) (element p v) := by
   unfold element; follows
@@ -527,7 +530,7 @@ theorem constant_f (p : Pos) (x : String) (i : Nat) {b b' : M Value} (h : Follow
 
 theorem specialize_f (p : Pos) (x : String) (i : Nat) (args : List Value) {f g : M (List Ty)}
     (h : Follows cap f g) : Follows cap (specialize p x i args f) (specialize p x i args g) := by
-  unfold specialize; follows [h, bounded_f]
+  unfold specialize; follows [h, bounded_f, sums_f]
 
 theorem iteration_f (p : Pos) (i : Binder) (v : Int) {x y : M α} (h : Follows cap x y) :
     Follows cap (iteration p i v x) (iteration p i v y) := by
