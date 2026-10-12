@@ -28,11 +28,9 @@ a check here:
 - Each number is below 2^65536: `Expr.printable` at `num` and at `select`.
 
 The proof covers the container forms of slice 2. These are the unit value, the unit type, a
-tuple, an array, an array type `[T; N]`, and a selector `.N`. It also covers a `struct` item and
-a `type` item or statement. It does not cover an array type in an expression yet. `Printable`
-excludes it.
+tuple, an array, an array type `[T; N]` in a type and in an expression, and a selector `.N`. It
+also covers the type forms of phase 3: a `struct` item, and a `type` item or statement.
 -/
--- TODO(#178): extend the proof to the type forms of phase 3.
 namespace Silicon.Source
 
 /-! The erased position. -/
@@ -142,14 +140,12 @@ mutual
     | .tuple _ xs => !xs.isEmpty && Expr.printableAll xs
     | .array _ xs => Expr.printableAll xs
     | .select _ b _ i => b.printable && i < numberBound
-    | .arrayType .. => false
+    | .arrayType _ t n => t.printable && n.printable
 
   def Expr.printableAll : List Expr → Bool
     | [] => true
     | x :: xs => x.printable && Expr.printableAll xs
-end
 
-mutual
   def TypeExpr.printable : TypeExpr → Bool
     | .name _ n => validName n
     | .index _ b xs => b.printable && !xs.isEmpty && Expr.printableAll xs
@@ -217,9 +213,8 @@ end ParsePrint
 /-!
 These two induction principles follow the cases of `Expr.erase` and `TypeExpr.erase`. The
 principle for an expression has no hypothesis for a type expression in it. The principle for a
-type expression has no hypothesis for an expression in it. A proof for a `Printable` AST needs
-no other hypothesis. `Printable` excludes an array type in an expression, and a proof for a type
-expression uses a separate lemma for an expression.
+type expression has no hypothesis for an expression in it. A proof that needs both hypotheses
+uses `Expr.erase.mutual_induct`, or an induction on the number of tokens.
 -/
 
 theorem Expr.ind (motive : Expr → Prop)
@@ -404,31 +399,37 @@ theorem Stmt.printableAll_eq (plain : Bool) (ss : List Stmt) :
     Stmt.printableAll plain ss = ss.all (Stmt.printable plain) := by
   induction ss <;> simp_all [Stmt.printableAll]
 
-@[simp] theorem Expr.printable_erase (e : Expr) : e.erase.printable = e.printable := by
-  induction e using Expr.ind with
-  | case8 _ f xs ihf ih =>
-    simp only [Expr.erase, Expr.printable, ihf, Expr.printableAll_eq, List.all_map,
-      Function.comp_def]
-    rw [all_congr_mem ih]
-  | case9 _ f xs ihf ih =>
+private theorem printable_erase_all :
+    (∀ e : Expr, e.erase.printable = e.printable) ∧
+      ∀ t : TypeExpr, t.erase.printable = t.printable := by
+  apply Expr.erase.mutual_induct
+  case case8 | case9 =>
+    intro p f xs ihf ih
     simp only [Expr.erase, Expr.printable, ihf, Expr.printableAll_eq, List.all_map,
       Function.comp_def, List.isEmpty_map]
     rw [all_congr_mem ih]
-  | case12 _ xs ih | case13 _ xs ih =>
+  case case12 | case13 =>
+    intro p xs ih
     simp only [Expr.erase, Expr.printable, Expr.printableAll_eq, List.all_map,
       Function.comp_def, List.isEmpty_map]
     rw [all_congr_mem ih]
-  | _ => simp_all [Expr.erase, Expr.printable]
-
-@[simp] theorem TypeExpr.printable_erase (t : TypeExpr) : t.erase.printable = t.printable := by
-  induction t using TypeExpr.ind with
-  | case4 _ ts ih =>
+  case case17 =>
+    intro p b xs ihb ih
+    simp only [TypeExpr.erase, TypeExpr.printable, ihb, Expr.printableAll_eq, List.all_map,
+      Function.comp_def, List.isEmpty_map]
+    rw [all_congr_mem ih]
+  case case19 =>
+    intro p ts ih
     simp only [TypeExpr.erase, TypeExpr.printable, TypeExpr.printableAll_eq, List.all_map,
       Function.comp_def, List.isEmpty_map]
     rw [all_congr_mem ih]
-  | _ =>
-    simp_all [TypeExpr.erase, TypeExpr.printable, Expr.printableAll_eq, List.all_map,
-      Function.comp_def]
+  all_goals intros; simp_all [Expr.erase, Expr.printable, TypeExpr.erase, TypeExpr.printable]
+
+@[simp] theorem Expr.printable_erase (e : Expr) : e.erase.printable = e.printable :=
+  printable_erase_all.1 e
+
+@[simp] theorem TypeExpr.printable_erase (t : TypeExpr) : t.erase.printable = t.printable :=
+  printable_erase_all.2 t
 
 @[simp] theorem Stmt.printable_erase (plain : Bool) (s : Stmt) :
     s.erase.printable plain = s.printable plain := by
