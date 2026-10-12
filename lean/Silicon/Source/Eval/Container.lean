@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: Apache-2.0
-import Silicon.Source.Eval.Basic
+import Silicon.Source.Eval.Types
 
 /-!
 The static containers of the evaluator. These are the typed use of a container, the common type,
@@ -10,16 +10,18 @@ The static containers of slice 2 follow section 5.1. These rules settle its open
 
 - In this phase, a container holds only static values. A hardware element is `S010` at the
   element. A handle as an element is `S010` until slice 3.
-- An array literal takes the common type of its elements by the operand rule. The typed use of
-  each element at that type charges as a conversion. Then the literal charges its size.
+- An array literal takes the common type of its elements by the operand rule. The join of the
+  types charges its visits (`Source.Eval.Types`). The typed use of each element at that type
+  charges as a conversion. Then the literal charges its size.
 - `[]` gets its type `[T; 0]` only at a typed use: an annotation, an assignment, an argument,
   a return, a constant, or a module argument. A literal with `[]` as an element waits for its
   type too. The typed use then gives each `[]` the type at its place, and each literal charges
   as at its node. Without a typed use, it is `S010` at the first `[]`.
 - A typed use of a container at another type converts each element. It charges the size of
   the value plus the size of the result.
-- `==` and `!=` on containers need a common type for each pair of elements. They charge the
-  sum of the two sizes. Each pair compares, so each conversion checks its fit (`S012`).
+- `==` and `!=` on containers need a common type for each pair of elements. Each pair of arrays
+  joins its element types and charges the visits of the join. Then the operator charges the sum
+  of the two sizes. Each pair compares, so each conversion checks its fit (`S012`).
 - An index and a selector `.N` refer to an element, and `len` refers to its array. They charge
   no size, so a binding of the result is a copy. An index with two or more arguments is `S010`
   before its operands run.
@@ -86,29 +88,15 @@ def convert (t : Ty) (v : Value) : Except Fault Step :=
   | _ => convertLeaf t v
 
 /-!
-The common type of two types by the operand rule: a static integer takes the finite type of the
-other side. Arrays need one length and tuples one arity.
+The common type of the elements of an array literal, if they have one. It joins the type of each
+element after the first with the join of the earlier elements.
 -/
-mutual
-  def commonTy : Ty → Ty → Option Ty
-    | .array s n, .array t m => if n = m then (commonTy s t).map (.array · n) else none
-    | .tuple ⟨ss⟩, .tuple ⟨ts⟩ => (commonAll ss ts).map fun us => .tuple us.toArray
-    | .nat, .nat => some .nat
-    | .int, .int | .int, .nat | .nat, .int => some .int
-    | .int, t | .nat, t => if t.finite then some t else none
-    | s, .int | s, .nat => if s.finite then some s else none
-    | s, t => if s = t then some s else none
-
-  def commonAll : List Ty → List Ty → Option (List Ty)
-    | [], [] => some []
-    | s :: ss, t :: ts => do return (← commonTy s t) :: (← commonAll ss ts)
-    | _, _ => none
-end
-
-/-! The common type of the elements of an array literal, if they have one. -/
-def commonOf : List Value → Option Ty
-  | [] => none
-  | v :: vs => do vs.foldlM (fun t w => do commonTy t (← w.ty?)) (← v.ty?)
+def commonOf : List Value → Walk (Option Ty)
+  | [] => return none
+  | v :: vs => vs.foldlM (init := v.ty?) fun t w => do
+    match t, w.ty? with
+    | some t, some u => joinTy t u
+    | _, _ => return none
 
 /-! A container: `()`, an array, or a tuple. -/
 def composite : Value → Bool
@@ -135,50 +123,50 @@ comparison for the step after the charge. Each pair compares, so each conversion
 fit.
 -/
 mutual
-  def same : Value → Value → Except Fault (Unit → Except Fault Bool)
-    | .unit, .unit => .ok fun _ => .ok true
-    | a@(.array s ⟨xs⟩), b@(.array t ⟨ys⟩) =>
-      if (commonTy s t).isSome && xs.length == ys.length then sameAll xs ys
-      else typeError s!"`==` needs a common type, not {a.text} and {b.text}"
+  def same : Value → Value → Walk (Unit → Except Fault Bool)
+    | .unit, .unit => return fun _ => .ok true
+    | a@(.array s ⟨xs⟩), b@(.array t ⟨ys⟩) => do
+      let j ← joinTy s t
+      if j.isSome && xs.length == ys.length then sameAll xs ys
+      else throw (.S010, s!"`==` needs a common type, not {a.text} and {b.text}")
     | a@(.tuple ⟨xs⟩), b@(.tuple ⟨ys⟩) =>
       if xs.length == ys.length then sameAll xs ys
-      else typeError s!"`==` needs a common type, not {a.text} and {b.text}"
+      else throw (.S010, s!"`==` needs a common type, not {a.text} and {b.text}")
     | a, b =>
       if composite a || composite b then
-        typeError s!"`==` needs a common type, not {a.text} and {b.text}"
-      else leafEq a b
+        throw (.S010, s!"`==` needs a common type, not {a.text} and {b.text}")
+      else
+        match leafEq a b with
+        | .ok r => return r
+        | .error f => throw f
 
-  def sameAll : List Value → List Value → Except Fault (Unit → Except Fault Bool)
+  def sameAll : List Value → List Value → Walk (Unit → Except Fault Bool)
     | x :: xs, y :: ys => do
       let r ← same x y
       let rs ← sameAll xs ys
-      .ok fun u => do
+      return fun u => do
         let a ← r u
         let b ← rs u
         return a && b
-    | _, _ => .ok fun _ => .ok true
+    | _, _ => return fun _ => .ok true
 end
 
 /-!
-A binary operator with a container operand. `==` and `!=` read both operands in full, so they
-charge the sum of the sizes. The orderings take no container.
+A binary operator with a container operand at `pos`. `==` and `!=` charge the visits of their
+joins, then they read both operands in full, so they charge the sum of the sizes. The orderings
+take no container.
 -/
-def containerOp (op : BinOp) (a b : Value) : Except Fault Step :=
+def containerOp (pos : Pos) (op : BinOp) (a b : Value) : M Value :=
   match op with
   | .eq | .ne => do
-    let r ← same a b
-    .ok ⟨a.size + b.size, fun u => do
+    let r ← walked pos (same a b)
+    apply pos (.ok ⟨a.size + b.size, fun u => do
       let x ← r u
-      return .bool (if op == .eq then x else !x)⟩
-  | .lt | .le | .gt | .ge => typeError s!"`{op.text}` takes no container"
-  | _ => typeError s!"`{op.text}` does not accept {a.text} and {b.text}"
+      return .bool (if op == .eq then x else !x)⟩)
+  | .lt | .le | .gt | .ge => lift pos (typeError s!"`{op.text}` takes no container")
+  | _ => lift pos (typeError s!"`{op.text}` does not accept {a.text} and {b.text}")
 
 def conform (pos : Pos) (t : Ty) (v : Value) : M Value := apply pos (convert t v)
-
-/-! A new value or type of the depth `d` at `pos`. Above the nesting depth, it is `S015`. -/
-def bounded (pos : Pos) (d : Nat) : M Unit := do
-  let c ← read
-  if c.limit < d then fail .S015 pos s!"the depth {d} goes above the nesting depth {c.limit}"
 
 /-!
 An element of a container literal at `pos`, and the position of its first `[]` if it waits for
@@ -216,22 +204,13 @@ An array literal at `pos`. Its elements take their common type. Then it checks i
 charges its size.
 -/
 def arrayOf (pos : Pos) (vs : List Value) : M Value := do
-  let some t := commonOf vs | fail .S010 pos "the elements of an array have no common type"
+  let some t ← walked pos (commonOf vs)
+    | fail .S010 pos "the elements of an array have no common type"
   let xs ← vs.mapM (conform pos t)
   let v := Value.array t xs.toArray
   bounded pos v.depth
   charge pos v.size
   return v
-
-/-! The array type `[e; k]` at `pos`. The length at `q` is a static `Nat`. -/
-def arrayTy (pos q : Pos) (e : Ty) : Value → M Ty
-  | .int k => do
-    if k < 0 then fail .S012 q s!"the length {intText k} is not a Nat"
-    let t := Ty.array e k.toNat
-    bounded pos t.depth
-    charge pos t.size
-    return t
-  | v => fail .S010 q s!"the length of an array is a static Nat, not {v.text}"
 
 /-!
 A literal that waits, at a typed use of the type `t` at `pos`. The type flows into each

@@ -29,6 +29,20 @@ inductive Entry where
   | done (value : Value)
   deriving Repr, Inhabited
 
+/-!
+A struct specialization in the table of specializations (section 5.6): the struct item, its
+static arguments as they evaluate, and its state. A done entry holds its struct type and its
+field types. A specialization that is not started has no entry.
+-/
+inductive SpecState where
+  | inProgress
+  | done (ty : Ty) (fields : List Ty)
+
+structure Spec where
+  item : Nat
+  args : List Value
+  state : SpecState
+
 /-! A node of a hardware value. Section 7.4 lowers each node to core operations. -/
 inductive Op where
   | ref (name : Path)
@@ -222,12 +236,14 @@ structure Naming where
   lets : Array Let := #[]
 
 /-!
-The fuel, the table of constants by item index, the locals of the current frame, and the
-names of the current instantiation.
+The state holds the fuel, the table of constants by item index, and the table of struct
+specializations. It also holds the locals of the current frame and the names of the current
+instantiation.
 -/
 structure St where
   fuel : Nat
   consts : Array Entry
+  specs : Array Spec
   frame : Std.HashMap Nat Slot
   naming : Naming
 
@@ -369,7 +385,7 @@ def convertLeaf (t : Ty) (v : Value) : Except Fault Step :=
   let same := Except.ok ⟨0, fun _ => .ok v⟩
   let wrong := typeError s!"expected {t.text}, but the value is {v.text}"
   match t, v with
-  | .unit, .unit | .bool, .bool _ | .int, .int _ => same
+  | .unit, .unit | .bool, .bool _ | .int, .int _ | .type, .type _ => same
   | .nat, .int n => if 0 ≤ n then same else .error (.S012, s!"{intText n} is not a Nat")
   | .uint w, .uint u _ | .sint w, .sint u _ => if u == w then same else wrong
   | .uint w, .int n | .sint w, .int n =>

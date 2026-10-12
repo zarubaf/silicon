@@ -252,12 +252,15 @@ is hardware data with no bit and no leaf (decision Q4 of issue #178).
 -/
 def Meta.struct (fields : List Meta) (argDepths : List Nat) : Meta := Meta.sum fields argDepths
 
+/-! The sizes of the four integers of `m`. A type constructor that makes them charges this. -/
+def Meta.intCharge (m : Meta) : Nat :=
+  intSize m.width + intSize m.leaves + intSize m.zeroSize + intSize m.depth
+
 /-!
 The charge of `Meta.struct fields _ = m`: 1 for each field, plus the sizes of the four new
 integers of `m`.
 -/
-def Meta.structCharge (fields : List Meta) (m : Meta) : Nat :=
-  fields.length + intSize m.width + intSize m.leaves + intSize m.zeroSize + intSize m.depth
+def Meta.structCharge (fields : List Meta) (m : Meta) : Nat := fields.length + m.intCharge
 
 /-!
 The metadata of a type. A type constructor computes it from its parts. A struct type stores
@@ -410,8 +413,8 @@ mutual
 end
 
 /-!
-The type of a value. A string, a type, and a tuple that holds them have no `Ty` yet: the
-evaluator gives a type value its type `Type` in a later step.
+The type of a value. A type value has the type `Type`. A string and a container that holds one
+have no `Ty` yet.
 -/
 mutual
   def Value.ty? : Value → Option Ty
@@ -423,7 +426,8 @@ mutual
     | .array t xs => some (.array t xs.size)
     | .tuple ⟨xs⟩ => (Value.tyAll? xs).map fun ts => .tuple ts.toArray
     | .record t _ => some t
-    | .str _ | .type _ => none
+    | .type _ => some .type
+    | .str _ => none
 
   def Value.tyAll? : List Value → Option (List Ty)
     | [] => some []
