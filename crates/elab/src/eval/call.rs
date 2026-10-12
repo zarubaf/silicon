@@ -176,33 +176,7 @@ impl Evaluator<'_> {
         self.charge(pos, sizes)?;
         let mut vs = vs;
         if matches!(builtin, Prelude::Resize | Prelude::Reinterpret) && vs.len() == 2 {
-            let (Some(v), Some(t)) = (vs.pop(), vs.pop()) else {
-                return fail(Code::S010, pos, format!("`{g}` needs two arguments"));
-            };
-            self.check_static(pos, &t)?;
-            let Value::Type(ty) = self.store.value(&t) else {
-                return fail(
-                    Code::S010,
-                    pos,
-                    format!(
-                        "`{g}` needs a type, not {}",
-                        self.store.value(&t).text(&self.tys)
-                    ),
-                );
-            };
-            let ty = *ty;
-            return match self.data(pos, v)? {
-                Opnd::Static(v) => {
-                    let v = self.store.value(&v);
-                    let made = if builtin == Prelude::Resize {
-                        ops::resize(ty, v, &mut self.fuel, &self.tys)
-                    } else {
-                        ops::reinterpret(ty, v, &mut self.fuel, &self.tys)
-                    };
-                    Ok(Some(Out::Made(Val::Static(made.map_err(at(pos))?))))
-                }
-                Opnd::Hw(x) => Ok(Some(Out::Made(self.hw_convert(pos, builtin, ty, x)?))),
-            };
+            return self.convert_call(pos, g, builtin, vs);
         }
         if builtin == Prelude::Str && vs.len() == 1 {
             let Some(v) = vs.pop() else {
@@ -211,7 +185,51 @@ impl Evaluator<'_> {
             let v = self.data(pos, v)?;
             return self.str_of(pos, g, v);
         }
-        match (builtin, vs.as_slice()) {
+        self.refuse(pos, g, builtin, &vs)
+    }
+
+    /// `resize` or `reinterpret` of a value to a type, at the call `pos`. The arguments paid
+    /// their copies.
+    fn convert_call(
+        &mut self,
+        pos: Pos,
+        g: &str,
+        builtin: Prelude,
+        mut vs: Vec<Out>,
+    ) -> Res<Option<Out>> {
+        let (Some(v), Some(t)) = (vs.pop(), vs.pop()) else {
+            return fail(Code::S010, pos, format!("`{g}` needs two arguments"));
+        };
+        self.check_static(pos, &t)?;
+        let Value::Type(ty) = self.store.value(&t) else {
+            return fail(
+                Code::S010,
+                pos,
+                format!(
+                    "`{g}` needs a type, not {}",
+                    self.store.value(&t).text(&self.tys)
+                ),
+            );
+        };
+        let ty = *ty;
+        match self.data(pos, v)? {
+            Opnd::Static(v) => {
+                let v = self.store.value(&v);
+                let made = if builtin == Prelude::Resize {
+                    ops::resize(ty, v, &mut self.fuel, &self.tys)
+                } else {
+                    ops::reinterpret(ty, v, &mut self.fuel, &self.tys)
+                };
+                Ok(Some(Out::Made(Val::Static(made.map_err(at(pos))?))))
+            }
+            Opnd::Hw(x) => Ok(Some(Out::Made(self.hw_convert(pos, builtin, ty, x)?))),
+        }
+    }
+
+    /// `static_assert` and `error` at the call `pos`, and the arguments that no prelude
+    /// function accepts. The arguments paid their copies.
+    fn refuse(&mut self, pos: Pos, g: &str, builtin: Prelude, vs: &[Out]) -> Res<Option<Out>> {
+        match (builtin, vs) {
             (Prelude::StaticAssert, [c, m]) => {
                 self.check_static(pos, c)?;
                 self.check_static(pos, m)?;
