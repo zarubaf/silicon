@@ -216,4 +216,56 @@ def chain : Nat → Ty
 #guard (Value.record (packet 8) #[.uint 8 3, .bool false]).measureCharge == 2
 #guard (Value.type (packet 8)).measureCharge == 0
 
+/-! The forms of section 7.1 for strings and lists. A list keeps its element type. -/
+#guard (Value.list .int #[.int 1, .int 2]).serialize == "(list int ((int 1) (int 2)))"
+#guard (Value.list .int #[]).serialize == "(list int ())"
+#guard (Value.type (.list .int)).serialize == "(type (list int))"
+#guard (Value.type .string).serialize == "(type string)"
+#guard (Value.list .string #[.str "a"]).serialize == "(list string ((string \"a\")))"
+#guard (Value.type (.list (.list (.uint 8)))).serialize == "(type (list (list (uint 8))))"
+
+/-! The type and the text of a string and a list. -/
+#guard (Value.str "a").ty? == some .string
+#guard (Value.list .int #[]).ty? == some (.list .int)
+#guard (Value.tuple #[.str "a"]).ty? == some (.tuple #[.string])
+#guard (Value.tuple #[.str "a"]).text == "(String,)"
+#guard (Ty.list (.uint 8)).text == "List[UInt[8]]"
+#guard Ty.string.text == "String"
+#guard (Value.list .int #[]).literal == "list(Int)"
+#guard (Value.list .int #[.int 1, .int 2]).literal == "[1, 2]"
+
+/-! Equality of lists compares the element type and the elements. -/
+#guard Value.list .int #[] != Value.list .bool #[]
+#guard Value.list .int #[] != Value.array .int #[]
+#guard Value.list .int #[.int 1] == Value.list .int #[.int 1]
+#guard Value.list .int #[.int 1] != Value.list .int #[.int 1, .int 1]
+#guard Ty.list .int != Ty.list .nat
+#guard Ty.string == Ty.string
+
+/-! A list has the size 1 plus its elements, and `List[T]` the size 1 plus `T`. -/
+#guard (Value.list .int #[]).size == 1
+#guard (Value.list .int #[.int 1, .int 18446744073709551616]).size == 4
+#guard (Value.list .string #[.str "ab"]).size == 4
+#guard Ty.string.size == 1
+#guard (Ty.list (.uint 8)).size == 3
+
+/-! The depth of a list counts its element type. `String` has the depth 1. -/
+#guard Ty.string.depth == 1
+#guard (Ty.list .int).depth == 2
+#guard (Ty.list (.list .int)).depth == 3
+#guard (Value.list .int #[]).depth == 2
+#guard (Value.list (.list .int) #[]).depth == 3
+#guard (Value.list (.list .int) #[.list .int #[]]).depth == 3
+
+/-! `String` and `List[T]` are not hardware data. The depth of `List[T]` reads only `T`. -/
+#guard Ty.string.info == ⟨0, 0, 0, 1, false⟩
+#guard (Ty.list .bool).info == ⟨0, 0, 0, 2, false⟩
+#guard (Ty.list (packet 8)).info == ⟨0, 0, 0, 3, false⟩
+#guard (Ty.list (chain 200)).info.depth == 203
+
+/-! The walk that measures a list charges 1 for its node. A string charges nothing. -/
+#guard (Value.list .int #[]).measureCharge == 1
+#guard (Value.list .int #[.int 1, .int 2]).measureCharge == 3
+#guard (Value.str "abc").measureCharge == 0
+
 end Silicon.Source.Test.Value
