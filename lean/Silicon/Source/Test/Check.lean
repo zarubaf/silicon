@@ -280,6 +280,109 @@ containers, and `==` on containers without a common type.
   .S002 5 5
 #guard fails "module M() {\nreturn;\nlet x = resize(q);\n}" .S003 3 16
 
+/-!
+The helpers of the tests of receiver calls and `mut` actuals. The body `s` of `f` starts on line
+6. `xs` is a `let mut` local, `ys` a `mut` formal, and `zs` a formal without a mark.
+-/
+def lists (s : String) : String :=
+  "fn helper(comptime n: Int, mut xs: List[Int]) -> () {}\n" ++
+  "fn two(mut a: List[Int], mut b: List[Int]) -> () {}\n" ++
+  "fn pair(a: Int, b: Int) -> Int { return a; }\n" ++
+  "fn f(zs: List[Int], mut ys: List[Int]) -> () {\n" ++
+  "let mut xs = list(Int);\n" ++ s ++ "\n}"
+
+/-! A receiver call binds its receiver to the first parameter without `comptime`. -/
+#guard ok (lists "xs.push(1);\nlet n = xs.pop() + xs.len();\nlet s = n.str();")
+#guard ok (lists "xs.helper(1);\nys.helper(2);\nxs.two(ys);")
+#guard ok (lists "let a = 1.resize(UInt[8]);\nlet b = a.reinterpret(SInt[8]);")
+#guard ok (lists "let c = (1 == 1).static_assert(\"m\");\n\"m\".error();")
+#guard ok "comptime fn h(x: Nat, comptime y: Nat) -> Nat { return x; }\nconst A: Nat = 1.h(2);"
+
+/-! `S007` at the start of a receiver call: no parameter without `comptime`, or the arity. -/
+#guard fails (lists "let t = Int.list();") .S007 6 9
+#guard message (lists "let t = Int.list();") ==
+  "`list` has no parameter without `comptime` for the receiver"
+#guard fails (lists "let t = Int.data_bits();") .S007 6 9
+#guard fails ("fn c(comptime n: Nat) -> Nat { return n; }\n" ++
+  "fn g(k: Nat) -> Nat { return k.c(); }") .S007 2 30
+#guard fails (lists "xs.push();") .S007 6 1
+#guard message (lists "xs.push();") == "`push` takes 2 argument(s), but it has 1"
+#guard fails (lists "let a = xs.pop(1);") .S007 6 9
+#guard fails (lists "let a = xs.len(1);") .S007 6 9
+#guard fails (lists "xs.helper();") .S007 6 1
+#guard fails (lists "xs.helper(1, 2);") .S007 6 1
+#guard fails (lists "let a = 1.pair(2, 3);") .S007 6 9
+#guard fails (lists "push(xs);") .S007 6 1
+#guard fails (lists "let a = str(1, 2);") .S007 6 9
+#guard fails (lists "let t = list();") .S007 6 9
+#guard fails "const L: List = 1;" .S007 1 10
+#guard fails "const S: String[1] = 1;" .S007 1 10
+
+/-!
+A `comptime` parameter is a static position, also for an argument of a receiver call. The
+receiver binds to a parameter without `comptime`. Each parameter of a `comptime fn` is static,
+also the one of the receiver. The `T` of `list(T)` is static. The argument of `str` is not.
+-/
+def regs2 (s : String) : String :=
+  "fn g(comptime n: Nat, x: Bool) -> Bool { return x; }\n" ++
+  "comptime fn h(x: Nat) -> Nat { return x; }\n" ++
+  "module M() {\ninput a: Bool;\nreg r: UInt[4] = 0;\n" ++ s ++ "\n}"
+#guard ok (regs2 "let y = a.g(1);\nlet z = str(r);\nlet w = r.resize(UInt[8]);")
+#guard fails (regs2 "let y = a.g(r);") .S005 6 13
+#guard fails (regs2 "let y = a.h();") .S005 6 9
+#guard fails (regs2 "let y = a.resize(r);") .S005 6 18
+#guard fails (regs2 "let l = list(r);") .S005 6 14
+
+/-!
+`S008`: a `mut` actual is a place with a mutable root, a `let mut` local or a `mut` formal. The
+position is the start of the actual.
+-/
+#guard ok (lists "push(xs, 1);\npush(ys, 2);\nlet mut t = (list(Int), 1);\nt.0.push(1);")
+#guard ok (lists "let mut a = [list(Int)];\na[0].push(1);\nhelper(1, a[0]);")
+#guard fails (lists "zs.push(1);") .S008 6 1
+#guard message (lists "zs.push(1);") ==
+  "a `mut` actual has a `let mut` local or a `mut` formal as its root"
+#guard fails (lists "push(zs, 1);") .S008 6 6
+#guard fails (lists "let l = list(Int);\nl.push(1);") .S008 7 1
+#guard fails (lists "list(Int).push(1);") .S008 6 1
+#guard message (lists "list(Int).push(1);") == "a `mut` actual is a place"
+#guard fails (lists "helper(1, list(Int));") .S008 6 11
+#guard fails ("const L: List[Int] = list(Int);\n" ++ lists "L.push(1);") .S008 7 1
+#guard fails (lists "let a = (xs.pop() + 1).str();\npush(xs.len(), 1);") .S008 7 6
+
+/-!
+`S008`: no mutation of a pending root in its window. The window of a `mut` actual holds its own
+indices and each later argument. The receiver comes first. The window of an assignment holds the
+indices of its place and its value. The position is the second `mut` actual with the root.
+-/
+#guard fails (lists "xs.helper(xs.pop());") .S008 6 11
+#guard message (lists "xs.helper(xs.pop());") ==
+  "the root of this `mut` actual is pending in its window"
+#guard fails (lists "xs[0] = xs.pop();") .S008 6 9
+#guard fails (lists "xs.push(xs.pop());") .S008 6 9
+#guard fails (lists "push(xs, xs.pop());") .S008 6 10
+#guard fails (lists "xs.push(pair(1, xs.pop()));") .S008 6 17
+#guard fails (lists "two(xs, xs);") .S008 6 9
+#guard fails (lists "xs.two(xs);") .S008 6 8
+#guard fails (lists "ys.two(ys);") .S008 6 8
+#guard fails (lists "xs[xs.pop()] = 1;") .S008 6 4
+#guard fails (lists "let mut a = [list(Int)];\na[a[0].pop()].push(1);") .S008 7 3
+#guard fails (lists "let mut t = (list(Int), 1);\nt.0.push(t.0.pop());") .S008 7 10
+
+/-!
+A root is pending only in its window. An argument before the `mut` actual and a call that ends
+before it do not conflict. A read of a pending root is not a mutation.
+-/
+#guard ok (lists "helper(xs.pop(), xs);")
+#guard ok (lists "let a = pair(xs.pop(), xs.pop());")
+#guard ok (lists "xs.push(xs.len());")
+#guard ok (lists "xs[0] = xs.len();")
+#guard ok (lists "xs.push(ys.pop());\nys.push(xs.pop());")
+#guard ok (lists "xs.two(ys);\nys.two(xs);")
+#guard ok (lists "push(xs, 1);\npush(xs, 2);")
+#guard ok (lists "let mut a = [list(Int)];\na[a.len()].push(1);")
+#guard ok (lists "let h = push;\nh(zs, 1);")
+
 /-! `S005` to `S007` compete by position. -/
 #guard fails (modBody "return;\ninput a: Bool;\ncomptime if (a) {}") .S006 2 1
 #guard fails (modBody "input a: Bool;\ncomptime if (a) {}\nreturn;") .S005 3 14
