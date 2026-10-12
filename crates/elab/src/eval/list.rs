@@ -21,19 +21,6 @@ enum Typed {
 }
 
 impl Evaluator<'_> {
-    /// A mutation at `pos` of a binding of the current frame (section 9.4). The binding is older
-    /// than the innermost hardware arm when that arm started at the current depth: `S016`.
-    pub(super) fn mutation(&self, pos: Pos) -> Res<()> {
-        if self.arm == Some(self.depth) {
-            return fail(
-                Code::S016,
-                pos,
-                "a hardware arm changes a binding from before the arm".to_owned(),
-            );
-        }
-        Ok(())
-    }
-
     /// `list(T)` at the call `pos`: an empty list of `T`. It checks its depth and charges 1.
     pub(super) fn list_new(&mut self, pos: Pos, g: &str, t: &Out) -> Res<Option<Out>> {
         self.check_static(pos, t)?;
