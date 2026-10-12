@@ -1,0 +1,2 @@
+// S001: the argument list of a receiver call needs its closing parenthesis.
+const A: T = x.f(a b);

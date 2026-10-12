@@ -1,0 +1,2 @@
+// S001: a module parameter has the mode comptime, so mut there is an error at `mut`.
+module M(mut W: Nat) {}

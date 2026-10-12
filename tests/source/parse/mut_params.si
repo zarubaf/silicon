@@ -1,0 +1,8 @@
+// The parameter modes (section 5.6): none, comptime, and mut. A comptime fn can have a mut
+// parameter, and a mark can follow a line break.
+fn f(mut xs: List[Nat], comptime T: Type, x: T) -> T {}
+comptime fn g(mut n: Nat, x: Nat) -> () {}
+fn h(x: Nat,
+    mut y: Nat) -> Nat {
+    return x;
+}

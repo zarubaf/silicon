@@ -1,0 +1,2 @@
+// S001: the rule of one mode also holds in a comptime fn.
+comptime fn f(comptime mut x: T) -> T {}

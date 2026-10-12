@@ -1,0 +1,2 @@
+// S001: a parameter has one mode. The second `mut` is the error.
+fn f(mut mut x: T) -> T {}

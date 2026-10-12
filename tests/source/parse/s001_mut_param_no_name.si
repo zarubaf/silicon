@@ -1,0 +1,2 @@
+// S001: a mode mark needs a parameter name after it.
+fn f(x: T, mut: T) -> T {}

@@ -1,0 +1,2 @@
+// S001: a struct parameter has the mode comptime, so mut there is an error at `mut`.
+struct P(mut W: Nat) {}
