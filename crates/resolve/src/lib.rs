@@ -105,6 +105,7 @@ pub struct Resolved {
     decls: Vec<Decl>,
     items: BTreeMap<String, DeclId>,
     names: BTreeMap<NodeId, Target>,
+    sites: BTreeMap<NodeId, usize>,
 }
 
 impl Resolved {
@@ -137,6 +138,13 @@ impl Resolved {
     pub fn target(&self, id: NodeId) -> Option<Target> {
         self.names.get(&id).copied()
     }
+
+    /// The call site of the call node or the method node with an id: its rank in pre-order
+    /// among the calls of its item body, from 0.
+    #[must_use]
+    pub fn site(&self, id: NodeId) -> Option<usize> {
+        self.sites.get(&id).copied()
+    }
 }
 
 /// Resolves the names of a parse. It reports the errors of the first pass with an error.
@@ -154,6 +162,7 @@ pub fn resolve(parse: Parse) -> Result<Resolved, Failed> {
         decls: table.decls,
         items: table.items,
         names: table.names,
+        sites: table.sites,
     })
 }
 
@@ -165,6 +174,7 @@ pub struct ResolvedExpr {
     expr: Expr,
     depth: usize,
     names: BTreeMap<NodeId, Target>,
+    sites: BTreeMap<NodeId, usize>,
 }
 
 impl ResolvedExpr {
@@ -185,6 +195,12 @@ impl ResolvedExpr {
     pub fn target(&self, id: NodeId) -> Option<Target> {
         self.names.get(&id).copied()
     }
+
+    /// The call site of the call node or the method node with an id, from 0 in pre-order.
+    #[must_use]
+    pub fn site(&self, id: NodeId) -> Option<usize> {
+        self.sites.get(&id).copied()
+    }
 }
 
 /// Resolves the names of an expression in the file scope of `resolved`. A name in the
@@ -199,7 +215,12 @@ pub fn resolve_expr(
 ) -> Result<Result<ResolvedExpr, Vec<Error>>, StackError> {
     let (expr, depth) = expr.into_parts();
     let names = parse::on_stack(depth, || walk::run_expr(resolved, &expr))?;
-    Ok(names.map(|names| ResolvedExpr { expr, depth, names }))
+    Ok(names.map(|(names, sites)| ResolvedExpr {
+        expr,
+        depth,
+        names,
+        sites,
+    }))
 }
 
 /// The result of a successful walk.
@@ -207,6 +228,7 @@ struct Table {
     decls: Vec<Decl>,
     items: BTreeMap<String, DeclId>,
     names: BTreeMap<NodeId, Target>,
+    sites: BTreeMap<NodeId, usize>,
 }
 
 #[cfg(test)]

@@ -3,7 +3,8 @@
 //! `S003` until then.
 
 /// A name of the prelude: the scalar types and functions of slice 1, `Unit` and `len` of the
-/// containers of slice 2, and `Type` and `data_bits` of the types as values.
+/// containers of slice 2, `Type` and `data_bits` of the types as values, and `String`, `List`,
+/// `list`, `push`, `pop`, and `str` of the strings and the lists.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Prelude {
     Bool,
@@ -19,6 +20,12 @@ pub enum Prelude {
     Error,
     Len,
     DataBits,
+    String,
+    List,
+    ListFn,
+    Push,
+    Pop,
+    Str,
 }
 
 impl Prelude {
@@ -37,6 +44,12 @@ impl Prelude {
             "error" => Prelude::Error,
             "len" => Prelude::Len,
             "data_bits" => Prelude::DataBits,
+            "String" => Prelude::String,
+            "List" => Prelude::List,
+            "list" => Prelude::ListFn,
+            "push" => Prelude::Push,
+            "pop" => Prelude::Pop,
+            "str" => Prelude::Str,
             _ => return None,
         })
     }
@@ -53,6 +66,26 @@ impl Prelude {
                 | Prelude::Type
                 | Prelude::UInt
                 | Prelude::SInt
+                | Prelude::String
+                | Prelude::List
+        )
+    }
+
+    /// Whether the name is a function of the prelude.
+    #[must_use]
+    pub fn is_fn(self) -> bool {
+        matches!(
+            self,
+            Prelude::Resize
+                | Prelude::Reinterpret
+                | Prelude::StaticAssert
+                | Prelude::Error
+                | Prelude::Len
+                | Prelude::DataBits
+                | Prelude::ListFn
+                | Prelude::Push
+                | Prelude::Pop
+                | Prelude::Str
         )
     }
 }
@@ -60,7 +93,7 @@ impl Prelude {
 /// The slice of a prelude name that a later slice adds, for the message of `S003`.
 pub(crate) fn later_slice(name: &str) -> Option<u8> {
     Some(match name {
-        "String" | "List" | "list" | "push" | "pop" | "str" | "diagnostic" => 2,
+        "diagnostic" => 2,
         "Reg" | "Wire" | "Mem" | "Input" | "Instance" | "Domain" | "read" => 3,
         "FieldInfo" | "TypeInfo" | "PortKey" | "PortInfo" => 4,
         _ => return None,

@@ -25,6 +25,8 @@ pub(crate) fn run(items: &[Item]) -> Result<Table, Vec<Error>> {
         scopes,
         duplicates,
         unresolved,
+        sites,
+        ..
     } = walker;
     let mut errors = if duplicates.is_empty() {
         unresolved
@@ -36,6 +38,7 @@ pub(crate) fn run(items: &[Item]) -> Result<Table, Vec<Error>> {
             decls,
             items: scopes.into_items(),
             names,
+            sites,
         });
     }
     errors.sort_by_key(|e| e.pos);
@@ -43,11 +46,9 @@ pub(crate) fn run(items: &[Item]) -> Result<Table, Vec<Error>> {
 }
 
 /// Resolves the names of an expression in the file scope of `resolved`. Returns the map from
-/// the id of each name node of the expression to its target, or the `S003` errors.
-pub(crate) fn run_expr(
-    resolved: &Resolved,
-    expr: &Expr,
-) -> Result<BTreeMap<NodeId, Target>, Vec<Error>> {
+/// the id of each name node of the expression to its target and the id of each call node to
+/// its call site, or the `S003` errors.
+pub(crate) fn run_expr(resolved: &Resolved, expr: &Expr) -> Result<ExprTable, Vec<Error>> {
     let mut walker = Walker {
         decls: resolved.decls.clone(),
         scopes: Scopes::of_items(resolved.items.clone()),
@@ -56,11 +57,14 @@ pub(crate) fn run_expr(
     walker.expr(expr);
     let mut errors = walker.unresolved;
     if errors.is_empty() {
-        return Ok(walker.names);
+        return Ok((walker.names, walker.sites));
     }
     errors.sort_by_key(|e| e.pos);
     Err(errors)
 }
+
+/// The targets of the name nodes and the call sites of the call nodes.
+pub(crate) type ExprTable = (BTreeMap<NodeId, Target>, BTreeMap<NodeId, usize>);
 
 #[derive(Default)]
 struct Walker {
@@ -71,6 +75,10 @@ struct Walker {
     duplicates: Vec<Error>,
     /// `S003`, pass 3.
     unresolved: Vec<Error>,
+    /// The call site of each call node and method node.
+    sites: BTreeMap<NodeId, usize>,
+    /// The next call site of the current item body.
+    next_site: usize,
 }
 
 impl Walker {
@@ -144,6 +152,7 @@ impl Walker {
                 self.scopes.open();
                 self.params(params);
                 self.ty(ret);
+                self.next_site = 0;
                 self.stmts(body);
                 self.scopes.close();
             }
@@ -164,6 +173,7 @@ impl Walker {
                 for domain in domains.iter().flatten() {
                     self.declare(domain, Kind::Domain);
                 }
+                self.next_site = 0;
                 self.stmts(body);
                 self.scopes.close();
             }
@@ -323,14 +333,25 @@ impl Walker {
                 self.expr(yes);
                 self.expr(no);
             }
-            Expr::Call { callee, args, .. } => {
+            Expr::Call {
+                id, callee, args, ..
+            } => {
+                self.site(*id);
                 self.expr(callee);
                 for arg in args {
                     self.expr(arg);
                 }
             }
-            Expr::Method { recv, args, .. } => {
+            Expr::Method {
+                id,
+                recv,
+                name,
+                args,
+                ..
+            } => {
+                self.site(*id);
                 self.expr(recv);
+                self.method_name(name);
                 for arg in args {
                     self.expr(arg);
                 }
@@ -351,6 +372,34 @@ impl Walker {
                     self.expr(elem);
                 }
             }
+        }
+    }
+
+    /// Gives the call node or the method node with the id the next call site of the body.
+    fn site(&mut self, id: NodeId) {
+        self.sites.insert(id, self.next_site);
+        self.next_site += 1;
+    }
+
+    /// The function of a receiver call: a `fn` item, else a prelude function. A local does not
+    /// hide it.
+    fn method_name(&mut self, name: &Ident) {
+        let target = match self.scopes.item(&name.name) {
+            Some(id) => Some(Target::Decl(id)),
+            None => Prelude::of(&name.name).map(Target::Prelude),
+        };
+        let is_fn = match target {
+            Some(Target::Decl(id)) => self.decls[id.0].kind == Kind::Fn,
+            Some(Target::Prelude(p)) => p.is_fn(),
+            None => {
+                self.unknown(name.pos, &name.name);
+                return;
+            }
+        };
+        if let (true, Some(target)) = (is_fn, target) {
+            self.names.insert(name.id, target);
+        } else {
+            self.reject(name.pos, format!("`{}` is not a function", name.name));
         }
     }
 
