@@ -14,9 +14,12 @@ use std::hash::{Hash, Hasher};
 pub struct Int(BigInt);
 
 impl Int {
+    /// The integer 0, for a constant.
+    pub const ZERO: Int = Int(BigInt::ZERO);
+
     #[must_use]
     pub fn zero() -> Int {
-        Int(BigInt::ZERO)
+        Int::ZERO
     }
 
     #[must_use]

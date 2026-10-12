@@ -230,8 +230,21 @@ pub struct Types {
     work: std::cell::Cell<u64>,
 }
 
-/// The type that an absent id names. The table makes each id, so no id finds it.
+/// The type, the metadata, and the specialization that an absent id names. The table makes
+/// each id, so no id finds them.
 static ABSENT: Ty = Ty::Unit;
+static ABSENT_META: Meta = Meta {
+    width: Int::ZERO,
+    leaves: Int::ZERO,
+    zero_size: Int::ZERO,
+    data: false,
+};
+static ABSENT_SPEC: Spec = Spec {
+    item: 0,
+    name: String::new(),
+    args: Vec::new(),
+    state: SpecState::InProgress,
+};
 
 impl Types {
     /// Counts `n` steps of work, for the tests of the work of the table.
@@ -398,8 +411,6 @@ impl Types {
     /// The metadata of the type `t`.
     #[must_use]
     pub fn meta(&self, t: TyId) -> &Meta {
-        static ABSENT_META: std::sync::LazyLock<Meta> =
-            std::sync::LazyLock::new(|| Meta::scalar(&Ty::Unit));
         self.entries.get(t.index).map_or(&ABSENT_META, |e| &e.meta)
     }
 
@@ -451,12 +462,6 @@ impl Types {
     /// The specialization `s`.
     #[must_use]
     pub fn spec(&self, s: SpecId) -> &Spec {
-        static ABSENT_SPEC: std::sync::LazyLock<Spec> = std::sync::LazyLock::new(|| Spec {
-            item: 0,
-            name: String::new(),
-            args: Vec::new(),
-            state: SpecState::InProgress,
-        });
         self.specs.get(s.0).unwrap_or(&ABSENT_SPEC)
     }
 
