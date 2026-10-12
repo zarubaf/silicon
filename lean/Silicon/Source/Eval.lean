@@ -480,7 +480,9 @@ def changeAt (p : Pos) (pl : Place) (f : Value → Value) : M Unit := do
 
 /-!
 Writes `y` into the place `pl` (section 5.2). A place without a step binds its root again, so a
-hardware value gets the next version of the root. A step writes into the live value of the root.
+hardware value gets the next version of the root. A place with a step checks the new depth of
+the root: the number of steps plus the depth of the value (`S015` at `p`). Then it writes into
+the live value of the root.
 A container holds no hardware value: `S011` at `q` in a list, else `S010`. `q` is the node of
 the value.
 -/
@@ -492,6 +494,8 @@ def store (p q : Pos) (pl : Place) (y : Val) : M Unit := do
   else
     if pl.inList && y matches .hw _ then fail .S011 q "a list holds no hardware value"
     let w ← item q y
+    -- The root is within the nesting depth, so only the value on the path can raise it.
+    bounded p (pl.keys.length + w.depth)
     changeAt p pl fun _ => w
 
 /-! An actual of a function item: a value, or the place of a `mut` actual. -/

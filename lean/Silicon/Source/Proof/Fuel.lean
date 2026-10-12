@@ -524,7 +524,7 @@ theorem changeAt_f (p : Pos) (pl : Place) (f : Value → Value) :
 
 theorem store_f (p q : Pos) (pl : Place) (y : Val) :
     Follows cap (store p q pl y) (store p q pl y) := by
-  unfold store; follows [named_f, held_f, bindLocal_f, item_f, changeAt_f]
+  unfold store; follows [named_f, held_f, bindLocal_f, item_f, bounded_f, changeAt_f]
 
 theorem finals_f (ps : List Resolve.Param) (acts : List Actual) :
     Follows cap (finals ps acts) (finals ps acts) := by
