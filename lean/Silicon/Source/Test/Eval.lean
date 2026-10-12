@@ -716,8 +716,8 @@ type X = S;
 #guard out structs "P[8] == P[8]" == "(bool true)"
 #guard out structs "P[8] == P[9]" == "(bool false)"
 #guard out structs "[P[8]; 2]" == "(type (array (struct root P ((int 8))) 2))"
-#guard exact structs "P[8]" 25
-#guard exact structs "P[8] == P[8]" 35
+#guard exact structs "P[8]" 26
+#guard exact structs "P[8] == P[8]" 37
 #guard out structs "P[-1]" == "S012 1:1"
 #guard out structs "P[true]" == "S010 1:1"
 #guard out structs "F[1]" == "S012 9:32"
@@ -736,8 +736,8 @@ struct P(comptime W: Nat) { a: Bool }"
 #guard out norm "N[8]" == "(type (struct root N ((uint 4 8))))"
 #guard out norm "N[UInt[4](8)]" == "(type (struct root N ((uint 4 8))))"
 #guard out norm "N[8] == N[UInt[4](8)]" == "(bool true)"
-#guard exact norm "N[8] == N[8]" 40
-#guard exact norm "N[8] == N[UInt[4](8)]" 48
+#guard exact norm "N[8] == N[8]" 42
+#guard exact norm "N[8] == N[UInt[4](8)]" 50
 #guard out norm "N[16]" == "S012 1:1"
 #guard out norm "N[UInt[8](8)]" == "S010 1:1"
 #guard out norm "P[UInt[4](8)]" == "S010 1:1"
@@ -822,8 +822,8 @@ struct T { t: Type }
 type X = P[8];
 "
 #guard out recs "P[8](1, true)" == "(record (struct root P ((int 8))) ((uint 8 1) (bool true)))"
-#guard exact recs "P[8](1, true)" 37
-#guard exact recs "P[8](1, true).a" 38
+#guard exact recs "P[8](1, true)" 38
+#guard exact recs "P[8](1, true).a" 39
 #guard out recs "P[8](1, true).a" == "(uint 8 1)"
 #guard out recs "X(1, true).b" == "(bool true)"
 #guard out recs "T(Bool).t" == "(type bool)"
@@ -846,7 +846,7 @@ the done specialization.
 -/
 #guard out recs "P[8](1, true) == P[8](1, true)" == "(bool true)"
 #guard out recs "P[8](1, true) != P[8](1, false)" == "(bool true)"
-#guard exact recs "P[8](1, true) == P[8](1, true)" 65
+#guard exact recs "P[8](1, true) == P[8](1, true)" 67
 #guard out recs "P[8](1, true) == P[4](1, true)" == "S010 1:1"
 #guard out recs "P[8](1, true) == (1, true)" == "S010 1:1"
 #guard out recs "P[8](1, true) < P[8](1, true)" == "S010 1:1"
@@ -869,7 +869,7 @@ bit. The zero checks its depth first: a record is one level deeper than its stru
   "((record (struct root P ((int 4))) ((uint 4 0) (bool false))) " ++
   "(record (struct root P ((int 4))) ((uint 4 0) (bool false)))))))"
 #guard exact recs "Bool()" 3
-#guard exact recs "P[8]()" 29
+#guard exact recs "P[8]()" 30
 #guard out recs "Int()" == "S010 1:1"
 #guard out recs "Type()" == "S010 1:1"
 #guard out recs "T()" == "S010 1:1"
@@ -887,7 +887,7 @@ the width. A value that is not a type and a type that is not hardware data are `
 #guard out recs "data_bits([P[3]; 3])" == "(int 12)"
 #guard out recs "data_bits(E)" == "(int 0)"
 #guard out recs "data_bits(Unit)" == "(int 0)"
-#guard exact recs "data_bits(P[8])" 28
+#guard exact recs "data_bits(P[8])" 29
 #guard out recs "data_bits(T)" == "S010 1:1"
 #guard out recs "data_bits(Int)" == "S010 1:1"
 #guard out recs "data_bits(1)" == "S010 1:1"
