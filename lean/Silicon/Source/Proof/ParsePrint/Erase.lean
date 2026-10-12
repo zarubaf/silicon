@@ -16,8 +16,8 @@ a check here:
 - No index is empty: `Expr.printable` and `TypeExpr.printable` at `index`.
 - No tuple is empty: `Expr.printable` and `TypeExpr.printable` at `tuple`. The printer writes an
   empty tuple as `()`, which is the unit value or the unit type.
-- Each module parameter has `comptime`: `Param.printable true`. The AST has no `mut` flag at a
-  parameter, so no check is necessary for `mut` at a `fn` parameter.
+- Each module parameter and each struct parameter has `comptime`: `Param.printable true`. The
+  AST has no `mut` flag at a parameter, so no check is necessary for `mut` at a parameter.
 - A `domains` declaration has at most one name: `Item.printable` at `module`.
 - Each assignment and connection target is a place: `Expr.place`.
 - No resource statement is in a `fn` without `comptime`: the flag `plain` of `Stmt.printable`.
@@ -28,9 +28,9 @@ a check here:
 - Each number is below 2^65536: `Expr.printable` at `num` and at `select`.
 
 The proof covers the container forms of slice 2. These are the unit value, the unit type, a
-tuple, an array, an array type `[T; N]`, and a selector `.N`. It does not cover the type forms
-of phase 3 yet: a `struct` item, a `type` item or statement, and an array type in an expression.
-`Printable` excludes them.
+tuple, an array, an array type `[T; N]`, and a selector `.N`. It also covers a `struct` item and
+a `type` item or statement. It does not cover an array type in an expression yet. `Printable`
+excludes it.
 -/
 -- TODO(#178): extend the proof to the type forms of phase 3.
 namespace Silicon.Source
@@ -182,14 +182,14 @@ mutual
       validName i.name && lo.printable && hi.printable && Stmt.printableAll plain b
     | .block _ b => Stmt.printableAll plain b
     | .expr _ v => v.printable
-    | .alias .. => false
+    | .alias _ n ty => validName n.name && ty.printable
 
   def Stmt.printableAll (plain : Bool) : List Stmt → Bool
     | [] => true
     | s :: ss => s.printable plain && Stmt.printableAll plain ss
 end
 
-/-! A parameter. A module parameter (`static`) has `comptime`. -/
+/-! A parameter. A module parameter or a struct parameter (`static`) has `comptime`. -/
 def Param.printable (static : Bool) (p : Param) : Bool :=
   (!static || p.comptime) && validName p.name.name && p.ty.printable
 
@@ -200,7 +200,9 @@ def Item.printable : Item → Bool
   | .module _ n ps ds b => validName n.name && ps.all (Param.printable true)
       && ds.all (fun ds => ds.length ≤ 1 && ds.all (validName ·.name))
       && Stmt.printableAll false b
-  | .struct .. | .alias .. => false
+  | .struct _ n ps fs => validName n.name && ps.all (Param.printable true)
+      && fs.all (fun f => validName f.name.name && f.ty.printable)
+  | .alias _ n ty => validName n.name && ty.printable
 
 namespace ParsePrint
 
@@ -458,7 +460,8 @@ theorem Stmt.printableAll_eq (plain : Bool) (ss : List Stmt) :
 
 @[simp] theorem Item.printable_erase (i : Item) : i.erase.printable = i.printable := by
   rcases i with _ | _ | ⟨_, _, _, _ | _, _⟩ | _ | _ <;>
-    simp [Item.erase, Item.printable, Stmt.printableAll_eq, List.all_map, Function.comp_def]
+    simp [Item.erase, Item.printable, Stmt.printableAll_eq, List.all_map, Function.comp_def,
+      StructField.erase]
 
 theorem ParsePrint.printable_erase (items : List Item) :
     ParsePrint.Printable (items.map Item.erase) ↔ ParsePrint.Printable items := by
