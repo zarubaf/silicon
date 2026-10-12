@@ -179,15 +179,6 @@ def typeArity : PrimType → Nat
   | .uint | .sint | .list => 1
   | .bool | .nat | .int | .unit | .type | .string => 0
 
-/-! The parameter modes of a prelude function (section 5.6). -/
-def fnModes : PrimFn → Array ParamMode
-  | .resize | .reinterpret => #[.comptime, .none]
-  | .list => #[.comptime]
-  | .push => #[.mut, .none]
-  | .pop => #[.mut]
-  | .staticAssert => #[.none, .none]
-  | .error | .len | .dataBits | .str => #[.none]
-
 /-!
 True for each static argument of a prelude function, by its index. A `comptime` parameter is
 static. Each argument of a function that takes a message is static too (section 5.6).
@@ -279,12 +270,13 @@ def call (pos : Pos) (f : Resolve.Expr) (h : Option Head) (got : Nat) : M (Optio
 
 /-!
 The binding of the receiver call at `pos` to the function `m` with the reference `r` and `got`
-explicit arguments. The receiver binds to the first parameter without a written `comptime`
-mark. The result is the callee and the index of that parameter, or `none` after an `S007`.
+explicit arguments. The receiver binds to the parameter `b` of `Resolve`. The result is the
+callee and `b`, or `none` after an `S007`.
 -/
-def receiver (pos : Pos) (m : Ident) (r : Ref) (got : Nat) : M (Option (Callee × Nat)) := do
+def receiver (pos : Pos) (m : Ident) (r : Ref) (b : Option Nat) (got : Nat) :
+    M (Option (Callee × Nat)) := do
   let some c ← callee r | return none
-  match c.modes.findIdx? (· != .comptime) with
+  match b with
   | none =>
     report .S007 pos s!"`{m.name}` has no parameter without `comptime` for the receiver"
     return none
@@ -372,10 +364,10 @@ mutual
         k := k + 1
       release held
       return none
-    | .method p r m f xs _ => do
+    | .method p r m f b xs _ => do
       -- The receiver evaluates first. It binds to the parameter `b`, so the argument `k` binds
       -- to the parameter `k` before `b` and to `k + 1` from `b` on.
-      let cb ← receiver p m f xs.length
+      let cb ← receiver p m f b xs.length
       let c := cb.map (·.1)
       let b := (cb.map (·.2)).getD 0
       let mut held ← pre c b r

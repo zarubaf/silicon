@@ -472,18 +472,6 @@ def unbound (b : Nat) (ps : List α) : List α :=
   | [] => ps
 
 /-!
-The parameter of the receiver of the function `f`: the first parameter without a written
-`comptime` mark, also in a `comptime fn` (section 5.6).
--/
-def receiverAt (items : Array Resolve.Item) : Ref → Option Nat
-  | .item i =>
-    match items[i]? with
-    | some (.fn _ _ _ ps _ _) => ps.findIdx? (·.mode != .comptime)
-    | _ => none
-  | .fn g => (Check.fnModes g).findIdx? (· != .comptime)
-  | _ => none
-
-/-!
 The final value of each `mut` formal with the place of its actual, in the order of the
 parameters. It reads the frame of the callee before the call ends.
 -/
@@ -559,8 +547,8 @@ mutual
           return some ⟨← mux p h a b, false⟩
         | v => if ← test p v then eval n y else eval n no
       | .call p f xs k => call n p f xs 0 k
-      | .method p r m f xs k => do
-        let some b := receiverAt (← read).items f
+      | .method p r m f b xs k => do
+        let some b := b
           | fail .S007 p s!"`{m.name}` has no parameter without `comptime` for the receiver"
         call n p (.name m.pos m.name f) (r :: xs) b k
       | .index p b xs => do
@@ -975,7 +963,7 @@ mutual
     | .call _ f xs _ => do
       scanExpr f
       for x in xs do scanExpr x
-    | .method _ r _ _ xs _ => do
+    | .method _ r _ _ _ xs _ => do
       scanExpr r
       for x in xs do scanExpr x
     | .field _ a f => do

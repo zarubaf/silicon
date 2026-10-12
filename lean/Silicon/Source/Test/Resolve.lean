@@ -294,7 +294,19 @@ def retMethod (s : String) : Option (Ref × Nat) :=
     match items[0]? with
     | some (Resolve.Item.fn _ _ _ _ _ b) =>
       match b.getLast? with
-      | some (.ret _ (some (.method _ _ _ f _ k))) => some (f, k)
+      | some (.ret _ (some (.method _ _ _ f _ _ k))) => some (f, k)
+      | _ => none
+    | _ => none
+  | .error _ => none
+
+/-! The parameter that the receiver of `return x.m(...);` of the first item binds to. -/
+def retParam (s : String) : Option (Option Nat) :=
+  match run s with
+  | .ok items =>
+    match items[0]? with
+    | some (Resolve.Item.fn _ _ _ _ _ b) =>
+      match b.getLast? with
+      | some (.ret _ (some (.method _ _ _ _ q _ _))) => some q
       | _ => none
     | _ => none
   | .error _ => none
@@ -313,6 +325,13 @@ prelude. A local never hides it, and an item hides a prelude function.
   == some (.item 1, 0)
 #guard retMethod "fn f(T: Type) -> Nat { return T.data_bits(); }" == some (.fn .dataBits, 0)
 #guard ok (fnBody "let x = p.resize(UInt[8]);\nreturn p.static_assert(\"a\");")
+
+/-! The receiver binds to the first parameter without a written `comptime` mark, if one exists. -/
+#guard retParam "fn f(T: Type) -> Nat { return T.data_bits(); }" == some (some 0)
+#guard retParam "fn f(p: Bool) -> Bool { return p.resize(Bool); }" == some (some 1)
+#guard retParam "fn f(T: Type) -> Nat { return T.list(); }" == some none
+#guard retParam ("fn f(p: Nat) -> Nat { return p.g(1); }\n" ++
+  "comptime fn g(comptime a: Nat, b: Nat) -> Nat { return b; }") == some (some 1)
 
 /-! `S003`: the name of a receiver call is not a function there. The position is the name. -/
 #guard fails (fnBody "return p.foo();") .S003 2 10
@@ -352,11 +371,11 @@ node comes before its callee, its receiver, and its arguments. A call outside th
 shift them, and each body starts at 0.
 -/
 #guard body (fnBody "let a = len(p);\nreturn p.len(len(p));") matches
-  [.local _ _ _ _ (.call _ _ _ 0), .ret _ (some (.method _ _ _ _ [.call _ _ _ 2] 1))]
+  [.local _ _ _ _ (.call _ _ _ 0), .ret _ (some (.method _ _ _ _ _ [.call _ _ _ 2] 1))]
 #guard body (fnBody "return len(p).len();") matches
-  [.ret _ (some (.method _ (.call _ _ _ 1) _ _ [] 0))]
+  [.ret _ (some (.method _ (.call _ _ _ 1) _ _ _ [] 0))]
 #guard body ("fn f(x: UInt[len([1])]) -> Bool {\nreturn x.f(len(x));\n}") matches
-  [.ret _ (some (.method _ _ _ _ [.call _ _ _ 1] 0))]
+  [.ret _ (some (.method _ _ _ _ _ [.call _ _ _ 1] 0))]
 #guard body (fnBody "return UInt[8](p)(p);") matches
   [.ret _ (some (.call _ (.call _ _ _ 1) _ 0))]
 #guard body ("module M() {\nlet a = len([1]);\n}\nfn g() -> Nat { return len([1]); }") matches
