@@ -107,7 +107,7 @@ struct Store {
     steps: Cell<u64>,
     /// The parameters of a frame that refer to an argument of the caller, by the number of
     /// the frame: a module argument refers until the instance statement pays its copy.
-    links: BTreeMap<(usize, DeclId), Ref>,
+    links: BTreeMap<usize, BTreeMap<DeclId, Ref>>,
     /// The recursive size of the values that references copied, and the fuel budget of the
     /// run, for the test of copies before a charge.
     #[cfg(test)]
@@ -155,6 +155,21 @@ impl Store {
 
     fn frame(&self) -> Option<&Frame> {
         self.frames.last()
+    }
+
+    /// Links the parameter `id` of the frame `frame` to the argument `r` of the caller.
+    fn link(&mut self, frame: usize, id: DeclId, r: Ref) {
+        self.links.entry(frame).or_default().insert(id, r);
+    }
+
+    /// The argument that the parameter `id` of the frame `frame` links to.
+    fn linked(&self, frame: usize, id: DeclId) -> Option<&Ref> {
+        self.links.get(&frame).and_then(|ls| ls.get(&id))
+    }
+
+    /// Removes the links of the frame `frame`, in work for its own links only.
+    fn unlink(&mut self, frame: usize) {
+        self.links.remove(&frame);
     }
 
     fn frame_mut(&mut self) -> Option<&mut Frame> {
@@ -1093,7 +1108,7 @@ impl Evaluator<'_> {
                             root: Root::Local(k, id),
                             path: Vec::new(),
                         }))
-                    } else if let Some(r) = self.store.links.get(&(k, id)) {
+                    } else if let Some(r) = self.store.linked(k, id) {
                         Ok(Out::Ref(r.clone()))
                     } else {
                         fail(Code::S011, pos, format!("`{x}` is not a static value"))

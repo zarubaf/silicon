@@ -567,7 +567,7 @@ impl Evaluator<'_> {
     fn settle_arguments(&mut self, pos: Pos, params: &[Param], outs: Vec<Out>) -> Res<Vec<Out>> {
         let frame = self.store.frames.len().saturating_sub(1);
         let settled = self.settle_linked(pos, params, outs, frame);
-        self.store.links.retain(|(k, _), _| *k != frame);
+        self.store.unlink(frame);
         settled
     }
 
@@ -590,7 +590,7 @@ impl Evaluator<'_> {
             if let Out::Ref(r) = &o {
                 self.check_static(pos, &o)?;
                 let id = self.decl(&q.name)?;
-                self.store.links.insert((frame, id), r.clone());
+                self.store.link(frame, id, r.clone());
                 kept.push(Kept::Arg(o));
                 continue;
             }
