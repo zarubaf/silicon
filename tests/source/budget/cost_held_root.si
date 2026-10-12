@@ -1,0 +1,15 @@
+// The cost of a mutation of a held root (section 5.4): the base `xs` of the index waits while
+// `xs.pop()` evaluates, so the `pop` charges the size of `xs` before it changes the list. Each
+// pass thus charges the size of the list. The fuel equal to the total of `cost` succeeds, and
+// one unit less gives `S015`.
+// FUEL 223
+// TOP M()
+module M() domains() {
+    let mut xs = list(Int);
+    comptime for i in 0..8 {
+        xs.push(i);
+    }
+    comptime for i in 0..8 {
+        let y = xs[xs.pop()];
+    }
+}
