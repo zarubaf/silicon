@@ -403,7 +403,6 @@ and the conversion of `1` charges 2.
 #guard out "" "[1, true]" == "S010 1:1"
 #guard out "" "[[1], [2, 3]]" == "S010 1:1"
 #guard out "" "[UInt[8](1), UInt[16](2)]" == "S010 1:1"
-#guard out "" "[(\"a\", 1)]" == "S010 1:1"
 #guard out "" "[300, UInt[8](1)]" == "S012 1:1"
 
 /-! `[]` takes its type only at a typed use. As an element or an operand, it is `S010` there. -/

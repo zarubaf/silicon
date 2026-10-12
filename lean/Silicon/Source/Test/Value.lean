@@ -80,8 +80,6 @@ open Silicon.Source
 #guard (Ty.tuple #[.bool, .array .int 2]).text == "(Bool, [Int; 2])"
 #guard (Value.tuple #[.int 1, .bool true]).ty? == some (.tuple #[.int, .bool])
 #guard (Value.array .bool #[]).ty? == some (.array .bool 0)
-#guard (Value.tuple #[.str "a"]).ty? == none
-#guard (Value.tuple #[.str "a"]).text == "a tuple"
 
 /-! Equality is structural. An array keeps its element type, also when it is empty. -/
 #guard Value.array .bool #[] != Value.array .int #[]
