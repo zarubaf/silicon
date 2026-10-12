@@ -12,8 +12,9 @@ This crate owns the item table, the scopes, the prelude, and the resolved AST. A
 
 - A name is unique in its scope. A scope is the file, the parameters with the top statements of a body, or a block. A declaration can shadow an outer name and a prelude name. Check: `cargo nextest run -p resolve`.
 - The position of `S002` is the name in the later declaration. Check: `cargo nextest run -p resolve`.
-- Each name resolves. A type name is a prelude type, the module of an `instance` is a module item, and a name in an expression is not a module. A local is in scope after its statement. A module without a `domains` clause has the domain `clock`. Items have no order. Check: `cargo nextest run -p resolve`.
-- The prelude has the names of slice 1, and `Unit` and `len` of the containers of slice 2. A prelude name of a later phase or slice is `S003`. Check: `cargo nextest run -p resolve`.
+- Each name resolves. A type name is a prelude type, a `struct` item, a `type` item, or a local, such as a `type` statement or a parameter of type `Type`. `elab` rejects a local that holds no type. The module of an `instance` is a module item, and a name in an expression is not a module. A local is in scope after its statement. A module without a `domains` clause has the domain `clock`. Items have no order. Check: `cargo nextest run -p resolve`.
+- The parameters of a struct and its field types share one scope. A second field with one name is `S002`. Check: `cargo nextest run -p resolve`.
+- The prelude has the names of slice 1, `Unit` and `len` of the containers of slice 2, and `Type` and `data_bits` of the types as values. A prelude name of a later phase or slice is `S003`. Check: `cargo nextest run -p resolve`.
 - The errors of pass 2 come before the errors of pass 3. Each pass reports in position order. Check: `cargo nextest run -p resolve`.
 - The walk runs through `parse::on_stack` with the syntax depth of the parse. This crate does not size a stack. The result is safe to drop on any stack, because it owns a plain AST with no `rowan` tree. Check: `cargo nextest run -p resolve`.
 - The crate uses no `HashMap` and no `HashSet`. Output order comes from the position. Check: `just clippy`.
