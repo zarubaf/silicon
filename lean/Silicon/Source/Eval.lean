@@ -158,6 +158,8 @@ def prim (pos : Pos) (x : String) : PrimType → M Ty
   | .uint | .sint => fail .S007 pos s!"`{x}` takes 1 argument(s), but it has 0"
   | .unit => pure .unit
   | .type => pure .type
+  -- TODO(#179): strings and lists come in the next steps of phase 4.
+  | .string | .list => fail .S004 pos s!"`{x}` is not supported yet"
 
 /-! A string and a handle have no `Ty`, so an assignment keeps their form. -/
 def sameForm : Val → Val → Bool
@@ -434,7 +436,9 @@ mutual
           let b ← data p (← need no (← eval n no)).value
           return some ⟨← mux p h a b, false⟩
         | v => if ← test p v then eval n y else eval n no
-      | .call p f xs => call n p f xs
+      | .call p f xs _ => call n p f xs
+      -- TODO(#179): receiver calls come in the next steps of phase 4.
+      | .method p .. => fail .S004 p "a receiver call is not supported yet"
       | .index p b xs => do
         if let .name bp _ (.type k) := b then
           charge bp 1
@@ -596,6 +600,8 @@ mutual
       let vs ← args xs
       if ps.length != vs.length then
         fail .S007 p s!"`{g}` takes {ps.length} argument(s), but it has {vs.length}"
+      -- TODO(#179): `mut` formals come in the next steps of phase 4.
+      if ps.any (·.mode == .mut) then fail .S004 p "a `mut` formal is not supported yet"
       let ctx ← read
       -- A call outside a body runs on static values only, so its site never names hardware.
       let site := ((ctx.calls[ctx.item]?).bind (·[p]?)).getD 0
@@ -605,7 +611,7 @@ mutual
           for (q, v) in ps.zip vs do
             let t ← typeExpr n q.ty
             charge p v.size
-            let x ← if c || q.comptime then do
+            let x ← if c || q.mode == .comptime then do
                 pure (.static (← conform p t (← static p (← settle p t v))))
               else conformVal p t v
             bindLocal q.name.id ⟨some t, false, ← named p q.name.id q.name.name.name x⟩
@@ -653,6 +659,8 @@ mutual
         match ← static p m with
         | .str m => fail .S014 p s!"error: {strText m}"
         | m => fail .S010 p s!"`{g}` does not accept {m.text}"
+      -- TODO(#179): strings and lists come in the next steps of phase 4.
+      | .list, _ | .push, _ | .pop, _ | .str, _ => fail .S004 p s!"`{g}` is not supported yet"
       | _, vs => fail .S010 p s!"`{g}` does not accept {vs.map Val.text}"
     | _ => ctor
   termination_by (n + 1, 0)
@@ -778,9 +786,13 @@ def scanBinder (b : Binder) : ScanM Unit :=
 
 mutual
   def scanExpr : Resolve.Expr → ScanM Unit
-    | .call p f xs => do
+    | .call p f xs _ => do
       modify fun s => { s with calls := p :: s.calls }
       scanExpr f
+      for x in xs do scanExpr x
+    | .method p r _ _ xs _ => do
+      modify fun s => { s with calls := p :: s.calls }
+      scanExpr r
       for x in xs do scanExpr x
     | .field _ a f => do
       modify fun s => { s with fields := (f.pos, f.name) :: s.fields }
