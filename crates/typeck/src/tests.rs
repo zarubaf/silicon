@@ -53,7 +53,7 @@ fn mod_body(s: &str) -> String {
     format!("module M(comptime W: Nat) {{\n{s}\n}}")
 }
 
-use Code::{S005, S006, S007};
+use Code::{S005, S006, S007, S008};
 
 #[test]
 fn valid_files_pass() {
@@ -638,4 +638,236 @@ fn s005_struct_arguments_and_array_lengths_are_static_positions() {
     ok(&with_structs(&mod_body(
         "input a: Bool;\nlet t = S(a);\nlet u = P[W](0, a);",
     )));
+}
+
+// Receiver calls, `mut` formals, and `S008`. The cases come from the guards of
+// `Silicon.Source.Test.Check` in Lean.
+
+/// The body `s` of `f` starts on line 6. `xs` is a `let mut` local, `ys` a `mut` formal, and
+/// `zs` a formal without a mark.
+fn lists(s: &str) -> String {
+    format!(
+        "fn helper(comptime n: Int, mut xs: List[Int]) -> () {{}}\n\
+         fn two(mut a: List[Int], mut b: List[Int]) -> () {{}}\n\
+         fn pair(a: Int, b: Int) -> Int {{ return a; }}\n\
+         fn f(zs: List[Int], mut ys: List[Int]) -> () {{\n\
+         let mut xs = list(Int);\n{s}\n}}"
+    )
+}
+
+#[test]
+fn a_receiver_call_binds_its_receiver_to_the_first_parameter_without_comptime() {
+    ok(&lists(
+        "xs.push(1);\nlet n = xs.pop() + xs.len();\nlet s = n.str();",
+    ));
+    ok(&lists("xs.helper(1);\nys.helper(2);\nxs.two(ys);"));
+    ok(&lists(
+        "let a = 1.resize(UInt[8]);\nlet b = a.reinterpret(SInt[8]);",
+    ));
+    ok(&lists(
+        "let c = (1 == 1).static_assert(\"m\");\n\"m\".error();",
+    ));
+    ok("comptime fn h(x: Nat, comptime y: Nat) -> Nat { return x; }\nconst A: Nat = 1.h(2);");
+}
+
+#[test]
+fn s007_a_receiver_call_has_a_parameter_for_the_receiver_and_the_arity() {
+    fails(&lists("let t = Int.list();"), S007, 6, 9);
+    assert_eq!(
+        message(&lists("let t = Int.list();")),
+        "`list` has no parameter without `comptime` for the receiver"
+    );
+    fails(&lists("let t = Int.data_bits();"), S007, 6, 9);
+    fails(
+        "fn c(comptime n: Nat) -> Nat { return n; }\nfn g(k: Nat) -> Nat { return k.c(); }",
+        S007,
+        2,
+        30,
+    );
+    fails(&lists("xs.push();"), S007, 6, 1);
+    assert_eq!(
+        message(&lists("xs.push();")),
+        "`push` takes 2 argument(s), but it has 1"
+    );
+    for (body, col) in [
+        ("let a = xs.pop(1);", 9),
+        ("let a = xs.len(1);", 9),
+        ("let a = 1.pair(2, 3);", 9),
+        ("let a = str(1, 2);", 9),
+        ("let t = list();", 9),
+    ] {
+        fails(&lists(body), S007, 6, col);
+    }
+    fails(&lists("xs.helper();"), S007, 6, 1);
+    fails(&lists("xs.helper(1, 2);"), S007, 6, 1);
+    fails(&lists("push(xs);"), S007, 6, 1);
+    fails("const L: List = 1;", S007, 1, 10);
+    fails("const S: String[1] = 1;", S007, 1, 10);
+}
+
+/// The module body `s` starts on line 6.
+fn regs2(s: &str) -> String {
+    format!(
+        "fn g(comptime n: Nat, x: Bool) -> Bool {{ return x; }}\n\
+         comptime fn h(x: Nat) -> Nat {{ return x; }}\n\
+         module M() {{\ninput a: Bool;\nreg r: UInt[4] = 0;\n{s}\n}}"
+    )
+}
+
+#[test]
+fn a_comptime_parameter_is_a_static_position_also_for_a_receiver_call() {
+    ok(&regs2(
+        "let y = a.g(1);\nlet z = str(r);\nlet w = r.resize(UInt[8]);",
+    ));
+    fails(&regs2("let y = a.g(r);"), S005, 6, 13);
+    fails(&regs2("let y = a.h();"), S005, 6, 9);
+    fails(&regs2("let y = a.resize(r);"), S005, 6, 18);
+    fails(&regs2("let l = list(r);"), S005, 6, 14);
+}
+
+#[test]
+fn s008_a_mut_actual_is_a_place_with_a_mutable_root() {
+    ok(&lists(
+        "push(xs, 1);\npush(ys, 2);\nlet mut t = (list(Int), 1);\nt.0.push(1);",
+    ));
+    ok(&lists(
+        "let mut a = [list(Int)];\na[0].push(1);\nhelper(1, a[0]);",
+    ));
+    fails(&lists("zs.push(1);"), S008, 6, 1);
+    assert_eq!(
+        message(&lists("zs.push(1);")),
+        "a `mut` actual has a `let mut` local or a `mut` formal as its root"
+    );
+    fails(&lists("push(zs, 1);"), S008, 6, 6);
+    fails(&lists("let l = list(Int);\nl.push(1);"), S008, 7, 1);
+    fails(&lists("list(Int).push(1);"), S008, 6, 1);
+    assert_eq!(
+        message(&lists("list(Int).push(1);")),
+        "a `mut` actual is a place"
+    );
+    fails(&lists("helper(1, list(Int));"), S008, 6, 11);
+    fails(
+        &format!("const L: List[Int] = list(Int);\n{}", lists("L.push(1);")),
+        S008,
+        7,
+        1,
+    );
+    fails(
+        &lists("let a = (xs.pop() + 1).str();\npush(xs.len(), 1);"),
+        S008,
+        7,
+        6,
+    );
+}
+
+#[test]
+fn s008_no_mutation_of_a_pending_root_in_its_window() {
+    for (body, line, col) in [
+        ("xs.helper(xs.pop());", 6, 11),
+        ("xs[0] = xs.pop();", 6, 9),
+        ("xs.push(xs.pop());", 6, 9),
+        ("push(xs, xs.pop());", 6, 10),
+        ("xs.push(pair(1, xs.pop()));", 6, 17),
+        ("two(xs, xs);", 6, 9),
+        ("xs.two(xs);", 6, 8),
+        ("ys.two(ys);", 6, 8),
+        ("xs[xs.pop()] = 1;", 6, 4),
+        ("let mut a = [list(Int)];\na[a[0].pop()].push(1);", 7, 3),
+        ("let mut t = (list(Int), 1);\nt.0.push(t.0.pop());", 7, 10),
+    ] {
+        fails(&lists(body), S008, line, col);
+    }
+    assert_eq!(
+        message(&lists("xs.helper(xs.pop());")),
+        "the root of this `mut` actual is pending in its window"
+    );
+}
+
+#[test]
+fn a_root_is_pending_only_in_its_window() {
+    for body in [
+        "helper(xs.pop(), xs);",
+        "let a = pair(xs.pop(), xs.pop());",
+        "xs.push(xs.len());",
+        "xs[0] = xs.len();",
+        "xs.push(ys.pop());\nys.push(xs.pop());",
+        "xs.two(ys);\nys.two(xs);",
+        "push(xs, 1);\npush(xs, 2);",
+        "let mut a = [list(Int)];\na[a.len()].push(1);",
+        "let h = push;\nh(zs, 1);",
+    ] {
+        ok(&lists(body));
+    }
+}
+
+#[test]
+fn a_mut_actual_changes_only_the_counter_of_its_root() {
+    // A call with many `mut` actuals of distinct roots and a long run of calls on one root
+    // pass in linear time: the check reads and changes one counter for each actual.
+    let n = 20_000;
+    let params: Vec<String> = (0..n).map(|i| format!("mut p{i}: List[Int]")).collect();
+    let locals = (0..n).fold(String::new(), |mut text, i| {
+        writeln!(text, "let mut l{i} = list(Int);").ok();
+        text
+    });
+    let actuals: Vec<String> = (0..n).map(|i| format!("l{i}")).collect();
+    ok(&format!(
+        "fn big({}) -> () {{}}\nfn f() -> () {{\n{locals}big({});\n}}",
+        params.join(", "),
+        actuals.join(", ")
+    ));
+    let pushes = "xs.push(1);\n".repeat(n);
+    ok(&lists(&pushes));
+    // The last actual repeats the first root.
+    let mut repeated = actuals.clone();
+    repeated[n - 1] = "l0".to_owned();
+    let col = 5 + actuals[..n - 1].iter().map(|a| a.len() + 2).sum::<usize>();
+    let src = format!(
+        "fn big({}) -> () {{}}\nfn f() -> () {{\n{locals}big({});\n}}",
+        params.join(", "),
+        repeated.join(", ")
+    );
+    assert_eq!(run(&src), Ok(Some((S008, n + 3, col))));
+}
+
+#[test]
+fn at_one_position_s007_comes_before_s008_and_s005() {
+    // The receiver `r` is a register: S005 in a static position. `mut` actual: S008.
+    // The tie order is the walk order: the binding and the arity, the `mut` actual, then the
+    // parts of the receiver.
+    fails(
+        "fn m(comptime n: Nat, mut x: Nat) -> () {}\nmodule M() {\nreg r: UInt[4] = 0;\nr.m();\n}",
+        S007,
+        4,
+        1,
+    );
+    fails(
+        "fn m(mut x: Nat) -> () {}\nmodule M() {\nreg r: UInt[4] = 0;\nr.m();\n}",
+        S008,
+        4,
+        1,
+    );
+    fails(
+        "fn m(comptime x: Nat, y: Nat) -> () {}\nmodule M() {\nreg r: UInt[4] = 0;\nr.m();\n}",
+        S007,
+        4,
+        1,
+    );
+    fails(
+        "fn m(comptime x: Nat, y: Nat) -> () {}\nmodule M() {\nreg r: UInt[4] = 0;\nm(r);\n}",
+        S007,
+        4,
+        1,
+    );
+}
+
+#[test]
+fn a_window_that_reported_s008_still_ends_with_its_call() {
+    let src = lists("two(xs, xs);\npush(xs, 1);\nxs.push(xs.pop());\nxs.push(2);");
+    let resolved = resolve::resolve(parse::parse(&src).unwrap()).ok().unwrap();
+    let Err(Failed::Errors(errors)) = check(resolved) else {
+        panic!("expected errors");
+    };
+    let at: Vec<_> = errors.iter().map(|e| (e.code, e.pos.line)).collect();
+    assert_eq!(at, [(S008, 6), (S008, 8)]);
 }
