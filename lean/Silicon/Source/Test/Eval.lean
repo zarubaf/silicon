@@ -693,7 +693,7 @@ A struct type is a static value. Its identity is the struct item and its static 
 first use charges the size of the struct type, evaluates the field types in the scope of the
 struct, and charges the metadata. `P[8]` charges its node, its name, the argument 2, the size
 2, the parameter type 1, the field types 6, and the metadata 2 + 4. A later use charges only
-its node, its name, and its argument.
+its node, its name, its argument, and its parameter type.
 -/
 def structs : String :=
   "struct P(comptime W: Nat) { a: UInt[W], b: Bool }
@@ -716,13 +716,30 @@ type X = S;
 #guard out structs "P[8] == P[9]" == "(bool false)"
 #guard out structs "[P[8]; 2]" == "(type (array (struct root P ((int 8))) 2))"
 #guard exact structs "P[8]" 19
-#guard exact structs "P[8] == P[8]" 28
+#guard exact structs "P[8] == P[8]" 29
 #guard out structs "P[-1]" == "S012 1:1"
 #guard out structs "P[true]" == "S010 1:1"
 #guard out structs "F[1]" == "S012 9:32"
 #guard out structs "R" == "S019 3:15"
 #guard out structs "A" == "S019 5:15"
 #guard out structs "S" == "S019 8:10"
+
+/-!
+The key of a specialization holds each argument after its typed use at its parameter type: the
+normalized identity. Thus `N[8]` and `N[UInt[4](8)]` are one type. Each use pays the conversion
+and gets its errors. A typed use at `Nat` does not convert a `UInt`.
+-/
+def norm : String :=
+  "struct N(comptime W: UInt[4]) { a: Bool }
+struct P(comptime W: Nat) { a: Bool }"
+#guard out norm "N[8]" == "(type (struct root N ((uint 4 8))))"
+#guard out norm "N[UInt[4](8)]" == "(type (struct root N ((uint 4 8))))"
+#guard out norm "N[8] == N[UInt[4](8)]" == "(bool true)"
+#guard exact norm "N[8] == N[8]" 37
+#guard exact norm "N[8] == N[UInt[4](8)]" 45
+#guard out norm "N[16]" == "S012 1:1"
+#guard out norm "N[UInt[8](8)]" == "S010 1:1"
+#guard out norm "P[UInt[4](8)]" == "S010 1:1"
 
 /-!
 The struct chain of section 11.3, specialized from the innermost struct outward. `S_k` has the
