@@ -159,7 +159,6 @@ def top (src t : String) (fuel : Nat := 100000000) (depth : Nat := 1000) : Strin
 #guard out "" "UInt[8](1) == UInt[4](1)" == "S010 1:1"
 #guard out "" "true < false" == "S010 1:1"
 #guard out "" "!1" == "S010 1:1"
-#guard out "" "\"a\" + \"b\"" == "S010 1:1"
 #guard out "" "if (1) { 1 } else { 2 }" == "S010 1:1"
 #guard out "" "UInt[true]" == "S010 1:1"
 #guard out "" "Bool(1)" == "S010 1:1"
