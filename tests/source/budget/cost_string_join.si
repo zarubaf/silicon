@@ -1,0 +1,12 @@
+// The cost of `+` on strings (section 5.4): the sum of the two sizes, before the join. A step
+// `s = s + t` makes one new string, which binds without a copy, so the loop is linear in the
+// sum of the lengths. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 2314
+// TOP M()
+module M() domains() {
+    let t = "abcdefghij";
+    let mut s = "";
+    comptime for i in 0..20 {
+        s = s + t;
+    }
+}

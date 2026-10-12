@@ -1,0 +1,11 @@
+// The cost of `str(n)` (section 5.4): the copy of `n`, then the square of the size of `n`, then
+// the size of the result. The integer `1 << 640` has 11 words, so each call charges 121 for the
+// square. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 1715
+// TOP M()
+module M() domains() {
+    let n = 1 << 640;
+    comptime for i in 0..5 {
+        let s = str(n);
+    }
+}

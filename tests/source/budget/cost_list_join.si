@@ -1,0 +1,13 @@
+// The join of two list types (section 5.4): a pair of two list types charges 1 and joins the
+// element types, as a pair of two array types does. Thus `==` of two lists of lists of arrays
+// charges 1 for each pair of container types. The fuel equal to the total of `cost` succeeds,
+// and one unit less gives `S015`.
+// FUEL 146
+// TOP M()
+module M() domains() {
+    let a = list(List[[Nat; 2]]);
+    let b = list(List[[Nat; 2]]);
+    comptime for i in 0..6 {
+        let e = a == b;
+    }
+}

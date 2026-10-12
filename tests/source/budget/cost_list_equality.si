@@ -1,0 +1,18 @@
+// The cost of `==` and `!=` on lists (section 5.4): both operands are read in full, so the
+// charge is the sum of the two recursive sizes. Two lists of different lengths are unequal, and
+// the comparison still charges both sizes. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 527
+// TOP M()
+module M() domains() {
+    let mut a = list(Nat);
+    let mut b = list(Nat);
+    comptime for i in 0..12 {
+        a.push(i);
+        b.push(i);
+    }
+    b.push(0);
+    comptime for i in 0..5 {
+        let e = a == b;
+        let f = a != b;
+    }
+}

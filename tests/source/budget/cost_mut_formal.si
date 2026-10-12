@@ -1,0 +1,16 @@
+// The cost of a `mut` formal (section 5.4): the copy at the call and the write-back at the
+// return each charge the recursive size of the value, and each step of the actual charges 1.
+// The write-backs run in the order of the parameters. The fuel equal to the total of `cost`
+// succeeds, and one unit less gives `S015`.
+// FUEL 434
+// TOP M()
+comptime fn touch(mut a: [Nat; 8], mut b: [Nat; 2]) -> () {
+    return ();
+}
+module M() domains() {
+    let mut x: [Nat; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
+    let mut y: ([Nat; 2], Nat) = ([9, 9], 10);
+    comptime for i in 0..5 {
+        touch(x, y.0);
+    }
+}

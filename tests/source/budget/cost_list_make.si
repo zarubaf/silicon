@@ -1,0 +1,11 @@
+// The cost of `list(T)` (section 5.4): the copy of `T`, plus 1 for the empty list. The charge
+// thus follows the size of the type, here an array of 16 tuples. The fuel equal to the total of
+// `cost` succeeds, and one unit less gives `S015`.
+// FUEL 178
+// TOP M()
+module M() domains() {
+    let t = [(UInt[8], [Bool; 64]); 16];
+    comptime for i in 0..6 {
+        let xs = list(t);
+    }
+}

@@ -1,0 +1,13 @@
+// The cost of `len(s)` and `s[i]` (section 5.4): the size of the string, before the scan. The
+// size is 1 plus the number of scalars, not the number of bytes. `s[i]` charges after the type
+// checks and before the range check. The fuel equal to the total of `cost` succeeds, and one
+// unit less gives `S015`.
+// FUEL 938
+// TOP M()
+module M() domains() {
+    let s = "héllo wörld, héllo wörld, héllo wörld";
+    comptime for i in 0..10 {
+        let n = len(s);
+        let c = s[i];
+    }
+}

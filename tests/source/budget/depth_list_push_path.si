@@ -1,0 +1,9 @@
+// The new depth of the root counts the steps of the place (section 5.4). The list sits in two
+// tuples, so the same element makes the root 10 deep. The depth 10 succeeds, and 9 gives `S015`
+// at the `push`.
+// DEPTH 10
+// TOP M()
+module M() domains() {
+    let mut t = ((list(Type),),);
+    t.0.0.push(List[List[List[List[List[List[Int]]]]]]);
+}

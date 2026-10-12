@@ -1,0 +1,9 @@
+// The depth of a list after `push` is the larger of its depth and 1 plus the depth of the element
+// (section 5.4). The element is a type with 6 nested `List` types, so the list is 8 deep. The depth 8
+// succeeds, and 7 gives `S015` at the `push`.
+// DEPTH 8
+// TOP M()
+module M() domains() {
+    let mut xs = list(Type);
+    xs.push(List[List[List[List[List[List[Int]]]]]]);
+}
