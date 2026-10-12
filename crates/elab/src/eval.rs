@@ -445,7 +445,7 @@ impl Evaluator<'_> {
     }
 
     /// A typed use of a static result at the type `t`. Another value is `S011`.
-    fn conform(&mut self, pos: Pos, t: Ty, out: Out) -> Res<Value> {
+    fn conform(&mut self, pos: Pos, t: &Ty, out: Out) -> Res<Value> {
         self.check_static(pos, &out)?;
         let converted = ops::convert(t, self.store.value(&out), &mut self.fuel).map_err(at(pos))?;
         match converted {
@@ -456,12 +456,12 @@ impl Evaluator<'_> {
 
     /// A typed use of `out` at the type `t`. It reads a handle. A hardware value needs the
     /// type `t`.
-    fn conform_val(&mut self, pos: Pos, t: Ty, out: Out) -> Res<Val> {
+    fn conform_val(&mut self, pos: Pos, t: &Ty, out: Out) -> Res<Val> {
         match self.data(pos, out)? {
             Opnd::Static(o) => Ok(Val::Static(self.conform(pos, t, o)?)),
             Opnd::Hw(h) => {
                 let ty = self.graph.ty(h);
-                if ty == t {
+                if ty == *t {
                     Ok(Val::Hw(h))
                 } else {
                     fail(
@@ -482,7 +482,7 @@ impl Evaluator<'_> {
             Val::Static(_) => Ok(Opnd::Static(out)),
             Val::Hw(h) => Ok(Opnd::Hw(*h)),
             Val::Handle(Handle::Res { ty, path, .. }) => {
-                let (ty, path) = (*ty, *path);
+                let (ty, path) = (ty.clone(), *path);
                 Ok(Opnd::Hw(self.graph.mk(pos, ty, Op::Ref(path), Vec::new())))
             }
             Val::Handle(Handle::Input { .. }) => fail(
@@ -856,10 +856,10 @@ impl Evaluator<'_> {
         if ops::unifies(op) {
             match (va, vb, va.finite_ty(), vb.finite_ty()) {
                 (Value::Int(_), _, _, Some(t)) => {
-                    ca = ops::convert(t, va, &mut self.fuel).map_err(at(pos))?;
+                    ca = ops::convert(&t, va, &mut self.fuel).map_err(at(pos))?;
                 }
                 (_, Value::Int(_), Some(t), _) => {
-                    cb = ops::convert(t, vb, &mut self.fuel).map_err(at(pos))?;
+                    cb = ops::convert(&t, vb, &mut self.fuel).map_err(at(pos))?;
                 }
                 _ => {}
             }
@@ -912,7 +912,7 @@ impl Evaluator<'_> {
         }
         let views: Vec<&Value> = outs.iter().map(|o| self.store.value(o)).collect();
         let t = ops::family(k, &views).map_err(at(pos))?;
-        self.charge(pos, u128::from(Value::Type(t).size()))?;
+        self.charge(pos, u128::from(t.size()))?;
         Ok(t)
     }
 
@@ -977,7 +977,7 @@ impl Evaluator<'_> {
                 let o = ev.eval(value)?;
                 let o = need(value, o)?;
                 ev.copy(*cp, &o)?;
-                ev.conform(*cp, t, o)
+                ev.conform(*cp, &t, o)
             })?;
             ev.store.consts[i] = Entry::Done(Val::Static(c));
             Ok(Out::Const(i))
@@ -1011,11 +1011,11 @@ impl Evaluator<'_> {
         let t = need(f, t)?;
         match (self.store.view(&t), xs) {
             (Val::Static(Value::Type(t)), [x]) => {
-                let t = *t;
+                let t = t.clone();
                 let a = self.eval(x)?;
                 let a = need(x, a)?;
                 self.charge(pos, self.size(&a))?;
-                Ok(Some(Out::Made(Val::Static(self.conform(pos, t, a)?))))
+                Ok(Some(Out::Made(Val::Static(self.conform(pos, &t, a)?))))
             }
             (Val::Static(Value::Type(_)), _) => {
                 fail(Code::S007, pos, "a constructor takes 1 argument".to_owned())
@@ -1107,9 +1107,9 @@ impl Evaluator<'_> {
         let t = self.type_expr(&q.ty)?;
         self.charge(pos, self.size(&v))?;
         let x = if comptime || q.comptime {
-            Val::Static(self.conform(pos, t, v)?)
+            Val::Static(self.conform(pos, &t, v)?)
         } else {
-            self.conform_val(pos, t, v)?
+            self.conform_val(pos, &t, v)?
         };
         let id = self.decl(&q.name)?;
         let x = self.named(pos, id, x);
@@ -1152,18 +1152,18 @@ impl Evaluator<'_> {
                     format!("`{g}` needs a type, not {}", self.store.value(&t).text()),
                 );
             };
-            let ty = *ty;
+            let ty = ty.clone();
             return match self.data(pos, v)? {
                 Opnd::Static(v) => {
                     let v = self.store.value(&v);
                     let made = if builtin == Prelude::Resize {
-                        ops::resize(ty, v, &mut self.fuel)
+                        ops::resize(&ty, v, &mut self.fuel)
                     } else {
-                        ops::reinterpret(ty, v, &mut self.fuel)
+                        ops::reinterpret(&ty, v, &mut self.fuel)
                     };
                     Ok(Some(Out::Made(Val::Static(made.map_err(at(pos))?))))
                 }
-                Opnd::Hw(x) => Ok(Some(Out::Made(self.hw_convert(pos, builtin, ty, x)?))),
+                Opnd::Hw(x) => Ok(Some(Out::Made(self.hw_convert(pos, builtin, &ty, x)?))),
             };
         }
         match (builtin, vs.as_slice()) {
@@ -1237,7 +1237,7 @@ impl Evaluator<'_> {
         let o = self.eval(value)?;
         let o = need(value, o)?;
         self.copy(pos, &o)?;
-        let x = match t {
+        let x = match &t {
             Some(t) => self.conform_val(pos, t, o)?,
             None => self.store.take(o),
         };
@@ -1264,7 +1264,7 @@ impl Evaluator<'_> {
                     .frame()
                     .and_then(|f| f.get(&id))
                     .filter(|s| s.mutable)
-                    .map(|s| (id, s.ty)),
+                    .map(|s| (id, s.ty.clone())),
                 _ => None,
             },
             _ => None,
@@ -1279,7 +1279,7 @@ impl Evaluator<'_> {
         let o = self.eval(value)?;
         let o = need(value, o)?;
         self.copy(pos, &o)?;
-        let y = if let Some(t) = ty {
+        let y = if let Some(t) = &ty {
             self.conform_val(pos, t, o)?
         } else {
             let old = self
@@ -1322,7 +1322,7 @@ impl Evaluator<'_> {
             } => self.local(*pos, *mutable, name, ty.as_ref(), value),
             Stmt::Assign { pos, target, value } => self.assign(*pos, target, value),
             Stmt::Ret { pos, value } => {
-                let Some(rt) = self.ret else {
+                let Some(rt) = self.ret.clone() else {
                     return fail(Code::S006, *pos, "only a function has `return`".to_owned());
                 };
                 let Some(value) = value else {
@@ -1335,7 +1335,7 @@ impl Evaluator<'_> {
                 let o = self.eval(value)?;
                 let o = need(value, o)?;
                 self.charge(*pos, self.size(&o))?;
-                let v = self.conform_val(*pos, rt, o)?;
+                let v = self.conform_val(*pos, &rt, o)?;
                 // A module body runs on after a `return`, as the walk of Lean `Elab` does.
                 Ok((!module).then_some(v))
             }
@@ -1404,15 +1404,15 @@ impl Evaluator<'_> {
         self.bound(pos, &end)?;
         let sizes = self.size(&first) + self.size(&end);
         self.charge(pos, sizes)?;
-        let (Val::Static(Value::Int(mut value)), Val::Static(Value::Int(end))) =
-            (self.store.take(first), self.store.take(end))
-        else {
+        let (first, end) = (self.store.take(first), self.store.take(end));
+        let (Val::Static(Value::Int(from)), Val::Static(Value::Int(end))) = (&first, &end) else {
             return Ok(None);
         };
+        let mut value = from.clone();
         let id = self.decl(var)?;
         let sym = self.sym(id);
         let one = Int::from_u64(1);
-        while value < end {
+        while value < *end {
             self.charge(pos, u128::from(int_size(&value)))?;
             let (_, frame) = self.frame_of(sym, Step::Int(value.clone()));
             let item = self.item;

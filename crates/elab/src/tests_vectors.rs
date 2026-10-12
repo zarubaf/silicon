@@ -141,7 +141,7 @@ fn the_port_schema() {
 }
 
 /// The core value of a source value, as a number, or `None`.
-fn value(t: Ty, v: &str) -> Option<String> {
+fn value(t: &Ty, v: &str) -> Option<String> {
     super::vectors::parse_value("x", t, v)
         .ok()
         .map(|b| crate::int::constant(&b).to_string())
@@ -169,15 +169,15 @@ fn the_values_of_each_type() {
         (Ty::SInt(1), "1", None),
     ];
     for (t, v, want) in cases {
-        assert_eq!(value(t, v).as_deref(), want, "{v}");
+        assert_eq!(value(&t, v).as_deref(), want, "{v}");
     }
     let bits = |w: u32, v: u32| core_ir::Bits::new(w, v.into()).unwrap();
     let texts = [
-        super::vectors::value_text(Ty::Bool, &bits(1, 1)),
-        super::vectors::value_text(Ty::UInt(8), &bits(8, 255)),
-        super::vectors::value_text(Ty::SInt(8), &bits(8, 255)),
-        super::vectors::value_text(Ty::SInt(8), &bits(8, 128)),
-        super::vectors::value_text(Ty::SInt(8), &bits(8, 127)),
+        super::vectors::value_text(&Ty::Bool, &bits(1, 1)),
+        super::vectors::value_text(&Ty::UInt(8), &bits(8, 255)),
+        super::vectors::value_text(&Ty::SInt(8), &bits(8, 255)),
+        super::vectors::value_text(&Ty::SInt(8), &bits(8, 128)),
+        super::vectors::value_text(&Ty::SInt(8), &bits(8, 127)),
     ];
     assert_eq!(texts, ["true", "255", "-1", "-128", "127"]);
 }

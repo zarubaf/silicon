@@ -149,18 +149,17 @@ fn product(a: &Value, b: &Value) -> u128 {
 }
 
 /// The range of a finite type, for the fit rule.
-fn fits(t: Ty, n: &Int) -> bool {
+fn fits(t: &Ty, n: &Int) -> bool {
     match t {
-        Ty::UInt(w) => n.fits_unsigned(u64::from(w)),
-        Ty::SInt(w) => n.fits_signed(u64::from(w)),
-        Ty::Nat => !n.is_negative(),
-        Ty::Bool | Ty::Int => true,
+        Ty::UInt(w) => n.fits_unsigned(u64::from(*w)),
+        Ty::SInt(w) => n.fits_signed(u64::from(*w)),
+        _ => true,
     }
 }
 
 /// A typed use of `v` at the type `t`. Only a static integer at a finite type converts: the
 /// result is the new value. `None` means that `v` itself is the result, with no charge.
-pub(crate) fn convert(t: Ty, v: &Value, fuel: &mut Fuel) -> Result<Option<Value>, Fault> {
+pub(crate) fn convert(t: &Ty, v: &Value, fuel: &mut Fuel) -> Result<Option<Value>, Fault> {
     let wrong = || {
         type_error(format!(
             "expected {}, but the value is {}",
@@ -178,18 +177,18 @@ pub(crate) fn convert(t: Ty, v: &Value, fuel: &mut Fuel) -> Result<Option<Value>
             }
         }
         (Ty::UInt(w), Value::UInt(x)) | (Ty::SInt(w), Value::SInt(x)) => {
-            if x.width() == w {
+            if x.width() == *w {
                 Ok(None)
             } else {
                 wrong()
             }
         }
         (Ty::UInt(w) | Ty::SInt(w), Value::Int(n)) => {
-            fuel.pay(u128::from(int_size(n)) + u128::from(width_size(w)))?;
+            fuel.pay(u128::from(int_size(n)) + u128::from(width_size(*w)))?;
             if fits(t, n) {
                 Ok(Some(finite(
                     matches!(t, Ty::SInt(_)),
-                    bits(w, n.to_finite(w))?,
+                    bits(*w, n.to_finite(*w))?,
                 )))
             } else {
                 Err((
@@ -473,16 +472,16 @@ fn int_shr(a: &Int, k: &Int) -> Int {
 }
 
 /// `resize`: it keeps the signedness. A `UInt` fills with zeros and an `SInt` with its sign.
-pub(crate) fn resize(t: Ty, v: &Value, fuel: &mut Fuel) -> Result<Value, Fault> {
+pub(crate) fn resize(t: &Ty, v: &Value, fuel: &mut Fuel) -> Result<Value, Fault> {
     let charge = |w: u32| u128::from(v.size()) + u128::from(width_size(w));
     match (t, v) {
         (Ty::UInt(w), Value::UInt(x)) => {
-            fuel.pay(charge(w))?;
-            Ok(Value::UInt(set_width(x, w, false)?))
+            fuel.pay(charge(*w))?;
+            Ok(Value::UInt(set_width(x, *w, false)?))
         }
         (Ty::SInt(w), Value::SInt(x)) => {
-            fuel.pay(charge(w))?;
-            Ok(Value::SInt(set_width(x, w, true)?))
+            fuel.pay(charge(*w))?;
+            Ok(Value::SInt(set_width(x, *w, true)?))
         }
         _ => type_error(format!(
             "`resize` needs finite types of one signedness, not {}",
@@ -507,13 +506,13 @@ fn set_width(x: &Bits, w: u32, sign_extend: bool) -> Result<Bits, Fault> {
 }
 
 /// `reinterpret`: it keeps the width and changes the signedness.
-pub(crate) fn reinterpret(t: Ty, v: &Value, fuel: &mut Fuel) -> Result<Value, Fault> {
+pub(crate) fn reinterpret(t: &Ty, v: &Value, fuel: &mut Fuel) -> Result<Value, Fault> {
     match (t, v) {
         (Ty::UInt(w) | Ty::SInt(w), Value::UInt(x) | Value::SInt(x)) => {
-            if x.width() != w {
+            if x.width() != *w {
                 return type_error("`reinterpret` keeps the width".to_owned());
             }
-            fuel.pay(u128::from(v.size()) + u128::from(width_size(w)))?;
+            fuel.pay(u128::from(v.size()) + u128::from(width_size(*w)))?;
             Ok(finite(matches!(t, Ty::SInt(_)), x.clone()))
         }
         _ => type_error(format!(
