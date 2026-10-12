@@ -13,29 +13,36 @@ position order, and it reports the first. This rule also orders a lexical error 
 `S004`. The lexer ends the tokens with an `error` token. The parser reports that token only
 if it gets to it. `S004` is at these tokens:
 
-- The keyword: `import`, `pub`, `type`, `struct`, and `extern` at an item. `type` and `mem`
-  at a statement. `in`, `as`, `with`, and `conforms` after their forms. `mut` at a function
-  parameter. `fn` of a function type. `input`, `output`, `reg`, `wire`, and `instance` in the
-  body of a `fn` without `comptime`: a helper that declares resources is slice 3.
-- The opening token: `[` of an array type `[T; N]` in an expression, which phase 3 of slice 2
-  brings. `@` of one of the five builtins.
+- The keyword: `import`, `pub`, and `extern` at an item. `mem` at a statement. `in`, `as`,
+  `with`, and `conforms` after their forms. `mut` at a function parameter. `fn` of a function
+  type. `input`, `output`, `reg`, `wire`, and `instance` in the body of a `fn` without
+  `comptime`: a helper that declares resources is slice 3.
+- The opening token: `@` of one of the five builtins.
 - A later token of the construct: the `::` of a path. The `(` after `.name`, which is a
   receiver call. The `(` after a type, which is a type function call. The second name in a
   `domains` clause.
 
 Two constructs need a look ahead. At `(`, the parser looks for `)` as the next token, or for
 a `,` directly in the bracket: these give `()` or a tuple, else the bracket groups. At `[` in an
-expression, it looks for a `;` directly in the bracket: this is an array type. Both scans
-count brackets of the three kinds as one depth.
+expression, it looks for a `;` directly in the bracket: this is an array type `[T; N]`. Both
+scans count brackets of the three kinds as one depth.
 
-The parse is linear in the number of tokens. Before the parse, one pass finds the matching
-bracket of each opening bracket. It also records if a `,` or a `;` comes directly in that
-bracket. Thus each look ahead takes constant time.
+The element `T` of `[T; N]` in an expression is a type. If it is not a type, or if no `;`
+follows it, the parser reads the bracket again as an array literal. That parse fails, at the
+latest at the `;`. Thus the `S001` is at the first token that neither form accepts, as the
+grammar requires: `[0; 4]` is `S001` at the `;`, and `[a, b; c]` too. An `S004` in the element,
+such as the `(` of a type function call, stops the parse at once.
+
+Without an error, the parse is linear in the number of tokens. Before the parse, one pass finds
+the matching bracket of each opening bracket. It also records if a `,` or a `;` comes directly
+in that bracket. Thus each look ahead takes constant time. Only the error path reads a bracket
+again, at most once for each nested array type in an expression.
 
 `@` followed by another name than a builtin is `S001` at that name: no slice has that syntax.
-A module parameter without `comptime` is `S001` at its name, and with `mut` it is `S001` at
-`mut`: the v0.1 grammar has only `comptime` module parameters. At the end of the file, the
-position is the end of the text of the lexer: the line after a final LF.
+A module parameter or a struct parameter without `comptime` is `S001` at its name. With `mut`,
+it is `S001` at `mut`. The v0.1 grammar has only `comptime` module parameters, and the front-end
+spec keeps this rule for a struct (section 5.6). At the end of the file, the position is the
+end of the text of the lexer: the line after a final LF.
 
 These rules settle the open points of the grammar:
 
@@ -46,6 +53,7 @@ These rules settle the open points of the grammar:
 - Slice 2 has no packages, so a path is one identifier: a `name` expression, a `name` type, or
   the module of an `inst`. A `::` after it is `S004`.
 - The `domains` of a module are `none` without a clause and `some` with a clause.
+- A struct without parentheses and a struct with `()` both have no parameters.
 - Parentheses make no node. A node keeps the position of its first token, also if that token
   is a `(`: the `binary` node of `(a + b) * c` is at the `(`.
 - `(a)` groups, `(a,)` is a tuple of one element, and `()` is the unit value. The same holds
@@ -372,10 +380,16 @@ mutual
         sym ")"
         return (e, false)
       | .symbol "[" =>
-        if ← arrayTypeAhead then later t "an array type in an expression"
-        bump
-        let xs ← args f "]" true false
-        return (⟨.array t.pos (xs.map (·.expr)), height (xs.map (·.height))⟩, false)
+        let el ← if ← arrayTypeAhead then arrayElem f else pure none
+        match el with
+        | some (ty, h) =>
+          let n ← expr f
+          sym "]"
+          return (⟨.arrayType t.pos ty n.expr, height [h, n.height]⟩, false)
+        | none =>
+          bump
+          let xs ← args f "]" true false
+          return (⟨.array t.pos (xs.map (·.expr)), height (xs.map (·.height))⟩, false)
       | .symbol "@" => builtin t
       | _ => unexpected t "an expression"
 
@@ -411,10 +425,19 @@ mutual
       let e ← expr f
       if top then checkHeight start e.height
       return e
-end
 
-/-! A type with its height. The limit of expressions also holds for types. -/
-mutual
+  /--
+  The element type and the `;` of an array type `[T; N]` in an expression, at its `[`. On
+  `S001`, the parser reads the bracket again as an array literal. Thus `[0; 4]` is `S001` at
+  its `;`.
+  -/
+  def arrayElem : Nat → P (Option (TypeExpr × Nat))
+    | 0 => exhausted
+    | f + 1 =>
+      tryCatch (do bump; let ty ← typeExpr f; sym ";"; return some ty) fun e =>
+        if e.code == .S001 then return none else throw e
+
+  /-- A type with its height. The limit of expressions also holds for types. -/
   def typeExpr : Nat → P (TypeExpr × Nat)
     | 0 => exhausted
     | f + 1 => do
@@ -505,6 +528,15 @@ def placeStmt (f : Nat) (start : Pos) (e : Node) (place : Bool) : P Stmt := do
     sym ";"
     return .expr start e.expr
 
+/-! `type N = T;` at an item or a statement. -/
+def aliasDecl (f : Nat) (start : Pos) (make : Pos → Ident → TypeExpr → α) : P α := do
+  kw "type"
+  let n ← ident
+  sym "="
+  let ty ← typeTop f
+  sym ";"
+  return make start n ty
+
 /-! The statements that declare a port, a resource, or an instance. -/
 def resourceKeywords : List String := ["input", "output", "reg", "wire", "instance"]
 
@@ -581,7 +613,7 @@ mutual
           return .ctFor t.pos i lo hi (← block f)
         else unexpected u "`if` or `for`"
       | .keyword "mem" => later t "a memory"
-      | .keyword "type" => later t "a type alias"
+      | .keyword "type" => aliasDecl f t.pos .alias
       | .symbol "{" => return .block t.pos (← block f)
       | .ident _ =>
         let (e, place) ← postfixExpr f
@@ -622,8 +654,9 @@ mutual
 end
 
 /-!
-A parameter. A module parameter needs `comptime`, and a function parameter can have it.
-`mut` is a later slice at a function parameter and no syntax at a module parameter.
+A parameter. A module parameter and a struct parameter need `comptime`, and a function parameter
+can have it. `mut` is a later slice at a function parameter and no syntax at a module parameter
+or a struct parameter.
 -/
 def param (f : Nat) (static : Bool) : P Param := do
   let t ← peek
@@ -672,9 +705,27 @@ def moduleItem (f : Nat) (start : Pos) : P Item := do
   if isKw "conforms" t then later t "a contract attachment"
   return .module start n ps ds (← block f)
 
+/-! The fields of a struct after its `{`, up to `}`. A `,` can end the list. -/
+def fields : Nat → List StructField → P (List StructField)
+  | 0, _ => exhausted
+  | f + 1, acc => do
+    if ← acceptSym "}" then return acc.reverse
+    let n ← ident
+    let acc := ⟨n, ← typeAnnotation f⟩ :: acc
+    if ← acceptSym "}" then return acc.reverse
+    sym ","
+    fields f acc
+
+/-! A struct. Without parentheses and with `()`, it has no parameters. -/
+def structItem (f : Nat) (start : Pos) : P Item := do
+  kw "struct"
+  let n ← ident
+  let ps ← if ← acceptSym "(" then params f true [] else pure []
+  sym "{"
+  return .struct start n ps (← fields f [])
+
 def laterItems : List (String × String) :=
-  [("import", "an import"), ("pub", "`pub`"), ("type", "a type alias"),
-   ("struct", "a struct"), ("extern", "an extern module")]
+  [("import", "an import"), ("pub", "`pub`"), ("extern", "an extern module")]
 
 def item (f : Nat) : P Item := do
   let t ← peek
@@ -690,6 +741,8 @@ def item (f : Nat) : P Item := do
   | .keyword "comptime" => bump; fnRest f t.pos true
   | .keyword "fn" => fnRest f t.pos false
   | .keyword "module" => moduleItem f t.pos
+  | .keyword "struct" => structItem f t.pos
+  | .keyword "type" => aliasDecl f t.pos .alias
   | .keyword w =>
     match laterItems.lookup w with
     | some what => later t what
