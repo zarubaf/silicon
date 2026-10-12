@@ -29,6 +29,15 @@ enum Key<'a> {
     Select(Pos, Pos, &'a Nat),
 }
 
+/// What the walk along a place knows of the type of the part: its type, no type, or the type
+/// of the element itself, which it finds at the end.
+#[derive(Clone, Copy)]
+enum Known {
+    Ty(TyId),
+    Absent,
+    Element,
+}
+
 /// A static index, read once when it evaluates: its number, the text of an integer that no
 /// `usize` holds, or the message of a value that is not an integer. A step checks it later
 /// without the value of the index.
@@ -448,26 +457,42 @@ impl Evaluator<'_> {
 
     /// The numbers of the steps `keyed` of the local at `root`, and the type of the part, in
     /// one walk from the root outward. `ty` is the type of the local, if it has one.
+    ///
+    /// Lean takes the part of the type at each step, and the type of the element when it has
+    /// no type. The type of a tuple is the tuple of the types of its elements, so below a
+    /// step without a type the type stays that of the element until an array gives its
+    /// element type. Thus the walk finds the type of a tuple element only once, at the end,
+    /// and not at each step.
     fn walk(
         &mut self,
         root: Root,
-        mut ty: Option<TyId>,
+        ty: Option<TyId>,
         keyed: &[Key<'_>],
     ) -> Res<(Vec<usize>, Option<TyId>)> {
         let mut keys = Vec::with_capacity(keyed.len());
         let mut cur = self.store.current(root, &[]);
+        let mut known = match ty {
+            Some(t) => Known::Ty(t),
+            None => Known::Absent,
+        };
         for key in keyed {
             let k = match key {
                 Key::Index(q, xp, i) => self.pick_at(*q, *xp, cur, i)?,
                 Key::Select(q, r, index) => self.select_at(*q, *r, index, cur)?,
             };
+            known = match (known, cur) {
+                (Known::Ty(t), _) => self.tys.part(t, k).map_or(Known::Absent, Known::Ty),
+                (Known::Element, Seen::Static(Value::Array(elem, _))) => Known::Ty(*elem),
+                (Known::Absent | Known::Element, _) => Known::Element,
+            };
             cur = self.store.step(cur, k);
             keys.push(k);
-            ty = match ty {
-                Some(t) => self.tys.part(t, k),
-                None => cur.ty(&self.graph, &mut self.tys),
-            };
         }
+        let ty = match known {
+            Known::Ty(t) => Some(t),
+            Known::Absent => None,
+            Known::Element => cur.ty(&self.graph, &mut self.tys),
+        };
         Ok((keys, ty))
     }
 
