@@ -1,0 +1,8 @@
+// S003: a constant is no function, so it is no method.
+// TOP M()
+const N: Int = 1;
+module M() {
+    let x = 1;
+    // expected-error S003 @+1
+    x.N();
+}

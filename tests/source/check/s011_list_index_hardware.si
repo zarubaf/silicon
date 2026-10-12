@@ -1,0 +1,10 @@
+// S011: the index of a list is static. A named hardware value is no static index.
+// TOP M()
+module M() {
+    input i: UInt[2];
+    let h = i;
+    let mut xs = list(Int);
+    xs.push(1);
+    // expected-error S011 @+1
+    let c = xs[h];
+}

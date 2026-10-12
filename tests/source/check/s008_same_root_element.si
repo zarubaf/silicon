@@ -1,0 +1,10 @@
+// S008: two places in one root are an alias too, here an element and the whole array.
+// TOP M()
+fn f(mut a: Int, mut b: [Int; 2]) -> () {
+    return ();
+}
+module M() {
+    let mut xs = [1, 2];
+    // expected-error S008 @+1
+    f(xs[0], xs);
+}

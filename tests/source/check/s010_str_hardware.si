@@ -1,0 +1,7 @@
+// S010: `str` converts a static `Int`, and a hardware value is no `Int`.
+// TOP M()
+module M() {
+    input x: UInt[8];
+    // expected-error S010 @+1
+    let s = str(x);
+}

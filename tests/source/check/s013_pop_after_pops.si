@@ -1,0 +1,9 @@
+// S013: the second `pop` finds the list empty after one `push`.
+// TOP M()
+module M() {
+    let mut xs = list(Int);
+    xs.push(1);
+    let a = xs.pop();
+    // expected-error S013 @+1
+    let b = pop(xs);
+}

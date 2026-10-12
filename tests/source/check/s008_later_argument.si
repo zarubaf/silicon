@@ -1,0 +1,11 @@
+// S008: each argument that evaluates later is in the window of the mut actual.
+// TOP M()
+fn f(mut xs: List[Int], n: Int) -> () {
+    return ();
+}
+module M() {
+    let mut xs = list(Int);
+    xs.push(1);
+    // expected-error S008 @+1
+    f(xs, xs.pop());
+}

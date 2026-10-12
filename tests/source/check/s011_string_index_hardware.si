@@ -1,0 +1,9 @@
+// S011: the index of a string is static. A named hardware value is no static index.
+// TOP M()
+module M() {
+    input i: UInt[2];
+    let h = i;
+    let s = "abc";
+    // expected-error S011 @+1
+    let c = s[h];
+}

@@ -1,0 +1,10 @@
+// S003: a struct is a type, not a function, so it is no method.
+// TOP M()
+struct P {
+    a: Bool,
+}
+module M() {
+    let x = true;
+    // expected-error S003 @+1
+    x.P();
+}

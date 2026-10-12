@@ -1,0 +1,10 @@
+// S010: the receiver of a mut formal has the same exact-type rule.
+// TOP M()
+fn bump(mut n: Int) -> () {
+    return ();
+}
+module M() {
+    let mut n: Nat = 1;
+    // expected-error S010 @+1
+    n.bump();
+}

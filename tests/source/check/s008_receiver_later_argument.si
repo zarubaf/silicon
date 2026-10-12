@@ -1,0 +1,12 @@
+// S008: a mut receiver has all explicit arguments in its window, also an argument that
+// binds to a leading comptime formal.
+// TOP M()
+fn append(comptime T: Type, mut xs: List[Int], v: Int) -> () {
+    return ();
+}
+module M() {
+    let mut xs = list(Int);
+    xs.push(1);
+    // expected-error S008 @+1
+    xs.append(Int, xs.pop());
+}

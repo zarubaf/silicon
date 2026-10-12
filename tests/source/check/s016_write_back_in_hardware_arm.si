@@ -1,0 +1,13 @@
+// S016: a mut write-back of a binding from before the arm. The write-back checks, also if the callee leaves the value unchanged.
+// TOP M()
+fn keep(mut a: UInt[8]) -> UInt[8] {
+    return a;
+}
+module M() {
+    input c: Bool;
+    input x: UInt[8];
+    output o: UInt[8];
+    let mut q = x;
+    // expected-error S016 @+1
+    o := if (c) { q.keep() } else { 0 };
+}

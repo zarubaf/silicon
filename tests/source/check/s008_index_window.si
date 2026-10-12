@@ -1,0 +1,11 @@
+// S008: the index expressions of a mut actual are in its window.
+// TOP M()
+fn bump(mut n: Int) -> () {
+    return ();
+}
+module M() {
+    let mut ys = list(Int);
+    ys.push(0);
+    // expected-error S008 @+1
+    bump(ys[ys.pop()]);
+}

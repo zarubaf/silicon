@@ -1,0 +1,9 @@
+// S008: a mut actual is a place, and a literal is not.
+// TOP M()
+fn bump(mut n: Int) -> () {
+    return ();
+}
+module M() {
+    // expected-error S008 @+1
+    bump(3);
+}

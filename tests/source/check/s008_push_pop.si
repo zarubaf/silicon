@@ -1,0 +1,8 @@
+// S008: `push` takes its list as a mut actual, so `xs.pop()` in its argument is an alias.
+// TOP M()
+module M() {
+    let mut xs = list(Int);
+    xs.push(1);
+    // expected-error S008 @+1
+    xs.push(xs.pop());
+}

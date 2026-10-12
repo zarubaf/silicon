@@ -1,0 +1,14 @@
+// A method name resolves in the items and the prelude, never to a local. A local with the name
+// of the function does not change the call.
+// TOP M()
+fn id(x: Int) -> Int {
+    return x;
+}
+fn f(id: Int, len: Int) -> Int {
+    return id.id() + [1, 2].len();
+}
+module M() {
+    let str = 3;
+    let y = f(1, 2);
+    let s = str.str();
+}

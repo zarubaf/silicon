@@ -1,0 +1,7 @@
+// S007: `pop` takes the list only.
+// TOP M()
+module M() {
+    let mut xs = list(Int);
+    // expected-error S007 @+1
+    let y = xs.pop(1);
+}

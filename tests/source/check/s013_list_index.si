@@ -1,0 +1,10 @@
+// S013: an index of a list is in range of its current length.
+// TOP M()
+module M() {
+    let mut xs = list(Int);
+    xs.push(1);
+    xs.push(2);
+    let a = xs.pop();
+    // expected-error S013 @+1
+    let b = xs[1];
+}

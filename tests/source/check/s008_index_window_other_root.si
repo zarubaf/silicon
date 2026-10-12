@@ -1,0 +1,11 @@
+// The twin of `s008_index_window`: an index expression with another root is no alias.
+// TOP M()
+fn bump(mut n: Int) -> () {
+    return ();
+}
+module M() {
+    let mut xs = [0, 1];
+    let mut ys = list(Int);
+    ys.push(1);
+    bump(xs[ys.pop()]);
+}

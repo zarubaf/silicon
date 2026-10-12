@@ -1,0 +1,7 @@
+// S008: the root of a mut actual is a `let mut` binding or a mut formal.
+// TOP M()
+module M() {
+    let xs = list(Int);
+    // expected-error S008 @+1
+    xs.push(1);
+}

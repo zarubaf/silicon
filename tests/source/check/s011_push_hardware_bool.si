@@ -1,0 +1,8 @@
+// S011: a hardware Boolean in a list, by the plain call of `push`.
+// TOP M()
+module M() {
+    input b: Bool;
+    let mut xs = list(Bool);
+    // expected-error S011 @+1
+    push(xs, b);
+}

@@ -1,0 +1,8 @@
+// S008: the index expression of the target uses the pending root `ys` again.
+// TOP M()
+module M() {
+    let mut ys = list(Int);
+    ys.push(0);
+    // expected-error S008 @+1
+    ys[ys.pop()] = 1;
+}

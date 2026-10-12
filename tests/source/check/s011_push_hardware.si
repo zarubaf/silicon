@@ -1,0 +1,8 @@
+// S011: a list holds no hardware value.
+// TOP M()
+module M() {
+    input x: UInt[8];
+    let mut xs = list(UInt[8]);
+    // expected-error S011 @+1
+    xs.push(x);
+}

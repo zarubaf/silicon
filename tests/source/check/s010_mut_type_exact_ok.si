@@ -1,0 +1,10 @@
+// A mut actual of the exact type of the formal is valid, also a declared `Nat` at a `Nat` formal.
+// TOP M()
+fn bump(mut n: Nat) -> () {
+    return ();
+}
+module M() {
+    let mut n: Nat = 1;
+    bump(n);
+    n.bump();
+}

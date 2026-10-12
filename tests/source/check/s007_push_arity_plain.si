@@ -1,0 +1,7 @@
+// S007: the plain call of `push` with one argument.
+// TOP M()
+module M() {
+    let mut xs = list(Int);
+    // expected-error S007 @+1
+    push(xs);
+}

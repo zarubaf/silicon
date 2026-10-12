@@ -1,0 +1,7 @@
+// S010: a string is not a place, so an index of it cannot be assigned.
+// TOP M()
+module M() {
+    let mut s = "abc";
+    // expected-error S010 @+1
+    s[0] = "x";
+}

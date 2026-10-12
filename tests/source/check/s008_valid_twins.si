@@ -1,0 +1,23 @@
+// The valid twins of the S008 cases. The order of evaluation keeps the roots apart: a pop
+// completes before a later mut actual is pending, and a call reads its list before the push.
+// TOP M()
+fn helper(comptime n: Int, mut xs: List[Int]) -> () {
+    return ();
+}
+fn f(mut a: List[Int], mut b: List[Int]) -> () {
+    return ();
+}
+module M() {
+    let mut xs = list(Int);
+    let mut ys = list(Int);
+    xs.push(1);
+    xs.push(2);
+    helper(xs.pop(), xs);
+    let a = xs.pop();
+    xs.push(3);
+    let b = xs.pop();
+    xs.push(xs.len());
+    f(xs, ys);
+    ys.push(a + b);
+    xs[0] = ys.pop();
+}
