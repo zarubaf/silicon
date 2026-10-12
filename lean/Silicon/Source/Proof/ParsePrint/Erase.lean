@@ -32,7 +32,7 @@ The proof covers the container forms of slice 2. These are the unit value, the u
 tuple, an array, an array type `[T; N]` in a type and in an expression, and a selector `.N`. It
 also covers the type forms of phase 3: a `struct` item, and a `type` item or statement. It
 covers the forms of phase 4: a `mut` parameter of a function, and a receiver call `x.m(args)`.
-The parser gives no function type yet, so a function type is not printable.
+It covers the function types of phase 5, in a type and in an expression.
 -/
 namespace Silicon.Source
 
@@ -151,7 +151,7 @@ mutual
     | .select _ b _ i => b.printable && i < numberBound
     | .arrayType _ t n => t.printable && n.printable
     | .method _ r m xs => r.printable && validName m.name && Expr.printableAll xs
-    | .fnType .. => false
+    | .fnType _ ps r => FnParam.printableAll ps && r.printable
 
   def Expr.printableAll : List Expr → Bool
     | [] => true
@@ -163,11 +163,18 @@ mutual
     | .unit _ => true
     | .tuple _ ts => !ts.isEmpty && TypeExpr.printableAll ts
     | .array _ t n => t.printable && n.printable
-    | .fn .. => false
+    | .fn _ ps r => FnParam.printableAll ps && r.printable
 
   def TypeExpr.printableAll : List TypeExpr → Bool
     | [] => true
     | t :: ts => t.printable && TypeExpr.printableAll ts
+
+  def FnParam.printable : FnParam → Bool
+    | .mk _ t => t.printable
+
+  def FnParam.printableAll : List FnParam → Bool
+    | [] => true
+    | p :: ps => p.printable && FnParam.printableAll ps
 end
 
 mutual
@@ -454,6 +461,10 @@ theorem TypeExpr.printableAll_eq (ts : List TypeExpr) :
     TypeExpr.printableAll ts = ts.all TypeExpr.printable := by
   induction ts <;> simp_all [TypeExpr.printableAll]
 
+theorem FnParam.printableAll_eq (ps : List FnParam) :
+    FnParam.printableAll ps = ps.all FnParam.printable := by
+  induction ps <;> simp_all [FnParam.printableAll]
+
 theorem Stmt.printableAll_eq (plain : Bool) (ss : List Stmt) :
     Stmt.printableAll plain ss = ss.all (Stmt.printable plain) := by
   induction ss <;> simp_all [Stmt.printableAll]
@@ -461,9 +472,23 @@ theorem Stmt.printableAll_eq (plain : Bool) (ss : List Stmt) :
 private theorem printable_erase_all :
     (∀ e : Expr, e.erase.printable = e.printable) ∧
       ∀ t : TypeExpr, t.erase.printable = t.printable := by
-  suffices h : (∀ e : Expr, e.erase.printable = e.printable) ∧ (∀ _ : FnParam, True) ∧
+  suffices h : (∀ e : Expr, e.erase.printable = e.printable) ∧
+      (∀ p : FnParam, p.erase.printable = p.printable) ∧
       ∀ t : TypeExpr, t.erase.printable = t.printable from ⟨h.1, h.2.2⟩
   apply Expr.erase.mutual_induct
+  case case17 =>
+    intro p ps r ih ihr
+    simp only [Expr.erase, Expr.printable, ihr, FnParam.printableAll_eq, List.all_map,
+      Function.comp_def]
+    rw [all_congr_mem ih]
+  case case18 =>
+    intro m t ih
+    simp only [FnParam.erase, FnParam.printable, ih]
+  case case24 =>
+    intro p ps r ih ihr
+    simp only [TypeExpr.erase, TypeExpr.printable, ihr, FnParam.printableAll_eq, List.all_map,
+      Function.comp_def]
+    rw [all_congr_mem ih]
   case case8 | case9 =>
     intro p f xs ihf ih
     simp only [Expr.erase, Expr.printable, ihf, Expr.printableAll_eq, List.all_map,

@@ -92,6 +92,21 @@ theorem Runs.acceptSym_false {ctx : Ctx} {i : Nat} {s : String}
   simp only [isSym, beq_iff_eq, hs, ite_false]
   exact Runs.pure rfl
 
+theorem Runs.acceptKw_true {ctx : Ctx} {i : Nat} {s : String}
+    (hs : (tokenAt ctx.input i).kind = .keyword s) :
+    Runs (acceptKw s) ctx i (i + 1) (· = true) := by
+  unfold acceptKw
+  refine Runs.peek_bind ?_
+  simp only [isKw, hs, beq_self_eq_true, ite_true]
+  exact Runs.bump_bind (Runs.pure rfl)
+
+theorem Runs.acceptKw_false {ctx : Ctx} {i : Nat} {s : String}
+    (hs : (tokenAt ctx.input i).kind ≠ .keyword s) : Runs (acceptKw s) ctx i i (· = false) := by
+  unfold acceptKw
+  refine Runs.peek_bind ?_
+  simp only [isKw, beq_iff_eq, hs, ite_false]
+  exact Runs.pure rfl
+
 /-! A kind that ends a suffix chain: no call, index, or field follows. -/
 def suffixStart (k : Kind) : Bool := k == .symbol "(" || k == .symbol "[" || k == .symbol "."
 
