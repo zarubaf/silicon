@@ -4,12 +4,12 @@
 //! result is the copy. An assignment to a place updates the one element in the local, because
 //! no other binding shares the container.
 
-use super::{Evaluator, Frame, Opnd, Out, Res, Slot, expr_pos, fail, need, same_form};
+use super::{Evaluator, Frame, Opnd, Out, Res, Slot, expr_pos, fail, need, same_form, step};
 use crate::Code;
 use crate::hw::{Ref, Root, Seen, Val};
 use crate::int::Int;
 use crate::ops::int_text;
-use crate::value::Value;
+use crate::value::{TyId, Value};
 use parse::ast::{Expr, Nat, Pos};
 use resolve::Target;
 use std::borrow::Cow;
@@ -19,6 +19,22 @@ use std::borrow::Cow;
 enum Sel<'a> {
     Index(Pos, &'a [Expr]),
     Select(Pos, Pos, &'a Nat),
+}
+
+/// A step of a place whose index evaluated: an index at its node, with the position of its
+/// index expression and the index, or a selector `.N` as in `Sel`.
+enum Key<'a> {
+    Index(Pos, Pos, Index),
+    Select(Pos, Pos, &'a Nat),
+}
+
+/// A static index, read once when it evaluates: its number, the text of an integer that no
+/// `usize` holds, or the message of a value that is not an integer. A step checks it later
+/// without the value of the index.
+pub(super) enum Index {
+    Number(usize),
+    Wide(String),
+    Bad(String),
 }
 
 /// The root of a place and its steps from the root outward. Another target has no place.
@@ -100,10 +116,28 @@ impl Evaluator<'_> {
         }
     }
 
+    /// The static index `i`, read once. An index that is not an integer keeps its message.
+    pub(super) fn index_of(&self, i: &Out) -> Index {
+        let k = match self.store.value(i) {
+            Value::Int(k) => Cow::Borrowed(k),
+            Value::UInt(x) => Cow::Owned(Int::from_unsigned(x)),
+            v => {
+                return Index::Bad(format!(
+                    "an index is a static integer, not {}",
+                    v.text(&self.tys)
+                ));
+            }
+        };
+        match k.to_u64().and_then(|k| usize::try_from(k).ok()) {
+            Some(k) => Index::Number(k),
+            None => Index::Wide(int_text(&k)),
+        }
+    }
+
     /// The number of the element that the static index `i` at `q` picks from `base`, a result
     /// of an index at `pos`. The checks come in this order: the container (`S010`), the type
     /// of the index (`S010`), then its range (`S013`).
-    pub(super) fn pick_at(&self, pos: Pos, q: Pos, base: Seen<'_>, i: &Out) -> Res<usize> {
+    pub(super) fn pick_at(&self, pos: Pos, q: Pos, base: Seen<'_>, i: &Index) -> Res<usize> {
         let len = match base {
             Seen::Static(Value::Array(_, xs) | Value::Tuple(xs)) => xs.len(),
             s => {
@@ -114,33 +148,24 @@ impl Evaluator<'_> {
                 );
             }
         };
-        let k = match self.store.value(i) {
-            Value::Int(k) => Cow::Borrowed(k),
-            Value::UInt(x) => Cow::Owned(Int::from_unsigned(x)),
-            v => {
-                return fail(
-                    Code::S010,
-                    q,
-                    format!("an index is a static integer, not {}", v.text(&self.tys)),
-                );
-            }
-        };
-        match k.to_u64().and_then(|k| usize::try_from(k).ok()) {
-            Some(k) if k < len => Ok(k),
-            _ => fail(
+        let range = |k: &str| {
+            fail(
                 Code::S013,
                 q,
-                format!(
-                    "the index {} is out of range for {len} element(s)",
-                    int_text(&k)
-                ),
-            ),
+                format!("the index {k} is out of range for {len} element(s)"),
+            )
+        };
+        match i {
+            Index::Number(k) if *k < len => Ok(*k),
+            Index::Number(k) => range(&k.to_string()),
+            Index::Wide(k) => range(k),
+            Index::Bad(m) => fail(Code::S010, q, m.clone()),
         }
     }
 
     /// The index `i` at `q` of the operand `b` of an index at `pos`.
     pub(super) fn pick_index(&self, pos: Pos, q: Pos, b: &Opnd, i: &Out) -> Res<usize> {
-        self.pick_at(pos, q, self.opnd_seen(b), i)
+        self.pick_at(pos, q, self.opnd_seen(b), &self.index_of(i))
     }
 
     /// The number of the element that the selector `.index` with its literal at `q` picks
@@ -236,9 +261,15 @@ impl Evaluator<'_> {
     }
 
     /// An assignment to a `let mut` local, or to a part of it by indices and selectors `.N`.
-    /// The target is a place, so it charges nothing. Only the index expressions of the place
-    /// evaluate, from left to right, and each checks when it evaluates. Then the right side
-    /// evaluates, with the type of the element as its type.
+    /// The root name charges nothing. Each step charges 1 at its node, then its index
+    /// evaluates, from the root outward. Then the right side evaluates, with the type of the
+    /// element as its type.
+    ///
+    /// Lean checks the container and the index of each step before the next step charges.
+    /// Here the checks run in one walk along the path after the indices, so no step walks
+    /// again from the root. `S008` keeps the root unchanged while the indices evaluate, and
+    /// a failed check comes before an error of a later step. Thus the first error is that of
+    /// Lean.
     pub(super) fn assign(&mut self, pos: Pos, target: &Expr, value: &Expr) -> Res<Option<Val>> {
         let bad = || {
             fail(
@@ -264,35 +295,20 @@ impl Evaluator<'_> {
         };
         let frame = self.store.frames.len().saturating_sub(1);
         let root = Root::Local(frame, id);
-        let mut keys: Vec<usize> = Vec::with_capacity(steps.len());
-        let mut ty = slot_ty;
+        let mut keyed = Vec::with_capacity(steps.len());
+        let mut stop = None;
         for step in &steps {
-            let k = match *step {
-                Sel::Index(q, args) => {
-                    let [i] = args else {
-                        return fail(
-                            Code::S010,
-                            q,
-                            "an index of a value has one argument".to_owned(),
-                        );
-                    };
-                    let o = self.eval(i)?;
-                    let o = need(i, o)?;
-                    self.check_static(expr_pos(i), &o)?;
-                    self.pick_at(q, expr_pos(i), self.store.current(root, &keys), &o)?
+            match self.key(step) {
+                Ok(k) => keyed.push(k),
+                Err(e) => {
+                    stop = Some(e);
+                    break;
                 }
-                Sel::Select(q, r, index) => {
-                    self.select_at(q, r, index, self.store.current(root, &keys))?
-                }
-            };
-            keys.push(k);
-            ty = match ty {
-                Some(t) => self.tys.part(t, k),
-                None => self
-                    .store
-                    .current(root, &keys)
-                    .ty(&self.graph, &mut self.tys),
-            };
+            }
+        }
+        let (keys, ty) = self.walk(root, slot_ty, &keyed)?;
+        if let Some(e) = stop {
+            return Err(e);
         }
         let o = self.eval(value)?;
         let o = need(value, o)?;
@@ -331,6 +347,56 @@ impl Evaluator<'_> {
             replace(r, &keys, w);
         }
         Ok(None)
+    }
+
+    /// The step `step` of a place: its charge, then its index with the static check.
+    fn key<'a>(&mut self, step: &Sel<'a>) -> Res<Key<'a>> {
+        match *step {
+            Sel::Index(q, args) => {
+                self.charge(q, 1)?;
+                let [i] = args else {
+                    return fail(
+                        Code::S010,
+                        q,
+                        "an index of a value has one argument".to_owned(),
+                    );
+                };
+                let o = self.eval(i)?;
+                let o = need(i, o)?;
+                let xp = expr_pos(i);
+                self.check_static(xp, &o)?;
+                Ok(Key::Index(q, xp, self.index_of(&o)))
+            }
+            Sel::Select(q, r, index) => {
+                self.charge(q, 1)?;
+                Ok(Key::Select(q, r, index))
+            }
+        }
+    }
+
+    /// The numbers of the steps `keyed` of the local at `root`, and the type of the part, in
+    /// one walk from the root outward. `ty` is the type of the local, if it has one.
+    fn walk(
+        &mut self,
+        root: Root,
+        mut ty: Option<TyId>,
+        keyed: &[Key<'_>],
+    ) -> Res<(Vec<usize>, Option<TyId>)> {
+        let mut keys = Vec::with_capacity(keyed.len());
+        let mut cur = self.store.current(root, &[]);
+        for key in keyed {
+            let k = match key {
+                Key::Index(q, xp, i) => self.pick_at(*q, *xp, cur, i)?,
+                Key::Select(q, r, index) => self.select_at(*q, *r, index, cur)?,
+            };
+            cur = step(cur, k);
+            keys.push(k);
+            ty = match ty {
+                Some(t) => self.tys.part(t, k),
+                None => cur.ty(&self.graph, &mut self.tys),
+            };
+        }
+        Ok((keys, ty))
     }
 
     /// The value of an element of a container in this phase. A hardware value is `S010`,

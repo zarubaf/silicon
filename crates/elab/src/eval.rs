@@ -110,6 +110,14 @@ fn element<'a>(v: &'a Value, path: &[usize]) -> &'a Value {
     cur
 }
 
+/// The element `k` of the container that `cur` finds: one step of a walk along a path.
+fn step(cur: Seen<'_>, k: usize) -> Seen<'_> {
+    match cur {
+        Seen::Static(v) => Seen::Static(element(v, &[k])),
+        s => s,
+    }
+}
+
 impl Store {
     fn frame(&self) -> Option<&Frame> {
         self.frames.last()
