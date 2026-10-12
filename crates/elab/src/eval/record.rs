@@ -156,9 +156,9 @@ impl Evaluator<'_> {
     }
 
     /// The field `.f` of a record: a reference to the field.
-    pub(super) fn record_field(&mut self, pos: Pos, b: Out, f: &Ident) -> Res<Option<Out>> {
+    pub(super) fn record_field(&mut self, pos: Pos, b: Out, f: &Ident) -> Res<Out> {
         let (k, _) = self.field_at(pos, f, self.store.seen(&b))?;
-        Ok(Some(super::place::elem(Opnd::Static(b), k)))
+        Ok(super::place::elem(Opnd::Static(b), k))
     }
 
     /// `data_bits(T)` at the call `pos`: the width of a hardware data type, from its metadata.

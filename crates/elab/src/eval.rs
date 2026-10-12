@@ -973,13 +973,8 @@ impl Evaluator<'_> {
                 }
                 self.read(e)
             }
-            Expr::Field { pos, base, field } => {
-                let b = self.eval(base)?;
-                let b = need(base, b)?;
-                self.field(*pos, b, field)
-            }
             Expr::Unit { .. } | Expr::Tuple { .. } | Expr::Array { .. } => self.container(e),
-            Expr::Select { .. } => self.read(e),
+            Expr::Select { .. } | Expr::Field { .. } => self.read(e),
             Expr::ArrayType { pos, elem, len } => {
                 let t = self.array_type(*pos, elem, len)?;
                 Ok(Some(Out::Made(Val::Static(Value::Type(t)))))
@@ -1024,7 +1019,7 @@ impl Evaluator<'_> {
 
     /// A field of a record, or a port of an instance: a child input is a target, and a child
     /// output is hardware.
-    fn field(&mut self, pos: Pos, b: Out, field: &Ident) -> Res<Option<Out>> {
+    fn field(&mut self, pos: Pos, b: Out, field: &Ident) -> Res<Out> {
         let Seen::Handle(Handle::Inst { id, path, inst }) = self.store.seen(&b) else {
             return self.record_field(pos, b, field);
         };
@@ -1035,14 +1030,14 @@ impl Evaluator<'_> {
         }
         .and_then(|s| self.elab.port(inst, s));
         match port {
-            Some(q) if q.input => Ok(Some(Out::Named(Val::Handle(Handle::Input {
+            Some(q) if q.input => Ok(Out::Named(Val::Handle(Handle::Input {
                 inst: id,
                 path,
                 port: q,
-            })))),
+            }))),
             Some(q) => {
                 let h = self.graph.mk(pos, q.ty, Op::Out(path, q.sym), Vec::new());
-                Ok(Some(Out::Named(Val::Hw(h))))
+                Ok(Out::Named(Val::Hw(h)))
             }
             None => fail(
                 Code::S010,
