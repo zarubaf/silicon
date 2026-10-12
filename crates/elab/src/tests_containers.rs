@@ -485,6 +485,44 @@ fn a_deep_update_walks_its_path_once() {
     assert!(index(20) - index(10) <= 10 * 2 * 4);
 }
 
+/// A read of a place of depth `d` walks its path a constant number of times: once for its
+/// checks and once for each use of its result. Thus it makes `O(d)` steps, not one walk from
+/// the root for each step.
+#[test]
+fn a_deep_read_walks_its_path_once() {
+    let steps = |d: usize, reads: usize| {
+        let (lit, place) = deep(d);
+        let src = body(&format!(
+            "let a = {lit}; let mut s = 0; {} return s;",
+            format!("s = s + {place}; ").repeat(reads)
+        ));
+        path_steps(&src, "f()")
+    };
+    let d = 400;
+    let each = (steps(d, 30) - steps(d, 10)) / 20;
+    assert!(each <= 4 * d as u64, "{each} steps for a depth of {d}");
+    let index = |reads: usize| {
+        let src = body(&format!(
+            "let a = [[[[1]]]]; let mut s = 0; {} return s;",
+            "s = s + a[0][0][0][0]; ".repeat(reads)
+        ));
+        path_steps(&src, "f()")
+    };
+    assert!(index(20) - index(10) <= 10 * 4 * 4);
+}
+
+/// A read checks each step before the index of the next step, as in Lean, although the checks
+/// run after the indices.
+#[test]
+fn a_read_checks_each_step_before_a_later_index() {
+    let at = |s: &str| o(&body(s), "f()");
+    assert_eq!(at("let a = [[1, 2]]; return a[5][1 / 0];"), "S013 1:44");
+    assert_eq!(at("let a = [[1, 2]]; return a[0].0[1 / 0];"), "S010 1:42");
+    assert_eq!(at("let a = [[1, 2]]; return a[0][1 / 0];"), "S013 1:47");
+    assert_eq!(at("let a = [[1, 2]]; return a[0, 1][0];"), "S010 1:42");
+    assert_eq!(at("let a = [[1, 2]]; return a[0][0, 1];"), "S010 1:42");
+}
+
 fn container(ty: &str, arg: &str) -> String {
     format!("module C(comptime xs: {ty}) {{\n}}\nmodule T() {{\n  instance a = C({arg});\n}}\n")
 }
