@@ -1,0 +1,15 @@
+// A tuple with a `()` part converts at its type, also as a module argument.
+// TOP Top()
+module Pair(comptime P: (Nat, ())) domains() {
+    input a: UInt[8];
+    output y: UInt[8];
+    y := a +% UInt[8](P.0);
+}
+module Top() domains() {
+    input x: UInt[8];
+    output y: UInt[8];
+    let p: (Nat, ()) = (1, ());
+    instance c = Pair(p);
+    c.a := x;
+    y := c.y;
+}
