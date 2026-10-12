@@ -623,6 +623,31 @@ fn eval_prints_the_serialization_of_the_value() -> Test {
     Ok(())
 }
 
+/// The driver prints the result after the evaluator ends, so the serialization of a deep
+/// value needs no deep stack.
+#[test]
+fn eval_prints_a_result_of_depth_10000() -> Test {
+    let depth = 10_000;
+    let expr = format!("{}0{}", "(".repeat(depth), ",)".repeat(depth));
+    let flags = [
+        "--syntax-depth",
+        "10010",
+        "--depth",
+        "10010",
+        "--fuel",
+        "200000000",
+    ];
+    let (out, code) = eval("", &expr, &flags)?;
+    assert_eq!(code, Some(0), "{}", &out[..out.len().min(200)]);
+    let expected = format!(
+        "{}(int 0){}\n",
+        "(tuple (".repeat(depth),
+        "))".repeat(depth)
+    );
+    assert!(out == expected, "{}", &out[..out.len().min(200)]);
+    Ok(())
+}
+
 #[test]
 fn eval_reports_the_first_error_of_the_file_then_of_the_expression() -> Test {
     let first = |r: (String, Option<i32>)| (r.0.split(": ").next().map(str::to_owned), r.1);
