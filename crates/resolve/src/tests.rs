@@ -949,3 +949,270 @@ fn a_module_a_const_or_a_function_is_no_type() {
         [(S003, 3, 14)]
     );
 }
+
+// Receiver calls, the call sites, and the list prelude. The cases come from the guards of
+// `Silicon.Source.Test.Resolve` in Lean.
+
+/// The position of the first `needle` in the source, which has one line before `line`.
+fn find(src: &str, needle: &str) -> Pos {
+    let at = src.find(needle).unwrap();
+    let before = &src[..at];
+    let line = before.matches('\n').count() + 1;
+    let col = before.rsplit('\n').next().map_or(0, |l| l.chars().count()) + 1;
+    pos(line, col)
+}
+
+/// The message of the first error.
+fn message(src: &str) -> String {
+    match run(src) {
+        Err(Failed::Names(errors)) => errors[0].message.clone(),
+        _ => panic!("expected an error"),
+    }
+}
+
+#[test]
+fn the_strings_and_the_lists_are_prelude_names() {
+    let r = ok("const S: String = \"a\";\nconst L: List[Int] = list(Int);");
+    let prelude = |src: &str, needle: &str| target_at(&r, find(src, needle));
+    assert_eq!(
+        prelude("const S: String = \"a\";", "String"),
+        Some(Target::Prelude(Prelude::String))
+    );
+    assert_eq!(
+        target_at(&r, pos(2, 10)),
+        Some(Target::Prelude(Prelude::List))
+    );
+    assert_eq!(
+        target_at(&r, pos(2, 22)),
+        Some(Target::Prelude(Prelude::ListFn))
+    );
+    for (name, want) in [
+        ("push", Prelude::Push),
+        ("pop", Prelude::Pop),
+        ("str", Prelude::Str),
+    ] {
+        let src = format!("fn f() -> Nat {{ return {name}; }}");
+        let r = ok(&src);
+        assert_eq!(
+            target_at(&r, find(&src, name)),
+            Some(Target::Prelude(want)),
+            "{name}"
+        );
+    }
+    // A `mut` parameter is a local.
+    let src = "fn f(mut xs: List[Int]) -> Nat { return xs; }";
+    let r = ok(src);
+    assert_eq!(decl_at(&r, find(src, "xs;")).kind, Kind::Param);
+    ok("fn f(mut xs: List[Int], x: Int) -> () { push(xs, x); let s = str(pop(xs)); }");
+    ok("const List: Nat = 1;\nconst N: Nat = List;");
+}
+
+#[test]
+fn the_name_of_a_receiver_call_is_a_function_of_the_items_or_the_prelude() {
+    let method = |src: &str, name: &str| {
+        let r = ok(src);
+        // The method name is the last use of `name` after the dot.
+        let at = src.find(&format!(".{name}(")).unwrap() + 1;
+        let before = &src[..at];
+        let line = before.matches('\n').count() + 1;
+        let col = before.rsplit('\n').next().map_or(0, |l| l.chars().count()) + 1;
+        match target_at(&r, pos(line, col)) {
+            Some(Target::Decl(id)) => Err(r.decl(id).kind),
+            Some(Target::Prelude(p)) => Ok(p),
+            None => panic!("no target for {name}"),
+        }
+    };
+    let g = "fn g(x: Bool) -> Bool { return x; }";
+    assert_eq!(
+        method(
+            &format!("fn f(p: Bool) -> Bool {{ return p.g(); }}\n{g}"),
+            "g"
+        ),
+        Err(Kind::Fn)
+    );
+    // A local does not hide the function.
+    assert_eq!(
+        method(
+            &format!("fn f(g: Bool) -> Bool {{ return g.g(); }}\n{g}"),
+            "g"
+        ),
+        Err(Kind::Fn)
+    );
+    assert_eq!(
+        method("fn f(xs: List[Int]) -> () { return xs.push(1); }", "push"),
+        Ok(Prelude::Push)
+    );
+    assert_eq!(
+        method("fn f(p: Bool) -> Nat { return p.len(); }", "len"),
+        Ok(Prelude::Len)
+    );
+    // An item hides a prelude function.
+    assert_eq!(
+        method(
+            "fn f(p: Bool) -> Nat { return p.len(); }\nfn len(x: Bool) -> Nat { return 1; }",
+            "len"
+        ),
+        Err(Kind::Fn)
+    );
+    assert_eq!(
+        method(
+            "fn f(T: Type) -> Nat { return T.data_bits(); }",
+            "data_bits"
+        ),
+        Ok(Prelude::DataBits)
+    );
+    ok(&fn_body(
+        "let x = p.resize(UInt[8]);\nreturn p.static_assert(\"a\");",
+    ));
+}
+
+#[test]
+fn s003_the_name_of_a_receiver_call_is_not_a_function_there() {
+    let fails = |src: &str, line: usize, col: usize| {
+        assert_eq!(errors(src), [(S003, line, col)], "{src}");
+    };
+    fails(&fn_body("return p.foo();"), 2, 10);
+    assert_eq!(
+        message(&fn_body("return p.foo();")),
+        "`foo` is not declared"
+    );
+    // A local is no function.
+    fails(&fn_body("let h = 1;\nreturn p.h();"), 3, 10);
+    let c = "const g: Nat = 1;\n";
+    fails(&format!("{c}{}", fn_body("return p.g();")), 3, 10);
+    assert_eq!(
+        message(&format!("{c}{}", fn_body("return p.g();"))),
+        "`g` is not a function"
+    );
+    fails(
+        &format!("const len: Nat = 1;\n{}", fn_body("return p.len();")),
+        3,
+        10,
+    );
+    fails(
+        &format!("module M() {{}}\n{}", fn_body("return p.M();")),
+        3,
+        10,
+    );
+    fails(
+        &format!("struct S {{}}\n{}", fn_body("return p.S();")),
+        3,
+        10,
+    );
+    fails(&fn_body("return p.Bool();"), 2, 10);
+    assert_eq!(
+        message(&fn_body("return p.Bool();")),
+        "`Bool` is not a function"
+    );
+    fails(&fn_body("return p.diagnostic();"), 2, 10);
+    assert_eq!(
+        message(&fn_body("return p.diagnostic();")),
+        "`diagnostic` is not supported yet; it comes in slice 2"
+    );
+    assert_eq!(
+        message(&fn_body("return p.read();")),
+        "`read` is not supported yet; it comes in slice 3"
+    );
+}
+
+#[test]
+fn s003_in_the_receiver_or_an_argument_of_a_receiver_call() {
+    for (body, line, col) in [
+        ("return q.len();", 2, 8),
+        ("return q.foo();", 2, 8),
+        ("return p.foo(q);", 2, 10),
+        ("return p.len(q);", 2, 14),
+        ("return p.len().foo();", 2, 16),
+    ] {
+        assert_eq!(errors(&fn_body(body))[0], (S003, line, col), "{body}");
+    }
+}
+
+/// The call sites of the call nodes and the method nodes in the first item, in pre-order.
+fn call_sites(r: &Resolved) -> Vec<(Pos, usize)> {
+    fn expr(r: &Resolved, e: &Expr, out: &mut Vec<(Pos, usize)>) {
+        match e {
+            Expr::Call {
+                pos,
+                id,
+                callee,
+                args,
+            } => {
+                out.push((*pos, r.site(*id).unwrap()));
+                expr(r, callee, out);
+                for a in args {
+                    expr(r, a, out);
+                }
+            }
+            Expr::Method {
+                pos,
+                id,
+                recv,
+                args,
+                ..
+            } => {
+                out.push((*pos, r.site(*id).unwrap()));
+                expr(r, recv, out);
+                for a in args {
+                    expr(r, a, out);
+                }
+            }
+            Expr::Index { base, args, .. } => {
+                expr(r, base, out);
+                for a in args {
+                    expr(r, a, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    let (Item::Fn { body, .. } | Item::Module { body, .. }) = &r.ast()[0] else {
+        panic!("not a body");
+    };
+    for stmt in body {
+        match stmt {
+            Stmt::Local { value, .. } | Stmt::Expr { value, .. } => expr(r, value, &mut out),
+            Stmt::Ret { value: Some(v), .. } => expr(r, v, &mut out),
+            _ => {}
+        }
+    }
+    out
+}
+
+fn sites(src: &str) -> Vec<usize> {
+    call_sites(&ok(src)).iter().map(|&(_, k)| k).collect()
+}
+
+#[test]
+fn the_call_sites_of_a_body_count_in_pre_order_from_zero() {
+    // A node comes before its callee, its receiver, and its arguments.
+    assert_eq!(
+        sites(&fn_body("let a = len(p);\nreturn p.len(len(p));")),
+        [0, 1, 2]
+    );
+    assert_eq!(sites(&fn_body("return len(p).len();")), [0, 1]);
+    // The type of a parameter comes before the body, so its calls do not shift the sites.
+    assert_eq!(
+        sites("fn f(x: UInt[len([1])]) -> Bool {\nreturn x.f(len(x));\n}"),
+        [0, 1]
+    );
+    assert_eq!(sites(&fn_body("return UInt[8](p)(p);")), [0, 1]);
+    // A call outside the body does not shift them, and each body starts at 0.
+    assert_eq!(
+        sites("module M() {\nlet a = len([1]);\n}\nfn g() -> Nat { return len([1]); }"),
+        [0]
+    );
+}
+
+#[test]
+fn the_call_sites_of_an_expression_count_from_zero() {
+    let r = run_expr("const A: Nat = 1;", "len([A]).len()").unwrap();
+    let Expr::Method { id, recv, .. } = r.expr() else {
+        panic!("not a method");
+    };
+    let Expr::Call { id: inner, .. } = &**recv else {
+        panic!("not a call");
+    };
+    assert_eq!((r.site(*id), r.site(*inner)), (Some(0), Some(1)));
+}
