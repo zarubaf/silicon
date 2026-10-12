@@ -35,8 +35,14 @@ The resolver does not look up the name after a `.`. The selection of a field or 
 later check. A selector `.N` holds a number, so it has no name. The container forms of slice 2,
 `()`, tuples, arrays, and the selector, have no declaration. The walk resolves their parts.
 
-A receiver call and a `mut` parameter are syntax of phase 4 of slice 2. The resolver does not
-resolve them yet: each gets `S004` at its start, and the walk continues with a placeholder.
+The name `m` of a receiver call `x.m(args)` resolves in the item scope, then in the prelude.
+It never resolves to a local (section 5.6 of the front-end spec). It names a function, else
+`S003` at `m`. A parameter keeps its mode: none, `comptime`, or `mut`.
+
+Each call node and each receiver-call node gets a call site `k`. The sites of an item body count
+from 0 in pre-order (section 7.3). A call node comes before its callee, its receiver, and its
+arguments. The walk visits the children in source order. A call outside a body also gets a
+site, but it runs on static values only, so its site never names hardware.
 
 A position that needs a fixed kind gets a name of that kind, else `S003`:
 
@@ -57,14 +63,17 @@ its declaration, so each lookup takes logarithmic time.
 -/
 namespace Silicon.Source.Resolve
 
-/-! The prelude types of slice 1, and `Unit` and `Type` of slice 2. -/
+/-! The prelude types of slice 1, and `Unit`, `Type`, `String`, and `List` of slice 2. -/
 inductive PrimType where
-  | bool | uint | sint | nat | int | unit | type
+  | bool | uint | sint | nat | int | unit | type | string | list
   deriving Repr, DecidableEq, BEq, Inhabited
 
-/-! The prelude functions of slice 1, and `len` and `data_bits` of slice 2. -/
+/-!
+The prelude functions of slice 1, and `len`, `data_bits`, `list`, `push`, `pop`, and `str` of
+slice 2.
+-/
 inductive PrimFn where
-  | resize | reinterpret | staticAssert | error | len | dataBits
+  | resize | reinterpret | staticAssert | error | len | dataBits | list | push | pop | str
   deriving Repr, DecidableEq, BEq, Inhabited
 
 /-!
@@ -83,21 +92,23 @@ inductive Ref where
 The prelude. It holds the scalar types of section 12.1 and the functions `resize`,
 `reinterpret`, `static_assert`, and `error` of slice 1. It also holds `Unit` and `len`, the
 names of the containers of slice 2, and `Type` and `data_bits`, the names of the types as values.
+The names of the strings and the lists are `String`, `List`, `list`, `push`, `pop`, and `str`.
 `true` and `false` are keywords, and `T(n)` is syntax, so they need no name.
 -/
 def prelude : List (String × Ref) :=
   [("Bool", .type .bool), ("UInt", .type .uint), ("SInt", .type .sint), ("Nat", .type .nat),
    ("Int", .type .int), ("Unit", .type .unit), ("Type", .type .type), ("resize", .fn .resize),
    ("reinterpret", .fn .reinterpret), ("static_assert", .fn .staticAssert),
-   ("error", .fn .error), ("len", .fn .len), ("data_bits", .fn .dataBits)]
+   ("error", .fn .error), ("len", .fn .len), ("data_bits", .fn .dataBits),
+   ("String", .type .string), ("List", .type .list), ("list", .fn .list), ("push", .fn .push),
+   ("pop", .fn .pop), ("str", .fn .str)]
 
 /-!
 The prelude names of later slices, with their slice. A use of one is `S003`, and the message
 names the slice.
 -/
 def laterPrelude : List (String × Nat) :=
-  [("String", 2), ("List", 2), ("list", 2), ("push", 2), ("pop", 2), ("str", 2),
-   ("diagnostic", 2),
+  [("diagnostic", 2),
    ("Reg", 3), ("Wire", 3), ("Mem", 3), ("Input", 3), ("Instance", 3), ("Domain", 3),
    ("read", 3), ("FieldInfo", 4), ("TypeInfo", 4), ("PortKey", 4), ("PortInfo", 4)]
 
@@ -110,8 +121,9 @@ structure Binder where
 /-!
 The resolved expression and type expression. They are those of `Source.Syntax` with a `Ref` at
 each name, so they are mutually recursive too. The container forms keep the shape of the parsed
-forms. A type name refers to a prelude type, a `struct` item, a `type` item, or a local. A local
-holds a value of type `Type`, which `Elab` checks.
+forms. A `call` and a `method` hold their call site. The `fn` of a `method` is a `fn` item or a
+prelude function. A type name refers to a prelude type, a `struct` item, a `type` item, or a
+local. A local holds a value of type `Type`, which `Elab` checks.
 -/
 mutual
   inductive Expr where
@@ -122,7 +134,7 @@ mutual
     | unary (pos : Pos) (op : UnOp) (arg : Expr)
     | binary (pos : Pos) (op : BinOp) (lhs rhs : Expr)
     | cond (pos : Pos) (cond yes no : Expr)
-    | call (pos : Pos) (callee : Expr) (args : List Expr)
+    | call (pos : Pos) (callee : Expr) (args : List Expr) (site : Nat)
     | index (pos : Pos) (base : Expr) (args : List Expr)
     | field (pos : Pos) (base : Expr) (field : Ident)
     | unit (pos : Pos)
@@ -130,6 +142,7 @@ mutual
     | array (pos : Pos) (elems : List Expr)
     | select (pos : Pos) (base : Expr) (litPos : Pos) (index : Nat)
     | arrayType (pos : Pos) (elem : TypeExpr) (len : Expr)
+    | method (pos : Pos) (recv : Expr) (name : Ident) (fn : Ref) (args : List Expr) (site : Nat)
 
   inductive TypeExpr where
     | name (pos : Pos) (name : String) (ref : Ref)
@@ -164,7 +177,7 @@ inductive Stmt where
 
 structure Param where
   pos : Pos
-  comptime : Bool
+  mode : ParamMode
   name : Binder
   ty : TypeExpr
   deriving Repr, BEq, Inhabited
@@ -192,7 +205,7 @@ inductive Item where
 def Expr.pos : Expr → Pos
   | .num p _ | .bool p _ | .str p _ | .name p .. | .unary p .. | .binary p ..
   | .cond p .. | .call p .. | .index p .. | .field p .. | .unit p | .tuple p ..
-  | .array p .. | .select p .. | .arrayType p .. => p
+  | .array p .. | .select p .. | .arrayType p .. | .method p .. => p
 
 def TypeExpr.pos : TypeExpr → Pos
   | .name p .. | .index p .. | .unit p | .tuple p .. | .array p .. => p
@@ -219,18 +232,28 @@ structure Binding where
 /-!
 The state of the walk. `env` maps each visible name to its innermost declaration. `scope` is the
 number of the current scope, and `scopes` the next free scope number. `locals` is the next local
-number of the current item. `dup` holds the first `S002`, and `unknown` the first `S003`.
+number of the current item, and `sites` its next call site. `dup` holds the first `S002`, and
+`unknown` the first `S003`.
 -/
 structure St where
   env : Std.TreeMap String Binding compare
   scope : Nat
   scopes : Nat
   locals : Nat
+  sites : Nat
   dup : Option Error
   unknown : Option Error
 
-/-! The context of the walk is the parsed items, for the kind of an item. -/
-abbrev M := ReaderT (Array Source.Item) (StateM St)
+/-!
+The context of the walk holds the parsed items, for the kind of an item. It also holds the item
+scope, which maps each item name to its index. A receiver call looks up its name there, past
+each local.
+-/
+structure File where
+  items : Array Source.Item
+  names : Std.TreeMap String Nat compare
+
+abbrev M := ReaderT File (StateM St)
 
 def recordDup (e : Error) : M Unit := modify fun s => { s with dup := earlier s.dup e }
 
@@ -260,6 +283,13 @@ def inScope (act : M α) : M α := do
   modify fun t => { t with env := s.env, scope := s.scope }
   return r
 
+/-! `S003` at `pos` for the name `n` that is neither declared nor in the prelude. -/
+def missing (pos : Pos) (n : String) : M Unit :=
+  let msg := match laterPrelude.lookup n with
+    | some k => s!"`{n}` is not supported yet; it comes in slice {k}"
+    | none => s!"`{n}` is not declared"
+  recordUnknown ⟨.S003, pos, msg⟩
+
 /-!
 The declaration of the name `n` at `pos`, or `S003`. After an error, the walk continues with a
 placeholder, and `resolve` discards its result.
@@ -270,14 +300,9 @@ def lookup (pos : Pos) (n : String) : M (Option Ref) := do
   | none =>
     match prelude.lookup n with
     | some r => return some r
-    | none =>
-      let msg := match laterPrelude.lookup n with
-        | some k => s!"`{n}` is not supported yet; it comes in slice {k}"
-        | none => s!"`{n}` is not declared"
-      recordUnknown ⟨.S003, pos, msg⟩
-      return none
+    | none => missing pos n; return none
 
-def isModule (i : Nat) : M Bool := return (← read)[i]? matches some (.module ..)
+def isModule (i : Nat) : M Bool := return (← read).items[i]? matches some (.module ..)
 
 def wrongKind (pos : Pos) (n what : String) : M Unit :=
   recordUnknown ⟨.S003, pos, s!"`{n}` is not {what}"⟩
@@ -289,10 +314,27 @@ local. Only `Elab` knows whether a local holds a type.
 def isType : Ref → M Bool
   | .type _ | .local _ => return true
   | .item i => do
-    match (← read)[i]? with
+    match (← read).items[i]? with
     | some (.struct ..) | some (.alias ..) => return true
     | _ => return false
   | .fn _ => return false
+
+/-! The next call site of the current item body. -/
+def site : M Nat := modifyGet fun s => (s.sites, { s with sites := s.sites + 1 })
+
+/-!
+The function `m` of a receiver call: a `fn` item of the item scope, else a prelude function. A
+local does not hide it. Another name is `S003` at `m`.
+-/
+def method (m : Ident) : M Ref := do
+  let notFn : M Ref := do wrongKind m.pos m.name "a function"; return default
+  match (← read).names.get? m.name with
+  | some i => if (← read).items[i]? matches some (.fn ..) then return .item i else notFn
+  | none =>
+    match prelude.lookup m.name with
+    | some (.fn f) => return .fn f
+    | some _ => notFn
+    | none => missing m.pos m.name; return default
 
 mutual
   def expr : Source.Expr → M Expr
@@ -307,7 +349,9 @@ mutual
     | .unary p op a => return .unary p op (← expr a)
     | .binary p op l r => return .binary p op (← expr l) (← expr r)
     | .cond p c y n => return .cond p (← expr c) (← expr y) (← expr n)
-    | .call p f xs => return .call p (← expr f) (← xs.mapM expr)
+    | .call p f xs => do
+      let k ← site
+      return .call p (← expr f) (← xs.mapM expr) k
     | .index p b xs => return .index p (← expr b) (← xs.mapM expr)
     | .field p b f => return .field p (← expr b) f
     | .unit p => return .unit p
@@ -315,9 +359,11 @@ mutual
     | .array p xs => return .array p (← xs.mapM expr)
     | .select p b l k => return .select p (← expr b) l k
     | .arrayType p t n => return .arrayType p (← typeExpr t) (← expr n)
-    | .method p .. => do
-      recordUnknown ⟨.S004, p, "a receiver call is not supported yet"⟩
-      return .num p 0
+    | .method p r m xs => do
+      let k ← site
+      let r ← expr r
+      let f ← method m
+      return .method p r m f (← xs.mapM expr) k
 
   def typeExpr : Source.TypeExpr → M TypeExpr
     | .name p n => do
@@ -383,9 +429,8 @@ mutual
 end
 
 def param (p : Source.Param) : M Param := do
-  if p.mode == .mut then recordUnknown ⟨.S004, p.pos, "a `mut` formal is not supported yet"⟩
   let ty ← typeExpr p.ty
-  return ⟨p.pos, p.mode == .comptime, ← declare p.name, ty⟩
+  return ⟨p.pos, p.mode, ← declare p.name, ty⟩
 
 /-!
 The fields of a struct. A field name is not a local, so the fields have their own table of
@@ -406,12 +451,17 @@ def body (act : M α) : M α := do
   modify fun s => { s with locals := 0 }
   inScope act
 
+/-! The statements of an item body. Their call sites count from 0. -/
+def bodyStmts (ss : List Source.Stmt) : M (List Stmt) := do
+  modify fun s => { s with sites := 0 }
+  stmts ss
+
 def item : Source.Item → M Item
   | .const p n ty v => return .const p n (← typeExpr ty) (← expr v)
   | .fn p c n ps r b => body do
     let ps ← ps.mapM param
     let r ← typeExpr r
-    return .fn p c n ps r (← stmts b)
+    return .fn p c n ps r (← bodyStmts b)
   | .module p n ps ds b => body do
     -- The implicit `clock` has no token, so it comes before the parameters.
     let clock ← if ds.isNone then some <$> declare ⟨p, "clock"⟩ else pure none
@@ -419,7 +469,7 @@ def item : Source.Item → M Item
     let ds ← match clock with
       | some c => pure [c]
       | none => (ds.getD []).mapM declare
-    return .module p n ps ds (← stmts b)
+    return .module p n ps ds (← bodyStmts b)
   | .struct p n ps fs => body do
     let ps ← ps.mapM param
     return .struct p n ps (← fields fs)
@@ -435,7 +485,8 @@ def inFile (items : List Source.Item) (act : M α) : Except Error α :=
       bind (itemName it) (.item i)
     modify fun s => { s with scopes := 1 }
     act
-  let (out, s) := (walk.run items.toArray).run ⟨{}, 0, 0, 0, none, none⟩
+  let names := items.zipIdx.foldl (fun m (it, i) => m.insert (itemName it).name i) {}
+  let (out, s) := (walk.run ⟨items.toArray, names⟩).run ⟨{}, 0, 0, 0, 0, none, none⟩
   match s.dup, s.unknown with
   | some e, _ => .error e
   | none, some e => .error e

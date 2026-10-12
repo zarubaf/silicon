@@ -57,10 +57,8 @@ a resource. A `let` alias of a resource and a domain name are for the stage rule
 A call through a local or a `const` has no known arity. `Elab` checks it with `S010`. The type of
 a `type` item and of a local is known only in `Elab`, so `Elab` checks its constructor.
 
-`S008` cannot occur in slice 1, so this check has no code for it. The parser rejects a `mut`
-formal with `S004`, so no `mut` actual exists. No expression mutates a root. An assignment is a
-statement, also with an index or a selector `.N` in its place. The containers have no `push`,
-no `pop`, and no receiver call. Thus no window of section 9.1 holds a mutation.
+TODO(#179): the receiver binding, the arity of a receiver call, and `S008` for `mut` actuals
+come in the next step of phase 4. Until then, the walk visits a receiver call without a binding.
 
 The other rules of the containers need static values, so they are for `Elab` (`S010`, `S011`,
 and `S013`). Among them are an index with two or more arguments, `<` on containers, and `==` on
@@ -99,7 +97,7 @@ inductive Sig where
 
 def sig : Resolve.Item → Sig
   | .const .. => .const
-  | .fn _ c _ ps _ _ => .fn (ps.map (c || ·.comptime)).toArray
+  | .fn _ c _ ps _ _ => .fn (ps.map (c || ·.mode == .comptime)).toArray
   | .module _ _ ps _ _ => .module ps.length
   | .struct _ _ ps fs => .struct ps.length fs.length
   | .alias .. => .alias
@@ -136,18 +134,19 @@ def arity (pos : Pos) (what : String) (want got : Nat) : M Unit :=
   else report .S007 pos s!"{what} takes {want} argument(s), but it has {got}"
 
 def typeArity : PrimType → Nat
-  | .uint | .sint => 1
-  | .bool | .nat | .int | .unit | .type => 0
+  | .uint | .sint | .list => 1
+  | .bool | .nat | .int | .unit | .type | .string => 0
 
 def fnArity : PrimFn → Nat
   | .resize | .reinterpret | .staticAssert => 2
-  | .error | .len | .dataBits => 1
+  | .push => 2
+  | .error | .len | .dataBits | .list | .pop | .str => 1
 
 /-! True for each static argument of a prelude function, by its index. -/
 def fnStatic : PrimFn → Nat → Bool
-  | .resize, k | .reinterpret, k => k == 0
+  | .resize, k | .reinterpret, k | .list, k => k == 0
   | .staticAssert, _ | .error, _ => true
-  | .len, _ | .dataBits, _ => false
+  | .len, _ | .dataBits, _ | .push, _ | .pop, _ | .str, _ => false
 
 /-!
 The rule of a constructor call `T(...)`. A `convert` type takes no argument or one static
@@ -242,7 +241,7 @@ mutual
       let _ ← visit static false y
       let _ ← visit static false n
       return none
-    | .call p f xs => do
+    | .call p f xs _ => do
       let h ← visit true false f
       let st ← call p f h xs.length
       let mut k := 0
@@ -256,6 +255,9 @@ mutual
       for x in xs do let _ ← visit true false x
       return h.map complete
     | .field _ b _ | .select _ b .. => do let _ ← visit static false b; return none
+    | .method _ r _ _ xs _ => do
+      for x in r :: xs do let _ ← visit static false x
+      return none
     | .unit _ => return none
     | .tuple _ xs | .array _ xs => do
       for x in xs do let _ ← visit static false x
