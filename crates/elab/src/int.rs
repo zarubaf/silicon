@@ -110,6 +110,18 @@ impl Int {
         Int(&self.0 + &other.0)
     }
 
+    /// Adds `other` in place: the work is in the words of `other` and its carry, not in the
+    /// words of `self`.
+    pub fn add_assign(&mut self, other: &Int) {
+        self.0 += &other.0;
+    }
+
+    /// The 64-bit words of the magnitude, for the tests of the work of an addition.
+    #[cfg(test)]
+    pub(crate) fn words(&self) -> Vec<u64> {
+        self.0.magnitude().to_u64_digits()
+    }
+
     #[must_use]
     pub fn sub(&self, other: &Int) -> Int {
         Int(&self.0 - &other.0)
