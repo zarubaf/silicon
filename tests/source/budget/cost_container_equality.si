@@ -1,0 +1,13 @@
+// The cost of a static equality (section 5.4): it reads both operands in full, so it charges the
+// sum of the two recursive sizes. The fuel equal to the total of `cost` succeeds, and one unit
+// less gives `S015`.
+// FUEL 628
+// TOP M()
+module M() domains() {
+    let a = [(1, true), (2, false), (3, true), (4, false)];
+    let b = [(1, true), (2, false), (3, true), (4, false)];
+    comptime for i in 0..8 {
+        let same = a == b;
+        let other = a != b;
+    }
+}

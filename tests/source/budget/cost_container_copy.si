@@ -1,0 +1,15 @@
+// The cost of a copy (section 5.4): an argument, a return, and a binding of an existing value
+// each charge the recursive size of the container. The fuel equal to the total of `cost`
+// succeeds, and one unit less gives `S015`.
+// FUEL 917
+// TOP M()
+comptime fn pass(a: [(Nat, Bool); 4]) -> [(Nat, Bool); 4] {
+    return a;
+}
+module M() domains() {
+    let a = [(1, true), (2, false), (3, true), (4, false)];
+    comptime for i in 0..8 {
+        let b = pass(a);
+        let c = b;
+    }
+}
