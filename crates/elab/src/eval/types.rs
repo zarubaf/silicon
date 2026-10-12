@@ -213,7 +213,7 @@ impl Evaluator<'_> {
                 ev.in_item(i, ROOT, |ev| {
                     let frame = ev.store.frames.len().saturating_sub(1);
                     let t = ev.specialize(pos, name, i, params, fields, args);
-                    ev.store.links.retain(|(k, _), _| *k != frame);
+                    ev.store.unlink(frame);
                     t
                 })
             })
@@ -252,7 +252,7 @@ impl Evaluator<'_> {
         let frame = self.store.frames.len().saturating_sub(1);
         match (converted, o) {
             (None, Out::Ref(r)) => {
-                self.store.links.insert((frame, id), r.clone());
+                self.store.link(frame, id, r.clone());
                 Ok(Out::Ref(r))
             }
             (converted, o) => {
