@@ -6,7 +6,7 @@
 //! `S015`.
 
 use crate::names::sha16;
-use crate::tests::{cost, exact, out};
+use crate::tests::{cost, exact, out, type_work};
 use crate::tests_elab::{cost as top_cost, cost_fuel, order};
 use std::fmt::Write;
 
@@ -492,4 +492,55 @@ fn a_part_of_a_resource_is_not_a_target() {
         ),
         "S017 6:3"
     );
+}
+
+/// A tuple type or literal of `n` elements of `Int`.
+fn wide(n: usize, item: &str) -> String {
+    format!("({})", vec![item; n].join(", "))
+}
+
+/// The type work is the lookups of types, 1 plus the number of parts of each one. An id is a
+/// plain copy, so the tests below count the lookups and not the time.
+#[test]
+fn a_type_is_a_copy_of_an_id() {
+    fn copy<T: Copy>() {}
+    copy::<crate::value::TyId>();
+}
+
+/// An update `a.0 = 1` in a wide tuple does not walk the type of the tuple: 500 more updates
+/// make no lookup of a type.
+#[test]
+fn an_update_in_a_wide_tuple_builds_no_type() {
+    let work = |updates: usize| {
+        let src = body(&format!(
+            "let mut a = {}; {} return a.0;",
+            wide(400, "0"),
+            "a.0 = 1; ".repeat(updates)
+        ));
+        type_work(&src, "f()")
+    };
+    assert_eq!(work(550), work(50));
+}
+
+/// The nested doubling of an array whose element type is wide copies the element type as an
+/// id: each level looks up a constant number of types, and the width counts once.
+#[test]
+fn a_doubling_with_a_wide_element_type_builds_one_type_per_level() {
+    let work = |width: usize, levels: usize| {
+        let mut lets = String::new();
+        let mut last = "e".to_owned();
+        for k in 1..=levels {
+            writeln!(lets, "let a{k} = [{last}, {last}];").unwrap();
+            last = format!("a{k}");
+        }
+        let src = body(&format!(
+            "let e: [{}; 0] = []; {lets} return len({last});",
+            wide(width, "Int")
+        ));
+        type_work(&src, "f()")
+    };
+    let (narrow, wider) = (work(300, 6), work(300, 12));
+    assert!(wider - narrow <= 8 * 6, "{narrow} {wider}");
+    let (small, large) = (work(100, 8), work(700, 8));
+    assert!(large - small <= 4 * 600 + 64, "{small} {large}");
 }

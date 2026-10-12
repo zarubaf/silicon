@@ -5,15 +5,16 @@
 
 use crate::int::Int;
 use crate::ops::{int_text, str_text};
+use crate::value::Evaluated;
 use crate::{Budget, eval};
 use std::fmt::Write;
 
-/// The result of `eval`: the serialization, or the code and the position of the first error
-/// of any pass. The second value is the used fuel.
-fn run(src: &str, expr: &str, fuel: u64, depth: u64) -> (String, u64) {
+/// The value with its types and the used fuel, or the code and the position of the first
+/// error of any pass.
+fn evaluated(src: &str, expr: &str, fuel: u64, depth: u64) -> Result<(Evaluated, u64), String> {
     let depth_n = parse::DEFAULT_SYNTAX_DEPTH;
     let at = |code: &dyn std::fmt::Display, pos: parse::ast::Pos| {
-        (format!("{code} {}:{}", pos.line, pos.col), 0)
+        Err(format!("{code} {}:{}", pos.line, pos.col))
     };
     let parsed = parse::parse_with_depth(src, depth_n).unwrap();
     if let Some(e) = parsed.errors().first() {
@@ -44,8 +45,28 @@ fn run(src: &str, expr: &str, fuel: u64, depth: u64) -> (String, u64) {
         Err(typeck::Failed::Stack(e)) => panic!("{e}"),
     };
     match eval(&file, &e, Budget { fuel, depth }).unwrap() {
-        Ok((v, used)) => (v.serialize(), used),
+        Ok(done) => Ok(done),
         Err(e) => at(&e.code, e.pos),
+    }
+}
+
+/// The result of `eval`: the serialization, or the code and the position of the first error
+/// of any pass. The second value is the used fuel.
+fn run(src: &str, expr: &str, fuel: u64, depth: u64) -> (String, u64) {
+    match evaluated(src, expr, fuel, depth) {
+        Ok((v, used)) => (v.serialize(), used),
+        Err(error) => (error, 0),
+    }
+}
+
+/// The work of the table of types for `expr`: for each lookup of a type, 1 plus the number
+/// of its parts. A copy of a type costs none of it, so the work follows the types that the
+/// program builds, not the values that it copies.
+pub(crate) fn type_work(src: &str, expr: &str) -> u64 {
+    let budget = Budget::default();
+    match evaluated(src, expr, budget.fuel, budget.depth) {
+        Ok((done, _)) => done.types.work,
+        Err(error) => panic!("{error}"),
     }
 }
 
