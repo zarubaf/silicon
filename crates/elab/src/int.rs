@@ -7,6 +7,7 @@ use core_ir::Bits;
 use num_bigint::{BigInt, BigUint, Sign};
 use std::cmp::Ordering;
 use std::fmt;
+use std::hash::{Hash, Hasher};
 
 /// An integer of any size, as Lean `Int`.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -44,6 +45,11 @@ impl Int {
         } else {
             Int(unsigned)
         }
+    }
+
+    /// Feeds the value to `h`.
+    pub fn hash_into(&self, h: &mut impl Hasher) {
+        self.0.hash(h);
     }
 
     #[must_use]
