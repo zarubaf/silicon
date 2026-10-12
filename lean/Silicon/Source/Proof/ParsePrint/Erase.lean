@@ -25,12 +25,12 @@ a check here:
 - No string has a control character other than LF, CR, and tab: `printableChar`.
 - Each number is below 2^65536: `Expr.printable` at `num` and at `select`.
 
-One check has no clause in the spec yet: no tuple is empty, see `Expr.printable` at `tuple`.
-The printer writes an empty tuple as `()`, which is the unit value.
+One check has no clause in the spec yet: no tuple is empty, see `Expr.printable` and
+`TypeExpr.printable` at `tuple`. The printer writes an empty tuple as `()`, which is the unit
+value or the unit type.
 
-The proof covers the container expressions of slice 2: the unit value, a tuple, an array, and
-a selector `.N`. It does not cover the container types yet, so `TypeExpr.printable` excludes
-them.
+The proof covers the container forms of slice 2. These are the unit value, the unit type, a
+tuple, an array, an array type `[T; N]`, and a selector `.N`.
 -/
 namespace Silicon.Source
 
@@ -139,10 +139,18 @@ mutual
     | x :: xs => x.printable && Expr.printableAll xs
 end
 
-def TypeExpr.printable : TypeExpr → Bool
-  | .name _ n => validName n
-  | .index _ b xs => b.printable && !xs.isEmpty && Expr.printableAll xs
-  | .unit _ | .tuple .. | .array .. => false
+mutual
+  def TypeExpr.printable : TypeExpr → Bool
+    | .name _ n => validName n
+    | .index _ b xs => b.printable && !xs.isEmpty && Expr.printableAll xs
+    | .unit _ => true
+    | .tuple _ ts => !ts.isEmpty && TypeExpr.printableAll ts
+    | .array _ t n => t.printable && n.printable
+
+  def TypeExpr.printableAll : List TypeExpr → Bool
+    | [] => true
+    | t :: ts => t.printable && TypeExpr.printableAll ts
+end
 
 mutual
   /-- A statement in a body. `plain` holds in the body of a `fn` without `comptime`. -/
@@ -311,6 +319,10 @@ theorem Expr.printableAll_eq (xs : List Expr) :
     Expr.printableAll xs = xs.all Expr.printable := by
   induction xs <;> simp_all [Expr.printableAll]
 
+theorem TypeExpr.printableAll_eq (ts : List TypeExpr) :
+    TypeExpr.printableAll ts = ts.all TypeExpr.printable := by
+  induction ts <;> simp_all [TypeExpr.printableAll]
+
 theorem Stmt.printableAll_eq (plain : Bool) (ss : List Stmt) :
     Stmt.printableAll plain ss = ss.all (Stmt.printable plain) := by
   induction ss <;> simp_all [Stmt.printableAll]
@@ -332,7 +344,12 @@ theorem Stmt.printableAll_eq (plain : Bool) (ss : List Stmt) :
   | _ => simp_all [Expr.erase, Expr.printable]
 
 @[simp] theorem TypeExpr.printable_erase (t : TypeExpr) : t.erase.printable = t.printable := by
-  induction t using TypeExpr.erase.induct <;>
+  induction t using TypeExpr.erase.induct with
+  | case4 _ ts ih =>
+    simp only [TypeExpr.erase, TypeExpr.printable, TypeExpr.printableAll_eq, List.all_map,
+      Function.comp_def, List.isEmpty_map]
+    rw [all_congr_mem ih]
+  | _ =>
     simp_all [TypeExpr.erase, TypeExpr.printable, Expr.printableAll_eq, List.all_map,
       Function.comp_def]
 

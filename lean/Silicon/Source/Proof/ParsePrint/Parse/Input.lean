@@ -245,6 +245,25 @@ theorem Expr.trans (s : Bool) (e : Expr) : ∀ c, Trans s (e.toks c) := by
     intro d rest
     simp [Expr.toks, scan, OpenK, CloseK]
 
+theorem TypeExpr.trans (s : Bool) (t : TypeExpr) : Trans s t.toks := by
+  induction t using TypeExpr.erase.induct with
+  | case2 p b xs ihb =>
+    have ha := Inner.argToks (s := s) (xss := xs.map (Expr.toks 0))
+      (by simpa using fun x _ => Expr.trans s x 0)
+    intro d rest
+    simp [TypeExpr.toks, scan, OpenK, CloseK, ihb d, ha d]
+  | case4 p ts ih =>
+    have ha := Inner.argToks (xss := ts.map TypeExpr.toks) (by simpa using ih)
+    rw [TypeExpr.toks]
+    split
+    · simpa using Trans.paren (ha.append Inner.comma)
+    · simpa using Trans.paren ha
+  | case5 p t n iht =>
+    intro d rest
+    simp [TypeExpr.toks, scan, OpenK, CloseK, iht (d + 1), Expr.trans s n 0 (d + 1)]
+  | _ =>
+    intro d rest
+    simp [TypeExpr.toks, scan, OpenK, CloseK]
 
 /-! The arguments of a call or an index are balanced. -/
 theorem Bal.args (xs : List Expr) : Bal (argToks (xs.map (Expr.toks 0))) :=

@@ -46,12 +46,6 @@ theorem Runs.map {α β : Type} {m : P α} {g : α → β} {ctx : Ctx} {i j : Na
 
 /-! ## Parameters -/
 
-theorem argToks_single (a : List Kind) : argToks [a] = a := by simp [Print.argToks]
-
-theorem argToks_cons_cons (a b : List Kind) (l : List (List Kind)) :
-    argToks (a :: b :: l) = a ++ .symbol "," :: argToks (b :: l) := by
-  simp [Print.argToks, List.intercalate_cons_cons]
-
 theorem Runs.param (q : Param) (static : Bool) (hp : q.printable static = true) (ctx : Ctx)
     (i f : Nat) (u : Kind) (R : List Kind) (hw : Win ctx.input i (q.toks ++ u :: R))
     (hu : u ≠ .symbol "[" ∧ u ≠ .symbol "(" ∧ u ≠ .symbol "::") (hf : 4 * q.ty.toks.length ≤ f)
