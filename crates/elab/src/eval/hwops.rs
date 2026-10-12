@@ -12,7 +12,8 @@ use crate::Code;
 use crate::hw::{HwId, Op, Val};
 use crate::int::unsigned_size;
 use crate::ops::{self, MAX_WIDTH, binop_text, int_text, unop_text};
-use crate::value::{Ty, TyId, Value, int_size};
+use crate::types::{Ty, TyId};
+use crate::value::{Value, int_size};
 use parse::ast::{BinOp, Pos, UnOp};
 use resolve::Prelude;
 

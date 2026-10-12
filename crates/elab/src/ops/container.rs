@@ -8,7 +8,8 @@
 use super::{Fault, Fuel, finite, fits, int_text, type_error};
 use crate::Code;
 use crate::int::Int;
-use crate::value::{Ty, TyId, Types, Value, int_size, width_size};
+use crate::types::{Ty, TyId, Types};
+use crate::value::{Value, int_size, width_size};
 use parse::ast::BinOp;
 use std::cmp::Ordering;
 

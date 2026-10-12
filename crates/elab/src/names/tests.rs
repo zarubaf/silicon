@@ -5,7 +5,7 @@
 //! encoded name matches the core name pattern and is not a core keyword.
 
 use super::*;
-use crate::value::{Ty, Types};
+use crate::types::{Ty, Types};
 use proptest::prelude::*;
 
 const KEYWORDS: [&str; 44] = [

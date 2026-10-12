@@ -18,7 +18,7 @@ use crate::eval::PortDecl;
 use crate::int::Int;
 use crate::layout;
 use crate::names::{Field, Name, Role, encode};
-use crate::value::Ty;
+use crate::types::Ty;
 use core_ir::Bits;
 use core_ir::ast::{Design as CDesign, Dir, Item, Ty as CTy};
 use core_ir::vectors::{input_tokens, output_line};

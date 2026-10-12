@@ -695,7 +695,7 @@ fn wide(n: usize, item: &str) -> String {
 #[test]
 fn a_type_is_a_copy_of_an_id() {
     fn copy<T: Copy>() {}
-    copy::<crate::value::TyId>();
+    copy::<crate::types::TyId>();
 }
 
 /// An update `a.0 = 1` in a wide tuple does not walk the type of the tuple: 500 more updates

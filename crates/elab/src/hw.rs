@@ -5,7 +5,8 @@
 //! node holds the indices of its operands.
 
 use crate::names::{PathId, Sym};
-use crate::value::{Ty, TyId, Types, Value};
+use crate::types::{Ty, TyId, Types};
+use crate::value::Value;
 use parse::ast::{BinOp, Pos, UnOp};
 use resolve::DeclId;
 
