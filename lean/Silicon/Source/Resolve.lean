@@ -3,8 +3,9 @@ import Std.Data.TreeMap
 import Silicon.Source.Syntax
 
 /-!
-The resolver of slice 1. It reads the AST of `Source.Parse`. It gives the resolved AST, in which
-each name points to its declaration. Else it gives the first `S002` or the first `S003`.
+The resolver of slice 1 and of the containers of slice 2. It reads the AST of `Source.Parse`. It
+gives the resolved AST, in which each name points to its declaration. Else it gives the first
+`S002` or the first `S003`.
 
 The scopes follow v0.1 section 2, with the change of the front-end spec: the language reserves
 no name. These rules settle the open points:
@@ -29,7 +30,8 @@ no name. These rules settle the open points:
   module. Thus a parameter `clock` is `S002` at the parameter. `domains()` declares no domain.
 
 The resolver does not look up the name after a `.`. The selection of a field or a port is a
-later check.
+later check. A selector `.N` holds a number, so it has no name. The container forms of slice 2,
+`()`, tuples, arrays, and the selector, have no declaration. The walk resolves their parts.
 
 A position that needs a fixed kind gets a name of that kind, else `S003`:
 
@@ -47,14 +49,14 @@ its declaration, so each lookup takes logarithmic time.
 -/
 namespace Silicon.Source.Resolve
 
-/-! The prelude types of slice 1. -/
+/-! The prelude types of slice 1, and `Unit` of slice 2. -/
 inductive PrimType where
-  | bool | uint | sint | nat | int
+  | bool | uint | sint | nat | int | unit
   deriving Repr, DecidableEq, BEq, Inhabited
 
-/-! The prelude functions of slice 1. -/
+/-! The prelude functions of slice 1, and `len` of slice 2. -/
 inductive PrimFn where
-  | resize | reinterpret | staticAssert | error
+  | resize | reinterpret | staticAssert | error | len
   deriving Repr, DecidableEq, BEq, Inhabited
 
 /-!
@@ -70,22 +72,24 @@ inductive Ref where
   deriving Repr, DecidableEq, BEq, Inhabited
 
 /-!
-The prelude of slice 1. It holds only the names of slice 1: the scalar types of section 12.1 and
-the functions `resize`, `reinterpret`, `static_assert`, and `error`. `true` and `false` are
-keywords, and `T(n)` is syntax, so they need no name.
+The prelude. It holds the scalar types of section 12.1 and the functions `resize`,
+`reinterpret`, `static_assert`, and `error` of slice 1. It also holds `Unit` and `len`, the
+names of the containers of slice 2. `true` and `false` are keywords, and `T(n)` is syntax, so
+they need no name.
 -/
 def prelude : List (String × Ref) :=
   [("Bool", .type .bool), ("UInt", .type .uint), ("SInt", .type .sint), ("Nat", .type .nat),
-   ("Int", .type .int), ("resize", .fn .resize), ("reinterpret", .fn .reinterpret),
-   ("static_assert", .fn .staticAssert), ("error", .fn .error)]
+   ("Int", .type .int), ("Unit", .type .unit), ("resize", .fn .resize),
+   ("reinterpret", .fn .reinterpret), ("static_assert", .fn .staticAssert),
+   ("error", .fn .error), ("len", .fn .len)]
 
 /-!
 The prelude names of later slices, with their slice. A use of one is `S003`, and the message
 names the slice.
 -/
 def laterPrelude : List (String × Nat) :=
-  [("String", 2), ("Type", 2), ("Unit", 2), ("List", 2), ("list", 2), ("push", 2), ("pop", 2),
-   ("len", 2), ("str", 2), ("data_bits", 2), ("diagnostic", 2),
+  [("String", 2), ("Type", 2), ("List", 2), ("list", 2), ("push", 2), ("pop", 2),
+   ("str", 2), ("data_bits", 2), ("diagnostic", 2),
    ("Reg", 3), ("Wire", 3), ("Mem", 3), ("Input", 3), ("Instance", 3), ("Domain", 3),
    ("read", 3), ("FieldInfo", 4), ("TypeInfo", 4), ("PortKey", 4), ("PortInfo", 4)]
 
@@ -95,7 +99,10 @@ structure Binder where
   id : Nat
   deriving Repr, DecidableEq, BEq, Inhabited
 
-/-! The resolved expression. It is the expression of `Source.Syntax` with a `Ref` at each name. -/
+/-!
+The resolved expression. It is the expression of `Source.Syntax` with a `Ref` at each name. The
+container forms keep the shape of the parsed forms.
+-/
 inductive Expr where
   | num (pos : Pos) (value : Nat)
   | bool (pos : Pos) (value : Bool)
@@ -107,12 +114,19 @@ inductive Expr where
   | call (pos : Pos) (callee : Expr) (args : List Expr)
   | index (pos : Pos) (base : Expr) (args : List Expr)
   | field (pos : Pos) (base : Expr) (field : Ident)
+  | unit (pos : Pos)
+  | tuple (pos : Pos) (elems : List Expr)
+  | array (pos : Pos) (elems : List Expr)
+  | select (pos : Pos) (base : Expr) (litPos : Pos) (index : Nat)
   deriving Repr, BEq, Inhabited
 
 /-! The resolved type expression. A type name is a prelude type. -/
 inductive TypeExpr where
   | name (pos : Pos) (name : String) (type : PrimType)
   | index (pos : Pos) (base : TypeExpr) (args : List Expr)
+  | unit (pos : Pos)
+  | tuple (pos : Pos) (elems : List TypeExpr)
+  | array (pos : Pos) (elem : TypeExpr) (len : Expr)
   deriving Repr, BEq, Inhabited
 
 /-! The resolved statement. Each declaration has a `Binder`. An `inst` has its module item. -/
@@ -154,10 +168,11 @@ inductive Item where
 /-! The position of the first token of a form. -/
 def Expr.pos : Expr → Pos
   | .num p _ | .bool p _ | .str p _ | .name p .. | .unary p .. | .binary p ..
-  | .cond p .. | .call p .. | .index p .. | .field p .. => p
+  | .cond p .. | .call p .. | .index p .. | .field p .. | .unit p | .tuple p ..
+  | .array p .. | .select p .. => p
 
 def TypeExpr.pos : TypeExpr → Pos
-  | .name p .. | .index p .. => p
+  | .name p .. | .index p .. | .unit p | .tuple p .. | .array p .. => p
 
 def Stmt.pos : Stmt → Pos
   | .local p .. | .assign p .. | .connect p .. | .reg p .. | .wire p .. | .input p ..
@@ -181,7 +196,7 @@ structure Binding where
 /-!
 The state of the walk. `env` maps each visible name to its innermost declaration. `scope` is the
 number of the current scope, and `scopes` the next free scope number. `locals` is the next local
-number of the current item. `dup` holds the first `S002`, and `unknown` the first `S003` or `S004`.
+number of the current item. `dup` holds the first `S002`, and `unknown` the first `S003`.
 -/
 structure St where
   env : Std.TreeMap String Binding compare
@@ -244,13 +259,6 @@ def isModule (i : Nat) : M Bool := return (← read)[i]? matches some (.module .
 def wrongKind (pos : Pos) (n what : String) : M Unit :=
   recordUnknown ⟨.S003, pos, s!"`{n}` is not {what}"⟩
 
-/-!
-A container form of slice 2. The parser does not give one yet, so it gets `S004` and a
-placeholder.
--/
-def later (pos : Pos) : M Unit :=
-  recordUnknown ⟨.S004, pos, "containers are not in this phase"⟩
-
 def expr : Source.Expr → M Expr
   | .num p v => return .num p v
   | .bool p v => return .bool p v
@@ -266,7 +274,10 @@ def expr : Source.Expr → M Expr
   | .call p f xs => return .call p (← expr f) (← xs.mapM expr)
   | .index p b xs => return .index p (← expr b) (← xs.mapM expr)
   | .field p b f => return .field p (← expr b) f
-  | .unit p | .tuple p .. | .array p .. | .select p .. => do later p; return .num p 0
+  | .unit p => return .unit p
+  | .tuple p xs => return .tuple p (← xs.mapM expr)
+  | .array p xs => return .array p (← xs.mapM expr)
+  | .select p b l k => return .select p (← expr b) l k
 
 def typeExpr : Source.TypeExpr → M TypeExpr
   | .name p n => do
@@ -275,7 +286,9 @@ def typeExpr : Source.TypeExpr → M TypeExpr
     | some _ => wrongKind p n "a type"; return .name p n default
     | none => return .name p n default
   | .index p b xs => return .index p (← typeExpr b) (← xs.mapM expr)
-  | .unit p | .tuple p .. | .array p .. => do later p; return .name p "()" default
+  | .unit p => return .unit p
+  | .tuple p ts => return .tuple p (← ts.mapM typeExpr)
+  | .array p t n => return .array p (← typeExpr t) (← expr n)
 
 /-! The module item of an `instance`. -/
 def moduleRef (m : Ident) : M Nat := do
