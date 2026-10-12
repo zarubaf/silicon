@@ -514,14 +514,22 @@ impl Types {
     /// Lean `Meta.struct` computes them: the depth counts the static arguments too.
     #[must_use]
     pub fn struct_meta(&self, s: SpecId, fields: &[TyId]) -> (Meta, u64) {
-        let metas = Meta::sum(fields.iter().map(|f| self.meta(*f)));
-        let deepest = fields
+        (
+            Meta::sum(fields.iter().map(|f| self.meta(*f))),
+            self.struct_depth(s, fields),
+        )
+    }
+
+    /// The depth of the struct type of `s` from its field types `fields`: 1 more than the
+    /// deepest field type and static argument. It needs no metadata sum.
+    #[must_use]
+    pub fn struct_depth(&self, s: SpecId, fields: &[TyId]) -> u64 {
+        1 + fields
             .iter()
             .map(|f| f.depth)
             .chain(self.spec(s).args.iter().map(Value::depth))
             .max()
-            .unwrap_or(0);
-        (metas, 1 + deepest)
+            .unwrap_or(0)
     }
 
     /// Completes the specialization `s` with its field types and its metadata, and gives its
