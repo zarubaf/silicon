@@ -1,0 +1,49 @@
+// The elements of a literal, the arguments of a constructor, and the index of a read keep the
+// values that they read. Each selected part is the one before the mutation, so each port has
+// 1 bit.
+// TOP M()
+// CHECK: (input a (bits 1))
+// CHECK-NEXT: (input b (bits 1))
+// CHECK-NEXT: (input c (bits 1))
+// CHECK-NEXT: (input d (bits 1))
+// CHECK-NEXT: (input e (bits 1))
+struct P {
+    a: Nat,
+    b: Nat,
+}
+comptime fn bump(mut x: Nat) -> Nat {
+    x = x + 1;
+    return x;
+}
+comptime fn zero(mut ys: [Nat; 2]) -> Nat {
+    ys[0] = 7;
+    return 0;
+}
+comptime fn tuple() -> Nat {
+    let mut x: Nat = 1;
+    return (x, bump(x)).0;
+}
+comptime fn array() -> Nat {
+    let mut x: Nat = 1;
+    return [x, bump(x)][0];
+}
+comptime fn record() -> Nat {
+    let mut x: Nat = 1;
+    return P(x, bump(x)).a;
+}
+comptime fn index() -> Nat {
+    let mut xs: [Nat; 2] = [1, 2];
+    return xs[zero(xs)];
+}
+comptime fn list() -> Nat {
+    let mut xs: [Nat; 2] = [1, 2];
+    let t: ([Nat; 0], Nat, Nat) = ([], xs[0], zero(xs));
+    return t.1;
+}
+module M() domains() {
+    input a: UInt[tuple()];
+    input b: UInt[array()];
+    input c: UInt[record()];
+    input d: UInt[index()];
+    input e: UInt[list()];
+}

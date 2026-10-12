@@ -1,0 +1,31 @@
+// A result keeps the value that its expression read. With `bump` adding 1 to its `mut` formal,
+// `first(x, bump(x))` reads `x = 1` before `bump` runs, so the first port has 1 bit. A receiver
+// call and a nested call read alike: the second port has 1 bit and the third has 4 bits.
+// TOP M()
+// CHECK: (input a (bits 1))
+// CHECK-NEXT: (input b (bits 1))
+// CHECK-NEXT: (input c (bits 4))
+comptime fn bump(mut x: Nat) -> Nat {
+    x = x + 1;
+    return x;
+}
+comptime fn first(a: Nat, b: Nat) -> Nat {
+    return a;
+}
+comptime fn plain() -> Nat {
+    let mut x: Nat = 1;
+    return first(x, bump(x));
+}
+comptime fn receiver() -> Nat {
+    let mut x: Nat = 1;
+    return x.first(bump(x));
+}
+comptime fn nested() -> Nat {
+    let mut x: Nat = 1;
+    return first(x, first(bump(x), bump(x))) + x;
+}
+module M() domains() {
+    input a: UInt[plain()];
+    input b: UInt[receiver()];
+    input c: UInt[nested()];
+}
