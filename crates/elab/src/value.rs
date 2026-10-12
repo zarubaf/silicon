@@ -335,6 +335,8 @@ impl Value {
     pub fn serialize(&self, tys: &Types) -> String {
         let mut out = String::new();
         serial::write(tys, Item::Value(self), &mut out);
+        #[cfg(test)]
+        crate::counters::add(&crate::counters::SERIALIZED, out.len() as u64);
         out
     }
 
