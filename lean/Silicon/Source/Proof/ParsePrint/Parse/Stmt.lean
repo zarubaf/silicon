@@ -81,7 +81,7 @@ theorem Expr.headKind (e : Expr) : ∀ c, ∃ k, (e.toks c).head? = some k ∧ E
     · exact ⟨_, rfl, Or.inl (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl rfl))))))⟩
     · simp only [hl, Nat.lt_irrefl, ite_false] at h
       exact ⟨k, h, Or.inl hk⟩
-  induction e using Expr.erase.induct with
+  induction e using Expr.ind with
   | case5 p op a _ =>
     intro c; rw [Expr.toks_paren]; split
     · exact ⟨_, rfl, Or.inl (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl rfl))))))⟩
@@ -707,7 +707,7 @@ theorem Expr.toks_place {e : Expr} (h : e.place = true) (c : Nat) (hc : c ≤ 11
   Expr.toks_noparen (by rw [Expr.place_level h]; omega)
 
 theorem Expr.place_head (e : Expr) : e.place = true → ∃ n, (e.toks 0).head? = some (.ident n) := by
-  induction e using Expr.erase.induct with
+  induction e using Expr.ind with
   | case4 p n => intro _; exact ⟨n, by simp [Expr.toks, Expr.level, postfixLevel]⟩
   | case10 p b m ihb =>
     intro h
@@ -933,6 +933,7 @@ theorem Runs.stmt_of (s : Stmt) (hIH : ∀ x : Stmt, x.toks.length < s.toks.leng
   | ctFor p x lo hi b => exact Runs.stmt_ctFor p x lo hi b (hB b (by simp [Stmt.toks]; omega))
   | block p b => exact Runs.stmt_block p b (hB b (by simp [Stmt.toks]))
   | expr p v => exact Runs.stmt_expr p v
+  | alias => intro _ _ _ _ _ h; simp [Stmt.printable] at h
 
 theorem sgoals (n : Nat) : ∀ s : Stmt, s.toks.length < n → SGoal s := by
   induction n with

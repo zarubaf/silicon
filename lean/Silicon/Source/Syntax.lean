@@ -33,40 +33,49 @@ inductive BinOp where
   deriving Repr, DecidableEq, BEq, Inhabited
 
 /-!
-An expression. A type in an expression position, such as `UInt[8]`, is an `index`. A `tuple`
-holds at least one element: `()` is `unit`. A `select` is the selector `.N` of a tuple. Its
-`litPos` is the position of the number literal, for `S013`.
--/
-inductive Expr where
-  | num (pos : Pos) (value : Nat)
-  | bool (pos : Pos) (value : Bool)
-  | str (pos : Pos) (value : String)
-  | name (pos : Pos) (name : String)
-  | unary (pos : Pos) (op : UnOp) (arg : Expr)
-  | binary (pos : Pos) (op : BinOp) (lhs rhs : Expr)
-  | cond (pos : Pos) (cond yes no : Expr)
-  | call (pos : Pos) (callee : Expr) (args : List Expr)
-  | index (pos : Pos) (base : Expr) (args : List Expr)
-  | field (pos : Pos) (base : Expr) (field : Ident)
-  | unit (pos : Pos)
-  | tuple (pos : Pos) (elems : List Expr)
-  | array (pos : Pos) (elems : List Expr)
-  | select (pos : Pos) (base : Expr) (litPos : Pos) (index : Nat)
-  deriving Repr, BEq, Inhabited
+An expression and a type expression. The two are mutually recursive, because an array type
+`[T; N]` is also an expression (`arrayType`). Its element `T` is a type expression, and its
+length `N` is an expression.
 
-/-!
-A type expression: a type name, a type family with its static arguments, the unit type `()`, a
+A type in an expression position, such as `UInt[8]`, is an `index`. A `tuple` holds at least one
+element: `()` is `unit`. A `select` is the selector `.N` of a tuple. Its `litPos` is the position
+of the number literal, for `S013`.
+
+A type expression is a type name, a type family with its static arguments, the unit type `()`, a
 tuple type, or an array type `[T; N]`. A `tuple` holds at least one element type.
 -/
-inductive TypeExpr where
-  | name (pos : Pos) (name : String)
-  | index (pos : Pos) (base : TypeExpr) (args : List Expr)
-  | unit (pos : Pos)
-  | tuple (pos : Pos) (elems : List TypeExpr)
-  | array (pos : Pos) (elem : TypeExpr) (len : Expr)
-  deriving Repr, BEq, Inhabited
+mutual
+  inductive Expr where
+    | num (pos : Pos) (value : Nat)
+    | bool (pos : Pos) (value : Bool)
+    | str (pos : Pos) (value : String)
+    | name (pos : Pos) (name : String)
+    | unary (pos : Pos) (op : UnOp) (arg : Expr)
+    | binary (pos : Pos) (op : BinOp) (lhs rhs : Expr)
+    | cond (pos : Pos) (cond yes no : Expr)
+    | call (pos : Pos) (callee : Expr) (args : List Expr)
+    | index (pos : Pos) (base : Expr) (args : List Expr)
+    | field (pos : Pos) (base : Expr) (field : Ident)
+    | unit (pos : Pos)
+    | tuple (pos : Pos) (elems : List Expr)
+    | array (pos : Pos) (elems : List Expr)
+    | select (pos : Pos) (base : Expr) (litPos : Pos) (index : Nat)
+    | arrayType (pos : Pos) (elem : TypeExpr) (len : Expr)
 
-/-! A statement. A target of `assign` or `connect` is a `name` or a `field` expression. -/
+  inductive TypeExpr where
+    | name (pos : Pos) (name : String)
+    | index (pos : Pos) (base : TypeExpr) (args : List Expr)
+    | unit (pos : Pos)
+    | tuple (pos : Pos) (elems : List TypeExpr)
+    | array (pos : Pos) (elem : TypeExpr) (len : Expr)
+end
+
+deriving instance Repr, BEq, Inhabited for Expr, TypeExpr
+
+/-!
+A statement. A target of `assign` or `connect` is a `name` or a `field` expression. An `alias` is
+the statement `type N = T;`.
+-/
 inductive Stmt where
   | local (pos : Pos) (mutable : Bool) (name : Ident) (ty : Option TypeExpr) (value : Expr)
   | assign (pos : Pos) (target value : Expr)
@@ -81,9 +90,13 @@ inductive Stmt where
   | ctFor (pos : Pos) (var : Ident) (lo hi : Expr) (body : List Stmt)
   | block (pos : Pos) (body : List Stmt)
   | expr (pos : Pos) (value : Expr)
+  | alias (pos : Pos) (name : Ident) (ty : TypeExpr)
   deriving Repr, BEq, Inhabited
 
-/-! A parameter of a function or a module. A module parameter always has `comptime`. -/
+/-!
+A parameter of a function, a module, or a struct. A module parameter and a struct parameter always
+have `comptime`.
+-/
 structure Param where
   pos : Pos
   comptime : Bool
@@ -91,8 +104,15 @@ structure Param where
   ty : TypeExpr
   deriving Repr, BEq, Inhabited
 
+/-! A field of a struct: `name: ty`. -/
+structure StructField where
+  name : Ident
+  ty : TypeExpr
+  deriving Repr, BEq, Inhabited
+
 /-!
-A top-level item. The `domains` of a module are `none` without a `domains` clause, which
+A top-level item. A `struct` without parameters has an empty list of parameters. An `alias` is
+the item `type N = T;`. The `domains` of a module are `none` without a `domains` clause, which
 means the one default domain `clock`. An empty list means no domain: a combinational module.
 The list holds at most one name in slice 1.
 -/
@@ -102,6 +122,8 @@ inductive Item where
       (body : List Stmt)
   | module (pos : Pos) (name : Ident) (params : List Param) (domains : Option (List Ident))
       (body : List Stmt)
+  | struct (pos : Pos) (name : Ident) (params : List Param) (fields : List StructField)
+  | alias (pos : Pos) (name : Ident) (ty : TypeExpr)
   deriving Repr, BEq, Inhabited
 
 /-! The front-end error codes of the spec. The spec defines no `S009`. -/

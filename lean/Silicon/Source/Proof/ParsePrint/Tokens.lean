@@ -15,44 +15,47 @@ open Lex Print
 /-! The kinds of a list of arguments, with a `,` between two arguments. -/
 def Print.argToks (xs : List (List Kind)) : List Kind := List.intercalate [.symbol ","] xs
 
-/-! The kinds of `e.print ctx`. -/
-def Expr.toks (ctx : Nat) (e : Expr) : List Kind :=
-  let body := match e with
-    | .num _ v => [.number v]
-    | .bool _ v => [.keyword (boolean v)]
-    | .str _ v => [.string v]
-    | .name _ n => [.ident n]
-    | .unary _ op a => .symbol op.text :: a.toks unaryLevel
-    | .binary _ op l r =>
-      let lhs := if op.associative then op.level else op.level + 1
-      l.toks lhs ++ .symbol op.text :: r.toks (op.level + 1)
-    | .cond _ c y n =>
-      [.keyword "if", .symbol "("] ++ c.toks 0 ++ [.symbol ")", .symbol "{"] ++ y.toks 0
-        ++ [.symbol "}", .keyword "else", .symbol "{"] ++ n.toks 0 ++ [.symbol "}"]
-    | .call _ f xs =>
-      let callee :=
-        if f matches .field .. then .symbol "(" :: f.toks 0 ++ [.symbol ")"]
-        else f.toks postfixLevel
-      callee ++ .symbol "(" :: argToks (xs.map (Expr.toks 0)) ++ [.symbol ")"]
-    | .index _ b xs =>
-      b.toks postfixLevel ++ .symbol "[" :: argToks (xs.map (Expr.toks 0)) ++ [.symbol "]"]
-    | .field _ b f => b.toks postfixLevel ++ [.symbol ".", .ident f.name]
-    | .unit _ => [.symbol "(", .symbol ")"]
-    | .tuple _ xs =>
-      .symbol "(" :: argToks (xs.map (Expr.toks 0))
-        ++ (if xs.length == 1 then [.symbol ",", .symbol ")"] else [.symbol ")"])
-    | .array _ xs => .symbol "[" :: argToks (xs.map (Expr.toks 0)) ++ [.symbol "]"]
-    | .select _ b _ i => b.toks postfixLevel ++ [.symbol ".", .number i]
-  if e.level < ctx then .symbol "(" :: body ++ [.symbol ")"] else body
+mutual
+  /-- The kinds of `e.print ctx`. -/
+  def Expr.toks (ctx : Nat) (e : Expr) : List Kind :=
+    let body := match e with
+      | .num _ v => [.number v]
+      | .bool _ v => [.keyword (boolean v)]
+      | .str _ v => [.string v]
+      | .name _ n => [.ident n]
+      | .unary _ op a => .symbol op.text :: a.toks unaryLevel
+      | .binary _ op l r =>
+        let lhs := if op.associative then op.level else op.level + 1
+        l.toks lhs ++ .symbol op.text :: r.toks (op.level + 1)
+      | .cond _ c y n =>
+        [.keyword "if", .symbol "("] ++ c.toks 0 ++ [.symbol ")", .symbol "{"] ++ y.toks 0
+          ++ [.symbol "}", .keyword "else", .symbol "{"] ++ n.toks 0 ++ [.symbol "}"]
+      | .call _ f xs =>
+        let callee :=
+          if f matches .field .. then .symbol "(" :: f.toks 0 ++ [.symbol ")"]
+          else f.toks postfixLevel
+        callee ++ .symbol "(" :: argToks (xs.map (Expr.toks 0)) ++ [.symbol ")"]
+      | .index _ b xs =>
+        b.toks postfixLevel ++ .symbol "[" :: argToks (xs.map (Expr.toks 0)) ++ [.symbol "]"]
+      | .field _ b f => b.toks postfixLevel ++ [.symbol ".", .ident f.name]
+      | .unit _ => [.symbol "(", .symbol ")"]
+      | .tuple _ xs =>
+        .symbol "(" :: argToks (xs.map (Expr.toks 0))
+          ++ (if xs.length == 1 then [.symbol ",", .symbol ")"] else [.symbol ")"])
+      | .array _ xs => .symbol "[" :: argToks (xs.map (Expr.toks 0)) ++ [.symbol "]"]
+      | .select _ b _ i => b.toks postfixLevel ++ [.symbol ".", .number i]
+      | .arrayType _ t n => .symbol "[" :: t.toks ++ .symbol ";" :: n.toks 0 ++ [.symbol "]"]
+    if e.level < ctx then .symbol "(" :: body ++ [.symbol ")"] else body
 
-def TypeExpr.toks : TypeExpr → List Kind
-  | .name _ n => [.ident n]
-  | .index _ b xs => b.toks ++ .symbol "[" :: argToks (xs.map (Expr.toks 0)) ++ [.symbol "]"]
-  | .unit _ => [.symbol "(", .symbol ")"]
-  | .tuple _ ts =>
-    .symbol "(" :: argToks (ts.map TypeExpr.toks)
-      ++ (if ts.length == 1 then [.symbol ",", .symbol ")"] else [.symbol ")"])
-  | .array _ t n => .symbol "[" :: t.toks ++ .symbol ";" :: n.toks 0 ++ [.symbol "]"]
+  def TypeExpr.toks : TypeExpr → List Kind
+    | .name _ n => [.ident n]
+    | .index _ b xs => b.toks ++ .symbol "[" :: argToks (xs.map (Expr.toks 0)) ++ [.symbol "]"]
+    | .unit _ => [.symbol "(", .symbol ")"]
+    | .tuple _ ts =>
+      .symbol "(" :: argToks (ts.map TypeExpr.toks)
+        ++ (if ts.length == 1 then [.symbol ",", .symbol ")"] else [.symbol ")"])
+    | .array _ t n => .symbol "[" :: t.toks ++ .symbol ";" :: n.toks 0 ++ [.symbol "]"]
+end
 
 mutual
   /-- The kinds of `s.print d`, for each depth `d`. -/
@@ -86,6 +89,7 @@ mutual
         ++ .symbol ".." :: hi.toks 0 ++ Stmt.bodyToks b
     | .block _ b => Stmt.bodyToks b
     | .expr _ v => v.toks 0 ++ [.symbol ";"]
+    | .alias _ n ty => [.keyword "type", .ident n.name, .symbol "="] ++ ty.toks ++ [.symbol ";"]
 
   /-- The kinds of `Stmt.body d b`. An empty body prints as `{}`, which is two tokens. -/
   def Stmt.bodyToks (b : List Stmt) : List Kind :=
@@ -99,6 +103,9 @@ end
 def Param.toks (p : Param) : List Kind :=
   (if p.comptime then [.keyword "comptime"] else []) ++ [.ident p.name.name, .symbol ":"]
     ++ p.ty.toks
+
+def StructField.toks (f : StructField) : List Kind :=
+  [.ident f.name.name, .symbol ":"] ++ f.ty.toks ++ [.symbol ","]
 
 def Item.toks : Item → List Kind
   | .const _ n ty v =>
@@ -115,6 +122,12 @@ def Item.toks : Item → List Kind
           ++ [.symbol ")"]
     [.keyword "module", .ident n.name, .symbol "("] ++ argToks (ps.map Param.toks)
       ++ .symbol ")" :: domains ++ Stmt.bodyToks b
+  | .struct _ n ps fs =>
+    let params :=
+      if ps.isEmpty then [] else .symbol "(" :: argToks (ps.map Param.toks) ++ [.symbol ")"]
+    [.keyword "struct", .ident n.name] ++ params ++ .symbol "{" :: fs.flatMap StructField.toks
+      ++ [.symbol "}"]
+  | .alias _ n ty => [.keyword "type", .ident n.name, .symbol "="] ++ ty.toks ++ [.symbol ";"]
 
 /-! The kinds of `Print.print items`: the lexer gives these, then `eof`. -/
 def Print.toks (items : List Item) : List Kind := items.flatMap Item.toks

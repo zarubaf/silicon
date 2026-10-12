@@ -170,7 +170,8 @@ theorem head_append {s t : String} (h : ∃ x xs, s.toList = x :: xs ∧ exprSta
 
 theorem Expr.head (e : Expr) :
     e.printable = true → ∀ ctx, ∃ x xs, (e.print ctx).toList = x :: xs ∧ exprStart x = true := by
-  induction e using Expr.erase.induct with
+  induction e using Expr.ind with
+  | case15 => intro h; simp [Expr.printable] at h
   | case11 | case12 =>
     intro _; apply Expr.head_paren
     rw [Expr.print]
@@ -284,7 +285,8 @@ theorem Expr.lexes {D : Nat} (e : Expr) :
   have hcl : Lexes D .any ")".toList [.symbol ")"] := Lexes.glue (by decide)
   have hcs : Starts .sep ")".toList := Starts.lit (by decide)
   have hop : Lexes D .any "(".toList [.symbol "("] := Lexes.glue (by decide)
-  induction e using Expr.erase.induct with
+  induction e using Expr.ind with
+  | case15 => intro h; simp [Expr.printable] at h
   | case11 p =>
     intro _; apply Lexes.wrap
     rw [Expr.print, Expr.toks]
@@ -423,7 +425,7 @@ theorem TypeExpr.lexes {D : Nat} (t : TypeExpr) :
     t.printable = true → Lexes D .sep t.print.toList t.toks := by
   have ho : Lexes D .any "(".toList [.symbol "("] := Lexes.glue (by decide)
   have hb : Lexes D .any "[".toList [.symbol "["] := Lexes.glue (by decide)
-  induction t using TypeExpr.erase.induct with
+  induction t using TypeExpr.ind with
   | case3 p =>
     intro _
     rw [TypeExpr.print, TypeExpr.toks]
@@ -513,6 +515,7 @@ theorem Stmt.lexes {D : Nat} (plain : Bool) (s : Stmt) :
   have eq : Lexes D .any " = ".toList [.symbol "="] := Lexes.glue (by decide)
   have nl : Lexes D .any "\n".toList [] := Lexes.glue (by decide)
   induction s using Stmt.erase.induct with
+  | case15 => intro h; simp [Stmt.printable] at h
   | case1 p m n ty v =>
     intro h d
     simp only [Stmt.printable, Bool.and_eq_true] at h
@@ -702,6 +705,7 @@ theorem Item.lexes {D : Nat} (i : Item) (h : i.printable = true) :
     simp only [List.all_eq_true] at hp
     exact Lexes.args _ _ ps fun x hx => Param.lexes x (hp x hx)
   cases i with
+  | struct | alias => simp [Item.printable] at h
   | const p n ty v =>
     simp only [Item.printable, Bool.and_eq_true] at h
     rw [Item.print, Item.toks]

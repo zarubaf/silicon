@@ -319,6 +319,7 @@ theorem Runs.item (it : Item) (hp : it.printable = true) (ctx : Ctx) (hpl : ctx.
     Runs (item f) ctx i (i + it.toks.length) (fun r => r.erase = it.erase) := by
   unfold Parse.item
   cases it with
+  | struct | alias => simp [Item.printable] at hp
   | const p n ty v =>
     simp only [Item.printable, Bool.and_eq_true] at hp
     obtain ⟨⟨hn, hty⟩, hv⟩ := hp
@@ -379,7 +380,7 @@ theorem Item.headKind (it : Item) : ∃ k ks, it.toks = k :: ks ∧ k ≠ .eof :
     cases it with
     | fn p c => cases c <;> simp [Item.toks]
     | module => simp [Item.toks_module]
-    | const => simp [Item.toks]
+    | const | struct | alias => simp [Item.toks]
   obtain ⟨k, hk, hne⟩ := this
   obtain ⟨ks, hks⟩ := List.head?_eq_some_iff.1 hk
   exact ⟨k, ks, hks, hne⟩

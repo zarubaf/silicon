@@ -637,7 +637,8 @@ theorem Runs.postfix_paren (u : Expr) (hl : u.level < 11) (hpl : u.place = false
   exact Runs.idx (by omega) (hk n f' hn (by omega))
 
 theorem Runs.postfix (u : Expr) : PGoal u := by
-  induction u using Expr.erase.induct with
+  induction u using Expr.ind with
+  | case15 => intro hp; simp [Expr.printable] at hp
   | case11 p =>
     intro hp hIH ctx i f t R hw ht _ hf l Q hk
     unfold SufK at hk
@@ -731,7 +732,7 @@ theorem Runs.postfix (u : Expr) : PGoal u := by
       ⟨hIH x (by have := argToks_mem hx; omega), hp x hx⟩
     have hs : ctx.input.semi.getD i false = false := by
       simpa using hw.semi [] _ (t :: R) (by simp) (Bal.args xs)
-        (notMem_argToks (by decide) (by simpa using fun x _ => Expr.semi_notMem x 0))
+        (notMem_argToks (by decide) (by simpa using fun x hx => Expr.semi_notMem x (hp x hx) 0))
     have hargs := Runs.args (Or.inr rfl) (allowEmpty := true) (top := false) hE
       (fun _ => rfl) ctx (i + 1) f (t :: R) hw.tail (by omega) (by simp)
     refine Runs.postfix_base (T := (argToks (xs.map (Expr.toks 0))).length + 2)
@@ -994,7 +995,7 @@ theorem Runs.unary_post (u : Expr) (hl : u.level ≠ 10) : UGoal u := by
   exact ⟨this.1, by rw [this.2]; have := hn.2; omega⟩
 
 theorem Runs.unary (u : Expr) : UGoal u := by
-  induction u using Expr.erase.induct with
+  induction u using Expr.ind with
   | case5 p op a iha =>
     intro cu hcu hseed hp hIH ctx i f t R ops hw ht ht2 hf
     have hT : (Expr.unary p op a).toks cu = .symbol op.text :: a.toks 10 := by
@@ -1061,7 +1062,7 @@ theorem spine_spec (e : Expr) : ∀ c, 1 ≤ c → c ≤ 10 →
     (spine e c).2.1 ≤ 10 ∧
     (e.printable = true → (spine e c).1.printable = true ∧
       ∀ q ∈ (spine e c).2.2, q.2.2.printable = true) := by
-  induction e using Expr.erase.induct with
+  induction e using Expr.ind with
   | case6 p op l r ihl _ =>
     intro c hc1 hc
     by_cases hle : c ≤ op.level
@@ -1380,7 +1381,7 @@ theorem Expr.head_post_ne_if (e : Expr) (hl : e.level = 11) (c : Nat) :
 
 theorem Expr.toks_head_ne_if (e : Expr) : ∀ c, 1 ≤ c →
     (e.toks c).head? ≠ some (.keyword "if") := by
-  induction e using Expr.erase.induct with
+  induction e using Expr.ind with
   | case5 p op a _ =>
     intro c _; rw [Expr.toks_paren]; split
     · simp
@@ -1513,7 +1514,7 @@ def TGoal (ty : TypeExpr) : Prop :=
 
 /-! The first kind of a type is no closing bracket. -/
 theorem TypeExpr.toks_head (ty : TypeExpr) : ∃ k ks, ty.toks = k :: ks ∧ NotClose k := by
-  induction ty using TypeExpr.erase.induct with
+  induction ty using TypeExpr.ind with
   | case2 p b xs ihb =>
     obtain ⟨k, ks, h, hk⟩ := ihb
     exact ⟨k, ks ++ .symbol "[" :: argToks (xs.map (Expr.toks 0)) ++ [.symbol "]"],
@@ -1635,7 +1636,7 @@ theorem Runs.typeElems (trail : Bool) (ts : List TypeExpr) (hne : ts ≠ [])
       · have := hh r' hr'; omega
 
 theorem Runs.type (ty : TypeExpr) : TGoal ty := by
-  induction ty using TypeExpr.erase.induct with
+  induction ty using TypeExpr.ind with
   | case3 p =>
     intro _ ctx i f u R hw hu hf l Q hk
     simp only [TypeExpr.toks, List.length_cons, List.length_nil, List.cons_append,

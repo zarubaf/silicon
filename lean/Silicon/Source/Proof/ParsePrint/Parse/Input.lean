@@ -187,25 +187,31 @@ theorem BinOp.trans {s : Bool} (op : BinOp) : Trans s [.symbol op.text] :=
 theorem UnOp.trans {s : Bool} (op : UnOp) : Trans s [.symbol op.text] :=
   Trans.single (by cases op <;> decide)
 
-theorem Expr.trans (s : Bool) (e : Expr) : ∀ c, Trans s (e.toks c) := by
-  induction e using Expr.erase.induct with
-  | case5 p op a ih =>
+/-! The kinds of each expression and of each type expression have balanced brackets. -/
+private theorem trans_all (s : Bool) :
+    (∀ e : Expr, ∀ c, Trans s (e.toks c)) ∧ ∀ t : TypeExpr, Trans s t.toks := by
+  apply Expr.erase.mutual_induct
+  case case5 =>
+    intro p op a ih
     refine Expr.trans_paren _ ?_
     intro d rest
     have h1 := UnOp.trans (s := s) op d
     simp only [List.singleton_append] at h1
     simp [Expr.toks, h1, ih unaryLevel d]
-  | case6 p op l r ihl ihr =>
+  case case6 =>
+    intro p op l r ihl ihr
     refine Expr.trans_paren _ ?_
     intro d rest
     have h1 := BinOp.trans (s := s) op d
     simp only [List.singleton_append] at h1
     simp [Expr.toks, h1, ihl _ d, ihr _ d]
-  | case7 p c y n ihc ihy ihn =>
+  case case7 =>
+    intro p c y n ihc ihy ihn
     refine Expr.trans_paren _ ?_
     intro d rest
     simp [Expr.toks, scan, OpenK, CloseK, ihc _ (d + 1), ihy _ (d + 1), ihn _ (d + 1)]
-  | case8 p f xs ihf ih =>
+  case case8 =>
+    intro p f xs ihf ih
     refine Expr.trans_paren _ ?_
     have ha := Inner.argToks (xss := xs.map (Expr.toks 0)) (by simpa using fun x hx => ih x hx 0)
     intro d rest
@@ -214,16 +220,19 @@ theorem Expr.trans (s : Bool) (e : Expr) : ∀ c, Trans s (e.toks c) := by
     split
     · simp [scan, OpenK, CloseK, ihf _ (d + 1), ha d]
     · simp [scan, OpenK, CloseK, ihf _ d, ha d]
-  | case9 p b xs ihb ih =>
+  case case9 =>
+    intro p b xs ihb ih
     refine Expr.trans_paren _ ?_
     have ha := Inner.argToks (xss := xs.map (Expr.toks 0)) (by simpa using fun x hx => ih x hx 0)
     intro d rest
     simp [Expr.toks, scan, OpenK, CloseK, ihb _ d, ha d]
-  | case10 p b f ih =>
+  case case10 =>
+    intro p b f ih
     refine Expr.trans_paren _ ?_
     intro d rest
     simp [Expr.toks, scan, OpenK, CloseK, ih _ d]
-  | case12 p xs ih =>
+  case case12 =>
+    intro p xs ih
     refine Expr.trans_paren _ ?_
     have ha := Inner.argToks (xss := xs.map (Expr.toks 0)) (by simpa using fun x hx => ih x hx 0)
     rw [Expr.toks.eq_def]
@@ -231,45 +240,58 @@ theorem Expr.trans (s : Bool) (e : Expr) : ∀ c, Trans s (e.toks c) := by
     split
     · simpa using Trans.paren (ha.append Inner.comma)
     · simpa using Trans.paren ha
-  | case13 p xs ih =>
+  case case13 =>
+    intro p xs ih
     refine Expr.trans_paren _ ?_
     have ha := Inner.argToks (xss := xs.map (Expr.toks 0)) (by simpa using fun x hx => ih x hx 0)
     intro d rest
     simp [Expr.toks, scan, OpenK, CloseK, ha d]
-  | case14 p b q i ih =>
+  case case14 =>
+    intro p b q i ih
     refine Expr.trans_paren _ ?_
     intro d rest
     simp [Expr.toks, scan, OpenK, CloseK, ih _ d]
-  | _ =>
+  case case15 =>
+    intro p t n iht ihn
     refine Expr.trans_paren _ ?_
     intro d rest
-    simp [Expr.toks, scan, OpenK, CloseK]
-
-theorem TypeExpr.trans (s : Bool) (t : TypeExpr) : Trans s t.toks := by
-  induction t using TypeExpr.erase.induct with
-  | case2 p b xs ihb =>
+    simp [Expr.toks, scan, OpenK, CloseK, iht (d + 1), ihn 0 (d + 1)]
+  case case17 =>
+    intro p b xs ihb ih
     have ha := Inner.argToks (s := s) (xss := xs.map (Expr.toks 0))
-      (by simpa using fun x _ => Expr.trans s x 0)
+      (by simpa using fun x hx => ih x hx 0)
     intro d rest
     simp [TypeExpr.toks, scan, OpenK, CloseK, ihb d, ha d]
-  | case4 p ts ih =>
+  case case19 =>
+    intro p ts ih
     have ha := Inner.argToks (xss := ts.map TypeExpr.toks) (by simpa using ih)
     rw [TypeExpr.toks]
     split
     · simpa using Trans.paren (ha.append Inner.comma)
     · simpa using Trans.paren ha
-  | case5 p t n iht =>
+  case case20 =>
+    intro p t n iht ihn
     intro d rest
-    simp [TypeExpr.toks, scan, OpenK, CloseK, iht (d + 1), Expr.trans s n 0 (d + 1)]
-  | _ =>
+    simp [TypeExpr.toks, scan, OpenK, CloseK, iht (d + 1), ihn 0 (d + 1)]
+  case case16 | case18 =>
+    intros
     intro d rest
     simp [TypeExpr.toks, scan, OpenK, CloseK]
+  all_goals
+    intros
+    apply Expr.trans_paren
+    intro d rest
+    simp [Expr.toks, scan, OpenK, CloseK]
+
+theorem Expr.trans (s : Bool) (e : Expr) : ∀ c, Trans s (e.toks c) := (trans_all s).1 e
+
+theorem TypeExpr.trans (s : Bool) (t : TypeExpr) : Trans s t.toks := (trans_all s).2 t
 
 /-! The arguments of a call or an index are balanced. -/
 theorem Bal.args (xs : List Expr) : Bal (argToks (xs.map (Expr.toks 0))) :=
   (Trans.argToks (by simpa using fun x _ => Expr.trans false x 0)).bal
 
-/-! No kind of an expression is `;`, so an array holds no `;`. -/
+/-! No kind of a `Printable` expression is `;`, so an array holds no `;`. -/
 theorem notMem_argToks {k : Kind} {xss : List (List Kind)} (hk : k ≠ .symbol ",")
     (h : ∀ l ∈ xss, k ∉ l) : k ∉ argToks xss := by
   induction xss with
@@ -292,47 +314,69 @@ theorem Expr.semi_paren (e : Expr) (h : Kind.symbol ";" ∉ e.toks 0) (c : Nat) 
   · simpa using h
   · exact h
 
-theorem Expr.semi_notMem (e : Expr) : ∀ c, Kind.symbol ";" ∉ e.toks c := by
-  have hl : ∀ xs : List Expr, (∀ x ∈ xs, ∀ c, Kind.symbol ";" ∉ x.toks c) →
-      Kind.symbol ";" ∉ argToks (xs.map (Expr.toks 0)) := fun xs h =>
-    notMem_argToks (by decide) (by simpa using fun x hx => h x hx 0)
-  induction e using Expr.erase.induct with
+theorem Expr.semi_notMem (e : Expr) :
+    e.printable = true → ∀ c, Kind.symbol ";" ∉ e.toks c := by
+  have hl : ∀ xs : List Expr,
+      (∀ x ∈ xs, x.printable = true → ∀ c, Kind.symbol ";" ∉ x.toks c) →
+      (∀ x ∈ xs, x.printable = true) → Kind.symbol ";" ∉ argToks (xs.map (Expr.toks 0)) :=
+    fun xs h hp => notMem_argToks (by decide) (by simpa using fun x hx => h x hx (hp x hx) 0)
+  induction e using Expr.ind with
   | case5 p op a ih =>
+    intro hp
+    simp only [Expr.printable] at hp
     refine Expr.semi_paren _ ?_
     simp only [Expr.toks, Nat.not_lt_zero, ite_false, List.mem_cons, not_or]
-    exact ⟨by cases op <;> decide, ih _⟩
+    exact ⟨by cases op <;> decide, ih hp _⟩
   | case6 p op l r ihl ihr =>
+    intro hp
+    simp only [Expr.printable, Bool.and_eq_true] at hp
     refine Expr.semi_paren _ ?_
     simp only [Expr.toks, Nat.not_lt_zero, ite_false, List.mem_append, List.mem_cons, not_or]
-    exact ⟨ihl _, by cases op <;> decide, ihr _⟩
+    exact ⟨ihl hp.1 _, by cases op <;> decide, ihr hp.2 _⟩
   | case7 p c y n ihc ihy ihn =>
+    intro hp
+    simp only [Expr.printable, Bool.and_eq_true] at hp
     refine Expr.semi_paren _ ?_
-    simp [Expr.toks, ihc, ihy, ihn]
+    simp [Expr.toks, ihc hp.1.1, ihy hp.1.2, ihn hp.2]
   | case8 p f xs ihf ih =>
+    intro hp
+    simp only [Expr.printable, Bool.and_eq_true, Expr.printableAll_eq, List.all_eq_true] at hp
     refine Expr.semi_paren _ ?_
-    have ha := hl xs ih
+    have ha := hl xs ih hp.2
     rw [Expr.toks.eq_def]
     simp only [Nat.not_lt_zero, ite_false]
-    split <;> simp [ihf, ha]
+    split <;> simp [ihf hp.1, ha]
   | case9 p b xs ihb ih =>
+    intro hp
+    simp only [Expr.printable, Bool.and_eq_true, Expr.printableAll_eq, List.all_eq_true] at hp
     refine Expr.semi_paren _ ?_
-    simp [Expr.toks, ihb, hl xs ih]
+    simp [Expr.toks, ihb hp.1.1, hl xs ih hp.2]
   | case10 p b f ih =>
+    intro hp
+    simp only [Expr.printable, Bool.and_eq_true] at hp
     refine Expr.semi_paren _ ?_
-    simp [Expr.toks, ih]
+    simp [Expr.toks, ih hp.1]
   | case12 p xs ih =>
+    intro hp
+    simp only [Expr.printable, Bool.and_eq_true, Expr.printableAll_eq, List.all_eq_true] at hp
     refine Expr.semi_paren _ ?_
-    have ha := hl xs ih
+    have ha := hl xs ih hp.2
     simp only [Expr.toks, Nat.not_lt_zero, ite_false, List.mem_cons, List.mem_append, not_or]
     refine ⟨⟨by decide, ha⟩, ?_⟩
     split <;> simp
   | case13 p xs ih =>
+    intro hp
+    simp only [Expr.printable, Expr.printableAll_eq, List.all_eq_true] at hp
     refine Expr.semi_paren _ ?_
-    simp [Expr.toks, hl xs ih]
+    simp [Expr.toks, hl xs ih hp]
   | case14 p b q i ih =>
+    intro hp
+    simp only [Expr.printable, Bool.and_eq_true] at hp
     refine Expr.semi_paren _ ?_
-    simp [Expr.toks, ih]
+    simp [Expr.toks, ih hp.1]
+  | case15 => intro hp; simp [Expr.printable] at hp
   | _ =>
+    intro _
     refine Expr.semi_paren _ ?_
     simp [Expr.toks]
 
