@@ -743,6 +743,21 @@ struct P(comptime W: Nat) { a: Bool }"
 #guard out norm "P[UInt[4](8)]" == "S010 1:1"
 
 /-!
+A literal with `[]` as a struct argument takes the type of its parameter, as a module argument
+does. This holds also for a nested literal and for a parameter type that depends on an earlier
+argument. A literal of another shape is `S010` at the use.
+-/
+def empties : String :=
+  "struct P(comptime X: [Bool; 0]) { a: Bool }
+struct Q(comptime n: Nat, comptime X: [[Bool; 0]; n]) { a: Bool }"
+#guard out empties "P[[]]" == "(type (struct root P ((array bool ()))))"
+#guard out empties "P[[]] == P[[Bool; 0]()]" == "(bool true)"
+#guard out empties "Q[1, [[]]]" ==
+  "(type (struct root Q ((int 1) (array (array bool 0) ((array bool ()))))))"
+#guard out empties "Q[2, [[]]]" == "S010 1:1"
+#guard out empties "P[[[]]]" == "S010 1:1"
+
+/-!
 A use of a struct while its own parameter types evaluate is a cycle: `S019` at the use. This
 holds also for a cycle of two structs through their parameter types.
 -/
