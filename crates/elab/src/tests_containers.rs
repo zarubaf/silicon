@@ -512,6 +512,35 @@ fn a_deep_read_walks_its_path_once() {
     assert!(index(20) - index(10) <= 10 * 4 * 4);
 }
 
+/// A read through tuple indices walks its path a constant number of times, as a read through
+/// selectors `.0` does, and not once from the root for each step. In the second case the path
+/// ends at a string. In the third, it indexes that string before its last step, so a scan
+/// charges between two indices. The assignment of the result walks the path a few times too.
+#[test]
+fn a_deep_read_through_tuple_indices_walks_its_path_once() {
+    let steps = |reads: usize, sel: &str, leaf: &str, tail: &str| {
+        let mut lit = leaf.to_owned();
+        for _ in 0..400 {
+            lit = format!("({lit}, 0)");
+        }
+        let ty = if leaf == "0" { "Int" } else { "String" };
+        let src = format!(
+            "fn f() -> {ty} {{ let a = {lit}; let mut s = {leaf}; {} return s; }}",
+            format!("s = a{}{tail}; ", sel.repeat(400)).repeat(reads)
+        );
+        path_steps(&src, "f()")
+    };
+    for (leaf, tail) in [("0", ""), ("\"st\"", ""), ("\"st\"", "[1][0]")] {
+        let each = |sel| (steps(30, sel, leaf, tail) - steps(10, sel, leaf, tail)) / 20;
+        let (index, select) = (each("[0]"), each(".0"));
+        assert!(
+            index <= 8 * 400,
+            "{index} steps for a depth of 400 with {leaf}{tail}"
+        );
+        assert_eq!(index, select, "{leaf}{tail}");
+    }
+}
+
 /// A read takes back the result that it parked, also when a later index failed after it
 /// parked an operand of its own. Thus the fuel error of the index is the first error, as in
 /// Lean, and not an error of a step on that operand.
