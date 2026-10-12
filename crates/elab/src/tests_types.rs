@@ -354,3 +354,20 @@ fn the_zero_charges_its_size_before_it_builds() {
     // with the size 1 + (1 + 16) + (1 + 1 + 1) from the metadata.
     exact(src, "P()", 62);
 }
+
+/// The text of a struct type in a message prints its arguments, and it stops after 1024 bytes
+/// of them, so a message never grows with the size of an argument.
+#[test]
+fn the_message_of_a_large_struct_type_is_short() {
+    let src = "struct A(comptime xs: [Nat; 5000]) { v: Bool }";
+    let xs = (0..5000)
+        .map(|k| k.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let text = message(src, &format!("A[[{xs}]]() == 1"));
+    assert!(
+        text.starts_with("`==` needs a common type, not A[[0, 1, 2, 3"),
+        "{text}"
+    );
+    assert!(text.len() < 1100 + 40, "{}", text.len());
+}
