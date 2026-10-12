@@ -244,6 +244,30 @@ fn the_depth_of_a_write_back() {
     assert_eq!(depth(back, "d()", 4), "S015 2:56");
 }
 
+/// An assignment to a place with a step checks the new depth of the root as `push` does. The
+/// depth is the steps of the place plus the depth of the value. Each case makes a root 4 deep,
+/// by an index, a `.N` selector, a field, and two steps. Thus the limit 4 passes, and 3 fails at
+/// the assignment.
+#[test]
+fn the_depth_of_an_element_assignment() {
+    let src = "struct R { f: Type }\n\
+        comptime fn a() -> Int { let mut xs = list(Type); xs.push(Int); \
+        xs[0] = List[List[Int]]; return 0; }\n\
+        comptime fn b() -> Int { let mut t = (Int, 0); t.0 = List[List[Int]]; return 0; }\n\
+        comptime fn c() -> Int { let mut r = R(Int); r.f = List[List[Int]]; return 0; }\n\
+        comptime fn m() -> Int { let mut t = (list(Type), 0); t.0.push(Int); \
+        t.0[0] = List[Int]; return 0; }\n";
+    for (expr, at) in [
+        ("a()", "S015 2:65"),
+        ("b()", "S015 3:48"),
+        ("c()", "S015 4:46"),
+        ("m()", "S015 5:70"),
+    ] {
+        assert_eq!(depth(src, expr, 4), "(int 0)", "{expr}");
+        assert_eq!(depth(src, expr, 3), at, "{expr}");
+    }
+}
+
 /// `len` and an index refer to a list, and an index of a list is also a step of a place.
 #[test]
 fn the_index_and_the_length_of_a_list() {
