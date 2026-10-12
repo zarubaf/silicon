@@ -48,6 +48,11 @@ pub(super) enum Index {
     Bad(String),
 }
 
+/// An index of a type, which is complete: `S007` at the index.
+fn fail_type_index<T>(q: Pos) -> Res<T> {
+    fail(Code::S007, q, "a complete type takes no index".to_owned())
+}
+
 /// The root of a place and its steps from the root outward. Another target has no place.
 fn chain(e: &Expr) -> Option<(&Expr, Vec<Sel<'_>>)> {
     let mut steps = Vec::new();
@@ -213,6 +218,7 @@ impl Evaluator<'_> {
                 let ty = match &**base {
                     Expr::Name { id, .. } => {
                         matches!(self.target(*id), Some(Target::Prelude(k)) if k.is_type())
+                            || self.struct_item(*id).is_some()
                     }
                     _ => false,
                 };
@@ -273,6 +279,11 @@ impl Evaluator<'_> {
         let b = self.eval(root)?;
         let b = need(root, b)?;
         let b = self.data(first, b)?;
+        if let Some(Sel::Index(q, _)) = steps.first()
+            && matches!(self.opnd_seen(&b), Seen::Static(Value::Type(_)))
+        {
+            return fail_type_index(*q);
+        }
         let mut keyed = Vec::with_capacity(steps.len());
         let mut stop = None;
         for step in &steps {
@@ -288,6 +299,9 @@ impl Evaluator<'_> {
         let mut cur = self.opnd_seen(&b);
         for key in &keyed {
             let k = match key {
+                Key::Index(q, ..) if matches!(cur, Seen::Static(Value::Type(_))) => {
+                    return fail_type_index(*q);
+                }
                 Key::Index(q, xp, i) => self.pick_at(*q, *xp, cur, i)?,
                 Key::Select(q, r, index) => self.select_at(*q, *r, index, cur)?,
             };
@@ -295,6 +309,12 @@ impl Evaluator<'_> {
             keys.push(k);
         }
         if let Some(e) = stop {
+            // The base of the step whose index failed is a type: that check comes first.
+            if let Some(Sel::Index(q, _)) = steps.get(keyed.len())
+                && matches!(cur, Seen::Static(Value::Type(_)))
+            {
+                return fail_type_index(*q);
+            }
             return Err(e);
         }
         let Some((&k, rest)) = keys.split_first() else {

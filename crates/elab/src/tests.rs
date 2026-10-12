@@ -87,7 +87,16 @@ fn run(src: &str, expr: &str, fuel: u64, depth: u64) -> (String, u64) {
 pub(crate) fn type_work(src: &str, expr: &str) -> u64 {
     let budget = Budget::default();
     match evaluated(src, expr, budget.fuel, budget.depth) {
-        Ok((done, _)) => done.types.work,
+        Ok((done, _)) => done.types.work(),
+        Err(error) => panic!("{error}"),
+    }
+}
+
+/// The length in bytes of the serialization of `expr`, from the table and not the text.
+pub(crate) fn serialized_len(src: &str, expr: &str) -> u64 {
+    let budget = Budget::default();
+    match evaluated(src, expr, budget.fuel, budget.depth) {
+        Ok((done, _)) => done.serialized_len(),
         Err(error) => panic!("{error}"),
     }
 }

@@ -237,4 +237,7 @@ mod tests_elab;
 mod tests_flatten;
 
 #[cfg(test)]
+mod tests_types;
+
+#[cfg(test)]
 mod tests_vectors;

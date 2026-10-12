@@ -194,6 +194,7 @@ impl Spec {
 }
 
 /// The result of a join of two types: the units that its walk charged, and the common type.
+#[derive(Clone)]
 pub struct Joined {
     pub charge: Int,
     pub ty: Option<TyId>,
@@ -226,24 +227,36 @@ pub struct Types {
     /// The work of the lookups: 1 for each type and 1 for each part of a container type. The
     /// type of a value adds 1 for each node that its walk visits.
     #[cfg(test)]
-    pub(crate) work: u64,
+    work: std::cell::Cell<u64>,
 }
 
 /// The type that an absent id names. The table makes each id, so no id finds it.
 static ABSENT: Ty = Ty::Unit;
 
 impl Types {
+    /// Counts `n` steps of work, for the tests of the work of the table.
+    #[cfg(test)]
+    pub(crate) fn tick(&self, n: u64) {
+        self.work.set(self.work.get() + n);
+    }
+
+    /// The steps of work so far.
+    #[cfg(test)]
+    pub(crate) fn work(&self) -> u64 {
+        self.work.get()
+    }
+
     /// The id of `ty`, which is not a struct type. A new type gets its metadata from the ids
     /// of its parts. The caller pays the work of a metadata number that it can compute
     /// before: see `meta_of` and `mk_with`.
     pub fn mk(&mut self, ty: Ty) -> TyId {
         #[cfg(test)]
-        {
-            self.work += 1 + match &ty {
+        self.tick(
+            1 + match &ty {
                 Ty::Tuple(parts) => parts.len() as u64,
                 _ => 0,
-            };
-        }
+            },
+        );
         if let Some(id) = self.index.get(&ty) {
             return *id;
         }
@@ -255,12 +268,12 @@ impl Types {
     /// computed from `meta_of` to charge it.
     pub fn mk_with(&mut self, ty: Ty, meta: Meta) -> TyId {
         #[cfg(test)]
-        {
-            self.work += 1 + match &ty {
+        self.tick(
+            1 + match &ty {
                 Ty::Tuple(parts) => parts.len() as u64,
                 _ => 0,
-            };
-        }
+            },
+        );
         if let Some(id) = self.index.get(&ty) {
             return *id;
         }
@@ -460,6 +473,8 @@ impl Types {
     /// type if it is done. The fingerprint narrows the search, and the arguments decide.
     #[must_use]
     pub fn find_spec(&self, item: usize, args: &[&Value]) -> Option<(SpecId, Option<TyId>)> {
+        #[cfg(test)]
+        self.tick(1 + args.len() as u64);
         let bucket = self
             .spec_index
             .get(&fingerprint(item, args.iter().copied()))?;
@@ -475,6 +490,8 @@ impl Types {
     /// Starts the specialization of the struct item `item` named `name`. The caller paid the
     /// size of the arguments, which it moves here.
     pub fn begin_spec(&mut self, name: &str, item: usize, args: Vec<Value>) -> SpecId {
+        #[cfg(test)]
+        self.tick(1 + args.len() as u64);
         let s = SpecId(self.specs.len());
         self.spec_index
             .entry(fingerprint(item, &args))

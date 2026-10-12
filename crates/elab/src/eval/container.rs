@@ -65,7 +65,9 @@ fn array_of<'x>(
     pos: Pos,
     elems: Vec<Cow<'x, Value>>,
 ) -> Res<Value> {
-    let Some(t) = ops::common_of(elems.iter().map(|e| &**e), tys) else {
+    let (units, common) = ops::common_of(elems.iter().map(|e| &**e), tys, fuel.left());
+    fuel.pay_int(&units).map_err(at(pos))?;
+    let Some(t) = common else {
         return fail(
             Code::S010,
             pos,

@@ -299,6 +299,8 @@ struct Evaluator<'a> {
     graph: Graph,
     paths: Paths,
     naming: Naming,
+    /// The struct items whose parameter types evaluate now: a use of one is a cycle.
+    binding: Vec<usize>,
     /// The item whose body runs, for its call sites.
     item: usize,
     frame: FrameRef,
@@ -418,6 +420,7 @@ impl<'a> Evaluator<'a> {
             graph: Graph::default(),
             paths: Paths::default(),
             naming: Naming::default(),
+            binding: Vec::new(),
             item: 0,
             frame: ROOT,
             elab,
@@ -489,6 +492,7 @@ fn prim(pos: Pos, name: &str, k: Prelude) -> Res<Ty> {
         Prelude::Nat => Ok(Ty::Nat),
         Prelude::Int => Ok(Ty::Int),
         Prelude::Unit => Ok(Ty::Unit),
+        Prelude::Type => Ok(Ty::Type),
         _ => fail(
             Code::S007,
             pos,
@@ -500,8 +504,7 @@ fn prim(pos: Pos, name: &str, k: Prelude) -> Res<Ty> {
 /// A string, a type, and a handle have no `Ty`, so an assignment keeps their form.
 fn same_form(a: Seen<'_>, b: Seen<'_>) -> bool {
     match (a, b) {
-        (Seen::Static(Value::Str(_)), Seen::Static(Value::Str(_)))
-        | (Seen::Static(Value::Type(_)), Seen::Static(Value::Type(_))) => true,
+        (Seen::Static(Value::Str(_)), Seen::Static(Value::Str(_))) => true,
         (
             Seen::Handle(Handle::Res { kind, ty, .. }),
             Seen::Handle(Handle::Res {
@@ -941,6 +944,13 @@ impl Evaluator<'_> {
                     let t = self.index(*pos, k, args)?;
                     return Ok(Some(Out::Made(Val::Static(Value::Type(t)))));
                 }
+                if let Expr::Name { pos: bp, id, .. } = &**base
+                    && let Some(i) = self.struct_item(*id)
+                {
+                    self.charge(*bp, 1)?;
+                    let t = self.spec(*pos, i, args)?;
+                    return Ok(Some(Out::Made(Val::Static(Value::Type(t)))));
+                }
                 self.read(e)
             }
             Expr::Field { pos, base, field } => {
@@ -950,12 +960,10 @@ impl Evaluator<'_> {
             }
             Expr::Unit { .. } | Expr::Tuple { .. } | Expr::Array { .. } => self.container(e),
             Expr::Select { .. } => self.read(e),
-            // TODO(#178): elaborate the array type `[T; N]` (plan step 17).
-            Expr::ArrayType { pos, .. } => fail(
-                Code::S010,
-                *pos,
-                "the array type `[T; N]` is not elaborated yet".to_owned(),
-            ),
+            Expr::ArrayType { pos, elem, len } => {
+                let t = self.array_type(*pos, elem, len)?;
+                Ok(Some(Out::Made(Val::Static(Value::Type(t)))))
+            }
         }
     }
 
@@ -1068,6 +1076,12 @@ impl Evaluator<'_> {
             )))),
             Some(Target::Decl(id)) => match self.file.decl(id).kind {
                 Kind::Const => self.constant(pos, x, id),
+                Kind::Alias if self.items.contains_key(&id) => self.constant(pos, x, id),
+                Kind::Struct => {
+                    let i = self.items.get(&id).copied().unwrap_or(usize::MAX);
+                    let t = self.spec(pos, i, &[])?;
+                    Ok(Out::Named(Val::Static(Value::Type(t))))
+                }
                 Kind::Fn | Kind::Module => fail(
                     Code::S010,
                     pos,
@@ -1096,17 +1110,17 @@ impl Evaluator<'_> {
         }
     }
 
+    /// A constant or a `type` item. It evaluates at its first use, in the table of constants,
+    /// one level deeper. A use while it is in progress is `S019`.
     fn constant(&mut self, pos: Pos, x: &str, id: DeclId) -> Res<Out> {
         let file = self.file;
         let Some(&i) = self.items.get(&id) else {
             return fail(Code::S010, pos, format!("`{x}` is not an item"));
         };
-        let Some(Item::Const {
-            pos: cp, ty, value, ..
-        }) = file.ast().get(i)
-        else {
+        let item = file.ast().get(i);
+        if !matches!(item, Some(Item::Const { .. } | Item::Alias { .. })) {
             return fail(Code::S010, pos, format!("`{x}` is not a constant"));
-        };
+        }
         match self.store.consts.get(i) {
             Some(Entry::Done(_)) => return Ok(const_ref(i)),
             Some(Entry::InProgress) => {
@@ -1120,13 +1134,19 @@ impl Evaluator<'_> {
         }
         self.nested(pos, |ev| {
             ev.store.consts[i] = Entry::InProgress;
-            let c = ev.in_frame(None, |ev| {
-                let t = ev.type_expr(ty)?;
-                let o = ev.eval(value)?;
-                let o = need(value, o)?;
-                ev.copy(*cp, &o)?;
-                let o = ev.settle(*cp, t, o)?;
-                ev.conform(*cp, t, o)
+            let c = ev.in_frame(None, |ev| match item {
+                Some(Item::Const {
+                    pos: cp, ty, value, ..
+                }) => {
+                    let t = ev.type_expr(ty)?;
+                    let o = ev.eval(value)?;
+                    let o = need(value, o)?;
+                    ev.copy(*cp, &o)?;
+                    let o = ev.settle(*cp, t, o)?;
+                    ev.conform(*cp, t, o)
+                }
+                Some(Item::Alias { ty, .. }) => Ok(Value::Type(ev.type_expr(ty)?)),
+                _ => fail(Code::S010, pos, format!("`{x}` is not a constant")),
             })?;
             ev.store.consts[i] = Entry::Done(Val::Static(c));
             Ok(const_ref(i))
@@ -1468,12 +1488,20 @@ impl Evaluator<'_> {
                 body,
             } => self.ct_for(*pos, var, lo, hi, body, module),
             Stmt::Block { body, .. } => self.stmts(body, module),
-            // TODO(#178): elaborate the `type` statement (plan step 17).
-            Stmt::Alias { pos, .. } => fail(
-                Code::S010,
-                *pos,
-                "the `type` statement is not elaborated yet".to_owned(),
-            ),
+            Stmt::Alias { name, ty, .. } => {
+                let t = self.type_expr(ty)?;
+                let id = self.decl(name)?;
+                let kind = self.tys.mk(Ty::Type);
+                self.bind(
+                    id,
+                    Slot {
+                        ty: Some(kind),
+                        mutable: false,
+                        value: Val::Static(Value::Type(t)),
+                    },
+                );
+                Ok(None)
+            }
             Stmt::Expr { value, .. } => {
                 if let Some(o) = self.eval(value)? {
                     self.known(&o)?;
