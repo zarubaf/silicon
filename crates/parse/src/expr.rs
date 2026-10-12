@@ -235,15 +235,19 @@ impl Parser<'_> {
                     })?;
                     self.height = 0;
                 }
+                Some(Dot) if self.next() == Some(Ident) && self.after_next() == Some(LParen) => {
+                    place = false;
+                    self.chain_at(checkpoint, MethodExpr, height, |p| {
+                        p.bump();
+                        p.bump();
+                        p.arg_list(RParen, true)
+                    })?;
+                }
                 Some(Dot) => {
                     self.chain_at(checkpoint, FieldExpr, height, |p| {
                         p.bump();
                         if !p.eat(Ident) {
                             p.syntax_error("expected a field name");
-                            return None;
-                        }
-                        if p.is(LParen) {
-                            p.later_slice(p.offset(), "a receiver call");
                             return None;
                         }
                         Some(())

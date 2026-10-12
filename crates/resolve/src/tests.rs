@@ -205,6 +205,13 @@ impl Ids {
                 self.expr(callee);
                 self.exprs(args);
             }
+            Expr::Method {
+                recv, name, args, ..
+            } => {
+                self.expr(recv);
+                self.ident(name);
+                self.exprs(args);
+            }
             Expr::Index { base, args, .. } => {
                 self.expr(base);
                 self.exprs(args);

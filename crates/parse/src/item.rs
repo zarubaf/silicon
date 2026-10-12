@@ -166,14 +166,10 @@ impl Parser<'_> {
 
     fn param(&mut self, all_comptime: bool) -> Res {
         self.node(Param, |p| {
-            if p.is(MutKw) && !all_comptime {
-                p.later_slice(p.offset(), "a `mut` parameter");
-                return None;
-            }
             if all_comptime {
                 p.expect(ComptimeKw, "`comptime`")?;
-            } else {
-                p.eat(ComptimeKw);
+            } else if !p.eat(ComptimeKw) {
+                p.eat(MutKw);
             }
             p.expect(Ident, "a name")?;
             p.expect(Colon, "`:`")?;

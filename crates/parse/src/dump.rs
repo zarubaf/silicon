@@ -125,6 +125,16 @@ fn expr(e: &Expr, out: &mut String) {
             sp(out);
             list(args, out, expr);
         }),
+        Expr::Method {
+            recv, name, args, ..
+        } => node("method", out, |out| {
+            sp(out);
+            expr(recv, out);
+            sp(out);
+            ident(name, out);
+            sp(out);
+            list(args, out, expr);
+        }),
         Expr::Index { base, args, .. } => node("index", out, |out| {
             sp(out);
             expr(base, out);
@@ -255,7 +265,7 @@ fn stmt(s: &Stmt, out: &mut String) {
 
 fn param(p: &Param, out: &mut String) {
     node("param", out, |out| {
-        fields!(out; boolean(p.comptime, out), ident(&p.name, out), type_expr(&p.ty, out));
+        fields!(out; constructor(&p.mode, out), ident(&p.name, out), type_expr(&p.ty, out));
     });
 }
 

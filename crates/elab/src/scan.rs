@@ -342,6 +342,13 @@ impl Walk<'_> {
                     self.expr(a, d);
                 }
             }
+            // TODO(#179): number the call sites of receiver calls (plan step 28).
+            Expr::Method { recv, args, .. } => {
+                self.expr(recv, d);
+                for a in args {
+                    self.expr(a, d);
+                }
+            }
             Expr::Index { base, args, .. } => {
                 self.expr(base, d);
                 for a in args {

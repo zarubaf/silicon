@@ -143,6 +143,8 @@ kinds! {
     CallExpr,
     IndexExpr,
     FieldExpr,
+    /// `x.m(args)`: a receiver call. The arguments are in an `ArgList`.
+    MethodExpr,
     /// `.N` after an expression.
     SelectExpr,
     /// `()`.

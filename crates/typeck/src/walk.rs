@@ -3,7 +3,7 @@
 //! so it runs on the front-end thread.
 
 use crate::{Code, Error};
-use parse::ast::{Expr, Item, NodeId, Param, Pos, Stmt, TypeExpr};
+use parse::ast::{Expr, Item, NodeId, Param, ParamMode, Pos, Stmt, TypeExpr};
 use resolve::{DeclId, Kind, Prelude, Resolved, ResolvedExpr, Target};
 use std::collections::BTreeMap;
 
@@ -122,7 +122,12 @@ fn sigs(resolved: &Resolved) -> BTreeMap<DeclId, Sig> {
                 ..
             } => (
                 name,
-                Sig::Fn(params.iter().map(|p| *comptime || p.comptime).collect()),
+                Sig::Fn(
+                    params
+                        .iter()
+                        .map(|p| *comptime || p.mode == ParamMode::Comptime)
+                        .collect(),
+                ),
             ),
             Item::Module { name, params, .. } => (name, Sig::Module(params.len())),
             Item::Struct {
@@ -354,6 +359,13 @@ impl<'a> Walker<'a> {
                 let statics = self.call(*pos, callee, head.as_ref(), args.len());
                 for (k, arg) in args.iter().enumerate() {
                     self.expr(is_static || statics.at(k), arg);
+                }
+                None
+            }
+            Expr::Method { recv, args, .. } => {
+                self.expr(is_static, recv);
+                for arg in args {
+                    self.expr(is_static, arg);
                 }
                 None
             }
