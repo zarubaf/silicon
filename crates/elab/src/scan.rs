@@ -67,8 +67,7 @@ pub(crate) fn of(file: &Resolved, top: Option<&ResolvedExpr>) -> Scan {
     }
     walk.top = None;
     for item in file.ast() {
-        let (Item::Const { name, .. } | Item::Fn { name, .. } | Item::Module { name, .. }) = item;
-        let s = walk.intern(&name.name);
+        let s = walk.intern(&item.name().name);
         walk.syms.items.push(s);
     }
     walk.syms.clock = walk.intern("clock");
@@ -162,6 +161,16 @@ impl Walk<'_> {
                 }
                 self.calls = calls;
             }
+            Item::Struct { params, fields, .. } => {
+                for p in params {
+                    self.binder(&p.name);
+                    self.ty(&p.ty, 1);
+                }
+                for f in fields {
+                    self.ty(&f.ty, 1);
+                }
+            }
+            Item::Alias { ty, .. } => self.ty(ty, 1),
         }
         self.calls.sort_unstable();
         let mut sites = BTreeMap::new();
@@ -207,7 +216,8 @@ impl Walk<'_> {
             }
             Stmt::Wire { name, ty, .. }
             | Stmt::Input { name, ty, .. }
-            | Stmt::Output { name, ty, .. } => {
+            | Stmt::Output { name, ty, .. }
+            | Stmt::Alias { name, ty, .. } => {
                 self.ty(ty, d);
                 self.binder(name);
             }
@@ -280,6 +290,10 @@ impl Walk<'_> {
                 }
             }
             Expr::Unary { arg, .. } => self.expr(arg, d),
+            Expr::ArrayType { elem, len, .. } => {
+                self.ty(elem, d);
+                self.expr(len, d);
+            }
             Expr::Binary { lhs, rhs, .. } => {
                 self.expr(lhs, d);
                 self.expr(rhs, d);

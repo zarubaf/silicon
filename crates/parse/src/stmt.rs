@@ -86,7 +86,8 @@ impl Parser<'_> {
             InstanceKw => self.node(InstStmt, Self::inst_stmt),
             ReturnKw => self.node(ReturnStmt, Self::return_stmt),
             ComptimeKw => self.comptime_stmt(),
-            MemKw | TypeKw => {
+            TypeKw => self.node(AliasStmt, Self::alias_item),
+            MemKw => {
                 self.later_slice(self.offset(), "this statement");
                 None
             }

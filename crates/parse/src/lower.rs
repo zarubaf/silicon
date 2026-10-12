@@ -2,7 +2,9 @@
 //! Lowers an error-free syntax tree into the AST. Every function returns `None` for a
 //! tree that does not have the shape that the parser builds.
 
-use crate::ast::{BinOp, Expr, Ident, Item, Nat, NodeId, Param, Pos, Stmt, TypeExpr, UnOp};
+use crate::ast::{
+    BinOp, Expr, Ident, Item, Nat, NodeId, Param, Pos, Stmt, StructField, TypeExpr, UnOp,
+};
 use crate::error::LineIndex;
 use rowan::NodeOrToken;
 use std::cell::Cell;
@@ -178,7 +180,36 @@ impl<'a> Lower<'a> {
                     }),
                 body: self.block(&node.children().find(|n| n.kind() == SyntaxKind::Block)?)?,
             }),
+            SyntaxKind::StructItem => Some(Item::Struct {
+                pos,
+                name,
+                params: self.optional_params(node)?,
+                fields: node
+                    .children()
+                    .filter(|n| n.kind() == SyntaxKind::StructField)
+                    .map(|field| {
+                        Some(StructField {
+                            name: self.ident(&field)?,
+                            ty: self.type_expr(&field.children().find(is_type)?)?,
+                        })
+                    })
+                    .collect::<Option<_>>()?,
+            }),
+            SyntaxKind::AliasItem => Some(Item::Alias {
+                pos,
+                name,
+                ty: self.type_expr(&node.children().find(is_type)?)?,
+            }),
             _ => None,
+        }
+    }
+
+    /// The parameters of a struct: none without parentheses.
+    fn optional_params(&self, node: &SyntaxNode) -> Option<Vec<Param>> {
+        if node.children().any(|n| n.kind() == SyntaxKind::ParamList) {
+            self.params(node)
+        } else {
+            Some(Vec::new())
         }
     }
 
@@ -291,6 +322,11 @@ impl<'a> Lower<'a> {
             ExprStmt => Some(Stmt::Expr {
                 pos,
                 value: nth_expr(0)?,
+            }),
+            AliasStmt => Some(Stmt::Alias {
+                pos,
+                name: self.ident(node)?,
+                ty: ty()?,
             }),
             _ => None,
         }
@@ -422,6 +458,11 @@ impl<'a> Lower<'a> {
                 pos,
                 elems: self.args(node)?,
             }),
+            ArrayTypeExpr => Some(Expr::ArrayType {
+                pos,
+                elem: Box::new(self.type_expr(&node.children().find(is_type)?)?),
+                len: operand(0)?,
+            }),
             _ => None,
         }
     }
@@ -457,5 +498,6 @@ fn is_expr(node: &SyntaxNode) -> bool {
             | UnitExpr
             | TupleExpr
             | ArrayExpr
+            | ArrayTypeExpr
     )
 }

@@ -59,6 +59,24 @@ fn sx(e: &Expr) -> String {
         Expr::Tuple { elems, .. } => format!("(tuple {})", list(elems)),
         Expr::Array { elems, .. } => format!("(array {})", list(elems)),
         Expr::Select { base, index, .. } => format!("(select {} {})", sx(base), index.as_str()),
+        Expr::ArrayType { elem, len, .. } => format!("(arraytype {} {})", tx(elem), sx(len)),
+    }
+}
+
+/// A type expression as a short S-expression.
+fn tx(t: &TypeExpr) -> String {
+    let list = |xs: &[Expr]| xs.iter().map(sx).collect::<Vec<_>>().join(" ");
+    match t {
+        TypeExpr::Name { name, .. } => name.clone(),
+        TypeExpr::Index { base, args, .. } => format!("(index {} {})", tx(base), list(args)),
+        TypeExpr::Unit { .. } => "()".to_owned(),
+        TypeExpr::Tuple { elems, .. } => {
+            format!(
+                "(tuple {})",
+                elems.iter().map(tx).collect::<Vec<_>>().join(" ")
+            )
+        }
+        TypeExpr::Array { elem, len, .. } => format!("(array {} {})", tx(elem), sx(len)),
     }
 }
 
@@ -255,6 +273,7 @@ fn statements() {
             Stmt::Block { body, .. } if body.len() == 1 => "block",
             Stmt::Block { .. } => "block?",
             Stmt::Expr { .. } => "expr",
+            Stmt::Alias { .. } => "alias",
         })
         .collect();
     assert_eq!(

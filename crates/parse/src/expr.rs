@@ -117,16 +117,19 @@ impl Parser<'_> {
 
     /// `[T; N]`
     fn array_type(&mut self) -> Res {
-        self.node(ArrayType, |p| {
-            p.bump();
-            p.type_expr()?;
-            let elem = p.height;
-            p.expect(Semi, "`;`")?;
-            p.expr()?;
-            p.expect(RBracket, "`]`")?;
-            p.height = elem.max(p.height) + 1;
-            Some(())
-        })
+        self.node(ArrayType, Self::array_type_parts)
+    }
+
+    /// The tokens and children of `[T; N]`, in a type and in an expression.
+    fn array_type_parts(&mut self) -> Res {
+        self.bump();
+        self.type_expr()?;
+        let elem = self.height;
+        self.expect(Semi, "`;`")?;
+        self.expr()?;
+        self.expect(RBracket, "`]`")?;
+        self.height = elem.max(self.height) + 1;
+        Some(())
     }
 
     /// An expression: a conditional, or the operators by precedence.
@@ -351,14 +354,19 @@ impl Parser<'_> {
         Some(())
     }
 
-    /// An array value. `[T; N]` is an array type, which belongs to phase 3 of slice 2.
+    /// An array value, or an array type `[T; N]`. The `;` in the bracket decides, and the
+    /// parser never reads a token again: the element of `[T; N]` is a type.
     fn array(&mut self) -> Res {
         if self.at_array_type() {
-            self.later_slice(self.offset(), "an array type in an expression");
-            return None;
+            return self.array_type_expr();
         }
         self.node(ArrayExpr, |p| p.arg_list(RBracket, true))?;
         self.height += 1;
         Some(())
+    }
+
+    /// `[T; N]` in an expression.
+    fn array_type_expr(&mut self) -> Res {
+        self.node(ArrayTypeExpr, Self::array_type_parts)
     }
 }

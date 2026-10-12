@@ -5,7 +5,7 @@
 //! The dump recurses over the AST, so its depth of calls is at most about twice the syntax
 //! depth of the parse that made the AST. `Parse::dump` runs it on a stack for that depth.
 
-use crate::ast::{Expr, Ident, Item, Param, Stmt, TypeExpr};
+use crate::ast::{Expr, Ident, Item, Param, Stmt, StructField, TypeExpr};
 use std::fmt::{Debug, Write};
 
 /// The dump of a file: one line for each item, and an LF ends each line.
@@ -152,6 +152,12 @@ fn expr(e: &Expr, out: &mut String) {
             sp(out);
             out.push_str(index.as_str());
         }),
+        Expr::ArrayType { elem, len, .. } => node("arraytype", out, |out| {
+            sp(out);
+            type_expr(elem, out);
+            sp(out);
+            expr(len, out);
+        }),
     }
 }
 
@@ -241,12 +247,21 @@ fn stmt(s: &Stmt, out: &mut String) {
         Stmt::Expr { value, .. } => node("expr", out, |out| {
             fields!(out; expr(value, out));
         }),
+        Stmt::Alias { name, ty, .. } => node("alias", out, |out| {
+            fields!(out; ident(name, out), type_expr(ty, out));
+        }),
     }
 }
 
 fn param(p: &Param, out: &mut String) {
     node("param", out, |out| {
         fields!(out; boolean(p.comptime, out), ident(&p.name, out), type_expr(&p.ty, out));
+    });
+}
+
+fn struct_field(f: &StructField, out: &mut String) {
+    node("structfield", out, |out| {
+        fields!(out; ident(&f.name, out), type_expr(&f.ty, out));
     });
 }
 
@@ -278,6 +293,18 @@ fn item_dump(item: &Item, out: &mut String) {
             fields!(out; ident(name, out), list(params, out, param),
                 option(domains.as_ref(), out, |ds, out| list(ds, out, ident)),
                 list(body, out, stmt));
+        }),
+        Item::Struct {
+            name,
+            params,
+            fields,
+            ..
+        } => node("struct", out, |out| {
+            fields!(out; ident(name, out), list(params, out, param),
+                list(fields, out, struct_field));
+        }),
+        Item::Alias { name, ty, .. } => node("alias", out, |out| {
+            fields!(out; ident(name, out), type_expr(ty, out));
         }),
     }
 }

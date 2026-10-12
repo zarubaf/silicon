@@ -49,6 +49,23 @@ impl Ids {
                     }
                     ids.stmts(body);
                 }
+                Item::Struct {
+                    name,
+                    params,
+                    fields,
+                    ..
+                } => {
+                    ids.ident(name);
+                    ids.params(params);
+                    for field in fields {
+                        ids.ident(&field.name);
+                        ids.ty(&field.ty);
+                    }
+                }
+                Item::Alias { name, ty, .. } => {
+                    ids.ident(name);
+                    ids.ty(ty);
+                }
             }
         }
         ids
@@ -106,7 +123,8 @@ impl Ids {
                 }
                 Stmt::Wire { name, ty, .. }
                 | Stmt::Input { name, ty, .. }
-                | Stmt::Output { name, ty, .. } => {
+                | Stmt::Output { name, ty, .. }
+                | Stmt::Alias { name, ty, .. } => {
                     self.ident(name);
                     self.ty(ty);
                 }
@@ -196,6 +214,10 @@ impl Ids {
                 self.ident(field);
             }
             Expr::Select { base, .. } => self.expr(base),
+            Expr::ArrayType { elem, len, .. } => {
+                self.ty(elem);
+                self.expr(len);
+            }
             Expr::Tuple { elems, .. } | Expr::Array { elems, .. } => self.exprs(elems),
         }
     }

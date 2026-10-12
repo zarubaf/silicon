@@ -70,7 +70,7 @@ fn sigs(resolved: &Resolved) -> BTreeMap<DeclId, Sig> {
     let mut sigs = BTreeMap::new();
     for item in resolved.ast() {
         let (name, sig) = match item {
-            Item::Const { .. } => continue,
+            Item::Const { .. } | Item::Struct { .. } | Item::Alias { .. } => continue,
             Item::Fn {
                 comptime,
                 name,
@@ -269,6 +269,10 @@ impl<'a> Walker<'a> {
                 self.index(is_static, *pos, base, args);
             }
             Expr::Field { base, .. } | Expr::Select { base, .. } => self.expr(is_static, base),
+            Expr::ArrayType { elem, len, .. } => {
+                self.type_expr(elem);
+                self.expr(true, len);
+            }
             Expr::Tuple { elems, .. } | Expr::Array { elems, .. } => {
                 for elem in elems {
                     self.expr(is_static, elem);
@@ -420,6 +424,7 @@ impl<'a> Walker<'a> {
             }
             Stmt::Block { body, .. } => self.stmts(owner, body),
             Stmt::Expr { value, .. } => self.expr(false, value),
+            Stmt::Alias { ty, .. } => self.type_expr(ty),
         }
     }
 
@@ -455,6 +460,13 @@ impl<'a> Walker<'a> {
                 self.params(params);
                 self.stmts(Owner::Module, body);
             }
+            Item::Struct { params, fields, .. } => {
+                self.params(params);
+                for field in fields {
+                    self.type_expr(&field.ty);
+                }
+            }
+            Item::Alias { ty, .. } => self.type_expr(ty),
         }
     }
 }

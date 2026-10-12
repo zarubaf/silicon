@@ -114,7 +114,9 @@ pub enum BinOp {
     Mulw,
 }
 
-/// An expression. A type in an expression position, such as `UInt[8]`, is an `Index`.
+/// An expression. A type in an expression position, such as `UInt[8]`, is an `Index`. An array
+/// type `[T; N]` is an `ArrayType`. Its element is a type expression, so `Expr` and
+/// `TypeExpr` are mutually recursive, as in Lean.
 #[cfg_attr(test, derive(Clone, Debug, PartialEq, Eq))]
 pub enum Expr {
     Num {
@@ -186,6 +188,12 @@ pub enum Expr {
         base: Box<Expr>,
         lit_pos: Pos,
         index: Nat,
+    },
+    /// The array type `[T; N]` in an expression.
+    ArrayType {
+        pos: Pos,
+        elem: Box<TypeExpr>,
+        len: Box<Expr>,
     },
 }
 
@@ -291,9 +299,16 @@ pub enum Stmt {
         pos: Pos,
         value: Expr,
     },
+    /// The statement `type N = T;`.
+    Alias {
+        pos: Pos,
+        name: Ident,
+        ty: TypeExpr,
+    },
 }
 
-/// A parameter of a function or a module. A module parameter always has `comptime`.
+/// A parameter of a function, a module, or a struct. A module parameter and a struct parameter
+/// always have `comptime`.
 #[cfg_attr(test, derive(Clone, Debug, PartialEq, Eq))]
 pub struct Param {
     pub pos: Pos,
@@ -302,7 +317,15 @@ pub struct Param {
     pub ty: TypeExpr,
 }
 
-/// A top-level item. The `domains` of a module are `None` without a clause and `Some` with
+/// A field of a struct: `name: ty`.
+#[cfg_attr(test, derive(Clone, Debug, PartialEq, Eq))]
+pub struct StructField {
+    pub name: Ident,
+    pub ty: TypeExpr,
+}
+
+/// A top-level item. A `Struct` without parameters has an empty list of parameters. An `Alias`
+/// is the item `type N = T;`. The `domains` of a module are `None` without a clause and `Some` with
 /// one. The list holds at most one name in slice 1.
 #[cfg_attr(test, derive(Clone, Debug, PartialEq, Eq))]
 pub enum Item {
@@ -327,10 +350,69 @@ pub enum Item {
         domains: Option<Vec<Ident>>,
         body: Vec<Stmt>,
     },
+    Struct {
+        pos: Pos,
+        name: Ident,
+        params: Vec<Param>,
+        fields: Vec<StructField>,
+    },
+    Alias {
+        pos: Pos,
+        name: Ident,
+        ty: TypeExpr,
+    },
+}
+
+impl Item {
+    /// The name of the item.
+    #[must_use]
+    pub fn name(&self) -> &Ident {
+        let (Item::Const { name, .. }
+        | Item::Fn { name, .. }
+        | Item::Module { name, .. }
+        | Item::Struct { name, .. }
+        | Item::Alias { name, .. }) = self;
+        name
+    }
 }
 
 // The recursive types free their children from a work list, so that a drop uses no recursion
-// and is safe on any stack. Each `Drop` moves the children out and leaves a leaf behind.
+// and is safe on any stack. `Expr` and `TypeExpr` contain each other, so they share one work
+// list. Each `Drop` moves the children out and leaves a leaf behind.
+
+/// A child that waits to be freed.
+enum Pending {
+    Expr(Expr),
+    Type(TypeExpr),
+}
+
+impl Pending {
+    fn take_children(&mut self, work: &mut Vec<Pending>) {
+        match self {
+            Pending::Expr(e) => e.take_children(work),
+            Pending::Type(t) => t.take_children(work),
+        }
+    }
+}
+
+/// Frees what the children of a node hold, from a work list.
+fn free(mut work: Vec<Pending>) {
+    while let Some(mut pending) = work.pop() {
+        pending.take_children(&mut work);
+    }
+}
+
+fn take_expr(e: &mut Expr, work: &mut Vec<Pending>) {
+    work.push(Pending::Expr(std::mem::replace(e, Expr::leaf())));
+}
+
+fn take_type(t: &mut TypeExpr, work: &mut Vec<Pending>) {
+    work.push(Pending::Type(std::mem::replace(t, TypeExpr::leaf())));
+}
+
+fn take_exprs(es: &mut Vec<Expr>, work: &mut Vec<Pending>) {
+    work.extend(es.drain(..).map(Pending::Expr));
+}
 
 impl Expr {
     fn leaf() -> Expr {
@@ -340,29 +422,32 @@ impl Expr {
         }
     }
 
-    fn take_children(&mut self, work: &mut Vec<Expr>) {
-        let mut take = |e: &mut Expr| work.push(std::mem::replace(e, Expr::leaf()));
+    fn take_children(&mut self, work: &mut Vec<Pending>) {
         match self {
-            Expr::Unary { arg, .. } => take(arg),
+            Expr::Unary { arg, .. } => take_expr(arg, work),
             Expr::Binary { lhs, rhs, .. } => {
-                take(lhs);
-                take(rhs);
+                take_expr(lhs, work);
+                take_expr(rhs, work);
             }
             Expr::Cond { cond, yes, no, .. } => {
-                take(cond);
-                take(yes);
-                take(no);
+                take_expr(cond, work);
+                take_expr(yes, work);
+                take_expr(no, work);
             }
             Expr::Call { callee, args, .. } => {
-                take(callee);
-                work.append(args);
+                take_expr(callee, work);
+                take_exprs(args, work);
             }
             Expr::Index { base, args, .. } => {
-                take(base);
-                work.append(args);
+                take_expr(base, work);
+                take_exprs(args, work);
             }
-            Expr::Field { base, .. } | Expr::Select { base, .. } => take(base),
-            Expr::Tuple { elems, .. } | Expr::Array { elems, .. } => work.append(elems),
+            Expr::Field { base, .. } | Expr::Select { base, .. } => take_expr(base, work),
+            Expr::Tuple { elems, .. } | Expr::Array { elems, .. } => take_exprs(elems, work),
+            Expr::ArrayType { elem, len, .. } => {
+                take_type(elem, work);
+                take_expr(len, work);
+            }
             Expr::Num { .. }
             | Expr::Bool { .. }
             | Expr::Str { .. }
@@ -376,9 +461,7 @@ impl Drop for Expr {
     fn drop(&mut self) {
         let mut work = Vec::new();
         self.take_children(&mut work);
-        while let Some(mut e) = work.pop() {
-            e.take_children(&mut work);
-        }
+        free(work);
     }
 }
 
@@ -391,11 +474,17 @@ impl TypeExpr {
         }
     }
 
-    fn take_children(&mut self, work: &mut Vec<TypeExpr>) {
+    fn take_children(&mut self, work: &mut Vec<Pending>) {
         match self {
-            TypeExpr::Index { base, .. } => work.push(std::mem::replace(&mut **base, Self::leaf())),
-            TypeExpr::Array { elem, .. } => work.push(std::mem::replace(&mut **elem, Self::leaf())),
-            TypeExpr::Tuple { elems, .. } => work.append(elems),
+            TypeExpr::Index { base, args, .. } => {
+                take_type(base, work);
+                take_exprs(args, work);
+            }
+            TypeExpr::Array { elem, len, .. } => {
+                take_type(elem, work);
+                take_expr(len, work);
+            }
+            TypeExpr::Tuple { elems, .. } => work.extend(elems.drain(..).map(Pending::Type)),
             TypeExpr::Name { .. } | TypeExpr::Unit { .. } => {}
         }
     }
@@ -405,9 +494,7 @@ impl Drop for TypeExpr {
     fn drop(&mut self) {
         let mut work = Vec::new();
         self.take_children(&mut work);
-        while let Some(mut t) = work.pop() {
-            t.take_children(&mut work);
-        }
+        free(work);
     }
 }
 

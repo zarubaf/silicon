@@ -335,7 +335,8 @@ pub(crate) fn expr_pos(e: &Expr) -> Pos {
         | Expr::Unit { pos }
         | Expr::Tuple { pos, .. }
         | Expr::Array { pos, .. }
-        | Expr::Select { pos, .. } => *pos,
+        | Expr::Select { pos, .. }
+        | Expr::ArrayType { pos, .. } => *pos,
     }
 }
 
@@ -363,7 +364,8 @@ fn stmt_pos(s: &Stmt) -> Pos {
         | Stmt::CtIf { pos, .. }
         | Stmt::CtFor { pos, .. }
         | Stmt::Block { pos, .. }
-        | Stmt::Expr { pos, .. } => *pos,
+        | Stmt::Expr { pos, .. }
+        | Stmt::Alias { pos, .. } => *pos,
     }
 }
 
@@ -380,8 +382,7 @@ impl<'a> Evaluator<'a> {
         let mut items = BTreeMap::new();
         let mut consts = Vec::new();
         for (i, item) in file.ast().iter().enumerate() {
-            let (Item::Const { name, .. } | Item::Fn { name, .. } | Item::Module { name, .. }) =
-                item;
+            let name = item.name();
             if let Some(Target::Decl(id)) = file.target(name.id) {
                 items.insert(id, i);
             }
@@ -947,6 +948,12 @@ impl Evaluator<'_> {
             }
             Expr::Unit { .. } | Expr::Tuple { .. } | Expr::Array { .. } => self.container(e),
             Expr::Select { .. } => self.read(e),
+            // TODO(#178): elaborate the array type `[T; N]` (plan step 17).
+            Expr::ArrayType { pos, .. } => fail(
+                Code::S010,
+                *pos,
+                "the array type `[T; N]` is not elaborated yet".to_owned(),
+            ),
         }
     }
 
@@ -1505,6 +1512,12 @@ impl Evaluator<'_> {
                 body,
             } => self.ct_for(*pos, var, lo, hi, body, module),
             Stmt::Block { body, .. } => self.stmts(body, module),
+            // TODO(#178): elaborate the `type` statement (plan step 17).
+            Stmt::Alias { pos, .. } => fail(
+                Code::S010,
+                *pos,
+                "the `type` statement is not elaborated yet".to_owned(),
+            ),
             Stmt::Expr { value, .. } => {
                 if let Some(o) = self.eval(value)? {
                     self.known(&o)?;
