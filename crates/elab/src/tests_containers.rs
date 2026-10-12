@@ -388,11 +388,14 @@ fn the_indices_of_a_place_evaluate_before_the_right_side() {
     assert_eq!(at("let mut a = 1; a[0] = 3; return 0;"), "S010 1:32");
 }
 
+/// Each step of the place charges 1 at its node. The update copies only the containers on
+/// its path, so it charges nothing more. The statement and the step `[0]` charge 1 each, and
+/// the index `0` and the right side `5` charge 2 each.
 #[test]
 fn an_update_charges_nothing_more() {
     assert_eq!(
         cost(&body("let mut a = [1, 2]; a[0] = 5; return 0;"), "f()"),
-        cost(&body("let mut a = [1, 2]; return 0;"), "f()") + 5
+        cost(&body("let mut a = [1, 2]; return 0;"), "f()") + 6
     );
     assert_eq!(
         cost(
@@ -403,10 +406,49 @@ fn an_update_charges_nothing_more() {
             &body("let mut a = [[1, 2]]; let b = [3, 4]; return 0;"),
             "f()"
         ) + 1
+            + 1
             + 2
             + 1
             + 3
     );
+}
+
+/// Each selector `.N` of a place charges 1: the statement, the three steps, and the right side.
+#[test]
+fn each_step_of_a_place_charges() {
+    assert_eq!(
+        cost(
+            &body("let mut a = ((1, (2, 3)), 4); a.0.1.0 = 5; return 0;"),
+            "f()"
+        ),
+        cost(&body("let mut a = ((1, (2, 3)), 4); return 0;"), "f()") + 1 + 3 + 2
+    );
+    // The step `[1]` charges at its node `1:39`, after the index `0` at `1:41`.
+    let src = body("let mut a = [[1, 2]]; a[0][1] = 5; return 0;");
+    let used = cost(&src, "f()");
+    assert_eq!(out(&src, "f()", used - 9, 1000), "S015 1:39");
+    assert_eq!(out(&src, "f()", used - 10, 1000), "S015 1:41");
+}
+
+/// A failed check of a step comes before each error of a later step, as in Lean, although the
+/// checks run after the indices.
+#[test]
+fn a_failed_step_comes_before_a_later_index() {
+    let at = |s: &str| o(&body(s), "f()");
+    assert_eq!(
+        at("let mut a = [[1, 2]]; a[5][1 / 0] = 1; return 0;"),
+        "S013 1:41"
+    );
+    assert_eq!(
+        at("let mut a = [[1, 2]]; a[0].0[1 / 0] = 1; return 0;"),
+        "S010 1:39"
+    );
+    // This fuel runs out at the charge of the step `[0]` after `[5]`, and `[5]` fails first.
+    let fuel = cost(&body("let mut a = [[1, 2]]; return 0;"), "f()");
+    let good = body("let mut a = [[1, 2]]; a[0][0] = 1; return 0;");
+    assert_eq!(out(&good, "f()", fuel, 1000), "S015 1:39");
+    let bad = body("let mut a = [[1, 2]]; a[5][0] = 1; return 0;");
+    assert_eq!(out(&bad, "f()", fuel, 1000), "S013 1:41");
 }
 
 fn container(ty: &str, arg: &str) -> String {
