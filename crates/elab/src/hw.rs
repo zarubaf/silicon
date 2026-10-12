@@ -5,7 +5,7 @@
 //! node holds the indices of its operands.
 
 use crate::names::{PathId, Sym};
-use crate::value::{Ty, Value};
+use crate::value::{Ty, TyId, Types, Value};
 use parse::ast::{BinOp, Pos, UnOp};
 use resolve::DeclId;
 
@@ -209,27 +209,27 @@ impl Val {
     }
 
     /// The type. A string, a type, a handle, and a literal that waits have none.
-    pub(crate) fn ty(&self, g: &Graph) -> Option<Ty> {
-        self.seen().ty(g)
+    pub(crate) fn ty(&self, g: &Graph, tys: &mut Types) -> Option<TyId> {
+        self.seen().ty(g, tys)
     }
 }
 
 impl Seen<'_> {
     /// The type. A string, a type, a handle, and a literal that waits have none.
-    pub(crate) fn ty(&self, g: &Graph) -> Option<Ty> {
+    pub(crate) fn ty(&self, g: &Graph, tys: &mut Types) -> Option<TyId> {
         match self {
-            Seen::Static(v) => v.ty(),
-            Seen::Hw(h) => Some(g.ty(*h)),
+            Seen::Static(v) => v.ty(tys),
+            Seen::Hw(h) => Some(tys.mk(g.ty(*h))),
             Seen::Handle(_) | Seen::Pending(..) => None,
         }
     }
 
     /// What the value is, for a message. A literal that waits is `None`: its text needs the
     /// values that it refers to.
-    pub(crate) fn text(&self, g: &Graph) -> Option<String> {
+    pub(crate) fn text(&self, g: &Graph, tys: &Types) -> Option<String> {
         Some(match self {
-            Seen::Static(v) => v.text(),
-            Seen::Hw(h) => format!("hardware {}", g.ty(*h).text()),
+            Seen::Static(v) => v.text(tys),
+            Seen::Hw(h) => format!("hardware {}", tys.text_of(&g.ty(*h))),
             Seen::Handle(h) => match h {
                 Handle::Res {
                     kind: Kind::Reg, ..

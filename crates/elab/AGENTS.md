@@ -10,7 +10,7 @@ This crate owns the static values with their canonical serialization, their recu
 
 The scan keeps the values of the number literals, the symbols of the field names, and the call sites. Their keys are the node ids of the parser, not the positions. Only the number of a call site still comes from the rank of its position, as in Lean `callSites`. In later slices, two nodes can have the same position.
 
-A hardware value is a node in one arena, so a new node shares its operand trees. A structural path is a node in a second arena, and a user field holds the symbol of its name. Thus a new node or a new name costs constant work and no copy.
+A hardware value is a node in one arena, so a new node shares its operand trees. A structural path is a node in a second arena, and a user field holds the symbol of its name. Thus a new node or a new name costs constant work and no copy. A static type is an id in a third table, `Types`, with one id for each equal type. An id carries the size and the depth of its type. Thus a copy and an equality of types cost constant work. An array value holds the id of its element type.
 
 The elaborator core keeps to the Rust subset of design section 4.5: plain owned data, `match`, `Vec`, `Box`, and no `Rc`, no `unsafe`, and no trait object. The module `int` holds the static integer behind a small interface, and only this module computes with `num-bigint`. It also holds each conversion between an integer and a finite value. A finite value uses the bit vector of `core-ir`, as the core semantics does.
 

@@ -4,12 +4,12 @@
 //! result is the copy. An assignment to a place updates the one element in the local, because
 //! no other binding shares the container.
 
-use super::{Evaluator, Frame, Opnd, Out, Res, Slot, element, expr_pos, fail, need, same_form};
+use super::{Evaluator, Frame, Opnd, Out, Res, Slot, expr_pos, fail, need, same_form};
 use crate::Code;
 use crate::hw::{Ref, Root, Seen, Val};
 use crate::int::Int;
 use crate::ops::int_text;
-use crate::value::{Ty, Value};
+use crate::value::Value;
 use parse::ast::{Expr, Nat, Pos};
 use resolve::Target;
 use std::borrow::Cow;
@@ -46,22 +46,6 @@ fn chain(e: &Expr) -> Option<(&Expr, Vec<Sel<'_>>)> {
             }
             _ => return None,
         }
-    }
-}
-
-/// The type of the element `k` of a container type.
-fn part_ty(t: Cow<'_, Ty>, k: usize) -> Option<Cow<'_, Ty>> {
-    match t {
-        Cow::Borrowed(t) => match t {
-            Ty::Array(e, _) => Some(Cow::Borrowed(&**e)),
-            Ty::Tuple(ts) => ts.get(k).map(Cow::Borrowed),
-            _ => None,
-        },
-        Cow::Owned(t) => match &t {
-            Ty::Array(e, _) => Some(Cow::Owned((**e).clone())),
-            Ty::Tuple(ts) => ts.get(k).cloned().map(Cow::Owned),
-            _ => None,
-        },
     }
 }
 
@@ -137,7 +121,7 @@ impl Evaluator<'_> {
                 return fail(
                     Code::S010,
                     q,
-                    format!("an index is a static integer, not {}", v.text()),
+                    format!("an index is a static integer, not {}", v.text(&self.tys)),
                 );
             }
         };
@@ -184,7 +168,7 @@ impl Evaluator<'_> {
                 format!(
                     "the selector {} is out of range for {}",
                     selector_text(index),
-                    v.text()
+                    v.text(&self.tys)
                 ),
             ),
         }
@@ -233,7 +217,7 @@ impl Evaluator<'_> {
                     return fail(
                         Code::S010,
                         pos,
-                        format!("`len` takes an array, not {}", v.text()),
+                        format!("`len` takes an array, not {}", v.text(&self.tys)),
                     );
                 }
             },
@@ -243,7 +227,7 @@ impl Evaluator<'_> {
                     pos,
                     format!(
                         "`len` takes an array, not hardware {}",
-                        self.graph.ty(h).text()
+                        self.tys.text_of(&self.graph.ty(h))
                     ),
                 );
             }
@@ -272,7 +256,7 @@ impl Evaluator<'_> {
                 .frame()
                 .and_then(|f: &Frame| f.get(&id))
                 .filter(|s| s.mutable)
-                .map(|s| (id, s.ty.clone())),
+                .map(|s| (id, s.ty)),
             _ => None,
         };
         let Some((id, slot_ty)) = place else {
@@ -281,7 +265,7 @@ impl Evaluator<'_> {
         let frame = self.store.frames.len().saturating_sub(1);
         let root = Root::Local(frame, id);
         let mut keys: Vec<usize> = Vec::with_capacity(steps.len());
-        let mut ty: Option<Cow<'_, Ty>> = slot_ty.as_ref().map(Cow::Borrowed);
+        let mut ty = slot_ty;
         for step in &steps {
             let k = match *step {
                 Sel::Index(q, args) => {
@@ -295,25 +279,28 @@ impl Evaluator<'_> {
                     let o = self.eval(i)?;
                     let o = need(i, o)?;
                     self.check_static(expr_pos(i), &o)?;
-                    self.pick_at(q, expr_pos(i), self.current(root, &keys), &o)?
+                    self.pick_at(q, expr_pos(i), self.store.current(root, &keys), &o)?
                 }
                 Sel::Select(q, r, index) => {
-                    self.select_at(q, r, index, self.current(root, &keys))?
+                    self.select_at(q, r, index, self.store.current(root, &keys))?
                 }
             };
             keys.push(k);
             ty = match ty {
-                Some(t) => part_ty(t, k),
-                None => self.current(root, &keys).ty(&self.graph).map(Cow::Owned),
+                Some(t) => self.tys.part(t, k),
+                None => self
+                    .store
+                    .current(root, &keys)
+                    .ty(&self.graph, &mut self.tys),
             };
         }
         let o = self.eval(value)?;
         let o = need(value, o)?;
         self.copy(pos, &o)?;
-        let y = if let Some(t) = &ty {
+        let y = if let Some(t) = ty {
             self.conform_val(pos, t, o)?
         } else {
-            let old = self.current(root, &keys);
+            let old = self.store.current(root, &keys);
             let new = self.store.seen(&o);
             if !same_form(old, new) {
                 return fail(
@@ -344,14 +331,6 @@ impl Evaluator<'_> {
             replace(r, &keys, w);
         }
         Ok(None)
-    }
-
-    /// What the local at `root` holds at the numbers `keys`.
-    fn current(&self, root: Root, keys: &[usize]) -> Seen<'_> {
-        match self.store.root(&root) {
-            Val::Static(v) => Seen::Static(element(v, keys)),
-            v => v.seen(),
-        }
     }
 
     /// The value of an element of a container in this phase. A hardware value is `S010`,
