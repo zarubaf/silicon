@@ -6,9 +6,12 @@ These tests check the static evaluator at the boundary of `eval` and `cost`. The
 operator with its boundary cases, the fit rule, the static faults, and the table of constants.
 They also check the calls and the exact charges of the cost model at the budget limits.
 
-The static containers of slice 2 come last. Their tests check the literals, the typed uses,
-the index, the selector, and `len`. They also check the equality, the depth bound, and the
-nested doubling of section 11.3.
+The static containers of slice 2 come next. Their tests check the literals, the typed uses,
+the index, the selector, and `len`. They also check the equality, the join, the depth bound,
+and the nested doubling of section 11.3.
+
+The types as values of slice 2 come last. Their tests check the type constructors with their
+charges, the aliases, the table of struct specializations, and the struct cases of section 11.3.
 -/
 
 namespace Silicon.Source.Test.Eval
@@ -423,11 +426,11 @@ def empty : String :=
 
 /-!
 A typed use of a container converts each element. It charges the size of the value plus the
-size of the result: 3 + 3 here. The type `[UInt[8]; 2]` charges 13.
+size of the result: 3 + 3 here. The type `[UInt[8]; 2]` charges 13, and its metadata 3.
 -/
 def typed (ty v : String) : String := s!"fn f() -> Int \{ let a: {ty} = {v}; return 0; }"
 #guard cost (typed "[UInt[8]; 2]" "[1, 2]") "f()" ==
-  cost "fn f() -> Int { let a = [1, 2]; return 0; }" "f()" + 13 + 6
+  cost "fn f() -> Int { let a = [1, 2]; return 0; }" "f()" + 16 + 6
 #guard out "fn f(a: [UInt[8]; 2]) -> UInt[8] { return a[1]; }" "f([1, 2])" == "(uint 8 2)"
 #guard out "fn f(a: [UInt[8]; 2]) -> UInt[8] { return a[1]; }" "f([1, 256])" == "S012 1:1"
 #guard out "fn f(a: [UInt[8]; 2]) -> UInt[8] { return a[1]; }" "f([1, 2, 3])" == "S010 1:1"
@@ -533,8 +536,9 @@ def hw (body : String) : String :=
 
 /-!
 The nested doubling of section 11.3: making `a_k` charges `2^(k + 2) - 1`. Each `let` adds 4
-units: the statement, the literal, and the two names. With the fuel 1000000, the sum first
-goes above the fuel at the `let` of `a17`.
+units: the statement, the literal, and the two names. The join of the two element types
+visits `k` pairs of arrays. With the fuel 1000000, the sum first goes above the fuel at the
+`let` of `a17`.
 -/
 def doubling (k : Nat) : String :=
   "fn d() -> Int {\n" ++ String.join ((List.range (k + 1)).map fun i =>
@@ -542,7 +546,7 @@ def doubling (k : Nat) : String :=
   "  return 0;\n}"
 #guard exact (doubling 0) "d()" 17
 #guard (List.range 6).all fun k =>
-  cost (doubling (k + 1)) "d()" == cost (doubling k) "d()" + 2 ^ (k + 3) - 1 + 4
+  cost (doubling (k + 1)) "d()" == cost (doubling k) "d()" + 2 ^ (k + 3) - 1 + 4 + (k + 1)
 #guard out (doubling 20) "d()" 1000000 == "S015 19:13"
 
 /-!
@@ -614,6 +618,165 @@ The step `[1]` charges at its node `1:39` after the index `0` at `1:41` and befo
 def twoSteps : String := body "let mut a = [[1, 2]]; a[0][1] = 5; return 0;"
 #guard out twoSteps "f()" (cost twoSteps "f()" - 9) == "S015 1:39"
 #guard out twoSteps "f()" (cost twoSteps "f()" - 10) == "S015 1:41"
+
+/-!
+A join charges 1 for each pair of container types that it visits. `[1, 2]` joins no container,
+and `[[1], [2]]` visits one pair of arrays: it charges 1 more than the tuple `([1], [2])`. `==`
+on two arrays joins their element types. The outer pair of the equality below visits one pair
+of arrays, after the two literals and before the sum of the sizes.
+-/
+#guard cost "" "[[1], [2]]" == cost "" "([1], [2])" + 1
+#guard exact "" "[[1], [2]] == [[1], [2]]" (1 + 2 * cost "" "[[1], [2]]" + 1 + 10)
+
+/-!
+A type is a static value of type `Type`. `[T; N]` in an expression is a type. A type equality
+charges the sum of the sizes: `Bool == Bool` charges its node, the two names, and 2.
+`[UInt[8]; 4]` charges its node, 6 for `UInt[8]`, and 2 for `4`. Then it charges its size 4
+and the three products of its metadata, 3.
+-/
+#guard out "" "Bool" == "(type bool)"
+#guard out "" "Type" == "(type type)"
+#guard out "" "[UInt[8]; 4]" == "(type (array (uint 8) 4))"
+#guard out "" "[[Bool; 2]; 3]" == "(type (array (array bool 2) 3))"
+#guard out "" "(Bool, Nat)" == "(tuple ((type bool) (type nat)))"
+#guard out "" "[Bool, UInt[8]]" == "(array type ((type bool) (type (uint 8))))"
+#guard out "" "[Bool; 2] == [Bool; 2]" == "(bool true)"
+#guard out "" "[Bool; 2] != [Bool; 3]" == "(bool true)"
+#guard exact "" "Bool == Bool" 5
+#guard exact "" "[UInt[8]; 4]" 16
+#guard out "" "[Bool; -1]" == "S012 1:8"
+#guard out "" "[Bool; 2][0]" == "S007 1:1"
+#guard out "" "[[Bool; 1]; 1]" (depth := 2) == "S015 1:1"
+
+/-!
+A tuple type charges its size and the sizes of the four integers of its metadata. Here these
+are the node 1, the two names 2, the size 3, and the metadata 4.
+-/
+def body2 (s : String) : String := s!"fn f() -> Type \{ {s} }"
+#guard out (body2 "type X = (Bool, UInt[8]); return X;") "f()" ==
+  "(type (tuple (bool (uint 8))))"
+#guard cost (body "type X = (Bool, Bool); return 0;") "f()" ==
+  cost (body "type X = Bool; return 0;") "f()" + 9
+
+/-!
+A local of type `Type` is a static value and can be a type. A local that holds another value is
+`S010` at the type name. An index of a local is `S007` in `Elab`.
+-/
+#guard out "fn f(comptime T: Type, x: T) -> T { return x; }" "f(UInt[8], 3)" == "(uint 8 3)"
+#guard out "fn f(T: Type) -> Type { return [T; 2]; }" "f(Bool)" == "(type (array bool 2))"
+#guard out "fn f(comptime T: Type) -> Type { let mut u = T; u = (T, T); return u; }" "f(Bool)" ==
+  "S010 1:49"
+#guard out "fn f(Bool: Nat, x: Bool) -> Int { return 0; }" "f(1, 2)" == "S010 1:20"
+#guard out "fn f(comptime T: Type) -> Int { let x: T[2] = 0; return 0; }" "f(Bool)" == "S007 1:40"
+#guard out "fn f(comptime T: Type) -> Int { let x = T[2]; return 0; }" "f(Bool)" == "S007 1:41"
+
+/-!
+A `type` item is a constant of type `Type`. It evaluates at its first use. A `type` statement
+binds a local of type `Type`. A cycle of aliases is `S019` at the use in progress.
+-/
+def aliases : String :=
+  "type T = UInt[8];
+type U = V;
+type V = U;
+const C: Type = [T; 2];
+" ++
+  "fn f() -> T { type X = [T; 2]; let x: X = [1, 2]; return x[1]; }"
+#guard out aliases "T" == "(type (uint 8))"
+#guard out aliases "T == UInt[8]" == "(bool true)"
+#guard out aliases "C" == "(type (array (uint 8) 2))"
+#guard out aliases "f()" == "(uint 8 2)"
+#guard out aliases "U" == "S019 3:10"
+#guard out aliases "V" == "S019 2:10"
+
+/-!
+A struct type is a static value. Its identity is the struct item and its static arguments. The
+first use charges the size of the struct type, evaluates the field types in the scope of the
+struct, and charges the metadata. `P[8]` charges its node, its name, the argument 2, the size
+2, the parameter type 1, the field types 6, and the metadata 2 + 4. A later use charges only
+its node, its name, and its argument.
+-/
+def structs : String :=
+  "struct P(comptime W: Nat) { a: UInt[W], b: Bool }
+struct Q { p: P[8], q: [P[4]; 2] }
+" ++
+  "struct R { r: R }
+struct A { b: B }
+struct B { a: A }
+" ++
+  "struct L(comptime T: Type) { a: T }
+struct S { a: X }
+type X = S;
+" ++
+  "struct F(comptime W: Nat) { a: UInt[W - 1] }"
+#guard out structs "P[8]" == "(type (struct root P ((int 8))))"
+#guard out structs "Q" == "(type (struct root Q ()))"
+#guard out structs "L[L[Bool]]" ==
+  "(type (struct root L ((type (struct root L ((type bool)))))))"
+#guard out structs "P[8] == P[8]" == "(bool true)"
+#guard out structs "P[8] == P[9]" == "(bool false)"
+#guard out structs "[P[8]; 2]" == "(type (array (struct root P ((int 8))) 2))"
+#guard exact structs "P[8]" 19
+#guard exact structs "P[8] == P[8]" 28
+#guard out structs "P[-1]" == "S012 1:1"
+#guard out structs "P[true]" == "S010 1:1"
+#guard out structs "F[1]" == "S012 9:32"
+#guard out structs "R" == "S019 3:15"
+#guard out structs "A" == "S019 5:15"
+#guard out structs "S" == "S019 8:10"
+
+/-!
+The struct chain of section 11.3, specialized from the innermost struct outward. `S_k` has the
+depth `k + 2`. It runs at the exact depth, and one level above it gives `S015` at its use.
+-/
+def structChain (k : Nat) : String :=
+  "struct S0 { a: Bool }
+" ++
+  String.join ((List.range k).map fun i => s!"struct S{i + 1} \{ a: S{i} }\n") ++
+  "fn f() -> Int {\n" ++
+  String.join ((List.range (k + 1)).map fun i => s!"  type T{i} = S{i};\n") ++ "  return 0;\n}"
+#guard out (structChain 5) "f()" (depth := 7) == "(int 0)"
+#guard out (structChain 5) "f()" (depth := 6) == "S015 13:13"
+
+/-!
+The chain of 300 acyclic structs of section 11.3. The first use specializes each struct in
+turn, so the call and the 300 specializations nest 301 levels deep. One level below gives
+`S015` at the use of the last struct.
+-/
+def structDeep (k : Nat) : String :=
+  String.join ((List.range (k - 1)).map fun i => s!"struct S{i} \{ a: S{i + 1} }\n") ++
+  s!"struct S{k - 1} \{ a: Bool }\n" ++ "fn f() -> Int { type X = S0; return 0; }"
+#guard out (structDeep 300) "f()" (depth := 301) == "(int 0)"
+#guard out (structDeep 300) "f()" (depth := 300) == "S015 299:18"
+
+/-!
+The loop `t = P[t];` of section 11.3. The type `t` nests its arguments, so each step adds 1 to
+its depth. The loop runs at the exact depth, and one more step gives `S015` at the node `P[t]`.
+-/
+def nest (k : Nat) : String :=
+  "struct P(comptime T: Type) { x: Bool }
+" ++
+  s!"fn f() -> Int \{\n  let mut t: Type = Bool;\n  comptime for i in 0..{k} \{\n" ++
+  "    t = P[t];
+  }
+  return 0;
+}"
+#guard out (nest 9) "f()" (depth := 10) == "(int 0)"
+#guard out (nest 10) "f()" (depth := 10) == "S015 5:9"
+
+/-!
+The doubling chain of section 11.3: each `S_k` has two fields of `S_(k-1)`, so its width is
+`64 * 2^k`. The metadata stays cheap: each step charges 11 units while the four integers fit
+one word, and 200 steps charge less than 3000 units.
+-/
+def wide (k : Nat) : String :=
+  "struct S0 { a: UInt[64] }
+" ++
+  String.join ((List.range k).map fun i => s!"struct S{i + 1} \{ a: S{i}, b: S{i} }\n") ++
+  "fn f() -> Int {\n" ++
+  String.join ((List.range (k + 1)).map fun i => s!"  type T{i} = S{i};\n") ++ "  return 0;\n}"
+#guard (List.range 50).all fun k => cost (wide (k + 1)) "f()" == cost (wide k) "f()" + 11
+#guard cost (wide 200) "f()" < 3000
+#guard out (wide 3) "S3" == "(type (struct root S3 ()))"
 
 /-! Errors of the earlier passes come first, also in `EXPR`. -/
 #guard out "const A: Nat = ;" "1" == "S001 1:16"
