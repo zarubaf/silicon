@@ -33,7 +33,7 @@ use crate::scan::{Numbers, Scan, Syms};
 use crate::types::{Ty, TyId, Types};
 use crate::value::{Evaluated, Value, int_size};
 use crate::{Budget, Code, Error};
-use parse::ast::{BinOp, Expr, Ident, Item, NodeId, Param, Pos, Stmt, TypeExpr};
+use parse::ast::{BinOp, Expr, Ident, Item, NodeId, Param, ParamMode, Pos, Stmt, TypeExpr};
 use parse::{NestedStack, StackError};
 use resolve::{DeclId, Kind, Prelude, Resolved, ResolvedExpr, Target};
 use std::cell::Cell;
@@ -354,6 +354,7 @@ pub(crate) fn expr_pos(e: &Expr) -> Pos {
         | Expr::Binary { pos, .. }
         | Expr::Cond { pos, .. }
         | Expr::Call { pos, .. }
+        | Expr::Method { pos, .. }
         | Expr::Index { pos, .. }
         | Expr::Field { pos, .. }
         | Expr::Unit { pos }
@@ -955,6 +956,12 @@ impl Evaluator<'_> {
                 callee,
                 args,
             } => self.call(*pos, *id, callee, args),
+            // TODO(#179): evaluate a receiver call (plan step 28).
+            Expr::Method { pos, name, .. } => fail(
+                Code::S010,
+                *pos,
+                format!("the receiver call `{}` is not supported yet", name.name),
+            ),
             Expr::Index { pos, base, args } => {
                 if let Expr::Name { pos: bp, id, .. } = &**base
                     && let Some(Target::Prelude(k)) = self.target(*id)
@@ -1266,7 +1273,15 @@ impl Evaluator<'_> {
     fn param(&mut self, pos: Pos, comptime: bool, q: &Param, v: Out) -> Res<()> {
         let t = self.type_expr(&q.ty)?;
         self.charge(pos, self.size(&v))?;
-        let x = if comptime || q.comptime {
+        // TODO(#179): bind a `mut` formal to its place (plan step 28).
+        if q.mode == ParamMode::Mut {
+            return fail(
+                Code::S010,
+                pos,
+                format!("the `mut` formal `{}` is not supported yet", q.name.name),
+            );
+        }
+        let x = if comptime || q.mode == ParamMode::Comptime {
             let v = self.settle(pos, t, v)?;
             Val::Static(self.conform(pos, t, v)?)
         } else {

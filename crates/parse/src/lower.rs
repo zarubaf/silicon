@@ -3,7 +3,7 @@
 //! tree that does not have the shape that the parser builds.
 
 use crate::ast::{
-    BinOp, Expr, Ident, Item, Nat, NodeId, Param, Pos, Stmt, StructField, TypeExpr, UnOp,
+    BinOp, Expr, Ident, Item, Nat, NodeId, Param, ParamMode, Pos, Stmt, StructField, TypeExpr, UnOp,
 };
 use crate::error::LineIndex;
 use rowan::NodeOrToken;
@@ -28,6 +28,16 @@ fn token(node: &SyntaxNode, kind: SyntaxKind) -> Option<SyntaxToken> {
 
 fn has(node: &SyntaxNode, kind: SyntaxKind) -> bool {
     token(node, kind).is_some()
+}
+
+fn param_mode(param: &SyntaxNode) -> ParamMode {
+    if has(param, SyntaxKind::ComptimeKw) {
+        ParamMode::Comptime
+    } else if has(param, SyntaxKind::MutKw) {
+        ParamMode::Mut
+    } else {
+        ParamMode::None
+    }
 }
 
 fn unescape(literal: &str) -> String {
@@ -221,7 +231,7 @@ impl<'a> Lower<'a> {
             .map(|param| {
                 Some(Param {
                     pos: self.pos_of(&param),
-                    comptime: has(&param, SyntaxKind::ComptimeKw),
+                    mode: param_mode(&param),
                     name: self.ident(&param)?,
                     ty: self.type_expr(&param.children().find(is_type)?)?,
                 })
@@ -424,31 +434,7 @@ impl<'a> Lower<'a> {
                 yes: operand(1)?,
                 no: operand(2)?,
             }),
-            CallExpr => Some(Expr::Call {
-                pos,
-                id: self.id(),
-                callee: operand(0)?,
-                args: self.args(node)?,
-            }),
-            IndexExpr => Some(Expr::Index {
-                pos,
-                base: operand(0)?,
-                args: self.args(node)?,
-            }),
-            FieldExpr => Some(Expr::Field {
-                pos,
-                base: operand(0)?,
-                field: self.ident(node)?,
-            }),
-            SelectExpr => {
-                let literal = tokens(node).find(|t| matches!(t.kind(), Dec | Hex | Bin))?;
-                Some(Expr::Select {
-                    pos,
-                    base: operand(0)?,
-                    lit_pos: self.pos_at(&literal),
-                    index: number(literal.text()),
-                })
-            }
+            CallExpr | MethodExpr | IndexExpr | FieldExpr | SelectExpr => self.postfix(node, pos),
             UnitExpr => Some(Expr::Unit { pos }),
             TupleExpr => Some(Expr::Tuple {
                 pos,
@@ -463,6 +449,49 @@ impl<'a> Lower<'a> {
                 elem: Box::new(self.type_expr(&node.children().find(is_type)?)?),
                 len: operand(0)?,
             }),
+            _ => None,
+        }
+    }
+
+    /// A call, a receiver call, an index, a field, or a selector: the postfix forms, which
+    /// have an operand first.
+    fn postfix(&self, node: &SyntaxNode, pos: Pos) -> Option<Expr> {
+        #[allow(clippy::enum_glob_use)]
+        use SyntaxKind::*;
+        let operand = || Some(Box::new(self.expr(&node.children().find(is_expr)?)?));
+        match node.kind() {
+            CallExpr => Some(Expr::Call {
+                pos,
+                id: self.id(),
+                callee: operand()?,
+                args: self.args(node)?,
+            }),
+            MethodExpr => Some(Expr::Method {
+                pos,
+                id: self.id(),
+                recv: operand()?,
+                name: self.ident(node)?,
+                args: self.args(node)?,
+            }),
+            IndexExpr => Some(Expr::Index {
+                pos,
+                base: operand()?,
+                args: self.args(node)?,
+            }),
+            FieldExpr => Some(Expr::Field {
+                pos,
+                base: operand()?,
+                field: self.ident(node)?,
+            }),
+            SelectExpr => {
+                let literal = tokens(node).find(|t| matches!(t.kind(), Dec | Hex | Bin))?;
+                Some(Expr::Select {
+                    pos,
+                    base: operand()?,
+                    lit_pos: self.pos_at(&literal),
+                    index: number(literal.text()),
+                })
+            }
             _ => None,
         }
     }
@@ -494,6 +523,7 @@ fn is_expr(node: &SyntaxNode) -> bool {
             | CallExpr
             | IndexExpr
             | FieldExpr
+            | MethodExpr
             | SelectExpr
             | UnitExpr
             | TupleExpr

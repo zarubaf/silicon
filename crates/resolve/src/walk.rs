@@ -329,6 +329,12 @@ impl Walker {
                     self.expr(arg);
                 }
             }
+            Expr::Method { recv, args, .. } => {
+                self.expr(recv);
+                for arg in args {
+                    self.expr(arg);
+                }
+            }
             Expr::Index { base, args, .. } => {
                 self.expr(base);
                 for arg in args {

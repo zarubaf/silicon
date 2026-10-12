@@ -13,8 +13,8 @@ pub struct Pos {
     pub col: usize,
 }
 
-/// The id of a node: an `Ident`, an `Expr::Name`, a `TypeExpr::Name`, an `Expr::Num`, or an
-/// `Expr::Call`. The lowering gives each such node of one parse its own id, in source order. A
+/// The id of a node: an `Ident`, an `Expr::Name`, a `TypeExpr::Name`, an `Expr::Num`, an
+/// `Expr::Call`, or an `Expr::Method`. The lowering gives each such node of one parse its own id, in source order. A
 /// later pass keys its facts about a node by the id and not by the position, because two nodes
 /// can share a position or have none. The id is not in the Lean AST, and the dump does not print it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -165,6 +165,14 @@ pub enum Expr {
         base: Box<Expr>,
         args: Vec<Expr>,
     },
+    /// The receiver call `recv.name(args)`. Its position is the position of the receiver.
+    Method {
+        pos: Pos,
+        id: NodeId,
+        recv: Box<Expr>,
+        name: Ident,
+        args: Vec<Expr>,
+    },
     Field {
         pos: Pos,
         base: Box<Expr>,
@@ -307,12 +315,20 @@ pub enum Stmt {
     },
 }
 
+/// The mode of a parameter: no mark, `comptime`, or `mut`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ParamMode {
+    None,
+    Comptime,
+    Mut,
+}
+
 /// A parameter of a function, a module, or a struct. A module parameter and a struct parameter
-/// always have `comptime`.
+/// always have the mode `Comptime`.
 #[cfg_attr(test, derive(Clone, Debug, PartialEq, Eq))]
 pub struct Param {
     pub pos: Pos,
-    pub comptime: bool,
+    pub mode: ParamMode,
     pub name: Ident,
     pub ty: TypeExpr,
 }
@@ -440,6 +456,10 @@ impl Expr {
             }
             Expr::Index { base, args, .. } => {
                 take_expr(base, work);
+                take_exprs(args, work);
+            }
+            Expr::Method { recv, args, .. } => {
+                take_expr(recv, work);
                 take_exprs(args, work);
             }
             Expr::Field { base, .. } | Expr::Select { base, .. } => take_expr(base, work),

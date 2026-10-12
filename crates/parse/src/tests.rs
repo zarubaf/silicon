@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-use crate::ast::{Expr, Item, Pos, Stmt, TypeExpr};
+use crate::ast::{Expr, Item, ParamMode, Pos, Stmt, TypeExpr};
 use crate::{Code, DEFAULT_SYNTAX_DEPTH, Parse};
 use proptest::prelude::*;
 
@@ -54,6 +54,9 @@ fn sx(e: &Expr) -> String {
         Expr::Cond { cond, yes, no, .. } => format!("(if {} {} {})", sx(cond), sx(yes), sx(no)),
         Expr::Call { callee, args, .. } => format!("(call {} {})", sx(callee), list(args)),
         Expr::Index { base, args, .. } => format!("(index {} {})", sx(base), list(args)),
+        Expr::Method {
+            recv, name, args, ..
+        } => format!("(method {} {} {})", sx(recv), name.name, list(args)),
         Expr::Field { base, field, .. } => format!("(field {} {})", sx(base), field.name),
         Expr::Unit { .. } => "()".to_owned(),
         Expr::Tuple { elems, .. } => format!("(tuple {})", list(elems)),
@@ -191,7 +194,10 @@ fn fn_item_and_params() {
     assert!(*comptime);
     assert_eq!(name.name, "f");
     assert_eq!(params.len(), 2);
-    assert!(params[0].comptime && !params[1].comptime);
+    assert_eq!(
+        (params[0].mode, params[1].mode),
+        (ParamMode::Comptime, ParamMode::None)
+    );
     assert_eq!(params[0].pos, pos(1, 15));
     assert!(matches!(ret, TypeExpr::Index { args, .. } if args.len() == 1));
     assert!(matches!(
@@ -224,7 +230,7 @@ fn module_with_domains() {
     else {
         panic!("{parsed:?}");
     };
-    assert!(params[0].comptime);
+    assert_eq!(params[0].mode, ParamMode::Comptime);
     let domains = domains.as_deref().unwrap_or_default();
     assert_eq!(domains.len(), 1);
     assert_eq!(

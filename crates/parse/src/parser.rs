@@ -128,6 +128,11 @@ impl<'a> Parser<'a> {
         self.cur() == Some(kind)
     }
 
+    /// The kind of the token two places after the current one.
+    pub(crate) fn after_next(&self) -> Option<SyntaxKind> {
+        self.significant(2).map(|t| t.kind)
+    }
+
     /// The text of the token after the current one.
     pub(crate) fn next_text(&self) -> &'a str {
         self.significant(1)
