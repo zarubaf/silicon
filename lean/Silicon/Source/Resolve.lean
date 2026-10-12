@@ -37,7 +37,9 @@ later check. A selector `.N` holds a number, so it has no name. The container fo
 
 The name `m` of a receiver call `x.m(args)` resolves in the item scope, then in the prelude.
 It never resolves to a local (section 5.6 of the front-end spec). It names a function, else
-`S003` at `m`. A parameter keeps its mode: none, `comptime`, or `mut`.
+`S003` at `m`. A parameter keeps its mode: none, `comptime`, or `mut`. The receiver binds to the
+first parameter of `m` without a written `comptime` mark. The node holds the index of that
+parameter, or none, which `Check` reports as `S007`.
 
 Each call node and each receiver-call node gets a call site `k`. The sites of an item body count
 from 0 in pre-order (section 7.3). A call node comes before its callee, its receiver, and its
@@ -88,6 +90,15 @@ inductive Ref where
   | local (id : Nat)
   deriving Repr, DecidableEq, BEq, Inhabited
 
+/-! The parameter modes of a prelude function (section 5.6). -/
+def fnModes : PrimFn → Array ParamMode
+  | .resize | .reinterpret => #[.comptime, .none]
+  | .list => #[.comptime]
+  | .push => #[.mut, .none]
+  | .pop => #[.mut]
+  | .staticAssert => #[.none, .none]
+  | .error | .len | .dataBits | .str => #[.none]
+
 /-!
 The prelude. It holds the scalar types of section 12.1 and the functions `resize`,
 `reinterpret`, `static_assert`, and `error` of slice 1. It also holds `Unit` and `len`, the
@@ -121,9 +132,10 @@ structure Binder where
 /-!
 The resolved expression and type expression. They are those of `Source.Syntax` with a `Ref` at
 each name, so they are mutually recursive too. The container forms keep the shape of the parsed
-forms. A `call` and a `method` hold their call site. The `fn` of a `method` is a `fn` item or a
-prelude function. A type name refers to a prelude type, a `struct` item, a `type` item, or a
-local. A local holds a value of type `Type`, which `Elab` checks.
+forms. A `call` and a `method` hold their call site. The `fn` of a `method` is a `fn` item or
+a prelude function, and its `param` is the parameter that the receiver binds to. A type name
+refers to a prelude type, a `struct` item, a `type` item, or a local. A local holds a value of
+type `Type`, which `Elab` checks.
 -/
 mutual
   inductive Expr where
@@ -142,7 +154,8 @@ mutual
     | array (pos : Pos) (elems : List Expr)
     | select (pos : Pos) (base : Expr) (litPos : Pos) (index : Nat)
     | arrayType (pos : Pos) (elem : TypeExpr) (len : Expr)
-    | method (pos : Pos) (recv : Expr) (name : Ident) (fn : Ref) (args : List Expr) (site : Nat)
+    | method (pos : Pos) (recv : Expr) (name : Ident) (fn : Ref) (param : Option Nat)
+        (args : List Expr) (site : Nat)
 
   inductive TypeExpr where
     | name (pos : Pos) (name : String) (ref : Ref)
@@ -336,6 +349,18 @@ def method (m : Ident) : M Ref := do
     | some _ => notFn
     | none => missing m.pos m.name; return default
 
+/-!
+The parameter of the function `f` that the receiver of a receiver call binds to. It is the first
+parameter without a written `comptime` mark, also in a `comptime fn` (section 5.6).
+-/
+def receiver : Ref → M (Option Nat)
+  | .item i => do
+    match (← read).items[i]? with
+    | some (.fn _ _ _ ps _ _) => return ps.findIdx? (·.mode != .comptime)
+    | _ => return none
+  | .fn g => return (fnModes g).findIdx? (· != .comptime)
+  | _ => return none
+
 mutual
   def expr : Source.Expr → M Expr
     | .num p v => return .num p v
@@ -363,7 +388,7 @@ mutual
       let k ← site
       let r ← expr r
       let f ← method m
-      return .method p r m f (← xs.mapM expr) k
+      return .method p r m f (← receiver f) (← xs.mapM expr) k
 
   def typeExpr : Source.TypeExpr → M TypeExpr
     | .name p n => do
