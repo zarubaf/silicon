@@ -714,14 +714,14 @@ fn eval_pays_the_length_of_its_result() -> Test {
     let full = agree("eval", &["f()"], &path)?;
     let len = text(&full).len() - 1;
     assert!(len > 5_000_000, "{len}");
-    let short = text(&agree("eval", &["f()", "--fuel", "20000"], &path)?);
+    let short = text(&agree("eval", &["f()", "--fuel", "100000"], &path)?);
     let paid = format!("error[S015]: 1:1: the fuel cannot pay {len} unit(s) of the result; ");
     let left: u64 = short
         .strip_prefix(&paid)
         .and_then(|rest| rest.split(' ').next())
         .and_then(|n| n.parse().ok())
         .ok_or(short.clone())?;
-    let used = 20_000 - left;
+    let used = 100_000 - left;
     let exact = (used + len as u64).to_string();
     let out = agree("eval", &["f()", "--fuel", &exact], &path)?;
     assert_eq!(out.status.code(), Some(0));
