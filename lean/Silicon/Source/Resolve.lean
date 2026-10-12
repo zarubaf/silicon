@@ -320,6 +320,10 @@ def isModule (i : Nat) : M Bool := return (← read).items[i]? matches some (.mo
 def wrongKind (pos : Pos) (n what : String) : M Unit :=
   recordUnknown ⟨.S003, pos, s!"`{n}` is not {what}"⟩
 
+/-! `S004` at a function type. The parser gives none yet, so the resolver has no form for it. -/
+def fnTypeLater (pos : Pos) : M Unit :=
+  recordUnknown ⟨.S004, pos, "a function type is not supported yet"⟩
+
 /-!
 A name in a type position refers to a type: a prelude type, a `struct` item, a `type` item, or a
 local. Only `Elab` knows whether a local holds a type.
@@ -389,6 +393,7 @@ mutual
       let r ← expr r
       let f ← method m
       return .method p r m f (← receiver f) (← xs.mapM expr) k
+    | .fnType p .. => do fnTypeLater p; return .unit p
 
   def typeExpr : Source.TypeExpr → M TypeExpr
     | .name p n => do
@@ -401,6 +406,7 @@ mutual
     | .unit p => return .unit p
     | .tuple p ts => return .tuple p (← ts.mapM typeExpr)
     | .array p t n => return .array p (← typeExpr t) (← expr n)
+    | .fn p .. => do fnTypeLater p; return .unit p
 end
 
 /-! The module item of an `instance`. -/

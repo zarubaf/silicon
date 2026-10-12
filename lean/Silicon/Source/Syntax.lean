@@ -42,8 +42,11 @@ element: `()` is `unit`. A `select` is the selector `.N` of a tuple. Its `litPos
 of the number literal, for `S013`. A `method` is the receiver call `recv.name(args)`. Its position
 is the position of the receiver, the start of the call.
 
-A type expression is a type name, a type family with its static arguments, the unit type `()`, a
-tuple type, or an array type `[T; N]`. A `tuple` holds at least one element type.
+A type expression is a type name, a type family with its static arguments, or the unit type
+`()`. It can also be a tuple type, an array type `[T; N]`, or a function type
+`fn (T, mut U) -> V`. A `tuple` holds at least one element type. A function type in an
+expression is a `fnType`, a unary operand. A `FnParam` is a parameter type of a function type,
+with its `mut` mark. It has no `comptime` mark, because that mark is `S001`.
 -/
 mutual
   inductive Expr where
@@ -63,6 +66,7 @@ mutual
     | select (pos : Pos) (base : Expr) (litPos : Pos) (index : Nat)
     | arrayType (pos : Pos) (elem : TypeExpr) (len : Expr)
     | method (pos : Pos) (recv : Expr) (name : Ident) (args : List Expr)
+    | fnType (pos : Pos) (params : List FnParam) (ret : TypeExpr)
 
   inductive TypeExpr where
     | name (pos : Pos) (name : String)
@@ -70,9 +74,13 @@ mutual
     | unit (pos : Pos)
     | tuple (pos : Pos) (elems : List TypeExpr)
     | array (pos : Pos) (elem : TypeExpr) (len : Expr)
+    | fn (pos : Pos) (params : List FnParam) (ret : TypeExpr)
+
+  inductive FnParam where
+    | mk (mutable : Bool) (ty : TypeExpr)
 end
 
-deriving instance Repr, BEq, Inhabited for Expr, TypeExpr
+deriving instance Repr, BEq, Inhabited for Expr, TypeExpr, FnParam
 
 /-!
 A statement. A target of `assign` or `connect` is a `name` or a `field` expression. An `alias` is

@@ -48,16 +48,27 @@ mutual
       | .method _ r m xs =>
         r.toks postfixLevel ++ [.symbol ".", .ident m.name, .symbol "("]
           ++ argToks (xs.map (Expr.toks 0)) ++ [.symbol ")"]
+      | .fnType _ ps r =>
+        [.keyword "fn", .symbol "("] ++ argToks (ps.map FnParam.toks)
+          ++ [.symbol ")", .symbol "->"] ++ r.toks
     if e.level < ctx then .symbol "(" :: body ++ [.symbol ")"] else body
 
   def TypeExpr.toks : TypeExpr → List Kind
     | .name _ n => [.ident n]
-    | .index _ b xs => b.toks ++ .symbol "[" :: argToks (xs.map (Expr.toks 0)) ++ [.symbol "]"]
+    | .index _ b xs =>
+      let base := if b matches .fn .. then .symbol "(" :: b.toks ++ [.symbol ")"] else b.toks
+      base ++ .symbol "[" :: argToks (xs.map (Expr.toks 0)) ++ [.symbol "]"]
     | .unit _ => [.symbol "(", .symbol ")"]
     | .tuple _ ts =>
       .symbol "(" :: argToks (ts.map TypeExpr.toks)
         ++ (if ts.length == 1 then [.symbol ",", .symbol ")"] else [.symbol ")"])
     | .array _ t n => .symbol "[" :: t.toks ++ .symbol ";" :: n.toks 0 ++ [.symbol "]"]
+    | .fn _ ps r =>
+      [.keyword "fn", .symbol "("] ++ argToks (ps.map FnParam.toks) ++ [.symbol ")", .symbol "->"]
+        ++ r.toks
+
+  def FnParam.toks : FnParam → List Kind
+    | .mk m t => (if m then [.keyword "mut"] else []) ++ t.toks
 end
 
 mutual

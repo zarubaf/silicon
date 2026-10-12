@@ -171,6 +171,7 @@ theorem head_append {s t : String} (h : ∃ x xs, s.toList = x :: xs ∧ exprSta
 theorem Expr.head (e : Expr) :
     e.printable = true → ∀ ctx, ∃ x xs, (e.print ctx).toList = x :: xs ∧ exprStart x = true := by
   induction e using Expr.ind with
+  | case17 => intro h; simp [Expr.printable] at h
   | case16 p r m xs ihr _ =>
     intro h; apply Expr.head_paren
     rw [Expr.print]
@@ -288,11 +289,17 @@ theorem Lexes.argsClose {D : Nat} (xs : List Expr) {close : String} {kc : List K
 private theorem lexes_all (D : Nat) :
     (∀ e : Expr, e.printable = true → ∀ ctx, Lexes D .sep (e.print ctx).toList (e.toks ctx)) ∧
       ∀ t : TypeExpr, t.printable = true → Lexes D .sep t.print.toList t.toks := by
+  suffices h : (∀ e : Expr, e.printable = true → ∀ ctx,
+      Lexes D .sep (e.print ctx).toList (e.toks ctx)) ∧ (∀ _ : FnParam, True) ∧
+      ∀ t : TypeExpr, t.printable = true → Lexes D .sep t.print.toList t.toks from ⟨h.1, h.2.2⟩
   have hcl : Lexes D .any ")".toList [.symbol ")"] := Lexes.glue (by decide)
   have hcs : Starts .sep ")".toList := Starts.lit (by decide)
   have hop : Lexes D .any "(".toList [.symbol "("] := Lexes.glue (by decide)
   have hb : Lexes D .any "[".toList [.symbol "["] := Lexes.glue (by decide)
   apply Expr.erase.mutual_induct
+  case case17 => intro p ps r _ _ h; simp [Expr.printable] at h
+  case case18 => intros; trivial
+  case case24 => intro p ps r _ _ h; simp [TypeExpr.printable] at h
   case case16 =>
     intro p r m xs ihr ihx h; apply Lexes.wrap
     simp only [Expr.printable, Bool.and_eq_true, Expr.printableAll_eq, List.all_eq_true] at h
@@ -446,12 +453,12 @@ private theorem lexes_all (D : Nat) :
     have := (ihb h.1 postfixLevel).append (hd.append (Lexes.name h.2)
       (starts_of_exprStart (by decide) (name_exprStart h.2))) (Starts.glue "." (by decide) _)
     simpa using this
-  case case19 =>
+  case case21 =>
     intro p _
     rw [TypeExpr.print, TypeExpr.toks]
     simpa using Lexes.any (f := .sep) (Lexes.glue (D := D) (cs := "()".toList)
       (ks := [.symbol "(", .symbol ")"]) (by decide))
-  case case20 =>
+  case case22 =>
     intro p ts ih h
     simp only [TypeExpr.printable, Bool.and_eq_true, TypeExpr.printableAll_eq,
       List.all_eq_true] at h
@@ -470,7 +477,7 @@ private theorem lexes_all (D : Nat) :
       · exact Starts.lit (by decide)
     have := hop.append (ha.append hc hs) (Starts.any _)
     simpa using Lexes.any (f := .sep) this
-  case case21 =>
+  case case23 =>
     intro p t n iht ihn h
     simp only [TypeExpr.printable, Bool.and_eq_true] at h
     rw [TypeExpr.print, TypeExpr.toks]
@@ -479,20 +486,22 @@ private theorem lexes_all (D : Nat) :
     have := hb.append ((iht h.1).append (hs.append ((ihn h.2 0).append hc
       (Starts.lit (by decide))) (Starts.any _)) (Starts.glue "; " (by decide) _)) (Starts.any _)
     simpa using Lexes.any (f := .sep) this
-  case case17 =>
+  case case19 =>
     intro p n h
     simp only [TypeExpr.printable] at h
     rw [TypeExpr.print, TypeExpr.toks]
     exact Lexes.name h
-  case case18 =>
+  case case20 =>
     intro p b xs ih ihx h
     simp only [TypeExpr.printable, Bool.and_eq_true, Expr.printableAll_eq,
       List.all_eq_true] at h
-    rw [TypeExpr.print, TypeExpr.toks]
     have ha := Lexes.argsClose (D := D) xs (fun x hx => ihx x hx (h.2 x hx) 0)
       (Lexes.glue (cs := "]".toList) (ks := [.symbol "]"]) (by decide)) (Starts.lit (by decide))
     have := (ih h.1.1).append (hb.append ha (Starts.any _)) (Starts.glue "[" (by decide) _)
-    simpa using Lexes.any (f := .sep) this
+    rw [TypeExpr.print.eq_def, TypeExpr.toks.eq_def]
+    cases b with
+    | fn => simp [TypeExpr.printable] at h
+    | _ => simpa using Lexes.any (f := .sep) this
 
 theorem Expr.lexes {D : Nat} (e : Expr) :
     e.printable = true → ∀ ctx, Lexes D .sep (e.print ctx).toList (e.toks ctx) :=
