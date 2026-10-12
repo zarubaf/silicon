@@ -117,9 +117,11 @@ def modBody (s : String) : String := "module M(comptime W: Nat) {\n" ++ s ++ "\n
 #guard ok (fnBody "let g = p;\nreturn g(1, 2);")
 #guard ok "const N: Nat = 1;\nconst M: Nat = N(1, 2);"
 
-/-! `S007`: a constructor `T(n)` has one argument. -/
+/-! `S007`: a constructor `T(n)` has one argument, and the zero `T()` has none. -/
 #guard fails (fnBody "return Bool(true, false);") .S007 2 8
-#guard fails (fnBody "return UInt[8]();") .S007 2 8
+#guard message (fnBody "return Bool(true, false);") ==
+  "a constructor takes 0 or 1 argument(s), but it has 2"
+#guard ok (fnBody "return UInt[8]();")
 #guard ok (fnBody "return Bool(true);")
 
 /-! `S007`: an `instance` has one argument for each parameter. The position is the statement. -/
@@ -162,6 +164,87 @@ def modBody (s : String) : String := "module M(comptime W: Nat) {\n" ++ s ++ "\n
 #guard fails "const A: [[Bool; 1][1]; 2] = [];" .S007 1 11
 #guard fails (fnBody "return (p, SInt);") .S007 2 12
 #guard fails (fnBody "return [resize(p)].0;") .S007 2 9
+
+/-! The struct `P` with one parameter and two fields, and the struct `S` without parameters. -/
+def structs : String :=
+  "\nstruct P(comptime W: Nat) { a: UInt[W], b: Bool }\nstruct S { a: Bool }\nstruct E {}"
+
+/-!
+A struct specialization, a struct constructor, the zero `T()`, a `type` item, `Type`, and
+`data_bits` pass this check.
+-/
+#guard ok ("const A: P[8] = P[8](1, true);\nconst B: S = S(true);\nconst C: P[2] = P[2]();" ++
+  "\nconst D: E = E();\nconst N: Nat = data_bits(P[8]);" ++ structs)
+#guard ok "type A = UInt[8];\nconst B: A = A(3);\nconst C: Type = A;\nconst D: A = A();"
+#guard ok (fnBody "type T = (Bool, [UInt[8]; 2]);\nlet x: T = T();\nreturn p;")
+#guard ok "fn f(comptime T: Type, x: T) -> T { return T(x); }"
+
+/-!
+`S007`: a struct specialization has one argument for each parameter, in a type and in an
+expression.
+-/
+#guard fails ("const A: P[8, 9] = 0;" ++ structs) .S007 1 10
+#guard fails ("const A: S[1] = 0;" ++ structs) .S007 1 10
+#guard message ("const A: S[1] = 0;" ++ structs) == "`S` takes 0 argument(s), but it has 1"
+#guard fails ("const A: P[8][1] = 0;" ++ structs) .S007 1 10
+#guard fails (fnBody "let t = P[1, 2];\nreturn p;" ++ structs) .S007 2 9
+#guard fails (fnBody "let t = E[0];\nreturn p;" ++ structs) .S007 2 9
+
+/-!
+`S007`: a struct with parameters is not used without its arguments: as a type, as a value, and
+as the callee of a constructor. The position is the name.
+-/
+#guard fails ("const A: P = 0;" ++ structs) .S007 1 10
+#guard message ("const A: P = 0;" ++ structs) == "`P` takes 1 argument(s), but it has 0"
+#guard fails (fnBody "let t = P;\nreturn p;" ++ structs) .S007 2 9
+#guard fails (fnBody "let t = P(1, true);\nreturn p;" ++ structs) .S007 2 9
+#guard fails (fnBody "let t = P();\nreturn p;" ++ structs) .S007 2 9
+#guard fails ("struct Q(comptime W: Nat) { a: Q }") .S007 1 32
+
+/-!
+`S007`: a struct constructor has one argument for each field, or none for the zero. The position
+is the call.
+-/
+#guard fails (fnBody "let t = S(true, false);\nreturn p;" ++ structs) .S007 2 9
+#guard fails (fnBody "let t = P[8](1);\nreturn p;" ++ structs) .S007 2 9
+#guard message (fnBody "let t = P[8](1);\nreturn p;" ++ structs) ==
+  "a struct constructor takes 0 or 2 argument(s), but it has 1"
+#guard fails (fnBody "let t = E(1);\nreturn p;" ++ structs) .S007 2 9
+
+/-!
+`S007`: `Type` and a `type` item are complete types, so they take no index. `Elab` checks the
+constructor of a `type` item, because only `Elab` knows its type. `data_bits` has one argument.
+-/
+#guard fails "const A: Type[1] = Bool;" .S007 1 10
+#guard fails "type A = UInt[8];\nconst B: A[2] = 0;" .S007 2 10
+#guard fails "type A = UInt[8];\nconst B: Nat = A[2];" .S007 2 16
+#guard ok "type A = UInt[8];\nconst B: Nat = A(1, 2);"
+#guard fails (fnBody "return data_bits();") .S007 2 8
+#guard fails (fnBody "return data_bits(Bool, Bool);") .S007 2 8
+
+/-!
+`S007` in the parts of the type forms: a parameter type, a field type, a `type` item, a `type`
+statement, and an array type in an expression.
+-/
+#guard fails "struct Q(comptime W: UInt) { a: Bool }" .S007 1 22
+#guard fails "struct Q { a: UInt }" .S007 1 15
+#guard fails "type A = SInt;" .S007 1 10
+#guard fails (fnBody "type T = UInt;\nreturn p;") .S007 2 10
+#guard fails (fnBody "let t = [UInt; 2];\nreturn p;") .S007 2 10
+#guard fails (fnBody "let t = [Bool; 2][1];\nreturn p;") .S007 2 9
+#guard fails (fnBody "let t = [Bool; 2](true, false);\nreturn p;") .S007 2 9
+#guard ok (fnBody "let t = [Bool; 2]();\nlet u = [Bool; 2]([p, p]);\nreturn p;")
+
+/-!
+`S005`: each argument of a struct specialization and the length of an array type in an
+expression are static positions. The arguments of a struct constructor are not.
+-/
+#guard fails (modBody "input a: Nat;\nlet x: P[a] = 0;" ++ structs) .S005 3 10
+#guard fails (modBody "input a: Nat;\nlet t = P[a];" ++ structs) .S005 3 11
+#guard fails (modBody "wire w: Nat;\nlet t = [Bool; w];") .S005 3 16
+#guard fails (modBody "wire w: Nat;\ntype T = [Bool; w];") .S005 3 17
+#guard fails (modBody "input a: Bool;\nlet t = Bool(a);") .S005 3 14
+#guard ok (modBody "input a: Bool;\nlet t = S(a);\nlet u = P[W](0, a);" ++ structs)
 
 /-!
 `S005`: a part of a container in a static position, the length of an array type, and the index

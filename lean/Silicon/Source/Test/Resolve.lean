@@ -98,9 +98,12 @@ def retRef (s : String) : Option Ref :=
 #guard retRef "fn f(error: Nat) -> Nat { return error; }" == some (.local 0)
 #guard ok (fnBody "let Int = 1;\nreturn p;")
 
-/-! A shadowed prelude type is not a type in the scope of its shadow. -/
+/-!
+A shadowed prelude type is not a prelude type in the scope of its shadow. A local in a type
+position can hold a type, so only `Elab` checks it.
+-/
 #guard fails "const UInt: Nat = 8;\nconst A: UInt[8] = 0;" .S003 2 10
-#guard fails "fn f(Bool: Nat, x: Bool) -> Nat { return x; }" .S003 1 20
+#guard ok "fn f(Bool: Nat, x: Bool) -> Nat { return x; }"
 #guard ok (fnBody "{ let Bool = 1; }\nlet x: Bool = p;\nreturn x;")
 
 /-! `S003`: a name without a declaration. The position is the name. -/
@@ -191,6 +194,78 @@ parameters, so a parameter `clock` is `S002` at the parameter. `domains()` decla
 #guard fails (fnBody "let x: (Bool, Foo) = (p, p);\nreturn p;") .S003 2 15
 #guard fails "const N: Nat = 1;\nconst A: (N,) = (1,);" .S003 2 11
 #guard message "const N: Nat = 1;\nconst A: (N,) = (1,);" == "`N` is not a type"
+
+/-! The declaration of the type name of the first `const` item. -/
+def tyRef (s : String) : Option Ref :=
+  match run s with
+  | .ok items =>
+    match items[0]? with
+    | some (Resolve.Item.const _ _ (.name _ _ r) _) => some r
+    | some (Resolve.Item.const _ _ (.index _ (.name _ _ r) _) _) => some r
+    | _ => none
+  | .error _ => none
+
+/-!
+A `struct` item and a `type` item are in the item scope. A type name refers to a prelude type,
+one of these items, or a local. `Type` and `data_bits` are prelude names.
+-/
+#guard ok "struct P(comptime W: Nat) { a: UInt[W], b: Bool }\nconst A: P[8] = P[8](1, true);"
+#guard ok "type A = UInt[8];\nconst B: A = A(3);"
+#guard tyRef "const A: T = 1;\ntype T = Bool;" == some (.item 1)
+#guard tyRef "const A: P[8] = 1;\nstruct P(comptime W: Nat) {}" == some (.item 1)
+#guard tyRef "const A: Type = Bool;" == some (.type .type)
+#guard retRef "fn f() -> Nat { return Type; }" == some (.type .type)
+#guard retRef "fn f() -> Nat { return data_bits; }" == some (.fn .dataBits)
+#guard retRef "fn f() -> Nat { return S; }\nstruct S {}" == some (.item 1)
+#guard retRef "fn f() -> Nat { return A; }\ntype A = Bool;" == some (.item 1)
+#guard ok "fn f(comptime T: Type, x: T) -> T { return x; }"
+#guard ok "fn f(comptime T: Type) -> Nat { let x: T = T(); return data_bits(T); }"
+#guard ok "type A = A;"
+#guard fails "const A: Nat = 1;\ntype A = Bool;" .S002 2 6
+#guard fails "struct A {}\nmodule A() {}" .S002 2 8
+
+/-!
+The parameters of a struct are visible in the later parameter types and in the field types.
+They are not visible in their own type or outside the struct. A field name is not a local, so it
+can be the name of a parameter.
+-/
+#guard ok "struct P(comptime T: Type, comptime x: T) { a: T, b: [T; 2] }"
+#guard ok "struct P(comptime a: Nat) { a: UInt[a] }"
+#guard fails "struct P(comptime W: UInt[W]) { a: Bool }" .S003 1 27
+#guard fails "struct P(comptime A: UInt[B], comptime B: Nat) {}" .S003 1 27
+#guard fails "struct P(comptime W: Nat) { a: Bool }\nconst N: Nat = W;" .S003 2 16
+#guard fails "struct P { a: UInt[W] }" .S003 1 20
+#guard fails "struct P(comptime a: Nat, comptime a: Nat) {}" .S002 1 36
+
+/-! `S002`: two fields of a struct with one name. The position is the name of the later field. -/
+#guard fails "struct S { a: Bool, a: Bool }" .S002 1 21
+#guard fails "struct S {\na: Bool,\nb: Bool,\na: UInt[8],\n}" .S002 4 1
+#guard message "struct S { a: Bool, a: Bool }" == "the field `a` is already declared"
+#guard fails "const A: Foo = 1;\nstruct S { a: Bool, a: Bool }" .S002 2 21
+
+/-!
+A `type` statement declares a local. It is visible after its statement and only in its scope,
+so its type reads an outer name.
+-/
+#guard ok (fnBody "type T = Bool;\nlet x: T = p;\nreturn x;")
+#guard ok "type T = Bool;\nfn f() -> Nat { type T = T; let x: T = true; return 1; }"
+#guard fails (fnBody "type T = T;\nreturn p;") .S003 2 10
+#guard fails (fnBody "type T = Bool;\ntype T = Bool;\nreturn p;") .S002 3 6
+#guard fails (fnBody "let T = 1;\ntype T = Bool;\nreturn p;") .S002 3 6
+#guard fails (fnBody "{ type T = Bool; }\nlet x: T = p;\nreturn p;") .S003 3 8
+
+/-! An array type `[T; N]` in an expression resolves its element type and its length. -/
+#guard ok (fnBody "let t = [Bool; 2];\nlet u = [[UInt[8]; 2]; 3]();\nreturn p;")
+#guard fails (fnBody "let t = [Foo; 2];\nreturn p;") .S003 2 10
+#guard fails (fnBody "let t = [Bool; N];\nreturn p;") .S003 2 16
+#guard fails "const N: Nat = 1;\nconst A: Type = [N; 2];" .S003 2 18
+
+/-! `S003`: a module, a `const`, or a function is not a type, and a struct is not a module. -/
+#guard fails "module M() {}\nconst A: M = 1;" .S003 2 10
+#guard fails "fn g() -> Nat { return 1; }\nstruct S { a: g }" .S003 2 15
+#guard fails "const N: Nat = 1;\ntype A = N;" .S003 2 10
+#guard fails "struct S {}\nmodule M() {\ninstance u = S();\n}" .S003 3 14
+#guard fails "type A = Bool;\nmodule M() {\ninstance u = A();\n}" .S003 3 14
 
 /-! Each pass reports its first error by position. -/
 #guard fails (fnBody "return a + b;") .S003 2 8
