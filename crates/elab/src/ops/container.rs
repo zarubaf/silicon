@@ -13,9 +13,12 @@ use crate::value::{Value, int_size, width_size};
 use parse::ast::BinOp;
 use std::cmp::Ordering;
 
-/// A container: `()`, an array, or a tuple.
+/// A container: `()`, an array, a tuple, or a record.
 pub(crate) fn composite(v: &Value) -> bool {
-    matches!(v, Value::Unit | Value::Array(..) | Value::Tuple(_))
+    matches!(
+        v,
+        Value::Unit | Value::Array(..) | Value::Tuple(_) | Value::Record(..)
+    )
 }
 
 /// Whether the type of `v` is `t`. It is `v.ty() == Some(t)` without the type.
@@ -23,7 +26,11 @@ fn is_of(v: &Value, t: TyId, tys: &Types) -> bool {
     let mut work = vec![(v, t)];
     while let Some((v, t)) = work.pop() {
         let same = match (v, tys.get(t)) {
-            (Value::Unit, Ty::Unit) | (Value::Int(_), Ty::Int) | (Value::Bool(_), Ty::Bool) => true,
+            (Value::Unit, Ty::Unit)
+            | (Value::Int(_), Ty::Int)
+            | (Value::Bool(_), Ty::Bool)
+            | (Value::Type(_), Ty::Type) => true,
+            (Value::Record(s, _), Ty::Struct(_)) => *s == t,
             (Value::UInt(x), Ty::UInt(w)) | (Value::SInt(x), Ty::SInt(w)) => x.width() == *w,
             (Value::Array(e, xs), Ty::Array(te, n)) => {
                 e == te && n.cmp_u64(xs.len() as u64) == Ordering::Equal
@@ -61,9 +68,11 @@ enum Leaf {
 /// container comes here, because it has no elements.
 fn leaf(t: &Ty, v: &Value, tys: &Types) -> Result<Leaf, Fault> {
     match (t, v) {
-        (Ty::Unit, Value::Unit) | (Ty::Bool, Value::Bool(_)) | (Ty::Int, Value::Int(_)) => {
-            Ok(Leaf::Same)
-        }
+        (Ty::Unit, Value::Unit)
+        | (Ty::Bool, Value::Bool(_))
+        | (Ty::Int, Value::Int(_))
+        | (Ty::Type, Value::Type(_)) => Ok(Leaf::Same),
+        (Ty::Struct(_), Value::Record(s, _)) if tys.get(*s) == t => Ok(Leaf::Same),
         (Ty::Nat, Value::Int(n)) => {
             if n.is_negative() {
                 Err((Code::S012, format!("{} is not a Nat", int_text(n))))
@@ -228,114 +237,192 @@ pub(crate) fn convert(
     run(t, v, tys).map(Some)
 }
 
-/// A step of the common type: join two types, or make the container type of the pair
-/// `(lhs, rhs)` from the last results.
-enum Join {
-    Visit(TyId, TyId),
-    Array(TyId, TyId, Int),
-    Tuple(TyId, TyId, usize),
+/// A container pair of types that a join has opened: its parts wait in `pairs`, and the
+/// results of the parts that joined collect in `parts`.
+struct Open {
+    key: (TyId, TyId),
+    /// The length of an array pair, which the common array type keeps.
+    len: Option<Int>,
+    pairs: Vec<(TyId, TyId)>,
+    next: usize,
+    /// The units of the walk of this pair so far: 1 for the pair, and the units of its parts.
+    charge: Int,
+    parts: Vec<TyId>,
+    failed: bool,
 }
 
-/// The common type of two types by the operand rule: a static integer takes the finite type
-/// of the other side. Arrays need one length and tuples one arity. Equal ids are the common
-/// type with no walk, so the walk goes only along the parts that differ. The parts join from
-/// left to right, and the first part without a common type ends the walk.
+/// The step of a join at a pair: a result, or a container pair that waits for its parts.
+enum Visit {
+    Done(Joined),
+    Open(Open),
+}
+
+fn joined(charge: u64, ty: Option<TyId>) -> Joined {
+    Joined {
+        charge: Int::from_u64(charge),
+        ty,
+    }
+}
+
+/// A container type: an array, a tuple, or a struct type.
+fn container_ty(t: &Ty) -> bool {
+    matches!(t, Ty::Array(..) | Ty::Tuple(_) | Ty::Struct(_))
+}
+
+/// The common type of two types that are not two arrays, two tuples, or two struct types: the
+/// operand rule. A static integer takes the finite type of the other side.
+fn scalar_join(lhs: TyId, rhs: TyId, tys: &mut Types) -> Option<TyId> {
+    if lhs == rhs {
+        return Some(lhs);
+    }
+    match (tys.get(lhs), tys.get(rhs)) {
+        (Ty::Int, Ty::Nat) | (Ty::Nat, Ty::Int) => Some(tys.mk(Ty::Int)),
+        (Ty::Int | Ty::Nat, other) => other.is_finite().then_some(rhs),
+        (other, Ty::Int | Ty::Nat) => other.is_finite().then_some(lhs),
+        _ => None,
+    }
+}
+
+/// The step of a join at `(lhs, rhs)`. A pair of arrays or of tuples of one shape opens, and it
+/// costs one unit of the `budget` of new pairs. Another pair has its result at once.
+fn visit(lhs: TyId, rhs: TyId, tys: &mut Types, budget: &mut u64) -> Visit {
+    #[cfg(test)]
+    tys.tick(1);
+    if let Some(done) = tys.joined(lhs, rhs) {
+        return Visit::Done(done.clone());
+    }
+    let open = |len: Option<Int>, pairs: Vec<(TyId, TyId)>| Open {
+        key: (lhs, rhs),
+        len,
+        pairs,
+        next: 0,
+        charge: Int::from_u64(1),
+        parts: Vec::new(),
+        failed: false,
+    };
+    let (left, right) = (tys.get(lhs).clone(), tys.get(rhs).clone());
+    let shaped = match (&left, &right) {
+        (Ty::Array(a, n), Ty::Array(b, m)) => {
+            Some((n == m).then(|| (Some(n.clone()), vec![(*a, *b)])))
+        }
+        (Ty::Tuple(ls), Ty::Tuple(rs)) => Some(
+            (ls.len() == rs.len())
+                .then(|| (None, ls.iter().copied().zip(rs.iter().copied()).collect())),
+        ),
+        _ => None,
+    };
+    match shaped {
+        Some(None) => Visit::Done(joined(1, None)),
+        Some(Some((len, pairs))) => {
+            // The charge of this pair exceeds the units that remain, or the walk makes more
+            // new pairs than the fuel holds: no fuel pays the join.
+            if *budget == 0 {
+                return Visit::Done(Joined {
+                    charge: Int::from_u64(u64::MAX).add(&Int::from_u64(1)),
+                    ty: None,
+                });
+            }
+            *budget -= 1;
+            Visit::Open(open(len, pairs))
+        }
+        None => match (&left, &right) {
+            (Ty::Struct(_), Ty::Struct(_)) => Visit::Done(Joined {
+                charge: Int::from_u64(lhs.size()).add(&Int::from_u64(rhs.size())),
+                ty: (lhs == rhs).then_some(lhs),
+            }),
+            (l, r) => {
+                let units = u64::from(container_ty(l) && container_ty(r));
+                Visit::Done(joined(units, scalar_join(lhs, rhs, tys)))
+            }
+        },
+    }
+}
+
+/// The join of two types: their common type by the operand rule, and the units that the walk
+/// charges (design section 5.4). The walk charges 1 before it visits each pair of container
+/// types. A pair of struct types charges the sum of the two sizes and compares the ids. The
+/// parts join from left to right, and the first part without a common type ends the pair.
 ///
 /// A type shares its parts, so its term can be exponentially larger than its table entries.
-/// The table keeps the join of each pair of ids, so each pair joins once in an elaboration
-/// and the walk is in the entries, not in the term.
-pub(crate) fn common_ty(lhs: TyId, rhs: TyId, tys: &mut Types) -> Option<TyId> {
-    let mut done: Vec<TyId> = Vec::new();
-    let mut work = vec![Join::Visit(lhs, rhs)];
-    while let Some(step) = work.pop() {
-        let (key, joined) = match step {
-            Join::Visit(lhs, rhs) if lhs == rhs => {
-                done.push(lhs);
-                continue;
+/// The table keeps the join of each pair of ids with its units, so each pair joins once in an
+/// elaboration and the work is in the entries, not in the term. The `budget` bounds the
+/// pairs of one call, so no walk makes more work than the fuel holds. A walk above it has
+/// units that no fuel pays.
+pub(crate) fn common_ty(lhs: TyId, rhs: TyId, tys: &mut Types, budget: &mut u64) -> Joined {
+    let mut stack: Vec<Open> = Vec::new();
+    let mut delivered = match visit(lhs, rhs, tys, budget) {
+        Visit::Done(done) => Some(done),
+        Visit::Open(open) => {
+            stack.push(open);
+            None
+        }
+    };
+    loop {
+        if let Some(done) = delivered.take() {
+            let Some(top) = stack.last_mut() else {
+                return done;
+            };
+            top.charge = top.charge.add(&done.charge);
+            match done.ty {
+                Some(t) => top.parts.push(t),
+                None => top.failed = true,
             }
-            Join::Visit(lhs, rhs) => {
-                if let Some(joined) = tys.joined(lhs, rhs) {
-                    ((lhs, rhs), joined.ty)
-                } else {
-                    match (tys.get(lhs).clone(), tys.get(rhs).clone()) {
-                        (Ty::Array(left, len), Ty::Array(right, other)) if len == other => {
-                            work.push(Join::Array(lhs, rhs, len));
-                            work.push(Join::Visit(left, right));
-                            continue;
-                        }
-                        (Ty::Tuple(lefts), Ty::Tuple(rights)) if lefts.len() == rights.len() => {
-                            work.push(Join::Tuple(lhs, rhs, lefts.len()));
-                            work.extend(
-                                lefts
-                                    .into_iter()
-                                    .zip(rights)
-                                    .rev()
-                                    .map(|(l, r)| Join::Visit(l, r)),
-                            );
-                            continue;
-                        }
-                        (Ty::Int, Ty::Nat) | (Ty::Nat, Ty::Int) => {
-                            ((lhs, rhs), Some(tys.mk(Ty::Int)))
-                        }
-                        (Ty::Int | Ty::Nat, other) => {
-                            ((lhs, rhs), other.is_finite().then_some(rhs))
-                        }
-                        (other, Ty::Int | Ty::Nat) => {
-                            ((lhs, rhs), other.is_finite().then_some(lhs))
-                        }
-                        _ => ((lhs, rhs), None),
-                    }
-                }
-            }
-            Join::Array(lhs, rhs, len) => {
-                let elem = done.pop();
-                ((lhs, rhs), elem.map(|elem| tys.array(elem, len)))
-            }
-            Join::Tuple(lhs, rhs, n) => {
-                let parts = done.split_off(done.len().saturating_sub(n));
-                ((lhs, rhs), Some(tys.tuple(parts)))
-            }
+            top.next += 1;
+        }
+        let Some(top) = stack.last_mut() else {
+            return joined(0, None);
         };
-        tys.join(
-            key,
-            Joined {
-                charge: Int::zero(),
-                ty: joined,
-            },
-        );
-        let Some(t) = joined else {
-            // Each open pair holds this pair, so none of them has a common type.
-            for open in work {
-                if let Join::Array(l, r, _) | Join::Tuple(l, r, _) = open {
-                    tys.join(
-                        (l, r),
-                        Joined {
-                            charge: Int::zero(),
-                            ty: None,
-                        },
-                    );
-                }
+        if !top.failed
+            && let Some(&(l, r)) = top.pairs.get(top.next)
+        {
+            match visit(l, r, tys, budget) {
+                Visit::Done(done) => delivered = Some(done),
+                Visit::Open(open) => stack.push(open),
             }
-            return None;
+            continue;
+        }
+        let Some(finished) = stack.pop() else {
+            return joined(0, None);
         };
-        done.push(t);
+        let ty = (!finished.failed).then(|| match finished.len {
+            Some(len) => finished.parts.first().map(|elem| tys.array(*elem, len)),
+            None => Some(tys.tuple(finished.parts)),
+        });
+        let ty = ty.flatten();
+        let done = Joined {
+            charge: finished.charge,
+            ty,
+        };
+        tys.join(finished.key, done.clone());
+        delivered = Some(done);
     }
-    done.pop()
 }
 
-/// The common type of the elements of an array literal, if they have one. There is none for
-/// no element.
+/// The common type of the elements of an array literal, if they have one, and the units of
+/// the joins. It joins the type of each element after the first with the join of the earlier
+/// elements. There is none for no element.
 pub(crate) fn common_of<'a>(
     vs: impl IntoIterator<Item = &'a Value>,
     tys: &mut Types,
-) -> Option<TyId> {
+    mut budget: u64,
+) -> (Int, Option<TyId>) {
+    let mut charge = Int::zero();
     let mut vs = vs.into_iter();
-    let mut t = vs.next()?.ty(tys)?;
+    let Some(Some(mut t)) = vs.next().map(|v| v.ty(tys)) else {
+        return (charge, None);
+    };
     for w in vs {
-        let u = w.ty(tys)?;
-        t = common_ty(t, u, tys)?;
+        let Some(u) = w.ty(tys) else {
+            return (charge, None);
+        };
+        let done = common_ty(t, u, tys, &mut budget);
+        charge = charge.add(&done.charge);
+        let Some(next) = done.ty else {
+            return (charge, None);
+        };
+        t = next;
     }
-    Some(t)
+    (charge, Some(t))
 }
 
 /// `==` on two scalars of a container: the check. A static integer takes the finite type of
@@ -365,30 +452,40 @@ fn no_common_type<T>(a: &Value, b: &Value, tys: &Types) -> Result<T, Fault> {
     ))
 }
 
-/// The type check of `==` on containers, by the operand rule for each pair of elements. The
-/// walk checks each pair before its elements, from left to right.
-fn same_check(a: &Value, b: &Value, tys: &mut Types) -> Result<(), Fault> {
+/// The type check of `==` on containers, by the operand rule for each pair of elements, and
+/// the units of the joins that it walked (design section 5.4). The walk checks each pair
+/// before its elements, from left to right, and it stops at the first pair that fails. The
+/// units count the pairs up to that one.
+fn same_check(a: &Value, b: &Value, tys: &mut Types, mut budget: u64) -> (Int, Result<(), Fault>) {
+    let mut charge = Int::zero();
     let mut work = vec![(a, b)];
     while let Some((a, b)) = work.pop() {
         match (a, b) {
             (Value::Unit, Value::Unit) => {}
-            (Value::Array(s, xs), Value::Array(t, ys)) => {
-                if common_ty(*s, *t, tys).is_none() || xs.len() != ys.len() {
-                    return no_common_type(a, b, tys);
+            (Value::Array(s, xs), Value::Array(t, ys))
+            | (Value::Record(s, xs), Value::Record(t, ys)) => {
+                let done = common_ty(*s, *t, tys, &mut budget);
+                charge = charge.add(&done.charge);
+                if done.ty.is_none() || (matches!(a, Value::Array(..)) && xs.len() != ys.len()) {
+                    return (charge, no_common_type(a, b, tys));
                 }
                 work.extend(xs.iter().zip(ys).rev());
             }
             (Value::Tuple(xs), Value::Tuple(ys)) => {
                 if xs.len() != ys.len() {
-                    return no_common_type(a, b, tys);
+                    return (charge, no_common_type(a, b, tys));
                 }
                 work.extend(xs.iter().zip(ys).rev());
             }
-            _ if composite(a) || composite(b) => return no_common_type(a, b, tys),
-            _ => leaf_eq_check(a, b, tys)?,
+            _ if composite(a) || composite(b) => return (charge, no_common_type(a, b, tys)),
+            _ => {
+                if let Err(fault) = leaf_eq_check(a, b, tys) {
+                    return (charge, Err(fault));
+                }
+            }
         }
     }
-    Ok(())
+    (charge, Ok(()))
 }
 
 /// The comparison, after the check and the charge. Each pair compares, from left to right, so
@@ -398,7 +495,9 @@ fn same_run(a: &Value, b: &Value, tys: &Types) -> Result<bool, Fault> {
     let mut work = vec![(a, b)];
     while let Some((a, b)) = work.pop() {
         match (a, b) {
-            (Value::Array(_, xs), Value::Array(_, ys)) | (Value::Tuple(xs), Value::Tuple(ys)) => {
+            (Value::Array(_, xs), Value::Array(_, ys))
+            | (Value::Tuple(xs), Value::Tuple(ys))
+            | (Value::Record(_, xs), Value::Record(_, ys)) => {
                 work.extend(xs.iter().zip(ys).rev());
             }
             (Value::Unit, Value::Unit) => {}
@@ -420,7 +519,9 @@ pub(crate) fn container_op(
     let text = super::binop_text(op);
     match op {
         BinOp::Eq | BinOp::Ne => {
-            same_check(a, b, tys)?;
+            let (units, checked) = same_check(a, b, tys, fuel.left());
+            fuel.pay_int(&units)?;
+            checked?;
             fuel.pay(u128::from(a.size()) + u128::from(b.size()))?;
             let x = same_run(a, b, tys)?;
             Ok(Value::Bool(if op == BinOp::Eq { x } else { !x }))
@@ -489,7 +590,8 @@ mod tests {
             assert!(matches!(n, Ok(Some(_))));
             let eq = container_op(BinOp::Eq, &v, &w, &mut fuel, &mut tys);
             assert!(matches!(eq, Ok(Value::Bool(true))));
-            assert_eq!(common_ty(t, tn, &mut tys), Some(t));
+            let mut budget = u64::MAX;
+            assert_eq!(common_ty(t, tn, &mut tys, &mut budget).ty, Some(t));
         });
     }
 
@@ -508,11 +610,21 @@ mod tests {
         let mut tys = Types::default();
         let (int, byte) = (tys.mk(Ty::Int), tys.mk(Ty::UInt(8)));
         let (a, b) = (doubled(&mut tys, int, 100), doubled(&mut tys, byte, 100));
-        let before = tys.work;
-        assert_eq!(common_ty(a, b, &mut tys), Some(b));
-        assert!(tys.work - before <= 4 * 100, "{}", tys.work - before);
-        let again = tys.work;
-        assert_eq!(common_ty(a, b, &mut tys), Some(b));
-        assert_eq!(tys.work, again);
+        let before = tys.work();
+        let mut budget = u64::MAX;
+        let first = common_ty(a, b, &mut tys, &mut budget);
+        assert_eq!(first.ty, Some(b));
+        assert!(tys.work() - before <= 6 * 100, "{}", tys.work() - before);
+        // Each of the 100 levels charges 1 for its pair and the units of its 2 parts.
+        assert_eq!(
+            first.charge,
+            Int::from_u64(1).shl(100).sub(&Int::from_u64(1))
+        );
+        let again = tys.work();
+        let second = common_ty(a, b, &mut tys, &mut budget);
+        assert_eq!(second.ty, Some(b));
+        assert_eq!(second.charge, first.charge);
+        // The second join finds its pair in the table: one lookup.
+        assert_eq!(tys.work(), again + 1);
     }
 }

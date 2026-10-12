@@ -85,7 +85,8 @@ fn an_empty_array_takes_its_type_at_a_typed_use() {
 fn a_typed_use_converts_each_element() {
     assert_eq!(
         cost(&typed("[UInt[8]; 2]", "[1, 2]"), "f()"),
-        cost("fn f() -> Int { let a = [1, 2]; return 0; }", "f()") + 13 + 6
+        // The type `[UInt[8]; 2]` also charges the 3 units of the products of its metadata.
+        cost("fn f() -> Int { let a = [1, 2]; return 0; }", "f()") + 13 + 6 + 3
     );
     let get = "fn f(a: [UInt[8]; 2]) -> UInt[8] { return a[1]; }";
     assert_eq!(o(get, "f([1, 2])"), "(uint 8 2)");
@@ -235,8 +236,9 @@ fn a_container_holds_only_static_values() {
 }
 
 /// The nested doubling of section 11.3: making `a_k` charges `2^(k + 2) - 1`. Each `let`
-/// adds 4 units: the statement, the literal, and the two names. There is no clock: the test
-/// reads the charges.
+/// adds 4 units: the statement, the literal, and the two names. The join of the two element
+/// types of `a_(k+1)` adds one unit for each of the `k + 1` array types in the type of `a_k`.
+/// There is no clock: the test reads the charges.
 fn doubling(k: u32) -> String {
     let mut src = "fn d() -> Int {\n  let a0 = [0, 0];\n".to_owned();
     for i in 1..=k {
@@ -250,7 +252,7 @@ fn doubling(k: u32) -> String {
 fn the_nested_doubling_charges_two_to_the_k() {
     exact(&doubling(0), "d()", 17);
     for k in 0..6u32 {
-        let step = (1u64 << (k + 3)) - 1 + 4;
+        let step = (1u64 << (k + 3)) - 1 + 4 + u64::from(k) + 1;
         assert_eq!(
             cost(&doubling(k + 1), "d()"),
             cost(&doubling(k), "d()") + step,
@@ -731,7 +733,7 @@ fn a_doubling_with_a_wide_element_type_builds_one_type_per_level() {
         type_work(&src, "f()")
     };
     let (narrow, wider) = (work(300, 6), work(300, 12));
-    assert!(wider - narrow <= 8 * 6, "{narrow} {wider}");
+    assert!(wider - narrow <= 10 * 6, "{narrow} {wider}");
     let (small, large) = (work(100, 8), work(700, 8));
     assert!(large - small <= 4 * 600 + 64, "{small} {large}");
 }

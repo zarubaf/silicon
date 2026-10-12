@@ -916,7 +916,7 @@ impl Evaluator<'_> {
                 Code::S010,
                 pos,
                 format!(
-                    "a port, a register, and a wire have a hardware type, not {}",
+                    "a port, a register, and a wire have the type Bool, UInt[W], or SInt[W], not {}",
                     self.tys.text(t)
                 ),
             ),

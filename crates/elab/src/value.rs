@@ -223,9 +223,7 @@ impl Value {
     /// The type of a value. A string and a tuple that holds one have no type.
     pub fn ty(&self, tys: &mut Types) -> Option<TyId> {
         #[cfg(test)]
-        {
-            tys.work += self.typing_nodes();
-        }
+        tys.tick(self.typing_nodes());
         if !self.has_type() {
             return None;
         }

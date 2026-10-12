@@ -95,12 +95,22 @@ struct Walk<'a> {
 }
 
 impl Walk<'_> {
-    fn is_constant(&self, id: NodeId) -> bool {
+    /// Whether the use of the name `id` can start a nested evaluation: a constant, a `type`
+    /// item, or a struct item. A `type` statement is a local, which starts none.
+    fn starts_nesting(&self, id: NodeId) -> bool {
         let target = match self.top {
             Some(top) => top.target(id),
             None => self.file.target(id),
         };
-        matches!(target, Some(Target::Decl(id)) if self.file.decl(id).kind == Kind::Const)
+        let Some(Target::Decl(decl)) = target else {
+            return false;
+        };
+        let d = self.file.decl(decl);
+        match d.kind {
+            Kind::Const | Kind::Struct => true,
+            Kind::Alias => self.file.item(&d.name) == Some(decl),
+            _ => false,
+        }
     }
 
     fn reach(&mut self, depth: usize) {
@@ -256,7 +266,12 @@ impl Walk<'_> {
     fn ty(&mut self, t: &TypeExpr, depth: usize) {
         self.reach(depth);
         match t {
-            TypeExpr::Name { .. } | TypeExpr::Unit { .. } => {}
+            TypeExpr::Unit { .. } => {}
+            TypeExpr::Name { id, .. } => {
+                if self.starts_nesting(*id) {
+                    self.nested = self.nested.max(depth);
+                }
+            }
             TypeExpr::Index { base, args, .. } => {
                 self.ty(base, depth + 1);
                 for a in args {
@@ -285,7 +300,7 @@ impl Walk<'_> {
             }
             Expr::Bool { .. } | Expr::Str { .. } | Expr::Unit { .. } => {}
             Expr::Name { id, .. } => {
-                if self.is_constant(*id) {
+                if self.starts_nesting(*id) {
                     self.nested = self.nested.max(depth);
                 }
             }

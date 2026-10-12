@@ -1,31 +1,67 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The type expressions of Lean `Source.Eval`: the prelude types, the type families, the tuple
-//! and array types, and the metadata of a new type.
+//! The types as values of Lean `Source.Eval.Types` and `Source.Eval`: the type expressions, the
+//! type families, the tuple and array types with the charges of their metadata, and the struct
+//! specializations (design sections 5.1, 5.4, 5.5, and 5.6).
+//!
+//! A struct specialization is one entry of the table `Types` for its item and its static
+//! arguments after their typed use at the parameter types. A first use charges the size of the
+//! struct type, evaluates the field types, and charges the metadata. A later use finds the
+//! entry and charges nothing more than its node and its arguments. Thus a use of a struct
+//! type copies nothing: the arguments stay references until the first use pays for them.
 
-use super::{Evaluator, Res, at, fail, need, prim, type_pos};
+use super::{Evaluator, Out, ROOT, Res, Slot, at, fail, need, type_pos};
 use crate::Code;
+use crate::hw::{Ref, Root, Seen, Val};
 use crate::ops;
-use crate::types::{Ty, TyId};
+use crate::types::{Ty, TyId, Types};
 use crate::value::Value;
-use parse::ast::{Expr, Pos, TypeExpr};
-use resolve::{Prelude, Target};
+use parse::ast::{Expr, Ident, Item, NodeId, Param, Pos, StructField, TypeExpr};
+use resolve::{DeclId, Prelude, Target};
 
 impl Evaluator<'_> {
+    /// The index of the struct item that the name node `id` refers to.
+    pub(super) fn struct_item(&self, id: NodeId) -> Option<usize> {
+        let Some(Target::Decl(decl)) = self.target(id) else {
+            return None;
+        };
+        let i = *self.items.get(&decl)?;
+        matches!(self.file.ast().get(i), Some(Item::Struct { .. })).then_some(i)
+    }
+
+    /// The index of the item that the name node `id` refers to.
+    fn item_of(&self, id: NodeId) -> Option<usize> {
+        match self.target(id) {
+            Some(Target::Decl(decl)) => self.items.get(&decl).copied(),
+            _ => None,
+        }
+    }
+
+    /// A type expression: one unit for the node, then the rules of the form.
     pub(super) fn type_expr(&mut self, t: &TypeExpr) -> Res<TyId> {
         self.charge(type_pos(t), 1)?;
         match t {
-            TypeExpr::Name { pos, id, name } => match self.target(*id) {
-                Some(Target::Prelude(k)) if k.is_type() => Ok(self.tys.mk(prim(*pos, name, k)?)),
-                _ => fail(Code::S010, *pos, format!("`{name}` is not a type")),
-            },
+            TypeExpr::Name { pos, id, name } => {
+                let o = self.name(*pos, *id, name)?;
+                self.type_of(*pos, name, &o)
+            }
             TypeExpr::Index { pos, base, args } => match &**base {
-                TypeExpr::Name { pos: bp, id, name } => {
-                    self.charge(*bp, 1)?;
-                    match self.target(*id) {
-                        Some(Target::Prelude(k)) if k.is_type() => self.index(*pos, k, args),
-                        _ => fail(Code::S010, *bp, format!("`{name}` is not a type")),
+                TypeExpr::Name { pos: bp, id, .. } => match self.target(*id) {
+                    Some(Target::Prelude(k)) if k.is_type() => {
+                        self.charge(*bp, 1)?;
+                        self.index(*pos, k, args)
                     }
-                }
+                    _ => match self.item_of(*id) {
+                        Some(i) => {
+                            self.charge(*bp, 1)?;
+                            self.spec(*pos, i, args)
+                        }
+                        None => fail(
+                            Code::S007,
+                            *pos,
+                            "a complete type takes no more index".to_owned(),
+                        ),
+                    },
+                },
                 _ => fail(
                     Code::S007,
                     *pos,
@@ -39,6 +75,18 @@ impl Evaluator<'_> {
             }
             TypeExpr::Tuple { pos, elems } => self.tuple_type(*pos, elems),
             TypeExpr::Array { pos, elem, len } => self.array_type(*pos, elem, len),
+        }
+    }
+
+    /// The type that the name `x` at `pos` holds. Another value is `S010`.
+    fn type_of(&self, pos: Pos, x: &str, o: &Out) -> Res<TyId> {
+        match self.store.seen(o) {
+            Seen::Static(Value::Type(t)) => Ok(*t),
+            s => fail(
+                Code::S010,
+                pos,
+                format!("`{x}` names a type, not {}", self.text(s)),
+            ),
         }
     }
 
@@ -57,17 +105,23 @@ impl Evaluator<'_> {
         Ok(t)
     }
 
-    /// The tuple type of the element types `elems` at `pos`.
+    /// The tuple type of the element types `elems` at `pos`. It checks its depth, then charges
+    /// its size and the sizes of the four integers of its metadata, as a struct does.
     pub(super) fn tuple_type(&mut self, pos: Pos, elems: &[TypeExpr]) -> Res<TyId> {
-        let mut types = Vec::with_capacity(elems.len());
+        let mut parts = Vec::with_capacity(elems.len());
         for elem in elems {
-            types.push(self.type_expr(elem)?);
+            parts.push(self.type_expr(elem)?);
         }
-        let ty = self.tys.tuple(types);
-        self.new_type(pos, ty)
+        let (size, depth) = Types::tuple_shape(&parts);
+        self.bounded(pos, depth)?;
+        let ty = Ty::Tuple(parts);
+        let meta = self.tys.meta_of(&ty);
+        self.charge(pos, u128::from(size) + meta.int_charge(depth))?;
+        Ok(self.tys.mk_with(ty, meta))
     }
 
-    /// The array type `[elem; len]` at `pos`. The length is a static `Nat`.
+    /// The array type `[elem; len]` at `pos`. The length is a static `Nat`. It checks its
+    /// depth, then charges its size and the products of its metadata.
     pub(super) fn array_type(&mut self, pos: Pos, elem: &TypeExpr, len: &Expr) -> Res<TyId> {
         let elem = self.type_expr(elem)?;
         let out = self.eval(len)?;
@@ -81,8 +135,12 @@ impl Evaluator<'_> {
                 format!("the length {} is not a Nat", ops::int_text(n)),
             ),
             Value::Int(n) => {
-                let ty = self.tys.array(elem, n.clone());
-                self.new_type(pos, ty)
+                let (size, depth) = Types::array_shape(elem, n);
+                self.bounded(pos, depth)?;
+                let units = u128::from(size) + self.tys.meta(elem).array_charge(n);
+                self.fuel.pay(units).map_err(at(pos))?;
+                let n = n.clone();
+                Ok(self.tys.array(elem, n))
             }
             other => fail(
                 Code::S010,
@@ -95,10 +153,158 @@ impl Evaluator<'_> {
         }
     }
 
-    /// A new container type at `pos`: its depth, then the charge of its size.
-    fn new_type(&mut self, pos: Pos, ty: TyId) -> Res<TyId> {
-        self.bounded(pos, ty.depth())?;
-        self.charge(pos, u128::from(ty.size()))?;
-        Ok(ty)
+    /// A use at `pos` of the struct item `i` with the arguments `xs`. Each argument is static.
+    /// Each use binds the parameters in the scope of the struct, one level deeper. The typed
+    /// uses give the key of the table. The first use evaluates the field types there. The key
+    /// exists only after the parameter types, so a use of the struct while its parameter types
+    /// evaluate is a cycle (`S019`).
+    pub(super) fn spec(&mut self, pos: Pos, i: usize, xs: &[Expr]) -> Res<TyId> {
+        let file = self.file;
+        let Some(Item::Struct {
+            name,
+            params,
+            fields,
+            ..
+        }) = file.ast().get(i)
+        else {
+            return fail(Code::S007, pos, "a complete type takes no index".to_owned());
+        };
+        let mut args = Vec::with_capacity(xs.len());
+        for x in xs {
+            let o = self.eval(x)?;
+            let o = need(x, o)?;
+            self.check_static(pos, &o)?;
+            args.push(o);
+        }
+        if params.len() != args.len() {
+            return fail(
+                Code::S007,
+                pos,
+                format!(
+                    "`{}` takes {} argument(s), but it has {}",
+                    name.name,
+                    params.len(),
+                    args.len()
+                ),
+            );
+        }
+        if self.binding.contains(&i) {
+            return fail(
+                Code::S019,
+                pos,
+                format!(
+                    "the parameter types of `{}` depend on `{}`",
+                    name.name, name.name
+                ),
+            );
+        }
+        self.nested(pos, |ev| {
+            ev.in_frame(None, |ev| {
+                ev.in_item(i, ROOT, |ev| {
+                    let frame = ev.store.frames.len().saturating_sub(1);
+                    let t = ev.specialize(pos, name, i, params, fields, args);
+                    ev.store.links.retain(|(k, _), _| *k != frame);
+                    t
+                })
+            })
+        })
+    }
+
+    /// The typed uses of the arguments at the parameter types, then the specialization of the
+    /// struct item `i` with them. The parameters bind as locals of the frame of the struct
+    /// for the types after them and for the field types.
+    fn specialize(
+        &mut self,
+        pos: Pos,
+        name: &Ident,
+        i: usize,
+        params: &[Param],
+        fields: &[StructField],
+        args: Vec<Out>,
+    ) -> Res<TyId> {
+        self.binding.push(i);
+        let mut keys = Vec::with_capacity(args.len());
+        for (q, o) in params.iter().zip(args) {
+            let t = self.type_expr(&q.ty)?;
+            let id = self.decl(&q.name)?;
+            keys.push(self.bind_argument(pos, t, id, o)?);
+        }
+        self.binding.pop();
+        self.first_or_later_use(pos, name, i, &keys, fields)
+    }
+
+    /// The typed use of the argument `o` at the type `t`, bound to the parameter `id`. The
+    /// result refers to the value: an argument that is already of the type stays a reference
+    /// to its caller, so nothing copies before the first use pays.
+    fn bind_argument(&mut self, pos: Pos, t: TyId, id: DeclId, o: Out) -> Res<Out> {
+        let converted =
+            ops::convert(t, self.store.value(&o), &mut self.fuel, &self.tys).map_err(at(pos))?;
+        let frame = self.store.frames.len().saturating_sub(1);
+        match (converted, o) {
+            (None, Out::Ref(r)) => {
+                self.store.links.insert((frame, id), r.clone());
+                Ok(Out::Ref(r))
+            }
+            (converted, o) => {
+                let value = match (converted, self.store.take(o)) {
+                    (Some(v), _) | (None, Val::Static(v)) => v,
+                    (None, _) => Value::Unit,
+                };
+                self.bind(
+                    id,
+                    Slot {
+                        ty: Some(t),
+                        mutable: false,
+                        value: Val::Static(value),
+                    },
+                );
+                Ok(Out::Ref(Ref {
+                    root: Root::Local(frame, id),
+                    path: Vec::new(),
+                }))
+            }
+        }
+    }
+
+    /// The specialization of the struct item `i` with the arguments `keys`. A done entry
+    /// charges nothing more. A first use charges the size of the struct type, evaluates the
+    /// field types, checks the depth of the struct type, and charges its metadata.
+    fn first_or_later_use(
+        &mut self,
+        pos: Pos,
+        name: &Ident,
+        i: usize,
+        keys: &[Out],
+        fields: &[StructField],
+    ) -> Res<TyId> {
+        let values: Vec<&Value> = keys.iter().map(|o| self.store.value(o)).collect();
+        match self.tys.find_spec(i, &values) {
+            Some((_, Some(t))) => return Ok(t),
+            Some((s, None)) => {
+                return fail(
+                    Code::S019,
+                    pos,
+                    format!(
+                        "the specialization {} is in progress",
+                        self.tys.text_of(&Ty::Struct(s))
+                    ),
+                );
+            }
+            None => {}
+        }
+        let size = values
+            .iter()
+            .fold(1u64, |sum, v| sum.saturating_add(v.size()));
+        self.fuel.pay(u128::from(size)).map_err(at(pos))?;
+        let args: Vec<Value> = values.into_iter().cloned().collect();
+        let s = self.tys.begin_spec(&name.name, i, args);
+        let mut types = Vec::with_capacity(fields.len());
+        for f in fields {
+            types.push(self.type_expr(&f.ty)?);
+        }
+        let (meta, depth) = self.tys.struct_meta(s, &types);
+        self.bounded(pos, depth)?;
+        self.charge(pos, types.len() as u128 + meta.int_charge(depth))?;
+        Ok(self.tys.finish_spec(s, types, meta, depth))
     }
 }
