@@ -45,6 +45,25 @@ Hardware values follow v0.1 sections 1 and 3:
   enclosing item in position order. A call outside a body has only static values, so it
   never names hardware.
 
+The static containers of slice 2 follow section 5.1. These rules settle its open points:
+
+- In this phase, a container holds only static values. A hardware element is `S010` at the
+  element. A handle as an element is `S010` until slice 3.
+- An array literal takes the common type of its elements by the operand rule. The typed use of
+  each element at that type charges as a conversion. Then the literal charges its size.
+- `[]` gets its type `[T; 0]` only at a typed use: an annotation, an assignment, an argument,
+  a return, or a constant. As an element or an operand, it is `S010` at the `[]`.
+- A typed use of a container at another type converts each element. It charges the size of
+  the value plus the size of the result.
+- `==` and `!=` on containers need a common type for each pair of elements. They charge the
+  sum of the two sizes. Each pair compares, so each conversion checks its fit (`S012`).
+- An index and a selector `.N` refer to an element, and `len` refers to its array. They charge
+  no size, so a binding of the result is a copy. An index with two or more arguments is `S010`
+  before its operands run.
+- Each new container checks its depth before the charge of its size (`S015`). These are the
+  literals, the tuple and array types, and `[]` at its typed use.
+- `()` charges the size 1 as a value and as a type.
+
 The cost model. Elaboration charges these units, in evaluation order. A charge is known before
 its operation runs. When the fuel cannot pay it, the result is `S015` at the node of the charge.
 
@@ -167,22 +186,26 @@ inductive Handle where
   | input (inst : Nat) (path : Path) (port : Port)
   | domain (name : String)
 
-/-! A value of the evaluator: a static value, a hardware value, or a handle (section 5.1). -/
+/-!
+A value of the evaluator: a static value, a hardware value, or a handle (section 5.1). `empty`
+is the literal `[]` at `pos` before a typed use gives it its type `[T; 0]`.
+-/
 inductive Val where
   | static (v : Value)
   | hw (h : Hw)
   | handle (h : Handle)
+  | empty (pos : Pos)
 
-/-! A handle has the size 1. -/
+/-! A handle has the size 1. `[]` has the size 1 with each element type. -/
 def Val.size : Val → Nat
   | .static v => v.size
   | .hw h => h.size
-  | .handle _ => 1
+  | .handle _ | .empty _ => 1
 
 def Val.ty? : Val → Option Ty
   | .static v => v.ty?
   | .hw h => some h.ty
-  | .handle _ => none
+  | .handle _ | .empty _ => none
 
 def Val.text : Val → String
   | .static v => v.text
@@ -193,6 +216,7 @@ def Val.text : Val → String
   | .handle (.inst ..) => "an instance"
   | .handle (.input ..) => "an input of a child"
   | .handle (.domain _) => "a domain"
+  | .empty _ => "`[]` without a type"
 
 /-! A local. A string, a type, and a handle have no `Ty`, so their `ty` is `none`. -/
 structure Slot where
@@ -399,8 +423,8 @@ def fits (t : Ty) (n : Int) : Bool :=
   | .nat => 0 ≤ n
   | _ => true
 
-/-! A typed use of `v` at the type `t`. Only a static integer at a finite type converts. -/
-def convert (t : Ty) (v : Value) : Except Fault Step :=
+/-! A typed use of a scalar `v` at `t`. Only a static integer at a finite type converts. -/
+def convertLeaf (t : Ty) (v : Value) : Except Fault Step :=
   let same := Except.ok ⟨0, fun _ => .ok v⟩
   let wrong := typeError s!"expected {t.text}, but the value is {v.text}"
   match t, v with
@@ -412,6 +436,86 @@ def convert (t : Ty) (v : Value) : Except Fault Step :=
       if fits t n then .ok (finite (t matches .sint _) w (BitVec.ofInt w n))
       else .error (.S012, s!"{intText n} does not fit {t.text}")⟩
   | _, _ => wrong
+
+/-! The size of a scalar `v` after its typed use at `t`. -/
+def leafSize (t : Ty) (v : Value) : Nat :=
+  match t with
+  | .uint w | .sint w => widthSize w
+  | _ => v.size
+
+/-!
+The typed use of a container `v` at `t`, element by element. The result is the size of the
+converted value and the conversion. A shape or a scalar type that differs is `S010` before the
+charge. A value that does not fit is `S012` in the conversion, after the charge.
+-/
+mutual
+  def plan : Ty → Value → Except Fault (Nat × (Unit → Except Fault Value))
+    | .array t n, v@(.array _ ⟨xs⟩) =>
+      if xs.length = n then do
+        let (k, f) ← planEach t xs
+        .ok (1 + k, fun u => do return .array t (← f u).toArray)
+      else typeError s!"expected {(Ty.array t n).text}, but the value is {v.text}"
+    | .tuple ⟨ts⟩, v@(.tuple ⟨xs⟩) =>
+      if ts.length = xs.length then do
+        let (k, f) ← planZip ts xs
+        .ok (1 + k, fun u => do return .tuple (← f u).toArray)
+      else typeError s!"expected {(Ty.tuple ⟨ts⟩).text}, but the value is {v.text}"
+    | t, v => do
+      let s ← convertLeaf t v
+      .ok (leafSize t v, s.run)
+
+  def planEach (t : Ty) : List Value → Except Fault (Nat × (Unit → Except Fault (List Value)))
+    | [] => .ok (0, fun _ => .ok [])
+    | x :: xs => do
+      let (k, f) ← plan t x
+      let (ks, fs) ← planEach t xs
+      .ok (k + ks, fun u => do return (← f u) :: (← fs u))
+
+  def planZip : List Ty → List Value → Except Fault (Nat × (Unit → Except Fault (List Value)))
+    | t :: ts, x :: xs => do
+      let (k, f) ← plan t x
+      let (ks, fs) ← planZip ts xs
+      .ok (k + ks, fun u => do return (← f u) :: (← fs u))
+    | _, _ => .ok (0, fun _ => .ok [])
+end
+
+/-!
+A typed use of `v` at the type `t`. A value of the type `t` charges nothing. Another container
+charges its size plus the size of the result, as a scalar conversion does.
+-/
+def convert (t : Ty) (v : Value) : Except Fault Step :=
+  match t with
+  | .unit | .array .. | .tuple _ =>
+    if v.ty? = some t then .ok ⟨0, fun _ => .ok v⟩
+    else do
+      let (k, f) ← plan t v
+      .ok ⟨v.size + k, f⟩
+  | _ => convertLeaf t v
+
+/-!
+The common type of two types by the operand rule: a static integer takes the finite type of the
+other side. Arrays need one length and tuples one arity.
+-/
+mutual
+  def commonTy : Ty → Ty → Option Ty
+    | .array s n, .array t m => if n = m then (commonTy s t).map (.array · n) else none
+    | .tuple ⟨ss⟩, .tuple ⟨ts⟩ => (commonAll ss ts).map fun us => .tuple us.toArray
+    | .nat, .nat => some .nat
+    | .int, .int | .int, .nat | .nat, .int => some .int
+    | .int, t | .nat, t => if t.finite then some t else none
+    | s, .int | s, .nat => if s.finite then some s else none
+    | s, t => if s = t then some s else none
+
+  def commonAll : List Ty → List Ty → Option (List Ty)
+    | [], [] => some []
+    | s :: ss, t :: ts => do return (← commonTy s t) :: (← commonAll ss ts)
+    | _, _ => none
+end
+
+/-! The common type of the elements of an array literal, if they have one. -/
+def commonOf : List Value → Option Ty
+  | [] => none
+  | v :: vs => do vs.foldlM (fun t w => do commonTy t (← w.ty?)) (← v.ty?)
 
 /-! An operation runs in its step after the charge, so each result is a thunk. -/
 def unary (op : UnOp) (a : Value) : Except Fault Step :=
@@ -492,6 +596,69 @@ def order (op : BinOp) (a b : Value) : Except Fault (Unit → Bool) :=
     | some (s, ⟨_, x, y⟩) => .ok fun _ => Core.Semantics.evalPred (pred op s) x y == 1
     | none => typeError s!"`{op.text}` orders integers of one type, not {a.text} and {b.text}"
 
+/-! A container: `()`, an array, or a tuple. -/
+def composite : Value → Bool
+  | .unit | .array .. | .tuple _ => true
+  | _ => false
+
+/-! `==` on two scalars in a container. A static integer takes the finite type of the other. -/
+def leafEq (a b : Value) : Except Fault (Unit → Except Fault Bool) :=
+  let cmp (x y : Value) : Except Fault Bool := do return (← equal x y) ()
+  match a, b, a.finiteTy?, b.finiteTy? with
+  | .int _, _, _, some t => do
+    let s ← convertLeaf t a
+    .ok fun u => do cmp (← s.run u) b
+  | _, .int _, some t, _ => do
+    let s ← convertLeaf t b
+    .ok fun u => do cmp a (← s.run u)
+  | _, _, _, _ => do
+    let r ← equal a b
+    .ok fun u => .ok (r u)
+
+/-!
+The type check of `==` on containers, by the operand rule for each pair of elements, and the
+comparison for the step after the charge. Each pair compares, so each conversion checks its
+fit.
+-/
+mutual
+  def same : Value → Value → Except Fault (Unit → Except Fault Bool)
+    | .unit, .unit => .ok fun _ => .ok true
+    | a@(.array s ⟨xs⟩), b@(.array t ⟨ys⟩) =>
+      if (commonTy s t).isSome && xs.length == ys.length then sameAll xs ys
+      else typeError s!"`==` needs a common type, not {a.text} and {b.text}"
+    | a@(.tuple ⟨xs⟩), b@(.tuple ⟨ys⟩) =>
+      if xs.length == ys.length then sameAll xs ys
+      else typeError s!"`==` needs a common type, not {a.text} and {b.text}"
+    | a, b =>
+      if composite a || composite b then
+        typeError s!"`==` needs a common type, not {a.text} and {b.text}"
+      else leafEq a b
+
+  def sameAll : List Value → List Value → Except Fault (Unit → Except Fault Bool)
+    | x :: xs, y :: ys => do
+      let r ← same x y
+      let rs ← sameAll xs ys
+      .ok fun u => do
+        let a ← r u
+        let b ← rs u
+        return a && b
+    | _, _ => .ok fun _ => .ok true
+end
+
+/-!
+A binary operator with a container operand. `==` and `!=` read both operands in full, so they
+charge the sum of the sizes. The orderings take no container.
+-/
+def containerOp (op : BinOp) (a b : Value) : Except Fault Step :=
+  match op with
+  | .eq | .ne => do
+    let r ← same a b
+    .ok ⟨a.size + b.size, fun u => do
+      let x ← r u
+      return .bool (if op == .eq then x else !x)⟩
+  | .lt | .le | .gt | .ge => typeError s!"`{op.text}` takes no container"
+  | _ => typeError s!"`{op.text}` does not accept {a.text} and {b.text}"
+
 /-! A binary operator other than `&&` and `||`, after its operands and the typed uses. -/
 def binary (op : BinOp) (a b : Value) : Except Fault Step :=
   let sum := a.size + b.size
@@ -542,9 +709,6 @@ def reinterpret (t : Ty) (v : Value) : Except Fault Step :=
     if h : u = w then flip true w (h ▸ x) else typeError "`reinterpret` keeps the width"
   | _, _ => typeError s!"`reinterpret` needs finite types, not {v.text}"
 
--- TODO(#177): evaluate the containers of slice 2.
-abbrev containers (pos : Pos) : M α := fail .S004 pos "containers are not in this phase"
-
 /-! `UInt[w]` or `SInt[w]`. The width is 1 to 65536. The charge is the size of the type. -/
 def family (t : PrimType) (args : List Value) : Except Fault Ty := do
   match t, args with
@@ -559,7 +723,7 @@ def prim (pos : Pos) (x : String) : PrimType → M Ty
   | .nat => pure .nat
   | .int => pure .int
   | .uint | .sint => fail .S007 pos s!"`{x}` takes 1 argument(s), but it has 0"
-  | .unit => containers pos
+  | .unit => pure .unit
 
 /-! A string, a type, and a handle have no `Ty`, so an assignment keeps their form. -/
 def sameForm : Val → Val → Bool
@@ -590,6 +754,7 @@ def copy (pos : Pos) (o : Out) : M Unit := if o.ref then charge pos o.value.size
 /-! The value of a static position at the node `pos`. Another value there is `S011`. -/
 def static (pos : Pos) : Val → M Value
   | .static v => pure v
+  | .empty q => fail .S010 q "`[]` needs the type [T; 0] from its context"
   | v => fail .S011 pos s!"a static position needs a static value, not {v.text}"
 
 /-!
@@ -598,6 +763,7 @@ reference to their name: the implicit read. A child input is never read (`S017`)
 and a domain are not data.
 -/
 def data (pos : Pos) : Val → M Val
+  | .empty q => fail .S010 q "`[]` needs the type [T; 0] from its context"
   | .handle (.res _ _ ty path) => pure (.hw (.mk pos ty (.ref path) []))
   | .handle (.input ..) => fail .S017 pos "an input of a child is a target; it is never read"
   | .handle h => fail .S010 pos s!"{(Val.handle h).text} is not data"
@@ -607,6 +773,7 @@ def data (pos : Pos) : Val → M Val
 def test (pos : Pos) : Val → M Bool
   | .static (.bool b) => pure b
   | .static v => fail .S010 pos s!"a condition is a Bool, not {v.text}"
+  | .empty q => fail .S010 q "`[]` needs the type [T; 0] from its context"
   | v => fail .S011 pos s!"a static condition needs a static Bool, not {v.text}"
 
 /-! The local of an assignment target and its source name, if it is a `let mut` local. -/
@@ -620,6 +787,7 @@ def place : Resolve.Expr → M (Option (Nat × Slot × String))
 def int (pos : Pos) : Val → M Int
   | .static (.int n) => pure n
   | .static v => fail .S010 pos s!"a loop bound is a static Int, not {v.text}"
+  | .empty q => fail .S010 q "`[]` needs the type [T; 0] from its context"
   | v => fail .S011 pos s!"a loop bound is a static Int, not {v.text}"
 
 /-! A static integer next to a finite operand takes the type of that operand. -/
@@ -731,9 +899,96 @@ def hwConvert (pos : Pos) (f : PrimFn) (t : Ty) (x : Hw) : M Val :=
     if u == w then node pos t .reinterpret [x] else bad
   | _, _, _ => bad
 
+/-! `[]` outside a typed use has no type: `S010` at the `[]`. -/
+def known : Val → M Unit
+  | .empty q => fail .S010 q "`[]` needs the type [T; 0] from its context"
+  | _ => pure ()
+
+/-! A new value or type of the depth `d` at `pos`. Above the nesting depth, it is `S015`. -/
+def bounded (pos : Pos) (d : Nat) : M Unit := do
+  let c ← read
+  if c.limit < d then fail .S015 pos s!"the depth {d} goes above the nesting depth {c.limit}"
+
+/-! `[]` at a typed use of the type `t`: it takes the type `t = [T; 0]`. -/
+def settle (pos : Pos) (t : Ty) : Val → M Val
+  | .empty q =>
+    match t with
+    | .array e 0 => do
+      bounded q (Value.array e #[]).depth
+      return .static (.array e #[])
+    | _ => fail .S010 pos s!"expected {t.text}, but the value is `[]`"
+  | v => pure v
+
+/-!
+An element of a container literal at `pos`. In this phase a container holds only static
+values. A hardware value is `S010`, and a handle is `S010` until slice 3.
+-/
+def element (pos : Pos) : Val → M Value
+  | .static v => pure v
+  | .hw _ => fail .S010 pos "a container holds only static values in this phase"
+  | .empty q => fail .S010 q "`[]` needs the type [T; 0] from its context"
+  | .handle h => fail .S010 pos s!"{(Val.handle h).text} is not an element before slice 3"
+
+/-! A tuple literal at `pos`: its depth, then the charge of its size. -/
+def tupleOf (pos : Pos) (vs : List Value) : M Value := do
+  let v := Value.tuple vs.toArray
+  bounded pos v.depth
+  charge pos v.size
+  return v
+
+/-!
+An array literal at `pos`. Its elements take their common type. Then it checks its depth and
+charges its size.
+-/
+def arrayOf (pos : Pos) (vs : List Value) : M Value := do
+  let some t := commonOf vs | fail .S010 pos "the elements of an array have no common type"
+  let xs ← vs.mapM (conform pos t)
+  let v := Value.array t xs.toArray
+  bounded pos v.depth
+  charge pos v.size
+  return v
+
+/-! The array type `[e; k]` at `pos`. The length at `q` is a static `Nat`. -/
+def arrayTy (pos q : Pos) (e : Ty) : Value → M Ty
+  | .int k => do
+    if k < 0 then fail .S012 q s!"the length {intText k} is not a Nat"
+    let t := Ty.array e k.toNat
+    bounded pos t.depth
+    charge pos t.size
+    return t
+  | v => fail .S010 q s!"the length of an array is a static Nat, not {v.text}"
+
+/-! The selector `.i` at `pos`, with its number literal at `q`. It refers to an element. -/
+def select (pos q : Pos) (i : Nat) : Val → M Val
+  | .static v@(.tuple xs) =>
+    match xs[i]? with
+    | some x => pure (.static x)
+    | none => fail .S013 q s!"the selector {i} is out of range for {v.text}"
+  | v => fail .S010 pos s!"the selector `.{i}` needs a tuple, not {v.text}"
+
+/-! The static index `i` at `q` of an array or a tuple at `pos`. It refers to an element. -/
+def pick (pos q : Pos) (v : Val) (i : Value) : M Val := do
+  let xs ← match v with
+    | .static (.array _ xs) | .static (.tuple xs) => pure xs
+    | v => fail .S010 pos s!"an index needs an array or a tuple, not {v.text}"
+  let k ← match i with
+    | .int k => pure k
+    | .uint _ x => pure (x.toNat : Int)
+    | i => fail .S010 q s!"an index is a static integer, not {i.text}"
+  if h : 0 ≤ k ∧ k.toNat < xs.size then return .static xs[k.toNat]
+  else fail .S013 q s!"the index {intText k} is out of range for {xs.size} element(s)"
+
+/-! `len` of an array at the call `pos`. It refers to the array, so it charges no size. -/
+def lenOf (pos : Pos) : List Val → M Value
+  | [v] => do
+    match ← data pos v with
+    | .static (.array _ xs) => return .int xs.size
+    | v => fail .S010 pos s!"`len` takes an array, not {v.text}"
+  | vs => fail .S007 pos s!"`len` takes 1 argument(s), but it has {vs.length}"
+
 /-! A typed use of `v` at the type `t`. It reads a handle. A hardware value needs the type `t`. -/
 def conformVal (pos : Pos) (t : Ty) (v : Val) : M Val := do
-  match ← data pos v with
+  match ← data pos (← settle pos t v) with
   | .static x => return .static (← conform pos t x)
   | .hw h =>
     if h.ty == t then return .hw h
@@ -832,6 +1087,8 @@ mutual
         let b ← data p (← need r (← eval n r)).value
         match a, b with
         | .static a, .static b =>
+          if composite a || composite b then
+            return some ⟨.static (← apply p (containerOp op a b)), false⟩
           let (a, b) ← unify p op a b
           return some ⟨.static (← apply p (binary op a b)), false⟩
         | a, b => return some ⟨← hwBinary p op a b, false⟩
@@ -847,7 +1104,11 @@ mutual
       | .index p (.name bp _ (.type k)) xs => do
         charge bp 1
         return some ⟨.static (.type (← index n p k xs)), false⟩
-      | .index p .. => fail .S010 p "slice 1 indexes only `UInt` and `SInt`"
+      | .index p b [x] => do
+        let v ← data p (← need b (← eval n b)).value
+        let i ← static x.pos (← need x (← eval n x)).value
+        return some ⟨← pick p x.pos v i, true⟩
+      | .index p .. => fail .S010 p "an index of a value has one argument"
       | .field p b f => do
         match (← need b (← eval n b)).value with
         | .handle (.inst id path iface) =>
@@ -857,7 +1118,17 @@ mutual
             else return some ⟨.hw (.mk p q.ty (.out path q.name) []), true⟩
           | none => fail .S010 p s!"the instance has no port `{f.name}`"
         | v => fail .S010 p s!"{v.text} has no field `{f.name}`"
-      | .unit p | .tuple p _ | .array p _ | .select p .. => containers p
+      | .unit p => do charge p Value.unit.size; return some ⟨.static .unit, false⟩
+      | .tuple p xs => do
+        let vs ← xs.mapM fun x => do element x.pos (← need x (← eval n x)).value
+        return some ⟨.static (← tupleOf p vs), false⟩
+      | .array p [] => do charge p 1; return some ⟨.empty p, false⟩
+      | .array p xs => do
+        let vs ← xs.mapM fun x => do element x.pos (← need x (← eval n x)).value
+        return some ⟨.static (← arrayOf p vs), false⟩
+      | .select p b q i => do
+        let v ← data p (← need b (← eval n b)).value
+        return some ⟨← select p q i v, true⟩
   termination_by (b, 1)
 
   def typeExpr (b : Nat) (t : Resolve.TypeExpr) : M Ty :=
@@ -871,7 +1142,16 @@ mutual
         charge bp 1
         index n p k xs
       | .index p .. => fail .S007 p "a complete type takes no more index"
-      | .unit p | .tuple p _ | .array p .. => containers p
+      | .unit p => do charge p Ty.unit.size; return .unit
+      | .tuple p ts => do
+        let us ← ts.mapM (typeExpr n)
+        let t := Ty.tuple us.toArray
+        bounded p t.depth
+        charge p t.size
+        return t
+      | .array p t k => do
+        let e ← typeExpr n t
+        arrayTy p k.pos e (← static k.pos (← need k (← eval n k)).value)
   termination_by (b, 1)
 
   /-- `UInt[e]` or `SInt[e]` in a type or an expression. The base charged its node. -/
@@ -902,7 +1182,7 @@ mutual
             let t ← typeExpr n ty
             let o ← need v (← eval n v)
             copy cp o
-            conform cp t (← static cp o.value)
+            conform cp t (← static cp (← settle cp t o.value))
           setConst i (.done c)
           return ⟨.static c, true⟩
       | _ => fail .S010 p s!"`{x}` is a function; slice 1 has no function values"
@@ -932,7 +1212,8 @@ mutual
           for (q, v) in ps.zip vs do
             let t ← typeExpr n q.ty
             charge p v.size
-            let x ← if c || q.comptime then do pure (.static (← conform p t (← static p v)))
+            let x ← if c || q.comptime then do
+                pure (.static (← conform p t (← static p (← settle p t v))))
               else conformVal p t v
             bindLocal q.name.id ⟨some t, false, ← named p q.name.id q.name.name.name x⟩
           let rt ← typeExpr n ret
@@ -942,6 +1223,9 @@ mutual
             return some ⟨← bindHw p ret h, false⟩
           | some v => return some ⟨v, false⟩
           | none => fail .S010 p s!"`{fname.name}` ends without `return`"
+    | .name fp _ (.fn .len) =>
+      charge fp 1
+      return some ⟨.static (← lenOf p (← args xs)), false⟩
     | .name fp g (.fn h) =>
       charge fp 1
       let vs ← args xs
@@ -991,7 +1275,7 @@ mutual
         copy p o
         let x ← match t with
           | some t => conformVal p t o.value
-          | none => pure o.value
+          | none => do known o.value; pure o.value
         let x ← named p b.id b.name.name x
         bindLocal b.id ⟨t <|> x.ty?, m, x⟩
         return none
@@ -1032,7 +1316,9 @@ mutual
         for s in ss do
           if let some r ← stmt n s then return some r
         return none
-      | .expr _ v => do let _ ← eval n v; return none
+      | .expr _ v => do
+        if let some o ← eval n v then known o.value
+        return none
       | .connect p .. | .reg p .. | .wire p .. | .input p .. | .output p .. | .inst p .. =>
         fail .S011 p "a static evaluation makes no hardware"
   termination_by (b, 1)
