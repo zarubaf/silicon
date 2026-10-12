@@ -1,0 +1,4 @@
+// S001: a receiver call is not a place, so it cannot be the target of an assignment.
+module M() {
+    xs.f() = 1;
+}

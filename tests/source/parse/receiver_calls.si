@@ -1,0 +1,13 @@
+// Receiver calls (section 5.6): the node is at the receiver, and a suffix can follow it.
+// A parenthesized field is a call of a function value, not a receiver call.
+const A: T = t.f(x);
+const B: T = t.0.f(x, y);
+const C: T = x.f();
+const D: T = xs.push(1,);
+const E: T = a.b.c(1).d;
+const F: T = x.f(a)(b);
+const G: T = x.f()[0].g(y.h());
+const H: T = -x.f() + 1;
+const I: T = (x.f)(1);
+const J: T = (a + b).f(c);
+const K: T = t.0(x);

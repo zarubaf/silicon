@@ -1,0 +1,12 @@
+// A receiver call as a statement, in a function body and in a module.
+fn helper(comptime n: Nat, mut xs: List[Nat]) -> Nat {
+    xs.push(n);
+    xs.pop();
+    return xs.len();
+}
+module M() domains() {
+    let mut xs = list(Nat);
+    xs.push(1);
+    xs.helper(2);
+    let n = xs.pop().len();
+}

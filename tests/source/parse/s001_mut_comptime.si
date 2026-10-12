@@ -1,0 +1,2 @@
+// S001: a parameter has one mode, in either order. The second mark is the error.
+fn f(mut comptime x: T) -> T {}

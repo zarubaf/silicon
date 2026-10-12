@@ -1,0 +1,2 @@
+// S001: a module parameter cannot have both marks. The error is at the second mark.
+module M(comptime mut W: Nat) {}
