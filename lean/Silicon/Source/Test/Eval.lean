@@ -438,6 +438,16 @@ def typed (ty v : String) : String := s!"fn f() -> Int \{ let a: {ty} = {v}; ret
 #guard out (typed "(UInt[8], Bool)" "(1, 2)") "f()" == "S010 1:17"
 #guard out (typed "()" "()") "f()" == "(int 0)"
 #guard out (typed "Unit" "()") "f()" == "(int 0)"
+
+/-! A `()` part of a container keeps its value when another part converts. -/
+#guard out "fn f() -> (Nat, ()) { let x: (Nat, ()) = (1, ()); return x; }" "f()" ==
+  "(tuple ((int 1) (unit)))"
+#guard out (typed "((), Nat)" "((), 1)") "f()" == "(int 0)"
+#guard out (typed "[(Nat, ()); 1]" "[(1, ())]") "f()" == "(int 0)"
+def unitArg : String :=
+  "module C(comptime A: ([Nat; 2], ())) {\n  output y: Bool;\n  y := true;\n}\n" ++
+  "module M() {\n  output y: Bool;\n  instance c = C(([1, 2], ()));\n  y := c.y;\n}\n"
+#guard (top unitArg "M()").startsWith "total"
 #guard out "fn f() -> Int { let mut a: [Int; 1] = [1]; a = [2]; return a[0]; }" "f()" ==
   "(int 2)"
 
