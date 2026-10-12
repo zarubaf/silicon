@@ -6,7 +6,6 @@
 //! its elements. The elements stay borrowed until then, so a reference to a large value costs
 //! nothing before the charge.
 
-use super::place::elem;
 use super::{Evaluator, Out, Res, Store, at, fail, need};
 use crate::Code;
 use crate::hw::{Part, Seen, Val};
@@ -255,18 +254,6 @@ impl Evaluator<'_> {
                 }
                 let v = self.array_of(*pos, outs)?;
                 Ok(Some(Out::Made(Val::Static(v))))
-            }
-            Expr::Select {
-                pos,
-                base,
-                lit_pos,
-                index,
-            } => {
-                let b = self.eval(base)?;
-                let b = need(base, b)?;
-                let b = self.data(*pos, b)?;
-                let k = self.select_index(*pos, *lit_pos, index, &b)?;
-                Ok(Some(elem(b, k)))
             }
             _ => fail(
                 Code::S010,
