@@ -79,42 +79,43 @@ theorem Expr.headKind (e : Expr) : ∀ c, ∃ k, (e.toks c).head? = some k ∧ E
     obtain ⟨k, h, hk⟩ := Expr.toks_head11 e
     rw [Expr.toks_paren] at h ⊢
     split
-    · exact ⟨_, rfl, Or.inl (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr rfl)))))⟩
+    · exact ⟨_, rfl, Or.inl (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl rfl))))))⟩
     · simp only [hl, Nat.lt_irrefl, ite_false] at h
       exact ⟨k, h, Or.inl hk⟩
   induction e using Expr.erase.induct with
   | case5 p op a _ =>
     intro c; rw [Expr.toks_paren]; split
-    · exact ⟨_, rfl, Or.inl (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr rfl)))))⟩
+    · exact ⟨_, rfl, Or.inl (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl rfl))))))⟩
     · exact ⟨.symbol op.text, by simp [Expr.toks], Or.inr (Or.inr ⟨op, rfl⟩)⟩
   | case6 p op l r ihl _ =>
     intro c; rw [Expr.toks_paren]; split
-    · exact ⟨_, rfl, Or.inl (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr rfl)))))⟩
+    · exact ⟨_, rfl, Or.inl (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl rfl))))))⟩
     · obtain ⟨k, h, hk⟩ := ihl (if op.associative then op.level else op.level + 1)
       exact ⟨k, by simp [Expr.toks, List.head?_append, h], hk⟩
   | case7 =>
     intro c; rw [Expr.toks_paren]; split
-    · exact ⟨_, rfl, Or.inl (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr rfl)))))⟩
+    · exact ⟨_, rfl, Or.inl (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl rfl))))))⟩
     · exact ⟨.keyword "if", by simp [Expr.toks], Or.inr (Or.inl rfl)⟩
   | _ => exact post _ (by simp [Expr.level, postfixLevel])
 
 theorem EHead.ne_kw {k : Kind} (h : EHead k) {w : String}
     (hw : w ≠ "if" ∧ w ≠ "true" ∧ w ≠ "false") : k ≠ .keyword w := by
   rintro rfl
-  rcases h with (⟨_, h⟩ | ⟨_, h⟩ | ⟨_, h⟩ | h | h | h) | h | ⟨op, h⟩ <;>
+  rcases h with (⟨_, h⟩ | ⟨_, h⟩ | ⟨_, h⟩ | h | h | h | h) | h | ⟨op, h⟩ <;>
     simp_all
 
 theorem EHead.ne_sym {k : Kind} (h : EHead k) {s : String}
-    (hs : s ≠ "(" ∧ s ≠ "!" ∧ s ≠ "~" ∧ s ≠ "-") : k ≠ .symbol s := by
+    (hs : s ≠ "(" ∧ s ≠ "[" ∧ s ≠ "!" ∧ s ≠ "~" ∧ s ≠ "-") : k ≠ .symbol s := by
   rintro rfl
-  rcases h with (⟨_, h⟩ | ⟨_, h⟩ | ⟨_, h⟩ | h | h | h) | h | ⟨op, h⟩
+  rcases h with (⟨_, h⟩ | ⟨_, h⟩ | ⟨_, h⟩ | h | h | h | h) | h | ⟨op, h⟩
   all_goals simp only [Kind.symbol.injEq, reduceCtorEq] at h
   · exact hs.1 h
+  · exact hs.2.1 h
   · cases op <;> simp [UnOp.text] at h <;> simp_all
 
 theorem EHead.ne_eof {k : Kind} (h : EHead k) : k ≠ .eof := by
   rintro rfl
-  rcases h with (⟨_, h⟩ | ⟨_, h⟩ | ⟨_, h⟩ | h | h | h) | h | ⟨op, h⟩ <;> simp at h
+  rcases h with (⟨_, h⟩ | ⟨_, h⟩ | ⟨_, h⟩ | h | h | h | h) | h | ⟨op, h⟩ <;> simp at h
 
 theorem EHead.ne_ident {k : Kind} (h : EHead k) (_hn : ∀ n, k ≠ .ident n) :
     ∀ w, k ≠ .keyword w ∨ w = "if" ∨ w = "true" ∨ w = "false" := by
@@ -285,6 +286,35 @@ theorem laterPlace_expr (e : Expr) : ∀ (c : Nat) (inp : Input) (i : Nat) (R : 
       | zero => exact Or.inl rfl
       | succ f' =>
         refine Or.inr ⟨f', seen', ?_, fun h => hpl (by simpa [Expr.place] using h)⟩
+        simp only [laterPlace, isSym, w.head, w.tail.head, Kind.beq_eq]
+        simp only [show (Kind.symbol "." = Kind.symbol "=") = False by decide,
+          show (Kind.symbol "." = Kind.symbol ":=") = False by decide,
+          show (Kind.symbol "." = Kind.symbol "[") = False by decide, decide_false,
+          decide_true, Bool.or_false, Bool.false_eq_true, ite_false, ite_true]
+        congr 1
+        simp; omega
+  | case11 | case12 | case13 =>
+    intro c inp i R n f seen hh _
+    have hl := Expr.noparen_of_ident hh
+    rw [Expr.toks_noparen hl] at hh
+    simp [Expr.toks] at hh
+  | case14 p b q k ihb =>
+    intro c inp i R n f seen hh hw
+    have hl := Expr.noparen_of_ident hh
+    have h11 : (Expr.select p b q k).toks c = b.toks 11 ++ [.symbol ".", .number k] := by
+      rw [Expr.toks_noparen hl]; simp [Expr.toks, Expr.level, postfixLevel]
+    rw [h11] at hh hw ⊢
+    rw [head?_append_ne (Expr.toks_ne_nil _ _)] at hh
+    simp only [List.append_assoc, List.cons_append, List.nil_append] at hw
+    unfold LPCont
+    rcases ihb 11 inp i _ n f seen hh hw with h | ⟨f', seen', h, -⟩
+    · exact Or.inl h
+    · rw [h]
+      have w := hw.drop
+      cases f' with
+      | zero => exact Or.inl rfl
+      | succ f' =>
+        refine Or.inr ⟨f', true, ?_, fun h => by simp [Expr.place] at h⟩
         simp only [laterPlace, isSym, w.head, w.tail.head, Kind.beq_eq]
         simp only [show (Kind.symbol "." = Kind.symbol "=") = False by decide,
           show (Kind.symbol "." = Kind.symbol ":=") = False by decide,

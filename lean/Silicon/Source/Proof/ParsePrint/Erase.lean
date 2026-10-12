@@ -24,6 +24,8 @@ a check here:
   Thus the flag `plain` also covers this clause.
 - No string has a control character other than LF, CR, and tab: `printableChar`.
 - Each number is below 2^65536: `Expr.printable` at `num`.
+
+The parser does not give the container forms of slice 2 yet, so `Printable` excludes them.
 -/
 namespace Silicon.Source
 
@@ -43,10 +45,17 @@ def Expr.erase : Expr → Expr
   | .call _ f xs => .call Pos.zero f.erase (xs.map Expr.erase)
   | .index _ b xs => .index Pos.zero b.erase (xs.map Expr.erase)
   | .field _ b f => .field Pos.zero b.erase f.erase
+  | .unit _ => .unit Pos.zero
+  | .tuple _ xs => .tuple Pos.zero (xs.map Expr.erase)
+  | .array _ xs => .array Pos.zero (xs.map Expr.erase)
+  | .select _ b _ i => .select Pos.zero b.erase Pos.zero i
 
 def TypeExpr.erase : TypeExpr → TypeExpr
   | .name _ n => .name Pos.zero n
   | .index _ b xs => .index Pos.zero b.erase (xs.map Expr.erase)
+  | .unit _ => .unit Pos.zero
+  | .tuple _ ts => .tuple Pos.zero (ts.map TypeExpr.erase)
+  | .array _ t n => .array Pos.zero t.erase n.erase
 
 def Stmt.erase : Stmt → Stmt
   | .local _ m n ty v => .local Pos.zero m n.erase (ty.map TypeExpr.erase) v.erase
@@ -115,6 +124,7 @@ mutual
     | .call _ f xs => f.printable && Expr.printableAll xs
     | .index _ b xs => b.printable && !xs.isEmpty && Expr.printableAll xs
     | .field _ b f => b.printable && validName f.name
+    | .unit _ | .tuple .. | .array .. | .select .. => false
 
   def Expr.printableAll : List Expr → Bool
     | [] => true
@@ -124,6 +134,7 @@ end
 def TypeExpr.printable : TypeExpr → Bool
   | .name _ n => validName n
   | .index _ b xs => b.printable && !xs.isEmpty && Expr.printableAll xs
+  | .unit _ | .tuple .. | .array .. => false
 
 mutual
   /-- A statement in a body. `plain` holds in the body of a `fn` without `comptime`. -/
@@ -182,7 +193,7 @@ end ParsePrint
   induction e using Expr.erase.induct <;> simp_all [Expr.erase, List.map_map]
 
 @[simp] theorem TypeExpr.erase_erase (t : TypeExpr) : t.erase.erase = t.erase := by
-  induction t <;> simp_all [TypeExpr.erase, List.map_map]
+  induction t using TypeExpr.erase.induct <;> simp_all [TypeExpr.erase, List.map_map]
 
 @[simp] theorem Stmt.erase_erase (s : Stmt) : s.erase.erase = s.erase := by
   induction s using Stmt.erase.induct <;>
@@ -218,6 +229,14 @@ theorem Expr.print_erase (e : Expr) : ∀ c, e.erase.print c = e.print c := by
     conv => lhs; rw [Expr.print.eq_def]
     conv => rhs; rw [Expr.print.eq_def]
     simp only [Expr.level, ihf, List.map_map, Function.comp_def, hm] <;> rfl
+  | case12 p xs ih | case13 p xs ih =>
+    intro c
+    have hm : List.map (fun x => print 0 x.erase) xs = List.map (print 0) xs :=
+      List.map_congr_left fun x hx => ih x hx 0
+    simp only [Expr.erase]
+    conv => lhs; rw [Expr.print.eq_def]
+    conv => rhs; rw [Expr.print.eq_def]
+    simp only [Expr.level, List.map_map, Function.comp_def, hm, List.length_map] <;> rfl
   | _ =>
     intro c
     simp only [Expr.erase]
@@ -226,10 +245,13 @@ theorem Expr.print_erase (e : Expr) : ∀ c, e.erase.print c = e.print c := by
     simp_all [Expr.level] <;> rfl
 
 theorem TypeExpr.print_erase (t : TypeExpr) : t.erase.print = t.print := by
-  induction t with
-  | name => rfl
-  | index p b xs ih =>
-    simp [TypeExpr.erase, TypeExpr.print, ih, List.map_map, Function.comp_def,
+  induction t using TypeExpr.erase.induct with
+  | case4 p ts ih =>
+    have hm : List.map (fun t => t.erase.print) ts = List.map TypeExpr.print ts :=
+      List.map_congr_left fun t ht => ih t ht
+    simp [TypeExpr.erase, TypeExpr.print, List.map_map, Function.comp_def, hm]
+  | _ =>
+    simp_all [TypeExpr.erase, TypeExpr.print, List.map_map, Function.comp_def,
       Expr.print_erase]
 
 theorem Stmt.lines_erase (l : List Stmt) (h : ∀ s ∈ l, ∀ d, s.erase.print d = s.print d) :
@@ -298,8 +320,9 @@ theorem Stmt.printableAll_eq (plain : Bool) (ss : List Stmt) :
   | _ => simp_all [Expr.erase, Expr.printable]
 
 @[simp] theorem TypeExpr.printable_erase (t : TypeExpr) : t.erase.printable = t.printable := by
-  induction t <;> simp_all [TypeExpr.erase, TypeExpr.printable, Expr.printableAll_eq,
-    List.all_map, Function.comp_def]
+  induction t using TypeExpr.erase.induct <;>
+    simp_all [TypeExpr.erase, TypeExpr.printable, Expr.printableAll_eq, List.all_map,
+      Function.comp_def]
 
 @[simp] theorem Stmt.printable_erase (plain : Bool) (s : Stmt) :
     s.erase.printable plain = s.printable plain := by

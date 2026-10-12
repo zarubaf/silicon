@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: Apache-2.0
 /-!
-The source AST of slice 1, its source positions, and the error codes of the front end.
+The source AST of slices 1 and 2, its source positions, and the error codes of the front end.
 The AST dump prints each constructor name in lowercase, and the Rust front end uses the
 same names. Each node keeps the position of the first token of its form.
 -/
@@ -32,7 +32,11 @@ inductive BinOp where
   | mul | div | rem | mulw
   deriving Repr, DecidableEq, BEq, Inhabited
 
-/-! An expression. A type in an expression position, such as `UInt[8]`, is an `index`. -/
+/-!
+An expression. A type in an expression position, such as `UInt[8]`, is an `index`. A `tuple`
+holds at least one element: `()` is `unit`. A `select` is the selector `.N` of a tuple. Its
+`litPos` is the position of the number literal, for `S013`.
+-/
 inductive Expr where
   | num (pos : Pos) (value : Nat)
   | bool (pos : Pos) (value : Bool)
@@ -44,12 +48,22 @@ inductive Expr where
   | call (pos : Pos) (callee : Expr) (args : List Expr)
   | index (pos : Pos) (base : Expr) (args : List Expr)
   | field (pos : Pos) (base : Expr) (field : Ident)
+  | unit (pos : Pos)
+  | tuple (pos : Pos) (elems : List Expr)
+  | array (pos : Pos) (elems : List Expr)
+  | select (pos : Pos) (base : Expr) (litPos : Pos) (index : Nat)
   deriving Repr, BEq, Inhabited
 
-/-! A type expression: a type name, or a type family with its static arguments. -/
+/-!
+A type expression: a type name, a type family with its static arguments, the unit type `()`, a
+tuple type, or an array type `[T; N]`. A `tuple` holds at least one element type.
+-/
 inductive TypeExpr where
   | name (pos : Pos) (name : String)
   | index (pos : Pos) (base : TypeExpr) (args : List Expr)
+  | unit (pos : Pos)
+  | tuple (pos : Pos) (elems : List TypeExpr)
+  | array (pos : Pos) (elem : TypeExpr) (len : Expr)
   deriving Repr, BEq, Inhabited
 
 /-! A statement. A target of `assign` or `connect` is a `name` or a `field` expression. -/

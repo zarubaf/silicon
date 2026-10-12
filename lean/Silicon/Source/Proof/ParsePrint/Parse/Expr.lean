@@ -503,6 +503,7 @@ theorem Runs.postfix_paren (u : Expr) (hl : u.level < 11) (hpl : u.place = false
 
 theorem Runs.postfix (u : Expr) : PGoal u := by
   induction u using Expr.erase.induct with
+  | case11 | case12 | case13 | case14 => intro hp; simp [Expr.printable] at hp
   | case1 p v =>
     intro hp hIH ctx i f t R hw ht _ hf l Q hk
     unfold SufK at hk
@@ -1121,7 +1122,7 @@ theorem Expr.head_post_ne_if (e : Expr) (hl : e.level = 11) (c : Nat) :
     intro he
     simp only [Option.some.injEq] at he
     subst he
-    rcases hpk with ⟨_, h⟩ | ⟨_, h⟩ | ⟨_, h⟩ | h | h | h <;> simp at h
+    rcases hpk with ⟨_, h⟩ | ⟨_, h⟩ | ⟨_, h⟩ | h | h | h | h <;> simp at h
 
 theorem Expr.toks_head_ne_if (e : Expr) : ∀ c, 1 ≤ c →
     (e.toks c).head? ≠ some (.keyword "if") := by
@@ -1257,8 +1258,9 @@ def TGoal (ty : TypeExpr) : Prop :=
     Runs (typeExpr f) ctx i l Q
 
 theorem Runs.type (ty : TypeExpr) : TGoal ty := by
-  induction ty with
-  | name p n =>
+  induction ty using TypeExpr.erase.induct with
+  | case3 | case4 | case5 => intro hp; simp [TypeExpr.printable] at hp
+  | case1 p n =>
     intro _ ctx i f u R hw hu hf l Q hk
     simp only [TypeExpr.toks, List.length_singleton, List.singleton_append] at hw hf hk
     obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
@@ -1267,7 +1269,7 @@ theorem Runs.type (ty : TypeExpr) : TGoal ty := by
     simp only [hw.head]
     refine Runs.bind (Runs.path hw.head (by rw [hw.tail.head]; exact hu)) fun _ _ => ?_
     exact hk _ 1 f (by simp [TypeExpr.erase]) (Nat.le_refl _) (by omega)
-  | index p b xs ihb =>
+  | case2 p b xs ihb =>
     intro hp ctx i f u R hw hu hf l Q hk
     simp only [TypeExpr.printable, Bool.and_eq_true, Expr.printableAll_eq, List.all_eq_true,
       Bool.not_eq_true', List.isEmpty_eq_false_iff] at hp
