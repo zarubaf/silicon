@@ -1149,4 +1149,24 @@ def holds : String :=
 #guard out holds "c()" == "(int 2)"
 #guard cost holds "a()" == cost holds "b()" + 4
 
+/-!
+An assignment to a place with a step checks the new depth of the root, as `push` does. The
+depth is the steps of the place plus the depth of the value. Each case makes a root 4 deep, by
+an index, a `.N` selector, a field, and two steps. Thus the limit 4 passes, and 3 fails at the
+assignment.
+-/
+def assigns : String :=
+  "struct R { f: Type }\n" ++
+  "comptime fn a() -> Int { let mut xs = list(Type); xs.push(Int); " ++
+    "xs[0] = List[List[Int]]; return 0; }\n" ++
+  "comptime fn b() -> Int { let mut t = (Int, 0); t.0 = List[List[Int]]; return 0; }\n" ++
+  "comptime fn c() -> Int { let mut r = R(Int); r.f = List[List[Int]]; return 0; }\n" ++
+  "comptime fn m() -> Int { let mut t = (list(Type), 0); t.0.push(Int); " ++
+    "t.0[0] = List[Int]; return 0; }\n"
+#guard ["a()", "b()", "c()", "m()"].all fun e => out assigns e (depth := 4) == "(int 0)"
+#guard out assigns "a()" (depth := 3) == "S015 2:65"
+#guard out assigns "b()" (depth := 3) == "S015 3:48"
+#guard out assigns "c()" (depth := 3) == "S015 4:46"
+#guard out assigns "m()" (depth := 3) == "S015 5:70"
+
 end Silicon.Source.Test.Eval
