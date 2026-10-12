@@ -15,7 +15,7 @@ The packed form has these costs. Each selection emits a core node. A port has th
 
 ## Decision
 
-- Elaboration lowers an aggregate to its leaves. A leaf is a scalar part of type `Bool`, `UInt[W]`, or `SInt[W]`. The values `()` and `[T; 0]` have no leaf.
+- Elaboration lowers an aggregate to its leaves. A leaf of a hardware data type is a part of type `Bool`, `UInt[W]`, or `SInt[W]`. The types `Unit` and `[T; 0]` have no leaf. A leaf of a value that is a hardware value is a hardware leaf.
 - Each leaf of a port, a register, a wire, a child port, or a named hardware binding is one core value.
 - A static selection of a field or an element refers to a leaf or to a subtree. It emits no core node.
 - Hardware `==`, `!=`, and `if` on an aggregate emit one core operation for each leaf.
