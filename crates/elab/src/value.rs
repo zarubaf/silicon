@@ -4,8 +4,9 @@
 //! Section 7.1 of the front-end spec uses the serialization in an `InstantiationId`, section
 //! 5.4 uses the size in the cost model, and section 5.5 bounds the depth.
 //!
-//! A container nests as deep as the nesting depth allows, and that limit is a budget. Thus a
-//! value drops without recursion, and no walk here recurses deeper than the value is deep.
+//! A container nests as deep as the nesting depth allows, and that limit is a budget. Thus no
+//! walk over a value or a type recurses: each one keeps its own stack, so it runs on any
+//! thread, also after the evaluator ends.
 
 use crate::int::Int;
 use core_ir::Bits;
@@ -57,7 +58,7 @@ impl TyId {
 /// A static value of slice 1, or a static container of slice 2. A finite value holds the bit
 /// vector of the core semantics with the width of its type. An array keeps its element type,
 /// so an empty array has a type. A tuple has at least one element: `()` is `Unit`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum Value {
     Int(Int),
     Bool(bool),
@@ -94,6 +95,79 @@ impl Drop for Value {
         }
     }
 }
+
+/// A step of a walk that builds a container after its elements: visit a value, or make a
+/// container of the last `n` results.
+enum Build<'a> {
+    Visit(&'a Value),
+    Array(TyId, usize),
+    Tuple(usize),
+}
+
+/// The last `n` results of a walk that builds containers.
+fn last<T>(done: &mut Vec<T>, n: usize) -> Vec<T> {
+    done.split_off(done.len().saturating_sub(n))
+}
+
+impl Clone for Value {
+    fn clone(&self) -> Value {
+        let mut done = Vec::new();
+        let mut work = vec![Build::Visit(self)];
+        while let Some(step) = work.pop() {
+            match step {
+                Build::Visit(Value::Array(t, xs)) => {
+                    work.push(Build::Array(*t, xs.len()));
+                    work.extend(xs.iter().rev().map(Build::Visit));
+                }
+                Build::Visit(Value::Tuple(xs)) => {
+                    work.push(Build::Tuple(xs.len()));
+                    work.extend(xs.iter().rev().map(Build::Visit));
+                }
+                Build::Visit(v) => done.push(v.clone_scalar()),
+                Build::Array(t, n) => {
+                    let xs = last(&mut done, n);
+                    done.push(Value::Array(t, xs));
+                }
+                Build::Tuple(n) => {
+                    let xs = last(&mut done, n);
+                    done.push(Value::Tuple(xs));
+                }
+            }
+        }
+        done.pop().unwrap_or(Value::Unit)
+    }
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Value) -> bool {
+        let mut work = vec![(self, other)];
+        while let Some(pair) = work.pop() {
+            let same = match pair {
+                (Value::Array(s, xs), Value::Array(t, ys)) => {
+                    work.extend(xs.iter().zip(ys));
+                    s == t && xs.len() == ys.len()
+                }
+                (Value::Tuple(xs), Value::Tuple(ys)) => {
+                    work.extend(xs.iter().zip(ys));
+                    xs.len() == ys.len()
+                }
+                (Value::Int(a), Value::Int(b)) => a == b,
+                (Value::Bool(a), Value::Bool(b)) => a == b,
+                (Value::Str(a), Value::Str(b)) => a == b,
+                (Value::UInt(a), Value::UInt(b)) | (Value::SInt(a), Value::SInt(b)) => a == b,
+                (Value::Type(a), Value::Type(b)) => a == b,
+                (Value::Unit, Value::Unit) => true,
+                _ => false,
+            };
+            if !same {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+impl Eq for Value {}
 
 /// The size of an integer: 1 for each 64-bit word of its magnitude, and at least 1.
 #[must_use]
@@ -279,10 +353,34 @@ impl Types {
         out
     }
 
+    /// The serialization of `t` into `out`. A part of a container type waits on the stack of
+    /// the walk, so the walk does not recurse.
     fn write(&self, t: TyId, out: &mut String) {
-        self.write_node(self.get(t), out);
+        let mut work = vec![TyPiece::Ty(t)];
+        while let Some(piece) = work.pop() {
+            match piece {
+                TyPiece::Text(text) => out.push_str(text),
+                TyPiece::Len(len) => write!(out, " {len})").unwrap_or_default(),
+                TyPiece::Ty(t) => match self.get(t) {
+                    Ty::Array(elem, len) => {
+                        out.push_str("(array ");
+                        work.push(TyPiece::Len(len));
+                        work.push(TyPiece::Ty(*elem));
+                    }
+                    Ty::Tuple(parts) => {
+                        out.push_str("(tuple (");
+                        work.push(TyPiece::Text("))"));
+                        push_parts(&mut work, parts, " ");
+                    }
+                    ty => self.write_node(ty, out),
+                },
+            }
+        }
     }
 
+    /// The node `ty` with each part of a container type as a call of `out.ty`. A sink that
+    /// writes the text of a part walks it again, so only `Len`, whose `ty` reads the table,
+    /// calls this for a container type.
     fn write_node<S: Sink>(&self, ty: &Ty, out: &mut S) {
         match ty {
             Ty::Bool => out.write_str("bool").unwrap_or_default(),
@@ -312,26 +410,113 @@ impl Types {
     /// The source form of the node `ty`, for a message.
     #[must_use]
     pub fn text_of(&self, ty: &Ty) -> String {
-        match ty {
-            Ty::Bool => "Bool".to_owned(),
-            Ty::Nat => "Nat".to_owned(),
-            Ty::Int => "Int".to_owned(),
-            Ty::Unit => "Unit".to_owned(),
-            Ty::UInt(w) => format!("UInt[{w}]"),
-            Ty::SInt(w) => format!("SInt[{w}]"),
-            Ty::Array(elem, len) => format!("[{}; {len}]", self.text(*elem)),
-            Ty::Tuple(parts) => {
-                tuple_text(&parts.iter().map(|p| self.text(*p)).collect::<Vec<String>>())
-            }
+        let mut out = Text::default();
+        out.ty_node(ty);
+        out.finish(self)
+    }
+}
+
+/// A piece of the text of a type that waits on the stack of a walk.
+enum TyPiece<'a> {
+    Ty(TyId),
+    Text(&'static str),
+    Len(&'a Int),
+}
+
+/// Pushes the parts of a tuple, so that they come off the stack in order with `sep` between.
+fn push_parts(work: &mut Vec<TyPiece<'_>>, parts: &[TyId], sep: &'static str) {
+    for (k, part) in parts.iter().enumerate().rev() {
+        work.push(TyPiece::Ty(*part));
+        if k > 0 {
+            work.push(TyPiece::Text(sep));
         }
     }
 }
 
-/// `(A, B)`, or `(A,)` for one part.
-fn tuple_text(parts: &[String]) -> String {
-    match parts {
-        [one] => format!("({one},)"),
-        _ => format!("({})", parts.join(", ")),
+/// A piece of the source form of a value or a type.
+enum Piece<'a> {
+    Value(&'a Value),
+    Ty(TyId),
+    Text(&'static str),
+    Owned(String),
+}
+
+/// The source form of a type or of the type of a value, for a message. The walk keeps its
+/// own stack.
+#[derive(Default)]
+struct Text<'a> {
+    out: String,
+    work: Vec<Piece<'a>>,
+}
+
+impl<'a> Text<'a> {
+    /// The node `ty`. Its parts wait on the stack.
+    fn ty_node(&mut self, ty: &Ty) {
+        match ty {
+            Ty::Bool => self.out.push_str("Bool"),
+            Ty::Nat => self.out.push_str("Nat"),
+            Ty::Int => self.out.push_str("Int"),
+            Ty::Unit => self.out.push_str("Unit"),
+            Ty::UInt(w) => write!(self.out, "UInt[{w}]").unwrap_or_default(),
+            Ty::SInt(w) => write!(self.out, "SInt[{w}]").unwrap_or_default(),
+            Ty::Array(elem, len) => {
+                self.out.push('[');
+                self.work.push(Piece::Owned(format!("; {len}]")));
+                self.work.push(Piece::Ty(*elem));
+            }
+            Ty::Tuple(parts) => {
+                self.out.push('(');
+                self.work
+                    .push(Piece::Text(if parts.len() == 1 { ",)" } else { ")" }));
+                for (k, part) in parts.iter().enumerate().rev() {
+                    self.work.push(Piece::Ty(*part));
+                    if k > 0 {
+                        self.work.push(Piece::Text(", "));
+                    }
+                }
+            }
+        }
+    }
+
+    /// The type of the value `v`, which has one. Its elements wait on the stack.
+    fn value(&mut self, v: &'a Value) {
+        match v {
+            Value::Int(_) => self.out.push_str("Int"),
+            Value::Bool(_) => self.out.push_str("Bool"),
+            Value::UInt(x) => write!(self.out, "UInt[{}]", x.width()).unwrap_or_default(),
+            Value::SInt(x) => write!(self.out, "SInt[{}]", x.width()).unwrap_or_default(),
+            Value::Unit => self.out.push_str("Unit"),
+            Value::Array(elem, xs) => {
+                self.out.push('[');
+                self.work.push(Piece::Owned(format!("; {}]", xs.len())));
+                self.work.push(Piece::Ty(*elem));
+            }
+            Value::Tuple(xs) => {
+                self.out.push('(');
+                self.work
+                    .push(Piece::Text(if xs.len() == 1 { ",)" } else { ")" }));
+                for (k, x) in xs.iter().enumerate().rev() {
+                    self.work.push(Piece::Value(x));
+                    if k > 0 {
+                        self.work.push(Piece::Text(", "));
+                    }
+                }
+            }
+            Value::Str(_) | Value::Type(_) => {}
+        }
+    }
+
+    /// The text after the walk of each piece on the stack.
+    fn finish(mut self, tys: &Types) -> String {
+        while let Some(piece) = self.work.pop() {
+            match piece {
+                Piece::Value(v) => self.value(v),
+                Piece::Ty(t) => self.ty_node(tys.get(t)),
+                Piece::Text(text) => self.out.push_str(text),
+                Piece::Owned(text) => self.out.push_str(&text),
+            }
+        }
+        self.out
     }
 }
 
@@ -346,6 +531,43 @@ impl Ty {
 impl Value {
     /// The type of a value. A string, a type, and a tuple that holds them have no type.
     pub fn ty(&self, tys: &mut Types) -> Option<TyId> {
+        if !self.has_type() {
+            return None;
+        }
+        let mut done = Vec::new();
+        let mut work = vec![Build::Visit(self)];
+        while let Some(step) = work.pop() {
+            match step {
+                Build::Visit(Value::Tuple(xs)) => {
+                    work.push(Build::Tuple(xs.len()));
+                    work.extend(xs.iter().rev().map(Build::Visit));
+                }
+                Build::Visit(v) => done.push(v.node_ty(tys)?),
+                Build::Tuple(n) | Build::Array(_, n) => {
+                    let parts = last(&mut done, n);
+                    done.push(tys.tuple(parts));
+                }
+            }
+        }
+        done.pop()
+    }
+
+    /// Whether the value has a type: no string and no type is an element of it, also of a
+    /// tuple in it. An array has the type of its elements, so the walk does not enter it.
+    fn has_type(&self) -> bool {
+        let mut work = vec![self];
+        while let Some(v) = work.pop() {
+            match v {
+                Value::Str(_) | Value::Type(_) => return false,
+                Value::Tuple(xs) => work.extend(xs),
+                _ => {}
+            }
+        }
+        true
+    }
+
+    /// The type of a value that is not a tuple.
+    fn node_ty(&self, tys: &mut Types) -> Option<TyId> {
         match self {
             Value::Int(_) => Some(tys.mk(Ty::Int)),
             Value::Bool(_) => Some(tys.mk(Ty::Bool)),
@@ -353,14 +575,20 @@ impl Value {
             Value::SInt(x) => Some(tys.mk(Ty::SInt(x.width()))),
             Value::Unit => Some(tys.mk(Ty::Unit)),
             Value::Array(elem, xs) => Some(tys.array(*elem, Int::from_u64(xs.len() as u64))),
-            Value::Tuple(xs) => {
-                let parts = xs
-                    .iter()
-                    .map(|x| x.ty(tys))
-                    .collect::<Option<Vec<TyId>>>()?;
-                Some(tys.tuple(parts))
-            }
-            Value::Str(_) | Value::Type(_) => None,
+            Value::Str(_) | Value::Type(_) | Value::Tuple(_) => None,
+        }
+    }
+
+    /// A copy of a value that is not a container.
+    fn clone_scalar(&self) -> Value {
+        match self {
+            Value::Int(n) => Value::Int(n.clone()),
+            Value::Bool(b) => Value::Bool(*b),
+            Value::Str(s) => Value::Str(s.clone()),
+            Value::UInt(x) => Value::UInt(x.clone()),
+            Value::SInt(x) => Value::SInt(x.clone()),
+            Value::Type(t) => Value::Type(*t),
+            Value::Unit | Value::Array(..) | Value::Tuple(_) => Value::Unit,
         }
     }
 
@@ -385,32 +613,18 @@ impl Value {
         }
     }
 
-    /// The source form of the type of a value, if it has one, without a new type in the
-    /// table.
-    fn type_text(&self, tys: &Types) -> Option<String> {
-        Some(match self {
-            Value::Int(_) => "Int".to_owned(),
-            Value::Bool(_) => "Bool".to_owned(),
-            Value::UInt(x) => format!("UInt[{}]", x.width()),
-            Value::SInt(x) => format!("SInt[{}]", x.width()),
-            Value::Unit => "Unit".to_owned(),
-            Value::Array(elem, xs) => format!("[{}; {}]", tys.text(*elem), xs.len()),
-            Value::Tuple(xs) => tuple_text(
-                &xs.iter()
-                    .map(|x| x.type_text(tys))
-                    .collect::<Option<Vec<String>>>()?,
-            ),
-            Value::Str(_) | Value::Type(_) => return None,
-        })
-    }
-
     /// What the value is, for a message. Only a tuple has neither a type nor its own text.
     #[must_use]
     pub fn text(&self, tys: &Types) -> String {
         match self {
             Value::Str(_) => "a string".to_owned(),
             Value::Type(_) => "a type".to_owned(),
-            v => v.type_text(tys).unwrap_or_else(|| "a tuple".to_owned()),
+            v if !v.has_type() => "a tuple".to_owned(),
+            v => {
+                let mut out = Text::default();
+                out.value(v);
+                out.finish(tys)
+            }
         }
     }
 
@@ -431,7 +645,45 @@ impl Value {
         len.0
     }
 
+    /// The serialization into `out`. An element waits on the stack of the walk, so the walk
+    /// does not recurse.
     fn write<S: Sink>(&self, tys: &Types, out: &mut S) {
+        // `None` on the stack closes the innermost open container. `Some(v)` writes `v`, with
+        // a space before it if it is not the first element of its container.
+        let mut work = vec![Some(self)];
+        let mut first = true;
+        while let Some(item) = work.pop() {
+            let Some(v) = item else {
+                out.write_str("))").unwrap_or_default();
+                first = false;
+                continue;
+            };
+            if !first {
+                out.write_str(" ").unwrap_or_default();
+            }
+            first = false;
+            match v {
+                Value::Array(elem, xs) => {
+                    out.write_str("(array ").unwrap_or_default();
+                    out.ty(tys, *elem);
+                    out.write_str(" (").unwrap_or_default();
+                    work.push(None);
+                    work.extend(xs.iter().rev().map(Some));
+                    first = true;
+                }
+                Value::Tuple(xs) => {
+                    out.write_str("(tuple (").unwrap_or_default();
+                    work.push(None);
+                    work.extend(xs.iter().rev().map(Some));
+                    first = true;
+                }
+                v => v.write_scalar(tys, out),
+            }
+        }
+    }
+
+    /// The serialization of a value that is not a container.
+    fn write_scalar<S: Sink>(&self, tys: &Types, out: &mut S) {
         match self {
             Value::Int(n) => write!(out, "(int {n})").unwrap_or_default(),
             Value::Bool(b) => write!(out, "(bool {b})").unwrap_or_default(),
@@ -453,17 +705,9 @@ impl Value {
                 out.write_str(" ").unwrap_or_default();
                 out.ty(tys, *t);
             }),
-            Value::Unit => out.write_str("(unit)").unwrap_or_default(),
-            Value::Array(elem, xs) => node(out, "array", |out| {
-                out.write_str(" ").unwrap_or_default();
-                out.ty(tys, *elem);
-                out.write_str(" ").unwrap_or_default();
-                list(out, xs, |x, out| x.write(tys, out));
-            }),
-            Value::Tuple(xs) => node(out, "tuple", |out| {
-                out.write_str(" ").unwrap_or_default();
-                list(out, xs, |x, out| x.write(tys, out));
-            }),
+            Value::Unit | Value::Array(..) | Value::Tuple(_) => {
+                out.write_str("(unit)").unwrap_or_default();
+            }
         }
     }
 
@@ -471,28 +715,47 @@ impl Value {
     /// has the size 1 plus the sizes of its elements, without the element type of an array.
     #[must_use]
     pub fn size(&self) -> u64 {
-        match self {
-            Value::Int(n) => int_size(n),
-            Value::Bool(_) | Value::Unit => 1,
-            Value::Str(s) => 1 + s.chars().count() as u64,
-            Value::UInt(x) | Value::SInt(x) => width_size(x.width()),
-            Value::Type(t) => t.size(),
-            Value::Array(_, xs) | Value::Tuple(xs) => {
-                xs.iter().fold(1u64, |sum, x| sum.saturating_add(x.size()))
-            }
+        let mut sum = 0u64;
+        let mut work = vec![self];
+        while let Some(v) = work.pop() {
+            let own = match v {
+                Value::Int(n) => int_size(n),
+                Value::Bool(_) | Value::Unit => 1,
+                Value::Str(s) => 1 + s.chars().count() as u64,
+                Value::UInt(x) | Value::SInt(x) => width_size(x.width()),
+                Value::Type(t) => t.size(),
+                Value::Array(_, xs) | Value::Tuple(xs) => {
+                    work.extend(xs);
+                    1
+                }
+            };
+            sum = sum.saturating_add(own);
         }
+        sum
     }
 
     /// The depth of section 5.5: 1 for a scalar value, and 1 more than its deepest part. An
     /// array counts its element type, and a type is as deep as its term.
     #[must_use]
     pub fn depth(&self) -> u64 {
-        match self {
-            Value::Type(t) => t.depth(),
-            Value::Array(elem, xs) => 1 + xs.iter().map(Value::depth).fold(elem.depth(), u64::max),
-            Value::Tuple(xs) => 1 + xs.iter().map(Value::depth).max().unwrap_or(0),
-            _ => 1,
+        let mut deepest = 0;
+        let mut work = vec![(self, 0u64)];
+        while let Some((v, above)) = work.pop() {
+            let own = match v {
+                Value::Type(t) => t.depth(),
+                Value::Array(elem, xs) => {
+                    work.extend(xs.iter().map(|x| (x, above + 1)));
+                    1 + elem.depth()
+                }
+                Value::Tuple(xs) => {
+                    work.extend(xs.iter().map(|x| (x, above + 1)));
+                    1
+                }
+                _ => 1,
+            };
+            deepest = deepest.max(above + own);
         }
+        deepest
     }
 
     /// The charge of the walk that measures the serialization, before the charge of its bytes
@@ -500,15 +763,21 @@ impl Value {
     /// square of their size, because a naive decimal conversion takes this time.
     #[must_use]
     pub fn measure_charge(&self) -> u128 {
-        match self {
-            Value::Int(_) | Value::UInt(_) | Value::SInt(_) => {
-                u128::from(self.size()) * u128::from(self.size())
-            }
-            Value::Array(_, xs) | Value::Tuple(xs) => {
-                1 + xs.iter().map(Value::measure_charge).sum::<u128>()
-            }
-            _ => 0,
+        let mut sum = 0u128;
+        let mut work = vec![self];
+        while let Some(v) = work.pop() {
+            sum += match v {
+                Value::Int(_) | Value::UInt(_) | Value::SInt(_) => {
+                    u128::from(v.size()) * u128::from(v.size())
+                }
+                Value::Array(_, xs) | Value::Tuple(xs) => {
+                    work.extend(xs);
+                    1
+                }
+                _ => 0,
+            };
         }
+        sum
     }
 }
 

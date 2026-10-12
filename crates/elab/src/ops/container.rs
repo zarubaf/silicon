@@ -19,17 +19,25 @@ pub(crate) fn composite(v: &Value) -> bool {
 
 /// Whether the type of `v` is `t`. It is `v.ty() == Some(t)` without the type.
 fn is_of(v: &Value, t: TyId, tys: &Types) -> bool {
-    match (v, tys.get(t)) {
-        (Value::Unit, Ty::Unit) | (Value::Int(_), Ty::Int) | (Value::Bool(_), Ty::Bool) => true,
-        (Value::UInt(x), Ty::UInt(w)) | (Value::SInt(x), Ty::SInt(w)) => x.width() == *w,
-        (Value::Array(e, xs), Ty::Array(te, n)) => {
-            e == te && n.cmp_u64(xs.len() as u64) == Ordering::Equal
+    let mut work = vec![(v, t)];
+    while let Some((v, t)) = work.pop() {
+        let same = match (v, tys.get(t)) {
+            (Value::Unit, Ty::Unit) | (Value::Int(_), Ty::Int) | (Value::Bool(_), Ty::Bool) => true,
+            (Value::UInt(x), Ty::UInt(w)) | (Value::SInt(x), Ty::SInt(w)) => x.width() == *w,
+            (Value::Array(e, xs), Ty::Array(te, n)) => {
+                e == te && n.cmp_u64(xs.len() as u64) == Ordering::Equal
+            }
+            (Value::Tuple(xs), Ty::Tuple(ts)) => {
+                work.extend(xs.iter().zip(ts.iter().copied()));
+                xs.len() == ts.len()
+            }
+            _ => false,
+        };
+        if !same {
+            return false;
         }
-        (Value::Tuple(xs), Ty::Tuple(ts)) => {
-            xs.len() == ts.len() && xs.iter().zip(ts).all(|(x, t)| is_of(x, *t, tys))
-        }
-        _ => false,
     }
+    true
 }
 
 fn wrong<T>(t: &Ty, v: &Value, tys: &Types) -> Result<T, Fault> {
@@ -120,59 +128,86 @@ fn leaf_size(t: &Ty, v: &Value) -> u64 {
 }
 
 /// The size of the converted container, and the check of its shape. A shape or a scalar type
-/// that differs is `S010`. A negative `Nat` is `S012`. Both come before the charge.
+/// that differs is `S010`. A negative `Nat` is `S012`. Both come before the charge. The walk
+/// checks each node before its elements, from left to right.
 fn plan(t: TyId, v: &Value, tys: &Types) -> Result<u64, Fault> {
-    let node = tys.get(t);
-    match (node, v) {
-        (Ty::Array(e, n), Value::Array(_, xs)) => {
-            if n.cmp_u64(xs.len() as u64) != Ordering::Equal {
-                return wrong(node, v, tys);
+    let mut size = 0u64;
+    let mut work = vec![(t, v)];
+    while let Some((t, v)) = work.pop() {
+        let node = tys.get(t);
+        match (node, v) {
+            (Ty::Array(e, n), Value::Array(_, xs)) => {
+                if n.cmp_u64(xs.len() as u64) != Ordering::Equal {
+                    return wrong(node, v, tys);
+                }
+                size = size.saturating_add(1);
+                work.extend(xs.iter().rev().map(|x| (*e, x)));
             }
-            let mut size = 1;
-            for x in xs {
-                size += plan(*e, x, tys)?;
+            (Ty::Tuple(ts), Value::Tuple(xs)) => {
+                if ts.len() != xs.len() {
+                    return wrong(node, v, tys);
+                }
+                size = size.saturating_add(1);
+                work.extend(ts.iter().copied().zip(xs).rev());
             }
-            Ok(size)
-        }
-        (Ty::Tuple(ts), Value::Tuple(xs)) => {
-            if ts.len() != xs.len() {
-                return wrong(node, v, tys);
+            _ => {
+                leaf(node, v, tys)?;
+                size = size.saturating_add(leaf_size(node, v));
             }
-            let mut size = 1;
-            for (t, x) in ts.iter().zip(xs) {
-                size += plan(*t, x, tys)?;
-            }
-            Ok(size)
-        }
-        _ => {
-            leaf(node, v, tys)?;
-            Ok(leaf_size(node, v))
         }
     }
+    Ok(size)
 }
 
-/// The conversion, element by element. A value that does not fit is `S012`.
+/// A step of the conversion: convert a value at a type, or make a container of the last `n`
+/// results.
+enum Step<'a> {
+    Visit(TyId, &'a Value),
+    Array(TyId, usize),
+    Tuple(usize),
+}
+
+/// The conversion, element by element and from left to right. A value that does not fit is
+/// `S012`.
 fn run(t: TyId, v: &Value, tys: &Types) -> Result<Value, Fault> {
-    let node = tys.get(t);
-    match (node, v) {
-        (Ty::Array(e, _), Value::Array(_, xs)) => {
-            let ys = xs
-                .iter()
-                .map(|x| run(*e, x, tys))
-                .collect::<Result<_, _>>()?;
-            Ok(Value::Array(*e, ys))
+    let mut done: Vec<Value> = Vec::new();
+    let mut work = vec![Step::Visit(t, v)];
+    while let Some(step) = work.pop() {
+        match step {
+            Step::Visit(t, v) => {
+                let node = tys.get(t);
+                match (node, v) {
+                    (Ty::Array(e, _), Value::Array(_, xs)) => {
+                        work.push(Step::Array(*e, xs.len()));
+                        work.extend(xs.iter().rev().map(|x| Step::Visit(*e, x)));
+                    }
+                    (Ty::Tuple(ts), Value::Tuple(xs)) => {
+                        work.push(Step::Tuple(xs.len()));
+                        work.extend(
+                            ts.iter()
+                                .copied()
+                                .zip(xs)
+                                .rev()
+                                .map(|(t, x)| Step::Visit(t, x)),
+                        );
+                    }
+                    (_, Value::Int(n)) if matches!(leaf(node, v, tys), Ok(Leaf::Fit)) => {
+                        done.push(fit(node, n, tys)?);
+                    }
+                    _ => done.push(v.clone()),
+                }
+            }
+            Step::Array(e, n) => {
+                let xs = done.split_off(done.len().saturating_sub(n));
+                done.push(Value::Array(e, xs));
+            }
+            Step::Tuple(n) => {
+                let xs = done.split_off(done.len().saturating_sub(n));
+                done.push(Value::Tuple(xs));
+            }
         }
-        (Ty::Tuple(ts), Value::Tuple(xs)) => {
-            let ys = ts
-                .iter()
-                .zip(xs)
-                .map(|(t, x)| run(*t, x, tys))
-                .collect::<Result<_, _>>()?;
-            Ok(Value::Tuple(ys))
-        }
-        (_, Value::Int(n)) if matches!(leaf(node, v, tys), Ok(Leaf::Fit)) => fit(node, n, tys),
-        _ => Ok(v.clone()),
     }
+    Ok(done.pop().unwrap_or(Value::Unit))
 }
 
 /// A typed use of a container or `()` at `t`. A value of the type `t` charges nothing.
@@ -192,37 +227,59 @@ pub(crate) fn convert(
     run(t, v, tys).map(Some)
 }
 
+/// A step of the common type: join two types, or make a container type of the last results.
+enum Join {
+    Visit(TyId, TyId),
+    Array(Int),
+    Tuple(usize),
+}
+
 /// The common type of two types by the operand rule: a static integer takes the finite type
 /// of the other side. Arrays need one length and tuples one arity. Equal ids are the common
-/// type with no walk, so the walk goes only along the parts that differ.
+/// type with no walk, so the walk goes only along the parts that differ. The parts join from
+/// left to right, and the first part without a common type ends the walk.
 pub(crate) fn common_ty(lhs: TyId, rhs: TyId, tys: &mut Types) -> Option<TyId> {
-    if lhs == rhs {
-        return Some(lhs);
-    }
-    match (tys.get(lhs).clone(), tys.get(rhs).clone()) {
-        (Ty::Array(left, len), Ty::Array(right, other)) => {
-            if len == other {
-                let elem = common_ty(left, right, tys)?;
-                Some(tys.array(elem, len))
+    let mut done: Vec<TyId> = Vec::new();
+    let mut work = vec![Join::Visit(lhs, rhs)];
+    while let Some(step) = work.pop() {
+        match step {
+            Join::Visit(lhs, rhs) => done.push(if lhs == rhs {
+                lhs
             } else {
-                None
+                match (tys.get(lhs).clone(), tys.get(rhs).clone()) {
+                    (Ty::Array(left, len), Ty::Array(right, other)) if len == other => {
+                        work.push(Join::Array(len));
+                        work.push(Join::Visit(left, right));
+                        continue;
+                    }
+                    (Ty::Tuple(lefts), Ty::Tuple(rights)) if lefts.len() == rights.len() => {
+                        work.push(Join::Tuple(lefts.len()));
+                        work.extend(
+                            lefts
+                                .into_iter()
+                                .zip(rights)
+                                .rev()
+                                .map(|(l, r)| Join::Visit(l, r)),
+                        );
+                        continue;
+                    }
+                    (Ty::Int, Ty::Nat) | (Ty::Nat, Ty::Int) => tys.mk(Ty::Int),
+                    (Ty::Int | Ty::Nat, other) => other.is_finite().then_some(rhs)?,
+                    (other, Ty::Int | Ty::Nat) => other.is_finite().then_some(lhs)?,
+                    _ => return None,
+                }
+            }),
+            Join::Array(len) => {
+                let elem = done.pop()?;
+                done.push(tys.array(elem, len));
+            }
+            Join::Tuple(n) => {
+                let parts = done.split_off(done.len().saturating_sub(n));
+                done.push(tys.tuple(parts));
             }
         }
-        (Ty::Tuple(lefts), Ty::Tuple(rights)) => {
-            if lefts.len() != rights.len() {
-                return None;
-            }
-            let mut parts = Vec::with_capacity(lefts.len());
-            for (left, right) in lefts.into_iter().zip(rights) {
-                parts.push(common_ty(left, right, tys)?);
-            }
-            Some(tys.tuple(parts))
-        }
-        (Ty::Int, Ty::Nat) | (Ty::Nat, Ty::Int) => Some(tys.mk(Ty::Int)),
-        (Ty::Int | Ty::Nat, other) => other.is_finite().then_some(rhs),
-        (other, Ty::Int | Ty::Nat) => other.is_finite().then_some(lhs),
-        _ => None,
     }
+    done.pop()
 }
 
 /// The common type of the elements of an array literal, if they have one. There is none for
@@ -267,45 +324,47 @@ fn no_common_type<T>(a: &Value, b: &Value, tys: &Types) -> Result<T, Fault> {
     ))
 }
 
-/// The type check of `==` on containers, by the operand rule for each pair of elements.
+/// The type check of `==` on containers, by the operand rule for each pair of elements. The
+/// walk checks each pair before its elements, from left to right.
 fn same_check(a: &Value, b: &Value, tys: &mut Types) -> Result<(), Fault> {
-    match (a, b) {
-        (Value::Unit, Value::Unit) => Ok(()),
-        (Value::Array(s, xs), Value::Array(t, ys)) => {
-            if common_ty(*s, *t, tys).is_none() || xs.len() != ys.len() {
-                return no_common_type(a, b, tys);
+    let mut work = vec![(a, b)];
+    while let Some((a, b)) = work.pop() {
+        match (a, b) {
+            (Value::Unit, Value::Unit) => {}
+            (Value::Array(s, xs), Value::Array(t, ys)) => {
+                if common_ty(*s, *t, tys).is_none() || xs.len() != ys.len() {
+                    return no_common_type(a, b, tys);
+                }
+                work.extend(xs.iter().zip(ys).rev());
             }
-            xs.iter()
-                .zip(ys)
-                .try_for_each(|(x, y)| same_check(x, y, tys))
-        }
-        (Value::Tuple(xs), Value::Tuple(ys)) => {
-            if xs.len() != ys.len() {
-                return no_common_type(a, b, tys);
+            (Value::Tuple(xs), Value::Tuple(ys)) => {
+                if xs.len() != ys.len() {
+                    return no_common_type(a, b, tys);
+                }
+                work.extend(xs.iter().zip(ys).rev());
             }
-            xs.iter()
-                .zip(ys)
-                .try_for_each(|(x, y)| same_check(x, y, tys))
+            _ if composite(a) || composite(b) => return no_common_type(a, b, tys),
+            _ => leaf_eq_check(a, b, tys)?,
         }
-        _ if composite(a) || composite(b) => no_common_type(a, b, tys),
-        _ => leaf_eq_check(a, b, tys),
     }
+    Ok(())
 }
 
-/// The comparison, after the check and the charge. Each pair compares, so each conversion
-/// checks its fit (`S012`) even after a pair that differs.
+/// The comparison, after the check and the charge. Each pair compares, from left to right, so
+/// each conversion checks its fit (`S012`) even after a pair that differs.
 fn same_run(a: &Value, b: &Value, tys: &Types) -> Result<bool, Fault> {
-    match (a, b) {
-        (Value::Array(_, xs), Value::Array(_, ys)) | (Value::Tuple(xs), Value::Tuple(ys)) => {
-            let mut all = true;
-            for (x, y) in xs.iter().zip(ys) {
-                all &= same_run(x, y, tys)?;
+    let mut all = true;
+    let mut work = vec![(a, b)];
+    while let Some((a, b)) = work.pop() {
+        match (a, b) {
+            (Value::Array(_, xs), Value::Array(_, ys)) | (Value::Tuple(xs), Value::Tuple(ys)) => {
+                work.extend(xs.iter().zip(ys).rev());
             }
-            Ok(all)
+            (Value::Unit, Value::Unit) => {}
+            _ => all &= leaf_eq_run(a, b, tys)?,
         }
-        (Value::Unit, Value::Unit) => Ok(true),
-        _ => leaf_eq_run(a, b, tys),
     }
+    Ok(all)
 }
 
 /// A binary operator with a container operand. `==` and `!=` read both operands in full, so
