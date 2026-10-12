@@ -14,6 +14,8 @@ a check here:
 
 - A name, a field, or a binder is a source identifier that is not a keyword: `validName`.
 - No index is empty: `Expr.printable` and `TypeExpr.printable` at `index`.
+- No tuple is empty: `Expr.printable` and `TypeExpr.printable` at `tuple`. The printer writes an
+  empty tuple as `()`, which is the unit value or the unit type.
 - Each module parameter has `comptime`: `Param.printable true`. The AST has no `mut` flag at a
   parameter, so no check is necessary for `mut` at a `fn` parameter.
 - A `domains` declaration has at most one name: `Item.printable` at `module`.
@@ -24,10 +26,6 @@ a check here:
   Thus the flag `plain` also covers this clause.
 - No string has a control character other than LF, CR, and tab: `printableChar`.
 - Each number is below 2^65536: `Expr.printable` at `num` and at `select`.
-
-One check has no clause in the spec yet: no tuple is empty, see `Expr.printable` and
-`TypeExpr.printable` at `tuple`. The printer writes an empty tuple as `()`, which is the unit
-value or the unit type.
 
 The proof covers the container forms of slice 2. These are the unit value, the unit type, a
 tuple, an array, an array type `[T; N]`, and a selector `.N`.
