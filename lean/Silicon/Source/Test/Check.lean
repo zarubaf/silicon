@@ -297,12 +297,12 @@ def lists (s : String) : String :=
 #guard ok (lists "let a = 1.resize(UInt[8]);\nlet b = a.reinterpret(SInt[8]);")
 #guard ok (lists "let c = (1 == 1).static_assert(\"m\");\n\"m\".error();")
 #guard ok "comptime fn h(x: Nat, comptime y: Nat) -> Nat { return x; }\nconst A: Nat = 1.h(2);"
+#guard ok (lists "let t = Int.data_bits();")
 
 /-! `S007` at the start of a receiver call: no parameter without `comptime`, or the arity. -/
 #guard fails (lists "let t = Int.list();") .S007 6 9
 #guard message (lists "let t = Int.list();") ==
   "`list` has no parameter without `comptime` for the receiver"
-#guard fails (lists "let t = Int.data_bits();") .S007 6 9
 #guard fails ("fn c(comptime n: Nat) -> Nat { return n; }\n" ++
   "fn g(k: Nat) -> Nat { return k.c(); }") .S007 2 30
 #guard fails (lists "xs.push();") .S007 6 1
