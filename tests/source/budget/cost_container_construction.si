@@ -1,7 +1,7 @@
 // The cost of the construction (section 5.4): an array literal and a tuple literal charge the
 // recursive size of the result, and an element that names a value pays its copy there.
 // The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
-// FUEL 203
+// FUEL 213
 // TOP M()
 module M() domains() {
     let a = [1, 2, 3, 4, 5, 6, 7, 8];
