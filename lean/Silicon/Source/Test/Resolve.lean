@@ -267,6 +267,101 @@ so its type reads an outer name.
 #guard fails "struct S {}\nmodule M() {\ninstance u = S();\n}" .S003 3 14
 #guard fails "type A = Bool;\nmodule M() {\ninstance u = A();\n}" .S003 3 14
 
+/-!
+The strings and the lists of slice 2 are prelude names: `String`, `List`, `list`, `push`, `pop`,
+and `str`. A `mut` parameter is a local, and it keeps its mode.
+-/
+#guard tyRef "const S: String = \"a\";" == some (.type .string)
+#guard tyRef "const L: List[Int] = list(Int);" == some (.type .list)
+#guard retRef "fn f() -> Nat { return list; }" == some (.fn .list)
+#guard retRef "fn f() -> Nat { return push; }" == some (.fn .push)
+#guard retRef "fn f() -> Nat { return pop; }" == some (.fn .pop)
+#guard retRef "fn f() -> Nat { return str; }" == some (.fn .str)
+#guard retRef "fn f(mut xs: List[Int]) -> Nat { return xs; }" == some (.local 0)
+#guard ok "fn f(mut xs: List[Int], x: Int) -> () { push(xs, x); let s = str(pop(xs)); }"
+#guard (match run "fn f(mut xs: List[Int], comptime n: Nat, x: Bool) -> () {}" with
+  | .ok items =>
+    match items[0]? with
+    | some (Resolve.Item.fn _ _ _ ps _ _) => ps.map (·.mode)
+    | _ => []
+  | .error _ => []) == [ParamMode.mut, .comptime, .none]
+#guard ok "const List: Nat = 1;\nconst N: Nat = List;"
+
+/-! The function and the call site of the receiver call `return x.m(...);` of the first item. -/
+def retMethod (s : String) : Option (Ref × Nat) :=
+  match run s with
+  | .ok items =>
+    match items[0]? with
+    | some (Resolve.Item.fn _ _ _ _ _ b) =>
+      match b.getLast? with
+      | some (.ret _ (some (.method _ _ _ f _ k))) => some (f, k)
+      | _ => none
+    | _ => none
+  | .error _ => none
+
+/-!
+The name `m` of a receiver call `x.m(args)` is a function of the item scope, else of the
+prelude. A local never hides it, and an item hides a prelude function.
+-/
+#guard retMethod "fn f(p: Bool) -> Bool { return p.g(); }\nfn g(x: Bool) -> Bool { return x; }" ==
+  some (.item 1, 0)
+#guard retMethod "fn f(g: Bool) -> Bool { return g.g(); }\nfn g(x: Bool) -> Bool { return x; }" ==
+  some (.item 1, 0)
+#guard retMethod "fn f(xs: List[Int]) -> () { return xs.push(1); }" == some (.fn .push, 0)
+#guard retMethod "fn f(p: Bool) -> Nat { return p.len(); }" == some (.fn .len, 0)
+#guard retMethod "fn f(p: Bool) -> Nat { return p.len(); }\nfn len(x: Bool) -> Nat { return 1; }"
+  == some (.item 1, 0)
+#guard retMethod "fn f(T: Type) -> Nat { return T.data_bits(); }" == some (.fn .dataBits, 0)
+#guard ok (fnBody "let x = p.resize(UInt[8]);\nreturn p.static_assert(\"a\");")
+
+/-! `S003`: the name of a receiver call is not a function there. The position is the name. -/
+#guard fails (fnBody "return p.foo();") .S003 2 10
+#guard message (fnBody "return p.foo();") == "`foo` is not declared"
+#guard fails (fnBody "let h = 1;\nreturn p.h();") .S003 3 10
+#guard fails ("const g: Nat = 1;\n" ++ fnBody "return p.g();") .S003 3 10
+#guard message ("const g: Nat = 1;\n" ++ fnBody "return p.g();") == "`g` is not a function"
+#guard fails ("const len: Nat = 1;\n" ++ fnBody "return p.len();") .S003 3 10
+#guard fails ("module M() {}\n" ++ fnBody "return p.M();") .S003 3 10
+#guard fails ("struct S {}\n" ++ fnBody "return p.S();") .S003 3 10
+#guard fails (fnBody "return p.Bool();") .S003 2 10
+#guard message (fnBody "return p.Bool();") == "`Bool` is not a function"
+#guard fails (fnBody "return p.diagnostic();") .S003 2 10
+#guard message (fnBody "return p.diagnostic();") ==
+  "`diagnostic` is not supported yet; it comes in slice 2"
+#guard message (fnBody "return p.read();") == "`read` is not supported yet; it comes in slice 3"
+
+/-! `S003` in the receiver or an argument of a receiver call. The first error by position wins. -/
+#guard fails (fnBody "return q.len();") .S003 2 8
+#guard fails (fnBody "return q.foo();") .S003 2 8
+#guard fails (fnBody "return p.foo(q);") .S003 2 10
+#guard fails (fnBody "return p.len(q);") .S003 2 14
+#guard fails (fnBody "return p.len().foo();") .S003 2 16
+
+/-! The statements of the body of the first item. -/
+def body (s : String) : List Resolve.Stmt :=
+  match run s with
+  | .ok items =>
+    match items[0]? with
+    | some (Resolve.Item.fn _ _ _ _ _ b) | some (Resolve.Item.module _ _ _ _ b) => b
+    | _ => []
+  | .error _ => []
+
+/-!
+The call sites of a body count the call nodes and the receiver-call nodes from 0 in pre-order. A
+node comes before its callee, its receiver, and its arguments. A call outside the body does not
+shift them, and each body starts at 0.
+-/
+#guard body (fnBody "let a = len(p);\nreturn p.len(len(p));") matches
+  [.local _ _ _ _ (.call _ _ _ 0), .ret _ (some (.method _ _ _ _ [.call _ _ _ 2] 1))]
+#guard body (fnBody "return len(p).len();") matches
+  [.ret _ (some (.method _ (.call _ _ _ 1) _ _ [] 0))]
+#guard body ("fn f(x: UInt[len([1])]) -> Bool {\nreturn x.f(len(x));\n}") matches
+  [.ret _ (some (.method _ _ _ _ [.call _ _ _ 1] 0))]
+#guard body (fnBody "return UInt[8](p)(p);") matches
+  [.ret _ (some (.call _ (.call _ _ _ 1) _ 0))]
+#guard body ("module M() {\nlet a = len([1]);\n}\nfn g() -> Nat { return len([1]); }") matches
+  [.local _ _ _ _ (.call _ _ _ 0)]
+
 /-! Each pass reports its first error by position. -/
 #guard fails (fnBody "return a + b;") .S003 2 8
 #guard fails "fn f() -> Bool { let x = true; let x = true; return x; }\nconst f: Nat = 1;"
