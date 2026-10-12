@@ -59,7 +59,8 @@ its operation runs. When the fuel cannot pay it, the result is `S015` at the nod
    `reinterpret`, and a typed use that makes a finite value from an `Int`.
 5. `UInt[w]` and `SInt[w]` charge the size of the type that they make. The other type
    constructors, the joins, and the struct specializations charge by `Source.Eval.Types`.
-   `data_bits(T)` charges only its node, because the metadata of `T` holds its width.
+   `data_bits(T)` charges its node and the size of the width that it copies. The metadata of
+   `T` holds the width, so the size of `T` does not count.
 6. A copy charges the size of the copied value: each argument, each return, and a binding of a
    reference. The arguments of a function, a prelude function other than `len`, and a
    constructor `T(x)` are copies. `len` only refers to its argument, so it copies nothing.
@@ -618,7 +619,9 @@ mutual
       charge fp 1
       match ← args xs with
       | [.static (.type t)] =>
-        if t.info.data then return some ⟨.static (.int t.info.width), false⟩
+        if t.info.data then
+          charge p (intSize t.info.width)
+          return some ⟨.static (.int t.info.width), false⟩
         else fail .S010 p s!"`{g}` needs a hardware data type, not {t.text}"
       | [v] => fail .S010 p s!"`{g}` needs a type, not {v.text}"
       | vs => fail .S007 p s!"`{g}` takes 1 argument(s), but it has {vs.length}"

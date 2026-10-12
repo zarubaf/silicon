@@ -10,7 +10,7 @@ follow sections 5.1, 5.4, 5.5, and 5.6. These rules settle their open points:
 
 - Each new type checks its depth before its charge (`S015` at its node).
 - `[T; N]` charges its size and the three products of its metadata (`Meta.arrayCharge`). A tuple
-  type charges its size and the sizes of the four integers of its metadata, as a struct does.
+  type charges its size, then the sums of its metadata (`sums`), as a struct does.
 - A join walks two types together. It charges 1 before it visits each pair of container types:
   arrays, tuples, and struct types. A pair of two struct types charges as a type equality, the
   sum of the two sizes, and compares the identities. Another pair charges nothing. A visit that
@@ -24,7 +24,7 @@ follow sections 5.1, 5.4, 5.5, and 5.6. These rules settle their open points:
   toward the nesting depth (`S015`). It evaluates the parameter types in the scope of the
   struct and binds the parameters as typed uses, with their charges and errors. A first use
   then charges the size of the struct type and evaluates the field types. Then it checks the
-  depth of the struct type (`S015`) and charges `Meta.structCharge`. A use in progress is
+  depth of the struct type (`S015`) and charges the sums of its metadata. A use in progress is
   `S019`. A use of a done entry charges nothing more than its node and its parameters. A use
   of a struct item while its own parameter types evaluate is `S019` too, because its key does
   not exist yet.
@@ -49,6 +49,15 @@ def walked (pos : Pos) (w : Walk α) : M α := do
   let (r, k) := Id.run (w.run.run 0)
   charge pos k
   lift pos r
+
+/-!
+The charge at `pos` of the metadata sums of a tuple or a struct type with the metadata `m` and
+the parts `parts`. The sums read the four integers of each part, so they charge their sizes
+first. Then they charge the sizes of the four new integers of `m`.
+-/
+def sums (pos : Pos) (parts : List Meta) (m : Meta) : M Unit := do
+  charge pos (Meta.readCharge parts)
+  charge pos m.intCharge
 
 /-! A container type: an array, a tuple, or a struct type. -/
 def containerTy : Ty → Bool
@@ -135,7 +144,7 @@ def specialize (p : Pos) (x : String) (i : Nat) (args : List Value) (fields : M 
     let ms := fs.map Ty.info
     let m := Meta.struct ms (args.map Value.depth)
     bounded p m.depth
-    charge p (Meta.structCharge ms m)
+    sums p ms m
     let t := Ty.struct x args.toArray m
     modify fun s => { s with specs := s.specs.set! k ⟨i, args, .done t fs⟩ }
     return t
@@ -184,11 +193,12 @@ def arrayTy (pos q : Pos) (e : Ty) : Value → M Ty
     return t
   | v => fail .S010 q s!"the length of an array is a static Nat, not {v.text}"
 
-/-! The tuple type of `ts` at `pos`. It charges its size and the integers of its metadata. -/
+/-! The tuple type of `ts` at `pos`. It charges its size and the sums of its metadata. -/
 def tupleTy (pos : Pos) (ts : List Ty) : M Ty := do
   let t := Ty.tuple ts.toArray
   bounded pos t.depth
-  charge pos (t.size + t.info.intCharge)
+  charge pos t.size
+  sums pos (ts.map Ty.info) t.info
   return t
 
 end Silicon.Source.Eval
