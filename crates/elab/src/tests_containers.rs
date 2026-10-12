@@ -6,7 +6,7 @@
 //! `S015`.
 
 use crate::names::sha16;
-use crate::tests::{cost, exact, out, type_work};
+use crate::tests::{cost, exact, out, path_steps, type_work};
 use crate::tests_elab::{cost as top_cost, cost_fuel, order};
 use std::fmt::Write;
 
@@ -449,6 +449,40 @@ fn a_failed_step_comes_before_a_later_index() {
     assert_eq!(out(&good, "f()", fuel, 1000), "S015 1:39");
     let bad = body("let mut a = [[1, 2]]; a[5][0] = 1; return 0;");
     assert_eq!(out(&bad, "f()", fuel, 1000), "S013 1:41");
+}
+
+/// A tuple of depth `d` with the selector place `.0` of depth `d`.
+fn deep(d: usize) -> (String, String) {
+    let mut lit = "0".to_owned();
+    for _ in 0..d {
+        lit = format!("({lit}, 0)");
+    }
+    (lit, format!("a{}", ".0".repeat(d)))
+}
+
+/// An update of a place of depth `d` walks its path once: `d` steps, not one walk from the
+/// root for each step.
+#[test]
+fn a_deep_update_walks_its_path_once() {
+    let steps = |d: usize, updates: usize| {
+        let (lit, place) = deep(d);
+        let src = body(&format!(
+            "let mut a = {lit}; {} return 0;",
+            format!("{place} = 1; ").repeat(updates)
+        ));
+        path_steps(&src, "f()")
+    };
+    let d = 400;
+    let each = (steps(d, 30) - steps(d, 10)) / 20;
+    assert!(each <= 2 * d as u64, "{each} steps for a depth of {d}");
+    let index = |updates: usize| {
+        let src = body(&format!(
+            "let mut a = [[[[1]]]]; {} return 0;",
+            "a[0][0][0][0] = 2; ".repeat(updates)
+        ));
+        path_steps(&src, "f()")
+    };
+    assert!(index(20) - index(10) <= 10 * 2 * 4);
 }
 
 fn container(ty: &str, arg: &str) -> String {

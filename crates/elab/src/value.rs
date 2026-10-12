@@ -517,6 +517,9 @@ impl Value {
 pub struct Evaluated {
     pub value: Value,
     pub types: Types,
+    /// The steps of the walks along paths into values, for a test of their work.
+    #[cfg(test)]
+    pub(crate) steps: u64,
 }
 
 impl Evaluated {
