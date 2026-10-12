@@ -4,9 +4,13 @@
 //! only then does its work. A type error thus costs no fuel, and a charge that the fuel cannot
 //! pay stops the operation before it runs.
 
+mod container;
+
+pub(crate) use container::{common_of, composite, container_op};
+
 use crate::Code;
 use crate::int::Int;
-use crate::value::{Ty, Value, int_size, width_size};
+use crate::value::{Ty, Value, width_size};
 use core_ir::{Bits, Pred};
 use parse::ast::{BinOp, UnOp};
 use resolve::Prelude;
@@ -153,51 +157,18 @@ fn fits(t: &Ty, n: &Int) -> bool {
     match t {
         Ty::UInt(w) => n.fits_unsigned(u64::from(*w)),
         Ty::SInt(w) => n.fits_signed(u64::from(*w)),
+        Ty::Nat => !n.is_negative(),
         _ => true,
     }
 }
 
-/// A typed use of `v` at the type `t`. Only a static integer at a finite type converts: the
-/// result is the new value. `None` means that `v` itself is the result, with no charge.
+/// A typed use of `v` at the type `t`: the new value, or `None` if `v` itself is the result
+/// with no charge. A static integer takes a finite type, and a container converts element by
+/// element.
 pub(crate) fn convert(t: &Ty, v: &Value, fuel: &mut Fuel) -> Result<Option<Value>, Fault> {
-    let wrong = || {
-        type_error(format!(
-            "expected {}, but the value is {}",
-            t.text(),
-            v.text()
-        ))
-    };
-    match (t, v) {
-        (Ty::Bool, Value::Bool(_)) | (Ty::Int, Value::Int(_)) => Ok(None),
-        (Ty::Nat, Value::Int(n)) => {
-            if n.is_negative() {
-                Err((Code::S012, format!("{} is not a Nat", int_text(n))))
-            } else {
-                Ok(None)
-            }
-        }
-        (Ty::UInt(w), Value::UInt(x)) | (Ty::SInt(w), Value::SInt(x)) => {
-            if x.width() == *w {
-                Ok(None)
-            } else {
-                wrong()
-            }
-        }
-        (Ty::UInt(w) | Ty::SInt(w), Value::Int(n)) => {
-            fuel.pay(u128::from(int_size(n)) + u128::from(width_size(*w)))?;
-            if fits(t, n) {
-                Ok(Some(finite(
-                    matches!(t, Ty::SInt(_)),
-                    bits(*w, n.to_finite(*w))?,
-                )))
-            } else {
-                Err((
-                    Code::S012,
-                    format!("{} does not fit {}", int_text(n), t.text()),
-                ))
-            }
-        }
-        _ => wrong(),
+    match t {
+        Ty::Unit | Ty::Array(..) | Ty::Tuple(_) => container::convert(t, v, fuel),
+        _ => container::convert_scalar(t, v, fuel),
     }
 }
 
@@ -305,20 +276,7 @@ pub(crate) fn binary(op: BinOp, a: &Value, b: &Value, fuel: &mut Fuel) -> Result
             }
         }
         BinOp::Eq | BinOp::Ne => {
-            let same = matches!(
-                (a, b),
-                (Value::Int(_), Value::Int(_))
-                    | (Value::Bool(_), Value::Bool(_))
-                    | (Value::Str(_), Value::Str(_))
-                    | (Value::Type(_), Value::Type(_))
-            ) || finite_pair(a, b).is_some();
-            if !same {
-                return type_error(format!(
-                    "`==` compares values of one type, not {} and {}",
-                    a.text(),
-                    b.text()
-                ));
-            }
+            equal_check(a, b)?;
             fuel.pay(sum(a, b))?;
             Ok(Value::Bool((a == b) == (op == BinOp::Eq)))
         }
@@ -345,6 +303,26 @@ pub(crate) fn binary(op: BinOp, a: &Value, b: &Value, fuel: &mut Fuel) -> Result
         }
         BinOp::Shl | BinOp::Shr => shift(op, a, b, fuel),
         BinOp::Land | BinOp::Lor => type_error(format!("`{text}` selects; it has no step")),
+    }
+}
+
+/// The type check of `==` on two scalars.
+fn equal_check(a: &Value, b: &Value) -> Result<(), Fault> {
+    let same = matches!(
+        (a, b),
+        (Value::Int(_), Value::Int(_))
+            | (Value::Bool(_), Value::Bool(_))
+            | (Value::Str(_), Value::Str(_))
+            | (Value::Type(_), Value::Type(_))
+    ) || finite_pair(a, b).is_some();
+    if same {
+        Ok(())
+    } else {
+        type_error(format!(
+            "`==` compares values of one type, not {} and {}",
+            a.text(),
+            b.text()
+        ))
     }
 }
 

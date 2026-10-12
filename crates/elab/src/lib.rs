@@ -225,6 +225,9 @@ fn top_selection(
 mod tests;
 
 #[cfg(test)]
+mod tests_containers;
+
+#[cfg(test)]
 mod tests_elab;
 
 #[cfg(test)]

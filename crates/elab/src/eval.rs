@@ -1,24 +1,27 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The evaluator of slice 1 with the budgets and the cost model of section 5.4 of the
-//! front-end spec. Lean `Source.Eval` is its normative definition: each charge here is a
-//! charge there, in the same order and at the same node. It reads the checked AST. It
-//! recurses over the AST and the calls, so it runs on the front-end thread.
+//! The evaluator of slice 1 and the static containers of slice 2, with the budgets and the cost
+//! model of section 5.4 of the front-end spec. Lean `Source.Eval` is its normative definition:
+//! each charge here is a charge there, in the same order and at the same node. It reads the
+//! checked AST. It recurses over the AST and the calls, so it runs on the front-end thread.
 //!
-//! A value is static, hardware, or a handle (section 5.1). The child module `hwops` makes the
-//! hardware nodes, and the child module `inst` runs the module statements and the
-//! instantiations of Lean `Source.Elab`.
+//! A value is static, hardware, or a handle (section 5.1), or a literal with `[]` that waits for
+//! the type of a typed use. The child module `hwops` makes the hardware nodes, the child modules
+//! `container` and `place` make and read the static containers, and the child module `inst`
+//! runs the module statements and the instantiations of Lean `Source.Elab`.
 //!
 //! A result that refers to an existing value, such as a local or a constant, stays a
 //! reference until a copy pays for it. Thus a read that the cost model does not charge does
 //! no work in the size of the value.
 
+mod container;
 mod hwops;
 mod inst;
+mod place;
 
 pub use inst::Design;
 pub(crate) use inst::{Bind, Elab, Inst, Literal, PortDecl, Sink, elaborate};
 
-use crate::hw::{Graph, Handle, HwId, Op, Val};
+use crate::hw::{Graph, Handle, HwId, Leaf, Op, Part, Ref, Root, Seen, Val};
 use crate::int::Int;
 use crate::names::{PathId, Paths, Role, Step, Sym};
 use crate::ops::{self, Fault, Fuel, str_text};
@@ -50,17 +53,26 @@ struct Slot {
 enum Out {
     Made(Val),
     /// A new value that the cost model treats as a reference: a type name, a domain, a child
-    /// input, or a child output.
+    /// input, a child output, or an element of a new container.
     Named(Val),
-    /// A local of the frame at this index of the frame stack. A call evaluates its arguments
-    /// in the caller frame and binds them in a new frame, so a reference names its frame.
-    Local(usize, DeclId),
-    Const(usize),
+    /// A local or a constant, or an element of one. A call evaluates its arguments in the
+    /// caller frame and binds them in a new frame, so a reference names its frame.
+    Ref(Ref),
 }
 
 impl Out {
     fn is_ref(&self) -> bool {
         !matches!(self, Out::Made(_))
+    }
+
+    /// The part of a literal that waits for its type. The result is static or waits.
+    fn into_part(self) -> Part {
+        match self {
+            Out::Made(Val::Pending(_, part)) => part,
+            Out::Made(Val::Static(v)) | Out::Named(Val::Static(v)) => Part::Value(Leaf::Owned(v)),
+            Out::Ref(r) => Part::Value(Leaf::Ref(r)),
+            Out::Made(_) | Out::Named(_) => Part::Value(Leaf::Owned(Value::Unit)),
+        }
     }
 }
 
@@ -86,6 +98,18 @@ struct Store {
     frames: Vec<Frame>,
 }
 
+/// The element of `v` at the numbers `path`, one for each container below it.
+fn element<'a>(v: &'a Value, path: &[usize]) -> &'a Value {
+    let mut cur = v;
+    for &k in path {
+        cur = match cur {
+            Value::Array(_, xs) | Value::Tuple(xs) => xs.get(k).unwrap_or(&ABSENT_VALUE),
+            _ => &ABSENT_VALUE,
+        };
+    }
+    cur
+}
+
 impl Store {
     fn frame(&self) -> Option<&Frame> {
         self.frames.last()
@@ -95,25 +119,57 @@ impl Store {
         self.frames.last_mut()
     }
 
-    fn view<'s>(&'s self, out: &'s Out) -> &'s Val {
-        match out {
-            Out::Made(v) | Out::Named(v) => v,
-            Out::Local(k, id) => self
+    fn root(&self, root: &Root) -> &Val {
+        match root {
+            Root::Local(k, id) => self
                 .frames
                 .get(*k)
                 .and_then(|f| f.get(id))
                 .map_or(&ABSENT, |s| &s.value),
-            Out::Const(i) => match self.consts.get(*i) {
+            Root::Const(i) => match self.consts.get(*i) {
                 Some(Entry::Done(v)) => v,
                 _ => &ABSENT,
             },
         }
     }
 
+    /// What a reference finds.
+    fn at<'s>(&'s self, r: &Ref) -> Seen<'s> {
+        let root = self.root(&r.root);
+        match (root, r.path.is_empty()) {
+            (_, true) => root.seen(),
+            (Val::Static(v), false) => Seen::Static(element(v, &r.path)),
+            _ => Seen::Static(&ABSENT_VALUE),
+        }
+    }
+
+    /// The static value that a reference finds.
+    fn value_at<'s>(&'s self, r: &Ref) -> &'s Value {
+        match self.at(r) {
+            Seen::Static(v) => v,
+            _ => &ABSENT_VALUE,
+        }
+    }
+
+    /// The static value of a leaf of a literal that waits.
+    fn leaf<'s>(&'s self, leaf: &'s Leaf) -> &'s Value {
+        match leaf {
+            Leaf::Owned(v) => v,
+            Leaf::Ref(r) => self.value_at(r),
+        }
+    }
+
+    fn seen<'s>(&'s self, out: &'s Out) -> Seen<'s> {
+        match out {
+            Out::Made(v) | Out::Named(v) => v.seen(),
+            Out::Ref(r) => self.at(r),
+        }
+    }
+
     /// The static value of a result that is static.
     fn value<'s>(&'s self, out: &'s Out) -> &'s Value {
-        match self.view(out) {
-            Val::Static(v) => v,
+        match self.seen(out) {
+            Seen::Static(v) => v,
             _ => &ABSENT_VALUE,
         }
     }
@@ -123,7 +179,12 @@ impl Store {
     fn take(&self, out: Out) -> Val {
         match out {
             Out::Made(v) | Out::Named(v) => v,
-            other => self.view(&other).clone(),
+            Out::Ref(r) => match self.at(&r) {
+                Seen::Static(v) => Val::Static(v.clone()),
+                Seen::Hw(h) => Val::Hw(h),
+                Seen::Handle(h) => Val::Handle(h.clone()),
+                Seen::Pending(q, p) => Val::Pending(q, p.clone()),
+            },
         }
     }
 }
@@ -328,6 +389,23 @@ pub(crate) fn run(
     Ok((value, budget.fuel - ev.fuel.left()))
 }
 
+/// A reference to the constant at the index `i` of the table of constants.
+fn const_ref(i: usize) -> Out {
+    Out::Ref(Ref {
+        root: Root::Const(i),
+        path: Vec::new(),
+    })
+}
+
+/// `[]` outside a typed use has no type: `S010` at the `[]`.
+fn no_type<T>(q: Pos) -> Res<T> {
+    fail(
+        Code::S010,
+        q,
+        "`[]` needs the type [T; 0] from its context".to_owned(),
+    )
+}
+
 /// The value of `e`. Only `static_assert` and `error` give no value.
 fn need(e: &Expr, out: Option<Out>) -> Res<Out> {
     match out {
@@ -346,6 +424,7 @@ fn prim(pos: Pos, name: &str, k: Prelude) -> Res<Ty> {
         Prelude::Bool => Ok(Ty::Bool),
         Prelude::Nat => Ok(Ty::Nat),
         Prelude::Int => Ok(Ty::Int),
+        Prelude::Unit => Ok(Ty::Unit),
         _ => fail(
             Code::S007,
             pos,
@@ -355,13 +434,13 @@ fn prim(pos: Pos, name: &str, k: Prelude) -> Res<Ty> {
 }
 
 /// A string, a type, and a handle have no `Ty`, so an assignment keeps their form.
-fn same_form(a: &Val, b: &Val) -> bool {
+fn same_form(a: Seen<'_>, b: Seen<'_>) -> bool {
     match (a, b) {
-        (Val::Static(Value::Str(_)), Val::Static(Value::Str(_)))
-        | (Val::Static(Value::Type(_)), Val::Static(Value::Type(_))) => true,
+        (Seen::Static(Value::Str(_)), Seen::Static(Value::Str(_)))
+        | (Seen::Static(Value::Type(_)), Seen::Static(Value::Type(_))) => true,
         (
-            Val::Handle(Handle::Res { kind, ty, .. }),
-            Val::Handle(Handle::Res {
+            Seen::Handle(Handle::Res { kind, ty, .. }),
+            Seen::Handle(Handle::Res {
                 kind: k2, ty: t2, ..
             }),
         ) => kind == k2 && ty == t2,
@@ -399,11 +478,39 @@ impl Evaluator<'_> {
     }
 
     fn size(&self, out: &Out) -> u128 {
-        u128::from(self.store.view(out).size(&self.graph))
+        u128::from(match self.store.seen(out) {
+            Seen::Static(v) => v.size(),
+            Seen::Hw(h) => self.graph.size(h),
+            Seen::Handle(_) => 1,
+            Seen::Pending(_, p) => self.part_size(p),
+        })
     }
 
-    fn text(&self, v: &Val) -> String {
-        v.text(&self.graph)
+    /// The size of a part that waits: 1 for `[]`, and 1 more than its parts for a literal.
+    fn part_size(&self, p: &Part) -> u64 {
+        match p {
+            Part::Value(l) => self.store.leaf(l).size(),
+            Part::Empty(_) => 1,
+            Part::Array(_, ps) | Part::Tuple(_, ps) => {
+                1 + ps.iter().map(|p| self.part_size(p)).sum::<u64>()
+            }
+        }
+    }
+
+    fn part_text(&self, p: &Part) -> String {
+        match p {
+            Part::Value(l) => self.store.leaf(l).text(),
+            Part::Empty(_) => "`[]`".to_owned(),
+            Part::Array(..) => "an array literal with `[]`".to_owned(),
+            Part::Tuple(..) => "a tuple literal with `[]`".to_owned(),
+        }
+    }
+
+    fn text(&self, s: Seen<'_>) -> String {
+        match s {
+            Seen::Pending(_, p) => format!("{} without a type", self.part_text(p)),
+            s => s.text(&self.graph).unwrap_or_default(),
+        }
     }
 
     /// A binding copies a reference.
@@ -414,32 +521,32 @@ impl Evaluator<'_> {
         Ok(())
     }
 
-    /// The value of a static position at the node `pos`. Another value there is `S011`.
-    fn static_value(&self, pos: Pos, out: Out) -> Res<Value> {
-        match self.store.take(out) {
-            Val::Static(v) => Ok(v),
-            v => fail(
+    /// The check of a static position, before the value is taken. A literal that waits for
+    /// its type is `S010` at its first `[]`.
+    fn check_static(&self, pos: Pos, out: &Out) -> Res<()> {
+        match self.store.seen(out) {
+            Seen::Static(_) => Ok(()),
+            Seen::Pending(q, _) => no_type(q),
+            s => fail(
                 Code::S011,
                 pos,
                 format!(
                     "a static position needs a static value, not {}",
-                    self.text(&v)
+                    self.text(s)
                 ),
             ),
         }
     }
 
-    /// The check of a static position, before the value is taken.
-    fn check_static(&self, pos: Pos, out: &Out) -> Res<()> {
-        match self.store.view(out) {
-            Val::Static(_) => Ok(()),
-            v => fail(
+    /// The value of a static position at the node `pos`. Another value there is `S011`.
+    fn static_value(&self, pos: Pos, out: Out) -> Res<Value> {
+        self.check_static(pos, &out)?;
+        match self.store.take(out) {
+            Val::Static(v) => Ok(v),
+            _ => fail(
                 Code::S011,
                 pos,
-                format!(
-                    "a static position needs a static value, not {}",
-                    self.text(v)
-                ),
+                "a static position needs a static value".to_owned(),
             ),
         }
     }
@@ -454,9 +561,10 @@ impl Evaluator<'_> {
         }
     }
 
-    /// A typed use of `out` at the type `t`. It reads a handle. A hardware value needs the
-    /// type `t`.
+    /// A typed use of `out` at the type `t`. A literal that waits takes its type. It reads a
+    /// handle. A hardware value needs the type `t`.
     fn conform_val(&mut self, pos: Pos, t: &Ty, out: Out) -> Res<Val> {
+        let out = self.settle(pos, t, out)?;
         match self.data(pos, out)? {
             Opnd::Static(o) => Ok(Val::Static(self.conform(pos, t, o)?)),
             Opnd::Hw(h) => {
@@ -478,19 +586,20 @@ impl Evaluator<'_> {
     /// give a reference to their name: the implicit read. A child input is never read
     /// (`S017`). An instance and a domain are not data.
     fn data(&mut self, pos: Pos, out: Out) -> Res<Opnd> {
-        match self.store.view(&out) {
-            Val::Static(_) => Ok(Opnd::Static(out)),
-            Val::Hw(h) => Ok(Opnd::Hw(*h)),
-            Val::Handle(Handle::Res { ty, path, .. }) => {
+        match self.store.seen(&out) {
+            Seen::Static(_) => Ok(Opnd::Static(out)),
+            Seen::Hw(h) => Ok(Opnd::Hw(h)),
+            Seen::Pending(q, _) => no_type(q),
+            Seen::Handle(Handle::Res { ty, path, .. }) => {
                 let (ty, path) = (ty.clone(), *path);
                 Ok(Opnd::Hw(self.graph.mk(pos, ty, Op::Ref(path), Vec::new())))
             }
-            Val::Handle(Handle::Input { .. }) => fail(
+            Seen::Handle(Handle::Input { .. }) => fail(
                 Code::S017,
                 pos,
                 "an input of a child is a target; it is never read".to_owned(),
             ),
-            v @ Val::Handle(_) => fail(Code::S010, pos, format!("{} is not data", self.text(v))),
+            s @ Seen::Handle(_) => fail(Code::S010, pos, format!("{} is not data", self.text(s))),
         }
     }
 
@@ -502,20 +611,21 @@ impl Evaluator<'_> {
     }
 
     /// A static condition.
-    fn test(&self, pos: Pos, v: &Val) -> Res<bool> {
-        match v {
-            Val::Static(Value::Bool(b)) => Ok(*b),
-            Val::Static(v) => fail(
+    fn test(&self, pos: Pos, s: Seen<'_>) -> Res<bool> {
+        match s {
+            Seen::Static(Value::Bool(b)) => Ok(*b),
+            Seen::Static(v) => fail(
                 Code::S010,
                 pos,
                 format!("a condition is a Bool, not {}", v.text()),
             ),
-            v => fail(
+            Seen::Pending(q, _) => no_type(q),
+            s => fail(
                 Code::S011,
                 pos,
                 format!(
                     "a static condition needs a static Bool, not {}",
-                    self.text(v)
+                    self.text(s)
                 ),
             ),
         }
@@ -523,18 +633,28 @@ impl Evaluator<'_> {
 
     /// A loop bound is a static `Int`.
     fn bound(&self, pos: Pos, out: &Out) -> Res<()> {
-        match self.store.view(out) {
-            Val::Static(Value::Int(_)) => Ok(()),
-            Val::Static(v) => fail(
+        match self.store.seen(out) {
+            Seen::Static(Value::Int(_)) => Ok(()),
+            Seen::Static(v) => fail(
                 Code::S010,
                 pos,
                 format!("a loop bound is a static Int, not {}", v.text()),
             ),
-            v => fail(
+            Seen::Pending(q, _) => no_type(q),
+            s => fail(
                 Code::S011,
                 pos,
-                format!("a loop bound is a static Int, not {}", self.text(v)),
+                format!("a loop bound is a static Int, not {}", self.text(s)),
             ),
+        }
+    }
+
+    /// A result that is not a literal that waits for its type. `[]` outside a typed use has
+    /// no type.
+    fn known(&self, out: &Out) -> Res<()> {
+        match self.store.seen(out) {
+            Seen::Pending(q, _) => no_type(q),
+            _ => Ok(()),
         }
     }
 
@@ -730,7 +850,7 @@ impl Evaluator<'_> {
                     Ok(Some(Out::Made(self.mux(*pos, c, a, b)?)))
                 }
                 Opnd::Static(c) => {
-                    if self.test(*pos, self.store.view(&c))? {
+                    if self.test(*pos, self.store.seen(&c))? {
                         self.eval(yes)
                     } else {
                         self.eval(no)
@@ -752,26 +872,16 @@ impl Evaluator<'_> {
                     let t = self.index(*pos, k, args)?;
                     return Ok(Some(Out::Made(Val::Static(Value::Type(t)))));
                 }
-                fail(
-                    Code::S010,
-                    *pos,
-                    "slice 1 indexes only `UInt` and `SInt`".to_owned(),
-                )
+                self.index_value(*pos, base, args)
             }
             Expr::Field { pos, base, field } => {
                 let b = self.eval(base)?;
                 let b = need(base, b)?;
                 self.field(*pos, &b, field)
             }
-            // TODO(#177): the values of the containers come in the next steps of phase 2.
-            Expr::Unit { pos }
-            | Expr::Tuple { pos, .. }
-            | Expr::Array { pos, .. }
-            | Expr::Select { pos, .. } => fail(
-                Code::S010,
-                *pos,
-                "the containers of slice 2 are not evaluated yet".to_owned(),
-            ),
+            Expr::Unit { .. } | Expr::Tuple { .. } | Expr::Array { .. } | Expr::Select { .. } => {
+                self.container(e)
+            }
         }
     }
 
@@ -780,7 +890,7 @@ impl Evaluator<'_> {
     fn select(&mut self, pos: Pos, op: BinOp, lhs: &Expr, rhs: &Expr) -> Res<Option<Out>> {
         match self.operand(pos, lhs)? {
             Opnd::Static(a) => {
-                let a = self.test(pos, self.store.view(&a))?;
+                let a = self.test(pos, self.store.seen(&a))?;
                 if a == (op == BinOp::Lor) {
                     return Ok(Some(Out::Made(Val::Static(Value::Bool(a)))));
                 }
@@ -798,7 +908,7 @@ impl Evaluator<'_> {
                         }
                     }
                     Opnd::Static(b) => {
-                        let b = self.test(pos, self.store.view(&b))?;
+                        let b = self.test(pos, self.store.seen(&b))?;
                         Ok(Some(Out::Made(Val::Static(Value::Bool(b)))))
                     }
                 }
@@ -812,13 +922,13 @@ impl Evaluator<'_> {
 
     /// A port of an instance: a child input is a target, and a child output is hardware.
     fn field(&mut self, pos: Pos, b: &Out, field: &Ident) -> Res<Option<Out>> {
-        let Val::Handle(Handle::Inst { id, path, inst }) = self.store.view(b) else {
+        let Seen::Handle(Handle::Inst { id, path, inst }) = self.store.seen(b) else {
             return fail(
                 Code::S010,
                 pos,
                 format!(
                     "{} has no field `{}`",
-                    self.text(self.store.view(b)),
+                    self.text(self.store.seen(b)),
                     field.name
                 ),
             );
@@ -848,9 +958,13 @@ impl Evaluator<'_> {
     }
 
     /// A binary operator with static operands. A static integer next to a finite operand
-    /// takes the type of that operand first.
+    /// takes the type of that operand first. A container operand compares by the common type
+    /// of each pair of elements.
     fn binary(&mut self, pos: Pos, op: BinOp, a: &Out, b: &Out) -> Res<Value> {
         let (va, vb) = (self.store.value(a), self.store.value(b));
+        if ops::composite(va) || ops::composite(vb) {
+            return ops::container_op(op, va, vb, &mut self.fuel).map_err(at(pos));
+        }
         let mut ca = None;
         let mut cb = None;
         if ops::unifies(op) {
@@ -890,14 +1004,12 @@ impl Evaluator<'_> {
                     "a complete type takes no more index".to_owned(),
                 ),
             },
-            // TODO(#177): the container types come in the next steps of phase 2.
-            TypeExpr::Unit { pos } | TypeExpr::Tuple { pos, .. } | TypeExpr::Array { pos, .. } => {
-                fail(
-                    Code::S010,
-                    *pos,
-                    "the containers of slice 2 are not evaluated yet".to_owned(),
-                )
+            TypeExpr::Unit { pos } => {
+                self.charge(*pos, u128::from(Ty::Unit.size()))?;
+                Ok(Ty::Unit)
             }
+            TypeExpr::Tuple { pos, elems } => self.tuple_type(*pos, elems),
+            TypeExpr::Array { pos, elem, len } => self.array_type(*pos, elem, len),
         }
     }
 
@@ -934,7 +1046,10 @@ impl Evaluator<'_> {
                 _ => {
                     let k = self.store.frames.len().saturating_sub(1);
                     if self.store.frame().is_some_and(|f| f.contains_key(&id)) {
-                        Ok(Out::Local(k, id))
+                        Ok(Out::Ref(Ref {
+                            root: Root::Local(k, id),
+                            path: Vec::new(),
+                        }))
                     } else {
                         fail(Code::S011, pos, format!("`{x}` is not a static value"))
                     }
@@ -960,7 +1075,7 @@ impl Evaluator<'_> {
             return fail(Code::S010, pos, format!("`{x}` is not a constant"));
         };
         match self.store.consts.get(i) {
-            Some(Entry::Done(_)) => return Ok(Out::Const(i)),
+            Some(Entry::Done(_)) => return Ok(const_ref(i)),
             Some(Entry::InProgress) => {
                 return fail(
                     Code::S019,
@@ -977,10 +1092,11 @@ impl Evaluator<'_> {
                 let o = ev.eval(value)?;
                 let o = need(value, o)?;
                 ev.copy(*cp, &o)?;
+                let o = ev.settle(*cp, &t, o)?;
                 ev.conform(*cp, &t, o)
             })?;
             ev.store.consts[i] = Entry::Done(Val::Static(c));
-            Ok(Out::Const(i))
+            Ok(const_ref(i))
         })
     }
 
@@ -1009,15 +1125,15 @@ impl Evaluator<'_> {
         }
         let t = self.eval(f)?;
         let t = need(f, t)?;
-        match (self.store.view(&t), xs) {
-            (Val::Static(Value::Type(t)), [x]) => {
+        match (self.store.seen(&t), xs) {
+            (Seen::Static(Value::Type(t)), [x]) => {
                 let t = t.clone();
                 let a = self.eval(x)?;
                 let a = need(x, a)?;
                 self.charge(pos, self.size(&a))?;
                 Ok(Some(Out::Made(Val::Static(self.conform(pos, &t, a)?))))
             }
-            (Val::Static(Value::Type(_)), _) => {
+            (Seen::Static(Value::Type(_)), _) => {
                 fail(Code::S007, pos, "a constructor takes 1 argument".to_owned())
             }
             (v, _) => fail(
@@ -1107,6 +1223,7 @@ impl Evaluator<'_> {
         let t = self.type_expr(&q.ty)?;
         self.charge(pos, self.size(&v))?;
         let x = if comptime || q.comptime {
+            let v = self.settle(pos, &t, v)?;
             Val::Static(self.conform(pos, &t, v)?)
         } else {
             self.conform_val(pos, &t, v)?
@@ -1134,6 +1251,9 @@ impl Evaluator<'_> {
     ) -> Res<Option<Out>> {
         self.charge(fp, 1)?;
         let vs = self.args(xs)?;
+        if builtin == Prelude::Len {
+            return self.len(pos, vs);
+        }
         let mut sizes = 0u128;
         for v in &vs {
             sizes += self.size(v);
@@ -1196,7 +1316,7 @@ impl Evaluator<'_> {
                 }
             }
             (_, vs) => {
-                let texts: Vec<String> = vs.iter().map(|v| self.text(self.store.view(v))).collect();
+                let texts: Vec<String> = vs.iter().map(|v| self.text(self.store.seen(v))).collect();
                 fail(
                     Code::S010,
                     pos,
@@ -1237,9 +1357,11 @@ impl Evaluator<'_> {
         let o = self.eval(value)?;
         let o = need(value, o)?;
         self.copy(pos, &o)?;
-        let x = match &t {
-            Some(t) => self.conform_val(pos, t, o)?,
-            None => self.store.take(o),
+        let x = if let Some(t) = &t {
+            self.conform_val(pos, t, o)?
+        } else {
+            self.known(&o)?;
+            self.store.take(o)
         };
         let id = self.decl(name)?;
         let x = self.named(pos, id, x);
@@ -1252,59 +1374,6 @@ impl Evaluator<'_> {
                 value: x,
             },
         );
-        Ok(None)
-    }
-
-    /// An assignment to a `let mut` local. The target is a place, so it charges nothing.
-    fn assign(&mut self, pos: Pos, target: &Expr, value: &Expr) -> Res<Option<Val>> {
-        let place = match target {
-            Expr::Name { id: tid, .. } => match self.target(*tid) {
-                Some(Target::Decl(id)) => self
-                    .store
-                    .frame()
-                    .and_then(|f| f.get(&id))
-                    .filter(|s| s.mutable)
-                    .map(|s| (id, s.ty.clone())),
-                _ => None,
-            },
-            _ => None,
-        };
-        let Some((id, ty)) = place else {
-            return fail(
-                Code::S010,
-                pos,
-                "an assignment target is a `let mut` local".to_owned(),
-            );
-        };
-        let o = self.eval(value)?;
-        let o = need(value, o)?;
-        self.copy(pos, &o)?;
-        let y = if let Some(t) = &ty {
-            self.conform_val(pos, t, o)?
-        } else {
-            let old = self
-                .store
-                .frame()
-                .and_then(|f| f.get(&id))
-                .map_or(&ABSENT, |s| &s.value);
-            let new = self.store.view(&o);
-            if !same_form(old, new) {
-                return fail(
-                    Code::S010,
-                    pos,
-                    format!(
-                        "expected {}, but the value is {}",
-                        self.text(old),
-                        self.text(new)
-                    ),
-                );
-            }
-            self.store.take(o)
-        };
-        let y = self.named(pos, id, y);
-        if let Some(slot) = self.store.frame_mut().and_then(|f| f.get_mut(&id)) {
-            slot.value = y;
-        }
         Ok(None)
     }
 
@@ -1342,7 +1411,7 @@ impl Evaluator<'_> {
             Stmt::CtIf { pos, cond, yes, no } => {
                 let c = self.eval(cond)?;
                 let c = need(cond, c)?;
-                if self.test(*pos, self.store.view(&c))? {
+                if self.test(*pos, self.store.seen(&c))? {
                     self.block(*pos, yes, module)
                 } else {
                     match no {
@@ -1360,7 +1429,9 @@ impl Evaluator<'_> {
             } => self.ct_for(*pos, var, lo, hi, body, module),
             Stmt::Block { body, .. } => self.stmts(body, module),
             Stmt::Expr { value, .. } => {
-                self.eval(value)?;
+                if let Some(o) = self.eval(value)? {
+                    self.known(&o)?;
+                }
                 Ok(None)
             }
             Stmt::Connect { pos, .. }

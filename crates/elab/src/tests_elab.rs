@@ -65,12 +65,12 @@ fn cost_with(src: &str, top: &str, fuel: u64, depth: u64, digest: fn(&str) -> St
     }
 }
 
-fn cost(src: &str, top: &str) -> String {
+pub(crate) fn cost(src: &str, top: &str) -> String {
     let b = Budget::default();
     cost_with(src, top, b.fuel, b.depth, sha16)
 }
 
-fn cost_fuel(src: &str, top: &str, fuel: u64) -> String {
+pub(crate) fn cost_fuel(src: &str, top: &str, fuel: u64) -> String {
     cost_with(src, top, fuel, Budget::default().depth, sha16)
 }
 
@@ -84,7 +84,7 @@ fn design(src: &str, top: &str) -> Design {
 }
 
 /// The total fuel of `cost`.
-fn total(src: &str, top: &str) -> u64 {
+pub(crate) fn total(src: &str, top: &str) -> u64 {
     design(src, top).used()
 }
 
@@ -96,7 +96,7 @@ fn exact(src: &str, top: &str, units: u64) {
 }
 
 /// The emitted names in the order in which the instantiations finish.
-fn order(src: &str, top: &str) -> Vec<String> {
+pub(crate) fn order(src: &str, top: &str) -> Vec<String> {
     design(src, top).order()
 }
 
