@@ -10,9 +10,9 @@ This crate owns pass 4 with `S005`, `S006`, and `S007`. These checks need no sta
 
 ## Invariants
 
-- `S005` is syntactic and is at the name. A static position names no port, register, wire, or instance. The length `N` of `[T; N]` and each index are static positions. A `let` alias and a domain name are for `elab`. Check: `cargo nextest run -p typeck`.
+- `S005` is syntactic and is at the name. A static position names no port, register, wire, or instance. The length `N` of `[T; N]` and each index are static positions. The arguments of a struct constructor and of `data_bits` are not static positions. A `let` alias and a domain name are for `elab`. Check: `cargo nextest run -p typeck`.
 - `S006` is at the statement. A module body has no `return`. A `comptime fn` has no port, register, wire, instance, or `:=`. Check: `cargo nextest run -p typeck`.
-- `S007` is at the call, the index, the type name, or the `instance` statement. A call through a local or a constant is not checked. Check: `cargo nextest run -p typeck`.
+- `S007` is at the call, the index, the type name, or the `instance` statement. A call through a local or a constant is not checked. A struct takes one index argument for each parameter. Thus a struct with parameters and no index is `S007`, and so is an index on a `type` item. `elab` gives `S007` for an index on a local that holds a type. A constructor of a struct takes no argument, which is the zero `T()`, or one argument for each field. Check: `cargo nextest run -p typeck`.
 - The first error by position equals the first error of Lean. Check: `cargo nextest run -p typeck`.
 - The walk runs through `parse::on_stack` with the syntax depth of the parse. This crate does not size a stack. Check: `cargo nextest run -p typeck`.
 - The crate uses no `HashMap` and no `HashSet`. Check: `just clippy`.
