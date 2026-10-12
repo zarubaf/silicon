@@ -244,7 +244,12 @@ fn s007_a_call_through_a_local_or_a_const_is_not_checked() {
 #[test]
 fn s007_a_constructor_has_one_argument() {
     fails(&fn_body("return Bool(true, false);"), S007, 2, 8);
-    fails(&fn_body("return UInt[8]();"), S007, 2, 8);
+    assert_eq!(
+        message(&fn_body("return Bool(true, false);")),
+        "a constructor takes 0 or 1 argument(s), but it has 2"
+    );
+    // The zero `T()` has no argument.
+    ok(&fn_body("return UInt[8]();"));
     ok(&fn_body("return Bool(true);"));
 }
 
@@ -501,4 +506,136 @@ fn the_rules_that_need_static_values_are_left_to_elab() {
     ok(&fn_body(
         "let t = (1, 2);\nlet x = t[0, 1];\nlet y = t < t;\nreturn [1] == [1, 2];",
     ));
+}
+
+// The struct and type forms of slice 2, phase 3.
+
+/// The struct `P` with one parameter and two fields, the struct `S` without parameters, and the
+/// struct `E` without fields.
+const STRUCTS: &str =
+    "\nstruct P(comptime W: Nat) { a: UInt[W], b: Bool }\nstruct S { a: Bool }\nstruct E {}";
+
+fn with_structs(src: &str) -> String {
+    format!("{src}{STRUCTS}")
+}
+
+#[test]
+fn structs_zero_and_type_items_pass() {
+    ok(&with_structs(
+        "const A: P[8] = P[8](1, true);\nconst B: S = S(true);\nconst C: P[2] = P[2]();\n\
+         const D: E = E();\nconst N: Nat = data_bits(P[8]);",
+    ));
+    ok("type A = UInt[8];\nconst B: A = A(3);\nconst C: Type = A;\nconst D: A = A();");
+    ok(&fn_body(
+        "type T = (Bool, [UInt[8]; 2]);\nlet x: T = T();\nreturn p;",
+    ));
+    ok("fn f(comptime T: Type, x: T) -> T { return T(x); }");
+}
+
+#[test]
+fn s007_a_struct_specialization_has_one_argument_per_parameter() {
+    fails(&with_structs("const A: P[8, 9] = 0;"), S007, 1, 10);
+    fails(&with_structs("const A: S[1] = 0;"), S007, 1, 10);
+    assert_eq!(
+        message(&with_structs("const A: S[1] = 0;")),
+        "`S` takes 0 argument(s), but it has 1"
+    );
+    fails(&with_structs("const A: P[8][1] = 0;"), S007, 1, 10);
+    fails(
+        &with_structs(&fn_body("let t = P[1, 2];\nreturn p;")),
+        S007,
+        2,
+        9,
+    );
+    fails(
+        &with_structs(&fn_body("let t = E[0];\nreturn p;")),
+        S007,
+        2,
+        9,
+    );
+}
+
+#[test]
+fn s007_a_struct_with_parameters_is_not_bare() {
+    fails(&with_structs("const A: P = 0;"), S007, 1, 10);
+    assert_eq!(
+        message(&with_structs("const A: P = 0;")),
+        "`P` takes 1 argument(s), but it has 0"
+    );
+    for body in [
+        "let t = P;\nreturn p;",
+        "let t = P(1, true);\nreturn p;",
+        "let t = P();\nreturn p;",
+    ] {
+        fails(&with_structs(&fn_body(body)), S007, 2, 9);
+    }
+    fails("struct Q(comptime W: Nat) { a: Q }", S007, 1, 32);
+}
+
+#[test]
+fn s007_a_struct_constructor_has_one_argument_per_field_or_none() {
+    for body in [
+        "let t = S(true, false);\nreturn p;",
+        "let t = P[8](1);\nreturn p;",
+        "let t = E(1);\nreturn p;",
+    ] {
+        fails(&with_structs(&fn_body(body)), S007, 2, 9);
+    }
+    assert_eq!(
+        message(&with_structs(&fn_body("let t = P[8](1);\nreturn p;"))),
+        "a struct constructor takes 0 or 2 argument(s), but it has 1"
+    );
+}
+
+#[test]
+fn s007_type_and_type_items_take_no_index() {
+    fails("const A: Type[1] = Bool;", S007, 1, 10);
+    fails("type A = UInt[8];\nconst B: A[2] = 0;", S007, 2, 10);
+    fails("type A = UInt[8];\nconst B: Nat = A[2];", S007, 2, 16);
+    // Only elaboration knows the type of a `type` item, so it checks the constructor.
+    ok("type A = UInt[8];\nconst B: Nat = A(1, 2);");
+    fails(&fn_body("return data_bits();"), S007, 2, 8);
+    fails(&fn_body("return data_bits(Bool, Bool);"), S007, 2, 8);
+}
+
+#[test]
+fn s007_in_the_parts_of_the_type_forms() {
+    fails("struct Q(comptime W: UInt) { a: Bool }", S007, 1, 22);
+    fails("struct Q { a: UInt }", S007, 1, 15);
+    fails("type A = SInt;", S007, 1, 10);
+    fails(&fn_body("type T = UInt;\nreturn p;"), S007, 2, 10);
+    fails(&fn_body("let t = [UInt; 2];\nreturn p;"), S007, 2, 10);
+    fails(&fn_body("let t = [Bool; 2][1];\nreturn p;"), S007, 2, 9);
+    fails(
+        &fn_body("let t = [Bool; 2](true, false);\nreturn p;"),
+        S007,
+        2,
+        9,
+    );
+    ok(&fn_body(
+        "let t = [Bool; 2]();\nlet u = [Bool; 2]([p, p]);\nreturn p;",
+    ));
+}
+
+#[test]
+fn s005_struct_arguments_and_array_lengths_are_static_positions() {
+    fails(
+        &with_structs(&mod_body("input a: Nat;\nlet x: P[a] = 0;")),
+        S005,
+        3,
+        10,
+    );
+    fails(
+        &with_structs(&mod_body("input a: Nat;\nlet t = P[a];")),
+        S005,
+        3,
+        11,
+    );
+    fails(&mod_body("wire w: Nat;\nlet t = [Bool; w];"), S005, 3, 16);
+    fails(&mod_body("wire w: Nat;\ntype T = [Bool; w];"), S005, 3, 17);
+    fails(&mod_body("input a: Bool;\nlet t = Bool(a);"), S005, 3, 14);
+    // The arguments of a struct constructor are no static positions.
+    ok(&with_structs(&mod_body(
+        "input a: Bool;\nlet t = S(a);\nlet u = P[W](0, a);",
+    )));
 }
