@@ -796,6 +796,20 @@ fn rules_of_the_lean_parser() {
         // `mut`: S001 at a module parameter. A path in a function parameter is S004.
         ("module M(mut x: T) { }", Code::S001, 1, 10),
         ("module M(comptime mut x: T) { }", Code::S001, 1, 19),
+        ("struct P(mut x: T) { }", Code::S001, 1, 10),
+        ("struct P(comptime mut W: Nat) { }", Code::S001, 1, 19),
+        // A function parameter has at most one mark: S001 where the name is due.
+        ("fn f(comptime mut x: T) -> T { }", Code::S001, 1, 15),
+        ("fn f(mut comptime x: T) -> T { }", Code::S001, 1, 10),
+        ("fn f(mut mut x: T) -> T { }", Code::S001, 1, 10),
+        ("fn f(comptime comptime x: T) -> T { }", Code::S001, 1, 15),
+        ("fn f(x: T, mut: T) -> T { }", Code::S001, 1, 15),
+        (
+            "comptime fn f(comptime mut x: T) -> T { }",
+            Code::S001,
+            1,
+            24,
+        ),
         ("fn f(x: a::T) -> T { }", Code::S004, 1, 10),
         // A builtin: S004 at the `@`, whatever its arguments are.
         ("const X: T = @TypeOf(a.b, c);", Code::S004, 1, 14),
@@ -988,14 +1002,16 @@ fn container_forms_give_s001_and_s004_like_lean() {
         ("const X: T = [,];", Code::S001, 1, 15),
         ("const X: T = [a b];", Code::S001, 1, 17),
         ("const X: T = t.\"s\";", Code::S001, 1, 16),
-        ("const X: T = t.f(x);", Code::S004, 1, 17),
-        ("const X: T = t.0.f(x);", Code::S004, 1, 19),
+        ("const X: T = x.f(;", Code::S001, 1, 18),
+        ("const X: T = x.f(a b);", Code::S001, 1, 20),
+        ("const X: T = x.f(a,,);", Code::S001, 1, 20),
         ("module M() { f(x)[0] = 1; }", Code::S001, 1, 22),
         ("module M() { a.0(x) = 1; }", Code::S001, 1, 21),
         ("module M() { (a,) = 1; }", Code::S001, 1, 19),
         ("module M() { [a][0] = 1; }", Code::S001, 1, 21),
         ("module M() { a[] = 1; }", Code::S001, 1, 16),
-        ("module M() { a.x(1) = 1; }", Code::S004, 1, 17),
+        ("module M() { a.x(1) = 1; }", Code::S001, 1, 21),
+        ("module M() { x.f().g = 1; }", Code::S001, 1, 22),
         ("module M() { mem m: [T; 4]; }", Code::S004, 1, 14),
         ("const A: (,) = 0;", Code::S001, 1, 11),
         ("const A: (T U) = 0;", Code::S001, 1, 13),
@@ -1443,4 +1459,53 @@ fn an_expression_of_the_command_line() {
         crate::parse_expr("1", 0),
         Err(crate::DepthError::Range(0))
     ));
+}
+
+#[test]
+fn a_receiver_call_lowers_with_the_positions_of_lean() {
+    let parsed = parse("const X: T = (a).f(x);");
+    let Some([Item::Const { value, .. }]) = parsed.ast.as_deref() else {
+        panic!("{parsed:?}");
+    };
+    let Expr::Method {
+        pos: p,
+        recv,
+        name,
+        args,
+        ..
+    } = value
+    else {
+        panic!("not a method");
+    };
+    assert_eq!(*p, pos(1, 14));
+    assert!(matches!(&**recv, Expr::Name { pos: q, .. } if *q == pos(1, 15)));
+    assert_eq!(name.pos, pos(1, 18));
+    assert!(matches!(args.as_slice(), [Expr::Name { pos: r, .. }] if *r == pos(1, 20)));
+    assert_eq!(shape("x.f().g()"), "(method (method x f ) g )");
+}
+
+#[test]
+fn a_function_parameter_has_the_mode_of_its_mark() {
+    let parsed = parse("fn f(x: T,\n  mut y: T, comptime z: T) -> T {}");
+    let Some([Item::Fn { params, .. }]) = parsed.ast.as_deref() else {
+        panic!("{parsed:?}");
+    };
+    let modes: Vec<_> = params.iter().map(|p| p.mode).collect();
+    assert_eq!(
+        modes,
+        [ParamMode::None, ParamMode::Mut, ParamMode::Comptime]
+    );
+    assert_eq!(params[1].pos, pos(2, 3));
+    assert_eq!(params[1].name.pos, pos(2, 7));
+}
+
+#[test]
+fn a_method_chain_is_bound_by_the_syntax_depth() {
+    let chain = |n: usize| format!("const X: T = x{};", ".f()".repeat(n));
+    assert_eq!(first_error_64(&chain(63)), None);
+    assert_eq!(first_error_64(&chain(64)), Some((Code::S001, 1, 14)));
+    assert_eq!(first_error(&chain(4095)), None);
+    assert_eq!(first_error(&chain(4096)), Some((Code::S001, 1, 14)));
+    let long = format!("module M() {{ {} }}", "x.f(y).g(z.h());".repeat(10_000));
+    assert_eq!(first_error(&long), None);
 }
