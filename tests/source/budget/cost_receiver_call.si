@@ -1,0 +1,15 @@
+// A receiver call charges as the call that it binds to (section 5.4): its node, the arguments in
+// evaluation order, and then the copies in the binding order of the parameters. `big.take(T, 2)`
+// binds to `take(T, big, 2)`, so the two forms of the loop cost the same, and the fuel equal to
+// the total of `cost` succeeds. One unit less gives `S015`.
+// FUEL 405
+// TOP M()
+comptime fn take(comptime T: Type, a: [Nat; 16], n: Nat) -> Nat {
+    return n;
+}
+module M() domains() {
+    let big = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+    comptime for i in 0..4 {
+        let a = big.take(Nat, 2);
+    }
+}

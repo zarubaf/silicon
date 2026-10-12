@@ -1,0 +1,10 @@
+// The cost of the type `List[T]` (section 5.4): the recursive size of the type that the
+// constructor makes. A nested `List` type charges its whole term at each level. The fuel equal
+// to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 728
+// TOP M()
+module M() domains() {
+    comptime for i in 0..10 {
+        let t = List[List[List[[(UInt[8], Bool); 2]]]];
+    }
+}

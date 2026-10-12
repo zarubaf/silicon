@@ -1,0 +1,14 @@
+// A loop that pushes `n` scalars charges in proportion to `n`: the list is not copied at a
+// push, so the sum of the element sizes is the whole charge. The fuel equal to the total of
+// `cost` succeeds, and one unit less gives `S015`.
+// FUEL 5251
+// TOP M()
+module M() domains() {
+    let mut xs = list(Nat);
+    comptime for i in 0..400 {
+        xs.push(i);
+    }
+    comptime for i in 0..400 {
+        let y = xs.pop();
+    }
+}

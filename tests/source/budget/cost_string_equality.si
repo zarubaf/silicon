@@ -1,0 +1,13 @@
+// The cost of `==` and `!=` on strings (section 5.4): both operands are read in full, so the
+// charge is the sum of the two recursive sizes. The fuel equal to the total of `cost` succeeds,
+// and one unit less gives `S015`.
+// FUEL 1040
+// TOP M()
+module M() domains() {
+    let a = "abcdefghijklmnopqrstuvwxyz";
+    let b = "abcdefghijklmnopqrstuvwxy!";
+    comptime for i in 0..8 {
+        let e = a == b;
+        let f = a != b;
+    }
+}

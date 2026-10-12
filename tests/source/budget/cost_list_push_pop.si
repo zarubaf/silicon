@@ -1,0 +1,16 @@
+// The cost of `push` and `pop` (section 5.4): each charges the recursive size of the element and
+// changes the live list in place. It copies neither the list in nor the list out. The pop result
+// is a new value, so its binding is no copy. The fuel equal to the total of `cost` succeeds,
+// and one unit less gives `S015`.
+// FUEL 511
+// TOP M()
+module M() domains() {
+    let e = [(1, true), (2, false), (3, true), (4, false)];
+    let mut xs = list([(Nat, Bool); 4]);
+    comptime for i in 0..6 {
+        xs.push(e);
+    }
+    comptime for i in 0..6 {
+        let y = xs.pop();
+    }
+}
