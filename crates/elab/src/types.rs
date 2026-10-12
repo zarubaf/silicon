@@ -157,7 +157,9 @@ impl Meta {
 /// One type of the table with its metadata.
 struct Entry {
     ty: Ty,
-    text_len: u64,
+    /// The length in bytes of the serialization, once a serialization measured it. It holds
+    /// the decimal form of each integer in the type, which no charge of the type pays.
+    text_len: Option<u64>,
     meta: Meta,
     /// The depth of the zero value of the type, from the type alone (section 5.5).
     zero_depth: u64,
@@ -229,6 +231,23 @@ fn read_work(v: &Value) -> u64 {
         };
     }
     sum
+}
+
+/// Pushes onto `out` each type that `v` holds as a part: a type value and the type of an array
+/// or a record, at any depth of `v`.
+fn held_types(v: &Value, out: &mut Vec<TyId>) {
+    let mut work = vec![v];
+    while let Some(v) = work.pop() {
+        match v {
+            Value::Type(t) => out.push(*t),
+            Value::Array(t, xs) | Value::Record(t, xs) => {
+                out.push(*t);
+                work.extend(xs);
+            }
+            Value::Tuple(xs) => work.extend(xs),
+            _ => {}
+        }
+    }
 }
 
 /// The table of the static types of one elaboration. A structurally equal type has one id, so
@@ -337,12 +356,10 @@ impl Types {
             size,
             depth,
         };
-        let mut len = Len::default();
-        serial::write(self, Item::Node(&ty), &mut len);
         let zero_depth = self.zero_depth_of(&ty, depth);
         self.entries.push(Entry {
             ty: ty.clone(),
-            text_len: len.0,
+            text_len: None,
             meta,
             zero_depth,
         });
@@ -478,10 +495,50 @@ impl Types {
         }
     }
 
-    /// The length in bytes of the serialization of `t`.
+    /// The length in bytes of the serialization of `t`, if `measure` measured it.
     #[must_use]
-    pub fn text_len(&self, t: TyId) -> u64 {
-        self.entries.get(t.index).map_or(0, |e| e.text_len)
+    pub fn text_len(&self, t: TyId) -> Option<u64> {
+        self.entries.get(t.index).and_then(|e| e.text_len)
+    }
+
+    /// Measures the serialization of each type that `v` holds, at any depth. A serialization
+    /// that charges its length calls this first, so a type pays for the decimal form of its
+    /// integers only when a text holds it. Each type measures once, after its parts, and a
+    /// part comes from the table, so the work is in the number of new types.
+    pub fn measure(&mut self, v: &Value) {
+        let mut work = Vec::new();
+        held_types(v, &mut work);
+        while let Some(&t) = work.last() {
+            if self.text_len(t).is_some() {
+                work.pop();
+                continue;
+            }
+            let mut parts = Vec::new();
+            match self.get(t) {
+                Ty::Array(elem, _) => parts.push(*elem),
+                Ty::Tuple(ts) => parts.extend(ts.iter().copied()),
+                Ty::Struct(s) => {
+                    for arg in self.spec(*s).args() {
+                        held_types(arg, &mut parts);
+                    }
+                }
+                _ => {}
+            }
+            let waiting = work.len();
+            for part in parts {
+                if self.text_len(part).is_none() {
+                    work.push(part);
+                }
+            }
+            if work.len() == waiting {
+                let mut len = Len::default();
+                serial::write(self, Item::Node(self.get(t)), &mut len);
+                if let Some(e) = self.entries.get_mut(t.index) {
+                    e.text_len = Some(len.0);
+                }
+                work.pop();
+            }
+        }
     }
 
     #[must_use]

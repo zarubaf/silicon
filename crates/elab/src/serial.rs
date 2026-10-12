@@ -4,7 +4,8 @@
 //! value or a type of any depth is safe on any thread.
 //!
 //! A sink takes the text, or only its length in bytes. The length of a whole type comes from
-//! the table, so the length of a value costs no walk of its types.
+//! the table once `Types::measure` measured it, so the length of a value costs no walk of its
+//! types.
 
 use crate::int::Int;
 use crate::types::{Ty, TyId, Types};
@@ -44,8 +45,13 @@ impl Write for Len {
 
 impl Sink for Len {
     fn whole_type(&mut self, tys: &Types, t: TyId) -> bool {
-        self.0 = self.0.saturating_add(tys.text_len(t));
-        true
+        match tys.text_len(t) {
+            Some(len) => {
+                self.0 = self.0.saturating_add(len);
+                true
+            }
+            None => false,
+        }
     }
 
     fn quoted(&mut self, s: &str) {
