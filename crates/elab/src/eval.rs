@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The evaluator of slice 1 and the static containers of slice 2, with the budgets and the cost
-//! model of section 5.4 of the front-end spec. Lean `Source.Eval` is its normative definition:
+//! The evaluator of slice 1 and the static containers, types, and records of slice 2, with the
+//! budgets and the cost model of section 5.4 of the front-end spec. Lean `Source.Eval` is its normative definition:
 //! each charge here is a charge there, in the same order and at the same node. It reads the
 //! checked AST. It recurses over the AST and the calls, so it runs on the front-end thread.
 //!
 //! A value is static, hardware, or a handle (section 5.1), or a literal with `[]` that waits for
 //! the type of a typed use. The child module `hwops` makes the hardware nodes, the child modules
-//! `container` and `place` make and read the static containers, and the child module `inst`
-//! runs the module statements and the instantiations of Lean `Source.Elab`.
+//! `container` and `place` make and read the static containers, the child module `types`
+//! evaluates the type expressions and the struct specializations, the child module `record`
+//! makes and reads the records, and the child module `inst` runs the module statements and the
+//! instantiations of Lean `Source.Elab`.
 //!
 //! A result that refers to an existing value, such as a local or a constant, stays a
 //! reference until a copy pays for it. Thus a read that the cost model does not charge does

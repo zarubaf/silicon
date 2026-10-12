@@ -240,6 +240,17 @@ impl Types {
         self.work.set(self.work.get() + n);
     }
 
+    /// Counts the lookup of `ty`: 1 for the type and 1 for each part of a tuple type.
+    #[cfg(test)]
+    fn tick_lookup(&self, ty: &Ty) {
+        self.tick(
+            1 + match ty {
+                Ty::Tuple(parts) => parts.len() as u64,
+                _ => 0,
+            },
+        );
+    }
+
     /// The steps of work so far.
     #[cfg(test)]
     pub(crate) fn work(&self) -> u64 {
@@ -251,12 +262,7 @@ impl Types {
     /// before: see `meta_of` and `mk_with`.
     pub fn mk(&mut self, ty: Ty) -> TyId {
         #[cfg(test)]
-        self.tick(
-            1 + match &ty {
-                Ty::Tuple(parts) => parts.len() as u64,
-                _ => 0,
-            },
-        );
+        self.tick_lookup(&ty);
         if let Some(id) = self.index.get(&ty) {
             return *id;
         }
@@ -268,27 +274,20 @@ impl Types {
     /// computed from `meta_of` to charge it.
     pub fn mk_with(&mut self, ty: Ty, meta: Meta) -> TyId {
         #[cfg(test)]
-        self.tick(
-            1 + match &ty {
-                Ty::Tuple(parts) => parts.len() as u64,
-                _ => 0,
-            },
-        );
+        self.tick_lookup(&ty);
         if let Some(id) = self.index.get(&ty) {
             return *id;
         }
         self.insert(ty, meta)
     }
 
-    /// The metadata of a type that is not a struct type, from the metadata of its parts.
+    /// The metadata of a type that is not a struct type, from the metadata of its parts. A
+    /// struct type gets its metadata from `struct_meta`.
     #[must_use]
     pub fn meta_of(&self, ty: &Ty) -> Meta {
         match ty {
             Ty::Array(elem, len) => self.meta(*elem).array(len),
             Ty::Tuple(parts) => Meta::sum(parts.iter().map(|part| self.meta(*part))),
-            Ty::Struct(s) => self
-                .spec_ty(*s)
-                .map_or_else(|| Meta::scalar(&Ty::Unit), |t| self.meta(t).clone()),
             scalar => Meta::scalar(scalar),
         }
     }
@@ -318,15 +317,15 @@ impl Types {
         id
     }
 
-    /// The recursive size and the depth of a type that is not a struct type.
+    /// The recursive size and the depth of a type that is not a struct type. A struct type
+    /// gets its size from its arguments and its depth from `struct_meta`.
     #[must_use]
     pub fn shape(&self, ty: &Ty) -> (u64, u64) {
         match ty {
-            Ty::Bool | Ty::Nat | Ty::Int | Ty::Unit | Ty::Type => (1, 1),
+            Ty::Bool | Ty::Nat | Ty::Int | Ty::Unit | Ty::Type | Ty::Struct(_) => (1, 1),
             Ty::UInt(w) | Ty::SInt(w) => (1 + int_size(&width_int(*w)), 1),
             Ty::Array(elem, len) => Types::array_shape(*elem, len),
             Ty::Tuple(parts) => Types::tuple_shape(parts),
-            Ty::Struct(s) => self.spec_ty(*s).map_or((1, 1), |t| (t.size, t.depth)),
         }
     }
 
