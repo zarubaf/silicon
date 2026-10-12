@@ -79,7 +79,7 @@ impl Prelude {
     pub fn modes(self) -> &'static [ParamMode] {
         match self {
             Prelude::Resize | Prelude::Reinterpret => &[ParamMode::Comptime, ParamMode::None],
-            Prelude::ListFn | Prelude::DataBits => &[ParamMode::Comptime],
+            Prelude::ListFn => &[ParamMode::Comptime],
             Prelude::Push => &[ParamMode::Mut, ParamMode::None],
             Prelude::Pop => &[ParamMode::Mut],
             Prelude::StaticAssert => &[ParamMode::None, ParamMode::None],
