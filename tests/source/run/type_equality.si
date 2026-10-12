@@ -1,0 +1,24 @@
+// Type equality is static: two types are equal when their normalized terms are equal. An alias is
+// transparent, and a struct is nominal.
+// TOP M()
+struct P(comptime W: Nat) {
+    a: UInt[W],
+}
+struct Q(comptime W: Nat) {
+    a: UInt[W],
+}
+type A = P[8];
+type B = (A, Bool);
+type C = (A, Nat);
+module M() domains() {
+    input x: Bool;
+    output y: Bool;
+    static_assert(A == P[8], "alias");
+    static_assert(P[8] != P[9], "arguments");
+    static_assert(P[8] != Q[8], "nominal");
+    static_assert([A; 2] == [P[8]; 2], "array");
+    static_assert(B != C, "tuple");
+    y := !x;
+}
+// STEP in=(x true) out=(y false)
+// STEP in=(x false) out=(y true)

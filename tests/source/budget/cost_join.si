@@ -1,0 +1,13 @@
+// A join charges 1 for each pair of container types that it visits, before it visits the pair. `[1, 2]` joins no containers
+// and charges no join. `[[1], [2]]` and `[(1,), (2,)]` visit one pair each. A comparison of two arrays joins their element types.
+// FUEL 490
+// TOP M()
+module M() domains() {
+    comptime for i in 0..4 {
+        let a = [1, 2];
+        let b = [[1], [2]];
+        let c = [[[1]], [[2]]];
+        let d = [(1,), (2,)];
+        let e = [[1, 2]] == [[1, 2]];
+    }
+}

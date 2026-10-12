@@ -1,0 +1,15 @@
+// A record constructor charges the recursive size of the result, after the fields evaluate and before the construction. A
+// field that refers to an existing value pays its copy here and nowhere else.
+// FUEL 409
+// TOP M()
+struct P {
+    a: (Nat, Bool),
+    b: [Nat; 4],
+}
+module M() domains() {
+    let a = (1, true);
+    let b = [1, 2, 3, 4];
+    comptime for i in 0..8 {
+        let r = P(a, b);
+    }
+}

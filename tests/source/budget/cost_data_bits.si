@@ -1,0 +1,13 @@
+// `data_bits(T)` charges only its node, so the size of the type does not count. Eight calls on a large type cost eight nodes.
+// FUEL 139
+// TOP M()
+struct P {
+    a: [[UInt[8]; 16]; 16],
+    b: (Bool, UInt[4]),
+}
+module M() domains() {
+    type A = P;
+    comptime for i in 0..8 {
+        let n = data_bits(A);
+    }
+}

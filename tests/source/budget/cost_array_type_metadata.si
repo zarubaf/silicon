@@ -1,0 +1,12 @@
+// `[T; N]` charges the recursive size of the type, and three multiplications for the width, the leaf count, and the zero
+// size of the metadata. Each product charges the size of `N` times the size of the number of `T`. A nested array pays at each
+// level, with the larger numbers of the inner array.
+// FUEL 450
+// TOP M()
+module M() domains() {
+    comptime for i in 0..4 {
+        type A = [UInt[8]; 4];
+        type B = [[A; 1000]; 1000];
+        type C = [[[B; 100000]; 100000]; 100000];
+    }
+}

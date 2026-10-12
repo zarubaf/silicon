@@ -1,0 +1,38 @@
+// The same chain, but the first use is the outermost struct. The specializations in progress count toward the nesting depth,
+// so the first use evaluates the field types of the whole chain recursively.
+// DEPTH 11
+// TOP M()
+struct S0 {
+    a: Bool,
+}
+struct S1 {
+    a: S0,
+}
+struct S2 {
+    a: S1,
+}
+struct S3 {
+    a: S2,
+}
+struct S4 {
+    a: S3,
+}
+struct S5 {
+    a: S4,
+}
+struct S6 {
+    a: S5,
+}
+struct S7 {
+    a: S6,
+}
+struct S8 {
+    a: S7,
+}
+struct S9 {
+    a: S8,
+}
+module M() domains() {
+    type T = S9;
+    let bits = data_bits(T);
+}

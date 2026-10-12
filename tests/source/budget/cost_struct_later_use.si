@@ -1,0 +1,15 @@
+// A later use of a specialization refers to the done entry and charges only its node. Sixteen more uses of `P[8]` add
+// only 16 times the cost of one node. Compare `cost_struct_first_use.si`.
+// FUEL 214
+// TOP M()
+struct P(comptime W: Nat) {
+    a: UInt[W],
+    b: (Bool, [UInt[W]; 2]),
+    c: Bool,
+}
+module M() domains() {
+    type A = P[8];
+    comptime for i in 0..16 {
+        type B = P[8];
+    }
+}

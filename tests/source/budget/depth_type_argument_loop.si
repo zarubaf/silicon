@@ -1,0 +1,13 @@
+// A loop that repeats `t = P[t];`. The type `t` nests its arguments, and the depth of the fields of each specialization stays 2.
+// The loop runs at the exact nesting depth, and one more step gives `S015` at the node `P[t]`.
+// DEPTH 11
+// TOP M()
+struct P(comptime T: Type) {
+    x: Bool,
+}
+module M() domains() {
+    let mut t = Bool;
+    comptime for i in 0..10 {
+        t = P[t];
+    }
+}

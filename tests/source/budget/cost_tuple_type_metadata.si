@@ -1,0 +1,15 @@
+// A tuple type charges the recursive size of the type and the sizes of its new metadata integers, as a struct does. The numbers
+// of a tuple of arrays grow with the product of the lengths.
+// FUEL 393
+// TOP M()
+struct P {
+    a: UInt[1000],
+    b: [Bool; 1000],
+}
+module M() domains() {
+    comptime for i in 0..4 {
+        type A = (P, P);
+        type B = (A, A, A);
+        type C = (B, [B; 100000], Bool);
+    }
+}

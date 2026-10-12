@@ -1,0 +1,12 @@
+// The first use of a struct specialization charges the size of the struct type once, then evaluates and charges each field
+// type, then computes the four metadata numbers. One use of `P[8]` in a block thus pays all of it.
+// FUEL 79
+// TOP M()
+struct P(comptime W: Nat) {
+    a: UInt[W],
+    b: (Bool, [UInt[W]; 2]),
+    c: Bool,
+}
+module M() domains() {
+    type A = P[8];
+}

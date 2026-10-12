@@ -1,0 +1,15 @@
+// A type equality charges the sum of the sizes of the two types. Equal terms and different terms charge the same.
+// FUEL 363
+// TOP M()
+struct P {
+    a: [UInt[8]; 4],
+}
+type A = ([P; 3], Bool);
+type B = ([P; 3], Bool);
+type C = ([P; 2], Bool);
+module M() domains() {
+    comptime for i in 0..8 {
+        let e = A == B;
+        let d = A != C;
+    }
+}
