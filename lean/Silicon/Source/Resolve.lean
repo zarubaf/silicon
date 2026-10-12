@@ -260,8 +260,9 @@ def wrongKind (pos : Pos) (n what : String) : M Unit :=
   recordUnknown ⟨.S003, pos, s!"`{n}` is not {what}"⟩
 
 /-!
-The type forms of phase 3: `struct`, `type`, and `[T; N]` in an expression. The parser does not
-give them yet, so this stub only keeps each match complete.
+The type forms of phase 3: `struct`, `type`, and `[T; N]` in an expression. The parser gives
+them, but the resolver does not resolve them yet. This stub reports `S004` at the start of each
+form.
 -/
 -- TODO(#178): resolve the type forms of phase 3, and remove this stub.
 def typeFormStub (pos : Pos) : M Unit :=

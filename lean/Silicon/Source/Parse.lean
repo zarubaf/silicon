@@ -27,16 +27,14 @@ a `,` directly in the bracket: these give `()` or a tuple, else the bracket grou
 expression, it looks for a `;` directly in the bracket: this is an array type `[T; N]`. Both
 scans count brackets of the three kinds as one depth.
 
-The element `T` of `[T; N]` in an expression is a type. If it is not a type, or if no `;`
-follows it, the parser reads the bracket again as an array literal. That parse fails, at the
-latest at the `;`. Thus the `S001` is at the first token that neither form accepts, as the
-grammar requires: `[0; 4]` is `S001` at the `;`, and `[a, b; c]` too. An `S004` in the element,
-such as the `(` of a type function call, stops the parse at once.
+The flag of the bracket pass decides the form at `[` in an expression, and the parser never
+reads a token again. With a `;` directly in the bracket, the element `T` of `[T; N]` is a type.
+The first token that is not part of a type is `S001`: `[0; 4]` is `S001` at the `0`, and
+`[a, b; c]` is `S001` at the `,`.
 
-Without an error, the parse is linear in the number of tokens. Before the parse, one pass finds
-the matching bracket of each opening bracket. It also records if a `,` or a `;` comes directly
-in that bracket. Thus each look ahead takes constant time. Only the error path reads a bracket
-again, at most once for each nested array type in an expression.
+The parse is linear in the number of tokens. Before the parse, one pass finds the matching
+bracket of each opening bracket. It also records if a `,` or a `;` comes directly in that
+bracket. Thus each look ahead takes constant time.
 
 `@` followed by another name than a builtin is `S001` at that name: no slice has that syntax.
 A module parameter or a struct parameter without `comptime` is `S001` at its name. With `mut`,
@@ -380,13 +378,14 @@ mutual
         sym ")"
         return (e, false)
       | .symbol "[" =>
-        let el ← if ← arrayTypeAhead then arrayElem f else pure none
-        match el with
-        | some (ty, h) =>
+        if ← arrayTypeAhead then
+          bump
+          let (ty, h) ← typeExpr f
+          sym ";"
           let n ← expr f
           sym "]"
           return (⟨.arrayType t.pos ty n.expr, height [h, n.height]⟩, false)
-        | none =>
+        else
           bump
           let xs ← args f "]" true false
           return (⟨.array t.pos (xs.map (·.expr)), height (xs.map (·.height))⟩, false)
@@ -425,17 +424,6 @@ mutual
       let e ← expr f
       if top then checkHeight start e.height
       return e
-
-  /--
-  The element type and the `;` of an array type `[T; N]` in an expression, at its `[`. On
-  `S001`, the parser reads the bracket again as an array literal. Thus `[0; 4]` is `S001` at
-  its `;`.
-  -/
-  def arrayElem : Nat → P (Option (TypeExpr × Nat))
-    | 0 => exhausted
-    | f + 1 =>
-      tryCatch (do bump; let ty ← typeExpr f; sym ";"; return some ty) fun e =>
-        if e.code == .S001 then return none else throw e
 
   /-- A type with its height. The limit of expressions also holds for types. -/
   def typeExpr : Nat → P (TypeExpr × Nat)
