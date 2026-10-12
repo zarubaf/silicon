@@ -7,7 +7,7 @@
 use super::place::Held;
 use super::{Evaluator, Opnd, Out, Res, at, expr_pos, fail, need};
 use crate::Code;
-use crate::hw::Val;
+use crate::hw::{Seen, Val};
 use crate::ops;
 use crate::types::TyId;
 use crate::value::Value;
@@ -85,6 +85,7 @@ impl Evaluator<'_> {
             Typed::Converted(v) => v,
             Typed::Same(o) => self.static_value(pos, o)?,
         };
+        self.charge_held(pos, place.root)?;
         if let Some(Value::List(_, ys)) = self.store.part_mut(place.root, &place.keys) {
             ys.push(w);
         }
@@ -128,6 +129,23 @@ impl Evaluator<'_> {
             return fail(Code::S013, pos, "`pop` of an empty list".to_owned());
         }
         self.mutation(pos)?;
+        if self.store.is_held(place.root) {
+            // The copies of the parked references come before the change, after both charges.
+            // The read of the element walks the path once more, and the size of the root pays
+            // for it.
+            let size = match self.store.current(place.root, &place.keys) {
+                Seen::Static(Value::List(_, ys)) => ys.last().map_or(0, Value::size),
+                _ => 0,
+            };
+            self.charge(pos, u128::from(size))?;
+            self.charge_held(pos, place.root)?;
+            let Some(Value::List(_, ys)) = self.store.part_mut(place.root, &place.keys) else {
+                return self.not_a_list(pos, g, &place);
+            };
+            return Ok(Some(Out::Made(Val::Static(
+                ys.pop().unwrap_or(Value::Unit),
+            ))));
+        }
         let Evaluator { store, fuel, .. } = self;
         let Some(Value::List(_, ys)) = store.part_mut(place.root, &place.keys) else {
             return self.not_a_list(pos, g, &place);

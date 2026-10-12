@@ -125,6 +125,11 @@ struct Store {
     /// to it, so a result keeps the value that its expression read.
     parked: Vec<Out>,
     parked_at: BTreeMap<Root, Vec<usize>>,
+    /// The number of parked results that hold each local (section 5.4): a reference to a static
+    /// value in the local, from its park to its resume. A copy does not end the hold. The
+    /// local that each parked result holds, if any, by its position.
+    holds: BTreeMap<Root, usize>,
+    held_by: Vec<Option<Root>>,
     /// The recursive size of the values that references copied, and the fuel budget of the
     /// run, for the test of copies before a charge.
     #[cfg(test)]
@@ -179,19 +184,34 @@ impl Store {
     /// local copies the value first (`settle_root`).
     fn park(&mut self, o: Out) -> usize {
         let at = self.parked.len();
+        let mut holds = None;
         if let Out::Ref(Ref { root, .. }) = &o
             && matches!(root, Root::Local(..))
         {
             self.parked_at.entry(*root).or_default().push(at);
+            if matches!(self.root(root), Val::Static(_)) {
+                *self.holds.entry(*root).or_default() += 1;
+                holds = Some(*root);
+            }
         }
         self.parked.push(o);
+        self.held_by.push(holds);
         at
     }
 
     /// Takes the results parked from the position `from` back, in their order. Parks and
     /// resumes nest like the evaluations that they wrap.
     fn resume(&mut self, from: usize) -> Vec<Out> {
-        let outs = self.parked.split_off(from.min(self.parked.len()));
+        let from = from.min(self.parked.len());
+        let outs = self.parked.split_off(from);
+        for root in self.held_by.split_off(from).into_iter().flatten() {
+            if let Some(n) = self.holds.get_mut(&root) {
+                *n -= 1;
+                if *n == 0 {
+                    self.holds.remove(&root);
+                }
+            }
+        }
         for o in outs.iter().rev() {
             if let Out::Ref(Ref { root, .. }) = o
                 && let Some(at) = self.parked_at.get_mut(root)
@@ -212,9 +232,15 @@ impl Store {
             .unwrap_or(Out::Made(Val::Static(Value::Unit)))
     }
 
+    /// Whether a parked result holds the local at `root` (section 5.4).
+    fn is_held(&self, root: Root) -> bool {
+        self.holds.contains_key(&root)
+    }
+
     /// Copies the value of each parked reference to the local at `root`, before a mutation
-    /// changes the local. The copy is bounded by the charge that binds or reads the result
-    /// later, and each reference copies once, because the copy is not a reference.
+    /// changes the local. A reference to a static value holds the local, so the mutation paid
+    /// the size of the local before (`charge_held`). Each reference copies once, because the
+    /// copy is not a reference.
     fn settle_root(&mut self, root: Root) {
         let Some(at) = self.parked_at.remove(&root) else {
             return;
@@ -541,6 +567,8 @@ impl<'a> Evaluator<'a> {
                 steps: Cell::new(0),
                 parked: Vec::new(),
                 parked_at: BTreeMap::new(),
+                holds: BTreeMap::new(),
+                held_by: Vec::new(),
                 links: BTreeMap::new(),
                 #[cfg(test)]
                 copied: (Cell::new(0), budget.fuel),
@@ -671,6 +699,17 @@ impl Evaluator<'_> {
 
     fn charge(&mut self, pos: Pos, units: u128) -> Res<()> {
         self.fuel.pay(units).map_err(at(pos))
+    }
+
+    /// A mutation at `pos` of the local at `root` that a parked result holds charges the size of
+    /// the local before the change (section 5.4). The charge pays for the copies of
+    /// `settle_root`, so it comes before the change settles the parked references.
+    fn charge_held(&mut self, pos: Pos, root: Root) -> Res<()> {
+        if !self.store.is_held(root) {
+            return Ok(());
+        }
+        let size = self.seen_size(self.store.root(&root).seen());
+        self.charge(pos, size)
     }
 
     fn size(&self, out: &Out) -> u128 {
