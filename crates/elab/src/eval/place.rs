@@ -9,7 +9,7 @@ use crate::Code;
 use crate::hw::{Ref, Root, Seen, Val};
 use crate::int::Int;
 use crate::ops::int_text;
-use crate::types::TyId;
+use crate::types::{Ty, TyId};
 use crate::value::Value;
 use parse::ast::{Expr, Ident, Nat, Pos};
 use resolve::{DeclId, Target};
@@ -272,8 +272,8 @@ impl Evaluator<'_> {
     /// outward reads its base as data and evaluates its index.
     ///
     /// Lean checks the container and the index of each step before the next index evaluates.
-    /// Here the checks run in one walk along the path after the indices, so no step walks
-    /// again from the root. A failed check comes before an error of a later index, so the
+    /// Here the checks of each segment (`segment`) run in one walk along the path after its
+    /// indices, so no step walks again from the root. A failed check comes before an error of a later index, so the
     /// first error is that of Lean. Only a static container has elements, so each base after
     /// the first is static data. A field of a root that is not static, for example a port of
     /// an instance, applies at once by the rule of `field`, before the walk.
@@ -318,14 +318,32 @@ impl Evaluator<'_> {
         {
             return fail_type_index(*q);
         }
-        if self.string_before_last(&b, &steps) {
-            return self.read_exact(b, &steps);
+        let mut base = b;
+        let mut rest: &[Sel<'_>] = &steps;
+        loop {
+            let (out, done) = self.segment(base, rest)?;
+            rest = rest.get(done..).unwrap_or_default();
+            if rest.is_empty() {
+                return Ok(Some(out));
+            }
+            base = Opnd::Static(out);
         }
+    }
+
+    /// The first segment of a read from `base` along `steps`: the result, and the number of its
+    /// steps. The indices evaluate while the base waits in the store, so that an index cannot
+    /// change the value that the base read. Then one walk checks and applies the steps. The
+    /// checks charge nothing, so they can follow the indices, as long as no string scan charges
+    /// before a later index evaluates. A string container before the last step thus ends the
+    /// segment, and its index makes the base of the next one. The type of the base tells which
+    /// container is a string, with no walk. A base without a known type ends the segment at each
+    /// index, which is cheap: such a base is a new value, so a step takes its element.
+    fn segment(&mut self, base: Opnd, steps: &[Sel<'_>]) -> Res<(Out, usize)> {
+        let mut known = self.base_ty(&base);
         let mut keyed = Vec::with_capacity(steps.len());
         let mut stop = None;
-        // The base waits in the store, so that an index cannot change the value that it read.
-        let at = self.store.park(b.into_out());
-        for step in &steps {
+        let at = self.store.park(base.into_out());
+        for (n, step) in steps.iter().enumerate() {
             match self.key(step) {
                 Ok(k) => keyed.push(k),
                 Err(e) => {
@@ -333,6 +351,13 @@ impl Evaluator<'_> {
                     break;
                 }
             }
+            if matches!(step, Sel::Index(..))
+                && n + 1 < steps.len()
+                && known.is_none_or(|t| matches!(self.tys.get(t), Ty::String))
+            {
+                break;
+            }
+            known = known.and_then(|t| keyed.last().and_then(|k| self.key_ty(t, k)));
         }
         let b = Opnd::of_out(self.store.resume_one(at));
         let (out, at_type) = self.follow(b, &keyed)?;
@@ -345,7 +370,40 @@ impl Evaluator<'_> {
             }
             return Err(e);
         }
-        Ok(Some(out))
+        Ok((out, keyed.len()))
+    }
+
+    /// The type of a base that refers to a local or a constant: the type of its root, along its
+    /// path. A new value has no known type here.
+    fn base_ty(&self, base: &Opnd) -> Option<TyId> {
+        let Opnd::Static(Out::Ref(r)) = base else {
+            return None;
+        };
+        let mut t = self.store.root_ty(&r.root)?;
+        for &k in &r.path {
+            t = self.part_ty(t, k)?;
+        }
+        Some(t)
+    }
+
+    /// The type of the part `k` of a container of type `t`.
+    fn part_ty(&self, t: TyId, k: usize) -> Option<TyId> {
+        self.tys
+            .part(t, k)
+            .or_else(|| self.tys.fields(t).and_then(|(_, fs)| fs.get(k).copied()))
+    }
+
+    /// The type of the part that the evaluated step `key` selects in a container of type `t`.
+    fn key_ty(&self, t: TyId, key: &Key<'_>) -> Option<TyId> {
+        match key {
+            Key::Index(_, _, Index::Number(k)) => self.part_ty(t, *k),
+            Key::Index(..) => None,
+            Key::Select(_, _, index) => self.part_ty(t, index.as_str().parse().ok()?),
+            Key::Field(_, f) => {
+                let (item, fs) = self.tys.fields(t)?;
+                fs.get(self.field_number(item, f)?).copied()
+            }
+        }
     }
 
     /// The walk of a read along the evaluated indices `keyed`, in one pass: the result, and
@@ -394,82 +452,6 @@ impl Evaluator<'_> {
             };
             base = Opnd::Static(self.str_at(*q, *xp, &out, i)?);
             rest = rest.get(at + 1..).unwrap_or_default();
-        }
-    }
-
-    /// Whether a step of the read other than the last indexes a string, or might. Such a read
-    /// runs its steps one by one (`read_exact`), because the scan of the string charges before
-    /// the next index evaluates. Only the first index step of the path needs a look: its
-    /// container holds a string if it is one, or if its element type holds one. The steps
-    /// before it have fixed numbers.
-    fn string_before_last(&self, base: &Opnd, steps: &[Sel<'_>]) -> bool {
-        let mut cur = self.opnd_seen(base);
-        for (n, step) in steps.iter().enumerate() {
-            let k = match *step {
-                Sel::Index(..) => {
-                    return n + 1 < steps.len()
-                        && match cur {
-                            Seen::Static(Value::Str(_) | Value::Tuple(_)) => true,
-                            Seen::Static(Value::Array(t, _) | Value::List(t, _)) => {
-                                t.holds_string()
-                            }
-                            _ => false,
-                        };
-                }
-                Sel::Select(q, r, index) => self.select_at(q, r, index, cur),
-                Sel::Field(q, f) => self.field_at(q, f, cur).map(|(k, _)| k),
-            };
-            match k {
-                Ok(k) => cur = self.store.step(cur, k),
-                Err(_) => return false,
-            }
-        }
-        false
-    }
-
-    /// A read whose steps run one by one, in the order of Lean `Source.Eval`: each step checks
-    /// its container, evaluates its index, and then applies, before the next step starts. The
-    /// result of a step refers to its container, so a step finds its container by the path from
-    /// the root. The path is short where a string is on it, so the walk stays within a small
-    /// factor of the steps.
-    fn read_exact(&mut self, b: Opnd, steps: &[Sel<'_>]) -> Res<Option<Out>> {
-        let mut cur = b;
-        for step in steps {
-            if let Sel::Index(q, _) = step
-                && matches!(self.opnd_seen(&cur), Seen::Static(Value::Type(_)))
-            {
-                return fail_type_index(*q);
-            }
-            // The container waits in the store, so that the index cannot change its value.
-            let at = self.store.park(cur.into_out());
-            let key = self.key(step);
-            cur = Opnd::of_out(self.store.resume_one(at));
-            let key = key?;
-            let out = match key {
-                Key::Index(q, xp, i) => {
-                    if let Opnd::Static(o) = &cur
-                        && matches!(self.store.seen(o), Seen::Static(Value::Str(_)))
-                    {
-                        self.str_at(q, xp, o, &i)?
-                    } else {
-                        let k = self.pick_at(q, xp, self.opnd_seen(&cur), &i)?;
-                        elem(cur, k)
-                    }
-                }
-                Key::Select(q, r, index) => {
-                    let k = self.select_at(q, r, index, self.opnd_seen(&cur))?;
-                    elem(cur, k)
-                }
-                Key::Field(q, f) => {
-                    let k = self.field_at(q, f, self.opnd_seen(&cur))?.0;
-                    elem(cur, k)
-                }
-            };
-            cur = Opnd::Static(out);
-        }
-        match cur {
-            Opnd::Static(o) => Ok(Some(o)),
-            Opnd::Hw(h) => Ok(Some(Out::Made(Val::Hw(h)))),
         }
     }
 

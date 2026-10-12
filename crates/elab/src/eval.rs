@@ -44,11 +44,12 @@ use resolve::{DeclId, Kind, Prelude, Resolved, ResolvedExpr, Target};
 use std::cell::Cell;
 use std::collections::BTreeMap;
 
-/// The state of a constant in the table of constants.
+/// The state of a constant in the table of constants. A done constant keeps its declared
+/// type, so a read through it knows the type of each part without a walk.
 enum Entry {
     NotStarted,
     InProgress,
-    Done(Val),
+    Done(Val, TyId),
 }
 
 /// A local of the current frame. A handle has no `Ty`, so its `ty` is `None`.
@@ -310,8 +311,19 @@ impl Store {
                 .and_then(|f| f.get(id))
                 .map_or(&ABSENT, |s| &s.value),
             Root::Const(i) => match self.consts.get(*i) {
-                Some(Entry::Done(v)) => v,
+                Some(Entry::Done(v, _)) => v,
                 _ => &ABSENT,
+            },
+        }
+    }
+
+    /// The type of the local or the constant at `root`, if it has one.
+    fn root_ty(&self, root: &Root) -> Option<TyId> {
+        match root {
+            Root::Local(k, id) => self.frames.get(*k).and_then(|f| f.get(id))?.ty,
+            Root::Const(i) => match self.consts.get(*i) {
+                Some(Entry::Done(_, t)) => Some(*t),
+                _ => None,
             },
         }
     }
@@ -1316,7 +1328,7 @@ impl Evaluator<'_> {
             return fail(Code::S010, pos, format!("`{x}` is not a constant"));
         }
         match self.store.consts.get(i) {
-            Some(Entry::Done(_)) => return Ok(const_ref(i)),
+            Some(Entry::Done(..)) => return Ok(const_ref(i)),
             Some(Entry::InProgress) => {
                 return fail(
                     Code::S019,
@@ -1337,12 +1349,15 @@ impl Evaluator<'_> {
                     let o = need(value, o)?;
                     ev.copy(*cp, &o)?;
                     let o = ev.settle(*cp, t, o)?;
-                    ev.conform(*cp, t, o)
+                    Ok((ev.conform(*cp, t, o)?, t))
                 }
-                Some(Item::Alias { ty, .. }) => Ok(Value::Type(ev.type_expr(ty)?)),
+                Some(Item::Alias { ty, .. }) => {
+                    let t = ev.type_expr(ty)?;
+                    Ok((Value::Type(t), ev.tys.mk(Ty::Type)))
+                }
                 _ => fail(Code::S010, pos, format!("`{x}` is not a constant")),
             })?;
-            ev.store.consts[i] = Entry::Done(Val::Static(c));
+            ev.store.consts[i] = Entry::Done(Val::Static(c.0), c.1);
             Ok(const_ref(i))
         })
     }

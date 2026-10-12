@@ -115,7 +115,7 @@ impl Evaluator<'_> {
     }
 
     /// The number of the field `f` in the struct item `item`.
-    fn field_number(&self, item: usize, f: &Ident) -> Option<usize> {
+    pub(super) fn field_number(&self, item: usize, f: &Ident) -> Option<usize> {
         match self.names {
             Names::File => {
                 let sym = self.syms.fields.get(&f.id)?;
