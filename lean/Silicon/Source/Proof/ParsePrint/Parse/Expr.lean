@@ -646,14 +646,27 @@ theorem TypeExpr.toks_head (ty : TypeExpr) : ∃ k ks, ty.toks = k :: ks ∧ Not
   induction ty using TypeExpr.ind with
   | case2 p b xs ihb =>
     obtain ⟨k, ks, h, hk⟩ := ihb
-    exact ⟨k, ks ++ .symbol "[" :: argToks (xs.map (Expr.toks 0)) ++ [.symbol "]"],
-      by simp [TypeExpr.toks, h], hk⟩
+    rw [TypeExpr.toks.eq_def]
+    cases b with
+    | fn => exact ⟨.symbol "(", _, by simp; exact rfl, by simp [NotClose]⟩
+    | _ => exact ⟨k, ks ++ .symbol "[" :: argToks (xs.map (Expr.toks 0)) ++ [.symbol "]"],
+        by simp [h], hk⟩
+  | case6 => exact ⟨.keyword "fn", _, by simp [TypeExpr.toks]; exact rfl, by simp [NotClose]⟩
   | case1 => exact ⟨_, [], by rw [TypeExpr.toks], by simp [NotClose]⟩
   | case3 => exact ⟨.symbol "(", _, by rw [TypeExpr.toks], by simp [NotClose]⟩
   | case4 => exact ⟨.symbol "(", _, by rw [TypeExpr.toks, List.cons_append], by simp [NotClose]⟩
   | case5 =>
     exact ⟨.symbol "[", _, by rw [TypeExpr.toks, List.cons_append, List.cons_append],
       by simp [NotClose]⟩
+
+/-! The kinds of a printable type family index: its base is no function type. -/
+theorem TypeExpr.toks_index {p : Pos} {b : TypeExpr} {xs : List Expr}
+    (hb : b.printable = true) : (TypeExpr.index p b xs).toks =
+      b.toks ++ .symbol "[" :: argToks (xs.map (Expr.toks 0)) ++ [.symbol "]"] := by
+  rw [TypeExpr.toks.eq_def]
+  cases b with
+  | fn => simp [TypeExpr.printable] at hb
+  | _ => rfl
 
 /-! A type, then a kind that is no `[`, no `(`, and no `::`. -/
 theorem TGoal.type_end {ty : TypeExpr} (hT : TGoal ty) (hp : ty.printable = true) (ctx : Ctx)
@@ -788,6 +801,7 @@ bound `B`. An array type in an expression needs this form: its element is a type
 theorem Runs.type_of (B : Nat) (hE : ∀ x, (x.toks 0).length < B → EGoal x) (ty : TypeExpr) :
     ty.toks.length ≤ B → TGoal ty := by
   induction ty using TypeExpr.ind with
+  | case6 => intro _ hp; simp [TypeExpr.printable] at hp
   | case3 p =>
     intro _ _ ctx i f u R hw hu hf l Q hk
     simp only [TypeExpr.toks, List.length_cons, List.length_nil, List.cons_append,
@@ -910,7 +924,8 @@ theorem Runs.type_of (B : Nat) (hE : ∀ x, (x.toks 0).length < B → EGoal x) (
     simp only [TypeExpr.printable, Bool.and_eq_true, Expr.printableAll_eq, List.all_eq_true,
       Bool.not_eq_true', List.isEmpty_eq_false_iff] at hp
     obtain ⟨⟨hpb, hne⟩, hpxs⟩ := hp
-    simp only [TypeExpr.toks, List.length_append, List.length_cons, List.length_nil] at hw hf hk hB
+    simp only [TypeExpr.toks_index hpb, List.length_append, List.length_cons, List.length_nil]
+      at hw hf hk hB
     simp only [List.cons_append, List.append_assoc, List.nil_append] at hw
     have hE : ∀ x ∈ xs, EGoal x ∧ x.printable = true := fun x hx =>
       ⟨hE x (by have := argToks_mem hx; omega), hpxs x hx⟩
@@ -1017,6 +1032,7 @@ theorem Runs.postfix_paren (u : Expr) (hl : u.level < 11) (hpl : u.place = false
 
 theorem Runs.postfix (u : Expr) : PGoal u := by
   induction u using Expr.ind with
+  | case17 => intro hp; simp [Expr.printable] at hp
   | case16 p r m xs ihr _ =>
     intro hp hIH ctx i f t R hw ht _ hf l Q hk
     unfold SufK at hk
@@ -1443,6 +1459,7 @@ theorem Runs.unary (u : Expr) : UGoal u := by
     rw [hn.1]
     exact wrap_congr ops _ _ (by simp [Expr.erase])
   | case6 p op => exact Runs.unary_post _ (by simp [Expr.level]; have := BinOp.level_lt op; omega)
+  | case17 => intro _ _ _ hp; simp [Expr.printable] at hp
   | _ => exact Runs.unary_post _ (by simp [Expr.level, postfixLevel])
 
 
@@ -1825,6 +1842,10 @@ theorem Expr.toks_head_ne_if (e : Expr) : ∀ c, 1 ≤ c →
       simpa using this
   | case7 =>
     intro c hc; rw [Expr.toks_paren, ite_eq_left (by simp [Expr.level]; omega)]; simp
+  | case17 =>
+    intro c _; rw [Expr.toks_paren]; split
+    · simp
+    · simp [Expr.toks]
   | _ => exact fun c _ => Expr.head_post_ne_if _ (by simp [Expr.level, postfixLevel]) c
 
 
@@ -2004,7 +2025,7 @@ theorem Runs.postfix_climb (e : Expr) (hp : e.printable = true)
     · have h10 : u.level ≠ 10 := by
         intro h10
         cases u with
-        | unary => simp [hlt, Expr.toks] at hks
+        | unary | fnType => simp [hlt, Expr.toks] at hks
         | binary _ op => have := BinOp.level_lt op; simp [Expr.level] at h10; omega
         | _ => simp [Expr.level, postfixLevel] at h10
       rw [ite_eq_right hlt, ite_eq_right (by omega)]

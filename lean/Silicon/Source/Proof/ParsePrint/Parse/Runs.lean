@@ -173,7 +173,7 @@ theorem Expr.toks_head11 (e : Expr) : ∃ k, (e.toks 11).head? = some k ∧ PSta
   | case3 p v => exact ⟨_, by simp [Expr.toks, Expr.level, postfixLevel],
       Or.inr (Or.inr (Or.inl ⟨v, rfl⟩))⟩
   | case4 p n => exact ⟨_, by simp [Expr.toks, Expr.level, postfixLevel], Or.inl ⟨n, rfl⟩⟩
-  | case5 => exact ⟨_, by simp [Expr.toks, Expr.level, unaryLevel],
+  | case5 | case17 => exact ⟨_, by simp [Expr.toks, Expr.level, unaryLevel],
       Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl rfl)))))⟩
   | case6 p op => exact ⟨_, by
       simp [Expr.toks, Expr.level, (by have := BinOp.level_lt op; omega : op.level < 11)],
@@ -231,6 +231,10 @@ theorem Expr.toks_head (e : Expr) : ∀ c, ∃ k, (e.toks c).head? = some k ∧ 
     intro c; rw [Expr.toks_paren]; split
     · exact ⟨_, rfl, by simp [NotClose]⟩
     · exact ⟨.keyword "if", by simp [Expr.toks], by simp [NotClose]⟩
+  | case17 =>
+    intro c; rw [Expr.toks_paren]; split
+    · exact ⟨_, rfl, by simp [NotClose]⟩
+    · exact ⟨.keyword "fn", by simp [Expr.toks], by simp [NotClose]⟩
   | _ => exact Expr.toks_head_post _ (by simp [Expr.level, postfixLevel])
 
 

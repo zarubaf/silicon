@@ -11,7 +11,7 @@ The Rust front end copies the dump byte for byte, so these rules fix each byte:
   no fields prints as `(<constructor>)`, for example `(unit)`. Thus `(` is followed by a name,
   except in an empty list.
 - The structure `Param` prints as `(param <mode> <name> <ty>)`. The structure `StructField`
-  prints as `(structfield <name> <ty>)`.
+  prints as `(structfield <name> <ty>)`. A `FnParam` prints as `(fnparam <mutable> <ty>)`.
 - A `ParamMode` prints as its constructor name: `none`, `comptime`, or `mut`.
 - A `pos` field does not print. An `Ident` prints as its name, as a string.
 - A `String` prints in double quotes. It escapes `"`, `\`, LF, CR, and tab as `\"`, `\\`,
@@ -48,6 +48,10 @@ def indent (depth : Nat) : String := "".pushn ' ' (4 * depth)
 
 /-! The end of a tuple of `n` elements. A tuple of one element ends with `,)`. -/
 def tupleEnd (n : Nat) : String := if n == 1 then ",)" else ")"
+
+/-! The text of a function type from the texts of its parameter types and its result type. -/
+def fnText (params : List String) (ret : String) : String :=
+  "fn (" ++ args params ++ ") -> " ++ ret
 
 def unaryLevel : Nat := 10
 def postfixLevel : Nat := 11
@@ -103,6 +107,7 @@ mutual
     | .arrayType _ t n => n.dumpTo (t.dumpTo (acc ++ "(arraytype ") ++ " ") ++ ")"
     | .method _ r m xs =>
       Expr.dumpsTo (r.dumpTo (acc ++ "(method ") ++ " " ++ ident m ++ " (") xs ++ "))"
+    | .fnType _ ps r => r.dumpTo (FnParam.dumpsTo (acc ++ "(fntype (") ps ++ ") ") ++ ")"
 
   /-- `sepTo Expr.dumpTo`, which the recursion over `Expr` needs as its own function. -/
   def Expr.dumpsTo (acc : String) : List Expr → String
@@ -116,12 +121,22 @@ mutual
     | .unit _ => acc ++ "(unit)"
     | .tuple _ ts => TypeExpr.dumpsTo (acc ++ "(tuple (") ts ++ "))"
     | .array _ t n => n.dumpTo (t.dumpTo (acc ++ "(array ") ++ " ") ++ ")"
+    | .fn _ ps r => r.dumpTo (FnParam.dumpsTo (acc ++ "(fn (") ps ++ ") ") ++ ")"
 
   /-- `sepTo TypeExpr.dumpTo`, which the recursion over `TypeExpr` needs as its own function. -/
   def TypeExpr.dumpsTo (acc : String) : List TypeExpr → String
     | [] => acc
     | [t] => t.dumpTo acc
     | t :: ts => TypeExpr.dumpsTo (t.dumpTo acc ++ " ") ts
+
+  def FnParam.dumpTo (acc : String) : FnParam → String
+    | .mk m t => t.dumpTo (acc ++ "(fnparam " ++ boolean m ++ " ") ++ ")"
+
+  /-- `sepTo FnParam.dumpTo`, which the recursion over `FnParam` needs as its own function. -/
+  def FnParam.dumpsTo (acc : String) : List FnParam → String
+    | [] => acc
+    | [p] => p.dumpTo acc
+    | p :: ps => FnParam.dumpsTo (p.dumpTo acc ++ " ") ps
 end
 
 mutual
@@ -201,6 +216,10 @@ A `tuple` of one element prints as `(a,)`, so that it differs from `a` in parent
 `select` is a postfix form, and its selector prints in decimal. An array type `[T; N]` in an
 expression is a primary. A receiver call `x.m(a)` is a postfix form.
 
+A function type in an expression is a unary operand, because its result type takes each postfix
+after it. Thus it prints in parentheses as the base of a postfix form. A function type as the
+base of a type family index prints in parentheses for the same reason.
+
 A struct without parameters prints without parentheses. Each field of a struct prints on its own
 line and ends with `,`.
 -/
@@ -228,7 +247,7 @@ def UnOp.text : UnOp → String
 def Expr.level : Expr → Nat
   | .cond .. => 0
   | .binary _ op .. => op.level
-  | .unary .. => unaryLevel
+  | .unary .. | .fnType .. => unaryLevel
   | _ => postfixLevel
 
 mutual
@@ -258,14 +277,21 @@ mutual
       | .arrayType _ t n => "[" ++ t.print ++ "; " ++ n.print 0 ++ "]"
       | .method _ r m xs =>
         r.print postfixLevel ++ "." ++ m.name ++ "(" ++ args (xs.map (Expr.print 0)) ++ ")"
+      | .fnType _ ps r => fnText (ps.map FnParam.print) r.print
     if e.level < ctx then "(" ++ text ++ ")" else text
 
   def TypeExpr.print : TypeExpr → String
     | .name _ n => n
-    | .index _ b xs => b.print ++ "[" ++ args (xs.map (Expr.print 0)) ++ "]"
+    | .index _ b xs =>
+      let base := if b matches .fn .. then "(" ++ b.print ++ ")" else b.print
+      base ++ "[" ++ args (xs.map (Expr.print 0)) ++ "]"
     | .unit _ => "()"
     | .tuple _ ts => "(" ++ args (ts.map TypeExpr.print) ++ tupleEnd ts.length
     | .array _ t n => "[" ++ t.print ++ "; " ++ n.print 0 ++ "]"
+    | .fn _ ps r => fnText (ps.map FnParam.print) r.print
+
+  def FnParam.print : FnParam → String
+    | .mk m t => (if m then "mut " else "") ++ t.print
 end
 
 mutual

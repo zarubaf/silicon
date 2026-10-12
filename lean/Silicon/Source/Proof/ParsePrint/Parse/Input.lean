@@ -210,7 +210,8 @@ theorem UnOp.trans {s : Sep} (op : UnOp) : Trans s [.symbol op.text] :=
 
 /-! The kinds of each expression and of each type expression have balanced brackets. -/
 private theorem trans_all (s : Sep) :
-    (∀ e : Expr, ∀ c, Trans s (e.toks c)) ∧ ∀ t : TypeExpr, Trans s t.toks := by
+    (∀ e : Expr, ∀ c, Trans s (e.toks c)) ∧ (∀ p : FnParam, Trans s p.toks) ∧
+      ∀ t : TypeExpr, Trans s t.toks := by
   apply Expr.erase.mutual_induct
   case case5 =>
     intro p op a ih
@@ -283,24 +284,39 @@ private theorem trans_all (s : Sep) :
     have ha := Inner.argToks (xss := xs.map (Expr.toks 0)) (by simpa using fun x hx => ih x hx 0)
     intro d rest
     simp [Expr.toks, scan, OpenK, CloseK, ihr _ d, ha d]
+  case case17 =>
+    intro p ps r ih ihr
+    refine Expr.trans_paren _ ?_
+    have ha := Inner.argToks (s := s) (xss := ps.map FnParam.toks) (by simpa using ih)
+    intro d rest
+    simp [Expr.toks, scan, OpenK, CloseK, ihr d, ha d]
   case case18 =>
+    intro m t iht d rest
+    cases m <;> simp [FnParam.toks, scan, OpenK, CloseK, iht d]
+  case case20 =>
     intro p b xs ihb ih
     have ha := Inner.argToks (s := s) (xss := xs.map (Expr.toks 0))
       (by simpa using fun x hx => ih x hx 0)
     intro d rest
-    simp [TypeExpr.toks, scan, OpenK, CloseK, ihb d, ha d]
-  case case20 =>
+    rw [TypeExpr.toks.eq_def]
+    cases b <;> simp [scan, OpenK, CloseK, ihb d, ihb (d + 1), ha d]
+  case case22 =>
     intro p ts ih
     have ha := Inner.argToks (xss := ts.map TypeExpr.toks) (by simpa using ih)
     rw [TypeExpr.toks]
     split
     · simpa using Trans.paren (ha.append Inner.comma)
     · simpa using Trans.paren ha
-  case case21 =>
+  case case23 =>
     intro p t n iht ihn
     intro d rest
     simp [TypeExpr.toks, scan, OpenK, CloseK, iht (d + 1), ihn 0 (d + 1)]
-  case case17 | case19 =>
+  case case24 =>
+    intro p ps r ih ihr
+    have ha := Inner.argToks (s := s) (xss := ps.map FnParam.toks) (by simpa using ih)
+    intro d rest
+    simp [TypeExpr.toks, scan, OpenK, CloseK, ihr d, ha d]
+  case case19 | case21 =>
     intros
     intro d rest
     simp [TypeExpr.toks, scan, OpenK, CloseK]
@@ -312,7 +328,7 @@ private theorem trans_all (s : Sep) :
 
 theorem Expr.trans (s : Sep) (e : Expr) : ∀ c, Trans s (e.toks c) := (trans_all s).1 e
 
-theorem TypeExpr.trans (s : Sep) (t : TypeExpr) : Trans s t.toks := (trans_all s).2 t
+theorem TypeExpr.trans (s : Sep) (t : TypeExpr) : Trans s t.toks := (trans_all s).2.2 t
 
 /-! The arguments of a call or an index are balanced. -/
 theorem Bal.args (xs : List Expr) : Bal (argToks (xs.map (Expr.toks 0))) :=
