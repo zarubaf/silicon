@@ -102,6 +102,8 @@ impl Walker {
             Item::Const { name, .. } => (name, Kind::Const),
             Item::Fn { name, .. } => (name, Kind::Fn),
             Item::Module { name, .. } => (name, Kind::Module),
+            Item::Struct { name, .. } => (name, Kind::Struct),
+            Item::Alias { name, .. } => (name, Kind::Alias),
         };
         let id = self.new_decl(name, kind);
         if let Err(first) = self.scopes.declare_item(&name.name, id) {
@@ -165,6 +167,15 @@ impl Walker {
                 self.stmts(body);
                 self.scopes.close();
             }
+            Item::Struct { params, fields, .. } => {
+                self.scopes.open();
+                self.params(params);
+                for field in fields {
+                    self.ty(&field.ty);
+                }
+                self.scopes.close();
+            }
+            Item::Alias { ty, .. } => self.ty(ty),
         }
     }
 
@@ -255,6 +266,10 @@ impl Walker {
             }
             Stmt::Block { body, .. } => self.block(body),
             Stmt::Expr { value, .. } => self.expr(value),
+            Stmt::Alias { name, ty, .. } => {
+                self.ty(ty);
+                self.declare(name, Kind::Alias);
+            }
         }
     }
 
@@ -307,6 +322,10 @@ impl Walker {
                 }
             }
             Expr::Field { base, .. } | Expr::Select { base, .. } => self.expr(base),
+            Expr::ArrayType { elem, len, .. } => {
+                self.ty(elem);
+                self.expr(len);
+            }
             Expr::Tuple { elems, .. } | Expr::Array { elems, .. } => {
                 for elem in elems {
                     self.expr(elem);

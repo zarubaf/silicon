@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The grammar of items: constants, functions, and modules.
+//! The grammar of items: constants, functions, modules, structs, and type aliases.
 #![allow(clippy::enum_glob_use)] // The grammar names token kinds on almost every line.
 
 use crate::parser::{Parser, Res};
@@ -38,7 +38,9 @@ impl Parser<'_> {
                 None
             }
             ModuleKw => self.node(ModuleItem, Self::module_item),
-            ImportKw | PubKw | TypeKw | StructKw | ExternKw => {
+            StructKw => self.node(StructItem, Self::struct_item),
+            TypeKw => self.node(AliasItem, Self::alias_item),
+            ImportKw | PubKw | ExternKw => {
                 self.later_slice(self.offset(), "this item");
                 None
             }
@@ -117,12 +119,43 @@ impl Parser<'_> {
         self.block()
     }
 
-    /// The parameters. A module parameter must have `comptime`.
-    fn param_list(&mut self, module: bool) -> Res {
+    /// `struct P(comptime n: Nat) { a: T, }`. Without parentheses and with `()`, a struct has
+    /// no parameters.
+    fn struct_item(&mut self) -> Res {
+        self.bump();
+        self.expect(Ident, "a name")?;
+        if self.is(LParen) {
+            self.param_list(true)?;
+        }
+        self.expect(LBrace, "`{`")?;
+        while !self.is(RBrace) {
+            self.node(StructField, |p| {
+                p.expect(Ident, "a field name")?;
+                p.expect(Colon, "`:`")?;
+                p.type_expr()
+            })?;
+            if !self.eat(Comma) {
+                break;
+            }
+        }
+        self.expect(RBrace, "`}`")
+    }
+
+    /// `type N = T;`, at an item and at a statement.
+    pub(crate) fn alias_item(&mut self) -> Res {
+        self.bump();
+        self.expect(Ident, "a name")?;
+        self.expect(Eq, "`=`")?;
+        self.type_expr()?;
+        self.expect(Semi, "`;`")
+    }
+
+    /// The parameters. A module parameter and a struct parameter must have `comptime`.
+    fn param_list(&mut self, all_comptime: bool) -> Res {
         self.node(ParamList, |p| {
             p.expect(LParen, "`(`")?;
             while !p.is(RParen) {
-                p.param(module)?;
+                p.param(all_comptime)?;
                 if !p.eat(Comma) {
                     break;
                 }
@@ -131,13 +164,13 @@ impl Parser<'_> {
         })
     }
 
-    fn param(&mut self, module: bool) -> Res {
+    fn param(&mut self, all_comptime: bool) -> Res {
         self.node(Param, |p| {
-            if p.is(MutKw) && !module {
+            if p.is(MutKw) && !all_comptime {
                 p.later_slice(p.offset(), "a `mut` parameter");
                 return None;
             }
-            if module {
+            if all_comptime {
                 p.expect(ComptimeKw, "`comptime`")?;
             } else {
                 p.eat(ComptimeKw);

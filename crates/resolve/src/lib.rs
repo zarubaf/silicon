@@ -61,6 +61,9 @@ pub enum Kind {
     Const,
     Fn,
     Module,
+    Struct,
+    /// A `type` item, or a `type` statement.
+    Alias,
     Param,
     Local,
     /// The variable of a `comptime for`.

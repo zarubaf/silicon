@@ -110,6 +110,12 @@ kinds! {
     ConstItem,
     FnItem,
     ModuleItem,
+    /// `struct P(comptime n: Nat) { a: T, }`: the name, the `ParamList` if any, then the fields.
+    StructItem,
+    /// `name: T` in a struct.
+    StructField,
+    /// `type N = T;` at an item.
+    AliasItem,
     ParamList,
     Param,
     DomainsClause,
@@ -122,6 +128,8 @@ kinds! {
     TupleType,
     /// `[T; N]`: the element type, then the length expression.
     ArrayType,
+    /// `[T; N]` in an expression: the element type, then the length expression.
+    ArrayTypeExpr,
     /// `(T)`: a grouped type. It makes no node of the AST.
     ParenType,
     /// The delimited arguments of a call, an index, or a type family.
@@ -155,6 +163,8 @@ kinds! {
     CtIfStmt,
     CtForStmt,
     ExprStmt,
+    /// `type N = T;` at a statement.
+    AliasStmt,
 }
 
 impl SyntaxKind {
