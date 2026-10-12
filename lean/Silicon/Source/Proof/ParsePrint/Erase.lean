@@ -16,8 +16,7 @@ a check here:
 - No index is empty: `Expr.printable` and `TypeExpr.printable` at `index`.
 - No tuple is empty: `Expr.printable` and `TypeExpr.printable` at `tuple`. The printer writes an
   empty tuple as `()`, which is the unit value or the unit type.
-- Each module parameter and each struct parameter has `comptime`: `Param.printable true`. The
-  AST has no `mut` flag at a parameter, so no check is necessary for `mut` at a parameter.
+- Each module parameter and each struct parameter has `comptime`: `Param.printable true`.
 - A `domains` declaration has at most one name: `Item.printable` at `module`.
 - Each assignment and connection target is a place: `Expr.place`.
 - No resource statement is in a `fn` without `comptime`: the flag `plain` of `Stmt.printable`.
@@ -29,7 +28,8 @@ a check here:
 
 The proof covers the container forms of slice 2. These are the unit value, the unit type, a
 tuple, an array, an array type `[T; N]` in a type and in an expression, and a selector `.N`. It
-also covers the type forms of phase 3: a `struct` item, and a `type` item or statement.
+also covers the type forms of phase 3: a `struct` item, and a `type` item or statement. It does
+not cover the forms of phase 4 yet: `Printable` excludes a `mut` parameter and a receiver call.
 -/
 namespace Silicon.Source
 
@@ -55,6 +55,7 @@ def Expr.erase : Expr → Expr
   | .array _ xs => .array Pos.zero (xs.map Expr.erase)
   | .select _ b _ i => .select Pos.zero b.erase Pos.zero i
   | .arrayType _ t n => .arrayType Pos.zero t.erase n.erase
+  | .method _ r m xs => .method Pos.zero r.erase m.erase (xs.map Expr.erase)
 
 def TypeExpr.erase : TypeExpr → TypeExpr
   | .name _ n => .name Pos.zero n
@@ -81,7 +82,7 @@ def Stmt.erase : Stmt → Stmt
   | .expr _ v => .expr Pos.zero v.erase
   | .alias _ n ty => .alias Pos.zero n.erase ty.erase
 
-def Param.erase (p : Param) : Param := ⟨Pos.zero, p.comptime, p.name.erase, p.ty.erase⟩
+def Param.erase (p : Param) : Param := ⟨Pos.zero, p.mode, p.name.erase, p.ty.erase⟩
 
 def StructField.erase (f : StructField) : StructField := ⟨f.name.erase, f.ty.erase⟩
 
@@ -141,6 +142,7 @@ mutual
     | .array _ xs => Expr.printableAll xs
     | .select _ b _ i => b.printable && i < numberBound
     | .arrayType _ t n => t.printable && n.printable
+    | .method .. => false
 
   def Expr.printableAll : List Expr → Bool
     | [] => true
@@ -185,9 +187,17 @@ mutual
     | s :: ss => s.printable plain && Stmt.printableAll plain ss
 end
 
-/-! A parameter. A module parameter or a struct parameter (`static`) has `comptime`. -/
+/-!
+A parameter mode. A module parameter or a struct parameter (`static`) has `comptime`. No
+parameter has `mut` yet.
+-/
+def ParamMode.printable (static : Bool) : ParamMode → Bool
+  | .none => !static
+  | .comptime => true
+  | .mut => false
+
 def Param.printable (static : Bool) (p : Param) : Bool :=
-  (!static || p.comptime) && validName p.name.name && p.ty.printable
+  p.mode.printable static && validName p.name.name && p.ty.printable
 
 def Item.printable : Item → Bool
   | .const _ n ty v => validName n.name && ty.printable && v.printable
@@ -232,9 +242,11 @@ theorem Expr.ind (motive : Expr → Prop)
     (case12 : ∀ pos xs, (∀ x ∈ xs, motive x) → motive (.tuple pos xs))
     (case13 : ∀ pos xs, (∀ x ∈ xs, motive x) → motive (.array pos xs))
     (case14 : ∀ pos b litPos i, motive b → motive (.select pos b litPos i))
-    (case15 : ∀ pos t n, motive n → motive (.arrayType pos t n)) (e : Expr) : motive e :=
+    (case15 : ∀ pos t n, motive n → motive (.arrayType pos t n))
+    (case16 : ∀ pos r m xs, motive r → (∀ x ∈ xs, motive x) → motive (.method pos r m xs))
+    (e : Expr) : motive e :=
   Expr.erase.induct motive (fun _ => True) case1 case2 case3 case4 case5 case6 case7 case8 case9
-    case10 case11 case12 case13 case14 (fun p t n _ ih => case15 p t n ih)
+    case10 case11 case12 case13 case14 (fun p t n _ ih => case15 p t n ih) case16
     (fun _ _ => trivial) (fun _ _ _ _ _ => trivial) (fun _ => trivial) (fun _ _ _ => trivial)
     (fun _ _ _ _ _ => trivial) e
 
@@ -249,7 +261,7 @@ theorem TypeExpr.ind (motive : TypeExpr → Prop)
     (fun _ _ _ _ _ _ => trivial) (fun _ _ _ _ _ _ _ => trivial)
     (fun _ _ _ _ _ => trivial) (fun _ _ _ _ _ => trivial) (fun _ _ _ _ => trivial)
     (fun _ => trivial) (fun _ _ _ => trivial) (fun _ _ _ => trivial)
-    (fun _ _ _ _ _ => trivial) (fun _ _ _ _ _ => trivial)
+    (fun _ _ _ _ _ => trivial) (fun _ _ _ _ _ => trivial) (fun _ _ _ _ _ _ => trivial)
     case1 (fun p b xs ih _ => case2 p b xs ih) case3 case4 (fun p t n ih _ => case5 p t n ih) t
 
 /-! The erasure is idempotent. -/
@@ -305,6 +317,14 @@ private theorem print_erase_all :
     conv => lhs; rw [Expr.print.eq_def]
     conv => rhs; rw [Expr.print.eq_def]
     simp only [Expr.level, ihf, List.map_map, Function.comp_def, hm] <;> rfl
+  case case16 =>
+    intro p r m xs ihr ih c
+    have hm : List.map (fun x => Expr.print 0 x.erase) xs = List.map (Expr.print 0) xs :=
+      List.map_congr_left fun x hx => ih x hx 0
+    simp only [Expr.erase]
+    conv => lhs; rw [Expr.print.eq_def]
+    conv => rhs; rw [Expr.print.eq_def]
+    simp only [Expr.level, ihr, List.map_map, Function.comp_def, hm, Ident.erase_name] <;> rfl
   case case12 | case13 =>
     intro p xs ih c
     have hm : List.map (fun x => Expr.print 0 x.erase) xs = List.map (Expr.print 0) xs :=
@@ -313,17 +333,17 @@ private theorem print_erase_all :
     conv => lhs; rw [Expr.print.eq_def]
     conv => rhs; rw [Expr.print.eq_def]
     simp only [Expr.level, List.map_map, Function.comp_def, hm, List.length_map] <;> rfl
-  case case17 =>
+  case case18 =>
     intro p b xs ihb ih
     have hm : List.map (fun x => Expr.print 0 x.erase) xs = List.map (Expr.print 0) xs :=
       List.map_congr_left fun x hx => ih x hx 0
     simp [TypeExpr.erase, TypeExpr.print, List.map_map, Function.comp_def, hm, ihb]
-  case case19 =>
+  case case20 =>
     intro p ts ih
     have hm : List.map (fun t => t.erase.print) ts = List.map TypeExpr.print ts :=
       List.map_congr_left fun t ht => ih t ht
     simp [TypeExpr.erase, TypeExpr.print, List.map_map, Function.comp_def, hm]
-  case case16 | case18 | case20 =>
+  case case17 | case19 | case21 =>
     intros
     simp_all [TypeExpr.erase, TypeExpr.print]
   all_goals
@@ -363,7 +383,7 @@ theorem Stmt.print_erase (s : Stmt) : ∀ d, s.erase.print d = s.print d := by
       List.map_map, Function.comp_def, Stmt.body_erase]
 
 theorem Param.print_erase (p : Param) : p.erase.print = p.print := by
-  simp only [Param.erase, Param.print, TypeExpr.print_erase, Ident.erase_name]; rfl
+  simp only [Param.erase, Param.print, TypeExpr.print_erase, Ident.erase_name]
 
 theorem StructField.print_erase (f : StructField) : f.erase.print = f.print := by
   simp only [StructField.erase, StructField.print, TypeExpr.print_erase, Ident.erase_name]
@@ -413,12 +433,12 @@ private theorem printable_erase_all :
     simp only [Expr.erase, Expr.printable, Expr.printableAll_eq, List.all_map,
       Function.comp_def, List.isEmpty_map]
     rw [all_congr_mem ih]
-  case case17 =>
+  case case18 =>
     intro p b xs ihb ih
     simp only [TypeExpr.erase, TypeExpr.printable, ihb, Expr.printableAll_eq, List.all_map,
       Function.comp_def, List.isEmpty_map]
     rw [all_congr_mem ih]
-  case case19 =>
+  case case20 =>
     intro p ts ih
     simp only [TypeExpr.erase, TypeExpr.printable, TypeExpr.printableAll_eq, List.all_map,
       Function.comp_def, List.isEmpty_map]

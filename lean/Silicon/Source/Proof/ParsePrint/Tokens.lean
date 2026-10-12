@@ -45,6 +45,9 @@ mutual
       | .array _ xs => .symbol "[" :: argToks (xs.map (Expr.toks 0)) ++ [.symbol "]"]
       | .select _ b _ i => b.toks postfixLevel ++ [.symbol ".", .number i]
       | .arrayType _ t n => .symbol "[" :: t.toks ++ .symbol ";" :: n.toks 0 ++ [.symbol "]"]
+      | .method _ r m xs =>
+        r.toks postfixLevel ++ [.symbol ".", .ident m.name, .symbol "("]
+          ++ argToks (xs.map (Expr.toks 0)) ++ [.symbol ")"]
     if e.level < ctx then .symbol "(" :: body ++ [.symbol ")"] else body
 
   def TypeExpr.toks : TypeExpr → List Kind
@@ -100,9 +103,11 @@ mutual
     | s :: ss => s.toks ++ Stmt.linesToks ss
 end
 
+def ParamMode.toks : ParamMode → List Kind
+  | .none => [] | .comptime => [.keyword "comptime"] | .mut => [.keyword "mut"]
+
 def Param.toks (p : Param) : List Kind :=
-  (if p.comptime then [.keyword "comptime"] else []) ++ [.ident p.name.name, .symbol ":"]
-    ++ p.ty.toks
+  p.mode.toks ++ [.ident p.name.name, .symbol ":"] ++ p.ty.toks
 
 def StructField.toks (f : StructField) : List Kind :=
   [.ident f.name.name, .symbol ":"] ++ f.ty.toks ++ [.symbol ","]

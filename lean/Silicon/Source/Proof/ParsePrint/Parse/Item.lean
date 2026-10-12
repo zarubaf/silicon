@@ -52,17 +52,18 @@ theorem Runs.param (q : Param) (static : Bool) (hp : q.printable static = true) 
     (hd : q.ty.toks.length ≤ ctx.depth) :
     Runs (param f static) ctx i (i + q.toks.length) (fun r => r.erase = q.erase) := by
   obtain ⟨pos, c, n, ty⟩ := q
-  simp only [Param.printable, Bool.and_eq_true, Bool.or_eq_true, Bool.not_eq_true'] at hp
+  simp only [Param.printable, Bool.and_eq_true] at hp
   obtain ⟨⟨hc, hn⟩, hty⟩ := hp
   simp only at hf hd
   unfold Parse.param
   cases c with
-  | true =>
-    have e : (Param.toks ⟨pos, true, n, ty⟩) ++ u :: R =
+  | «mut» => simp [ParamMode.printable] at hc
+  | comptime =>
+    have e : (Param.toks ⟨pos, .comptime, n, ty⟩) ++ u :: R =
         .keyword "comptime" :: .ident n.name :: .symbol ":" :: (ty.toks ++ u :: R) := by
-      simp [Param.toks]
-    have hT : (Param.toks ⟨pos, true, n, ty⟩).length = ty.toks.length + 3 := by
-      simp [Param.toks]
+      simp [Param.toks, ParamMode.toks]
+    have hT : (Param.toks ⟨pos, .comptime, n, ty⟩).length = ty.toks.length + 3 := by
+      simp [Param.toks, ParamMode.toks]
     rw [e] at hw
     rw [hT]
     refine Runs.peek_bind ?_
@@ -86,16 +87,16 @@ theorem Runs.param (q : Param) (static : Bool) (hp : q.printable static = true) 
       refine Runs.bind (Runs.typeAnnotation ty hty ctx _ f _ _ hw.tail.tail hu hf hd)
         fun ty' hty' => Runs.idx (by omega) (Runs.pure ?_)
       simp [Param.erase, Ident.erase_of_name (b := n) hid, hty']
-  | false =>
-    have e : (Param.toks ⟨pos, false, n, ty⟩) ++ u :: R =
+  | none =>
+    have e : (Param.toks ⟨pos, .none, n, ty⟩) ++ u :: R =
         .ident n.name :: .symbol ":" :: (ty.toks ++ u :: R) := by
-      simp [Param.toks]
-    have hT : (Param.toks ⟨pos, false, n, ty⟩).length = ty.toks.length + 2 := by
-      simp [Param.toks]
+      simp [Param.toks, ParamMode.toks]
+    have hT : (Param.toks ⟨pos, .none, n, ty⟩).length = ty.toks.length + 2 := by
+      simp [Param.toks, ParamMode.toks]
     rw [e] at hw
     rw [hT]
     cases static with
-    | true => simp at hc
+    | true => simp [ParamMode.printable] at hc
     | false =>
       refine Runs.peek_bind ?_
       simp only [isKw_of hw.head]
@@ -111,9 +112,12 @@ theorem Param.headKind (q : Param) : ∃ k ks, q.toks = k :: ks ∧ k ≠ .symbo
     k ≠ .symbol "," := by
   obtain ⟨pos, c, n, ty⟩ := q
   cases c
-  · exact ⟨.ident n.name, .symbol ":" :: ty.toks, by simp [Param.toks], by simp, by simp⟩
-  · exact ⟨.keyword "comptime", .ident n.name :: .symbol ":" :: ty.toks, by simp [Param.toks],
-      by decide, by decide⟩
+  · exact ⟨.ident n.name, .symbol ":" :: ty.toks, by simp [Param.toks, ParamMode.toks], by simp,
+      by simp⟩
+  · exact ⟨.keyword "comptime", .ident n.name :: .symbol ":" :: ty.toks,
+      by simp [Param.toks, ParamMode.toks], by decide, by decide⟩
+  · exact ⟨.keyword "mut", .ident n.name :: .symbol ":" :: ty.toks,
+      by simp [Param.toks, ParamMode.toks], by decide, by decide⟩
 
 theorem Runs.params (static : Bool) (ps : List Param) : ∀ (ctx : Ctx) (i f : Nat)
     (R : List Kind) (acc : List Param), ps.all (Param.printable static) = true →

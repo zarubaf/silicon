@@ -651,7 +651,7 @@ def param (f : Nat) (static : Bool) : P Param := do
   if isKw "mut" t && !static then later t "a `mut` formal"
   let c ← if static then kw "comptime" *> pure true else acceptKw "comptime"
   let n ← ident
-  return ⟨t.pos, c, n, ← typeAnnotation f⟩
+  return ⟨t.pos, if c then .comptime else .none, n, ← typeAnnotation f⟩
 
 def params : Nat → Bool → List Param → P (List Param)
   | 0, _, _ => exhausted

@@ -983,6 +983,7 @@ theorem Runs.postfix_paren (u : Expr) (hl : u.level < 11) (hpl : u.place = false
 
 theorem Runs.postfix (u : Expr) : PGoal u := by
   induction u using Expr.ind with
+  | case16 => intro hp; simp [Expr.printable] at hp
   | case15 p t n _ =>
     intro hp hIH ctx i f u R hw ht _ hf l Q hk
     unfold SufK at hk

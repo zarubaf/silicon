@@ -10,8 +10,9 @@ The Rust front end copies the dump byte for byte, so these rules fix each byte:
   lowercase, then each field in declaration order. One space separates two parts. A node with
   no fields prints as `(<constructor>)`, for example `(unit)`. Thus `(` is followed by a name,
   except in an empty list.
-- The structure `Param` prints as `(param <comptime> <name> <ty>)`. The structure `StructField`
+- The structure `Param` prints as `(param <mode> <name> <ty>)`. The structure `StructField`
   prints as `(structfield <name> <ty>)`.
+- A `ParamMode` prints as its constructor name: `none`, `comptime`, or `mut`.
 - A `pos` field does not print. An `Ident` prints as its name, as a string.
 - A `String` prints in double quotes. It escapes `"`, `\`, LF, CR, and tab as `\"`, `\\`,
   `\n`, `\r`, and `\t`, the escapes of the grammar. Each other character prints as itself.
@@ -100,6 +101,8 @@ mutual
     | .array _ xs => Expr.dumpsTo (acc ++ "(array (") xs ++ "))"
     | .select _ b _ i => b.dumpTo (acc ++ "(select ") ++ " " ++ toString i ++ ")"
     | .arrayType _ t n => n.dumpTo (t.dumpTo (acc ++ "(arraytype ") ++ " ") ++ ")"
+    | .method _ r m xs =>
+      Expr.dumpsTo (r.dumpTo (acc ++ "(method ") ++ " " ++ ident m ++ " (") xs ++ "))"
 
   /-- `sepTo Expr.dumpTo`, which the recursion over `Expr` needs as its own function. -/
   def Expr.dumpsTo (acc : String) : List Expr → String
@@ -153,8 +156,11 @@ mutual
     | s :: ss => Stmt.dumpsTo (s.dumpTo acc ++ " ") ss
 end
 
+def ParamMode.name : ParamMode → String
+  | .none => "none" | .comptime => "comptime" | .mut => "mut"
+
 def Param.dumpTo (acc : String) (p : Param) : String :=
-  p.ty.dumpTo (acc ++ "(param " ++ boolean p.comptime ++ " " ++ ident p.name ++ " ") ++ ")"
+  p.ty.dumpTo (acc ++ "(param " ++ p.mode.name ++ " " ++ ident p.name ++ " ") ++ ")"
 
 def StructField.dumpTo (acc : String) (f : StructField) : String :=
   f.ty.dumpTo (acc ++ "(structfield " ++ ident f.name ++ " ") ++ ")"
@@ -193,7 +199,7 @@ higher level. A `field` prints in parentheses also as the callee of a `call`.
 
 A `tuple` of one element prints as `(a,)`, so that it differs from `a` in parentheses. A
 `select` is a postfix form, and its selector prints in decimal. An array type `[T; N]` in an
-expression is a primary.
+expression is a primary. A receiver call `x.m(a)` is a postfix form.
 
 A struct without parameters prints without parentheses. Each field of a struct prints on its own
 line and ends with `,`.
@@ -250,6 +256,8 @@ mutual
       | .array _ xs => "[" ++ args (xs.map (Expr.print 0)) ++ "]"
       | .select _ b _ i => b.print postfixLevel ++ "." ++ toString i
       | .arrayType _ t n => "[" ++ t.print ++ "; " ++ n.print 0 ++ "]"
+      | .method _ r m xs =>
+        r.print postfixLevel ++ "." ++ m.name ++ "(" ++ args (xs.map (Expr.print 0)) ++ ")"
     if e.level < ctx then "(" ++ text ++ ")" else text
 
   def TypeExpr.print : TypeExpr → String
@@ -298,8 +306,11 @@ mutual
     | s :: ss => s.print d ++ Stmt.lines d ss
 end
 
-def Param.print (p : Param) : String :=
-  (if p.comptime then "comptime " else "") ++ p.name.name ++ ": " ++ p.ty.print
+/-! The mark of a parameter mode, with its space. -/
+def ParamMode.mark : ParamMode → String
+  | .none => "" | .comptime => "comptime " | .mut => "mut "
+
+def Param.print (p : Param) : String := p.mode.mark ++ p.name.name ++ ": " ++ p.ty.print
 
 def StructField.print (f : StructField) : String := f.name.name ++ ": " ++ f.ty.print
 
