@@ -233,6 +233,17 @@ fn the_depth_of_a_push() {
     assert_eq!(depth(deep, "d()", 4), "S015 1:56");
 }
 
+/// A `mut` write-back checks the new depth of the root as `push` does. The push in `add` makes
+/// its list 3 deep. The write-back adds the two steps of the place. Thus the limit 5 passes, and
+/// 4 fails at the call.
+#[test]
+fn the_depth_of_a_write_back() {
+    let back = "comptime fn add(mut xs: List[Type]) -> () { push(xs, List[Int]); return (); }\n\
+        comptime fn d() -> Int { let mut t = ((list(Type),),); add(t.0.0); return 0; }\n";
+    assert_eq!(depth(back, "d()", 5), "(int 0)");
+    assert_eq!(depth(back, "d()", 4), "S015 2:56");
+}
+
 /// `len` and an index refer to a list, and an index of a list is also a step of a place.
 #[test]
 fn the_index_and_the_length_of_a_list() {
