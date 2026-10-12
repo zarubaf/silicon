@@ -1,6 +1,6 @@
-// A later use of a specialization refers to the done entry and charges only its node. Sixteen more uses of `P[8]` add
-// only 16 times the cost of one node. Compare `cost_struct_first_use.si`.
-// FUEL 231
+// A later use of a specialization refers to the done entry. It charges only its node and the size of its argument, which
+// the lookup reads. Sixteen more uses of `P[8]` add only 16 times this cost. Compare `cost_struct_first_use.si`.
+// FUEL 248
 // TOP M()
 struct P(comptime W: Nat) {
     a: UInt[W],
