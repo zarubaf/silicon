@@ -195,7 +195,7 @@ structure Syms where
 /-!
 The items, the depth limit, the current depth, and the return type of the current call. The
 item whose body runs, its call sites by position, its symbols, and the current frame name the
-hardware.
+hardware. `binding` holds the struct items whose parameter types evaluate now.
 -/
 structure Ctx where
   items : Array Resolve.Item
@@ -206,6 +206,7 @@ structure Ctx where
   calls : Array (Std.TreeMap Pos Nat Pos.compare)
   syms : Syms
   frame : Frame
+  binding : List Nat
 
 /-! The symbol of the local number `id` in the current item. Each binder has one. -/
 def Ctx.binder (c : Ctx) (id : Nat) : Nat := ((c.syms.binders[c.item]?).bind (·[id]?)).getD 0

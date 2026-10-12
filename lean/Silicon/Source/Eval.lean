@@ -510,7 +510,8 @@ mutual
   A use of the struct item `i` at `p` with the arguments `xs`, in the table of specializations.
   Each argument is static. Each use binds the parameters in the scope of the struct, one level
   deeper. The typed uses give the key of the table. The first use evaluates the field types
-  there.
+  there. The key exists only after the parameter types, so a use of the struct while its
+  parameter types evaluate is a cycle (`S019`).
   -/
   def spec (n : Nat) (p : Pos) (i : Nat) (xs : List Resolve.Expr) : M Ty := do
     let some (.struct _ x ps fs) := (← read).items[i]?
@@ -518,12 +519,15 @@ mutual
     let args ← xs.mapM fun e => do static p (← need e (← eval n e)).value
     if ps.length != args.length then
       fail .S007 p s!"`{x.name}` takes {ps.length} argument(s), but it has {args.length}"
+    if (← read).binding.contains i then
+      fail .S019 p s!"the parameter types of `{x.name}` depend on `{x.name}`"
     nested p <| inFrame none <| withReader (fun c => { c with item := i, frame := ⟨none, 0⟩ }) do
-      let keys ← (ps.zip args).mapM fun (q, v) => do
-        let t ← typeExpr n q.ty
-        let w ← conform p t v
-        bindLocal q.name.id ⟨some t, false, .static w⟩
-        return w
+      let keys ← withReader (fun c => { c with binding := i :: c.binding }) <|
+        (ps.zip args).mapM fun (q, v) => do
+          let t ← typeExpr n q.ty
+          let w ← conform p t v
+          bindLocal q.name.id ⟨some t, false, .static w⟩
+          return w
       specialize p x.name i keys (fs.mapM fun f => typeExpr n f.ty)
   termination_by (n + 1, 0)
 
@@ -898,7 +902,8 @@ def symbols (items : Array Resolve.Item) (scans : Array Scan) : Syms := Id.run d
 /-! The context and the state of an elaboration with the budget `budget`. -/
 def start (budget : Budget) (items : Array Resolve.Item) : Ctx × St :=
   let scans := items.map scanItem
-  (⟨items, budget.depth, 0, none, 0, scans.map callSites, symbols items scans, ⟨none, 0⟩⟩,
+  (⟨items, budget.depth, 0, none, 0, scans.map callSites, symbols items scans, ⟨none, 0⟩,
+    []⟩,
    ⟨budget.fuel, Array.replicate items.size .notStarted, #[], {}, {}⟩)
 
 /-! Runs `act` with the budget. The result has the used fuel. -/
