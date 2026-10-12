@@ -668,7 +668,13 @@ fn eval_reports_the_first_error_of_the_file_then_of_the_expression() -> Test {
 
 #[test]
 fn eval_takes_the_budgets() -> Test {
-    assert_eq!(eval("", "1 + 2", &["--fuel", "7"])?.1, Some(0));
+    // The evaluation uses 7 units, and the result `(int 3)` pays its 7 bytes.
+    assert_eq!(eval("", "1 + 2", &["--fuel", "14"])?.1, Some(0));
+    assert!(
+        eval("", "1 + 2", &["--fuel", "13"])?
+            .0
+            .starts_with("error[S015]: 1:1: ")
+    );
     assert!(
         eval("", "1 + 2", &["--fuel", "6"])?
             .0
