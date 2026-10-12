@@ -1,0 +1,6 @@
+// S007: `list` takes one type.
+// TOP M()
+module M() {
+    // expected-error S007 @+1
+    let xs = list(Int, Bool);
+}

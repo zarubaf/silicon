@@ -1,0 +1,7 @@
+// S007: `push` takes a list and an element. The receiver is the list.
+// TOP M()
+module M() {
+    let mut xs = list(Int);
+    // expected-error S007 @+1
+    xs.push();
+}

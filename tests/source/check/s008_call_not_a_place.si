@@ -1,0 +1,12 @@
+// S008: the result of a call is not a place.
+// TOP M()
+fn one() -> Int {
+    return 1;
+}
+fn bump(mut n: Int) -> () {
+    return ();
+}
+module M() {
+    // expected-error S008 @+1
+    bump(one());
+}

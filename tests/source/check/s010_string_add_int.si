@@ -1,0 +1,6 @@
+// S010: `+` joins two strings only.
+// TOP M()
+module M() {
+    // expected-error S010 @+1
+    let c = "a" + 1;
+}

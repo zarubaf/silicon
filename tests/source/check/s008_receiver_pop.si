@@ -1,0 +1,11 @@
+// S008: the receiver evaluates first, so `xs` is pending when `xs.pop()` evaluates.
+// TOP M()
+fn helper(comptime n: Int, mut xs: List[Int]) -> () {
+    return ();
+}
+module M() {
+    let mut xs = list(Int);
+    xs.push(1);
+    // expected-error S008 @+1
+    xs.helper(xs.pop());
+}

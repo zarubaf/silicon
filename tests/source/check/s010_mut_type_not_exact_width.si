@@ -1,0 +1,10 @@
+// S010: a `UInt[4]` place does not fit a `UInt[8]` formal.
+// TOP M()
+fn bump(mut n: UInt[8]) -> () {
+    return ();
+}
+module M() {
+    let mut n: UInt[4] = 1;
+    // expected-error S010 @+1
+    bump(n);
+}

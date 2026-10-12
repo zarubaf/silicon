@@ -1,0 +1,7 @@
+// S003: a method name that resolves to no function.
+// TOP M()
+module M() {
+    let x = 1;
+    // expected-error S003 @+1
+    x.nope();
+}

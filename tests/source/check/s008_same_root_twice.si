@@ -1,0 +1,10 @@
+// S008: two mut actuals of one call have different roots.
+// TOP M()
+fn f(mut a: List[Int], mut b: List[Int]) -> () {
+    return ();
+}
+module M() {
+    let mut xs = list(Int);
+    // expected-error S008 @+1
+    f(xs, xs);
+}

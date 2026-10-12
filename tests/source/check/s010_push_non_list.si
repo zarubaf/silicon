@@ -1,0 +1,7 @@
+// S010: `push` takes a list, and an array is not one.
+// TOP M()
+module M() {
+    let mut a = [1, 2];
+    // expected-error S010 @+1
+    a.push(3);
+}

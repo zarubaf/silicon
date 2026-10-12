@@ -1,0 +1,6 @@
+// S007: the receiver is the only argument of `str`, so a second argument is too many.
+// TOP M()
+module M() {
+    // expected-error S007 @+1
+    let s = 1.str(2);
+}

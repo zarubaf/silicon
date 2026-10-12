@@ -1,0 +1,7 @@
+// S013: no index is in range for the empty string.
+// TOP M()
+module M() {
+    let s = "";
+    // expected-error S013 @+1
+    let c = s[0];
+}

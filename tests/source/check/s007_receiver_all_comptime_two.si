@@ -1,0 +1,9 @@
+// S007: also two marked parameters leave no slot for the receiver.
+// TOP M()
+comptime fn k(comptime T: Type, comptime n: Nat) -> () {
+    return ();
+}
+module M() {
+    // expected-error S007 @+1
+    3.k(Bool, 1);
+}

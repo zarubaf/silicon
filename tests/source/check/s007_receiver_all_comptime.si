@@ -1,0 +1,10 @@
+// S007: every parameter has `comptime`, so a receiver has no slot.
+// TOP M()
+fn k(comptime T: Type) -> () {
+    return ();
+}
+module M() {
+    let x = 1;
+    // expected-error S007 @+1
+    x.k();
+}

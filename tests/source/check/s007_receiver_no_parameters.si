@@ -1,0 +1,10 @@
+// S007: a function without parameters has no slot for a receiver.
+// TOP M()
+fn one() -> Int {
+    return 1;
+}
+module M() {
+    let x = 1;
+    // expected-error S007 @+1
+    let y = x.one();
+}

@@ -1,0 +1,10 @@
+// S010: a mut actual has no typed use. A `Nat` place does not fit an `Int` formal.
+// TOP M()
+fn bump(mut n: Int) -> () {
+    return ();
+}
+module M() {
+    let mut n: Nat = 1;
+    // expected-error S010 @+1
+    bump(n);
+}

@@ -1,0 +1,24 @@
+// A hardware arm can change a binding that its callee declares. Only a binding from before the arm is S016.
+// TOP M()
+fn own() -> UInt[8] {
+    let mut ys = list(UInt[8]);
+    ys.push(1);
+    ys.push(2);
+    let a = ys.pop();
+    return a;
+}
+fn inc(mut a: UInt[8]) -> UInt[8] {
+    a = a +% 1;
+    return a;
+}
+fn through() -> UInt[8] {
+    let mut z: UInt[8] = 1;
+    return z.inc();
+}
+module M() {
+    input c: Bool;
+    output o: UInt[8];
+    output p: UInt[8];
+    o := if (c) { own() } else { 0 };
+    p := if (c) { through() } else { 0 };
+}

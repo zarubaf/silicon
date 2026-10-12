@@ -1,0 +1,6 @@
+// S010: `str` takes an `Int`, and a Boolean is not one.
+// TOP M()
+module M() {
+    // expected-error S010 @+1
+    let s = str(true);
+}

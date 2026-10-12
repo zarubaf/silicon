@@ -1,0 +1,8 @@
+// S013: the string "aé" has 2 scalars, though it has 3 bytes in UTF-8.
+// TOP M()
+module M() {
+    let s = "aé";
+    let c = s[1];
+    // expected-error S013 @+1
+    let d = s[2];
+}

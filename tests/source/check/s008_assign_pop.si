@@ -1,0 +1,8 @@
+// S008: the root of the target is pending in the right side of the assignment.
+// TOP M()
+module M() {
+    let mut xs = list(Int);
+    xs.push(1);
+    // expected-error S008 @+1
+    xs[0] = xs.pop();
+}

@@ -1,0 +1,8 @@
+// S008: the plain call of `push` has the same window as the receiver call.
+// TOP M()
+module M() {
+    let mut xs = list(Int);
+    xs.push(1);
+    // expected-error S008 @+1
+    push(xs, pop(xs));
+}

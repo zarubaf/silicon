@@ -1,0 +1,9 @@
+// S003: a method resolves to a function, and a module is not one.
+// TOP M()
+module Child() {
+}
+module M() {
+    let x = 1;
+    // expected-error S003 @+1
+    x.Child();
+}

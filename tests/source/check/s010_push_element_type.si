@@ -1,0 +1,7 @@
+// S010: the element of `push` has the element type of the list.
+// TOP M()
+module M() {
+    let mut xs = list(Bool);
+    // expected-error S010 @+1
+    xs.push(1);
+}

@@ -1,0 +1,11 @@
+// S003: a method never resolves to a local, also not to a local function value.
+// TOP M()
+fn id(x: Int) -> Int {
+    return x;
+}
+module M() {
+    let x = 1;
+    let g = id;
+    // expected-error S003 @+1
+    let y = x.g();
+}

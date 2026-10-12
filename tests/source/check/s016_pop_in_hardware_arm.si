@@ -1,0 +1,10 @@
+// S016: a `pop` in the else arm of a hardware `if` changes a list from before the arm.
+// TOP M()
+module M() {
+    input c: Bool;
+    output o: UInt[8];
+    let mut xs = list(UInt[8]);
+    xs.push(1);
+    // expected-error S016 @+1
+    o := if (c) { 3 } else { xs.pop() };
+}

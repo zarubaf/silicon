@@ -1,0 +1,14 @@
+// S016: the plain call of a mut formal in a hardware arm.
+// TOP M()
+fn inc(mut a: UInt[8]) -> UInt[8] {
+    a = a +% 1;
+    return a;
+}
+module M() {
+    input c: Bool;
+    input x: UInt[8];
+    output o: UInt[8];
+    let mut q = x;
+    // expected-error S016 @+1
+    o := if (c) { inc(q) } else { 0 };
+}

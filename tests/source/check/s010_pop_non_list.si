@@ -1,0 +1,7 @@
+// S010: `pop` takes a list, and a string is not one.
+// TOP M()
+module M() {
+    let mut s = "abc";
+    // expected-error S010 @+1
+    let c = pop(s);
+}

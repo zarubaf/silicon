@@ -1,0 +1,7 @@
+// S013: the index of a string is a scalar position, and 3 is past the last scalar of "abc".
+// TOP M()
+module M() {
+    let s = "abc";
+    // expected-error S013 @+1
+    let c = s[3];
+}

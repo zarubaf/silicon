@@ -1,0 +1,6 @@
+// S010: `list` takes a type.
+// TOP M()
+module M() {
+    // expected-error S010 @+1
+    let xs = list(3);
+}

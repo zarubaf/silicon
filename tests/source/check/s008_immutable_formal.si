@@ -1,0 +1,10 @@
+// S008: a formal without `mut` is no mutable root.
+// TOP M()
+fn f(xs: List[Int]) -> () {
+    // expected-error S008 @+1
+    xs.push(1);
+    return ();
+}
+module M() {
+    f(list(Int));
+}

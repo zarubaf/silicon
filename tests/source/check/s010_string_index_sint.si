@@ -1,0 +1,7 @@
+// S010: an `SInt` index is not an index, as for a container.
+// TOP M()
+module M() {
+    let i = SInt[4](1);
+    // expected-error S010 @+1
+    let c = "abc"[i];
+}
