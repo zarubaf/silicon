@@ -593,14 +593,27 @@ right side evaluates.
 #guard out (body "let mut a = 1; a[0] = 3; return 0;") "f()" == "S010 1:32"
 
 /-!
-The update copies only the containers on its path, so it charges nothing more: the statement,
-the index `0`, and the right side `5` add 5 units. A reference on the right side pays its copy:
-the name `b` charges 1, and its copy 3.
+Each step of the place charges 1 at its node before it applies. The update copies only the
+containers on its path, so it charges nothing more. The statement and the step `[0]` charge 1
+each, and the index `0` and the right side `5` charge 2 each. A reference on the right side pays its
+copy: the name `b` charges 1, and its copy 3.
 -/
 #guard cost (body "let mut a = [1, 2]; a[0] = 5; return 0;") "f()" ==
-  cost (body "let mut a = [1, 2]; return 0;") "f()" + 5
+  cost (body "let mut a = [1, 2]; return 0;") "f()" + 6
 #guard cost (body "let mut a = [[1, 2]]; let b = [3, 4]; a[0] = b; return 0;") "f()" ==
-  cost (body "let mut a = [[1, 2]]; let b = [3, 4]; return 0;") "f()" + 1 + 2 + 1 + 3
+  cost (body "let mut a = [[1, 2]]; let b = [3, 4]; return 0;") "f()" + 1 + 1 + 2 + 1 + 3
+
+/-! Each selector `.N` charges 1: the statement, the three steps, and the right side add 6. -/
+#guard cost (body "let mut a = ((1, (2, 3)), 4); a.0.1.0 = 5; return 0;") "f()" ==
+  cost (body "let mut a = ((1, (2, 3)), 4); return 0;") "f()" + 1 + 3 + 2
+
+/-!
+The step `[1]` charges at its node `1:39` after the index `0` at `1:41` and before the index
+`1`. The index `1`, the right side `5`, and `return 0;` charge 8 units after it.
+-/
+def twoSteps : String := body "let mut a = [[1, 2]]; a[0][1] = 5; return 0;"
+#guard out twoSteps "f()" (cost twoSteps "f()" - 9) == "S015 1:39"
+#guard out twoSteps "f()" (cost twoSteps "f()" - 10) == "S015 1:41"
 
 /-! Errors of the earlier passes come first, also in `EXPR`. -/
 #guard out "const A: Nat = ;" "1" == "S001 1:16"
