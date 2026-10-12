@@ -76,8 +76,8 @@ charges the square of the size of the integer instead, at least 1, before its de
 -/
 def fieldUnits : Field → Nat
   | .user x => max 1 x.utf8ByteSize
-  | .int v => (Value.int v).decimalCharge
-  | .call k | .version k | .temp k => (Value.int k).decimalCharge
+  | .int v => (Value.int v).measureCharge
+  | .call k | .version k | .temp k => (Value.int k).measureCharge
   | .bool _ => 2
   | .digest h => 2 + h.utf8ByteSize
   | .role r => r.text.utf8ByteSize
