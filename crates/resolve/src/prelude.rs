@@ -87,6 +87,12 @@ impl Prelude {
         }
     }
 
+    /// The parameter that a receiver binds to: the first without a written `comptime` mark.
+    #[must_use]
+    pub fn receiver(self) -> Option<usize> {
+        self.modes().iter().position(|&m| m != ParamMode::Comptime)
+    }
+
     /// Whether the name is a function of the prelude.
     #[must_use]
     pub fn is_fn(self) -> bool {

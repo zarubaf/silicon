@@ -222,6 +222,14 @@ impl<'a> Walker<'a> {
         }
     }
 
+    /// The parameter that the receiver of the method node with an id binds to.
+    fn receiver_of(&self, id: NodeId) -> Option<usize> {
+        match self.expr {
+            Some(expr) => expr.receiver(id),
+            None => self.resolved.receiver(id),
+        }
+    }
+
     /// The errors in position order.
     fn finish(mut self) -> Vec<Error> {
         // The sort is stable, so at one position the first error of the walk stays first.
@@ -359,19 +367,20 @@ impl<'a> Walker<'a> {
         Some(callee)
     }
 
-    /// Binds the receiver of the receiver call at `pos` to the function with the name node
-    /// `id`, which has `got` explicit arguments. The receiver binds to the first parameter
-    /// without a written `comptime` mark. The result is the callee and the index of that
-    /// parameter, or `None` after an `S007`.
+    /// Checks the receiver call `node` at `pos` to the function with the name node `id`,
+    /// which has `got` explicit arguments. The receiver binds to the parameter that `resolve`
+    /// recorded. The result is the callee and the index of that parameter, or `None` after an
+    /// `S007`.
     fn receiver(
         &mut self,
         pos: Pos,
+        node: NodeId,
         id: NodeId,
         name: &str,
         got: usize,
     ) -> Option<(Callee<'a>, usize)> {
         let callee = self.callee(id)?;
-        let Some(bound) = callee.modes.iter().position(|&m| m != ParamMode::Comptime) else {
+        let Some(bound) = self.receiver_of(node) else {
             self.report(
                 Code::S007,
                 pos,
@@ -507,15 +516,15 @@ impl<'a> Walker<'a> {
             }
             Expr::Method {
                 pos,
+                id,
                 recv,
                 name,
                 args,
-                ..
             } => {
                 // The receiver evaluates first. It binds to the parameter `bound`, so the
                 // argument `k` binds to the parameter `k` before `bound` and to `k + 1` from
                 // `bound` on.
-                let bound = self.receiver(*pos, name.id, &name.name, args.len());
+                let bound = self.receiver(*pos, *id, name.id, &name.name, args.len());
                 let callee = bound.map(|(c, _)| c);
                 let at = bound.map_or(0, |(_, b)| b);
                 let mut held = Vec::new();

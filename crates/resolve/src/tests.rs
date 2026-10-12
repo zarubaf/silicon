@@ -1216,3 +1216,41 @@ fn the_call_sites_of_an_expression_count_from_zero() {
     };
     assert_eq!((r.site(*id), r.site(*inner)), (Some(0), Some(1)));
 }
+
+/// The parameter that the receiver of `return x.m(...);` in the first item binds to.
+fn receiver_of_return(src: &str) -> Option<usize> {
+    let r = ok(src);
+    let Some(Item::Fn { body, .. }) = r.ast().first() else {
+        panic!("not a fn");
+    };
+    let Some(Stmt::Ret {
+        value: Some(Expr::Method { id, .. }),
+        pos: _,
+    }) = body.last()
+    else {
+        panic!("not a method return");
+    };
+    r.receiver(*id)
+}
+
+#[test]
+fn the_receiver_binds_to_the_first_parameter_without_a_comptime_mark() {
+    assert_eq!(
+        receiver_of_return("fn f(T: Type) -> Nat { return T.data_bits(); }"),
+        Some(0)
+    );
+    assert_eq!(
+        receiver_of_return("fn f(p: Bool) -> Bool { return p.resize(Bool); }"),
+        Some(1)
+    );
+    assert_eq!(
+        receiver_of_return("fn f(T: Type) -> Nat { return T.list(); }"),
+        None
+    );
+    assert_eq!(
+        receiver_of_return(
+            "fn f(p: Nat) -> Nat { return p.g(1); }\ncomptime fn g(comptime a: Nat, b: Nat) -> Nat { return b; }"
+        ),
+        Some(1)
+    );
+}
