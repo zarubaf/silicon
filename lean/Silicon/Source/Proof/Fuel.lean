@@ -555,7 +555,8 @@ theorem spec_f (he : ∀ e, Follows m (eval k e) (eval m e))
     (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t)) (p : Pos) (i : Nat)
     (xs : List Resolve.Expr) : Follows m (spec k p i xs) (spec m p i xs) := by
   rw [spec.eq_def k, spec.eq_def m]
-  follows [he, ht, need_f, static_f, specialize_f, nested_f, inFrame_f, conform_f, bindLocal_f]
+  follows [he, ht, need_f, static_f, settle_f, specialize_f, nested_f, inFrame_f, conform_f,
+    bindLocal_f]
 
 theorem name_f (he : ∀ e, Follows m (eval k e) (eval m e))
     (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t)) (p : Pos) (x : String) (r : Ref) :
