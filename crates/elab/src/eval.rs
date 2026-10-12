@@ -100,6 +100,9 @@ struct Store {
     /// The steps of the walks along paths into values: 1 for each container that a walk
     /// enters. A test counts them, so it checks the work of a walk and not its time.
     steps: Cell<u64>,
+    /// The parameters of a frame that refer to an argument of the caller, by the number of
+    /// the frame: a module argument refers until the instance statement pays its copy.
+    links: BTreeMap<(usize, DeclId), Ref>,
 }
 
 /// The element of `v` at the numbers `path`, one for each container below it.
@@ -382,6 +385,7 @@ impl<'a> Evaluator<'a> {
                 consts,
                 frames: vec![Frame::new()],
                 steps: Cell::new(0),
+                links: BTreeMap::new(),
             },
             graph: Graph::default(),
             paths: Paths::default(),
@@ -1089,6 +1093,8 @@ impl Evaluator<'_> {
                             root: Root::Local(k, id),
                             path: Vec::new(),
                         }))
+                    } else if let Some(r) = self.store.links.get(&(k, id)) {
+                        Ok(Out::Ref(r.clone()))
                     } else {
                         fail(Code::S011, pos, format!("`{x}` is not a static value"))
                     }
