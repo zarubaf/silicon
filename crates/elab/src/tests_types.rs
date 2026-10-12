@@ -427,3 +427,21 @@ fn a_later_use_pays_for_the_lookup_of_its_arguments() {
         "{cost_100} {cost_200} {work_100} {work_200}"
     );
 }
+
+const EMPTIES: &str = "struct P(comptime X: [Bool; 0]) { a: Bool }\n\
+    struct Q(comptime n: Nat, comptime X: [[Bool; 0]; n]) { a: Bool }";
+
+#[test]
+fn an_empty_struct_argument_takes_its_parameter_type() {
+    assert_eq!(
+        o(EMPTIES, "P[[]]"),
+        "(type (struct root P ((array bool ()))))"
+    );
+    assert_eq!(o(EMPTIES, "P[[]] == P[[Bool; 0]()]"), "(bool true)");
+    assert_eq!(
+        o(EMPTIES, "Q[1, [[]]]"),
+        "(type (struct root Q ((int 1) (array (array bool 0) ((array bool ()))))))"
+    );
+    assert_eq!(o(EMPTIES, "Q[2, [[]]]"), "S010 1:1");
+    assert_eq!(o(EMPTIES, "P[[[]]]"), "S010 1:1");
+}
