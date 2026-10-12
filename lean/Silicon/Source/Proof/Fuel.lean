@@ -513,6 +513,10 @@ theorem changeAt_f (pl : Place) (f : Value → Value) :
     Follows cap (changeAt pl f) (changeAt pl f) := by
   unfold changeAt; follows [bindLocal_f]
 
+theorem store_f (p q : Pos) (pl : Place) (y : Val) :
+    Follows cap (store p q pl y) (store p q pl y) := by
+  unfold store; follows [named_f, bindLocal_f, item_f, changeAt_f]
+
 theorem prim_f (p : Pos) (x : String) (k : PrimType) :
     Follows cap (prim p x k) (prim p x k) := by
   unfold prim; follows
@@ -644,14 +648,14 @@ theorem follows_all : ∀ n,
         apply Follows.exhaust (cap := k)
         intro _
         follows [he k, ht k, hs k, hb k, placeAt_f (he k), need_f, copy_f, conformVal_f,
-          known_f, named_f, bindLocal_f, test_f, int_f, range_f, iteration_f, static_f, item_f,
-          changeAt_f]
+          known_f, named_f, bindLocal_f, test_f, int_f, range_f, iteration_f, static_f,
+          store_f]
       · rw [stmt.eq_def (k + 1), stmt.eq_def (m + 1)]
         apply Follows.charge_one
         intro _
         follows [he m, ht m, hs m, hb m, placeAt_f (he m), need_f, copy_f, conformVal_f,
-          known_f, named_f, bindLocal_f, test_f, int_f, range_f, iteration_f, static_f, item_f,
-          changeAt_f]
+          known_f, named_f, bindLocal_f, test_f, int_f, range_f, iteration_f, static_f,
+          store_f]
     · rcases n' with _ | m
       · rw [block.eq_def (k + 1), block.eq_def 0]
         apply Follows.exhaust (cap := k)

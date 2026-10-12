@@ -428,6 +428,19 @@ def changeAt (pl : Place) (f : Value → Value) : M Unit := do
     bindLocal pl.id { s with value := .static (update f r pl.keys) }
 
 /-!
+Writes `y` into the place `pl` (section 5.2). A place without a step binds its root again, so a
+hardware value gets the next version of the root. A step writes into the live value of the root.
+A container holds no hardware value: `S011` at `q` in a list, else `S010`. `q` is the node of
+the value.
+-/
+def store (p q : Pos) (pl : Place) (y : Val) : M Unit := do
+  if pl.keys.isEmpty then bindLocal pl.id { pl.slot with value := ← named p pl.id pl.name y }
+  else
+    if pl.inList && y matches .hw _ then fail .S011 q "a list holds no hardware value"
+    let w ← item q y
+    changeAt pl fun _ => w
+
+/-!
 The evaluator. `eval`, `typeExpr`, `stmt`, and `block` are the entry functions. Each charges
 one unit, then calls deeper with the bound `n`. The helpers `name`, `spec`, `call`, `index`,
 and `placeAt` get the bound `n` of their caller after its charge. They call only entry functions and
@@ -816,11 +829,7 @@ mutual
           | none =>
             if sameForm pl.part o.value then pure o.value
             else fail .S010 p s!"expected {pl.part.text}, but the value is {o.value.text}"
-        if pl.keys.isEmpty then bindLocal pl.id { pl.slot with value := ← named p pl.id pl.name y }
-        else
-          if pl.inList && y matches .hw _ then fail .S011 v.pos "a list holds no hardware value"
-          let w ← item v.pos y
-          changeAt pl fun _ => w
+        store p v.pos pl y
         return none
       | .ret p v => do
         let some rt := (← read).ret | fail .S006 p "only a function has `return`"
