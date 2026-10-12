@@ -397,7 +397,7 @@ def fits (t : Ty) (n : Int) : Bool :=
   | .uint w => 0 ≤ n && n < 2 ^ w
   | .sint w => -(2 ^ (w - 1) : Int) ≤ n && n < 2 ^ (w - 1)
   | .nat => 0 ≤ n
-  | .bool | .int => true
+  | _ => true
 
 /-! A typed use of `v` at the type `t`. Only a static integer at a finite type converts. -/
 def convert (t : Ty) (v : Value) : Except Fault Step :=

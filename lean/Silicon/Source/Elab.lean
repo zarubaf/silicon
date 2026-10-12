@@ -263,11 +263,11 @@ def iface (name : Name) (b : Body) : Iface :=
    (b.ports.filter (·.input)).size, b.domain⟩
 
 /-!
-The serialization of an `InstantiationId` at the statement `pos`. It charges the decimal forms
-of its integers, then its length in bytes, before it makes the text (section 5.4).
+The serialization of an `InstantiationId` at the statement `pos`. It charges the walk that
+measures it, then its length in bytes, before it makes the text (section 5.4).
 -/
 def serialize (pos : Pos) (m : String) (vs : List Value) : EM String := do
-  charge pos (vs.map Value.decimalCharge).sum
+  charge pos (vs.map Value.measureCharge).sum
   let parts := vs.map Value.serialize
   charge pos (InstantiationId.renderSize m parts)
   return InstantiationId.render m parts
