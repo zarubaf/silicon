@@ -1,8 +1,8 @@
 // A doubling chain of structs, specialized from the innermost outward: each `S_k` has two fields of `S_(k-1)`. `data_bits` of
-// the outer struct is the exponential width 2^69 at the charge of one node, because the type metadata holds it. The fuel equal
-// to the total of `cost` succeeds, and one unit less gives `S015`. A `T()` of the outer struct fails before it builds the value
-// (see the check file `s015_struct_doubling_zero.si`).
-// FUEL 822
+// the outer struct is the exponential width 2^69 at the charge of its node and the size of the width, because the type
+// metadata holds it. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`. A `T()` of the outer
+// struct fails before it builds the value (see the check file `s015_struct_doubling_zero.si`).
+// FUEL 1273
 // TOP M()
 struct S0 {
     a: Bool,

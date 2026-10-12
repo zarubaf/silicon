@@ -1,6 +1,6 @@
 // `T()` charges its node and the recursive size of the zero, which the type metadata gives without a walk. Eight zeros of
 // a struct with an array field pay eight times the same size.
-// FUEL 287
+// FUEL 301
 // TOP M()
 struct P {
     a: [UInt[8]; 16],

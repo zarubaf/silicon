@@ -1,5 +1,5 @@
 // A type equality charges the sum of the sizes of the two types. Equal terms and different terms charge the same.
-// FUEL 363
+// FUEL 390
 // TOP M()
 struct P {
     a: [UInt[8]; 4],
