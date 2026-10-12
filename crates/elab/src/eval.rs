@@ -225,10 +225,12 @@ impl Store {
         outs
     }
 
-    /// Takes back the one result parked at `at`.
+    /// Takes back the one result parked at `at`. A later evaluation that failed can leave its
+    /// own results parked after it, so the result is the first one.
     fn resume_one(&mut self, at: usize) -> Out {
         self.resume(at)
-            .pop()
+            .into_iter()
+            .next()
             .unwrap_or(Out::Made(Val::Static(Value::Unit)))
     }
 
