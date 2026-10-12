@@ -139,6 +139,37 @@ def specialize (p : Pos) (x : String) (i : Nat) (args : List Value) (fields : M 
     return t
 
 /-!
+The struct item and the field types of the struct type `t`, from its done entry in the table of
+specializations. A record exists only after its specialization is done, so each record type has
+one.
+-/
+def fieldsIn (specs : Array Spec) (t : Ty) : Option (Nat × List Ty) :=
+  specs.findSome? fun e =>
+    match e.state with
+    | .done u fs => if u = t then some (e.item, fs) else none
+    | .inProgress => none
+
+/-!
+The zero of a hardware data type `t` (section 5.6): 0 for each integer leaf and `false` for each
+`Bool` leaf. A struct type takes the field types of its done entry. The bound `b` is the depth
+of `t`, because each part of a type is less deep than the type.
+-/
+def zeroOf (specs : Array Spec) : Nat → Ty → Option Value
+  | 0, _ => none
+  | b + 1, t =>
+    match t with
+    | .bool => some (.bool false)
+    | .uint w => some (.uint w 0)
+    | .sint w => some (.sint w 0)
+    | .unit => some .unit
+    | .array e k => do return .array e (Array.replicate k (← zeroOf specs b e))
+    | .tuple ⟨ts⟩ => do return .tuple (← ts.mapM (zeroOf specs b)).toArray
+    | .struct .. => do
+      let (_, fs) ← fieldsIn specs t
+      return .record t (← fs.mapM (zeroOf specs b)).toArray
+    | .nat | .int | .type => none
+
+/-!
 The array type `[e; k]` at `pos`. The length at `q` is a static `Nat`. It charges its size and
 the products of its metadata.
 -/

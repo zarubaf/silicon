@@ -375,6 +375,25 @@ mutual
 end
 
 /-!
+The depth of the zero value of a hardware data type, from the type alone. An array of length 0
+has the depth of its type, and another array 1 more than the zero of its element. A record is
+1 deeper than its struct type, because the depth of a record counts its type. Thus this walk
+never enters the field types of a struct. It gives the depth of section 5.5 of `T()`.
+-/
+mutual
+  def Ty.zeroDepth : Ty → Nat
+    | .array t 0 => 1 + t.depth
+    | .array t _ => 1 + t.zeroDepth
+    | .tuple ⟨ts⟩ => 1 + Ty.zeroDepthAll ts
+    | t@(.struct ..) => 1 + t.depth
+    | _ => 1
+
+  def Ty.zeroDepthAll : List Ty → Nat
+    | [] => 0
+    | t :: ts => max t.zeroDepth (Ty.zeroDepthAll ts)
+end
+
+/-!
 The text of a type in a message, and the source text of a static argument in it. A struct type
 prints its item, with its arguments in brackets when it has any: `P[8]`.
 -/
