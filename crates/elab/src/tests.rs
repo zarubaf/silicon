@@ -49,18 +49,18 @@ fn run(src: &str, expr: &str, fuel: u64, depth: u64) -> (String, u64) {
     }
 }
 
-fn out(src: &str, expr: &str, fuel: u64, depth: u64) -> String {
+pub(crate) fn out(src: &str, expr: &str, fuel: u64, depth: u64) -> String {
     run(src, expr, fuel, depth).0
 }
 
 /// The fuel that `eval` uses with the default budgets, or 0 for an error.
-fn cost(src: &str, expr: &str) -> u64 {
+pub(crate) fn cost(src: &str, expr: &str) -> u64 {
     let budget = Budget::default();
     run(src, expr, budget.fuel, budget.depth).1
 }
 
 /// The cost is `units`. This fuel passes, and one unit less gives `S015`.
-fn exact(src: &str, expr: &str, units: u64) {
+pub(crate) fn exact(src: &str, expr: &str, units: u64) {
     assert_eq!(cost(src, expr), units, "{expr}");
     assert!(!out(src, expr, units, 1000).starts_with('S'), "{expr}");
     assert!(

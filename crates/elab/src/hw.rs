@@ -7,6 +7,7 @@
 use crate::names::{PathId, Sym};
 use crate::value::{Ty, Value};
 use parse::ast::{BinOp, Pos, UnOp};
+use resolve::DeclId;
 
 /// A node of a hardware value: an index into the arena of its elaboration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -141,39 +142,95 @@ pub(crate) enum Handle {
     Domain,
 }
 
-/// A value of the evaluator: a static value, a hardware value, or a handle.
+/// Where a reference starts: the local of the frame at this index of the frame stack, or the
+/// constant at this index of the table of constants.
+#[derive(Clone, Copy)]
+pub(crate) enum Root {
+    Local(usize, DeclId),
+    Const(usize),
+}
+
+/// A reference to a value that exists: a root, then the numbers of the elements of the
+/// containers below it. It copies nothing, so a read that the cost model does not charge does
+/// no work in the size of the value.
+#[derive(Clone)]
+pub(crate) struct Ref {
+    pub root: Root,
+    pub path: Vec<usize>,
+}
+
+/// A static element of a literal that waits for its type: a new value, or a reference.
+#[derive(Clone)]
+pub(crate) enum Leaf {
+    Owned(Value),
+    Ref(Ref),
+}
+
+/// A part of a literal that waits for its type. It is a static value, the literal `[]` at the
+/// position, or an array or a tuple literal at the position. Such a literal has at least one
+/// part that waits.
+#[derive(Clone)]
+pub(crate) enum Part {
+    Value(Leaf),
+    Empty(Pos),
+    Array(Pos, Vec<Part>),
+    Tuple(Pos, Vec<Part>),
+}
+
+/// A value of the evaluator: a static value, a hardware value, or a handle. `Pending` is a
+/// literal with `[]` before a typed use gives it its type. It holds the position of its first
+/// `[]`.
 #[derive(Clone)]
 pub(crate) enum Val {
     Static(Value),
     Hw(HwId),
     Handle(Handle),
+    Pending(Pos, Part),
+}
+
+/// What a result is, without a copy: a static value, a hardware value, a handle, or a literal
+/// that waits for its type.
+#[derive(Clone, Copy)]
+pub(crate) enum Seen<'a> {
+    Static(&'a Value),
+    Hw(HwId),
+    Handle(&'a Handle),
+    Pending(Pos, &'a Part),
 }
 
 impl Val {
-    /// The recursive size. A handle has the size 1.
-    pub(crate) fn size(&self, g: &Graph) -> u64 {
+    pub(crate) fn seen(&self) -> Seen<'_> {
         match self {
-            Val::Static(v) => v.size(),
-            Val::Hw(h) => g.size(*h),
-            Val::Handle(_) => 1,
+            Val::Static(v) => Seen::Static(v),
+            Val::Hw(h) => Seen::Hw(*h),
+            Val::Handle(h) => Seen::Handle(h),
+            Val::Pending(q, p) => Seen::Pending(*q, p),
         }
     }
 
-    /// The type. A string, a type, and a handle have none.
+    /// The type. A string, a type, a handle, and a literal that waits have none.
+    pub(crate) fn ty(&self, g: &Graph) -> Option<Ty> {
+        self.seen().ty(g)
+    }
+}
+
+impl Seen<'_> {
+    /// The type. A string, a type, a handle, and a literal that waits have none.
     pub(crate) fn ty(&self, g: &Graph) -> Option<Ty> {
         match self {
-            Val::Static(v) => v.ty(),
-            Val::Hw(h) => Some(g.ty(*h)),
-            Val::Handle(_) => None,
+            Seen::Static(v) => v.ty(),
+            Seen::Hw(h) => Some(g.ty(*h)),
+            Seen::Handle(_) | Seen::Pending(..) => None,
         }
     }
 
-    /// What the value is, for a message.
-    pub(crate) fn text(&self, g: &Graph) -> String {
-        match self {
-            Val::Static(v) => v.text(),
-            Val::Hw(h) => format!("hardware {}", g.ty(*h).text()),
-            Val::Handle(h) => match h {
+    /// What the value is, for a message. A literal that waits is `None`: its text needs the
+    /// values that it refers to.
+    pub(crate) fn text(&self, g: &Graph) -> Option<String> {
+        Some(match self {
+            Seen::Static(v) => v.text(),
+            Seen::Hw(h) => format!("hardware {}", g.ty(*h).text()),
+            Seen::Handle(h) => match h {
                 Handle::Res {
                     kind: Kind::Reg, ..
                 } => "a register",
@@ -188,6 +245,7 @@ impl Val {
                 Handle::Domain => "a domain",
             }
             .to_owned(),
-        }
+            Seen::Pending(..) => return None,
+        })
     }
 }

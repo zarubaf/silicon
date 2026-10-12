@@ -45,17 +45,31 @@ impl Evaluator<'_> {
         }
     }
 
+    /// A static result at a hardware use. The copy of a constant is small, so a value that
+    /// has no hardware type fails before its copy.
+    fn lit_out(&mut self, pos: Pos, o: &super::Out) -> Res<HwId> {
+        let v = self.store.value(o);
+        if !matches!(v, Value::Bool(_) | Value::UInt(_) | Value::SInt(_)) {
+            return fail(
+                Code::S010,
+                pos,
+                format!("hardware needs a Bool or a finite value, not {}", v.text()),
+            );
+        }
+        let v = v.clone();
+        self.lit(pos, v)
+    }
+
     /// A static operand next to a hardware operand of the type `t`. An integer takes the
     /// type `t`.
     fn lit_at(&mut self, pos: Pos, t: &Ty, o: &super::Out) -> Res<HwId> {
         let v = self.store.value(o);
-        let converted = if matches!(v, Value::Int(_)) && t.is_finite() {
-            ops::convert(t, v, &mut self.fuel).map_err(at(pos))?
-        } else {
-            None
-        };
-        let v = converted.unwrap_or_else(|| self.store.value(o).clone());
-        self.lit(pos, v)
+        if matches!(v, Value::Int(_)) && t.is_finite() {
+            let converted = ops::convert(t, v, &mut self.fuel).map_err(at(pos))?;
+            let v = converted.unwrap_or_else(|| self.store.value(o).clone());
+            return self.lit(pos, v);
+        }
+        self.lit_out(pos, o)
     }
 
     /// Two data operands as hardware. At least one of them is hardware.
@@ -216,20 +230,16 @@ impl Evaluator<'_> {
                 let no_ty = self.store.value(&no).finite_ty();
                 match (yes_ty, no_ty) {
                     (Some(ty), _) => {
-                        let value = self.store.value(&yes).clone();
-                        let left = self.lit(pos, value)?;
+                        let left = self.lit_out(pos, &yes)?;
                         (left, self.lit_at(pos, &ty, &no)?)
                     }
                     (_, Some(ty)) => {
                         let left = self.lit_at(pos, &ty, &yes)?;
-                        let value = self.store.value(&no).clone();
-                        (left, self.lit(pos, value)?)
+                        (left, self.lit_out(pos, &no)?)
                     }
                     _ => {
-                        let value = self.store.value(&yes).clone();
-                        let left = self.lit(pos, value)?;
-                        let value = self.store.value(&no).clone();
-                        (left, self.lit(pos, value)?)
+                        let left = self.lit_out(pos, &yes)?;
+                        (left, self.lit_out(pos, &no)?)
                     }
                 }
             }

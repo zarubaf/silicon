@@ -7,7 +7,8 @@
 //!
 //! The table of instantiations is normative. An `instance` statement works in these steps:
 //!
-//! 1. It evaluates the arguments from left to right. Each argument is static (`S011`).
+//! 1. It evaluates the arguments from left to right. Each argument is static (`S011`). A
+//!    literal with `[]` takes the type of its parameter.
 //! 2. It charges the recursive size of the arguments, also for a done instantiation. Then the
 //!    serialization charges the square of the size of each integer, and its length in bytes.
 //! 3. A clocked child in a combinational module is `S017` at the statement.
@@ -23,14 +24,14 @@
 //! instantiation.
 
 use super::{Evaluator, Let, Out, ROOT, Res, Slot, Tag, fail, need};
-use crate::hw::{Graph, Handle, HwId, Kind, Op, Port, Val};
+use crate::hw::{Graph, Handle, HwId, Kind, Op, Port, Seen, Val};
 use crate::int::Int;
 use crate::names::{Name, PathId, Paths, Sym, encode, module_name};
 use crate::scan::Scan;
 use crate::value::{InstantiationId, Ty, Value, int_size};
 use crate::{Budget, Code};
 use parse::StackError;
-use parse::ast::{Expr, Ident, Item, NodeId, Pos, Stmt, UnOp};
+use parse::ast::{Expr, Ident, Item, NodeId, Param, Pos, Stmt, TypeExpr, UnOp};
 use resolve::{Kind as DeclKind, Resolved, Target as Ref};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -461,38 +462,7 @@ impl Evaluator<'_> {
                 name,
                 ty,
                 init,
-            } => {
-                if self.elab.work.body.domain.is_none() {
-                    return fail(
-                        Code::S017,
-                        *pos,
-                        "a combinational module has no register".to_owned(),
-                    );
-                }
-                let ty = self.type_expr(ty)?;
-                let ty = data_type(*pos, ty)?;
-                let out = self.eval(init)?;
-                let out = need(init, out)?;
-                self.copy(*pos, &out)?;
-                let init = self.conform(*pos, &ty, out)?;
-                let id = self.decl(name)?;
-                let path = self.fresh(id);
-                self.elab.work.body.regs.push(RegDecl {
-                    path,
-                    ty: ty.clone(),
-                    init,
-                    pos: *pos,
-                });
-                let reg = self.resource(Kind::Reg, path, ty.clone(), *pos, self.sym(id));
-                self.bind(
-                    id,
-                    Slot {
-                        ty: Some(ty),
-                        mutable: false,
-                        value: reg,
-                    },
-                );
-            }
+            } => self.reg_stmt(*pos, name, ty, init)?,
             Stmt::Wire { pos, name, ty } => {
                 let t = self.type_expr(ty)?;
                 let t = data_type(*pos, t)?;
@@ -525,8 +495,12 @@ impl Evaluator<'_> {
                 let h = match self.conform_val(*pos, &ty, o)? {
                     Val::Static(v) => self.lit(*pos, v)?,
                     Val::Hw(h) => h,
-                    v @ Val::Handle(_) => {
-                        return fail(Code::S010, *pos, format!("{} is not data", self.text(&v)));
+                    v @ (Val::Handle(_) | Val::Pending(..)) => {
+                        return fail(
+                            Code::S010,
+                            *pos,
+                            format!("{} is not data", self.text(v.seen())),
+                        );
                     }
                 };
                 self.bind_target(*pos, t, h);
@@ -542,15 +516,115 @@ impl Evaluator<'_> {
         Ok(())
     }
 
-    /// An `instance` statement.
-    fn inst_stmt(&mut self, pos: Pos, name: &Ident, module: &Ident, args: &[Expr]) -> Res<()> {
-        let mut outs = Vec::with_capacity(args.len());
-        for x in args {
+    /// The arguments of an instantiation of the item `i` at `pos`, from left to right. Each
+    /// argument is static (`S011`) when it evaluates. A literal with `[]` takes the type of its
+    /// parameter, as the argument of a call does. Its parameter type then evaluates in the
+    /// scope of the module, with each earlier parameter bound to its argument. The parent pays
+    /// this work.
+    fn arguments(&mut self, pos: Pos, i: usize, xs: &[Expr]) -> Res<Vec<Out>> {
+        let mut outs = Vec::with_capacity(xs.len());
+        let mut waiting = false;
+        for x in xs {
             let o = self.eval(x)?;
             let o = need(x, o)?;
-            self.check_static(pos, &o)?;
+            if matches!(self.store.seen(&o), Seen::Pending(..)) {
+                waiting = true;
+            } else {
+                self.check_static(pos, &o)?;
+            }
             outs.push(o);
         }
+        if let Some(Item::Module { params, .. }) = self.file.ast().get(i)
+            && waiting
+            && params.len() == outs.len()
+        {
+            return self.in_frame(None, |ev| {
+                ev.in_item(i, ROOT, |ev| ev.settle_arguments(pos, params, outs))
+            });
+        }
+        for o in &outs {
+            self.check_static(pos, o)?;
+        }
+        Ok(outs)
+    }
+
+    /// The arguments in the scope of the module: a literal that waits takes the type of its
+    /// parameter. Each parameter stays bound for the types after it. The values leave the
+    /// frame at the end.
+    fn settle_arguments(&mut self, pos: Pos, params: &[Param], outs: Vec<Out>) -> Res<Vec<Out>> {
+        let mut ids = Vec::with_capacity(outs.len());
+        for (q, o) in params.iter().zip(outs) {
+            let o = if matches!(self.store.seen(&o), Seen::Pending(..)) {
+                let t = self.type_expr(&q.ty)?;
+                self.settle(pos, &t, o)?
+            } else {
+                o
+            };
+            let x = self.static_value(pos, o)?;
+            let id = self.decl(&q.name)?;
+            let ty = x.ty();
+            self.bind(
+                id,
+                Slot {
+                    ty,
+                    mutable: false,
+                    value: Val::Static(x),
+                },
+            );
+            ids.push(id);
+        }
+        let mut done = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(Slot { value, .. }) = self.store.frame_mut().and_then(|f| f.remove(&id)) {
+                done.push(Out::Made(value));
+            }
+        }
+        Ok(done)
+    }
+
+    /// A `reg` statement. A register in a combinational module is `S017` before its type.
+    fn reg_stmt(&mut self, pos: Pos, name: &Ident, ty: &TypeExpr, init: &Expr) -> Res<()> {
+        if self.elab.work.body.domain.is_none() {
+            return fail(
+                Code::S017,
+                pos,
+                "a combinational module has no register".to_owned(),
+            );
+        }
+        let ty = self.type_expr(ty)?;
+        let ty = data_type(pos, ty)?;
+        let out = self.eval(init)?;
+        let out = need(init, out)?;
+        self.copy(pos, &out)?;
+        let init = self.conform(pos, &ty, out)?;
+        let id = self.decl(name)?;
+        let path = self.fresh(id);
+        self.elab.work.body.regs.push(RegDecl {
+            path,
+            ty: ty.clone(),
+            init,
+            pos,
+        });
+        let reg = self.resource(Kind::Reg, path, ty.clone(), pos, self.sym(id));
+        self.bind(
+            id,
+            Slot {
+                ty: Some(ty),
+                mutable: false,
+                value: reg,
+            },
+        );
+        Ok(())
+    }
+
+    /// An `instance` statement.
+    fn inst_stmt(&mut self, pos: Pos, name: &Ident, module: &Ident, args: &[Expr]) -> Res<()> {
+        let i = match self.file.target(module.id) {
+            Some(Ref::Decl(id)) => self.items.get(&id).copied(),
+            _ => None,
+        }
+        .unwrap_or(usize::MAX);
+        let outs = self.arguments(pos, i, args)?;
         let mut sizes = 0u128;
         for o in &outs {
             sizes += self.size(o);
@@ -560,11 +634,6 @@ impl Evaluator<'_> {
         for o in outs {
             vs.push(self.static_value(pos, o)?);
         }
-        let i = match self.file.target(module.id) {
-            Some(Ref::Decl(id)) => self.items.get(&id).copied(),
-            _ => None,
-        }
-        .unwrap_or(usize::MAX);
         if let Some(Item::Module {
             name: m, domains, ..
         }) = self.file.ast().get(i)
