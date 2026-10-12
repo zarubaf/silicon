@@ -210,6 +210,23 @@ theorem Expr.trans (s : Bool) (e : Expr) : ∀ c, Trans s (e.toks c) := by
     refine Expr.trans_paren _ ?_
     intro d rest
     simp [Expr.toks, scan, OpenK, CloseK, ih _ d]
+  | case12 p xs ih =>
+    refine Expr.trans_paren _ ?_
+    have ha := Inner.argToks (xss := xs.map (Expr.toks 0)) (by simpa using fun x hx => ih x hx 0)
+    rw [Expr.toks.eq_def]
+    simp only [Expr.level, Nat.not_lt_zero, ite_false]
+    split
+    · simpa using Trans.paren (ha.append Inner.comma)
+    · simpa using Trans.paren ha
+  | case13 p xs ih =>
+    refine Expr.trans_paren _ ?_
+    have ha := Inner.argToks (xss := xs.map (Expr.toks 0)) (by simpa using fun x hx => ih x hx 0)
+    intro d rest
+    simp [Expr.toks, scan, OpenK, CloseK, ha d]
+  | case14 p b q i ih =>
+    refine Expr.trans_paren _ ?_
+    intro d rest
+    simp [Expr.toks, scan, OpenK, CloseK, ih _ d]
   | _ =>
     refine Expr.trans_paren _ ?_
     intro d rest

@@ -8,7 +8,8 @@ The Rust front end copies the dump byte for byte, so these rules fix each byte:
 
 - A node prints as `(<constructor> <field> ...)`: the constructor name of `Source.Syntax` in
   lowercase, then each field in declaration order. One space separates two parts. A node with
-  no fields cannot occur, so `(` is always followed by a name.
+  no fields prints as `(<constructor>)`, for example `(unit)`. Thus `(` is followed by a name,
+  except in an empty list.
 - The structure `Param` prints as `(param <comptime> <name> <ty>)`.
 - A `pos` field does not print. An `Ident` prints as its name, as a string.
 - A `String` prints in double quotes. It escapes `"`, `\`, LF, CR, and tab as `\"`, `\\`,
@@ -42,6 +43,9 @@ def ident (i : Ident) : String := quote i.name
 def args (xs : List String) : String := ", ".intercalate xs
 
 def indent (depth : Nat) : String := "".pushn ' ' (4 * depth)
+
+/-! The end of a tuple of `n` elements. A tuple of one element ends with `,)`. -/
+def tupleEnd (n : Nat) : String := if n == 1 then ",)" else ")"
 
 def unaryLevel : Nat := 10
 def postfixLevel : Nat := 11
@@ -90,6 +94,10 @@ mutual
     | .call _ f xs => Expr.dumpsTo (f.dumpTo (acc ++ "(call ") ++ " (") xs ++ "))"
     | .index _ b xs => Expr.dumpsTo (b.dumpTo (acc ++ "(index ") ++ " (") xs ++ "))"
     | .field _ b f => b.dumpTo (acc ++ "(field ") ++ " " ++ ident f ++ ")"
+    | .unit _ => acc ++ "(unit)"
+    | .tuple _ xs => Expr.dumpsTo (acc ++ "(tuple (") xs ++ "))"
+    | .array _ xs => Expr.dumpsTo (acc ++ "(array (") xs ++ "))"
+    | .select _ b _ i => b.dumpTo (acc ++ "(select ") ++ " " ++ toString i ++ ")"
 
   /-- `sepTo Expr.dumpTo`, which the recursion over `Expr` needs as its own function. -/
   def Expr.dumpsTo (acc : String) : List Expr → String
@@ -98,9 +106,20 @@ mutual
     | e :: es => Expr.dumpsTo (e.dumpTo acc ++ " ") es
 end
 
-def TypeExpr.dumpTo (acc : String) : TypeExpr → String
-  | .name _ n => acc ++ "(name " ++ quote n ++ ")"
-  | .index _ b xs => listTo Expr.dumpTo (b.dumpTo (acc ++ "(index ") ++ " ") xs ++ ")"
+mutual
+  def TypeExpr.dumpTo (acc : String) : TypeExpr → String
+    | .name _ n => acc ++ "(name " ++ quote n ++ ")"
+    | .index _ b xs => listTo Expr.dumpTo (b.dumpTo (acc ++ "(index ") ++ " ") xs ++ ")"
+    | .unit _ => acc ++ "(unit)"
+    | .tuple _ ts => TypeExpr.dumpsTo (acc ++ "(tuple (") ts ++ "))"
+    | .array _ t n => n.dumpTo (t.dumpTo (acc ++ "(array ") ++ " ") ++ ")"
+
+  /-- `sepTo TypeExpr.dumpTo`, which the recursion over `TypeExpr` needs as its own function. -/
+  def TypeExpr.dumpsTo (acc : String) : List TypeExpr → String
+    | [] => acc
+    | [t] => t.dumpTo acc
+    | t :: ts => TypeExpr.dumpsTo (t.dumpTo acc ++ " ") ts
+end
 
 mutual
   def Stmt.dumpTo (acc : String) : Stmt → String
@@ -163,6 +182,9 @@ module parameter has `comptime`. The printer does not keep comments.
 The binding power of an expression follows the levels of the grammar, from 0 for `if` to 11
 for a postfix form or a primary. A form prints in parentheses where its context needs a
 higher level. A `field` prints in parentheses also as the callee of a `call`.
+
+A `tuple` of one element prints as `(a,)`, so that it differs from `a` in parentheses. A
+`select` is a postfix form, and its selector prints in decimal.
 -/
 
 def BinOp.text : BinOp → String
@@ -210,11 +232,18 @@ def Expr.print (ctx : Nat) (e : Expr) : String :=
       callee ++ "(" ++ args (xs.map (Expr.print 0)) ++ ")"
     | .index _ b xs => b.print postfixLevel ++ "[" ++ args (xs.map (Expr.print 0)) ++ "]"
     | .field _ b f => b.print postfixLevel ++ "." ++ f.name
+    | .unit _ => "()"
+    | .tuple _ xs => "(" ++ args (xs.map (Expr.print 0)) ++ tupleEnd xs.length
+    | .array _ xs => "[" ++ args (xs.map (Expr.print 0)) ++ "]"
+    | .select _ b _ i => b.print postfixLevel ++ "." ++ toString i
   if e.level < ctx then "(" ++ text ++ ")" else text
 
 def TypeExpr.print : TypeExpr → String
   | .name _ n => n
   | .index _ b xs => b.print ++ "[" ++ args (xs.map (Expr.print 0)) ++ "]"
+  | .unit _ => "()"
+  | .tuple _ ts => "(" ++ args (ts.map TypeExpr.print) ++ tupleEnd ts.length
+  | .array _ t n => "[" ++ t.print ++ "; " ++ n.print 0 ++ "]"
 
 mutual
   /-- The lines of a statement at the nesting depth `d`. Each line ends with LF. -/

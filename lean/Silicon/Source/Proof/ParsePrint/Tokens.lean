@@ -37,11 +37,22 @@ def Expr.toks (ctx : Nat) (e : Expr) : List Kind :=
     | .index _ b xs =>
       b.toks postfixLevel ++ .symbol "[" :: argToks (xs.map (Expr.toks 0)) ++ [.symbol "]"]
     | .field _ b f => b.toks postfixLevel ++ [.symbol ".", .ident f.name]
+    | .unit _ => [.symbol "(", .symbol ")"]
+    | .tuple _ xs =>
+      .symbol "(" :: argToks (xs.map (Expr.toks 0))
+        ++ (if xs.length == 1 then [.symbol ",", .symbol ")"] else [.symbol ")"])
+    | .array _ xs => .symbol "[" :: argToks (xs.map (Expr.toks 0)) ++ [.symbol "]"]
+    | .select _ b _ i => b.toks postfixLevel ++ [.symbol ".", .number i]
   if e.level < ctx then .symbol "(" :: body ++ [.symbol ")"] else body
 
 def TypeExpr.toks : TypeExpr → List Kind
   | .name _ n => [.ident n]
   | .index _ b xs => b.toks ++ .symbol "[" :: argToks (xs.map (Expr.toks 0)) ++ [.symbol "]"]
+  | .unit _ => [.symbol "(", .symbol ")"]
+  | .tuple _ ts =>
+    .symbol "(" :: argToks (ts.map TypeExpr.toks)
+      ++ (if ts.length == 1 then [.symbol ",", .symbol ")"] else [.symbol ")"])
+  | .array _ t n => .symbol "[" :: t.toks ++ .symbol ";" :: n.toks 0 ++ [.symbol "]"]
 
 mutual
   /-- The kinds of `s.print d`, for each depth `d`. -/

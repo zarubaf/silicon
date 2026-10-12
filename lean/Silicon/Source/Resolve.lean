@@ -181,7 +181,7 @@ structure Binding where
 /-!
 The state of the walk. `env` maps each visible name to its innermost declaration. `scope` is the
 number of the current scope, and `scopes` the next free scope number. `locals` is the next local
-number of the current item. `dup` and `unknown` hold the first `S002` and the first `S003`.
+number of the current item. `dup` holds the first `S002`, and `unknown` the first `S003` or `S004`.
 -/
 structure St where
   env : Std.TreeMap String Binding compare
@@ -244,6 +244,13 @@ def isModule (i : Nat) : M Bool := return (← read)[i]? matches some (.module .
 def wrongKind (pos : Pos) (n what : String) : M Unit :=
   recordUnknown ⟨.S003, pos, s!"`{n}` is not {what}"⟩
 
+/-!
+A container form of slice 2. The parser does not give one yet, so it gets `S004` and a
+placeholder.
+-/
+def later (pos : Pos) : M Unit :=
+  recordUnknown ⟨.S004, pos, "containers are not in this phase"⟩
+
 def expr : Source.Expr → M Expr
   | .num p v => return .num p v
   | .bool p v => return .bool p v
@@ -259,6 +266,7 @@ def expr : Source.Expr → M Expr
   | .call p f xs => return .call p (← expr f) (← xs.mapM expr)
   | .index p b xs => return .index p (← expr b) (← xs.mapM expr)
   | .field p b f => return .field p (← expr b) f
+  | .unit p | .tuple p .. | .array p .. | .select p .. => do later p; return .num p 0
 
 def typeExpr : Source.TypeExpr → M TypeExpr
   | .name p n => do
@@ -267,6 +275,7 @@ def typeExpr : Source.TypeExpr → M TypeExpr
     | some _ => wrongKind p n "a type"; return .name p n default
     | none => return .name p n default
   | .index p b xs => return .index p (← typeExpr b) (← xs.mapM expr)
+  | .unit p | .tuple p .. | .array p .. => do later p; return .name p "()" default
 
 /-! The module item of an `instance`. -/
 def moduleRef (m : Ident) : M Nat := do

@@ -170,6 +170,7 @@ theorem head_append {s t : String} (h : ∃ x xs, s.toList = x :: xs ∧ exprSta
 theorem Expr.head (e : Expr) :
     e.printable = true → ∀ ctx, ∃ x xs, (e.print ctx).toList = x :: xs ∧ exprStart x = true := by
   induction e using Expr.erase.induct with
+  | case11 | case12 | case13 | case14 => intro h; simp [Expr.printable] at h
   | case1 p v =>
     intro _; apply Expr.head_paren
     rw [Expr.print]
@@ -270,6 +271,7 @@ theorem Expr.lexes {D : Nat} (e : Expr) :
   have hcs : Starts .sep ")".toList := Starts.lit (by decide)
   have hop : Lexes D .any "(".toList [.symbol "("] := Lexes.glue (by decide)
   induction e using Expr.erase.induct with
+  | case11 | case12 | case13 | case14 => intro h; simp [Expr.printable] at h
   | case1 p v =>
     intro h; apply Lexes.wrap
     simp only [Expr.printable] at h
@@ -356,13 +358,14 @@ theorem Expr.lexes {D : Nat} (e : Expr) :
 
 theorem TypeExpr.lexes {D : Nat} (t : TypeExpr) :
     t.printable = true → Lexes D .sep t.print.toList t.toks := by
-  induction t with
-  | name p n =>
+  induction t using TypeExpr.erase.induct with
+  | case3 | case4 | case5 => intro h; simp [TypeExpr.printable] at h
+  | case1 p n =>
     intro h
     simp only [TypeExpr.printable] at h
     rw [TypeExpr.print, TypeExpr.toks]
     exact Lexes.name h
-  | index p b xs ih =>
+  | case2 p b xs ih =>
     intro h
     simp only [TypeExpr.printable, Bool.and_eq_true, Expr.printableAll_eq,
       List.all_eq_true] at h
