@@ -173,7 +173,9 @@ pub(crate) fn convert(
     tys: &Types,
 ) -> Result<Option<Value>, Fault> {
     match tys.get(t) {
-        Ty::Unit | Ty::Array(..) | Ty::Tuple(_) => container::convert(t, v, fuel, tys),
+        Ty::Unit | Ty::Array(..) | Ty::Tuple(_) | Ty::List(_) => {
+            container::convert(t, v, fuel, tys)
+        }
         scalar => container::convert_scalar(scalar, v, fuel, tys),
     }
 }
@@ -240,6 +242,13 @@ pub(crate) fn binary(
     let text = binop_text(op);
     match op {
         BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => {
+            if let (Value::Str(x), Value::Str(y)) = (a, b) {
+                if op != BinOp::Add {
+                    return type_error(format!("`{text}` does not accept strings; `+` joins them"));
+                }
+                fuel.pay(sum(a, b))?;
+                return Ok(Value::Str(join(x, y)));
+            }
             let (Value::Int(x), Value::Int(y)) = (a, b) else {
                 return type_error(format!(
                     "`{text}` accepts only Int and Nat, not {} and {}",
@@ -320,6 +329,14 @@ pub(crate) fn binary(
         BinOp::Shl | BinOp::Shr => shift(op, a, b, fuel, tys),
         BinOp::Land | BinOp::Lor => type_error(format!("`{text}` selects; it has no step")),
     }
+}
+
+/// The join of two strings: one new string, with no copy of either operand beyond the result.
+fn join(x: &str, y: &str) -> String {
+    let mut joined = String::with_capacity(x.len() + y.len());
+    joined.push_str(x);
+    joined.push_str(y);
+    joined
 }
 
 /// The type check of `==` on two scalars.
@@ -526,9 +543,14 @@ pub(crate) fn reinterpret(
     }
 }
 
-/// `UInt[w]` or `SInt[w]`. The width is 1 to 65536.
+/// `UInt[w]`, `SInt[w]`, or `List[T]`. The width is 1 to 65536.
 pub(crate) fn family(k: Prelude, args: &[&Value], tys: &mut Types) -> Result<TyId, Fault> {
     match (k, args) {
+        (Prelude::List, [Value::Type(e)]) => Ok(tys.list(*e)),
+        (Prelude::List, [v]) => type_error(format!(
+            "the element of a list is a type, not {}",
+            v.text(tys)
+        )),
         (Prelude::UInt | Prelude::SInt, [Value::Int(w)]) => {
             let width = w
                 .to_u64()

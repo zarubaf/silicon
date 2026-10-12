@@ -185,7 +185,15 @@ pub(crate) fn parse_value(name: &str, t: &Ty, v: &str) -> Result<Bits, String> {
             }
             (n, *w)
         }
-        Ty::Nat | Ty::Int | Ty::Unit | Ty::Type | Ty::Array(..) | Ty::Tuple(_) | Ty::Struct(_) => {
+        Ty::Nat
+        | Ty::Int
+        | Ty::Unit
+        | Ty::Type
+        | Ty::String
+        | Ty::List(_)
+        | Ty::Array(..)
+        | Ty::Tuple(_)
+        | Ty::Struct(_) => {
             return Err(bad());
         }
     };

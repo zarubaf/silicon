@@ -54,12 +54,18 @@ impl<'a> Text<'a> {
             Ty::Int => self.out.push_str("Int"),
             Ty::Unit => self.out.push_str("Unit"),
             Ty::Type => self.out.push_str("Type"),
+            Ty::String => self.out.push_str("String"),
             Ty::UInt(w) => write!(self.out, "UInt[{w}]").unwrap_or_default(),
             Ty::SInt(w) => write!(self.out, "SInt[{w}]").unwrap_or_default(),
             Ty::Array(elem, len) => {
                 self.out.push('[');
                 self.work
                     .push(Piece::Owned(format!("; {}]", int_text(len))));
+                self.work.push(Piece::Ty(*elem));
+            }
+            Ty::List(elem) => {
+                self.out.push_str("List[");
+                self.work.push(Piece::Text("]"));
                 self.work.push(Piece::Ty(*elem));
             }
             Ty::Tuple(parts) => {
@@ -85,7 +91,7 @@ impl<'a> Text<'a> {
         }
     }
 
-    /// The type of the value `v`, which has one. Its elements wait on the stack.
+    /// The type of the value `v`. Its elements wait on the stack.
     pub(crate) fn value(&mut self, v: &'a Value) {
         match v {
             Value::Int(_) => self.out.push_str("Int"),
@@ -100,13 +106,18 @@ impl<'a> Text<'a> {
                 self.work.push(Piece::Ty(*elem));
             }
             Value::Record(t, _) => self.work.push(Piece::Ty(*t)),
+            Value::List(elem, _) => {
+                self.out.push_str("List[");
+                self.work.push(Piece::Text("]"));
+                self.work.push(Piece::Ty(*elem));
+            }
             Value::Tuple(xs) => {
                 self.out.push('(');
                 self.work
                     .push(Piece::Text(if xs.len() == 1 { ",)" } else { ")" }));
                 self.push_list(xs, ", ", Piece::Value);
             }
-            Value::Str(_) => {}
+            Value::Str(_) => self.out.push_str("String"),
         }
     }
 
@@ -125,7 +136,12 @@ impl<'a> Text<'a> {
                 .push_str(&int_text(&Int::from_signed(x, x.width()))),
             Value::Type(t) => self.work.push(Piece::Ty(*t)),
             Value::Unit => self.out.push_str("()"),
-            Value::Array(_, xs) => {
+            Value::List(t, xs) if xs.is_empty() => {
+                self.out.push_str("list(");
+                self.work.push(Piece::Text(")"));
+                self.work.push(Piece::Ty(*t));
+            }
+            Value::Array(_, xs) | Value::List(_, xs) => {
                 self.out.push('[');
                 self.work.push(Piece::Text("]"));
                 self.push_list(xs, ", ", Piece::Lit);

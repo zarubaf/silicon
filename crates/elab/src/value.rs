@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The static values of slice 1 and the static containers, types, and records of slice 2,
+//! The static values of slice 1 and the static containers, types, records, strings, and lists of slice 2,
 //! their canonical serialization, their recursive size, and their depth, as Lean
 //! `Source.Value` defines them. Section 7.1 of the front-end spec uses the serialization in an
 //! `InstantiationId`, section 5.4 uses the size in the cost model, and section 5.5 bounds the
@@ -20,7 +20,7 @@ use std::hash::Hasher;
 /// A static value of slice 1, or a static container of slice 2. A finite value holds the bit
 /// vector of the core semantics with the width of its type. An array keeps its element type,
 /// so an empty array has a type, and a record keeps its struct type for the same reason. A
-/// tuple has at least one element: `()` is `Unit`.
+/// list keeps its element type too. A tuple has at least one element: `()` is `Unit`.
 pub enum Value {
     Int(Int),
     Bool(bool),
@@ -32,12 +32,16 @@ pub enum Value {
     Array(TyId, Vec<Value>),
     Tuple(Vec<Value>),
     Record(TyId, Vec<Value>),
+    List(TyId, Vec<Value>),
 }
 
 impl Value {
     fn take_children(&mut self, work: &mut Vec<Value>) {
         match self {
-            Value::Array(_, elems) | Value::Tuple(elems) | Value::Record(_, elems) => {
+            Value::Array(_, elems)
+            | Value::Tuple(elems)
+            | Value::Record(_, elems)
+            | Value::List(_, elems) => {
                 work.append(elems);
             }
             Value::Int(_)
@@ -86,11 +90,11 @@ impl fmt::Debug for Value {
                 Value::SInt(x) => write!(f, "SInt({x:?})")?,
                 Value::Type(t) => write!(f, "Type({t:?})")?,
                 Value::Unit => f.write_str("Unit")?,
-                Value::Array(t, xs) | Value::Record(t, xs) => {
-                    let form = if matches!(v, Value::Array(..)) {
-                        "Array"
-                    } else {
-                        "Record"
+                Value::Array(t, xs) | Value::Record(t, xs) | Value::List(t, xs) => {
+                    let form = match v {
+                        Value::Array(..) => "Array",
+                        Value::Record(..) => "Record",
+                        _ => "List",
                     };
                     write!(f, "{form}({t:?}, [")?;
                     work.push(Piece::Text("])"));
@@ -127,6 +131,7 @@ enum Build<'a> {
     Array(TyId, usize),
     Tuple(usize),
     Record(TyId, usize),
+    List(TyId, usize),
 }
 
 /// The last `n` results of a walk that builds containers.
@@ -152,6 +157,10 @@ impl Clone for Value {
                     work.push(Build::Record(*t, xs.len()));
                     work.extend(xs.iter().rev().map(Build::Visit));
                 }
+                Build::Visit(Value::List(t, xs)) => {
+                    work.push(Build::List(*t, xs.len()));
+                    work.extend(xs.iter().rev().map(Build::Visit));
+                }
                 Build::Visit(v) => done.push(v.clone_scalar()),
                 Build::Array(t, n) => {
                     let xs = last(&mut done, n);
@@ -165,6 +174,10 @@ impl Clone for Value {
                     let xs = last(&mut done, n);
                     done.push(Value::Record(t, xs));
                 }
+                Build::List(t, n) => {
+                    let xs = last(&mut done, n);
+                    done.push(Value::List(t, xs));
+                }
             }
         }
         done.pop().unwrap_or(Value::Unit)
@@ -177,7 +190,8 @@ impl PartialEq for Value {
         while let Some(pair) = work.pop() {
             let same = match pair {
                 (Value::Array(s, xs), Value::Array(t, ys))
-                | (Value::Record(s, xs), Value::Record(t, ys)) => {
+                | (Value::Record(s, xs), Value::Record(t, ys))
+                | (Value::List(s, xs), Value::List(t, ys)) => {
                     work.extend(xs.iter().zip(ys));
                     s == t && xs.len() == ys.len()
                 }
@@ -220,74 +234,46 @@ pub(crate) fn width_int(width: u32) -> Int {
 }
 
 impl Value {
-    /// The type of a value. A string and a tuple that holds one have no type.
-    pub fn ty(&self, tys: &mut Types) -> Option<TyId> {
-        #[cfg(test)]
-        tys.tick(self.typing_nodes());
-        if !self.has_type() {
-            return None;
-        }
+    /// The type of a value. An array and a list have the type of their elements, and a record
+    /// its struct type, so the walk enters only the tuples.
+    pub fn ty(&self, tys: &mut Types) -> TyId {
         let mut done = Vec::new();
         let mut work = vec![Build::Visit(self)];
         while let Some(step) = work.pop() {
             match step {
                 Build::Visit(Value::Tuple(xs)) => {
+                    #[cfg(test)]
+                    tys.tick(1);
                     work.push(Build::Tuple(xs.len()));
                     work.extend(xs.iter().rev().map(Build::Visit));
                 }
-                Build::Visit(v) => done.push(v.node_ty(tys)?),
-                Build::Tuple(n) | Build::Array(_, n) | Build::Record(_, n) => {
+                Build::Visit(v) => {
+                    #[cfg(test)]
+                    tys.tick(1);
+                    done.push(v.node_ty(tys));
+                }
+                Build::Tuple(n) | Build::Array(_, n) | Build::Record(_, n) | Build::List(_, n) => {
                     let parts = last(&mut done, n);
                     done.push(tys.tuple(parts));
                 }
             }
         }
-        done.pop()
-    }
-
-    /// Whether the value has a type: no string is an element of it, also of a tuple in it. An
-    /// array has the type of its elements, and a record its struct type, so the walk does not
-    /// enter them.
-    fn has_type(&self) -> bool {
-        let mut work = vec![self];
-        while let Some(v) = work.pop() {
-            match v {
-                Value::Str(_) => return false,
-                Value::Tuple(xs) => work.extend(xs),
-                _ => {}
-            }
-        }
-        true
-    }
-
-    /// The nodes that `has_type` visits, for the test of the work of a type.
-    #[cfg(test)]
-    fn typing_nodes(&self) -> u64 {
-        let mut nodes = 0;
-        let mut work = vec![self];
-        while let Some(v) = work.pop() {
-            nodes += 1;
-            match v {
-                Value::Str(_) => return nodes,
-                Value::Tuple(xs) => work.extend(xs),
-                _ => {}
-            }
-        }
-        nodes
+        done.pop().unwrap_or_else(|| tys.mk(Ty::Unit))
     }
 
     /// The type of a value that is not a tuple.
-    fn node_ty(&self, tys: &mut Types) -> Option<TyId> {
+    fn node_ty(&self, tys: &mut Types) -> TyId {
         match self {
-            Value::Int(_) => Some(tys.mk(Ty::Int)),
-            Value::Bool(_) => Some(tys.mk(Ty::Bool)),
-            Value::UInt(x) => Some(tys.mk(Ty::UInt(x.width()))),
-            Value::SInt(x) => Some(tys.mk(Ty::SInt(x.width()))),
-            Value::Unit => Some(tys.mk(Ty::Unit)),
-            Value::Type(_) => Some(tys.mk(Ty::Type)),
-            Value::Array(elem, xs) => Some(tys.array(*elem, Int::from_u64(xs.len() as u64))),
-            Value::Record(t, _) => Some(*t),
-            Value::Str(_) | Value::Tuple(_) => None,
+            Value::Int(_) => tys.mk(Ty::Int),
+            Value::Bool(_) => tys.mk(Ty::Bool),
+            Value::UInt(x) => tys.mk(Ty::UInt(x.width())),
+            Value::SInt(x) => tys.mk(Ty::SInt(x.width())),
+            Value::Type(_) => tys.mk(Ty::Type),
+            Value::Str(_) => tys.mk(Ty::String),
+            Value::Array(elem, xs) => tys.array(*elem, Int::from_u64(xs.len() as u64)),
+            Value::List(elem, _) => tys.list(*elem),
+            Value::Record(t, _) => *t,
+            Value::Unit | Value::Tuple(_) => tys.mk(Ty::Unit),
         }
     }
 
@@ -300,7 +286,11 @@ impl Value {
             Value::UInt(x) => Value::UInt(x.clone()),
             Value::SInt(x) => Value::SInt(x.clone()),
             Value::Type(t) => Value::Type(*t),
-            Value::Unit | Value::Array(..) | Value::Tuple(_) | Value::Record(..) => Value::Unit,
+            Value::Unit
+            | Value::Array(..)
+            | Value::Tuple(_)
+            | Value::Record(..)
+            | Value::List(..) => Value::Unit,
         }
     }
 
@@ -325,14 +315,13 @@ impl Value {
         }
     }
 
-    /// What the value is, for a message. Only a tuple has neither a type nor its own text.
-    /// The text of a type stops after `TEXT_LIMIT` bytes.
+    /// What the value is, for a message: a string and a type have their own text, and another
+    /// value its type. The text of a type stops after `TEXT_LIMIT` bytes.
     #[must_use]
     pub fn text(&self, tys: &Types) -> String {
         match self {
             Value::Str(_) => "a string".to_owned(),
             Value::Type(_) => "a type".to_owned(),
-            v if !v.has_type() => "a tuple".to_owned(),
             v => {
                 let mut out = Text::default();
                 out.value(v);
@@ -373,7 +362,10 @@ impl Value {
                 Value::Str(s) => 1 + s.chars().count() as u64,
                 Value::UInt(x) | Value::SInt(x) => width_size(x.width()),
                 Value::Type(t) => t.size(),
-                Value::Array(_, xs) | Value::Tuple(xs) | Value::Record(_, xs) => {
+                Value::Array(_, xs)
+                | Value::Tuple(xs)
+                | Value::Record(_, xs)
+                | Value::List(_, xs) => {
                     work.extend(xs);
                     1
                 }
@@ -393,7 +385,7 @@ impl Value {
         while let Some((v, above)) = work.pop() {
             let own = match v {
                 Value::Type(t) => t.depth(),
-                Value::Array(t, xs) | Value::Record(t, xs) => {
+                Value::Array(t, xs) | Value::Record(t, xs) | Value::List(t, xs) => {
                     work.extend(xs.iter().map(|x| (x, above + 1)));
                     1 + t.depth()
                 }
@@ -421,7 +413,10 @@ impl Value {
                 Value::Int(_) | Value::UInt(_) | Value::SInt(_) => {
                     u128::from(v.size()) * u128::from(v.size())
                 }
-                Value::Array(_, xs) | Value::Tuple(xs) | Value::Record(_, xs) => {
+                Value::Array(_, xs)
+                | Value::Tuple(xs)
+                | Value::Record(_, xs)
+                | Value::List(_, xs) => {
                     work.extend(xs);
                     1
                 }
@@ -461,8 +456,12 @@ impl Value {
                     t.hash_into(h);
                 }
                 Value::Unit => h.write_u8(7),
-                Value::Array(t, xs) | Value::Record(t, xs) => {
-                    h.write_u8(if matches!(v, Value::Array(..)) { 8 } else { 9 });
+                Value::Array(t, xs) | Value::Record(t, xs) | Value::List(t, xs) => {
+                    h.write_u8(match v {
+                        Value::Array(..) => 8,
+                        Value::Record(..) => 9,
+                        _ => 11,
+                    });
                     t.hash_into(h);
                     h.write_usize(xs.len());
                     work.extend(xs.iter().rev());
@@ -738,13 +737,15 @@ mod tests {
         assert_eq!(tys.text(two), "(Bool, [Int; 2])");
         let pair = Value::Tuple(vec![int("1"), Value::Bool(true)]);
         let pair_ty = tys.tuple(vec![i, b]);
-        assert_eq!(pair.ty(&mut tys), Some(pair_ty));
+        assert_eq!(pair.ty(&mut tys), pair_ty);
         let empty = Value::Array(b, vec![]);
         let empty_ty = array_ty(&mut tys, b, 0);
-        assert_eq!(empty.ty(&mut tys), Some(empty_ty));
+        assert_eq!(empty.ty(&mut tys), empty_ty);
         let strings = Value::Tuple(vec![Value::Str("a".to_owned())]);
-        assert_eq!(strings.ty(&mut tys), None);
-        assert_eq!(strings.text(&tys), "a tuple");
+        let string = tys.mk(Ty::String);
+        let strings_ty = tys.tuple(vec![string]);
+        assert_eq!(strings.ty(&mut tys), strings_ty);
+        assert_eq!(strings.text(&tys), "(String,)");
         assert_eq!(pair.text(&tys), "(Int, Bool)");
     }
 
@@ -810,7 +811,7 @@ mod tests {
             return Value::Array(b, vec![Value::Bool(true), Value::Bool(false)]);
         }
         let below = doubling(tys, k - 1);
-        let elem = below.ty(tys).unwrap();
+        let elem = below.ty(tys);
         Value::Array(elem, vec![below.clone(), below])
     }
 
@@ -974,7 +975,7 @@ mod tests {
         assert_eq!(tys.text(w), "Wrap[[[Bool; 1]; 1]]");
         let r = Value::Record(p8, vec![uint(8, 3), Value::Bool(false)]);
         assert_eq!(r.text(&tys), "Packet[8]");
-        assert_eq!(r.ty(&mut tys), Some(p8));
+        assert_eq!(r.ty(&mut tys), p8);
         let pair = Value::Tuple(vec![Value::Type(p8), Value::Unit]);
         assert_eq!(pair.text(&tys), "(Type, Unit)");
         let lit = tys.begin_spec("Lit", 3, vec![r.clone(), Value::Str("a\"".to_owned())]);
@@ -1128,6 +1129,129 @@ mod tests {
         assert_eq!(tys.zero_depth(none), 2);
         let nat = tys.mk(Ty::Nat);
         assert!(tys.zero(nat).is_none());
+    }
+
+    /// The forms of section 7.1 for strings and lists, and their types and texts, as the cases
+    /// of `Silicon.Source.Test.Value` in Lean.
+    #[test]
+    fn strings_and_lists() {
+        let mut tys = Types::default();
+        let (i, s, u8t) = (tys.mk(Ty::Int), tys.mk(Ty::String), tys.mk(Ty::UInt(8)));
+        let list = |tys: &mut Types, e: TyId, xs: Vec<Value>| {
+            let _ = tys.list(e);
+            Value::List(e, xs)
+        };
+        let two = list(&mut tys, i, vec![int("1"), int("2")]);
+        assert_eq!(two.serialize(&tys), "(list int ((int 1) (int 2)))");
+        let none = list(&mut tys, i, vec![]);
+        assert_eq!(none.serialize(&tys), "(list int ())");
+        let list_int = tys.list(i);
+        assert_eq!(Value::Type(list_int).serialize(&tys), "(type (list int))");
+        assert_eq!(Value::Type(s).serialize(&tys), "(type string)");
+        let strings = list(&mut tys, s, vec![Value::Str("a".to_owned())]);
+        assert_eq!(strings.serialize(&tys), "(list string ((string \"a\")))");
+        let list_u8 = tys.list(u8t);
+        let nested = tys.list(list_u8);
+        assert_eq!(
+            Value::Type(nested).serialize(&tys),
+            "(type (list (list (uint 8))))"
+        );
+        assert_eq!(Value::Str("a".to_owned()).ty(&mut tys), s);
+        assert_eq!(none.ty(&mut tys), list_int);
+        assert_eq!(tys.text(list_u8), "List[UInt[8]]");
+        assert_eq!(tys.text(s), "String");
+        assert_eq!(none.text(&tys), "List[Int]");
+        let mut text = Text::default();
+        text.value(&none);
+        assert_eq!(text.finish(&tys), "List[Int]");
+        assert_eq!(Value::Type(list_int).size(), 2);
+        assert_eq!(list_u8.size(), 3);
+        assert_eq!((list_int.size(), list_int.depth()), (2, 2));
+        assert_eq!((s.size(), s.depth()), (1, 1));
+        assert_eq!((nested.size(), nested.depth()), (4, 3));
+        assert_eq!(none.size(), 1);
+        assert_eq!(strings.size(), 3);
+        assert_eq!(
+            list(&mut tys, i, vec![int("1"), int("18446744073709551616")]).size(),
+            4
+        );
+        assert_eq!(none.depth(), 2);
+        let inner = list(&mut tys, i, vec![]);
+        let outer = list(&mut tys, list_int, vec![inner]);
+        assert_eq!(outer.depth(), 3);
+        assert_eq!(none.measure_charge(), 1);
+        assert_eq!(two.measure_charge(), 3);
+        assert_eq!(Value::Str("abc".to_owned()).measure_charge(), 0);
+        assert!(!tys.meta(s).data && !tys.meta(list_int).data);
+        assert!(tys.zero(s).is_none() && tys.zero(list_int).is_none());
+    }
+
+    #[test]
+    fn a_list_equals_by_its_type_and_elements() {
+        let mut tys = Types::default();
+        let (b, i) = (tys.mk(Ty::Bool), tys.mk(Ty::Int));
+        assert_ne!(Value::List(i, vec![]), Value::List(b, vec![]));
+        assert_ne!(Value::List(i, vec![]), Value::Array(i, vec![]));
+        assert_eq!(
+            Value::List(i, vec![int("1")]),
+            Value::List(i, vec![int("1")])
+        );
+        assert_ne!(
+            Value::List(i, vec![int("1")]),
+            Value::List(i, vec![int("1"), int("1")])
+        );
+        let (l, m) = (tys.list(i), tys.list(b));
+        assert_ne!(l, m);
+        assert_eq!(l, tys.list(i));
+    }
+
+    /// A list of lists as deep as a long loop can make it keeps every walk off the stack. A
+    /// list prints its element type in full, so the text of a deep list grows with the square
+    /// of its depth: the walks that print run at a smaller depth.
+    #[test]
+    fn the_walks_over_a_deep_list_do_not_recurse() {
+        fn nest(tys: &mut Types, depth: usize) -> Value {
+            let mut t = tys.mk(Ty::Int);
+            let mut v = Value::List(t, vec![int("1")]);
+            for _ in 0..depth {
+                v = Value::List(tys.list(t), vec![v]);
+                t = tys.list(t);
+            }
+            v
+        }
+        std::thread::scope(|scope| {
+            let worker = std::thread::Builder::new()
+                .stack_size(256 * 1024)
+                .spawn_scoped(scope, || {
+                    const DEPTH: usize = 100_000;
+                    let mut tys = Types::default();
+                    let v = nest(&mut tys, DEPTH);
+                    assert_eq!(v.size(), DEPTH as u64 + 2);
+                    assert_eq!(v.measure_charge(), DEPTH as u128 + 2);
+                    assert_eq!(v.depth(), DEPTH as u64 + 2);
+                    assert!(v.text(&tys).len() < 1100);
+                    let w = v.clone();
+                    let same = v == w;
+                    assert!(same);
+                    let mut hash = std::hash::DefaultHasher::new();
+                    v.hash_into(&mut hash);
+                    assert!(format!("{v:?}").len() > DEPTH);
+                    drop(w);
+                    drop(v);
+                });
+            assert!(worker.is_ok_and(|w| w.join().is_ok()));
+            let worker = std::thread::Builder::new()
+                .stack_size(48 * 1024)
+                .spawn_scoped(scope, || {
+                    const DEPTH: usize = 2_000;
+                    let mut tys = Types::default();
+                    let v = nest(&mut tys, DEPTH);
+                    let text = v.serialize(&tys);
+                    assert_eq!(text.len() as u64, v.serialized_len(&mut tys));
+                    let _ = v.ty(&mut tys);
+                });
+            assert!(worker.is_ok_and(|w| w.join().is_ok()));
+        });
     }
 
     /// The `Debug` of a value keeps its own stack, so a failed assertion about a deep value

@@ -209,17 +209,17 @@ impl Val {
         }
     }
 
-    /// The type. A string, a type, a handle, and a literal that waits have none.
+    /// The type. A handle and a literal that waits have none.
     pub(crate) fn ty(&self, g: &Graph, tys: &mut Types) -> Option<TyId> {
         self.seen().ty(g, tys)
     }
 }
 
 impl Seen<'_> {
-    /// The type. A string, a type, a handle, and a literal that waits have none.
+    /// The type. A handle and a literal that waits have none.
     pub(crate) fn ty(&self, g: &Graph, tys: &mut Types) -> Option<TyId> {
         match self {
-            Seen::Static(v) => v.ty(tys),
+            Seen::Static(v) => Some(v.ty(tys)),
             Seen::Hw(h) => Some(tys.mk(g.ty(*h))),
             Seen::Handle(_) | Seen::Pending(..) => None,
         }

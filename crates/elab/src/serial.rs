@@ -110,6 +110,7 @@ fn type_node<'a, S: Sink>(tys: &'a Types, ty: &'a Ty, out: &mut S, work: &mut Ve
         Ty::Int => out.write_str("int").unwrap_or_default(),
         Ty::Unit => out.write_str("unit").unwrap_or_default(),
         Ty::Type => out.write_str("type").unwrap_or_default(),
+        Ty::String => out.write_str("string").unwrap_or_default(),
         Ty::UInt(w) => write!(out, "(uint {w})").unwrap_or_default(),
         Ty::SInt(w) => write!(out, "(sint {w})").unwrap_or_default(),
         Ty::Array(elem, len) => {
@@ -117,6 +118,11 @@ fn type_node<'a, S: Sink>(tys: &'a Types, ty: &'a Ty, out: &mut S, work: &mut Ve
             work.push(Item::Text(")"));
             work.push(Item::Int(len));
             work.push(Item::Text(" "));
+            work.push(Item::Ty(*elem));
+        }
+        Ty::List(elem) => {
+            out.write_str("(list ").unwrap_or_default();
+            work.push(Item::Text(")"));
             work.push(Item::Ty(*elem));
         }
         Ty::Tuple(parts) => {
@@ -163,6 +169,7 @@ fn value_node<'a, S: Sink>(v: &'a Value, out: &mut S, work: &mut Vec<Item<'a>>) 
         }
         Value::Array(t, xs) => container(out, work, "(array ", Some(*t), xs),
         Value::Record(t, xs) => container(out, work, "(record ", Some(*t), xs),
+        Value::List(t, xs) => container(out, work, "(list ", Some(*t), xs),
         Value::Tuple(xs) => container(out, work, "(tuple ", None, xs),
     }
 }

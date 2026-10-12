@@ -102,6 +102,9 @@ impl Evaluator<'_> {
         }
         let views: Vec<&Value> = outs.iter().map(|o| self.store.value(o)).collect();
         let t = ops::family(k, &views, &mut self.tys).map_err(at(pos))?;
+        if matches!(self.tys.get(t), Ty::List(_)) {
+            self.bounded(pos, t.depth())?;
+        }
         self.charge(pos, u128::from(t.size()))?;
         Ok(t)
     }

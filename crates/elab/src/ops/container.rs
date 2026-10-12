@@ -13,11 +13,11 @@ use crate::value::{Value, int_size, width_size};
 use parse::ast::BinOp;
 use std::cmp::Ordering;
 
-/// A container: `()`, an array, a tuple, or a record.
+/// A container: `()`, an array, a tuple, a record, or a list.
 pub(crate) fn composite(v: &Value) -> bool {
     matches!(
         v,
-        Value::Unit | Value::Array(..) | Value::Tuple(_) | Value::Record(..)
+        Value::Unit | Value::Array(..) | Value::Tuple(_) | Value::Record(..) | Value::List(..)
     )
 }
 
@@ -29,12 +29,14 @@ fn is_of(v: &Value, t: TyId, tys: &Types) -> bool {
             (Value::Unit, Ty::Unit)
             | (Value::Int(_), Ty::Int)
             | (Value::Bool(_), Ty::Bool)
-            | (Value::Type(_), Ty::Type) => true,
+            | (Value::Type(_), Ty::Type)
+            | (Value::Str(_), Ty::String) => true,
             (Value::Record(s, _), Ty::Struct(_)) => *s == t,
             (Value::UInt(x), Ty::UInt(w)) | (Value::SInt(x), Ty::SInt(w)) => x.width() == *w,
             (Value::Array(e, xs), Ty::Array(te, n)) => {
                 e == te && n.cmp_u64(xs.len() as u64) == Ordering::Equal
             }
+            (Value::List(e, _), Ty::List(te)) => e == te,
             (Value::Tuple(xs), Ty::Tuple(ts)) => {
                 work.extend(xs.iter().zip(ts.iter().copied()));
                 xs.len() == ts.len()
@@ -71,7 +73,8 @@ fn leaf(t: &Ty, v: &Value, tys: &Types) -> Result<Leaf, Fault> {
         (Ty::Unit, Value::Unit)
         | (Ty::Bool, Value::Bool(_))
         | (Ty::Int, Value::Int(_))
-        | (Ty::Type, Value::Type(_)) => Ok(Leaf::Same),
+        | (Ty::Type, Value::Type(_))
+        | (Ty::String, Value::Str(_)) => Ok(Leaf::Same),
         (Ty::Struct(_), Value::Record(s, _)) if tys.get(*s) == t => Ok(Leaf::Same),
         (Ty::Nat, Value::Int(n)) => {
             if n.is_negative() {
@@ -153,6 +156,10 @@ fn plan(t: TyId, v: &Value, tys: &Types) -> Result<u64, Fault> {
                 size = size.saturating_add(1);
                 work.extend(xs.iter().rev().map(|x| (*e, x)));
             }
+            (Ty::List(e), Value::List(_, xs)) => {
+                size = size.saturating_add(1);
+                work.extend(xs.iter().rev().map(|x| (*e, x)));
+            }
             (Ty::Tuple(ts), Value::Tuple(xs)) => {
                 if ts.len() != xs.len() {
                     return wrong(node, v, tys);
@@ -174,6 +181,7 @@ fn plan(t: TyId, v: &Value, tys: &Types) -> Result<u64, Fault> {
 enum Step<'a> {
     Visit(TyId, &'a Value),
     Array(TyId, usize),
+    List(TyId, usize),
     Tuple(usize),
 }
 
@@ -189,6 +197,10 @@ fn run(t: TyId, v: &Value, tys: &Types) -> Result<Value, Fault> {
                 match (node, v) {
                     (Ty::Array(e, _), Value::Array(_, xs)) => {
                         work.push(Step::Array(*e, xs.len()));
+                        work.extend(xs.iter().rev().map(|x| Step::Visit(*e, x)));
+                    }
+                    (Ty::List(e), Value::List(_, xs)) => {
+                        work.push(Step::List(*e, xs.len()));
                         work.extend(xs.iter().rev().map(|x| Step::Visit(*e, x)));
                     }
                     (Ty::Tuple(ts), Value::Tuple(xs)) => {
@@ -210,6 +222,10 @@ fn run(t: TyId, v: &Value, tys: &Types) -> Result<Value, Fault> {
             Step::Array(e, n) => {
                 let xs = done.split_off(done.len().saturating_sub(n));
                 done.push(Value::Array(e, xs));
+            }
+            Step::List(e, n) => {
+                let xs = done.split_off(done.len().saturating_sub(n));
+                done.push(Value::List(e, xs));
             }
             Step::Tuple(n) => {
                 let xs = done.split_off(done.len().saturating_sub(n));
@@ -241,14 +257,20 @@ pub(crate) fn convert(
 /// results of the parts that joined collect in `parts`.
 struct Open {
     key: (TyId, TyId),
-    /// The length of an array pair, which the common array type keeps.
-    len: Option<Int>,
+    form: Form,
     pairs: Vec<(TyId, TyId)>,
     next: usize,
     /// The units of the walk of this pair so far: 1 for the pair, and the units of its parts.
     charge: Int,
     parts: Vec<TyId>,
     failed: bool,
+}
+
+/// The form of a container pair that a join opened. An array pair keeps its length.
+enum Form {
+    Array(Int),
+    List,
+    Tuple,
 }
 
 /// The step of a join at a pair: a result, or a container pair that waits for its parts.
@@ -264,9 +286,12 @@ fn joined(charge: u64, ty: Option<TyId>) -> Joined {
     }
 }
 
-/// A container type: an array, a tuple, or a struct type.
+/// A container type: an array, a tuple, a list, or a struct type.
 fn container_ty(t: &Ty) -> bool {
-    matches!(t, Ty::Array(..) | Ty::Tuple(_) | Ty::Struct(_))
+    matches!(
+        t,
+        Ty::Array(..) | Ty::Tuple(_) | Ty::List(_) | Ty::Struct(_)
+    )
 }
 
 /// The common type of two types that are not two arrays, two tuples, or two struct types: the
@@ -291,9 +316,9 @@ fn visit(lhs: TyId, rhs: TyId, tys: &mut Types, budget: &mut u64) -> Visit {
     if let Some(done) = tys.joined(lhs, rhs) {
         return Visit::Done(done.clone());
     }
-    let open = |len: Option<Int>, pairs: Vec<(TyId, TyId)>| Open {
+    let open = |form: Form, pairs: Vec<(TyId, TyId)>| Open {
         key: (lhs, rhs),
-        len,
+        form,
         pairs,
         next: 0,
         charge: Int::from_u64(1),
@@ -303,17 +328,20 @@ fn visit(lhs: TyId, rhs: TyId, tys: &mut Types, budget: &mut u64) -> Visit {
     let (left, right) = (tys.get(lhs).clone(), tys.get(rhs).clone());
     let shaped = match (&left, &right) {
         (Ty::Array(a, n), Ty::Array(b, m)) => {
-            Some((n == m).then(|| (Some(n.clone()), vec![(*a, *b)])))
+            Some((n == m).then(|| (Form::Array(n.clone()), vec![(*a, *b)])))
         }
-        (Ty::Tuple(ls), Ty::Tuple(rs)) => Some(
-            (ls.len() == rs.len())
-                .then(|| (None, ls.iter().copied().zip(rs.iter().copied()).collect())),
-        ),
+        (Ty::List(a), Ty::List(b)) => Some(Some((Form::List, vec![(*a, *b)]))),
+        (Ty::Tuple(ls), Ty::Tuple(rs)) => Some((ls.len() == rs.len()).then(|| {
+            (
+                Form::Tuple,
+                ls.iter().copied().zip(rs.iter().copied()).collect(),
+            )
+        })),
         _ => None,
     };
     match shaped {
         Some(None) => Visit::Done(joined(1, None)),
-        Some(Some((len, pairs))) => {
+        Some(Some((form, pairs))) => {
             // The charge of this pair exceeds the units that remain, or the walk makes more
             // new pairs than the fuel holds: no fuel pays the join.
             if *budget == 0 {
@@ -323,7 +351,7 @@ fn visit(lhs: TyId, rhs: TyId, tys: &mut Types, budget: &mut u64) -> Visit {
                 });
             }
             *budget -= 1;
-            Visit::Open(open(len, pairs))
+            Visit::Open(open(form, pairs))
         }
         None => match (&left, &right) {
             (Ty::Struct(_), Ty::Struct(_)) => Visit::Done(Joined {
@@ -384,9 +412,10 @@ pub(crate) fn common_ty(lhs: TyId, rhs: TyId, tys: &mut Types, budget: &mut u64)
         let Some(finished) = stack.pop() else {
             return joined(0, None);
         };
-        let ty = (!finished.failed).then(|| match finished.len {
-            Some(len) => finished.parts.first().map(|elem| tys.array(*elem, len)),
-            None => Some(tys.tuple(finished.parts)),
+        let ty = (!finished.failed).then(|| match finished.form {
+            Form::Array(len) => finished.parts.first().map(|elem| tys.array(*elem, len)),
+            Form::List => finished.parts.first().map(|elem| tys.list(*elem)),
+            Form::Tuple => Some(tys.tuple(finished.parts)),
         });
         let ty = ty.flatten();
         let done = Joined {
@@ -408,13 +437,11 @@ pub(crate) fn common_of<'a>(
 ) -> (Int, Option<TyId>) {
     let mut charge = Int::zero();
     let mut vs = vs.into_iter();
-    let Some(Some(mut t)) = vs.next().map(|v| v.ty(tys)) else {
+    let Some(mut t) = vs.next().map(|v| v.ty(tys)) else {
         return (charge, None);
     };
     for w in vs {
-        let Some(u) = w.ty(tys) else {
-            return (charge, None);
-        };
+        let u = w.ty(tys);
         let done = common_ty(t, u, tys, &mut budget);
         charge = charge.add(&done.charge);
         let Some(next) = done.ty else {
@@ -471,6 +498,16 @@ fn same_check(a: &Value, b: &Value, tys: &mut Types, mut budget: u64) -> (Int, R
                 }
                 work.extend(xs.iter().zip(ys).rev());
             }
+            (Value::List(s, xs), Value::List(t, ys)) => {
+                let done = common_ty(*s, *t, tys, &mut budget);
+                charge = charge.add(&done.charge);
+                if done.ty.is_none() {
+                    return (charge, no_common_type(a, b, tys));
+                }
+                if xs.len() == ys.len() {
+                    work.extend(xs.iter().zip(ys).rev());
+                }
+            }
             (Value::Tuple(xs), Value::Tuple(ys)) => {
                 if xs.len() != ys.len() {
                     return (charge, no_common_type(a, b, tys));
@@ -499,6 +536,13 @@ fn same_run(a: &Value, b: &Value, tys: &Types) -> Result<bool, Fault> {
             | (Value::Tuple(xs), Value::Tuple(ys))
             | (Value::Record(_, xs), Value::Record(_, ys)) => {
                 work.extend(xs.iter().zip(ys).rev());
+            }
+            (Value::List(_, xs), Value::List(_, ys)) => {
+                if xs.len() == ys.len() {
+                    work.extend(xs.iter().zip(ys).rev());
+                } else {
+                    all = false;
+                }
             }
             (Value::Unit, Value::Unit) => {}
             _ => all &= leaf_eq_run(a, b, tys)?,
@@ -578,7 +622,7 @@ mod tests {
             assert_eq!(v.measure_charge(), DEPTH as u128 + 1);
             let text = v.serialize(&tys);
             assert_eq!(text.len() as u64, v.serialized_len(&mut tys));
-            assert_eq!(v.ty(&mut tys), Some(t));
+            assert_eq!(v.ty(&mut tys), t);
             assert!(v.text(&tys).ends_with("..."));
             assert!(tys.text(t).len() < 1100);
             let w = v.clone();
@@ -588,6 +632,40 @@ mod tests {
             let mut fuel = Fuel::new(u64::MAX);
             let n = convert(tn, &v, &mut fuel, &tys);
             assert!(matches!(n, Ok(Some(_))));
+            let eq = container_op(BinOp::Eq, &v, &w, &mut fuel, &mut tys);
+            assert!(matches!(eq, Ok(Value::Bool(true))));
+            let mut budget = u64::MAX;
+            assert_eq!(common_ty(t, tn, &mut tys, &mut budget).ty, Some(t));
+        });
+    }
+
+    /// The list `[[x]]` of depth `depth` around `x` of the type `t`, and its type. A list prints
+    /// its element type, so no test here prints a text.
+    fn deep_list(tys: &mut Types, depth: usize, x: Value, t: TyId) -> (Value, TyId) {
+        let (mut v, mut elem) = (x, t);
+        for _ in 0..depth {
+            v = Value::List(elem, vec![v]);
+            elem = tys.list(elem);
+        }
+        (v, elem)
+    }
+
+    /// The walks over a list and its type keep their own stacks: a typed use, `==`, and the
+    /// join of two list types.
+    #[test]
+    fn the_walks_over_a_deep_list_do_not_recurse() {
+        small_stack(|| {
+            const DEPTH: usize = 100_000;
+            let mut tys = Types::default();
+            let (int, nat) = (tys.mk(Ty::Int), tys.mk(Ty::Nat));
+            let (v, t) = deep_list(&mut tys, DEPTH, Value::Int(Int::from_u64(7)), int);
+            let (_, tn) = deep_list(&mut tys, DEPTH, Value::Int(Int::from_u64(7)), nat);
+            assert_eq!(v.ty(&mut tys), t);
+            let w = v.clone();
+            let mut fuel = Fuel::new(u64::MAX);
+            let n = convert(tn, &v, &mut fuel, &tys);
+            assert!(matches!(n, Ok(Some(_))));
+            assert!(matches!(convert(t, &v, &mut fuel, &tys), Ok(None)));
             let eq = container_op(BinOp::Eq, &v, &w, &mut fuel, &mut tys);
             assert!(matches!(eq, Ok(Value::Bool(true))));
             let mut budget = u64::MAX;
@@ -621,7 +699,7 @@ mod tests {
             assert_eq!(v.measure_charge(), DEPTH as u128);
             let text = v.serialize(&tys);
             assert_eq!(text.len() as u64, v.serialized_len(&mut tys));
-            assert_eq!(v.ty(&mut tys), Some(t));
+            assert_eq!(v.ty(&mut tys), t);
             assert!(v.text(&tys).len() < 1100);
             assert!(tys.text(t).len() < 1100);
             let w = v.clone();

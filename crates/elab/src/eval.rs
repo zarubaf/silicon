@@ -47,8 +47,7 @@ enum Entry {
     Done(Val),
 }
 
-/// A local of the current frame. A string, a type, and a handle have no `Ty`, so their `ty`
-/// is `None`.
+/// A local of the current frame. A handle has no `Ty`, so its `ty` is `None`.
 struct Slot {
     ty: Option<TyId>,
     mutable: bool,
@@ -515,12 +514,7 @@ fn prim(pos: Pos, name: &str, k: Prelude) -> Res<Ty> {
         Prelude::Int => Ok(Ty::Int),
         Prelude::Unit => Ok(Ty::Unit),
         Prelude::Type => Ok(Ty::Type),
-        // TODO(#179): the types `String` and `List` (plan step 25).
-        Prelude::String | Prelude::List => fail(
-            Code::S010,
-            pos,
-            format!("the type `{name}` is not supported yet"),
-        ),
+        Prelude::String => Ok(Ty::String),
         _ => fail(
             Code::S007,
             pos,
@@ -529,10 +523,9 @@ fn prim(pos: Pos, name: &str, k: Prelude) -> Res<Ty> {
     }
 }
 
-/// A string, a type, and a handle have no `Ty`, so an assignment keeps their form.
+/// A handle has no `Ty`, so an assignment keeps its form.
 fn same_form(a: Seen<'_>, b: Seen<'_>) -> bool {
     match (a, b) {
-        (Seen::Static(Value::Str(_)), Seen::Static(Value::Str(_))) => true,
         (
             Seen::Handle(Handle::Res { kind, ty, .. }),
             Seen::Handle(Handle::Res {
