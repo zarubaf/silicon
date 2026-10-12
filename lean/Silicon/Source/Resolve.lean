@@ -35,6 +35,9 @@ The resolver does not look up the name after a `.`. The selection of a field or 
 later check. A selector `.N` holds a number, so it has no name. The container forms of slice 2,
 `()`, tuples, arrays, and the selector, have no declaration. The walk resolves their parts.
 
+A receiver call and a `mut` parameter are syntax of phase 4 of slice 2. The resolver does not
+resolve them yet: each gets `S004` at its start, and the walk continues with a placeholder.
+
 A position that needs a fixed kind gets a name of that kind, else `S003`:
 
 - A type name is a prelude type, a `struct` item, a `type` item, or a local. Only `Elab` knows
@@ -312,6 +315,9 @@ mutual
     | .array p xs => return .array p (← xs.mapM expr)
     | .select p b l k => return .select p (← expr b) l k
     | .arrayType p t n => return .arrayType p (← typeExpr t) (← expr n)
+    | .method p .. => do
+      recordUnknown ⟨.S004, p, "a receiver call is not supported yet"⟩
+      return .num p 0
 
   def typeExpr : Source.TypeExpr → M TypeExpr
     | .name p n => do
@@ -377,8 +383,9 @@ mutual
 end
 
 def param (p : Source.Param) : M Param := do
+  if p.mode == .mut then recordUnknown ⟨.S004, p.pos, "a `mut` formal is not supported yet"⟩
   let ty ← typeExpr p.ty
-  return ⟨p.pos, p.comptime, ← declare p.name, ty⟩
+  return ⟨p.pos, p.mode == .comptime, ← declare p.name, ty⟩
 
 /-!
 The fields of a struct. A field name is not a local, so the fields have their own table of

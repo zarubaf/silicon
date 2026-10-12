@@ -39,7 +39,8 @@ length `N` is an expression.
 
 A type in an expression position, such as `UInt[8]`, is an `index`. A `tuple` holds at least one
 element: `()` is `unit`. A `select` is the selector `.N` of a tuple. Its `litPos` is the position
-of the number literal, for `S013`.
+of the number literal, for `S013`. A `method` is the receiver call `recv.name(args)`. Its position
+is the position of the receiver, the start of the call.
 
 A type expression is a type name, a type family with its static arguments, the unit type `()`, a
 tuple type, or an array type `[T; N]`. A `tuple` holds at least one element type.
@@ -61,6 +62,7 @@ mutual
     | array (pos : Pos) (elems : List Expr)
     | select (pos : Pos) (base : Expr) (litPos : Pos) (index : Nat)
     | arrayType (pos : Pos) (elem : TypeExpr) (len : Expr)
+    | method (pos : Pos) (recv : Expr) (name : Ident) (args : List Expr)
 
   inductive TypeExpr where
     | name (pos : Pos) (name : String)
@@ -93,13 +95,18 @@ inductive Stmt where
   | alias (pos : Pos) (name : Ident) (ty : TypeExpr)
   deriving Repr, BEq, Inhabited
 
+/-! The mode of a parameter: no mark, `comptime`, or `mut`. -/
+inductive ParamMode where
+  | none | comptime | mut
+  deriving Repr, DecidableEq, BEq, Inhabited
+
 /-!
 A parameter of a function, a module, or a struct. A module parameter and a struct parameter always
-have `comptime`.
+have the mode `comptime`.
 -/
 structure Param where
   pos : Pos
-  comptime : Bool
+  mode : ParamMode
   name : Ident
   ty : TypeExpr
   deriving Repr, BEq, Inhabited

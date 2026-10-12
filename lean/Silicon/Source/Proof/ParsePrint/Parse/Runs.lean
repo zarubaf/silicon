@@ -200,6 +200,9 @@ theorem Expr.toks_head11 (e : Expr) : ∃ k, (e.toks 11).head? = some k ∧ PSta
   | case14 p b q i ihb =>
     obtain ⟨k, h, hk⟩ := ihb
     exact ⟨k, by simp [Expr.toks, Expr.level, postfixLevel, List.head?_append, h], hk⟩
+  | case16 p r m xs ihr _ =>
+    obtain ⟨k, h, hk⟩ := ihr
+    exact ⟨k, by simp [Expr.toks, Expr.level, postfixLevel, List.head?_append, h], hk⟩
 
 /-! The first kind of an expression is no closing bracket. -/
 def NotClose (k : Kind) : Prop := k ≠ .symbol ")" ∧ k ≠ .symbol "]"

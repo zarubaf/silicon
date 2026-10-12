@@ -52,13 +52,13 @@ private def v (s : String) : Expr := .name p s
 private def t (s : String) : TypeExpr := .name p s
 
 private def counter : Item :=
-  .module p (nm "Counter") [⟨p, true, nm "W", t "Nat"⟩] (some [nm "clk"])
+  .module p (nm "Counter") [⟨p, .comptime, nm "W", t "Nat"⟩] (some [nm "clk"])
     [.output p (nm "q") (.index p (t "UInt") [v "W"]),
      .connect p (.field p (v "u") (nm "d")) (.str p "a\n\"b\""),
      .expr p (.cond p (v "en") (.num p 1) (.num p 0))]
 
 private def helper : Item :=
-  .fn p false (nm "g") [⟨p, true, nm "n", t "Nat"⟩] (t "Nat")
+  .fn p false (nm "g") [⟨p, .comptime, nm "n", t "Nat"⟩] (t "Nat")
     [.local p true (nm "y") none (v "n"), .assign p (v "y") (.unary p .neg (v "y")),
      .ctIf p (v "b") [] (some []), .ret p (some (v "y"))]
 
@@ -94,13 +94,13 @@ example : Printable [.const p (nm "X")
 example : ¬ Printable [.const p (nm "X") (.tuple p []) (v "x")] := by decide
 
 /-! A struct with parameters and fields, a struct without them, and a `type` item and statement. -/
-example : Printable [.struct p (nm "P") [⟨p, true, nm "W", t "Nat"⟩]
+example : Printable [.struct p (nm "P") [⟨p, .comptime, nm "W", t "Nat"⟩]
     [⟨nm "a", .index p (t "UInt") [v "W"]⟩, ⟨nm "b", t "Bool"⟩], .struct p (nm "E") [] [],
     .alias p (nm "T") (t "U"), .fn p false (nm "f") [] (t "T") [.alias p (nm "L") (t "T")]] := by
   decide +kernel
 
 /-! A struct parameter without `comptime`, and a keyword as a field name. -/
-example : ¬ Printable [.struct p (nm "P") [⟨p, false, nm "W", t "Nat"⟩] []] := by decide
+example : ¬ Printable [.struct p (nm "P") [⟨p, .none, nm "W", t "Nat"⟩] []] := by decide
 example : ¬ Printable [.struct p (nm "P") [] [⟨nm "in", t "T"⟩]] := by decide
 
 /-! Array types in expressions: in an array, as the base of an index, and in a type argument. -/
@@ -115,12 +115,16 @@ example : ¬ Printable [.const p (nm "X") (t "Type") (.arrayType p (.tuple p [])
   decide
 
 /-! A module parameter without `comptime`, and two domains. -/
-example : ¬ Printable [.module p (nm "M") [⟨p, false, nm "W", t "Nat"⟩] none []] := by decide
+example : ¬ Printable [.module p (nm "M") [⟨p, .none, nm "W", t "Nat"⟩] none []] := by decide
 example : ¬ Printable [.module p (nm "M") [] (some [nm "a", nm "b"]) []] := by decide
 
 /-! A resource in a `fn` without `comptime`, but not in a `comptime fn`. -/
 example : ¬ Printable [.fn p false (nm "f") [] (t "T") [.wire p (nm "w") (t "T")]] := by decide
 example : Printable [.fn p true (nm "f") [] (t "T") [.wire p (nm "w") (t "T")]] := by decide
+
+/-! A `mut` parameter and a receiver call: the proof does not cover them yet. -/
+example : ¬ Printable [.fn p false (nm "f") [⟨p, .mut, nm "x", t "T"⟩] (t "T") []] := by decide
+example : ¬ Printable [.const p (nm "X") (t "T") (.method p (v "a") (nm "m") [])] := by decide
 
 /-! A control character in a string, and a number that is too large. -/
 example : ¬ Printable [.const p (nm "X") (t "T") (.str p "\x01")] := by decide
