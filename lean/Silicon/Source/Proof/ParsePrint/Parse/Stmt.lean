@@ -804,6 +804,40 @@ theorem Runs.stmt_connect (p : Pos) (tg v : Expr) : SGoal (.connect p tg v) := b
   obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
   simpa using Runs.stmt_place p tg v ":=" (Or.inr rfl) hpl hpt hv hw (by omega) hd
 
+/-! `aliasDecl` reads `type N = T;` at an item or a statement. -/
+theorem Runs.aliasDecl {α : Type} (n : Ident) (ty : TypeExpr) (hty : ty.printable = true)
+    (ctx : Ctx) (i f : Nat) (start : Pos) (make : Pos → Ident → TypeExpr → α) (R : List Kind)
+    (hw : Win ctx.input i (.keyword "type" :: .ident n.name :: .symbol "=" ::
+      (ty.toks ++ .symbol ";" :: R)))
+    (hf : 4 * ty.toks.length ≤ f) (hd : ty.toks.length ≤ ctx.depth) :
+    Runs (aliasDecl f start make) ctx i (i + (ty.toks.length + 4))
+      (fun r => ∃ id ty', id.name = n.name ∧ ty'.erase = ty.erase ∧ r = make start id ty') := by
+  unfold Parse.aliasDecl
+  refine Runs.kw_bind hw.head ?_
+  refine Runs.bind (Runs.ident hw.tail.head) fun id hid => ?_
+  refine Runs.sym_bind hw.tail.tail.head ?_
+  have w := hw.tail.tail.tail
+  refine Runs.bind (Runs.typeTop ty hty ctx _ f _ _ w (by decide) hf hd) fun ty' hty' => ?_
+  exact Runs.sym_bind w.drop.head (Runs.idx (by omega) (Runs.pure ⟨id, ty', hid, hty', rfl⟩))
+
+theorem Runs.stmt_alias (p : Pos) (n : Ident) (ty : TypeExpr) : SGoal (.alias p n ty) := by
+  intro ctx i f t R hp hw ht hf hd
+  simp only [Stmt.printable, Bool.and_eq_true] at hp
+  have e : (Stmt.alias p n ty).toks ++ t :: R = .keyword "type" :: .ident n.name ::
+      .symbol "=" :: (ty.toks ++ .symbol ";" :: t :: R) := by
+    simp [Stmt.toks]
+  have hT : (Stmt.alias p n ty).toks.length = ty.toks.length + 4 := by
+    simp [Stmt.toks] <;> omega
+  rw [e] at hw
+  rw [hT] at hf hd ⊢
+  obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
+  rw [Parse.stmt]
+  refine Runs.peek_bind (Runs.read_bind ?_)
+  simp only [stmt_res_kw hw.head (by decide), hw.head, Bool.false_eq_true, ite_false]
+  refine Runs.mono (Runs.aliasDecl n ty hp.2 ctx i f _ _ _ hw (by omega) (by omega)) ?_
+  rintro _ ⟨id, ty', hid, hty', rfl⟩
+  simp [Stmt.erase, Ident.erase_of_name (b := n) hid, hty']
+
 /-! ## Blocks -/
 
 /-! The first kind of a statement: no `else`, no `}`, and no `eof`. -/
@@ -933,7 +967,7 @@ theorem Runs.stmt_of (s : Stmt) (hIH : ∀ x : Stmt, x.toks.length < s.toks.leng
   | ctFor p x lo hi b => exact Runs.stmt_ctFor p x lo hi b (hB b (by simp [Stmt.toks]; omega))
   | block p b => exact Runs.stmt_block p b (hB b (by simp [Stmt.toks]))
   | expr p v => exact Runs.stmt_expr p v
-  | alias => intro _ _ _ _ _ h; simp [Stmt.printable] at h
+  | alias p n ty => exact Runs.stmt_alias p n ty
 
 theorem sgoals (n : Nat) : ∀ s : Stmt, s.toks.length < n → SGoal s := by
   induction n with

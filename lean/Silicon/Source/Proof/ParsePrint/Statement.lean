@@ -93,6 +93,16 @@ example : Printable [.const p (nm "X")
 /-! An empty tuple type: the printer writes it as `()`, the unit type. -/
 example : ¬ Printable [.const p (nm "X") (.tuple p []) (v "x")] := by decide
 
+/-! A struct with parameters and fields, a struct without them, and a `type` item and statement. -/
+example : Printable [.struct p (nm "P") [⟨p, true, nm "W", t "Nat"⟩]
+    [⟨nm "a", .index p (t "UInt") [v "W"]⟩, ⟨nm "b", t "Bool"⟩], .struct p (nm "E") [] [],
+    .alias p (nm "T") (t "U"), .fn p false (nm "f") [] (t "T") [.alias p (nm "L") (t "T")]] := by
+  decide +kernel
+
+/-! A struct parameter without `comptime`, and a keyword as a field name. -/
+example : ¬ Printable [.struct p (nm "P") [⟨p, false, nm "W", t "Nat"⟩] []] := by decide
+example : ¬ Printable [.struct p (nm "P") [] [⟨nm "in", t "T"⟩]] := by decide
+
 /-! A module parameter without `comptime`, and two domains. -/
 example : ¬ Printable [.module p (nm "M") [⟨p, false, nm "W", t "Nat"⟩] none []] := by decide
 example : ¬ Printable [.module p (nm "M") [] (some [nm "a", nm "b"]) []] := by decide

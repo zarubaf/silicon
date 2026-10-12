@@ -515,7 +515,15 @@ theorem Stmt.lexes {D : Nat} (plain : Bool) (s : Stmt) :
   have eq : Lexes D .any " = ".toList [.symbol "="] := Lexes.glue (by decide)
   have nl : Lexes D .any "\n".toList [] := Lexes.glue (by decide)
   induction s using Stmt.erase.induct with
-  | case15 => intro h; simp [Stmt.printable] at h
+  | case15 p n ty =>
+    intro h d
+    simp only [Stmt.printable, Bool.and_eq_true] at h
+    rw [Stmt.print, Stmt.toks]
+    have g : Lexes D .any "type ".toList [.keyword "type"] := Lexes.glue (by decide)
+    have := (Lexes.indent (D := D) d).append (g.append ((Lexes.name h.1).append (eq.append
+      ((TypeExpr.lexes ty h.2).append semi (Starts.glue ";\n" (by decide) _)) (Starts.any _))
+      (Starts.glue " = " (by decide) _)) (Starts.any _)) (Starts.any _)
+    simpa using this
   | case1 p m n ty v =>
     intro h d
     simp only [Stmt.printable, Bool.and_eq_true] at h
@@ -688,6 +696,21 @@ theorem Param.lexes {D : Nat} {static : Bool} (p : Param) (h : p.printable stati
   have := hc.append (Lexes.decl (D := D) h.1.2 h.2) (Starts.any _)
   simpa using this
 
+/-! The fields of a struct, each on its own line and with a `,` at its end. -/
+theorem Lexes.fields {D : Nat} (fs : List StructField)
+    (h : fs.all (fun f => validName f.name.name && f.ty.printable) = true) :
+    Lexes D .any (String.join (fs.map fun f => Print.indent 1 ++ f.print ++ ",\n")).toList
+      (fs.flatMap StructField.toks) := by
+  have g : Lexes D .any ",\n".toList [.symbol ","] := Lexes.glue (by decide)
+  induction fs with
+  | nil => exact Lexes.nil
+  | cons x xs ih =>
+    simp only [List.all_cons, Bool.and_eq_true] at h
+    have hx := (Lexes.indent (D := D) 1).append ((Lexes.decl (D := D) h.1.1 h.1.2).append g
+      (Starts.glue ",\n" (by decide) _)) (Starts.any _)
+    have := hx.append (ih h.2) (Starts.any _)
+    simpa [StructField.print, StructField.toks] using this
+
 theorem Item.lexes {D : Nat} (i : Item) (h : i.printable = true) :
     Lexes D .any i.print.toList i.toks := by
   have semi : Lexes D .any ";\n".toList [.symbol ";"] := Lexes.glue (by decide)
@@ -705,7 +728,42 @@ theorem Item.lexes {D : Nat} (i : Item) (h : i.printable = true) :
     simp only [List.all_eq_true] at hp
     exact Lexes.args _ _ ps fun x hx => Param.lexes x (hp x hx)
   cases i with
-  | struct | alias => simp [Item.printable] at h
+  | alias p n ty =>
+    simp only [Item.printable, Bool.and_eq_true] at h
+    rw [Item.print, Item.toks]
+    have g : Lexes D .any "type ".toList [.keyword "type"] := Lexes.glue (by decide)
+    have := g.append ((Lexes.name h.1).append (eq.append ((TypeExpr.lexes ty h.2).append
+      semi (Starts.glue ";\n" (by decide) _)) (Starts.any _)) (Starts.glue " = " (by decide) _))
+      (Starts.any _)
+    simpa using this
+  | struct p n ps fs =>
+    simp only [Item.printable, Bool.and_eq_true] at h
+    obtain ⟨⟨hn, hp⟩, hfs⟩ := h
+    rw [Item.print, Item.toks]
+    have g : Lexes D .any "struct ".toList [.keyword "struct"] := Lexes.glue (by decide)
+    have hb : Lexes D .any (if fs.isEmpty then "{}"
+        else "{\n" ++ String.join (fs.map fun f => Print.indent 1 ++ f.print ++ ",\n") ++
+          "}").toList
+        (.symbol "{" :: fs.flatMap StructField.toks ++ [.symbol "}"]) := by
+      cases fs with
+      | nil => exact Lexes.glue (by decide)
+      | cons x xs =>
+        have g1 : Lexes D .any "{\n".toList [.symbol "{"] := Lexes.glue (by decide)
+        have g2 : Lexes D .any "}".toList [.symbol "}"] := Lexes.glue (by decide)
+        have := g1.append ((Lexes.fields (x :: xs) hfs).append g2 (Starts.any _)) (Starts.any _)
+        simpa using this
+    have tail := sp.append (hb.append nl (Starts.any _)) (Starts.any _)
+    cases ps with
+    | nil =>
+      have := g.append ((Lexes.name hn).append tail (Starts.glue " " (by decide) _))
+        (Starts.any _)
+      simpa using this
+    | cons q qs =>
+      have gc : Lexes D .any ")".toList [.symbol ")"] := Lexes.glue (by decide)
+      have := g.append ((Lexes.name hn).append (ho.append ((params true _ hp).append
+        (gc.append tail (Starts.any _)) (Starts.glue ")" (by decide) _)) (Starts.any _))
+        (Starts.glue "(" (by decide) _)) (Starts.any _)
+      simpa using this
   | const p n ty v =>
     simp only [Item.printable, Bool.and_eq_true] at h
     rw [Item.print, Item.toks]

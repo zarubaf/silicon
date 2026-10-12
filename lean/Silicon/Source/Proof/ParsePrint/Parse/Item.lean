@@ -312,6 +312,122 @@ theorem Runs.moduleItem (p : Pos) (n : Ident) (ps : List Param) (ds : Option (Li
     refine Runs.idx (by omega) (Runs.pure ?_)
     simp [Item.erase, Ident.erase_of_name (b := n) hid, hms, hb', hds']
 
+/-! `fields` reads the fields of a struct after its `{`, up to its `}`. -/
+theorem Runs.fields (fs : List StructField)
+    (hp : fs.all (fun f => validName f.name.name && f.ty.printable) = true) :
+    ∀ (ctx : Ctx) (i f : Nat) (R : List Kind) (acc : List StructField),
+    Win ctx.input i (fs.flatMap StructField.toks ++ .symbol "}" :: R) →
+    4 * (fs.flatMap StructField.toks).length + 1 ≤ f →
+    (fs.flatMap StructField.toks).length ≤ ctx.depth →
+    Runs (fields f acc) ctx i (i + (fs.flatMap StructField.toks).length + 1)
+      (fun r => ∃ ms, r = acc.reverse ++ ms ∧
+        ms.map StructField.erase = fs.map StructField.erase) := by
+  induction fs with
+  | nil =>
+    intro ctx i f R acc hw hf _
+    simp only [List.flatMap_nil, List.nil_append, List.length_nil] at hw hf ⊢
+    obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
+    rw [Parse.fields]
+    refine Runs.bind (Runs.acceptSym_true hw.head) fun b hb => ?_
+    subst b
+    exact Runs.pure ⟨[], by simp, rfl⟩
+  | cons x xs ih =>
+    intro ctx i f R acc hw hf hd
+    simp only [List.all_cons, Bool.and_eq_true] at hp
+    obtain ⟨⟨hn, hty⟩, hxs⟩ := hp
+    have e : (x :: xs).flatMap StructField.toks ++ .symbol "}" :: R = .ident x.name.name ::
+        .symbol ":" :: (x.ty.toks ++ .symbol "," ::
+        (xs.flatMap StructField.toks ++ .symbol "}" :: R)) := by
+      simp [StructField.toks]
+    have hT : ((x :: xs).flatMap StructField.toks).length =
+        x.ty.toks.length + (xs.flatMap StructField.toks).length + 3 := by
+      simp [StructField.toks]; omega
+    rw [e] at hw
+    rw [hT] at hf hd ⊢
+    obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
+    rw [Parse.fields]
+    refine Runs.bind (Runs.acceptSym_false (by rw [hw.head]; simp)) fun b hb => ?_
+    subst b
+    reduce_checks
+    refine Runs.bind (Runs.ident hw.head) fun id hid => ?_
+    refine Runs.bind (Runs.typeAnnotation x.ty hty ctx _ f _ _ hw.tail (by decide) (by omega)
+      (by omega)) fun ty' hty' => ?_
+    have w := hw.tail.tail.drop
+    refine Runs.bind (Runs.acceptSym_false (by rw [w.head]; decide)) fun b hb => ?_
+    subst b
+    reduce_checks
+    refine Runs.sym_bind w.head ?_
+    refine Runs.idx (by omega) (Runs.mono (ih hxs ctx _ f R (⟨id, ty'⟩ :: acc) w.tail
+      (by omega) (by omega)) ?_)
+    rintro r ⟨ms, rfl, hms⟩
+    refine ⟨⟨id, ty'⟩ :: ms, by simp, ?_⟩
+    simp [hms, StructField.erase, Ident.erase_of_name (b := x.name) hid, hty']
+
+theorem Runs.structItem (p : Pos) (n : Ident) (ps : List Param) (fs : List StructField)
+    (hp : (Item.struct p n ps fs).printable = true) (ctx : Ctx) (i f : Nat) (R : List Kind)
+    (start : Pos) (hw : Win ctx.input i ((Item.struct p n ps fs).toks ++ R))
+    (hf : 4 * (Item.struct p n ps fs).toks.length + 5 ≤ f)
+    (hd : (Item.struct p n ps fs).toks.length ≤ ctx.depth) :
+    Runs (structItem f start) ctx i (i + (Item.struct p n ps fs).toks.length)
+      (fun it => it.erase = (Item.struct p n ps fs).erase) := by
+  simp only [Item.printable, Bool.and_eq_true] at hp
+  obtain ⟨⟨hn, hps⟩, hfs⟩ := hp
+  unfold Parse.structItem
+  have body : ∀ (j : Nat) (ms : List Param), ms.map Param.erase = ps.map Param.erase →
+      Win ctx.input j (.symbol "{" :: (fs.flatMap StructField.toks ++ .symbol "}" :: R)) →
+      i ≤ j →
+      j + (fs.flatMap StructField.toks).length + 2 = i + (Item.struct p n ps fs).toks.length →
+      ∀ id : Ident, id.name = n.name →
+      Runs (Parse.sym "{" >>= fun _ => Parse.fields f [] >>= fun fs' =>
+          (Pure.pure (Item.struct start id ms fs') : P Item)) ctx j
+        (i + (Item.struct p n ps fs).toks.length)
+        (fun it => it.erase = (Item.struct p n ps fs).erase) := by
+    intro j ms hms w hij hj id hid
+    refine Runs.sym_bind w.head ?_
+    refine Runs.bind (Runs.fields fs hfs ctx _ f R [] w.tail (by omega) (by omega))
+      fun fs' hfs' => ?_
+    obtain ⟨ms', rfl, hms'⟩ := hfs'
+    refine Runs.idx (by omega) (Runs.pure ?_)
+    simp [Item.erase, Ident.erase_of_name (b := n) hid, hms, hms']
+  cases ps with
+  | nil =>
+    have e : (Item.struct p n [] fs).toks ++ R = .keyword "struct" :: .ident n.name ::
+        .symbol "{" :: (fs.flatMap StructField.toks ++ .symbol "}" :: R) := by
+      simp [Item.toks]
+    have hT : (Item.struct p n [] fs).toks.length = (fs.flatMap StructField.toks).length + 4 := by
+      simp [Item.toks]
+    rw [e] at hw
+    refine Runs.kw_bind hw.head ?_
+    refine Runs.bind (Runs.ident hw.tail.head) fun id hid => ?_
+    have w := hw.tail.tail
+    refine Runs.bind (Runs.acceptSym_false (by rw [w.head]; decide)) fun b hb => ?_
+    subst b
+    reduce_checks
+    refine Runs.bind (Runs.pure (Q := (· = [])) rfl) fun ms hms => ?_
+    subst ms
+    exact body _ [] rfl w (by omega) (by rw [hT]; omega) id hid
+  | cons q qs =>
+    have e : (Item.struct p n (q :: qs) fs).toks ++ R = .keyword "struct" :: .ident n.name ::
+        .symbol "(" :: (argToks ((q :: qs).map Param.toks) ++ .symbol ")" ::
+        .symbol "{" :: (fs.flatMap StructField.toks ++ .symbol "}" :: R)) := by
+      simp [Item.toks]
+    have hT : (Item.struct p n (q :: qs) fs).toks.length =
+        (argToks ((q :: qs).map Param.toks)).length + (fs.flatMap StructField.toks).length +
+          6 := by
+      simp [Item.toks]; omega
+    rw [e] at hw
+    rw [hT] at hf hd
+    refine Runs.kw_bind hw.head ?_
+    refine Runs.bind (Runs.ident hw.tail.head) fun id hid => ?_
+    have w := hw.tail.tail
+    refine Runs.bind (Runs.acceptSym_true w.head) fun b hb => ?_
+    subst b
+    reduce_checks
+    refine Runs.bind (Runs.params true (q :: qs) ctx _ f _ [] hps w.tail (by omega) (by omega))
+      fun ps' hps' => ?_
+    obtain ⟨ms, rfl, hms⟩ := hps'
+    exact body _ _ (by simpa using hms) w.tail.drop.tail (by omega) (by rw [hT]; omega) id hid
+
 /-! `item` reads the kinds of a printable item back to it, up to positions. -/
 theorem Runs.item (it : Item) (hp : it.printable = true) (ctx : Ctx) (hpl : ctx.plainFn = false)
     (i f : Nat) (R : List Kind) (hw : Win ctx.input i (it.toks ++ R))
@@ -319,7 +435,25 @@ theorem Runs.item (it : Item) (hp : it.printable = true) (ctx : Ctx) (hpl : ctx.
     Runs (item f) ctx i (i + it.toks.length) (fun r => r.erase = it.erase) := by
   unfold Parse.item
   cases it with
-  | struct | alias => simp [Item.printable] at hp
+  | struct p n ps fs =>
+    have hk : (tokenAt ctx.input i).kind = .keyword "struct" := hw.head' (by simp [Item.toks])
+    refine Runs.peek_bind ?_
+    simp only [hk]
+    exact Runs.structItem p n ps fs hp ctx i f R _ hw hf hd
+  | alias p n ty =>
+    simp only [Item.printable, Bool.and_eq_true] at hp
+    have e : (Item.alias p n ty).toks ++ R = .keyword "type" :: .ident n.name ::
+        .symbol "=" :: (ty.toks ++ .symbol ";" :: R) := by
+      simp [Item.toks]
+    have hT : (Item.alias p n ty).toks.length = ty.toks.length + 4 := by
+      simp [Item.toks]
+    rw [e] at hw
+    rw [hT] at hf hd ⊢
+    refine Runs.peek_bind ?_
+    simp only [hw.head]
+    refine Runs.mono (Runs.aliasDecl n ty hp.2 ctx i f _ _ R hw (by omega) (by omega)) ?_
+    rintro _ ⟨id, ty', hid, hty', rfl⟩
+    simp [Item.erase, Ident.erase_of_name (b := n) hid, hty']
   | const p n ty v =>
     simp only [Item.printable, Bool.and_eq_true] at hp
     obtain ⟨⟨hn, hty⟩, hv⟩ := hp
