@@ -4,7 +4,7 @@
 //! result is the copy. An assignment to a place updates the one element in the local, because
 //! no other binding shares the container.
 
-use super::{Evaluator, Frame, Opnd, Out, Res, Slot, expr_pos, fail, need, same_form, step};
+use super::{Evaluator, Frame, Opnd, Out, Res, Slot, expr_pos, fail, need, same_form};
 use crate::Code;
 use crate::hw::{Ref, Root, Seen, Val};
 use crate::int::Int;
@@ -389,7 +389,7 @@ impl Evaluator<'_> {
                 Key::Index(q, xp, i) => self.pick_at(*q, *xp, cur, i)?,
                 Key::Select(q, r, index) => self.select_at(*q, *r, index, cur)?,
             };
-            cur = step(cur, k);
+            cur = self.store.step(cur, k);
             keys.push(k);
             ty = match ty {
                 Some(t) => self.tys.part(t, k),

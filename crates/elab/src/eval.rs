@@ -31,6 +31,7 @@ use crate::{Budget, Code, Error};
 use parse::ast::{BinOp, Expr, Ident, Item, NodeId, Param, Pos, Stmt, TypeExpr};
 use parse::{NestedStack, StackError};
 use resolve::{DeclId, Kind, Prelude, Resolved, ResolvedExpr, Target};
+use std::cell::Cell;
 use std::collections::BTreeMap;
 
 /// The state of a constant in the table of constants.
@@ -96,10 +97,14 @@ type Frame = BTreeMap<DeclId, Slot>;
 struct Store {
     consts: Vec<Entry>,
     frames: Vec<Frame>,
+    /// The steps of the walks along paths into values: 1 for each container that a walk
+    /// enters. A test counts them, so it checks the work of a walk and not its time.
+    steps: Cell<u64>,
 }
 
 /// The element of `v` at the numbers `path`, one for each container below it.
-fn element<'a>(v: &'a Value, path: &[usize]) -> &'a Value {
+fn element<'a>(v: &'a Value, path: &[usize], steps: &Cell<u64>) -> &'a Value {
+    steps.set(steps.get() + path.len() as u64);
     let mut cur = v;
     for &k in path {
         cur = match cur {
@@ -110,15 +115,15 @@ fn element<'a>(v: &'a Value, path: &[usize]) -> &'a Value {
     cur
 }
 
-/// The element `k` of the container that `cur` finds: one step of a walk along a path.
-fn step(cur: Seen<'_>, k: usize) -> Seen<'_> {
-    match cur {
-        Seen::Static(v) => Seen::Static(element(v, &[k])),
-        s => s,
-    }
-}
-
 impl Store {
+    /// The element `k` of the container that `cur` finds: one step of a walk along a path.
+    fn step<'s>(&self, cur: Seen<'s>, k: usize) -> Seen<'s> {
+        match cur {
+            Seen::Static(v) => Seen::Static(element(v, &[k], &self.steps)),
+            s => s,
+        }
+    }
+
     fn frame(&self) -> Option<&Frame> {
         self.frames.last()
     }
@@ -144,7 +149,7 @@ impl Store {
     /// What the local at `root` holds at the numbers `keys`.
     fn current(&self, root: Root, keys: &[usize]) -> Seen<'_> {
         match self.root(&root) {
-            Val::Static(v) => Seen::Static(element(v, keys)),
+            Val::Static(v) => Seen::Static(element(v, keys, &self.steps)),
             v => v.seen(),
         }
     }
@@ -154,7 +159,7 @@ impl Store {
         let root = self.root(&r.root);
         match (root, r.path.is_empty()) {
             (_, true) => root.seen(),
-            (Val::Static(v), false) => Seen::Static(element(v, &r.path)),
+            (Val::Static(v), false) => Seen::Static(element(v, &r.path, &self.steps)),
             _ => Seen::Static(&ABSENT_VALUE),
         }
     }
@@ -376,6 +381,7 @@ impl<'a> Evaluator<'a> {
             store: Store {
                 consts,
                 frames: vec![Frame::new()],
+                steps: Cell::new(0),
             },
             graph: Graph::default(),
             paths: Paths::default(),
@@ -409,6 +415,8 @@ pub(crate) fn run(
     let evaluated = Evaluated {
         value,
         types: ev.tys,
+        #[cfg(test)]
+        steps: ev.store.steps.get(),
     };
     Ok((evaluated, used))
 }

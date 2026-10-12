@@ -70,6 +70,16 @@ pub(crate) fn type_work(src: &str, expr: &str) -> u64 {
     }
 }
 
+/// The steps of the walks along paths into values for `expr`: 1 for each container that a
+/// walk enters. The tests count the steps and not the time.
+pub(crate) fn path_steps(src: &str, expr: &str) -> u64 {
+    let budget = Budget::default();
+    match evaluated(src, expr, budget.fuel, budget.depth) {
+        Ok((done, _)) => done.steps,
+        Err(error) => panic!("{error}"),
+    }
+}
+
 pub(crate) fn out(src: &str, expr: &str, fuel: u64, depth: u64) -> String {
     run(src, expr, fuel, depth).0
 }
