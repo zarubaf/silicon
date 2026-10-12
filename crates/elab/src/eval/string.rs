@@ -79,6 +79,9 @@ impl Evaluator<'_> {
             }
         };
         self.charge(pos, size * size)?;
+        // The digit count of a big integer is as costly as its digits, so the digits come first.
+        // The charge of the size of `n` squared above bounds them, and the charge of the result
+        // follows, as in Lean.
         let digits = match self.store.value(&o) {
             Value::Int(n) => n.to_string(),
             _ => String::new(),
