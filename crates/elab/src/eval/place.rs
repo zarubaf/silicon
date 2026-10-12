@@ -323,6 +323,8 @@ impl Evaluator<'_> {
         }
         let mut keyed = Vec::with_capacity(steps.len());
         let mut stop = None;
+        // The base waits in the store, so that an index cannot change the value that it read.
+        let at = self.store.park(b.into_out());
         for step in &steps {
             match self.key(step) {
                 Ok(k) => keyed.push(k),
@@ -332,6 +334,7 @@ impl Evaluator<'_> {
                 }
             }
         }
+        let b = Opnd::of_out(self.store.resume_one(at));
         let (out, at_type) = self.follow(b, &keyed)?;
         if let Some(e) = stop {
             // The base of the step whose index failed is a type: that check comes first.
@@ -437,7 +440,11 @@ impl Evaluator<'_> {
             {
                 return fail_type_index(*q);
             }
-            let key = self.key(step)?;
+            // The container waits in the store, so that the index cannot change its value.
+            let at = self.store.park(cur.into_out());
+            let key = self.key(step);
+            cur = Opnd::of_out(self.store.resume_one(at));
+            let key = key?;
             let out = match key {
                 Key::Index(q, xp, i) => {
                     if let Opnd::Static(o) = &cur
@@ -604,6 +611,7 @@ impl Evaluator<'_> {
     pub(super) fn store_at(&mut self, pos: Pos, q: Pos, place: &Place, y: Val) -> Res<()> {
         if place.keys.is_empty() {
             let y = self.named(pos, place.id, y);
+            self.store.settle_root(place.root);
             if let Root::Local(frame, id) = place.root
                 && let Some(slot) = self
                     .store

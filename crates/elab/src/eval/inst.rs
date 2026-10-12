@@ -531,7 +531,7 @@ impl Evaluator<'_> {
     /// scope of the module, with each earlier parameter bound to its argument. The parent pays
     /// this work.
     fn arguments(&mut self, pos: Pos, i: usize, xs: &[Expr]) -> Res<Vec<Out>> {
-        let mut outs = Vec::with_capacity(xs.len());
+        let base = self.store.parked.len();
         let mut waiting = false;
         for x in xs {
             let o = self.eval(x)?;
@@ -541,8 +541,9 @@ impl Evaluator<'_> {
             } else {
                 self.check_static(pos, &o)?;
             }
-            outs.push(o);
+            self.store.park(o);
         }
+        let outs = self.store.resume(base);
         if let Some(Item::Module { params, .. }) = self.file.ast().get(i)
             && waiting
             && params.len() == outs.len()

@@ -135,16 +135,26 @@ impl Evaluator<'_> {
     /// the steps of an assignment target.
     fn actuals(&mut self, params: &[Param], xs: &[&Expr], bound: usize) -> Res<Vec<Actual>> {
         let mut slots: Vec<Option<Actual>> = xs.iter().map(|_| None).collect();
+        // The values wait in the store, so that a later actual cannot change them.
+        let base = self.store.parked.len();
+        let mut values = Vec::with_capacity(xs.len());
         for (k, x) in xs.iter().enumerate() {
             let at = parameter_of(k, bound);
-            let actual = if params.get(at).is_some_and(|q| q.mode == ParamMode::Mut) {
-                Actual::Place(self.place_at(expr_pos(x), Code::S008, x)?)
+            if params.get(at).is_some_and(|q| q.mode == ParamMode::Mut) {
+                let place = Actual::Place(self.place_at(expr_pos(x), Code::S008, x)?);
+                if let Some(slot) = slots.get_mut(at) {
+                    *slot = Some(place);
+                }
             } else {
                 let o = self.eval(x)?;
-                Actual::Value(need(x, o)?)
-            };
+                let o = need(x, o)?;
+                self.store.park(o);
+                values.push(at);
+            }
+        }
+        for (at, o) in values.into_iter().zip(self.store.resume(base)) {
             if let Some(slot) = slots.get_mut(at) {
-                *slot = Some(actual);
+                *slot = Some(Actual::Value(o));
             }
         }
         Ok(slots.into_iter().flatten().collect())

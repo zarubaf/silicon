@@ -30,7 +30,7 @@ mod types;
 pub use inst::Design;
 pub(crate) use inst::{Bind, Elab, Inst, Literal, PortDecl, Sink, elaborate};
 
-use crate::hw::{Graph, Handle, HwId, Leaf, Op, Part, Ref, Root, Seen, Val};
+use crate::hw::{Graph, Handle, HwId, Op, Part, Ref, Root, Seen, Val};
 use crate::int::Int;
 use crate::names::{PathId, Paths, Step, Sym};
 use crate::ops::{self, Fault, Fuel};
@@ -74,14 +74,22 @@ impl Out {
     fn is_ref(&self) -> bool {
         !matches!(self, Out::Made(_))
     }
+}
 
-    /// The part of a literal that waits for its type. The result is static or waits.
-    fn into_part(self) -> Part {
+impl Opnd {
+    /// The operand as a result, so that it can wait in the store.
+    fn into_out(self) -> Out {
         match self {
-            Out::Made(Val::Pending(_, part)) => part,
-            Out::Made(Val::Static(v)) | Out::Named(Val::Static(v)) => Part::Value(Leaf::Owned(v)),
-            Out::Ref(r) => Part::Value(Leaf::Ref(r)),
-            Out::Made(_) | Out::Named(_) => Part::Value(Leaf::Owned(Value::Unit)),
+            Opnd::Hw(h) => Out::Made(Val::Hw(h)),
+            Opnd::Static(o) => o,
+        }
+    }
+
+    /// The operand that `into_out` made.
+    fn of_out(o: Out) -> Opnd {
+        match o {
+            Out::Made(Val::Hw(h)) => Opnd::Hw(h),
+            o => Opnd::Static(o),
         }
     }
 }
@@ -112,6 +120,11 @@ struct Store {
     /// The parameters of a frame that refer to an argument of the caller, by the number of
     /// the frame: a module argument refers until the instance statement pays its copy.
     links: BTreeMap<usize, BTreeMap<DeclId, Ref>>,
+    /// The results that wait while a later operand of their node evaluates, and the positions
+    /// of those that refer to each local. A mutation of a local first copies the references
+    /// to it, so a result keeps the value that its expression read.
+    parked: Vec<Out>,
+    parked_at: BTreeMap<Root, Vec<usize>>,
     /// The recursive size of the values that references copied, and the fuel budget of the
     /// run, for the test of copies before a charge.
     #[cfg(test)]
@@ -197,12 +210,70 @@ impl Store {
         self.frames.last()
     }
 
+    /// Parks the result `o` while a later operand of its node evaluates. It returns the
+    /// position to resume from. A reference to a local registers, so that a mutation of the
+    /// local copies the value first (`settle_root`).
+    fn park(&mut self, o: Out) -> usize {
+        let at = self.parked.len();
+        if let Out::Ref(Ref { root, .. }) = &o
+            && matches!(root, Root::Local(..))
+        {
+            self.parked_at.entry(*root).or_default().push(at);
+        }
+        self.parked.push(o);
+        at
+    }
+
+    /// Takes the results parked from the position `from` back, in their order. Parks and
+    /// resumes nest like the evaluations that they wrap.
+    fn resume(&mut self, from: usize) -> Vec<Out> {
+        let outs = self.parked.split_off(from.min(self.parked.len()));
+        for o in outs.iter().rev() {
+            if let Out::Ref(Ref { root, .. }) = o
+                && let Some(at) = self.parked_at.get_mut(root)
+            {
+                at.pop();
+                if at.is_empty() {
+                    self.parked_at.remove(root);
+                }
+            }
+        }
+        outs
+    }
+
+    /// Takes back the one result parked at `at`.
+    fn resume_one(&mut self, at: usize) -> Out {
+        self.resume(at)
+            .pop()
+            .unwrap_or(Out::Made(Val::Static(Value::Unit)))
+    }
+
+    /// Copies the value of each parked reference to the local at `root`, before a mutation
+    /// changes the local. The copy is bounded by the charge that binds or reads the result
+    /// later, and each reference copies once, because the copy is not a reference.
+    fn settle_root(&mut self, root: Root) {
+        let Some(at) = self.parked_at.remove(&root) else {
+            return;
+        };
+        for k in at {
+            let Some(slot) = self.parked.get_mut(k) else {
+                continue;
+            };
+            let old = std::mem::replace(slot, Out::Made(Val::Static(Value::Unit)));
+            let copy = Out::Named(self.take(old));
+            if let Some(slot) = self.parked.get_mut(k) {
+                *slot = copy;
+            }
+        }
+    }
+
     /// The part of the live value of the local at `root` at the numbers `keys`, for a change in
     /// place: one walk down the path. A root that is not a static local has no part.
     fn part_mut(&mut self, root: Root, keys: &[usize]) -> Option<&mut Value> {
         let Root::Local(frame, id) = root else {
             return None;
         };
+        self.settle_root(root);
         self.steps.set(self.steps.get() + keys.len() as u64);
         let Val::Static(value) = &mut self.frames.get_mut(frame)?.get_mut(&id)?.value else {
             return None;
@@ -279,11 +350,14 @@ impl Store {
         }
     }
 
-    /// The static value of a leaf of a literal that waits.
-    fn leaf<'s>(&'s self, leaf: &'s Leaf) -> &'s Value {
-        match leaf {
-            Leaf::Owned(v) => v,
-            Leaf::Ref(r) => self.value_at(r),
+    /// The part of a literal that waits for its type. A reference copies its value now, so the
+    /// literal keeps the value that its expression read. The typed use that settles the literal
+    /// charges the size of each part.
+    fn part(&self, o: Out) -> Part {
+        match self.take(o) {
+            Val::Pending(_, part) => part,
+            Val::Static(v) => Part::Value(v),
+            _ => Part::Value(Value::Unit),
         }
     }
 
@@ -499,6 +573,8 @@ impl<'a> Evaluator<'a> {
                 consts,
                 frames: vec![Frame::new()],
                 steps: Cell::new(0),
+                parked: Vec::new(),
+                parked_at: BTreeMap::new(),
                 links: BTreeMap::new(),
                 #[cfg(test)]
                 copied: (Cell::new(0), budget.fuel),
@@ -643,24 +719,24 @@ impl Evaluator<'_> {
             Seen::Static(v) => v.size(),
             Seen::Hw(h) => self.graph.size(h),
             Seen::Handle(_) => 1,
-            Seen::Pending(_, p) => self.part_size(p),
+            Seen::Pending(_, p) => Self::part_size(p),
         })
     }
 
     /// The size of a part that waits: 1 for `[]`, and 1 more than its parts for a literal.
-    fn part_size(&self, p: &Part) -> u64 {
+    fn part_size(p: &Part) -> u64 {
         match p {
-            Part::Value(l) => self.store.leaf(l).size(),
+            Part::Value(v) => v.size(),
             Part::Empty(_) => 1,
             Part::Array(_, ps) | Part::Tuple(_, ps) => {
-                1 + ps.iter().map(|p| self.part_size(p)).sum::<u64>()
+                1 + ps.iter().map(Self::part_size).sum::<u64>()
             }
         }
     }
 
     fn part_text(&self, p: &Part) -> String {
         match p {
-            Part::Value(l) => self.store.leaf(l).text(&self.tys),
+            Part::Value(v) => v.text(&self.tys),
             Part::Empty(_) => "`[]`".to_owned(),
             Part::Array(..) => "an array literal with `[]`".to_owned(),
             Part::Tuple(..) => "a tuple literal with `[]`".to_owned(),
@@ -774,6 +850,15 @@ impl Evaluator<'_> {
         let o = self.eval(e)?;
         let o = need(e, o)?;
         self.data(pos, o)
+    }
+
+    /// The operand `e` of the node at `pos`, which evaluates after the operand `a`. The
+    /// operand `a` waits in the store, so that `e` cannot change the value that `a` read.
+    fn operand_after(&mut self, pos: Pos, a: Opnd, e: &Expr) -> Res<(Opnd, Opnd)> {
+        let at = self.store.park(a.into_out());
+        let b = self.operand(pos, e)?;
+        let a = Opnd::of_out(self.store.resume_one(at));
+        Ok((a, b))
     }
 
     /// A static condition.
@@ -943,12 +1028,13 @@ impl Evaluator<'_> {
 
     /// The results of the arguments of a call, in order.
     fn args<'e>(&mut self, xs: impl IntoIterator<Item = &'e Expr>) -> Res<Vec<Out>> {
-        let mut outs = Vec::new();
+        let base = self.store.parked.len();
         for x in xs {
             let out = self.eval(x)?;
-            outs.push(need(x, out)?);
+            let out = need(x, out)?;
+            self.store.park(out);
         }
-        Ok(outs)
+        Ok(self.store.resume(base))
     }
 
     /// A number literal. It pays the size of its value before it copies the value.
@@ -993,7 +1079,7 @@ impl Evaluator<'_> {
             } => self.select(*pos, *op, lhs, rhs),
             Expr::Binary { pos, op, lhs, rhs } => {
                 let a = self.operand(*pos, lhs)?;
-                let b = self.operand(*pos, rhs)?;
+                let (a, b) = self.operand_after(*pos, a, rhs)?;
                 match (a, b) {
                     (Opnd::Static(a), Opnd::Static(b)) => Ok(Some(Out::Made(Val::Static(
                         self.binary(*pos, *op, &a, &b)?,
@@ -1014,7 +1100,7 @@ impl Evaluator<'_> {
                     let saved = self.arm.replace(self.depth);
                     let arms = self
                         .operand(*pos, yes)
-                        .and_then(|a| Ok((a, self.operand(*pos, no)?)));
+                        .and_then(|a| self.operand_after(*pos, a, no));
                     self.arm = saved;
                     let (a, b) = arms?;
                     Ok(Some(Out::Made(self.mux(*pos, c, a, b)?)))
@@ -1406,8 +1492,10 @@ impl Evaluator<'_> {
         let first = self.eval(lo)?;
         let first = need(lo, first)?;
         self.bound(pos, &first)?;
+        let at = self.store.park(first);
         let end = self.eval(hi)?;
         let end = need(hi, end)?;
+        let first = self.store.resume_one(at);
         self.bound(pos, &end)?;
         let sizes = self.size(&first) + self.size(&end);
         self.charge(pos, sizes)?;
