@@ -1,0 +1,8 @@
+// S011: the length of an array type is a static position, so a hardware value there gives S011.
+// TOP M()
+module M() {
+    input x: UInt[4];
+    let y = x +% 1;
+    // expected-error S011 @+1
+    type A = [Bool; y];
+}

@@ -1,0 +1,10 @@
+// S010: a hardware-width value of another width does not fit the field type.
+// TOP M()
+struct P {
+    a: UInt[8],
+}
+module M() domains() {
+    let x: UInt[4] = 1;
+    // expected-error S010 @+1
+    let r = P(x);
+}

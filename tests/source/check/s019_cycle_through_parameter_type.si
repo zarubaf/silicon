@@ -1,0 +1,9 @@
+// S019: the type of a struct parameter uses the struct itself, while the parameter types evaluate.
+// TOP M()
+// expected-error S019 @+1
+struct P(comptime X: P[1]) {
+    a: Bool,
+}
+module M() domains() {
+    type B = P[1];
+}

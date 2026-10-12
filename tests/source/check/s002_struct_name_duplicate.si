@@ -1,0 +1,7 @@
+// S002: a struct and a const share one namespace of items.
+// TOP M()
+const P: Nat = 1;
+// expected-error S002 @+1
+struct P {}
+module M() domains() {
+}

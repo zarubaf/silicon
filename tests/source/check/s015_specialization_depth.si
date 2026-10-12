@@ -1,0 +1,12 @@
+// S015: a struct specialization that goes above the nesting depth. `t = P[t]` nests its arguments.
+// TOP M()
+struct P(comptime T: Type) {
+    a: Bool,
+}
+module M() domains() {
+    let mut t = Bool;
+    comptime for i in 0..2000 {
+        // expected-error S015 @+1
+        t = P[t];
+    }
+}

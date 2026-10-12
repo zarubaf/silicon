@@ -1,0 +1,9 @@
+// S010: a struct-typed wire belongs to phase 6.
+// TOP M()
+struct P {
+    a: Bool,
+}
+module M() {
+    // expected-error S010 @+1
+    wire w: P;
+}

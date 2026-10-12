@@ -1,0 +1,9 @@
+// S010: `P()` is the zero of a struct, never a constructor, so a field that is not hardware data gives S010.
+// TOP M()
+struct P {
+    a: Int,
+}
+module M() domains() {
+    // expected-error S010 @+1
+    let z = P();
+}

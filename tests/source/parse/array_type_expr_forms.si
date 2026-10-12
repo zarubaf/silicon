@@ -1,0 +1,9 @@
+// The array type in an expression: nested, with a computed length, as a callee, and indexed.
+const A: Type = [[T; 2]; 3];
+const B: Type = [(T, ()); N + 1];
+const C: Type = [(T); 4];
+const D: T = [T; 4]();
+const E: T = [T; 4][1];
+const F: T = f([T; 2], [U; 3]);
+const G: T = [[T; 2], [U; 3]];
+const H: T = [T; 4] == [T; 4];

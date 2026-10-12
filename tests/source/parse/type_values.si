@@ -1,0 +1,14 @@
+// Types as values: a `Type` parameter, the zero `T()`, `data_bits`, a constructor, and a type argument.
+const A: Type = [UInt[8]; 4];
+const B: [UInt[8]; 4] = A();
+const C: Nat = data_bits(P[8]);
+const D: P[8] = P[8](x, y);
+const E: Type = P[[Bool; 2]];
+const F: Nat = P[8](x, y).a;
+const G: Type = [[Bool; 2]; 3];
+fn f(comptime T: Type, x: T) -> T {
+    return T();
+}
+module M(comptime T: Type, comptime R: P[8]) domains() {
+    let z = (T, [T; 2], [P[T]; 3])();
+}

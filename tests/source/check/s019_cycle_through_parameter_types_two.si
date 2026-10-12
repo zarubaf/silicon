@@ -1,0 +1,12 @@
+// S019: two structs that use each other in their parameter types. The error is at the use that closes the cycle.
+// TOP M()
+struct A(comptime X: B[1]) {
+    a: Bool,
+}
+// expected-error S019 @+1
+struct B(comptime Y: A[1]) {
+    a: Bool,
+}
+module M() domains() {
+    type C = A[1];
+}

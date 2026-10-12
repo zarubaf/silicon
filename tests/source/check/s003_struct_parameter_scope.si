@@ -1,0 +1,9 @@
+// S003: a struct parameter is not visible outside its struct.
+// TOP M()
+struct P(comptime W: Nat) {
+    a: Bool,
+}
+// expected-error S003 @+1
+const N: Nat = W;
+module M() domains() {
+}

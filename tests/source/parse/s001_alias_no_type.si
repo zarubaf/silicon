@@ -1,0 +1,2 @@
+// S001: an alias names a type, not a number.
+type A = 1;

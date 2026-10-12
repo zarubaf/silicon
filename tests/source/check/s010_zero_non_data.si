@@ -1,0 +1,6 @@
+// S010: `T()` takes a hardware data type. `Int` is not one.
+// TOP M()
+module M() domains() {
+    // expected-error S010 @+1
+    let z = Int();
+}

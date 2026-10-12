@@ -1,0 +1,9 @@
+// S007: a struct specialization with too few arguments.
+// TOP M()
+struct P(comptime W: Nat, comptime V: Nat) {
+    a: UInt[W],
+}
+module M() domains() {
+    // expected-error S007 @+1
+    type A = P[8];
+}

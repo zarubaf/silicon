@@ -1,0 +1,6 @@
+// S010: `data_bits` takes a type.
+// TOP M()
+module M() domains() {
+    // expected-error S010 @+1
+    let n = data_bits(3);
+}

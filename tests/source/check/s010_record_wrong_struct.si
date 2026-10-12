@@ -1,0 +1,12 @@
+// S010: a record of one struct is not a value of another struct, though their fields agree.
+// TOP M()
+struct P {
+    a: Bool,
+}
+struct Q {
+    a: Bool,
+}
+module M() domains() {
+    // expected-error S010 @+1
+    let r: Q = P(true);
+}

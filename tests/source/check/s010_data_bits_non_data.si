@@ -1,0 +1,6 @@
+// S010: `data_bits(T)` takes a hardware data type.
+// TOP M()
+module M() domains() {
+    // expected-error S010 @+1
+    let n = data_bits(Nat);
+}

@@ -1,0 +1,6 @@
+// S010: a type is not an operand of an order comparison.
+// TOP M()
+module M() domains() {
+    // expected-error S010 @+1
+    let b = Bool < Nat;
+}

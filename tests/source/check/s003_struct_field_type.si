@@ -1,0 +1,8 @@
+// S003: a field type names a declaration.
+// TOP M()
+struct P {
+    // expected-error S003 @+1
+    a: Missing,
+}
+module M() domains() {
+}

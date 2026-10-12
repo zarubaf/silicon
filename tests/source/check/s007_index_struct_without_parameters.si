@@ -1,0 +1,9 @@
+// S007: a struct without parameters takes no arguments.
+// TOP M()
+struct P {
+    a: Bool,
+}
+module M() domains() {
+    // expected-error S007 @+1
+    type B = P[1];
+}

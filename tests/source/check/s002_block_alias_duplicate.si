@@ -1,0 +1,7 @@
+// S002: a type alias in a block is unique in its scope.
+// TOP M()
+module M() domains() {
+    type A = Bool;
+    // expected-error S002 @+1
+    type A = Nat;
+}

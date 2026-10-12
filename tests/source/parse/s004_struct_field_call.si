@@ -1,0 +1,2 @@
+// S004: a type function call in a field type belongs to a later slice.
+struct P { a: T(x) }

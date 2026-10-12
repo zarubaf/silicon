@@ -1,0 +1,9 @@
+// S010: a specialization is nominal: `P[8]` and `P[9]` are two types.
+// TOP M()
+struct P(comptime W: Nat) {
+    a: UInt[W],
+}
+module M() domains() {
+    // expected-error S010 @+1
+    let r: P[9] = P[8](1);
+}

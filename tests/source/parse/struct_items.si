@@ -1,0 +1,14 @@
+// Struct items: with and without parameters, with and without fields, and a trailing comma.
+struct P(comptime W: Nat) {
+    a: UInt[W],
+    b: Bool,
+}
+struct Q {}
+struct R() {}
+struct S(comptime A: Nat, comptime B: Type,) {
+    a: [B; A]
+}
+struct U {
+    p: (Bool, [SInt[4]; 2]),
+    q: P[8]
+}

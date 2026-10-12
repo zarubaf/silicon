@@ -1,0 +1,7 @@
+// S003: a struct is not a module.
+// TOP M()
+struct S {}
+module M() domains() {
+    // expected-error S003 @+1
+    instance u = S();
+}

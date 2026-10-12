@@ -1,0 +1,10 @@
+// S010: a struct with a field that is not hardware data is no hardware data.
+// TOP M()
+struct P {
+    a: Bool,
+    n: Nat,
+}
+module M() domains() {
+    // expected-error S010 @+1
+    let n = data_bits(P);
+}
