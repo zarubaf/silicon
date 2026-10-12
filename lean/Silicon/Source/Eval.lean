@@ -785,8 +785,10 @@ mutual
               bindLocal q.name.id ⟨some t, false, ← named p q.name.id q.name.name.name x⟩
             | .place pl =>
               charge p pl.part.size
-              unless (pl.ty <|> pl.part.ty?) == some t do
-                fail .S010 p s!"a `mut` actual has the type {t.text}, not {pl.part.text}"
+              let pt := pl.ty <|> pl.part.ty?
+              unless pt == some t do
+                let u := match pt with | some u => u.text | none => pl.part.text
+                fail .S010 p s!"a `mut` actual has the type {u}, but its formal has {t.text}"
               let x ← if c then pure (Val.static (← static p pl.part)) else pure pl.part
               bindLocal q.name.id ⟨some t, true, ← named p q.name.id q.name.name.name x⟩
           let rt ← typeExpr n ret
