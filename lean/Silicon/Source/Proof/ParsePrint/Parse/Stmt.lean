@@ -31,21 +31,6 @@ theorem Runs.read_bind {β : Type} {k : Ctx → P β} {ctx : Ctx} {i l : Nat} {R
     (hk : Runs (k ctx) ctx i l R) : Runs (read >>= k) ctx i l R :=
   Runs.bind (Q := (· = ctx)) (fun _ => ⟨ctx, rfl, rfl⟩) fun _ h => h ▸ hk
 
-theorem Runs.acceptKw_true {ctx : Ctx} {i : Nat} {s : String}
-    (hs : (tokenAt ctx.input i).kind = .keyword s) :
-    Runs (acceptKw s) ctx i (i + 1) (· = true) := by
-  unfold acceptKw
-  refine Runs.peek_bind ?_
-  simp only [isKw, hs, beq_self_eq_true, ite_true]
-  exact Runs.bump_bind (Runs.pure rfl)
-
-theorem Runs.acceptKw_false {ctx : Ctx} {i : Nat} {s : String}
-    (hs : (tokenAt ctx.input i).kind ≠ .keyword s) : Runs (acceptKw s) ctx i i (· = false) := by
-  unfold acceptKw
-  refine Runs.peek_bind ?_
-  simp only [isKw, beq_iff_eq, hs, ite_false]
-  exact Runs.pure rfl
-
 theorem Runs.noDomain {ctx : Ctx} {i : Nat} (h : (tokenAt ctx.input i).kind ≠ .keyword "in") :
     Runs noDomain ctx i i (fun _ => True) := by
   unfold Parse.noDomain
