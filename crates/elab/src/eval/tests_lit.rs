@@ -433,3 +433,30 @@ fn the_stored_depth_of_a_root_stays_exact_after_a_push_and_a_deep_pop() {
     assert_eq!(cost_depth(&body(""), "M()", 5), "S015 7:13");
     assert_eq!(cost_depth(&body(""), "M()", 6), "total 108\nM 82\n");
 }
+
+/// An index after a selector waits at a static part of an aggregate root, so a mutation inside
+/// the index holds the root local and charges its size, as Lean does (section 5.4). The totals
+/// are those of the Lean evaluator for the same module.
+#[test]
+fn an_index_at_a_static_part_of_an_aggregate_root_holds_the_root() {
+    let module = |sel: &str, inside: &str| {
+        format!(
+            "comptime fn bumpl(mut x: List[Nat]) -> Nat {{ x.push(9); return 0; }}\n\
+             module M() domains() {{\n    input a: UInt[8];\n    output y: UInt[8];\n    \
+             let mut t = (a, list(Nat), [1, 2], [(0, a, [3, 4])]);\n    t.1.push(4);\n    \
+             t.1.push(5);\n    let k = t.{sel}[{inside}];\n    y := t.0;\n}}\n"
+        )
+    };
+    assert_eq!(
+        lowered_cost(&module("1", "t.1.pop() - 4"), "M()"),
+        "total 180\nM 152\n"
+    );
+    assert_eq!(
+        lowered_cost(&module("2", "(t.1.push(1), 0).1"), "M()"),
+        "total 184\nM 156\n"
+    );
+    assert_eq!(
+        lowered_cost(&module("1", "bumpl(t.1)"), "M()"),
+        "total 229\nM 201\n"
+    );
+}
