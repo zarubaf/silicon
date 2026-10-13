@@ -1263,3 +1263,152 @@ fn the_receiver_binds_to_the_first_parameter_without_a_comptime_mark() {
         Some(1)
     );
 }
+
+#[test]
+fn function_types_resolve_their_parts_in_both_forms() {
+    let src = "struct S { a: Nat }\n\
+               fn f(g: fn (UInt[8], mut S) -> Bool) -> fn (Nat) -> S { return g; }\n\
+               const C: Nat = (fn (S) -> S)[8];\n";
+    let r = ok(src);
+    assert_eq!(
+        target_at(&r, find(src, "UInt[8]")),
+        Some(Target::Prelude(Prelude::UInt))
+    );
+    assert_eq!(decl_at(&r, find(src, "S) -> Bool")).kind, Kind::Struct);
+    assert_eq!(
+        target_at(&r, find(src, "Bool)")),
+        Some(Target::Prelude(Prelude::Bool))
+    );
+    assert_eq!(decl_at(&r, find(src, "S { return")).kind, Kind::Struct);
+    // The expression form resolves too.
+    assert_eq!(decl_at(&r, find(src, "S) -> S)[")).kind, Kind::Struct);
+}
+
+#[test]
+fn a_function_type_can_name_a_parameter_before_it() {
+    let src = "fn f(T: Type, g: fn (T) -> T) -> Nat { return 1; }\n";
+    let r = ok(src);
+    assert_eq!(decl_at(&r, find(src, "T) -> T")).kind, Kind::Param);
+    assert_eq!(decl_at(&r, find(src, "T) -> T")).pos, pos(1, 6));
+}
+
+#[test]
+fn an_unknown_name_in_a_function_type_is_s003() {
+    for (src, line, col) in [
+        ("const A: fn (X) -> Nat = 0;\n", 1, 14),
+        ("const A: fn (Nat) -> X = 0;\n", 1, 22),
+        ("const A: fn (Nat, mut X) -> Nat = 0;\n", 1, 23),
+        ("const A: Nat = fn (X) -> Nat;\n", 1, 20),
+        ("const A: Nat = fn (Nat) -> X;\n", 1, 28),
+        ("const A: Nat = fn (Nat) -> UInt[x];\n", 1, 33),
+        ("fn f() -> fn () -> X { return 1; }\n", 1, 20),
+        // A value is no type, and a function is no type.
+        ("const K: Nat = 1;\nconst A: fn (K) -> Nat = 0;\n", 2, 14),
+        (
+            "fn g() -> Nat { return 1; }\nconst A: fn () -> g = 0;\n",
+            2,
+            19,
+        ),
+    ] {
+        assert_eq!(errors(src), [(S003, line, col)], "{src}");
+    }
+}
+
+#[test]
+fn a_function_type_declares_no_name() {
+    // The parameter types have no names, so `x` is not in scope in the result type.
+    assert_eq!(
+        errors("const A: fn (Nat) -> UInt[x] = 0;\n"),
+        [(S003, 1, 27)]
+    );
+    ok("fn f(x: Nat, g: fn (Nat) -> Nat) -> Nat { return g(x); }\n");
+}
+
+#[test]
+fn a_function_name_as_a_value_resolves_to_its_item() {
+    let src = "fn g(x: Nat) -> Nat { return x; }\n\
+               comptime fn h(comptime n: Nat) -> Nat { return n; }\n\
+               const A: fn (Nat) -> Nat = g;\n\
+               const B: Nat = h;\n\
+               fn k(f: fn (Nat) -> Nat) -> Nat { return f(1); }\n\
+               const C: Nat = k(g);\n";
+    let r = ok(src);
+    assert_eq!(decl_at(&r, find(src, "g;")).kind, Kind::Fn);
+    assert_eq!(decl_at(&r, find(src, "h;")).name, "h");
+    assert_eq!(decl_at(&r, find(src, "g);")).name, "g");
+    // A parameter of a function type hides an item in the body.
+    assert_eq!(decl_at(&r, find(src, "f(1)")).kind, Kind::Param);
+}
+
+#[test]
+fn a_builtin_name_as_a_value_resolves_to_the_prelude() {
+    let src = "const A: Nat = len;\n";
+    let r = ok(src);
+    assert!(matches!(
+        target_at(&r, find(src, "len")),
+        Some(Target::Prelude(_))
+    ));
+}
+
+/// Whether the function item `name` of the source is generic.
+fn generic(src: &str, name: &str) -> bool {
+    let r = ok(src);
+    let id = r.item(name).unwrap();
+    assert_eq!(r.decl(id).kind, Kind::Fn);
+    r.decl(id).generic
+}
+
+#[test]
+fn a_function_is_generic_with_a_comptime_parameter() {
+    assert!(generic("fn f(comptime n: Nat) -> Nat { return n; }", "f"));
+    assert!(generic(
+        "comptime fn f(x: Nat, comptime n: Nat) -> Nat { return n; }",
+        "f"
+    ));
+    // A `comptime fn` without a `comptime` parameter is no generic function.
+    assert!(!generic("comptime fn f(x: Nat) -> Nat { return x; }", "f"));
+}
+
+#[test]
+fn a_function_is_generic_when_its_signature_names_a_parameter() {
+    for src in [
+        "fn f(T: Type, x: T) -> T { return x; }",
+        "fn f(n: Nat) -> UInt[n] { return 0; }",
+        "fn f(n: Nat, x: UInt[n]) -> Nat { return 0; }",
+        "fn f(T: Type, g: fn (T) -> Nat) -> Nat { return 0; }",
+        "fn f(T: Type) -> fn () -> T { return 0; }",
+        "fn f(T: Type) -> (T, Nat) { return 0; }",
+        "fn f(T: Type) -> [T; 2] { return 0; }",
+        "fn f(n: Nat) -> [Nat; n + 1] { return 0; }",
+        "fn f(n: Nat, m: Nat) -> UInt[g(n)] { return 0; }\nfn g(x: Nat) -> Nat { return x; }",
+        // A parameter hides the item of its name.
+        "struct S { a: Nat }\nfn f(S: Type, x: S) -> Nat { return 0; }",
+    ] {
+        assert!(generic(src, "f"), "{src}");
+    }
+}
+
+#[test]
+fn a_function_is_not_generic_for_items_and_locals() {
+    for src in [
+        "fn f() -> Nat { return 1; }",
+        "fn f(x: Nat) -> Nat { return x; }",
+        // The name of a parameter in the body is no name in the signature.
+        "fn f(T: Type) -> Nat { return 1; }",
+        "fn f(x: Nat, y: fn (Nat) -> Nat) -> Nat { return y(x); }",
+        "struct S { a: Nat }\nfn f(x: S) -> S { return x; }",
+        "const W: Nat = 8;\nfn f(x: UInt[W]) -> UInt[W] { return x; }",
+        "type T = Nat;\nfn f(x: T) -> T { return x; }",
+        "fn f() -> Nat { type T = Nat; let x: T = 1; return x; }",
+    ] {
+        assert!(!generic(src, "f"), "{src}");
+    }
+}
+
+#[test]
+fn a_function_type_in_the_body_does_not_change_genericity() {
+    let src = "fn g(n: Nat) -> Nat { let f: fn (Nat) -> Nat = g; return n; }\n\
+               fn h(n: Nat) -> Nat { return n; }\n";
+    assert!(!generic(src, "g"));
+    assert!(!generic(src, "h"));
+}
