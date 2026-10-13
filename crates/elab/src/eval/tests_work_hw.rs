@@ -393,3 +393,40 @@ fn a_place_through_empty_parts_of_a_stored_root_takes_linear_steps() {
     };
     assert_linear(at, |r| r.counts.stepped, 8, 16);
 }
+
+/// A place update that turns a static root of `n` nested tuples into hardware finds the type of
+/// the root once, and the type of each level comes from it. The work of the table of types grows
+/// with the update, and the update is paid by the fuel. The zero root is the same in both runs.
+#[test]
+fn the_promotion_of_nested_static_tuples_finds_the_type_once() {
+    let at = |n: u64, update: bool, k: u64| {
+        let sel = rep(".0", n);
+        let set = if update {
+            format!("m{sel} = x.0;")
+        } else {
+            String::new()
+        };
+        run_ok(
+            &chain_decls(n, "type T{i} = (T{}, UInt[8]);\n", "type T{i} = UInt[8];\n"),
+            "(UInt[8], Bool)",
+            &format!("let mut m: T0 = T0();\n  {set}"),
+            key(24, k * 2 + u64::from(update)),
+        )
+    };
+    let mut before: Option<u64> = None;
+    for (k, n) in SIZES.into_iter().enumerate() {
+        let k = k as u64;
+        let (with, without) = (at(n, true, k), at(n, false, k));
+        let work = with.counts.table - without.counts.table;
+        let units = with.units - without.units;
+        assert!(work > 0, "{n}: no table work for the update");
+        assert!(
+            work <= 4 * units,
+            "{n}: {work} table steps for {units} units"
+        );
+        if let Some(b) = before {
+            assert!(work <= 2 * b + 8, "{n}: the work {b} grew to {work}");
+        }
+        before = Some(work);
+    }
+}
