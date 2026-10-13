@@ -420,8 +420,7 @@ the `instance` statement.
 
 /-!
 Until phase 6, a port, a register, and a wire have a scalar type. A struct type, an array type,
-or a tuple type there is `S010` at the statement. A record field holds only a static value, so a
-hardware argument of a constructor is `S010` at the argument.
+or a tuple type there is `S010` at the statement. A record field can hold a hardware value.
 -/
 def ps : String := "struct P(comptime W: Nat) { a: UInt[W], b: Bool }\n"
 #guard cost (ps ++ "module M() {\n  input x: P[8];\n}\n") "M" == "S010 3:3"
@@ -430,7 +429,22 @@ def ps : String := "struct P(comptime W: Nat) { a: UInt[W], b: Bool }\n"
 #guard cost (ps ++ "module M() {\n  wire w: [Bool; 2];\n}\n") "M" == "S010 3:3"
 #guard cost (ps ++ "module M() {\n  wire w: (Bool, Bool);\n}\n") "M" == "S010 3:3"
 #guard cost (ps ++ "module M() {\n  input x: UInt[8];\n  let r = P[8](x, true);\n}\n") "M" ==
-  "S010 4:16"
+  "total 101\nM 73\n"
+
+/-!
+A constructor argument is in a data context, so a register reads (section 9.2). A module
+argument is a static position. Thus an aggregate with a hardware leaf there is `S011` at the
+statement, also in a literal that waits for its type.
+-/
+#guard cost (ps ++ "module M() {\n  input x: UInt[8];\n  output y: UInt[8];\n" ++
+  "  reg q: UInt[8] = 0;\n  let r = P[8](q, true);\n  q := x;\n  y := r.a;\n}\n") "M" ==
+  "total 160\nM 132\n"
+def cArg (t a : String) : String :=
+  s!"module C(comptime p: {t}) \{\n}\nmodule M() \{\n  input x: UInt[8];\n{a}}\n"
+#guard cost (cArg "(UInt[8], Int)" "  let a = (x, 1);\n  instance c = C(a);\n") "M" == "S011 6:3"
+#guard cost (cArg "([Bool; 0], UInt[8])" "  let h = x;\n  instance c = C(([], h));\n") "M" ==
+  "S011 6:3"
+#guard (cost (cArg "(UInt[8], Int)" "  instance c = C((3, 1));\n") "M").startsWith "total"
 
 /-!
 A module parameter can be a type or a record. Such an argument gives the digest form of the

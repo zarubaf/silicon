@@ -530,13 +530,13 @@ of the sizes. The orderings take no container.
 #guard out "fn f() -> Int { let a = (((1,),),); return 0; }" "f()" (depth := 3) == "S015 1:25"
 
 /-!
-In this phase a container holds only static values. A hardware element is `S010` at the
-element, and so is a handle. A hardware index is `S011` at the index.
+A container holds hardware elements (section 5.1). A handle as an element is `S010` at the
+element until slice 3. A hardware index is `S011` at the index.
 -/
 def hw (body : String) : String :=
   "module M(comptime N: Nat) {\n  input x: UInt[8];\n  output y: UInt[8];\n" ++
   "  reg r: UInt[8] = 0;\n" ++ body ++ "\n  r := x;\n  y := r;\n}\n"
-#guard top (hw "  let t = (1, x);") "M(1)" == "S010 5:15"
+#guard top (hw "  let t = (1, x);") "M(1)" == "total 146\nM$1 104\n"
 #guard top (hw "  let t = [r];") "M(1)" == "S010 5:12"
 #guard top (hw "  let h = x +% 1;\n  let u = [1, 2][h];") "M(1)" == "S011 6:18"
 #guard top (hw "  let h = x +% 1;\n  let u: [Int; h] = [1];") "M(1)" == "S011 6:16"
@@ -2018,8 +2018,8 @@ reference, and its binding refers to its new name.
 
 /-!
 A new root without a hardware leaf is a static value with no rebind charge. A static part of an
-aggregate root takes a static value and keeps the other leaves. In this phase it holds no
-hardware value (`S010` at the value).
+aggregate root takes a static value and keeps the other leaves. A static part that takes a
+hardware value opens one level, and the root binds again.
 -/
 #guard runF (assignIn "(UInt[8], Int)" "x.0 = 5;")
   (fun _ => .agg (.mkTuple #[.uint 8, .int] #[leafX 0, .static (.int 3)])) ==
@@ -2028,7 +2028,8 @@ def staticPart (t : Ty) : Eval.Val :=
   .agg (.mkTuple #[.uint 8, t] #[leafX 0, .static (.array (.uint 8) #[.uint 8 1, .uint 8 2])])
 #guard runF (assignIn "(UInt[8], [UInt[8]; 2])" "x.1[0] = 9;") staticPart ==
   "x$1v$0e=x$0e | [x$1v$0e, (array (uint 8) ((uint 8 9) (uint 8 2)))] | 18"
-#guard runF (assignIn "(UInt[8], [UInt[8]; 2])" "x.1[0] = x.0;") staticPart == "S010 2:12"
+#guard runF (assignIn "(UInt[8], [UInt[8]; 2])" "x.1[0] = x.0;") staticPart ==
+  "x$1v$0e=x$0e x$1v$1e$0e=x$0e | [x$1v$0e, [x$1v$1e$0e, (uint 8 2)]] | 17"
 
 /-!
 A binding takes one version, and each hardware leaf gets one core `let`. A typed binding and an
@@ -2288,5 +2289,70 @@ with two references to a huge array fails on the budget in the walk.
 -/
 #guard runIf "(Bool, [UInt[8]; 1 << 40], [UInt[8]; 1 << 40])"
   "let y = if (x.0) { x.1 } else { x.2 };" == "S015 2:11"
+
+/-!
+A literal and a record constructor with a hardware part make an aggregate node. They charge as a
+static literal: the elements, the conversions to the common type, then the size of the result.
+`(x.0, 3)` charges the statement 1, the literal 1, `x.0` 2, `3` 2, and its size 3. A binding of
+the new node is not a copy, and each hardware leaf gets a core `let`. A literal that waits takes
+its type at a typed use, also with a hardware part.
+-/
+def sx : String := "struct S { a: UInt[8], b: Bool }\n"
+#guard runF (assignIn "(UInt[8], Bool)" "let y = (x.0, 3);") refX == "y$0e=x$0e | ref x | 13"
+#guard runF (assignIn "(UInt[8], Bool)" "let y = (x.0, 3);") refX 8 == "S015 2:11"
+#guard runF (assignIn "(UInt[8], Bool)" "let y = [x.0, 1];") refX == "y$0e=x$0e | ref x | 15"
+#guard runF (sx ++ assignIn "(UInt[8], Bool)" "let y = S(x.0, true);") refX ==
+  "y$a=x$0e | ref x | 36"
+#guard runF (assignIn "(UInt[8], Bool)" "let y: ([Bool; 0], UInt[8]) = ([], x.0);") refX ==
+  "y$1e=x$0e | ref x | 48"
+#guard runF (assignIn "(UInt[8], Bool)" "let y = [(x.0, 1), (2, 3)];") refX ==
+  "y$0e$0e=x$0e | ref x | 36"
+#guard runF (assignIn "(UInt[8], Bool)" "let y = [x, (2, true)];") refX ==
+  "y$0e$0e=x$0e y$0e$1e=x$1e | ref x | 29"
+
+/-! The elements need a common type, and each field its type. A static leaf checks its fit. -/
+#guard runF (assignIn "(UInt[8], Bool)" "let y = [x.0, x.1];") refX == "S010 2:11"
+#guard runF (assignIn "(UInt[8], Bool)" "let y = [x.0, 300];") refX == "S012 2:11"
+#guard runF (sx ++ assignIn "(UInt[8], Bool)" "let y = S(x.1, true);") refX == "S010 3:11"
+
+/-!
+A list holds no value with a hardware leaf: `S011` at the value, also through a place with a
+step after the list. A static root of a type with a hardware part takes a hardware value and
+binds its leaves. A later update binds them again, and a root without a hardware leaf is static.
+-/
+def listIn (s : String) : String :=
+  assignIn "(UInt[8], Bool)" ("let mut l = list([UInt[8]; 1]);\n  " ++ s)
+#guard runF (listIn "l.push([5]);\n  l[0][0] = x.0;") refX == "S011 4:13"
+#guard runF (listIn "l.push([5]);\n  l[0] = [x.0];") refX == "S011 4:10"
+#guard runF (listIn "l.push([x.0]);") refX == "S011 3:10"
+#guard runF (assignIn "(UInt[8], Bool)" "let mut t = (1, 2);\n  t.0 = x.0;") refX == "S010 3:3"
+#guard runF (assignIn "(UInt[8], Bool)"
+  "let mut t: (UInt[8], Int) = (1, 2);\n  t.0 = x.0;\n  t.1 = 4;") refX ==
+  "t$0e=x$0e t$1v$0e=t$0e | ref x | 58"
+#guard runF (assignIn "(UInt[8], Bool)"
+  "let mut t: (UInt[8], Int) = (1, 2);\n  t.0 = x.0;\n  t.0 = 7;") refX ==
+  "t$0e=x$0e | ref x | 57"
+
+/-!
+A held aggregate root charges its size 3 at the write-back, the last step before the change. The
+waiting `x.1` costs as much as `0`, so the difference is the held charge. A `mut` actual that is
+a part of an aggregate root writes back into that part, and the root binds again.
+-/
+def gx : String := "fn g(mut a: (Bool, Int)) -> Int {\n  a.1 = 5;\n  return 0;\n}\n"
+def gb : String := "fn g(mut a: Bool) -> Int {\n  a = !a;\n  return 0;\n}\n"
+#guard runF (gx ++ assignIn "(Bool, Int)" "let y = x.1 + g(x);") intPart ==
+  "g$0c$a$0e=x$0e g$0c$a$1v$0e=g$0c$a$0e x$1v$0e=g$0c$a$1v$0e | [x$1v$0e, (int 5)] | 52"
+#guard runF (gx ++ assignIn "(Bool, Int)" "let y = 0 + g(x);") intPart ==
+  "g$0c$a$0e=x$0e g$0c$a$1v$0e=g$0c$a$0e x$1v$0e=g$0c$a$1v$0e | [x$1v$0e, (int 5)] | 49"
+#guard runF (gb ++ assignIn "(Bool, Int)" "let y = g(x.0);") intPart ==
+  "g$0c$a=x$0e g$0c$a$1v=hardware Bool x$1v$0e=g$0c$a$1v | [x$1v$0e, (int 0)] | 25"
+#guard runF (gb ++ assignIn "(Bool, Int)" "let y = x.1 + g(x.0);") intPart ==
+  "g$0c$a=x$0e g$0c$a$1v=hardware Bool x$1v$0e=g$0c$a$1v | [x$1v$0e, (int 0)] | 33"
+
+/-! Each new aggregate node checks its depth at its node (`S015`). -/
+#guard top (hw "  let t = [[x]];") "M(1)" (depth := 2) == "S015 5:11"
+#guard top (hw "  let t = [[x]];") "M(1)" (depth := 3) == "total 148\nM$1 106\n"
+#guard top (hw "  let t = ((x,),);") "M(1)" (depth := 2) == "S015 5:11"
+#guard top (hw "  let t = ((x,),);") "M(1)" (depth := 3) == "total 148\nM$1 106\n"
 
 end Silicon.Source.Test.Eval
