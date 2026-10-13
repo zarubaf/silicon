@@ -788,18 +788,28 @@ def setAt (pos : Pos) (a y : Agg) (ks : List Nat) : M Agg := do
 Applies `f` at `p` to the selected static part of the place `pl` in the live value of its root.
 The indices of the place and the other operands ran after the root was read, so the change reads
 the live slot. In an aggregate root, the change refreshes each container node on the path, so it
-first charges the part count of each one (`Agg.pathWidth`). Then a held root charges its size.
-The hardware leaves of an aggregate root keep their names, so the root takes no new version.
+first charges the part count of each one (`Agg.pathWidth`). `sz` and `d` give the new numbers of
+each node as `Agg.change` takes them. When `d` is `none`, the change can lower a depth. Then it
+charges the size of the root, and it builds each node on the path again from its parts. Then a
+held root charges its size. The hardware leaves of an aggregate root keep their names, so the root
+takes no new version.
 -/
-def changeAt (p : Pos) (pl : Place) (f : Value → Value) : M Unit := do
+def changeAt (p : Pos) (pl : Place) (f : Value → Value) (sz : Nat → Nat) (d : Option Nat) :
+    M Unit := do
   match (← get).frame[pl.id]?, pl.part with
   | some s@{ value := .static r, .. }, _ =>
     held p pl.id
     bindLocal pl.id { s with value := .static (update f r pl.keys) }
   | some s@{ value := .agg a, .. }, .static v =>
     charge p (a.pathWidth pl.keys)
+    if d.isNone then charge p a.size
     held p pl.id
-    bindLocal pl.id { s with value := (← setAt p a (.static (f v)) pl.keys).val }
+    let r ← match d with
+      | some d => match Agg.change f sz d a pl.keys with
+        | some r => pure r
+        | none => fail .S010 p "the place has no static part to change"
+      | none => setAt p a (.static (f v)) pl.keys
+    bindLocal pl.id { s with value := r.val }
   | _, _ => fail .S010 p "the place has no static part to change"
 
 /-!
@@ -843,7 +853,7 @@ def store (p q : Pos) (pl : Place) (y : Val) : M Unit := do
     match (← get).frame[pl.id]?, pl.part.agg?, x with
     | some { value := .static _, .. }, _, .static w => do
       bounded p (pl.keys.length + w.depth)
-      changeAt p pl fun _ => w
+      changeAt p pl (fun _ => w) id (some 0)
     | some sl@{ value := .static r, .. }, some o, x => do
       bounded p (pl.keys.length + x.depth)
       rebind p pl sl (.static r) o x
@@ -954,7 +964,7 @@ def pushOnto (p x : Pos) (g : String) (pl : Place) (v : Val) : M (Option Out) :=
   -- The root is within the nesting depth, so only the element on the path can raise it.
   bounded p (pl.keys.length + 1 + w.depth)
   charge p w.size
-  changeAt p pl (fun | .list t ys => .list t (ys.push w) | v => v)
+  changeAt p pl (fun | .list t ys => .list t (ys.push w) | v => v) (· + w.size) (some (1 + w.depth))
   return some ⟨.static .unit, false, none⟩
 
 /-!
@@ -962,11 +972,13 @@ def pushOnto (p x : Pos) (g : String) (pl : Place) (v : Val) : M (Option Out) :=
 `S013`. Then it checks the mutation rule and charges the size of the element.
 -/
 def popFrom (p : Pos) (g : String) (pl : Place) : M (Option Out) := do
-  let .static (.list _ ys) := pl.part | fail .S010 p s!"`{g}` needs a list, not {pl.part.text}"
+  let .static (.list e ys) := pl.part | fail .S010 p s!"`{g}` needs a list, not {pl.part.text}"
   let some w := ys.back? | fail .S013 p "`pop` of an empty list"
   mutation p
   charge p w.size
-  changeAt p pl (fun | .list t ys => .list t ys.pop | v => v)
+  -- The element type bounds the depth of a list from below, so only a deeper element lowers it.
+  let d := if w.depth ≤ e.depth then some 0 else none
+  changeAt p pl (fun | .list t ys => .list t ys.pop | v => v) (· - w.size) d
   return some ⟨.static w, false, none⟩
 
 /-!

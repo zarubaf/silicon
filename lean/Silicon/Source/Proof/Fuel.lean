@@ -629,8 +629,8 @@ theorem setAt_f (p : Pos) (a y : Agg) (ks : List Nat) :
     Follows cap (setAt p a y ks) (setAt p a y ks) := by
   unfold setAt; follows
 
-theorem changeAt_f (p : Pos) (pl : Place) (f : Value → Value) :
-    Follows cap (changeAt p pl f) (changeAt p pl f) := by
+theorem changeAt_f (p : Pos) (pl : Place) (f : Value → Value) (sz : Nat → Nat)
+    (d : Option Nat) : Follows cap (changeAt p pl f sz d) (changeAt p pl f sz d) := by
   unfold changeAt; follows [held_f, bindLocal_f, setAt_f]
 
 theorem rebind_f (p : Pos) (pl : Place) (sl : Slot) (a o x : Agg) :

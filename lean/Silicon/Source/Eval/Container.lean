@@ -435,8 +435,8 @@ def Agg.emptySize (specs : Specs) : Agg → List Nat → Nat
 
 /-!
 The sum of the part counts of the container nodes on the path `ks` of the aggregate `a`. A change
-of a static part rebuilds each of these nodes from its parts (`Agg.rebuild`), so this sum bounds
-the work of the refresh. The path ends at the first part that is not a container node.
+of a static part copies each of these nodes (`Agg.change`), so this sum bounds the work of the
+refresh. The path ends at the first part that is not a container node.
 -/
 def Agg.pathWidth : Agg → List Nat → Nat
   | .array _ xs, k :: ks | .tuple _ xs, k :: ks | .record _ xs, k :: ks =>
@@ -444,6 +444,30 @@ def Agg.pathWidth : Agg → List Nat → Nat
       | some x => Agg.pathWidth x ks
       | none => 0
   | _, _ => 0
+
+/-!
+The aggregate `a` with `f` applied to the static part at the numbers `ks`, for a change that
+keeps each hardware leaf. Each container node on the path maps its stored size by `sz`. Its depth
+becomes at least `d` plus the number of steps from the node to the end of the path. Thus each
+node refreshes in one step, and the walk reads no sibling. The caller makes these numbers exact.
+`sz` adds or removes the size of one element. `d` is the depth that the value at the end of the
+path can reach. A change that can lower a depth does not use this walk.
+-/
+def Agg.change (f : Value → Value) (sz : Nat → Nat) (d : Nat) : Agg → List Nat → Option Agg
+  | .static v, ks => some (.static (update f v ks))
+  | .array n xs, k :: ks => do
+    let x ← Agg.change f sz d (← xs[k]?) ks
+    return .array (refresh n ks) (xs.set! k x)
+  | .tuple n xs, k :: ks => do
+    let x ← Agg.change f sz d (← xs[k]?) ks
+    return .tuple (refresh n ks) (xs.set! k x)
+  | .record n xs, k :: ks => do
+    let x ← Agg.change f sz d (← xs[k]?) ks
+    return .record (refresh n ks) (xs.set! k x)
+  | _, _ => none
+where
+  refresh (n : Node) (ks : List Nat) : Node :=
+    { n with size := sz n.size, depth := max n.depth (ks.length + 1 + d) }
 
 /-!
 The static container `v` opened one level: its elements as static parts, and the builder of its
