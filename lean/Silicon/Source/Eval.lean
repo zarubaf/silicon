@@ -787,15 +787,18 @@ def setAt (pos : Pos) (a y : Agg) (ks : List Nat) : M Agg := do
 /-!
 Applies `f` at `p` to the selected static part of the place `pl` in the live value of its root.
 The indices of the place and the other operands ran after the root was read, so the change reads
-the live slot. A held root first charges its size. The hardware leaves of an aggregate root keep
-their names, so the root takes no new version.
+the live slot. In an aggregate root, the change refreshes each container node on the path, so it
+first charges the part count of each one (`Agg.pathWidth`). Then a held root charges its size.
+The hardware leaves of an aggregate root keep their names, so the root takes no new version.
 -/
 def changeAt (p : Pos) (pl : Place) (f : Value → Value) : M Unit := do
-  held p pl.id
   match (← get).frame[pl.id]?, pl.part with
   | some s@{ value := .static r, .. }, _ =>
+    held p pl.id
     bindLocal pl.id { s with value := .static (update f r pl.keys) }
   | some s@{ value := .agg a, .. }, .static v =>
+    charge p (a.pathWidth pl.keys)
+    held p pl.id
     bindLocal pl.id { s with value := (← setAt p a (.static (f v)) pl.keys).val }
   | _, _ => fail .S010 p "the place has no static part to change"
 

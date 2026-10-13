@@ -2095,9 +2095,34 @@ The update of the formal rebinds it in the frame of the call first.
   "S011 3:10"
 def listPart (_ : Ty) : Eval.Val :=
   .agg (.mkTuple #[.uint 8, .list (.uint 8)] #[leafX 0, .static (.list (.uint 8) #[])])
-/-! `push` into a static list part of an aggregate root keeps the names of its leaves. -/
+/-!
+`push` into a static list part of an aggregate root keeps the names of its leaves. The change
+refreshes each container node on the path. Thus `push` and `pop` charge the part count of each
+node, after the element and before a held root (section 5.4). `x.1.push(5);` charges 11, and 2 of it
+is the part count of the root. The root of width 3 charges 3 instead. A nested root charges 2 for
+its root and 2 for its part, and its extra step charges 1. `return true;` charges 4.
+-/
 #guard runF (assignIn "(UInt[8], List[UInt[8]])" "x.1.push(5);") listPart ==
-  " | [x$0e, (list (uint 8) ((uint 8 5)))] | 13"
+  " | [x$0e, (list (uint 8) ((uint 8 5)))] | 15"
+def wideList (_ : Ty) : Eval.Val :=
+  .agg (.mkTuple #[.uint 8, .bool, .list (.uint 8)]
+    #[leafX 0, .static (.bool true), .static (.list (.uint 8) #[.uint 8 7])])
+def nested (_ : Ty) : Eval.Val :=
+  .agg (.mkTuple #[.tuple #[.uint 8, .list (.uint 8)], .bool]
+    #[.mkTuple #[.uint 8, .list (.uint 8)] #[leafX 0, .static (.list (.uint 8) #[])],
+      .static (.bool true)])
+#guard runF (assignIn "(UInt[8], List[UInt[8]])" "x.1.push(5);") listPart 11 == "S015 3:3"
+#guard runF (assignIn "(UInt[8], List[UInt[8]])" "x.1.push(5);") listPart 10 == "S015 2:3"
+#guard runF (assignIn "(UInt[8], Bool, List[UInt[8]])" "x.2.push(5);") wideList ==
+  " | [x$0e, (bool true), (list (uint 8) ((uint 8 7) (uint 8 5)))] | 16"
+#guard runF (assignIn "(UInt[8], Bool, List[UInt[8]])" "x.2.push(5);") wideList 12 == "S015 3:3"
+#guard runF (assignIn "(UInt[8], Bool, List[UInt[8]])" "x.2.push(5);") wideList 11 == "S015 2:3"
+#guard runF (assignIn "(UInt[8], Bool, List[UInt[8]])" "let y = x.2.pop();") wideList ==
+  " | [x$0e, (bool true), (list (uint 8) ())] | 12"
+#guard runF (assignIn "((UInt[8], List[UInt[8]]), Bool)" "x.0.1.push(5);") nested ==
+  " | [[x$0e, (list (uint 8) ((uint 8 5)))], (bool true)] | 18"
+#guard runF (assignIn "((UInt[8], List[UInt[8]]), Bool)" "x.0.1.push(5);") nested 14 == "S015 3:3"
+#guard runF (assignIn "((UInt[8], List[UInt[8]]), Bool)" "x.0.1.push(5);") nested 13 == "S015 2:3"
 
 /-!
 `==` and `!=` on a hardware aggregate (section 5.4). A hardware value prints as its tree: a name,

@@ -434,6 +434,18 @@ def Agg.emptySize (specs : Specs) : Agg → List Nat → Nat
   | _, _ => 0
 
 /-!
+The sum of the part counts of the container nodes on the path `ks` of the aggregate `a`. A change
+of a static part rebuilds each of these nodes from its parts (`Agg.rebuild`), so this sum bounds
+the work of the refresh. The path ends at the first part that is not a container node.
+-/
+def Agg.pathWidth : Agg → List Nat → Nat
+  | .array _ xs, k :: ks | .tuple _ xs, k :: ks | .record _ xs, k :: ks =>
+    xs.size + match xs[k]? with
+      | some x => Agg.pathWidth x ks
+      | none => 0
+  | _, _ => 0
+
+/-!
 The static container `v` opened one level: its elements as static parts, and the builder of its
 node. A list never holds a hardware leaf, so it does not open.
 -/
