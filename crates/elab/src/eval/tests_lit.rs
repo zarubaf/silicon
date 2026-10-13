@@ -460,3 +460,60 @@ fn an_index_at_a_static_part_of_an_aggregate_root_holds_the_root() {
         "total 229\nM 201\n"
     );
 }
+
+/// The message of the first error of the module `M` with the statement `s` in its body.
+fn message_of(s: &str) -> String {
+    let src = format!(
+        "module M() domains() {{\n    input a: UInt[8];\n    output y: UInt[8];\n    {s}\n    y := a;\n}}\n"
+    );
+    let file = crate::tests_elab::load(&src).unwrap_or_else(|e| panic!("{e}"));
+    match crate::elaborate_with(
+        &file,
+        "M()",
+        parse::DEFAULT_SYNTAX_DEPTH,
+        crate::Budget::default(),
+        crate::names::sha16,
+    ) {
+        Ok(Err(e)) => format!("{} {}", e.code, e.message),
+        _ => "no error".to_owned(),
+    }
+}
+
+/// An operand that is a hardware aggregate prints as `hardware T` in each message, and an
+/// operator rejects it as Lean does: as no data operand, never as a static `Bool`.
+#[test]
+fn an_aggregate_operand_prints_its_type_and_no_operator_accepts_it() {
+    let t = "hardware (UInt[8], Int)";
+    let cases = [
+        (
+            "let s = str((a, 1));",
+            format!("`str` needs an Int, not {t}"),
+        ),
+        (
+            "let s = str(a);",
+            "`str` needs an Int, not hardware UInt[8]".to_owned(),
+        ),
+        (
+            "let s = a << (a, 1);",
+            format!("a shift count is UInt or a static Int, not {t}"),
+        ),
+        ("let s = (a, 1) << a;", format!("`<<` does not accept {t}")),
+        ("let s = !(a, 1);", format!("`!` does not accept {t}")),
+        ("let s = -(a, 1);", format!("`-` does not accept {t}")),
+        (
+            "let s = (a, 1) & 3;",
+            format!("expected data operands, not {t} and Int"),
+        ),
+        (
+            "let s = (a, 1) && true;",
+            format!("expected data operands, not {t} and Bool"),
+        ),
+        (
+            "let s = 1 + (a, 1);",
+            "`+` accepts only Int and Nat; hardware has `+%`, `-%`, and `*%`".to_owned(),
+        ),
+    ];
+    for (s, message) in cases {
+        assert_eq!(message_of(s), format!("S010 {message}"), "{s}");
+    }
+}
