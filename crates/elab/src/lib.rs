@@ -246,6 +246,9 @@ mod tests_elab;
 mod tests_fn;
 
 #[cfg(test)]
+mod tests_fn_call;
+
+#[cfg(test)]
 mod tests_flatten;
 
 #[cfg(test)]

@@ -101,7 +101,7 @@ pub(crate) fn order(src: &str, top: &str) -> Vec<String> {
 }
 
 /// The core names of the named bindings, the registers, the wires, and the children of `m`.
-fn names(src: &str, top: &str, m: &str) -> Vec<String> {
+pub(crate) fn names(src: &str, top: &str, m: &str) -> Vec<String> {
     design(src, top).core_names(m).unwrap()
 }
 
