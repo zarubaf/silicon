@@ -131,7 +131,7 @@ fn defect<T>(msg: &str) -> R<T> {
 fn field_units(f: &Field) -> u128 {
     match f {
         Field::User(x) => x.len().max(1) as u128,
-        Field::Int(n) => u128::from(int_size(n)).pow(2),
+        Field::Int(n) | Field::Elem(n) => u128::from(int_size(n)).pow(2),
         Field::Call(_) | Field::Version(_) | Field::Temp(_) => 1,
         Field::Bool(_) => 2,
         Field::Digest(h) => 2 + h.len() as u128,

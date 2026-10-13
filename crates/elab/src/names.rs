@@ -9,7 +9,8 @@
 //! for each valid name `p`.
 //!
 //! A call site, a version, and a temporary are `u64` values here: an elaboration within a
-//! `u64` fuel makes no larger one. `decode` gives `None` for a larger number.
+//! `u64` fuel makes no larger one. `decode` gives `None` for a larger number. An element is a
+//! natural number as in Lean, so it has no bound.
 
 use crate::int::Int;
 use crate::sha256;
@@ -63,6 +64,8 @@ pub enum Field {
     Digest(String),
     Temp(u64),
     Role(Role),
+    /// An array or tuple element `<k>e`. Its index is never negative.
+    Elem(Int),
 }
 
 /// A name: a first user field, then the other fields in order.
@@ -92,6 +95,7 @@ impl Field {
         match self {
             Field::User(s) => user_field(s),
             Field::Digest(h) => !h.is_empty() && h.chars().all(hex_digit),
+            Field::Elem(k) => !k.is_negative(),
             _ => true,
         }
     }
@@ -108,6 +112,7 @@ impl Field {
             Field::Digest(h) => format!("0h{h}"),
             Field::Temp(k) => format!("{k}t"),
             Field::Role(r) => r.text().to_owned(),
+            Field::Elem(k) => format!("{k}e"),
         }
     }
 }
@@ -184,6 +189,7 @@ fn made_field(s: &str) -> Option<Field> {
         "c" => small().map(Field::Call),
         "v" => small().map(Field::Version),
         "t" => small().map(Field::Temp),
+        "e" => n.and_then(Int::from_decimal).map(Field::Elem),
         "b" => match n {
             Some("0") => Some(Field::Bool(false)),
             Some("1") => Some(Field::Bool(true)),
