@@ -490,3 +490,59 @@ fn a_copy_of_a_wide_name_charges_its_width() {
     assert!(!sil_fuel(&copies(256), "M", 99).starts_with("S015"));
     assert!(sil_fuel(&copies(256), "M", 98).starts_with("S015"));
 }
+
+/// A static container of `Bool`, `UInt`, or `SInt` in a hardware aggregate has hardware leaves in
+/// its type only. A read of it, with an index that changes a sibling, holds the root like the
+/// read of any static part, so the fuel equals that of Lean. The totals are those of
+/// `silicon-check cost`.
+#[test]
+fn a_static_container_with_leaf_types_holds_the_root() {
+    let body = |decl: &str, root: &str, read: &str, out: &str| {
+        format!(
+            "module M() domains() {{ input a: UInt[8]; output y: UInt[8]; {decl} let mut t = {root}; let k = {read}; y := {out}; }}\n"
+        )
+    };
+    let cases = [
+        (
+            body(
+                "",
+                "(a, list(Nat), [(false, true)])",
+                "t.2[0][(t.1.push(1), 0).1]",
+                "t.0",
+            ),
+            122,
+        ),
+        (
+            body(
+                "let s: [UInt[8]; 2] = [1, 2];",
+                "(a, list(Nat), s)",
+                "t.2[(t.1.push(1), 0).1]",
+                "t.0",
+            ),
+            136,
+        ),
+        (
+            body(
+                "let s: (SInt[4], [SInt[4]; 2]) = (-1, [2, -3]);",
+                "(a, list(Nat), s)",
+                "t.2.1[(t.1.push(1), 0).1]",
+                "t.0",
+            ),
+            183,
+        ),
+        (
+            body(
+                "let s: [[(Bool, UInt[2]); 1]; 1] = [[(true, 2)]];",
+                "(list(Nat), (a, ((s, a), a)))",
+                "t.1.1.0.0[0][(t.0.push(1), 0).1].0",
+                "a",
+            ),
+            251,
+        ),
+    ];
+    for (src, units) in cases {
+        assert_eq!(total(&src, "M"), units, "{src}");
+        assert!(!sil_fuel(&src, "M", units).starts_with("S015"), "{src}");
+        assert!(sil_fuel(&src, "M", units - 1).starts_with("S015"), "{src}");
+    }
+}
