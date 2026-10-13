@@ -1431,7 +1431,10 @@ impl Evaluator<'_> {
     fn field(&mut self, pos: Pos, b: Out, field: &Ident) -> Res<Out> {
         let b = match self.store.seen(&b) {
             Seen::Handle(Handle::Inst { .. }) => return self.port_of(pos, b, field),
-            Seen::Handle(Handle::Res { .. }) => self.data(pos, b)?.into_out(),
+            // A field selection is a data context (section 9.2): a child input is `S017`.
+            Seen::Handle(Handle::Res { .. } | Handle::Input { .. }) => {
+                self.data(pos, b)?.into_out()
+            }
             _ => b,
         };
         if matches!(self.store.seen(&b), Seen::Agg(_)) {
