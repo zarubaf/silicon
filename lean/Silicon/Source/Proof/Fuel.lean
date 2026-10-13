@@ -657,7 +657,12 @@ theorem args_f (he : ∀ e, Follows m (eval k e) (eval m e)) (b : Nat)
 theorem ctor_f (he : ∀ e, Follows m (eval k e) (eval m e)) (p : Pos) (o : Out)
     (b : Nat) (xs : List Resolve.Expr) : Follows m (ctor k p o b xs) (ctor m p o b xs) := by
   rw [ctor.eq_def k, ctor.eq_def m]
-  follows [he, args_f he, need_f, static_f, conform_f, zero_f, recordOf_f]
+  follows [he, args_f he, need_f, static_f, conform_f, zero_f, recordOf_f, hold_f, release_f]
+
+theorem actuals_f (he : ∀ e, Follows m (eval k e) (eval m e)) (xs : List Resolve.Expr)
+    (muts : List Bool) : Follows m (actuals k xs muts) (actuals m xs muts) := by
+  rw [actuals.eq_def k, actuals.eq_def m]
+  follows [he, placeAt_f he, need_f, hold_f, release_f]
 
 theorem invoke_f (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t))
     (hb : ∀ p ss, Follows m (block k p ss) (block m p ss)) (p : Pos) (i j : Nat) (c : Bool)
@@ -674,8 +679,8 @@ theorem call_f (he : ∀ e, Follows m (eval k e) (eval m e))
     (xs : List Resolve.Expr) (b j : Nat) :
     Follows m (call k p f xs b j) (call m p f xs b j) := by
   rw [call.eq_def k, call.eq_def m]
-  follows [he, placeAt_f he, args_f he, ctor_f he, invoke_f ht hb, need_f, hold_f, release_f,
-    pushOnto_f, popFrom_f, primCall_f]
+  follows [he, placeAt_f he, args_f he, ctor_f he, actuals_f he, invoke_f ht hb, need_f,
+    hold_f, release_f, pushOnto_f, popFrom_f, primCall_f]
 
 set_option maxHeartbeats 400000 in
 /--
