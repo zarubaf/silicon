@@ -6,9 +6,10 @@
 use super::place::Place;
 use super::{Evaluator, Names, Opnd, Out, Res, Slot, Tag, at, expr_pos, fail, need};
 use crate::Code;
-use crate::hw::{Ref, Val};
+use crate::hw::{Ref, Seen, Val};
 use crate::names::{Role, Step};
 use crate::ops::{self, str_text};
+use crate::types::{Ty, TyId};
 use crate::value::Value;
 use parse::ast::{Expr, Ident, Item, NodeId, Param, ParamMode, Pos};
 use resolve::{DeclId, Kind, Prelude, Target};
@@ -93,7 +94,7 @@ impl Evaluator<'_> {
         Ok(Callee::Value(need(f, value)?))
     }
 
-    /// A call of a function item, a prelude function, or a type.
+    /// A call of a function item, a prelude function, a function value, or a type.
     pub(super) fn call(
         &mut self,
         pos: Pos,
@@ -106,7 +107,13 @@ impl Evaluator<'_> {
         match callee {
             Callee::Item(fp, g, id) => self.call_fn(pos, node, fp, g, id, &args, 0),
             Callee::Prim(fp, g, h) => self.call_prelude(pos, fp, g, h, &args, 0),
-            Callee::Value(o) => self.construct(pos, &o, xs),
+            Callee::Value(o) => {
+                let Seen::Static(Value::Function(i, sig)) = self.store.seen(&o) else {
+                    return self.construct(pos, o, xs);
+                };
+                let (i, sig) = (*i, *sig);
+                self.call_value(pos, node, o, i, sig, &args)
+            }
         }
     }
 
@@ -151,16 +158,21 @@ impl Evaluator<'_> {
     }
 
     /// The arguments `xs` of a call in their evaluation order, as the actuals of the
-    /// parameters `params`, in the order of the parameters. A `mut` actual resolves its place by
-    /// the steps of an assignment target.
-    fn actuals(&mut self, params: &[Param], xs: &[&Expr], bound: usize) -> Res<Vec<Actual>> {
+    /// parameters, in the order of the parameters. The parameter `k` is `mut` if `is_mut(k)`.
+    /// A `mut` actual resolves its place by the steps of an assignment target.
+    fn actuals(
+        &mut self,
+        is_mut: impl Fn(usize) -> bool,
+        xs: &[&Expr],
+        bound: usize,
+    ) -> Res<Vec<Actual>> {
         let mut slots: Vec<Option<Actual>> = xs.iter().map(|_| None).collect();
         // The values wait in the store, so that a later actual cannot change them.
         let base = self.store.parked.len();
         let mut values = Vec::with_capacity(xs.len());
         for (k, x) in xs.iter().enumerate() {
             let at = parameter_of(k, bound);
-            if params.get(at).is_some_and(|q| q.mode == ParamMode::Mut) {
+            if is_mut(at) {
                 let place = Actual::Place(self.place_at(expr_pos(x), Code::S008, x)?);
                 if let Some(slot) = slots.get_mut(at) {
                     *slot = Some(place);
@@ -199,15 +211,7 @@ impl Evaluator<'_> {
         let Some(&i) = self.items.get(&id) else {
             return fail(Code::S010, fp, format!("`{g}` is not a function"));
         };
-        let Some(Item::Fn {
-            pos: ip,
-            comptime,
-            name: fn_name,
-            params,
-            ret,
-            body,
-        }) = file.ast().get(i)
-        else {
+        let Some(Item::Fn { params, .. }) = file.ast().get(i) else {
             return fail(Code::S010, fp, format!("`{g}` is not a function"));
         };
         if params.len() != xs.len() {
@@ -222,7 +226,65 @@ impl Evaluator<'_> {
                 ),
             );
         }
-        let acts = self.actuals(params, xs, bound)?;
+        let acts = self.actuals(
+            |k| params.get(k).is_some_and(|q| q.mode == ParamMode::Mut),
+            xs,
+            bound,
+        )?;
+        self.run_fn(pos, node, i, acts)
+    }
+
+    /// A call through the function value of the item `i` with the signature `sig`, whose
+    /// result is `callee`. The number of arguments comes first (`S007` at the call), before
+    /// any argument evaluates. The callee waits while the arguments evaluate, and the marks of
+    /// its type select the `mut` actuals. The item runs as a call by its name, with no
+    /// charge for a name.
+    fn call_value(
+        &mut self,
+        pos: Pos,
+        node: NodeId,
+        callee: Out,
+        i: usize,
+        sig: TyId,
+        xs: &[&Expr],
+    ) -> Res<Option<Out>> {
+        let Ty::Fn(qs, _) = self.tys.get(sig) else {
+            return fail(Code::S010, pos, "the value is not a function".to_owned());
+        };
+        if qs.len() != xs.len() {
+            return fail(
+                Code::S007,
+                pos,
+                format!(
+                    "`{}` takes {} argument(s), but it has {}",
+                    self.tys.fn_name(i),
+                    qs.len(),
+                    xs.len()
+                ),
+            );
+        }
+        let marks: Vec<bool> = qs.iter().map(|q| q.mutable).collect();
+        let at = self.store.park(callee);
+        let acts = self.actuals(|k| marks.get(k).copied().unwrap_or(false), xs, 0);
+        self.store.resume_one(at);
+        self.run_fn(pos, node, i, acts?)
+    }
+
+    /// The run of the function item `i` with the actuals `acts` in the order of the
+    /// parameters.
+    fn run_fn(&mut self, pos: Pos, node: NodeId, i: usize, acts: Vec<Actual>) -> Res<Option<Out>> {
+        let file = self.file;
+        let Some(Item::Fn {
+            pos: ip,
+            comptime,
+            name: fn_name,
+            params,
+            ret,
+            body,
+        }) = file.ast().get(i)
+        else {
+            return fail(Code::S010, pos, "the value is not a function".to_owned());
+        };
         let site = self.site(node);
         let u = self.syms.items.get(i).copied().unwrap_or(0);
         let (result, written) = self.nested(pos, |ev| {

@@ -16,13 +16,14 @@ use parse::ast::{Expr, Ident, Item, Pos};
 impl Evaluator<'_> {
     /// A call whose callee is not a function item or a prelude function: the callee is a type,
     /// and the call is its constructor. No argument is the zero `T()`. A struct type takes one
-    /// argument for each field. Another type takes one argument, which it converts.
-    pub(super) fn construct(&mut self, pos: Pos, callee: &Out, xs: &[Expr]) -> Res<Option<Out>> {
-        let Seen::Static(Value::Type(ty)) = self.store.seen(callee) else {
+    /// argument for each field. Another type takes one argument, which it converts. The callee
+    /// waits in the store while the arguments evaluate.
+    pub(super) fn construct(&mut self, pos: Pos, callee: Out, xs: &[Expr]) -> Res<Option<Out>> {
+        let Seen::Static(Value::Type(ty)) = self.store.seen(&callee) else {
             return fail(
                 Code::S010,
                 pos,
-                format!("{} is not a function", self.text(self.store.seen(callee))),
+                format!("{} is not a function", self.text(self.store.seen(&callee))),
             );
         };
         let ty = *ty;
@@ -38,10 +39,12 @@ impl Evaluator<'_> {
         }
         let value = match xs {
             [] => self.zero(pos, ty)?,
-            _ if matches!(self.tys.get(ty), Ty::Struct(_)) => self.record(pos, ty, xs)?,
+            _ if matches!(self.tys.get(ty), Ty::Struct(_)) => self.record(pos, ty, callee, xs)?,
             [x] => {
+                let at = self.store.park(callee);
                 let a = self.eval(x)?;
                 let a = need(x, a)?;
+                self.store.resume_one(at);
                 self.charge(pos, self.size(&a))?;
                 self.conform(pos, ty, a)?
             }
@@ -84,7 +87,7 @@ impl Evaluator<'_> {
     /// Each field is a typed use in declaration order. A literal with `[]` takes the type of its
     /// field. In this phase a field holds only a static value, so a hardware argument is
     /// `S010` at the argument. Then the record checks its depth and charges its size.
-    fn record(&mut self, pos: Pos, ty: TyId, xs: &[Expr]) -> Res<Value> {
+    fn record(&mut self, pos: Pos, ty: TyId, callee: Out, xs: &[Expr]) -> Res<Value> {
         let Some((_, fields)) = self.tys.fields(ty) else {
             return fail(
                 Code::S010,
@@ -104,7 +107,9 @@ impl Evaluator<'_> {
             );
         }
         let fields = fields.to_vec();
+        let at = self.store.park(callee);
         let args = self.args(xs)?;
+        self.store.resume_one(at);
         let mut sizes = 0u128;
         for a in &args {
             sizes += self.size(a);
