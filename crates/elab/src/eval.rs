@@ -1117,32 +1117,7 @@ impl Evaluator<'_> {
                     (a, b) => Ok(Some(Out::Made(self.hw_binary(*pos, *op, a, b)?))),
                 }
             }
-            Expr::Cond { pos, cond, yes, no } => match self.operand(*pos, cond)? {
-                Opnd::Hw(c) => {
-                    let ty = self.graph.ty(c);
-                    if ty != Ty::Bool {
-                        return fail(
-                            Code::S010,
-                            *pos,
-                            format!("a condition is a Bool, not {}", self.tys.text_of(&ty)),
-                        );
-                    }
-                    let saved = self.arm.replace(self.depth);
-                    let arms = self
-                        .operand(*pos, yes)
-                        .and_then(|a| self.operand_after(*pos, a, no));
-                    self.arm = saved;
-                    let (a, b) = arms?;
-                    Ok(Some(Out::Made(self.mux(*pos, c, a, b)?)))
-                }
-                Opnd::Static(c) => {
-                    if self.test(*pos, self.store.seen(&c))? {
-                        self.eval(yes)
-                    } else {
-                        self.eval(no)
-                    }
-                }
-            },
+            Expr::Cond { pos, cond, yes, no } => self.cond(*pos, cond, yes, no),
             Expr::Call {
                 pos,
                 id,
@@ -1181,6 +1156,37 @@ impl Evaluator<'_> {
                 Ok(Some(Out::Made(Val::Static(Value::Type(t)))))
             }
             Expr::FnType { pos, .. } => fail(Code::S004, *pos, FN_TYPE_LATER.to_owned()),
+        }
+    }
+
+    /// An `if` expression. A static condition selects an arm, and a hardware condition makes
+    /// a select of both arms.
+    fn cond(&mut self, pos: Pos, cond: &Expr, yes: &Expr, no: &Expr) -> Res<Option<Out>> {
+        match self.operand(pos, cond)? {
+            Opnd::Hw(c) => {
+                let ty = self.graph.ty(c);
+                if ty != Ty::Bool {
+                    return fail(
+                        Code::S010,
+                        pos,
+                        format!("a condition is a Bool, not {}", self.tys.text_of(&ty)),
+                    );
+                }
+                let saved = self.arm.replace(self.depth);
+                let arms = self
+                    .operand(pos, yes)
+                    .and_then(|a| self.operand_after(pos, a, no));
+                self.arm = saved;
+                let (a, b) = arms?;
+                Ok(Some(Out::Made(self.mux(pos, c, a, b)?)))
+            }
+            Opnd::Static(c) => {
+                if self.test(pos, self.store.seen(&c))? {
+                    self.eval(yes)
+                } else {
+                    self.eval(no)
+                }
+            }
         }
     }
 
