@@ -1,0 +1,13 @@
+// A port named like a core keyword with leaves: the leaf names are `add.x` and `add.y`.
+// TOP M()
+struct P {
+    x: UInt[4],
+    y: UInt[4],
+}
+module M() domains() {
+    input add: P;
+    output sub: P;
+    sub := P(add.y, add.x);
+}
+// STEP in=(add.x 1 add.y 2) out=(sub.x 2 sub.y 1)
+// STEP in=(add.x 15 add.y 0) out=(sub.x 0 sub.y 15)

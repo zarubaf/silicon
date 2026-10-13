@@ -1,0 +1,20 @@
+// A child with a record input and an array output: the parent connects and reads the leaves.
+// TOP Top()
+struct P {
+    a: UInt[4],
+    b: Bool,
+}
+module Child() domains() {
+    input p: P;
+    output q: [UInt[4]; 2];
+    q := [p.a, p.a +% 1];
+}
+module Top() domains() {
+    input x: UInt[4];
+    output y: UInt[4];
+    instance c = Child();
+    c.p := P(x, true);
+    y := c.q[1];
+}
+// STEP in=(x 3) out=(y 4)
+// STEP in=(x 15) out=(y 0)

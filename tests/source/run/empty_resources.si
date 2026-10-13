@@ -1,0 +1,17 @@
+// An empty port, register, and wire lower to nothing. Each needs one `:=` and has no entry.
+// TOP M()
+module M() {
+    input e: ();
+    input z: [Bool; 0];
+    output o: [UInt[4]; 0];
+    output y: UInt[4];
+    input x: UInt[4];
+    reg r: () = ();
+    wire w: ([Bool; 0], ());
+    r := ();
+    w := ([], ());
+    o := [];
+    y := x;
+}
+// STEP in=(clock$0rst false x 5) out=(y 5)
+// STEP in=(clock$0rst false x 9) out=(y 9)

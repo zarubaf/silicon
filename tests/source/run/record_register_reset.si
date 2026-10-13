@@ -1,0 +1,17 @@
+// A record register with a reset value. The reset leaves take the fields of the initial record.
+// TOP M()
+struct P {
+    a: UInt[4],
+    b: Bool,
+}
+module M() {
+    input x: UInt[4];
+    output y: P;
+    reg r: P = P(3, true);
+    r := P(r.a +% x, r.b);
+    y := r;
+}
+// STEP in=(clock$0rst true x 0) out=(y.a 0 y.b false)
+// STEP in=(clock$0rst false x 1) out=(y.a 3 y.b true)
+// STEP in=(clock$0rst false x 2) out=(y.a 4 y.b true)
+// STEP in=(clock$0rst false x 0) out=(y.a 6 y.b true)

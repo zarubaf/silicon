@@ -1,0 +1,10 @@
+// An array input and an array output: each element is one leaf of the port, so the output swaps
+// the two inputs.
+// TOP M()
+module M() domains() {
+    input a: [UInt[4]; 2];
+    output b: [UInt[4]; 2];
+    b := [a[1], a[0]];
+}
+// STEP in=(a.0 1 a.1 2) out=(b.0 2 b.1 1)
+// STEP in=(a.0 15 a.1 0) out=(b.0 0 b.1 15)

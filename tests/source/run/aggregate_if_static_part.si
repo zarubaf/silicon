@@ -1,0 +1,12 @@
+// The arms of a hardware `if` have the same static part: the scalar 3 and a string.
+// TOP M()
+module M() domains() {
+    input c: Bool;
+    input h: UInt[4];
+    input g: UInt[4];
+    output y: UInt[4];
+    let p = if (c) { (h, 3, "s") } else { (g, 3, "s") };
+    y := p.0 +% UInt[4](p.1);
+}
+// STEP in=(c true g 5 h 1) out=(y 4)
+// STEP in=(c false g 5 h 1) out=(y 8)

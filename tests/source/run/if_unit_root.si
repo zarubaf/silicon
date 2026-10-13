@@ -1,0 +1,10 @@
+// An `if` whose arms have the type `()` gives `()` and makes no hardware.
+// TOP M()
+module M() domains() {
+    input c: Bool;
+    output y: Bool;
+    let u = if (c) { () } else { () };
+    y := c;
+}
+// STEP in=(c true) out=(y true)
+// STEP in=(c false) out=(y false)

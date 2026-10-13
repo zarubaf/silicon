@@ -1,0 +1,11 @@
+// A hardware `if` of two aggregates muxes by leaf. A static part that both arms share stays static.
+// TOP M()
+module M() domains() {
+    input c: Bool;
+    input a: (UInt[4], Bool);
+    input b: (UInt[4], Bool);
+    output y: (UInt[4], Bool);
+    y := if (c) { a } else { b };
+}
+// STEP in=(a.0 1 a.1 true b.0 2 b.1 false c true) out=(y.0 1 y.1 true)
+// STEP in=(a.0 1 a.1 true b.0 2 b.1 false c false) out=(y.0 2 y.1 false)

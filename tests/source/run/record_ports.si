@@ -1,0 +1,13 @@
+// A record input and a record output: each field is one leaf of the port.
+// TOP M()
+struct P {
+    a: UInt[4],
+    b: Bool,
+}
+module M() domains() {
+    input p: P;
+    output q: P;
+    q := P(p.a +% 1, p.b);
+}
+// STEP in=(p.a 3 p.b true) out=(q.a 4 q.b true)
+// STEP in=(p.a 15 p.b false) out=(q.a 0 q.b false)

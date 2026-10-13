@@ -1,0 +1,12 @@
+// An aggregate wire. Its second leaf reads its first leaf. This is no cycle, because the leaves
+// are separate signals.
+// TOP M()
+module M() domains() {
+    input x: UInt[4];
+    output y: UInt[4];
+    wire w: (UInt[4], UInt[4]);
+    w := (x, w.0 +% 1);
+    y := w.1;
+}
+// STEP in=(x 3) out=(y 4)
+// STEP in=(x 15) out=(y 0)

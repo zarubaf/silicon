@@ -1,0 +1,9 @@
+// A tuple input and a tuple output: each element is one leaf of the port.
+// TOP M()
+module M() domains() {
+    input t: (UInt[4], Bool);
+    output u: (Bool, UInt[4]);
+    u := (t.1, t.0);
+}
+// STEP in=(t.0 5 t.1 true) out=(u.0 true u.1 5)
+// STEP in=(t.0 9 t.1 false) out=(u.0 false u.1 9)

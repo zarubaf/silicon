@@ -1,0 +1,15 @@
+// `==` and `!=` of hardware aggregates compare by leaf. A static part of both sides folds.
+// TOP M()
+module M() domains() {
+    input a: (UInt[4], Bool);
+    input b: (UInt[4], Bool);
+    output eq: Bool;
+    output ne: Bool;
+    output lit: Bool;
+    eq := a == b;
+    ne := a != b;
+    lit := (a.0, 1) == (b.0, 1);
+}
+// STEP in=(a.0 3 a.1 true b.0 3 b.1 true) out=(eq true lit true ne false)
+// STEP in=(a.0 3 a.1 true b.0 3 b.1 false) out=(eq false lit true ne true)
+// STEP in=(a.0 3 a.1 true b.0 4 b.1 true) out=(eq false lit false ne true)
