@@ -1,0 +1,259 @@
+// SPDX-License-Identifier: Apache-2.0
+//! The work of the walks over hardware aggregates, as the work bound of design section 5.5
+//! states it for the Rust front end: each walk visits a pair, a part, or a leaf after the unit
+//! that pays for it, and a reference never expands. The tests count the steps of the walks with
+//! the counters and not the time. Doubling the input at most doubles the count, and the count
+//! stays within a constant times the fuel that the run charged.
+
+use super::tests_bind::{assign_in, ref_x, run_f};
+use crate::counters::{self, Counts};
+
+const FUEL: u64 = 1_000_000_000_000;
+
+/// A run: the counts of its walks and the fuel that it charged.
+struct Run {
+    counts: Counts,
+    units: u64,
+}
+
+/// The run of `pre` and the statement `s` in the body of `f` with the formal `x` of the type
+/// `t`. The number `run` keys the counters. A failed run gives its text.
+fn run_with(pre: &str, t: &str, s: &str, run: u64) -> Result<Run, String> {
+    let text = run_f(&format!("{pre}{}", assign_in(t, s)), run, FUEL, ref_x);
+    match text.rsplit(" | ").next().map(str::parse::<u64>) {
+        Some(Ok(units)) if text.contains(" | ") => Ok(Run {
+            counts: counters::of(run),
+            units,
+        }),
+        _ => Err(text),
+    }
+}
+
+fn run_ok(pre: &str, t: &str, s: &str, run: u64) -> Run {
+    run_with(pre, t, s, run).unwrap_or_else(|e| panic!("{t} {s}: {e}"))
+}
+
+/// The sizes of the inputs of a scaling test: each is double the one before.
+const SIZES: [u64; 4] = [32, 64, 128, 256];
+
+/// The count `of` of the run `at(n)` at least doubles by no more than its input: it is at most
+/// twice the count at half the input plus a constant `slack`. The count stays within `factor`
+/// times the fuel that the run charged, and it is not zero.
+fn assert_linear(at: impl Fn(u64, u64) -> Run, of: fn(&Run) -> u64, factor: u64, slack: u64) {
+    let mut before: Option<u64> = None;
+    for (k, n) in SIZES.into_iter().enumerate() {
+        let r = at(n, k as u64);
+        let count = of(&r);
+        assert!(count > 0, "no work counted at {n}");
+        assert!(
+            count <= factor * r.units,
+            "{n}: the work {count} is more than {factor} times the fuel {}",
+            r.units
+        );
+        if let Some(b) = before {
+            assert!(count <= 2 * b + slack, "{n}: the work {b} grew to {count}");
+        }
+        before = Some(count);
+    }
+}
+
+/// The key of a run: the family number and the index of the size keep it unique.
+fn key(family: u64, k: u64) -> u64 {
+    800_000_000 + family * 100 + k
+}
+
+/// `==` and `!=` pair the root and each element once: `n + 1` pairs, each paid by the fuel.
+#[test]
+fn the_work_of_the_equality_walk_is_linear_and_paid() {
+    for (family, op) in [(1, "=="), (2, "!=")] {
+        let at = |n: u64, k: u64| {
+            run_ok(
+                "",
+                &format!("[UInt[8]; {n}]"),
+                &format!("let y = x {op} x;"),
+                key(family, k),
+            )
+        };
+        assert_linear(at, |r| r.counts.paired, 1, 1);
+        assert_eq!(at(64, 9).counts.paired, 65);
+    }
+}
+
+/// The `if` pairs the root and each element once and builds one node for each leaf.
+#[test]
+fn the_work_of_the_if_walk_is_linear_and_paid() {
+    let at = |n: u64, k: u64| {
+        run_ok(
+            "",
+            &format!("(Bool, [UInt[8]; {n}], [UInt[8]; {n}])"),
+            "let y = if (x.0) { x.1 } else { x.2 };",
+            key(3, k),
+        )
+    };
+    assert_linear(at, |r| r.counts.paired, 1, 1);
+    assert_linear(at, |r| r.counts.nodes, 1, 2);
+    assert_eq!(at(64, 9).counts.paired, 65);
+}
+
+/// A selection takes constant work in the length of the array, also at 2^40, and a typed use
+/// of a reference at its own type checks no part. The binding of the typed use makes one `let`
+/// for each leaf, and the copy pays for them.
+#[test]
+fn a_selection_and_a_typed_use_take_no_work_in_the_array_length() {
+    let sizes = [16u64, 1 << 20, 1 << 40];
+    let select = |shape: fn(u64) -> String, s: &str, family: u64| {
+        let rows: Vec<Run> = sizes
+            .iter()
+            .enumerate()
+            .map(|(k, n)| run_ok("", &shape(*n), s, key(family, k as u64)))
+            .collect();
+        for r in &rows {
+            let (a, b) = (&rows[0].counts, &r.counts);
+            assert_eq!(
+                (a.selected, a.nodes, a.walked, a.expanded, a.bound),
+                (b.selected, b.nodes, b.walked, b.expanded, b.bound)
+            );
+            assert_eq!(rows[0].units, r.units);
+        }
+    };
+    select(|n| format!("[UInt[8]; {n}]"), "let y = x[3];", 4);
+    select(|n| format!("[[UInt[8]; {n}]; 8]"), "let y = x[3][4];", 5);
+    let typed = |n: u64, k: u64| {
+        run_ok(
+            "",
+            &format!("[UInt[8]; {n}]"),
+            &format!("let q: [UInt[8]; {n}] = x;"),
+            key(6, k),
+        )
+    };
+    for (k, n) in SIZES.into_iter().enumerate() {
+        let r = typed(n, k as u64);
+        let c = r.counts;
+        assert_eq!((c.typed, c.nodes, c.expanded), (0, 1, 0), "{n}");
+        assert!(
+            c.bound <= r.units,
+            "{n}: {} bound for {} units",
+            c.bound,
+            r.units
+        );
+    }
+}
+
+/// The empty sub-reference charges its zero size before it exists and builds nothing: the fuel
+/// grows with the length of the empty array, and no count grows with it. At 2^40 the charge
+/// fails before any part exists.
+#[test]
+fn an_empty_sub_reference_builds_nothing_beyond_its_charge() {
+    let at = |n: u64, k: u64| {
+        run_ok(
+            "",
+            &format!("(UInt[8], [(); {n}])"),
+            "let e = x.1;",
+            key(7, k),
+        )
+    };
+    let (a, b) = (at(64, 0), at(1 << 20, 1));
+    let (ca, cb) = (a.counts, b.counts);
+    assert_eq!(
+        (ca.nodes, ca.walked, ca.bound, ca.expanded, ca.selected),
+        (cb.nodes, cb.walked, cb.bound, cb.expanded, cb.selected)
+    );
+    assert_eq!(
+        b.units - a.units,
+        (1 << 20) - 64,
+        "the charge is the zero size"
+    );
+    let huge = run_with(
+        "",
+        "(UInt[8], [(); 1099511627776])",
+        "let e = x.1;",
+        key(7, 2),
+    );
+    assert_eq!(huge.err().as_deref(), Some("S015 2:11"));
+    let c = counters::of(key(7, 2));
+    assert_eq!((c.nodes, c.walked, c.bound, c.expanded), (0, 0, 0, 0));
+}
+
+/// The rebind of a place update binds each leaf once. Its work grows with the leaf count, and
+/// the fuel pays for it. The rebind of an empty part charges the zero size first, and the
+/// expansion of the part then takes a constant number of walks over it.
+#[test]
+fn the_rebind_and_the_empty_part_charge_are_paid() {
+    let at = |n: u64, k: u64| run_ok("", &format!("[UInt[8]; {n}]"), "x[1] = 7;", key(8, k));
+    assert_linear(at, |r| r.counts.bound, 1, 2);
+    assert_linear(at, |r| r.counts.expanded, 1, 2);
+    assert_linear(at, |r| r.counts.nodes, 4, 2);
+    let empty =
+        |n: u64, k: u64| run_ok("", &format!("(UInt[8], [(); {n}])"), "x.0 = 5;", key(9, k));
+    let sizes = [64u64, 1 << 10, 1 << 16];
+    for (k, n) in sizes.into_iter().enumerate() {
+        let r = empty(n, k as u64);
+        let c = r.counts;
+        assert_eq!((c.nodes, c.expanded), (4, 2), "{n}");
+        assert!(
+            c.walked <= 5 * r.units,
+            "{n}: {} walked for {} units",
+            c.walked,
+            r.units
+        );
+        assert!(r.units >= n, "{n}: the zero size is charged");
+    }
+    let huge = run_with("", "(UInt[8], [(); 1099511627776])", "x.0 = 5;", key(9, 9));
+    assert_eq!(huge.err().as_deref(), Some("S015 2:3"));
+    assert_eq!(counters::of(key(9, 9)).expanded, 0);
+}
+
+/// `push` into a list part of an aggregate root of width `n`, `n` times. The nodes above the
+/// list refresh their stored size and depth by a walk over their parts, and no unit pays for it:
+/// the work grows by 4 when the width doubles, and the fuel by 2.
+#[test]
+#[ignore = "TODO(#181): the refresh of the ancestors of a pushed list is O(width) and uncharged"]
+fn a_push_into_a_list_part_of_a_wide_root_is_paid() {
+    let at = |n: u64, k: u64| {
+        let ws = (0..n).map(|_| "x.0").collect::<Vec<_>>().join(", ");
+        run_ok(
+            "",
+            "(UInt[8], Bool)",
+            &format!(
+                "let mut t = ({ws}, list(Int));\n  comptime for i in 0..{n} {{ t.{n}.push(3); }}"
+            ),
+            key(10, k),
+        )
+    };
+    assert_linear(at, |r| r.counts.nodes, 8, 8);
+    assert_linear(at, |r| r.counts.walked, 8, 8);
+}
+
+/// A parked reference to a part of an aggregate root copies when a later operand changes the
+/// root. The copy is one node for each part. The change charges the rebind of the root, so the
+/// extra work of the copy stays within a constant times the extra fuel of the change.
+#[test]
+fn the_copy_of_a_parked_reference_is_paid_by_the_change() {
+    let at = |n: u64, with: bool, k: u64| {
+        let ws = (0..n).map(|_| "x.0").collect::<Vec<_>>().join(", ");
+        let pre = format!(
+            "fn h(a: [UInt[8]; {n}], b: Int) -> Int {{ return b; }}\n\
+             fn p(mut l: List[Int]) -> Int {{\n  l.push(1);\n  return 0;\n}}\n"
+        );
+        let call = if with { "h(t.0, p(t.1))" } else { "h(t.0, 0)" };
+        run_ok(
+            &pre,
+            "(UInt[8], Bool)",
+            &format!("let mut t = ([{ws}], list(Int));\n  let y = {call};"),
+            key(11, k * 2 + u64::from(with)),
+        )
+    };
+    let mut before: Option<u64> = None;
+    for (k, n) in SIZES.into_iter().enumerate() {
+        let k = k as u64;
+        let (base, changed) = (at(n, false, k), at(n, true, k));
+        let nodes = changed.counts.nodes - base.counts.nodes;
+        let units = changed.units - base.units;
+        assert!(nodes > 0, "{n}: the change copied nothing");
+        assert!(nodes <= 2 * units, "{n}: {nodes} nodes for {units} units");
+        if let Some(b) = before {
+            assert!(nodes <= 2 * b + 8, "{n}: {b} grew to {nodes}");
+        }
+        before = Some(nodes);
+    }
+}
