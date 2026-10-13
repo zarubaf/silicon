@@ -468,7 +468,7 @@ fn an_index_with_a_call_along_stored_nodes_takes_linear_steps() {
             ),
             "S0",
             &format!("let mut m = x;\n  m{place} = 7;\n  let y = m{read};"),
-            key(24, k),
+            key(26, k),
         )
     };
     assert_linear(at, |r| r.counts.stepped, 16, 16);
