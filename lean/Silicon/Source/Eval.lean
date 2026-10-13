@@ -102,6 +102,13 @@ Hardware values follow v0.1 sections 1 and 3:
 - A binding of a hardware aggregate takes one version, and each hardware leaf gets one core
   `let` at the name with its leaf fields. A reference expands into its leaves there, after the
   copy paid for them. An argument, a result, and a `mut` write-back bind the same way.
+- `==` and `!=` with a hardware aggregate operand check the function flag, then join the two
+  types with the join charge (`S010` without a join). Then the walk of section 7.4 visits the
+  pairs in packing order, and it charges 1 before each pair, the root pair included. A
+  reference pairs part by part through its type, so it never expands. A static pair charges as a
+  static equality. A leaf pair keeps the scalar rule of slice 1 with its conversion charge. After
+  the walk, the chain of `and` nodes charges from `(const 1 s)` when static pairs exist, and `!=`
+  adds an `xor` node last (`aggEq`).
 - A place update whose new root has a hardware leaf binds each hardware leaf of the root again,
   at the next version of the root. It charges the size of the new root from the stored sizes,
   before the path copies and before a reference on the path expands. The held root then
@@ -354,9 +361,12 @@ def range (pos : Pos) (a z : Int) : M Nat := do
 Makes a hardware node. It charges 1 plus the number of its operands. The operand trees are
 shared, so the work is constant per node.
 -/
-def node (pos : Pos) (ty : Ty) (op : Op) (args : List Hw) : M Val := do
+def hwNode (pos : Pos) (ty : Ty) (op : Op) (args : List Hw) : M Hw := do
   charge pos (1 + args.length)
-  return .hw (Hw.mk pos ty op args)
+  return Hw.mk pos ty op args
+
+def node (pos : Pos) (ty : Ty) (op : Op) (args : List Hw) : M Val := do
+  return .hw (← hwNode pos ty op args)
 
 /-! A static value at a hardware use. Only a Boolean and a finite value have a hardware type. -/
 def lit (pos : Pos) : Value → M Hw
@@ -441,6 +451,113 @@ def mux (pos : Pos) (c : Hw) (a b : Val) : M Val := do
     | a, b => hwPair pos a b
   if x.ty.same y.ty then node pos x.ty .mux [c, x, y]
   else fail .S010 pos s!"the arms of an `if` have one type, not {x.ty.text} and {y.ty.text}"
+
+/-!
+The pairs of a hardware equality (section 7.4). `statics` tells if a static pair exists, and
+`equal` tells if all static pairs are equal. `nodes` holds the `icmp eq` node of each hardware
+pair in walk order.
+-/
+structure Pairs where
+  statics : Bool := false
+  equal : Bool := true
+  nodes : Array Hw := #[]
+
+/-!
+The part `k` of the part `a` of an equality walk. `f` is its leaf field and `t` its type. An
+element of a node or of a static container keeps its form. A part of a reference is a reference
+to the part, or a hardware leaf of a scalar type. Thus the walk never expands a reference.
+-/
+def Agg.child (pos : Pos) (k : Nat) (f : Field) (t : Ty) : Agg → Option Agg
+  | .array _ xs | .tuple _ xs | .record _ xs => xs[k]?
+  | .static (.array _ xs) | .static (.tuple xs) | .static (.record _ xs) => xs[k]?.map .static
+  | .ref b _ =>
+    if t matches .bool | .uint _ | .sint _ then some (.hw (.mk pos t (b.sub f).op []))
+    else some (.ref (b.sub f) t)
+  | _ => none
+
+/-!
+A static pair of a hardware equality at `pos`. It charges as a static equality, the sum of the
+two sizes, and its result goes into `s` (section 7.4). The two types joined before the walk, so
+the charge comes before the comparison reads the values.
+-/
+def staticPair (pos : Pos) (x y : Value) (acc : Pairs) : M Pairs := do
+  charge pos (x.size + y.size)
+  let r ← lift pos (Id.run ((same x y).run.run' 0))
+  let e ← lift pos (r ())
+  return { acc with statics := true, equal := acc.equal && e }
+
+/-!
+A leaf pair of a hardware equality at `pos`. Two static leaves are a static pair. Another pair
+keeps the scalar rule of slice 1. A static leaf converts to the type of its pair with its
+conversion charge. Then the `icmp eq` node charges.
+-/
+def leafPair (pos : Pos) (a b : Agg) (acc : Pairs) : M Pairs := do
+  match a, b with
+  | .static x, .static y => staticPair pos x y acc
+  | a, b =>
+    let (x, y) ← hwPair pos a.val b.val
+    unless x.ty.same y.ty do
+      fail .S010 pos s!"`==` does not accept {x.ty.text} and {y.ty.text}"
+    return { acc with nodes := acc.nodes.push (← hwNode pos .bool (.bin .eq) [x, y]) }
+
+/-!
+The walk of a hardware equality at `pos` over the parts `a` and `b` of the joined type `t`, by
+the rules of section 7.4 in order. It charges 1 before it visits each pair. A container descends
+into its pairs in packing order, also a container that is not hardware data. `()` adds nothing.
+A part that is not hardware data is a static pair, and a data scalar is a leaf pair. `fs` gives
+the named fields of a struct type. The depth `d` of `t` bounds the walk.
+-/
+def eqWalk (fs : Ty → Option (Array (String × Ty))) (pos : Pos) :
+    Nat → Ty → Agg → Agg → Pairs → M Pairs
+  | 0, t, _, _, _ => fail .S010 pos s!"{t.text} is deeper than its depth"
+  | d + 1, t, a, b, acc => do
+    charge pos 1
+    let pair (k : Nat) (f : Field) (u : Ty) (acc : Pairs) : M Pairs :=
+      match a.child pos k f u, b.child pos k f u with
+      | some x, some y => eqWalk fs pos d u x y acc
+      | _, _ => fail .S010 pos s!"`==` needs a common type, not {a.val.text} and {b.val.text}"
+    match t with
+    | .array e n => do
+      let mut acc := acc
+      for k in [0:n] do acc ← pair k (.elem k) e acc
+      return acc
+    | .tuple ts => do
+      let mut acc := acc
+      for (u, k) in ts.toList.zipIdx do acc ← pair k (.elem k) u acc
+      return acc
+    | .struct .. => do
+      let some nfs := fs t | fail .S010 pos s!"{t.text} has no specialization"
+      let mut acc := acc
+      for ((x, u), k) in nfs.toList.zipIdx do acc ← pair k (.user x) u acc
+      return acc
+    | .unit => return acc
+    | .bool | .uint _ | .sint _ => leafPair pos a b acc
+    | _ =>
+      match a, b with
+      | .static x, .static y => staticPair pos x y acc
+      | _, _ => fail .S010 pos s!"`==` needs a common type, not {a.val.text} and {b.val.text}"
+
+/-!
+`==` or `!=` at `pos` with a hardware aggregate operand (section 5.4). The function flag checked
+before. The two types join with the join charge (`S010` without a join). Then the walk visits
+the pairs. After the walk, the chain of `and` nodes charges in chain order from `E_0`, which is
+`(const 1 s)` when static pairs exist. `!=` adds an `xor` node last. A walk without a hardware
+pair gives a static `Bool`.
+-/
+def aggEq (pos : Pos) (op : BinOp) (a b : Val) : M Val := do
+  let bad : M Val := fail .S010 pos s!"`{op.text}` needs a common type, not {a.text} and {b.text}"
+  let (some s, some t, some x, some y) := (a.ty?, b.ty?, a.agg?, b.agg?) | bad
+  let some j ← walked pos (joinTy s t : Walk (Option Ty)) | bad
+  let r ← eqWalk (fieldsNamed (← read).items (← get).specs) pos j.depth j x y {}
+  match r.nodes.toList with
+  | [] => return .static (.bool (if op == .eq then r.equal else !r.equal))
+  | n :: ns =>
+    let (e₀, rest) ← if r.statics then do pure (← lit pos (.bool r.equal), n :: ns)
+      else pure (n, ns)
+    let mut e := e₀
+    for z in rest do e ← hwNode pos .bool (.bin .and) [e, z]
+    if op == .eq then return .hw e
+    else node pos .bool (.bin .xor) [e, ← lit pos (.bool true)]
 
 def hwConvert (pos : Pos) (f : PrimFn) (t : Ty) (x : Hw) : M Val :=
   let bad : M Val := fail .S010 pos s!"no conversion of {x.ty.text} to {t.text} here"
@@ -861,7 +978,10 @@ mutual
             return some ⟨.static (← containerOp p op a b), false, none⟩
           let (a, b) ← unify p op a b
           return some ⟨.static (← apply p (binary op a b)), false, none⟩
-        | a, b => return some ⟨← hwBinary p op a b, false, none⟩
+        | a, b =>
+          if (op == .eq || op == .ne) && (a matches .agg _ || b matches .agg _) then
+            return some ⟨← aggEq p op a b, false, none⟩
+          return some ⟨← hwBinary p op a b, false, none⟩
       | .cond p c y no => do
         match ← data p (← need c (← eval n c)).value with
         | .hw h =>

@@ -358,9 +358,13 @@ theorem range_f (p : Pos) (a z : Int) :
     Follows cap (range p a z) (range p a z) := by
   unfold range; follows
 
+theorem hwNode_f (p : Pos) (t : Ty) (op : Op) (xs : List Hw) :
+    Follows cap (hwNode p t op xs) (hwNode p t op xs) := by
+  unfold hwNode; follows
+
 theorem node_f (p : Pos) (t : Ty) (op : Op) (xs : List Hw) :
     Follows cap (node p t op xs) (node p t op xs) := by
-  unfold node; follows
+  unfold node; follows [hwNode_f]
 
 theorem lit_f (p : Pos) (v : Value) :
     Follows cap (lit p v) (lit p v) := by
@@ -413,6 +417,26 @@ theorem walked_f (p : Pos) (w : Walk α) : Follows cap (walked p w) (walked p w)
 theorem containerOp_f (p : Pos) (op : BinOp) (a b : Value) :
     Follows cap (containerOp p op a b) (containerOp p op a b) := by
   unfold containerOp; follows [walked_f, apply_f]
+
+theorem staticPair_f (p : Pos) (x y : Value) (acc : Pairs) :
+    Follows cap (staticPair p x y acc) (staticPair p x y acc) := by
+  unfold staticPair; follows
+
+theorem leafPair_f (p : Pos) (a b : Agg) (acc : Pairs) :
+    Follows cap (leafPair p a b acc) (leafPair p a b acc) := by
+  unfold leafPair; follows [staticPair_f, hwPair_f, hwNode_f]
+
+theorem eqWalk_f (fs : Ty → Option (Array (String × Ty))) (p : Pos) :
+    ∀ (d : Nat) (t : Ty) (a b : Agg) (acc : Pairs),
+      Follows cap (eqWalk fs p d t a b acc) (eqWalk fs p d t a b acc)
+  | 0, t, a, b, acc => by rw [eqWalk.eq_def]; follows
+  | d + 1, t, a, b, acc => by
+    rw [eqWalk.eq_def]; dsimp only
+    follows [eqWalk_f fs p d, staticPair_f, leafPair_f]
+
+theorem aggEq_f (p : Pos) (op : BinOp) (a b : Val) :
+    Follows cap (aggEq p op a b) (aggEq p op a b) := by
+  unfold aggEq; follows [walked_f, eqWalk_f, lit_f, hwNode_f, node_f]
 
 theorem typeOf_f (p : Pos) (x : String) (v : Val) :
     Follows cap (typeOf p x v) (typeOf p x v) := by
@@ -764,7 +788,7 @@ theorem follows_all : ∀ n,
           call_f (he k) (ht k) (hb k), spec_f (he k) (ht k), need_f, data_f, apply_f,
           hwUnary_f, test_f, hwBinary_f, unify_f, mux_f, static_f, pick_f, element_f, tupleOf_f,
           arrayOf_f, select_f, containerOp_f, arrayTy_f, field_f, strAt_f, hold_f, release_f,
-          normalize_f,
+          normalize_f, aggEq_f,
           operands_f (he k), comparable_f, params_f (ht k), fnTy_f]
       · rw [eval.eq_def (k + 1), eval.eq_def (m + 1)]
         apply Follows.charge_one
@@ -773,7 +797,7 @@ theorem follows_all : ∀ n,
           call_f (he m) (ht m) (hb m), spec_f (he m) (ht m), need_f, data_f, apply_f,
           hwUnary_f, test_f, hwBinary_f, unify_f, mux_f, static_f, pick_f, element_f, tupleOf_f,
           arrayOf_f, select_f, containerOp_f, arrayTy_f, field_f, strAt_f, hold_f, release_f,
-          normalize_f,
+          normalize_f, aggEq_f,
           operands_f (he m), comparable_f, params_f (ht m), fnTy_f]
     · rcases n' with _ | m
       · rw [typeExpr.eq_def (k + 1), typeExpr.eq_def 0]
