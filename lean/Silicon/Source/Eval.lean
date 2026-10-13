@@ -920,7 +920,8 @@ mutual
   A name. A constant and a `type` item evaluate at their first use, in the table of constants.
   A struct item is a use of its specialization without arguments. A function item gives a
   function value. Its signature evaluates in the scope of the function, with no locals. It adds
-  no nesting level and no call frame. Each depth check of the signature reports `S015` at the
+  no call frame, but it takes a nesting level. A signature can name its own function in a call,
+  and the nesting depth ends that cycle. Each depth check of the signature reports `S015` at the
   name. The name makes the value, so a binding of it is no copy.
   -/
   def name (n : Nat) (p : Pos) (x : String) : Ref → M Out
@@ -944,7 +945,7 @@ mutual
       | some (.struct ..) => do return ⟨.static (.type (← spec n p i [])), true, none⟩
       | some (.fn _ _ u ps ret _) => do
         if generic ps ret then fail .S010 p s!"`{x}` is generic; a generic function is not a value"
-        let (qs, r) ← inFrame none <|
+        let (qs, r) ← nested p <| inFrame none <|
             withReader (fun c => { c with item := i, frame := ⟨none, 0⟩, site := some p }) do
           let qs ← params n (ps.map fun q => .mk (q.mode == .mut) q.ty)
           return (qs, ← typeExpr n ret)
