@@ -1,0 +1,12 @@
+// S015: the parameter type of `r` calls `k` with the function value `r`, so the signature of `r` names `r` again. Each evaluation of the signature takes a nesting level, so the nesting depth ends the cycle at the name.
+// TOP M()
+fn k(h: fn (UInt[1]) -> Bool) -> Nat {
+    return 1;
+}
+// expected-error S015 @+1
+fn r(x: UInt[k(r)]) -> Bool {
+    return true;
+}
+module M() domains() {
+    let v = r;
+}
