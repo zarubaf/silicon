@@ -375,4 +375,172 @@ def shared : String :=
   "(let y$0e$0t (bits 4) (sub (const 4 0) s))",
   "(let y$0e$1t (bits 1) (icmp eq (concat (replicate (extract y$0e$0t 3 1) 4) y$0e$0t) t))"]
 
+/-!
+Each leaf of an aggregate lowers to one core node, with the leaf name of section 7.3. The leaves
+of a port follow in packing order, so `p$xs$0e` comes before `p$b`. A register leaf takes its
+reset constant from the leaf of its value. A named binding takes one version for all its leaves,
+as `q$1v$xs$0e` does. A call result names its leaves after `0ret`, and a static leaf gets no
+name: the `:=` of `z$1e` lowers it to a constant.
+-/
+def leaves : String :=
+  "struct S { xs: [UInt[8]; 2], b: Bool }\n" ++
+  "fn f(x: UInt[8]) -> (UInt[8], Bool) {\n  return (x, true);\n}\n" ++
+  "module M() {\n  input p: S;\n  input a: UInt[8];\n  output y: S;\n" ++
+  "  output z: (UInt[8], Bool);\n  reg r: [UInt[4]; 3] = [1, 2, 3];\n  r := r;\n" ++
+  "  let mut q = p;\n  q = S([a, a], p.b);\n  y := q;\n  z := f(a);\n}\n"
+#guard sil leaves "M" == text [
+  "(design M",
+  "  (module M",
+  "    (input clock$0clk clock)",
+  "    (input clock$0rst (bits 1))",
+  "    (input a (bits 8))",
+  "    (input p$xs$0e (bits 8))",
+  "    (input p$xs$1e (bits 8))",
+  "    (input p$b (bits 1))",
+  "    (output y$xs$0e (bits 8))",
+  "    (output y$xs$1e (bits 8))",
+  "    (output y$b (bits 1))",
+  "    (output z$0e (bits 8))",
+  "    (output z$1e (bits 1))",
+  "    (reg r$0e (bits 4) clock$0clk (reset sync clock$0rst (const 4 1)))",
+  "    (reg r$1e (bits 4) clock$0clk (reset sync clock$0rst (const 4 2)))",
+  "    (reg r$2e (bits 4) clock$0clk (reset sync clock$0rst (const 4 3)))",
+  "    (let f$1c$0ret$0e (bits 8) f$1c$x)",
+  "    (let f$1c$x (bits 8) a)",
+  "    (let q$1v$b (bits 1) p$b)",
+  "    (let q$1v$xs$0e (bits 8) a)",
+  "    (let q$1v$xs$1e (bits 8) a)",
+  "    (let q$b (bits 1) p$b)",
+  "    (let q$xs$0e (bits 8) p$xs$0e)",
+  "    (let q$xs$1e (bits 8) p$xs$1e)",
+  "    (next r$0e r$0e)",
+  "    (next r$1e r$1e)",
+  "    (next r$2e r$2e)",
+  "    (assign y$b q$1v$b)",
+  "    (assign y$xs$0e q$1v$xs$0e)",
+  "    (assign y$xs$1e q$1v$xs$1e)",
+  "    (assign z$0e f$1c$0ret$0e)",
+  "    (assign z$1e (const 1 1))))"]
+
+/-!
+A struct skips its empty fields. The other fields keep their names and their order.
+-/
+def emptyFields : String :=
+  "struct E { a: Bool, z: (), e: [Bool; 0], c: UInt[2] }\n" ++
+  "module M() domains() {\n  input p: E;\n  output y: E;\n  y := p;\n}\n"
+#guard sil emptyFields "M" == text [
+  "(design M",
+  "  (module M",
+  "    (input p$a (bits 1))",
+  "    (input p$c (bits 2))",
+  "    (output y$a (bits 1))",
+  "    (output y$c (bits 2))",
+  "    (assign y$a p$a)",
+  "    (assign y$c p$c)))"]
+
+/-!
+Each leaf of a port charges 1 for its node, then the bytes of its name, before it exists. A leaf
+of `x: [Bool; 3]` charges 3: its node, `x`, and `<k>e`. An empty port charges nothing. The walk
+makes no list of the leaves, so a port with 2^40 leaves is `S015` at its declaration.
+-/
+def portOf (n : String) : String := s!"module M() domains() \{\n  input x: [Bool; {n}];\n}\n"
+#guard lowering (portOf "3") == lowering (portOf "0") + 9
+#guard lowering (portOf "0") == lowering "module M() domains() {\n}\n"
+#guard sil (portOf "1 << 40") "M" (fuel := 10000) == "S015 2:3"
+
+/-!
+The condition of an aggregate `if` binds once to a temporary of the leaf statement that lowers
+first. The second leaf statement refers to it, also in a child connection: `u$a$0e$0t`. The
+table of shared conditions starts empty in each module, so `C` and `M` each bind their own. A
+child output of an aggregate type lowers to one reference for each leaf.
+-/
+def shareLeaves : String :=
+  "module C() domains() {\n  input c: Bool;\n  input a: (Bool, Bool);\n" ++
+  "  output q: (Bool, Bool);\n  q := if (!c) { a } else { (c, c) };\n}\n" ++
+  "module M() domains() {\n  input c: Bool;\n  input d: Bool;\n  input a: (Bool, Bool);\n" ++
+  "  output y: (Bool, Bool);\n  output z: (Bool, Bool);\n  instance u = C();\n" ++
+  "  u.c := c;\n  u.a := if (c && d) { a } else { (d, d) };\n" ++
+  "  y := if (c || d) { a } else { u.q };\n  z := u.q;\n}\n"
+#guard sil shareLeaves "M" == text [
+  "(design M",
+  "  (module C",
+  "    (input a$0e (bits 1))",
+  "    (input a$1e (bits 1))",
+  "    (input c (bits 1))",
+  "    (output q$0e (bits 1))",
+  "    (output q$1e (bits 1))",
+  "    (let q$0e$0t (bits 1) (xor c (const 1 1)))",
+  "    (assign q$0e (mux q$0e$0t a$0e c))",
+  "    (assign q$1e (mux q$0e$0t a$1e c)))",
+  "  (module M",
+  "    (input a$0e (bits 1))",
+  "    (input a$1e (bits 1))",
+  "    (input c (bits 1))",
+  "    (input d (bits 1))",
+  "    (output y$0e (bits 1))",
+  "    (output y$1e (bits 1))",
+  "    (output z$0e (bits 1))",
+  "    (output z$1e (bits 1))",
+  "    (inst u C (a$0e (mux u$a$0e$0t a$0e d)) (a$1e (mux u$a$0e$0t a$1e d)) (c c))",
+  "    (let u$a$0e$0t (bits 1) (and c d))",
+  "    (let y$0e$0t (bits 1) (or c d))",
+  "    (assign y$0e (mux y$0e$0t a$0e u.q$0e))",
+  "    (assign y$1e (mux y$0e$0t a$1e u.q$1e))",
+  "    (assign z$0e u.q$0e)",
+  "    (assign z$1e u.q$1e)))"]
+
+/-!
+An empty port, register, wire, and child port lower to no core node. Each still has its one
+binding. A combinational child keeps its empty module.
+-/
+def emptyAll : String :=
+  "module C() domains() {\n  input p: ();\n  output q: [Bool; 0];\n  q := [];\n}\n" ++
+  "module M() {\n  input e: [(); 4];\n  output o: [(); 4];\n  reg r: [Bool; 0] = [];\n" ++
+  "  wire w: ((), [UInt[8]; 0]);\n  instance u = C();\n  u.p := ();\n  o := e;\n  r := r;\n" ++
+  "  w := ((), []);\n}\n"
+#guard sil emptyAll "M" == text [
+  "(design M",
+  "  (module C)",
+  "  (module M",
+  "    (input clock$0clk clock)",
+  "    (input clock$0rst (bits 1))",
+  "    (inst u C)))"]
+
+/-!
+A cycle through one leaf is `S020` at the binding (section 7.5). A dependency between two
+different leaves of one wire is not a cycle.
+-/
+def wire2 (v : String) : String :=
+  "module M() domains() {\n  input c: Bool;\n  wire w: (Bool, Bool);\n" ++
+  s!"  w := {v};\n  output y: Bool;\n  y := w.1;\n}\n"
+#guard sil (wire2 "(c, w.0)") "M" == text [
+  "(design M",
+  "  (module M",
+  "    (input c (bits 1))",
+  "    (output y (bits 1))",
+  "    (let w$0e (bits 1) c)",
+  "    (let w$1e (bits 1) w$0e)",
+  "    (assign y w$1e)))"]
+#guard sil (wire2 "(w.0, c)") "M" == "S020 4:3"
+#guard sil (wire2 "(w.1, w.0)") "M" == "S020 4:3"
+
+/-!
+The chain of `==` on an aggregate is as long as its leaf count. Its left spine lowers in a loop,
+so a long chain needs no deep recursion. Each 63 links bind one temporary by the height rule.
+The interpreter of these tests has a large stack, so these guards check the result, not the
+depth of the stack.
+-/
+def eqLeaves (n : Nat) : String :=
+  s!"module M() domains() \{\n  input a: [Bool; {n}];\n  input b: [Bool; {n}];\n" ++
+  "  output y: Bool;\n  y := a == b;\n}\n"
+#guard valid (sil (eqLeaves 2048) "M")
+def andChain (n : Nat) : String :=
+  let p : Pos := ⟨1, 1⟩
+  let r (x : String) : Eval.Hw := .mk p .bool (.ref ⟨x, []⟩) []
+  let h := (List.range n).foldl (fun e _ => Eval.Hw.mk p .bool (.bin .and) [e, r "b"]) (r "a")
+  match (Flatten.lower ⟨"y", []⟩ true h).run { fuel := 100000000 } with
+  | .ok (_, s) => s!"ok {s.temps.size}"
+  | .error _ => "error"
+#guard andChain 100000 == "ok 1587"
+
 end Silicon.Source.Test.Flatten
