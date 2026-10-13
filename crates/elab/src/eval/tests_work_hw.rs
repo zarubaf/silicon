@@ -430,3 +430,19 @@ fn the_promotion_of_nested_static_tuples_finds_the_type_once() {
         before = Some(work);
     }
 }
+
+/// A hardware `if` over `n` nested empty parts keeps the size and the depth of each finished
+/// part, so a node reads the numbers of its parts and does not walk a finished part again.
+#[test]
+fn the_if_over_nested_empty_parts_walks_each_part_once() {
+    let at = |n: u64, k: u64| {
+        run_ok(
+            &chain_decls(n, "struct E{i} { a: E{}, }\n", "struct E{i} { a: (), }\n"),
+            "(UInt[8], E0, E0)",
+            "let y = if (x.0 == 1) { (x.0, x.1) } else { (x.0, x.2) };",
+            key(25, k),
+        )
+    };
+    assert_linear(at, |r| r.counts.walked, 4, 8);
+    assert_linear(at, |r| r.counts.paired, 1, 4);
+}
