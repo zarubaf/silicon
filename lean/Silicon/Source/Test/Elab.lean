@@ -655,4 +655,15 @@ def fnHw (body : String) : String :=
 #guard cost (fnHw "  output y: UInt[8];\n  y := if (c) { inc } else { inc };\n") "M" ==
   "S010 8:3"
 
+/-!
+A name refers to a core name, so its hardware value has the size of a finite value of its type
+(section 5.4). Each copy of a `UInt[256]` name thus charges 4, and each copy of a `UInt[64]`
+name 1. The binding of `p`, the binding of `x`, and the `:=` of `y` copy a name.
+-/
+def copies (w : Nat) : String :=
+  s!"module M() \{\n  input p: UInt[{w}];\n  output q: UInt[{w}];\n" ++
+  "  let x = p;\n  let y = x;\n  q := y;\n}\n"
+#guard total (copies 256) "M" == total (copies 64) "M" + 9
+#guard exact (copies 256) "M" 99
+
 end Silicon.Source.Test.Elab

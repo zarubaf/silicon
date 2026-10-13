@@ -1639,4 +1639,51 @@ def pre : String := String.ofList (List.replicate 200 'a')
 #guard out prefixed s!"H[{pre}y] == H[{pre}z]" == "(bool false)"
 #guard out prefixed s!"H[{pre}y] == H[{pre}y]" == "(bool true)"
 
+/-!
+The form of a hardware aggregate (section 5.1). A name or a child output has the size of a
+finite value of its type: 4 for `UInt[256]` and 1 for `Bool`. A node adds the sizes of its
+operands. A reference has the zero size of its type and the depth of its zero, from the
+metadata.
+-/
+def at1 : Pos := ⟨1, 1⟩
+def wideRef : Eval.Hw := Eval.Hw.mk at1 (.uint 256) (.ref ⟨"p", []⟩) []
+#guard wideRef.size == 4
+#guard (Eval.Hw.mk at1 .bool (.out ⟨"u", []⟩ ⟨"q", []⟩) []).size == 1
+#guard (Eval.Hw.mk at1 (.uint 256) (.un .inv) [wideRef]).size == 5
+def boolLeaf : Eval.Agg := .hw (Eval.Hw.mk at1 .bool (.ref ⟨"b", []⟩) [])
+def arrayRef : Eval.Agg := .ref (.name ⟨"r", []⟩) (.array (.uint 8) 4)
+#guard arrayRef.size == 5 && arrayRef.depth == 2
+
+/-!
+A container node stores its type, its size, and its depth. A record counts the depth of its
+struct type, here 5. A container without a hardware leaf is a static value.
+-/
+def mixed : Eval.Agg :=
+  .mkTuple #[.bool, .int, .array (.uint 8) 4] #[boolLeaf, .static (.int 3), arrayRef]
+#guard mixed.size == 8 && mixed.depth == 3
+#guard (Eval.Val.agg mixed).text == "hardware (Bool, Int, [UInt[8]; 4])"
+#guard (Eval.Agg.mkRecord (.struct 0 "P" #[] ⟨8, 1, 2, 5, true, false⟩) #[boolLeaf]).depth == 6
+#guard match Eval.Agg.mkArray .int #[.static (.int 1), .static (.int 2)] with
+  | .static v => v.serialize == "(array int ((int 1) (int 2)))"
+  | _ => false
+
+/-!
+The normal form. A reference without a hardware leaf charges the zero size of its type, then it
+is the static zero. The charge comes first, so a huge empty part fails before any work. A
+reference of a scalar type is a hardware value, and another reference stays lazy with no charge.
+-/
+def normal (a : Eval.Agg) (fuel : Nat := 100) : String :=
+  match Eval.run { fuel } #[] (fun _ => Eval.normalize at1 a) with
+  | .ok (.static v, used) => s!"{v.serialize} {used}"
+  | .ok (.hw h, used) => s!"hardware {h.ty.text} {h.size} {used}"
+  | .ok (v, used) => s!"{v.text} {v.size} {used}"
+  | .error e => s!"{e.code} {e.pos.line}:{e.pos.col}"
+#guard normal (.ref (.name ⟨"r", []⟩) (.array .unit 3)) == "(array unit ((unit) (unit) (unit))) 4"
+#guard normal (.ref (.name ⟨"r", []⟩) (.array .unit 3)) 3 == "S015 1:1"
+#guard normal (.ref (.name ⟨"r", []⟩) (.array .unit (2 ^ 40))) == "S015 1:1"
+#guard normal (.ref (.name ⟨"r", []⟩) (.tuple #[.unit, .array .bool 0])) ==
+  "(tuple ((unit) (array bool ()))) 3"
+#guard normal (.ref (.out ⟨"u", []⟩ ⟨"q", []⟩) (.uint 256)) == "hardware UInt[256] 4 0"
+#guard normal arrayRef == "hardware [UInt[8]; 4] 5 0"
+
 end Silicon.Source.Test.Eval
