@@ -1211,7 +1211,7 @@ def fnBody (s : String) : String := s!"fn f() -> Bool \{ {s} }"
 A typed use at a function type needs a function of that exact type, also in the `mut` marks.
 It charges nothing. Another value is `S010` at the typed use.
 -/
-def fnG : Value := .function "g" #[] .bool
+def fnG : Value := .function 0 "g" #[] .bool
 def typedFn (t : Ty) (v : Value) : String :=
   match Eval.convertLeaf t v with
   | .ok s => match s.run () with
@@ -1219,9 +1219,9 @@ def typedFn (t : Ty) (v : Value) : String :=
     | .error (c, _) => s!"{c}"
   | .error (c, _) => s!"{c}"
 #guard typedFn (.fn #[] .bool) fnG == "(function root g) 0"
-#guard typedFn (.fn #[.mk true .bool] .bool) (.function "g" #[.mk true .bool] .bool) ==
+#guard typedFn (.fn #[.mk true .bool] .bool) (.function 0 "g" #[.mk true .bool] .bool) ==
   "(function root g) 0"
-#guard typedFn (.fn #[.mk true .bool] .bool) (.function "g" #[.mk false .bool] .bool) == "S010"
+#guard typedFn (.fn #[.mk true .bool] .bool) (.function 0 "g" #[.mk false .bool] .bool) == "S010"
 #guard typedFn (.fn #[] .bool) (.bool true) == "S010"
 #guard typedFn .bool fnG == "S010"
 #guard out (fnBody "let x: fn () -> Bool = true; return x;") "f()" == "S010 1:18"
@@ -1291,8 +1291,8 @@ def fnArms (v w : Value) (fuel : Nat := 100) : String :=
   | .error e => s!"{e.code} {e.pos.line}:{e.pos.col}"
 #guard fnArms fnG fnG == "(function root g) 2"
 #guard fnArms fnG fnG 1 == "S015 1:1"
-#guard fnArms fnG (.function "h" #[] .bool) == "S011 1:1"
-#guard fnArms fnG (.function "h" #[] .bool) 1 == "S015 1:1"
+#guard fnArms fnG (.function 1 "h" #[] .bool) == "S011 1:1"
+#guard fnArms fnG (.function 1 "h" #[] .bool) 1 == "S015 1:1"
 #guard fnArms fnG (.bool true) == "S010 1:1"
 
 /-!
@@ -1609,5 +1609,34 @@ def agree (named value : String) (want : String) : Bool :=
 #guard late (windows "xs[0] = xs.pop();") == "S008 10:9"
 #guard out (windows "xs[xs.pop()] = 1;") "f()" == "S008 10:4"
 #guard late (windows "xs[xs.pop()] = 1;") == "S008 10:4"
+
+/-!
+A field and a function item are found by number, not by name. Names with a long common prefix
+still select their own field and call their own function. A field selection works in a
+constant, an alias, a result type, and the top expression. A struct with a function argument
+specializes once for each function.
+-/
+def prefixed : String :=
+  let x := String.ofList (List.replicate 200 'a')
+  s!"struct R \{ {x}1: UInt[8], {x}2: Bool }
+struct H(comptime F: fn () -> Bool) \{ }
+fn {x}y() -> Bool \{ return true; }
+fn {x}z() -> Bool \{ return false; }
+struct N \{ {x}3: Nat }
+const C: R = R(7, true);
+const D: N = N(5);
+const W: UInt[8] = C.{x}1;
+type A = UInt[D.{x}3];
+fn g() -> UInt[D.{x}3] \{ return 3; }
+fn f() -> Bool \{ let h = {x}z; return h(); }
+"
+def pre : String := String.ofList (List.replicate 200 'a')
+#guard out prefixed s!"C.{pre}2" == "(bool true)"
+#guard out prefixed "W" == "(uint 8 7)"
+#guard out prefixed "A" == "(type (uint 5))"
+#guard out prefixed "g()" == "(uint 5 3)"
+#guard out prefixed "f()" == "(bool false)"
+#guard out prefixed s!"H[{pre}y] == H[{pre}z]" == "(bool false)"
+#guard out prefixed s!"H[{pre}y] == H[{pre}y]" == "(bool true)"
 
 end Silicon.Source.Test.Eval

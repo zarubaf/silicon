@@ -43,17 +43,22 @@ structure Spec where
   args : List Value
   state : SpecState
 
+/-! The order of the keys of specializations: the struct item, then the static arguments. -/
+def Spec.cmp (a b : Nat × List Value) : Ordering := (compare a.1 b.1).then (Value.cmps a.2 b.2)
+
 /-!
-The table of specializations. `index` finds the entry of a struct type by its serialization in
-logarithmic time (section 5.6). The serialization of a struct type is its item and its static
-arguments, so it is the key of its entry.
+The table of specializations. A struct type holds the number of its entry. `index` finds the
+number of an entry by its key in logarithmic time (section 5.6). A comparison of two keys walks
+at most the smaller arguments, so the lookup stays in the charge of the arguments.
 -/
 structure Specs where
   entries : Array Spec := #[]
-  index : Std.TreeMap String Nat compare := {}
+  index : Std.TreeMap (Nat × List Value) Nat Spec.cmp := {}
 
-/-! The entry of the struct type with the serialization `key`. -/
-def Specs.find? (s : Specs) (key : String) : Option Spec := s.index[key]? >>= (s.entries[·]?)
+/-! The number and the entry of the struct item `i` with the static arguments `args`. -/
+def Specs.find? (s : Specs) (i : Nat) (args : List Value) : Option (Nat × Spec) := do
+  let k ← s.index[(i, args)]?
+  return (k, ← s.entries[k]?)
 
 /-! A node of a hardware value. Section 7.4 lowers each node to core operations. -/
 inductive Op where
@@ -196,16 +201,15 @@ structure Frame where
 /-!
 The symbols of a file. Each distinct identifier gets one number, so a lookup or a key compares
 numbers and not text. `binders` gives the symbol of each local number of each item. `fields`
-gives the symbol of each field name by its position in each item. `items` gives the symbol of
-each item name. `fns` gives the number of each function item by its name. `members` gives the
-number of each field of each struct item by its name. A lookup in them takes logarithmic time.
+gives the symbol of each field name by its position in each item, and the last entry is the
+top expression. `items` gives the symbol of each item name. `members` gives the number of each
+field of each struct item by the symbol of its name.
 -/
 structure Syms where
   binders : Array (Array Nat)
   fields : Array (Std.TreeMap Pos Nat Pos.compare)
   items : Array Nat
-  fns : Std.TreeMap String Nat compare
-  members : Array (Std.TreeMap String Nat compare)
+  members : Array (Std.TreeMap Nat Nat compare)
 
 /-!
 The items, the depth limit, the current depth, and the return type of the current call. The
@@ -428,8 +432,8 @@ def convertLeaf (t : Ty) (v : Value) : Except Fault Step :=
   let wrong := typeError s!"expected {t.text}, but the value is {v.text}"
   match t, v with
   | .unit, .unit | .bool, .bool _ | .int, .int _ | .type, .type _ | .string, .str _ => same
-  | .struct .., .record s _ => if s = t then same else wrong
-  | .fn .., .function _ ps r => if Ty.fn ps r = t then same else wrong
+  | .struct .., .record s _ => if s.same t then same else wrong
+  | .fn .., .function _ _ ps r => if (Ty.fn ps r).same t then same else wrong
   | .nat, .int n => if 0 ≤ n then same else .error (.S012, s!"{intText n} is not a Nat")
   | .uint w, .uint u _ | .sint w, .sint u _ => if u == w then same else wrong
   | .uint w, .int n | .sint w, .int n =>
@@ -508,7 +512,7 @@ def equal (a b : Value) : Except Fault (Unit → Bool) :=
   | .int x, .int y => .ok fun _ => x == y
   | .bool x, .bool y => .ok fun _ => x == y
   | .str x, .str y => .ok fun _ => x == y
-  | .type x, .type y => .ok fun _ => x == y
+  | .type x, .type y => .ok fun _ => x.same y
   | _, _ =>
     match finitePair a b with
     | some (_, ⟨_, x, y⟩) => .ok fun _ => x == y

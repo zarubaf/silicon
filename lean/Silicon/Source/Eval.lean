@@ -75,7 +75,7 @@ The operators follow v0.1 section 3. These rules settle the open points of slice
   before the arguments. Its result waits while they evaluate. A type gives a constructor
   call. A function value checks the number of its arguments first (`S007` at the call). Then
   the marks of its type select the `mut` actuals, and it runs as a call of its item, found by
-  its name. Its callee charges as an expression, and no function name charges. A `comptime fn`
+  its index. Its callee charges as an expression, and no function name charges. A `comptime fn`
   thus runs in the static mode, and a hardware argument is `S011`. Another value is `S010`.
 - `resize` keeps the signedness. `reinterpret` keeps the width.
 - A typed-use error is at the node of the typed use: the statement, the call, or the operator.
@@ -238,7 +238,7 @@ def prim (pos : Pos) (x : String) : PrimType → M Ty
 /-! A string and a handle have no `Ty`, so an assignment keeps their form. -/
 def sameForm : Val → Val → Bool
   | .static (.str _), .static (.str _) => true
-  | .handle (.res k _ t _), .handle (.res k' _ t' _) => k == k' && t == t'
+  | .handle (.res k _ t _), .handle (.res k' _ t' _) => k == k' && t.same t'
   | _, _ => false
 
 /-!
@@ -399,7 +399,7 @@ def hwBinary (pos : Pos) (op : BinOp) (a b : Val) : M Val := do
     let (x, y) ← hwPair pos a b
     let t := x.ty
     let bad : M Val := fail .S010 pos s!"`{op.text}` does not accept {t.text} and {y.ty.text}"
-    if t != y.ty then bad
+    if !t.same y.ty then bad
     else match op with
       | .eq | .ne => node pos .bool (.bin op) [x, y]
       | .land | .lor => if t == .bool then node pos .bool (.bin op) [x, y] else bad
@@ -423,7 +423,7 @@ def mux (pos : Pos) (c : Hw) (a b : Val) : M Val := do
       | _, some t => do pure (← litAt pos t v, ← lit pos w)
       | _, _ => do pure (← lit pos v, ← lit pos w)
     | a, b => hwPair pos a b
-  if x.ty == y.ty then node pos x.ty .mux [c, x, y]
+  if x.ty.same y.ty then node pos x.ty .mux [c, x, y]
   else fail .S010 pos s!"the arms of an `if` have one type, not {x.ty.text} and {y.ty.text}"
 
 def hwConvert (pos : Pos) (f : PrimFn) (t : Ty) (x : Hw) : M Val :=
@@ -445,7 +445,7 @@ def conformVal (pos : Pos) (t : Ty) (v : Val) : M Val := do
   match ← data pos (← settle pos t v) with
   | .static x => return .static (← conform pos t x)
   | .hw h =>
-    if h.ty == t then return .hw h
+    if h.ty.same t then return .hw h
     else fail .S010 pos s!"expected {t.text}, but the value is {h.ty.text}"
   | v => fail .S010 pos s!"{v.text} is not data"
 
@@ -555,13 +555,6 @@ inductive Callee where
   | prim (name : String) (h : PrimFn)
   | value (o : Out)
 
-/-!
-The function item `g` and its index. A function value holds the name of its item, and the item
-names are distinct (`S002`). The lookup takes logarithmic time.
--/
-def fnItem (c : Ctx) (g : String) : Option (Nat × Resolve.Item) := do
-  let i ← c.syms.fns[g]?
-  return (i, ← c.items[i]?)
 
 /-! An actual of a function item: a value, or the place of a `mut` actual. -/
 inductive Actual where
@@ -621,7 +614,7 @@ def copyIn (p : Pos) (c : Bool) (q : Resolve.Param) (t : Ty) : Actual → M Unit
   | .place pl => do
     charge p pl.part.size
     let pt := pl.ty <|> pl.part.ty?
-    unless pt == some t do
+    unless pt.any (·.same t) do
       let u := match pt with | some u => u.text | none => pl.part.text
       fail .S010 p s!"a `mut` actual has the type {u}, but its formal has {t.text}"
     let x ← if c then pure (Val.static (← static p pl.part)) else pure pl.part
@@ -950,7 +943,7 @@ mutual
           let qs ← params n (ps.map fun q => .mk (q.mode == .mut) q.ty)
           return (qs, ← typeExpr n ret)
         let _ ← fnTy p qs r
-        return ⟨.static (.function u.name qs.toArray r), false, none⟩
+        return ⟨.static (.function i u.name qs.toArray r), false, none⟩
       | _ => fail .S010 p s!"`{x}` is not a value"
   termination_by (n + 1, 1)
 
@@ -1126,10 +1119,10 @@ mutual
       popFrom p g pl
     | .prim g h => primCall p g h (← args n b xs)
     | .value o =>
-      let .static (.function g qs _) := o.value | ctor n p o b xs
+      let .static (.function i g qs _) := o.value | ctor n p o b xs
       if qs.size != xs.length then
         fail .S007 p s!"`{g}` takes {qs.size} argument(s), but it has {xs.length}"
-      let some (i, .fn ip c u ps ret body) := fnItem (← read) g
+      let some (.fn ip c u ps ret body) := (← read).items[i]?
         | fail .S010 p s!"`{g}` is not a function"
       hold o
       let acts ← actuals n xs (qs.toList.map fun (.mk m _) => m)
@@ -1317,33 +1310,41 @@ def scanItem (it : Resolve.Item) : Scan :=
     | .const .. | .alias .. => pure ()
   (go.run {}).2
 
+/-!
+The rest of the scan of an item. It scans the type and the value of a constant, the type of
+an alias, and the result type of a function. Their names take symbols after those of
+`scanItem`. Thus the symbols of `scanItem` keep their order.
+-/
+def scanRest (it : Resolve.Item) : Scan :=
+  let go : ScanM Unit := match it with
+    | .const _ _ ty v => do scanType ty; scanExpr v
+    | .alias _ _ ty => scanType ty
+    | .fn _ _ _ _ r _ => scanType r
+    | .module .. | .struct .. => pure ()
+  (go.run {}).2
+
+/-! The scan of a top expression. -/
+def scanTop (e : Resolve.Expr) : Scan := ((scanExpr e).run {}).2
+
 def itemName : Resolve.Item → String
   | .const _ n .. | .fn _ _ n .. | .module _ n .. | .struct _ n .. | .alias _ n .. => n.name
 
 /-!
-The symbols of the items. The text table runs once for each elaboration, in time linear in
-the source up to a logarithmic factor, before the fuel counts.
+The symbols of the items. `scans` holds the scan of each item and then that of the top
+expression, and `rests` the rest of the scan of each item. The text table runs once for each
+elaboration, in time linear in the source up to a logarithmic factor, before the fuel counts.
 -/
-def symbols (items : Array Resolve.Item) (scans : Array Scan) : Syms := Id.run do
+def symbols (items : Array Resolve.Item) (scans rests : Array Scan) : Syms := Id.run do
   let mut table : Std.HashMap String Nat := {}
   let intern := fun (t : Std.HashMap String Nat) (x : String) =>
     match t[x]? with
     | some k => (t, k)
     | none => (t.insert x t.size, t.size)
   let mut names := #[]
-  let mut fns : Std.TreeMap String Nat compare := {}
-  let mut members := #[]
-  for (it, i) in items.zipIdx do
+  for it in items do
     let (t, k) := intern table (itemName it)
     table := t
     names := names.push k
-    if let .fn _ _ u .. := it then
-      unless fns.contains u.name do fns := fns.insert u.name i
-    let mut ms : Std.TreeMap String Nat compare := {}
-    if let .struct _ _ _ fs := it then
-      for (f, j) in fs.zipIdx do
-        unless ms.contains f.name.name do ms := ms.insert f.name.name j
-    members := members.push ms
   let mut binders := #[]
   let mut fields := #[]
   for sc in scans do
@@ -1360,24 +1361,46 @@ def symbols (items : Array Resolve.Item) (scans : Array Scan) : Syms := Id.run d
       fm := fm.insert p k
     binders := binders.push arr
     fields := fields.push fm
-  return ⟨binders, fields, names, fns, members⟩
+  for (sc, i) in rests.zipIdx do
+    for (p, x) in sc.fields do
+      let (t, k) := intern table x
+      table := t
+      fields := fields.modify i (·.insert p k)
+  let mut members := #[]
+  for it in items do
+    let mut ms : Std.TreeMap Nat Nat compare := {}
+    if let .struct _ _ _ fs := it then
+      for (f, j) in fs.zipIdx do
+        let (t, k) := intern table f.name.name
+        table := t
+        unless ms.contains k do ms := ms.insert k j
+    members := members.push ms
+  return ⟨binders, fields, names, members⟩
 
-/-! The context and the state of an elaboration with the budget `budget`. -/
-def start (budget : Budget) (items : Array Resolve.Item) : Ctx × St :=
-  let scans := items.map scanItem
-  (⟨items, budget.depth, 0, none, 0, symbols items scans, ⟨none, 0⟩, [], none, none⟩,
+/-!
+The context and the state of an elaboration with the budget `budget`, and with the scan `top`
+of its top expression.
+-/
+def start (budget : Budget) (items : Array Resolve.Item) (top : Scan) : Ctx × St :=
+  let syms := symbols items ((items.map scanItem).push top) (items.map scanRest)
+  (⟨items, budget.depth, 0, none, 0, syms, ⟨none, 0⟩, [], none, none⟩,
    ⟨budget.fuel, Array.replicate items.size .notStarted, {}, {}, {}, {}, {}⟩)
 
 /-! Runs `act` with the budget. The result has the used fuel. -/
-def run (budget : Budget) (items : Array Resolve.Item) (act : Nat → M α) :
+def run (budget : Budget) (items : Array Resolve.Item) (act : Nat → M α) (top : Scan := {}) :
     Except Error (α × Nat) := do
-  let (ctx, st) := start budget items
+  let (ctx, st) := start budget items top
   let (a, s) ← ((act budget.fuel).run ctx).run st
   return (a, budget.fuel - s.fuel)
 
-/-! The value of a static expression in the file scope, and the used fuel. -/
+/-!
+The value of a static expression in the file scope, and the used fuel. The expression has the
+symbols of the entry after the items.
+-/
 def evalExpr (budget : Budget) (items : Array Resolve.Item) (e : Resolve.Expr) :
     Except Error (Value × Nat) :=
-  run budget items fun n => do static e.pos (← need e (← eval n e)).value
+  run budget items (top := scanTop e) fun n =>
+    withReader (fun c => { c with item := items.size }) do
+      static e.pos (← need e (← eval n e)).value
 
 end Silicon.Source.Eval

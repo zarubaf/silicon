@@ -80,7 +80,7 @@ def scalarJoin : Ty → Ty → Option Ty
   | .int, .int | .int, .nat | .nat, .int => some .int
   | .int, t | .nat, t => if t.finite then some t else none
   | s, .int | s, .nat => if s.finite then some s else none
-  | s, t => if s = t then some s else none
+  | s, t => if s.same t then some s else none
 
 /-!
 The join of two types: their common type by the operand rule. A static integer takes the finite
@@ -106,7 +106,7 @@ mutual
       else return none
     | s@(.struct ..), t@(.struct ..) | s@(.fn ..), t@(.fn ..) => do
       modify (· + (s.size + t.size))
-      return if s = t then some s else none
+      return if s.same t then some s else none
     | s, t => do
       if containerTy s && containerTy t then modify (· + 1)
       return scalarJoin s t
@@ -126,7 +126,8 @@ def typeOf (p : Pos) (x : String) : Val → M Ty
 
 /-!
 A use at `p` of the item `i` with the name `x` in the table of constants: a `const` or a `type`
-item. The first use evaluates `body` one level deeper. A use in progress is `S019`.
+item. The first use evaluates `body` one level deeper, in the scope of the item, so the field
+names of `body` have their symbols. A use in progress is `S019`.
 -/
 def constant (p : Pos) (x : String) (i : Nat) (body : M Value) : M Value := do
   match (← get).consts[i]? with
@@ -134,49 +135,51 @@ def constant (p : Pos) (x : String) (i : Nat) (body : M Value) : M Value := do
   | some .inProgress => fail .S019 p s!"`{x}` depends on itself"
   | _ => nested p do
     setConst i .inProgress
-    let c ← inFrame none body
+    let c ← inFrame none <| withReader (fun c => { c with item := i }) body
     setConst i (.done c)
     return c
 
 /-!
 A use at `p` of the struct item `i` with the name `x` and the normalized static arguments
-`args`. It charges their sizes before the lookup. The first use runs `fields`, which evaluates
-the field types. The caller nests it.
+`args`. It charges their sizes before the lookup. The key of the lookup is the item and the
+arguments, so its work stays in that charge. The first use runs `fields`, which evaluates the
+field types. The caller nests it.
 -/
 def specialize (p : Pos) (x : String) (i : Nat) (args : List Value) (fields : M (List Ty)) :
     M Ty := do
   charge p (Value.sizeAll args)
-  let key := (Ty.struct x args.toArray Meta.static).serialize
-  let found : Option SpecState := ((← get).specs.find? key).map (·.state)
-  match found with
-  | some (.done t _) => return t
-  | some .inProgress =>
-    fail .S019 p s!"the specialization {(Ty.struct x args.toArray Meta.static).text} is in progress"
+  match (← get).specs.find? i args with
+  | some (_, ⟨_, _, .done t _⟩) => return t
+  | some (k, ⟨_, _, .inProgress⟩) =>
+    let t := Ty.struct k x args.toArray Meta.static
+    fail .S019 p s!"the specialization {t.text} is in progress"
   | none => do
-    charge p (Ty.struct x args.toArray Meta.static).size
     let k := (← get).specs.entries.size
+    charge p (Ty.struct k x args.toArray Meta.static).size
     modify fun s => { s with specs := ⟨s.specs.entries.push ⟨i, args, .inProgress⟩,
-      s.specs.index.insert key k⟩ }
+      s.specs.index.insert (i, args) k⟩ }
     let fs ← fields
     let ms := fs.map Ty.info
     let m := Meta.struct ms (args.map Value.depth)
     bounded p m.depth
     sums p ms m
-    let t := Ty.struct x args.toArray m
+    let t := Ty.struct k x args.toArray m
     modify fun s => { s with specs := { s.specs with
       entries := s.specs.entries.set! k ⟨i, args, .done t fs.toArray⟩ } }
     return t
 
 /-!
 The struct item and the field types of the struct type `t`, from its done entry in the table of
-specializations. A record exists only after its specialization is done, so each record type has
-one.
+specializations. The type holds the number of the entry. A record exists only after its
+specialization is done, so each record type has one.
 -/
-def fieldsIn (specs : Specs) (t : Ty) : Option (Nat × Array Ty) := do
-  let e ← specs.find? t.serialize
-  match e.state with
-  | .done u fs => if u = t then some (e.item, fs) else none
-  | .inProgress => none
+def fieldsIn (specs : Specs) : Ty → Option (Nat × Array Ty)
+  | .struct k .. => do
+    let e ← specs.entries[k]?
+    match e.state with
+    | .done _ fs => some (e.item, fs)
+    | .inProgress => none
+  | _ => none
 
 /-!
 The zero of a hardware data type `t` (section 5.6): 0 for each integer leaf and `false` for each

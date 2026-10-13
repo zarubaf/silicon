@@ -128,12 +128,13 @@ def doubling : Nat → Value
 #guard (Value.tuple #[.int 18446744073709551616, .tuple #[.bool true]]).measureCharge == 6
 
 /-! A struct type and a record: `struct Packet(comptime W: Nat) { a: UInt[W], b: Bool }`. -/
-def packet (w : Nat) : Ty := .struct "Packet" #[.int w] (Meta.struct [Meta.finite w, Meta.bool] [1])
+def packet (w : Nat) : Ty :=
+  .struct w "Packet" #[.int w] (Meta.struct [Meta.finite w, Meta.bool] [1])
 
-def empty : Ty := .struct "Empty" #[] (Meta.struct [] [])
+def empty : Ty := .struct 100 "Empty" #[] (Meta.struct [] [])
 
 /-! `struct Wrap(comptime T: Type) {}` at `T = [[Bool; 1]; 1]`. -/
-def wrap : Ty := .struct "Wrap" #[.type (.array (.array .bool 1) 1)] (Meta.struct [] [3])
+def wrap : Ty := .struct 101 "Wrap" #[.type (.array (.array .bool 1) 1)] (Meta.struct [] [3])
 
 /-! The forms of section 7.1 for types and records. -/
 #guard (Value.type .type).serialize == "(type type)"
@@ -202,8 +203,8 @@ A chain of structs that doubles at each step: `S(k+1) { a: S(k), b: S(k) }`. The
 exponentially, but each struct stores its numbers, so the metadata and the size stay cheap.
 -/
 def chain : Nat → Ty
-  | 0 => .struct "S0" #[] (Meta.struct [Meta.finite 1] [])
-  | k + 1 => let t := chain k; .struct s!"S{k + 1}" #[] (Meta.struct [t.info, t.info] [])
+  | 0 => .struct 1000 "S0" #[] (Meta.struct [Meta.finite 1] [])
+  | k + 1 => let t := chain k; .struct (1001 + k) s!"S{k + 1}" #[] (Meta.struct [t.info, t.info] [])
 
 #guard (chain 200).info == ⟨2 ^ 200, 2 ^ 200, 3 * 2 ^ 200 - 1, 202, true, false⟩
 #guard (chain 200).size == 1
@@ -314,11 +315,11 @@ sets the function flag.
 #guard !(Ty.array (.list .string) 2).info.funcs
 #guard !(packet 8).info.funcs
 #guard !(chain 200).info.funcs
-#guard (Ty.struct "Holder" #[] (Meta.struct [pred.info] [])).info.funcs
-#guard (Ty.list (.struct "Holder" #[] (Meta.struct [pred.info] []))).info.funcs
+#guard (Ty.struct 102 "Holder" #[] (Meta.struct [pred.info] [])).info.funcs
+#guard (Ty.list (.struct 102 "Holder" #[] (Meta.struct [pred.info] []))).info.funcs
 
 /-! The function flag of a struct comes from its field types, not from its static arguments. -/
-#guard !(Ty.struct "Tag" #[.type pred] (Meta.struct [] [pred.depth])).info.funcs
+#guard !(Ty.struct 103 "Tag" #[.type pred] (Meta.struct [] [pred.depth])).info.funcs
 
 /-! Equality of function types compares the parameter types, the `mut` marks, and the result. -/
 #guard incTy == .fn #[.mk true (.uint 8), .mk false .bool] .unit
@@ -331,7 +332,7 @@ sets the function flag.
 A function value is its item and its signature. It serializes its package and its name, has the
 size 1 and the depth 1, and its type is its signature.
 -/
-def inc : Value := .function "inc" #[.mk true (.uint 8), .mk false .bool] .unit
+def inc : Value := .function 0 "inc" #[.mk true (.uint 8), .mk false .bool] .unit
 
 #guard inc.serialize == "(function root inc)"
 #guard inc.size == 1
@@ -341,13 +342,13 @@ def inc : Value := .function "inc" #[.mk true (.uint 8), .mk false .bool] .unit
 #guard inc.text == "fn (mut UInt[8], Bool) -> Unit"
 #guard inc.measureCharge == 0
 #guard !(inc.ty?.map (·.info.data)).getD true
-#guard inc == .function "inc" #[.mk true (.uint 8), .mk false .bool] .unit
-#guard inc != .function "dec" #[.mk true (.uint 8), .mk false .bool] .unit
+#guard inc == .function 0 "inc" #[.mk true (.uint 8), .mk false .bool] .unit
+#guard inc != .function 1 "dec" #[.mk true (.uint 8), .mk false .bool] .unit
 #guard (Value.tuple #[inc]).ty? == some (.tuple #[incTy])
 #guard (Value.tuple #[inc]).serialize == "(tuple ((function root inc)))"
 #guard (Value.tuple #[inc]).size == 2
 #guard (Value.tuple #[inc]).depth == 2
-#guard (Value.list pred #[.function "yes" #[] .bool]).serialize ==
+#guard (Value.list pred #[.function 2 "yes" #[] .bool]).serialize ==
   "(list (fn () bool) ((function root yes)))"
 #guard (Value.list pred #[]).depth == 3
 #guard ({ module := "Map", args := [inc] } : InstantiationId).serialize ==

@@ -36,6 +36,9 @@ These rules settle the open points of the spec:
   each `mut` mark as one node.
 - A function value is its item and its signature, so it has a type. It serializes as
   `(function root <item>)`, has the size 1 and the depth 1, and is not a container.
+- A struct type holds the number of its specialization, and a function value the index of its
+  item. These numbers do not serialize, print, or add to the size. A key and an equality of
+  types compare them in place of the names (`Ty.cmp`), as the Rust ids do.
 -/
 namespace Silicon.Source
 
@@ -59,9 +62,10 @@ mutual
   /--
   A type as a static value. Its forms are the scalar types of slice 1 with a static width and
   the types of the static containers of slice 2. `Type` and the struct types are forms too. A
-  tuple type has at least one element type: `()` is `unit`. A struct type is its item, its
-  static arguments, and its metadata. `String` and `List[T]` are static types only. A function
-  type is its parameter types with their `mut` marks, and its result type.
+  tuple type has at least one element type: `()` is `unit`. A struct type is the number of its
+  entry in the table of specializations, its item, its static arguments, and its metadata.
+  `String` and `List[T]` are static types only. A function type is its parameter types with
+  their `mut` marks, and its result type.
   -/
   inductive Ty where
     | bool | nat | int
@@ -71,7 +75,7 @@ mutual
     | type
     | array (elem : Ty) (len : Nat)
     | tuple (elems : Array Ty)
-    | struct (item : String) (args : Array Value) (info : Meta)
+    | struct (spec : Nat) (item : String) (args : Array Value) (info : Meta)
     | string
     | list (elem : Ty)
     | fn (params : Array TyParam) (ret : Ty)
@@ -83,8 +87,8 @@ mutual
   /--
   A static value of slice 1, or a static container of slice 2. An array keeps its element type,
   and a record keeps its struct type. A tuple has at least one element: `()` is `unit`. A list
-  keeps its element type, as an array does. A function value is a named function item with its
-  signature.
+  keeps its element type, as an array does. A function value is a function item, by its index
+  and its name, with its signature.
   -/
   inductive Value where
     | int (value : Int)
@@ -98,7 +102,7 @@ mutual
     | tuple (elems : Array Value)
     | record (ty : Ty) (fields : Array Value)
     | list (elem : Ty) (elems : Array Value)
-    | function (item : String) (params : Array TyParam) (ret : Ty)
+    | function (item : Nat) (name : String) (params : Array TyParam) (ret : Ty)
 end
 
 deriving instance Repr for Ty, TyParam, Value
@@ -115,7 +119,8 @@ mutual
     | .array s n, .array t m => Ty.beq s t && n == m
     | .list s, .list t => Ty.beq s t
     | .tuple ⟨xs⟩, .tuple ⟨ys⟩ => Ty.beqs xs ys
-    | .struct i ⟨xs⟩ m, .struct j ⟨ys⟩ n => i == j && Value.beqs xs ys && decide (m = n)
+    | .struct a i ⟨xs⟩ m, .struct b j ⟨ys⟩ n =>
+      a == b && i == j && Value.beqs xs ys && decide (m = n)
     | .fn ⟨ps⟩ r, .fn ⟨qs⟩ s => TyParam.beqs ps qs && Ty.beq r s
     | _, _ => false
 
@@ -140,7 +145,8 @@ mutual
     | .tuple ⟨xs⟩, .tuple ⟨ys⟩ => Value.beqs xs ys
     | .record s ⟨xs⟩, .record t ⟨ys⟩ | .list s ⟨xs⟩, .list t ⟨ys⟩ =>
       Ty.beq s t && Value.beqs xs ys
-    | .function i ⟨ps⟩ r, .function j ⟨qs⟩ s => i == j && TyParam.beqs ps qs && Ty.beq r s
+    | .function a i ⟨ps⟩ r, .function b j ⟨qs⟩ s =>
+      a == b && i == j && TyParam.beqs ps qs && Ty.beq r s
     | _, _ => false
 
   def Value.beqs : List Value → List Value → Bool
@@ -161,13 +167,13 @@ mutual
       cases b <;> simp [Ty.beq] at h ⊢
       exact Ty.eq_of_beq _ _ h
     | .tuple ⟨xs⟩, b, h => by
-      rcases b with _ | _ | _ | _ | _ | _ | _ | _ | ⟨⟨ys⟩⟩ | ⟨_, ⟨ys⟩, _⟩ | _ | _ | _ <;>
+      rcases b with _ | _ | _ | _ | _ | _ | _ | _ | ⟨⟨ys⟩⟩ | ⟨_, _, ⟨ys⟩, _⟩ | _ | _ | _ <;>
         simp [Ty.beq] at h ⊢
       rw [Ty.eqs_of_beqs _ _ h]
-    | .struct _ ⟨xs⟩ _, b, h => by
-      rcases b with _ | _ | _ | _ | _ | _ | _ | _ | ⟨⟨ys⟩⟩ | ⟨_, ⟨ys⟩, _⟩ | _ | _ | _ <;>
+    | .struct _ _ ⟨xs⟩ _, b, h => by
+      rcases b with _ | _ | _ | _ | _ | _ | _ | _ | ⟨⟨ys⟩⟩ | ⟨_, _, ⟨ys⟩, _⟩ | _ | _ | _ <;>
         simp [Ty.beq] at h ⊢
-      exact ⟨h.1.1, by rw [Value.eqs_of_beqs _ _ h.1.2], h.2⟩
+      exact ⟨h.1.1.1, h.1.1.2, by rw [Value.eqs_of_beqs _ _ h.1.2], h.2⟩
     | .fn ⟨ps⟩ _, b, h => by
       rcases b with _ | _ | _ | _ | _ | _ | _ | _ | _ | _ | _ | _ | ⟨⟨qs⟩, _⟩ <;>
         simp [Ty.beq] at h ⊢
@@ -203,10 +209,10 @@ mutual
       rcases b with _ | _ | _ | _ | _ | _ | _ | ⟨_, ⟨ys⟩⟩ | ⟨⟨ys⟩⟩ | ⟨_, ⟨ys⟩⟩ | ⟨_, ⟨ys⟩⟩ | _ <;>
         simp [Value.beq] at h ⊢
       rw [Value.eqs_of_beqs _ _ h]
-    | .function _ ⟨ps⟩ _, b, h => by
-      rcases b with _ | _ | _ | _ | _ | _ | _ | _ | _ | _ | _ | ⟨_, ⟨qs⟩, _⟩ <;>
+    | .function _ _ ⟨ps⟩ _, b, h => by
+      rcases b with _ | _ | _ | _ | _ | _ | _ | _ | _ | _ | _ | ⟨_, _, ⟨qs⟩, _⟩ <;>
         simp [Value.beq] at h ⊢
-      exact ⟨h.1.1, by rw [TyParam.eqs_of_beqs _ _ h.1.2], Ty.eq_of_beq _ _ h.2⟩
+      exact ⟨h.1.1.1, h.1.1.2, by rw [TyParam.eqs_of_beqs _ _ h.1.2], Ty.eq_of_beq _ _ h.2⟩
 
   theorem Value.eqs_of_beqs : ∀ xs ys : List Value, Value.beqs xs ys = true → xs = ys
     | [], ys, h => by cases ys <;> simp_all [Value.beqs]
@@ -220,7 +226,7 @@ mutual
     | .bool | .nat | .int | .unit | .type | .uint _ | .sint _ | .string => by simp [Ty.beq]
     | .array s _ | .list s => by simp [Ty.beq, Ty.beq_self s]
     | .tuple ⟨xs⟩ => by simp [Ty.beq, Ty.beqs_self xs]
-    | .struct _ ⟨xs⟩ _ => by simp [Ty.beq, Value.beqs_self xs]
+    | .struct _ _ ⟨xs⟩ _ => by simp [Ty.beq, Value.beqs_self xs]
     | .fn ⟨ps⟩ r => by simp [Ty.beq, TyParam.beqs_self ps, Ty.beq_self r]
 
   theorem Ty.beqs_self : ∀ xs : List Ty, Ty.beqs xs xs = true
@@ -237,7 +243,7 @@ mutual
     | .array t ⟨xs⟩ | .record t ⟨xs⟩ | .list t ⟨xs⟩ => by
       simp [Value.beq, Ty.beq_self t, Value.beqs_self xs]
     | .tuple ⟨xs⟩ => by simp [Value.beq, Value.beqs_self xs]
-    | .function _ ⟨ps⟩ r => by simp [Value.beq, TyParam.beqs_self ps, Ty.beq_self r]
+    | .function _ _ ⟨ps⟩ r => by simp [Value.beq, TyParam.beqs_self ps, Ty.beq_self r]
 
   theorem Value.beqs_self : ∀ xs : List Value, Value.beqs xs xs = true
     | [] => by simp [Value.beqs]
@@ -251,6 +257,71 @@ instance : DecidableEq Ty := fun a b =>
 instance : DecidableEq Value := fun a b =>
   if h : a.beq b then isTrue (Value.eq_of_beq a b h)
   else isFalse fun e => h (e ▸ Value.beq_self a)
+
+/-! The number of the form of a type and of a value, for an order between two forms. -/
+def Ty.form : Ty → Nat
+  | .bool => 0 | .nat => 1 | .int => 2 | .uint _ => 3 | .sint _ => 4 | .unit => 5 | .type => 6
+  | .array .. => 7 | .tuple _ => 8 | .struct .. => 9 | .string => 10 | .list _ => 11
+  | .fn .. => 12
+
+def Value.form : Value → Nat
+  | .int _ => 0 | .bool _ => 1 | .str _ => 2 | .uint .. => 3 | .sint .. => 4 | .type _ => 5
+  | .unit => 6 | .array .. => 7 | .tuple _ => 8 | .record .. => 9 | .list _ _ => 10
+  | .function .. => 11
+
+/-!
+An order of types and values by their numbers (section 5.6). A struct type compares by the
+number of its specialization, and a function value by the number of its item. Each number fixes
+the rest of its term, so the order compares no name. Each other part compares in full, so the
+work is at most the smaller size, plus the element types of arrays and lists.
+-/
+mutual
+  def Ty.cmp : Ty → Ty → Ordering
+    | .uint a, .uint b | .sint a, .sint b => compare a b
+    | .array s n, .array t m => (Ty.cmp s t).then (compare n m)
+    | .list s, .list t => Ty.cmp s t
+    | .tuple ⟨xs⟩, .tuple ⟨ys⟩ => Ty.cmps xs ys
+    | .struct a .., .struct b .. => compare a b
+    | .fn ⟨ps⟩ r, .fn ⟨qs⟩ s => (TyParam.cmps ps qs).then (Ty.cmp r s)
+    | s, t => compare s.form t.form
+
+  def Ty.cmps : List Ty → List Ty → Ordering
+    | [], [] => .eq
+    | [], _ => .lt
+    | _, [] => .gt
+    | x :: xs, y :: ys => (Ty.cmp x y).then (Ty.cmps xs ys)
+
+  def TyParam.cmps : List TyParam → List TyParam → Ordering
+    | [], [] => .eq
+    | [], _ => .lt
+    | _, [] => .gt
+    | .mk m s :: ps, .mk n t :: qs =>
+      (compare m n).then ((Ty.cmp s t).then (TyParam.cmps ps qs))
+
+  def Value.cmp : Value → Value → Ordering
+    | .int a, .int b => compare a b
+    | .bool a, .bool b => compare a b
+    | .str a, .str b => compare a b
+    | .uint w x, .uint v y | .sint w x, .sint v y => (compare w v).then (compare x.toNat y.toNat)
+    | .type s, .type t => Ty.cmp s t
+    | .array s ⟨xs⟩, .array t ⟨ys⟩ | .record s ⟨xs⟩, .record t ⟨ys⟩
+    | .list s ⟨xs⟩, .list t ⟨ys⟩ => (Ty.cmp s t).then (Value.cmps xs ys)
+    | .tuple ⟨xs⟩, .tuple ⟨ys⟩ => Value.cmps xs ys
+    | .function a .., .function b .. => compare a b
+    | x, y => compare x.form y.form
+
+  def Value.cmps : List Value → List Value → Ordering
+    | [], [] => .eq
+    | [], _ => .lt
+    | _, [] => .gt
+    | x :: xs, y :: ys => (Value.cmp x y).then (Value.cmps xs ys)
+end
+
+/-!
+The equality of two types by their numbers. For the types of one evaluation it agrees with `=`,
+because a struct type comes only from its entry in the table of specializations.
+-/
+def Ty.same (s t : Ty) : Bool := Ty.cmp s t == .eq
 
 /-! The size of an integer: 1 for each 64-bit word of its magnitude, and at least 1. -/
 def intSize (n : Int) : Nat := n.natAbs.log2 / 64 + 1
@@ -339,7 +410,7 @@ mutual
     | .list t => { Meta.static with depth := 1 + t.info.depth, funcs := t.info.funcs }
     | .array t n => t.info.array n
     | .tuple ⟨ts⟩ => Meta.tuple (Ty.infoAll ts)
-    | .struct _ _ m => m
+    | .struct _ _ _ m => m
     | .fn ⟨ps⟩ r => Meta.fn (TyParam.infoAll ps) r.info
 
   def Ty.infoAll : List Ty → List Meta
@@ -363,7 +434,7 @@ mutual
     | .type => "type"
     | .array t n => Print.node "array" [t.serialize, toString n]
     | .tuple ⟨ts⟩ => Print.node "tuple" [Print.list (Ty.serializeAll ts)]
-    | .struct i ⟨xs⟩ _ => Print.node "struct" ["root", i, Print.list (Value.serializeAll xs)]
+    | .struct _ i ⟨xs⟩ _ => Print.node "struct" ["root", i, Print.list (Value.serializeAll xs)]
     | .string => "string"
     | .list t => Print.node "list" [t.serialize]
     | .fn ⟨ps⟩ r => Print.node "fn" [Print.list (TyParam.serializeAll ps), r.serialize]
@@ -389,7 +460,7 @@ mutual
     | .tuple ⟨xs⟩ => Print.node "tuple" [Print.list (Value.serializeAll xs)]
     | .record t ⟨xs⟩ => Print.node "record" [t.serialize, Print.list (Value.serializeAll xs)]
     | .list t ⟨xs⟩ => Print.node "list" [t.serialize, Print.list (Value.serializeAll xs)]
-    | .function i _ _ => Print.node "function" ["root", i]
+    | .function _ i _ _ => Print.node "function" ["root", i]
 
   def Value.serializeAll : List Value → List String
     | [] => []
@@ -408,7 +479,7 @@ mutual
     | .array t n => 1 + t.size + intSize n
     | .list t => 1 + t.size
     | .tuple ⟨ts⟩ => 1 + Ty.sizeAll ts
-    | .struct _ ⟨xs⟩ _ => 1 + Value.sizeAll xs
+    | .struct _ _ ⟨xs⟩ _ => 1 + Value.sizeAll xs
     | .fn ⟨ps⟩ r => 1 + TyParam.sizeAll ps + r.size
 
   def Ty.sizeAll : List Ty → Nat
@@ -441,7 +512,7 @@ mutual
   def Ty.depth : Ty → Nat
     | .array t _ | .list t => 1 + t.depth
     | .tuple ⟨ts⟩ => 1 + Ty.depthAll ts
-    | .struct _ _ m => m.depth
+    | .struct _ _ _ m => m.depth
     | .fn ⟨ps⟩ r => 1 + max (TyParam.depthAll ps) r.depth
     | _ => 1
 
@@ -500,8 +571,8 @@ mutual
     | .array t n => s!"[{t.text}; {n}]"
     | .tuple ⟨[t]⟩ => s!"({t.text},)"
     | .tuple ⟨ts⟩ => "(" ++ ", ".intercalate (Ty.textAll ts) ++ ")"
-    | .struct i ⟨[]⟩ _ => i
-    | .struct i ⟨xs⟩ _ => i ++ "[" ++ ", ".intercalate (Value.literalAll xs) ++ "]"
+    | .struct _ i ⟨[]⟩ _ => i
+    | .struct _ i ⟨xs⟩ _ => i ++ "[" ++ ", ".intercalate (Value.literalAll xs) ++ "]"
     | .string => "String"
     | .list t => s!"List[{t.text}]"
     | .fn ⟨ps⟩ r => Print.fnText (TyParam.textAll ps) r.text
@@ -528,7 +599,7 @@ mutual
     | .record t ⟨xs⟩ => t.text ++ "(" ++ ", ".intercalate (Value.literalAll xs) ++ ")"
     | .list t ⟨[]⟩ => s!"list({t.text})"
     | .list _ ⟨xs⟩ => "[" ++ ", ".intercalate (Value.literalAll xs) ++ "]"
-    | .function i _ _ => i
+    | .function _ i _ _ => i
 
   def Value.literalAll : List Value → List String
     | [] => []
@@ -549,7 +620,7 @@ mutual
     | .type _ => some .type
     | .str _ => some .string
     | .list t _ => some (.list t)
-    | .function _ ps r => some (.fn ps r)
+    | .function _ _ ps r => some (.fn ps r)
 
   def Value.tyAll? : List Value → Option (List Ty)
     | [] => some []

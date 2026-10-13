@@ -779,13 +779,14 @@ theorem Follows.short {x y : M α} (h : Follows cap x y) {c : Ctx} {s s' : St} {
   delta Follows at h
   exact ((h c s a s' hx).2 F hcap).2 hF
 
-theorem run_apply (budget : Budget) (items : Array Resolve.Item) (act : Nat → M α) :
-    run budget items act =
-      match act budget.fuel (start budget items).1 (start budget items).2 with
+theorem run_apply (budget : Budget) (items : Array Resolve.Item) (act : Nat → M α)
+    (top : Scan) :
+    run budget items act top =
+      match act budget.fuel (start budget items top).1 (start budget items top).2 with
       | .ok (a, s) => .ok (a, budget.fuel - s.fuel)
       | .error e => .error e := by
   unfold run
-  rcases hs : start budget items with ⟨ctx, st⟩
+  rcases hs : start budget items top with ⟨ctx, st⟩
   simp only []
   show (act budget.fuel ctx st >>= fun x => pure (x.1, budget.fuel - x.2.fuel)) = _
   cases act budget.fuel ctx st <;> rfl
@@ -796,10 +797,10 @@ of bounds. Then the action uses the same fuel `u` with each budget. Each fuel fr
 the same result, and each fuel below `u` gives `S015`.
 -/
 theorem run_budget {act : Nat → M α} (hact : ∀ n n', Follows n' (act n) (act n'))
-    {budget : Budget} {items : Array Resolve.Item} {a : α} {u : Nat}
-    (h : run budget items act = .ok (a, u)) (F : Nat) :
-    (u ≤ F → run { budget with fuel := F } items act = .ok (a, u)) ∧
-    (F < u → ∃ p m, run { budget with fuel := F } items act = .error ⟨.S015, p, m⟩) := by
+    {budget : Budget} {items : Array Resolve.Item} {top : Scan} {a : α} {u : Nat}
+    (h : run budget items act top = .ok (a, u)) (F : Nat) :
+    (u ≤ F → run { budget with fuel := F } items act top = .ok (a, u)) ∧
+    (F < u → ∃ p m, run { budget with fuel := F } items act top = .error ⟨.S015, p, m⟩) := by
   rw [run_apply] at h
   split at h
   next a' s' hx =>
@@ -810,7 +811,8 @@ theorem run_budget {act : Nat → M α} (hact : ∀ n n', Follows n' (act n) (ac
     have r := k F (Nat.le_refl F)
     refine ⟨fun hu => ?_, fun hu => ?_⟩
     · rw [run_apply]
-      show (match act F (start budget items).1 { (start budget items).2 with fuel := F } with
+      show (match act F (start budget items top).1
+          { (start budget items top).2 with fuel := F } with
         | .ok (a, s) => Except.ok (a, F - s.fuel) | .error e => Except.error e) = _
       rw [r.1 hu]
       simp only [used] at hu ⊢
@@ -820,7 +822,8 @@ theorem run_budget {act : Nat → M α} (hact : ∀ n n', Follows n' (act n) (ac
     · obtain ⟨p, m, he⟩ := r.2 hu
       refine ⟨p, m, ?_⟩
       rw [run_apply]
-      show (match act F (start budget items).1 { (start budget items).2 with fuel := F } with
+      show (match act F (start budget items top).1
+          { (start budget items top).2 with fuel := F } with
         | .ok (a, s) => Except.ok (a, F - s.fuel) | .error e => Except.error e) = _
       rw [he]
   next => cases h
