@@ -648,7 +648,7 @@ theorem name_f (he : ∀ e, Follows m (eval k e) (eval m e))
     Follows m (name k p x r) (name m p x r) := by
   rw [name.eq_def k, name.eq_def m]
   follows [he, ht, prim_f, need_f, copy_f, conform_f, static_f, settle_f, constant_f,
-    spec_f he ht, inFrame_f, params_f ht, fnTy_f]
+    spec_f he ht, nested_f, inFrame_f, params_f ht, fnTy_f]
 
 theorem placeAt_f (he : ∀ e, Follows m (eval k e) (eval m e)) (p : Pos) (c : ErrorCode)
     (t : Resolve.Expr) : Follows m (placeAt k p c t) (placeAt m p c t) := by
