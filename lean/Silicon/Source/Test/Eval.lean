@@ -1332,6 +1332,26 @@ signature does not evaluate.
 #guard out fns "(1, push)" == "S010 1:5"
 
 /-!
+A function whose parameter type or result type names one of its parameters is generic too. It
+is `S010` at the name, also when the type of `T` would be wrong (`d3`), because the signature
+does not evaluate. A name of an item in the signature does not make a function generic.
+-/
+def gens : String :=
+  "fn d(T: Type, x: T) -> T { return x; }\n" ++
+  "fn d2(n: Nat) -> UInt[n] { return 0; }\n" ++
+  "fn d3(T: Bool, x: [Bool; 1]) -> fn (T) -> Bool { return x; }\n" ++
+  "fn d4(n: Nat, x: [Bool; n + 1]) -> Bool { return true; }\n" ++
+  "const N: Nat = 2;\n" ++
+  "fn a(x: UInt[N]) -> Bool { return true; }\n"
+#guard out gens "d" 1 == "S010 1:1"
+#guard out gens "d" 0 == "S015 1:1"
+#guard out gens "d2" 1 == "S010 1:1"
+#guard out gens "d3" 1 == "S010 1:1"
+#guard out gens "(1, d4)" == "S010 1:5"
+#guard out gens "a" == "(function root a)"
+#guard out gens "d(Bool, true)" == "(bool true)"
+
+/-!
 The function type checks its depth at the name: `h` is 3 deep. The parameter type
 `fn () -> Bool` is 2 deep, so it passes the depth 2, and the name fails.
 -/
