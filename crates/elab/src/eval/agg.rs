@@ -6,7 +6,7 @@
 //! it copies nothing. Each walk keeps its own stack, and each charge comes before the work that
 //! it pays for.
 
-use super::place::Index;
+use super::place::{Index, PartInfo};
 use super::{Code, Evaluator, Let, Names, Out, Res, at, fail};
 use crate::agg::{Agg, Base};
 use crate::hw::{Seen, Val};
@@ -396,6 +396,18 @@ impl Evaluator<'_> {
         Ok(r)
     }
 
+    /// The typed use of the part `a` at `t` at `pos`, for a part that no result holds. The
+    /// charge is that of `typed_agg`, and the copy comes after it. A part of the type `t`
+    /// is the caller's to keep.
+    pub(super) fn typed_part(&mut self, pos: Pos, t: TyId, a: &Agg) -> Res<Agg> {
+        let size = a.size(&self.graph, &self.tys);
+        let planned = self.plan_agg(pos, t, a)?;
+        self.charge(pos, u128::from(size) + u128::from(planned))?;
+        let r = self.convert_agg(pos, t, a.clone())?;
+        self.bounded(pos, r.depth(&self.tys))?;
+        Ok(r)
+    }
+
     /// The aggregate that the result `out` is. A reference to a stored one copies it, and the
     /// caller paid the copy.
     fn agg_of(&self, pos: Pos, out: Out) -> Res<Agg> {
@@ -752,11 +764,18 @@ impl Evaluator<'_> {
     }
 
     /// The walk down the numbers `keys` from `root`. Each node on the path gives up its part, and
-    /// a reference on the path expands one level. The result is the nodes above the path, the
-    /// part where the walk ended, and the number of keys used. A static part with keys left ends
-    /// the walk early, and the rest of the path lies inside its value. The caller paid for the
-    /// expansion. The walk keeps its own stack.
-    fn descend(&mut self, pos: Pos, root: Agg, keys: &[usize]) -> Res<(Vec<Above>, Agg, usize)> {
+    /// a reference on the path expands one level. A static container on the path opens one level
+    /// when `open` (Lean `Agg.opened`): its elements become static parts. The result is the
+    /// nodes above the path, the part where the walk ended, and the number of keys used. A
+    /// static part with keys left ends the walk early, and the rest of the path lies inside its
+    /// value. The caller paid for the expansion and the opening. The walk keeps its own stack.
+    fn descend(
+        &mut self,
+        pos: Pos,
+        root: Agg,
+        keys: &[usize],
+        open: bool,
+    ) -> Res<(Vec<Above>, Agg, usize)> {
         let wrong = || {
             fail(
                 Code::S010,
@@ -770,21 +789,30 @@ impl Evaluator<'_> {
             if let Agg::Ref(base, t) = &cur {
                 cur = self.expand(pos, base, *t)?;
             }
-            match cur {
+            let (ty, mut parts) = match cur {
                 Agg::Array(n, mut p) | Agg::Tuple(n, mut p) | Agg::Record(n, mut p) => {
-                    let mut parts = std::mem::take(&mut p.0);
-                    let Some(part) = parts
-                        .get_mut(k)
-                        .map(|x| std::mem::replace(x, Agg::Static(Value::Unit)))
+                    (n.ty, std::mem::take(&mut p.0))
+                }
+                Agg::Static(mut v) if open => {
+                    let ty = v.ty(&mut self.tys);
+                    let (Value::Array(_, xs) | Value::Tuple(_, xs) | Value::Record(_, xs)) = &mut v
                     else {
                         return wrong();
                     };
-                    above.push(Above { ty: n.ty, parts, k });
-                    cur = part;
+                    let parts = std::mem::take(xs).into_iter().map(Agg::Static).collect();
+                    (ty, parts)
                 }
                 Agg::Static(_) => return Ok((above, cur, i)),
                 _ => return wrong(),
-            }
+            };
+            let Some(part) = parts
+                .get_mut(k)
+                .map(|x| std::mem::replace(x, Agg::Static(Value::Unit)))
+            else {
+                return wrong();
+            };
+            above.push(Above { ty, parts, k });
+            cur = part;
         }
         Ok((above, cur, keys.len()))
     }
@@ -809,10 +837,12 @@ impl Evaluator<'_> {
 
     /// The aggregate `root` with the part at the numbers `keys` replaced by `y`. Each step
     /// copies only the node on the path, and a reference on the path expands one level. A static
-    /// part on the path takes only a static `y`, and the rest of the path updates inside it. Each
-    /// node keeps its normal form. The caller paid for the copy and the expansion.
+    /// part on the path opens one level when `y` has a hardware leaf, else the rest of the path
+    /// updates inside it. Each node keeps its normal form. The caller paid for the copy and the
+    /// expansion.
     fn set_at(&mut self, pos: Pos, root: Agg, y: Agg, keys: &[usize]) -> Res<Agg> {
-        let (above, mut cur, used) = self.descend(pos, root, keys)?;
+        let open = !matches!(y, Agg::Static(_));
+        let (above, mut cur, used) = self.descend(pos, root, keys, open)?;
         if used < keys.len() {
             let (Agg::Static(v), Agg::Static(w)) = (&mut cur, y) else {
                 return fail(
@@ -835,20 +865,82 @@ impl Evaluator<'_> {
         self.rebuild(pos, above, cur)
     }
 
-    /// The place update of an aggregate root (section 5.4). The part `x` replaces the old part,
-    /// which has `old_size` and `old_leaves`. The new root has a hardware leaf unless the
-    /// update replaces each one. Then the rebind charges the size of the new root from the
+    /// Applies `f` to the static part of the aggregate `root` at the numbers `keys`, in place:
+    /// the nodes on the path copy, and the part itself does not. The caller paid for the change.
+    fn edit_at<R>(
+        &mut self,
+        pos: Pos,
+        root: Agg,
+        keys: &[usize],
+        f: impl FnOnce(&mut Value) -> Option<R>,
+    ) -> Res<(Agg, Option<R>)> {
+        let (above, mut cur, used) = self.descend(pos, root, keys, false)?;
+        let part = match &mut cur {
+            Agg::Static(v) => keys.get(used..).and_then(|rest| part_in(v, rest)),
+            _ => None,
+        };
+        let Some(part) = part else {
+            return fail(
+                Code::S010,
+                pos,
+                "the place has no static part to change".to_owned(),
+            );
+        };
+        let r = f(part);
+        Ok((self.rebuild(pos, above, cur)?, r))
+    }
+
+    /// Applies `f` to the list at the place, in place, for `push` and `pop`. The stored numbers
+    /// of the nodes above the list refresh on the way back, and the change charges only the
+    /// element (Lean `changeAt`), so the refresh has no charge of its own. `None` if the part
+    /// is no list.
+    pub(super) fn edit_list<R>(
+        &mut self,
+        pos: Pos,
+        place: &super::place::Place,
+        f: impl FnOnce(&mut Vec<Value>) -> R,
+    ) -> Res<Option<R>> {
+        if !matches!(self.store.root(&place.root), Val::Agg(_)) {
+            return Ok(match self.store.part_mut(place.root, &place.keys) {
+                Some(Value::List(_, ys)) => Some(f(ys)),
+                _ => None,
+            });
+        }
+        self.store.settle_root(place.root);
+        self.store
+            .steps
+            .set(self.store.steps.get() + place.keys.len() as u64);
+        let Val::Agg(root) = self.store.take_root(&place.root) else {
+            return fail(Code::S010, pos, "the root is not an aggregate".to_owned());
+        };
+        let (root, r) = self.edit_at(pos, *root, &place.keys, |part| match part {
+            Value::List(_, ys) => Some(f(ys)),
+            _ => None,
+        })?;
+        self.store.put_root(&place.root, Val::Agg(Box::new(root)));
+        Ok(r)
+    }
+
+    /// The place update of an aggregate root, or of a static root that takes a hardware leaf
+    /// (section 5.4). The part `x` replaces the old part, which has `old_size` and
+    /// `old_leaves`. The new root has a hardware leaf unless the update replaces each one. Then the rebind charges the size of the new root from the
     /// stored sizes: the old size, minus the size of the old part, plus the size of `x`. This
     /// charge comes before the copy of the path and before a reference on the path expands.
     /// Then the held root charges, the path copies, and each hardware leaf of the new root binds
     /// at the next version of the root. A new root without a hardware leaf is a static value.
     pub(super) fn rebind(&mut self, pos: Pos, place: &super::place::Place, x: Agg) -> Res<()> {
-        let Some(old) = place.part else {
-            return fail(Code::S010, pos, "the place has no part".to_owned());
-        };
         let (size, leaves) = match self.store.root(&place.root) {
             Val::Agg(a) => (a.size(&self.graph, &self.tys), a.leaves(&self.tys)),
+            Val::Static(v) => (v.size(), 0),
             _ => return fail(Code::S010, pos, "the root is not an aggregate".to_owned()),
+        };
+        let old = match place.part {
+            Some(old) => old,
+            None => PartInfo {
+                size: u64::try_from(self.seen_size(self.store.current(place.root, &place.keys)))
+                    .unwrap_or(u64::MAX),
+                leaves: 0,
+            },
         };
         let hardware = leaves
             .saturating_sub(old.leaves)
@@ -865,10 +957,12 @@ impl Evaluator<'_> {
         self.charge_held(pos, place.root)?;
         self.store.settle_root(place.root);
         let root = self.store.take_root(&place.root);
-        let Val::Agg(root) = root else {
-            return fail(Code::S010, pos, "the root is not an aggregate".to_owned());
+        let root = match root {
+            Val::Agg(root) => *root,
+            Val::Static(v) => Agg::Static(v),
+            _ => return fail(Code::S010, pos, "the root is not an aggregate".to_owned()),
         };
-        let r = self.set_at(pos, *root, x, &place.keys)?;
+        let r = self.set_at(pos, root, x, &place.keys)?;
         let v = if hardware {
             let path = self.fresh(place.id);
             Val::Agg(Box::new(self.bind_agg(pos, path, r)?))

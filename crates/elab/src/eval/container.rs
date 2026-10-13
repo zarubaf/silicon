@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The static containers of Lean `Source.Eval`: the tuple and array literals, the literals that
-//! wait for the type of a typed use, and the new containers with their depth bound.
+//! The containers of Lean `Source.Eval`: the tuple and array literals, the literals that wait
+//! for the type of a typed use, and the new containers with their depth bound. An element is a
+//! static value, a hardware value, or a hardware aggregate (section 5.1).
 //!
 //! A new container checks its depth, then pays the charge of its size, and only then copies
 //! its elements. The elements stay borrowed until then, so a reference to a large value costs
-//! nothing before the charge.
+//! nothing before the charge. The size, the depth, and the number of hardware leaves of an
+//! element come from its stored numbers.
 
 use super::{Evaluator, Out, Res, Store, at, fail, need};
 use crate::Code;
-use crate::hw::{Part, Seen, Val};
+use crate::agg::Agg;
+use crate::hw::{Graph, Part, Seen, Val};
+use crate::int::Int;
 use crate::ops::{self, Fuel};
 use crate::types::{Ty, TyId, Types};
 use crate::value::Value;
@@ -106,71 +110,254 @@ fn mismatch<T>(pos: Pos, t: TyId, what: &str, tys: &Types) -> Res<T> {
     )
 }
 
-/// A literal that waits, at a typed use of the type `t` at `pos`. The type flows into each
-/// element: `[]` takes the type `[T; 0]`, and a literal of the shape of `t` makes its elements
-/// at the element types of `t`. Then the literal charges as it does at its node. Another shape
-/// is `S010` at `pos`.
-fn build<'x>(
-    env: Env<'x>,
-    fuel: &mut Fuel,
-    tys: &mut Types,
-    pos: Pos,
-    ty: TyId,
-    part: &'x Part,
-) -> Res<Cow<'x, Value>> {
-    match part {
-        Part::Value(v) => Ok(Cow::Borrowed(v)),
-        Part::Empty(node) => match tys.get(ty) {
-            Ty::Array(elem, len) if len.cmp_u64(0) == Ordering::Equal => {
-                let empty = Value::Array(*elem, Vec::new());
-                bounded(env.limit, env.site, *node, empty.depth())?;
-                Ok(Cow::Owned(empty))
-            }
-            _ => mismatch(pos, ty, "`[]`", tys),
-        },
-        Part::Array(node, parts) => match tys.get(ty) {
-            Ty::Array(elem, len) if len.cmp_u64(parts.len() as u64) == Ordering::Equal => {
-                let elem = *elem;
-                let mut elems = Vec::with_capacity(parts.len());
-                for part in parts {
-                    elems.push(build(env, fuel, tys, pos, elem, part)?);
-                }
-                array_of(env, fuel, tys, *node, elems).map(Cow::Owned)
-            }
-            _ => mismatch(pos, ty, "an array literal with `[]`", tys),
-        },
-        Part::Tuple(node, parts) => match tys.get(ty) {
-            Ty::Tuple(types) if types.len() == parts.len() => {
-                let mut elems = Vec::with_capacity(parts.len());
-                for (k, part) in parts.iter().enumerate() {
-                    let elem_ty = tys.part(ty, k).unwrap_or(ty);
-                    elems.push(build(env, fuel, tys, pos, elem_ty, part)?);
-                }
-                tuple_of(env, fuel, *node, elems).map(Cow::Owned)
-            }
-            _ => mismatch(pos, ty, "a tuple literal with `[]`", tys),
-        },
+/// An element of a container that is being built: a result in the store, a part of a literal
+/// that waits, or a part that a typed use made.
+pub(super) enum Piece<'x> {
+    Out(Out),
+    Part(&'x Agg),
+    New(Agg),
+}
+
+/// What a piece is, without a copy.
+fn piece_seen<'a>(store: &'a Store, p: &'a Piece<'_>) -> Seen<'a> {
+    match p {
+        Piece::Out(o) => store.seen(o),
+        Piece::Part(a) => a.seen(),
+        Piece::New(a) => a.seen(),
+    }
+}
+
+/// The static value of a piece that is static.
+fn cow_of<'a>(store: &'a Store, p: Piece<'a>) -> Cow<'a, Value> {
+    match p {
+        Piece::Out(o) => cow(store, o),
+        Piece::Part(Agg::Static(v)) => Cow::Borrowed(v),
+        Piece::New(Agg::Static(v)) => Cow::Owned(v),
+        Piece::Part(_) | Piece::New(_) => Cow::Owned(Value::Unit),
+    }
+}
+
+/// The size, the depth, and the number of hardware leaves of what a piece is, from its stored
+/// numbers.
+fn numbers(g: &Graph, tys: &Types, s: Seen<'_>) -> (u64, u64, u64) {
+    match s {
+        Seen::Static(v) => (v.size(), v.depth(), 0),
+        Seen::Hw(h) => (g.size(h), 1, 1),
+        Seen::Agg(a) => (a.size(g, tys), a.depth(tys), a.leaves(tys)),
+        Seen::Handle(_) | Seen::Pending(..) => (1, 1, 0),
+    }
+}
+
+impl<'x> Piece<'x> {
+    /// The piece of a result that is an element.
+    fn of_outs(outs: Vec<Out>) -> Vec<Piece<'x>> {
+        outs.into_iter().map(Piece::Out).collect()
     }
 }
 
 impl Evaluator<'_> {
+    /// Whether each piece is a static value.
+    fn all_static(&self, pieces: &[Piece<'_>]) -> bool {
+        pieces
+            .iter()
+            .all(|p| matches!(piece_seen(&self.store, p), Seen::Static(_)))
+    }
+
+    /// The type of a piece.
+    fn piece_ty(&mut self, pos: Pos, p: &Piece<'_>) -> Res<TyId> {
+        match piece_seen(&self.store, p).ty(&self.graph, &mut self.tys) {
+            Some(t) => Ok(t),
+            None => fail(Code::S010, pos, "an element has no type".to_owned()),
+        }
+    }
+
+    /// The part that a piece gives. A result or a part that waits copies now: the caller paid
+    /// the charge of the node that holds the part.
+    fn part_of_piece(&self, p: Piece<'_>) -> Agg {
+        match p {
+            Piece::Out(o) => Agg::of_val(self.store.take(o)).unwrap_or(Agg::Static(Value::Unit)),
+            Piece::Part(a) => a.clone(),
+            Piece::New(a) => a,
+        }
+    }
+
+    /// The typed use of the piece `p` at the type `t` at `pos` (Lean `conformAgg`). A static
+    /// part converts, a hardware leaf needs the type `t`, and a hardware aggregate converts
+    /// part by part (`typed_agg`). A part of the type `t` stays where it is.
+    pub(super) fn conform_piece<'x>(&mut self, pos: Pos, t: TyId, p: Piece<'x>) -> Res<Piece<'x>> {
+        enum Is {
+            Static,
+            Hw(crate::hw::HwId),
+            Agg(bool),
+            Other,
+        }
+        let is = match piece_seen(&self.store, &p) {
+            Seen::Static(_) => Is::Static,
+            Seen::Hw(h) => Is::Hw(h),
+            Seen::Agg(a) => Is::Agg(a.stored_ty() == Some(t)),
+            Seen::Handle(_) | Seen::Pending(..) => Is::Other,
+        };
+        match is {
+            Is::Static => {
+                let Seen::Static(v) = piece_seen(&self.store, &p) else {
+                    return Ok(p);
+                };
+                match ops::convert(t, v, &mut self.fuel, &self.tys).map_err(at(pos))? {
+                    Some(w) => Ok(Piece::New(Agg::Static(w))),
+                    None => Ok(p),
+                }
+            }
+            Is::Hw(h) => {
+                let ty = self.graph.ty(h);
+                if ty == *self.tys.get(t) {
+                    Ok(p)
+                } else {
+                    fail(
+                        Code::S010,
+                        pos,
+                        format!(
+                            "expected {}, but the value is {}",
+                            self.tys.text(t),
+                            self.tys.text_of(&ty)
+                        ),
+                    )
+                }
+            }
+            Is::Agg(true) => Ok(p),
+            Is::Agg(false) => match p {
+                Piece::Out(o) => Ok(Piece::New(self.typed_agg(pos, t, o)?)),
+                Piece::Part(a) => Ok(Piece::New(self.typed_part(pos, t, a)?)),
+                Piece::New(a) => Ok(Piece::New(self.typed_part(pos, t, &a)?)),
+            },
+            Is::Other => fail(
+                Code::S010,
+                pos,
+                "an element of a container is data".to_owned(),
+            ),
+        }
+    }
+
+    /// The new container node of the type `ty` at `pos` with the pieces: its depth (`S015`),
+    /// then the charge of its size from the stored numbers of the pieces. Only then do the pieces
+    /// copy.
+    pub(super) fn made_pieces(&mut self, pos: Pos, ty: TyId, pieces: Vec<Piece<'_>>) -> Res<Agg> {
+        let parts = pieces
+            .iter()
+            .map(|p| numbers(&self.graph, &self.tys, piece_seen(&self.store, p)));
+        let Some(node) = Agg::shape_from(&self.tys, ty, pieces.len(), parts) else {
+            return fail(Code::S010, pos, "the part has the wrong shape".to_owned());
+        };
+        self.bounded(pos, node.depth)?;
+        self.charge(pos, u128::from(node.size))?;
+        let xs = pieces.into_iter().map(|p| self.part_of_piece(p)).collect();
+        Ok(Agg::finish(&self.tys, node, xs))
+    }
+
+    /// A tuple literal at `pos` with the pieces. A tuple of static values keeps the charges of a
+    /// static value. Another one has the type of its elements.
+    pub(super) fn tuple_piece(&mut self, pos: Pos, pieces: Vec<Piece<'_>>) -> Res<Agg> {
+        if self.all_static(&pieces) {
+            let env = Env {
+                store: &self.store,
+                limit: self.limit,
+                site: self.site,
+            };
+            let elems = pieces.into_iter().map(|p| cow_of(env.store, p)).collect();
+            return tuple_of(env, &mut self.fuel, pos, elems).map(Agg::Static);
+        }
+        let mut types = Vec::with_capacity(pieces.len());
+        for p in &pieces {
+            types.push(self.piece_ty(pos, p)?);
+        }
+        let ty = self.tys.tuple(types);
+        self.made_pieces(pos, ty, pieces)
+    }
+
+    /// An array literal at `pos` with the pieces. Its elements take their common type by a typed
+    /// use. Then it checks its depth and charges its size.
+    pub(super) fn array_piece(&mut self, pos: Pos, pieces: Vec<Piece<'_>>) -> Res<Agg> {
+        if self.all_static(&pieces) {
+            let env = Env {
+                store: &self.store,
+                limit: self.limit,
+                site: self.site,
+            };
+            let elems = pieces.into_iter().map(|p| cow_of(env.store, p)).collect();
+            return array_of(env, &mut self.fuel, &mut self.tys, pos, elems).map(Agg::Static);
+        }
+        let mut types = Vec::with_capacity(pieces.len());
+        for p in &pieces {
+            types.push(self.piece_ty(pos, p)?);
+        }
+        let (units, common) = ops::common_of(types, |t, _| *t, &mut self.tys, self.fuel.left());
+        self.fuel.pay_int(&units).map_err(at(pos))?;
+        let Some(t) = common else {
+            return fail(
+                Code::S010,
+                pos,
+                "the elements of an array have no common type".to_owned(),
+            );
+        };
+        let mut conformed = Vec::with_capacity(pieces.len());
+        for p in pieces {
+            conformed.push(self.conform_piece(pos, t, p)?);
+        }
+        let ty = self.tys.array(t, Int::from_u64(conformed.len() as u64));
+        self.made_pieces(pos, ty, conformed)
+    }
+
+    /// A literal that waits, at a typed use of the type `t` at `pos`. The type flows into each
+    /// element: `[]` takes the type `[T; 0]`, and a literal of the shape of `t` makes its
+    /// elements at the element types of `t`. Then the literal charges as it does at its node.
+    /// Another shape is `S010` at `pos`.
+    fn build<'x>(&mut self, pos: Pos, ty: TyId, part: &'x Part) -> Res<Piece<'x>> {
+        match part {
+            Part::Value(a) => Ok(Piece::Part(a)),
+            Part::Empty(node) => match self.tys.get(ty) {
+                Ty::Array(elem, len) if len.cmp_u64(0) == Ordering::Equal => {
+                    let empty = Value::Array(*elem, Vec::new());
+                    self.bounded(*node, empty.depth())?;
+                    Ok(Piece::New(Agg::Static(empty)))
+                }
+                _ => mismatch(pos, ty, "`[]`", &self.tys),
+            },
+            Part::Array(node, parts) => match self.tys.get(ty) {
+                Ty::Array(elem, len) if len.cmp_u64(parts.len() as u64) == Ordering::Equal => {
+                    let elem = *elem;
+                    let mut pieces = Vec::with_capacity(parts.len());
+                    for part in parts {
+                        pieces.push(self.build(pos, elem, part)?);
+                    }
+                    self.array_piece(*node, pieces).map(Piece::New)
+                }
+                _ => mismatch(pos, ty, "an array literal with `[]`", &self.tys),
+            },
+            Part::Tuple(node, parts) => match self.tys.get(ty) {
+                Ty::Tuple(types) if types.len() == parts.len() => {
+                    let mut pieces = Vec::with_capacity(parts.len());
+                    for (k, part) in parts.iter().enumerate() {
+                        let elem_ty = self.tys.part(ty, k).unwrap_or(ty);
+                        pieces.push(self.build(pos, elem_ty, part)?);
+                    }
+                    self.tuple_piece(*node, pieces).map(Piece::New)
+                }
+                _ => mismatch(pos, ty, "a tuple literal with `[]`", &self.tys),
+            },
+        }
+    }
+
     /// A new value or type of the depth `depth` at `pos`.
     pub(super) fn bounded(&self, pos: Pos, depth: u64) -> Res<()> {
         bounded(self.limit, self.site, pos, depth)
     }
 
-    /// Checks that `o` can be an element of a container at `pos`. In this phase a container
-    /// holds only static values. A hardware value is `S010`, and a handle is `S010` until
-    /// slice 3. A literal that waits for its type gives the position of its first `[]`.
+    /// Checks that `o` can be an element of a container at `pos`. A static value, a hardware
+    /// value, and a hardware aggregate can. A handle is `S010` until slice 3. A literal that
+    /// waits for its type gives the position of its first `[]`.
     pub(super) fn held(&self, pos: Pos, o: &Out) -> Res<Option<Pos>> {
         match self.store.seen(o) {
-            Seen::Static(_) => Ok(None),
+            Seen::Static(_) | Seen::Hw(_) | Seen::Agg(_) => Ok(None),
             Seen::Pending(q, _) => Ok(Some(q)),
-            Seen::Hw(_) | Seen::Agg(_) => fail(
-                Code::S010,
-                pos,
-                "a container holds only static values in this phase".to_owned(),
-            ),
             s @ Seen::Handle(_) => fail(
                 Code::S010,
                 pos,
@@ -179,9 +366,8 @@ impl Evaluator<'_> {
         }
     }
 
-    /// The elements of a container literal, each checked as it evaluates. In this phase a
-    /// container holds only static values. A hardware value is `S010`, and a handle is `S010`
-    /// until slice 3. The position is that of the first `[]` among the elements that wait.
+    /// The elements of a container literal, each checked as it evaluates. The position is that
+    /// of the first `[]` among the elements that wait.
     pub(super) fn elements(&mut self, xs: &[Expr]) -> Res<(Vec<Out>, Option<Pos>)> {
         let base = self.store.parked.len();
         let mut waiting = None;
@@ -207,8 +393,8 @@ impl Evaluator<'_> {
                     let parts = outs.into_iter().map(|o| self.store.part(o)).collect();
                     return Ok(Some(Out::Made(Val::Pending(q, Part::Tuple(*pos, parts)))));
                 }
-                let v = self.tuple_of(*pos, outs)?;
-                Ok(Some(Out::Made(Val::Static(v))))
+                let a = self.tuple_piece(*pos, Piece::of_outs(outs))?;
+                Ok(Some(Out::Made(a.into_val())))
             }
             Expr::Array { pos, elems } if elems.is_empty() => {
                 self.charge(*pos, 1)?;
@@ -220,8 +406,8 @@ impl Evaluator<'_> {
                     let parts = outs.into_iter().map(|o| self.store.part(o)).collect();
                     return Ok(Some(Out::Made(Val::Pending(q, Part::Array(*pos, parts)))));
                 }
-                let v = self.array_of(*pos, outs)?;
-                Ok(Some(Out::Made(Val::Static(v))))
+                let a = self.array_piece(*pos, Piece::of_outs(outs))?;
+                Ok(Some(Out::Made(a.into_val())))
             }
             _ => fail(
                 Code::S010,
@@ -231,39 +417,12 @@ impl Evaluator<'_> {
         }
     }
 
-    /// A tuple literal at `pos` whose elements are all static.
-    pub(super) fn tuple_of(&mut self, pos: Pos, outs: Vec<Out>) -> Res<Value> {
-        let env = Env {
-            store: &self.store,
-            limit: self.limit,
-            site: self.site,
-        };
-        let elems = outs.into_iter().map(|o| cow(env.store, o)).collect();
-        tuple_of(env, &mut self.fuel, pos, elems)
-    }
-
-    /// An array literal at `pos` whose elements are all static.
-    pub(super) fn array_of(&mut self, pos: Pos, outs: Vec<Out>) -> Res<Value> {
-        let env = Env {
-            store: &self.store,
-            limit: self.limit,
-            site: self.site,
-        };
-        let elems = outs.into_iter().map(|o| cow(env.store, o)).collect();
-        array_of(env, &mut self.fuel, &mut self.tys, pos, elems)
-    }
-
     /// A typed use of the type `t` at `pos` gives a literal that waits its type.
     pub(super) fn settle(&mut self, pos: Pos, t: TyId, out: Out) -> Res<Out> {
         let Out::Made(Val::Pending(_, part)) = out else {
             return Ok(out);
         };
-        let env = Env {
-            store: &self.store,
-            limit: self.limit,
-            site: self.site,
-        };
-        let v = build(env, &mut self.fuel, &mut self.tys, pos, t, &part)?.into_owned();
-        Ok(Out::Made(Val::Static(v)))
+        let piece = self.build(pos, t, &part)?;
+        Ok(Out::Made(self.part_of_piece(piece).into_val()))
     }
 }

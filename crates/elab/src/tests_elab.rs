@@ -74,7 +74,7 @@ pub(crate) fn cost_fuel(src: &str, top: &str, fuel: u64) -> String {
     cost_with(src, top, fuel, Budget::default().depth, sha16)
 }
 
-fn cost_depth(src: &str, top: &str, depth: u64) -> String {
+pub(crate) fn cost_depth(src: &str, top: &str, depth: u64) -> String {
     cost_with(src, top, Budget::default().fuel, depth, sha16)
 }
 

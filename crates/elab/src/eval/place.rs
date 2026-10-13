@@ -75,7 +75,6 @@ struct Walked {
     keys: Vec<usize>,
     ty: Option<TyId>,
     in_list: bool,
-    in_static: bool,
     held: Held,
     part: Option<PartInfo>,
     own: Option<Val>,
@@ -105,16 +104,15 @@ fn key_pos(key: &Key<'_>) -> Pos {
 }
 
 /// A place after its steps (section 5.2): its root, the number of each step, and the type and
-/// the kind of the part. `in_list` tells if the container of the last step is a list, and
-/// `in_static` if it is a static value. A place in an aggregate root also holds the numbers of
-/// its part, and the part itself if it is a reference that the walk made, for no path names it.
+/// the kind of the part. `in_list` tells if a step selects an element of a list. A place in an
+/// aggregate root also holds the numbers of its part, and the part itself if it is a reference
+/// that the walk made, for no path names it.
 pub(super) struct Place {
     pub(super) root: Root,
     pub(super) id: DeclId,
     pub(super) keys: Vec<usize>,
     pub(super) ty: Option<TyId>,
     pub(super) in_list: bool,
-    pub(super) in_static: bool,
     pub(super) held: Held,
     pub(super) part: Option<PartInfo>,
     pub(super) own: Option<Val>,
@@ -651,7 +649,6 @@ impl Evaluator<'_> {
             keys: walked.keys,
             ty: walked.ty,
             in_list: walked.in_list,
-            in_static: walked.in_static,
             held: walked.held,
             part: walked.part,
             own: walked.own,
@@ -674,8 +671,9 @@ impl Evaluator<'_> {
     /// Writes `y` into the place (section 5.2). A place without a step binds its root again, so
     /// a hardware value gets the next version of the root. A place with a step checks the new
     /// depth of the root: the number of steps plus the depth of the value (`S015` at `pos`).
-    /// Then it writes into the live value of the root. A list holds no hardware value: `S011` at `q`, the node of the value. A
-    /// container holds no hardware value in this phase: `S010`.
+    /// Then it writes into the live value of the root, and a root that has a hardware leaf
+    /// afterwards binds again (`rebind`). A step into a list makes a value with a hardware leaf
+    /// `S011` at `q`, the node of the value.
     pub(super) fn store_at(&mut self, pos: Pos, q: Pos, place: &Place, y: Val) -> Res<()> {
         if place.keys.is_empty() {
             let y = self.named(pos, place.id, y)?;
@@ -693,36 +691,33 @@ impl Evaluator<'_> {
             return Ok(());
         }
         if place.in_list && matches!(y, Val::Hw(_) | Val::Agg(_)) {
-            return fail(Code::S011, q, "a list holds no hardware value".to_owned());
+            return fail(
+                Code::S011,
+                q,
+                "a list holds no value with a hardware leaf".to_owned(),
+            );
         }
-        let y = if place.part.is_some() {
-            match Agg::of_val(y) {
-                Ok(x) => {
-                    if place.in_static && !matches!(x, Agg::Static(_)) {
-                        return fail(
-                            Code::S010,
-                            q,
-                            "a container holds only static values in this phase".to_owned(),
-                        );
-                    }
-                    // The root is within the nesting depth, so only the value on the path can
-                    // raise it.
-                    self.bounded(pos, place.keys.len() as u64 + x.depth(&self.tys))?;
-                    return self.rebind(pos, place, x);
-                }
-                Err(v) => v,
-            }
-        } else {
-            y
-        };
-        let w = self.item(q, y)?;
+        let x = self.item(q, y)?;
         // The root is within the nesting depth, so only the value on the path can raise it.
-        self.bounded(pos, place.keys.len() as u64 + w.depth())?;
-        self.charge_held(pos, place.root)?;
-        if let Some(part) = self.store.part_mut(place.root, &place.keys) {
-            *part = w;
+        self.bounded(pos, place.keys.len() as u64 + x.depth(&self.tys))?;
+        let static_root = matches!(self.store.root(&place.root), Val::Static(_));
+        match x {
+            Agg::Static(w) if static_root => {
+                self.charge_held(pos, place.root)?;
+                if let Some(part) = self.store.part_mut(place.root, &place.keys) {
+                    *part = w;
+                }
+                Ok(())
+            }
+            x if static_root || matches!(self.store.root(&place.root), Val::Agg(_)) => {
+                self.rebind(pos, place, x)
+            }
+            _ => fail(
+                Code::S010,
+                pos,
+                "the place has no part for its value".to_owned(),
+            ),
         }
-        Ok(())
     }
 
     /// The step `step` of a place or a read with its index, which gets its static check.
@@ -760,7 +755,6 @@ impl Evaluator<'_> {
         let aggregate = matches!(self.store.root(&root), Val::Agg(_));
         let mut cur = Cur::In(self.store.current(root, &[]));
         let mut in_list = false;
-        let mut in_static = false;
         let mut known = match ty {
             Some(t) => Known::Ty(t),
             None => Known::Absent,
@@ -785,8 +779,7 @@ impl Evaluator<'_> {
                 ) => Known::Ty(*elem),
                 (None, Known::Absent | Known::Element, _) => Known::Element,
             };
-            in_list = matches!(seen, Seen::Static(Value::List(..)));
-            in_static = matches!(seen, Seen::Static(_));
+            in_list = in_list || matches!(seen, Seen::Static(Value::List(..)));
             // A step into a reference makes a new reference to the part, in constant work.
             let lazy = match seen {
                 Seen::Agg(Agg::Ref(b, t)) => Some((b.clone(), *t)),
@@ -840,7 +833,6 @@ impl Evaluator<'_> {
             keys,
             ty,
             in_list,
-            in_static,
             held,
             part,
             own,
@@ -879,25 +871,17 @@ impl Evaluator<'_> {
         self.normalize(pos, Agg::Ref(sub, part))
     }
 
-    /// The value of an element of a container in this phase. A hardware value is `S010`,
-    /// and so is a handle until slice 3.
-    fn item(&self, pos: Pos, v: Val) -> Res<Value> {
-        match v {
-            Val::Static(v) => Ok(v),
-            Val::Hw(_) | Val::Agg(_) => fail(
+    /// The part of a container that the value `v` at `pos` gives. A handle is `S010` until
+    /// slice 3.
+    fn item(&self, pos: Pos, v: Val) -> Res<Agg> {
+        match Agg::of_val(v) {
+            Ok(a) => Ok(a),
+            Err(Val::Pending(q, _)) => super::no_type(q),
+            Err(v) => fail(
                 Code::S010,
                 pos,
-                "a container holds only static values in this phase".to_owned(),
+                format!("{} is not an element before slice 3", self.text(v.seen())),
             ),
-            Val::Handle(h) => {
-                let v = Val::Handle(h);
-                fail(
-                    Code::S010,
-                    pos,
-                    format!("{} is not an element before slice 3", self.text(v.seen())),
-                )
-            }
-            Val::Pending(q, _) => super::no_type(q),
         }
     }
 }

@@ -34,6 +34,8 @@ mod tests_bind;
 mod tests_eq;
 #[cfg(test)]
 mod tests_if;
+#[cfg(test)]
+mod tests_lit;
 mod types;
 
 pub use inst::Design;
@@ -220,13 +222,20 @@ impl Store {
     fn park(&mut self, o: Out) -> usize {
         let at = self.parked.len();
         let mut holds = None;
-        if let Out::Ref(Ref { root, .. }) = &o
-            && matches!(root, Root::Local(..))
+        if let Out::Ref(r) = &o
+            && let Root::Local(..) = r.root
         {
-            self.parked_at.entry(*root).or_default().push(at);
-            if matches!(self.root(root), Val::Static(_)) {
-                *self.holds.entry(*root).or_default() += 1;
-                holds = Some(*root);
+            let root = r.root;
+            self.parked_at.entry(root).or_default().push(at);
+            // A part that is a static value holds the local, also in an aggregate root.
+            let static_part = match self.root(&root) {
+                Val::Static(_) => true,
+                Val::Agg(_) => matches!(self.at(r), Seen::Static(_)),
+                _ => false,
+            };
+            if static_part {
+                *self.holds.entry(root).or_default() += 1;
+                holds = Some(root);
             }
         }
         self.parked.push(o);
@@ -431,8 +440,10 @@ impl Store {
     fn part(&self, o: Out) -> Part {
         match self.take(o) {
             Val::Pending(_, part) => part,
-            Val::Static(v) => Part::Value(v),
-            _ => Part::Value(Value::Unit),
+            Val::Static(v) => Part::Value(Agg::Static(v)),
+            Val::Hw(h) => Part::Value(Agg::Hw(h)),
+            Val::Agg(a) => Part::Value(*a),
+            Val::Handle(_) => Part::Value(Agg::Static(Value::Unit)),
         }
     }
 
@@ -811,25 +822,25 @@ impl Evaluator<'_> {
             Seen::Static(v) => v.size(),
             Seen::Hw(h) => self.graph.size(h),
             Seen::Handle(_) => 1,
-            Seen::Pending(_, p) => Self::part_size(p),
+            Seen::Pending(_, p) => self.part_size(p),
             Seen::Agg(a) => a.size(&self.graph, &self.tys),
         })
     }
 
     /// The size of a part that waits: 1 for `[]`, and 1 more than its parts for a literal.
-    fn part_size(p: &Part) -> u64 {
+    fn part_size(&self, p: &Part) -> u64 {
         match p {
-            Part::Value(v) => v.size(),
+            Part::Value(a) => a.size(&self.graph, &self.tys),
             Part::Empty(_) => 1,
             Part::Array(_, ps) | Part::Tuple(_, ps) => {
-                1 + ps.iter().map(Self::part_size).sum::<u64>()
+                1 + ps.iter().map(|p| self.part_size(p)).sum::<u64>()
             }
         }
     }
 
     fn part_text(&self, p: &Part) -> String {
         match p {
-            Part::Value(v) => v.text(&self.tys),
+            Part::Value(a) => self.text(a.seen()),
             Part::Empty(_) => "`[]`".to_owned(),
             Part::Array(..) => "an array literal with `[]`".to_owned(),
             Part::Tuple(..) => "a tuple literal with `[]`".to_owned(),

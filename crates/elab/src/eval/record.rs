@@ -6,8 +6,10 @@
 //! value only after it paid for it. The zero charges its size from the metadata before it
 //! exists, and `data_bits` reads the width from the metadata, so neither walks the field types.
 
+use super::container::Piece;
 use super::{Evaluator, Names, Opnd, Out, Res, at, expr_pos, fail, need};
 use crate::Code;
+use crate::agg::Agg;
 use crate::hw::{Seen, Val};
 use crate::types::{Ty, TyId};
 use crate::value::{Value, int_size};
@@ -38,15 +40,17 @@ impl Evaluator<'_> {
             );
         }
         let value = match xs {
-            [] => self.zero(pos, ty)?,
-            _ if matches!(self.tys.get(ty), Ty::Struct(_)) => self.record(pos, ty, callee, xs)?,
+            [] => Val::Static(self.zero(pos, ty)?),
+            _ if matches!(self.tys.get(ty), Ty::Struct(_)) => {
+                self.record(pos, ty, callee, xs)?.into_val()
+            }
             [x] => {
                 let at = self.store.park(callee);
                 let a = self.eval(x)?;
                 let a = need(x, a)?;
                 self.store.resume_one(at);
                 self.charge(pos, self.size(&a))?;
-                self.conform(pos, ty, a)?
+                Val::Static(self.conform(pos, ty, a)?)
             }
             _ => {
                 return fail(
@@ -56,7 +60,7 @@ impl Evaluator<'_> {
                 );
             }
         };
-        Ok(Some(Out::Made(Val::Static(value))))
+        Ok(Some(Out::Made(value)))
     }
 
     /// The zero `T()` of the type `t` at `pos` (section 5.6). A type that is not hardware data
@@ -84,10 +88,11 @@ impl Evaluator<'_> {
     }
 
     /// A record constructor of the struct type `ty` at `pos`. The arguments paid their copies.
-    /// Each field is a typed use in declaration order. A literal with `[]` takes the type of its
-    /// field. In this phase a field holds only a static value, so a hardware argument is
-    /// `S010` at the argument. Then the record checks its depth and charges its size.
-    fn record(&mut self, pos: Pos, ty: TyId, callee: Out, xs: &[Expr]) -> Res<Value> {
+    /// Each field is a typed use in declaration order, in a data context (section 9.2): a
+    /// register or a wire is read. A literal with `[]` takes the type of its field. A field can
+    /// hold a hardware value or a hardware aggregate. Then the record checks its depth and
+    /// charges its size.
+    fn record(&mut self, pos: Pos, ty: TyId, callee: Out, xs: &[Expr]) -> Res<Agg> {
         let Some((_, fields)) = self.tys.fields(ty) else {
             return fail(
                 Code::S010,
@@ -115,16 +120,13 @@ impl Evaluator<'_> {
             sizes += self.size(a);
         }
         self.charge(pos, sizes)?;
-        let mut values = Vec::with_capacity(args.len());
+        let mut pieces = Vec::with_capacity(args.len());
         for ((field, arg), x) in fields.into_iter().zip(args).zip(xs) {
             let arg = self.settle(pos, field, arg)?;
-            self.held(expr_pos(x), &arg)?;
-            values.push(self.conform(pos, field, arg)?);
+            let arg = self.data(expr_pos(x), arg)?.into_out();
+            pieces.push(self.conform_piece(pos, field, Piece::Out(arg))?);
         }
-        let record = Value::Record(ty, values);
-        self.bounded(pos, record.depth())?;
-        self.charge(pos, u128::from(record.size()))?;
-        Ok(record)
+        self.made_pieces(pos, ty, pieces)
     }
 
     /// The number of the field `f` in the struct item `item`.

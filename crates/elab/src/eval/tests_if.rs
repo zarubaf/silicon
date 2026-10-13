@@ -154,7 +154,7 @@ fn a_record_descends_by_its_fields_and_joins_as_a_type_equality() {
 }
 
 /// The tuple `(Bool, Int)` with a hardware first part and a static second part.
-fn int_part(ev: &mut Evaluator<'_>, p: PathId, t: TyId) -> Val {
+pub(super) fn int_part(ev: &mut Evaluator<'_>, p: PathId, t: TyId) -> Val {
     let bit = leaf_at(ev, p, &[0], Ty::Bool);
     node(ev, t, vec![bit, Agg::Static(int(0))])
 }

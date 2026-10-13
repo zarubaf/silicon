@@ -180,12 +180,12 @@ pub(crate) struct Ref {
     pub path: Vec<usize>,
 }
 
-/// A part of a literal that waits for its type. It is a static value, the literal `[]` at the
-/// position, or an array or a tuple literal at the position. Such a literal has at least one
-/// part that waits.
+/// A part of a literal that waits for its type. It is a value in its normal form as an
+/// aggregate part, the literal `[]` at the position, or an array or a tuple literal at the
+/// position. Such a literal has at least one part that waits.
 #[derive(Clone)]
 pub(crate) enum Part {
-    Value(Value),
+    Value(Agg),
     Empty(Pos),
     Array(Pos, Vec<Part>),
     Tuple(Pos, Vec<Part>),

@@ -320,7 +320,7 @@ fn lets_text(ev: &Evaluator<'_>, shown: Shown) -> String {
 /// value that `base` makes at the name path of `x`, and it took its first core name, as a
 /// copy-in does. The result shows the core `let` statements, the final value of `x`, and the
 /// units of the body alone, with the fuel `fuel` for it. `run` keys the counters.
-fn run_f(
+pub(super) fn run_f(
     src: &str,
     run: u64,
     fuel: u64,
@@ -451,10 +451,10 @@ fn only_the_references_on_the_path_expand() {
 }
 
 /// A new root without a hardware leaf is a static value with no rebind charge. A static part of
-/// an aggregate root takes a static value and keeps the other leaves. In this phase it holds no
-/// hardware value (`S010` at the value).
+/// an aggregate root takes a static value and keeps the other leaves. A static part that takes a
+/// hardware value opens one level, and the root binds again.
 #[test]
-fn a_static_part_of_a_root_takes_only_a_static_value() {
+fn a_static_part_of_a_root_takes_a_static_value_or_opens_for_a_hardware_one() {
     let src = assign_in("(UInt[8], Int)", "x.0 = 5;");
     let mixed = |ev: &mut Evaluator<'_>, p: PathId, t: TyId| {
         let a = leaf_x(ev, p, 0);
@@ -477,7 +477,10 @@ fn a_static_part_of_a_root_takes_only_a_static_value() {
         "x$1v$0e=x$0e | [x$1v$0e, (array (uint 8) ((uint 8 9) (uint 8 2)))] | 18"
     );
     let src = assign_in("(UInt[8], [UInt[8]; 2])", "x.1[0] = x.0;");
-    assert_eq!(run_f(&src, 700_000_254, 1000, with_array), "S010 2:12");
+    assert_eq!(
+        run_f(&src, 700_000_254, 1000, with_array),
+        "x$1v$0e=x$0e x$1v$1e$0e=x$0e | [x$1v$0e, [x$1v$1e$0e, (uint 8 2)]] | 17"
+    );
 }
 
 /// The value `n` of the type `UInt[8]`.
