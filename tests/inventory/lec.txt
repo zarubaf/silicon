@@ -35,6 +35,8 @@ tests/core/corpus/unused_module.sil main PASS
 tests/core/corpus/unused_module.sil lowering PASS
 tests/core/corpus/wide.sil main PASS
 tests/core/corpus/wide.sil lowering PASS
+tests/source/corpus/aggregate_ports.si main PASS
+tests/source/corpus/aggregate_ports.si lowering PASS
 tests/source/corpus/comptime_for_helpers.si main PASS
 tests/source/corpus/comptime_for_helpers.si lowering PASS
 tests/source/corpus/const_table.si main PASS

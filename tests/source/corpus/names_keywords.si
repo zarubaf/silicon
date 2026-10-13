@@ -1,5 +1,5 @@
 // User names that equal a core keyword, a made field form, or a backend name are legal.
-// A module, an instance, a port, a wire, a register, and a local variable each take them.
+// A module, an instance, a port, a wire, a register, a local variable, and a record field each take them.
 // TOP Top()
 module design() {
     input a: UInt[4];
@@ -675,6 +675,78 @@ module Instances() {
     silicon_reg_r.a := a;
     y := design.q ^ bits.q ^ deps.q ^ next.q ^ write.q ^ inst.q ^ assign.q ^ reset.q ^ sync.q ^ not.q ^ add.q ^ sub.q ^ mul.q ^ and.q ^ or.q ^ xor.q ^ shl.q ^ shru.q ^ shrs.q ^ concat.q ^ icmp.q ^ mux.q ^ extract.q ^ replicate.q ^ read.q ^ eq.q ^ ne.q ^ ult.q ^ ule.q ^ ugt.q ^ uge.q ^ slt.q ^ sle.q ^ sgt.q ^ sge.q ^ clk.q ^ rst.q ^ ret.q ^ rdata.q ^ rvalid.q ^ ren.q ^ raddr.q ^ n.q ^ c.q ^ v.q ^ b.q ^ t.q ^ k.q ^ h.q ^ silicon_reg_r.q;
 }
+struct Kw {
+    design: UInt[4],
+    bits: UInt[4],
+    deps: UInt[4],
+    next: UInt[4],
+    write: UInt[4],
+    inst: UInt[4],
+    assign: UInt[4],
+    reset: UInt[4],
+    sync: UInt[4],
+    not: UInt[4],
+    add: UInt[4],
+    sub: UInt[4],
+    mul: UInt[4],
+    and: UInt[4],
+    or: UInt[4],
+    xor: UInt[4],
+    shl: UInt[4],
+    shru: UInt[4],
+    shrs: UInt[4],
+    concat: UInt[4],
+    icmp: UInt[4],
+    mux: UInt[4],
+    extract: UInt[4],
+    replicate: UInt[4],
+    read: UInt[4],
+    eq: UInt[4],
+    ne: UInt[4],
+    ult: UInt[4],
+    ule: UInt[4],
+    ugt: UInt[4],
+    uge: UInt[4],
+    slt: UInt[4],
+    sle: UInt[4],
+    sgt: UInt[4],
+    sge: UInt[4],
+    clk: UInt[4],
+    rst: UInt[4],
+    ret: UInt[4],
+    rdata: UInt[4],
+    rvalid: UInt[4],
+    ren: UInt[4],
+    raddr: UInt[4],
+    n: UInt[4],
+    c: UInt[4],
+    v: UInt[4],
+    b: UInt[4],
+    t: UInt[4],
+    k: UInt[4],
+    h: UInt[4],
+    silicon_reg_r: UInt[4],
+}
+module Records() {
+    input a: UInt[4];
+    output y: UInt[4];
+    wire w: Kw;
+    w := Kw(a +% 0, a +% 1, a +% 2, a +% 3, a +% 4, a +% 5, a +% 6, a +% 7, a +% 8, a +% 9, a +% 10, a +% 11, a +% 12, a +% 13, a +% 14, a +% 15, a +% 0, a +% 1, a +% 2, a +% 3, a +% 4, a +% 5, a +% 6, a +% 7, a +% 8, a +% 9, a +% 10, a +% 11, a +% 12, a +% 13, a +% 14, a +% 15, a +% 0, a +% 1, a +% 2, a +% 3, a +% 4, a +% 5, a +% 6, a +% 7, a +% 8, a +% 9, a +% 10, a +% 11, a +% 12, a +% 13, a +% 14, a +% 15, a +% 0, a +% 1);
+    reg r: Kw = Kw(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 0, 1);
+    r := Kw(a +% w.design, a +% w.bits, a +% w.deps, a +% w.next, a +% w.write, a +% w.inst, a +% w.assign, a +% w.reset, a +% w.sync, a +% w.not, a +% w.add, a +% w.sub, a +% w.mul, a +% w.and, a +% w.or, a +% w.xor, a +% w.shl, a +% w.shru, a +% w.shrs, a +% w.concat, a +% w.icmp, a +% w.mux, a +% w.extract, a +% w.replicate, a +% w.read, a +% w.eq, a +% w.ne, a +% w.ult, a +% w.ule, a +% w.ugt, a +% w.uge, a +% w.slt, a +% w.sle, a +% w.sgt, a +% w.sge, a +% w.clk, a +% w.rst, a +% w.ret, a +% w.rdata, a +% w.rvalid, a +% w.ren, a +% w.raddr, a +% w.n, a +% w.c, a +% w.v, a +% w.b, a +% w.t, a +% w.k, a +% w.h, a +% w.silicon_reg_r);
+    let mut l: Kw = w;
+    l.design = l.design +% 1;
+    l.bits = l.bits +% 1;
+    l.deps = l.deps +% 1;
+    l.next = l.next +% 1;
+    l.write = l.write +% 1;
+    l.inst = l.inst +% 1;
+    l.t = l.t +% 1;
+    l.k = l.k +% 1;
+    l.h = l.h +% 1;
+    l.silicon_reg_r = l.silicon_reg_r +% 1;
+    y := w.design ^ w.bits ^ w.deps ^ w.next ^ w.write ^ w.inst ^ w.assign ^ w.reset ^ w.sync ^ w.not ^ w.add ^ w.sub ^ w.mul ^ w.and ^ w.or ^ w.xor ^ w.shl ^ w.shru ^ w.shrs ^ w.concat ^ w.icmp ^ w.mux ^ w.extract ^ w.replicate ^ w.read ^ w.eq ^ w.ne ^ w.ult ^ w.ule ^ w.ugt ^ w.uge ^ w.slt ^ w.sle ^ w.sgt ^ w.sge ^ w.clk ^ w.rst ^ w.ret ^ w.rdata ^ w.rvalid ^ w.ren ^ w.raddr ^ w.n ^ w.c ^ w.v ^ w.b ^ w.t ^ w.k ^ w.h ^ w.silicon_reg_r ^ r.design ^ r.bits ^ r.deps ^ r.next ^ r.write ^ r.inst ^ r.assign ^ r.reset ^ r.sync ^ r.not ^ r.add ^ r.sub ^ r.mul ^ r.and ^ r.or ^ r.xor ^ r.shl ^ r.shru ^ r.shrs ^ r.concat ^ r.icmp ^ r.mux ^ r.extract ^ r.replicate ^ r.read ^ r.eq ^ r.ne ^ r.ult ^ r.ule ^ r.ugt ^ r.uge ^ r.slt ^ r.sle ^ r.sgt ^ r.sge ^ r.clk ^ r.rst ^ r.ret ^ r.rdata ^ r.rvalid ^ r.ren ^ r.raddr ^ r.n ^ r.c ^ r.v ^ r.b ^ r.t ^ r.k ^ r.h ^ r.silicon_reg_r ^ l.design ^ l.bits ^ l.deps ^ l.next ^ l.write ^ l.inst ^ l.assign ^ l.reset ^ l.sync ^ l.not ^ l.add ^ l.sub ^ l.mul ^ l.and ^ l.or ^ l.xor ^ l.shl ^ l.shru ^ l.shrs ^ l.concat ^ l.icmp ^ l.mux ^ l.extract ^ l.replicate ^ l.read ^ l.eq ^ l.ne ^ l.ult ^ l.ule ^ l.ugt ^ l.uge ^ l.slt ^ l.sle ^ l.sgt ^ l.sge ^ l.clk ^ l.rst ^ l.ret ^ l.rdata ^ l.rvalid ^ l.ren ^ l.raddr ^ l.n ^ l.c ^ l.v ^ l.b ^ l.t ^ l.k ^ l.h ^ l.silicon_reg_r;
+}
 module Top() {
     input a: UInt[4];
     output y: UInt[4];
@@ -683,6 +755,7 @@ module Top() {
     instance regs = Regs();
     instance locals = Locals();
     instance insts = Instances();
+    instance records = Records();
     ports.design := a;
     ports.bits := a;
     ports.deps := a;
@@ -737,5 +810,6 @@ module Top() {
     regs.a := a;
     locals.a := a;
     insts.a := a;
-    y := ports.y ^ wires.y ^ regs.y ^ locals.y ^ insts.y;
+    records.a := a;
+    y := ports.y ^ wires.y ^ regs.y ^ locals.y ^ insts.y ^ records.y;
 }

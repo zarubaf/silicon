@@ -1,0 +1,33 @@
+// Aggregate ports and a record register. A packet stage holds a record register with a reset
+// value. Its ports are a record, an array, and a tuple. The top connects two stages through
+// aggregate child ports and compares the two results by leaf.
+// TOP Top()
+struct Pkt {
+    valid: Bool,
+    data: UInt[8],
+    tag: (Bool, UInt[2]),
+}
+module Stage() {
+    input p: Pkt;
+    input w: [UInt[8]; 2];
+    output q: Pkt;
+    output s: (UInt[8], Bool);
+    reg r: Pkt = Pkt(false, 7, (true, 1));
+    r := if (p.valid) { Pkt(true, p.data +% w[0], (p.tag.1 == 0, p.tag.1)) } else { Pkt(false, w[1], p.tag) };
+    q := r;
+    s := (r.data, r == p);
+}
+module Top() {
+    input a: Pkt;
+    input w: [UInt[8]; 2];
+    output y: Pkt;
+    output same: Bool;
+    instance first = Stage();
+    instance second = Stage();
+    first.p := a;
+    first.w := w;
+    second.p := first.q;
+    second.w := [w[1], w[0]];
+    y := second.q;
+    same := first.q == second.q;
+}

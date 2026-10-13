@@ -14,6 +14,7 @@ tests/core/corpus/reg_self.sil run PASS
 tests/core/corpus/reg_state.sil run PASS
 tests/core/corpus/unused_module.sil run PASS
 tests/core/corpus/wide.sil run PASS
+tests/source/corpus/aggregate_ports.si run PASS
 tests/source/corpus/comptime_for_helpers.si run PASS
 tests/source/corpus/const_table.si run PASS
 tests/source/corpus/counter_width.si run PASS
