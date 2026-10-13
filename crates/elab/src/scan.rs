@@ -92,7 +92,8 @@ struct Walk<'a> {
 
 impl Walk<'_> {
     /// Whether the use of the name `id` can start a nested evaluation: a constant, a `type`
-    /// item, or a struct item. A `type` statement is a local, which starts none.
+    /// item, a struct item, or a function item, whose signature evaluates as a value. A `type`
+    /// statement is a local, which starts none.
     fn starts_nesting(&self, id: NodeId) -> bool {
         let target = match self.top {
             Some(top) => top.target(id),
@@ -103,7 +104,7 @@ impl Walk<'_> {
         };
         let d = self.file.decl(decl);
         match d.kind {
-            Kind::Const | Kind::Struct => true,
+            Kind::Const | Kind::Struct | Kind::Fn => true,
             Kind::Alias => self.file.item(&d.name) == Some(decl),
             _ => false,
         }
