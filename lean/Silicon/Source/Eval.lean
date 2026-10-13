@@ -55,7 +55,10 @@ The operators follow v0.1 section 3. These rules settle the open points of slice
   value and the number of steps of the place (`S015`). Each then charges the size of the final
   value of the formal. Then it writes the value into the live root, by the steps that the place
   got before the call. A hardware value thus gives the caller root its next version.
-- Slice 1 has no function values: a function name is only a callee (`S010`).
+- A function name that is not a callee gives a function value (section 5.1). A generic
+  function or a builtin is `S010` at the name, after the charge of its node. The signature then
+  evaluates in the scope of the function, and the function type checks its depth and charges its
+  size at the name (`fnTy`).
 - `==` and `!=` with an operand whose type holds a function type are `S010` at the operator.
   The check reads the function flag of the type after both operands, before each join and each
   charge.
@@ -882,7 +885,9 @@ mutual
 
   /--
   A name. A constant and a `type` item evaluate at their first use, in the table of constants.
-  A struct item is a use of its specialization without arguments.
+  A struct item is a use of its specialization without arguments. A function item gives a
+  function value. Its signature evaluates in the scope of the function, with no locals. It adds
+  no nesting level and no call frame. The name makes the value, so a binding of it is no copy.
   -/
   def name (n : Nat) (p : Pos) (x : String) : Ref → M Out
     | .local id => do
@@ -890,7 +895,7 @@ mutual
       | some s => return ⟨s.value, true, some id⟩
       | _ => fail .S011 p s!"`{x}` is not a static value"
     | .type k => do return ⟨.static (.type (← prim p x k)), true, none⟩
-    | .fn _ => fail .S010 p s!"`{x}` is a function; slice 1 has no function values"
+    | .fn _ => fail .S010 p s!"`{x}` is a builtin; a builtin is not a value"
     | .item i => do
       match (← read).items[i]? with
       | some (.const cp _ ty v) => do
@@ -903,7 +908,16 @@ mutual
       | some (.alias _ _ ty) => do
         return ⟨.static (← constant p x i do return .type (← typeExpr n ty)), true, none⟩
       | some (.struct ..) => do return ⟨.static (.type (← spec n p i [])), true, none⟩
-      | _ => fail .S010 p s!"`{x}` is a function; slice 1 has no function values"
+      | some (.fn _ _ u ps ret _) => do
+        if ps.any (·.mode == .comptime) then
+          fail .S010 p s!"`{x}` has `comptime` parameters; a generic function is not a value"
+        let (qs, r) ← inFrame none <|
+            withReader (fun c => { c with item := i, frame := ⟨none, 0⟩ }) do
+          let qs ← params n (ps.map fun q => .mk (q.mode == .mut) q.ty)
+          return (qs, ← typeExpr n ret)
+        let _ ← fnTy p qs r
+        return ⟨.static (.function u.name qs.toArray r), false, none⟩
+      | _ => fail .S010 p s!"`{x}` is not a value"
   termination_by (n + 1, 1)
 
   /--
