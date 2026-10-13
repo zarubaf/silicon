@@ -179,20 +179,20 @@ def wrap : Ty := .struct "Wrap" #[.type (.array (.array .bool 1) 1)] (Meta.struc
 #guard (Ty.array (packet 8) 2).depth == 3
 
 /-! The metadata of the scalar types, of a tuple, and of a struct. -/
-#guard Ty.bool.info == ⟨1, 1, 1, 1, true⟩
-#guard (Ty.uint 65).info == ⟨65, 1, 2, 1, true⟩
-#guard Ty.unit.info == ⟨0, 0, 1, 1, true⟩
-#guard Ty.type.info == ⟨0, 0, 0, 1, false⟩
-#guard (Ty.tuple #[.bool, .int]).info == ⟨1, 1, 2, 2, false⟩
-#guard (packet 8).info == ⟨9, 2, 3, 2, true⟩
-#guard empty.info == ⟨0, 0, 1, 1, true⟩
-#guard wrap.info == ⟨0, 0, 1, 4, true⟩
+#guard Ty.bool.info == ⟨1, 1, 1, 1, true, false⟩
+#guard (Ty.uint 65).info == ⟨65, 1, 2, 1, true, false⟩
+#guard Ty.unit.info == ⟨0, 0, 1, 1, true, false⟩
+#guard Ty.type.info == ⟨0, 0, 0, 1, false, false⟩
+#guard (Ty.tuple #[.bool, .int]).info == ⟨1, 1, 2, 2, false, false⟩
+#guard (packet 8).info == ⟨9, 2, 3, 2, true, false⟩
+#guard empty.info == ⟨0, 0, 1, 1, true, false⟩
+#guard wrap.info == ⟨0, 0, 1, 4, true, false⟩
 #guard Meta.readCharge [Meta.finite 8, Meta.bool] == 8
 #guard (packet 8).info.intCharge == 4
 
 /-! `[T; N]` multiplies the numbers of `T` by `N`, and each product charges its two sizes. -/
-#guard (Ty.array (packet 8) 4).info == ⟨36, 8, 13, 3, true⟩
-#guard (Ty.array .bool 0).info == ⟨0, 0, 1, 2, true⟩
+#guard (Ty.array (packet 8) 4).info == ⟨36, 8, 13, 3, true, false⟩
+#guard (Ty.array .bool 0).info == ⟨0, 0, 1, 2, true, false⟩
 #guard Meta.arrayCharge (packet 8).info 4 == 3
 #guard (Ty.array (.uint 8) (2 ^ 64)).info.width == 2 ^ 67
 #guard Meta.arrayCharge (Ty.uint 8).info (2 ^ 64) == 6
@@ -205,7 +205,7 @@ def chain : Nat → Ty
   | 0 => .struct "S0" #[] (Meta.struct [Meta.finite 1] [])
   | k + 1 => let t := chain k; .struct s!"S{k + 1}" #[] (Meta.struct [t.info, t.info] [])
 
-#guard (chain 200).info == ⟨2 ^ 200, 2 ^ 200, 3 * 2 ^ 200 - 1, 202, true⟩
+#guard (chain 200).info == ⟨2 ^ 200, 2 ^ 200, 3 * 2 ^ 200 - 1, 202, true, false⟩
 #guard (chain 200).size == 1
 #guard (chain 200).depth == 202
 #guard Meta.readCharge [(chain 199).info, (chain 199).info] == 26
@@ -258,14 +258,99 @@ def chain : Nat → Ty
 #guard (Value.list (.list .int) #[.list .int #[]]).depth == 3
 
 /-! `String` and `List[T]` are not hardware data. The depth of `List[T]` reads only `T`. -/
-#guard Ty.string.info == ⟨0, 0, 0, 1, false⟩
-#guard (Ty.list .bool).info == ⟨0, 0, 0, 2, false⟩
-#guard (Ty.list (packet 8)).info == ⟨0, 0, 0, 3, false⟩
+#guard Ty.string.info == ⟨0, 0, 0, 1, false, false⟩
+#guard (Ty.list .bool).info == ⟨0, 0, 0, 2, false, false⟩
+#guard (Ty.list (packet 8)).info == ⟨0, 0, 0, 3, false, false⟩
 #guard (Ty.list (chain 200)).info.depth == 203
 
 /-! The walk that measures a list charges 1 for its node. A string charges nothing. -/
 #guard (Value.list .int #[]).measureCharge == 1
 #guard (Value.list .int #[.int 1, .int 2]).measureCharge == 3
 #guard (Value.str "abc").measureCharge == 0
+
+/-!
+Function types. `inc : fn (mut UInt[8], Bool) -> Unit` is the form of section 7.1. A function
+type is a node with each parameter type and the result type. Each `mut` mark is one more node.
+-/
+def incTy : Ty := .fn #[.mk true (.uint 8), .mk false .bool] .unit
+def pred : Ty := .fn #[] .bool
+def higher : Ty := .fn #[.mk false pred] (.array (.uint 8) 4)
+
+#guard (Value.type incTy).serialize == "(type (fn ((mut (uint 8)) bool) unit))"
+#guard pred.serialize == "(fn () bool)"
+#guard higher.serialize == "(fn ((fn () bool)) (array (uint 8) 4))"
+#guard incTy.text == "fn (mut UInt[8], Bool) -> Unit"
+#guard pred.text == "fn () -> Bool"
+#guard higher.text == "fn (fn () -> Bool) -> [UInt[8]; 4]"
+#guard (Ty.list pred).text == "List[fn () -> Bool]"
+#guard incTy.size == 6
+#guard pred.size == 2
+#guard higher.size == 7
+#guard (Ty.fn #[.mk true .bool] .unit).size == (Ty.fn #[.mk false .bool] .unit).size + 1
+
+/-! The depth of a function type is 1 more than its deepest part. A `mut` mark adds none. -/
+#guard incTy.depth == 2
+#guard pred.depth == 2
+#guard higher.depth == 3
+#guard (Ty.fn #[.mk true (.array .bool 1)] .bool).depth == 3
+#guard (Ty.fn #[.mk false (.array .bool 1)] .bool).depth == 3
+#guard (Value.type higher).depth == 3
+
+/-!
+A function type is not hardware data: its three numbers are 0. Its metadata keeps its depth and
+sets the function flag.
+-/
+#guard incTy.info == ⟨0, 0, 0, 2, false, true⟩
+#guard pred.info == ⟨0, 0, 0, 2, false, true⟩
+#guard higher.info == ⟨0, 0, 0, 3, false, true⟩
+#guard (Ty.fn #[.mk true (.array .bool 1)] .bool).info.depth == 3
+
+/-! The function flag holds at any depth of a type, and a constructor takes it from its parts. -/
+#guard (Ty.array pred 0).info == ⟨0, 0, 1, 3, false, true⟩
+#guard (Ty.list pred).info == ⟨0, 0, 0, 3, false, true⟩
+#guard (Ty.tuple #[.bool, pred]).info.funcs
+#guard (Ty.array (.tuple #[.bool, .list pred]) 2).info.funcs
+#guard !(Ty.tuple #[.bool, .int]).info.funcs
+#guard !(Ty.array (.list .string) 2).info.funcs
+#guard !(packet 8).info.funcs
+#guard !(chain 200).info.funcs
+#guard (Ty.struct "Holder" #[] (Meta.struct [pred.info] [])).info.funcs
+#guard (Ty.list (.struct "Holder" #[] (Meta.struct [pred.info] []))).info.funcs
+
+/-! The function flag of a struct comes from its field types, not from its static arguments. -/
+#guard !(Ty.struct "Tag" #[.type pred] (Meta.struct [] [pred.depth])).info.funcs
+
+/-! Equality of function types compares the parameter types, the `mut` marks, and the result. -/
+#guard incTy == .fn #[.mk true (.uint 8), .mk false .bool] .unit
+#guard incTy != .fn #[.mk false (.uint 8), .mk false .bool] .unit
+#guard incTy != .fn #[.mk true (.uint 8), .mk false .bool] .bool
+#guard incTy != .fn #[.mk true (.uint 8)] .unit
+#guard pred != Ty.tuple #[.bool]
+
+/-!
+A function value is its item and its signature. It serializes its package and its name, has the
+size 1 and the depth 1, and its type is its signature.
+-/
+def inc : Value := .function "inc" #[.mk true (.uint 8), .mk false .bool] .unit
+
+#guard inc.serialize == "(function root inc)"
+#guard inc.size == 1
+#guard inc.depth == 1
+#guard inc.ty? == some incTy
+#guard inc.literal == "inc"
+#guard inc.text == "fn (mut UInt[8], Bool) -> Unit"
+#guard inc.measureCharge == 0
+#guard !(inc.ty?.map (·.info.data)).getD true
+#guard inc == .function "inc" #[.mk true (.uint 8), .mk false .bool] .unit
+#guard inc != .function "dec" #[.mk true (.uint 8), .mk false .bool] .unit
+#guard (Value.tuple #[inc]).ty? == some (.tuple #[incTy])
+#guard (Value.tuple #[inc]).serialize == "(tuple ((function root inc)))"
+#guard (Value.tuple #[inc]).size == 2
+#guard (Value.tuple #[inc]).depth == 2
+#guard (Value.list pred #[.function "yes" #[] .bool]).serialize ==
+  "(list (fn () bool) ((function root yes)))"
+#guard (Value.list pred #[]).depth == 3
+#guard ({ module := "Map", args := [inc] } : InstantiationId).serialize ==
+  "(instantiation root Map ((function root inc)))"
 
 end Silicon.Source.Test.Value
