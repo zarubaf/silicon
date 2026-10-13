@@ -22,6 +22,7 @@
 //! The lowering recurses over the hardware values, so it runs on a thread with a stack for
 //! the highest of them. The core design that it makes is at most 256 levels deep.
 
+use crate::agg::Agg;
 use crate::eval::{Bind, Design, Inst, Sink};
 use crate::hw::{HwId, Kind, Op};
 use crate::int::{Nat, constant, nat};
@@ -126,6 +127,14 @@ type R<T> = Result<T, Failure>;
 
 fn defect<T>(msg: &str) -> R<T> {
     Err(Failure::Defect(msg.to_owned()))
+}
+
+/// The hardware value of a scalar `:=` binding. An aggregate binding has no lowering here.
+fn scalar(a: &Agg) -> R<HwId> {
+    match a {
+        Agg::Hw(h) => Ok(*h),
+        _ => defect("a `:=` binding of an aggregate has no lowering by leaf"),
+    }
 }
 
 /// The charge of a field: its length in bytes, at least 1. A made field that holds an
@@ -730,6 +739,9 @@ impl Lower<'_> {
             let Some(domain) = inst.body.domain else {
                 return defect("a register in a combinational module");
             };
+            if !matches!(reg.ty, Ty::Bool | Ty::UInt(_) | Ty::SInt(_)) {
+                return defect("a register of an aggregate type has no lowering by leaf");
+            }
             let at = span(reg.pos);
             self.charge(reg.pos, 2)?;
             let name = self.name(reg.pos, &self.path(reg.path))?;
@@ -817,7 +829,7 @@ impl Lower<'_> {
         match bind.sink {
             Sink::Own { kind, ref ty, path } => {
                 let x = self.name(bind.pos, &self.path(path))?;
-                let expr = self.value(Target { path, port: None }, bind.value)?;
+                let expr = self.value(Target { path, port: None }, scalar(&bind.value)?)?;
                 stmts.push(match kind {
                     Kind::Reg => Stmt::Next {
                         reg: x,
@@ -841,13 +853,14 @@ impl Lower<'_> {
                 index,
                 inst,
                 ref port,
+                ..
             } => {
                 let x = self.name(bind.pos, port)?;
                 let target = Target {
                     path: inst,
                     port: Some(port),
                 };
-                let expr = self.value(target, bind.value)?;
+                let expr = self.value(target, scalar(&bind.value)?)?;
                 let Some(conns) = conns.get_mut(index) else {
                     return defect("a connection names no child");
                 };

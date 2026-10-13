@@ -154,7 +154,7 @@ fn typed_use(
     };
     let v = make(&mut ev, t);
     ev.fuel = Fuel::new(fuel);
-    match error_text(ev.conform_val(AT, t, super::Out::Made(v))) {
+    match error_text(ev.copy_use(AT, t, false, super::Out::Made(v))) {
         Ok(x) => format!("{} {}", val_text(&ev, &x), fuel - ev.fuel.left()),
         Err(e) => e,
     }

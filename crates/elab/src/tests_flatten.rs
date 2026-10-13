@@ -505,7 +505,10 @@ fn a_shared_condition_binds_in_its_first_statement_and_later_ones_refer_to_it() 
         panic!("elaboration failed");
     };
     let top = d.top;
-    let value = |d: &Design, k: usize| d.insts[top].body.binds[k].value;
+    let value = |d: &Design, k: usize| match d.insts[top].body.binds[k].value {
+        crate::agg::Agg::Hw(h) => h,
+        _ => panic!("a scalar binding holds a hardware value"),
+    };
     let (small, wide_in, left, right) = (value(&d, 0), value(&d, 1), value(&d, 2), value(&d, 3));
     let (pos, g) = (d.insts[top].body.binds[0].pos, &mut d.graph);
     let neg = g.mk(pos, Ty::SInt(4), Op::Un(UnOp::Neg), vec![small]);
@@ -514,8 +517,8 @@ fn a_shared_condition_binds_in_its_first_statement_and_later_ones_refer_to_it() 
     let shared = g.mk(pos, Ty::Bool, Op::Share(0), vec![cond]);
     let first = g.mk(pos, Ty::UInt(8), Op::Mux, vec![shared, left, right]);
     let second = g.mk(pos, Ty::UInt(8), Op::Mux, vec![shared, right, left]);
-    d.insts[top].body.binds[2].value = first;
-    d.insts[top].body.binds[3].value = second;
+    d.insts[top].body.binds[2].value = crate::agg::Agg::Hw(first);
+    d.insts[top].body.binds[3].value = crate::agg::Agg::Hw(second);
     let lowered = d.lower().unwrap().unwrap();
     let out = print(&lowered.design);
     for line in [

@@ -929,15 +929,6 @@ impl Evaluator<'_> {
         }
     }
 
-    /// A typed use of `out` at the type `t`. A literal that waits takes its type. It reads a
-    /// handle. A hardware value needs the type `t`, and a hardware aggregate converts part by
-    /// part (`typed_agg`).
-    fn conform_val(&mut self, pos: Pos, t: TyId, out: Out) -> Res<Val> {
-        let out = self.settle(pos, t, out)?;
-        let d = self.data(pos, out)?;
-        self.conform_data(pos, t, d)
-    }
-
     /// The typed use of the data `d` at the type `t`.
     fn conform_data(&mut self, pos: Pos, t: TyId, d: Opnd) -> Res<Val> {
         match d {
@@ -1494,6 +1485,21 @@ impl Evaluator<'_> {
 
     /// A name. A constant evaluates at its first use, in the table of constants. A domain
     /// is a handle in the whole body of its module, so it needs no slot.
+    /// The path and the type of the local `id` if it is an input port without a hardware leaf.
+    fn empty_input(&self, id: DeclId) -> Option<(PathId, TyId)> {
+        match self.store.frame().and_then(|f| f.get(&id)) {
+            Some(Slot {
+                value: Val::Agg(a), ..
+            }) => match &**a {
+                Agg::Ref(Base::Name(path), ty) if self.tys.meta(*ty).leaves.is_zero() => {
+                    Some((*path, *ty))
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     fn name(&mut self, pos: Pos, node: NodeId, x: &str) -> Res<Out> {
         match self.target(node) {
             Some(Target::Prelude(k)) if k.is_type() => Ok(Out::Named(Val::Static(Value::Type(
@@ -1522,7 +1528,14 @@ impl Evaluator<'_> {
                 Kind::Domain => Ok(Out::Named(Val::Handle(Handle::Domain))),
                 _ => {
                     let k = self.store.frames.len().saturating_sub(1);
-                    if self.store.frame().is_some_and(|f| f.contains_key(&id)) {
+                    // An empty input port refers to its name. The read pays its zero, a new
+                    // static value.
+                    let empty = self.empty_input(id);
+                    if let Some((path, ty)) = empty {
+                        Ok(Out::Made(
+                            self.normalize(pos, Agg::Ref(Base::Name(path), ty))?,
+                        ))
+                    } else if self.store.frame().is_some_and(|f| f.contains_key(&id)) {
                         Ok(Out::Ref(Ref {
                             root: Root::Local(k, id),
                             path: Vec::new(),

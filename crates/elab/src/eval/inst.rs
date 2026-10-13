@@ -24,7 +24,8 @@
 //! instantiation.
 
 use super::{Evaluator, Let, Out, ROOT, Res, Slot, fail, need};
-use crate::hw::{Graph, Handle, HwId, Kind, Op, Port, Seen, Val, port_name};
+use crate::agg::{Agg, Base};
+use crate::hw::{Graph, Handle, Kind, Port, Seen, Val, port_name};
 use crate::int::Int;
 use crate::names::{Name, PathId, Paths, Sym, encode, module_name};
 use crate::scan::Scan;
@@ -53,7 +54,7 @@ pub(crate) struct RegDecl {
 
 #[expect(
     dead_code,
-    reason = "the lowering of #72 reads the types and positions"
+    reason = "the lowering by leaf reads the types and positions"
 )]
 pub(crate) struct WireDecl {
     path: PathId,
@@ -79,12 +80,15 @@ pub(crate) enum Sink {
         index: usize,
         inst: PathId,
         port: Name,
+        #[expect(dead_code, reason = "the lowering by leaf reads the type of the port")]
+        ty: Ty,
     },
 }
 
+/// A `:=` binding. Its value has the type of the sink, and the lowering takes it leaf by leaf.
 pub(crate) struct Bind {
     pub sink: Sink,
-    pub value: HwId,
+    pub value: Agg,
     pub pos: Pos,
 }
 
@@ -495,24 +499,15 @@ impl Evaluator<'_> {
                 let t = self.connect_target(*pos, target)?;
                 let o = self.eval(value)?;
                 let o = need(value, o)?;
-                self.copy(*pos, &o)?;
                 let ty = match &t {
                     Target::Own { ty, .. } => ty.clone(),
                     Target::Child { port, .. } => port.ty.clone(),
                 };
                 let ty = self.tys.mk(ty);
-                let h = match self.conform_val(*pos, ty, o)? {
-                    Val::Static(v) => self.lit(*pos, v)?,
-                    Val::Hw(h) => h,
-                    v @ (Val::Handle(_) | Val::Pending(..) | Val::Agg(_)) => {
-                        return fail(
-                            Code::S010,
-                            *pos,
-                            format!("{} is not data", self.text(v.seen())),
-                        );
-                    }
-                };
-                self.bind_target(*pos, t, h);
+                let copies = o.is_ref();
+                let v = self.copy_use(*pos, ty, copies, o)?;
+                let v = self.sink_value(*pos, ty, v)?;
+                self.bind_target(*pos, t, v);
             }
             Stmt::Inst {
                 pos,
@@ -523,6 +518,25 @@ impl Evaluator<'_> {
             _ => {}
         }
         Ok(())
+    }
+
+    /// The value of a `:=` binding of the type `t` at `pos`, after its typed use. A static
+    /// scalar becomes a hardware constant. A static value of another type is empty or has only
+    /// static leaves, so it stays static. A hardware value and a hardware aggregate stay.
+    fn sink_value(&mut self, pos: Pos, t: TyId, v: Val) -> Res<Agg> {
+        match v {
+            Val::Static(x) if matches!(self.tys.get(t), Ty::Bool | Ty::UInt(_) | Ty::SInt(_)) => {
+                Ok(Agg::Hw(self.lit(pos, x)?))
+            }
+            Val::Static(x) => Ok(Agg::Static(x)),
+            Val::Hw(h) => Ok(Agg::Hw(h)),
+            Val::Agg(a) => Ok(*a),
+            v @ (Val::Handle(_) | Val::Pending(..)) => fail(
+                Code::S010,
+                pos,
+                format!("{} is not data", self.text(v.seen())),
+            ),
+        }
     }
 
     /// The arguments of an instantiation of the item `i` at `pos`, from left to right. Each
@@ -638,6 +652,7 @@ impl Evaluator<'_> {
         let out = self.eval(init)?;
         let out = need(init, out)?;
         self.copy(pos, &out)?;
+        let out = self.settle(pos, tid, out)?;
         let init = self.conform(pos, tid, out)?;
         let id = self.decl(name)?;
         let path = self.fresh(id);
@@ -748,7 +763,15 @@ impl Evaluator<'_> {
         });
         let path = self.paths.child(None, sym);
         if input {
-            Ok(Val::Hw(self.graph.mk(pos, ty, Op::Ref(path), Vec::new())))
+            // An input refers to its name. An empty one stays a reference, so only a read of it
+            // pays its zero (`name`).
+            let t = self.tys.mk(ty);
+            let r = Agg::Ref(Base::Name(path), t);
+            if self.tys.meta(t).leaves.is_zero() {
+                Ok(Val::Agg(Box::new(r)))
+            } else {
+                self.normalize(pos, r)
+            }
         } else {
             Ok(self.resource(Kind::Output, path, ty, pos, sym))
         }
@@ -816,7 +839,7 @@ impl Evaluator<'_> {
     }
 
     /// Records the binding of `t` to `h`. The second binding of one target is an `S018`.
-    fn bind_target(&mut self, pos: Pos, t: Target, h: HwId) {
+    fn bind_target(&mut self, pos: Pos, t: Target, h: Agg) {
         let w = &mut self.elab.work;
         match t {
             Target::Own { kind, id, ty, path } => {
@@ -848,6 +871,7 @@ impl Evaluator<'_> {
                         index: inst,
                         inst: path,
                         port: port_name(self.syms.texts.get(port.sym).map_or("", String::as_str)),
+                        ty: port.ty,
                     },
                     value: h,
                     pos,
@@ -909,18 +933,21 @@ impl Evaluator<'_> {
         fail(Code::S018, pos, message)
     }
 
-    /// A port, a register, and a wire have a hardware type, a node with no part.
+    /// A port, a register, and a wire have a hardware data type (section 5.1), also an
+    /// aggregate and an empty one. The metadata tells, so a function type at any depth is
+    /// `S010` with no walk.
     fn data_type(&self, pos: Pos, t: TyId) -> Res<Ty> {
-        match self.tys.get(t) {
-            node @ (Ty::Bool | Ty::UInt(_) | Ty::SInt(_)) => Ok(node.clone()),
-            _ => fail(
+        if self.tys.meta(t).data {
+            Ok(self.tys.get(t).clone())
+        } else {
+            fail(
                 Code::S010,
                 pos,
                 format!(
-                    "a port, a register, and a wire have the type Bool, UInt[W], or SInt[W], not {}",
+                    "a port, a register, and a wire need a hardware data type, not {}",
                     self.tys.text(t)
                 ),
-            ),
+            )
         }
     }
 
