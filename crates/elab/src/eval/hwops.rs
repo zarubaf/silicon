@@ -218,6 +218,28 @@ fn static_pair(
     Ok(())
 }
 
+/// The two sides of a leaf pair as hardware nodes, or `None` when neither side is hardware or a
+/// side is neither. A static side converts to the type of the hardware side, with the charge of
+/// its conversion.
+fn hw_operands(
+    pos: Pos,
+    (lhs, rhs): (&Side<'_>, &Side<'_>),
+    (fuel, graph, tys): (&mut Fuel, &mut Graph, &mut Types),
+) -> Res<Option<(HwId, HwId)>> {
+    Ok(Some(match (lhs, rhs) {
+        (Side::Hw(x), Side::Hw(y)) => (*x, *y),
+        (Side::Hw(hw), Side::Val(value)) => {
+            let at_ty = graph.ty(*hw);
+            (*hw, lit_value_at(pos, &at_ty, value, fuel, graph, tys)?)
+        }
+        (Side::Val(value), Side::Hw(hw)) => {
+            let at_ty = graph.ty(*hw);
+            (lit_value_at(pos, &at_ty, value, fuel, graph, tys)?, *hw)
+        }
+        _ => return Ok(None),
+    }))
+}
+
 /// A leaf pair of the walk: a pair of a data scalar type. Two static leaves are a static pair.
 /// Another pair keeps the scalar rule of slice 1: a static leaf converts to the type of the
 /// hardware leaf with its conversion charge, then the `icmp eq` node charges at the pair.
@@ -231,20 +253,9 @@ fn leaf_pair(
     if let (Side::Val(_), Side::Val(_)) = (lhs, rhs) {
         return static_pair(pos, op, (lhs, rhs), pairs, (fuel, graph, tys));
     }
-    let (left, right) = match (lhs, rhs) {
-        (Side::Hw(x), Side::Hw(y)) => (*x, *y),
-        (Side::Hw(hw), Side::Val(value)) => {
-            let at_ty = graph.ty(*hw);
-            (*hw, lit_value_at(pos, &at_ty, value, fuel, graph, tys)?)
-        }
-        (Side::Val(value), Side::Hw(hw)) => {
-            let at_ty = graph.ty(*hw);
-            (lit_value_at(pos, &at_ty, value, fuel, graph, tys)?, *hw)
-        }
-        _ => {
-            let texts = (lhs.text(graph, tys), rhs.text(graph, tys));
-            return fail(Code::S010, pos, no_common(op, &texts.0, &texts.1));
-        }
+    let Some((left, right)) = hw_operands(pos, (lhs, rhs), (fuel, graph, tys))? else {
+        let texts = (lhs.text(graph, tys), rhs.text(graph, tys));
+        return fail(Code::S010, pos, no_common(op, &texts.0, &texts.1));
     };
     let (ty, other) = (graph.ty(left), graph.ty(right));
     if ty != other {
