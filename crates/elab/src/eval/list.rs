@@ -4,6 +4,7 @@
 //! (`place_at`), and the change is one walk down its path. A value that `push` adds copies
 //! only after its charge, and `pop` charges the element before it takes the element out.
 
+use super::agg::Delta;
 use super::place::Held;
 use super::{Evaluator, Opnd, Out, Res, at, expr_pos, fail, need};
 use crate::Code;
@@ -88,7 +89,11 @@ impl Evaluator<'_> {
         };
         self.charge_refresh(pos, &place)?;
         self.charge_held(pos, place.root)?;
-        self.edit_list(pos, &place, |ys| ys.push(w))?;
+        let delta = Delta::Grow {
+            size,
+            depth: 1 + depth,
+        };
+        self.edit_list(pos, &place, Some(delta), |ys| ys.push(w))?;
         Ok(Some(Out::Made(Val::Static(Value::Unit))))
     }
 
@@ -126,7 +131,7 @@ impl Evaluator<'_> {
         };
         let place = self.place_at(expr_pos(list), Code::S008, list)?;
         self.store.shut_window(place.root);
-        let Held::List { len, .. } = place.held else {
+        let Held::List { elem, len } = place.held else {
             return self.not_a_list(pos, g, &place);
         };
         if len == 0 {
@@ -142,9 +147,23 @@ impl Evaluator<'_> {
                 _ => 0,
             };
             self.charge(pos, u128::from(size))?;
+            // An element deeper than the element type can lower the depth of the list. Then the
+            // change charges the root and builds each node on the path again.
+            let deep = match self.store.current(place.root, &place.keys) {
+                Seen::Static(Value::List(_, ys)) => {
+                    ys.last().is_some_and(|w| w.depth() > elem.depth())
+                }
+                _ => false,
+            };
             self.charge_refresh(pos, &place)?;
+            if deep {
+                self.charge_root(pos, &place)?;
+            }
             self.charge_held(pos, place.root)?;
-            let Some(w) = self.edit_list(pos, &place, |ys| ys.pop().unwrap_or(Value::Unit))? else {
+            let delta = (!deep).then_some(Delta::Shrink { size });
+            let Some(w) =
+                self.edit_list(pos, &place, delta, |ys| ys.pop().unwrap_or(Value::Unit))?
+            else {
                 return self.not_a_list(pos, g, &place);
             };
             return Ok(Some(Out::Made(Val::Static(w))));

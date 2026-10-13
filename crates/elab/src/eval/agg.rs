@@ -890,6 +890,56 @@ impl Evaluator<'_> {
         Ok((self.rebuild(pos, above, cur)?, r))
     }
 
+    /// Applies `f` to the static part of `root` at the numbers `keys`, with one refresh of each
+    /// node on the path from the stored numbers (Lean `Agg.change`): the size changes by
+    /// `delta`, and a growing depth becomes at least `depth` plus the steps from the node to the
+    /// end of the path. No sibling is read, and the walk keeps no stack.
+    fn change_at<R>(
+        pos: Pos,
+        root: &mut Agg,
+        keys: &[usize],
+        delta: Delta,
+        f: impl FnOnce(&mut Value) -> Option<R>,
+    ) -> Res<Option<R>> {
+        let wrong = || {
+            fail(
+                Code::S010,
+                pos,
+                "the place has no static part to change".to_owned(),
+            )
+        };
+        let mut cur = root;
+        for (i, &k) in keys.iter().enumerate() {
+            match cur {
+                Agg::Array(n, p) | Agg::Tuple(n, p) | Agg::Record(n, p) => {
+                    n.size = match delta {
+                        Delta::Grow { size, .. } => n.size.saturating_add(size),
+                        Delta::Shrink { size } => n.size.saturating_sub(size),
+                    };
+                    if let Delta::Grow { depth, .. } = delta {
+                        let rest = (keys.len() - i) as u64;
+                        n.depth = n.depth.max(rest.saturating_add(depth));
+                    }
+                    cur = match p.0.get_mut(k) {
+                        Some(x) => x,
+                        None => return wrong(),
+                    };
+                }
+                Agg::Static(v) => {
+                    let Some(part) = keys.get(i..).and_then(|rest| part_in(v, rest)) else {
+                        return wrong();
+                    };
+                    return Ok(f(part));
+                }
+                _ => return wrong(),
+            }
+        }
+        match cur {
+            Agg::Static(v) => Ok(f(v)),
+            _ => wrong(),
+        }
+    }
+
     /// The charge of the refresh that `push` and `pop` cause in an aggregate root: the part
     /// count of each container node on the path (Lean `Agg.pathWidth`). It comes after the
     /// charge of the element and before the charge of a held root. A static root has none.
@@ -901,13 +951,25 @@ impl Evaluator<'_> {
         self.charge(pos, u128::from(width))
     }
 
+    /// The size of an aggregate root, charged before the change that rebuilds each node on the
+    /// path (Lean `changeAt` with no depth). A static root has none.
+    pub(super) fn charge_root(&mut self, pos: Pos, place: &super::place::Place) -> Res<()> {
+        let Val::Agg(a) = self.store.root(&place.root) else {
+            return Ok(());
+        };
+        let size = a.size(&self.graph, &self.tys);
+        self.charge(pos, u128::from(size))
+    }
+
     /// Applies `f` to the list at the place, in place, for `push` and `pop`. The stored numbers
-    /// of the nodes above the list refresh on the way back; the caller charged that refresh
-    /// (`charge_refresh`). `None` if the part is no list.
+    /// of the nodes above the list refresh by `delta` in the walk down the path. Without a
+    /// `delta` the change can lower a depth, and each node rebuilds from its parts. The caller
+    /// charged that refresh (`charge_refresh`). `None` if the part is no list.
     pub(super) fn edit_list<R>(
         &mut self,
         pos: Pos,
         place: &super::place::Place,
+        delta: Option<Delta>,
         f: impl FnOnce(&mut Vec<Value>) -> R,
     ) -> Res<Option<R>> {
         if !matches!(self.store.root(&place.root), Val::Agg(_)) {
@@ -923,10 +985,18 @@ impl Evaluator<'_> {
         let Val::Agg(root) = self.store.take_root(&place.root) else {
             return fail(Code::S010, pos, "the root is not an aggregate".to_owned());
         };
-        let (root, r) = self.edit_at(pos, *root, &place.keys, |part| match part {
+        let edit = |part: &mut Value| match part {
             Value::List(_, ys) => Some(f(ys)),
             _ => None,
-        })?;
+        };
+        let (root, r) = match delta {
+            Some(delta) => {
+                let mut root = *root;
+                let r = Self::change_at(pos, &mut root, &place.keys, delta, edit)?;
+                (root, r)
+            }
+            None => self.edit_at(pos, *root, &place.keys, edit)?,
+        };
         self.store.put_root(&place.root, Val::Agg(Box::new(root)));
         Ok(r)
     }
@@ -982,6 +1052,15 @@ impl Evaluator<'_> {
         self.store.put_root(&place.root, v);
         Ok(())
     }
+}
+
+/// The change of the stored numbers of a node above a list that `push` or `pop` changes (Lean
+/// `Agg.change`): `size` is the size of the element, and `depth` is the depth that the list can
+/// reach. A pop of an element not deeper than the element type keeps each depth.
+#[derive(Clone, Copy)]
+pub(super) enum Delta {
+    Grow { size: u64, depth: u64 },
+    Shrink { size: u64 },
 }
 
 /// The static part of `v` at the numbers `keys`, for a change in place.

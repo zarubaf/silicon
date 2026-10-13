@@ -805,21 +805,26 @@ impl Evaluator<'_> {
             },
             _ => Held::Other,
         };
-        let part = aggregate.then(|| match seen {
-            Seen::Agg(a) => PartInfo {
-                size: a.size(&self.graph, &self.tys),
-                leaves: a.leaves(&self.tys),
-            },
-            Seen::Static(v) => PartInfo {
-                size: v.size(),
-                leaves: 0,
-            },
-            Seen::Hw(h) => PartInfo {
-                size: self.graph.size(h),
-                leaves: 1,
-            },
-            _ => PartInfo { size: 1, leaves: 0 },
-        });
+        // A static part of the live root has no stored size: `push` and `pop` need none, and a
+        // rebind reads it once when it charges (`part: None`).
+        let part = aggregate
+            .then(|| match (&cur, seen) {
+                (_, Seen::Agg(a)) => Some(PartInfo {
+                    size: a.size(&self.graph, &self.tys),
+                    leaves: a.leaves(&self.tys),
+                }),
+                (Cur::In(_), Seen::Static(_)) => None,
+                (Cur::Own(_), Seen::Static(v)) => Some(PartInfo {
+                    size: v.size(),
+                    leaves: 0,
+                }),
+                (_, Seen::Hw(h)) => Some(PartInfo {
+                    size: self.graph.size(h),
+                    leaves: 1,
+                }),
+                _ => Some(PartInfo { size: 1, leaves: 0 }),
+            })
+            .flatten();
         let ty = match known {
             Known::Ty(t) => Some(t),
             Known::Absent => None,
