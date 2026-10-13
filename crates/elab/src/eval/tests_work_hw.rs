@@ -318,3 +318,38 @@ fn the_walks_add_no_path_for_a_part_without_a_hardware_leaf() {
         assert_eq!(small, large, "{s}");
     }
 }
+
+/// The text `s` `n` times.
+fn rep(s: &str, n: u64) -> String {
+    (0..n).map(|_| s).collect()
+}
+
+/// The declarations `S0` to `Sn` of a chain of `n + 1` levels. Each level `link`s to the next
+/// one, and the last level takes the place of `leaf`. The text of `link` has the number of the
+/// next level in place of `{}`.
+fn chain_decls(n: u64, link: &str, leaf: &str) -> String {
+    (0..n)
+        .map(|i| {
+            link.replace("{}", &(i + 1).to_string())
+                .replace("{i}", &i.to_string())
+        })
+        .chain([leaf.replace("{i}", &n.to_string())])
+        .collect()
+}
+
+/// A place through `n` empty parts of a stored root walks its path in `n` steps. The empty parts
+/// are in a static part of the root, which holds no reference to normalize, so the walk does not
+/// catch up at each one.
+#[test]
+fn a_place_through_empty_parts_of_a_stored_root_takes_linear_steps() {
+    let at = |n: u64, k: u64| {
+        let sel = rep(".a", n + 1);
+        run_ok(
+            &chain_decls(n, "struct E{i} { a: E{}, }\n", "struct E{i} { a: (), }\n"),
+            "(UInt[8], E0)",
+            &format!("let mut m = x;\n  m.0 = x.0;\n  m.1{sel} = ();"),
+            key(23, k),
+        )
+    };
+    assert_linear(at, |r| r.counts.stepped, 8, 16);
+}
