@@ -557,11 +557,11 @@ inductive Callee where
 
 /-!
 The function item `g` and its index. A function value holds the name of its item, and the item
-names are distinct (`S002`).
+names are distinct (`S002`). The lookup takes logarithmic time.
 -/
-def fnItem (items : Array Resolve.Item) (g : String) : Option (Nat × Resolve.Item) := do
-  let i ← items.findIdx? fun | .fn _ _ u .. => u.name == g | _ => false
-  return (i, ← items[i]?)
+def fnItem (c : Ctx) (g : String) : Option (Nat × Resolve.Item) := do
+  let i ← c.syms.fns[g]?
+  return (i, ← c.items[i]?)
 
 /-! An actual of a function item: a value, or the place of a `mut` actual. -/
 inductive Actual where
@@ -1026,14 +1026,14 @@ mutual
     | t@(.struct ..), xs =>
       let some (_, fs) := fieldsIn (← get).specs t
         | fail .S010 p s!"{t.text} has no specialization"
-      if fs.length != xs.length then
+      if fs.size != xs.length then
         fail .S007 p
-          s!"a struct constructor takes 0 or {fs.length} argument(s), but it has {xs.length}"
+          s!"a struct constructor takes 0 or {fs.size} argument(s), but it has {xs.length}"
       hold o
       let vs ← args n b xs
       release o
       charge p (vs.map Val.size).sum
-      return some ⟨.static (← recordOf p t fs (xs.map (·.pos)) vs), false, none⟩
+      return some ⟨.static (← recordOf p t fs.toList (xs.map (·.pos)) vs), false, none⟩
     | t, [x] =>
       hold o
       let a ← need x (← eval n x)
@@ -1129,7 +1129,7 @@ mutual
       let .static (.function g qs _) := o.value | ctor n p o b xs
       if qs.size != xs.length then
         fail .S007 p s!"`{g}` takes {qs.size} argument(s), but it has {xs.length}"
-      let some (i, .fn ip c u ps ret body) := fnItem (← read).items g
+      let some (i, .fn ip c u ps ret body) := fnItem (← read) g
         | fail .S010 p s!"`{g}` is not a function"
       hold o
       let acts ← actuals n xs (qs.toList.map fun (.mk m _) => m)
@@ -1331,10 +1331,19 @@ def symbols (items : Array Resolve.Item) (scans : Array Scan) : Syms := Id.run d
     | some k => (t, k)
     | none => (t.insert x t.size, t.size)
   let mut names := #[]
-  for it in items do
+  let mut fns : Std.TreeMap String Nat compare := {}
+  let mut members := #[]
+  for (it, i) in items.zipIdx do
     let (t, k) := intern table (itemName it)
     table := t
     names := names.push k
+    if let .fn _ _ u .. := it then
+      unless fns.contains u.name do fns := fns.insert u.name i
+    let mut ms : Std.TreeMap String Nat compare := {}
+    if let .struct _ _ _ fs := it then
+      for (f, j) in fs.zipIdx do
+        unless ms.contains f.name.name do ms := ms.insert f.name.name j
+    members := members.push ms
   let mut binders := #[]
   let mut fields := #[]
   for sc in scans do
@@ -1351,13 +1360,13 @@ def symbols (items : Array Resolve.Item) (scans : Array Scan) : Syms := Id.run d
       fm := fm.insert p k
     binders := binders.push arr
     fields := fields.push fm
-  return ⟨binders, fields, names⟩
+  return ⟨binders, fields, names, fns, members⟩
 
 /-! The context and the state of an elaboration with the budget `budget`. -/
 def start (budget : Budget) (items : Array Resolve.Item) : Ctx × St :=
   let scans := items.map scanItem
   (⟨items, budget.depth, 0, none, 0, symbols items scans, ⟨none, 0⟩, [], none, none⟩,
-   ⟨budget.fuel, Array.replicate items.size .notStarted, #[], {}, {}, {}, {}⟩)
+   ⟨budget.fuel, Array.replicate items.size .notStarted, {}, {}, {}, {}, {}⟩)
 
 /-! Runs `act` with the budget. The result has the used fuel. -/
 def run (budget : Budget) (items : Array Resolve.Item) (act : Nat → M α) :

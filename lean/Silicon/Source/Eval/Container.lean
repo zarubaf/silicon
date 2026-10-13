@@ -376,13 +376,14 @@ def fieldAt (pos : Pos) (f : Ident) : Val → M (Nat × Value × Ty)
   | .static v@(.record t xs) => do
     let some (i, fs) := fieldsIn (← get).specs t
       | fail .S010 pos s!"{v.text} has no specialization"
-    let some (.struct _ _ _ decl) := (← read).items[i]?
+    let some (.struct ..) := (← read).items[i]?
       | fail .S010 pos s!"{v.text} has no struct item"
-    match ((decl.zip fs).zipIdx.find? fun ((d, _), _) => d.name.name == f.name) with
-    | some ((_, ft), k) =>
-      match xs[k]? with
-      | some x => return (k, x, ft)
-      | none => fail .S010 pos s!"{v.text} has no field `{f.name}`"
+    let members := (← read).syms.members
+    let found := do
+      let k ← members[i]? >>= (·[f.name]?)
+      return (k, ← xs[k]?, ← fs[k]?)
+    match found with
+    | some r => return r
     | none => fail .S010 pos s!"{v.text} has no field `{f.name}`"
   | v => fail .S010 pos s!"{v.text} has no field `{f.name}`"
 
