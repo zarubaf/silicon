@@ -10,8 +10,11 @@ The static containers of slice 2 come next. Their tests check the literals, the 
 the index, the selector, and `len`. They also check the equality, the join, the depth bound,
 and the nested doubling of section 11.3.
 
-The types as values of slice 2 come last. Their tests check the type constructors with their
+The types as values of slice 2 come next. Their tests check the type constructors with their
 charges, the aliases, the table of struct specializations, and the struct cases of section 11.3.
+
+The function types of slice 2 come last. Their tests check the type constructor with its
+charge, the typed use, `==`, the join, the constructor, the index, and the hardware `if`.
 -/
 
 namespace Silicon.Source.Test.Eval
@@ -1168,5 +1171,117 @@ def assigns : String :=
 #guard out assigns "b()" (depth := 3) == "S015 3:48"
 #guard out assigns "c()" (depth := 3) == "S015 4:46"
 #guard out assigns "m()" (depth := 3) == "S015 5:70"
+
+/-!
+A function type is a type. Its parameter types evaluate, then its result type. It charges its
+node, its parts, and its size, and a `mut` mark is one more node of the size. `fn () -> Bool`
+charges 1, 1 for `Bool`, and the size 2. `fn (fn () -> Bool) -> UInt[8]` charges 1, 4, 6 for
+`UInt[8]`, and the size 5. A function type checks its depth: `fn () -> Bool` is 2 deep.
+-/
+#guard out "" "fn () -> Bool" == "(type (fn () bool))"
+#guard out "" "fn (Bool, mut UInt[8]) -> (Bool, Nat)" ==
+  "(type (fn (bool (mut (uint 8))) (tuple (bool nat))))"
+#guard out "const C: Type = fn (mut [Bool; 2]) -> Bool;" "C" ==
+  "(type (fn ((mut (array bool 2))) bool))"
+#guard out "fn f(T: Type) -> Type { return fn (T) -> T; }" "f(Bool)" == "(type (fn (bool) bool))"
+#guard exact "" "fn () -> Bool" 4
+#guard exact "" "fn (Bool) -> Bool" 6
+#guard exact "" "fn (mut Bool) -> Bool" 7
+#guard exact "" "fn (fn () -> Bool) -> UInt[8]" 16
+#guard out "" "fn () -> Bool" (depth := 2) == "(type (fn () bool))"
+#guard out "" "fn () -> Bool" (depth := 1) == "S015 1:1"
+
+/-! A function type in a type charges as in an expression: 1, 1, 1, and the size 4. -/
+def fnBody (s : String) : String := s!"fn f() -> Bool \{ {s} }"
+#guard cost (fnBody "type X = fn (mut Bool) -> Bool; return true;") "f()" ==
+  cost (fnBody "type X = Bool; return true;") "f()" + 6
+
+/-!
+A typed use at a function type needs a function of that exact type, also in the `mut` marks.
+It charges nothing. Another value is `S010` at the typed use.
+-/
+def fnG : Value := .function "g" #[] .bool
+def typedFn (t : Ty) (v : Value) : String :=
+  match Eval.convertLeaf t v with
+  | .ok s => match s.run () with
+    | .ok w => s!"{w.serialize} {s.charge}"
+    | .error (c, _) => s!"{c}"
+  | .error (c, _) => s!"{c}"
+#guard typedFn (.fn #[] .bool) fnG == "(function root g) 0"
+#guard typedFn (.fn #[.mk true .bool] .bool) (.function "g" #[.mk true .bool] .bool) ==
+  "(function root g) 0"
+#guard typedFn (.fn #[.mk true .bool] .bool) (.function "g" #[.mk false .bool] .bool) == "S010"
+#guard typedFn (.fn #[] .bool) (.bool true) == "S010"
+#guard typedFn .bool fnG == "S010"
+#guard out (fnBody "let x: fn () -> Bool = true; return x;") "f()" == "S010 1:18"
+
+/-!
+A unary operator on a function type is `S010` at the operator, before its charge. A constructor
+of a function type is `S010` at the call, after its callee and before its arguments, also with
+a wrong number of arguments.
+-/
+#guard out "" "-fn () -> Bool" 5 == "S010 1:1"
+#guard out "" "-fn () -> Bool" 4 == "S015 1:2"
+#guard out "" "(fn () -> Bool)()" == "S010 1:1"
+#guard out "" "(fn () -> Bool)(1)" == "S010 1:1"
+#guard out "" "(fn () -> Bool)(1, 2, 3)" 5 == "S010 1:1"
+#guard out "" "(fn () -> Bool)(1, 2, 3)" 4 == "S015 1:2"
+
+/-!
+`==` and `!=` are `S010` at the operator when the type of an operand holds a function type. The
+check comes after both operands and before the join and the charge of the operator: the two
+operands use 19 units here. Two function types are types, so they compare and charge the sum of
+their sizes.
+-/
+def fnEq : String := "list(fn () -> Bool) == list(fn () -> Bool)"
+#guard out "" fnEq 19 == "S010 1:1"
+#guard out "" fnEq 18 == "S015 1:24"
+#guard out "" "list(fn () -> Bool) != 1" == "S010 1:1"
+#guard out (fnBody "let a: [fn () -> Bool; 0] = []; return a == a;") "f()" == "S010 1:57"
+#guard out (fnBody "let a: [fn () -> Bool; 0] = []; return (1, [a]) != (1, [a]);") "f()" ==
+  "S010 1:57"
+#guard out "" "(fn () -> Bool) == (fn () -> Bool)" == "(bool true)"
+#guard out "" "(fn () -> Bool) == (fn (mut Bool) -> Bool)" == "(bool false)"
+#guard exact "" "(fn () -> Bool) == (fn () -> Bool)" 13
+
+/-!
+A join of two function types charges as a type equality, the sum of the two sizes. The two
+types are equal, also in their `mut` marks, else the join fails: `S010` at the literal. The
+array below charges 1 for the pair of lists and 4 for the pair of function types more than the
+tuple.
+-/
+def fnLists (t u : String) : String := s!"[list({t}), list({u})]"
+#guard out "" (fnLists "fn () -> Bool" "fn () -> Bool") ==
+  "(array (list (fn () bool)) ((list (fn () bool) ()) (list (fn () bool) ())))"
+#guard cost "" (fnLists "fn () -> Bool" "fn () -> Bool") ==
+  cost "" "(list(fn () -> Bool), list(fn () -> Bool))" + 5
+#guard out "" (fnLists "fn () -> Bool" "fn (mut Bool) -> Bool") == "S010 1:1"
+#guard out "" (fnLists "fn (Bool) -> Bool" "fn (mut Bool) -> Bool") == "S010 1:1"
+
+/-!
+An index of a function type in a local is `S007` in pass 5, at the index, in an expression and
+in a type.
+-/
+#guard out (fnBody "type T = fn () -> Bool; let x = T[8]; return true;") "f()" == "S007 1:50"
+#guard out (fnBody "let T = fn () -> Bool; let x: T[8] = 1; return true;") "f()" ==
+  "S007 1:48"
+
+/-!
+A hardware `if` with two function arms: one function item gives the static value, and two
+different items are `S011` at the `if`. The pair charges as a static equality, 1 + 1, before the
+comparison. A function and another value are `S010`.
+-/
+def fnArms (v w : Value) (fuel : Nat := 100) : String :=
+  let p : Pos := ⟨1, 1⟩
+  let c := Eval.Hw.mk p .bool (.lit (.bool true)) []
+  match Eval.run { fuel } #[] (fun _ => Eval.mux p c (.static v) (.static w)) with
+  | .ok (.static v, used) => s!"{v.serialize} {used}"
+  | .ok _ => "hardware"
+  | .error e => s!"{e.code} {e.pos.line}:{e.pos.col}"
+#guard fnArms fnG fnG == "(function root g) 2"
+#guard fnArms fnG fnG 1 == "S015 1:1"
+#guard fnArms fnG (.function "h" #[] .bool) == "S011 1:1"
+#guard fnArms fnG (.function "h" #[] .bool) 1 == "S015 1:1"
+#guard fnArms fnG (.bool true) == "S010 1:1"
 
 end Silicon.Source.Test.Eval
