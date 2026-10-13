@@ -1,0 +1,7 @@
+// S010: the callee is a function or a type. A number is neither.
+// TOP M()
+module M() domains() {
+    let n = 3;
+    // expected-error S010 @+1
+    let r = n(1);
+}

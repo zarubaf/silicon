@@ -1,0 +1,8 @@
+// S003: a name inside a function type resolves like any type name.
+// TOP M()
+// expected-error S003 @+1
+fn apply(f: fn (Missing) -> Nat) -> Nat {
+    return 0;
+}
+module M() domains() {
+}

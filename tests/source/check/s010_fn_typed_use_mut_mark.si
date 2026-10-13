@@ -1,0 +1,9 @@
+// S010: a typed use needs the exact `mut` marks. The function takes no `mut` parameter.
+// TOP M()
+fn a(x: Nat) -> Nat {
+    return x;
+}
+module M() domains() {
+    // expected-error S010 @+1
+    let f: fn (mut Nat) -> Nat = a;
+}

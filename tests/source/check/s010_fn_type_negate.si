@@ -1,0 +1,6 @@
+// S010: a unary operator takes no function type.
+// TOP M()
+module M() domains() {
+    // expected-error S010 @+1
+    let t = -fn () -> Nat;
+}

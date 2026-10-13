@@ -1,0 +1,9 @@
+// S010: `==` takes no function.
+// TOP M()
+fn a() -> Nat {
+    return 1;
+}
+module M() domains() {
+    // expected-error S010 @+1
+    let eq = a == a;
+}

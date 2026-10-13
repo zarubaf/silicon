@@ -1,0 +1,9 @@
+// S010: a generic function is no value. Its parameter `T` is a `comptime` parameter.
+// TOP M()
+comptime fn first(comptime T: Type, x: T) -> T {
+    return x;
+}
+module M() domains() {
+    // expected-error S010 @+1
+    let f = first;
+}

@@ -1,0 +1,11 @@
+// S008: the same alias through a function value with `push` as the later argument.
+// TOP M()
+fn g(mut a: List[Nat], b: Nat) -> () {
+    return ();
+}
+module M() domains() {
+    let mut xs = list(Nat);
+    let f = g;
+    // expected-error S008 @+1
+    f(xs, xs.push(1));
+}

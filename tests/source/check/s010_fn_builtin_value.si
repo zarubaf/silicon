@@ -1,0 +1,6 @@
+// S010: a builtin is no value.
+// TOP M()
+module M() domains() {
+    // expected-error S010 @+1
+    let f = len;
+}

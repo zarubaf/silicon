@@ -1,0 +1,12 @@
+// S008: the call is through a function value, so only the run-time check sees the alias: `g` binds `mut xs`, and `xs.pop()` mutates the same root.
+// TOP M()
+fn g(mut a: List[Nat], b: Nat) -> () {
+    return ();
+}
+module M() domains() {
+    let mut xs = list(Nat);
+    xs.push(1);
+    let f = g;
+    // expected-error S008 @+1
+    f(xs, xs.pop());
+}

@@ -1,0 +1,6 @@
+// S010: a port has a hardware data type, and a function type is none.
+// TOP M()
+module M() {
+    // expected-error S010 @+1
+    input f: fn () -> Bool;
+}

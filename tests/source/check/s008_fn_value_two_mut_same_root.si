@@ -1,0 +1,11 @@
+// S008: two `mut` actuals of one call through a value have the same root.
+// TOP M()
+fn swap(mut a: Nat, mut b: Nat) -> () {
+    return ();
+}
+module M() domains() {
+    let mut n = 1;
+    let f = swap;
+    // expected-error S008 @+1
+    f(n, n);
+}

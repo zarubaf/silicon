@@ -1,0 +1,6 @@
+// S010: `T()` takes a hardware data type, so a function type has no constructor.
+// TOP M()
+module M() domains() {
+    // expected-error S010 @+1
+    let t = (fn () -> Bool)();
+}
