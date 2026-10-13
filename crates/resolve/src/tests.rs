@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 use crate::{Code, Decl, Failed, Kind, Prelude, Resolved, Target, resolve};
-use parse::ast::{Expr, Ident, Item, NodeId, Param, Pos, Stmt, TypeExpr};
+use parse::ast::{Expr, FnParam, Ident, Item, NodeId, Param, Pos, Stmt, TypeExpr};
 use std::collections::BTreeMap;
 
 fn pos(line: usize, col: usize) -> Pos {
@@ -178,7 +178,15 @@ impl Ids {
                 self.ty(elem);
                 self.expr(len);
             }
+            TypeExpr::Fn { params, ret, .. } => self.fn_type(params, ret),
         }
+    }
+
+    fn fn_type(&mut self, params: &[FnParam], ret: &TypeExpr) {
+        for param in params {
+            self.ty(&param.ty);
+        }
+        self.ty(ret);
     }
 
     fn exprs(&mut self, exprs: &[Expr]) {
@@ -225,6 +233,7 @@ impl Ids {
                 self.ty(elem);
                 self.expr(len);
             }
+            Expr::FnType { params, ret, .. } => self.fn_type(params, ret),
             Expr::Tuple { elems, .. } | Expr::Array { elems, .. } => self.exprs(elems),
         }
     }

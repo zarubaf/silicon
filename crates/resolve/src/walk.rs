@@ -6,7 +6,9 @@
 use crate::prelude::{Prelude, later_slice};
 use crate::scope::Scopes;
 use crate::{Call, Code, Decl, DeclId, Error, Kind, Resolved, Table, Target};
-use parse::ast::{Expr, Ident, Item, NodeId, Param, ParamMode, Pos, Stmt, StructField, TypeExpr};
+use parse::ast::{
+    Expr, FnParam, Ident, Item, NodeId, Param, ParamMode, Pos, Stmt, StructField, TypeExpr,
+};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Resolves the names of the items. Returns the table, or the errors of the first pass with
@@ -322,7 +324,16 @@ impl Walker {
                 self.ty(elem);
                 self.expr(len);
             }
+            TypeExpr::Fn { params, ret, .. } => self.fn_type(params, ret),
         }
+    }
+
+    /// The parameter types and the result type of a function type. They declare no name.
+    fn fn_type(&mut self, params: &[FnParam], ret: &TypeExpr) {
+        for param in params {
+            self.ty(&param.ty);
+        }
+        self.ty(ret);
     }
 
     fn expr(&mut self, expr: &Expr) {
@@ -374,6 +385,7 @@ impl Walker {
                 self.ty(elem);
                 self.expr(len);
             }
+            Expr::FnType { params, ret, .. } => self.fn_type(params, ret),
             Expr::Tuple { elems, .. } | Expr::Array { elems, .. } => {
                 for elem in elems {
                     self.expr(elem);

@@ -132,6 +132,13 @@ kinds! {
     ArrayTypeExpr,
     /// `(T)`: a grouped type. It makes no node of the AST.
     ParenType,
+    /// `fn (P, mut Q) -> R`: the `FnTypeParam` children, then the result type, which is a
+    /// `FnType` for a chain.
+    FnType,
+    /// `fn (P) -> R` in an expression: like `FnType`, and the outermost node of a chain.
+    FnTypeExpr,
+    /// A parameter type of a function type, with its `mut` mark.
+    FnTypeParam,
     /// The delimited arguments of a call, an index, or a type family.
     ArgList,
     Literal,

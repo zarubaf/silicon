@@ -76,6 +76,7 @@ impl Evaluator<'_> {
             }
             TypeExpr::Tuple { pos, elems } => self.tuple_type(*pos, elems),
             TypeExpr::Array { pos, elem, len } => self.array_type(*pos, elem, len),
+            TypeExpr::Fn { pos, .. } => fail(Code::S004, *pos, super::FN_TYPE_LATER.to_owned()),
         }
     }
 

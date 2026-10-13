@@ -3,7 +3,7 @@
 //! so it runs on the front-end thread.
 
 use crate::{Code, Error};
-use parse::ast::{Expr, Item, NodeId, Param, ParamMode, Pos, Stmt, TypeExpr};
+use parse::ast::{Expr, FnParam, Item, NodeId, Param, ParamMode, Pos, Stmt, TypeExpr};
 use resolve::{DeclId, Kind, Prelude, Resolved, ResolvedExpr, Target};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -563,7 +563,19 @@ impl<'a> Walker<'a> {
                 self.expr(true, len);
                 Some(Head::complete(Ctor::Convert))
             }
+            Expr::FnType { params, ret, .. } => {
+                self.fn_type(params, ret);
+                None
+            }
         }
+    }
+
+    /// The parameter types and the result type of a function type.
+    fn fn_type(&mut self, params: &[FnParam], ret: &TypeExpr) {
+        for param in params {
+            self.type_expr(&param.ty);
+        }
+        self.type_expr(ret);
     }
 
     fn type_expr(&mut self, ty: &TypeExpr) {
@@ -596,6 +608,7 @@ impl<'a> Walker<'a> {
                 self.type_expr(elem);
                 self.expr(true, len);
             }
+            TypeExpr::Fn { params, ret, .. } => self.fn_type(params, ret),
         }
     }
 
@@ -767,6 +780,7 @@ fn expr_pos(expr: &Expr) -> Pos {
         | Expr::Tuple { pos, .. }
         | Expr::Array { pos, .. }
         | Expr::Select { pos, .. }
-        | Expr::ArrayType { pos, .. } => *pos,
+        | Expr::ArrayType { pos, .. }
+        | Expr::FnType { pos, .. } => *pos,
     }
 }
