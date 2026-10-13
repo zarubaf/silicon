@@ -1,0 +1,9 @@
+// S017: a `:=` target is a whole output, not an element of a tuple output.
+// TOP M()
+module M() {
+    input x: Bool;
+    output o: (Bool, Bool);
+    // expected-error S017 @+1
+    o.0 := x;
+    o.1 := x;
+}

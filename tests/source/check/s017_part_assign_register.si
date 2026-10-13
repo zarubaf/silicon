@@ -1,0 +1,10 @@
+// S017: a `:=` target is a whole register, not a field of a record register.
+// TOP M()
+struct P { a: Bool, b: Bool }
+module M() {
+    input x: Bool;
+    reg r: P = P(false, false);
+    // expected-error S017 @+1
+    r.a := x;
+    r.b := x;
+}

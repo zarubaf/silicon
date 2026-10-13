@@ -1,0 +1,11 @@
+// S011: the arms of a hardware `if` differ in a static part, here two lists.
+// TOP M()
+module M() {
+    input c: Bool;
+    input h: Bool;
+    let mut xs = list(Int);
+    let mut ys = list(Int);
+    ys.push(1);
+    // expected-error S011 @+1
+    let p = if (c) { (h, xs) } else { (h, ys) };
+}

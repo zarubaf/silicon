@@ -1,0 +1,8 @@
+// S011: the arms of a hardware `if` differ in a static part, here two strings.
+// TOP M()
+module M() {
+    input c: Bool;
+    input h: Bool;
+    // expected-error S011 @+1
+    let p = if (c) { (h, "a") } else { (h, "b") };
+}

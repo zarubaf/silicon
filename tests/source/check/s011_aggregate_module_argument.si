@@ -1,0 +1,9 @@
+// S011: a tuple with a hardware part is no static module argument.
+// TOP M()
+module C(comptime p: (Bool, Bool)) {}
+module M() {
+    input x: Bool;
+    let p = (x, x);
+    // expected-error S011 @+1
+    instance c = C(p);
+}

@@ -1,0 +1,6 @@
+// S010: an output has a hardware data type, and an array of a function type is none.
+// TOP M()
+module M() {
+    // expected-error S010 @+1
+    output o: [fn () -> Bool; 2];
+}

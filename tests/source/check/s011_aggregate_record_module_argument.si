@@ -1,0 +1,10 @@
+// S011: a record with a hardware field is no static module argument.
+// TOP M()
+struct P { a: Bool }
+module C(comptime p: P) {}
+module M() {
+    input x: Bool;
+    let p = P(x);
+    // expected-error S011 @+1
+    instance c = C(p);
+}

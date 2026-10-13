@@ -1,0 +1,6 @@
+// S010: an array of a function type is no data, also with length 0.
+// TOP M()
+module M() {
+    // expected-error S010 @+1
+    input a: [fn () -> Bool; 0];
+}

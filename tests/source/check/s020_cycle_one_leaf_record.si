@@ -1,0 +1,8 @@
+// S020: a field of a record wire reads itself, so one leaf has a cycle.
+// TOP M()
+struct P { a: Bool, b: Bool }
+module M() {
+    wire w: P;
+    // expected-error S020 @+1
+    w := P(w.a, true);
+}

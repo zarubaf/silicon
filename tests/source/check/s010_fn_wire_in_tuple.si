@@ -1,0 +1,6 @@
+// S010: a wire has a hardware data type, and a tuple with a function type is none.
+// TOP M()
+module M() {
+    // expected-error S010 @+1
+    wire w: (Bool, fn () -> Bool);
+}

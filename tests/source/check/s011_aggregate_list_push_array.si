@@ -1,0 +1,10 @@
+// S011: a list holds no array with a hardware element.
+// TOP M()
+type T = [Bool; 1];
+module M() {
+    input x: Bool;
+    let mut xs = list(T);
+    let a = [x];
+    // expected-error S011 @+1
+    xs.push(a);
+}

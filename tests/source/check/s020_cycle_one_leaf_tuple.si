@@ -1,0 +1,7 @@
+// S020: an element of a tuple wire reads itself through the other element.
+// TOP M()
+module M() {
+    wire w: (Bool, Bool);
+    // expected-error S020 @+1
+    w := (w.1, w.1);
+}

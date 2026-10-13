@@ -1,0 +1,7 @@
+// S020: an element of a tuple output reads itself, so one leaf has a cycle.
+// TOP M()
+module M() {
+    output o: (Bool, Bool);
+    // expected-error S020 @+1
+    o := (o.0, true);
+}

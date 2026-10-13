@@ -1,0 +1,6 @@
+// S010: a register has a hardware data type, and an empty array of a function type is none.
+// TOP M()
+module M() {
+    // expected-error S010 @+1
+    reg r: [fn () -> Bool; 0] = [];
+}

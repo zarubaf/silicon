@@ -1,0 +1,10 @@
+// S011: the arms differ in the static scalar of a nested tuple, 3 against 4, with a hardware part beside it.
+// TOP M()
+module M() {
+    input c: Bool;
+    input h: Bool;
+    input x: UInt[8];
+    let z: UInt[8] = 3;
+    // expected-error S011 @+1
+    let p = if (c) { (h, (3, z)) } else { (h, (4, x)) };
+}

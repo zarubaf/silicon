@@ -1,0 +1,8 @@
+// S010: the arms of a hardware `if` have one type, and Int against Bool in a tuple differs.
+// TOP M()
+module M() {
+    input c: Bool;
+    input h: Bool;
+    // expected-error S010 @+1
+    let p = if (c) { (h, 3) } else { (h, true) };
+}

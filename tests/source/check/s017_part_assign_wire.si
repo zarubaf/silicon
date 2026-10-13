@@ -1,0 +1,9 @@
+// S017: a `:=` target is a whole wire, not an element of an array wire.
+// TOP M()
+module M() {
+    input x: Bool;
+    wire w: [Bool; 2];
+    // expected-error S017 @+1
+    w[0] := x;
+    w[1] := x;
+}

@@ -1,0 +1,7 @@
+// S010: the arms of a hardware `if` have one type, and an array of Bool against one of Int differs.
+// TOP M()
+module M() {
+    input c: Bool;
+    // expected-error S010 @+1
+    let p = if (c) { [true, false] } else { [1, 2] };
+}

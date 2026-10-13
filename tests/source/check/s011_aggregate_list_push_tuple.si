@@ -1,0 +1,9 @@
+// S011: a list holds no tuple with a hardware part.
+// TOP M()
+type T = (Bool, Bool);
+module M() {
+    input x: Bool;
+    let mut xs = list(T);
+    // expected-error S011 @+1
+    xs.push((x, x));
+}

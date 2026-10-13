@@ -1,0 +1,7 @@
+// S020: an element of an array wire reads itself, so one leaf has a cycle.
+// TOP M()
+module M() {
+    wire w: [Bool; 2];
+    // expected-error S020 @+1
+    w := [w[0], true];
+}
