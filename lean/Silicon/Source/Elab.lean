@@ -205,7 +205,8 @@ def port (p : Pos) (input : Bool) (b : Binder) (t : Ty) : EM Val := do
     return v != 0 : Eval.M Bool)
   if taken then fail .S019 p s!"two declarations have the core name `{x}`"
   modifyBody fun d => { d with ports := d.ports.push ⟨x, sym, input, t, p⟩ }
-  if input then return .hw (.mk p t (.ref ⟨x, []⟩) [])
+  -- An input refers to its name: a scalar is hardware, and an aggregate a lazy reference.
+  if input then monadLift (normalize p (.ref (.name ⟨x, []⟩) t) : Eval.M Val)
   else resource .output ⟨x, []⟩ t p x
 
 /-! The target of a `:=` binding. It refers, so it charges nothing. -/

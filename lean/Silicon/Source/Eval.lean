@@ -251,6 +251,14 @@ structure Out where
   ref : Bool
   root : Option Nat
 
+/-!
+The result of the part `r` that a step selects from `o`. `v` is the data of `o`. The part
+refers to `o`. A reference gives a part without a hardware leaf as a new static value
+(section 5.4). Thus a binding of it is not a copy.
+-/
+def part (o : Out) (v r : Val) : Out :=
+  if v matches .agg (.ref ..) && r matches .static _ then ⟨r, false, none⟩ else ⟨r, true, o.root⟩
+
 /-! The value of `e`. Only `static_assert` and `error` give no value. -/
 def need (e : Resolve.Expr) : Option Out → M Out
   | some o => pure o
@@ -807,7 +815,7 @@ mutual
         release o
         if let .static (.str s) := v then
           return some ⟨.static (← strAt p x.pos s i), false, none⟩
-        return some ⟨← pick p x.pos v i, true, o.root⟩
+        return some (part o v (← pick p x.pos v i))
       | .field p b f => do
         let o ← need b (← eval n b)
         match o.value with
@@ -815,9 +823,14 @@ mutual
           match (← read).field f.pos >>= (iface.ports[·]?) with
           | some q =>
             if q.input then return some ⟨.handle (.input id path q), true, none⟩
-            else return some ⟨.hw (.mk p q.ty (.out path (portName q.name)) []), true, none⟩
+            else
+              -- A child output refers, unless it has no hardware leaf and is a new static value.
+              let r ← normalize p (.ref (.out path (portName q.name)) q.ty)
+              return some ⟨r, !(r matches .static _), none⟩
           | none => fail .S010 p s!"the instance has no port `{f.name}`"
-        | v => return some ⟨.static (← fieldAt p f v).2.1, true, o.root⟩
+        | v => do
+          let w ← if v matches .handle (.res ..) then data p v else pure v
+          return some (part o w (← field p f w))
       | .unit p => do charge p Value.unit.size; return some ⟨.static .unit, false, none⟩
       | .tuple p xs => do
         let es ← operands n xs fun x o => element x.pos o.value
@@ -832,7 +845,8 @@ mutual
         | none => return some ⟨.static (← arrayOf p (values es)), false, none⟩
       | .select p b q i => do
         let o ← need b (← eval n b)
-        return some ⟨← select p q i (← data p o.value), true, o.root⟩
+        let v ← data p o.value
+        return some (part o v (← select p q i v))
       | .arrayType p t k => do
         let e ← typeExpr n t
         let t ← arrayTy p k.pos e (← static k.pos (← need k (← eval n k)).value)

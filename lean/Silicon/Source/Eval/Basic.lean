@@ -108,6 +108,15 @@ def Base.op : Base → Op
   | .name p => .ref p
   | .out i q => .out i q
 
+/-!
+The part of the base `b` with the leaf field `f` (section 7.3). The field is a field `.f` of
+a record, or the element `<k>e` of an array or a tuple. A name adds the field in one step. A
+child output appends it to its port name, in the number of its steps.
+-/
+def Base.sub : Base → Field → Base
+  | .name p, f => .name (p.push f)
+  | .out i q, f => .out i ⟨q.head, q.rest ++ [f]⟩
+
 /-! The stored numbers of a container node of an aggregate: its type, its size, and its depth. -/
 structure Node where
   ty : Ty
@@ -622,17 +631,5 @@ def apply (pos : Pos) (s : Except Fault Step) : M Value := do
   let s ← lift pos s
   charge pos s.charge
   lift pos (s.run ())
-
-/-!
-The data of a value at a use that reads it. A register, a wire, and an own output give a
-reference to their name: the implicit read. A child input is never read (`S017`). An instance
-and a domain are not data.
--/
-def data (pos : Pos) : Val → M Val
-  | .pending q _ => fail .S010 q "`[]` needs the type [T; 0] from its context"
-  | .handle (.res _ _ ty path) => pure (.hw (.mk pos ty (.ref path) []))
-  | .handle (.input ..) => fail .S017 pos "an input of a child is a target; it is never read"
-  | .handle h => fail .S010 pos s!"{(Val.handle h).text} is not data"
-  | v => pure v
 
 end Silicon.Source.Eval

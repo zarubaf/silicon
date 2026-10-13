@@ -39,6 +39,13 @@ The static containers of slice 2 follow section 5.1. These rules settle its open
 - `==` on two records needs one struct type. The join of the two types charges as a type
   equality. Then the operator charges the sum of the two sizes.
 - A field `.f` refers to the field, so it charges no size. A missing field is `S010`.
+- A hardware aggregate (section 5.1) takes an index, a selector `.N`, and a field `.f` as a static
+  container does. An element of a container node keeps its normal form, so the selection refers
+  to it. An implicit read of an aggregate register, wire, or output, and an aggregate child
+  output, give a lazy reference with no charge. A step on a reference gives a reference to the
+  part, in a number of steps that the path bounds. Thus `p[i]` takes the same work for a huge
+  array type. A part without a hardware leaf is a static value: it charges its zero size from
+  the metadata first (`normalize`). A hardware index stays `S011`.
 - `T()` is the zero of a hardware data type, also of a struct type. Another type is `S010`. The
   zero checks its depth (`Ty.zeroDepth`) and charges its size from the metadata before it exists.
 - An assignment to a place with indices, selectors `.N`, and fields evaluates its indices from
@@ -280,6 +287,38 @@ def settle (pos : Pos) (t : Ty) : Val → M Val
   | v => pure v
 
 /-!
+The normal form of the aggregate `a` at `pos` (section 5.1). A reference without a hardware leaf
+is a static value, for example a part of the type `[Unit; 4]`. It charges the zero size of its
+type from the metadata before the value exists (section 5.4). A reference of a scalar type is a
+hardware value. Another part keeps its form.
+-/
+def normalize (pos : Pos) : Agg → M Val
+  | .static v => pure (.static v)
+  | .hw h => pure (.hw h)
+  | a@(.ref b t) =>
+    if t.info.leaves = 0 then do
+      charge pos t.info.zeroSize
+      match zeroOf (← get).specs t.depth t with
+      | some v => return .static v
+      | none => fail .S010 pos s!"{t.text} has no zero"
+    else if t matches .bool | .uint _ | .sint _ then return .hw (.mk pos t b.op [])
+    else return .agg a
+  | a => pure (.agg a)
+
+/-!
+The data of a value at a use that reads it: the implicit read. A register, a wire, and an own
+output give a reference to their name, in its normal form. Thus a scalar gives a hardware value,
+and an aggregate a lazy reference with no charge (section 9.2). A child input is never read
+(`S017`). An instance and a domain are not data.
+-/
+def data (pos : Pos) : Val → M Val
+  | .pending q _ => fail .S010 q "`[]` needs the type [T; 0] from its context"
+  | .handle (.res _ _ ty path) => normalize pos (.ref (.name path) ty)
+  | .handle (.input ..) => fail .S017 pos "an input of a child is a target; it is never read"
+  | .handle h => fail .S010 pos s!"{(Val.handle h).text} is not data"
+  | v => pure v
+
+/-!
 The selector `.i` at `pos`, with its number literal at `q`. The result is the number of the
 element and the element.
 -/
@@ -290,9 +329,20 @@ def selectAt (pos q : Pos) (i : Nat) : Val → M (Nat × Value)
     | none => fail .S013 q s!"the selector {i} is out of range for {v.text}"
   | v => fail .S010 pos s!"the selector `.{i}` needs a tuple, not {v.text}"
 
-/-! The selector `.i` refers to an element. -/
-def select (pos q : Pos) (i : Nat) (v : Val) : M Val := do
-  return .static (← selectAt pos q i v).2
+/-!
+The selector `.i` refers to an element. A selector of a reference to a tuple gives a reference
+to the element `<i>e`.
+-/
+def select (pos q : Pos) (i : Nat) : Val → M Val
+  | v@(.agg (.tuple _ xs)) =>
+    match xs[i]? with
+    | some x => normalize pos x
+    | none => fail .S013 q s!"the selector {i} is out of range for {v.text}"
+  | v@(.agg (.ref b (.tuple ts))) =>
+    match ts[i]? with
+    | some t => normalize pos (.ref (b.sub (.elem i)) t)
+    | none => fail .S013 q s!"the selector {i} is out of range for {v.text}"
+  | v => do return .static (← selectAt pos q i v).2
 
 /-! The value of a static index at `q`. It is a static `Int` or `UInt`, else `S010`. -/
 def indexOf (q : Pos) : Value → M Int
@@ -324,9 +374,30 @@ def strAt (pos q : Pos) (s : String) (i : Value) : M Value := do
   | some c => return .str (String.singleton c)
   | none => fail .S013 q s!"the index {intText k} is out of range for {s.length} scalar(s)"
 
-/-! A static index refers to an element. -/
+/-! The number of the static index `i` at `q` in a container with `n` elements. -/
+def within (q : Pos) (n : Nat) (i : Value) : M Nat := do
+  let k ← indexOf q i
+  if 0 ≤ k ∧ k.toNat < n then return k.toNat
+  else fail .S013 q s!"the index {intText k} is out of range for {n} element(s)"
+
+/-!
+A static index refers to an element. An index of a reference to an array or a tuple gives a
+reference to the element `<k>e`. Its type gives the length, so a huge array takes no more work.
+-/
 def pick (pos q : Pos) (v : Val) (i : Value) : M Val := do
-  return .static (← pickAt pos q v i).2
+  match v with
+  | .agg (.array _ xs) | .agg (.tuple _ xs) =>
+    match xs[← within q xs.size i]? with
+    | some x => normalize pos x
+    | none => fail .S013 q s!"the index is out of range for {xs.size} element(s)"
+  | .agg (.ref b (.array e n)) => do
+    normalize pos (.ref (b.sub (.elem (← within q n i))) e)
+  | .agg (.ref b (.tuple ts)) => do
+    let k ← within q ts.size i
+    match ts[k]? with
+    | some t => normalize pos (.ref (b.sub (.elem k)) t)
+    | none => fail .S013 q s!"the index is out of range for {ts.size} element(s)"
+  | v => return .static (← pickAt pos q v i).2
 
 /-! The type of the element `k` of a container type. -/
 def partTy : Ty → Nat → Option Ty
@@ -369,25 +440,49 @@ def update (f : Value → Value) : Value → List Nat → Value
   | v, _ :: _ => v
 
 /-!
+The number and the type of the field `f` of the struct type `t` at `pos`. `text` names the
+value. The record type holds the number of its specialization, and the symbol of `f` finds the
+number of the field, so the selection compares no name.
+-/
+def fieldOf (pos : Pos) (f : Ident) (t : Ty) (text : String) : M (Nat × Ty) := do
+  let some (i, fs) := fieldsIn (← get).specs t
+    | fail .S010 pos s!"{text} has no specialization"
+  let some (.struct ..) := (← read).items[i]?
+    | fail .S010 pos s!"{text} has no struct item"
+  let c ← read
+  let found := do
+    let k ← c.field f.pos >>= fun x => c.syms.members[i]? >>= (·[x]?)
+    return (k, ← fs[k]?)
+  match found with
+  | some r => return r
+  | none => fail .S010 pos s!"{text} has no field `{f.name}`"
+
+/-!
 The field `f` of a record at `pos`. The result is the number of the field, its value, and its
-type. A field selection refers to the field, so it charges no size. The record type holds the
-number of its specialization, and the symbol of `f` finds the number of the field, so the
-selection compares no name.
+type. A field selection refers to the field, so it charges no size.
 -/
 def fieldAt (pos : Pos) (f : Ident) : Val → M (Nat × Value × Ty)
   | .static v@(.record t xs) => do
-    let some (i, fs) := fieldsIn (← get).specs t
-      | fail .S010 pos s!"{v.text} has no specialization"
-    let some (.struct ..) := (← read).items[i]?
-      | fail .S010 pos s!"{v.text} has no struct item"
-    let c ← read
-    let found := do
-      let k ← c.field f.pos >>= fun x => c.syms.members[i]? >>= (·[x]?)
-      return (k, ← xs[k]?, ← fs[k]?)
-    match found with
-    | some r => return r
+    let (k, ft) ← fieldOf pos f t v.text
+    match xs[k]? with
+    | some x => return (k, x, ft)
     | none => fail .S010 pos s!"{v.text} has no field `{f.name}`"
   | v => fail .S010 pos s!"{v.text} has no field `{f.name}`"
+
+/-!
+The field `f` of a record or of a hardware aggregate at `pos`. A field of a reference to a record
+gives a reference to the part with the leaf field `f`.
+-/
+def field (pos : Pos) (f : Ident) : Val → M Val
+  | v@(.agg (.record n xs)) => do
+    let (k, _) ← fieldOf pos f n.ty v.text
+    match xs[k]? with
+    | some x => normalize pos x
+    | none => fail .S010 pos s!"{v.text} has no field `{f.name}`"
+  | v@(.agg (.ref b t@(.struct ..))) => do
+    let (_, ft) ← fieldOf pos f t v.text
+    normalize pos (.ref (b.sub (.user f.name)) ft)
+  | v => do return .static (← fieldAt pos f v).2.1
 
 /-!
 A record constructor of the struct type `t` with the field types `fs` at `pos`. The arguments
@@ -417,32 +512,14 @@ def zero (pos : Pos) (t : Ty) : M Value := do
   | none => fail .S010 pos s!"{t.text} has no zero"
 
 /-!
-The normal form of the aggregate `a` at `pos` (section 5.1). A reference without a hardware leaf
-is a static value, for example a part of the type `[Unit; 4]`. It charges the zero size of its
-type from the metadata before the value exists (section 5.4). A reference of a scalar type is a
-hardware value. Another part keeps its form.
--/
-def normalize (pos : Pos) : Agg → M Val
-  | .static v => pure (.static v)
-  | .hw h => pure (.hw h)
-  | a@(.ref b t) =>
-    if t.info.leaves = 0 then do
-      charge pos t.info.zeroSize
-      match zeroOf (← get).specs t.depth t with
-      | some v => return .static v
-      | none => fail .S010 pos s!"{t.text} has no zero"
-    else if t matches .bool | .uint _ | .sint _ then return .hw (.mk pos t b.op [])
-    else return .agg a
-  | a => pure (.agg a)
-
-/-!
 `len` of an array, a list, or a string at the call `pos`. It refers to an array or a list, so
 it charges no size. A string needs a scan, so it charges the size of the string first.
 -/
 def lenOf (pos : Pos) : List Val → M Value
   | [v] => do
     match ← data pos v with
-    | .static (.array _ xs) | .static (.list _ xs) => return .int xs.size
+    | .static (.array _ xs) | .static (.list _ xs) | .agg (.array _ xs) => return .int xs.size
+    | .agg (.ref _ (.array _ k)) => return .int k
     | .static v@(.str s) => do
       charge pos v.size
       return .int s.length

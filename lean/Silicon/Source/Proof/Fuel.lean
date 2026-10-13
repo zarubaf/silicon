@@ -305,8 +305,11 @@ theorem need_f (e : Resolve.Expr) (o : Option Out) : Follows cap (need e o) (nee
 theorem apply_f (p : Pos) (st : Except Fault Step) : Follows cap (apply p st) (apply p st) := by
   unfold apply; follows
 
+theorem normalize_f (p : Pos) (a : Agg) : Follows cap (normalize p a) (normalize p a) := by
+  unfold normalize; follows
+
 theorem data_f (p : Pos) (v : Val) : Follows cap (data p v) (data p v) := by
-  unfold data; follows
+  unfold data; follows [normalize_f]
 
 theorem conform_f (p : Pos) (t : Ty) (v : Value) :
     Follows cap (conform p t v) (conform p t v) := by
@@ -470,7 +473,7 @@ theorem selectAt_f (p q : Pos) (i : Nat) (v : Val) :
 
 theorem select_f (p q : Pos) (i : Nat) (v : Val) :
     Follows cap (select p q i v) (select p q i v) := by
-  unfold select; follows [selectAt_f]
+  unfold select; follows [selectAt_f, normalize_f]
 
 theorem indexOf_f (q : Pos) (i : Value) : Follows cap (indexOf q i) (indexOf q i) := by
   unfold indexOf; follows
@@ -483,16 +486,28 @@ theorem strAt_f (p q : Pos) (s : String) (i : Value) :
     Follows cap (strAt p q s i) (strAt p q s i) := by
   unfold strAt; follows [indexOf_f]
 
+theorem within_f (q : Pos) (n : Nat) (i : Value) :
+    Follows cap (within q n i) (within q n i) := by
+  unfold within; follows [indexOf_f]
+
 theorem pick_f (p q : Pos) (v : Val) (i : Value) :
     Follows cap (pick p q v i) (pick p q v i) := by
-  unfold pick; follows [pickAt_f]
+  unfold pick; follows [pickAt_f, within_f, normalize_f]
 
 theorem lenOf_f (p : Pos) (vs : List Val) : Follows cap (lenOf p vs) (lenOf p vs) := by
   unfold lenOf; follows [data_f]
 
+theorem fieldOf_f (p : Pos) (f : Ident) (t : Ty) (x : String) :
+    Follows cap (fieldOf p f t x) (fieldOf p f t x) := by
+  unfold fieldOf; follows
+
 theorem fieldAt_f (p : Pos) (f : Ident) (v : Val) :
     Follows cap (fieldAt p f v) (fieldAt p f v) := by
-  unfold fieldAt; follows
+  unfold fieldAt; follows [fieldOf_f]
+
+theorem field_f (p : Pos) (f : Ident) (v : Val) :
+    Follows cap (field p f v) (field p f v) := by
+  unfold field; follows [fieldOf_f, fieldAt_f, normalize_f]
 
 theorem recordOf_f (p : Pos) (t : Ty) (fs : List Ty) (ps : List Pos) (vs : List Val) :
     Follows cap (recordOf p t fs ps vs) (recordOf p t fs ps vs) := by
@@ -500,9 +515,6 @@ theorem recordOf_f (p : Pos) (t : Ty) (fs : List Ty) (ps : List Pos) (vs : List 
 
 theorem zero_f (p : Pos) (t : Ty) : Follows cap (zero p t) (zero p t) := by
   unfold zero; follows [bounded_f]
-
-theorem normalize_f (p : Pos) (a : Agg) : Follows cap (normalize p a) (normalize p a) := by
-  unfold normalize; follows
 
 theorem conformVal_f (p : Pos) (t : Ty) (v : Val) :
     Follows cap (conformVal p t v) (conformVal p t v) := by
@@ -718,7 +730,8 @@ theorem follows_all : ∀ n,
         follows [he k, ht k, index_f (he k), name_f (he k) (ht k),
           call_f (he k) (ht k) (hb k), spec_f (he k) (ht k), need_f, data_f, apply_f,
           hwUnary_f, test_f, hwBinary_f, unify_f, mux_f, static_f, pick_f, element_f, tupleOf_f,
-          arrayOf_f, select_f, containerOp_f, arrayTy_f, fieldAt_f, strAt_f, hold_f, release_f,
+          arrayOf_f, select_f, containerOp_f, arrayTy_f, field_f, strAt_f, hold_f, release_f,
+          normalize_f,
           operands_f (he k), comparable_f, params_f (ht k), fnTy_f]
       · rw [eval.eq_def (k + 1), eval.eq_def (m + 1)]
         apply Follows.charge_one
@@ -726,7 +739,8 @@ theorem follows_all : ∀ n,
         follows [he m, ht m, index_f (he m), name_f (he m) (ht m),
           call_f (he m) (ht m) (hb m), spec_f (he m) (ht m), need_f, data_f, apply_f,
           hwUnary_f, test_f, hwBinary_f, unify_f, mux_f, static_f, pick_f, element_f, tupleOf_f,
-          arrayOf_f, select_f, containerOp_f, arrayTy_f, fieldAt_f, strAt_f, hold_f, release_f,
+          arrayOf_f, select_f, containerOp_f, arrayTy_f, field_f, strAt_f, hold_f, release_f,
+          normalize_f,
           operands_f (he m), comparable_f, params_f (ht m), fnTy_f]
     · rcases n' with _ | m
       · rw [typeExpr.eq_def (k + 1), typeExpr.eq_def 0]

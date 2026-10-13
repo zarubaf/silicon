@@ -234,7 +234,7 @@ theorem port_e (p : Pos) (input : Bool) (b : Resolve.Binder) (t : Ty) :
     simp only [bind_apply, get_apply, set_apply, pure_apply] at h ⊢
     cases h
     exact ⟨rfl, fun _ => rfl⟩
-  · efollows [resource_e, modifyBody_e]
+  · efollows [resource_e, modifyBody_e, normalize_f]
 
 theorem target_e (p : Pos) (e : Resolve.Expr) : EFollows cap (target p e) (target p e) := by
   unfold target; efollows [slot_e]
