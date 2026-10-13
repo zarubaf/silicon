@@ -1,0 +1,11 @@
+// S010: an array of functions is no operand of `==`, the type holds a function type.
+// TOP M()
+fn a() -> Nat {
+    return 1;
+}
+module M() domains() {
+    let xs = [a];
+    let ys = [a];
+    // expected-error S010 @+1
+    let eq = xs == ys;
+}

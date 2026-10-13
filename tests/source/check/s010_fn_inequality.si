@@ -1,0 +1,12 @@
+// S010: `!=` takes no function either.
+// TOP M()
+fn a() -> Nat {
+    return 1;
+}
+fn b() -> Nat {
+    return 2;
+}
+module M() domains() {
+    // expected-error S010 @+1
+    let ne = a != b;
+}

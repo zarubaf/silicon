@@ -1,0 +1,12 @@
+// S011: a `comptime fn` called through a value takes no hardware argument.
+// TOP M()
+comptime fn inc(x: UInt[8]) -> UInt[8] {
+    return x;
+}
+module M() {
+    input x: UInt[8];
+    output y: UInt[8];
+    let f = inc;
+    // expected-error S011 @+1
+    y := f(x);
+}

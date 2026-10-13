@@ -1,0 +1,7 @@
+// S007: an alias of a function type takes no index either.
+// TOP M()
+type Pred = fn (Nat) -> Bool;
+module M() domains() {
+    // expected-error S007 @+1
+    let t = Pred[8];
+}

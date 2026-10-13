@@ -1,0 +1,6 @@
+// S007: a function type takes no index.
+// TOP M()
+module M() domains() {
+    // expected-error S007 @+1
+    let t = (fn () -> UInt)[8];
+}

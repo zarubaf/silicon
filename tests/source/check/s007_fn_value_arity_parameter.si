@@ -1,0 +1,12 @@
+// S007: the function value is a parameter of a function, and its function type gives the arity.
+// TOP M()
+comptime fn run(f: fn (Nat) -> Nat) -> Nat {
+    // expected-error S007 @+1
+    return f();
+}
+comptime fn inc(x: Nat) -> Nat {
+    return x + 1;
+}
+module M() domains() {
+    let r = run(inc);
+}

@@ -1,0 +1,9 @@
+// S010: a typed use needs the exact function type. The number of parameters differs.
+// TOP M()
+fn a(x: Nat) -> Nat {
+    return x;
+}
+module M() domains() {
+    // expected-error S010 @+1
+    let f: fn () -> Nat = a;
+}

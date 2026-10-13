@@ -1,0 +1,10 @@
+// S007: a call through a function value needs the number of arguments of its function type. The check comes before the arguments evaluate.
+// TOP M()
+fn inc(x: Nat) -> Nat {
+    return x + 1;
+}
+module M() domains() {
+    let f = inc;
+    // expected-error S007 @+1
+    let r = f(1, 2);
+}

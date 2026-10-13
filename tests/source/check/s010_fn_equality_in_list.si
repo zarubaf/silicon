@@ -1,0 +1,8 @@
+// S010: a list of functions is no operand of `==`, also when the list is empty.
+// TOP M()
+module M() domains() {
+    let xs = list(fn () -> Bool);
+    let ys = list(fn () -> Bool);
+    // expected-error S010 @+1
+    let eq = xs == ys;
+}

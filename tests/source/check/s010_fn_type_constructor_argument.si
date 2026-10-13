@@ -1,0 +1,6 @@
+// S010: the constructor of a function type fails before the argument evaluates.
+// TOP M()
+module M() domains() {
+    // expected-error S010 @+1
+    let t = (fn (Nat) -> Nat)(1);
+}

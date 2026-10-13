@@ -1,0 +1,10 @@
+// S008: a `mut` actual of a call through a function value is a place.
+// TOP M()
+fn bump(mut a: Nat) -> () {
+    return ();
+}
+module M() domains() {
+    let f = bump;
+    // expected-error S008 @+1
+    f(1);
+}

@@ -1,0 +1,9 @@
+// S003: the result type of a function type resolves too.
+// TOP M()
+fn id(x: Nat) -> Nat {
+    return x;
+}
+module M() domains() {
+    // expected-error S003 @+1
+    let t = fn (Nat) -> Missing;
+}

@@ -1,0 +1,9 @@
+// S010: a signature that names a parameter is generic, so the function is no value.
+// TOP M()
+comptime fn same(n: Nat, x: UInt[n]) -> UInt[n] {
+    return x;
+}
+module M() domains() {
+    // expected-error S010 @+1
+    let f = same;
+}

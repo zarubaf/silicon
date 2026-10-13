@@ -1,0 +1,10 @@
+// S007: too few arguments through a function value.
+// TOP M()
+fn add(x: Nat, y: Nat) -> Nat {
+    return x + y;
+}
+module M() domains() {
+    let f = add;
+    // expected-error S007 @+1
+    let r = f(1);
+}

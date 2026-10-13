@@ -1,0 +1,13 @@
+// S011: two different function arms of a hardware `if` are no static value.
+// TOP M()
+fn a() -> Nat {
+    return 1;
+}
+fn b() -> Nat {
+    return 2;
+}
+module M() {
+    input sel: Bool;
+    // expected-error S011 @+1
+    let f = if (sel) { a } else { b };
+}
