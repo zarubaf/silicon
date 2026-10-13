@@ -1,0 +1,11 @@
+// The cost of a function name as a value (section 5.6): the name charges its node, the signature evaluates in the scope of the function, and the function type charges its recursive size. The name is no call, so it adds no frame and no copy. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 106
+// TOP M()
+fn inc(x: Nat, mut y: List[Nat]) -> Nat {
+    return x;
+}
+module M() domains() {
+    comptime for i in 0..4 {
+        let f = inc;
+    }
+}

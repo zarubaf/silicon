@@ -1,0 +1,12 @@
+// The cost of a named call, the base of `cost_fn_call_value.si`: the call node, the copies of the arguments, and the body block. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 273
+// TOP M()
+comptime fn take(a: [Nat; 8], n: Nat) -> Nat {
+    return n;
+}
+module M() domains() {
+    let big = [0, 1, 2, 3, 4, 5, 6, 7];
+    comptime for i in 0..4 {
+        let r = take(big, 2);
+    }
+}
