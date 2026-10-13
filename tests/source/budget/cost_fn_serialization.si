@@ -1,0 +1,18 @@
+// A function as a module argument: the instance charges the recursive size of the argument, then the length of the serialization of the function item and the length of the emitted name. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 294
+// TOP M()
+fn inc(x: UInt[1]) -> UInt[1] {
+    return x;
+}
+module Leaf(comptime f: fn (UInt[1]) -> UInt[1]) domains() {
+    input a: UInt[1];
+    output q: UInt[1];
+    q := f(a);
+}
+module M() domains() {
+    input x: UInt[1];
+    output y: UInt[1];
+    instance l = Leaf(inc);
+    l.a := x;
+    y := l.q;
+}

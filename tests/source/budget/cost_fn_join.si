@@ -1,0 +1,14 @@
+// The join of two function types charges as a type equality: the sum of the two sizes. The array literal `[inc, dec]` joins its two elements, and each name charges its own value. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 162
+// TOP M()
+fn inc(x: Nat, y: Nat) -> Nat {
+    return x;
+}
+fn dec(x: Nat, y: Nat) -> Nat {
+    return y;
+}
+module M() domains() {
+    comptime for i in 0..4 {
+        let t = [inc, dec];
+    }
+}
