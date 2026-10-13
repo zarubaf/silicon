@@ -24,6 +24,19 @@ const SELF_REGISTER: Outcome = Outcome::Skip {
     why: "a register is its own next value",
 };
 
+/// The skip of a design that `firtool` emits with an array lookup.
+const FOLDED_MUX_CHAIN: Outcome = Outcome::Skip {
+    tag: "#197",
+    why: "circt-lec cannot legalize the hw.bitcast of a folded mux chain",
+};
+
+/// The text of the `circt-lec` failure on the array that `firtool` makes of a
+/// mux chain. The match is narrow, so every other failure stays a failure.
+fn is_folded_mux_chain(failure: &str) -> bool {
+    failure.contains("failed to legalize operation 'hw.bitcast'")
+        && failure.contains("-> !hw.array<")
+}
+
 /// The result of one check of one file.
 #[derive(Debug, PartialEq, Eq)]
 enum Outcome {
@@ -210,7 +223,7 @@ fn checks(outputs: &Outputs, seen: &mut BTreeSet<String>) -> Result<Vec<(String,
             mlir::verilog_stand_ins(&outputs.reference)?
         );
         let main = tools::import(&sv, top).and_then(|rust| tools::compare(&lean, &rust, top));
-        out.push(("main".to_owned(), main.into()));
+        out.push(("main".to_owned(), known_gap(main.into())));
         let lowering = mlir::defined(&outputs.rust_lower, &models)
             .context("the Rust lowering")
             .and_then(|rust| tools::compare(&lean, &rust, top));
@@ -218,6 +231,14 @@ fn checks(outputs: &Outputs, seen: &mut BTreeSet<String>) -> Result<Vec<(String,
     }
     out.extend(model_checks(&models, &outputs.rust_models, seen));
     Ok(out)
+}
+
+/// Turns the failure of the `main` check on a folded mux chain into its skip.
+fn known_gap(outcome: Outcome) -> Outcome {
+    match outcome {
+        Outcome::Fail(why) if is_folded_mux_chain(&why) => FOLDED_MUX_CHAIN,
+        other => other,
+    }
 }
 
 /// The third LEC: each new Rust memory model against the Lean model of its
@@ -373,6 +394,22 @@ mod tests {
             e("-", "model m", skips::Verdict::Pass)
         );
         assert_eq!(entry("main", Outcome::Fail(String::new())), None);
+    }
+
+    #[test]
+    fn only_the_bitcast_failure_of_an_array_is_skipped() {
+        let bitcast = "error: failed to legalize operation 'hw.bitcast' that was explicitly \
+                       marked illegal: %12 = \"hw.bitcast\"(%11) : (i64) -> !hw.array<8xi8>";
+        assert_eq!(
+            known_gap(Outcome::Fail(bitcast.to_owned())),
+            FOLDED_MUX_CHAIN
+        );
+        let other = "error: failed to legalize operation 'comb.mux'";
+        assert_eq!(
+            known_gap(Outcome::Fail(other.to_owned())),
+            Outcome::Fail(other.to_owned())
+        );
+        assert_eq!(known_gap(Outcome::Pass), Outcome::Pass);
     }
 
     #[test]
