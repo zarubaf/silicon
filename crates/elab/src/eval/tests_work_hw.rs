@@ -7,6 +7,7 @@
 
 use super::tests_bind::{assign_in, ref_x, run_f};
 use crate::counters::{self, Counts};
+use std::fmt::Write as _;
 
 const FUEL: u64 = 1_000_000_000_000;
 
@@ -515,4 +516,25 @@ fn repl(mut ys: [Int; 2]) -> Int { ys = [3, 4]; return 0; }\n";
         };
         assert_linear(at, |r| r.counts.stepped, 16, 16);
     }
+}
+
+/// A sibling push in an index of a read does not copy a parked part that the push leaves alone.
+/// The read waits at the hardware array `m.0`, and each push goes to `m.1`, so no push copies
+/// the array: the nodes that clones visit stay linear in the number of pushes and the width.
+#[test]
+fn a_sibling_push_in_an_index_copies_no_parked_part() {
+    let at = |n: u64, k: u64| {
+        let ws = (0..n).map(|_| "x").collect::<Vec<_>>().join(", ");
+        let mut reads = String::new();
+        for i in 0..n {
+            let _ = write!(reads, "let k{i} = m.0[(m.1.push(0), 1).1];\n  ");
+        }
+        run_ok(
+            "",
+            "UInt[8]",
+            &format!("let mut m = ([{ws}], list(Int), x);\n  {reads}"),
+            key(40, k),
+        )
+    };
+    assert_linear(at, |r| r.counts.nodes, 16, 16);
 }
