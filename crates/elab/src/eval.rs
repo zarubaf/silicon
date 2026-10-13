@@ -447,19 +447,39 @@ impl Store {
     /// Copies the value of each parked reference to the local at `root`, before a mutation
     /// changes the local. A reference to a static value holds the local, so the mutation paid
     /// the size of the local before (`charge_held`). Each reference copies once, because the
-    /// copy is not a reference.
-    fn settle_root(&mut self, root: Root) {
+    /// copy is not a reference. A change in place of the part at the numbers `keys` (`Some`)
+    /// copies only the references that it can reach: a reference to a part that is no prefix and
+    /// no extension of `keys` reads the same value after the change, so it stays a reference. A
+    /// write that binds the root again (`None`) gives new names to each leaf, so it copies all.
+    fn settle_root(&mut self, root: Root, keys: Option<&[usize]>) {
         self.decide_holds(root);
         let Some(at) = self.parked_at.remove(&root) else {
             return;
         };
-        // The change can turn a hardware leaf into a static one, so no bound holds after it.
-        for &k in &at {
-            if let Some(Some(p)) = self.probes.get_mut(k) {
-                p.bound = u64::MAX;
-            }
-        }
+        let overlaps = |path: &[usize]| {
+            keys.is_none_or(|keys| {
+                let n = path.len().min(keys.len());
+                path.get(..n) == keys.get(..n)
+            })
+        };
+        let mut kept = Vec::new();
         for k in at {
+            // A read that walks a path waits at the part of its probe, and its later steps only
+            // go deeper. Other references wait at their own path.
+            let reached = match (self.probes.get(k), self.parked.get(k)) {
+                (Some(Some(p)), _) => overlaps(&p.part.path),
+                (_, Some(Out::Ref(r))) => overlaps(&r.path),
+                _ => true,
+            };
+            if reached {
+                // The change can turn a hardware leaf into a static one, so no bound holds.
+                if let Some(Some(p)) = self.probes.get_mut(k) {
+                    p.bound = u64::MAX;
+                }
+            } else {
+                kept.push(k);
+                continue;
+            }
             let Some(slot) = self.parked.get_mut(k) else {
                 continue;
             };
@@ -469,6 +489,9 @@ impl Store {
                 *slot = copy;
             }
         }
+        if !kept.is_empty() {
+            self.parked_at.insert(root, kept);
+        }
     }
 
     /// The part of the live value of the local at `root` at the numbers `keys`, for a change in
@@ -477,7 +500,7 @@ impl Store {
         let Root::Local(frame, id) = root else {
             return None;
         };
-        self.settle_root(root);
+        self.settle_root(root, Some(keys));
         stepped(&self.steps, keys.len() as u64);
         let Val::Static(value) = &mut self.frames.get_mut(frame)?.get_mut(&id)?.value else {
             return None;

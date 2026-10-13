@@ -886,7 +886,7 @@ impl Evaluator<'_> {
         if place.keys.is_empty() {
             let y = self.named(pos, place.id, y)?;
             self.charge_held(pos, place.root)?;
-            self.store.settle_root(place.root);
+            self.store.settle_root(place.root, None);
             if let Root::Local(frame, id) = place.root
                 && let Some(slot) = self
                     .store
