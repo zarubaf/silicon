@@ -322,6 +322,12 @@ theorem hold_f (o : Out) : Follows cap (hold o) (hold o) := by
 theorem release_f (o : Out) : Follows cap (release o) (release o) := by
   unfold release waits; follows
 
+theorem pend_f (p : Pos) (x : String) (i : Nat) : Follows cap (pend p x i) (pend p x i) := by
+  unfold pend; follows
+
+theorem shut_f (i : Nat) : Follows cap (shut i) (shut i) := by
+  unfold shut; follows
+
 theorem held_f (p : Pos) (i : Nat) : Follows cap (held p i) (held p i) := by
   unfold held; follows
 
@@ -647,7 +653,7 @@ theorem name_f (he : ∀ e, Follows m (eval k e) (eval m e))
 theorem placeAt_f (he : ∀ e, Follows m (eval k e) (eval m e)) (p : Pos) (c : ErrorCode)
     (t : Resolve.Expr) : Follows m (placeAt k p c t) (placeAt m p c t) := by
   rw [placeAt.eq_def k, placeAt.eq_def m]
-  follows [he, place_f, need_f, static_f, pickAt_f, selectAt_f, fieldAt_f]
+  follows [he, place_f, pend_f, need_f, static_f, pickAt_f, selectAt_f, fieldAt_f]
 
 theorem args_f (he : ∀ e, Follows m (eval k e) (eval m e)) (b : Nat)
     (xs : List Resolve.Expr) : Follows m (args k b xs) (args m b xs) := by
@@ -662,7 +668,7 @@ theorem ctor_f (he : ∀ e, Follows m (eval k e) (eval m e)) (p : Pos) (o : Out)
 theorem actuals_f (he : ∀ e, Follows m (eval k e) (eval m e)) (xs : List Resolve.Expr)
     (muts : List Bool) : Follows m (actuals k xs muts) (actuals m xs muts) := by
   rw [actuals.eq_def k, actuals.eq_def m]
-  follows [he, placeAt_f he, need_f, hold_f, release_f]
+  follows [he, placeAt_f he, need_f, hold_f, release_f, shut_f]
 
 theorem invoke_f (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t))
     (hb : ∀ p ss, Follows m (block k p ss) (block m p ss)) (p : Pos) (i j : Nat) (c : Bool)
@@ -680,7 +686,7 @@ theorem call_f (he : ∀ e, Follows m (eval k e) (eval m e))
     Follows m (call k p f xs b j) (call m p f xs b j) := by
   rw [call.eq_def k, call.eq_def m]
   follows [he, placeAt_f he, args_f he, ctor_f he, actuals_f he, invoke_f ht hb, need_f,
-    hold_f, release_f, pushOnto_f, popFrom_f, primCall_f]
+    hold_f, release_f, shut_f, pushOnto_f, popFrom_f, primCall_f]
 
 set_option maxHeartbeats 400000 in
 /--
@@ -736,13 +742,13 @@ theorem follows_all : ∀ n,
         intro _
         follows [he k, ht k, hs k, hb k, placeAt_f (he k), need_f, copy_f, conformVal_f,
           known_f, named_f, bindLocal_f, test_f, int_f, range_f, iteration_f, static_f,
-          store_f, hold_f, release_f]
+          store_f, hold_f, release_f, shut_f]
       · rw [stmt.eq_def (k + 1), stmt.eq_def (m + 1)]
         apply Follows.charge_one
         intro _
         follows [he m, ht m, hs m, hb m, placeAt_f (he m), need_f, copy_f, conformVal_f,
           known_f, named_f, bindLocal_f, test_f, int_f, range_f, iteration_f, static_f,
-          store_f, hold_f, release_f]
+          store_f, hold_f, release_f, shut_f]
     · rcases n' with _ | m
       · rw [block.eq_def (k + 1), block.eq_def 0]
         apply Follows.exhaust (cap := k)

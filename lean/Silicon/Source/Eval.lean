@@ -50,6 +50,13 @@ The operators follow v0.1 section 3. These rules settle the open points of slice
   order of the arguments. Its copy charges with the other copies, in the order of the
   parameters. The place has exactly the type of the formal, else `S010` at the call. In a
   `comptime fn`, its value is static (`S011`). The formal is a mutable local of the callee.
+- `S008` at run time (section 9.1). Each frame has a counter of the open windows of each root,
+  with no charge. The place of an assignment, of a `mut` actual, of `push`, and of `pop` opens
+  a window of its root after the root resolves, before its steps. A root that is pending
+  already is `S008` at the `mut` actual or the assignment. The window of an assignment closes
+  after its right side, and the window of a `mut` actual after the last argument of its call.
+  Pass 4 rejects each conflict that the syntax shows, so only a call through a function value
+  gives this error.
 - The write-backs of a call run after its result, in the order of the parameters. Each checks
   the mutation rule (`S016`). A static value then checks the new depth of the root from the
   value and the number of steps of the place (`S015`). Each then charges the size of the final
@@ -274,6 +281,18 @@ def held (p : Pos) (id : Nat) : M Unit := do
   let s ← get
   if s.holds.getD id 0 != 0 then
     if let some sl := s.frame[id]? then charge p sl.value.size
+
+/-!
+Opens at `p` a window of the root `id` of the current frame (section 9.1). A root that is
+pending already is `S008` at `p`. The counters have no charge. `shut` closes the window.
+-/
+def pend (p : Pos) (x : String) (id : Nat) : M Unit := do
+  let k := (← get).pending.getD id 0
+  if k > 0 then fail .S008 p s!"the root `{x}` is pending in a window"
+  modify fun s => { s with pending := s.pending.insert id (k + 1) }
+
+def shut (id : Nat) : M Unit :=
+  modify fun s => { s with pending := s.pending.insert id (s.pending.getD id 0 - 1) }
 
 /-! The value of a static position at the node `pos`. Another value there is `S011`. -/
 def static (pos : Pos) : Val → M Value
@@ -935,14 +954,16 @@ mutual
 
   /--
   The place `target` at `p` (section 5.2). Its root is a `let mut` local, else it is `code` at
-  `p`. Each step charges 1 before it applies. Then the index of an index step evaluates and
-  checks against the live value of the root.
+  `p`. The place then opens a window of its root (`pend`), and the caller closes it (`shut`).
+  Each step charges 1 before it applies. Then the index of an index step evaluates and checks
+  against the live value of the root.
   -/
   def placeAt (n : Nat) (p : Pos) (code : ErrorCode) (target : Resolve.Expr) : M Place := do
     let some (root, sels) := chain target
       | fail code p "the root of a place is a `let mut` local"
     let some (id, slot, x) := ← place root
       | fail code p "the root of a place is a `let mut` local"
+    pend p x id
     let mut cur := slot.value
     let mut ty := slot.ty
     let mut keys : Array Nat := #[]
@@ -1023,8 +1044,8 @@ mutual
   /--
   The actuals of the arguments `xs` of a function item, in their evaluation order. The mark of
   an argument in `muts` makes it a `mut` actual, which resolves its place by the steps of an
-  assignment target. Each other argument evaluates, and its result waits while the later
-  arguments evaluate.
+  assignment target. Its window stays open until the last argument evaluates. Each other
+  argument evaluates, and its result waits while the later arguments evaluate.
   -/
   def actuals (n : Nat) (xs : List Resolve.Expr) (muts : List Bool) : M (List Actual) := do
     let acts ← (xs.zip muts).mapM fun (x, m) => do
@@ -1033,7 +1054,9 @@ mutual
         let o ← need x (← eval n x)
         hold o
         return (Actual.value o.value, some o)
-    for (_, o) in acts do if let some o := o then release o
+    for (a, o) in acts do
+      if let some o := o then release o
+      if let .place pl := a then shut pl.id
     return acts.map (·.1)
   termination_by (n + 1, 1)
 
@@ -1092,10 +1115,13 @@ mutual
       let [l, x] := xs | fail .S007 p s!"`{g}` takes 2 argument(s), but it has {xs.length}"
       let pl ← placeAt n l.pos .S008 l
       let o ← need x (← eval n x)
+      shut pl.id
       pushOnto p x.pos g pl o.value
     | .prim g .pop =>
       let [l] := xs | fail .S007 p s!"`{g}` takes 1 argument(s), but it has {xs.length}"
-      popFrom p g (← placeAt n l.pos .S008 l)
+      let pl ← placeAt n l.pos .S008 l
+      shut pl.id
+      popFrom p g pl
     | .prim g h => primCall p g h (← args n b xs)
     | .value o =>
       let .static (.function g qs _) := o.value | ctor n p o b xs
@@ -1129,6 +1155,7 @@ mutual
       | .assign p target v => do
         let pl ← placeAt n p .S010 target
         let o ← need v (← eval n v)
+        shut pl.id
         copy p o
         let y ← match pl.ty with
           | some t => conformVal p t o.value
@@ -1328,7 +1355,7 @@ def symbols (items : Array Resolve.Item) (scans : Array Scan) : Syms := Id.run d
 def start (budget : Budget) (items : Array Resolve.Item) : Ctx × St :=
   let scans := items.map scanItem
   (⟨items, budget.depth, 0, none, 0, symbols items scans, ⟨none, 0⟩, [], none⟩,
-   ⟨budget.fuel, Array.replicate items.size .notStarted, #[], {}, {}, {}⟩)
+   ⟨budget.fuel, Array.replicate items.size .notStarted, #[], {}, {}, {}, {}⟩)
 
 /-! Runs `act` with the budget. The result has the used fuel. -/
 def run (budget : Budget) (items : Array Resolve.Item) (act : Nat → M α) :
