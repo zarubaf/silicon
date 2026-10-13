@@ -296,3 +296,115 @@ fn registers_with_a_nonzero_reset_value() {
         "S017 2:3"
     );
 }
+
+const LEAF_PORTS: &str = "struct S { a: Bool, b: UInt[4] }\n\
+    struct P { hdr: (UInt[4], Bool), data: [S; 2] }\n\
+    module L() domains() {\n  input xs: [UInt[4]; 2];\n  input t: (Bool, SInt[4]);\n  \
+    input add: S;\n  input pkt: P;\n  output y: P;\n  output mux: [Bool; 1];\n  \
+    y := pkt;\n  mux := [add.a];\n}\n";
+
+/// One entry for each leaf of a port, in packing order: `.k` for an array or tuple element,
+/// and a keyword port with leaves keeps its source name and has no `0k`.
+#[test]
+fn the_schema_has_one_entry_for_each_leaf() {
+    assert_eq!(
+        names(LEAF_PORTS, "L"),
+        (
+            pairs(&[
+                ("add.a", "add$a"),
+                ("add.b", "add$b"),
+                ("pkt.hdr.0", "pkt$hdr$0e"),
+                ("pkt.hdr.1", "pkt$hdr$1e"),
+                ("pkt.data.0.a", "pkt$data$0e$a"),
+                ("pkt.data.0.b", "pkt$data$0e$b"),
+                ("pkt.data.1.a", "pkt$data$1e$a"),
+                ("pkt.data.1.b", "pkt$data$1e$b"),
+                ("t.0", "t$0e"),
+                ("t.1", "t$1e"),
+                ("xs.0", "xs$0e"),
+                ("xs.1", "xs$1e"),
+            ]),
+            pairs(&[
+                ("mux.0", "mux$0e"),
+                ("y.hdr.0", "y$hdr$0e"),
+                ("y.hdr.1", "y$hdr$1e"),
+                ("y.data.0.a", "y$data$0e$a"),
+                ("y.data.0.b", "y$data$0e$b"),
+                ("y.data.1.a", "y$data$1e$a"),
+                ("y.data.1.b", "y$data$1e$b"),
+            ]),
+        )
+    );
+}
+
+const EMPTY_PORTS: &str = "struct E { a: Bool, z: (), e: [Bool; 0], c: (UInt[2], ()) }\n\
+    module M() {\n  input u: ();\n  input n: [UInt[8]; 0];\n  input p: E;\n  \
+    output o: ();\n  output y: E;\n  o := ();\n  y := p;\n}\n";
+
+/// An empty port and an empty leaf have no entry, and the other fields keep their order.
+#[test]
+fn an_empty_port_and_an_empty_leaf_have_no_entry() {
+    assert_eq!(
+        names(EMPTY_PORTS, "M"),
+        (
+            pairs(&[
+                ("clock$0rst", "clock$0rst"),
+                ("p.a", "p$a"),
+                ("p.c.0", "p$c$0e")
+            ]),
+            pairs(&[("y.a", "y$a"), ("y.c.0", "y$c$0e")]),
+        )
+    );
+    assert_eq!(
+        run(
+            EMPTY_PORTS,
+            "M",
+            &["in=(clock$0rst false p.a true p.c.0 2)"]
+        ),
+        "out=(y.a true y.c.0 2)\n"
+    );
+    assert_eq!(
+        run(
+            EMPTY_PORTS,
+            "M",
+            &["in=(clock$0rst false p$a true p.c.0 2)"]
+        ),
+        "expected input p.a"
+    );
+}
+
+const AGG_RUN: &str = "struct R { n: UInt[4], s: SInt[4], f: Bool }\n\
+    module A() {\n  input t: (UInt[4], UInt[4]);\n  input v: R;\n  \
+    output swap: (UInt[4], UInt[4]);\n  output q: R;\n  output eq: Bool;\n  \
+    reg r: R = R(5, -2, true);\n  r := v;\n  swap := (t.1, t.0);\n  q := r;\n  eq := r == v;\n}\n";
+
+/// A vector runs through an aggregate design by leaf.
+#[test]
+fn a_vector_runs_through_an_aggregate_design() {
+    assert_eq!(
+        run(
+            AGG_RUN,
+            "A",
+            &[
+                "in=(clock$0rst true t.0 1 t.1 2 v.n 3 v.s -4 v.f false)",
+                "in=(clock$0rst false t.0 9 t.1 0 v.n 3 v.s -4 v.f false)",
+                "in=(clock$0rst false t.0 9 t.1 0 v.n 7 v.s 7 v.f true)",
+                "in=(clock$0rst false t.0 9 t.1 0 v.n 7 v.s 7 v.f true)"
+            ]
+        ),
+        text(&[
+            "out=(eq false q.n 0 q.s 0 q.f false swap.0 2 swap.1 1)",
+            "out=(eq false q.n 5 q.s -2 q.f true swap.0 0 swap.1 9)",
+            "out=(eq false q.n 3 q.s -4 q.f false swap.0 0 swap.1 9)",
+            "out=(eq true q.n 7 q.s 7 q.f true swap.0 0 swap.1 9)"
+        ])
+    );
+    assert_eq!(
+        run(
+            AGG_RUN,
+            "A",
+            &["in=(clock$0rst true t.0 1 t.1 2 v.n 3 v.s -9 v.f false)"]
+        ),
+        "input v.s exceeds its width"
+    );
+}
