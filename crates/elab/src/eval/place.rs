@@ -416,9 +416,13 @@ impl Evaluator<'_> {
         let mut known = self.base_ty(&base);
         let mut keyed = Vec::with_capacity(steps.len());
         let mut stop = None;
-        let mut held = self.held_path(&base);
+        let held = self.held_path(&base);
         let on_agg = matches!(self.opnd_seen(&base), Seen::Agg(_));
         let at = self.store.park(base.into_out());
+        let mut held = held.map(|(r, ty)| {
+            self.store.probe(at, r);
+            ty
+        });
         for (n, step) in steps.iter().enumerate() {
             // A selection of a hardware aggregate normalizes an empty part, which charges its
             // size. As in Lean, that charge comes before the next index evaluates, so the
@@ -434,18 +438,22 @@ impl Evaluator<'_> {
             }
             // An index evaluates while the walk waits at the part that the earlier steps lead
             // to. At a static part the base holds the root local, as in Lean, to the end. An
-            // index with no call cannot change the root, so the hold has no effect for it.
-            if let Sel::Index(_, args) = step
-                && self.call_args.has_call(args)
-                && let Some((r, _)) = &held
-                && matches!(self.store.at(r), Seen::Static(_))
-            {
-                self.store.hold_parked(at, r.root);
-                held = None;
+            // index with no call cannot change the root, so the hold has no effect for it. For
+            // an index with a call, the first change of the root decides the hold (`arm`).
+            let armed = held.is_some()
+                && matches!(step, Sel::Index(_, args) if self.call_args.has_call(args));
+            if armed {
+                self.store.arm(at);
             }
-            match self.key(step) {
+            let key = self.key(step);
+            if armed {
+                self.store.disarm(at);
+            }
+            match key {
                 Ok(k) => {
-                    held = held.and_then(|h| self.held_step(h, &k));
+                    let next = held.and_then(|ty| self.held_step(ty, &k));
+                    self.store.probe_step(at, next.map(|(number, _)| number));
+                    held = next.map(|(_, ty)| ty);
                     keyed.push(k);
                 }
                 Err(e) => {
@@ -486,10 +494,10 @@ impl Evaluator<'_> {
             .then(|| (r.clone(), self.base_ty(base)))
     }
 
-    /// Extends the path of `held` by the step `key`, which the walk takes. A dynamic index or a
-    /// field without a number ends the path: no static part follows it.
-    fn held_step(&self, held: (Ref, Option<TyId>), key: &Key<'_>) -> Option<(Ref, Option<TyId>)> {
-        let (mut r, ty) = held;
+    /// The number of the step `key`, which the walk takes from a part of type `ty`, and the type
+    /// of the part that follows. A dynamic index or a field without a number ends the path: no
+    /// static part follows it.
+    fn held_step(&self, ty: Option<TyId>, key: &Key<'_>) -> Option<(usize, Option<TyId>)> {
         let k = match key {
             Key::Index(_, _, Index::Number(k)) => Some(*k),
             Key::Index(..) => None,
@@ -498,9 +506,7 @@ impl Evaluator<'_> {
                 .and_then(|t| self.tys.fields(t))
                 .and_then(|(item, _)| self.field_number(item, f)),
         }?;
-        let ty = ty.and_then(|t| self.part_ty(t, k));
-        r.path.push(k);
-        Some((r, ty))
+        Some((k, ty.and_then(|t| self.part_ty(t, k))))
     }
 
     /// The type of a base that refers to a local or a constant: the type of its root, along its

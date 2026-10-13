@@ -135,6 +135,11 @@ static ABSENT_VALUE: Value = Value::Bool(false);
 
 type Frame = BTreeMap<DeclId, Slot>;
 
+/// The part of an aggregate root that a read waits at, with the root not held yet.
+struct Probe {
+    part: Ref,
+}
+
 /// The values that a result can refer to: the table of constants by item index, and the
 /// stack of frames. The last frame is the current frame. A frame holds only the bindings
 /// that ran.
@@ -157,6 +162,13 @@ struct Store {
     /// local that each parked result holds, if any, by its position.
     holds: BTreeMap<Root, usize>,
     held_by: Vec<Option<Root>>,
+    /// The read that waits at a part of an aggregate root and has not held the root yet, by the
+    /// position of its parked result: the path of the part, and whether an index with a call
+    /// evaluates now. The decision to hold comes at the first change of the root during that
+    /// index (`decide_holds`), so an index that leaves the root alone walks no path.
+    probes: Vec<Option<Probe>>,
+    /// The parked results with an index that evaluates now, by their local.
+    armed: BTreeMap<Root, Vec<usize>>,
     /// The roots with an open window (section 9.1). A root has at most one, since a second one is
     /// `S008`. The
     /// root names its frame, so a call switches no frame of this table and copies nothing.
@@ -265,6 +277,7 @@ impl Store {
         }
         self.parked.push(o);
         self.held_by.push(holds);
+        self.probes.push(None);
         at
     }
 
@@ -278,11 +291,79 @@ impl Store {
         }
     }
 
+    /// The read parked at `at` waits at the part `r` of an aggregate root, and a later index
+    /// with a call may hold the root there.
+    fn probe(&mut self, at: usize, r: Ref) {
+        if let Some(slot) = self.probes.get_mut(at) {
+            *slot = Some(Probe { part: r });
+        }
+    }
+
+    /// The walk of the read takes the step `k` from the part of the probe at `at`. A step with no
+    /// number ends the probe, because no static part follows it.
+    fn probe_step(&mut self, at: usize, k: Option<usize>) {
+        let Some(slot) = self.probes.get_mut(at) else {
+            return;
+        };
+        match (k, slot.as_mut()) {
+            (Some(k), Some(p)) => p.part.path.push(k),
+            _ => *slot = None,
+        }
+    }
+
+    /// An index with a call of the read at `at` evaluates: the first change of the local in that
+    /// time decides the hold.
+    fn arm(&mut self, at: usize) {
+        if let Some(Some(p)) = self.probes.get(at) {
+            let root = p.part.root;
+            self.armed.entry(root).or_default().push(at);
+        }
+    }
+
+    /// The index of the read at `at` finished. A decision that a change made stays made.
+    fn disarm(&mut self, at: usize) {
+        let root = match self.probes.get(at) {
+            Some(Some(p)) => p.part.root,
+            _ => return,
+        };
+        if let Some(list) = self.armed.get_mut(&root) {
+            if let Some(i) = list.iter().rposition(|&a| a == at) {
+                list.remove(i);
+            }
+            if list.is_empty() {
+                self.armed.remove(&root);
+            }
+        }
+    }
+
+    /// Decides the holds of the reads with an index that evaluates now, before a change of the
+    /// local at `root`: the part of a probe that is a static value holds the local, as Lean
+    /// reads the part again from the live root. The decision uses the root as the index found
+    /// it, so it comes before the first change, and each armed probe walks its path once.
+    fn decide_holds(&mut self, root: Root) {
+        let Some(list) = self.armed.remove(&root) else {
+            return;
+        };
+        for at in list {
+            let hold = match self.probes.get(at) {
+                Some(Some(p)) => matches!(self.at(&p.part), Seen::Static(_)),
+                _ => false,
+            };
+            if hold {
+                self.hold_parked(at, root);
+                if let Some(slot) = self.probes.get_mut(at) {
+                    *slot = None;
+                }
+            }
+        }
+    }
+
     /// Takes the results parked from the position `from` back, in their order. Parks and
     /// resumes nest like the evaluations that they wrap.
     fn resume(&mut self, from: usize) -> Vec<Out> {
         let from = from.min(self.parked.len());
         let outs = self.parked.split_off(from);
+        self.probes.truncate(from);
         for root in self.held_by.split_off(from).into_iter().flatten() {
             if let Some(n) = self.holds.get_mut(&root) {
                 *n -= 1;
@@ -328,7 +409,8 @@ impl Store {
     }
 
     /// Whether a parked result holds the local at `root` (section 5.4).
-    fn is_held(&self, root: Root) -> bool {
+    fn is_held(&mut self, root: Root) -> bool {
+        self.decide_holds(root);
         self.holds.contains_key(&root)
     }
 
@@ -337,6 +419,7 @@ impl Store {
     /// the size of the local before (`charge_held`). Each reference copies once, because the
     /// copy is not a reference.
     fn settle_root(&mut self, root: Root) {
+        self.decide_holds(root);
         let Some(at) = self.parked_at.remove(&root) else {
             return;
         };
@@ -705,6 +788,8 @@ impl<'a> Evaluator<'a> {
                 parked_at: BTreeMap::new(),
                 holds: BTreeMap::new(),
                 held_by: Vec::new(),
+                probes: Vec::new(),
+                armed: BTreeMap::new(),
                 pending: BTreeSet::new(),
                 links: BTreeMap::new(),
                 #[cfg(test)]
