@@ -28,6 +28,11 @@ pub(crate) struct Counts {
     pub params: u64,
     /// The windows of places that opened and closed.
     pub windows: u64,
+    /// The pairs of values and of types that an equality or a typed use compared. A type pair
+    /// compares two ids.
+    pub compared: u64,
+    /// The pairs of types that the join of two types visited.
+    pub visited: u64,
 }
 
 /// What a counter counts.
@@ -41,6 +46,8 @@ pub(crate) enum Count {
     Flagged,
     Params,
     Windows,
+    Compared,
+    Visited,
 }
 
 static COUNTS: Mutex<BTreeMap<u64, Counts>> = Mutex::new(BTreeMap::new());
@@ -81,6 +88,8 @@ pub(crate) fn add(count: Count, n: u64) {
             Count::Flagged => &mut c.flagged,
             Count::Params => &mut c.params,
             Count::Windows => &mut c.windows,
+            Count::Compared => &mut c.compared,
+            Count::Visited => &mut c.visited,
         };
         *field += n;
     }

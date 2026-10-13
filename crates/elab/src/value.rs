@@ -204,6 +204,8 @@ impl PartialEq for Value {
     fn eq(&self, other: &Value) -> bool {
         let mut work = vec![(self, other)];
         while let Some(pair) = work.pop() {
+            #[cfg(test)]
+            crate::counters::add(crate::counters::Count::Compared, 1);
             let same = match pair {
                 (Value::Array(s, xs), Value::Array(t, ys))
                 | (Value::Record(s, xs), Value::Record(t, ys))

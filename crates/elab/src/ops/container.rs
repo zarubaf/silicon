@@ -25,6 +25,8 @@ pub(crate) fn composite(v: &Value) -> bool {
 fn is_of(v: &Value, t: TyId, tys: &Types) -> bool {
     let mut work = vec![(v, t)];
     while let Some((v, t)) = work.pop() {
+        #[cfg(test)]
+        crate::counters::add(crate::counters::Count::Compared, 1);
         let same = match (v, tys.get(t)) {
             (Value::Unit, Ty::Unit)
             | (Value::Int(_), Ty::Int)
@@ -136,6 +138,8 @@ pub(crate) fn convert_scalar(
 /// A typed use of a function value at the function type `t`: its signature must be exactly
 /// `t`, with the `mut` marks. It compares two ids and charges nothing.
 pub(crate) fn convert_fn(t: TyId, v: &Value, tys: &Types) -> Result<Option<Value>, Fault> {
+    #[cfg(test)]
+    crate::counters::add(crate::counters::Count::Compared, 1);
     match v {
         Value::Function(_, sig) if *sig == t => Ok(None),
         _ => wrong(tys.get(t), v, tys),
@@ -325,7 +329,10 @@ fn scalar_join(lhs: TyId, rhs: TyId, tys: &mut Types) -> Option<TyId> {
 /// costs one unit of the `budget` of new pairs. Another pair has its result at once.
 fn visit(lhs: TyId, rhs: TyId, tys: &mut Types, budget: &mut u64) -> Visit {
     #[cfg(test)]
-    tys.tick(1);
+    {
+        tys.tick(1);
+        crate::counters::add(crate::counters::Count::Visited, 1);
+    }
     if let Some(done) = tys.joined(lhs, rhs) {
         return Visit::Done(done.clone());
     }
