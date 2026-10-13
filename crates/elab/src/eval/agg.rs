@@ -817,20 +817,34 @@ impl Evaluator<'_> {
         Ok((above, cur, keys.len()))
     }
 
-    /// The nodes `above` a path with the part `cur` back in place, each in its normal form.
+    /// The nodes `above` a path with the part `cur` back in place, each in its normal form. A
+    /// node takes the stored numbers of the part below it from the node just built, so a static
+    /// part on the path is never walked again, and the siblings are read once.
     fn rebuild(&self, pos: Pos, mut above: Vec<Above>, mut cur: Agg) -> Res<Agg> {
+        let mut below: Option<(u64, u64, u64)> = None;
         while let Some(mut level) = above.pop() {
-            if let Some(slot) = level.parts.get_mut(level.k) {
+            let k = level.k;
+            if let Some(slot) = level.parts.get_mut(k) {
                 *slot = cur;
             }
-            let Some(node) = Agg::node(&self.graph, &self.tys, level.ty, level.parts) else {
+            let numbers = level.parts.iter().enumerate().map(|(i, x)| match below {
+                Some(n) if i == k => n,
+                _ => (
+                    x.size(&self.graph, &self.tys),
+                    x.depth(&self.tys),
+                    x.leaves(&self.tys),
+                ),
+            });
+            let Some(node) = Agg::shape_from(&self.tys, level.ty, level.parts.len(), numbers)
+            else {
                 return fail(
                     Code::S010,
                     pos,
                     "the place has no part for its value".to_owned(),
                 );
             };
-            cur = node;
+            below = Some((node.size, node.depth, node.leaves));
+            cur = Agg::finish(&self.tys, node, level.parts);
         }
         Ok(cur)
     }
