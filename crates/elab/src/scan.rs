@@ -16,7 +16,7 @@
 use crate::int::Int;
 use crate::names::Sym;
 use parse::NestedStack;
-use parse::ast::{Expr, Ident, Item, NodeId, Stmt, TypeExpr};
+use parse::ast::{Expr, FnParam, Ident, Item, NodeId, Stmt, TypeExpr};
 use resolve::{DeclId, Kind, Resolved, ResolvedExpr, Target};
 use std::collections::BTreeMap;
 
@@ -271,7 +271,15 @@ impl Walk<'_> {
                 self.ty(elem, depth + 1);
                 self.expr(len, depth + 1);
             }
+            TypeExpr::Fn { params, ret, .. } => self.fn_type(params, ret, depth + 1),
         }
+    }
+
+    fn fn_type(&mut self, params: &[FnParam], ret: &TypeExpr, depth: usize) {
+        for param in params {
+            self.ty(&param.ty, depth);
+        }
+        self.ty(ret, depth);
     }
 
     fn expr(&mut self, e: &Expr, depth: usize) {
@@ -293,6 +301,7 @@ impl Walk<'_> {
                 self.ty(elem, d);
                 self.expr(len, d);
             }
+            Expr::FnType { params, ret, .. } => self.fn_type(params, ret, d),
             Expr::Binary { lhs, rhs, .. } => {
                 self.expr(lhs, d);
                 self.expr(rhs, d);

@@ -5,7 +5,7 @@
 //! The dump recurses over the AST, so its depth of calls is at most about twice the syntax
 //! depth of the parse that made the AST. `Parse::dump` runs it on a stack for that depth.
 
-use crate::ast::{Expr, Ident, Item, Param, Stmt, StructField, TypeExpr};
+use crate::ast::{Expr, FnParam, Ident, Item, Param, Stmt, StructField, TypeExpr};
 use std::fmt::{Debug, Write};
 
 /// The dump of a file: one line for each item, and an LF ends each line.
@@ -168,7 +168,22 @@ fn expr(e: &Expr, out: &mut String) {
             sp(out);
             expr(len, out);
         }),
+        Expr::FnType { params, ret, .. } => node("fntype", out, |out| {
+            sp(out);
+            list(params, out, fn_param);
+            sp(out);
+            type_expr(ret, out);
+        }),
     }
+}
+
+fn fn_param(p: &FnParam, out: &mut String) {
+    node("fnparam", out, |out| {
+        out.push(' ');
+        boolean(p.mutable, out);
+        out.push(' ');
+        type_expr(&p.ty, out);
+    });
 }
 
 fn type_expr(t: &TypeExpr, out: &mut String) {
@@ -193,6 +208,12 @@ fn type_expr(t: &TypeExpr, out: &mut String) {
             type_expr(elem, out);
             out.push(' ');
             expr(len, out);
+        }),
+        TypeExpr::Fn { params, ret, .. } => node("fn", out, |out| {
+            out.push(' ');
+            list(params, out, fn_param);
+            out.push(' ');
+            type_expr(ret, out);
         }),
     }
 }

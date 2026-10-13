@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-use crate::ast::{Expr, Item, ParamMode, Pos, Stmt, TypeExpr};
+use crate::ast::{Expr, FnParam, Item, ParamMode, Pos, Stmt, TypeExpr};
 use crate::{Code, DEFAULT_SYNTAX_DEPTH, Parse};
 use proptest::prelude::*;
 
@@ -63,7 +63,17 @@ fn sx(e: &Expr) -> String {
         Expr::Array { elems, .. } => format!("(array {})", list(elems)),
         Expr::Select { base, index, .. } => format!("(select {} {})", sx(base), index.as_str()),
         Expr::ArrayType { elem, len, .. } => format!("(arraytype {} {})", tx(elem), sx(len)),
+        Expr::FnType { params, ret, .. } => format!("(fntype {})", fx(params, ret)),
     }
+}
+
+/// The parameters and the result type of a function type: `[mut ]T ... -> R`.
+fn fx(params: &[FnParam], ret: &TypeExpr) -> String {
+    let params: Vec<String> = params
+        .iter()
+        .map(|p| format!("{}{}", if p.mutable { "mut " } else { "" }, tx(&p.ty)))
+        .collect();
+    format!("({}) -> {}", params.join(" "), tx(ret))
 }
 
 /// A type expression as a short S-expression.
@@ -80,6 +90,7 @@ fn tx(t: &TypeExpr) -> String {
             )
         }
         TypeExpr::Array { elem, len, .. } => format!("(array {} {})", tx(elem), sx(len)),
+        TypeExpr::Fn { params, ret, .. } => format!("(fn {})", fx(params, ret)),
     }
 }
 
@@ -1020,7 +1031,6 @@ fn container_forms_give_s001_and_s004_like_lean() {
         ("const A: [T] = 0;", Code::S001, 1, 12),
         ("const A: [T, U] = 0;", Code::S001, 1, 12),
         ("const A: [T; ] = 0;", Code::S001, 1, 14),
-        ("const A: (fn() -> T,) = 0;", Code::S004, 1, 11),
         ("const A: (T)(x) = 0;", Code::S004, 1, 13),
         ("const A: [T; 2](x) = 0;", Code::S004, 1, 16),
     ];
@@ -1046,7 +1056,6 @@ fn array_types_in_expressions_give_s001_at_the_first_non_type_token() {
         ("const X: T = [(a; b)];", Code::S001, 1, 17),
         ("const X: T = [f(x); 4];", Code::S004, 1, 16),
         ("const X: T = [a.f(x); 4];", Code::S001, 1, 16),
-        ("const X: T = [fn() -> T; 4];", Code::S004, 1, 15),
         ("const X: T = [@TypeOf(x); 4];", Code::S004, 1, 15),
         ("const X: T = [a::T; 4];", Code::S004, 1, 16),
         ("struct P(W: Nat) { }", Code::S001, 1, 10),

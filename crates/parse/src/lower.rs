@@ -3,7 +3,8 @@
 //! tree that does not have the shape that the parser builds.
 
 use crate::ast::{
-    BinOp, Expr, Ident, Item, Nat, NodeId, Param, ParamMode, Pos, Stmt, StructField, TypeExpr, UnOp,
+    BinOp, Expr, FnParam, Ident, Item, Nat, NodeId, Param, ParamMode, Pos, Stmt, StructField,
+    TypeExpr, UnOp,
 };
 use crate::error::LineIndex;
 use rowan::NodeOrToken;
@@ -375,8 +376,26 @@ impl<'a> Lower<'a> {
                 len: Box::new(self.expr(&node.children().find(is_expr)?)?),
             }),
             SyntaxKind::ParenType => self.type_expr(&node.children().find(is_type)?),
+            SyntaxKind::FnType => Some(TypeExpr::Fn {
+                pos,
+                params: self.fn_params(node)?,
+                ret: Box::new(self.type_expr(&node.children().find(is_type)?)?),
+            }),
             _ => None,
         }
+    }
+
+    /// The parameter types of a function type.
+    fn fn_params(&self, node: &SyntaxNode) -> Option<Vec<FnParam>> {
+        node.children()
+            .filter(|n| n.kind() == SyntaxKind::FnTypeParam)
+            .map(|param| {
+                Some(FnParam {
+                    mutable: has(&param, SyntaxKind::MutKw),
+                    ty: self.type_expr(&param.children().find(is_type)?)?,
+                })
+            })
+            .collect()
     }
 
     fn expr(&self, node: &SyntaxNode) -> Option<Expr> {
@@ -433,6 +452,11 @@ impl<'a> Lower<'a> {
                 cond: operand(0)?,
                 yes: operand(1)?,
                 no: operand(2)?,
+            }),
+            FnTypeExpr => Some(Expr::FnType {
+                pos,
+                params: self.fn_params(node)?,
+                ret: Box::new(self.type_expr(&node.children().find(is_type)?)?),
             }),
             CallExpr | MethodExpr | IndexExpr | FieldExpr | SelectExpr => self.postfix(node, pos),
             UnitExpr => Some(Expr::Unit { pos }),
@@ -506,6 +530,7 @@ fn is_type(node: &SyntaxNode) -> bool {
             | SyntaxKind::TupleType
             | SyntaxKind::ArrayType
             | SyntaxKind::ParenType
+            | SyntaxKind::FnType
     )
 }
 
@@ -529,5 +554,6 @@ fn is_expr(node: &SyntaxNode) -> bool {
             | TupleExpr
             | ArrayExpr
             | ArrayTypeExpr
+            | FnTypeExpr
     )
 }

@@ -203,10 +203,16 @@ pub enum Expr {
         elem: Box<TypeExpr>,
         len: Box<Expr>,
     },
+    /// The function type `fn (T, mut U) -> V` in an expression: a unary operand.
+    FnType {
+        pos: Pos,
+        params: Vec<FnParam>,
+        ret: Box<TypeExpr>,
+    },
 }
 
 /// A type expression: a type name, a type family with its static arguments, the unit type,
-/// a tuple type, or an array type `[T; N]`.
+/// a tuple type, an array type `[T; N]`, or a function type `fn (T, mut U) -> V`.
 #[cfg_attr(test, derive(Clone, Debug, PartialEq, Eq))]
 pub enum TypeExpr {
     Name {
@@ -232,6 +238,19 @@ pub enum TypeExpr {
         elem: Box<TypeExpr>,
         len: Box<Expr>,
     },
+    Fn {
+        pos: Pos,
+        params: Vec<FnParam>,
+        ret: Box<TypeExpr>,
+    },
+}
+
+/// A parameter type of a function type, with its `mut` mark. It has no `comptime` mark,
+/// because that mark is `S001`.
+#[cfg_attr(test, derive(Clone, Debug, PartialEq, Eq))]
+pub struct FnParam {
+    pub mutable: bool,
+    pub ty: TypeExpr,
 }
 
 /// A statement. A target of `Assign` or `Connect` is a `Name`, a `Field`, or an `Index`
@@ -430,6 +449,10 @@ fn take_exprs(es: &mut Vec<Expr>, work: &mut Vec<Pending>) {
     work.extend(es.drain(..).map(Pending::Expr));
 }
 
+fn take_params(params: &mut Vec<FnParam>, work: &mut Vec<Pending>) {
+    work.extend(params.drain(..).map(|p| Pending::Type(p.ty)));
+}
+
 impl Expr {
     fn leaf() -> Expr {
         Expr::Bool {
@@ -468,6 +491,10 @@ impl Expr {
                 take_type(elem, work);
                 take_expr(len, work);
             }
+            Expr::FnType { params, ret, .. } => {
+                take_params(params, work);
+                take_type(ret, work);
+            }
             Expr::Num { .. }
             | Expr::Bool { .. }
             | Expr::Str { .. }
@@ -505,6 +532,10 @@ impl TypeExpr {
                 take_expr(len, work);
             }
             TypeExpr::Tuple { elems, .. } => work.extend(elems.drain(..).map(Pending::Type)),
+            TypeExpr::Fn { params, ret, .. } => {
+                take_params(params, work);
+                take_type(ret, work);
+            }
             TypeExpr::Name { .. } | TypeExpr::Unit { .. } => {}
         }
     }

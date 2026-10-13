@@ -483,6 +483,9 @@ fn fail<T>(code: Code, pos: Pos, message: String) -> Res<T> {
     Err(Stop::Error(Error { code, pos, message }))
 }
 
+/// The message for a function type, which the evaluator does not support yet.
+const FN_TYPE_LATER: &str = "a function type is not supported yet";
+
 fn at(pos: Pos) -> impl Fn(Fault) -> Stop {
     move |(code, message)| Stop::Error(Error { code, pos, message })
 }
@@ -504,7 +507,8 @@ pub(crate) fn expr_pos(e: &Expr) -> Pos {
         | Expr::Tuple { pos, .. }
         | Expr::Array { pos, .. }
         | Expr::Select { pos, .. }
-        | Expr::ArrayType { pos, .. } => *pos,
+        | Expr::ArrayType { pos, .. }
+        | Expr::FnType { pos, .. } => *pos,
     }
 }
 
@@ -514,7 +518,8 @@ fn type_pos(t: &TypeExpr) -> Pos {
         | TypeExpr::Index { pos, .. }
         | TypeExpr::Unit { pos }
         | TypeExpr::Tuple { pos, .. }
-        | TypeExpr::Array { pos, .. } => *pos,
+        | TypeExpr::Array { pos, .. }
+        | TypeExpr::Fn { pos, .. } => *pos,
     }
 }
 
@@ -1175,6 +1180,7 @@ impl Evaluator<'_> {
                 let t = self.array_type(*pos, elem, len)?;
                 Ok(Some(Out::Made(Val::Static(Value::Type(t)))))
             }
+            Expr::FnType { pos, .. } => fail(Code::S004, *pos, FN_TYPE_LATER.to_owned()),
         }
     }
 

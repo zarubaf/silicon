@@ -51,10 +51,8 @@ impl Parser<'_> {
             }
             Some(LParen) => self.paren_type()?,
             Some(LBracket) => self.array_type()?,
-            Some(FnKw) => {
-                self.later_slice(self.offset(), "a function type");
-                return None;
-            }
+            // The result type of a function type takes the suffixes, so the chain ends here.
+            Some(FnKw) => return self.fn_chain(FnType),
             Some(At) => return self.builtin(),
             _ => {
                 self.syntax_error("expected a type");
@@ -79,6 +77,62 @@ impl Parser<'_> {
         }
         self.height = height;
         Some(())
+    }
+
+    /// A chain of function types `fn (A) -> fn (B) -> T`, then the result type of the last. A
+    /// loop opens one node for each arrow, so the recursion does not grow with the chain. The
+    /// height of a function type is 1 plus the largest height of its parameter types and its
+    /// result type: a `mut` mark adds none. `outer` is the kind of the first node.
+    fn fn_chain(&mut self, outer: SyntaxKind) -> Res {
+        let mut params = Vec::new();
+        let mut opened = 0;
+        let mut kind = outer;
+        let res = loop {
+            self.start(kind);
+            opened += 1;
+            let Some(height) = self.fn_head() else {
+                break None;
+            };
+            params.push(height);
+            if !self.is(FnKw) {
+                break self.type_expr();
+            }
+            kind = FnType;
+        };
+        for _ in 0..opened {
+            self.finish_node();
+        }
+        res?;
+        for height in params.into_iter().rev() {
+            self.height = height.max(self.height) + 1;
+        }
+        Some(())
+    }
+
+    /// `fn (P, mut Q,) ->`. The value is the largest height of the parameter types. A
+    /// `comptime` mark is `S001` at the mark.
+    fn fn_head(&mut self) -> Option<usize> {
+        self.bump();
+        self.expect(LParen, "`(`")?;
+        let mut height = 0;
+        while !self.is(RParen) {
+            self.node(FnTypeParam, |p| {
+                if p.is(ComptimeKw) {
+                    p.syntax_error("a parameter of a function type has no `comptime` mark");
+                    return None;
+                }
+                p.eat(MutKw);
+                p.type_expr()?;
+                height = height.max(p.height);
+                Some(())
+            })?;
+            if !self.eat(Comma) {
+                break;
+            }
+        }
+        self.expect(RParen, "`,` or `)`")?;
+        self.expect(Arrow, "`->`")?;
+        Some(height)
     }
 
     /// `()`, a tuple type, or a grouped type. A group makes no node of the AST, so it adds
@@ -201,7 +255,13 @@ impl Parser<'_> {
             self.bump();
             ops += 1;
         }
-        let res = self.postfix_expr();
+        let res = if self.is(FnKw) {
+            // A function type is a unary operand: its result type takes the suffixes.
+            self.place = false;
+            self.fn_chain(FnTypeExpr)
+        } else {
+            self.postfix_expr()
+        };
         for _ in 0..ops {
             self.finish_node();
         }
@@ -290,7 +350,6 @@ impl Parser<'_> {
     }
 
     fn primary(&mut self) -> Res {
-        let start = self.offset();
         match self.cur() {
             Some(Dec | Hex | Bin | Str | TrueKw | FalseKw) => {
                 self.node(Literal, |p| {
@@ -310,10 +369,6 @@ impl Parser<'_> {
             }
             Some(LParen) => return self.paren(),
             Some(LBracket) => return self.array(),
-            Some(FnKw) => {
-                self.later_slice(start, "a function type");
-                return None;
-            }
             Some(At) => return self.builtin(),
             _ => {
                 self.syntax_error("expected an expression");
