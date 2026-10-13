@@ -42,7 +42,7 @@ use parse::ast::{BinOp, Expr, Ident, Item, NodeId, Pos, Stmt, TypeExpr};
 use parse::{NestedStack, StackError};
 use resolve::{DeclId, Kind, Prelude, Resolved, ResolvedExpr, Target};
 use std::cell::Cell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The state of a constant in the table of constants. A done constant keeps its declared
 /// type, so a read through it knows the type of each part without a walk.
@@ -131,6 +131,10 @@ struct Store {
     /// local that each parked result holds, if any, by its position.
     holds: BTreeMap<Root, usize>,
     held_by: Vec<Option<Root>>,
+    /// The roots with an open window (section 9.1). A root has at most one, since a second one is
+    /// `S008`. The
+    /// root names its frame, so a call switches no frame of this table and copies nothing.
+    pending: BTreeSet<Root>,
     /// The recursive size of the values that references copied, and the fuel budget of the
     /// run, for the test of copies before a charge.
     #[cfg(test)]
@@ -233,6 +237,20 @@ impl Store {
             .into_iter()
             .next()
             .unwrap_or(Out::Made(Val::Static(Value::Unit)))
+    }
+
+    /// Opens a window of `root`: `false`, with no change, if a window of it is open already.
+    fn open_window(&mut self, root: Root) -> bool {
+        #[cfg(test)]
+        crate::counters::add(crate::counters::Count::Windows, 1);
+        self.pending.insert(root)
+    }
+
+    /// Closes the window of `root`.
+    fn shut_window(&mut self, root: Root) {
+        #[cfg(test)]
+        crate::counters::add(crate::counters::Count::Windows, 1);
+        self.pending.remove(&root);
     }
 
     /// Whether a parked result holds the local at `root` (section 5.4).
@@ -588,6 +606,7 @@ impl<'a> Evaluator<'a> {
                 parked_at: BTreeMap::new(),
                 holds: BTreeMap::new(),
                 held_by: Vec::new(),
+                pending: BTreeSet::new(),
                 links: BTreeMap::new(),
                 #[cfg(test)]
                 copied: (Cell::new(0), budget.fuel),

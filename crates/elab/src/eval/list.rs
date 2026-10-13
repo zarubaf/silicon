@@ -67,6 +67,7 @@ impl Evaluator<'_> {
         let place = self.place_at(expr_pos(list), Code::S008, list)?;
         let o = self.eval(x)?;
         let o = need(x, o)?;
+        self.store.shut_window(place.root);
         let Held::List { elem, .. } = place.held else {
             return self.not_a_list(pos, g, &place);
         };
@@ -122,6 +123,7 @@ impl Evaluator<'_> {
             );
         };
         let place = self.place_at(expr_pos(list), Code::S008, list)?;
+        self.store.shut_window(place.root);
         let Held::List { len, .. } = place.held else {
             return self.not_a_list(pos, g, &place);
         };

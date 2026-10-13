@@ -26,6 +26,8 @@ pub(crate) struct Counts {
     pub flagged: u64,
     /// The parameter types and result types that the function types made.
     pub params: u64,
+    /// The windows of places that opened and closed.
+    pub windows: u64,
 }
 
 /// What a counter counts.
@@ -38,6 +40,7 @@ pub(crate) enum Count {
     Serialized,
     Flagged,
     Params,
+    Windows,
 }
 
 static COUNTS: Mutex<BTreeMap<u64, Counts>> = Mutex::new(BTreeMap::new());
@@ -77,6 +80,7 @@ pub(crate) fn add(count: Count, n: u64) {
             Count::Serialized => &mut c.serialized,
             Count::Flagged => &mut c.flagged,
             Count::Params => &mut c.params,
+            Count::Windows => &mut c.windows,
         };
         *field += n;
     }
