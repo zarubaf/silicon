@@ -379,8 +379,15 @@ impl Evaluator<'_> {
         let mut keyed = Vec::with_capacity(steps.len());
         let mut stop = None;
         let mut held = self.held_path(&base);
+        let on_agg = matches!(self.opnd_seen(&base), Seen::Agg(_));
         let at = self.store.park(base.into_out());
         for (n, step) in steps.iter().enumerate() {
+            // A selection of a hardware aggregate normalizes an empty part, which charges its
+            // size. As in Lean, that charge comes before the next index evaluates, so the
+            // segment ends before an index that follows a selection.
+            if on_agg && n > 0 && matches!(step, Sel::Index(..)) {
+                break;
+            }
             // An index evaluates while the walk waits at the part that the earlier steps lead
             // to. At a static part the base holds the root local, as in Lean, to the end.
             if matches!(step, Sel::Index(..))
