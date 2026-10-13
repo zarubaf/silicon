@@ -1,0 +1,2 @@
+// S001: a function type has no `comptime` mark. The error is at the mark.
+fn f(g: fn (comptime Type) -> Nat) -> Nat {}

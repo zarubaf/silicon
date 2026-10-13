@@ -1,0 +1,5 @@
+// Function types nest: in a parameter, in a result, and in a type argument. A result type
+// extends as far right as it can, so `fn () -> fn () -> Nat` is a function that returns a function.
+fn twice(f: fn (fn (Nat) -> Nat, Nat) -> Nat) -> fn (Nat) -> fn (Nat) -> Nat {}
+type Row = [fn (Nat) -> Nat; 4];
+type Rows = List[(fn () -> Nat, fn (mut Nat) -> ())];
