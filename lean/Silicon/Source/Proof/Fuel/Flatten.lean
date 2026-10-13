@@ -165,6 +165,11 @@ theorem forInArray {f : β → γ → FM (ForInStep γ)} (h : ∀ b a, FFollows 
   rw [← Array.forIn_toList]
   exact forIn h _ init
 
+theorem forInRange {f : Nat → γ → FM (ForInStep γ)} (h : ∀ b a, FFollows (f b a))
+    (r : Std.Legacy.Range) (init : γ) : FFollows (ForIn.forIn r init f) := by
+  rw [Std.Legacy.Range.forIn_eq_forIn_range']
+  exact forIn h _ init
+
 end FFollows
 
 attribute [irreducible] FFollows
@@ -196,6 +201,7 @@ macro_rules | `(tactic| ffollows [$ts,*]) => `(tactic| repeat' (first
   | (with_reducible apply FFollows.get_bind; case hk => intros; rfl)
   | with_reducible apply FFollows.measure
   | with_reducible apply FFollows.forInArray
+  | with_reducible apply FFollows.forInRange
   | with_reducible apply FFollows.forIn
   | ffollows_by [$ts,*]
   | split
@@ -233,17 +239,27 @@ theorem lower_f (target : Names.Path) :
   | 0, .node .., hs => by simp at hs
   | n + 1, .node p t sz op args, hs => by
     have ih := lower_f target n
+    -- A link of a spine and the bottom of a spine are below a node within the bound.
+    have ihB : ∀ (B : Nat) (x : { x : Hw // sizeOf x < B }), B ≤ n + 1 → ∀ r,
+        FFollows (lower target r x.1) := fun B x hB r => ih x.1 (by have := x.2; omega) r
     intro root
     rw [lower.eq_def]
-    ffollows [ih, twice_f, deep_f, bindTemp_f, tempRef_f, pathText_f, nameText_f, constOf_f]
+    ffollows [ihB, ih, twice_f, deep_f, bindTemp_f, tempRef_f, pathText_f, nameText_f,
+      constOf_f]
     all_goals simp_all only [Hw.node.injEq, Hw.node.sizeOf_spec, List.cons.sizeOf_spec]
     all_goals omega
 
 theorem value_f (target : Names.Path) (h : Hw) : FFollows (value target h) := by
   unfold value; ffollows [lower_f target _ h (Nat.le_refl _)]
 
-theorem scalar_f (a : Agg) : FFollows (scalar a) := by
-  unfold scalar; ffollows
+theorem leafHw_f (pos : Pos) (t : Ty) (a : Option Agg) : FFollows (leafHw pos t a) := by
+  unfold leafHw; split <;> ffollows
+
+theorem leafConst_f (p : Core.Pos) (a : Option Agg) : FFollows (leafConst p a) := by
+  unfold leafConst; split <;> ffollows [constOf_f]
+
+theorem noFields_f (b : β) (t : Ty) : FFollows (noFields b t) := by
+  unfold noFields; ffollows
 
 theorem domainRef_f (pos : Pos) (n : Names.Name) : FFollows (domainRef pos n) := by
   unfold domainRef; ffollows [nameText_f]
@@ -251,14 +267,26 @@ theorem domainRef_f (pos : Pos) (n : Names.Name) : FFollows (domainRef pos n) :=
 theorem domainConns_f (pos : Pos) (c d : Option String) : FFollows (domainConns pos c d) := by
   unfold domainConns; ffollows [nameText_f, domainRef_f]
 
-theorem foldLeaves_f (q : Elab.PortDecl) (b : β) {f : β → Layout.Leaf → FM β}
-    (h : ∀ b l, FFollows (f b l)) : FFollows (Layout.foldLeaves q b f) := by
-  unfold Layout.foldLeaves; exact h _ _
+/-- The walk over the leaves follows itself, by induction on its bound. -/
+theorem foldLeaves_f (fs : Layout.Fields) (sub : α → Names.Field → Nat → Ty → α)
+    {f : β → Layout.Leaf → α → FM β} {bad : β → Ty → FM β} (h : ∀ b l x, FFollows (f b l x))
+    (hb : ∀ b t, FFollows (bad b t)) :
+    ∀ d p t x b, FFollows (Layout.foldLeaves fs sub f bad d p t x b)
+  | 0, _, _, _, _ => by unfold Layout.foldLeaves; ffollows
+  | d + 1, p, t, x, b => by
+    have ih := foldLeaves_f fs sub h hb d
+    unfold Layout.foldLeaves
+    ffollows [ih, h, hb]
 
-theorem lowerInst_f (i : Elab.Inst) : FFollows (lowerInst i) := by
+theorem foldPort_f (fs : Layout.Fields) (q : Elab.PortDecl) (b : β) {f : β → Layout.Leaf → FM β}
+    {bad : β → Ty → FM β} (h : ∀ b l, FFollows (f b l)) (hb : ∀ b t, FFollows (bad b t)) :
+    FFollows (Layout.foldPort fs q b f bad) := by
+  unfold Layout.foldPort; exact foldLeaves_f fs _ (fun b l _ => h b l) hb _ _ _ _ _
+
+theorem lowerInst_f (fs : Layout.Fields) (i : Elab.Inst) : FFollows (lowerInst fs i) := by
   unfold lowerInst
-  ffollows [nameText_f, pathText_f, domainRef_f, domainConns_f, value_f, constOf_f, foldLeaves_f,
-    scalar_f]
+  ffollows [nameText_f, pathText_f, domainRef_f, domainConns_f, value_f, constOf_f, foldPort_f,
+    foldLeaves_f, leafHw_f, leafConst_f, noFields_f]
 
 theorem lowerDesign_f (pos : Pos) (d : Elab.Design) : FFollows (lowerDesign pos d) := by
   unfold lowerDesign; ffollows [nameText_f, lowerInst_f]

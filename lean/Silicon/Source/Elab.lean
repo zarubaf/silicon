@@ -175,10 +175,34 @@ abbrev EM := StateT St Eval.M
 
 instance : Runs EM := {}
 
-/-! A design: the done instantiations in the order they finish, and the top among them. -/
+/-!
+A design: the done instantiations in the order they finish, and the top among them. `fields`
+gives the fields with a leaf of each struct type of the design: the number, the name, and the
+type of each, in declaration order. The lowering thus names the leaves of a record, and it skips
+an empty field with no step.
+-/
 structure Design where
   insts : Array Inst
   top : Nat
+  fields : Ty → Option (Array (Nat × String × Ty))
+
+/-!
+The fields with a leaf of each done struct specialization, by its number. `elaborate` makes the
+table once, from the fields that each specialization paid for when it completed.
+-/
+def leafFields (items : Array Resolve.Item) (specs : Specs) :
+    Array (Option (Array (Nat × String × Ty))) :=
+  specs.entries.map fun e => do
+    let .done _ fs := e.state | none
+    let some (.struct _ _ _ ds) := items[e.item]? | none
+    return ((ds.toArray.map (·.name.name)).zip fs).zipIdx.filterMap fun ((x, t), k) =>
+      if t.info.leaves = 0 then none else some (k, x, t)
+
+/-! The fields with a leaf of the struct type `t` in the table `table`. -/
+def fieldsOf (table : Array (Option (Array (Nat × String × Ty)))) :
+    Ty → Option (Array (Nat × String × Ty))
+  | .struct k .. => table[k]?.join
+  | _ => none
 
 def modifyBody (f : Body → Body) : EM Unit :=
   modify fun s => { s with work.body := f s.work.body }
@@ -496,7 +520,8 @@ def elaborate (budget : Budget) (items : Array Resolve.Item) (digest : String �
       charge pos (vs.map Value.size).sum
       return (← instantiate n pos top vs).2
     let (k, s) ← go.run { digest, work := { body := { domain := none } } }
-    return ⟨s.done, k⟩
+    let table := leafFields items (← get).specs
+    return ⟨s.done, k, fieldsOf table⟩
 
 /-! The output of `cost` (section 8): the total, then the units of each instantiation by name. -/
 def costLines (d : Design) (total : Nat) : String :=

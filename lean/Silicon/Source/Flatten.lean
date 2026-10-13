@@ -38,6 +38,15 @@ These rules settle the open points of the spec:
   module, the domain ports, and the ports in declaration order. Then it lowers the registers,
   the named bindings, the `:=` bindings, and the instances. A connection lowers with its `:=`
   binding.
+- A port, a register, and a `:=` binding lower one leaf at a time, in packing order
+  (`Layout.foldLeaves`). Each leaf charges its node and its name before it exists, so no list
+  of leaves comes before its charges. An empty one lowers to nothing. A leaf statement of a `:=`
+  binding has the leaf name as its target, so its temporaries count from 0.
+- A static leaf of a bound value lowers to a constant. A leaf of a reference refers to its core
+  name, or to its child output, at the position of the statement.
+- The left spine of a chain of binary nodes lowers in a loop, in the order of the recursion. The
+  chain of `==` on an aggregate is as long as its leaf count. The recursion only enters the
+  operands of the chain, so its depth does not grow with the chain.
 - The charges of a module belong to the units of its instantiation. The design node and the name
   of the top belong to no instantiation.
 - A core `E008` becomes `S020` at its position. `Core.check` reports the cycle node with the
@@ -182,12 +191,31 @@ def signed : Ty → Bool
   | .sint _ => true
   | _ => false
 
+/-! The core node of a binary operation or of a predicate. -/
+def binExpr (c : Core.Pos) : Core.BinOp ⊕ Core.Pred → Core.Expr → Core.Expr → Core.Expr
+  | .inl k, a, b => .bin c k a b
+  | .inr k, a, b => .icmp c k a b
+
+/-!
+A link of the left spine of a chain of binary nodes below a node of the measure `b`. It holds the
+position and the type of the node, its core operation, and its right operand.
+-/
+structure Link (b : Nat) where
+  pos : Pos
+  ty : Ty
+  op : Core.BinOp ⊕ Core.Pred
+  right : { x : Hw // sizeOf x < b }
+
 /-!
 The lowering of a hardware value for the statement of `target`. Each case charges its own core
 nodes, then lowers its operands from left to right. `root` marks the value of the statement.
+
+The left spine of a chain of binary nodes lowers in a loop, in the order of the recursion. Each
+node charges before its left operand, and each node binds after its right operand. The chain of
+`==` on an aggregate is as long as its leaf count, so the recursion never follows the spine.
 -/
 def lower (target : Path) (root : Bool) : Hw → FM Low
-  | .node p t _ op args => do
+  | .node p t sz op args => do
     let c := cpos p
     let up (h : Nat) := h + 1
     let lo ← match op, args with
@@ -219,7 +247,7 @@ def lower (target : Path) (root : Bool) : Hw → FM Low
       if op == .shl || op == .shr then
         let w := width t
         let k : Core.BinOp := if op == .shl then .shl else if signed t then .shrs else .shru
-        match n with
+        match _hn : n with
         | .node _ _ _ (.lit (.int v)) [] =>
           charge p 2
           let a ← lower target false a
@@ -251,16 +279,30 @@ def lower (target : Path) (root : Bool) : Hw → FM Low
             pure ⟨e, none, up (max ha hn)⟩
       else
         match binOp op (signed a.ty) with
-        | some (.inl k) =>
+        | some k =>
           charge p 1
-          let a ← lower target false a
-          let b ← lower target false n
-          pure ⟨.bin c k a.expr b.expr, none, up (max a.height b.height)⟩
-        | some (.inr k) =>
-          charge p 1
-          let a ← lower target false a
-          let b ← lower target false n
-          pure ⟨.icmp c k a.expr b.expr, none, up (max a.height b.height)⟩
+          let b := sizeOf (Hw.node p t sz (.bin op) [a, n])
+          let mut links : List (Link b) := []
+          let mut cur : { x : Hw // sizeOf x < b } := ⟨a, by
+            simp only [b, Hw.node.sizeOf_spec, List.cons.sizeOf_spec]; omega⟩
+          for _ in [0:sz] do
+            match cur with
+            | ⟨.node q u _ (.bin o) [l, r], hc⟩ =>
+              match binOp o (signed l.ty) with
+              | some j =>
+                charge q 1
+                links := ⟨q, u, j, ⟨r, by
+                  simp only [Hw.node.sizeOf_spec, List.cons.sizeOf_spec] at hc; omega⟩⟩ :: links
+                cur := ⟨l, by simp only [Hw.node.sizeOf_spec, List.cons.sizeOf_spec] at hc; omega⟩
+              | none => break
+            | _ => break
+          let mut lo ← lower target false cur.1
+          for l in links do
+            let r ← lower target false l.right.1
+            let e := binExpr (cpos l.pos) l.op lo.expr r.expr
+            lo ← deep l.pos target (width l.ty) false ⟨e, none, up (max lo.height r.height)⟩
+          let r ← lower target false n
+          pure ⟨binExpr c k lo.expr r.expr, none, up (max lo.height r.height)⟩
         | none => defect s!"no hardware node for `{op.text}`"
     | .mux, [s, a, b] =>
       charge p 1
@@ -302,16 +344,41 @@ def lower (target : Path) (root : Bool) : Hw → FM Low
       pure ⟨← tempRef p path, some (1 + pathUnits path), 1⟩
     | _, _ => defect "a hardware node has the wrong number of operands"
     deep p target (width t) root lo
+termination_by h => sizeOf h
+decreasing_by
+  all_goals first
+    | exact Subtype.property (p := fun x => sizeOf x < b) _
+    | (simp_all only [Hw.node.sizeOf_spec, List.cons.sizeOf_spec]; omega)
 
 /-! The value of one statement with the target `target`. Its temporaries count from 0. -/
 def value (target : Path) (h : Hw) : FM Core.Expr := do
   modify fun s => { s with count := 0 }
   return (← lower target true h).expr
 
-/-! The hardware value of a scalar `:=` binding. An aggregate binding has no lowering here. -/
-def scalar : Agg → FM Hw
-  | .hw h => pure h
-  | a => defect s!"a `:=` binding of {a.text} has no lowering by leaf"
+/-!
+The source of the element `k` of the type `t` with the leaf field `f`, for the statement at `pos`
+(`Agg.child`). Elaboration gives each bound value the type of its sink, so a missing part is a
+defect at its leaf.
+-/
+def sub (pos : Pos) (a : Option Agg) (f : Field) (k : Nat) (t : Ty) : Option Agg :=
+  a.bind (Agg.child pos k f t)
+
+/-!
+The hardware value of a leaf of the type `t` with the source `a`. A static leaf is a constant,
+and a leaf of a reference refers to its name or to its child output.
+-/
+def leafHw (pos : Pos) (t : Ty) : Option Agg → FM Hw
+  | some (.hw h) => pure h
+  | some (.static v) => pure (.mk pos t (.lit v) [])
+  | _ => defect s!"a bound value has no leaf of {t.text}"
+
+/-! The reset constant of a leaf of a register with the source `a`. -/
+def leafConst (p : Core.Pos) : Option Agg → FM Core.Expr
+  | some (.static v) => constOf p v
+  | _ => defect "a register value has no constant leaf"
+
+/-! A struct type without its fields in the design. -/
+def noFields (_ : β) (t : Ty) : FM β := defect s!"{t.text} has no fields in the design"
 
 /-! The domain ports `d$0clk` and `d$0rst`. -/
 def clockName (d : String) : Name := ⟨d, [.role .clk]⟩
@@ -336,8 +403,12 @@ def domainConns (pos : Pos) (c d : Option String) : FM (List (String × Core.Exp
   | none, _ => return []
   | some _, none => defect "a clocked child in a combinational module"
 
-/-! The core module of one instantiation. -/
-def lowerInst (i : Inst) : FM Core.Module := do
+/-!
+The core module of one instantiation. `fs` names the fields of each struct type. Each port,
+register, and `:=` binding lowers one leaf at a time in packing order, and each leaf charges
+before it exists. An empty one lowers to nothing.
+-/
+def lowerInst (fs : Layout.Fields) (i : Inst) : FM Core.Module := do
   let b := i.body
   let mp := cpos i.pos
   charge i.pos 1
@@ -353,22 +424,24 @@ def lowerInst (i : Inst) : FM Core.Module := do
   let mut ports : Array (PortDecl × Array Core.Port) := #[]
   for q in b.ports do
     let dir : Core.PortDir := if q.input then .input else .output
-    let leaves ← Layout.foldLeaves q #[] fun acc l => do
+    let leaves ← Layout.foldPort fs q #[] (fun acc l => do
       charge q.pos 1
       let x ← nameText q.pos l.name
-      pure (acc.push ⟨cpos q.pos, dir, x, .bits (width l.ty)⟩)
+      pure (acc.push ⟨cpos q.pos, dir, x, .bits (width l.ty)⟩)) noFields
     ports := ports.push (q, leaves)
   let layout := Layout.arrange domain ports
   let mut body : Array Core.Stmt := #[]
   for r in b.regs do
     let some d := b.domain | defect "a register in a combinational module"
-    charge r.pos 2
-    let x ← pathText r.pos r.path
-    let clk ← nameText r.pos (clockName d)
-    let sig ← domainRef r.pos (resetName d)
-    charge r.pos 1
-    let reset : Core.Reset := ⟨.sync, sig, ← constOf (cpos r.pos) r.init⟩
-    body := body.push (.reg (cpos r.pos) x (width r.ty) clk (some reset))
+    body ← Layout.foldLeaves fs (sub r.pos) (fun body l x => do
+      charge r.pos 2
+      let y ← pathText r.pos l.path
+      let clk ← nameText r.pos (clockName d)
+      let sig ← domainRef r.pos (resetName d)
+      charge r.pos 1
+      let reset : Core.Reset := ⟨.sync, sig, ← leafConst (cpos r.pos) x⟩
+      return body.push (.reg (cpos r.pos) y (width l.ty) clk (some reset)))
+      noFields r.ty.depth r.path r.ty (some (.static r.init)) body
   for l in b.lets do
     charge l.pos 1
     let x ← pathText l.pos l.path
@@ -378,18 +451,24 @@ def lowerInst (i : Inst) : FM Core.Module := do
     let p := cpos bd.pos
     match bd.sink with
     | .own k t path =>
-      charge bd.pos 1
-      let x ← pathText bd.pos path
-      let e ← value path (← scalar bd.value)
-      body := body.push <| match k with
-        | .reg => .next p x e
-        | .wire => .let_ p x (width t) e
-        | .output => .assign p x e
-    | .child k inst q _ =>
-      charge bd.pos 1
-      let x ← nameText bd.pos q
-      let e ← value (q.rest.foldl Path.push (inst.push (.user q.head))) (← scalar bd.value)
-      conns := conns.modify k (·.push (x, e))
+      body ← Layout.foldLeaves fs (sub bd.pos) (fun body l x => do
+        charge bd.pos 1
+        let y ← pathText bd.pos l.path
+        let e ← value l.path (← leafHw bd.pos l.ty x)
+        return body.push <| match k with
+          | .reg => .next p y e
+          | .wire => .let_ p y (width l.ty) e
+          | .output => .assign p y e)
+        noFields t.depth path t (some bd.value) body
+    | .child k inst q t =>
+      -- The leaf `l` names the port with its leaf fields. Its target is the instance, then it.
+      conns ← Layout.foldLeaves fs (sub bd.pos) (fun conns l x => do
+        charge bd.pos 1
+        let y ← nameText bd.pos l.name
+        let target : Path := ⟨inst.outer, l.path.inner ++ .user q.head :: inst.inner⟩
+        let e ← value target (← leafHw bd.pos l.ty x)
+        return conns.modify k (·.push (y, e)))
+        noFields t.depth ⟨q.head, q.rest.reverse⟩ t (some bd.value) conns
   for (c, k) in b.children.zipIdx do
     charge c.pos 1
     let x ← pathText c.pos c.path
@@ -418,7 +497,7 @@ def lowerDesign (pos : Pos) (d : Elab.Design) : FM Lowered := do
   let mut items : Array Core.Item := #[]
   let mut units : Array Nat := #[]
   for i in d.insts do
-    let (m, u) ← measure (lowerInst i)
+    let (m, u) ← measure (lowerInst d.fields i)
     items := items.push (.module m)
     units := units.push (i.units + u)
   charge pos 1

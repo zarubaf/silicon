@@ -202,6 +202,17 @@ private theorem natCast_lt_zero (k : Nat) : ((k : Int) < 0) = False :=
 private theorem ofBool_beq_one (b : Bool) : (BitVec.ofBool b == 1#1) = b := by
   cases b <;> rfl
 
+/-!
+The loop over the left spine of a node stops at once when its left operand is a constant. It
+thus leaves its start value.
+-/
+private theorem forIn_range_done (l : List Nat) (init : β)
+    (f : Nat → β → FM (ForInStep β)) (h : ∀ i, f i init = pure (.done init)) :
+    ForIn.forIn l init f = pure init := by
+  cases l with
+  | nil => rfl
+  | cons x xs => rw [List.forIn_cons, h]; rfl
+
 /--
 `lower` on a small node: it splits the fuel into the charge and a rest, then computes the run.
 -/
@@ -216,7 +227,8 @@ macro_rules
     simp only at hrest
     subst hrest
     simp +arith +decide [lower, litHw, leaf, Hw.mk, Hw.ty, Flatten.charge, deep, binOp,
-      finiteTy, signed, finite, width, constOf, twice, Core.Typed.Expr.erase, $[$ts:term],*]
+      finiteTy, signed, finite, width, constOf, twice, Core.Typed.Expr.erase, forIn_range_done,
+      binExpr, $[$ts:term],*]
     all_goals exact ⟨_, ⟨_, rfl⟩, rfl⟩))
 
 /-! The proofs, one per row family. -/

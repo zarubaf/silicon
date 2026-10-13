@@ -44,7 +44,8 @@ def schema (d : Elab.Design) : Option Schema := do
   let top ← d.insts[d.top]?
   let b := top.body
   let entries (q : Elab.PortDecl) : Array Entry :=
-    Id.run (Layout.foldLeaves q #[] fun es l => pure (es.push ⟨l.entry, encode l.name, l.ty⟩))
+    Id.run (Layout.foldPort d.fields q #[]
+      (fun es l => pure (es.push ⟨l.entry, encode l.name, l.ty⟩)) fun es _ => pure es)
   let reset := match b.domain with
     | some dom => let x := encode (Flatten.resetName dom); [⟨x, x, .bool⟩]
     | none => []
