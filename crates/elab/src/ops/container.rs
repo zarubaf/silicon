@@ -304,7 +304,7 @@ fn joined(charge: u64, ty: Option<TyId>) -> Joined {
 }
 
 /// A container type: an array, a tuple, a list, or a struct type.
-fn container_ty(t: &Ty) -> bool {
+pub(crate) fn container_ty(t: &Ty) -> bool {
     matches!(
         t,
         Ty::Array(..) | Ty::Tuple(_) | Ty::List(_) | Ty::Struct(_)
@@ -313,7 +313,7 @@ fn container_ty(t: &Ty) -> bool {
 
 /// The common type of two types that are not two arrays, two tuples, or two struct types: the
 /// operand rule. A static integer takes the finite type of the other side.
-fn scalar_join(lhs: TyId, rhs: TyId, tys: &mut Types) -> Option<TyId> {
+pub(crate) fn scalar_join(lhs: TyId, rhs: TyId, tys: &mut Types) -> Option<TyId> {
     if lhs == rhs {
         return Some(lhs);
     }

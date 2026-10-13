@@ -38,6 +38,7 @@ use core_ir::ast::{
 use core_ir::diag::{ErrorCode, Span};
 use parse::StackError;
 use parse::ast::{BinOp, Pos, UnOp};
+use std::collections::BTreeMap;
 use std::fmt::Write;
 
 /// The failure of a lowering or of its check: a source error, or a defect of this elaborator.
@@ -88,6 +89,7 @@ pub(crate) fn lower(d: &Design) -> Result<Result<Lowered, Failure>, StackError> 
             fuel: d.left,
             temps: Vec::new(),
             count: 0,
+            shares: BTreeMap::new(),
         };
         let lowered = lower.design();
         lowered.map(|(design, units)| Lowered {
@@ -294,6 +296,9 @@ struct Lower<'d> {
     fuel: u64,
     temps: Vec<Stmt>,
     count: u64,
+    /// The temporary of each shared condition (`Op::Share`) that a statement of the current
+    /// module already bound.
+    shares: BTreeMap<u64, Name>,
 }
 
 /// A node that a rule uses twice: its two uses and its effective height.
@@ -455,6 +460,7 @@ impl Lower<'_> {
                 let height = up(sel.height.max(then.height).max(els.height));
                 inner(mux(at, sel.expr, then.expr, els.expr), height)
             }
+            (Op::Share(k), [arg]) => self.share(target, pos, *k, *arg)?,
             (Op::Resize, [arg]) => self.resize(target, pos, &ty, *arg)?,
             (Op::Reinterpret, [arg]) => {
                 let arg = self.operand(target, *arg)?;
@@ -466,6 +472,25 @@ impl Lower<'_> {
             _ => return defect("a hardware node has the wrong number of operands"),
         };
         self.deep(pos, target, width(&ty), root, low)
+    }
+
+    /// A shared condition. Its first lowering in the module binds it to a temporary of that
+    /// statement, after the temporaries of the condition itself. Each later use refers to it.
+    fn share(&mut self, target: Target, pos: Pos, k: u64, arg: HwId) -> R<Low> {
+        let temp = if let Some(temp) = self.shares.get(&k) {
+            temp.clone()
+        } else {
+            let (width, at) = (width(&self.ty(arg)), self.pos(arg, pos));
+            let low = self.operand(target, arg)?;
+            let temp = self.bind_temp(pos, target, width, at, low.expr)?;
+            self.shares.insert(k, temp.clone());
+            temp
+        };
+        Ok(Low {
+            expr: self.temp_ref(pos, &temp)?,
+            copy: Some(1 + name_units(&temp)),
+            height: 1,
+        })
     }
 
     /// A node without operands: a name, a child output, or a constant.
@@ -733,6 +758,7 @@ impl Lower<'_> {
         self.charge(inst.pos, 1)?;
         let name = self.name(inst.pos, &inst.iface.name)?;
         self.temps.clear();
+        self.shares.clear();
         let ports = self.ports(inst)?;
         let mut stmts = Vec::new();
         self.regs(inst, &mut stmts)?;

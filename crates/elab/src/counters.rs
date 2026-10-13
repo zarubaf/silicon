@@ -43,7 +43,7 @@ pub(crate) struct Counts {
     pub bound: u64,
     /// The parts that a reference on the path of a place expanded into.
     pub expanded: u64,
-    /// The pairs that the walk of a hardware equality visited.
+    /// The pairs that the walk of a hardware equality or of a hardware `if` charged.
     pub paired: u64,
 }
 

@@ -38,6 +38,10 @@ pub(crate) enum Op {
     Un(UnOp),
     Bin(BinOp),
     Mux,
+    /// The condition of an aggregate `if`, which several leaf statements share. The lowering
+    /// binds it to one temporary at its first use. `k` numbers the marks of one instantiation.
+    /// The mark has no charge and no size.
+    Share(u64),
     Resize,
     Reinterpret,
 }
@@ -50,6 +54,7 @@ impl Op {
         match self {
             Op::Lit(v) => v.size(),
             Op::Count { size, .. } => *size,
+            Op::Share(_) => 0,
             Op::Ref(_) | Op::Out(..) => match ty {
                 Ty::UInt(w) | Ty::SInt(w) => width_size(*w),
                 _ => 1,

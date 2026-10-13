@@ -7,7 +7,7 @@
 //! A constant node copies a Boolean or a finite value. A finite value has at most 1024 words,
 //! because a width is at most 65536, so the copy stays within a constant factor of the charge.
 
-use super::{Evaluator, Opnd, Res, Store, at, fail};
+use super::{Evaluator, Naming, Opnd, Res, Store, at, fail};
 use crate::Code;
 use crate::agg::{Agg, Base};
 use crate::hw::{Graph, HwId, Op, Seen, Val};
@@ -189,6 +189,27 @@ struct Level<'a> {
     b: Side<'a>,
     next: u64,
     len: u64,
+    /// The results of the parts so far, for a walk that builds a value.
+    parts: Vec<Agg>,
+}
+
+/// The parts `part` of the two sides of `top`, in constant work. A scalar part type `leaf`
+/// makes hardware leaves of a reference. `None` if a side has no such part.
+fn part_pair<'a>(
+    top: &Level<'a>,
+    (part, step, leaf): (u64, &Step, Option<&Ty>),
+    pos: Pos,
+    (graph, paths, texts): (&mut Graph, &mut Paths, &[String]),
+) -> Option<(Side<'a>, Side<'a>)> {
+    let idx = usize::try_from(part).unwrap_or(usize::MAX);
+    let left = top.a.child(idx, step, leaf, pos, (graph, paths, texts));
+    let right = top.b.child(idx, step, leaf, pos, (graph, paths, texts));
+    Some((left?, right?))
+}
+
+/// The scalar type of a part type, if it is a data scalar.
+fn leaf_ty(t: &Ty) -> Option<Ty> {
+    matches!(t, Ty::Bool | Ty::UInt(_) | Ty::SInt(_)).then(|| t.clone())
 }
 
 /// The message of two sides that have no common type.
@@ -277,6 +298,166 @@ fn leaf_pair(
     Ok(())
 }
 
+/// The joined type of the two arms of a hardware `if`. Arms of a scalar type join with no
+/// charge. Arms of a container type pay the join charge.
+fn arm_join(
+    pos: Pos,
+    (lhs, rhs): (&Side<'_>, &Side<'_>),
+    (fuel, graph, tys): (&mut Fuel, &Graph, &mut Types),
+) -> Res<TyId> {
+    let (Some(lt), Some(rt)) = (lhs.ty(graph, tys), rhs.ty(graph, tys)) else {
+        return fail(Code::S010, pos, if_types("a value", "a value"));
+    };
+    let joined = if ops::container_ty(tys.get(lt)) || ops::container_ty(tys.get(rt)) {
+        let mut budget = fuel.left();
+        let joined = ops::common_ty(lt, rt, tys, &mut budget);
+        fuel.pay_int(&joined.charge).map_err(at(pos))?;
+        joined.ty
+    } else {
+        ops::scalar_join(lt, rt, tys)
+    };
+    match joined {
+        Some(t) => Ok(t),
+        None => fail(
+            Code::S010,
+            pos,
+            if_types(&lhs.text(graph, tys), &rhs.text(graph, tys)),
+        ),
+    }
+}
+
+/// What a pair of the walk of a hardware `if` gives: the number of the parts of a container, or
+/// the result of a pair that has no parts.
+enum Walked {
+    Parts(u64),
+    Done(Agg),
+}
+
+/// The pair `(a, b)` of the type `ty` by the rules 1 to 4 of section 7.4: a container descends,
+/// `()` gives `()`, a data scalar is a leaf pair, and every other part is a static pair.
+fn if_pair(
+    pos: Pos,
+    cond: HwId,
+    ty: TyId,
+    (a, b): (&Side<'_>, &Side<'_>),
+    (fuel, graph, tys): (&mut Fuel, &mut Graph, &mut Types),
+) -> Res<Walked> {
+    Ok(match tys.get(ty) {
+        Ty::Array(_, n) => Walked::Parts(n.to_u64().unwrap_or(u64::MAX)),
+        Ty::Tuple(ts) => Walked::Parts(ts.len() as u64),
+        Ty::Struct(_) => Walked::Parts(tys.fields(ty).map_or(0, |(_, fs)| fs.len() as u64)),
+        Ty::Unit => Walked::Done(Agg::Static(Value::Unit)),
+        Ty::Bool | Ty::UInt(_) | Ty::SInt(_) => {
+            let t = tys.get(ty).clone();
+            Walked::Done(Agg::Hw(if_leaf(pos, cond, &t, (a, b), (fuel, graph, tys))?))
+        }
+        _ => Walked::Done(Agg::Static(if_static(pos, ty, (a, b), (fuel, graph, tys))?)),
+    })
+}
+
+/// The message of two arms that have no common type.
+fn if_types(a: &str, b: &str) -> String {
+    format!("the arms of an `if` have one type, not {a} and {b}")
+}
+
+/// The condition `cond` of an `if` whose walk makes `muxes` `mux` nodes. With two or more
+/// nodes, the leaf statements share it, so it gets one mark with the next number of the
+/// instantiation. A name, a child output, and a constant get no mark. The mark has no charge.
+fn share(graph: &mut Graph, naming: &mut Naming, cond: HwId, muxes: u64) -> HwId {
+    let Some(node) = graph.node(cond) else {
+        return cond;
+    };
+    if muxes < 2
+        || matches!(
+            node.op,
+            Op::Ref(_) | Op::Out(..) | Op::Lit(_) | Op::Count { .. }
+        )
+    {
+        return cond;
+    }
+    let (pos, ty) = (node.pos, node.ty.clone());
+    let k = naming.shares;
+    naming.shares += 1;
+    graph.mk(pos, ty, Op::Share(k), vec![cond])
+}
+
+/// A static pair of a hardware `if` (section 7.4) of the joined type `t`. It charges the sum of
+/// the two sizes, as a static equality does, before it compares. Identical sides give the value,
+/// so a function compares by its item. Other sides compare by the static equality of `==`, and
+/// equal sides give the side of the joined type. Different sides are `S011`, because a static
+/// part cannot depend on the hardware condition.
+fn if_static(
+    pos: Pos,
+    t: TyId,
+    (lhs, rhs): (&Side<'_>, &Side<'_>),
+    (fuel, graph, tys): (&mut Fuel, &Graph, &mut Types),
+) -> Res<Value> {
+    let (Side::Val(x), Side::Val(y)) = (lhs, rhs) else {
+        return fail(
+            Code::S010,
+            pos,
+            if_types(&lhs.text(graph, tys), &rhs.text(graph, tys)),
+        );
+    };
+    fuel.pay(u128::from(x.size()) + u128::from(y.size()))
+        .map_err(at(pos))?;
+    let differ = || {
+        fail(
+            Code::S011,
+            pos,
+            "the arms of a hardware `if` differ in a static part".to_owned(),
+        )
+    };
+    if x == y {
+        return Ok((*x).clone());
+    }
+    if matches!(x, Value::Function(..)) {
+        return differ();
+    }
+    if ops::same_pair(x, y, tys, fuel.left()).map_err(at(pos))? {
+        return Ok(if x.ty(tys) == t {
+            (*x).clone()
+        } else {
+            (*y).clone()
+        });
+    }
+    differ()
+}
+
+/// A leaf pair of a hardware `if` of the joined data scalar type `t`. A static leaf converts to
+/// `t`, also when both leaves are static. Then the `mux` node charges 1 plus 3.
+fn if_leaf(
+    pos: Pos,
+    cond: HwId,
+    t: &Ty,
+    (lhs, rhs): (&Side<'_>, &Side<'_>),
+    (fuel, graph, tys): (&mut Fuel, &mut Graph, &mut Types),
+) -> Res<HwId> {
+    let pair = if let (Side::Val(x), Side::Val(y)) = (lhs, rhs) {
+        let left = lit_value_at(pos, t, x, fuel, graph, tys)?;
+        Some((left, lit_value_at(pos, t, y, fuel, graph, tys)?))
+    } else {
+        hw_operands(pos, (lhs, rhs), (fuel, graph, tys))?
+    };
+    let Some((left, right)) = pair else {
+        return fail(
+            Code::S010,
+            pos,
+            if_types(&lhs.text(graph, tys), &rhs.text(graph, tys)),
+        );
+    };
+    let (ty, other) = (graph.ty(left), graph.ty(right));
+    if ty != other {
+        return fail(
+            Code::S010,
+            pos,
+            if_types(&tys.text_of(&ty), &tys.text_of(&other)),
+        );
+    }
+    fuel.pay(4).map_err(at(pos))?;
+    Ok(graph.mk(pos, ty, Op::Mux, vec![cond, left, right]))
+}
+
 impl Evaluator<'_> {
     /// Makes a hardware node. It charges 1 plus the number of its operands.
     fn node(&mut self, pos: Pos, ty: Ty, op: Op, args: Vec<HwId>) -> Res<Val> {
@@ -288,12 +469,6 @@ impl Evaluator<'_> {
     /// type.
     pub(super) fn lit(&mut self, pos: Pos, v: Value) -> Res<HwId> {
         lit_of(pos, v, &mut self.graph, &self.tys)
-    }
-
-    /// A static result at a hardware use. The copy of a constant is small, so a value that
-    /// has no hardware type fails before its copy.
-    fn lit_out(&mut self, pos: Pos, o: &super::Out) -> Res<HwId> {
-        lit_value(pos, self.store.value(o), &mut self.graph, &self.tys)
     }
 
     /// A static operand next to a hardware operand of the type `t`. An integer takes the
@@ -466,60 +641,96 @@ impl Evaluator<'_> {
         self.node(pos, result, Op::Bin(op), vec![left, right])
     }
 
-    /// A hardware `if` with the condition `cond`. A static arm takes the type of the other
-    /// arm. Both arms have one type. Two function arms are a static pair: they charge as a
-    /// static equality, and one function item gives the static value. Two different functions
-    /// are `S011`.
-    pub(super) fn mux(&mut self, pos: Pos, cond: HwId, yes: Opnd, no: Opnd) -> Res<Val> {
-        if let (Opnd::Static(y), Opnd::Static(n)) = (&yes, &no)
-            && let (v @ Value::Function(i, _), w @ Value::Function(j, _)) =
-                (self.store.value(y), self.store.value(n))
-        {
-            let (same, kept) = (i == j, v.clone());
-            self.charge(pos, u128::from(v.size()) + u128::from(w.size()))?;
-            if same {
-                return Ok(Val::Static(kept));
-            }
-            return fail(
-                Code::S011,
-                pos,
-                "the arms of a hardware `if` are two different functions".to_owned(),
-            );
-        }
-        let (left, right) = match (yes, no) {
-            (Opnd::Static(yes), Opnd::Static(no)) => {
-                let yes_ty = self.store.value(&yes).finite_ty();
-                let no_ty = self.store.value(&no).finite_ty();
-                match (yes_ty, no_ty) {
-                    (Some(ty), _) => {
-                        let left = self.lit_out(pos, &yes)?;
-                        (left, self.lit_at(pos, &ty, &no)?)
+    /// A hardware `if` with the condition `cond` (section 5.4). Arms of a scalar type keep the
+    /// rule of slice 1: a common type (`S010`), no join charge, no walk unit. Arms of a
+    /// container type join with the join charge (`S010` without a join). An array, a tuple, or a
+    /// record root then walks by the rules of section 7.4 and charges 1 before each pair. The
+    /// metadata gives the number of `mux` nodes of the walk, so the mark of `cond` comes
+    /// before the walk. The walk keeps its own stack, and a reference never expands.
+    pub(super) fn mux(&mut self, pos: Pos, cond: HwId, yes: &Opnd, no: &Opnd) -> Res<Val> {
+        let (Some(sa), Some(sb)) = (
+            Side::of_opnd(&self.store, yes),
+            Side::of_opnd(&self.store, no),
+        ) else {
+            return fail(Code::S010, pos, if_types("a value", "a value"));
+        };
+        let env = (&mut self.fuel, &self.graph, &mut self.tys);
+        let joined = arm_join(pos, (&sa, &sb), env)?;
+        let root = matches!(
+            self.tys.get(joined),
+            Ty::Array(..) | Ty::Tuple(_) | Ty::Struct(_)
+        );
+        let cond = if root {
+            let muxes = self.tys.meta(joined).leaves.to_u64().unwrap_or(u64::MAX);
+            share(&mut self.graph, &mut self.naming, cond, muxes)
+        } else {
+            cond
+        };
+        let mut stack: Vec<Level<'_>> = Vec::new();
+        let mut visit = Some((joined, sa, sb));
+        let mut delivered: Option<Agg>;
+        loop {
+            delivered = None;
+            if let Some((ty, a, b)) = visit.take() {
+                if root {
+                    self.fuel.pay(1).map_err(at(pos))?;
+                    #[cfg(test)]
+                    crate::counters::add(crate::counters::Count::Paired, 1);
+                }
+                let env = (&mut self.fuel, &mut self.graph, &mut self.tys);
+                let len = match if_pair(pos, cond, ty, (&a, &b), env)? {
+                    Walked::Parts(len) => Some(len),
+                    Walked::Done(x) => {
+                        delivered = Some(x);
+                        None
                     }
-                    (_, Some(ty)) => {
-                        let left = self.lit_at(pos, &ty, &yes)?;
-                        (left, self.lit_out(pos, &no)?)
-                    }
-                    _ => {
-                        let left = self.lit_out(pos, &yes)?;
-                        (left, self.lit_out(pos, &no)?)
-                    }
+                };
+                if let Some(len) = len {
+                    stack.push(Level {
+                        ty,
+                        a,
+                        b,
+                        next: 0,
+                        len,
+                        parts: Vec::new(),
+                    });
                 }
             }
-            (yes, no) => self.hw_pair(pos, yes, no)?,
-        };
-        let (ty, other) = (self.graph.ty(left), self.graph.ty(right));
-        if ty == other {
-            self.node(pos, ty, Op::Mux, vec![cond, left, right])
-        } else {
-            fail(
-                Code::S010,
-                pos,
-                format!(
-                    "the arms of an `if` have one type, not {} and {}",
-                    self.tys.text_of(&ty),
-                    self.tys.text_of(&other)
-                ),
-            )
+            if let Some(part) = delivered.take() {
+                let Some(top) = stack.last_mut() else {
+                    return Ok(part.into_val());
+                };
+                top.parts.push(part);
+            }
+            let Some(top) = stack.last_mut() else {
+                return fail(Code::S010, pos, if_types("a value", "a value"));
+            };
+            if top.next >= top.len {
+                let Some(done) = stack.pop() else {
+                    return fail(Code::S010, pos, if_types("a value", "a value"));
+                };
+                let Some(node) = Agg::node(&self.graph, &self.tys, done.ty, done.parts) else {
+                    return fail(Code::S010, pos, if_types("a value", "a value"));
+                };
+                match stack.last_mut() {
+                    Some(parent) => parent.parts.push(node),
+                    None => return Ok(node.into_val()),
+                }
+                continue;
+            }
+            let part = top.next;
+            top.next += 1;
+            let (ct, step) = self.child_of(pos, top.ty, part)?;
+            let leaf = leaf_ty(self.tys.get(ct));
+            let env = (&mut self.graph, &mut self.paths, &self.syms.texts[..]);
+            let Some((left, right)) = part_pair(top, (part, &step, leaf.as_ref()), pos, env) else {
+                let texts = (
+                    top.a.text(&self.graph, &self.tys),
+                    top.b.text(&self.graph, &self.tys),
+                );
+                return fail(Code::S010, pos, if_types(&texts.0, &texts.1));
+            };
+            visit = Some((ct, left, right));
         }
     }
 
@@ -585,6 +796,7 @@ impl Evaluator<'_> {
                         b,
                         next: 0,
                         len,
+                        parts: Vec::new(),
                     });
                 }
             }
@@ -598,16 +810,9 @@ impl Evaluator<'_> {
             let part = top.next;
             top.next += 1;
             let (ct, step) = self.child_of(pos, top.ty, part)?;
-            let leaf = match self.tys.get(ct) {
-                scalar @ (Ty::Bool | Ty::UInt(_) | Ty::SInt(_)) => Some(scalar.clone()),
-                _ => None,
-            };
-            let idx = usize::try_from(part).unwrap_or(usize::MAX);
+            let leaf = leaf_ty(self.tys.get(ct));
             let env = (&mut self.graph, &mut self.paths, &self.syms.texts[..]);
-            let left = top.a.child(idx, &step, leaf.as_ref(), pos, env);
-            let env = (&mut self.graph, &mut self.paths, &self.syms.texts[..]);
-            let right = top.b.child(idx, &step, leaf.as_ref(), pos, env);
-            let (Some(left), Some(right)) = (left, right) else {
+            let Some((left, right)) = part_pair(top, (part, &step, leaf.as_ref()), pos, env) else {
                 let texts = (
                     top.a.text(&self.graph, &self.tys),
                     top.b.text(&self.graph, &self.tys),

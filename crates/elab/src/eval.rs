@@ -501,6 +501,8 @@ struct Naming {
     frames: BTreeMap<(usize, Sym, Step), usize>,
     versions: BTreeMap<(usize, Sym), u64>,
     lets: Vec<Let>,
+    /// The number of the marks of shared conditions (`Op::Share`).
+    shares: u64,
 }
 
 struct Evaluator<'a> {
@@ -1322,7 +1324,7 @@ impl Evaluator<'_> {
                     .and_then(|a| self.operand_after(pos, a, no));
                 self.arm = saved;
                 let (a, b) = arms?;
-                Ok(Some(Out::Made(self.mux(pos, c, a, b)?)))
+                Ok(Some(Out::Made(self.mux(pos, c, &a, &b)?)))
             }
             Opnd::Static(c) => {
                 if self.test(pos, self.store.seen(&c))? {
