@@ -920,7 +920,8 @@ mutual
   A name. A constant and a `type` item evaluate at their first use, in the table of constants.
   A struct item is a use of its specialization without arguments. A function item gives a
   function value. Its signature evaluates in the scope of the function, with no locals. It adds
-  no nesting level and no call frame. The name makes the value, so a binding of it is no copy.
+  no nesting level and no call frame. Each depth check of the signature reports `S015` at the
+  name. The name makes the value, so a binding of it is no copy.
   -/
   def name (n : Nat) (p : Pos) (x : String) : Ref → M Out
     | .local id => do
@@ -944,7 +945,7 @@ mutual
       | some (.fn _ _ u ps ret _) => do
         if generic ps ret then fail .S010 p s!"`{x}` is generic; a generic function is not a value"
         let (qs, r) ← inFrame none <|
-            withReader (fun c => { c with item := i, frame := ⟨none, 0⟩ }) do
+            withReader (fun c => { c with item := i, frame := ⟨none, 0⟩, site := some p }) do
           let qs ← params n (ps.map fun q => .mk (q.mode == .mut) q.ty)
           return (qs, ← typeExpr n ret)
         let _ ← fnTy p qs r
@@ -1354,7 +1355,7 @@ def symbols (items : Array Resolve.Item) (scans : Array Scan) : Syms := Id.run d
 /-! The context and the state of an elaboration with the budget `budget`. -/
 def start (budget : Budget) (items : Array Resolve.Item) : Ctx × St :=
   let scans := items.map scanItem
-  (⟨items, budget.depth, 0, none, 0, symbols items scans, ⟨none, 0⟩, [], none⟩,
+  (⟨items, budget.depth, 0, none, 0, symbols items scans, ⟨none, 0⟩, [], none, none⟩,
    ⟨budget.fuel, Array.replicate items.size .notStarted, #[], {}, {}, {}, {}⟩)
 
 /-! Runs `act` with the budget. The result has the used fuel. -/
