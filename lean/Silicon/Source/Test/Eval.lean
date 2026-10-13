@@ -1686,4 +1686,168 @@ def normal (a : Eval.Agg) (fuel : Nat := 100) : String :=
 #guard normal (.ref (.out ⟨"u", []⟩ ⟨"q", []⟩) (.uint 256)) == "hardware UInt[256] 4 0"
 #guard normal arrayRef == "hardware [UInt[8]; 4] 5 0"
 
+/-!
+The selection on a hardware aggregate (section 5.4, "References"). A chain of steps runs on the
+local `x`. Step `k` has its node at `9:(k + 2)`, and its literal, field name, or index name at
+`10:(k + 2)`. The local `h` is a hardware `UInt[2]`, the index of `hix`. The result shows the
+part, whether it refers, and the units of the chain alone.
+-/
+inductive Step where
+  | idx (k : Nat)
+  | hix
+  | dot (k : Nat)
+  | fld (f : String)
+
+def stepNode (k : Nat) : Pos := ⟨9, k + 2⟩
+def stepArg (k : Nat) : Pos := ⟨10, k + 2⟩
+
+def chainOf (steps : List Step) : Resolve.Expr :=
+  steps.zipIdx.foldl (init := .name ⟨9, 1⟩ "x" (.local 0)) fun b (s, k) =>
+    match s with
+    | .idx i => .index (stepNode k) b [.num (stepArg k) i]
+    | .hix => .index (stepNode k) b [.name (stepArg k) "h" (.local 1)]
+    | .dot i => .select (stepNode k) b (stepArg k) i
+    | .fld f => .field (stepNode k) b ⟨stepArg k, f⟩
+
+def fieldsOf (steps : List Step) : List (Pos × String) :=
+  steps.zipIdx.filterMap fun | (.fld f, k) => some (stepArg k, f) | _ => none
+
+def baseText : Eval.Base → String
+  | .name p => Names.encode p.name
+  | .out i q => s!"{Names.encode i.name}.{Names.encode q}"
+
+def describe : Eval.Val → String
+  | .static v => v.serialize
+  | .hw (.node _ t s op []) =>
+    let b := match op with
+      | .ref p => baseText (.name p)
+      | .out i q => baseText (.out i q)
+      | _ => ""
+    s!"hw {t.text} {b} {s}"
+  | .agg a@(.ref b t) => s!"ref {t.text} {baseText b} {a.size}"
+  | v => v.text
+
+/-!
+The result of the chain `steps` on `x`. `ty` is a type expression after the items of `src`.
+`base` makes the value of `x` from the context and that type.
+-/
+def sel (src ty : String) (base : Eval.Ctx → Ty → Eval.Val) (steps : List Step)
+    (fuel : Nat := 1000000) : String :=
+  let e := chainOf steps
+  let r : Except Error (String × Nat) := do
+    let (items, checked) ← Cli.load 4096 src
+    let te ← Resolve.resolveExpr items (← Parse.parseExpr 4096 ty)
+    let ((d, used), _) ← Eval.run { fuel } checked (top := { fields := fieldsOf steps }) fun n =>
+      withReader (fun c => { c with item := checked.size }) do
+        let t ← match ← Eval.eval n te with
+          | some ⟨.static (.type t), _, _⟩ => pure t
+          | _ => Eval.fail .S010 ⟨0, 0⟩ "a type"
+        Eval.bindLocal 0 ⟨none, false, base (← read) t⟩
+        Eval.bindLocal 1 ⟨none, false, .hw (.mk ⟨0, 0⟩ (.uint 2) (.ref ⟨"h", []⟩) [])⟩
+        let f0 := (← get).fuel
+        let o ← Eval.need e (← Eval.eval n e)
+        return (s!"{describe o.value} {o.ref}", f0 - (← get).fuel)
+    return (d, used)
+  match r with
+  | .ok (d, used) => s!"{d} {used}"
+  | .error e => s!"{e.code} {e.pos.line}:{e.pos.col}"
+
+def shapes : String :=
+  "struct P { a: UInt[8], z: [Unit; 1099511627776], t: (Bool, [UInt[4]; 3]), e: [Unit; 3] }\n" ++
+  "struct Q { a: UInt[8], b: Int }\ntype T2 = (Bool, UInt[8]);\n" ++
+  "type E = [([Unit; 2], Bool); 1099511627776];\n"
+
+/-! A register `r` of the type `t`. -/
+def regOf (t : Ty) : Eval.Val := .handle (.res .reg 0 t ⟨"r", []⟩)
+def reg (_ : Eval.Ctx) (t : Ty) : Eval.Val := regOf t
+
+/-!
+An implicit read of an aggregate register gives a lazy reference with no charge. A scalar read
+stays a hardware name. A name of a register without a step is the handle. Each step on a
+reference gives a reference to the part with its leaf field: `.f` adds `f`, and an index or a
+selector adds `<k>e`. The chain charges only its nodes and its literals: a name 1, a step 1,
+and a literal 2. A reference has the zero size of its type.
+-/
+#guard sel shapes "P" reg [.fld "a"] == "hw UInt[8] r$a 1 true 2"
+#guard sel shapes "P" reg [.fld "t"] == "ref (Bool, [UInt[4]; 3]) r$t 6 true 2"
+#guard sel shapes "P" reg [.fld "t", .dot 1, .idx 2] == "hw UInt[4] r$t$1e$2e 1 true 6"
+#guard sel shapes "P" reg [.fld "t", .idx 0] == "hw Bool r$t$0e 1 true 5"
+#guard sel shapes "UInt[8]" reg [] == "a register true 1"
+#guard sel shapes "UInt[8]" reg [.idx 0] == "S010 9:2"
+
+/-!
+A reference keeps its work in proportion to its steps. An index of a reference to a huge array
+takes the units of an index of a small array, and it never expands the array. The length check
+reads the type.
+-/
+#guard sel "" "[UInt[8]; 1099511627776]" reg [.idx 1099511627775] ==
+  "hw UInt[8] r$1099511627775e 1 true 4"
+#guard sel "" "[[UInt[8]; 1099511627776]; 1099511627776]" reg [.idx 7, .idx 9] ==
+  "hw UInt[8] r$7e$9e 1 true 7"
+#guard sel "" "[UInt[8]; 4]" reg [.idx 3] == "hw UInt[8] r$3e 1 true 4"
+#guard sel "" "[UInt[8]; 1099511627776]" reg [.idx 1099511627776] == "S013 10:2"
+#guard sel shapes "T2" reg [.dot 2] == "S013 10:2"
+#guard sel shapes "T2" reg [.idx 1] == "hw UInt[8] r$1e 1 true 4"
+
+/-!
+A hardware index of a reference is `S011` at the index, before the container check. A field of
+a reference to an array, or a selector of a reference to an array, is `S010`.
+-/
+#guard sel "" "[UInt[8]; 4]" reg [.hix] == "S011 10:2"
+#guard sel "" "UInt[8]" reg [.hix] == "S011 10:2"
+#guard sel "" "[UInt[8]; 4]" reg [.dot 0] == "S010 9:2"
+#guard sel shapes "[UInt[8]; 4]" reg [.fld "a"] == "S010 9:2"
+#guard sel shapes "P" reg [.fld "y"] == "S010 9:2"
+
+/-!
+A part without a hardware leaf is a new static value. It charges its zero size from the metadata
+before it exists, so a huge empty part fails with `S015` at the step before any work. It does not
+refer, so a binding of it is not a copy. A whole read of a register without a hardware leaf is
+a static value too, so a huge empty register fails at its read.
+-/
+#guard sel shapes "P" reg [.fld "e"] == "(array unit ((unit) (unit) (unit))) false 6"
+#guard sel shapes "P" reg [.fld "z"] == "S015 9:2"
+#guard sel shapes "E" reg [.idx 5, .dot 0] == "(array unit ((unit) (unit))) false 8"
+#guard sel "" "[[Unit; 2]; 1099511627776]" reg [.idx 5] == "S015 9:2"
+
+/-!
+A child output of an aggregate type is a reference to the output. Its parts append their leaf
+fields to the port name.
+-/
+def child (c : Eval.Ctx) (t : Ty) : Eval.Val :=
+  let k := (c.field (stepArg 0)).getD 0
+  let ports := ({} : Std.HashMap Nat Eval.Port).insert k ⟨"q", k, false, t⟩
+  .handle (.inst 0 ⟨"u", []⟩ ⟨⟨"C", []⟩, ports, 0, none⟩)
+#guard sel shapes "P" child [.fld "q"] == "ref P u.q 1099511627789 true 2"
+#guard sel shapes "P" child [.fld "q", .fld "t", .dot 1, .idx 2] ==
+  "hw UInt[4] u.q$t$1e$2e 1 true 7"
+#guard sel shapes "[Unit; 3]" child [.fld "q"] == "(array unit ((unit) (unit) (unit))) false 6"
+#guard sel shapes "Bool" child [.fld "q"] == "hw Bool u.q 1 true 2"
+
+/-!
+A container node of an aggregate refers to its element, which keeps its normal form. A static
+element stays static and refers.
+-/
+def node (_ : Eval.Ctx) (t : Ty) : Eval.Val :=
+  match t with
+  | .struct .. => .agg (.mkRecord t #[boolLeaf, .static (.int 3)])
+  | _ => .agg (.mkTuple #[.bool, .int, .array (.uint 8) 4] #[boolLeaf, .static (.int 3), arrayRef])
+#guard sel shapes "Q" node [.fld "a"] == "hw Bool b 1 true 2"
+#guard sel shapes "Q" node [.fld "b"] == "(int 3) true 2"
+#guard sel shapes "Q" node [.fld "c"] == "S010 9:2"
+#guard sel "" "Bool" node [.dot 1] == "(int 3) true 2"
+#guard sel "" "Bool" node [.idx 2, .idx 1] == "hw UInt[8] r$1e 1 true 7"
+#guard sel "" "Bool" node [.dot 2] == "ref [UInt[8]; 4] r 5 true 2"
+#guard sel "" "Bool" node [.dot 3] == "S013 10:2"
+#guard sel "" "Bool" node [.idx 3] == "S013 10:2"
+
+/-! `len` of a reference reads its type, so a huge array charges nothing. -/
+def lenText (v : Eval.Val) : String :=
+  match Eval.run {} #[] (fun _ => Eval.lenOf at1 [v]) with
+  | .ok (v, used) => s!"{v.serialize} {used}"
+  | .error e => s!"{e.code} {e.pos.line}:{e.pos.col}"
+#guard lenText (regOf (.array (.uint 8) (2 ^ 40))) == "(int 1099511627776) 0"
+#guard lenText (.agg (.mkArray .bool #[boolLeaf, .static (.bool true)])) == "(int 2) 0"
+#guard lenText (regOf (.tuple #[.bool, .bool])) == "S010 1:1"
+
 end Silicon.Source.Test.Eval
