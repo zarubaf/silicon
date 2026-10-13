@@ -279,7 +279,10 @@ fn read_work(v: &Value) -> u64 {
         sum += match v {
             Value::Int(n) => int_size(n),
             Value::Str(s) => 1 + s.len() as u64,
-            Value::Array(_, xs) | Value::Tuple(xs) | Value::Record(_, xs) | Value::List(_, xs) => {
+            Value::Array(_, xs)
+            | Value::Tuple(_, xs)
+            | Value::Record(_, xs)
+            | Value::List(_, xs) => {
                 work.extend(xs);
                 1
             }
@@ -300,7 +303,7 @@ fn held_types(v: &Value, out: &mut Vec<TyId>) {
                 out.push(*t);
                 work.extend(xs);
             }
-            Value::Tuple(xs) => work.extend(xs),
+            Value::Tuple(_, xs) => work.extend(xs),
             _ => {}
         }
     }
@@ -832,7 +835,7 @@ impl Types {
                 }
                 Step::Tuple(n) => {
                     let xs = done.split_off(done.len().checked_sub(n)?);
-                    done.push(Value::Tuple(xs));
+                    done.push(Value::tuple(xs));
                 }
                 Step::Record(t, n) => {
                     let xs = done.split_off(done.len().checked_sub(n)?);

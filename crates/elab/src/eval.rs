@@ -162,9 +162,10 @@ fn element<'a>(v: &'a Value, path: &[usize], steps: &Cell<u64>) -> &'a Value {
     let mut cur = v;
     for &k in path {
         cur = match cur {
-            Value::Array(_, xs) | Value::Tuple(xs) | Value::Record(_, xs) | Value::List(_, xs) => {
-                xs.get(k).unwrap_or(&ABSENT_VALUE)
-            }
+            Value::Array(_, xs)
+            | Value::Tuple(_, xs)
+            | Value::Record(_, xs)
+            | Value::List(_, xs) => xs.get(k).unwrap_or(&ABSENT_VALUE),
             _ => &ABSENT_VALUE,
         };
     }
@@ -293,7 +294,7 @@ impl Store {
         for &k in keys {
             cur = match cur {
                 Value::Array(_, xs)
-                | Value::Tuple(xs)
+                | Value::Tuple(_, xs)
                 | Value::Record(_, xs)
                 | Value::List(_, xs) => xs.get_mut(k)?,
                 _ => return None,
@@ -1286,7 +1287,11 @@ impl Evaluator<'_> {
     /// operands and before each join and each charge.
     fn comparable(&self, pos: Pos, op: BinOp, a: &Opnd, b: &Opnd) -> Res<()> {
         let holds = |o: &Opnd| match o {
-            Opnd::Static(o) => self.store.value(o).holds_fn(),
+            Opnd::Static(o) => {
+                #[cfg(test)]
+                crate::counters::add(crate::counters::Count::Flagged, 1);
+                self.store.value(o).holds_fn()
+            }
             Opnd::Hw(_) => false,
         };
         if matches!(op, BinOp::Eq | BinOp::Ne) && (holds(a) || holds(b)) {

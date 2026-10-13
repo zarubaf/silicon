@@ -23,7 +23,9 @@ use std::hash::Hasher;
 /// list keeps its element type too. A tuple has at least one element: `()` is `Unit`. A
 /// function value is the item that the name refers to and the id of its signature, which is
 /// its type. The table `Types` keeps the name of the item, so a copy of the value is constant
-/// work.
+/// work. A tuple keeps the function flag of its type, which it reads from its elements once,
+/// at its construction (`Value::tuple`). A write to an element keeps the type of the element,
+/// so it keeps the flag.
 pub enum Value {
     Int(Int),
     Bool(bool),
@@ -33,17 +35,25 @@ pub enum Value {
     Type(TyId),
     Unit,
     Array(TyId, Vec<Value>),
-    Tuple(Vec<Value>),
+    Tuple(bool, Vec<Value>),
     Record(TyId, Vec<Value>),
     List(TyId, Vec<Value>),
     Function(usize, TyId),
 }
 
 impl Value {
+    /// The tuple of `elems`, with the function flag of its type. Each element answers in
+    /// constant work, so the cost of the flag is in the construction, which already visits
+    /// each element.
+    #[must_use]
+    pub fn tuple(elems: Vec<Value>) -> Value {
+        Value::Tuple(elems.iter().any(Value::holds_fn), elems)
+    }
+
     fn take_children(&mut self, work: &mut Vec<Value>) {
         match self {
             Value::Array(_, elems)
-            | Value::Tuple(elems)
+            | Value::Tuple(_, elems)
             | Value::Record(_, elems)
             | Value::List(_, elems) => {
                 work.append(elems);
@@ -106,7 +116,7 @@ impl fmt::Debug for Value {
                     work.push(Piece::Text("])"));
                     push_each(&mut work, xs, Piece::Value, Piece::Text(", "));
                 }
-                Value::Tuple(xs) => {
+                Value::Tuple(_, xs) => {
                     f.write_str("Tuple([")?;
                     work.push(Piece::Text("])"));
                     push_each(&mut work, xs, Piece::Value, Piece::Text(", "));
@@ -155,7 +165,7 @@ impl Clone for Value {
                     work.push(Build::Array(*t, xs.len()));
                     work.extend(xs.iter().rev().map(Build::Visit));
                 }
-                Build::Visit(Value::Tuple(xs)) => {
+                Build::Visit(Value::Tuple(_, xs)) => {
                     work.push(Build::Tuple(xs.len()));
                     work.extend(xs.iter().rev().map(Build::Visit));
                 }
@@ -174,7 +184,7 @@ impl Clone for Value {
                 }
                 Build::Tuple(n) => {
                     let xs = last(&mut done, n);
-                    done.push(Value::Tuple(xs));
+                    done.push(Value::tuple(xs));
                 }
                 Build::Record(t, n) => {
                     let xs = last(&mut done, n);
@@ -201,7 +211,7 @@ impl PartialEq for Value {
                     work.extend(xs.iter().zip(ys));
                     s == t && xs.len() == ys.len()
                 }
-                (Value::Tuple(xs), Value::Tuple(ys)) => {
+                (Value::Tuple(_, xs), Value::Tuple(_, ys)) => {
                     work.extend(xs.iter().zip(ys));
                     xs.len() == ys.len()
                 }
@@ -248,7 +258,7 @@ impl Value {
         let mut work = vec![Build::Visit(self)];
         while let Some(step) = work.pop() {
             match step {
-                Build::Visit(Value::Tuple(xs)) => {
+                Build::Visit(Value::Tuple(_, xs)) => {
                     #[cfg(test)]
                     tys.tick(1);
                     work.push(Build::Tuple(xs.len()));
@@ -280,7 +290,7 @@ impl Value {
             Value::Array(elem, xs) => tys.array(*elem, Int::from_u64(xs.len() as u64)),
             Value::List(elem, _) => tys.list(*elem),
             Value::Record(t, _) | Value::Function(_, t) => *t,
-            Value::Unit | Value::Tuple(_) => tys.mk(Ty::Unit),
+            Value::Unit | Value::Tuple(..) => tys.mk(Ty::Unit),
         }
     }
 
@@ -296,7 +306,7 @@ impl Value {
             Value::Function(i, t) => Value::Function(*i, *t),
             Value::Unit
             | Value::Array(..)
-            | Value::Tuple(_)
+            | Value::Tuple(..)
             | Value::Record(..)
             | Value::List(..) => Value::Unit,
         }
@@ -375,7 +385,7 @@ impl Value {
                 Value::UInt(x) | Value::SInt(x) => width_size(x.width()),
                 Value::Type(t) => t.size(),
                 Value::Array(_, xs)
-                | Value::Tuple(xs)
+                | Value::Tuple(_, xs)
                 | Value::Record(_, xs)
                 | Value::List(_, xs) => {
                     work.extend(xs);
@@ -403,7 +413,7 @@ impl Value {
                     work.extend(xs.iter().map(|x| (x, above + 1)));
                     1 + t.depth()
                 }
-                Value::Tuple(xs) => {
+                Value::Tuple(_, xs) => {
                     work.extend(xs.iter().map(|x| (x, above + 1)));
                     1
                 }
@@ -415,27 +425,15 @@ impl Value {
     }
 
     /// Whether the type of the value holds a function type (the function flag of section 5.4).
-    /// An array, a list, and a record read the flag of their type id. The walk enters only
-    /// the tuples, so it is in the number of nodes of the tuples and stops at the first
-    /// function.
+    /// It reads the flag of the type id or of the tuple, with no walk over the value.
     #[must_use]
     pub fn holds_fn(&self) -> bool {
-        let mut work = vec![self];
-        while let Some(v) = work.pop() {
-            #[cfg(test)]
-            crate::counters::add(crate::counters::Count::Flagged, 1);
-            match v {
-                Value::Function(..) => return true,
-                Value::Array(t, _) | Value::Record(t, _) | Value::List(t, _) => {
-                    if t.holds_fn() {
-                        return true;
-                    }
-                }
-                Value::Tuple(xs) => work.extend(xs),
-                _ => {}
-            }
+        match self {
+            Value::Function(..) => true,
+            Value::Array(t, _) | Value::Record(t, _) | Value::List(t, _) => t.holds_fn(),
+            Value::Tuple(flag, _) => *flag,
+            _ => false,
         }
-        false
     }
 
     /// The charge of the walk that measures the serialization, before the charge of its bytes
@@ -452,7 +450,7 @@ impl Value {
                     u128::from(v.size()) * u128::from(v.size())
                 }
                 Value::Array(_, xs)
-                | Value::Tuple(xs)
+                | Value::Tuple(_, xs)
                 | Value::Record(_, xs)
                 | Value::List(_, xs) => {
                     work.extend(xs);
@@ -509,7 +507,7 @@ impl Value {
                     h.write_usize(xs.len());
                     work.extend(xs.iter().rev());
                 }
-                Value::Tuple(xs) => {
+                Value::Tuple(_, xs) => {
                     h.write_u8(10);
                     h.write_usize(xs.len());
                     work.extend(xs.iter().rev());
@@ -708,11 +706,11 @@ mod tests {
         );
         assert_eq!(ser(&tys, &Value::Array(b, vec![])), "(array bool ())");
         assert_eq!(
-            ser(&tys, &Value::Tuple(vec![int("1"), Value::Bool(true)])),
+            ser(&tys, &Value::tuple(vec![int("1"), Value::Bool(true)])),
             "(tuple ((int 1) (bool true)))"
         );
         assert_eq!(
-            ser(&tys, &Value::Tuple(vec![Value::Unit])),
+            ser(&tys, &Value::tuple(vec![Value::Unit])),
             "(tuple ((unit)))"
         );
         let arr = array_ty(&mut tys, u8t, 4);
@@ -736,7 +734,7 @@ mod tests {
             "(array (array bool 2) ((array bool ((bool true) (bool false)))))"
         );
         assert_eq!(
-            id("Top", vec![Value::Tuple(vec![int("1")]), Value::Unit]).serialize(&tys),
+            id("Top", vec![Value::tuple(vec![int("1")]), Value::Unit]).serialize(&tys),
             "(instantiation root Top ((tuple ((int 1))) (unit)))"
         );
     }
@@ -753,7 +751,7 @@ mod tests {
                 vec![Value::Array(wide, vec![]), Value::Array(wide, vec![])],
             ),
             Value::Type(arr),
-            Value::Tuple(vec![
+            Value::tuple(vec![
                 Value::Str("a\"".to_owned()),
                 int("-12"),
                 Value::Array(b, vec![]),
@@ -778,13 +776,13 @@ mod tests {
         let int2 = array_ty(&mut tys, i, 2);
         let two = tys.tuple(vec![b, int2]);
         assert_eq!(tys.text(two), "(Bool, [Int; 2])");
-        let pair = Value::Tuple(vec![int("1"), Value::Bool(true)]);
+        let pair = Value::tuple(vec![int("1"), Value::Bool(true)]);
         let pair_ty = tys.tuple(vec![i, b]);
         assert_eq!(pair.ty(&mut tys), pair_ty);
         let empty = Value::Array(b, vec![]);
         let empty_ty = array_ty(&mut tys, b, 0);
         assert_eq!(empty.ty(&mut tys), empty_ty);
-        let strings = Value::Tuple(vec![Value::Str("a".to_owned())]);
+        let strings = Value::tuple(vec![Value::Str("a".to_owned())]);
         let string = tys.mk(Ty::String);
         let strings_ty = tys.tuple(vec![string]);
         assert_eq!(strings.ty(&mut tys), strings_ty);
@@ -798,12 +796,12 @@ mod tests {
         let (b, i) = (tys.mk(Ty::Bool), tys.mk(Ty::Int));
         assert_ne!(Value::Array(b, vec![]), Value::Array(i, vec![]));
         assert_ne!(
-            Value::Tuple(vec![int("1")]),
+            Value::tuple(vec![int("1")]),
             Value::Array(i, vec![int("1")])
         );
         assert_eq!(
-            Value::Tuple(vec![uint(8, 1)]),
-            Value::Tuple(vec![uint(8, 1)])
+            Value::tuple(vec![uint(8, 1)]),
+            Value::tuple(vec![uint(8, 1)])
         );
         assert_ne!(uint(8, 1), uint(16, 1));
         let tup = tys.tuple(vec![b]);
@@ -835,7 +833,7 @@ mod tests {
         assert_eq!(Value::Array(b, vec![]).size(), 1);
         assert_eq!(Value::Array(u8t, vec![uint(8, 1), uint(8, 2)]).size(), 3);
         assert_eq!(
-            Value::Tuple(vec![int("1"), Value::Str("ab".to_owned())]).size(),
+            Value::tuple(vec![int("1"), Value::Str("ab".to_owned())]).size(),
             5
         );
         let arr = array_ty(&mut tys, u8t, 4);
@@ -882,7 +880,7 @@ mod tests {
         let tup = tys.tuple(vec![b, tup_int]);
         assert_eq!(Value::Type(tup).depth(), 3);
         assert_eq!(
-            Value::Tuple(vec![Value::Tuple(vec![int("1")]), Value::Bool(true)]).depth(),
+            Value::tuple(vec![Value::tuple(vec![int("1")]), Value::Bool(true)]).depth(),
             3
         );
         assert_eq!(Value::Array(b, vec![]).depth(), 2);
@@ -906,9 +904,9 @@ mod tests {
             3
         );
         assert_eq!(
-            Value::Tuple(vec![
+            Value::tuple(vec![
                 int("18446744073709551616"),
-                Value::Tuple(vec![Value::Bool(true)])
+                Value::tuple(vec![Value::Bool(true)])
             ])
             .measure_charge(),
             6
@@ -923,7 +921,7 @@ mod tests {
         let mut v = Value::Unit;
         let mut t = tys.mk(Ty::Unit);
         for _ in 0..1_000_000 {
-            v = Value::Tuple(vec![v]);
+            v = Value::tuple(vec![v]);
             t = tys.tuple(vec![t]);
         }
         assert_eq!(t.depth(), 1_000_001);
@@ -1019,7 +1017,7 @@ mod tests {
         let r = Value::Record(p8, vec![uint(8, 3), Value::Bool(false)]);
         assert_eq!(r.text(&tys), "Packet[8]");
         assert_eq!(r.ty(&mut tys), p8);
-        let pair = Value::Tuple(vec![Value::Type(p8), Value::Unit]);
+        let pair = Value::tuple(vec![Value::Type(p8), Value::Unit]);
         assert_eq!(pair.text(&tys), "(Type, Unit)");
         let lit = tys.begin_spec("Lit", 3, vec![r.clone(), Value::Str("a\"".to_owned())]);
         let (meta, depth) = tys.struct_meta(lit, &[]);
@@ -1034,7 +1032,7 @@ mod tests {
         assert_ne!(a, b);
         assert_eq!(Value::Type(a), Value::Type(a));
         let e = empty(&mut tys);
-        assert_ne!(Value::Record(e, vec![]), Value::Tuple(vec![]));
+        assert_ne!(Value::Record(e, vec![]), Value::tuple(vec![]));
         assert_ne!(
             Value::Record(a, vec![uint(8, 1), Value::Bool(true)]),
             Value::Record(a, vec![uint(8, 2), Value::Bool(true)])
@@ -1309,7 +1307,7 @@ mod tests {
                     let e = empty(&mut tys);
                     let mut v = Value::Record(e, vec![]);
                     for _ in 0..100_000 {
-                        v = Value::Tuple(vec![v, Value::Int(Int::from_u64(1))]);
+                        v = Value::tuple(vec![v, Value::Int(Int::from_u64(1))]);
                     }
                     let text = format!("{v:?}");
                     assert!(text.starts_with("Tuple([Tuple([Tuple(["));

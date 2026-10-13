@@ -17,7 +17,7 @@ use std::cmp::Ordering;
 pub(crate) fn composite(v: &Value) -> bool {
     matches!(
         v,
-        Value::Unit | Value::Array(..) | Value::Tuple(_) | Value::Record(..) | Value::List(..)
+        Value::Unit | Value::Array(..) | Value::Tuple(..) | Value::Record(..) | Value::List(..)
     )
 }
 
@@ -38,7 +38,7 @@ fn is_of(v: &Value, t: TyId, tys: &Types) -> bool {
             }
             (Value::List(e, _), Ty::List(te)) => e == te,
             (Value::Function(_, sig), Ty::Fn(..)) => *sig == t,
-            (Value::Tuple(xs), Ty::Tuple(ts)) => {
+            (Value::Tuple(_, xs), Ty::Tuple(ts)) => {
                 work.extend(xs.iter().zip(ts.iter().copied()));
                 xs.len() == ts.len()
             }
@@ -170,7 +170,7 @@ fn plan(t: TyId, v: &Value, tys: &Types) -> Result<u64, Fault> {
                 size = size.saturating_add(1);
                 work.extend(xs.iter().rev().map(|x| (*e, x)));
             }
-            (Ty::Tuple(ts), Value::Tuple(xs)) => {
+            (Ty::Tuple(ts), Value::Tuple(_, xs)) => {
                 if ts.len() != xs.len() {
                     return wrong(node, v, tys);
                 }
@@ -216,7 +216,7 @@ fn run(t: TyId, v: &Value, tys: &Types) -> Result<Value, Fault> {
                         work.push(Step::List(*e, xs.len()));
                         work.extend(xs.iter().rev().map(|x| Step::Visit(*e, x)));
                     }
-                    (Ty::Tuple(ts), Value::Tuple(xs)) => {
+                    (Ty::Tuple(ts), Value::Tuple(_, xs)) => {
                         work.push(Step::Tuple(xs.len()));
                         work.extend(
                             ts.iter()
@@ -242,7 +242,7 @@ fn run(t: TyId, v: &Value, tys: &Types) -> Result<Value, Fault> {
             }
             Step::Tuple(n) => {
                 let xs = done.split_off(done.len().saturating_sub(n));
-                done.push(Value::Tuple(xs));
+                done.push(Value::tuple(xs));
             }
         }
     }
@@ -526,7 +526,7 @@ fn same_check(a: &Value, b: &Value, tys: &mut Types, mut budget: u64) -> (Int, R
                     work.extend(xs.iter().zip(ys).rev());
                 }
             }
-            (Value::Tuple(xs), Value::Tuple(ys)) => {
+            (Value::Tuple(_, xs), Value::Tuple(_, ys)) => {
                 if xs.len() != ys.len() {
                     return (charge, no_common_type(a, b, tys));
                 }
@@ -551,7 +551,7 @@ fn same_run(a: &Value, b: &Value, tys: &Types) -> Result<bool, Fault> {
     while let Some((a, b)) = work.pop() {
         match (a, b) {
             (Value::Array(_, xs), Value::Array(_, ys))
-            | (Value::Tuple(xs), Value::Tuple(ys))
+            | (Value::Tuple(_, xs), Value::Tuple(_, ys))
             | (Value::Record(_, xs), Value::Record(_, ys)) => {
                 work.extend(xs.iter().zip(ys).rev());
             }
@@ -619,7 +619,7 @@ mod tests {
     fn deep(tys: &mut Types, depth: usize, x: Value, mut t: TyId) -> (Value, TyId) {
         let mut v = x;
         for _ in 0..depth {
-            v = Value::Tuple(vec![v]);
+            v = Value::tuple(vec![v]);
             t = tys.tuple(vec![t]);
         }
         (v, t)

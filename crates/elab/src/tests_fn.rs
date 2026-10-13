@@ -118,7 +118,7 @@ fn the_function_value() {
     assert_eq!(inc, Value::Function(0, inc_sig));
     assert_ne!(inc, Value::Function(1, inc_sig));
     assert_ne!(inc, Value::Function(0, pred));
-    let tuple = Value::Tuple(vec![inc.clone()]);
+    let tuple = Value::tuple(vec![inc.clone()]);
     assert_eq!(tuple.serialize(&tys), "(tuple ((function root inc)))");
     assert_eq!((tuple.size(), tuple.depth()), (2, 2));
     let one = tys.tuple(vec![inc_sig]);
@@ -139,7 +139,7 @@ fn the_function_value() {
     );
     assert_eq!(inc.serialized_len(&mut tys), 19);
     assert!(inc.holds_fn() && tuple.holds_fn() && list.holds_fn());
-    assert!(!Value::Tuple(vec![Value::Bool(true)]).holds_fn());
+    assert!(!Value::tuple(vec![Value::Bool(true)]).holds_fn());
 }
 
 fn o(src: &str, expr: &str) -> String {
@@ -678,10 +678,10 @@ fn many_uses_of_one_function_name_cost_linear_work() {
     assert_eq!(c.3 - b.3, 2 * (b.3 - a.3));
 }
 
-/// The check of `==` reads the function flag. It enters the tuples only, so its nodes follow
-/// the tuples and not the arrays and lists in them.
+/// The check of `==` reads the function flag of each operand in constant work: it does not
+/// walk the tuples (section 5.1).
 #[test]
-fn the_function_flag_check_follows_the_tuples() {
+fn the_function_flag_check_does_constant_work() {
     let tuple = |n: usize, last: &str| format!("({}, {last})", vec!["1"; n].join(", "));
     let measure = |n: usize| {
         let fuel = 300_000_000 + n as u64;
@@ -689,12 +689,16 @@ fn the_function_flag_check_follows_the_tuples() {
         assert_eq!(out("", &expr, fuel, 1000), "(bool true)");
         of(fuel).flagged
     };
-    // Each operand visits its tuple and its n + 1 elements.
-    assert_eq!(measure(50), 2 * 52);
-    assert_eq!(measure(100), 2 * 102);
-    // The type id of a list holds the flag, so the walk stops at the list.
+    assert_eq!((measure(10), measure(50), measure(100)), (2, 2, 2));
+    // A function in the last element of a long tuple gives one read, which short-circuits.
     let fuel = 300_000_999;
+    let expr = format!("{0} == {0}", tuple(100, "g"));
+    let src = "fn g() -> Bool { return true; }";
+    assert!(out(src, &expr, fuel, 1000).starts_with("S010"));
+    assert_eq!(of(fuel).flagged, 1);
+    // The type id of a list holds the flag.
+    let fuel = 300_000_998;
     let expr = "(list(fn () -> Bool), 1) == (list(fn () -> Bool), 1)";
     assert!(out("", expr, fuel, 1000).starts_with("S010"));
-    assert_eq!(of(fuel).flagged, 3);
+    assert_eq!(of(fuel).flagged, 1);
 }

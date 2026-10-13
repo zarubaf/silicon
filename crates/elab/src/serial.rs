@@ -185,7 +185,7 @@ fn value_node<'a, S: Sink>(tys: &Types, v: &'a Value, out: &mut S, work: &mut Ve
         Value::Array(t, xs) => container(out, work, "(array ", Some(*t), xs),
         Value::Record(t, xs) => container(out, work, "(record ", Some(*t), xs),
         Value::List(t, xs) => container(out, work, "(list ", Some(*t), xs),
-        Value::Tuple(xs) => container(out, work, "(tuple ", None, xs),
+        Value::Tuple(_, xs) => container(out, work, "(tuple ", None, xs),
         Value::Function(item, _) => {
             write!(out, "(function root {})", tys.fn_name(*item)).unwrap_or_default();
         }

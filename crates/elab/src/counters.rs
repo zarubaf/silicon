@@ -22,7 +22,7 @@ pub(crate) struct Counts {
     pub joined: u64,
     /// The bytes of text that the serialization of a static value wrote.
     pub serialized: u64,
-    /// The nodes that `Value::holds_fn` visited.
+    /// The operands that the check of `==` read the function flag of.
     pub flagged: u64,
     /// The parameter types and result types that the function types made.
     pub params: u64,
