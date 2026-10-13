@@ -105,25 +105,31 @@ def Op.size (ty : Ty) : Op → Nat
 def Hw.mk (pos : Pos) (ty : Ty) (op : Op) (args : List Hw) : Hw :=
   .node pos ty (op.size ty + (args.map Hw.size).sum) op args
 
-/-! The base of a reference aggregate: a core name, or an output of a child instance. -/
+/-! The core name of the port with the source name `x`. A port keeps its source name. -/
+def portName (x : String) : Name := ⟨x, []⟩
+
+/-!
+The base of a reference aggregate: a core name, or an output of a child instance. A child output
+holds the name of its port and the fields of its part in reverse order. Thus a step adds a field
+at the front.
+-/
 inductive Base where
   | name (path : Path)
-  | out (inst : Path) (port : Name)
+  | out (inst : Path) (port : String) (rev : List Field)
   deriving Repr, Inhabited
 
-/-! The operation of a leaf of the base `b`. -/
+/-! The operation of a leaf of the base `b`. A child output puts its fields in order once. -/
 def Base.op : Base → Op
   | .name p => .ref p
-  | .out i q => .out i q
+  | .out i q r => .out i { portName q with rest := r.reverse }
 
 /-!
 The part of the base `b` with the leaf field `f` (section 7.3). The field is a field `.f` of
-a record, or the element `<k>e` of an array or a tuple. A name adds the field in one step. A
-child output appends it to its port name, in the number of its steps.
+a record, or the element `<k>e` of an array or a tuple. Each base adds the field in one step.
 -/
 def Base.sub : Base → Field → Base
   | .name p, f => .name (p.push f)
-  | .out i q, f => .out i ⟨q.head, q.rest ++ [f]⟩
+  | .out i q r, f => .out i q (f :: r)
 
 /-!
 The stored numbers of a container node of an aggregate: its type, its size, its depth, and the
@@ -218,9 +224,6 @@ def Agg.rebuild (a : Agg) (xs : Array Agg) : Agg :=
   | .tuple { ty := .tuple ts, .. } _ => .mkTuple ts xs
   | .record n _ => .mkRecord n.ty xs
   | a => a
-
-/-! The core name of the port with the source name `x`. A port keeps its source name. -/
-def portName (x : String) : Name := ⟨x, []⟩
 
 /-! A port of an instantiation, as its parent sees it. `sym` is the symbol of its name. -/
 structure Port where

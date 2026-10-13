@@ -1142,7 +1142,7 @@ mutual
             if q.input then return some ⟨.handle (.input id path q), true, none⟩
             else
               -- A child output refers, unless it has no hardware leaf and is a new static value.
-              let r ← normalize p (.ref (.out path (portName q.name)) q.ty)
+              let r ← normalize p (.ref (.out path q.name []) q.ty)
               return some ⟨r, !(r matches .static _), none⟩
           | none => fail .S010 p s!"the instance has no port `{f.name}`"
         | v => do

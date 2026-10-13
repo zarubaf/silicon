@@ -1683,7 +1683,7 @@ def normal (a : Eval.Agg) (fuel : Nat := 100) : String :=
 #guard normal (.ref (.name ⟨"r", []⟩) (.array .unit (2 ^ 40))) == "S015 1:1"
 #guard normal (.ref (.name ⟨"r", []⟩) (.tuple #[.unit, .array .bool 0])) ==
   "(tuple ((unit) (array bool ()))) 3"
-#guard normal (.ref (.out ⟨"u", []⟩ ⟨"q", []⟩) (.uint 256)) == "hardware UInt[256] 4 0"
+#guard normal (.ref (.out ⟨"u", []⟩ "q" []) (.uint 256)) == "hardware UInt[256] 4 0"
 #guard normal arrayRef == "hardware [UInt[8]; 4] 5 0"
 
 /-!
@@ -1712,19 +1712,15 @@ def chainOf (steps : List Step) : Resolve.Expr :=
 def fieldsOf (steps : List Step) : List (Pos × String) :=
   steps.zipIdx.filterMap fun | (.fld f, k) => some (stepArg k, f) | _ => none
 
-def baseText : Eval.Base → String
-  | .name p => Names.encode p.name
+def opText : Eval.Op → String
+  | .ref p => Names.encode p.name
   | .out i q => s!"{Names.encode i.name}.{Names.encode q}"
+  | _ => ""
 
 def describe : Eval.Val → String
   | .static v => v.serialize
-  | .hw (.node _ t s op []) =>
-    let b := match op with
-      | .ref p => baseText (.name p)
-      | .out i q => baseText (.out i q)
-      | _ => ""
-    s!"hw {t.text} {b} {s}"
-  | .agg a@(.ref b t) => s!"ref {t.text} {baseText b} {a.size}"
+  | .hw (.node _ t s op []) => s!"hw {t.text} {opText op} {s}"
+  | .agg a@(.ref b t) => s!"ref {t.text} {opText b.op} {a.size}"
   | v => v.text
 
 /-!
@@ -1863,7 +1859,7 @@ mutual
   def aggText : Eval.Agg → String
     | .static v => v.serialize
     | .hw h => nameText h
-    | .ref b _ => s!"ref {baseText b}"
+    | .ref b _ => s!"ref {opText b.op}"
     | .array _ ⟨xs⟩ | .tuple _ ⟨xs⟩ | .record _ ⟨xs⟩ => s!"[{aggTexts xs}]"
 
   def aggTexts : List Eval.Agg → String
