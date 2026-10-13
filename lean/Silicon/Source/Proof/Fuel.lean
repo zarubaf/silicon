@@ -471,9 +471,13 @@ theorem selectAt_f (p q : Pos) (i : Nat) (v : Val) :
     Follows cap (selectAt p q i v) (selectAt p q i v) := by
   unfold selectAt; follows
 
+theorem selectKey_f (p q : Pos) (i : Nat) (v : Val) :
+    Follows cap (selectKey p q i v) (selectKey p q i v) := by
+  unfold selectKey; follows [selectAt_f, normalize_f]
+
 theorem select_f (p q : Pos) (i : Nat) (v : Val) :
     Follows cap (select p q i v) (select p q i v) := by
-  unfold select; follows [selectAt_f, normalize_f]
+  unfold select; follows [selectKey_f]
 
 theorem indexOf_f (q : Pos) (i : Value) : Follows cap (indexOf q i) (indexOf q i) := by
   unfold indexOf; follows
@@ -490,9 +494,13 @@ theorem within_f (q : Pos) (n : Nat) (i : Value) :
     Follows cap (within q n i) (within q n i) := by
   unfold within; follows [indexOf_f]
 
+theorem pickKey_f (p q : Pos) (v : Val) (i : Value) :
+    Follows cap (pickKey p q v i) (pickKey p q v i) := by
+  unfold pickKey; follows [pickAt_f, within_f, normalize_f]
+
 theorem pick_f (p q : Pos) (v : Val) (i : Value) :
     Follows cap (pick p q v i) (pick p q v i) := by
-  unfold pick; follows [pickAt_f, within_f, normalize_f]
+  unfold pick; follows [pickKey_f]
 
 theorem lenOf_f (p : Pos) (vs : List Val) : Follows cap (lenOf p vs) (lenOf p vs) := by
   unfold lenOf; follows [data_f]
@@ -505,9 +513,13 @@ theorem fieldAt_f (p : Pos) (f : Ident) (v : Val) :
     Follows cap (fieldAt p f v) (fieldAt p f v) := by
   unfold fieldAt; follows [fieldOf_f]
 
+theorem fieldKey_f (p : Pos) (f : Ident) (v : Val) :
+    Follows cap (fieldKey p f v) (fieldKey p f v) := by
+  unfold fieldKey; follows [fieldOf_f, fieldAt_f, normalize_f]
+
 theorem field_f (p : Pos) (f : Ident) (v : Val) :
     Follows cap (field p f v) (field p f v) := by
-  unfold field; follows [fieldOf_f, fieldAt_f, normalize_f]
+  unfold field; follows [fieldKey_f]
 
 theorem recordOf_f (p : Pos) (t : Ty) (fs : List Ty) (ps : List Pos) (vs : List Val) :
     Follows cap (recordOf p t fs ps vs) (recordOf p t fs ps vs) := by
@@ -516,9 +528,17 @@ theorem recordOf_f (p : Pos) (t : Ty) (fs : List Ty) (ps : List Pos) (vs : List 
 theorem zero_f (p : Pos) (t : Ty) : Follows cap (zero p t) (zero p t) := by
   unfold zero; follows [bounded_f]
 
+theorem typedAgg_f (p : Pos) (t : Ty) (a : Agg) :
+    Follows cap (typedAgg p t a) (typedAgg p t a) := by
+  unfold typedAgg; follows [bounded_f]
+
 theorem conformVal_f (p : Pos) (t : Ty) (v : Val) :
     Follows cap (conformVal p t v) (conformVal p t v) := by
-  unfold conformVal; follows [settle_f, data_f, conform_f]
+  unfold conformVal; follows [settle_f, data_f, conform_f, typedAgg_f]
+
+theorem copyUse_f (p : Pos) (t : Ty) (c : Bool) (v : Val) :
+    Follows cap (copyUse p t c v) (copyUse p t c v) := by
+  unfold copyUse; follows [settle_f, data_f, conformVal_f]
 
 theorem version_f (k : Tag) (b : Names.Path) :
     Follows cap (version k b) (version k b) := by
@@ -532,9 +552,13 @@ theorem bindHw_f (p : Pos) (q : Names.Path) (h : Hw) :
     Follows cap (bindHw p q h) (bindHw p q h) := by
   unfold bindHw; follows
 
+theorem bindAgg_f (p : Pos) (q : Names.Path) (a : Agg) :
+    Follows cap (bindAgg p q a) (bindAgg p q a) := by
+  unfold bindAgg; follows
+
 theorem named_f (p : Pos) (i : Nat) (u : String) (v : Val) :
     Follows cap (named p i u v) (named p i u v) := by
-  unfold named; follows [fresh_f, bindHw_f]
+  unfold named; follows [fresh_f, bindHw_f, bindAgg_f]
 
 theorem bindLocal_f (i : Nat) (sl : Slot) :
     Follows cap (bindLocal i sl) (bindLocal i sl) := by
@@ -547,13 +571,21 @@ theorem setConst_f (i : Nat) (e : Entry) :
 theorem mutation_f (p : Pos) : Follows cap (mutation p) (mutation p) := by
   unfold mutation; follows
 
+theorem setAt_f (p : Pos) (a y : Agg) (ks : List Nat) :
+    Follows cap (setAt p a y ks) (setAt p a y ks) := by
+  unfold setAt; follows
+
 theorem changeAt_f (p : Pos) (pl : Place) (f : Value → Value) :
     Follows cap (changeAt p pl f) (changeAt p pl f) := by
-  unfold changeAt; follows [held_f, bindLocal_f]
+  unfold changeAt; follows [held_f, bindLocal_f, setAt_f]
+
+theorem rebind_f (p : Pos) (pl : Place) (sl : Slot) (a o x : Agg) :
+    Follows cap (rebind p pl sl a o x) (rebind p pl sl a o x) := by
+  unfold rebind; follows [held_f, setAt_f, bindAgg_f, fresh_f, bindLocal_f]
 
 theorem store_f (p q : Pos) (pl : Place) (y : Val) :
     Follows cap (store p q pl y) (store p q pl y) := by
-  unfold store; follows [named_f, held_f, bindLocal_f, item_f, bounded_f, changeAt_f]
+  unfold store; follows [named_f, held_f, bindLocal_f, item_f, bounded_f, changeAt_f, rebind_f]
 
 theorem finals_f (ps : List Resolve.Param) (acts : List Actual) :
     Follows cap (finals ps acts) (finals ps acts) := by
@@ -602,11 +634,12 @@ theorem iteration_f (p : Pos) (i : Binder) (v : Int) {x y : M α} (h : Follows c
 
 theorem copyIn_f (p : Pos) (c : Bool) (q : Resolve.Param) (t : Ty) (a : Actual) :
     Follows cap (copyIn p c q t a) (copyIn p c q t a) := by
-  unfold copyIn; follows [static_f, settle_f, conform_f, conformVal_f, named_f, bindLocal_f]
+  unfold copyIn
+  follows [static_f, settle_f, conform_f, copyUse_f, named_f, bindLocal_f]
 
 theorem result_f (p : Pos) (path : Names.Path) (u : String) (o : Option Val) :
     Follows cap (result p path u o) (result p path u o) := by
-  unfold result; follows [bindHw_f, version_f]
+  unfold result; follows [bindHw_f, bindAgg_f]
 
 theorem pushOnto_f (p x : Pos) (g : String) (pl : Place) (v : Val) :
     Follows cap (pushOnto p x g pl v) (pushOnto p x g pl v) := by
@@ -668,7 +701,7 @@ theorem name_f (he : ∀ e, Follows m (eval k e) (eval m e))
 theorem placeAt_f (he : ∀ e, Follows m (eval k e) (eval m e)) (p : Pos) (c : ErrorCode)
     (t : Resolve.Expr) : Follows m (placeAt k p c t) (placeAt m p c t) := by
   rw [placeAt.eq_def k, placeAt.eq_def m]
-  follows [he, place_f, pend_f, need_f, static_f, pickAt_f, selectAt_f, fieldAt_f]
+  follows [he, place_f, pend_f, need_f, static_f, pickKey_f, selectKey_f, fieldKey_f]
 
 theorem args_f (he : ∀ e, Follows m (eval k e) (eval m e)) (b : Nat)
     (xs : List Resolve.Expr) : Follows m (args k b xs) (args m b xs) := by
@@ -757,13 +790,13 @@ theorem follows_all : ∀ n,
       · rw [stmt.eq_def (k + 1), stmt.eq_def 0]
         apply Follows.exhaust (cap := k)
         intro _
-        follows [he k, ht k, hs k, hb k, placeAt_f (he k), need_f, copy_f, conformVal_f,
+        follows [he k, ht k, hs k, hb k, placeAt_f (he k), need_f, copy_f, copyUse_f,
           known_f, named_f, bindLocal_f, test_f, int_f, range_f, iteration_f, static_f,
           store_f, hold_f, release_f, shut_f]
       · rw [stmt.eq_def (k + 1), stmt.eq_def (m + 1)]
         apply Follows.charge_one
         intro _
-        follows [he m, ht m, hs m, hb m, placeAt_f (he m), need_f, copy_f, conformVal_f,
+        follows [he m, ht m, hs m, hb m, placeAt_f (he m), need_f, copy_f, copyUse_f,
           known_f, named_f, bindLocal_f, test_f, int_f, range_f, iteration_f, static_f,
           store_f, hold_f, release_f, shut_f]
     · rcases n' with _ | m

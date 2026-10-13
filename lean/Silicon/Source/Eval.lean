@@ -98,7 +98,14 @@ Hardware values follow v0.1 sections 1 and 3:
 - A shift count is a hardware `UInt`, or a static count that becomes an `Int` constant node.
 - A `let`, an assignment, and a hardware argument of a function bind a hardware value to a
   core name of section 7.3. The hardware result of a function gets the role `0ret` in the call
-  frame. A static value and a handle alias get no core name.
+  frame, with no version. A static value and a handle alias get no core name.
+- A binding of a hardware aggregate takes one version, and each hardware leaf gets one core
+  `let` at the name with its leaf fields. A reference expands into its leaves there, after the
+  copy paid for them. An argument, a result, and a `mut` write-back bind the same way.
+- A place update whose new root has a hardware leaf binds each hardware leaf of the root again,
+  at the next version of the root. It charges the size of the new root from the stored sizes,
+  before the path copies and before a reference on the path expands. The held root then
+  charges, and the change and the core `let` statements follow (section 5.4).
 - `Source.Resolve` gives each call node its call site `k`: its number in the pre-order of the
   body of the enclosing item. The call frame is `<fn>$<k>c`. A call outside a body has only
   static values, so it never names hardware.
@@ -125,7 +132,8 @@ its operation runs. When the fuel cannot pay it, the result is `S015` at the nod
    constructor `T(x)` are copies. `len` only refers to its argument, so it copies nothing.
    Each copy charges after all arguments of the call run. A binding is a `let`, an
    assignment, or a constant. A reference is a name, or a conditional that selects a
-   reference. The copy comes before the typed use.
+   reference. The copy comes before the typed use. The copy of a handle that reads an aggregate
+   also charges the size of the read reference: the zero size of its type.
 7. The target of an assignment is a place, not an expression, so its root name charges
    nothing. Each step of the place, an index or a selector `.N`, charges 1 before it applies,
    so the charge pays for the walk over the path. The index expressions evaluate and charge.
@@ -448,14 +456,30 @@ def known : Val → M Unit
   | .pending q _ => fail .S010 q "`[]` needs the type [T; 0] from its context"
   | _ => pure ()
 
-/-! A typed use of `v` at the type `t`. It reads a handle. A hardware value needs the type `t`. -/
+/-!
+A typed use of `v` at the type `t`. It reads a handle. A hardware value needs the type `t`, and
+a hardware aggregate converts part by part (`typedAgg`).
+-/
 def conformVal (pos : Pos) (t : Ty) (v : Val) : M Val := do
   match ← data pos (← settle pos t v) with
   | .static x => return .static (← conform pos t x)
   | .hw h =>
     if h.ty.same t then return .hw h
     else fail .S010 pos s!"expected {t.text}, but the value is {h.ty.text}"
+  | .agg a => return .agg (← typedAgg pos t a)
   | v => fail .S010 pos s!"{v.text} is not data"
+
+/-!
+The copy of `v` when `copies`, then its typed use at `t` at `pos`. The copy charges the size of
+`v`, and a handle has the size 1 as in slice 1. A typed use then reads a handle. A read of an
+aggregate gives a reference, and its binding expands the reference into its leaves. Thus the
+copy also charges the size of the reference, the zero size of its type, before the typed use.
+-/
+def copyUse (pos : Pos) (t : Ty) (copies : Bool) (v : Val) : M Val := do
+  if copies then charge pos v.size
+  let d ← data pos (← settle pos t v)
+  if copies && v matches .handle _ && d matches .agg _ then charge pos d.size
+  conformVal pos t d
 
 /-!
 The frame of the field pair `u` and `f` inside the current frame, with its path. Two frames
@@ -493,9 +517,24 @@ def bindHw (pos : Pos) (path : Path) (h : Hw) : M Val := do
   modify fun s => { s with naming.lets := s.naming.lets.push ⟨path, h, pos⟩ }
   return .hw (.mk pos h.ty (.ref path) [])
 
-/-! A binding of the local `id` with the source name `u`. Only hardware gets a core name. -/
+/-!
+Binds the hardware aggregate `a` to the core name `path` (section 7.3). Each hardware leaf gets
+one core `let`, and a reference expands into its leaves. The copy of the value paid for each
+leaf before. The result refers to the names.
+-/
+def bindAgg (pos : Pos) (path : Path) (a : Agg) : M Agg := do
+  let fs := fieldsNamed (← read).items (← get).specs
+  let (r, lets) ← lift pos ((Agg.bindAt fs pos path a).run #[])
+  modify fun s => { s with naming.lets := s.naming.lets ++ lets }
+  return r
+
+/-!
+A binding of the local `id` with the source name `u`. Only a value with a hardware leaf gets a
+core name. An aggregate takes one version, and each of its hardware leaves gets a core `let`.
+-/
 def named (pos : Pos) (id : Nat) (u : String) : Val → M Val
   | .hw h => do bindHw pos (← fresh id u) h
+  | .agg a => do return .agg (← bindAgg pos (← fresh id u) a)
   | v => pure v
 
 /-!
@@ -512,7 +551,8 @@ def iteration [Runs m] (pos : Pos) (i : Binder) (v : Int) (act : m α) : m α :=
 /-!
 A place after its steps (section 5.2). It holds the local number, the slot, and the source name
 of its root. It also holds the selected part with its type, and the number of each step.
-`inList` tells if the last step selects an element of a list.
+`inList` tells if the last step selects an element of a list, and `inStatic` if it selects a
+part of a static value.
 -/
 structure Place where
   id : Nat
@@ -522,36 +562,75 @@ structure Place where
   part : Val
   keys : List Nat
   inList : Bool
+  inStatic : Bool
 
 /-!
-Applies `f` at `p` to the selected part of the place `pl` in the live value of its root. The
-indices of the place and the other operands ran after the root was read, so the change reads the
-live slot. A held root first charges its size.
+The aggregate `a` with the part at the numbers `ks` replaced by `y` (`Agg.set`). A reference on
+the path expands one level. The caller paid for the expansion.
+-/
+def setAt (pos : Pos) (a y : Agg) (ks : List Nat) : M Agg := do
+  let specs := (← get).specs
+  match Agg.set (Agg.expand (fieldsNamed (← read).items specs) specs pos) y a ks with
+  | some r => return r
+  | none => fail .S010 pos "the place has no part for its value"
+
+/-!
+Applies `f` at `p` to the selected static part of the place `pl` in the live value of its root.
+The indices of the place and the other operands ran after the root was read, so the change reads
+the live slot. A held root first charges its size. The hardware leaves of an aggregate root keep
+their names, so the root takes no new version.
 -/
 def changeAt (p : Pos) (pl : Place) (f : Value → Value) : M Unit := do
   held p pl.id
-  if let some s@{ value := .static r, .. } := (← get).frame[pl.id]? then
+  match (← get).frame[pl.id]?, pl.part with
+  | some s@{ value := .static r, .. }, _ =>
     bindLocal pl.id { s with value := .static (update f r pl.keys) }
+  | some s@{ value := .agg a, .. }, .static v =>
+    bindLocal pl.id { s with value := (← setAt p a (.static (f v)) pl.keys).val }
+  | _, _ => fail .S010 p "the place has no static part to change"
+
+/-!
+The place update at `p` of the aggregate root `a` of the slot `sl` (section 5.4). The part `x`
+at the place replaces the old part `o`. The new root has a hardware leaf unless the update
+replaces each one. Then the rebind charges the size of the new root from the stored sizes: the
+old size, minus the size of `o`, plus the size of `x`. This charge comes before the copy of the
+path and before a reference on the path expands. Then the held root charges, the path copies,
+and each hardware leaf of the new root binds at the next version of the root. A new root without
+a hardware leaf is a static value.
+-/
+def rebind (p : Pos) (pl : Place) (sl : Slot) (a o x : Agg) : M Unit := do
+  let hw := a.leaves - o.leaves + x.leaves != 0
+  if hw then charge p (a.size - o.size + x.size)
+  held p pl.id
+  let r ← setAt p a x pl.keys
+  let v ← if hw then do pure (Val.agg (← bindAgg p (← fresh pl.id pl.name) r)) else pure r.val
+  bindLocal pl.id { sl with value := v }
 
 /-!
 Writes `y` into the place `pl` (section 5.2). A place without a step binds its root again, so a
-hardware value gets the next version of the root. A place with a step checks the new depth of
-the root: the number of steps plus the depth of the value (`S015` at `p`). Then it writes into
-the live value of the root.
-A container holds no hardware value: `S011` at `q` in a list, else `S010`. `q` is the node of
-the value.
+value with a hardware leaf gets the next version of the root. A place with a step checks the new
+depth of the root: the number of steps plus the depth of the value (`S015` at `p`). Then it
+writes into the live value of the root, and an aggregate root binds again (`rebind`).
+A list holds no hardware value: `S011` at `q`, the node of the value. In this phase a static
+container holds no hardware value either: `S010` at `q`.
 -/
 def store (p q : Pos) (pl : Place) (y : Val) : M Unit := do
   if pl.keys.isEmpty then
-    let v ← named p pl.id pl.name y
     held p pl.id
-    bindLocal pl.id { pl.slot with value := v }
+    bindLocal pl.id { pl.slot with value := ← named p pl.id pl.name y }
   else
-    if pl.inList && y matches .hw _ then fail .S011 q "a list holds no hardware value"
-    let w ← item q y
-    -- The root is within the nesting depth, so only the value on the path can raise it.
-    bounded p (pl.keys.length + w.depth)
-    changeAt p pl fun _ => w
+    if pl.inList && (y matches .hw _ | .agg _) then fail .S011 q "a list holds no hardware value"
+    match (← get).frame[pl.id]?, pl.part.agg?, y.agg? with
+    | some sl@{ value := .agg a, .. }, some o, some x =>
+      if pl.inStatic && !(x matches .static _) then
+        fail .S010 q "a container holds only static values in this phase"
+      -- The root is within the nesting depth, so only the value on the path can raise it.
+      bounded p (pl.keys.length + x.depth)
+      rebind p pl sl a o x
+    | _, _, _ =>
+      let w ← item q y
+      bounded p (pl.keys.length + w.depth)
+      changeAt p pl fun _ => w
 
 /-!
 The callee of a call after its one evaluation. The name of a function item or of a prelude
@@ -614,10 +693,10 @@ call `p`. It is static in a `comptime fn`. Its formal is a mutable local.
 -/
 def copyIn (p : Pos) (c : Bool) (q : Resolve.Param) (t : Ty) : Actual → M Unit
   | .value v => do
-    charge p v.size
     let x ← if c || q.mode == .comptime then do
+        charge p v.size
         pure (.static (← conform p t (← static p (← settle p t v))))
-      else conformVal p t v
+      else copyUse p t true v
     bindLocal q.name.id ⟨some t, false, ← named p q.name.id q.name.name.name x⟩
   | .place pl => do
     charge p pl.part.size
@@ -629,11 +708,14 @@ def copyIn (p : Pos) (c : Bool) (q : Resolve.Param) (t : Ty) : Actual → M Unit
     bindLocal q.name.id ⟨some t, true, ← named p q.name.id q.name.name.name x⟩
 
 /-!
-The result of the body of the function `u` in the call frame `path`. A hardware result gets the
-role `0ret` there. A body without `return` at its end is `S010` at the call `p`.
+The result of the body of the function `u` in the call frame `path`. A result with a hardware
+leaf gets the role `0ret` there, in the place of a name, and each hardware leaf follows it. A
+result never takes a version (section 7.3). A body without `return` at its end is `S010` at the
+call `p`.
 -/
 def result (p : Pos) (path : Path) (u : String) : Option Val → M Val
-  | some (.hw h) => do bindHw p (← version .ret (path.push (.role .ret))) h
+  | some (.hw h) => bindHw p (path.push (.role .ret)) h
+  | some (.agg a) => do return .agg (← bindAgg p (path.push (.role .ret)) a)
   | some v => pure v
   | none => fail .S010 p s!"`{u}` ends without `return`"
 
@@ -647,7 +729,7 @@ def pushOnto (p x : Pos) (g : String) (pl : Place) (v : Val) : M (Option Out) :=
   mutation p
   let w ← match ← data x (← settle p e v) with
     | .static w => conform p e w
-    | .hw _ => fail .S011 x "a list holds no hardware value"
+    | .hw _ | .agg _ => fail .S011 x "a list holds no hardware value"
     | v => fail .S010 x s!"{v.text} is not an element of a list"
   -- The root is within the nesting depth, so only the element on the path can raise it.
   bounded p (pl.keys.length + 1 + w.depth)
@@ -977,27 +1059,29 @@ mutual
     let mut ty := slot.ty
     let mut keys : Array Nat := #[]
     let mut inList := false
+    let mut inStatic := false
     for sel in sels do
       charge sel.pos 1
       let (k, w, ft) ← match sel with
         | .index q [i] => do
-          let (k, w) ← pickAt q i.pos cur (← static i.pos (← need i (← eval n i)).value)
+          let (k, w) ← pickKey q i.pos cur (← static i.pos (← need i (← eval n i)).value)
           pure (k, w, none)
         | .index q _ => fail .S010 q "an index of a value has one argument"
         | .select q r i => do
-          let (k, w) ← selectAt q r i cur
+          let (k, w) ← selectKey q r i cur
           pure (k, w, none)
         | .field q f => do
-          let (k, w, ft) ← fieldAt q f cur
+          let (k, w, ft) ← fieldKey q f cur
           pure (k, w, some ft)
       ty := match ft, ty with
         | some t, _ => some t
         | none, some t => partTy t k
         | none, none => w.ty?
       inList := cur matches .static (.list ..)
-      cur := .static w
+      inStatic := cur matches .static _
+      cur := w
       keys := keys.push k
-    return ⟨id, slot, x, ty, cur, keys.toList, inList⟩
+    return ⟨id, slot, x, ty, cur, keys.toList, inList, inStatic⟩
   termination_by (n + 1, 0)
 
   /-- The values of the arguments `xs` in the order of the parameters, by `bound b`. -/
@@ -1154,10 +1238,12 @@ mutual
       | .local p m b ty v => do
         let t ← ty.mapM (typeExpr n)
         let o ← need v (← eval n v)
-        copy p o
         let x ← match t with
-          | some t => conformVal p t o.value
-          | none => do known o.value; pure o.value
+          | some t => copyUse p t o.ref o.value
+          | none => do
+            copy p o
+            known o.value
+            pure o.value
         let x ← named p b.id b.name.name x
         bindLocal b.id ⟨t <|> x.ty?, m, x⟩
         return none
@@ -1165,10 +1251,10 @@ mutual
         let pl ← placeAt n p .S010 target
         let o ← need v (← eval n v)
         shut pl.id
-        copy p o
         let y ← match pl.ty with
-          | some t => conformVal p t o.value
+          | some t => copyUse p t o.ref o.value
           | none =>
+            copy p o
             if sameForm pl.part o.value then pure o.value
             else fail .S010 p s!"expected {pl.part.text}, but the value is {o.value.text}"
         store p v.pos pl y
@@ -1177,8 +1263,7 @@ mutual
         let some rt := (← read).ret | fail .S006 p "only a function has `return`"
         let some v := v | fail .S010 p s!"`return` needs a value of {rt.text}"
         let o ← need v (← eval n v)
-        charge p o.value.size
-        return some (← conformVal p rt o.value)
+        return some (← copyUse p rt true o.value)
       | .ctIf p c yes no => do
         if ← test p (← need c (← eval n c)).value then block n p yes
         else match no with

@@ -46,6 +46,10 @@ The static containers of slice 2 follow section 5.1. These rules settle its open
   part, in a number of steps that the path bounds. Thus `p[i]` takes the same work for a huge
   array type. A part without a hardware leaf is a static value: it charges its zero size from
   the metadata first (`normalize`). A hardware index stays `S011`.
+- A typed use of a hardware aggregate checks a reference by its type in one step, so it never
+  expands. The other parts check first: a hardware leaf needs the type of its position, and a
+  static leaf its sign. Then the conversion charges, and the static leaves convert.
+- A place update copies only the nodes on its path. A reference on the path expands one level.
 - `T()` is the zero of a hardware data type, also of a struct type. Another type is `S010`. The
   zero checks its depth (`Ty.zeroDepth`) and charges its size from the metadata before it exists.
 - An assignment to a place with indices, selectors `.N`, and fields evaluates its indices from
@@ -287,23 +291,27 @@ def settle (pos : Pos) (t : Ty) : Val → M Val
   | v => pure v
 
 /-!
+The part of the type `t` of the base `b` at `pos` in its normal form (section 5.1), with no
+charge. A part without a hardware leaf is the static zero of its type, for example a part of the
+type `[Unit; 4]`. A part of a scalar type is a hardware value. Another part is a reference.
+-/
+def Agg.part (specs : Specs) (pos : Pos) (b : Base) (t : Ty) : Option Agg :=
+  if t.info.leaves = 0 then (zeroOf specs t.depth t).map .static
+  else if t matches .bool | .uint _ | .sint _ then some (.hw (.mk pos t b.op []))
+  else some (.ref b t)
+
+/-!
 The normal form of the aggregate `a` at `pos` (section 5.1). A reference without a hardware leaf
-is a static value, for example a part of the type `[Unit; 4]`. It charges the zero size of its
-type from the metadata before the value exists (section 5.4). A reference of a scalar type is a
-hardware value. Another part keeps its form.
+charges the zero size of its type from the metadata before the static value exists (section
+5.4). Another part keeps its form.
 -/
 def normalize (pos : Pos) : Agg → M Val
-  | .static v => pure (.static v)
-  | .hw h => pure (.hw h)
-  | a@(.ref b t) =>
-    if t.info.leaves = 0 then do
-      charge pos t.info.zeroSize
-      match zeroOf (← get).specs t.depth t with
-      | some v => return .static v
-      | none => fail .S010 pos s!"{t.text} has no zero"
-    else if t matches .bool | .uint _ | .sint _ then return .hw (.mk pos t b.op [])
-    else return .agg a
-  | a => pure (.agg a)
+  | .ref b t => do
+    if t.info.leaves = 0 then charge pos t.info.zeroSize
+    match Agg.part (← get).specs pos b t with
+    | some a => return a.val
+    | none => fail .S010 pos s!"{t.text} has no zero"
+  | a => pure a.val
 
 /-!
 The data of a value at a use that reads it: the implicit read. A register, a wire, and an own
@@ -331,18 +339,22 @@ def selectAt (pos q : Pos) (i : Nat) : Val → M (Nat × Value)
 
 /-!
 The selector `.i` refers to an element. A selector of a reference to a tuple gives a reference
-to the element `<i>e`.
+to the element `<i>e`. The result is the number of the element and the element.
 -/
-def select (pos q : Pos) (i : Nat) : Val → M Val
+def selectKey (pos q : Pos) (i : Nat) : Val → M (Nat × Val)
   | v@(.agg (.tuple _ xs)) =>
     match xs[i]? with
-    | some x => normalize pos x
+    | some x => do return (i, ← normalize pos x)
     | none => fail .S013 q s!"the selector {i} is out of range for {v.text}"
   | v@(.agg (.ref b (.tuple ts))) =>
     match ts[i]? with
-    | some t => normalize pos (.ref (b.sub (.elem i)) t)
+    | some t => do return (i, ← normalize pos (.ref (b.sub (.elem i)) t))
     | none => fail .S013 q s!"the selector {i} is out of range for {v.text}"
-  | v => do return .static (← selectAt pos q i v).2
+  | v => do
+    let (k, w) ← selectAt pos q i v
+    return (k, .static w)
+
+def select (pos q : Pos) (i : Nat) (v : Val) : M Val := do return (← selectKey pos q i v).2
 
 /-! The value of a static index at `q`. It is a static `Int` or `UInt`, else `S010`. -/
 def indexOf (q : Pos) : Value → M Int
@@ -383,21 +395,28 @@ def within (q : Pos) (n : Nat) (i : Value) : M Nat := do
 /-!
 A static index refers to an element. An index of a reference to an array or a tuple gives a
 reference to the element `<k>e`. Its type gives the length, so a huge array takes no more work.
+The result is the number of the element and the element.
 -/
-def pick (pos q : Pos) (v : Val) (i : Value) : M Val := do
+def pickKey (pos q : Pos) (v : Val) (i : Value) : M (Nat × Val) := do
   match v with
   | .agg (.array _ xs) | .agg (.tuple _ xs) =>
-    match xs[← within q xs.size i]? with
-    | some x => normalize pos x
+    let k ← within q xs.size i
+    match xs[k]? with
+    | some x => return (k, ← normalize pos x)
     | none => fail .S013 q s!"the index is out of range for {xs.size} element(s)"
   | .agg (.ref b (.array e n)) => do
-    normalize pos (.ref (b.sub (.elem (← within q n i))) e)
+    let k ← within q n i
+    return (k, ← normalize pos (.ref (b.sub (.elem k)) e))
   | .agg (.ref b (.tuple ts)) => do
     let k ← within q ts.size i
     match ts[k]? with
-    | some t => normalize pos (.ref (b.sub (.elem k)) t)
+    | some t => return (k, ← normalize pos (.ref (b.sub (.elem k)) t))
     | none => fail .S013 q s!"the index is out of range for {ts.size} element(s)"
-  | v => return .static (← pickAt pos q v i).2
+  | v =>
+    let (k, w) ← pickAt pos q v i
+    return (k, .static w)
+
+def pick (pos q : Pos) (v : Val) (i : Value) : M Val := do return (← pickKey pos q v i).2
 
 /-! The type of the element `k` of a container type. -/
 def partTy : Ty → Nat → Option Ty
@@ -439,6 +458,46 @@ def update (f : Value → Value) : Value → List Nat → Value
   | .list t xs, k :: ks => .list t (xs.modify k (update f · ks))
   | v, _ :: _ => v
 
+/-! The field names and the field types of the struct type `t`, in declaration order. -/
+def fieldsNamed (items : Array Resolve.Item) (specs : Specs) (t : Ty) :
+    Option (Array (String × Ty)) := do
+  let (i, fs) ← fieldsIn specs t
+  let some (.struct _ _ _ ds) := items[i]? | none
+  return (ds.toArray.map (·.name.name)).zip fs
+
+/-!
+The reference of the type `t` to the base `b`, expanded one level into references to its parts
+in their normal form. The caller paid for the parts, so this has no charge. `fs` gives the named
+fields of a struct type.
+-/
+def Agg.expand (fs : Ty → Option (Array (String × Ty))) (specs : Specs) (pos : Pos) (b : Base) :
+    Ty → Option Agg
+  | .array e n => do
+    return .mkArray e (← (Array.range n).mapM fun k => Agg.part specs pos (b.sub (.elem k)) e)
+  | .tuple ts => do
+    return .mkTuple ts (← ts.zipIdx.mapM fun (t, k) => Agg.part specs pos (b.sub (.elem k)) t)
+  | t@(.struct ..) => do
+    return .mkRecord t (← (← fs t).mapM fun (x, ft) => Agg.part specs pos (b.sub (.user x)) ft)
+  | _ => none
+
+/-!
+The aggregate `a` with the part at the numbers `ks` replaced by `y`. Each step copies only the
+node on the path. A reference on the path expands one level by `ex`. A static part on the path
+takes only a static `y`. Each node keeps its normal form, so a node without a hardware leaf is
+a static value.
+-/
+def Agg.set (ex : Base → Ty → Option Agg) (y : Agg) : Agg → List Nat → Option Agg
+  | _, [] => some y
+  | a, k :: ks => do
+    let a ← match a with
+      | .ref b t => ex b t
+      | a => pure a
+    match a, y with
+    | .static v, .static w => some (.static (update (fun _ => w) v (k :: ks)))
+    | .array _ xs, _ | .tuple _ xs, _ | .record _ xs, _ => do
+      return a.rebuild (xs.set! k (← Agg.set ex y (← xs[k]?) ks))
+    | _, _ => none
+
 /-!
 The number and the type of the field `f` of the struct type `t` at `pos`. `text` names the
 value. The record type holds the number of its specialization, and the symbol of `f` finds the
@@ -471,18 +530,23 @@ def fieldAt (pos : Pos) (f : Ident) : Val → M (Nat × Value × Ty)
 
 /-!
 The field `f` of a record or of a hardware aggregate at `pos`. A field of a reference to a record
-gives a reference to the part with the leaf field `f`.
+gives a reference to the part with the leaf field `f`. The result is the number of the field,
+its value, and its type.
 -/
-def field (pos : Pos) (f : Ident) : Val → M Val
+def fieldKey (pos : Pos) (f : Ident) : Val → M (Nat × Val × Ty)
   | v@(.agg (.record n xs)) => do
-    let (k, _) ← fieldOf pos f n.ty v.text
+    let (k, ft) ← fieldOf pos f n.ty v.text
     match xs[k]? with
-    | some x => normalize pos x
+    | some x => return (k, ← normalize pos x, ft)
     | none => fail .S010 pos s!"{v.text} has no field `{f.name}`"
   | v@(.agg (.ref b t@(.struct ..))) => do
-    let (_, ft) ← fieldOf pos f t v.text
-    normalize pos (.ref (b.sub (.user f.name)) ft)
-  | v => do return .static (← fieldAt pos f v).2.1
+    let (k, ft) ← fieldOf pos f t v.text
+    return (k, ← normalize pos (.ref (b.sub (.user f.name)) ft), ft)
+  | v => do
+    let (k, w, ft) ← fieldAt pos f v
+    return (k, .static w, ft)
+
+def field (pos : Pos) (f : Ident) (v : Val) : M Val := do return (← fieldKey pos f v).2.1
 
 /-!
 A record constructor of the struct type `t` with the field types `fs` at `pos`. The arguments
@@ -510,6 +574,125 @@ def zero (pos : Pos) (t : Ty) : M Value := do
   match zeroOf (← get).specs t.depth t with
   | some v => return v
   | none => fail .S010 pos s!"{t.text} has no zero"
+
+/-! A typed use of the aggregate `a` at `t` with another type is `S010`. -/
+def Agg.wrong (t : Ty) (a : Agg) : Except Fault α :=
+  typeError s!"expected {t.text}, but the value is {a.val.text}"
+
+/-!
+The typed use of the aggregate `a` at `t` (section 5.4), part by part. The result is the size of
+the converted aggregate and the conversion. A reference checks by its type in one step, so it
+never expands. A hardware leaf needs the type of its position. A static part checks its type and
+its sign (`plan`). All these checks come before the charge. A static value that does not fit its
+finite type is `S012` in the conversion, after the charge. A record needs its own struct type.
+-/
+mutual
+  def Agg.plan : Ty → Agg → Except Fault (Nat × (Unit → Except Fault Agg))
+    | t, a@(.ref _ u) => if u.same t then .ok (a.size, fun _ => .ok a) else Agg.wrong t a
+    | t, a@(.hw h) => if h.ty.same t then .ok (a.size, fun _ => .ok a) else Agg.wrong t a
+    | t, .static v => do
+      let (k, f) ← Eval.plan t v
+      .ok (k, fun u => do return .static (← f u))
+    | .array e n, a@(.array _ ⟨xs⟩) =>
+      if xs.length = n then do
+        let (k, f) ← Agg.planEach e xs
+        .ok (1 + k, fun u => do return .mkArray e (← f u).toArray)
+      else Agg.wrong (.array e n) a
+    | .tuple ⟨ts⟩, a@(.tuple _ ⟨xs⟩) =>
+      if ts.length = xs.length then do
+        let (k, f) ← Agg.planZip ts xs
+        .ok (1 + k, fun u => do return .mkTuple ⟨ts⟩ (← f u).toArray)
+      else Agg.wrong (.tuple ⟨ts⟩) a
+    | t, a@(.record n _) => if n.ty.same t then .ok (a.size, fun _ => .ok a) else Agg.wrong t a
+    | t, a => Agg.wrong t a
+
+  def Agg.planEach (t : Ty) : List Agg → Except Fault (Nat × (Unit → Except Fault (List Agg)))
+    | [] => .ok (0, fun _ => .ok [])
+    | x :: xs => do
+      let (k, f) ← Agg.plan t x
+      let (ks, fs) ← Agg.planEach t xs
+      .ok (k + ks, fun u => do return (← f u) :: (← fs u))
+
+  def Agg.planZip : List Ty → List Agg → Except Fault (Nat × (Unit → Except Fault (List Agg)))
+    | t :: ts, x :: xs => do
+      let (k, f) ← Agg.plan t x
+      let (ks, fs) ← Agg.planZip ts xs
+      .ok (k + ks, fun u => do return (← f u) :: (← fs u))
+    | _, _ => .ok (0, fun _ => .ok [])
+end
+
+/-!
+The typed use of the aggregate `a` at `t` at `pos` (section 5.4). An aggregate of the type `t`
+charges nothing. Another one checks each part first (`Agg.plan`), then charges its size plus the
+size of the result, then converts its static parts. Each new node checks its depth (`S015`).
+-/
+def typedAgg (pos : Pos) (t : Ty) (a : Agg) : M Agg := do
+  if a.ty?.any (·.same t) then return a
+  let (k, f) ← lift pos (Agg.plan t a)
+  charge pos (a.size + k)
+  let r ← lift pos (f ())
+  bounded pos r.depth
+  return r
+
+/-! The core `let` statements that a binding of an aggregate makes, in packing order. -/
+abbrev Binds := StateT (Array Let) (Except Fault)
+
+/-!
+Take the part of the type `t` of the base `b`. Each of its hardware leaves gets a core `let`
+at `path` with its leaf fields (section 7.3), in packing order. `fs` gives the named fields of
+a struct type. The depth `d` of `t` bounds the walk.
+-/
+def leafLets (fs : Ty → Option (Array (String × Ty))) (pos : Pos) :
+    Nat → Base → Path → Ty → Binds Unit
+  | 0, _, _, t => throw (.S010, s!"{t.text} is deeper than its depth")
+  | d + 1, b, path, t =>
+    match t with
+    | .bool | .uint _ | .sint _ => modify (·.push ⟨path, .mk pos t b.op [], pos⟩)
+    | .array e n => do
+      for k in [0:n] do leafLets fs pos d (b.sub (.elem k)) (path.push (.elem k)) e
+    | .tuple ts => do
+      for (u, k) in ts.zipIdx do leafLets fs pos d (b.sub (.elem k)) (path.push (.elem k)) u
+    | .struct .. => do
+      let some nfs := fs t | throw (.S010, s!"{t.text} has no specialization")
+      for (x, u) in nfs do leafLets fs pos d (b.sub (.user x)) (path.push (.user x)) u
+    | _ => pure ()
+
+/-!
+The binding of the aggregate `a` to the core name `path` (section 7.3). Each hardware leaf gets
+one core `let` at `path` with its leaf fields, and a reference expands into its leaves. The
+result refers to the names: a hardware leaf becomes a name, a reference becomes a reference to
+`path`, and a static part keeps its value.
+-/
+mutual
+  def Agg.bindAt (fs : Ty → Option (Array (String × Ty))) (pos : Pos) (path : Path) :
+      Agg → Binds Agg
+    | .static v => pure (.static v)
+    | .hw h => do
+      modify (·.push ⟨path, h, pos⟩)
+      return .hw (.mk pos h.ty (.ref path) [])
+    | .ref b t => do
+      leafLets fs pos t.depth b path t
+      return .ref (.name path) t
+    | a@(.array _ ⟨xs⟩) | a@(.tuple _ ⟨xs⟩) => do
+      return a.rebuild (← Agg.bindEach fs pos path 0 xs).toArray
+    | a@(.record n ⟨xs⟩) => do
+      let some nfs := fs n.ty | throw (.S010, s!"{n.ty.text} has no specialization")
+      return a.rebuild (← Agg.bindNamed fs pos path (nfs.toList.map (·.1)) xs).toArray
+
+  def Agg.bindEach (fs : Ty → Option (Array (String × Ty))) (pos : Pos) (path : Path)
+      (k : Nat) : List Agg → Binds (List Agg)
+    | [] => pure []
+    | x :: xs => do
+      let y ← Agg.bindAt fs pos (path.push (.elem k)) x
+      return y :: (← Agg.bindEach fs pos path (k + 1) xs)
+
+  def Agg.bindNamed (fs : Ty → Option (Array (String × Ty))) (pos : Pos) (path : Path) :
+      List String → List Agg → Binds (List Agg)
+    | x :: ns, a :: xs => do
+      let y ← Agg.bindAt fs pos (path.push (.user x)) a
+      return y :: (← Agg.bindNamed fs pos path ns xs)
+    | _, xs => pure xs
+end
 
 /-!
 `len` of an array, a list, or a string at the call `pos`. It refers to an array or a list, so

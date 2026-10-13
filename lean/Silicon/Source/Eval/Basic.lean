@@ -117,19 +117,23 @@ def Base.sub : Base → Field → Base
   | .name p, f => .name (p.push f)
   | .out i q, f => .out i ⟨q.head, q.rest ++ [f]⟩
 
-/-! The stored numbers of a container node of an aggregate: its type, its size, and its depth. -/
+/-!
+The stored numbers of a container node of an aggregate: its type, its size, its depth, and the
+number of its hardware leaves.
+-/
 structure Node where
   ty : Ty
   size : Nat
   depth : Nat
+  leaves : Nat
   deriving Repr, Inhabited
 
 /-!
 A hardware aggregate (section 5.1): a tree with at least one hardware leaf. A `static` part
 holds no hardware leaf, and a `hw` part is a hardware value. A `ref` refers to a part of a port,
 a register, a wire, or a child output. Its type is `ty`, and it does not expand into its leaves.
-Each container node stores its type, its recursive size, and its depth. Thus no charge walks the
-tree.
+Each container node stores its type, its recursive size, its depth, and the number of its hardware
+leaves. Thus no charge walks the tree.
 -/
 inductive Agg where
   | static (v : Value)
@@ -157,6 +161,13 @@ def Agg.depth : Agg → Nat
   | .ref _ t => t.zeroDepth
   | .array n _ | .tuple n _ | .record n _ => n.depth
 
+/-! The number of hardware leaves. Each leaf of a reference is a hardware leaf. -/
+def Agg.leaves : Agg → Nat
+  | .static _ => 0
+  | .hw _ => 1
+  | .ref _ t => t.info.leaves
+  | .array n _ | .tuple n _ | .record n _ => n.leaves
+
 def Agg.ty? : Agg → Option Ty
   | .static v => v.ty?
   | .hw h => some h.ty
@@ -173,7 +184,9 @@ def Agg.container (mk : Node → Array Agg → Agg) (static : Array Value → Va
     (xs : Array Agg) : Agg :=
   let vs := xs.filterMap fun | .static v => some v | _ => none
   if vs.size = xs.size then .static (static vs)
-  else mk ⟨t, 1 + (xs.toList.map Agg.size).sum, 1 + xs.foldl (fun m x => max m x.depth) d⟩ xs
+  else
+    mk ⟨t, 1 + (xs.toList.map Agg.size).sum, 1 + xs.foldl (fun m x => max m x.depth) d,
+      (xs.toList.map Agg.leaves).sum⟩ xs
 
 def Agg.mkArray (e : Ty) (xs : Array Agg) : Agg :=
   Agg.container .array (.array e) (.array e xs.size) e.depth xs
@@ -183,6 +196,14 @@ def Agg.mkTuple (ts : Array Ty) (xs : Array Agg) : Agg :=
 
 def Agg.mkRecord (t : Ty) (xs : Array Agg) : Agg :=
   Agg.container .record (.record t) t t.depth xs
+
+/-! The container node `a` with the new elements `xs`, in its normal form. -/
+def Agg.rebuild (a : Agg) (xs : Array Agg) : Agg :=
+  match a with
+  | .array { ty := .array e _, .. } _ => .mkArray e xs
+  | .tuple { ty := .tuple ts, .. } _ => .mkTuple ts xs
+  | .record n _ => .mkRecord n.ty xs
+  | a => a
 
 /-! The core name of the port with the source name `x`. A port keeps its source name. -/
 def portName (x : String) : Name := ⟨x, []⟩
@@ -269,6 +290,19 @@ def Val.size : Val → Nat
   | .handle _ => 1
   | .pending _ p => p.size
 
+/-! The value of the aggregate part `a`. -/
+def Agg.val : Agg → Val
+  | .static v => .static v
+  | .hw h => .hw h
+  | a => .agg a
+
+/-! The part of a container that the value `v` gives. A handle and a waiting literal have none. -/
+def Val.agg? : Val → Option Agg
+  | .static v => some (.static v)
+  | .hw h => some (.hw h)
+  | .agg a => some a
+  | .handle _ | .pending .. => none
+
 def Val.ty? : Val → Option Ty
   | .static v => v.ty?
   | .hw h => some h.ty
@@ -336,10 +370,12 @@ def Ctx.binder (c : Ctx) (id : Nat) : Nat := ((c.syms.binders[c.item]?).bind (·
 /-! The symbol of the field name at `p` in the current item. -/
 def Ctx.field (c : Ctx) (p : Pos) : Option Nat := (c.syms.fields[c.item]?).bind (·[p]?)
 
-/-! The key of a binding in a frame: the symbol of its source name, or the result role. -/
+/-!
+The key of a binding in a frame: the symbol of its source name. A call result takes no version
+(section 7.3), so it has no key.
+-/
 inductive Tag where
   | sym (n : Nat)
-  | ret
   deriving DecidableEq, BEq, Hashable
 
 /-! A named hardware binding: its core name, its value, and the position of the binding. -/
