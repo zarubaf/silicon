@@ -2,12 +2,13 @@
 //! The cases of the aggregate form in `Silicon.Source.Test.Eval` and `Test.Elab` in Lean (design
 //! section 5.1): the size of a name, the stored numbers of a node, the static form of a
 //! container without a hardware leaf, and `normalize`. The walks over a deep aggregate keep
-//! their own stack.
+//! their own stack. The selection cases of `Test.Eval` follow: an implicit read of a register,
+//! the steps on a reference, the work of a huge array type, and the node of an aggregate.
 
-use super::{Code, Evaluator, Res, Stop};
+use super::{Code, Entry, Evaluator, Out, Res, Stop};
 use crate::agg::{Agg, Base, Node, Parts};
 use crate::counters;
-use crate::hw::{Op, Val};
+use crate::hw::{Handle, Kind, Op, Seen, Val};
 use crate::int::Int;
 use crate::names::{Name, Step};
 use crate::tests_elab::load;
@@ -245,4 +246,314 @@ fn an_error_of_normalize_is_s010_for_a_type_without_a_zero() {
         Agg::Ref(base(ev), t)
     };
     assert_eq!(normal(100, none), format!("{} 1:1", Code::S010));
+}
+
+/// The items of the selection cases: two constants that the cases replace, and two structs.
+const SHAPES: &str = "const X: Int = 0;\nconst Y: Int = 0;\n\
+    struct P { a: UInt[8], z: [Unit; 1099511627776], t: (Bool, [UInt[4]; 3]), e: [Unit; 3] }\n\
+    struct Q { a: UInt[8], b: Int }\n";
+
+/// The text of the base of a reference.
+fn base_text(ev: &Evaluator<'_>, b: &Base) -> String {
+    let name = |p| crate::names::encode(&ev.paths.name(p, &ev.syms.texts));
+    match b {
+        Base::Name(p) => name(*p),
+        Base::Out(i, q) => format!("{}.{}", name(*i), crate::names::encode(q)),
+    }
+}
+
+/// The part that a selection gave: a static value, a hardware value with its type, name, and
+/// size, or a reference with its type, base, and size.
+fn describe(ev: &Evaluator<'_>, out: &Out) -> String {
+    match ev.store.seen(out) {
+        Seen::Static(v) => v.serialize(&ev.tys),
+        Seen::Hw(h) => {
+            let name = match ev.graph.node(h).map(|n| &n.op) {
+                Some(Op::Ref(p)) => base_text(ev, &Base::Name(*p)),
+                Some(Op::Out(i, q)) => base_text(ev, &Base::Out(*i, q.clone())),
+                _ => String::new(),
+            };
+            let t = ev.graph.ty(h);
+            format!("hw {} {name} {}", ev.tys.text_of(&t), ev.graph.size(h))
+        }
+        Seen::Agg(a @ Agg::Ref(b, t)) => format!(
+            "ref {} {} {}",
+            ev.tys.text(*t),
+            base_text(ev, b),
+            a.size(&ev.graph, &ev.tys)
+        ),
+        s => ev.text(s),
+    }
+}
+
+/// A register `r` of the type `t`, as the handle that a use reads.
+fn register(ev: &mut Evaluator<'_>, t: TyId) -> Val {
+    ev.syms.texts.push("r".to_owned());
+    let path = ev.paths.child(None, ev.syms.texts.len() - 1);
+    Val::Handle(Handle::Res {
+        kind: Kind::Reg,
+        id: 0,
+        ty: ev.tys.get(t).clone(),
+        path,
+    })
+}
+
+/// The struct type `P` or `Q`: the item 2 or 3.
+fn record(ev: &mut Evaluator<'_>, item: usize) -> TyId {
+    ev.spec(AT, item, &[])
+        .unwrap_or_else(|_| panic!("a struct"))
+}
+
+/// The result of the expression `expr` over the constants `X` and `Y`, which `make` sets. The
+/// result shows the part, whether it refers, and the used fuel: or the code and the position.
+fn sel(expr: &str, fuel: u64, make: impl FnOnce(&mut Evaluator<'_>) -> Vec<Val>) -> String {
+    sel_counted(expr, fuel, make).0
+}
+
+fn sel_counted(
+    expr: &str,
+    fuel: u64,
+    make: impl FnOnce(&mut Evaluator<'_>) -> Vec<Val>,
+) -> (String, u64) {
+    let depth = parse::DEFAULT_SYNTAX_DEPTH;
+    let file = load(SHAPES).unwrap();
+    let e = parse::parse_expr(expr, depth).unwrap().unwrap();
+    let top = resolve::resolve_expr(&file, e).unwrap().unwrap();
+    let scan = scan::of(&file, Some(&top));
+    let mut ev = Evaluator::new(
+        &file,
+        Some(&top),
+        Budget { fuel, depth: 1000 },
+        scan,
+        super::Elab::new(crate::names::sha16),
+    );
+    let unit = ev.tys.mk(Ty::Unit);
+    for (i, v) in make(&mut ev).into_iter().enumerate() {
+        ev.store.consts[i] = Entry::Done(v, unit);
+    }
+    let before = ev.fuel.left();
+    let r = ev.eval(top.expr()).and_then(|o| super::need(top.expr(), o));
+    let used = before - ev.fuel.left();
+    let text = match r {
+        Ok(out) => format!("{} {} {used}", describe(&ev, &out), out.is_ref()),
+        Err(Stop::Error(e)) => {
+            eprintln!("{}", e.message);
+            format!("{} {}:{}", e.code, e.pos.line, e.pos.col)
+        }
+        Err(Stop::Stack(_)) => "stack".to_owned(),
+    };
+    (text, counters::of(fuel).selected)
+}
+
+/// A register of the type `t` made by `ty`.
+fn reg(ty: impl FnOnce(&mut Evaluator<'_>) -> TyId) -> impl FnOnce(&mut Evaluator<'_>) -> Vec<Val> {
+    move |ev| {
+        let t = ty(ev);
+        vec![register(ev, t)]
+    }
+}
+
+fn p_type(ev: &mut Evaluator<'_>) -> TyId {
+    record(ev, 2)
+}
+
+#[test]
+fn an_implicit_read_of_an_aggregate_register_is_a_reference_and_each_step_adds_a_leaf_field() {
+    let f = 700_000_100;
+    assert_eq!(sel("X.a", f, reg(p_type)), "hw UInt[8] r$a 1 true 2");
+    assert_eq!(
+        sel("X.t", f, reg(p_type)),
+        "ref (Bool, [UInt[4]; 3]) r$t 6 true 2"
+    );
+    assert_eq!(
+        sel("X.t.1[2]", f, reg(p_type)),
+        "hw UInt[4] r$t$1e$2e 1 true 6"
+    );
+    assert_eq!(sel("X.t[0]", f, reg(p_type)), "hw Bool r$t$0e 1 true 5");
+    assert_eq!(
+        sel("X", f, reg(|ev| ev.tys.mk(Ty::UInt(8)))),
+        "a register true 1"
+    );
+    assert_eq!(sel("X[0]", f, reg(|ev| ev.tys.mk(Ty::UInt(8)))), "S010 1:1");
+}
+
+fn bytes(ev: &mut Evaluator<'_>, len: u64) -> TyId {
+    array(ev, Ty::UInt(8), len)
+}
+
+#[test]
+fn an_index_of_a_reference_takes_the_units_of_a_small_array_and_expands_nothing() {
+    let f = 700_000_101;
+    let huge = |ev: &mut Evaluator<'_>| bytes(ev, 1 << 40);
+    let small = |ev: &mut Evaluator<'_>| bytes(ev, 4);
+    assert_eq!(
+        sel("X[1099511627775]", f, reg(huge)),
+        "hw UInt[8] r$1099511627775e 1 true 4"
+    );
+    assert_eq!(sel("X[3]", f, reg(small)), "hw UInt[8] r$3e 1 true 4");
+    let nested = |ev: &mut Evaluator<'_>| {
+        let inner = bytes(ev, 1 << 40);
+        ev.tys.array(inner, Int::from_u64(1 << 40))
+    };
+    assert_eq!(
+        sel("X[7][9]", f, reg(nested)),
+        "hw UInt[8] r$7e$9e 1 true 7"
+    );
+    assert_eq!(sel("X[1099511627776]", f, reg(huge)), "S013 1:3");
+    let t2 = |ev: &mut Evaluator<'_>| tuple(ev, vec![Ty::Bool, Ty::UInt(8)]);
+    assert_eq!(sel("X.2", f, reg(t2)), "S013 1:3");
+    assert_eq!(sel("X[1]", f, reg(t2)), "hw UInt[8] r$1e 1 true 4");
+}
+
+#[test]
+fn a_step_on_a_huge_reference_counts_one_part_and_walks_no_node() {
+    let huge = |ev: &mut Evaluator<'_>| bytes(ev, 1 << 40);
+    let nested = |ev: &mut Evaluator<'_>| {
+        let inner = bytes(ev, 1 << 40);
+        ev.tys.array(inner, Int::from_u64(1 << 40))
+    };
+    let (_, parts) = sel_counted("X[5]", 700_000_102, reg(huge));
+    assert_eq!(parts, 1);
+    assert_eq!(counters::of(700_000_102).nodes, 0);
+    let (_, parts) = sel_counted("X[5][6]", 700_000_103, reg(nested));
+    assert_eq!(parts, 2);
+    let c = counters::of(700_000_103);
+    assert_eq!((c.nodes, c.walked), (0, 0));
+}
+
+#[test]
+fn a_hardware_index_is_s011_before_the_container_check_and_a_wrong_step_is_s010() {
+    let f = 700_000_104;
+    let with_index = |ty: fn(&mut Evaluator<'_>) -> TyId| {
+        move |ev: &mut Evaluator<'_>| {
+            let t = ty(ev);
+            let r = register(ev, t);
+            let op = Op::Ref(ev.paths.child(None, 0));
+            let h = ev.graph.mk(AT, Ty::UInt(2), op, Vec::new());
+            vec![r, Val::Hw(h)]
+        }
+    };
+    assert_eq!(sel("X[Y]", f, with_index(|ev| bytes(ev, 4))), "S011 1:3");
+    assert_eq!(
+        sel("X[Y]", f, with_index(|ev| ev.tys.mk(Ty::UInt(8)))),
+        "S011 1:3"
+    );
+    assert_eq!(sel("X.0", f, reg(|ev| bytes(ev, 4))), "S010 1:1");
+    assert_eq!(sel("X.a", f, reg(|ev| bytes(ev, 4))), "S010 1:1");
+    assert_eq!(sel("X.y", f, reg(p_type)), "S010 1:1");
+}
+
+#[test]
+fn a_part_without_a_hardware_leaf_charges_its_zero_size_first_and_does_not_refer() {
+    let f = 700_000_105;
+    assert_eq!(
+        sel("X.e", f, reg(p_type)),
+        "(array unit ((unit) (unit) (unit))) false 6"
+    );
+    assert_eq!(sel("X.z", f, reg(p_type)), "S015 1:1");
+    let e = |ev: &mut Evaluator<'_>| {
+        let pair = array(ev, Ty::Unit, 2);
+        let unit = ev.tys.mk(Ty::Bool);
+        let part = ev.tys.tuple(vec![pair, unit]);
+        ev.tys.array(part, Int::from_u64(1 << 40))
+    };
+    assert_eq!(
+        sel("X[5].0", f, reg(e)),
+        "(array unit ((unit) (unit))) false 8"
+    );
+    let empty = |ev: &mut Evaluator<'_>| {
+        let inner = array(ev, Ty::Unit, 2);
+        ev.tys.array(inner, Int::from_u64(1 << 40))
+    };
+    assert_eq!(sel("X[5]", f, reg(empty)), "S015 1:1");
+}
+
+/// A hardware leaf of a node.
+fn leaf(ev: &mut Evaluator<'_>, ty: Ty) -> Agg {
+    Agg::Hw(
+        ev.graph
+            .mk(AT, ty, Op::Ref(ev.paths.child(None, 0)), Vec::new()),
+    )
+}
+
+#[test]
+fn a_container_node_gives_its_part_in_its_normal_form() {
+    let f = 700_000_106;
+    let record_node = |ev: &mut Evaluator<'_>| {
+        let t = record(ev, 3);
+        let a = leaf(ev, Ty::UInt(8));
+        let parts = vec![a, Agg::Static(Value::Int(Int::from_u64(3)))];
+        let node = Agg::node(&ev.graph, &ev.tys, t, parts);
+        vec![Val::Agg(Box::new(node.unwrap_or(Agg::Static(Value::Unit))))]
+    };
+    assert_eq!(sel("X.a", f, record_node), "hw UInt[8] X 1 true 2");
+    assert_eq!(sel("X.b", f, record_node), "(int 3) true 2");
+    assert_eq!(sel("X.c", f, record_node), "S010 1:1");
+    let tuple_node = |ev: &mut Evaluator<'_>| {
+        let arr = array(ev, Ty::UInt(8), 4);
+        let t = tuple(ev, vec![Ty::Bool, Ty::Int, Ty::UInt(8)]);
+        let a = leaf(ev, Ty::Bool);
+        let parts = vec![
+            a,
+            Agg::Static(Value::Int(Int::from_u64(3))),
+            Agg::Ref(base(ev), ev.tys.mk(Ty::UInt(8))),
+        ];
+        let _ = arr;
+        let node = Agg::node(&ev.graph, &ev.tys, t, parts);
+        vec![Val::Agg(Box::new(node.unwrap_or(Agg::Static(Value::Unit))))]
+    };
+    assert_eq!(sel("X.1", f, tuple_node), "(int 3) true 2");
+    assert_eq!(sel("X[2]", f, tuple_node), "hw UInt[8] Y$0 1 true 4");
+    assert_eq!(sel("X.3", f, tuple_node), "S013 1:3");
+    assert_eq!(sel("X[3]", f, tuple_node), "S013 1:3");
+}
+
+#[test]
+fn the_leaf_fields_of_a_child_output_append_to_its_port_name() {
+    with(100, |ev| {
+        let inst = ev.paths.child(None, 5);
+        let port = Name {
+            head: "q".to_owned(),
+            rest: Vec::new(),
+        };
+        ev.syms.texts.resize(8, String::new());
+        let out = Base::Out(inst, port);
+        let field = ev.syms.texts.len();
+        ev.syms.texts.push("t".to_owned());
+        let out = out.sub(&mut ev.paths, &ev.syms.texts, Step::User(field));
+        let out = out.sub(&mut ev.paths, &ev.syms.texts, Step::Elem(1));
+        let out = out.sub(&mut ev.paths, &ev.syms.texts, Step::Elem(2));
+        assert_eq!(base_text(ev, &out), ".q$t$1e$2e");
+        let leaf = ev.tys.mk(Ty::UInt(4));
+        let Ok(Val::Hw(h)) = ev.normalize(AT, Agg::Ref(out, leaf)) else {
+            panic!("a hardware leaf")
+        };
+        assert!(matches!(ev.graph.node(h).map(|n| &n.op), Some(Op::Out(..))));
+    });
+}
+
+#[test]
+fn len_of_a_reference_reads_its_type() {
+    let f = 700_000_107;
+    let len = |ev: &mut Evaluator<'_>, v: Val| match ev.len(AT, vec![Out::Made(v)]) {
+        Ok(Some(o)) => ev.store.value(&o).serialize(&ev.tys),
+        Ok(None) => "none".to_owned(),
+        Err(Stop::Error(e)) => format!("{} {}:{}", e.code, e.pos.line, e.pos.col),
+        Err(Stop::Stack(_)) => "stack".to_owned(),
+    };
+    with(f, |ev| {
+        let t = bytes(ev, 1 << 40);
+        let r = register(ev, t);
+        assert_eq!(len(ev, r), "(int 1099511627776)");
+        assert_eq!(f - ev.fuel.left(), 0);
+        let flags = tuple(ev, vec![Ty::Bool, Ty::Bool]);
+        let r = register(ev, flags);
+        assert_eq!(len(ev, r), format!("{} 1:1", Code::S010));
+        let flags = array(ev, Ty::Bool, 2);
+        let parts = vec![leaf(ev, Ty::Bool), Agg::Static(Value::Bool(true))];
+        let node = Agg::node(&ev.graph, &ev.tys, flags, parts);
+        let v = Val::Agg(Box::new(node.unwrap_or(Agg::Static(Value::Unit))));
+        assert_eq!(len(ev, v), "(int 2)");
+        assert_eq!(f - ev.fuel.left(), 0);
+    });
 }
