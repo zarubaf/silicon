@@ -7,10 +7,12 @@
 //! A constant node copies a Boolean or a finite value. A finite value has at most 1024 words,
 //! because a width is at most 65536, so the copy stays within a constant factor of the charge.
 
-use super::{Evaluator, Opnd, Res, at, fail};
+use super::{Evaluator, Opnd, Res, Store, at, fail};
 use crate::Code;
-use crate::hw::{Graph, HwId, Op, Val};
+use crate::agg::{Agg, Base};
+use crate::hw::{Graph, HwId, Op, Seen, Val};
 use crate::int::unsigned_size;
+use crate::names::{Paths, Step};
 use crate::ops::{self, Fuel, MAX_WIDTH, binop_text, int_text, unop_text};
 use crate::types::{Ty, TyId, Types};
 use crate::value::{Value, int_size};
@@ -74,6 +76,194 @@ fn lit_value_at(
         return lit_of(pos, v, graph, tys);
     }
     lit_value(pos, v, graph, tys)
+}
+
+/// One side of a pair in the walk of a hardware equality (section 7.4). It borrows the store,
+/// so the walk copies no aggregate. A `Ref` is a reference that the walk made for a part.
+enum Side<'a> {
+    Val(&'a Value),
+    Agg(&'a Agg),
+    Hw(HwId),
+    Ref(Base),
+}
+
+impl<'a> Side<'a> {
+    /// The part in the form of the walk: a static part or a leaf is a value of its own.
+    fn of_agg(a: &'a Agg) -> Side<'a> {
+        match a {
+            Agg::Static(v) => Side::Val(v),
+            Agg::Hw(h) => Side::Hw(*h),
+            a => Side::Agg(a),
+        }
+    }
+
+    /// The operand as a side, or `None` for a handle and a literal that waits.
+    fn of_opnd(store: &'a Store, o: &'a Opnd) -> Option<Side<'a>> {
+        match o {
+            Opnd::Hw(h) => Some(Side::Hw(*h)),
+            Opnd::Static(out) => match store.seen(out) {
+                Seen::Static(v) => Some(Side::Val(v)),
+                Seen::Hw(h) => Some(Side::Hw(h)),
+                Seen::Agg(a) => Some(Side::of_agg(a)),
+                Seen::Handle(_) | Seen::Pending(..) => None,
+            },
+        }
+    }
+
+    /// The type of the side. A part that the walk made has none.
+    fn ty(&self, g: &Graph, tys: &mut Types) -> Option<TyId> {
+        match self {
+            Side::Val(v) => Some(v.ty(tys)),
+            Side::Hw(h) => Some(tys.mk(g.ty(*h))),
+            Side::Agg(a) => Some(a.ty(g, tys)),
+            Side::Ref(_) => None,
+        }
+    }
+
+    fn text(&self, g: &Graph, tys: &Types) -> String {
+        match self {
+            Side::Val(v) => v.text(tys),
+            Side::Hw(h) => format!("hardware {}", tys.text_of(&g.ty(*h))),
+            Side::Agg(a) => a.stored_ty().map_or_else(
+                || "hardware".to_owned(),
+                |t| format!("hardware {}", tys.text(t)),
+            ),
+            Side::Ref(_) => "a part".to_owned(),
+        }
+    }
+
+    /// The part `k` of the side, in constant work. A reference gives a reference to the part
+    /// with the leaf field `step`, or a hardware leaf of the scalar type `leaf`, so it never
+    /// expands. A stored node and a static container give the part they hold.
+    fn child(
+        &self,
+        k: usize,
+        step: &Step,
+        leaf: Option<&Ty>,
+        pos: Pos,
+        (graph, paths, texts): (&mut Graph, &mut Paths, &[String]),
+    ) -> Option<Side<'a>> {
+        let base = match self {
+            Side::Val(v) => {
+                let v: &'a Value = v;
+                return match v {
+                    Value::Array(_, xs) | Value::Tuple(_, xs) | Value::Record(_, xs) => {
+                        xs.get(k).map(Side::Val)
+                    }
+                    _ => None,
+                };
+            }
+            Side::Agg(a) => {
+                let a: &'a Agg = a;
+                match a {
+                    Agg::Array(_, p) | Agg::Tuple(_, p) | Agg::Record(_, p) => {
+                        return p.0.get(k).map(Side::of_agg);
+                    }
+                    Agg::Ref(b, _) => b,
+                    _ => return None,
+                }
+            }
+            Side::Ref(b) => b,
+            Side::Hw(_) => return None,
+        };
+        let sub = base.sub(paths, texts, step.clone());
+        Some(match leaf {
+            Some(t) => Side::Hw(graph.mk(pos, t.clone(), sub.op(), Vec::new())),
+            None => Side::Ref(sub),
+        })
+    }
+}
+
+/// The units of the walk of a hardware equality: whether a static pair exists, whether all
+/// static pairs are equal, and the `icmp eq` node of each leaf pair in walk order.
+struct Pairs {
+    statics: bool,
+    equal: bool,
+    nodes: Vec<HwId>,
+}
+
+/// A container pair of the walk whose parts wait: the next part to visit and the count.
+struct Level<'a> {
+    ty: TyId,
+    a: Side<'a>,
+    b: Side<'a>,
+    next: u64,
+    len: u64,
+}
+
+/// The message of two sides that have no common type.
+fn no_common(op: BinOp, a: &str, b: &str) -> String {
+    format!("`{}` needs a common type, not {a} and {b}", binop_text(op))
+}
+
+/// A static pair of the walk (section 7.4). It charges the sum of the two sizes, as a static
+/// equality does, before it compares. Its result goes into `s`. The two types joined before
+/// the walk, so the pair has two static values.
+fn static_pair(
+    pos: Pos,
+    op: BinOp,
+    (lhs, rhs): (&Side<'_>, &Side<'_>),
+    pairs: &mut Pairs,
+    (fuel, graph, tys): (&mut Fuel, &mut Graph, &mut Types),
+) -> Res<()> {
+    let (Side::Val(left), Side::Val(right)) = (lhs, rhs) else {
+        let texts = (lhs.text(graph, tys), rhs.text(graph, tys));
+        return fail(Code::S010, pos, no_common(op, &texts.0, &texts.1));
+    };
+    fuel.pay(u128::from(left.size()) + u128::from(right.size()))
+        .map_err(at(pos))?;
+    let equal = ops::same_pair(left, right, tys, fuel.left()).map_err(at(pos))?;
+    pairs.statics = true;
+    pairs.equal &= equal;
+    Ok(())
+}
+
+/// A leaf pair of the walk: a pair of a data scalar type. Two static leaves are a static pair.
+/// Another pair keeps the scalar rule of slice 1: a static leaf converts to the type of the
+/// hardware leaf with its conversion charge, then the `icmp eq` node charges at the pair.
+fn leaf_pair(
+    pos: Pos,
+    op: BinOp,
+    (lhs, rhs): (&Side<'_>, &Side<'_>),
+    pairs: &mut Pairs,
+    (fuel, graph, tys): (&mut Fuel, &mut Graph, &mut Types),
+) -> Res<()> {
+    if let (Side::Val(_), Side::Val(_)) = (lhs, rhs) {
+        return static_pair(pos, op, (lhs, rhs), pairs, (fuel, graph, tys));
+    }
+    let (left, right) = match (lhs, rhs) {
+        (Side::Hw(x), Side::Hw(y)) => (*x, *y),
+        (Side::Hw(hw), Side::Val(value)) => {
+            let at_ty = graph.ty(*hw);
+            (*hw, lit_value_at(pos, &at_ty, value, fuel, graph, tys)?)
+        }
+        (Side::Val(value), Side::Hw(hw)) => {
+            let at_ty = graph.ty(*hw);
+            (lit_value_at(pos, &at_ty, value, fuel, graph, tys)?, *hw)
+        }
+        _ => {
+            let texts = (lhs.text(graph, tys), rhs.text(graph, tys));
+            return fail(Code::S010, pos, no_common(op, &texts.0, &texts.1));
+        }
+    };
+    let (ty, other) = (graph.ty(left), graph.ty(right));
+    if ty != other {
+        return fail(
+            Code::S010,
+            pos,
+            format!(
+                "`{}` does not accept {} and {}",
+                binop_text(op),
+                tys.text_of(&ty),
+                tys.text_of(&other)
+            ),
+        );
+    }
+    fuel.pay(3).map_err(at(pos))?;
+    pairs
+        .nodes
+        .push(graph.mk(pos, Ty::Bool, Op::Bin(BinOp::Eq), vec![left, right]));
+    Ok(())
 }
 
 impl Evaluator<'_> {
@@ -320,6 +510,130 @@ impl Evaluator<'_> {
                 ),
             )
         }
+    }
+
+    /// `==` or `!=` with a hardware aggregate operand (section 5.4). The function flag checked
+    /// before. The two types join with the join charge (`S010` without a join). Then the walk
+    /// visits the pairs by the joined type. After the walk, the chain of `and` nodes charges
+    /// from `(const 1 s)` when static pairs exist, and `!=` adds an `xor` node last. A walk
+    /// without a hardware pair gives a static `Bool`. The walk keeps its own stack and charges
+    /// 1 before it visits each pair, so a reference of any size never expands.
+    pub(super) fn agg_eq(&mut self, pos: Pos, op: BinOp, lhs: &Opnd, rhs: &Opnd) -> Res<Val> {
+        let (Some(sa), Some(sb)) = (
+            Side::of_opnd(&self.store, lhs),
+            Side::of_opnd(&self.store, rhs),
+        ) else {
+            return fail(Code::S010, pos, no_common(op, "a value", "a value"));
+        };
+        let (graph, tys) = (&self.graph, &mut self.tys);
+        let (Some(lhs_ty), Some(rhs_ty)) = (sa.ty(graph, tys), sb.ty(graph, tys)) else {
+            return fail(Code::S010, pos, no_common(op, "a value", "a value"));
+        };
+        let mut budget = self.fuel.left();
+        let joined = ops::common_ty(lhs_ty, rhs_ty, &mut self.tys, &mut budget);
+        self.fuel.pay_int(&joined.charge).map_err(at(pos))?;
+        let Some(joined) = joined.ty else {
+            let texts = (
+                sa.text(&self.graph, &self.tys),
+                sb.text(&self.graph, &self.tys),
+            );
+            return fail(Code::S010, pos, no_common(op, &texts.0, &texts.1));
+        };
+        let mut pairs = Pairs {
+            statics: false,
+            equal: true,
+            nodes: Vec::new(),
+        };
+        let mut stack: Vec<Level<'_>> = Vec::new();
+        let mut visit = Some((joined, sa, sb));
+        loop {
+            if let Some((ty, a, b)) = visit.take() {
+                self.fuel.pay(1).map_err(at(pos))?;
+                #[cfg(test)]
+                crate::counters::add(crate::counters::Count::Paired, 1);
+                let len = match self.tys.get(ty) {
+                    Ty::Array(_, n) => Some(n.to_u64().unwrap_or(u64::MAX)),
+                    Ty::Tuple(ts) => Some(ts.len() as u64),
+                    Ty::Struct(_) => Some(self.tys.fields(ty).map_or(0, |(_, fs)| fs.len() as u64)),
+                    Ty::Unit => None,
+                    Ty::Bool | Ty::UInt(_) | Ty::SInt(_) => {
+                        let env = (&mut self.fuel, &mut self.graph, &mut self.tys);
+                        leaf_pair(pos, op, (&a, &b), &mut pairs, env)?;
+                        None
+                    }
+                    _ => {
+                        let env = (&mut self.fuel, &mut self.graph, &mut self.tys);
+                        static_pair(pos, op, (&a, &b), &mut pairs, env)?;
+                        None
+                    }
+                };
+                if let Some(len) = len {
+                    stack.push(Level {
+                        ty,
+                        a,
+                        b,
+                        next: 0,
+                        len,
+                    });
+                }
+            }
+            let Some(top) = stack.last_mut() else {
+                break;
+            };
+            if top.next >= top.len {
+                stack.pop();
+                continue;
+            }
+            let part = top.next;
+            top.next += 1;
+            let (ct, step) = self.child_of(pos, top.ty, part)?;
+            let leaf = match self.tys.get(ct) {
+                scalar @ (Ty::Bool | Ty::UInt(_) | Ty::SInt(_)) => Some(scalar.clone()),
+                _ => None,
+            };
+            let idx = usize::try_from(part).unwrap_or(usize::MAX);
+            let env = (&mut self.graph, &mut self.paths, &self.syms.texts[..]);
+            let left = top.a.child(idx, &step, leaf.as_ref(), pos, env);
+            let env = (&mut self.graph, &mut self.paths, &self.syms.texts[..]);
+            let right = top.b.child(idx, &step, leaf.as_ref(), pos, env);
+            let (Some(left), Some(right)) = (left, right) else {
+                let texts = (
+                    top.a.text(&self.graph, &self.tys),
+                    top.b.text(&self.graph, &self.tys),
+                );
+                return fail(Code::S010, pos, no_common(op, &texts.0, &texts.1));
+            };
+            visit = Some((ct, left, right));
+        }
+        self.eq_chain(pos, op, pairs)
+    }
+
+    /// The result of the walk of a hardware equality: the chain of `and` nodes over the leaf
+    /// pairs, in walk order. It charges 3 for each `and` node, after the walk. When a static
+    /// pair exists, the chain starts from the free constant `s`. `!=` adds an `xor` node last.
+    fn eq_chain(&mut self, pos: Pos, op: BinOp, r: Pairs) -> Res<Val> {
+        let mut nodes = r.nodes.into_iter();
+        let Some(first) = nodes.next() else {
+            let same = if op == BinOp::Eq { r.equal } else { !r.equal };
+            return Ok(Val::Static(Value::Bool(same)));
+        };
+        let (mut chain, mut next) = if r.statics {
+            (self.lit(pos, Value::Bool(r.equal))?, Some(first))
+        } else {
+            (first, nodes.next())
+        };
+        while let Some(z) = next {
+            self.charge(pos, 3)?;
+            chain = self
+                .graph
+                .mk(pos, Ty::Bool, Op::Bin(BinOp::And), vec![chain, z]);
+            next = nodes.next();
+        }
+        if op == BinOp::Eq {
+            return Ok(Val::Hw(chain));
+        }
+        let one = self.lit(pos, Value::Bool(true))?;
+        self.node(pos, Ty::Bool, Op::Bin(BinOp::Xor), vec![chain, one])
     }
 
     /// `resize` or `reinterpret` of a hardware value.

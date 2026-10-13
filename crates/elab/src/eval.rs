@@ -849,6 +849,11 @@ impl Evaluator<'_> {
         }
     }
 
+    /// Whether the operand is a hardware aggregate.
+    fn opnd_is_agg(&self, o: &Opnd) -> bool {
+        matches!(o, Opnd::Static(out) if self.is_agg(out))
+    }
+
     /// Whether the result is a handle. A handle is the whole value of a local, so a reference
     /// with a path is none, and the check does not walk it.
     fn is_handle(&self, out: &Out) -> bool {
@@ -1239,6 +1244,11 @@ impl Evaluator<'_> {
                 let a = self.operand(*pos, lhs)?;
                 let (a, b) = self.operand_after(*pos, a, rhs)?;
                 self.comparable(*pos, *op, &a, &b)?;
+                if matches!(op, BinOp::Eq | BinOp::Ne)
+                    && (self.opnd_is_agg(&a) || self.opnd_is_agg(&b))
+                {
+                    return Ok(Some(Out::Made(self.agg_eq(*pos, *op, &a, &b)?)));
+                }
                 match (a, b) {
                     (Opnd::Static(a), Opnd::Static(b)) => Ok(Some(Out::Made(Val::Static(
                         self.binary(*pos, *op, &a, &b)?,
@@ -1420,7 +1430,10 @@ impl Evaluator<'_> {
             Opnd::Static(o) => {
                 #[cfg(test)]
                 crate::counters::add(crate::counters::Count::Flagged, 1);
-                self.store.value(o).holds_fn()
+                match self.store.seen(o) {
+                    Seen::Agg(a) => a.stored_ty().is_some_and(TyId::holds_fn),
+                    _ => self.store.value(o).holds_fn(),
+                }
             }
             Opnd::Hw(_) => false,
         };

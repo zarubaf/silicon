@@ -523,7 +523,7 @@ impl Evaluator<'_> {
     }
 
     /// The type and the leaf field of the part `k` of the container type `t`.
-    fn child_of(&self, pos: Pos, t: TyId, k: u64) -> Res<(TyId, Step)> {
+    pub(super) fn child_of(&self, pos: Pos, t: TyId, k: u64) -> Res<(TyId, Step)> {
         let idx = usize::try_from(k).unwrap_or(usize::MAX);
         match self.tys.get(t) {
             Ty::Array(e, _) => Ok((*e, Step::Elem(k))),

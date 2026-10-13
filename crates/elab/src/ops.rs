@@ -6,7 +6,7 @@
 
 mod container;
 
-pub(crate) use container::{common_of, composite, container_op};
+pub(crate) use container::{common_of, common_ty, composite, container_op, same_pair};
 pub(crate) use container::{plan as plan_value, run as run_value};
 
 use crate::Code;

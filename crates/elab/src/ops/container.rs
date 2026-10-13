@@ -576,6 +576,15 @@ fn same_run(a: &Value, b: &Value, tys: &Types) -> Result<bool, Fault> {
     Ok(all)
 }
 
+/// `==` on a static pair of the walk of a hardware equality: the check and the comparison,
+/// after the caller charged the two sizes. The joins of the check charge nothing here, because
+/// the two types joined before the walk.
+pub(crate) fn same_pair(a: &Value, b: &Value, tys: &mut Types, budget: u64) -> Result<bool, Fault> {
+    let (_, checked) = same_check(a, b, tys, budget);
+    checked?;
+    same_run(a, b, tys)
+}
+
 /// A binary operator with a container operand. `==` and `!=` read both operands in full, so
 /// they charge the sum of the sizes. The orderings take no container.
 pub(crate) fn container_op(
