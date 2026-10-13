@@ -383,6 +383,42 @@ before it do not conflict. A read of a pending root is not a mutation.
 #guard ok (lists "let mut a = [list(Int)];\na[a.len()].push(1);")
 #guard ok (lists "let h = push;\nh(zs, 1);")
 
+/-!
+`S007`: a function type takes no index, in a type and in an expression. The position is the
+index, the start of its base. A postfix after a function type belongs to its result type.
+-/
+#guard fails (fnBody "let h = (fn () -> UInt)[8];\nreturn p;") .S007 2 9
+#guard message (fnBody "let h = (fn () -> UInt)[8];\nreturn p;") ==
+  "a function type takes 0 argument(s), but it has 1"
+#guard fails "const A: (fn () -> UInt)[8] = 1;" .S007 1 10
+#guard fails (fnBody "let h = (fn () -> Bool)[1][2];\nreturn p;") .S007 2 9
+#guard ok (fnBody "let h = fn () -> UInt[8];\nreturn p;")
+#guard ok "const A: fn () -> UInt[8] = 1;"
+
+/-! The parameter types and the result type of a function type follow the rules of a type. -/
+#guard fails "const A: fn (UInt) -> Bool = 1;" .S007 1 14
+#guard fails "const A: fn () -> UInt = 1;" .S007 1 19
+#guard fails (fnBody "let h = fn (Bool, UInt) -> Bool;\nreturn p;") .S007 2 19
+#guard fails (fnBody "let h = fn () -> UInt;\nreturn p;") .S007 2 18
+#guard fails (modBody "reg r: UInt[8] = 0;\nlet h = fn (UInt[r]) -> Bool;") .S005 3 18
+#guard fails (modBody "reg r: UInt[8] = 0;\nlet h: fn () -> UInt[r] = 1;") .S005 3 22
+#guard fails (modBody "reg r: UInt[8] = 0;\ncomptime if (fn () -> UInt[r] == r) {}") .S005 3 28
+
+/-!
+Pass 5 decides the other rules of the function types and the function values. These are a call
+through a function value (`S007` and `S008`) and the constructor of a function type. They are
+also a generic function or a builtin as a value, a unary operator on a type, and `==` on
+functions (`S010`).
+-/
+#guard ok "fn g(mut x: Bool) -> Bool { return x; }\nfn f() -> Bool { let h = g; return h(true); }"
+#guard ok (fnBody "let h = f;\nreturn h(1, 2, 3);")
+#guard ok (fnBody "let h = (fn () -> Bool)(1, 2, 3);\nreturn p;")
+#guard ok "fn f() -> Nat { let h = g; return 1; }\nfn g(comptime N: Nat) -> Nat { return N; }"
+#guard ok (fnBody "let h = len;\nreturn p;")
+#guard ok (fnBody "let h = -fn () -> Bool;\nreturn p;")
+#guard ok (fnBody "let h = f == f;\nreturn p;")
+#guard ok (fnBody "return p == (fn () -> Bool == f);")
+
 /-! `S005` to `S007` compete by position. -/
 #guard fails (modBody "return;\ninput a: Bool;\ncomptime if (a) {}") .S006 2 1
 #guard fails (modBody "input a: Bool;\ncomptime if (a) {}\nreturn;") .S005 3 14
