@@ -446,3 +446,30 @@ fn the_if_over_nested_empty_parts_walks_each_part_once() {
     assert_linear(at, |r| r.counts.walked, 4, 8);
     assert_linear(at, |r| r.counts.paired, 1, 4);
 }
+
+/// An index with a call, along a chain of `n` stored nodes, takes steps in `n`. A call can
+/// change the root, so a read re-checks the part that it waits at (`segment`), but a call that
+/// leaves the root alone must not walk the path from the root again at each index. The calls
+/// are constant work, so the fuel grows in `n` too.
+#[test]
+fn an_index_with_a_call_along_stored_nodes_takes_linear_steps() {
+    let zero = "fn zero() -> Int { return 0; }\n";
+    let at = |n: u64, k: u64| {
+        let place = rep(".a[0]", n + 1);
+        let read = rep(".a[zero()]", n + 1);
+        run_ok(
+            &format!(
+                "{zero}{}",
+                chain_decls(
+                    n,
+                    "struct S{i} { a: [S{}; 1], b: UInt[8], }\n",
+                    "struct S{i} { a: [UInt[8]; 1], b: UInt[8], }\n"
+                )
+            ),
+            "S0",
+            &format!("let mut m = x;\n  m{place} = 7;\n  let y = m{read};"),
+            key(24, k),
+        )
+    };
+    assert_linear(at, |r| r.counts.stepped, 16, 16);
+}
