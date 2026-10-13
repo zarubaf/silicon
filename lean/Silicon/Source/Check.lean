@@ -62,9 +62,14 @@ a resource. A `let` alias of a resource and a domain name are for the stage rule
   has its arguments, also the callee of a constructor. This also holds for a type name in an
   expression. A complete type such as `UInt[8]`, `P[8]`, a `type` item, `()`, a tuple type, or
   an array type takes no index.
+- A function type takes no index, in a type and in an expression: `(fn () -> UInt)[8]` is
+  `S007` at the index.
 
-A call through a local or a `const` has no known arity. `Elab` checks it with `S010`. The type of
-a `type` item and of a local is known only in `Elab`, so `Elab` checks its constructor.
+A call through a function value, a local, or a `const` has no known arity. `Elab` checks it in
+pass 5: `S007` for a function value, else `S010`. The type of a `type` item and of a local is
+known only in `Elab`, so `Elab` checks its constructor. A constructor of a function type has no
+rule of this check either, and its arguments are not static positions. A function name as a value
+is a name like another. `Elab` checks that it is not generic and not a builtin (`S010`).
 
 `S008` follows section 9.1. A mutable root is a `let mut` local or a `mut` parameter. A place is
 a name, or an index, a selector `.N`, or a field of a place. Its root is that name. An index of a
@@ -394,6 +399,10 @@ mutual
       typeExpr t
       let _ ← visit true false n
       return some ⟨"a complete type", 0, .convert⟩
+    | .fnType _ ps r => do
+      for q in ps do fnParam q
+      typeExpr r
+      return some ⟨"a function type", 0, .unknown⟩
 
   def typeExpr : Resolve.TypeExpr → M Unit
     | .name p n r => do
@@ -402,12 +411,19 @@ mutual
       if let some h ← head n r then arity p h.text h.missing xs.length
       for x in xs do let _ ← visit true false x
     | .index p b xs => do
-      arity p "a complete type" 0 xs.length
+      arity p (if b matches .fn .. then "a function type" else "a complete type") 0 xs.length
       typeExpr b
       for x in xs do let _ ← visit true false x
     | .unit _ => pure ()
     | .tuple _ ts => for t in ts do typeExpr t
     | .array _ t n => do typeExpr t; let _ ← visit true false n
+    | .fn _ ps r => do
+      for q in ps do fnParam q
+      typeExpr r
+
+  /-- A parameter type of a function type. -/
+  def fnParam : Resolve.FnParam → M Unit
+    | .mk _ t => typeExpr t
 end
 
 def expr (static : Bool) (e : Resolve.Expr) : M Unit := do let _ ← visit static false e

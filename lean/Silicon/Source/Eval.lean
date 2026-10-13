@@ -788,6 +788,7 @@ mutual
         let e ← typeExpr n t
         let t ← arrayTy p k.pos e (← static k.pos (← need k (← eval n k)).value)
         return some ⟨.static (.type t), false, none⟩
+      | .fnType p .. => fail .S004 p "a function type is not supported yet"
   termination_by (b, 3)
 
   def typeExpr (b : Nat) (t : Resolve.TypeExpr) : M Ty :=
@@ -809,6 +810,7 @@ mutual
       | .array p t k => do
         let e ← typeExpr n t
         arrayTy p k.pos e (← static k.pos (← need k (← eval n k)).value)
+      | .fn p .. => fail .S004 p "a function type is not supported yet"
   termination_by (b, 3)
 
   /-- `UInt[e]` or `SInt[e]` in a type or an expression. The base charged its node. -/
@@ -1131,6 +1133,9 @@ mutual
     | .select _ a .. => scanExpr a
     | .tuple _ xs | .array _ xs => for x in xs do scanExpr x
     | .arrayType _ t n => do scanType t; scanExpr n
+    | .fnType _ ps r => do
+      for q in ps do scanParam q
+      scanType r
     | .num .. | .bool .. | .str .. | .name .. | .unit _ => pure ()
 
   def scanType : Resolve.TypeExpr → ScanM Unit
@@ -1140,6 +1145,12 @@ mutual
       for x in xs do scanExpr x
     | .tuple _ ts => for t in ts do scanType t
     | .array _ t n => do scanType t; scanExpr n
+    | .fn _ ps r => do
+      for q in ps do scanParam q
+      scanType r
+
+  def scanParam : Resolve.FnParam → ScanM Unit
+    | .mk _ t => scanType t
 end
 
 mutual

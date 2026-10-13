@@ -51,7 +51,11 @@ A position that needs a fixed kind gets a name of that kind, else `S003`:
 - A type name is a prelude type, a `struct` item, a `type` item, or a local. Only `Elab` knows
   whether a local holds a type.
 - The module of an `instance` is a `module` item.
-- A name in an expression is not a module. A module is used only in an `instance`.
+- A name in an expression is not a module. Only an `instance` uses a module.
+
+A function item is a name in an expression too: a callee, or a function value in another
+position. Whether it is a value of the right kind, not generic and not a builtin, is the type
+rule `S010` of `Elab` (section 5.1). The types of a function type resolve as type expressions.
 
 The field names of a struct are not in a scope. Two fields with one name are `S002`.
 
@@ -135,7 +139,8 @@ each name, so they are mutually recursive too. The container forms keep the shap
 forms. A `call` and a `method` hold their call site. The `fn` of a `method` is a `fn` item or
 a prelude function, and its `param` is the parameter that the receiver binds to. A type name
 refers to a prelude type, a `struct` item, a `type` item, or a local. A local holds a value of
-type `Type`, which `Elab` checks.
+type `Type`, which `Elab` checks. A function type keeps its form, with the `mut` mark of each
+parameter type.
 -/
 mutual
   inductive Expr where
@@ -156,6 +161,7 @@ mutual
     | arrayType (pos : Pos) (elem : TypeExpr) (len : Expr)
     | method (pos : Pos) (recv : Expr) (name : Ident) (fn : Ref) (param : Option Nat)
         (args : List Expr) (site : Nat)
+    | fnType (pos : Pos) (params : List FnParam) (ret : TypeExpr)
 
   inductive TypeExpr where
     | name (pos : Pos) (name : String) (ref : Ref)
@@ -163,9 +169,13 @@ mutual
     | unit (pos : Pos)
     | tuple (pos : Pos) (elems : List TypeExpr)
     | array (pos : Pos) (elem : TypeExpr) (len : Expr)
+    | fn (pos : Pos) (params : List FnParam) (ret : TypeExpr)
+
+  inductive FnParam where
+    | mk (mutable : Bool) (ty : TypeExpr)
 end
 
-deriving instance Repr, BEq, Inhabited for Expr, TypeExpr
+deriving instance Repr, BEq, Inhabited for Expr, TypeExpr, FnParam
 
 /-!
 The resolved statement. Each declaration has a `Binder`. An `inst` has its module item. An
@@ -218,10 +228,10 @@ inductive Item where
 def Expr.pos : Expr → Pos
   | .num p _ | .bool p _ | .str p _ | .name p .. | .unary p .. | .binary p ..
   | .cond p .. | .call p .. | .index p .. | .field p .. | .unit p | .tuple p ..
-  | .array p .. | .select p .. | .arrayType p .. | .method p .. => p
+  | .array p .. | .select p .. | .arrayType p .. | .method p .. | .fnType p .. => p
 
 def TypeExpr.pos : TypeExpr → Pos
-  | .name p .. | .index p .. | .unit p | .tuple p .. | .array p .. => p
+  | .name p .. | .index p .. | .unit p | .tuple p .. | .array p .. | .fn p .. => p
 
 def Stmt.pos : Stmt → Pos
   | .local p .. | .assign p .. | .connect p .. | .reg p .. | .wire p .. | .input p ..
@@ -320,10 +330,6 @@ def isModule (i : Nat) : M Bool := return (← read).items[i]? matches some (.mo
 def wrongKind (pos : Pos) (n what : String) : M Unit :=
   recordUnknown ⟨.S003, pos, s!"`{n}` is not {what}"⟩
 
-/-! `S004` at a function type. The parser gives none yet, so the resolver has no form for it. -/
-def fnTypeLater (pos : Pos) : M Unit :=
-  recordUnknown ⟨.S004, pos, "a function type is not supported yet"⟩
-
 /-!
 A name in a type position refers to a type: a prelude type, a `struct` item, a `type` item, or a
 local. Only `Elab` knows whether a local holds a type.
@@ -393,7 +399,9 @@ mutual
       let r ← expr r
       let f ← method m
       return .method p r m f (← receiver f) (← xs.mapM expr) k
-    | .fnType p .. => do fnTypeLater p; return .unit p
+    | .fnType p ps r => do
+      let ps ← ps.mapM fnParam
+      return .fnType p ps (← typeExpr r)
 
   def typeExpr : Source.TypeExpr → M TypeExpr
     | .name p n => do
@@ -406,7 +414,13 @@ mutual
     | .unit p => return .unit p
     | .tuple p ts => return .tuple p (← ts.mapM typeExpr)
     | .array p t n => return .array p (← typeExpr t) (← expr n)
-    | .fn p .. => do fnTypeLater p; return .unit p
+    | .fn p ps r => do
+      let ps ← ps.mapM fnParam
+      return .fn p ps (← typeExpr r)
+
+  /-- A parameter type of a function type. It declares no name. -/
+  def fnParam : Source.FnParam → M FnParam
+    | .mk m t => return .mk m (← typeExpr t)
 end
 
 /-! The module item of an `instance`. -/
