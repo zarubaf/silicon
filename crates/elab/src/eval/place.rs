@@ -80,6 +80,9 @@ struct Walked {
     held: Held,
     part: Option<PartInfo>,
     own: Option<Val>,
+    /// The walk ended inside a static value of the root, which holds no reference: no later step
+    /// normalizes a part, so the next steps need no catch-up.
+    settled: bool,
 }
 
 /// Where the walk along a place is: a view of a value in the store, or a value that the walk
@@ -101,6 +104,7 @@ impl Walked {
             held: Held::Other,
             part: None,
             own: None,
+            settled: false,
         }
     }
 }
@@ -713,6 +717,7 @@ impl Evaluator<'_> {
             // A step into a reference normalizes an empty part, which charges its size. As in
             // Lean, that comes before the next step charges, so the walk catches up first.
             if aggregate
+                && !state.settled
                 && !keyed.is_empty()
                 && part_ty.is_some_and(|t| self.tys.meta(t).leaves.to_u64() == Some(0))
             {
@@ -893,6 +898,7 @@ impl Evaluator<'_> {
                 keys,
                 known,
                 in_list,
+                settled: matches!(cur.seen(), Seen::Static(_)),
                 own: cur.into_own(),
                 ..Walked::start(None)
             });
@@ -938,6 +944,7 @@ impl Evaluator<'_> {
             held,
             part,
             own: cur.into_own(),
+            settled: false,
         })
     }
 
