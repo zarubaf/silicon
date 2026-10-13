@@ -2297,6 +2297,25 @@ def listArms (k : Nat) : String :=
 #guard runIf armsT (listArms 1 ++ "\n  let z: List[UInt[8]] = y;") == " | ref x | 62"
 #guard runIf armsT (listArms 2) == "S011 6:11"
 
+/-!
+Equal static sides without the joined type are `S011` at the `if`, in each arm order. Here the
+lists of `(Int, UInt[8])` and `(UInt[8], Int)` join to a list of `(UInt[8], UInt[8])`, so no
+side has the joined type. A list of `(UInt[8], UInt[8])` has the joined type, so it is the
+result in each arm order.
+-/
+def crossArms (a b : String) : String :=
+  "type A = (Int, UInt[8]);\ntype B = (UInt[8], Int);\ntype C = (UInt[8], UInt[8]);\n" ++
+  assignIn armsT ("let mut xs = list(A);\n  xs.push((1, 2));\n  let mut ys = list(B);\n" ++
+    "  ys.push((1, 2));\n  let mut zs = list(C);\n  zs.push((1, 2));\n" ++
+    s!"  let y = if (x.0) \{ ({a}, x.0) } else \{ ({b}, x.0) };\n" ++
+    "  let z: (List[C], Bool) = y;")
+#guard runF (crossArms "xs" "ys") refX 1000000 ifTree == "S011 11:11"
+#guard runF (crossArms "ys" "xs") refX 1000000 ifTree == "S011 11:11"
+#guard runF (crossArms "xs" "zs") refX 1000000 ifTree ==
+  "y$1e=(mux x$0e x$0e x$0e) z$1e=y$1e | ref x | 251"
+#guard runF (crossArms "zs" "xs") refX 1000000 ifTree ==
+  runF (crossArms "xs" "zs") refX 1000000 ifTree
+
 /-! Each mark of one instantiation takes the next number. -/
 #guard runIf armsT ("let y = if (!x.0) { x.1 } else { x.2 };\n" ++
   "  let z = if (!x.0) { x.2 } else { x.1 };") ==
