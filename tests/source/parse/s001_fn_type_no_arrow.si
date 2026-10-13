@@ -1,0 +1,2 @@
+// S001: a function type needs its result type.
+fn f(g: fn (Nat)) -> Nat {}

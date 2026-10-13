@@ -1,0 +1,2 @@
+// S001: a parameter of a function type has one mark. The `comptime` mark is the error.
+fn f(g: fn (mut comptime Nat) -> Nat) -> Nat {}

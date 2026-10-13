@@ -1,0 +1,2 @@
+// S001: a function type lists types, not names.
+fn f(g: fn (x: Nat) -> Nat) -> Nat {}

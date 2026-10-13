@@ -1,0 +1,14 @@
+// Function types (section 5.6): in a parameter, a result, a field, an alias, and a constant. A
+// parameter type has an optional `mut` mark, and a trailing comma is allowed.
+fn apply(f: fn (Nat) -> Nat, x: Nat) -> Nat {
+    return f(x);
+}
+fn touch(g: fn (mut List[Nat], Nat,) -> (), mut xs: List[Nat]) -> () {
+    g(xs, 1);
+}
+fn pick() -> fn () -> Bool {}
+struct Table {
+    step: fn (Nat, Nat) -> Nat,
+}
+type Pred = fn (Nat) -> Bool;
+const NONE: List[fn () -> ()] = list(fn () -> ());

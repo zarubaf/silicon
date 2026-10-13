@@ -1,0 +1,10 @@
+// A function type is a unary operand in an expression, so a postfix after it belongs to its result type.
+// TOP M()
+module M() domains() {
+    let a = fn (Nat) -> Nat;
+    let b = list(fn () -> Bool);
+    let c = fn () -> UInt[8];
+    let d = (fn () -> UInt)[8];
+    let e = [fn () -> Nat; 3];
+    let f = fn (mut Nat, Bool) -> ();
+}
