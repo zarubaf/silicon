@@ -381,6 +381,58 @@ shift them, and each body starts at 0.
 #guard body ("module M() {\nlet a = len([1]);\n}\nfn g() -> Nat { return len([1]); }") matches
   [.local _ _ _ _ (.call _ _ _ 0)]
 
+/-! The type of the first `const` item. -/
+def constTy (s : String) : Option Resolve.TypeExpr :=
+  match run s with
+  | .ok items =>
+    match items[0]? with
+    | some (Resolve.Item.const _ _ t _) => some t
+    | _ => none
+  | .error _ => none
+
+/-!
+A function type resolves its parameter types and its result type, in a type and in an
+expression. It keeps the `mut` mark of each parameter type. A local and a later item are visible
+in it.
+-/
+#guard ok "fn f(g: fn (Bool, mut UInt[8]) -> Bool) -> Bool { return g(true); }"
+#guard ok "fn f(comptime T: Type) -> Type { return fn (T, mut [T; 2]) -> (T, T); }"
+#guard ok "const A: fn (T) -> fn () -> T = 1;\ntype T = Bool;"
+#guard constTy "const A: fn (mut Bool, T) -> () = 1;\ntype T = Bool;" matches
+  some (.fn _ [.mk true (.name _ _ (.type .bool)), .mk false (.name _ _ (.item 1))] (.unit _))
+#guard body (fnBody "let h = fn (mut Bool) -> fn () -> Bool;\nreturn p;") matches
+  [.local _ _ _ _ (.fnType _ [.mk true (.name _ _ (.type .bool))]
+    (.fn _ [] (.name _ _ (.type .bool)))), _]
+#guard body (fnBody "let h = (fn () -> Bool)[1];\nreturn p;") matches
+  [.local _ _ _ _ (.index _ (.fnType _ [] _) [.num _ 1]), _]
+
+/-! `S003` in a function type. The position is the name. -/
+#guard fails "const A: fn (Foo) -> Bool = 1;" .S003 1 14
+#guard fails "const A: fn () -> Foo = 1;" .S003 1 19
+#guard fails "const A: fn (mut fn () -> Foo) -> Bool = 1;" .S003 1 27
+#guard fails (fnBody "let h = fn (Foo) -> Bool;\nreturn p;") .S003 2 13
+#guard fails (fnBody "let h = fn () -> Foo;\nreturn p;") .S003 2 18
+#guard fails (fnBody "let h = fn (Bool, mut Foo) -> Bool;\nreturn p;") .S003 2 23
+#guard fails "fn g() -> Nat { return 1; }\nconst A: fn (g) -> Bool = 1;" .S003 2 14
+#guard message "fn g() -> Nat { return 1; }\nconst A: fn (g) -> Bool = 1;" == "`g` is not a type"
+#guard fails "module M() {}\nconst A: fn () -> M = 1;" .S003 2 19
+
+/-!
+A function name as a value resolves to its item, also a generic function. A builtin resolves to
+its prelude function. `Elab` reports a generic function and a builtin as values (`S010`). A
+module is not a value.
+-/
+#guard retRef "fn f() -> Nat { let h = g; return h; }\nfn g() -> Nat { return 1; }" ==
+  some (.local 0)
+#guard body "fn f() -> Nat { let h = g; return h(); }\nfn g() -> Nat { return 1; }" matches
+  [.local _ _ _ _ (.name _ _ (.item 1)), .ret _ (some (.call _ (.name _ _ (.local 0)) [] 0))]
+#guard retRef "fn f() -> Nat { return g; }\nfn g(comptime N: Nat) -> Nat { return N; }" ==
+  some (.item 1)
+#guard retRef "fn f() -> Nat { return g; }\ncomptime fn g() -> Nat { return 1; }" ==
+  some (.item 1)
+#guard retRef "fn f() -> Nat { return len; }" == some (.fn .len)
+#guard fails "fn f() -> Nat { return (M); }\nmodule M() {}" .S003 1 25
+
 /-! Each pass reports its first error by position. -/
 #guard fails (fnBody "return a + b;") .S003 2 8
 #guard fails "fn f() -> Bool { let x = true; let x = true; return x; }\nconst f: Nat = 1;"
