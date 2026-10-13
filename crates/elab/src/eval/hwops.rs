@@ -9,10 +9,10 @@
 
 use super::{Evaluator, Opnd, Res, at, fail};
 use crate::Code;
-use crate::hw::{HwId, Op, Val};
+use crate::hw::{Graph, HwId, Op, Val};
 use crate::int::unsigned_size;
-use crate::ops::{self, MAX_WIDTH, binop_text, int_text, unop_text};
-use crate::types::{Ty, TyId};
+use crate::ops::{self, Fuel, MAX_WIDTH, binop_text, int_text, unop_text};
+use crate::types::{Ty, TyId, Types};
 use crate::value::{Value, int_size};
 use parse::ast::{BinOp, Pos, UnOp};
 use resolve::Prelude;
@@ -21,6 +21,59 @@ use resolve::Prelude;
 fn amount(k: Option<u64>) -> u32 {
     let k = k.map_or(MAX_WIDTH, |k| k.min(MAX_WIDTH));
     u32::try_from(k).unwrap_or(u32::MAX)
+}
+
+/// A static value as a constant node. Only a Boolean and a finite value have a hardware type.
+fn lit_of(pos: Pos, v: Value, graph: &mut Graph, tys: &Types) -> Res<HwId> {
+    match v {
+        Value::Bool(_) | Value::UInt(_) | Value::SInt(_) => {
+            let ty = v.scalar_ty().unwrap_or(Ty::Bool);
+            Ok(graph.mk(pos, ty, Op::Lit(v), Vec::new()))
+        }
+        v => fail(
+            Code::S010,
+            pos,
+            format!(
+                "hardware needs a Bool or a finite value, not {}",
+                v.text(tys)
+            ),
+        ),
+    }
+}
+
+/// The static value `v` as a constant node. A value that has no hardware type fails before its
+/// copy.
+fn lit_value(pos: Pos, v: &Value, graph: &mut Graph, tys: &Types) -> Res<HwId> {
+    if !matches!(v, Value::Bool(_) | Value::UInt(_) | Value::SInt(_)) {
+        return fail(
+            Code::S010,
+            pos,
+            format!(
+                "hardware needs a Bool or a finite value, not {}",
+                v.text(tys)
+            ),
+        );
+    }
+    lit_of(pos, v.clone(), graph, tys)
+}
+
+/// The static value `v` next to a hardware operand of the type `t`. An integer takes the
+/// type `t`, with the charge of its conversion.
+fn lit_value_at(
+    pos: Pos,
+    t: &Ty,
+    v: &Value,
+    fuel: &mut Fuel,
+    graph: &mut Graph,
+    tys: &mut Types,
+) -> Res<HwId> {
+    if matches!(v, Value::Int(_)) && t.is_finite() {
+        let t = tys.mk(t.clone());
+        let converted = ops::convert(t, v, fuel, tys).map_err(at(pos))?;
+        let v = converted.unwrap_or_else(|| v.clone());
+        return lit_of(pos, v, graph, tys);
+    }
+    lit_value(pos, v, graph, tys)
 }
 
 impl Evaluator<'_> {
@@ -33,51 +86,20 @@ impl Evaluator<'_> {
     /// A static value at a hardware use. Only a Boolean and a finite value have a hardware
     /// type.
     pub(super) fn lit(&mut self, pos: Pos, v: Value) -> Res<HwId> {
-        match v {
-            Value::Bool(_) | Value::UInt(_) | Value::SInt(_) => {
-                let ty = v.scalar_ty().unwrap_or(Ty::Bool);
-                Ok(self.graph.mk(pos, ty, Op::Lit(v), Vec::new()))
-            }
-            v => fail(
-                Code::S010,
-                pos,
-                format!(
-                    "hardware needs a Bool or a finite value, not {}",
-                    v.text(&self.tys)
-                ),
-            ),
-        }
+        lit_of(pos, v, &mut self.graph, &self.tys)
     }
 
     /// A static result at a hardware use. The copy of a constant is small, so a value that
     /// has no hardware type fails before its copy.
     fn lit_out(&mut self, pos: Pos, o: &super::Out) -> Res<HwId> {
-        let v = self.store.value(o);
-        if !matches!(v, Value::Bool(_) | Value::UInt(_) | Value::SInt(_)) {
-            return fail(
-                Code::S010,
-                pos,
-                format!(
-                    "hardware needs a Bool or a finite value, not {}",
-                    v.text(&self.tys)
-                ),
-            );
-        }
-        let v = v.clone();
-        self.lit(pos, v)
+        lit_value(pos, self.store.value(o), &mut self.graph, &self.tys)
     }
 
     /// A static operand next to a hardware operand of the type `t`. An integer takes the
     /// type `t`.
     fn lit_at(&mut self, pos: Pos, t: &Ty, o: &super::Out) -> Res<HwId> {
         let v = self.store.value(o);
-        if matches!(v, Value::Int(_)) && t.is_finite() {
-            let t = self.tys.mk(t.clone());
-            let converted = ops::convert(t, v, &mut self.fuel, &self.tys).map_err(at(pos))?;
-            let v = converted.unwrap_or_else(|| self.store.value(o).clone());
-            return self.lit(pos, v);
-        }
-        self.lit_out(pos, o)
+        lit_value_at(pos, t, v, &mut self.fuel, &mut self.graph, &mut self.tys)
     }
 
     /// Two data operands as hardware. At least one of them is hardware.
