@@ -1382,6 +1382,25 @@ def deepSig : String :=
 #guard out deepSig "q" (depth := 2) == "S015 3:10"
 
 /-!
+A signature can name its own function, here as an argument of a call in a parameter type. Each
+evaluation of a signature takes a nesting level. Thus the cycle ends with `S015` at a name in
+the cycle. The cycle is direct (`r`) or goes through a second function (`a` and `b`).
+-/
+def selfSig : String :=
+  "fn k(h: fn (UInt[1]) -> Bool) -> Nat { return 1; }\n" ++
+  "fn r(x: UInt[k(r)]) -> Bool { return true; }\n" ++
+  fnBody "let v = r; return true;"
+#guard out selfSig "f()" == "S015 2:16"
+#guard out selfSig "f()" (depth := 3) == "S015 2:16"
+def mutualSig : String :=
+  "fn k(h: fn (UInt[1]) -> Bool) -> Nat { return 1; }\n" ++
+  "fn a(x: UInt[k(b)]) -> Bool { return true; }\n" ++
+  "fn b(x: UInt[k(a)]) -> Bool { return true; }\n" ++
+  fnBody "let v = a; return true;"
+#guard out mutualSig "f()" == "S015 2:16"
+#guard out mutualSig "f()" (depth := 3) == "S015 3:16"
+
+/-!
 A binding of a function name is not a copy: `let x = g;` charges as `let x = true;` with the
 charges of `g` in place of 2 for `true`. A binding of a local that holds a function copies it:
 the size 1. A typed use at the exact function type charges nothing more than its type.
