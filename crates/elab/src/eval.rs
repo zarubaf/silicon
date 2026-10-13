@@ -30,9 +30,9 @@ mod types;
 pub use inst::Design;
 pub(crate) use inst::{Bind, Elab, Inst, Literal, PortDecl, Sink, elaborate};
 
-use crate::hw::{Graph, Handle, HwId, Op, Part, Ref, Root, Seen, Val};
+use crate::hw::{Graph, Handle, HwId, Op, Part, Ref, Root, Seen, Val, port_name};
 use crate::int::Int;
-use crate::names::{PathId, Paths, Step, Sym};
+use crate::names::{Name, PathId, Paths, Step, Sym};
 use crate::ops::{self, Fault, Fuel};
 use crate::scan::{Numbers, Scan, Syms};
 use crate::types::{Ty, TyId, Types};
@@ -1252,6 +1252,11 @@ impl Evaluator<'_> {
         }
     }
 
+    /// The core name of the port with the symbol `sym`.
+    fn port_core_name(&self, sym: Sym) -> Name {
+        port_name(self.syms.texts.get(sym).map_or("", String::as_str))
+    }
+
     /// A field of a record, or a port of an instance: a child input is a target, and a child
     /// output is hardware.
     fn field(&mut self, pos: Pos, b: Out, field: &Ident) -> Res<Out> {
@@ -1271,7 +1276,8 @@ impl Evaluator<'_> {
                 port: q,
             }))),
             Some(q) => {
-                let h = self.graph.mk(pos, q.ty, Op::Out(path, q.sym), Vec::new());
+                let name = self.port_core_name(q.sym);
+                let h = self.graph.mk(pos, q.ty, Op::Out(path, name), Vec::new());
                 Ok(Out::Named(Val::Hw(h)))
             }
             None => fail(

@@ -24,7 +24,7 @@
 //! instantiation.
 
 use super::{Evaluator, Let, Out, ROOT, Res, Slot, Tag, fail, need};
-use crate::hw::{Graph, Handle, HwId, Kind, Op, Port, Seen, Val};
+use crate::hw::{Graph, Handle, HwId, Kind, Op, Port, Seen, Val, port_name};
 use crate::int::Int;
 use crate::names::{Name, PathId, Paths, Sym, encode, module_name};
 use crate::scan::Scan;
@@ -78,7 +78,7 @@ pub(crate) enum Sink {
     Child {
         index: usize,
         inst: PathId,
-        port: Sym,
+        port: Name,
     },
 }
 
@@ -847,7 +847,7 @@ impl Evaluator<'_> {
                     sink: Sink::Child {
                         index: inst,
                         inst: path,
-                        port: port.sym,
+                        port: port_name(self.syms.texts.get(port.sym).map_or("", String::as_str)),
                     },
                     value: h,
                     pos,

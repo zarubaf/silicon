@@ -279,12 +279,12 @@ fn inner(expr: Expr, height: u64) -> Low {
     }
 }
 
-/// The core name of the target of a statement: a path, and the user field of a child input.
-/// Its temporaries are named after it.
+/// The core name of the target of a statement: a path, and the core name of a child input. Its
+/// temporaries are named after it: the path, then all fields of the port name.
 #[derive(Clone, Copy)]
-struct Target {
+struct Target<'a> {
     path: PathId,
-    port: Option<Sym>,
+    port: Option<&'a Name>,
 }
 
 /// The fuel, the temporaries of the current module, and the number of the next temporary of
@@ -329,14 +329,6 @@ impl Lower<'_> {
         self.design.paths.name(path, &self.design.texts)
     }
 
-    /// The core name of a port: its source name.
-    fn port_name(&self, sym: Sym) -> Name {
-        Name {
-            head: self.text(sym),
-            rest: Vec::new(),
-        }
-    }
-
     /// The domain port `<domain>$<role>`.
     fn role(&self, domain: Sym, role: Role) -> Name {
         Name {
@@ -363,7 +355,8 @@ impl Lower<'_> {
     fn bind_temp(&mut self, pos: Pos, target: Target, width: u32, at: Pos, expr: Expr) -> R<Name> {
         let mut temp = self.path(target.path);
         if let Some(port) = target.port {
-            temp.rest.push(Field::User(self.text(port)));
+            temp.rest.push(Field::User(port.head.clone()));
+            temp.rest.extend(port.rest.iter().cloned());
         }
         temp.rest.push(Field::Temp(self.count));
         self.count += 1;
@@ -486,7 +479,7 @@ impl Lower<'_> {
                 (Expr::Ref(self.name(pos, &name)?), units)
             }
             Op::Out(inst, port) => {
-                let (inst, port) = (self.path(*inst), self.port_name(*port));
+                let (inst, port) = (self.path(*inst), port.clone());
                 let units = 1 + name_units(&inst) + name_units(&port);
                 self.charge(pos, 1)?;
                 let inst = self.name(pos, &inst)?;
@@ -680,19 +673,24 @@ impl Lower<'_> {
         }
         let mut ports = Vec::with_capacity(body.ports.len());
         for decl in &body.ports {
-            self.charge(decl.pos, 1)?;
-            let name = self.name(decl.pos, &self.port_name(decl.sym))?;
             let at = span(decl.pos);
-            let port = Port {
-                dir: if decl.input { Dir::Input } else { Dir::Output },
-                name,
-                ty: CTy::Bits(num(width(&decl.ty), at)),
-                span: at,
-            };
+            let source = self.text(decl.sym);
+            let mut leaves = Vec::new();
+            layout::for_each_leaf(&source, &decl.ty, |leaf| {
+                self.charge(decl.pos, 1)?;
+                let name = self.name(decl.pos, &leaf.name)?;
+                leaves.push(Port {
+                    dir: if decl.input { Dir::Input } else { Dir::Output },
+                    name,
+                    ty: CTy::Bits(num(width(&leaf.ty), at)),
+                    span: at,
+                });
+                Ok(())
+            })?;
             ports.push(layout::Declared {
-                name: self.text(decl.sym),
+                name: source,
                 input: decl.input,
-                value: port,
+                leaves,
             });
         }
         let layout = layout::arrange(domain, ports);
@@ -813,8 +811,12 @@ impl Lower<'_> {
                     },
                 });
             }
-            Sink::Child { index, inst, port } => {
-                let x = self.name(bind.pos, &self.port_name(port))?;
+            Sink::Child {
+                index,
+                inst,
+                ref port,
+            } => {
+                let x = self.name(bind.pos, port)?;
                 let target = Target {
                     path: inst,
                     port: Some(port),

@@ -4,7 +4,7 @@
 //! core names. Its nodes live in one arena, so an operand tree is shared, not copied: a new
 //! node holds the indices of its operands.
 
-use crate::names::{PathId, Sym};
+use crate::names::{Name, PathId, Sym};
 use crate::types::{Ty, TyId, Types};
 use crate::value::Value;
 use parse::ast::{BinOp, Pos, UnOp};
@@ -14,10 +14,18 @@ use resolve::DeclId;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct HwId(usize);
 
+/// The core name of the port with the source name `x`. A port keeps its source name.
+pub(crate) fn port_name(x: &str) -> Name {
+    Name {
+        head: x.to_owned(),
+        rest: Vec::new(),
+    }
+}
+
 /// The operation of a node. Section 7.4 lowers each node to core operations.
 pub(crate) enum Op {
     Ref(PathId),
-    Out(PathId, Sym),
+    Out(PathId, Name),
     Lit(Value),
     /// A static shift count `k`, as the `Int` constant of Lean. The lowering reads only
     /// `min k w` for a width `w` of at most 65536, so the node keeps `min k 65536`, and the

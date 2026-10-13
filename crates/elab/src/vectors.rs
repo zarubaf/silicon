@@ -57,29 +57,26 @@ impl Design {
                 ty: Ty::Bool,
             });
         }
-        let entry = |q: &PortDecl| {
-            let name = text(q.sym);
-            let core = encode(&Name {
-                head: name.clone(),
-                rest: Vec::new(),
+        let entries = |q: &PortDecl| {
+            let mut entries = Vec::new();
+            let _: Result<(), ()> = layout::for_each_leaf(&text(q.sym), &q.ty, |leaf| {
+                entries.push(Entry {
+                    name: leaf.entry,
+                    core: encode(&leaf.name),
+                    ty: leaf.ty,
+                });
+                Ok(())
             });
-            Entry {
-                name,
-                core,
-                ty: q.ty.clone(),
-            }
+            entries
         };
         let ports = top
             .body
             .ports
             .iter()
-            .map(|q| {
-                let value = entry(q);
-                layout::Declared {
-                    name: value.name.clone(),
-                    input: q.input,
-                    value,
-                }
+            .map(|q| layout::Declared {
+                name: text(q.sym),
+                input: q.input,
+                leaves: entries(q),
             })
             .collect();
         let layout::Ports { inputs, outputs } = layout::arrange(reset, ports);
