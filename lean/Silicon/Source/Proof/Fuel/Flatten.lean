@@ -210,6 +210,9 @@ theorem pathText_f (pos : Pos) (p : Names.Path) : FFollows (pathText pos p) := b
 theorem nameText_f (pos : Pos) (p : Names.Name) : FFollows (nameText pos p) := by
   unfold nameText; ffollows
 
+theorem constOf_f (p : Core.Pos) (v : Value) : FFollows (constOf p v) := by
+  unfold constOf; split <;> ffollows
+
 theorem bindTemp_f (pos : Pos) (target : Names.Path) (w : Nat) (opPos : Pos) (e : Core.Expr) :
     FFollows (bindTemp pos target w opPos e) := by
   unfold bindTemp; ffollows [pathText_f]
@@ -232,7 +235,7 @@ theorem lower_f (target : Names.Path) :
     have ih := lower_f target n
     intro root
     rw [lower.eq_def]
-    ffollows [ih, twice_f, deep_f, pathText_f, nameText_f]
+    ffollows [ih, twice_f, deep_f, pathText_f, nameText_f, constOf_f]
     all_goals simp_all only [Hw.node.injEq, Hw.node.sizeOf_spec, List.cons.sizeOf_spec]
     all_goals omega
 
@@ -246,7 +249,8 @@ theorem domainConns_f (pos : Pos) (c d : Option String) : FFollows (domainConns 
   unfold domainConns; ffollows [nameText_f, domainRef_f]
 
 theorem lowerInst_f (i : Elab.Inst) : FFollows (lowerInst i) := by
-  unfold lowerInst; ffollows [nameText_f, pathText_f, domainRef_f, domainConns_f, value_f]
+  unfold lowerInst
+  ffollows [nameText_f, pathText_f, domainRef_f, domainConns_f, value_f, constOf_f]
 
 theorem lowerDesign_f (pos : Pos) (d : Elab.Design) : FFollows (lowerDesign pos d) := by
   unfold lowerDesign; ffollows [nameText_f, lowerInst_f]

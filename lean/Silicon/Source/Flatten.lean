@@ -109,11 +109,14 @@ def width : Ty → Nat
   | .uint w | .sint w => w
   | _ => 1
 
-/-! The constant of a static value at a hardware use: its value modulo `2^w`. -/
-def constOf (p : Core.Pos) : Value → Core.Expr
-  | .bool b => .const p 1 (if b then 1 else 0)
-  | .uint w x | .sint w x => .const p w x.toNat
-  | _ => .const p 1 0
+/-!
+The constant of a static value at a hardware use: its value modulo `2^w`. Elaboration gives
+only a Boolean or a finite value there, so another value is a defect.
+-/
+def constOf (p : Core.Pos) : Value → FM Core.Expr
+  | .bool b => pure (.const p 1 (if b then 1 else 0))
+  | .uint w x | .sint w x => pure (.const p w x.toNat)
+  | v => defect s!"a hardware constant of {v.text}"
 
 /-!
 A lowered expression and its effective height. A leaf and a reference to a temporary have the
@@ -197,7 +200,7 @@ def lower (target : Path) (root : Bool) : Hw → FM Low
       pure ⟨.port c i (← nameText p (portName q)), some u, 1⟩
     | .lit v, [] =>
       charge p 1
-      pure ⟨constOf c v, some 1, 1⟩
+      pure ⟨← constOf c v, some 1, 1⟩
     | .un .not, [a] =>
       charge p 2
       let a ← lower target false a
@@ -346,7 +349,7 @@ def lowerInst (i : Inst) : FM Core.Module := do
     let clk ← nameText r.pos (clockName d)
     let sig ← domainRef r.pos (resetName d)
     charge r.pos 1
-    let reset : Core.Reset := ⟨.sync, sig, constOf (cpos r.pos) r.init⟩
+    let reset : Core.Reset := ⟨.sync, sig, ← constOf (cpos r.pos) r.init⟩
     body := body.push (.reg (cpos r.pos) x (width r.ty) clk (some reset))
   for l in b.lets do
     charge l.pos 1
