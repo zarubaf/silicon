@@ -161,7 +161,7 @@ impl Evaluator<'_> {
         match self.store.seen(o) {
             Seen::Static(_) => Ok(None),
             Seen::Pending(q, _) => Ok(Some(q)),
-            Seen::Hw(_) => fail(
+            Seen::Hw(_) | Seen::Agg(_) => fail(
                 Code::S010,
                 pos,
                 "a container holds only static values in this phase".to_owned(),

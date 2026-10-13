@@ -504,7 +504,7 @@ impl Evaluator<'_> {
                 let h = match self.conform_val(*pos, ty, o)? {
                     Val::Static(v) => self.lit(*pos, v)?,
                     Val::Hw(h) => h,
-                    v @ (Val::Handle(_) | Val::Pending(..)) => {
+                    v @ (Val::Handle(_) | Val::Pending(..) | Val::Agg(_)) => {
                         return fail(
                             Code::S010,
                             *pos,

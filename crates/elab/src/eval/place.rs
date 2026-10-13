@@ -731,7 +731,7 @@ impl Evaluator<'_> {
     fn item(&self, pos: Pos, v: Val) -> Res<Value> {
         match v {
             Val::Static(v) => Ok(v),
-            Val::Hw(_) => fail(
+            Val::Hw(_) | Val::Agg(_) => fail(
                 Code::S010,
                 pos,
                 "a container holds only static values in this phase".to_owned(),

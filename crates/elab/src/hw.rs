@@ -4,9 +4,10 @@
 //! core names. Its nodes live in one arena, so an operand tree is shared, not copied: a new
 //! node holds the indices of its operands.
 
+use crate::agg::Agg;
 use crate::names::{Name, PathId, Sym};
 use crate::types::{Ty, TyId, Types};
-use crate::value::Value;
+use crate::value::{Value, width_size};
 use parse::ast::{BinOp, Pos, UnOp};
 use resolve::DeclId;
 
@@ -42,11 +43,17 @@ pub(crate) enum Op {
 }
 
 impl Op {
-    /// A name or a child output has the size 1. A constant has the size of its value.
-    fn size(&self) -> u64 {
+    /// The size of a node of the type `ty` without its operands. A name and a child output refer
+    /// to a core name, and each has the size of a finite value of its type (section 5.4). A
+    /// constant has the size of its value. Each other node has the size 1.
+    fn size(&self, ty: &Ty) -> u64 {
         match self {
             Op::Lit(v) => v.size(),
             Op::Count { size, .. } => *size,
+            Op::Ref(_) | Op::Out(..) => match ty {
+                Ty::UInt(w) | Ty::SInt(w) => width_size(*w),
+                _ => 1,
+            },
             _ => 1,
         }
     }
@@ -74,7 +81,7 @@ impl Graph {
     /// A new node. Its size is the size of its operation plus the sizes of its operands. The
     /// caller pays a hardware operation; a reference and a constant only refer.
     pub(crate) fn mk(&mut self, pos: Pos, ty: Ty, op: Op, args: Vec<HwId>) -> HwId {
-        let mut size = op.size();
+        let mut size = op.size(&ty);
         let mut height = 0;
         for a in &args {
             size = size.saturating_add(self.size(*a));
@@ -188,6 +195,8 @@ pub(crate) enum Val {
     Hw(HwId),
     Handle(Handle),
     Pending(Pos, Part),
+    /// A hardware aggregate: a tree with at least one hardware leaf.
+    Agg(Box<Agg>),
 }
 
 /// What a result is, without a copy: a static value, a hardware value, a handle, or a literal
@@ -198,6 +207,7 @@ pub(crate) enum Seen<'a> {
     Hw(HwId),
     Handle(&'a Handle),
     Pending(Pos, &'a Part),
+    Agg(&'a Agg),
 }
 
 impl Val {
@@ -207,6 +217,7 @@ impl Val {
             Val::Hw(h) => Seen::Hw(*h),
             Val::Handle(h) => Seen::Handle(h),
             Val::Pending(q, p) => Seen::Pending(*q, p),
+            Val::Agg(a) => Seen::Agg(a),
         }
     }
 
@@ -222,6 +233,7 @@ impl Seen<'_> {
         match self {
             Seen::Static(v) => Some(v.ty(tys)),
             Seen::Hw(h) => Some(tys.mk(g.ty(*h))),
+            Seen::Agg(a) => Some(a.ty(g, tys)),
             Seen::Handle(_) | Seen::Pending(..) => None,
         }
     }
@@ -247,6 +259,10 @@ impl Seen<'_> {
                 Handle::Domain => "a domain",
             }
             .to_owned(),
+            Seen::Agg(a) => a.stored_ty().map_or_else(
+                || "hardware".to_owned(),
+                |t| format!("hardware {}", tys.text(t)),
+            ),
             Seen::Pending(..) => return None,
         })
     }

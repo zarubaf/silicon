@@ -3,6 +3,7 @@
 //! and the cost model, the instantiations, and the names. See [the front end
 //! design](../../doc/design/2026-10-09-frontend.md), sections 4.4, 4.5, 5, and 7.
 
+mod agg;
 mod eval;
 mod flatten;
 mod hw;

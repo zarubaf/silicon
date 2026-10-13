@@ -33,6 +33,8 @@ pub(crate) struct Counts {
     pub compared: u64,
     /// The pairs of types that the join of two types visited.
     pub visited: u64,
+    /// The nodes of an aggregate that a build or a clone visited.
+    pub nodes: u64,
 }
 
 /// What a counter counts.
@@ -48,6 +50,7 @@ pub(crate) enum Count {
     Windows,
     Compared,
     Visited,
+    Nodes,
 }
 
 static COUNTS: Mutex<BTreeMap<u64, Counts>> = Mutex::new(BTreeMap::new());
@@ -90,6 +93,7 @@ pub(crate) fn add(count: Count, n: u64) {
             Count::Windows => &mut c.windows,
             Count::Compared => &mut c.compared,
             Count::Visited => &mut c.visited,
+            Count::Nodes => &mut c.nodes,
         };
         *field += n;
     }

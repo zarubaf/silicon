@@ -17,6 +17,7 @@
 //! reference until a copy pays for it. Thus a read that the cost model does not charge does
 //! no work in the size of the value.
 
+mod agg;
 mod call;
 mod container;
 mod hwops;
@@ -413,6 +414,7 @@ impl Store {
                 Seen::Hw(h) => Val::Hw(h),
                 Seen::Handle(h) => Val::Handle(h.clone()),
                 Seen::Pending(q, p) => Val::Pending(q, p.clone()),
+                Seen::Agg(a) => Val::Agg(Box::new(a.clone())),
             },
         }
     }
@@ -763,6 +765,7 @@ impl Evaluator<'_> {
             Seen::Hw(h) => self.graph.size(h),
             Seen::Handle(_) => 1,
             Seen::Pending(_, p) => Self::part_size(p),
+            Seen::Agg(a) => a.size(&self.graph, &self.tys),
         })
     }
 
@@ -884,7 +887,9 @@ impl Evaluator<'_> {
                 pos,
                 "an input of a child is a target; it is never read".to_owned(),
             ),
-            s @ Seen::Handle(_) => fail(Code::S010, pos, format!("{} is not data", self.text(s))),
+            s @ (Seen::Handle(_) | Seen::Agg(_)) => {
+                fail(Code::S010, pos, format!("{} is not data", self.text(s)))
+            }
         }
     }
 
