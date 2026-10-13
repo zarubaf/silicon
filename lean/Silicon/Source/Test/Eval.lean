@@ -13,8 +13,12 @@ and the nested doubling of section 11.3.
 The types as values of slice 2 come next. Their tests check the type constructors with their
 charges, the aliases, the table of struct specializations, and the struct cases of section 11.3.
 
-The function types of slice 2 come last. Their tests check the type constructor with its
+The function types of slice 2 come next. Their tests check the type constructor with its
 charge, the typed use, `==`, the join, the constructor, the index, and the hardware `if`.
+
+The function names as values of slice 2 come last. Their tests check the charges of a name,
+the generic functions and the builtins, the depth, and the flow through bindings, arguments,
+returns, containers, and `==`.
 -/
 
 namespace Silicon.Source.Test.Eval
@@ -219,7 +223,8 @@ def program : String :=
 #guard out program "bad(1)" == "S010 19:5"
 #guard out program "none(0)" == "(int 0)"
 #guard out program "none(1)" == "S010 1:1"
-#guard out program "fact" == "S010 1:1"
+#guard out program "fact" == "(function root fact)"
+#guard out program "mask" == "S010 1:1"
 #guard out program "resize" == "S010 1:1"
 
 /-! A return checks its type. A `Nat` result is not negative. -/
@@ -1283,5 +1288,116 @@ def fnArms (v w : Value) (fuel : Nat := 100) : String :=
 #guard fnArms fnG (.function "h" #[] .bool) == "S011 1:1"
 #guard fnArms fnG (.function "h" #[] .bool) 1 == "S015 1:1"
 #guard fnArms fnG (.bool true) == "S010 1:1"
+
+/-!
+A function name that is not a callee gives a function value. The name charges its node, then
+the signature evaluates as type expressions, then the function type checks its depth and
+charges its size. `g` charges 1, 1 for `Bool`, and the size 2. `k` charges 1, 1 for `Bool`, 1
+for `Bool`, and the size 4. `h` charges 1, 4 for `fn () -> Bool`, 1 for `Bool`, and the size 4.
+Each use evaluates the signature again.
+-/
+def fns : String :=
+  "fn g() -> Bool { return true; }\n" ++
+  "fn g2() -> Bool { return false; }\n" ++
+  "fn k(mut b: Bool) -> Bool { return b; }\n" ++
+  "fn h(x: fn () -> Bool) -> Bool { return true; }\n" ++
+  "comptime fn c() -> Bool { return true; }\n" ++
+  "fn gen(comptime n: Nat) -> Bool { return true; }\n" ++
+  "const N: Nat = 2;\n" ++
+  "fn a(x: [Bool; N]) -> Bool { return true; }\n"
+#guard out fns "g" == "(function root g)"
+#guard out fns "k" == "(function root k)"
+#guard exact fns "g" 4
+#guard exact fns "k" 7
+#guard exact fns "h" 10
+#guard exact fns "(g, g)" (1 + 4 + 4 + 3)
+#guard cost fns "(g, g)" == cost fns "(true, true)" + 4
+
+/-! The signature evaluates in the scope of the function, so it reads the items there. -/
+#guard out fns "a" == "(function root a)"
+#guard out fns "[a]" == "(array (fn ((array bool 2)) bool) ((function root a)))"
+
+/-! A `comptime fn` gives a function value of the same function type. -/
+#guard out fns "c" == "(function root c)"
+#guard out fns "[g, c]" == "(array (fn () bool) ((function root g) (function root c)))"
+
+/-!
+A generic function and a builtin are `S010` at the name, after the charge of its node. The
+signature does not evaluate.
+-/
+#guard out fns "gen" 1 == "S010 1:1"
+#guard out fns "gen" 0 == "S015 1:1"
+#guard out fns "len" 1 == "S010 1:1"
+#guard out fns "len" 0 == "S015 1:1"
+#guard out fns "(1, push)" == "S010 1:5"
+
+/-!
+The function type checks its depth at the name: `h` is 3 deep. The parameter type
+`fn () -> Bool` is 2 deep, so it passes the depth 2, and the name fails.
+-/
+#guard out fns "h" (depth := 3) == "(function root h)"
+#guard out fns "h" (depth := 2) == "S015 1:1"
+#guard out fns "(1, h)" (depth := 2) == "S015 1:5"
+
+/-!
+A binding of a function name is not a copy: `let x = g;` charges as `let x = true;` with the
+charges of `g` in place of 2 for `true`. A binding of a local that holds a function copies it:
+the size 1. A typed use at the exact function type charges nothing more than its type.
+-/
+def fnLet (s : String) : String := fns ++ fnBody s
+#guard out (fnLet "let x = g; return true;") "f()" == "(bool true)"
+#guard cost (fnLet "let x = g; return true;") "f()" ==
+  cost (fnLet "let x = true; return true;") "f()" + 2
+#guard cost (fnLet "let x = g; let y = x; return true;") "f()" ==
+  cost (fnLet "let x = g; return true;") "f()" + 3
+#guard cost (fnLet "let x: fn () -> Bool = g; return true;") "f()" ==
+  cost (fnLet "let x = g; return true;") "f()" + 4
+#guard cost (fnLet "let x: fn (mut Bool) -> Bool = k; return true;") "f()" ==
+  cost (fnLet "let x = k; return true;") "f()" + 7
+
+/-!
+A typed use needs the exact function type, also in the `mut` marks, else `S010` at the typed
+use: a `let`, an assignment, an argument, and a return.
+-/
+#guard out (fnLet "let x: fn (Bool) -> Bool = k; return true;") "f()" == "S010 9:18"
+#guard out (fnLet "let x: fn (mut Bool) -> Bool = g; return true;") "f()" == "S010 9:18"
+#guard out (fnLet "let x: fn () -> Bool = c; return true;") "f()" == "(bool true)"
+#guard out (fnLet "let x: Bool = g; return true;") "f()" == "S010 9:18"
+#guard out (fnLet "let mut x = g; x = g2; return true;") "f()" == "(bool true)"
+#guard out (fnLet "let mut x = g; x = k; return true;") "f()" == "S010 9:33"
+#guard out fns "h(g)" == "(bool true)"
+#guard out fns "h(c)" == "(bool true)"
+#guard out fns "h(k)" == "S010 1:1"
+#guard out (fns ++ "fn r() -> fn () -> Bool { return g2; }") "r()" == "(function root g2)"
+#guard out (fns ++ "fn r() -> fn () -> Bool { return k; }") "r()" == "S010 9:27"
+#guard out (fns ++ "fn r(x: fn () -> Bool) -> fn () -> Bool { return x; }") "r(g)" ==
+  "(function root g)"
+
+/-!
+A function value is an element of an array, a tuple, and a list. The elements of an array join
+their function types as a type equality: `[g, g2]` charges 2 + 2 for the join.
+-/
+#guard out fns "[g, g2]" == "(array (fn () bool) ((function root g) (function root g2)))"
+#guard cost fns "[g, g2]" == cost fns "(g, g2)" + 4
+#guard out fns "[g, k]" == "S010 1:1"
+#guard out fns "(g, k)" == "(tuple ((function root g) (function root k)))"
+#guard out (fnLet "let mut xs = list(fn () -> Bool); push(xs, g); push(xs, c); return true;")
+  "f()" == "(bool true)"
+#guard out (fns ++ "fn r() -> fn () -> Bool { let mut xs = list(fn () -> Bool); " ++
+  "xs.push(g2); return xs.pop(); }") "r()" == "(function root g2)"
+#guard out (fnLet "let mut xs = list(fn () -> Bool); push(xs, k); return true;") "f()" ==
+  "S010 9:52"
+
+/-!
+`==` and `!=` are `S010` at the operator after both operands, before the charge: here the
+operator charges 1 and each `g` charges 4.
+-/
+#guard out fns "g == g" 9 == "S010 1:1"
+#guard out fns "g == g" 8 == "S015 1:6"
+#guard out fns "[g] != [g]" == "S010 1:1"
+#guard out fns "(1, g) == (1, g)" == "S010 1:1"
+
+/-! A call through a function value is not supported yet: `S010` at the call, as a constructor. -/
+#guard out (fnLet "let x = g; return x();") "f()" == "S010 9:36"
 
 end Silicon.Source.Test.Eval
