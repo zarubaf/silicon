@@ -84,6 +84,9 @@ pub struct Decl {
     pub receiver: Option<usize>,
     pub name: String,
     pub pos: Pos,
+    /// For a `fn` item, whether it is generic: it has a `comptime` parameter, or a parameter
+    /// type or its result type names one of its parameters. A generic function is no value.
+    pub generic: bool,
 }
 
 /// The call site of a call node or a method node, with the parameter that the receiver binds to.
