@@ -95,6 +95,11 @@ Hardware values follow v0.1 sections 1 and 3:
   constant node: a static integer first takes the finite type of the other operand.
 - A static `&&` or `||` that does not decide gives its right operand, also a hardware one.
 - A hardware condition makes a mux of both arms. A static arm takes the type of the other arm.
+  Arms of a container type join with the join charge. Then the walk of section 7.4 makes one
+  `mux` for each leaf pair. Two scalar arms such as `3` and `3` are a static pair too. Equal
+  sides of a static pair give the value. The first difference is `S011` at the `if` (F19). A
+  walk with two or more `mux` nodes marks the condition once with `Op.share`. A core name and a
+  constant get no mark, and the mark has no charge (`mux`).
 - A shift count is a hardware `UInt`, or a static count that becomes an `Int` constant node.
 - A `let`, an assignment, and a hardware argument of a function bind a hardware value to a
   core name of section 7.3. The hardware result of a function gets the role `0ret` in the call
@@ -433,26 +438,6 @@ def hwBinary (pos : Pos) (op : BinOp) (a b : Val) : M Val := do
       | _ => if t.finite then node pos t (.bin op) [x, y] else bad
 
 /-!
-A hardware `if` with the condition `c`. A static arm takes the type of the other arm. Both arms
-have one type. Two function arms are a static pair: they charge as a static equality, and one
-function item gives the static value. Two different functions are `S011` at `pos`.
--/
-def mux (pos : Pos) (c : Hw) (a b : Val) : M Val := do
-  if let (.static v@(.function i ..), .static w@(.function j ..)) := (a, b) then
-    charge pos (v.size + w.size)
-    if i == j then return .static v
-    else fail .S011 pos "the arms of a hardware `if` are two different functions"
-  let (x, y) ← match a, b with
-    | .static v, .static w =>
-      match v.finiteTy?, w.finiteTy? with
-      | some t, _ => do pure (← lit pos v, ← litAt pos t w)
-      | _, some t => do pure (← litAt pos t v, ← lit pos w)
-      | _, _ => do pure (← lit pos v, ← lit pos w)
-    | a, b => hwPair pos a b
-  if x.ty.same y.ty then node pos x.ty .mux [c, x, y]
-  else fail .S010 pos s!"the arms of an `if` have one type, not {x.ty.text} and {y.ty.text}"
-
-/-!
 The pairs of a hardware equality (section 7.4). `statics` tells if a static pair exists, and
 `equal` tells if all static pairs are equal. `nodes` holds the `icmp eq` node of each hardware
 pair in walk order.
@@ -558,6 +543,113 @@ def aggEq (pos : Pos) (op : BinOp) (a b : Val) : M Val := do
     for z in rest do e ← hwNode pos .bool (.bin .and) [e, z]
     if op == .eq then return .hw e
     else node pos .bool (.bin .xor) [e, ← lit pos (.bool true)]
+
+/-!
+A static pair of a hardware `if` at `pos` (section 7.4) with the joined type `t`. It charges as a
+static equality, the sum of the two sizes. Identical sides give the value, so a function compares
+by its item. Other sides compare by the static equality of `==`, which converts a static integer
+to the joined type. Equal sides give the side of the joined type. Different sides are `S011` at
+the `if`, because a static part cannot depend on the hardware condition.
+-/
+def ifStatic (pos : Pos) (t : Ty) (x y : Value) : M Value := do
+  charge pos (x.size + y.size)
+  let differ : M Value :=
+    fail .S011 pos s!"the arms of a hardware `if` differ in a static part: {x.text} and {y.text}"
+  if x.cmp y == .eq then return x
+  if x matches .function .. then return ← differ
+  let r ← lift pos (Id.run ((same x y).run.run' 0))
+  if ← lift pos (r ()) then return if x.ty?.any (·.same t) then x else y
+  differ
+
+/-!
+A leaf pair of a hardware `if` at `pos` with the condition `c` and the joined type `t`. A static
+leaf converts to `t`, also when both leaves are static. Then the `mux` node charges 1 plus 3.
+-/
+def ifLeaf (pos : Pos) (c : Hw) (t : Ty) (a b : Agg) : M Hw := do
+  let (x, y) ← match a, b with
+    | .static v, .static w => do pure (← litAt pos t v, ← litAt pos t w)
+    | a, b => hwPair pos a.val b.val
+  if x.ty.same y.ty then hwNode pos x.ty .mux [c, x, y]
+  else fail .S010 pos s!"the arms of an `if` have one type, not {x.ty.text} and {y.ty.text}"
+
+/-!
+A pair of the type `t` that is not an array, a tuple, or a record. The rules 2 to 4 of the walk
+apply: `()` gives `()`, a data scalar is a leaf pair, and each other part is a static pair.
+-/
+def ifPart (pos : Pos) (c : Hw) (t : Ty) (a b : Agg) : M Agg :=
+  match t with
+  | .unit => return .static .unit
+  | .bool | .uint _ | .sint _ => return .hw (← ifLeaf pos c t a b)
+  | _ =>
+    match a, b with
+    | .static x, .static y => return .static (← ifStatic pos t x y)
+    | _, _ =>
+      fail .S010 pos s!"the arms of an `if` have one type, not {a.val.text} and {b.val.text}"
+
+/-!
+The walk of a hardware `if` at `pos` over the arms `a` and `b` of the joined type `t`, by the
+rules of section 7.4 in order. It charges 1 before it visits each pair. A container descends
+into its pairs in packing order, also a container that is not hardware data. Then it rebuilds
+the node in its normal form. `fs` gives the named fields of a struct type. The depth `d` of `t`
+bounds the walk.
+-/
+def ifWalk (fs : Ty → Option (Array (String × Ty))) (pos : Pos) (c : Hw) :
+    Nat → Ty → Agg → Agg → M Agg
+  | 0, t, _, _ => fail .S010 pos s!"{t.text} is deeper than its depth"
+  | d + 1, t, a, b => do
+    charge pos 1
+    let pair (k : Nat) (f : Field) (u : Ty) : M Agg :=
+      match a.child pos k f u, b.child pos k f u with
+      | some x, some y => ifWalk fs pos c d u x y
+      | _, _ =>
+        fail .S010 pos s!"the arms of an `if` have one type, not {a.val.text} and {b.val.text}"
+    match t with
+    | .array e n => do
+      let mut xs := #[]
+      for k in [0:n] do xs := xs.push (← pair k (.elem k) e)
+      return .mkArray e xs
+    | .tuple ts => do
+      let mut xs := #[]
+      for (u, k) in ts.toList.zipIdx do xs := xs.push (← pair k (.elem k) u)
+      return .mkTuple ts xs
+    | .struct .. => do
+      let some nfs := fs t | fail .S010 pos s!"{t.text} has no specialization"
+      let mut xs := #[]
+      for ((x, u), k) in nfs.toList.zipIdx do xs := xs.push (← pair k (.user x) u)
+      return .mkRecord t xs
+    | t => ifPart pos c t a b
+
+/-!
+The condition `c` of an `if` whose walk makes `n` `mux` nodes. With two or more nodes, the leaf
+statements share `c`, so it gets one mark with the next number of the instantiation. A core
+name, a child output, and a constant get no mark. The mark has no charge.
+-/
+def shared (c : Hw) (n : Nat) : M Hw := do
+  let .node _ _ _ op _ := c
+  if n < 2 || op matches .ref _ | .out .. | .lit _ then return c
+  let k := (← get).naming.shares
+  modify fun s => { s with naming := { s.naming with shares := k + 1 } }
+  return Hw.mk c.pos c.ty (.share k) [c]
+
+/-!
+A hardware `if` at `pos` with the condition `c` (section 5.4). Arms of a scalar type keep the
+rule of slice 1. They need a common type (`S010`), with no join charge and no walk unit. Then
+the rules 2 to 4 of the walk apply to the one pair (F19). Arms of a container type join
+with the join charge (`S010` without a join). An array, a tuple, or a record root then walks.
+The type metadata gives the number of `mux` nodes of the walk, its leaf count, so the mark of
+`c` comes before the walk.
+-/
+def mux (pos : Pos) (c : Hw) (a b : Val) : M Val := do
+  let bad : M Val := fail .S010 pos s!"the arms of an `if` have one type, not {a.text} and {b.text}"
+  let (some s, some t, some x, some y) := (a.ty?, b.ty?, a.agg?, b.agg?) | bad
+  let some j ← if containerTy s || containerTy t then walked pos (joinTy s t : Walk (Option Ty))
+    else pure (scalarJoin s t) | bad
+  match j with
+  | .array .. | .tuple _ | .struct .. =>
+    let c ← shared c j.info.leaves
+    let fs := fieldsNamed (← read).items (← get).specs
+    return (← ifWalk fs pos c j.depth j x y).val
+  | j => return (← ifPart pos c j x y).val
 
 def hwConvert (pos : Pos) (f : PrimFn) (t : Ty) (x : Hw) : M Val :=
   let bad : M Val := fail .S010 pos s!"no conversion of {x.ty.text} to {t.text} here"

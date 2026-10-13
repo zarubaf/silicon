@@ -60,7 +60,12 @@ def Specs.find? (s : Specs) (i : Nat) (args : List Value) : Option (Nat × Spec)
   let k ← s.index[(i, args)]?
   return (k, ← s.entries[k]?)
 
-/-! A node of a hardware value. Section 7.4 lowers each node to core operations. -/
+/-!
+A node of a hardware value. Section 7.4 lowers each node to core operations. `share k` marks its
+one operand, the condition of an aggregate `if`, as shared by several leaf statements. The
+lowering binds it to one temporary at its first use (section 7.4). `k` numbers the marks of one
+instantiation.
+-/
 inductive Op where
   | ref (name : Path)
   | out (inst : Path) (port : Name)
@@ -70,6 +75,7 @@ inductive Op where
   | mux
   | resize
   | reinterpret
+  | share (k : Nat)
   deriving Repr, Inhabited
 
 /-!
@@ -87,11 +93,13 @@ def Hw.size : Hw → Nat | .node _ _ s .. => s
 /-!
 The size of a node of the type `ty` without its operands. A name and a child output refer to a
 core name. Each has the size of a finite value of its type (section 5.4). A constant has the
-size of its value. Each other node has the size 1.
+size of its value. A mark of a shared operand has no charge, so it adds no size. Each other
+node has the size 1.
 -/
 def Op.size (ty : Ty) : Op → Nat
   | .lit v => v.size
   | .ref _ | .out .. => ty.info.zeroSize
+  | .share _ => 0
   | _ => 1
 
 def Hw.mk (pos : Pos) (ty : Ty) (op : Op) (args : List Hw) : Hw :=
@@ -387,12 +395,14 @@ structure Let where
 /-!
 The names of one instantiation. `frames` numbers each frame by its parent and its field pair.
 `versions` counts the bindings of each tag in each frame. `lets` holds the named bindings in
-evaluation order. Each table grows only with the bindings that run.
+evaluation order. Each table grows only with the bindings that run. `shares` counts the marks of
+shared operands (`Op.share`).
 -/
 structure Naming where
   frames : Std.HashMap (Nat × Nat × Field) Nat := {}
   versions : Std.HashMap (Nat × Tag) Nat := {}
   lets : Array Let := #[]
+  shares : Nat := 0
 
 /-!
 The state holds the fuel, the table of constants by item index, and the table of struct

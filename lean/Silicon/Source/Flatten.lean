@@ -31,6 +31,9 @@ These rules settle the open points of the spec:
   output, or a constant. Such a leaf is copied, and the copy charges as a new node.
 - The temporaries of one node bind after its operands lower, in operand order. Inner nodes thus
   bind first. Each binding with `:=` is its own statement, also a connection of a child input.
+- A shared operand (`Op.share`) binds to a temporary at its first lowering in the module. That
+  statement gives it its next number, after the temporaries of the operand itself. Each later
+  use, also in another statement, refers to it, as a use of a temporary does.
 - The lowering runs the instantiations in the order they finish. In one module, it lowers the
   module, the domain ports, and the ports in declaration order. Then it lowers the registers,
   the named bindings, the `:=` bindings, and the instances. A connection lowers with its `:=`
@@ -51,12 +54,14 @@ inductive Failure where
 
 /-!
 The fuel, the temporaries of the current module, and the number of the next temporary of the
-current statement.
+current statement. `shares` holds the temporary of each shared operand (`Op.share`) of the
+current module that a statement already bound.
 -/
 structure St where
   fuel : Nat
   temps : Array Core.Stmt := #[]
   count : Nat := 0
+  shares : Std.HashMap Nat Path := {}
 
 abbrev FM := StateT St (Except Failure)
 
@@ -286,6 +291,15 @@ def lower (target : Path) (root : Bool) : Hw → FM Low
     | .reinterpret, [a] =>
       let a ← lower target false a
       pure { a with height := up a.height }
+    | .share k, [a] =>
+      let path ← match (← get).shares[k]? with
+        | some path => pure path
+        | none =>
+          let la ← lower target false a
+          let path ← bindTemp p target (width a.ty) a.pos la.expr
+          modify fun s => { s with shares := s.shares.insert k path }
+          pure path
+      pure ⟨← tempRef p path, some (1 + pathUnits path), 1⟩
     | _, _ => defect "a hardware node has the wrong number of operands"
     deep p target (width t) root lo
 
@@ -323,7 +337,7 @@ def lowerInst (i : Inst) : FM Core.Module := do
   let mp := cpos i.pos
   charge i.pos 1
   let name ← nameText i.pos i.iface.name
-  modify fun s => { s with temps := #[] }
+  modify fun s => { s with temps := #[], shares := {} }
   let mut domain : List Core.Port := []
   if let some d := b.domain then
     charge i.pos 1

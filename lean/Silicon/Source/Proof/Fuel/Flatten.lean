@@ -235,7 +235,7 @@ theorem lower_f (target : Names.Path) :
     have ih := lower_f target n
     intro root
     rw [lower.eq_def]
-    ffollows [ih, twice_f, deep_f, pathText_f, nameText_f, constOf_f]
+    ffollows [ih, twice_f, deep_f, bindTemp_f, tempRef_f, pathText_f, nameText_f, constOf_f]
     all_goals simp_all only [Hw.node.injEq, Hw.node.sizeOf_spec, List.cons.sizeOf_spec]
     all_goals omega
 

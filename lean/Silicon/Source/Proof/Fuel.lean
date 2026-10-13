@@ -394,10 +394,6 @@ theorem comparable_f (p : Pos) (op : BinOp) (a b : Val) :
     Follows cap (comparable p op a b) (comparable p op a b) := by
   unfold comparable; follows
 
-theorem mux_f (p : Pos) (c : Hw) (a b : Val) :
-    Follows cap (mux p c a b) (mux p c a b) := by
-  unfold mux; follows [lit_f, litAt_f, hwPair_f, node_f]
-
 theorem hwConvert_f (p : Pos) (f : PrimFn) (t : Ty) (x : Hw) :
     Follows cap (hwConvert p f t x) (hwConvert p f t x) := by
   unfold hwConvert; follows [node_f]
@@ -437,6 +433,33 @@ theorem eqWalk_f (fs : Ty → Option (Array (String × Ty))) (p : Pos) :
 theorem aggEq_f (p : Pos) (op : BinOp) (a b : Val) :
     Follows cap (aggEq p op a b) (aggEq p op a b) := by
   unfold aggEq; follows [walked_f, eqWalk_f, lit_f, hwNode_f, node_f]
+
+theorem ifStatic_f (p : Pos) (t : Ty) (x y : Value) :
+    Follows cap (ifStatic p t x y) (ifStatic p t x y) := by
+  unfold ifStatic; follows
+
+theorem ifLeaf_f (p : Pos) (c : Hw) (t : Ty) (a b : Agg) :
+    Follows cap (ifLeaf p c t a b) (ifLeaf p c t a b) := by
+  unfold ifLeaf; follows [litAt_f, hwPair_f, hwNode_f]
+
+theorem ifPart_f (p : Pos) (c : Hw) (t : Ty) (a b : Agg) :
+    Follows cap (ifPart p c t a b) (ifPart p c t a b) := by
+  unfold ifPart; follows [ifStatic_f, ifLeaf_f]
+
+theorem ifWalk_f (fs : Ty → Option (Array (String × Ty))) (p : Pos) (c : Hw) :
+    ∀ (d : Nat) (t : Ty) (a b : Agg),
+      Follows cap (ifWalk fs p c d t a b) (ifWalk fs p c d t a b)
+  | 0, t, a, b => by rw [ifWalk.eq_def]; follows
+  | d + 1, t, a, b => by
+    rw [ifWalk.eq_def]; dsimp only
+    follows [ifWalk_f fs p c d, ifPart_f]
+
+theorem shared_f (c : Hw) (n : Nat) : Follows cap (shared c n) (shared c n) := by
+  unfold shared; follows
+
+theorem mux_f (p : Pos) (c : Hw) (a b : Val) :
+    Follows cap (mux p c a b) (mux p c a b) := by
+  unfold mux; follows [walked_f, ifPart_f, shared_f, ifWalk_f]
 
 theorem typeOf_f (p : Pos) (x : String) (v : Val) :
     Follows cap (typeOf p x v) (typeOf p x v) := by
