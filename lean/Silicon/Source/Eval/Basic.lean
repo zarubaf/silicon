@@ -205,6 +205,12 @@ def Agg.mkTuple (ts : Array Ty) (xs : Array Agg) : Agg :=
 def Agg.mkRecord (t : Ty) (xs : Array Agg) : Agg :=
   Agg.container .record (.record t) t t.depth xs
 
+/-! The text of the aggregate part `a` in a message. -/
+def Agg.text : Agg → String
+  | .static v => v.text
+  | .hw h => s!"hardware {h.ty.text}"
+  | a => s!"hardware {(a.ty?.map Ty.text).getD "a tuple"}"
+
 /-! The container node `a` with the new elements `xs`, in its normal form. -/
 def Agg.rebuild (a : Agg) (xs : Array Agg) : Agg :=
   match a with
@@ -250,11 +256,12 @@ inductive Handle where
   | domain (name : String)
 
 /-!
-A part of a literal that waits for its type. It is a value, the literal `[]` at `pos`, or an
-array or a tuple literal at `pos`. Such a literal has at least one part that waits.
+A part of a literal that waits for its type. It is a value with its normal form as an aggregate
+part, the literal `[]` at `pos`, or an array or a tuple literal at `pos`. Such a literal has at
+least one part that waits.
 -/
 inductive Part where
-  | value (v : Value)
+  | value (v : Agg)
   | empty (pos : Pos)
   | array (pos : Pos) (elems : List Part)
   | tuple (pos : Pos) (elems : List Part)
@@ -319,8 +326,8 @@ def Val.ty? : Val → Option Ty
 
 def Val.text : Val → String
   | .static v => v.text
-  | .hw h => s!"hardware {h.ty.text}"
-  | .agg a => s!"hardware {(a.ty?.map Ty.text).getD "a tuple"}"
+  | .hw h => (Agg.hw h).text
+  | .agg a => a.text
   | .handle (.res .reg ..) => "a register"
   | .handle (.res .wire ..) => "a wire"
   | .handle (.res .output ..) => "an output"

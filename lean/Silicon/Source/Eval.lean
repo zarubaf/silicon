@@ -42,7 +42,10 @@ The operators follow v0.1 section 3. These rules settle the open points of slice
 - A hardware arm starts at the current nesting depth. A `push` or a `pop` on a binding of that
   depth changes a binding from before the arm: `S016`. A call nests deeper with a new frame,
   so a function that the arm calls can change its own bindings.
-- An element of a list, also through an assignment to `xs[i]`, is never hardware (`S011`).
+- An element of a list, also through an assignment to `xs[i]` or to a part of it, holds no
+  hardware leaf (`S011`). A module argument and the element of `push` hold none either.
+- A literal, a record constructor, and an assignment to a part can make a hardware aggregate.
+  An assignment that gives a static root a hardware leaf binds the root as a rebind does.
 - A receiver call `x.m(a)` is the call of `m` with `x` at the first parameter without a written
   `comptime` mark (section 5.6). Its name `m` charges 1, as the callee name of a call does. `x`
   evaluates first, then the arguments. The copies then charge in the order of the parameters.
@@ -760,8 +763,7 @@ def iteration [Runs m] (pos : Pos) (i : Binder) (v : Int) (act : m α) : m α :=
 /-!
 A place after its steps (section 5.2). It holds the local number, the slot, and the source name
 of its root. It also holds the selected part with its type, and the number of each step.
-`inList` tells if the last step selects an element of a list, and `inStatic` if it selects a
-part of a static value.
+`inList` tells if a step selects an element of a list.
 -/
 structure Place where
   id : Nat
@@ -771,7 +773,6 @@ structure Place where
   part : Val
   keys : List Nat
   inList : Bool
-  inStatic : Bool
 
 /-!
 The aggregate `a` with the part at the numbers `ks` replaced by `y` (`Agg.set`). A reference on
@@ -820,26 +821,30 @@ Writes `y` into the place `pl` (section 5.2). A place without a step binds its r
 value with a hardware leaf gets the next version of the root. A place with a step checks the new
 depth of the root: the number of steps plus the depth of the value (`S015` at `p`). Then it
 writes into the live value of the root, and an aggregate root binds again (`rebind`).
-A list holds no hardware value: `S011` at `q`, the node of the value. In this phase a static
-container holds no hardware value either: `S010` at `q`.
+A list holds no value with a hardware leaf: `S011` at `q`, the node of the value. A static root
+that takes a value with a hardware leaf becomes a hardware aggregate, so it binds as `rebind`
+gives.
 -/
 def store (p q : Pos) (pl : Place) (y : Val) : M Unit := do
   if pl.keys.isEmpty then
     held p pl.id
     bindLocal pl.id { pl.slot with value := ← named p pl.id pl.name y }
   else
-    if pl.inList && (y matches .hw _ | .agg _) then fail .S011 q "a list holds no hardware value"
-    match (← get).frame[pl.id]?, pl.part.agg?, y.agg? with
-    | some sl@{ value := .agg a, .. }, some o, some x =>
-      if pl.inStatic && !(x matches .static _) then
-        fail .S010 q "a container holds only static values in this phase"
-      -- The root is within the nesting depth, so only the value on the path can raise it.
-      bounded p (pl.keys.length + x.depth)
-      rebind p pl sl a o x
-    | _, _, _ =>
-      let w ← item q y
+    if pl.inList && (y matches .hw _ | .agg _) then
+      fail .S011 q "a list holds no value with a hardware leaf"
+    let x ← item q y
+    -- The root is within the nesting depth, so only the value on the path can raise it.
+    match (← get).frame[pl.id]?, pl.part.agg?, x with
+    | some { value := .static _, .. }, _, .static w => do
       bounded p (pl.keys.length + w.depth)
       changeAt p pl fun _ => w
+    | some sl@{ value := .static r, .. }, some o, x => do
+      bounded p (pl.keys.length + x.depth)
+      rebind p pl sl (.static r) o x
+    | some sl@{ value := .agg a, .. }, some o, x => do
+      bounded p (pl.keys.length + x.depth)
+      rebind p pl sl a o x
+    | _, _, _ => fail .S010 p "the place has no part for its value"
 
 /-!
 The callee of a call after its one evaluation. The name of a function item or of a prelude
@@ -1130,13 +1135,13 @@ mutual
         let es ← operands n xs fun x o => element x.pos o.value
         match waiting es with
         | some q => return some ⟨.pending q (.tuple p (es.map (·.1))), false, none⟩
-        | none => return some ⟨.static (← tupleOf p (values es)), false, none⟩
+        | none => return some ⟨(← tupleOf p (values es)).val, false, none⟩
       | .array p [] => do charge p 1; return some ⟨.pending p (.empty p), false, none⟩
       | .array p xs => do
         let es ← operands n xs fun x o => element x.pos o.value
         match waiting es with
         | some q => return some ⟨.pending q (.array p (es.map (·.1))), false, none⟩
-        | none => return some ⟨.static (← arrayOf p (values es)), false, none⟩
+        | none => return some ⟨(← arrayOf p (values es)).val, false, none⟩
       | .select p b q i => do
         let o ← need b (← eval n b)
         let v ← data p o.value
@@ -1271,7 +1276,6 @@ mutual
     let mut ty := slot.ty
     let mut keys : Array Nat := #[]
     let mut inList := false
-    let mut inStatic := false
     for sel in sels do
       charge sel.pos 1
       let (k, w, ft) ← match sel with
@@ -1289,11 +1293,10 @@ mutual
         | some t, _ => some t
         | none, some t => partTy t k
         | none, none => w.ty?
-      inList := cur matches .static (.list ..)
-      inStatic := cur matches .static _
+      inList := inList || cur matches .static (.list ..)
       cur := w
       keys := keys.push k
-    return ⟨id, slot, x, ty, cur, keys.toList, inList, inStatic⟩
+    return ⟨id, slot, x, ty, cur, keys.toList, inList⟩
   termination_by (n + 1, 0)
 
   /-- The values of the arguments `xs` in the order of the parameters, by `bound b`. -/
@@ -1336,7 +1339,7 @@ mutual
       let vs ← args n b xs
       release o
       charge p (vs.map Val.size).sum
-      return some ⟨.static (← recordOf p t fs.toList (xs.map (·.pos)) vs), false, none⟩
+      return some ⟨(← recordOf p t fs.toList (xs.map (·.pos)) vs).val, false, none⟩
     | t, [x] =>
       hold o
       let a ← need x (← eval n x)

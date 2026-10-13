@@ -9,8 +9,10 @@ So are the records of section 5.6: the constructor, the field `.f`, and the zero
 
 The static containers of slice 2 follow section 5.1. These rules settle its open points:
 
-- In this phase, a container holds only static values. A hardware element is `S010` at the
-  element. A handle as an element is `S010` until slice 3.
+- An element of a literal and a field of a record are static values, hardware values, or
+  hardware aggregates (section 5.1). A literal with a hardware part makes an aggregate node. It
+  checks its depth and charges its size as a static literal does. A handle as an element is
+  `S010` until slice 3. A list holds no value with a hardware leaf (`S011`).
 - An array literal takes the common type of its elements by the operand rule. The join of the
   types charges its visits (`Source.Eval.Types`). The typed use of each element at that type
   charges as a conversion. Then the literal charges its size.
@@ -33,9 +35,9 @@ The static containers of slice 2 follow section 5.1. These rules settle its open
   literals, the tuple and array types, and `[]` at its typed use.
 - `()` charges the size 1 as a value and as a type.
 - A record constructor `P[8](a, b)` charges the copies of its arguments. Then it makes the typed
-  use of each field in declaration order (`S010` and `S012`), and it charges its size. In this
-  phase a field holds only a static value: a hardware argument is `S010`. A struct type of a
-  local or of a `type` item checks the number of its arguments here (`S007`).
+  use of each field in declaration order (`S010` and `S012`), and it charges its size. An
+  argument is in a data context, so a register or a wire is read (section 9.2). A struct type of
+  a local or of a `type` item checks the number of its arguments here (`S007`).
 - `==` on two records needs one struct type. The join of the two types charges as a type
   equality. Then the operator charges the sum of the two sizes.
 - A field `.f` refers to the field, so it charges no size. A missing field is `S010`.
@@ -50,6 +52,7 @@ The static containers of slice 2 follow section 5.1. These rules settle its open
   expands. The other parts check first: a hardware leaf needs the type of its position, and a
   static leaf its sign. Then the conversion charges, and the static leaves convert.
 - A place update copies only the nodes on its path. A reference on the path expands one level.
+  A static part on the path that takes a value with a hardware leaf opens one level.
 - `T()` is the zero of a hardware data type, also of a struct type. Another type is `S010`. The
   zero checks its depth (`Ty.zeroDepth`) and charges its size from the metadata before it exists.
 - An assignment to a place with indices, selectors `.N`, and fields evaluates its indices from
@@ -118,10 +121,10 @@ def convert (t : Ty) (v : Value) : Except Fault Step :=
 The common type of the elements of an array literal, if they have one. It joins the type of each
 element after the first with the join of the earlier elements.
 -/
-def commonOf : List Value → Walk (Option Ty)
+def commonOf : List (Option Ty) → Walk (Option Ty)
   | [] => return none
-  | v :: vs => vs.foldlM (init := v.ty?) fun t w => do
-    match t, w.ty? with
+  | v :: vs => vs.foldlM (init := v) fun t w => do
+    match t, w with
     | some t, some u => joinTy t u
     | _, _ => return none
 
@@ -203,92 +206,6 @@ def containerOp (pos : Pos) (op : BinOp) (a b : Value) : M Value :=
   | _ => lift pos (typeError s!"`{op.text}` does not accept {a.text} and {b.text}")
 
 def conform (pos : Pos) (t : Ty) (v : Value) : M Value := apply pos (convert t v)
-
-/-!
-An element of a container literal at `pos`, and the position of its first `[]` if it waits for
-its type. In this phase a container holds only static values. A hardware value is `S010`, and a
-handle is `S010` until slice 3.
--/
-def element (pos : Pos) : Val → M (Part × Option Pos)
-  | .static v => pure (.value v, none)
-  | .pending q p => pure (p, some q)
-  | .hw _ | .agg _ => fail .S010 pos "a container holds only static values in this phase"
-  | .handle h => fail .S010 pos s!"{(Val.handle h).text} is not an element before slice 3"
-
-/-! The value of an element of a container in this phase. -/
-def item (pos : Pos) (v : Val) : M Value := do
-  match ← element pos v with
-  | (.value v, _) => pure v
-  | (_, q) => fail .S010 (q.getD pos) "`[]` needs the type [T; 0] from its context"
-
-/-! The first `[]` of the elements of a literal that waits for its type. -/
-def waiting (es : List (Part × Option Pos)) : Option Pos := (es.filterMap (·.2)).head?
-
-/-! The values of the elements of a literal that does not wait. -/
-def values (es : List (Part × Option Pos)) : List Value :=
-  es.filterMap fun | (.value v, _) => some v | _ => none
-
-/-! A tuple literal at `pos`: its depth, then the charge of its size. -/
-def tupleOf (pos : Pos) (vs : List Value) : M Value := do
-  let v := Value.tuple vs.toArray
-  bounded pos v.depth
-  charge pos v.size
-  return v
-
-/-!
-An array literal at `pos`. Its elements take their common type. Then it checks its depth and
-charges its size.
--/
-def arrayOf (pos : Pos) (vs : List Value) : M Value := do
-  let some t ← walked pos (commonOf vs)
-    | fail .S010 pos "the elements of an array have no common type"
-  let xs ← vs.mapM (conform pos t)
-  let v := Value.array t xs.toArray
-  bounded pos v.depth
-  charge pos v.size
-  return v
-
-/-!
-A literal that waits, at a typed use of the type `t` at `pos`. The type flows into each
-element: `[]` takes the type `[T; 0]`, and a literal of the shape of `t` makes its elements at
-the element types of `t`. Then the literal charges as it does at its node. Another shape is
-`S010` at `pos`.
--/
-mutual
-  def build (pos : Pos) (t : Ty) : Part → M Value
-    | .value v => pure v
-    | p@(.empty q) =>
-      match t with
-      | .array e 0 => do
-        bounded q (Value.array e #[]).depth
-        return .array e #[]
-      | _ => fail .S010 pos s!"expected {t.text}, but the value is {p.text}"
-    | p@(.array q ps) =>
-      match t with
-      | .array e k =>
-        if ps.length = k then do arrayOf q (← buildAll pos e ps)
-        else fail .S010 pos s!"expected {t.text}, but the value is {p.text}"
-      | _ => fail .S010 pos s!"expected {t.text}, but the value is {p.text}"
-    | p@(.tuple q ps) =>
-      match t with
-      | .tuple ⟨ts⟩ =>
-        if ps.length = ts.length then do tupleOf q (← buildZip pos ts ps)
-        else fail .S010 pos s!"expected {t.text}, but the value is {p.text}"
-      | _ => fail .S010 pos s!"expected {t.text}, but the value is {p.text}"
-
-  def buildAll (pos : Pos) (t : Ty) : List Part → M (List Value)
-    | [] => pure []
-    | p :: ps => do return (← build pos t p) :: (← buildAll pos t ps)
-
-  def buildZip (pos : Pos) : List Ty → List Part → M (List Value)
-    | t :: ts, p :: ps => do return (← build pos t p) :: (← buildZip pos ts ps)
-    | _, _ => pure []
-end
-
-/-! A typed use of the type `t` at `pos` gives a literal that waits its type. -/
-def settle (pos : Pos) (t : Ty) : Val → M Val
-  | .pending _ p => do return .static (← build pos t p)
-  | v => pure v
 
 /-!
 The part of the type `t` of the base `b` at `pos` in its normal form (section 5.1), with no
@@ -481,10 +398,22 @@ def Agg.expand (fs : Ty → Option (Array (String × Ty))) (specs : Specs) (pos 
   | _ => none
 
 /-!
+The static container `v` opened one level: its elements as static parts, and the builder of its
+node. A list never holds a hardware leaf, so it does not open.
+-/
+def Agg.opened : Value → Option (Array Agg × (Array Agg → Agg))
+  | .array e xs => some (xs.map .static, .mkArray e)
+  | .tuple xs => do
+    let ts ← Value.tyAll? xs.toList
+    return (xs.map .static, .mkTuple ts.toArray)
+  | .record t xs => some (xs.map .static, .mkRecord t)
+  | _ => none
+
+/-!
 The aggregate `a` with the part at the numbers `ks` replaced by `y`. Each step copies only the
 node on the path. A reference on the path expands one level by `ex`. A static part on the path
-takes only a static `y`. Each node keeps its normal form, so a node without a hardware leaf is
-a static value.
+opens one level when `y` has a hardware leaf (`Agg.opened`). Each node keeps its normal form,
+so a node without a hardware leaf is a static value.
 -/
 def Agg.set (ex : Base → Ty → Option Agg) (y : Agg) : Agg → List Nat → Option Agg
   | _, [] => some y
@@ -494,6 +423,9 @@ def Agg.set (ex : Base → Ty → Option Agg) (y : Agg) : Agg → List Nat → O
       | a => pure a
     match a, y with
     | .static v, .static w => some (.static (update (fun _ => w) v (k :: ks)))
+    | .static v, _ => do
+      let (xs, mk) ← Agg.opened v
+      return mk (xs.set! k (← Agg.set ex y (← xs[k]?) ks))
     | .array _ xs, _ | .tuple _ xs, _ | .record _ xs, _ => do
       return a.rebuild (xs.set! k (← Agg.set ex y (← xs[k]?) ks))
     | _, _ => none
@@ -547,21 +479,6 @@ def fieldKey (pos : Pos) (f : Ident) : Val → M (Nat × Val × Ty)
     return (k, .static w, ft)
 
 def field (pos : Pos) (f : Ident) (v : Val) : M Val := do return (← fieldKey pos f v).2.1
-
-/-!
-A record constructor of the struct type `t` with the field types `fs` at `pos`. The arguments
-`vs` at the positions `ps` paid their copies. Each field is a typed use in declaration order. A
-literal with `[]` takes the type of its field. In this phase a field holds only a static value,
-so a hardware argument is `S010` at the argument. Then the record checks its depth and charges
-its size.
--/
-def recordOf (pos : Pos) (t : Ty) (fs : List Ty) (ps : List Pos) (vs : List Val) : M Value := do
-  let xs ← (fs.zip (ps.zip vs)).mapM fun (ft, q, v) => do
-    conform pos ft (← item q (← settle pos ft v))
-  let r := Value.record t xs.toArray
-  bounded pos r.depth
-  charge pos r.size
-  return r
 
 /-!
 The zero `T()` of the type `t` at `pos` (section 5.6). A type that is not hardware data is
@@ -633,6 +550,120 @@ def typedAgg (pos : Pos) (t : Ty) (a : Agg) : M Agg := do
   let r ← lift pos (f ())
   bounded pos r.depth
   return r
+
+/-!
+The typed use of the part `a` of a container at `t` at `pos`. A static part converts, a hardware
+leaf needs the type `t`, and a hardware aggregate converts part by part (`typedAgg`).
+-/
+def conformAgg (pos : Pos) (t : Ty) : Agg → M Agg
+  | .static v => do return .static (← conform pos t v)
+  | .hw h =>
+    if h.ty.same t then pure (.hw h)
+    else fail .S010 pos s!"expected {t.text}, but the value is {h.ty.text}"
+  | a => typedAgg pos t a
+
+/-!
+An element of a container literal at `pos`, and the position of its first `[]` if it waits for
+its type. A static value, a hardware value, and a hardware aggregate are elements (section 5.1).
+A handle is `S010` until slice 3.
+-/
+def element (pos : Pos) : Val → M (Part × Option Pos)
+  | .pending q p => pure (p, some q)
+  | .handle h => fail .S010 pos s!"{(Val.handle h).text} is not an element before slice 3"
+  | .static v => pure (.value (.static v), none)
+  | .hw h => pure (.value (.hw h), none)
+  | .agg a => pure (.value a, none)
+
+/-! The part of a container that the value `v` at `pos` gives, after its typed use. -/
+def item (pos : Pos) (v : Val) : M Agg := do
+  match ← element pos v with
+  | (.value v, _) => pure v
+  | (_, q) => fail .S010 (q.getD pos) "`[]` needs the type [T; 0] from its context"
+
+/-! The first `[]` of the elements of a literal that waits for its type. -/
+def waiting (es : List (Part × Option Pos)) : Option Pos := (es.filterMap (·.2)).head?
+
+/-! The values of the elements of a literal that does not wait. -/
+def values (es : List (Part × Option Pos)) : List Agg :=
+  es.filterMap fun | (.value v, _) => some v | _ => none
+
+/-!
+A new container node `a` at `pos`: its depth (`S015`), then the charge of its size. The builder
+gives a node without a hardware leaf as a static value, so a static literal keeps its charges.
+-/
+def made (pos : Pos) (a : Agg) : M Agg := do
+  bounded pos a.depth
+  charge pos a.size
+  return a
+
+/-! A tuple literal at `pos` with the elements `xs`. -/
+def tupleOf (pos : Pos) (xs : List Agg) : M Agg := do
+  let some ts := xs.mapM Agg.ty? | fail .S010 pos "an element of the tuple has no type"
+  made pos (.mkTuple ts.toArray xs.toArray)
+
+/-!
+An array literal at `pos`. Its elements take their common type by a typed use. Then it checks
+its depth and charges its size.
+-/
+def arrayOf (pos : Pos) (xs : List Agg) : M Agg := do
+  let some t ← walked pos (commonOf (xs.map Agg.ty?))
+    | fail .S010 pos "the elements of an array have no common type"
+  let ys ← xs.mapM (conformAgg pos t)
+  made pos (.mkArray t ys.toArray)
+
+/-!
+A literal that waits, at a typed use of the type `t` at `pos`. The type flows into each
+element: `[]` takes the type `[T; 0]`, and a literal of the shape of `t` makes its elements at
+the element types of `t`. Then the literal charges as it does at its node. Another shape is
+`S010` at `pos`.
+-/
+mutual
+  def build (pos : Pos) (t : Ty) : Part → M Agg
+    | .value v => pure v
+    | p@(.empty q) =>
+      match t with
+      | .array e 0 => do
+        bounded q (Value.array e #[]).depth
+        return .static (.array e #[])
+      | _ => fail .S010 pos s!"expected {t.text}, but the value is {p.text}"
+    | p@(.array q ps) =>
+      match t with
+      | .array e k =>
+        if ps.length = k then do arrayOf q (← buildAll pos e ps)
+        else fail .S010 pos s!"expected {t.text}, but the value is {p.text}"
+      | _ => fail .S010 pos s!"expected {t.text}, but the value is {p.text}"
+    | p@(.tuple q ps) =>
+      match t with
+      | .tuple ⟨ts⟩ =>
+        if ps.length = ts.length then do tupleOf q (← buildZip pos ts ps)
+        else fail .S010 pos s!"expected {t.text}, but the value is {p.text}"
+      | _ => fail .S010 pos s!"expected {t.text}, but the value is {p.text}"
+
+  def buildAll (pos : Pos) (t : Ty) : List Part → M (List Agg)
+    | [] => pure []
+    | p :: ps => do return (← build pos t p) :: (← buildAll pos t ps)
+
+  def buildZip (pos : Pos) : List Ty → List Part → M (List Agg)
+    | t :: ts, p :: ps => do return (← build pos t p) :: (← buildZip pos ts ps)
+    | _, _ => pure []
+end
+
+/-! A typed use of the type `t` at `pos` gives a literal that waits its type. -/
+def settle (pos : Pos) (t : Ty) : Val → M Val
+  | .pending _ p => do return (← build pos t p).val
+  | v => pure v
+
+/-!
+A record constructor of the struct type `t` with the field types `fs` at `pos`. The arguments
+`vs` at the positions `ps` paid their copies. Each field is a typed use in declaration order, in
+a data context (section 9.2): a register or a wire is read. A literal with `[]` takes the type
+of its field. A field can hold a hardware value or a hardware aggregate. Then the record checks
+its depth and charges its size.
+-/
+def recordOf (pos : Pos) (t : Ty) (fs : List Ty) (ps : List Pos) (vs : List Val) : M Agg := do
+  let xs ← (fs.zip (ps.zip vs)).mapM fun (ft, q, v) => do
+    conformAgg pos ft (← item q (← data q (← settle pos ft v)))
+  made pos (.mkRecord t xs.toArray)
 
 /-! The core `let` statements that a binding of an aggregate makes, in packing order. -/
 abbrev Binds := StateT (Array Let) (Except Fault)

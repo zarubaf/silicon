@@ -472,44 +472,6 @@ theorem fnTy_f (p : Pos) (ps : List TyParam) (r : Ty) :
     Follows cap (fnTy p ps r) (fnTy p ps r) := by
   unfold fnTy; follows [bounded_f]
 
-theorem element_f (p : Pos) (v : Val) : Follows cap (element p v) (element p v) := by
-  unfold element; follows
-
-theorem item_f (p : Pos) (v : Val) : Follows cap (item p v) (item p v) := by
-  unfold item; follows [element_f]
-
-theorem tupleOf_f (p : Pos) (vs : List Value) :
-    Follows cap (tupleOf p vs) (tupleOf p vs) := by
-  unfold tupleOf; follows [bounded_f]
-
-theorem arrayOf_f (p : Pos) (vs : List Value) :
-    Follows cap (arrayOf p vs) (arrayOf p vs) := by
-  unfold arrayOf; follows [walked_f, conform_f, bounded_f]
-
-mutual
-  theorem build_f (p : Pos) : ∀ (t : Ty) (x : Part), Follows cap (build p t x) (build p t x)
-    | t, .value v => by rw [build.eq_def]; dsimp only; follows
-    | t, .empty q => by rw [build.eq_def]; dsimp only; follows [bounded_f]
-    | t, .array q ps => by rw [build.eq_def]; dsimp only; follows [buildAll_f p, arrayOf_f]
-    | t, .tuple q ps => by rw [build.eq_def]; dsimp only; follows [buildZip_f p, tupleOf_f]
-
-  theorem buildAll_f (p : Pos) (t : Ty) :
-      ∀ xs : List Part, Follows cap (buildAll p t xs) (buildAll p t xs)
-    | [] => by rw [buildAll]; follows
-    | x :: xs => by rw [buildAll]; follows [build_f p t x, buildAll_f p t xs]
-
-  theorem buildZip_f (p : Pos) :
-      ∀ (ts : List Ty) (xs : List Part), Follows cap (buildZip p ts xs) (buildZip p ts xs)
-    | t :: ts, x :: xs => by
-      rw [buildZip.eq_def]; dsimp only; follows [build_f p t x, buildZip_f p ts xs]
-    | [], _ => by rw [buildZip.eq_def]; dsimp only; follows
-    | _ :: _, [] => by rw [buildZip.eq_def]; dsimp only; follows
-end
-
-theorem settle_f (p : Pos) (t : Ty) (v : Val) :
-    Follows cap (settle p t v) (settle p t v) := by
-  unfold settle; follows [build_f]
-
 theorem arrayTy_f (p q : Pos) (e : Ty) (v : Value) :
     Follows cap (arrayTy p q e v) (arrayTy p q e v) := by
   unfold arrayTy; follows [bounded_f]
@@ -568,16 +530,61 @@ theorem field_f (p : Pos) (f : Ident) (v : Val) :
     Follows cap (field p f v) (field p f v) := by
   unfold field; follows [fieldKey_f]
 
-theorem recordOf_f (p : Pos) (t : Ty) (fs : List Ty) (ps : List Pos) (vs : List Val) :
-    Follows cap (recordOf p t fs ps vs) (recordOf p t fs ps vs) := by
-  unfold recordOf; follows [conform_f, item_f, settle_f, bounded_f]
-
 theorem zero_f (p : Pos) (t : Ty) : Follows cap (zero p t) (zero p t) := by
   unfold zero; follows [bounded_f]
 
 theorem typedAgg_f (p : Pos) (t : Ty) (a : Agg) :
     Follows cap (typedAgg p t a) (typedAgg p t a) := by
   unfold typedAgg; follows [bounded_f]
+
+theorem conformAgg_f (p : Pos) (t : Ty) (a : Agg) :
+    Follows cap (conformAgg p t a) (conformAgg p t a) := by
+  unfold conformAgg; follows [conform_f, typedAgg_f]
+
+theorem element_f (p : Pos) (v : Val) : Follows cap (element p v) (element p v) := by
+  unfold element; follows
+
+theorem item_f (p : Pos) (v : Val) : Follows cap (item p v) (item p v) := by
+  unfold item; follows [element_f]
+
+theorem made_f (p : Pos) (a : Agg) : Follows cap (made p a) (made p a) := by
+  unfold made; follows [bounded_f]
+
+theorem tupleOf_f (p : Pos) (xs : List Agg) :
+    Follows cap (tupleOf p xs) (tupleOf p xs) := by
+  unfold tupleOf; follows [made_f]
+
+theorem arrayOf_f (p : Pos) (xs : List Agg) :
+    Follows cap (arrayOf p xs) (arrayOf p xs) := by
+  unfold arrayOf; follows [walked_f, conformAgg_f, made_f]
+
+mutual
+  theorem build_f (p : Pos) : ∀ (t : Ty) (x : Part), Follows cap (build p t x) (build p t x)
+    | t, .value v => by rw [build.eq_def]; dsimp only; follows
+    | t, .empty q => by rw [build.eq_def]; dsimp only; follows [bounded_f]
+    | t, .array q ps => by rw [build.eq_def]; dsimp only; follows [buildAll_f p, arrayOf_f]
+    | t, .tuple q ps => by rw [build.eq_def]; dsimp only; follows [buildZip_f p, tupleOf_f]
+
+  theorem buildAll_f (p : Pos) (t : Ty) :
+      ∀ xs : List Part, Follows cap (buildAll p t xs) (buildAll p t xs)
+    | [] => by rw [buildAll]; follows
+    | x :: xs => by rw [buildAll]; follows [build_f p t x, buildAll_f p t xs]
+
+  theorem buildZip_f (p : Pos) :
+      ∀ (ts : List Ty) (xs : List Part), Follows cap (buildZip p ts xs) (buildZip p ts xs)
+    | t :: ts, x :: xs => by
+      rw [buildZip.eq_def]; dsimp only; follows [build_f p t x, buildZip_f p ts xs]
+    | [], _ => by rw [buildZip.eq_def]; dsimp only; follows
+    | _ :: _, [] => by rw [buildZip.eq_def]; dsimp only; follows
+end
+
+theorem settle_f (p : Pos) (t : Ty) (v : Val) :
+    Follows cap (settle p t v) (settle p t v) := by
+  unfold settle; follows [build_f]
+
+theorem recordOf_f (p : Pos) (t : Ty) (fs : List Ty) (ps : List Pos) (vs : List Val) :
+    Follows cap (recordOf p t fs ps vs) (recordOf p t fs ps vs) := by
+  unfold recordOf; follows [conformAgg_f, item_f, data_f, settle_f, made_f]
 
 theorem conformVal_f (p : Pos) (t : Ty) (v : Val) :
     Follows cap (conformVal p t v) (conformVal p t v) := by
