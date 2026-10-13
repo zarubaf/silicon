@@ -108,6 +108,7 @@ private theorem madeField_digits (s : String) (k : Nat) (tail : List Char)
       | ['c'] => some (.call k)
       | ['v'] => some (.version k)
       | ['t'] => some (.temp k)
+      | ['e'] => some (.elem k)
       | ['b'] => if k ≤ 1 then some (.bool (k == 1)) else none
       | _ => none := by
   unfold madeField
@@ -159,6 +160,7 @@ private theorem decodeField_encode (f : Field) (hf : f.valid = true) :
       | ['c'] => some (.call k)
       | ['v'] => some (.version k)
       | ['t'] => some (.temp k)
+      | ['e'] => some (.elem k)
       | ['b'] => if k ≤ 1 then some (.bool (k == 1)) else none
       | _ => none := by
     intro k c hc hh
@@ -195,6 +197,10 @@ private theorem decodeField_encode (f : Field) (hf : f.valid = true) :
     exact number _ _ _ (by rw [made _ _ (by decide) (by decide)]; rfl)
   | temp k =>
     have e : s!"{k}t" = toString k ++ String.singleton 't' := by simp; rfl
+    simp only [Field.encode, e]
+    exact number _ _ _ (by rw [made _ _ (by decide) (by decide)]; rfl)
+  | elem k =>
+    have e : s!"{k}e" = toString k ++ String.singleton 'e' := by simp; rfl
     simp only [Field.encode, e]
     exact number _ _ _ (by rw [made _ _ (by decide) (by decide)]; rfl)
   | bool b =>
@@ -278,6 +284,10 @@ private theorem encode_fields (f : Field) (hf : f.valid = true) : Fields f.encod
     exact number_fields _ _ (by decide)
   | temp k =>
     have e : s!"{k}t" = toString k ++ String.singleton 't' := by simp; rfl
+    simp only [Field.encode, e, toList_suffix]
+    exact number_fields _ _ (by decide)
+  | elem k =>
+    have e : s!"{k}e" = toString k ++ String.singleton 'e' := by simp; rfl
     simp only [Field.encode, e, toList_suffix]
     exact number_fields _ _ (by decide)
   | bool b => cases b <;> exact ⟨by decide, by decide⟩

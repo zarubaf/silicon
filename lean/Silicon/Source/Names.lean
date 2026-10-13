@@ -15,8 +15,8 @@ name `p`, and `encode` is injective.
 
 These rules settle the open points of the spec:
 
-- An integer, a call site, a version, and a temporary print in decimal without leading zeros.
-  `decode` accepts only this form, so each field has one text.
+- An integer, a call site, a version, a temporary, and an element print in decimal without
+  leading zeros. `decode` accepts only this form, so each field has one text.
 - A digest is `0h` and at least one lowercase hexadecimal digit.
 - `encode` adds the field `0k` to a name with only one field that equals a core keyword. The
   name structure has no field for it. `decode` removes it, and it accepts `0k` only there.
@@ -48,6 +48,7 @@ inductive Field where
   | digest (hex : String)
   | temp (index : Nat)
   | role (role : Role)
+  | elem (index : Nat)
   deriving Repr, DecidableEq, BEq, Hashable, Inhabited
 
 /-! A name: a first user field, then the other fields in order. -/
@@ -81,6 +82,7 @@ def Field.encode : Field → String
   | .digest h => "0h" ++ h
   | .temp k => s!"{k}t"
   | .role r => r.text
+  | .elem k => s!"{k}e"
 
 /-! True for a name with one field that equals a core keyword. It gets the field `0k`. -/
 def keyword (p : Name) : Bool := p.rest.isEmpty && Core.keywords.contains p.head
@@ -114,6 +116,7 @@ def madeField (s : String) : Option Field :=
       | ['c'] => n.map .call
       | ['v'] => n.map .version
       | ['t'] => n.map .temp
+      | ['e'] => n.map .elem
       | ['b'] => n.bind fun k => if k ≤ 1 then some (.bool (k == 1)) else none
       | _ => none
 
