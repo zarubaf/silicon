@@ -1116,7 +1116,7 @@ def calls : String :=
 A `mut` actual copies its place into the formal. At the return, the final value of the formal
 goes back into the place, also through steps of the place and through a receiver. The place
 has the type of the formal, else `S010` at the call. A `comptime fn` writes back its static
-value.
+at its own node.
 -/
 def muts : String :=
   "fn inc(mut x: Int) -> () { x = x + 1; return (); }\n" ++
@@ -1364,6 +1364,22 @@ The function type checks its depth at the name: `h` is 3 deep. The parameter typ
 #guard out fns "h" (depth := 3) == "(function root h)"
 #guard out fns "h" (depth := 2) == "S015 1:1"
 #guard out fns "(1, h)" (depth := 2) == "S015 1:5"
+
+/-!
+Each depth check of the signature reports at the name: a parameter type of `p` and the result
+type of `r` are 3 deep. A constant in the signature nests, so the type of `D`, 3 deep, reports
+at its own node.
+-/
+def deepSig : String :=
+  "fn p(x: fn () -> fn () -> Bool) -> Bool { return true; }\n" ++
+  "fn r() -> fn () -> fn () -> Bool { return r; }\n" ++
+  "const D: [[Bool; 1]; 1] = [[true]];\n" ++
+  "fn q(x: [Bool; len(D)]) -> Bool { return true; }\n"
+#guard out deepSig "p" (depth := 4) == "(function root p)"
+#guard out deepSig "p" (depth := 2) == "S015 1:1"
+#guard out deepSig "(1, r)" (depth := 2) == "S015 1:5"
+#guard out deepSig "q" (depth := 3) == "(function root q)"
+#guard out deepSig "q" (depth := 2) == "S015 3:10"
 
 /-!
 A binding of a function name is not a copy: `let x = g;` charges as `let x = true;` with the
