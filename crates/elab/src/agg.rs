@@ -139,24 +139,38 @@ impl Agg {
     /// `None` if `ty` is not a container type with `xs.len()` parts. It reads the stored numbers
     /// of each part once and walks no part.
     pub(crate) fn shape(g: &Graph, tys: &Types, ty: TyId, xs: &[Agg]) -> Option<Node> {
+        let parts = xs
+            .iter()
+            .map(|x| (x.size(g, tys), x.depth(tys), x.leaves(tys)));
+        Agg::shape_from(tys, ty, xs.len(), parts)
+    }
+
+    /// The same from the size, the depth, and the number of hardware leaves of each of the `n`
+    /// parts, so a caller that did not build the parts yet can charge their node first.
+    pub(crate) fn shape_from(
+        tys: &Types,
+        ty: TyId,
+        n: usize,
+        parts: impl IntoIterator<Item = (u64, u64, u64)>,
+    ) -> Option<Node> {
         let base = match tys.get(ty) {
-            Ty::Array(elem, len) if len.to_u64() == u64::try_from(xs.len()).ok() => elem.depth(),
-            Ty::Tuple(parts) if parts.len() == xs.len() => 0,
-            Ty::Struct(_) if tys.fields(ty).is_some_and(|(_, f)| f.len() == xs.len()) => ty.depth(),
+            Ty::Array(elem, len) if len.to_u64() == u64::try_from(n).ok() => elem.depth(),
+            Ty::Tuple(types) if types.len() == n => 0,
+            Ty::Struct(_) if tys.fields(ty).is_some_and(|(_, f)| f.len() == n) => ty.depth(),
             _ => return None,
         };
         #[cfg(test)]
-        crate::counters::add(crate::counters::Count::Nodes, xs.len() as u64);
+        crate::counters::add(crate::counters::Count::Nodes, n as u64);
         let mut node = Node {
             ty,
             size: 1,
             depth: base,
             leaves: 0,
         };
-        for x in xs {
-            node.size = node.size.saturating_add(x.size(g, tys));
-            node.depth = node.depth.max(x.depth(tys));
-            node.leaves = node.leaves.saturating_add(x.leaves(tys));
+        for (size, depth, leaves) in parts {
+            node.size = node.size.saturating_add(size);
+            node.depth = node.depth.max(depth);
+            node.leaves = node.leaves.saturating_add(leaves);
         }
         node.depth = node.depth.saturating_add(1);
         Some(node)
@@ -167,6 +181,12 @@ impl Agg {
     /// The caller charged the size and checked the depth of `shape`.
     pub(crate) fn node(g: &Graph, tys: &Types, ty: TyId, xs: Vec<Agg>) -> Option<Agg> {
         let node = Agg::shape(g, tys, ty, &xs)?;
+        Some(Agg::finish(tys, node, xs))
+    }
+
+    /// The container of the stored numbers `node` with the parts `xs`, in its normal form.
+    pub(crate) fn finish(tys: &Types, node: Node, xs: Vec<Agg>) -> Agg {
+        let ty = node.ty;
         if node.leaves == 0 && xs.iter().all(|x| matches!(x, Agg::Static(_))) {
             let vs: Vec<Value> = xs
                 .into_iter()
@@ -175,17 +195,17 @@ impl Agg {
                     _ => None,
                 })
                 .collect();
-            return Some(Agg::Static(match tys.get(ty) {
+            return Agg::Static(match tys.get(ty) {
                 Ty::Array(elem, _) => Value::Array(*elem, vs),
                 Ty::Tuple(_) => Value::tuple(vs),
                 _ => Value::Record(ty, vs),
-            }));
+            });
         }
-        Some(match tys.get(ty) {
+        match tys.get(ty) {
             Ty::Array(..) => Agg::Array(node, Parts(xs)),
             Ty::Tuple(_) => Agg::Tuple(node, Parts(xs)),
             _ => Agg::Record(node, Parts(xs)),
-        })
+        }
     }
 
     /// What the aggregate is, without a copy: a static part or a hardware leaf look like the

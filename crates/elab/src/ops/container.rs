@@ -455,18 +455,19 @@ pub(crate) fn common_ty(lhs: TyId, rhs: TyId, tys: &mut Types, budget: &mut u64)
 /// The common type of the elements of an array literal, if they have one, and the units of
 /// the joins. It joins the type of each element after the first with the join of the earlier
 /// elements. There is none for no element.
-pub(crate) fn common_of<'a>(
-    vs: impl IntoIterator<Item = &'a Value>,
+pub(crate) fn common_of<T>(
+    items: impl IntoIterator<Item = T>,
+    ty_of: impl Fn(&T, &mut Types) -> TyId,
     tys: &mut Types,
     mut budget: u64,
 ) -> (Int, Option<TyId>) {
     let mut charge = Int::zero();
-    let mut vs = vs.into_iter();
-    let Some(mut t) = vs.next().map(|v| v.ty(tys)) else {
+    let mut items = items.into_iter();
+    let Some(mut t) = items.next().map(|v| ty_of(&v, tys)) else {
         return (charge, None);
     };
-    for w in vs {
-        let u = w.ty(tys);
+    for w in items {
+        let u = ty_of(&w, tys);
         let done = common_ty(t, u, tys, &mut budget);
         charge = charge.add(&done.charge);
         let Some(next) = done.ty else {

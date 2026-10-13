@@ -751,12 +751,12 @@ impl Evaluator<'_> {
         total
     }
 
-    /// The aggregate `root` with the part at the numbers `keys` replaced by `y`. Each step
-    /// copies only the node on the path, and a reference on the path expands one level. A static
-    /// part on the path takes only a static `y`, and the rest of the path updates inside it.
-    /// Each node keeps its normal form. The caller paid for the copy and the expansion. The
-    /// walk keeps its own stack.
-    fn set_at(&mut self, pos: Pos, root: Agg, y: Agg, keys: &[usize]) -> Res<Agg> {
+    /// The walk down the numbers `keys` from `root`. Each node on the path gives up its part, and
+    /// a reference on the path expands one level. The result is the nodes above the path, the
+    /// part where the walk ended, and the number of keys used. A static part with keys left ends
+    /// the walk early, and the rest of the path lies inside its value. The caller paid for the
+    /// expansion. The walk keeps its own stack.
+    fn descend(&mut self, pos: Pos, root: Agg, keys: &[usize]) -> Res<(Vec<Above>, Agg, usize)> {
         let wrong = || {
             fail(
                 Code::S010,
@@ -766,7 +766,6 @@ impl Evaluator<'_> {
         };
         let mut above: Vec<Above> = Vec::new();
         let mut cur = root;
-        let mut y = Some(y);
         for (i, &k) in keys.iter().enumerate() {
             if let Agg::Ref(base, t) = &cur {
                 cur = self.expand(pos, base, *t)?;
@@ -783,33 +782,57 @@ impl Evaluator<'_> {
                     above.push(Above { ty: n.ty, parts, k });
                     cur = part;
                 }
-                Agg::Static(mut v) => {
-                    let Some(Agg::Static(w)) = y.take() else {
-                        return wrong();
-                    };
-                    let Some(part) = keys.get(i..).and_then(|rest| part_in(&mut v, rest)) else {
-                        return wrong();
-                    };
-                    *part = w;
-                    cur = Agg::Static(v);
-                    break;
-                }
+                Agg::Static(_) => return Ok((above, cur, i)),
                 _ => return wrong(),
             }
         }
-        if let Some(y) = y {
-            cur = y;
-        }
+        Ok((above, cur, keys.len()))
+    }
+
+    /// The nodes `above` a path with the part `cur` back in place, each in its normal form.
+    fn rebuild(&self, pos: Pos, mut above: Vec<Above>, mut cur: Agg) -> Res<Agg> {
         while let Some(mut level) = above.pop() {
             if let Some(slot) = level.parts.get_mut(level.k) {
                 *slot = cur;
             }
             let Some(node) = Agg::node(&self.graph, &self.tys, level.ty, level.parts) else {
-                return wrong();
+                return fail(
+                    Code::S010,
+                    pos,
+                    "the place has no part for its value".to_owned(),
+                );
             };
             cur = node;
         }
         Ok(cur)
+    }
+
+    /// The aggregate `root` with the part at the numbers `keys` replaced by `y`. Each step
+    /// copies only the node on the path, and a reference on the path expands one level. A static
+    /// part on the path takes only a static `y`, and the rest of the path updates inside it. Each
+    /// node keeps its normal form. The caller paid for the copy and the expansion.
+    fn set_at(&mut self, pos: Pos, root: Agg, y: Agg, keys: &[usize]) -> Res<Agg> {
+        let (above, mut cur, used) = self.descend(pos, root, keys)?;
+        if used < keys.len() {
+            let (Agg::Static(v), Agg::Static(w)) = (&mut cur, y) else {
+                return fail(
+                    Code::S010,
+                    pos,
+                    "the place has no part for its value".to_owned(),
+                );
+            };
+            let Some(part) = keys.get(used..).and_then(|rest| part_in(v, rest)) else {
+                return fail(
+                    Code::S010,
+                    pos,
+                    "the place has no part for its value".to_owned(),
+                );
+            };
+            *part = w;
+        } else {
+            cur = y;
+        }
+        self.rebuild(pos, above, cur)
     }
 
     /// The place update of an aggregate root (section 5.4). The part `x` replaces the old part,
