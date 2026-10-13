@@ -546,6 +546,18 @@ def empty (body : String) : String := s!"module M() \{\n{body}}\n"
 #guard elabOnly (empty "  reg r: () = ();\n") "M" == "S018 2:3"
 #guard elabOnly "module M() domains() {\n  reg r: () = ();\n}\n" "M" == "S017 2:3"
 #guard elabOnly (empty "  wire w: ();\n  w := ();\n  w := ();\n") "M" == "S018 4:3"
+/-!
+An empty input charges nothing at its declaration, also with 2^40 leaves. Each read of it
+charges the zero size of its type, then gives its zero. `[(); 8]` has the zero size 9. The `let`
+and the name charge 1 each. A read of the huge input is thus `S015` at the name.
+-/
+def emptyIn (ty body : String) : String := s!"module M() \{\n  input x: {ty};\n{body}}\n"
+#guard elabOnly (emptyIn "[(); 1 << 40]" "") "M" == "ok 43"
+#guard elabOnly (emptyIn "[(); 1 << 40]" "  let y = x;\n") "M" == "S015 3:11"
+#guard elabUnits (emptyIn "[(); 8]" "  let y = x;\n") "M" ==
+  elabUnits (emptyIn "[(); 8]" "") "M" + 11
+#guard elabUnits (emptyIn "()" "  let y = x;\n") "M" == elabUnits (emptyIn "()" "") "M" + 3
+
 def emptyChild (bind : String) : String :=
   s!"module C() \{\n  input p: ();\n}\nmodule M() \{\n  instance c = C();\n{bind}}\n"
 #guard elabOnly (emptyChild "") "M" == "S018 5:3"
