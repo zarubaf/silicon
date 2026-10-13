@@ -315,3 +315,15 @@ fn an_empty_part_in_a_chain_is_paid_before_each_index() {
     assert_eq!(sil_fuel(src, "M", 42), "S015 1:50");
     assert_eq!(sil_fuel(src, "M", 44), "S015 1:40");
 }
+
+/// A place pays the zero size of an empty part before the next step charges (Lean `placeAt`).
+/// The size of the array `[(); 10]` is 11. With 75 units it fails at that unit, and with 87
+/// and 94 the later steps and the index charge in turn.
+#[test]
+fn a_place_pays_an_empty_part_before_the_next_step() {
+    let src =
+        "module M() domains() { input p: (Bool, [(); 10]); let mut v = p; v.1[1 + 0] = (); }\n";
+    assert_eq!(sil_fuel(src, "M", 75), "S015 1:66");
+    assert_eq!(sil_fuel(src, "M", 87), "S015 1:70");
+    assert_eq!(sil_fuel(src, "M", 94), "S015 1:79");
+}
