@@ -86,6 +86,7 @@ impl Evaluator<'_> {
             Typed::Converted(v) => v,
             Typed::Same(o) => self.static_value(pos, o)?,
         };
+        self.charge_refresh(pos, &place)?;
         self.charge_held(pos, place.root)?;
         self.edit_list(pos, &place, |ys| ys.push(w))?;
         Ok(Some(Out::Made(Val::Static(Value::Unit))))
@@ -141,6 +142,7 @@ impl Evaluator<'_> {
                 _ => 0,
             };
             self.charge(pos, u128::from(size))?;
+            self.charge_refresh(pos, &place)?;
             self.charge_held(pos, place.root)?;
             let Some(w) = self.edit_list(pos, &place, |ys| ys.pop().unwrap_or(Value::Unit))? else {
                 return self.not_a_list(pos, g, &place);

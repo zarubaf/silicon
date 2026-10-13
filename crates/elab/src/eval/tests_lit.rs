@@ -7,11 +7,17 @@
 //! aggregate root, and `push` and `pop` into a list part of an aggregate root. The tests count
 //! the work of each walk and not the time.
 
-use super::tests_bind::{assign_in, ref_x, run_f};
+use super::Evaluator;
+use super::tests_bind::{assign_in, leaf_x, node, ref_x, run_f};
 use super::tests_if::int_part;
+use crate::agg::Agg;
 use crate::counters;
+use crate::hw::Val;
+use crate::names::PathId;
 use crate::tests_elab::{cost, cost_depth};
 use crate::tests_flatten::lowered_cost;
+use crate::types::{Ty, TyId};
+use crate::value::Value;
 
 /// The formal `x: (UInt[8], Bool)` and the statement `s` in the body of `f`.
 fn on_x(s: &str, run: u64, fuel: u64) -> String {
@@ -156,7 +162,7 @@ fn a_list_holds_no_hardware_leaf_and_a_static_root_binds_on_its_first_leaf() {
             run + 6,
             1_000_000
         ),
-        "t$1e=x$0e | ref x | 66"
+        "t$1e=x$0e | ref x | 68"
     );
 }
 
@@ -206,7 +212,7 @@ fn push_and_pop_change_a_list_part_of_an_aggregate_root_in_place() {
     let t = "let mut t = (x.0, list(Int));\n  ";
     assert_eq!(
         on_x(&format!("{t}t.1.push(3);"), run, 1_000_000),
-        "t$0e=x$0e | ref x | 23"
+        "t$0e=x$0e | ref x | 25"
     );
     assert_eq!(
         on_x(
@@ -214,12 +220,12 @@ fn push_and_pop_change_a_list_part_of_an_aggregate_root_in_place() {
             run + 1,
             1_000_000
         ),
-        "t$0e=x$0e | ref x | 30"
+        "t$0e=x$0e | ref x | 34"
     );
     let popped = format!("{t}t.1.push(3);\n  let a = t.1.pop();");
-    assert_eq!(on_x(&popped, run + 2, 1_000_000), "t$0e=x$0e | ref x | 28");
-    assert_eq!(on_x(&popped, run + 3, 20), "S015 4:11");
-    assert_eq!(on_x(&popped, run + 4, 21), "S015 4:15");
+    assert_eq!(on_x(&popped, run + 2, 1_000_000), "t$0e=x$0e | ref x | 32");
+    assert_eq!(on_x(&popped, run + 3, 22), "S015 4:11");
+    assert_eq!(on_x(&popped, run + 4, 23), "S015 4:15");
     assert_eq!(
         on_x(&format!("{t}t.1.push(x.0);"), run + 5, 1_000_000),
         "S011 3:12"
@@ -234,7 +240,7 @@ fn push_and_pop_change_a_list_part_of_an_aggregate_root_in_place() {
             run + 7,
             1_000_000
         ),
-        "t$0e$0e=x$0e b$0e$0e=t$0e$0e | ref x | 39"
+        "t$0e$0e=x$0e b$0e$0e=t$0e$0e | ref x | 41"
     );
     assert_eq!(
         on_x(&format!("{t}let k = t.1.len();"), run + 8, 1_000_000),
@@ -252,17 +258,74 @@ fn a_push_refreshes_each_node_on_the_path_once() {
         run,
         1_000_000,
     );
-    assert_eq!(one, "t$0e=x$0e | ref x | 23");
+    assert_eq!(one, "t$0e=x$0e | ref x | 25");
     let before = counters::of(run).nodes;
     let two = on_x(
         "let mut t = (x.0, x.0, x.0, list(Int));\n  t.3.push(3);",
         run + 1,
         1_000_000,
     );
-    assert_eq!(two, "t$0e=x$0e t$1e=x$0e t$2e=x$0e | ref x | 29");
+    assert_eq!(two, "t$0e=x$0e t$1e=x$0e t$2e=x$0e | ref x | 33");
     let after = counters::of(run + 1).nodes;
     assert!(after > before, "{before} {after}");
     assert!(after - before <= 12, "{before} {after}");
+}
+
+/// The aggregate root `(UInt[8], .., List[UInt[8]])` with a hardware first part, the parts
+/// `mid` and a static list that holds `list`.
+fn with_list(ev: &mut Evaluator<'_>, p: PathId, t: TyId, mid: Option<bool>, list: &[u64]) -> Val {
+    let a = leaf_x(ev, p, 0);
+    let e = ev.tys.mk(Ty::UInt(8));
+    let xs = list
+        .iter()
+        .map(|&n| Value::UInt(crate::int::finite(8, n).unwrap_or_else(|| panic!("a byte"))))
+        .collect();
+    let mut parts = vec![a];
+    parts.extend(mid.map(|b| Agg::Static(Value::Bool(b))));
+    parts.push(Agg::Static(Value::List(e, xs)));
+    node(ev, t, parts)
+}
+
+/// `push` and `pop` into a list part of an aggregate root charge the part count of each
+/// container node on the path, after the element and before a held root (section 5.4). The
+/// totals and the `S015` positions are those of the Lean guards for `Agg.pathWidth`.
+#[test]
+fn a_push_into_a_list_part_charges_the_part_count_of_each_node_on_the_path() {
+    let run = 700_000_600;
+    let list_part = |ev: &mut Evaluator<'_>, p: PathId, t: TyId| with_list(ev, p, t, None, &[]);
+    let tuple2 = "(UInt[8], List[UInt[8]])";
+    let src = assign_in(tuple2, "x.1.push(5);");
+    let ok = run_f(&src, run, 1_000_000, list_part);
+    assert!(ok.ends_with(" | 15"), "{ok}");
+    assert_eq!(run_f(&src, run + 1, 11, list_part), "S015 3:3");
+    assert_eq!(run_f(&src, run + 2, 10, list_part), "S015 2:3");
+
+    let wide = |ev: &mut Evaluator<'_>, p: PathId, t: TyId| with_list(ev, p, t, Some(true), &[7]);
+    let tuple3 = "(UInt[8], Bool, List[UInt[8]])";
+    let src = assign_in(tuple3, "x.2.push(5);");
+    let ok = run_f(&src, run + 3, 1_000_000, wide);
+    assert!(ok.ends_with(" | 16"), "{ok}");
+    assert_eq!(run_f(&src, run + 4, 12, wide), "S015 3:3");
+    assert_eq!(run_f(&src, run + 5, 11, wide), "S015 2:3");
+    let src = assign_in(tuple3, "let y = x.2.pop();");
+    let ok = run_f(&src, run + 6, 1_000_000, wide);
+    assert!(ok.ends_with(" | 12"), "{ok}");
+
+    let nested = |ev: &mut Evaluator<'_>, p: PathId, t: TyId| {
+        let u8t = ev.tys.mk(Ty::UInt(8));
+        let list = ev.tys.list(u8t);
+        let inner = ev.tys.tuple(vec![u8t, list]);
+        let a = leaf_x(ev, p, 0);
+        let empty = Agg::Static(Value::List(u8t, Vec::new()));
+        let part = Agg::node(&ev.graph, &ev.tys, inner, vec![a, empty]);
+        let part = part.unwrap_or_else(|| panic!("a node"));
+        node(ev, t, vec![part, Agg::Static(Value::Bool(true))])
+    };
+    let src = assign_in("((UInt[8], List[UInt[8]]), Bool)", "x.0.1.push(5);");
+    let ok = run_f(&src, run + 7, 1_000_000, nested);
+    assert!(ok.ends_with(" | 18"), "{ok}");
+    assert_eq!(run_f(&src, run + 8, 14, nested), "S015 3:3");
+    assert_eq!(run_f(&src, run + 9, 13, nested), "S015 2:3");
 }
 
 const PS: &str = "struct P(comptime W: Nat) { a: UInt[W], b: Bool }\n";

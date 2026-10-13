@@ -890,10 +890,20 @@ impl Evaluator<'_> {
         Ok((self.rebuild(pos, above, cur)?, r))
     }
 
+    /// The charge of the refresh that `push` and `pop` cause in an aggregate root: the part
+    /// count of each container node on the path (Lean `Agg.pathWidth`). It comes after the
+    /// charge of the element and before the charge of a held root. A static root has none.
+    pub(super) fn charge_refresh(&mut self, pos: Pos, place: &super::place::Place) -> Res<()> {
+        let Val::Agg(a) = self.store.root(&place.root) else {
+            return Ok(());
+        };
+        let width = a.path_width(&place.keys);
+        self.charge(pos, u128::from(width))
+    }
+
     /// Applies `f` to the list at the place, in place, for `push` and `pop`. The stored numbers
-    /// of the nodes above the list refresh on the way back, and the change charges only the
-    /// element (Lean `changeAt`), so the refresh has no charge of its own. `None` if the part
-    /// is no list.
+    /// of the nodes above the list refresh on the way back; the caller charged that refresh
+    /// (`charge_refresh`). `None` if the part is no list.
     pub(super) fn edit_list<R>(
         &mut self,
         pos: Pos,

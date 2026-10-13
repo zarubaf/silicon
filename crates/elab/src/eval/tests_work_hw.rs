@@ -203,25 +203,31 @@ fn the_rebind_and_the_empty_part_charge_are_paid() {
     assert_eq!(counters::of(key(9, 9)).expanded, 0);
 }
 
-/// `push` into a list part of an aggregate root of width `n`, `n` times. The nodes above the
-/// list refresh their stored size and depth by a walk over their parts, and no unit pays for it:
-/// the work grows by 4 when the width doubles, and the fuel by 2.
+/// `push` into a list part of an aggregate root of width `n`, `n` times. Each push refreshes the
+/// nodes above the list by a walk over their parts, and it charges the part count of each node
+/// first. Thus the work and the fuel both grow by 4 when the width doubles, and the work stays
+/// within a constant times the fuel.
 #[test]
-#[ignore = "TODO(#181): the refresh of the ancestors of a pushed list is O(width) and uncharged"]
 fn a_push_into_a_list_part_of_a_wide_root_is_paid() {
-    let at = |n: u64, k: u64| {
+    for (k, n) in SIZES.into_iter().enumerate() {
         let ws = (0..n).map(|_| "x.0").collect::<Vec<_>>().join(", ");
-        run_ok(
+        let r = run_ok(
             "",
             "(UInt[8], Bool)",
             &format!(
                 "let mut t = ({ws}, list(Int));\n  comptime for i in 0..{n} {{ t.{n}.push(3); }}"
             ),
-            key(10, k),
-        )
-    };
-    assert_linear(at, |r| r.counts.nodes, 8, 8);
-    assert_linear(at, |r| r.counts.walked, 8, 8);
+            key(10, k as u64),
+        );
+        for (name, count) in [("nodes", r.counts.nodes), ("walked", r.counts.walked)] {
+            assert!(count > 0, "{n}: no {name} counted");
+            assert!(
+                count <= 8 * r.units,
+                "{n}: {count} {name} for {} units",
+                r.units
+            );
+        }
+    }
 }
 
 /// A parked reference to a part of an aggregate root copies when a later operand changes the

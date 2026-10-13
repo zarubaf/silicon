@@ -87,6 +87,25 @@ fn small(n: &crate::int::Int) -> u64 {
 }
 
 impl Agg {
+    /// The sum of the part counts of the container nodes on the path `keys`, which ends at the
+    /// first part that is no container node (Lean `Agg.pathWidth`). The path length bounds the
+    /// work: it reads the length of each parts vector and never walks the parts.
+    pub(crate) fn path_width(&self, keys: &[usize]) -> u64 {
+        let mut sum = 0u64;
+        let mut cur = self;
+        for &k in keys {
+            let (Agg::Array(_, p) | Agg::Tuple(_, p) | Agg::Record(_, p)) = cur else {
+                break;
+            };
+            sum = sum.saturating_add(p.0.len() as u64);
+            match p.0.get(k) {
+                Some(x) => cur = x,
+                None => break,
+            }
+        }
+        sum
+    }
+
     /// The recursive size (section 5.4). A reference has the zero size of its type.
     pub(crate) fn size(&self, g: &Graph, tys: &Types) -> u64 {
         match self {
