@@ -287,7 +287,8 @@ def keywords : String :=
 
 /-!
 Each hardware operator of slice 1, a hardware `if` with static arms, a hardware shift count, the
-conversions, and a child input through a handle alias.
+conversions, and a child input through a handle alias. A hardware `if` with two equal static
+`Int` arms gives the static value (F19), here the static shift count `n`.
 -/
 def ops : String :=
   "module C() domains() {\n  input a: Bool;\n  output q: Bool;\n  q := !a;\n}\n" ++
@@ -296,7 +297,8 @@ def ops : String :=
   "  output y: UInt[8];\n  output z: SInt[16];\n  output b: Bool;\n" ++
   "  let w = (x +% 1) -% (x *% 3) & ~x | (x ^ 255);\n" ++
   "  let v = -s >> c;\n" ++
-  "  let k = if (e) { 1 } else { x << 2 };\n" ++
+  "  let n = if (e) { 2 } else { 2 };\n" ++
+  "  let k = if (e) { 1 } else { x << n };\n" ++
   "  instance u = C();\n" ++
   "  let h = u.a;\n" ++
   "  h := e && x < 5 || s >= -1 && x != w;\n" ++
@@ -550,6 +552,23 @@ def fnArms (body : String) : String :=
 #guard cost (fnArms "  let f = if (c) { g } else { true };\n") "T" == "S010 6:11"
 #guard cost (fnArms "  let f: fn () -> Bool = if (c) { g } else { g };\n") "T" |>.startsWith
   "total"
+
+/-!
+F19: a hardware `if` with two static arms of a type that is not hardware data is a static pair.
+It charges as a static equality, the sum of the sizes. Thus `if (c) { 3 } else { 3 }` charges
+its node, 1 for `c`, 2 for each arm, and 2 for the pair: 6 more than `3`, which charges 2. Equal
+arms give the static value, and different arms are `S011` at the `if`. An `Int` arm and a `Bool`
+arm have no join, so they are `S010` at the `if`. Two arms of type `()` give `()`.
+-/
+def arms (body : String) : String :=
+  "module T() {\n  input c: Bool;\n  output o: UInt[8];\n" ++ body ++ "  o := 0;\n}\n"
+#guard total (arms "  let k = if (c) { 3 } else { 3 };\n") "T" ==
+  total (arms "  let k = 3;\n") "T" + 6
+#guard (cost (arms "  let k = if (c) { \"a\" } else { \"a\" };\n") "T").startsWith "total"
+#guard (cost (arms "  let k = if (c) { () } else { () };\n") "T").startsWith "total"
+#guard cost (arms "  let k = if (c) { 3 } else { 4 };\n") "T" == "S011 4:11"
+#guard cost (arms "  let k = if (c) { UInt[8] } else { UInt[4] };\n") "T" == "S011 4:11"
+#guard cost (arms "  let k = if (c) { 3 } else { true };\n") "T" == "S010 4:11"
 
 /-!
 A function value is a module argument (section 7.1). It serializes as `(function root inc)`, so

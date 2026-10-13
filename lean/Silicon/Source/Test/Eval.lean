@@ -2167,4 +2167,126 @@ references to a huge array fails on the budget in the walk, before the chain exi
 -/
 #guard runEq "[UInt[8]; 1 << 40]" "x == x" == "S015 2:11"
 
+/-!
+A hardware `if` by leaf (sections 5.4 and 7.4). `ifTree` prints a `mux` node and the mark
+`share k` of a shared condition too. `runIf` binds `y` to the expression `e` in the body of `f`
+with the formal `x`.
+-/
+mutual
+  def ifTree : Eval.Hw → String
+    | .node _ _ _ .mux xs => s!"(mux {ifTrees xs})"
+    | .node _ _ _ (.share k) xs => s!"(share {k} {ifTrees xs})"
+    | .node _ _ _ (.un op) xs => s!"({op.text} {ifTrees xs})"
+    | .node _ _ _ (.bin op) xs => s!"({op.text} {ifTrees xs})"
+    | h => nameText h
+
+  def ifTrees : List Eval.Hw → String
+    | [] => ""
+    | [x] => ifTree x
+    | x :: xs => s!"{ifTree x} {ifTrees xs}"
+end
+
+def runIf (t s : String) (base : Ty → Eval.Val := refX) (fuel : Nat := 1000000) : String :=
+  runF (assignIn t s) base fuel ifTree
+
+/-!
+The exact charges of an `if` with array arms. The statement charges 1, the `if` node 1, and each
+operand 2. The join charges 1 for the pair of arrays. The walk charges 1 for the root pair, and
+each leaf pair charges 1 plus 4 for its `mux` node. `return true;` charges 4. The condition `x.0`
+is a core name, so it gets no mark. `!x.0` gets the mark `share 0`, with no charge, because the
+walk makes two `mux` nodes. One `mux` node and a `()` pair give no mark.
+-/
+def armsT : String := "(Bool, [UInt[8]; 2], [UInt[8]; 2])"
+#guard runIf armsT "let y = if (x.0) { x.1 } else { x.2 };" ==
+  "y$0e=(mux x$0e x$1e$0e x$2e$0e) y$1e=(mux x$0e x$1e$1e x$2e$1e) | ref x | 24"
+#guard runIf armsT "let y = if (!x.0) { x.1 } else { x.2 };" ==
+  "y$0e=(mux (share 0 (! x$0e)) x$1e$0e x$2e$0e) " ++
+  "y$1e=(mux (share 0 (! x$0e)) x$1e$1e x$2e$1e) | ref x | 27"
+#guard runIf armsT "let y = if (!x.0) { x.1 } else { x.2 };" (fuel := 22) == "S015 2:11"
+#guard runIf armsT "let y = if (!x.0) { x.1 } else { x.2 };" (fuel := 23) == "S015 3:3"
+#guard runIf "(Bool, (UInt[8], ()), (UInt[8], ()))" "let y = if (!x.0) { x.1 } else { x.2 };" ==
+  "y$0e=(mux (! x$0e) x$1e$0e x$2e$0e) | ref x | 23"
+
+/-!
+Two static leaves of a data type are a leaf pair: they make a `mux` of constants, and each such
+`mux` counts for the mark. A static list pair compares by the static equality of `==`, so `[1]`
+equals the typed list `xs`, and the result has the joined type.
+-/
+#guard runIf armsT ("let a: [UInt[8]; 2] = [1, 2];\n  let y = if (!x.0) { a } else { [3, 4] };") ==
+  "y$0e=(mux (share 0 (! x$0e)) (uint 8 1) (uint 8 3)) " ++
+  "y$1e=(mux (share 0 (! x$0e)) (uint 8 2) (uint 8 4)) | ref x | 67"
+def listArms (k : Nat) : String :=
+  s!"let mut xs = list(UInt[8]);\n  push(xs, 1);\n  let mut ys = list(Int);\n  push(ys, {k});\n" ++
+  "  let y = if (x.0) { ys } else { xs };"
+#guard runIf armsT (listArms 1 ++ "\n  let z: List[UInt[8]] = y;") == " | ref x | 62"
+#guard runIf armsT (listArms 2) == "S011 6:11"
+
+/-! Each mark of one instantiation takes the next number. -/
+#guard runIf armsT ("let y = if (!x.0) { x.1 } else { x.2 };\n" ++
+  "  let z = if (!x.0) { x.2 } else { x.1 };") ==
+  "y$0e=(mux (share 0 (! x$0e)) x$1e$0e x$2e$0e) " ++
+  "y$1e=(mux (share 0 (! x$0e)) x$1e$1e x$2e$1e) " ++
+  "z$0e=(mux (share 1 (! x$0e)) x$2e$0e x$1e$0e) " ++
+  "z$1e=(mux (share 1 (! x$0e)) x$2e$1e x$1e$1e) | ref x | 50"
+
+/-!
+A record descends by its named fields. The join of two struct types charges as a type
+equality, the sum of the two sizes 1 + 1, instead of 1.
+-/
+#guard runF ("struct S { a: UInt[8], b: Bool }\n" ++
+  assignIn "(Bool, S, S)" "let y = if (!x.0) { x.1 } else { x.2 };") refX 1000000 ifTree ==
+  "y$a=(mux (share 0 (! x$0e)) x$1e$a x$2e$a) y$b=(mux (share 0 (! x$0e)) x$1e$b x$2e$b) | " ++
+  "ref x | 28"
+
+/-!
+Scalar arms keep the rule of slice 1: no join charge and no walk unit. Two arms of type `()`
+give `()`. Two static arms of a type that is not hardware data are a static pair (F19). It
+charges the sum of the sizes, here 1 + 1. Equal arms give the static value, and different arms
+are `S011` at the `if`. An `Int` arm and a `Bool` arm have no join, so they are `S010`. The
+assignment `x.1 = ...` binds the hardware leaf of `x` again, at the next version.
+-/
+def bitX : Eval.Agg := .hw (.mk at1 .bool (.ref ⟨"x", [.elem 0]⟩) [])
+def intPart (_ : Ty) : Eval.Val := .agg (.mkTuple #[.bool, .int] #[bitX, .static (.int 0)])
+#guard runIf "(Bool, UInt[8])" "let y = if (!x.0) { () } else { () };" == " | ref x | 15"
+#guard runIf "(Bool, Int)" "x.1 = if (x.0) { 3 } else { 3 };" intPart ==
+  "x$1v$0e=x$0e | [x$1v$0e, (int 3)] | 18"
+#guard runIf "(Bool, Int)" "x.1 = if (x.0) { 3 } else { 3 };" intPart (fuel := 11) == "S015 2:3"
+#guard runIf "(Bool, Int)" "x.1 = if (x.0) { 3 } else { 4 };" intPart (fuel := 10) == "S015 2:9"
+#guard runIf "(Bool, Int)" "x.1 = if (x.0) { 3 } else { 4 };" intPart (fuel := 11) == "S011 2:9"
+#guard runIf "(Bool, Int)" "let y = if (x.0) { \"a\" } else { \"a\" };" intPart ==
+  " | [x$0e, (int 0)] | 18"
+#guard runIf "(Bool, Int)" "let y = if (x.0) { \"a\" } else { \"b\" };" intPart == "S011 2:11"
+#guard runIf "(Bool, Int)" "let y = if (x.0) { 3 } else { true };" intPart == "S010 2:11"
+#guard runIf "(Bool, Int)" "let y = if (x.0) { () } else { 3 };" intPart == "S010 2:11"
+
+/-!
+A static pair in an aggregate. Equal sides give the value, and a hardware pair beside them makes
+a `mux`. The first static pair whose sides differ is `S011` at the `if`, and the walk stops
+there. The units up to that pair are 16. The statement, the `if`, and the three operands charge
+8. The join of the tuples and the root pair charge 1 each. Each static pair charges 1 + 2. Thus
+the fuel 16 gives `S011`, and the `mux` of the third pair never charges.
+-/
+def staticArms (u : Int) (_ : Ty) : Eval.Val :=
+  let leaf (k : Nat) : Eval.Agg := .hw (.mk at1 (.uint 8) (.ref ⟨"x", [.elem 2, .elem k]⟩) [])
+  let ts := #[Ty.int, .int, .uint 8]
+  .agg (.mkTuple #[.bool, .tuple ts, .tuple ts] #[bitX,
+    .mkTuple ts #[.static (.int 5), .static (.int 6), leaf 1],
+    .mkTuple ts #[.static (.int 5), .static (.int u), leaf 2]])
+def armsS : String := "(Bool, (Int, Int, UInt[8]), (Int, Int, UInt[8]))"
+#guard runIf armsS "let y = if (!x.0) { x.1 } else { x.2 };" (staticArms 6) ==
+  "y$2e=(mux (! x$0e) x$1e$2e x$2e$2e) | [x$0e, [(int 5), (int 6), x$1e$2e], " ++
+  "[(int 5), (int 6), x$2e$2e]] | 28"
+#guard runIf armsS "let y = if (x.0) { x.1 } else { x.2 };" (staticArms 7) == "S011 2:11"
+#guard runIf armsS "let y = if (x.0) { x.1 } else { x.2 };" (staticArms 7) (fuel := 15) ==
+  "S015 2:11"
+#guard runIf armsS "let y = if (x.0) { x.1 } else { x.2 };" (staticArms 7) (fuel := 16) ==
+  "S011 2:11"
+
+/-!
+The walk charges each pair before it visits it, and a reference never expands. Thus an `if`
+with two references to a huge array fails on the budget in the walk.
+-/
+#guard runIf "(Bool, [UInt[8]; 1 << 40], [UInt[8]; 1 << 40])"
+  "let y = if (x.0) { x.1 } else { x.2 };" == "S015 2:11"
+
 end Silicon.Source.Test.Eval

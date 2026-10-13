@@ -348,4 +348,31 @@ def broken : String := text [
   (Test.Elab.ops, "M"), (ops2, "N"), (unroll, "R(3)"), (shifts, "S"), (small, "M")].all
   fun (src, t) => (sil src t).startsWith "(design "
 
+/-!
+A shared condition (`Op.share`, section 7.4) binds to one temporary in the statement that lowers
+first. Its number comes after the temporaries of the condition itself: here `y$0e$0t` holds the
+negation that the `resize` of `SInt` uses twice, so the condition is `y$0e$1t`. The later leaf
+statement refers to it.
+-/
+def shared : String :=
+  let p : Pos := ⟨1, 1⟩
+  let r (x : String) (t : Ty) : Eval.Hw := .mk p t (.ref ⟨x, []⟩) []
+  let neg := Eval.Hw.mk p (.sint 4) (.un .neg) [r "s" (.sint 4)]
+  let c := Eval.Hw.mk p .bool (.bin .eq) [.mk p (.sint 8) .resize [neg], r "t" (.sint 8)]
+  let m := Eval.Hw.mk p (.uint 8) .mux
+    [.mk p .bool (.share 0) [c], r "a" (.uint 8), r "b" (.uint 8)]
+  let run : Flatten.FM (List String) := do
+    let e₀ ← Flatten.value ⟨"y", [.elem 0]⟩ m
+    let e₁ ← Flatten.value ⟨"y", [.elem 1]⟩ m
+    return [Core.Text.printExpr e₀, Core.Text.printExpr e₁] ++
+      ((← get).temps.toList.map Core.Text.printStmt)
+  match run.run { fuel := 1000 } with
+  | .ok (xs, _) => text xs
+  | .error _ => "error"
+#guard shared == text [
+  "(mux y$0e$1t a b)",
+  "(mux y$0e$1t a b)",
+  "(let y$0e$0t (bits 4) (sub (const 4 0) s))",
+  "(let y$0e$1t (bits 1) (icmp eq (concat (replicate (extract y$0e$0t 3 1) 4) y$0e$0t) t))"]
+
 end Silicon.Source.Test.Flatten
