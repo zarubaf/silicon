@@ -1717,6 +1717,13 @@ def opText : Eval.Op → String
   | .out i q => s!"{Names.encode i.name}.{Names.encode q}"
   | _ => ""
 
+/-!
+A child output base keeps its fields in reverse order, and its leaf puts them in order once. Thus
+the leaf of `u.q[1].a[0]` has the core name `u.q$1e$a$0e`.
+-/
+#guard opText ([Names.Field.elem 1, .user "a", .elem 0].foldl Eval.Base.sub
+  (.out ⟨"u", []⟩ "q" [])).op == "u.q$1e$a$0e"
+
 def describe : Eval.Val → String
   | .static v => v.serialize
   | .hw (.node _ t s op []) => s!"hw {t.text} {opText op} {s}"
