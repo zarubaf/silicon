@@ -384,3 +384,52 @@ fn a_new_aggregate_node_checks_its_depth() {
     assert_eq!(cost_depth(&tuple, "M(1)", 2), "S015 5:11");
     assert!(cost_depth(&tuple, "M(1)", 3).starts_with("total"));
 }
+
+/// The aggregate root `(UInt[8], List[Type])` with the list `[Type UInt[8], Type [[UInt[8]; 1]; 1]]`.
+fn type_list(ev: &mut Evaluator<'_>, p: PathId, t: TyId) -> Val {
+    let a = leaf_x(ev, p, 0);
+    let u8t = ev.tys.mk(Ty::UInt(8));
+    let one = ev.tys.array(u8t, crate::int::Int::from_u64(1));
+    let deep = ev.tys.array(one, crate::int::Int::from_u64(1));
+    let ty = ev.tys.mk(Ty::Type);
+    let list = Value::List(ty, vec![Value::Type(u8t), Value::Type(deep)]);
+    node(ev, t, vec![a, Agg::Static(list)])
+}
+
+/// A `pop` of an element deeper than the element type can lower the depth of the list, so it
+/// charges the size of the root after the part counts and builds each node on the path again.
+/// The totals and the `S015` positions are those of the Lean guards for `Agg.change`.
+#[test]
+fn a_pop_of_a_deep_element_charges_the_root_and_a_shallow_pop_does_not() {
+    let run = 700_000_700;
+    let src = assign_in("(UInt[8], List[Type])", "let y = x.1.pop();");
+    let ok = run_f(&src, run, 1_000_000, type_list);
+    assert!(ok.ends_with(" | 27"), "{ok}");
+    assert_eq!(run_f(&src, run + 1, 23, type_list), "S015 3:3");
+    assert_eq!(run_f(&src, run + 2, 22, type_list), "S015 2:11");
+    let two = assign_in(
+        "(UInt[8], List[Type])",
+        "let y = x.1.pop(); let z = x.1.pop();",
+    );
+    let ok = run_f(&two, run + 3, 1_000_000, type_list);
+    assert!(ok.ends_with(" | 35"), "{ok}");
+}
+
+/// The refresh of a push keeps the depth of the root exact, and a deep pop finds it again. The
+/// totals are those of the elaboration alone; with the lowering they are 147 and 132, as in Lean.
+#[test]
+fn the_stored_depth_of_a_root_stays_exact_after_a_push_and_a_deep_pop() {
+    let body = |pop: &str| {
+        format!(
+            "module M() domains() {{\n    input a: UInt[8];\n    output y: UInt[8];\n    \
+             let mut t = (a, list(Type));\n    t.1.push([[UInt[8]; 1]; 1]);\n    {pop}\n    \
+             let u = (t,);\n    y := a;\n}}\n"
+        )
+    };
+    assert_eq!(
+        cost_depth(&body("let k = t.1.pop();"), "M()", 5),
+        "total 123\nM 97\n"
+    );
+    assert_eq!(cost_depth(&body(""), "M()", 5), "S015 7:13");
+    assert_eq!(cost_depth(&body(""), "M()", 6), "total 108\nM 82\n");
+}
