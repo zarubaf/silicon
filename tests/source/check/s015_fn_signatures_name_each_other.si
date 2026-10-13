@@ -1,0 +1,15 @@
+// S015: the signature of `a` names `b`, and the signature of `b` names `a`, each as an argument of a call in a parameter type. Each evaluation of a signature takes a nesting level, so the nesting depth ends the cycle at a name.
+// TOP M()
+fn k(h: fn (UInt[1]) -> Bool) -> Nat {
+    return 1;
+}
+// expected-error S015 @+1
+fn a(x: UInt[k(b)]) -> Bool {
+    return true;
+}
+fn b(x: UInt[k(a)]) -> Bool {
+    return true;
+}
+module M() domains() {
+    let v = a;
+}
