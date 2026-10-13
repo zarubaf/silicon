@@ -875,6 +875,14 @@ impl Evaluator<'_> {
         }
     }
 
+    /// What the operand is, for a message: a hardware aggregate prints as `hardware T`.
+    fn opnd_text(&self, o: &Opnd) -> String {
+        match o {
+            Opnd::Hw(h) => format!("hardware {}", self.tys.text_of(&self.graph.ty(*h))),
+            Opnd::Static(out) => self.text(self.store.seen(out)),
+        }
+    }
+
     /// Whether the operand is a hardware aggregate.
     fn opnd_is_agg(&self, o: &Opnd) -> bool {
         matches!(o, Opnd::Static(out) if self.is_agg(out))
@@ -1244,6 +1252,15 @@ impl Evaluator<'_> {
             }
             Expr::Name { pos, id, name } => Ok(Some(self.name(*pos, *id, name)?)),
             Expr::Unary { pos, op, arg } => match self.operand(*pos, arg)? {
+                Opnd::Static(a) if self.is_agg(&a) => fail(
+                    Code::S010,
+                    *pos,
+                    format!(
+                        "`{}` does not accept {}",
+                        ops::unop_text(*op),
+                        self.text(self.store.seen(&a))
+                    ),
+                ),
                 Opnd::Static(a) => {
                     let v = ops::unary(*op, self.store.value(&a), &mut self.fuel, &self.tys)
                         .map_err(at(*pos))?;
@@ -1267,9 +1284,11 @@ impl Evaluator<'_> {
                     return Ok(Some(Out::Made(self.agg_eq(*pos, *op, &a, &b)?)));
                 }
                 match (a, b) {
-                    (Opnd::Static(a), Opnd::Static(b)) => Ok(Some(Out::Made(Val::Static(
-                        self.binary(*pos, *op, &a, &b)?,
-                    )))),
+                    (Opnd::Static(a), Opnd::Static(b)) if !self.is_agg(&a) && !self.is_agg(&b) => {
+                        Ok(Some(Out::Made(Val::Static(
+                            self.binary(*pos, *op, &a, &b)?,
+                        ))))
+                    }
                     (a, b) => Ok(Some(Out::Made(self.hw_binary(*pos, *op, a, b)?))),
                 }
             }
@@ -1353,6 +1372,10 @@ impl Evaluator<'_> {
     /// that does not decide gives the right operand, also a hardware one.
     fn select(&mut self, pos: Pos, op: BinOp, lhs: &Expr, rhs: &Expr) -> Res<Option<Out>> {
         match self.operand(pos, lhs)? {
+            a @ Opnd::Static(_) if self.opnd_is_agg(&a) => {
+                let b = self.operand(pos, rhs)?;
+                Ok(Some(Out::Made(self.hw_binary(pos, op, a, b)?)))
+            }
             Opnd::Static(a) => {
                 let a = self.test(pos, self.store.seen(&a))?;
                 if a == (op == BinOp::Lor) {

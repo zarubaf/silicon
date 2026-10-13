@@ -66,15 +66,19 @@ impl Evaluator<'_> {
     /// size of `n` before the conversion, and then the size of the result.
     pub(super) fn str_of(&mut self, pos: Pos, g: &str, v: Opnd) -> Res<Option<Out>> {
         let Opnd::Static(o) = v else {
-            return fail(Code::S010, pos, format!("`{g}` needs an Int, not hardware"));
+            return fail(
+                Code::S010,
+                pos,
+                format!("`{g}` needs an Int, not {}", self.opnd_text(&v)),
+            );
         };
         let size = match self.store.value(&o) {
             Value::Int(n) => u128::from(int_size(n)),
-            v => {
+            _ => {
                 return fail(
                     Code::S010,
                     pos,
-                    format!("`{g}` needs an Int, not {}", v.text(&self.tys)),
+                    format!("`{g}` needs an Int, not {}", self.text(self.store.seen(&o))),
                 );
             }
         };

@@ -484,6 +484,17 @@ impl Evaluator<'_> {
 
     /// Two data operands as hardware. At least one of them is hardware.
     fn hw_pair(&mut self, pos: Pos, lhs: Opnd, rhs: Opnd) -> Res<(HwId, HwId)> {
+        if self.opnd_is_agg(&lhs) || self.opnd_is_agg(&rhs) {
+            return fail(
+                Code::S010,
+                pos,
+                format!(
+                    "expected data operands, not {} and {}",
+                    self.opnd_text(&lhs),
+                    self.opnd_text(&rhs)
+                ),
+            );
+        }
         match (lhs, rhs) {
             (Opnd::Hw(left), Opnd::Hw(right)) => Ok((left, right)),
             (Opnd::Hw(left), Opnd::Static(right)) => {
@@ -499,8 +510,8 @@ impl Evaluator<'_> {
                 pos,
                 format!(
                     "expected data operands, not {} and {}",
-                    self.store.value(&left).text(&self.tys),
-                    self.store.value(&right).text(&self.tys)
+                    self.text(self.store.seen(&left)),
+                    self.text(self.store.seen(&right))
                 ),
             ),
         }
@@ -529,6 +540,16 @@ impl Evaluator<'_> {
     /// node, so the lowering can use the row "Shift by a static count" of section 7.4.
     fn hw_shift(&mut self, pos: Pos, op: BinOp, a: Opnd, b: &Opnd) -> Res<Val> {
         let count = match b {
+            Opnd::Static(o) if self.is_agg(o) => {
+                return fail(
+                    Code::S010,
+                    pos,
+                    format!(
+                        "a shift count is UInt or a static Int, not {}",
+                        self.text(self.store.seen(o))
+                    ),
+                );
+            }
             Opnd::Static(o) => match self.store.value(o) {
                 Value::Int(k) if k.is_negative() => {
                     return fail(
@@ -548,13 +569,13 @@ impl Evaluator<'_> {
                     self.graph
                         .mk(pos, Ty::Int, Op::Count { amount, size }, Vec::new())
                 }
-                v => {
+                _ => {
                     return fail(
                         Code::S010,
                         pos,
                         format!(
                             "a shift count is UInt or a static Int, not {}",
-                            v.text(&self.tys)
+                            self.text(self.store.seen(o))
                         ),
                     );
                 }
@@ -577,6 +598,17 @@ impl Evaluator<'_> {
         };
         let left = match a {
             Opnd::Hw(x) => x,
+            Opnd::Static(o) if self.is_agg(&o) => {
+                return fail(
+                    Code::S010,
+                    pos,
+                    format!(
+                        "`{}` does not accept {}",
+                        binop_text(op),
+                        self.text(self.store.seen(&o))
+                    ),
+                );
+            }
             Opnd::Static(o) => self.lit_at(pos, &Ty::Bool, &o)?,
         };
         let t = self.graph.ty(left);
