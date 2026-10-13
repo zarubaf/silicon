@@ -64,6 +64,12 @@ The operators follow v0.1 section 3. These rules settle the open points of slice
   charge.
 - A constructor call of a function type is `S010` at the call, before its arguments, because
   a constructor needs a hardware data type.
+- Another callee than the name of a function item or of a prelude function evaluates once,
+  before the arguments. Its result waits while they evaluate. A type gives a constructor
+  call. A function value checks the number of its arguments first (`S007` at the call). Then
+  the marks of its type select the `mut` actuals, and it runs as a call of its item, found by
+  its name. Its callee charges as an expression, and no function name charges. A `comptime fn`
+  thus runs in the static mode, and a hardware argument is `S011`. Another value is `S010`.
 - `resize` keeps the signedness. `reinterpret` keeps the width.
 - A typed-use error is at the node of the typed use: the statement, the call, or the operator.
   A function without `return` at its end is `S010` at the call.
@@ -530,6 +536,14 @@ inductive Callee where
   | prim (name : String) (h : PrimFn)
   | value (o : Out)
 
+/-!
+The function item `g` and its index. A function value holds the name of its item, and the item
+names are distinct (`S002`).
+-/
+def fnItem (items : Array Resolve.Item) (g : String) : Option (Nat × Resolve.Item) := do
+  let i ← items.findIdx? fun | .fn _ _ u .. => u.name == g | _ => false
+  return (i, ← items[i]?)
+
 /-! An actual of a function item: a value, or the place of a `mut` actual. -/
 inductive Actual where
   | value (v : Val)
@@ -698,9 +712,9 @@ def primCall (p : Pos) (g : String) (h : PrimFn) (vs : List Val) : M (Option Out
 /-!
 The evaluator. `eval`, `typeExpr`, `stmt`, and `block` are the entry functions. Each charges
 one unit, then calls deeper with the bound `n`. The helpers `name`, `spec`, `index`, `params`,
-`placeAt`, `args`, `ctor`, `invoke`, and `call` get the bound `n` of their caller after its
-charge. They call entry functions, `spec`, which a name of a struct item uses, and the helpers
-that `call` uses.
+`placeAt`, `args`, `ctor`, `actuals`, `invoke`, and `call` get the bound `n` of their caller
+after its charge. They call entry functions, `spec`, which a name of a struct item uses, and
+the helpers that `call` uses.
 -/
 mutual
   def eval (b : Nat) (e : Resolve.Expr) : M (Option Out) :=
@@ -976,7 +990,10 @@ mutual
     return os.map (·.1)
   termination_by (n, 4)
 
-  /-- A constructor call at `p`: the callee result `o` gives a type, and `xs` are its arguments. -/
+  /--
+  A constructor call at `p`: the callee result `o` gives a type, and `xs` are its arguments. The
+  callee waits while the arguments evaluate.
+  -/
   def ctor (n : Nat) (p : Pos) (o : Out) (b : Nat) (xs : List Resolve.Expr) :
       M (Option Out) := do
     let .static (.type t) := o.value | fail .S010 p s!"{o.value.text} is not a function"
@@ -989,14 +1006,35 @@ mutual
       if fs.length != xs.length then
         fail .S007 p
           s!"a struct constructor takes 0 or {fs.length} argument(s), but it has {xs.length}"
+      hold o
       let vs ← args n b xs
+      release o
       charge p (vs.map Val.size).sum
       return some ⟨.static (← recordOf p t fs (xs.map (·.pos)) vs), false, none⟩
     | t, [x] =>
+      hold o
       let a ← need x (← eval n x)
+      release o
       charge p a.value.size
       return some ⟨.static (← conform p t (← static p a.value)), false, none⟩
     | _, _ => fail .S007 p "a constructor takes 0 or 1 argument(s)"
+  termination_by (n + 1, 1)
+
+  /--
+  The actuals of the arguments `xs` of a function item, in their evaluation order. The mark of
+  an argument in `muts` makes it a `mut` actual, which resolves its place by the steps of an
+  assignment target. Each other argument evaluates, and its result waits while the later
+  arguments evaluate.
+  -/
+  def actuals (n : Nat) (xs : List Resolve.Expr) (muts : List Bool) : M (List Actual) := do
+    let acts ← (xs.zip muts).mapM fun (x, m) => do
+      if m then return (Actual.place (← placeAt n x.pos .S008 x), none)
+      else
+        let o ← need x (← eval n x)
+        hold o
+        return (Actual.value o.value, some o)
+    for (_, o) in acts do if let some o := o then release o
+    return acts.map (·.1)
   termination_by (n + 1, 1)
 
   /--
@@ -1021,11 +1059,14 @@ mutual
   termination_by (n + 1, 0)
 
   /--
-  A call of a function item, a prelude function, or a type. The callee `f` evaluates once,
-  before the arguments, and its result selects the call. The arguments `xs` are in their
-  evaluation order, and the first binds at the parameter `b` (`bound`). A function item runs in
-  the call frame of the call site `k` (`invoke`). A `mut` actual resolves its place in the
-  evaluation order of the arguments.
+  A call of a function item, a prelude function, a function value, or a type. The callee `f`
+  evaluates once, before the arguments, and its result selects the call. The arguments `xs` are
+  in their evaluation order, and the first binds at the parameter `b` (`bound`). A function item
+  runs in the call frame of the call site `k` (`invoke`). A `mut` actual resolves its place in
+  the evaluation order of the arguments. A function value checks the number of arguments before
+  they evaluate (`S007`), and its callee waits while they evaluate. The `mut` marks of its type
+  select the `mut` actuals. It then runs as a call of its function item. Another value that is
+  not a type is `S010` at the call (`ctor`).
   -/
   def call (n : Nat) (p : Pos) (f : Resolve.Expr) (xs : List Resolve.Expr) (b k : Nat) :
       M (Option Out) := do
@@ -1045,14 +1086,8 @@ mutual
       if ps.length != xs.length then
         let _ ← args n b xs
         fail .S007 p s!"`{g}` takes {ps.length} argument(s), but it has {xs.length}"
-      let acts ← (xs.zip (unbound b ps)).mapM fun (x, q) => do
-        if q.mode == .mut then return (Actual.place (← placeAt n x.pos .S008 x), none)
-        else
-          let o ← need x (← eval n x)
-          hold o
-          return (Actual.value o.value, some o)
-      for (_, o) in acts do if let some o := o then release o
-      invoke n p i k c u ps ret ip body (bound b (acts.map (·.1)))
+      let acts ← actuals n xs ((unbound b ps).map (·.mode == .mut))
+      invoke n p i k c u ps ret ip body (bound b acts)
     | .prim g .push =>
       let [l, x] := xs | fail .S007 p s!"`{g}` takes 2 argument(s), but it has {xs.length}"
       let pl ← placeAt n l.pos .S008 l
@@ -1062,7 +1097,16 @@ mutual
       let [l] := xs | fail .S007 p s!"`{g}` takes 1 argument(s), but it has {xs.length}"
       popFrom p g (← placeAt n l.pos .S008 l)
     | .prim g h => primCall p g h (← args n b xs)
-    | .value o => ctor n p o b xs
+    | .value o =>
+      let .static (.function g qs _) := o.value | ctor n p o b xs
+      if qs.size != xs.length then
+        fail .S007 p s!"`{g}` takes {qs.size} argument(s), but it has {xs.length}"
+      let some (i, .fn ip c u ps ret body) := fnItem (← read).items g
+        | fail .S010 p s!"`{g}` is not a function"
+      hold o
+      let acts ← actuals n xs (qs.toList.map fun (.mk m _) => m)
+      release o
+      invoke n p i k c u ps ret ip body (bound b acts)
   termination_by (n + 1, 2)
 
   /-- A statement. The result is the value of a `return`. -/
