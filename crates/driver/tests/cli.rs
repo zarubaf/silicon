@@ -769,6 +769,19 @@ fn eval_does_not_overflow_the_stack() -> Test {
     Ok(())
 }
 
+#[test]
+fn eval_of_a_function_cycle_through_its_signature_does_not_overflow_the_stack() -> Test {
+    // The signature of `f` names `f` beneath a unary chain, so each link nests one evaluation.
+    let src = format!(
+        "fn f(x: UInt[{}f]) -> Bool {{ return true; }}\n",
+        "!".repeat(30)
+    );
+    let out = agree("eval", &["f"], &file("fn-cycle-eval.si", src.as_bytes())?)?;
+    assert!(text(&out).starts_with("error[S015]: "), "{}", text(&out));
+    assert_eq!(out.status.code(), Some(1));
+    Ok(())
+}
+
 /// Runs `silicon cost FILE --top TOP` with the flags `flags`. Each call has its own file.
 fn cost(src: &str, top: &str, flags: &[&str]) -> std::io::Result<(String, Option<i32>)> {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
