@@ -193,7 +193,8 @@ pub(crate) fn parse_value(name: &str, t: &Ty, v: &str) -> Result<Bits, String> {
         | Ty::List(_)
         | Ty::Array(..)
         | Ty::Tuple(_)
-        | Ty::Struct(_) => {
+        | Ty::Struct(_)
+        | Ty::Fn(..) => {
             return Err(bad());
         }
     };

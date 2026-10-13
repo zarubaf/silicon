@@ -8,7 +8,7 @@
 //! types.
 
 use crate::int::Int;
-use crate::types::{Ty, TyId, Types};
+use crate::types::{FnParam, Ty, TyId, Types};
 use crate::value::Value;
 use std::fmt::Write;
 
@@ -68,6 +68,8 @@ pub(crate) enum Item<'a> {
     Ty(TyId),
     /// The node of a type, with its parts as pieces. The table makes a new entry from it.
     Node(&'a Ty),
+    /// A parameter type of a function type: `(mut <type>)` with the mark, else the type.
+    Param(FnParam),
     Text(&'static str),
     Name(&'a str),
     Int(&'a Int),
@@ -96,6 +98,12 @@ pub(crate) fn write<S: Sink>(tys: &Types, first: Item<'_>, out: &mut S) {
                     work.push(Item::Node(tys.get(t)));
                 }
             }
+            Item::Param(p) if p.mutable => {
+                out.write_str("(mut ").unwrap_or_default();
+                work.push(Item::Text(")"));
+                work.push(Item::Ty(p.ty));
+            }
+            Item::Param(p) => work.push(Item::Ty(p.ty)),
             Item::Node(ty) => type_node(tys, ty, out, &mut work),
             Item::Value(v) => value_node(v, out, &mut work),
         }
@@ -129,6 +137,13 @@ fn type_node<'a, S: Sink>(tys: &'a Types, ty: &'a Ty, out: &mut S, work: &mut Ve
             out.write_str("(tuple (").unwrap_or_default();
             work.push(Item::Text("))"));
             push_list(work, parts.iter().map(|part| Item::Ty(*part)));
+        }
+        Ty::Fn(params, ret) => {
+            out.write_str("(fn (").unwrap_or_default();
+            work.push(Item::Text(")"));
+            work.push(Item::Ty(*ret));
+            work.push(Item::Text(") "));
+            push_list(work, params.iter().map(|p| Item::Param(*p)));
         }
         Ty::Struct(s) => {
             let spec = tys.spec(*s);
@@ -171,6 +186,9 @@ fn value_node<'a, S: Sink>(v: &'a Value, out: &mut S, work: &mut Vec<Item<'a>>) 
         Value::Record(t, xs) => container(out, work, "(record ", Some(*t), xs),
         Value::List(t, xs) => container(out, work, "(list ", Some(*t), xs),
         Value::Tuple(xs) => container(out, work, "(tuple ", None, xs),
+        Value::Function(_, name, _) => {
+            write!(out, "(function root {name})").unwrap_or_default();
+        }
     }
 }
 

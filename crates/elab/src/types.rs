@@ -37,6 +37,15 @@ pub enum Ty {
     String,
     /// `List[T]`, a static type only. Its length is a value, not a part of the type.
     List(TyId),
+    /// `fn (T, mut U) -> V`, a static type only. It keeps the `mut` mark of each parameter.
+    Fn(Vec<FnParam>, TyId),
+}
+
+/// A parameter type of a function type, with its `mut` mark.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct FnParam {
+    pub mutable: bool,
+    pub ty: TyId,
 }
 
 /// A type in the table `Types`. Two ids of one table are equal exactly if their types are
@@ -48,6 +57,7 @@ pub struct TyId {
     size: u64,
     depth: u64,
     strings: bool,
+    funcs: bool,
 }
 
 impl TyId {
@@ -73,6 +83,14 @@ impl TyId {
     #[must_use]
     pub fn holds_string(self) -> bool {
         self.strings
+    }
+
+    /// Whether a function type is `self` or a part of it, at any depth (the function flag of
+    /// the type metadata). A struct type reads its field types only. A value of a type with
+    /// the flag has no `==`.
+    #[must_use]
+    pub fn holds_fn(self) -> bool {
+        self.funcs
     }
 }
 
@@ -336,6 +354,7 @@ impl Types {
         self.tick(
             1 + match ty {
                 Ty::Tuple(parts) => parts.len() as u64,
+                Ty::Fn(params, _) => params.len() as u64 + 1,
                 _ => 0,
             },
         );
@@ -389,17 +408,31 @@ impl Types {
             Ty::String => true,
             Ty::Array(elem, _) | Ty::List(elem) => elem.strings,
             Ty::Tuple(parts) => parts.iter().any(|part| part.strings),
+            Ty::Fn(params, ret) => ret.strings || params.iter().any(|p| p.ty.strings),
             _ => false,
         };
-        self.insert_shaped(ty, size, depth, strings, meta)
+        let funcs = match &ty {
+            Ty::Fn(..) => true,
+            Ty::Array(elem, _) | Ty::List(elem) => elem.funcs,
+            Ty::Tuple(parts) => parts.iter().any(|part| part.funcs),
+            _ => false,
+        };
+        self.insert_shaped(ty, (size, depth), (strings, funcs), meta)
     }
 
-    fn insert_shaped(&mut self, ty: Ty, size: u64, depth: u64, strings: bool, meta: Meta) -> TyId {
+    fn insert_shaped(
+        &mut self,
+        ty: Ty,
+        (size, depth): (u64, u64),
+        (strings, funcs): (bool, bool),
+        meta: Meta,
+    ) -> TyId {
         let id = TyId {
             index: self.entries.len(),
             size,
             depth,
             strings,
+            funcs,
         };
         let zero_depth = self.zero_depth_of(&ty, depth);
         self.entries.push(Entry {
@@ -424,7 +457,20 @@ impl Types {
             Ty::Array(elem, len) => Types::array_shape(*elem, len),
             Ty::Tuple(parts) => Types::tuple_shape(parts),
             Ty::List(elem) => (1u64.saturating_add(elem.size), 1 + elem.depth),
+            Ty::Fn(params, ret) => Types::fn_shape(params, *ret),
         }
+    }
+
+    /// The recursive size and the depth of a function type, before the type exists: 1 node,
+    /// the parts, and 1 node for each `mut` mark. A mark adds no depth.
+    #[must_use]
+    pub fn fn_shape(params: &[FnParam], ret: TyId) -> (u64, u64) {
+        let size = params.iter().fold(1u64.saturating_add(ret.size), |sum, p| {
+            sum.saturating_add(p.ty.size)
+                .saturating_add(u64::from(p.mutable))
+        });
+        let deepest = params.iter().map(|p| p.ty.depth).fold(ret.depth, u64::max);
+        (size, 1 + deepest)
     }
 
     /// The recursive size and the depth of `[elem; len]`, before the type exists.
@@ -479,6 +525,11 @@ impl Types {
     #[must_use]
     pub fn list(&mut self, elem: TyId) -> TyId {
         self.mk(Ty::List(elem))
+    }
+
+    #[must_use]
+    pub fn function(&mut self, params: Vec<FnParam>, ret: TyId) -> TyId {
+        self.mk(Ty::Fn(params, ret))
     }
 
     /// The join of `lhs` and `rhs` if they joined before.
@@ -564,6 +615,10 @@ impl Types {
             match self.get(t) {
                 Ty::Array(elem, _) | Ty::List(elem) => parts.push(*elem),
                 Ty::Tuple(ts) => parts.extend(ts.iter().copied()),
+                Ty::Fn(ps, ret) => {
+                    parts.extend(ps.iter().map(|p| p.ty));
+                    parts.push(*ret);
+                }
                 Ty::Struct(s) => {
                     for arg in self.spec(*s).args() {
                         held_types(arg, &mut parts);
@@ -690,7 +745,9 @@ impl Types {
             .iter()
             .fold(1u64, |sum, arg| sum.saturating_add(arg.size()));
         let strings = fields.iter().any(|field| field.strings);
-        let ty = self.insert_shaped(Ty::Struct(s), size, depth, strings, meta);
+        // The function flag of a struct reads the field types, not the static arguments.
+        let funcs = fields.iter().any(|field| field.funcs);
+        let ty = self.insert_shaped(Ty::Struct(s), (size, depth), (strings, funcs), meta);
         if let Some(spec) = self.specs.get_mut(s.0) {
             spec.state = SpecState::Done { ty, fields };
         }
@@ -748,7 +805,9 @@ impl Types {
                         work.push(Step::Record(t, fields.len()));
                         work.extend(fields.iter().rev().map(|f| Step::Visit(*f)));
                     }
-                    Ty::Nat | Ty::Int | Ty::Type | Ty::String | Ty::List(_) => return None,
+                    Ty::Nat | Ty::Int | Ty::Type | Ty::String | Ty::List(_) | Ty::Fn(..) => {
+                        return None;
+                    }
                 },
                 Step::Array(elem, n) => {
                     let first = done.pop()?;
