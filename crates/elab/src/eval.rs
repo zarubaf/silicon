@@ -222,13 +222,6 @@ impl Store {
     /// position to resume from. A reference to a local registers, so that a mutation of the
     /// local copies the value first (`settle_root`).
     fn park(&mut self, o: Out) -> usize {
-        self.park_held(o, false)
-    }
-
-    /// `park`, and a local root of an aggregate that `holds` the local also when the result
-    /// itself is no static part: a read waits at a base whose first steps select a static part
-    /// of the aggregate root (Lean holds the value that those steps read).
-    fn park_held(&mut self, o: Out, holds_root: bool) -> usize {
         let at = self.parked.len();
         let mut holds = None;
         if let Out::Ref(r) = &o
@@ -239,7 +232,7 @@ impl Store {
             // A part that is a static value holds the local, also in an aggregate root.
             let static_part = match self.root(&root) {
                 Val::Static(_) => true,
-                Val::Agg(_) => holds_root || matches!(self.at(r), Seen::Static(_)),
+                Val::Agg(_) => matches!(self.at(r), Seen::Static(_)),
                 _ => false,
             };
             if static_part {
@@ -250,6 +243,16 @@ impl Store {
         self.parked.push(o);
         self.held_by.push(holds);
         at
+    }
+
+    /// The result parked at `at` holds the local at `root` from now on: a read waits at a static
+    /// part of the aggregate root (Lean reads the part again from the live root after each
+    /// index). A hold that exists already stays as it is.
+    fn hold_parked(&mut self, at: usize, root: Root) {
+        if let Some(slot @ None) = self.held_by.get_mut(at) {
+            *slot = Some(root);
+            *self.holds.entry(root).or_default() += 1;
+        }
     }
 
     /// Takes the results parked from the position `from` back, in their order. Parks and

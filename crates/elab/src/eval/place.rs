@@ -375,11 +375,23 @@ impl Evaluator<'_> {
         let mut known = self.base_ty(&base);
         let mut keyed = Vec::with_capacity(steps.len());
         let mut stop = None;
-        let holds = self.selects_static_part(&base, steps);
-        let at = self.store.park_held(base.into_out(), holds);
+        let mut held = self.held_path(&base);
+        let at = self.store.park(base.into_out());
         for (n, step) in steps.iter().enumerate() {
+            // An index evaluates while the walk waits at the part that the earlier steps lead
+            // to. At a static part the base holds the root local, as in Lean, to the end.
+            if matches!(step, Sel::Index(..))
+                && let Some((r, _)) = &held
+                && matches!(self.store.at(r), Seen::Static(_))
+            {
+                self.store.hold_parked(at, r.root);
+                held = None;
+            }
             match self.key(step) {
-                Ok(k) => keyed.push(k),
+                Ok(k) => {
+                    held = held.and_then(|h| self.held_step(h, &k));
+                    keyed.push(k);
+                }
                 Err(e) => {
                     stop = Some(e);
                     break;
@@ -407,33 +419,32 @@ impl Evaluator<'_> {
         Ok((out, keyed.len()))
     }
 
-    /// True if the base is a part of an aggregate root of a local, and the selectors and fields
-    /// that start `steps` lead to a static part of the root. The index after them then waits at
-    /// a static part, so it holds the root local. The walk takes at most the steps that already
-    /// charged, and reads no index.
-    fn selects_static_part(&self, base: &Opnd, steps: &[Sel<'_>]) -> bool {
+    /// The path that follows the steps of a segment from a part of an aggregate root of a local,
+    /// with the type of its part, or `None` if the base is no such part. An index that waits at a
+    /// static part of the root holds the root local.
+    fn held_path(&self, base: &Opnd) -> Option<(Ref, Option<TyId>)> {
         let Opnd::Static(Out::Ref(r)) = base else {
-            return false;
+            return None;
         };
-        if !matches!(r.root, Root::Local(..)) || !matches!(self.store.root(&r.root), Val::Agg(_)) {
-            return false;
-        }
-        let mut ty = self.base_ty(base);
-        let mut path = r.path.clone();
-        for step in steps {
-            let number = match *step {
-                Sel::Index(..) => break,
-                Sel::Select(_, _, index) => index.as_str().parse::<usize>().ok(),
-                Sel::Field(_, f) => ty
-                    .and_then(|t| self.tys.fields(t))
-                    .and_then(|(item, _)| self.field_number(item, f)),
-            };
-            let Some(k) = number else { return false };
-            ty = ty.and_then(|t| self.part_ty(t, k));
-            path.push(k);
-        }
-        path.len() > r.path.len()
-            && matches!(self.store.at(&Ref { root: r.root, path }), Seen::Static(_))
+        (matches!(r.root, Root::Local(..)) && matches!(self.store.root(&r.root), Val::Agg(_)))
+            .then(|| (r.clone(), self.base_ty(base)))
+    }
+
+    /// Extends the path of `held` by the step `key`, which the walk takes. A dynamic index or a
+    /// field without a number ends the path: no static part follows it.
+    fn held_step(&self, held: (Ref, Option<TyId>), key: &Key<'_>) -> Option<(Ref, Option<TyId>)> {
+        let (mut r, ty) = held;
+        let k = match key {
+            Key::Index(_, _, Index::Number(k)) => Some(*k),
+            Key::Index(..) => None,
+            Key::Select(_, _, index) => index.as_str().parse::<usize>().ok(),
+            Key::Field(_, f) => ty
+                .and_then(|t| self.tys.fields(t))
+                .and_then(|(item, _)| self.field_number(item, f)),
+        }?;
+        let ty = ty.and_then(|t| self.part_ty(t, k));
+        r.path.push(k);
+        Some((r, ty))
     }
 
     /// The type of a base that refers to a local or a constant: the type of its root, along its
