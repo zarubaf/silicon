@@ -1518,3 +1518,170 @@ fn a_method_chain_is_bound_by_the_syntax_depth() {
     let long = format!("module M() {{ {} }}", "x.f(y).g(z.h());".repeat(10_000));
     assert_eq!(first_error(&long), None);
 }
+
+/// The type of `const X: <ty> = 0;` as the shape of the type.
+fn type_shape(ty: &str) -> String {
+    let parsed = parse(&format!("const X: {ty} = 0;"));
+    assert!(parsed.errors.is_empty(), "{ty}: {:?}", parsed.errors);
+    match parsed.ast.as_deref() {
+        Some([Item::Const { ty, .. }]) => tx(ty),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn function_types_parse_in_an_expression() {
+    for (input, shape_text) in [
+        ("fn () -> T", "(fntype () -> T)"),
+        ("fn (T, mut U) -> V", "(fntype (T mut U) -> V)"),
+        ("fn (T,) -> U", "(fntype (T) -> U)"),
+        ("fn (mut T,) -> U", "(fntype (mut T) -> U)"),
+        ("fn (A) -> fn (B) -> T", "(fntype (A) -> (fn (B) -> T))"),
+        // The result type takes the suffixes.
+        ("fn () -> UInt[8]", "(fntype () -> (index UInt 8))"),
+        (
+            "fn (UInt[8]) -> (T, U)",
+            "(fntype ((index UInt 8)) -> (tuple T U))",
+        ),
+        // A function type is a unary operand.
+        ("-fn () -> T", "(neg (fntype () -> T))"),
+        ("a + fn () -> T", "(add a (fntype () -> T))"),
+        ("fn () -> T + a", "(add (fntype () -> T) a)"),
+        ("f(fn () -> T, a)", "(call f (fntype () -> T) a)"),
+        // A group makes the function type the base of a suffix.
+        ("(fn () -> T)[8]", "(index (fntype () -> T) 8)"),
+        ("(fn () -> T)(a)", "(call (fntype () -> T) a)"),
+        ("[fn () -> T; 4]", "(arraytype (fn () -> T) 4)"),
+    ] {
+        assert_eq!(shape(input), shape_text, "{input}");
+    }
+}
+
+#[test]
+fn function_types_parse_in_a_type() {
+    for (input, shape_text) in [
+        ("fn (T, mut U) -> V", "(fn (T mut U) -> V)"),
+        ("fn (A) -> fn (B) -> T", "(fn (A) -> (fn (B) -> T))"),
+        ("fn () -> UInt[8]", "(fn () -> (index UInt 8))"),
+        ("(fn () -> T)", "(fn () -> T)"),
+        ("(fn () -> T)[8]", "(index (fn () -> T) 8)"),
+        ("(fn () -> T, U)", "(tuple (fn () -> T) U)"),
+        ("[fn () -> T; 2]", "(array (fn () -> T) 2)"),
+        ("fn (fn (A) -> B) -> C", "(fn ((fn (A) -> B)) -> C)"),
+    ] {
+        assert_eq!(type_shape(input), shape_text, "{input}");
+    }
+    let stmts = body("let f: fn (T) -> U = g; type F = fn () -> T;");
+    assert!(matches!(
+        stmts.as_slice(),
+        [
+            Stmt::Local {
+                ty: Some(TypeExpr::Fn { .. }),
+                ..
+            },
+            Stmt::Alias {
+                ty: TypeExpr::Fn { .. },
+                ..
+            }
+        ]
+    ));
+}
+
+#[test]
+fn function_types_keep_their_positions() {
+    let parsed = parse("const X: fn () -> T = -fn (T) -> fn () -> U;");
+    let Some([Item::Const { ty, value, .. }]) = parsed.ast.as_deref() else {
+        panic!("{:?}", parsed.errors);
+    };
+    assert!(matches!(ty, TypeExpr::Fn { pos: p, .. } if *p == pos(1, 10)));
+    let Expr::Unary { arg, .. } = value else {
+        panic!("not a unary");
+    };
+    let Expr::FnType { pos: at, ret, .. } = &**arg else {
+        panic!("not a function type");
+    };
+    assert_eq!(*at, pos(1, 24));
+    assert!(matches!(&**ret, TypeExpr::Fn { pos: p, .. } if *p == pos(1, 34)));
+}
+
+#[test]
+fn function_type_errors_are_at_the_offending_token() {
+    for (input, code, col) in [
+        ("const X: T = fn (comptime T) -> U;", Code::S001, 18),
+        ("const X: T = fn (T, comptime U) -> V;", Code::S001, 21),
+        ("const X: T = fn (mut comptime T) -> U;", Code::S001, 22),
+        ("const X: fn (comptime T) -> U = 0;", Code::S001, 14),
+        ("const X: T = fn (T) U;", Code::S001, 21),
+        ("const X: T = fn (T -> U;", Code::S001, 20),
+        ("const X: T = fn (,) -> U;", Code::S001, 18),
+        ("const X: T = fn (x: T) -> U;", Code::S001, 19),
+        ("const X: T = fn (T U) -> V;", Code::S001, 20),
+        ("const X: T = fn (T) -> ;", Code::S001, 24),
+        ("const X: T = fn T -> U;", Code::S001, 17),
+        ("const X: T = fn (mut mut T) -> U;", Code::S001, 22),
+    ] {
+        assert_eq!(first_error(input), Some((code, 1, col)), "{input}");
+    }
+}
+
+#[test]
+fn the_height_of_a_function_type_is_one_plus_the_largest_part() {
+    let at = |n: usize| Some((Code::S001, 1, n));
+    // A chain of n function types has the height n + 1.
+    let chain = |n: usize| format!("const X: T = {}T;", "fn () -> ".repeat(n));
+    assert_eq!(first_error_64(&chain(63)), None);
+    assert_eq!(first_error_64(&chain(64)), at(14));
+    let chain_ty = |n: usize| format!("const X: {}T = 0;", "fn () -> ".repeat(n));
+    assert_eq!(first_error_64(&chain_ty(63)), None);
+    assert_eq!(first_error_64(&chain_ty(64)), at(10));
+    // The parameter types count in the same way, and a `mut` mark adds none.
+    for mark in ["", "mut "] {
+        let nested = |n: usize| {
+            format!(
+                "const X: T = {}T{};",
+                format!("fn ({mark}").repeat(n),
+                ") -> T".repeat(n)
+            )
+        };
+        assert_eq!(first_error_64(&nested(63)), None, "{mark}");
+        assert_eq!(first_error_64(&nested(64)), at(14), "{mark}");
+    }
+    // A unary operator adds 1 to the function type.
+    let neg = |n: usize| format!("const X: T = -{}T;", "fn () -> ".repeat(n));
+    assert_eq!(first_error_64(&neg(62)), None);
+    assert_eq!(first_error_64(&neg(63)), at(14));
+    // The suffixes of the result type add to its height.
+    let suffix = |n: usize| format!("const X: T = fn () -> T{};", "[1]".repeat(n));
+    assert_eq!(first_error_64(&suffix(62)), None);
+    assert_eq!(first_error_64(&suffix(63)), at(14));
+}
+
+#[test]
+fn a_million_long_chain_of_function_types_gives_the_height_error() {
+    let chain = "fn () -> ".repeat(1_000_000);
+    assert_eq!(
+        first_error(&format!("const X: T = {chain}T;")),
+        Some((Code::S001, 1, 14))
+    );
+    assert_eq!(
+        first_error(&format!("const X: {chain}T = 0;")),
+        Some((Code::S001, 1, 10))
+    );
+    let parsed = parse(&format!("const X: T = -{chain}T;"));
+    assert_eq!(parsed.errors.len(), 1);
+    assert!(parsed.ast.is_none());
+}
+
+#[test]
+fn a_deep_chain_of_function_types_drops_without_recursion() {
+    let n = 2000;
+    let input = format!("const X: {0}T = {0}T;", "fn (U) -> ".repeat(n));
+    let parsed = parse(&input);
+    assert!(parsed.errors.is_empty(), "{:?}", parsed.errors.first());
+    assert_lossless(&parsed, &input);
+    drop(parsed);
+    let nested = format!("const X: T = {}T{};", "fn (".repeat(n), ") -> T".repeat(n));
+    let parsed = parse(&nested);
+    assert!(parsed.errors.is_empty(), "{:?}", parsed.errors.first());
+    drop(parsed);
+}
