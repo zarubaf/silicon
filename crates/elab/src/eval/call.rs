@@ -159,7 +159,8 @@ impl Evaluator<'_> {
 
     /// The arguments `xs` of a call in their evaluation order, as the actuals of the
     /// parameters, in the order of the parameters. The parameter `k` is `mut` if `is_mut(k)`.
-    /// A `mut` actual resolves its place by the steps of an assignment target.
+    /// A `mut` actual resolves its place by the steps of an assignment target, and its window
+    /// stays open until the last argument evaluates.
     fn actuals(
         &mut self,
         is_mut: impl Fn(usize) -> bool,
@@ -182,6 +183,12 @@ impl Evaluator<'_> {
                 let o = need(x, o)?;
                 self.store.park(o);
                 values.push(at);
+            }
+        }
+        // The windows of the `mut` actuals close after the last argument.
+        for slot in slots.iter().flatten() {
+            if let Actual::Place(place) = slot {
+                self.store.shut_window(place.root);
             }
         }
         for (at, o) in values.into_iter().zip(self.store.resume(base)) {

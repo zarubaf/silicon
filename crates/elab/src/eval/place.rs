@@ -504,6 +504,7 @@ impl Evaluator<'_> {
         let place = self.place_at(pos, Code::S010, target)?;
         let o = self.eval(value)?;
         let o = need(value, o)?;
+        self.store.shut_window(place.root);
         self.copy(pos, &o)?;
         let y = if let Some(t) = place.ty {
             self.conform_val(pos, t, o)?
@@ -528,7 +529,9 @@ impl Evaluator<'_> {
     }
 
     /// The place `target` at `pos` (section 5.2). Its root is a `let mut` local, else the error
-    /// is `code` at `pos`. The root name charges nothing. Each step charges 1 at its node, then
+    /// is `code` at `pos`. The root name charges nothing. Then the place opens a window of its
+    /// root, which the caller closes (`shut_window`), and a root with an open window is `S008`
+    /// at `pos` (section 9.1). Each step charges 1 at its node, then
     /// its index evaluates, from the root outward.
     ///
     /// Lean checks the container and the index of each step before the next step charges.
@@ -561,6 +564,13 @@ impl Evaluator<'_> {
         };
         let frame = self.store.frames.len().saturating_sub(1);
         let root = Root::Local(frame, id);
+        if !self.store.open_window(root) {
+            return fail(
+                Code::S008,
+                pos,
+                "the root of the place is pending in a window".to_owned(),
+            );
+        }
         let mut keyed = Vec::with_capacity(steps.len());
         let mut stop = None;
         for step in &steps {
