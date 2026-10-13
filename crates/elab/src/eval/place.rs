@@ -547,7 +547,7 @@ impl Evaluator<'_> {
     }
 
     /// The type of the part `k` of a container of type `t`.
-    fn part_ty(&self, t: TyId, k: usize) -> Option<TyId> {
+    pub(super) fn part_ty(&self, t: TyId, k: usize) -> Option<TyId> {
         self.tys
             .part(t, k)
             .or_else(|| self.tys.fields(t).and_then(|(_, fs)| fs.get(k).copied()))

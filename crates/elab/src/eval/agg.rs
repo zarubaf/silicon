@@ -803,6 +803,10 @@ impl Evaluator<'_> {
         };
         let mut above: Vec<Above> = Vec::new();
         let mut cur = root;
+        // The type of the static part `cur`, once a step opened a static container: the type of
+        // the part below comes from it, so the walk finds the type of a value only at the first
+        // static container, and not at each level of a nested one.
+        let mut opened: Option<TyId> = None;
         for (i, &k) in keys.iter().enumerate() {
             if let Agg::Ref(base, t) = &cur {
                 cur = self.expand(pos, base, *t)?;
@@ -812,7 +816,10 @@ impl Evaluator<'_> {
                     (n.ty, std::mem::take(&mut p.0))
                 }
                 Agg::Static(mut v) if open => {
-                    let ty = v.ty(&mut self.tys);
+                    let ty = match opened {
+                        Some(ty) => ty,
+                        None => v.ty(&mut self.tys),
+                    };
                     let (Value::Array(_, xs) | Value::Tuple(_, xs) | Value::Record(_, xs)) = &mut v
                     else {
                         return wrong();
@@ -828,6 +835,10 @@ impl Evaluator<'_> {
                 .map(|x| std::mem::replace(x, Agg::Static(Value::Unit)))
             else {
                 return wrong();
+            };
+            opened = match part {
+                Agg::Static(_) => self.part_ty(ty, k),
+                _ => None,
             };
             above.push(Above { ty, parts, k });
             cur = part;
