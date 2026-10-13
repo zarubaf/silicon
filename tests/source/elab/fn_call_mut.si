@@ -1,0 +1,30 @@
+// A call through a function value names its variables like the named call: the frame of `bump` is `bump$0c` inside `twice$0c`, and the write-backs give the root `a` the versions `a$1v` and `a$2v`.
+// TOP M()
+// CHECK: (let a (bits 8) x)
+// CHECK: (let a$1v (bits 8) twice$0c$v$2v)
+// CHECK: (let a$2v (bits 8) bump$1c$a$1v)
+// CHECK-NOT: a$3v
+// CHECK: (let twice$0c$bump$0c$a$1v (bits 8) (add twice$0c$bump$0c$a (const 8 1)))
+// CHECK: (let twice$0c$bump$1c$a$1v (bits 8) (add twice$0c$bump$1c$a (const 8 1)))
+// CHECK: (assign p a$2v)
+fn bump(mut a: UInt[8]) -> UInt[8] {
+    a = a +% 1;
+    return a;
+}
+fn twice(f: fn (mut UInt[8]) -> UInt[8], mut v: UInt[8]) -> UInt[8] {
+    let first = f(v);
+    let second = f(v);
+    return first +% second;
+}
+module M() domains() {
+    input x: UInt[8];
+    output p: UInt[8];
+    output q: UInt[8];
+    let mut a = x;
+    let table = [bump, bump];
+    let g = table[1];
+    let r = twice(bump, a);
+    g(a);
+    p := a;
+    q := r;
+}

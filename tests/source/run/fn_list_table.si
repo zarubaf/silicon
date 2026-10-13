@@ -1,0 +1,31 @@
+// A list of function values: a comptime loop builds the list, and a hardware select applies the function that its index names.
+// TOP Table()
+fn inc(x: UInt[8]) -> UInt[8] {
+    return x +% 1;
+}
+fn dbl(x: UInt[8]) -> UInt[8] {
+    return x +% x;
+}
+fn inv(x: UInt[8]) -> UInt[8] {
+    return ~x;
+}
+module Table() domains() {
+    input sel: UInt[2];
+    input a: UInt[8];
+    output y: UInt[8];
+    let mut ops = list(fn (UInt[8]) -> UInt[8]);
+    ops.push(inc);
+    ops.push(dbl);
+    ops.push(inv);
+    let mut r = a;
+    comptime for k in 0..len(ops) {
+        let f = ops[k];
+        r = if (sel == k) { f(a) } else { r };
+    }
+    y := r;
+}
+// STEP in=(a 7 sel 0) out=(y 8)
+// STEP in=(a 7 sel 1) out=(y 14)
+// STEP in=(a 7 sel 2) out=(y 248)
+// STEP in=(a 7 sel 3) out=(y 7)
+// STEP in=(a 200 sel 1) out=(y 144)

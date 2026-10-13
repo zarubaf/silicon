@@ -1,0 +1,26 @@
+// A call through a function value with a `mut` mark: the type of the value gives the mark, so the call writes the actual back as a named call does. The value is a parameter of a function and an element of an array.
+// TOP M()
+fn bump(mut a: UInt[8]) -> UInt[8] {
+    a = a +% 1;
+    return a;
+}
+fn twice(f: fn (mut UInt[8]) -> UInt[8], mut v: UInt[8]) -> UInt[8] {
+    let first = f(v);
+    let second = f(v);
+    return first +% second;
+}
+module M() domains() {
+    input x: UInt[8];
+    output p: UInt[8];
+    output q: UInt[8];
+    let mut a = x;
+    let table = [bump, bump];
+    let g = table[1];
+    let r = twice(bump, a);
+    g(a);
+    p := a;
+    q := r;
+}
+// STEP in=(x 0) out=(p 3 q 3)
+// STEP in=(x 10) out=(p 13 q 23)
+// STEP in=(x 254) out=(p 1 q 255)

@@ -1,0 +1,16 @@
+// A hardware `if` with two equal function arms gives that function as a static value. The call after it is the call of `inc`, and the design holds no select and no mux.
+// TOP M()
+// CHECK: (input sel (bits 1))
+// CHECK-NOT: mux
+// CHECK: (let inc$0c$0ret (bits 8) (add inc$0c$x (const 8 1)))
+// CHECK: (assign y inc$0c$0ret)
+fn inc(x: UInt[8]) -> UInt[8] {
+    return x +% 1;
+}
+module M() domains() {
+    input sel: Bool;
+    input a: UInt[8];
+    output y: UInt[8];
+    let f = if (sel) { inc } else { inc };
+    y := f(a);
+}

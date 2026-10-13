@@ -1,0 +1,31 @@
+// A function as a module argument selects the specialization: two functions of one type give two modules, and each body names the function that it applies.
+// TOP Top()
+// CHECK: (module Apply$
+// CHECK: (let inc$0c$0ret (bits 8) (add inc$0c$x (const 8 1)))
+// CHECK: (module Apply$
+// CHECK: (let dbl$0c$0ret (bits 8) (add dbl$0c$x dbl$0c$x))
+// CHECK: (module Top
+// CHECK: (inst first Apply$
+// CHECK: (inst second Apply$
+fn inc(x: UInt[8]) -> UInt[8] {
+    return x +% 1;
+}
+fn dbl(x: UInt[8]) -> UInt[8] {
+    return x +% x;
+}
+module Apply(comptime f: fn (UInt[8]) -> UInt[8]) domains() {
+    input a: UInt[8];
+    output q: UInt[8];
+    q := f(a);
+}
+module Top() domains() {
+    input x: UInt[8];
+    output p: UInt[8];
+    output q: UInt[8];
+    instance first = Apply(inc);
+    instance second = Apply(dbl);
+    first.a := x;
+    second.a := x;
+    p := first.q;
+    q := second.q;
+}
