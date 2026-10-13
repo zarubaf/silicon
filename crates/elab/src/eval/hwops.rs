@@ -247,7 +247,7 @@ fn static_pair(
     };
     fuel.pay(u128::from(left.size()) + u128::from(right.size()))
         .map_err(at(pos))?;
-    let equal = ops::same_pair(left, right, tys, fuel.left()).map_err(at(pos))?;
+    let equal = ops::same_pair(left, right, tys).map_err(at(pos))?;
     pairs.statics = true;
     pairs.equal &= equal;
     Ok(())
@@ -429,7 +429,7 @@ fn if_static(
     if matches!(x, Value::Function(..)) {
         return differ();
     }
-    if ops::same_pair(x, y, tys, fuel.left()).map_err(at(pos))? {
+    if ops::same_pair(x, y, tys).map_err(at(pos))? {
         // The type walks enter only tuples, so the charge of the two sizes covers them.
         if x.ty(tys) == t {
             return Ok((*x).clone());

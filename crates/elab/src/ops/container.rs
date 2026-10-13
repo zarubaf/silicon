@@ -505,19 +505,41 @@ fn no_common_type<T>(a: &Value, b: &Value, tys: &Types) -> Result<T, Fault> {
     ))
 }
 
+/// How the joins of a container check count. `Charged` joins pay their units, and a walk above
+/// the budget has units that no fuel pays. `Free` joins pay nothing, so the fuel must not decide
+/// their result.
+#[derive(Clone, Copy)]
+enum Joins {
+    Charged(u64),
+    Free,
+}
+
+/// One join of the check. A free join of equal ids is the type itself, with no walk. A free
+/// join of two ids walks only the pairs that differ, and the table joins each pair of ids once.
+fn join_of(lhs: TyId, rhs: TyId, tys: &mut Types, joins: Joins, budget: &mut u64) -> Joined {
+    if matches!(joins, Joins::Free) && lhs == rhs {
+        return joined(0, Some(lhs));
+    }
+    common_ty(lhs, rhs, tys, budget)
+}
+
 /// The type check of `==` on containers, by the operand rule for each pair of elements, and
 /// the units of the joins that it walked (design section 5.4). The walk checks each pair
 /// before its elements, from left to right, and it stops at the first pair that fails. The
 /// units count the pairs up to that one.
-fn same_check(a: &Value, b: &Value, tys: &mut Types, mut budget: u64) -> (Int, Result<(), Fault>) {
+fn same_check(a: &Value, b: &Value, tys: &mut Types, joins: Joins) -> (Int, Result<(), Fault>) {
     let mut charge = Int::zero();
+    let mut budget = match joins {
+        Joins::Charged(budget) => budget,
+        Joins::Free => u64::MAX,
+    };
     let mut work = vec![(a, b)];
     while let Some((a, b)) = work.pop() {
         match (a, b) {
             (Value::Unit, Value::Unit) => {}
             (Value::Array(s, xs), Value::Array(t, ys))
             | (Value::Record(s, xs), Value::Record(t, ys)) => {
-                let done = common_ty(*s, *t, tys, &mut budget);
+                let done = join_of(*s, *t, tys, joins, &mut budget);
                 charge = charge.add(&done.charge);
                 if done.ty.is_none() || (matches!(a, Value::Array(..)) && xs.len() != ys.len()) {
                     return (charge, no_common_type(a, b, tys));
@@ -525,7 +547,7 @@ fn same_check(a: &Value, b: &Value, tys: &mut Types, mut budget: u64) -> (Int, R
                 work.extend(xs.iter().zip(ys).rev());
             }
             (Value::List(s, xs), Value::List(t, ys)) => {
-                let done = common_ty(*s, *t, tys, &mut budget);
+                let done = join_of(*s, *t, tys, joins, &mut budget);
                 charge = charge.add(&done.charge);
                 if done.ty.is_none() {
                     return (charge, no_common_type(a, b, tys));
@@ -578,10 +600,10 @@ fn same_run(a: &Value, b: &Value, tys: &Types) -> Result<bool, Fault> {
 }
 
 /// `==` on a static pair of the walk of a hardware equality: the check and the comparison,
-/// after the caller charged the two sizes. The joins of the check charge nothing here, because
-/// the two types joined before the walk.
-pub(crate) fn same_pair(a: &Value, b: &Value, tys: &mut Types, budget: u64) -> Result<bool, Fault> {
-    let (_, checked) = same_check(a, b, tys, budget);
+/// after the caller charged the two sizes. The joins of the check charge nothing here, so the
+/// fuel never limits them: a join that fails is `S010` and no other fault.
+pub(crate) fn same_pair(a: &Value, b: &Value, tys: &mut Types) -> Result<bool, Fault> {
+    let (_, checked) = same_check(a, b, tys, Joins::Free);
     checked?;
     same_run(a, b, tys)
 }
@@ -598,7 +620,7 @@ pub(crate) fn container_op(
     let text = super::binop_text(op);
     match op {
         BinOp::Eq | BinOp::Ne => {
-            let (units, checked) = same_check(a, b, tys, fuel.left());
+            let (units, checked) = same_check(a, b, tys, Joins::Charged(fuel.left()));
             fuel.pay_int(&units)?;
             checked?;
             fuel.pay(u128::from(a.size()) + u128::from(b.size()))?;
