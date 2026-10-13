@@ -37,7 +37,7 @@ fn is_of(v: &Value, t: TyId, tys: &Types) -> bool {
                 e == te && n.cmp_u64(xs.len() as u64) == Ordering::Equal
             }
             (Value::List(e, _), Ty::List(te)) => e == te,
-            (Value::Function(_, _, sig), Ty::Fn(..)) => *sig == t,
+            (Value::Function(_, sig), Ty::Fn(..)) => *sig == t,
             (Value::Tuple(xs), Ty::Tuple(ts)) => {
                 work.extend(xs.iter().zip(ts.iter().copied()));
                 xs.len() == ts.len()
@@ -137,7 +137,7 @@ pub(crate) fn convert_scalar(
 /// `t`, with the `mut` marks. It compares two ids and charges nothing.
 pub(crate) fn convert_fn(t: TyId, v: &Value, tys: &Types) -> Result<Option<Value>, Fault> {
     match v {
-        Value::Function(_, _, sig) if *sig == t => Ok(None),
+        Value::Function(_, sig) if *sig == t => Ok(None),
         _ => wrong(tys.get(t), v, tys),
     }
 }
@@ -177,7 +177,7 @@ fn plan(t: TyId, v: &Value, tys: &Types) -> Result<u64, Fault> {
                 size = size.saturating_add(1);
                 work.extend(ts.iter().copied().zip(xs).rev());
             }
-            (Ty::Fn(..), Value::Function(_, _, sig)) if *sig == t => {
+            (Ty::Fn(..), Value::Function(_, sig)) if *sig == t => {
                 size = size.saturating_add(1);
             }
             _ => {
@@ -338,8 +338,9 @@ fn visit(lhs: TyId, rhs: TyId, tys: &mut Types, budget: &mut u64) -> Visit {
         parts: Vec::new(),
         failed: false,
     };
-    let (left, right) = (tys.get(lhs).clone(), tys.get(rhs).clone());
-    let shaped = match (&left, &right) {
+    // The shape reads the table by reference: a pair that opens copies its parts, and any
+    // other pair, such as a function type against `Int`, copies nothing.
+    let shaped = match (tys.get(lhs), tys.get(rhs)) {
         (Ty::Array(a, n), Ty::Array(b, m)) => {
             Some((n == m).then(|| (Form::Array(n.clone()), vec![(*a, *b)])))
         }
@@ -366,16 +367,20 @@ fn visit(lhs: TyId, rhs: TyId, tys: &mut Types, budget: &mut u64) -> Visit {
             *budget -= 1;
             Visit::Open(open(form, pairs))
         }
-        None => match (&left, &right) {
-            (Ty::Struct(_), Ty::Struct(_)) | (Ty::Fn(..), Ty::Fn(..)) => Visit::Done(Joined {
-                charge: Int::from_u64(lhs.size()).add(&Int::from_u64(rhs.size())),
-                ty: (lhs == rhs).then_some(lhs),
-            }),
-            (l, r) => {
-                let units = u64::from(container_ty(l) && container_ty(r));
-                Visit::Done(joined(units, scalar_join(lhs, rhs, tys)))
+        None => {
+            let (left, right) = (tys.get(lhs), tys.get(rhs));
+            if matches!(
+                (left, right),
+                (Ty::Struct(_), Ty::Struct(_)) | (Ty::Fn(..), Ty::Fn(..))
+            ) {
+                return Visit::Done(Joined {
+                    charge: Int::from_u64(lhs.size()).add(&Int::from_u64(rhs.size())),
+                    ty: (lhs == rhs).then_some(lhs),
+                });
             }
-        },
+            let units = u64::from(container_ty(left) && container_ty(right));
+            Visit::Done(joined(units, scalar_join(lhs, rhs, tys)))
+        }
     }
 }
 

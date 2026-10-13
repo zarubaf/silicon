@@ -14,9 +14,11 @@ use super::{Evaluator, Out, ROOT, Res, Slot, at, fail, need, type_pos};
 use crate::Code;
 use crate::hw::{Ref, Root, Seen, Val};
 use crate::ops;
-use crate::types::{Meta, Ty, TyId, Types};
+use crate::types::{Meta, Ty, TyId, TyParam, Types};
 use crate::value::Value;
-use parse::ast::{Expr, Ident, Item, NodeId, Param, Pos, StructField, TypeExpr};
+use parse::ast::{
+    Expr, FnParam, Ident, Item, NodeId, Param, ParamMode, Pos, StructField, TypeExpr,
+};
 use resolve::{DeclId, Prelude, Target};
 
 impl Evaluator<'_> {
@@ -76,7 +78,7 @@ impl Evaluator<'_> {
             }
             TypeExpr::Tuple { pos, elems } => self.tuple_type(*pos, elems),
             TypeExpr::Array { pos, elem, len } => self.array_type(*pos, elem, len),
-            TypeExpr::Fn { pos, .. } => fail(Code::S004, *pos, super::FN_TYPE_LATER.to_owned()),
+            TypeExpr::Fn { pos, params, ret } => self.fn_type(*pos, params, ret),
         }
     }
 
@@ -123,6 +125,63 @@ impl Evaluator<'_> {
         self.charge(pos, u128::from(size))?;
         let meta = self.sums(pos, &parts, depth)?;
         Ok(self.tys.mk_with(Ty::Tuple(parts), meta))
+    }
+
+    /// The function type with the parameter types `params` and the result type `ret` at `pos`:
+    /// the parameter types in order, then the result type, then the type.
+    pub(super) fn fn_type(&mut self, pos: Pos, params: &[FnParam], ret: &TypeExpr) -> Res<TyId> {
+        let mut parts = Vec::with_capacity(params.len());
+        for p in params {
+            parts.push(TyParam {
+                mutable: p.mutable,
+                ty: self.type_expr(&p.ty)?,
+            });
+        }
+        let ret = self.type_expr(ret)?;
+        self.fn_ty(pos, parts, ret)
+    }
+
+    /// The function type of the parameters `params` and the result `ret` at `pos`. It checks
+    /// its depth, then charges its size, both from the ids of its parts. It has no metadata to
+    /// charge: it is not hardware data, and its numbers are 0.
+    pub(super) fn fn_ty(&mut self, pos: Pos, params: Vec<TyParam>, ret: TyId) -> Res<TyId> {
+        #[cfg(test)]
+        crate::counters::add(crate::counters::Count::Params, params.len() as u64 + 1);
+        let (size, depth) = Types::fn_shape(&params, ret);
+        self.bounded(pos, depth)?;
+        self.charge(pos, u128::from(size))?;
+        Ok(self.tys.function(params, ret))
+    }
+
+    /// The function item `i` named `name` as a value at the name `pos`. Its signature evaluates
+    /// in the scope of the function, with no locals. It adds no nesting level and no call
+    /// frame, and each depth check of the signature reports at the name.
+    pub(super) fn fn_value(&mut self, pos: Pos, i: usize) -> Res<Out> {
+        let file = self.file;
+        let Some(Item::Fn {
+            name, params, ret, ..
+        }) = file.ast().get(i)
+        else {
+            return fail(Code::S010, pos, "the name is not a value".to_owned());
+        };
+        let saved = self.site.replace(pos);
+        let signature = self.in_frame(None, |ev| {
+            ev.in_item(i, ROOT, |ev| {
+                let mut parts = Vec::with_capacity(params.len());
+                for q in params {
+                    parts.push(TyParam {
+                        mutable: q.mode == ParamMode::Mut,
+                        ty: ev.type_expr(&q.ty)?,
+                    });
+                }
+                Ok((parts, ev.type_expr(ret)?))
+            })
+        });
+        self.site = saved;
+        let (parts, ret) = signature?;
+        let sig = self.fn_ty(pos, parts, ret)?;
+        self.tys.name_fn(i, &name.name);
+        Ok(Out::Made(Val::Static(Value::Function(i, sig))))
     }
 
     /// The metadata sums of a tuple or a struct type of the depth `depth` with the parts

@@ -468,6 +468,9 @@ struct Evaluator<'a> {
     elab: Elab,
     /// The nesting depth at the start of the innermost hardware arm (section 9.4).
     arm: Option<u64>,
+    /// The name of a function value while its signature evaluates: each depth check there
+    /// reports at it. A nested level clears it, so it keeps its own positions.
+    site: Option<Pos>,
 }
 
 /// Why an evaluation stops: its first error, or a deeper level for which the machine cannot
@@ -482,9 +485,6 @@ type Res<T> = Result<T, Stop>;
 fn fail<T>(code: Code, pos: Pos, message: String) -> Res<T> {
     Err(Stop::Error(Error { code, pos, message }))
 }
-
-/// The message for a function type, which the evaluator does not support yet.
-const FN_TYPE_LATER: &str = "a function type is not supported yet";
 
 fn at(pos: Pos) -> impl Fn(Fault) -> Stop {
     move |(code, message)| Stop::Error(Error { code, pos, message })
@@ -600,6 +600,7 @@ impl<'a> Evaluator<'a> {
             frame: ROOT,
             elab,
             arm: None,
+            site: None,
         }
     }
 }
@@ -954,6 +955,7 @@ impl Evaluator<'_> {
             );
         }
         self.depth += 1;
+        let site = self.site.take();
         let stack = self.stack;
         #[cfg(test)]
         let fuel = self.store.copied.1;
@@ -967,6 +969,7 @@ impl Evaluator<'_> {
             .nest(self.depth, self, act)
             .unwrap_or_else(|e| Err(Stop::Stack(e)));
         self.depth -= 1;
+        self.site = site;
         r
     }
 
@@ -1110,6 +1113,7 @@ impl Evaluator<'_> {
             Expr::Binary { pos, op, lhs, rhs } => {
                 let a = self.operand(*pos, lhs)?;
                 let (a, b) = self.operand_after(*pos, a, rhs)?;
+                self.comparable(*pos, *op, &a, &b)?;
                 match (a, b) {
                     (Opnd::Static(a), Opnd::Static(b)) => Ok(Some(Out::Made(Val::Static(
                         self.binary(*pos, *op, &a, &b)?,
@@ -1155,7 +1159,10 @@ impl Evaluator<'_> {
                 let t = self.array_type(*pos, elem, len)?;
                 Ok(Some(Out::Made(Val::Static(Value::Type(t)))))
             }
-            Expr::FnType { pos, .. } => fail(Code::S004, *pos, FN_TYPE_LATER.to_owned()),
+            Expr::FnType { pos, params, ret } => {
+                let t = self.fn_type(*pos, params, ret)?;
+                Ok(Some(Out::Made(Val::Static(Value::Type(t)))))
+            }
         }
     }
 
@@ -1255,6 +1262,24 @@ impl Evaluator<'_> {
         }
     }
 
+    /// `==` and `!=` take no operand whose type holds a function type (section 5.1), else
+    /// `S010` at the operator. The check reads the function flag of the type, after both
+    /// operands and before each join and each charge.
+    fn comparable(&self, pos: Pos, op: BinOp, a: &Opnd, b: &Opnd) -> Res<()> {
+        let holds = |o: &Opnd| match o {
+            Opnd::Static(o) => self.store.value(o).holds_fn(),
+            Opnd::Hw(_) => false,
+        };
+        if matches!(op, BinOp::Eq | BinOp::Ne) && (holds(a) || holds(b)) {
+            return fail(
+                Code::S010,
+                pos,
+                format!("`{}` takes no function", ops::binop_text(op)),
+            );
+        }
+        Ok(())
+    }
+
     /// A binary operator with static operands. A static integer next to a finite operand
     /// takes the type of that operand first. A container operand compares by the common type
     /// of each pair of elements.
@@ -1300,11 +1325,16 @@ impl Evaluator<'_> {
                     let t = self.spec(pos, i, &[])?;
                     Ok(Out::Named(Val::Static(Value::Type(t))))
                 }
-                Kind::Fn | Kind::Module => fail(
+                Kind::Fn if self.file.decl(id).generic => fail(
                     Code::S010,
                     pos,
-                    format!("`{x}` is a function; slice 1 has no function values"),
+                    format!("`{x}` is generic; a generic function is not a value"),
                 ),
+                Kind::Fn => match self.items.get(&id) {
+                    Some(&i) => self.fn_value(pos, i),
+                    None => fail(Code::S010, pos, format!("`{x}` is not an item")),
+                },
+                Kind::Module => fail(Code::S010, pos, format!("`{x}` is not a value")),
                 Kind::Domain => Ok(Out::Named(Val::Handle(Handle::Domain))),
                 _ => {
                     let k = self.store.frames.len().saturating_sub(1);
@@ -1320,11 +1350,12 @@ impl Evaluator<'_> {
                     }
                 }
             },
-            _ => fail(
+            Some(Target::Prelude(_)) => fail(
                 Code::S010,
                 pos,
-                format!("`{x}` is a function; slice 1 has no function values"),
+                format!("`{x}` is a builtin; a builtin is not a value"),
             ),
+            None => fail(Code::S010, pos, format!("`{x}` is not a value")),
         }
     }
 

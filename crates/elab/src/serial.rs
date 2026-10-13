@@ -8,7 +8,7 @@
 //! types.
 
 use crate::int::Int;
-use crate::types::{FnParam, Ty, TyId, Types};
+use crate::types::{Ty, TyId, TyParam, Types};
 use crate::value::Value;
 use std::fmt::Write;
 
@@ -69,7 +69,7 @@ pub(crate) enum Item<'a> {
     /// The node of a type, with its parts as pieces. The table makes a new entry from it.
     Node(&'a Ty),
     /// A parameter type of a function type: `(mut <type>)` with the mark, else the type.
-    Param(FnParam),
+    Param(TyParam),
     Text(&'static str),
     Name(&'a str),
     Int(&'a Int),
@@ -105,7 +105,7 @@ pub(crate) fn write<S: Sink>(tys: &Types, first: Item<'_>, out: &mut S) {
             }
             Item::Param(p) => work.push(Item::Ty(p.ty)),
             Item::Node(ty) => type_node(tys, ty, out, &mut work),
-            Item::Value(v) => value_node(v, out, &mut work),
+            Item::Value(v) => value_node(tys, v, out, &mut work),
         }
     }
 }
@@ -157,7 +157,7 @@ fn type_node<'a, S: Sink>(tys: &'a Types, ty: &'a Ty, out: &mut S, work: &mut Ve
 }
 
 /// The node of a value. Its parts wait on the stack.
-fn value_node<'a, S: Sink>(v: &'a Value, out: &mut S, work: &mut Vec<Item<'a>>) {
+fn value_node<'a, S: Sink>(tys: &Types, v: &'a Value, out: &mut S, work: &mut Vec<Item<'a>>) {
     match v {
         Value::Int(n) => write!(out, "(int {n})").unwrap_or_default(),
         Value::Bool(b) => write!(out, "(bool {b})").unwrap_or_default(),
@@ -186,8 +186,8 @@ fn value_node<'a, S: Sink>(v: &'a Value, out: &mut S, work: &mut Vec<Item<'a>>) 
         Value::Record(t, xs) => container(out, work, "(record ", Some(*t), xs),
         Value::List(t, xs) => container(out, work, "(list ", Some(*t), xs),
         Value::Tuple(xs) => container(out, work, "(tuple ", None, xs),
-        Value::Function(_, name, _) => {
-            write!(out, "(function root {name})").unwrap_or_default();
+        Value::Function(item, _) => {
+            write!(out, "(function root {})", tys.fn_name(*item)).unwrap_or_default();
         }
     }
 }

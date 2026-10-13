@@ -450,7 +450,10 @@ fn the_cases_of_lean() {
     assert_eq!(out(PROGRAM, "bad(1)", 100_000_000, 1000), "S010 19:5");
     assert_eq!(out(PROGRAM, "none(0)", 100_000_000, 1000), "(int 0)");
     assert_eq!(out(PROGRAM, "none(1)", 100_000_000, 1000), "S010 1:1");
-    assert_eq!(out(PROGRAM, "fact", 100_000_000, 1000), "S010 1:1");
+    assert_eq!(
+        out(PROGRAM, "fact", 100_000_000, 1000),
+        "(function root fact)"
+    );
     assert_eq!(out(PROGRAM, "resize", 100_000_000, 1000), "S010 1:1");
     assert_eq!(
         out(

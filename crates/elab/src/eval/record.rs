@@ -26,6 +26,16 @@ impl Evaluator<'_> {
             );
         };
         let ty = *ty;
+        if matches!(self.tys.get(ty), Ty::Fn(..)) {
+            return fail(
+                Code::S010,
+                pos,
+                format!(
+                    "a constructor needs a hardware data type, not {}",
+                    self.tys.text(ty)
+                ),
+            );
+        }
         let value = match xs {
             [] => self.zero(pos, ty)?,
             _ if matches!(self.tys.get(ty), Ty::Struct(_)) => self.record(pos, ty, xs)?,

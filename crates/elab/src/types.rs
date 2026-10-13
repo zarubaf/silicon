@@ -38,12 +38,12 @@ pub enum Ty {
     /// `List[T]`, a static type only. Its length is a value, not a part of the type.
     List(TyId),
     /// `fn (T, mut U) -> V`, a static type only. It keeps the `mut` mark of each parameter.
-    Fn(Vec<FnParam>, TyId),
+    Fn(Vec<TyParam>, TyId),
 }
 
 /// A parameter type of a function type, with its `mut` mark.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct FnParam {
+pub struct TyParam {
     pub mutable: bool,
     pub ty: TyId,
 }
@@ -317,6 +317,9 @@ pub struct Types {
     /// The join of each pair of types that joined: its charge and its common type, if any.
     joins: BTreeMap<(TyId, TyId), Joined>,
     specs: Vec<Spec>,
+    /// The name of each function item that a function value names, by its item. A value holds
+    /// the item, so a copy of it copies no name.
+    fn_names: BTreeMap<usize, String>,
     /// The specializations by the fingerprint of their item and arguments.
     spec_index: BTreeMap<u64, Vec<SpecId>>,
     /// The work of the lookups: 1 for each type and 1 for each part of a container type. The
@@ -464,7 +467,7 @@ impl Types {
     /// The recursive size and the depth of a function type, before the type exists: 1 node,
     /// the parts, and 1 node for each `mut` mark. A mark adds no depth.
     #[must_use]
-    pub fn fn_shape(params: &[FnParam], ret: TyId) -> (u64, u64) {
+    pub fn fn_shape(params: &[TyParam], ret: TyId) -> (u64, u64) {
         let size = params.iter().fold(1u64.saturating_add(ret.size), |sum, p| {
             sum.saturating_add(p.ty.size)
                 .saturating_add(u64::from(p.mutable))
@@ -528,7 +531,7 @@ impl Types {
     }
 
     #[must_use]
-    pub fn function(&mut self, params: Vec<FnParam>, ret: TyId) -> TyId {
+    pub fn function(&mut self, params: Vec<TyParam>, ret: TyId) -> TyId {
         self.mk(Ty::Fn(params, ret))
     }
 
@@ -663,6 +666,17 @@ impl Types {
         let mut out = Text::default();
         out.ty_node(self, ty);
         out.finish(self)
+    }
+
+    /// Keeps the name of the function item `item`, once.
+    pub fn name_fn(&mut self, item: usize, name: &str) {
+        self.fn_names.entry(item).or_insert_with(|| name.to_owned());
+    }
+
+    /// The name of the function item `item`.
+    #[must_use]
+    pub fn fn_name(&self, item: usize) -> &str {
+        self.fn_names.get(&item).map_or("", String::as_str)
     }
 
     /// The specialization `s`.
