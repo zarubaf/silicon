@@ -1146,7 +1146,8 @@ mutual
               return some ⟨r, !(r matches .static _), none⟩
           | none => fail .S010 p s!"the instance has no port `{f.name}`"
         | v => do
-          let w ← if v matches .handle (.res ..) then data p v else pure v
+          -- A data field selection is a data context (section 9.2), so an input handle is S017.
+          let w ← if v matches .handle (.res ..) | .handle (.input ..) then data p v else pure v
           return some (part o w (← field p f w))
       | .unit p => do charge p Value.unit.size; return some ⟨.static .unit, false, none⟩
       | .tuple p xs => do
