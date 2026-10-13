@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The function cases of `Silicon.Source.Test.Value`, `Test.Eval`, and `Test.Elab` in Lean:
 //! the function types and function values of the value model, the function type as a type
-//! expression, the function name as a value, `==`, the join, and the hardware `if`. A call
-//! through a function value is not here. The tests of the work count the steps of the walks
-//! and not the time.
+//! expression, the function name as a value, `==`, the join, and the hardware `if`. The calls
+//! through function values are in `tests_fn_call`. The tests of the work count the steps of the
+//! walks and not the time.
 
 use crate::counters::of;
 use crate::eval::COPIES;
@@ -438,8 +438,7 @@ fn function_values_in_containers() {
 }
 
 /// `==` and `!=` are `S010` at the operator after both operands, before the charge: here the
-/// operator charges 1 and each `g` charges 4. A call through a function value is not supported
-/// yet: `S010` at the call, as a constructor.
+/// operator charges 1 and each `g` charges 4.
 #[test]
 fn equality_of_function_values() {
     assert_eq!(with(FNS, "g == g", 9), "S010 1:1");
@@ -447,7 +446,7 @@ fn equality_of_function_values() {
     assert_eq!(o(FNS, "[g] != [g]"), "S010 1:1");
     assert_eq!(o(FNS, "(1, g) == (1, g)"), "S010 1:1");
     let fl = format!("{FNS}fn f() -> Bool {{ let x = g; return x(); }}");
-    assert_eq!(o(&fl, "f()"), "S010 9:36");
+    assert_eq!(o(&fl, "f()"), "(bool true)");
 }
 
 fn arms(body: &str) -> String {
