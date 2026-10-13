@@ -473,3 +473,46 @@ fn an_index_with_a_call_along_stored_nodes_takes_linear_steps() {
     };
     assert_linear(at, |r| r.counts.stepped, 16, 16);
 }
+
+/// An index that changes a sibling of a chain of `n` stored nodes takes steps in `n`. The change
+/// alters the root, and the read at the end of the chain decides if it holds the root. A part
+/// with a hardware leaf is no static part, so that decision walks no path, and the change pays
+/// its own width only. The kinds: `push` and `pop` of a sibling list, a call that changes a
+/// static sibling in place or by a new value, and a call that rebinds a hardware sibling, in the
+/// root or in the chain. The calls are constant work, so the fuel grows in `n` too.
+#[test]
+fn an_index_that_changes_a_sibling_takes_linear_steps() {
+    let fns = "fn zero(mut ys: [Int; 2]) -> Int { ys[0] = 7; return 0; }\n\
+fn bump(mut a: UInt[8]) -> Int { a = a +% 1; return 0; }\n\
+fn repl(mut ys: [Int; 2]) -> Int { ys = [3, 4]; return 0; }\n";
+    let kinds = [
+        "(push(m.1, 0), 0).1",
+        "(push(m.1, 0), pop(m.1), 0).2",
+        "zero(m.2)",
+        "repl(m.2)",
+        "bump(m.3)",
+        "(bump(m.0.b), 0).1",
+    ];
+    for (family, index) in (27..).zip(kinds) {
+        let at = |n: u64, k: u64| {
+            let place = rep(".a[0]", n + 1);
+            let read = rep(&format!(".a[{index}]"), n + 1);
+            run_ok(
+                &format!(
+                    "{fns}{}",
+                    chain_decls(
+                        n,
+                        "struct S{i} { a: [S{}; 1], b: UInt[8], }\n",
+                        "struct S{i} { a: [UInt[8]; 1], b: UInt[8], }\n",
+                    )
+                ),
+                "(S0, UInt[8])",
+                &format!(
+                    "let mut m = (x.0, list(Int), [1, 2], x.1);\n  m.0{place} = 7;\n  let y = m.0{read};"
+                ),
+                key(family, k),
+            )
+        };
+        assert_linear(at, |r| r.counts.stepped, 16, 16);
+    }
+}
