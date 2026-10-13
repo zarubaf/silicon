@@ -3,6 +3,7 @@
 //! function value with its charges, its number of arguments, its callee rule, its `mut` actuals,
 //! and the wait of its callee, then the windows of the `mut` actuals at run time (`S008`).
 
+use crate::counters::of;
 use crate::tests::{cost, out};
 use crate::tests_elab::{cost as elab_cost, names, total};
 use crate::{Budget, eval};
@@ -299,4 +300,88 @@ fn pass_four_and_pass_five_agree() {
         assert_eq!(o(&windows(body), "f()"), want, "{body}");
         assert_eq!(late(&windows(body)), want, "{body} late");
     }
+}
+
+/// The windows that a run opened and closed, for a fuel that no other test uses.
+fn windows_of(src: &str, fuel: u64) -> u64 {
+    let _ = with(src, "f()", fuel);
+    of(fuel).windows
+}
+
+/// A call through one value, `n` times, opens and closes the window of its `mut` actual, and
+/// the fuel grows by a fixed step for each call: the lookup of the item by the value has no
+/// charge and no walk.
+#[test]
+fn many_calls_through_one_value_grow_linearly() {
+    let src = |n: usize| {
+        let calls = "f(a); ".repeat(n);
+        call_in(&format!("let f = inc; let mut a = 1; {calls}return a;"))
+    };
+    let counts: Vec<u64> = [0, 10, 20, 40]
+        .iter()
+        .zip(7_000_001u64..)
+        .map(|(&n, fuel)| windows_of(&src(n), fuel))
+        .collect();
+    // The window of the actual and the window of the assignment in the callee.
+    assert_eq!(counts, [0, 40, 80, 160]);
+    let used: Vec<u64> = [0, 10, 20, 40]
+        .iter()
+        .map(|&n| cost(&src(n), "f()"))
+        .collect();
+    assert_eq!(used[2] - used[1], used[1] - used[0]);
+    assert_eq!(used[3] - used[2], 2 * (used[2] - used[1]));
+}
+
+/// A call with `k` `mut` actuals on `k` distinct roots opens `k` windows and closes them after
+/// the last argument, so the work is `2k` for the call and the fuel grows by a fixed step for
+/// each actual.
+#[test]
+fn many_mut_actuals_on_distinct_roots_grow_linearly() {
+    let src = |k: usize| {
+        let params: Vec<String> = (0..k).map(|i| format!("mut p{i}: Int")).collect();
+        let locals = (0..k)
+            .map(|i| format!("let mut x{i} = {i};"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let args: Vec<String> = (0..k).map(|i| format!("x{i}")).collect();
+        format!(
+            "fn many({}) -> Int {{ return 0; }}\nfn f() -> Int {{ let v = many; {locals}\
+             return v({}); }}",
+            params.join(", "),
+            args.join(", ")
+        )
+    };
+    let counts: Vec<u64> = [10, 20, 40]
+        .iter()
+        .zip(7_100_001u64..)
+        .map(|(&k, fuel)| windows_of(&src(k), fuel))
+        .collect();
+    assert_eq!(counts, [20, 40, 80]);
+    let used: Vec<u64> = [10, 20, 40].iter().map(|&k| cost(&src(k), "f()")).collect();
+    assert_eq!(used[2] - used[1], 2 * (used[1] - used[0]));
+}
+
+/// A call through a value in a frame while a window of that frame is open: the windows follow
+/// the frames and do not copy. Each of the `n + 1` frames of a recursion through a value opens
+/// one window of its own `x` while the next frame runs, so a root of a frame does not conflict
+/// with the same local of another frame, and the work is `2 (n + 1)` and not more.
+#[test]
+fn nested_calls_through_values_keep_one_window_for_each_frame() {
+    let src = "fn tk(mut a: Int, b: Nat) -> Nat { return b; }\n\
+        fn r(n: Nat) -> Nat {\n  let mut x = 0;\n  let f = r;\n  let t = tk;\n  \
+        return t(x, if (n == 0) { 0 } else { f(n - 1) });\n}";
+    let counts: Vec<u64> = [10u64, 20, 40]
+        .iter()
+        .zip(7_200_001u64..)
+        .map(|(&n, fuel)| {
+            let _ = with(src, &format!("r({n})"), fuel);
+            of(fuel).windows
+        })
+        .collect();
+    assert_eq!(counts, [22, 42, 82]);
+    let used: Vec<u64> = [10, 20, 40]
+        .iter()
+        .map(|n| cost(src, &format!("r({n})")))
+        .collect();
+    assert_eq!(used[2] - used[1], 2 * (used[1] - used[0]));
 }
