@@ -259,3 +259,6 @@ mod tests_types;
 
 #[cfg(test)]
 mod tests_vectors;
+
+#[cfg(test)]
+mod tests_work;
