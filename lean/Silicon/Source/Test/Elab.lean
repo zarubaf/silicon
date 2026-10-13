@@ -522,4 +522,108 @@ def fnArms (body : String) : String :=
 #guard cost (fnArms "  let f: fn () -> Bool = if (c) { g } else { g };\n") "T" |>.startsWith
   "total"
 
+/-!
+A function value is a module argument (section 7.1). It serializes as `(function root inc)`, so
+it gives the digest form of the emitted name. A constant and a name of one function give one
+instantiation. A function type, an array of functions, and `[]` at an array of functions are
+arguments too. The child calls the function through its parameter.
+-/
+def fnItems : String :=
+  "fn inc(a: UInt[8]) -> UInt[8] { return a +% 1; }\n" ++
+  "fn dec(a: UInt[8]) -> UInt[8] { return a -% 1; }\n" ++
+  "fn bump(mut a: UInt[8]) -> UInt[8] { return a; }\n" ++
+  "fn gen(comptime W: Nat, a: UInt[W]) -> UInt[W] { return a; }\n"
+def fnTy : String := "fn (UInt[8]) -> UInt[8]"
+def fnArg (ty arg : String) : String :=
+  fnItems ++ s!"module C(comptime f: {ty}) \{\n}\nmodule M() \{\n  instance c = C({arg});\n}\n"
+def fnDigest (arg : String) : String :=
+  "C$0h" ++ Names.sha16 s!"(instantiation root C ({arg}))"
+#guard order (fnArg fnTy "inc") "M" == [fnDigest "(function root inc)", "M"]
+#guard order (fnArg fnTy "dec") "M" == [fnDigest "(function root dec)", "M"]
+#guard order (fnArg "Type" "fn (mut UInt[8]) -> Bool") "M" ==
+  [fnDigest "(type (fn ((mut (uint 8))) bool))", "M"]
+#guard order (fnArg s!"[{fnTy}; 1]" "[inc]") "M" ==
+  [fnDigest "(array (fn ((uint 8)) (uint 8)) ((function root inc)))", "M"]
+#guard order (fnArg s!"[{fnTy}; 0]" "[]") "M" ==
+  [fnDigest "(array (fn ((uint 8)) (uint 8)) ())", "M"]
+#guard order (s!"const F: {fnTy} = inc;\n" ++ fnItems ++
+  s!"module C(comptime f: {fnTy}) \{\n}\nmodule M() \{\n  instance c = C(F);\n" ++
+  "  instance d = C(inc);\n}\n") "M" == [fnDigest "(function root inc)", "M"]
+#guard (cost (fnItems ++ s!"module C(comptime f: {fnTy}) \{\n" ++
+  "  input x: UInt[8];\n  output y: UInt[8];\n  y := f(x);\n}\n" ++
+  "module M() {\n  input x: UInt[8];\n  output y: UInt[8];\n  let g = inc;\n" ++
+  "  instance c = C(g);\n  c.x := x;\n  y := c.y;\n}\n") "M").startsWith "total"
+
+/-!
+The parent pays for a function argument as for each argument. The units of `M` with `C(inc)`
+are those with `C(3)` at an `Int` parameter, plus 61. The name `inc` charges 16 units more than
+the literal `3` (`Test.Eval`). Each argument has the size 1. The walk that measures the
+serialization charges 1 for the integer and nothing for the function. The serialization has
+44 bytes instead of 32. The emitted name has 20 bytes instead of 3, and both the statement and
+the lowering of the child charge it.
+-/
+def units (src t m : String) : Nat :=
+  match (cost src t).splitOn "\n" |>.find? (·.startsWith s!"{m} ") with
+  | some line => (line.drop (m.length + 1)).toString.toNat!
+  | none => 0
+#guard units (fnArg fnTy "inc") "M" "M" ==
+  units (fnArg "Int" "3") "M" "M" + 16 + (44 - 32) + 2 * (20 - 3) - 1
+#guard exact (fnArg fnTy "inc") "M" (total (fnArg fnTy "inc") "M")
+
+/-!
+A typed use at a module parameter needs the exact function type: another `mut` mark, another
+function type, and another value are `S010` at the statement. A generic function and a builtin
+are `S010` at the name, before the statement.
+-/
+#guard cost (fnArg fnTy "bump") "M" == "S010 8:3"
+#guard cost (fnArg "fn (UInt[8]) -> Bool" "inc") "M" == "S010 8:3"
+#guard cost (fnArg fnTy "3") "M" == "S010 8:3"
+#guard cost (fnArg "UInt[8]" "inc") "M" == "S010 8:3"
+#guard cost (fnArg fnTy "gen") "M" == "S010 8:18"
+#guard cost (fnArg fnTy "len") "M" == "S010 8:18"
+
+/-!
+A top selection has only literal arguments (section 8), so a function there is a usage error.
+A literal at a function parameter is `S010` at the top selection.
+-/
+#guard cost (fnItems ++ s!"module C(comptime f: {fnTy}) \{\n}\n") "C(inc)" == "usage"
+#guard cost (fnItems ++ s!"module C(comptime f: {fnTy}) \{\n}\n") "C(3)" == "S010 1:1"
+
+/-!
+A function value is a struct argument and a field of a record. The struct type serializes its
+arguments, so the key of the specialization and the `InstantiationId` hold the function. Another
+function gives another struct type: `S010` at the statement. A function with another type at
+the struct parameter is `S010` at the specialization.
+-/
+def fnStruct (field arg : String) : String :=
+  fnItems ++ s!"struct S(comptime f: {fnTy}) \{ a: UInt[8] }\nstruct R \{ f: {fnTy} }\n" ++
+  s!"module C(comptime s: {field}) \{\n}\nmodule M() \{\n  instance c = C({arg});\n}\n"
+#guard order (fnStruct "S[inc]" "S[inc](1)") "M" ==
+  [fnDigest "(record (struct root S ((function root inc))) ((uint 8 1)))", "M"]
+#guard order (fnStruct "R" "R(inc)") "M" ==
+  [fnDigest "(record (struct root R ()) ((function root inc)))", "M"]
+#guard cost (fnStruct "S[inc]" "S[dec](1)") "M" == "S010 10:3"
+#guard cost (fnStruct "S[inc]" "S[bump](1)") "M" == "S010 10:18"
+#guard cost (fnStruct "R" "R(bump)") "M" == "S010 10:18"
+#guard (cost (fnItems ++ s!"struct R \{ f: {fnTy} }\nmodule M() \{\n  input x: UInt[8];\n" ++
+  "  output y: UInt[8];\n  let r = R(inc);\n  y := (r.f)(x);\n}\n") "M").startsWith "total"
+
+/-!
+A function type is not hardware data. A port, a register, and a wire of a function type, also
+in an array, are `S010` at the statement. A function value at a hardware use is `S010` at the
+statement: a `:=` value and a register value, also from a hardware `if` with one function.
+No function value thus reaches the lowering.
+-/
+def fnHw (body : String) : String :=
+  fnItems ++ "module M() domains(clk) {\n  input c: Bool;\n" ++ body ++ "}\n"
+#guard cost (fnHw s!"  input x: {fnTy};\n") "M" == "S010 7:3"
+#guard cost (fnHw s!"  output x: {fnTy};\n") "M" == "S010 7:3"
+#guard cost (fnHw s!"  wire x: {fnTy};\n") "M" == "S010 7:3"
+#guard cost (fnHw s!"  reg x: {fnTy} = inc;\n") "M" == "S010 7:3"
+#guard cost (fnHw s!"  input x: [{fnTy}; 0];\n") "M" == "S010 7:3"
+#guard cost (fnHw "  reg r: UInt[8] = inc;\n  r := r;\n") "M" == "S010 7:3"
+#guard cost (fnHw "  output y: UInt[8];\n  y := inc;\n") "M" == "S010 8:3"
+#guard cost (fnHw "  output y: UInt[8];\n  y := if (c) { inc } else { inc };\n") "M" ==
+  "S010 8:3"
+
 end Silicon.Source.Test.Elab
