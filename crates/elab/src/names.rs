@@ -278,6 +278,22 @@ pub(crate) enum Step {
     Call(u64),
     Version(u64),
     Role(Role),
+    /// An array or tuple element `<k>e`.
+    Elem(u64),
+}
+
+impl Step {
+    /// The field of a name that the step makes, with the text of each symbol from `texts`.
+    pub(crate) fn field(&self, texts: &[String]) -> Field {
+        match self {
+            Step::User(s) => Field::User(texts.get(*s).cloned().unwrap_or_default()),
+            Step::Int(n) => Field::Int(n.clone()),
+            Step::Call(k) => Field::Call(*k),
+            Step::Version(k) => Field::Version(*k),
+            Step::Role(r) => Field::Role(*r),
+            Step::Elem(k) => Field::Elem(Int::from_u64(*k)),
+        }
+    }
 }
 
 /// A structural path: an index into the paths of an elaboration.
@@ -323,13 +339,7 @@ impl Paths {
         loop {
             match self.nodes.get(at.0) {
                 Some(PathNode::Push(parent, step)) => {
-                    rest.push(match step {
-                        Step::User(s) => Field::User(text(*s)),
-                        Step::Int(n) => Field::Int(n.clone()),
-                        Step::Call(k) => Field::Call(*k),
-                        Step::Version(k) => Field::Version(*k),
-                        Step::Role(r) => Field::Role(*r),
-                    });
+                    rest.push(step.field(texts));
                     at = *parent;
                 }
                 Some(PathNode::Outer(s)) => {

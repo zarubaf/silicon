@@ -415,6 +415,18 @@ impl Evaluator<'_> {
         let mut base = base;
         let mut rest = keyed;
         loop {
+            // The steps on an aggregate each give a part in constant work, so they take no walk
+            // along a path. A part that is not an aggregate ends them.
+            while let Some(key) = rest.first()
+                && matches!(self.opnd_seen(&base), Seen::Agg(_))
+            {
+                let out = self.agg_key(base.into_out(), key)?;
+                rest = rest.get(1..).unwrap_or_default();
+                if rest.is_empty() {
+                    return Ok((out, false));
+                }
+                base = Opnd::of_out(out);
+            }
             let mut cur = self.opnd_seen(&base);
             let mut numbers = Vec::with_capacity(rest.len());
             let mut string_step = None;
@@ -457,6 +469,15 @@ impl Evaluator<'_> {
         }
     }
 
+    /// The step `key` on the aggregate `b`.
+    fn agg_key(&mut self, b: Out, key: &Key<'_>) -> Res<Out> {
+        match key {
+            Key::Index(q, xp, i) => self.agg_index(*q, *xp, b, i),
+            Key::Select(q, r, index) => self.agg_select(*q, *r, index, b),
+            Key::Field(q, f) => self.agg_field(*q, f, b),
+        }
+    }
+
     /// `len` of an array, a list, or a string at the call `pos`. It refers to an array or a
     /// list, so it charges no size. A string needs a scan, so it charges its size first.
     pub(super) fn len(&mut self, pos: Pos, mut vs: Vec<Out>) -> Res<Option<Out>> {
@@ -468,6 +489,9 @@ impl Evaluator<'_> {
             );
         };
         let n = match self.data(pos, v)? {
+            Opnd::Static(o) if matches!(self.store.seen(&o), Seen::Agg(_)) => {
+                return self.agg_len(pos, o);
+            }
             Opnd::Static(o) => match self.store.value(&o) {
                 Value::Array(_, xs) | Value::List(_, xs) => xs.len() as u64,
                 Value::Str(_) => {

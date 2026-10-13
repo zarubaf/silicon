@@ -33,6 +33,7 @@ mod types;
 pub use inst::Design;
 pub(crate) use inst::{Bind, Elab, Inst, Literal, PortDecl, Sink, elaborate};
 
+use crate::agg::{Agg, Base};
 use crate::hw::{Graph, Handle, HwId, Op, Part, Ref, Root, Seen, Val, port_name};
 use crate::int::Int;
 use crate::names::{Name, PathId, Paths, Step, Sym};
@@ -873,25 +874,28 @@ impl Evaluator<'_> {
     }
 
     /// The data of a result at a use that reads it. A register, a wire, and an own output
-    /// give a reference to their name: the implicit read. A child input is never read
+    /// give a reference to their name in its normal form: the implicit read. Thus a scalar is
+    /// hardware, and an aggregate is a lazy reference with no charge. A child input is never read
     /// (`S017`). An instance and a domain are not data.
     fn data(&mut self, pos: Pos, out: Out) -> Res<Opnd> {
         match self.store.seen(&out) {
-            Seen::Static(_) => Ok(Opnd::Static(out)),
+            Seen::Static(_) | Seen::Agg(_) => Ok(Opnd::Static(out)),
             Seen::Hw(h) => Ok(Opnd::Hw(h)),
             Seen::Pending(q, _) => no_type(q),
             Seen::Handle(Handle::Res { ty, path, .. }) => {
                 let (ty, path) = (ty.clone(), *path);
-                Ok(Opnd::Hw(self.graph.mk(pos, ty, Op::Ref(path), Vec::new())))
+                let t = self.tys.mk(ty);
+                match self.normalize(pos, Agg::Ref(Base::Name(path), t))? {
+                    Val::Hw(h) => Ok(Opnd::Hw(h)),
+                    v => Ok(Opnd::Static(Out::Made(v))),
+                }
             }
             Seen::Handle(Handle::Input { .. }) => fail(
                 Code::S017,
                 pos,
                 "an input of a child is a target; it is never read".to_owned(),
             ),
-            s @ (Seen::Handle(_) | Seen::Agg(_)) => {
-                fail(Code::S010, pos, format!("{} is not data", self.text(s)))
-            }
+            s @ Seen::Handle(_) => fail(Code::S010, pos, format!("{} is not data", self.text(s))),
         }
     }
 
@@ -1267,6 +1271,20 @@ impl Evaluator<'_> {
     /// A field of a record, or a port of an instance: a child input is a target, and a child
     /// output is hardware.
     fn field(&mut self, pos: Pos, b: Out, field: &Ident) -> Res<Out> {
+        let b = match self.store.seen(&b) {
+            Seen::Handle(Handle::Inst { .. }) => return self.port_of(pos, b, field),
+            Seen::Handle(Handle::Res { .. }) => self.data(pos, b)?.into_out(),
+            _ => b,
+        };
+        if matches!(self.store.seen(&b), Seen::Agg(_)) {
+            return self.agg_field(pos, field, b);
+        }
+        self.record_field(pos, b, field)
+    }
+
+    /// A port of an instance: a child input is a target, and a child output refers to its
+    /// name. An output without a hardware leaf is a new static value.
+    fn port_of(&mut self, pos: Pos, b: Out, field: &Ident) -> Res<Out> {
         let Seen::Handle(Handle::Inst { id, path, inst }) = self.store.seen(&b) else {
             return self.record_field(pos, b, field);
         };
@@ -1284,8 +1302,13 @@ impl Evaluator<'_> {
             }))),
             Some(q) => {
                 let name = self.port_core_name(q.sym);
-                let h = self.graph.mk(pos, q.ty, Op::Out(path, name), Vec::new());
-                Ok(Out::Named(Val::Hw(h)))
+                let t = self.tys.mk(q.ty);
+                let v = self.normalize(pos, Agg::Ref(Base::Out(path, name), t))?;
+                Ok(if matches!(v, Val::Static(_)) {
+                    Out::Made(v)
+                } else {
+                    Out::Named(v)
+                })
             }
             None => fail(
                 Code::S010,

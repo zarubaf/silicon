@@ -12,7 +12,7 @@
 #![allow(dead_code)]
 
 use crate::hw::{Graph, HwId, Op};
-use crate::names::{Name, PathId};
+use crate::names::{Name, PathId, Paths, Step};
 use crate::types::{Ty, TyId, Types};
 use crate::value::Value;
 
@@ -29,6 +29,20 @@ impl Base {
         match self {
             Base::Name(p) => Op::Ref(*p),
             Base::Out(i, q) => Op::Out(*i, q.clone()),
+        }
+    }
+
+    /// The part of the base with the leaf field `step` (section 7.3): a user field `f`, or an
+    /// element `<k>e`. A name adds the step to its path in constant work. A child output
+    /// appends the field to its port name, in the number of the steps so far.
+    pub(crate) fn sub(&self, paths: &mut Paths, texts: &[String], step: Step) -> Base {
+        match self {
+            Base::Name(p) => Base::Name(paths.push(*p, step)),
+            Base::Out(i, q) => {
+                let mut q = q.clone();
+                q.rest.push(step.field(texts));
+                Base::Out(*i, q)
+            }
         }
     }
 }
