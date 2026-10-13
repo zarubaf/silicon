@@ -398,8 +398,9 @@ fn share(graph: &mut Graph, naming: &mut Naming, cond: HwId, muxes: u64) -> HwId
 /// A static pair of a hardware `if` (section 7.4) of the joined type `t`. It charges the sum of
 /// the two sizes, as a static equality does, before it compares. Identical sides give the value,
 /// so a function compares by its item. Other sides compare by the static equality of `==`, and
-/// equal sides give the side of the joined type. Different sides are `S011`, because a static
-/// part cannot depend on the hardware condition.
+/// equal sides give the first side of the joined type. Different sides are `S011`, because a
+/// static part cannot depend on the hardware condition. Equal sides without the joined type are
+/// also `S011`, because the pair makes no value conversion.
 fn if_static(
     pos: Pos,
     t: TyId,
@@ -429,11 +430,13 @@ fn if_static(
         return differ();
     }
     if ops::same_pair(x, y, tys, fuel.left()).map_err(at(pos))? {
-        return Ok(if x.ty(tys) == t {
-            (*x).clone()
-        } else {
-            (*y).clone()
-        });
+        // The type walks enter only tuples, so the charge of the two sizes covers them.
+        if x.ty(tys) == t {
+            return Ok((*x).clone());
+        }
+        if y.ty(tys) == t {
+            return Ok((*y).clone());
+        }
     }
     differ()
 }
