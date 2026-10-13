@@ -164,20 +164,25 @@ impl Evaluator<'_> {
         else {
             return fail(Code::S010, pos, "the name is not a value".to_owned());
         };
-        let saved = self.site.replace(pos);
-        let signature = self.in_frame(None, |ev| {
-            ev.in_item(i, ROOT, |ev| {
-                let mut parts = Vec::with_capacity(params.len());
-                for q in params {
-                    parts.push(TyParam {
-                        mutable: q.mode == ParamMode::Mut,
-                        ty: ev.type_expr(&q.ty)?,
-                    });
-                }
-                Ok((parts, ev.type_expr(ret)?))
-            })
+        // A signature can name its own function in a call, so the evaluation takes a nesting
+        // level, which bounds the recursion and keeps it on the stack of its group.
+        let signature = self.nested(pos, |ev| {
+            let saved = ev.site.replace(pos);
+            let signature = ev.in_frame(None, |ev| {
+                ev.in_item(i, ROOT, |ev| {
+                    let mut parts = Vec::with_capacity(params.len());
+                    for q in params {
+                        parts.push(TyParam {
+                            mutable: q.mode == ParamMode::Mut,
+                            ty: ev.type_expr(&q.ty)?,
+                        });
+                    }
+                    Ok((parts, ev.type_expr(ret)?))
+                })
+            });
+            ev.site = saved;
+            signature
         });
-        self.site = saved;
         let (parts, ret) = signature?;
         let sig = self.fn_ty(pos, parts, ret)?;
         self.tys.name_fn(i, &name.name);
