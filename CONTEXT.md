@@ -234,6 +234,22 @@ A part of a value or of a type, at any depth, that is not a container and not `(
 
 A leaf of a value that is a hardware value. Elaboration lowers each hardware leaf of an aggregate to one core value.
 
+### hardware aggregate
+
+A container with at least one hardware leaf. A container without a hardware leaf is a static value. A list never holds a hardware leaf.
+
+### reference aggregate
+
+A hardware aggregate that refers to a whole port, register, wire, or child output, or to a static part of one. It holds its type. It does not expand into its leaves, so a read, a selection, and a typed use of it take constant work. It has the zero size of its type.
+
+### leaf name
+
+The core name of one leaf of an aggregate binding. It is the name of the binding and its version, then one field for each step to the leaf. A record field is a user field, and an array index or a tuple element is the made field `<k>e`. For example, the field `a` of the port `p` is `p$a`.
+
+### shared condition
+
+The condition of a hardware `if` whose walk makes two or more `mux` nodes. Elaboration marks it once, and the lowering binds it to one temporary that each leaf statement uses. A core name or a constant gets no mark.
+
 ### packing order
 
 The order of the leaves of a hardware data type. Array index 0, tuple element 0, and the first record field come first, recursively. A memory word puts the first leaf in the least significant bits.
