@@ -1,0 +1,24 @@
+// A function name as a value whose signature is a chain of function types: the result type of `f` nests 5 function types around `Bool`, so it is 6 deep, and the function type is 7 deep. The depth check of the signature is at the name. The nesting depth 7 succeeds, and 6 gives `S015`.
+// DEPTH 7
+// TOP M()
+fn f() -> fn () -> fn () -> fn () -> fn () -> fn () -> Bool {
+    return g;
+}
+fn g() -> fn () -> fn () -> fn () -> fn () -> Bool {
+    return h;
+}
+fn h() -> fn () -> fn () -> fn () -> Bool {
+    return k;
+}
+fn k() -> fn () -> fn () -> Bool {
+    return m;
+}
+fn m() -> fn () -> Bool {
+    return n;
+}
+fn n() -> Bool {
+    return true;
+}
+module M() domains() {
+    let v = f;
+}
