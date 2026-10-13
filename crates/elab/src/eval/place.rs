@@ -144,7 +144,7 @@ pub(super) fn elem(b: Opnd, k: usize) -> Out {
 /// The element `k` of an owned container.
 fn take_element(v: &mut Value, k: usize) -> Value {
     match v {
-        Value::Array(_, xs) | Value::Tuple(xs) | Value::Record(_, xs) | Value::List(_, xs) => xs
+        Value::Array(_, xs) | Value::Tuple(_, xs) | Value::Record(_, xs) | Value::List(_, xs) => xs
             .get_mut(k)
             .map_or(Value::Unit, |x| std::mem::replace(x, Value::Unit)),
         _ => Value::Unit,
@@ -183,7 +183,9 @@ impl Evaluator<'_> {
     /// of the index (`S010`), then its range (`S013`).
     pub(super) fn pick_at(&self, pos: Pos, q: Pos, base: Seen<'_>, i: &Index) -> Res<usize> {
         let len = match base {
-            Seen::Static(Value::Array(_, xs) | Value::Tuple(xs) | Value::List(_, xs)) => xs.len(),
+            Seen::Static(Value::Array(_, xs) | Value::Tuple(_, xs) | Value::List(_, xs)) => {
+                xs.len()
+            }
             s => {
                 return fail(
                     Code::S010,
@@ -214,7 +216,7 @@ impl Evaluator<'_> {
     /// from `base`, a result of a selector at `pos`.
     fn select_at(&self, pos: Pos, q: Pos, index: &Nat, base: Seen<'_>) -> Res<usize> {
         let (len, v) = match base {
-            Seen::Static(v @ Value::Tuple(xs)) => (xs.len(), v),
+            Seen::Static(v @ Value::Tuple(_, xs)) => (xs.len(), v),
             s => {
                 return fail(
                     Code::S010,

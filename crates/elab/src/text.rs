@@ -124,7 +124,7 @@ impl<'a> Text<'a> {
                 self.work.push(Piece::Text("]"));
                 self.work.push(Piece::Ty(*elem));
             }
-            Value::Tuple(xs) => {
+            Value::Tuple(_, xs) => {
                 self.out.push('(');
                 self.work
                     .push(Piece::Text(if xs.len() == 1 { ",)" } else { ")" }));
@@ -160,7 +160,7 @@ impl<'a> Text<'a> {
                 self.work.push(Piece::Text("]"));
                 self.push_list(xs, ", ", Piece::Lit);
             }
-            Value::Tuple(xs) => {
+            Value::Tuple(_, xs) => {
                 self.out.push('(');
                 self.work
                     .push(Piece::Text(if xs.len() == 1 { ",)" } else { ")" }));

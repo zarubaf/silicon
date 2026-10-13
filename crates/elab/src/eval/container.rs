@@ -53,7 +53,7 @@ fn tuple_of(env: Env<'_>, fuel: &mut Fuel, pos: Pos, elems: Vec<Cow<'_, Value>>)
     bounded(env.limit, env.site, pos, depth)?;
     let size = 1 + elems.iter().map(|e| u128::from(e.size())).sum::<u128>();
     fuel.pay(size).map_err(at(pos))?;
-    Ok(Value::Tuple(
+    Ok(Value::tuple(
         elems.into_iter().map(Cow::into_owned).collect(),
     ))
 }
