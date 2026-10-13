@@ -293,3 +293,25 @@ fn the_walk_over_leaves_skips_the_empty_parts() {
     assert_eq!(run(710_000_002, &mut tys, tuple), (1, 2));
     assert_eq!(run(710_000_003, &mut tys, nested), (100, 201));
 }
+
+/// A selection of a hardware aggregate normalizes an empty part before the next index
+/// evaluates, so the zero size of `p.1` is paid before `1 + 0` (Lean `Eval.eval` of `.index`).
+/// With 74 units, the size of the empty array (11) is the unit that fails. With 75, it is paid
+/// and the index fails on its first unit.
+#[test]
+fn an_empty_part_is_paid_before_the_next_index() {
+    let src = "module M() domains() { input p: (Bool, [(); 10]); let w = p[1][1 + 0]; }\n";
+    assert_eq!(sil_fuel(src, "M", 64), "S015 1:59");
+    assert_eq!(sil_fuel(src, "M", 74), "S015 1:59");
+    assert_eq!(sil_fuel(src, "M", 75), "S015 1:64");
+}
+
+/// The same order holds for a chain of selections and indices on a tuple with empty subparts.
+#[test]
+fn an_empty_part_in_a_chain_is_paid_before_each_index() {
+    let src =
+        "module M() domains() { input p: (Bool, [[(); 2]; 2]); let w = p.1[1 + 0][1 + 0]; }\n";
+    assert_eq!(sil_fuel(src, "M", 36), "S015 1:41");
+    assert_eq!(sil_fuel(src, "M", 42), "S015 1:50");
+    assert_eq!(sil_fuel(src, "M", 44), "S015 1:40");
+}
