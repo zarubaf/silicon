@@ -1,0 +1,6 @@
+// S015: a port with 2^40 leaves exhausts the fuel in the streamed lowering, one leaf at a time.
+// TOP M()
+module M() domains() {
+    // expected-error S015 @+1
+    input p: [UInt[8]; 1 << 40];
+}

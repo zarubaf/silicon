@@ -1,0 +1,15 @@
+// The cost of `==` and `!=` on pairs with a hardware `Bool` and a static list (section 5.4): `(h,
+// xs) == (h, ys)` joins the two types, then walks the pairs. The list pair is static and folds into
+// `(const 1 0)`. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 142
+// TOP M()
+module M() domains() {
+    input h: Bool;
+    output e: Bool;
+    output n: Bool;
+    let mut xs = list(Unit);
+    let mut ys = list(Unit);
+    ys.push(());
+    e := (h, xs) == (h, ys);
+    n := (h, xs) != (h, ys);
+}

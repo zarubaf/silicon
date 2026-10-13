@@ -1,0 +1,11 @@
+// S015: a typed use of a port with a huge empty field charges the size of its type in one step and never expands it.
+// TOP M()
+struct R {
+    z: [(); 1 << 40],
+    b: Bool,
+}
+module M() domains() {
+    input p: R;
+    // expected-error S015 @+1
+    let q: R = p;
+}

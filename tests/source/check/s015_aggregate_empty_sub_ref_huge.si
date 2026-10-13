@@ -1,0 +1,11 @@
+// S015: a field of a port without hardware leaves, here of the size 2^40, charges its zero size before it becomes a value.
+// TOP M()
+struct R {
+    z: [(); 1 << 40],
+    b: Bool,
+}
+module M() domains() {
+    input p: R;
+    // expected-error S015 @+1
+    let w = p.z;
+}

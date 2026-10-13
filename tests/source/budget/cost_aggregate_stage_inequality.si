@@ -1,0 +1,11 @@
+// The same asymmetric stages with `!=`: the static pair folds, the hardware pair compares, and the
+// chain inverts. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 129
+// TOP M()
+module M() domains() {
+    input h: Bool;
+    input x: UInt[8];
+    output e: Bool;
+    let z: UInt[8] = 5;
+    e := (h, (3, z)) != (h, (3, x));
+}

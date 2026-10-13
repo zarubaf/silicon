@@ -1,0 +1,14 @@
+// A place update of a named aggregate rebinds its hardware leaves. The rebind charges the new size
+// from the stored sizes. The fuel equal to the total of `cost` succeeds, and one unit less gives
+// `S015`.
+// FUEL 458
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output y: UInt[8];
+    let mut q = ([x, x, x, x], x);
+    comptime for i in 0..4 {
+        q.0[i] = q.0[i] +% 1;
+    }
+    y := q.0[3];
+}

@@ -1,0 +1,11 @@
+// `==` of two array ports with 100000 leaves each: one walk charges every pair, and the lowering of
+// the and-chain needs no recursion on its depth. The fuel equal to the total of `cost` succeeds,
+// and one unit less gives `S015`.
+// FUEL 2109765
+// TOP M()
+module M() {
+  input a: [UInt[1]; 100000];
+  input b: [UInt[1]; 100000];
+  output y: Bool;
+  y := a == b;
+}

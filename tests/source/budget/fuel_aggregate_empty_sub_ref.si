@@ -1,0 +1,15 @@
+// A field of a record port whose type holds no hardware leaf normalizes to a static value. It
+// charges the zero size of its type, 5000 units. The fuel equal to the total of `cost` succeeds,
+// and one unit less gives `S015`.
+// FUEL 5078
+// TOP M()
+struct R {
+    z: [(); 5000],
+    b: Bool,
+}
+module M() domains() {
+    input p: R;
+    output y: Bool;
+    let w = p.z;
+    y := p.b;
+}

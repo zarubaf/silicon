@@ -1,0 +1,11 @@
+// A hardware `if` of two aggregates with 53 leaves each walks every pair once, and makes one mux
+// for each leaf. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 1899
+// TOP M()
+module M() domains() {
+    input c: Bool;
+    input a: ([UInt[8]; 50], (Bool, UInt[4]));
+    input b: ([UInt[8]; 50], (Bool, UInt[4]));
+    output y: ([UInt[8]; 50], (Bool, UInt[4]));
+    y := if (c) { a } else { b };
+}

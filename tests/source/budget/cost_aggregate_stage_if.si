@@ -1,0 +1,12 @@
+// The same asymmetric stages as the arms of a hardware `if`: the static `3` of both arms stays
+// static, and `z` against `x` makes one mux. The fuel equal to the total of `cost` succeeds, and
+// one unit less gives `S015`.
+// FUEL 127
+// TOP M()
+module M() domains() {
+    input c: Bool;
+    input h: Bool;
+    input x: UInt[8];
+    let z: UInt[8] = 5;
+    let p = if (c) { (h, (3, z)) } else { (h, (3, x)) };
+}

@@ -1,0 +1,9 @@
+// A port with 10000 leaves: the lowering streams the leaves and charges 1 plus the name bytes for
+// each one. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 130068
+// TOP M()
+module M() domains() {
+    input p: [UInt[8]; 10000];
+    output q: [UInt[8]; 10000];
+    q := p;
+}

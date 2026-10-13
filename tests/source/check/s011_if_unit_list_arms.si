@@ -1,0 +1,11 @@
+// S011: the arms `(h, xs)` and `(h, ys)` of a hardware `if` differ in the static list, the empty one against `[()]`.
+// TOP M()
+module M() domains() {
+    input c: Bool;
+    input h: Bool;
+    let mut xs = list(Unit);
+    let mut ys = list(Unit);
+    ys.push(());
+    // expected-error S011 @+1
+    let p = if (c) { (h, xs) } else { (h, ys) };
+}
