@@ -9,7 +9,7 @@
 //! any stack.
 
 use crate::hw::{Graph, HwId, Op, Seen, Val};
-use crate::names::{Name, PathId, Paths, Step};
+use crate::names::{PathId, Paths, Step};
 use crate::types::{Ty, TyId, Types};
 use crate::value::Value;
 
@@ -17,7 +17,7 @@ use crate::value::Value;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Base {
     Name(PathId),
-    Out(PathId, Name),
+    Out(PathId, PathId),
 }
 
 impl Base {
@@ -25,21 +25,17 @@ impl Base {
     pub(crate) fn op(&self) -> Op {
         match self {
             Base::Name(p) => Op::Ref(*p),
-            Base::Out(i, q) => Op::Out(*i, q.clone()),
+            Base::Out(i, q) => Op::Out(*i, *q),
         }
     }
 
     /// The part of the base with the leaf field `step` (section 7.3): a user field `f`, or an
-    /// element `<k>e`. A name adds the step to its path in constant work. A child output
-    /// appends the field to its port name, in the number of the steps so far.
-    pub(crate) fn sub(&self, paths: &mut Paths, texts: &[String], step: Step) -> Base {
+    /// element `<k>e`. A step adds one node to the path arena, in constant work, for a name and
+    /// for the port name of a child output alike.
+    pub(crate) fn sub(&self, paths: &mut Paths, step: Step) -> Base {
         match self {
             Base::Name(p) => Base::Name(paths.push(*p, step)),
-            Base::Out(i, q) => {
-                let mut q = q.clone();
-                q.rest.push(step.field(texts));
-                Base::Out(*i, q)
-            }
+            Base::Out(i, q) => Base::Out(*i, paths.push(*q, step)),
         }
     }
 }

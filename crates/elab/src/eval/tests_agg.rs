@@ -10,7 +10,7 @@ use crate::agg::{Agg, Base, Node, Parts};
 use crate::counters;
 use crate::hw::{Handle, Kind, Op, Seen, Val};
 use crate::int::Int;
-use crate::names::{Name, Step};
+use crate::names::Step;
 use crate::tests_elab::load;
 use crate::types::{Ty, TyId};
 use crate::value::Value;
@@ -74,13 +74,7 @@ fn a_name_and_a_child_output_have_the_size_of_their_type() {
         let p = base(ev).op();
         let wide = ev.graph.mk(AT, Ty::UInt(256), p, Vec::new());
         assert_eq!(ev.graph.size(wide), 4);
-        let out = Op::Out(
-            ev.paths.child(None, 2),
-            Name {
-                head: "q".to_owned(),
-                rest: Vec::new(),
-            },
-        );
+        let out = Op::Out(ev.paths.child(None, 2), ev.paths.child(None, 3));
         let flag = ev.graph.mk(AT, Ty::Bool, out, Vec::new());
         assert_eq!(ev.graph.size(flag), 1);
         let inv = ev
@@ -258,7 +252,7 @@ fn base_text(ev: &Evaluator<'_>, b: &Base) -> String {
     let name = |p| crate::names::encode(&ev.paths.name(p, &ev.syms.texts));
     match b {
         Base::Name(p) => name(*p),
-        Base::Out(i, q) => format!("{}.{}", name(*i), crate::names::encode(q)),
+        Base::Out(i, q) => format!("{}.{}", name(*i), name(*q)),
     }
 }
 
@@ -270,7 +264,7 @@ fn describe(ev: &Evaluator<'_>, out: &Out) -> String {
         Seen::Hw(h) => {
             let name = match ev.graph.node(h).map(|n| &n.op) {
                 Some(Op::Ref(p)) => base_text(ev, &Base::Name(*p)),
-                Some(Op::Out(i, q)) => base_text(ev, &Base::Out(*i, q.clone())),
+                Some(Op::Out(i, q)) => base_text(ev, &Base::Out(*i, *q)),
                 _ => String::new(),
             };
             let t = ev.graph.ty(h);
@@ -512,23 +506,39 @@ fn a_container_node_gives_its_part_in_its_normal_form() {
 fn the_leaf_fields_of_a_child_output_append_to_its_port_name() {
     with(100, |ev| {
         let inst = ev.paths.child(None, 5);
-        let port = Name {
-            head: "q".to_owned(),
-            rest: Vec::new(),
-        };
         ev.syms.texts.resize(8, String::new());
+        ev.syms.texts[6] = "q".to_owned();
+        let port = ev.paths.child(None, 6);
         let out = Base::Out(inst, port);
         let field = ev.syms.texts.len();
         ev.syms.texts.push("t".to_owned());
-        let out = out.sub(&mut ev.paths, &ev.syms.texts, Step::User(field));
-        let out = out.sub(&mut ev.paths, &ev.syms.texts, Step::Elem(1));
-        let out = out.sub(&mut ev.paths, &ev.syms.texts, Step::Elem(2));
+        let out = out.sub(&mut ev.paths, Step::User(field));
+        let out = out.sub(&mut ev.paths, Step::Elem(1));
+        let out = out.sub(&mut ev.paths, Step::Elem(2));
         assert_eq!(base_text(ev, &out), ".q$t$1e$2e");
         let leaf = ev.tys.mk(Ty::UInt(4));
         let Ok(Val::Hw(h)) = ev.normalize(AT, Agg::Ref(out, leaf)) else {
             panic!("a hardware leaf")
         };
         assert!(matches!(ev.graph.node(h).map(|n| &n.op), Some(Op::Out(..))));
+    });
+}
+
+/// The leaf of `u.q[1].a[0]` has the core name `u.q$1e$a$0e`, as in Lean.
+#[test]
+fn the_leaf_of_a_child_output_puts_its_fields_in_order() {
+    with(100, |ev| {
+        ev.syms.texts.resize(8, String::new());
+        ev.syms.texts[5] = "u".to_owned();
+        ev.syms.texts[6] = "q".to_owned();
+        ev.syms.texts[7] = "a".to_owned();
+        let inst = ev.paths.child(None, 5);
+        let port = ev.paths.child(None, 6);
+        let out = Base::Out(inst, port);
+        let out = out.sub(&mut ev.paths, Step::Elem(1));
+        let out = out.sub(&mut ev.paths, Step::User(7));
+        let out = out.sub(&mut ev.paths, Step::Elem(0));
+        assert_eq!(base_text(ev, &out), "u.q$1e$a$0e");
     });
 }
 

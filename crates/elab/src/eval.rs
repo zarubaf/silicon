@@ -44,9 +44,9 @@ pub use inst::Design;
 pub(crate) use inst::{Bind, Elab, Inst, Literal, Sink, elaborate};
 
 use crate::agg::{Agg, Base};
-use crate::hw::{Graph, Handle, HwId, Op, Part, Ref, Root, Seen, Val, port_name};
+use crate::hw::{Graph, Handle, HwId, Op, Part, Ref, Root, Seen, Val};
 use crate::int::Int;
-use crate::names::{Name, PathId, Paths, Step, Sym};
+use crate::names::{PathId, Paths, Step, Sym};
 use crate::ops::{self, Fault, Fuel};
 use crate::scan::{Numbers, Scan, Syms};
 use crate::types::{Ty, TyId, Types};
@@ -1377,11 +1377,6 @@ impl Evaluator<'_> {
         }
     }
 
-    /// The core name of the port with the symbol `sym`.
-    fn port_core_name(&self, sym: Sym) -> Name {
-        port_name(self.syms.texts.get(sym).map_or("", String::as_str))
-    }
-
     /// A field of a record, or a port of an instance: a child input is a target, and a child
     /// output is hardware.
     fn field(&mut self, pos: Pos, b: Out, field: &Ident) -> Res<Out> {
@@ -1415,7 +1410,7 @@ impl Evaluator<'_> {
                 port: q,
             }))),
             Some(q) => {
-                let name = self.port_core_name(q.sym);
+                let name = self.paths.child(None, q.sym);
                 let t = self.tys.mk(q.ty);
                 let v = self.normalize(pos, Agg::Ref(Base::Out(path, name), t))?;
                 Ok(if matches!(v, Val::Static(_)) {

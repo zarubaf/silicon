@@ -630,7 +630,7 @@ impl Lower<'_> {
         let at = span(pos);
         let (expr, units) = match op {
             Op::Ref(path) => self.ref_leaf(pos, &self.path(*path))?,
-            Op::Out(inst, port) => self.out_leaf(pos, &self.path(*inst), port)?,
+            Op::Out(inst, port) => self.out_leaf(pos, &self.path(*inst), &self.path(*port))?,
             Op::Lit(v) => {
                 self.charge(pos, 1)?;
                 (const_of(at, v)?, 1)
@@ -1055,7 +1055,7 @@ impl Lower<'_> {
                     }
                     Base::Out(i, q) => {
                         let inst = self.path(*i);
-                        let port = with_fields(q, below);
+                        let port = with_fields(&self.path(*q), below);
                         Ok(self.out_leaf(pos, &inst, &port)?.0)
                     }
                 }

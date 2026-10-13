@@ -29,7 +29,7 @@ pub(super) fn name_of(ev: &Evaluator<'_>, p: PathId) -> String {
 fn base_text(ev: &Evaluator<'_>, b: &Base) -> String {
     match b {
         Base::Name(p) => name_of(ev, *p),
-        Base::Out(i, q) => format!("{}.{}", name_of(ev, *i), names::encode(q)),
+        Base::Out(i, q) => format!("{}.{}", name_of(ev, *i), name_of(ev, *q)),
     }
 }
 

@@ -872,7 +872,7 @@ impl Evaluator<'_> {
         let Some(part) = part else {
             return fail(Code::S010, pos, "the part has no type".to_owned());
         };
-        let sub = base.sub(&mut self.paths, &self.syms.texts, step);
+        let sub = base.sub(&mut self.paths, step);
         self.normalize(pos, Agg::Ref(sub, part))
     }
 

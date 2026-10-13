@@ -141,7 +141,7 @@ impl<'a> Side<'a> {
         step: &Step,
         leaf: Option<&Ty>,
         pos: Pos,
-        (graph, paths, texts): (&mut Graph, &mut Paths, &[String]),
+        (graph, paths): (&mut Graph, &mut Paths),
     ) -> Option<Side<'a>> {
         let base = match self {
             Side::Val(v) => {
@@ -166,7 +166,7 @@ impl<'a> Side<'a> {
             Side::Ref(b) => b,
             Side::Hw(_) => return None,
         };
-        let sub = base.sub(paths, texts, step.clone());
+        let sub = base.sub(paths, step.clone());
         Some(match leaf {
             Some(t) => Side::Hw(graph.mk(pos, t.clone(), sub.op(), Vec::new())),
             None => Side::Ref(sub),
@@ -199,11 +199,11 @@ fn part_pair<'a>(
     top: &Level<'a>,
     (part, step, leaf): (u64, &Step, Option<&Ty>),
     pos: Pos,
-    (graph, paths, texts): (&mut Graph, &mut Paths, &[String]),
+    (graph, paths): (&mut Graph, &mut Paths),
 ) -> Option<(Side<'a>, Side<'a>)> {
     let idx = usize::try_from(part).unwrap_or(usize::MAX);
-    let left = top.a.child(idx, step, leaf, pos, (graph, paths, texts));
-    let right = top.b.child(idx, step, leaf, pos, (graph, paths, texts));
+    let left = top.a.child(idx, step, leaf, pos, (graph, paths));
+    let right = top.b.child(idx, step, leaf, pos, (graph, paths));
     Some((left?, right?))
 }
 
@@ -722,7 +722,7 @@ impl Evaluator<'_> {
             top.next += 1;
             let (ct, step) = self.child_of(pos, top.ty, part)?;
             let leaf = leaf_ty(self.tys.get(ct));
-            let env = (&mut self.graph, &mut self.paths, &self.syms.texts[..]);
+            let env = (&mut self.graph, &mut self.paths);
             let Some((left, right)) = part_pair(top, (part, &step, leaf.as_ref()), pos, env) else {
                 let texts = (
                     top.a.text(&self.graph, &self.tys),
@@ -811,7 +811,7 @@ impl Evaluator<'_> {
             top.next += 1;
             let (ct, step) = self.child_of(pos, top.ty, part)?;
             let leaf = leaf_ty(self.tys.get(ct));
-            let env = (&mut self.graph, &mut self.paths, &self.syms.texts[..]);
+            let env = (&mut self.graph, &mut self.paths);
             let Some((left, right)) = part_pair(top, (part, &step, leaf.as_ref()), pos, env) else {
                 let texts = (
                     top.a.text(&self.graph, &self.tys),

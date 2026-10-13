@@ -110,7 +110,7 @@ impl Evaluator<'_> {
                 let Some(ft) = ft else {
                     return fail(Code::S010, pos, "the part has no type".to_owned());
                 };
-                Some((base.sub(&mut self.paths, &self.syms.texts, step), ft))
+                Some((base.sub(&mut self.paths, step), ft))
             }
             _ => None,
         };
@@ -611,7 +611,7 @@ impl Evaluator<'_> {
             top.next += 1;
             let (ty, base_ty, path) = (top.ty, top.base.clone(), top.path);
             let (child, step) = self.child_of(pos, ty, k)?;
-            let sub = base_ty.sub(&mut self.paths, &self.syms.texts, step.clone());
+            let sub = base_ty.sub(&mut self.paths, step.clone());
             visit = Some((sub, self.paths.push(path, step), child));
         }
     }
@@ -690,7 +690,7 @@ impl Evaluator<'_> {
             #[cfg(test)]
             crate::counters::add(crate::counters::Count::Expanded, 1);
             let (ty, step) = self.child_of(pos, t, k)?;
-            let sub = base.sub(&mut self.paths, &self.syms.texts, step);
+            let sub = base.sub(&mut self.paths, step);
             parts.push(self.part_of(pos, sub, ty)?);
         }
         match Agg::node(&self.graph, &self.tys, t, parts) {

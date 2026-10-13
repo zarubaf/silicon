@@ -26,7 +26,7 @@ pub(crate) fn port_name(x: &str) -> Name {
 /// The operation of a node. Section 7.4 lowers each node to core operations.
 pub(crate) enum Op {
     Ref(PathId),
-    Out(PathId, Name),
+    Out(PathId, PathId),
     Lit(Value),
     /// A static shift count `k`, as the `Int` constant of Lean. The lowering reads only
     /// `min k w` for a width `w` of at most 65536, so the node keeps `min k 65536`, and the
