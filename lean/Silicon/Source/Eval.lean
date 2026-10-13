@@ -909,8 +909,7 @@ mutual
         return ⟨.static (← constant p x i do return .type (← typeExpr n ty)), true, none⟩
       | some (.struct ..) => do return ⟨.static (.type (← spec n p i [])), true, none⟩
       | some (.fn _ _ u ps ret _) => do
-        if ps.any (·.mode == .comptime) then
-          fail .S010 p s!"`{x}` has `comptime` parameters; a generic function is not a value"
+        if generic ps ret then fail .S010 p s!"`{x}` is generic; a generic function is not a value"
         let (qs, r) ← inFrame none <|
             withReader (fun c => { c with item := i, frame := ⟨none, 0⟩ }) do
           let qs ← params n (ps.map fun q => .mk (q.mode == .mut) q.ty)
