@@ -1850,4 +1850,233 @@ def lenText (v : Eval.Val) : String :=
 #guard lenText (.agg (.mkArray .bool #[boolLeaf, .static (.bool true)])) == "(int 2) 0"
 #guard lenText (regOf (.tuple #[.bool, .bool])) == "S010 1:1"
 
+/-!
+The typed use of a hardware aggregate (section 5.4). A name of a leaf prints as its core name. A
+part of a node prints in brackets.
+-/
+def nameText : Eval.Hw → String
+  | .node _ _ _ (.ref p) [] => Names.encode p.name
+  | .node _ _ _ (.lit v) [] => v.serialize
+  | .node _ t _ _ _ => s!"hardware {t.text}"
+
+mutual
+  def aggText : Eval.Agg → String
+    | .static v => v.serialize
+    | .hw h => nameText h
+    | .ref b _ => s!"ref {baseText b}"
+    | .array _ ⟨xs⟩ | .tuple _ ⟨xs⟩ | .record _ ⟨xs⟩ => s!"[{aggTexts xs}]"
+
+  def aggTexts : List Eval.Agg → String
+    | [] => ""
+    | [x] => aggText x
+    | x :: xs => s!"{aggText x}, {aggTexts xs}"
+end
+
+def valText : Eval.Val → String
+  | .agg a => aggText a
+  | .hw h => nameText h
+  | v => v.text
+
+/-! The core `let` statements of the named bindings: each core name with its value. -/
+def letsText (ls : Array Eval.Let) : String :=
+  " ".intercalate (ls.toList.map fun l => s!"{Names.encode l.path.name}={nameText l.value}")
+
+def tupleAliases : String :=
+  "type A = (Bool, UInt[4]);\ntype B = (Bool, Nat);\ntype C = (UInt[1], Nat);\n" ++
+  "type D = (Nat, UInt[1]);\ntype E = (Bool, UInt[8]);\n" ++
+  "type F = (Bool, [UInt[8]; 4], UInt[4]);\n" ++
+  "struct Q { a: Bool }\n"
+
+/-!
+The typed use of `v` at the type expression `ty` after the items of `src`. The result shows the
+value and the units of the typed use alone, with the fuel `fuel` for it.
+-/
+def typedUse (src ty : String) (v : Ty → Eval.Val) (fuel : Nat := 1000) : String :=
+  let r : Except Error String := do
+    let (items, checked) ← Cli.load 4096 src
+    let te ← Resolve.resolveExpr items (← Parse.parseExpr 4096 ty)
+    let ((d, used), _) ← Eval.run { fuel := fuel + 100 } checked fun n =>
+      withReader (fun c => { c with item := checked.size }) do
+        let t ← match ← Eval.eval n te with
+          | some ⟨.static (.type t), _, _⟩ => pure t
+          | _ => Eval.fail .S010 ⟨0, 0⟩ "a type"
+        modify fun s => { s with fuel }
+        let x ← Eval.conformVal at1 t (v t)
+        return (valText x, fuel - (← get).fuel)
+    return s!"{d} {used}"
+  match r with
+  | .ok s => s
+  | .error e => s!"{e.code} {e.pos.line}:{e.pos.col}"
+
+def refR (t : Ty) : Eval.Val := .agg (.ref (.name ⟨"r", []⟩) t)
+def pair (t : Ty) (x : Value) : Eval.Val := .agg (.mkTuple #[.bool, t] #[boolLeaf, .static x])
+
+/-!
+A reference checks by its type in one step and never expands. Thus a typed use of a reference to
+a huge array at its own type takes no unit, and another type is `S010` before any charge.
+-/
+#guard typedUse "" "[UInt[8]; 1099511627776]" refR 0 == "ref r 0"
+#guard typedUse "" "[UInt[4]; 4]" (fun _ => refR (.array (.uint 8) 4)) 0 == "S010 1:1"
+
+/-!
+Another aggregate checks each part first: a hardware leaf needs the type of its position
+(`S010`), and a static leaf its sign (`S012`). The first failing part in the walk order reports,
+before the charge. Then the conversion charges the size of the value plus the size of the result,
+here 3 + 3. Then a static leaf converts and checks its fit (`S012`), after the charge. A
+reference part keeps its form and counts its zero size, here 5, in both sizes.
+-/
+#guard typedUse tupleAliases "A" (fun _ => pair .int (.int 3)) == "[b, (uint 4 3)] 6"
+#guard typedUse tupleAliases "B" (fun _ => pair .int (.int (-1))) 0 == "S012 1:1"
+#guard typedUse tupleAliases "C" (fun _ => pair .int (.int (-1))) 0 == "S010 1:1"
+#guard typedUse tupleAliases "D"
+  (fun _ => .agg (.mkTuple #[.int, .bool] #[.static (.int (-1)), boolLeaf])) 0 == "S012 1:1"
+#guard typedUse tupleAliases "E" (fun _ => pair .int (.int 300)) == "S012 1:1"
+#guard typedUse tupleAliases "E" (fun _ => pair .int (.int 300)) 5 == "S015 1:1"
+#guard typedUse tupleAliases "F" (fun _ => .agg (.mkTuple #[.bool, .array (.uint 8) 4, .int]
+  #[boolLeaf, .ref (.name ⟨"r", []⟩) (.array (.uint 8) 4), .static (.int 3)])) ==
+  "[b, ref r, (uint 4 3)] 16"
+
+/-! A record needs its own struct type, and it converts nothing. -/
+#guard typedUse tupleAliases "Q" (fun t => .agg (.mkRecord t #[boolLeaf])) 0 == "[b] 0"
+#guard typedUse tupleAliases "Q"
+  (fun _ => .agg (.mkRecord (.struct 5 "R" #[] ⟨1, 1, 2, 2, true, false⟩) #[boolLeaf])) 0 ==
+  "S010 1:1"
+
+/-!
+The copy of a register charges 1 for the handle. A read of an aggregate register is a reference,
+so its copy also charges the zero size of its type. A huge one thus fails before any leaf exists.
+A scalar read charges only the handle, as in slice 1. A read without a hardware leaf makes a new
+static value with the charge of its zero size.
+-/
+def copyRead (t : Ty) (fuel : Nat := 100) : String :=
+  match Eval.run { fuel } #[] (fun _ => Eval.copyUse at1 t true (regOf t)) with
+  | .ok (v, used) => s!"{valText v} {used}"
+  | .error e => s!"{e.code} {e.pos.line}:{e.pos.col}"
+#guard copyRead (.array (.uint 8) 4) == "ref r 6"
+#guard copyRead (.array (.uint 8) (2 ^ 40)) == "S015 1:1"
+#guard copyRead (.uint 256) == "r 1"
+#guard copyRead (.array .unit 3) == "[Unit; 3] 5"
+
+/-!
+The body of the function `f` of `src`. Its first parameter `x` is a mutable local with the value
+`base`, and it took its first core name, as a copy-in does. The result shows the core `let`
+statements, the final value of `x`, and the units of the body alone.
+-/
+def runF (src : String) (base : Ty → Eval.Val) (fuel : Nat := 1000000) : String :=
+  let r : Except Error String := do
+    let (_, checked) ← Cli.load 4096 src
+    let some i := checked.findIdx? fun | .fn _ _ u .. => u.name == "f" | _ => false
+      | .error ⟨.S010, at1, "no function f"⟩
+    let some (.fn _ _ _ (q :: _) _ ss) := checked[i]? | .error ⟨.S010, at1, "no parameter"⟩
+    let ((d, used), _) ← Eval.run { fuel := fuel + 1000 } checked fun n =>
+      withReader (fun c => { c with item := i, ret := some .bool }) do
+        let t ← Eval.typeExpr n q.ty
+        Eval.bindLocal q.name.id ⟨some t, true, base t⟩
+        let _ ← Eval.fresh q.name.id q.name.name.name
+        modify fun s => { s with fuel }
+        for s in ss do
+          if let some _ ← Eval.stmt n s then break
+        let st ← get
+        let x := (st.frame[q.name.id]?).map (valText ·.value)
+        return (s!"{letsText st.naming.lets} | {x.getD "-"}", fuel - st.fuel)
+    return s!"{d} | {used}"
+  match r with
+  | .ok s => s
+  | .error e => s!"{e.code} {e.pos.line}:{e.pos.col}"
+
+def refX (t : Ty) : Eval.Val := .agg (.ref (.name ⟨"x", []⟩) t)
+def leafX (k : Nat) : Eval.Agg := .hw (.mk at1 (.uint 8) (.ref ⟨"x", [.elem k]⟩) [])
+def assignIn (t : String) (s : String) : String :=
+  s!"fn f(mut x: {t}) -> Bool \{\n  {s}\n  return true;\n}\n"
+
+/-!
+A place update can give a new root with a hardware leaf. It then binds each hardware leaf of the
+root again, at the next version of the root (section 7.3). The static leaf `7` gets no core
+name. The assignment charges 1, its step 1, the index 2, the value 2, and its conversion 2. The
+rebind charges 5: the old size 5, minus the part 1, plus the new part 1. `return true;` charges
+4.
+-/
+#guard runF (assignIn "[UInt[8]; 4]" "x[1] = 7;") refX ==
+  "x$1v$0e=x$0e x$1v$2e=x$2e x$1v$3e=x$3e | [x$1v$0e, (uint 8 7), x$1v$2e, x$1v$3e] | 17"
+#guard runF (assignIn "[UInt[8]; 4]" "x[1] = 7;") refX 12 == "S015 2:3"
+#guard runF (assignIn "[UInt[8]; 4]" "x[1] = 7;") refX 13 == "S015 3:3"
+
+/-!
+The rebind charges from the stored sizes before the path copies and before the reference root
+expands. Thus a huge root fails at the assignment before any work on its elements.
+-/
+#guard runF (assignIn "[UInt[8]; 1 << 40]" "x[5] = 7;") refX == "S015 2:3"
+
+/-!
+Only the references on the path expand, one level for each step. The part `x[0]` stays a
+reference, and its binding refers to its new name.
+-/
+#guard runF (assignIn "[[UInt[8]; 2]; 2]" "x[1][0] = x[0][1];") refX ==
+  "x$1v$0e$0e=x$0e$0e x$1v$0e$1e=x$0e$1e x$1v$1e$0e=x$0e$1e x$1v$1e$1e=x$1e$1e | " ++
+  "[ref x$1v$0e, [x$1v$1e$0e, x$1v$1e$1e]] | 26"
+
+/-!
+A new root without a hardware leaf is a static value with no rebind charge. A static part of an
+aggregate root takes a static value and keeps the other leaves. In this phase it holds no
+hardware value (`S010` at the value).
+-/
+#guard runF (assignIn "(UInt[8], Int)" "x.0 = 5;")
+  (fun _ => .agg (.mkTuple #[.uint 8, .int] #[leafX 0, .static (.int 3)])) ==
+  " | (UInt[8], Int) | 10"
+def staticPart (t : Ty) : Eval.Val :=
+  .agg (.mkTuple #[.uint 8, t] #[leafX 0, .static (.array (.uint 8) #[.uint 8 1, .uint 8 2])])
+#guard runF (assignIn "(UInt[8], [UInt[8]; 2])" "x.1[0] = 9;") staticPart ==
+  "x$1v$0e=x$0e | [x$1v$0e, (array (uint 8) ((uint 8 9) (uint 8 2)))] | 18"
+#guard runF (assignIn "(UInt[8], [UInt[8]; 2])" "x.1[0] = x.0;") staticPart == "S010 2:12"
+
+/-!
+A binding takes one version, and each hardware leaf gets one core `let`. A typed binding and an
+assignment without a step read a reference by its leaves.
+-/
+#guard runF (assignIn "[UInt[8]; 2]" "let y: [UInt[8]; 2] = x;\n  x = y;") refX ==
+  "y$0e=x$0e y$1e=x$1e x$1v$0e=y$0e x$1v$1e=y$1e | ref x$1v | 30"
+
+/-!
+An argument, a call result, and a `mut` write-back bind by leaf (section 7.3). The result puts
+its role `0ret` in the place of a name, with no version, and the leaves follow it. A loop adds
+its frame, so no two names are equal.
+-/
+def aggCalls : String :=
+  "struct S { a: UInt[8], b: Bool }\nfn g(a: S) -> S {\n  return a;\n}\n" ++
+  "fn f(mut x: S) -> Bool {\n  let y = g(x);\n  comptime for i in 0..2 {\n" ++
+  "    let z = g(y);\n  }\n  return true;\n}\n"
+#guard runF aggCalls refX ==
+  "g$0c$a$a=x$a g$0c$a$b=x$b g$0c$0ret$a=g$0c$a$a g$0c$0ret$b=g$0c$a$b y$a=g$0c$0ret$a " ++
+  "y$b=g$0c$0ret$b i$0$g$1c$a$a=y$a i$0$g$1c$a$b=y$b i$0$g$1c$0ret$a=i$0$g$1c$a$a " ++
+  "i$0$g$1c$0ret$b=i$0$g$1c$a$b i$0$z$a=i$0$g$1c$0ret$a i$0$z$b=i$0$g$1c$0ret$b " ++
+  "i$1$g$1c$a$a=y$a i$1$g$1c$a$b=y$b i$1$g$1c$0ret$a=i$1$g$1c$a$a " ++
+  "i$1$g$1c$0ret$b=i$1$g$1c$a$b i$1$z$a=i$1$g$1c$0ret$a i$1$z$b=i$1$g$1c$0ret$b | ref x | 60"
+
+/-! The `results` guard of `Test.Elab` for aggregate results: no version, and no two equal. -/
+def callNames : List Names.Name :=
+  ((runF aggCalls refX).splitOn " ").filterMap fun w => Names.decode ((w.splitOn "=").head!)
+def retLeaves : List Names.Name := callNames.filter (·.rest.contains (.role .ret))
+#guard retLeaves.length == 6
+#guard retLeaves.all fun p => !p.rest.any fun | .version _ => true | _ => false
+#guard retLeaves.all fun p => (p.rest.dropWhile (· != .role .ret)).length == 2
+#guard callNames.eraseDups.length == callNames.length
+
+/-!
+A `mut` write-back binds the final value of the formal to the next version of the caller root.
+The update of the formal rebinds it in the frame of the call first.
+-/
+#guard runF ("fn g(mut a: [UInt[8]; 2]) -> Bool {\n  a[0] = 1;\n  return true;\n}\n" ++
+  "fn f(mut x: [UInt[8]; 2]) -> Bool {\n  let b = g(x);\n  return b;\n}\n") refX ==
+  "g$0c$a$0e=x$0e g$0c$a$1e=x$1e g$0c$a$1v$1e=g$0c$a$1e x$1v$1e=g$0c$a$1v$1e | " ++
+  "[(uint 8 1), x$1v$1e] | 45"
+
+/-! A list holds no value with a hardware leaf: `push` of an aggregate is `S011` at the element. -/
+#guard runF (assignIn "[UInt[8]; 2]" "let mut l = list([UInt[8]; 2]);\n  l.push(x);") refX ==
+  "S011 3:10"
+def listPart (_ : Ty) : Eval.Val :=
+  .agg (.mkTuple #[.uint 8, .list (.uint 8)] #[leafX 0, .static (.list (.uint 8) #[])])
+/-! `push` into a static list part of an aggregate root keeps the names of its leaves. -/
+#guard runF (assignIn "(UInt[8], List[UInt[8]])" "x.1.push(5);") listPart ==
+  " | [x$0e, (list (uint 8) ((uint 8 5)))] | 13"
+
 end Silicon.Source.Test.Eval
