@@ -90,7 +90,7 @@ receiver call:
 
 Each local has a counter of the windows that hold its root as pending. A `mut` actual reads and
 changes only the counter of its root, so each step takes constant amortized time. A call through
-a local or a `const` has no known parameter modes. `Elab` checks its `S008` in pass 5.
+a local or a `const` has no known parameter modes. `Eval` checks its `S008` in pass 5.
 
 The other rules of the containers need static values, so they are for `Elab` (`S010`, `S011`,
 and `S013`). Among them are an index with two or more arguments, `<` on containers, and `==` on
