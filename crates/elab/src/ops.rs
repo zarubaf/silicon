@@ -37,11 +37,6 @@ impl Fuel {
         self.left
     }
 
-    /// Whether the fuel that is left can pay `units`. It pays nothing.
-    pub(crate) fn affords(&self, units: &Int) -> bool {
-        units.to_u64().is_some_and(|units| units <= self.left)
-    }
-
     /// Pays `units`, or gives `S015` and keeps the fuel.
     pub(crate) fn pay(&mut self, units: u128) -> Result<(), Fault> {
         match u64::try_from(units) {

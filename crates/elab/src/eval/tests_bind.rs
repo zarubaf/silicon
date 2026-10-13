@@ -581,13 +581,37 @@ fn push_of_an_aggregate_is_s011_at_the_element() {
     assert_eq!(run_f(&src, 700_000_290, 1_000_000, ref_x), "S011 3:10");
 }
 
-/// A rebind that leaves no hardware leaf charges nothing, yet a reference on its path expands.
-/// A part without a hardware leaf that the fuel cannot pay for does not exist: `S015` before the
-/// zero of that part is made.
+/// A rebind that leaves no hardware leaf charges the zero size of each empty part that a
+/// reference on its path makes, from the metadata, before the static value exists (Lean
+/// `Agg.emptySize`). On `(UInt[8], [(); 3])`, `x.0 = 5;` charges 10, and 4 of it is the zero
+/// size of `[(); 3]`. `return true;` charges 4.
 #[test]
-fn an_expansion_makes_no_empty_part_that_the_fuel_cannot_pay() {
+fn a_rebind_without_a_hardware_leaf_charges_the_empty_parts_it_makes() {
     let run = 700_000_300;
-    let src = assign_in("[(UInt[8], [Unit; 1 << 40]); 1]", "x[0].0 = 5;");
+    let src = assign_in("(UInt[8], ())", "x.0 = 5;");
+    assert_eq!(
+        run_f(&src, run, 1000, ref_x),
+        " | (tuple ((uint 8 5) (unit))) | 11"
+    );
+    let src = assign_in("(UInt[8], [(); 3])", "x.0 = 5;");
+    assert_eq!(
+        run_f(&src, run + 1, 1000, ref_x),
+        " | (tuple ((uint 8 5) (array unit ((unit) (unit) (unit))))) | 14"
+    );
+    assert_eq!(run_f(&src, run + 2, 9, ref_x), "S015 2:3");
+    assert_eq!(run_f(&src, run + 3, 10, ref_x), "S015 3:3");
+    let src = assign_in("((UInt[8], [(); 3]), [(); 2])", "x.0.0 = 5;");
+    assert_eq!(
+        run_f(&src, run + 4, 1000, ref_x),
+        " | (tuple ((tuple ((uint 8 5) (array unit ((unit) (unit) (unit))))) (array unit ((unit) (unit))))) | 18"
+    );
+}
+
+/// A huge empty part fails at the charge, before any work on its elements.
+#[test]
+fn a_huge_empty_part_fails_at_the_charge_before_it_expands() {
+    let run = 700_000_310;
+    let src = assign_in("(UInt[8], [(); 1 << 40])", "x.0 = 5;");
     assert_eq!(run_f(&src, run, 1000, ref_x), "S015 2:3");
-    assert_eq!(counters::of(run).expanded, 3);
+    assert_eq!(counters::of(run).expanded, 0);
 }

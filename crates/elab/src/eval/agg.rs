@@ -678,12 +678,6 @@ impl Evaluator<'_> {
             #[cfg(test)]
             crate::counters::add(crate::counters::Count::Expanded, 1);
             let (ty, step) = self.child_of(pos, t, k)?;
-            // A rebind that leaves no hardware leaf charges nothing, so a zero that the fuel
-            // left cannot pay for does not exist.
-            let meta = self.tys.meta(ty);
-            if meta.leaves.is_zero() && !self.fuel.affords(&meta.zero_size) {
-                self.fuel.pay_int(&meta.zero_size).map_err(at(pos))?;
-            }
             let sub = base.sub(&mut self.paths, &self.syms.texts, step);
             parts.push(self.part_of(pos, sub, ty)?);
         }
@@ -691,6 +685,70 @@ impl Evaluator<'_> {
             Some(node) => Ok(node),
             None => fail(Code::S010, pos, "the type has no parts".to_owned()),
         }
+    }
+
+    /// The sum of the zero sizes of the empty parts that a reference on the path `keys` of `a`
+    /// makes when it expands (Lean `Agg.emptySize`). Each reference expands one level, and the
+    /// metadata gives each zero size, so the sum makes no part. The walk follows the path once.
+    fn empty_size(&self, a: &Agg, keys: &[usize]) -> Int {
+        let mut cur = a;
+        let mut keys = keys;
+        while let Some((&k, rest)) = keys.split_first() {
+            match cur {
+                Agg::Ref(_, t) => return self.empty_size_in(*t, keys),
+                Agg::Array(_, p) | Agg::Tuple(_, p) | Agg::Record(_, p) => match p.0.get(k) {
+                    Some(x) => cur = x,
+                    None => break,
+                },
+                _ => break,
+            }
+            keys = rest;
+        }
+        Int::zero()
+    }
+
+    /// The same for the type `t` of a reference, along the path `keys` (Lean `Ty.emptySize`).
+    fn empty_size_in(&self, mut t: TyId, mut keys: &[usize]) -> Int {
+        let mut total = Int::zero();
+        let empty = |this: &Self, p: TyId| {
+            let m = this.tys.meta(p);
+            if m.leaves.is_zero() {
+                m.zero_size.clone()
+            } else {
+                Int::zero()
+            }
+        };
+        while let Some((&k, rest)) = keys.split_first() {
+            let part = match self.tys.get(t) {
+                Ty::Array(e, n) => {
+                    total.add_assign(&n.mul(&empty(self, *e)));
+                    Some(*e)
+                }
+                Ty::Tuple(ts) => {
+                    for &p in ts {
+                        total.add_assign(&empty(self, p));
+                    }
+                    ts.get(k).copied()
+                }
+                Ty::Struct(_) => {
+                    let fs = self.tys.fields(t).map_or(&[][..], |(_, fs)| fs);
+                    for &p in fs {
+                        total.add_assign(&empty(self, p));
+                    }
+                    fs.get(k).copied()
+                }
+                _ => None,
+            };
+            let Some(p) = part else { break };
+            if self.tys.meta(p).leaves.is_zero()
+                || matches!(self.tys.get(p), Ty::Bool | Ty::UInt(_) | Ty::SInt(_))
+            {
+                break;
+            }
+            t = p;
+            keys = rest;
+        }
+        total
     }
 
     /// The aggregate `root` with the part at the numbers `keys` replaced by `y`. Each step
@@ -777,6 +835,9 @@ impl Evaluator<'_> {
             let new = u128::from(size.saturating_sub(old.size))
                 + u128::from(x.size(&self.graph, &self.tys));
             self.charge(pos, new)?;
+        } else if let Val::Agg(a) = self.store.root(&place.root) {
+            let empty = self.empty_size(a, &place.keys);
+            self.fuel.pay_int(&empty).map_err(at(pos))?;
         }
         self.charge_held(pos, place.root)?;
         self.store.settle_root(place.root);
