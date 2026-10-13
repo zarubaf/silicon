@@ -1,0 +1,14 @@
+// A struct-typed wire takes a record value.
+// TOP M()
+struct P {
+    a: Bool,
+}
+module M() domains() {
+    input x: Bool;
+    output y: Bool;
+    wire w: P;
+    w := P(x);
+    y := w.a;
+}
+// STEP in=(x true) out=(y true)
+// STEP in=(x false) out=(y false)

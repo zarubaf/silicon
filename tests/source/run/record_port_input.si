@@ -1,0 +1,12 @@
+// A struct-typed input port: its field is one leaf of the port.
+// TOP M()
+struct P {
+    a: Bool,
+}
+module M() domains() {
+    input p: P;
+    output y: Bool;
+    y := p.a;
+}
+// STEP in=(p.a true) out=(y true)
+// STEP in=(p.a false) out=(y false)

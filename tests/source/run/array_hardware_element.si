@@ -1,0 +1,10 @@
+// A hardware value is an element of an array, and a static index selects it.
+// TOP M()
+module M() domains() {
+    input x: Bool;
+    output y: Bool;
+    let a = [x];
+    y := a[0];
+}
+// STEP in=(x true) out=(y true)
+// STEP in=(x false) out=(y false)

@@ -1,0 +1,13 @@
+// A hardware value is a field of a record, and a field read selects it.
+// TOP M()
+struct P {
+    a: Bool,
+}
+module M() domains() {
+    input x: Bool;
+    output y: Bool;
+    let r = P(x);
+    y := r.a;
+}
+// STEP in=(x true) out=(y true)
+// STEP in=(x false) out=(y false)

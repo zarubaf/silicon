@@ -1,9 +1,0 @@
-// S010: a struct-typed output belongs to phase 6.
-// TOP M()
-struct P {
-    a: Bool,
-}
-module M() {
-    // expected-error S010 @+1
-    output p: P;
-}

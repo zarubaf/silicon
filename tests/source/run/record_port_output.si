@@ -1,0 +1,12 @@
+// A struct-typed output port takes a record value.
+// TOP M()
+struct P {
+    a: Bool,
+}
+module M() domains() {
+    input x: Bool;
+    output p: P;
+    p := P(x);
+}
+// STEP in=(x true) out=(p.a true)
+// STEP in=(x false) out=(p.a false)

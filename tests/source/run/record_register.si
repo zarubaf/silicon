@@ -1,0 +1,15 @@
+// A struct-typed register with a reset value.
+// TOP M()
+struct P {
+    a: Bool,
+}
+module M() {
+    input x: Bool;
+    output y: Bool;
+    reg r: P = P(false);
+    r := P(x);
+    y := r.a;
+}
+// STEP in=(clock$0rst false x true) out=(y false)
+// STEP in=(clock$0rst false x false) out=(y true)
+// STEP in=(clock$0rst false x true) out=(y false)
