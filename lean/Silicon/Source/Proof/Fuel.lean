@@ -377,6 +377,10 @@ theorem hwBinary_f (p : Pos) (op : BinOp) (a b : Val) :
     Follows cap (hwBinary p op a b) (hwBinary p op a b) := by
   unfold hwBinary; follows [hwShift_f, hwPair_f, node_f]
 
+theorem comparable_f (p : Pos) (op : BinOp) (a b : Val) :
+    Follows cap (comparable p op a b) (comparable p op a b) := by
+  unfold comparable; follows
+
 theorem mux_f (p : Pos) (c : Hw) (a b : Val) :
     Follows cap (mux p c a b) (mux p c a b) := by
   unfold mux; follows [lit_f, litAt_f, hwPair_f, node_f]
@@ -407,6 +411,10 @@ theorem typeOf_f (p : Pos) (x : String) (v : Val) :
 
 theorem tupleTy_f (p : Pos) (ts : List Ty) : Follows cap (tupleTy p ts) (tupleTy p ts) := by
   unfold tupleTy; follows [bounded_f, sums_f]
+
+theorem fnTy_f (p : Pos) (ps : List TyParam) (r : Ty) :
+    Follows cap (fnTy p ps r) (fnTy p ps r) := by
+  unfold fnTy; follows [bounded_f]
 
 theorem element_f (p : Pos) (v : Val) : Follows cap (element p v) (element p v) := by
   unfold element; follows
@@ -631,6 +639,11 @@ theorem name_f (he : ∀ e, Follows m (eval k e) (eval m e))
   follows [he, ht, prim_f, need_f, copy_f, conform_f, static_f, settle_f, constant_f,
     spec_f he ht]
 
+theorem params_f (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t))
+    (ps : List Resolve.FnParam) : Follows m (params k ps) (params m ps) := by
+  rw [params.eq_def k, params.eq_def m]
+  follows [ht]
+
 theorem placeAt_f (he : ∀ e, Follows m (eval k e) (eval m e)) (p : Pos) (c : ErrorCode)
     (t : Resolve.Expr) : Follows m (placeAt k p c t) (placeAt m p c t) := by
   rw [placeAt.eq_def k, placeAt.eq_def m]
@@ -692,7 +705,7 @@ theorem follows_all : ∀ n,
           call_f (he k) (ht k) (hb k), spec_f (he k) (ht k), need_f, data_f, apply_f,
           hwUnary_f, test_f, hwBinary_f, unify_f, mux_f, static_f, pick_f, element_f, tupleOf_f,
           arrayOf_f, select_f, containerOp_f, arrayTy_f, fieldAt_f, strAt_f, hold_f, release_f,
-          operands_f (he k)]
+          operands_f (he k), comparable_f, params_f (ht k), fnTy_f]
       · rw [eval.eq_def (k + 1), eval.eq_def (m + 1)]
         apply Follows.charge_one
         intro _
@@ -700,18 +713,18 @@ theorem follows_all : ∀ n,
           call_f (he m) (ht m) (hb m), spec_f (he m) (ht m), need_f, data_f, apply_f,
           hwUnary_f, test_f, hwBinary_f, unify_f, mux_f, static_f, pick_f, element_f, tupleOf_f,
           arrayOf_f, select_f, containerOp_f, arrayTy_f, fieldAt_f, strAt_f, hold_f, release_f,
-          operands_f (he m)]
+          operands_f (he m), comparable_f, params_f (ht m), fnTy_f]
     · rcases n' with _ | m
       · rw [typeExpr.eq_def (k + 1), typeExpr.eq_def 0]
         apply Follows.exhaust (cap := k)
         intro _
         follows [he k, ht k, index_f (he k), name_f (he k) (ht k), spec_f (he k) (ht k),
-          typeOf_f, tupleTy_f, arrayTy_f, static_f, need_f]
+          typeOf_f, tupleTy_f, arrayTy_f, static_f, need_f, params_f (ht k), fnTy_f]
       · rw [typeExpr.eq_def (k + 1), typeExpr.eq_def (m + 1)]
         apply Follows.charge_one
         intro _
         follows [he m, ht m, index_f (he m), name_f (he m) (ht m), spec_f (he m) (ht m),
-          typeOf_f, tupleTy_f, arrayTy_f, static_f, need_f]
+          typeOf_f, tupleTy_f, arrayTy_f, static_f, need_f, params_f (ht m), fnTy_f]
     · rcases n' with _ | m
       · rw [stmt.eq_def (k + 1), stmt.eq_def 0]
         apply Follows.exhaust (cap := k)

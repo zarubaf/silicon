@@ -56,6 +56,11 @@ The operators follow v0.1 section 3. These rules settle the open points of slice
   value of the formal. Then it writes the value into the live root, by the steps that the place
   got before the call. A hardware value thus gives the caller root its next version.
 - Slice 1 has no function values: a function name is only a callee (`S010`).
+- `==` and `!=` with an operand whose type holds a function type are `S010` at the operator.
+  The check reads the function flag of the type after both operands, before each join and each
+  charge.
+- A constructor call of a function type is `S010` at the call, before its arguments, because
+  a constructor needs a hardware data type.
 - `resize` keeps the signedness. `reinterpret` keeps the width.
 - A typed-use error is at the node of the typed use: the statement, the call, or the operator.
   A function without `return` at its end is `S010` at the call.
@@ -161,6 +166,15 @@ def binary (op : BinOp) (a b : Value) : Except Fault Step :=
     .ok ⟨sum, fun u => .ok (.bool (r u))⟩
   | .shl | .shr => shift op a b
   | .land | .lor => typeError s!"`{op.text}` selects; it has no step"
+
+/-!
+`==` and `!=` at `pos` take no operand whose type holds a function type (section 5.1), else
+`S010`. The check reads the function flag of the type, before each join and each charge.
+-/
+def comparable (pos : Pos) (op : BinOp) (a b : Val) : M Unit := do
+  let funcs (v : Val) : Bool := (v.ty?.map (·.info.funcs)).getD false
+  if (op == .eq || op == .ne) && (funcs a || funcs b) then
+    fail .S010 pos s!"`{op.text}` takes no function, here {a.text} and {b.text}"
 
 /-! The operators at which a static integer takes the finite type of the other operand. -/
 def unifies : BinOp → Bool
@@ -366,9 +380,14 @@ def hwBinary (pos : Pos) (op : BinOp) (a b : Val) : M Val := do
 
 /-!
 A hardware `if` with the condition `c`. A static arm takes the type of the other arm. Both arms
-have one type.
+have one type. Two function arms are a static pair: they charge as a static equality, and one
+function item gives the static value. Two different functions are `S011` at `pos`.
 -/
 def mux (pos : Pos) (c : Hw) (a b : Val) : M Val := do
+  if let (.static v@(.function i ..), .static w@(.function j ..)) := (a, b) then
+    charge pos (v.size + w.size)
+    if i == j then return .static v
+    else fail .S011 pos "the arms of a hardware `if` are two different functions"
   let (x, y) ← match a, b with
     | .static v, .static w =>
       match v.finiteTy?, w.finiteTy? with
@@ -675,10 +694,10 @@ def primCall (p : Pos) (g : String) (h : PrimFn) (vs : List Val) : M (Option Out
 
 /-!
 The evaluator. `eval`, `typeExpr`, `stmt`, and `block` are the entry functions. Each charges
-one unit, then calls deeper with the bound `n`. The helpers `name`, `spec`, `index`, `placeAt`,
-`args`, `ctor`, `invoke`, and `call` get the bound `n` of their caller after its charge. They
-call entry functions, `spec`, which a name of a struct item uses, and the helpers that `call`
-uses.
+one unit, then calls deeper with the bound `n`. The helpers `name`, `spec`, `index`, `params`,
+`placeAt`, `args`, `ctor`, `invoke`, and `call` get the bound `n` of their caller after its
+charge. They call entry functions, `spec`, which a name of a struct item uses, and the helpers
+that `call` uses.
 -/
 mutual
   def eval (b : Nat) (e : Resolve.Expr) : M (Option Out) :=
@@ -716,6 +735,7 @@ mutual
         hold o
         let b ← data p (← need r (← eval n r)).value
         release o
+        comparable p op a b
         match a, b with
         | .static a, .static b =>
           if composite a || composite b then
@@ -788,7 +808,9 @@ mutual
         let e ← typeExpr n t
         let t ← arrayTy p k.pos e (← static k.pos (← need k (← eval n k)).value)
         return some ⟨.static (.type t), false, none⟩
-      | .fnType p .. => fail .S004 p "a function type is not supported yet"
+      | .fnType p ps r => do
+        let qs ← params n ps
+        return some ⟨.static (.type (← fnTy p qs (← typeExpr n r))), false, none⟩
   termination_by (b, 3)
 
   def typeExpr (b : Nat) (t : Resolve.TypeExpr) : M Ty :=
@@ -810,8 +832,15 @@ mutual
       | .array p t k => do
         let e ← typeExpr n t
         arrayTy p k.pos e (← static k.pos (← need k (← eval n k)).value)
-      | .fn p .. => fail .S004 p "a function type is not supported yet"
+      | .fn p ps r => do
+        let qs ← params n ps
+        fnTy p qs (← typeExpr n r)
   termination_by (b, 3)
+
+  /-- The parameter types of a function type in their order, each with its `mut` mark. -/
+  def params (n : Nat) (ps : List Resolve.FnParam) : M (List TyParam) :=
+    ps.mapM fun | .mk m q => do return TyParam.mk m (← typeExpr n q)
+  termination_by (n + 1, 0)
 
   /-- `UInt[e]` or `SInt[e]` in a type or an expression. The base charged its node. -/
   def index (n : Nat) (p : Pos) (k : PrimType) (xs : List Resolve.Expr) : M Ty := do
@@ -938,6 +967,7 @@ mutual
   def ctor (n : Nat) (p : Pos) (o : Out) (b : Nat) (xs : List Resolve.Expr) :
       M (Option Out) := do
     let .static (.type t) := o.value | fail .S010 p s!"{o.value.text} is not a function"
+    if t matches .fn .. then fail .S010 p s!"a constructor needs a hardware data type, not {t.text}"
     match t, xs with
     | t, [] => return some ⟨.static (← zero p t), false, none⟩
     | t@(.struct ..), xs =>

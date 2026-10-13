@@ -11,10 +11,15 @@ follow sections 5.1, 5.4, 5.5, and 5.6. These rules settle their open points:
 - Each new type checks its depth before its charge (`S015` at its node).
 - `[T; N]` charges its size and the three products of its metadata (`Meta.arrayCharge`). A tuple
   type charges its size, then the sums of its metadata (`sums`), as a struct does.
+- A function type evaluates its parameter types, then its result type. Its metadata reads only
+  the depths of its parts, as `List[T]` does, so it adds no charge. It checks its depth, then
+  charges its size (`fnTy`).
 - A join walks two types together. It charges 1 before it visits each pair of container types:
   arrays, tuples, lists, and struct types. A pair of two struct types charges as a type
-  equality, the sum of the two sizes, and compares the identities. Another pair charges nothing.
-  A visit that fails stops the walk, so the charge counts the pairs up to that visit.
+  equality, the sum of the two sizes, and compares the identities. A pair of two function types
+  charges in the same way and needs two equal types, also in their `mut` marks. Another pair
+  charges nothing. A visit that fails stops the walk, so the charge counts the pairs up to that
+  visit.
 - A `type` item is a constant of type `Type` in the table of constants. Its first use evaluates
   its type expression, and a use while it is in progress is `S019`.
 - The key of a struct specialization is its struct item and its static arguments. Each
@@ -95,7 +100,7 @@ mutual
         let r ← joinAll ss ts
         return r.map fun us => .tuple us.toArray
       else return none
-    | s@(.struct ..), t@(.struct ..) => do
+    | s@(.struct ..), t@(.struct ..) | s@(.fn ..), t@(.fn ..) => do
       modify (· + (s.size + t.size))
       return if s = t then some s else none
     | s, t => do
@@ -206,6 +211,16 @@ def tupleTy (pos : Pos) (ts : List Ty) : M Ty := do
   bounded pos t.depth
   charge pos t.size
   sums pos (ts.map Ty.info) t.info
+  return t
+
+/-!
+The function type with the parameter types `ps` and the result type `r` at `pos`. It checks its
+depth, then charges its size.
+-/
+def fnTy (pos : Pos) (ps : List TyParam) (r : Ty) : M Ty := do
+  let t := Ty.fn ps.toArray r
+  bounded pos t.depth
+  charge pos t.size
   return t
 
 end Silicon.Source.Eval
