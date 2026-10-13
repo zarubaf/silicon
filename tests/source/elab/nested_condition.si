@@ -1,0 +1,11 @@
+// Four nested `if` of aggregates, each the condition of the next. Each condition becomes one
+// temporary with its own 2 compares, so the output stays linear in the source.
+// TOP M()
+// CHECK-COUNT-8: icmp eq
+// CHECK-NOT: icmp
+module M() domains() {
+    input a: (UInt[4], Bool);
+    input b: (UInt[4], Bool);
+    output y: (UInt[4], Bool);
+    y := if ((if ((if ((if (a == b) { a } else { b }) == a) { a } else { b }) == b) { a } else { b }) == a) { a } else { b };
+}

@@ -1,0 +1,16 @@
+// `==` of aggregates is an and-chain of the leaf compares in leaf order, and `!=` is its xor with 1. A
+// static pair folds into `(const 1 1)`, the first term of the chain.
+// TOP M()
+// CHECK: (assign e (and (and (icmp eq a$0e b$0e) (icmp eq a$1e b$1e)) (icmp eq a$2e b$2e)))
+// CHECK-NEXT: (assign k (and (and (const 1 1) (icmp eq a$0e b$0e)) (icmp eq a$2e b$2e)))
+// CHECK-NEXT: (assign n (xor (and (and (icmp eq a$0e b$0e) (icmp eq a$1e b$1e)) (icmp eq a$2e b$2e)) (const 1 1)))
+module M() domains() {
+    input a: (UInt[4], Bool, UInt[4]);
+    input b: (UInt[4], Bool, UInt[4]);
+    output e: Bool;
+    output n: Bool;
+    output k: Bool;
+    e := a == b;
+    n := a != b;
+    k := (a.0, 3, a.2) == (b.0, 3, b.2);
+}

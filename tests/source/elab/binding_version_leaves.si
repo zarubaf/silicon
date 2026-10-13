@@ -1,0 +1,19 @@
+// A named record with an array field, and an update of one element. The update takes version 1
+// for the record, and each leaf of the new version follows it: `q$1v$xs$0e`.
+// TOP M()
+// CHECK: (let q$1v$f (bits 1) q$f)
+// CHECK-NEXT: (let q$1v$xs$0e (bits 4) q$xs$0e)
+// CHECK-NEXT: (let q$1v$xs$1e (bits 4) (add q$xs$1e (const 4 1)))
+// CHECK: (assign o q$1v$xs$1e)
+struct R {
+    xs: [UInt[4]; 2],
+    f: Bool,
+}
+module M() domains() {
+    input x: UInt[4];
+    input y: Bool;
+    output o: UInt[4];
+    let mut q = R([x, x], y);
+    q.xs[1] = q.xs[1] +% 1;
+    o := q.xs[1];
+}

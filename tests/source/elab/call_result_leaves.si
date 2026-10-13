@@ -1,0 +1,27 @@
+// A call that returns a record or a tuple names the result leaves with the role `0ret` in the NAME
+// position and no version: `f$0c$0ret$a` and `g$1c$0ret$0e`.
+// TOP M()
+// CHECK: (let f$0c$0ret$a (bits 4) f$0c$x)
+// CHECK: (let g$1c$0ret$0e (bits 4) g$1c$x)
+// CHECK: (let r$a (bits 4) f$0c$0ret$a)
+// CHECK: (let s$0e (bits 4) g$1c$0ret$0e)
+// CHECK: (assign z (const 1 1))
+struct P {
+    a: UInt[4],
+    b: Bool,
+}
+fn f(x: UInt[4]) -> P {
+    return P(x, true);
+}
+fn g(x: UInt[4]) -> (UInt[4], Bool) {
+    return (x, false);
+}
+module M() domains() {
+    input x: UInt[4];
+    output y: UInt[4];
+    output z: Bool;
+    let r = f(x);
+    let s = g(x);
+    y := r.a +% s.0;
+    z := r.b;
+}

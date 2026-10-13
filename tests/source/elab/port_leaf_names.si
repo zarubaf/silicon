@@ -1,0 +1,22 @@
+// A record port, an array port, and a tuple port give one core port for each leaf. A field
+// leaf is `p$a`, and an element leaf is `r$2e`, in the packing order.
+// TOP M()
+// CHECK: (input p$a (bits 4))
+// CHECK-NEXT: (input p$b (bits 1))
+// CHECK-NEXT: (input r$0e (bits 1))
+// CHECK-NEXT: (input r$1e (bits 1))
+// CHECK-NEXT: (input r$2e (bits 1))
+// CHECK-NEXT: (output q$0e (bits 4))
+// CHECK-NEXT: (output q$1e (bits 1))
+// CHECK: (assign q$0e p$a)
+// CHECK-NEXT: (assign q$1e r$2e)
+struct P {
+    a: UInt[4],
+    b: Bool,
+}
+module M() domains() {
+    input p: P;
+    input r: [Bool; 3];
+    output q: (UInt[4], Bool);
+    q := (p.a, r[2]);
+}

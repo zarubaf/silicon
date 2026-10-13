@@ -1,0 +1,14 @@
+// A hardware `if` of an aggregate lowers its condition once, into a temporary, and each leaf mux
+// reads that temporary.
+// TOP M()
+// CHECK: (let y$0e$0t (bits 1) (icmp eq u v))
+// CHECK-COUNT-3: (mux y$0e$0t
+// CHECK-NOT: icmp
+module M() domains() {
+    input u: UInt[4];
+    input v: UInt[4];
+    input a: (UInt[4], UInt[4], Bool);
+    input b: (UInt[4], UInt[4], Bool);
+    output y: (UInt[4], UInt[4], Bool);
+    y := if (u == v) { a } else { b };
+}
