@@ -33,8 +33,15 @@ These rules settle the open points of slice 1:
   The code is `S019`.
 - A port, a register, and a wire have the type `Bool`, `UInt[W]`, or `SInt[W]` (`S010`). Until
   phase 6 of section 14.2, a struct type, an array type, or a tuple type there is `S010`.
-- A module parameter can be a type or a record. Such an argument gives the digest form of the
-  emitted name (section 7.1).
+- A module parameter can be a type, a record, or a function. Such an argument gives the digest
+  form of the emitted name (section 7.1). A function serializes as its item, so a struct
+  argument and the key of a struct specialization hold the item too. The typed use at the
+  parameter needs the exact function type (`S010` at the statement).
+- A function type is not hardware data, so a port, a register, and a wire of a function type
+  are `S010` at the statement (`dataType`).
+- A function value never reaches the lowering. It is always static. Only `Eval.lit` makes
+  hardware of a static value, and it takes only a `Bool` or a finite value. A register value
+  and a `:=` value conform to a scalar type first. A function there is thus `S010`.
 - A register in a combinational module is `S017` at the statement, before its type.
 - A `:=` target resolves without a charge. A register, a wire, an own output, and a child input
   are targets, also through a handle alias. Each other target fails with `S017` (rule). A
