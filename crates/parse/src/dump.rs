@@ -377,6 +377,23 @@ mod tests {
     }
 
     #[test]
+    fn function_types() {
+        assert_eq!(expr_of("fn () -> T"), "(fntype () (name \"T\"))");
+        assert_eq!(
+            expr_of("fn (T, mut U) -> V"),
+            "(fntype ((fnparam false (name \"T\")) (fnparam true (name \"U\"))) (name \"V\"))"
+        );
+        assert_eq!(
+            expr_of("-fn (A) -> fn () -> B"),
+            "(unary neg (fntype ((fnparam false (name \"A\"))) (fn () (name \"B\"))))"
+        );
+        assert_eq!(
+            dump_of("type F = fn (mut T,) -> UInt[8];"),
+            "(alias \"F\" (fn ((fnparam true (name \"T\"))) (index (name \"UInt\") ((num 8)))))\n"
+        );
+    }
+
+    #[test]
     fn expressions() {
         assert_eq!(expr_of("42"), "(num 42)");
         assert_eq!(expr_of("0xff"), "(num 255)");
