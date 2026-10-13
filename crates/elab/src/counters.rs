@@ -49,6 +49,10 @@ pub(crate) struct Counts {
     pub leaves: u64,
     /// The nodes that the path arena gained.
     pub paths: u64,
+    /// The containers that a walk along a path into a stored value entered.
+    pub stepped: u64,
+    /// The steps of work of the table of types: its lookups, and the walks of `Value::ty`.
+    pub table: u64,
 }
 
 /// What a counter counts.
@@ -72,6 +76,8 @@ pub(crate) enum Count {
     Paired,
     Leaves,
     Paths,
+    Stepped,
+    Table,
 }
 
 static COUNTS: Mutex<BTreeMap<u64, Counts>> = Mutex::new(BTreeMap::new());
@@ -128,6 +134,8 @@ pub(crate) fn add(count: Count, n: u64) {
             Count::Paired => &mut c.paired,
             Count::Leaves => &mut c.leaves,
             Count::Paths => &mut c.paths,
+            Count::Stepped => &mut c.stepped,
+            Count::Table => &mut c.table,
         };
         *field += n;
     }

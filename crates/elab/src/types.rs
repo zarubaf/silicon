@@ -352,6 +352,7 @@ impl Types {
     #[cfg(test)]
     pub(crate) fn tick(&self, n: u64) {
         self.work.fetch_add(n, std::sync::atomic::Ordering::Relaxed);
+        crate::counters::add(crate::counters::Count::Table, n);
     }
 
     /// Counts the lookup of `ty`: 1 for the type and 1 for each part of a tuple type.

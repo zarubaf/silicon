@@ -182,9 +182,16 @@ impl Drop for Store {
     }
 }
 
+/// Counts `n` steps of a walk along a path into a stored value.
+fn stepped(steps: &Cell<u64>, n: u64) {
+    steps.set(steps.get() + n);
+    #[cfg(test)]
+    crate::counters::add(crate::counters::Count::Stepped, n);
+}
+
 /// The element of `v` at the numbers `path`, one for each container below it.
 fn element<'a>(v: &'a Value, path: &[usize], steps: &Cell<u64>) -> &'a Value {
-    steps.set(steps.get() + path.len() as u64);
+    stepped(steps, path.len() as u64);
     let mut cur = v;
     for &k in path {
         cur = match cur {
@@ -206,7 +213,7 @@ fn agg_element<'a>(a: &'a Agg, path: &[usize], steps: &Cell<u64>) -> Seen<'a> {
     for (i, &k) in path.iter().enumerate() {
         cur = match cur {
             Seen::Agg(Agg::Array(_, p) | Agg::Tuple(_, p) | Agg::Record(_, p)) => {
-                steps.set(steps.get() + 1);
+                stepped(steps, 1);
                 p.0.get(k).map_or(Seen::Static(&ABSENT_VALUE), Agg::seen)
             }
             Seen::Static(v) => return Seen::Static(element(v, &path[i..], steps)),
@@ -352,7 +359,7 @@ impl Store {
             return None;
         };
         self.settle_root(root);
-        self.steps.set(self.steps.get() + keys.len() as u64);
+        stepped(&self.steps, keys.len() as u64);
         let Val::Static(value) = &mut self.frames.get_mut(frame)?.get_mut(&id)?.value else {
             return None;
         };
