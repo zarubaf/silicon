@@ -53,6 +53,9 @@ pub(crate) struct Counts {
     pub stepped: u64,
     /// The steps of work of the table of types: its lookups, and the walks of `Value::ty`.
     pub table: u64,
+    /// The expression nodes that scans of the AST visited. The pass before the evaluation scans
+    /// each node once. An evaluation that scans an expression again counts here too.
+    pub ast: u64,
 }
 
 /// What a counter counts.
@@ -78,6 +81,7 @@ pub(crate) enum Count {
     Paths,
     Stepped,
     Table,
+    Ast,
 }
 
 static COUNTS: Mutex<BTreeMap<u64, Counts>> = Mutex::new(BTreeMap::new());
@@ -136,6 +140,7 @@ pub(crate) fn add(count: Count, n: u64) {
             Count::Paths => &mut c.paths,
             Count::Stepped => &mut c.stepped,
             Count::Table => &mut c.table,
+            Count::Ast => &mut c.ast,
         };
         *field += n;
     }

@@ -72,6 +72,9 @@ pub(crate) struct Scan {
     pub numbers: Numbers,
     pub call_args: CallArgs,
     pub syms: Syms,
+    /// The expression nodes that the pass visited, for the tests of the work.
+    #[cfg(test)]
+    pub nodes: u64,
 }
 
 pub(crate) fn of(file: &Resolved, top: Option<&ResolvedExpr>) -> Scan {
@@ -82,6 +85,8 @@ pub(crate) fn of(file: &Resolved, top: Option<&ResolvedExpr>) -> Scan {
         nested: 0,
         numbers: Numbers::new(),
         call_args: CallArgs::default(),
+        #[cfg(test)]
+        nodes: 0,
         table: BTreeMap::new(),
         syms: Syms::default(),
     };
@@ -102,6 +107,8 @@ pub(crate) fn of(file: &Resolved, top: Option<&ResolvedExpr>) -> Scan {
         numbers: walk.numbers,
         call_args: walk.call_args,
         syms: walk.syms,
+        #[cfg(test)]
+        nodes: walk.nodes,
     }
 }
 
@@ -113,6 +120,8 @@ struct Walk<'a> {
     nested: usize,
     numbers: Numbers,
     call_args: CallArgs,
+    #[cfg(test)]
+    nodes: u64,
     table: BTreeMap<String, Sym>,
     syms: Syms,
 }
@@ -319,6 +328,10 @@ impl Walk<'_> {
     /// expression.
     fn expr(&mut self, e: &Expr, depth: usize) -> bool {
         self.reach(depth);
+        #[cfg(test)]
+        {
+            self.nodes += 1;
+        }
         let d = depth + 1;
         match e {
             Expr::Num { id, value, .. } => {

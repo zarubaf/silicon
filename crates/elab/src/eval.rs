@@ -761,7 +761,10 @@ impl<'a> Evaluator<'a> {
             consts.push(Entry::NotStarted);
         }
         #[cfg(test)]
-        crate::counters::start(budget.fuel);
+        {
+            crate::counters::start(budget.fuel);
+            crate::counters::add(crate::counters::Count::Ast, scan.nodes);
+        }
         Evaluator {
             file,
             top,

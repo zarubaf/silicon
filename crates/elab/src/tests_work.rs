@@ -42,10 +42,20 @@ fn equals(n: usize, k: usize) -> String {
     )
 }
 
+/// Repeated indices of a static array with an unused branch of `n` nodes: `k` evaluations of the
+/// same index. The scan pass visits the branch once, and no evaluation scans it again.
+fn branches(n: usize, k: usize) -> String {
+    format!(
+        "fn f() -> Int {{ let xs = [1, 2]; \
+         comptime for i in 0..{k} {{ let y = xs[if (true) {{ 0 }} else {{ {} }}]; }} return 0; }}",
+        vec!["0"; n].join(" + ")
+    )
+}
+
 /// The work of a run: the steps of the table, the pairs compared, the pairs of types joined,
-/// the operands that the check of `==` read the function flag of, and the nodes of the size
-/// walks. The family number and the sizes make the fuel of the run unique.
-fn work(family: u64, source: fn(usize, usize) -> String, n: usize, k: usize) -> [u64; 5] {
+/// the operands that the check of `==` read the function flag of, the nodes of the size walks,
+/// and the nodes that scans of the AST visited. The family number and the sizes make the fuel of the run unique.
+fn work(family: u64, source: fn(usize, usize) -> String, n: usize, k: usize) -> [u64; 6] {
     let fuel = 500_000_000 + family * 1_000_000 + (n as u64) * 1000 + k as u64;
     let src = source(n, k);
     assert_eq!(out(&src, "f()", fuel, 1000), "(int 0)", "{n} {k}");
@@ -56,6 +66,7 @@ fn work(family: u64, source: fn(usize, usize) -> String, n: usize, k: usize) -> 
         counts.visited,
         counts.flagged,
         counts.walked,
+        counts.ast,
     ]
 }
 
@@ -95,6 +106,17 @@ fn the_work_of_typed_uses_of_a_function_value_is_linear_in_n_and_k() {
 #[test]
 fn the_work_of_repeated_equality_is_linear_in_n_and_k() {
     assert_linear(3, equals);
+}
+
+/// An index does not scan its arguments again at each evaluation, also not the branch that a
+/// conditional skips: the nodes that scans visited grow in `n` and not in `k`.
+#[test]
+fn the_work_of_repeated_indices_is_linear_in_n_and_k() {
+    let at = |n: usize, k: usize| work(4, branches, n, k)[5];
+    let (n1, n2, n4) = (at(100, 100), at(200, 100), at(400, 100));
+    assert!(n1 > 0 && n4 - n2 == 2 * (n2 - n1), "{n1} {n2} {n4}");
+    assert_eq!(at(100, 400), n1);
+    assert_eq!(at(400, 400), n4);
 }
 
 /// The leaves that the walk over the leaves of a port type visited during the elaboration and
