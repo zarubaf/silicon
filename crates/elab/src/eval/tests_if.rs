@@ -120,6 +120,34 @@ fn static_leaves_make_muxes_and_static_lists_compare_by_equality() {
     assert_eq!(r(&lists(2), 710_000_412), "S011 6:11");
 }
 
+/// Equal static sides without the joined type are `S011` at the `if`, in each arm order. The
+/// lists of `(Int, UInt[8])` and `(UInt[8], Int)` join to a list of `(UInt[8], UInt[8])`, so no
+/// side has the joined type. A list of `(UInt[8], UInt[8])` has it, so it is the result in each
+/// arm order, also when only the second side has it.
+#[test]
+fn equal_static_sides_without_the_joined_type_are_s011_in_each_arm_order() {
+    let cross = |a: &str, b: &str| {
+        let body = format!(
+            "let mut xs = list(A);\n  xs.push((1, 2));\n  let mut ys = list(B);\n  \
+             ys.push((1, 2));\n  let mut zs = list(C);\n  zs.push((1, 2));\n  \
+             let y = if (x.0) {{ ({a}, x.0) }} else {{ ({b}, x.0) }};\n  \
+             let z: (List[C], Bool) = y;"
+        );
+        let src = format!(
+            "type A = (Int, UInt[8]);\ntype B = (UInt[8], Int);\ntype C = (UInt[8], UInt[8]);\n{}",
+            assign_in(ARMS, &body)
+        );
+        run_shown(&src, 710_000_413, ALL, ref_x, tree)
+    };
+    assert_eq!(cross("xs", "ys"), "S011 11:11");
+    assert_eq!(cross("ys", "xs"), "S011 11:11");
+    assert_eq!(
+        cross("xs", "zs"),
+        "y$1e=(mux x$0e x$0e x$0e) z$1e=y$1e | ref x | 251"
+    );
+    assert_eq!(cross("zs", "xs"), cross("xs", "zs"));
+}
+
 /// Each mark of one instantiation takes the next number.
 #[test]
 fn each_mark_of_an_instantiation_takes_the_next_number() {
