@@ -192,10 +192,6 @@ def ReinterpretAgrees : Prop :=
 
 /-! Facts about the lift and the operands. -/
 
-private theorem constOf_finite (p : Core.Pos) (s : Bool) (w : Nat) (x : BitVec w) :
-    constOf p (finite s w x) = .const p w x.toNat := by
-  cases s <;> rfl
-
 private theorem finitePair_finite (s : Bool) (w : Nat) (x y : BitVec w) :
     finitePair (finite s w x) (finite s w y) = some (s, ⟨w, x, y⟩) := by
   cases s <;> simp [finite, finitePair]
