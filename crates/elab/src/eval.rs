@@ -32,6 +32,8 @@ mod tests_agg;
 mod tests_bind;
 #[cfg(test)]
 mod tests_eq;
+#[cfg(test)]
+mod tests_if;
 mod types;
 
 pub use inst::Design;

@@ -385,7 +385,8 @@ fn a_keyword_gets_its_escape() {
 }
 
 /// Each hardware operator of slice 1, a hardware `if` with static arms, a hardware shift
-/// count, the conversions, and a child input through a handle alias.
+/// count, the conversions, and a child input through a handle alias. A hardware `if` with two
+/// equal static `Int` arms gives the static value (F19), here the static shift count `n`.
 #[test]
 fn the_hardware_operators() {
     let src = "module C() domains() {\n  input a: Bool;\n  output q: Bool;\n  q := !a;\n}
@@ -394,7 +395,8 @@ module M() {
   output y: UInt[8];\n  output z: SInt[16];\n  output b: Bool;
   let w = (x +% 1) -% (x *% 3) & ~x | (x ^ 255);
   let v = -s >> c;
-  let k = if (e) { 1 } else { x << 2 };
+  let n = if (e) { 2 } else { 2 };
+  let k = if (e) { 1 } else { x << n };
   instance u = C();
   let h = u.a;
   h := e && x < 5 || s >= -1 && x != w;
@@ -405,8 +407,41 @@ module M() {
 ";
     assert_eq!(order(src, "M"), ["C", "M"]);
     assert_eq!(names(src, "M", "M"), ["w", "v", "k", "u"]);
-    exact(src, "M", 268);
-    assert_eq!(cost(src, "M"), "total 268\nC 10\nM 232\n");
+    exact(src, "M", 276);
+    assert_eq!(cost(src, "M"), "total 276\nC 10\nM 240\n");
+}
+
+/// The module of the F19 cases: a hardware `if` in the body.
+fn arms(body: &str) -> String {
+    format!("module T() {{\n  input c: Bool;\n  output o: UInt[8];\n{body}  o := 0;\n}}\n")
+}
+
+/// F19: a hardware `if` with two static arms of a type that is not hardware data is a static
+/// pair. It charges as a static equality, the sum of the sizes. Thus `if (c) { 3 } else { 3 }`
+/// charges 6 more than `3`. Equal arms give the static value, and different arms are `S011` at
+/// the `if`. An `Int` arm and a `Bool` arm have no join, so they are `S010`. Two arms of type
+/// `()` give `()`.
+#[test]
+fn a_hardware_if_with_static_arms_is_a_static_pair() {
+    let if_3 = total(&arms("  let k = if (c) { 3 } else { 3 };\n"), "T");
+    assert_eq!(if_3, total(&arms("  let k = 3;\n"), "T") + 6);
+    for equal in [
+        "  let k = if (c) { \"a\" } else { \"a\" };\n",
+        "  let k = if (c) { () } else { () };\n",
+    ] {
+        assert!(cost(&arms(equal), "T").starts_with("total"), "{equal}");
+    }
+    let cases = [
+        ("  let k = if (c) { 3 } else { 4 };\n", "S011 4:11"),
+        (
+            "  let k = if (c) { UInt[8] } else { UInt[4] };\n",
+            "S011 4:11",
+        ),
+        ("  let k = if (c) { 3 } else { true };\n", "S010 4:11"),
+    ];
+    for (body, code) in cases {
+        assert_eq!(cost(&arms(body), "T"), code, "{body}");
+    }
 }
 
 /// A hardware function: its arguments, its versions, and its result get core names in the

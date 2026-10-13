@@ -4,8 +4,10 @@
 //! height, `S020` with its position, and the charges of the lowering.
 
 use crate::tests_elab::load;
+use crate::types::Ty;
 use crate::{Abort, Budget, Design, Failure, Lowered, check, elaborate};
 use core_ir::text::{canonicalize, parse, print};
+use parse::ast::BinOp;
 
 /// The elaboration of `src` with the top `top` and the fuel `fuel`, and its lowering. An error
 /// gives its code and its position.
@@ -181,7 +183,7 @@ const OPS: &str = "module C() domains() {\n  input a: Bool;\n  output q: Bool;\n
     module M() {\n  input x: UInt[8];\n  input s: SInt[8];\n  input c: UInt[3];\n  \
     input e: Bool;\n  output y: UInt[8];\n  output z: SInt[16];\n  output b: Bool;\n  \
     let w = (x +% 1) -% (x *% 3) & ~x | (x ^ 255);\n  let v = -s >> c;\n  \
-    let k = if (e) { 1 } else { x << 2 };\n  instance u = C();\n  let h = u.a;\n  \
+    let n = if (e) { 2 } else { 2 };\n  let k = if (e) { 1 } else { x << n };\n  instance u = C();\n  let h = u.a;\n  \
     h := e && x < 5 || s >= -1 && x != w;\n  \
     y := if (u.q) { k } else { reinterpret(UInt[8], s) };\n  z := resize(SInt[16], v);\n  \
     b := if (e) { true } else { false };\n}\n";
@@ -481,4 +483,48 @@ fn a_copy_of_a_wide_name_charges_its_width() {
     assert_eq!(total(&copies(256), "M"), 99);
     assert!(!sil_fuel(&copies(256), "M", 99).starts_with("S015"));
     assert!(sil_fuel(&copies(256), "M", 98).starts_with("S015"));
+}
+
+/// A shared condition (`Op::Share`, section 7.4) binds to one temporary in the statement that
+/// lowers first. Its number comes after the temporaries of the condition itself: here `y$0t`
+/// holds the negation that the `resize` of `SInt` uses twice, so the condition is `y$1t`. The
+/// later statement refers to it. The hardware aggregate that makes such a mark comes with the
+/// aggregate resources, so the test puts the trees of two `mux` nodes into the bindings of
+/// two outputs.
+#[test]
+fn a_shared_condition_binds_in_its_first_statement_and_later_ones_refer_to_it() {
+    use crate::hw::Op;
+    use core_ir::text::print;
+    use parse::ast::UnOp;
+    let src = "module T() {\n  input s: SInt[4];\n  input t: SInt[8];\n  input a: UInt[8];\n  \
+        input b: UInt[8];\n  output p: SInt[4];\n  output q: SInt[8];\n  output y: UInt[8];\n  \
+        output z: UInt[8];\n  p := s;\n  q := t;\n  y := a;\n  z := b;\n}\n";
+    let file = load(src).unwrap();
+    let Ok(Ok(mut d)) = elaborate(&file, "T", parse::DEFAULT_SYNTAX_DEPTH, Budget::default())
+    else {
+        panic!("elaboration failed");
+    };
+    let top = d.top;
+    let value = |d: &Design, k: usize| d.insts[top].body.binds[k].value;
+    let (small, wide_in, left, right) = (value(&d, 0), value(&d, 1), value(&d, 2), value(&d, 3));
+    let (pos, g) = (d.insts[top].body.binds[0].pos, &mut d.graph);
+    let neg = g.mk(pos, Ty::SInt(4), Op::Un(UnOp::Neg), vec![small]);
+    let wide = g.mk(pos, Ty::SInt(8), Op::Resize, vec![neg]);
+    let cond = g.mk(pos, Ty::Bool, Op::Bin(BinOp::Eq), vec![wide, wide_in]);
+    let shared = g.mk(pos, Ty::Bool, Op::Share(0), vec![cond]);
+    let first = g.mk(pos, Ty::UInt(8), Op::Mux, vec![shared, left, right]);
+    let second = g.mk(pos, Ty::UInt(8), Op::Mux, vec![shared, right, left]);
+    d.insts[top].body.binds[2].value = first;
+    d.insts[top].body.binds[3].value = second;
+    let lowered = d.lower().unwrap().unwrap();
+    let out = print(&lowered.design);
+    for line in [
+        "(assign y (mux y$1t a b))",
+        "(assign z (mux y$1t b a))",
+        "(let y$0t (bits 4) (sub (const 4 0) s))",
+        "(let y$1t (bits 1) (icmp eq (concat (replicate (extract y$0t 3 1) 4) y$0t) t))))",
+    ] {
+        assert!(out.contains(line), "{line}\n{out}");
+    }
+    assert_eq!(out.matches("(let ").count(), 2, "{out}");
 }
