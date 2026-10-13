@@ -815,7 +815,7 @@ mutual
           match (← read).field f.pos >>= (iface.ports[·]?) with
           | some q =>
             if q.input then return some ⟨.handle (.input id path q), true, none⟩
-            else return some ⟨.hw (.mk p q.ty (.out path q.name) []), true, none⟩
+            else return some ⟨.hw (.mk p q.ty (.out path (portName q.name)) []), true, none⟩
           | none => fail .S010 p s!"the instance has no port `{f.name}`"
         | v => return some ⟨.static (← fieldAt p f v).2.1, true, o.root⟩
       | .unit p => do charge p Value.unit.size; return some ⟨.static .unit, false, none⟩

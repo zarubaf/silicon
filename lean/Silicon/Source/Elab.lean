@@ -91,10 +91,13 @@ structure ChildDecl where
   iface : Iface
   pos : Pos
 
-/-! The target of a `:=` binding: an own resource, or an input of the child number `index`. -/
+/-!
+The target of a `:=` binding: an own resource, or an input of the child number `index`. The
+input names its leaf by its core name.
+-/
 inductive Sink where
   | own (kind : Kind) (ty : Ty) (path : Path)
-  | child (index : Nat) (inst : Path) (port : String)
+  | child (index : Nat) (inst : Path) (port : Name)
 
 structure Bind where
   sink : Sink
@@ -247,7 +250,7 @@ def bindTarget (p : Pos) (t : Target) (h : Hw) : EM Unit := do
     if c == 0 then modify fun s => { s with work.bound := s.work.bound.modify k (· + 1) }
     if c == 1 then modify fun s => { s with work.dup := earlier s.work.dup second }
     modify fun s => { s with work.inputs := s.work.inputs.insert (k, q.sym) (c + 1) }
-    modifyBody fun b => { b with binds := b.binds.push ⟨.child k path q.name, h, p⟩ }
+    modifyBody fun b => { b with binds := b.binds.push ⟨.child k path (portName q.name), h, p⟩ }
 
 /-!
 The binding rule at the end of a body. A missing binding of an own resource is at its

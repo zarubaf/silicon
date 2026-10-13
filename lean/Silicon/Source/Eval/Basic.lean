@@ -63,7 +63,7 @@ def Specs.find? (s : Specs) (i : Nat) (args : List Value) : Option (Nat × Spec)
 /-! A node of a hardware value. Section 7.4 lowers each node to core operations. -/
 inductive Op where
   | ref (name : Path)
-  | out (inst : Path) (port : String)
+  | out (inst : Path) (port : Name)
   | lit (value : Value)
   | un (op : UnOp)
   | bin (op : BinOp)
@@ -91,6 +91,9 @@ def Op.size : Op → Nat
 
 def Hw.mk (pos : Pos) (ty : Ty) (op : Op) (args : List Hw) : Hw :=
   .node pos ty (op.size + (args.map Hw.size).sum) op args
+
+/-! The core name of the port with the source name `x`. A port keeps its source name. -/
+def portName (x : String) : Name := ⟨x, []⟩
 
 /-! A port of an instantiation, as its parent sees it. `sym` is the symbol of its name. -/
 structure Port where

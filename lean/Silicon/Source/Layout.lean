@@ -16,10 +16,7 @@ leaf before it makes the leaf. In this phase, a port has a scalar type and thus 
 -/
 namespace Silicon.Source.Layout
 
-open Names
-
-/-! The core name of the port with the source name `x`. -/
-def portName (x : String) : Name := ⟨x, []⟩
+open Names Eval
 
 /-! One leaf of a port: its core name, its name in a source vector, and its scalar type. -/
 structure Leaf where

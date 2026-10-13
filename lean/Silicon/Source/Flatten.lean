@@ -191,10 +191,10 @@ def lower (target : Path) (root : Bool) : Hw → FM Low
       charge p 1
       pure ⟨.ref c (← pathText p path), some u, 1⟩
     | .out inst q, [] =>
-      let u := 1 + pathUnits inst + nameUnits (Layout.portName q)
+      let u := 1 + pathUnits inst + nameUnits q
       charge p 1
       let i ← pathText p inst
-      pure ⟨.port c i (← nameText p (Layout.portName q)), some u, 1⟩
+      pure ⟨.port c i (← nameText p q), some u, 1⟩
     | .lit v, [] =>
       charge p 1
       pure ⟨← constOf c v, some 1, 1⟩
@@ -368,8 +368,8 @@ def lowerInst (i : Inst) : FM Core.Module := do
         | .output => .assign p x e
     | .child k inst q =>
       charge bd.pos 1
-      let x ← nameText bd.pos (Layout.portName q)
-      let e ← value (inst.push (.user q)) bd.value
+      let x ← nameText bd.pos q
+      let e ← value (q.rest.foldl Path.push (inst.push (.user q.head))) bd.value
       conns := conns.modify k (·.push (x, e))
   for (c, k) in b.children.zipIdx do
     charge c.pos 1
