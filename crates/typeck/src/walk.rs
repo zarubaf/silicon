@@ -565,7 +565,11 @@ impl<'a> Walker<'a> {
             }
             Expr::FnType { params, ret, .. } => {
                 self.fn_type(params, ret);
-                None
+                Some(Head {
+                    text: "a function type".to_owned(),
+                    missing: 0,
+                    ctor: Ctor::Unknown,
+                })
             }
         }
     }
@@ -591,7 +595,12 @@ impl<'a> Walker<'a> {
                         self.arity(*pos, &h.text, h.missing, args.len());
                     }
                 } else {
-                    self.arity(*pos, "a complete type", 0, args.len());
+                    let what = if matches!(**base, TypeExpr::Fn { .. }) {
+                        "a function type"
+                    } else {
+                        "a complete type"
+                    };
+                    self.arity(*pos, what, 0, args.len());
                     self.type_expr(base);
                 }
                 for arg in args {
