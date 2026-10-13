@@ -1,0 +1,23 @@
+// S017: a read of a part of a child input. A data selection reads the input handle.
+// TOP M()
+struct P {
+    a: Bool,
+}
+module C() domains() {
+    input p: P;
+    input r: [Bool; 2];
+    input t: (Bool, Bool);
+}
+module M() domains() {
+    output x: Bool;
+    output y: Bool;
+    output z: Bool;
+    instance c = C();
+    c.p := P(false);
+    c.r := [false, true];
+    c.t := (false, true);
+    // expected-error S017 @+1
+    x := c.p.a;
+    y := c.r[0];
+    z := c.t.1;
+}
