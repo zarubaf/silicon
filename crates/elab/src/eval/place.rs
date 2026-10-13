@@ -375,7 +375,8 @@ impl Evaluator<'_> {
         let mut known = self.base_ty(&base);
         let mut keyed = Vec::with_capacity(steps.len());
         let mut stop = None;
-        let at = self.store.park(base.into_out());
+        let holds = self.selects_static_part(&base, steps);
+        let at = self.store.park_held(base.into_out(), holds);
         for (n, step) in steps.iter().enumerate() {
             match self.key(step) {
                 Ok(k) => keyed.push(k),
@@ -404,6 +405,35 @@ impl Evaluator<'_> {
             return Err(e);
         }
         Ok((out, keyed.len()))
+    }
+
+    /// True if the base is a part of an aggregate root of a local, and the selectors and fields
+    /// that start `steps` lead to a static part of the root. The index after them then waits at
+    /// a static part, so it holds the root local. The walk takes at most the steps that already
+    /// charged, and reads no index.
+    fn selects_static_part(&self, base: &Opnd, steps: &[Sel<'_>]) -> bool {
+        let Opnd::Static(Out::Ref(r)) = base else {
+            return false;
+        };
+        if !matches!(r.root, Root::Local(..)) || !matches!(self.store.root(&r.root), Val::Agg(_)) {
+            return false;
+        }
+        let mut ty = self.base_ty(base);
+        let mut path = r.path.clone();
+        for step in steps {
+            let number = match *step {
+                Sel::Index(..) => break,
+                Sel::Select(_, _, index) => index.as_str().parse::<usize>().ok(),
+                Sel::Field(_, f) => ty
+                    .and_then(|t| self.tys.fields(t))
+                    .and_then(|(item, _)| self.field_number(item, f)),
+            };
+            let Some(k) = number else { return false };
+            ty = ty.and_then(|t| self.part_ty(t, k));
+            path.push(k);
+        }
+        path.len() > r.path.len()
+            && matches!(self.store.at(&Ref { root: r.root, path }), Seen::Static(_))
     }
 
     /// The type of a base that refers to a local or a constant: the type of its root, along its
