@@ -73,6 +73,8 @@ pub(super) struct PartInfo {
 /// The result of the walk along a place.
 struct Walked {
     keys: Vec<usize>,
+    /// What the walk knows of the type, for the next group of steps.
+    known: Known,
     ty: Option<TyId>,
     in_list: bool,
     held: Held,
@@ -88,7 +90,30 @@ enum Cur<'s> {
     Own(Val),
 }
 
+impl Walked {
+    /// The start of a walk from the root of a local with the type `ty`, if it has one.
+    fn start(ty: Option<TyId>) -> Self {
+        Walked {
+            keys: Vec::new(),
+            known: ty.map_or(Known::Absent, Known::Ty),
+            ty,
+            in_list: false,
+            held: Held::Other,
+            part: None,
+            own: None,
+        }
+    }
+}
+
 impl Cur<'_> {
+    /// The value that the walk made, if the part is not in the store.
+    fn into_own(self) -> Option<Val> {
+        match self {
+            Cur::Own(v) => Some(v),
+            Cur::In(_) => None,
+        }
+    }
+
     fn seen(&self) -> Seen<'_> {
         match self {
             Cur::In(s) => *s,
@@ -679,18 +704,33 @@ impl Evaluator<'_> {
                 "the root of the place is pending in a window".to_owned(),
             );
         }
+        let aggregate = matches!(self.store.root(&root), Val::Agg(_));
+        let mut state = Walked::start(slot_ty);
         let mut keyed = Vec::with_capacity(steps.len());
+        let mut part_ty = slot_ty;
         let mut stop = None;
         for step in &steps {
+            // A step into a reference normalizes an empty part, which charges its size. As in
+            // Lean, that comes before the next step charges, so the walk catches up first.
+            if aggregate
+                && !keyed.is_empty()
+                && part_ty.is_some_and(|t| self.tys.meta(t).leaves.to_u64() == Some(0))
+            {
+                state = self.walk(root, state, &keyed, false)?;
+                keyed.clear();
+            }
             match self.charge(step.pos(), 1).and_then(|()| self.key(step)) {
-                Ok(k) => keyed.push(k),
+                Ok(k) => {
+                    part_ty = part_ty.and_then(|t| self.key_ty(t, &k));
+                    keyed.push(k);
+                }
                 Err(e) => {
                     stop = Some(e);
                     break;
                 }
             }
         }
-        let walked = self.walk(root, slot_ty, &keyed)?;
+        let walked = self.walk(root, state, &keyed, true)?;
         if let Some(e) = stop {
             return Err(e);
         }
@@ -801,15 +841,15 @@ impl Evaluator<'_> {
     /// step without a type the type stays that of the element until an array gives its
     /// element type. Thus the walk finds the type of a tuple element only once, at the end,
     /// and not at each step.
-    fn walk(&mut self, root: Root, ty: Option<TyId>, keyed: &[Key<'_>]) -> Res<Walked> {
-        let mut keys = Vec::with_capacity(keyed.len());
+    fn walk(&mut self, root: Root, mut st: Walked, keyed: &[Key<'_>], last: bool) -> Res<Walked> {
         let aggregate = matches!(self.store.root(&root), Val::Agg(_));
-        let mut cur = Cur::In(self.store.current(root, &[]));
-        let mut in_list = false;
-        let mut known = match ty {
-            Some(t) => Known::Ty(t),
-            None => Known::Absent,
+        let mut cur = match st.own.take() {
+            Some(v) => Cur::Own(v),
+            None => Cur::In(self.store.current(root, &st.keys)),
         };
+        let mut known = st.known;
+        let mut in_list = st.in_list;
+        let mut keys = std::mem::take(&mut st.keys);
         for key in keyed {
             let seen = cur.seen();
             let (k, field) = match key {
@@ -848,6 +888,15 @@ impl Evaluator<'_> {
             };
             keys.push(k);
         }
+        if !last {
+            return Ok(Walked {
+                keys,
+                known,
+                in_list,
+                own: cur.into_own(),
+                ..Walked::start(None)
+            });
+        }
         let seen = cur.seen();
         let held = match seen {
             Seen::Static(Value::List(elem, xs)) => Held::List {
@@ -881,17 +930,14 @@ impl Evaluator<'_> {
             Known::Absent => None,
             Known::Element => seen.ty(&self.graph, &mut self.tys),
         };
-        let own = match cur {
-            Cur::Own(v) => Some(v),
-            Cur::In(_) => None,
-        };
         Ok(Walked {
             keys,
+            known,
             ty,
             in_list,
             held,
             part,
-            own,
+            own: cur.into_own(),
         })
     }
 
