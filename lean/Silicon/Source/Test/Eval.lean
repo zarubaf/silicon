@@ -2032,6 +2032,24 @@ def staticPart (t : Ty) : Eval.Val :=
   "x$1v$0e=x$0e x$1v$1e$0e=x$0e | [x$1v$0e, [x$1v$1e$0e, (uint 8 2)]] | 17"
 
 /-!
+A new root without a hardware leaf makes the empty parts of each reference on the path static
+values. The update charges the zero size of each such part from the type metadata, at the place
+of the rebind charge, before the part exists. On `(UInt[8], [(); 3])`, `x.0 = 5;` charges 10, and
+4 of it is the zero size of `[(); 3]`. `return true;` charges 4. On `(UInt[8], ())` the empty part
+has the zero size 1, so the total is 11.
+With 9 units the assignment fails, and with 10 the `return` fails. Each reference on a path of two
+steps charges its own empty parts: 3 for `[(); 2]` and 4 for `[(); 3]`. A huge empty part fails
+at the charge before any work on its elements.
+-/
+#guard runF (assignIn "(UInt[8], ())" "x.0 = 5;") refX == " | (UInt[8], Unit) | 11"
+#guard runF (assignIn "(UInt[8], [(); 3])" "x.0 = 5;") refX == " | (UInt[8], [Unit; 3]) | 14"
+#guard runF (assignIn "(UInt[8], [(); 3])" "x.0 = 5;") refX 9 == "S015 2:3"
+#guard runF (assignIn "(UInt[8], [(); 3])" "x.0 = 5;") refX 10 == "S015 3:3"
+#guard runF (assignIn "((UInt[8], [(); 3]), [(); 2])" "x.0.0 = 5;") refX ==
+  " | ((UInt[8], [Unit; 3]), [Unit; 2]) | 18"
+#guard runF (assignIn "(UInt[8], [(); 1 << 40])" "x.0 = 5;") refX == "S015 2:3"
+
+/-!
 A binding takes one version, and each hardware leaf gets one core `let`. A typed binding and an
 assignment without a step read a reference by its leaves.
 -/
