@@ -193,8 +193,18 @@ struct Level<'a> {
     b: Side<'a>,
     next: u64,
     len: u64,
-    /// The results of the parts so far, for a walk that builds a value.
+    /// The results of the parts so far, for a walk that builds a value, and the size, the depth,
+    /// and the number of hardware leaves of each. A finished part keeps its numbers, so the node
+    /// above it reads them and does not walk the part again.
     parts: Vec<Agg>,
+    numbers: Vec<(u64, u64, u64)>,
+}
+
+impl Level<'_> {
+    fn push(&mut self, part: Agg, numbers: (u64, u64, u64)) {
+        self.parts.push(part);
+        self.numbers.push(numbers);
+    }
 }
 
 /// The parts `part` of the two sides of `top`, in constant work. A scalar part type `leaf`
@@ -729,6 +739,7 @@ impl Evaluator<'_> {
                         next: 0,
                         len,
                         parts: Vec::new(),
+                        numbers: Vec::new(),
                     });
                 }
             }
@@ -736,7 +747,12 @@ impl Evaluator<'_> {
                 let Some(top) = stack.last_mut() else {
                     return Ok(part.into_val());
                 };
-                top.parts.push(part);
+                let numbers = (
+                    part.size(&self.graph, &self.tys),
+                    part.depth(&self.tys),
+                    part.leaves(&self.tys),
+                );
+                top.push(part, numbers);
             }
             let Some(top) = stack.last_mut() else {
                 return fail(Code::S010, pos, if_types("a value", "a value"));
@@ -745,11 +761,14 @@ impl Evaluator<'_> {
                 let Some(done) = stack.pop() else {
                     return fail(Code::S010, pos, if_types("a value", "a value"));
                 };
-                let Some(node) = Agg::node(&self.graph, &self.tys, done.ty, done.parts) else {
+                let len = done.parts.len();
+                let Some(shape) = Agg::shape_from(&self.tys, done.ty, len, done.numbers) else {
                     return fail(Code::S010, pos, if_types("a value", "a value"));
                 };
+                let numbers = (shape.size, shape.depth, shape.leaves);
+                let node = Agg::finish(&self.tys, shape, done.parts);
                 match stack.last_mut() {
-                    Some(parent) => parent.parts.push(node),
+                    Some(parent) => parent.push(node, numbers),
                     None => return Ok(node.into_val()),
                 }
                 continue;
@@ -835,6 +854,7 @@ impl Evaluator<'_> {
                         next: 0,
                         len,
                         parts: Vec::new(),
+                        numbers: Vec::new(),
                     });
                 }
             }
