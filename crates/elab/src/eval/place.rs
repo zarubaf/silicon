@@ -420,7 +420,8 @@ impl Evaluator<'_> {
         let on_agg = matches!(self.opnd_seen(&base), Seen::Agg(_));
         let at = self.store.park(base.into_out());
         let mut held = held.map(|(r, ty)| {
-            self.store.probe(at, r);
+            let hw = self.has_leaf(ty);
+            self.store.probe(at, r, hw);
             ty
         });
         for (n, step) in steps.iter().enumerate() {
@@ -452,7 +453,9 @@ impl Evaluator<'_> {
             match key {
                 Ok(k) => {
                     let next = held.and_then(|ty| self.held_step(ty, &k));
-                    self.store.probe_step(at, next.map(|(number, _)| number));
+                    let hw = next.is_some_and(|(_, ty)| self.has_leaf(ty));
+                    self.store
+                        .probe_step(at, next.map(|(number, _)| number), hw);
                     held = next.map(|(_, ty)| ty);
                     keyed.push(k);
                 }
@@ -492,6 +495,11 @@ impl Evaluator<'_> {
         };
         (matches!(r.root, Root::Local(..)) && matches!(self.store.root(&r.root), Val::Agg(_)))
             .then(|| (r.clone(), self.base_ty(base)))
+    }
+
+    /// Whether the type `ty` has a hardware leaf: a part of such a type is no static value.
+    fn has_leaf(&self, ty: Option<TyId>) -> bool {
+        ty.is_some_and(|t| !self.tys.meta(t).leaves.is_zero())
     }
 
     /// The number of the step `key`, which the walk takes from a part of type `ty`, and the type

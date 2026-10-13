@@ -138,6 +138,9 @@ type Frame = BTreeMap<DeclId, Slot>;
 /// The part of an aggregate root that a read waits at, with the root not held yet.
 struct Probe {
     part: Ref,
+    /// The type of the part has a hardware leaf, so the part is no static value (a static part
+    /// holds no hardware leaf) and the decision needs no walk.
+    hw: bool,
 }
 
 /// The values that a result can refer to: the table of constants by item index, and the
@@ -293,20 +296,23 @@ impl Store {
 
     /// The read parked at `at` waits at the part `r` of an aggregate root, and a later index
     /// with a call may hold the root there.
-    fn probe(&mut self, at: usize, r: Ref) {
+    fn probe(&mut self, at: usize, r: Ref, hw: bool) {
         if let Some(slot) = self.probes.get_mut(at) {
-            *slot = Some(Probe { part: r });
+            *slot = Some(Probe { part: r, hw });
         }
     }
 
     /// The walk of the read takes the step `k` from the part of the probe at `at`. A step with no
     /// number ends the probe, because no static part follows it.
-    fn probe_step(&mut self, at: usize, k: Option<usize>) {
+    fn probe_step(&mut self, at: usize, k: Option<usize>, hw: bool) {
         let Some(slot) = self.probes.get_mut(at) else {
             return;
         };
         match (k, slot.as_mut()) {
-            (Some(k), Some(p)) => p.part.path.push(k),
+            (Some(k), Some(p)) => {
+                p.part.path.push(k);
+                p.hw = hw;
+            }
             _ => *slot = None,
         }
     }
@@ -346,7 +352,7 @@ impl Store {
         };
         for at in list {
             let hold = match self.probes.get(at) {
-                Some(Some(p)) => matches!(self.at(&p.part), Seen::Static(_)),
+                Some(Some(p)) => !p.hw && matches!(self.at(&p.part), Seen::Static(_)),
                 _ => false,
             };
             if hold {
