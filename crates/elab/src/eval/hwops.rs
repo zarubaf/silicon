@@ -244,8 +244,25 @@ impl Evaluator<'_> {
     }
 
     /// A hardware `if` with the condition `cond`. A static arm takes the type of the other
-    /// arm. Both arms have one type.
+    /// arm. Both arms have one type. Two function arms are a static pair: they charge as a
+    /// static equality, and one function item gives the static value. Two different functions
+    /// are `S011`.
     pub(super) fn mux(&mut self, pos: Pos, cond: HwId, yes: Opnd, no: Opnd) -> Res<Val> {
+        if let (Opnd::Static(y), Opnd::Static(n)) = (&yes, &no)
+            && let (v @ Value::Function(i, _), w @ Value::Function(j, _)) =
+                (self.store.value(y), self.store.value(n))
+        {
+            let (same, kept) = (i == j, v.clone());
+            self.charge(pos, u128::from(v.size()) + u128::from(w.size()))?;
+            if same {
+                return Ok(Val::Static(kept));
+            }
+            return fail(
+                Code::S011,
+                pos,
+                "the arms of a hardware `if` are two different functions".to_owned(),
+            );
+        }
         let (left, right) = match (yes, no) {
             (Opnd::Static(yes), Opnd::Static(no)) => {
                 let yes_ty = self.store.value(&yes).finite_ty();

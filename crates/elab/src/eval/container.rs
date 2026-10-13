@@ -22,14 +22,16 @@ use std::cmp::Ordering;
 struct Env<'x> {
     store: &'x Store,
     limit: u64,
+    site: Option<Pos>,
 }
 
-/// A new value or type of the depth `depth` at `pos`. Above the nesting depth, it is `S015`.
-pub(super) fn bounded(limit: u64, pos: Pos, depth: u64) -> Res<()> {
+/// A new value or type of the depth `depth` at `pos`. Above the nesting depth, it is `S015`
+/// at `pos`, or at the name `site` of a function value whose signature evaluates.
+pub(super) fn bounded(limit: u64, site: Option<Pos>, pos: Pos, depth: u64) -> Res<()> {
     if limit < depth {
         return fail(
             Code::S015,
-            pos,
+            site.unwrap_or(pos),
             format!("the depth {depth} goes above the nesting depth {limit}"),
         );
     }
@@ -48,7 +50,7 @@ fn cow(store: &Store, out: Out) -> Cow<'_, Value> {
 /// A tuple literal at `pos`: its depth, then the charge of its size.
 fn tuple_of(env: Env<'_>, fuel: &mut Fuel, pos: Pos, elems: Vec<Cow<'_, Value>>) -> Res<Value> {
     let depth = 1 + elems.iter().map(|e| e.depth()).max().unwrap_or(0);
-    bounded(env.limit, pos, depth)?;
+    bounded(env.limit, env.site, pos, depth)?;
     let size = 1 + elems.iter().map(|e| u128::from(e.size())).sum::<u128>();
     fuel.pay(size).map_err(at(pos))?;
     Ok(Value::Tuple(
@@ -82,7 +84,7 @@ fn array_of<'x>(
         });
     }
     let depth = 1 + xs.iter().map(|x| x.depth()).fold(t.depth(), u64::max);
-    bounded(env.limit, pos, depth)?;
+    bounded(env.limit, env.site, pos, depth)?;
     let size = 1 + xs.iter().map(|x| u128::from(x.size())).sum::<u128>();
     fuel.pay(size).map_err(at(pos))?;
     Ok(Value::Array(
@@ -116,7 +118,7 @@ fn build<'x>(
         Part::Empty(node) => match tys.get(ty) {
             Ty::Array(elem, len) if len.cmp_u64(0) == Ordering::Equal => {
                 let empty = Value::Array(*elem, Vec::new());
-                bounded(env.limit, *node, empty.depth())?;
+                bounded(env.limit, env.site, *node, empty.depth())?;
                 Ok(Cow::Owned(empty))
             }
             _ => mismatch(pos, ty, "`[]`", tys),
@@ -149,7 +151,7 @@ fn build<'x>(
 impl Evaluator<'_> {
     /// A new value or type of the depth `depth` at `pos`.
     pub(super) fn bounded(&self, pos: Pos, depth: u64) -> Res<()> {
-        bounded(self.limit, pos, depth)
+        bounded(self.limit, self.site, pos, depth)
     }
 
     /// Checks that `o` can be an element of a container at `pos`. In this phase a container
@@ -229,6 +231,7 @@ impl Evaluator<'_> {
         let env = Env {
             store: &self.store,
             limit: self.limit,
+            site: self.site,
         };
         let elems = outs.into_iter().map(|o| cow(env.store, o)).collect();
         tuple_of(env, &mut self.fuel, pos, elems)
@@ -239,6 +242,7 @@ impl Evaluator<'_> {
         let env = Env {
             store: &self.store,
             limit: self.limit,
+            site: self.site,
         };
         let elems = outs.into_iter().map(|o| cow(env.store, o)).collect();
         array_of(env, &mut self.fuel, &mut self.tys, pos, elems)
@@ -252,6 +256,7 @@ impl Evaluator<'_> {
         let env = Env {
             store: &self.store,
             limit: self.limit,
+            site: self.site,
         };
         let v = build(env, &mut self.fuel, &mut self.tys, pos, t, &part)?.into_owned();
         Ok(Out::Made(Val::Static(v)))

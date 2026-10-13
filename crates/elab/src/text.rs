@@ -4,7 +4,7 @@
 
 use crate::int::Int;
 use crate::ops::int_text;
-use crate::types::{FnParam, Ty, TyId, Types};
+use crate::types::{Ty, TyId, TyParam, Types};
 use crate::value::Value;
 use std::fmt::Write;
 
@@ -19,7 +19,7 @@ pub(crate) enum Piece<'a> {
     Lit(&'a Value),
     Ty(TyId),
     /// A parameter type of a function type, with `mut ` before it if it has the mark.
-    Param(FnParam),
+    Param(TyParam),
     Text(&'static str),
     Owned(String),
 }
@@ -118,7 +118,7 @@ impl<'a> Text<'a> {
                 self.work.push(Piece::Owned(format!("; {}]", xs.len())));
                 self.work.push(Piece::Ty(*elem));
             }
-            Value::Record(t, _) | Value::Function(_, _, t) => self.work.push(Piece::Ty(*t)),
+            Value::Record(t, _) | Value::Function(_, t) => self.work.push(Piece::Ty(*t)),
             Value::List(elem, _) => {
                 self.out.push_str("List[");
                 self.work.push(Piece::Text("]"));
@@ -135,7 +135,7 @@ impl<'a> Text<'a> {
     }
 
     /// The literal form of the static argument `v`, as Lean `Value.literal` prints it.
-    fn lit(&mut self, v: &'a Value) {
+    fn lit(&mut self, tys: &Types, v: &'a Value) {
         match v {
             Value::Int(n) => self.out.push_str(&int_text(n)),
             Value::Bool(b) => write!(self.out, "{b}").unwrap_or_default(),
@@ -149,7 +149,7 @@ impl<'a> Text<'a> {
                 .push_str(&int_text(&Int::from_signed(x, x.width()))),
             Value::Type(t) => self.work.push(Piece::Ty(*t)),
             Value::Unit => self.out.push_str("()"),
-            Value::Function(_, name, _) => self.out.push_str(name),
+            Value::Function(item, _) => self.out.push_str(tys.fn_name(*item)),
             Value::List(t, xs) if xs.is_empty() => {
                 self.out.push_str("list(");
                 self.work.push(Piece::Text(")"));
@@ -184,7 +184,7 @@ impl<'a> Text<'a> {
         {
             match piece {
                 Piece::Value(v) => self.value(v),
-                Piece::Lit(v) => self.lit(v),
+                Piece::Lit(v) => self.lit(tys, v),
                 Piece::Ty(t) => self.ty_node(tys, tys.get(t)),
                 Piece::Param(p) => {
                     if p.mutable {

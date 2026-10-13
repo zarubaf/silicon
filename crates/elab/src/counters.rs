@@ -22,6 +22,10 @@ pub(crate) struct Counts {
     pub joined: u64,
     /// The bytes of text that the serialization of a static value wrote.
     pub serialized: u64,
+    /// The nodes that `Value::holds_fn` visited.
+    pub flagged: u64,
+    /// The parameter types and result types that the function types made.
+    pub params: u64,
 }
 
 /// What a counter counts.
@@ -32,6 +36,8 @@ pub(crate) enum Count {
     Walked,
     Joined,
     Serialized,
+    Flagged,
+    Params,
 }
 
 static COUNTS: Mutex<BTreeMap<u64, Counts>> = Mutex::new(BTreeMap::new());
@@ -69,6 +75,8 @@ pub(crate) fn add(count: Count, n: u64) {
             Count::Walked => &mut c.walked,
             Count::Joined => &mut c.joined,
             Count::Serialized => &mut c.serialized,
+            Count::Flagged => &mut c.flagged,
+            Count::Params => &mut c.params,
         };
         *field += n;
     }

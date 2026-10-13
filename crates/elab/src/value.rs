@@ -21,8 +21,9 @@ use std::hash::Hasher;
 /// vector of the core semantics with the width of its type. An array keeps its element type,
 /// so an empty array has a type, and a record keeps its struct type for the same reason. A
 /// list keeps its element type too. A tuple has at least one element: `()` is `Unit`. A
-/// function value is the item that the name refers to, the name of the item, and the id of its
-/// signature, which is its type.
+/// function value is the item that the name refers to and the id of its signature, which is
+/// its type. The table `Types` keeps the name of the item, so a copy of the value is constant
+/// work.
 pub enum Value {
     Int(Int),
     Bool(bool),
@@ -35,7 +36,7 @@ pub enum Value {
     Tuple(Vec<Value>),
     Record(TyId, Vec<Value>),
     List(TyId, Vec<Value>),
-    Function(usize, String, TyId),
+    Function(usize, TyId),
 }
 
 impl Value {
@@ -94,7 +95,7 @@ impl fmt::Debug for Value {
                 Value::SInt(x) => write!(f, "SInt({x:?})")?,
                 Value::Type(t) => write!(f, "Type({t:?})")?,
                 Value::Unit => f.write_str("Unit")?,
-                Value::Function(i, name, t) => write!(f, "Function({i}, {name:?}, {t:?})")?,
+                Value::Function(i, t) => write!(f, "Function({i}, {t:?})")?,
                 Value::Array(t, xs) | Value::Record(t, xs) | Value::List(t, xs) => {
                     let form = match v {
                         Value::Array(..) => "Array",
@@ -209,7 +210,7 @@ impl PartialEq for Value {
                 (Value::Str(a), Value::Str(b)) => a == b,
                 (Value::UInt(a), Value::UInt(b)) | (Value::SInt(a), Value::SInt(b)) => a == b,
                 (Value::Type(a), Value::Type(b)) => a == b,
-                (Value::Function(i, _, s), Value::Function(j, _, t)) => i == j && s == t,
+                (Value::Function(i, s), Value::Function(j, t)) => i == j && s == t,
                 (Value::Unit, Value::Unit) => true,
                 _ => false,
             };
@@ -278,7 +279,7 @@ impl Value {
             Value::Str(_) => tys.mk(Ty::String),
             Value::Array(elem, xs) => tys.array(*elem, Int::from_u64(xs.len() as u64)),
             Value::List(elem, _) => tys.list(*elem),
-            Value::Record(t, _) | Value::Function(_, _, t) => *t,
+            Value::Record(t, _) | Value::Function(_, t) => *t,
             Value::Unit | Value::Tuple(_) => tys.mk(Ty::Unit),
         }
     }
@@ -292,7 +293,7 @@ impl Value {
             Value::UInt(x) => Value::UInt(x.clone()),
             Value::SInt(x) => Value::SInt(x.clone()),
             Value::Type(t) => Value::Type(*t),
-            Value::Function(i, name, t) => Value::Function(*i, name.clone(), *t),
+            Value::Function(i, t) => Value::Function(*i, *t),
             Value::Unit
             | Value::Array(..)
             | Value::Tuple(_)
@@ -413,6 +414,30 @@ impl Value {
         deepest
     }
 
+    /// Whether the type of the value holds a function type (the function flag of section 5.4).
+    /// An array, a list, and a record read the flag of their type id. The walk enters only
+    /// the tuples, so it is in the number of nodes of the tuples and stops at the first
+    /// function.
+    #[must_use]
+    pub fn holds_fn(&self) -> bool {
+        let mut work = vec![self];
+        while let Some(v) = work.pop() {
+            #[cfg(test)]
+            crate::counters::add(crate::counters::Count::Flagged, 1);
+            match v {
+                Value::Function(..) => return true,
+                Value::Array(t, _) | Value::Record(t, _) | Value::List(t, _) => {
+                    if t.holds_fn() {
+                        return true;
+                    }
+                }
+                Value::Tuple(xs) => work.extend(xs),
+                _ => {}
+            }
+        }
+        false
+    }
+
     /// The charge of the walk that measures the serialization, before the charge of its bytes
     /// (section 5.4). Each container charges 1. An integer and a finite value charge the
     /// square of their size, because a naive decimal conversion takes this time. A type
@@ -469,7 +494,7 @@ impl Value {
                     t.hash_into(h);
                 }
                 Value::Unit => h.write_u8(7),
-                Value::Function(i, _, t) => {
+                Value::Function(i, t) => {
                     h.write_u8(12);
                     h.write_usize(*i);
                     t.hash_into(h);
