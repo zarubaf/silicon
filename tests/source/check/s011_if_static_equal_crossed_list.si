@@ -1,0 +1,15 @@
+// S011: equal static sides of a hardware `if` without the joined type, here crossed lists.
+// TOP M()
+type A = (Int, UInt[8]);
+type B = (UInt[8], Int);
+module M() {
+    input c: Bool;
+    output y: UInt[8];
+    let mut xs = list(A);
+    xs.push((1, 2));
+    let mut ys = list(B);
+    ys.push((1, 2));
+    // expected-error S011 @+1
+    let p = if (c) { (c, xs) } else { (c, ys) };
+    y := p.1[0].1 +% 1;
+}
