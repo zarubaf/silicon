@@ -14,7 +14,7 @@ use crate::agg::Agg;
 use crate::counters;
 use crate::hw::Val;
 use crate::names::PathId;
-use crate::tests_elab::{cost, cost_depth};
+use crate::tests_elab::{cost, cost_depth, cost_fuel};
 use crate::tests_flatten::lowered_cost;
 use crate::types::{Ty, TyId};
 use crate::value::Value;
@@ -516,4 +516,31 @@ fn an_aggregate_operand_prints_its_type_and_no_operator_accepts_it() {
     for (s, message) in cases {
         assert_eq!(message_of(s), format!("S010 {message}"), "{s}");
     }
+}
+
+/// A later index of a segment holds the aggregate root too, when the steps before it lead to a
+/// static part: the path is followed to the index, not only up to the first index. The totals
+/// and the `S015` positions are those of the Lean evaluator for the same module.
+#[test]
+fn a_later_index_after_an_index_of_an_aggregate_root_holds_the_root() {
+    let module = |base: &str| {
+        format!(
+            "comptime fn bumpl(mut x: List[Nat]) -> Nat {{ x.push(9); return 0; }}\n\
+             module M() domains() {{\n    input a: UInt[8];\n    output y: UInt[8];\n    \
+             let mut t = (a, list(Nat), [1, 2], [(0, a, [3, 4])]);\n    t.1.push(4);\n    \
+             t.1.push(5);\n    let k = {base};\n    y := t.0;\n}}\n"
+        )
+    };
+    let pushed = module("t.3[0].2[(t.1.push(1), 0).1]");
+    assert_eq!(lowered_cost(&pushed, "M()"), "total 188\nM 160\n");
+    assert_eq!(cost_fuel(&pushed, "M()", 148), "S015 8:23");
+    assert_eq!(cost_fuel(&pushed, "M()", 154), "S015 8:36");
+    assert_eq!(
+        lowered_cost(&module("t.3[0].2[t.1.pop() - 4]"), "M()"),
+        "total 184\nM 156\n"
+    );
+    assert_eq!(
+        lowered_cost(&module("t.3[(0, bumpl(t.1)).0].2[bumpl(t.1)]"), "M()"),
+        "total 305\nM 277\n"
+    );
 }
