@@ -13,6 +13,14 @@ use crate::value::Value;
 use parse::ast::{Expr, Ident, Item, NodeId, Param, ParamMode, Pos};
 use resolve::{DeclId, Kind, Prelude, Target};
 
+/// The callee of a call after its one evaluation: a function item or a prelude function by
+/// its name, or the value of another callee.
+enum Callee<'e> {
+    Item(Pos, &'e str, DeclId),
+    Prim(Pos, &'e str, Prelude),
+    Value(Out),
+}
+
 /// What a call binds to a parameter: the result of its argument, or the place of a `mut`
 /// actual.
 enum Actual {
@@ -60,6 +68,31 @@ impl Evaluator<'_> {
         }
     }
 
+    /// The callee of a call, evaluated once. The name of a function item or of a prelude
+    /// function selects it without a value. Each other callee evaluates to a value.
+    fn callee<'e>(&mut self, f: &'e Expr) -> Res<Callee<'e>> {
+        if let Expr::Name {
+            pos: fp,
+            id: fid,
+            name: g,
+        } = f
+        {
+            match self.target(*fid) {
+                Some(Target::Decl(id))
+                    if matches!(self.file.decl(id).kind, Kind::Fn | Kind::Module) =>
+                {
+                    return Ok(Callee::Item(*fp, g, id));
+                }
+                Some(Target::Prelude(h)) if !h.is_type() => {
+                    return Ok(Callee::Prim(*fp, g, h));
+                }
+                _ => {}
+            }
+        }
+        let value = self.eval(f)?;
+        Ok(Callee::Value(need(f, value)?))
+    }
+
     /// A call of a function item, a prelude function, or a type.
     pub(super) fn call(
         &mut self,
@@ -68,26 +101,13 @@ impl Evaluator<'_> {
         f: &Expr,
         xs: &[Expr],
     ) -> Res<Option<Out>> {
-        if let Expr::Name {
-            pos: fp,
-            id: fid,
-            name: g,
-        } = f
-        {
-            let args: Vec<&Expr> = xs.iter().collect();
-            match self.target(*fid) {
-                Some(Target::Decl(id))
-                    if matches!(self.file.decl(id).kind, Kind::Fn | Kind::Module) =>
-                {
-                    return self.call_fn(pos, node, *fp, g, id, &args, 0);
-                }
-                Some(Target::Prelude(h)) if !h.is_type() => {
-                    return self.call_prelude(pos, *fp, g, h, &args, 0);
-                }
-                _ => {}
-            }
+        let callee = self.callee(f)?;
+        let args: Vec<&Expr> = xs.iter().collect();
+        match callee {
+            Callee::Item(fp, g, id) => self.call_fn(pos, node, fp, g, id, &args, 0),
+            Callee::Prim(fp, g, h) => self.call_prelude(pos, fp, g, h, &args, 0),
+            Callee::Value(o) => self.construct(pos, &o, xs),
         }
-        self.construct(pos, f, xs)
     }
 
     /// A receiver call `recv.name(xs)`: the call of `name` with `recv` at the first parameter
