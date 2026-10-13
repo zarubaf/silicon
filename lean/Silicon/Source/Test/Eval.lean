@@ -16,9 +16,12 @@ charges, the aliases, the table of struct specializations, and the struct cases 
 The function types of slice 2 come next. Their tests check the type constructor with its
 charge, the typed use, `==`, the join, the constructor, the index, and the hardware `if`.
 
-The function names as values of slice 2 come last. Their tests check the charges of a name,
+The function names as values of slice 2 come next. Their tests check the charges of a name,
 the generic functions and the builtins, the depth, and the flow through bindings, arguments,
 returns, containers, and `==`.
+
+The calls through function values of slice 2 come last. Their tests check the charges, the
+number of arguments, the callee rule, the `mut` actuals, and the wait of the callee.
 -/
 
 namespace Silicon.Source.Test.Eval
@@ -1417,7 +1420,69 @@ operator charges 1 and each `g` charges 4.
 #guard out fns "[g] != [g]" == "S010 1:1"
 #guard out fns "(1, g) == (1, g)" == "S010 1:1"
 
-/-! A call through a function value is not supported yet: `S010` at the call, as a constructor. -/
-#guard out (fnLet "let x = g; return x();") "f()" == "S010 9:36"
+/-!
+A call through a function value evaluates its callee once, then runs as a call of its item. It
+charges as a named call: the callee charges as an expression, and no function name charges.
+Thus `f(5, 2)` and `two(5, 2)` charge the same units.
+-/
+#guard out (fnLet "let x = g; return x();") "f()" == "(bool true)"
+def viaFns : String :=
+  "fn id(x: Bool) -> Bool { return x; }\n" ++
+  "fn two(a: Int, b: Int) -> Int { return a - b; }\n" ++
+  "fn inc(mut x: Int) -> Int { x = x + 1; return x; }\n" ++
+  "comptime fn c(x: Int) -> Int { return x + 1; }\n" ++
+  "fn sf(mut h: fn (Bool) -> Bool) -> Bool { h = id; return true; }\n" ++
+  "fn st(mut t: Type) -> Nat { t = Bool; return 0; }\n" ++
+  "fn ap(h: fn (Bool) -> Bool, x: Bool) -> Bool { return h(x); }\n"
+def callIn (s : String) : String := viaFns ++ s!"fn f() -> Int \{ {s} }"
+#guard out (callIn "let f = two; return f(5, 2);") "f()" == "(int 3)"
+#guard cost (callIn "let f = two; return f(5, 2);") "f()" ==
+  cost (callIn "let f = two; return two(5, 2);") "f()"
+#guard out viaFns "ap(id, false)" == "(bool false)"
+#guard out (callIn "let fs = [two, two]; return fs[1](7, 1);") "f()" == "(int 6)"
+#guard out viaFns "(two)(1, 1)" == "(int 0)"
+
+/-!
+The number of arguments is `S007` at the call, after the charge of the callee and before the
+arguments: `error` does not run. The fuel 15 stops at the callee.
+-/
+#guard out (callIn "let f = two; return f(5);") "f()" == "S007 8:37"
+#guard out (callIn "let f = two; return f(5, 2, error(\"x\"));") "f()" == "S007 8:37"
+#guard out (callIn "let f = two; return f(5);") "f()" 16 == "S007 8:37"
+#guard out (callIn "let f = two; return f(5);") "f()" 15 == "S015 8:37"
+
+/-! A callee that is neither a function nor a type is `S010` at the call. -/
+#guard out (callIn "let f = 3; return f(5);") "f()" == "S010 8:35"
+#guard out (callIn "return (1)(5);") "f()" == "S010 8:24"
+
+/-! The type rule of the arguments holds as at a named call. -/
+#guard out (callIn "let f = two; return f(true, 1);") "f()" == "S010 8:37"
+
+/-! A `comptime fn` runs through its value. -/
+#guard out (callIn "let f = c; return f(5);") "f()" == "(int 6)"
+
+/-!
+The `mut` marks of the function type select the `mut` actuals. The write-back runs as at a named
+call, with the same charges. A `mut` actual that is not a place is `S008` at the argument.
+-/
+#guard out (callIn "let f = inc; let mut a = 1; let r = f(a); return a * 10 + r;") "f()" ==
+  "(int 22)"
+#guard cost (callIn "let f = inc; let mut a = 1; let r = f(a); return a;") "f()" ==
+  cost (callIn "let f = inc; let mut a = 1; let r = inc(a); return a;") "f()"
+#guard out (callIn "let f = inc; return f(3);") "f()" == "S008 8:39"
+
+/-!
+The callee waits while the arguments evaluate. A write-back to the local of the callee thus
+charges the size of the local: 1 for a function, 2 for `UInt[8]`. Another callee local `e`
+or `S` is not held, so its call charges 1 or 2 less.
+-/
+#guard cost (callIn "let mut f = id; let b = f(sf(f)); return 0;") "f()" -
+    cost (callIn "let mut f = id; let b = sf(f); return 0;") "f()" ==
+  cost (callIn "let mut f = id; let mut e = id; let b = e(sf(f)); return 0;") "f()" -
+    cost (callIn "let mut f = id; let mut e = id; let b = sf(f); return 0;") "f()" + 1
+#guard cost (callIn "let mut T = UInt[8]; let v = T(st(T)); return 0;") "f()" -
+    cost (callIn "let mut T = UInt[8]; let v = st(T); return 0;") "f()" ==
+  cost (callIn "let mut T = UInt[8]; let mut S = UInt[8]; let v = S(st(T)); return 0;") "f()" -
+    cost (callIn "let mut T = UInt[8]; let mut S = UInt[8]; let v = st(T); return 0;") "f()" + 2
 
 end Silicon.Source.Test.Eval

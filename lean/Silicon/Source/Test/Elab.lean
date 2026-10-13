@@ -480,6 +480,32 @@ def sites : String :=
   ["add$2c$a", "add$2c$0ret", "s", "add$3c$a", "add$3c$0ret"]
 
 /-!
+A call through a function value runs as a call of its item. The call frame has the name of
+the item and the site of the call. The `mut` write-backs give the same names and the same
+charges as a named call. A `comptime fn` runs in the static mode, so a hardware argument is
+`S011` at the call.
+-/
+def viaValue (body : String) : String :=
+  "fn inc(mut a: UInt[8]) -> () { a = a +% 1; return (); }\n" ++
+  "fn swap(mut a: UInt[8], mut b: UInt[8]) -> UInt[8] { let t = a; a = b; b = t; return t; }\n" ++
+  "comptime fn cc(a: UInt[8]) -> UInt[8] { return a; }\n" ++
+  "module M() {\n  input c: Bool;\n  input x: UInt[8];\n  input w: UInt[8];\n" ++
+  "  output y: UInt[8];\n  let f = swap;\n  let mut q = x;\n  let mut r = w;\n" ++ body ++ "}\n"
+#guard names (viaValue "  let s = f(q, r);\n  y := q +% r;\n") "M" "M" ==
+  names (viaValue "  let s = swap(q, r);\n  y := q +% r;\n") "M" "M"
+#guard names (viaValue "  let s = f(q, r);\n  y := q +% r;\n") "M" "M" ==
+  ["q", "r", "swap$0c$a", "swap$0c$b", "swap$0c$t", "swap$0c$a$1v", "swap$0c$b$1v",
+   "swap$0c$0ret", "q$1v", "r$1v", "s"]
+#guard total (viaValue "  let s = f(q, r);\n  y := q +% r;\n") "M" ==
+  total (viaValue "  let s = swap(q, r);\n  y := q +% r;\n") "M"
+#guard names (viaValue "  let g = inc;\n  g(q);\n  g(q);\n  y := q;\n") "M" "M" ==
+  ["q", "r", "inc$0c$a", "inc$0c$a$1v", "q$1v", "inc$1c$a", "inc$1c$a$1v", "q$2v"]
+#guard cost (viaValue "  let g = inc;\n  y := if (c) { g(q) } else { 0 };\n") "M" ==
+  "S016 13:17"
+#guard cost (viaValue "  let g = cc;\n  y := g(x);\n") "M" == "S011 13:8"
+#guard (cost (viaValue "  let g = cc;\n  y := g(3);\n") "M").startsWith "total"
+
+/-!
 A hardware `if` with two function arms: one function item gives the static value, and two
 different items are `S011` at the `if`. The pair charges as a static equality, 1 + 1. Thus the
 `if` charges its node, 1 for `c`, 4 for the second `g`, and 2 for the pair. A function and
