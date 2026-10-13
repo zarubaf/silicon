@@ -81,6 +81,9 @@ struct Walker {
     calls: BTreeMap<NodeId, Call>,
     /// The next call site of the current item body.
     next_site: usize,
+    /// How many names so far resolved to a parameter. A `fn` item reads the change over its
+    /// signature to tell whether it is generic.
+    param_uses: usize,
 }
 
 impl Walker {
@@ -91,6 +94,7 @@ impl Walker {
             receiver,
             name: name.name.clone(),
             pos: name.pos,
+            generic: false,
         });
         self.names.insert(name.id, Target::Decl(id));
         id
@@ -142,6 +146,7 @@ impl Walker {
             receiver: None,
             name: name.to_owned(),
             pos,
+            generic: false,
         });
         // The scope is new, so the name cannot repeat.
         let _ = self.scopes.declare_local(name, id);
@@ -154,12 +159,24 @@ impl Walker {
                 self.expr(value);
             }
             Item::Fn {
-                params, ret, body, ..
+                name,
+                params,
+                ret,
+                body,
+                ..
             } => {
                 // The parameters and the top statements of the body share one scope.
                 self.scopes.open();
+                let before = self.param_uses;
                 self.params(params);
                 self.ty(ret);
+                // A function is generic when it has a `comptime` parameter, or when a
+                // parameter type or the result type names a parameter.
+                let generic = self.param_uses > before
+                    || params.iter().any(|q| q.mode == ParamMode::Comptime);
+                if let Some(Target::Decl(id)) = self.names.get(&name.id) {
+                    self.decls[id.0].generic = generic;
+                }
                 self.next_site = 0;
                 self.stmts(body);
                 self.scopes.close();
@@ -476,11 +493,17 @@ impl Walker {
                 pos,
                 format!("`{name}` is not a value; a module is used only in an `instance`"),
             ),
-            Some(target) => {
-                self.names.insert(id, target);
-            }
+            Some(target) => self.bind(id, target),
             None => self.unknown(pos, name),
         }
+    }
+
+    /// Points the name node `id` at its target.
+    fn bind(&mut self, id: NodeId, target: Target) {
+        if matches!(target, Target::Decl(d) if self.decls[d.0].kind == Kind::Param) {
+            self.param_uses += 1;
+        }
+        self.names.insert(id, target);
     }
 
     /// Whether a name can stand in a type position: a prelude type, a `struct` item, a `type`
@@ -496,9 +519,7 @@ impl Walker {
 
     fn type_name(&mut self, pos: Pos, id: NodeId, name: &str) {
         match self.lookup(name) {
-            Some(target) if self.is_type(target) => {
-                self.names.insert(id, target);
-            }
+            Some(target) if self.is_type(target) => self.bind(id, target),
             Some(_) => self.reject(pos, format!("`{name}` is not a type")),
             None => self.unknown(pos, name),
         }
