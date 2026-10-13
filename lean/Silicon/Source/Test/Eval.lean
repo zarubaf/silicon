@@ -1878,8 +1878,8 @@ def valText : Eval.Val → String
   | v => v.text
 
 /-! The core `let` statements of the named bindings: each core name with its value. -/
-def letsText (ls : Array Eval.Let) : String :=
-  " ".intercalate (ls.toList.map fun l => s!"{Names.encode l.path.name}={nameText l.value}")
+def letsText (ls : Array Eval.Let) (shown : Eval.Hw → String := nameText) : String :=
+  " ".intercalate (ls.toList.map fun l => s!"{Names.encode l.path.name}={shown l.value}")
 
 def tupleAliases : String :=
   "type A = (Bool, UInt[4]);\ntype B = (Bool, Nat);\ntype C = (UInt[1], Nat);\n" ++
@@ -1962,7 +1962,8 @@ The body of the function `f` of `src`. Its first parameter `x` is a mutable loca
 `base`, and it took its first core name, as a copy-in does. The result shows the core `let`
 statements, the final value of `x`, and the units of the body alone.
 -/
-def runF (src : String) (base : Ty → Eval.Val) (fuel : Nat := 1000000) : String :=
+def runF (src : String) (base : Ty → Eval.Val) (fuel : Nat := 1000000)
+    (shown : Eval.Hw → String := nameText) : String :=
   let r : Except Error String := do
     let (_, checked) ← Cli.load 4096 src
     let some i := checked.findIdx? fun | .fn _ _ u .. => u.name == "f" | _ => false
@@ -1978,7 +1979,7 @@ def runF (src : String) (base : Ty → Eval.Val) (fuel : Nat := 1000000) : Strin
           if let some _ ← Eval.stmt n s then break
         let st ← get
         let x := (st.frame[q.name.id]?).map (valText ·.value)
-        return (s!"{letsText st.naming.lets} | {x.getD "-"}", fuel - st.fuel)
+        return (s!"{letsText st.naming.lets shown} | {x.getD "-"}", fuel - st.fuel)
     return s!"{d} | {used}"
   match r with
   | .ok s => s
@@ -2078,5 +2079,92 @@ def listPart (_ : Ty) : Eval.Val :=
 /-! `push` into a static list part of an aggregate root keeps the names of its leaves. -/
 #guard runF (assignIn "(UInt[8], List[UInt[8]])" "x.1.push(5);") listPart ==
   " | [x$0e, (list (uint 8) ((uint 8 5)))] | 13"
+
+/-!
+`==` and `!=` on a hardware aggregate (section 5.4). A hardware value prints as its tree: a name,
+a constant, or an operator with its operands. `runEq` binds `y` to the expression `e` in the
+body of `f` with the formal `x`. Its units count the statement and the operands too.
+-/
+mutual
+  def hwTree : Eval.Hw → String
+    | .node _ _ _ (.bin op) xs => s!"({op.text} {hwTrees xs})"
+    | h => nameText h
+
+  def hwTrees : List Eval.Hw → String
+    | [] => ""
+    | [x] => hwTree x
+    | x :: xs => s!"{hwTree x} {hwTrees xs}"
+end
+
+def runEq (t e : String) (base : Ty → Eval.Val := refX) (fuel : Nat := 1000000) : String :=
+  runF (assignIn t s!"let y = {e};") base fuel hwTree
+
+/-!
+The exact charges of `x == x`. The statement and the operands charge 4, the join 1, and the
+root pair 1. Each leaf pair charges 1 plus 3 for its `icmp` node. The `and` node charges 3 after
+the walk. `return true;` charges 4. `!=` adds the `xor` node last, 3 more. The chain charges
+after the walk, so at the fuel 16 it fails at the operator, and at 17 only the `return` fails.
+-/
+#guard runEq "(UInt[8], Bool)" "x == x" ==
+  "y=(& (== x$0e x$0e) (== x$1e x$1e)) | ref x | 21"
+#guard runEq "(UInt[8], Bool)" "x != x" ==
+  "y=(^ (& (== x$0e x$0e) (== x$1e x$1e)) (bool true)) | ref x | 24"
+#guard runEq "(UInt[8], Bool)" "x == x" (fuel := 16) == "S015 2:11"
+#guard runEq "(UInt[8], Bool)" "x == x" (fuel := 17) == "S015 3:3"
+
+/-!
+A reference pairs leaf by leaf through its type, also in nested containers and records. `()`
+adds no pair to the chain. A reference against a literal: each static leaf converts to the type
+of its pair with its conversion charge, here 2 for `3`, before its `icmp`. A `Bool` needs no
+conversion.
+-/
+#guard runEq "[[UInt[8]; 2]; 2]" "x == x" ==
+  "y=(& (& (& (== x$0e$0e x$0e$0e) (== x$0e$1e x$0e$1e)) (== x$1e$0e x$1e$0e)) " ++
+  "(== x$1e$1e x$1e$1e)) | ref x | 38"
+#guard runEq "(Bool, ())" "x == (true, ())" == "y=(== x$0e (bool true)) | ref x | 22"
+#guard runEq "[UInt[8]; 2]" "x == [1, 2]" ==
+  "y=(& (== x$0e (uint 8 1)) (== x$1e (uint 8 2))) | ref x | 32"
+#guard runEq "(UInt[8], Bool)" "x == (3, true)" ==
+  "y=(& (== x$0e (uint 8 3)) (== x$1e (bool true))) | ref x | 30"
+#guard runF ("struct S { a: UInt[8], b: Bool }\n" ++ assignIn "S" "let y = x == S(1, true);")
+  refX 1000000 hwTree == "y=(& (== x$a (uint 8 1)) (== x$b (bool true))) | ref x | 34"
+
+/-!
+Static and hardware parts mix. A static pair charges as a static equality, and its result goes
+into `s`. Thus `E_0` is `(const 1 s)`. `s` is 0 when a static pair differs, also by the length of
+a list. The operands can take either side.
+-/
+def mixedX (_ : Ty) : Eval.Val := .agg (.mkTuple #[.uint 8, .int, .list .int]
+  #[leafX 0, .static (.int 3), .static (.list .int #[.int 1])])
+#guard runEq "(UInt[8], Int, List[Int])" "x == (5, 3, x.2)" mixedX ==
+  "y=(& (bool true) (== x$0e (uint 8 5))) | [x$0e, (int 3), (list int ((int 1)))] | 39"
+#guard runEq "(UInt[8], Int, List[Int])" "x == (5, 4, x.2)" mixedX ==
+  "y=(& (bool false) (== x$0e (uint 8 5))) | [x$0e, (int 3), (list int ((int 1)))] | 39"
+#guard runEq "(UInt[8], Int, List[Int])" "x != (5, 3, list(Int))" mixedX ==
+  "y=(^ (& (bool false) (== x$0e (uint 8 5))) (bool true)) | " ++
+  "[x$0e, (int 3), (list int ((int 1)))] | 43"
+#guard runEq "(UInt[8], Int, List[Int])" "(5, 3, list(Int)) == x" mixedX ==
+  "y=(& (bool false) (== (uint 8 5) x$0e)) | [x$0e, (int 3), (list int ((int 1)))] | 40"
+
+/-!
+The order of the errors. The function flag comes first: with the fuel 42 the operands are done,
+and the flag fails with no charge of the operator. The join comes next: it charges 1 for the
+pair of arrays and fails, before any walk unit. The walk then visits the pairs in order: the
+second pair fails its fit after its conversion charge, at the fuel 22.
+-/
+#guard runEq "(UInt[8], Bool)" "x == (1, f)" (fuel := 41) == "S015 2:16"
+#guard runEq "(UInt[8], Bool)" "x == (1, f)" (fuel := 42) == "S010 2:11"
+#guard runEq "[UInt[8]; 2]" "x == [1, 2, 3]" (fuel := 14) == "S015 2:11"
+#guard runEq "[UInt[8]; 2]" "x == [1, 2, 3]" (fuel := 15) == "S010 2:11"
+#guard runEq "(UInt[8], UInt[8])" "x == (3, 300)" (fuel := 21) == "S015 2:11"
+#guard runEq "(UInt[8], UInt[8])" "x == (3, 300)" (fuel := 22) == "S012 2:11"
+#guard runEq "(UInt[8], Bool)" "x == 3" == "S010 2:11"
+#guard runEq "(UInt[8], Bool)" "x < x" == "S010 2:11"
+
+/-!
+The walk charges each pair before it visits it, and a reference never expands. Thus `==` of two
+references to a huge array fails on the budget in the walk, before the chain exists.
+-/
+#guard runEq "[UInt[8]; 1 << 40]" "x == x" == "S015 2:11"
 
 end Silicon.Source.Test.Eval
