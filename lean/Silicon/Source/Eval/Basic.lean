@@ -196,7 +196,8 @@ structure Syms where
 The items, the depth limit, the current depth, and the return type of the current call. The
 item whose body runs, its symbols, and the current frame name the hardware. `binding` holds
 the struct items whose parameter types evaluate now. `arm` is the nesting depth at the start of
-the innermost hardware arm (section 9.4).
+the innermost hardware arm (section 9.4). `site` is the name of a function value while its
+signature evaluates: each depth check there reports at it.
 -/
 structure Ctx where
   items : Array Resolve.Item
@@ -208,6 +209,7 @@ structure Ctx where
   frame : Frame
   binding : List Nat
   arm : Option Nat
+  site : Option Pos
 
 /-! The symbol of the local number `id` in the current item. Each binder has one. -/
 def Ctx.binder (c : Ctx) (id : Nat) : Nat := ((c.syms.binders[c.item]?).bind (·[id]?)).getD 0
@@ -299,12 +301,15 @@ class Runs (m : Type → Type) extends Monad m, MonadLiftT M m, MonadReaderOf Ct
 
 instance : Runs M := {}
 
-/-! Runs `act` one level deeper, or gives `S015` at `pos` above the limit. -/
+/-!
+Runs `act` one level deeper, or gives `S015` at `pos` above the limit. The level reports its
+own depth checks, so it clears `site`.
+-/
 def nested [Runs m] (pos : Pos) (act : m α) : m α := do
   let c ← readThe Ctx
   if c.limit ≤ c.depth then
     monadLift (fail .S015 pos s!"the nesting depth goes above {c.limit}" : M Unit)
-  withTheReader Ctx (fun c => { c with depth := c.depth + 1 }) act
+  withTheReader Ctx (fun c => { c with depth := c.depth + 1, site := none }) act
 
 /-!
 A mutation at `pos` of a binding of the current frame of locals (section 9.4). Each call, each

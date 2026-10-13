@@ -39,10 +39,14 @@ namespace Silicon.Source.Eval
 
 open Resolve
 
-/-! A new value or type of the depth `d` at `pos`. Above the nesting depth, it is `S015`. -/
+/-!
+A new value or type of the depth `d` at `pos`. Above the nesting depth, it is `S015` at `pos`,
+or at the name of a function value whose signature evaluates.
+-/
 def bounded (pos : Pos) (d : Nat) : M Unit := do
   let c ← read
-  if c.limit < d then fail .S015 pos s!"the depth {d} goes above the nesting depth {c.limit}"
+  if c.limit < d then
+    fail .S015 (c.site.getD pos) s!"the depth {d} goes above the nesting depth {c.limit}"
 
 /-!
 A walk over types or values that counts its charge. A failure keeps the charge of the visits
