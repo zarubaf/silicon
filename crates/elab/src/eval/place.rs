@@ -420,8 +420,8 @@ impl Evaluator<'_> {
         let on_agg = matches!(self.opnd_seen(&base), Seen::Agg(_));
         let at = self.store.park(base.into_out());
         let mut held = held.map(|(r, ty)| {
-            let hw = self.has_leaf(ty);
-            self.store.probe(at, r, hw);
+            let bound = self.static_bound(&r);
+            self.store.probe(at, r, self.leaf_count(ty), bound);
             ty
         });
         for (n, step) in steps.iter().enumerate() {
@@ -453,9 +453,9 @@ impl Evaluator<'_> {
             match key {
                 Ok(k) => {
                     let next = held.and_then(|ty| self.held_step(ty, &k));
-                    let hw = next.is_some_and(|(_, ty)| self.has_leaf(ty));
+                    let leaves = next.map_or(0, |(_, ty)| self.leaf_count(ty));
                     self.store
-                        .probe_step(at, next.map(|(number, _)| number), hw);
+                        .probe_step(at, next.map(|(number, _)| number), leaves);
                     held = next.map(|(_, ty)| ty);
                     keyed.push(k);
                 }
@@ -497,9 +497,24 @@ impl Evaluator<'_> {
             .then(|| (r.clone(), self.base_ty(base)))
     }
 
-    /// Whether the type `ty` has a hardware leaf: a part of such a type is no static value.
-    fn has_leaf(&self, ty: Option<TyId>) -> bool {
-        ty.is_some_and(|t| !self.tys.meta(t).leaves.is_zero())
+    /// The number of leaves in the type `ty`: 0 for an unknown type, and the largest number for
+    /// a count that does not fit.
+    fn leaf_count(&self, ty: Option<TyId>) -> u64 {
+        ty.map_or(0, |t| self.tys.meta(t).leaves.to_u64().unwrap_or(u64::MAX))
+    }
+
+    /// The most leaves of a part of the aggregate root of `r` that are static, from the two
+    /// counts that the root stores: the leaves of its type minus its hardware leaves. A static
+    /// container of `Bool`, `UInt`, or `SInt` has leaves in its type and none in the root. The
+    /// largest number means no bound.
+    fn static_bound(&self, r: &Ref) -> u64 {
+        let Val::Agg(a) = self.store.root(&r.root) else {
+            return u64::MAX;
+        };
+        match self.leaf_count(self.store.root_ty(&r.root)) {
+            u64::MAX => u64::MAX,
+            all => all.saturating_sub(a.leaves(&self.tys)),
+        }
     }
 
     /// The number of the step `key`, which the walk takes from a part of type `ty`, and the type

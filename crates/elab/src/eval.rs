@@ -138,9 +138,12 @@ type Frame = BTreeMap<DeclId, Slot>;
 /// The part of an aggregate root that a read waits at, with the root not held yet.
 struct Probe {
     part: Ref,
-    /// The type of the part has a hardware leaf, so the part is no static value (a static part
-    /// holds no hardware leaf) and the decision needs no walk.
-    hw: bool,
+    /// The leaves in the type of the part.
+    leaves: u64,
+    /// The most leaves of the type that the part holds as static values. A part with more leaves
+    /// than this holds a hardware leaf, so it is no static value and its decision needs no
+    /// walk. A walk that finds the part lowers the bound to the exact count.
+    bound: u64,
 }
 
 /// The values that a result can refer to: the table of constants by item index, and the
@@ -296,22 +299,26 @@ impl Store {
 
     /// The read parked at `at` waits at the part `r` of an aggregate root, and a later index
     /// with a call may hold the root there.
-    fn probe(&mut self, at: usize, r: Ref, hw: bool) {
+    fn probe(&mut self, at: usize, r: Ref, leaves: u64, bound: u64) {
         if let Some(slot) = self.probes.get_mut(at) {
-            *slot = Some(Probe { part: r, hw });
+            *slot = Some(Probe {
+                part: r,
+                leaves,
+                bound,
+            });
         }
     }
 
     /// The walk of the read takes the step `k` from the part of the probe at `at`. A step with no
     /// number ends the probe, because no static part follows it.
-    fn probe_step(&mut self, at: usize, k: Option<usize>, hw: bool) {
+    fn probe_step(&mut self, at: usize, k: Option<usize>, leaves: u64) {
         let Some(slot) = self.probes.get_mut(at) else {
             return;
         };
         match (k, slot.as_mut()) {
             (Some(k), Some(p)) => {
                 p.part.path.push(k);
-                p.hw = hw;
+                p.leaves = leaves;
             }
             _ => *slot = None,
         }
@@ -351,10 +358,27 @@ impl Store {
             return;
         };
         for at in list {
-            let hold = match self.probes.get(at) {
-                Some(Some(p)) => !p.hw && matches!(self.at(&p.part), Seen::Static(_)),
-                _ => false,
+            let (hold, bound) = match self.probes.get(at) {
+                Some(Some(p)) if p.leaves > p.bound => (false, None),
+                Some(Some(p)) => match self.at(&p.part) {
+                    Seen::Static(_) => (true, None),
+                    Seen::Hw(_) | Seen::Agg(Agg::Hw(_)) => {
+                        (false, Some(p.leaves.saturating_sub(1)))
+                    }
+                    Seen::Agg(Agg::Ref(..)) => (false, Some(0)),
+                    Seen::Agg(Agg::Array(n, _) | Agg::Tuple(n, _) | Agg::Record(n, _)) => {
+                        (false, Some(p.leaves.saturating_sub(n.leaves)))
+                    }
+                    _ => (false, None),
+                },
+                _ => (false, None),
             };
+            if let (Some(b), Some(Some(p))) = (bound, self.probes.get_mut(at))
+                && p.leaves != 0
+                && p.leaves != u64::MAX
+            {
+                p.bound = p.bound.min(b);
+            }
             if hold {
                 self.hold_parked(at, root);
                 if let Some(slot) = self.probes.get_mut(at) {
@@ -429,6 +453,12 @@ impl Store {
         let Some(at) = self.parked_at.remove(&root) else {
             return;
         };
+        // The change can turn a hardware leaf into a static one, so no bound holds after it.
+        for &k in &at {
+            if let Some(Some(p)) = self.probes.get_mut(k) {
+                p.bound = u64::MAX;
+            }
+        }
         for k in at {
             let Some(slot) = self.parked.get_mut(k) else {
                 continue;
