@@ -161,36 +161,6 @@ fn fail_type_index<T>(q: Pos) -> Res<T> {
     fail(Code::S007, q, "a complete type takes no index".to_owned())
 }
 
-/// Whether the expression `e` holds no call and no receiver call. Such an expression changes no
-/// local of its frame, because only a call passes a local as a `mut` actual or runs a statement.
-/// The walk keeps its own stack.
-fn has_no_call(e: &Expr) -> bool {
-    let mut work = vec![e];
-    while let Some(e) = work.pop() {
-        match e {
-            Expr::Num { .. }
-            | Expr::Bool { .. }
-            | Expr::Str { .. }
-            | Expr::Name { .. }
-            | Expr::Unit { .. } => {}
-            Expr::Unary { arg, .. } => work.push(arg),
-            Expr::Binary { lhs, rhs, .. } => work.extend([&**lhs, &**rhs]),
-            Expr::Cond { cond, yes, no, .. } => work.extend([&**cond, &**yes, &**no]),
-            Expr::Index { base, args, .. } => {
-                work.push(base);
-                work.extend(args);
-            }
-            Expr::Field { base, .. } | Expr::Select { base, .. } => work.push(base),
-            Expr::Tuple { elems, .. } | Expr::Array { elems, .. } => work.extend(elems),
-            Expr::Call { .. }
-            | Expr::Method { .. }
-            | Expr::ArrayType { .. }
-            | Expr::FnType { .. } => return false,
-        }
-    }
-    true
-}
-
 /// The root of a place and its steps from the root outward. Another target has no place.
 fn chain(e: &Expr) -> Option<(&Expr, Vec<Sel<'_>>)> {
     let mut steps = Vec::new();
@@ -466,7 +436,7 @@ impl Evaluator<'_> {
             // to. At a static part the base holds the root local, as in Lean, to the end. An
             // index with no call cannot change the root, so the hold has no effect for it.
             if let Sel::Index(_, args) = step
-                && !args.iter().all(has_no_call)
+                && self.call_args.has_call(args)
                 && let Some((r, _)) = &held
                 && matches!(self.store.at(r), Seen::Static(_))
             {

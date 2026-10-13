@@ -48,7 +48,7 @@ use crate::hw::{Graph, Handle, HwId, Op, Part, Ref, Root, Seen, Val};
 use crate::int::Int;
 use crate::names::{PathId, Paths, Step, Sym};
 use crate::ops::{self, Fault, Fuel};
-use crate::scan::{Numbers, Scan, Syms};
+use crate::scan::{CallArgs, Numbers, Scan, Syms};
 use crate::types::{Ty, TyId, Types};
 use crate::value::{Evaluated, Value, int_size};
 use crate::{Budget, Code, Error};
@@ -561,6 +561,8 @@ struct Evaluator<'a> {
     items: BTreeMap<DeclId, usize>,
     /// The value of each number literal, from the pass before the evaluation.
     numbers: Numbers,
+    /// The index expressions with a call in their arguments, from the same pass.
+    call_args: CallArgs,
     syms: Syms,
     limit: u64,
     depth: u64,
@@ -687,6 +689,7 @@ impl<'a> Evaluator<'a> {
             },
             items,
             numbers: scan.numbers,
+            call_args: scan.call_args,
             syms: scan.syms,
             limit: budget.depth,
             depth: 0,

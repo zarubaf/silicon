@@ -18,11 +18,31 @@ use crate::names::Sym;
 use parse::NestedStack;
 use parse::ast::{Expr, FnParam, Ident, Item, NodeId, Stmt, TypeExpr};
 use resolve::{DeclId, Kind, Resolved, ResolvedExpr, Target};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The value of each number literal, by its parse and its node id. The key is `true` for a
 /// literal of the top expression, which is a different parse with its own ids.
 pub(crate) type Numbers = BTreeMap<(bool, NodeId), Int>;
+
+/// The argument lists of index expressions that hold a call, a receiver call, or a type
+/// expression, by the address of the list. The AST does not move while the evaluator runs, and
+/// an index node has no id of its own. An evaluation looks up the property and scans no
+/// expression.
+#[derive(Default)]
+pub(crate) struct CallArgs(BTreeSet<usize>);
+
+impl CallArgs {
+    fn key(args: &[Expr]) -> usize {
+        args.as_ptr() as usize
+    }
+
+    /// Whether the arguments `args` of an index hold a call. Such an index can change a local
+    /// of its frame while it evaluates, because only a call passes a local as a `mut` actual or
+    /// runs a statement.
+    pub(crate) fn has_call(&self, args: &[Expr]) -> bool {
+        !args.is_empty() && self.0.contains(&Self::key(args))
+    }
+}
 
 /// The symbols of a file. Each distinct source name gets one number, so a lookup or a key
 /// compares numbers and not text.
@@ -50,6 +70,7 @@ pub(crate) struct Syms {
 pub(crate) struct Scan {
     pub stack: NestedStack,
     pub numbers: Numbers,
+    pub call_args: CallArgs,
     pub syms: Syms,
 }
 
@@ -60,6 +81,7 @@ pub(crate) fn of(file: &Resolved, top: Option<&ResolvedExpr>) -> Scan {
         height: 0,
         nested: 0,
         numbers: Numbers::new(),
+        call_args: CallArgs::default(),
         table: BTreeMap::new(),
         syms: Syms::default(),
     };
@@ -78,6 +100,7 @@ pub(crate) fn of(file: &Resolved, top: Option<&ResolvedExpr>) -> Scan {
     Scan {
         stack: NestedStack::new(walk.height, walk.nested),
         numbers: walk.numbers,
+        call_args: walk.call_args,
         syms: walk.syms,
     }
 }
@@ -89,6 +112,7 @@ struct Walk<'a> {
     height: usize,
     nested: usize,
     numbers: Numbers,
+    call_args: CallArgs,
     table: BTreeMap<String, Sym>,
     syms: Syms,
 }
@@ -250,7 +274,9 @@ impl Walk<'_> {
                 self.stmts(body, d + 1);
             }
             Stmt::Block { body, .. } => self.stmts(body, d),
-            Stmt::Expr { value, .. } => self.expr(value, d),
+            Stmt::Expr { value, .. } => {
+                self.expr(value, d);
+            }
         }
     }
 
@@ -289,34 +315,42 @@ impl Walk<'_> {
         self.ty(ret, depth);
     }
 
-    fn expr(&mut self, e: &Expr, depth: usize) {
+    /// Walks the expression, and tells whether it holds a call, a receiver call, or a type
+    /// expression.
+    fn expr(&mut self, e: &Expr, depth: usize) -> bool {
         self.reach(depth);
         let d = depth + 1;
         match e {
             Expr::Num { id, value, .. } => {
                 let n = Int::from_decimal(value.as_str()).unwrap_or_else(Int::zero);
                 self.numbers.insert((self.top.is_some(), *id), n);
+                false
             }
-            Expr::Bool { .. } | Expr::Str { .. } | Expr::Unit { .. } => {}
+            Expr::Bool { .. } | Expr::Str { .. } | Expr::Unit { .. } => false,
             Expr::Name { id, .. } => {
                 if self.starts_nesting(*id) {
                     self.nested = self.nested.max(depth);
                 }
+                false
             }
             Expr::Unary { arg, .. } => self.expr(arg, d),
             Expr::ArrayType { elem, len, .. } => {
                 self.ty(elem, d);
                 self.expr(len, d);
+                true
             }
-            Expr::FnType { params, ret, .. } => self.fn_type(params, ret, d),
+            Expr::FnType { params, ret, .. } => {
+                self.fn_type(params, ret, d);
+                true
+            }
             Expr::Binary { lhs, rhs, .. } => {
-                self.expr(lhs, d);
-                self.expr(rhs, d);
+                let l = self.expr(lhs, d);
+                self.expr(rhs, d) || l
             }
             Expr::Cond { cond, yes, no, .. } => {
-                self.expr(cond, d);
-                self.expr(yes, d);
-                self.expr(no, d);
+                let c = self.expr(cond, d);
+                let y = self.expr(yes, d);
+                self.expr(no, d) || c || y
             }
             Expr::Call { callee, args, .. } => {
                 self.nested = self.nested.max(depth);
@@ -324,6 +358,7 @@ impl Walk<'_> {
                 for a in args {
                     self.expr(a, d);
                 }
+                true
             }
             Expr::Method { recv, args, .. } => {
                 self.nested = self.nested.max(depth);
@@ -331,25 +366,34 @@ impl Walk<'_> {
                 for a in args {
                     self.expr(a, d);
                 }
+                true
             }
             Expr::Index { base, args, .. } => {
-                self.expr(base, d);
+                let mut calls = self.expr(base, d);
+                let mut in_args = false;
                 for a in args {
-                    self.expr(a, d);
+                    in_args |= self.expr(a, d);
                 }
+                if in_args && !args.is_empty() {
+                    self.call_args.0.insert(CallArgs::key(args));
+                }
+                calls |= in_args;
+                calls
             }
             Expr::Field { base, field, .. } => {
                 if self.top.is_none() {
                     let s = self.intern(&field.name);
                     self.syms.fields.insert(field.id, s);
                 }
-                self.expr(base, d);
+                self.expr(base, d)
             }
             Expr::Select { base, .. } => self.expr(base, d),
             Expr::Tuple { elems, .. } | Expr::Array { elems, .. } => {
+                let mut calls = false;
                 for e in elems {
-                    self.expr(e, d);
+                    calls |= self.expr(e, d);
                 }
+                calls
             }
         }
     }
