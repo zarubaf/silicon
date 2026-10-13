@@ -22,7 +22,7 @@ use parse::ast::{Item, Pos};
 const AT: Pos = Pos { line: 1, col: 1 };
 
 /// The core name of `p` as text.
-fn name_of(ev: &Evaluator<'_>, p: PathId) -> String {
+pub(super) fn name_of(ev: &Evaluator<'_>, p: PathId) -> String {
     names::encode(&ev.paths.name(p, &ev.syms.texts))
 }
 
@@ -102,7 +102,7 @@ fn tuple_of(ev: &mut Evaluator<'_>, parts: Vec<Ty>) -> TyId {
     ev.tys.tuple(parts)
 }
 
-fn node(ev: &Evaluator<'_>, ty: TyId, parts: Vec<Agg>) -> Val {
+pub(super) fn node(ev: &Evaluator<'_>, ty: TyId, parts: Vec<Agg>) -> Val {
     match Agg::node(&ev.graph, &ev.tys, ty, parts) {
         Some(a) => a.into_val(),
         None => Val::Static(Value::Unit),
@@ -166,7 +166,7 @@ fn pair(ev: &mut Evaluator<'_>, second: Ty, x: Value) -> Val {
     node(ev, t, vec![b, Agg::Static(x)])
 }
 
-fn int(n: i64) -> Value {
+pub(super) fn int(n: i64) -> Value {
     Value::Int(Int::from_decimal(&n.to_string()).unwrap_or_else(Int::zero))
 }
 
@@ -302,13 +302,16 @@ fn the_copy_of_an_aggregate_register_read_charges_its_zero_size() {
     assert!(empty.ends_with(" 5"), "{empty}");
 }
 
+/// The text of a hardware value in a core `let`.
+pub(super) type Shown = fn(&Evaluator<'_>, crate::hw::HwId) -> String;
+
 /// The text of the core `let` statements: each core name with its value.
-fn lets_text(ev: &Evaluator<'_>) -> String {
+fn lets_text(ev: &Evaluator<'_>, shown: Shown) -> String {
     let parts: Vec<String> = ev
         .naming
         .lets
         .iter()
-        .map(|l| format!("{}={}", name_of(ev, l.path), hw_text(ev, l.value)))
+        .map(|l| format!("{}={}", name_of(ev, l.path), shown(ev, l.value)))
         .collect();
     parts.join(" ")
 }
@@ -322,6 +325,17 @@ fn run_f(
     run: u64,
     fuel: u64,
     base: impl FnOnce(&mut Evaluator<'_>, PathId, TyId) -> Val,
+) -> String {
+    run_shown(src, run, fuel, base, hw_text)
+}
+
+/// `run_f` with the text `shown` of the hardware value of each core `let`.
+pub(super) fn run_shown(
+    src: &str,
+    run: u64,
+    fuel: u64,
+    base: impl FnOnce(&mut Evaluator<'_>, PathId, TyId) -> Val,
+    shown: Shown,
 ) -> String {
     let file = load(src).unwrap();
     let mut ev = evaluator(&file, run);
@@ -368,7 +382,7 @@ fn run_f(
             .map(|s| val_text(ev, &s.value));
         Ok(format!(
             "{} | {} | {}",
-            lets_text(ev),
+            lets_text(ev, shown),
             last.unwrap_or_else(|| "-".to_owned()),
             fuel - ev.fuel.left()
         ))
@@ -379,19 +393,19 @@ fn run_f(
 }
 
 /// A reference to the name of `x` at the type of its parameter.
-fn ref_x(ev: &mut Evaluator<'_>, p: PathId, t: TyId) -> Val {
+pub(super) fn ref_x(ev: &mut Evaluator<'_>, p: PathId, t: TyId) -> Val {
     let _ = ev;
     Agg::Ref(Base::Name(p), t).into_val()
 }
 
 /// The hardware leaf of the element `k` of `x`, of the type `UInt[8]`.
-fn leaf_x(ev: &mut Evaluator<'_>, p: PathId, k: u64) -> Agg {
+pub(super) fn leaf_x(ev: &mut Evaluator<'_>, p: PathId, k: u64) -> Agg {
     let q = ev.paths.push(p, Step::Elem(k));
     let ty = Ty::UInt(8);
     Agg::Hw(ev.graph.mk(AT, ty, Op::Ref(q), Vec::new()))
 }
 
-fn assign_in(t: &str, s: &str) -> String {
+pub(super) fn assign_in(t: &str, s: &str) -> String {
     format!("fn f(mut x: {t}) -> Bool {{\n  {s}\n  return true;\n}}\n")
 }
 

@@ -30,6 +30,8 @@ mod string;
 mod tests_agg;
 #[cfg(test)]
 mod tests_bind;
+#[cfg(test)]
+mod tests_eq;
 mod types;
 
 pub use inst::Design;
