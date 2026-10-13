@@ -479,4 +479,21 @@ def sites : String :=
 #guard names sites "M" "M" ==
   ["add$2c$a", "add$2c$0ret", "s", "add$3c$a", "add$3c$0ret"]
 
+/-!
+A hardware `if` with two function arms: one function item gives the static value, and two
+different items are `S011` at the `if`. The pair charges as a static equality, 1 + 1. Thus the
+`if` charges its node, 1 for `c`, 4 for the second `g`, and 2 for the pair. A function and
+another value are `S010` at the `if`.
+-/
+def fnArms (body : String) : String :=
+  "fn g() -> Bool { return true; }\nfn g2() -> Bool { return false; }\n" ++
+  "module T() {\n  input c: Bool;\n  output o: Bool;\n" ++ body ++ "  o := c;\n}\n"
+#guard (cost (fnArms "  let f = if (c) { g } else { g };\n") "T").startsWith "total"
+#guard total (fnArms "  let f = if (c) { g } else { g };\n") "T" ==
+  total (fnArms "  let f = g;\n") "T" + 8
+#guard cost (fnArms "  let f = if (c) { g } else { g2 };\n") "T" == "S011 6:11"
+#guard cost (fnArms "  let f = if (c) { g } else { true };\n") "T" == "S010 6:11"
+#guard cost (fnArms "  let f: fn () -> Bool = if (c) { g } else { g };\n") "T" |>.startsWith
+  "total"
+
 end Silicon.Source.Test.Elab
