@@ -238,3 +238,26 @@ fn a_child_port_can_be_an_aggregate() {
     );
     ok(&whole);
 }
+
+fn read_child(ty: &str, read: &str) -> String {
+    format!(
+        "{PS}module C() {{\n  input p: {ty};\n}}\n\
+         module M() {{\n  input x: {ty};\n  output y: Bool;\n  instance c = C();\n  \
+         c.p := x;\n  y := {read};\n}}\n"
+    )
+}
+
+/// A data selection is a data context (section 9.2). A read of a part of a child input is thus
+/// `S017` at the start of the selection, before the field check.
+#[test]
+fn a_part_of_a_child_input_is_never_read() {
+    for (ty, read, at) in [
+        ("P[8]", "c.p.b", "10:8"),
+        ("P[8]", "!c.p.b", "10:9"),
+        ("P[8]", "c.p.c", "10:8"),
+        ("[Bool; 2]", "c.p[0]", "10:8"),
+        ("(Bool, Bool)", "c.p.1", "10:8"),
+    ] {
+        assert_eq!(elab(&read_child(ty, read)), format!("S017 {at}"), "{read}");
+    }
+}
