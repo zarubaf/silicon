@@ -1,0 +1,26 @@
+// The same function as an argument of two instances gives one specialization.
+// TOP Top()
+// CHECK: (module Apply$
+// CHECK-NOT: (module Apply$
+// CHECK: (module Top
+// CHECK: (inst first Apply$
+// CHECK: (inst second Apply$
+fn inc(x: UInt[8]) -> UInt[8] {
+    return x +% 1;
+}
+module Apply(comptime f: fn (UInt[8]) -> UInt[8]) domains() {
+    input a: UInt[8];
+    output q: UInt[8];
+    q := f(a);
+}
+module Top() domains() {
+    input x: UInt[8];
+    output p: UInt[8];
+    output q: UInt[8];
+    instance first = Apply(inc);
+    instance second = Apply(inc);
+    first.a := x;
+    second.a := x;
+    p := first.q;
+    q := second.q;
+}

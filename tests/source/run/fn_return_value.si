@@ -1,0 +1,20 @@
+// A function returns a function value, and the call applies the result at once: the callee is the call `pick(...)`, not a name.
+// TOP M()
+fn inc(x: UInt[8]) -> UInt[8] {
+    return x +% 1;
+}
+fn dec(x: UInt[8]) -> UInt[8] {
+    return x -% 1;
+}
+comptime fn pick(up: Bool) -> fn (UInt[8]) -> UInt[8] {
+    return if (up) { inc } else { dec };
+}
+module M() domains() {
+    input x: UInt[8];
+    output p: UInt[8];
+    output q: UInt[8];
+    p := pick(true)(x);
+    q := pick(false)(x);
+}
+// STEP in=(x 0) out=(p 1 q 255)
+// STEP in=(x 9) out=(p 10 q 8)

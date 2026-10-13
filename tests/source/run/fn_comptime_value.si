@@ -1,0 +1,19 @@
+// A function value of a `comptime fn` runs in the mode `static`. The module argument carries it, and the child reads its result as a width.
+// TOP Top()
+comptime fn twice(n: Nat) -> Nat {
+    return n * 2;
+}
+module Wide(comptime f: fn (Nat) -> Nat, comptime n: Nat) domains() {
+    input a: UInt[f(n)];
+    output q: UInt[f(n)];
+    q := a;
+}
+module Top() domains() {
+    input x: UInt[6];
+    output y: UInt[6];
+    instance w = Wide(twice, 3);
+    w.a := x;
+    y := w.q;
+}
+// STEP in=(x 0) out=(y 0)
+// STEP in=(x 63) out=(y 63)

@@ -1,0 +1,15 @@
+// A hardware `if` with two equal function arms gives that function as a static value, so the call after it applies the function and no select remains.
+// TOP M()
+fn inc(x: UInt[8]) -> UInt[8] {
+    return x +% 1;
+}
+module M() domains() {
+    input sel: Bool;
+    input a: UInt[8];
+    output y: UInt[8];
+    let f = if (sel) { inc } else { inc };
+    y := f(a);
+}
+// STEP in=(a 4 sel false) out=(y 5)
+// STEP in=(a 4 sel true) out=(y 5)
+// STEP in=(a 255 sel true) out=(y 0)
