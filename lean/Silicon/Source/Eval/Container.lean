@@ -398,6 +398,42 @@ def Agg.expand (fs : Ty → Option (Array (String × Ty))) (specs : Specs) (pos 
   | _ => none
 
 /-!
+The sum of the zero sizes of the empty parts on the path `ks` in a reference of the type
+`t`. Each reference on the path expands one level (`Agg.expand`) and makes these parts. The
+type metadata gives each zero size, so the sum makes no part. A part of a scalar type is a
+hardware leaf, so the path ends there.
+-/
+def Ty.emptySize (specs : Specs) : Ty → List Nat → Nat
+  | _, [] => 0
+  | t, k :: ks =>
+    let empty (p : Ty) := if p.info.leaves = 0 then p.info.zeroSize else 0
+    let (here, p) := match t with
+      | .array e n => (n * empty e, some e)
+      | t =>
+        let ps : Array Ty := match t with
+          | .tuple ts => ts
+          | t => ((fieldsIn specs t).map Prod.snd).getD #[]
+        ((ps.map empty).sum, ps[k]?)
+    match p with
+    | some p =>
+      if p.info.leaves = 0 || p matches .bool | .uint _ | .sint _ then here
+      else here + Ty.emptySize specs p ks
+    | none => here
+
+/-!
+The sum of the zero sizes of the empty parts that `Agg.set` makes on the path `ks` of the
+aggregate `a` (`Ty.emptySize`). Only a reference on the path makes parts.
+-/
+def Agg.emptySize (specs : Specs) : Agg → List Nat → Nat
+  | _, [] => 0
+  | .ref _ t, ks => Ty.emptySize specs t ks
+  | .array _ xs, k :: ks | .tuple _ xs, k :: ks | .record _ xs, k :: ks =>
+    match xs[k]? with
+    | some x => Agg.emptySize specs x ks
+    | none => 0
+  | _, _ => 0
+
+/-!
 The static container `v` opened one level: its elements as static parts, and the builder of its
 node. A list never holds a hardware leaf, so it does not open.
 -/

@@ -806,11 +806,14 @@ replaces each one. Then the rebind charges the size of the new root from the sto
 old size, minus the size of `o`, plus the size of `x`. This charge comes before the copy of the
 path and before a reference on the path expands. Then the held root charges, the path copies,
 and each hardware leaf of the new root binds at the next version of the root. A new root without
-a hardware leaf is a static value.
+a hardware leaf is a static value. It has no rebind charge. Instead, at the same point, it charges
+the zero size of each empty part that a reference on the path makes when it expands
+(`Agg.emptySize`). The type metadata gives these sizes, as in `normalize`.
 -/
 def rebind (p : Pos) (pl : Place) (sl : Slot) (a o x : Agg) : M Unit := do
   let hw := a.leaves - o.leaves + x.leaves != 0
   if hw then charge p (a.size - o.size + x.size)
+  else charge p (Agg.emptySize (← get).specs a pl.keys)
   held p pl.id
   let r ← setAt p a x pl.keys
   let v ← if hw then do pure (Val.agg (← bindAgg p (← fresh pl.id pl.name) r)) else pure r.val
