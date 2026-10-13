@@ -337,6 +337,46 @@ fn chain_decls(n: u64, link: &str, leaf: &str) -> String {
         .collect()
 }
 
+/// A read through a chain of `n` stored nodes takes steps in `n`: one cursor walks the whole
+/// chain, so the path from the root is not walked again at each level. The root is the formal
+/// with one update along the chain, so the nodes of the chain are stored in the local. The
+/// chain goes through fields, through fields and indices, and through selectors.
+#[test]
+fn a_read_through_stored_nodes_takes_linear_steps() {
+    let cases: [(u64, &str, &str, &str); 3] = [
+        (
+            20,
+            "struct S{i} { a: S{}, b: UInt[8], }\n",
+            "struct S{i} { a: UInt[8], b: UInt[8], }\n",
+            ".a",
+        ),
+        (
+            21,
+            "struct S{i} { a: [S{}; 1], b: UInt[8], }\n",
+            "struct S{i} { a: [UInt[8]; 1], b: UInt[8], }\n",
+            ".a[0]",
+        ),
+        (
+            22,
+            "type S{i} = (S{}, UInt[8]);\n",
+            "type S{i} = (UInt[8], UInt[8]);\n",
+            ".0",
+        ),
+    ];
+    for (family, link, leaf, step) in cases {
+        let at = |n: u64, k: u64| {
+            let sel = rep(step, n + 1);
+            run_ok(
+                &chain_decls(n, link, leaf),
+                "S0",
+                &format!("let mut m = x;\n  m{sel} = 7;\n  let y = m{sel};"),
+                key(family, k),
+            )
+        };
+        assert_linear(at, |r| r.counts.stepped, 16, 16);
+    }
+}
+
 /// A place through `n` empty parts of a stored root walks its path in `n` steps. The empty parts
 /// are in a static part of the root, which holds no reference to normalize, so the walk does not
 /// catch up at each one.
