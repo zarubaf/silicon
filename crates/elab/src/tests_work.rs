@@ -96,3 +96,73 @@ fn the_work_of_typed_uses_of_a_function_value_is_linear_in_n_and_k() {
 fn the_work_of_repeated_equality_is_linear_in_n_and_k() {
     assert_linear(3, equals);
 }
+
+/// The leaves that the walk over the leaves of a port type visited during the elaboration and
+/// during the lowering, and the fuel that the lowering charged. The lowering runs on a thread of
+/// its own, which joins the run of its parent. The fuel of the run keys the counts.
+fn lowering(family: u64, ports: &str, n: usize) -> (u64, u64, u64) {
+    use crate::{Abort, Budget, elaborate, tests_elab::load};
+    let fuel = 600_000_000 + family * 1_000_000 + n as u64;
+    let src = format!("module M() {{\n{ports}}}\n").replace("{n}", &n.to_string());
+    let file = load(&src).unwrap();
+    let budget = Budget {
+        fuel,
+        ..Budget::default()
+    };
+    let design = match elaborate(&file, "M", parse::DEFAULT_SYNTAX_DEPTH, budget) {
+        Ok(Ok(design)) => design,
+        Ok(Err(e)) => panic!("{} {}:{} at {n}", e.code, e.pos.line, e.pos.col),
+        Err(Abort::Usage(m)) => panic!("{m}"),
+        Err(Abort::Stack(e)) => panic!("{e}"),
+    };
+    let elaborated = of(fuel).leaves;
+    let lowered = design.lower().unwrap().ok().unwrap();
+    let total = of(fuel).leaves;
+    (
+        elaborated,
+        total - elaborated,
+        lowered.used() - design.used(),
+    )
+}
+
+/// Checks that the lowering walk grows at most in step with `n` and stays within a constant
+/// times the fuel that the lowering charged: it makes one visit for each leaf, and no list.
+fn assert_streams(family: u64, ports: &str) {
+    let at = |n: usize| lowering(family, ports, n);
+    let (a, b, c) = (at(256), at(512), at(1024));
+    for (n, w) in [(256, a), (512, b), (1024, c)] {
+        assert!(w.1 > 0, "the lowering thread counts nothing at {n}");
+        assert!(w.1 <= w.2, "{n}: {} visits for {} units", w.1, w.2);
+    }
+    assert!(
+        b.1 <= 2 * a.1 + 4 && c.1 <= 2 * b.1 + 4,
+        "{a:?} {b:?} {c:?}"
+    );
+    assert!(
+        b.2 <= 2 * a.2 + 4 && c.2 <= 2 * b.2 + 4,
+        "{a:?} {b:?} {c:?}"
+    );
+}
+
+/// A port, a register, and a binding of an array lower one leaf at a time. The visits grow with
+/// the leaf count and the charge pays for each of them.
+#[test]
+fn the_lowering_walks_ports_registers_and_bindings_per_leaf() {
+    assert_streams(
+        10,
+        "  input x: [UInt[8]; {n}];\n  output y: [UInt[8]; {n}];\n  y := x;\n",
+    );
+    assert_streams(
+        11,
+        "  input x: [UInt[8]; {n}];\n  output y: [UInt[8]; {n}];\n  \
+         reg r: [UInt[8]; {n}] = [UInt[8]; {n}]();\n  r := x;\n  y := r;\n",
+    );
+}
+
+/// Empty parts have no leaves: the walk skips them and the lowering takes constant work.
+#[test]
+fn the_lowering_walk_skips_a_huge_empty_part() {
+    let at = |n: usize| lowering(12, "  input x: (Bool, [(); {n}]);\n", n);
+    assert_eq!(at(1 << 10).1, at(1 << 40).1);
+    assert_eq!(at(1 << 10).2, at(1 << 40).2);
+}

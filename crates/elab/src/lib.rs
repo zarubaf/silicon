@@ -175,9 +175,14 @@ fn elaborate_with(
     }
     let scan = parse::on_stack(file.depth(), || scan::of(file, None)).map_err(Abort::Stack)?;
     let stack = scan.stack;
+    #[cfg(test)]
+    let fuel = budget.fuel;
     let run = stack
         .run(|| eval::elaborate(file, budget, scan, digest, pos, item, xs))
         .map_err(Abort::Stack)?;
+    // The lowering that follows counts into the run, also from the thread that calls it.
+    #[cfg(test)]
+    counters::join(fuel);
     finish(run).map_err(Abort::Stack)
 }
 

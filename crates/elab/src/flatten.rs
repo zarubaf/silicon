@@ -92,7 +92,14 @@ pub(crate) fn cost_lines(total: u64, mut lines: Vec<(String, u64)>) -> String {
 
 /// Lowers `d` with the fuel that its elaboration leaves.
 pub(crate) fn lower(d: &Design) -> Result<Result<Lowered, Failure>, StackError> {
+    #[cfg(test)]
+    let run = crate::counters::current();
     parse::on_stack(d.graph.height(), || {
+        // The lowering thread counts into the run of its parent.
+        #[cfg(test)]
+        if let Some(fuel) = run {
+            crate::counters::join(fuel);
+        }
         let mut lower = Lower {
             design: d,
             fuel: d.left,

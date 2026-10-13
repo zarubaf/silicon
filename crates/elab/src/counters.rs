@@ -92,6 +92,12 @@ pub(crate) fn join(fuel: u64) {
     RUN.with(|run| run.set(Some(fuel)));
 }
 
+/// The fuel budget of the run that this thread counts into. A thread that works for the run
+/// later, such as the lowering thread, joins it with `join`.
+pub(crate) fn current() -> Option<u64> {
+    RUN.with(Cell::get)
+}
+
 /// Adds `n` to the count of the run of this thread. Work outside a run counts nowhere.
 pub(crate) fn add(count: Count, n: u64) {
     let Some(fuel) = RUN.with(Cell::get) else {
