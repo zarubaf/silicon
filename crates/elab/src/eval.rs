@@ -28,6 +28,8 @@ mod record;
 mod string;
 #[cfg(test)]
 mod tests_agg;
+#[cfg(test)]
+mod tests_bind;
 mod types;
 
 pub use inst::Design;
