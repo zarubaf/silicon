@@ -52,16 +52,6 @@ pub(crate) struct RegDecl {
     pub pos: Pos,
 }
 
-#[expect(
-    dead_code,
-    reason = "the lowering by leaf reads the types and positions"
-)]
-pub(crate) struct WireDecl {
-    path: PathId,
-    ty: Ty,
-    pos: Pos,
-}
-
 /// A child instance: its path, the index of its done instantiation, and its statement.
 pub(crate) struct ChildDecl {
     pub path: PathId,
@@ -98,7 +88,9 @@ pub(crate) struct Body {
     pub domain: Option<Sym>,
     pub ports: Vec<PortDecl>,
     pub regs: Vec<RegDecl>,
-    wires: Vec<WireDecl>,
+    /// The paths of the wires. Only the tests read them: a wire lowers through its binding.
+    #[cfg(test)]
+    wires: Vec<PathId>,
     pub lets: Vec<Let>,
     pub children: Vec<ChildDecl>,
     pub binds: Vec<Bind>,
@@ -110,6 +102,7 @@ impl Body {
             domain,
             ports: Vec::new(),
             regs: Vec::new(),
+            #[cfg(test)]
             wires: Vec::new(),
             lets: Vec::new(),
             children: Vec::new(),
@@ -298,7 +291,7 @@ impl Design {
             .iter()
             .map(|l| l.path)
             .chain(b.regs.iter().map(|r| r.path))
-            .chain(b.wires.iter().map(|w| w.path))
+            .chain(b.wires.iter().copied())
             .chain(b.children.iter().map(|c| c.path));
         Some(
             paths
@@ -480,11 +473,8 @@ impl Evaluator<'_> {
                 let t = self.data_type(*pos, tid)?;
                 let id = self.decl(name)?;
                 let path = self.fresh(id);
-                self.elab.work.body.wires.push(WireDecl {
-                    path,
-                    ty: t.clone(),
-                    pos: *pos,
-                });
+                #[cfg(test)]
+                self.elab.work.body.wires.push(path);
                 let w = self.resource(Kind::Wire, path, t, *pos, self.sym(id));
                 self.bind(
                     id,

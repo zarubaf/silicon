@@ -290,13 +290,9 @@ fn inner(expr: Expr, height: u64) -> Low {
     }
 }
 
-/// The core name of the target of a statement: a path, and the core name of a child input. Its
-/// temporaries are named after it: the path, then all fields of the port name.
-#[derive(Clone, Copy)]
-struct Target<'a> {
-    path: PathId,
-    port: Option<&'a Name>,
-}
+/// The core name of the target of a statement: the name of its leaf, or the name of a child
+/// input with its leaf fields. Its temporaries are named after it.
+type Target<'a> = &'a Name;
 
 /// The fuel, the temporaries of the current module, and the number of the next temporary of
 /// the current statement.
@@ -367,11 +363,7 @@ impl Lower<'_> {
 
     /// Binds `expr` of width `width` to the next temporary of `target` at `at`.
     fn bind_temp(&mut self, pos: Pos, target: Target, width: u32, at: Pos, expr: Expr) -> R<Name> {
-        let mut temp = self.path(target.path);
-        if let Some(port) = target.port {
-            temp.rest.push(Field::User(port.head.clone()));
-            temp.rest.extend(port.rest.iter().cloned());
-        }
+        let mut temp = target.clone();
         temp.rest.push(Field::Temp(self.count));
         self.count += 1;
         self.charge(pos, 1)?;
@@ -502,29 +494,33 @@ impl Lower<'_> {
         })
     }
 
+    /// A reference to the core name `name`, and the charge of a copy of it.
+    fn ref_leaf(&mut self, pos: Pos, name: &Name) -> R<(Expr, u128)> {
+        let units = 1 + name_units(name);
+        self.charge(pos, 1)?;
+        Ok((Expr::Ref(self.name(pos, name)?), units))
+    }
+
+    /// A reference to the output `port` of the child `inst`, and the charge of a copy of it.
+    fn out_leaf(&mut self, pos: Pos, inst: &Name, port: &Name) -> R<(Expr, u128)> {
+        let units = 1 + name_units(inst) + name_units(port);
+        self.charge(pos, 1)?;
+        let inst = self.name(pos, inst)?;
+        let port = self.name(pos, port)?;
+        let expr = Expr::InstOut {
+            inst,
+            port,
+            span: span(pos),
+        };
+        Ok((expr, units))
+    }
+
     /// A node without operands: a name, a child output, or a constant.
     fn leaf(&mut self, pos: Pos, op: &Op) -> R<Low> {
         let at = span(pos);
         let (expr, units) = match op {
-            Op::Ref(path) => {
-                let name = self.path(*path);
-                let units = 1 + name_units(&name);
-                self.charge(pos, 1)?;
-                (Expr::Ref(self.name(pos, &name)?), units)
-            }
-            Op::Out(inst, port) => {
-                let (inst, port) = (self.path(*inst), port.clone());
-                let units = 1 + name_units(&inst) + name_units(&port);
-                self.charge(pos, 1)?;
-                let inst = self.name(pos, &inst)?;
-                let port = self.name(pos, &port)?;
-                let expr = Expr::InstOut {
-                    inst,
-                    port,
-                    span: at,
-                };
-                (expr, units)
-            }
+            Op::Ref(path) => self.ref_leaf(pos, &self.path(*path))?,
+            Op::Out(inst, port) => self.out_leaf(pos, &self.path(*inst), port)?,
             Op::Lit(v) => {
                 self.charge(pos, 1)?;
                 (const_of(at, v), 1)
@@ -778,12 +774,8 @@ impl Lower<'_> {
             let at = span(local.pos);
             self.charge(local.pos, 1)?;
             let x = self.name(local.pos, &self.path(local.path))?;
-            let target = Target {
-                path: local.path,
-                port: None,
-            };
             let w = width(&self.ty(local.value));
-            let expr = self.value(target, local.value)?;
+            let expr = self.value(&self.path(local.path), local.value)?;
             stmts.push(Stmt::Let {
                 name: x,
                 width: num(w, at),
@@ -829,7 +821,7 @@ impl Lower<'_> {
         match bind.sink {
             Sink::Own { kind, ref ty, path } => {
                 let x = self.name(bind.pos, &self.path(path))?;
-                let expr = self.value(Target { path, port: None }, scalar(&bind.value)?)?;
+                let expr = self.value(&self.path(path), scalar(&bind.value)?)?;
                 stmts.push(match kind {
                     Kind::Reg => Stmt::Next {
                         reg: x,
@@ -856,11 +848,10 @@ impl Lower<'_> {
                 ..
             } => {
                 let x = self.name(bind.pos, port)?;
-                let target = Target {
-                    path: inst,
-                    port: Some(port),
-                };
-                let expr = self.value(target, scalar(&bind.value)?)?;
+                let mut target = self.path(inst);
+                target.rest.push(Field::User(port.head.clone()));
+                target.rest.extend(port.rest.iter().cloned());
+                let expr = self.value(&target, scalar(&bind.value)?)?;
                 let Some(conns) = conns.get_mut(index) else {
                     return defect("a connection names no child");
                 };
