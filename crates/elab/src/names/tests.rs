@@ -72,6 +72,7 @@ fn users() -> Vec<String> {
         "b1",
         "h0",
         "t4",
+        "e2",
         "ret",
         "rdata",
         "A_b9",
@@ -107,6 +108,9 @@ fn made() -> Vec<Field> {
         Field::Digest("0".to_owned()),
         Field::Temp(0),
         Field::Temp(4),
+        Field::Elem(int("0")),
+        Field::Elem(int("2")),
+        Field::Elem(int("18446744073709551616")),
     ];
     out.extend(ROLES.iter().map(|r| Field::Role(*r)));
     out
@@ -194,6 +198,42 @@ fn the_keyword_escape() {
         )),
         "Fifo$16$1b"
     );
+}
+
+/// The leaf names of section 7.3. An element `<k>e` differs from the loop value `k`.
+#[test]
+fn the_leaf_names() {
+    let elem = |k: &str| Field::Elem(int(k));
+    assert_eq!(encode(&name("r", vec![elem("2")])), "r$2e");
+    assert_eq!(
+        encode(&name(
+            "q",
+            vec![Field::Version(1), Field::User("xs".into()), elem("0")]
+        )),
+        "q$1v$xs$0e"
+    );
+    assert_eq!(
+        encode(&name(
+            "f",
+            vec![Field::Call(0), Field::Role(Role::Ret), elem("0")]
+        )),
+        "f$0c$0ret$0e"
+    );
+    assert_eq!(decode("r$2e"), Some(name("r", vec![elem("2")])));
+    assert_eq!(
+        decode("p$0e$x"),
+        Some(name("p", vec![elem("0"), Field::User("x".into())]))
+    );
+    assert_eq!(
+        decode("p$0$x"),
+        Some(name(
+            "p",
+            vec![Field::Int(int("0")), Field::User("x".into())]
+        ))
+    );
+    for text in ["x$02e", "x$2e2", "x$2ee"] {
+        assert_eq!(decode(text), None, "{text}");
+    }
 }
 
 #[test]
@@ -372,6 +412,8 @@ fn arb_field() -> impl Strategy<Value = Field> {
         any::<bool>().prop_map(Field::Bool),
         "[0-9a-f]{1,16}".prop_map(Field::Digest),
         any::<u64>().prop_map(Field::Temp),
+        any::<u64>().prop_map(|k| Field::Elem(Int::from_u64(k))),
+        any::<u64>().prop_map(|k| Field::Elem(Int::from_u64(k).shl(64))),
         proptest::sample::select(ROLES.to_vec()).prop_map(Field::Role),
     ]
 }
