@@ -103,6 +103,24 @@ impl Evaluator<'_> {
     /// its number, so the node is not copied. A new node gives its part in its normal form, and
     /// moves it out.
     fn agg_part(&mut self, pos: Pos, out: Out, k: usize, step: Step, ft: Option<TyId>) -> Res<Out> {
+        let kept = out.kept();
+        let part = self.agg_part_of(pos, out, k, step, ft)?;
+        // A part of a copy that still holds its local holds it too.
+        Ok(match (kept, part) {
+            (Some(root), Out::Made(v) | Out::Named(v)) => Out::Kept(v, root),
+            (_, part) => part,
+        })
+    }
+
+    /// `agg_part`, with no regard for the local that `out` holds.
+    fn agg_part_of(
+        &mut self,
+        pos: Pos,
+        out: Out,
+        k: usize,
+        step: Step,
+        ft: Option<TyId>,
+    ) -> Res<Out> {
         #[cfg(test)]
         crate::counters::add(crate::counters::Count::Selected, 1);
         let lazy = match self.store.seen(&out) {

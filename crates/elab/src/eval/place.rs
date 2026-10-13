@@ -175,6 +175,9 @@ pub(super) fn elem(b: Opnd, k: usize) -> Out {
         Opnd::Static(Out::Made(Val::Static(mut v)) | Out::Named(Val::Static(mut v))) => {
             Out::Named(Val::Static(take_element(&mut v, k)))
         }
+        Opnd::Static(Out::Kept(Val::Static(mut v), root)) => {
+            Out::Kept(Val::Static(take_element(&mut v, k)), root)
+        }
         Opnd::Static(o) => o,
         Opnd::Hw(h) => Out::Made(Val::Hw(h)),
     }

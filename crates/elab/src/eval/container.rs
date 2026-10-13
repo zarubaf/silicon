@@ -45,9 +45,11 @@ pub(super) fn bounded(limit: u64, site: Option<Pos>, pos: Pos, depth: u64) -> Re
 /// The static value of a result that is an element of a container.
 fn cow(store: &Store, out: Out) -> Cow<'_, Value> {
     match out {
-        Out::Made(Val::Static(v)) | Out::Named(Val::Static(v)) => Cow::Owned(v),
+        Out::Made(Val::Static(v)) | Out::Named(Val::Static(v)) | Out::Kept(Val::Static(v), _) => {
+            Cow::Owned(v)
+        }
         Out::Ref(r) => Cow::Borrowed(store.value_at(&r)),
-        Out::Made(_) | Out::Named(_) => Cow::Owned(Value::Unit),
+        Out::Made(_) | Out::Named(_) | Out::Kept(..) => Cow::Owned(Value::Unit),
     }
 }
 

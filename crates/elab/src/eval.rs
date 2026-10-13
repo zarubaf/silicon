@@ -80,6 +80,10 @@ enum Out {
     /// A new value that the cost model treats as a reference: a type name, a domain, a child
     /// input, a child output, or an element of a new container.
     Named(Val),
+    /// A copy of a reference to a local that a mutation settled while the result waited. Lean
+    /// keeps the root of such a result, so a static copy, or a static part of it, still holds
+    /// the local (section 5.4).
+    Kept(Val, Root),
     /// A local or a constant, or an element of one. A call evaluates its arguments in the
     /// caller frame and binds them in a new frame, so a reference names its frame.
     Ref(Ref),
@@ -88,6 +92,14 @@ enum Out {
 impl Out {
     fn is_ref(&self) -> bool {
         !matches!(self, Out::Made(_))
+    }
+
+    /// The local that this result keeps holding after a mutation copied its value.
+    fn kept(&self) -> Option<Root> {
+        match self {
+            Out::Kept(_, root) => Some(*root),
+            _ => None,
+        }
     }
 }
 
@@ -240,6 +252,10 @@ impl Store {
                 holds = Some(root);
             }
         }
+        if let Out::Kept(Val::Static(_), root) = &o {
+            *self.holds.entry(*root).or_default() += 1;
+            holds = Some(*root);
+        }
         self.parked.push(o);
         self.held_by.push(holds);
         at
@@ -322,7 +338,7 @@ impl Store {
                 continue;
             };
             let old = std::mem::replace(slot, Out::Made(Val::Static(Value::Unit)));
-            let copy = Out::Named(self.take(old));
+            let copy = Out::Kept(self.take(old), root);
             if let Some(slot) = self.parked.get_mut(k) {
                 *slot = copy;
             }
@@ -461,7 +477,7 @@ impl Store {
 
     fn seen<'s>(&'s self, out: &'s Out) -> Seen<'s> {
         match out {
-            Out::Made(v) | Out::Named(v) => v.seen(),
+            Out::Made(v) | Out::Named(v) | Out::Kept(v, _) => v.seen(),
             Out::Ref(r) => self.at(r),
         }
     }
@@ -478,7 +494,7 @@ impl Store {
     /// paid for the copy before.
     fn take(&self, out: Out) -> Val {
         match out {
-            Out::Made(v) | Out::Named(v) => v,
+            Out::Made(v) | Out::Named(v) | Out::Kept(v, _) => v,
             Out::Ref(r) => match self.at(&r) {
                 Seen::Static(v) => {
                     #[cfg(test)]
@@ -870,7 +886,7 @@ impl Evaluator<'_> {
     /// the check does not walk its path.
     fn is_agg(&self, out: &Out) -> bool {
         match out {
-            Out::Made(v) | Out::Named(v) => matches!(v, Val::Agg(_)),
+            Out::Made(v) | Out::Named(v) | Out::Kept(v, _) => matches!(v, Val::Agg(_)),
             Out::Ref(r) => {
                 matches!(self.store.root(&r.root), Val::Agg(_))
                     && matches!(self.store.at(r), Seen::Agg(_))
@@ -895,7 +911,7 @@ impl Evaluator<'_> {
     /// with a path is none, and the check does not walk it.
     fn is_handle(&self, out: &Out) -> bool {
         match out {
-            Out::Made(v) | Out::Named(v) => matches!(v, Val::Handle(_)),
+            Out::Made(v) | Out::Named(v) | Out::Kept(v, _) => matches!(v, Val::Handle(_)),
             Out::Ref(r) => r.path.is_empty() && matches!(self.store.root(&r.root), Val::Handle(_)),
         }
     }
