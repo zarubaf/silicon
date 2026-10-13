@@ -176,11 +176,30 @@ fn element<'a>(v: &'a Value, path: &[usize], steps: &Cell<u64>) -> &'a Value {
     cur
 }
 
+/// What the aggregate `a` finds at the numbers `path`, one for each container node below it. A
+/// static part continues as a static value. A reference does not continue: a step into it makes
+/// a new reference, which no path names.
+fn agg_element<'a>(a: &'a Agg, path: &[usize], steps: &Cell<u64>) -> Seen<'a> {
+    let mut cur = a.seen();
+    for (i, &k) in path.iter().enumerate() {
+        cur = match cur {
+            Seen::Agg(Agg::Array(_, p) | Agg::Tuple(_, p) | Agg::Record(_, p)) => {
+                steps.set(steps.get() + 1);
+                p.0.get(k).map_or(Seen::Static(&ABSENT_VALUE), Agg::seen)
+            }
+            Seen::Static(v) => return Seen::Static(element(v, &path[i..], steps)),
+            _ => return Seen::Static(&ABSENT_VALUE),
+        };
+    }
+    cur
+}
+
 impl Store {
     /// The element `k` of the container that `cur` finds: one step of a walk along a path.
     fn step<'s>(&self, cur: Seen<'s>, k: usize) -> Seen<'s> {
         match cur {
             Seen::Static(v) => Seen::Static(element(v, &[k], &self.steps)),
+            Seen::Agg(a) => agg_element(a, &[k], &self.steps),
             s => s,
         }
     }
@@ -307,6 +326,27 @@ impl Store {
         Some(cur)
     }
 
+    /// Takes the value of the local at `root` out of its slot, for a change that rebuilds it.
+    /// The caller puts the new value back with `put_root`.
+    fn take_root(&mut self, root: &Root) -> Val {
+        let Root::Local(k, id) = root else {
+            return Val::Static(Value::Unit);
+        };
+        match self.frames.get_mut(*k).and_then(|f| f.get_mut(id)) {
+            Some(slot) => std::mem::replace(&mut slot.value, Val::Static(Value::Unit)),
+            None => Val::Static(Value::Unit),
+        }
+    }
+
+    /// Puts `v` into the slot of the local at `root`.
+    fn put_root(&mut self, root: &Root, v: Val) {
+        if let Root::Local(k, id) = root
+            && let Some(slot) = self.frames.get_mut(*k).and_then(|f| f.get_mut(id))
+        {
+            slot.value = v;
+        }
+    }
+
     /// Links the parameter `id` of the frame `frame` to the argument `r` of the caller.
     fn link(&mut self, frame: usize, id: DeclId, r: Ref) {
         self.links.entry(frame).or_default().insert(id, r);
@@ -355,6 +395,7 @@ impl Store {
     fn current(&self, root: Root, keys: &[usize]) -> Seen<'_> {
         match self.root(&root) {
             Val::Static(v) => Seen::Static(element(v, keys, &self.steps)),
+            Val::Agg(a) => agg_element(a, keys, &self.steps),
             v => v.seen(),
         }
     }
@@ -365,6 +406,7 @@ impl Store {
         match (root, r.path.is_empty()) {
             (_, true) => root.seen(),
             (Val::Static(v), false) => Seen::Static(element(v, &r.path, &self.steps)),
+            (Val::Agg(a), false) => agg_element(a, &r.path, &self.steps),
             _ => Seen::Static(&ABSENT_VALUE),
         }
     }
@@ -439,13 +481,6 @@ struct FrameRef {
 
 const ROOT: FrameRef = FrameRef { path: None, id: 0 };
 
-/// The key of a binding in a frame: the symbol of its source name, or the result role.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum Tag {
-    Sym(Sym),
-    Ret,
-}
-
 /// A named hardware binding: its core name, its value, and the position of the binding.
 pub(crate) struct Let {
     pub path: PathId,
@@ -454,12 +489,13 @@ pub(crate) struct Let {
 }
 
 /// The names of one instantiation. `frames` numbers each frame by its parent and its field
-/// pair. `versions` counts the bindings of each tag in each frame. `lets` holds the named
+/// pair. `versions` counts the bindings of each source name in each frame. A call result takes
+/// no version. `lets` holds the named
 /// bindings in evaluation order. Each table grows only with the bindings that run.
 #[derive(Default)]
 struct Naming {
     frames: BTreeMap<(usize, Sym, Step), usize>,
-    versions: BTreeMap<(usize, Tag), u64>,
+    versions: BTreeMap<(usize, Sym), u64>,
     lets: Vec<Let>,
 }
 
@@ -799,6 +835,27 @@ impl Evaluator<'_> {
         }
     }
 
+    /// Whether the result is a hardware aggregate. A reference into a static value is not, and
+    /// the check does not walk its path.
+    fn is_agg(&self, out: &Out) -> bool {
+        match out {
+            Out::Made(v) | Out::Named(v) => matches!(v, Val::Agg(_)),
+            Out::Ref(r) => {
+                matches!(self.store.root(&r.root), Val::Agg(_))
+                    && matches!(self.store.at(r), Seen::Agg(_))
+            }
+        }
+    }
+
+    /// Whether the result is a handle. A handle is the whole value of a local, so a reference
+    /// with a path is none, and the check does not walk it.
+    fn is_handle(&self, out: &Out) -> bool {
+        match out {
+            Out::Made(v) | Out::Named(v) => matches!(v, Val::Handle(_)),
+            Out::Ref(r) => r.path.is_empty() && matches!(self.store.root(&r.root), Val::Handle(_)),
+        }
+    }
+
     /// A binding copies a reference.
     fn copy(&mut self, pos: Pos, out: &Out) -> Res<()> {
         if out.is_ref() {
@@ -849,10 +906,18 @@ impl Evaluator<'_> {
     }
 
     /// A typed use of `out` at the type `t`. A literal that waits takes its type. It reads a
-    /// handle. A hardware value needs the type `t`.
+    /// handle. A hardware value needs the type `t`, and a hardware aggregate converts part by
+    /// part (`typed_agg`).
     fn conform_val(&mut self, pos: Pos, t: TyId, out: Out) -> Res<Val> {
         let out = self.settle(pos, t, out)?;
-        match self.data(pos, out)? {
+        let d = self.data(pos, out)?;
+        self.conform_data(pos, t, d)
+    }
+
+    /// The typed use of the data `d` at the type `t`.
+    fn conform_data(&mut self, pos: Pos, t: TyId, d: Opnd) -> Res<Val> {
+        match d {
+            Opnd::Static(o) if self.is_agg(&o) => Ok(self.typed_agg(pos, t, o)?.into_val()),
             Opnd::Static(o) => Ok(Val::Static(self.conform(pos, t, o)?)),
             Opnd::Hw(h) => {
                 let ty = self.graph.ty(h);
@@ -871,6 +936,28 @@ impl Evaluator<'_> {
                 }
             }
         }
+    }
+
+    /// The copy of `out` when `copies`, then its typed use at `t` at `pos`. The copy charges the
+    /// size of the result, and a handle has the size 1. A typed use then reads a handle. A read
+    /// of an aggregate gives a reference, and its binding expands the reference into its
+    /// leaves. Thus the copy also charges the size of the reference, the zero size of its type,
+    /// before the typed use.
+    fn copy_use(&mut self, pos: Pos, t: TyId, copies: bool, out: Out) -> Res<Val> {
+        if copies {
+            self.charge(pos, self.size(&out))?;
+        }
+        let out = self.settle(pos, t, out)?;
+        let handle = self.is_handle(&out);
+        let d = self.data(pos, out)?;
+        if copies
+            && handle
+            && let Opnd::Static(o) = &d
+            && self.is_agg(o)
+        {
+            self.charge(pos, self.size(o))?;
+        }
+        self.conform_data(pos, t, d)
     }
 
     /// The data of a result at a use that reads it. A register, a wire, and an own output
@@ -1049,8 +1136,8 @@ impl Evaluator<'_> {
         )
     }
 
-    /// The core name `base` of the tag `key` in the current frame, or a version of it.
-    fn version(&mut self, key: Tag, base: PathId) -> PathId {
+    /// The core name `base` of the source name `key` in the current frame, or a version of it.
+    fn version(&mut self, key: Sym, base: PathId) -> PathId {
         let k = (self.frame.id, key);
         let v = self.naming.versions.get(&k).copied().unwrap_or(0);
         self.naming.versions.insert(k, v + 1);
@@ -1065,7 +1152,7 @@ impl Evaluator<'_> {
     fn fresh(&mut self, id: DeclId) -> PathId {
         let u = self.sym(id);
         let base = self.paths.child(self.frame.path, u);
-        self.version(Tag::Sym(u), base)
+        self.version(u, base)
     }
 
     /// Binds the hardware value `h` to the core name `path`. The result refers to the name.
@@ -1079,14 +1166,19 @@ impl Evaluator<'_> {
         Val::Hw(self.graph.mk(pos, ty, Op::Ref(path), Vec::new()))
     }
 
-    /// A binding of the local `id`. Only hardware gets a core name.
-    fn named(&mut self, pos: Pos, id: DeclId, v: Val) -> Val {
+    /// A binding of the local `id`. Only a value with a hardware leaf gets a core name. An
+    /// aggregate takes one version, and each of its hardware leaves gets a core `let`.
+    fn named(&mut self, pos: Pos, id: DeclId, v: Val) -> Res<Val> {
         match v {
             Val::Hw(h) => {
                 let path = self.fresh(id);
-                self.bind_hw(pos, path, h)
+                Ok(self.bind_hw(pos, path, h))
             }
-            v => v,
+            Val::Agg(a) => {
+                let path = self.fresh(id);
+                Ok(Val::Agg(Box::new(self.bind_agg(pos, path, *a)?)))
+            }
+            v => Ok(v),
         }
     }
 
@@ -1495,15 +1587,15 @@ impl Evaluator<'_> {
         };
         let o = self.eval(value)?;
         let o = need(value, o)?;
-        self.copy(pos, &o)?;
         let x = if let Some(t) = t {
-            self.conform_val(pos, t, o)?
+            self.copy_use(pos, t, o.is_ref(), o)?
         } else {
+            self.copy(pos, &o)?;
             self.known(&o)?;
             self.store.take(o)
         };
         let id = self.decl(name)?;
-        let x = self.named(pos, id, x);
+        let x = self.named(pos, id, x)?;
         let ty = t.or_else(|| x.ty(&self.graph, &mut self.tys));
         self.bind(
             id,
@@ -1542,8 +1634,7 @@ impl Evaluator<'_> {
                 };
                 let o = self.eval(value)?;
                 let o = need(value, o)?;
-                self.charge(*pos, self.size(&o))?;
-                let v = self.conform_val(*pos, rt, o)?;
+                let v = self.copy_use(*pos, rt, true, o)?;
                 // A module body runs on after a `return`, as the walk of Lean `Elab` does.
                 Ok((!module).then_some(v))
             }

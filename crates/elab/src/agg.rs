@@ -8,10 +8,7 @@
 //! Every walk over an aggregate keeps its own stack, so an aggregate of any depth is safe on
 //! any stack.
 
-// TODO(#181): remove this allowance when the evaluator builds aggregates.
-#![allow(dead_code)]
-
-use crate::hw::{Graph, HwId, Op};
+use crate::hw::{Graph, HwId, Op, Seen, Val};
 use crate::names::{Name, PathId, Paths, Step};
 use crate::types::{Ty, TyId, Types};
 use crate::value::Value;
@@ -189,6 +186,37 @@ impl Agg {
             Ty::Tuple(_) => Agg::Tuple(node, Parts(xs)),
             _ => Agg::Record(node, Parts(xs)),
         })
+    }
+
+    /// What the aggregate is, without a copy: a static part or a hardware leaf look like the
+    /// values they hold, and every other part is an aggregate.
+    pub(crate) fn seen(&self) -> Seen<'_> {
+        match self {
+            Agg::Static(v) => Seen::Static(v),
+            Agg::Hw(h) => Seen::Hw(*h),
+            a => Seen::Agg(a),
+        }
+    }
+
+    /// The value that the aggregate is: a static part and a hardware leaf are values of their
+    /// own, and every other part is an aggregate value.
+    pub(crate) fn into_val(self) -> Val {
+        match self {
+            Agg::Static(v) => Val::Static(v),
+            Agg::Hw(h) => Val::Hw(h),
+            a => Val::Agg(Box::new(a)),
+        }
+    }
+
+    /// The part that the value `v` gives, or the value itself if a handle or a literal that
+    /// waits has no part.
+    pub(crate) fn of_val(v: Val) -> Result<Agg, Val> {
+        match v {
+            Val::Static(v) => Ok(Agg::Static(v)),
+            Val::Hw(h) => Ok(Agg::Hw(h)),
+            Val::Agg(a) => Ok(*a),
+            v @ (Val::Handle(_) | Val::Pending(..)) => Err(v),
+        }
     }
 
     /// The same kind of node with the parts `xs`.

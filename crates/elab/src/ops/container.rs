@@ -157,7 +157,7 @@ fn leaf_size(t: &Ty, v: &Value) -> u64 {
 /// The size of the converted container, and the check of its shape. A shape or a scalar type
 /// that differs is `S010`. A negative `Nat` is `S012`. Both come before the charge. The walk
 /// checks each node before its elements, from left to right.
-fn plan(t: TyId, v: &Value, tys: &Types) -> Result<u64, Fault> {
+pub(crate) fn plan(t: TyId, v: &Value, tys: &Types) -> Result<u64, Fault> {
     let mut size = 0u64;
     let mut work = vec![(t, v)];
     while let Some((t, v)) = work.pop() {
@@ -204,7 +204,7 @@ enum Step<'a> {
 
 /// The conversion, element by element and from left to right. A value that does not fit is
 /// `S012`.
-fn run(t: TyId, v: &Value, tys: &Types) -> Result<Value, Fault> {
+pub(crate) fn run(t: TyId, v: &Value, tys: &Types) -> Result<Value, Fault> {
     let mut done: Vec<Value> = Vec::new();
     let mut work = vec![Step::Visit(t, v)];
     while let Some(step) = work.pop() {

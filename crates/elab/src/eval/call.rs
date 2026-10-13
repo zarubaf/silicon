@@ -4,7 +4,7 @@
 //! new call frame.
 
 use super::place::Place;
-use super::{Evaluator, Names, Opnd, Out, Res, Slot, Tag, at, expr_pos, fail, need};
+use super::{Evaluator, Names, Opnd, Out, Res, Slot, at, expr_pos, fail, need};
 use crate::Code;
 use crate::hw::{Ref, Seen, Val};
 use crate::names::{Role, Step};
@@ -307,8 +307,11 @@ impl Evaluator<'_> {
                     let result = match ev.block(*ip, body, false)? {
                         Some(Val::Hw(h)) => {
                             let role = ev.paths.push(path, Step::Role(Role::Ret));
-                            let name = ev.version(Tag::Ret, role);
-                            Out::Made(ev.bind_hw(pos, name, h))
+                            Out::Made(ev.bind_hw(pos, role, h))
+                        }
+                        Some(Val::Agg(a)) => {
+                            let role = ev.paths.push(path, Step::Role(Role::Ret));
+                            Out::Made(Val::Agg(Box::new(ev.bind_agg(pos, role, *a)?)))
                         }
                         Some(v) => Out::Made(v),
                         None => {
@@ -373,20 +376,23 @@ impl Evaluator<'_> {
         let id = self.decl(&q.name)?;
         let (x, mutable) = match actual {
             Actual::Value(v) => {
-                self.charge(pos, self.size(&v))?;
                 let x = if comptime || q.mode == ParamMode::Comptime {
+                    self.charge(pos, self.size(&v))?;
                     let v = self.settle(pos, t, v)?;
                     Val::Static(self.conform(pos, t, v)?)
                 } else {
-                    self.conform_val(pos, t, v)?
+                    self.copy_use(pos, t, true, v)?
                 };
                 (x, false)
             }
-            Actual::Place(place) => {
-                let part = Out::Ref(Ref {
-                    root: place.root,
-                    path: place.keys.clone(),
-                });
+            Actual::Place(mut place) => {
+                let part = match place.own.take() {
+                    Some(own) => Out::Named(own),
+                    None => Out::Ref(Ref {
+                        root: place.root,
+                        path: place.keys.clone(),
+                    }),
+                };
                 self.charge(pos, self.size(&part))?;
                 let ty = place
                     .ty
@@ -412,7 +418,7 @@ impl Evaluator<'_> {
                 (x, true)
             }
         };
-        let x = self.named(pos, id, x);
+        let x = self.named(pos, id, x)?;
         self.bind(
             id,
             Slot {

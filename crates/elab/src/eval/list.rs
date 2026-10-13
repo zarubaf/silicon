@@ -101,6 +101,9 @@ impl Evaluator<'_> {
         let Opnd::Static(o) = self.data(xp, o)? else {
             return fail(Code::S011, xp, "a list holds no hardware value".to_owned());
         };
+        if self.is_agg(&o) {
+            return fail(Code::S011, xp, "a list holds no hardware value".to_owned());
+        }
         self.check_static(pos, &o)?;
         match ops::convert(elem, self.store.value(&o), &mut self.fuel, &self.tys)
             .map_err(at(pos))?

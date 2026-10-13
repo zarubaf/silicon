@@ -39,6 +39,9 @@ pub(crate) struct Syms {
     /// The number of each field of each struct item by the symbol of its name, in the order of
     /// the items. An item that is not a struct has none.
     pub struct_fields: Vec<BTreeMap<Sym, usize>>,
+    /// The symbol of each field of each struct item, in the order of its declaration. An item
+    /// that is not a struct has none. The name of a field in a leaf name comes from it.
+    pub field_order: Vec<Vec<Sym>>,
     /// The symbol of `clock`, the default domain.
     pub clock: Sym,
 }
@@ -133,6 +136,7 @@ impl Walk<'_> {
 
     fn item(&mut self, item: &Item) {
         let mut struct_fields = BTreeMap::new();
+        let mut field_order = Vec::new();
         match item {
             Item::Const { ty, value, .. } => {
                 self.ty(ty, 1);
@@ -171,6 +175,7 @@ impl Walk<'_> {
                 let mut numbers = BTreeMap::new();
                 for (k, f) in fields.iter().enumerate() {
                     let s = self.intern(&f.name.name);
+                    field_order.push(s);
                     numbers.entry(s).or_insert(k);
                     self.ty(&f.ty, 1);
                 }
@@ -179,6 +184,7 @@ impl Walk<'_> {
             Item::Alias { ty, .. } => self.ty(ty, 1),
         }
         self.syms.struct_fields.push(struct_fields);
+        self.syms.field_order.push(field_order);
     }
 
     fn stmts(&mut self, ss: &[Stmt], depth: usize) {

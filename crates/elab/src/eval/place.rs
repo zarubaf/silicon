@@ -6,8 +6,10 @@
 
 use super::{Evaluator, Frame, Opnd, Out, Res, expr_pos, fail, need, same_form};
 use crate::Code;
+use crate::agg::Agg;
 use crate::hw::{Ref, Root, Seen, Val};
 use crate::int::Int;
+use crate::names::Step;
 use crate::ops::int_text;
 use crate::types::{Ty, TyId};
 use crate::value::Value;
@@ -60,23 +62,62 @@ pub(super) enum Held {
     Other,
 }
 
+/// The size and the number of hardware leaves of the part of a place in an aggregate root. They
+/// come from the stored numbers of the part, so the rebind charge needs no walk of a node.
+#[derive(Clone, Copy)]
+pub(super) struct PartInfo {
+    pub(super) size: u64,
+    pub(super) leaves: u64,
+}
+
 /// The result of the walk along a place.
 struct Walked {
     keys: Vec<usize>,
     ty: Option<TyId>,
     in_list: bool,
+    in_static: bool,
     held: Held,
+    part: Option<PartInfo>,
+    own: Option<Val>,
+}
+
+/// Where the walk along a place is: a view of a value in the store, or a value that the walk
+/// made. A step into a reference makes a new reference, which no path names, and so do the
+/// steps below it.
+enum Cur<'s> {
+    In(Seen<'s>),
+    Own(Val),
+}
+
+impl Cur<'_> {
+    fn seen(&self) -> Seen<'_> {
+        match self {
+            Cur::In(s) => *s,
+            Cur::Own(v) => v.seen(),
+        }
+    }
+}
+
+/// The position of the node of a step.
+fn key_pos(key: &Key<'_>) -> Pos {
+    let (Key::Index(q, ..) | Key::Select(q, ..) | Key::Field(q, _)) = *key;
+    q
 }
 
 /// A place after its steps (section 5.2): its root, the number of each step, and the type and
-/// the kind of the part. `in_list` tells if the container of the last step is a list.
+/// the kind of the part. `in_list` tells if the container of the last step is a list, and
+/// `in_static` if it is a static value. A place in an aggregate root also holds the numbers of
+/// its part, and the part itself if it is a reference that the walk made, for no path names it.
 pub(super) struct Place {
     pub(super) root: Root,
     pub(super) id: DeclId,
     pub(super) keys: Vec<usize>,
     pub(super) ty: Option<TyId>,
     pub(super) in_list: bool,
+    pub(super) in_static: bool,
     pub(super) held: Held,
+    pub(super) part: Option<PartInfo>,
+    pub(super) own: Option<Val>,
 }
 
 /// A static index, read once when it evaluates: its number, the text of an integer that no
@@ -184,50 +225,42 @@ impl Evaluator<'_> {
     pub(super) fn pick_at(&self, pos: Pos, q: Pos, base: Seen<'_>, i: &Index) -> Res<usize> {
         let len = match base {
             Seen::Static(Value::Array(_, xs) | Value::Tuple(_, xs) | Value::List(_, xs)) => {
-                xs.len()
+                Some(xs.len() as u64)
             }
-            s => {
-                return fail(
-                    Code::S010,
-                    pos,
-                    format!(
-                        "an index needs an array, a list, or a tuple, not {}",
-                        self.text(s)
-                    ),
-                );
-            }
+            Seen::Agg(a) => self.index_len(a),
+            _ => None,
         };
-        let range = |k: &str| {
-            fail(
-                Code::S013,
-                q,
-                format!("the index {k} is out of range for {len} element(s)"),
-            )
+        let Some(len) = len else {
+            return fail(
+                Code::S010,
+                pos,
+                format!(
+                    "an index needs an array, a list, or a tuple, not {}",
+                    self.text(base)
+                ),
+            );
         };
-        match i {
-            Index::Number(k) if *k < len => Ok(*k),
-            Index::Number(k) => range(&k.to_string()),
-            Index::Wide(k) => range(k),
-            Index::Bad(m) => fail(Code::S010, q, m.clone()),
-        }
+        Self::within(q, len, i)
     }
 
     /// The number of the element that the selector `.index` with its literal at `q` picks
     /// from `base`, a result of a selector at `pos`.
     fn select_at(&self, pos: Pos, q: Pos, index: &Nat, base: Seen<'_>) -> Res<usize> {
-        let (len, v) = match base {
-            Seen::Static(v @ Value::Tuple(_, xs)) => (xs.len(), v),
-            s => {
-                return fail(
-                    Code::S010,
-                    pos,
-                    format!(
-                        "the selector `.{}` needs a tuple, not {}",
-                        selector_text(index),
-                        self.text(s)
-                    ),
-                );
-            }
+        let len = match base {
+            Seen::Static(Value::Tuple(_, xs)) => Some(xs.len()),
+            Seen::Agg(a) => self.select_len(a),
+            _ => None,
+        };
+        let Some(len) = len else {
+            return fail(
+                Code::S010,
+                pos,
+                format!(
+                    "the selector `.{}` needs a tuple, not {}",
+                    selector_text(index),
+                    self.text(base)
+                ),
+            );
         };
         match index.as_str().parse::<usize>() {
             Ok(k) if k < len => Ok(k),
@@ -237,7 +270,7 @@ impl Evaluator<'_> {
                 format!(
                     "the selector {} is out of range for {}",
                     selector_text(index),
-                    v.text(&self.tys)
+                    self.text(base)
                 ),
             ),
         }
@@ -490,7 +523,7 @@ impl Evaluator<'_> {
         };
         let n = match self.data(pos, v)? {
             Opnd::Static(o) if matches!(self.store.seen(&o), Seen::Agg(_)) => {
-                return self.agg_len(pos, o);
+                return self.agg_len(pos, &o);
             }
             Opnd::Static(o) => match self.store.value(&o) {
                 Value::Array(_, xs) | Value::List(_, xs) => xs.len() as u64,
@@ -531,10 +564,10 @@ impl Evaluator<'_> {
         let o = self.eval(value)?;
         let o = need(value, o)?;
         self.store.shut_window(place.root);
-        self.copy(pos, &o)?;
         let y = if let Some(t) = place.ty {
-            self.conform_val(pos, t, o)?
+            self.copy_use(pos, t, o.is_ref(), o)?
         } else {
+            self.copy(pos, &o)?;
             let old = self.store.current(place.root, &place.keys);
             let new = self.store.seen(&o);
             if !same_form(old, new) {
@@ -618,7 +651,10 @@ impl Evaluator<'_> {
             keys: walked.keys,
             ty: walked.ty,
             in_list: walked.in_list,
+            in_static: walked.in_static,
             held: walked.held,
+            part: walked.part,
+            own: walked.own,
         })
     }
 
@@ -642,7 +678,7 @@ impl Evaluator<'_> {
     /// container holds no hardware value in this phase: `S010`.
     pub(super) fn store_at(&mut self, pos: Pos, q: Pos, place: &Place, y: Val) -> Res<()> {
         if place.keys.is_empty() {
-            let y = self.named(pos, place.id, y);
+            let y = self.named(pos, place.id, y)?;
             self.charge_held(pos, place.root)?;
             self.store.settle_root(place.root);
             if let Root::Local(frame, id) = place.root
@@ -656,9 +692,29 @@ impl Evaluator<'_> {
             }
             return Ok(());
         }
-        if place.in_list && matches!(y, Val::Hw(_)) {
+        if place.in_list && matches!(y, Val::Hw(_) | Val::Agg(_)) {
             return fail(Code::S011, q, "a list holds no hardware value".to_owned());
         }
+        let y = if place.part.is_some() {
+            match Agg::of_val(y) {
+                Ok(x) => {
+                    if place.in_static && !matches!(x, Agg::Static(_)) {
+                        return fail(
+                            Code::S010,
+                            q,
+                            "a container holds only static values in this phase".to_owned(),
+                        );
+                    }
+                    // The root is within the nesting depth, so only the value on the path can
+                    // raise it.
+                    self.bounded(pos, place.keys.len() as u64 + x.depth(&self.tys))?;
+                    return self.rebind(pos, place, x);
+                }
+                Err(v) => v,
+            }
+        } else {
+            y
+        };
         let w = self.item(q, y)?;
         // The root is within the nesting depth, so only the value on the path can raise it.
         self.bounded(pos, place.keys.len() as u64 + w.depth())?;
@@ -701,22 +757,25 @@ impl Evaluator<'_> {
     /// and not at each step.
     fn walk(&mut self, root: Root, ty: Option<TyId>, keyed: &[Key<'_>]) -> Res<Walked> {
         let mut keys = Vec::with_capacity(keyed.len());
-        let mut cur = self.store.current(root, &[]);
+        let aggregate = matches!(self.store.root(&root), Val::Agg(_));
+        let mut cur = Cur::In(self.store.current(root, &[]));
         let mut in_list = false;
+        let mut in_static = false;
         let mut known = match ty {
             Some(t) => Known::Ty(t),
             None => Known::Absent,
         };
         for key in keyed {
+            let seen = cur.seen();
             let (k, field) = match key {
-                Key::Index(q, xp, i) => (self.pick_at(*q, *xp, cur, i)?, None),
-                Key::Select(q, r, index) => (self.select_at(*q, *r, index, cur)?, None),
+                Key::Index(q, xp, i) => (self.pick_at(*q, *xp, seen, i)?, None),
+                Key::Select(q, r, index) => (self.select_at(*q, *r, index, seen)?, None),
                 Key::Field(q, f) => {
-                    let (k, ft) = self.field_at(*q, f, cur)?;
+                    let (k, ft) = self.field_at(*q, f, seen)?;
                     (k, Some(ft))
                 }
             };
-            known = match (field, known, cur) {
+            known = match (field, known, seen) {
                 (Some(ft), _, _) => Known::Ty(ft),
                 (None, Known::Ty(t), _) => self.tys.part(t, k).map_or(Known::Absent, Known::Ty),
                 (
@@ -726,28 +785,98 @@ impl Evaluator<'_> {
                 ) => Known::Ty(*elem),
                 (None, Known::Absent | Known::Element, _) => Known::Element,
             };
-            in_list = matches!(cur, Seen::Static(Value::List(..)));
-            cur = self.store.step(cur, k);
+            in_list = matches!(seen, Seen::Static(Value::List(..)));
+            in_static = matches!(seen, Seen::Static(_));
+            // A step into a reference makes a new reference to the part, in constant work.
+            let lazy = match seen {
+                Seen::Agg(Agg::Ref(b, t)) => Some((b.clone(), *t)),
+                _ => None,
+            };
+            cur = if let Some((base, t)) = lazy {
+                drop(cur);
+                Cur::Own(self.lazy_part(key_pos(key), &base, t, k, key, field)?)
+            } else {
+                match cur {
+                    Cur::In(s) => Cur::In(self.store.step(s, k)),
+                    Cur::Own(Val::Static(mut x)) => Cur::Own(Val::Static(take_element(&mut x, k))),
+                    own @ Cur::Own(_) => own,
+                }
+            };
             keys.push(k);
         }
-        let held = match cur {
+        let seen = cur.seen();
+        let held = match seen {
             Seen::Static(Value::List(elem, xs)) => Held::List {
                 elem: *elem,
                 len: xs.len(),
             },
             _ => Held::Other,
         };
+        let part = aggregate.then(|| match seen {
+            Seen::Agg(a) => PartInfo {
+                size: a.size(&self.graph, &self.tys),
+                leaves: a.leaves(&self.tys),
+            },
+            Seen::Static(v) => PartInfo {
+                size: v.size(),
+                leaves: 0,
+            },
+            Seen::Hw(h) => PartInfo {
+                size: self.graph.size(h),
+                leaves: 1,
+            },
+            _ => PartInfo { size: 1, leaves: 0 },
+        });
         let ty = match known {
             Known::Ty(t) => Some(t),
             Known::Absent => None,
-            Known::Element => cur.ty(&self.graph, &mut self.tys),
+            Known::Element => seen.ty(&self.graph, &mut self.tys),
+        };
+        let own = match cur {
+            Cur::Own(v) => Some(v),
+            Cur::In(_) => None,
         };
         Ok(Walked {
             keys,
             ty,
             in_list,
+            in_static,
             held,
+            part,
+            own,
         })
+    }
+
+    /// The part `k` of the reference to `base` of type `t` that the step `key` selects, in its
+    /// normal form. A part without a hardware leaf charges its zero size first (`normalize`).
+    /// `field` is the type of the field that a field step found.
+    fn lazy_part(
+        &mut self,
+        pos: Pos,
+        base: &crate::agg::Base,
+        t: TyId,
+        k: usize,
+        key: &Key<'_>,
+        field: Option<TyId>,
+    ) -> Res<Val> {
+        let (part, step) = match key {
+            Key::Field(_, f) => {
+                let Some(sym) = self.field_sym(f) else {
+                    return fail(
+                        Code::S010,
+                        pos,
+                        format!("the field `{}` has no symbol", f.name),
+                    );
+                };
+                (field, Step::User(sym))
+            }
+            _ => (self.tys.part(t, k), Step::Elem(k as u64)),
+        };
+        let Some(part) = part else {
+            return fail(Code::S010, pos, "the part has no type".to_owned());
+        };
+        let sub = base.sub(&mut self.paths, &self.syms.texts, step);
+        self.normalize(pos, Agg::Ref(sub, part))
     }
 
     /// The value of an element of a container in this phase. A hardware value is `S010`,

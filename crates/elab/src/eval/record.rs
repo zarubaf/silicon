@@ -153,6 +153,9 @@ impl Evaluator<'_> {
                 format!("{} has no field `{}`", self.text(cur), f.name),
             )
         };
+        if let Seen::Agg(a) = cur {
+            return self.agg_field_at(a, f).ok_or(()).or_else(|()| missing());
+        }
         let Seen::Static(Value::Record(t, _)) = cur else {
             return missing();
         };

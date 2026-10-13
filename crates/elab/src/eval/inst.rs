@@ -23,7 +23,7 @@
 //! statement belong to the parent. The arguments of the top selection belong to no
 //! instantiation.
 
-use super::{Evaluator, Let, Out, ROOT, Res, Slot, Tag, fail, need};
+use super::{Evaluator, Let, Out, ROOT, Res, Slot, fail, need};
 use crate::hw::{Graph, Handle, HwId, Kind, Op, Port, Seen, Val, port_name};
 use crate::int::Int;
 use crate::names::{Name, PathId, Paths, Sym, encode, module_name};
@@ -730,7 +730,7 @@ impl Evaluator<'_> {
     fn port(&mut self, pos: Pos, input: bool, name: &Ident, ty: Ty) -> Res<Val> {
         let id = self.decl(name)?;
         let sym = self.sym(id);
-        let key = (ROOT.id, Tag::Sym(sym));
+        let key = (ROOT.id, sym);
         let v = self.naming.versions.get(&key).copied().unwrap_or(0);
         self.naming.versions.insert(key, v + 1);
         if v != 0 {

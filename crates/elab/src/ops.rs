@@ -7,6 +7,7 @@
 mod container;
 
 pub(crate) use container::{common_of, composite, container_op};
+pub(crate) use container::{plan as plan_value, run as run_value};
 
 use crate::Code;
 use crate::int::Int;
@@ -34,6 +35,11 @@ impl Fuel {
 
     pub(crate) fn left(&self) -> u64 {
         self.left
+    }
+
+    /// Whether the fuel that is left can pay `units`. It pays nothing.
+    pub(crate) fn affords(&self, units: &Int) -> bool {
+        units.to_u64().is_some_and(|units| units <= self.left)
     }
 
     /// Pays `units`, or gives `S015` and keeps the fuel.

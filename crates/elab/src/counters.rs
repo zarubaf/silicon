@@ -37,6 +37,12 @@ pub(crate) struct Counts {
     pub nodes: u64,
     /// The parts that a selection on an aggregate took.
     pub selected: u64,
+    /// The parts that the typed use of an aggregate checked and converted.
+    pub typed: u64,
+    /// The parts that the binding of an aggregate visited, and the leaves that it made lets for.
+    pub bound: u64,
+    /// The parts that a reference on the path of a place expanded into.
+    pub expanded: u64,
 }
 
 /// What a counter counts.
@@ -54,6 +60,9 @@ pub(crate) enum Count {
     Visited,
     Nodes,
     Selected,
+    Typed,
+    Bound,
+    Expanded,
 }
 
 static COUNTS: Mutex<BTreeMap<u64, Counts>> = Mutex::new(BTreeMap::new());
@@ -98,6 +107,9 @@ pub(crate) fn add(count: Count, n: u64) {
             Count::Visited => &mut c.visited,
             Count::Nodes => &mut c.nodes,
             Count::Selected => &mut c.selected,
+            Count::Typed => &mut c.typed,
+            Count::Bound => &mut c.bound,
+            Count::Expanded => &mut c.expanded,
         };
         *field += n;
     }
