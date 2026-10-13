@@ -25,17 +25,23 @@ def cost (src t : String) (fuel : Nat := 100000000) (depth : Nat := 1000)
   | .usage _ => "usage"
   | .defect _ => "defect"
 
-/-! The elaborated design of `src` with the top selection `t`. -/
-def design (src t : String) : Option Elab.Design :=
+/-!
+The elaboration of `src` with the top selection `t`, without the lowering: the design and its
+units, or the code and the position of the first error.
+-/
+def elaborated (src t : String) : Except String (Elab.Design × Nat) :=
   match Cli.load 4096 src with
-  | .error _ => none
+  | .error e => .error s!"{e.code} {e.pos.line}:{e.pos.col}"
   | .ok (items, checked) =>
     match Cli.topSelection 4096 items checked t with
-    | .error _ => none
+    | .error _ => .error "usage"
     | .ok (p, i, _, xs) =>
       match Elab.elaborate {} checked Names.sha16 p i xs with
-      | .ok (d, _) => some d
-      | .error _ => none
+      | .ok r => .ok r
+      | .error e => .error s!"{e.code} {e.pos.line}:{e.pos.col}"
+
+/-! The elaborated design of `src` with the top selection `t`. -/
+def design (src t : String) : Option Elab.Design := (elaborated src t).toOption.map (·.1)
 
 /-! The total fuel of `cost`. -/
 def total (src t : String) : Nat :=
@@ -418,16 +424,151 @@ the `instance` statement.
   "module M() {\n  output y: UInt[8];\n  instance c = C();\n  y := true;\n}\n") "M" ==
   "S018 2:3"
 
+/-! The elaboration alone: `ok` and its units, or the code and the position of the first error. -/
+def elabOnly (src t : String) : String :=
+  match elaborated src t with
+  | .ok (_, u) => s!"ok {u}"
+  | .error e => e
+
+/-! The units of the elaboration alone, or 0 for an error. -/
+def elabUnits (src t : String) : Nat := ((elabOnly src t).drop 3).toString.toNat?.getD 0
+
+/-! The description of the top instantiation. -/
+def topBody (src t : String) : Option Elab.Body := do
+  let d ← design src t
+  return (← d.insts[d.top]?).body
+
 /-!
-Until phase 6, a port, a register, and a wire have a scalar type. A struct type, an array type,
-or a tuple type there is `S010` at the statement. A record field can hold a hardware value.
+A port, a register, and a wire have a hardware data type (section 5.1). This type can be a
+struct type, an array type, or a tuple type. A read of an aggregate gives a reference, and a
+field or a static index of it gives a part. A record field can hold a hardware value.
 -/
 def ps : String := "struct P(comptime W: Nat) { a: UInt[W], b: Bool }\n"
-#guard cost (ps ++ "module M() {\n  input x: P[8];\n}\n") "M" == "S010 3:3"
-#guard cost (ps ++ "module M() {\n  output y: P[8];\n}\n") "M" == "S010 3:3"
-#guard cost (ps ++ "module M() {\n  reg r: P[8] = P[8]();\n}\n") "M" == "S010 3:3"
-#guard cost (ps ++ "module M() {\n  wire w: [Bool; 2];\n}\n") "M" == "S010 3:3"
-#guard cost (ps ++ "module M() {\n  wire w: (Bool, Bool);\n}\n") "M" == "S010 3:3"
+def agg (body : String) : String :=
+  ps ++ "module M() {\n  input x: P[8];\n" ++ body ++ "}\n"
+#guard (elabOnly (agg "") "M").startsWith "ok"
+#guard (elabOnly (agg "  output y: P[8];\n  y := x;\n") "M").startsWith "ok"
+#guard (elabOnly (agg "  output y: UInt[8];\n  y := x.a;\n") "M").startsWith "ok"
+#guard (elabOnly (agg "  reg r: P[8] = P[8](3, true);\n  r := x;\n") "M").startsWith "ok"
+#guard (elabOnly (agg "  reg r: P[8] = P[8]();\n  r := r;\n  output y: Bool;\n  y := r.b;\n") "M")
+  |>.startsWith "ok"
+#guard (elabOnly (agg ("  wire w: [Bool; 2];\n  w := [x.b, true];\n  output y: Bool;\n" ++
+  "  y := w[1];\n")) "M").startsWith "ok"
+#guard (elabOnly (agg ("  wire w: (UInt[8], Bool);\n  w := (x.a, x.b);\n  output y: UInt[8];\n" ++
+  "  y := w.0;\n")) "M").startsWith "ok"
+
+/-!
+The register value is static, and it takes the register type by a typed use. Each leaf of it
+gives the reset constant of its leaf in the lowering. A value that does not fit is `S012` at the
+statement, and another type is `S010`.
+-/
+def regInit (ty v : String) : String := s!"module M() \{\n  reg r: {ty} = {v};\n  r := r;\n}\n"
+#guard ((topBody (regInit "[UInt[4]; 2]" "[1, 2]") "M").map
+  (·.regs.toList.map (·.init.serialize))) == some ["(array (uint 4) ((uint 4 1) (uint 4 2)))"]
+#guard elabOnly (regInit "[UInt[4]; 2]" "[1, 16]") "M" == "S012 2:3"
+#guard elabOnly (ps ++ regInit "P[8]" "1") "M" == "S010 3:3"
+#guard (elabOnly (regInit "[Bool; 0]" "[]") "M").startsWith "ok"
+#guard (elabOnly (regInit "([UInt[8]; 0], Bool)" "([], false)") "M").startsWith "ok"
+#guard elabOnly (regInit "[Bool; 1]" "[]") "M" == "S010 2:3"
+
+/-!
+A `:=` binding of an aggregate is one binding. It holds the aggregate, so the lowering makes the
+leaf statements. A static leaf of the value takes its type by the typed use: it converts, and
+a value that does not fit is `S012`. Another type is `S010` at the statement.
+-/
+#guard ((topBody (agg "  output y: P[8];\n  y := x;\n") "M").map fun b =>
+  b.binds.toList.map fun d => match d.sink, d.value with
+    | .own .output t _, .ref _ u => t.same u
+    | _, _ => false) == some [true]
+#guard (elabOnly (agg "  output y: (UInt[8], UInt[8]);\n  y := (x.a, 1);\n") "M").startsWith "ok"
+#guard elabOnly (agg "  output y: (UInt[8], UInt[8]);\n  y := (x.a, 256);\n") "M" == "S012 5:3"
+#guard elabOnly (ps ++ "module M() {\n  input x: P[4];\n  output y: P[8];\n  y := x;\n}\n") "M" ==
+  "S010 5:3"
+#guard elabOnly (agg "  output y: UInt[8];\n  y := x;\n") "M" == "S010 5:3"
+
+/-!
+The value of `:=` is a typed use. A read of an aggregate handle thus copies the handle and the
+reference: 1 plus the zero size of the type (section 5.4). An aggregate port is a reference
+already, so its copy charges the zero size alone.
+-/
+def viaWire (y : String) : String :=
+  "module M() {\n  input x: (UInt[256], Bool);\n  wire w: (UInt[256], Bool);\n" ++
+  s!"  output y: (UInt[256], Bool);\n  w := x;\n  y := {y};\n}\n"
+#guard elabUnits (viaWire "w") "M" == elabUnits (viaWire "x") "M" + 1
+#guard elabUnits (viaWire "x") "M" > 0
+
+/-!
+A `:=` target is a whole resource. A part of a register, an output, or a child input is `S017`
+at the start of the target. An input is never a target. A hardware index of a reference is
+`S011`, and a static index out of range is `S013` at the index.
+-/
+#guard elabOnly (agg "  reg r: P[8] = P[8]();\n  r.a := 1;\n") "M" == "S017 5:3"
+#guard elabOnly (agg "  output y: P[8];\n  y.b := true;\n") "M" == "S017 5:3"
+#guard elabOnly (agg "  output y: P[8];\n  y := x;\n  x := y;\n") "M" == "S017 6:3"
+#guard elabOnly (agg "  input z: [Bool; 4];\n  output y: Bool;\n  let k = x.a;\n  y := z[k];\n")
+  "M" == "S011 7:10"
+#guard elabOnly ("module M() {\n  input x: [Bool; 4];\n  output y: Bool;\n  y := x[4];\n}\n") "M" ==
+  "S013 4:10"
+
+/-!
+A reference stays lazy. A read and a static index of a port with 2^40 leaves take constant work.
+The copy of the whole port charges its zero size before any work: `S015` at the statement.
+-/
+def huge (body : String) : String :=
+  "module M() {\n  input x: [Bool; 1099511627776];\n" ++ body ++ "}\n"
+#guard elabUnits (huge "  output y: Bool;\n  y := x[5];\n") "M" < 100
+#guard elabOnly (huge "  output y: [Bool; 1099511627776];\n  y := x;\n") "M" == "S015 4:3"
+
+/-!
+A type that holds a function type at any depth is not hardware data. A port, a register, and a
+wire of such a type are `S010` at the statement. Examples are a struct with a function field and
+a tuple with `[fn () -> Bool; 0]`.
+-/
+def withFn : String := "struct R { f: fn () -> Bool, a: Bool }\n"
+#guard elabOnly (withFn ++ "module M() {\n  input x: R;\n}\n") "M" == "S010 3:3"
+#guard elabOnly (withFn ++ "module M() {\n  output y: (Bool, [fn () -> Bool; 0]);\n}\n") "M" ==
+  "S010 3:3"
+#guard elabOnly (withFn ++ "module M() {\n  wire w: [R; 0];\n}\n") "M" == "S010 3:3"
+#guard elabOnly (withFn ++ "module M() {\n  reg r: (Bool, R) = (true, R());\n}\n") "M" ==
+  "S010 3:3"
+
+/-!
+A port, a register, and a wire can have an empty type. Each still needs exactly one `:=`
+(`S018` at its declaration), and so does an empty input of a child (`S018` at the `instance`
+statement). A register in a combinational module is `S017` first, also with an empty type. A
+read of an empty input gives its zero.
+-/
+def empty (body : String) : String := s!"module M() \{\n{body}}\n"
+#guard (elabOnly (empty ("  input e: ();\n  output o: ();\n  o := e;\n  wire w: [UInt[8]; 0];\n" ++
+  "  w := [];\n  reg r: () = ();\n  r := ();\n")) "M").startsWith "ok"
+#guard elabOnly (empty "  wire w: ();\n") "M" == "S018 2:3"
+#guard elabOnly (empty "  output o: [Bool; 0];\n") "M" == "S018 2:3"
+#guard elabOnly (empty "  reg r: () = ();\n") "M" == "S018 2:3"
+#guard elabOnly "module M() domains() {\n  reg r: () = ();\n}\n" "M" == "S017 2:3"
+#guard elabOnly (empty "  wire w: ();\n  w := ();\n  w := ();\n") "M" == "S018 4:3"
+def emptyChild (bind : String) : String :=
+  s!"module C() \{\n  input p: ();\n}\nmodule M() \{\n  instance c = C();\n{bind}}\n"
+#guard elabOnly (emptyChild "") "M" == "S018 5:3"
+#guard (elabOnly (emptyChild "  c.p := ();\n") "M").startsWith "ok"
+
+/-!
+A child port can have an aggregate type. A `:=` of a child input is one binding, and its sink
+holds the port type for the leaves. A child output gives a reference. A part of a child input is
+`S017`, and an input without a binding is `S018` at the `instance` statement.
+-/
+def aggChild (bind : String) : String :=
+  ps ++ "module C() {\n  input p: P[8];\n  output q: P[8];\n  q := p;\n}\n" ++
+  "module M() {\n  input x: P[8];\n  output y: UInt[8];\n  instance c = C();\n" ++ bind ++
+  "  y := c.q.a;\n}\n"
+#guard (elabOnly (aggChild "  c.p := x;\n") "M").startsWith "ok"
+#guard ((topBody (aggChild "  c.p := x;\n") "M").map fun b =>
+  b.binds.toList.filterMap fun d => match d.sink with
+    | .child _ _ q t => some (Names.encode q, t.text)
+    | _ => none) == some [("p", "P[8]")]
+#guard elabOnly (aggChild "  c.p.a := x.a;\n") "M" == "S017 11:3"
+#guard elabOnly (aggChild "") "M" == "S018 10:3"
+#guard elabOnly (aggChild "  c.p := (x.a, x.b);\n") "M" == "S010 11:3"
+
 #guard cost (ps ++ "module M() {\n  input x: UInt[8];\n  let r = P[8](x, true);\n}\n") "M" ==
   "total 101\nM 73\n"
 
