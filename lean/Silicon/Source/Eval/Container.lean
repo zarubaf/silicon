@@ -201,7 +201,7 @@ handle is `S010` until slice 3.
 def element (pos : Pos) : Val → M (Part × Option Pos)
   | .static v => pure (.value v, none)
   | .pending q p => pure (p, some q)
-  | .hw _ => fail .S010 pos "a container holds only static values in this phase"
+  | .hw _ | .agg _ => fail .S010 pos "a container holds only static values in this phase"
   | .handle h => fail .S010 pos s!"{(Val.handle h).text} is not an element before slice 3"
 
 /-! The value of an element of a container in this phase. -/
@@ -415,6 +415,25 @@ def zero (pos : Pos) (t : Ty) : M Value := do
   match zeroOf (← get).specs t.depth t with
   | some v => return v
   | none => fail .S010 pos s!"{t.text} has no zero"
+
+/-!
+The normal form of the aggregate `a` at `pos` (section 5.1). A reference without a hardware leaf
+is a static value, for example a part of the type `[Unit; 4]`. It charges the zero size of its
+type from the metadata before the value exists (section 5.4). A reference of a scalar type is a
+hardware value. Another part keeps its form.
+-/
+def normalize (pos : Pos) : Agg → M Val
+  | .static v => pure (.static v)
+  | .hw h => pure (.hw h)
+  | a@(.ref b t) =>
+    if t.info.leaves = 0 then do
+      charge pos t.info.zeroSize
+      match zeroOf (← get).specs t.depth t with
+      | some v => return .static v
+      | none => fail .S010 pos s!"{t.text} has no zero"
+    else if t matches .bool | .uint _ | .sint _ then return .hw (.mk pos t b.op [])
+    else return .agg a
+  | a => pure (.agg a)
 
 /-!
 `len` of an array, a list, or a string at the call `pos`. It refers to an array or a list, so

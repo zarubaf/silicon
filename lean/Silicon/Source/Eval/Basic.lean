@@ -84,13 +84,96 @@ def Hw.pos : Hw → Pos | .node p .. => p
 def Hw.ty : Hw → Ty | .node _ t .. => t
 def Hw.size : Hw → Nat | .node _ _ s .. => s
 
-/-! A name or a child output has the size 1. A constant has the size of its value. -/
-def Op.size : Op → Nat
+/-!
+The size of a node of the type `ty` without its operands. A name and a child output refer to a
+core name. Each has the size of a finite value of its type (section 5.4). A constant has the
+size of its value. Each other node has the size 1.
+-/
+def Op.size (ty : Ty) : Op → Nat
   | .lit v => v.size
+  | .ref _ | .out .. => ty.info.zeroSize
   | _ => 1
 
 def Hw.mk (pos : Pos) (ty : Ty) (op : Op) (args : List Hw) : Hw :=
-  .node pos ty (op.size + (args.map Hw.size).sum) op args
+  .node pos ty (op.size ty + (args.map Hw.size).sum) op args
+
+/-! The base of a reference aggregate: a core name, or an output of a child instance. -/
+inductive Base where
+  | name (path : Path)
+  | out (inst : Path) (port : Name)
+  deriving Repr, Inhabited
+
+/-! The operation of a leaf of the base `b`. -/
+def Base.op : Base → Op
+  | .name p => .ref p
+  | .out i q => .out i q
+
+/-! The stored numbers of a container node of an aggregate: its type, its size, and its depth. -/
+structure Node where
+  ty : Ty
+  size : Nat
+  depth : Nat
+  deriving Repr, Inhabited
+
+/-!
+A hardware aggregate (section 5.1): a tree with at least one hardware leaf. A `static` part
+holds no hardware leaf, and a `hw` part is a hardware value. A `ref` refers to a part of a port,
+a register, a wire, or a child output. Its type is `ty`, and it does not expand into its leaves.
+Each container node stores its type, its recursive size, and its depth. Thus no charge walks the
+tree.
+-/
+inductive Agg where
+  | static (v : Value)
+  | hw (h : Hw)
+  | ref (base : Base) (ty : Ty)
+  | array (node : Node) (elems : Array Agg)
+  | tuple (node : Node) (elems : Array Agg)
+  | record (node : Node) (elems : Array Agg)
+  deriving Repr, Inhabited
+
+/-!
+The recursive size (section 5.4). Each leaf of a reference has the size of a finite value of its
+type. Thus a reference has the zero size of its type, and the metadata gives it in one step.
+-/
+def Agg.size : Agg → Nat
+  | .static v => v.size
+  | .hw h => h.size
+  | .ref _ t => t.info.zeroSize
+  | .array n _ | .tuple n _ | .record n _ => n.size
+
+/-! The depth (section 5.5). A reference has the depth of a value of its type. -/
+def Agg.depth : Agg → Nat
+  | .static v => v.depth
+  | .hw _ => 1
+  | .ref _ t => t.zeroDepth
+  | .array n _ | .tuple n _ | .record n _ => n.depth
+
+def Agg.ty? : Agg → Option Ty
+  | .static v => v.ty?
+  | .hw h => some h.ty
+  | .ref _ t => some t
+  | .array n _ | .tuple n _ | .record n _ => some n.ty
+
+/-!
+A container node with the elements `xs` and the type `t`. When no element has a hardware leaf, it
+is a static value. The depth of the node also counts `d`: the depth of the element type of an
+array, of the struct type of a record, or 0. Each element is in its normal form
+(`normalize`), so a node has at least one hardware leaf.
+-/
+def Agg.container (mk : Node → Array Agg → Agg) (static : Array Value → Value) (t : Ty) (d : Nat)
+    (xs : Array Agg) : Agg :=
+  let vs := xs.filterMap fun | .static v => some v | _ => none
+  if vs.size = xs.size then .static (static vs)
+  else mk ⟨t, 1 + (xs.toList.map Agg.size).sum, 1 + xs.foldl (fun m x => max m x.depth) d⟩ xs
+
+def Agg.mkArray (e : Ty) (xs : Array Agg) : Agg :=
+  Agg.container .array (.array e) (.array e xs.size) e.depth xs
+
+def Agg.mkTuple (ts : Array Ty) (xs : Array Agg) : Agg :=
+  Agg.container .tuple .tuple (.tuple ts) 0 xs
+
+def Agg.mkRecord (t : Ty) (xs : Array Agg) : Agg :=
+  Agg.container .record (.record t) t t.depth xs
 
 /-! The core name of the port with the source name `x`. A port keeps its source name. -/
 def portName (x : String) : Name := ⟨x, []⟩
@@ -157,7 +240,8 @@ def Part.text : Part → String
   | .tuple .. => "a tuple literal with `[]`"
 
 /-!
-A value of the evaluator: a static value, a hardware value, or a handle (section 5.1).
+A value of the evaluator: a static value, a hardware value, a hardware aggregate, or a handle
+(section 5.1).
 `pending` is a literal with `[]` before a typed use gives it its type. `first` is the position
 of its first `[]`.
 -/
@@ -166,22 +250,26 @@ inductive Val where
   | hw (h : Hw)
   | handle (h : Handle)
   | pending (first : Pos) (part : Part)
+  | agg (a : Agg)
 
 /-! A handle has the size 1. A literal that waits has the size of its parts. -/
 def Val.size : Val → Nat
   | .static v => v.size
   | .hw h => h.size
+  | .agg a => a.size
   | .handle _ => 1
   | .pending _ p => p.size
 
 def Val.ty? : Val → Option Ty
   | .static v => v.ty?
   | .hw h => some h.ty
+  | .agg a => a.ty?
   | .handle _ | .pending .. => none
 
 def Val.text : Val → String
   | .static v => v.text
   | .hw h => s!"hardware {h.ty.text}"
+  | .agg a => s!"hardware {(a.ty?.map Ty.text).getD "a tuple"}"
   | .handle (.res .reg ..) => "a register"
   | .handle (.res .wire ..) => "a wire"
   | .handle (.res .output ..) => "an output"

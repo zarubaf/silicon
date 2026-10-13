@@ -501,6 +501,9 @@ theorem recordOf_f (p : Pos) (t : Ty) (fs : List Ty) (ps : List Pos) (vs : List 
 theorem zero_f (p : Pos) (t : Ty) : Follows cap (zero p t) (zero p t) := by
   unfold zero; follows [bounded_f]
 
+theorem normalize_f (p : Pos) (a : Agg) : Follows cap (normalize p a) (normalize p a) := by
+  unfold normalize; follows
+
 theorem conformVal_f (p : Pos) (t : Ty) (v : Val) :
     Follows cap (conformVal p t v) (conformVal p t v) := by
   unfold conformVal; follows [settle_f, data_f, conform_f]
