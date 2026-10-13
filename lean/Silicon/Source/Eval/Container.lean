@@ -370,7 +370,9 @@ def update (f : Value → Value) : Value → List Nat → Value
 
 /-!
 The field `f` of a record at `pos`. The result is the number of the field, its value, and its
-type. A field selection refers to the field, so it charges no size.
+type. A field selection refers to the field, so it charges no size. The record type holds the
+number of its specialization, and the symbol of `f` finds the number of the field, so the
+selection compares no name.
 -/
 def fieldAt (pos : Pos) (f : Ident) : Val → M (Nat × Value × Ty)
   | .static v@(.record t xs) => do
@@ -378,9 +380,9 @@ def fieldAt (pos : Pos) (f : Ident) : Val → M (Nat × Value × Ty)
       | fail .S010 pos s!"{v.text} has no specialization"
     let some (.struct ..) := (← read).items[i]?
       | fail .S010 pos s!"{v.text} has no struct item"
-    let members := (← read).syms.members
+    let c ← read
     let found := do
-      let k ← members[i]? >>= (·[f.name]?)
+      let k ← c.field f.pos >>= fun x => c.syms.members[i]? >>= (·[x]?)
       return (k, ← xs[k]?, ← fs[k]?)
     match found with
     | some r => return r
