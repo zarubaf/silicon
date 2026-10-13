@@ -1,0 +1,32 @@
+// A small ALU whose operations are a table of function values. A comptime loop reads the table and builds one select per entry, and the result goes through a register. The operation count comes from the length of the table.
+// TOP Alu()
+fn add(a: UInt[8], b: UInt[8]) -> UInt[8] {
+    return a +% b;
+}
+fn sub(a: UInt[8], b: UInt[8]) -> UInt[8] {
+    return a -% b;
+}
+fn and(a: UInt[8], b: UInt[8]) -> UInt[8] {
+    return a & b;
+}
+fn xor(a: UInt[8], b: UInt[8]) -> UInt[8] {
+    return a ^ b;
+}
+fn left(a: UInt[8], b: UInt[8]) -> UInt[8] {
+    return a << (b & 7);
+}
+const OPS: [fn (UInt[8], UInt[8]) -> UInt[8]; 5] = [add, sub, and, xor, left];
+module Alu() {
+    input op: UInt[3];
+    input a: UInt[8];
+    input b: UInt[8];
+    output y: UInt[8];
+    reg acc: UInt[8] = 0;
+    let mut r = UInt[8](0);
+    comptime for k in 0..len(OPS) {
+        let f = OPS[k];
+        r = if (op == k) { f(a, b) } else { r };
+    }
+    acc := r;
+    y := acc;
+}
