@@ -465,3 +465,20 @@ fn each_design_passes_the_core_checker() {
         assert!(sil(&src, top).starts_with("(design "), "{top}");
     }
 }
+
+/// A name refers to a core name, so its hardware value has the size of a finite value of its
+/// type (section 5.4). Each copy of a `UInt[256]` name charges 4, and each copy of a `UInt[64]`
+/// name 1. The binding of `p`, the binding of `x`, and the `:=` of `y` copy a name.
+fn copies(w: u32) -> String {
+    format!(
+        "module M() {{\n  input p: UInt[{w}];\n  output q: UInt[{w}];\n  let x = p;\n  let y = x;\n  q := y;\n}}\n"
+    )
+}
+
+#[test]
+fn a_copy_of_a_wide_name_charges_its_width() {
+    assert_eq!(total(&copies(256), "M"), total(&copies(64), "M") + 9);
+    assert_eq!(total(&copies(256), "M"), 99);
+    assert!(!sil_fuel(&copies(256), "M", 99).starts_with("S015"));
+    assert!(sil_fuel(&copies(256), "M", 98).starts_with("S015"));
+}

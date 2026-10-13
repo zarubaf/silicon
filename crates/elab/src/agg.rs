@@ -213,7 +213,9 @@ impl Clone for Agg {
         let mut work = vec![Step::Visit(self)];
         while let Some(step) = work.pop() {
             #[cfg(test)]
-            crate::counters::add(crate::counters::Count::Nodes, 1);
+            if matches!(step, Step::Visit(_)) {
+                crate::counters::add(crate::counters::Count::Nodes, 1);
+            }
             match step {
                 Step::Visit(a) if a.parts().is_empty() => done.push(a.with(Vec::new())),
                 Step::Visit(a) => {

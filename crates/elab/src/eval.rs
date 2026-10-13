@@ -26,6 +26,8 @@ mod list;
 mod place;
 mod record;
 mod string;
+#[cfg(test)]
+mod tests_agg;
 mod types;
 
 pub use inst::Design;
