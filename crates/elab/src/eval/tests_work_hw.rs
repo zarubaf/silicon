@@ -263,3 +263,41 @@ fn the_copy_of_a_parked_reference_is_paid_by_the_change() {
         before = Some(nodes);
     }
 }
+
+/// A `push` under an aggregate root refreshes each node on the path from its stored numbers and
+/// reads no sibling, so the walks over values count only the elements that the pushes add.
+#[test]
+fn a_push_into_a_list_part_reads_no_sibling() {
+    let at = |n: u64, k: u64| {
+        run_ok(
+            "",
+            "(UInt[8], Bool)",
+            &format!(
+                "let mut t = (x.0, list(Int));\n  comptime for i in 0..{n} {{ t.1.push(3); }}"
+            ),
+            key(12, k),
+        )
+    };
+    assert_linear(at, |r| r.counts.walked, 8, 8);
+}
+
+/// The first update of a place through a lazy reference builds each node on the path once, and
+/// a static part on the path is not walked again at each level.
+#[test]
+fn a_place_update_through_a_reference_walks_each_level_once() {
+    let at = |n: u64, k: u64| {
+        let structs: String = (0..n)
+            .map(|i| format!("struct S{i} {{ a: S{}, }}\n", i + 1))
+            .chain([format!("struct S{n} {{ a: UInt[8], }}\n")])
+            .collect();
+        let sel: String = (0..=n).map(|_| ".a").collect();
+        let r = run_with(
+            &structs,
+            "S0",
+            &format!("let mut m = x;\n  m{sel} = 7;"),
+            key(13, k),
+        );
+        r.unwrap_or_else(|e| panic!("{n}: {e}"))
+    };
+    assert_linear(at, |r| r.counts.walked, 8, 8);
+}
