@@ -13,7 +13,8 @@ output values to a source output line.
 
 These rules settle the open points of the spec:
 
-- Schema order is the port layout of `Source.Layout`, without the clock.
+- Schema order is the port layout of `Source.Layout`, without the clock. Each leaf of a port
+  has one entry.
 - An input line lists the reset `d$0rst` of the domain `d` first. A combinational top has none.
 - The reset is a `Bool` value. The clock has no entry.
 - An input value has the decimal forms of a core value. A `UInt` value and the magnitude of an
@@ -42,11 +43,12 @@ is `none` when the top is not a done instantiation.
 def schema (d : Elab.Design) : Option Schema := do
   let top ← d.insts[d.top]?
   let b := top.body
-  let entry (q : Elab.PortDecl) : Entry := ⟨q.name, encode (Flatten.portName q.name), q.ty⟩
+  let entries (q : Elab.PortDecl) : Array Entry :=
+    Id.run (Layout.foldLeaves q #[] fun es l => pure (es.push ⟨l.entry, encode l.name, l.ty⟩))
   let reset := match b.domain with
     | some dom => let x := encode (Flatten.resetName dom); [⟨x, x, .bool⟩]
     | none => []
-  let layout := Layout.arrange reset (b.ports.map fun q => (q, entry q))
+  let layout := Layout.arrange reset (b.ports.map fun q => (q, entries q))
   return ⟨layout.inputs, layout.outputs⟩
 
 /-!

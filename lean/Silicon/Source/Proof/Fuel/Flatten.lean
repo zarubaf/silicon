@@ -248,9 +248,13 @@ theorem domainRef_f (pos : Pos) (n : Names.Name) : FFollows (domainRef pos n) :=
 theorem domainConns_f (pos : Pos) (c d : Option String) : FFollows (domainConns pos c d) := by
   unfold domainConns; ffollows [nameText_f, domainRef_f]
 
+theorem foldLeaves_f (q : Elab.PortDecl) (b : β) {f : β → Layout.Leaf → FM β}
+    (h : ∀ b l, FFollows (f b l)) : FFollows (Layout.foldLeaves q b f) := by
+  unfold Layout.foldLeaves; exact h _ _
+
 theorem lowerInst_f (i : Elab.Inst) : FFollows (lowerInst i) := by
   unfold lowerInst
-  ffollows [nameText_f, pathText_f, domainRef_f, domainConns_f, value_f, constOf_f]
+  ffollows [nameText_f, pathText_f, domainRef_f, domainConns_f, value_f, constOf_f, foldLeaves_f]
 
 theorem lowerDesign_f (pos : Pos) (d : Elab.Design) : FFollows (lowerDesign pos d) := by
   unfold lowerDesign; ffollows [nameText_f, lowerInst_f]

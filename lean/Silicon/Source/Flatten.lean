@@ -101,9 +101,6 @@ def nameText (pos : Pos) (p : Name) : FM String := do
   charge pos (nameUnits p)
   return encode p
 
-/-! The core name of a port: its source name. -/
-def portName (x : String) : Name := ⟨x, []⟩
-
 /-! The width of a hardware type. -/
 def width : Ty → Nat
   | .uint w | .sint w => w
@@ -194,10 +191,10 @@ def lower (target : Path) (root : Bool) : Hw → FM Low
       charge p 1
       pure ⟨.ref c (← pathText p path), some u, 1⟩
     | .out inst q, [] =>
-      let u := 1 + pathUnits inst + nameUnits (portName q)
+      let u := 1 + pathUnits inst + nameUnits (Layout.portName q)
       charge p 1
       let i ← pathText p inst
-      pure ⟨.port c i (← nameText p (portName q)), some u, 1⟩
+      pure ⟨.port c i (← nameText p (Layout.portName q)), some u, 1⟩
     | .lit v, [] =>
       charge p 1
       pure ⟨← constOf c v, some 1, 1⟩
@@ -334,12 +331,14 @@ def lowerInst (i : Inst) : FM Core.Module := do
     charge i.pos 1
     let rst ← nameText i.pos (resetName d)
     domain := [⟨mp, .input, clk, .clock⟩, ⟨mp, .input, rst, .bits 1⟩]
-  let mut ports : Array (PortDecl × Core.Port) := #[]
+  let mut ports : Array (PortDecl × Array Core.Port) := #[]
   for q in b.ports do
-    charge q.pos 1
-    let x ← nameText q.pos (portName q.name)
     let dir : Core.PortDir := if q.input then .input else .output
-    ports := ports.push (q, ⟨cpos q.pos, dir, x, .bits (width q.ty)⟩)
+    let leaves ← Layout.foldLeaves q #[] fun acc l => do
+      charge q.pos 1
+      let x ← nameText q.pos l.name
+      pure (acc.push ⟨cpos q.pos, dir, x, .bits (width l.ty)⟩)
+    ports := ports.push (q, leaves)
   let layout := Layout.arrange domain ports
   let mut body : Array Core.Stmt := #[]
   for r in b.regs do
@@ -369,7 +368,7 @@ def lowerInst (i : Inst) : FM Core.Module := do
         | .output => .assign p x e
     | .child k inst q =>
       charge bd.pos 1
-      let x ← nameText bd.pos (portName q)
+      let x ← nameText bd.pos (Layout.portName q)
       let e ← value (inst.push (.user q)) bd.value
       conns := conns.modify k (·.push (x, e))
   for (c, k) in b.children.zipIdx do
