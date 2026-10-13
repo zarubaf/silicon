@@ -301,3 +301,20 @@ fn a_place_update_through_a_reference_walks_each_level_once() {
     };
     assert_linear(at, |r| r.counts.walked, 8, 8);
 }
+
+/// The walk of `==` and of `if` adds no path to the arena for a part without a hardware leaf:
+/// `()` and an empty pair keep the base of their parent. Thus the paths stay the same when the
+/// empty array grows by a factor of 16.
+#[test]
+fn the_walks_add_no_path_for_a_part_without_a_hardware_leaf() {
+    let paths = |t: &str, s: &str, k: u64| run_ok("", t, s, key(14, k)).counts.paths;
+    for (k, s) in [
+        (0, "let y = x == x;"),
+        (2, "let y = if (x.0 == 1) { x } else { x };"),
+    ] {
+        let small = paths("(UInt[8], [(); 16])", s, k);
+        let large = paths("(UInt[8], [(); 256])", s, k + 1);
+        assert!(small > 0, "{s}: no path counted");
+        assert_eq!(small, large, "{s}");
+    }
+}
