@@ -581,6 +581,19 @@ def aggChild (bind : String) : String :=
 #guard elabOnly (aggChild "") "M" == "S018 10:3"
 #guard elabOnly (aggChild "  c.p := (x.a, x.b);\n") "M" == "S010 11:3"
 
+/-!
+A data field selection and a data index selection are data contexts (section 9.2). A read of a
+part of a child input is thus `S017` at the start of the selection, before the field check.
+-/
+def readChild (ty read : String) : String :=
+  ps ++ s!"module C() \{\n  input p: {ty};\n}\nmodule M() \{\n  input x: {ty};\n" ++
+  s!"  output y: Bool;\n  instance c = C();\n  c.p := x;\n  y := {read};\n}\n"
+#guard elabOnly (readChild "P[8]" "c.p.b") "M" == "S017 10:8"
+#guard elabOnly (readChild "P[8]" "!c.p.b") "M" == "S017 10:9"
+#guard elabOnly (readChild "P[8]" "c.p.c") "M" == "S017 10:8"
+#guard elabOnly (readChild "[Bool; 2]" "c.p[0]") "M" == "S017 10:8"
+#guard elabOnly (readChild "(Bool, Bool)" "c.p.1") "M" == "S017 10:8"
+
 #guard cost (ps ++ "module M() {\n  input x: UInt[8];\n  let r = P[8](x, true);\n}\n") "M" ==
   "total 101\nM 73\n"
 
