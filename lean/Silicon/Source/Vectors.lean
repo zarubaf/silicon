@@ -7,7 +7,7 @@ import Silicon.Source.Layout
 The source vectors of section 11.2 of the front-end spec, and the port schema of the top.
 
 A source vector has the form of a core vector (core IR spec, section 6.4.3), with source names
-and source values. The port schema maps each source port of the top to its core port.
+and source values. The port schema maps each leaf of a source port of the top to its core port.
 `parseLine` maps a source input line to the core input values, and `printLine` maps the core
 output values to a source output line.
 
@@ -25,7 +25,7 @@ namespace Silicon.Source.Vectors
 
 open Names
 
-/-! One port of the schema: its name in a source vector, its core name, and its type. -/
+/-! One leaf entry of the schema: its name in a source vector, its core name, and its type. -/
 structure Entry where
   name : String
   core : String
