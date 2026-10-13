@@ -154,7 +154,7 @@ impl Evaluator<'_> {
     }
 
     /// The function item `i` named `name` as a value at the name `pos`. Its signature evaluates
-    /// in the scope of the function, with no locals. It adds no nesting level and no call
+    /// in the scope of the function, with no locals. It takes one nesting level and no call
     /// frame, and each depth check of the signature reports at the name.
     pub(super) fn fn_value(&mut self, pos: Pos, i: usize) -> Res<Out> {
         let file = self.file;
