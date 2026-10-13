@@ -239,9 +239,13 @@ theorem port_e (p : Pos) (input : Bool) (b : Resolve.Binder) (t : Ty) :
 theorem target_e (p : Pos) (e : Resolve.Expr) : EFollows cap (target p e) (target p e) := by
   unfold target; efollows [slot_e]
 
-theorem bindTarget_e (p : Pos) (t : Target) (h : Hw) :
+theorem bindTarget_e (p : Pos) (t : Target) (h : Agg) :
     EFollows cap (bindTarget p t h) (bindTarget p t h) := by
   unfold bindTarget; efollows [modifyBody_e]
+
+theorem sinkValue_e (p : Pos) (t : Ty) (v : Val) :
+    EFollows cap (sinkValue p t v) (sinkValue p t v) := by
+  unfold sinkValue; efollows [lit_f]
 
 theorem serialize_e (p : Pos) (m : String) (vs : List Value) :
     EFollows cap (serialize p m vs) (serialize p m vs) := by
@@ -299,13 +303,13 @@ theorem follows_all : ∀ n,
           arguments_e (he.1 k) (he.2.1 k), he.1 k, he.2.1 k, need_f, copy_f,
           conform_f, static_f, conformVal_f, lit_f, fresh_f, bindLocal_f, test_f, int_f, range_f,
           iteration_e, dataType_e, port_e, resource_e, modifyBody_e, target_e, bindTarget_e,
-          hold_f, release_f]
+          sinkValue_e, copyUse_f, settle_f, hold_f, release_f]
       · refine EFollows.charge_one _ fun _ => ?_
         efollows [hs m, hb m, instantiate_e (he.2.1 m) (hb m),
           arguments_e (he.1 m) (he.2.1 m), he.1 m, he.2.1 m, need_f, copy_f,
           conform_f, static_f, conformVal_f, lit_f, fresh_f, bindLocal_f, test_f, int_f, range_f,
           iteration_e, dataType_e, port_e, resource_e, modifyBody_e, target_e, bindTarget_e,
-          hold_f, release_f]
+          sinkValue_e, copyUse_f, settle_f, hold_f, release_f]
     · rcases n' with _ | m
       · rw [block.eq_def (k + 1), block.eq_def 0]
         exact EFollows.exhaust (cap := k) _ _ fun _ => by efollows [hs k]

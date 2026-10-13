@@ -308,6 +308,11 @@ def value (target : Path) (h : Hw) : FM Core.Expr := do
   modify fun s => { s with count := 0 }
   return (← lower target true h).expr
 
+/-! The hardware value of a scalar `:=` binding. An aggregate binding has no lowering here. -/
+def scalar : Agg → FM Hw
+  | .hw h => pure h
+  | a => defect s!"a `:=` binding of {a.text} has no lowering by leaf"
+
 /-! The domain ports `d$0clk` and `d$0rst`. -/
 def clockName (d : String) : Name := ⟨d, [.role .clk]⟩
 def resetName (d : String) : Name := ⟨d, [.role .rst]⟩
@@ -375,15 +380,15 @@ def lowerInst (i : Inst) : FM Core.Module := do
     | .own k t path =>
       charge bd.pos 1
       let x ← pathText bd.pos path
-      let e ← value path bd.value
+      let e ← value path (← scalar bd.value)
       body := body.push <| match k with
         | .reg => .next p x e
         | .wire => .let_ p x (width t) e
         | .output => .assign p x e
-    | .child k inst q =>
+    | .child k inst q _ =>
       charge bd.pos 1
       let x ← nameText bd.pos q
-      let e ← value (q.rest.foldl Path.push (inst.push (.user q.head))) bd.value
+      let e ← value (q.rest.foldl Path.push (inst.push (.user q.head))) (← scalar bd.value)
       conns := conns.modify k (·.push (x, e))
   for (c, k) in b.children.zipIdx do
     charge c.pos 1

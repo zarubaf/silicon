@@ -242,6 +242,9 @@ theorem lower_f (target : Names.Path) :
 theorem value_f (target : Names.Path) (h : Hw) : FFollows (value target h) := by
   unfold value; ffollows [lower_f target _ h (Nat.le_refl _)]
 
+theorem scalar_f (a : Agg) : FFollows (scalar a) := by
+  unfold scalar; ffollows
+
 theorem domainRef_f (pos : Pos) (n : Names.Name) : FFollows (domainRef pos n) := by
   unfold domainRef; ffollows [nameText_f]
 
@@ -254,7 +257,8 @@ theorem foldLeaves_f (q : Elab.PortDecl) (b : β) {f : β → Layout.Leaf → FM
 
 theorem lowerInst_f (i : Elab.Inst) : FFollows (lowerInst i) := by
   unfold lowerInst
-  ffollows [nameText_f, pathText_f, domainRef_f, domainConns_f, value_f, constOf_f, foldLeaves_f]
+  ffollows [nameText_f, pathText_f, domainRef_f, domainConns_f, value_f, constOf_f, foldLeaves_f,
+    scalar_f]
 
 theorem lowerDesign_f (pos : Pos) (d : Elab.Design) : FFollows (lowerDesign pos d) := by
   unfold lowerDesign; ffollows [nameText_f, lowerInst_f]

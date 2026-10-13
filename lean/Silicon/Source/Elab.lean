@@ -31,22 +31,26 @@ These rules settle the open points of slice 1:
 - A port keeps its source name. The root frame counts it with the other bindings of its name.
   A second port with one name thus fails, and so does a port after a binding of its name.
   The code is `S019`.
-- A port, a register, and a wire have the type `Bool`, `UInt[W]`, or `SInt[W]` (`S010`). Until
-  phase 6 of section 14.2, a struct type, an array type, or a tuple type there is `S010`.
+- A port, a register, and a wire have a hardware data type (`S010`), also an aggregate type and
+  an empty type. Each still needs its binding (`S018`). An empty one lowers to no core node.
 - A module parameter can be a type, a record, or a function. Such an argument gives the digest
   form of the emitted name (section 7.1). A function serializes as its item, so a struct
   argument and the key of a struct specialization hold the item too. The typed use at the
   parameter needs the exact function type (`S010` at the statement).
-- A function type is not hardware data, so a port, a register, and a wire of a function type
-  are `S010` at the statement (`dataType`).
-- A function value never reaches the lowering. It is always static. Only `Eval.lit` makes
-  hardware of a static value, and it takes only a `Bool` or a finite value. A register value
-  and a `:=` value conform to a scalar type first. A function there is thus `S010`.
+- A function type is not hardware data, also inside an aggregate and in `[fn () -> Bool; 0]`.
+  A port, a register, and a wire of such a type are thus `S010` at the statement (`dataType`).
+- A function value never reaches the lowering. It is always static. A register value and a `:=`
+  value conform to the hardware data type of their resource first. A function there is thus
+  `S010`.
 - A register in a combinational module is `S017` at the statement, before its type.
 - A `:=` target resolves without a charge. A register, a wire, an own output, and a child input
   are targets, also through a handle alias. Each other target fails with `S017` (rule). A
   target with an index or a selector `.N` is a part of a resource: `S017` at the target.
-- The value of `:=` is a typed use. It copies a reference, as a `let` does.
+- The value of `:=` is a typed use. It copies a reference, as a `let` with a type does. A read
+  of an aggregate handle charges the handle, then the zero size of its type (`copyUse`).
+- A `:=` binding holds its value as an aggregate part. A static scalar becomes a hardware
+  constant. An aggregate or an empty value stays one part, so the lowering makes its leaf
+  statements and charges each one before it makes it.
 - `S018` errors wait for the end of the body. The second binding of a resource gives one.
   A resource without a binding gives one at its declaration. A child input without a binding
   gives one at the `instance` statement. The error with the lowest position wins.
@@ -93,15 +97,16 @@ structure ChildDecl where
 
 /-!
 The target of a `:=` binding: an own resource, or an input of the child number `index`. The
-input names its leaf by its core name.
+input names its port by its core name, and `ty` gives its leaves.
 -/
 inductive Sink where
   | own (kind : Kind) (ty : Ty) (path : Path)
-  | child (index : Nat) (inst : Path) (port : Name)
+  | child (index : Nat) (inst : Path) (port : Name) (ty : Ty)
 
+/-! A `:=` binding. Its value has the type of the sink, and the lowering takes it leaf by leaf. -/
 structure Bind where
   sink : Sink
-  value : Hw
+  value : Agg
   pos : Pos
 
 /-!
@@ -178,11 +183,13 @@ def modifyBody (f : Body → Body) : EM Unit :=
 
 def slot (id : Nat) : EM (Option Slot) := monadLift (do return (← get).frame[id]? : Eval.M _)
 
-/-! A port, a register, and a wire have a scalar hardware type until phase 6. -/
+/-!
+A port, a register, and a wire have a hardware data type (section 5.1). The metadata gives it,
+so a type with a function type at any depth is `S010` with no walk. The type can be empty.
+-/
 def dataType (p : Pos) (t : Ty) : EM Ty :=
-  if t.finite || t == .bool then pure t
-  else fail .S010 p
-    s!"a port, a register, and a wire have the type Bool, UInt[W], or SInt[W], not {t.text}"
+  if t.info.data then pure t
+  else fail .S010 p s!"a port, a register, and a wire need a hardware data type, not {t.text}"
 
 /-! A resource that needs one binding. The result is its handle. -/
 def resource (k : Kind) (path : Path) (t : Ty) (p : Pos) (x : String) : EM Val := do
@@ -236,7 +243,7 @@ def target (p : Pos) (e : Resolve.Expr) : EM Target := do
   | _ => bad
 
 /-! Records the binding of `t` to `h`. The second binding of one target is an `S018`. -/
-def bindTarget (p : Pos) (t : Target) (h : Hw) : EM Unit := do
+def bindTarget (p : Pos) (t : Target) (h : Agg) : EM Unit := do
   let second : Error := ⟨.S018, p, "a second binding of one target"⟩
   let w := (← get).work
   match t with
@@ -251,7 +258,22 @@ def bindTarget (p : Pos) (t : Target) (h : Hw) : EM Unit := do
     if c == 0 then modify fun s => { s with work.bound := s.work.bound.modify k (· + 1) }
     if c == 1 then modify fun s => { s with work.dup := earlier s.work.dup second }
     modify fun s => { s with work.inputs := s.work.inputs.insert (k, q.sym) (c + 1) }
-    modifyBody fun b => { b with binds := b.binds.push ⟨.child k path (portName q.name), h, p⟩ }
+    modifyBody fun b =>
+      { b with binds := b.binds.push ⟨.child k path (portName q.name) q.ty, h, p⟩ }
+
+/-!
+The value of a `:=` binding of the type `t` at `p`, after its typed use. A static scalar becomes
+a hardware constant. A static value of another type is empty or has only static leaves, so it
+stays static. A hardware value and a hardware aggregate stay as they are.
+-/
+def sinkValue (p : Pos) (t : Ty) : Val → EM Agg
+  | .static v =>
+    match t with
+    | .bool | .uint _ | .sint _ => do return .hw (← lit p v)
+    | _ => pure (.static v)
+  | .hw h => pure (.hw h)
+  | .agg a => pure a
+  | v => fail .S010 p s!"{v.text} is not data"
 
 /-!
 The binding rule at the end of a body. A missing binding of an own resource is at its
@@ -350,7 +372,7 @@ mutual
           let t ← dataType p (← typeExpr n ty)
           let o ← need init (← eval n init)
           copy p o
-          let v ← conform p t (← static p o.value)
+          let v ← conform p t (← static p (← settle p t o.value))
           let path ← fresh x.id x.name.name
           modifyBody fun b => { b with regs := b.regs.push ⟨path, t, v, p⟩ }
           bindLocal x.id ⟨some t, false, ← resource .reg path t p x.name.name⟩
@@ -362,15 +384,10 @@ mutual
         | .connect p tgt v => do
           let t ← target p tgt
           let o ← need v (← eval n v)
-          copy p o
           let ty := match t with
             | .own _ _ ty _ => ty
             | .child _ _ q => q.ty
-          let h ← match ← conformVal p ty o.value with
-            | .static v => lit p v
-            | .hw h => pure h
-            | v => fail .S010 p s!"{v.text} is not data"
-          bindTarget p t h
+          bindTarget p t (← sinkValue p ty (← copyUse p ty o.ref o.value))
         | .inst p u _ i xs => do
           let vs ← arguments n p i xs
           charge p (vs.map Value.size).sum
