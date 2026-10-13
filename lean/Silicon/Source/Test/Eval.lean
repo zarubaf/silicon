@@ -20,8 +20,11 @@ The function names as values of slice 2 come next. Their tests check the charges
 the generic functions and the builtins, the depth, and the flow through bindings, arguments,
 returns, containers, and `==`.
 
-The calls through function values of slice 2 come last. Their tests check the charges, the
+The calls through function values of slice 2 come next. Their tests check the charges, the
 number of arguments, the callee rule, the `mut` actuals, and the wait of the callee.
+
+The windows of the `mut` actuals at run time come last. Their tests check `S008` in pass 5
+through function values, and its agreement with pass 4 on the calls of function items.
 -/
 
 namespace Silicon.Source.Test.Eval
@@ -1484,5 +1487,92 @@ or `S` is not held, so its call charges 1 or 2 less.
     cost (callIn "let mut T = UInt[8]; let v = st(T); return 0;") "f()" ==
   cost (callIn "let mut T = UInt[8]; let mut S = UInt[8]; let v = S(st(T)); return 0;") "f()" -
     cost (callIn "let mut T = UInt[8]; let mut S = UInt[8]; let v = st(T); return 0;") "f()" + 2
+
+/-!
+`S008` at run time (section 9.1). The `mut` marks of a call through a function value are known
+only in pass 5. A `mut` actual whose root is pending in a window of the same frame is `S008` at
+the start of the actual. Pass 4 accepts each of these programs, so pass 5 gives the error.
+Each call opens windows: `push`, `pop`, a receiver call, a named call, and a call through a
+value. An assignment opens a window too. Each value `vX` has a name as long as its function
+`mX`. A named call and a call through its value thus have the same positions.
+-/
+def windows (s : String) : String :=
+  "fn mo(mut a: List[Int]) -> Int { return a.len(); }\n" ++
+  "fn mt(mut a: List[Int], mut b: List[Int]) -> Int { return 0; }\n" ++
+  "fn mp(mut a: List[Int], b: Int) -> Int { return b; }\n" ++
+  "fn mu(mut a: List[Int], b: ()) -> Int { return 0; }\n" ++
+  "fn mq(b: Int, mut a: List[Int]) -> Int { return b; }\n" ++
+  "fn mr(mut a: List[Int]) -> Int { let h = mo; a.push(7); return h(a); }\n" ++
+  "fn f() -> Int {\nlet mut xs = list(Int); xs.push(1); xs.push(2); let mut ys = list(Int);\n" ++
+  "let vo = mo; let vt = mt; let vp = mp; let vu = mu; let vq = mq; let vr = mr;\n" ++
+  s ++ "\nreturn xs.len() * 10 + ys.len();\n}"
+
+/-! The value of `f()` without pass 4. Pass 5 alone then decides `S008`. -/
+def late (src : String) : String :=
+  let r : Except Error (Value × Nat) := do
+    let items ← Parse.parseSource Lex.maxSyntaxDepth src
+    let e ← Resolve.resolveExpr items (← Parse.parseExpr Lex.maxSyntaxDepth "f()")
+    Eval.evalExpr {} (← Resolve.resolve items) e
+  match r with
+  | .ok (v, _) => v.serialize
+  | .error e => s!"{e.code} {e.pos.line}:{e.pos.col}"
+
+/-! `g(xs, xs.pop())` with `g` a value: the receiver of `pop` is the second `mut` actual. -/
+#guard out (windows "vp(xs, xs.pop());") "f()" == "S008 10:8"
+#guard out (windows "vp(xs, pop(xs));") "f()" == "S008 10:12"
+#guard out (windows "vu(xs, xs.push(1));") "f()" == "S008 10:8"
+#guard out (windows "vu(xs, push(xs, 1));") "f()" == "S008 10:13"
+#guard out (windows "vt(xs, xs);") "f()" == "S008 10:8"
+
+/-! A `push` or a named call opens a window, and a call through a value in it conflicts. -/
+#guard out (windows "xs.push(vo(xs));") "f()" == "S008 10:12"
+#guard out (windows "push(xs, vo(xs));") "f()" == "S008 10:13"
+#guard out (windows "mp(xs, vo(xs));") "f()" == "S008 10:11"
+#guard out (windows "mp(xs, mp(ys, vo(xs)));") "f()" == "S008 10:18"
+
+/-! A call through a value opens a window, and a named call or `pop` in it conflicts. -/
+#guard out (windows "vp(xs, mo(xs));") "f()" == "S008 10:11"
+#guard out (windows "vp(xs, vp(ys, xs.pop()));") "f()" == "S008 10:15"
+
+/-! An assignment opens a window for the indices of its place and its right side. -/
+#guard out (windows "xs[vo(xs) - 1] = 5;") "f()" == "S008 10:7"
+#guard out (windows "xs[0] = vo(xs);") "f()" == "S008 10:12"
+
+/-!
+A root is pending only in its window, and only in its frame. An argument before the `mut`
+actual, a call that ends before it, a read, and another root do not conflict. The callee `mr`
+changes its own `mut` formal while the root `xs` of the caller is pending.
+-/
+#guard out (windows "vp(xs, ys.pop());") "f()" == "S013 10:8"
+#guard out (windows "ys.push(3); vp(xs, ys.pop());") "f()" == "(int 20)"
+#guard out (windows "vq(xs.pop(), xs);") "f()" == "(int 10)"
+#guard out (windows "let a = mo(ys) + vo(xs) + vp(xs, xs.len());") "f()" == "(int 20)"
+#guard out (windows "vt(xs, ys); vt(ys, xs);") "f()" == "(int 20)"
+#guard out (windows "let a = vp(xs, vr(ys));") "f()" == "(int 21)"
+#guard out (windows "ys.push(vo(xs)); xs[vo(ys) - 1] = 5;") "f()" == "(int 21)"
+
+/-! The counters have no charge: a call through a value charges as the named call. -/
+#guard cost (windows "let a = vp(xs, 1);") "f()" == cost (windows "let a = mp(xs, 1);") "f()"
+
+/-!
+Pass 4 and pass 5 agree on the calls of function items. A program that pass 4 rejects gives the
+same error in pass 5 alone (`late`). The call through the value of the function then gives it
+too. A program that pass 4 accepts runs the same in pass 5 alone.
+-/
+def agree (named value : String) (want : String) : Bool :=
+  out (windows named) "f()" == want && late (windows named) == want &&
+    out (windows value) "f()" == want
+#guard agree "mp(xs, xs.pop());" "vp(xs, xs.pop());" "S008 10:8"
+#guard agree "mt(xs, xs);" "vt(xs, xs);" "S008 10:8"
+#guard agree "mu(xs, push(xs, 1));" "vu(xs, push(xs, 1));" "S008 10:13"
+#guard agree "mp(xs, mo(xs));" "vp(xs, vo(xs));" "S008 10:11"
+#guard agree "mq(xs.pop(), xs);" "vq(xs.pop(), xs);" "(int 10)"
+#guard agree "mt(xs, ys); mt(ys, xs);" "vt(xs, ys); vt(ys, xs);" "(int 20)"
+#guard out (windows "xs.push(xs.pop());") "f()" == "S008 10:9"
+#guard late (windows "xs.push(xs.pop());") == "S008 10:9"
+#guard out (windows "xs[0] = xs.pop();") "f()" == "S008 10:9"
+#guard late (windows "xs[0] = xs.pop();") == "S008 10:9"
+#guard out (windows "xs[xs.pop()] = 1;") "f()" == "S008 10:4"
+#guard late (windows "xs[xs.pop()] = 1;") == "S008 10:4"
 
 end Silicon.Source.Test.Eval
