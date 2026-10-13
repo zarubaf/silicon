@@ -243,6 +243,9 @@ mod tests_containers;
 mod tests_elab;
 
 #[cfg(test)]
+mod tests_fn;
+
+#[cfg(test)]
 mod tests_flatten;
 
 #[cfg(test)]
