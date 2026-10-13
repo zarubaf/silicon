@@ -45,6 +45,8 @@ pub(crate) struct Counts {
     pub expanded: u64,
     /// The pairs that the walk of a hardware equality or of a hardware `if` charged.
     pub paired: u64,
+    /// The parts that a walk over the leaves of a type visited.
+    pub leaves: u64,
 }
 
 /// What a counter counts.
@@ -66,6 +68,7 @@ pub(crate) enum Count {
     Bound,
     Expanded,
     Paired,
+    Leaves,
 }
 
 static COUNTS: Mutex<BTreeMap<u64, Counts>> = Mutex::new(BTreeMap::new());
@@ -114,6 +117,7 @@ pub(crate) fn add(count: Count, n: u64) {
             Count::Bound => &mut c.bound,
             Count::Expanded => &mut c.expanded,
             Count::Paired => &mut c.paired,
+            Count::Leaves => &mut c.leaves,
         };
         *field += n;
     }

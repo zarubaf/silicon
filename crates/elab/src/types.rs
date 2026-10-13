@@ -328,7 +328,7 @@ pub struct Types {
     /// The work of the lookups: 1 for each type and 1 for each part of a container type. The
     /// type of a value adds 1 for each node that its walk visits.
     #[cfg(test)]
-    work: std::cell::Cell<u64>,
+    work: std::sync::atomic::AtomicU64,
 }
 
 /// The type, the metadata, and the specialization that an absent id names. The table makes
@@ -351,7 +351,7 @@ impl Types {
     /// Counts `n` steps of work, for the tests of the work of the table.
     #[cfg(test)]
     pub(crate) fn tick(&self, n: u64) {
-        self.work.set(self.work.get() + n);
+        self.work.fetch_add(n, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Counts the lookup of `ty`: 1 for the type and 1 for each part of a tuple type.
@@ -369,7 +369,7 @@ impl Types {
     /// The steps of work so far.
     #[cfg(test)]
     pub(crate) fn work(&self) -> u64 {
-        self.work.get()
+        self.work.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// The id of `ty`, which is not a struct type. A new type gets its metadata from the ids
@@ -383,6 +383,13 @@ impl Types {
         }
         let meta = self.meta_of(&ty);
         self.insert(ty, meta)
+    }
+
+    /// The id of `ty` if the table holds it. Each type of a port, a register, or a binding was
+    /// made by the table, so the lowering finds its id without a change of the table.
+    #[must_use]
+    pub fn id_of(&self, ty: &Ty) -> Option<TyId> {
+        self.index.get(ty).copied()
     }
 
     /// The id of `ty`, which is not a struct type, with the metadata `meta` that the caller

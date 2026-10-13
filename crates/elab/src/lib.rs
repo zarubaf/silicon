@@ -253,6 +253,9 @@ mod tests_fn_call;
 mod tests_flatten;
 
 #[cfg(test)]
+mod tests_leaves;
+
+#[cfg(test)]
 mod tests_resources;
 
 #[cfg(test)]

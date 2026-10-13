@@ -8,6 +8,7 @@
 use crate::names::sha16;
 use crate::tests::{cost, exact, message, out, path_steps, type_work};
 use crate::tests_elab::{cost as top_cost, cost_fuel, order};
+use crate::tests_flatten::lowered_cost;
 use std::fmt::Write;
 
 /// The result of `eval` with the default budgets.
@@ -212,11 +213,14 @@ fn hw(body: &str) -> String {
 }
 
 /// A container holds static values and hardware values. A handle is `S010` at the element until
-/// slice 3. The totals are those of the elaboration alone: the lowering of the leaves comes later.
+/// slice 3. The totals include the lowering.
 #[test]
 fn a_container_holds_hardware_elements_but_no_handle() {
     let top = |body: &str, arg: &str| top_cost(&hw(body), arg);
-    assert_eq!(top("  let t = (1, x);", "M(1)"), "total 80\nM$1 41\n");
+    assert_eq!(
+        lowered_cost(&hw("  let t = (1, x);"), "M(1)"),
+        "total 146\nM$1 104\n"
+    );
     assert_eq!(top("  let t = [r];", "M(1)"), "S010 5:12");
     assert_eq!(
         top("  let h = x +% 1;\n  let u = [1, 2][h];", "M(1)"),

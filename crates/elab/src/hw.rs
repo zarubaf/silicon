@@ -65,7 +65,8 @@ impl Op {
 }
 
 /// A node keeps the position of the source node that made it, and its recursive size, so a
-/// charge reads the size in one step. Its height sizes the stack of the lowering.
+/// charge reads the size in one step. Its height is the levels of recursion that the lowering
+/// needs, which sizes its stack.
 pub(crate) struct Node {
     pub pos: Pos,
     pub ty: Ty,
@@ -87,21 +88,36 @@ impl Graph {
     /// caller pays a hardware operation; a reference and a constant only refer.
     pub(crate) fn mk(&mut self, pos: Pos, ty: Ty, op: Op, args: Vec<HwId>) -> HwId {
         let mut size = op.size(&ty);
-        let mut height = 0;
         for a in &args {
             size = size.saturating_add(self.size(*a));
-            height = height.max(self.nodes.get(a.0).map_or(0, |n| n.height));
         }
-        self.height = self.height.max(height + 1);
+        let height = self.lowering_height(&op, &args);
+        self.height = self.height.max(height);
         self.nodes.push(Node {
             pos,
             ty,
             size,
-            height: height + 1,
+            height,
             op,
             args,
         });
         HwId(self.nodes.len() - 1)
+    }
+
+    /// The levels of recursion that the lowering needs for a new node with the operation `op`
+    /// and the operands `args`: 1 more than its highest operand. The lowering visits the left
+    /// spine of a chain of binary nodes in a loop, so a binary node on such a spine adds no
+    /// level for its left operand. Only its right operand adds one.
+    fn lowering_height(&self, op: &Op, args: &[HwId]) -> usize {
+        let of = |h: HwId| self.nodes.get(h.0).map_or(0, |n| n.height);
+        if let (Op::Bin(o), [left, right]) = (op, args)
+            && !matches!(o, BinOp::Shl | BinOp::Shr)
+            && let Some(Node { op: Op::Bin(l), .. }) = self.nodes.get(left.0)
+            && !matches!(l, BinOp::Shl | BinOp::Shr)
+        {
+            return of(*left).max(of(*right) + 1);
+        }
+        args.iter().map(|a| of(*a)).max().unwrap_or(0) + 1
     }
 
     /// The node `h`. Each id of an elaboration indexes its arena.

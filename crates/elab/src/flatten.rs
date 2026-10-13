@@ -19,16 +19,24 @@
 //! A leaf is copied, and the copy charges as a new node. The temporaries of one node bind
 //! after its operands lower, in operand order.
 //!
-//! The lowering recurses over the hardware values, so it runs on a thread with a stack for
-//! the highest of them. The core design that it makes is at most 256 levels deep.
+//! A port, a register, and a `:=` binding lower one leaf at a time in packing order, and each
+//! leaf charges before it exists (`layout::for_each_leaf`). An empty part gives nothing. A static
+//! leaf is a constant, and a leaf of a reference refers to its core name at the position of the
+//! statement. The temporaries of a leaf statement count from 0 and take the name of the leaf. A
+//! shared condition binds in the first leaf statement of the module that lowers it.
+//!
+//! The lowering recurses over the hardware values, except along the left spine of a chain of
+//! binary nodes, which lowers in a loop: the chain of `==` on an aggregate is as long as its leaf
+//! count. It runs on a thread with a stack for the highest recursion (`Graph::height`). The core
+//! design that it makes is at most 256 levels deep.
 
-use crate::agg::Agg;
+use crate::agg::{Agg, Base};
 use crate::eval::{Bind, Design, Inst, Sink};
 use crate::hw::{HwId, Kind, Op};
 use crate::int::{Nat, constant, nat};
-use crate::layout;
+use crate::layout::{self, Env, Shapes};
 use crate::names::{Field, Name, PathId, Role, Sym, encode};
-use crate::types::Ty;
+use crate::types::{Ty, TyId};
 use crate::value::{Value, int_size};
 use crate::{Code, Error};
 use core_ir::Pred;
@@ -91,6 +99,7 @@ pub(crate) fn lower(d: &Design) -> Result<Result<Lowered, Failure>, StackError> 
             temps: Vec::new(),
             count: 0,
             shares: BTreeMap::new(),
+            shapes: Shapes::default(),
         };
         let lowered = lower.design();
         lowered.map(|(design, units)| Lowered {
@@ -129,11 +138,43 @@ fn defect<T>(msg: &str) -> R<T> {
     Err(Failure::Defect(msg.to_owned()))
 }
 
-/// The hardware value of a scalar `:=` binding. An aggregate binding has no lowering here.
-fn scalar(a: &Agg) -> R<HwId> {
-    match a {
-        Agg::Hw(h) => Ok(*h),
-        _ => defect("a `:=` binding of an aggregate has no lowering by leaf"),
+/// Where the value of a leaf comes from, while the walk over the leaves of a type descends: a
+/// static value, a hardware value, a node of an aggregate, a reference, or nothing. A reference
+/// is the node of the aggregate and the number of leaf fields of the walk at which it starts, so
+/// a descent copies nothing: the leaf makes its name from the leaf fields below that number.
+/// The walk of a type never expands a reference.
+enum Src<'a> {
+    Missing,
+    Val(&'a Value),
+    Hw(HwId),
+    Agg(&'a Agg),
+    Ref(&'a Agg, usize),
+}
+
+impl<'a> Src<'a> {
+    /// The source of the part `a` that starts at `depth` leaf fields.
+    fn of(a: &'a Agg, depth: usize) -> Src<'a> {
+        match a {
+            Agg::Static(v) => Src::Val(v),
+            Agg::Hw(h) => Src::Hw(*h),
+            Agg::Ref(..) => Src::Ref(a, depth),
+            a => Src::Agg(a),
+        }
+    }
+
+    /// The source of the part `k` at `depth` leaf fields.
+    fn part(&self, k: u64, depth: usize) -> Src<'a> {
+        let k = usize::try_from(k).unwrap_or(usize::MAX);
+        match self {
+            Src::Val(Value::Array(_, xs) | Value::Tuple(_, xs) | Value::Record(_, xs)) => {
+                xs.get(k).map_or(Src::Missing, Src::Val)
+            }
+            Src::Agg(Agg::Array(_, p) | Agg::Tuple(_, p) | Agg::Record(_, p)) => {
+                p.0.get(k).map_or(Src::Missing, |a| Src::of(a, depth))
+            }
+            Src::Ref(a, from) => Src::Ref(a, *from),
+            _ => Src::Missing,
+        }
     }
 }
 
@@ -161,6 +202,19 @@ fn name_units(p: &Name) -> u128 {
         n += field_units(f);
     }
     n
+}
+
+/// The step of the walk over the leaves of a type: the source of a part.
+fn parts<'a>(src: &Src<'a>, k: u64, _: &Field, depth: usize, _: TyId) -> Src<'a> {
+    src.part(k, depth)
+}
+
+/// The name `base` with the leaf fields `fields`.
+fn with_fields(base: &Name, fields: &[Field]) -> Name {
+    Name {
+        head: base.head.clone(),
+        rest: base.rest.iter().chain(fields).cloned().collect(),
+    }
 }
 
 fn span(p: Pos) -> Span {
@@ -239,16 +293,18 @@ fn signed(t: &Ty) -> bool {
     matches!(t, Ty::SInt(_))
 }
 
-/// The constant of a static value at a hardware use: its value modulo `2^w`.
-fn const_of(c: Span, v: &Value) -> Expr {
+/// The constant of a static scalar value at a hardware use: its value modulo `2^w`. A value
+/// that is not a scalar has no constant: a leaf never holds one.
+fn const_of(c: Span, v: &Value) -> R<Expr> {
     match v {
-        Value::Bool(b) => small(c, 1, u32::from(*b)),
-        Value::UInt(x) | Value::SInt(x) => konst(c, x.width(), constant(x)),
-        _ => small(c, 1, 0),
+        Value::Bool(b) => Ok(small(c, 1, u32::from(*b))),
+        Value::UInt(x) | Value::SInt(x) => Ok(konst(c, x.width(), constant(x))),
+        _ => defect("a static leaf is not a scalar"),
     }
 }
 
 /// The core operation of a binary node that is not a shift, or its predicate.
+#[derive(Clone, Copy)]
 enum Core {
     Bin(CBin),
     Pred(Pred),
@@ -267,6 +323,23 @@ fn bin_op(op: BinOp, signed: bool) -> Option<Core> {
         BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => Core::Pred(crate::ops::pred(op, signed)),
         _ => return None,
     })
+}
+
+/// A node of the left spine of a chain of binary nodes: its position, the width of its type,
+/// its core operation, and its right operand.
+struct Link {
+    pos: Pos,
+    width: u32,
+    core: Core,
+    right: HwId,
+}
+
+/// The core node of a binary operation or of a predicate.
+fn core_bin(c: Span, core: Core, a: Expr, b: Expr) -> Expr {
+    match core {
+        Core::Bin(op) => bin(c, op, a, b),
+        Core::Pred(pred) => icmp(c, pred, a, b),
+    }
 }
 
 /// A lowered expression and its effective height. A leaf and a reference to a temporary
@@ -304,6 +377,8 @@ struct Lower<'d> {
     /// The temporary of each shared condition (`Op::Share`) that a statement of the current
     /// module already bound.
     shares: BTreeMap<u64, Name>,
+    /// The non-empty parts of the tuple and struct types that the walks over leaves met.
+    shapes: Shapes,
 }
 
 /// A node that a rule uses twice: its two uses and its effective height.
@@ -439,20 +514,7 @@ impl Lower<'_> {
             (Op::Bin(op @ (BinOp::Shl | BinOp::Shr)), [arg, count]) => {
                 self.shift(target, pos, &ty, *op, *arg, *count)?
             }
-            (Op::Bin(op), [lhs, rhs]) => {
-                let Some(core) = bin_op(*op, signed(&graph.ty(*lhs))) else {
-                    return defect("a binary node has no core operation");
-                };
-                self.charge(pos, 1)?;
-                let lhs = self.operand(target, *lhs)?;
-                let rhs = self.operand(target, *rhs)?;
-                let height = up(lhs.height.max(rhs.height));
-                let expr = match core {
-                    Core::Bin(op) => bin(at, op, lhs.expr, rhs.expr),
-                    Core::Pred(pred) => icmp(at, pred, lhs.expr, rhs.expr),
-                };
-                inner(expr, height)
-            }
+            (Op::Bin(op), [lhs, rhs]) => self.binary(target, pos, *op, *lhs, *rhs)?,
             (Op::Mux, [sel, then, els]) => {
                 self.charge(pos, 1)?;
                 let sel = self.operand(target, *sel)?;
@@ -473,6 +535,47 @@ impl Lower<'_> {
             _ => return defect("a hardware node has the wrong number of operands"),
         };
         self.deep(pos, target, width(&ty), root, low)
+    }
+
+    /// A binary node and the chain of binary nodes on its left spine. The chain of `==` on an
+    /// aggregate is as long as its leaf count, so the spine lowers in a loop, in the order of
+    /// the recursion: each node charges before its left operand, and each node lowers its right
+    /// operand and binds after its left operand. The recursion only enters the right operands.
+    fn binary(&mut self, target: Target, pos: Pos, op: BinOp, lhs: HwId, rhs: HwId) -> R<Low> {
+        let design = self.design;
+        let graph = &design.graph;
+        let Some(core) = bin_op(op, signed(&graph.ty(lhs))) else {
+            return defect("a binary node has no core operation");
+        };
+        self.charge(pos, 1)?;
+        let mut links: Vec<Link> = Vec::new();
+        let mut cur = lhs;
+        while let Some(node) = graph.node(cur)
+            && let (Op::Bin(o), [l, r]) = (&node.op, node.args.as_slice())
+            && let Some(core) = bin_op(*o, signed(&graph.ty(*l)))
+        {
+            self.charge(node.pos, 1)?;
+            links.push(Link {
+                pos: node.pos,
+                width: width(&node.ty),
+                core,
+                right: *r,
+            });
+            cur = *l;
+        }
+        let mut low = self.operand(target, cur)?;
+        for link in links.into_iter().rev() {
+            let right = self.operand(target, link.right)?;
+            let height = up(low.height.max(right.height));
+            let expr = core_bin(span(link.pos), link.core, low.expr, right.expr);
+            low = self.deep(link.pos, target, link.width, false, inner(expr, height))?;
+        }
+        let right = self.operand(target, rhs)?;
+        let height = up(low.height.max(right.height));
+        Ok(inner(
+            core_bin(span(pos), core, low.expr, right.expr),
+            height,
+        ))
     }
 
     /// A shared condition. Its first lowering in the module binds it to a temporary of that
@@ -523,7 +626,7 @@ impl Lower<'_> {
             Op::Out(inst, port) => self.out_leaf(pos, &self.path(*inst), port)?,
             Op::Lit(v) => {
                 self.charge(pos, 1)?;
-                (const_of(at, v), 1)
+                (const_of(at, v)?, 1)
             }
             Op::Count { .. } => {
                 self.charge(pos, 1)?;
@@ -706,17 +809,22 @@ impl Lower<'_> {
             let at = span(decl.pos);
             let source = self.text(decl.sym);
             let mut leaves = Vec::new();
-            layout::for_each_leaf(&source, &decl.ty, |leaf| {
-                self.charge(decl.pos, 1)?;
-                let name = self.name(decl.pos, &leaf.name)?;
-                leaves.push(Port {
-                    dir: if decl.input { Dir::Input } else { Dir::Output },
-                    name,
-                    ty: CTy::Bits(num(width(&leaf.ty), at)),
-                    span: at,
-                });
-                Ok(())
-            })?;
+            self.walk(
+                &decl.ty,
+                (),
+                |(), _, _, _, _| (),
+                |lower, fields, t, ()| {
+                    lower.charge(decl.pos, 1)?;
+                    let name = lower.name(decl.pos, &layout::leaf_name(&source, fields))?;
+                    leaves.push(Port {
+                        dir: if decl.input { Dir::Input } else { Dir::Output },
+                        name,
+                        ty: CTy::Bits(num(width(t), at)),
+                        span: at,
+                    });
+                    Ok(())
+                },
+            )?;
             ports.push(layout::Declared {
                 name: source,
                 input: decl.input,
@@ -729,32 +837,42 @@ impl Lower<'_> {
         Ok(ports)
     }
 
-    /// The registers of `inst`, each with the reset of its domain.
+    /// The registers of `inst`, one for each leaf, each with the reset of its domain. The
+    /// reset constant is the leaf of the initial value.
     fn regs(&mut self, inst: &Inst, stmts: &mut Vec<Stmt>) -> R<()> {
         for reg in &inst.body.regs {
             let Some(domain) = inst.body.domain else {
                 return defect("a register in a combinational module");
             };
-            if !matches!(reg.ty, Ty::Bool | Ty::UInt(_) | Ty::SInt(_)) {
-                return defect("a register of an aggregate type has no lowering by leaf");
-            }
             let at = span(reg.pos);
-            self.charge(reg.pos, 2)?;
-            let name = self.name(reg.pos, &self.path(reg.path))?;
-            let clk = self.name(reg.pos, &self.role(domain, Role::Clk))?;
-            let signal = self.domain_ref(reg.pos, &self.role(domain, Role::Rst))?;
-            self.charge(reg.pos, 1)?;
-            stmts.push(Stmt::Reg {
-                name,
-                width: num(width(&reg.ty), at),
-                clk,
-                reset: Some(Reset {
-                    signal,
-                    value: const_of(at, &reg.init),
-                    span: at,
-                }),
-                span: at,
-            });
+            let base = self.path(reg.path);
+            self.walk(
+                &reg.ty,
+                Src::Val(&reg.init),
+                parts,
+                |lower, fields, t, src| {
+                    lower.charge(reg.pos, 2)?;
+                    let name = lower.name(reg.pos, &with_fields(&base, fields))?;
+                    let clk = lower.name(reg.pos, &lower.role(domain, Role::Clk))?;
+                    let signal = lower.domain_ref(reg.pos, &lower.role(domain, Role::Rst))?;
+                    lower.charge(reg.pos, 1)?;
+                    let Src::Val(zero) = src else {
+                        return defect("a register value has no constant leaf");
+                    };
+                    stmts.push(Stmt::Reg {
+                        name,
+                        width: num(width(t), at),
+                        clk,
+                        reset: Some(Reset {
+                            signal,
+                            value: const_of(at, zero)?,
+                            span: at,
+                        }),
+                        span: at,
+                    });
+                    Ok(())
+                },
+            )?;
         }
         Ok(())
     }
@@ -814,55 +932,129 @@ impl Lower<'_> {
         Ok((module, text))
     }
 
-    /// One `:=` binding: a statement of an own resource, or a connection of a child input.
+    /// One `:=` binding, one statement for each leaf in packing order: a statement of an own
+    /// resource, or a connection of a child input. Each leaf charges before it exists. A
+    /// binding of an empty type gives nothing.
     fn bind(&mut self, bind: &Bind, stmts: &mut Vec<Stmt>, conns: &mut [Vec<Conn>]) -> R<()> {
         let at = span(bind.pos);
-        self.charge(bind.pos, 1)?;
+        let src = Src::of(&bind.value, 0);
         match bind.sink {
             Sink::Own { kind, ref ty, path } => {
-                let x = self.name(bind.pos, &self.path(path))?;
-                let expr = self.value(&self.path(path), scalar(&bind.value)?)?;
-                stmts.push(match kind {
-                    Kind::Reg => Stmt::Next {
-                        reg: x,
-                        expr,
-                        span: at,
-                    },
-                    Kind::Wire => Stmt::Let {
-                        name: x,
-                        width: num(width(ty), at),
-                        expr,
-                        span: at,
-                    },
-                    Kind::Output => Stmt::Assign {
-                        out: x,
-                        expr,
-                        span: at,
-                    },
-                });
+                let base = self.path(path);
+                self.walk(ty, src, parts, |lower, fields, t, src| {
+                    lower.charge(bind.pos, 1)?;
+                    let name = with_fields(&base, fields);
+                    let x = lower.name(bind.pos, &name)?;
+                    let expr = lower.leaf_value(&name, bind.pos, fields, src)?;
+                    stmts.push(match kind {
+                        Kind::Reg => Stmt::Next {
+                            reg: x,
+                            expr,
+                            span: at,
+                        },
+                        Kind::Wire => Stmt::Let {
+                            name: x,
+                            width: num(width(t), at),
+                            expr,
+                            span: at,
+                        },
+                        Kind::Output => Stmt::Assign {
+                            out: x,
+                            expr,
+                            span: at,
+                        },
+                    });
+                    Ok(())
+                })
             }
             Sink::Child {
                 index,
                 inst,
                 ref port,
-                ..
+                ref ty,
             } => {
-                let x = self.name(bind.pos, port)?;
-                let mut target = self.path(inst);
-                target.rest.push(Field::User(port.head.clone()));
-                target.rest.extend(port.rest.iter().cloned());
-                let expr = self.value(&target, scalar(&bind.value)?)?;
                 let Some(conns) = conns.get_mut(index) else {
                     return defect("a connection names no child");
                 };
-                conns.push(Conn {
-                    port: x,
-                    expr,
-                    span: at,
-                });
+                let mut base = self.path(inst);
+                base.rest.push(Field::User(port.head.clone()));
+                base.rest.extend(port.rest.iter().cloned());
+                self.walk(ty, src, parts, |lower, fields, _, src| {
+                    lower.charge(bind.pos, 1)?;
+                    let x = lower.name(bind.pos, &with_fields(port, fields))?;
+                    let expr =
+                        lower.leaf_value(&with_fields(&base, fields), bind.pos, fields, src)?;
+                    conns.push(Conn {
+                        port: x,
+                        expr,
+                        span: at,
+                    });
+                    Ok(())
+                })
             }
         }
-        Ok(())
+    }
+
+    /// Runs `leaf` on each leaf of the type `ty` in packing order. `src` is the source of the
+    /// root, and `down` gives the source of a part. The walk makes no list of the leaves, so
+    /// `leaf` charges each leaf before it makes it.
+    fn walk<S>(
+        &mut self,
+        ty: &Ty,
+        src: S,
+        down: impl FnMut(&S, u64, &Field, usize, TyId) -> S,
+        mut leaf: impl FnMut(&mut Self, &[Field], &Ty, &S) -> R<()>,
+    ) -> R<()> {
+        let design = self.design;
+        let Some(root) = design.tys.id_of(ty) else {
+            return defect("a type is not in the table of types");
+        };
+        let env = Env {
+            tys: &design.tys,
+            order: &design.field_order,
+            texts: &design.texts,
+        };
+        let mut shapes = std::mem::take(&mut self.shapes);
+        let done = layout::for_each_leaf(
+            env,
+            &mut shapes,
+            root,
+            src,
+            down,
+            |_| Failure::Defect("a struct type has no field names".to_owned()),
+            |fields, t, src| leaf(self, fields, design.tys.get(t), src),
+        );
+        self.shapes = shapes;
+        done
+    }
+
+    /// The value of a leaf statement with the target `target` at `pos`. A static leaf is a
+    /// constant, and a leaf of a reference refers to its core name or to its child output at
+    /// the position of the statement.
+    fn leaf_value(&mut self, target: Target, pos: Pos, fields: &[Field], src: &Src) -> R<Expr> {
+        self.count = 0;
+        match src {
+            Src::Hw(h) => Ok(self.lower(target, true, *h)?.expr),
+            Src::Val(v) => {
+                self.charge(pos, 1)?;
+                const_of(span(pos), v)
+            }
+            Src::Ref(Agg::Ref(base, _), from) => {
+                let below = fields.get(*from..).unwrap_or_default();
+                match base {
+                    Base::Name(p) => {
+                        let name = with_fields(&self.path(*p), below);
+                        Ok(self.ref_leaf(pos, &name)?.0)
+                    }
+                    Base::Out(i, q) => {
+                        let inst = self.path(*i);
+                        let port = with_fields(q, below);
+                        Ok(self.out_leaf(pos, &inst, &port)?.0)
+                    }
+                }
+            }
+            Src::Missing | Src::Agg(_) | Src::Ref(..) => defect("a bound value has no leaf there"),
+        }
     }
 
     /// The core design: the modules in the order the instantiations finish, then the name of

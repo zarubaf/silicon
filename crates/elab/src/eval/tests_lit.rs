@@ -11,6 +11,7 @@ use super::tests_bind::{assign_in, ref_x, run_f};
 use super::tests_if::int_part;
 use crate::counters;
 use crate::tests_elab::{cost, cost_depth};
+use crate::tests_flatten::lowered_cost;
 
 /// The formal `x: (UInt[8], Bool)` and the statement `s` in the body of `f`.
 fn on_x(s: &str, run: u64, fuel: u64) -> String {
@@ -273,11 +274,11 @@ fn module_with(item: &str) -> String {
 /// A constructor argument is in a data context, so a register reads (section 9.2). A literal
 /// element is a raw context: a register there is `S010`. A module argument is a static position,
 /// so an aggregate with a hardware leaf there is `S011` at the statement, also in a literal that
-/// waits for its type. The totals are those of the elaboration alone.
+/// waits for its type. The totals include the lowering.
 #[test]
 fn a_constructor_reads_a_register_and_a_module_argument_is_static() {
     let record = module_with("module M() {\n  input x: UInt[8];\n  let r = P[8](x, true);\n}\n");
-    assert_eq!(cost(&record, "M"), "total 70\nM 44\n");
+    assert_eq!(lowered_cost(&record, "M"), "total 101\nM 73\n");
     let read = module_with(
         "module M() {\n  input x: UInt[8];\n  output y: UInt[8];\n  reg q: UInt[8] = 0;\n  \
          let r = P[8](q, true);\n  q := x;\n  y := r.a;\n}\n",

@@ -4,14 +4,12 @@
 //! height, `S020` with its position, and the charges of the lowering.
 
 use crate::tests_elab::load;
-use crate::types::Ty;
 use crate::{Abort, Budget, Design, Failure, Lowered, check, elaborate};
 use core_ir::text::{canonicalize, parse, print};
-use parse::ast::BinOp;
 
 /// The elaboration of `src` with the top `top` and the fuel `fuel`, and its lowering. An error
 /// gives its code and its position.
-fn lowered(src: &str, top: &str, fuel: u64) -> Result<(Design, Lowered), String> {
+pub(crate) fn lowered(src: &str, top: &str, fuel: u64) -> Result<(Design, Lowered), String> {
     let file = load(src)?;
     let budget = Budget {
         fuel,
@@ -33,7 +31,7 @@ fn lowered(src: &str, top: &str, fuel: u64) -> Result<(Design, Lowered), String>
 
 /// The result of `elab`: the canonical `.sil` text, or the code and the position of the
 /// error.
-fn sil_fuel(src: &str, top: &str, fuel: u64) -> String {
+pub(crate) fn sil_fuel(src: &str, top: &str, fuel: u64) -> String {
     match lowered(src, top, fuel) {
         Ok((_, l)) => match check(&l.design) {
             Ok(_) => print(&canonicalize(&l.design)),
@@ -44,21 +42,29 @@ fn sil_fuel(src: &str, top: &str, fuel: u64) -> String {
     }
 }
 
-fn sil(src: &str, top: &str) -> String {
+pub(crate) fn sil(src: &str, top: &str) -> String {
     sil_fuel(src, top, Budget::default().fuel)
 }
 
+/// The output of `cost` with the lowering, or the code and the position of the first error.
+pub(crate) fn lowered_cost(src: &str, top: &str) -> String {
+    match lowered(src, top, Budget::default().fuel) {
+        Ok((_, l)) => l.cost(),
+        Err(e) => e,
+    }
+}
+
 /// The fuel of the elaboration with the lowering.
-fn total(src: &str, top: &str) -> u64 {
+pub(crate) fn total(src: &str, top: &str) -> u64 {
     lowered(src, top, Budget::default().fuel).unwrap().1.used()
 }
 
 /// The fuel of the elaboration alone.
-fn elab_used(src: &str, top: &str) -> u64 {
+pub(crate) fn elab_used(src: &str, top: &str) -> u64 {
     lowered(src, top, Budget::default().fuel).unwrap().0.used()
 }
 
-fn text<S: AsRef<str>>(lines: &[S]) -> String {
+pub(crate) fn text<S: AsRef<str>>(lines: &[S]) -> String {
     let mut out = String::new();
     for l in lines {
         out.push_str(l.as_ref());
@@ -68,7 +74,7 @@ fn text<S: AsRef<str>>(lines: &[S]) -> String {
 }
 
 /// The text re-parses and passes the core checker.
-fn valid(s: &str) -> bool {
+pub(crate) fn valid(s: &str) -> bool {
     parse(s).is_ok_and(|d| core_ir::check::check(&d).is_ok())
 }
 
@@ -483,51 +489,4 @@ fn a_copy_of_a_wide_name_charges_its_width() {
     assert_eq!(total(&copies(256), "M"), 99);
     assert!(!sil_fuel(&copies(256), "M", 99).starts_with("S015"));
     assert!(sil_fuel(&copies(256), "M", 98).starts_with("S015"));
-}
-
-/// A shared condition (`Op::Share`, section 7.4) binds to one temporary in the statement that
-/// lowers first. Its number comes after the temporaries of the condition itself: here `y$0t`
-/// holds the negation that the `resize` of `SInt` uses twice, so the condition is `y$1t`. The
-/// later statement refers to it. The hardware aggregate that makes such a mark comes with the
-/// aggregate resources, so the test puts the trees of two `mux` nodes into the bindings of
-/// two outputs.
-#[test]
-fn a_shared_condition_binds_in_its_first_statement_and_later_ones_refer_to_it() {
-    use crate::hw::Op;
-    use core_ir::text::print;
-    use parse::ast::UnOp;
-    let src = "module T() {\n  input s: SInt[4];\n  input t: SInt[8];\n  input a: UInt[8];\n  \
-        input b: UInt[8];\n  output p: SInt[4];\n  output q: SInt[8];\n  output y: UInt[8];\n  \
-        output z: UInt[8];\n  p := s;\n  q := t;\n  y := a;\n  z := b;\n}\n";
-    let file = load(src).unwrap();
-    let Ok(Ok(mut d)) = elaborate(&file, "T", parse::DEFAULT_SYNTAX_DEPTH, Budget::default())
-    else {
-        panic!("elaboration failed");
-    };
-    let top = d.top;
-    let value = |d: &Design, k: usize| match d.insts[top].body.binds[k].value {
-        crate::agg::Agg::Hw(h) => h,
-        _ => panic!("a scalar binding holds a hardware value"),
-    };
-    let (small, wide_in, left, right) = (value(&d, 0), value(&d, 1), value(&d, 2), value(&d, 3));
-    let (pos, g) = (d.insts[top].body.binds[0].pos, &mut d.graph);
-    let neg = g.mk(pos, Ty::SInt(4), Op::Un(UnOp::Neg), vec![small]);
-    let wide = g.mk(pos, Ty::SInt(8), Op::Resize, vec![neg]);
-    let cond = g.mk(pos, Ty::Bool, Op::Bin(BinOp::Eq), vec![wide, wide_in]);
-    let shared = g.mk(pos, Ty::Bool, Op::Share(0), vec![cond]);
-    let first = g.mk(pos, Ty::UInt(8), Op::Mux, vec![shared, left, right]);
-    let second = g.mk(pos, Ty::UInt(8), Op::Mux, vec![shared, right, left]);
-    d.insts[top].body.binds[2].value = crate::agg::Agg::Hw(first);
-    d.insts[top].body.binds[3].value = crate::agg::Agg::Hw(second);
-    let lowered = d.lower().unwrap().unwrap();
-    let out = print(&lowered.design);
-    for line in [
-        "(assign y (mux y$1t a b))",
-        "(assign z (mux y$1t b a))",
-        "(let y$0t (bits 4) (sub (const 4 0) s))",
-        "(let y$1t (bits 1) (icmp eq (concat (replicate (extract y$0t 3 1) 4) y$0t) t))))",
-    ] {
-        assert!(out.contains(line), "{line}\n{out}");
-    }
-    assert_eq!(out.matches("(let ").count(), 2, "{out}");
 }

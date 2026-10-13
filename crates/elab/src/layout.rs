@@ -4,36 +4,206 @@
 //! leaves. `flatten` and `vectors` both read it. No other module expands a port.
 //!
 //! The domain ports come first, then the inputs, then the outputs. In each group of inputs and
-//! outputs, the ports sort by the byte order of their source names. This order equals the order
-//! of the core names, because a name that `encode` changes only gets `$0k`, and `$` sorts before
-//! each name character. The resolver makes the port names of a module unique, so two ports never
-//! tie and the sort needs no tie break.
+//! outputs, the ports sort by the byte order of their source names. The leaves of one port
+//! follow in packing order, so the layout order is not the byte order of the core names. The
+//! resolver makes the port names of a module unique, so two ports never tie and the sort
+//! needs no tie break.
 //!
-//! `for_each_leaf` streams the leaves of a port: it makes no list of them. A caller thus charges
-//! each leaf before it makes the leaf. In this phase, a port has a scalar type and thus one leaf.
+//! `for_each_leaf` streams the leaves of a type in packing order with its own stack: it makes no
+//! list of them, so a caller charges each leaf before it makes the leaf. A part without a leaf
+//! takes no step: a tuple or a struct visits only the parts that the metadata of its type counts
+//! as non-empty, and an array without leaves is skipped whole. A port, a register, and a `:=`
+//! binding all take their leaves from it.
 
-use crate::names::Name;
-use crate::types::Ty;
+use crate::names::{Field, Name, Sym};
+use crate::types::{Ty, TyId, Types};
+use std::collections::BTreeMap;
 
-/// One leaf of a port: its core name, its name in a source vector, and its scalar type.
-pub(crate) struct Leaf {
-    pub name: Name,
-    pub entry: String,
-    pub ty: Ty,
+/// What the walk needs to name the parts of a type: the table of types, the field symbols of
+/// each struct item, and the text of each symbol.
+#[derive(Clone, Copy)]
+pub(crate) struct Env<'a> {
+    pub tys: &'a Types,
+    pub order: &'a [Vec<Sym>],
+    pub texts: &'a [String],
 }
 
-/// Runs `f` on each leaf of the port `name` of type `ty` in packing order. It stops at the
-/// first error of `f`.
-pub(crate) fn for_each_leaf<E>(
-    name: &str,
-    ty: &Ty,
-    mut f: impl FnMut(Leaf) -> Result<(), E>,
+/// A part of a tuple or struct type with at least one leaf: its index, its leaf field, and its
+/// type.
+struct Kid {
+    index: u64,
+    field: Field,
+    ty: TyId,
+}
+
+/// The non-empty parts of each tuple and struct type that a walk met. A type thus builds its
+/// list once, in the number of its parts, which the charges of the type paid.
+#[derive(Default)]
+pub(crate) struct Shapes {
+    index: BTreeMap<TyId, usize>,
+    kids: Vec<Vec<Kid>>,
+}
+
+impl Shapes {
+    /// The number of the list of the non-empty parts of `t`, or `None` for a struct without
+    /// field names.
+    fn kids_of(&mut self, env: Env<'_>, t: TyId) -> Option<usize> {
+        if let Some(k) = self.index.get(&t) {
+            return Some(*k);
+        }
+        let full = |u: TyId| !env.tys.meta(u).leaves.is_zero();
+        let kids: Vec<Kid> = if let Ty::Tuple(ts) = env.tys.get(t) {
+            ts.iter()
+                .enumerate()
+                .filter(|(_, u)| full(**u))
+                .map(|(k, u)| Kid {
+                    index: k as u64,
+                    field: Field::Elem(crate::int::Int::from_u64(k as u64)),
+                    ty: *u,
+                })
+                .collect()
+        } else {
+            let (item, fields) = env.tys.fields(t)?;
+            let syms = env.order.get(item)?;
+            let mut kids = Vec::new();
+            for (k, u) in fields.iter().enumerate() {
+                if full(*u) {
+                    let text = env.texts.get(*syms.get(k)?)?;
+                    kids.push(Kid {
+                        index: k as u64,
+                        field: Field::User(text.clone()),
+                        ty: *u,
+                    });
+                }
+            }
+            kids
+        };
+        self.kids.push(kids);
+        self.index.insert(t, self.kids.len() - 1);
+        Some(self.kids.len() - 1)
+    }
+}
+
+/// The parts that a container frame still visits.
+enum Parts {
+    Array { elem: TyId, len: u64 },
+    Kids(usize),
+}
+
+/// A container on the stack of the walk, the number of its next part, and the source of the
+/// container. `pushed` tells if its leaf field is on the path.
+struct Frame<S> {
+    parts: Parts,
+    next: u64,
+    src: S,
+    pushed: bool,
+}
+
+/// Runs `f` on each leaf of the type `root` in packing order, with the leaf fields of the leaf
+/// and its scalar type. `src` is the source of the root. `down` gives the source of the part
+/// `k` of the type `ty` with the leaf field `field`, which is the last of `depth` leaf fields,
+/// and `f` gets the source of each leaf.
+/// A struct type without field names gives `missing`. The walk stops at the first error of `f`.
+pub(crate) fn for_each_leaf<S, E>(
+    env: Env<'_>,
+    shapes: &mut Shapes,
+    root: TyId,
+    src: S,
+    mut down: impl FnMut(&S, u64, &Field, usize, TyId) -> S,
+    missing: impl Fn(TyId) -> E,
+    mut f: impl FnMut(&[Field], TyId, &S) -> Result<(), E>,
 ) -> Result<(), E> {
-    f(Leaf {
-        name: crate::hw::port_name(name),
-        entry: name.to_owned(),
-        ty: ty.clone(),
-    })
+    let mut fields: Vec<Field> = Vec::new();
+    let mut stack: Vec<Frame<S>> = Vec::new();
+    let mut enter = Some((root, src, false));
+    loop {
+        if let Some((t, s, pushed)) = enter.take() {
+            #[cfg(test)]
+            crate::counters::add(crate::counters::Count::Leaves, 1);
+            let parts = if env.tys.meta(t).leaves.is_zero() {
+                None
+            } else {
+                match env.tys.get(t) {
+                    Ty::Bool | Ty::UInt(_) | Ty::SInt(_) => {
+                        f(&fields, t, &s)?;
+                        None
+                    }
+                    Ty::Array(elem, n) => Some(Parts::Array {
+                        elem: *elem,
+                        len: n.to_u64().unwrap_or(u64::MAX),
+                    }),
+                    Ty::Tuple(_) | Ty::Struct(_) => Some(Parts::Kids(
+                        shapes.kids_of(env, t).ok_or_else(|| missing(t))?,
+                    )),
+                    _ => None,
+                }
+            };
+            match parts {
+                Some(parts) => stack.push(Frame {
+                    parts,
+                    next: 0,
+                    src: s,
+                    pushed,
+                }),
+                None if pushed => {
+                    fields.pop();
+                }
+                None => {}
+            }
+        }
+        let Some(top) = stack.last_mut() else {
+            return Ok(());
+        };
+        let step = match &top.parts {
+            Parts::Array { elem, len } if top.next < *len => Some((
+                top.next,
+                Field::Elem(crate::int::Int::from_u64(top.next)),
+                *elem,
+            )),
+            Parts::Kids(k) => shapes
+                .kids
+                .get(*k)
+                .and_then(|kids| kids.get(usize::try_from(top.next).unwrap_or(usize::MAX)))
+                .map(|kid| (kid.index, kid.field.clone(), kid.ty)),
+            Parts::Array { .. } => None,
+        };
+        match step {
+            Some((index, field, ty)) => {
+                top.next += 1;
+                let child = down(&top.src, index, &field, fields.len() + 1, ty);
+                fields.push(field);
+                enter = Some((ty, child, true));
+            }
+            None => {
+                if stack.pop().is_some_and(|frame| frame.pushed) {
+                    fields.pop();
+                }
+            }
+        }
+    }
+}
+
+/// The core name of the leaf of the port `source` with the leaf fields `fields`.
+pub(crate) fn leaf_name(source: &str, fields: &[Field]) -> Name {
+    Name {
+        head: source.to_owned(),
+        rest: fields.to_vec(),
+    }
+}
+
+/// The name of the leaf in a source vector: the source name of the port, then `.f` for a field
+/// and `.k` for an element at each level.
+pub(crate) fn leaf_entry(source: &str, fields: &[Field]) -> String {
+    let mut entry = source.to_owned();
+    for field in fields {
+        entry.push('.');
+        match field {
+            Field::User(x) => entry.push_str(x),
+            Field::Elem(k) => entry.push_str(&k.to_string()),
+            other => entry.push_str(&other.encode()),
+        }
+    }
+    entry
 }
 
 /// The ports of one module in layout order: the inputs, then the outputs.

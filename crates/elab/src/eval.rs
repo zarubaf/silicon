@@ -39,7 +39,7 @@ mod tests_lit;
 mod types;
 
 pub use inst::Design;
-pub(crate) use inst::{Bind, Elab, Inst, Literal, PortDecl, Sink, elaborate};
+pub(crate) use inst::{Bind, Elab, Inst, Literal, Sink, elaborate};
 
 use crate::agg::{Agg, Base};
 use crate::hw::{Graph, Handle, HwId, Op, Part, Ref, Root, Seen, Val, port_name};

@@ -29,7 +29,7 @@ use crate::hw::{Graph, Handle, Kind, Port, Seen, Val, port_name};
 use crate::int::Int;
 use crate::names::{Name, PathId, Paths, Sym, encode, module_name};
 use crate::scan::Scan;
-use crate::types::{Ty, TyId};
+use crate::types::{Ty, TyId, Types};
 use crate::value::{InstantiationId, Value, int_size};
 use crate::{Budget, Code};
 use parse::StackError;
@@ -70,7 +70,6 @@ pub(crate) enum Sink {
         index: usize,
         inst: PathId,
         port: Name,
-        #[expect(dead_code, reason = "the lowering by leaf reads the type of the port")]
         ty: Ty,
     },
 }
@@ -227,7 +226,8 @@ impl Elab {
 /// An elaborated design: the done instantiations in the order they finish, the top among
 /// them, the position of the top selection, the used fuel, and the fuel that remains for the
 /// lowering. It keeps the arenas of the hardware values and of the paths that its
-/// descriptions refer to, and the text of each symbol. Dropping it is safe on any stack: it
+/// descriptions refer to, the table of types and the field names of the struct items (the
+/// lowering names the leaves of a record by them), and the text of each symbol. Dropping it is safe on any stack: it
 /// holds no recursive value.
 pub struct Design {
     pub(crate) insts: Vec<Inst>,
@@ -237,6 +237,8 @@ pub struct Design {
     pub(crate) left: u64,
     pub(crate) graph: Graph,
     pub(crate) paths: Paths,
+    pub(crate) tys: Types,
+    pub(crate) field_order: Vec<Vec<Sym>>,
     pub(crate) texts: Vec<String>,
 }
 
@@ -368,6 +370,8 @@ pub(crate) fn elaborate(
         left: ev.fuel.left(),
         graph: ev.graph,
         paths: ev.paths,
+        tys: ev.tys,
+        field_order: ev.syms.field_order,
         texts: ev.syms.texts,
     })
 }

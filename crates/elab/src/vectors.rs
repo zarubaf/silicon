@@ -14,7 +14,6 @@
 //!   `-0` is 0. An output value has no leading zeros, and only a negative `SInt` has `-`.
 
 use crate::Design;
-use crate::eval::PortDecl;
 use crate::int::Int;
 use crate::layout;
 use crate::names::{Field, Name, Role, encode};
@@ -57,28 +56,40 @@ impl Design {
                 ty: Ty::Bool,
             });
         }
-        let entries = |q: &PortDecl| {
-            let mut entries = Vec::new();
-            let _: Result<(), ()> = layout::for_each_leaf(&text(q.sym), &q.ty, |leaf| {
-                entries.push(Entry {
-                    name: leaf.entry,
-                    core: encode(&leaf.name),
-                    ty: leaf.ty,
-                });
-                Ok(())
-            });
-            entries
+        let env = layout::Env {
+            tys: &self.tys,
+            order: &self.field_order,
+            texts: &self.texts,
         };
-        let ports = top
-            .body
-            .ports
-            .iter()
-            .map(|q| layout::Declared {
-                name: text(q.sym),
+        let mut shapes = layout::Shapes::default();
+        let mut ports = Vec::with_capacity(top.body.ports.len());
+        for q in &top.body.ports {
+            let source = text(q.sym);
+            let root = self.tys.id_of(&q.ty)?;
+            let mut leaves = Vec::new();
+            let walked: Result<(), ()> = layout::for_each_leaf(
+                env,
+                &mut shapes,
+                root,
+                (),
+                |(), _, _, _, _| (),
+                |_| (),
+                |fields, t, ()| {
+                    leaves.push(Entry {
+                        name: layout::leaf_entry(&source, fields),
+                        core: encode(&layout::leaf_name(&source, fields)),
+                        ty: self.tys.get(t).clone(),
+                    });
+                    Ok(())
+                },
+            );
+            walked.ok()?;
+            ports.push(layout::Declared {
+                name: source,
                 input: q.input,
-                leaves: entries(q),
-            })
-            .collect();
+                leaves,
+            });
+        }
         let layout::Ports { inputs, outputs } = layout::arrange(reset, ports);
         Some(Schema { inputs, outputs })
     }
