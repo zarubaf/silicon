@@ -385,3 +385,15 @@ fn nested_calls_through_values_keep_one_window_for_each_frame() {
         .collect();
     assert_eq!(used[2] - used[1], 2 * (used[1] - used[0]));
 }
+
+/// A parameter type that calls a function with the function value of its own signature goes
+/// round in a cycle. Each round takes a nesting level, so the cycle ends with `S015` and the
+/// stack stays small.
+#[test]
+fn a_signature_that_names_its_function_ends_at_the_nesting_depth() {
+    let src = "fn k(h: fn (UInt[1]) -> Bool) -> Nat { return 1; }\n\
+        fn r(x: UInt[k(r)]) -> Bool { return true; }\n\
+        fn f() -> Bool { let v = r; return true; }";
+    assert!(o(src, "f()").starts_with("S015"));
+    assert!(out(src, "f()", 100_000_000, 3).starts_with("S015"));
+}
