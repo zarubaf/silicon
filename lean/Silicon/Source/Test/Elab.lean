@@ -243,6 +243,35 @@ def helpers : String :=
    "i$0$add$1c$0ret", "i$0$z", "i$1$add$1c$a", "i$1$add$1c$t", "i$1$add$1c$0ret", "i$1$z",
    "s$1v", "q", "q$1v", "i$0$r", "i$1$r", "u"]
 
+/-!
+A call result never gets a version (section 7.3). A loop and a recursion add frames. Each
+result name thus ends with `0ret`, and no two names are equal.
+-/
+def results : String :=
+  "fn g(comptime n: Nat, a: UInt[8]) -> UInt[8] {\n" ++
+  "  comptime if (n == 0) {\n" ++
+  "    return a +% 1;\n" ++
+  "  }\n" ++
+  "  let b = g(n - 1, a);\n" ++
+  "  return b +% 1;\n" ++
+  "}\n" ++
+  "module M() {\n" ++
+  "  input x: UInt[8];\n" ++
+  "  output y: UInt[8];\n" ++
+  "  let mut s = g(0, x);\n" ++
+  "  comptime for i in 0..2 {\n" ++
+  "    s = g(2, s);\n" ++
+  "  }\n" ++
+  "  y := s;\n" ++
+  "}\n"
+def retNames : List Names.Name :=
+  ((names results "M" "M").filterMap Names.decode).filter (·.rest.contains (.role .ret))
+#guard retNames.length == 7
+#guard retNames.all (·.rest.getLast? == some (.role .ret))
+#guard retNames.all fun p => !p.rest.any fun | .version _ => true | _ => false
+#guard (names results "M" "M").eraseDups.length == (names results "M" "M").length
+#guard (names results "M" "M").contains "i$1$g$1c$g$0c$g$0c$0ret"
+
 /-! A static value gets no core name. A user name equal to a core keyword gets `0k`. -/
 def keywords : String :=
   "module next() {\n" ++

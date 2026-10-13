@@ -15,13 +15,13 @@ open Silicon.Source Silicon.Source.Names
 /-! User names: each core keyword, backend kinds, and names close to the made fields. -/
 def users : List String :=
   Core.keywords ++ ["clk", "rst", "silicon_reg_r", "x", "_", "_0k", "k0", "n5", "c3", "v2",
-    "b1", "h0", "t4", "ret", "rdata", "A_b9", "Counter"]
+    "b1", "h0", "t4", "e2", "ret", "rdata", "A_b9", "Counter"]
 
 /-! Each made field form, with the boundary values of each number. -/
 def made : List Field :=
   [.int 0, .int 5, .int (-5), .int 18446744073709551616, .int (-1), .call 0, .call 3,
    .version 1, .version 12, .bool true, .bool false, .digest "3f2a9c0b1d4e5f60", .digest "0",
-   .temp 0, .temp 4] ++ roles.map .role
+   .temp 0, .temp 4, .elem 0, .elem 2, .elem 18446744073709551616] ++ roles.map .role
 
 def fields : List Field := made ++ (users.map .user)
 
@@ -48,6 +48,17 @@ def legal (p : Name) : Bool := Core.validName (encode p)
 #guard encode ⟨"d", [.role .clk]⟩ == "d$0clk"
 #guard encode ⟨"i", [.int (-5)]⟩ == "i$5n"
 #guard encode ⟨"Fifo", [.int 16, .bool true]⟩ == "Fifo$16$1b"
+
+/-! The leaf names of section 7.3. An element `<k>e` differs from the loop value `k`. -/
+#guard encode ⟨"r", [.elem 2]⟩ == "r$2e"
+#guard encode ⟨"q", [.version 1, .user "xs", .elem 0]⟩ == "q$1v$xs$0e"
+#guard encode ⟨"f", [.call 0, .role .ret, .elem 0]⟩ == "f$0c$0ret$0e"
+#guard decode "r$2e" == some ⟨"r", [.elem 2]⟩
+#guard decode "p$0e$x" == some ⟨"p", [.elem 0, .user "x"]⟩
+#guard decode "p$0$x" == some ⟨"p", [.int 0, .user "x"]⟩
+#guard decode "x$02e" == none
+#guard decode "x$2e2" == none
+#guard decode "x$2ee" == none
 
 /-! `decode` accepts only the texts that `encode` makes. -/
 #guard decode "add" == none
