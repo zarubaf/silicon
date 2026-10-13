@@ -36,12 +36,24 @@ field types. A specialization that is not started has no entry.
 -/
 inductive SpecState where
   | inProgress
-  | done (ty : Ty) (fields : List Ty)
+  | done (ty : Ty) (fields : Array Ty)
 
 structure Spec where
   item : Nat
   args : List Value
   state : SpecState
+
+/-!
+The table of specializations. `index` finds the entry of a struct type by its serialization in
+logarithmic time (section 5.6). The serialization of a struct type is its item and its static
+arguments, so it is the key of its entry.
+-/
+structure Specs where
+  entries : Array Spec := #[]
+  index : Std.TreeMap String Nat compare := {}
+
+/-! The entry of the struct type with the serialization `key`. -/
+def Specs.find? (s : Specs) (key : String) : Option Spec := s.index[key]? >>= (s.entries[·]?)
 
 /-! A node of a hardware value. Section 7.4 lowers each node to core operations. -/
 inductive Op where
@@ -185,12 +197,15 @@ structure Frame where
 The symbols of a file. Each distinct identifier gets one number, so a lookup or a key compares
 numbers and not text. `binders` gives the symbol of each local number of each item. `fields`
 gives the symbol of each field name by its position in each item. `items` gives the symbol of
-each item name.
+each item name. `fns` gives the number of each function item by its name. `members` gives the
+number of each field of each struct item by its name. A lookup in them takes logarithmic time.
 -/
 structure Syms where
   binders : Array (Array Nat)
   fields : Array (Std.TreeMap Pos Nat Pos.compare)
   items : Array Nat
+  fns : Std.TreeMap String Nat compare
+  members : Array (Std.TreeMap String Nat compare)
 
 /-!
 The items, the depth limit, the current depth, and the return type of the current call. The
@@ -248,7 +263,7 @@ instantiation. `holds` counts the waiting results that hold each local of the fr
 structure St where
   fuel : Nat
   consts : Array Entry
-  specs : Array Spec
+  specs : Specs
   frame : Std.HashMap Nat Slot
   holds : Std.HashMap Nat Nat
   pending : Std.TreeMap Nat Nat compare
