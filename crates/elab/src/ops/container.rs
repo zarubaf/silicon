@@ -37,6 +37,7 @@ fn is_of(v: &Value, t: TyId, tys: &Types) -> bool {
                 e == te && n.cmp_u64(xs.len() as u64) == Ordering::Equal
             }
             (Value::List(e, _), Ty::List(te)) => e == te,
+            (Value::Function(_, _, sig), Ty::Fn(..)) => *sig == t,
             (Value::Tuple(xs), Ty::Tuple(ts)) => {
                 work.extend(xs.iter().zip(ts.iter().copied()));
                 xs.len() == ts.len()
@@ -132,6 +133,15 @@ pub(crate) fn convert_scalar(
     }
 }
 
+/// A typed use of a function value at the function type `t`: its signature must be exactly
+/// `t`, with the `mut` marks. It compares two ids and charges nothing.
+pub(crate) fn convert_fn(t: TyId, v: &Value, tys: &Types) -> Result<Option<Value>, Fault> {
+    match v {
+        Value::Function(_, _, sig) if *sig == t => Ok(None),
+        _ => wrong(tys.get(t), v, tys),
+    }
+}
+
 /// The size of a scalar `v` after its typed use at `t`.
 fn leaf_size(t: &Ty, v: &Value) -> u64 {
     match t {
@@ -166,6 +176,9 @@ fn plan(t: TyId, v: &Value, tys: &Types) -> Result<u64, Fault> {
                 }
                 size = size.saturating_add(1);
                 work.extend(ts.iter().copied().zip(xs).rev());
+            }
+            (Ty::Fn(..), Value::Function(_, _, sig)) if *sig == t => {
+                size = size.saturating_add(1);
             }
             _ => {
                 leaf(node, v, tys)?;
@@ -354,7 +367,7 @@ fn visit(lhs: TyId, rhs: TyId, tys: &mut Types, budget: &mut u64) -> Visit {
             Visit::Open(open(form, pairs))
         }
         None => match (&left, &right) {
-            (Ty::Struct(_), Ty::Struct(_)) => Visit::Done(Joined {
+            (Ty::Struct(_), Ty::Struct(_)) | (Ty::Fn(..), Ty::Fn(..)) => Visit::Done(Joined {
                 charge: Int::from_u64(lhs.size()).add(&Int::from_u64(rhs.size())),
                 ty: (lhs == rhs).then_some(lhs),
             }),

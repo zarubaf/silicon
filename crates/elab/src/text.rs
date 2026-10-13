@@ -4,7 +4,7 @@
 
 use crate::int::Int;
 use crate::ops::int_text;
-use crate::types::{Ty, TyId, Types};
+use crate::types::{FnParam, Ty, TyId, Types};
 use crate::value::Value;
 use std::fmt::Write;
 
@@ -18,6 +18,8 @@ pub(crate) enum Piece<'a> {
     /// The literal form of a static argument.
     Lit(&'a Value),
     Ty(TyId),
+    /// A parameter type of a function type, with `mut ` before it if it has the mark.
+    Param(FnParam),
     Text(&'static str),
     Owned(String),
 }
@@ -79,6 +81,17 @@ impl<'a> Text<'a> {
                     }
                 }
             }
+            Ty::Fn(params, ret) => {
+                self.out.push_str("fn (");
+                self.work.push(Piece::Ty(*ret));
+                self.work.push(Piece::Text(") -> "));
+                for (k, p) in params.iter().enumerate().rev() {
+                    self.work.push(Piece::Param(*p));
+                    if k > 0 {
+                        self.work.push(Piece::Text(", "));
+                    }
+                }
+            }
             Ty::Struct(s) => {
                 let spec = tys.spec(*s);
                 self.out.push_str(spec.name());
@@ -105,7 +118,7 @@ impl<'a> Text<'a> {
                 self.work.push(Piece::Owned(format!("; {}]", xs.len())));
                 self.work.push(Piece::Ty(*elem));
             }
-            Value::Record(t, _) => self.work.push(Piece::Ty(*t)),
+            Value::Record(t, _) | Value::Function(_, _, t) => self.work.push(Piece::Ty(*t)),
             Value::List(elem, _) => {
                 self.out.push_str("List[");
                 self.work.push(Piece::Text("]"));
@@ -136,6 +149,7 @@ impl<'a> Text<'a> {
                 .push_str(&int_text(&Int::from_signed(x, x.width()))),
             Value::Type(t) => self.work.push(Piece::Ty(*t)),
             Value::Unit => self.out.push_str("()"),
+            Value::Function(_, name, _) => self.out.push_str(name),
             Value::List(t, xs) if xs.is_empty() => {
                 self.out.push_str("list(");
                 self.work.push(Piece::Text(")"));
@@ -172,6 +186,12 @@ impl<'a> Text<'a> {
                 Piece::Value(v) => self.value(v),
                 Piece::Lit(v) => self.lit(v),
                 Piece::Ty(t) => self.ty_node(tys, tys.get(t)),
+                Piece::Param(p) => {
+                    if p.mutable {
+                        self.out.push_str("mut ");
+                    }
+                    self.work.push(Piece::Ty(p.ty));
+                }
                 Piece::Text(text) => self.out.push_str(text),
                 Piece::Owned(text) => self.out.push_str(&text),
             }

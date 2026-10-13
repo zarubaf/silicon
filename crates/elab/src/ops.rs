@@ -176,6 +176,7 @@ pub(crate) fn convert(
         Ty::Unit | Ty::Array(..) | Ty::Tuple(_) | Ty::List(_) => {
             container::convert(t, v, fuel, tys)
         }
+        Ty::Fn(..) => container::convert_fn(t, v, tys),
         scalar => container::convert_scalar(scalar, v, fuel, tys),
     }
 }

@@ -20,7 +20,9 @@ use std::hash::Hasher;
 /// A static value of slice 1, or a static container of slice 2. A finite value holds the bit
 /// vector of the core semantics with the width of its type. An array keeps its element type,
 /// so an empty array has a type, and a record keeps its struct type for the same reason. A
-/// list keeps its element type too. A tuple has at least one element: `()` is `Unit`.
+/// list keeps its element type too. A tuple has at least one element: `()` is `Unit`. A
+/// function value is the item that the name refers to, the name of the item, and the id of its
+/// signature, which is its type.
 pub enum Value {
     Int(Int),
     Bool(bool),
@@ -33,6 +35,7 @@ pub enum Value {
     Tuple(Vec<Value>),
     Record(TyId, Vec<Value>),
     List(TyId, Vec<Value>),
+    Function(usize, String, TyId),
 }
 
 impl Value {
@@ -50,6 +53,7 @@ impl Value {
             | Value::UInt(_)
             | Value::SInt(_)
             | Value::Type(_)
+            | Value::Function(..)
             | Value::Unit => {}
         }
     }
@@ -90,6 +94,7 @@ impl fmt::Debug for Value {
                 Value::SInt(x) => write!(f, "SInt({x:?})")?,
                 Value::Type(t) => write!(f, "Type({t:?})")?,
                 Value::Unit => f.write_str("Unit")?,
+                Value::Function(i, name, t) => write!(f, "Function({i}, {name:?}, {t:?})")?,
                 Value::Array(t, xs) | Value::Record(t, xs) | Value::List(t, xs) => {
                     let form = match v {
                         Value::Array(..) => "Array",
@@ -204,6 +209,7 @@ impl PartialEq for Value {
                 (Value::Str(a), Value::Str(b)) => a == b,
                 (Value::UInt(a), Value::UInt(b)) | (Value::SInt(a), Value::SInt(b)) => a == b,
                 (Value::Type(a), Value::Type(b)) => a == b,
+                (Value::Function(i, _, s), Value::Function(j, _, t)) => i == j && s == t,
                 (Value::Unit, Value::Unit) => true,
                 _ => false,
             };
@@ -272,7 +278,7 @@ impl Value {
             Value::Str(_) => tys.mk(Ty::String),
             Value::Array(elem, xs) => tys.array(*elem, Int::from_u64(xs.len() as u64)),
             Value::List(elem, _) => tys.list(*elem),
-            Value::Record(t, _) => *t,
+            Value::Record(t, _) | Value::Function(_, _, t) => *t,
             Value::Unit | Value::Tuple(_) => tys.mk(Ty::Unit),
         }
     }
@@ -286,6 +292,7 @@ impl Value {
             Value::UInt(x) => Value::UInt(x.clone()),
             Value::SInt(x) => Value::SInt(x.clone()),
             Value::Type(t) => Value::Type(*t),
+            Value::Function(i, name, t) => Value::Function(*i, name.clone(), *t),
             Value::Unit
             | Value::Array(..)
             | Value::Tuple(_)
@@ -362,7 +369,7 @@ impl Value {
             crate::counters::add(crate::counters::Count::Walked, 1);
             let own = match v {
                 Value::Int(n) => int_size(n),
-                Value::Bool(_) | Value::Unit => 1,
+                Value::Bool(_) | Value::Unit | Value::Function(..) => 1,
                 Value::Str(s) => 1 + s.chars().count() as u64,
                 Value::UInt(x) | Value::SInt(x) => width_size(x.width()),
                 Value::Type(t) => t.size(),
@@ -462,6 +469,11 @@ impl Value {
                     t.hash_into(h);
                 }
                 Value::Unit => h.write_u8(7),
+                Value::Function(i, _, t) => {
+                    h.write_u8(12);
+                    h.write_usize(*i);
+                    t.hash_into(h);
+                }
                 Value::Array(t, xs) | Value::Record(t, xs) | Value::List(t, xs) => {
                     h.write_u8(match v {
                         Value::Array(..) => 8,
