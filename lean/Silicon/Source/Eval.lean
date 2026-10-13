@@ -551,8 +551,9 @@ def aggEq (pos : Pos) (op : BinOp) (a b : Val) : M Val := do
 A static pair of a hardware `if` at `pos` (section 7.4) with the joined type `t`. It charges as a
 static equality, the sum of the two sizes. Identical sides give the value, so a function compares
 by its item. Other sides compare by the static equality of `==`, which converts a static integer
-to the joined type. Equal sides give the side of the joined type. Different sides are `S011` at
-the `if`, because a static part cannot depend on the hardware condition.
+to the joined type. Equal sides give the first side of the joined type. Different sides are
+`S011` at the `if`, because a static part cannot depend on the hardware condition. Equal sides
+without the joined type are also `S011`, because the pair makes no value conversion.
 -/
 def ifStatic (pos : Pos) (t : Ty) (x y : Value) : M Value := do
   charge pos (x.size + y.size)
@@ -561,7 +562,9 @@ def ifStatic (pos : Pos) (t : Ty) (x y : Value) : M Value := do
   if x.cmp y == .eq then return x
   if x matches .function .. then return ← differ
   let r ← lift pos (Id.run ((same x y).run.run' 0))
-  if ← lift pos (r ()) then return if x.ty?.any (·.same t) then x else y
+  if !(← lift pos (r ())) then return ← differ
+  if x.ty?.any (·.same t) then return x
+  if y.ty?.any (·.same t) then return y
   differ
 
 /-!
