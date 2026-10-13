@@ -871,3 +871,74 @@ fn a_window_that_reported_s008_still_ends_with_its_call() {
     let at: Vec<_> = errors.iter().map(|e| (e.code, e.pos.line)).collect();
     assert_eq!(at, [(S008, 6), (S008, 8)]);
 }
+
+#[test]
+fn a_function_type_takes_no_index() {
+    fails(
+        &fn_body("let h = (fn () -> UInt)[8];\nreturn p;"),
+        S007,
+        2,
+        9,
+    );
+    assert_eq!(
+        message(&fn_body("let h = (fn () -> UInt)[8];\nreturn p;")),
+        "a function type takes 0 argument(s), but it has 1"
+    );
+    fails("const A: (fn () -> UInt)[8] = 1;", S007, 1, 10);
+    assert_eq!(
+        message("const A: (fn () -> UInt)[8] = 1;"),
+        "a function type takes 0 argument(s), but it has 1"
+    );
+    fails(
+        &fn_body("let h = (fn () -> Bool)[1][2];\nreturn p;"),
+        S007,
+        2,
+        9,
+    );
+    // A suffix after a function type belongs to its result type.
+    ok(&fn_body("let h = fn () -> UInt[8];\nreturn p;"));
+    ok("const A: fn () -> UInt[8] = 1;");
+}
+
+#[test]
+fn the_parts_of_a_function_type_follow_the_rules_of_a_type() {
+    fails("const A: fn (UInt) -> Bool = 1;", S007, 1, 14);
+    fails("const A: fn () -> UInt = 1;", S007, 1, 19);
+    fails(
+        &fn_body("let h = fn (Bool, UInt) -> Bool;\nreturn p;"),
+        S007,
+        2,
+        19,
+    );
+    fails(&fn_body("let h = fn () -> UInt;\nreturn p;"), S007, 2, 18);
+    fails(
+        &mod_body("reg r: UInt[8] = 0;\nlet h = fn (UInt[r]) -> Bool;"),
+        S005,
+        3,
+        18,
+    );
+    fails(
+        &mod_body("reg r: UInt[8] = 0;\nlet h: fn () -> UInt[r] = 1;"),
+        S005,
+        3,
+        22,
+    );
+    fails(
+        &mod_body("reg r: UInt[8] = 0;\ncomptime if (fn () -> UInt[r] == r) {}"),
+        S005,
+        3,
+        28,
+    );
+}
+
+#[test]
+fn pass_5_decides_the_other_rules_of_function_values() {
+    ok("fn g(mut x: Bool) -> Bool { return x; }\nfn f() -> Bool { let h = g; return h(true); }");
+    ok(&fn_body("let h = f;\nreturn h(1, 2, 3);"));
+    ok(&fn_body("let h = (fn () -> Bool)(1, 2, 3);\nreturn p;"));
+    ok("fn f() -> Nat { let h = g; return 1; }\nfn g(comptime N: Nat) -> Nat { return N; }");
+    ok(&fn_body("let h = len;\nreturn p;"));
+    ok(&fn_body("let h = -fn () -> Bool;\nreturn p;"));
+    ok(&fn_body("let h = f == f;\nreturn p;"));
+    ok(&fn_body("return p == (fn () -> Bool == f);"));
+}
