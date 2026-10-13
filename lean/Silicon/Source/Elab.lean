@@ -33,6 +33,8 @@ These rules settle the open points of slice 1:
   The code is `S019`.
 - A port, a register, and a wire have a hardware data type (`S010`), also an aggregate type and
   an empty type. Each still needs its binding (`S018`). An empty one lowers to no core node.
+- An empty input charges nothing at its declaration. Each read of it charges the zero size of
+  its type, then gives its zero (section 5.4).
 - A module parameter can be a type, a record, or a function. Such an argument gives the digest
   form of the emitted name (section 7.1). A function serializes as its item, so a struct
   argument and the key of a struct specialization hold the item too. The typed use at the
@@ -212,9 +214,11 @@ def port (p : Pos) (input : Bool) (b : Binder) (t : Ty) : EM Val := do
     return v != 0 : Eval.M Bool)
   if taken then fail .S019 p s!"two declarations have the core name `{x}`"
   modifyBody fun d => { d with ports := d.ports.push ⟨x, sym, input, t, p⟩ }
-  -- An input refers to its name: a scalar is hardware, and an aggregate a lazy reference.
-  if input then monadLift (normalize p (.ref (.name ⟨x, []⟩) t) : Eval.M Val)
-  else resource .output ⟨x, []⟩ t p x
+  -- An input refers to its name: a scalar is hardware, and an aggregate a lazy reference. An
+  -- empty input stays a reference too, so only a read of it pays its zero (`Eval.name`).
+  if !input then resource .output ⟨x, []⟩ t p x
+  else if t.info.leaves = 0 then pure (.agg (.ref (.name ⟨x, []⟩) t))
+  else monadLift (normalize p (.ref (.name ⟨x, []⟩) t) : Eval.M Val)
 
 /-! The target of a `:=` binding. It refers, so it charges nothing. -/
 inductive Target where

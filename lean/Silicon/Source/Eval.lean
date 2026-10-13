@@ -1233,6 +1233,10 @@ mutual
   def name (n : Nat) (p : Pos) (x : String) : Ref → M Out
     | .local id => do
       match (← get).frame[id]? with
+      | some ⟨_, _, .agg (.ref b t)⟩ =>
+        -- An empty input port refers to its name. The read pays its zero, a new static value.
+        if t.info.leaves = 0 then return ⟨← normalize p (.ref b t), false, none⟩
+        else return ⟨.agg (.ref b t), true, some id⟩
       | some s => return ⟨s.value, true, some id⟩
       | _ => fail .S011 p s!"`{x}` is not a static value"
     | .type k => do return ⟨.static (.type (← prim p x k)), true, none⟩
