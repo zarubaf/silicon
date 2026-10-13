@@ -365,8 +365,17 @@ impl Evaluator<'_> {
         }
         steps.reverse();
         let b = self.eval(root)?;
-        let mut b = need(root, b)?;
-        let mut done = 0;
+        let b = need(root, b)?;
+        // The fields at the start take no index, so a stored root runs through its nodes at once.
+        let fields: Vec<Key<'_>> = steps
+            .iter()
+            .map_while(|s| match *s {
+                Sel::Field(q, f) => Some(Key::Field(q, f)),
+                _ => None,
+            })
+            .collect();
+        let (through, mut done) = self.node_steps(Opnd::of_out(b), &fields);
+        let mut b = through.into_out();
         while let Some(Sel::Field(q, f)) = steps.get(done)
             && !matches!(self.store.seen(&b), Seen::Static(_))
         {
@@ -526,6 +535,14 @@ impl Evaluator<'_> {
         let mut base = base;
         let mut rest = keyed;
         loop {
+            // The steps through the nodes of a stored root go on from the part that the last step
+            // found, so the whole run walks the path from the root once.
+            let (through, taken) = self.node_steps(base, rest);
+            base = through;
+            rest = rest.get(taken..).unwrap_or_default();
+            if taken > 0 && rest.is_empty() {
+                return Ok((base.into_out(), false));
+            }
             // The steps on an aggregate each give a part in constant work, so they take no walk
             // along a path. A part that is not an aggregate ends them.
             while let Some(key) = rest.first()
@@ -577,6 +594,64 @@ impl Evaluator<'_> {
             };
             base = Opnd::Static(self.str_at(*q, *xp, &out, i)?);
             rest = rest.get(at + 1..).unwrap_or_default();
+        }
+    }
+
+    /// The longest run of steps of `keys` that stay inside the nodes of an aggregate root, taken
+    /// with a cursor: the part that a step finds is the container of the next step, so the run
+    /// walks the path of `base` from the root once, and each step takes constant work. A step
+    /// that fails its check, or that finds a reference to normalize, ends the run before it, so
+    /// the step of `agg_key` gives its error or its charge. The result is the reference to the
+    /// part where the run ended, and the number of steps taken.
+    fn node_steps(&mut self, base: Opnd, keys: &[Key<'_>]) -> (Opnd, usize) {
+        let Opnd::Static(Out::Ref(r)) = &base else {
+            return (base, 0);
+        };
+        let mut taken: Vec<usize> = Vec::new();
+        let mut cur = self.store.at(r);
+        for key in keys {
+            let Seen::Agg(a @ (Agg::Array(..) | Agg::Tuple(..) | Agg::Record(..))) = cur else {
+                break;
+            };
+            let Some(k) = self.node_key(a, key) else {
+                break;
+            };
+            let next = self.store.step(cur, k);
+            if let Seen::Agg(Agg::Ref(_, t)) = next
+                && (self.tys.meta(*t).leaves.is_zero()
+                    || matches!(self.tys.get(*t), Ty::Bool | Ty::UInt(_) | Ty::SInt(_)))
+            {
+                break;
+            }
+            #[cfg(test)]
+            crate::counters::add(crate::counters::Count::Selected, 1);
+            taken.push(k);
+            cur = next;
+        }
+        let count = taken.len();
+        match base {
+            Opnd::Static(Out::Ref(mut r)) if count > 0 => {
+                r.path.extend(taken);
+                (Opnd::Static(Out::Ref(r)), count)
+            }
+            base => (base, 0),
+        }
+    }
+
+    /// The number of the part that the step `key` takes from the node `a`, if the step passes
+    /// its checks.
+    fn node_key(&self, a: &Agg, key: &Key<'_>) -> Option<usize> {
+        match (key, a) {
+            (Key::Index(_, _, Index::Number(k)), Agg::Array(_, p) | Agg::Tuple(_, p)) => {
+                (*k < p.0.len()).then_some(*k)
+            }
+            (Key::Select(_, _, index), Agg::Tuple(_, p)) => index
+                .as_str()
+                .parse::<usize>()
+                .ok()
+                .filter(|k| *k < p.0.len()),
+            (Key::Field(_, f), Agg::Record(..)) => self.agg_field_at(a, f).map(|(k, _)| k),
+            _ => None,
         }
     }
 
