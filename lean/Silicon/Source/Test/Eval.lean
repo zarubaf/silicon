@@ -2123,6 +2123,35 @@ def nested (_ : Ty) : Eval.Val :=
   " | [[x$0e, (list (uint 8) ((uint 8 5)))], (bool true)] | 18"
 #guard runF (assignIn "((UInt[8], List[UInt[8]]), Bool)" "x.0.1.push(5);") nested 14 == "S015 3:3"
 #guard runF (assignIn "((UInt[8], List[UInt[8]]), Bool)" "x.0.1.push(5);") nested 13 == "S015 2:3"
+/-!
+A `pop` of an element deeper than the element type of the list can lower the depth of the list. Then
+the refresh finds each depth on the path again. Thus the `pop` also charges the size 11 of the root,
+after the part count 2 (section 5.4). The first `pop` charges 4 for its statement, 6 for the
+element, 2, and 11. The second element `UInt[8]` is not deeper than `Type`, so its `pop` charges
+only 4, 2, and 2. After the deep `pop`, the stored depth of the root is exact, so `(t,)` runs at the
+nesting depth 5. Without the `pop`, it goes above it.
+-/
+def typeList (_ : Ty) : Eval.Val :=
+  .agg (.mkTuple #[.uint 8, .list .type]
+    #[leafX 0, .static (.list .type #[.type (.uint 8), .type (.array (.array (.uint 8) 1) 1)])])
+#guard runF (assignIn "(UInt[8], List[Type])" "let y = x.1.pop();") typeList ==
+  " | [x$0e, (list type ((type (uint 8))))] | 27"
+#guard runF (assignIn "(UInt[8], List[Type])" "let y = x.1.pop();") typeList 23 == "S015 3:3"
+#guard runF (assignIn "(UInt[8], List[Type])" "let y = x.1.pop();") typeList 22 == "S015 2:11"
+#guard runF (assignIn "(UInt[8], List[Type])" "let y = x.1.pop(); let z = x.1.pop();") typeList ==
+  " | [x$0e, (list type ())] | 35"
+def popDeep (pop : String) : String := s!"module M() domains() \{
+    input a: UInt[8];
+    output y: UInt[8];
+    let mut t = (a, list(Type));
+    t.1.push([[UInt[8]; 1]; 1]);
+    {pop}
+    let u = (t,);
+    y := a;
+}"
+#guard top (popDeep "let k = t.1.pop();") "M()" (depth := 5) == "total 147\nM 119\n"
+#guard top (popDeep "") "M()" (depth := 5) == "S015 7:13"
+#guard top (popDeep "") "M()" (depth := 6) == "total 132\nM 104\n"
 
 /-!
 `==` and `!=` on a hardware aggregate (section 5.4). A hardware value prints as its tree: a name,
