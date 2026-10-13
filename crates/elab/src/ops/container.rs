@@ -818,4 +818,24 @@ mod tests {
         // The second join finds its pair in the table: one lookup.
         assert_eq!(tys.work(), again + 1);
     }
+
+    /// The static pair of two empty lists of `[Int; 1]` has a join that no fuel pays. It must
+    /// not fail in the join: the pair is `true`.
+    #[test]
+    fn a_static_pair_joins_its_element_types_with_no_fuel() {
+        let mut tys = Types::default();
+        let (int, one) = (tys.mk(Ty::Int), Int::from_u64(1));
+        let elem = tys.array(int, one);
+        let v = Value::List(elem, Vec::new());
+        assert!(matches!(same_pair(&v, &v, &mut tys), Ok(true)));
+        // Two ids that differ join in the table, once for each pair of ids.
+        let (nat, other) = (
+            tys.mk(Ty::Nat),
+            Value::List(tys.array(int, Int::from_u64(1)), Vec::new()),
+        );
+        let narrow = Value::List(tys.array(nat, Int::from_u64(1)), Vec::new());
+        assert!(matches!(same_pair(&narrow, &other, &mut tys), Ok(true)));
+        let long = Value::List(tys.array(int, Int::from_u64(2)), Vec::new());
+        assert!(matches!(same_pair(&long, &other, &mut tys), Err(_)));
+    }
 }

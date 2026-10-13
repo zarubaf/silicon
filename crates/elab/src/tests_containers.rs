@@ -281,6 +281,26 @@ fn the_nested_doubling_in_a_module() {
     assert!(cost_fuel(&module(16), "T", 1_000_000).starts_with("total"));
 }
 
+/// The static pair of `r == r` joins the element types of its list with no charge. The fuel
+/// that the charges leave, 0 to 3, never makes the join fail: the values of Lean are `S015`
+/// at the next charge, never `S010`.
+#[test]
+fn the_static_pair_of_a_struct_with_a_list_never_fails_in_its_join_on_the_fuel() {
+    let src = "struct R { a: UInt[8], xs: List[[Int; 1]], }
+module M() domains() {
+    input a: UInt[8];
+    output y: Bool;
+    let r = R(a, list([Int; 1]));
+    y := r == r;
+}
+";
+    for fuel in [112, 111, 110, 109, 108, 107] {
+        assert_eq!(cost_fuel(src, "M", fuel), "S015 6:10", "{fuel}");
+    }
+    // The lowering charges the last 24 units of the 137 of Lean.
+    assert_eq!(crate::tests_elab::total(src, "M"), 113);
+}
+
 #[test]
 fn the_type_flows_into_the_elements_of_a_literal() {
     assert_eq!(
