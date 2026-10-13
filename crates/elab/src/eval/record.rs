@@ -17,14 +17,12 @@ impl Evaluator<'_> {
     /// A call whose callee is not a function item or a prelude function: the callee is a type,
     /// and the call is its constructor. No argument is the zero `T()`. A struct type takes one
     /// argument for each field. Another type takes one argument, which it converts.
-    pub(super) fn construct(&mut self, pos: Pos, f: &Expr, xs: &[Expr]) -> Res<Option<Out>> {
-        let callee = self.eval(f)?;
-        let callee = need(f, callee)?;
-        let Seen::Static(Value::Type(ty)) = self.store.seen(&callee) else {
+    pub(super) fn construct(&mut self, pos: Pos, callee: &Out, xs: &[Expr]) -> Res<Option<Out>> {
+        let Seen::Static(Value::Type(ty)) = self.store.seen(callee) else {
             return fail(
                 Code::S010,
                 pos,
-                format!("{} is not a function", self.text(self.store.seen(&callee))),
+                format!("{} is not a function", self.text(self.store.seen(callee))),
             );
         };
         let ty = *ty;
