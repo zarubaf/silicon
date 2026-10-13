@@ -55,7 +55,9 @@ A position that needs a fixed kind gets a name of that kind, else `S003`:
 
 A function item is a name in an expression too: a callee, or a function value in another
 position. Whether it is a value of the right kind, not generic and not a builtin, is the type
-rule `S010` of `Elab` (section 5.1). The types of a function type resolve as type expressions.
+rule `S010` of `Elab` (section 5.1). `generic` tells from the resolved signature whether a
+function is generic, with no evaluation. The types of a function type resolve as type
+expressions.
 
 The field names of a struct are not in a scope. Two fields with one name are `S002`.
 
@@ -237,6 +239,53 @@ def Stmt.pos : Stmt → Pos
   | .local p .. | .assign p .. | .connect p .. | .reg p .. | .wire p .. | .input p ..
   | .output p .. | .inst p .. | .ret p .. | .ctIf p .. | .ctFor p .. | .block p ..
   | .expr p .. | .alias p .. => p
+
+/-! Whether a form names a local. In a signature, each local is a parameter. -/
+mutual
+  def Expr.namesLocal : Expr → Bool
+    | .name _ _ r => (r matches .local _)
+    | .num .. | .bool .. | .str .. | .unit _ => false
+    | .unary _ _ a => a.namesLocal
+    | .field _ a _ => a.namesLocal
+    | .select _ a .. => a.namesLocal
+    | .binary _ _ l r => l.namesLocal || r.namesLocal
+    | .cond _ c y n => c.namesLocal || y.namesLocal || n.namesLocal
+    | .call _ f xs _ => f.namesLocal || Expr.anyLocal xs
+    | .index _ f xs => f.namesLocal || Expr.anyLocal xs
+    | .method _ r _ _ _ xs _ => r.namesLocal || Expr.anyLocal xs
+    | .tuple _ xs => Expr.anyLocal xs
+    | .array _ xs => Expr.anyLocal xs
+    | .arrayType _ t n => t.namesLocal || n.namesLocal
+    | .fnType _ ps r => FnParam.anyLocal ps || r.namesLocal
+
+  def Expr.anyLocal : List Expr → Bool
+    | [] => false
+    | x :: xs => x.namesLocal || Expr.anyLocal xs
+
+  def TypeExpr.namesLocal : TypeExpr → Bool
+    | .name _ _ r => (r matches .local _)
+    | .unit _ => false
+    | .index _ b xs => b.namesLocal || Expr.anyLocal xs
+    | .tuple _ ts => TypeExpr.anyLocal ts
+    | .array _ t n => t.namesLocal || n.namesLocal
+    | .fn _ ps r => FnParam.anyLocal ps || r.namesLocal
+
+  def TypeExpr.anyLocal : List TypeExpr → Bool
+    | [] => false
+    | t :: ts => t.namesLocal || TypeExpr.anyLocal ts
+
+  def FnParam.anyLocal : List FnParam → Bool
+    | [] => false
+    | .mk _ t :: ps => t.namesLocal || FnParam.anyLocal ps
+end
+
+/-!
+A function with the parameters `ps` and the result type `ret` is generic in two cases
+(section 5.1). It has a `comptime` parameter, or a parameter type or its result type names one
+of its parameters. The check reads only the resolved signature, so it needs no evaluation.
+-/
+def generic (ps : List Param) (ret : TypeExpr) : Bool :=
+  ps.any (fun q => q.mode == .comptime || q.ty.namesLocal) || ret.namesLocal
 
 /-! Position order: the lower line, then the lower column. -/
 def before (a b : Pos) : Bool := a.line < b.line || (a.line == b.line && a.col < b.col)
