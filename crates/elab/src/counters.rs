@@ -47,6 +47,8 @@ pub(crate) struct Counts {
     pub paired: u64,
     /// The parts that a walk over the leaves of a type visited.
     pub leaves: u64,
+    /// The nodes that the path arena gained.
+    pub paths: u64,
 }
 
 /// What a counter counts.
@@ -69,6 +71,7 @@ pub(crate) enum Count {
     Expanded,
     Paired,
     Leaves,
+    Paths,
 }
 
 static COUNTS: Mutex<BTreeMap<u64, Counts>> = Mutex::new(BTreeMap::new());
@@ -124,6 +127,7 @@ pub(crate) fn add(count: Count, n: u64) {
             Count::Expanded => &mut c.expanded,
             Count::Paired => &mut c.paired,
             Count::Leaves => &mut c.leaves,
+            Count::Paths => &mut c.paths,
         };
         *field += n;
     }

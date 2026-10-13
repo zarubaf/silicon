@@ -134,12 +134,13 @@ impl<'a> Side<'a> {
 
     /// The part `k` of the side, in constant work. A reference gives a reference to the part
     /// with the leaf field `step`, or a hardware leaf of the scalar type `leaf`, so it never
-    /// expands. A stored node and a static container give the part they hold.
+    /// expands. A part of a type without a hardware leaf (`empty`) is a reference that keeps the
+    /// base of its parent: no leaf is ever made from it, so it adds no path. A stored node and
+    /// a static container give the part they hold.
     fn child(
         &self,
         k: usize,
-        step: &Step,
-        leaf: Option<&Ty>,
+        (step, leaf, empty): (&Step, Option<&Ty>, bool),
         pos: Pos,
         (graph, paths): (&mut Graph, &mut Paths),
     ) -> Option<Side<'a>> {
@@ -166,6 +167,9 @@ impl<'a> Side<'a> {
             Side::Ref(b) => b,
             Side::Hw(_) => return None,
         };
+        if empty {
+            return Some(Side::Ref(base.clone()));
+        }
         let sub = base.sub(paths, step.clone());
         Some(match leaf {
             Some(t) => Side::Hw(graph.mk(pos, t.clone(), sub.op(), Vec::new())),
@@ -197,13 +201,13 @@ struct Level<'a> {
 /// makes hardware leaves of a reference. `None` if a side has no such part.
 fn part_pair<'a>(
     top: &Level<'a>,
-    (part, step, leaf): (u64, &Step, Option<&Ty>),
+    (part, step, leaf, empty): (u64, &Step, Option<&Ty>, bool),
     pos: Pos,
     (graph, paths): (&mut Graph, &mut Paths),
 ) -> Option<(Side<'a>, Side<'a>)> {
     let idx = usize::try_from(part).unwrap_or(usize::MAX);
-    let left = top.a.child(idx, step, leaf, pos, (graph, paths));
-    let right = top.b.child(idx, step, leaf, pos, (graph, paths));
+    let left = top.a.child(idx, (step, leaf, empty), pos, (graph, paths));
+    let right = top.b.child(idx, (step, leaf, empty), pos, (graph, paths));
     Some((left?, right?))
 }
 
@@ -722,8 +726,10 @@ impl Evaluator<'_> {
             top.next += 1;
             let (ct, step) = self.child_of(pos, top.ty, part)?;
             let leaf = leaf_ty(self.tys.get(ct));
+            let empty = leaf.is_none() && self.tys.meta(ct).leaves.is_zero();
             let env = (&mut self.graph, &mut self.paths);
-            let Some((left, right)) = part_pair(top, (part, &step, leaf.as_ref()), pos, env) else {
+            let part = (part, &step, leaf.as_ref(), empty);
+            let Some((left, right)) = part_pair(top, part, pos, env) else {
                 let texts = (
                     top.a.text(&self.graph, &self.tys),
                     top.b.text(&self.graph, &self.tys),
@@ -811,8 +817,10 @@ impl Evaluator<'_> {
             top.next += 1;
             let (ct, step) = self.child_of(pos, top.ty, part)?;
             let leaf = leaf_ty(self.tys.get(ct));
+            let empty = leaf.is_none() && self.tys.meta(ct).leaves.is_zero();
             let env = (&mut self.graph, &mut self.paths);
-            let Some((left, right)) = part_pair(top, (part, &step, leaf.as_ref()), pos, env) else {
+            let part = (part, &step, leaf.as_ref(), empty);
+            let Some((left, right)) = part_pair(top, part, pos, env) else {
                 let texts = (
                     top.a.text(&self.graph, &self.tys),
                     top.b.text(&self.graph, &self.tys),

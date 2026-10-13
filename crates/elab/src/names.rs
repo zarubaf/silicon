@@ -315,6 +315,8 @@ pub(crate) struct Paths {
 
 impl Paths {
     fn add(&mut self, node: PathNode) -> PathId {
+        #[cfg(test)]
+        crate::counters::add(crate::counters::Count::Paths, 1);
         self.nodes.push(node);
         PathId(self.nodes.len() - 1)
     }
