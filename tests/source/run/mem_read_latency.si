@@ -1,0 +1,27 @@
+// A read has a latency of one cycle, and `valid` is a one-cycle pulse (v0.1 section 5, frontend spec 7.6).
+// Inputs: ra, re, wa, wd, we. Outputs: data, valid.
+// TOP M()
+module M() {
+    input ra: UInt[2];
+    input re: Bool;
+    input wa: UInt[2];
+    input wd: UInt[8];
+    input we: Bool;
+    output data: UInt[8];
+    output valid: Bool;
+    mem m: [UInt[8]; 4];
+    let r = m.read_port(ra, re);
+    write_port(m, wa, wd, we);
+    data := r.data;
+    valid := r.valid;
+}
+// word 1 takes 5; the read is off
+// STEP in=(clock$0rst false ra 0 re false wa 1 wd 5 we true) out=(data 0 valid false)
+// the read of word 1 is requested: the response still shows the start
+// STEP in=(clock$0rst false ra 1 re true wa 0 wd 0 we false) out=(data 0 valid false)
+// one cycle later the word and the pulse show
+// STEP in=(clock$0rst false ra 1 re true wa 0 wd 0 we false) out=(data 5 valid true)
+// the second read was enabled too, so the pulse shows again; the read is now off
+// STEP in=(clock$0rst false ra 0 re false wa 0 wd 0 we false) out=(data 5 valid true)
+// the pulse ends after one cycle
+// STEP in=(clock$0rst false ra 0 re false wa 0 wd 0 we false) out=(data 5 valid false)

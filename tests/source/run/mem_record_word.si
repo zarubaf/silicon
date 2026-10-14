@@ -1,0 +1,35 @@
+// A word that is a record with a `Bool` leaf and an `SInt` leaf: the leaves pack and unpack without loss
+// (frontend spec 7.6). The response has the leaves data.flag and data.val, then valid.
+// Inputs: ra, re, wa, we, wf, wv.
+// TOP M()
+struct W {
+    flag: Bool,
+    val: SInt[4],
+}
+module M() {
+    input ra: UInt[2];
+    input re: Bool;
+    input wa: UInt[2];
+    input we: Bool;
+    input wf: Bool;
+    input wv: SInt[4];
+    output data: W;
+    output valid: Bool;
+    mem m: [W; 4];
+    let r = m.read_port(ra, re);
+    write_port(m, wa, W(wf, wv), we);
+    data := r.data;
+    valid := r.valid;
+}
+// word 1 takes (true, -3)
+// STEP in=(clock$0rst false ra 0 re false wa 1 we true wf true wv -3) out=(data.flag false data.val 0 valid false)
+// read word 1; word 2 takes (false, 7)
+// STEP in=(clock$0rst false ra 1 re true wa 2 we true wf false wv 7) out=(data.flag false data.val 0 valid false)
+// read word 2; no write
+// STEP in=(clock$0rst false ra 2 re true wa 0 we false wf true wv -8) out=(data.flag true data.val -3 valid true)
+// read word 0, which is zero
+// STEP in=(clock$0rst false ra 0 re true wa 0 we false wf true wv -8) out=(data.flag false data.val 7 valid true)
+// read word 1 again
+// STEP in=(clock$0rst false ra 1 re true wa 0 we false wf true wv -8) out=(data.flag false data.val 0 valid true)
+// STEP in=(clock$0rst false ra 0 re false wa 0 we false wf true wv -8) out=(data.flag true data.val -3 valid true)
+// STEP in=(clock$0rst false ra 0 re false wa 0 we false wf true wv -8) out=(data.flag true data.val -3 valid false)
