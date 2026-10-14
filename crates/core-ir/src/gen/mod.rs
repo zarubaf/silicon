@@ -70,11 +70,20 @@ pub enum Resets {
     Module,
 }
 
+/// Which memories a design has.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mems {
+    /// No memory.
+    None,
+    /// Memories with any number of write ports and combinational reads.
+    Core,
+}
+
 /// Which forms of the core IR the generator uses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Config {
-    /// Memories, write ports, and reads.
-    pub mems: bool,
+    /// Which memories a design has.
+    pub mems: Mems,
     /// Names with a `$` field.
     pub dollar_names: bool,
     /// How registers reset.
@@ -87,7 +96,7 @@ impl Config {
     #[must_use]
     pub fn source() -> Config {
         Config {
-            mems: false,
+            mems: Mems::None,
             dollar_names: false,
             resets: Resets::Module,
         }
@@ -97,7 +106,7 @@ impl Config {
 impl Default for Config {
     fn default() -> Config {
         Config {
-            mems: true,
+            mems: Mems::Core,
             dollar_names: true,
             resets: Resets::Random,
         }
@@ -393,7 +402,7 @@ impl Tape {
                 source: Source::State,
             });
         }
-        let mem_count = if has_clock && self.config.mems {
+        let mem_count = if has_clock && self.config.mems == Mems::Core {
             self.below(MEMS + 1)
         } else {
             0
