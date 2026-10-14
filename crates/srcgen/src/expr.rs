@@ -14,6 +14,9 @@ use std::collections::HashMap;
 pub(super) struct Env<'a> {
     pub widths: HashMap<&'a str, u32>,
     pub insts: HashMap<&'a str, &'a Module>,
+    /// A name that source spells as another text, for example the
+    /// response register of a memory.
+    pub alias: HashMap<&'a str, String>,
 }
 
 impl Env<'_> {
@@ -61,7 +64,9 @@ impl Env<'_> {
         Ok(match e {
             Expr::Ref(n) => {
                 self.width(e)?;
-                n.text.clone()
+                self.alias
+                    .get(n.text.as_str())
+                    .map_or_else(|| n.text.clone(), Clone::clone)
             }
             Expr::InstOut { inst, port, .. } => format!("{}.{}", inst.text, port.text),
             Expr::Const { width, value, .. } => format!("UInt[{}]({value})", width.value),

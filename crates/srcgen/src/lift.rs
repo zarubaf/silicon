@@ -3,6 +3,7 @@
 //! core vectors to source vectors.
 
 use super::expr::Env;
+use super::memory;
 use core_ir::ast::{Conn, Design, Dir, Expr, Item, Module, Port, Stmt, Ty};
 use core_ir::r#gen::RESET;
 use core_ir::{interp, typed};
@@ -81,6 +82,7 @@ struct Sections {
     ports: Vec<String>,
     regs: Vec<String>,
     wires: Vec<String>,
+    mems: Vec<String>,
     insts: Vec<String>,
     assigns: Vec<String>,
 }
@@ -93,6 +95,7 @@ fn env_of<'a>(
     let mut env = Env {
         widths: HashMap::new(),
         insts: HashMap::new(),
+        alias: HashMap::new(),
     };
     for p in &m.ports {
         // The reset of a clocked module is its domain, not a value.
@@ -111,9 +114,6 @@ fn env_of<'a>(
                     .ok_or_else(|| Unsupported::Name(module.text.clone()))?;
                 env.insts.insert(name.text.as_str(), child);
             }
-            Stmt::Mem { name, .. } | Stmt::Write { mem: name, .. } => {
-                return Err(Unsupported::Memory(name.text.clone()));
-            }
             _ => {}
         }
     }
@@ -125,7 +125,17 @@ fn module(m: &Module, modules: &HashMap<&str, &Module>) -> Result<String, Unsupp
     if clocked && !m.ports.iter().any(|p| p.name.text == RESET) {
         return Err(Unsupported::Reset(m.name.text.clone()));
     }
-    let env = env_of(m, clocked, modules)?;
+    let mut env = env_of(m, clocked, modules)?;
+    let memories = memory::find(m, &env)?;
+    for mem in &memories {
+        for s in &m.stmts {
+            if let Stmt::Reg { name, .. } = s
+                && let Some(text) = mem.alias(&name.text)
+            {
+                env.alias.insert(name.text.as_str(), text);
+            }
+        }
+    }
     let mut sections = Sections::default();
     for dir in [Dir::Input, Dir::Output] {
         for p in m.ports.iter().filter(|p| p.dir == dir) {
@@ -139,8 +149,17 @@ fn module(m: &Module, modules: &HashMap<&str, &Module>) -> Result<String, Unsupp
                 .push(format!("    {kw} {}: UInt[{w}];", name(&p.name.text)?));
         }
     }
+    for mem in &memories {
+        let taken = |n: &str| env.widths.contains_key(n) || env.insts.contains_key(n);
+        let lines = mem.lines(&env, &taken)?;
+        sections.wires.extend(lines.wires);
+        sections.mems.extend(lines.mems);
+        sections.assigns.extend(lines.assigns);
+    }
     for s in &m.stmts {
-        statement(s, &env, &mut sections)?;
+        if !memories.iter().any(|mem| mem.owns(s)) {
+            statement(s, &env, &mut sections)?;
+        }
     }
     let domains = if clocked { "" } else { " domains()" };
     let mut text = format!("module {}(){domains} {{\n", name(&m.name.text)?);
@@ -148,6 +167,7 @@ fn module(m: &Module, modules: &HashMap<&str, &Module>) -> Result<String, Unsupp
         &sections.ports,
         &sections.regs,
         &sections.wires,
+        &sections.mems,
         &sections.insts,
         &sections.assigns,
     ]
