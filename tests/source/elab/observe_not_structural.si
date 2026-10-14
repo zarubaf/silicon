@@ -1,0 +1,45 @@
+// The contexts that 9.4 lists as not structural allow a graph effect: the call of a helper with a
+// `diagnostic` in `T(x)`, in the argument of `list(T)` and of `data_bits(T)`, in `static_assert`,
+// in `comptime if`, in `comptime for`, and in the argument of an instance. The body of a
+// `comptime fn` that the module calls allows `diagnostic` too. Each call gives one record, in
+// evaluation order.
+// TOP M()
+// CHECK: (module M
+// OBSERVE: (record 20 5 M ((call note 33 21)) (string "zero") (int 3))
+// OBSERVE-NEXT: (record 24 5 M ((call tnote 34 18)) (string "list") (int 0))
+// OBSERVE-NEXT: (record 24 5 M ((call tnote 35 23)) (string "bits") (int 0))
+// OBSERVE-NEXT: (record 20 5 M ((call note 36 19)) (string "assert") (int 1))
+// OBSERVE-NEXT: (record 20 5 M ((call note 37 18)) (string "if") (int 1))
+// OBSERVE-NEXT: (record 38 9 M () (string "then") (int 1))
+// OBSERVE-NEXT: (record 20 5 M ((call note 40 26)) (string "for") (int 2))
+// OBSERVE-NEXT: (record 41 9 M () (string "body") (int 0))
+// OBSERVE-NEXT: (record 41 9 M () (string "body") (int 1))
+// OBSERVE-NEXT: (record 20 5 M ((call note 43 23)) (string "arg") (int 4))
+// OBSERVE-NOT: (record
+comptime fn note(m: String, n: Int) -> Int {
+    diagnostic(m, n);
+    return n;
+}
+comptime fn tnote(m: String, t: Type) -> Type {
+    diagnostic(m, 0);
+    return t;
+}
+module Leaf(comptime n: Int) {
+    output o: Bool;
+    o := true;
+}
+module M() {
+    output o: UInt[8];
+    let a = UInt[8](note("zero", 3));
+    let l = list(tnote("list", Int));
+    let b = data_bits(tnote("bits", UInt[5]));
+    static_assert(note("assert", 1) == 1, "one");
+    comptime if (note("if", 1) == 1) {
+        diagnostic("then", 1);
+    }
+    comptime for i in 0..note("for", 2) {
+        diagnostic("body", i);
+    }
+    instance u = Leaf(note("arg", 4));
+    o := a;
+}
