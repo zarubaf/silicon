@@ -1715,6 +1715,7 @@ def fieldsOf (steps : List Step) : List (Pos × String) :=
 def opText : Eval.Op → String
   | .ref p => Names.encode p.name
   | .out i q => s!"{Names.encode i.name}.{Names.encode q}"
+  | .word m o => s!"{Names.encode (m.push (.role .rdata)).name}@{o}"
   | _ => ""
 
 /-!
@@ -1860,6 +1861,7 @@ part of a node prints in brackets.
 -/
 def nameText : Eval.Hw → String
   | .node _ _ _ (.ref p) [] => Names.encode p.name
+  | .node _ t _ (.word m o) [] => s!"{opText (.word m o)}:{t.info.width}"
   | .node _ _ _ (.lit v) [] => v.serialize
   | .node _ t _ _ _ => s!"hardware {t.text}"
 
@@ -2487,5 +2489,82 @@ def useResponse : String := "module M() {\n  input a: UInt[8];\n  let t = ReadRe
   "(int 3)"
 #guard out "const X: Int = 5;\nfn write_port(a: Int) -> Int { return a; }" "X.write_port()" ==
   "(int 5)"
+
+/-!
+The word reference of a memory response (section 7.6). The base `word` holds the memory `m` and
+a bit offset. A leaf of a word is `Op.word`, shown as `m$0rdata@o` and with its width `:w`. It
+has the size of a finite value of its type, as a name has.
+-/
+def memM : Names.Path := ⟨"m", []⟩
+def word (_ : Eval.Ctx) (t : Ty) : Eval.Val := .agg (.ref (.word memM 0) t)
+def wordX (t : Ty) : Eval.Val := .agg (.ref (.word memM 0) t)
+#guard (Eval.Op.word memM 3).size (.uint 200) == 4
+#guard (Eval.Hw.mk at1 (.uint 200) (.word memM 3) []).size == 4
+
+/-!
+The offset of a part: `k` times the element width for an array, and the widths of the earlier
+parts for a tuple or a record. A table of fields can leave out a field without a leaf.
+-/
+#guard Eval.Ty.offset (fun _ => none) (.array (.uint 4) 8) 3 == 12
+#guard Eval.Ty.offset (fun _ => none) (.tuple #[.bool, .uint 8, .uint 3]) 2 == 9
+#guard Eval.Ty.offset (fun _ => some #[(0, .uint 8), (2, .uint 4)]) .unit 2 == 8
+#guard Eval.Ty.offset (fun _ => some #[(0, .uint 8), (2, .uint 4)]) .unit 3 == 12
+
+/-!
+A word base takes each step that a name base takes, with the same charges. In `P`, `a` is at 0,
+`z` has no bit, `t.0` is at 8, and `t.1[k]` is at `9 + 4k`. A scalar part is a leaf `Op.word`,
+and an aggregate part is a reference with its offset. A part without a hardware leaf is a
+static value, and a huge one is `S015` at the step, as for a name base.
+-/
+#guard sel shapes "P" word [.fld "a"] == "hw UInt[8] m$0rdata@0 1 true 2"
+#guard sel shapes "P" word [.fld "t", .dot 1, .idx 2] == "hw UInt[4] m$0rdata@17 1 true 6"
+#guard sel shapes "P" word [.fld "t"] == "ref (Bool, [UInt[4]; 3]) m$0rdata@8 6 true 2"
+#guard sel shapes "P" word [.fld "t", .idx 0] == "hw Bool m$0rdata@8 1 true 5"
+#guard sel shapes "P" word [.fld "e"] == "(array unit ((unit) (unit) (unit))) false 6"
+#guard sel shapes "P" word [.fld "z"] == "S015 9:2"
+#guard sel shapes "T2" word [.idx 1] == "hw UInt[8] m$0rdata@1 1 true 4"
+#guard sel shapes "E" word [.idx 5, .dot 1] == "hw Bool m$0rdata@5 1 true 5"
+
+/-! The offset of an index of a huge array is a product of the metadata, with no walk. -/
+#guard sel "" "[UInt[8]; 1099511627776]" word [.idx 1099511627775] ==
+  "hw UInt[8] m$0rdata@8796093022200 1 true 4"
+#guard sel "" "[[UInt[8]; 1099511627776]; 1099511627776]" word [.idx 7, .idx 9] ==
+  "hw UInt[8] m$0rdata@61572651155528 1 true 7"
+
+/-!
+The normal form of a word: a scalar word is a leaf at the offset 0, and an aggregate word stays a
+reference. Neither charges.
+-/
+def wordNormal (t : Ty) : String :=
+  match Eval.run {} #[] (fun _ => Eval.normalize at1 (.ref (.word memM 0) t)) with
+  | .ok (v, used) => s!"{valText v} {used}"
+  | .error e => s!"{e.code}"
+#guard wordNormal (.uint 8) == "m$0rdata@0:8 0"
+#guard wordNormal (.tuple #[.uint 8, .bool]) == "ref m$0rdata@0 0"
+
+/-!
+A binding of a word expands it into its leaves in packing order, each with its offset. Its
+charges equal those of a name base. A place update expands one level on its path. `()` has no
+bit, so `b` is at 8.
+-/
+def wordS : String := "struct S { a: UInt[8], u: (), b: (Bool, [UInt[4]; 2]) }\n"
+#guard runF (wordS ++ assignIn "S" "let y = x;") wordX ==
+  "y$a=m$0rdata@0:8 y$b$0e=m$0rdata@8:1 y$b$1e$0e=m$0rdata@9:4 y$b$1e$1e=m$0rdata@13:4 | " ++
+  "ref m$0rdata@0 | 14"
+#guard runF (wordS ++ assignIn "S" "let y = x;") refX ==
+  "y$a=x$a y$b$0e=x$b$0e y$b$1e$0e=x$b$1e$0e y$b$1e$1e=x$b$1e$1e | ref x | 14"
+#guard runF (wordS ++ assignIn "S" "x.a = 1;") wordX ==
+  "x$1v$b$0e=m$0rdata@8:1 x$1v$b$1e$0e=m$0rdata@9:4 x$1v$b$1e$1e=m$0rdata@13:4 | " ++
+  "[(uint 8 1), (unit), ref x$1v$b] | 18"
+#guard runF (wordS ++ assignIn "S" "x.b.1[1] = 1;") wordX ==
+  "x$1v$a=m$0rdata@0:8 x$1v$b$0e=m$0rdata@8:1 x$1v$b$1e$0e=m$0rdata@9:4 | " ++
+  "[x$1v$a, (unit), [x$1v$b$0e, [x$1v$b$1e$0e, (uint 4 1)]]] | 22"
+
+/-! The equality walk takes the leaves of a word by their offsets, with the charges of a name. -/
+#guard runEq "(UInt[8], Bool)" "x == x" wordX ==
+  "y=(& (== m$0rdata@0:8 m$0rdata@0:8) (== m$0rdata@8:1 m$0rdata@8:1)) | ref m$0rdata@0 | 21"
+#guard runF ("struct S { a: UInt[8], b: Bool }\n" ++ assignIn "S" "let y = x == S(1, true);")
+  wordX 1000000 hwTree ==
+  "y=(& (== m$0rdata@0:8 (uint 8 1)) (== m$0rdata@8:1 (bool true))) | ref m$0rdata@0 | 34"
 
 end Silicon.Source.Test.Eval
