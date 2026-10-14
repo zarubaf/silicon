@@ -36,8 +36,12 @@ These rules settle the open points of the spec:
   use, also in another statement, refers to it, as a use of a temporary does.
 - The lowering runs the instantiations in the order they finish. In one module, it lowers the
   module, the domain ports, and the ports in declaration order. Then it lowers the registers,
-  the named bindings, the `:=` bindings, and the instances. A connection lowers with its `:=`
-  binding.
+  the memories, the named bindings, the `:=` bindings, and the instances. A connection lowers
+  with its `:=` binding.
+- Each memory lowers as one block in the order of section 7.6, at the position of its `mem`
+  statement. A leaf of its word (`Op.word`) is an `extract` of `m$0rdata` with the height 2.
+  A rule that uses it twice binds it to a temporary. The write data is a `concat` chain
+  that a loop over the leaves builds, so the recursion does not follow the leaf count.
 - A port, a register, and a `:=` binding lower one leaf at a time, in packing order
   (`Layout.foldLeaves`). Each leaf charges its node and its name before it exists, so no list
   of leaves comes before its charges. An empty one lowers to nothing. A leaf statement of a `:=`
@@ -228,6 +232,10 @@ def lower (target : Path) (root : Bool) : Hw → FM Low
       charge p 1
       let i ← pathText p inst
       pure ⟨.port c i (← nameText p q), some u, 1⟩
+    | .word m off, [] =>
+      charge p 2
+      let x ← pathText p (m.push (.role .rdata))
+      pure ⟨.extract c (.ref c x) off (width t), none, 2⟩
     | .lit v, [] =>
       charge p 1
       pure ⟨← constOf c v, some 1, 1⟩
@@ -404,6 +412,104 @@ def domainConns (pos : Pos) (c d : Option String) : FM (List (String × Core.Exp
   | none, _ => return []
   | some _, none => defect "a clocked child in a combinational module"
 
+/-! A reference to the core name `path` at `pos`: one node and the bytes of the name. -/
+def nameRef (pos : Pos) (path : Path) : FM Core.Expr := do
+  charge pos 1
+  return .ref (cpos pos) (← pathText pos path)
+
+/-! A response register of a memory at `pos`, of the width `w`, with the reset value 0. -/
+def memReg (pos : Pos) (d : String) (path : Path) (w : Nat) : FM Core.Stmt := do
+  charge pos 2
+  let y ← pathText pos path
+  let clk ← nameText pos (clockName d)
+  let sig ← domainRef pos (resetName d)
+  charge pos 1
+  return .reg (cpos pos) y w clk (some ⟨.sync, sig, .const (cpos pos) w 0⟩)
+
+/-! A request `let` of a memory at `pos`: the value of the scalar `a` of the type `t`. -/
+def memLet (pos : Pos) (path : Path) (t : Ty) (a : Agg) : FM Core.Stmt := do
+  charge pos 1
+  let x ← pathText pos path
+  return .let_ (cpos pos) x (width t) (← value path (← leafHw pos t (some a)))
+
+/-!
+The write data of a memory at `pos`: `(concat l_(n-1) (concat ... l_0))` over the leaves of the
+word `a` of the type `t` (section 7.6). The loop starts at `l_0` in packing order. Each step
+charges its `concat` node, then lowers its leaf. Before that, the chain so far binds to a
+temporary of the target `m` when its effective height reaches 64. A word with one leaf is that
+leaf. The chain is the value of the statement, so its top never binds.
+-/
+def memData (fs : Layout.Fields) (pos : Pos) (m : Path) (t : Ty) (a : Agg) : FM Core.Expr := do
+  let one := t.info.leaves == 1
+  let acc ← Layout.foldLeaves fs (sub fs pos) (fun (acc : Option (Low × Nat)) l x => do
+    match acc with
+    | none => return some (← lower m one (← leafHw pos l.ty x), width l.ty)
+    | some (lo, w) =>
+      let lo ← deep pos m w false lo
+      charge pos 1
+      let r ← lower m false (← leafHw pos l.ty x)
+      let e := Core.Expr.bin (cpos pos) .concat r.expr lo.expr
+      return some (⟨e, none, max r.height lo.height + 1⟩, w + width l.ty))
+    noFields t.depth m t (some a) none
+  let some (lo, _) := acc | defect s!"the memory word {t.text} has no leaf"
+  return lo.expr
+
+/-!
+The block of the memory `m` of the domain `d` (section 7.6): the core memory, the response
+registers, the request `let` values, the two `next` statements, and the `write`. Each core node
+charges before it exists, at the position of the `mem` statement. The `write` has the target
+`m`, so its temporaries count from 0 over the address, the data, and the enable.
+-/
+def lowerMem (fs : Layout.Fields) (d : String) (body : Array Core.Stmt) (m : Mem) :
+    FM (Array Core.Stmt) := do
+  let p := m.pos
+  let c := cpos p
+  let some (raddr, ren) := m.read | defect s!"the memory `{m.name}` has no read request"
+  let some (waddr, wdata, wen) := m.write | defect s!"the memory `{m.name}` has no write request"
+  let w := m.word.info.width
+  let aw := addrWidth m.depth
+  let rdata := m.path.push (.role .rdata)
+  let rvalid := m.path.push (.role .rvalid)
+  let enPath := m.path.push (.role .ren)
+  let addrPath := m.path.push (.role .raddr)
+  charge p 1
+  let x ← pathText p m.path
+  let clk ← nameText p (clockName d)
+  let mut body := body.push (.mem c x w m.depth clk)
+  body := body.push (← memReg p d rdata w)
+  body := body.push (← memReg p d rvalid 1)
+  body := body.push (← memLet p enPath .bool ren)
+  body := body.push (← memLet p addrPath (.uint aw) raddr)
+  charge p 3
+  let y ← pathText p rdata
+  let en ← nameRef p enPath
+  let mx ← pathText p m.path
+  let ra ← nameRef p addrPath
+  let old ← nameRef p rdata
+  body := body.push (.next c y (.mux c en (.read c mx ra) old))
+  charge p 2
+  let y ← pathText p rvalid
+  let en ← nameRef p enPath
+  let ok ← if m.depth == 2 ^ aw then do charge p 1; pure (Core.Expr.const c 1 1)
+    else do
+      charge p 1
+      let ra ← nameRef p addrPath
+      charge p 1
+      pure (.icmp c .ult ra (.const c aw m.depth))
+  body := body.push (.next c y (.bin c .and en ok))
+  charge p 1
+  let mx ← pathText p m.path
+  modify fun s => { s with count := 0 }
+  let a ← lower m.path true (← leafHw p (.uint aw) (some waddr))
+  let dt ← memData fs p m.path m.word wdata
+  charge p 1
+  let e ← lower m.path false (← leafHw p .bool (some wen))
+  charge p 1
+  let rst ← domainRef p (resetName d)
+  charge p 1
+  let en := Core.Expr.bin c .and e.expr (.bin c .xor rst (.const c 1 1))
+  return body.push (.write c mx 0 a.expr dt en)
+
 /-!
 The core module of one instantiation. `fs` names the fields of each struct type. Each port,
 register, and `:=` binding lowers one leaf at a time in packing order, and each leaf charges
@@ -443,6 +549,9 @@ def lowerInst (fs : Layout.Fields) (i : Inst) : FM Core.Module := do
       let reset : Core.Reset := ⟨.sync, sig, ← leafConst (cpos r.pos) x⟩
       return body.push (.reg (cpos r.pos) y (width l.ty) clk (some reset)))
       noFields r.ty.depth r.path r.ty (some (.static r.init)) body
+  for m in b.mems do
+    let some d := b.domain | defect "a memory in a combinational module"
+    body ← lowerMem fs d body m
   for l in b.lets do
     charge l.pos 1
     let x ← pathText l.pos l.path
