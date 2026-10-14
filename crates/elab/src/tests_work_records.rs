@@ -347,3 +347,51 @@ fn a_domain_read_copies_no_name() {
         );
     }
 }
+
+/// A record with a long name in a handle, a module, a port, or its message stops at the charge
+/// of its bytes before it builds any name: the length pass measures the borrowed fields. Each
+/// case is a source and the least fuel that appends its record.
+#[test]
+fn a_record_that_does_not_fit_builds_no_name() {
+    let name = "w".repeat(10_000);
+    let child = format!("module {name}() {{\n  input {name}: UInt[1];\n}}\n");
+    let cases = [
+        (
+            module(
+                "",
+                &format!("  wire {name}: UInt[8];\n  diagnostic(\"w\", {name});\n"),
+            ),
+            10_107,
+        ),
+        (
+            module("", &format!("  diagnostic(\"{name}\", 1);\n")),
+            30_090,
+        ),
+        (
+            format!(
+                "{child}{}",
+                module(
+                    "",
+                    &format!("  instance i = {name}();\n  diagnostic(\"i\", i);\n")
+                )
+            ),
+            30_168,
+        ),
+        (
+            format!(
+                "{child}{}",
+                module(
+                    "",
+                    &format!("  instance i = {name}();\n  diagnostic(\"p\", i.{name});\n")
+                )
+            ),
+            30_156,
+        ),
+    ];
+    for (k, (src, least)) in cases.iter().enumerate() {
+        assert_eq!(run_at(src, *least).0, 1, "case {k}");
+        let (records, code, counts) = run_at(src, least - 1);
+        assert_eq!((records, code), (0, Some(crate::Code::S015)), "case {k}");
+        assert_eq!(counts.copied, 0, "case {k}: {} bytes", counts.copied);
+    }
+}
