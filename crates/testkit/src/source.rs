@@ -124,14 +124,19 @@ fn compare_message(want: &Expected, out: &Output) -> Result<(), String> {
 
 /// What a front end printed for `observe`: the record lines, as bytes, then the error line, if
 /// the exit code is 1.
-struct Observed {
-    records: Vec<u8>,
-    error: Option<String>,
+pub struct Observed {
+    pub records: Vec<u8>,
+    pub error: Option<String>,
 }
 
 /// Splits the output of `observe` into its records and its error line. The records end at the
 /// last line when the exit code is 1, and that line is a report `error[XNNN]: L:C: message`.
-fn split_observed(out: &Output) -> Result<Observed, String> {
+///
+/// # Errors
+///
+/// Returns the reason if the exit code is neither 0 nor 1, or if the output at exit 1 does not
+/// end with a report line.
+pub fn split_observed(out: &Output) -> Result<Observed, String> {
     match out.status.code() {
         Some(0) => Ok(Observed {
             records: out.stdout.clone(),
@@ -166,7 +171,15 @@ fn split_observed(out: &Output) -> Result<Observed, String> {
 /// same record lines byte for byte, and, with exit 1, the same code, line, and column in the
 /// error line. The message of the error line is compared only when `want` holds an
 /// `expected-message`, as `compare_check` does.
-fn compare_observe(rust: &Output, lean: &Output, want: Option<&Expected>) -> Result<(), String> {
+///
+/// # Errors
+///
+/// Returns the first difference between the two runs.
+pub fn compare_observe(
+    rust: &Output,
+    lean: &Output,
+    want: Option<&Expected>,
+) -> Result<(), String> {
     let outputs = || {
         format!(
             "\nRust stdout:\n{}\nLean stdout:\n{}",
