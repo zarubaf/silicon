@@ -1085,3 +1085,21 @@ fn the_walk_skips_the_prelude_struct_and_a_user_struct_gets_the_check() {
     // The same forms in a user struct give the error at their position.
     fails("struct ReadResponse { data: UInt }", S007, 1, 29);
 }
+
+#[test]
+fn s007_diagnostic_takes_two_arguments() {
+    ok(&fn_body("diagnostic(\"m\", p);\nreturn p;"));
+    ok(&fn_body("p.diagnostic(p);\nreturn p;"));
+    fails(&fn_body("diagnostic(\"m\");\nreturn p;"), S007, 2, 1);
+    fails(&fn_body("diagnostic(\"m\", p, p);\nreturn p;"), S007, 2, 1);
+    fails(&fn_body("p.diagnostic();\nreturn p;"), S007, 2, 1);
+    assert_eq!(
+        message(&fn_body("diagnostic(\"m\");\nreturn p;")),
+        "`diagnostic` takes 2 argument(s), but it has 1"
+    );
+    // A user function of that name has its own arity.
+    ok(&format!(
+        "{}\nfn diagnostic(a: Bool) -> Bool {{ return a; }}",
+        fn_body("diagnostic(p);\nreturn p;")
+    ));
+}
