@@ -283,10 +283,32 @@ theorem foldPort_f (fs : Layout.Fields) (q : Elab.PortDecl) (b : β) {f : β →
     FFollows (Layout.foldPort fs q b f bad) := by
   unfold Layout.foldPort; exact foldLeaves_f fs _ (fun b l _ => h b l) hb _ _ _ _ _
 
+theorem nameRef_f (pos : Pos) (path : Names.Path) : FFollows (nameRef pos path) := by
+  unfold nameRef; ffollows [pathText_f]
+
+theorem memReg_f (pos : Pos) (d : String) (path : Names.Path) (w : Nat) :
+    FFollows (memReg pos d path w) := by
+  unfold memReg; ffollows [pathText_f, nameText_f, domainRef_f]
+
+theorem memLet_f (pos : Pos) (path : Names.Path) (t : Ty) (a : Agg) :
+    FFollows (memLet pos path t a) := by
+  unfold memLet; ffollows [pathText_f, value_f, leafHw_f]
+
+theorem memData_f (fs : Layout.Fields) (pos : Pos) (m : Names.Path) (t : Ty) (a : Agg) :
+    FFollows (memData fs pos m t a) := by
+  unfold memData
+  ffollows [foldLeaves_f, lower_f _ _ _ (Nat.le_refl _), deep_f, leafHw_f, noFields_f]
+
+theorem lowerMem_f (fs : Layout.Fields) (d : String) (body : Array Core.Stmt) (m : Mem) :
+    FFollows (lowerMem fs d body m) := by
+  unfold lowerMem
+  ffollows [pathText_f, nameText_f, memReg_f, memLet_f, nameRef_f, memData_f, domainRef_f,
+    lower_f _ _ _ (Nat.le_refl _), leafHw_f]
+
 theorem lowerInst_f (fs : Layout.Fields) (i : Elab.Inst) : FFollows (lowerInst fs i) := by
   unfold lowerInst
   ffollows [nameText_f, pathText_f, domainRef_f, domainConns_f, value_f, constOf_f, foldPort_f,
-    foldLeaves_f, leafHw_f, leafConst_f, noFields_f]
+    foldLeaves_f, leafHw_f, leafConst_f, noFields_f, lowerMem_f]
 
 theorem lowerDesign_f (pos : Pos) (d : Elab.Design) : FFollows (lowerDesign pos d) := by
   unfold lowerDesign; ffollows [nameText_f, lowerInst_f]
