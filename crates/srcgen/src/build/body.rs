@@ -5,8 +5,8 @@
 use super::hw::{DEPTH, Want};
 use super::stat::{self, Kind, Reach};
 use super::{
-    Builder, Built, CONTAINER_LEVELS, COUNT, Ctx, ENVS, HELPERS, Helper, Hw, INPUTS, INSTANCES,
-    MODULE_STMTS, MODULES, Module, NESTED_STMTS, NESTING, Names, OUTPUTS, PARAMS, SAMPLE_INTS, Sig,
+    Builder, Built, COUNT, Ctx, ENVS, HELPERS, Helper, Hw, INPUTS, INSTANCES, MODULE_STMTS,
+    MODULES, Module, NESTED_STMTS, NESTING, Names, OUTPUTS, PARAMS, SAMPLE_INTS, Sig,
 };
 use crate::eval::{Env, Fault, Value, concrete, eval, loop_values};
 use crate::program::{HExpr, Place, SExpr, STy, Scalar, Stmt, Ty};
@@ -422,7 +422,7 @@ impl Builder {
     /// A static `let` of type `Nat`, `Int`, or `Bool`.
     fn static_let(&mut self, ctx: &mut Ctx, names: &mut Names, out: &mut Vec<Stmt>) -> Built {
         if self.tape.below(4) == 3 {
-            let ty = self.container_ty(CONTAINER_LEVELS);
+            let ty = self.static_container_ty();
             let value = self.container(&ty, stat::DEPTH, self.reach(ctx));
             let vs = self.values(&value, &ctx.envs).ok_or(Fault::Type)?;
             let name = names.fresh("s");

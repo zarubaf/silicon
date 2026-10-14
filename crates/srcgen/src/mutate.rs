@@ -23,7 +23,9 @@
 //! values, or pass, so its prediction is `None`.
 
 use super::program::sexpr as sexpr_text;
-use super::program::{HExpr, Item, Place, Program, Radix, SBin, SExpr, Stmt, Ty, render_items};
+use super::program::{
+    FieldTy, HExpr, Item, Place, Program, Radix, SBin, SExpr, Stmt, Ty, render_items,
+};
 use num_bigint::BigInt;
 use std::mem;
 
@@ -233,6 +235,13 @@ impl<'a> Walk<'a> {
     fn item_body(&mut self, item: &mut Item) {
         match item {
             Item::Const { value, .. } => self.sexpr(value),
+            Item::Struct(def) => {
+                for (_, t) in &mut def.fields {
+                    if let FieldTy::UInt(w) | FieldTy::SInt(w) = t {
+                        self.sexpr(w);
+                    }
+                }
+            }
             Item::ComptimeFn(f) => {
                 self.sexpr(&mut f.base);
                 self.sexpr(&mut f.step);
@@ -405,7 +414,21 @@ impl<'a> Walk<'a> {
                     self.sexpr(x);
                 }
             }
-            SExpr::Select(a, ..) | SExpr::Len(a) | SExpr::Unary(_, a) => self.sexpr(a),
+            SExpr::Record(name, targs, fields) => {
+                self.rename(name);
+                for x in targs.iter_mut().chain(fields) {
+                    self.sexpr(x);
+                }
+            }
+            SExpr::Zero(name, targs) | SExpr::DataBits(name, targs) => {
+                self.rename(name);
+                for x in targs {
+                    self.sexpr(x);
+                }
+            }
+            SExpr::Select(a, ..) | SExpr::Field(a, _) | SExpr::Len(a) | SExpr::Unary(_, a) => {
+                self.sexpr(a);
+            }
             SExpr::Index(a, b) | SExpr::Binary(_, a, b) => {
                 self.sexpr(a);
                 self.sexpr(b);
@@ -455,6 +478,7 @@ fn item_name(item: &Item) -> &str {
     match item {
         Item::Const { name, .. } | Item::Helper { name, .. } | Item::Module { name, .. } => name,
         Item::ComptimeFn(f) => &f.name,
+        Item::Struct(def) => &def.name,
     }
 }
 

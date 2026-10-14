@@ -28,7 +28,7 @@ pub(super) fn kind(t: &STy) -> Option<Kind> {
     match t {
         STy::Nat | STy::Int => Some(Kind::Int),
         STy::Bool => Some(Kind::Bool),
-        STy::Tuple(_) | STy::Array(..) => None,
+        STy::Tuple(_) | STy::Array(..) | STy::UInt(_) | STy::SInt(_) | STy::Record(_) => None,
     }
 }
 
@@ -412,6 +412,12 @@ impl Builder {
             }
             STy::Tuple(ts) => Value::Tuple(ts.iter().map(|t| self.top_value(t)).collect()),
             STy::Array(t, n) => Value::Array((0..*n).map(|_| self.top_value(t)).collect()),
+            STy::UInt(w) => Value::UInt(*w, BigInt::ZERO),
+            STy::SInt(w) => Value::SInt(*w, BigInt::ZERO),
+            STy::Record(r) => Value::Record(
+                r.clone(),
+                r.fields.iter().map(|(_, t)| self.top_value(t)).collect(),
+            ),
         }
     }
 }
@@ -423,16 +429,33 @@ pub(super) fn arg_range(t: &STy) -> (i64, i64) {
         STy::Nat => (1, 12),
         STy::Int => (-6, 6),
         STy::Bool => (0, 1),
-        STy::Tuple(_) | STy::Array(..) => (0, 0),
+        STy::Tuple(_) | STy::Array(..) | STy::UInt(_) | STy::SInt(_) | STy::Record(_) => (0, 0),
     }
 }
 
 /// A literal for a value.
 pub(super) fn value_expr(v: &Value) -> SExpr {
     match v {
-        Value::Int(n) => SExpr::Int(n.clone(), Radix::Dec),
         Value::Bool(b) => SExpr::Bool(*b),
         Value::Tuple(xs) => SExpr::Tuple(xs.iter().map(value_expr).collect()),
         Value::Array(xs) => SExpr::Array(xs.iter().map(value_expr).collect()),
+        Value::Int(n) | Value::UInt(_, n) | Value::SInt(_, n) => SExpr::Int(n.clone(), Radix::Dec),
+        Value::Record(rt, xs) => {
+            let targs = rt.args.iter().map(value_expr).collect();
+            if rt.zeroable() && xs.iter().all(is_zero) {
+                SExpr::Zero(rt.name.clone(), targs)
+            } else {
+                SExpr::Record(rt.name.clone(), targs, xs.iter().map(value_expr).collect())
+            }
+        }
+    }
+}
+
+/// Whether `v` is the zero of its type: `0` or `false`.
+fn is_zero(v: &Value) -> bool {
+    match v {
+        Value::Int(n) | Value::UInt(_, n) | Value::SInt(_, n) => *n == BigInt::ZERO,
+        Value::Bool(b) => !b,
+        Value::Tuple(xs) | Value::Array(xs) | Value::Record(_, xs) => xs.iter().all(is_zero),
     }
 }

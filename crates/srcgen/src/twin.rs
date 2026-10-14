@@ -126,18 +126,29 @@ fn token(v: &Value) -> Option<String> {
         Value::Int(n) => Some(n.to_string()),
         Value::Bool(true) => Some("1b".to_owned()),
         Value::Bool(false) => Some("0b".to_owned()),
-        Value::Tuple(_) | Value::Array(_) => None,
+        Value::Tuple(_)
+        | Value::Array(_)
+        | Value::UInt(..)
+        | Value::SInt(..)
+        | Value::Record(..) => None,
     }
 }
 
-/// A static value as a literal.
-fn literal(v: Value) -> SExpr {
-    match v {
+/// A static value as a literal, if it has one: a finite integer has none,
+/// so a record of hardware data has none.
+fn literal(v: Value) -> Option<SExpr> {
+    let all = |xs: Vec<Value>| xs.into_iter().map(literal).collect::<Option<Vec<_>>>();
+    Some(match v {
         Value::Int(n) => SExpr::Int(n, Radix::Dec),
         Value::Bool(b) => SExpr::Bool(b),
-        Value::Tuple(xs) => SExpr::Tuple(xs.into_iter().map(literal).collect()),
-        Value::Array(xs) => SExpr::Array(xs.into_iter().map(literal).collect()),
-    }
+        Value::Tuple(xs) => SExpr::Tuple(all(xs)?),
+        Value::Array(xs) => SExpr::Array(all(xs)?),
+        Value::UInt(..) | Value::SInt(..) => return None,
+        Value::Record(rt, xs) => {
+            let targs = all(rt.args.clone())?;
+            SExpr::Record(rt.name.clone(), targs, all(xs)?)
+        }
+    })
 }
 
 /// The scope of a frame: its static env, the twin name of each hardware
@@ -224,7 +235,9 @@ impl Writer<'_> {
     }
 
     fn fold(&self, e: &SExpr, fr: &Frame) -> SExpr {
-        self.value(e, fr).map_or_else(|| e.clone(), literal)
+        self.value(e, fr)
+            .and_then(literal)
+            .unwrap_or_else(|| e.clone())
     }
 
     fn ty(&self, t: &Ty, fr: &Frame) -> Ty {

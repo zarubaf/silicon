@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Static containers: tuple and array types, literals, and the scalar
-//! exits that bring a leaf back to a static position.
+//! Static containers: tuple, array, and record types, literals, and the
+//! scalar exits that bring a leaf back to a static position.
 //!
 //! A container leaves a static position only through an exit: an index,
-//! a selector `.N`, or `len`. An index is a static position, so each index
+//! a selector `.N`, a field, `len`, or `data_bits`. An index is a static position, so each index
 //! is in range in each env of the env set, or it falls back to a literal.
 
 use super::stat::{self, Kind, Reach, bin, int};
@@ -18,11 +18,26 @@ fn has_leaf(t: &STy, kind: Kind) -> bool {
         STy::Bool => kind == Kind::Bool,
         STy::Tuple(ts) => ts.iter().any(|t| has_leaf(t, kind)),
         STy::Array(t, _) => has_leaf(t, kind),
+        STy::Record(r) => r.fields.iter().any(|(_, t)| has_leaf(t, kind)),
+        STy::UInt(_) | STy::SInt(_) => false,
     }
 }
 
 impl Builder {
-    /// A tuple or an array type with at most `levels` levels of nesting.
+    /// The type of a static container binding: a record, or a tuple or an
+    /// array.
+    pub(super) fn static_container_ty(&mut self) -> STy {
+        if !self.structs.is_empty()
+            && self.tape.below(3) == 0
+            && let Some(record) = self.record_ty()
+        {
+            return record;
+        }
+        self.container_ty(CONTAINER_LEVELS)
+    }
+
+    /// A tuple or an array type with at most `levels` levels of nesting,
+    /// a record counting for two (itself and its field container).
     /// Choice 0 is the shortest tuple of one `Int`.
     pub(super) fn container_ty(&mut self, levels: u32) -> STy {
         if self.tape.flag() {
@@ -34,8 +49,16 @@ impl Builder {
         }
     }
 
-    /// The type of an element: a scalar, or a container one level deeper.
+    /// The type of an element: a scalar, a record, or a container one
+    /// level deeper.
     fn element_ty(&mut self, levels: u32) -> STy {
+        if levels >= 3
+            && !self.structs.is_empty()
+            && self.tape.below(6) == 5
+            && let Some(record) = self.record_ty()
+        {
+            return record;
+        }
         if levels > 1 && self.tape.below(4) == 3 {
             return self.container_ty(levels - 1);
         }
@@ -59,8 +82,9 @@ impl Builder {
                 note!(self, arrays);
                 SExpr::Array((0..*n).map(|_| self.container(t, depth, r)).collect())
             }
+            STy::Record(rt) => self.record(rt, depth, r),
             STy::Bool => self.element(Kind::Bool, depth, r),
-            STy::Nat | STy::Int => self.element(Kind::Int, depth, r),
+            STy::Nat | STy::Int | STy::UInt(_) | STy::SInt(_) => self.element(Kind::Int, depth, r),
         }
     }
 
@@ -82,6 +106,12 @@ impl Builder {
     /// literal, then a chain of indexes and selectors down to a leaf, or
     /// `len` of an array. `None` if no container has such a leaf.
     pub(super) fn exit(&mut self, kind: Kind, depth: u32, r: Reach<'_>) -> Option<SExpr> {
+        if kind == Kind::Int
+            && self.tape.below(8) == 0
+            && let Some(bits) = self.data_bits(r)
+        {
+            return Some(bits);
+        }
         let names: Vec<(&String, &STy)> = r
             .names
             .iter()
@@ -113,7 +143,7 @@ impl Builder {
                 .get(self.tape.index(consts.len()))
                 .map(|n| SExpr::Name((*n).clone())),
             3 => {
-                let t = self.container_ty(CONTAINER_LEVELS);
+                let t = self.static_container_ty();
                 let r = Reach {
                     names,
                     fns: 0,
@@ -159,6 +189,17 @@ impl Builder {
                 let sel = SExpr::Select(Box::new(base), u32::try_from(k).ok()?, radix);
                 self.descend(sel, ts.get(k)?, kind, depth, r)
             }
+            STy::Record(rt) => {
+                let ks: Vec<usize> = (0..rt.fields.len())
+                    .filter(|&k| rt.fields.get(k).is_some_and(|(_, t)| has_leaf(t, kind)))
+                    .collect();
+                let k = *ks.get(self.tape.index(ks.len()))?;
+                let (field, ty) = rt.fields.get(k)?;
+                note!(self, fields);
+                let sel = SExpr::Field(Box::new(base), field.clone());
+                self.descend(sel, ty, kind, depth, r)
+            }
+            STy::UInt(_) | STy::SInt(_) => None,
             STy::Array(elem, n) => {
                 if kind == Kind::Int && self.tape.below(4) == 0 {
                     note!(self, lens);

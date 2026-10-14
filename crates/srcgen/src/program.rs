@@ -24,7 +24,8 @@ pub(crate) enum Radix {
 /// The type of a static parameter, formal, result, or binding. A container
 /// type holds `Int` and `Bool` leaves only: the serialization of an array
 /// names the element type, and `Nat` is a check on an `Int`, not a type of
-/// its value.
+/// its value. `UInt` and `SInt` are the types of the hardware fields of a
+/// record, with their width evaluated.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum STy {
     Nat,
@@ -34,6 +35,28 @@ pub(crate) enum STy {
     Tuple(Vec<STy>),
     /// `[T; N]` with `N >= 1`.
     Array(Box<STy>, u32),
+    UInt(u32),
+    SInt(u32),
+    Record(Box<RecTy>),
+}
+
+/// A struct specialization: the struct, its arguments, and its field types
+/// with the widths evaluated.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RecTy {
+    pub(crate) name: String,
+    pub(crate) args: Vec<Value>,
+    pub(crate) fields: Vec<(String, STy)>,
+}
+
+impl RecTy {
+    /// Whether `T()` makes a zero of the type: each field is hardware data
+    /// that is a `Bool` or a finite integer.
+    pub(crate) fn zeroable(&self) -> bool {
+        self.fields
+            .iter()
+            .all(|(_, t)| matches!(t, STy::Bool | STy::UInt(_) | STy::SInt(_)))
+    }
 }
 
 impl STy {
@@ -49,12 +72,19 @@ impl STy {
                 ts.iter().map(STy::text).collect::<Vec<_>>().join(", ")
             ),
             STy::Array(t, n) => format!("[{}; {n}]", t.text()),
+            STy::UInt(w) => format!("UInt[{w}]"),
+            STy::SInt(w) => format!("SInt[{w}]"),
+            STy::Record(r) if r.args.is_empty() => r.name.clone(),
+            STy::Record(r) => {
+                let args: Vec<String> = r.args.iter().map(Value::spelling).collect();
+                format!("{}[{}]", r.name, args.join(", "))
+            }
         }
     }
 
-    /// Whether the type is a tuple or an array.
+    /// Whether the type is a tuple, an array, or a record.
     pub(crate) fn is_container(&self) -> bool {
-        matches!(self, STy::Tuple(_) | STy::Array(..))
+        matches!(self, STy::Tuple(_) | STy::Array(..) | STy::Record(_))
     }
 }
 
@@ -135,6 +165,14 @@ pub(crate) enum SExpr {
     Select(Box<SExpr>, u32, Radix),
     /// `len(base)` of an array.
     Len(Box<SExpr>),
+    /// `S[args](fields)`, or `S(fields)` of a struct without parameters.
+    Record(String, Vec<SExpr>, Vec<SExpr>),
+    /// The zero `S[args]()` of a struct of hardware data.
+    Zero(String, Vec<SExpr>),
+    /// `data_bits(S[args])`.
+    DataBits(String, Vec<SExpr>),
+    /// `base.f` of a record.
+    Field(Box<SExpr>, String),
     Unary(Un, Box<SExpr>),
     Binary(SBin, Box<SExpr>, Box<SExpr>),
     If(Box<SExpr>, Box<SExpr>, Box<SExpr>),
@@ -194,6 +232,25 @@ pub(crate) enum Stmt {
     Block(Vec<Stmt>),
 }
 
+/// The type of a field in the declaration of a struct.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum FieldTy {
+    /// A static type: `Int`, `Bool`, or a container of them.
+    Static(STy),
+    /// `UInt[W]` over the parameters of the struct.
+    UInt(SExpr),
+    SInt(SExpr),
+}
+
+/// `struct name(comptime W0: Nat, ...) { m0: T0, ... }`. A struct without
+/// parameters has no parentheses.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct StructDef {
+    pub(crate) name: String,
+    pub(crate) params: Vec<String>,
+    pub(crate) fields: Vec<(String, FieldTy)>,
+}
+
 /// `comptime fn name(params) -> ret { comptime if ((x == 0)) { return base; } return step; }`,
 /// where `x` is the first formal.
 #[derive(Clone, Debug)]
@@ -213,6 +270,7 @@ pub(crate) enum Item {
         value: SExpr,
     },
     ComptimeFn(ComptimeFn),
+    Struct(StructDef),
     Helper {
         name: String,
         params: Vec<(String, Ty)>,
@@ -315,6 +373,28 @@ fn render_item(out: &mut String, item: &Item) {
             line(out, 2, &format!("return {};", sexpr(&f.base)));
             line(out, 1, "}");
             line(out, 1, &format!("return {};", sexpr(&f.step)));
+            line(out, 0, "}");
+        }
+        Item::Struct(def) => {
+            let params: Vec<String> = def
+                .params
+                .iter()
+                .map(|p| format!("comptime {p}: Nat"))
+                .collect();
+            let head = if params.is_empty() {
+                def.name.clone()
+            } else {
+                format!("{}({})", def.name, params.join(", "))
+            };
+            line(out, 0, &format!("struct {head} {{"));
+            for (f, t) in &def.fields {
+                let t = match t {
+                    FieldTy::Static(t) => t.text(),
+                    FieldTy::UInt(w) => format!("UInt[{}]", sexpr(w)),
+                    FieldTy::SInt(w) => format!("SInt[{}]", sexpr(w)),
+                };
+                line(out, 1, &format!("{f}: {t},"));
+            }
             line(out, 0, "}");
         }
         Item::Helper {
@@ -536,6 +616,12 @@ pub(crate) fn sexpr(e: &SExpr) -> String {
             format!("{}.{}", postfix_base(b), literal(&BigInt::from(*k), *radix))
         }
         SExpr::Len(b) => format!("len({})", sexpr(b)),
+        SExpr::Record(s, targs, fields) => {
+            format!("{}({})", struct_use(s, targs), list(fields, sexpr))
+        }
+        SExpr::Zero(s, targs) => format!("{}()", struct_use(s, targs)),
+        SExpr::DataBits(s, targs) => format!("data_bits({})", struct_use(s, targs)),
+        SExpr::Field(b, f) => format!("{}.{f}", postfix_base(b)),
         SExpr::Unary(op, a) => format!("({}{})", un(*op), sexpr(a)),
         SExpr::Binary(op, a, b) => format!("({} {} {})", sexpr(a), sbin(*op), sexpr(b)),
         SExpr::If(c, t, e) => {
@@ -546,6 +632,15 @@ pub(crate) fn sexpr(e: &SExpr) -> String {
                 sexpr(e)
             )
         }
+    }
+}
+
+/// `S` or `S[args]`: the use of a struct as a type.
+fn struct_use(name: &str, targs: &[SExpr]) -> String {
+    if targs.is_empty() {
+        name.to_owned()
+    } else {
+        format!("{name}[{}]", list(targs, sexpr))
     }
 }
 
@@ -834,6 +929,58 @@ module M1(comptime P0: Nat) domains() {
         let ty = STy::Array(Box::new(STy::Tuple(vec![STy::Int, STy::Bool])), 2);
         assert_eq!(ty.text(), "[(Int, Bool); 2]");
         assert_eq!(STy::Tuple(vec![STy::Int]).text(), "(Int,)");
+    }
+
+    #[test]
+    fn structs_print_and_construct() {
+        let def = |params: &[&str], fields: Vec<(&str, FieldTy)>| {
+            Item::Struct(StructDef {
+                name: "S0".to_owned(),
+                params: params.iter().map(|p| (*p).to_owned()).collect(),
+                fields: fields.into_iter().map(|(f, t)| (f.to_owned(), t)).collect(),
+            })
+        };
+        let wide = SExpr::Binary(SBin::Add, Box::new(sname("W0")), Box::new(dec(1)));
+        let items = [
+            def(
+                &["W0", "W1"],
+                vec![
+                    ("m0", FieldTy::UInt(wide)),
+                    ("m1", FieldTy::SInt(dec(3))),
+                    ("m2", FieldTy::Static(STy::Bool)),
+                ],
+            ),
+            def(&[], vec![("m0", FieldTy::Static(STy::Int))]),
+        ];
+        assert_eq!(
+            render_items(&items),
+            "struct S0(comptime W0: Nat, comptime W1: Nat) {\n    m0: UInt[(W0 + 1)],\n    m1: SInt[3],\n    m2: Bool,\n}\nstruct S0 {\n    m0: Int,\n}\n"
+        );
+        let args = vec![dec(8), dec(2)];
+        let record = SExpr::Record(
+            "S0".to_owned(),
+            args.clone(),
+            vec![dec(1), SExpr::Bool(true)],
+        );
+        assert_eq!(super::sexpr(&record), "S0[8, 2](1, true)");
+        let plain = SExpr::Record("S0".to_owned(), Vec::new(), vec![dec(1)]);
+        assert_eq!(super::sexpr(&plain), "S0(1)");
+        assert_eq!(
+            super::sexpr(&SExpr::Zero("S0".to_owned(), args.clone())),
+            "S0[8, 2]()"
+        );
+        assert_eq!(
+            super::sexpr(&SExpr::DataBits("S0".to_owned(), args)),
+            "data_bits(S0[8, 2])"
+        );
+        let field = SExpr::Field(Box::new(record), "m1".to_owned());
+        assert_eq!(super::sexpr(&field), "S0[8, 2](1, true).m1");
+        let rec_ty = RecTy {
+            name: "S0".to_owned(),
+            args: vec![Value::Int(BigInt::from(8))],
+            fields: vec![("m0".to_owned(), STy::UInt(8))],
+        };
+        assert_eq!(STy::Record(Box::new(rec_ty)).text(), "S0[8]");
     }
 
     #[test]

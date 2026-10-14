@@ -38,12 +38,15 @@ mod file;
 mod hw;
 mod inst;
 mod lines;
+mod record;
 mod stat;
 
 pub use lines::lines;
 
 use super::eval::{Env, Fault, Scope, Value, concrete};
-use super::program::{ComptimeFn, HExpr, Item, Ports, Program, SExpr, STy, Scalar, Stmt, Ty};
+use super::program::{
+    ComptimeFn, HExpr, Item, Ports, Program, SExpr, STy, Scalar, Stmt, StructDef, Ty,
+};
 use proptest::collection::vec;
 use proptest::prelude::*;
 use stat::Reach;
@@ -75,6 +78,10 @@ const NESTING: u32 = 2;
 /// nested containers.
 const CONTAINER_LEN: u32 = 4;
 const CONTAINER_LEVELS: u32 = 3;
+/// The most structs, parameters of a struct, and fields of a struct.
+const STRUCTS: u32 = 2;
+const STRUCT_PARAMS: u32 = 2;
+const STRUCT_FIELDS: u32 = 3;
 const ENVS: usize = 64;
 const INSTANCES: u32 = 3;
 const CONTEXTS: usize = 3;
@@ -279,12 +286,19 @@ struct Stats {
     indexes: u32,
     index_fallbacks: u32,
     lens: u32,
+    records: u32,
+    zeros: u32,
+    fields: u32,
+    data_bits: u32,
+    arguments: u32,
+    argument_fallbacks: u32,
 }
 
 struct Builder {
     tape: Tape,
     consts: Vec<(String, STy, SExpr)>,
     fns: Vec<ComptimeFn>,
+    structs: Vec<StructDef>,
     helpers: Vec<Helper>,
     sigs: Vec<Sig>,
     bodies: Vec<Option<Vec<Stmt>>>,
@@ -303,6 +317,7 @@ impl Builder {
             },
             consts: Vec::new(),
             fns: Vec::new(),
+            structs: Vec::new(),
             helpers: Vec::new(),
             sigs: Vec::new(),
             bodies: Vec::new(),
@@ -314,6 +329,7 @@ impl Builder {
     }
 
     fn program(&mut self) -> Result<Program, Fault> {
+        self.structs()?;
         self.consts()?;
         self.fns()?;
         self.helpers()?;

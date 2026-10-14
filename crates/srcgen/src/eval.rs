@@ -3,7 +3,9 @@
 //! semantics of v0.1 section 3. It is a third implementation of these
 //! rules, next to the two front ends, so the `eval` probe compares it.
 
-use super::program::{ComptimeFn, Item, SBin, SExpr, STy, Scalar, Ty, Un};
+use super::program::{
+    ComptimeFn, FieldTy, Item, RecTy, SBin, SExpr, STy, Scalar, StructDef, Ty, Un,
+};
 use num_bigint::{BigInt, BigUint, Sign};
 use std::collections::BTreeMap;
 
@@ -15,6 +17,11 @@ pub(crate) enum Value {
     Tuple(Vec<Value>),
     /// An array of at least one element, all of one type.
     Array(Vec<Value>),
+    /// A finite static integer; only the zero of a record makes one.
+    UInt(u32, BigInt),
+    SInt(u32, BigInt),
+    /// A record: its type, and its field values in declaration order.
+    Record(Box<RecTy>, Vec<Value>),
 }
 
 impl Value {
@@ -29,17 +36,25 @@ impl Value {
                 let elem = xs.first().map_or_else(String::new, |x| x.ty().serialize());
                 format!("(array {elem} ({}))", serialized(xs))
             }
+            Value::UInt(w, n) => format!("(uint {w} {n})"),
+            Value::SInt(w, n) => format!("(sint {w} {n})"),
+            Value::Record(t, xs) => format!(
+                "(record {} ({}))",
+                STy::Record(t.clone()).serialize(),
+                serialized(xs)
+            ),
         }
     }
 
     /// The spelling of the value as an argument of the top selection.
     pub(crate) fn spelling(&self) -> String {
         match self {
-            Value::Int(n) => n.to_string(),
             Value::Bool(b) => b.to_string(),
             Value::Tuple(xs) if xs.len() == 1 => format!("({},)", spelled(xs)),
             Value::Tuple(xs) => format!("({})", spelled(xs)),
             Value::Array(xs) => format!("[{}]", spelled(xs)),
+            Value::Int(n) | Value::UInt(_, n) | Value::SInt(_, n) => n.to_string(),
+            Value::Record(t, xs) => format!("{}({})", STy::Record(t.clone()).text(), spelled(xs)),
         }
     }
 
@@ -54,6 +69,9 @@ impl Value {
                 Box::new(xs.first().map_or(STy::Int, Value::ty)),
                 u32::try_from(xs.len()).unwrap_or(u32::MAX),
             ),
+            Value::UInt(w, _) => STy::UInt(*w),
+            Value::SInt(w, _) => STy::SInt(*w),
+            Value::Record(t, _) => STy::Record(t.clone()),
         }
     }
 }
@@ -84,6 +102,9 @@ impl STy {
                 ts.iter().map(STy::serialize).collect::<Vec<_>>().join(" ")
             ),
             STy::Array(t, n) => format!("(array {} {n})", t.serialize()),
+            STy::UInt(w) => format!("(uint {w})"),
+            STy::SInt(w) => format!("(sint {w})"),
+            STy::Record(r) => format!("(struct root {} ({}))", r.name, serialized(&r.args)),
         }
     }
 }
@@ -134,6 +155,7 @@ pub(crate) fn loop_values(lo: &BigInt, hi: &BigInt) -> impl Iterator<Item = Valu
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Scope {
     fns: BTreeMap<String, ComptimeFn>,
+    structs: BTreeMap<String, StructDef>,
     consts: BTreeMap<String, Value>,
 }
 
@@ -145,8 +167,14 @@ impl Scope {
     pub(crate) fn new(items: &[Item]) -> Result<Scope, Fault> {
         let mut scope = Scope::default();
         for item in items {
-            if let Item::ComptimeFn(f) = item {
-                scope.fns.insert(f.name.clone(), f.clone());
+            match item {
+                Item::ComptimeFn(f) => {
+                    scope.fns.insert(f.name.clone(), f.clone());
+                }
+                Item::Struct(def) => {
+                    scope.structs.insert(def.name.clone(), def.clone());
+                }
+                _ => {}
             }
         }
         for item in items {
@@ -179,6 +207,63 @@ pub(crate) fn eval(e: &SExpr, env: &Env, scope: &Scope) -> Result<Value, Fault> 
         depth: 0,
     }
     .eval(e, env)
+}
+
+/// The specialization of the struct `name` at `args`: each argument at the
+/// type `Nat`, each field type with its width evaluated.
+pub(crate) fn record_ty(name: &str, args: &[Value], scope: &Scope) -> Result<RecTy, Fault> {
+    let def = scope.structs.get(name).ok_or(Fault::Type)?;
+    if def.params.len() != args.len() {
+        return Err(Fault::Type);
+    }
+    let mut env = Env::default();
+    for (p, a) in def.params.iter().zip(args) {
+        env.statics.insert(p.clone(), typed(&STy::Nat, a.clone())?);
+    }
+    let mut fields = Vec::new();
+    for (f, t) in &def.fields {
+        let t = match t {
+            FieldTy::Static(t) => t.clone(),
+            FieldTy::UInt(w) => STy::UInt(field_width(w, &env, scope)?),
+            FieldTy::SInt(w) => STy::SInt(field_width(w, &env, scope)?),
+        };
+        fields.push((f.clone(), t));
+    }
+    Ok(RecTy {
+        name: name.to_owned(),
+        args: args.to_vec(),
+        fields,
+    })
+}
+
+fn field_width(w: &SExpr, env: &Env, scope: &Scope) -> Result<u32, Fault> {
+    let w = int(eval(w, env, scope)?)?;
+    u32::try_from(&w)
+        .ok()
+        .filter(|w| (1..=MAX_WIDTH).contains(w))
+        .ok_or(Fault::Bound)
+}
+
+/// The number of bits of a type of hardware data.
+fn bits(t: &STy) -> Result<u32, Fault> {
+    match t {
+        STy::Bool => Ok(1),
+        STy::UInt(w) | STy::SInt(w) => Ok(*w),
+        STy::Tuple(ts) => ts.iter().map(bits).sum(),
+        STy::Array(t, n) => Ok(bits(t)?.saturating_mul(*n)),
+        STy::Record(r) => r.fields.iter().map(|(_, t)| bits(t)).sum(),
+        STy::Nat | STy::Int => Err(Fault::Type),
+    }
+}
+
+/// The zero of a type of `Bool` and finite integer fields.
+fn zero(t: &STy) -> Result<Value, Fault> {
+    match t {
+        STy::Bool => Ok(Value::Bool(false)),
+        STy::UInt(w) => Ok(Value::UInt(*w, BigInt::ZERO)),
+        STy::SInt(w) => Ok(Value::SInt(*w, BigInt::ZERO)),
+        _ => Err(Fault::Type),
+    }
 }
 
 /// The type of `t` with its width evaluated.
@@ -237,6 +322,37 @@ impl Evaluator<'_> {
                 Value::Array(xs) => Value::Int(BigInt::from(xs.len())),
                 _ => return Err(Fault::Type),
             },
+            SExpr::Record(name, targs, fields) => {
+                let ty = self.specialize(name, targs, env)?;
+                let xs = self.all(fields, env)?;
+                if xs.len() != ty.fields.len() {
+                    return Err(Fault::Type);
+                }
+                let tys = ty.fields.iter().map(|(_, t)| t);
+                Value::Record(Box::new(ty.clone()), typed_all(tys, xs.into_iter())?)
+            }
+            SExpr::Zero(name, targs) => {
+                let ty = self.specialize(name, targs, env)?;
+                let xs = ty
+                    .fields
+                    .iter()
+                    .map(|(_, t)| zero(t))
+                    .collect::<Result<_, _>>()?;
+                Value::Record(Box::new(ty), xs)
+            }
+            SExpr::DataBits(name, targs) => {
+                let ty = self.specialize(name, targs, env)?;
+                Value::Int(BigInt::from(bits(&STy::Record(Box::new(ty)))?))
+            }
+            SExpr::Field(base, field) => match self.eval(base, env)? {
+                Value::Record(ty, xs) => ty
+                    .fields
+                    .iter()
+                    .position(|(f, _)| f == field)
+                    .and_then(|k| xs.into_iter().nth(k))
+                    .ok_or(Fault::Type)?,
+                _ => return Err(Fault::Type),
+            },
             SExpr::Unary(op, a) => match (op, self.eval(a, env)?) {
                 (Un::Neg, Value::Int(n)) => Value::Int(-n),
                 (Un::Inv, Value::Int(n)) => Value::Int(!n),
@@ -263,6 +379,12 @@ impl Evaluator<'_> {
             }
         };
         bounded(v)
+    }
+
+    /// The specialization of a struct at the arguments `targs`.
+    fn specialize(&mut self, name: &str, targs: &[SExpr], env: &Env) -> Result<RecTy, Fault> {
+        let args = self.all(targs, env)?;
+        record_ty(name, &args, self.scope)
     }
 
     /// The values of `xs`, left to right.
@@ -394,6 +516,8 @@ fn typed(ty: &STy, v: Value) -> Result<Value, Fault> {
         (STy::Array(t, n), Value::Array(xs)) if *n as usize == xs.len() => Ok(Value::Array(
             typed_all(std::iter::repeat_n(&**t, xs.len()), xs.iter().cloned())?,
         )),
+        (STy::UInt(w), Value::UInt(x, _)) | (STy::SInt(w), Value::SInt(x, _)) if w == x => Ok(v),
+        (STy::Record(want), Value::Record(have, _)) if want == have => Ok(v),
         _ => Err(Fault::Type),
     }
 }
@@ -675,6 +799,111 @@ mod tests {
         let nat = STy::Array(Box::new(STy::Nat), 1);
         let negative = Value::Array(vec![Value::Int(BigInt::from(-1))]);
         assert_eq!(typed(&nat, negative), Err(Fault::Nat));
+    }
+
+    /// `struct S0(comptime W0: Nat) { m0: UInt[(W0 + 1)], m1: Bool }`,
+    /// `struct S1 { m0: Int, m1: (Int, Bool) }`, and
+    /// `struct S2(comptime W0: Nat) { m0: UInt[W0] }`.
+    fn structs() -> Scope {
+        let hardware = StructDef {
+            name: "S0".to_owned(),
+            params: vec!["W0".to_owned()],
+            fields: vec![
+                (
+                    "m0".to_owned(),
+                    FieldTy::UInt(bin(SBin::Add, name("W0"), int(1))),
+                ),
+                ("m1".to_owned(), FieldTy::Static(STy::Bool)),
+            ],
+        };
+        let value = StructDef {
+            name: "S1".to_owned(),
+            params: Vec::new(),
+            fields: vec![
+                ("m0".to_owned(), FieldTy::Static(STy::Int)),
+                (
+                    "m1".to_owned(),
+                    FieldTy::Static(STy::Tuple(vec![STy::Int, STy::Bool])),
+                ),
+            ],
+        };
+        let narrow = StructDef {
+            name: "S2".to_owned(),
+            params: vec!["W0".to_owned()],
+            fields: vec![("m0".to_owned(), FieldTy::UInt(name("W0")))],
+        };
+        let items = [
+            Item::Struct(hardware),
+            Item::Struct(value),
+            Item::Struct(narrow),
+        ];
+        Scope::new(&items).unwrap_or_default()
+    }
+
+    fn run_in(scope: &Scope, e: &SExpr) -> Result<Value, Fault> {
+        eval(e, &Env::default(), scope)
+    }
+
+    #[test]
+    fn records_evaluate_like_the_front_ends() {
+        let scope = structs();
+        let zero = SExpr::Zero("S0".to_owned(), vec![int(7)]);
+        // The example of front-end spec 7.1, with the zero in place of `3`.
+        assert_eq!(
+            run_in(&scope, &zero).map(|v| v.serialize()),
+            Ok("(record (struct root S0 ((int 7))) ((uint 8 0) (bool false)))".to_owned())
+        );
+        let bits = SExpr::DataBits("S0".to_owned(), vec![int(7)]);
+        assert_eq!(run_in(&scope, &bits), value(9));
+        let negative = SExpr::DataBits("S0".to_owned(), vec![int(-1)]);
+        assert_eq!(run_in(&scope, &negative), Err(Fault::Nat));
+        let record = SExpr::Record(
+            "S1".to_owned(),
+            Vec::new(),
+            vec![int(5), tuple(vec![int(-1), SExpr::Bool(true)])],
+        );
+        assert_eq!(
+            run_in(&scope, &record).map(|v| v.serialize()),
+            Ok("(record (struct root S1 ()) ((int 5) (tuple ((int -1) (bool true)))))".to_owned())
+        );
+        let field = |e: SExpr, f: &str| SExpr::Field(Box::new(e), f.to_owned());
+        assert_eq!(run_in(&scope, &field(record.clone(), "m0")), value(5));
+        assert_eq!(
+            run_in(&scope, &select(field(record.clone(), "m1"), 0)),
+            value(-1)
+        );
+        assert_eq!(run_in(&scope, &field(zero, "m1")), Ok(Value::Bool(false)));
+        assert_eq!(run_in(&scope, &field(record, "m9")), Err(Fault::Type));
+    }
+
+    #[test]
+    fn records_reject_what_the_builder_never_makes() {
+        let scope = structs();
+        let few = SExpr::Record("S1".to_owned(), Vec::new(), vec![int(5)]);
+        assert_eq!(run_in(&scope, &few), Err(Fault::Type));
+        let wrong = SExpr::Record(
+            "S1".to_owned(),
+            Vec::new(),
+            vec![SExpr::Bool(true), tuple(vec![int(1), SExpr::Bool(true)])],
+        );
+        assert_eq!(run_in(&scope, &wrong), Err(Fault::Type));
+        // The zero needs hardware data in each field.
+        assert_eq!(
+            run_in(&scope, &SExpr::Zero("S1".to_owned(), Vec::new())),
+            Err(Fault::Type)
+        );
+        // The arguments are the parameters, no fewer and no more.
+        assert_eq!(
+            run_in(&scope, &SExpr::Zero("S0".to_owned(), Vec::new())),
+            Err(Fault::Type)
+        );
+        // A width of 0 bits is out of the bounds of the generator.
+        let zero_width = SExpr::DataBits("S2".to_owned(), vec![int(0)]);
+        assert_eq!(run_in(&scope, &zero_width), Err(Fault::Bound));
+        assert_eq!(
+            run_in(&scope, &SExpr::DataBits("S2".to_owned(), vec![int(1)])),
+            value(1)
+        );
     }
 
     #[test]

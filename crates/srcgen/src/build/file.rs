@@ -7,7 +7,7 @@
 //! of arguments before a call site uses it.
 
 use super::stat::{self, Kind, Reach, bin, int};
-use super::{Builder, CONSTS, CONTAINER_LEVELS, COUNT, FNS, SAMPLE_INTS};
+use super::{Builder, CONSTS, COUNT, FNS, SAMPLE_INTS};
 use crate::eval::{Env, Fault, Scope, Value, eval};
 use crate::program::{ComptimeFn, Item, SBin, SExpr, STy};
 use num_bigint::BigInt;
@@ -27,12 +27,13 @@ impl Builder {
             value: value.clone(),
         });
         let fns = self.fns.iter().cloned().map(Item::ComptimeFn);
-        consts.chain(fns).collect()
+        let structs = self.structs.iter().cloned().map(Item::Struct);
+        structs.chain(consts).chain(fns).collect()
     }
 
     /// The scope of the consts and `comptime fn`s so far. The builder adds
     /// only consts that evaluate, so it does not fault.
-    fn refresh(&mut self) -> Result<(), Fault> {
+    pub(super) fn refresh(&mut self) -> Result<(), Fault> {
         self.scope = Scope::new(&self.file_items())?;
         Ok(())
     }
@@ -47,7 +48,7 @@ impl Builder {
                     fns: 0,
                     envs: Some(&envs),
                 };
-                let ty = self.container_ty(CONTAINER_LEVELS);
+                let ty = self.static_container_ty();
                 let value = self.container(&ty, stat::DEPTH, r);
                 self.consts.push((format!("C{k}"), ty, value));
                 self.refresh()?;
