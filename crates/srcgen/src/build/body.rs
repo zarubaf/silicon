@@ -111,6 +111,7 @@ impl Builder {
                 })
                 .collect(),
             helpers: k,
+            lists: Vec::new(),
         };
         let mut body = Vec::new();
         for _ in 0..self.tape.below(3) {
@@ -298,6 +299,7 @@ impl Builder {
             statics: self.const_names().into_iter().chain(sig.params).collect(),
             hw: Vec::new(),
             helpers: self.helpers.len(),
+            lists: Vec::new(),
         };
         let mut body = Vec::new();
         for (n, t) in &sig.inputs {
@@ -353,8 +355,11 @@ impl Builder {
         let mut instances = 0;
         for _ in 0..self.tape.below(max + 1) {
             let nested = level < NESTING;
-            match self.tape.below(12) {
+            match self.tape.below(15) {
                 1 => self.static_let(ctx, &mut m.names, &mut out)?,
+                12 => self.list_let(ctx, &mut m.names, &mut out)?,
+                13 => self.push_stmt(ctx, &mut out),
+                14 => self.pop_stmt(ctx, &mut m.names, &mut out),
                 2 => self.binding(ctx, &mut m.names, &mut out, true)?,
                 3 => self.assign(ctx, &mut m.names, &mut out)?,
                 4 => self.wire(ctx, &mut m.names, &mut out)?,
@@ -421,7 +426,24 @@ impl Builder {
 
     /// A static `let` of type `Nat`, `Int`, or `Bool`.
     fn static_let(&mut self, ctx: &mut Ctx, names: &mut Names, out: &mut Vec<Stmt>) -> Built {
-        if self.tape.below(4) == 3 {
+        let shape = self.tape.below(8);
+        if shape == 2 {
+            let value = self.sexpr(Kind::Str, stat::DEPTH, self.reach(ctx));
+            let (value, vs) = if let Some(vs) = self.values(&value, &ctx.envs) {
+                (value, vs)
+            } else {
+                let (e, v) = Builder::empty_string();
+                (e, vec![v; ctx.envs.len()])
+            };
+            let name = names.fresh("s");
+            for (env, v) in ctx.envs.iter_mut().zip(vs) {
+                env.statics.insert(name.clone(), v);
+            }
+            ctx.statics.push((name.clone(), STy::Str));
+            out.push(Stmt::StaticLet(name, STy::Str, value));
+            return Ok(());
+        }
+        if shape >= 6 {
             let ty = self.static_container_ty();
             let value = self.container(&ty, stat::DEPTH, self.reach(ctx));
             let vs = self.values(&value, &ctx.envs).ok_or(Fault::Type)?;

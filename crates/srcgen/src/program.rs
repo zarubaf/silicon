@@ -38,6 +38,10 @@ pub(crate) enum STy {
     UInt(u32),
     SInt(u32),
     Record(Box<RecTy>),
+    /// A string of at most 16 scalars.
+    Str,
+    /// `List[Int]` or `List[Nat]`.
+    List(Box<STy>),
 }
 
 /// A struct specialization: the struct, its arguments, and its field types
@@ -74,6 +78,8 @@ impl STy {
             STy::Array(t, n) => format!("[{}; {n}]", t.text()),
             STy::UInt(w) => format!("UInt[{w}]"),
             STy::SInt(w) => format!("SInt[{w}]"),
+            STy::Str => "String".to_owned(),
+            STy::List(t) => format!("List[{}]", t.text()),
             STy::Record(r) if r.args.is_empty() => r.name.clone(),
             STy::Record(r) => {
                 let args: Vec<String> = r.args.iter().map(Value::spelling).collect();
@@ -82,9 +88,12 @@ impl STy {
         }
     }
 
-    /// Whether the type is a tuple, an array, or a record.
+    /// Whether the type is a tuple, an array, a record, or a list.
     pub(crate) fn is_container(&self) -> bool {
-        matches!(self, STy::Tuple(_) | STy::Array(..) | STy::Record(_))
+        matches!(
+            self,
+            STy::Tuple(_) | STy::Array(..) | STy::Record(_) | STy::List(_)
+        )
     }
 }
 
@@ -173,6 +182,12 @@ pub(crate) enum SExpr {
     DataBits(String, Vec<SExpr>),
     /// `base.f` of a record.
     Field(Box<SExpr>, String),
+    /// A string literal.
+    Str(String),
+    /// `str(n)`.
+    StrOf(Box<SExpr>),
+    /// `list(T)`.
+    NewList(STy),
     Unary(Un, Box<SExpr>),
     Binary(SBin, Box<SExpr>, Box<SExpr>),
     If(Box<SExpr>, Box<SExpr>, Box<SExpr>),
@@ -227,9 +242,35 @@ pub(crate) enum Stmt {
     For(String, SExpr, SExpr, Vec<Stmt>),
     Assert(SExpr, String),
     Error(String),
+    /// `let mut name: T = value;` of a static value.
+    MutLet(String, STy, SExpr),
+    /// `list.push(value);`
+    Push(String, SExpr),
+    /// `let name: Int = list.pop();`: the new name, then the list.
+    PopLet(String, String),
     /// A block `{ ... }`. The twin writes a selected `comptime if` branch
     /// and each iteration of a `comptime for` as one.
     Block(Vec<Stmt>),
+}
+
+/// A `comptime fn` that builds a list:
+///
+/// ```text
+/// comptime fn name(x0: Nat, ...) -> List[T] {
+///     let mut r0 = list(T);
+///     comptime for j0 in 0..x0 { r0.push(element); }
+///     return r0;
+/// }
+/// ```
+#[derive(Clone, Debug)]
+pub(crate) struct ListFn {
+    pub(crate) name: String,
+    /// The first formal is the length `Nat`.
+    pub(crate) params: Vec<(String, STy)>,
+    /// `Int` or `Nat`.
+    pub(crate) elem: STy,
+    /// Over the formals and the binder `j0`.
+    pub(crate) element: SExpr,
 }
 
 /// The type of a field in the declaration of a struct.
@@ -270,6 +311,7 @@ pub(crate) enum Item {
         value: SExpr,
     },
     ComptimeFn(ComptimeFn),
+    ListFn(ListFn),
     Struct(StructDef),
     Helper {
         name: String,
@@ -375,6 +417,22 @@ fn render_item(out: &mut String, item: &Item) {
             line(out, 1, &format!("return {};", sexpr(&f.step)));
             line(out, 0, "}");
         }
+        Item::ListFn(f) => {
+            let params = formals(f.params.iter().map(|(n, t)| (n, t.text())));
+            let count = f.params.first().map_or("0", |(n, _)| n.as_str());
+            let elem = f.elem.text();
+            line(
+                out,
+                0,
+                &format!("comptime fn {}({params}) -> List[{elem}] {{", f.name),
+            );
+            line(out, 1, &format!("let mut r0 = list({elem});"));
+            line(out, 1, &format!("comptime for j0 in 0..{count} {{"));
+            line(out, 2, &format!("r0.push({});", sexpr(&f.element)));
+            line(out, 1, "}");
+            line(out, 1, "return r0;");
+            line(out, 0, "}");
+        }
         Item::Struct(def) => {
             let params: Vec<String> = def
                 .params
@@ -468,6 +526,9 @@ fn stmt(out: &mut String, depth: usize, s: &Stmt) {
             format!("let {m}{name}{t} = {};", hexpr(value))
         }
         Stmt::StaticLet(n, t, v) => format!("let {n}: {} = {};", t.text(), sexpr(v)),
+        Stmt::MutLet(n, t, v) => format!("let mut {n}: {} = {};", t.text(), sexpr(v)),
+        Stmt::Push(n, v) => format!("{n}.push({});", sexpr(v)),
+        Stmt::PopLet(n, list) => format!("let {n}: Int = {list}.pop();"),
         Stmt::Assign(n, v) => format!("{n} = {};", hexpr(v)),
         Stmt::Connect(place, v) => {
             let place = match place {
@@ -520,7 +581,7 @@ fn list<T>(xs: &[T], f: fn(&T) -> String) -> String {
 
 /// A string literal with the escapes of the grammar. The lexer has no escape
 /// for another control character, so a message of the builder has none.
-fn string(m: &str) -> String {
+pub(crate) fn string(m: &str) -> String {
     let mut out = String::from("\"");
     for c in m.chars() {
         match c {
@@ -622,6 +683,9 @@ pub(crate) fn sexpr(e: &SExpr) -> String {
         SExpr::Zero(s, targs) => format!("{}()", struct_use(s, targs)),
         SExpr::DataBits(s, targs) => format!("data_bits({})", struct_use(s, targs)),
         SExpr::Field(b, f) => format!("{}.{f}", postfix_base(b)),
+        SExpr::Str(s) => string(s),
+        SExpr::StrOf(n) => format!("str({})", sexpr(n)),
+        SExpr::NewList(t) => format!("list({})", t.text()),
         SExpr::Unary(op, a) => format!("({}{})", un(*op), sexpr(a)),
         SExpr::Binary(op, a, b) => format!("({} {} {})", sexpr(a), sbin(*op), sexpr(b)),
         SExpr::If(c, t, e) => {
@@ -981,6 +1045,44 @@ module M1(comptime P0: Nat) domains() {
             fields: vec![("m0".to_owned(), STy::UInt(8))],
         };
         assert_eq!(STy::Record(Box::new(rec_ty)).text(), "S0[8]");
+    }
+
+    #[test]
+    fn lists_and_strings_print() {
+        let build = Item::ListFn(ListFn {
+            name: "b0".to_owned(),
+            params: vec![("x0".to_owned(), STy::Nat), ("x1".to_owned(), STy::Int)],
+            elem: STy::Nat,
+            element: SExpr::Binary(SBin::Add, Box::new(sname("j0")), Box::new(sname("x1"))),
+        });
+        assert_eq!(
+            render_items(&[build]),
+            "comptime fn b0(x0: Nat, x1: Int) -> List[Nat] {\n    let mut r0 = list(Nat);\n    comptime for j0 in 0..x0 {\n        r0.push((j0 + x1));\n    }\n    return r0;\n}\n"
+        );
+        let body = vec![
+            Stmt::MutLet(
+                "s0".to_owned(),
+                STy::List(Box::new(STy::Int)),
+                SExpr::Call("b0".to_owned(), vec![dec(3), dec(1)]),
+            ),
+            Stmt::Push("s0".to_owned(), dec(-2)),
+            Stmt::PopLet("s1".to_owned(), "s0".to_owned()),
+            Stmt::StaticLet(
+                "s2".to_owned(),
+                STy::Str,
+                SExpr::Binary(
+                    SBin::Add,
+                    Box::new(SExpr::Str("a\"".to_owned())),
+                    Box::new(SExpr::StrOf(Box::new(sname("s1")))),
+                ),
+            ),
+        ];
+        let mut out = String::new();
+        stmts(&mut out, 0, &body);
+        assert_eq!(
+            out,
+            "let mut s0: List[Int] = b0(3, 1);\ns0.push((-2));\nlet s1: Int = s0.pop();\nlet s2: String = (\"a\\\"\" + str(s1));\n"
+        );
     }
 
     #[test]

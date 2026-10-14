@@ -38,14 +38,16 @@ mod file;
 mod hw;
 mod inst;
 mod lines;
+mod lists;
 mod record;
 mod stat;
+mod strings;
 
 pub use lines::lines;
 
 use super::eval::{Env, Fault, Scope, Value, concrete};
 use super::program::{
-    ComptimeFn, HExpr, Item, Ports, Program, SExpr, STy, Scalar, Stmt, StructDef, Ty,
+    ComptimeFn, HExpr, Item, ListFn, Ports, Program, SExpr, STy, Scalar, Stmt, StructDef, Ty,
 };
 use proptest::collection::vec;
 use proptest::prelude::*;
@@ -56,7 +58,7 @@ use std::fmt;
 /// The name prefixes of the static kinds: `P` parameter, `C` const, `f`
 /// `comptime fn`, `s` static `let`, `j` loop binder. A static name is one
 /// of them and digits; the twin must have none.
-pub(super) const STATIC_PREFIXES: &str = "PCfsj";
+pub(super) const STATIC_PREFIXES: &str = "PCfsjbS";
 
 /// The result of a step whose faults the checks of the builder exclude.
 /// A fault reaches `build`, which the coverage test watches.
@@ -82,6 +84,8 @@ const CONTAINER_LEVELS: u32 = 3;
 const STRUCTS: u32 = 2;
 const STRUCT_PARAMS: u32 = 2;
 const STRUCT_FIELDS: u32 = 3;
+/// The most list builders.
+const LIST_FNS: u32 = 2;
 const ENVS: usize = 64;
 const INSTANCES: u32 = 3;
 const CONTEXTS: usize = 3;
@@ -218,6 +222,8 @@ struct Ctx {
     statics: Vec<(String, STy)>,
     hw: Vec<Hw>,
     helpers: usize,
+    /// The mutable lists that this frame declares.
+    lists: Vec<String>,
 }
 
 impl Ctx {
@@ -239,6 +245,7 @@ impl Ctx {
             statics: self.statics.clone(),
             hw,
             helpers: self.helpers,
+            lists: Vec::new(),
         }
     }
 }
@@ -292,6 +299,18 @@ struct Stats {
     data_bits: u32,
     arguments: u32,
     argument_fallbacks: u32,
+    str_of: u32,
+    joins: u32,
+    scalars: u32,
+    str_lens: u32,
+    str_eqs: u32,
+    list_lens: u32,
+    list_indexes: u32,
+    list_calls: u32,
+    list_call_fallbacks: u32,
+    pushes: u32,
+    pops: u32,
+    push_fallbacks: u32,
 }
 
 struct Builder {
@@ -299,6 +318,7 @@ struct Builder {
     consts: Vec<(String, STy, SExpr)>,
     fns: Vec<ComptimeFn>,
     structs: Vec<StructDef>,
+    list_fns: Vec<ListFn>,
     helpers: Vec<Helper>,
     sigs: Vec<Sig>,
     bodies: Vec<Option<Vec<Stmt>>>,
@@ -318,6 +338,7 @@ impl Builder {
             consts: Vec::new(),
             fns: Vec::new(),
             structs: Vec::new(),
+            list_fns: Vec::new(),
             helpers: Vec::new(),
             sigs: Vec::new(),
             bodies: Vec::new(),
@@ -332,6 +353,7 @@ impl Builder {
         self.structs()?;
         self.consts()?;
         self.fns()?;
+        self.list_fns()?;
         self.helpers()?;
         self.signatures();
         let params = self

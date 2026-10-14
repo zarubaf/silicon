@@ -235,6 +235,7 @@ impl<'a> Walk<'a> {
     fn item_body(&mut self, item: &mut Item) {
         match item {
             Item::Const { value, .. } => self.sexpr(value),
+            Item::ListFn(f) => self.sexpr(&mut f.element),
             Item::Struct(def) => {
                 for (_, t) in &mut def.fields {
                     if let FieldTy::UInt(w) | FieldTy::SInt(w) = t {
@@ -309,7 +310,12 @@ impl<'a> Walk<'a> {
                 }
                 self.hexpr(value);
             }
-            Stmt::StaticLet(_, _, v) | Stmt::Assert(v, _) => self.sexpr(v),
+            Stmt::StaticLet(_, _, v) | Stmt::MutLet(_, _, v) | Stmt::Assert(v, _) => self.sexpr(v),
+            Stmt::Push(list, v) => {
+                self.rename(list);
+                self.sexpr(v);
+            }
+            Stmt::PopLet(_, list) => self.rename(list),
             Stmt::Assign(n, v) => {
                 self.rename(n);
                 self.hexpr(v);
@@ -400,7 +406,7 @@ impl<'a> Walk<'a> {
             return;
         }
         match e {
-            SExpr::Int(..) | SExpr::Bool(_) => {}
+            SExpr::Int(..) | SExpr::Bool(_) | SExpr::Str(_) | SExpr::NewList(_) => {}
             SExpr::Name(n) => self.rename(n),
             SExpr::Call(f, args) => {
                 self.rename(f);
@@ -426,7 +432,11 @@ impl<'a> Walk<'a> {
                     self.sexpr(x);
                 }
             }
-            SExpr::Select(a, ..) | SExpr::Field(a, _) | SExpr::Len(a) | SExpr::Unary(_, a) => {
+            SExpr::Select(a, ..)
+            | SExpr::Field(a, _)
+            | SExpr::Len(a)
+            | SExpr::StrOf(a)
+            | SExpr::Unary(_, a) => {
                 self.sexpr(a);
             }
             SExpr::Index(a, b) | SExpr::Binary(_, a, b) => {
@@ -479,6 +489,7 @@ fn item_name(item: &Item) -> &str {
         Item::Const { name, .. } | Item::Helper { name, .. } | Item::Module { name, .. } => name,
         Item::ComptimeFn(f) => &f.name,
         Item::Struct(def) => &def.name,
+        Item::ListFn(f) => &f.name,
     }
 }
 
@@ -491,6 +502,8 @@ fn declared(s: &Stmt) -> Option<&str> {
         | Stmt::Wire(n, _)
         | Stmt::Let { name: n, .. }
         | Stmt::StaticLet(n, _, _)
+        | Stmt::MutLet(n, _, _)
+        | Stmt::PopLet(n, _)
         | Stmt::Instance(n, _, _) => Some(n),
         _ => None,
     }

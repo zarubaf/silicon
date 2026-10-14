@@ -304,6 +304,8 @@ fn programs_cover_static_containers() {
     let (mut leaves, mut leaf_fallbacks) = (0, 0);
     let (mut indexes, mut index_fallbacks) = (0, 0);
     let (mut arguments, mut argument_fallbacks) = (0, 0);
+    let (mut calls, mut call_fallbacks) = (0, 0);
+    let (mut pushes, mut push_fallbacks) = (0, 0);
     for tape in tapes(TAPES) {
         let mut b = Builder::new(tape);
         let p = b.program();
@@ -320,6 +322,16 @@ fn programs_cover_static_containers() {
             ("zero", s.zeros > 0),
             ("field", s.fields > 0),
             ("data_bits", s.data_bits > 0),
+            ("str(n)", s.str_of > 0),
+            ("join", s.joins > 0),
+            ("scalar of a string", s.scalars > 0),
+            ("len of a string", s.str_lens > 0),
+            ("string equality", s.str_eqs > 0),
+            ("list builder call", s.list_calls > 0),
+            ("push", s.pushes > 0),
+            ("pop", s.pops > 0),
+            ("index of a list", s.list_indexes > 0),
+            ("len of a list", s.list_lens > 0),
         ] {
             *with.entry(form).or_default() += usize::from(seen);
         }
@@ -341,6 +353,10 @@ fn programs_cover_static_containers() {
         leaf_fallbacks += s.leaf_fallbacks;
         indexes += s.indexes;
         arguments += s.arguments;
+        calls += s.list_calls;
+        call_fallbacks += s.list_call_fallbacks;
+        pushes += s.pushes + s.push_fallbacks;
+        push_fallbacks += s.push_fallbacks;
         argument_fallbacks += s.argument_fallbacks;
         index_fallbacks += s.index_fallbacks;
     }
@@ -350,7 +366,7 @@ fn programs_cover_static_containers() {
             "{form} occurs in {n} of {TAPES} programs: {with:?}"
         );
     }
-    assert_eq!(with.len(), 10, "{with:?}");
+    assert_eq!(with.len(), 20, "{with:?}");
     assert!(
         leaf_fallbacks * 5 <= leaves,
         "leaf fallbacks {leaf_fallbacks} of {leaves}"
@@ -362,6 +378,14 @@ fn programs_cover_static_containers() {
     assert!(
         argument_fallbacks * 5 <= arguments,
         "argument fallbacks {argument_fallbacks} of {arguments}"
+    );
+    assert!(
+        call_fallbacks * 5 <= calls,
+        "list call fallbacks {call_fallbacks} of {calls}"
+    );
+    assert!(
+        push_fallbacks * 5 <= pushes,
+        "push fallbacks {push_fallbacks} of {pushes}"
     );
 }
 
