@@ -95,7 +95,7 @@ is the design, the lowered design, and the used fuel, or the outcome of the firs
 records of the elaboration come with both outcomes. Only the elaboration makes records
 (section 8). The core check of pass 6 is not part of it, because it charges no fuel.
 -/
-def elabRun (o : Opts) (source t : String) (digest : String → String) :
+def observeRun (o : Opts) (source t : String) (digest : String → String) :
     Array Eval.Record × Except Outcome (Elab.Design × Flatten.Lowered × Nat) :=
   match load o.syntaxDepth source with
   | .error e => (#[], .error (.error e))
@@ -116,13 +116,18 @@ def elabRun (o : Opts) (source t : String) (digest : String → String) :
             | .error (.source e) => .error (.error e)
             | .error (.defect msg) => .error (.defect msg))
 
+/-! The elaboration of the top selection `t` and its lowering, without the records. -/
+def elabRun (o : Opts) (source t : String) (digest : String → String) :
+    Except Outcome (Elab.Design × Flatten.Lowered × Nat) :=
+  (observeRun o source t digest).2
+
 /-!
 `cost`: the fuel that the elaboration of the top selection uses, with the lowering, and the
 units of each instantiation. It does not run the core check, so an `S020` design has a cost.
 -/
 def costText (o : Opts) (source t : String) (digest : String → String := Names.sha16) :
     Outcome :=
-  match (elabRun o source t digest).2 with
+  match elabRun o source t digest with
   | .ok (d, l, used) =>
     let insts := d.insts.zipWith (fun i u => { i with units := u }) l.units
     .ok (Elab.costLines { d with insts } used)
@@ -138,7 +143,7 @@ structure Checked where
 /-! The elaboration of the top selection `t`, its lowering, and the check of pass 6. -/
 def elabChecked (o : Opts) (source t : String) (digest : String → String) :
     Except Outcome Checked :=
-  match (elabRun o source t digest).2 with
+  match elabRun o source t digest with
   | .ok (d, l, _) =>
     match Flatten.checkDesign l.design with
     | .ok ⟨typed, h⟩ => .ok ⟨d, l.design, typed, h⟩
