@@ -275,6 +275,85 @@ fn programs_cover_slice_1() {
     assert!(shape.contexts * 10 >= 400, "{shape:?}");
 }
 
+/// The mean program stays near the size of the slice-1 programs (2457
+/// bytes over these 256 tapes before containers): at most 50% more.
+#[test]
+fn the_mean_program_stays_small() {
+    const TAPES: usize = 256;
+    let total: usize = tapes(TAPES)
+        .into_iter()
+        .filter_map(|tape| build(tape).ok())
+        .map(|p| p.text().len())
+        .sum();
+    assert!(total / TAPES <= 3700, "the mean is {} bytes", total / TAPES);
+}
+
+/// The most levels of container types in `t`.
+fn levels(t: &STy) -> u32 {
+    match t {
+        STy::Tuple(ts) => 1 + ts.iter().map(levels).max().unwrap_or(0),
+        STy::Array(t, _) => 1 + levels(t),
+        _ => 0,
+    }
+}
+
+#[test]
+fn programs_cover_static_containers() {
+    const TAPES: usize = 256;
+    let mut with = BTreeMap::<&str, usize>::new();
+    let (mut leaves, mut leaf_fallbacks) = (0, 0);
+    let (mut indexes, mut index_fallbacks) = (0, 0);
+    for tape in tapes(TAPES) {
+        let mut b = Builder::new(tape);
+        let p = b.program();
+        assert!(p.is_ok(), "a program faults: {p:?}");
+        let Ok(p) = p else { continue };
+        let s = &b.stats;
+        for (form, seen) in [
+            ("tuple", s.tuples > 0),
+            ("array", s.arrays > 0),
+            ("selector", s.selects > 0),
+            ("index", s.indexes > 0),
+            ("len", s.lens > 0),
+        ] {
+            *with.entry(form).or_default() += usize::from(seen);
+        }
+        let mut deep = p.probe().1.starts_with("(array") || p.probe().1.starts_with("(tuple");
+        let statics = stmts_of(&p.items)
+            .into_iter()
+            .filter_map(|s| match s {
+                Stmt::StaticLet(_, t, _) => Some(t),
+                _ => None,
+            })
+            .chain(p.items.iter().filter_map(|i| match i {
+                Item::Const { ty, .. } => Some(ty),
+                _ => None,
+            }));
+        let nested = statics.map(levels).max().unwrap_or(0) >= 2;
+        deep |= nested;
+        *with.entry("nested or probed").or_default() += usize::from(deep);
+        leaves += s.leaves;
+        leaf_fallbacks += s.leaf_fallbacks;
+        indexes += s.indexes;
+        index_fallbacks += s.index_fallbacks;
+    }
+    for (form, n) in &with {
+        assert!(
+            n * 10 >= TAPES,
+            "{form} occurs in {n} of {TAPES} programs: {with:?}"
+        );
+    }
+    assert_eq!(with.len(), 6, "{with:?}");
+    assert!(
+        leaf_fallbacks * 5 <= leaves,
+        "leaf fallbacks {leaf_fallbacks} of {leaves}"
+    );
+    assert!(
+        index_fallbacks * 5 <= indexes,
+        "index fallbacks {index_fallbacks} of {indexes}"
+    );
+}
+
 /// The depth of the instance tree below module `m`.
 fn depth(m: &str, modules: &BTreeMap<&str, &[Stmt]>) -> usize {
     stmts_of_body(modules.get(m).copied().unwrap_or_default())

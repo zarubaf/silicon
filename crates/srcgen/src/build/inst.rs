@@ -43,7 +43,7 @@ impl Builder {
         let sig = self.sigs.get(j).cloned().ok_or(Fault::Type)?;
         let mut args = Vec::new();
         for (_, t) in &sig.params {
-            args.push(self.argument(*t, self.reach(ctx), &ctx.envs));
+            args.push(self.argument(t, self.reach(ctx), &ctx.envs));
         }
         let tuples = self.tuples(j, &mut args, &ctx.envs)?;
         let name = m.names.fresh("u");

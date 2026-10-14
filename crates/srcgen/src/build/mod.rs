@@ -33,6 +33,7 @@ macro_rules! note {
 }
 
 mod body;
+mod container;
 mod file;
 mod hw;
 mod inst;
@@ -70,6 +71,10 @@ const HELPERS: u32 = 2;
 const MODULE_STMTS: u32 = 8;
 const NESTED_STMTS: u32 = 4;
 const NESTING: u32 = 2;
+/// The most elements of a tuple or an array, and the most levels of
+/// nested containers.
+const CONTAINER_LEN: u32 = 4;
+const CONTAINER_LEVELS: u32 = 3;
 const ENVS: usize = 64;
 const INSTANCES: u32 = 3;
 const CONTEXTS: usize = 3;
@@ -266,6 +271,14 @@ struct Stats {
     width_fallbacks: u32,
     calls: u32,
     call_fallbacks: u32,
+    tuples: u32,
+    leaves: u32,
+    arrays: u32,
+    leaf_fallbacks: u32,
+    selects: u32,
+    indexes: u32,
+    index_fallbacks: u32,
+    lens: u32,
 }
 
 struct Builder {
@@ -310,7 +323,7 @@ impl Builder {
             .first()
             .map(|s| s.params.clone())
             .unwrap_or_default();
-        let args: Vec<Value> = params.iter().map(|(_, t)| self.top_value(*t)).collect();
+        let args: Vec<Value> = params.iter().map(|(_, t)| self.top_value(t)).collect();
         self.contexts = vec![Vec::new(); self.sigs.len()];
         if let Some(top) = self.contexts.first_mut() {
             top.push(args.clone());

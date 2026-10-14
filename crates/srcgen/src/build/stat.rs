@@ -23,11 +23,19 @@ pub(super) enum Kind {
     Bool,
 }
 
-pub(super) fn kind(t: STy) -> Kind {
+/// The kind of a scalar type, or `None` for a container.
+pub(super) fn kind(t: &STy) -> Option<Kind> {
     match t {
-        STy::Nat | STy::Int => Kind::Int,
-        STy::Bool => Kind::Bool,
+        STy::Nat | STy::Int => Some(Kind::Int),
+        STy::Bool => Some(Kind::Bool),
+        STy::Tuple(_) | STy::Array(..) => None,
     }
+}
+
+/// The kind of a parameter or a formal. Those are scalars by construction
+/// (`STATIC_TYS`), so a container never reaches the `Int` arm.
+pub(super) fn param_kind(t: &STy) -> Kind {
+    kind(t).unwrap_or(Kind::Int)
 }
 
 /// What a candidate can read: the static names, how many `comptime fn`s
@@ -102,13 +110,13 @@ impl Builder {
         let names: Vec<&String> = r
             .names
             .iter()
-            .filter(|(_, t)| self::kind(*t) == kind)
+            .filter(|(_, t)| self::kind(t) == Some(kind))
             .map(|(n, _)| n)
             .collect();
         let choice = if depth == 0 {
             self.tape.below(2)
         } else {
-            self.tape.below(6)
+            self.tape.below(7)
         };
         let d = depth.saturating_sub(1);
         match (kind, choice) {
@@ -145,8 +153,19 @@ impl Builder {
                 SExpr::If(Box::new(cond), Box::new(then), Box::new(els))
             }
             (Kind::Int, 5) if r.fns > 0 => self.fn_call(d, r),
-            (Kind::Int, _) => self.small(),
-            (Kind::Bool, _) => SExpr::Bool(self.tape.flag()),
+            (_, 6) => match self.exit(kind, d, r) {
+                Some(e) => e,
+                None => self.leaf_literal(kind),
+            },
+            _ => self.leaf_literal(kind),
+        }
+    }
+
+    /// A literal of `kind`.
+    pub(super) fn leaf_literal(&mut self, kind: Kind) -> SExpr {
+        match kind {
+            Kind::Int => self.small(),
+            Kind::Bool => SExpr::Bool(self.tape.flag()),
         }
     }
 
@@ -185,7 +204,7 @@ impl Builder {
         let rest: Vec<SExpr> = params
             .iter()
             .skip(1)
-            .map(|(_, t)| self.sexpr(kind(*t), d, r))
+            .map(|(_, t)| self.sexpr(param_kind(t), d, r))
             .collect();
         let counted = r
             .envs
@@ -201,7 +220,7 @@ impl Builder {
         note!(self, call_fallbacks);
         let base = params
             .iter()
-            .map(|(_, t)| match kind(*t) {
+            .map(|(_, t)| match param_kind(t) {
                 Kind::Int => int(0),
                 Kind::Bool => SExpr::Bool(false),
             })
@@ -365,10 +384,10 @@ impl Builder {
 
     /// An argument for a parameter of type `t`: `Nat` in `1..=12`, `Int` in
     /// `-6..=6`, or a Bool, in each env.
-    pub(super) fn argument(&mut self, t: STy, r: Reach<'_>, envs: &[Env]) -> SExpr {
+    pub(super) fn argument(&mut self, t: &STy, r: Reach<'_>, envs: &[Env]) -> SExpr {
         let (lo, hi) = arg_range(t);
         self.position(
-            kind(t),
+            param_kind(t),
             r,
             envs,
             |v| match t {
@@ -381,7 +400,7 @@ impl Builder {
     }
 
     /// A random value in the range of a parameter of type `t`.
-    pub(super) fn top_value(&mut self, t: STy) -> Value {
+    pub(super) fn top_value(&mut self, t: &STy) -> Value {
         match t {
             STy::Bool => Value::Bool(self.tape.flag()),
             STy::Nat => Value::Int(BigInt::from(self.tape.between(1, 12))),
@@ -391,17 +410,20 @@ impl Builder {
                 let n = if k % 2 == 1 { (k + 1) / 2 } else { -(k / 2) };
                 Value::Int(BigInt::from(n))
             }
+            STy::Tuple(ts) => Value::Tuple(ts.iter().map(|t| self.top_value(t)).collect()),
+            STy::Array(t, n) => Value::Array((0..*n).map(|_| self.top_value(t)).collect()),
         }
     }
 }
 
 /// The range of a module argument of type `t`. Port widths hold over
 /// the whole range, so every argument tuple gives valid ports.
-pub(super) fn arg_range(t: STy) -> (i64, i64) {
+pub(super) fn arg_range(t: &STy) -> (i64, i64) {
     match t {
         STy::Nat => (1, 12),
         STy::Int => (-6, 6),
         STy::Bool => (0, 1),
+        STy::Tuple(_) | STy::Array(..) => (0, 0),
     }
 }
 
@@ -410,5 +432,7 @@ pub(super) fn value_expr(v: &Value) -> SExpr {
     match v {
         Value::Int(n) => SExpr::Int(n.clone(), Radix::Dec),
         Value::Bool(b) => SExpr::Bool(*b),
+        Value::Tuple(xs) => SExpr::Tuple(xs.iter().map(value_expr).collect()),
+        Value::Array(xs) => SExpr::Array(xs.iter().map(value_expr).collect()),
     }
 }

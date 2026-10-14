@@ -72,7 +72,14 @@ pub fn twin(program: &Program) -> Twin {
         named: BTreeSet::new(),
         queue: VecDeque::new(),
     };
-    let top = w.specialize(&program.top, &program.args);
+    let Some(top) = w.specialize(&program.top, &program.args) else {
+        // A container argument is a fault of the builder; the static names
+        // of the program stay, where the tests find them.
+        return Twin {
+            text: program.text(),
+            top: program.top(),
+        };
+    };
     let helpers: Vec<Item> = program
         .items
         .iter()
@@ -111,13 +118,15 @@ pub fn twin(program: &Program) -> Twin {
 }
 
 /// The token of a static argument in an emitted module name (front-end
-/// design 7.1): decimal, `5n` for `-5`, `1b` or `0b`.
-fn token(v: &Value) -> String {
+/// design 7.1): decimal, `5n` for `-5`, `1b` or `0b`. A container argument
+/// has the digest form, which the builder never makes.
+fn token(v: &Value) -> Option<String> {
     match v {
-        Value::Int(n) if n.sign() == Sign::Minus => format!("{}n", n.magnitude()),
-        Value::Int(n) => n.to_string(),
-        Value::Bool(true) => "1b".to_owned(),
-        Value::Bool(false) => "0b".to_owned(),
+        Value::Int(n) if n.sign() == Sign::Minus => Some(format!("{}n", n.magnitude())),
+        Value::Int(n) => Some(n.to_string()),
+        Value::Bool(true) => Some("1b".to_owned()),
+        Value::Bool(false) => Some("0b".to_owned()),
+        Value::Tuple(_) | Value::Array(_) => None,
     }
 }
 
@@ -126,6 +135,8 @@ fn literal(v: Value) -> SExpr {
     match v {
         Value::Int(n) => SExpr::Int(n, Radix::Dec),
         Value::Bool(b) => SExpr::Bool(b),
+        Value::Tuple(xs) => SExpr::Tuple(xs.into_iter().map(literal).collect()),
+        Value::Array(xs) => SExpr::Array(xs.into_iter().map(literal).collect()),
     }
 }
 
@@ -164,16 +175,17 @@ struct Writer<'a> {
 
 impl Writer<'_> {
     /// The name of module `module` at `args`; a new one joins the queue.
-    fn specialize(&mut self, module: &str, args: &[Value]) -> String {
+    fn specialize(&mut self, module: &str, args: &[Value]) -> Option<String> {
+        let tokens = args.iter().map(token).collect::<Option<Vec<_>>>()?;
         let name: String = std::iter::once(module.to_owned())
-            .chain(args.iter().map(token))
+            .chain(tokens)
             .collect::<Vec<_>>()
             .join("_");
         if self.named.insert(name.clone()) {
             self.queue
                 .push_back((name.clone(), module.to_owned(), args.to_vec()));
         }
-        name
+        Some(name)
     }
 
     /// The specialized module `name`: module `module` at `args`.
@@ -309,7 +321,10 @@ impl Writer<'_> {
                     out.push(s.clone());
                     return;
                 };
-                let child = self.specialize(m, &values);
+                let Some(child) = self.specialize(m, &values) else {
+                    out.push(s.clone());
+                    return;
+                };
                 out.push(Stmt::Instance(fr.declare(u), child, Vec::new()));
             }
             Stmt::If(c, then, els) => match self.value(c, fr) {
@@ -331,7 +346,11 @@ impl Writer<'_> {
                     return;
                 };
                 for value in loop_values(&lo, &hi) {
-                    let suffix = format!("_{binder}_{}{}", token(&value), fr.suffix);
+                    let suffix = format!(
+                        "_{binder}_{}{}",
+                        token(&value).unwrap_or_default(),
+                        fr.suffix
+                    );
                     let mut env = fr.env.clone();
                     env.statics.insert(binder.clone(), value);
                     out.push(self.block(body, fr, env, suffix));
@@ -399,7 +418,10 @@ mod tests {
     fn module(name: &str, params: &[(&str, STy)], clocked: bool, body: Vec<Stmt>) -> Item {
         Item::Module {
             name: name.to_owned(),
-            params: params.iter().map(|(n, t)| ((*n).to_owned(), *t)).collect(),
+            params: params
+                .iter()
+                .map(|(n, t)| ((*n).to_owned(), t.clone()))
+                .collect(),
             clocked,
             body,
         }
