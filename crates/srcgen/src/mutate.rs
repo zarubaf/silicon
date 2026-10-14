@@ -253,7 +253,7 @@ impl<'a> Walk<'a> {
             Item::Struct(def) => {
                 for (_, t) in &mut def.fields {
                     if let FieldTy::UInt(w) | FieldTy::SInt(w) = t {
-                        self.sexpr(w);
+                        self.width(w);
                     }
                 }
             }
@@ -406,9 +406,13 @@ impl<'a> Walk<'a> {
     }
 
     fn ty(&mut self, t: &mut Ty) {
-        let (Ty::UInt(w) | Ty::SInt(w)) = t else {
-            return;
-        };
+        if let Ty::UInt(w) | Ty::SInt(w) = t {
+            self.width(w);
+        }
+    }
+
+    /// The width of a type or of a struct field.
+    fn width(&mut self, w: &mut SExpr) {
         let new = if self.site(Kind::Widen) {
             let one = SExpr::Int(BigInt::from(1), Radix::Dec);
             SExpr::Binary(SBin::Add, Box::new(w.clone()), Box::new(one))
@@ -960,6 +964,218 @@ mod tests {
             codes.into_iter().collect::<Vec<_>>(),
             ["S002", "S003", "S007", "S018"]
         );
+    }
+
+    /// `struct S0(comptime W0: Nat) { m0: UInt[W0], m1: Int }` and
+    /// `comptime fn k0(mut a0: List[Int], x1: Int) -> Int` with the const
+    /// `F0` that holds it.
+    fn slice_two_items() -> Vec<Item> {
+        use super::super::program::{FnTy, MutFn, StructDef};
+        let s0 = Item::Struct(StructDef {
+            name: "S0".to_owned(),
+            params: vec!["W0".to_owned()],
+            fields: vec![
+                ("m0".to_owned(), FieldTy::UInt(SExpr::Name("W0".to_owned()))),
+                ("m1".to_owned(), FieldTy::Static(STy::Int)),
+            ],
+        });
+        let list = STy::List(Box::new(STy::Int));
+        let k0 = Item::MutFn(MutFn {
+            name: "k0".to_owned(),
+            root: list.clone(),
+            update: SExpr::Name("x1".to_owned()),
+            ret: SExpr::Len(Box::new(SExpr::Name("a0".to_owned()))),
+            diag: None,
+        });
+        let f0 = Item::Const {
+            name: "F0".to_owned(),
+            ty: STy::Fn(Box::new(FnTy {
+                params: vec![(true, list), (false, STy::Int)],
+                ret: STy::Int,
+            })),
+            value: SExpr::Name("k0".to_owned()),
+        };
+        vec![s0, k0, f0]
+    }
+
+    /// A module that builds a list, calls `k0` on it by name, as a receiver
+    /// and through `F0`, and ends with the top outputs.
+    fn mut_call_module() -> Item {
+        let call = |n: &str, f: &str, receiver| Stmt::MutCall {
+            name: n.to_owned(),
+            root: "s0".to_owned(),
+            f: f.to_owned(),
+            args: vec![dec(1)],
+            receiver,
+        };
+        module(
+            "M0",
+            vec![
+                Stmt::Output("o0".to_owned(), Ty::Bool),
+                Stmt::MutLet(
+                    "s0".to_owned(),
+                    STy::List(Box::new(STy::Int)),
+                    SExpr::NewList(STy::Int),
+                ),
+                call("s1", "k0", false),
+                call("s2", "k0", true),
+                call("s3", "F0", false),
+                Stmt::Push("s0".to_owned(), dec(2)),
+                Stmt::Diagnostic("d0".to_owned(), SExpr::Name("s1".to_owned())),
+                connect("o0", HExpr::Static(SExpr::Bool(false))),
+            ],
+        )
+    }
+
+    fn slice_two() -> Program {
+        let mut items = slice_two_items();
+        items.push(mut_call_module());
+        of(items)
+    }
+
+    fn find(p: &Program, kind: Kind, text: &str) -> Mutant {
+        all(p, kind)
+            .into_iter()
+            .find(|m| m.text.contains(text))
+            .unwrap_or_else(|| panic!("no {kind:?} mutant with `{text}`"))
+    }
+
+    #[test]
+    fn delete_of_a_mut_root_predicts_s003() {
+        let p = slice_two();
+        let root = "    let mut s0: List[Int] = list(Int);\n";
+        let m = all(&p, Kind::Delete)
+            .into_iter()
+            .find(|m| m.text == p.text().replacen(root, "", 1))
+            .unwrap();
+        assert_eq!(m.expect, Some("S003"));
+        // The call result `s1` is read by the `diagnostic`; `s2` is not.
+        let result = "    let s1: Int = k0(s0, 1);\n";
+        let m = all(&p, Kind::Delete)
+            .into_iter()
+            .find(|m| m.text == p.text().replacen(result, "", 1))
+            .unwrap();
+        assert_eq!(m.expect, Some("S003"));
+        let unread = "    let s2: Int = s0.k0(1);\n";
+        let m = all(&p, Kind::Delete)
+            .into_iter()
+            .find(|m| m.text == p.text().replacen(unread, "", 1))
+            .unwrap();
+        assert_eq!(m.expect, None);
+        // A statement that declares nothing predicts nothing, in the top
+        // frame too.
+        for line in ["    s0.push(2);\n", "    diagnostic(\"d0\", s1);\n"] {
+            let m = all(&p, Kind::Delete)
+                .into_iter()
+                .find(|m| m.text == p.text().replacen(line, "", 1))
+                .unwrap();
+            assert_eq!(m.expect, None, "{line}");
+        }
+    }
+
+    #[test]
+    fn delete_of_a_struct_item_predicts_s003_only_where_it_is_used() {
+        let mut p = slice_two();
+        let delete = |p: &Program| {
+            all(p, Kind::Delete)
+                .into_iter()
+                .find(|m| !m.text.contains("struct S0"))
+                .unwrap()
+        };
+        // No statement or item names the struct: no prediction.
+        assert_eq!(delete(&p).expect, None);
+        // A constructor names it.
+        if let Some(Item::Module { body, .. }) = p.items.last_mut() {
+            let record = SExpr::Record("S0".to_owned(), vec![dec(3)], vec![dec(1), dec(2)]);
+            body.insert(1, Stmt::StaticLet("s9".to_owned(), STy::Int, record));
+        }
+        assert_eq!(delete(&p).expect, Some("S003"));
+    }
+
+    #[test]
+    fn drop_and_add_arg_of_a_receiver_call_predict_s007() {
+        let p = slice_two();
+        let m = find(&p, Kind::DropArg, "let s2: Int = s0.k0();");
+        assert_eq!(m.expect, Some("S007"));
+        assert_eq!(m.what, "drop argument 1 of k0 in M0");
+        let m = find(&p, Kind::DropArg, "let s1: Int = k0(s0);");
+        assert_eq!(m.expect, Some("S007"));
+        let m = find(&p, Kind::AddArg, "let s2: Int = s0.k0(1, 0);");
+        assert_eq!(m.expect, Some("S007"));
+        // A call through the value `F0` checks its arguments when it runs.
+        let m = find(&p, Kind::DropArg, "let s3: Int = F0(s0);");
+        assert_eq!(m.expect, None);
+        let m = find(&p, Kind::AddArg, "let s3: Int = F0(s0, 1, 0);");
+        assert_eq!(m.expect, None);
+    }
+
+    #[test]
+    fn widths_of_a_struct_field_are_width_sites() {
+        let p = slice_two();
+        let m = find(&p, Kind::Widen, "m0: UInt[(W0 + 1)],");
+        assert_eq!(m.expect, None);
+        assert_eq!(m.what, "change width W0 to (W0 + 1) in S0");
+        let m = find(&p, Kind::ZeroWidth, "m0: UInt[0],");
+        assert_eq!(m.expect, None);
+        assert_eq!(m.text, p.text().replace("m0: UInt[W0]", "m0: UInt[0]"));
+    }
+
+    #[test]
+    fn duplicate_of_a_slice_two_item_or_declaration_predicts_s002() {
+        let p = slice_two();
+        let doubled = |m: &Mutant, text: &str| m.text.matches(text).count() == 2;
+        let item = all(&p, Kind::Duplicate)
+            .into_iter()
+            .find(|m| doubled(m, "struct S0(comptime W0: Nat) {"))
+            .unwrap();
+        assert_eq!(item.expect, Some("S002"));
+        for text in [
+            "const F0: fn (mut List[Int], Int) -> Int = k0;",
+            "let mut s0: List[Int] = list(Int);",
+            "let s1: Int = k0(s0, 1);",
+        ] {
+            let m = all(&p, Kind::Duplicate)
+                .into_iter()
+                .find(|m| doubled(m, text))
+                .unwrap_or_else(|| panic!("no duplicate of `{text}`"));
+            assert_eq!(m.expect, Some("S002"), "{text}");
+        }
+        // A `push` and a `diagnostic` declare nothing, so a duplicate of the
+        // module is the only copy that holds them twice.
+        for text in [
+            "    s0.push(2);\n    s0.push(2);\n",
+            "    diagnostic(\"d0\", s1);\n    diagnostic(\"d0\", s1);\n",
+        ] {
+            assert!(
+                all(&p, Kind::Duplicate)
+                    .iter()
+                    .all(|m| !m.text.contains(text))
+            );
+        }
+    }
+
+    #[test]
+    fn rename_of_a_slice_two_name_predicts_s003() {
+        let p = slice_two();
+        let renamed = all(&p, Kind::Rename);
+        for text in [
+            "let mut s0: List[Int] = list(Int);\n    let s1: Int = q0(s0, 1);",
+            "let s2: Int = q0.k0(1);",
+            "let s2: Int = s0.q0(1);",
+            "let s3: Int = q0(s0, 1);",
+            "s0.push(2);\n    diagnostic(\"d0\", q0);",
+            "q0.push(2);",
+        ] {
+            assert!(renamed.iter().any(|m| m.text.contains(text)), "{text}");
+        }
+        assert!(renamed.iter().all(|m| m.expect == Some("S003")));
+    }
+
+    #[test]
+    fn fault_in_a_diagnostic_value_predicts_nothing() {
+        let p = slice_two();
+        let m = find(&p, Kind::Fault, "diagnostic(\"d0\", (1 / 0));");
+        assert_eq!(m.expect, None);
     }
 
     #[test]
