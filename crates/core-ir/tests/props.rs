@@ -544,7 +544,7 @@ fn the_source_generator_covers_the_lift_forms() {
     let seen = sample(source());
     assert_covers(&seen, FORMS);
     assert_covers(&seen, &["rst-conn"]);
-    assert!(!seen.forms.contains("read"));
+    assert_covers(&seen, &["read"]);
     assert!(!seen.forms.contains("no-reset"));
 }
 
@@ -585,7 +585,7 @@ fn source_forms(d: &Design) -> Result<(), String> {
             return Err("an extern".to_owned());
         };
         if has_mem_form(m) {
-            return Err(format!("{} has a memory form", m.name.text));
+            registered_shape(m).map_err(|e| format!("{} has a memory form: {e}", m.name.text))?;
         }
         let clocked = m.ports.iter().any(|p| p.ty == Ty::Clock);
         if clocked != has_reset_input(m) {
