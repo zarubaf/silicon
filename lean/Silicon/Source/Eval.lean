@@ -1530,7 +1530,8 @@ mutual
       | .expr _ v => do
         if let some o ← eval n v then known o.value
         return none
-      | .connect p .. | .reg p .. | .wire p .. | .input p .. | .output p .. | .inst p .. =>
+      | .connect p .. | .reg p .. | .wire p .. | .mem p .. | .input p .. | .output p ..
+      | .inst p .. =>
         fail .S011 p "a static evaluation makes no hardware"
       | .alias _ x ty => do
         bindLocal x.id ⟨some .type, false, .static (.type (← typeExpr n ty))⟩
@@ -1611,6 +1612,7 @@ mutual
     | .assign _ t v | .connect _ t v => do scanExpr t; scanExpr v
     | .reg _ b ty i => do scanType ty; scanExpr i; scanBinder b
     | .wire _ b ty | .input _ b ty | .output _ b ty => do scanType ty; scanBinder b
+    | .mem _ b w d => do scanType w; scanExpr d; scanBinder b
     | .inst _ b _ _ xs => do
       for x in xs do scanExpr x
       scanBinder b

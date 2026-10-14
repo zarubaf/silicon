@@ -10,10 +10,10 @@ These checks need no static values. Widths, types, and the dynamic stage rule ar
 The check runs on each item, also on an item that no instantiation uses. It checks both
 branches of each `comptime if`.
 
-`S005`: a static position does not name a port, a register, a wire, or an instance. Slice 1 has
-no memory. The rule is syntactic. It looks only at names that resolve to the declaration of such
-a resource. A `let` alias of a resource and a domain name are for the stage rule `S011` of
-`Elab`. The error is at the name. These are the static positions:
+`S005`: a static position does not name a port, a register, a wire, a memory, or an instance. The
+rule is syntactic. It looks only at names that resolve to the declaration of such a resource. A
+`let` alias of a resource and a domain name are for the stage rule `S011` of `Elab`. The error is
+at the name. These are the static positions:
 
 1. Each argument of an index: `T[e]` in a type and `b[e]` in an expression. Thus each argument
    of a struct specialization `P[e]`. Also the length `N` of an array type `[T; N]`, in a type
@@ -21,7 +21,7 @@ a resource. A `let` alias of a resource and a domain name are for the stage rule
 2. The value of a `const` item.
 3. The condition of a `comptime if`, and both bounds of a `comptime for`.
 4. Each argument of an `instance`.
-5. The reset value of a `reg`.
+5. The reset value of a `reg`, and the depth `N` of a `mem m: [T; N]`.
 6. The callee of each call.
 7. Each argument of a call to a `comptime fn` item, and each argument at a `comptime` parameter
    of a call to a `fn` item. A receiver call binds its receiver and its arguments to the
@@ -39,7 +39,7 @@ a resource. A `let` alias of a resource and a domain name are for the stage rule
 `S006` is at the statement:
 
 - A module body has no `return`, also in a nested block.
-- A `comptime fn` has no `input`, `output`, `reg`, `wire`, `instance`, or `:=` statement.
+- A `comptime fn` has no `input`, `output`, `reg`, `wire`, `mem`, `instance`, or `:=` statement.
 
 `S007` is at the call, the index, the type name, or the `instance` statement:
 
@@ -113,11 +113,12 @@ open Resolve
 
 /-! A resource that a static position cannot name. -/
 inductive Resource where
-  | port | reg | wire | inst
+  | port | reg | wire | mem | inst
   deriving Repr, DecidableEq, BEq, Inhabited
 
 def Resource.text : Resource → String
-  | .port => "a port" | .reg => "a register" | .wire => "a wire" | .inst => "an instance"
+  | .port => "a port" | .reg => "a register" | .wire => "a wire" | .mem => "a memory"
+  | .inst => "an instance"
 
 /-! A local: a resource, a mutable root, or another local. -/
 inductive Local where
@@ -454,6 +455,11 @@ mutual
       expr true i
       declare b (.resource .reg)
     | .wire p b ty => do placement o p "wire"; typeExpr ty; declare b (.resource .wire)
+    | .mem p b w d => do
+      placement o p "memory"
+      typeExpr w
+      expr true d
+      declare b (.resource .mem)
     | .input p b ty => do placement o p "port"; typeExpr ty; declare b (.resource .port)
     | .output p b ty => do placement o p "port"; typeExpr ty; declare b (.resource .port)
     | .inst p b m i xs => do
