@@ -16,9 +16,9 @@
 //!   item, so no other declaration catches the use.
 //! - One argument more or less in a call of a named function is `S007`
 //!   (pass 4), on all code. In a call through a function value, pass 5
-//!   finds it when the call runs: `S007` where the site always runs (a
-//!   `const`, or the top frame of a module, outside a lazy branch), else
-//!   no prediction.
+//!   finds it when the call runs: `S007` where the site always runs (the
+//!   top frame of a module, outside a lazy operand or branch), else no
+//!   prediction. A `const` runs at its first use, so it predicts nothing.
 //! - A deleted `:=` in the top frame of a module body is `S018` (pass 5):
 //!   each module of a program has a context, so its top frame runs, and
 //!   nothing else fails.
@@ -28,7 +28,7 @@
 
 use super::program::sexpr as sexpr_text;
 use super::program::{
-    FieldTy, HExpr, Item, Place, Program, Radix, SBin, SExpr, STy, Stmt, Ty, render_items,
+    FieldTy, HBin, HExpr, Item, Place, Program, Radix, SBin, SExpr, STy, Stmt, Ty, render_items,
 };
 use num_bigint::BigInt;
 use std::mem;
@@ -178,8 +178,8 @@ struct Walk<'a> {
     /// arguments at run time (pass 5), so an arity change in dead code stays
     /// unseen.
     values: Vec<String>,
-    /// Whether the site being walked always runs: it is in a `const` or in
-    /// the top frame of a module, and in no lazy branch.
+    /// Whether the site being walked always runs: it is in the top frame of
+    /// a module, and in no lazy operand or branch.
     always: bool,
     /// The name and index of the current item, and the count of its
     /// statements so far.
@@ -247,7 +247,7 @@ impl<'a> Walk<'a> {
     }
 
     fn item_body(&mut self, item: &mut Item) {
-        self.always = matches!(item, Item::Const { .. });
+        self.always = false;
         match item {
             Item::Const { value, .. } => self.sexpr(value),
             Item::HwFnValue { .. } => {}
@@ -524,6 +524,10 @@ impl<'a> Walk<'a> {
                 self.sexpr(s);
             }
             HExpr::Unary(_, a) => self.hexpr(a),
+            HExpr::Binary(HBin::Land | HBin::Lor, a, b) => {
+                self.hexpr(a);
+                self.lazily(|w| w.hexpr(b));
+            }
             HExpr::Binary(_, a, b) => {
                 self.hexpr(a);
                 self.hexpr(b);
@@ -933,28 +937,70 @@ mod tests {
             value: SExpr::Name("f0".to_owned()),
         };
         let call = SExpr::Call("F0".to_owned(), vec![dec(1), dec(2)]);
-        let lazy = SExpr::If(
-            Box::new(SExpr::Bool(false)),
-            Box::new(call.clone()),
-            Box::new(dec(0)),
-        );
+        let hcall = HExpr::Static(call.clone());
+        let boolean = |b| Box::new(SExpr::Bool(b));
+        let unused = Item::Const {
+            name: "K0".to_owned(),
+            ty: STy::Int,
+            value: call.clone(),
+        };
         let m0 = module(
             "M0",
             vec![
                 Stmt::Output("o0".to_owned(), Ty::Bool),
-                Stmt::StaticLet("s0".to_owned(), STy::Int, lazy),
+                Stmt::StaticLet(
+                    "s0".to_owned(),
+                    STy::Int,
+                    SExpr::If(boolean(false), Box::new(call.clone()), Box::new(dec(0))),
+                ),
+                Stmt::StaticLet(
+                    "s1".to_owned(),
+                    STy::Bool,
+                    SExpr::Binary(SBin::Land, boolean(false), Box::new(call.clone())),
+                ),
+                Stmt::StaticLet(
+                    "s2".to_owned(),
+                    STy::Bool,
+                    SExpr::Binary(SBin::Lor, boolean(true), Box::new(call.clone())),
+                ),
+                Stmt::Let {
+                    name: "h0".to_owned(),
+                    mutable: false,
+                    ty: None,
+                    value: HExpr::Binary(
+                        HBin::Lor,
+                        Box::new(HExpr::Static(SExpr::Bool(true))),
+                        Box::new(hcall.clone()),
+                    ),
+                },
+                Stmt::Let {
+                    name: "h1".to_owned(),
+                    mutable: false,
+                    ty: None,
+                    value: HExpr::If(
+                        Box::new(HExpr::Static(SExpr::Bool(false))),
+                        Box::new(hcall),
+                        Box::new(HExpr::Static(dec(0))),
+                    ),
+                },
                 Stmt::If(
                     SExpr::Bool(false),
-                    vec![Stmt::StaticLet("s1".to_owned(), STy::Int, call)],
+                    vec![Stmt::StaticLet("s3".to_owned(), STy::Int, call.clone())],
                     None,
+                ),
+                Stmt::For(
+                    "j0".to_owned(),
+                    dec(0),
+                    dec(0),
+                    vec![Stmt::StaticLet("s4".to_owned(), STy::Int, call)],
                 ),
                 connect("o0", HExpr::Static(SExpr::Bool(false))),
             ],
         );
-        let p = of(vec![f0, value, m0]);
+        let p = of(vec![f0, value, unused, m0]);
         for kind in [Kind::DropArg, Kind::AddArg] {
             let ms = all(&p, kind);
-            assert_eq!(ms.len(), 2, "{kind:?}");
+            assert_eq!(ms.len(), 8, "{kind:?}");
             assert!(ms.iter().all(|m| m.expect.is_none()), "{ms:?}");
         }
     }
