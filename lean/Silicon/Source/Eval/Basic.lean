@@ -410,8 +410,8 @@ structure Guard where
 def Guard.change (g : Guard) (x : String) : String :=
   match g.kind with
   | .arm => "a hardware arm changes a binding from before the arm"
-  | .structural => s!"a type or a constant cannot change `{x}`; change it before, " ++
-    "for example `let n = xs.pop();`, and use the result"
+  | .structural => s!"a type or a constant cannot change `{x}`; change `{x}` before it, " ++
+    "keep the result in a `let`, and use that name here"
 
 def Guard.effect (g : Guard) (f : String) : String :=
   match g.kind with
