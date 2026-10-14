@@ -45,6 +45,10 @@ These rules settle the open points of slice 1:
   value conform to the hardware data type of their resource first. A function there is thus
   `S010`.
 - A register in a combinational module is `S017` at the statement, before its type.
+- A `mem` statement checks in the order of section 6.2, each error at the statement: a
+  combinational module (`S017`), the word type (`memWord`), then the depth (`memDepth`). It
+  makes no `[T; N]` type. Its name binds a memory handle, which is never data (`S010`). A memory
+  without a `read_port` or a `write_port` call is `S018` at its statement.
 - A `:=` target resolves without a charge. A register, a wire, an own output, and a child input
   are targets, also through a handle alias. Each other target fails with `S017` (rule). A
   target with an index or a selector `.N` is a part of a resource: `S017` at the target.
@@ -91,6 +95,13 @@ structure WireDecl where
   ty : Ty
   pos : Pos
 
+/-! A memory: its path, its word type, its depth, and its `mem` statement (section 7.6). -/
+structure MemDecl where
+  path : Path
+  word : Ty
+  depth : Nat
+  pos : Pos
+
 /-! A child instance: its path, the interface of its instantiation, and its statement. -/
 structure ChildDecl where
   path : Path
@@ -120,6 +131,7 @@ structure Body where
   ports : Array PortDecl := #[]
   regs : Array RegDecl := #[]
   wires : Array WireDecl := #[]
+  mems : Array MemDecl := #[]
   lets : Array Let := #[]
   children : Array ChildDecl := #[]
   binds : Array Bind := #[]
@@ -131,13 +143,25 @@ structure Need where
   count : Nat
 
 /-!
-The work of the current instantiation. The resource number indexes `needs`, and the instance
-number indexes `bound`. `inputs` counts the bindings of each child input. `dup` holds the first
-`S018` of a second binding by position. `spent` is the fuel of the new children.
+The port calls of one memory by its number: its name, its `mem` statement, and the counts of its
+`read_port` calls and its `write_port` calls (section 6.2).
+-/
+structure MemUse where
+  name : String
+  pos : Pos
+  reads : Nat := 0
+  writes : Nat := 0
+
+/-!
+The work of the current instantiation. The resource number indexes `needs`, the memory number
+indexes `mems`, and the instance number indexes `bound`. `inputs` counts the bindings of each
+child input. `dup` holds the first `S018` of a second binding by position. `spent` is the fuel of
+the new children.
 -/
 structure Work where
   body : Body
   needs : Array Need := #[]
+  mems : Array MemUse := #[]
   bound : Array Nat := #[]
   inputs : Std.HashMap (Nat × Nat) Nat := {}
   dup : Option Error := none
@@ -216,6 +240,31 @@ so a type with a function type at any depth is `S010` with no walk. The type can
 def dataType (p : Pos) (t : Ty) : EM Ty :=
   if t.info.data then pure t
   else fail .S010 p s!"a port, a register, and a wire need a hardware data type, not {t.text}"
+
+/-!
+The word type of a memory at its `mem` statement `p` (section 6.2). It is hardware data with at
+least one leaf (`S010`), so an empty word is `S010` and not `S012`. Its width is at most 65536
+bits (`S012`). The metadata gives both, with no walk.
+-/
+def memWord (p : Pos) (t : Ty) : EM Ty :=
+  if !t.info.data || t.info.leaves = 0 then
+    fail .S010 p s!"a memory needs a nonempty hardware data type, not {t.text}"
+  else if t.info.width > 65536 then
+    fail .S012 p s!"a memory word has at most 65536 bits, not {t.info.width}"
+  else pure t
+
+/-!
+The depth of a memory at its `mem` statement `p` (section 6.2): a static value (`S011`), an
+integer (`S010`), and 1 to 16777216 (`S012`). Each error is at the statement.
+-/
+def memDepth (p : Pos) : Val → EM Nat
+  | .static (.int k) =>
+    if k < 1 || k > 16777216 then
+      fail .S012 p s!"a memory depth is 1 to 16777216, not {intText k}"
+    else pure k.toNat
+  | .static v => fail .S010 p s!"a memory depth is a static integer, not {v.text}"
+  | .pending .. => fail .S010 p "a memory depth is a static integer, not `[]`"
+  | v => fail .S011 p s!"a memory depth is static, not {v.text}"
 
 /-! A resource that needs one binding. The result is its handle. -/
 def resource (k : Kind) (path : Path) (t : Ty) (p : Pos) (x : String) : EM Val := do
@@ -314,6 +363,11 @@ def bindings : EM Unit := do
   let mut err := w.dup
   for r in w.needs do
     if r.count == 0 then err := earlier err ⟨.S018, r.pos, s!"`{r.name}` has no binding"⟩
+  for m in w.mems do
+    if m.reads == 0 then
+      err := earlier err ⟨.S018, m.pos, s!"the memory `{m.name}` has no `read_port`"⟩
+    else if m.writes == 0 then
+      err := earlier err ⟨.S018, m.pos, s!"the memory `{m.name}` has no `write_port`"⟩
   let mut first : Option (ChildDecl × Nat) := none
   for (c, k) in w.body.children.zipIdx do
     if w.bound.getD k 0 < c.iface.inputs then
@@ -409,8 +463,16 @@ mutual
           let path ← fresh x.id x.name.name
           modifyBody fun b => { b with wires := b.wires.push ⟨path, t, p⟩ }
           bindLocal x.id ⟨some t, false, ← resource .wire path t p x.name.name⟩
-        -- TODO(#209): elaborate the memory declaration. Until then, a memory is `S004`.
-        | .mem p .. => fail .S004 p "a memory is not supported yet"
+        | .mem p x w d => do
+          if (← get).work.body.domain.isNone then
+            fail .S017 p "a combinational module has no memory"
+          let t ← memWord p (← typeExpr n w)
+          let k ← memDepth p (← need d (← eval n d)).value
+          let path ← fresh x.id x.name.name
+          let id := (← get).work.mems.size
+          modify fun s => { s with work.mems := s.work.mems.push ⟨x.name.name, p, 0, 0⟩ }
+          modifyBody fun b => { b with mems := b.mems.push ⟨path, t, k, p⟩ }
+          bindLocal x.id ⟨none, false, .handle (.mem id path t k)⟩
         | .connect p tgt v => do
           let t ← target p tgt
           let o ← need v (← eval n v)
