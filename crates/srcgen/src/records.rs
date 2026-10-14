@@ -70,7 +70,6 @@ fn run(body: &[Stmt], env: &mut Env, scope: &Scope, log: &mut Vec<String>) -> Re
                     run(body, &mut inner, scope, log)?;
                 }
             }
-            Stmt::Block(body) => run(body, &mut env.clone(), scope, log)?,
             // A frame that no env reaches holds the `error`; it never runs.
             Stmt::Error(_) => return Err(Fault::Type),
             _ => {}
