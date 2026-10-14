@@ -836,6 +836,6 @@ mod tests {
         let narrow = Value::List(tys.array(nat, Int::from_u64(1)), Vec::new());
         assert!(matches!(same_pair(&narrow, &other, &mut tys), Ok(true)));
         let long = Value::List(tys.array(int, Int::from_u64(2)), Vec::new());
-        assert!(matches!(same_pair(&long, &other, &mut tys), Err(_)));
+        assert!(same_pair(&long, &other, &mut tys).is_err());
     }
 }
