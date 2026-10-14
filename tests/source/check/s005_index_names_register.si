@@ -1,0 +1,9 @@
+// S005: each index of a container is a static position, so a register is no index.
+// TOP M()
+module M() {
+    reg r: UInt[1] = 0;
+    r := r +% 1;
+    let a = [1, 2];
+    // expected-error S005 @+1
+    let b = a[r];
+}
