@@ -68,7 +68,7 @@ because the prelude struct has no source position (section 6.2).
 def atUse (p : Pos) (act : M α) : M α := fun c s =>
   match act c s with
   | .ok r => .ok r
-  | .error e => .error { e with pos := p }
+  | .error e => .error { e with err.pos := p }
 
 /-!
 The charge at `pos` of the metadata sums of a tuple or a struct type with the metadata `m` and

@@ -1826,23 +1826,37 @@ of its top expression.
 def start (budget : Budget) (items : Array Resolve.Item) (top : Scan) : Ctx × St :=
   let syms := symbols items ((items.map scanItem).push top) (items.map scanRest)
   (⟨items, budget.depth, 0, none, 0, syms, ⟨none, 0⟩, [], none, none⟩,
-   ⟨budget.fuel, Array.replicate items.size .notStarted, {}, {}, {}, {}, {}⟩)
-
-/-! Runs `act` with the budget. The result has the used fuel. -/
-def run (budget : Budget) (items : Array Resolve.Item) (act : Nat → M α) (top : Scan := {}) :
-    Except Error (α × Nat) := do
-  let (ctx, st) := start budget items top
-  let (a, s) ← ((act budget.fuel).run ctx).run st
-  return (a, budget.fuel - s.fuel)
+   ⟨budget.fuel, Array.replicate items.size .notStarted, {}, {}, {}, {}, {}, #[]⟩)
 
 /-!
-The value of a static expression in the file scope, and the used fuel. The expression has the
-symbols of the entry after the items.
+Runs `act` with the budget. The result has the used fuel. The records come with both outcomes:
+an error keeps the records before it (section 8.2).
 -/
-def evalExpr (budget : Budget) (items : Array Resolve.Item) (e : Resolve.Expr) :
-    Except Error (Value × Nat) :=
-  run budget items (top := scanTop e) fun n =>
+def observeRun (budget : Budget) (items : Array Resolve.Item) (act : Nat → M α)
+    (top : Scan := {}) : Array Record × Except Error (α × Nat) :=
+  let (ctx, st) := start budget items top
+  match act budget.fuel ctx st with
+  | .ok (a, s) => (s.records, .ok (a, budget.fuel - s.fuel))
+  | .error e => (e.records, .error e.err)
+
+/-! Runs `act` with the budget, without the records. -/
+def run (budget : Budget) (items : Array Resolve.Item) (act : Nat → M α) (top : Scan := {}) :
+    Except Error (α × Nat) :=
+  (observeRun budget items act top).2
+
+/-!
+The value of a static expression in the file scope, the used fuel, and the records. The
+expression has the symbols of the entry after the items.
+-/
+def observeExpr (budget : Budget) (items : Array Resolve.Item) (e : Resolve.Expr) :
+    Array Record × Except Error (Value × Nat) :=
+  observeRun budget items (top := scanTop e) fun n =>
     withReader (fun c => { c with item := items.size }) do
       static e.pos (← need e (← eval n e)).value
+
+/-! The value of a static expression in the file scope and the used fuel, without the records. -/
+def evalExpr (budget : Budget) (items : Array Resolve.Item) (e : Resolve.Expr) :
+    Except Error (Value × Nat) :=
+  (observeExpr budget items e).2
 
 end Silicon.Source.Eval
