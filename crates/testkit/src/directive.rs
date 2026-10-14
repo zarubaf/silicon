@@ -25,7 +25,18 @@ impl Marker {
 /// True when a line of `source` holds a `FileCheck` directive: `<marker> CHECK`, then `:` or one
 /// of the suffixes `-NEXT`, `-NOT`, `-DAG`, `-LABEL`, `-SAME`, `-EMPTY`, and `-COUNT-<n>`, then `:`.
 pub(crate) fn has_check(source: &str, marker: Marker) -> bool {
-    let head = format!("{} CHECK", marker.prefix());
+    has_prefix(source, marker, "CHECK")
+}
+
+/// True when a line of `source` holds a `FileCheck` directive of the prefix `OBSERVE`, which
+/// checks the output of `observe` (section 11.3).
+pub(crate) fn has_observe(source: &str, marker: Marker) -> bool {
+    has_prefix(source, marker, "OBSERVE")
+}
+
+/// True when a line of `source` holds a `FileCheck` directive of the prefix `prefix`.
+fn has_prefix(source: &str, marker: Marker, prefix: &str) -> bool {
+    let head = format!("{} {prefix}", marker.prefix());
     source.lines().any(|line| {
         line.match_indices(&head).any(|(at, _)| {
             let rest = &line[at + head.len()..];
@@ -290,6 +301,23 @@ mod tests {
             assert!(has_check(&source, Marker::Si), "{form}");
         }
         assert!(has_check("; CHECK-COUNT-2: x\n", Marker::Sil));
+    }
+
+    #[test]
+    fn has_observe_takes_its_own_prefix_only() {
+        for form in [
+            "OBSERVE:",
+            "OBSERVE-NEXT:",
+            "OBSERVE-NOT:",
+            "OBSERVE-COUNT-31:",
+        ] {
+            let source = format!("// {form} x\n");
+            assert!(has_observe(&source, Marker::Si), "{form}");
+            assert!(!has_check(&source, Marker::Si), "{form}");
+        }
+        assert!(!has_observe("// CHECK: x\n", Marker::Si));
+        assert!(!has_observe("// OBSERVED: x\n", Marker::Si));
+        assert!(!has_observe("// OBSERVE x\n", Marker::Si));
     }
 
     #[test]
