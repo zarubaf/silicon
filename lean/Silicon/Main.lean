@@ -29,6 +29,7 @@ def main (args : List String) : IO UInt32 := do
       | "eval" :: rest => source "eval" rest
       | "cost" :: rest => source "cost" rest
       | "elab" :: rest => source "elab" rest
+      | "observe" :: rest => source "observe" rest
       | "run" :: rest => source "run" rest
       | "validate" :: rest => source "validate" rest
       | _ => usage

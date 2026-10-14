@@ -12,7 +12,8 @@ def errorLine (e : Error) : String :=
 
 def usage : String :=
   "usage: silicon-check {parse FILE|eval FILE EXPR|cost FILE --top T|elab FILE --top T|" ++
-  "run FILE --top T|validate FILE --top T OUT} [--fuel N] [--depth N] [--syntax-depth N]"
+  "observe FILE --top T|run FILE --top T|validate FILE --top T OUT} [--fuel N] [--depth N] " ++
+  "[--syntax-depth N]"
 
 /-! The positional arguments and the flags of a command. -/
 structure Opts where
@@ -154,6 +155,20 @@ def elabChecked (o : Opts) (source t : String) (digest : String → String) :
     Except Outcome Checked :=
   checkLowered (elabRun o source t digest)
 
+/-!
+`observe` (section 8): the record lines, then the outcome after them. It runs the stages of
+`elab`: the elaboration, the lowering, and the check of pass 6. Only the elaboration makes
+records, so a rejection at any stage keeps the records before its error. A success has no
+other output.
+-/
+def observeText (o : Opts) (source t : String) (digest : String → String := Names.sha16) :
+    String × Outcome :=
+  let (rs, r) := observeRun o source t digest
+  let text := rs.foldl (fun s line => s ++ line ++ "\n") ""
+  match checkLowered r with
+  | .ok _ => (text, .ok "")
+  | .error out => (text, out)
+
 /-! The canonical text of a design. -/
 def canonicalText (d : Core.Design) : String := Core.print (Core.canonicalize d)
 
@@ -258,6 +273,10 @@ def execute (cmd : String) (rest : List String) : IO (Except String UInt32) := d
   | "eval", [file, expr], none => emit (evalOutcome o (← IO.FS.readFile file) expr)
   | "cost", [file], some t => emit (costText o (← IO.FS.readFile file) t)
   | "elab", [file], some t => emit (elabText o (← IO.FS.readFile file) t)
+  | "observe", [file], some t =>
+    let (text, out) := observeText o (← IO.FS.readFile file) t
+    (← IO.getStdout).putStr text
+    emit out
   | "validate", [file, out], some t =>
     emit (validateText o (← IO.FS.readFile file) t (← IO.FS.readFile out))
   | "run", [file], some t =>
