@@ -178,7 +178,7 @@ impl Builder {
     }
 
     /// The static statement `s` on each env of `ctx`; a fault is a bug.
-    fn run(&self, ctx: &mut Ctx, s: &Stmt) -> Built {
+    pub(super) fn run(&self, ctx: &mut Ctx, s: &Stmt) -> Built {
         for env in &mut ctx.envs {
             exec_static(s, env, &self.scope)?;
         }
@@ -186,7 +186,7 @@ impl Builder {
     }
 
     /// `s` on each env of `ctx`, which stay unchanged if one faults.
-    fn try_run(&self, ctx: &mut Ctx, s: &Stmt) -> bool {
+    pub(super) fn try_run(&self, ctx: &mut Ctx, s: &Stmt) -> bool {
         let mut envs: Vec<Env> = ctx.envs.clone();
         let ok = envs
             .iter_mut()

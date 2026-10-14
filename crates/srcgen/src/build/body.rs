@@ -49,7 +49,7 @@ impl Builder {
 
     /// A helper type: `Bool`, or a width that is a literal or a `Nat`
     /// const in `1..=64`.
-    fn data_ty(&mut self) -> (Ty, Scalar) {
+    pub(super) fn data_ty(&mut self) -> (Ty, Scalar) {
         let shape = self.tape.below(3);
         if shape == 0 {
             return (Ty::Bool, Scalar::Bool);
@@ -112,6 +112,7 @@ impl Builder {
                 .collect(),
             helpers: k,
             lists: Vec::new(),
+            counters: Vec::new(),
         };
         let mut body = Vec::new();
         for _ in 0..self.tape.below(3) {
@@ -128,6 +129,7 @@ impl Builder {
         Ok(Helper {
             name: format!("h{k}"),
             params,
+            mut_first: false,
             ret,
             body,
             result,
@@ -300,6 +302,7 @@ impl Builder {
             hw: Vec::new(),
             helpers: self.helpers.len(),
             lists: Vec::new(),
+            counters: Vec::new(),
         };
         let mut body = Vec::new();
         for (n, t) in &sig.inputs {
@@ -355,11 +358,13 @@ impl Builder {
         let mut instances = 0;
         for _ in 0..self.tape.below(max + 1) {
             let nested = level < NESTING;
-            match self.tape.below(15) {
+            match self.tape.below(17) {
                 1 => self.static_let(ctx, &mut m.names, &mut out)?,
                 12 => self.list_let(ctx, &mut m.names, &mut out)?,
                 13 => self.push_stmt(ctx, &mut out),
                 14 => self.pop_stmt(ctx, &mut m.names, &mut out),
+                15 => self.static_mut_call(ctx, &mut m.names, &mut out)?,
+                16 => self.hw_mut_call(ctx, m, &mut out)?,
                 2 => self.binding(ctx, &mut m.names, &mut out, true)?,
                 3 => self.assign(ctx, &mut m.names, &mut out)?,
                 4 => self.wire(ctx, &mut m.names, &mut out)?,
@@ -385,7 +390,7 @@ impl Builder {
     }
 
     /// `let` or `let mut`, with or without its type.
-    fn binding(
+    pub(super) fn binding(
         &mut self,
         ctx: &mut Ctx,
         names: &mut Names,

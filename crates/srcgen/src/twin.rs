@@ -87,6 +87,7 @@ pub fn twin(program: &Program) -> Twin {
             Item::Helper {
                 name,
                 params,
+                mut_first,
                 ret,
                 body,
                 result,
@@ -98,6 +99,7 @@ pub fn twin(program: &Program) -> Twin {
                         .iter()
                         .map(|(n, t)| (n.clone(), w.ty(t, &f)))
                         .collect(),
+                    mut_first: *mut_first,
                     ret: w.ty(ret, &f),
                     body: w.stmts(body, &mut f),
                     result: w.hexpr(result, &f),
@@ -266,6 +268,11 @@ impl Writer<'_> {
             HExpr::Call(g, args) => {
                 HExpr::Call(g.clone(), args.iter().map(|a| self.hexpr(a, fr)).collect())
             }
+            HExpr::Receiver(recv, g, args) => HExpr::Receiver(
+                sub(recv),
+                g.clone(),
+                args.iter().map(|a| self.hexpr(a, fr)).collect(),
+            ),
         }
     }
 
@@ -314,7 +321,11 @@ impl Writer<'_> {
                     value,
                 });
             }
-            Stmt::StaticLet(..) | Stmt::MutLet(..) | Stmt::Push(..) | Stmt::PopLet(..) => {
+            Stmt::StaticLet(..)
+            | Stmt::MutLet(..)
+            | Stmt::Push(..)
+            | Stmt::PopLet(..)
+            | Stmt::MutCall { .. } => {
                 if exec_static(s, &mut fr.env, &self.scope).is_err() {
                     out.push(s.clone());
                 }
