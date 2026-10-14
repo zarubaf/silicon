@@ -79,6 +79,9 @@ pub(crate) struct Counts {
     /// The bytes of a name that the walks of `diagnostic` and the reads of a domain copied into
     /// a new string, outside the text of a record.
     pub copied: u64,
+    /// The nodes of a type that a serialization expanded part by part, because the table held
+    /// no measured length for the type.
+    pub unfolded: u64,
 }
 
 /// What a counter counts.
@@ -115,6 +118,7 @@ pub(crate) enum Count {
     Recorded,
     Guarded,
     Copied,
+    Unfolded,
 }
 
 static COUNTS: Mutex<BTreeMap<u64, Counts>> = Mutex::new(BTreeMap::new());
@@ -184,6 +188,7 @@ pub(crate) fn add(count: Count, n: u64) {
             Count::Recorded => &mut c.recorded,
             Count::Guarded => &mut c.guarded,
             Count::Copied => &mut c.copied,
+            Count::Unfolded => &mut c.unfolded,
         };
         *field += n;
     }
