@@ -1440,3 +1440,170 @@ fn a_function_type_in_the_body_does_not_change_genericity() {
     assert!(!generic(src, "g"));
     assert!(!generic(src, "h"));
 }
+
+/// The targets of the names of the prelude struct item, by their node ids: the name, the
+/// parameter `T`, its type, the type of `data`, and the type of `valid`.
+fn response_targets(r: &Resolved) -> [Option<Target>; 4] {
+    let Some(Item::Struct { params, fields, .. }) = r.ast().last() else {
+        panic!("the last item is the prelude struct");
+    };
+    let ty = |t: &TypeExpr| match t {
+        TypeExpr::Name { id, .. } => r.target(*id),
+        _ => panic!("a type name"),
+    };
+    [
+        r.target(params[0].name.id),
+        ty(&params[0].ty),
+        ty(&fields[0].ty),
+        ty(&fields[1].ty),
+    ]
+}
+
+#[test]
+fn the_memory_functions_are_prelude_names_without_a_comptime_mark() {
+    for (name, want, arity) in [
+        ("read_port", Prelude::ReadPort, 3),
+        ("write_port", Prelude::WritePort, 4),
+    ] {
+        let src = format!("fn f() -> Nat {{ return {name}; }}");
+        let r = ok(&src);
+        assert_eq!(
+            target_at(&r, find(&src, name)),
+            Some(Target::Prelude(want)),
+            "{name}"
+        );
+        assert!(want.is_fn() && !want.is_type());
+        assert_eq!(want.modes().len(), arity);
+        assert_eq!(want.receiver(), Some(0), "the receiver binds to `m`");
+    }
+}
+
+#[test]
+fn a_receiver_call_of_a_memory_function_binds_the_receiver_to_the_first_parameter() {
+    let src = "fn f(m: Nat) -> Nat { return m.read_port(1, 2); }";
+    let r = ok(src);
+    assert_eq!(
+        target_at(&r, find(src, "read_port")),
+        Some(Target::Prelude(Prelude::ReadPort))
+    );
+    let src = "fn f(m: Nat) -> Nat { return m.write_port(1, 2, 3); }";
+    assert_eq!(receiver_of_return(src), Some(0));
+}
+
+#[test]
+fn a_user_function_shadows_a_memory_function_name() {
+    let src = "comptime fn read_port(n: Nat) -> Nat { return n; }\n\
+               fn f(x: Nat) -> Nat { return read_port(x) + x.read_port(); }";
+    let r = ok(src);
+    assert_eq!(decl_at(&r, find(src, "read_port(x)")).kind, Kind::Fn);
+    assert_eq!(decl_at(&r, find(src, "read_port()")).kind, Kind::Fn);
+}
+
+#[test]
+fn the_prelude_struct_is_the_last_item_and_changes_no_user_index() {
+    let src = "const A: Nat = 1;\nstruct S { a: Bool }\n";
+    let r = ok(src);
+    assert_eq!(r.ast().len(), 3);
+    assert!(!r.is_prelude_item(0) && !r.is_prelude_item(1) && r.is_prelude_item(2));
+    assert_eq!(r.item("A").map(|d| r.decl(d).kind), Some(Kind::Const));
+    assert!(r.item("ReadResponse").is_none(), "not in the item scope");
+    let Some(Item::Struct { name, .. }) = r.ast().last() else {
+        panic!("a struct");
+    };
+    assert_eq!(name.name, "ReadResponse");
+    assert_eq!(name.pos, pos(0, 0));
+    let Some(Target::Decl(d)) = r.target(name.id) else {
+        panic!("the name points to its declaration");
+    };
+    assert_eq!(r.decl(d).kind, Kind::Struct);
+    assert_eq!(r.decl(d).pos, pos(0, 0));
+}
+
+#[test]
+fn the_prelude_struct_is_resolved_already() {
+    let r = ok("fn f() -> Nat { return 1; }");
+    let [t, ty, data, valid] = response_targets(&r);
+    assert!(matches!(t, Some(Target::Decl(_))));
+    assert_eq!(ty, Some(Target::Prelude(Prelude::Type)));
+    assert_eq!(data, t, "`data: T` points to the parameter");
+    assert_eq!(valid, Some(Target::Prelude(Prelude::Bool)));
+}
+
+#[test]
+fn a_user_bool_or_type_does_not_change_the_prelude_struct() {
+    let want = response_targets(&ok("fn f() -> Nat { return 1; }"));
+    let [t, ty, data, valid] = want;
+    for src in [
+        "struct Bool { a: Nat }",
+        "type Type = Nat;",
+        "const Bool: Nat = 1;\nconst Type: Nat = 2;",
+        "struct T { a: Nat }",
+    ] {
+        let r = ok(src);
+        let [t2, ty2, data2, valid2] = response_targets(&r);
+        assert_eq!(ty2, ty, "{src}");
+        assert_eq!(valid2, valid, "{src}");
+        assert!(matches!(t2, Some(Target::Decl(_))) && t2 == data2, "{src}");
+        assert_eq!(t2.is_some(), t.is_some());
+        assert_eq!(data2.is_some(), data.is_some());
+    }
+}
+
+#[test]
+fn the_name_read_response_resolves_to_the_prelude_struct() {
+    let src = "fn f() -> ReadResponse[Bool] { return ReadResponse[Bool](); }";
+    let r = ok(src);
+    let Some(Item::Struct { name, .. }) = r.ast().last() else {
+        panic!("a struct");
+    };
+    let want = r.target(name.id);
+    assert_eq!(target_at(&r, find(src, "ReadResponse[Bool] {")), want);
+    assert_eq!(target_at(&r, find(src, "ReadResponse[Bool](")), want);
+    let file = ok("fn f() -> Nat { return 1; }");
+    let e = run_expr("fn f() -> Nat { return 1; }", "ReadResponse[Bool]").unwrap();
+    let ids = Ids::of_expr(e.expr());
+    let Some(Target::Decl(d)) = e.target(ids.at(pos(1, 1))) else {
+        panic!("a declaration");
+    };
+    assert_eq!(file.decl(d).name, "ReadResponse");
+    assert_eq!(file.decl(d).kind, Kind::Struct);
+}
+
+#[test]
+fn a_user_struct_shadows_the_prelude_struct() {
+    let src = "struct ReadResponse { a: Bool }\nfn f() -> ReadResponse { return ReadResponse(); }";
+    let r = ok(src);
+    let user = r.item("ReadResponse").unwrap();
+    assert_eq!(r.decl(user).pos, pos(1, 8));
+    assert_eq!(
+        target_at(&r, find(src, "ReadResponse {")),
+        Some(Target::Decl(user))
+    );
+    assert_eq!(
+        target_at(&r, find(src, "ReadResponse()")),
+        Some(Target::Decl(user))
+    );
+    assert_eq!(
+        r.ast().len(),
+        3,
+        "the prelude struct is still the last item"
+    );
+}
+
+#[test]
+fn the_prelude_struct_is_no_function() {
+    let src = fn_body("return p.ReadResponse();");
+    assert_eq!(errors(&src), [(S003, 2, 10)]);
+    assert_eq!(message(&src), "`ReadResponse` is not a function");
+}
+
+#[test]
+fn the_prelude_struct_adds_no_error_and_no_duplicate() {
+    // A user item with the name does not collide: the prelude struct is not in the item scope.
+    ok("struct ReadResponse { a: Bool }");
+    ok("fn read_port() -> Nat { return 1; }\nfn write_port() -> Nat { return 1; }");
+    assert_eq!(
+        errors("struct ReadResponse { a: Bool }\nstruct ReadResponse { b: Bool }"),
+        [(S002, 2, 8)]
+    );
+}
