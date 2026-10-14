@@ -2567,4 +2567,22 @@ def wordS : String := "struct S { a: UInt[8], u: (), b: (Bool, [UInt[4]; 2]) }\n
   wordX 1000000 hwTree ==
   "y=(& (== m$0rdata@0:8 (uint 8 1)) (== m$0rdata@8:1 (bool true))) | ref m$0rdata@0 | 34"
 
+/-! The records of the static expression `expr` in the file scope of `src`. -/
+def records (src expr : String) : List String :=
+  match (do
+      let (items, checked) ← Cli.load 4096 src
+      let e ← Resolve.resolveExpr items (← Parse.parseExpr 4096 expr)
+      Check.checkExpr checked e
+      return (checked, e) : Except Error _) with
+  | .ok (checked, e) => (Eval.observeExpr {} checked e).1.toList
+  | .error _ => []
+
+/-!
+`diagnostic` under `eval` (section 8.2) charges as in a module, and its emitted name is `-`. The
+call charges 10 units for its node, its name, its arguments, and their copies. Then it charges
+1 for the measure of `1` and the 38 bytes of the record.
+-/
+#guard records "" "diagnostic(\"x\", 1)" == ["(record 1 1 - () (string \"x\") (int 1))"]
+#guard exact "" "diagnostic(\"x\", 1)" (10 + 1 + 38)
+
 end Silicon.Source.Test.Eval

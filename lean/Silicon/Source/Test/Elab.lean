@@ -1178,4 +1178,162 @@ def sMem (wr : Bool) (rest : String) : String :=
 #guard said (sMem true "  let z = if (c) { read_port(q, a, c) } else { 0 };\n") ==
   "a hardware arm has no graph effect such as `read_port`"
 
+/-!
+`diagnostic` (sections 6.2 and 8.2). A call charges its node and its name, then its arguments
+from left to right, then their copies. Then come the effect rule (`S016`), the message in the
+`data` context, and a value that waits for its type (`S010`). Then the measure charge of the
+value and the length of the record in bytes. The record goes into the list after its charges.
+-/
+def dMod (body : String) (fs : String := "") : String :=
+  fs ++ "module M() {\n  input c: Bool;\n  input d: UInt[8];\n  output o: UInt[8];\n" ++ body ++
+    "  o := 0;\n}\n"
+
+/-! The records of `observe` with the top `M`, then `ok` or the code and the position. -/
+def observed (src : String) (fuel : Nat := 100000000) : List String :=
+  let (rs, r) := Cli.observeRun { budget := { fuel, depth := 1000 } } src "M" Names.sha16
+  rs.toList ++ [match r with
+    | .ok _ => "ok"
+    | .error (.error e) => s!"{e.code} {e.pos.line}:{e.pos.col}"
+    | .error _ => "other"]
+
+/-! At the fuel `fuel`, the elaboration of `src` stops at the charge of `units` at `pos`. -/
+def pays (src : String) (fuel : Nat) (pos : String) (units : Nat) : Bool :=
+  match Cli.load 4096 src with
+  | .error _ => false
+  | .ok (items, checked) =>
+    match Cli.topSelection 4096 items checked "M" with
+    | .error _ => false
+    | .ok (p, i, _, xs) =>
+      match Elab.elaborate { fuel, depth := 1000 } checked Names.sha16 p i xs with
+      | .ok _ => false
+      | .error e =>
+        s!"{e.code} {e.pos.line}:{e.pos.col} {e.msg}" ==
+          s!"S015 {pos} the fuel cannot pay {units} unit(s); 0 remain"
+
+def d16 : String := dMod "  diagnostic(\"depth\", 16);\n"
+#guard observed d16 == ["(record 5 3 - () (string \"depth\") (int 16))", "ok"]
+-- 1. The statement, then the node and the name of the call.
+#guard pays d16 43 "5:3" 1 && pays d16 44 "5:3" 1 && pays d16 45 "5:3" 1
+-- 2. The arguments from left to right: the node and the size of each.
+#guard pays d16 46 "5:14" 1 && pays d16 47 "5:14" 6 && pays d16 53 "5:23" 1 &&
+  pays d16 54 "5:23" 1
+-- 3. The copies of the arguments.
+#guard pays d16 55 "5:3" 7
+-- 7. The measure charge of the value, then the 43 bytes of the record.
+#guard pays d16 62 "5:3" 1 && pays d16 63 "5:3" 43
+-- 8. The record goes into the list after its charges.
+#guard observed d16 105 == ["S015 5:3"]
+#guard observed d16 106 == ["(record 5 3 - () (string \"depth\") (int 16))", "S015 6:3"]
+
+-- 4. The effect rule comes after the copies.
+def dArm : String := dMod "  let z = if (c) { diagnostic(\"a\", 1) } else { 0 };\n"
+#guard pays dArm 53 "5:20" 3
+#guard elabAt dArm "M" 56 == "S016 5:20"
+-- 5. The message comes after the copies.
+def dMsg : String := dMod "  diagnostic(5, 1);\n"
+#guard pays dMsg 50 "5:3" 2
+#guard elabAt dMsg "M" 52 == "S010 5:3"
+-- 6. A value that waits for its type comes after the copies and has no measure charge.
+def dWait : String := dMod "  diagnostic(\"s\", []);\n"
+#guard pays dWait 51 "5:3" 3
+#guard elabAt dWait "M" 54 == "S010 5:3"
+#guard elabOnly (dMod "  diagnostic(\"s\", [1, []]);\n") "M" == "S010 5:3"
+
+-- The measure charge: the square of the size of an integer, and 1 for each container node.
+def dBig : String := dMod "  diagnostic(\"n\", 340282366920938463463374607431768211456);\n"
+#guard pays dBig 58 "5:3" 9 && pays dBig 67 "5:3" 76
+#guard observed dBig 143 ==
+  ["(record 5 3 - () (string \"n\") (int 340282366920938463463374607431768211456))", "S015 6:3"]
+def dArr : String := dMod "  diagnostic(\"n\", [1, 2]);\n"
+#guard pays dArr 62 "5:3" 3 && pays dArr 65 "5:3" 60
+#guard observed dArr ==
+  ["(record 5 3 - () (string \"n\") (array int ((int 1) (int 2))))", "ok"]
+
+/-!
+The message takes the `data` context. A register, a wire, an output, an own input, and a
+hardware value are `S011`. A child input is `S017`. A memory, an instance, and a domain are
+`S010`, and so is a static value that is not a `String`. The order is: the effect rule, the
+message, then the value.
+-/
+def dRes (msg : String) : String :=
+  "module C() {\n  input a: Bool;\n  output q: Bool;\n  q := a;\n}\n" ++
+  "module M() {\n  input c: Bool;\n  input d: UInt[8];\n  output o: UInt[8];\n" ++
+  "  reg r: UInt[8] = 0;\n  r := d;\n  wire w: UInt[8];\n  w := d;\n  mem m: [UInt[8]; 4];\n" ++
+  "  write_port(m, 0, d, c);\n  let k = read_port(m, 0, c);\n  instance u = C();\n" ++
+  "  u.a := c;\n" ++ s!"  diagnostic({msg}, 1);\n" ++ "  o := 0;\n}\n"
+#guard elabOnly (dRes "r") "M" == "S011 19:3"
+#guard elabOnly (dRes "w") "M" == "S011 19:3"
+#guard elabOnly (dRes "o") "M" == "S011 19:3"
+#guard elabOnly (dRes "d") "M" == "S011 19:3"
+#guard elabOnly (dRes "d +% 1") "M" == "S011 19:3"
+#guard elabOnly (dRes "u.q") "M" == "S011 19:3"
+#guard elabOnly (dRes "u.a") "M" == "S017 19:3"
+#guard elabOnly (dRes "m") "M" == "S010 19:3"
+#guard elabOnly (dRes "u") "M" == "S010 19:3"
+#guard elabOnly (dRes "clock") "M" == "S010 19:3"
+#guard elabOnly (dRes "5") "M" == "S010 19:3"
+#guard elabOnly (dRes "(1, 2)") "M" == "S010 19:3"
+#guard elabOnly (dRes "[]") "M" == "S010 19:3"
+#guard elabOnly (dRes "\"s\"") "M" == "ok 219"
+#guard elabOnly (dMod "  wire e: ();\n  diagnostic(e, 1);\n") "M" == "S011 6:3"
+-- A receiver call starts at its receiver, which is the message. A hardware scalar is `(hw <type>)`.
+#guard observed (dMod "  \"r\".diagnostic(d);\n") ==
+  ["(record 5 3 - () (string \"r\") (hw (uint 8)))", "ok"]
+#guard said (dRes "r") == "the message of `diagnostic` is a static String, not a register"
+#guard said (dRes "d") == "the message of `diagnostic` is a static String, not hardware UInt[8]"
+#guard said (dRes "u.a") == "an input of a child is a target; it is never read"
+#guard said (dRes "m") == "a memory is not data"
+#guard said (dRes "5") == "the message of `diagnostic` is a String, not Int"
+#guard said (dRes "[]") == "the message of `diagnostic` is a String, not `[]` without a type"
+#guard said (dMod "  diagnostic(5, []);\n") == "the message of `diagnostic` is a String, not Int"
+#guard said (dMod "  let z = if (c) { diagnostic(5, []) } else { 0 };\n") ==
+  "a hardware arm has no graph effect such as `diagnostic`"
+#guard said dWait == "the value of `diagnostic` needs a type; `[]` without a type"
+
+/-!
+The effect rule (section 9.4): `diagnostic` is `S016` in a hardware arm, also through a helper
+and a function value. It is `S016` in each structural context too, with the text of the kind. A
+`comptime fn` that the module body calls, `T(x)`, `comptime if`, and `comptime for` make records.
+-/
+def dg : String := "fn g() -> Nat { diagnostic(\"a\", 1); return 2; }\n"
+#guard sRun "  let z = if (c) { diagnostic(\"b\", 1) } else { 0 };\n" dg == "S016 14:20"
+#guard sRun "  let z = if (c) { UInt[8](g()) } else { 0 };\n" dg == "S016 1:17"
+#guard sRun "  let fv = g;\n  let z = if (c) { UInt[8](fv()) } else { 0 };\n" dg == "S016 1:17"
+-- Context 1: a type expression, also a parameter type.
+#guard sRun "  let x: UInt[g()] = 0;\n" dg == "S016 1:17"
+#guard sRun "  wire w: UInt[g()];\n  w := 0;\n" dg == "S016 1:17"
+#guard sRun "  reg r: UInt[g()] = 0;\n  r := r;\n" dg == "S016 1:17"
+#guard sRun "  let z = k();\n" (dg ++ "fn k() -> UInt[g()] { return 1; }\n") == "S016 1:17"
+#guard sRun "  let z = k(1);\n" (dg ++ "fn k(b: UInt[g()]) -> Nat { return 1; }\n") == "S016 1:17"
+-- Context 2: the expression forms that make a type.
+#guard sRun "  let x = UInt[g()](0);\n" dg == "S016 1:17"
+#guard sRun "  let t = [Bool; g()];\n" dg == "S016 1:17"
+#guard sRun "  let t = fn (UInt[g()]) -> Bool;\n" dg == "S016 1:17"
+-- Context 3: a `const` item and a `type` item at their first use, and a `type` statement.
+#guard sRun "  let x = K;\n" (dg ++ "const K: Nat = g();\n") == "S016 1:17"
+#guard sRun "  let x: T = 0;\n" (dg ++ "type T = UInt[g()];\n") == "S016 1:17"
+#guard sRun "  type T = UInt[g()];\n" dg == "S016 1:17"
+-- Context 4: a struct use.
+#guard sRun "  let t = P[g()];\n" dg == "S016 1:17"
+#guard sRun "  let t = Q[1];\n" (dg ++ "struct Q(comptime W: Nat) { a: UInt[g()] }\n") ==
+  "S016 1:17"
+-- Context 5: the word type and the depth of a `mem` statement.
+#guard sRun "  mem q: [UInt[g()]; 4];\n" dg == "S016 1:17"
+#guard sRun "  mem q: [UInt[8]; g()];\n" dg == "S016 1:17"
+#guard said (dg ++ sMod "  let x: UInt[g()] = 0;\n") ==
+  "a type or a constant has no graph effect such as `diagnostic`; call it before and use the " ++
+  "result"
+#guard said (dg ++ sMod "  let z = if (c) { UInt[8](g()) } else { 0 };\n") ==
+  "a hardware arm has no graph effect such as `diagnostic`"
+-- Not structural: each makes one record.
+#guard observed (dg ++ sMod "  let x = UInt[8](g());\n") ==
+  ["(record 1 17 - () (string \"a\") (int 1))", "ok"]
+#guard observed (dg ++ sMod "  comptime if (g() == 2) {}\n  comptime for i in 0..g() {}\n") ==
+  ["(record 1 17 - () (string \"a\") (int 1))", "(record 1 17 - () (string \"a\") (int 1))",
+   "ok"]
+#guard observed (dg ++ sMod "  static_assert(g() == 2, \"m\");\n") ==
+  ["(record 1 17 - () (string \"a\") (int 1))", "ok"]
+#guard observed ("comptime fn cg() -> Nat { diagnostic(\"c\", 1); return 2; }\n" ++
+  sMod "  let z = cg();\n") == ["(record 1 27 - () (string \"c\") (int 1))", "ok"]
+
 end Silicon.Source.Test.Elab
