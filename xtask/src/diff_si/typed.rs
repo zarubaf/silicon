@@ -3,15 +3,18 @@
 //! comptime construct, go through both front ends. The oracles are the
 //! front-end spec, section 11.4: `silicon-check validate` accepts the
 //! elaboration of `silicon elab`; the probe `eval` gives the value of the
-//! generator in both front ends; `cost` is equal in both; and the program
-//! and its twin give equal outputs in `run` on the same input lines.
+//! generator in both front ends; `cost` is equal in both; `observe` is equal
+//! in both, and the tails of its records are those that the generator
+//! predicts; and the program and its twin give equal outputs in `run` on the
+//! same input lines.
 
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Output};
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use proptest::strategy::{Just, Strategy};
 use srcgen::{BuildFault, Program, lines, twin, typed};
+use testkit::source::{compare_observe, split_observed};
 
 use super::{Mode, Tools, repeat, reproducer, run_trace, stdin, validated, verdict_of, write};
 use crate::diff::{CYCLES, Trace, compare, difference, output};
@@ -67,6 +70,9 @@ fn try_verdict(tools: &Tools, dir: &Path, case: &Case) -> Result<Option<String>>
     if let Some((_, message)) = difference(&traces) {
         return Ok(Some(format!("cost: {message}")));
     }
+    if let Some(message) = observed(tools, &file, &top, program)? {
+        return Ok(Some(format!("observe: {message}")));
+    }
     let twin = twin(program);
     let names = twin.static_names();
     if !names.is_empty() {
@@ -93,6 +99,62 @@ fn try_verdict(tools: &Tools, dir: &Path, case: &Case) -> Result<Option<String>>
         return Ok(Some(format!("run: {message}")));
     }
     Ok(validated(tools, &twin_file, &twin.top)?.map(|m| format!("twin: {m}")))
+}
+
+/// `None` if both front ends print the same `observe` output for `file`, with
+/// no error line, and the tails of its records are the records that the
+/// generator predicts, as multisets.
+fn observed(tools: &Tools, file: &Path, top: &str, program: &Program) -> Result<Option<String>> {
+    let run = |binary: &Path| {
+        Command::new(binary)
+            .arg("observe")
+            .arg(file)
+            .args(["--top", top])
+            .output()
+            .with_context(|| format!("cannot run {} observe", binary.display()))
+    };
+    let (rust, lean): (Output, Output) = (run(&tools.silicon)?, run(&tools.lean)?);
+    if let Err(message) = compare_observe(&rust, &lean, None) {
+        return Ok(Some(message));
+    }
+    let seen = match split_observed(&rust) {
+        Ok(seen) => seen,
+        Err(message) => return Ok(Some(message)),
+    };
+    if let Some(line) = seen.error {
+        return Ok(Some(format!(
+            "an error line for an accepted program: {line}"
+        )));
+    }
+    let mut got = match tails(&seen.records) {
+        Ok(got) => got,
+        Err(message) => return Ok(Some(message)),
+    };
+    let mut want = program.records().to_vec();
+    got.sort();
+    want.sort();
+    Ok((got != want).then(|| {
+        format!(
+            "the records differ from the generator\nobserved tails: {got:?}\npredicted tails: {want:?}"
+        )
+    }))
+}
+
+/// The tail of each record line: the message and the value, from the
+/// message `(string "d...")` to the end of the record. The generator names
+/// each message `d<n>`, and no other part of a record holds `(string "d`.
+fn tails(records: &[u8]) -> Result<Vec<String>, String> {
+    String::from_utf8_lossy(records)
+        .lines()
+        .map(|line| {
+            let at = line
+                .find(" (string \"d")
+                .ok_or_else(|| format!("a record has no message `dK`: {line}"))?;
+            line.get(at + 1..line.len() - 1)
+                .map(str::to_owned)
+                .ok_or_else(|| format!("a record has a bad end: {line}"))
+        })
+        .collect()
 }
 
 /// The trace of `eval` for the expression `expr` in the file scope of `file`.
@@ -184,6 +246,19 @@ mod tests {
         };
         let error = report(&tools, dir.path(), 7, &case(7), "x").unwrap_err();
         assert!(format!("{error:#}").contains("no-such-tool"), "{error:#}");
+    }
+
+    #[test]
+    fn a_record_tail_runs_from_the_message_to_the_last_paren() {
+        let lines = b"(record 12 5 M0 () (string \"d0\") (int -4))\n(record 3 9 M1$2 ((call k0 40 9)) (string \"d12\") (bool true))\n";
+        assert_eq!(
+            tails(lines),
+            Ok(vec![
+                "(string \"d0\") (int -4)".to_owned(),
+                "(string \"d12\") (bool true)".to_owned()
+            ])
+        );
+        assert!(tails(b"(record 1 1 M0 () (string \"x\") (int 1))\n").is_err());
     }
 
     #[test]
