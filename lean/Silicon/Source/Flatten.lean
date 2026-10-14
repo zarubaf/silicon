@@ -358,10 +358,11 @@ def value (target : Path) (h : Hw) : FM Core.Expr := do
 /-!
 The source of the element `k` of the type `t` with the leaf field `f`, for the statement at `pos`
 (`Agg.child`). Elaboration gives each bound value the type of its sink, so a missing part is a
-defect at its leaf.
+defect at its leaf. `fs` gives the fields with a leaf of a struct type, for a word part.
 -/
-def sub (pos : Pos) (a : Option Agg) (f : Field) (k : Nat) (t : Ty) : Option Agg :=
-  a.bind (Agg.child pos k f t)
+def sub (fs : Layout.Fields) (pos : Pos) (a : Option Agg) (f : Field) (k : Nat) (t : Ty) :
+    Option Agg :=
+  a.bind (Agg.child (fun u => (fs u).map (·.map fun (k, _, v) => (k, v))) pos k f t)
 
 /-!
 The hardware value of a leaf of the type `t` with the source `a`. A static leaf is a constant,
@@ -433,7 +434,7 @@ def lowerInst (fs : Layout.Fields) (i : Inst) : FM Core.Module := do
   let mut body : Array Core.Stmt := #[]
   for r in b.regs do
     let some d := b.domain | defect "a register in a combinational module"
-    body ← Layout.foldLeaves fs (sub r.pos) (fun body l x => do
+    body ← Layout.foldLeaves fs (sub fs r.pos) (fun body l x => do
       charge r.pos 2
       let y ← pathText r.pos l.path
       let clk ← nameText r.pos (clockName d)
@@ -451,7 +452,7 @@ def lowerInst (fs : Layout.Fields) (i : Inst) : FM Core.Module := do
     let p := cpos bd.pos
     match bd.sink with
     | .own k t path =>
-      body ← Layout.foldLeaves fs (sub bd.pos) (fun body l x => do
+      body ← Layout.foldLeaves fs (sub fs bd.pos) (fun body l x => do
         charge bd.pos 1
         let y ← pathText bd.pos l.path
         let e ← value l.path (← leafHw bd.pos l.ty x)
@@ -462,7 +463,7 @@ def lowerInst (fs : Layout.Fields) (i : Inst) : FM Core.Module := do
         noFields t.depth path t (some bd.value) body
     | .child k inst q t =>
       -- The leaf `l` names the port with its leaf fields. Its target is the instance, then it.
-      conns ← Layout.foldLeaves fs (sub bd.pos) (fun conns l x => do
+      conns ← Layout.foldLeaves fs (sub fs bd.pos) (fun conns l x => do
         charge bd.pos 1
         let y ← nameText bd.pos l.name
         let target : Path := ⟨inst.outer, l.path.inner ++ .user q.head :: inst.inner⟩
