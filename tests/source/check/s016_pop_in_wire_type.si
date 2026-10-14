@@ -1,0 +1,11 @@
+// S016: a `wire` annotation is a structural context (section 9.4, item 1), so a pop of a list from
+// before the annotation changes it.
+// TOP M()
+module M() {
+    input x: UInt[8];
+    let mut ts = list(Nat);
+    ts.push(8);
+    // expected-error S016 @+1
+    wire w: UInt[ts.pop()];
+    w := x;
+}

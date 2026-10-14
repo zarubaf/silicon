@@ -1,0 +1,14 @@
+// S016: the signature of a function value is a structural context (section 9.4, item 1), so a
+// helper with a diagnostic cannot build its width. The signature binds no locals of the call.
+// TOP M()
+fn note() -> Nat {
+    // expected-error S016 @+1
+    diagnostic("signature", 8);
+    return 8;
+}
+fn id(x: UInt[note()]) -> UInt[8] {
+    return x;
+}
+module M() {
+    let g = id;
+}

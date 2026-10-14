@@ -1,0 +1,14 @@
+// S016: the field type of a struct is a structural context (section 9.4, item 4), so a helper
+// with a diagnostic cannot build its width.
+// TOP M()
+fn note() -> Nat {
+    // expected-error S016 @+1
+    diagnostic("field", 8);
+    return 8;
+}
+struct P {
+    a: UInt[note()],
+}
+module M() {
+    let a: P = P(0);
+}

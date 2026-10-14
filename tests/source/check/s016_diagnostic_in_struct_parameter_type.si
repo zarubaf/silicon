@@ -1,0 +1,14 @@
+// S016: the parameter type of a struct is a structural context (section 9.4, item 4), so a helper
+// with a diagnostic cannot build its length.
+// TOP M()
+fn note() -> Nat {
+    // expected-error S016 @+1
+    diagnostic("struct parameter", 2);
+    return 2;
+}
+struct P(comptime A: [Nat; note()]) {
+    a: Bool,
+}
+module M() {
+    let a: P[[1, 2]] = P[[1, 2]](false);
+}
