@@ -34,6 +34,8 @@ A memory (spec section 6.2 and section 7.6) uses these parts:
 
 The evaluator holds the innermost guard of section 9.4 in `Ctx.guard : Option Guard`. A guard has a kind, `arm` or `structural`, and the nesting depth at its start. A hardware `if` sets an `arm` guard for its arms. `structural` sets a `structural` guard in these contexts. They are each type expression, each form that makes a type, and the first use of a constant. They are also each struct use, and the word type and depth of a `mem` statement. The innermost guard wins. A `push`, a `pop`, or a write-back of a binding of the depth of the guard is `S016` (`mutation`), and so is a graph effect (`portCall`). A call nests deeper, so a helper can change its own locals. `Guard.change` and `Guard.effect` give the texts, and the Rust front end prints them exactly.
 
+`diagnostic(message, value)` (spec sections 5.4, 6.2, and 8.2) adds one `Record` (a line of text) to `St.records`. `Eval.diagnose` runs after the copy charge: the guard, the message, the measure charge (`Val.measureCharge`), the byte charge, and then the record. The text comes from the pure `render` functions (`Ty.render`, `Agg.render`, `Handle.render`). They never call `normalize`, and a `ref` renders from its type. `Ctx.inst` holds the emitted name, and `Ctx.calls` holds the frames. A frame push is O(1), and the byte charge pays for the frames. `fail` is the only error: it builds a `Stop { err, records }` from `St.records`, so an error keeps the records. `Eval.observeRun`, `Eval.observeExpr`, and `Elab.observe` return the records with both outcomes. `Eval.run`, `Eval.evalExpr`, and `Elab.elaborate` are their projections.
+
 ## Invariants
 
 - Do not use `sorry`. Check: `cargo xtask check` (rule `lean-sorry`).
@@ -51,4 +53,4 @@ Lean has no dependencies on `crates/`.
 
 Run `just check` from the repository root.
 
-Run `lake -d lean exe silicon-check check FILE` to check a design. Run `silicon-check parse`, `eval`, `cost`, `elab`, or `validate` for the front end.
+Run `lake -d lean exe silicon-check check FILE` to check a design. Run `silicon-check parse`, `eval`, `cost`, `elab`, `observe`, or `validate` for the front end. `observe` prints the records, then the first error.
