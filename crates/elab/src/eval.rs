@@ -23,6 +23,7 @@ mod container;
 mod hwops;
 mod inst;
 mod list;
+mod mem;
 mod place;
 mod record;
 mod string;
@@ -1156,6 +1157,12 @@ impl Evaluator<'_> {
         if copies {
             self.charge(pos, self.size(&out))?;
         }
+        self.read_use(pos, t, copies, out)
+    }
+
+    /// The typed use of `out` at `t` after its copy charged. A read of a handle that gives an
+    /// aggregate charges the size of the reference when `copies`.
+    fn read_use(&mut self, pos: Pos, t: TyId, copies: bool, out: Out) -> Res<Val> {
         let out = self.settle(pos, t, out)?;
         let handle = self.is_handle(&out);
         let d = self.data(pos, out)?;
@@ -1590,7 +1597,7 @@ impl Evaluator<'_> {
         let b = match self.store.seen(&b) {
             Seen::Handle(Handle::Inst { .. }) => return self.port_of(pos, b, field),
             // A field selection is a data context (section 9.2): a child input is `S017`.
-            Seen::Handle(Handle::Res { .. } | Handle::Mem | Handle::Input { .. }) => {
+            Seen::Handle(Handle::Res { .. } | Handle::Mem(_) | Handle::Input { .. }) => {
                 self.data(pos, b)?.into_out()
             }
             _ => b,

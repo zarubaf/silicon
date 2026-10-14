@@ -458,6 +458,9 @@ impl Evaluator<'_> {
         }
         self.charge(pos, sizes)?;
         let mut vs = vs;
+        if matches!(builtin, Prelude::ReadPort | Prelude::WritePort) {
+            return self.port_call(pos, g, builtin, vs);
+        }
         if matches!(builtin, Prelude::Resize | Prelude::Reinterpret) && vs.len() == 2 {
             return self.convert_call(pos, g, builtin, vs);
         }

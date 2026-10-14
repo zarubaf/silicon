@@ -259,6 +259,19 @@ impl Evaluator<'_> {
             self.store.park(o);
         }
         let args = self.store.resume(base);
+        self.spec_of(pos, (i, name, params, fields), args)
+    }
+
+    /// The use at `pos` of the struct item `i`, with the name, the parameters, and the fields of
+    /// its item, for the arguments `args` that evaluated. The prelude struct has no source
+    /// position, so each error of its work reports at `pos` (section 6.2).
+    pub(super) fn spec_of(
+        &mut self,
+        pos: Pos,
+        (i, name, params, fields): (usize, &Ident, &[Param], &[StructField]),
+        args: Vec<Out>,
+    ) -> Res<TyId> {
+        let file = self.file;
         if params.len() != args.len() {
             return fail(
                 Code::S007,
