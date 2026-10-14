@@ -208,6 +208,7 @@ fn resource(kind: Kind) -> Option<&'static str> {
         Kind::Input | Kind::Output => Some("a port"),
         Kind::Reg => Some("a register"),
         Kind::Wire => Some("a wire"),
+        Kind::Mem => Some("a memory"),
         Kind::Instance => Some("an instance"),
         _ => None,
     }
@@ -674,8 +675,13 @@ impl<'a> Walker<'a> {
                 self.placement(owner, *pos, "wire");
                 self.type_expr(ty);
             }
-            // TODO(#209): check the memory statement.
-            Stmt::Mem { .. } => {}
+            Stmt::Mem {
+                pos, word, depth, ..
+            } => {
+                self.placement(owner, *pos, "memory");
+                self.type_expr(word);
+                self.expr(true, depth);
+            }
             Stmt::Input { pos, ty, .. } | Stmt::Output { pos, ty, .. } => {
                 self.placement(owner, *pos, "port");
                 self.type_expr(ty);
