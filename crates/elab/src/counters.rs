@@ -79,8 +79,8 @@ pub(crate) struct Counts {
     /// The bytes of a name that the walks of `diagnostic` and the reads of a domain copied into
     /// a new string, outside the text of a record.
     pub copied: u64,
-    /// The nodes of a type that a serialization expanded part by part, because the table held
-    /// no measured length for the type.
+    /// The types that a serialization to a sink without the stored length expanded part by
+    /// part. A length pass never expands one.
     pub unfolded: u64,
 }
 

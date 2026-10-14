@@ -416,21 +416,17 @@ fn nested_handle(kind: &str, levels: u64) -> String {
     format!("{src}module M() domains(clk) {{\n{body}}}\n")
 }
 
-/// The type of a handle measures through the table once: the type nodes that a record unfolds
-/// grow by a constant at each level of nesting, not by the triple of the term. The record stops
+/// The type of a handle measures through the table once: a record unfolds no type. The record stops
 /// at the charge of its bytes, so no walk follows it.
 #[test]
 fn the_type_of_a_handle_measures_through_the_table() {
-    // A handle unfolds its levels once each and a constant number of nodes besides.
-    for (k, (kind, extra)) in [("mem", 2), ("input", 3), ("output", 2)]
-        .into_iter()
-        .enumerate()
-    {
+    // The length pass reads the stored length of each type and unfolds none.
+    for (k, kind) in ["mem", "input", "output"].into_iter().enumerate() {
         for (j, n) in [6u64, 8, 10, 12].into_iter().enumerate() {
             let src = nested_handle(kind, n);
             let (_, code, counts) = run_at(&src, 9_100 + (k * 10 + j) as u64);
             assert_eq!(code, Some(crate::Code::S015), "{kind} {n}");
-            assert_eq!(counts.unfolded, n + extra, "{kind} {n}");
+            assert_eq!(counts.unfolded, 0, "{kind} {n}");
         }
     }
 }
