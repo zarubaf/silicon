@@ -706,3 +706,146 @@ fn generator_designs_are_pinned() {
     }
     insta::assert_snapshot!(texts.join("\n"));
 }
+
+fn registered() -> impl Strategy<Value = Design> {
+    r#gen::design_with(r#gen::Config {
+        mems: r#gen::Mems::Registered,
+        dollar_names: false,
+        resets: r#gen::Resets::Module,
+    })
+}
+
+/// Whether `e` is the constant `value` of `width` bits.
+fn is_const(e: &Expr, width: u32, value: u32) -> bool {
+    matches!(e, Expr::Const { width: w, value: v, .. }
+        if w.value == width && *v == value.into())
+}
+
+/// Why a memory of `m` has no registered-read shape, if so.
+fn registered_shape(m: &Module) -> Result<usize, String> {
+    let mut mems = 0;
+    for s in &m.stmts {
+        let Stmt::Mem { name, depth, .. } = s else {
+            continue;
+        };
+        mems += 1;
+        let is_next = |s: &&Stmt| matches!(s, Stmt::Next { .. });
+        let reads: Vec<_> = m
+            .stmts
+            .iter()
+            .filter(is_next)
+            .filter_map(|s| match s {
+                Stmt::Next {
+                    reg,
+                    expr: Expr::Mux { then, els, .. },
+                    ..
+                } => match (&**then, &**els) {
+                    (Expr::Read { mem, .. }, Expr::Ref(held)) if mem.text == name.text => {
+                        (held.text == reg.text).then_some(reg.text.as_str())
+                    }
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        let [data] = reads[..] else {
+            return Err(format!("{}: not one registered read", name.text));
+        };
+        let reset_to_zero = |reg: &str| {
+            m.stmts.iter().any(|s| match s {
+                Stmt::Reg {
+                    name,
+                    width,
+                    reset: Some(r),
+                    ..
+                } if name.text == reg => is_rst(&r.signal) && is_const(&r.value, width.value, 0),
+                _ => false,
+            })
+        };
+        if !reset_to_zero(data) {
+            return Err(format!(
+                "{}: the data register has no reset to 0",
+                name.text
+            ));
+        }
+        let depth = depth.value;
+        let valid = m.stmts.iter().find_map(|s| match s {
+            Stmt::Next {
+                reg,
+                expr: Expr::Binary { rhs, .. },
+                ..
+            } => match &**rhs {
+                Expr::Icmp { rhs: limit, .. } if is_const_depth(limit, depth) => Some(reg),
+                full if is_const(full, 1, 1) && depth > 1 && depth.is_power_of_two() => Some(reg),
+                _ => None,
+            },
+            _ => None,
+        });
+        let Some(valid) = valid else {
+            return Err(format!("{}: no valid register", name.text));
+        };
+        if !reset_to_zero(&valid.text) {
+            return Err(format!(
+                "{}: the valid register has no reset to 0",
+                name.text
+            ));
+        }
+        let writes: Vec<_> = m
+            .stmts
+            .iter()
+            .filter_map(|s| match s {
+                Stmt::Write { mem, port, en, .. } if mem.text == name.text => Some((*port, en)),
+                _ => None,
+            })
+            .collect();
+        let [(0, Expr::Binary { rhs, .. })] = writes[..] else {
+            return Err(format!("{}: not exactly one write", name.text));
+        };
+        let disabled_by_reset = matches!(&**rhs, Expr::Binary { lhs, rhs, .. }
+            if is_rst(lhs) && is_const(rhs, 1, 1));
+        if !disabled_by_reset {
+            return Err(format!(
+                "{}: the reset does not disable the write",
+                name.text
+            ));
+        }
+    }
+    Ok(mems)
+}
+
+fn is_const_depth(e: &Expr, depth: u32) -> bool {
+    matches!(e, Expr::Const { value, .. } if *value == depth.into())
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig {
+        failure_persistence: None,
+        ..ProptestConfig::default()
+    })]
+
+    #[test]
+    fn registered_designs_check_and_have_the_registered_shape(d in registered()) {
+        prop_assert!(check(&d).is_ok(), "{:?}\n{}", check(&d).err(), print(&d));
+        for item in &d.items {
+            if let Item::Module(m) = item {
+                prop_assert!(registered_shape(m).is_ok(), "{:?}\n{}", registered_shape(m), print(&d));
+            }
+        }
+    }
+}
+
+#[test]
+fn registered_designs_often_have_a_memory() {
+    let mut runner = TestRunner::deterministic();
+    let strategy = registered();
+    let with_memory = (0..256)
+        .filter(|_| {
+            let d = draw(&strategy, &mut runner);
+            d.items.iter().any(|item| {
+                matches!(item, Item::Module(m)
+                    if registered_shape(m).is_ok_and(|mems| mems > 0))
+            })
+        })
+        .count();
+    assert!(with_memory * 10 >= 256 * 3, "{with_memory} of 256");
+}
