@@ -1,0 +1,11 @@
+// S011: the message of a diagnostic is a register. A register is not static, so it cannot be a message.
+// TOP M()
+module M() {
+    input a: Bool;
+    output o: Bool;
+    reg r: Bool = false;
+    r := a;
+    // expected-error S011 @+1
+    diagnostic(r, 1);
+    o := r;
+}

@@ -1,0 +1,6 @@
+// S007: a diagnostic takes 2 arguments, a message and a value. One argument is too few.
+// TOP M()
+module M() {
+    // expected-error S007 @+1
+    diagnostic("only");
+}

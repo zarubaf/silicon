@@ -1,0 +1,8 @@
+// S018: an output without a driver is an error at the end of the body, after the records of the body.
+// TOP M()
+module M() {
+    // expected-error S018 @+1
+    output o: Bool;
+    diagnostic("body", true);
+    diagnostic("end", "text");
+}

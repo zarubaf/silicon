@@ -1,0 +1,15 @@
+// S017: the message of a diagnostic is a field of a child input.
+// TOP M()
+struct R {
+    x: Bool,
+    y: Bool,
+}
+module C() domains() {
+    input a: R;
+}
+module M() domains() {
+    instance c = C();
+    c.a := R(true, false);
+    // expected-error S017 @+1
+    diagnostic(c.a.x, 1);
+}

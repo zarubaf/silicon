@@ -1,0 +1,8 @@
+// S010: an error after two records. The first two diagnostics succeed. The third has an Int as its message.
+// TOP M()
+module M() {
+    diagnostic("one", 1);
+    diagnostic("two", [2, 3]);
+    // expected-error S010 @+1
+    diagnostic(3, 3);
+}

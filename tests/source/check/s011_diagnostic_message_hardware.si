@@ -1,0 +1,9 @@
+// S011: the message of a diagnostic is a hardware value, here an input.
+// TOP M()
+module M() {
+    input m: Bool;
+    output o: Bool;
+    // expected-error S011 @+1
+    diagnostic(m, 1);
+    o := m;
+}

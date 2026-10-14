@@ -1,0 +1,11 @@
+// S010: the message of a diagnostic is an instance handle.
+// TOP M()
+module C() domains() {
+    input a: Bool;
+}
+module M() domains() {
+    instance c = C();
+    c.a := false;
+    // expected-error S010 @+1
+    diagnostic(c, 1);
+}

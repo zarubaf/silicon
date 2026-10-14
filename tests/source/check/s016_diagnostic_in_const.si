@@ -1,0 +1,11 @@
+// S016: a diagnostic in the value of a const item, at its first use.
+// TOP M()
+fn note() -> Nat {
+    // expected-error S016 @+1
+    diagnostic("const", 8);
+    return 8;
+}
+const W: Nat = note();
+module M() {
+    let a: UInt[W] = 0;
+}

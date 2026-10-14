@@ -1,0 +1,7 @@
+// S010: the message of a diagnostic is a memory. A memory is a handle, not a String.
+// TOP M()
+module M() {
+    mem m: [UInt[8]; 4];
+    // expected-error S010 @+1
+    diagnostic(m, 1);
+}

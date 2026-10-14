@@ -1,0 +1,6 @@
+// S010: the value of a diagnostic is [], a literal that waits for its type.
+// TOP M()
+module M() {
+    // expected-error S010 @+1
+    diagnostic("empty", []);
+}

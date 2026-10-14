@@ -1,0 +1,13 @@
+// S016: a diagnostic in the argument of a struct use.
+// TOP M()
+fn note() -> Nat {
+    // expected-error S016 @+1
+    diagnostic("argument", 4);
+    return 4;
+}
+struct P(comptime W: Nat) {
+    a: UInt[W],
+}
+module M() {
+    let a: P[note()] = P[4](0);
+}

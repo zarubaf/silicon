@@ -1,0 +1,12 @@
+// S018: a child input without a binding. The records of the child and of the parent come first.
+// TOP M()
+module C() domains() {
+    input a: Bool;
+    diagnostic("child", 1);
+}
+module M() domains() {
+    diagnostic("before", 0);
+    // expected-error S018 @+1
+    instance c = C();
+    diagnostic("after", 2);
+}
