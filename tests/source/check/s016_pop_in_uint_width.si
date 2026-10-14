@@ -1,0 +1,8 @@
+// S016: a pop of a list from before the type changes it in a UInt width.
+// TOP M()
+module M() {
+    let mut xs = list(Int);
+    xs.push(8);
+    // expected-error S016 @+1
+    let a: UInt[xs.pop()] = 0;
+}

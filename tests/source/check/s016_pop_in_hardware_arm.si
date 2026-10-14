@@ -5,6 +5,7 @@ module M() {
     output o: UInt[8];
     let mut xs = list(UInt[8]);
     xs.push(1);
-    // expected-error S016 @+1
+    // expected-error S016 @+2
+    // expected-message: a hardware arm changes a binding from before the arm
     o := if (c) { 3 } else { xs.pop() };
 }

@@ -1,0 +1,11 @@
+// S016: a mut write-back of a binding from before the type is a change in an array length.
+// TOP M()
+fn f(mut n: Int) -> Int {
+    n = n + 1;
+    return n;
+}
+module M() {
+    let mut n = 3;
+    // expected-error S016 @+1
+    let a: [Bool; f(n)] = [false, false, false, false];
+}
