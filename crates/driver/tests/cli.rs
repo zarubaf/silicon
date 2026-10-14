@@ -916,6 +916,105 @@ fn elab_reports_the_first_error_and_takes_the_budgets() -> Test {
     Ok(())
 }
 
+/// A module with a record of a static value and a record of a hardware value, on the lines 4
+/// and 5. The lines of `OBSERVE_TWO` and the outcomes below are those of `silicon-check
+/// observe`.
+const OBSERVE_SI: &str = "module M() {\n  input d: UInt[8];\n  output o: UInt[8];\n  \
+    diagnostic(\"one\", 1);\n  diagnostic(\"two\", d);\n  o := d;\n}\n";
+
+const OBSERVE_TWO: &str = "(record 4 3 M () (string \"one\") (int 1))\n\
+    (record 5 3 M () (string \"two\") (hw (uint 8)))\n";
+
+#[test]
+fn observe_prints_the_records_and_exits_with_0() -> Test {
+    assert_eq!(
+        source("observe", OBSERVE_SI, &[], "M()", "")?,
+        (OBSERVE_TWO.to_owned(), Some(0))
+    );
+    // A design with no `diagnostic` has no record, and an empty output is valid.
+    assert_eq!(
+        source("observe", COUNTER_SI, &[], "Counter(4)", "")?,
+        (String::new(), Some(0))
+    );
+    Ok(())
+}
+
+#[test]
+fn observe_prints_the_records_before_the_first_error() -> Test {
+    // An error of the elaboration.
+    let bad_message = OBSERVE_SI.replace("diagnostic(\"two\", d)", "diagnostic(2, d)");
+    assert_eq!(
+        source("observe", &bad_message, &[], "M()", "")?,
+        (
+            "(record 4 3 M () (string \"one\") (int 1))\n\
+             error[S010]: 5:3: the message of `diagnostic` is a String, not Int\n"
+                .to_owned(),
+            Some(1)
+        )
+    );
+    // An `S018` at the end of the body comes after the record of the body.
+    let unbound = OBSERVE_SI.replace(
+        "  output o: UInt[8];\n",
+        "  output o: UInt[8];\n  reg r: UInt[8] = 0;\n",
+    );
+    let (out, code) = source("observe", &unbound, &[], "M()", "")?;
+    assert_eq!(
+        (out.as_str(), code),
+        (
+            "(record 5 3 M () (string \"one\") (int 1))\n\
+             (record 6 3 M () (string \"two\") (hw (uint 8)))\n\
+             error[S018]: 4:3: `r` has no binding\n",
+            Some(1)
+        )
+    );
+    // The fuel ends in the elaboration, and then in the lowering, which makes no record.
+    assert_eq!(
+        source("observe", OBSERVE_SI, &["--fuel", "150"], "M()", "")?,
+        (
+            "(record 4 3 M () (string \"one\") (int 1))\n\
+             error[S015]: 5:3: the fuel cannot pay 46 unit(s); 39 remain\n"
+                .to_owned(),
+            Some(1)
+        )
+    );
+    assert_eq!(
+        source("observe", OBSERVE_SI, &["--fuel", "160"], "M()", "")?,
+        (
+            format!(
+                "{OBSERVE_TWO}error[S015]: 1:1: the fuel cannot pay 1 unit(s) of the lowering; \
+                 0 remain\n"
+            ),
+            Some(1)
+        )
+    );
+    // A syntax error comes before any record.
+    let (out, code) = source("observe", "module M( {}", &[], "M", "")?;
+    assert!(out.starts_with("error[S001]: "), "{out}");
+    assert_eq!(code, Some(1));
+    Ok(())
+}
+
+#[test]
+fn observe_of_a_bad_top_selection_is_a_usage_error() -> Test {
+    assert_eq!(
+        source("observe", OBSERVE_SI, &[], "M(1 + 1)", "")?,
+        (String::new(), Some(2))
+    );
+    assert_eq!(
+        source("observe", OBSERVE_SI, &[], "N", "")?,
+        (String::new(), Some(2))
+    );
+    let mut command = silicon_command();
+    command
+        .arg("observe")
+        .arg(file("observe-no-top.si", OBSERVE_SI.as_bytes())?);
+    assert_eq!(spawn(&mut command, "")?.status.code(), Some(2));
+    let mut command = silicon_command();
+    command.args(["observe", "no-such-file.si", "--top", "M()"]);
+    assert_eq!(spawn(&mut command, "")?.status.code(), Some(2));
+    Ok(())
+}
+
 #[test]
 fn validate_compares_the_canonical_core_ir() -> Test {
     let validate = |sil: &str| -> std::io::Result<(String, Option<i32>)> {
