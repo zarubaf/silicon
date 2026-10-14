@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
-use crate::program::{Place, Radix, SBin};
+use crate::program::{Place, Radix, SBin, render_items};
 use num_bigint::BigInt;
 use proptest::strategy::ValueTree;
 use proptest::test_runner::TestRunner;
@@ -643,4 +643,49 @@ fn a_write_to_a_root_drops_the_types_that_read_it() {
     ctx.forget("s0");
     let kept: Vec<bool> = ctx.hw.iter().map(|h| h.ty.is_some()).collect();
     assert_eq!(kept, [false, true, true]);
+}
+
+/// A register declared with `SInt[(s0[0] + s1)]` and driven after `s0.pop()`
+/// must not print that width in the resize of its driver.
+#[test]
+fn a_write_to_a_root_drops_the_type_of_a_register_driver() {
+    let width = Ty::SInt(SExpr::Binary(
+        SBin::Add,
+        Box::new(SExpr::Index(
+            Box::new(SExpr::Name("s0".to_owned())),
+            Box::new(SExpr::Int(BigInt::from(0), Radix::Dec)),
+        )),
+        Box::new(SExpr::Name("s1".to_owned())),
+    ));
+    let hw = |name: &str, ty: Ty, scalar: Scalar| Hw {
+        expr: HExpr::Name(name.to_owned()),
+        ty: Some(ty),
+        types: vec![scalar],
+        mutable: false,
+    };
+    let mut ctx = Ctx {
+        envs: vec![Env::default()],
+        hw: vec![
+            hw(
+                "i0",
+                super::hw::literal_ty(Scalar::SInt(5)),
+                Scalar::SInt(5),
+            ),
+            hw("r0", width, Scalar::SInt(3)),
+        ],
+        ..Ctx::default()
+    };
+    ctx.forget("s0");
+    let mut b = Builder::new(vec![]);
+    let mut out = Vec::new();
+    assert!(b.close_regs(&ctx, vec!["r0".to_owned()], &mut out).is_ok());
+    let items = vec![Item::Module {
+        name: "M0".to_owned(),
+        params: vec![],
+        clocked: true,
+        body: out,
+    }];
+    let text = render_items(&items);
+    assert!(text.contains("resize"), "{text}");
+    assert!(!text.contains("s0"), "{text}");
 }
