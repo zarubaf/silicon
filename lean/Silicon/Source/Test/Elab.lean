@@ -1467,4 +1467,43 @@ def dTree (d : Nat) : String :=
   (List.range 31).reverse.map (fun i => s!"(record 4 3 T${i} () (string \"d\") (int {i}))") ++
     ["ok"]
 
+/-!
+The command `observe` (section 8): the record lines, then the outcome. It runs the stages of
+`elab`. A rejection at any stage prints the records before its first error, then the error
+line, with the exit code 1. A success prints only the records, with the exit code 0.
+-/
+def observeOut (src : String) (fuel : Nat := 100000000) : String × UInt32 :=
+  let (text, o) := Cli.observeText { budget := { fuel } } src "M"
+  (text ++ (match o with
+    | .ok t => t
+    | .error e => Cli.errorLine e ++ "\n"
+    | .reject l => l ++ "\n"
+    | .usage m => s!"usage: {m}\n"
+    | .defect m => s!"defect: {m}\n"), Cli.exitCode o)
+
+#guard observeOut dDeep ==
+  ("(record 1 23 M ((call k 8 11) (call g 3 30) (call h 2 41)) (string \"h\") (int 3))\n" ++
+    "(record 9 3 M () (string \"m\") (int 3))\n", 0)
+#guard observeOut (dMod "  let x = 1;\n") == ("", 0)
+-- A parse error has no record.
+#guard observeOut "module M() {\n  input c: Bool;\n  output o: Bool\n}\n" ==
+  ("error[S001]: 4:1: expected `;`\n", 1)
+-- An error after two records.
+def dAfter : String :=
+  dMod "  diagnostic(\"a\", 1);\n  diagnostic(\"b\", (c, 2));\n  diagnostic(5, 1);\n"
+#guard observeOut dAfter ==
+  ("(record 5 3 M () (string \"a\") (int 1))\n" ++
+    "(record 6 3 M () (string \"b\") (tuple ((hw bool) (int 2))))\n" ++
+    "error[S010]: 7:3: the message of `diagnostic` is a String, not Int\n", 1)
+-- An `S018` at the end of the body comes after the records of the body.
+#guard observeOut (dMod "  wire w: Bool;\n  diagnostic(\"a\", 1);\n") ==
+  ("(record 6 3 M () (string \"a\") (int 1))\nerror[S018]: 5:3: `w` has no binding\n", 1)
+-- An `S015` in the lowering keeps the records of the elaboration.
+def dLow : String := dMod "  diagnostic(\"a\", d);\n" |>.replace "  o := 0;\n" "  o := d +% 1;\n"
+#guard observeOut dLow 143 == ("(record 5 3 M () (string \"a\") (hw (uint 8)))\n", 0)
+#guard observeOut dLow 142 ==
+  ("(record 5 3 M () (string \"a\") (hw (uint 8)))\n" ++
+    "error[S015]: 1:1: the fuel cannot pay 1 unit(s) of the lowering; 0 remain\n", 1)
+#guard (Cli.usage.splitOn "|observe FILE --top T|").length == 2
+
 end Silicon.Source.Test.Elab
