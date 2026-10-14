@@ -119,6 +119,7 @@ pub struct Resolved {
     items: BTreeMap<String, DeclId>,
     names: BTreeMap<NodeId, Target>,
     calls: BTreeMap<NodeId, Call>,
+    response: DeclId,
 }
 
 impl Resolved {
@@ -126,6 +127,14 @@ impl Resolved {
     #[must_use]
     pub fn ast(&self) -> &[Item] {
         &self.ast
+    }
+
+    /// Whether the item `i` of [`Resolved::ast`] is the prelude struct `ReadResponse`. It is the
+    /// last item, after the user items, so it changes no index of a user item. It has no source
+    /// position, so a pass that orders by position skips it.
+    #[must_use]
+    pub fn is_prelude_item(&self, i: usize) -> bool {
+        i + 1 == self.ast.len()
     }
 
     /// The syntax depth of the parse, which sizes the stack of each pass over the AST.
@@ -173,9 +182,10 @@ impl Resolved {
 /// Returns `Failed::Parse` if the parse has an error, `Failed::Names` for `S002` or `S003`,
 /// and `Failed::Stack` if the machine cannot give the stack for the syntax depth.
 pub fn resolve(parse: Parse) -> Result<Resolved, Failed> {
-    let (ast, depth) = parse.into_ast().map_err(Failed::Parse)?;
+    let (mut ast, depth) = parse.into_ast().map_err(Failed::Parse)?;
     let table = parse::on_stack(depth, || walk::run(&ast)).map_err(Failed::Stack)?;
     let table = table.map_err(Failed::Names)?;
+    ast.push(prelude::response_item());
     Ok(Resolved {
         ast,
         depth,
@@ -183,6 +193,7 @@ pub fn resolve(parse: Parse) -> Result<Resolved, Failed> {
         items: table.items,
         names: table.names,
         calls: table.calls,
+        response: table.response,
     })
 }
 
@@ -255,6 +266,7 @@ struct Table {
     items: BTreeMap<String, DeclId>,
     names: BTreeMap<NodeId, Target>,
     calls: BTreeMap<NodeId, Call>,
+    response: DeclId,
 }
 
 #[cfg(test)]

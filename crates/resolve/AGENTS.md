@@ -13,17 +13,30 @@ The module `prelude` owns the prelude names. It also owns the parameter modes of
 ## Invariants
 
 - A name is unique in its scope. A scope is the file, the parameters with the top statements of a body, or a block. A declaration can shadow an outer name and a prelude name. Check: `cargo nextest run -p resolve`.
+
 - The position of `S002` is the name in the later declaration. Check: `cargo nextest run -p resolve`.
+
 - Each name resolves. A type name is a prelude type, a `struct` item, a `type` item, or a local, such as a `type` statement or a parameter of type `Type`. `elab` rejects a local that holds no type. The module of an `instance` is a module item, and a name in an expression is not a module. A local is in scope after its statement. A module without a `domains` clause has the domain `clock`. Items have no order. Check: `cargo nextest run -p resolve`.
+
 - The parameters of a struct and its field types share one scope. A second field with one name is `S002`. Check: `cargo nextest run -p resolve`.
-- The prelude has the names of slice 1, `Unit` and `len` of the containers of slice 2, `Type` and `data_bits` of the types as values, and `String`, `List`, `list`, `push`, `pop`, and `str`. A prelude name of a later phase or slice is `S003`. Check: `cargo nextest run -p resolve`.
+
+- The prelude has the names of slice 1, `Unit` and `len` of the containers of slice 2, `Type` and `data_bits` of the types as values, and `String`, `List`, `list`, `push`, `pop`, and `str`. It also has the memory functions `read_port` and `write_port`, and the prelude struct `ReadResponse`. A prelude name of a later phase or slice is `S003`. Check: `cargo nextest run -p resolve`.
+
 - A `fn` item is generic when it has a `comptime` parameter. It is also generic when a parameter type or its result type names one of its parameters, as Lean `generic` says. A name of an item in the signature does not make it generic. A function type resolves its parameter types and its result type as types, and it declares no name. A function name in an expression resolves to its item. Check: `cargo nextest run -p resolve`.
+
 - The function name of a receiver call resolves in the item scope, then in the prelude, and never to a local. A name there that is not a function is `S003` at the name. Check: `cargo nextest run -p resolve`.
+
 - The call site of a call or a receiver call is its number in the pre-order of its item body, from 0. Lean `Resolve` gives the same number. A node comes before its children, and the receiver comes before the arguments. Check: `cargo nextest run -p resolve` and the comparison with `silicon-check elab`.
+
 - The errors of pass 2 come before the errors of pass 3. Each pass reports in position order. Check: `cargo nextest run -p resolve`.
+
 - The walk runs through `parse::on_stack` with the syntax depth of the parse. This crate does not size a stack. The result is safe to drop on any stack, because it owns a plain AST with no `rowan` tree. Check: `cargo nextest run -p resolve`.
+
 - The crate uses no `HashMap` and no `HashSet`. Output order comes from the position. Check: `just clippy`.
+
 - Non-test code has no `unwrap`, no `expect`, and no panic on user input. Check: `just clippy`.
+
+- The prelude struct `ReadResponse` is one struct item after the user items, so the user items keep their indices. The resolver builds it already resolved: its names point to the prelude `Type` and `Bool` and to its own parameter, and never go through the item scope. Thus a user `struct Bool` or `type Type` does not change it. A user item `ReadResponse` shadows the name. `Resolved::is_prelude_item` tells it. It has no source position, so a pass that orders by position skips it. Check: `cargo nextest run -p resolve`.
 
 ## Dependencies
 
