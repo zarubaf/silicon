@@ -1,0 +1,9 @@
+// S006: a comptime fn declares no memory.
+// TOP M()
+comptime fn f() -> Nat {
+    // expected-error S006 @+1
+    mem m: [UInt[8]; 4];
+    return 1;
+}
+module M() {
+}

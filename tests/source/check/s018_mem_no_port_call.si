@@ -1,0 +1,6 @@
+// S018: a memory without a read port and a write port.
+// TOP M()
+module M() {
+    // expected-error S018 @+1
+    mem m: [UInt[8]; 4];
+}

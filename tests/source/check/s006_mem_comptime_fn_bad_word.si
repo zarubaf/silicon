@@ -1,0 +1,9 @@
+// S006: the placement error comes before the word type check.
+// TOP M()
+comptime fn f() -> Nat {
+    // expected-error S006 @+1
+    mem m: [Int; 0];
+    return 1;
+}
+module M() {
+}

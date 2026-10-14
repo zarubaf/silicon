@@ -1,0 +1,6 @@
+// S012: a memory word of 65537 bits does not fit.
+// TOP M()
+module M() {
+    // expected-error S012 @+1
+    mem m: [UInt[65537]; 4];
+}

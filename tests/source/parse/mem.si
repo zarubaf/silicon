@@ -1,0 +1,8 @@
+// The mem statement: the word type, the depth expression, and a comptime depth.
+module M(comptime N: Nat) {
+    mem a: [UInt[8]; 16];
+    mem b: [(Bool, UInt[4]); N + 1];
+    comptime for i in 0..2 {
+        mem c: [Bool; 2];
+    }
+}

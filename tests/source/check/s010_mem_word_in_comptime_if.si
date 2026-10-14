@@ -1,0 +1,8 @@
+// S010: a memory word of a non-data type, inside a comptime if.
+// TOP M()
+module M() {
+    comptime if (true) {
+        // expected-error S010 @+1
+        mem m: [Int; 4];
+    }
+}

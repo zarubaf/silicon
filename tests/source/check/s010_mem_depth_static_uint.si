@@ -1,0 +1,6 @@
+// S010: a memory depth is an Int value, not a UInt.
+// TOP M()
+module M() {
+    // expected-error S010 @+1
+    mem m: [UInt[8]; UInt[8](4)];
+}

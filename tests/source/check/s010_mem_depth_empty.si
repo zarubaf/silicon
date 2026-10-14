@@ -1,0 +1,6 @@
+// S010: an empty depth position is S010 at the statement.
+// TOP M()
+module M() {
+    // expected-error S010 @+1
+    mem m: [UInt[8]; []];
+}
