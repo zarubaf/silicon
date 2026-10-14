@@ -12,7 +12,8 @@ const MAX_GROUP: usize = 4;
 pub(super) enum Kind {
     /// `(UInt[a], UInt[b])`
     Tuple,
-    /// `[UInt[w]; n]`, with equal widths.
+    /// `[UInt[w]; n]` with the widest member width `w`. A narrower member
+    /// is `resize`d at each read and write of its leaf.
     Array,
     /// The generated struct `R<id>`, with one `comptime W: Nat` for the
     /// width of its first field if `param` is set.
@@ -42,13 +43,16 @@ impl Group {
         format!("UInt[{width}]")
     }
 
-    /// The width that all members share, if they do.
-    fn common_width(&self) -> Option<u32> {
-        let (_, first) = self.members.first()?;
-        self.members
-            .iter()
-            .all(|(_, w)| w == first)
-            .then_some(*first)
+    fn widest(&self) -> u32 {
+        self.members.iter().map(|(_, w)| *w).max().unwrap_or(1)
+    }
+
+    /// The width of the leaf `i` in the source type of the port.
+    pub fn leaf_width(&self, i: usize) -> u32 {
+        match (self.kind, self.members.get(i)) {
+            (Kind::Array, _) | (_, None) => self.widest(),
+            (_, Some((_, w))) => *w,
+        }
     }
 
     fn first_width(&self) -> u32 {
@@ -62,11 +66,7 @@ impl Group {
                 let parts: Vec<String> = self.members.iter().map(|(_, w)| Self::uint(*w)).collect();
                 format!("({})", parts.join(", "))
             }
-            Kind::Array => format!(
-                "[{}; {}]",
-                Self::uint(self.common_width().unwrap_or(1)),
-                self.members.len()
-            ),
+            Kind::Array => format!("[{}; {}]", Self::uint(self.widest()), self.members.len()),
             Kind::Record { id, param: false } => record_name(id),
             Kind::Record { id, param: true } => {
                 format!("{}[{}]", record_name(id), self.first_width())
@@ -122,15 +122,24 @@ impl Group {
         Some(format!("{head}{}}}\n", fields.concat()))
     }
 
-    /// The source text that reads the leaf `i`, and its entry name in a
-    /// source vector.
-    fn leaf(&self, i: usize) -> (String, String) {
+    /// The source text that reads the leaf `i` of the port of the instance
+    /// `owner` (or of this module if `None`), and its entry name in a
+    /// source vector. A leaf wider than its core port is `resize`d down.
+    fn leaf(&self, i: usize, owner: Option<&str>) -> (String, String) {
         let n = &self.name;
-        match self.kind {
+        let (path, entry) = match self.kind {
             Kind::Tuple => (format!("{n}.{i}"), format!("{n}.{i}")),
             Kind::Array => (format!("{n}[{i}]"), format!("{n}.{i}")),
             Kind::Record { .. } => (format!("{n}.f{i}"), format!("{n}.f{i}")),
-        }
+        };
+        let path = owner.map_or(path.clone(), |o| format!("{o}.{path}"));
+        let core = self.members[i].1;
+        let read = if core == self.leaf_width(i) {
+            path
+        } else {
+            format!("resize({}, {path})", Self::uint(core))
+        };
+        (read, entry)
     }
 }
 
@@ -149,10 +158,11 @@ impl Shape {
             .find_map(|g| Some((g, g.members.iter().position(|(m, _)| m == port)?)))
     }
 
-    /// The source text that reads the core port `port`.
-    pub fn read(&self, port: &str) -> Option<String> {
+    /// The source text that reads the core port `port` of this module, or
+    /// of its instance `owner`.
+    pub fn read(&self, port: &str, owner: Option<&str>) -> Option<String> {
         let (group, i) = self.group_of(port)?;
-        Some(group.leaf(i).0)
+        Some(group.leaf(i, owner).0)
     }
 
     /// The sort key and the entry name of the core port `port` in a source
@@ -160,7 +170,7 @@ impl Shape {
     /// leaves of a port follow in packing order.
     fn entry(&self, port: &str) -> ((String, usize), String) {
         match self.group_of(port) {
-            Some((group, i)) => ((group.name.clone(), i), group.leaf(i).1),
+            Some((group, i)) => ((group.name.clone(), i), group.leaf(i, None).1),
             None => ((port.to_owned(), 0), port.to_owned()),
         }
     }
@@ -205,18 +215,7 @@ pub(super) fn draw(
             continue;
         }
         let kind = next(3);
-        let mut size = 2 + next(run - 1);
-        if kind == 1 {
-            // An array needs equal widths.
-            size = ports[at..at + size]
-                .iter()
-                .take_while(|(_, _, w)| *w == ports[at].2)
-                .count();
-            if size < 2 {
-                at += 1;
-                continue;
-            }
-        }
+        let size = 2 + next(run - 1);
         let members: Vec<(String, u32)> = ports[at..at + size]
             .iter()
             .map(|(n, _, w)| (n.clone(), *w))

@@ -358,7 +358,7 @@ fn module<'a>(
         .unwrap_or_default();
     let mut env = env_of(m, clocked, modules, shapes)?;
     for p in &m.ports {
-        if let Some(path) = shape.read(&p.name.text) {
+        if let Some(path) = shape.read(&p.name.text, None) {
             env.alias.insert(p.name.text.as_str(), path);
         }
     }
@@ -413,7 +413,8 @@ fn module<'a>(
         let parts = g
             .members
             .iter()
-            .map(|(port, width)| {
+            .enumerate()
+            .map(|(i, (port, _))| {
                 let expr = m.stmts.iter().find_map(|s| match s {
                     Stmt::Assign { out, expr, .. } if out.text == *port => Some(expr),
                     _ => None,
@@ -421,7 +422,7 @@ fn module<'a>(
                 element(
                     &env,
                     expr.ok_or_else(|| Unsupported::Name(port.clone()))?,
-                    *width,
+                    g.leaf_width(i),
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -449,13 +450,14 @@ fn module<'a>(
     Ok(text)
 }
 
-/// The source of `e` as an element of an aggregate literal. A bare name can
-/// be a register, which is no element before slice 3, so `resize` makes a
-/// value of it.
-fn element(env: &Env<'_>, e: &Expr, width: u32) -> Result<String, Unsupported> {
+/// The source of `e` as an element of an aggregate literal with the leaf
+/// width `leaf`. A bare name can be a register, which is no element before
+/// slice 3, and a value of another width is no element of the type, so
+/// `resize` makes a value of the leaf width of it.
+fn element(env: &Env<'_>, e: &Expr, leaf: u32) -> Result<String, Unsupported> {
     let text = env.source(e)?;
-    Ok(if matches!(e, Expr::Ref(_)) {
-        format!("resize(UInt[{width}], {text})")
+    Ok(if matches!(e, Expr::Ref(_)) || env.width(e)? != leaf {
+        format!("resize(UInt[{leaf}], {text})")
     } else {
         text
     })
@@ -532,10 +534,11 @@ fn statement(s: &Stmt, env: &Env<'_>, out: &mut Sections) -> Result<(), Unsuppor
                 let parts = g
                     .members
                     .iter()
-                    .map(|(port, width)| {
+                    .enumerate()
+                    .map(|(i, (port, _))| {
                         let conn = conns.iter().find(|c| c.port.text == *port);
                         let conn = conn.ok_or_else(|| Unsupported::Name(format!("{n}.{port}")))?;
-                        element(env, &conn.expr, *width)
+                        element(env, &conn.expr, g.leaf_width(i))
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 out.assigns.push(format!(
@@ -1015,6 +1018,31 @@ mod tests {
     }
 
     #[test]
+    fn an_array_of_unequal_widths_resizes_its_narrow_leaves() {
+        let core = "(design m1 \
+            (module m0 (input a (bits 4)) (input b (bits 8)) (output x (bits 8)) \
+              (output y (bits 4)) (assign x b) (assign y a)) \
+            (module m1 (input i0 (bits 4)) (input i1 (bits 8)) (output o0 (bits 8)) \
+              (output o1 (bits 4)) (inst u m0 (a i0) (b i1)) \
+              (assign o0 u.x) (assign o1 u.y)))";
+        let shapes = shapes(vec![(
+            "m0",
+            vec![
+                group("ab", Dir::Input, Kind::Array, &[("a", 4), ("b", 8)]),
+                group("xy", Dir::Output, Kind::Array, &[("x", 8), ("y", 4)]),
+            ],
+        )]);
+        let text = lift_shaped(&parse(core).unwrap(), &shapes).unwrap().text;
+        assert!(text.contains("input ab: [UInt[8]; 2];"), "{text}");
+        assert!(
+            text.contains(
+                "xy := [resize(UInt[8], ab[1]), resize(UInt[8], resize(UInt[4], ab[0]))];"
+            ),
+            "{text}"
+        );
+    }
+
+    #[test]
     fn a_record_with_a_width_parameter_has_a_specialized_type() {
         let core = "(design m0 (module m0 (input a (bits 8)) (input b (bits 8)) \
                     (output x (bits 8)) (output y (bits 8)) (assign x b) (assign y a)))";
@@ -1150,7 +1178,12 @@ mod tests {
         let kinds: [(&str, Has); 5] = [
             ("memory", |t| t.contains("    mem ")),
             ("tuple", |t| t.contains(": (UInt[")),
-            ("array", |t| t.contains(": [UInt[")),
+            ("array", |t| {
+                t.lines().any(|l| {
+                    let l = l.trim_start();
+                    (l.starts_with("input ") || l.starts_with("output ")) && l.contains(": [UInt[")
+                })
+            }),
             ("record", |t| {
                 t.contains("struct R") && !t.contains("(comptime")
             }),
