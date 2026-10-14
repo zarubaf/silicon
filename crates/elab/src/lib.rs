@@ -261,6 +261,9 @@ mod tests_flatten;
 mod tests_leaves;
 
 #[cfg(test)]
+mod tests_memory;
+
+#[cfg(test)]
 mod tests_ports;
 
 #[cfg(test)]
