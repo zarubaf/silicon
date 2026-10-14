@@ -1811,7 +1811,11 @@ impl Evaluator<'_> {
                     None => fail(Code::S010, pos, format!("`{x}` is not an item")),
                 },
                 Kind::Module => fail(Code::S010, pos, format!("`{x}` is not a value")),
-                Kind::Domain => Ok(Out::Named(Val::Handle(Handle::Domain(x.to_owned())))),
+                Kind::Domain => {
+                    #[cfg(test)]
+                    crate::counters::add(crate::counters::Count::Copied, x.len() as u64);
+                    Ok(Out::Named(Val::Handle(Handle::Domain(x.to_owned()))))
+                }
                 _ => {
                     let k = self.store.frames.len().saturating_sub(1);
                     // An empty input port refers to its name. The read pays its zero, a new
