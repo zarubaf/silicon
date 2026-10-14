@@ -1133,8 +1133,8 @@ def said (src : String) : String :=
 -- The innermost guard wins: a type in a hardware arm gives the structural text.
 #guard sRun "  let z = if (c) { pop(xs) } else { 0 };\n" == "S016 13:20"
 #guard said (sMod "  let z = if (c) { UInt[pop(xs)](0) } else { 0 };\n") ==
-  "a type or a constant cannot change `xs`; change it before, for example " ++
-  "`let n = xs.pop();`, and use the result"
+  "a type or a constant cannot change `xs`; change `xs` before it, keep the result in a " ++
+  "`let`, and use that name here"
 
 /-!
 The other effects (section 9.4). A declaration in a `fn` is `S004` (pass 1), and in a
@@ -1166,11 +1166,11 @@ def sMem (wr : Bool) (rest : String) : String :=
 
 /-! Each normative text of `S016` (section 9.4), in full. -/
 #guard said (sMod "  let x: [Bool; pop(xs)] = [false, false, false];\n") ==
-  "a type or a constant cannot change `xs`; change it before, for example " ++
-  "`let n = xs.pop();`, and use the result"
+  "a type or a constant cannot change `xs`; change `xs` before it, keep the result in a " ++
+  "`let`, and use that name here"
 #guard said (sMod "  let x: UInt[f(n)] = 0;\n") ==
-  "a type or a constant cannot change `n`; change it before, for example " ++
-  "`let n = xs.pop();`, and use the result"
+  "a type or a constant cannot change `n`; change `n` before it, keep the result in a " ++
+  "`let`, and use that name here"
 #guard said (sMem true "  let x: UInt[read_port(k, 0, true)] = 0;\n") ==
   "a type or a constant has no graph effect such as `read_port`; call it before and use the result"
 #guard said (sMod "  let z = if (c) { pop(xs) } else { 0 };\n") ==
