@@ -23,7 +23,7 @@ The static evaluator models only the programs that the builder makes. It works o
 - The records of `Program::records()` come from the contexts of the builder, with no second identity rule (ADR 0018). Check: `cargo nextest run -p srcgen`.
 - Each twin of a `typed()` program lexes with no error, and it has no comptime construct and no static name. Check: `cargo nextest run -p srcgen`.
 - Each mutant differs from its program and lexes with no error token. A prediction holds on the slice-2 forms, or it is `None`. Check: `cargo nextest run -p srcgen`.
-- A prediction of `S008` or `S016` holds only at a site that always runs. A condition of an arm is a port, a register, or the negation of one. Else the prediction is `None`. Check: `cargo nextest run -p srcgen`.
+- A prediction of `ValueWindow` or of the four `S016` kinds holds only at a site that always runs. A condition of an arm is a port, a register, or the negation of one. Else the prediction is `None`. Check: `cargo nextest run -p srcgen`.
 - A fixed set of 256 programs has at least 5 predictions of `S008` and 5 of `S016`. Check: `cargo nextest run -p srcgen`.
 - Non-test code has no `unwrap`, no `expect`, and no panic on user input. Check: `just clippy`.
 

@@ -25,6 +25,7 @@
 //!
 //! - A `mut` actual whose root is no longer mutable is `S008` (pass 4) if
 //!   a named function, `push`, or `pop` has the root as its `mut` actual.
+//!   An assignment to the root gives no prediction, even with such a use.
 //!   A `pop` of the receiver in the arguments of a receiver call on a list
 //!   is `S008` (pass 4), on all code. In a call through a function value,
 //!   pass 5 finds the window when the call runs: `S008` where the site

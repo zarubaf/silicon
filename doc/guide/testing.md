@@ -210,7 +210,7 @@ The input lines come from `lines()`. They follow the ports of the top. The reset
 
 The mutation mode changes one site of a typed program and sends the mutant to both front ends. `mutate` of the crate `srcgen` makes the mutant. The kind and the site come from the tape, so they shrink with it. The kinds are `Delete`, `Duplicate`, `Rename`, `DropArg`, `AddArg`, `Widen`, `ZeroWidth`, `Fault`, and seven kinds for `S008` and `S016`. A kind with no site gives way to the next kind. The seven kinds are:
 
-- `Immutable` changes the `let mut` root of a `mut` actual to `let`. The prediction is `S008` if a named function, a `push`, or a `pop` has the root as its `mut` actual. If only a call through a function value or an assignment uses the root, there is no prediction.
+- `Immutable` changes the `let mut` root of a `mut` actual to `let`. The prediction is `S008` if a named function, a `push`, or a `pop` has the root as its `mut` actual. A call through a function value gives no prediction. An assignment to the root gives no prediction, even with a named `mut` actual.
 - `Window` changes an argument of a receiver call on a list to a `pop` of the receiver. The prediction is `S008` (pass 4). `ValueWindow` does the same in a call through a function value. Pass 5 finds that window when the call runs. The prediction is `S008` where the call always runs.
 - `ArmEffect` and `TypeEffect` change a static operand of an arm, or a width, to a call of a function that runs a `diagnostic`. The mutant adds that function. The prediction is `S016`.
 - `ArmMutation` and `TypeMutation` change the same sites to a call that takes a `let mut` static `Int` from before the site as its `mut` actual. The mutant adds a function with a `mut` formal. The prediction is `S016`, by the write-back.
@@ -227,7 +227,7 @@ The budget mode checks the fuel and the depth on a typed program. `silicon cost`
 - `--fuel N` must succeed.
 - `--fuel N - 1` must give `S015`.
 - A random fuel from 1 to `N - 1` must give `S015`. It tests the order of the charges, which `cost` does not show.
-- A random `--depth` from 1 to 8 must give the same outcome in both front ends. Success and `S015` are the only allowed outcomes. The success line counts both outcomes, for example `diff-si: 100 budgets agree (seeds 1 to 100): depth success 53, depth S015 47`. Programs with containers have a value depth of 2 or more, so the draw reaches the depth of a value.
+- A random `--depth` from 1 to 8 must give the same outcome in both front ends. Success and `S015` are the only allowed outcomes. The success line counts both outcomes, for example `diff-si: 100 budgets agree (seeds 1 to 100): depth success 53, depth S015 47`. The tally counts outcomes only, and `S015` also comes from call depth and instantiation depth. The coverage test of `srcgen` shows that programs with containers have a value depth of 2 or more.
 
 These rules apply to all modes:
 
