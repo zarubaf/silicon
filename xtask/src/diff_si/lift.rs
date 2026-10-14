@@ -109,9 +109,9 @@ pub(super) fn verdict(
     case: &Case,
     tally: &mut Tally,
 ) -> Result<Option<String>> {
-    let message = verdict_of(try_verdict(tools, dir, case))?;
+    let lifted = lifted(case)?;
+    let message = verdict_of(try_verdict(tools, dir, case, &lifted))?;
     if message.is_none() {
-        let lifted = lifted(case)?;
         tally.lifted += 1;
         tally.memories += u64::from(lifted.memories > 0);
         tally.aggregates += u64::from(lifted.aggregates > 0);
@@ -119,15 +119,14 @@ pub(super) fn verdict(
     Ok(message)
 }
 
-fn try_verdict(tools: &Tools, dir: &Path, case: &Case) -> Result<Option<String>> {
-    let lifted = lifted(case)?;
-    let steps = match reference(case, &lifted)? {
+fn try_verdict(tools: &Tools, dir: &Path, case: &Case, lifted: &Lifted) -> Result<Option<String>> {
+    let steps = match reference(case, lifted)? {
         Ok(steps) => steps,
         Err(message) => return Ok(Some(message)),
     };
-    let source = lifted.text;
+    let source = &lifted.text;
     let file = dir.join("design.si");
-    std::fs::write(&file, &source).with_context(|| format!("cannot write {}", file.display()))?;
+    std::fs::write(&file, source).with_context(|| format!("cannot write {}", file.display()))?;
     let top = top_selection(&case.0);
     let stdin = stdin(steps.iter().map(|(line, _)| line.as_str()));
     let traces = [
