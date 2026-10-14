@@ -114,6 +114,44 @@ fn s005_a_static_position_names_a_resource() {
 }
 
 #[test]
+fn s005_a_static_position_names_a_memory() {
+    ok(&mod_body("mem m: [UInt[W]; W + 1];\nlet x = m;"));
+    let cases = [
+        ("mem m: [Bool; 4];\nlet x: [Bool; m] = 0;", 3, 15),
+        ("mem m: [Bool; 4];\nlet x = [Bool; m]();", 3, 16),
+        ("mem m: [Bool; 4];\nlet x: UInt[m] = 0;", 3, 13),
+        ("mem m: [Bool; 4];\ncomptime if (m) {}", 3, 14),
+        ("mem m: [Bool; 4];\ninstance u = M(m);", 3, 16),
+        ("wire w: UInt[8];\nmem m: [Bool; w];", 3, 15),
+        ("mem m: [Bool; 4];\nmem k: [UInt[m]; 4];", 3, 14),
+    ];
+    for (body, line, col) in cases {
+        fails(&mod_body(body), S005, line, col);
+    }
+    assert_eq!(
+        message(&mod_body("mem m: [Bool; 4];\ncomptime if (m) {}")),
+        "`m` is a memory; a static position needs a static value"
+    );
+}
+
+#[test]
+fn s006_a_comptime_fn_has_no_mem() {
+    let fn_with = |body: &str| format!("comptime fn g() -> Nat {{\n{body}\nreturn 1;\n}}");
+    fails(&fn_with("mem m: [Bool; 4];"), S006, 2, 1);
+    fails(&fn_with("{ mem m: [Bool; 4]; }"), S006, 2, 3);
+    fails(
+        &fn_with("mem m: [Bool; 4];\ncomptime if (m) {}"),
+        S006,
+        2,
+        1,
+    );
+    assert_eq!(
+        message(&fn_with("mem m: [Bool; 4];")),
+        "a `comptime fn` has no memory"
+    );
+}
+
+#[test]
 fn s005_the_arguments_of_a_static_call() {
     fails(
         "fn g(comptime N: Nat, x: Bool) -> Bool { return x; }\n\
