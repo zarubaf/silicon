@@ -1590,7 +1590,7 @@ impl Evaluator<'_> {
         let b = match self.store.seen(&b) {
             Seen::Handle(Handle::Inst { .. }) => return self.port_of(pos, b, field),
             // A field selection is a data context (section 9.2): a child input is `S017`.
-            Seen::Handle(Handle::Res { .. } | Handle::Input { .. }) => {
+            Seen::Handle(Handle::Res { .. } | Handle::Mem | Handle::Input { .. }) => {
                 self.data(pos, b)?.into_out()
             }
             _ => b,
@@ -1933,6 +1933,7 @@ impl Evaluator<'_> {
             Stmt::Connect { pos, .. }
             | Stmt::Reg { pos, .. }
             | Stmt::Wire { pos, .. }
+            | Stmt::Mem { pos, .. }
             | Stmt::Input { pos, .. }
             | Stmt::Output { pos, .. }
             | Stmt::Inst { pos, .. }

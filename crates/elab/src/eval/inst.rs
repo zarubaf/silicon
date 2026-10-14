@@ -28,6 +28,7 @@ use crate::agg::{Agg, Base};
 use crate::hw::{Graph, Handle, Kind, Port, Seen, Val, port_name};
 use crate::int::Int;
 use crate::names::{Name, PathId, Paths, Sym, encode, module_name};
+use crate::ops::int_text;
 use crate::scan::Scan;
 use crate::types::{Ty, TyId, Types};
 use crate::value::{InstantiationId, Value, int_size};
@@ -117,13 +118,14 @@ struct Need {
     count: u64,
 }
 
-/// The work of the current instantiation. The resource number indexes `needs`, and the
-/// instance number indexes `bound`. `inputs` counts the bindings of each child input. `dup`
+/// The work of the current instantiation. The resource number indexes `needs`, the memory
+/// number indexes `mems`, and the instance number indexes `bound`. `inputs` counts the bindings of each child input. `dup`
 /// holds the first `S018` of a second binding by position. `spent` is the fuel of the new
 /// children.
 struct Work {
     body: Body,
     needs: Vec<Need>,
+    mems: Vec<Need>,
     bound: Vec<usize>,
     inputs: BTreeMap<(usize, Sym), u64>,
     dup: Option<Pos>,
@@ -135,6 +137,7 @@ impl Work {
         Work {
             body: Body::new(domain),
             needs: Vec::new(),
+            mems: Vec::new(),
             bound: Vec::new(),
             inputs: BTreeMap::new(),
             dup: None,
@@ -396,11 +399,16 @@ enum Target {
     },
 }
 
+/// The most bits of a memory word, and the most words of a memory (spec section 6.2).
+const MEM_MAX_BITS: u64 = 65536;
+const MEM_MAX_DEPTH: u64 = 16_777_216;
+
 /// The kind of the first `S018` of a body.
 #[derive(Clone, Copy)]
 enum Missing {
     Second,
     Need(usize),
+    Mem(usize),
     Input(usize),
 }
 
@@ -472,6 +480,12 @@ impl Evaluator<'_> {
                 ty,
                 init,
             } => self.reg_stmt(*pos, name, ty, init)?,
+            Stmt::Mem {
+                pos,
+                name,
+                word,
+                depth,
+            } => self.mem_stmt(*pos, name, word, depth)?,
             Stmt::Wire { pos, name, ty } => {
                 let tid = self.type_expr(ty)?;
                 let t = self.data_type(*pos, tid)?;
@@ -666,6 +680,103 @@ impl Evaluator<'_> {
             },
         );
         Ok(())
+    }
+
+    /// A `mem` statement. Each error is at the statement: a combinational module (`S017`), the
+    /// word type, then the depth. No `[T; N]` type is made, so the depth adds no metadata
+    /// charge. The name binds a memory handle, which is never data.
+    fn mem_stmt(&mut self, pos: Pos, name: &Ident, word: &TypeExpr, depth: &Expr) -> Res<()> {
+        if self.elab.work.body.domain.is_none() {
+            return fail(
+                Code::S017,
+                pos,
+                "a combinational module has no memory".to_owned(),
+            );
+        }
+        let tid = self.type_expr(word)?;
+        self.mem_word(pos, tid)?;
+        let out = self.eval(depth)?;
+        let out = need(depth, out)?;
+        self.mem_depth(pos, &out)?;
+        let id = self.decl(name)?;
+        // The path takes a version of the name. No port call lowers the memory yet.
+        self.fresh(id);
+        let sym = self.sym(id);
+        self.elab.work.mems.push(Need {
+            name: sym,
+            pos,
+            count: 0,
+        });
+        self.bind(
+            id,
+            Slot {
+                ty: None,
+                mutable: false,
+                value: Val::Handle(Handle::Mem),
+            },
+        );
+        Ok(())
+    }
+
+    /// The word type of a memory is hardware data with at least one leaf (`S010`), so an empty
+    /// word is `S010`. Its width is at most 65536 bits (`S012`). The metadata tells both.
+    fn mem_word(&self, pos: Pos, t: TyId) -> Res<()> {
+        let meta = self.tys.meta(t);
+        if !meta.data || meta.leaves.is_zero() {
+            return fail(
+                Code::S010,
+                pos,
+                format!(
+                    "a memory needs a nonempty hardware data type, not {}",
+                    self.tys.text(t)
+                ),
+            );
+        }
+        if meta.width.cmp_u64(MEM_MAX_BITS).is_gt() {
+            return fail(
+                Code::S012,
+                pos,
+                format!(
+                    "a memory word has at most {MEM_MAX_BITS} bits, not {}",
+                    int_text(&meta.width)
+                ),
+            );
+        }
+        Ok(())
+    }
+
+    /// The depth of a memory is a static value (`S011`), an `Int` (`S010`), and 1 to 16777216
+    /// (`S012`).
+    fn mem_depth(&self, pos: Pos, out: &Out) -> Res<()> {
+        match self.store.seen(out) {
+            Seen::Static(Value::Int(k)) => {
+                if k.is_negative() || k.is_zero() || k.cmp_u64(MEM_MAX_DEPTH).is_gt() {
+                    fail(
+                        Code::S012,
+                        pos,
+                        format!(
+                            "a memory depth is 1 to {MEM_MAX_DEPTH}, not {}",
+                            int_text(k)
+                        ),
+                    )
+                } else {
+                    Ok(())
+                }
+            }
+            s @ (Seen::Static(_) | Seen::Pending(..)) => fail(
+                Code::S010,
+                pos,
+                match s {
+                    Seen::Pending(..) => "a memory depth is a static integer, not `[]`".to_owned(),
+                    s => format!("a memory depth is a static integer, not {}", self.text(s)),
+                },
+            ),
+            s => fail(
+                Code::S011,
+                pos,
+                format!("a memory depth is static, not {}", self.text(s)),
+            ),
+        }
     }
 
     /// An `instance` statement.
@@ -886,6 +997,11 @@ impl Evaluator<'_> {
                 first = Some(first_of(first, need.pos, Missing::Need(k)));
             }
         }
+        for (k, mem) in work.mems.iter().enumerate() {
+            if mem.count == 0 {
+                first = Some(first_of(first, mem.pos, Missing::Mem(k)));
+            }
+        }
         let mut free: Option<(Pos, usize)> = None;
         for (k, child) in work.body.children.iter().enumerate() {
             let inputs = self.elab.done.get(child.inst).map_or(0, |i| i.iface.inputs);
@@ -907,6 +1023,10 @@ impl Evaluator<'_> {
             Missing::Need(k) => {
                 let name = work.needs.get(k).map_or("", |need| text(need.name));
                 format!("`{name}` has no binding")
+            }
+            Missing::Mem(k) => {
+                let name = work.mems.get(k).map_or("", |mem| text(mem.name));
+                format!("the memory `{name}` has no `read_port`")
             }
             Missing::Input(k) => {
                 let iface = work
