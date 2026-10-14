@@ -1,0 +1,49 @@
+// A pipeline whose stage function is a module parameter of function type. The child keeps an array
+// register of stages, builds the next stage array by place updates in a comptime loop, and outputs the
+// last stage. The top uses it twice, with a tuple and with a record, gates the record by a receiver call
+// of a function with a `mut` argument, and compares the two valid leaves.
+// TOP Top()
+struct Entry(comptime W: Nat) {
+    valid: Bool,
+    data: UInt[W],
+}
+type Pair = (UInt[4], Bool);
+fn step_pair(p: Pair) -> Pair {
+    return (p.0 +% 1, !p.1);
+}
+fn step_entry(e: Entry[2]) -> Entry[2] {
+    return Entry[2](!e.valid, e.data ^ 3);
+}
+fn gate(mut e: Entry[2], en: Bool) -> () {
+    e.valid = e.valid && en;
+    return ();
+}
+module Pipe(comptime T: Type, comptime N: Nat, comptime f: fn (T) -> T) {
+    input x: T;
+    output y: T;
+    reg s: [T; N] = [T; N]();
+    let mut next = [T; N]();
+    next[0] = f(x);
+    comptime for k in 1..N {
+        next[k] = f(s[k - 1]);
+    }
+    s := next;
+    y := s[N - 1];
+}
+module Top() {
+    input p: Pair;
+    input e: Entry[2];
+    input en: Bool;
+    output py: Pair;
+    output ey: Entry[2];
+    output same: Bool;
+    instance pp = Pipe(Pair, 3, step_pair);
+    instance ep = Pipe(Entry[2], 2, step_entry);
+    let mut g = e;
+    g.gate(en);
+    pp.x := p;
+    ep.x := g;
+    py := pp.y;
+    ey := ep.y;
+    same := pp.y.1 == ep.y.valid;
+}

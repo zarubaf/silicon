@@ -24,4 +24,5 @@ tests/source/corpus/hierarchy_parameters.si run PASS
 tests/source/corpus/list_scrambler.si run PASS
 tests/source/corpus/memory_record.si run PASS
 tests/source/corpus/names_keywords.si run PASS
+tests/source/corpus/pipeline_map.si run PASS
 tests/source/corpus/register_resets.si run PASS
