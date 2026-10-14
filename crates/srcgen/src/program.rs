@@ -21,23 +21,40 @@ pub(crate) enum Radix {
     Bin,
 }
 
-// The type of a static parameter, formal, result, or binding.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// The type of a static parameter, formal, result, or binding. A container
+/// type holds `Int` and `Bool` leaves only: the serialization of an array
+/// names the element type, and `Nat` is a check on an `Int`, not a type of
+/// its value.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum STy {
     Nat,
     Int,
     Bool,
+    /// `(T, U)`, or `(T,)` for one element.
+    Tuple(Vec<STy>),
+    /// `[T; N]` with `N >= 1`.
+    Array(Box<STy>, u32),
 }
 
 impl STy {
     /// The source spelling of the type.
-    pub(crate) fn text(self) -> String {
+    pub(crate) fn text(&self) -> String {
         match self {
-            STy::Nat => "Nat",
-            STy::Int => "Int",
-            STy::Bool => "Bool",
+            STy::Nat => "Nat".to_owned(),
+            STy::Int => "Int".to_owned(),
+            STy::Bool => "Bool".to_owned(),
+            STy::Tuple(ts) if ts.len() == 1 => format!("({},)", ts[0].text()),
+            STy::Tuple(ts) => format!(
+                "({})",
+                ts.iter().map(STy::text).collect::<Vec<_>>().join(", ")
+            ),
+            STy::Array(t, n) => format!("[{}; {n}]", t.text()),
         }
-        .to_owned()
+    }
+
+    /// Whether the type is a tuple or an array.
+    pub(crate) fn is_container(&self) -> bool {
+        matches!(self, STy::Tuple(_) | STy::Array(..))
     }
 }
 
@@ -108,6 +125,16 @@ pub(crate) enum SExpr {
     Name(String),
     /// A call of a `comptime fn`.
     Call(String, Vec<SExpr>),
+    /// A tuple literal.
+    Tuple(Vec<SExpr>),
+    /// An array literal with at least one element.
+    Array(Vec<SExpr>),
+    /// `base[index]` of an array.
+    Index(Box<SExpr>, Box<SExpr>),
+    /// `base.N` of a tuple, with the spelling of `N`.
+    Select(Box<SExpr>, u32, Radix),
+    /// `len(base)` of an array.
+    Len(Box<SExpr>),
     Unary(Un, Box<SExpr>),
     Binary(SBin, Box<SExpr>, Box<SExpr>),
     If(Box<SExpr>, Box<SExpr>, Box<SExpr>),
@@ -501,6 +528,14 @@ pub(crate) fn sexpr(e: &SExpr) -> String {
         SExpr::Bool(b) => b.to_string(),
         SExpr::Name(n) => n.clone(),
         SExpr::Call(f, args) => format!("{f}({})", list(args, sexpr)),
+        SExpr::Tuple(xs) if xs.len() == 1 => format!("({},)", list(xs, sexpr)),
+        SExpr::Tuple(xs) => format!("({})", list(xs, sexpr)),
+        SExpr::Array(xs) => format!("[{}]", list(xs, sexpr)),
+        SExpr::Index(b, i) => format!("{}[{}]", postfix_base(b), sexpr(i)),
+        SExpr::Select(b, k, radix) => {
+            format!("{}.{}", postfix_base(b), literal(&BigInt::from(*k), *radix))
+        }
+        SExpr::Len(b) => format!("len({})", sexpr(b)),
         SExpr::Unary(op, a) => format!("({}{})", un(*op), sexpr(a)),
         SExpr::Binary(op, a, b) => format!("({} {} {})", sexpr(a), sbin(*op), sexpr(b)),
         SExpr::If(c, t, e) => {
@@ -511,6 +546,15 @@ pub(crate) fn sexpr(e: &SExpr) -> String {
                 sexpr(e)
             )
         }
+    }
+}
+
+/// The base of an index or a selector. A selector after a selector would
+/// read `a.0.1` as one number, so it takes parentheses.
+fn postfix_base(e: &SExpr) -> String {
+    match e {
+        SExpr::Select(..) => format!("({})", sexpr(e)),
+        _ => sexpr(e),
     }
 }
 
@@ -769,6 +813,28 @@ module M1(comptime P0: Nat) domains() {
     o0 := i0;
 }
 ";
+
+    #[test]
+    fn containers_print_with_their_selectors() {
+        let t = SExpr::Name("s0".to_owned());
+        let sel = |e: SExpr, k: u32, radix| SExpr::Select(Box::new(e), k, radix);
+        assert_eq!(super::sexpr(&sel(t.clone(), 1, Radix::Dec)), "s0.1");
+        assert_eq!(super::sexpr(&sel(t.clone(), 1, Radix::Hex)), "s0.0x1");
+        let nested = sel(sel(t.clone(), 0, Radix::Dec), 1, Radix::Bin);
+        assert_eq!(super::sexpr(&nested), "(s0.0).0b1");
+        let a = SExpr::Array(vec![dec(1), dec(-2)]);
+        let at = SExpr::Index(Box::new(a.clone()), Box::new(dec(0)));
+        assert_eq!(super::sexpr(&at), "[1, (-2)][0]");
+        assert_eq!(super::sexpr(&SExpr::Len(Box::new(a))), "len([1, (-2)])");
+        assert_eq!(super::sexpr(&SExpr::Tuple(vec![dec(1)])), "(1,)");
+        assert_eq!(
+            super::sexpr(&SExpr::Tuple(vec![dec(1), SExpr::Bool(false)])),
+            "(1, false)"
+        );
+        let ty = STy::Array(Box::new(STy::Tuple(vec![STy::Int, STy::Bool])), 2);
+        assert_eq!(ty.text(), "[(Int, Bool); 2]");
+        assert_eq!(STy::Tuple(vec![STy::Int]).text(), "(Int,)");
+    }
 
     #[test]
     fn strings_take_the_escapes_of_the_grammar() {

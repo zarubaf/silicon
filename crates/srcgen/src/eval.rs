@@ -12,14 +12,23 @@ use std::collections::BTreeMap;
 pub(crate) enum Value {
     Int(BigInt),
     Bool(bool),
+    Tuple(Vec<Value>),
+    /// An array of at least one element, all of one type.
+    Array(Vec<Value>),
 }
 
 impl Value {
-    /// The serialization that `eval` prints.
+    /// The serialization that `eval` prints (front-end spec 7.1). An array
+    /// names its element type, which its first element gives.
     pub(crate) fn serialize(&self) -> String {
         match self {
             Value::Int(n) => format!("(int {n})"),
             Value::Bool(b) => format!("(bool {b})"),
+            Value::Tuple(xs) => format!("(tuple ({}))", serialized(xs)),
+            Value::Array(xs) => {
+                let elem = xs.first().map_or_else(String::new, |x| x.ty().serialize());
+                format!("(array {elem} ({}))", serialized(xs))
+            }
         }
     }
 
@@ -28,6 +37,53 @@ impl Value {
         match self {
             Value::Int(n) => n.to_string(),
             Value::Bool(b) => b.to_string(),
+            Value::Tuple(xs) if xs.len() == 1 => format!("({},)", spelled(xs)),
+            Value::Tuple(xs) => format!("({})", spelled(xs)),
+            Value::Array(xs) => format!("[{}]", spelled(xs)),
+        }
+    }
+
+    /// The type of the value. A `Nat` has the type `Int`, as in the
+    /// front ends, so a value never has the type `Nat`.
+    pub(crate) fn ty(&self) -> STy {
+        match self {
+            Value::Int(_) => STy::Int,
+            Value::Bool(_) => STy::Bool,
+            Value::Tuple(xs) => STy::Tuple(xs.iter().map(Value::ty).collect()),
+            Value::Array(xs) => STy::Array(
+                Box::new(xs.first().map_or(STy::Int, Value::ty)),
+                u32::try_from(xs.len()).unwrap_or(u32::MAX),
+            ),
+        }
+    }
+}
+
+fn serialized(xs: &[Value]) -> String {
+    xs.iter()
+        .map(Value::serialize)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn spelled(xs: &[Value]) -> String {
+    xs.iter()
+        .map(Value::spelling)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+impl STy {
+    /// The serialization of the type (front-end spec 7.1).
+    fn serialize(&self) -> String {
+        match self {
+            STy::Nat => "nat".to_owned(),
+            STy::Int => "int".to_owned(),
+            STy::Bool => "bool".to_owned(),
+            STy::Tuple(ts) => format!(
+                "(tuple ({}))",
+                ts.iter().map(STy::serialize).collect::<Vec<_>>().join(" ")
+            ),
+            STy::Array(t, n) => format!("(array {} {n})", t.serialize()),
         }
     }
 }
@@ -96,7 +152,7 @@ impl Scope {
         for item in items {
             if let Item::Const { name, ty, value } = item {
                 let v = eval(value, &Env::default(), &scope)?;
-                scope.consts.insert(name.clone(), typed(*ty, v)?);
+                scope.consts.insert(name.clone(), typed(ty, v)?);
             }
         }
         Ok(scope)
@@ -159,6 +215,28 @@ impl Evaluator<'_> {
                 .cloned()
                 .ok_or(Fault::Type)?,
             SExpr::Call(f, args) => self.call(f, args, env)?,
+            SExpr::Tuple(xs) => Value::Tuple(self.all(xs, env)?),
+            SExpr::Array(xs) if xs.is_empty() => return Err(Fault::Type),
+            SExpr::Array(xs) => Value::Array(self.all(xs, env)?),
+            SExpr::Index(base, index) => {
+                let base = self.eval(base, env)?;
+                let index = int(self.eval(index, env)?)?;
+                match base {
+                    Value::Array(xs) => usize::try_from(&index)
+                        .ok()
+                        .and_then(|i| xs.into_iter().nth(i))
+                        .ok_or(Fault::Bound)?,
+                    _ => return Err(Fault::Type),
+                }
+            }
+            SExpr::Select(base, k, _) => match self.eval(base, env)? {
+                Value::Tuple(xs) => xs.into_iter().nth(*k as usize).ok_or(Fault::Bound)?,
+                _ => return Err(Fault::Type),
+            },
+            SExpr::Len(base) => match self.eval(base, env)? {
+                Value::Array(xs) => Value::Int(BigInt::from(xs.len())),
+                _ => return Err(Fault::Type),
+            },
             SExpr::Unary(op, a) => match (op, self.eval(a, env)?) {
                 (Un::Neg, Value::Int(n)) => Value::Int(-n),
                 (Un::Inv, Value::Int(n)) => Value::Int(!n),
@@ -187,6 +265,11 @@ impl Evaluator<'_> {
         bounded(v)
     }
 
+    /// The values of `xs`, left to right.
+    fn all(&mut self, xs: &[SExpr], env: &Env) -> Result<Vec<Value>, Fault> {
+        xs.iter().map(|x| self.eval(x, env)).collect()
+    }
+
     /// The template of `ComptimeFn`: the base when the first formal is 0,
     /// else the step. Each formal and the result check their type.
     fn call(&mut self, f: &str, args: &[SExpr], env: &Env) -> Result<Value, Fault> {
@@ -198,7 +281,7 @@ impl Evaluator<'_> {
         let mut inner = Env::default();
         for (arg, (name, ty)) in args.iter().zip(&def.params) {
             let v = self.eval(arg, env)?;
-            inner.statics.insert(name.clone(), typed(*ty, v)?);
+            inner.statics.insert(name.clone(), typed(ty, v)?);
         }
         self.calls += 1;
         if self.calls > MAX_CALLS || self.depth >= MAX_DEPTH {
@@ -221,7 +304,7 @@ impl Evaluator<'_> {
         self.depth += 1;
         let v = self.eval(body, &inner);
         self.depth -= 1;
-        typed(def.ret, v?)
+        typed(&def.ret, v?)
     }
 }
 
@@ -288,24 +371,38 @@ fn bounded(v: Value) -> Result<Value, Fault> {
 fn boolean(v: &Value) -> Result<bool, Fault> {
     match v {
         Value::Bool(b) => Ok(*b),
-        Value::Int(_) => Err(Fault::Type),
+        _ => Err(Fault::Type),
     }
 }
 
 fn int(v: Value) -> Result<BigInt, Fault> {
     match v {
         Value::Int(n) => Ok(n),
-        Value::Bool(_) => Err(Fault::Type),
+        _ => Err(Fault::Type),
     }
 }
 
-/// A typed use of `v` at a static type: a `Nat` must not be negative.
-fn typed(ty: STy, v: Value) -> Result<Value, Fault> {
+/// A typed use of `v` at a static type: a `Nat` must not be negative, and
+/// a container has the shape of its type.
+fn typed(ty: &STy, v: Value) -> Result<Value, Fault> {
     match (ty, &v) {
         (STy::Nat, Value::Int(n)) if n.sign() == Sign::Minus => Err(Fault::Nat),
         (STy::Nat | STy::Int, Value::Int(_)) | (STy::Bool, Value::Bool(_)) => Ok(v),
+        (STy::Tuple(ts), Value::Tuple(xs)) if ts.len() == xs.len() => {
+            Ok(Value::Tuple(typed_all(ts.iter(), xs.iter().cloned())?))
+        }
+        (STy::Array(t, n), Value::Array(xs)) if *n as usize == xs.len() => Ok(Value::Array(
+            typed_all(std::iter::repeat_n(&**t, xs.len()), xs.iter().cloned())?,
+        )),
         _ => Err(Fault::Type),
     }
+}
+
+fn typed_all<'t>(
+    tys: impl Iterator<Item = &'t STy>,
+    vs: impl Iterator<Item = Value>,
+) -> Result<Vec<Value>, Fault> {
+    tys.zip(vs).map(|(t, v)| typed(t, v)).collect()
 }
 
 #[cfg(test)]
@@ -503,6 +600,81 @@ mod tests {
             concrete(&Ty::UInt(SExpr::Bool(true)), &env, &scope),
             Err(Fault::Type)
         );
+    }
+
+    fn array(xs: Vec<SExpr>) -> SExpr {
+        SExpr::Array(xs)
+    }
+
+    fn tuple(xs: Vec<SExpr>) -> SExpr {
+        SExpr::Tuple(xs)
+    }
+
+    fn index(base: SExpr, i: SExpr) -> SExpr {
+        SExpr::Index(Box::new(base), Box::new(i))
+    }
+
+    fn select(base: SExpr, k: u32) -> SExpr {
+        SExpr::Select(Box::new(base), k, Radix::Dec)
+    }
+
+    #[test]
+    fn containers_index_select_and_measure() {
+        let a = array(vec![int(10), int(20), int(30)]);
+        assert_eq!(run(&index(a.clone(), int(1))), value(20));
+        assert_eq!(run(&SExpr::Len(Box::new(a.clone()))), value(3));
+        let t = tuple(vec![int(7), SExpr::Bool(true)]);
+        assert_eq!(run(&select(t.clone(), 1)), Ok(Value::Bool(true)));
+        assert_eq!(run(&index(a.clone(), int(3))), Err(Fault::Bound));
+        assert_eq!(run(&index(a.clone(), int(-1))), Err(Fault::Bound));
+        assert_eq!(run(&select(t.clone(), 2)), Err(Fault::Bound));
+        assert_eq!(run(&index(t.clone(), int(0))), Err(Fault::Type));
+        assert_eq!(run(&select(a.clone(), 0)), Err(Fault::Type));
+        assert_eq!(run(&SExpr::Len(Box::new(t))), Err(Fault::Type));
+        assert_eq!(run(&array(vec![])), Err(Fault::Type));
+        let nested = array(vec![
+            tuple(vec![int(1), int(2)]),
+            tuple(vec![int(3), int(4)]),
+        ]);
+        assert_eq!(run(&select(index(nested, int(1)), 0)), value(3));
+        // The base evaluates before the index.
+        let late = index(a, bin(SBin::Div, int(1), int(0)));
+        assert_eq!(run(&late), Err(Fault::Div));
+    }
+
+    #[test]
+    fn containers_serialize_with_their_element_type() {
+        let pair = tuple(vec![int(1), SExpr::Bool(true)]);
+        assert_eq!(
+            run(&pair).map(|v| v.serialize()),
+            Ok("(tuple ((int 1) (bool true)))".to_owned())
+        );
+        assert_eq!(
+            run(&tuple(vec![int(1)])).map(|v| v.serialize()),
+            Ok("(tuple ((int 1)))".to_owned())
+        );
+        assert_eq!(
+            run(&array(vec![pair])).map(|v| v.serialize()),
+            Ok("(array (tuple (int bool)) ((tuple ((int 1) (bool true)))))".to_owned())
+        );
+        let rows = array(vec![array(vec![int(1)]), array(vec![int(-2)])]);
+        assert_eq!(
+            run(&rows).map(|v| v.serialize()),
+            Ok("(array (array int 1) ((array int ((int 1))) (array int ((int -2)))))".to_owned())
+        );
+    }
+
+    #[test]
+    fn typed_containers_have_the_shape_of_their_type() {
+        let ty = STy::Array(Box::new(STy::Tuple(vec![STy::Int, STy::Bool])), 1);
+        let pair = Value::Tuple(vec![Value::Int(BigInt::from(1)), Value::Bool(true)]);
+        let ok = Value::Array(vec![pair.clone()]);
+        assert_eq!(typed(&ty, ok.clone()), Ok(ok));
+        let two = Value::Array(vec![pair.clone(), pair]);
+        assert_eq!(typed(&ty, two), Err(Fault::Type));
+        let nat = STy::Array(Box::new(STy::Nat), 1);
+        let negative = Value::Array(vec![Value::Int(BigInt::from(-1))]);
+        assert_eq!(typed(&nat, negative), Err(Fault::Nat));
     }
 
     #[test]

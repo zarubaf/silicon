@@ -400,8 +400,13 @@ impl<'a> Walk<'a> {
                     self.sexpr(a);
                 }
             }
-            SExpr::Unary(_, a) => self.sexpr(a),
-            SExpr::Binary(_, a, b) => {
+            SExpr::Tuple(xs) | SExpr::Array(xs) => {
+                for x in xs {
+                    self.sexpr(x);
+                }
+            }
+            SExpr::Select(a, ..) | SExpr::Len(a) | SExpr::Unary(_, a) => self.sexpr(a),
+            SExpr::Index(a, b) | SExpr::Binary(_, a, b) => {
                 self.sexpr(a);
                 self.sexpr(b);
             }

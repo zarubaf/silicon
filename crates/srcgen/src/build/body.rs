@@ -3,10 +3,10 @@
 //! statements.
 
 use super::hw::{DEPTH, Want};
-use super::stat::{Kind, Reach};
+use super::stat::{self, Kind, Reach};
 use super::{
-    Builder, Built, COUNT, Ctx, ENVS, HELPERS, Helper, Hw, INPUTS, INSTANCES, MODULE_STMTS,
-    MODULES, Module, NESTED_STMTS, NESTING, Names, OUTPUTS, PARAMS, SAMPLE_INTS, Sig,
+    Builder, Built, CONTAINER_LEVELS, COUNT, Ctx, ENVS, HELPERS, Helper, Hw, INPUTS, INSTANCES,
+    MODULE_STMTS, MODULES, Module, NESTED_STMTS, NESTING, Names, OUTPUTS, PARAMS, SAMPLE_INTS, Sig,
 };
 use crate::eval::{Env, Fault, Value, concrete, eval, loop_values};
 use crate::program::{HExpr, Place, SExpr, STy, Scalar, Stmt, Ty};
@@ -21,7 +21,7 @@ fn domain(params: &[(String, STy)]) -> Vec<Env> {
         let values: Vec<Value> = if *t == STy::Bool {
             vec![Value::Bool(false), Value::Bool(true)]
         } else {
-            let (lo, hi) = super::stat::arg_range(*t);
+            let (lo, hi) = super::stat::arg_range(t);
             (lo..=hi).map(|n| Value::Int(BigInt::from(n))).collect()
         };
         envs = envs
@@ -239,7 +239,7 @@ impl Builder {
             let mut names = Names::default();
             let mut params = Vec::new();
             for _ in 0..self.tape.below(PARAMS + 1) {
-                let t = self.pick(&STATIC_TYS);
+                let t = STATIC_TYS[self.tape.index(STATIC_TYS.len())].clone();
                 params.push((names.fresh("P"), t));
             }
             let clocked = if k == 0 {
@@ -354,7 +354,7 @@ impl Builder {
         for _ in 0..self.tape.below(max + 1) {
             let nested = level < NESTING;
             match self.tape.below(12) {
-                1 => self.static_let(ctx, &mut m.names, &mut out),
+                1 => self.static_let(ctx, &mut m.names, &mut out)?,
                 2 => self.binding(ctx, &mut m.names, &mut out, true)?,
                 3 => self.assign(ctx, &mut m.names, &mut out)?,
                 4 => self.wire(ctx, &mut m.names, &mut out)?,
@@ -420,7 +420,19 @@ impl Builder {
     }
 
     /// A static `let` of type `Nat`, `Int`, or `Bool`.
-    fn static_let(&mut self, ctx: &mut Ctx, names: &mut Names, out: &mut Vec<Stmt>) {
+    fn static_let(&mut self, ctx: &mut Ctx, names: &mut Names, out: &mut Vec<Stmt>) -> Built {
+        if self.tape.below(4) == 3 {
+            let ty = self.container_ty(CONTAINER_LEVELS);
+            let value = self.container(&ty, stat::DEPTH, self.reach(ctx));
+            let vs = self.values(&value, &ctx.envs).ok_or(Fault::Type)?;
+            let name = names.fresh("s");
+            for (env, v) in ctx.envs.iter_mut().zip(vs) {
+                env.statics.insert(name.clone(), v);
+            }
+            ctx.statics.push((name.clone(), ty.clone()));
+            out.push(Stmt::StaticLet(name, ty, value));
+            return Ok(());
+        }
         let kind = if self.tape.below(3) == 2 {
             Kind::Bool
         } else {
@@ -432,8 +444,9 @@ impl Builder {
         for (env, v) in ctx.envs.iter_mut().zip(vs) {
             env.statics.insert(name.clone(), v);
         }
-        ctx.statics.push((name.clone(), ty));
+        ctx.statics.push((name.clone(), ty.clone()));
         out.push(Stmt::StaticLet(name, ty, value));
+        Ok(())
     }
 
     /// `v = ...;` of a `let mut` in scope, or a new `let`.
@@ -534,7 +547,9 @@ impl Builder {
     pub(super) fn probe(&mut self) -> (SExpr, Value) {
         let envs = [Env::default()];
         let names = self.const_names();
-        let e = if self.fns.is_empty() {
+        let e = if let Some(e) = self.container_probe(&names, &envs) {
+            e
+        } else if self.fns.is_empty() {
             let kind = if self.tape.below(4) == 3 {
                 Kind::Bool
             } else {

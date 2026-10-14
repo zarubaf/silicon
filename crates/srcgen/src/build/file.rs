@@ -7,7 +7,7 @@
 //! of arguments before a call site uses it.
 
 use super::stat::{self, Kind, Reach, bin, int};
-use super::{Builder, CONSTS, COUNT, FNS, SAMPLE_INTS};
+use super::{Builder, CONSTS, CONTAINER_LEVELS, COUNT, FNS, SAMPLE_INTS};
 use crate::eval::{Env, Fault, Scope, Value, eval};
 use crate::program::{ComptimeFn, Item, SBin, SExpr, STy};
 use num_bigint::BigInt;
@@ -16,14 +16,14 @@ impl Builder {
     pub(super) fn const_names(&self) -> Vec<(String, STy)> {
         self.consts
             .iter()
-            .map(|(n, t, _)| (n.clone(), *t))
+            .map(|(n, t, _)| (n.clone(), t.clone()))
             .collect()
     }
 
     pub(super) fn file_items(&self) -> Vec<Item> {
         let consts = self.consts.iter().map(|(name, ty, value)| Item::Const {
             name: name.clone(),
-            ty: *ty,
+            ty: ty.clone(),
             value: value.clone(),
         });
         let fns = self.fns.iter().cloned().map(Item::ComptimeFn);
@@ -41,6 +41,18 @@ impl Builder {
         let envs = [Env::default()];
         for k in 0..self.tape.below(CONSTS + 1) {
             let names = self.const_names();
+            if self.tape.below(4) == 3 {
+                let r = Reach {
+                    names: &names,
+                    fns: 0,
+                    envs: Some(&envs),
+                };
+                let ty = self.container_ty(CONTAINER_LEVELS);
+                let value = self.container(&ty, stat::DEPTH, r);
+                self.consts.push((format!("C{k}"), ty, value));
+                self.refresh()?;
+                continue;
+            }
             let kind = if self.tape.below(3) == 2 {
                 Kind::Bool
             } else {
@@ -144,7 +156,7 @@ impl Builder {
             SBin::Div,
             SBin::Rem,
         ];
-        let arg = |b: &mut Builder, t: STy| b.sexpr(stat::kind(t), 1, r);
+        let arg = |b: &mut Builder, t: &STy| b.sexpr(stat::param_kind(t), 1, r);
         let first = self_call(name, params, |t, _| arg(self, t));
         let op = self.pick(&OPS);
         match self.tape.below(3) {
@@ -192,12 +204,12 @@ impl Builder {
 fn self_call(
     name: &str,
     params: &[(String, STy)],
-    mut arg: impl FnMut(STy, &str) -> SExpr,
+    mut arg: impl FnMut(&STy, &str) -> SExpr,
 ) -> SExpr {
     let first = params.first().map_or(int(0), |(x, _)| {
         bin(SBin::Sub, SExpr::Name(x.clone()), int(1))
     });
-    let rest = params.iter().skip(1).map(|(n, t)| arg(*t, n));
+    let rest = params.iter().skip(1).map(|(n, t)| arg(t, n));
     SExpr::Call(
         name.to_owned(),
         std::iter::once(first).chain(rest).collect(),
