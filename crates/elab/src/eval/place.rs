@@ -863,13 +863,13 @@ impl Evaluator<'_> {
         })
     }
 
-    /// A mutation at `pos` of a binding of the current frame (section 9.4). The binding is older
+    /// A mutation at `pos` of a binding `id` of the current frame (section 9.4). The binding is older
     /// than the innermost guard when that guard started at the current depth: `S016`.
-    pub(super) fn mutation(&self, pos: Pos) -> Res<()> {
+    pub(super) fn mutation(&self, pos: Pos, id: DeclId) -> Res<()> {
         if let Some(guard) = self.guard
             && guard.depth == self.depth
         {
-            return fail(Code::S016, pos, guard.change());
+            return fail(Code::S016, pos, guard.change(&self.file.decl(id).name));
         }
         Ok(())
     }

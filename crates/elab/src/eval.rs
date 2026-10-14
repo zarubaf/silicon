@@ -735,10 +735,11 @@ struct Evaluator<'a> {
     site: Option<Pos>,
 }
 
-/// The kind of a guard (section 9.4): a hardware arm.
+/// The kind of a guard (section 9.4): a hardware arm or a structural context.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GuardKind {
     Arm,
+    Structural,
 }
 
 /// The innermost guard: its kind and the nesting depth at its start. The texts of `S016` name
@@ -750,10 +751,13 @@ pub(crate) struct Guard {
 }
 
 impl Guard {
-    /// The text of a mutation of a binding.
-    pub(crate) fn change(self) -> String {
+    /// The text of a mutation of the binding `x`.
+    pub(crate) fn change(self, x: &str) -> String {
         match self.kind {
             GuardKind::Arm => "a hardware arm changes a binding from before the arm".to_owned(),
+            GuardKind::Structural => format!(
+                "a type or a constant cannot change `{x}`; change `{x}` before it, keep the result in a `let`, and use that name here"
+            ),
         }
     }
 
@@ -761,6 +765,9 @@ impl Guard {
     pub(crate) fn effect(self, g: &str) -> String {
         match self.kind {
             GuardKind::Arm => format!("a hardware arm has no graph effect such as `{g}`"),
+            GuardKind::Structural => format!(
+                "a type or a constant has no graph effect such as `{g}`; call it before and use the result"
+            ),
         }
     }
 }
@@ -1340,6 +1347,18 @@ impl Evaluator<'_> {
         r
     }
 
+    /// Runs `act` in a structural context (section 9.4): its guard starts at the current depth,
+    /// so it is the innermost guard. Setting and restoring it is O(1).
+    pub(super) fn structural<T>(&mut self, act: impl FnOnce(&mut Self) -> Res<T>) -> Res<T> {
+        let saved = self.guard.replace(Guard {
+            kind: GuardKind::Structural,
+            depth: self.depth,
+        });
+        let r = act(self);
+        self.guard = saved;
+        r
+    }
+
     /// Runs `act` in the file scope with a new empty frame of locals and the return type
     /// `ret`. The frames below stay, so a reference into them still finds its value.
     fn in_frame<T>(&mut self, ret: Option<TyId>, act: impl FnOnce(&mut Self) -> Res<T>) -> Res<T> {
@@ -1828,27 +1847,29 @@ impl Evaluator<'_> {
             }
             _ => {}
         }
-        self.nested(pos, |ev| {
-            ev.store.consts[i] = Entry::InProgress;
-            let c = ev.in_frame(None, |ev| match item {
-                Some(Item::Const {
-                    pos: cp, ty, value, ..
-                }) => {
-                    let t = ev.type_expr(ty)?;
-                    let o = ev.eval(value)?;
-                    let o = need(value, o)?;
-                    ev.copy(*cp, &o)?;
-                    let o = ev.settle(*cp, t, o)?;
-                    Ok((ev.conform(*cp, t, o)?, t))
-                }
-                Some(Item::Alias { ty, .. }) => {
-                    let t = ev.type_expr(ty)?;
-                    Ok((Value::Type(t), ev.tys.mk(Ty::Type)))
-                }
-                _ => fail(Code::S010, pos, format!("`{x}` is not a constant")),
-            })?;
-            ev.store.consts[i] = Entry::Done(Val::Static(c.0), c.1);
-            Ok(const_ref(i))
+        self.structural(|ev| {
+            ev.nested(pos, |ev| {
+                ev.store.consts[i] = Entry::InProgress;
+                let c = ev.in_frame(None, |ev| match item {
+                    Some(Item::Const {
+                        pos: cp, ty, value, ..
+                    }) => {
+                        let t = ev.type_expr(ty)?;
+                        let o = ev.eval(value)?;
+                        let o = need(value, o)?;
+                        ev.copy(*cp, &o)?;
+                        let o = ev.settle(*cp, t, o)?;
+                        Ok((ev.conform(*cp, t, o)?, t))
+                    }
+                    Some(Item::Alias { ty, .. }) => {
+                        let t = ev.type_expr(ty)?;
+                        Ok((Value::Type(t), ev.tys.mk(Ty::Type)))
+                    }
+                    _ => fail(Code::S010, pos, format!("`{x}` is not a constant")),
+                })?;
+                ev.store.consts[i] = Entry::Done(Val::Static(c.0), c.1);
+                Ok(const_ref(i))
+            })
         })
     }
 

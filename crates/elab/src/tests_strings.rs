@@ -500,7 +500,7 @@ fn a_result_keeps_the_value_that_its_expression_read() {
         ("ctor()", "(record (struct root P ()) ((int 1) (int 2)))"),
         ("range()", "(int 10)"),
         ("nest()", "(int 4)"),
-        ("spec()", "(int 1)"),
+        ("spec()", "S016 22:71"),
         ("lst()", "(list int ((int 1) (int 2)))"),
         ("at()", "(int 1)"),
         ("own()", "(list int ((int 1) (int 1) (int 2)))"),

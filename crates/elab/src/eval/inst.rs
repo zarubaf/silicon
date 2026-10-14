@@ -724,8 +724,10 @@ impl Evaluator<'_> {
         }
         let tid = self.type_expr(word)?;
         self.mem_word(pos, tid)?;
-        let out = self.eval(depth)?;
-        let out = need(depth, out)?;
+        let out = self.structural(|ev| {
+            let out = ev.eval(depth)?;
+            need(depth, out)
+        })?;
         let depth = self.mem_depth(pos, &out)?;
         let id = self.decl(name)?;
         let path = self.fresh(id);

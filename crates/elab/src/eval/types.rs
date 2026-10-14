@@ -42,6 +42,11 @@ impl Evaluator<'_> {
     /// A type expression: one unit for the node, then the rules of the form.
     pub(super) fn type_expr(&mut self, t: &TypeExpr) -> Res<TyId> {
         self.charge(type_pos(t), 1)?;
+        self.structural(|ev| ev.type_expr_form(t))
+    }
+
+    /// The rules of the form of a type expression, in its structural context.
+    fn type_expr_form(&mut self, t: &TypeExpr) -> Res<TyId> {
         match t {
             TypeExpr::Name { pos, id, name } => {
                 let o = self.name(*pos, *id, name)?;
@@ -96,6 +101,10 @@ impl Evaluator<'_> {
 
     /// `UInt[e]` or `SInt[e]` in a type or an expression. The base charged its node.
     pub(super) fn index(&mut self, pos: Pos, k: Prelude, xs: &[Expr]) -> Res<TyId> {
+        self.structural(|ev| ev.family(pos, k, xs))
+    }
+
+    fn family(&mut self, pos: Pos, k: Prelude, xs: &[Expr]) -> Res<TyId> {
         let base = self.store.parked.len();
         for x in xs {
             let o = self.eval(x)?;
@@ -130,6 +139,10 @@ impl Evaluator<'_> {
     /// The function type with the parameter types `params` and the result type `ret` at `pos`:
     /// the parameter types in order, then the result type, then the type.
     pub(super) fn fn_type(&mut self, pos: Pos, params: &[FnParam], ret: &TypeExpr) -> Res<TyId> {
+        self.structural(|ev| ev.fn_type_of(pos, params, ret))
+    }
+
+    fn fn_type_of(&mut self, pos: Pos, params: &[FnParam], ret: &TypeExpr) -> Res<TyId> {
         let mut parts = Vec::with_capacity(params.len());
         for p in params {
             parts.push(TyParam {
@@ -202,6 +215,10 @@ impl Evaluator<'_> {
     /// The array type `[elem; len]` at `pos`. The length is a static `Nat`. It checks its
     /// depth, then charges its size and the products of its metadata.
     pub(super) fn array_type(&mut self, pos: Pos, elem: &TypeExpr, len: &Expr) -> Res<TyId> {
+        self.structural(|ev| ev.array_type_of(pos, elem, len))
+    }
+
+    fn array_type_of(&mut self, pos: Pos, elem: &TypeExpr, len: &Expr) -> Res<TyId> {
         let elem = self.type_expr(elem)?;
         let out = self.eval(len)?;
         let out = need(len, out)?;
@@ -239,6 +256,10 @@ impl Evaluator<'_> {
     /// exists only after the parameter types, so a use of the struct while its parameter types
     /// evaluate is a cycle (`S019`).
     pub(super) fn spec(&mut self, pos: Pos, i: usize, xs: &[Expr]) -> Res<TyId> {
+        self.structural(|ev| ev.spec_use(pos, i, xs))
+    }
+
+    fn spec_use(&mut self, pos: Pos, i: usize, xs: &[Expr]) -> Res<TyId> {
         let file = self.file;
         let Some(Item::Struct {
             name,
