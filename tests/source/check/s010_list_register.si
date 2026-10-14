@@ -1,0 +1,6 @@
+// S010: a `reg` has a hardware data type, and a list is none.
+// TOP M()
+module M() {
+    // expected-error S010 @+1
+    reg xs: List[Nat] = list(Nat);
+}
