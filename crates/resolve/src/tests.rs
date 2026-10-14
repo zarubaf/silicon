@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 use crate::{Code, Decl, Failed, Kind, Prelude, Resolved, Target, resolve};
-use parse::ast::{Expr, FnParam, Ident, Item, NodeId, Param, Pos, Stmt, TypeExpr};
+use parse::ast::{Expr, FnParam, Ident, Item, NodeId, Param, ParamMode, Pos, Stmt, TypeExpr};
 use std::collections::BTreeMap;
 
 fn pos(line: usize, col: usize) -> Pos {
@@ -1606,4 +1606,22 @@ fn the_prelude_struct_adds_no_error_and_no_duplicate() {
         errors("struct ReadResponse { a: Bool }\nstruct ReadResponse { b: Bool }"),
         [(S002, 2, 8)]
     );
+}
+
+#[test]
+fn diagnostic_is_a_prelude_function_with_two_parameters() {
+    let src = "fn f() -> Unit { return diagnostic; }";
+    let r = ok(src);
+    let want = Prelude::Diagnostic;
+    assert_eq!(
+        target_at(&r, find(src, "diagnostic")),
+        Some(Target::Prelude(want))
+    );
+    assert!(want.is_fn() && !want.is_type());
+    assert_eq!(want.modes(), &[ParamMode::None; 2]);
+    assert_eq!(want.receiver(), Some(0));
+    let src = "comptime fn diagnostic(n: Nat) -> Nat { return n; }\n\
+               fn f(x: Nat) -> Nat { return diagnostic(x); }";
+    let r = ok(src);
+    assert_eq!(decl_at(&r, find(src, "diagnostic(x)")).kind, Kind::Fn);
 }
