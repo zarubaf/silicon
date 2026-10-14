@@ -99,12 +99,12 @@ pub struct Config {
 }
 
 impl Config {
-    /// The forms that slice-1 source can express: no memory, no `$` in a
-    /// name, and each register resets on the reset of its module.
+    /// The forms that source can express: registered-read memories, no `$`
+    /// in a name, and each register resets on the reset of its module.
     #[must_use]
     pub fn source() -> Config {
         Config {
-            mems: Mems::None,
+            mems: Mems::Registered,
             dollar_names: false,
             resets: Resets::Module,
         }

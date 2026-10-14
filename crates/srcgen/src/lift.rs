@@ -630,7 +630,7 @@ mod tests {
     }
 
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(64))]
+        #![proptest_config(ProptestConfig::with_cases(256))]
         #[test]
         fn lifted_designs_lex(design in design_with(Config::source())) {
             let text = lift(&design).unwrap();
