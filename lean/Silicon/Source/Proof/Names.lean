@@ -392,6 +392,19 @@ theorem names_injective (p q : Name) (hp : p.valid = true) (hq : q.valid = true)
   rw [h, decode_encode q hq] at e
   exact (Option.some.inj e).symm
 
+/--
+A leaf field `<k>e` never gives the name of the loop frame with the integer field `k`
+(section 7.3). Thus the leaf `p.0.x` and the register `x` of the frame `p$0` differ.
+-/
+theorem leaf_ne_loop (h : String) (pre post : List Field) (k : Nat)
+    (hp : (⟨h, pre ++ .elem k :: post⟩ : Name).valid = true) :
+    encode ⟨h, pre ++ .elem k :: post⟩ ≠ encode ⟨h, pre ++ .int k :: post⟩ := by
+  intro e
+  have hq : (⟨h, pre ++ .int k :: post⟩ : Name).valid = true := by
+    simpa [Name.valid, List.all_append, Field.valid] using hp
+  have := names_injective _ _ hp hq e
+  simp at this
+
 /-! `encode` makes only legal core names. -/
 
 private theorem fieldsRest_fields (a : List Char) (h : ∀ c ∈ a, fieldChar c = true)
