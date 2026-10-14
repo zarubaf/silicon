@@ -1,6 +1,7 @@
-// Two memories in one design. The top holds a memory of five array words, a depth that is not a power of 2.
-// A child holds a memory of one 3-bit word, the depth 1. Every port has a non-constant enable (#20). The child
-// remembers the XOR of the two lanes of the last written word, and the top outputs both responses.
+// Four memories in two modules. The top holds a memory of five array words, a depth that is not a power of 2,
+// and a memory of four 3-bit words, whose write enable depends on the data. A child holds a memory of one
+// 3-bit word, the depth 1. Every port has a non-constant enable (#20). The child remembers the XOR of the two
+// lanes of the last written word, and the top outputs the responses of all three memories.
 // TOP Top()
 module Flag() {
     input a: UInt[1];
@@ -20,12 +21,18 @@ module Top() {
     input we: Bool;
     input wd: [UInt[3]; 2];
     input fa: UInt[1];
+    input ha: UInt[2];
+    output h: UInt[3];
     output q: [UInt[3]; 2];
     output valid: Bool;
     output seen: Bool;
     mem read: [[UInt[3]; 2]; 5];
     let r = read.read_port(ra, re);
     read.write_port(wa, wd, we);
+    mem hist: [UInt[3]; 4];
+    let hr = hist.read_port(ha, re || we);
+    hist.write_port(ha, wd[0] ^ wd[1], we && wd[0] != wd[1]);
+    h := if (hr.valid) { hr.data } else { UInt[3]() };
     instance f = Flag();
     f.a := fa;
     f.d := wd[0] ^ wd[1];
