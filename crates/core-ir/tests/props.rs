@@ -707,6 +707,16 @@ fn generator_designs_are_pinned() {
     insta::assert_snapshot!(texts.join("\n"));
 }
 
+#[test]
+#[should_panic(expected = "Mems::Registered needs Resets::Module")]
+fn registered_memories_with_random_resets_are_rejected() {
+    let _ = r#gen::design_with(r#gen::Config {
+        mems: r#gen::Mems::Registered,
+        dollar_names: false,
+        resets: r#gen::Resets::Random,
+    });
+}
+
 fn registered() -> impl Strategy<Value = Design> {
     r#gen::design_with(r#gen::Config {
         mems: r#gen::Mems::Registered,

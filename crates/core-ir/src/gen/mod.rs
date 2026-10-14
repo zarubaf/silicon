@@ -83,7 +83,7 @@ pub enum Mems {
     /// register loads the word at the read address on an enabled read. The
     /// valid register is set by an enabled read of an address below the
     /// depth. The module reset disables the write. This needs
-    /// `Resets::Module`; with `Resets::Random` a design has no memory.
+    /// `Resets::Module`; [`design_with`] panics with `Resets::Random`.
     Registered,
 }
 
@@ -127,7 +127,16 @@ pub fn design() -> impl Strategy<Value = Design> {
 }
 
 /// Random designs of the forms that `config` allows.
+///
+/// # Panics
+/// Panics if `config` has `Mems::Registered` with `Resets::Random`: the
+/// reset of a memory block is the module reset, so no design has a
+/// memory then.
 pub fn design_with(config: Config) -> impl Strategy<Value = Design> {
+    assert!(
+        config.mems != Mems::Registered || config.resets == Resets::Module,
+        "Mems::Registered needs Resets::Module: its data and valid registers reset on the module reset"
+    );
     vec(any::<u32>(), 0..4096).prop_map(move |tape| {
         Tape {
             numbers: tape.into_iter(),
@@ -481,12 +490,7 @@ impl Tape {
         has_clock: bool,
         scope: &mut Scope,
     ) -> (Vec<Mem>, Vec<(String, String)>) {
-        let has_mems = has_clock
-            && match self.config.mems {
-                Mems::None => false,
-                Mems::Core => true,
-                Mems::Registered => self.config.resets == Resets::Module,
-            };
+        let has_mems = has_clock && self.config.mems != Mems::None;
         let mem_count = if has_mems { self.below(MEMS + 1) } else { 0 };
         let mems: Vec<Mem> = (0..mem_count)
             .map(|m| Mem {
