@@ -1,7 +1,7 @@
 // A pipeline whose stage function is a module parameter of function type. The child keeps an array
 // register of stages, builds the next stage array by place updates in a comptime loop, and outputs the
 // last stage. The top uses it twice, with a tuple and with a record, gates the record by a receiver call
-// of a function with a `mut` argument, and compares the two valid leaves.
+// of a function with a `mut` argument, sends it through a `wire` of the record type, and compares the two valid leaves.
 // TOP Top()
 struct Entry(comptime W: Nat) {
     valid: Bool,
@@ -42,7 +42,9 @@ module Top() {
     let mut g = e;
     g.gate(en);
     pp.x := p;
-    ep.x := g;
+    wire w: Entry[2];
+    w := g;
+    ep.x := w;
     py := pp.y;
     ey := ep.y;
     same := pp.y.1 == ep.y.valid;
