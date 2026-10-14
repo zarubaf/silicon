@@ -7,7 +7,7 @@ use parse::ast::{Ident, Item, NodeId, Param, ParamMode, Pos, StructField, TypeEx
 /// A name of the prelude: the scalar types and functions of slice 1, `Unit` and `len` of the
 /// containers of slice 2, `Type` and `data_bits` of the types as values, and `String`, `List`,
 /// `list`, `push`, `pop`, and `str` of the strings and the lists, and `read_port` and
-/// `write_port` of the memories.
+/// `write_port` of the memories, and `diagnostic` of the records.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Prelude {
     Bool,
@@ -31,6 +31,7 @@ pub enum Prelude {
     Str,
     ReadPort,
     WritePort,
+    Diagnostic,
 }
 
 impl Prelude {
@@ -57,6 +58,7 @@ impl Prelude {
             "str" => Prelude::Str,
             "read_port" => Prelude::ReadPort,
             "write_port" => Prelude::WritePort,
+            "diagnostic" => Prelude::Diagnostic,
             _ => return None,
         })
     }
@@ -90,6 +92,7 @@ impl Prelude {
             Prelude::StaticAssert => &[ParamMode::None, ParamMode::None],
             Prelude::ReadPort => &[ParamMode::None; 3],
             Prelude::WritePort => &[ParamMode::None; 4],
+            Prelude::Diagnostic => &[ParamMode::None; 2],
             _ => &[ParamMode::None],
         }
     }
@@ -117,6 +120,7 @@ impl Prelude {
                 | Prelude::Str
                 | Prelude::ReadPort
                 | Prelude::WritePort
+                | Prelude::Diagnostic
         )
     }
 }
@@ -175,7 +179,6 @@ pub(crate) fn response_item() -> Item {
 /// The slice of a prelude name that a later slice adds, for the message of `S003`.
 pub(crate) fn later_slice(name: &str) -> Option<u8> {
     Some(match name {
-        "diagnostic" => 2,
         "Reg" | "Wire" | "Mem" | "Input" | "Instance" | "Domain" | "read" => 3,
         "FieldInfo" | "TypeInfo" | "PortKey" | "PortInfo" => 4,
         _ => return None,
