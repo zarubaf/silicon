@@ -980,3 +980,108 @@ fn pass_5_decides_the_other_rules_of_function_values() {
     ok(&fn_body("let h = f == f;\nreturn p;"));
     ok(&fn_body("return p == (fn () -> Bool == f);"));
 }
+
+/// The body of a `comptime fn`. The body starts on line 2.
+fn ct_body(s: &str) -> String {
+    format!("comptime fn f(x: Nat) -> Nat {{\n{s}\nreturn x;\n}}")
+}
+
+#[test]
+fn s006_a_comptime_fn_has_no_memory_port_call() {
+    fails(&ct_body("let r = read_port(x, 1, true);"), S006, 2, 9);
+    fails(&ct_body("x.write_port(1, 2, true);"), S006, 2, 1);
+    // The rule comes before the `S007` of the call at that position.
+    fails(&ct_body("let r = read_port(x, 1);"), S006, 2, 9);
+    fails(&ct_body("x.write_port(1, 2);"), S006, 2, 1);
+    assert_eq!(
+        message(&ct_body("x.write_port(1, 2);")),
+        "a `comptime fn` has no memory port call"
+    );
+    ok(&mod_body(
+        "mem m: [UInt[8]; 4];\nlet r = read_port(m, 0, true);\nm.write_port(0, 1, true);",
+    ));
+    ok(&fn_body("return read_port(p, p, p).valid;"));
+}
+
+#[test]
+fn a_user_function_named_as_a_port_function_gets_no_memory_rule() {
+    ok(&format!(
+        "{}\ncomptime fn read_port(a: Nat) -> Nat {{ return a; }}",
+        ct_body("let r = read_port(x);")
+    ));
+    ok(&format!(
+        "{}\nfn write_port(a: Nat) -> Nat {{ return a; }}",
+        ct_body("let r = x.write_port();")
+    ));
+    fails(
+        &format!(
+            "{}\nfn write_port(a: Nat) -> Nat {{ return a; }}",
+            ct_body("let r = x.write_port(1);")
+        ),
+        S007,
+        2,
+        9,
+    );
+}
+
+#[test]
+fn s007_the_memory_port_functions_have_three_and_four_arguments() {
+    let mem = |s: &str| mod_body(&format!("mem m: [UInt[8]; 4];\n{s}"));
+    fails(&mem("let r = read_port(m, 0);"), S007, 3, 9);
+    assert_eq!(
+        message(&mem("let r = read_port(m, 0);")),
+        "`read_port` takes 3 argument(s), but it has 2"
+    );
+    fails(&mem("write_port(m, 0, 1, true, 4);"), S007, 3, 1);
+    fails(&mem("let r = m.read_port(0, true, 1);"), S007, 3, 9);
+    fails(&mem("m.write_port(0, true);"), S007, 3, 1);
+    ok(&mem(
+        "let r = m.read_port(0, true);\nm.write_port(0, 1, true);",
+    ));
+}
+
+#[test]
+fn s007_the_prelude_struct_has_one_index_and_two_constructor_arguments() {
+    ok(&fn_body(
+        "let r: ReadResponse[Bool] = ReadResponse[Bool](p, p);\nreturn r.valid;",
+    ));
+    ok(&fn_body("return ReadResponse[Bool]().valid;"));
+    fails(&fn_body("let r: ReadResponse = p;\nreturn p;"), S007, 2, 8);
+    fails(&fn_body("let r = ReadResponse;\nreturn p;"), S007, 2, 9);
+    fails(
+        &fn_body("let r: ReadResponse[Bool, Bool] = p;\nreturn p;"),
+        S007,
+        2,
+        8,
+    );
+    fails(
+        &fn_body("let r = ReadResponse[Bool, Bool];\nreturn p;"),
+        S007,
+        2,
+        9,
+    );
+    fails(
+        &fn_body("let r = ReadResponse[Bool](p);\nreturn p;"),
+        S007,
+        2,
+        9,
+    );
+    assert_eq!(
+        message(&fn_body("let r = ReadResponse[Bool](p);\nreturn p;")),
+        "a struct constructor takes 0 or 2 argument(s), but it has 1"
+    );
+    fails(
+        &fn_body("let r = ReadResponse(p, p);\nreturn p;"),
+        S007,
+        2,
+        9,
+    );
+}
+
+#[test]
+fn the_walk_skips_the_prelude_struct_and_a_user_struct_gets_the_check() {
+    ok("");
+    ok("fn f() -> Nat { return 1; }");
+    // The same forms in a user struct give the error at their position.
+    fails("struct ReadResponse { data: UInt }", S007, 1, 29);
+}
