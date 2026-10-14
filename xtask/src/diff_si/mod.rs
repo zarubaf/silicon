@@ -138,16 +138,17 @@ pub fn run(repo: &Repo, mode: Mode, seed: u64, count: u64) -> Result<bool> {
                 )?;
                 (agree, mutation::summary(count, seed, last, &tally))
             }
-            Mode::Budget => (
-                search(
+            Mode::Budget => {
+                let mut tally = budget::Tally::default();
+                let agree = search(
                     budget::cases(),
                     seed,
                     count,
-                    |case| budget::verdict(&tools, dir.path(), case),
+                    |case| budget::verdict(&tools, dir.path(), case, &mut tally),
                     |n, case, message| budget::report(&tools, dir.path(), n, case, message),
-                )?,
-                format!("diff-si: {count} budgets agree (seeds {seed} to {last})"),
-            ),
+                )?;
+                (agree, tally.summary(count, seed, last))
+            }
             Mode::All => bail!("the mode `all` is not one mode"),
         };
         if !agree {
