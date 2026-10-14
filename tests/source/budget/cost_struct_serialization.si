@@ -1,0 +1,21 @@
+// The cost of the serialization of a record (section 5.4): an `instance` with a record argument charges
+// the recursive size of the argument, then the length in bytes of the serialization, and the length of the
+// emitted name. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 426
+// TOP M()
+struct P(comptime N: Nat) {
+    v: [UInt[8]; N],
+    b: Bool,
+}
+module Leaf(comptime T: P[6]) domains() {
+    input a: UInt[1];
+    output q: UInt[1];
+    q := a;
+}
+module M() domains() {
+    input x: UInt[1];
+    output y: UInt[1];
+    instance l = Leaf(P[6]([UInt[8]; 6](), true));
+    l.a := x;
+    y := l.q;
+}
