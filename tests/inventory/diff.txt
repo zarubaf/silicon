@@ -20,6 +20,7 @@ tests/source/corpus/const_table.si run PASS
 tests/source/corpus/counter_width.si run PASS
 tests/source/corpus/fn_alu_table.si run PASS
 tests/source/corpus/hierarchy_parameters.si run PASS
+tests/source/corpus/list_scrambler.si run PASS
 tests/source/corpus/memory_record.si run PASS
 tests/source/corpus/names_keywords.si run PASS
 tests/source/corpus/register_resets.si run PASS

@@ -1,0 +1,30 @@
+// An LFSR scrambler whose tap list is a table that a list builds. A helper with a `mut` list adds each tap
+// through a receiver call. A comptime loop over the length of the table builds the XOR network of the feedback.
+// A static assert fixes the tap count, and a diagnostic record names the table with a string.
+// TOP Scrambler()
+comptime fn add_tap(mut xs: List[Nat], t: Nat) -> () {
+    xs.push(t);
+    return ();
+}
+comptime fn taps(comptime n: Nat) -> List[Nat] {
+    let mut xs = list(Nat);
+    comptime for i in 0..4 {
+        xs.add_tap(n - 1 - 2 * i);
+    }
+    return xs;
+}
+const TAPS: List[Nat] = taps(8);
+module Scrambler() {
+    input en: Bool;
+    input d: UInt[8];
+    output y: UInt[8];
+    reg lfsr: UInt[8] = 1;
+    static_assert(len(TAPS) == 4, "four taps");
+    diagnostic("taps " + str(len(TAPS)), TAPS);
+    let mut fb = UInt[8](0);
+    comptime for k in 0..len(TAPS) {
+        fb = fb ^ ((lfsr >> TAPS[k]) & 1);
+    }
+    lfsr := if (en) { (lfsr << 1) | fb } else { lfsr };
+    y := d ^ lfsr;
+}
