@@ -127,15 +127,15 @@ const KEEP_FN: &str = "p0";
 
 impl Kind {
     /// The function that the mutant adds, with its newline.
-    fn function(self) -> &'static str {
+    fn function(self) -> String {
         match self {
-            Kind::ArmEffect | Kind::TypeEffect => {
-                "comptime fn e0(x: Int) -> Int {\n    diagnostic(\"e0\", x);\n    return x;\n}\n"
-            }
+            Kind::ArmEffect | Kind::TypeEffect => format!(
+                "comptime fn {EFFECT_FN}(x: Int) -> Int {{\n    diagnostic(\"{EFFECT_FN}\", x);\n    return x;\n}}\n"
+            ),
             Kind::ArmMutation | Kind::TypeMutation => {
-                "comptime fn p0(mut n: Int, x: Int) -> Int {\n    return x;\n}\n"
+                format!("comptime fn {KEEP_FN}(mut n: Int, x: Int) -> Int {{\n    return x;\n}}\n")
             }
-            _ => "",
+            _ => String::new(),
         }
     }
 }
@@ -159,7 +159,7 @@ pub fn mutate(program: &Program, kind: u32, site: u32) -> Mutant {
             let mut items = program.items.clone();
             let (what, expect) = apply(kind, &mut items, &program.top, site as usize % count)?;
             Some(Mutant {
-                text: render_items(&items) + kind.function(),
+                text: render_items(&items) + &kind.function(),
                 what,
                 expect,
             })

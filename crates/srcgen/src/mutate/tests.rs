@@ -1044,7 +1044,7 @@ fn type_effect_predicts_s016_in_a_width_of_the_top_frame() {
     );
     assert_eq!(ms[0].what, "call e0 in the width 8 in M0");
     assert!(ms.iter().all(|m| m.expect == Some("S016")));
-    // A width in the value of a statement, in an arm and in a lazy operand.
+    // A width in the value of a statement in an arm.
     let l = Stmt::Let {
         name: "l0".to_owned(),
         mutable: false,
@@ -1144,7 +1144,7 @@ fn mutation_kinds_need_a_root_in_scope() {
     // No root: no site.
     let p = arm_module(vec![], bool_name_if(make(1), make(2)));
     assert_eq!(sites_of(&p, Kind::ArmMutation), 0);
-    // The root of a loop body is out of scope after the loop.
+    // The root of a block body is out of scope after the block.
     let body = vec![counter_let()];
     let p = arm_module(vec![Stmt::Block(body)], bool_name_if(make(1), make(2)));
     assert_eq!(sites_of(&p, Kind::ArmMutation), 0);
