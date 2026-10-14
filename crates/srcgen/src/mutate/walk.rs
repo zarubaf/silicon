@@ -2,9 +2,11 @@
 //! The pre-order walk over the sites of a mutation kind.
 
 use super::super::program::sexpr as sexpr_text;
-use super::super::program::{FieldTy, HBin, HExpr, Item, Place, Radix, SBin, SExpr, STy, Stmt, Ty};
+use super::super::program::{
+    FieldTy, HBin, HExpr, Item, Place, Radix, SBin, SExpr, STy, Stmt, Ty, Un,
+};
 use super::uses::{self, Callees};
-use super::{Effect, Hit, Kind};
+use super::{EFFECT_FN, Effect, Hit, KEEP_FN, Kind};
 use num_bigint::BigInt;
 use std::mem;
 
@@ -29,6 +31,13 @@ pub(super) struct Walk<'a> {
     mut_helpers: Vec<String>,
     /// The static `let mut` roots in scope, with their types.
     scope: Vec<(String, STy)>,
+    /// The ports and registers of the current module.
+    hardware: Vec<String>,
+    /// Whether the site is in an arm of an `if`.
+    arm: bool,
+    /// Whether the site runs when the top frame of a module runs, with both
+    /// arms of a hardware `if` counted as run. `always` is stricter.
+    reach: bool,
     /// Whether the site being walked always runs: it is in the top frame of
     /// a module, and in no lazy operand or branch.
     always: bool,
@@ -52,6 +61,9 @@ impl<'a> Walk<'a> {
             list_values: Vec::new(),
             mut_helpers: Vec::new(),
             scope: Vec::new(),
+            hardware: Vec::new(),
+            arm: false,
+            reach: false,
             always: false,
             item: String::new(),
             index: 0,
@@ -104,7 +116,10 @@ impl<'a> Walk<'a> {
 
     fn item_body(&mut self, item: &mut Item) {
         self.always = false;
+        self.reach = false;
+        self.arm = false;
         self.scope.clear();
+        self.hardware.clear();
         match item {
             Item::Const { value, .. } => self.sexpr(value),
             Item::HwFnValue { .. } => {}
@@ -147,10 +162,10 @@ impl<'a> Walk<'a> {
 
     /// The statements of a body; `top` if it is the top frame of a module.
     fn stmts(&mut self, body: &mut Vec<Stmt>, top: bool) {
-        let outer = self.always;
-        self.always = top;
+        let outer = (self.always, self.reach);
+        (self.always, self.reach) = (top, top);
         self.stmts_in(body, top);
-        self.always = outer;
+        (self.always, self.reach) = outer;
     }
 
     fn stmts_in(&mut self, body: &mut Vec<Stmt>, top: bool) {
@@ -205,6 +220,7 @@ impl<'a> Walk<'a> {
     }
 
     fn stmt_parts(&mut self, s: &mut Stmt) {
+        self.note_hardware(s);
         match s {
             Stmt::Input(_, t) | Stmt::Output(_, t) | Stmt::Wire(_, t) => self.ty(t),
             Stmt::Reg(_, t, reset) => {
@@ -275,11 +291,62 @@ impl<'a> Walk<'a> {
         }
     }
 
+    /// Records the ports and registers of a module.
+    fn note_hardware(&mut self, s: &Stmt) {
+        if let Stmt::Input(n, _) | Stmt::Reg(n, ..) = s {
+            self.hardware.push(n.clone());
+        }
+    }
+
+    /// Whether the condition `c` is certainly not static by value: a port
+    /// or a register, or its negation. The front ends fold an operator on
+    /// constants, and a call can drop its operand, so any other condition
+    /// may fold to a static `Bool` that takes one arm.
+    fn is_hardware(&self, c: &HExpr) -> bool {
+        match c {
+            HExpr::Name(n) => self.hardware.contains(n),
+            HExpr::Unary(Un::Not, a) => self.is_hardware(a),
+            _ => false,
+        }
+    }
+
+    /// The newest static `let mut` `Int` in scope.
+    fn counter(&self) -> Option<String> {
+        let (name, _) = self.scope.iter().rev().find(|(_, t)| *t == STy::Int)?;
+        Some(name.clone())
+    }
+
+    /// The sites of `ArmEffect` and `ArmMutation`: a static `Int` operand
+    /// in an arm.
+    fn arm_operand(&mut self, e: &mut SExpr) {
+        if !self.arm {
+            return;
+        }
+        let code = self.reach.then_some("S016");
+        let (what, new) = if self.site(Kind::ArmEffect) {
+            let new = SExpr::Call(EFFECT_FN.to_owned(), vec![e.clone()]);
+            (format!("call {EFFECT_FN} on {}", sexpr_text(e)), new)
+        } else if let Some(root) = self.counter()
+            && self.site(Kind::ArmMutation)
+        {
+            let what = format!("call {KEEP_FN} on {root} and {}", sexpr_text(e));
+            (what, keep(&root, e.clone()))
+        } else {
+            return;
+        };
+        *e = new;
+        self.hit(
+            format!("{what} in an arm of {}", self.item),
+            Effect::Code(code),
+        );
+    }
+
     /// Walks a part that may not run: no site in it always runs.
     fn lazily(&mut self, walk: impl FnOnce(&mut Self)) {
-        let outer = mem::replace(&mut self.always, false);
+        let outer = (self.always, self.reach);
+        (self.always, self.reach) = (false, false);
         walk(self);
-        self.always = outer;
+        (self.always, self.reach) = outer;
     }
 
     /// The sites of `Window` and `ValueWindow`: an argument of a call on a
@@ -356,6 +423,30 @@ impl<'a> Walk<'a> {
             SExpr::Binary(SBin::Add, Box::new(w.clone()), Box::new(one))
         } else if *w != zero() && self.site(Kind::ZeroWidth) {
             zero()
+        } else if self.site(Kind::TypeEffect) {
+            let code = self.reach.then_some("S016");
+            let new = SExpr::Call(EFFECT_FN.to_owned(), vec![w.clone()]);
+            let what = format!(
+                "call {EFFECT_FN} in the width {} in {}",
+                sexpr_text(w),
+                self.item
+            );
+            *w = new;
+            self.hit(what, Effect::Code(code));
+            return;
+        } else if let Some(root) = self.counter()
+            && self.site(Kind::TypeMutation)
+        {
+            let code = self.reach.then_some("S016");
+            let new = keep(&root, w.clone());
+            let what = format!(
+                "call {KEEP_FN} on {root} in the width {} in {}",
+                sexpr_text(w),
+                self.item
+            );
+            *w = new;
+            self.hit(what, Effect::Code(code));
+            return;
         } else {
             self.sexpr(w);
             return;
@@ -432,10 +523,18 @@ impl<'a> Walk<'a> {
     fn hexpr(&mut self, e: &mut HExpr) {
         match e {
             HExpr::Name(n) | HExpr::Field(n, _) => self.rename(n),
-            HExpr::Static(s) => self.sexpr(s),
+            HExpr::Static(s) => {
+                self.sexpr(s);
+                if int_valued(s) {
+                    self.arm_operand(s);
+                }
+            }
             HExpr::Make(t, s) => {
                 self.ty(t);
                 self.sexpr(s);
+                if !matches!(t, Ty::Bool) {
+                    self.arm_operand(s);
+                }
             }
             HExpr::Unary(_, a) => self.hexpr(a),
             HExpr::Binary(HBin::Land | HBin::Lor, a, b) => {
@@ -448,10 +547,13 @@ impl<'a> Walk<'a> {
             }
             HExpr::If(c, t, f) => {
                 self.hexpr(c);
-                self.lazily(|w| {
-                    w.hexpr(t);
-                    w.hexpr(f);
-                });
+                // A hardware `if` evaluates both arms.
+                let both = self.is_hardware(c);
+                let (always, reach, arm) = (self.always, self.reach, self.arm);
+                (self.always, self.reach, self.arm) = (false, reach && both, true);
+                self.hexpr(t);
+                self.hexpr(f);
+                (self.always, self.reach, self.arm) = (always, reach, arm);
             }
             HExpr::Resize(t, a) | HExpr::Reinterpret(t, a) => {
                 self.ty(t);
@@ -496,6 +598,31 @@ fn function_values(items: &[Item]) -> Vec<String> {
         }
     }
     names
+}
+
+/// `p0(root, e)`: a call that takes `root` as its `mut` actual.
+fn keep(root: &str, e: SExpr) -> SExpr {
+    SExpr::Call(KEEP_FN.to_owned(), vec![SExpr::Name(root.to_owned()), e])
+}
+
+/// Whether `e` has the type `Int` by its syntax: a literal, or an
+/// arithmetic operator.
+fn int_valued(e: &SExpr) -> bool {
+    match e {
+        SExpr::Int(..) | SExpr::Unary(Un::Neg | Un::Inv, _) => true,
+        SExpr::Binary(op, ..) => !matches!(
+            op,
+            SBin::Eq
+                | SBin::Ne
+                | SBin::Lt
+                | SBin::Le
+                | SBin::Gt
+                | SBin::Ge
+                | SBin::Land
+                | SBin::Lor
+        ),
+        _ => false,
+    }
 }
 
 /// The consts of a function type whose first formal is a `mut` list.
