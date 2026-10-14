@@ -29,8 +29,6 @@ pub(crate) enum Op {
     Out(PathId, PathId),
     /// A leaf of the word of the memory at the path, at a bit offset. It holds the path once, as
     /// an id, and it lowers to an `extract` of the read register (section 7.6).
-    // The memory block reads it in a later commit.
-    #[allow(dead_code)]
     Word(PathId, u64),
     Lit(Value),
     /// A static shift count `k`, as the `Int` constant of Lean. The lowering reads only
