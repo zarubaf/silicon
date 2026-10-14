@@ -424,6 +424,67 @@ the `instance` statement.
   "module M() {\n  output y: UInt[8];\n  instance c = C();\n  y := true;\n}\n") "M" ==
   "S018 2:3"
 
+/-!
+The `mem` statement (section 6.2). Each check is at the statement. First, the statement charges
+1. A combinational module is `S017`, before the type. The word type is `S010` when it is not
+hardware data or has no leaf, and `S012` above 65536 bits. Then the depth is `S011`, `S010`, or
+`S012` outside 1 to 16777216. A memory without a port call is `S018` at its statement.
+-/
+def memBody (ss : String) : String := "module M() {\n" ++ ss ++ "}\n"
+
+#guard cost "module M() domains() {\n  mem m: [Int; 0];\n}\n" "M" == "S017 2:3"
+#guard cost "module M() domains() {\n  mem m: [Int; 0];\n}\n" "M" (fuel := 28) == "S017 2:3"
+#guard cost "module M() domains() {\n  mem m: [Int; 0];\n}\n" "M" (fuel := 27) == "S015 2:3"
+#guard cost (memBody "  mem m: [Int; 4];\n") "M" == "S010 2:3"
+#guard cost (memBody "  mem m: [(); 4];\n") "M" == "S010 2:3"
+#guard cost (memBody "  mem m: [[Unit; 4]; 4];\n") "M" == "S010 2:3"
+#guard cost (memBody "  mem m: [[fn () -> Bool; 0]; 4];\n") "M" == "S010 2:3"
+#guard cost (memBody "  mem m: [UInt[65536]; 4];\n  mem k: [[UInt[65536]; 2]; 4];\n") "M" ==
+  "S012 3:3"
+#guard cost (memBody "  mem m: [Bool; 0];\n") "M" == "S012 2:3"
+#guard cost (memBody "  mem m: [Bool; 16777217];\n") "M" == "S012 2:3"
+#guard cost (memBody "  mem m: [Bool; -1];\n") "M" == "S012 2:3"
+#guard cost (memBody "  mem m: [Bool; true];\n") "M" == "S010 2:3"
+#guard cost (memBody "  mem m: [Bool; \"a\"];\n") "M" == "S010 2:3"
+#guard cost (memBody "  mem m: [Bool; []];\n") "M" == "S010 2:3"
+#guard cost (memBody "  input x: UInt[4];\n  let h = x;\n  mem m: [Bool; h];\n") "M" == "S011 4:3"
+
+/-! The word type checks before the depth, and the width before the depth. -/
+#guard cost (memBody "  input x: UInt[4];\n  let h = x;\n  mem m: [Int; h];\n") "M" == "S010 4:3"
+#guard cost (memBody "  input x: UInt[4];\n  let h = x;\n  mem m: [[UInt[65536]; 2]; h];\n")
+  "M" == "S012 4:3"
+
+/-!
+The charge: the statement, the type, and the depth, with no `[T; N]` type. A wide word with the
+largest depth costs as much as one with the depth 1, and its last charge is at the depth.
+-/
+#guard cost (memBody "  mem m: [Bool; 4];\n") "M" (fuel := 31) == "S018 2:3"
+#guard cost (memBody "  mem m: [Bool; 4];\n") "M" (fuel := 30) == "S015 2:17"
+#guard cost (memBody "  mem m: [UInt[65536]; 16777216];\n") "M" (fuel := 36) == "S018 2:3"
+#guard cost (memBody "  mem m: [UInt[65536]; 16777216];\n") "M" (fuel := 35) == "S015 2:24"
+#guard cost (memBody "  mem m: [UInt[65536]; 1];\n") "M" (fuel := 36) == "S018 2:3"
+#guard cost (memBody "  mem m: [UInt[65536]; 1];\n") "M" (fuel := 35) == "S015 2:24"
+
+/-!
+A memory is never data: a read, an index, a field, and an operand are `S010` at the use. A `let`
+alias keeps the handle, so only its read fails.
+-/
+#guard cost (memBody "  output y: Bool;\n  mem m: [Bool; 4];\n  y := m;\n") "M" == "S010 4:3"
+#guard cost (memBody "  output y: Bool;\n  mem m: [Bool; 4];\n  y := m[0];\n") "M" == "S010 4:8"
+#guard cost (memBody "  output y: Bool;\n  mem m: [Bool; 4];\n  y := m.a;\n") "M" == "S010 4:8"
+#guard cost (memBody "  output y: Bool;\n  mem m: [Bool; 4];\n  y := m + 1;\n") "M" ==
+  "S010 4:8"
+#guard cost (memBody "  mem m: [Bool; 4];\n  let a = m;\n  let b: Bool = a;\n") "M" ==
+  "S010 4:3"
+#guard cost (memBody "  mem m: [Bool; 16777216];\n  let a = m;\n") "M" == "S018 2:3"
+
+/-! `S018` at the statement competes by position with the other bindings, also in a loop. -/
+#guard cost (memBody "  mem m: [Bool; 4];\n  wire w: Bool;\n") "M" == "S018 2:3"
+#guard cost (memBody "  wire w: Bool;\n  mem m: [Bool; 4];\n") "M" == "S018 2:3"
+#guard cost (memBody "  output y: Bool;\n  y := true;\n  mem m: [Bool; 4];\n  y := false;\n")
+  "M" == "S018 4:3"
+#guard cost (memBody "  comptime for i in 0..2 {\n    mem m: [Bool; 2];\n  }\n") "M" == "S018 3:5"
+
 /-! The elaboration alone: `ok` and its units, or the code and the position of the first error. -/
 def elabOnly (src t : String) : String :=
   match elaborated src t with
