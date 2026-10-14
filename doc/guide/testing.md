@@ -208,19 +208,26 @@ The typed mode builds random typed source programs. The builder is `typed()` of 
 
 The input lines come from `lines()`. They follow the ports of the top. The reset of the domain is likely in the first cycle and rare after it, in both modes. Thus the state of a design lives for several cycles.
 
-The mutation mode changes one site of a typed program and sends the mutant to both front ends. `mutate` of the crate `srcgen` makes the mutant. The kind and the site come from the tape, so they shrink with it. The kinds are `Delete`, `Duplicate`, `Rename`, `DropArg`, `AddArg`, `Widen`, `ZeroWidth`, and `Fault`. A kind with no site gives way to the next kind.
+The mutation mode changes one site of a typed program and sends the mutant to both front ends. `mutate` of the crate `srcgen` makes the mutant. The kind and the site come from the tape, so they shrink with it. The kinds are `Delete`, `Duplicate`, `Rename`, `DropArg`, `AddArg`, `Widen`, `ZeroWidth`, `Fault`, and seven kinds for `S008` and `S016`. A kind with no site gives way to the next kind. The seven kinds are:
+
+- `Immutable` changes the `let mut` root of a `mut` actual to `let`. The prediction is `S008` if a named function, a `push`, or a `pop` has the root as its `mut` actual. If only a call through a function value or an assignment uses the root, there is no prediction.
+- `Window` changes an argument of a receiver call on a list to a `pop` of the receiver. The prediction is `S008` (pass 4). `ValueWindow` does the same in a call through a function value. Pass 5 finds that window when the call runs. The prediction is `S008` where the call always runs.
+- `ArmEffect` and `TypeEffect` change a static operand of an arm, or a width, to a call of a function that runs a `diagnostic`. The mutant adds that function. The prediction is `S016`.
+- `ArmMutation` and `TypeMutation` change the same sites to a call that takes a `let mut` static `Int` from before the site as its `mut` actual. The mutant adds a function with a `mut` formal. The prediction is `S016`, by the write-back.
+
+A prediction of these four kinds holds only where the site always runs, in the top frame of a module. A site in a branch, a loop, a lazy operand, a helper, or a struct has no prediction. An arm counts as run only if the condition of its `if` is a port, a register, or the negation of one. The front ends fold any other condition that is static by value, and that `if` takes one arm.
 
 - `silicon elab` and `silicon-check elab` run the mutant. The oracle is `agree` of `testkit`. Both must exit 0 with the same design, or both must exit 1 with the same first code, line, and column. Any other exit code is a failure.
 - Where the pass order makes the first code certain, `srcgen` predicts it. It is a third trace. If both front ends agree on another code, the failure names `gen`.
 - Both front ends can accept a mutant, and the run counts it. The success line counts the mutants by code, for example `diff-si: 100 mutants agree (seeds 1 to 100): 88 rejected (S002 12, S003 30), 12 accepted`. Read it to see a drop in the rejections.
-- The kinds do not reach all codes. Issue #130 tracks the codes that no mutation reaches yet. The mutation mode thus does not cover all rejections.
+- The kinds reach `S008` and `S016`, but not all codes. Issue #130 tracks the codes of slice 1 that no mutation reaches yet. The mutation mode thus does not cover all rejections.
 
 The budget mode checks the fuel and the depth on a typed program. `silicon cost` and `silicon-check cost` must agree, and the first line gives `total N`. Then `elab` runs in both front ends with these limits:
 
 - `--fuel N` must succeed.
 - `--fuel N - 1` must give `S015`.
 - A random fuel from 1 to `N - 1` must give `S015`. It tests the order of the charges, which `cost` does not show.
-- A random `--depth` from 1 to 8 must give the same outcome in both front ends. Success and `S015` are the only allowed outcomes.
+- A random `--depth` from 1 to 8 must give the same outcome in both front ends. Success and `S015` are the only allowed outcomes. The success line counts both outcomes, for example `diff-si: 100 budgets agree (seeds 1 to 100): depth success 53, depth S015 47`. Programs with containers have a value depth of 2 or more, so the draw reaches the depth of a value.
 
 These rules apply to all modes:
 
