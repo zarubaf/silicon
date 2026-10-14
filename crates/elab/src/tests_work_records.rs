@@ -422,7 +422,7 @@ fn nested_handle(kind: &str, levels: u64) -> String {
 #[test]
 fn the_type_of_a_handle_measures_through_the_table() {
     // A handle unfolds its levels once each and a constant number of nodes besides.
-    for (k, (kind, extra)) in [("mem", 2), ("input", 3), ("output", 3)]
+    for (k, (kind, extra)) in [("mem", 2), ("input", 3), ("output", 2)]
         .into_iter()
         .enumerate()
     {
@@ -432,5 +432,62 @@ fn the_type_of_a_handle_measures_through_the_table() {
             assert_eq!(code, Some(crate::Code::S015), "{kind} {n}");
             assert_eq!(counts.unfolded, n + extra, "{kind} {n}");
         }
+    }
+}
+
+/// The module `M()` that records `value` after the nested types `T0` to `T<levels>` and the
+/// struct `Wrap` with a field of an array of the deepest. The term of the deepest type triples
+/// at each level while its size grows by a constant.
+fn nested_record(levels: u64, ports: &str, value: &str) -> String {
+    let mut src = String::from(
+        "struct R(comptime A: Type, comptime e: [A; 0], comptime f: [A; 0]) { x: Bool }\n\
+         type T0 = R[Bool, [], []];\n",
+    );
+    for i in 1..=levels {
+        writeln!(src, "type T{i} = R[T{}, [], []];", i - 1).unwrap_or_default();
+    }
+    writeln!(src, "struct Wrap {{ x: [T{levels}; 1] }}").unwrap_or_default();
+    writeln!(
+        src,
+        "fn probe(w: Wrap, t: T{levels}) -> Bool {{ return true; }}"
+    )
+    .unwrap_or_default();
+    format!("{src}module M() domains(clk) {{\n{ports}  diagnostic(\"m\", {value});\n}}\n")
+}
+
+/// A type that a record holds, whatever the way it holds it, measures through the table: the
+/// type nodes that the length pass unfolds grow by a constant at each level, and no walk
+/// follows the term of the type.
+#[test]
+fn a_type_in_a_record_unfolds_once_for_each_level() {
+    let cases: [(&str, &str); 6] = [
+        ("  input w: Wrap;\n", "w"),
+        ("", "Wrap()"),
+        ("", "[Wrap(), Wrap()]"),
+        ("  input w: [Wrap; 2];\n", "w"),
+        ("", "fn(Wrap, T{L}) -> Bool"),
+        ("  input w: Wrap;\n", "(w, 1)"),
+    ];
+    for (k, (ports, value)) in cases.into_iter().enumerate() {
+        let counts: Vec<u64> = [6u64, 9, 12]
+            .into_iter()
+            .enumerate()
+            .map(|(j, n)| {
+                let src = nested_record(n, ports, &value.replace("{L}", &n.to_string()));
+                let (_, code, counts) = run_at(&src, 9_200 + (k * 10 + j) as u64);
+                assert!(
+                    code.is_none_or(|c| c == crate::Code::S015),
+                    "{value} {code:?}"
+                );
+                counts.unfolded
+            })
+            .collect();
+        // The count grows by the same amount for each three levels.
+        assert_eq!(
+            counts[2] - counts[1],
+            counts[1] - counts[0],
+            "{value} {counts:?}"
+        );
+        assert!(counts[2] <= 4 * 12, "{value} {counts:?}");
     }
 }

@@ -362,9 +362,8 @@ impl Value {
 
     /// The length in bytes of `serialize`, without the text. The element type of an array
     /// and a type take their length from the table, so the walk is in the size of the value.
-    /// The table measures the types that it has not measured yet.
-    pub fn serialized_len(&self, tys: &mut Types) -> u64 {
-        tys.measure(self);
+    #[must_use]
+    pub fn serialized_len(&self, tys: &Types) -> u64 {
         let mut len = Len::default();
         serial::write(tys, Item::Value(self), &mut len);
         len.0
@@ -538,7 +537,7 @@ impl Evaluated {
 
     /// The length in bytes of `serialize`, without the text.
     pub fn serialized_len(&mut self) -> u64 {
-        self.value.serialized_len(&mut self.types)
+        self.value.serialized_len(&self.types)
     }
 }
 
@@ -610,7 +609,7 @@ mod tests {
 
     #[test]
     fn serialization() {
-        let mut tys = Types::default();
+        let tys = Types::default();
         assert_eq!(int("-5").serialize(&tys), "(int -5)");
         assert_eq!(int("0").serialize(&tys), "(int 0)");
         assert_eq!(
@@ -645,7 +644,7 @@ mod tests {
             ("Fifo", vec![int("16"), Value::Bool(true)]),
         ] {
             let parts: Vec<String> = args.iter().map(|a| a.serialize(&tys)).collect();
-            let lens: Vec<u64> = args.iter().map(|a| a.serialized_len(&mut tys)).collect();
+            let lens: Vec<u64> = args.iter().map(|a| a.serialized_len(&tys)).collect();
             let text = InstantiationId::render(module, &parts);
             assert_eq!(
                 InstantiationId::render_size(module, &lens),
@@ -761,7 +760,7 @@ mod tests {
             uint(70, 5),
         ];
         for v in &vs {
-            assert_eq!(v.serialized_len(&mut tys), v.serialize(&tys).len() as u64);
+            assert_eq!(v.serialized_len(&tys), v.serialize(&tys).len() as u64);
         }
     }
 
@@ -1000,7 +999,7 @@ mod tests {
             Value::Array(p8, vec![]),
         ];
         for v in &vs {
-            assert_eq!(v.serialized_len(&mut tys), v.serialize(&tys).len() as u64);
+            assert_eq!(v.serialized_len(&tys), v.serialize(&tys).len() as u64);
         }
         assert_eq!(tys.text_len(w), Some(tys.serialize(w).len() as u64));
     }
@@ -1295,7 +1294,7 @@ mod tests {
                     let mut tys = Types::default();
                     let v = nest(&mut tys, DEPTH);
                     let text = v.serialize(&tys);
-                    assert_eq!(text.len() as u64, v.serialized_len(&mut tys));
+                    assert_eq!(text.len() as u64, v.serialized_len(&tys));
                     let _ = v.ty(&mut tys);
                 });
             assert!(worker.is_ok_and(|w| w.join().is_ok()));

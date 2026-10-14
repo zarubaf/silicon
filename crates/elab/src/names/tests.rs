@@ -368,7 +368,7 @@ fn the_sizes_equal_the_lengths() {
         id("M", vec![Value::Type(uint8), uint(8, 3), sint(4, 15)]),
     ];
     for i in &ids {
-        let lens: Vec<u64> = i.args.iter().map(|a| a.serialized_len(&mut tys)).collect();
+        let lens: Vec<u64> = i.args.iter().map(|a| a.serialized_len(&tys)).collect();
         assert_eq!(
             InstantiationId::render_size(&i.module, &lens),
             i.serialize(&tys).len() as u64

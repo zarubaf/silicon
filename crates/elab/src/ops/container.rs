@@ -678,7 +678,7 @@ mod tests {
             assert_eq!(v.depth(), DEPTH as u64 + 1);
             assert_eq!(v.measure_charge(), DEPTH as u128 + 1);
             let text = v.serialize(&tys);
-            assert_eq!(text.len() as u64, v.serialized_len(&mut tys));
+            assert_eq!(text.len() as u64, v.serialized_len(&tys));
             assert_eq!(v.ty(&mut tys), t);
             assert!(v.text(&tys).ends_with("..."));
             assert!(tys.text(t).len() < 1100);
@@ -755,7 +755,7 @@ mod tests {
             assert_eq!(v.depth(), DEPTH as u64 + 2);
             assert_eq!(v.measure_charge(), DEPTH as u128);
             let text = v.serialize(&tys);
-            assert_eq!(text.len() as u64, v.serialized_len(&mut tys));
+            assert_eq!(text.len() as u64, v.serialized_len(&tys));
             assert_eq!(v.ty(&mut tys), t);
             assert!(v.text(&tys).len() < 1100);
             assert!(tys.text(t).len() < 1100);
