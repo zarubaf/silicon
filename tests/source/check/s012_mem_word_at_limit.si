@@ -1,0 +1,12 @@
+// A memory word of exactly 65536 bits fits (front-end spec section 6.1, S012).
+// TOP M()
+module M() {
+    input a: UInt[1];
+    input e: Bool;
+    input d: UInt[65536];
+    output o: UInt[65536];
+    mem m: [UInt[65536]; 1];
+    let r = read_port(m, a, e);
+    write_port(m, a, d, e);
+    o := r.data;
+}
