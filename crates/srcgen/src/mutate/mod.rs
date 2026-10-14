@@ -23,12 +23,20 @@
 //!   each module of a program has a context, so its top frame runs, and
 //!   nothing else fails.
 //!
+//! - A `mut` actual whose root is no longer mutable is `S008` (pass 4) if
+//!   a named function, `push`, or `pop` has the root as its `mut` actual.
+//!   A `pop` of the receiver in the arguments of a receiver call on a list
+//!   is `S008` (pass 4), on all code. In a call through a function value,
+//!   pass 5 finds the window when the call runs: `S008` where the site
+//!   always runs, else no prediction.
+//!
 //! Any other mutation can fail in pass 5 at a point that depends on the
 //! values, or pass, so its prediction is `None`.
 
 use super::program::{Item, Program, render_items};
 use walk::Walk;
 
+mod uses;
 mod walk;
 
 #[cfg(test)]
@@ -63,9 +71,16 @@ enum Kind {
     ZeroWidth,
     /// A static expression becomes `(1 / 0)`.
     Fault,
+    /// The `let mut` root of a `mut` actual becomes `let`.
+    Immutable,
+    /// An argument of a receiver call on a list becomes `pop` of the list:
+    /// the `pop` is in the window of the receiver.
+    Window,
+    /// The same, in a call through a function value.
+    ValueWindow,
 }
 
-const KINDS: [Kind; 8] = [
+const KINDS: [Kind; 11] = [
     Kind::Delete,
     Kind::Duplicate,
     Kind::Rename,
@@ -74,9 +89,12 @@ const KINDS: [Kind; 8] = [
     Kind::Widen,
     Kind::ZeroWidth,
     Kind::Fault,
+    Kind::Immutable,
+    Kind::Window,
+    Kind::ValueWindow,
 ];
 
-/// The mutant of `program` for the kind `kind % 8`, or for the next kind
+/// The mutant of `program` for the kind `kind % KINDS.len()`, or for the next kind
 /// in cyclic order that has a site, at the site `site % count` in the
 /// pre-order of the items.
 #[must_use]
