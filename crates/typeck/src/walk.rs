@@ -674,6 +674,8 @@ impl<'a> Walker<'a> {
                 self.placement(owner, *pos, "wire");
                 self.type_expr(ty);
             }
+            // TODO(#209): check the memory statement.
+            Stmt::Mem { .. } => {}
             Stmt::Input { pos, ty, .. } | Stmt::Output { pos, ty, .. } => {
                 self.placement(owner, *pos, "port");
                 self.type_expr(ty);

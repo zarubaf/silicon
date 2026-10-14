@@ -278,27 +278,7 @@ impl<'a> Lower<'a> {
                 target: nth_expr(0)?,
                 value: nth_expr(1)?,
             }),
-            RegStmt => Some(Stmt::Reg {
-                pos,
-                name: self.ident(node)?,
-                ty: ty()?,
-                init: nth_expr(0)?,
-            }),
-            WireStmt => Some(Stmt::Wire {
-                pos,
-                name: self.ident(node)?,
-                ty: ty()?,
-            }),
-            InputStmt => Some(Stmt::Input {
-                pos,
-                name: self.ident(node)?,
-                ty: ty()?,
-            }),
-            OutputStmt => Some(Stmt::Output {
-                pos,
-                name: self.ident(node)?,
-                ty: ty()?,
-            }),
+            RegStmt | WireStmt | MemStmt | InputStmt | OutputStmt => self.resource_stmt(node, pos),
             InstStmt => Some(Stmt::Inst {
                 pos,
                 name: self.ident(node)?,
@@ -335,6 +315,46 @@ impl<'a> Lower<'a> {
                 value: nth_expr(0)?,
             }),
             AliasStmt => Some(Stmt::Alias {
+                pos,
+                name: self.ident(node)?,
+                ty: ty()?,
+            }),
+            _ => None,
+        }
+    }
+
+    /// A statement that declares a register, a wire, a memory, or a port.
+    fn resource_stmt(&self, node: &SyntaxNode, pos: Pos) -> Option<Stmt> {
+        #[allow(clippy::enum_glob_use)]
+        use SyntaxKind::*;
+        let exprs: Vec<SyntaxNode> = node.children().filter(is_expr).collect();
+        let types: Vec<SyntaxNode> = node.children().filter(is_type).collect();
+        let nth_expr = |n: usize| self.expr(exprs.get(n)?);
+        let ty = || self.type_expr(types.first()?);
+        match node.kind() {
+            RegStmt => Some(Stmt::Reg {
+                pos,
+                name: self.ident(node)?,
+                ty: ty()?,
+                init: nth_expr(0)?,
+            }),
+            WireStmt => Some(Stmt::Wire {
+                pos,
+                name: self.ident(node)?,
+                ty: ty()?,
+            }),
+            MemStmt => Some(Stmt::Mem {
+                pos,
+                name: self.ident(node)?,
+                word: ty()?,
+                depth: nth_expr(0)?,
+            }),
+            InputStmt => Some(Stmt::Input {
+                pos,
+                name: self.ident(node)?,
+                ty: ty()?,
+            }),
+            OutputStmt => Some(Stmt::Output {
                 pos,
                 name: self.ident(node)?,
                 ty: ty()?,

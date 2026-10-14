@@ -285,6 +285,12 @@ pub enum Stmt {
         name: Ident,
         ty: TypeExpr,
     },
+    Mem {
+        pos: Pos,
+        name: Ident,
+        word: TypeExpr,
+        depth: Expr,
+    },
     Input {
         pos: Pos,
         name: Ident,

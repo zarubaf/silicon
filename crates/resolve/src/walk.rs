@@ -273,6 +273,8 @@ impl Walker {
                 self.ty(ty);
                 self.declare(name, Kind::Wire);
             }
+            // TODO(#209): resolve the memory binder.
+            Stmt::Mem { .. } => {}
             Stmt::Input { name, ty, .. } => {
                 self.ty(ty);
                 self.declare(name, Kind::Input);

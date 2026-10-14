@@ -121,6 +121,7 @@ impl Ids {
                     self.ty(ty);
                     self.expr(init);
                 }
+                Stmt::Mem { .. } => {}
                 Stmt::Wire { name, ty, .. }
                 | Stmt::Input { name, ty, .. }
                 | Stmt::Output { name, ty, .. }
