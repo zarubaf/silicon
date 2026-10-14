@@ -7,12 +7,14 @@ use std::process::{Command, Output};
 
 use crate::bins::{silicon, under_test};
 use crate::directive::{Expectation, Expected, Marker, expectation, expected_error, has_check};
-use crate::report::parse_report;
+use crate::report::{message_matches, parse_report};
 use crate::spawn::spawn;
 
-/// True when `stdout` reports the error `want`: the code and the line only.
+/// True when `stdout` reports the error `want`: the code and the line, and the exact message if
+/// `want` has one.
 fn reports(stdout: &str, want: &Expected) -> bool {
     parse_report(stdout).is_some_and(|got| got.code == want.code && got.line == want.line)
+        && message_matches(stdout, want.message.as_deref())
 }
 
 fn wrong_error(want: &Expected, code: Option<i32>, stdout: &str) -> String {
@@ -26,7 +28,7 @@ fn wrong_error(want: &Expected, code: Option<i32>, stdout: &str) -> String {
 /// or `silicon-check` through `cargo xtask lean-check`) runs on each `.sil`
 /// file. A file with `; expected-error EXXX @+N` (or `@-N`) expects that code
 /// on the line `N` lines after (or before) the comment. A file without it
-/// expects `ok`. The suite compares the code and the line only.
+/// expects `ok`. The suite compares the code and the line, and the message if an `expected-message` follows.
 ///
 /// # Errors
 ///
@@ -52,7 +54,7 @@ pub fn check(binary: &Path, file: &Path) -> datatest_stable::Result<()> {
 /// suite feeds the `in=` parts to stdin, one per line, and compares stdout with
 /// the `out=` parts byte for byte. A file without STEP lines holds one
 /// `; expected-error EXXX @+N` instead (for `E014`), and the suite compares the
-/// code and the line only.
+/// code and the line, and the message if an `expected-message` follows.
 ///
 /// # Errors
 ///
@@ -160,4 +162,25 @@ pub(crate) fn smoke(binary: &Path, file: &Path) -> datatest_stable::Result<()> {
 /// Returns an error when one of the commands fails.
 pub fn corpus(binary: &Path, file: &Path) -> datatest_stable::Result<()> {
     smoke(binary, file)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn want(message: Option<&str>) -> Expected {
+        Expected {
+            code: "E004".to_owned(),
+            line: 3,
+            message: message.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn an_equal_message_passes_and_another_fails() {
+        let stdout = "error[E004]: 3:7: bad thing\n";
+        assert!(reports(stdout, &want(None)));
+        assert!(reports(stdout, &want(Some("bad thing"))));
+        assert!(!reports(stdout, &want(Some("other"))));
+    }
 }
