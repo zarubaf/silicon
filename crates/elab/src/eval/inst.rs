@@ -53,6 +53,22 @@ pub(crate) struct RegDecl {
     pub pos: Pos,
 }
 
+/// A memory of one instantiation (section 7.6): its name, its path, its word type, its depth,
+/// and its `mem` statement. `read` holds the request of its first `read_port` call: the address
+/// and the enable. `write` holds the request of its first `write_port` call: the address, the
+/// data, and the enable. Each part of a request is after its typed use. `dup` holds the earliest
+/// second call by position, with the callee, for its `S018` at the end of the body.
+pub(crate) struct Mem {
+    pub name: Sym,
+    pub path: PathId,
+    pub word: TyId,
+    pub depth: u64,
+    pub pos: Pos,
+    pub read: Option<(Agg, Agg)>,
+    pub write: Option<(Agg, Agg, Agg)>,
+    pub dup: Option<(Pos, &'static str)>,
+}
+
 /// A child instance: its path, the index of its done instantiation, and its statement.
 pub(crate) struct ChildDecl {
     pub path: PathId,
@@ -92,6 +108,7 @@ pub(crate) struct Body {
     #[cfg(test)]
     wires: Vec<PathId>,
     pub lets: Vec<Let>,
+    pub mems: Vec<Mem>,
     pub children: Vec<ChildDecl>,
     pub binds: Vec<Bind>,
 }
@@ -105,6 +122,7 @@ impl Body {
             #[cfg(test)]
             wires: Vec::new(),
             lets: Vec::new(),
+            mems: Vec::new(),
             children: Vec::new(),
             binds: Vec::new(),
         }
@@ -118,14 +136,13 @@ struct Need {
     count: u64,
 }
 
-/// The work of the current instantiation. The resource number indexes `needs`, the memory
-/// number indexes `mems`, and the instance number indexes `bound`. `inputs` counts the bindings of each child input. `dup`
-/// holds the first `S018` of a second binding by position. `spent` is the fuel of the new
-/// children.
+/// The work of the current instantiation. The resource number indexes `needs`, and the instance
+/// number indexes `bound`. The memories are in the body, where `Handle::Mem` indexes them.
+/// `inputs` counts the bindings of each child input. `dup` holds the first `S018` of a second
+/// binding by position. `spent` is the fuel of the new children.
 struct Work {
     body: Body,
     needs: Vec<Need>,
-    mems: Vec<Need>,
     bound: Vec<usize>,
     inputs: BTreeMap<(usize, Sym), u64>,
     dup: Option<Pos>,
@@ -137,7 +154,6 @@ impl Work {
         Work {
             body: Body::new(domain),
             needs: Vec::new(),
-            mems: Vec::new(),
             bound: Vec::new(),
             inputs: BTreeMap::new(),
             dup: None,
@@ -408,7 +424,10 @@ const MEM_MAX_DEPTH: u64 = 16_777_216;
 enum Missing {
     Second,
     Need(usize),
+    /// The memory has no `read_port` or no `write_port`.
     Mem(usize),
+    /// The second call of a port function of the memory.
+    Port(usize),
     Input(usize),
 }
 
@@ -682,6 +701,16 @@ impl Evaluator<'_> {
         Ok(())
     }
 
+    /// The memory number `id` of the current instantiation.
+    pub(super) fn mem(&self, id: usize) -> Option<&Mem> {
+        self.elab.work.body.mems.get(id)
+    }
+
+    /// The memory number `id` of the current instantiation, for a request.
+    pub(super) fn mem_mut(&mut self, id: usize) -> Option<&mut Mem> {
+        self.elab.work.body.mems.get_mut(id)
+    }
+
     /// A `mem` statement. Each error is at the statement: a combinational module (`S017`), the
     /// word type, then the depth. No `[T; N]` type is made, so the depth adds no metadata
     /// charge. The name binds a memory handle, which is never data.
@@ -697,22 +726,27 @@ impl Evaluator<'_> {
         self.mem_word(pos, tid)?;
         let out = self.eval(depth)?;
         let out = need(depth, out)?;
-        self.mem_depth(pos, &out)?;
+        let depth = self.mem_depth(pos, &out)?;
         let id = self.decl(name)?;
-        // The path takes a version of the name. No port call lowers the memory yet.
-        self.fresh(id);
+        let path = self.fresh(id);
         let sym = self.sym(id);
-        self.elab.work.mems.push(Need {
+        let number = self.elab.work.body.mems.len();
+        self.elab.work.body.mems.push(Mem {
             name: sym,
+            path,
+            word: tid,
+            depth,
             pos,
-            count: 0,
+            read: None,
+            write: None,
+            dup: None,
         });
         self.bind(
             id,
             Slot {
                 ty: None,
                 mutable: false,
-                value: Val::Handle(Handle::Mem),
+                value: Val::Handle(Handle::Mem(number)),
             },
         );
         Ok(())
@@ -747,22 +781,19 @@ impl Evaluator<'_> {
 
     /// The depth of a memory is a static value (`S011`), an `Int` (`S010`), and 1 to 16777216
     /// (`S012`).
-    fn mem_depth(&self, pos: Pos, out: &Out) -> Res<()> {
+    fn mem_depth(&self, pos: Pos, out: &Out) -> Res<u64> {
         match self.store.seen(out) {
-            Seen::Static(Value::Int(k)) => {
-                if k.is_negative() || k.is_zero() || k.cmp_u64(MEM_MAX_DEPTH).is_gt() {
-                    fail(
-                        Code::S012,
-                        pos,
-                        format!(
-                            "a memory depth is 1 to {MEM_MAX_DEPTH}, not {}",
-                            int_text(k)
-                        ),
-                    )
-                } else {
-                    Ok(())
-                }
-            }
+            Seen::Static(Value::Int(k)) => match k.to_u64() {
+                Some(n) if (1..=MEM_MAX_DEPTH).contains(&n) => Ok(n),
+                _ => fail(
+                    Code::S012,
+                    pos,
+                    format!(
+                        "a memory depth is 1 to {MEM_MAX_DEPTH}, not {}",
+                        int_text(k)
+                    ),
+                ),
+            },
             s @ (Seen::Static(_) | Seen::Pending(..)) => fail(
                 Code::S010,
                 pos,
@@ -997,8 +1028,11 @@ impl Evaluator<'_> {
                 first = Some(first_of(first, need.pos, Missing::Need(k)));
             }
         }
-        for (k, mem) in work.mems.iter().enumerate() {
-            if mem.count == 0 {
+        for (k, mem) in work.body.mems.iter().enumerate() {
+            if let Some((at, _)) = mem.dup {
+                first = Some(first_of(first, at, Missing::Port(k)));
+            }
+            if mem.read.is_none() || mem.write.is_none() {
                 first = Some(first_of(first, mem.pos, Missing::Mem(k)));
             }
         }
@@ -1025,8 +1059,20 @@ impl Evaluator<'_> {
                 format!("`{name}` has no binding")
             }
             Missing::Mem(k) => {
-                let name = work.mems.get(k).map_or("", |mem| text(mem.name));
-                format!("the memory `{name}` has no `read_port`")
+                let mem = work.body.mems.get(k);
+                let name = mem.map_or("", |mem| text(mem.name));
+                let port = if mem.is_some_and(|mem| mem.read.is_none()) {
+                    "read_port"
+                } else {
+                    "write_port"
+                };
+                format!("the memory `{name}` has no `{port}`")
+            }
+            Missing::Port(k) => {
+                let mem = work.body.mems.get(k);
+                let name = mem.map_or("", |mem| text(mem.name));
+                let port = mem.and_then(|mem| mem.dup).map_or("", |(_, port)| port);
+                format!("a second `{port}` of the memory `{name}`")
             }
             Missing::Input(k) => {
                 let iface = work

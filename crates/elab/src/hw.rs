@@ -172,8 +172,9 @@ pub(crate) enum Handle {
         ty: Ty,
         path: PathId,
     },
-    /// A memory. It is never data, so it holds nothing to read.
-    Mem,
+    /// A memory by its number in the memories of its instantiation. It is never data, so it
+    /// holds nothing to read.
+    Mem(usize),
     Inst {
         id: usize,
         path: PathId,
@@ -283,7 +284,7 @@ impl Seen<'_> {
                 Handle::Res {
                     kind: Kind::Output, ..
                 } => "an output",
-                Handle::Mem => "a memory",
+                Handle::Mem(_) => "a memory",
                 Handle::Inst { .. } => "an instance",
                 Handle::Input { .. } => "an input of a child",
                 Handle::Domain => "a domain",

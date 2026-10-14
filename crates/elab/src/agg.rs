@@ -20,8 +20,6 @@ use crate::value::Value;
 pub(crate) enum Base {
     Name(PathId),
     Out(PathId, PathId),
-    // The port call makes it in a later commit.
-    #[allow(dead_code)]
     Word(PathId, u64),
 }
 
