@@ -148,6 +148,7 @@ mutual
     | .connect _ t v => v.dumpTo (t.dumpTo (acc ++ "(connect ") ++ " ") ++ ")"
     | .reg _ n ty i => i.dumpTo (ty.dumpTo (acc ++ "(reg " ++ ident n ++ " ") ++ " ") ++ ")"
     | .wire _ n ty => ty.dumpTo (acc ++ "(wire " ++ ident n ++ " ") ++ ")"
+    | .mem _ n ty d => d.dumpTo (ty.dumpTo (acc ++ "(mem " ++ ident n ++ " ") ++ " ") ++ ")"
     | .input _ n ty => ty.dumpTo (acc ++ "(input " ++ ident n ++ " ") ++ ")"
     | .output _ n ty => ty.dumpTo (acc ++ "(output " ++ ident n ++ " ") ++ ")"
     | .inst _ n m xs =>
@@ -306,6 +307,8 @@ mutual
     | .reg _ n ty i => indent d ++ "reg " ++ n.name ++ ": " ++ ty.print ++ " = " ++ i.print 0
       ++ ";\n"
     | .wire _ n ty => indent d ++ "wire " ++ n.name ++ ": " ++ ty.print ++ ";\n"
+    | .mem _ n ty e => indent d ++ "mem " ++ n.name ++ ": [" ++ ty.print ++ "; " ++ e.print 0
+      ++ "];\n"
     | .input _ n ty => indent d ++ "input " ++ n.name ++ ": " ++ ty.print ++ ";\n"
     | .output _ n ty => indent d ++ "output " ++ n.name ++ ": " ++ ty.print ++ ";\n"
     | .inst _ n m xs => indent d ++ "instance " ++ n.name ++ " = " ++ m.name ++ "("
