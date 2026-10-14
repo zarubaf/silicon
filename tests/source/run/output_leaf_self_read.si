@@ -1,0 +1,13 @@
+// A tuple output. Its second leaf reads its first leaf through a fn. This is no cycle (S020) and
+// no part target (S017), because the leaves are separate signals.
+// TOP M()
+fn inc(v: UInt[4]) -> UInt[4] {
+    return v +% 1;
+}
+module M() domains() {
+    input x: UInt[4];
+    output o: (UInt[4], UInt[4]);
+    o := (x, inc(o.0));
+}
+// STEP in=(x 3) out=(o.0 3 o.1 4)
+// STEP in=(x 15) out=(o.0 15 o.1 0)
