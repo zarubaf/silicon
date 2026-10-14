@@ -424,7 +424,10 @@ The items, the depth limit, the current depth, and the return type of the curren
 item whose body runs, its symbols, and the current frame name the hardware. `binding` holds
 the struct items whose parameter types evaluate now. `guard` is the innermost guard
 (section 9.4). `site` is the name of a function value while its signature evaluates: each
-depth check there reports at it.
+depth check there reports at it. `inst` is the emitted name of the current instantiation, else
+`-`. `calls` holds the call frames from the module body, innermost first (section 8.2). A frame
+is the item name of the callee and the position of its call. A call adds its frame in one step,
+and the records share the list.
 -/
 structure Ctx where
   items : Array Resolve.Item
@@ -437,6 +440,8 @@ structure Ctx where
   binding : List Nat
   guard : Option Guard
   site : Option Pos
+  inst : String
+  calls : List (String × Pos)
 
 /-! The symbol of the local number `id` in the current item. Each binder has one. -/
 def Ctx.binder (c : Ctx) (id : Nat) : Nat := ((c.syms.binders[c.item]?).bind (·[id]?)).getD 0

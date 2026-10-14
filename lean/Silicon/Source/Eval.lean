@@ -140,6 +140,8 @@ Hardware values follow v0.1 sections 1 and 3:
   before the record goes into `St.records`. A static part charges `Value.measureCharge`, and each
   rendered container node charges 1. A reference renders from its type metadata, and a part of
   it without a hardware leaf is its static zero with no charge. `render` is pure.
+  A record names the emitted name of its instantiation (`Ctx.inst`) and its call frames
+  (`Ctx.calls`). `invoke` adds a frame in one step, so the records share the frame list.
 - `Source.Resolve` gives each call node its call site `k`: its number in the pre-order of the
   body of the enclosing item. The call frame is `<fn>$<k>c`. A call outside a body has only
   static values, so it never names hardware.
@@ -1081,17 +1083,22 @@ def Val.measureCharge (specs : Specs) : Val → Nat
 
 /-!
 The line of a record (section 8.2) at the call `p`. `inst` is the emitted name of the
-instantiation, `m` is the message, and `v` is the text of the value. The frames are empty.
+instantiation, and `calls` holds the call frames, innermost first. The line gives them outermost
+first, each as `(call <name> <line> <col>)`. `m` is the message, and `v` is the text of the
+value.
 -/
-def recordLine (p : Pos) (inst m v : String) : Record :=
-  Print.node "record" [toString p.line, toString p.col, inst, Print.list [],
+def recordLine (p : Pos) (inst : String) (calls : List (String × Pos)) (m v : String) : Record :=
+  let frames := calls.reverse.map fun (g, q) =>
+    Print.node "call" [g, toString q.line, toString q.col]
+  Print.node "record" [toString p.line, toString p.col, inst, Print.list frames,
     (Value.str m).serialize, v]
 
 /-!
 A call at `p` of `diagnostic` with the message `m` and the value `v`, after the copies of its
 arguments charge (section 6.2). The effect rule (`S016`) comes first, then the message, then a
 value that waits for its type (`S010`). Then the measure charge of the value, then the length of
-the record in bytes. The record then goes into the list. The emitted name is `-`.
+the record in bytes. The record then goes into the list, with the emitted name and the call
+frames of the context.
 -/
 def diagnose (p : Pos) (g : String) (m v : Val) : M (Option Out) := do
   if let some gd := (← read).guard then fail .S016 p (gd.effect g)
@@ -1100,7 +1107,8 @@ def diagnose (p : Pos) (g : String) (m v : Val) : M (Option Out) := do
     fail .S010 p s!"the value of `{g}` needs a type; {v.text}"
   let specs := (← get).specs
   charge p (v.measureCharge specs)
-  let line := recordLine p "-" m (render specs v)
+  let ctx ← read
+  let line := recordLine p ctx.inst ctx.calls m (render specs v)
   charge p line.utf8ByteSize
   modify fun s => { s with records := s.records.push line }
   return some ⟨.static .unit, false, none⟩
@@ -1590,7 +1598,7 @@ mutual
     let ctx ← read
     let (r, outs) ← nested p <| inFrame none do
       let (path, fr) ← frameOf u.name (ctx.syms.items.getD i 0) (.call k)
-      withReader (fun c => { c with item := i, frame := fr }) do
+      withReader (fun c => { c with item := i, frame := fr, calls := (u.name, p) :: c.calls }) do
         for (q, a) in ps.zip acts do copyIn p c q (← typeExpr n q.ty) a
         let rt ← typeExpr n ret
         let o ← withReader (fun c => { c with ret := some rt }) (block n ip body)
@@ -1911,7 +1919,7 @@ of its top expression.
 -/
 def start (budget : Budget) (items : Array Resolve.Item) (top : Scan) : Ctx × St :=
   let syms := symbols items ((items.map scanItem).push top) (items.map scanRest)
-  (⟨items, budget.depth, 0, none, 0, syms, ⟨none, 0⟩, [], none, none⟩,
+  (⟨items, budget.depth, 0, none, 0, syms, ⟨none, 0⟩, [], none, none, "-", []⟩,
    ⟨budget.fuel, Array.replicate items.size .notStarted, {}, {}, {}, {}, {}, #[]⟩)
 
 /-!
