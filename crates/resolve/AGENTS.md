@@ -20,7 +20,7 @@ The module `prelude` owns the prelude names. It also owns the parameter modes of
 
 - The parameters of a struct and its field types share one scope. A second field with one name is `S002`. Check: `cargo nextest run -p resolve`.
 
-- The prelude has the names of slice 1, `Unit` and `len` of the containers of slice 2, `Type` and `data_bits` of the types as values, and `String`, `List`, `list`, `push`, `pop`, and `str`. It also has the memory functions `read_port` and `write_port`, and the prelude struct `ReadResponse`. A prelude name of a later phase or slice is `S003`. Check: `cargo nextest run -p resolve`.
+- The prelude has the names of slice 1, `Unit` and `len` of the containers of slice 2, `Type` and `data_bits` of the types as values, and `String`, `List`, `list`, `push`, `pop`, and `str`. It also has the memory functions `read_port` and `write_port`, the function `diagnostic`, and the prelude struct `ReadResponse`. A prelude name of a later phase or slice is `S003`. Check: `cargo nextest run -p resolve`.
 
 - A `fn` item is generic when it has a `comptime` parameter. It is also generic when a parameter type or its result type names one of its parameters, as Lean `generic` says. A name of an item in the signature does not make it generic. A function type resolves its parameter types and its result type as types, and it declares no name. A function name in an expression resolves to its item. Check: `cargo nextest run -p resolve`.
 
