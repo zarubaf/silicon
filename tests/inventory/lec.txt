@@ -44,6 +44,7 @@ tests/source/corpus/const_table.si lowering PASS
 tests/source/corpus/dual_memory.si main PASS
 tests/source/corpus/dual_memory.si lowering PASS
 - model mem$$1x3_r1w1 PASS
+- model mem$$4x3_r1w1 PASS
 - model mem$$5x6_r1w1 PASS
 tests/source/corpus/fifo_generic.si main PASS
 tests/source/corpus/fifo_generic.si lowering PASS
