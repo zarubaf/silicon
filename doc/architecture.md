@@ -88,11 +88,13 @@ These are the architecture paths. `cargo xtask review-scope` reads this list. Ea
 - `doc/architecture.md`, `doc/trust.md`, `doc/adr/`, and `doc/design/`
 - `CONTEXT.md`, `AGENTS.md`, `*/AGENTS.md`, and `crates/*/AGENTS.md`
 - `lean/lakefile.toml`, `lean/lake-manifest.json`, `lean/allowlist.toml`, `lean/Silicon/*/Syntax.lean`, `lean/Silicon/*/Main.lean`, and `lean/Silicon/Main.lean`
-- The normative Lean definitions: `lean/Silicon/Core/Semantics.lean`, `lean/Silicon/Core/Semantics/`, `lean/Silicon/Core/Check.lean`, `lean/Silicon/Core/Names.lean`, `lean/Silicon/Core/Typed.lean`, `lean/Silicon/Core/Deps.lean`, `lean/Silicon/Core/Text.lean`, `lean/Silicon/Core/MemModel.lean`, `lean/Silicon/Core/Lower.lean`, and `lean/Silicon/Core/Mlir/`. The normative source definitions: `lean/Silicon/Source/*.lean`
+- The normative Lean definitions: `lean/Silicon/Core/Semantics.lean`, `lean/Silicon/Core/Semantics/`, `lean/Silicon/Core/Check.lean`, `lean/Silicon/Core/Names.lean`, `lean/Silicon/Core/Typed.lean`, `lean/Silicon/Core/Deps.lean`, `lean/Silicon/Core/Text.lean`, `lean/Silicon/Core/MemModel.lean`, `lean/Silicon/Core/Lower.lean`, and `lean/Silicon/Core/Mlir/`. The normative source definitions: `lean/Silicon/Source/*.lean` and `lean/Silicon/Source/Eval/`
 - The statements of the front-end theorems: `lean/Silicon/Source/Proof/ParsePrint.lean`, `lean/Silicon/Source/Proof/ParsePrint/Statement.lean`, `lean/Silicon/Source/Proof/ParsePrint/Erase.lean`, `lean/Silicon/Source/Proof/Names.lean`, `lean/Silicon/Source/Proof/StaticOps.lean`, `lean/Silicon/Source/Proof/WellFormed.lean`, and `lean/Silicon/Source/Proof/Fuel/Cost.lean`. The other proof modules of the front end are not architecture paths
 - `justfile`, `.github/workflows/`, `xtask/`, and `tests/inventory/`
 - The translation validator `crates/driver/src/validate.rs`
 - The toolchain pins `flake.nix` and `flake.lock`
+
+These Lean modules are not normative, so they are not architecture paths. They are proofs, tests, and executable support for the normative definitions. Their directories are `lean/Silicon/Core/Canonical/`, `lean/Silicon/Core/Interp/`, `lean/Silicon/Core/Proof/`, `lean/Silicon/Core/Test/`, `lean/Silicon/Source/Proof/`, and `lean/Silicon/Source/Test/`. These files in `lean/Silicon/Core/` are not normative either: `Interp.lean`, `Vectors.lean`, `Complete.lean`, `DependencyTable.lean`, `DepsReach.lean`, `Graph*.lean`, `Index.lean`, `List.lean`, `Order.lean`, `Reassemble.lean`, and `StatementOrder.lean`.
 
 ## Verification against existing SystemVerilog
 
