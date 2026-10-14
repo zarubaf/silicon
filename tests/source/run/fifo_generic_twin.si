@@ -1,6 +1,6 @@
 // A generic FIFO over a record entry. The child holds the storage as a memory, the two pointers, and a
-// fill count; the pointer width comes from a comptime function of the depth. An empty queue shows the zero
-// of the entry type. The top fixes the entry type, and a static assert pins the width of the entry there.
+// fill count; the pointer width comes from a comptime function of the depth. The head shows the zero
+// of the entry type unless the last cycle popped. The top fixes the entry type, and a static assert pins the width of the entry there.
 // TOP Top()
 struct Entry(comptime W: Nat) {
     valid: Bool,
