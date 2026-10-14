@@ -735,7 +735,7 @@ mod tests {
         let mut ty = tys.mk(Ty::Bool);
         let mut value = Value::Bool(true);
         for k in 0..depth {
-            let spec = tys.begin_spec(&format!("S{k}"), k, Vec::new());
+            let spec = tys.begin_spec(&format!("S{k}"), k, Vec::new(), false);
             let (meta, deepest) = tys.struct_meta(spec, &[ty]);
             ty = tys.finish_spec(spec, vec![ty], meta, deepest);
             value = Value::Record(ty, vec![value]);

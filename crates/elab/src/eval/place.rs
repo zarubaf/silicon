@@ -1088,7 +1088,8 @@ impl Evaluator<'_> {
         let Some(part) = part else {
             return fail(Code::S010, pos, "the part has no type".to_owned());
         };
-        let sub = base.sub(&mut self.paths, step);
+        let offset = self.tys.offset(t, k as u64);
+        let sub = base.sub(&mut self.paths, step, offset);
         self.normalize(pos, Agg::Ref(sub, part))
     }
 

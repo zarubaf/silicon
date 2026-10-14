@@ -932,7 +932,7 @@ mod tests {
 
     /// `struct Packet(comptime W: Nat) { a: UInt[W], b: Bool }`.
     fn packet(tys: &mut Types, w: u32) -> TyId {
-        let s = tys.begin_spec("Packet", 0, vec![int(&w.to_string())]);
+        let s = tys.begin_spec("Packet", 0, vec![int(&w.to_string())], false);
         let fields = vec![tys.mk(Ty::UInt(w)), tys.mk(Ty::Bool)];
         let (meta, depth) = tys.struct_meta(s, &fields);
         tys.finish_spec(s, fields, meta, depth)
@@ -940,7 +940,7 @@ mod tests {
 
     /// `struct Empty {}`.
     fn empty(tys: &mut Types) -> TyId {
-        let s = tys.begin_spec("Empty", 1, Vec::new());
+        let s = tys.begin_spec("Empty", 1, Vec::new(), false);
         let (meta, depth) = tys.struct_meta(s, &[]);
         tys.finish_spec(s, Vec::new(), meta, depth)
     }
@@ -950,7 +950,7 @@ mod tests {
         let b = tys.mk(Ty::Bool);
         let inner = array_ty(tys, b, 1);
         let outer = array_ty(tys, inner, 1);
-        let s = tys.begin_spec("Wrap", 2, vec![Value::Type(outer)]);
+        let s = tys.begin_spec("Wrap", 2, vec![Value::Type(outer)], false);
         let (meta, depth) = tys.struct_meta(s, &[]);
         tys.finish_spec(s, Vec::new(), meta, depth)
     }
@@ -1021,7 +1021,12 @@ mod tests {
         assert_eq!(r.ty(&mut tys), p8);
         let pair = Value::tuple(vec![Value::Type(p8), Value::Unit]);
         assert_eq!(pair.text(&tys), "(Type, Unit)");
-        let lit = tys.begin_spec("Lit", 3, vec![r.clone(), Value::Str("a\"".to_owned())]);
+        let lit = tys.begin_spec(
+            "Lit",
+            3,
+            vec![r.clone(), Value::Str("a\"".to_owned())],
+            false,
+        );
         let (meta, depth) = tys.struct_meta(lit, &[]);
         let lit = tys.finish_spec(lit, Vec::new(), meta, depth);
         assert_eq!(tys.text(lit), "Lit[Packet[8](3, false), \"a\\\"\"]");
@@ -1128,12 +1133,12 @@ mod tests {
         let mut tys = Types::default();
         let b = tys.mk(Ty::Bool);
         let mut t = {
-            let s = tys.begin_spec("S0", 0, Vec::new());
+            let s = tys.begin_spec("S0", 0, Vec::new(), false);
             let (meta, depth) = tys.struct_meta(s, &[b]);
             tys.finish_spec(s, vec![b], meta, depth)
         };
         for k in 1..=200usize {
-            let s = tys.begin_spec(&format!("S{k}"), k, Vec::new());
+            let s = tys.begin_spec(&format!("S{k}"), k, Vec::new(), false);
             let (meta, depth) = tys.struct_meta(s, &[t, t]);
             t = tys.finish_spec(s, vec![t, t], meta, depth);
         }

@@ -13,11 +13,16 @@ use crate::names::{PathId, Paths, Step};
 use crate::types::{Ty, TyId, Types};
 use crate::value::Value;
 
-/// Where a reference aggregate starts: a core name, or an output of a child instance.
+/// Where a reference aggregate starts: a core name, an output of a child instance, or the word
+/// of a memory. A word holds the path of its memory once, as an id, and the bit offset of its
+/// part (section 7.6).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Base {
     Name(PathId),
     Out(PathId, PathId),
+    // The port call makes it in a later commit.
+    #[allow(dead_code)]
+    Word(PathId, u64),
 }
 
 impl Base {
@@ -26,16 +31,19 @@ impl Base {
         match self {
             Base::Name(p) => Op::Ref(*p),
             Base::Out(i, q) => Op::Out(*i, *q),
+            Base::Word(m, off) => Op::Word(*m, *off),
         }
     }
 
     /// The part of the base with the leaf field `step` (section 7.3): a user field `f`, or an
     /// element `<k>e`. A step adds one node to the path arena, in constant work, for a name and
-    /// for the port name of a child output alike.
-    pub(crate) fn sub(&self, paths: &mut Paths, step: Step) -> Base {
+    /// for the port name of a child output alike. A word adds `offset`, the offset of the part
+    /// in its parent (`Types::offset`), and no node.
+    pub(crate) fn sub(&self, paths: &mut Paths, step: Step, offset: u64) -> Base {
         match self {
             Base::Name(p) => Base::Name(paths.push(*p, step)),
             Base::Out(i, q) => Base::Out(*i, paths.push(*q, step)),
+            Base::Word(m, off) => Base::Word(*m, off.saturating_add(offset)),
         }
     }
 }

@@ -253,6 +253,7 @@ fn base_text(ev: &Evaluator<'_>, b: &Base) -> String {
     match b {
         Base::Name(p) => name(*p),
         Base::Out(i, q) => format!("{}.{}", name(*i), name(*q)),
+        Base::Word(m, off) => format!("{}+{off}", name(*m)),
     }
 }
 
@@ -512,9 +513,9 @@ fn the_leaf_fields_of_a_child_output_append_to_its_port_name() {
         let out = Base::Out(inst, port);
         let field = ev.syms.texts.len();
         ev.syms.texts.push("t".to_owned());
-        let out = out.sub(&mut ev.paths, Step::User(field));
-        let out = out.sub(&mut ev.paths, Step::Elem(1));
-        let out = out.sub(&mut ev.paths, Step::Elem(2));
+        let out = out.sub(&mut ev.paths, Step::User(field), 0);
+        let out = out.sub(&mut ev.paths, Step::Elem(1), 0);
+        let out = out.sub(&mut ev.paths, Step::Elem(2), 0);
         assert_eq!(base_text(ev, &out), ".q$t$1e$2e");
         let leaf = ev.tys.mk(Ty::UInt(4));
         let Ok(Val::Hw(h)) = ev.normalize(AT, Agg::Ref(out, leaf)) else {
@@ -535,9 +536,9 @@ fn the_leaf_of_a_child_output_puts_its_fields_in_order() {
         let inst = ev.paths.child(None, 5);
         let port = ev.paths.child(None, 6);
         let out = Base::Out(inst, port);
-        let out = out.sub(&mut ev.paths, Step::Elem(1));
-        let out = out.sub(&mut ev.paths, Step::User(7));
-        let out = out.sub(&mut ev.paths, Step::Elem(0));
+        let out = out.sub(&mut ev.paths, Step::Elem(1), 0);
+        let out = out.sub(&mut ev.paths, Step::User(7), 0);
+        let out = out.sub(&mut ev.paths, Step::Elem(0), 0);
         assert_eq!(base_text(ev, &out), "u.q$1e$a$0e");
     });
 }

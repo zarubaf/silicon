@@ -10,12 +10,12 @@
 //! later use finds the entry and charges nothing more. Thus a use of a struct type copies
 //! nothing: the arguments stay references until the first use pays for them.
 
-use super::{Evaluator, Out, ROOT, Res, Slot, at, fail, need, type_pos};
-use crate::Code;
+use super::{Evaluator, Out, ROOT, Res, Slot, Stop, at, fail, need, type_pos};
 use crate::hw::{Ref, Root, Seen, Val};
 use crate::ops;
 use crate::types::{Meta, Ty, TyId, TyParam, Types};
 use crate::value::Value;
+use crate::{Code, Error};
 use parse::ast::{
     Expr, FnParam, Ident, Item, NodeId, Param, ParamMode, Pos, StructField, TypeExpr,
 };
@@ -281,7 +281,7 @@ impl Evaluator<'_> {
                 ),
             );
         }
-        self.nested(pos, |ev| {
+        let work = self.nested(pos, |ev| {
             ev.in_frame(None, |ev| {
                 ev.in_item(i, ROOT, |ev| {
                     let frame = ev.store.frames.len().saturating_sub(1);
@@ -290,7 +290,17 @@ impl Evaluator<'_> {
                     t
                 })
             })
-        })
+        });
+        // The prelude struct has no source position, so each error of its work reports at the
+        // use (section 6.2).
+        if file.is_prelude_item(i) {
+            work.map_err(|stop| match stop {
+                Stop::Error(e) => Stop::Error(Error { pos, ..e }),
+                Stop::Stack(e) => Stop::Stack(e),
+            })
+        } else {
+            work
+        }
     }
 
     /// The typed uses of the arguments at the parameter types, then the specialization of the
@@ -389,7 +399,8 @@ impl Evaluator<'_> {
         }
         self.fuel.pay(1 + u128::from(sizes)).map_err(at(pos))?;
         let args: Vec<Value> = values.into_iter().cloned().collect();
-        let s = self.tys.begin_spec(&name.name, i, args);
+        let prelude = self.file.is_prelude_item(i);
+        let s = self.tys.begin_spec(&name.name, i, args, prelude);
         let mut types = Vec::with_capacity(fields.len());
         for f in fields {
             types.push(self.type_expr(&f.ty)?);
