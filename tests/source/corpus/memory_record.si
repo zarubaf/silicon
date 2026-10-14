@@ -1,0 +1,24 @@
+// A memory whose word is a record with a `Bool` leaf and an `SInt` leaf, and a depth of 6 that is not
+// a power of 2. The read and write enables come from inputs, so no response register holds a constant
+// next value (#20). The top reads one word, compares it with the word that it writes, and outputs both.
+// TOP Top()
+struct Word {
+    flag: Bool,
+    val: SInt[4],
+}
+module Top() {
+    input ra: UInt[3];
+    input re: Bool;
+    input wa: UInt[3];
+    input we: Bool;
+    input wd: Word;
+    output q: Word;
+    output valid: Bool;
+    output hit: Bool;
+    mem m: [Word; 6];
+    let r = m.read_port(ra, re);
+    m.write_port(wa, wd, we);
+    q := r.data;
+    valid := r.valid;
+    hit := r.valid && r.data == wd;
+}
