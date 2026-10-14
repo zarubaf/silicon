@@ -13,7 +13,7 @@ It also owns one runner for each suite. The harness in `driver` is the table of 
 ## Invariants
 
 - Only `[dev-dependencies]` and `xtask` name this crate. Check: `cargo xtask check` (rule `workspace-dev-only`).
-- A file has at most one `expected-error` directive. A second directive and a malformed directive are errors. A `.si` file of the `check` suite has exactly one `TOP` line. Check: `cargo nextest run -p testkit`.
+- A file has at most one `expected-error` directive. A second directive and a malformed directive are errors. A file has at most one `expected-message` line, directly after its `expected-error` line, and the `check` and `run` runners then compare the message in both front ends. A `.si` file of the `check` suite has exactly one `TOP` line. Check: `cargo nextest run -p testkit`.
 - `SILICON_BIN` names the binary under test, else the caller gives a default. `SILICON_CHECK` names the checker, else the Lean package output. Check: `cargo nextest run -p testkit`.
 - The outcome check accepts only exit 0 and exit 1 with a valid diagnostic. A signal and every other exit code fail. Check: `cargo nextest run -p testkit`.
 - Each suite root holds at least one file of the suite. Check: `cargo nextest run -p driver --test suites`. An empty root makes `datatest-stable` panic with "no test cases found".

@@ -23,6 +23,16 @@ pub fn parse_report(stdout: &str) -> Option<Report> {
     })
 }
 
+/// The message of the first line of a report `error[XNNN]: L:C: message`.
+#[must_use]
+pub fn parse_message(stdout: &str) -> Option<&str> {
+    parse_report(stdout)?;
+    let (_, rest) = stdout.split_once("]: ")?;
+    let (_, rest) = rest.split_once(':')?;
+    let (_, rest) = rest.split_once(':')?;
+    rest.lines().next()?.strip_prefix(' ')
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -37,6 +47,15 @@ mod tests {
                 col: 7
             })
         );
+    }
+
+    #[test]
+    fn the_message_is_the_rest_of_the_first_line() {
+        assert_eq!(
+            parse_message("error[S016]: 3:7: a: b\nmore\n"),
+            Some("a: b")
+        );
+        assert_eq!(parse_message("ok\n"), None);
     }
 
     #[test]

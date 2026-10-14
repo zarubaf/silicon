@@ -10,7 +10,7 @@ use crate::directive::{
     BudgetKind, Expectation, Expected, Marker, budgets, expectation, expected_error, has_check, top,
 };
 use crate::outcome::{Outcome, classify};
-use crate::report::parse_report;
+use crate::report::{parse_message, parse_report};
 use crate::spawn::spawn;
 
 /// Runs `command` of the two front ends on `file` with the further arguments `args` and `stdin`.
@@ -75,7 +75,8 @@ pub fn parse(binary: &Path, file: &Path) -> datatest_stable::Result<()> {
 
 /// Compares the runs of the command `name` in the two front ends with the expectation of the
 /// file. The two must agree as `agree` says. With an `expected-error`, the code and the line
-/// must also equal the directive; without it, both must succeed.
+/// must also equal the directive; with an `expected-message` too, both front ends must print
+/// exactly that message. Without an `expected-error`, both must succeed.
 fn compare_check(
     name: &str,
     rust: &Output,
@@ -94,7 +95,10 @@ fn compare_check(
         None if r.code == 0 => Ok(()),
         None => Err(format!("expected success{}", outputs())),
         Some(want) => match parse_report(&String::from_utf8_lossy(&rust.stdout)) {
-            Some(got) if r.code == 1 && got.code == want.code && got.line == want.line => Ok(()),
+            Some(got) if r.code == 1 && got.code == want.code && got.line == want.line => {
+                compare_message(want, lean).map_err(|e| format!("{e}{}", outputs()))?;
+                compare_message(want, rust).map_err(|e| format!("{e}{}", outputs()))
+            }
             _ => Err(format!(
                 "expected error[{}] on line {}{}",
                 want.code,
@@ -102,6 +106,17 @@ fn compare_check(
                 outputs()
             )),
         },
+    }
+}
+
+/// Checks that the report in `out` holds exactly the message of `want`, if it has one.
+fn compare_message(want: &Expected, out: &Output) -> Result<(), String> {
+    let Some(message) = &want.message else {
+        return Ok(());
+    };
+    match parse_message(&String::from_utf8_lossy(&out.stdout)) {
+        Some(got) if got == message => Ok(()),
+        _ => Err(format!("expected the message `{message}`")),
     }
 }
 
@@ -122,7 +137,8 @@ fn both(
 /// The `check` suite (frontend spec section 11.3): the Rust `silicon elab` and the Lean
 /// `silicon-check elab` run on each `.si` file with the top selection of its `// TOP` line.
 /// A file with `// expected-error SXXX @+N` (or `@-N`) expects that code on that line in
-/// both, at the same column. A file without it expects the same design from both.
+/// both, at the same column; a following `// expected-message: TEXT` pins the exact message.
+/// A file without it expects the same design from both.
 ///
 /// # Errors
 ///
@@ -236,6 +252,7 @@ fn compare_below(kind: BudgetKind, rust: &Output, lean: &Output) -> Result<(), S
             Some(&Expected {
                 code: code.to_owned(),
                 line: got.line,
+                message: None,
             }),
         ),
         None => compare_check("elab", rust, lean, None)
@@ -386,6 +403,7 @@ mod tests {
         Expected {
             code: "S010".to_owned(),
             line,
+            message: None,
         }
     }
 
@@ -464,6 +482,23 @@ mod tests {
             compare_check("elab", &rust, &lean, Some(&s010_on(4))),
             Ok(())
         );
+    }
+
+    #[test]
+    fn an_equal_message_passes_and_another_fails() {
+        let out = exited(1, "error[S010]: 4:8: the text: here\n");
+        let want = |text: &str| Expected {
+            message: Some(text.to_owned()),
+            ..s010_on(4)
+        };
+        assert_eq!(
+            compare_check("elab", &out, &out, Some(&want("the text: here"))),
+            Ok(())
+        );
+        let err = compare_check("elab", &out, &out, Some(&want("other"))).unwrap_err();
+        assert!(err.contains("expected the message `other`"), "{err}");
+        let lean = exited(1, "error[S010]: 4:8: another\n");
+        assert!(compare_check("elab", &out, &lean, Some(&want("the text: here"))).is_err());
     }
 
     #[test]

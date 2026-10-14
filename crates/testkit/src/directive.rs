@@ -43,12 +43,15 @@ fn is_check_suffix(suffix: &str) -> bool {
 }
 
 const KEYWORD: &str = " expected-error ";
+const MESSAGE_KEYWORD: &str = " expected-message: ";
 
-/// The expected error of a file: its code and its 1-based line.
+/// The expected error of a file: its code, its 1-based line, and the exact message when the file
+/// has an `expected-message` directive.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Expected {
     pub code: String,
     pub line: usize,
+    pub message: Option<String>,
 }
 
 /// Parses `XNNN @+N` or `XNNN @-N` on the 1-based line `at`.
@@ -72,31 +75,57 @@ fn parse_directive(rest: &str, at: usize, marker: &str) -> Result<Expected, Stri
     Ok(Expected {
         code: code.to_owned(),
         line,
+        message: None,
     })
 }
 
-/// The directive of a file. `None` means the file must pass.
+/// The directive of a file. `None` means the file must pass. The line `<marker> expected-message:
+/// <text>` directly after the `expected-error` line sets the exact message.
 ///
 /// # Errors
 ///
-/// Returns a message when a directive is malformed or a file has more than one.
+/// Returns a message when a directive is malformed, a file has more than one of either kind, or
+/// an `expected-message` does not follow an `expected-error` line directly.
 pub fn expected_error(source: &str, marker: Marker) -> Result<Option<Expected>, String> {
     let prefix = marker.prefix();
     let mut found = None;
+    let mut message = None;
     for (index, text) in source.lines().enumerate() {
-        let Some(rest) = text
-            .trim_start()
-            .strip_prefix(prefix)
-            .and_then(|r| r.strip_prefix(KEYWORD))
-        else {
-            continue;
-        };
-        if found.is_some() {
-            return Err(format!("line {}: a second directive", index + 1));
+        let text = text.trim_start().strip_prefix(prefix);
+        if let Some(rest) = text.and_then(|r| r.strip_prefix(MESSAGE_KEYWORD)) {
+            if message.is_some() {
+                return Err(format!("line {}: a second expected-message", index + 1));
+            }
+            let rest = rest.trim_end();
+            if rest.is_empty() {
+                return Err(format!("line {}: an empty expected-message", index + 1));
+            }
+            message = Some((index, rest.to_owned()));
+        } else if let Some(rest) = text.and_then(|r| r.strip_prefix(KEYWORD)) {
+            if found.is_some() {
+                return Err(format!("line {}: a second directive", index + 1));
+            }
+            found = Some((index, parse_directive(rest, index + 1, prefix)?));
         }
-        found = Some(parse_directive(rest, index + 1, prefix)?);
     }
-    Ok(found)
+    match (found, message) {
+        (None, None) => Ok(None),
+        (None, Some((at, _))) => Err(format!(
+            "line {}: an expected-message without an expected-error",
+            at + 1
+        )),
+        (Some((_, expected)), None) => Ok(Some(expected)),
+        (Some((error_at, expected)), Some((at, text))) if at == error_at + 1 => {
+            Ok(Some(Expected {
+                message: Some(text),
+                ..expected
+            }))
+        }
+        (Some(_), Some((at, _))) => Err(format!(
+            "line {}: an expected-message not directly after the expected-error",
+            at + 1
+        )),
+    }
 }
 
 /// What a file expects of `run`.
@@ -282,14 +311,16 @@ mod tests {
             expected_error("; expected-error E004 @+1\nx", Marker::Sil),
             Ok(Some(Expected {
                 code: "E004".to_owned(),
-                line: 2
+                line: 2,
+                message: None
             }))
         );
         assert_eq!(
             expected_error("a\nb\n// expected-error S010 @-1", Marker::Si),
             Ok(Some(Expected {
                 code: "S010".to_owned(),
-                line: 2
+                line: 2,
+                message: None
             }))
         );
     }
@@ -310,6 +341,30 @@ mod tests {
             expected_error(source, Marker::Sil),
             Err("line 2: a second directive".to_owned())
         );
+    }
+
+    #[test]
+    fn expected_message_follows_the_error_line() {
+        let source = "// expected-error S016 @+2\n// expected-message: a: b c \nx";
+        let got = expected_error(source, Marker::Si).unwrap().unwrap();
+        assert_eq!(got.message.as_deref(), Some("a: b c"));
+        let sil = "; expected-error S016 @+2\n; expected-message: m\nx";
+        let got = expected_error(sil, Marker::Sil).unwrap().unwrap();
+        assert_eq!(got.message.as_deref(), Some("m"));
+    }
+
+    #[test]
+    fn a_bad_expected_message_is_an_error() {
+        let error = "// expected-error S016 @+2\n";
+        for source in [
+            format!("{error}// expected-message: a\n// expected-message: b\n"),
+            "// expected-message: a\n".to_owned(),
+            format!("{error}\n// expected-message: a\n"),
+            format!("// expected-message: a\n{error}"),
+            format!("{error}// expected-message: \n"),
+        ] {
+            assert!(expected_error(&source, Marker::Si).is_err(), "{source:?}");
+        }
     }
 
     #[test]
