@@ -1,0 +1,12 @@
+// S008: the receiver evaluates first, so it is pending when the pop of the same list binds to a
+// leading comptime formal of the helper (front-end spec section 9.1).
+// TOP M()
+fn helper(comptime n: Int, mut xs: List[Int]) -> () {
+    return ();
+}
+module M() {
+    let mut xs = list(Int);
+    xs.push(1);
+    // expected-error S008 @+1
+    xs.helper(xs.pop());
+}
