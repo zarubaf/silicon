@@ -1,0 +1,6 @@
+// S010: a `wire` has a hardware data type, and `Type` is none.
+// TOP M()
+module M() {
+    // expected-error S010 @+1
+    wire t: Type;
+}

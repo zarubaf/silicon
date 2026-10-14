@@ -1,0 +1,11 @@
+// S010: no handle is a container element, so a memory is no element of a tuple.
+// TOP M()
+module M() {
+    mem m: [UInt[8]; 4];
+    let t = (
+        1,
+        // expected-error S010 @+1
+        m,
+        2
+    );
+}

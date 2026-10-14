@@ -1,0 +1,14 @@
+// S010: no handle is a container element, so an instance is no element of an array.
+// TOP M()
+module Leaf() {
+    output o: Bool;
+    o := true;
+}
+module M() {
+    instance u = Leaf();
+    let a = [
+        // expected-error S010 @+1
+        u,
+        u
+    ];
+}
