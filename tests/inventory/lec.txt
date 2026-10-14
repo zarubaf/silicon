@@ -41,6 +41,9 @@ tests/source/corpus/comptime_for_helpers.si main PASS
 tests/source/corpus/comptime_for_helpers.si lowering PASS
 tests/source/corpus/const_table.si main PASS
 tests/source/corpus/const_table.si lowering PASS
+tests/source/corpus/fifo_generic.si main PASS
+tests/source/corpus/fifo_generic.si lowering PASS
+- model mem$$8x7_r1w1 PASS
 tests/source/corpus/fn_alu_table.si main SKIP #197
 tests/source/corpus/fn_alu_table.si lowering PASS
 tests/source/corpus/counter_width.si main PASS
