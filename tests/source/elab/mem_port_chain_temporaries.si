@@ -1,0 +1,23 @@
+// A word of 130 leaves. The write data is a chain of concat nodes. The lowering binds the
+// temporaries `m$<k>t` where the chain would pass the height limit.
+// TOP M()
+// CHECK: (reg m$0rdata (bits 130) clock$0clk (reset sync clock$0rst (const 130 0)))
+// CHECK-NEXT: (reg m$0rvalid (bits 1) clock$0clk (reset sync clock$0rst (const 1 0)))
+// CHECK-NEXT: (mem m (bits 130) 2 clock$0clk)
+// CHECK-NEXT: (let m$0raddr (bits 1) a)
+// CHECK-NEXT: (let m$0ren (bits 1) e)
+// CHECK: (let m$0t (bits 64) (concat d$63e (concat d$62e
+// CHECK-SAME: (concat d$1e d$0e))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))
+// CHECK: (let m$1t (bits 127) (concat d$126e (concat d$125e
+// CHECK-SAME: (concat d$64e m$0t))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))
+// CHECK: (write m 0 a (concat d$129e (concat d$128e (concat d$127e m$1t))) (and e (xor clock$0rst (const 1 1))))
+module M() {
+    input a: UInt[1];
+    input e: Bool;
+    input d: [Bool; 130];
+    output q: [Bool; 130];
+    mem m: [[Bool; 130]; 2];
+    let r = m.read_port(a, e);
+    m.write_port(a, d, e);
+    q := r.data;
+}

@@ -1,0 +1,29 @@
+// The response unpacks each leaf of the word with an extract at the offset of the leaf.
+// TOP M()
+// CHECK: (reg m$0rdata (bits 10) clock$0clk (reset sync clock$0rst (const 10 0)))
+// CHECK-NEXT: (reg m$0rvalid (bits 1) clock$0clk (reset sync clock$0rst (const 1 0)))
+// CHECK-NEXT: (mem m (bits 10) 4 clock$0clk)
+// CHECK-NEXT: (let m$0raddr (bits 2) a)
+// CHECK-NEXT: (let m$0ren (bits 1) e)
+// CHECK-NEXT: (let r$data$0e (bits 3) (extract m$0rdata 0 3))
+// CHECK-NEXT: (let r$data$1e$0e (bits 1) (extract m$0rdata 3 1))
+// CHECK-NEXT: (let r$data$1e$1e (bits 1) (extract m$0rdata 4 1))
+// CHECK-NEXT: (let r$data$2e (bits 5) (extract m$0rdata 5 5))
+// CHECK-NEXT: (let r$valid (bits 1) m$0rvalid)
+// CHECK-NEXT: (next m$0rdata (mux m$0ren (read m m$0raddr) m$0rdata))
+// CHECK-NEXT: (next m$0rvalid (and m$0ren (const 1 1)))
+// CHECK-NEXT: (write m 0 a (concat d$2e (concat d$1e$1e (concat d$1e$0e d$0e))) (and e (xor clock$0rst (const 1 1))))
+// CHECK-NEXT: (assign q$0e r$data$0e)
+// CHECK-NEXT: (assign q$1e$0e r$data$1e$0e)
+// CHECK-NEXT: (assign q$1e$1e r$data$1e$1e)
+// CHECK-NEXT: (assign q$2e r$data$2e)))
+module M() {
+    input a: UInt[2];
+    input e: Bool;
+    input d: (UInt[3], [Bool; 2], SInt[5]);
+    output q: (UInt[3], [Bool; 2], SInt[5]);
+    mem m: [(UInt[3], [Bool; 2], SInt[5]); 4];
+    let r = m.read_port(a, e);
+    m.write_port(a, d, e);
+    q := r.data;
+}

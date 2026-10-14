@@ -1,0 +1,40 @@
+// A memory in a loop: each iteration takes its own names for the memory, the registers, the
+// request lets, and the response leaves.
+// TOP M()
+// CHECK: (reg i$0$m$0rdata (bits 8) clock$0clk (reset sync clock$0rst (const 8 0)))
+// CHECK-NEXT: (reg i$0$m$0rvalid (bits 1) clock$0clk (reset sync clock$0rst (const 1 0)))
+// CHECK-NEXT: (reg i$1$m$0rdata (bits 8) clock$0clk (reset sync clock$0rst (const 8 0)))
+// CHECK-NEXT: (reg i$1$m$0rvalid (bits 1) clock$0clk (reset sync clock$0rst (const 1 0)))
+// CHECK-NEXT: (mem i$0$m (bits 8) 4 clock$0clk)
+// CHECK-NEXT: (mem i$1$m (bits 8) 4 clock$0clk)
+// CHECK-NEXT: (let i$0$acc (bits 8) (add (const 8 0) i$0$r$data))
+// CHECK-NEXT: (let i$0$m$0raddr (bits 2) a)
+// CHECK-NEXT: (let i$0$m$0ren (bits 1) e)
+// CHECK-NEXT: (let i$0$r$data (bits 8) (extract i$0$m$0rdata 0 8))
+// CHECK-NEXT: (let i$0$r$valid (bits 1) i$0$m$0rvalid)
+// CHECK-NEXT: (let i$1$acc (bits 8) (add i$0$acc i$1$r$data))
+// CHECK-NEXT: (let i$1$m$0raddr (bits 2) a)
+// CHECK-NEXT: (let i$1$m$0ren (bits 1) e)
+// CHECK-NEXT: (let i$1$r$data (bits 8) (extract i$1$m$0rdata 0 8))
+// CHECK-NEXT: (let i$1$r$valid (bits 1) i$1$m$0rvalid)
+// CHECK-NEXT: (next i$0$m$0rdata (mux i$0$m$0ren (read i$0$m i$0$m$0raddr) i$0$m$0rdata))
+// CHECK-NEXT: (next i$0$m$0rvalid (and i$0$m$0ren (const 1 1)))
+// CHECK-NEXT: (next i$1$m$0rdata (mux i$1$m$0ren (read i$1$m i$1$m$0raddr) i$1$m$0rdata))
+// CHECK-NEXT: (next i$1$m$0rvalid (and i$1$m$0ren (const 1 1)))
+// CHECK-NEXT: (write i$0$m 0 a d (and e (xor clock$0rst (const 1 1))))
+// CHECK-NEXT: (write i$1$m 0 a d (and e (xor clock$0rst (const 1 1))))
+// CHECK-NEXT: (assign q i$1$acc)))
+module M() {
+    input a: UInt[2];
+    input e: Bool;
+    input d: UInt[8];
+    output q: UInt[8];
+    let mut acc = UInt[8](0);
+    comptime for i in 0..2 {
+        mem m: [UInt[8]; 4];
+        let r = m.read_port(a, e);
+        m.write_port(a, d, e);
+        acc = acc +% r.data;
+    }
+    q := acc;
+}
