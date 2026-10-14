@@ -151,6 +151,7 @@ impl Builder {
             };
             if self.try_run(ctx, &stmt) {
                 note!(self, mut_calls);
+                ctx.forget(&root);
                 if f.diag.is_some() {
                     note!(self, effectful_calls);
                 }
