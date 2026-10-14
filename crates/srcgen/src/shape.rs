@@ -32,6 +32,11 @@ pub(super) struct Group {
     pub members: Vec<(String, u32)>,
 }
 
+/// The name of the struct item of the record `id`.
+fn record_name(id: usize) -> String {
+    format!("R{id}")
+}
+
 impl Group {
     fn uint(width: u32) -> String {
         format!("UInt[{width}]")
@@ -62,8 +67,10 @@ impl Group {
                 Self::uint(self.common_width().unwrap_or(1)),
                 self.members.len()
             ),
-            Kind::Record { id, param: false } => format!("R{id}"),
-            Kind::Record { id, param: true } => format!("R{id}[{}]", self.first_width()),
+            Kind::Record { id, param: false } => record_name(id),
+            Kind::Record { id, param: true } => {
+                format!("{}[{}]", record_name(id), self.first_width())
+            }
         }
     }
 
@@ -73,22 +80,31 @@ impl Group {
         match self.kind {
             Kind::Tuple => format!("({list})"),
             Kind::Array => format!("[{list}]"),
-            Kind::Record { id, param: false } => format!("R{id}({list})"),
+            Kind::Record { id, param: false } => format!("{}({list})", record_name(id)),
             Kind::Record { id, param: true } => {
-                format!("R{id}[{}]({list})", self.first_width())
+                format!("{}[{}]({list})", record_name(id), self.first_width())
             }
+        }
+    }
+
+    /// The name of the struct item of a record port.
+    pub fn struct_name(&self) -> Option<String> {
+        match self.kind {
+            Kind::Record { id, .. } => Some(record_name(id)),
+            _ => None,
         }
     }
 
     /// The struct item of a record port.
     pub fn struct_item(&self) -> Option<String> {
-        let Kind::Record { id, param } = self.kind else {
+        let Kind::Record { param, .. } = self.kind else {
             return None;
         };
+        let name = self.struct_name()?;
         let head = if param {
-            format!("struct R{id}(comptime W: Nat) {{\n")
+            format!("struct {name}(comptime W: Nat) {{\n")
         } else {
-            format!("struct R{id} {{\n")
+            format!("struct {name} {{\n")
         };
         let fields: Vec<String> = self
             .members
