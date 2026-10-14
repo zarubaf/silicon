@@ -32,6 +32,10 @@ use parse::ast::Pos;
 enum Piece<'a> {
     Text(&'static str),
     Owned(String),
+    /// A frame `(call <name> <line> <col>)`, written from the borrowed name.
+    Frame(&'a str, Pos),
+    /// A domain `(domain <name>)`, written from the shared name.
+    Domain(&'a str),
     Quoted(&'a str),
     Value(&'a Value),
     Type(TyId),
@@ -252,9 +256,7 @@ impl Evaluator<'_> {
         crate::counters::add(crate::counters::Count::Framed, self.calls.len() as u64);
         let frames = spaced(self.calls.iter().map(|&(i, q)| {
             let name = self.file.ast().get(i).map_or("", |item| &item.name().name);
-            #[cfg(test)]
-            crate::counters::add(crate::counters::Count::Copied, name.len() as u64);
-            Piece::Owned(format!("(call {name} {} {})", q.line, q.col))
+            Piece::Frame(name, q)
         }));
         let mut work = Vec::new();
         let value = match root {
@@ -285,6 +287,10 @@ impl Evaluator<'_> {
             match piece {
                 Piece::Text(s) => out.write_str(s).unwrap_or_default(),
                 Piece::Owned(s) => out.write_str(&s).unwrap_or_default(),
+                Piece::Frame(name, q) => {
+                    write!(out, "(call {name} {} {})", q.line, q.col).unwrap_or_default();
+                }
+                Piece::Domain(d) => write!(out, "(domain {d})").unwrap_or_default(),
                 Piece::Quoted(s) => out.quoted(s),
                 Piece::Value(v) => serial::write(&self.tys, Item::Value(v), out),
                 Piece::Type(t) => serial::write(&self.tys, Item::Ty(t), out),
@@ -449,7 +455,7 @@ impl Evaluator<'_> {
                     Piece::Owned(format!(" {port_name})")),
                 ]
             }
-            Handle::Domain(d) => vec![Piece::Owned(format!("(domain {d})"))],
+            Handle::Domain(d) => vec![Piece::Domain(d)],
         };
         push_all(work, pieces);
     }

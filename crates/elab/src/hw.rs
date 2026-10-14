@@ -10,6 +10,7 @@ use crate::types::{Ty, TyId, Types};
 use crate::value::{Value, width_size};
 use parse::ast::{BinOp, Pos, UnOp};
 use resolve::DeclId;
+use std::sync::Arc;
 
 /// A node of a hardware value: an index into the arena of its elaboration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -183,8 +184,8 @@ pub(crate) enum Handle {
         path: PathId,
         port: Port,
     },
-    /// A domain by its declared name.
-    Domain(String),
+    /// A domain by its declared name. The name is shared, so a read copies no text.
+    Domain(Arc<str>),
 }
 
 /// Where a reference starts: the local of the frame at this index of the frame stack, or the

@@ -743,6 +743,8 @@ struct Evaluator<'a> {
     /// the position of its call, outermost first. A call adds one in O(1), and a record
     /// writes them out after the charge of its bytes.
     calls: Vec<(usize, Pos)>,
+    /// The shared name of each domain that a read named.
+    domains: BTreeMap<DeclId, Arc<str>>,
 }
 
 /// The kind of a guard (section 9.4): a hardware arm or a structural context.
@@ -921,6 +923,7 @@ impl<'a> Evaluator<'a> {
             records: Vec::new(),
             inst: Arc::from("-"),
             calls: Vec::new(),
+            domains: BTreeMap::new(),
         }
     }
 }
@@ -1786,6 +1789,16 @@ impl Evaluator<'_> {
         }
     }
 
+    /// The shared name of the domain `id`: the first read copies the text, and each later read
+    /// shares it.
+    fn domain(&mut self, id: DeclId, x: &str) -> Arc<str> {
+        Arc::clone(self.domains.entry(id).or_insert_with(|| {
+            #[cfg(test)]
+            crate::counters::add(crate::counters::Count::Copied, x.len() as u64);
+            Arc::from(x)
+        }))
+    }
+
     fn name(&mut self, pos: Pos, node: NodeId, x: &str) -> Res<Out> {
         match self.target(node) {
             Some(Target::Prelude(k)) if k.is_type() => Ok(Out::Named(Val::Static(Value::Type(
@@ -1811,11 +1824,7 @@ impl Evaluator<'_> {
                     None => fail(Code::S010, pos, format!("`{x}` is not an item")),
                 },
                 Kind::Module => fail(Code::S010, pos, format!("`{x}` is not a value")),
-                Kind::Domain => {
-                    #[cfg(test)]
-                    crate::counters::add(crate::counters::Count::Copied, x.len() as u64);
-                    Ok(Out::Named(Val::Handle(Handle::Domain(x.to_owned()))))
-                }
+                Kind::Domain => Ok(Out::Named(Val::Handle(Handle::Domain(self.domain(id, x))))),
                 _ => {
                     let k = self.store.frames.len().saturating_sub(1);
                     // An empty input port refers to its name. The read pays its zero, a new
