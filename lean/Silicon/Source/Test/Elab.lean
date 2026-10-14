@@ -1211,7 +1211,7 @@ def pays (src : String) (fuel : Nat) (pos : String) (units : Nat) : Bool :=
           s!"S015 {pos} the fuel cannot pay {units} unit(s); 0 remain"
 
 def d16 : String := dMod "  diagnostic(\"depth\", 16);\n"
-#guard observed d16 == ["(record 5 3 - () (string \"depth\") (int 16))", "ok"]
+#guard observed d16 == ["(record 5 3 M () (string \"depth\") (int 16))", "ok"]
 -- 1. The statement, then the node and the name of the call.
 #guard pays d16 43 "5:3" 1 && pays d16 44 "5:3" 1 && pays d16 45 "5:3" 1
 -- 2. The arguments from left to right: the node and the size of each.
@@ -1223,7 +1223,7 @@ def d16 : String := dMod "  diagnostic(\"depth\", 16);\n"
 #guard pays d16 62 "5:3" 1 && pays d16 63 "5:3" 43
 -- 8. The record goes into the list after its charges.
 #guard observed d16 105 == ["S015 5:3"]
-#guard observed d16 106 == ["(record 5 3 - () (string \"depth\") (int 16))", "S015 6:3"]
+#guard observed d16 106 == ["(record 5 3 M () (string \"depth\") (int 16))", "S015 6:3"]
 
 -- 4. The effect rule comes after the copies.
 def dArm : String := dMod "  let z = if (c) { diagnostic(\"a\", 1) } else { 0 };\n"
@@ -1243,11 +1243,11 @@ def dWait : String := dMod "  diagnostic(\"s\", []);\n"
 def dBig : String := dMod "  diagnostic(\"n\", 340282366920938463463374607431768211456);\n"
 #guard pays dBig 58 "5:3" 9 && pays dBig 67 "5:3" 76
 #guard observed dBig 143 ==
-  ["(record 5 3 - () (string \"n\") (int 340282366920938463463374607431768211456))", "S015 6:3"]
+  ["(record 5 3 M () (string \"n\") (int 340282366920938463463374607431768211456))", "S015 6:3"]
 def dArr : String := dMod "  diagnostic(\"n\", [1, 2]);\n"
 #guard pays dArr 62 "5:3" 3 && pays dArr 65 "5:3" 60
 #guard observed dArr ==
-  ["(record 5 3 - () (string \"n\") (array int ((int 1) (int 2))))", "ok"]
+  ["(record 5 3 M () (string \"n\") (array int ((int 1) (int 2))))", "ok"]
 
 /-!
 The message takes the `data` context. A register, a wire, an output, an own input, and a
@@ -1278,7 +1278,7 @@ def dRes (msg : String) : String :=
 #guard elabOnly (dMod "  wire e: ();\n  diagnostic(e, 1);\n") "M" == "S011 6:3"
 -- A receiver call starts at its receiver, which is the message. A hardware scalar is `(hw <type>)`.
 #guard observed (dMod "  \"r\".diagnostic(d);\n") ==
-  ["(record 5 3 - () (string \"r\") (hw (uint 8)))", "ok"]
+  ["(record 5 3 M () (string \"r\") (hw (uint 8)))", "ok"]
 #guard said (dRes "r") == "the message of `diagnostic` is a static String, not a register"
 #guard said (dRes "d") == "the message of `diagnostic` is a static String, not hardware UInt[8]"
 #guard said (dRes "u.a") == "an input of a child is a target; it is never read"
@@ -1327,14 +1327,15 @@ def dg : String := "fn g() -> Nat { diagnostic(\"a\", 1); return 2; }\n"
   "a hardware arm has no graph effect such as `diagnostic`"
 -- Not structural: each makes one record.
 #guard observed (dg ++ sMod "  let x = UInt[8](g());\n") ==
-  ["(record 1 17 - () (string \"a\") (int 1))", "ok"]
+  ["(record 1 17 M ((call g 14 19)) (string \"a\") (int 1))", "ok"]
 #guard observed (dg ++ sMod "  comptime if (g() == 2) {}\n  comptime for i in 0..g() {}\n") ==
-  ["(record 1 17 - () (string \"a\") (int 1))", "(record 1 17 - () (string \"a\") (int 1))",
-   "ok"]
+  ["(record 1 17 M ((call g 14 16)) (string \"a\") (int 1))",
+   "(record 1 17 M ((call g 15 24)) (string \"a\") (int 1))", "ok"]
 #guard observed (dg ++ sMod "  static_assert(g() == 2, \"m\");\n") ==
-  ["(record 1 17 - () (string \"a\") (int 1))", "ok"]
+  ["(record 1 17 M ((call g 14 17)) (string \"a\") (int 1))", "ok"]
 #guard observed ("comptime fn cg() -> Nat { diagnostic(\"c\", 1); return 2; }\n" ++
-  sMod "  let z = cg();\n") == ["(record 1 27 - () (string \"c\") (int 1))", "ok"]
+  sMod "  let z = cg();\n") ==
+  ["(record 1 27 M ((call cg 14 11)) (string \"c\") (int 1))", "ok"]
 
 /-!
 The rendering of a value in a record (section 8.2) and its measure charge (section 5.4). A
@@ -1350,17 +1351,17 @@ def dIn (ports body : String) (items : String := "") : String :=
 -- A hardware tuple: the tuple charges 1, and its static `1` charges 1.
 def dTup : String := dMod "  diagnostic(\"t\", (d, 1, c));\n"
 #guard observed dTup ==
-  ["(record 5 3 - () (string \"t\") (tuple ((hw (uint 8)) (int 1) (hw bool))))", "ok"]
+  ["(record 5 3 M () (string \"t\") (tuple ((hw (uint 8)) (int 1) (hw bool))))", "ok"]
 #guard pays dTup 64 "5:3" 2 && pays dTup 66 "5:3" 72
 #guard observed dTup 138 ==
-  ["(record 5 3 - () (string \"t\") (tuple ((hw (uint 8)) (int 1) (hw bool))))", "S015 6:3"]
+  ["(record 5 3 M () (string \"t\") (tuple ((hw (uint 8)) (int 1) (hw bool))))", "S015 6:3"]
 #guard observed dTup 137 == ["S015 5:3"]
 
 -- Nested aggregates with hardware and static leaves, and a reference with an empty part.
 def dNest : String :=
   dIn "  input a: (UInt[2], [Bool; 0]);\n" "  diagnostic(\"n\", (a, [d, 2], (c, (3, true))));\n"
 #guard observed dNest ==
-  ["(record 6 3 - () (string \"n\") (tuple ((tuple ((hw (uint 2)) (array bool ()))) " ++
+  ["(record 6 3 M () (string \"n\") (tuple ((tuple ((hw (uint 2)) (array bool ()))) " ++
     "(array (uint 8) ((hw (uint 8)) (uint 8 2))) (tuple ((hw bool) (tuple ((int 3) " ++
     "(bool true))))))))", "ok"]
 #guard pays dNest 137 "6:3" 7 && pays dNest 144 "6:3" 174
@@ -1368,10 +1369,10 @@ def dNest : String :=
 -- A reference: its empty parts are static zeros with no charge, so only the tuple charges.
 def dRef : String := dIn "  input a: (UInt[8], [Bool; 0], ());\n" "  diagnostic(\"r\", a);\n"
 #guard observed dRef ==
-  ["(record 6 3 - () (string \"r\") (tuple ((hw (uint 8)) (array bool ()) (unit))))", "ok"]
+  ["(record 6 3 M () (string \"r\") (tuple ((hw (uint 8)) (array bool ()) (unit))))", "ok"]
 #guard pays dRef 99 "6:3" 1 && pays dRef 100 "6:3" 77
 #guard observed dRef 177 ==
-  ["(record 6 3 - () (string \"r\") (tuple ((hw (uint 8)) (array bool ()) (unit))))", "S015 7:3"]
+  ["(record 6 3 M () (string \"r\") (tuple ((hw (uint 8)) (array bool ()) (unit))))", "S015 7:3"]
 #guard observed dRef 176 == ["S015 6:3"]
 
 -- A reference of a struct type renders as a record. An array of arrays renders each part.
@@ -1379,11 +1380,11 @@ def dRec : String :=
   dIn "  input a: P[4];\n" "  diagnostic(\"r\", a);\n"
     "struct P(comptime W: Nat) { x: UInt[W], y: (), z: Bool }\n"
 #guard observed dRec ==
-  ["(record 7 3 - () (string \"r\") (record (struct root P ((int 4))) " ++
+  ["(record 7 3 M () (string \"r\") (record (struct root P ((int 4))) " ++
     "((hw (uint 4)) (unit) (hw bool))))", "ok"]
 #guard pays dRec 89 "7:3" 1 && pays dRec 90 "7:3" 98
 #guard observed (dIn "  input a: [[UInt[4]; 2]; 2];\n" "  diagnostic(\"r\", a);\n") ==
-  ["(record 6 3 - () (string \"r\") (array (array (uint 4) 2) ((array (uint 4) " ++
+  ["(record 6 3 M () (string \"r\") (array (array (uint 4) 2) ((array (uint 4) " ++
     "((hw (uint 4)) (hw (uint 4)))) (array (uint 4) ((hw (uint 4)) (hw (uint 4)))))))", "ok"]
 
 -- The response of `read_port`: a record of the word reference and of `valid`.
@@ -1391,7 +1392,7 @@ def dResp : String :=
   dIn "" ("  mem m: [(UInt[8], Bool); 4];\n  write_port(m, 0, (d, c), c);\n" ++
     "  diagnostic(\"k\", read_port(m, 0, c));\n")
 #guard observed dResp ==
-  ["(record 7 3 - () (string \"k\") (record (struct prelude ReadResponse ((type (tuple " ++
+  ["(record 7 3 M () (string \"k\") (record (struct prelude ReadResponse ((type (tuple " ++
     "((uint 8) bool))))) ((tuple ((hw (uint 8)) (hw bool))) (hw bool))))", "ok"]
 #guard pays dResp 144 "7:3" 2 && pays dResp 146 "7:3" 148
 
@@ -1402,25 +1403,68 @@ def dResp : String :=
     "  instance u = C();\n  u.a := c;\n  diagnostic(\"r\", r);\n  diagnostic(\"w\", w);\n" ++
     "  diagnostic(\"o\", o);\n  diagnostic(\"m\", m);\n  diagnostic(\"u\", u);\n" ++
     "  diagnostic(\"i\", u.a);\n  diagnostic(\"q\", u.q);\n  diagnostic(\"clk\", clock);\n")) ==
-  ["(record 19 3 - () (string \"r\") (reg (uint 8) r))",
-   "(record 20 3 - () (string \"w\") (wire (tuple (bool (uint 2))) w))",
-   "(record 21 3 - () (string \"o\") (output (uint 8) o))",
-   "(record 22 3 - () (string \"m\") (mem (array (uint 8) 4) m))",
-   "(record 23 3 - () (string \"u\") (instance C u))",
-   "(record 24 3 - () (string \"i\") (input bool u a))",
-   "(record 25 3 - () (string \"q\") (hw bool))",
-   "(record 26 3 - () (string \"clk\") (domain clock))", "ok"]
+  ["(record 19 3 M () (string \"r\") (reg (uint 8) r))",
+   "(record 20 3 M () (string \"w\") (wire (tuple (bool (uint 2))) w))",
+   "(record 21 3 M () (string \"o\") (output (uint 8) o))",
+   "(record 22 3 M () (string \"m\") (mem (array (uint 8) 4) m))",
+   "(record 23 3 M () (string \"u\") (instance C u))",
+   "(record 24 3 M () (string \"i\") (input bool u a))",
+   "(record 25 3 M () (string \"q\") (hw bool))",
+   "(record 26 3 M () (string \"clk\") (domain clock))", "ok"]
 def dReg : String := dIn "" "  reg r: UInt[8] = 0;\n  r := d;\n  diagnostic(\"r\", r);\n"
 #guard pays dReg 67 "7:3" 47
-#guard observed dReg 114 == ["(record 7 3 - () (string \"r\") (reg (uint 8) r))", "S015 8:3"]
+#guard observed dReg 114 == ["(record 7 3 M () (string \"r\") (reg (uint 8) r))", "S015 8:3"]
 #guard observed dReg 113 == ["S015 7:3"]
 
 -- A reference with 1000 leaves: 1 for the array and 1 for each tuple, then 24059 bytes.
 def dWide : String := dIn "  input a: [(UInt[1],); 1000];\n" "  diagnostic(\"r\", a);\n"
 #guard observed dWide 27143 ==
-  ["(record 6 3 - () (string \"r\") (array (tuple ((uint 1))) (" ++
+  ["(record 6 3 M () (string \"r\") (array (tuple ((uint 1))) (" ++
     " ".intercalate (List.replicate 1000 "(tuple ((hw (uint 1))))") ++ ")))", "S015 7:3"]
 #guard pays dWide 2083 "6:3" 1001 && pays dWide 3084 "6:3" 24059
 #guard observed dWide 27142 == ["S015 6:3"]
+
+/-!
+The emitted name and the call frames of a record (section 8.2). A frame names the item of the
+callee and the position of its call, outermost first, also through a function value and a
+receiver call. A receiver call starts at its receiver. The frames are part of the byte charge.
+-/
+def dDeep : String :=
+  dMod "  let z = k(3);\n  diagnostic(\"m\", z);\n"
+    ("fn h(x: Nat) -> Nat { diagnostic(\"h\", x); return x; }\n" ++
+     "fn g(x: Nat) -> Nat { let f = h; return f(x); }\n" ++
+     "fn k(x: Nat) -> Nat { return x.g(); }\n")
+#guard observed dDeep ==
+  ["(record 1 23 M ((call k 8 11) (call g 3 30) (call h 2 41)) (string \"h\") (int 3))",
+   "(record 9 3 M () (string \"m\") (int 3))", "ok"]
+#guard pays dDeep 86 "1:23" 80
+#guard observed dDeep 165 == ["S015 1:23"]
+#guard observed dDeep 166 ==
+  ["(record 1 23 M ((call k 8 11) (call g 3 30) (call h 2 41)) (string \"h\") (int 3))",
+   "S015 1:43"]
+
+-- A child gives its records with its emitted name, before the rest of the parent. A done
+-- instantiation gives no second record (decision F15).
+def dKid : String :=
+  "module C(comptime W: Nat) {\n  input a: UInt[W];\n  output q: UInt[W];\n" ++
+  "  diagnostic(\"w\", W);\n  q := a;\n}\n" ++
+  dMod ("  diagnostic(\"x\", 0);\n  instance u = C(8);\n  u.a := d;\n" ++
+    "  diagnostic(\"y\", u);\n  instance v = C(8);\n  v.a := d;\n  instance s = C(2);\n" ++
+    "  s.a := 1;\n  diagnostic(\"z\", s);\n")
+#guard observed dKid ==
+  ["(record 11 3 M () (string \"x\") (int 0))", "(record 4 3 C$8 () (string \"w\") (int 8))",
+   "(record 14 3 M () (string \"y\") (instance C$8 u))",
+   "(record 4 3 C$2 () (string \"w\") (int 2))",
+   "(record 19 3 M () (string \"z\") (instance C$2 s))", "ok"]
+
+-- `T(D)` has two children `T(D - 1)`; the second is done. `D = 30` gives exactly 31 records.
+def dTree (d : Nat) : String :=
+  "module T(comptime D: Nat) {\n  input a: Bool;\n  output q: Bool;\n  diagnostic(\"d\", D);\n" ++
+  "  comptime if (D == 0) {\n    q := a;\n  } else {\n    instance u = T(D - 1);\n" ++
+  "    instance v = T(D - 1);\n    u.a := a;\n    v.a := a;\n    q := u.q && v.q;\n  }\n}\n" ++
+  dMod s!"  instance t = T({d});\n  t.a := c;\n"
+#guard observed (dTree 30) ==
+  (List.range 31).reverse.map (fun i => s!"(record 4 3 T${i} () (string \"d\") (int {i}))") ++
+    ["ok"]
 
 end Silicon.Source.Test.Elab

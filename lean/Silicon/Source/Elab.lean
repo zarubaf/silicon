@@ -21,6 +21,9 @@ The table of instantiations is normative. An `instance` statement works in these
    and it must be new (`S019`). Then it goes in progress, runs its body, checks its bindings,
    and is done.
 
+A new instantiation sets the emitted name of its records and starts with no call frames. A done
+instantiation does not run its body again, so its records come out once (decision F15).
+
 The `InstantiationId` holds the arguments as they evaluate, before the typed use at the
 parameters. The parameters then bind in the body of the new instantiation, as a typed use.
 
@@ -534,7 +537,8 @@ mutual
                    work := { body := { domain := ds.head?.map fun (d : Binder) => d.name.name } } }
       monadLift (modify fun t => { t with naming := {} } : Eval.M Unit)
       let (made, used) ← measure do
-        inFrame none <| withTheReader Ctx (fun c => { c with item := i, frame := ⟨none, 0⟩ }) do
+        inFrame none <| withTheReader Ctx (fun c =>
+            { c with item := i, frame := ⟨none, 0⟩, inst := text, calls := [] }) do
           for (q, v) in ps.zip vs do
             let t ← typeExpr n q.ty
             bindLocal q.name.id ⟨some t, false, .static (← conform pos t v)⟩
