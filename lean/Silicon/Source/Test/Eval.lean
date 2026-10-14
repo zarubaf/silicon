@@ -2449,4 +2449,42 @@ def gb : String := "fn g(mut a: Bool) -> Int {\n  a = !a;\n  return 0;\n}\n"
 #guard top (hw "  let t = ((x,),);") "M(1)" (depth := 2) == "S015 5:11"
 #guard top (hw "  let t = ((x,),);") "M(1)" (depth := 3) == "total 148\nM$1 106\n"
 
+/-!
+The prelude struct `ReadResponse` acts as `struct ReadResponse(comptime T: Type) { data: T,
+valid: Bool }`. A user `struct Bool` or `type Type` does not change it. A user struct
+`ReadResponse` shadows the name and serializes with `root`.
+-/
+def userTypes : String := "struct Bool { x: UInt[2] }\ntype Type = UInt[3];"
+def userResponse : String := "struct ReadResponse(comptime T: Type) { data: T, valid: Bool }"
+#guard out "" "ReadResponse[UInt[8]]" ==
+  "(type (struct prelude ReadResponse ((type (uint 8)))))"
+#guard out userTypes "ReadResponse[UInt[8]]()" ==
+  "(record (struct prelude ReadResponse ((type (uint 8)))) ((uint 8 0) (bool false)))"
+#guard out userTypes "data_bits(ReadResponse[UInt[8]])" == "(int 9)"
+#guard out "" "ReadResponse[UInt[8]](3, true).valid" == "(bool true)"
+#guard out "" "ReadResponse[UInt[8]](3, true).data" == "(uint 8 3)"
+#guard out userResponse "ReadResponse[UInt[8]]" ==
+  "(type (struct root ReadResponse ((type (uint 8)))))"
+#guard out userResponse "ReadResponse[UInt[8]](3, true)" ==
+  "(record (struct root ReadResponse ((type (uint 8)))) ((uint 8 3) (bool true)))"
+#guard out "" "ReadResponse[3]" == "S010 1:1"
+#guard out "" "ReadResponse[Int]()" == "S010 1:1"
+
+/-!
+Each error in the work of the prelude struct reports at its use, also an `S015` in its field
+types. No run gives the position `0:0` of the item.
+-/
+def useResponse : String := "module M() {\n  input a: UInt[8];\n  let t = ReadResponse[UInt[8]];\n}"
+#guard top useResponse "M" (depth := 1) == "S015 3:11"
+#guard (List.range 63).all fun f =>
+  let r := top useResponse "M" (fuel := f)
+  r.startsWith "S015 " && !r.startsWith "S015 0:"
+#guard (List.range 13).all fun f => top useResponse "M" (fuel := 50 + f) == "S015 3:11"
+
+/-! A user function `read_port` or `write_port` shadows the prelude function and runs as usual. -/
+#guard out "comptime fn read_port(a: Nat, b: Nat) -> Nat { return a + b; }" "read_port(1, 2)" ==
+  "(int 3)"
+#guard out "const X: Int = 5;\nfn write_port(a: Int) -> Int { return a; }" "X.write_port()" ==
+  "(int 5)"
+
 end Silicon.Source.Test.Eval

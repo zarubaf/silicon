@@ -474,6 +474,68 @@ functions (`S010`).
   "fn h() -> Nat { return g(1); }") .S006 5 1
 
 /-!
+`S006`: a `comptime fn` has no call of `read_port` or `write_port`, also in the receiver form.
+The position is the call. The rule comes before an `S007` of the call at that position.
+-/
+def ctBody (s : String) : String := "comptime fn f(x: Nat) -> Nat {\n" ++ s ++ "\nreturn x;\n}"
+#guard fails (ctBody "let r = read_port(x, 1, true);") .S006 2 9
+#guard fails (ctBody "x.write_port(1, 2, true);") .S006 2 1
+#guard fails (ctBody "let r = read_port(x, 1);") .S006 2 9
+#guard fails (ctBody "x.write_port(1, 2);") .S006 2 1
+#guard message (ctBody "x.write_port(1, 2);") == "a `comptime fn` has no memory port call"
+#guard ok (modBody
+  "mem m: [UInt[8]; 4];\nlet r = read_port(m, 0, true);\nm.write_port(0, 1, true);")
+#guard ok (fnBody "return read_port(p, p, p).valid;")
+
+/-!
+A user function `read_port` or `write_port` shadows the prelude function, so its call gets no
+memory rule. The check reads the resolved callee, never the name.
+-/
+#guard ok (ctBody "let r = read_port(x);" ++ "\ncomptime fn read_port(a: Nat) -> Nat { return a; }")
+#guard ok (ctBody "let r = x.write_port();" ++ "\nfn write_port(a: Nat) -> Nat { return a; }")
+#guard fails (ctBody "let r = x.write_port(1);" ++ "\nfn write_port(a: Nat) -> Nat { return a; }")
+  .S007 2 9
+
+/-!
+`S007`: `read_port` has three arguments and `write_port` four, also in the receiver form. The
+position is the call, which starts at the receiver in the receiver form.
+-/
+#guard fails (modBody "mem m: [UInt[8]; 4];\nlet r = read_port(m, 0);") .S007 3 9
+#guard message (modBody "mem m: [UInt[8]; 4];\nlet r = read_port(m, 0);") ==
+  "`read_port` takes 3 argument(s), but it has 2"
+#guard fails (modBody "mem m: [UInt[8]; 4];\nwrite_port(m, 0, 1, true, 4);") .S007 3 1
+#guard fails (modBody "mem m: [UInt[8]; 4];\nlet r = m.read_port(0, true, 1);") .S007 3 9
+#guard fails (modBody "mem m: [UInt[8]; 4];\nm.write_port(0, true);") .S007 3 1
+
+/-!
+`S007`: the prelude struct `ReadResponse` has one index argument, and its constructor two
+arguments or none. The position is the type name, the index, or the call.
+-/
+#guard ok (fnBody "let r: ReadResponse[Bool] = ReadResponse[Bool](p, p);\nreturn r.valid;")
+#guard ok (fnBody "return ReadResponse[Bool]().valid;")
+#guard fails (fnBody "let r: ReadResponse = p;\nreturn p;") .S007 2 8
+#guard fails (fnBody "let r = ReadResponse;\nreturn p;") .S007 2 9
+#guard fails (fnBody "let r: ReadResponse[Bool, Bool] = p;\nreturn p;") .S007 2 8
+#guard fails (fnBody "let r = ReadResponse[Bool, Bool];\nreturn p;") .S007 2 9
+#guard fails (fnBody "let r = ReadResponse[Bool](p);\nreturn p;") .S007 2 9
+#guard message (fnBody "let r = ReadResponse[Bool](p);\nreturn p;") ==
+  "a struct constructor takes 0 or 2 argument(s), but it has 1"
+#guard fails (fnBody "let r = ReadResponse(p, p);\nreturn p;") .S007 2 9
+
+/-!
+The walk skips the prelude struct, because it has no source position. Its errors would be at
+`0:0` and win over each user error. A user struct with the same forms gets the error.
+-/
+def badStruct (pre : Bool) : Resolve.Item :=
+  .struct ⟨0, 0⟩ ⟨⟨0, 0⟩, "ReadResponse"⟩ [] [⟨⟨⟨0, 0⟩, "data"⟩, .name ⟨0, 0⟩ "UInt" (.type .uint)⟩]
+    pre
+#guard (Check.check #[badStruct true]).toBool
+#guard match Check.check #[badStruct false] with
+  | .error e => e.code == .S007 && e.pos == ⟨0, 0⟩
+  | .ok _ => false
+#guard (Check.check #[Resolve.response]).toBool
+
+/-!
 The walk is linear and its stack follows the syntax depth. These inputs are at the default
 syntax depth or hold many statements in one scope.
 -/
