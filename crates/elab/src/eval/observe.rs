@@ -85,7 +85,7 @@ fn spaced<'a>(items: impl Iterator<Item = Piece<'a>>) -> Vec<Piece<'a>> {
 
 /// The container types of the parts of the value that `root` is, for the measure of their
 /// serialization: a type pays for the decimal form of its integers only when a text holds it.
-fn measure_types(tys: &mut Types, root: Seen<'_>) {
+fn measure_types(tys: &mut Types, root: Seen<'_>, mems: &mut Vec<usize>) {
     let mut work = vec![root];
     while let Some(seen) = work.pop() {
         match seen {
@@ -107,6 +107,7 @@ fn measure_types(tys: &mut Types, root: Seen<'_>) {
                 let t = tys.mk(port.ty.clone());
                 tys.measure(&Value::Type(t));
             }
+            Seen::Handle(Handle::Mem(id)) => mems.push(*id),
             Seen::Hw(_) | Seen::Handle(_) | Seen::Pending(..) => {}
         }
     }
@@ -166,7 +167,15 @@ impl Evaluator<'_> {
                 ),
             );
         }
-        measure_types(&mut self.tys, self.store.seen(&value));
+        let mut mems = Vec::new();
+        measure_types(&mut self.tys, self.store.seen(&value), &mut mems);
+        let words: Vec<TyId> = mems
+            .into_iter()
+            .filter_map(|id| self.mem(id).map(|m| m.word))
+            .collect();
+        for word in words {
+            self.tys.measure(&Value::Type(word));
+        }
         let measure = self.measure_charge(self.store.seen(&value));
         self.charge(pos, measure)?;
         let mut len = Len::default();
