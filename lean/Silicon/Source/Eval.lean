@@ -1125,8 +1125,7 @@ def portCall (p : Pos) (g : String) (h : PrimFn) (vs : List Val) (use : Ty → M
   charge p (vs.map Val.size).sum
   let .handle (.mem id path t k) :: rest := vs
     | fail .S010 p s!"`{g}` needs a memory, not {(vs.head?.map Val.text).getD "nothing"}"
-  if (← read).arm.isSome then
-    fail .S016 p s!"a hardware arm has no graph effect such as `{g}`"
+  if let some gd := (← read).guard then fail .S016 p (gd.effect g)
   let a := Ty.uint (addrWidth k)
   let second (m : Mem) : Mem :=
     { m with dup := earlier m.dup ⟨.S018, p, s!"a second `{g}` of the memory `{m.name}`"⟩ }
@@ -1210,7 +1209,7 @@ mutual
         match ← data p (← need c (← eval n c)).value with
         | .hw h =>
           unless h.ty == .bool do fail .S010 p s!"a condition is a Bool, not {h.ty.text}"
-          let (a, b) ← withReader (fun c => { c with arm := some c.depth }) do
+          let (a, b) ← withReader (fun c => { c with guard := some ⟨.arm, c.depth⟩ }) do
             let o ← need y (← eval n y)
             let a ← data p o.value
             hold o
