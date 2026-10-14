@@ -272,3 +272,78 @@ fn the_records_of_a_shared_hierarchy_are_linear_in_its_depth() {
     assert_eq!(c.rendered - b.rendered, 2 * (b.rendered - a.rendered));
     assert_eq!(c.framed, 0);
 }
+
+/// The run of `src` at the fuel `fuel`: its records, the code of its first error, and the
+/// counts of the run. The fuel must be unique in the test run.
+fn run_at(src: &str, fuel: u64) -> (usize, Option<crate::Code>, Counts) {
+    let file = load(src).unwrap();
+    let budget = Budget { fuel, depth: 1000 };
+    let Ok(done) = observe_with(
+        &file,
+        "M()",
+        parse::DEFAULT_SYNTAX_DEPTH,
+        budget,
+        crate::names::sha16,
+    ) else {
+        panic!("the top selection must be valid")
+    };
+    (
+        done.records.len(),
+        done.outcome.err().map(|e| e.code),
+        of(fuel),
+    )
+}
+
+/// A record that does not fit its fuel measures its line from the borrowed names of its frames.
+/// It copies no name before the charge of its bytes: the frames are `depth` times a name of
+/// `len` characters, and the call stops with fuel left.
+#[test]
+fn a_record_that_does_not_fit_copies_no_frame() {
+    // The least fuel that appends the record. One unit less stops at the charge of its bytes,
+    // which is about 410,000 bytes, and the frames are still unwritten.
+    const LEAST: u64 = 411_721;
+    let (depth, len) = (40, 10_000);
+    let name = "f".repeat(len);
+    let src = format!(
+        "fn {name}(n: Nat) -> Nat {{\n  comptime if (n == 0) {{ diagnostic(\"b\", n); }}\n  \
+         return if (n == 0) {{ 0 }} else {{ {name}(n - 1) }};\n}}\n{}",
+        module("", &format!("  {name}({depth});\n"))
+    );
+    assert_eq!(run_at(&src, LEAST).0, 1);
+    let (records, code, counts) = run_at(&src, LEAST - 1);
+    assert_eq!((records, code), (0, Some(crate::Code::S015)));
+    assert_eq!(counts.recorded, 0);
+    // The line holds `depth + 1` frames of the name; none of them exists before its charge.
+    assert_eq!(counts.copied, 0, "{} bytes for {len}", counts.copied);
+}
+
+/// A read of a domain shares its name: the loop of `n` reads of a name of `len` characters
+/// copies the name at most once, not once for each read.
+#[test]
+fn a_domain_read_copies_no_name() {
+    let source = |len: usize, n: u64| {
+        let name = "c".repeat(len);
+        format!(
+            "module M() domains({name}) {{\n  input d: UInt[8];\n  output o: UInt[8];\n  \
+             comptime for i in 0..{n} {{\n    let x = {name};\n  }}\n  o := d;\n}}\n"
+        )
+    };
+    for (k, n) in SIZES.iter().enumerate() {
+        let (_, code, counts) = run_at(&source(1000, *n), 736_000_000 + k as u64);
+        assert_eq!(code, None);
+        assert!(
+            counts.copied <= 1000,
+            "{} bytes at {n} reads",
+            counts.copied
+        );
+    }
+    for (k, len) in [500usize, 1000, 2000].into_iter().enumerate() {
+        let (_, code, counts) = run_at(&source(len, 64), 737_000_000 + k as u64);
+        assert_eq!(code, None);
+        assert!(
+            counts.copied <= len as u64,
+            "{} bytes at {len}",
+            counts.copied
+        );
+    }
+}
