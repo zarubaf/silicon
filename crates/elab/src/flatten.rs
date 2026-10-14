@@ -921,14 +921,24 @@ impl Lower<'_> {
         Ok(Expr::Ref(self.name(pos, name)?))
     }
 
+    /// Charges `units` core nodes of the memory block, apart from its write chain.
+    fn block_charge(&mut self, pos: Pos, units: u128) -> R<()> {
+        #[cfg(test)]
+        crate::counters::add(
+            crate::counters::Count::Blocked,
+            u64::try_from(units).unwrap_or(0),
+        );
+        self.charge(pos, units)
+    }
+
     /// A response register of a memory at `pos`, of the width `w`, with the reset value 0.
     fn mem_reg(&mut self, pos: Pos, domain: Sym, name: &Name, w: u32) -> R<Stmt> {
         let at = span(pos);
-        self.charge(pos, 2)?;
+        self.block_charge(pos, 2)?;
         let reg = self.name(pos, name)?;
         let clk = self.name(pos, &self.role(domain, Role::Clk))?;
         let signal = self.domain_ref(pos, &self.role(domain, Role::Rst))?;
-        self.charge(pos, 1)?;
+        self.block_charge(pos, 1)?;
         Ok(Stmt::Reg {
             name: reg,
             width: num(w, at),
@@ -945,7 +955,7 @@ impl Lower<'_> {
     /// A request `let` of a memory at `pos`: the value of the scalar `a` of the type `t`.
     fn mem_let(&mut self, pos: Pos, name: &Name, t: &Ty, a: &Agg) -> R<Stmt> {
         let at = span(pos);
-        self.charge(pos, 1)?;
+        self.block_charge(pos, 1)?;
         let x = self.name(pos, name)?;
         self.count = 0;
         let leaf = self.request_leaf(name, true, pos, t, a)?;
@@ -982,6 +992,8 @@ impl Lower<'_> {
                 None => (lower.leaf_low(m, one, pos, fields, (t, src))?, w),
                 Some((low, bits)) => {
                     let low = lower.deep(pos, m, bits, false, low)?;
+                    #[cfg(test)]
+                    crate::counters::add(crate::counters::Count::Chained, 1);
                     lower.charge(pos, 1)?;
                     let high = lower.leaf_low(m, false, pos, fields, (t, src))?;
                     let height = up(high.height.max(low.height));
@@ -1024,7 +1036,7 @@ impl Lower<'_> {
             role(Role::Ren),
             role(Role::Raddr),
         );
-        self.charge(pos, 1)?;
+        self.block_charge(pos, 1)?;
         let x = self.name(pos, &path)?;
         let clk = self.name(pos, &self.role(domain, Role::Clk))?;
         stmts.push(Stmt::Mem {
@@ -1038,7 +1050,7 @@ impl Lower<'_> {
         stmts.push(self.mem_reg(pos, domain, &rvalid, 1)?);
         stmts.push(self.mem_let(pos, &en_name, &Ty::Bool, ren)?);
         stmts.push(self.mem_let(pos, &addr_name, &Ty::UInt(aw), raddr)?);
-        self.charge(pos, 3)?;
+        self.block_charge(pos, 3)?;
         let reg = self.name(pos, &rdata)?;
         let en = self.name_ref(pos, &en_name)?;
         let memory = self.name(pos, &path)?;
@@ -1054,16 +1066,16 @@ impl Lower<'_> {
             expr: mux(at, en, read, old),
             span: at,
         });
-        self.charge(pos, 2)?;
+        self.block_charge(pos, 2)?;
         let reg = self.name(pos, &rvalid)?;
         let en = self.name_ref(pos, &en_name)?;
         let in_range = if mem.depth == 1u64 << aw {
-            self.charge(pos, 1)?;
+            self.block_charge(pos, 1)?;
             small(at, 1, 1)
         } else {
-            self.charge(pos, 1)?;
+            self.block_charge(pos, 1)?;
             let addr = self.name_ref(pos, &addr_name)?;
-            self.charge(pos, 1)?;
+            self.block_charge(pos, 1)?;
             icmp(at, Pred::Ult, addr, konst(at, aw, nat(mem.depth)))
         };
         stmts.push(Stmt::Next {
@@ -1071,16 +1083,16 @@ impl Lower<'_> {
             expr: bin(at, CBin::And, en, in_range),
             span: at,
         });
-        self.charge(pos, 1)?;
+        self.block_charge(pos, 1)?;
         let memory = self.name(pos, &path)?;
         self.count = 0;
         let addr = self.request_leaf(&path, true, pos, &Ty::UInt(aw), waddr)?;
         let data = self.mem_data(pos, &path, mem.word, wdata)?;
-        self.charge(pos, 1)?;
+        self.block_charge(pos, 1)?;
         let enable = self.request_leaf(&path, false, pos, &Ty::Bool, wen)?;
-        self.charge(pos, 1)?;
+        self.block_charge(pos, 1)?;
         let reset = self.domain_ref(pos, &self.role(domain, Role::Rst))?;
-        self.charge(pos, 1)?;
+        self.block_charge(pos, 1)?;
         let not_reset = bin(at, CBin::Xor, reset, small(at, 1, 1));
         stmts.push(Stmt::Write {
             mem: memory,

@@ -56,6 +56,14 @@ pub(crate) struct Counts {
     /// The expression nodes that scans of the AST visited. The pass before the evaluation scans
     /// each node once. An evaluation that scans an expression again counts here too.
     pub ast: u64,
+    /// The lookups of the prefix offset of a part in a word, one for each step on a word.
+    pub offsets: u64,
+    /// The steps of the loop that builds the write chain of a memory: one for each leaf.
+    pub chained: u64,
+    /// The core nodes of the memory block, apart from the write chain, that the lowering charged.
+    pub blocked: u64,
+    /// The second calls of a port that recorded their `S018`.
+    pub seconds: u64,
 }
 
 /// What a counter counts.
@@ -82,6 +90,10 @@ pub(crate) enum Count {
     Stepped,
     Table,
     Ast,
+    Offsets,
+    Chained,
+    Blocked,
+    Seconds,
 }
 
 static COUNTS: Mutex<BTreeMap<u64, Counts>> = Mutex::new(BTreeMap::new());
@@ -141,6 +153,10 @@ pub(crate) fn add(count: Count, n: u64) {
             Count::Stepped => &mut c.stepped,
             Count::Table => &mut c.table,
             Count::Ast => &mut c.ast,
+            Count::Offsets => &mut c.offsets,
+            Count::Chained => &mut c.chained,
+            Count::Blocked => &mut c.blocked,
+            Count::Seconds => &mut c.seconds,
         };
         *field += n;
     }

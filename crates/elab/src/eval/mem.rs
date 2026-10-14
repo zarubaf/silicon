@@ -159,6 +159,8 @@ impl Evaluator<'_> {
 
 /// The earlier of the recorded second call and this one, with the callee.
 fn second(old: Option<(Pos, &'static str)>, pos: Pos, g: &'static str) -> (Pos, &'static str) {
+    #[cfg(test)]
+    crate::counters::add(crate::counters::Count::Seconds, 1);
     match old {
         Some((at, port)) if pos >= at => (at, port),
         _ => (pos, g),
