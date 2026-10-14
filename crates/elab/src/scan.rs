@@ -248,6 +248,13 @@ impl Walk<'_> {
                 self.expr(init, d);
                 self.binder(name);
             }
+            Stmt::Mem {
+                name, word, depth, ..
+            } => {
+                self.ty(word, d);
+                self.expr(depth, d);
+                self.binder(name);
+            }
             Stmt::Wire { name, ty, .. }
             | Stmt::Input { name, ty, .. }
             | Stmt::Output { name, ty, .. }

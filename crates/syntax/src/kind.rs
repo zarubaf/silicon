@@ -165,6 +165,7 @@ kinds! {
     ConnectStmt,
     RegStmt,
     WireStmt,
+    MemStmt,
     InputStmt,
     OutputStmt,
     InstStmt,

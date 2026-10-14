@@ -788,6 +788,7 @@ fn stmt_pos(s: &Stmt) -> Pos {
         | Stmt::Connect { pos, .. }
         | Stmt::Reg { pos, .. }
         | Stmt::Wire { pos, .. }
+        | Stmt::Mem { pos, .. }
         | Stmt::Input { pos, .. }
         | Stmt::Output { pos, .. }
         | Stmt::Inst { pos, .. }

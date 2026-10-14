@@ -249,6 +249,11 @@ fn stmt(s: &Stmt, out: &mut String) {
         Stmt::Wire { name, ty, .. } => node("wire", out, |out| {
             fields!(out; ident(name, out), type_expr(ty, out));
         }),
+        Stmt::Mem {
+            name, word, depth, ..
+        } => node("mem", out, |out| {
+            fields!(out; ident(name, out), type_expr(word, out), expr(depth, out));
+        }),
         Stmt::Input { name, ty, .. } => node("input", out, |out| {
             fields!(out; ident(name, out), type_expr(ty, out));
         }),
@@ -476,6 +481,10 @@ mod tests {
         assert_eq!(stmt_of("x := 1;"), "(connect (name \"x\") (num 1))");
         assert_eq!(stmt_of("reg r: T = 0;"), "(reg \"r\" (name \"T\") (num 0))");
         assert_eq!(stmt_of("wire w: T;"), "(wire \"w\" (name \"T\"))");
+        assert_eq!(
+            stmt_of("mem m: [T; 4];"),
+            "(mem \"m\" (name \"T\") (num 4))"
+        );
         assert_eq!(stmt_of("input i: T;"), "(input \"i\" (name \"T\"))");
         assert_eq!(stmt_of("output o: T;"), "(output \"o\" (name \"T\"))");
         assert_eq!(

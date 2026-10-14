@@ -73,7 +73,12 @@ impl Parser<'_> {
     fn stmt(&mut self) -> Res {
         let kind = self.cur()?;
         // A `comptime fn` has these statements and `typeck` rejects them with `S006`.
-        if self.in_plain_fn && matches!(kind, RegKw | WireKw | InputKw | OutputKw | InstanceKw) {
+        if self.in_plain_fn
+            && matches!(
+                kind,
+                RegKw | WireKw | MemKw | InputKw | OutputKw | InstanceKw
+            )
+        {
             self.later_slice(self.offset(), "a hardware statement in a `fn`");
             return None;
         }
@@ -87,10 +92,7 @@ impl Parser<'_> {
             ReturnKw => self.node(ReturnStmt, Self::return_stmt),
             ComptimeKw => self.comptime_stmt(),
             TypeKw => self.node(AliasStmt, Self::alias_item),
-            MemKw => {
-                self.later_slice(self.offset(), "this statement");
-                None
-            }
+            MemKw => self.node(MemStmt, Self::mem_stmt),
             LBrace => self.block(),
             Error => {
                 self.bump();
@@ -137,6 +139,20 @@ impl Parser<'_> {
             self.expect(Eq, "`=`")?;
             self.expr()?;
         }
+        self.expect(Semi, "`;`")
+    }
+
+    /// `mem x: [T; e];` The brackets belong to the statement, not to an array type.
+    fn mem_stmt(&mut self) -> Res {
+        self.bump();
+        self.expect(Ident, "a name")?;
+        self.expect(Colon, "`:`")?;
+        self.expect(LBracket, "`[`")?;
+        self.type_expr()?;
+        self.expect(Semi, "`;`")?;
+        self.expr()?;
+        self.expect(RBracket, "`]`")?;
+        self.no_domain_annotation()?;
         self.expect(Semi, "`;`")
     }
 
