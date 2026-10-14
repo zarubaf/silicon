@@ -113,19 +113,20 @@ pub fn run(repo: &Repo, mode: Mode, seed: u64, count: u64) -> Result<bool> {
                 )?,
                 format!("diff-si: {count} typed programs agree (seeds {seed} to {last})"),
             ),
-            Mode::Lift => (
-                search(
+            Mode::Lift => {
+                let mut tally = lift::Tally::default();
+                let agree = search(
                     lift::cases(),
                     seed,
                     count,
-                    |case| lift::verdict(&tools, dir.path(), case),
+                    |case| lift::verdict(&tools, dir.path(), case, &mut tally),
                     |n, case, message| {
                         lift::report(n, case, message);
                         Ok(())
                     },
-                )?,
-                format!("diff-si: {count} lifted designs agree (seeds {seed} to {last})"),
-            ),
+                )?;
+                (agree, tally.summary(seed, last))
+            }
             Mode::Mutation => {
                 let mut tally = mutation::Tally::new();
                 let agree = search(
