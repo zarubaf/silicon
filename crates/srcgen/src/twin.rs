@@ -353,7 +353,7 @@ mod tests {
     use super::super::build::typed;
     use super::super::eval::Value;
     use super::super::program::{
-        ComptimeFn, HBin, HExpr, Item, Place, Ports, Radix, SBin, SExpr, StaticTy, Stmt, Ty,
+        ComptimeFn, HBin, HExpr, Item, Place, Ports, Radix, SBin, SExpr, STy, Stmt, Ty,
     };
     use super::*;
     use num_bigint::BigInt;
@@ -396,7 +396,7 @@ mod tests {
         }
     }
 
-    fn module(name: &str, params: &[(&str, StaticTy)], clocked: bool, body: Vec<Stmt>) -> Item {
+    fn module(name: &str, params: &[(&str, STy)], clocked: bool, body: Vec<Stmt>) -> Item {
         Item::Module {
             name: name.to_owned(),
             params: params.iter().map(|(n, t)| ((*n).to_owned(), *t)).collect(),
@@ -450,12 +450,7 @@ mod tests {
             ),
             connect("o0", hname("v0")),
         ];
-        let m0 = module(
-            "M0",
-            &[("P0", StaticTy::Nat), ("P1", StaticTy::Bool)],
-            false,
-            body,
-        );
+        let m0 = module("M0", &[("P0", STy::Nat), ("P1", STy::Bool)], false, body);
         let p = program(
             vec![m0],
             vec![Value::Int(BigInt::from(2)), Value::Bool(true)],
@@ -536,11 +531,8 @@ mod tests {
         );
         Item::ComptimeFn(ComptimeFn {
             name: "f0".to_owned(),
-            params: vec![
-                ("x0".to_owned(), StaticTy::Nat),
-                ("x1".to_owned(), StaticTy::Int),
-            ],
-            ret: StaticTy::Int,
+            params: vec![("x0".to_owned(), STy::Nat), ("x1".to_owned(), STy::Int)],
+            ret: STy::Int,
             base: sname("x1"),
             step,
         })
@@ -550,7 +542,7 @@ mod tests {
     fn the_twin_specializes_each_instantiation() {
         let m1 = module(
             "M1",
-            &[("P0", StaticTy::Nat)],
+            &[("P0", STy::Nat)],
             false,
             vec![
                 Stmt::Input("i0".to_owned(), Ty::UInt(sname("P0"))),
@@ -576,7 +568,7 @@ mod tests {
         );
         let consts = Item::Const {
             name: "C0".to_owned(),
-            ty: StaticTy::Nat,
+            ty: STy::Nat,
             value: int(4),
         };
         let p = program(vec![consts, f0(), m0, m1], Vec::new());
@@ -604,7 +596,7 @@ mod tests {
         let fault = sbin(SBin::Div, int(1), int(0));
         let body = vec![
             Stmt::Output("o0".to_owned(), uint(4)),
-            Stmt::StaticLet("s0".to_owned(), StaticTy::Int, fault),
+            Stmt::StaticLet("s0".to_owned(), STy::Int, fault),
             connect("o0", HExpr::Static(sname("s0"))),
         ];
         let p = program(vec![module("M0", &[], false, body)], Vec::new());

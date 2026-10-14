@@ -42,7 +42,7 @@ mod stat;
 pub use lines::lines;
 
 use super::eval::{Env, Fault, Scope, Value, concrete};
-use super::program::{ComptimeFn, HExpr, Item, Ports, Program, SExpr, Scalar, StaticTy, Stmt, Ty};
+use super::program::{ComptimeFn, HExpr, Item, Ports, Program, SExpr, STy, Scalar, Stmt, Ty};
 use proptest::collection::vec;
 use proptest::prelude::*;
 use stat::Reach;
@@ -203,7 +203,7 @@ struct Hw {
 #[derive(Clone, Debug, Default)]
 struct Ctx {
     envs: Vec<Env>,
-    statics: Vec<(String, StaticTy)>,
+    statics: Vec<(String, STy)>,
     hw: Vec<Hw>,
     helpers: usize,
 }
@@ -246,7 +246,7 @@ struct Helper {
 #[derive(Clone)]
 struct Sig {
     name: String,
-    params: Vec<(String, StaticTy)>,
+    params: Vec<(String, STy)>,
     clocked: bool,
     inputs: Vec<(String, Ty)>,
     outputs: Vec<(String, Ty)>,
@@ -270,7 +270,7 @@ struct Stats {
 
 struct Builder {
     tape: Tape,
-    consts: Vec<(String, StaticTy, SExpr)>,
+    consts: Vec<(String, STy, SExpr)>,
     fns: Vec<ComptimeFn>,
     helpers: Vec<Helper>,
     sigs: Vec<Sig>,

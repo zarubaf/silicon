@@ -9,16 +9,16 @@ use super::{
     MODULES, Module, NESTED_STMTS, NESTING, Names, OUTPUTS, PARAMS, SAMPLE_INTS, Sig,
 };
 use crate::eval::{Env, Fault, Value, concrete, eval, loop_values};
-use crate::program::{HExpr, Place, SExpr, Scalar, StaticTy, Stmt, Ty};
+use crate::program::{HExpr, Place, SExpr, STy, Scalar, Stmt, Ty};
 use num_bigint::BigInt;
 
-const STATIC_TYS: [StaticTy; 3] = [StaticTy::Nat, StaticTy::Int, StaticTy::Bool];
+const STATIC_TYS: [STy; 3] = [STy::Nat, STy::Int, STy::Bool];
 
 /// One env per argument tuple in the ranges of the module arguments.
-fn domain(params: &[(String, StaticTy)]) -> Vec<Env> {
+fn domain(params: &[(String, STy)]) -> Vec<Env> {
     let mut envs = vec![Env::default()];
     for (name, t) in params {
-        let values: Vec<Value> = if *t == StaticTy::Bool {
+        let values: Vec<Value> = if *t == STy::Bool {
             vec![Value::Bool(false), Value::Bool(true)]
         } else {
             let (lo, hi) = super::stat::arg_range(*t);
@@ -57,7 +57,7 @@ impl Builder {
         let widths: Vec<(String, u32)> = self
             .consts
             .iter()
-            .filter(|(_, t, _)| *t == StaticTy::Nat)
+            .filter(|(_, t, _)| *t == STy::Nat)
             .filter_map(|(n, _, _)| {
                 match eval(&SExpr::Name(n.clone()), &Env::default(), &self.scope) {
                     Ok(Value::Int(v)) => u32::try_from(v)
@@ -200,7 +200,7 @@ impl Builder {
             }
         }
         let mut inner = ctx.derive(&parents, envs);
-        inner.statics.push((binder.to_owned(), StaticTy::Int));
+        inner.statics.push((binder.to_owned(), STy::Int));
         Ok(Some(inner))
     }
 
@@ -250,11 +250,11 @@ impl Builder {
             let domain = domain(&params);
             // Port widths read only `Nat` names: an `Int` parameter takes
             // negative values over the domain, so it rarely gives a width.
-            let statics: Vec<(String, StaticTy)> = self
+            let statics: Vec<(String, STy)> = self
                 .const_names()
                 .into_iter()
                 .chain(params.clone())
-                .filter(|(_, t)| *t == StaticTy::Nat)
+                .filter(|(_, t)| *t == STy::Nat)
                 .collect();
             // A port width holds in every context, so a call (which can be
             // costly over the whole domain) is not a candidate here.
@@ -556,7 +556,7 @@ impl Builder {
             let mut args = Vec::new();
             for (k, (_, t)) in params.iter().enumerate() {
                 args.push(match t {
-                    StaticTy::Bool => SExpr::Bool(self.tape.flag()),
+                    STy::Bool => SExpr::Bool(self.tape.flag()),
                     _ if k == 0 => self.number(0, COUNT),
                     _ => super::stat::int(self.pick(&SAMPLE_INTS)),
                 });

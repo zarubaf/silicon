@@ -9,11 +9,11 @@
 use super::stat::{self, Kind, Reach, bin, int};
 use super::{Builder, CONSTS, COUNT, FNS, SAMPLE_INTS};
 use crate::eval::{Env, Fault, Scope, Value, eval};
-use crate::program::{ComptimeFn, Item, SBin, SExpr, StaticTy};
+use crate::program::{ComptimeFn, Item, SBin, SExpr, STy};
 use num_bigint::BigInt;
 
 impl Builder {
-    pub(super) fn const_names(&self) -> Vec<(String, StaticTy)> {
+    pub(super) fn const_names(&self) -> Vec<(String, STy)> {
         self.consts
             .iter()
             .map(|(n, t, _)| (n.clone(), *t))
@@ -61,14 +61,14 @@ impl Builder {
 
     /// `Nat` for most non-negative values (a negative `Nat` is `S012`),
     /// else `Int`; or `Bool`.
-    pub(super) fn static_ty(&mut self, kind: Kind, vs: &[Value]) -> StaticTy {
+    pub(super) fn static_ty(&mut self, kind: Kind, vs: &[Value]) -> STy {
         let natural = vs
             .iter()
             .all(|v| matches!(v, Value::Int(n) if *n >= BigInt::ZERO));
         match kind {
-            Kind::Bool => StaticTy::Bool,
-            Kind::Int if natural && self.tape.below(4) != 0 => StaticTy::Nat,
-            Kind::Int => StaticTy::Int,
+            Kind::Bool => STy::Bool,
+            Kind::Int if natural && self.tape.below(4) != 0 => STy::Nat,
+            Kind::Int => STy::Int,
         }
     }
 
@@ -85,17 +85,16 @@ impl Builder {
     /// takes a simpler step, then a literal base.
     fn comptime_fn(&mut self, k: usize) -> ComptimeFn {
         let name = format!("f{k}");
-        let mut params = vec![("x0".to_owned(), StaticTy::Nat)];
+        let mut params = vec![("x0".to_owned(), STy::Nat)];
         for i in 1..=self.tape.below(3) {
             let t = if self.tape.flag() {
-                StaticTy::Bool
+                STy::Bool
             } else {
-                StaticTy::Int
+                STy::Int
             };
             params.push((format!("x{i}"), t));
         }
-        let names: Vec<(String, StaticTy)> =
-            params.iter().cloned().chain(self.const_names()).collect();
+        let names: Vec<(String, STy)> = params.iter().cloned().chain(self.const_names()).collect();
         let r = Reach {
             names: &names,
             fns: k,
@@ -112,7 +111,7 @@ impl Builder {
         let mut f = ComptimeFn {
             name,
             params,
-            ret: StaticTy::Int,
+            ret: STy::Int,
             base,
             step,
         };
@@ -126,15 +125,15 @@ impl Builder {
             results = self.sample(&f);
         }
         if let Some(vs) = results
-            && self.static_ty(Kind::Int, &vs) == StaticTy::Nat
+            && self.static_ty(Kind::Int, &vs) == STy::Nat
         {
-            f.ret = StaticTy::Nat;
+            f.ret = STy::Nat;
         }
         f
     }
 
     /// One or two calls `f<k>((x0 - 1), ...)`, in an expression.
-    fn step(&mut self, name: &str, params: &[(String, StaticTy)], r: Reach<'_>) -> SExpr {
+    fn step(&mut self, name: &str, params: &[(String, STy)], r: Reach<'_>) -> SExpr {
         const OPS: [SBin; 8] = [
             SBin::Add,
             SBin::Sub,
@@ -145,7 +144,7 @@ impl Builder {
             SBin::Div,
             SBin::Rem,
         ];
-        let arg = |b: &mut Builder, t: StaticTy| b.sexpr(stat::kind(t), 1, r);
+        let arg = |b: &mut Builder, t: STy| b.sexpr(stat::kind(t), 1, r);
         let first = self_call(name, params, |t, _| arg(self, t));
         let op = self.pick(&OPS);
         match self.tape.below(3) {
@@ -166,7 +165,7 @@ impl Builder {
         let mut rows: Vec<Vec<SExpr>> = (0..=i64::from(COUNT)).map(|n| vec![int(n)]).collect();
         for (_, t) in f.params.iter().skip(1) {
             let values: Vec<SExpr> = match t {
-                StaticTy::Bool => vec![SExpr::Bool(false), SExpr::Bool(true)],
+                STy::Bool => vec![SExpr::Bool(false), SExpr::Bool(true)],
                 _ => SAMPLE_INTS.iter().map(|n| int(*n)).collect(),
             };
             rows = rows
@@ -192,8 +191,8 @@ impl Builder {
 /// `f((x0 - 1), a1, ...)` with `a_i` from `arg(type, formal)`.
 fn self_call(
     name: &str,
-    params: &[(String, StaticTy)],
-    mut arg: impl FnMut(StaticTy, &str) -> SExpr,
+    params: &[(String, STy)],
+    mut arg: impl FnMut(STy, &str) -> SExpr,
 ) -> SExpr {
     let first = params.first().map_or(int(0), |(x, _)| {
         bin(SBin::Sub, SExpr::Name(x.clone()), int(1))

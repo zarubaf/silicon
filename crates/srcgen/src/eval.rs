@@ -3,7 +3,7 @@
 //! semantics of v0.1 section 3. It is a third implementation of these
 //! rules, next to the two front ends, so the `eval` probe compares it.
 
-use super::program::{ComptimeFn, Item, SBin, SExpr, Scalar, StaticTy, Ty, Un};
+use super::program::{ComptimeFn, Item, SBin, SExpr, STy, Scalar, Ty, Un};
 use num_bigint::{BigInt, BigUint, Sign};
 use std::collections::BTreeMap;
 
@@ -55,7 +55,7 @@ pub(crate) struct Env {
 
 impl Env {
     /// The env of a module context: each parameter bound to its argument.
-    pub(crate) fn of(params: &[(String, StaticTy)], args: &[Value]) -> Env {
+    pub(crate) fn of(params: &[(String, STy)], args: &[Value]) -> Env {
         Env {
             statics: params
                 .iter()
@@ -300,10 +300,10 @@ fn int(v: Value) -> Result<BigInt, Fault> {
 }
 
 /// A typed use of `v` at a static type: a `Nat` must not be negative.
-fn typed(ty: StaticTy, v: Value) -> Result<Value, Fault> {
+fn typed(ty: STy, v: Value) -> Result<Value, Fault> {
     match (ty, &v) {
-        (StaticTy::Nat, Value::Int(n)) if n.sign() == Sign::Minus => Err(Fault::Nat),
-        (StaticTy::Nat | StaticTy::Int, Value::Int(_)) | (StaticTy::Bool, Value::Bool(_)) => Ok(v),
+        (STy::Nat, Value::Int(n)) if n.sign() == Sign::Minus => Err(Fault::Nat),
+        (STy::Nat | STy::Int, Value::Int(_)) | (STy::Bool, Value::Bool(_)) => Ok(v),
         _ => Err(Fault::Type),
     }
 }
@@ -403,16 +403,13 @@ mod tests {
         vec![
             Item::Const {
                 name: "C0".to_owned(),
-                ty: StaticTy::Nat,
+                ty: STy::Nat,
                 value: SExpr::Call("f".to_owned(), vec![int(2), int(1)]),
             },
             Item::ComptimeFn(ComptimeFn {
                 name: "f".to_owned(),
-                params: vec![
-                    ("x0".to_owned(), StaticTy::Nat),
-                    ("x1".to_owned(), StaticTy::Int),
-                ],
-                ret: StaticTy::Int,
+                params: vec![("x0".to_owned(), STy::Nat), ("x1".to_owned(), STy::Int)],
+                ret: STy::Int,
                 base: name("x1"),
                 step,
             }),
@@ -447,8 +444,8 @@ mod tests {
     fn a_bool_first_formal_is_a_type_fault() {
         let f2 = Item::ComptimeFn(ComptimeFn {
             name: "f2".to_owned(),
-            params: vec![("x0".to_owned(), StaticTy::Bool)],
-            ret: StaticTy::Int,
+            params: vec![("x0".to_owned(), STy::Bool)],
+            ret: STy::Int,
             base: int(1),
             step: int(2),
         });
@@ -463,7 +460,7 @@ mod tests {
     fn nat_results_and_consts_are_checked() {
         let mut items = twice();
         if let Some(Item::ComptimeFn(f)) = items.get_mut(1) {
-            f.ret = StaticTy::Nat;
+            f.ret = STy::Nat;
         }
         let Ok(scope) = Scope::new(&items) else {
             panic!("the scope faults");
@@ -472,13 +469,13 @@ mod tests {
         assert_eq!(eval(&call, &Env::default(), &scope), Err(Fault::Nat));
         let negative = Item::Const {
             name: "C1".to_owned(),
-            ty: StaticTy::Nat,
+            ty: STy::Nat,
             value: int(-1),
         };
         assert_eq!(Scope::new(&[negative]).map(|_| ()), Err(Fault::Nat));
         let later = Item::Const {
             name: "C2".to_owned(),
-            ty: StaticTy::Int,
+            ty: STy::Int,
             value: name("C3"),
         };
         assert_eq!(Scope::new(&[later]).map(|_| ()), Err(Fault::Type));

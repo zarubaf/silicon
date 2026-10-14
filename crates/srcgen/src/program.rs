@@ -21,12 +21,24 @@ pub(crate) enum Radix {
     Bin,
 }
 
-/// The type of a static parameter, formal, result, or binding.
+// The type of a static parameter, formal, result, or binding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum StaticTy {
+pub(crate) enum STy {
     Nat,
     Int,
     Bool,
+}
+
+impl STy {
+    /// The source spelling of the type.
+    pub(crate) fn text(self) -> String {
+        match self {
+            STy::Nat => "Nat",
+            STy::Int => "Int",
+            STy::Bool => "Bool",
+        }
+        .to_owned()
+    }
 }
 
 /// A hardware data type. A width is a static expression.
@@ -140,7 +152,7 @@ pub(crate) enum Stmt {
         ty: Option<Ty>,
         value: HExpr,
     },
-    StaticLet(String, StaticTy, SExpr),
+    StaticLet(String, STy, SExpr),
     /// `name = value;` of a `let mut`.
     Assign(String, HExpr),
     Connect(Place, HExpr),
@@ -160,8 +172,8 @@ pub(crate) enum Stmt {
 #[derive(Clone, Debug)]
 pub(crate) struct ComptimeFn {
     pub(crate) name: String,
-    pub(crate) params: Vec<(String, StaticTy)>,
-    pub(crate) ret: StaticTy,
+    pub(crate) params: Vec<(String, STy)>,
+    pub(crate) ret: STy,
     pub(crate) base: SExpr,
     pub(crate) step: SExpr,
 }
@@ -170,7 +182,7 @@ pub(crate) struct ComptimeFn {
 pub(crate) enum Item {
     Const {
         name: String,
-        ty: StaticTy,
+        ty: STy,
         value: SExpr,
     },
     ComptimeFn(ComptimeFn),
@@ -185,7 +197,7 @@ pub(crate) enum Item {
     /// clause, so its domain is `clock`; a combinational one has `domains()`.
     Module {
         name: String,
-        params: Vec<(String, StaticTy)>,
+        params: Vec<(String, STy)>,
         clocked: bool,
         body: Vec<Stmt>,
     },
@@ -261,20 +273,16 @@ fn render_item(out: &mut String, item: &Item) {
             line(
                 out,
                 0,
-                &format!("const {name}: {} = {};", static_ty(*ty), sexpr(value)),
+                &format!("const {name}: {} = {};", ty.text(), sexpr(value)),
             );
         }
         Item::ComptimeFn(f) => {
-            let params = formals(f.params.iter().map(|(n, t)| (n, static_ty(*t).to_owned())));
+            let params = formals(f.params.iter().map(|(n, t)| (n, t.text())));
             let first = f.params.first().map_or("", |(n, _)| n.as_str());
             line(
                 out,
                 0,
-                &format!(
-                    "comptime fn {}({params}) -> {} {{",
-                    f.name,
-                    static_ty(f.ret)
-                ),
+                &format!("comptime fn {}({params}) -> {} {{", f.name, f.ret.text()),
             );
             line(out, 1, &format!("comptime if (({first} == 0)) {{"));
             line(out, 2, &format!("return {};", sexpr(&f.base)));
@@ -303,7 +311,7 @@ fn render_item(out: &mut String, item: &Item) {
         } => {
             let params: Vec<String> = params
                 .iter()
-                .map(|(n, t)| format!("comptime {n}: {}", static_ty(*t)))
+                .map(|(n, t)| format!("comptime {n}: {}", t.text()))
                 .collect();
             let domains = if *clocked { "" } else { " domains()" };
             line(
@@ -352,7 +360,7 @@ fn stmt(out: &mut String, depth: usize, s: &Stmt) {
             let t = t.as_ref().map_or(String::new(), |t| format!(": {}", ty(t)));
             format!("let {m}{name}{t} = {};", hexpr(value))
         }
-        Stmt::StaticLet(n, t, v) => format!("let {n}: {} = {};", static_ty(*t), sexpr(v)),
+        Stmt::StaticLet(n, t, v) => format!("let {n}: {} = {};", t.text(), sexpr(v)),
         Stmt::Assign(n, v) => format!("{n} = {};", hexpr(v)),
         Stmt::Connect(place, v) => {
             let place = match place {
@@ -389,14 +397,6 @@ fn stmt(out: &mut String, depth: usize, s: &Stmt) {
         }
     };
     line(out, depth, &text);
-}
-
-fn static_ty(t: StaticTy) -> &'static str {
-    match t {
-        StaticTy::Nat => "Nat",
-        StaticTy::Int => "Int",
-        StaticTy::Bool => "Bool",
-    }
 }
 
 fn ty(t: &Ty) -> String {
@@ -595,9 +595,9 @@ pub(crate) mod tests {
         Item::Module {
             name: "M0".to_owned(),
             params: vec![
-                ("P0".to_owned(), StaticTy::Nat),
-                ("P1".to_owned(), StaticTy::Int),
-                ("P2".to_owned(), StaticTy::Bool),
+                ("P0".to_owned(), STy::Nat),
+                ("P1".to_owned(), STy::Int),
+                ("P2".to_owned(), STy::Bool),
             ],
             clocked: true,
             body: vec![
@@ -606,7 +606,7 @@ pub(crate) mod tests {
                 Stmt::Output("o1".to_owned(), Ty::Bool),
                 Stmt::StaticLet(
                     "s0".to_owned(),
-                    StaticTy::Int,
+                    STy::Int,
                     SExpr::Call("f0".to_owned(), vec![sname("P0"), dec(-3)]),
                 ),
                 Stmt::Reg("r0".to_owned(), Ty::SInt(width), dec(-3)),
@@ -667,11 +667,8 @@ pub(crate) mod tests {
         };
         let f0 = Item::ComptimeFn(ComptimeFn {
             name: "f0".to_owned(),
-            params: vec![
-                ("x0".to_owned(), StaticTy::Nat),
-                ("x1".to_owned(), StaticTy::Int),
-            ],
-            ret: StaticTy::Int,
+            params: vec![("x0".to_owned(), STy::Nat), ("x1".to_owned(), STy::Int)],
+            ret: STy::Int,
             base: sname("x1"),
             step: sbin(
                 SBin::Add,
@@ -688,7 +685,7 @@ pub(crate) mod tests {
         });
         let child = Item::Module {
             name: "M1".to_owned(),
-            params: vec![("P0".to_owned(), StaticTy::Nat)],
+            params: vec![("P0".to_owned(), STy::Nat)],
             clocked: false,
             body: vec![
                 Stmt::Input("i0".to_owned(), Ty::UInt(dec(4))),
@@ -700,7 +697,7 @@ pub(crate) mod tests {
             items: vec![
                 Item::Const {
                     name: "C0".to_owned(),
-                    ty: StaticTy::Nat,
+                    ty: STy::Nat,
                     value: dec(4),
                 },
                 f0,

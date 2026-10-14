@@ -8,7 +8,7 @@
 
 use super::{Builder, COUNT};
 use crate::eval::{BOUND, Env, Value, eval};
-use crate::program::{Radix, SBin, SExpr, Scalar, StaticTy, Un};
+use crate::program::{Radix, SBin, SExpr, STy, Scalar, Un};
 use num_bigint::BigInt;
 
 /// The depth of a static candidate.
@@ -23,10 +23,10 @@ pub(super) enum Kind {
     Bool,
 }
 
-pub(super) fn kind(t: StaticTy) -> Kind {
+pub(super) fn kind(t: STy) -> Kind {
     match t {
-        StaticTy::Nat | StaticTy::Int => Kind::Int,
-        StaticTy::Bool => Kind::Bool,
+        STy::Nat | STy::Int => Kind::Int,
+        STy::Bool => Kind::Bool,
     }
 }
 
@@ -35,7 +35,7 @@ pub(super) fn kind(t: StaticTy) -> Kind {
 /// `comptime fn` body, where the sample check of the body covers calls).
 #[derive(Clone, Copy)]
 pub(super) struct Reach<'a> {
-    pub(super) names: &'a [(String, StaticTy)],
+    pub(super) names: &'a [(String, STy)],
     pub(super) fns: usize,
     pub(super) envs: Option<&'a [Env]>,
 }
@@ -244,7 +244,7 @@ impl Builder {
         let names: Vec<String> = r
             .names
             .iter()
-            .filter(|(_, t)| *t == StaticTy::Nat)
+            .filter(|(_, t)| *t == STy::Nat)
             .map(|(n, _)| n.clone())
             .collect();
         // Widths lean on `Nat` names, so that most candidates hold.
@@ -365,14 +365,14 @@ impl Builder {
 
     /// An argument for a parameter of type `t`: `Nat` in `1..=12`, `Int` in
     /// `-6..=6`, or a Bool, in each env.
-    pub(super) fn argument(&mut self, t: StaticTy, r: Reach<'_>, envs: &[Env]) -> SExpr {
+    pub(super) fn argument(&mut self, t: STy, r: Reach<'_>, envs: &[Env]) -> SExpr {
         let (lo, hi) = arg_range(t);
         self.position(
             kind(t),
             r,
             envs,
             |v| match t {
-                StaticTy::Bool => true,
+                STy::Bool => true,
                 _ => int_in(v, lo, hi),
             },
             |b| value_expr(&b.top_value(t)),
@@ -381,11 +381,11 @@ impl Builder {
     }
 
     /// A random value in the range of a parameter of type `t`.
-    pub(super) fn top_value(&mut self, t: StaticTy) -> Value {
+    pub(super) fn top_value(&mut self, t: STy) -> Value {
         match t {
-            StaticTy::Bool => Value::Bool(self.tape.flag()),
-            StaticTy::Nat => Value::Int(BigInt::from(self.tape.between(1, 12))),
-            StaticTy::Int => {
+            STy::Bool => Value::Bool(self.tape.flag()),
+            STy::Nat => Value::Int(BigInt::from(self.tape.between(1, 12))),
+            STy::Int => {
                 // 0, 1, -1, 2, -2, ...: choice 0 is the simplest.
                 let k = i64::from(self.tape.below(13));
                 let n = if k % 2 == 1 { (k + 1) / 2 } else { -(k / 2) };
@@ -397,11 +397,11 @@ impl Builder {
 
 /// The range of a module argument of type `t`. Port widths hold over
 /// the whole range, so every argument tuple gives valid ports.
-pub(super) fn arg_range(t: StaticTy) -> (i64, i64) {
+pub(super) fn arg_range(t: STy) -> (i64, i64) {
     match t {
-        StaticTy::Nat => (1, 12),
-        StaticTy::Int => (-6, 6),
-        StaticTy::Bool => (0, 1),
+        STy::Nat => (1, 12),
+        STy::Int => (-6, 6),
+        STy::Bool => (0, 1),
     }
 }
 
