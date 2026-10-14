@@ -273,6 +273,9 @@ mod tests_resources;
 mod tests_strings;
 
 #[cfg(test)]
+mod tests_structural;
+
+#[cfg(test)]
 mod tests_types;
 
 #[cfg(test)]

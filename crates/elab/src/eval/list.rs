@@ -72,7 +72,7 @@ impl Evaluator<'_> {
         let Held::List { elem, .. } = place.held else {
             return self.not_a_list(pos, g, &place);
         };
-        self.mutation(pos)?;
+        self.mutation(pos, place.id)?;
         let typed = self.typed_element(pos, expr_pos(x), elem, o)?;
         let (depth, size) = match &typed {
             Typed::Converted(v) => (v.depth(), v.size()),
@@ -137,7 +137,7 @@ impl Evaluator<'_> {
         if len == 0 {
             return fail(Code::S013, pos, "`pop` of an empty list".to_owned());
         }
-        self.mutation(pos)?;
+        self.mutation(pos, place.id)?;
         if self.store.is_held(place.root) || matches!(self.store.root(&place.root), Val::Agg(_)) {
             // The copies of the parked references come before the change, after both charges.
             // The read of the element walks the path once more, and the size of the root pays
