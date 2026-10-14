@@ -102,6 +102,51 @@ def modBody (s : String) : String := "module M(comptime W: Nat) {\n" ++ s ++ "\n
   "a `comptime fn` has no `:=`"
 #guard ok "comptime fn g(x: Nat) -> Nat {\nlet mut y = x;\ny = 1;\nreturn y;\n}"
 
+/-!
+`S005`: a static position names a memory: an index, the length of `[T; N]`, the condition of a
+`comptime if`, an `instance` argument, and the depth of a `mem`. The position is the name.
+-/
+#guard ok (modBody "mem m: [UInt[W]; W + 1];
+let x = m;")
+#guard fails (modBody "mem m: [Bool; 4];
+let x: [Bool; m] = 0;") .S005 3 15
+#guard fails (modBody "mem m: [Bool; 4];
+let x = [Bool; m]();") .S005 3 16
+#guard fails (modBody "mem m: [Bool; 4];
+let x: UInt[m] = 0;") .S005 3 13
+#guard fails (modBody "mem m: [Bool; 4];
+comptime if (m) {}") .S005 3 14
+#guard fails (modBody "mem m: [Bool; 4];
+instance u = M(m);") .S005 3 16
+#guard fails (modBody "wire w: UInt[8];
+mem m: [Bool; w];") .S005 3 15
+#guard fails (modBody "mem m: [Bool; 4];
+mem k: [UInt[m]; 4];") .S005 3 14
+#guard message (modBody "mem m: [Bool; 4];
+comptime if (m) {}") ==
+  "`m` is a memory; a static position needs a static value"
+
+/-! `S006`: a `comptime fn` has no `mem`, also in a nested block. -/
+#guard fails "comptime fn g() -> Nat {
+mem m: [Bool; 4];
+return 1;
+}" .S006 2 1
+#guard fails "comptime fn g() -> Nat {
+{ mem m: [Bool; 4]; }
+return 1;
+}" .S006 2 3
+#guard message "comptime fn g() -> Nat {
+mem m: [Bool; 4];
+return 1;
+}" ==
+  "a `comptime fn` has no memory"
+#guard fails "comptime fn g() -> Nat {
+mem m: [Bool; 4];
+comptime if (m) {}
+return 1;
+}"
+  .S006 2 1
+
 /-! `S007`: a call has the number of arguments of its declaration. The position is the call. -/
 #guard fails "fn g(x: Nat) -> Nat { return x; }\nconst N: Nat = g(1, 2);" .S007 2 16
 #guard fails "fn g(x: Nat) -> Nat { return x; }\nconst N: Nat = g();" .S007 2 16

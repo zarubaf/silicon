@@ -440,6 +440,34 @@ module is not a value.
 #guard fails "const f: Nat = 1;\nfn f() -> Bool { let x = true; let x = true; return x; }"
   .S002 2 4
 
+/-! The first statement of the body of the first module. -/
+def firstStmt (s : String) : Option Resolve.Stmt :=
+  match run s with
+  | .ok items =>
+    match items[0]? with
+    | some (Resolve.Item.module _ _ _ _ b) => b.head?
+    | _ => none
+  | .error _ => none
+
+/-!
+A `mem` declares its name as a local after `clock` and the parameters. Its word type and its
+depth see only the earlier declarations.
+-/
+#guard ok (modBody "mem m: [UInt[W]; W + 1];
+let x = m;")
+#guard match firstStmt (modBody "mem m: [UInt[W]; 4];") with
+  | some (.mem _ b (.index _ (.name _ _ (.type .uint)) [.name _ _ (.local 1)]) (.num _ 4)) =>
+    b.name.name == "m" && b.id == 2
+  | _ => false
+#guard fails (modBody "mem m: [T; 4];") .S003 2 9
+#guard fails (modBody "mem m: [Bool; n];") .S003 2 15
+#guard fails (modBody "mem m: [Bool; m];") .S003 2 15
+#guard fails (modBody "wire m: Bool;
+mem m: [Bool; 4];") .S002 3 5
+#guard fails (modBody "mem m: [Bool; 4];
+let m = 1;") .S002 3 5
+#guard fails (modBody "mem W: [Bool; 4];") .S002 2 5
+
 /-! Pass 2 comes before pass 3: an `S002` wins over an earlier `S003`. -/
 #guard fails "fn f() -> Bool { return q; }\nconst f: Nat = 1;" .S002 2 7
 #guard fails (fnBody "let y = q;\nlet y = p;\nreturn y;") .S002 3 5
