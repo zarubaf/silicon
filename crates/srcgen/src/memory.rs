@@ -171,6 +171,7 @@ fn block<'a>(
         } = s
             && reg.text != data
             && !claimed.contains(&reg.text.as_str())
+            && resets_to_zero(m, &reg.text, 1)
             && same(lhs, read_en)?
             && in_range(rhs)?
         {
@@ -182,7 +183,7 @@ fn block<'a>(
     let Some(&valid) = valids.first() else {
         return Err(bad());
     };
-    if !resets_to_zero(m, data, width) || !resets_to_zero(m, valid, 1) {
+    if !resets_to_zero(m, data, width) {
         return Err(bad());
     }
     Ok(Memory {
@@ -384,6 +385,22 @@ mod tests {
         let text = lifted(&two).unwrap();
         assert!(text.contains("mem mem1: [UInt[8]; 4];"), "{text}");
         assert!(!text.contains("reg "), "{text}");
+    }
+
+    #[test]
+    fn an_unrelated_register_with_the_same_next_is_not_the_valid_register() {
+        let decoy =
+            "(reg x (bits 1) clk (reset sync rst (const 1 1))) (next x (and re (const 1 1)))";
+        let ok = module(8, 4, "ra", "");
+        // Before the real valid register.
+        let before = ok.replace("(reg d0 ", &format!("{decoy} (reg d0 "));
+        // After the real valid register.
+        let after = ok.replace("(assign od d0)", &format!("{decoy} (assign od d0)"));
+        for core in [before, after] {
+            let text = lifted(&core).unwrap();
+            assert!(text.contains("mem mem0:"), "{text}");
+            assert!(text.contains("reg x"), "{text}");
+        }
     }
 
     #[test]
