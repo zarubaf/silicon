@@ -720,15 +720,6 @@ impl Types {
         self.entries.get(t.index)?.text_len.get().copied()
     }
 
-    /// Computes the length of each type that `v` holds.
-    pub fn measure(&mut self, v: &Value) {
-        let mut held = Vec::new();
-        held_types(v, &mut held);
-        for t in held {
-            let _ = self.text_len(t);
-        }
-    }
-
     #[must_use]
     pub fn serialize(&self, t: TyId) -> String {
         let mut out = String::new();

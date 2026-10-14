@@ -137,7 +137,7 @@ fn the_function_value() {
         id.serialize(&tys),
         "(instantiation root Map ((function root inc)))"
     );
-    assert_eq!(inc.serialized_len(&mut tys), 19);
+    assert_eq!(inc.serialized_len(&tys), 19);
     assert!(inc.holds_fn() && tuple.holds_fn() && list.holds_fn());
     assert!(!Value::tuple(vec![Value::Bool(true)]).holds_fn());
 }
