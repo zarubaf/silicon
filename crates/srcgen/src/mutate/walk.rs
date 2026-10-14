@@ -3,6 +3,7 @@
 
 use super::super::program::sexpr as sexpr_text;
 use super::super::program::{FieldTy, HBin, HExpr, Item, Place, Radix, SBin, SExpr, STy, Stmt, Ty};
+use super::uses::{self, Callees};
 use super::{Effect, Hit, Kind};
 use num_bigint::BigInt;
 use std::mem;
@@ -22,6 +23,12 @@ pub(super) struct Walk<'a> {
     /// arguments at run time (pass 5), so an arity change in dead code stays
     /// unseen.
     values: Vec<String>,
+    /// The function values whose first formal is a `mut` list.
+    list_values: Vec<String>,
+    /// The helpers with a `mut` first formal.
+    mut_helpers: Vec<String>,
+    /// The static `let mut` roots in scope, with their types.
+    scope: Vec<(String, STy)>,
     /// Whether the site being walked always runs: it is in the top frame of
     /// a module, and in no lazy operand or branch.
     always: bool,
@@ -42,6 +49,9 @@ impl<'a> Walk<'a> {
             hit: None,
             names: Vec::new(),
             values: Vec::new(),
+            list_values: Vec::new(),
+            mut_helpers: Vec::new(),
+            scope: Vec::new(),
             always: false,
             item: String::new(),
             index: 0,
@@ -64,6 +74,8 @@ impl<'a> Walk<'a> {
 
     pub(super) fn items(&mut self, items: &mut Vec<Item>) {
         self.values = function_values(items);
+        self.list_values = list_values(items);
+        self.mut_helpers = mut_helpers(items);
         let mut i = 0;
         while let Some(item) = items.get(i) {
             let name = item_name(item).to_owned();
@@ -92,6 +104,7 @@ impl<'a> Walk<'a> {
 
     fn item_body(&mut self, item: &mut Item) {
         self.always = false;
+        self.scope.clear();
         match item {
             Item::Const { value, .. } => self.sexpr(value),
             Item::HwFnValue { .. } => {}
@@ -141,6 +154,7 @@ impl<'a> Walk<'a> {
     }
 
     fn stmts_in(&mut self, body: &mut Vec<Stmt>, top: bool) {
+        let mark = self.scope.len();
         let mut i = 0;
         while let Some(s) = body.get(i) {
             self.stmt += 1;
@@ -161,14 +175,33 @@ impl<'a> Walk<'a> {
                 self.hit(what, Effect::Code(Some("S002")));
                 return;
             }
+            if let Some(root) = mut_root(s)
+                && self.site(Kind::Immutable)
+            {
+                let callees = Callees {
+                    mut_helpers: &self.mut_helpers,
+                    values: &self.values,
+                };
+                let code = uses::of(root, body.get(i + 1..).unwrap_or_default(), &callees).code();
+                let what = format!("make {root} immutable in {}", self.item);
+                if let Some(s) = body.get_mut(i) {
+                    freeze(s);
+                }
+                self.hit(what, Effect::Code(code));
+                return;
+            }
             if let Some(s) = body.get_mut(i) {
                 self.stmt_parts(s);
+                if let Stmt::MutLet(n, t, _) = s {
+                    self.scope.push((n.clone(), t.clone()));
+                }
             }
             if self.hit.is_some() {
                 return;
             }
             i += 1;
         }
+        self.scope.truncate(mark);
     }
 
     fn stmt_parts(&mut self, s: &mut Stmt) {
@@ -193,13 +226,20 @@ impl<'a> Walk<'a> {
                 self.sexpr(v);
             }
             Stmt::PopLet(_, list) => self.rename(list),
-            Stmt::MutCall { root, f, args, .. } => {
+            Stmt::MutCall {
+                root,
+                f,
+                args,
+                receiver,
+                ..
+            } => {
                 self.rename(root);
                 self.rename(f);
                 self.args(f, args, zero());
-                for a in args {
+                for a in args.iter_mut() {
                     self.sexpr(a);
                 }
+                self.window(root, f, args, *receiver);
             }
             Stmt::Assign(n, v) => {
                 self.rename(n);
@@ -240,6 +280,36 @@ impl<'a> Walk<'a> {
         let outer = mem::replace(&mut self.always, false);
         walk(self);
         self.always = outer;
+    }
+
+    /// The sites of `Window` and `ValueWindow`: an argument of a call on a
+    /// list root becomes `root.pop()`. The mutant is printed and never
+    /// walked again, so the pop is a name of the printer.
+    fn window(&mut self, root: &str, f: &str, args: &mut [SExpr], receiver: bool) {
+        let is_list = |scope: &[(String, STy)]| {
+            scope
+                .iter()
+                .rev()
+                .find(|(n, _)| n == root)
+                .is_some_and(|(_, t)| matches!(t, STy::List(_)))
+        };
+        let through_value = self.list_values.iter().any(|v| v == f);
+        let (kind, code) = match (receiver, through_value) {
+            (true, false) => (Kind::Window, Some("S008")),
+            (false, true) => (Kind::ValueWindow, self.always.then_some("S008")),
+            _ => return,
+        };
+        if !is_list(&self.scope) {
+            return;
+        }
+        for (i, arg) in args.iter_mut().enumerate() {
+            if self.site(kind) {
+                *arg = SExpr::Name(format!("{root}.pop()"));
+                let what = format!("pop {root} in argument {} of {f} in {}", i + 1, self.item);
+                self.hit(what, Effect::Code(code));
+                return;
+            }
+        }
     }
 
     fn rename(&mut self, name: &mut String) {
@@ -426,6 +496,60 @@ fn function_values(items: &[Item]) -> Vec<String> {
         }
     }
     names
+}
+
+/// The consts of a function type whose first formal is a `mut` list.
+fn list_values(items: &[Item]) -> Vec<String> {
+    items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Const {
+                name,
+                ty: STy::Fn(f),
+                ..
+            } if matches!(f.params.first(), Some((true, STy::List(_)))) => Some(name.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The helpers with a `mut` first formal.
+fn mut_helpers(items: &[Item]) -> Vec<String> {
+    items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Helper {
+                name,
+                mut_first: true,
+                ..
+            } => Some(name.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The name of a `let mut` root: static or hardware.
+fn mut_root(s: &Stmt) -> Option<&str> {
+    match s {
+        Stmt::MutLet(n, ..)
+        | Stmt::Let {
+            name: n,
+            mutable: true,
+            ..
+        } => Some(n),
+        _ => None,
+    }
+}
+
+/// Makes a `let mut` a `let`.
+fn freeze(s: &mut Stmt) {
+    match s {
+        Stmt::MutLet(n, t, v) => {
+            *s = Stmt::StaticLet(mem::take(n), t.clone(), v.clone());
+        }
+        Stmt::Let { mutable, .. } => *mutable = false,
+        _ => {}
+    }
 }
 
 fn item_name(item: &Item) -> &str {

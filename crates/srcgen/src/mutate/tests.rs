@@ -680,10 +680,202 @@ fn fault_in_a_diagnostic_value_predicts_nothing() {
     assert_eq!(m.expect, None);
 }
 
+fn list_ty() -> STy {
+    STy::List(Box::new(STy::Int))
+}
+
+fn mut_let(n: &str) -> Stmt {
+    Stmt::MutLet(n.to_owned(), list_ty(), SExpr::NewList(STy::Int))
+}
+
+fn mut_call(n: &str, root: &str, f: &str, receiver: bool) -> Stmt {
+    Stmt::MutCall {
+        name: n.to_owned(),
+        root: root.to_owned(),
+        f: f.to_owned(),
+        args: vec![dec(1)],
+        receiver,
+    }
+}
+
+/// `slice_two` with the body of `M0` replaced by `body`, after the output.
+fn slice_two_with(body: Vec<Stmt>) -> Program {
+    let mut items = slice_two_items();
+    let mut stmts = vec![Stmt::Output("o0".to_owned(), Ty::Bool)];
+    stmts.extend(body);
+    stmts.push(connect("o0", HExpr::Static(SExpr::Bool(false))));
+    items.push(module("M0", stmts));
+    of(items)
+}
+
+#[test]
+fn immutable_predicts_s008_where_a_named_mut_actual_uses_the_root() {
+    let p = slice_two();
+    let m = find(&p, Kind::Immutable, "let s0: List[Int] = list(Int);");
+    assert_eq!(m.expect, Some("S008"));
+    assert_eq!(m.what, "make s0 immutable in M0");
+    assert_eq!(m.text, p.text().replace("let mut s0", "let s0"));
+    // A `push` is a named `mut` actual too.
+    let p = slice_two_with(vec![mut_let("s0"), Stmt::Push("s0".to_owned(), dec(2))]);
+    assert_eq!(all(&p, Kind::Immutable)[0].expect, Some("S008"));
+    // A `pop` and a receiver call are.
+    let p = slice_two_with(vec![
+        mut_let("s0"),
+        Stmt::PopLet("s1".to_owned(), "s0".to_owned()),
+    ]);
+    assert_eq!(all(&p, Kind::Immutable)[0].expect, Some("S008"));
+    let p = slice_two_with(vec![mut_let("s0"), mut_call("s1", "s0", "k0", true)]);
+    assert_eq!(all(&p, Kind::Immutable)[0].expect, Some("S008"));
+}
+
+#[test]
+fn immutable_predicts_nothing_where_pass_four_cannot_see_the_mutation() {
+    // No mutation: the mutant is accepted.
+    let p = slice_two_with(vec![mut_let("s0")]);
+    assert_eq!(all(&p, Kind::Immutable)[0].expect, None);
+    // The only mutation is a call through a function value.
+    let p = slice_two_with(vec![mut_let("s0"), mut_call("s1", "s0", "F0", false)]);
+    assert_eq!(all(&p, Kind::Immutable)[0].expect, None);
+    // Each root has its own mutations.
+    let p = slice_two_with(vec![
+        mut_let("s0"),
+        mut_call("s1", "s0", "F0", false),
+        mut_let("s2"),
+        mut_call("s3", "s2", "k0", false),
+    ]);
+    let m = all(&p, Kind::Immutable);
+    assert_eq!(
+        m.iter().map(|m| m.expect).collect::<Vec<_>>(),
+        [None, Some("S008")]
+    );
+}
+
+/// `fn g0(mut a0: UInt[8], x1: UInt[8]) -> UInt[8] { a0 = x1; a0 }` and a
+/// module that declares `let mut v0` and then `body`.
+fn hardware_root(body: Vec<Stmt>) -> Program {
+    let helper = Item::Helper {
+        name: "g0".to_owned(),
+        params: vec![("a0".to_owned(), u8()), ("x1".to_owned(), u8())],
+        mut_first: true,
+        ret: u8(),
+        body: vec![Stmt::Assign("a0".to_owned(), name("x1"))],
+        result: name("a0"),
+    };
+    let mut stmts = ports_then(vec![Stmt::Let {
+        name: "v0".to_owned(),
+        mutable: true,
+        ty: Some(u8()),
+        value: name("i0"),
+    }]);
+    stmts.extend(body);
+    stmts.push(connect("o0", name("v0")));
+    of(vec![helper, module("M0", stmts)])
+}
+
+fn let_of(n: &str, value: HExpr) -> Stmt {
+    Stmt::Let {
+        name: n.to_owned(),
+        mutable: false,
+        ty: None,
+        value,
+    }
+}
+
+#[test]
+fn immutable_of_a_hardware_root_follows_its_mutations() {
+    let call = HExpr::Call("g0".to_owned(), vec![name("v0"), name("i0")]);
+    let p = hardware_root(vec![let_of("l0", call)]);
+    let m = find(&p, Kind::Immutable, "let v0: UInt[8] = i0;");
+    assert_eq!(m.expect, Some("S008"));
+    let recv = HExpr::Receiver(Box::new(name("v0")), "g0".to_owned(), vec![name("i0")]);
+    let p = hardware_root(vec![let_of("l0", recv)]);
+    assert_eq!(
+        find(&p, Kind::Immutable, "let v0: UInt[8] = i0;").expect,
+        Some("S008")
+    );
+    // An assignment to an immutable root has another code.
+    let assign = Stmt::Assign("v0".to_owned(), name("i0"));
+    let call = HExpr::Call("g0".to_owned(), vec![name("v0"), name("i0")]);
+    let p = hardware_root(vec![assign, let_of("l0", call)]);
+    assert_eq!(
+        find(&p, Kind::Immutable, "let v0: UInt[8] = i0;").expect,
+        None
+    );
+    // A read of the root is no mutation.
+    let p = hardware_root(vec![let_of("l0", name("v0"))]);
+    assert_eq!(
+        find(&p, Kind::Immutable, "let v0: UInt[8] = i0;").expect,
+        None
+    );
+    // The helper takes the root as its second formal: a read.
+    let read = HExpr::Call("g0".to_owned(), vec![name("i0"), name("v0")]);
+    let p = hardware_root(vec![let_of("l0", read)]);
+    assert_eq!(
+        find(&p, Kind::Immutable, "let v0: UInt[8] = i0;").expect,
+        None
+    );
+}
+
+#[test]
+fn window_predicts_s008_for_a_pop_of_the_receiver() {
+    let p = slice_two();
+    assert_eq!(sites(Kind::Window, &p.items, &p.top), 1);
+    let m = find(&p, Kind::Window, "s0.k0(s0.pop())");
+    assert_eq!(m.expect, Some("S008"));
+    assert_eq!(m.what, "pop s0 in argument 1 of k0 in M0");
+    assert_eq!(m.text, p.text().replace("s0.k0(1)", "s0.k0(s0.pop())"));
+    // Pass 4 reports it in dead code too.
+    let call = mut_call("s1", "s0", "k0", true);
+    let p = slice_two_with(vec![
+        mut_let("s0"),
+        Stmt::If(SExpr::Bool(false), vec![call], None),
+    ]);
+    assert_eq!(all(&p, Kind::Window)[0].expect, Some("S008"));
+}
+
+#[test]
+fn window_has_no_site_on_an_integer_root_or_a_plain_call() {
+    let int_root = Stmt::MutLet("s0".to_owned(), STy::Int, dec(0));
+    let p = slice_two_with(vec![int_root, mut_call("s1", "s0", "k1", true)]);
+    assert_eq!(sites(Kind::Window, &p.items, &p.top), 0);
+    let p = slice_two_with(vec![mut_let("s0"), mut_call("s1", "s0", "k0", false)]);
+    assert_eq!(sites(Kind::Window, &p.items, &p.top), 0);
+    // The root of a `let` is not in scope before its declaration.
+    let p = slice_two_with(vec![mut_call("s1", "s0", "k0", true), mut_let("s0")]);
+    assert_eq!(sites(Kind::Window, &p.items, &p.top), 0);
+}
+
+#[test]
+fn value_window_predicts_s008_where_the_call_always_runs() {
+    let p = slice_two();
+    assert_eq!(sites(Kind::ValueWindow, &p.items, &p.top), 1);
+    let m = find(&p, Kind::ValueWindow, "F0(s0, s0.pop())");
+    assert_eq!(m.expect, Some("S008"));
+    assert_eq!(m.what, "pop s0 in argument 1 of F0 in M0");
+    // Where the call may not run, pass 5 may never see the window.
+    let call = || mut_call("s1", "s0", "F0", false);
+    for inner in [
+        Stmt::If(SExpr::Bool(false), vec![call()], None),
+        Stmt::For("j0".to_owned(), dec(0), dec(0), vec![call()]),
+        Stmt::Block(vec![call()]),
+    ] {
+        let p = slice_two_with(vec![mut_let("s0"), inner]);
+        let m = &all(&p, Kind::ValueWindow)[0];
+        assert!(m.text.contains("F0(s0, s0.pop())"));
+        assert_eq!(m.expect, None);
+    }
+}
+
+#[test]
+fn value_window_has_no_site_on_a_named_call() {
+    let p = slice_two_with(vec![mut_let("s0"), mut_call("s1", "s0", "k0", false)]);
+    assert_eq!(sites(Kind::ValueWindow, &p.items, &p.top), 0);
+}
+
 #[test]
 fn mutation_is_deterministic() {
     let p = program();
-    for kind in 0..8 {
+    for kind in 0..11 {
         assert_eq!(mutate(&p, kind, 11), mutate(&p, kind, 11));
     }
 }
