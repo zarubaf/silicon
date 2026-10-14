@@ -213,9 +213,6 @@ fn ascending_sum(mut terms: Vec<&Int>, start: u64, touched: &mut u64) -> Int {
 /// One type of the table with its metadata.
 struct Entry {
     ty: Ty,
-    /// The length in bytes of the serialization, computed when the type is made, from the
-    /// stored lengths of its parts. It holds the decimal form of each integer in the type.
-    text_len: u64,
     meta: Meta,
     /// The depth of the zero value of the type, from the type alone (section 5.5).
     zero_depth: u64,
@@ -464,12 +461,8 @@ impl Types {
             funcs,
         };
         let zero_depth = self.zero_depth_of(&ty, depth);
-        // The parts of the type are in the table, so the walk stops at each part.
-        let mut len = Len::default();
-        serial::write(self, Item::Node(&ty), &mut len);
         self.entries.push(Entry {
             ty: ty.clone(),
-            text_len: len.0,
             meta,
             zero_depth,
             prefix,
@@ -650,11 +643,12 @@ impl Types {
         }
     }
 
-    /// The length in bytes of the serialization of `t`, stored when the type was made, so no
-    /// text unfolds a type. An id that the table does not hold has none.
+    /// The length in bytes of the serialization of `t`, if the table holds `t`. It computes
+    /// the length of each part once, and no text of a type is built.
     #[must_use]
     pub fn text_len(&self, t: TyId) -> Option<u64> {
-        self.entries.get(t.index).map(|e| e.text_len)
+        self.entries.get(t.index)?;
+        Some(Len::default().type_len(self, t))
     }
 
     #[must_use]

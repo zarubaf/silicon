@@ -745,6 +745,8 @@ struct Evaluator<'a> {
     calls: Vec<(usize, Pos)>,
     /// The shared name of each domain that a read named.
     domains: BTreeMap<DeclId, Arc<str>>,
+    /// The lengths of the types and the powers of ten that the records measured.
+    lens: crate::serial::Cache,
 }
 
 /// The kind of a guard (section 9.4): a hardware arm or a structural context.
@@ -924,6 +926,7 @@ impl<'a> Evaluator<'a> {
             inst: Arc::from("-"),
             calls: Vec::new(),
             domains: BTreeMap::new(),
+            lens: crate::serial::Cache::default(),
         }
     }
 }

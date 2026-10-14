@@ -6,6 +6,7 @@
 use core_ir::Bits;
 use num_bigint::{BigInt, BigUint, Sign};
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
@@ -77,7 +78,14 @@ impl Int {
     /// comparison with that power. Thus a large value costs no conversion to decimal.
     #[must_use]
     pub fn decimal_len(&self) -> u64 {
-        u64::from(self.is_negative()) + digits(self.0.magnitude())
+        self.decimal_len_with(&mut Pow10::new())
+    }
+
+    /// `decimal_len` with the powers of ten of `pow`: a value near a power of ten builds that
+    /// power once, and a later value with the same digit count finds it.
+    #[must_use]
+    pub(crate) fn decimal_len_with(&self, pow: &mut Pow10) -> u64 {
+        u64::from(self.is_negative()) + digits(self.0.magnitude(), pow)
     }
 
     /// The value, if it is from 0 to `u64::MAX`.
@@ -248,13 +256,35 @@ pub fn unsigned_size(x: &Bits) -> u64 {
 /// `log10(2)`.
 const LOG10_2: f64 = std::f64::consts::LOG10_2;
 
+/// The powers of ten that the exact check of a digit count built, by exponent.
+pub(crate) type Pow10 = BTreeMap<u64, BigUint>;
+
+/// `10^e`, built once for each exponent by squaring.
+fn pow10(e: u64, pow: &mut Pow10) -> &BigUint {
+    pow.entry(e).or_insert_with(|| {
+        #[cfg(test)]
+        crate::counters::add(crate::counters::Count::Powered, 1);
+        let (mut result, mut base, mut rest) = (BigUint::from(1u32), BigUint::from(10u32), e);
+        while rest > 0 {
+            if rest & 1 == 1 {
+                result *= &base;
+            }
+            rest >>= 1;
+            if rest > 0 {
+                base = &base * &base;
+            }
+        }
+        result
+    })
+}
+
 /// The number of decimal digits of `m`, and 1 for 0.
 #[allow(
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss
 )]
-fn digits(m: &BigUint) -> u64 {
+fn digits(m: &BigUint, pow: &mut Pow10) -> u64 {
     let bits = m.bits();
     if bits <= 64 {
         let v = u64::try_from(m).unwrap_or(0);
@@ -272,20 +302,15 @@ fn digits(m: &BigUint) -> u64 {
     if fraction > slack && fraction < 1.0 - slack {
         return estimate as u64 + 1;
     }
-    // Too near a power of ten: `10^e <= m < 10^(e + 1)` for the exponent `e` that holds.
-    let ten = BigUint::from(10u32);
+    // Too near a power of ten for the estimate. The exponent `e` with `10^e <= m < 10^(e + 1)`
+    // takes comparisons with exact powers, for any exponent: the estimate only starts the search.
+    // One power of ten serves both bounds, so a run of values near one boundary builds one.
     let mut e = estimate as u64;
-    let Ok(exp) = u32::try_from(e) else {
-        return e + 1;
-    };
-    let mut power = ten.pow(exp);
-    while *m < power && e > 0 {
+    while e > 0 && *m < *pow10(e, pow) {
         e -= 1;
-        power /= &ten;
     }
-    while *m >= &power * &ten {
+    while *m >= pow10(e, pow) * 10u32 {
         e += 1;
-        power *= &ten;
     }
     e + 1
 }

@@ -84,6 +84,8 @@ pub(crate) struct Counts {
     pub unfolded: u64,
     /// The bytes of the decimal form of the integers that a run formatted.
     pub formatted: u64,
+    /// The powers of ten that the exact check of a digit count built.
+    pub powered: u64,
 }
 
 /// What a counter counts.
@@ -122,6 +124,7 @@ pub(crate) enum Count {
     Copied,
     Unfolded,
     Formatted,
+    Powered,
 }
 
 static COUNTS: Mutex<BTreeMap<u64, Counts>> = Mutex::new(BTreeMap::new());
@@ -193,6 +196,7 @@ pub(crate) fn add(count: Count, n: u64) {
             Count::Copied => &mut c.copied,
             Count::Unfolded => &mut c.unfolded,
             Count::Formatted => &mut c.formatted,
+            Count::Powered => &mut c.powered,
         };
         *field += n;
     }
