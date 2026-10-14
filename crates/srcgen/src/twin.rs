@@ -402,6 +402,8 @@ impl Writer<'_> {
                 }
             }
             Stmt::Error(_) => out.push(s.clone()),
+            // The twin compares outputs only; a record is no output.
+            Stmt::Diagnostic(..) => {}
             Stmt::Block(body) => out.push(self.block(body, fr, fr.env.clone(), fr.suffix.clone())),
         }
     }
@@ -480,6 +482,7 @@ mod tests {
                 outputs: Vec::new(),
             },
             probe: (int(0), Value::Int(BigInt::ZERO)),
+            records: Vec::new(),
         }
     }
 

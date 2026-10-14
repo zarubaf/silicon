@@ -246,6 +246,9 @@ impl<'a> Walk<'a> {
             Item::MutFn(f) => {
                 self.sexpr(&mut f.update);
                 self.sexpr(&mut f.ret);
+                if let Some((_, value)) = &mut f.diag {
+                    self.sexpr(value);
+                }
             }
             Item::Struct(def) => {
                 for (_, t) in &mut def.fields {
@@ -321,7 +324,10 @@ impl<'a> Walk<'a> {
                 }
                 self.hexpr(value);
             }
-            Stmt::StaticLet(_, _, v) | Stmt::MutLet(_, _, v) | Stmt::Assert(v, _) => self.sexpr(v),
+            Stmt::StaticLet(_, _, v)
+            | Stmt::MutLet(_, _, v)
+            | Stmt::Assert(v, _)
+            | Stmt::Diagnostic(_, v) => self.sexpr(v),
             Stmt::Push(list, v) => {
                 self.rename(list);
                 self.sexpr(v);
@@ -627,6 +633,7 @@ mod tests {
                 outputs: vec![],
             },
             probe: (dec(0), Value::Int(BigInt::from(0))),
+            records: Vec::new(),
         }
     }
 

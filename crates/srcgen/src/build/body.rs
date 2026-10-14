@@ -368,13 +368,14 @@ impl Builder {
         let mut instances = 0;
         for _ in 0..self.tape.below(max + 1) {
             let nested = level < NESTING;
-            match self.tape.below(17) {
+            match self.tape.below(18) {
                 1 => self.static_let(ctx, &mut m.names, &mut out)?,
                 12 => self.list_let(ctx, &mut m.names, &mut out)?,
                 13 => self.push_stmt(ctx, &mut out),
                 14 => self.pop_stmt(ctx, &mut m.names, &mut out),
                 15 => self.static_mut_call(ctx, &mut m.names, &mut out)?,
                 16 => self.hw_mut_call(ctx, m, &mut out)?,
+                17 => self.diagnostic(ctx, &mut out),
                 2 => self.binding(ctx, &mut m.names, &mut out, true)?,
                 3 => self.assign(ctx, &mut m.names, &mut out)?,
                 4 => self.wire(ctx, &mut m.names, &mut out)?,

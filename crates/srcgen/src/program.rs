@@ -281,6 +281,8 @@ pub(crate) enum Stmt {
     /// A block `{ ... }`. The twin writes a selected `comptime if` branch
     /// and each iteration of a `comptime for` as one.
     Block(Vec<Stmt>),
+    /// `diagnostic("dK", value);` of a static value, in a module body.
+    Diagnostic(String, SExpr),
 }
 
 /// A `comptime fn` that builds a list:
@@ -309,6 +311,10 @@ pub(crate) struct ListFn {
 /// comptime fn name(mut a0: Int, x1: Int) -> Int { a0 = update; return ret; }
 /// comptime fn name(mut a0: List[Int], x1: Int) -> Int { a0.push(update); return ret; }
 /// ```
+///
+/// A function with `diag` has `diagnostic(message, value);` before its
+/// `return`. It is effectful (9.4): a call stands only at a statement of a
+/// module body.
 #[derive(Clone, Debug)]
 pub(crate) struct MutFn {
     pub(crate) name: String,
@@ -318,6 +324,9 @@ pub(crate) struct MutFn {
     pub(crate) update: SExpr,
     /// The result. It reads `x1`, and `a0` after the update.
     pub(crate) ret: SExpr,
+    /// The message and the static value of the record that a call makes.
+    /// The value reads `x1`, and `a0` after the update.
+    pub(crate) diag: Option<(String, SExpr)>,
 }
 
 /// The type of a field in the declaration of a struct.
@@ -413,6 +422,7 @@ pub struct Program {
     pub(crate) args: Vec<Value>,
     pub(crate) ports: Ports,
     pub(crate) probe: (SExpr, Value),
+    pub(crate) records: Vec<String>,
 }
 
 impl Program {
@@ -432,6 +442,15 @@ impl Program {
     #[must_use]
     pub fn ports(&self) -> &Ports {
         &self.ports
+    }
+
+    /// The tail of each observation record that `observe` prints, in the
+    /// order of the modules: the message and the value, for example
+    /// `(string "d0") (int 5)`. Compare the multiset of the tails, not the
+    /// order.
+    #[must_use]
+    pub fn records(&self) -> &[String] {
+        &self.records
     }
 
     /// The `eval` expression of the file scope and its serialization.
@@ -567,6 +586,13 @@ fn render_mut_fn(out: &mut String, f: &MutFn) {
         STy::Int => line(out, 1, &format!("a0 = {};", sexpr(&f.update))),
         _ => line(out, 1, &format!("a0.push({});", sexpr(&f.update))),
     }
+    if let Some((message, value)) = &f.diag {
+        line(
+            out,
+            1,
+            &format!("diagnostic({}, {});", string(message), sexpr(value)),
+        );
+    }
     line(out, 1, &format!("return {};", sexpr(&f.ret)));
     line(out, 0, "}");
 }
@@ -681,6 +707,7 @@ fn stmt(out: &mut String, depth: usize, s: &Stmt) {
         }
         Stmt::Assert(c, m) => format!("static_assert({}, {});", sexpr(c), string(m)),
         Stmt::Error(m) => format!("error({});", string(m)),
+        Stmt::Diagnostic(m, v) => format!("diagnostic({}, {});", string(m), sexpr(v)),
         Stmt::Block(body) => {
             line(out, depth, "{");
             stmts(out, depth + 1, body);
@@ -1051,6 +1078,7 @@ pub(crate) mod tests {
                 SExpr::Call("f0".to_owned(), vec![dec(2), dec(-1)]),
                 Value::Int(BigInt::from(-3)),
             ),
+            records: Vec::new(),
         }
     }
 
@@ -1217,12 +1245,14 @@ module M1(comptime P0: Nat) domains() {
             root: STy::Int,
             update: SExpr::Binary(SBin::Add, Box::new(sname("a0")), Box::new(sname("x1"))),
             ret: sname("a0"),
+            diag: None,
         });
         let by_list = Item::MutFn(MutFn {
             name: "k1".to_owned(),
             root: STy::List(Box::new(STy::Int)),
             update: sname("x1"),
             ret: SExpr::Len(Box::new(sname("a0"))),
+            diag: Some(("d0".to_owned(), sname("x1"))),
         });
         let helper = Item::Helper {
             name: "g0".to_owned(),
@@ -1234,7 +1264,7 @@ module M1(comptime P0: Nat) domains() {
         };
         assert_eq!(
             render_items(&[by_int, by_list, helper]),
-            "comptime fn k0(mut a0: Int, x1: Int) -> Int {\n    a0 = (a0 + x1);\n    return a0;\n}\ncomptime fn k1(mut a0: List[Int], x1: Int) -> Int {\n    a0.push(x1);\n    return len(a0);\n}\nfn g0(mut a0: UInt[8], x1: Bool) -> Bool {\n    a0 = a0;\n    return x1;\n}\n"
+            "comptime fn k0(mut a0: Int, x1: Int) -> Int {\n    a0 = (a0 + x1);\n    return a0;\n}\ncomptime fn k1(mut a0: List[Int], x1: Int) -> Int {\n    a0.push(x1);\n    diagnostic(\"d0\", x1);\n    return len(a0);\n}\nfn g0(mut a0: UInt[8], x1: Bool) -> Bool {\n    a0 = a0;\n    return x1;\n}\n"
         );
         let call = |receiver| Stmt::MutCall {
             name: "s1".to_owned(),

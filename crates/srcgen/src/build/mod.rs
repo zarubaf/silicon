@@ -34,6 +34,7 @@ macro_rules! note {
 
 mod body;
 mod container;
+mod diagnostics;
 mod file;
 mod fnvalues;
 mod hw;
@@ -51,6 +52,7 @@ use super::eval::{Env, Fault, Scope, Value, concrete};
 use super::program::{
     ComptimeFn, HExpr, Item, ListFn, MutFn, Ports, Program, SExpr, STy, Scalar, Stmt, StructDef, Ty,
 };
+use super::records::records;
 use proptest::collection::vec;
 use proptest::prelude::*;
 use stat::Reach;
@@ -333,6 +335,9 @@ struct Stats {
     mut_value_calls: u32,
     hw_value_calls: u32,
     fn_arguments: u32,
+    diagnostics: u32,
+    effectful_fns: u32,
+    effectful_calls: u32,
 }
 
 struct Builder {
@@ -350,6 +355,8 @@ struct Builder {
     bodies: Vec<Option<Vec<Stmt>>>,
     /// The distinct argument tuples of each module.
     contexts: Vec<Vec<Vec<Value>>>,
+    /// The messages `d<n>` made so far.
+    messages: u32,
     scope: Scope,
     #[cfg(test)]
     stats: Stats,
@@ -372,6 +379,7 @@ impl Builder {
             sigs: Vec::new(),
             bodies: Vec::new(),
             contexts: Vec::new(),
+            messages: 0,
             scope: Scope::default(),
             #[cfg(test)]
             stats: Stats::default(),
@@ -405,12 +413,20 @@ impl Builder {
         let probe = self.probe();
         let items = self.items();
         let ports = ports(&items, "M0", &args)?;
+        let named: Vec<(String, Vec<Vec<Value>>)> = self
+            .sigs
+            .iter()
+            .zip(&self.contexts)
+            .map(|(s, c)| (s.name.clone(), c.clone()))
+            .collect();
+        let records = records(&items, &named)?;
         Ok(Program {
             items,
             top: "M0".to_owned(),
             args,
             ports,
             probe,
+            records,
         })
     }
 
