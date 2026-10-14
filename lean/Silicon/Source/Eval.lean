@@ -1221,10 +1221,11 @@ mutual
   deeper. A literal with `[]` takes the type of its parameter there, as a module argument does.
   The typed uses give the key of the table. The first use evaluates the field types there. The
   key exists only after the parameter types, so a use of the struct while its parameter types
-  evaluate is a cycle (`S019`).
+  evaluate is a cycle (`S019`). The prelude struct has no source position, so each error of its
+  work reports at `p` (`atUse`).
   -/
   def spec (n : Nat) (p : Pos) (i : Nat) (xs : List Resolve.Expr) : M Ty := do
-    let some (.struct _ x ps fs) := (← read).items[i]?
+    let some (.struct _ x ps fs pre) := (← read).items[i]?
       | fail .S007 p "a complete type takes no index"
     let args ← operands n xs fun _ o => do
       match o.value with
@@ -1234,14 +1235,16 @@ mutual
       fail .S007 p s!"`{x.name}` takes {ps.length} argument(s), but it has {args.length}"
     if (← read).binding.contains i then
       fail .S019 p s!"the parameter types of `{x.name}` depend on `{x.name}`"
-    nested p <| inFrame none <| withReader (fun c => { c with item := i, frame := ⟨none, 0⟩ }) do
+    let work := nested p <| inFrame none <|
+        withReader (fun c => { c with item := i, frame := ⟨none, 0⟩ }) do
       let keys ← withReader (fun c => { c with binding := i :: c.binding }) <|
         (ps.zip args).mapM fun (q, v) => do
           let t ← typeExpr n q.ty
           let w ← conform p t (← static p (← settle p t v))
           bindLocal q.name.id ⟨some t, false, .static w⟩
           return w
-      specialize p x.name i keys (fs.mapM fun f => typeExpr n f.ty)
+      specialize p x.name i pre keys (fs.mapM fun f => typeExpr n f.ty)
+    if pre then atUse p work else work
   termination_by (n + 1, 0)
 
   /--
@@ -1644,7 +1647,7 @@ def scanItem (it : Resolve.Item) : Scan :=
         scanBinder q.name
         scanType q.ty
       for d in ds do scanBinder d
-    | .struct _ _ ps fs => do
+    | .struct _ _ ps fs _ => do
       for q in ps do
         scanBinder q.name
         scanType q.ty
@@ -1711,7 +1714,7 @@ def symbols (items : Array Resolve.Item) (scans rests : Array Scan) : Syms := Id
   let mut members := #[]
   for it in items do
     let mut ms : Std.TreeMap Nat Nat compare := {}
-    if let .struct _ _ _ fs := it then
+    if let .struct _ _ _ fs _ := it then
       for (f, j) in fs.zipIdx do
         let (t, k) := intern table f.name.name
         table := t

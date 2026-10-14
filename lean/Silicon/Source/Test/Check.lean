@@ -45,7 +45,7 @@ def modBody (s : String) : String := "module M(comptime W: Nat) {\n" ++ s ++ "\n
   "module Main() {\ninput enable: Bool;\noutput value: UInt[4];\n" ++
   "instance counter = Counter(4);\ncounter.enable := enable;\nvalue := counter.value;\n}")
 #guard ok "comptime fn g(n: Nat) -> Nat {\ncomptime if (n == 0) { return 1; }\nreturn g(n - 1);\n}"
-#guard (run "const A: Nat = 1;\nfn f() -> Nat { return A; }").toOption.map (·.size) == some 2
+#guard (run "const A: Nat = 1;\nfn f() -> Nat { return A; }").toOption.map (·.size) == some 3
 
 /-! A hardware value outside a static position passes. -/
 #guard ok (modBody ("input a: UInt[W];\noutput b: UInt[W];\nreg r: UInt[W] = 0;\n" ++

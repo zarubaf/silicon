@@ -379,7 +379,7 @@ def update (f : Value → Value) : Value → List Nat → Value
 def fieldsNamed (items : Array Resolve.Item) (specs : Specs) (t : Ty) :
     Option (Array (String × Ty)) := do
   let (i, fs) ← fieldsIn specs t
-  let some (.struct _ _ _ ds) := items[i]? | none
+  let some (.struct _ _ _ ds _) := items[i]? | none
   return (ds.toArray.map (·.name.name)).zip fs
 
 /-!
