@@ -14,7 +14,11 @@
 //! - A deleted declaration that its item still mentions (an item: that
 //!   any item still mentions) is `S003`. Generated names are unique in an
 //!   item, so no other declaration catches the use.
-//! - One argument more or less is `S007` (pass 4), on all code.
+//! - One argument more or less in a call of a named function is `S007`
+//!   (pass 4), on all code. In a call through a function value, pass 5
+//!   finds it when the call runs: `S007` where the site always runs (a
+//!   `const`, or the top frame of a module, outside a lazy branch), else
+//!   no prediction.
 //! - A deleted `:=` in the top frame of a module body is `S018` (pass 5):
 //!   each module of a program has a context, so its top frame runs, and
 //!   nothing else fails.
@@ -174,6 +178,9 @@ struct Walk<'a> {
     /// arguments at run time (pass 5), so an arity change in dead code stays
     /// unseen.
     values: Vec<String>,
+    /// Whether the site being walked always runs: it is in a `const` or in
+    /// the top frame of a module, and in no lazy branch.
+    always: bool,
     /// The name and index of the current item, and the count of its
     /// statements so far.
     item: String,
@@ -191,6 +198,7 @@ impl<'a> Walk<'a> {
             hit: None,
             names: Vec::new(),
             values: Vec::new(),
+            always: false,
             item: String::new(),
             index: 0,
             stmt: 0,
@@ -239,6 +247,7 @@ impl<'a> Walk<'a> {
     }
 
     fn item_body(&mut self, item: &mut Item) {
+        self.always = matches!(item, Item::Const { .. });
         match item {
             Item::Const { value, .. } => self.sexpr(value),
             Item::HwFnValue { .. } => {}
@@ -281,6 +290,13 @@ impl<'a> Walk<'a> {
 
     /// The statements of a body; `top` if it is the top frame of a module.
     fn stmts(&mut self, body: &mut Vec<Stmt>, top: bool) {
+        let outer = self.always;
+        self.always = top;
+        self.stmts_in(body, top);
+        self.always = outer;
+    }
+
+    fn stmts_in(&mut self, body: &mut Vec<Stmt>, top: bool) {
         let mut i = 0;
         while let Some(s) = body.get(i) {
             self.stmt += 1;
@@ -375,6 +391,13 @@ impl<'a> Walk<'a> {
         }
     }
 
+    /// Walks a part that may not run: no site in it always runs.
+    fn lazily(&mut self, walk: impl FnOnce(&mut Self)) {
+        let outer = mem::replace(&mut self.always, false);
+        walk(self);
+        self.always = outer;
+    }
+
     fn rename(&mut self, name: &mut String) {
         if self.kind == Kind::Rename && self.target.is_none() {
             self.names.push(name.clone());
@@ -388,7 +411,8 @@ impl<'a> Walk<'a> {
 
     /// The arity sites of a call or an instance of `callee`.
     fn args<T>(&mut self, callee: &str, args: &mut Vec<T>, zero: T) {
-        let code = if self.values.iter().any(|v| v == callee) {
+        let through_value = self.values.iter().any(|v| v == callee);
+        let code = if through_value && !self.always {
             None
         } else {
             Some("S007")
@@ -473,14 +497,20 @@ impl<'a> Walk<'a> {
             | SExpr::Unary(_, a) => {
                 self.sexpr(a);
             }
+            SExpr::Binary(SBin::Land | SBin::Lor, a, b) => {
+                self.sexpr(a);
+                self.lazily(|w| w.sexpr(b));
+            }
             SExpr::Index(a, b) | SExpr::Binary(_, a, b) => {
                 self.sexpr(a);
                 self.sexpr(b);
             }
             SExpr::If(c, t, f) => {
                 self.sexpr(c);
-                self.sexpr(t);
-                self.sexpr(f);
+                self.lazily(|w| {
+                    w.sexpr(t);
+                    w.sexpr(f);
+                });
             }
         }
     }
@@ -500,8 +530,10 @@ impl<'a> Walk<'a> {
             }
             HExpr::If(c, t, f) => {
                 self.hexpr(c);
-                self.hexpr(t);
-                self.hexpr(f);
+                self.lazily(|w| {
+                    w.hexpr(t);
+                    w.hexpr(f);
+                });
             }
             HExpr::Resize(t, a) | HExpr::Reinterpret(t, a) => {
                 self.ty(t);
@@ -832,7 +864,7 @@ mod tests {
     }
 
     #[test]
-    fn an_arity_change_of_a_call_through_a_value_predicts_nothing() {
+    fn an_arity_change_of_a_call_through_a_value_predicts_where_the_site_always_runs() {
         use super::super::program::{ComptimeFn, FnTy};
         let f0 = Item::ComptimeFn(ComptimeFn {
             name: "f0".to_owned(),
@@ -871,14 +903,60 @@ mod tests {
         assert_eq!(m.expect, Some("S007"));
         let m = by_name(Kind::AddArg, "let s0: Int = f0(1, 2, 0);");
         assert_eq!(m.expect, Some("S007"));
-        // A call through a value is checked when it runs, in pass 5.
+        // A call through a value is checked when it runs, in pass 5; the
+        // top frame of a module always runs.
         let m = by_name(Kind::DropArg, "let s1: Int = F0(1);");
-        assert_eq!(m.expect, None);
+        assert_eq!(m.expect, Some("S007"));
         let m = by_name(Kind::AddArg, "let s1: Int = F0(1, 2, 0);");
-        assert_eq!(m.expect, None);
+        assert_eq!(m.expect, Some("S007"));
         // A name that no declaration holds is still unresolved in pass 3.
         let m = by_name(Kind::Rename, "let s1: Int = q0(1, 2);");
         assert_eq!(m.expect, Some("S003"));
+    }
+
+    #[test]
+    fn an_arity_change_of_a_call_through_a_value_predicts_nothing_where_the_site_may_not_run() {
+        use super::super::program::{ComptimeFn, FnTy};
+        let f0 = Item::ComptimeFn(ComptimeFn {
+            name: "f0".to_owned(),
+            params: vec![("x0".to_owned(), STy::Nat), ("x1".to_owned(), STy::Int)],
+            ret: STy::Int,
+            base: SExpr::Name("x1".to_owned()),
+            step: SExpr::Name("x1".to_owned()),
+        });
+        let value = Item::Const {
+            name: "F0".to_owned(),
+            ty: STy::Fn(Box::new(FnTy {
+                params: vec![(false, STy::Nat), (false, STy::Int)],
+                ret: STy::Int,
+            })),
+            value: SExpr::Name("f0".to_owned()),
+        };
+        let call = SExpr::Call("F0".to_owned(), vec![dec(1), dec(2)]);
+        let lazy = SExpr::If(
+            Box::new(SExpr::Bool(false)),
+            Box::new(call.clone()),
+            Box::new(dec(0)),
+        );
+        let m0 = module(
+            "M0",
+            vec![
+                Stmt::Output("o0".to_owned(), Ty::Bool),
+                Stmt::StaticLet("s0".to_owned(), STy::Int, lazy),
+                Stmt::If(
+                    SExpr::Bool(false),
+                    vec![Stmt::StaticLet("s1".to_owned(), STy::Int, call)],
+                    None,
+                ),
+                connect("o0", HExpr::Static(SExpr::Bool(false))),
+            ],
+        );
+        let p = of(vec![f0, value, m0]);
+        for kind in [Kind::DropArg, Kind::AddArg] {
+            let ms = all(&p, kind);
+            assert_eq!(ms.len(), 2, "{kind:?}");
+            assert!(ms.iter().all(|m| m.expect.is_none()), "{ms:?}");
+        }
     }
 
     #[test]
@@ -1102,11 +1180,12 @@ mod tests {
         assert_eq!(m.expect, Some("S007"));
         let m = find(&p, Kind::AddArg, "let s2: Int = s0.k0(1, 0);");
         assert_eq!(m.expect, Some("S007"));
-        // A call through the value `F0` checks its arguments when it runs.
+        // A call through the value `F0` checks its arguments when it runs,
+        // and this call is in the top frame.
         let m = find(&p, Kind::DropArg, "let s3: Int = F0(s0);");
-        assert_eq!(m.expect, None);
+        assert_eq!(m.expect, Some("S007"));
         let m = find(&p, Kind::AddArg, "let s3: Int = F0(s0, 1, 0);");
-        assert_eq!(m.expect, None);
+        assert_eq!(m.expect, Some("S007"));
     }
 
     #[test]
