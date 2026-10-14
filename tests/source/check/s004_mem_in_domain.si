@@ -1,0 +1,6 @@
+// S004: a memory in a named domain belongs to a later slice.
+// TOP M()
+module M() {
+    // expected-error S004 @+1
+    mem m: [UInt[8]; 4] in d;
+}

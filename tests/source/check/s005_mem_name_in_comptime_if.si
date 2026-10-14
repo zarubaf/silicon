@@ -1,0 +1,7 @@
+// S005: a memory name in the condition of a comptime if.
+// TOP M()
+module M() {
+    mem m: [UInt[8]; 4];
+    // expected-error S005 @+1
+    comptime if (m) { }
+}

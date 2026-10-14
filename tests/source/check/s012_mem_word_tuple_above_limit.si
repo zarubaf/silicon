@@ -1,0 +1,6 @@
+// S012: a memory word of a tuple with 65537 bits does not fit.
+// TOP M()
+module M() {
+    // expected-error S012 @+1
+    mem m: [(UInt[65536], Bool); 4];
+}

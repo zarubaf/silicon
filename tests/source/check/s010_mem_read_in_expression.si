@@ -1,0 +1,7 @@
+// S010: a memory is never read as a value.
+// TOP M()
+module M() {
+    mem m: [UInt[8]; 4];
+    // expected-error S010 @+1
+    let x = m + 1;
+}

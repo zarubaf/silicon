@@ -1,0 +1,6 @@
+// S012: a negative memory depth does not fit.
+// TOP M()
+module M() {
+    // expected-error S012 @+1
+    mem m: [UInt[8]; -1];
+}

@@ -1,0 +1,6 @@
+// S017: a combinational module has no memory.
+// TOP M()
+module M() domains() {
+    // expected-error S017 @+1
+    mem m: [UInt[8]; 4];
+}

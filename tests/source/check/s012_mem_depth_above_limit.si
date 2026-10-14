@@ -1,0 +1,6 @@
+// S012: a memory depth of 16777217 does not fit.
+// TOP M()
+module M() {
+    // expected-error S012 @+1
+    mem m: [UInt[8]; 16777217];
+}

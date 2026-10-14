@@ -1,0 +1,6 @@
+// S017: the combinational module is S017 before the word type is checked.
+// TOP M()
+module M() domains() {
+    // expected-error S017 @+1
+    mem m: [Int; 4];
+}

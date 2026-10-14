@@ -1,0 +1,6 @@
+// S010: a memory word of the type `[Unit; 4]` is not hardware data.
+// TOP M()
+module M() {
+    // expected-error S010 @+1
+    mem m: [[Unit; 4]; 4];
+}

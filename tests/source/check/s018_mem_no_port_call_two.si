@@ -1,0 +1,7 @@
+// S018: the first of two memories without port calls gives the error.
+// TOP M()
+module M() {
+    // expected-error S018 @+1
+    mem a: [UInt[8]; 4];
+    mem b: [Bool; 2];
+}

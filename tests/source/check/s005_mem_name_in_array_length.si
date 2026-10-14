@@ -1,0 +1,7 @@
+// S005: a memory name is not a static position.
+// TOP M()
+module M() {
+    mem m: [UInt[8]; 4];
+    // expected-error S005 @+1
+    wire w: [Bool; m];
+}

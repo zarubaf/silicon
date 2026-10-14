@@ -1,0 +1,6 @@
+// S010: a memory word of the type `[fn () -> Bool; 0]` is not hardware data.
+// TOP M()
+module M() {
+    // expected-error S010 @+1
+    mem m: [[fn () -> Bool; 0]; 4];
+}
