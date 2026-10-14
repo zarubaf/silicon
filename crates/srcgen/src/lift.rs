@@ -12,7 +12,8 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use syntax::SyntaxKind;
 
-/// A core form that has no slice-1 source form.
+/// A core form that the lift cannot write as source, so the design is no
+/// input of the lift mode.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Unsupported {
     Extern(String),
