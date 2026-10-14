@@ -4,8 +4,8 @@
 //! rules, next to the two front ends, so the `eval` probe compares it.
 
 use super::program::{
-    ComptimeFn, FieldTy, Item, ListFn, RecTy, SBin, SExpr, STy, Scalar, Stmt, StructDef, Ty, Un,
-    string,
+    ComptimeFn, FieldTy, Item, ListFn, MutFn, RecTy, SBin, SExpr, STy, Scalar, Stmt, StructDef, Ty,
+    Un, string,
 };
 use num_bigint::{BigInt, BigUint, Sign};
 use std::collections::BTreeMap;
@@ -169,6 +169,7 @@ pub(crate) struct Scope {
     fns: BTreeMap<String, ComptimeFn>,
     structs: BTreeMap<String, StructDef>,
     list_fns: BTreeMap<String, ListFn>,
+    mut_fns: BTreeMap<String, MutFn>,
     consts: BTreeMap<String, Value>,
 }
 
@@ -186,6 +187,9 @@ impl Scope {
                 }
                 Item::ListFn(f) => {
                     scope.list_fns.insert(f.name.clone(), f.clone());
+                }
+                Item::MutFn(f) => {
+                    scope.mut_fns.insert(f.name.clone(), f.clone());
                 }
                 Item::Struct(def) => {
                     scope.structs.insert(def.name.clone(), def.clone());
@@ -217,6 +221,29 @@ const MAX_CALLS: u32 = 4096;
 /// The widths of `UInt[w]` and `SInt[w]` (front-end `MAX_WIDTH`).
 const MAX_WIDTH: u32 = 65536;
 
+/// A call of a `comptime fn` with a `mut` formal: the final value of the
+/// formal, which the call writes back to its root, and the result.
+fn call_mut(def: &MutFn, root: Value, arg: Value, scope: &Scope) -> Result<(Value, Value), Fault> {
+    let mut inner = Env::default();
+    inner.statics.insert("x1".to_owned(), arg);
+    inner.statics.insert("a0".to_owned(), root);
+    let v = typed(&STy::Int, eval(&def.update, &inner, scope)?)?;
+    if def.root == STy::Int {
+        inner.statics.insert("a0".to_owned(), v);
+    } else {
+        let Some(Value::List(_, xs)) = inner.statics.get_mut("a0") else {
+            return Err(Fault::Type);
+        };
+        xs.push(v);
+        if xs.len() > MAX_LIST {
+            return Err(Fault::Bound);
+        }
+    }
+    let result = typed(&STy::Int, eval(&def.ret, &inner, scope)?)?;
+    let new = inner.statics.remove("a0").ok_or(Fault::Type)?;
+    Ok((new, result))
+}
+
 /// Executes a static statement on `env`: a `let`, a `push`, or a `pop`. The
 /// builder and the twin both run the static statements of a frame with it.
 pub(crate) fn exec_static(s: &Stmt, env: &mut Env, scope: &Scope) -> Result<(), Fault> {
@@ -234,6 +261,23 @@ pub(crate) fn exec_static(s: &Stmt, env: &mut Env, scope: &Scope) -> Result<(), 
             if xs.len() > MAX_LIST {
                 return Err(Fault::Bound);
             }
+        }
+        Stmt::MutCall {
+            name,
+            root,
+            f,
+            args,
+            ..
+        } => {
+            let def = scope.mut_fns.get(f).ok_or(Fault::Type)?;
+            let [arg] = args.as_slice() else {
+                return Err(Fault::Type);
+            };
+            let arg = typed(&STy::Int, eval(arg, env, scope)?)?;
+            let old = env.statics.get(root).cloned().ok_or(Fault::Type)?;
+            let (new, result) = call_mut(def, typed(&def.root, old)?, arg, scope)?;
+            env.statics.insert(root.clone(), new);
+            env.statics.insert(name.clone(), result);
         }
         Stmt::PopLet(name, list) => {
             let Some(Value::List(_, xs)) = env.statics.get_mut(list) else {
@@ -1136,6 +1180,95 @@ mod tests {
             assert_eq!(exec_static(&push(1), &mut env, &scope), Ok(()));
         }
         assert_eq!(exec_static(&push(1), &mut env, &scope), Err(Fault::Bound));
+    }
+
+    /// `k0(mut a0: Int, x1: Int) -> Int { a0 = (a0 + x1); return (a0 * 2); }`
+    /// and `k1(mut a0: List[Int], x1: Int) -> Int { a0.push(x1); return (x1 + len(a0)); }`.
+    fn mutators() -> Scope {
+        let k0 = MutFn {
+            name: "k0".to_owned(),
+            root: STy::Int,
+            update: bin(SBin::Add, name_expr("a0"), name_expr("x1")),
+            ret: bin(SBin::Mul, name_expr("a0"), int(2)),
+        };
+        let k1 = MutFn {
+            name: "k1".to_owned(),
+            root: STy::List(Box::new(STy::Int)),
+            update: name_expr("x1"),
+            ret: bin(
+                SBin::Add,
+                name_expr("x1"),
+                SExpr::Len(Box::new(name_expr("a0"))),
+            ),
+        };
+        Scope::new(&[Item::MutFn(k0), Item::MutFn(k1)]).unwrap_or_default()
+    }
+
+    fn mut_call(f: &str, root: &str, arg: i64) -> Stmt {
+        Stmt::MutCall {
+            name: "r".to_owned(),
+            root: root.to_owned(),
+            f: f.to_owned(),
+            args: vec![int(arg)],
+            receiver: false,
+        }
+    }
+
+    #[test]
+    fn a_call_writes_its_formal_back_to_the_root() {
+        let scope = mutators();
+        let mut env = Env::default();
+        env.statics
+            .insert("n".to_owned(), Value::Int(BigInt::from(5)));
+        env.statics
+            .insert("xs".to_owned(), Value::List(STy::Int, Vec::new()));
+        assert_eq!(
+            exec_static(&mut_call("k0", "n", 3), &mut env, &scope),
+            Ok(())
+        );
+        assert_eq!(env.statics.get("n"), Some(&Value::Int(BigInt::from(8))));
+        assert_eq!(env.statics.get("r"), Some(&Value::Int(BigInt::from(16))));
+        assert_eq!(
+            exec_static(&mut_call("k1", "xs", 7), &mut env, &scope),
+            Ok(())
+        );
+        assert_eq!(
+            env.statics.get("xs").map(Value::serialize),
+            Some("(list int ((int 7)))".to_owned())
+        );
+        assert_eq!(env.statics.get("r"), Some(&Value::Int(BigInt::from(8))));
+        // A root of the wrong type, a missing root, and a full list.
+        assert_eq!(
+            exec_static(&mut_call("k0", "xs", 1), &mut env, &scope),
+            Err(Fault::Type)
+        );
+        assert_eq!(
+            exec_static(&mut_call("k0", "none", 1), &mut env, &scope),
+            Err(Fault::Type)
+        );
+        for _ in 0..7 {
+            assert_eq!(
+                exec_static(&mut_call("k1", "xs", 1), &mut env, &scope),
+                Ok(())
+            );
+        }
+        assert_eq!(
+            exec_static(&mut_call("k1", "xs", 1), &mut env, &scope),
+            Err(Fault::Bound)
+        );
+        // The root keeps its value when the call faults.
+        assert!(matches!(
+            env.statics.get("xs"),
+            Some(Value::List(_, xs)) if xs.len() == 8
+        ));
+        let no_arg = Stmt::MutCall {
+            name: "r".to_owned(),
+            root: "n".to_owned(),
+            f: "k0".to_owned(),
+            args: Vec::new(),
+            receiver: true,
+        };
+        assert_eq!(exec_static(&no_arg, &mut env, &scope), Err(Fault::Type));
     }
 
     #[test]

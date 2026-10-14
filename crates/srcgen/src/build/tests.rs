@@ -297,45 +297,72 @@ fn levels(t: &STy) -> u32 {
     }
 }
 
+/// The forms of the static containers that a program holds, by name.
+fn static_forms(s: &Stats) -> [(&'static str, bool); 22] {
+    [
+        ("tuple", s.tuples > 0),
+        ("array", s.arrays > 0),
+        ("selector", s.selects > 0),
+        ("index", s.indexes > 0),
+        ("len", s.lens > 0),
+        ("record", s.records > 0),
+        ("zero", s.zeros > 0),
+        ("field", s.fields > 0),
+        ("data_bits", s.data_bits > 0),
+        ("str(n)", s.str_of > 0),
+        ("join", s.joins > 0),
+        ("scalar of a string", s.scalars > 0),
+        ("len of a string", s.str_lens > 0),
+        ("string equality", s.str_eqs > 0),
+        ("list builder call", s.list_calls > 0),
+        ("push", s.pushes > 0),
+        ("pop", s.pops > 0),
+        ("index of a list", s.list_indexes > 0),
+        ("len of a list", s.list_lens > 0),
+        ("static mut call", s.mut_calls > 0),
+        ("hardware mut call", s.hw_mut_calls > 0),
+        ("hardware mut receiver", s.hw_mut_receivers > 0),
+    ]
+}
+
+/// The positions of each form and those that took a fallback.
+fn fallback_pairs(s: &Stats) -> [(&'static str, u32, u32); 7] {
+    [
+        ("container leaf", s.leaves, s.leaf_fallbacks),
+        ("index", s.indexes, s.index_fallbacks),
+        ("type argument", s.arguments, s.argument_fallbacks),
+        ("list call", s.list_calls, s.list_call_fallbacks),
+        ("push", s.pushes + s.push_fallbacks, s.push_fallbacks),
+        (
+            "mut call",
+            s.mut_calls + s.mut_call_fallbacks,
+            s.mut_call_fallbacks,
+        ),
+        ("hardware mut call", s.hw_mut_calls, 0),
+    ]
+}
+
+/// Each form of the static containers occurs in at least 10% of 256
+/// programs, and a form takes a fallback in at most 20% of its positions.
 #[test]
 fn programs_cover_static_containers() {
     const TAPES: usize = 256;
     let mut with = BTreeMap::<&str, usize>::new();
-    let (mut leaves, mut leaf_fallbacks) = (0, 0);
-    let (mut indexes, mut index_fallbacks) = (0, 0);
-    let (mut arguments, mut argument_fallbacks) = (0, 0);
-    let (mut calls, mut call_fallbacks) = (0, 0);
-    let (mut pushes, mut push_fallbacks) = (0, 0);
+    let mut pairs = BTreeMap::<&str, (u32, u32)>::new();
     for tape in tapes(TAPES) {
         let mut b = Builder::new(tape);
         let p = b.program();
         assert!(p.is_ok(), "a program faults: {p:?}");
         let Ok(p) = p else { continue };
-        let s = &b.stats;
-        for (form, seen) in [
-            ("tuple", s.tuples > 0),
-            ("array", s.arrays > 0),
-            ("selector", s.selects > 0),
-            ("index", s.indexes > 0),
-            ("len", s.lens > 0),
-            ("record", s.records > 0),
-            ("zero", s.zeros > 0),
-            ("field", s.fields > 0),
-            ("data_bits", s.data_bits > 0),
-            ("str(n)", s.str_of > 0),
-            ("join", s.joins > 0),
-            ("scalar of a string", s.scalars > 0),
-            ("len of a string", s.str_lens > 0),
-            ("string equality", s.str_eqs > 0),
-            ("list builder call", s.list_calls > 0),
-            ("push", s.pushes > 0),
-            ("pop", s.pops > 0),
-            ("index of a list", s.list_indexes > 0),
-            ("len of a list", s.list_lens > 0),
-        ] {
+        for (form, seen) in static_forms(&b.stats) {
             *with.entry(form).or_default() += usize::from(seen);
         }
-        let mut deep = p.probe().1.starts_with("(array") || p.probe().1.starts_with("(tuple");
+        for (form, total, fallbacks) in fallback_pairs(&b.stats) {
+            let entry = pairs.entry(form).or_default();
+            entry.0 += total;
+            entry.1 += fallbacks;
+        }
+        let probed = p.probe().1.starts_with("(array") || p.probe().1.starts_with("(tuple");
         let statics = stmts_of(&p.items)
             .into_iter()
             .filter_map(|s| match s {
@@ -347,46 +374,21 @@ fn programs_cover_static_containers() {
                 _ => None,
             }));
         let nested = statics.map(levels).max().unwrap_or(0) >= 2;
-        deep |= nested;
-        *with.entry("nested or probed").or_default() += usize::from(deep);
-        leaves += s.leaves;
-        leaf_fallbacks += s.leaf_fallbacks;
-        indexes += s.indexes;
-        arguments += s.arguments;
-        calls += s.list_calls;
-        call_fallbacks += s.list_call_fallbacks;
-        pushes += s.pushes + s.push_fallbacks;
-        push_fallbacks += s.push_fallbacks;
-        argument_fallbacks += s.argument_fallbacks;
-        index_fallbacks += s.index_fallbacks;
+        *with.entry("nested or probed").or_default() += usize::from(probed || nested);
     }
+    assert_eq!(with.len(), 23, "{with:?}");
     for (form, n) in &with {
         assert!(
             n * 10 >= TAPES,
             "{form} occurs in {n} of {TAPES} programs: {with:?}"
         );
     }
-    assert_eq!(with.len(), 20, "{with:?}");
-    assert!(
-        leaf_fallbacks * 5 <= leaves,
-        "leaf fallbacks {leaf_fallbacks} of {leaves}"
-    );
-    assert!(
-        index_fallbacks * 5 <= indexes,
-        "index fallbacks {index_fallbacks} of {indexes}"
-    );
-    assert!(
-        argument_fallbacks * 5 <= arguments,
-        "argument fallbacks {argument_fallbacks} of {arguments}"
-    );
-    assert!(
-        call_fallbacks * 5 <= calls,
-        "list call fallbacks {call_fallbacks} of {calls}"
-    );
-    assert!(
-        push_fallbacks * 5 <= pushes,
-        "push fallbacks {push_fallbacks} of {pushes}"
-    );
+    for (form, (total, fallbacks)) in &pairs {
+        assert!(
+            fallbacks * 5 <= *total,
+            "{form}: {fallbacks} fallbacks of {total} positions"
+        );
+    }
 }
 
 /// The depth of the instance tree below module `m`.

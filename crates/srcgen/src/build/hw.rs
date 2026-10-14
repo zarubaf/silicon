@@ -355,7 +355,8 @@ fn adapt(e: HExpr, from: &Want, to: &Want) -> Option<HExpr> {
 /// Whether `e` reads a hardware name.
 pub(super) fn reads_name(e: &HExpr) -> bool {
     match e {
-        HExpr::Name(_) | HExpr::Field(..) => true,
+        // The receiver of a receiver call is a name.
+        HExpr::Name(_) | HExpr::Field(..) | HExpr::Receiver(..) => true,
         HExpr::Static(_) | HExpr::Make(..) => false,
         HExpr::Unary(_, a) | HExpr::Resize(_, a) | HExpr::Reinterpret(_, a) => reads_name(a),
         HExpr::Binary(_, a, b) => reads_name(a) || reads_name(b),

@@ -39,6 +39,7 @@ mod hw;
 mod inst;
 mod lines;
 mod lists;
+mod mutcalls;
 mod record;
 mod stat;
 mod strings;
@@ -47,7 +48,7 @@ pub use lines::lines;
 
 use super::eval::{Env, Fault, Scope, Value, concrete};
 use super::program::{
-    ComptimeFn, HExpr, Item, ListFn, Ports, Program, SExpr, STy, Scalar, Stmt, StructDef, Ty,
+    ComptimeFn, HExpr, Item, ListFn, MutFn, Ports, Program, SExpr, STy, Scalar, Stmt, StructDef, Ty,
 };
 use proptest::collection::vec;
 use proptest::prelude::*;
@@ -58,7 +59,7 @@ use std::fmt;
 /// The name prefixes of the static kinds: `P` parameter, `C` const, `f`
 /// `comptime fn`, `s` static `let`, `j` loop binder. A static name is one
 /// of them and digits; the twin must have none.
-pub(super) const STATIC_PREFIXES: &str = "PCfsjbS";
+pub(super) const STATIC_PREFIXES: &str = "PCfsjbSk";
 
 /// The result of a step whose faults the checks of the builder exclude.
 /// A fault reaches `build`, which the coverage test watches.
@@ -86,6 +87,9 @@ const STRUCT_PARAMS: u32 = 2;
 const STRUCT_FIELDS: u32 = 3;
 /// The most list builders.
 const LIST_FNS: u32 = 2;
+/// The most functions with a `mut` formal, static and hardware.
+const MUT_FNS: u32 = 2;
+const MUT_HELPERS: u32 = 2;
 const ENVS: usize = 64;
 const INSTANCES: u32 = 3;
 const CONTEXTS: usize = 3;
@@ -224,6 +228,8 @@ struct Ctx {
     helpers: usize,
     /// The mutable lists that this frame declares.
     lists: Vec<String>,
+    /// The mutable `Int` roots that this frame declares.
+    counters: Vec<String>,
 }
 
 impl Ctx {
@@ -246,6 +252,7 @@ impl Ctx {
             hw,
             helpers: self.helpers,
             lists: Vec::new(),
+            counters: Vec::new(),
         }
     }
 }
@@ -256,6 +263,8 @@ impl Ctx {
 struct Helper {
     name: String,
     params: Vec<(String, Ty, Scalar)>,
+    /// Whether the first formal has the mark `mut`.
+    mut_first: bool,
     ret: (Ty, Scalar),
     body: Vec<Stmt>,
     result: HExpr,
@@ -311,6 +320,10 @@ struct Stats {
     pushes: u32,
     pops: u32,
     push_fallbacks: u32,
+    mut_calls: u32,
+    mut_call_fallbacks: u32,
+    hw_mut_calls: u32,
+    hw_mut_receivers: u32,
 }
 
 struct Builder {
@@ -320,6 +333,9 @@ struct Builder {
     structs: Vec<StructDef>,
     list_fns: Vec<ListFn>,
     helpers: Vec<Helper>,
+    /// The helpers with a `mut` formal; a plain call never names one.
+    mut_helpers: Vec<Helper>,
+    mut_fns: Vec<MutFn>,
     sigs: Vec<Sig>,
     bodies: Vec<Option<Vec<Stmt>>>,
     /// The distinct argument tuples of each module.
@@ -340,6 +356,8 @@ impl Builder {
             structs: Vec::new(),
             list_fns: Vec::new(),
             helpers: Vec::new(),
+            mut_helpers: Vec::new(),
+            mut_fns: Vec::new(),
             sigs: Vec::new(),
             bodies: Vec::new(),
             contexts: Vec::new(),
@@ -354,7 +372,9 @@ impl Builder {
         self.consts()?;
         self.fns()?;
         self.list_fns()?;
+        self.mut_fns()?;
         self.helpers()?;
+        self.mut_helpers()?;
         self.signatures();
         let params = self
             .sigs
@@ -399,17 +419,22 @@ impl Builder {
 
     /// The items: consts, `comptime fn`s, helpers, and the reached modules.
     fn items(&self) -> Vec<Item> {
-        let helpers = self.helpers.iter().map(|h| Item::Helper {
-            name: h.name.clone(),
-            params: h
-                .params
-                .iter()
-                .map(|(n, t, _)| (n.clone(), t.clone()))
-                .collect(),
-            ret: h.ret.0.clone(),
-            body: h.body.clone(),
-            result: h.result.clone(),
-        });
+        let helpers = self
+            .helpers
+            .iter()
+            .chain(&self.mut_helpers)
+            .map(|h| Item::Helper {
+                name: h.name.clone(),
+                params: h
+                    .params
+                    .iter()
+                    .map(|(n, t, _)| (n.clone(), t.clone()))
+                    .collect(),
+                mut_first: h.mut_first,
+                ret: h.ret.0.clone(),
+                body: h.body.clone(),
+                result: h.result.clone(),
+            });
         let modules = self.sigs.iter().zip(&self.bodies).filter_map(|(s, b)| {
             b.as_ref().map(|body| Item::Module {
                 name: s.name.clone(),

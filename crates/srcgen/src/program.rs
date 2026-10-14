@@ -209,6 +209,8 @@ pub(crate) enum HExpr {
     Reinterpret(Ty, Box<HExpr>),
     /// A call of a helper `fn`.
     Call(String, Vec<HExpr>),
+    /// A receiver call `recv.f(args)` of a helper `fn`.
+    Receiver(Box<HExpr>, String, Vec<HExpr>),
 }
 
 /// The target of `:=`.
@@ -248,6 +250,16 @@ pub(crate) enum Stmt {
     Push(String, SExpr),
     /// `let name: Int = list.pop();`: the new name, then the list.
     PopLet(String, String),
+    /// `let name: Int = f(root, args);`, or `let name: Int = root.f(args);`
+    /// with a receiver, of a `comptime fn` with a `mut` formal: the call
+    /// writes its final `a0` back to `root`.
+    MutCall {
+        name: String,
+        root: String,
+        f: String,
+        args: Vec<SExpr>,
+        receiver: bool,
+    },
     /// A block `{ ... }`. The twin writes a selected `comptime if` branch
     /// and each iteration of a `comptime for` as one.
     Block(Vec<Stmt>),
@@ -271,6 +283,23 @@ pub(crate) struct ListFn {
     pub(crate) elem: STy,
     /// Over the formals and the binder `j0`.
     pub(crate) element: SExpr,
+}
+
+/// A `comptime fn` with a `mut` formal:
+///
+/// ```text
+/// comptime fn name(mut a0: Int, x1: Int) -> Int { a0 = update; return ret; }
+/// comptime fn name(mut a0: List[Int], x1: Int) -> Int { a0.push(update); return ret; }
+/// ```
+#[derive(Clone, Debug)]
+pub(crate) struct MutFn {
+    pub(crate) name: String,
+    /// `Int` or `List[Int]`.
+    pub(crate) root: STy,
+    /// The new value of `a0`, or the element to push. It reads `x1`.
+    pub(crate) update: SExpr,
+    /// The result. It reads `x1`, and `a0` after the update.
+    pub(crate) ret: SExpr,
 }
 
 /// The type of a field in the declaration of a struct.
@@ -316,10 +345,13 @@ pub(crate) enum Item {
     Helper {
         name: String,
         params: Vec<(String, Ty)>,
+        /// Whether the first formal has the mark `mut`.
+        mut_first: bool,
         ret: Ty,
         body: Vec<Stmt>,
         result: HExpr,
     },
+    MutFn(MutFn),
     /// A module with `comptime` parameters. A clocked module has no domain
     /// clause, so its domain is `clock`; a combinational one has `domains()`.
     Module {
@@ -417,52 +449,26 @@ fn render_item(out: &mut String, item: &Item) {
             line(out, 1, &format!("return {};", sexpr(&f.step)));
             line(out, 0, "}");
         }
-        Item::ListFn(f) => {
-            let params = formals(f.params.iter().map(|(n, t)| (n, t.text())));
-            let count = f.params.first().map_or("0", |(n, _)| n.as_str());
-            let elem = f.elem.text();
-            line(
-                out,
-                0,
-                &format!("comptime fn {}({params}) -> List[{elem}] {{", f.name),
-            );
-            line(out, 1, &format!("let mut r0 = list({elem});"));
-            line(out, 1, &format!("comptime for j0 in 0..{count} {{"));
-            line(out, 2, &format!("r0.push({});", sexpr(&f.element)));
-            line(out, 1, "}");
-            line(out, 1, "return r0;");
-            line(out, 0, "}");
-        }
-        Item::Struct(def) => {
-            let params: Vec<String> = def
-                .params
-                .iter()
-                .map(|p| format!("comptime {p}: Nat"))
-                .collect();
-            let head = if params.is_empty() {
-                def.name.clone()
-            } else {
-                format!("{}({})", def.name, params.join(", "))
-            };
-            line(out, 0, &format!("struct {head} {{"));
-            for (f, t) in &def.fields {
-                let t = match t {
-                    FieldTy::Static(t) => t.text(),
-                    FieldTy::UInt(w) => format!("UInt[{}]", sexpr(w)),
-                    FieldTy::SInt(w) => format!("SInt[{}]", sexpr(w)),
-                };
-                line(out, 1, &format!("{f}: {t},"));
-            }
-            line(out, 0, "}");
-        }
+        Item::ListFn(f) => render_list_fn(out, f),
+        Item::MutFn(f) => render_mut_fn(out, f),
+        Item::Struct(def) => render_struct(out, def),
         Item::Helper {
             name,
             params,
+            mut_first,
             ret,
             body,
             result,
         } => {
-            let params = formals(params.iter().map(|(n, t)| (n, ty(t))));
+            let params = params
+                .iter()
+                .enumerate()
+                .map(|(i, (n, t))| {
+                    let mark = if i == 0 && *mut_first { "mut " } else { "" };
+                    format!("{mark}{n}: {}", ty(t))
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
             line(out, 0, &format!("fn {name}({params}) -> {} {{", ty(ret)));
             stmts(out, 1, body);
             line(out, 1, &format!("return {};", hexpr(result)));
@@ -488,6 +494,61 @@ fn render_item(out: &mut String, item: &Item) {
             line(out, 0, "}");
         }
     }
+}
+
+fn render_list_fn(out: &mut String, f: &ListFn) {
+    let params = formals(f.params.iter().map(|(n, t)| (n, t.text())));
+    let count = f.params.first().map_or("0", |(n, _)| n.as_str());
+    let elem = f.elem.text();
+    line(
+        out,
+        0,
+        &format!("comptime fn {}({params}) -> List[{elem}] {{", f.name),
+    );
+    line(out, 1, &format!("let mut r0 = list({elem});"));
+    line(out, 1, &format!("comptime for j0 in 0..{count} {{"));
+    line(out, 2, &format!("r0.push({});", sexpr(&f.element)));
+    line(out, 1, "}");
+    line(out, 1, "return r0;");
+    line(out, 0, "}");
+}
+
+fn render_mut_fn(out: &mut String, f: &MutFn) {
+    let root = f.root.text();
+    line(
+        out,
+        0,
+        &format!("comptime fn {}(mut a0: {root}, x1: Int) -> Int {{", f.name),
+    );
+    match f.root {
+        STy::Int => line(out, 1, &format!("a0 = {};", sexpr(&f.update))),
+        _ => line(out, 1, &format!("a0.push({});", sexpr(&f.update))),
+    }
+    line(out, 1, &format!("return {};", sexpr(&f.ret)));
+    line(out, 0, "}");
+}
+
+fn render_struct(out: &mut String, def: &StructDef) {
+    let params: Vec<String> = def
+        .params
+        .iter()
+        .map(|p| format!("comptime {p}: Nat"))
+        .collect();
+    let head = if params.is_empty() {
+        def.name.clone()
+    } else {
+        format!("{}({})", def.name, params.join(", "))
+    };
+    line(out, 0, &format!("struct {head} {{"));
+    for (f, t) in &def.fields {
+        let t = match t {
+            FieldTy::Static(t) => t.text(),
+            FieldTy::UInt(w) => format!("UInt[{}]", sexpr(w)),
+            FieldTy::SInt(w) => format!("SInt[{}]", sexpr(w)),
+        };
+        line(out, 1, &format!("{f}: {t},"));
+    }
+    line(out, 0, "}");
 }
 
 fn formals<'a>(params: impl Iterator<Item = (&'a String, String)>) -> String {
@@ -529,6 +590,25 @@ fn stmt(out: &mut String, depth: usize, s: &Stmt) {
         Stmt::MutLet(n, t, v) => format!("let mut {n}: {} = {};", t.text(), sexpr(v)),
         Stmt::Push(n, v) => format!("{n}.push({});", sexpr(v)),
         Stmt::PopLet(n, list) => format!("let {n}: Int = {list}.pop();"),
+        Stmt::MutCall {
+            name,
+            root,
+            f,
+            args,
+            receiver: true,
+        } => format!("let {name}: Int = {root}.{f}({});", list(args, sexpr)),
+        Stmt::MutCall {
+            name,
+            root,
+            f,
+            args,
+            receiver: false,
+        } => {
+            let all: Vec<String> = std::iter::once(root.clone())
+                .chain(args.iter().map(sexpr))
+                .collect();
+            format!("let {name}: Int = {f}({});", all.join(", "))
+        }
         Stmt::Assign(n, v) => format!("{n} = {};", hexpr(v)),
         Stmt::Connect(place, v) => {
             let place = match place {
@@ -736,6 +816,7 @@ fn hexpr(e: &HExpr) -> String {
         HExpr::Resize(t, a) => format!("resize({}, {})", ty(t), hexpr(a)),
         HExpr::Reinterpret(t, a) => format!("reinterpret({}, {})", ty(t), hexpr(a)),
         HExpr::Call(f, args) => format!("{f}({})", list(args, hexpr)),
+        HExpr::Receiver(recv, f, args) => format!("{}.{f}({})", hexpr(recv), list(args, hexpr)),
     }
 }
 
@@ -857,6 +938,7 @@ pub(crate) mod tests {
     /// A program with each construct of the printer.
     pub(crate) fn program() -> Program {
         let helper = Item::Helper {
+            mut_first: false,
             name: "h0".to_owned(),
             params: vec![("x0".to_owned(), u8())],
             ret: Ty::UInt(dec(4)),
@@ -1083,6 +1165,48 @@ module M1(comptime P0: Nat) domains() {
             out,
             "let mut s0: List[Int] = b0(3, 1);\ns0.push((-2));\nlet s1: Int = s0.pop();\nlet s2: String = (\"a\\\"\" + str(s1));\n"
         );
+    }
+
+    #[test]
+    fn mut_formals_and_receiver_calls_print() {
+        let by_int = Item::MutFn(MutFn {
+            name: "k0".to_owned(),
+            root: STy::Int,
+            update: SExpr::Binary(SBin::Add, Box::new(sname("a0")), Box::new(sname("x1"))),
+            ret: sname("a0"),
+        });
+        let by_list = Item::MutFn(MutFn {
+            name: "k1".to_owned(),
+            root: STy::List(Box::new(STy::Int)),
+            update: sname("x1"),
+            ret: SExpr::Len(Box::new(sname("a0"))),
+        });
+        let helper = Item::Helper {
+            name: "g0".to_owned(),
+            params: vec![("a0".to_owned(), u8()), ("x1".to_owned(), Ty::Bool)],
+            mut_first: true,
+            ret: Ty::Bool,
+            body: vec![Stmt::Assign("a0".to_owned(), hname("a0"))],
+            result: hname("x1"),
+        };
+        assert_eq!(
+            render_items(&[by_int, by_list, helper]),
+            "comptime fn k0(mut a0: Int, x1: Int) -> Int {\n    a0 = (a0 + x1);\n    return a0;\n}\ncomptime fn k1(mut a0: List[Int], x1: Int) -> Int {\n    a0.push(x1);\n    return len(a0);\n}\nfn g0(mut a0: UInt[8], x1: Bool) -> Bool {\n    a0 = a0;\n    return x1;\n}\n"
+        );
+        let call = |receiver| Stmt::MutCall {
+            name: "s1".to_owned(),
+            root: "s0".to_owned(),
+            f: "k0".to_owned(),
+            args: vec![dec(2)],
+            receiver,
+        };
+        let mut out = String::new();
+        stmts(&mut out, 0, &[call(false), call(true)]);
+        assert_eq!(out, "let s1: Int = k0(s0, 2);\nlet s1: Int = s0.k0(2);\n");
+        let plain = HExpr::Call("g0".to_owned(), vec![hname("v0"), hname("i0")]);
+        let recv = HExpr::Receiver(Box::new(hname("v0")), "g0".to_owned(), vec![hname("i0")]);
+        assert_eq!(hexpr(&plain), "g0(v0, i0)");
+        assert_eq!(hexpr(&recv), "v0.g0(i0)");
     }
 
     #[test]

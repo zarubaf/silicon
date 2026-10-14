@@ -236,6 +236,10 @@ impl<'a> Walk<'a> {
         match item {
             Item::Const { value, .. } => self.sexpr(value),
             Item::ListFn(f) => self.sexpr(&mut f.element),
+            Item::MutFn(f) => {
+                self.sexpr(&mut f.update);
+                self.sexpr(&mut f.ret);
+            }
             Item::Struct(def) => {
                 for (_, t) in &mut def.fields {
                     if let FieldTy::UInt(w) | FieldTy::SInt(w) = t {
@@ -316,6 +320,14 @@ impl<'a> Walk<'a> {
                 self.sexpr(v);
             }
             Stmt::PopLet(_, list) => self.rename(list),
+            Stmt::MutCall { root, f, args, .. } => {
+                self.rename(root);
+                self.rename(f);
+                self.args(f, args, zero());
+                for a in args {
+                    self.sexpr(a);
+                }
+            }
             Stmt::Assign(n, v) => {
                 self.rename(n);
                 self.hexpr(v);
@@ -480,6 +492,14 @@ impl<'a> Walk<'a> {
                     self.hexpr(a);
                 }
             }
+            HExpr::Receiver(recv, f, args) => {
+                self.hexpr(recv);
+                self.rename(f);
+                self.args(f, args, HExpr::Static(zero()));
+                for a in args {
+                    self.hexpr(a);
+                }
+            }
         }
     }
 }
@@ -490,6 +510,7 @@ fn item_name(item: &Item) -> &str {
         Item::ComptimeFn(f) => &f.name,
         Item::Struct(def) => &def.name,
         Item::ListFn(f) => &f.name,
+        Item::MutFn(f) => &f.name,
     }
 }
 
@@ -504,6 +525,7 @@ fn declared(s: &Stmt) -> Option<&str> {
         | Stmt::StaticLet(n, _, _)
         | Stmt::MutLet(n, _, _)
         | Stmt::PopLet(n, _)
+        | Stmt::MutCall { name: n, .. }
         | Stmt::Instance(n, _, _) => Some(n),
         _ => None,
     }
@@ -666,6 +688,7 @@ mod tests {
     #[test]
     fn delete_of_a_used_item_predicts_s003() {
         let helper = Item::Helper {
+            mut_first: false,
             name: "h0".to_owned(),
             params: vec![("x0".to_owned(), u8())],
             ret: u8(),
