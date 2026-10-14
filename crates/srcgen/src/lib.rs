@@ -24,7 +24,7 @@ mod shape;
 mod twin;
 
 pub use build::{BuildFault, lines, typed};
-pub use lift::{Lifted, Unsupported, lift};
+pub use lift::{Lifted, Unsupported, VectorLen, lift};
 pub use mutate::{Mutant, mutate};
 pub use program::{Ports, Program, Scalar};
 pub use twin::{Twin, twin};

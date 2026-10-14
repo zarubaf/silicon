@@ -86,10 +86,7 @@ fn reference(
     for line in lines {
         let inputs = parse_input(line, top).map_err(|e| anyhow!("{line}: {e}"))?;
         let outputs = sim.step(&inputs);
-        steps.push((
-            lifted.vector_in(top, &inputs),
-            lifted.vector_out(top, &outputs),
-        ));
+        steps.push((lifted.vector_in(&inputs)?, lifted.vector_out(&outputs)?));
     }
     Ok(Ok(steps))
 }

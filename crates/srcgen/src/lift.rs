@@ -7,7 +7,7 @@ use super::memory;
 use super::shape::{self, Shape};
 use core_ir::ast::{Conn, Design, Dir, Expr, Item, Module, Port, Stmt, Ty};
 use core_ir::r#gen::RESET;
-use core_ir::{interp, typed};
+use core_ir::interp;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use syntax::SyntaxKind;
@@ -46,23 +46,119 @@ pub struct Lifted {
     pub memories: usize,
     /// The aggregate ports of the design.
     pub aggregates: usize,
-    top: Shape,
+    top: Layout,
 }
 
 impl Lifted {
-    /// The `in=` line of a source run for the core inputs `inputs` of
-    /// `top`: the reset first, then one entry for each leaf in the port
-    /// layout. No LF.
-    #[must_use]
-    pub fn vector_in(&self, top: &typed::Module, inputs: &interp::Inputs) -> String {
-        vector_in(top, &self.top, inputs)
+    /// The `in=` line of a source run for the core inputs `inputs` of the
+    /// top module: the reset first, then one entry for each leaf in the
+    /// port layout. No LF.
+    ///
+    /// # Errors
+    /// Returns [`VectorLen`] if `inputs` has not one value for each data
+    /// input of the top module.
+    pub fn vector_in(&self, inputs: &interp::Inputs) -> Result<String, VectorLen> {
+        self.top.vector_in(inputs)
     }
 
-    /// The `out=` line for the core outputs `outputs` of `top`, with one
-    /// entry for each leaf in the port layout. No LF.
-    #[must_use]
-    pub fn vector_out(&self, top: &typed::Module, outputs: &interp::Outputs) -> String {
-        vector_out(top, &self.top, outputs)
+    /// The `out=` line for the core outputs `outputs` of the top module,
+    /// with one entry for each leaf in the port layout. No LF.
+    ///
+    /// # Errors
+    /// Returns [`VectorLen`] if `outputs` has not one value for each output
+    /// of the top module.
+    pub fn vector_out(&self, outputs: &interp::Outputs) -> Result<String, VectorLen> {
+        self.top.vector_out(outputs)
+    }
+}
+
+/// A vector with another number of values than the top module has ports.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VectorLen {
+    pub expected: usize,
+    pub found: usize,
+}
+
+impl fmt::Display for VectorLen {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "the top module has {} ports in this direction, the vector has {}",
+            self.expected, self.found
+        )
+    }
+}
+
+impl std::error::Error for VectorLen {}
+
+/// The ports of the top module in vector order, and their groups.
+struct Layout {
+    shape: Shape,
+    /// The data inputs with a flag for the domain reset.
+    inputs: Vec<(String, bool)>,
+    outputs: Vec<String>,
+}
+
+impl Layout {
+    fn of(top: &Module, shape: Shape) -> Self {
+        let clocked = top.ports.iter().any(|p| p.ty == Ty::Clock);
+        let data = |dir| {
+            top.ports
+                .iter()
+                .filter(move |p| p.dir == dir && width(p).is_some())
+        };
+        Layout {
+            shape,
+            inputs: data(Dir::Input)
+                .map(|p| {
+                    let name = p.name.text.clone();
+                    let reset = is_domain_reset(clocked, &name);
+                    (name, reset)
+                })
+                .collect(),
+            outputs: data(Dir::Output).map(|p| p.name.text.clone()).collect(),
+        }
+    }
+
+    fn vector_in(&self, inputs: &interp::Inputs) -> Result<String, VectorLen> {
+        let values = checked(self.inputs.len(), inputs.values())?;
+        let mut reset = None;
+        let mut others = Vec::new();
+        for ((name, is_reset), value) in self.inputs.iter().zip(values) {
+            if *is_reset {
+                reset = Some(value.to_biguint().bits() != 0);
+            } else {
+                others.push((name.as_str(), value.to_biguint().to_string()));
+            }
+        }
+        Ok(super::in_line(reset, self.shape.layout(others)))
+    }
+
+    fn vector_out(&self, outputs: &interp::Outputs) -> Result<String, VectorLen> {
+        let values = checked(self.outputs.len(), outputs.values())?;
+        let pairs = self
+            .outputs
+            .iter()
+            .zip(values)
+            .map(|(name, value)| (name.as_str(), value.to_biguint().to_string()));
+        let entries: Vec<String> = self
+            .shape
+            .layout(pairs)
+            .into_iter()
+            .map(|(n, v)| format!("{n} {v}"))
+            .collect();
+        Ok(format!("out=({})", entries.join(" ")))
+    }
+}
+
+fn checked<T>(expected: usize, values: &[T]) -> Result<&[T], VectorLen> {
+    if values.len() == expected {
+        Ok(values)
+    } else {
+        Err(VectorLen {
+            expected,
+            found: values.len(),
+        })
     }
 }
 
@@ -146,10 +242,15 @@ pub(super) fn lift_shaped(
         text,
         memories,
         aggregates: shapes.values().map(|s| s.groups.len()).sum(),
-        top: shapes
-            .get(design.top.text.as_str())
-            .cloned()
-            .unwrap_or_default(),
+        top: Layout::of(
+            modules
+                .get(design.top.text.as_str())
+                .ok_or_else(|| Unsupported::Name(design.top.text.clone()))?,
+            shapes
+                .get(design.top.text.as_str())
+                .cloned()
+                .unwrap_or_default(),
+        ),
     })
 }
 
@@ -489,39 +590,12 @@ fn is_domain_reset(clocked: bool, name: &str) -> bool {
     clocked && name == RESET
 }
 
-fn vector_in(top: &typed::Module, shape: &Shape, inputs: &interp::Inputs) -> String {
-    let mut reset = None;
-    let mut others = Vec::new();
-    for (port, value) in top.inputs().iter().zip(inputs.values()) {
-        if is_domain_reset(top.clock().is_some(), &port.name) {
-            reset = Some(value.to_biguint().bits() != 0);
-        } else {
-            others.push((port.name.as_str(), value.to_biguint().to_string()));
-        }
-    }
-    super::in_line(reset, shape.layout(others))
-}
-
-fn vector_out(top: &typed::Module, shape: &Shape, outputs: &interp::Outputs) -> String {
-    let pairs = top
-        .outputs()
-        .iter()
-        .zip(outputs.values())
-        .map(|(port, value)| (port.name.as_str(), value.to_biguint().to_string()));
-    let entries: Vec<String> = shape
-        .layout(pairs)
-        .into_iter()
-        .map(|(n, v)| format!("{n} {v}"))
-        .collect();
-    format!("out=({})", entries.join(" "))
-}
-
 #[cfg(test)]
 mod tests {
     use super::super::shape::{Group, Kind};
     use super::*;
     use core_ir::r#gen::{Config, design_with};
-    use core_ir::{Bits, check::check, text::parse, vectors};
+    use core_ir::{Bits, check::check, text::parse, typed, vectors};
     use proptest::collection::vec;
     use proptest::prelude::*;
     use proptest::strategy::ValueTree;
@@ -548,9 +622,19 @@ mod tests {
             .to_owned()
     }
 
-    fn top_of(core: &str) -> typed::Module {
-        let design = check(&parse(core).unwrap()).unwrap();
-        design.modules()[design.top().index()].clone()
+    /// The checked top module of `core`, and its layout under `shape`.
+    fn top_of(core: &str, shape: Shape) -> (typed::Module, Layout) {
+        let ast = parse(core).unwrap();
+        let design = check(&ast).unwrap();
+        let top = design.modules()[design.top().index()].clone();
+        let Some(Item::Module(m)) = ast
+            .items
+            .iter()
+            .find(|i| matches!(i, Item::Module(m) if m.name.text == ast.top.text))
+        else {
+            unreachable!()
+        };
+        (top, Layout::of(m, shape))
     }
 
     #[test]
@@ -792,54 +876,81 @@ mod tests {
 
     #[test]
     fn vector_in_puts_the_reset_first_and_sorts_the_inputs() {
-        let top = top_of(
+        let (top, top_layout) = top_of(
             "(design m0 (module m0 (input clk clock) (input silicon_i1 (bits 3)) \
              (input rst (bits 1)) (input i0 (bits 4)) \
              (reg r0 (bits 4) clk (reset sync rst (const 4 0))) (next r0 i0)))",
+            Shape::default(),
         );
         let inputs = vectors::parse_input("in=(silicon_i1 3 rst 1 i0 7)", &top).unwrap();
         assert_eq!(
-            vector_in(&top, &Shape::default(), &inputs),
+            top_layout.vector_in(&inputs).unwrap(),
             "in=(clock$0rst true i0 7 silicon_i1 3)"
         );
         let inputs = vectors::parse_input("in=(silicon_i1 3 rst 0 i0 7)", &top).unwrap();
         assert_eq!(
-            vector_in(&top, &Shape::default(), &inputs),
+            top_layout.vector_in(&inputs).unwrap(),
             "in=(clock$0rst false i0 7 silicon_i1 3)"
         );
 
-        let comb = top_of(
+        let (comb, comb_layout) = top_of(
             "(design m0 (module m0 (input silicon_i1 (bits 3)) (input i0 (bits 4)) \
              (output o0 (bits 1)) (assign o0 (const 1 0))))",
+            Shape::default(),
         );
         let inputs = vectors::parse_input("in=(silicon_i1 3 i0 7)", &comb).unwrap();
         assert_eq!(
-            vector_in(&comb, &Shape::default(), &inputs),
+            comb_layout.vector_in(&inputs).unwrap(),
             "in=(i0 7 silicon_i1 3)"
         );
 
-        let none = top_of("(design m0 (module m0 (output o0 (bits 1)) (assign o0 (const 1 0))))");
+        let (none, none_layout) = top_of(
+            "(design m0 (module m0 (output o0 (bits 1)) (assign o0 (const 1 0))))",
+            Shape::default(),
+        );
         let inputs = vectors::parse_input("in=()", &none).unwrap();
-        assert_eq!(vector_in(&none, &Shape::default(), &inputs), "in=()");
+        assert_eq!(none_layout.vector_in(&inputs).unwrap(), "in=()");
+    }
+
+    #[test]
+    fn a_vector_of_the_wrong_length_is_an_error() {
+        let (top, layout) = top_of(
+            "(design m0 (module m0 (input a (bits 1)) (input b (bits 1)) \
+             (output o (bits 1)) (assign o a)))",
+            Shape::default(),
+        );
+        let short = vectors::parse_input("in=(a 1 b 0)", &top).unwrap();
+        assert!(layout.vector_in(&short).is_ok());
+        let one = interp::Outputs::new(vec![Bits::new(1, 1u8.into()).unwrap(); 2]);
+        assert_eq!(
+            layout.vector_out(&one),
+            Err(VectorLen {
+                expected: 1,
+                found: 2
+            })
+        );
     }
 
     #[test]
     fn vector_out_sorts_the_outputs() {
-        let top = top_of(
+        let (_, top_layout) = top_of(
             "(design m0 (module m0 (output o1 (bits 2)) (output o0 (bits 3)) \
              (assign o1 (const 2 3)) (assign o0 (const 3 7))))",
+            Shape::default(),
         );
         let outputs = interp::Outputs::new(vec![
             Bits::new(2, 3u8.into()).unwrap(),
             Bits::new(3, 7u8.into()).unwrap(),
         ]);
-        assert_eq!(
-            vector_out(&top, &Shape::default(), &outputs),
-            "out=(o0 7 o1 3)"
+        assert_eq!(top_layout.vector_out(&outputs).unwrap(), "out=(o0 7 o1 3)");
+        let (_, none_layout) = top_of(
+            "(design m0 (module m0 (input i0 (bits 1))))",
+            Shape::default(),
         );
-        let none = top_of("(design m0 (module m0 (input i0 (bits 1))))");
         assert_eq!(
-            vector_out(&none, &Shape::default(), &interp::Outputs::new(vec![])),
+            none_layout
+                .vector_out(&interp::Outputs::new(vec![]))
+                .unwrap(),
             "out=()"
         );
     }
@@ -930,31 +1041,34 @@ mod tests {
 
     #[test]
     fn the_vector_map_follows_the_layout_not_the_byte_order() {
-        let top = top_of(
-            "(design m0 (module m0 (input z (bits 4)) (input a (bits 4)) (input c (bits 4)) \
-             (output p (bits 4)) (output q (bits 4)) (assign p a) (assign q z)))",
-        );
         let shape = Shape {
             groups: vec![
                 group("b", Dir::Input, Kind::Tuple, &[("z", 4), ("a", 4)]),
                 group("g", Dir::Output, Kind::Array, &[("q", 4), ("p", 4)]),
             ],
         };
+        let (top, top_layout) = top_of(
+            "(design m0 (module m0 (input z (bits 4)) (input a (bits 4)) (input c (bits 4)) \
+             (output p (bits 4)) (output q (bits 4)) (assign p a) (assign q z)))",
+            shape,
+        );
         let inputs = vectors::parse_input("in=(z 3 a 5 c 7)", &top).unwrap();
-        assert_eq!(vector_in(&top, &shape, &inputs), "in=(b.0 3 b.1 5 c 7)");
+        assert_eq!(
+            top_layout.vector_in(&inputs).unwrap(),
+            "in=(b.0 3 b.1 5 c 7)"
+        );
         let outputs = interp::Outputs::new(vec![
             Bits::new(4, 2u8.into()).unwrap(),
             Bits::new(4, 9u8.into()).unwrap(),
         ]);
-        assert_eq!(vector_out(&top, &shape, &outputs), "out=(g.0 9 g.1 2)");
+        assert_eq!(
+            top_layout.vector_out(&outputs).unwrap(),
+            "out=(g.0 9 g.1 2)"
+        );
     }
 
     #[test]
     fn a_record_leaf_has_a_field_entry_after_the_reset() {
-        let top = top_of(
-            "(design m0 (module m0 (input clk clock) (input rst (bits 1)) (input x (bits 4)) \
-             (input y (bits 4)) (reg r (bits 4) clk (reset sync rst (const 4 0))) (next r x)))",
-        );
         let shape = Shape {
             groups: vec![group(
                 "p",
@@ -966,9 +1080,14 @@ mod tests {
                 &[("y", 4), ("x", 4)],
             )],
         };
+        let (top, top_layout) = top_of(
+            "(design m0 (module m0 (input clk clock) (input rst (bits 1)) (input x (bits 4)) \
+             (input y (bits 4)) (reg r (bits 4) clk (reset sync rst (const 4 0))) (next r x)))",
+            shape,
+        );
         let inputs = vectors::parse_input("in=(rst 1 x 3 y 6)", &top).unwrap();
         assert_eq!(
-            vector_in(&top, &shape, &inputs),
+            top_layout.vector_in(&inputs).unwrap(),
             "in=(clock$0rst true p.f0 6 p.f1 3)"
         );
     }
