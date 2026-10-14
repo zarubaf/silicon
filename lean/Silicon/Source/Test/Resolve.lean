@@ -344,9 +344,8 @@ prelude. A local never hides it, and an item hides a prelude function.
 #guard fails ("struct S {}\n" ++ fnBody "return p.S();") .S003 3 10
 #guard fails (fnBody "return p.Bool();") .S003 2 10
 #guard message (fnBody "return p.Bool();") == "`Bool` is not a function"
-#guard fails (fnBody "return p.diagnostic();") .S003 2 10
-#guard message (fnBody "return p.diagnostic();") ==
-  "`diagnostic` is not supported yet; it comes in slice 2"
+#guard fails (fnBody "return p.Reg();") .S003 2 10
+#guard message (fnBody "return p.Reg();") == "`Reg` is not supported yet; it comes in slice 3"
 #guard message (fnBody "return p.read();") == "`read` is not supported yet; it comes in slice 3"
 
 /-! `S003` in the receiver or an argument of a receiver call. The first error by position wins. -/
