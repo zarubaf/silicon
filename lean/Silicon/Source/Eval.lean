@@ -136,8 +136,10 @@ Hardware values follow v0.1 sections 1 and 3:
 - `diagnostic(message, value)` runs in the order of section 6.2, each error at the call
   (`diagnose`). The copies of the arguments charge first. An enclosing guard is `S016`. The
   message takes the `data` context and is a static `String`. A value that waits for its type is
-  `S010`. Then the measure charge of the value (`Value.measureCharge`) and the length of the
-  record in bytes come before the record goes into `St.records`. `render` is pure.
+  `S010`. Then the measure charge of the value and the length of the record in bytes come
+  before the record goes into `St.records`. A static part charges `Value.measureCharge`, and each
+  rendered container node charges 1. A reference renders from its type metadata, and a part of
+  it without a hardware leaf is its static zero with no charge. `render` is pure.
 - `Source.Resolve` gives each call node its call site `k`: its number in the pre-order of the
   body of the enclosing item. The call frame is `<fn>$<k>c`. A call outside a body has only
   static values, so it never names hardware.
@@ -1041,22 +1043,40 @@ def message (p : Pos) (g : String) : Val → M String
     | v => fail .S011 p s!"the message of `{g}` is a static String, not {v.text}"
 
 /-!
-The text of a value in a record (section 8.2). A static value is its canonical serialization,
-and a hardware scalar is `(hw <type>)`. It is pure and has no charge, because the measure
-charge and the byte charge of the record come before it (section 5.4). An aggregate and a handle
-render as `-`.
+The text of the handle `h` in a record (section 8.2), by its kind. A resource and a memory name
+their type and their core name. An instance names its emitted module name and its core name, and
+a child input the core name of its instance and its port name. A domain names itself.
 -/
-def render : Val → String
+def Handle.render : Handle → String
+  | .res k _ t path =>
+    let kind := match k with | .reg => "reg" | .wire => "wire" | .output => "output"
+    Print.node kind [t.serialize, encode path.name]
+  | .mem _ path t k => Print.node "mem" [(Ty.array t k).serialize, encode path.name]
+  | .inst _ path i => Print.node "instance" [encode i.name, encode path.name]
+  | .input _ path q => Print.node "input" [q.ty.serialize, encode path.name, q.name]
+  | .domain d => Print.node "domain" [d]
+
+/-!
+The text of a value in a record (section 8.2). A static value is its canonical serialization,
+a hardware scalar is `(hw <type>)`, an aggregate renders by `Agg.render`, and a handle by its
+kind. It is pure and has no charge, because the measure charge and the byte charge of the record
+come before it (section 5.4). It never calls the charged `normalize`.
+-/
+def render (specs : Specs) : Val → String
   | .static v => v.serialize
   | .hw h => Print.node "hw" [h.ty.serialize]
-  | _ => "-"
+  | .agg a => a.render specs
+  | .handle h => h.render
+  | .pending .. => "-"
 
 /-!
 The measure charge of a value in a record (section 5.4): `Value.measureCharge` of a static
-value. A hardware scalar has no container, so it charges nothing.
+value, and `Agg.renderCharge` of an aggregate. A hardware scalar and a handle have no container,
+so they charge nothing.
 -/
-def Val.measureCharge : Val → Nat
+def Val.measureCharge (specs : Specs) : Val → Nat
   | .static v => v.measureCharge
+  | .agg a => a.renderCharge specs
   | _ => 0
 
 /-!
@@ -1078,8 +1098,9 @@ def diagnose (p : Pos) (g : String) (m v : Val) : M (Option Out) := do
   let m ← message p g m
   if v matches .pending .. then
     fail .S010 p s!"the value of `{g}` needs a type; {v.text}"
-  charge p v.measureCharge
-  let line := recordLine p "-" m (render v)
+  let specs := (← get).specs
+  charge p (v.measureCharge specs)
+  let line := recordLine p "-" m (render specs v)
   charge p line.utf8ByteSize
   modify fun s => { s with records := s.records.push line }
   return some ⟨.static .unit, false, none⟩
