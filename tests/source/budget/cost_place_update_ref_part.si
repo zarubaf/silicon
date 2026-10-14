@@ -1,0 +1,14 @@
+// The cost of a place update on a reference (section 5.4): `q.0 = 5` replaces the leaf, so the new
+// root has no hardware leaf. The reference on the path expands, and the part `[Unit; 3]` becomes a
+// static value. The update charges the zero size of that type once: 1 + 3 = 4. The charge grows by
+// 1 for each element of the unit array. The fuel equal to the total of `cost` succeeds, and one
+// unit less gives `S015`.
+// FUEL 132
+// TOP M()
+module M() {
+    input x: (UInt[8], [Unit; 3]);
+    output o: UInt[8];
+    let mut q = x;
+    q.0 = 5;
+    o := x.0;
+}

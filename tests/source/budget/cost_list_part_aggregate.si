@@ -1,0 +1,22 @@
+// The cost of a list part of a hardware aggregate (section 5.4). A `push` into `x.1` refreshes the
+// stored size of the root, so it charges the number of parts of the root, 2, besides the element: 4
+// pushes charge 8. The same pushes into a root without a hardware leaf charge nothing for the
+// refresh. A `pop` of a type with depth 3 from a list part of the type `List[Type]` makes the root
+// less deep. It charges the number of parts, 2, and the recursive size of the root, 9: the tuple 1,
+// the leaf 1, the list 1, and the type `[[UInt[8]; 1]; 1]` 6. The fuel equal to the total of `cost`
+// succeeds, and one unit less gives `S015`.
+// FUEL 239
+// TOP M()
+module M() {
+    input i: UInt[8];
+    output o: UInt[8];
+    let mut x = (i, list(UInt[8]));
+    comptime for k in 0..4 {
+        x.1.push(5);
+    }
+    let mut ts = list(Type);
+    ts.push([[UInt[8]; 1]; 1]);
+    let mut y = (i, ts);
+    let t = y.1.pop();
+    o := i;
+}

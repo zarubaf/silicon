@@ -1,0 +1,16 @@
+// The cost of a selection (section 5.4): a static index, a field selection, and `len` of an array
+// only refer to a value, so they charge no size, only their nodes. The array has 64 elements. Its
+// size 65 appears in no pass: the total at 64 elements exceeds the total at 4 elements by 120, and
+// the same file without the three selections exceeds its 4-element total by the same 120. The fuel
+// equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 331
+// TOP M()
+module M() domains() {
+    let a = [UInt[8]; 64]();
+    let s = (a, UInt[8](1));
+    comptime for i in 0..8 {
+        let x = a[3];
+        let n = len(a);
+        let y = s.1;
+    }
+}
