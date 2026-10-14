@@ -409,6 +409,8 @@ mutual
           let path ← fresh x.id x.name.name
           modifyBody fun b => { b with wires := b.wires.push ⟨path, t, p⟩ }
           bindLocal x.id ⟨some t, false, ← resource .wire path t p x.name.name⟩
+        -- TODO(#209): elaborate the memory declaration. Until then, a memory is `S004`.
+        | .mem p .. => fail .S004 p "a memory is not supported yet"
         | .connect p tgt v => do
           let t ← target p tgt
           let o ← need v (← eval n v)

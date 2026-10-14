@@ -189,6 +189,7 @@ inductive Stmt where
   | connect (pos : Pos) (target value : Expr)
   | reg (pos : Pos) (name : Binder) (ty : TypeExpr) (init : Expr)
   | wire (pos : Pos) (name : Binder) (ty : TypeExpr)
+  | mem (pos : Pos) (name : Binder) (word : TypeExpr) (depth : Expr)
   | input (pos : Pos) (name : Binder) (ty : TypeExpr)
   | output (pos : Pos) (name : Binder) (ty : TypeExpr)
   | inst (pos : Pos) (name : Binder) (module : Ident) (item : Nat) (args : List Expr)
@@ -236,8 +237,8 @@ def TypeExpr.pos : TypeExpr → Pos
   | .name p .. | .index p .. | .unit p | .tuple p .. | .array p .. | .fn p .. => p
 
 def Stmt.pos : Stmt → Pos
-  | .local p .. | .assign p .. | .connect p .. | .reg p .. | .wire p .. | .input p ..
-  | .output p .. | .inst p .. | .ret p .. | .ctIf p .. | .ctFor p .. | .block p ..
+  | .local p .. | .assign p .. | .connect p .. | .reg p .. | .wire p .. | .mem p ..
+  | .input p .. | .output p .. | .inst p .. | .ret p .. | .ctIf p .. | .ctFor p .. | .block p ..
   | .expr p .. | .alias p .. => p
 
 /-! Whether a form names a local. In a signature, each local is a parameter. -/
@@ -494,10 +495,10 @@ mutual
       let i ← expr i
       return .reg p (← declare n) ty i
     | .wire p n ty => do let ty ← typeExpr ty; return .wire p (← declare n) ty
-    -- TODO(#209): resolve the memory binder. Until the later passes take a memory, it is `S004`.
-    | .mem p .. => do
-      recordDup ⟨.S004, p, "a memory is not supported yet"⟩
-      return .block p []
+    | .mem p n w d => do
+      let w ← typeExpr w
+      let d ← expr d
+      return .mem p (← declare n) w d
     | .input p n ty => do let ty ← typeExpr ty; return .input p (← declare n) ty
     | .output p n ty => do let ty ← typeExpr ty; return .output p (← declare n) ty
     | .inst p n m xs => do
