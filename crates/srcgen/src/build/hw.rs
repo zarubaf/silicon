@@ -287,7 +287,15 @@ impl Builder {
             .map(|(_, _, t)| self.value(ctx, &Want::uniform(*t, ctx.envs.len()), d))
             .collect();
         let ret = Want::uniform(ret, ctx.envs.len());
-        adapt(HExpr::Call(name, args), &ret, w)
+        // A call through a function value runs the same helper.
+        let callee = match self.hw_value_of(&name) {
+            Some(value) if self.tape.flag() => {
+                note!(self, hw_value_calls);
+                value
+            }
+            _ => name,
+        };
+        adapt(HExpr::Call(callee, args), &ret, w)
     }
 
     /// `a << k` or `a >> k`: the count is static or a `UInt` value.

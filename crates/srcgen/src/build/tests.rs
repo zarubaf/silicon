@@ -298,7 +298,7 @@ fn levels(t: &STy) -> u32 {
 }
 
 /// The forms of the static containers that a program holds, by name.
-fn static_forms(s: &Stats) -> [(&'static str, bool); 22] {
+fn static_forms(s: &Stats) -> [(&'static str, bool); 29] {
     [
         ("tuple", s.tuples > 0),
         ("array", s.arrays > 0),
@@ -322,11 +322,18 @@ fn static_forms(s: &Stats) -> [(&'static str, bool); 22] {
         ("static mut call", s.mut_calls > 0),
         ("hardware mut call", s.hw_mut_calls > 0),
         ("hardware mut receiver", s.hw_mut_receivers > 0),
+        ("function value", s.fn_values > 0),
+        ("function value with a mut formal", s.mut_values > 0),
+        ("function value of a helper", s.hw_values > 0),
+        ("call through a function value", s.value_calls > 0),
+        ("mut call through a function value", s.mut_value_calls > 0),
+        ("helper call through a function value", s.hw_value_calls > 0),
+        ("function as a module argument", s.fn_arguments > 0),
     ]
 }
 
 /// The positions of each form and those that took a fallback.
-fn fallback_pairs(s: &Stats) -> [(&'static str, u32, u32); 7] {
+fn fallback_pairs(s: &Stats) -> [(&'static str, u32, u32); 8] {
     [
         ("container leaf", s.leaves, s.leaf_fallbacks),
         ("index", s.indexes, s.index_fallbacks),
@@ -339,6 +346,11 @@ fn fallback_pairs(s: &Stats) -> [(&'static str, u32, u32); 7] {
             s.mut_call_fallbacks,
         ),
         ("hardware mut call", s.hw_mut_calls, 0),
+        (
+            "call through a function value",
+            s.value_calls,
+            s.value_call_fallbacks,
+        ),
     ]
 }
 
@@ -376,7 +388,7 @@ fn programs_cover_static_containers() {
         let nested = statics.map(levels).max().unwrap_or(0) >= 2;
         *with.entry("nested or probed").or_default() += usize::from(probed || nested);
     }
-    assert_eq!(with.len(), 23, "{with:?}");
+    assert_eq!(with.len(), 30, "{with:?}");
     for (form, n) in &with {
         assert!(
             n * 10 >= TAPES,

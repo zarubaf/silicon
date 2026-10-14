@@ -71,6 +71,14 @@ pub fn twin(program: &Program) -> Twin {
         scope: Scope::new(&program.items).unwrap_or_default(),
         named: BTreeSet::new(),
         queue: VecDeque::new(),
+        hw_values: program
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::HwFnValue { name, target, .. } => Some((name.clone(), target.clone())),
+                _ => None,
+            })
+            .collect(),
     };
     let Some(top) = w.specialize(&program.top, &program.args) else {
         // A container argument is a fault of the builder; the static names
@@ -128,6 +136,7 @@ fn token(v: &Value) -> Option<String> {
         Value::Int(n) => Some(n.to_string()),
         Value::Bool(true) => Some("1b".to_owned()),
         Value::Bool(false) => Some("0b".to_owned()),
+        Value::Function(item, _) => Some(item.clone()),
         Value::Tuple(_)
         | Value::Array(_)
         | Value::UInt(..)
@@ -149,6 +158,7 @@ fn literal(v: Value) -> Option<SExpr> {
         Value::Array(xs) => SExpr::Array(all(xs)?),
         Value::UInt(..) | Value::SInt(..) | Value::List(..) => return None,
         Value::Str(s) => SExpr::Str(s),
+        Value::Function(item, _) => SExpr::Name(item),
         Value::Record(rt, xs) => {
             let targs = all(rt.args.clone())?;
             SExpr::Record(rt.name.clone(), targs, all(xs)?)
@@ -187,6 +197,8 @@ struct Writer<'a> {
     named: BTreeSet<String>,
     /// The specializations to write: name, module, and arguments.
     queue: VecDeque<(String, String, Vec<Value>)>,
+    /// The helper that each function value of a helper holds.
+    hw_values: BTreeMap<String, String>,
 }
 
 impl Writer<'_> {
@@ -266,6 +278,8 @@ impl Writer<'_> {
             HExpr::Resize(t, a) => HExpr::Resize(self.ty(t, fr), sub(a)),
             HExpr::Reinterpret(t, a) => HExpr::Reinterpret(self.ty(t, fr), sub(a)),
             HExpr::Call(g, args) => {
+                // A call through a function value is a call of its helper.
+                let g = self.hw_values.get(g).unwrap_or(g);
                 HExpr::Call(g.clone(), args.iter().map(|a| self.hexpr(a, fr)).collect())
             }
             HExpr::Receiver(recv, g, args) => HExpr::Receiver(
@@ -637,6 +651,68 @@ mod tests {
         for word in ["comptime", "static_assert", "f0", "const"] {
             assert!(!t.text.contains(word), "{word} in\n{}", t.text);
         }
+    }
+
+    #[test]
+    fn the_twin_calls_the_item_of_a_function_value() {
+        use super::super::program::FnTy;
+        let helper = Item::Helper {
+            name: "h0".to_owned(),
+            params: vec![("x0".to_owned(), uint(8))],
+            mut_first: false,
+            ret: uint(8),
+            body: vec![],
+            result: hname("x0"),
+        };
+        let value = Item::HwFnValue {
+            name: "F0".to_owned(),
+            target: "h0".to_owned(),
+            params: vec![uint(8)],
+            ret: uint(8),
+        };
+        // `module M1(comptime P0: fn (Nat) -> Nat)` reads the value `P0`.
+        let fn_ty = STy::Fn(Box::new(FnTy {
+            params: vec![(false, STy::Nat)],
+            ret: STy::Nat,
+        }));
+        let f0 = Item::ComptimeFn(ComptimeFn {
+            name: "f0".to_owned(),
+            params: vec![("x0".to_owned(), STy::Nat)],
+            ret: STy::Nat,
+            base: int(2),
+            step: sname("x0"),
+        });
+        let m1 = module(
+            "M1",
+            &[("P0", fn_ty)],
+            false,
+            vec![
+                Stmt::Input(
+                    "i0".to_owned(),
+                    Ty::UInt(SExpr::Call("P0".to_owned(), vec![int(0)])),
+                ),
+                Stmt::Output("o0".to_owned(), uint(8)),
+                connect("o0", HExpr::Call("F0".to_owned(), vec![hname("i0")])),
+            ],
+        );
+        let m0 = module(
+            "M0",
+            &[],
+            false,
+            vec![
+                Stmt::Output("o0".to_owned(), uint(8)),
+                Stmt::Input("i0".to_owned(), uint(2)),
+                Stmt::Instance("u0".to_owned(), "M1".to_owned(), vec![sname("f0")]),
+                Stmt::Connect(Place::Field("u0".to_owned(), "i0".to_owned()), hname("i0")),
+                connect("o0", HExpr::Field("u0".to_owned(), "o0".to_owned())),
+            ],
+        );
+        let t = twin(&program(vec![f0, helper, value, m0, m1], Vec::new()));
+        assert_eq!(
+            t.text,
+            "fn h0(x0: UInt[8]) -> UInt[8] {\n    return x0;\n}\nmodule M0() domains() {\n    output o0: UInt[8];\n    input i0: UInt[2];\n    instance u0 = M1_f0();\n    u0.i0 := i0;\n    o0 := u0.o0;\n}\nmodule M1_f0() domains() {\n    input i0: UInt[2];\n    output o0: UInt[8];\n    o0 := h0(i0);\n}\n"
+        );
+        assert!(t.static_names().is_empty(), "{:?}", t.static_names());
     }
 
     #[test]

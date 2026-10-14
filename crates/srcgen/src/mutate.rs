@@ -24,7 +24,7 @@
 
 use super::program::sexpr as sexpr_text;
 use super::program::{
-    FieldTy, HExpr, Item, Place, Program, Radix, SBin, SExpr, Stmt, Ty, render_items,
+    FieldTy, HExpr, Item, Place, Program, Radix, SBin, SExpr, STy, Stmt, Ty, render_items,
 };
 use num_bigint::BigInt;
 use std::mem;
@@ -170,6 +170,10 @@ struct Walk<'a> {
     seen: usize,
     hit: Option<Hit>,
     names: Vec<String>,
+    /// The names that hold a function value: a call through one checks its
+    /// arguments at run time (pass 5), so an arity change in dead code stays
+    /// unseen.
+    values: Vec<String>,
     /// The name and index of the current item, and the count of its
     /// statements so far.
     item: String,
@@ -186,6 +190,7 @@ impl<'a> Walk<'a> {
             seen: 0,
             hit: None,
             names: Vec::new(),
+            values: Vec::new(),
             item: String::new(),
             index: 0,
             stmt: 0,
@@ -206,6 +211,7 @@ impl<'a> Walk<'a> {
     }
 
     fn items(&mut self, items: &mut Vec<Item>) {
+        self.values = function_values(items);
         let mut i = 0;
         while let Some(item) = items.get(i) {
             let name = item_name(item).to_owned();
@@ -235,6 +241,7 @@ impl<'a> Walk<'a> {
     fn item_body(&mut self, item: &mut Item) {
         match item {
             Item::Const { value, .. } => self.sexpr(value),
+            Item::HwFnValue { .. } => {}
             Item::ListFn(f) => self.sexpr(&mut f.element),
             Item::MutFn(f) => {
                 self.sexpr(&mut f.update);
@@ -375,15 +382,20 @@ impl<'a> Walk<'a> {
 
     /// The arity sites of a call or an instance of `callee`.
     fn args<T>(&mut self, callee: &str, args: &mut Vec<T>, zero: T) {
+        let code = if self.values.iter().any(|v| v == callee) {
+            None
+        } else {
+            Some("S007")
+        };
         if !args.is_empty() && self.site(Kind::DropArg) {
             let what = format!("drop argument {} of {callee} in {}", args.len(), self.item);
             args.pop();
-            self.hit(what, Effect::Code(Some("S007")));
+            self.hit(what, Effect::Code(code));
         }
         if self.site(Kind::AddArg) {
             args.push(zero);
             let what = format!("add argument {} to {callee} in {}", args.len(), self.item);
-            self.hit(what, Effect::Code(Some("S007")));
+            self.hit(what, Effect::Code(code));
         }
     }
 
@@ -504,9 +516,34 @@ impl<'a> Walk<'a> {
     }
 }
 
+/// The names of the consts and parameters of a function type, and of the
+/// function values of helpers.
+fn function_values(items: &[Item]) -> Vec<String> {
+    let mut names = Vec::new();
+    for item in items {
+        match item {
+            Item::Const {
+                name,
+                ty: STy::Fn(_),
+                ..
+            }
+            | Item::HwFnValue { name, .. } => names.push(name.clone()),
+            Item::Module { params, .. } => {
+                let functions = params.iter().filter(|(_, t)| matches!(t, STy::Fn(_)));
+                names.extend(functions.map(|(n, _)| n.clone()));
+            }
+            _ => {}
+        }
+    }
+    names
+}
+
 fn item_name(item: &Item) -> &str {
     match item {
-        Item::Const { name, .. } | Item::Helper { name, .. } | Item::Module { name, .. } => name,
+        Item::Const { name, .. }
+        | Item::Helper { name, .. }
+        | Item::HwFnValue { name, .. }
+        | Item::Module { name, .. } => name,
         Item::ComptimeFn(f) => &f.name,
         Item::Struct(def) => &def.name,
         Item::ListFn(f) => &f.name,
@@ -781,6 +818,56 @@ mod tests {
         let m = find(Kind::DropArg, "let s0: Int = f0(P0);");
         assert_eq!(m.expect, Some("S007"));
         assert_eq!(m.what, "drop argument 2 of f0 in M0");
+    }
+
+    #[test]
+    fn an_arity_change_of_a_call_through_a_value_predicts_nothing() {
+        use super::super::program::{ComptimeFn, FnTy};
+        let f0 = Item::ComptimeFn(ComptimeFn {
+            name: "f0".to_owned(),
+            params: vec![("x0".to_owned(), STy::Nat), ("x1".to_owned(), STy::Int)],
+            ret: STy::Int,
+            base: SExpr::Name("x1".to_owned()),
+            step: SExpr::Name("x1".to_owned()),
+        });
+        let value = Item::Const {
+            name: "F0".to_owned(),
+            ty: STy::Fn(Box::new(FnTy {
+                params: vec![(false, STy::Nat), (false, STy::Int)],
+                ret: STy::Int,
+            })),
+            value: SExpr::Name("f0".to_owned()),
+        };
+        let call = |f: &str| SExpr::Call(f.to_owned(), vec![dec(1), dec(2)]);
+        let m0 = module(
+            "M0",
+            vec![
+                Stmt::Output("o0".to_owned(), Ty::Bool),
+                Stmt::StaticLet("s0".to_owned(), STy::Int, call("f0")),
+                Stmt::StaticLet("s1".to_owned(), STy::Int, call("F0")),
+                connect("o0", HExpr::Static(SExpr::Bool(false))),
+            ],
+        );
+        let p = of(vec![f0, value, m0]);
+        let by_name = |kind: Kind, text: &str| {
+            all(&p, kind)
+                .into_iter()
+                .find(|m| m.text.contains(text))
+                .unwrap()
+        };
+        // A named call has its arity checked in pass 4, on dead code too.
+        let m = by_name(Kind::DropArg, "let s0: Int = f0(1);");
+        assert_eq!(m.expect, Some("S007"));
+        let m = by_name(Kind::AddArg, "let s0: Int = f0(1, 2, 0);");
+        assert_eq!(m.expect, Some("S007"));
+        // A call through a value is checked when it runs, in pass 5.
+        let m = by_name(Kind::DropArg, "let s1: Int = F0(1);");
+        assert_eq!(m.expect, None);
+        let m = by_name(Kind::AddArg, "let s1: Int = F0(1, 2, 0);");
+        assert_eq!(m.expect, None);
+        // A name that no declaration holds is still unresolved in pass 3.
+        let m = by_name(Kind::Rename, "let s1: Int = q0(1, 2);");
+        assert_eq!(m.expect, Some("S003"));
     }
 
     #[test]

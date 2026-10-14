@@ -48,7 +48,7 @@ impl Builder {
         let choice = if depth == 0 {
             self.tape.below(2)
         } else {
-            self.tape.below(7)
+            self.tape.below(9)
         };
         let d = depth.saturating_sub(1);
         match choice {
@@ -58,7 +58,7 @@ impl Builder {
                     .get(i)
                     .map_or_else(|| SExpr::Str(String::new()), |n| SExpr::Name((*n).clone()))
             }
-            2 => {
+            2 | 7 => {
                 note!(self, str_of);
                 SExpr::StrOf(Box::new(self.sexpr(Kind::Int, d, r)))
             }
@@ -76,7 +76,7 @@ impl Builder {
                 let els = self.sexpr(Kind::Str, d, r);
                 SExpr::If(Box::new(cond), Box::new(then), Box::new(els))
             }
-            5 => self.scalar_of(d, r),
+            5 | 8 => self.scalar_of(d, r),
             _ => self.string_literal(),
         }
     }
