@@ -70,6 +70,7 @@ pub enum Kind {
     Loop,
     Reg,
     Wire,
+    Mem,
     Input,
     Output,
     Instance,
