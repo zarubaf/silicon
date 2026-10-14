@@ -728,10 +728,19 @@ theorem dataBitsOf_f (p : Pos) (g : String) (vs : List Val) :
     Follows cap (dataBitsOf p g vs) (dataBitsOf p g vs) := by
   unfold dataBitsOf; follows
 
+theorem message_f (p : Pos) (g : String) (v : Val) :
+    Follows cap (message p g v) (message p g v) := by
+  unfold message; follows [data_f]
+
+theorem diagnose_f (p : Pos) (g : String) (m v : Val) :
+    Follows cap (diagnose p g m v) (diagnose p g m v) := by
+  unfold diagnose; follows [message_f]
+
 theorem primCall_f (p : Pos) (g : String) (h : PrimFn) (vs : List Val) :
     Follows cap (primCall p g h vs) (primCall p g h vs) := by
   unfold primCall
-  follows [lenOf_f, dataBitsOf_f, static_f, data_f, apply_f, hwConvert_f, bounded_f]
+  follows [lenOf_f, dataBitsOf_f, static_f, data_f, apply_f, hwConvert_f, bounded_f,
+    diagnose_f]
 
 theorem specOf_f {ty ty' : Resolve.TypeExpr → M Ty} (h : ∀ t, Follows cap (ty t) (ty' t))
     (p : Pos) (i : Nat) (x : Ident) (ps : List Resolve.Param) (fs : List Resolve.StructField)

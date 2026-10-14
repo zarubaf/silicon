@@ -133,6 +133,11 @@ Hardware values follow v0.1 sections 1 and 3:
   and records its `S018`, which waits for the end of the body. `read_port` then charges the
   struct use of `ReadResponse[T]`, checks the depth of the response, and charges its zero size.
   The response refers to the word and to `m$0rvalid`, so it has no other charge.
+- `diagnostic(message, value)` runs in the order of section 6.2, each error at the call
+  (`diagnose`). The copies of the arguments charge first. An enclosing guard is `S016`. The
+  message takes the `data` context and is a static `String`. A value that waits for its type is
+  `S010`. Then the measure charge of the value (`Value.measureCharge`) and the length of the
+  record in bytes come before the record goes into `St.records`. `render` is pure.
 - `Source.Resolve` gives each call node its call site `k`: its number in the pre-order of the
   body of the enclosing item. The call frame is `<fn>$<k>c`. A call outside a body has only
   static values, so it never names hardware.
@@ -1021,6 +1026,65 @@ def dataBitsOf (p : Pos) (g : String) : List Val → M (Option Out)
   | vs => fail .S007 p s!"`{g}` takes 1 argument(s), but it has {vs.length}"
 
 /-!
+The message of `diagnostic` at the call `p`, in the `data` context (section 9.2). A register, a
+wire, an output, and an own input read as hardware (`S011`). A child input is `S017`. A memory,
+an instance, and a domain are `S010`. Then a hardware value is `S011`, and a static value other
+than a `String` is `S010`. `g` is the name of the callee.
+-/
+def message (p : Pos) (g : String) : Val → M String
+  | .pending .. => fail .S010 p s!"the message of `{g}` is a String, not `[]` without a type"
+  | m@(.handle (.res ..)) => fail .S011 p s!"the message of `{g}` is a static String, not {m.text}"
+  | m => do
+    match ← data p m with
+    | .static (.str s) => return s
+    | .static v => fail .S010 p s!"the message of `{g}` is a String, not {v.text}"
+    | v => fail .S011 p s!"the message of `{g}` is a static String, not {v.text}"
+
+/-!
+The text of a value in a record (section 8.2). A static value is its canonical serialization,
+and a hardware scalar is `(hw <type>)`. It is pure and has no charge, because the measure
+charge and the byte charge of the record come before it (section 5.4). An aggregate and a handle
+render as `-`.
+-/
+def render : Val → String
+  | .static v => v.serialize
+  | .hw h => Print.node "hw" [h.ty.serialize]
+  | _ => "-"
+
+/-!
+The measure charge of a value in a record (section 5.4): `Value.measureCharge` of a static
+value. A hardware scalar has no container, so it charges nothing.
+-/
+def Val.measureCharge : Val → Nat
+  | .static v => v.measureCharge
+  | _ => 0
+
+/-!
+The line of a record (section 8.2) at the call `p`. `inst` is the emitted name of the
+instantiation, `m` is the message, and `v` is the text of the value. The frames are empty.
+-/
+def recordLine (p : Pos) (inst m v : String) : Record :=
+  Print.node "record" [toString p.line, toString p.col, inst, Print.list [],
+    (Value.str m).serialize, v]
+
+/-!
+A call at `p` of `diagnostic` with the message `m` and the value `v`, after the copies of its
+arguments charge (section 6.2). The effect rule (`S016`) comes first, then the message, then a
+value that waits for its type (`S010`). Then the measure charge of the value, then the length of
+the record in bytes. The record then goes into the list. The emitted name is `-`.
+-/
+def diagnose (p : Pos) (g : String) (m v : Val) : M (Option Out) := do
+  if let some gd := (← read).guard then fail .S016 p (gd.effect g)
+  let m ← message p g m
+  if v matches .pending .. then
+    fail .S010 p s!"the value of `{g}` needs a type; {v.text}"
+  charge p v.measureCharge
+  let line := recordLine p "-" m (render v)
+  charge p line.utf8ByteSize
+  modify fun s => { s with records := s.records.push line }
+  return some ⟨.static .unit, false, none⟩
+
+/-!
 A call at `p` of the prelude function `h` other than `push` and `pop`, with the values `vs` of
 its arguments in the order of the parameters. `g` is the name of the callee. `len` only refers
 to its argument, and `data_bits` reads the metadata of its type. The others copy each argument.
@@ -1067,6 +1131,7 @@ def primCall (p : Pos) (g : String) (h : PrimFn) (vs : List Val) : M (Option Out
         charge p s.size
         return some ⟨.static s, false, none⟩
       | v => fail .S010 p s!"`{g}` needs an Int, not {v.text}"
+    | .diagnostic, [m, v] => diagnose p g m v
     | _, vs => fail .S010 p s!"`{g}` does not accept {vs.map Val.text}"
 
 /-!
