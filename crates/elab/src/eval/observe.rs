@@ -32,6 +32,8 @@ use parse::ast::Pos;
 enum Piece<'a> {
     Text(&'static str),
     Owned(String),
+    /// The head `(record <line> <col> <emitted> (`, written from the borrowed name.
+    Head(Pos, &'a str),
     /// An instance `(instance <module> `, written from the borrowed module name.
     Instance(Option<&'a Name>),
     /// The name of a path, encoded into the sink.
@@ -139,8 +141,9 @@ impl Evaluator<'_> {
         }
         let measure = self.measure_charge(self.store.seen(&value));
         self.charge(pos, measure)?;
-        let mut len = Len::default();
+        let mut len = Len::with(std::mem::take(&mut self.lens));
         self.line(pos, &message, self.store.seen(&value), &mut len);
+        self.lens = len.1;
         self.charge(pos, u128::from(len.0))?;
         let mut text = String::with_capacity(usize::try_from(len.0).unwrap_or(0));
         self.line(pos, &message, self.store.seen(&value), &mut text);
@@ -227,7 +230,6 @@ impl Evaluator<'_> {
     /// The record line `(record <line> <col> <emitted> (<frames>) <message> <value>)` into
     /// `out`. The walk is pure and keeps its own stack.
     fn line<S: Sink>(&self, pos: Pos, message: &str, root: Seen<'_>, out: &mut S) {
-        let head = format!("(record {} {} {} (", pos.line, pos.col, self.inst);
         #[cfg(test)]
         crate::counters::add(crate::counters::Count::Framed, self.calls.len() as u64);
         let frames = spaced(self.calls.iter().map(|&(i, q)| {
@@ -242,7 +244,7 @@ impl Evaluator<'_> {
             Seen::Hw(h) => Piece::Hw(h),
             Seen::Pending(..) => Piece::Text("-"),
         };
-        let mut pieces = vec![Piece::Owned(head)];
+        let mut pieces = vec![Piece::Head(pos, &self.inst)];
         pieces.extend(frames);
         pieces.extend([
             Piece::Text(") (string "),
@@ -263,6 +265,9 @@ impl Evaluator<'_> {
             match piece {
                 Piece::Text(s) => out.write_str(s).unwrap_or_default(),
                 Piece::Owned(s) => out.write_str(&s).unwrap_or_default(),
+                Piece::Head(pos, inst) => {
+                    write!(out, "(record {} {} {inst} (", pos.line, pos.col).unwrap_or_default();
+                }
                 Piece::Frame(name, q) => {
                     write!(out, "(call {name} {} {})", q.line, q.col).unwrap_or_default();
                 }

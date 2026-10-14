@@ -7,9 +7,10 @@
 //! the table once `Types::measure` measured it, so the length of a value costs no walk of its
 //! types.
 
-use crate::int::Int;
+use crate::int::{Int, Pow10};
 use crate::types::{Ty, TyId, TyParam, Types};
 use crate::value::Value;
+use std::collections::BTreeMap;
 use std::fmt::Write;
 
 /// Where a serialization goes: the text itself, or only its length in bytes.
@@ -39,9 +40,79 @@ impl Sink for String {
     }
 }
 
+/// What a length measure keeps between texts: the length of each type it measured, and the
+/// powers of ten that the digit counts of integers built. Both stay true for the whole run.
+#[derive(Default)]
+pub(crate) struct Cache {
+    types: BTreeMap<TyId, u64>,
+    pow10: Pow10,
+}
+
 /// The length in bytes of a serialization.
 #[derive(Default)]
-pub(crate) struct Len(pub(crate) u64);
+pub(crate) struct Len(pub(crate) u64, pub(crate) Cache);
+
+impl Len {
+    /// A measure that starts with `cache`.
+    pub(crate) fn with(cache: Cache) -> Len {
+        Len(0, cache)
+    }
+
+    /// The length of the text of the type `t`. A part that the cache holds is a lookup, and
+    /// a new type takes the lengths of its parts first, with a stack of its own, so each
+    /// type in the table measures once and no text unfolds a type.
+    pub(crate) fn type_len(&mut self, tys: &Types, t: TyId) -> u64 {
+        let mut work = vec![t];
+        while let Some(&t) = work.last() {
+            if self.1.types.contains_key(&t) {
+                work.pop();
+                continue;
+            }
+            let mut parts = Vec::new();
+            match tys.get(t) {
+                Ty::Array(elem, _) | Ty::List(elem) => parts.push(*elem),
+                Ty::Tuple(ts) => parts.extend(ts.iter().copied()),
+                Ty::Fn(ps, ret) => {
+                    parts.extend(ps.iter().map(|p| p.ty));
+                    parts.push(*ret);
+                }
+                Ty::Struct(s) => {
+                    for arg in tys.spec(*s).args() {
+                        held_types(arg, &mut parts);
+                    }
+                }
+                _ => {}
+            }
+            let waiting = work.len();
+            work.extend(parts.into_iter().filter(|p| !self.1.types.contains_key(p)));
+            if work.len() == waiting {
+                let mut node = Len::with(std::mem::take(&mut self.1));
+                write(tys, Item::Node(tys.get(t)), &mut node);
+                self.1 = node.1;
+                self.1.types.insert(t, node.0);
+                work.pop();
+            }
+        }
+        self.1.types.get(&t).copied().unwrap_or_default()
+    }
+}
+
+/// Pushes onto `out` each type that `v` holds as a part: a type value and the type of an array
+/// or a record, at any depth of `v`.
+fn held_types(v: &Value, out: &mut Vec<TyId>) {
+    let mut work = vec![v];
+    while let Some(v) = work.pop() {
+        match v {
+            Value::Type(t) => out.push(*t),
+            Value::Array(t, xs) | Value::Record(t, xs) | Value::List(t, xs) => {
+                out.push(*t);
+                work.extend(xs);
+            }
+            Value::Tuple(_, xs) => work.extend(xs),
+            _ => {}
+        }
+    }
+}
 
 impl Write for Len {
     fn write_str(&mut self, s: &str) -> std::fmt::Result {
@@ -52,17 +123,13 @@ impl Write for Len {
 
 impl Sink for Len {
     fn whole_type(&mut self, tys: &Types, t: TyId) -> bool {
-        match tys.text_len(t) {
-            Some(len) => {
-                self.0 = self.0.saturating_add(len);
-                true
-            }
-            None => false,
-        }
+        let len = self.type_len(tys, t);
+        self.0 = self.0.saturating_add(len);
+        true
     }
 
     fn int(&mut self, n: &Int) {
-        self.0 = self.0.saturating_add(n.decimal_len());
+        self.0 = self.0.saturating_add(n.decimal_len_with(&mut self.1.pow10));
     }
 
     fn quoted(&mut self, s: &str) {
@@ -195,15 +262,15 @@ fn value_node<'a, S: Sink>(tys: &Types, v: &'a Value, out: &mut S, work: &mut Ve
             out.write_str(")").unwrap_or_default();
         }
         Value::UInt(x) => {
-            write!(out, "(uint {} {})", x.width(), Int::from_unsigned(x)).unwrap_or_default();
+            write!(out, "(uint {} ", x.width()).unwrap_or_default();
+            out.int(&Int::from_unsigned(x));
+            out.write_str(")").unwrap_or_default();
         }
-        Value::SInt(x) => write!(
-            out,
-            "(sint {} {})",
-            x.width(),
-            Int::from_signed(x, x.width())
-        )
-        .unwrap_or_default(),
+        Value::SInt(x) => {
+            write!(out, "(sint {} ", x.width()).unwrap_or_default();
+            out.int(&Int::from_signed(x, x.width()));
+            out.write_str(")").unwrap_or_default();
+        }
         Value::Unit => out.write_str("(unit)").unwrap_or_default(),
         Value::Type(t) => {
             out.write_str("(type ").unwrap_or_default();
