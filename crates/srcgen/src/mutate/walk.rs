@@ -371,6 +371,7 @@ impl<'a> Walk<'a> {
         }
         for (i, arg) in args.iter_mut().enumerate() {
             if self.site(kind) {
+                // The mutant is printed and never walked again, so this name is never resolved.
                 *arg = SExpr::Name(format!("{root}.pop()"));
                 let what = format!("pop {root} in argument {} of {f} in {}", i + 1, self.item);
                 self.hit(what, Effect::Code(code));
