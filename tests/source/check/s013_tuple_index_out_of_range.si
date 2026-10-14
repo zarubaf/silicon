@@ -1,0 +1,8 @@
+// S013: a static index of a tuple above the last element.
+// TOP M()
+module M() {
+    let t = (1, 2);
+    let i = 1 + 1;
+    // expected-error S013 @+1
+    let b = t[i];
+}
