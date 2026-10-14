@@ -1,0 +1,50 @@
+// A word that is a chain of 8 structs. The ports and the aliases nest to the depth 10 at most. The
+// specialization of the prelude struct `ReadResponse[S7]` nests one level deeper. The exact depth
+// succeeds, and one level below gives `S015` at the call of `read_port`, the use position, not in the
+// prelude struct.
+// DEPTH 11
+// TOP M()
+struct S0 {
+    a: Bool,
+}
+struct S1 {
+    a: S0,
+}
+struct S2 {
+    a: S1,
+}
+struct S3 {
+    a: S2,
+}
+struct S4 {
+    a: S3,
+}
+struct S5 {
+    a: S4,
+}
+struct S6 {
+    a: S5,
+}
+struct S7 {
+    a: S6,
+}
+module M() {
+    input ra: UInt[1];
+    input re: Bool;
+    input wa: UInt[1];
+    input we: Bool;
+    input wd: S7;
+    output q: S7;
+    type T0 = S0;
+    type T1 = S1;
+    type T2 = S2;
+    type T3 = S3;
+    type T4 = S4;
+    type T5 = S5;
+    type T6 = S6;
+    type T7 = S7;
+    mem m: [T7; 2];
+    let r = m.read_port(ra, re);
+    m.write_port(wa, wd, we);
+    q := r.data;
+}
