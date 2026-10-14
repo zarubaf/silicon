@@ -5,8 +5,9 @@
 //! and `k` repeated uses. The work then grows in `n + k` and not in `n * k`. The tests count
 //! the steps of the walks and not the time.
 
-use crate::counters::of;
+use crate::counters::{Counts, of};
 use crate::tests::{out, type_work};
+use std::fmt::Write as _;
 
 /// The alias of a tuple of `n` Booleans.
 fn tn(n: usize) -> String {
@@ -187,4 +188,216 @@ fn the_lowering_walk_skips_a_huge_empty_part() {
     let at = |n: usize| lowering(12, "  input x: (Bool, [(); {n}]);\n", n);
     assert_eq!(at(1 << 10).1, at(1 << 40).1);
     assert_eq!(at(1 << 10).2, at(1 << 40).2);
+}
+
+/// The counts of the elaboration and of the whole run of a module `M`, and the fuel that the
+/// run charged. The key makes the fuel budget of the run unique, so it keys the counters.
+#[derive(Debug)]
+struct MemRun {
+    elab: Counts,
+    all: Counts,
+    units: u64,
+}
+
+/// The module `M` of `src`, elaborated and lowered under the budget of the key `key`. An error
+/// of the elaboration gives its code, and the counts then cover the work up to the error.
+fn mem_run(key: u64, src: &str) -> Result<MemRun, String> {
+    use crate::{Abort, Budget, elaborate, tests_elab::load};
+    let fuel = 900_000_000 + key;
+    let file = load(src)?;
+    let budget = Budget {
+        fuel,
+        ..Budget::default()
+    };
+    let design = match elaborate(&file, "M", parse::DEFAULT_SYNTAX_DEPTH, budget) {
+        Ok(Ok(d)) => d,
+        Ok(Err(e)) => return Err(format!("{} {}:{}", e.code, e.pos.line, e.pos.col)),
+        Err(Abort::Usage(m)) => return Err(m),
+        Err(Abort::Stack(e)) => panic!("{e}"),
+    };
+    let elab = of(fuel);
+    let units = design.lower().unwrap().ok().unwrap().used();
+    Ok(MemRun {
+        elab,
+        all: of(fuel),
+        units,
+    })
+}
+
+/// The sizes of a scaling test: each is double the one before.
+const SIZES: [usize; 4] = [64, 128, 256, 512];
+
+/// The count `of` of the run `at(n)` is not zero, stays within `factor` times the fuel that the
+/// run charged, and at most doubles (plus `slack`) when the size doubles.
+fn assert_doubles(family: u64, at: impl Fn(usize, u64) -> MemRun, of: fn(&MemRun) -> u64) {
+    let mut before: Option<u64> = None;
+    for (i, n) in SIZES.into_iter().enumerate() {
+        let r = at(n, family * 100 + i as u64);
+        let count = of(&r);
+        assert!(count > 0, "family {family}: no work counted at {n}");
+        assert!(
+            count <= 2 * r.units,
+            "family {family} at {n}: the work {count} is more than twice the fuel {}",
+            r.units
+        );
+        if let Some(b) = before {
+            assert!(
+                count <= 2 * b + 4,
+                "family {family} at {n}: the work {b} grew to {count}"
+            );
+        }
+        before = Some(count);
+    }
+}
+
+/// A struct `W` of `n` bytes.
+fn word(n: usize) -> String {
+    let mut fields = String::new();
+    for i in 0..n {
+        let _ = write!(fields, "f{i}: UInt[8], ");
+    }
+    format!("struct W {{ {fields}}}\n")
+}
+
+/// A module `M` with one memory of the word type `W`, one write, and the output `o` bound to
+/// `body`.
+fn memory_module(pre: &str, mems: &str, body: &str) -> String {
+    format!(
+        "{pre}module M() {{\n input ra: UInt[2];\n input re: Bool;\n input wa: UInt[2];\n \
+         input wd: W;\n input we: Bool;\n output o: UInt[8];\n{mems}{body}}}\n"
+    )
+}
+
+/// The step on a word adds one stored offset: the selection of the last field of a wide word
+/// reads the same number of offsets at each width, in the elaboration.
+#[test]
+fn the_work_of_a_step_on_a_word_does_not_grow_with_its_width() {
+    let at = |n: usize, key: u64| {
+        let src = memory_module(
+            &word(n),
+            " mem m: [W; 4];\n write_port(m, wa, wd, we);\n",
+            &format!(" o := read_port(m, ra, re).data.f{};\n", n - 1),
+        );
+        mem_run(key, &src).unwrap()
+    };
+    let rows: Vec<u64> = SIZES
+        .into_iter()
+        .enumerate()
+        .map(|(i, n)| at(n, 100 + i as u64).elab.offsets)
+        .collect();
+    assert!(
+        rows[0] > 0 && rows.iter().all(|r| *r == rows[0]),
+        "{rows:?}"
+    );
+    // The lowering reads one offset for each leaf of the word.
+    assert_doubles(2, at, |r| r.all.offsets - r.elab.offsets);
+}
+
+/// A response passed through `k` calls binds the leaves of the word at each call. The work of
+/// the offsets and of the bindings is linear in the width and in `k`, and the copy charges pay
+/// for it.
+#[test]
+fn the_work_of_a_response_passed_through_calls_is_linear() {
+    let call = |n: usize, k: usize, key: u64| {
+        let mut e = "read_port(m, ra, re)".to_owned();
+        for _ in 0..k {
+            e = format!("id({e})");
+        }
+        let pre = format!(
+            "{}fn id(r: ReadResponse[W]) -> ReadResponse[W] {{ return r; }}\n",
+            word(n)
+        );
+        let src = memory_module(
+            &pre,
+            " mem m: [W; 4];\n write_port(m, wa, wd, we);\n",
+            &format!(" o := {e}.data.f{};\n", n - 1),
+        );
+        mem_run(key, &src).unwrap()
+    };
+    assert_doubles(3, |n, key| call(n, 4, key), |r| r.elab.offsets);
+    assert_doubles(4, |n, key| call(16, n / 8, key), |r| r.elab.offsets);
+    assert_doubles(5, |n, key| call(n, 4, key), |r| r.elab.bound);
+}
+
+/// The write chain of a word of `n` leaves makes `n - 1` steps, each after its charge.
+#[test]
+fn the_work_of_the_write_chain_is_linear_in_the_leaves() {
+    let at = |n: usize, key: u64| {
+        let src = memory_module(
+            &word(n),
+            " mem m: [W; 4];\n write_port(m, wa, wd, we);\n",
+            " o := read_port(m, ra, re).data.f0;\n",
+        );
+        let r = mem_run(key, &src).unwrap();
+        assert_eq!(r.all.chained, n as u64 - 1, "{n}");
+        r
+    };
+    assert_doubles(6, at, |r| r.all.chained);
+}
+
+/// The memory block, apart from the write chain, does not depend on the width of the word.
+/// A module of `n` memories has `n` blocks.
+#[test]
+fn the_work_of_the_memory_block_is_constant_for_a_memory_and_linear_in_the_memories() {
+    let wide: Vec<u64> = SIZES
+        .into_iter()
+        .enumerate()
+        .map(|(i, n)| {
+            let src = memory_module(
+                &word(n),
+                " mem m: [W; 4];\n write_port(m, wa, wd, we);\n",
+                " o := read_port(m, ra, re).data.f0;\n",
+            );
+            mem_run(700 + i as u64, &src).unwrap().all.blocked
+        })
+        .collect();
+    assert!(
+        wide[0] > 0 && wide.iter().all(|b| *b == wide[0]),
+        "{wide:?}"
+    );
+    let many = |n: usize, key: u64| {
+        let mut mems = String::new();
+        for i in 0..n {
+            let _ = write!(
+                mems,
+                " mem m{i}: [UInt[8]; 4];\n let r{i} = read_port(m{i}, ra, re);\n \
+                 write_port(m{i}, wa, r{i}.data, we);\n"
+            );
+        }
+        let src = memory_module("struct W { a: UInt[8], }\n", &mems, " o := 0;\n");
+        let r = mem_run(key, &src).unwrap();
+        assert_eq!(r.all.blocked, n as u64 * wide[0], "{n}");
+        r
+    };
+    assert_doubles(8, many, |r| r.all.blocked);
+}
+
+/// A second call of a port records its `S018` in constant work: `k` second calls count `k`
+/// records, and the error stays the first one.
+#[test]
+fn the_work_of_the_second_calls_is_linear() {
+    let at = |n: usize, key: u64| {
+        let mut body = " let first = read_port(m, ra, re);\n".to_owned();
+        for i in 0..n {
+            let _ = writeln!(body, " let again{i} = read_port(m, ra, re);");
+        }
+        body.push_str(" o := first.data.f0;\n");
+        let src = memory_module(
+            &word(2),
+            " mem m: [W; 4];\n write_port(m, wa, wd, we);\n",
+            &body,
+        );
+        let err = mem_run(key, &src).unwrap_err();
+        assert!(err.starts_with("S018"), "{err}");
+        // The run fails, so it has no fuel count. Each second call is one statement of the
+        // source, so the scan of the AST bounds the work.
+        let all = of(900_000_000 + key);
+        MemRun {
+            elab: all,
+            all,
+            units: all.ast,
+        }
+    };
+    assert_doubles(9, at, |r| r.all.seconds);
+    assert_eq!(at(64, 950).all.seconds, 64);
 }
