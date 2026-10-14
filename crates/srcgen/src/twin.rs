@@ -24,7 +24,7 @@
 //! with it, so they show the bug.
 
 use super::build::STATIC_PREFIXES;
-use super::eval::{Env, Scope, Value, eval, loop_values};
+use super::eval::{Env, Scope, Value, eval, exec_static, loop_values};
 use super::program::{HExpr, Item, Place, Program, Radix, SExpr, Stmt, Ty, render_items};
 use num_bigint::Sign;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -130,6 +130,8 @@ fn token(v: &Value) -> Option<String> {
         | Value::Array(_)
         | Value::UInt(..)
         | Value::SInt(..)
+        | Value::Str(_)
+        | Value::List(..)
         | Value::Record(..) => None,
     }
 }
@@ -143,7 +145,8 @@ fn literal(v: Value) -> Option<SExpr> {
         Value::Bool(b) => SExpr::Bool(b),
         Value::Tuple(xs) => SExpr::Tuple(all(xs)?),
         Value::Array(xs) => SExpr::Array(all(xs)?),
-        Value::UInt(..) | Value::SInt(..) => return None,
+        Value::UInt(..) | Value::SInt(..) | Value::List(..) => return None,
+        Value::Str(s) => SExpr::Str(s),
         Value::Record(rt, xs) => {
             let targs = all(rt.args.clone())?;
             SExpr::Record(rt.name.clone(), targs, all(xs)?)
@@ -311,12 +314,11 @@ impl Writer<'_> {
                     value,
                 });
             }
-            Stmt::StaticLet(n, _, v) => match self.value(v, fr) {
-                Some(v) => {
-                    fr.env.statics.insert(n.clone(), v);
+            Stmt::StaticLet(..) | Stmt::MutLet(..) | Stmt::Push(..) | Stmt::PopLet(..) => {
+                if exec_static(s, &mut fr.env, &self.scope).is_err() {
+                    out.push(s.clone());
                 }
-                None => out.push(s.clone()),
-            },
+            }
             Stmt::Assign(n, v) => out.push(Stmt::Assign(fr.name(n), self.hexpr(v, fr))),
             Stmt::Connect(place, v) => {
                 let place = match place {

@@ -21,6 +21,7 @@ const SHIFT: i64 = 70;
 pub(super) enum Kind {
     Int,
     Bool,
+    Str,
 }
 
 /// The kind of a scalar type, or `None` for a container.
@@ -28,7 +29,13 @@ pub(super) fn kind(t: &STy) -> Option<Kind> {
     match t {
         STy::Nat | STy::Int => Some(Kind::Int),
         STy::Bool => Some(Kind::Bool),
-        STy::Tuple(_) | STy::Array(..) | STy::UInt(_) | STy::SInt(_) | STy::Record(_) => None,
+        STy::Str => Some(Kind::Str),
+        STy::Tuple(_)
+        | STy::Array(..)
+        | STy::UInt(_)
+        | STy::SInt(_)
+        | STy::Record(_)
+        | STy::List(_) => None,
     }
 }
 
@@ -107,6 +114,9 @@ impl Builder {
 
     /// A random static expression of `kind`.
     pub(super) fn sexpr(&mut self, kind: Kind, depth: u32, r: Reach<'_>) -> SExpr {
+        if kind == Kind::Str {
+            return self.string_expr(depth, r);
+        }
         let names: Vec<&String> = r
             .names
             .iter()
@@ -166,6 +176,7 @@ impl Builder {
         match kind {
             Kind::Int => self.small(),
             Kind::Bool => SExpr::Bool(self.tape.flag()),
+            Kind::Str => self.string_literal(),
         }
     }
 
@@ -173,6 +184,11 @@ impl Builder {
     fn relation(&mut self, d: u32, r: Reach<'_>) -> SExpr {
         const ORDER: [SBin; 6] = [SBin::Eq, SBin::Ne, SBin::Lt, SBin::Le, SBin::Gt, SBin::Ge];
         const LOGIC: [SBin; 4] = [SBin::Land, SBin::Lor, SBin::Eq, SBin::Ne];
+        if self.tape.below(6) == 0 {
+            return self
+                .string_exit(Kind::Bool, d + 1, r)
+                .unwrap_or(SExpr::Bool(true));
+        }
         if self.tape.flag() {
             let op = self.pick(&LOGIC);
             bin(
@@ -223,6 +239,7 @@ impl Builder {
             .map(|(_, t)| match param_kind(t) {
                 Kind::Int => int(0),
                 Kind::Bool => SExpr::Bool(false),
+                Kind::Str => SExpr::Str(String::new()),
             })
             .collect();
         SExpr::Call(name, base)
@@ -378,6 +395,7 @@ impl Builder {
         let (e, v) = match kind {
             Kind::Int => (int(0), Value::Int(BigInt::ZERO)),
             Kind::Bool => (SExpr::Bool(false), Value::Bool(false)),
+            Kind::Str => Builder::empty_string(),
         };
         (e, vec![v; envs.len()])
     }
@@ -414,6 +432,8 @@ impl Builder {
             STy::Array(t, n) => Value::Array((0..*n).map(|_| self.top_value(t)).collect()),
             STy::UInt(w) => Value::UInt(*w, BigInt::ZERO),
             STy::SInt(w) => Value::SInt(*w, BigInt::ZERO),
+            STy::Str => Value::Str(String::new()),
+            STy::List(t) => Value::List((**t).clone(), Vec::new()),
             STy::Record(r) => Value::Record(
                 r.clone(),
                 r.fields.iter().map(|(_, t)| self.top_value(t)).collect(),
@@ -429,7 +449,13 @@ pub(super) fn arg_range(t: &STy) -> (i64, i64) {
         STy::Nat => (1, 12),
         STy::Int => (-6, 6),
         STy::Bool => (0, 1),
-        STy::Tuple(_) | STy::Array(..) | STy::UInt(_) | STy::SInt(_) | STy::Record(_) => (0, 0),
+        STy::Tuple(_)
+        | STy::Array(..)
+        | STy::UInt(_)
+        | STy::SInt(_)
+        | STy::Record(_)
+        | STy::Str
+        | STy::List(_) => (0, 0),
     }
 }
 
@@ -440,6 +466,8 @@ pub(super) fn value_expr(v: &Value) -> SExpr {
         Value::Tuple(xs) => SExpr::Tuple(xs.iter().map(value_expr).collect()),
         Value::Array(xs) => SExpr::Array(xs.iter().map(value_expr).collect()),
         Value::Int(n) | Value::UInt(_, n) | Value::SInt(_, n) => SExpr::Int(n.clone(), Radix::Dec),
+        Value::Str(s) => SExpr::Str(s.clone()),
+        Value::List(t, _) => SExpr::NewList(t.clone()),
         Value::Record(rt, xs) => {
             let targs = rt.args.iter().map(value_expr).collect();
             if rt.zeroable() && xs.iter().all(is_zero) {
@@ -457,5 +485,7 @@ fn is_zero(v: &Value) -> bool {
         Value::Int(n) | Value::UInt(_, n) | Value::SInt(_, n) => *n == BigInt::ZERO,
         Value::Bool(b) => !b,
         Value::Tuple(xs) | Value::Array(xs) | Value::Record(_, xs) => xs.iter().all(is_zero),
+        Value::Str(s) => s.is_empty(),
+        Value::List(_, xs) => xs.is_empty(),
     }
 }

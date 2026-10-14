@@ -19,7 +19,8 @@ fn has_leaf(t: &STy, kind: Kind) -> bool {
         STy::Tuple(ts) => ts.iter().any(|t| has_leaf(t, kind)),
         STy::Array(t, _) => has_leaf(t, kind),
         STy::Record(r) => r.fields.iter().any(|(_, t)| has_leaf(t, kind)),
-        STy::UInt(_) | STy::SInt(_) => false,
+        STy::List(t) => kind == Kind::Int || has_leaf(t, kind),
+        STy::UInt(_) | STy::SInt(_) | STy::Str => false,
     }
 }
 
@@ -83,6 +84,8 @@ impl Builder {
                 SExpr::Array((0..*n).map(|_| self.container(t, depth, r)).collect())
             }
             STy::Record(rt) => self.record(rt, depth, r),
+            STy::Str => self.string_literal(),
+            STy::List(t) => SExpr::NewList((**t).clone()),
             STy::Bool => self.element(Kind::Bool, depth, r),
             STy::Nat | STy::Int | STy::UInt(_) | STy::SInt(_) => self.element(Kind::Int, depth, r),
         }
@@ -99,6 +102,7 @@ impl Builder {
         match kind {
             Kind::Int => self.number(0, 16),
             Kind::Bool => SExpr::Bool(self.tape.flag()),
+            Kind::Str => self.string_literal(),
         }
     }
 
@@ -112,6 +116,9 @@ impl Builder {
         {
             return Some(bits);
         }
+        if kind != Kind::Str && self.tape.below(5) == 0 {
+            return self.string_exit(kind, depth, r);
+        }
         let names: Vec<(&String, &STy)> = r
             .names
             .iter()
@@ -121,7 +128,18 @@ impl Builder {
         if names.is_empty() || (depth > 0 && self.tape.below(4) == 3) {
             return self.literal_exit(kind, depth, r);
         }
-        let (name, t) = *names.get(self.tape.index(names.len()))?;
+        // A list is one container among many names; it gets a larger share.
+        let lists: Vec<(&String, &STy)> = names
+            .iter()
+            .copied()
+            .filter(|(_, t)| matches!(t, STy::List(_)))
+            .collect();
+        let pool = if !lists.is_empty() && self.tape.below(3) == 0 {
+            lists
+        } else {
+            names
+        };
+        let (name, t) = *pool.get(self.tape.index(pool.len()))?;
         self.descend(SExpr::Name(name.clone()), t, kind, depth, r)
     }
 
@@ -138,10 +156,19 @@ impl Builder {
             .filter(|(_, t)| t.is_container())
             .map(|(n, _)| n)
             .collect();
-        match self.tape.below(4) {
+        match self.tape.below(6) {
             2 => consts
                 .get(self.tape.index(consts.len()))
                 .map(|n| SExpr::Name((*n).clone())),
+            4 => {
+                let r = Reach {
+                    names,
+                    fns: 0,
+                    envs: Some(envs),
+                };
+                Some(self.sexpr(Kind::Str, stat::DEPTH, r))
+            }
+            5 => self.list_probe(),
             3 => {
                 let t = self.static_container_ty();
                 let r = Reach {
@@ -153,6 +180,20 @@ impl Builder {
             }
             _ => None,
         }
+    }
+
+    /// The length of the shortest value of the list `base` over the envs of
+    /// `r`, if it is at least 1.
+    fn shortest(&self, base: &SExpr, r: Reach<'_>) -> Option<u32> {
+        let default = [Env::default()];
+        let envs = r.envs.unwrap_or(&default);
+        let lens = self.values(&SExpr::Len(Box::new(base.clone())), envs)?;
+        let mut shortest = u32::MAX;
+        for v in &lens {
+            let Value::Int(n) = v else { return None };
+            shortest = shortest.min(u32::try_from(n).ok()?);
+        }
+        (1..u32::MAX).contains(&shortest).then_some(shortest)
     }
 
     /// An exit from a fresh literal, for example `[1, x][0]`.
@@ -199,7 +240,22 @@ impl Builder {
                 let sel = SExpr::Field(Box::new(base), field.clone());
                 self.descend(sel, ty, kind, depth, r)
             }
-            STy::UInt(_) | STy::SInt(_) => None,
+            STy::UInt(_) | STy::SInt(_) | STy::Str => None,
+            STy::List(elem) => {
+                if kind == Kind::Int && self.tape.below(3) == 0 {
+                    note!(self, list_lens);
+                    return Some(SExpr::Len(Box::new(base)));
+                }
+                let Some(len) = self.shortest(&base, r) else {
+                    return (kind == Kind::Int).then(|| SExpr::Len(Box::new(base)));
+                };
+                if !has_leaf(elem, kind) {
+                    return None;
+                }
+                note!(self, list_indexes);
+                let at = self.index(len, depth, r);
+                Some(SExpr::Index(Box::new(base), Box::new(at)))
+            }
             STy::Array(elem, n) => {
                 if kind == Kind::Int && self.tape.below(4) == 0 {
                     note!(self, lens);
@@ -224,7 +280,7 @@ impl Builder {
     /// An index into `len` elements: a literal, or a candidate that is in
     /// `0..len` in each env of `r`. In a `comptime fn` body only the sample
     /// check covers a candidate, so a literal stands there.
-    fn index(&mut self, len: u32, depth: u32, r: Reach<'_>) -> SExpr {
+    pub(super) fn index(&mut self, len: u32, depth: u32, r: Reach<'_>) -> SExpr {
         let Some(envs) = r.envs else {
             return self.number(0, len - 1);
         };
@@ -260,7 +316,7 @@ fn with_leaf(t: STy, kind: Kind) -> STy {
         return t;
     }
     match kind {
-        Kind::Int => STy::Tuple(vec![STy::Int]),
         Kind::Bool => STy::Tuple(vec![STy::Bool]),
+        Kind::Int | Kind::Str => STy::Tuple(vec![STy::Int]),
     }
 }

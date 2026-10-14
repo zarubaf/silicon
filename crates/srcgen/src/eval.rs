@@ -4,7 +4,8 @@
 //! rules, next to the two front ends, so the `eval` probe compares it.
 
 use super::program::{
-    ComptimeFn, FieldTy, Item, RecTy, SBin, SExpr, STy, Scalar, StructDef, Ty, Un,
+    ComptimeFn, FieldTy, Item, ListFn, RecTy, SBin, SExpr, STy, Scalar, Stmt, StructDef, Ty, Un,
+    string,
 };
 use num_bigint::{BigInt, BigUint, Sign};
 use std::collections::BTreeMap;
@@ -22,6 +23,9 @@ pub(crate) enum Value {
     SInt(u32, BigInt),
     /// A record: its type, and its field values in declaration order.
     Record(Box<RecTy>, Vec<Value>),
+    Str(String),
+    /// A list: its element type (`Int` or `Nat`), and its elements.
+    List(STy, Vec<Value>),
 }
 
 impl Value {
@@ -36,6 +40,8 @@ impl Value {
                 let elem = xs.first().map_or_else(String::new, |x| x.ty().serialize());
                 format!("(array {elem} ({}))", serialized(xs))
             }
+            Value::Str(s) => format!("(string {})", string(s)),
+            Value::List(t, xs) => format!("(list {} ({}))", t.serialize(), serialized(xs)),
             Value::UInt(w, n) => format!("(uint {w} {n})"),
             Value::SInt(w, n) => format!("(sint {w} {n})"),
             Value::Record(t, xs) => format!(
@@ -54,6 +60,8 @@ impl Value {
             Value::Tuple(xs) => format!("({})", spelled(xs)),
             Value::Array(xs) => format!("[{}]", spelled(xs)),
             Value::Int(n) | Value::UInt(_, n) | Value::SInt(_, n) => n.to_string(),
+            Value::Str(s) => string(s),
+            Value::List(t, _) => format!("list({})", t.text()),
             Value::Record(t, xs) => format!("{}({})", STy::Record(t.clone()).text(), spelled(xs)),
         }
     }
@@ -69,6 +77,8 @@ impl Value {
                 Box::new(xs.first().map_or(STy::Int, Value::ty)),
                 u32::try_from(xs.len()).unwrap_or(u32::MAX),
             ),
+            Value::Str(_) => STy::Str,
+            Value::List(t, _) => STy::List(Box::new(t.clone())),
             Value::UInt(w, _) => STy::UInt(*w),
             Value::SInt(w, _) => STy::SInt(*w),
             Value::Record(t, _) => STy::Record(t.clone()),
@@ -104,6 +114,8 @@ impl STy {
             STy::Array(t, n) => format!("(array {} {n})", t.serialize()),
             STy::UInt(w) => format!("(uint {w})"),
             STy::SInt(w) => format!("(sint {w})"),
+            STy::Str => "string".to_owned(),
+            STy::List(t) => format!("(list {})", t.serialize()),
             STy::Record(r) => format!("(struct root {} ({}))", r.name, serialized(&r.args)),
         }
     }
@@ -156,6 +168,7 @@ pub(crate) fn loop_values(lo: &BigInt, hi: &BigInt) -> impl Iterator<Item = Valu
 pub(crate) struct Scope {
     fns: BTreeMap<String, ComptimeFn>,
     structs: BTreeMap<String, StructDef>,
+    list_fns: BTreeMap<String, ListFn>,
     consts: BTreeMap<String, Value>,
 }
 
@@ -170,6 +183,9 @@ impl Scope {
             match item {
                 Item::ComptimeFn(f) => {
                     scope.fns.insert(f.name.clone(), f.clone());
+                }
+                Item::ListFn(f) => {
+                    scope.list_fns.insert(f.name.clone(), f.clone());
                 }
                 Item::Struct(def) => {
                     scope.structs.insert(def.name.clone(), def.clone());
@@ -193,10 +209,43 @@ pub(crate) const BOUND: u32 = 1 << 20;
 const MAX_SHIFT: u32 = 20;
 /// The most active `comptime fn` calls; the native stack stays small.
 const MAX_DEPTH: u32 = 64;
+/// The most scalars in a string, and elements in a list.
+pub(crate) const MAX_STRING: usize = 16;
+pub(crate) const MAX_LIST: usize = 8;
 /// The most `comptime fn` calls of one evaluation.
 const MAX_CALLS: u32 = 4096;
 /// The widths of `UInt[w]` and `SInt[w]` (front-end `MAX_WIDTH`).
 const MAX_WIDTH: u32 = 65536;
+
+/// Executes a static statement on `env`: a `let`, a `push`, or a `pop`. The
+/// builder and the twin both run the static statements of a frame with it.
+pub(crate) fn exec_static(s: &Stmt, env: &mut Env, scope: &Scope) -> Result<(), Fault> {
+    match s {
+        Stmt::StaticLet(name, _, value) | Stmt::MutLet(name, _, value) => {
+            let v = eval(value, env, scope)?;
+            env.statics.insert(name.clone(), v);
+        }
+        Stmt::Push(list, value) => {
+            let v = eval(value, env, scope)?;
+            let Some(Value::List(t, xs)) = env.statics.get_mut(list) else {
+                return Err(Fault::Type);
+            };
+            xs.push(typed(t, v)?);
+            if xs.len() > MAX_LIST {
+                return Err(Fault::Bound);
+            }
+        }
+        Stmt::PopLet(name, list) => {
+            let Some(Value::List(_, xs)) = env.statics.get_mut(list) else {
+                return Err(Fault::Type);
+            };
+            let v = xs.pop().ok_or(Fault::Bound)?;
+            env.statics.insert(name.clone(), v);
+        }
+        _ => return Err(Fault::Type),
+    }
+    Ok(())
+}
 
 /// The value of a static expression, as both front ends compute it, or the
 /// first fault in evaluation order.
@@ -252,7 +301,7 @@ fn bits(t: &STy) -> Result<u32, Fault> {
         STy::Tuple(ts) => ts.iter().map(bits).sum(),
         STy::Array(t, n) => Ok(bits(t)?.saturating_mul(*n)),
         STy::Record(r) => r.fields.iter().map(|(_, t)| bits(t)).sum(),
-        STy::Nat | STy::Int => Err(Fault::Type),
+        STy::Nat | STy::Int | STy::Str | STy::List(_) => Err(Fault::Type),
     }
 }
 
@@ -306,11 +355,14 @@ impl Evaluator<'_> {
             SExpr::Index(base, index) => {
                 let base = self.eval(base, env)?;
                 let index = int(self.eval(index, env)?)?;
+                let at = usize::try_from(&index).map_err(|_| Fault::Bound);
                 match base {
-                    Value::Array(xs) => usize::try_from(&index)
-                        .ok()
-                        .and_then(|i| xs.into_iter().nth(i))
-                        .ok_or(Fault::Bound)?,
+                    Value::Array(xs) | Value::List(_, xs) => {
+                        xs.into_iter().nth(at?).ok_or(Fault::Bound)?
+                    }
+                    Value::Str(s) => {
+                        Value::Str(s.chars().nth(at?).ok_or(Fault::Bound)?.to_string())
+                    }
                     _ => return Err(Fault::Type),
                 }
             }
@@ -319,7 +371,14 @@ impl Evaluator<'_> {
                 _ => return Err(Fault::Type),
             },
             SExpr::Len(base) => match self.eval(base, env)? {
-                Value::Array(xs) => Value::Int(BigInt::from(xs.len())),
+                Value::Array(xs) | Value::List(_, xs) => Value::Int(BigInt::from(xs.len())),
+                Value::Str(s) => Value::Int(BigInt::from(s.chars().count())),
+                _ => return Err(Fault::Type),
+            },
+            SExpr::Str(s) => Value::Str(s.clone()),
+            SExpr::StrOf(n) => Value::Str(int(self.eval(n, env)?)?.to_string()),
+            SExpr::NewList(t) => match t {
+                STy::Int | STy::Nat => Value::List(t.clone(), Vec::new()),
                 _ => return Err(Fault::Type),
             },
             SExpr::Record(name, targs, fields) => {
@@ -381,6 +440,44 @@ impl Evaluator<'_> {
         bounded(v)
     }
 
+    /// The call of a list builder: the list of the elements for the binder
+    /// `j0` over `0..x0`. The first formal is the length.
+    fn list_call(&mut self, def: &ListFn, args: &[SExpr], env: &Env) -> Result<Value, Fault> {
+        if args.len() != def.params.len() {
+            return Err(Fault::Type);
+        }
+        let mut inner = Env::default();
+        for (arg, (name, ty)) in args.iter().zip(&def.params) {
+            let v = self.eval(arg, env)?;
+            inner.statics.insert(name.clone(), typed(ty, v)?);
+        }
+        self.calls += 1;
+        if self.calls > MAX_CALLS || self.depth >= MAX_DEPTH {
+            return Err(Fault::Bound);
+        }
+        let count = def
+            .params
+            .first()
+            .and_then(|(name, _)| inner.statics.get(name))
+            .cloned()
+            .ok_or(Fault::Type)?;
+        let Value::Int(count) = count else {
+            return Err(Fault::Type);
+        };
+        if count > BigInt::from(MAX_LIST) {
+            return Err(Fault::Bound);
+        }
+        let mut xs = Vec::new();
+        for j in loop_values(&BigInt::ZERO, &count) {
+            inner.statics.insert("j0".to_owned(), j);
+            self.depth += 1;
+            let v = self.eval(&def.element, &inner);
+            self.depth -= 1;
+            xs.push(typed(&def.elem, v?)?);
+        }
+        Ok(Value::List(def.elem.clone(), xs))
+    }
+
     /// The specialization of a struct at the arguments `targs`.
     fn specialize(&mut self, name: &str, targs: &[SExpr], env: &Env) -> Result<RecTy, Fault> {
         let args = self.all(targs, env)?;
@@ -396,6 +493,9 @@ impl Evaluator<'_> {
     /// else the step. Each formal and the result check their type.
     fn call(&mut self, f: &str, args: &[SExpr], env: &Env) -> Result<Value, Fault> {
         let scope = self.scope;
+        if let Some(def) = scope.list_fns.get(f) {
+            return self.list_call(def, args, env);
+        }
         let def = scope.fns.get(f).ok_or(Fault::Type)?;
         if args.len() != def.params.len() {
             return Err(Fault::Type);
@@ -436,6 +536,12 @@ fn binary(op: SBin, a: Value, b: Value) -> Result<Value, Fault> {
         (Value::Bool(x), Value::Bool(y)) => match op {
             SBin::Eq => x == y,
             SBin::Ne => x != y,
+            _ => return Err(Fault::Type),
+        },
+        (Value::Str(x), Value::Str(y)) => match op {
+            SBin::Eq => x == y,
+            SBin::Ne => x != y,
+            SBin::Add => return Ok(Value::Str(x + &y)),
             _ => return Err(Fault::Type),
         },
         (Value::Int(x), Value::Int(y)) => match op {
@@ -486,6 +592,8 @@ fn count(k: &BigInt, max: u32) -> Result<u32, Fault> {
 fn bounded(v: Value) -> Result<Value, Fault> {
     match &v {
         Value::Int(n) if n.magnitude() > &BigUint::from(BOUND) => Err(Fault::Bound),
+        Value::Str(s) if s.chars().count() > MAX_STRING => Err(Fault::Bound),
+        Value::List(_, xs) if xs.len() > MAX_LIST => Err(Fault::Bound),
         _ => Ok(v),
     }
 }
@@ -509,11 +617,17 @@ fn int(v: Value) -> Result<BigInt, Fault> {
 fn typed(ty: &STy, v: Value) -> Result<Value, Fault> {
     match (ty, &v) {
         (STy::Nat, Value::Int(n)) if n.sign() == Sign::Minus => Err(Fault::Nat),
-        (STy::Nat | STy::Int, Value::Int(_)) | (STy::Bool, Value::Bool(_)) => Ok(v),
+        (STy::Nat | STy::Int, Value::Int(_))
+        | (STy::Bool, Value::Bool(_))
+        | (STy::Str, Value::Str(_)) => Ok(v),
         (STy::Tuple(ts), Value::Tuple(xs)) if ts.len() == xs.len() => {
             Ok(Value::Tuple(typed_all(ts.iter(), xs.iter().cloned())?))
         }
         (STy::Array(t, n), Value::Array(xs)) if *n as usize == xs.len() => Ok(Value::Array(
+            typed_all(std::iter::repeat_n(&**t, xs.len()), xs.iter().cloned())?,
+        )),
+        (STy::List(t), Value::List(have, xs)) if **t == *have => Ok(Value::List(
+            have.clone(),
             typed_all(std::iter::repeat_n(&**t, xs.len()), xs.iter().cloned())?,
         )),
         (STy::UInt(w), Value::UInt(x, _)) | (STy::SInt(w), Value::SInt(x, _)) if w == x => Ok(v),
@@ -904,6 +1018,124 @@ mod tests {
             run_in(&scope, &SExpr::DataBits("S2".to_owned(), vec![int(1)])),
             value(1)
         );
+    }
+
+    fn text(s: &str) -> SExpr {
+        SExpr::Str(s.to_owned())
+    }
+
+    #[test]
+    fn strings_count_scalars_and_join() {
+        let joined = bin(SBin::Add, text("h\u{e9}"), SExpr::StrOf(Box::new(int(-12))));
+        assert_eq!(
+            run(&joined).map(|v| v.serialize()),
+            Ok("(string \"h\u{e9}-12\")".to_owned())
+        );
+        let len = |s: &str| SExpr::Len(Box::new(text(s)));
+        assert_eq!(run(&len("\u{e9}\u{1f600}x")), value(3));
+        assert_eq!(run(&len("")), value(0));
+        let second = index(text("a\u{e9}b"), int(1));
+        assert_eq!(run(&second), Ok(Value::Str("\u{e9}".to_owned())));
+        assert_eq!(run(&index(text("ab"), int(2))), Err(Fault::Bound));
+        assert_eq!(run(&index(text("ab"), int(-1))), Err(Fault::Bound));
+        let same = bin(SBin::Eq, text("a"), text("a"));
+        assert_eq!(run(&same), Ok(Value::Bool(true)));
+        let order = bin(SBin::Lt, text("a"), text("b"));
+        assert_eq!(run(&order), Err(Fault::Type));
+        let mixed = bin(SBin::Add, text("a"), int(1));
+        assert_eq!(run(&mixed), Err(Fault::Type));
+        // The grammar escapes of a message print in the serialization.
+        assert_eq!(
+            run(&text("a\"b\\\n")).map(|v| v.serialize()),
+            Ok("(string \"a\\\"b\\\\\\n\")".to_owned())
+        );
+        // More than 16 scalars is out of the bounds of the generator.
+        let long = bin(SBin::Add, text("0123456789abcdef"), text("g"));
+        assert_eq!(run(&long), Err(Fault::Bound));
+        assert_eq!(
+            run(&bin(SBin::Add, text("0123456789abcde"), text("f"))).map(|_| ()),
+            Ok(())
+        );
+    }
+
+    /// `comptime fn b0(x0: Nat) -> List[Int]` with the element `(j0 - 1)`,
+    /// and `b1` the same with `List[Nat]`.
+    fn builders() -> Scope {
+        let f = |name: &str, elem: STy| ListFn {
+            name: name.to_owned(),
+            params: vec![("x0".to_owned(), STy::Nat)],
+            elem,
+            element: bin(SBin::Sub, name_expr("j0"), int(1)),
+        };
+        let items = [
+            Item::ListFn(f("b0", STy::Int)),
+            Item::ListFn(f("b1", STy::Nat)),
+        ];
+        Scope::new(&items).unwrap_or_default()
+    }
+
+    fn name_expr(n: &str) -> SExpr {
+        SExpr::Name(n.to_owned())
+    }
+
+    #[test]
+    fn list_builders_push_in_a_loop() {
+        let scope = builders();
+        let call = |f: &str, n: i64| SExpr::Call(f.to_owned(), vec![int(n)]);
+        assert_eq!(
+            run_in(&scope, &call("b0", 3)).map(|v| v.serialize()),
+            Ok("(list int ((int -1) (int 0) (int 1)))".to_owned())
+        );
+        assert_eq!(
+            run_in(&scope, &call("b0", 0)).map(|v| v.serialize()),
+            Ok("(list int ())".to_owned())
+        );
+        // The element -1 is no `Nat`.
+        assert_eq!(run_in(&scope, &call("b1", 2)), Err(Fault::Nat));
+        assert_eq!(
+            run_in(&scope, &call("b1", 0)).map(|v| v.serialize()),
+            Ok("(list nat ())".to_owned())
+        );
+        assert_eq!(run_in(&scope, &call("b0", 9)), Err(Fault::Bound));
+        assert_eq!(run_in(&scope, &call("b0", -1)), Err(Fault::Nat));
+        let at = |n: i64| index(call("b0", 3), int(n));
+        assert_eq!(run_in(&scope, &at(2)), value(1));
+        assert_eq!(run_in(&scope, &at(3)), Err(Fault::Bound));
+        assert_eq!(
+            run_in(&scope, &SExpr::Len(Box::new(call("b0", 5)))),
+            value(5)
+        );
+    }
+
+    #[test]
+    fn static_statements_change_the_env() {
+        let scope = Scope::default();
+        let mut env = Env::default();
+        let list = |t: STy| {
+            Stmt::MutLet(
+                "s0".to_owned(),
+                STy::List(Box::new(t)),
+                SExpr::NewList(STy::Nat),
+            )
+        };
+        let push = |n: i64| Stmt::Push("s0".to_owned(), int(n));
+        let pop = Stmt::PopLet("s1".to_owned(), "s0".to_owned());
+        assert_eq!(exec_static(&pop, &mut env, &scope), Err(Fault::Type));
+        assert_eq!(exec_static(&list(STy::Nat), &mut env, &scope), Ok(()));
+        assert_eq!(exec_static(&pop, &mut env, &scope), Err(Fault::Bound));
+        assert_eq!(exec_static(&push(4), &mut env, &scope), Ok(()));
+        assert_eq!(exec_static(&push(5), &mut env, &scope), Ok(()));
+        assert_eq!(exec_static(&push(-1), &mut env, &scope), Err(Fault::Nat));
+        assert_eq!(exec_static(&pop, &mut env, &scope), Ok(()));
+        assert_eq!(env.statics.get("s1"), Some(&Value::Int(BigInt::from(5))));
+        assert_eq!(
+            env.statics.get("s0").map(Value::serialize),
+            Some("(list nat ((int 4)))".to_owned())
+        );
+        for _ in 0..7 {
+            assert_eq!(exec_static(&push(1), &mut env, &scope), Ok(()));
+        }
+        assert_eq!(exec_static(&push(1), &mut env, &scope), Err(Fault::Bound));
     }
 
     #[test]
