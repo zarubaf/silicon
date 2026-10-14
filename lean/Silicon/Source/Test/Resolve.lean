@@ -508,6 +508,11 @@ the receiver form.
   | some #[.fn _ _ _ _ _ [.ret _ (some (.method _ _ _ (.item 1) (some 0) _ _))], _, _] => true
   | _ => false
 
+/-! `diagnostic` is a prelude function of slice 2, and a user function with the name shadows it. -/
+#guard retRef "fn f() -> Bool { return diagnostic; }" == some (.fn .diagnostic)
+#guard retRef "fn f() -> Bool { return diagnostic; }\nfn diagnostic() -> Bool {}" ==
+  some (.item 1)
+
 /-! Pass 2 comes before pass 3: an `S002` wins over an earlier `S003`. -/
 #guard fails "fn f() -> Bool { return q; }\nconst f: Nat = 1;" .S002 2 7
 #guard fails (fnBody "let y = q;\nlet y = p;\nreturn y;") .S002 3 5

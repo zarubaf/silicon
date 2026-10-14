@@ -157,6 +157,11 @@ return 1;
 #guard fails (fnBody "static_assert(p);\nreturn p;") .S007 2 1
 #guard fails (fnBody "error();\nreturn p;") .S007 2 1
 #guard fails (fnBody "error(\"a\", \"b\");\nreturn p;") .S007 2 1
+#guard fails (fnBody "diagnostic(\"a\");\nreturn p;") .S007 2 1
+#guard fails (fnBody "diagnostic(\"a\", 1, 2);\nreturn p;") .S007 2 1
+#guard message (fnBody "diagnostic(\"a\");\nreturn p;") ==
+  "`diagnostic` takes 2 argument(s), but it has 1"
+#guard ok (fnBody "diagnostic(\"a\", p);\nreturn p;")
 
 /-! `S007`: a call through a local or a `const` has no known arity here. -/
 #guard ok (fnBody "let g = p;\nreturn g(1, 2);")
