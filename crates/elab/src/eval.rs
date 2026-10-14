@@ -38,6 +38,8 @@ mod tests_if;
 #[cfg(test)]
 mod tests_lit;
 #[cfg(test)]
+mod tests_mem;
+#[cfg(test)]
 mod tests_work_hw;
 mod types;
 
