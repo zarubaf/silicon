@@ -44,7 +44,8 @@ mod tests_work_hw;
 mod types;
 
 pub use inst::Design;
-pub(crate) use inst::{Bind, Elab, Inst, Literal, Sink, elaborate};
+pub(crate) use inst::{Bind, Elab, Inst, Literal, Mem, Sink, elaborate};
+pub(crate) use mem::addr_width;
 
 use crate::agg::{Agg, Base};
 use crate::hw::{Graph, Handle, HwId, Op, Part, Ref, Root, Seen, Val};

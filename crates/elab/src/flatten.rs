@@ -25,13 +25,19 @@
 //! statement. The temporaries of a leaf statement count from 0 and take the name of the leaf. A
 //! shared condition binds in the first leaf statement of the module that lowers it.
 //!
+//! A memory lowers as one block after the registers, in the order of section 7.6: the core
+//! memory, the response registers, the request `let` values, the two `next` statements, and the
+//! `write`. Each core node of the block charges before it exists, at the position of the `mem`
+//! statement. A leaf of a word is an `extract` of the read register. The write data is a
+//! right-nested `concat` chain that a loop over the leaves builds.
+//!
 //! The lowering recurses over the hardware values, except along the left spine of a chain of
 //! binary nodes, which lowers in a loop: the chain of `==` on an aggregate is as long as its leaf
 //! count. It runs on a thread with a stack for the highest recursion (`Graph::height`). The core
 //! design that it makes is at most 256 levels deep.
 
 use crate::agg::{Agg, Base};
-use crate::eval::{Bind, Design, Inst, Sink};
+use crate::eval::{Bind, Design, Inst, Mem, Sink, addr_width};
 use crate::hw::{HwId, Kind, Op};
 use crate::int::{Nat, constant, nat};
 use crate::layout::{self, Env, Shapes};
@@ -155,7 +161,9 @@ enum Src<'a> {
     Val(&'a Value),
     Hw(HwId),
     Agg(&'a Agg),
-    Ref(&'a Agg, usize),
+    /// A reference, the number of leaf fields at which it starts, and the bit offset of the
+    /// part in the word of the reference. Only a word reads the offset.
+    Ref(&'a Agg, usize, u64),
 }
 
 impl<'a> Src<'a> {
@@ -164,13 +172,14 @@ impl<'a> Src<'a> {
         match a {
             Agg::Static(v) => Src::Val(v),
             Agg::Hw(h) => Src::Hw(*h),
-            Agg::Ref(..) => Src::Ref(a, depth),
+            Agg::Ref(..) => Src::Ref(a, depth, 0),
             a => Src::Agg(a),
         }
     }
 
-    /// The source of the part `k` at `depth` leaf fields.
-    fn part(&self, k: u64, depth: usize) -> Src<'a> {
+    /// The source of the part `k` at `depth` leaf fields, at the bit offset `offset` in its
+    /// parent.
+    fn part(&self, k: u64, depth: usize, offset: u64) -> Src<'a> {
         let k = usize::try_from(k).unwrap_or(usize::MAX);
         match self {
             Src::Val(Value::Array(_, xs) | Value::Tuple(_, xs) | Value::Record(_, xs)) => {
@@ -179,7 +188,7 @@ impl<'a> Src<'a> {
             Src::Agg(Agg::Array(_, p) | Agg::Tuple(_, p) | Agg::Record(_, p)) => {
                 p.0.get(k).map_or(Src::Missing, |a| Src::of(a, depth))
             }
-            Src::Ref(a, from) => Src::Ref(a, *from),
+            Src::Ref(a, from, at) => Src::Ref(a, *from, at.saturating_add(offset)),
             _ => Src::Missing,
         }
     }
@@ -212,8 +221,8 @@ fn name_units(p: &Name) -> u128 {
 }
 
 /// The step of the walk over the leaves of a type: the source of a part.
-fn parts<'a>(src: &Src<'a>, k: u64, _: &Field, depth: usize, _: TyId) -> Src<'a> {
-    src.part(k, depth)
+fn parts<'a>(src: &Src<'a>, k: u64, _: &Field, depth: usize, offset: u64) -> Src<'a> {
+    src.part(k, depth, offset)
 }
 
 /// The name `base` with the leaf fields `fields`.
@@ -516,7 +525,7 @@ impl Lower<'_> {
         let (pos, ty) = (node.pos, node.ty.clone());
         let at = span(pos);
         let low = match (&node.op, node.args.as_slice()) {
-            (op, []) => self.leaf(pos, op)?,
+            (op, []) => self.leaf(pos, &ty, op)?,
             (Op::Un(op), [arg]) => self.unary(target, pos, &ty, *op, *arg)?,
             (Op::Bin(op @ (BinOp::Shl | BinOp::Shr)), [arg, count]) => {
                 self.shift(target, pos, &ty, *op, *arg, *count)?
@@ -625,10 +634,21 @@ impl Lower<'_> {
         Ok((expr, units))
     }
 
-    /// A node without operands: a name, a child output, or a constant.
-    fn leaf(&mut self, pos: Pos, op: &Op) -> R<Low> {
+    /// A leaf of the word of the memory with the path `mem`, at the bit offset `off`: an
+    /// `extract` of the read register `<mem>$0rdata` of the width `w`. It is no leaf to copy, and
+    /// its height is 2.
+    fn word_leaf(&mut self, pos: Pos, mem: &Name, off: u64, w: u32) -> R<Low> {
+        self.charge(pos, 2)?;
+        let x = self.name(pos, &with_fields(mem, &[Field::Role(Role::Rdata)]))?;
+        let lo = u32::try_from(off).unwrap_or(u32::MAX);
+        Ok(inner(extract(span(pos), Expr::Ref(x), lo, w), 2))
+    }
+
+    /// A node without operands: a name, a child output, a leaf of a memory word, or a constant.
+    fn leaf(&mut self, pos: Pos, ty: &Ty, op: &Op) -> R<Low> {
         let at = span(pos);
         let (expr, units) = match op {
+            Op::Word(mem, off) => return self.word_leaf(pos, &self.path(*mem), *off, width(ty)),
             Op::Ref(path) => self.ref_leaf(pos, &self.path(*path))?,
             Op::Out(inst, port) => self.out_leaf(pos, &self.path(*inst), &self.path(*port))?,
             Op::Lit(v) => {
@@ -884,6 +904,195 @@ impl Lower<'_> {
         Ok(())
     }
 
+    /// The memories of `inst`, one block each in declaration order.
+    fn mems(&mut self, inst: &Inst, stmts: &mut Vec<Stmt>) -> R<()> {
+        for mem in &inst.body.mems {
+            let Some(domain) = inst.body.domain else {
+                return defect("a memory in a combinational module");
+            };
+            self.mem(domain, mem, stmts)?;
+        }
+        Ok(())
+    }
+
+    /// A reference to the core name `name` at `pos`: one node and the bytes of the name.
+    fn name_ref(&mut self, pos: Pos, name: &Name) -> R<Expr> {
+        self.charge(pos, 1)?;
+        Ok(Expr::Ref(self.name(pos, name)?))
+    }
+
+    /// A response register of a memory at `pos`, of the width `w`, with the reset value 0.
+    fn mem_reg(&mut self, pos: Pos, domain: Sym, name: &Name, w: u32) -> R<Stmt> {
+        let at = span(pos);
+        self.charge(pos, 2)?;
+        let reg = self.name(pos, name)?;
+        let clk = self.name(pos, &self.role(domain, Role::Clk))?;
+        let signal = self.domain_ref(pos, &self.role(domain, Role::Rst))?;
+        self.charge(pos, 1)?;
+        Ok(Stmt::Reg {
+            name: reg,
+            width: num(w, at),
+            clk,
+            reset: Some(Reset {
+                signal,
+                value: small(at, w, 0),
+                span: at,
+            }),
+            span: at,
+        })
+    }
+
+    /// A request `let` of a memory at `pos`: the value of the scalar `a` of the type `t`.
+    fn mem_let(&mut self, pos: Pos, name: &Name, t: &Ty, a: &Agg) -> R<Stmt> {
+        let at = span(pos);
+        self.charge(pos, 1)?;
+        let x = self.name(pos, name)?;
+        self.count = 0;
+        let leaf = self.request_leaf(name, true, pos, t, a)?;
+        Ok(Stmt::Let {
+            name: x,
+            width: num(width(t), at),
+            expr: leaf.expr,
+            span: at,
+        })
+    }
+
+    /// The lowered scalar `a` of a request, a hardware or a static value of the type `t`.
+    fn request_leaf(&mut self, target: Target, root: bool, pos: Pos, t: &Ty, a: &Agg) -> R<Low> {
+        match Src::of(a, 0) {
+            Src::Hw(h) => self.lower(target, root, h),
+            Src::Val(v) => self.leaf_low(target, root, pos, &[], (t, &Src::Val(v))),
+            _ => defect("a request is not a scalar"),
+        }
+    }
+
+    /// The write data of a memory at `pos`: `(concat l_(n-1) (concat ... l_0))` over the leaves
+    /// of the word `a` of the type `t` (section 7.6). The loop starts at `l_0` in packing order.
+    /// Each step binds the chain so far to a temporary of the target `m` when its effective
+    /// height reaches 64, then charges its `concat` node, then lowers its leaf. A word with one
+    /// leaf is that leaf. The chain is the value of the statement, so its top never binds.
+    fn mem_data(&mut self, pos: Pos, m: Target, word: TyId, a: &Agg) -> R<Expr> {
+        let design = self.design;
+        let one = design.tys.meta(word).leaves.cmp_u64(1).is_eq();
+        let ty = design.tys.get(word).clone();
+        let mut chain: Option<(Low, u32)> = None;
+        self.walk(&ty, Src::of(a, 0), parts, |lower, fields, t, src| {
+            let w = width(t);
+            chain = Some(match chain.take() {
+                None => (lower.leaf_low(m, one, pos, fields, (t, src))?, w),
+                Some((low, bits)) => {
+                    let low = lower.deep(pos, m, bits, false, low)?;
+                    lower.charge(pos, 1)?;
+                    let high = lower.leaf_low(m, false, pos, fields, (t, src))?;
+                    let height = up(high.height.max(low.height));
+                    let expr = bin(span(pos), CBin::Concat, high.expr, low.expr);
+                    (inner(expr, height), bits + w)
+                }
+            });
+            Ok(())
+        })?;
+        match chain {
+            Some((low, _)) => Ok(low.expr),
+            None => defect("the memory word has no leaf"),
+        }
+    }
+
+    /// The block of the memory `mem` of the domain `domain` (section 7.6): the core memory, the
+    /// response registers, the request `let` values, the two `next` statements, and the `write`.
+    /// Each core node charges before it exists, at the position of the `mem` statement. The
+    /// `write` has the target of the memory, so its temporaries count from 0 over the address,
+    /// the data, and the enable.
+    fn mem(&mut self, domain: Sym, mem: &Mem, stmts: &mut Vec<Stmt>) -> R<()> {
+        let (pos, at) = (mem.pos, span(mem.pos));
+        let (Some((raddr, ren)), Some((waddr, wdata, wen))) = (&mem.read, &mem.write) else {
+            return defect("a memory has no read request or no write request");
+        };
+        let design = self.design;
+        let word = design
+            .tys
+            .meta(mem.word)
+            .width
+            .to_u64()
+            .and_then(|w| u32::try_from(w).ok())
+            .unwrap_or(u32::MAX);
+        let aw = addr_width(mem.depth);
+        let path = self.path(mem.path);
+        let role = |role: Role| with_fields(&path, &[Field::Role(role)]);
+        let (rdata, rvalid, en_name, addr_name) = (
+            role(Role::Rdata),
+            role(Role::Rvalid),
+            role(Role::Ren),
+            role(Role::Raddr),
+        );
+        self.charge(pos, 1)?;
+        let x = self.name(pos, &path)?;
+        let clk = self.name(pos, &self.role(domain, Role::Clk))?;
+        stmts.push(Stmt::Mem {
+            name: x,
+            width: num(word, at),
+            depth: num(u32::try_from(mem.depth).unwrap_or(u32::MAX), at),
+            clk,
+            span: at,
+        });
+        stmts.push(self.mem_reg(pos, domain, &rdata, word)?);
+        stmts.push(self.mem_reg(pos, domain, &rvalid, 1)?);
+        stmts.push(self.mem_let(pos, &en_name, &Ty::Bool, ren)?);
+        stmts.push(self.mem_let(pos, &addr_name, &Ty::UInt(aw), raddr)?);
+        self.charge(pos, 3)?;
+        let reg = self.name(pos, &rdata)?;
+        let en = self.name_ref(pos, &en_name)?;
+        let memory = self.name(pos, &path)?;
+        let addr = self.name_ref(pos, &addr_name)?;
+        let old = self.name_ref(pos, &rdata)?;
+        let read = Expr::Read {
+            mem: memory,
+            addr: Box::new(addr),
+            span: at,
+        };
+        stmts.push(Stmt::Next {
+            reg,
+            expr: mux(at, en, read, old),
+            span: at,
+        });
+        self.charge(pos, 2)?;
+        let reg = self.name(pos, &rvalid)?;
+        let en = self.name_ref(pos, &en_name)?;
+        let in_range = if mem.depth == 1u64 << aw {
+            self.charge(pos, 1)?;
+            small(at, 1, 1)
+        } else {
+            self.charge(pos, 1)?;
+            let addr = self.name_ref(pos, &addr_name)?;
+            self.charge(pos, 1)?;
+            icmp(at, Pred::Ult, addr, konst(at, aw, nat(mem.depth)))
+        };
+        stmts.push(Stmt::Next {
+            reg,
+            expr: bin(at, CBin::And, en, in_range),
+            span: at,
+        });
+        self.charge(pos, 1)?;
+        let memory = self.name(pos, &path)?;
+        self.count = 0;
+        let addr = self.request_leaf(&path, true, pos, &Ty::UInt(aw), waddr)?;
+        let data = self.mem_data(pos, &path, mem.word, wdata)?;
+        self.charge(pos, 1)?;
+        let enable = self.request_leaf(&path, false, pos, &Ty::Bool, wen)?;
+        self.charge(pos, 1)?;
+        let reset = self.domain_ref(pos, &self.role(domain, Role::Rst))?;
+        self.charge(pos, 1)?;
+        let not_reset = bin(at, CBin::Xor, reset, small(at, 1, 1));
+        stmts.push(Stmt::Write {
+            mem: memory,
+            port: 0,
+            addr: addr.expr,
+            data,
+            en: bin(at, CBin::And, enable.expr, not_reset),
+            span: at,
+        });
+        Ok(())
+    }
+
     /// The core module of one instantiation, and its emitted name.
     fn module(&mut self, inst: &Inst) -> R<(Module, String)> {
         let body = &inst.body;
@@ -895,6 +1104,7 @@ impl Lower<'_> {
         let ports = self.ports(inst)?;
         let mut stmts = Vec::new();
         self.regs(inst, &mut stmts)?;
+        self.mems(inst, &mut stmts)?;
         for local in &body.lets {
             let at = span(local.pos);
             self.charge(local.pos, 1)?;
@@ -952,7 +1162,7 @@ impl Lower<'_> {
                     lower.charge(bind.pos, 1)?;
                     let name = with_fields(&base, fields);
                     let x = lower.name(bind.pos, &name)?;
-                    let expr = lower.leaf_value(&name, bind.pos, fields, src)?;
+                    let expr = lower.leaf_value(&name, bind.pos, fields, (t, src))?;
                     stmts.push(match kind {
                         Kind::Reg => Stmt::Next {
                             reg: x,
@@ -986,11 +1196,15 @@ impl Lower<'_> {
                 let mut base = self.path(inst);
                 base.rest.push(Field::User(port.head.clone()));
                 base.rest.extend(port.rest.iter().cloned());
-                self.walk(ty, src, parts, |lower, fields, _, src| {
+                self.walk(ty, src, parts, |lower, fields, t, src| {
                     lower.charge(bind.pos, 1)?;
                     let x = lower.name(bind.pos, &with_fields(port, fields))?;
-                    let expr =
-                        lower.leaf_value(&with_fields(&base, fields), bind.pos, fields, src)?;
+                    let expr = lower.leaf_value(
+                        &with_fields(&base, fields),
+                        bind.pos,
+                        fields,
+                        (t, src),
+                    )?;
                     conns.push(Conn {
                         port: x,
                         expr,
@@ -1009,7 +1223,7 @@ impl Lower<'_> {
         &mut self,
         ty: &Ty,
         src: S,
-        down: impl FnMut(&S, u64, &Field, usize, TyId) -> S,
+        down: impl FnMut(&S, u64, &Field, usize, u64) -> S,
         mut leaf: impl FnMut(&mut Self, &[Field], &Ty, &S) -> R<()>,
     ) -> R<()> {
         let design = self.design;
@@ -1038,28 +1252,64 @@ impl Lower<'_> {
     /// The value of a leaf statement with the target `target` at `pos`. A static leaf is a
     /// constant, and a leaf of a reference refers to its core name or to its child output at
     /// the position of the statement.
-    fn leaf_value(&mut self, target: Target, pos: Pos, fields: &[Field], src: &Src) -> R<Expr> {
+    fn leaf_value(
+        &mut self,
+        target: Target,
+        pos: Pos,
+        fields: &[Field],
+        leaf: (&Ty, &Src),
+    ) -> R<Expr> {
         self.count = 0;
+        Ok(self.leaf_low(target, true, pos, fields, leaf)?.expr)
+    }
+
+    /// The lowered leaf `src` of the type `t` at `pos`, for a statement with the target
+    /// `target`. `root` marks the value of the statement. It keeps the number of the next
+    /// temporary, so a statement that lowers several leaves numbers them together.
+    fn leaf_low(
+        &mut self,
+        target: Target,
+        root: bool,
+        pos: Pos,
+        fields: &[Field],
+        (t, src): (&Ty, &Src),
+    ) -> R<Low> {
         match src {
-            Src::Hw(h) => Ok(self.lower(target, true, *h)?.expr),
+            Src::Hw(h) => self.lower(target, root, *h),
             Src::Val(v) => {
                 self.charge(pos, 1)?;
-                const_of(span(pos), v)
+                Ok(Low {
+                    expr: const_of(span(pos), v)?,
+                    copy: Some(1),
+                    height: 1,
+                })
             }
-            Src::Ref(Agg::Ref(base, _), from) => {
+            Src::Ref(Agg::Ref(base, _), from, offset) => {
                 let below = fields.get(*from..).unwrap_or_default();
-                match base {
+                let (expr, units) = match base {
                     Base::Name(p) => {
                         let name = with_fields(&self.path(*p), below);
-                        Ok(self.ref_leaf(pos, &name)?.0)
+                        self.ref_leaf(pos, &name)?
                     }
                     Base::Out(i, q) => {
                         let inst = self.path(*i);
                         let port = with_fields(&self.path(*q), below);
-                        Ok(self.out_leaf(pos, &inst, &port)?.0)
+                        self.out_leaf(pos, &inst, &port)?
                     }
-                    Base::Word(..) => defect("a memory word has no lowering yet"),
-                }
+                    Base::Word(m, at) => {
+                        return self.word_leaf(
+                            pos,
+                            &self.path(*m),
+                            at.saturating_add(*offset),
+                            width(t),
+                        );
+                    }
+                };
+                Ok(Low {
+                    expr,
+                    copy: Some(units),
+                    height: 1,
+                })
             }
             Src::Missing | Src::Agg(_) | Src::Ref(..) => defect("a bound value has no leaf there"),
         }

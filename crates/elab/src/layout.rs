@@ -93,6 +93,7 @@ enum Parts {
 /// A container on the stack of the walk, the number of its next part, and the source of the
 /// container. `pushed` tells if its leaf field is on the path.
 struct Frame<S> {
+    ty: TyId,
     parts: Parts,
     next: u64,
     src: S,
@@ -101,15 +102,16 @@ struct Frame<S> {
 
 /// Runs `f` on each leaf of the type `root` in packing order, with the leaf fields of the leaf
 /// and its scalar type. `src` is the source of the root. `down` gives the source of the part
-/// `k` of the type `ty` with the leaf field `field`, which is the last of `depth` leaf fields,
-/// and `f` gets the source of each leaf.
+/// `k` of a container with the leaf field `field`, which is the last of `depth` leaf fields,
+/// and the bit offset of the part in a word of the container (`Types::offset`). `f` gets the
+/// source of each leaf.
 /// A struct type without field names gives `missing`. The walk stops at the first error of `f`.
 pub(crate) fn for_each_leaf<S, E>(
     env: Env<'_>,
     shapes: &mut Shapes,
     root: TyId,
     src: S,
-    mut down: impl FnMut(&S, u64, &Field, usize, TyId) -> S,
+    mut down: impl FnMut(&S, u64, &Field, usize, u64) -> S,
     missing: impl Fn(TyId) -> E,
     mut f: impl FnMut(&[Field], TyId, &S) -> Result<(), E>,
 ) -> Result<(), E> {
@@ -140,6 +142,7 @@ pub(crate) fn for_each_leaf<S, E>(
             };
             match parts {
                 Some(parts) => stack.push(Frame {
+                    ty: t,
                     parts,
                     next: 0,
                     src: s,
@@ -170,7 +173,8 @@ pub(crate) fn for_each_leaf<S, E>(
         match step {
             Some((index, field, ty)) => {
                 top.next += 1;
-                let child = down(&top.src, index, &field, fields.len() + 1, ty);
+                let offset = env.tys.offset(top.ty, index);
+                let child = down(&top.src, index, &field, fields.len() + 1, offset);
                 fields.push(field);
                 enter = Some((ty, child, true));
             }
