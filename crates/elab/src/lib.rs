@@ -324,3 +324,6 @@ mod tests_vectors;
 
 #[cfg(test)]
 mod tests_work;
+
+#[cfg(test)]
+mod tests_work_records;
