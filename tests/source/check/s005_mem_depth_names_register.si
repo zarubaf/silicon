@@ -1,0 +1,8 @@
+// S005: the depth of a memory is a static position, so a register is no depth.
+// TOP M()
+module M() {
+    reg d: UInt[2] = 0;
+    d := d +% 1;
+    // expected-error S005 @+1
+    mem m: [UInt[8]; d];
+}
