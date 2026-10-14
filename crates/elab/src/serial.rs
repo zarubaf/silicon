@@ -101,6 +101,8 @@ pub(crate) fn write<S: Sink>(tys: &Types, first: Item<'_>, out: &mut S) {
             Item::Int(n) => write!(out, "{n}").unwrap_or_default(),
             Item::Ty(t) => {
                 if !out.whole_type(tys, t) {
+                    #[cfg(test)]
+                    crate::counters::add(crate::counters::Count::Unfolded, 1);
                     work.push(Item::Node(tys.get(t)));
                 }
             }
@@ -110,11 +112,7 @@ pub(crate) fn write<S: Sink>(tys: &Types, first: Item<'_>, out: &mut S) {
                 work.push(Item::Ty(p.ty));
             }
             Item::Param(p) => work.push(Item::Ty(p.ty)),
-            Item::Node(ty) => {
-                #[cfg(test)]
-                crate::counters::add(crate::counters::Count::Unfolded, 1);
-                type_node(tys, ty, out, &mut work);
-            }
+            Item::Node(ty) => type_node(tys, ty, out, &mut work),
             Item::Value(v) => value_node(tys, v, out, &mut work),
         }
     }

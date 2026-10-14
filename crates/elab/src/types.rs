@@ -13,7 +13,6 @@ use crate::text::Text;
 use crate::value::{Value, int_size, width_int, width_size};
 use std::collections::BTreeMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::sync::OnceLock;
 
 /// A type as a static value: the scalar types of slice 1 with a width from 1 to 65536, `()`,
 /// `Type`, `String`, and the container types, which include `List[T]`. A tuple type has at least one element type: `()` is
@@ -214,10 +213,9 @@ fn ascending_sum(mut terms: Vec<&Int>, start: u64, touched: &mut u64) -> Int {
 /// One type of the table with its metadata.
 struct Entry {
     ty: Ty,
-    /// The length in bytes of the serialization, computed once from the lengths of the parts,
-    /// when a text first needs it. It holds the decimal form of each integer in the type,
-    /// which no charge of the type pays.
-    text_len: OnceLock<u64>,
+    /// The length in bytes of the serialization, computed when the type is made, from the
+    /// stored lengths of its parts. It holds the decimal form of each integer in the type.
+    text_len: u64,
     meta: Meta,
     /// The depth of the zero value of the type, from the type alone (section 5.5).
     zero_depth: u64,
@@ -305,23 +303,6 @@ fn read_work(v: &Value) -> u64 {
         };
     }
     sum
-}
-
-/// Pushes onto `out` each type that `v` holds as a part: a type value and the type of an array
-/// or a record, at any depth of `v`.
-fn held_types(v: &Value, out: &mut Vec<TyId>) {
-    let mut work = vec![v];
-    while let Some(v) = work.pop() {
-        match v {
-            Value::Type(t) => out.push(*t),
-            Value::Array(t, xs) | Value::Record(t, xs) | Value::List(t, xs) => {
-                out.push(*t);
-                work.extend(xs);
-            }
-            Value::Tuple(_, xs) => work.extend(xs),
-            _ => {}
-        }
-    }
 }
 
 /// The table of the static types of one elaboration. A structurally equal type has one id, so
@@ -483,9 +464,12 @@ impl Types {
             funcs,
         };
         let zero_depth = self.zero_depth_of(&ty, depth);
+        // The parts of the type are in the table, so the walk stops at each part.
+        let mut len = Len::default();
+        serial::write(self, Item::Node(&ty), &mut len);
         self.entries.push(Entry {
             ty: ty.clone(),
-            text_len: OnceLock::new(),
+            text_len: len.0,
             meta,
             zero_depth,
             prefix,
@@ -666,58 +650,11 @@ impl Types {
         }
     }
 
-    /// The length in bytes of the serialization of `t`. The table computes it once for each
-    /// type, from the stored lengths of the parts, so any later call is a lookup and no text
-    /// unfolds a type. An id that the table does not hold has none. The work of the first call is in the number of new types.
+    /// The length in bytes of the serialization of `t`, stored when the type was made, so no
+    /// text unfolds a type. An id that the table does not hold has none.
     #[must_use]
     pub fn text_len(&self, t: TyId) -> Option<u64> {
-        let entry = self.entries.get(t.index)?;
-        if let Some(len) = entry.text_len.get() {
-            return Some(*len);
-        }
-        let mut work = vec![t];
-        while let Some(&t) = work.last() {
-            let Some(entry) = self.entries.get(t.index) else {
-                work.pop();
-                continue;
-            };
-            if entry.text_len.get().is_some() {
-                work.pop();
-                continue;
-            }
-            let mut parts = Vec::new();
-            match &entry.ty {
-                Ty::Array(elem, _) | Ty::List(elem) => parts.push(*elem),
-                Ty::Tuple(ts) => parts.extend(ts.iter().copied()),
-                Ty::Fn(ps, ret) => {
-                    parts.extend(ps.iter().map(|p| p.ty));
-                    parts.push(*ret);
-                }
-                Ty::Struct(s) => {
-                    for arg in self.spec(*s).args() {
-                        held_types(arg, &mut parts);
-                    }
-                }
-                _ => {}
-            }
-            let waiting = work.len();
-            for part in parts {
-                if self
-                    .entries
-                    .get(part.index)
-                    .is_some_and(|e| e.text_len.get().is_none())
-                {
-                    work.push(part);
-                }
-            }
-            if work.len() == waiting {
-                let mut len = Len::default();
-                serial::write(self, Item::Node(&entry.ty), &mut len);
-                entry.text_len.get_or_init(|| len.0);
-                work.pop();
-            }
-        }
-        self.entries.get(t.index)?.text_len.get().copied()
+        self.entries.get(t.index).map(|e| e.text_len)
     }
 
     #[must_use]
