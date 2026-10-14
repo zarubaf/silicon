@@ -15,11 +15,15 @@ use num_bigint::BigInt;
 const STATIC_TYS: [STy; 3] = [STy::Nat, STy::Int, STy::Bool];
 
 /// One env per argument tuple in the ranges of the module arguments.
-fn domain(params: &[(String, STy)]) -> Vec<Env> {
+fn domain(params: &[(String, STy)], builder: &Builder) -> Vec<Env> {
     let mut envs = vec![Env::default()];
     for (name, t) in params {
         let values: Vec<Value> = if *t == STy::Bool {
             vec![Value::Bool(false), Value::Bool(true)]
+        } else if let STy::Fn(ft) = t {
+            // Only widths read the domain, and they read `Nat` names, so
+            // one function stands for all.
+            builder.fn_domain(ft).into_iter().take(1).collect()
         } else {
             let (lo, hi) = super::stat::arg_range(t);
             (lo..=hi).map(|n| Value::Int(BigInt::from(n))).collect()
@@ -243,6 +247,12 @@ impl Builder {
             let mut params = Vec::new();
             for _ in 0..self.tape.below(PARAMS + 1) {
                 let t = STATIC_TYS[self.tape.index(STATIC_TYS.len())].clone();
+                // A child, not the top, takes a function: the top arguments
+                // are scalars on the command line.
+                let t = match self.fn_param_ty() {
+                    Some(f) if k > 0 && self.tape.below(5) == 0 => f,
+                    _ => t,
+                };
                 params.push((names.fresh("P"), t));
             }
             let clocked = if k == 0 {
@@ -250,7 +260,7 @@ impl Builder {
             } else {
                 self.tape.flag()
             };
-            let domain = domain(&params);
+            let domain = domain(&params, self);
             // Port widths read only `Nat` names: an `Int` parameter takes
             // negative values over the domain, so it rarely gives a width.
             let statics: Vec<(String, STy)> = self

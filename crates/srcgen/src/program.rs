@@ -42,6 +42,16 @@ pub(crate) enum STy {
     Str,
     /// `List[Int]` or `List[Nat]`.
     List(Box<STy>),
+    /// The type of a function value.
+    Fn(Box<FnTy>),
+}
+
+/// A function type `fn (T, mut U) -> V` of static types.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct FnTy {
+    /// Each formal with whether it has the mark `mut`.
+    pub(crate) params: Vec<(bool, STy)>,
+    pub(crate) ret: STy,
 }
 
 /// A struct specialization: the struct, its arguments, and its field types
@@ -80,6 +90,14 @@ impl STy {
             STy::SInt(w) => format!("SInt[{w}]"),
             STy::Str => "String".to_owned(),
             STy::List(t) => format!("List[{}]", t.text()),
+            STy::Fn(f) => {
+                let params: Vec<String> = f
+                    .params
+                    .iter()
+                    .map(|(m, t)| format!("{}{}", if *m { "mut " } else { "" }, t.text()))
+                    .collect();
+                format!("fn ({}) -> {}", params.join(", "), f.ret.text())
+            }
             STy::Record(r) if r.args.is_empty() => r.name.clone(),
             STy::Record(r) => {
                 let args: Vec<String> = r.args.iter().map(Value::spelling).collect();
@@ -352,6 +370,14 @@ pub(crate) enum Item {
         result: HExpr,
     },
     MutFn(MutFn),
+    /// `const name: fn (T, ...) -> R = target;` of a helper `fn`, with the
+    /// types as the helper declares them.
+    HwFnValue {
+        name: String,
+        target: String,
+        params: Vec<Ty>,
+        ret: Ty,
+    },
     /// A module with `comptime` parameters. A clocked module has no domain
     /// clause, so its domain is `clock`; a combinational one has `domains()`.
     Module {
@@ -448,6 +474,23 @@ fn render_item(out: &mut String, item: &Item) {
             line(out, 1, "}");
             line(out, 1, &format!("return {};", sexpr(&f.step)));
             line(out, 0, "}");
+        }
+        Item::HwFnValue {
+            name,
+            target,
+            params,
+            ret,
+        } => {
+            let params: Vec<String> = params.iter().map(ty).collect();
+            line(
+                out,
+                0,
+                &format!(
+                    "const {name}: fn ({}) -> {} = {target};",
+                    params.join(", "),
+                    ty(ret)
+                ),
+            );
         }
         Item::ListFn(f) => render_list_fn(out, f),
         Item::MutFn(f) => render_mut_fn(out, f),
@@ -1207,6 +1250,32 @@ module M1(comptime P0: Nat) domains() {
         let recv = HExpr::Receiver(Box::new(hname("v0")), "g0".to_owned(), vec![hname("i0")]);
         assert_eq!(hexpr(&plain), "g0(v0, i0)");
         assert_eq!(hexpr(&recv), "v0.g0(i0)");
+    }
+
+    #[test]
+    fn function_values_print_with_their_types() {
+        let ty = STy::Fn(Box::new(FnTy {
+            params: vec![(true, STy::List(Box::new(STy::Int))), (false, STy::Nat)],
+            ret: STy::Bool,
+        }));
+        assert_eq!(ty.text(), "fn (mut List[Int], Nat) -> Bool");
+        let items = [
+            Item::Const {
+                name: "F0".to_owned(),
+                ty,
+                value: sname("k0"),
+            },
+            Item::HwFnValue {
+                name: "F1".to_owned(),
+                target: "h0".to_owned(),
+                params: vec![u8(), Ty::Bool],
+                ret: Ty::SInt(sname("C0")),
+            },
+        ];
+        assert_eq!(
+            render_items(&items),
+            "const F0: fn (mut List[Int], Nat) -> Bool = k0;\nconst F1: fn (UInt[8], Bool) -> SInt[C0] = h0;\n"
+        );
     }
 
     #[test]

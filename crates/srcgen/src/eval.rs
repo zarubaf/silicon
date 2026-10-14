@@ -4,8 +4,8 @@
 //! rules, next to the two front ends, so the `eval` probe compares it.
 
 use super::program::{
-    ComptimeFn, FieldTy, Item, ListFn, MutFn, RecTy, SBin, SExpr, STy, Scalar, Stmt, StructDef, Ty,
-    Un, string,
+    ComptimeFn, FieldTy, FnTy, Item, ListFn, MutFn, RecTy, SBin, SExpr, STy, Scalar, Stmt,
+    StructDef, Ty, Un, string,
 };
 use num_bigint::{BigInt, BigUint, Sign};
 use std::collections::BTreeMap;
@@ -26,6 +26,8 @@ pub(crate) enum Value {
     Str(String),
     /// A list: its element type (`Int` or `Nat`), and its elements.
     List(STy, Vec<Value>),
+    /// A function value: the item and its function type.
+    Function(String, FnTy),
 }
 
 impl Value {
@@ -40,6 +42,7 @@ impl Value {
                 let elem = xs.first().map_or_else(String::new, |x| x.ty().serialize());
                 format!("(array {elem} ({}))", serialized(xs))
             }
+            Value::Function(item, _) => format!("(function root {item})"),
             Value::Str(s) => format!("(string {})", string(s)),
             Value::List(t, xs) => format!("(list {} ({}))", t.serialize(), serialized(xs)),
             Value::UInt(w, n) => format!("(uint {w} {n})"),
@@ -60,6 +63,7 @@ impl Value {
             Value::Tuple(xs) => format!("({})", spelled(xs)),
             Value::Array(xs) => format!("[{}]", spelled(xs)),
             Value::Int(n) | Value::UInt(_, n) | Value::SInt(_, n) => n.to_string(),
+            Value::Function(item, _) => item.clone(),
             Value::Str(s) => string(s),
             Value::List(t, _) => format!("list({})", t.text()),
             Value::Record(t, xs) => format!("{}({})", STy::Record(t.clone()).text(), spelled(xs)),
@@ -77,6 +81,7 @@ impl Value {
                 Box::new(xs.first().map_or(STy::Int, Value::ty)),
                 u32::try_from(xs.len()).unwrap_or(u32::MAX),
             ),
+            Value::Function(_, t) => STy::Fn(Box::new(t.clone())),
             Value::Str(_) => STy::Str,
             Value::List(t, _) => STy::List(Box::new(t.clone())),
             Value::UInt(w, _) => STy::UInt(*w),
@@ -116,6 +121,20 @@ impl STy {
             STy::SInt(w) => format!("(sint {w})"),
             STy::Str => "string".to_owned(),
             STy::List(t) => format!("(list {})", t.serialize()),
+            STy::Fn(f) => {
+                let params: Vec<String> = f
+                    .params
+                    .iter()
+                    .map(|(m, t)| {
+                        if *m {
+                            format!("(mut {})", t.serialize())
+                        } else {
+                            t.serialize()
+                        }
+                    })
+                    .collect();
+                format!("(fn ({}) {})", params.join(" "), f.ret.serialize())
+            }
             STy::Record(r) => format!("(struct root {} ({}))", r.name, serialized(&r.args)),
         }
     }
@@ -174,6 +193,30 @@ pub(crate) struct Scope {
 }
 
 impl Scope {
+    /// The type of the function item `name`: the signature of the
+    /// `comptime fn`, the list builder, or the function with a `mut` formal.
+    pub(crate) fn fn_ty(&self, name: &str) -> Option<FnTy> {
+        if let Some(f) = self.fns.get(name) {
+            let params = f.params.iter().map(|(_, t)| (false, t.clone())).collect();
+            return Some(FnTy {
+                params,
+                ret: f.ret.clone(),
+            });
+        }
+        if let Some(f) = self.list_fns.get(name) {
+            let params = f.params.iter().map(|(_, t)| (false, t.clone())).collect();
+            return Some(FnTy {
+                params,
+                ret: STy::List(Box::new(f.elem.clone())),
+            });
+        }
+        let f = self.mut_fns.get(name)?;
+        Some(FnTy {
+            params: vec![(true, f.root.clone()), (false, STy::Int)],
+            ret: STy::Int,
+        })
+    }
+
     /// The scope of the items: all `comptime fn`s, then each `const` in item
     /// order. A `const` can read only earlier ones. Each `const` evaluates
     /// here, not at its first use, so a faulting `const` that nothing reads
@@ -220,6 +263,17 @@ pub(crate) const MAX_LIST: usize = 8;
 const MAX_CALLS: u32 = 4096;
 /// The widths of `UInt[w]` and `SInt[w]` (front-end `MAX_WIDTH`).
 const MAX_WIDTH: u32 = 65536;
+
+/// The item that a call of `name` runs: `name` itself, or the item that
+/// the function value `name` holds (a `const` or a parameter). A value that
+/// is no function is a fault.
+fn callee<'s>(name: &'s str, env: &'s Env, scope: &'s Scope) -> Result<&'s str, Fault> {
+    match env.statics.get(name).or_else(|| scope.consts.get(name)) {
+        Some(Value::Function(item, _)) => Ok(item),
+        Some(_) => Err(Fault::Type),
+        None => Ok(name),
+    }
+}
 
 /// A call of a `comptime fn` with a `mut` formal: the final value of the
 /// formal, which the call writes back to its root, and the result.
@@ -269,7 +323,10 @@ pub(crate) fn exec_static(s: &Stmt, env: &mut Env, scope: &Scope) -> Result<(), 
             args,
             ..
         } => {
-            let def = scope.mut_fns.get(f).ok_or(Fault::Type)?;
+            let def = scope
+                .mut_fns
+                .get(callee(f, env, scope)?)
+                .ok_or(Fault::Type)?;
             let [arg] = args.as_slice() else {
                 return Err(Fault::Type);
             };
@@ -345,7 +402,7 @@ fn bits(t: &STy) -> Result<u32, Fault> {
         STy::Tuple(ts) => ts.iter().map(bits).sum(),
         STy::Array(t, n) => Ok(bits(t)?.saturating_mul(*n)),
         STy::Record(r) => r.fields.iter().map(|(_, t)| bits(t)).sum(),
-        STy::Nat | STy::Int | STy::Str | STy::List(_) => Err(Fault::Type),
+        STy::Nat | STy::Int | STy::Str | STy::List(_) | STy::Fn(_) => Err(Fault::Type),
     }
 }
 
@@ -386,12 +443,10 @@ impl Evaluator<'_> {
         let v = match e {
             SExpr::Int(n, _) => Value::Int(n.clone()),
             SExpr::Bool(b) => Value::Bool(*b),
-            SExpr::Name(n) => env
-                .statics
-                .get(n)
-                .or_else(|| self.scope.consts.get(n))
-                .cloned()
-                .ok_or(Fault::Type)?,
+            SExpr::Name(n) => match env.statics.get(n).or_else(|| self.scope.consts.get(n)) {
+                Some(v) => v.clone(),
+                None => Value::Function(n.clone(), self.scope.fn_ty(n).ok_or(Fault::Type)?),
+            },
             SExpr::Call(f, args) => self.call(f, args, env)?,
             SExpr::Tuple(xs) => Value::Tuple(self.all(xs, env)?),
             SExpr::Array(xs) if xs.is_empty() => return Err(Fault::Type),
@@ -537,6 +592,7 @@ impl Evaluator<'_> {
     /// else the step. Each formal and the result check their type.
     fn call(&mut self, f: &str, args: &[SExpr], env: &Env) -> Result<Value, Fault> {
         let scope = self.scope;
+        let f = callee(f, env, scope)?;
         if let Some(def) = scope.list_fns.get(f) {
             return self.list_call(def, args, env);
         }
@@ -674,6 +730,7 @@ fn typed(ty: &STy, v: Value) -> Result<Value, Fault> {
             have.clone(),
             typed_all(std::iter::repeat_n(&**t, xs.len()), xs.iter().cloned())?,
         )),
+        (STy::Fn(want), Value::Function(_, have)) if **want == *have => Ok(v),
         (STy::UInt(w), Value::UInt(x, _)) | (STy::SInt(w), Value::SInt(x, _)) if w == x => Ok(v),
         (STy::Record(want), Value::Record(have, _)) if want == have => Ok(v),
         _ => Err(Fault::Type),
@@ -1269,6 +1326,113 @@ mod tests {
             receiver: true,
         };
         assert_eq!(exec_static(&no_arg, &mut env, &scope), Err(Fault::Type));
+    }
+
+    fn fn_ty(params: &[(bool, STy)], ret: STy) -> STy {
+        STy::Fn(Box::new(FnTy {
+            params: params.to_vec(),
+            ret,
+        }))
+    }
+
+    /// `f` of `twice()`, `k0` of `mutators()`, and the consts that hold them.
+    fn values() -> Vec<Item> {
+        let mut items = twice();
+        items.retain(|i| !matches!(i, Item::Const { .. }));
+        let mut_fn = MutFn {
+            name: "k0".to_owned(),
+            root: STy::Int,
+            update: bin(SBin::Add, name_expr("a0"), name_expr("x1")),
+            ret: name_expr("a0"),
+        };
+        let consts = [
+            (
+                "F0",
+                fn_ty(&[(false, STy::Nat), (false, STy::Int)], STy::Int),
+                "f",
+            ),
+            (
+                "F1",
+                fn_ty(&[(true, STy::Int), (false, STy::Int)], STy::Int),
+                "k0",
+            ),
+        ];
+        items.push(Item::MutFn(mut_fn));
+        for (n, ty, target) in consts {
+            items.push(Item::Const {
+                name: n.to_owned(),
+                ty,
+                value: name_expr(target),
+            });
+        }
+        items
+    }
+
+    #[test]
+    fn a_call_through_a_function_value_runs_its_item() {
+        let Ok(scope) = Scope::new(&values()) else {
+            panic!("the scope faults");
+        };
+        let call = |f: &str| SExpr::Call(f.to_owned(), vec![int(3), int(1)]);
+        assert_eq!(run_in(&scope, &call("F0")), run_in(&scope, &call("f")));
+        assert_eq!(run_in(&scope, &call("F0")), value(11));
+        assert_eq!(
+            run_in(&scope, &name_expr("F0")).map(|v| v.serialize()),
+            Ok("(function root f)".to_owned())
+        );
+        // The item name is a value too, with its own type.
+        assert_eq!(
+            run_in(&scope, &name_expr("f")).map(|v| v.ty()),
+            Ok(fn_ty(&[(false, STy::Nat), (false, STy::Int)], STy::Int))
+        );
+        // A call of a name that holds a value that is no function.
+        let items = [Item::Const {
+            name: "C0".to_owned(),
+            ty: STy::Int,
+            value: int(1),
+        }];
+        let Ok(plain) = Scope::new(&items) else {
+            panic!("the scope faults");
+        };
+        let c0 = SExpr::Call("C0".to_owned(), Vec::new());
+        assert_eq!(run_in(&plain, &c0), Err(Fault::Type));
+    }
+
+    #[test]
+    fn a_value_has_the_exact_type_of_its_const() {
+        let mut items = values();
+        // `F0` has the mark `mut` on `x0`, which `f` has not.
+        items.push(Item::Const {
+            name: "F2".to_owned(),
+            ty: fn_ty(&[(true, STy::Nat), (false, STy::Int)], STy::Int),
+            value: name_expr("f"),
+        });
+        assert_eq!(Scope::new(&items).map(|_| ()), Err(Fault::Type));
+    }
+
+    #[test]
+    fn a_mut_call_through_a_value_writes_back() {
+        let Ok(scope) = Scope::new(&values()) else {
+            panic!("the scope faults");
+        };
+        let mut env = Env::default();
+        env.statics
+            .insert("n".to_owned(), Value::Int(BigInt::from(4)));
+        assert_eq!(
+            exec_static(&mut_call("F1", "n", 5), &mut env, &scope),
+            Ok(())
+        );
+        assert_eq!(env.statics.get("n"), Some(&Value::Int(BigInt::from(9))));
+        // A parameter that holds a function takes the same path.
+        let f = scope
+            .fn_ty("k0")
+            .map(|t| Value::Function("k0".to_owned(), t));
+        env.statics.extend(f.map(|f| ("P0".to_owned(), f)));
+        assert_eq!(
+            exec_static(&mut_call("P0", "n", 1), &mut env, &scope),
+            Ok(())
+        );
+        assert_eq!(env.statics.get("n"), Some(&Value::Int(BigInt::from(10))));
     }
 
     #[test]

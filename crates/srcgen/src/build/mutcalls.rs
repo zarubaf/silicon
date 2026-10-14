@@ -125,12 +125,13 @@ impl Builder {
         };
         let root = self.static_root(ctx, names, out, &f.root)?;
         let result = names.fresh("s");
-        let receiver = self.tape.flag();
+        // A call through a function value is a plain call.
+        let (callee, receiver) = self.mut_callee(&f.name);
         for arg in [self.sexpr(Kind::Int, 1, self.reach(ctx)), int(0)] {
             let stmt = Stmt::MutCall {
                 name: result.clone(),
                 root: root.clone(),
-                f: f.name.clone(),
+                f: callee.clone(),
                 args: vec![arg],
                 receiver,
             };

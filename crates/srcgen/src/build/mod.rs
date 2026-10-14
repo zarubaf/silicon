@@ -35,6 +35,7 @@ macro_rules! note {
 mod body;
 mod container;
 mod file;
+mod fnvalues;
 mod hw;
 mod inst;
 mod lines;
@@ -59,7 +60,7 @@ use std::fmt;
 /// The name prefixes of the static kinds: `P` parameter, `C` const, `f`
 /// `comptime fn`, `s` static `let`, `j` loop binder. A static name is one
 /// of them and digits; the twin must have none.
-pub(super) const STATIC_PREFIXES: &str = "PCfsjbSk";
+pub(super) const STATIC_PREFIXES: &str = "PCfsjbSkF";
 
 /// The result of a step whose faults the checks of the builder exclude.
 /// A fault reaches `build`, which the coverage test watches.
@@ -324,6 +325,14 @@ struct Stats {
     mut_call_fallbacks: u32,
     hw_mut_calls: u32,
     hw_mut_receivers: u32,
+    fn_values: u32,
+    mut_values: u32,
+    hw_values: u32,
+    value_calls: u32,
+    value_call_fallbacks: u32,
+    mut_value_calls: u32,
+    hw_value_calls: u32,
+    fn_arguments: u32,
 }
 
 struct Builder {
@@ -336,6 +345,7 @@ struct Builder {
     /// The helpers with a `mut` formal; a plain call never names one.
     mut_helpers: Vec<Helper>,
     mut_fns: Vec<MutFn>,
+    hw_values: Vec<fnvalues::HwValue>,
     sigs: Vec<Sig>,
     bodies: Vec<Option<Vec<Stmt>>>,
     /// The distinct argument tuples of each module.
@@ -358,6 +368,7 @@ impl Builder {
             helpers: Vec::new(),
             mut_helpers: Vec::new(),
             mut_fns: Vec::new(),
+            hw_values: Vec::new(),
             sigs: Vec::new(),
             bodies: Vec::new(),
             contexts: Vec::new(),
@@ -375,6 +386,7 @@ impl Builder {
         self.mut_fns()?;
         self.helpers()?;
         self.mut_helpers()?;
+        self.fn_values()?;
         self.signatures();
         let params = self
             .sigs
@@ -446,6 +458,7 @@ impl Builder {
         self.file_items()
             .into_iter()
             .chain(helpers)
+            .chain(self.hw_value_items())
             .chain(modules)
             .collect()
     }

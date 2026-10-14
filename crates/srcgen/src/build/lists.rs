@@ -125,8 +125,11 @@ impl Builder {
             Stmt::StaticLet(name.clone(), ty.clone(), value)
         };
         self.run(ctx, &stmt)?;
-        ctx.statics.push((name.clone(), ty));
+        ctx.statics.push((name.clone(), ty.clone()));
         out.push(stmt);
+        if self.tape.flag() {
+            self.list_exit_let(ctx, names, out, &name, &ty);
+        }
         if mutable {
             ctx.lists.push(name);
             // A fresh mutable list gets a few changes at once, so that
@@ -139,6 +142,30 @@ impl Builder {
             }
         }
         Ok(())
+    }
+
+    /// `let s: Int = xs[i];` or `let s: Int = len(xs);`: an exit from the
+    /// list that the frame just declared, so that its length and its elements
+    /// reach a static position.
+    fn list_exit_let(
+        &mut self,
+        ctx: &mut Ctx,
+        names: &mut Names,
+        out: &mut Vec<Stmt>,
+        list: &str,
+        ty: &STy,
+    ) {
+        let reach = self.reach(ctx);
+        let base = SExpr::Name(list.to_owned());
+        let Some(value) = self.descend(base, ty, Kind::Int, super::stat::DEPTH, reach) else {
+            return;
+        };
+        let name = names.fresh("s");
+        let stmt = Stmt::StaticLet(name.clone(), STy::Int, value);
+        if self.try_run(ctx, &stmt) {
+            ctx.statics.push((name, STy::Int));
+            out.push(stmt);
+        }
     }
 
     /// `xs.push(e);` on a mutable list of the frame with room for one more

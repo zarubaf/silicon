@@ -20,7 +20,7 @@ fn has_leaf(t: &STy, kind: Kind) -> bool {
         STy::Array(t, _) => has_leaf(t, kind),
         STy::Record(r) => r.fields.iter().any(|(_, t)| has_leaf(t, kind)),
         STy::List(t) => kind == Kind::Int || has_leaf(t, kind),
-        STy::UInt(_) | STy::SInt(_) | STy::Str => false,
+        STy::UInt(_) | STy::SInt(_) | STy::Str | STy::Fn(_) => false,
     }
 }
 
@@ -87,7 +87,9 @@ impl Builder {
             STy::Str => self.string_literal(),
             STy::List(t) => SExpr::NewList((**t).clone()),
             STy::Bool => self.element(Kind::Bool, depth, r),
-            STy::Nat | STy::Int | STy::UInt(_) | STy::SInt(_) => self.element(Kind::Int, depth, r),
+            STy::Nat | STy::Int | STy::UInt(_) | STy::SInt(_) | STy::Fn(_) => {
+                self.element(Kind::Int, depth, r)
+            }
         }
     }
 
@@ -119,6 +121,12 @@ impl Builder {
         if kind != Kind::Str && self.tape.below(5) == 0 {
             return self.string_exit(kind, depth, r);
         }
+        if kind != Kind::Str
+            && self.tape.below(5) == 0
+            && let Some(call) = self.value_call(kind, depth, r)
+        {
+            return Some(call);
+        }
         let names: Vec<(&String, &STy)> = r
             .names
             .iter()
@@ -134,7 +142,7 @@ impl Builder {
             .copied()
             .filter(|(_, t)| matches!(t, STy::List(_)))
             .collect();
-        let pool = if !lists.is_empty() && self.tape.below(3) == 0 {
+        let pool = if !lists.is_empty() && self.tape.flag() {
             lists
         } else {
             names
@@ -206,7 +214,7 @@ impl Builder {
         self.descend(lit, &t, kind, depth - 1, r)
     }
 
-    fn descend(
+    pub(super) fn descend(
         &mut self,
         base: SExpr,
         t: &STy,
@@ -240,7 +248,7 @@ impl Builder {
                 let sel = SExpr::Field(Box::new(base), field.clone());
                 self.descend(sel, ty, kind, depth, r)
             }
-            STy::UInt(_) | STy::SInt(_) | STy::Str => None,
+            STy::UInt(_) | STy::SInt(_) | STy::Str | STy::Fn(_) => None,
             STy::List(elem) => {
                 if kind == Kind::Int && self.tape.below(3) == 0 {
                     note!(self, list_lens);

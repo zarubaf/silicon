@@ -30,7 +30,8 @@ pub(super) fn kind(t: &STy) -> Option<Kind> {
         STy::Nat | STy::Int => Some(Kind::Int),
         STy::Bool => Some(Kind::Bool),
         STy::Str => Some(Kind::Str),
-        STy::Tuple(_)
+        STy::Fn(_)
+        | STy::Tuple(_)
         | STy::Array(..)
         | STy::UInt(_)
         | STy::SInt(_)
@@ -403,6 +404,10 @@ impl Builder {
     /// An argument for a parameter of type `t`: `Nat` in `1..=12`, `Int` in
     /// `-6..=6`, or a Bool, in each env.
     pub(super) fn argument(&mut self, t: &STy, r: Reach<'_>, envs: &[Env]) -> SExpr {
+        if let STy::Fn(ft) = t {
+            note!(self, fn_arguments);
+            return self.fn_argument(ft);
+        }
         let (lo, hi) = arg_range(t);
         self.position(
             param_kind(t),
@@ -433,6 +438,7 @@ impl Builder {
             STy::UInt(w) => Value::UInt(*w, BigInt::ZERO),
             STy::SInt(w) => Value::SInt(*w, BigInt::ZERO),
             STy::Str => Value::Str(String::new()),
+            STy::Fn(f) => Value::Function(String::new(), (**f).clone()),
             STy::List(t) => Value::List((**t).clone(), Vec::new()),
             STy::Record(r) => Value::Record(
                 r.clone(),
@@ -455,6 +461,7 @@ pub(super) fn arg_range(t: &STy) -> (i64, i64) {
         | STy::SInt(_)
         | STy::Record(_)
         | STy::Str
+        | STy::Fn(_)
         | STy::List(_) => (0, 0),
     }
 }
@@ -467,6 +474,7 @@ pub(super) fn value_expr(v: &Value) -> SExpr {
         Value::Array(xs) => SExpr::Array(xs.iter().map(value_expr).collect()),
         Value::Int(n) | Value::UInt(_, n) | Value::SInt(_, n) => SExpr::Int(n.clone(), Radix::Dec),
         Value::Str(s) => SExpr::Str(s.clone()),
+        Value::Function(item, _) => SExpr::Name(item.clone()),
         Value::List(t, _) => SExpr::NewList(t.clone()),
         Value::Record(rt, xs) => {
             let targs = rt.args.iter().map(value_expr).collect();
@@ -485,6 +493,7 @@ fn is_zero(v: &Value) -> bool {
         Value::Int(n) | Value::UInt(_, n) | Value::SInt(_, n) => *n == BigInt::ZERO,
         Value::Bool(b) => !b,
         Value::Tuple(xs) | Value::Array(xs) | Value::Record(_, xs) => xs.iter().all(is_zero),
+        Value::Function(..) => false,
         Value::Str(s) => s.is_empty(),
         Value::List(_, xs) => xs.is_empty(),
     }
