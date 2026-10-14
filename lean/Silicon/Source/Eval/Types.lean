@@ -27,7 +27,8 @@ follow sections 5.1, 5.4, 5.5, and 5.6. These rules settle their open points:
   Thus `P[8]` and
   `P[UInt[4](8)]` are one type when the parameter of `P` has the type `UInt[4]`. Each use counts
   toward the nesting depth (`S015`). It evaluates the parameter types in the scope of the
-  struct and binds the parameters as typed uses, with their charges and errors. Then it
+  struct and binds the parameters as typed uses, with their charges and errors. The work of
+  the prelude struct `ReadResponse` reports each of its errors at the use (`atUse`). Then it
   charges the sum of the sizes of the arguments, before the lookup, because the lookup reads
   them in full. A first use then charges the size of the struct type and evaluates the field
   types. Then it checks the depth of the struct type (`S015`) and charges the sums of its
@@ -59,6 +60,15 @@ def walked (pos : Pos) (w : Walk α) : M α := do
   let (r, k) := Id.run (w.run.run 0)
   charge pos k
   lift pos r
+
+/-!
+Runs `act`, the work of the prelude struct at its use `p`. Each error of `act` reports at `p`,
+because the prelude struct has no source position (section 6.2).
+-/
+def atUse (p : Pos) (act : M α) : M α := fun c s =>
+  match act c s with
+  | .ok r => .ok r
+  | .error e => .error { e with pos := p }
 
 /-!
 The charge at `pos` of the metadata sums of a tuple or a struct type with the metadata `m` and
@@ -140,22 +150,22 @@ def constant (p : Pos) (x : String) (i : Nat) (body : M Value) : M Value := do
     return c
 
 /-!
-A use at `p` of the struct item `i` with the name `x` and the normalized static arguments
-`args`. It charges their sizes before the lookup. The key of the lookup is the item and the
-arguments, so its work stays in that charge. The first use runs `fields`, which evaluates the
-field types. The caller nests it.
+A use at `p` of the struct item `i` with the name `x`, the prelude flag `pre`, and the
+normalized static arguments `args`. It charges their sizes before the lookup. The key of the
+lookup is the item and the arguments, so its work stays in that charge. The first use runs
+`fields`, which evaluates the field types. The caller nests it.
 -/
-def specialize (p : Pos) (x : String) (i : Nat) (args : List Value) (fields : M (List Ty)) :
-    M Ty := do
+def specialize (p : Pos) (x : String) (i : Nat) (pre : Bool) (args : List Value)
+    (fields : M (List Ty)) : M Ty := do
   charge p (Value.sizeAll args)
   match (← get).specs.find? i args with
   | some (_, ⟨_, _, .done t _⟩) => return t
   | some (k, ⟨_, _, .inProgress⟩) =>
-    let t := Ty.struct k x args.toArray Meta.static
+    let t := Ty.struct k x args.toArray Meta.static pre
     fail .S019 p s!"the specialization {t.text} is in progress"
   | none => do
     let k := (← get).specs.entries.size
-    charge p (Ty.struct k x args.toArray Meta.static).size
+    charge p (Ty.struct k x args.toArray Meta.static pre).size
     modify fun s => { s with specs := ⟨s.specs.entries.push ⟨i, args, .inProgress⟩,
       s.specs.index.insert (i, args) k⟩ }
     let fs ← fields
@@ -163,7 +173,7 @@ def specialize (p : Pos) (x : String) (i : Nat) (args : List Value) (fields : M 
     let m := Meta.struct ms (args.map Value.depth)
     bounded p m.depth
     sums p ms m
-    let t := Ty.struct k x args.toArray m
+    let t := Ty.struct k x args.toArray m pre
     modify fun s => { s with specs := { s.specs with
       entries := s.specs.entries.set! k ⟨i, args, .done t fs.toArray⟩ } }
     return t

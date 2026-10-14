@@ -39,6 +39,9 @@ These rules settle the open points of the spec:
 - A struct type holds the number of its specialization, and a function value the index of its
   item. These numbers do not serialize, print, or add to the size. A key and an equality of
   types compare them in place of the names (`Ty.cmp`), as the Rust ids do.
+- The prelude struct `ReadResponse` has the token `prelude` in the place of `root`:
+  `(struct prelude ReadResponse ((type (uint 8))))`. A user struct with the same name thus has
+  another serialization.
 -/
 namespace Silicon.Source
 
@@ -63,7 +66,8 @@ mutual
   A type as a static value. Its forms are the scalar types of slice 1 with a static width and
   the types of the static containers of slice 2. `Type` and the struct types are forms too. A
   tuple type has at least one element type: `()` is `unit`. A struct type is the number of its
-  entry in the table of specializations, its item, its static arguments, and its metadata.
+  entry in the table of specializations, its item, its static arguments, and its metadata. Its
+  flag `prelude` marks the prelude struct `ReadResponse` (section 7.1).
   `String` and `List[T]` are static types only. A function type is its parameter types with
   their `mut` marks, and its result type.
   -/
@@ -76,6 +80,7 @@ mutual
     | array (elem : Ty) (len : Nat)
     | tuple (elems : Array Ty)
     | struct (spec : Nat) (item : String) (args : Array Value) (info : Meta)
+        (prelude : Bool := false)
     | string
     | list (elem : Ty)
     | fn (params : Array TyParam) (ret : Ty)
@@ -119,8 +124,8 @@ mutual
     | .array s n, .array t m => Ty.beq s t && n == m
     | .list s, .list t => Ty.beq s t
     | .tuple ⟨xs⟩, .tuple ⟨ys⟩ => Ty.beqs xs ys
-    | .struct a i ⟨xs⟩ m, .struct b j ⟨ys⟩ n =>
-      a == b && i == j && Value.beqs xs ys && decide (m = n)
+    | .struct a i ⟨xs⟩ m e, .struct b j ⟨ys⟩ n f =>
+      a == b && i == j && Value.beqs xs ys && decide (m = n) && e == f
     | .fn ⟨ps⟩ r, .fn ⟨qs⟩ s => TyParam.beqs ps qs && Ty.beq r s
     | _, _ => false
 
@@ -167,13 +172,13 @@ mutual
       cases b <;> simp [Ty.beq] at h ⊢
       exact Ty.eq_of_beq _ _ h
     | .tuple ⟨xs⟩, b, h => by
-      rcases b with _ | _ | _ | _ | _ | _ | _ | _ | ⟨⟨ys⟩⟩ | ⟨_, _, ⟨ys⟩, _⟩ | _ | _ | _ <;>
+      rcases b with _ | _ | _ | _ | _ | _ | _ | _ | ⟨⟨ys⟩⟩ | ⟨_, _, ⟨ys⟩, _, _⟩ | _ | _ | _ <;>
         simp [Ty.beq] at h ⊢
       rw [Ty.eqs_of_beqs _ _ h]
-    | .struct _ _ ⟨xs⟩ _, b, h => by
-      rcases b with _ | _ | _ | _ | _ | _ | _ | _ | ⟨⟨ys⟩⟩ | ⟨_, _, ⟨ys⟩, _⟩ | _ | _ | _ <;>
+    | .struct _ _ ⟨xs⟩ _ _, b, h => by
+      rcases b with _ | _ | _ | _ | _ | _ | _ | _ | ⟨⟨ys⟩⟩ | ⟨_, _, ⟨ys⟩, _, _⟩ | _ | _ | _ <;>
         simp [Ty.beq] at h ⊢
-      exact ⟨h.1.1.1, h.1.1.2, by rw [Value.eqs_of_beqs _ _ h.1.2], h.2⟩
+      exact ⟨h.1.1.1.1, h.1.1.1.2, by rw [Value.eqs_of_beqs _ _ h.1.1.2], h.1.2, h.2⟩
     | .fn ⟨ps⟩ _, b, h => by
       rcases b with _ | _ | _ | _ | _ | _ | _ | _ | _ | _ | _ | _ | ⟨⟨qs⟩, _⟩ <;>
         simp [Ty.beq] at h ⊢
@@ -226,7 +231,7 @@ mutual
     | .bool | .nat | .int | .unit | .type | .uint _ | .sint _ | .string => by simp [Ty.beq]
     | .array s _ | .list s => by simp [Ty.beq, Ty.beq_self s]
     | .tuple ⟨xs⟩ => by simp [Ty.beq, Ty.beqs_self xs]
-    | .struct _ _ ⟨xs⟩ _ => by simp [Ty.beq, Value.beqs_self xs]
+    | .struct _ _ ⟨xs⟩ _ _ => by simp [Ty.beq, Value.beqs_self xs]
     | .fn ⟨ps⟩ r => by simp [Ty.beq, TyParam.beqs_self ps, Ty.beq_self r]
 
   theorem Ty.beqs_self : ∀ xs : List Ty, Ty.beqs xs xs = true
@@ -410,7 +415,7 @@ mutual
     | .list t => { Meta.static with depth := 1 + t.info.depth, funcs := t.info.funcs }
     | .array t n => t.info.array n
     | .tuple ⟨ts⟩ => Meta.tuple (Ty.infoAll ts)
-    | .struct _ _ _ m => m
+    | .struct _ _ _ m _ => m
     | .fn ⟨ps⟩ r => Meta.fn (TyParam.infoAll ps) r.info
 
   def Ty.infoAll : List Ty → List Meta
@@ -434,7 +439,8 @@ mutual
     | .type => "type"
     | .array t n => Print.node "array" [t.serialize, toString n]
     | .tuple ⟨ts⟩ => Print.node "tuple" [Print.list (Ty.serializeAll ts)]
-    | .struct _ i ⟨xs⟩ _ => Print.node "struct" ["root", i, Print.list (Value.serializeAll xs)]
+    | .struct _ i ⟨xs⟩ _ e =>
+      Print.node "struct" [if e then "prelude" else "root", i, Print.list (Value.serializeAll xs)]
     | .string => "string"
     | .list t => Print.node "list" [t.serialize]
     | .fn ⟨ps⟩ r => Print.node "fn" [Print.list (TyParam.serializeAll ps), r.serialize]
@@ -479,7 +485,7 @@ mutual
     | .array t n => 1 + t.size + intSize n
     | .list t => 1 + t.size
     | .tuple ⟨ts⟩ => 1 + Ty.sizeAll ts
-    | .struct _ _ ⟨xs⟩ _ => 1 + Value.sizeAll xs
+    | .struct _ _ ⟨xs⟩ _ _ => 1 + Value.sizeAll xs
     | .fn ⟨ps⟩ r => 1 + TyParam.sizeAll ps + r.size
 
   def Ty.sizeAll : List Ty → Nat
@@ -512,7 +518,7 @@ mutual
   def Ty.depth : Ty → Nat
     | .array t _ | .list t => 1 + t.depth
     | .tuple ⟨ts⟩ => 1 + Ty.depthAll ts
-    | .struct _ _ _ m => m.depth
+    | .struct _ _ _ m _ => m.depth
     | .fn ⟨ps⟩ r => 1 + max (TyParam.depthAll ps) r.depth
     | _ => 1
 
@@ -571,8 +577,8 @@ mutual
     | .array t n => s!"[{t.text}; {n}]"
     | .tuple ⟨[t]⟩ => s!"({t.text},)"
     | .tuple ⟨ts⟩ => "(" ++ ", ".intercalate (Ty.textAll ts) ++ ")"
-    | .struct _ i ⟨[]⟩ _ => i
-    | .struct _ i ⟨xs⟩ _ => i ++ "[" ++ ", ".intercalate (Value.literalAll xs) ++ "]"
+    | .struct _ i ⟨[]⟩ _ _ => i
+    | .struct _ i ⟨xs⟩ _ _ => i ++ "[" ++ ", ".intercalate (Value.literalAll xs) ++ "]"
     | .string => "String"
     | .list t => s!"List[{t.text}]"
     | .fn ⟨ps⟩ r => Print.fnText (TyParam.textAll ps) r.text

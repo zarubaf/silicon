@@ -218,7 +218,7 @@ def leafFields (items : Array Resolve.Item) (specs : Specs) :
     Array (Option (Array (Nat × String × Ty))) :=
   specs.entries.map fun e => do
     let .done _ fs := e.state | none
-    let some (.struct _ _ _ ds) := items[e.item]? | none
+    let some (.struct _ _ _ ds _) := items[e.item]? | none
     return ((ds.toArray.map (·.name.name)).zip fs).zipIdx.filterMap fun ((x, t), k) =>
       if t.info.leaves = 0 then none else some (k, x, t)
 

@@ -12,6 +12,10 @@ no name. These rules settle the open points:
 
 - The prelude is the outermost scope. The item scope is inside it. A local scope is inside the
   item scope. Thus a declaration can shadow a prelude name, and a local can shadow an item.
+- The prelude struct `ReadResponse` (section 5.6) is one struct item after the user items, with
+  the `prelude` flag. It is built already resolved and never resolves in the item scope. Thus
+  a user `struct Bool` or `type Type` does not change it, and the user items keep their indices.
+  A prelude name `ReadResponse` refers to it. The walk never visits it, so it adds no error.
 - The item scope holds each `const`, `fn`, `module`, `struct`, and `type` item. An item is
   visible in the full file, also before its declaration.
 - The parameters of a function or a module are in its outer local scope. The domain names of a
@@ -77,11 +81,12 @@ inductive PrimType where
   deriving Repr, DecidableEq, BEq, Inhabited
 
 /-!
-The prelude functions of slice 1, and `len`, `data_bits`, `list`, `push`, `pop`, and `str` of
-slice 2.
+The prelude functions of slice 1, and `len`, `data_bits`, `list`, `push`, `pop`, `str`,
+`read_port`, and `write_port` of slice 2.
 -/
 inductive PrimFn where
   | resize | reinterpret | staticAssert | error | len | dataBits | list | push | pop | str
+  | readPort | writePort
   deriving Repr, DecidableEq, BEq, Inhabited
 
 /-!
@@ -104,13 +109,21 @@ def fnModes : PrimFn → Array ParamMode
   | .pop => #[.mut]
   | .staticAssert => #[.none, .none]
   | .error | .len | .dataBits | .str => #[.none]
+  | .readPort => #[.none, .none, .none]
+  | .writePort => #[.none, .none, .none, .none]
+
+/-! True for a memory port function: `read_port` or `write_port`. -/
+def PrimFn.port : PrimFn → Bool
+  | .readPort | .writePort => true
+  | _ => false
 
 /-!
 The prelude. It holds the scalar types of section 12.1 and the functions `resize`,
 `reinterpret`, `static_assert`, and `error` of slice 1. It also holds `Unit` and `len`, the
 names of the containers of slice 2, and `Type` and `data_bits`, the names of the types as values.
 The names of the strings and the lists are `String`, `List`, `list`, `push`, `pop`, and `str`.
-`true` and `false` are keywords, and `T(n)` is syntax, so they need no name.
+The memory ports are `read_port` and `write_port`. `true` and `false` are keywords, and `T(n)`
+is syntax, so they need no name. The prelude struct `ReadResponse` is an item (`responseName`).
 -/
 def prelude : List (String × Ref) :=
   [("Bool", .type .bool), ("UInt", .type .uint), ("SInt", .type .sint), ("Nat", .type .nat),
@@ -118,7 +131,11 @@ def prelude : List (String × Ref) :=
    ("reinterpret", .fn .reinterpret), ("static_assert", .fn .staticAssert),
    ("error", .fn .error), ("len", .fn .len), ("data_bits", .fn .dataBits),
    ("String", .type .string), ("List", .type .list), ("list", .fn .list), ("push", .fn .push),
-   ("pop", .fn .pop), ("str", .fn .str)]
+   ("pop", .fn .pop), ("str", .fn .str), ("read_port", .fn .readPort),
+   ("write_port", .fn .writePort)]
+
+/-! The name of the prelude struct (section 5.6). -/
+def responseName : String := "ReadResponse"
 
 /-!
 The prelude names of later slices, with their slice. A use of one is `S003`, and the message
@@ -215,7 +232,8 @@ structure StructField where
 
 /-!
 The resolved item. A `Ref.item` holds the index of an item in the resolved file. The `domains`
-of a module without a clause hold the one default domain `clock`.
+of a module without a clause hold the one default domain `clock`. A struct has the `prelude`
+flag when it is the prelude struct `ReadResponse` (`response`).
 -/
 inductive Item where
   | const (pos : Pos) (name : Ident) (ty : TypeExpr) (value : Expr)
@@ -224,6 +242,7 @@ inductive Item where
   | module (pos : Pos) (name : Ident) (params : List Param) (domains : List Binder)
       (body : List Stmt)
   | struct (pos : Pos) (name : Ident) (params : List Param) (fields : List StructField)
+      (prelude : Bool)
   | alias (pos : Pos) (name : Ident) (ty : TypeExpr)
   deriving Repr, BEq, Inhabited
 
@@ -297,6 +316,17 @@ def earlier (old : Option Error) (e : Error) : Option Error :=
   | some o => if before e.pos o.pos then some e else some o
   | none => some e
 
+/-!
+The prelude struct `ReadResponse`: the item
+`struct ReadResponse(comptime T: Type) { data: T, valid: Bool }`, already resolved (section
+5.6). `Type` and `Bool` are the prelude types, and `T` is the local 0 of the item. It has no
+source position, so each of its forms has the position `0:0`. Its errors report at its use.
+-/
+def response : Item :=
+  let p : Pos := ⟨0, 0⟩
+  .struct p ⟨p, responseName⟩ [⟨p, .comptime, ⟨⟨p, "T"⟩, 0⟩, .name p "Type" (.type .type)⟩]
+    [⟨⟨p, "data"⟩, .name p "T" (.local 0)⟩, ⟨⟨p, "valid"⟩, .name p "Bool" (.type .bool)⟩] true
+
 /-! A visible declaration and the number of its scope. The item scope has the number 0. -/
 structure Binding where
   ref : Ref
@@ -320,7 +350,7 @@ structure St where
 /-!
 The context of the walk holds the parsed items, for the kind of an item. It also holds the item
 scope, which maps each item name to its index. A receiver call looks up its name there, past
-each local.
+each local. The prelude struct has the index after the user items.
 -/
 structure File where
   items : Array Source.Item
@@ -363,6 +393,14 @@ def missing (pos : Pos) (n : String) : M Unit :=
     | none => s!"`{n}` is not declared"
   recordUnknown ⟨.S003, pos, msg⟩
 
+/-! The prelude declaration of the name `n`. `ReadResponse` is the item after the user items. -/
+def inPrelude (n : String) : M (Option Ref) := do
+  match prelude.lookup n with
+  | some r => return some r
+  | none => do
+    let k := (← read).items.size
+    return if n == responseName then some (.item k) else none
+
 /-!
 The declaration of the name `n` at `pos`, or `S003`. After an error, the walk continues with a
 placeholder, and `resolve` discards its result.
@@ -371,7 +409,7 @@ def lookup (pos : Pos) (n : String) : M (Option Ref) := do
   match (← get).env.get? n with
   | some b => return some b.ref
   | none =>
-    match prelude.lookup n with
+    match ← inPrelude n with
     | some r => return some r
     | none => missing pos n; return none
 
@@ -389,7 +427,8 @@ def isType : Ref → M Bool
   | .item i => do
     match (← read).items[i]? with
     | some (.struct ..) | some (.alias ..) => return true
-    | _ => return false
+    | some _ => return false
+    | none => return i == (← read).items.size
   | .fn _ => return false
 
 /-! The next call site of the current item body. -/
@@ -404,7 +443,7 @@ def method (m : Ident) : M Ref := do
   match (← read).names.get? m.name with
   | some i => if (← read).items[i]? matches some (.fn ..) then return .item i else notFn
   | none =>
-    match prelude.lookup m.name with
+    match ← inPrelude m.name with
     | some (.fn f) => return .fn f
     | some _ => notFn
     | none => missing m.pos m.name; return default
@@ -571,7 +610,7 @@ def item : Source.Item → M Item
     return .module p n ps ds (← bodyStmts b)
   | .struct p n ps fs => body do
     let ps ← ps.mapM param
-    return .struct p n ps (← fields fs)
+    return .struct p n ps (← fields fs) false
   | .alias p n t => return .alias p n (← typeExpr t)
 
 def itemName : Source.Item → Ident
@@ -593,10 +632,10 @@ def inFile (items : List Source.Item) (act : M α) : Except Error α :=
 
 /-!
 The resolved items of a file, or the first error. The index of an item in the result is its
-index in `items`.
+index in `items`. The prelude struct `response` follows the user items, so it changes no index.
 -/
 def resolve (items : List Source.Item) : Except Error (Array Item) :=
-  inFile items (items.toArray.mapM item)
+  inFile items (return (← items.toArray.mapM item).push response)
 
 /-! An expression in the file scope, such as the `EXPR` of `eval`, or its first `S003`. -/
 def resolveExpr (items : List Source.Item) (e : Source.Expr) : Except Error Expr :=

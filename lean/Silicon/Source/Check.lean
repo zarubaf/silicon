@@ -40,12 +40,15 @@ at the name. These are the static positions:
 
 - A module body has no `return`, also in a nested block.
 - A `comptime fn` has no `input`, `output`, `reg`, `wire`, `mem`, `instance`, or `:=` statement.
+- A `comptime fn` has no call of the prelude functions `read_port` and `write_port`, also in the
+  receiver form. The rule reads the resolved callee, so a user function with such a name has no
+  rule. The error is at the call. It comes before an `S007` of the call at that position.
 
 `S007` is at the call, the index, the type name, or the `instance` statement:
 
 - A call to a `fn` item has one argument for each parameter.
 - `resize`, `reinterpret`, `static_assert`, and `push` have two arguments. `error`, `len`,
-  `data_bits`, `list`, `pop`, and `str` have one.
+  `data_bits`, `list`, `pop`, and `str` have one. `read_port` has three, and `write_port` four.
 - A receiver call `x.m(args)` binds its receiver to the first parameter of `m` without a written
   `comptime` mark, also in a `comptime fn`. A function without such a parameter is `S007` at the
   call. Then the receiver and the arguments together have one argument for each parameter. The
@@ -58,7 +61,8 @@ at the name. These are the static positions:
 - An `instance` has one argument for each parameter of its module.
 - `UInt`, `SInt`, and `List` have one index argument. `Bool`, `Nat`, `Int`, `Unit`, `Type`, and
   `String` have none.
-  A struct has one index argument for each parameter. Thus each use of a struct with parameters
+  A struct has one index argument for each parameter. The prelude struct `ReadResponse` thus
+  has one, and its constructor two arguments. Thus each use of a struct with parameters
   has its arguments, also the callee of a constructor. This also holds for a type name in an
   expression. A complete type such as `UInt[8]`, `P[8]`, a `type` item, `()`, a tuple type, or
   an array type takes no index.
@@ -102,6 +106,9 @@ only two `S007` errors could share a position. A receiver call starts at its rec
 binding and the arity of the call first, because the receiver has no parameter before the
 binding. Then it checks the receiver as a `mut` actual (`S008`), then its parts (`S005`).
 
+The prelude struct `ReadResponse` is an item of the resolved file, but it has no source position.
+The walk skips it, so its errors never compete by position (section 5.6).
+
 The walk is a single pass in source order. Its recursion follows the blocks and the expressions.
 The syntax depth thus bounds it at about 2N. A loop handles each list. The resources, the mutable
 roots, and the pending counters of an item are arrays by local number, so each step takes
@@ -143,7 +150,7 @@ def sig : Resolve.Item → Sig
   | .const .. => .const
   | .fn _ c _ ps _ _ => .fn c (ps.map (·.mode)).toArray
   | .module _ _ ps _ _ => .module ps.length
-  | .struct _ _ ps fs => .struct ps.length fs.length
+  | .struct _ _ ps fs _ => .struct ps.length fs.length
   | .alias .. => .alias
 
 /-! The item of a statement, for `S006`. -/
@@ -154,12 +161,14 @@ inductive Owner where
 /-!
 The state of the walk. `locals` maps the local number of each resource and each mutable root of
 the current item to its kind. `pending` maps a local number to the number of windows that hold
-it as a pending root. `err` holds the first error by position.
+it as a pending root. `err` holds the first error by position. `comptime` is true in the body
+of a `comptime fn`.
 -/
 structure St where
   locals : Array Local
   pending : Array Nat
   err : Option Error
+  comptime : Bool
 
 /-! The context of the walk is the signature of each item. -/
 abbrev M := ReaderT (Array Sig) (StateM St)
@@ -191,6 +200,13 @@ static. Each argument of a function that takes a message is static too (section 
 -/
 def fnStatic (f : PrimFn) (k : Nat) : Bool :=
   f == .staticAssert || f == .error || (fnModes f)[k]? == some .comptime
+
+/-! `S006` at the call `pos` of a memory port function `f` in a `comptime fn`. -/
+def portCall (pos : Pos) : Ref → M Unit
+  | .fn f => do
+    if f.port && (← get).comptime then
+      report .S006 pos "a `comptime fn` has no memory port call"
+  | _ => pure ()
 
 /-! A function that a call names: its parameter modes and its static parameters, by index. -/
 structure Callee where
@@ -360,6 +376,7 @@ mutual
       let _ ← visit static false n
       return none
     | .call p f xs _ => do
+      if let .name _ _ r := f then portCall p r
       let h ← visit true false f
       let c ← call p f h xs.length
       let mut held := []
@@ -373,6 +390,7 @@ mutual
     | .method p r m f b xs _ => do
       -- The receiver evaluates first. It binds to the parameter `b`, so the argument `k` binds
       -- to the parameter `k` before `b` and to `k + 1` from `b` on.
+      portCall p f
       let cb ← receiver p m f b xs.length
       let c := cb.map (·.1)
       let b := (cb.map (·.2)).getD 0
@@ -491,11 +509,14 @@ def item : Resolve.Item → M Unit
       typeExpr p.ty
       if p.mode == .mut then declare p.name .mutable
     typeExpr r
+    modify fun s => { s with comptime := c }
     stmts (if c then .comptimeFn else .fn) b
+    modify fun s => { s with comptime := false }
   | .module _ _ ps _ b => do
     for p in ps do typeExpr p.ty
     stmts .module b
-  | .struct _ _ ps fs => do
+  | .struct _ _ _ _ true => pure ()
+  | .struct _ _ ps fs false => do
     for p in ps do typeExpr p.ty
     for f in fs do typeExpr f.ty
   | .alias _ _ ty => typeExpr ty
@@ -505,14 +526,14 @@ def check (items : Array Resolve.Item) : Except Error (Array Resolve.Item) :=
   let walk : M Unit := items.forM fun it => do
     modify fun s => { s with locals := #[], pending := #[] }
     item it
-  let ((), s) := (walk.run (items.map sig)).run ⟨#[], #[], none⟩
+  let ((), s) := (walk.run (items.map sig)).run ⟨#[], #[], none, false⟩
   match s.err with
   | some e => .error e
   | none => .ok items
 
 /-! A static expression in the file scope, such as the `EXPR` of `eval`, or its first error. -/
 def checkExpr (items : Array Resolve.Item) (e : Resolve.Expr) : Except Error Unit :=
-  let ((), s) := ((expr true e).run (items.map sig)).run ⟨#[], #[], none⟩
+  let ((), s) := ((expr true e).run (items.map sig)).run ⟨#[], #[], none, false⟩
   match s.err with
   | some e => .error e
   | none => .ok ()

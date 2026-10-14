@@ -678,9 +678,26 @@ theorem constant_f (p : Pos) (x : String) (i : Nat) {b b' : M Value} (h : Follow
     Follows cap (constant p x i b) (constant p x i b') := by
   unfold constant; follows [h, setConst_f, nested_f, inFrame_f]
 
-theorem specialize_f (p : Pos) (x : String) (i : Nat) (args : List Value) {f g : M (List Ty)}
-    (h : Follows cap f g) : Follows cap (specialize p x i args f) (specialize p x i args g) := by
+theorem specialize_f (p : Pos) (x : String) (i : Nat) (pre : Bool) (args : List Value)
+    {f g : M (List Ty)} (h : Follows cap f g) :
+    Follows cap (specialize p x i pre args f) (specialize p x i pre args g) := by
   unfold specialize; follows [h, bounded_f, sums_f]
+
+/-! A moved error keeps its code, so a run without the fuel still gives `S015`. -/
+theorem atUse_f (p : Pos) {x y : M α} (h : Follows cap x y) :
+    Follows cap (atUse p x) (atUse p y) := by
+  unfold Follows at h ⊢
+  intro c s a s' hx
+  simp only [atUse] at hx
+  split at hx
+  · next r hr =>
+    cases hx
+    obtain ⟨h1, h2⟩ := h c s a s' hr
+    refine ⟨h1, fun F hF => ⟨fun hu => ?_, fun hu => ?_⟩⟩
+    · simp only [atUse, (h2 F hF).1 hu]
+    · obtain ⟨q, m, e⟩ := (h2 F hF).2 hu
+      exact ⟨p, m, by simp only [atUse, e]⟩
+  · cases hx
 
 theorem iteration_f (p : Pos) (i : Binder) (v : Int) {x y : M α} (h : Follows cap x y) :
     Follows cap (iteration p i v x) (iteration p i v y) := by
@@ -738,7 +755,7 @@ theorem spec_f (he : ∀ e, Follows m (eval k e) (eval m e))
     (xs : List Resolve.Expr) : Follows m (spec k p i xs) (spec m p i xs) := by
   rw [spec.eq_def k, spec.eq_def m]
   follows [he, ht, operands_f he, need_f, static_f, settle_f, specialize_f, nested_f,
-    inFrame_f, conform_f, bindLocal_f]
+    inFrame_f, conform_f, bindLocal_f, atUse_f]
 
 theorem params_f (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t))
     (ps : List Resolve.FnParam) : Follows m (params k ps) (params m ps) := by
