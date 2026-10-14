@@ -1066,4 +1066,116 @@ def wideW (k : Nat) : String :=
 #guard port (wideW 4) == "ok 120"
 #guard port (wideW 4096) == s!"ok {120 + 2 * (4096 - 4)}"
 
+/-!
+Structural contexts (section 9.4). Each sets a guard of the kind `structural` at the current
+depth. A `push`, a `pop`, or a `mut` write-back of a binding from before the context is `S016`
+at the call. A helper that the context calls can change its own locals. `T(x)`, `static_assert`,
+`comptime if`, `comptime for`, and the body of a `comptime fn` that the module body calls are
+not structural. The innermost guard wins, so a type in a hardware arm gives the structural text.
+-/
+def sPre : String :=
+  "struct P(comptime W: Nat) { a: UInt[W] }\n" ++
+  "fn f(mut n: Int) -> Int { n = n + 1; return n; }\n" ++
+  "fn h() -> Nat { let mut ys = list(Nat); push(ys, 4); return pop(ys); }\n"
+def sMod (body : String) : String :=
+  sPre ++ "module M() {\n  input c: Bool;\n  input a: UInt[2];\n  input d: UInt[8];\n" ++
+  "  output o: UInt[8];\n  let mut xs = list(Nat);\n  push(xs, 2);\n  push(xs, 3);\n" ++
+  "  let mut n = 3;\n" ++ body ++ "  o := 0;\n}\n"
+def sRun (body : String) (fs : String := "") : String := elabOnly (fs ++ sMod body) "M"
+
+/-! The message of the first error of `src` with the top `M`, or `ok`. -/
+def said (src : String) : String :=
+  match Cli.load 4096 src with
+  | .error e => e.msg
+  | .ok (items, checked) =>
+    match Cli.topSelection 4096 items checked "M" with
+    | .error _ => "usage"
+    | .ok (p, i, _, xs) =>
+      match Elab.elaborate {} checked Names.sha16 p i xs with
+      | .ok _ => "ok"
+      | .error e => e.msg
+
+-- Context 1: the annotations of a `let`, a `wire`, and a `reg`, and the parameter and result
+-- types of a call.
+#guard sRun "  let x: [Bool; pop(xs)] = [false, false, false];\n" == "S016 13:17"
+#guard sRun "  let x: UInt[f(n)] = 0;\n" == "S016 13:15"
+#guard sRun "  wire w: UInt[pop(xs)];\n  w := 0;\n" == "S016 13:16"
+#guard sRun "  reg r: UInt[pop(xs)] = 0;\n  r := r;\n" == "S016 13:15"
+#guard sRun "  let z = g(xs, 1);\n"
+  "fn g(mut ys: List[Nat], b: UInt[pop(ys)]) -> Nat { return 1; }\n" == "S016 1:33"
+#guard sRun "  let z = g(xs);\n"
+  "fn g(mut ys: List[Nat]) -> UInt[pop(ys)] { return 1; }\n" == "S016 1:33"
+-- Context 2: the expression forms that make a type.
+#guard sRun "  let x = UInt[pop(xs)](0);\n" == "S016 13:16"
+#guard sRun "  let x = UInt[xs.pop()](0);\n" == "S016 13:16"
+#guard sRun "  let t = [Bool; push(xs, 4)];\n" == "S016 13:18"
+#guard sRun "  let t = fn (UInt[pop(xs)]) -> Bool;\n" == "S016 13:20"
+-- Context 3: a `type` statement.
+#guard sRun "  type T = UInt[pop(xs)];\n" == "S016 13:17"
+-- Context 4: the arguments of a struct use.
+#guard sRun "  let t = P[pop(xs)];\n" == "S016 13:13"
+#guard sRun "  let x: P[f(n)] = P[4](1);\n" == "S016 13:12"
+-- Context 5: the word type and the depth of a `mem` statement.
+#guard sRun "  mem q: [UInt[pop(xs)]; 4];\n" == "S016 13:16"
+#guard sRun "  mem q: [UInt[8]; pop(xs)];\n" == "S016 13:20"
+#guard sRun "  mem q: [UInt[8]; f(n)];\n" == "S016 13:20"
+-- A helper changes its own locals; the other forms are not structural.
+#guard sRun "  let x: UInt[h()] = 0;\n" == "ok 106"
+#guard sRun "  let x = UInt[8](pop(xs));\n" == "ok 90"
+#guard sRun "  comptime if (pop(xs) == 3) {}\n" == "ok 86"
+#guard sRun "  comptime for i in 0..pop(xs) {}\n" == "ok 90"
+#guard sRun "  let z = cf();\n  let w: UInt[cf()] = 0;\n"
+  "comptime fn cf() -> Nat { let mut ys = list(Nat); push(ys, 4); return pop(ys); }\n" ==
+  "ok 128"
+-- A constant used first inside a hardware arm runs its helper with no `S016`.
+#guard sRun "  let z = if (c) { UInt[8](K) } else { 0 };\n" "const K: Nat = h();\n" == "ok 120"
+#guard sRun "  let z = if (c) { UInt[K](1) } else { 0 };\n" "const K: Nat = h();\n" == "ok 120"
+-- The innermost guard wins: a type in a hardware arm gives the structural text.
+#guard sRun "  let z = if (c) { pop(xs) } else { 0 };\n" == "S016 13:20"
+#guard said (sMod "  let z = if (c) { UInt[pop(xs)](0) } else { 0 };\n") ==
+  "a type or a constant cannot change `xs`; change it before, for example " ++
+  "`let n = xs.pop();`, and use the result"
+
+/-!
+The other effects (section 9.4). A declaration in a `fn` is `S004` (pass 1), and in a
+`comptime fn` `S006` (pass 4). A `:=` in a `fn` is `S011`, and in a `comptime fn` `S006`. A
+memory port call in a structural context is `S016` at the call. The check rejects a memory name
+at a static position (`S005`), so an alias reaches the call.
+-/
+#guard sRun "  let x: UInt[g()] = 0;\n" "fn g() -> Nat { reg r: UInt[8] = 0; return 1; }\n" ==
+  "S004 1:17"
+#guard sRun "  let x: UInt[g()] = 0;\n" "fn g() -> Nat { mem q: [UInt[8]; 4]; return 1; }\n" ==
+  "S004 1:17"
+#guard sRun "  let x: UInt[g()] = 0;\n"
+  "comptime fn g() -> Nat { reg r: UInt[8] = 0; return 1; }\n" == "S006 1:26"
+#guard sRun "  let x: UInt[g()] = 0;\n"
+  "comptime fn g() -> Nat { mem q: [UInt[8]; 4]; return 1; }\n" == "S006 1:26"
+#guard sRun "  let x: UInt[g(1)] = 0;\n" "fn g(x: UInt[8]) -> Nat { x := 1; return 1; }\n" ==
+  "S011 1:27"
+#guard sRun "  let x: UInt[g(1)] = 0;\n"
+  "comptime fn g(x: UInt[8]) -> Nat { x := 1; return 1; }\n" == "S006 1:36"
+def sMem (wr : Bool) (rest : String) : String :=
+  sMod ("  mem q: [UInt[8]; 4];\n" ++
+    (if wr then "  write_port(q, a, d, c);\n" else "  let r = read_port(q, a, c);\n") ++
+    "  let k = q;\n" ++ rest)
+#guard elabOnly (sMem true "  let x: UInt[read_port(k, 0, true)] = 0;\n") "M" == "S016 16:15"
+#guard elabOnly (sMem false "  mem q2: [UInt[8]; write_port(k, 0, 1, true)];\n") "M" ==
+  "S016 16:21"
+#guard elabOnly (sMem false "  let t = [Bool; k.write_port(0, 1, true)];\n") "M" == "S016 16:18"
+#guard elabOnly (sMem true "  let x: UInt[read_port(q, 0, true)] = 0;\n") "M" == "S005 16:25"
+
+/-! Each normative text of `S016` (section 9.4), in full. -/
+#guard said (sMod "  let x: [Bool; pop(xs)] = [false, false, false];\n") ==
+  "a type or a constant cannot change `xs`; change it before, for example " ++
+  "`let n = xs.pop();`, and use the result"
+#guard said (sMod "  let x: UInt[f(n)] = 0;\n") ==
+  "a type or a constant cannot change `n`; change it before, for example " ++
+  "`let n = xs.pop();`, and use the result"
+#guard said (sMem true "  let x: UInt[read_port(k, 0, true)] = 0;\n") ==
+  "a type or a constant has no graph effect such as `read_port`; call it before and use the result"
+#guard said (sMod "  let z = if (c) { pop(xs) } else { 0 };\n") ==
+  "a hardware arm changes a binding from before the arm"
+#guard said (sMem true "  let z = if (c) { read_port(q, a, c) } else { 0 };\n") ==
+  "a hardware arm has no graph effect such as `read_port`"
+
 end Silicon.Source.Test.Elab
