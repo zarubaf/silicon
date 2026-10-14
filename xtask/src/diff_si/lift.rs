@@ -24,6 +24,25 @@ use crate::diff::{CYCLES, Trace, compare};
 /// A core design, its `in=` lines, and the shape tape of the lift.
 pub(super) type Case = (ast::Design, Vec<String>, Vec<u32>);
 
+/// The designs that agree, and how many of them have a memory or an
+/// aggregate port.
+#[derive(Default)]
+pub(super) struct Tally {
+    lifted: u64,
+    memories: u64,
+    aggregates: u64,
+}
+
+impl Tally {
+    /// The success line for the seeds `seed` to `last`.
+    pub(super) fn summary(&self, seed: u64, last: u64) -> String {
+        format!(
+            "diff-si: {} lifted designs agree (seeds {seed} to {last}): {} with memories, {} with aggregate ports",
+            self.lifted, self.memories, self.aggregates
+        )
+    }
+}
+
 /// The most numbers of a shape tape: a design has at most 6 modules of 8
 /// ports, and a port takes up to 4 numbers.
 const SHAPE_NUMBERS: usize = 256;
@@ -87,8 +106,20 @@ fn top_selection(design: &ast::Design) -> String {
 
 /// `None` if the tools agree on `case`, else the message of the
 /// disagreement or of a tool failure. A tooling error is an `Err`.
-pub(super) fn verdict(tools: &Tools, dir: &Path, case: &Case) -> Result<Option<String>> {
-    verdict_of(try_verdict(tools, dir, case))
+pub(super) fn verdict(
+    tools: &Tools,
+    dir: &Path,
+    case: &Case,
+    tally: &mut Tally,
+) -> Result<Option<String>> {
+    let message = verdict_of(try_verdict(tools, dir, case))?;
+    if message.is_none() {
+        let lifted = lifted(case)?;
+        tally.lifted += 1;
+        tally.memories += u64::from(lifted.memories > 0);
+        tally.aggregates += u64::from(lifted.aggregates > 0);
+    }
+    Ok(message)
 }
 
 fn try_verdict(tools: &Tools, dir: &Path, case: &Case) -> Result<Option<String>> {
@@ -142,6 +173,19 @@ mod tests {
         let case = cases().new_tree(&mut runner(seed)).unwrap().current();
         let text = print(&case.0);
         (case, text)
+    }
+
+    #[test]
+    fn the_summary_counts_memories_and_aggregate_ports() {
+        let tally = Tally {
+            lifted: 100,
+            memories: 41,
+            aggregates: 58,
+        };
+        assert_eq!(
+            tally.summary(1, 100),
+            "diff-si: 100 lifted designs agree (seeds 1 to 100): 41 with memories, 58 with aggregate ports"
+        );
     }
 
     #[test]

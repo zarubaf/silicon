@@ -42,6 +42,10 @@ impl std::error::Error for Unsupported {}
 /// vectors.
 pub struct Lifted {
     pub text: String,
+    /// The memories of the design.
+    pub memories: usize,
+    /// The aggregate ports of the design.
+    pub aggregates: usize,
     top: Shape,
 }
 
@@ -120,8 +124,20 @@ pub(super) fn lift_shaped(
             text.push_str(&module(m, &modules, shapes)?);
         }
     }
+    let memories = design
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Module(m) => Some(m),
+            Item::Extern(_) => None,
+        })
+        .flat_map(|m| &m.stmts)
+        .filter(|s| matches!(s, Stmt::Mem { .. }))
+        .count();
     Ok(Lifted {
         text,
+        memories,
+        aggregates: shapes.values().map(|s| s.groups.len()).sum(),
         top: shapes
             .get(design.top.text.as_str())
             .cloned()
