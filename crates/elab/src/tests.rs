@@ -74,7 +74,7 @@ pub(crate) fn message(src: &str, expr: &str) -> String {
 
 /// The result of `eval`: the serialization, or the code and the position of the first error
 /// of any pass. The second value is the used fuel.
-fn run(src: &str, expr: &str, fuel: u64, depth: u64) -> (String, u64) {
+pub(crate) fn run(src: &str, expr: &str, fuel: u64, depth: u64) -> (String, u64) {
     match evaluated(src, expr, fuel, depth) {
         Ok((v, used)) => (v.serialize(), used),
         Err(error) => (error, 0),

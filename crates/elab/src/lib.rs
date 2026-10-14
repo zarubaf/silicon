@@ -305,6 +305,9 @@ mod tests_memory;
 mod tests_ports;
 
 #[cfg(test)]
+mod tests_records;
+
+#[cfg(test)]
 mod tests_resources;
 
 #[cfg(test)]
