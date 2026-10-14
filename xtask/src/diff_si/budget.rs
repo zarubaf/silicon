@@ -58,6 +58,25 @@ fn show(outcome: &Outcome) -> String {
     )
 }
 
+/// How the front ends answered the depth draws: the runs that succeeded,
+/// and the runs that gave `S015`. A depth draw that reaches no container
+/// shows as success.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(super) struct Tally {
+    success: u64,
+    s015: u64,
+}
+
+impl Tally {
+    /// The success line of `count` budgets from the seed `seed` to `last`.
+    pub(super) fn summary(&self, count: u64, seed: u64, last: u64) -> String {
+        format!(
+            "diff-si: {count} budgets agree (seeds {seed} to {last}): depth success {}, depth S015 {}",
+            self.success, self.s015
+        )
+    }
+}
+
 /// An `elab` run with one budget flag, and the outcome that both front
 /// ends must give.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -85,7 +104,12 @@ impl std::fmt::Display for Failure {
 /// `None` if both front ends agree on all budget runs of `case`, else the
 /// first difference. Its message names the flag and its value. A tooling
 /// error, and a fault of the builder, is an `Err`.
-pub(super) fn verdict(tools: &Tools, dir: &Path, case: &Case) -> Result<Option<Failure>> {
+pub(super) fn verdict(
+    tools: &Tools,
+    dir: &Path,
+    case: &Case,
+    tally: &mut Tally,
+) -> Result<Option<Failure>> {
     let (program, fuel_pick, depth_pick) = case;
     let program = program
         .as_ref()
@@ -109,11 +133,11 @@ pub(super) fn verdict(tools: &Tools, dir: &Path, case: &Case) -> Result<Option<F
         let message = "cost: the report has no `total N` first line".to_owned();
         return Ok(Some(at_cost(message)));
     };
-    // `None` if both front ends give the outcome that `run` expects.
-    let check = |run: Run, allowed: &dyn Fn(&Outcome) -> bool| -> Result<Option<Failure>> {
+    // The outcome if both front ends give the outcome that `run` expects.
+    let check = |run: Run, allowed: &dyn Fn(&Outcome) -> bool| -> Result<Checked> {
         let value = run.value.to_string();
         let message = match outcome(tools, "elab", &file, &top, &[run.flag, &value])? {
-            Ok(out) if allowed(&out) => return Ok(None),
+            Ok(out) if allowed(&out) => return Ok(Ok(out)),
             Ok(out) => format!(
                 "with `{} {value}`: expected {} (cost is {total}), both gave {}",
                 run.flag,
@@ -122,7 +146,7 @@ pub(super) fn verdict(tools: &Tools, dir: &Path, case: &Case) -> Result<Option<F
             ),
             Err(message) => format!("with `{} {value}`: {message}", run.flag),
         };
-        Ok(Some(Failure {
+        Ok(Err(Failure {
             message,
             total: Some(total),
             run: Some(run),
@@ -133,12 +157,12 @@ pub(super) fn verdict(tools: &Tools, dir: &Path, case: &Case) -> Result<Option<F
         value,
         expect,
     };
-    if let Some(failure) = check(fuel(total, "success"), &|out| out.code == 0)? {
+    if let Err(failure) = check(fuel(total, "success"), &|out| out.code == 0)? {
         return Ok(Some(failure));
     }
     let lower = [total.checked_sub(1), fuel_below(total, *fuel_pick)];
     for value in lower.into_iter().flatten() {
-        if let Some(failure) = check(fuel(value, "S015"), &s015)? {
+        if let Err(failure) = check(fuel(value, "S015"), &s015)? {
             return Ok(Some(failure));
         }
     }
@@ -147,8 +171,22 @@ pub(super) fn verdict(tools: &Tools, dir: &Path, case: &Case) -> Result<Option<F
         value: depth_of(*depth_pick),
         expect: "success or S015",
     };
-    check(depth, &|out| out.code == 0 || s015(out))
+    match check(depth, &|out| out.code == 0 || s015(out))? {
+        Ok(out) => {
+            if out.code == 0 {
+                tally.success += 1;
+            } else {
+                tally.s015 += 1;
+            }
+            Ok(None)
+        }
+        Err(failure) => Ok(Some(failure)),
+    }
 }
+
+/// The outcome of a run that both front ends gave as expected, or the
+/// failure.
+type Checked = std::result::Result<Outcome, Failure>;
 
 /// The failing run of `failure` that no budget file holds: a run below
 /// `total - 1`, or a `--depth` run. A budget file `// FUEL total` checks
@@ -262,6 +300,18 @@ mod tests {
         assert_eq!(depth_of(0), 1);
         assert_eq!(depth_of(7), 8);
         assert_eq!(depth_of(8), 1);
+    }
+
+    #[test]
+    fn the_summary_counts_the_depth_outcomes() {
+        let tally = Tally {
+            success: 77,
+            s015: 23,
+        };
+        assert_eq!(
+            tally.summary(100, 1, 100),
+            "diff-si: 100 budgets agree (seeds 1 to 100): depth success 77, depth S015 23"
+        );
     }
 
     fn rejected(code: i32, report: &str) -> Outcome {

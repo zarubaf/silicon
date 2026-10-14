@@ -406,6 +406,53 @@ fn programs_cover_static_containers() {
     }
 }
 
+/// The nesting depth of a value of type `t` (spec 5.5): 1 for a part that
+/// is no container, else 1 plus the largest depth of an element, a field,
+/// or an element type.
+fn value_depth(t: &STy) -> u32 {
+    match t {
+        STy::Tuple(ts) => 1 + ts.iter().map(value_depth).max().unwrap_or(0),
+        STy::Array(t, _) | STy::List(t) => 1 + value_depth(t),
+        STy::Record(r) => {
+            1 + r
+                .fields
+                .iter()
+                .map(|(_, t)| value_depth(t))
+                .max()
+                .unwrap_or(0)
+        }
+        _ => 1,
+    }
+}
+
+/// The depth draw of the budget mode is `1..=8`. At least half of 256
+/// programs hold a container with a depth of at least 2, so the draw
+/// reaches the depth of a value (spec 5.5).
+#[test]
+fn programs_hold_containers_for_the_depth_draw() {
+    const TAPES: usize = 256;
+    let mut deep = 0;
+    let mut deepest = 0;
+    for tape in tapes(TAPES) {
+        let p = build(tape);
+        assert!(p.is_ok(), "a program faults: {p:?}");
+        let Ok(p) = p else { continue };
+        let lets = stmts_of(&p.items).into_iter().filter_map(|s| match s {
+            Stmt::StaticLet(_, t, _) | Stmt::MutLet(_, t, _) => Some(t),
+            _ => None,
+        });
+        let consts = p.items.iter().filter_map(|i| match i {
+            Item::Const { ty, .. } => Some(ty),
+            _ => None,
+        });
+        let depth = lets.chain(consts).map(value_depth).max().unwrap_or(1);
+        deep += usize::from(depth >= 2);
+        deepest = deepest.max(depth);
+    }
+    assert!(deep * 2 >= TAPES, "{deep} of {TAPES} programs");
+    assert!(deepest >= 4, "the deepest value has the depth {deepest}");
+}
+
 /// The names of the effectful functions of `p` (a `diagnostic` in the body)
 /// and of the consts that hold one.
 fn effectful(p: &Program) -> BTreeSet<String> {
