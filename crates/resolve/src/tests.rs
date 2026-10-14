@@ -248,7 +248,8 @@ impl Ids {
 
 /// What the name node at a position of the file points to.
 fn target_at(resolved: &Resolved, at: Pos) -> Option<Target> {
-    resolved.target(Ids::of_items(resolved.ast()).at(at))
+    let user = resolved.ast().len() - 1;
+    resolved.target(Ids::of_items(&resolved.ast()[..user]).at(at))
 }
 
 fn run(src: &str) -> Result<Resolved, Failed> {
@@ -322,7 +323,7 @@ fn a_valid_file_resolves_every_name() {
     assert_eq!(decl_at(&r, pos(2, 4)).kind, Kind::Fn);
     assert_eq!(decl_at(&r, pos(6, 12)).kind, Kind::Input);
     assert_eq!(decl_at(&r, pos(6, 3)).kind, Kind::Output);
-    assert_eq!(r.ast().len(), 3);
+    assert_eq!(r.ast().len(), 4);
     assert_eq!(r.depth(), parse::DEFAULT_SYNTAX_DEPTH);
 }
 
@@ -744,7 +745,7 @@ fn a_deep_valid_input_resolves_on_a_test_thread() {
          module M() {blocks}\n"
     );
     let r = ok(&src);
-    assert_eq!(r.ast().len(), 4);
+    assert_eq!(r.ast().len(), 5);
     assert_eq!(r.decl(r.item("f").unwrap()).kind, Kind::Fn);
     drop(r);
 }

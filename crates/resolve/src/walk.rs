@@ -3,7 +3,7 @@
 //! of passes 2 and 3 apart, because pass 2 errors rank before pass 3 errors (design
 //! section 6.2). It recurses over the AST, so it runs on the front-end thread.
 
-use crate::prelude::{Prelude, later_slice};
+use crate::prelude::{Prelude, RESPONSE, later_slice, node};
 use crate::scope::Scopes;
 use crate::{Call, Code, Decl, DeclId, Error, Kind, Resolved, Table, Target};
 use parse::ast::{
@@ -18,6 +18,7 @@ pub(crate) fn run(items: &[Item]) -> Result<Table, Vec<Error>> {
     for item in items {
         walker.declare_item(item);
     }
+    let response = walker.declare_response();
     for item in items {
         walker.item(item);
     }
@@ -41,6 +42,7 @@ pub(crate) fn run(items: &[Item]) -> Result<Table, Vec<Error>> {
             items: scopes.into_items(),
             names,
             calls,
+            response,
         });
     }
     errors.sort_by_key(|e| e.pos);
@@ -54,6 +56,7 @@ pub(crate) fn run_expr(resolved: &Resolved, expr: &Expr) -> Result<ExprTable, Ve
     let mut walker = Walker {
         decls: resolved.decls.clone(),
         scopes: Scopes::of_items(resolved.items.clone()),
+        response: Some(resolved.response),
         ..Walker::default()
     };
     walker.expr(expr);
@@ -84,6 +87,8 @@ struct Walker {
     /// How many names so far resolved to a parameter. A `fn` item reads the change over its
     /// signature to tell whether it is generic.
     param_uses: usize,
+    /// The declaration of the prelude struct `ReadResponse`.
+    response: Option<DeclId>,
 }
 
 impl Walker {
@@ -128,6 +133,38 @@ impl Walker {
         if let Err(first) = self.scopes.declare_item(&name.name, id) {
             self.duplicate(name, first);
         }
+    }
+
+    /// Declares the prelude struct and gives the names of its item their targets, past the item
+    /// scope. The name `ReadResponse` is not in the item scope, so a user item shadows it.
+    fn declare_response(&mut self) -> DeclId {
+        let pos = Pos { line: 0, col: 0 };
+        let decl = |walker: &mut Walker, k: usize, name: &str, kind: Kind| {
+            let id = DeclId(walker.decls.len());
+            walker.decls.push(Decl {
+                kind,
+                receiver: None,
+                name: name.to_owned(),
+                pos,
+                generic: false,
+            });
+            walker.names.insert(NodeId::prelude(k), Target::Decl(id));
+            id
+        };
+        let response = decl(self, node::NAME, RESPONSE, Kind::Struct);
+        let t = decl(self, node::PARAM, "T", Kind::Param);
+        self.names.insert(
+            NodeId::prelude(node::PARAM_TYPE),
+            Target::Prelude(Prelude::Type),
+        );
+        self.names
+            .insert(NodeId::prelude(node::DATA_TYPE), Target::Decl(t));
+        self.names.insert(
+            NodeId::prelude(node::VALID_TYPE),
+            Target::Prelude(Prelude::Bool),
+        );
+        self.response = Some(response);
+        response
     }
 
     /// Declares a name in the innermost scope. A use resolves to it only after this call.
@@ -449,7 +486,7 @@ impl Walker {
     fn method_name(&mut self, name: &Ident) {
         let target = match self.scopes.item(&name.name) {
             Some(id) => Some(Target::Decl(id)),
-            None => Prelude::of(&name.name).map(Target::Prelude),
+            None => self.prelude_target(&name.name),
         };
         let is_fn = match target {
             Some(Target::Decl(id)) => self.decls[id.0].kind == Kind::Fn,
@@ -469,7 +506,16 @@ impl Walker {
     fn lookup(&self, name: &str) -> Option<Target> {
         match self.scopes.lookup(name) {
             Some(id) => Some(Target::Decl(id)),
-            None => Prelude::of(name).map(Target::Prelude),
+            None => self.prelude_target(name),
+        }
+    }
+
+    /// The prelude declaration of a name: a prelude name, else the prelude struct.
+    fn prelude_target(&self, name: &str) -> Option<Target> {
+        match Prelude::of(name) {
+            Some(p) => Some(Target::Prelude(p)),
+            None if name == RESPONSE => self.response.map(Target::Decl),
+            None => None,
         }
     }
 

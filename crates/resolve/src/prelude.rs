@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The prelude of slices 1 and 2. A later slice adds its own names, so a use of one of them is
-//! `S003` until then.
+//! `S003` until then. The prelude struct `ReadResponse` is an item, built here already resolved.
 
-use parse::ast::ParamMode;
+use parse::ast::{Ident, Item, NodeId, Param, ParamMode, Pos, StructField, TypeExpr};
 
 /// A name of the prelude: the scalar types and functions of slice 1, `Unit` and `len` of the
 /// containers of slice 2, `Type` and `data_bits` of the types as values, and `String`, `List`,
-/// `list`, `push`, `pop`, and `str` of the strings and the lists.
+/// `list`, `push`, `pop`, and `str` of the strings and the lists, and `read_port` and
+/// `write_port` of the memories.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Prelude {
     Bool,
@@ -28,6 +29,8 @@ pub enum Prelude {
     Push,
     Pop,
     Str,
+    ReadPort,
+    WritePort,
 }
 
 impl Prelude {
@@ -52,6 +55,8 @@ impl Prelude {
             "push" => Prelude::Push,
             "pop" => Prelude::Pop,
             "str" => Prelude::Str,
+            "read_port" => Prelude::ReadPort,
+            "write_port" => Prelude::WritePort,
             _ => return None,
         })
     }
@@ -83,6 +88,8 @@ impl Prelude {
             Prelude::Push => &[ParamMode::Mut, ParamMode::None],
             Prelude::Pop => &[ParamMode::Mut],
             Prelude::StaticAssert => &[ParamMode::None, ParamMode::None],
+            Prelude::ReadPort => &[ParamMode::None; 3],
+            Prelude::WritePort => &[ParamMode::None; 4],
             _ => &[ParamMode::None],
         }
     }
@@ -108,7 +115,60 @@ impl Prelude {
                 | Prelude::Push
                 | Prelude::Pop
                 | Prelude::Str
+                | Prelude::ReadPort
+                | Prelude::WritePort
         )
+    }
+}
+
+/// The name of the prelude struct.
+pub(crate) const RESPONSE: &str = "ReadResponse";
+
+/// The nodes of the prelude struct, by their number for `NodeId::prelude`.
+pub(crate) mod node {
+    pub(crate) const NAME: usize = 0;
+    pub(crate) const PARAM: usize = 1;
+    pub(crate) const PARAM_TYPE: usize = 2;
+    pub(crate) const DATA: usize = 3;
+    pub(crate) const DATA_TYPE: usize = 4;
+    pub(crate) const VALID: usize = 5;
+    pub(crate) const VALID_TYPE: usize = 6;
+}
+
+/// The prelude struct `struct ReadResponse(comptime T: Type) { data: T, valid: Bool }`. The
+/// resolver gives its names their targets itself and never looks them up, so a user item
+/// `Bool` or `Type` cannot change it. It has no source position: each position is `0:0`.
+pub(crate) fn response_item() -> Item {
+    let pos = Pos { line: 0, col: 0 };
+    let ident = |k: usize, name: &str| Ident {
+        pos,
+        id: NodeId::prelude(k),
+        name: name.to_owned(),
+    };
+    let named = |k: usize, name: &str| TypeExpr::Name {
+        pos,
+        id: NodeId::prelude(k),
+        name: name.to_owned(),
+    };
+    Item::Struct {
+        pos,
+        name: ident(node::NAME, RESPONSE),
+        params: vec![Param {
+            pos,
+            mode: ParamMode::Comptime,
+            name: ident(node::PARAM, "T"),
+            ty: named(node::PARAM_TYPE, "Type"),
+        }],
+        fields: vec![
+            StructField {
+                name: ident(node::DATA, "data"),
+                ty: named(node::DATA_TYPE, "T"),
+            },
+            StructField {
+                name: ident(node::VALID, "valid"),
+                ty: named(node::VALID_TYPE, "Bool"),
+            },
+        ],
     }
 }
 

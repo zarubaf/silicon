@@ -31,6 +31,13 @@ impl NodeId {
     pub(crate) fn next(self) -> NodeId {
         NodeId(self.0 + 1)
     }
+
+    /// The id of the node `k` of the prelude struct item, which `resolve` builds. The parser
+    /// counts up from 0 and never reaches these ids, which count down from the top.
+    #[must_use]
+    pub fn prelude(k: usize) -> NodeId {
+        NodeId(usize::MAX - 1 - k)
+    }
 }
 
 /// A natural number of any size, as its canonical decimal digits: no leading zero.
