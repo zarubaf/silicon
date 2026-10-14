@@ -132,7 +132,7 @@ impl Group {
             Kind::Array => (format!("{n}[{i}]"), format!("{n}.{i}")),
             Kind::Record { .. } => (format!("{n}.f{i}"), format!("{n}.f{i}")),
         };
-        let path = owner.map_or(path.clone(), |o| format!("{o}.{path}"));
+        let path = owner.map_or_else(|| path.clone(), |o| format!("{o}.{path}"));
         let core = self.members[i].1;
         let read = if core == self.leaf_width(i) {
             path
