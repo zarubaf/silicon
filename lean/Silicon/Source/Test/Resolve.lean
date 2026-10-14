@@ -468,6 +468,47 @@ mem m: [Bool; 4];") .S002 3 5
 let m = 1;") .S002 3 5
 #guard fails (modBody "mem W: [Bool; 4];") .S002 2 5
 
+/-!
+The prelude struct `ReadResponse` is one struct item after the user items, with the `prelude`
+flag. It is built already resolved, so a user `struct Bool` or `type Type` does not change it.
+The user items keep their indices.
+-/
+#guard (run "").toOption == some #[response]
+#guard (run "struct Bool { x: UInt[2] }\ntype Type = UInt[3];").toOption.map (·.back?) ==
+  some (some response)
+#guard match (run "struct Bool { x: UInt[2] }\ntype Type = UInt[3];").toOption with
+  | some #[.struct _ _ [] _ false, .alias .., .struct _ x [q] [d, v] true] =>
+    x.name == "ReadResponse" && q.mode == .comptime && q.name.id == 0 &&
+      q.ty == .name ⟨0, 0⟩ "Type" (.type .type) &&
+      d.ty == .name ⟨0, 0⟩ "T" (.local 0) && v.ty == .name ⟨0, 0⟩ "Bool" (.type .bool)
+  | _ => false
+
+/-! The prelude name `ReadResponse` refers to the item after the user items. A user item shadows
+it. -/
+#guard retRef "fn f() -> Type { return ReadResponse; }" == some (.item 1)
+#guard retRef "fn f() -> Type { return ReadResponse; }\nstruct A {}" == some (.item 2)
+#guard retRef "fn f() -> Type { return ReadResponse; }\nstruct ReadResponse {}" == some (.item 1)
+#guard ok (fnBody "let r: ReadResponse[Bool] = ReadResponse[Bool](p, p);\nreturn r.valid;")
+#guard fails (fnBody "return p.ReadResponse();") .S003 2 10
+
+/-!
+`read_port` and `write_port` are prelude functions without a `comptime` or `mut` parameter, so
+the receiver binds to the first parameter. A user function with the name shadows them, also in
+the receiver form.
+-/
+#guard retRef "fn f() -> Bool { return read_port; }" == some (.fn .readPort)
+#guard retRef "fn f() -> Bool { return write_port; }" == some (.fn .writePort)
+#guard retRef "fn f() -> Bool { return read_port; }\ncomptime fn read_port() -> Bool {}" ==
+  some (.item 1)
+#guard match (run "fn f(x: Nat) -> Nat { return x.write_port(1, 2, 3); }").toOption with
+  | some #[.fn _ _ _ _ _ [.ret _ (some (.method _ _ _ (.fn .writePort) (some 0) _ _))], _] =>
+    true
+  | _ => false
+#guard match (run ("fn f(x: Nat) -> Nat { return x.write_port(); }\n" ++
+    "fn write_port(a: Nat) -> Nat { return a; }")).toOption with
+  | some #[.fn _ _ _ _ _ [.ret _ (some (.method _ _ _ (.item 1) (some 0) _ _))], _, _] => true
+  | _ => false
+
 /-! Pass 2 comes before pass 3: an `S002` wins over an earlier `S003`. -/
 #guard fails "fn f() -> Bool { return q; }\nconst f: Nat = 1;" .S002 2 7
 #guard fails (fnBody "let y = q;\nlet y = p;\nreturn y;") .S002 3 5

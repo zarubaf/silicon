@@ -354,4 +354,21 @@ def inc : Value := .function 0 "inc" #[.mk true (.uint 8), .mk false .bool] .uni
 #guard ({ module := "Map", args := [inc] } : InstantiationId).serialize ==
   "(instantiation root Map ((function root inc)))"
 
+/-!
+The prelude struct `ReadResponse` has the token `prelude` in the place of the package. A user
+struct with the same name and arguments serializes with `root`, so the two never share an
+identity. A message names both in their source form.
+-/
+def response (pre : Bool) : Ty :=
+  .struct 4 "ReadResponse" #[.type (.uint 8)] (Meta.struct [(Ty.uint 8).info, Ty.bool.info] [2])
+    pre
+#guard (response true).serialize == "(struct prelude ReadResponse ((type (uint 8))))"
+#guard (response false).serialize == "(struct root ReadResponse ((type (uint 8))))"
+#guard (response true).text == "ReadResponse[UInt[8]]"
+#guard (response false).text == "ReadResponse[UInt[8]]"
+#guard (response true) != (response false)
+#guard (response true).size == (response false).size
+#guard (Value.record (response true) #[.uint 8 3, .bool true]).serialize ==
+  "(record (struct prelude ReadResponse ((type (uint 8)))) ((uint 8 3) (bool true)))"
+
 end Silicon.Source.Test.Value
