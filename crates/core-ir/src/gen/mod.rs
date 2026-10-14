@@ -32,7 +32,8 @@ use num_bigint::BigUint;
 use proptest::collection::vec;
 use proptest::prelude::*;
 
-use crate::ast::{Conn, Design, Dir, Expr, Item, Module, Name, Num, Port, Reset, Stmt, Ty};
+use crate::Pred;
+use crate::ast::{BinOp, Conn, Design, Dir, Expr, Item, Module, Name, Num, Port, Reset, Stmt, Ty};
 use crate::diag::Span;
 use crate::typed::{self, address_width};
 use crate::value::mask;
@@ -77,6 +78,13 @@ pub enum Mems {
     None,
     /// Memories with any number of write ports and combinational reads.
     Core,
+    /// Memories with one registered read and one write. A data register
+    /// and a valid register both reset to 0 on the module reset. The data
+    /// register loads the word at the read address on an enabled read. The
+    /// valid register is set by an enabled read of an address below the
+    /// depth. The module reset disables the write. This needs
+    /// `Resets::Module`; with `Resets::Random` a design has no memory.
+    Registered,
 }
 
 /// Which forms of the core IR the generator uses.
@@ -402,19 +410,8 @@ impl Tape {
                 source: Source::State,
             });
         }
-        let mem_count = if has_clock && self.config.mems == Mems::Core {
-            self.below(MEMS + 1)
-        } else {
-            0
-        };
-        let mems: Vec<Mem> = (0..mem_count)
-            .map(|m| Mem {
-                name: self.label("mem", m),
-                width: self.width(),
-                depth: self.between(1, DEPTH),
-            })
-            .collect();
-        body.scope.mems.clone_from(&mems);
+        let (mems, responses) = self.memories(has_clock, &mut body.scope);
+        let registered = self.config.mems == Mems::Registered;
 
         let eligible: Vec<usize> = (0..library.len())
             .filter(|&c| library[c].levels < levels && (has_clock || !library[c].has_clock))
@@ -440,8 +437,14 @@ impl Tape {
                 span: Span::default(),
             });
         }
-        for mem in &mems {
-            self.mem(mem, scope, &mut stmts);
+        if registered {
+            for (mem, (data, valid)) in mems.iter().zip(&responses) {
+                self.registered_mem(mem, data, valid, scope, &mut stmts);
+            }
+        } else {
+            for mem in &mems {
+                self.mem(mem, scope, &mut stmts);
+            }
         }
         for mut inst in std::mem::take(&mut body.insts) {
             self.shuffle(&mut inst.conns);
@@ -468,6 +471,47 @@ impl Tape {
             span: Span::default(),
         };
         (interface, module, chosen)
+    }
+
+    /// The memories of a module, and for each memory of `Mems::Registered`
+    /// the names of its data and valid registers. The registers join
+    /// `scope`, and the memories of `Mems::Core` too.
+    fn memories(
+        &mut self,
+        has_clock: bool,
+        scope: &mut Scope,
+    ) -> (Vec<Mem>, Vec<(String, String)>) {
+        let has_mems = has_clock
+            && match self.config.mems {
+                Mems::None => false,
+                Mems::Core => true,
+                Mems::Registered => self.config.resets == Resets::Module,
+            };
+        let mem_count = if has_mems { self.below(MEMS + 1) } else { 0 };
+        let mems: Vec<Mem> = (0..mem_count)
+            .map(|m| Mem {
+                name: self.label("mem", m),
+                width: self.width(),
+                depth: self.between(1, DEPTH),
+            })
+            .collect();
+        if self.config.mems != Mems::Registered {
+            scope.mems.clone_from(&mems);
+            return (mems, Vec::new());
+        }
+        let responses: Vec<(String, String)> = (0..mem_count)
+            .map(|m| (self.label("mrd", m), self.label("mrv", m)))
+            .collect();
+        for (mem, (data, valid)) in mems.iter().zip(&responses) {
+            for (reg, width) in [(data, mem.width), (valid, 1)] {
+                scope.values.push(Value {
+                    expr: reference(reg),
+                    width,
+                    source: Source::State,
+                });
+            }
+        }
+        (mems, responses)
     }
 
     /// The `assign` of each output in port order, and the inputs that each
@@ -658,6 +702,93 @@ impl Tape {
                 span: Span::default(),
             });
         }
+    }
+
+    /// A memory with a registered read: the response registers `data` and
+    /// `valid`, and one write that the module reset disables.
+    fn registered_mem(
+        &mut self,
+        mem: &Mem,
+        data: &str,
+        valid: &str,
+        scope: &Scope,
+        stmts: &mut Vec<Stmt>,
+    ) {
+        let span = Span::default();
+        let addr_width = address_width(mem.depth);
+        let constant = |width: u32, value: u32| Expr::Const {
+            width: num(width),
+            value: BigUint::from(value),
+            value_span: span,
+            span,
+        };
+        let binary = |op: BinOp, lhs: Expr, rhs: Expr| Expr::Binary {
+            op,
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+            span,
+        };
+        stmts.push(Stmt::Mem {
+            name: name(mem.name.clone()),
+            width: num(mem.width),
+            depth: num(mem.depth),
+            clk: name(CLOCK.to_owned()),
+            span,
+        });
+        for (reg, width) in [(data, mem.width), (valid, 1)] {
+            stmts.push(Stmt::Reg {
+                name: name(reg.to_owned()),
+                width: num(width),
+                clk: name(CLOCK.to_owned()),
+                reset: Some(Reset {
+                    signal: reference(RESET),
+                    value: constant(width, 0),
+                    span,
+                }),
+                span,
+            });
+        }
+        let en = self.expr(scope, 1, NESTING);
+        let addr = self.expr(scope, addr_width, NESTING);
+        let in_range = if mem.depth == 1 << addr_width {
+            constant(1, 1)
+        } else {
+            Expr::Icmp {
+                pred: Pred::Ult,
+                lhs: Box::new(addr.clone()),
+                rhs: Box::new(constant(addr_width, mem.depth)),
+                span,
+            }
+        };
+        stmts.push(Stmt::Next {
+            reg: name(data.to_owned()),
+            expr: Expr::Mux {
+                cond: Box::new(en.clone()),
+                then: Box::new(Expr::Read {
+                    mem: name(mem.name.clone()),
+                    addr: Box::new(addr),
+                    span,
+                }),
+                els: Box::new(reference(data)),
+                span,
+            },
+            span,
+        });
+        stmts.push(Stmt::Next {
+            reg: name(valid.to_owned()),
+            expr: binary(BinOp::And, en, in_range),
+            span,
+        });
+        let write_enable = self.expr(scope, 1, NESTING);
+        let running = binary(BinOp::Xor, reference(RESET), constant(1, 1));
+        stmts.push(Stmt::Write {
+            mem: name(mem.name.clone()),
+            port: 0,
+            addr: self.expr(scope, addr_width, NESTING),
+            data: self.expr(scope, mem.width, NESTING),
+            en: binary(BinOp::And, write_enable, running),
+            span,
+        });
     }
 
     fn reg(&mut self, reg: &str, width: u32, scope: &Scope) -> Stmt {
