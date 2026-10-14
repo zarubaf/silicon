@@ -17,6 +17,7 @@ mod build;
 mod eval;
 mod expr;
 mod lift;
+mod memory;
 mod mutate;
 mod program;
 mod twin;
