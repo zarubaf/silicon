@@ -1,0 +1,9 @@
+// S016: read_port through a let alias of a memory in an array length.
+// TOP M()
+module M() {
+    mem m: [UInt[8]; 4];
+    let alias = m;
+    // expected-error S016 @+2
+    // expected-message: a type or a constant has no graph effect such as `read_port`; call it before and use the result
+    let t: [Bool; read_port(alias, 0, true).data] = [];
+}

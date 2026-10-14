@@ -1,0 +1,8 @@
+// S016: read_port through a let alias of a memory in a UInt width.
+// TOP M()
+module M() {
+    mem m: [UInt[8]; 4];
+    let alias = m;
+    // expected-error S016 @+1
+    let t: UInt[read_port(alias, 0, true).data] = 0;
+}

@@ -1,0 +1,11 @@
+// S016: a push in the argument of a struct use in a let type.
+// TOP M()
+struct P(comptime W: Nat) {
+    a: UInt[W],
+}
+module M() {
+    let mut xs = list(Nat);
+    // expected-error S016 @+2
+    // expected-message: a type or a constant cannot change `xs`; change `xs` before it, keep the result in a `let`, and use that name here
+    let a: P[xs.push(4)] = P[4](0);
+}

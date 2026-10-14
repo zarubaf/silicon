@@ -1,0 +1,10 @@
+// S016: a push in the argument of a struct use in a type statement.
+// TOP M()
+struct P(comptime W: Nat) {
+    a: UInt[W],
+}
+module M() {
+    let mut xs = list(Nat);
+    // expected-error S016 @+1
+    type T = P[xs.push(4)];
+}

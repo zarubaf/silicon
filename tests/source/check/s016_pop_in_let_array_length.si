@@ -1,0 +1,9 @@
+// S016: a pop of a list from before the type changes it in a let array length.
+// TOP M()
+module M() {
+    let mut xs = list(Int);
+    xs.push(2);
+    // expected-error S016 @+2
+    // expected-message: a type or a constant cannot change `xs`; change `xs` before it, keep the result in a `let`, and use that name here
+    let a: [Bool; xs.pop()] = [false, false];
+}

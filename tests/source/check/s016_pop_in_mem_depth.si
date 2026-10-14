@@ -1,0 +1,8 @@
+// S016: a pop in the depth of a mem statement.
+// TOP M()
+module M() {
+    let mut xs = list(Nat);
+    xs.push(4);
+    // expected-error S016 @+1
+    mem m: [UInt[8]; xs.pop()];
+}

@@ -1,0 +1,15 @@
+// A helper that a type expression calls can change its own locals. Only a binding from before the type is S016.
+// TOP M()
+// CHECK: (module M
+// CHECK: (assign o (const 8 0))
+fn width() -> Int {
+    let mut ys = list(Int);
+    ys.push(5);
+    ys.push(3);
+    let a = ys.pop();
+    return a + ys.pop();
+}
+module M() domains() {
+    output o: UInt[width()];
+    o := 0;
+}

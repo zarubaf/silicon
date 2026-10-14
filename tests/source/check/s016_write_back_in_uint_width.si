@@ -1,0 +1,12 @@
+// S016: a mut write-back of a binding from before the type is a change in a UInt width.
+// TOP M()
+fn f(mut n: Int) -> Int {
+    n = n + 1;
+    return n;
+}
+module M() {
+    let mut n = 3;
+    // expected-error S016 @+2
+    // expected-message: a type or a constant cannot change `n`; change `n` before it, keep the result in a `let`, and use that name here
+    let a: UInt[f(n)] = 0;
+}
