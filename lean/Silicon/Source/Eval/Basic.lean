@@ -392,12 +392,30 @@ structure Syms where
   items : Array Nat
   members : Array (Std.TreeMap Nat Nat compare)
 
+/-! The kind of a guard (section 9.4): a hardware arm. -/
+inductive GuardKind where
+  | arm
+  deriving DecidableEq, BEq
+
+/-!
+The innermost guard (section 9.4): its kind and the nesting depth at its start. Its texts of
+`S016` name the kind: `change` for a mutation, and `effect` for the graph effect `g`.
+-/
+structure Guard where
+  kind : GuardKind
+  depth : Nat
+
+def Guard.change (_ : Guard) : String := "a hardware arm changes a binding from before the arm"
+
+def Guard.effect (_ : Guard) (g : String) : String :=
+  s!"a hardware arm has no graph effect such as `{g}`"
+
 /-!
 The items, the depth limit, the current depth, and the return type of the current call. The
 item whose body runs, its symbols, and the current frame name the hardware. `binding` holds
-the struct items whose parameter types evaluate now. `arm` is the nesting depth at the start of
-the innermost hardware arm (section 9.4). `site` is the name of a function value while its
-signature evaluates: each depth check there reports at it.
+the struct items whose parameter types evaluate now. `guard` is the innermost guard
+(section 9.4). `site` is the name of a function value while its signature evaluates: each
+depth check there reports at it.
 -/
 structure Ctx where
   items : Array Resolve.Item
@@ -408,7 +426,7 @@ structure Ctx where
   syms : Syms
   frame : Frame
   binding : List Nat
-  arm : Option Nat
+  guard : Option Guard
   site : Option Pos
 
 /-! The symbol of the local number `id` in the current item. Each binder has one. -/
@@ -539,12 +557,12 @@ def nested [Runs m] (pos : Pos) (act : m α) : m α := do
 /-!
 A mutation at `pos` of a binding of the current frame of locals (section 9.4). Each call, each
 constant, and each struct use nests one level deeper with a new frame. Thus the binding is
-older than the innermost hardware arm when that arm started at the current depth: `S016`.
+older than the innermost guard when that guard started at the current depth: `S016`.
 -/
 def mutation (pos : Pos) : M Unit := do
   let c ← read
-  if c.arm == some c.depth then
-    fail .S016 pos "a hardware arm changes a binding from before the arm"
+  if let some g := c.guard then
+    if g.depth == c.depth then fail .S016 pos g.change
 
 /-!
 Runs `act` with an empty frame of locals and the return type `ret`. A waiting result of the
