@@ -82,6 +82,8 @@ pub(crate) struct Counts {
     /// The types that a serialization to a sink without the stored length expanded part by
     /// part. A length pass never expands one.
     pub unfolded: u64,
+    /// The bytes of the decimal form of the integers that a run formatted.
+    pub formatted: u64,
 }
 
 /// What a counter counts.
@@ -119,6 +121,7 @@ pub(crate) enum Count {
     Guarded,
     Copied,
     Unfolded,
+    Formatted,
 }
 
 static COUNTS: Mutex<BTreeMap<u64, Counts>> = Mutex::new(BTreeMap::new());
@@ -189,6 +192,7 @@ pub(crate) fn add(count: Count, n: u64) {
             Count::Guarded => &mut c.guarded,
             Count::Copied => &mut c.copied,
             Count::Unfolded => &mut c.unfolded,
+            Count::Formatted => &mut c.formatted,
         };
         *field += n;
     }

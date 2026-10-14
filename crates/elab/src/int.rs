@@ -71,6 +71,15 @@ impl Int {
         self.0.bits().saturating_sub(1)
     }
 
+    /// The length in bytes of the decimal form, with the `-` of a negative value, computed
+    /// without the form. The digits come from the bit length and the top 64 bits, which a
+    /// float estimates. A value too near a power of ten for the estimate takes one exact
+    /// comparison with that power. Thus a large value costs no conversion to decimal.
+    #[must_use]
+    pub fn decimal_len(&self) -> u64 {
+        u64::from(self.is_negative()) + digits(self.0.magnitude())
+    }
+
     /// The value, if it is from 0 to `u64::MAX`.
     #[must_use]
     pub fn to_u64(&self) -> Option<u64> {
@@ -236,6 +245,51 @@ pub fn unsigned_size(x: &Bits) -> u64 {
     x.value().bits().saturating_sub(1) / 64 + 1
 }
 
+/// `log10(2)`.
+const LOG10_2: f64 = std::f64::consts::LOG10_2;
+
+/// The number of decimal digits of `m`, and 1 for 0.
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
+fn digits(m: &BigUint) -> u64 {
+    let bits = m.bits();
+    if bits <= 64 {
+        let v = u64::try_from(m).unwrap_or(0);
+        return v.checked_ilog10().map_or(1, |d| u64::from(d) + 1);
+    }
+    let limbs = m.to_u64_digits();
+    let [.., second, first] = limbs.as_slice() else {
+        return 1;
+    };
+    let two = (u128::from(*first) << 64) | u128::from(*second);
+    let top = (two << first.leading_zeros()) >> 64;
+    let estimate = (top as f64).log10() + (bits - 64) as f64 * LOG10_2;
+    let fraction = estimate.fract();
+    let slack = 1e-9 + bits as f64 * 1e-15;
+    if fraction > slack && fraction < 1.0 - slack {
+        return estimate as u64 + 1;
+    }
+    // Too near a power of ten: `10^e <= m < 10^(e + 1)` for the exponent `e` that holds.
+    let ten = BigUint::from(10u32);
+    let mut e = estimate as u64;
+    let Ok(exp) = u32::try_from(e) else {
+        return e + 1;
+    };
+    let mut power = ten.pow(exp);
+    while *m < power && e > 0 {
+        e -= 1;
+        power /= &ten;
+    }
+    while *m >= &power * &ten {
+        e += 1;
+        power *= &ten;
+    }
+    e + 1
+}
+
 impl fmt::Debug for Int {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
@@ -245,6 +299,8 @@ impl fmt::Debug for Int {
 /// The decimal form, with `-` before a negative value.
 impl fmt::Display for Int {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        #[cfg(test)]
+        crate::counters::add(crate::counters::Count::Formatted, self.decimal_len());
         write!(f, "{}", self.0)
     }
 }
