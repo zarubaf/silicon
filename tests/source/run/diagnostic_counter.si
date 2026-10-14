@@ -1,0 +1,16 @@
+// A diagnostic in a module body makes a record at elaboration. It does not change the simulation: the
+// outputs are those of the same module without the diagnostic.
+// TOP M()
+module M() {
+    input en: Bool;
+    output q: UInt[4];
+    reg c: UInt[4] = 0;
+    diagnostic("counter", c);
+    c := if (en) { c +% 1 } else { c };
+    q := c;
+}
+// STEP in=(clock$0rst true en false) out=(q 0)
+// STEP in=(clock$0rst false en true) out=(q 0)
+// STEP in=(clock$0rst false en true) out=(q 1)
+// STEP in=(clock$0rst false en false) out=(q 2)
+// STEP in=(clock$0rst false en true) out=(q 2)

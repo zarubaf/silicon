@@ -1,0 +1,11 @@
+// A record of a large static integer: its decimal form is paid by the square of its size in words,
+// before the text exists. The fuel equal to the total of `cost` succeeds, and one unit less gives
+// `S015`.
+// FUEL 5700
+// TOP M()
+module M() domains() {
+    output y: Bool;
+    let n = 1 << 4096;
+    diagnostic("integer", n);
+    y := true;
+}

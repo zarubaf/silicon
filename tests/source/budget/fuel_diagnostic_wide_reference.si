@@ -1,0 +1,11 @@
+// A record of a wide aggregate reference: the copy of the argument pays its size from the type
+// metadata, and the record pays for the rendered leaves. The fuel equal to the total of `cost`
+// succeeds, and one unit less gives `S015`.
+// FUEL 18137
+// TOP M()
+module M() domains() {
+    input p: [UInt[8]; 1000];
+    output y: UInt[8];
+    diagnostic("wide", p);
+    y := p[7];
+}

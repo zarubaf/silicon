@@ -1,0 +1,16 @@
+// A record at the bottom of a chain of calls: the record has one frame for each call. The depth is
+// the smallest one at which the chain elaborates, and one unit less gives `S015`.
+// DEPTH 22
+// TOP M()
+comptime fn down(n: Nat) -> Nat {
+    comptime if (n == 0) {
+        diagnostic("deep", n);
+        return 0;
+    }
+    return down(n - 1);
+}
+module M() domains() {
+    output y: Bool;
+    let r = down(20);
+    y := true;
+}
