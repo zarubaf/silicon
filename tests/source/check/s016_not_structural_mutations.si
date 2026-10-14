@@ -1,0 +1,36 @@
+// The contexts that section 9.4 lists as not structural allow a mutation of a binding from before
+// them: `T(x)`, the argument of `list(T)` and of `data_bits(T)`, `static_assert`, `comptime if`,
+// `comptime for`, the argument of an instance, and a `comptime fn` body that the module calls.
+// The file has no error.
+// TOP M()
+comptime fn drain(mut xs: List[Int]) -> Int {
+    return xs.pop();
+}
+module Leaf(comptime n: Int) {
+    output o: Bool;
+    o := true;
+}
+module M() {
+    output o: UInt[8];
+    let mut xs = list(Int);
+    comptime for i in 0..8 {
+        xs.push(i);
+    }
+    let mut ts = list(Type);
+    ts.push(UInt[5]);
+    ts.push(UInt[6]);
+    ts.push(UInt[7]);
+    let a = UInt[8](xs.pop());
+    let l = list(ts.pop());
+    let b = data_bits(ts.pop());
+    static_assert(xs.pop() == 6, "six");
+    comptime if (xs.pop() == 5) {
+        xs.push(5);
+    }
+    comptime for i in 0..xs.pop() {
+        xs.push(i);
+    }
+    instance u = Leaf(xs.pop());
+    let d = xs.drain();
+    o := a;
+}
