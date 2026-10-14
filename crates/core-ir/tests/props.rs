@@ -737,18 +737,21 @@ fn registered_shape(m: &Module) -> Result<usize, String> {
             .filter_map(|s| match s {
                 Stmt::Next {
                     reg,
-                    expr: Expr::Mux { then, els, .. },
+                    expr:
+                        Expr::Mux {
+                            cond, then, els, ..
+                        },
                     ..
                 } => match (&**then, &**els) {
                     (Expr::Read { mem, .. }, Expr::Ref(held)) if mem.text == name.text => {
-                        (held.text == reg.text).then_some(reg.text.as_str())
+                        (held.text == reg.text).then_some((reg.text.as_str(), &**cond))
                     }
                     _ => None,
                 },
                 _ => None,
             })
             .collect();
-        let [data] = reads[..] else {
+        let [(data, read_en)] = reads[..] else {
             return Err(format!("{}: not one registered read", name.text));
         };
         let reset_to_zero = |reg: &str| {
@@ -772,9 +775,9 @@ fn registered_shape(m: &Module) -> Result<usize, String> {
         let valid = m.stmts.iter().find_map(|s| match s {
             Stmt::Next {
                 reg,
-                expr: Expr::Binary { rhs, .. },
+                expr: Expr::Binary { lhs, rhs, .. },
                 ..
-            } => match &**rhs {
+            } if reg.text != data && **lhs == *read_en => match &**rhs {
                 Expr::Icmp { rhs: limit, .. } if is_const_depth(limit, depth) => Some(reg),
                 full if is_const(full, 1, 1) && depth > 1 && depth.is_power_of_two() => Some(reg),
                 _ => None,
