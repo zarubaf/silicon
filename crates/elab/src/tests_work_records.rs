@@ -8,6 +8,7 @@
 //! the time.
 
 use crate::counters::{Counts, of};
+use crate::int::Int;
 use crate::tests_elab::load;
 use crate::{Budget, observe_with};
 use std::fmt::Write;
@@ -486,4 +487,49 @@ fn a_type_in_a_record_unfolds_once_for_each_level() {
         );
         assert!(counts[2] <= 4 * 12, "{value} {counts:?}");
     }
+}
+
+/// A type that no text holds formats no integer: an array type of a large computed length is
+/// made in the work of its integer, and its decimal form does not exist. The count is the
+/// bytes of decimal forms that the run formatted.
+#[test]
+fn an_unused_array_type_formats_no_integer() {
+    for (k, bits) in [20_000u64, 40_000, 80_000].into_iter().enumerate() {
+        let src = format!("module M() {{\n  type T = [Unit; 1 << {bits}];\n}}\n");
+        let (_, code, counts) = run_at(&src, 9_300 + k as u64);
+        assert_eq!(code, None, "{bits}");
+        assert_eq!(counts.formatted, 0, "{bits}");
+    }
+}
+
+fn check_len(n: &Int) {
+    assert_eq!(n.decimal_len(), n.to_string().len() as u64, "{n}");
+}
+
+/// The length equals the length of the decimal form for the values near each power of two
+/// and each power of ten, where the estimate of the digits is least sure, and for a few
+/// values between.
+#[test]
+fn the_length_of_the_decimal_form_is_exact() {
+    let one = Int::from_u64(1);
+    let ten = Int::from_u64(10);
+    let mut pow10 = one.clone();
+    for k in 0..3000u64 {
+        let two = one.shl(k);
+        let mid = two.add(&Int::from_u64(k * 7919));
+        for v in [two.sub(&one), two.clone(), two.add(&one), mid] {
+            check_len(&v);
+            check_len(&v.neg());
+        }
+        for v in [pow10.sub(&one), pow10.clone(), pow10.add(&one)] {
+            check_len(&v);
+            check_len(&v.neg());
+        }
+        pow10 = pow10.mul(&ten);
+    }
+    for k in (3000..200_000u64).step_by(9973) {
+        check_len(&one.shl(k));
+        check_len(&one.shl(k).sub(&one));
+    }
+    check_len(&Int::zero());
 }
