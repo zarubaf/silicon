@@ -294,7 +294,8 @@ impl Evaluator<'_> {
         };
         let site = self.site(node);
         let u = self.syms.items.get(i).copied().unwrap_or(0);
-        let (result, written) = self.nested(pos, |ev| {
+        self.calls.push((i, pos));
+        let ran = self.nested(pos, |ev| {
             ev.in_frame(None, |ev| {
                 let (path, frame) = ev.frame_of(u, Step::Call(site));
                 ev.in_item(i, frame, |ev| {
@@ -325,7 +326,9 @@ impl Evaluator<'_> {
                     Ok((result, ev.finals(places)))
                 })
             })
-        })?;
+        });
+        self.calls.pop();
+        let (result, written) = ran?;
         self.write_back(pos, written)?;
         Ok(Some(result))
     }
@@ -458,6 +461,9 @@ impl Evaluator<'_> {
         }
         self.charge(pos, sizes)?;
         let mut vs = vs;
+        if builtin == Prelude::Diagnostic && vs.len() == 2 {
+            return self.diagnose(pos, g, vs);
+        }
         if matches!(builtin, Prelude::ReadPort | Prelude::WritePort) {
             return self.port_call(pos, g, builtin, vs);
         }

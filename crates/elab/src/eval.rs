@@ -24,6 +24,7 @@ mod hwops;
 mod inst;
 mod list;
 mod mem;
+mod observe;
 mod place;
 mod record;
 mod string;
@@ -61,6 +62,7 @@ use parse::{NestedStack, StackError};
 use resolve::{DeclId, Kind, Prelude, Resolved, ResolvedExpr, Target};
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 /// The state of a constant in the table of constants. A done constant keeps its declared
 /// type, so a read through it knows the type of each part without a walk.
@@ -733,6 +735,14 @@ struct Evaluator<'a> {
     /// The name of a function value while its signature evaluates: each depth check there
     /// reports at it. A nested level clears it, so it keeps its own positions.
     site: Option<Pos>,
+    /// The records of `diagnostic` in evaluation order (section 8.2).
+    records: Vec<String>,
+    /// The emitted name of the current instantiation, else `-`. A record shares it.
+    inst: Arc<str>,
+    /// The calls from the module body to the current node: the item index of the callee and
+    /// the position of its call, outermost first. A call adds one in O(1), and a record
+    /// writes them out after the charge of its bytes.
+    calls: Vec<(usize, Pos)>,
 }
 
 /// The kind of a guard (section 9.4): a hardware arm or a structural context.
@@ -908,6 +918,9 @@ impl<'a> Evaluator<'a> {
             elab,
             guard: None,
             site: None,
+            records: Vec::new(),
+            inst: Arc::from("-"),
+            calls: Vec::new(),
         }
     }
 }
@@ -1794,7 +1807,7 @@ impl Evaluator<'_> {
                     None => fail(Code::S010, pos, format!("`{x}` is not an item")),
                 },
                 Kind::Module => fail(Code::S010, pos, format!("`{x}` is not a value")),
-                Kind::Domain => Ok(Out::Named(Val::Handle(Handle::Domain))),
+                Kind::Domain => Ok(Out::Named(Val::Handle(Handle::Domain(x.to_owned())))),
                 _ => {
                     let k = self.store.frames.len().saturating_sub(1);
                     // An empty input port refers to its name. The read pays its zero, a new

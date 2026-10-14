@@ -37,6 +37,7 @@ use parse::StackError;
 use parse::ast::{Expr, Ident, Item, NodeId, Param, Pos, Stmt, TypeExpr, UnOp};
 use resolve::{Kind as DeclKind, Resolved, Target as Ref};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 /// A port declaration. A port keeps its source name.
 pub(crate) struct PortDecl {
@@ -233,6 +234,11 @@ impl Elab {
         }
     }
 
+    /// The interface of the done instantiation `inst`.
+    pub(crate) fn interface(&self, inst: usize) -> Option<&Iface> {
+        self.done.get(inst).map(|i| &i.iface)
+    }
+
     /// The port `sym` of the done instantiation `inst`.
     pub(crate) fn port(&self, inst: usize, sym: Sym) -> Option<Port> {
         self.done
@@ -384,7 +390,7 @@ pub(crate) fn elaborate(
         field_order: std::mem::take(&mut ev.syms.field_order),
         texts: std::mem::take(&mut ev.syms.texts),
     });
-    (Vec::new(), design)
+    (std::mem::take(&mut ev.records), design)
 }
 
 fn before(a: Pos, b: Pos) -> bool {
@@ -1175,6 +1181,7 @@ impl Evaluator<'_> {
             let name = module_name(ev.elab.digest, &id, &key);
             ev.charge(pos, u128::from(name.byte_size()))?;
             let text = encode(&name);
+            let emitted: Arc<str> = Arc::from(text.as_str());
             if ev.elab.names.contains(&text) {
                 return fail(
                     Code::S019,
@@ -1188,7 +1195,10 @@ impl Evaluator<'_> {
             let naming = std::mem::take(&mut ev.naming);
             let start = ev.fuel.left();
             let args = id.args.clone();
-            ev.in_frame(None, |ev| {
+            // The records of the body name this instantiation and start with no call frames.
+            let outer_inst = std::mem::replace(&mut ev.inst, emitted);
+            let outer_calls = std::mem::take(&mut ev.calls);
+            let ran = ev.in_frame(None, |ev| {
                 ev.in_item(i, ROOT, |ev| {
                     for (q, v) in params.iter().zip(args) {
                         let t = ev.type_expr(&q.ty)?;
@@ -1205,7 +1215,10 @@ impl Evaluator<'_> {
                     }
                     ev.block(*mp, body, true)
                 })
-            })?;
+            });
+            ev.inst = outer_inst;
+            ev.calls = outer_calls;
+            ran?;
             ev.bindings()?;
             let lets = std::mem::take(&mut ev.naming.lets);
             ev.naming = naming;
