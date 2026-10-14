@@ -1,0 +1,13 @@
+// The memory port calls: the function form, the receiver form, and the use of the response.
+module M() {
+    input a: UInt[2];
+    input e: Bool;
+    input d: UInt[8];
+    output o: UInt[8];
+    mem m: [UInt[8]; 4];
+    let r = m.read_port(a, e);
+    m.write_port(a, d, e);
+    let s = read_port(m, a, e);
+    write_port(m, a, d, e);
+    o := r.data +% s.data;
+}

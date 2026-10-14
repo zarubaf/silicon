@@ -1,0 +1,14 @@
+// S010: the enable of write_port is a UInt[1], not a Bool.
+// TOP M()
+module M() {
+    input a: UInt[2];
+    input e: Bool;
+    input d: UInt[8];
+    output o: UInt[8];
+    input n: UInt[1];
+    mem m: [UInt[8]; 4];
+    let r = m.read_port(a, e);
+    // expected-error S010 @+1
+    m.write_port(a, d, n);
+    o := r.data;
+}

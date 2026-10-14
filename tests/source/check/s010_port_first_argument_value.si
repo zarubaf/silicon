@@ -1,0 +1,13 @@
+// S010: the first argument of write_port is a number, not a memory.
+// TOP M()
+module M() {
+    input a: UInt[2];
+    input e: Bool;
+    input d: UInt[8];
+    output o: UInt[8];
+    mem m: [UInt[8]; 4];
+    let r = m.read_port(a, e);
+    // expected-error S010 @+1
+    write_port(3, a, d, e);
+    o := r.data;
+}

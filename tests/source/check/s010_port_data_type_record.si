@@ -1,0 +1,17 @@
+// S010: the data of write_port is a record, but the word is a UInt[8].
+// TOP M()
+struct P {
+    x: Bool,
+    y: Bool,
+}
+module M() {
+    input a: UInt[2];
+    input e: Bool;
+    input d: UInt[8];
+    output o: UInt[8];
+    mem m: [UInt[8]; 4];
+    let r = m.read_port(a, e);
+    // expected-error S010 @+1
+    m.write_port(a, P(e, e), e);
+    o := r.data;
+}

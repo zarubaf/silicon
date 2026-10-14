@@ -1,0 +1,14 @@
+// S010: the address of read_port has another width than the memory address (4 words need UInt[2]).
+// TOP M()
+module M() {
+    input a: UInt[2];
+    input e: Bool;
+    input d: UInt[8];
+    output o: UInt[8];
+    input w: UInt[3];
+    mem m: [UInt[8]; 4];
+    // expected-error S010 @+1
+    let r = read_port(m, w, e);
+    write_port(m, a, d, e);
+    o := r.data;
+}
