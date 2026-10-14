@@ -214,6 +214,10 @@ A limit of one elaboration: the fuel, which all parts of the elaboration share, 
 
 The unit of fuel. Elaboration charges cost units for each expression node and each statement. It also charges the size of each static value that it reads or makes, and each core node that it emits. This cost model is normative.
 
+### structural context
+
+A place in the source that elaborates a type, a constant, or a signature, where a graph effect is `S016`.
+
 ### structural path
 
 The core IR name that elaboration gives to a declaration. It contains the enclosing loop values and call sites. It contains no byte offsets.
