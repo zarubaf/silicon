@@ -1,0 +1,13 @@
+// A memory of 16777216 words passes: the address has 24 bits.
+// TOP M()
+module M() {
+    input a: UInt[2];
+    input e: Bool;
+    input d: UInt[8];
+    output o: UInt[8];
+    input w: UInt[24];
+    mem m: [UInt[8]; 16777216];
+    let r = m.read_port(w, e);
+    m.write_port(w, d, e);
+    o := r.data;
+}

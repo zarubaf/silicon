@@ -1,0 +1,13 @@
+// S012: a static address 8 does not fit UInt[3] (5 words).
+// TOP M()
+module M() {
+    input a: UInt[2];
+    input e: Bool;
+    input d: UInt[8];
+    output o: UInt[8];
+    mem m: [UInt[8]; 5];
+    let r = m.read_port(3, e);
+    // expected-error S012 @+1
+    m.write_port(8, d, e);
+    o := r.data;
+}

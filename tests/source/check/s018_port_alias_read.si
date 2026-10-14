@@ -1,0 +1,15 @@
+// S018: a let alias of a memory counts for the same memory, so the second read_port is an error.
+// TOP M()
+module M() {
+    input a: UInt[2];
+    input e: Bool;
+    input d: UInt[8];
+    output o: UInt[8];
+    mem m: [UInt[8]; 4];
+    let n = m;
+    let r = m.read_port(a, e);
+    m.write_port(a, d, e);
+    // expected-error S018 @+1
+    let s = n.read_port(a, e);
+    o := r.data;
+}

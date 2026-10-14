@@ -1,0 +1,12 @@
+// A static address that fits UInt[2] but is not below 3 is valid. It is not S013.
+// TOP M()
+module M() {
+    input a: UInt[2];
+    input e: Bool;
+    input d: UInt[8];
+    output o: UInt[8];
+    mem m: [UInt[8]; 3];
+    let r = m.read_port(3, e);
+    m.write_port(3, d, e);
+    o := r.data;
+}

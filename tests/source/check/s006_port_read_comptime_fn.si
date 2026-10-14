@@ -1,0 +1,9 @@
+// S006: a comptime fn has no read_port.
+// TOP M()
+comptime fn f(m: Nat) -> Nat {
+    // expected-error S006 @+1
+    let r = read_port(m, 0, true);
+    return 1;
+}
+module M() {
+}

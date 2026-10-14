@@ -1,0 +1,14 @@
+// S018: a second read_port by receiver.
+// TOP M()
+module M() {
+    input a: UInt[2];
+    input e: Bool;
+    input d: UInt[8];
+    output o: UInt[8];
+    mem m: [UInt[8]; 4];
+    let r = m.read_port(a, e);
+    m.write_port(a, d, e);
+    // expected-error S018 @+1
+    let s = m.read_port(a, e);
+    o := r.data;
+}

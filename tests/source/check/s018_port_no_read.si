@@ -1,0 +1,12 @@
+// S018: a memory with a write_port and no read_port. The error is at the mem statement.
+// TOP M()
+module M() {
+    input a: UInt[2];
+    input e: Bool;
+    input d: UInt[8];
+    output o: UInt[8];
+    // expected-error S018 @+1
+    mem m: [UInt[8]; 4];
+    m.write_port(a, d, e);
+    o := d;
+}

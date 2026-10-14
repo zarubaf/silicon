@@ -1,0 +1,12 @@
+// S016: a read_port in the arm of a hardware if is a graph effect.
+// TOP M()
+module M() {
+    input a: UInt[2];
+    input e: Bool;
+    input d: UInt[8];
+    output o: UInt[8];
+    mem m: [UInt[8]; 4];
+    write_port(m, a, d, e);
+    // expected-error S016 @+1
+    o := if (e) { read_port(m, a, e).data } else { 0 };
+}

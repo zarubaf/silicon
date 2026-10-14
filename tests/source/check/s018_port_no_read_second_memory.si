@@ -1,0 +1,16 @@
+// S018: the second memory has no read_port. The first memory is complete.
+// TOP M()
+module M() {
+    input a: UInt[2];
+    input e: Bool;
+    input d: UInt[8];
+    output o: UInt[8];
+    mem m: [UInt[8]; 4];
+    let r = m.read_port(a, e);
+    m.write_port(a, d, e);
+    input b: UInt[1];
+    // expected-error S018 @+1
+    mem n: [UInt[8]; 2];
+    n.write_port(b, d, e);
+    o := r.data;
+}

@@ -1,0 +1,9 @@
+// S006: a comptime fn has no write_port, also by receiver.
+// TOP M()
+comptime fn f(m: Nat) -> Nat {
+    // expected-error S006 @+1
+    m.write_port(0, 0, true);
+    return 1;
+}
+module M() {
+}

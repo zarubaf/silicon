@@ -1,0 +1,13 @@
+// S007: m.write_port takes 3 arguments, not 4.
+// TOP M()
+module M() {
+    input a: UInt[2];
+    input e: Bool;
+    input d: UInt[8];
+    output o: UInt[8];
+    mem m: [UInt[8]; 4];
+    let r = read_port(m, a, e);
+    // expected-error S007 @+1
+    m.write_port(a, d, e, e);
+    o := r.data;
+}
