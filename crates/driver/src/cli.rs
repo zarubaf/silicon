@@ -76,6 +76,16 @@ pub enum Command {
         #[arg(long, allow_hyphen_values = true)]
         top: String,
     },
+    /// Print the records of `diagnostic` of a Silicon source file, one line each, then the first
+    /// error if any.
+    Observe {
+        #[command(flatten)]
+        budget: Budgets,
+        file: PathBuf,
+        /// The top selection: a module name, then literal arguments in parentheses.
+        #[arg(long, allow_hyphen_values = true)]
+        top: String,
+    },
     /// Elaborate a Silicon source file and compare the canonical core IR with `out`: print
     /// `ok`, or the first line that differs.
     Validate {
@@ -275,6 +285,11 @@ fn dispatch(command: &Command, input: impl BufRead, out: &mut impl Write) -> Res
             out.write_all(text.as_bytes())?;
             Ok(exit)
         }
+        Command::Observe { budget, file, top } => {
+            let (text, exit) = observe_source(&read_source(file)?, top, budget)?;
+            out.write_all(text.as_bytes())?;
+            Ok(exit)
+        }
         Command::Validate {
             budget,
             file,
@@ -420,28 +435,45 @@ fn eval_source(source: &str, expr: &str, budget: &Budgets) -> Result<Output, Usa
     )
 }
 
-/// The elaboration of the top selection `top` of `source` and its lowering, or the output and
-/// the exit code of the first failure. A top selection that is not a module name with
-/// literal arguments is a usage error.
+/// The records of an elaboration with its outcome, in the order of the stages: an error keeps
+/// the records before it.
+type Observed<T> = (Vec<String>, Result<T, Output>);
+
+/// The elaboration of the top selection `top` of `source` and its lowering, with the records
+/// of the elaboration, or the output and the exit code of the first failure. A top selection
+/// that is not a module name with literal arguments is a usage error.
+fn observed_lowered(
+    source: &str,
+    top: &str,
+    budget: &Budgets,
+) -> Result<Observed<(elab::Design, elab::Lowered)>, Usage> {
+    let file = match load(source, budget.syntax_depth)? {
+        Ok(file) => file,
+        Err(line) => return Ok((Vec::new(), Err(line))),
+    };
+    let observed = match elab::observe(&file, top, budget.syntax_depth, budget.elab()) {
+        Ok(observed) => observed,
+        Err(elab::Abort::Usage(message)) => return Err(Usage(message)),
+        Err(elab::Abort::Stack(e)) => return Err(stack(e)),
+    };
+    let records = observed.records;
+    let design = match observed.outcome {
+        Ok(design) => design,
+        Err(e) => return Ok((records, Err(error_line(e.code, e.pos, &e.message)))),
+    };
+    Ok(match design.lower().map_err(stack)? {
+        Ok(lowered) => (records, Ok((design, lowered))),
+        Err(f) => (records, Err(failure(f))),
+    })
+}
+
+/// `observed_lowered` without the records.
 fn lowered(
     source: &str,
     top: &str,
     budget: &Budgets,
 ) -> Result<Result<(elab::Design, elab::Lowered), Output>, Usage> {
-    let file = match load(source, budget.syntax_depth)? {
-        Ok(file) => file,
-        Err(line) => return Ok(Err(line)),
-    };
-    let design = match elab::elaborate(&file, top, budget.syntax_depth, budget.elab()) {
-        Ok(Ok(design)) => design,
-        Ok(Err(e)) => return Ok(Err(error_line(e.code, e.pos, &e.message))),
-        Err(elab::Abort::Usage(message)) => return Err(Usage(message)),
-        Err(elab::Abort::Stack(e)) => return Err(stack(e)),
-    };
-    Ok(match design.lower().map_err(stack)? {
-        Ok(lowered) => Ok((design, lowered)),
-        Err(f) => Err(failure(f)),
-    })
+    Ok(observed_lowered(source, top, budget)?.1)
 }
 
 /// A lowered design that passed the core check of pass 6.
@@ -451,9 +483,10 @@ struct Checked {
     typed: typed::Design,
 }
 
-/// `lowered`, then the core check of pass 6.
-fn checked(source: &str, top: &str, budget: &Budgets) -> Result<Result<Checked, Output>, Usage> {
-    Ok(match lowered(source, top, budget)? {
+/// `observed_lowered`, then the core check of pass 6.
+fn observed_checked(source: &str, top: &str, budget: &Budgets) -> Result<Observed<Checked>, Usage> {
+    let (records, outcome) = observed_lowered(source, top, budget)?;
+    let outcome = match outcome {
         Ok((design, lowered)) => match elab::check(&lowered.design) {
             Ok(typed) => Ok(Checked {
                 design,
@@ -463,7 +496,13 @@ fn checked(source: &str, top: &str, budget: &Budgets) -> Result<Result<Checked, 
             Err(f) => Err(failure(f)),
         },
         Err(line) => Err(line),
-    })
+    };
+    Ok((records, outcome))
+}
+
+/// `observed_checked` without the records.
+fn checked(source: &str, top: &str, budget: &Budgets) -> Result<Result<Checked, Output>, Usage> {
+    Ok(observed_checked(source, top, budget)?.1)
 }
 
 /// The output of a failure of the lowering or of its check. A defect prints on stderr.
@@ -489,6 +528,21 @@ fn cost_source(source: &str, top: &str, budget: &Budgets) -> Result<Output, Usag
         Ok((_, lowered)) => (lowered.cost(), Exit::Success),
         Err(line) => line,
     })
+}
+
+/// The output and the exit code of `observe` (section 8): the record lines, then the first
+/// error of any stage of `elab` after them. A success prints the records only.
+fn observe_source(source: &str, top: &str, budget: &Budgets) -> Result<Output, Usage> {
+    let (records, outcome) = observed_checked(source, top, budget)?;
+    let mut text: String = records.iter().flat_map(|r| [r.as_str(), "\n"]).collect();
+    let exit = match outcome {
+        Ok(_) => Exit::Success,
+        Err((line, exit)) => {
+            text.push_str(&line);
+            exit
+        }
+    };
+    Ok((text, exit))
 }
 
 /// The output and the exit code of `elab`: the canonical text of the lowered design.
