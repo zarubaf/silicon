@@ -491,11 +491,15 @@ structure Naming where
   shares : Nat := 0
   mems : Array Mem := #[]
 
+/-! An observation record: its line of section 8.2, with no line end. -/
+abbrev Record := String
+
 /-!
 The state holds the fuel, the table of constants by item index, and the table of struct
 specializations. It also holds the locals of the current frame and the names of the current
 instantiation. `holds` counts the waiting results that hold each local of the frame (section
-5.4). `pending` counts the open windows of each root of the frame (section 9.1).
+5.4). `pending` counts the open windows of each root of the frame (section 9.1). `records` holds
+the observation records of the elaboration in their order (section 8.2).
 -/
 structure St where
   fuel : Nat
@@ -505,8 +509,17 @@ structure St where
   holds : Std.HashMap Nat Nat
   pending : Std.TreeMap Nat Nat compare
   naming : Naming
+  records : Array Record
 
-abbrev M := ReaderT Ctx (StateT St (Except Error))
+/-!
+The stop of a run: its first error and the records before it. An error keeps the records before
+it (section 8.2), so `fail` is the only way that `M` stops.
+-/
+structure Stop where
+  err : Error
+  records : Array Record
+
+abbrev M := ReaderT Ctx (StateT St (Except Stop))
 
 /-! An error without a position. The caller adds the position of its node. -/
 abbrev Fault := ErrorCode × String
@@ -529,7 +542,9 @@ def intText (n : Int) : String :=
 def strText (m : String) : String :=
   if m.length ≤ 64 then m else s!"{(m.take 64).toString}... ({m.length} characters)"
 
-def fail (code : ErrorCode) (pos : Pos) (msg : String) : M α := throw ⟨code, pos, msg⟩
+/-! The error stops the run. The stop holds the records so far, with no copy. -/
+def fail (code : ErrorCode) (pos : Pos) (msg : String) : M α :=
+  fun _ s => .error ⟨⟨code, pos, msg⟩, s.records⟩
 
 def lift (pos : Pos) : Except Fault α → M α
   | .ok a => pure a

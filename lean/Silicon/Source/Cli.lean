@@ -91,27 +91,30 @@ def topSelection (depth : Nat) (items : List Item) (checked : Array Resolve.Item
 
 /-!
 The elaboration of the top selection `t` and its lowering with `Source.Flatten`. The result
-is the design, the lowered design, and the used fuel, or the outcome of the first failure.
-The core check of pass 6 is not part of it, because it charges no fuel.
+is the design, the lowered design, and the used fuel, or the outcome of the first failure. The
+records of the elaboration come with both outcomes. Only the elaboration makes records
+(section 8). The core check of pass 6 is not part of it, because it charges no fuel.
 -/
 def elabRun (o : Opts) (source t : String) (digest : String → String) :
-    Except Outcome (Elab.Design × Flatten.Lowered × Nat) :=
+    Array Eval.Record × Except Outcome (Elab.Design × Flatten.Lowered × Nat) :=
   match load o.syntaxDepth source with
-  | .error e => .error (.error e)
+  | .error e => (#[], .error (.error e))
   | .ok (items, checked) =>
     match topSelection o.syntaxDepth items checked t with
-    | .error msg => .error (.usage msg)
+    | .error msg => (#[], .error (.usage msg))
     | .ok (p, i, ps, xs) =>
       if ps.length != xs.length then
         let msg := s!"the top takes {ps.length} argument(s), but it has {xs.length}"
-        .error (.error ⟨.S007, p, msg⟩)
-      else match Elab.elaborate o.budget checked digest p i xs with
-        | .error e => .error (.error e)
-        | .ok (d, used) =>
-          match Flatten.flatten (o.budget.fuel - used) p d with
-          | .ok (l, lowered) => .ok (d, l, used + lowered)
-          | .error (.source e) => .error (.error e)
-          | .error (.defect msg) => .error (.defect msg)
+        (#[], .error (.error ⟨.S007, p, msg⟩))
+      else
+        let r := Elab.observe o.budget checked digest p i xs
+        (r.1, match r.2 with
+          | .error e => .error (.error e)
+          | .ok (d, used) =>
+            match Flatten.flatten (o.budget.fuel - used) p d with
+            | .ok (l, lowered) => .ok (d, l, used + lowered)
+            | .error (.source e) => .error (.error e)
+            | .error (.defect msg) => .error (.defect msg))
 
 /-!
 `cost`: the fuel that the elaboration of the top selection uses, with the lowering, and the
@@ -119,7 +122,7 @@ units of each instantiation. It does not run the core check, so an `S020` design
 -/
 def costText (o : Opts) (source t : String) (digest : String → String := Names.sha16) :
     Outcome :=
-  match elabRun o source t digest with
+  match (elabRun o source t digest).2 with
   | .ok (d, l, used) =>
     let insts := d.insts.zipWith (fun i u => { i with units := u }) l.units
     .ok (Elab.costLines { d with insts } used)
@@ -135,7 +138,7 @@ structure Checked where
 /-! The elaboration of the top selection `t`, its lowering, and the check of pass 6. -/
 def elabChecked (o : Opts) (source t : String) (digest : String → String) :
     Except Outcome Checked :=
-  match elabRun o source t digest with
+  match (elabRun o source t digest).2 with
   | .ok (d, l, _) =>
     match Flatten.checkDesign l.design with
     | .ok ⟨typed, h⟩ => .ok ⟨d, l.design, typed, h⟩

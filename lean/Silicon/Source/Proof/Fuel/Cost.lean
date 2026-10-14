@@ -18,11 +18,12 @@ namespace Silicon.Source.Cli.Fuel
 
 /-- The budget boundary of `elabRun` for one fuel `F`. -/
 theorem elabRun_budget {o : Opts} {src t : String} {dg : String → String} {d : Elab.Design}
-    {l : Flatten.Lowered} {used : Nat} (h : elabRun o src t dg = .ok (d, l, used)) (F : Nat) :
-    (used ≤ F → elabRun { o with budget.fuel := F } src t dg = .ok (d, l, used)) ∧
+    {l : Flatten.Lowered} {used : Nat} (h : (elabRun o src t dg).2 = .ok (d, l, used)) (F : Nat) :
+    (used ≤ F → (elabRun { o with budget.fuel := F } src t dg).2 = .ok (d, l, used)) ∧
     (F < used → ∃ p m,
-      elabRun { o with budget.fuel := F } src t dg = .error (.error ⟨.S015, p, m⟩)) := by
+      (elabRun { o with budget.fuel := F } src t dg).2 = .error (.error ⟨.S015, p, m⟩)) := by
   unfold elabRun at h ⊢
+  simp only [← Elab.elaborate.eq_1] at h ⊢
   split at h
   · cases h
   rename_i items checked hl
@@ -41,11 +42,6 @@ theorem elabRun_budget {o : Opts} {src t : String} {dg : String → String} {d :
   · cases h
   rename_i l' ul hf
   cases h
-  dsimp only
-  rw [hl]
-  dsimp only
-  rw [ht]
-  dsimp only
   simp only [hlen, Bool.false_eq_true, ↓reduceIte]
   have eb := Elab.Fuel.elaborate_budget he F
   refine ⟨fun hu => ?_, fun hu => ?_⟩
@@ -66,10 +62,10 @@ The budget boundary of `elabRun` (spec 10.3, `eval_cost`). Let `elabRun` succeed
 `S015`.
 -/
 theorem eval_cost (o : Opts) (src t : String) (dg : String → String) {d l used}
-    (h : elabRun o src t dg = .ok (d, l, used)) :
-    (∀ F, used ≤ F → elabRun { o with budget.fuel := F } src t dg = .ok (d, l, used)) ∧
+    (h : (elabRun o src t dg).2 = .ok (d, l, used)) :
+    (∀ F, used ≤ F → (elabRun { o with budget.fuel := F } src t dg).2 = .ok (d, l, used)) ∧
     (∀ F, F < used → ∃ p m,
-      elabRun { o with budget.fuel := F } src t dg = .error (.error ⟨.S015, p, m⟩)) :=
+      (elabRun { o with budget.fuel := F } src t dg).2 = .error (.error ⟨.S015, p, m⟩)) :=
   ⟨fun F => (elabRun_budget h F).1, fun F => (elabRun_budget h F).2⟩
 
 theorem foldl_prefix (g : β → String) :
@@ -81,7 +77,7 @@ theorem foldl_prefix (g : β → String) :
 
 /-- The output of `cost` starts with the line `total {used}` of the fuel that `elabRun` used. -/
 theorem eval_cost_total (o : Opts) (src t : String) (dg : String → String) {d l used}
-    (h : elabRun o src t dg = .ok (d, l, used)) :
+    (h : (elabRun o src t dg).2 = .ok (d, l, used)) :
     ∃ rest, costText o src t dg = .ok (s!"total {used}\n" ++ rest) := by
   unfold costText Elab.costLines
   rw [h]

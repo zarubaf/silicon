@@ -363,7 +363,7 @@ def bindings : EM Unit := do
       if q.input && !w.inputs.contains (k, q.sym) && f.all (q.sym < ·.sym) then some q else f
     let x := (free.map (·.name)).getD ""
     err := earlier err ⟨.S018, c.pos, s!"the input `{x}` of the child has no binding"⟩
-  if let some e := err then throw e
+  if let some e := err then fail e.code e.pos e.msg
 
 /-! The interface of a done instantiation. -/
 def iface (name : Name) (b : Body) : Iface :=
@@ -560,11 +560,12 @@ end
 /-!
 The elaboration of the top selection at `pos`: the module item `top` with the literal
 arguments `xs`. The arguments charge as those of an `instance` statement. The result is the
-design and the used fuel.
+records and the design with the used fuel, or the records and the first error (section 8.2).
 -/
-def elaborate (budget : Budget) (items : Array Resolve.Item) (digest : String → String)
-    (pos : Pos) (top : Nat) (xs : List Resolve.Expr) : Except Error (Design × Nat) :=
-  Eval.run budget items fun n => do
+def observe (budget : Budget) (items : Array Resolve.Item) (digest : String → String)
+    (pos : Pos) (top : Nat) (xs : List Resolve.Expr) :
+    Array Record × Except Error (Design × Nat) :=
+  Eval.observeRun budget items fun n => do
     let go : EM Nat := do
       let vs ← arguments n pos top xs
       charge pos (vs.map Value.size).sum
@@ -572,6 +573,11 @@ def elaborate (budget : Budget) (items : Array Resolve.Item) (digest : String �
     let (k, s) ← go.run { digest, work := { body := { domain := none } } }
     let table := leafFields items (← get).specs
     return ⟨s.done, k, fieldsOf table⟩
+
+/-! The elaboration of the top selection, without the records. -/
+def elaborate (budget : Budget) (items : Array Resolve.Item) (digest : String → String)
+    (pos : Pos) (top : Nat) (xs : List Resolve.Expr) : Except Error (Design × Nat) :=
+  (observe budget items digest pos top xs).2
 
 /-! The output of `cost` (section 8): the total, then the units of each instantiation by name. -/
 def costLines (d : Design) (total : Nat) : String :=

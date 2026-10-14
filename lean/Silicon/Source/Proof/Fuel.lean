@@ -8,11 +8,11 @@ spec. The result of `Eval` does not depend on spare fuel, and less fuel than a r
 
 `Follows cap x y` relates two runs of `M`. Each time that `x` succeeds from the state `s` to
 `s'`, it used `u = s.fuel - s'.fuel` units and did not add fuel. Then `y` from `s` with any
-fuel `F ≤ cap` gives the value of `x` and the state `s'` with the fuel `F - u` if `u ≤ F`, and
-`S015` if `F < u`. The other fields of the state are equal. Only `charge` reads the fuel in
-the evaluator, and nothing catches an error, so each function of the evaluator follows
-itself. The cap holds the invariant "fuel ≤ bound" of the run `y`. A run `y` within the cap
-never reaches the bound 0 when it has fuel for the work.
+fuel `F ≤ cap` gives the value of `x` and the state `s'` with the fuel `F - u` if `u ≤ F`. If
+`F < u`, it stops with `S015` and the records before it. The other fields of the state are
+equal. Only `charge` reads the fuel in the evaluator, and nothing catches an error, so each
+function of the evaluator follows itself. The cap holds the invariant "fuel ≤ bound" of the run
+`y`. A run `y` within the cap never reaches the bound 0 when it has fuel for the work.
 
 `follows_all` gives `Follows n' (f n a) (f n' a)` for `eval`, `typeExpr`, `stmt`, and `block`
 at any two bounds `n` and `n'`. `Follows.shift` and `Follows.short` read off the two
@@ -29,10 +29,10 @@ open Resolve
 abbrev used (s s' : St) : Nat := s.fuel - s'.fuel
 
 /-- The run of `y` with the fuel `F` agrees with the run of `x` that used `u` units. -/
-@[reducible] def Follows.Res (a : α) (s' : St) (u F : Nat) (r : Except Error (α × St)) :
+@[reducible] def Follows.Res (a : α) (s' : St) (u F : Nat) (r : Except Stop (α × St)) :
     Prop :=
   (u ≤ F → r = .ok (a, { s' with fuel := F - u })) ∧
-    (F < u → ∃ p m, r = .error ⟨.S015, p, m⟩)
+    (F < u → ∃ p m rs, r = .error ⟨⟨.S015, p, m⟩, rs⟩)
 
 /--
 `y` follows `x` with each fuel up to `cap`: a success of `x` that uses `u` units decides the
@@ -53,8 +53,8 @@ theorem bind_apply (x : M α) (f : α → M β) (c : Ctx) (s : St) :
 
 theorem charge_apply (p : Pos) (k : Nat) (c : Ctx) (s : St) :
     charge p k c s = if k ≤ s.fuel then .ok ((), { s with fuel := s.fuel - k })
-      else .error ⟨.S015, p,
-        s!"the fuel cannot pay {intText k} unit(s); {intText s.fuel} remain"⟩ := by
+      else .error ⟨⟨.S015, p,
+        s!"the fuel cannot pay {intText k} unit(s); {intText s.fuel} remain"⟩, s.records⟩ := by
   unfold charge
   rw [bind_apply]
   show (if k ≤ s.fuel then _ else _ : M Unit) c s = _
@@ -95,9 +95,9 @@ theorem bind {x y : M α} {f g : α → M β} (hx : Follows cap x y)
       · intro h2
         simp only []
         exact e2.2 (by omega)
-    · obtain ⟨p, m, he⟩ := (k1 F hF).2 (by omega)
+    · obtain ⟨p, m, rs, he⟩ := (k1 F hF).2 (by omega)
       rw [he]
-      exact ⟨fun _ => by omega, fun _ => ⟨p, m, rfl⟩⟩
+      exact ⟨fun _ => by omega, fun _ => ⟨p, m, rs, rfl⟩⟩
   next => cases h
 
 /-- A computation that neither reads nor changes the fuel follows itself. -/
@@ -117,9 +117,6 @@ theorem fail (code : ErrorCode) (p : Pos) (m : String) :
     Follows cap (Eval.fail code p m : M α) (Eval.fail code p m) :=
   fun _ _ _ _ h => by cases h
 
-theorem throw (e : Error) : Follows cap (MonadExcept.throw e : M α) (MonadExcept.throw e) :=
-  fun _ _ _ _ h => by cases h
-
 theorem read : Follows cap (MonadReader.read : M Ctx) MonadReader.read :=
   of_frame fun _ _ _ _ h => by cases h; exact ⟨rfl, fun _ => rfl⟩
 
@@ -137,7 +134,7 @@ theorem charge (p : Pos) (k : Nat) : Follows cap (Eval.charge p k) (Eval.charge 
     · simp only [used] at hF
       rw [charge_apply]
       simp only [show ¬k ≤ F by omega, ↓reduceIte]
-      exact ⟨_, _, rfl⟩
+      exact ⟨_, _, _, rfl⟩
   · cases h
 
 theorem get_bind {k k' : St → M α} (h : ∀ s, Follows cap (k s) (k' s))
@@ -222,7 +219,7 @@ theorem charge_one (p : Pos) {f g : PUnit → M α} (h : ∀ u, Follows cap (f u
       · rw [r.1 (by omega)]; congr 3; omega
       · exact r.2 (by omega)
     · simp only [hF0, ↓reduceIte]
-      exact ⟨fun hu => by simp only [used] at hu; omega, fun _ => ⟨_, _, rfl⟩⟩
+      exact ⟨fun hu => by simp only [used] at hu; omega, fun _ => ⟨_, _, _, rfl⟩⟩
   · simp [h1] at hx
 
 /-- With no fuel, an entry function at the bound 0 fails as its charge does. -/
@@ -240,7 +237,7 @@ theorem exhaust (p q : Pos) {f : PUnit → M α} (h : ∀ u, Follows cap (f u) (
     unfold exhausted
     rw [bind_apply, charge_apply]
     simp only [show ¬(1 ≤ 0) by omega, ↓reduceIte]
-    exact ⟨fun hu => by simp only [used] at hu; omega, fun _ => ⟨_, _, rfl⟩⟩
+    exact ⟨fun hu => by simp only [used] at hu; omega, fun _ => ⟨_, _, _, rfl⟩⟩
   · simp [h1] at hx
 
 /-- The bound 0 never succeeds. -/
@@ -276,7 +273,6 @@ macro_rules | `(tactic| follows [$ts,*]) => `(tactic| repeat' (first
   | with_reducible exact Follows.pure _
   | with_reducible exact Follows.charge _ _
   | with_reducible exact Follows.fail _ _ _
-  | with_reducible exact Follows.throw _
   | with_reducible exact Follows.read
   | with_reducible exact Follows.readThe
   | with_reducible apply Follows.monadLift
@@ -703,8 +699,8 @@ theorem atUse_f (p : Pos) {x y : M α} (h : Follows cap x y) :
     obtain ⟨h1, h2⟩ := h c s a s' hr
     refine ⟨h1, fun F hF => ⟨fun hu => ?_, fun hu => ?_⟩⟩
     · simp only [atUse, (h2 F hF).1 hu]
-    · obtain ⟨q, m, e⟩ := (h2 F hF).2 hu
-      exact ⟨p, m, by simp only [atUse, e]⟩
+    · obtain ⟨q, m, rs, e⟩ := (h2 F hF).2 hu
+      exact ⟨p, m, rs, by simp only [atUse, e]⟩
   · cases hx
 
 theorem iteration_f (p : Pos) (i : Binder) (v : Int) {x y : M α} (h : Follows cap x y) :
@@ -926,7 +922,7 @@ theorem Follows.shift {x y : M α} (h : Follows cap x y) {c : Ctx} {s s' : St} {
 /-- With less fuel than the run of `x` used, the run gives `S015`. -/
 theorem Follows.short {x y : M α} (h : Follows cap x y) {c : Ctx} {s s' : St} {a : α}
     (hx : x c s = .ok (a, s')) {F : Nat} (hF : F < s.fuel - s'.fuel) (hcap : F ≤ cap) :
-    ∃ p m, y c { s with fuel := F } = .error ⟨.S015, p, m⟩ := by
+    ∃ p m rs, y c { s with fuel := F } = .error ⟨⟨.S015, p, m⟩, rs⟩ := by
   delta Follows at h
   exact ((h c s a s' hx).2 F hcap).2 hF
 
@@ -935,11 +931,10 @@ theorem run_apply (budget : Budget) (items : Array Resolve.Item) (act : Nat → 
     run budget items act top =
       match act budget.fuel (start budget items top).1 (start budget items top).2 with
       | .ok (a, s) => .ok (a, budget.fuel - s.fuel)
-      | .error e => .error e := by
-  unfold run
+      | .error e => .error e.err := by
+  unfold run observeRun
   rcases hs : start budget items top with ⟨ctx, st⟩
   simp only []
-  show (act budget.fuel ctx st >>= fun x => pure (x.1, budget.fuel - x.2.fuel)) = _
   cases act budget.fuel ctx st <;> rfl
 
 /--
@@ -964,18 +959,18 @@ theorem run_budget {act : Nat → M α} (hact : ∀ n n', Follows n' (act n) (ac
     · rw [run_apply]
       show (match act F (start budget items top).1
           { (start budget items top).2 with fuel := F } with
-        | .ok (a, s) => Except.ok (a, F - s.fuel) | .error e => Except.error e) = _
+        | .ok (a, s) => Except.ok (a, F - s.fuel) | .error e => Except.error e.err) = _
       rw [r.1 hu]
       simp only [used] at hu ⊢
       congr 2
       show F - (F - (budget.fuel - s'.fuel)) = budget.fuel - s'.fuel
       omega
-    · obtain ⟨p, m, he⟩ := r.2 hu
+    · obtain ⟨p, m, rs, he⟩ := r.2 hu
       refine ⟨p, m, ?_⟩
       rw [run_apply]
       show (match act F (start budget items top).1
           { (start budget items top).2 with fuel := F } with
-        | .ok (a, s) => Except.ok (a, F - s.fuel) | .error e => Except.error e) = _
+        | .ok (a, s) => Except.ok (a, F - s.fuel) | .error e => Except.error e.err) = _
       rw [he]
   next => cases h
 

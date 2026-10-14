@@ -75,9 +75,6 @@ theorem read : EFollows cap (MonadReader.read : EM Ctx) MonadReader.read :=
 theorem readThe : EFollows cap (_root_.readThe Ctx : EM Ctx) (_root_.readThe Ctx) :=
   monadLift Follows.read
 
-theorem throw (e : Error) : EFollows cap (MonadExcept.throw e : EM α) (MonadExcept.throw e) :=
-  EFollows.monadLift (Follows.throw e)
-
 theorem withTheReader {x y : EM α} (f : Ctx → Ctx) (h : EFollows cap x y) :
     EFollows cap (_root_.withTheReader Ctx f x) (_root_.withTheReader Ctx f y) :=
   fun σ => Follows.withTheReader f (h σ)
@@ -127,8 +124,8 @@ theorem measure {x y : EM α} (h : EFollows cap x y) :
     · rw [measure_apply, (k F hF).1 hu]
       simp only [used] at hu ⊢
       congr 4; omega
-    · obtain ⟨p, m, he⟩ := (k F hF).2 hu
-      exact ⟨p, m, by rw [measure_apply, he]⟩
+    · obtain ⟨p, m, rs, he⟩ := (k F hF).2 hu
+      exact ⟨p, m, rs, by rw [measure_apply, he]⟩
   next => cases hx
 
 /-- An entry function charges one unit, then runs its body one bound lower. -/
@@ -157,7 +154,7 @@ theorem exhaust (p q : Pos) {f : PUnit → EM α} (h : ∀ u, EFollows cap (f u)
     unfold exhausted
     rw [bind_apply, charge_apply]
     simp only [show ¬(1 ≤ 0) by omega, ↓reduceIte]
-    exact ⟨_, _, rfl⟩
+    exact ⟨_, _, _, rfl⟩
 
 theorem run {x y : EM α} (h : EFollows cap x y) (σ : St) :
     Follows cap (x.run σ) (y.run σ) := h σ
@@ -187,7 +184,7 @@ macro_rules | `(tactic| efollows) => `(tactic| efollows [EFollows.pure])
 
 macro_rules | `(tactic| efollows [$ts,*]) => `(tactic| follows [$ts,*, EFollows.pure,
   EFollows.get, EFollows.set, EFollows.setOf, EFollows.modify, EFollows.read,
-  EFollows.readThe, EFollows.throw, EFollows.monadLift, EFollows.withTheReader,
+  EFollows.readThe, EFollows.monadLift, EFollows.withTheReader,
   EFollows.mapM, EFollows.forIn, EFollows.forInArray, EFollows.forInRange, EFollows.bind])
 
 section helpers
