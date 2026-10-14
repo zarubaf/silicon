@@ -1336,4 +1336,91 @@ def dg : String := "fn g() -> Nat { diagnostic(\"a\", 1); return 2; }\n"
 #guard observed ("comptime fn cg() -> Nat { diagnostic(\"c\", 1); return 2; }\n" ++
   sMod "  let z = cg();\n") == ["(record 1 27 - () (string \"c\") (int 1))", "ok"]
 
+/-!
+The rendering of a value in a record (section 8.2) and its measure charge (section 5.4). A
+hardware leaf is `(hw <type>)`. An aggregate is its container form with each part rendered, and
+each container node charges 1. A reference renders as the value that it stands for. A part
+without a hardware leaf is its static zero, with no charge. Each container part with a hardware
+leaf charges 1. A handle renders by its kind and has no measure charge.
+-/
+def dIn (ports body : String) (items : String := "") : String :=
+  items ++ "module M() {\n  input c: Bool;\n  input d: UInt[8];\n" ++ ports ++
+    "  output o: UInt[8];\n" ++ body ++ "  o := 0;\n}\n"
+
+-- A hardware tuple: the tuple charges 1, and its static `1` charges 1.
+def dTup : String := dMod "  diagnostic(\"t\", (d, 1, c));\n"
+#guard observed dTup ==
+  ["(record 5 3 - () (string \"t\") (tuple ((hw (uint 8)) (int 1) (hw bool))))", "ok"]
+#guard pays dTup 64 "5:3" 2 && pays dTup 66 "5:3" 72
+#guard observed dTup 138 ==
+  ["(record 5 3 - () (string \"t\") (tuple ((hw (uint 8)) (int 1) (hw bool))))", "S015 6:3"]
+#guard observed dTup 137 == ["S015 5:3"]
+
+-- Nested aggregates with hardware and static leaves, and a reference with an empty part.
+def dNest : String :=
+  dIn "  input a: (UInt[2], [Bool; 0]);\n" "  diagnostic(\"n\", (a, [d, 2], (c, (3, true))));\n"
+#guard observed dNest ==
+  ["(record 6 3 - () (string \"n\") (tuple ((tuple ((hw (uint 2)) (array bool ()))) " ++
+    "(array (uint 8) ((hw (uint 8)) (uint 8 2))) (tuple ((hw bool) (tuple ((int 3) " ++
+    "(bool true))))))))", "ok"]
+#guard pays dNest 137 "6:3" 7 && pays dNest 144 "6:3" 174
+
+-- A reference: its empty parts are static zeros with no charge, so only the tuple charges.
+def dRef : String := dIn "  input a: (UInt[8], [Bool; 0], ());\n" "  diagnostic(\"r\", a);\n"
+#guard observed dRef ==
+  ["(record 6 3 - () (string \"r\") (tuple ((hw (uint 8)) (array bool ()) (unit))))", "ok"]
+#guard pays dRef 99 "6:3" 1 && pays dRef 100 "6:3" 77
+#guard observed dRef 177 ==
+  ["(record 6 3 - () (string \"r\") (tuple ((hw (uint 8)) (array bool ()) (unit))))", "S015 7:3"]
+#guard observed dRef 176 == ["S015 6:3"]
+
+-- A reference of a struct type renders as a record. An array of arrays renders each part.
+def dRec : String :=
+  dIn "  input a: P[4];\n" "  diagnostic(\"r\", a);\n"
+    "struct P(comptime W: Nat) { x: UInt[W], y: (), z: Bool }\n"
+#guard observed dRec ==
+  ["(record 7 3 - () (string \"r\") (record (struct root P ((int 4))) " ++
+    "((hw (uint 4)) (unit) (hw bool))))", "ok"]
+#guard pays dRec 89 "7:3" 1 && pays dRec 90 "7:3" 98
+#guard observed (dIn "  input a: [[UInt[4]; 2]; 2];\n" "  diagnostic(\"r\", a);\n") ==
+  ["(record 6 3 - () (string \"r\") (array (array (uint 4) 2) ((array (uint 4) " ++
+    "((hw (uint 4)) (hw (uint 4)))) (array (uint 4) ((hw (uint 4)) (hw (uint 4)))))))", "ok"]
+
+-- The response of `read_port`: a record of the word reference and of `valid`.
+def dResp : String :=
+  dIn "" ("  mem m: [(UInt[8], Bool); 4];\n  write_port(m, 0, (d, c), c);\n" ++
+    "  diagnostic(\"k\", read_port(m, 0, c));\n")
+#guard observed dResp ==
+  ["(record 7 3 - () (string \"k\") (record (struct prelude ReadResponse ((type (tuple " ++
+    "((uint 8) bool))))) ((tuple ((hw (uint 8)) (hw bool))) (hw bool))))", "ok"]
+#guard pays dResp 144 "7:3" 2 && pays dResp 146 "7:3" 148
+
+-- Each handle kind. A handle has no measure charge, so its bytes follow its copy.
+#guard observed ("module C() {\n  input a: Bool;\n  output q: Bool;\n  q := a;\n}\n" ++
+  dIn "" ("  reg r: UInt[8] = 0;\n  r := d;\n  wire w: (Bool, UInt[2]);\n  w := (c, 1);\n" ++
+    "  mem m: [UInt[8]; 4];\n  write_port(m, 0, d, c);\n  let k = read_port(m, 0, c);\n" ++
+    "  instance u = C();\n  u.a := c;\n  diagnostic(\"r\", r);\n  diagnostic(\"w\", w);\n" ++
+    "  diagnostic(\"o\", o);\n  diagnostic(\"m\", m);\n  diagnostic(\"u\", u);\n" ++
+    "  diagnostic(\"i\", u.a);\n  diagnostic(\"q\", u.q);\n  diagnostic(\"clk\", clock);\n")) ==
+  ["(record 19 3 - () (string \"r\") (reg (uint 8) r))",
+   "(record 20 3 - () (string \"w\") (wire (tuple (bool (uint 2))) w))",
+   "(record 21 3 - () (string \"o\") (output (uint 8) o))",
+   "(record 22 3 - () (string \"m\") (mem (array (uint 8) 4) m))",
+   "(record 23 3 - () (string \"u\") (instance C u))",
+   "(record 24 3 - () (string \"i\") (input bool u a))",
+   "(record 25 3 - () (string \"q\") (hw bool))",
+   "(record 26 3 - () (string \"clk\") (domain clock))", "ok"]
+def dReg : String := dIn "" "  reg r: UInt[8] = 0;\n  r := d;\n  diagnostic(\"r\", r);\n"
+#guard pays dReg 67 "7:3" 47
+#guard observed dReg 114 == ["(record 7 3 - () (string \"r\") (reg (uint 8) r))", "S015 8:3"]
+#guard observed dReg 113 == ["S015 7:3"]
+
+-- A reference with 1000 leaves: 1 for the array and 1 for each tuple, then 24059 bytes.
+def dWide : String := dIn "  input a: [(UInt[1],); 1000];\n" "  diagnostic(\"r\", a);\n"
+#guard observed dWide 27143 ==
+  ["(record 6 3 - () (string \"r\") (array (tuple ((uint 1))) (" ++
+    " ".intercalate (List.replicate 1000 "(tuple ((hw (uint 1))))") ++ ")))", "S015 7:3"]
+#guard pays dWide 2083 "6:3" 1001 && pays dWide 3084 "6:3" 24059
+#guard observed dWide 27142 == ["S015 6:3"]
+
 end Silicon.Source.Test.Elab
