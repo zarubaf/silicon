@@ -46,6 +46,7 @@ Each rule is one list line. It ends with `Check:` and the check. A rule without 
 - Write Markdown prose in ASD-STE100. Check: `vale`.
 - Keep the error codes of the spec, Lean, and Rust equal. The Rust front end can lack the codes of later slices that `LATER` in `xtask/src/arch.rs` lists. Check: `cargo xtask check` (rule `arch-codes`).
 - Name each workspace crate and each `silicon-check` command in backticks in the Part column of a row of `doc/trust.md`. The crate `xtask` is exempt. Check: `cargo xtask check` (rule `arch-trust`).
+- Cover each Lean module under `lean/Silicon/Core/` and `lean/Silicon/Source/` by an architecture path in `doc/architecture.md`, or list it as non-normative in `xtask/src/arch.rs`. Check: `cargo xtask check` (rule `arch-paths`).
 - Keep proof modules out of the imports of `silicon-check`. Check: `cargo xtask check` (rule `lean-exe-imports`).
 - Keep the front end out of the imports of the Lean core: no `Core` module imports a `Source` module. Check: `cargo xtask check` (rule `lean-core-imports`).
 - Leave no unproven Lean: no `sorry`, no new `axiom`, no `native_decide` outside the allowlist. Check: `lake build` and the xtask Lean scan.
