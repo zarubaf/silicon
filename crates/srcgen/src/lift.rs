@@ -923,8 +923,23 @@ mod tests {
              (output o (bits 1)) (assign o a)))",
             Shape::default(),
         );
-        let short = vectors::parse_input("in=(a 1 b 0)", &top).unwrap();
-        assert!(layout.vector_in(&short).is_ok());
+        assert!(
+            layout
+                .vector_in(&vectors::parse_input("in=(a 1 b 0)", &top).unwrap())
+                .is_ok()
+        );
+        let (one_port, _) = top_of(
+            "(design m0 (module m0 (input a (bits 1)) (output o (bits 1)) (assign o a)))",
+            Shape::default(),
+        );
+        let short = vectors::parse_input("in=(a 1)", &one_port).unwrap();
+        assert_eq!(
+            layout.vector_in(&short),
+            Err(VectorLen {
+                expected: 2,
+                found: 1
+            })
+        );
         let one = interp::Outputs::new(vec![Bits::new(1, 1u8.into()).unwrap(); 2]);
         assert_eq!(
             layout.vector_out(&one),
