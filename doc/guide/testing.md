@@ -194,7 +194,7 @@ LEC and the differential tests read a source design as core IR. `silicon elab` m
 
 `cargo xtask diff-si` has four modes. Use `--mode lift`, `--mode typed`, `--mode mutation`, `--mode budget`, or `--mode all`. The default is `all`, which runs the four modes in this order. The run stops at the first failure.
 
-The lift mode lifts random core designs to source programs. The generator of `core-ir` runs with the source configuration, which makes only designs that have a source form. `lift` of the crate `srcgen` writes each design as a source program. The core interpreter runs the original design with random inputs. It is the oracle.
+The lift mode lifts random core designs to source programs. The generator of `core-ir` runs with the source configuration, which makes only designs that have a source form. `lift` of the crate `srcgen` writes each design as a source program. A shape tape groups adjacent ports into tuple, array, and record ports. A core memory with a registered read becomes a source memory. The success line counts the designs with a memory and with an aggregate port. The core interpreter runs the original design with random inputs. It is the oracle.
 
 - `silicon run` and `silicon-check run` run the source program. Both must print the `out=` lines of the core interpreter. `silicon elab` writes the core IR of the program, and `silicon-check validate` must print `ok`.
 
