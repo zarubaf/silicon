@@ -1,17 +1,17 @@
 // Two memories in one design. The top holds a memory of five array words, a depth that is not a power of 2.
-// A child holds a memory of one flag, the depth 1. Every port has a non-constant enable (#20). The child
-// remembers whether the two lanes of the last written word were equal, and the top outputs both responses.
+// A child holds a memory of one 3-bit word, the depth 1. Every port has a non-constant enable (#20). The child
+// remembers the XOR of the two lanes of the last written word, and the top outputs both responses.
 // TOP Top()
 module Flag() {
     input a: UInt[1];
-    input d: Bool;
+    input d: UInt[3];
     input we: Bool;
     input re: Bool;
     output seen: Bool;
-    mem flag: [Bool; 1];
+    mem flag: [UInt[3]; 1];
     let r = flag.read_port(a, re);
     flag.write_port(a, d, we);
-    seen := r.valid && r.data;
+    seen := r.valid && r.data != 0;
 }
 module Top() {
     input ra: UInt[3];
@@ -28,7 +28,7 @@ module Top() {
     read.write_port(wa, wd, we);
     instance f = Flag();
     f.a := fa;
-    f.d := wd[0] == wd[1];
+    f.d := wd[0] ^ wd[1];
     f.we := we;
     f.re := re;
     q := r.data;
