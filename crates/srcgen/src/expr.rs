@@ -71,15 +71,12 @@ impl Env<'_> {
                     .get(n.text.as_str())
                     .map_or_else(|| n.text.clone(), Clone::clone)
             }
-            Expr::InstOut { inst, port, .. } => {
-                let leaf = self
-                    .insts
-                    .get(inst.text.as_str())
-                    .and_then(|m| self.shapes.get(m.name.text.as_str()))
-                    .and_then(|shape| shape.read(&port.text))
-                    .unwrap_or_else(|| port.text.clone());
-                format!("{}.{leaf}", inst.text)
-            }
+            Expr::InstOut { inst, port, .. } => self
+                .insts
+                .get(inst.text.as_str())
+                .and_then(|m| self.shapes.get(m.name.text.as_str()))
+                .and_then(|shape| shape.read(&port.text, Some(&inst.text)))
+                .unwrap_or_else(|| format!("{}.{}", inst.text, port.text)),
             Expr::Const { width, value, .. } => format!("UInt[{}]({value})", width.value),
             Expr::Unary {
                 op: UnOp::Not, arg, ..
