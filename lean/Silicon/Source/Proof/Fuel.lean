@@ -626,7 +626,7 @@ theorem setConst_f (i : Nat) (e : Entry) :
     Follows cap (setConst i e) (setConst i e) := by
   unfold setConst; follows
 
-theorem mutation_f (p : Pos) : Follows cap (mutation p) (mutation p) := by
+theorem mutation_f (p : Pos) (x : String) : Follows cap (mutation p x) (mutation p x) := by
   unfold mutation; follows
 
 theorem setAt_f (p : Pos) (a y : Agg) (ks : List Nat) :
@@ -670,6 +670,10 @@ theorem nested_f (p : Pos) {x y : M α} (h : Follows cap x y) :
     Follows cap (nested p x) (nested p y) := by
   unfold nested; follows [h]
 
+theorem structural_f {x y : M α} (h : Follows cap x y) :
+    Follows cap (structural x) (structural y) := by
+  unfold structural; follows [h]
+
 theorem inFrame_f (r : Option Ty) {x y : M α} (h : Follows cap x y) :
     Follows cap (inFrame r x) (inFrame r y) := by
   unfold inFrame; follows [h]
@@ -680,7 +684,7 @@ theorem inFrameOf_f (fr : Frame) {x y : M α} (h : Follows cap x y) :
 
 theorem constant_f (p : Pos) (x : String) (i : Nat) {b b' : M Value} (h : Follows cap b b') :
     Follows cap (constant p x i b) (constant p x i b') := by
-  unfold constant; follows [h, setConst_f, nested_f, inFrame_f]
+  unfold constant; follows [h, setConst_f, nested_f, inFrame_f, structural_f]
 
 theorem specialize_f (p : Pos) (x : String) (i : Nat) (pre : Bool) (args : List Value)
     {f g : M (List Ty)} (h : Follows cap f g) :
@@ -778,7 +782,7 @@ theorem spec_f (he : ∀ e, Follows m (eval k e) (eval m e))
     (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t)) (p : Pos) (i : Nat)
     (xs : List Resolve.Expr) : Follows m (spec k p i xs) (spec m p i xs) := by
   rw [spec.eq_def k, spec.eq_def m]
-  follows [operands_f he, need_f, static_f, specOf_f ht]
+  follows [operands_f he, need_f, static_f, specOf_f ht, structural_f]
 
 theorem params_f (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t))
     (ps : List Resolve.FnParam) : Follows m (params k ps) (params m ps) := by
@@ -860,7 +864,7 @@ theorem follows_all : ∀ n,
           hwUnary_f, test_f, hwBinary_f, unify_f, mux_f, static_f, pick_f, element_f, tupleOf_f,
           arrayOf_f, select_f, containerOp_f, arrayTy_f, field_f, strAt_f, hold_f, release_f,
           normalize_f, aggEq_f,
-          operands_f (he k), comparable_f, params_f (ht k), fnTy_f]
+          operands_f (he k), comparable_f, params_f (ht k), fnTy_f, structural_f]
       · rw [eval.eq_def (k + 1), eval.eq_def (m + 1)]
         apply Follows.charge_one
         intro _
@@ -869,18 +873,20 @@ theorem follows_all : ∀ n,
           hwUnary_f, test_f, hwBinary_f, unify_f, mux_f, static_f, pick_f, element_f, tupleOf_f,
           arrayOf_f, select_f, containerOp_f, arrayTy_f, field_f, strAt_f, hold_f, release_f,
           normalize_f, aggEq_f,
-          operands_f (he m), comparable_f, params_f (ht m), fnTy_f]
+          operands_f (he m), comparable_f, params_f (ht m), fnTy_f, structural_f]
     · rcases n' with _ | m
       · rw [typeExpr.eq_def (k + 1), typeExpr.eq_def 0]
         apply Follows.exhaust (cap := k)
         intro _
         follows [he k, ht k, index_f (he k), name_f (he k) (ht k), spec_f (he k) (ht k),
-          typeOf_f, tupleTy_f, arrayTy_f, static_f, need_f, params_f (ht k), fnTy_f]
+          typeOf_f, tupleTy_f, arrayTy_f, static_f, need_f, params_f (ht k), fnTy_f,
+          structural_f]
       · rw [typeExpr.eq_def (k + 1), typeExpr.eq_def (m + 1)]
         apply Follows.charge_one
         intro _
         follows [he m, ht m, index_f (he m), name_f (he m) (ht m), spec_f (he m) (ht m),
-          typeOf_f, tupleTy_f, arrayTy_f, static_f, need_f, params_f (ht m), fnTy_f]
+          typeOf_f, tupleTy_f, arrayTy_f, static_f, need_f, params_f (ht m), fnTy_f,
+          structural_f]
     · rcases n' with _ | m
       · rw [stmt.eq_def (k + 1), stmt.eq_def 0]
         apply Follows.exhaust (cap := k)

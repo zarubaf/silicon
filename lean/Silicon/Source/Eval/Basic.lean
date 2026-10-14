@@ -392,23 +392,32 @@ structure Syms where
   items : Array Nat
   members : Array (Std.TreeMap Nat Nat compare)
 
-/-! The kind of a guard (section 9.4): a hardware arm. -/
+/-! The kind of a guard (section 9.4): a hardware arm or a structural context. -/
 inductive GuardKind where
   | arm
+  | structural
   deriving DecidableEq, BEq
 
 /-!
 The innermost guard (section 9.4): its kind and the nesting depth at its start. Its texts of
-`S016` name the kind: `change` for a mutation, and `effect` for the graph effect `g`.
+`S016` name the kind: `change` for a mutation of the binding `x`, and `effect` for the graph
+effect `g`. The texts are normative, and the front ends print them exactly.
 -/
 structure Guard where
   kind : GuardKind
   depth : Nat
 
-def Guard.change (_ : Guard) : String := "a hardware arm changes a binding from before the arm"
+def Guard.change (g : Guard) (x : String) : String :=
+  match g.kind with
+  | .arm => "a hardware arm changes a binding from before the arm"
+  | .structural => s!"a type or a constant cannot change `{x}`; change it before, " ++
+    "for example `let n = xs.pop();`, and use the result"
 
-def Guard.effect (_ : Guard) (g : String) : String :=
-  s!"a hardware arm has no graph effect such as `{g}`"
+def Guard.effect (g : Guard) (f : String) : String :=
+  match g.kind with
+  | .arm => s!"a hardware arm has no graph effect such as `{f}`"
+  | .structural =>
+    s!"a type or a constant has no graph effect such as `{f}`; call it before and use the result"
 
 /-!
 The items, the depth limit, the current depth, and the return type of the current call. The
@@ -555,14 +564,22 @@ def nested [Runs m] (pos : Pos) (act : m α) : m α := do
   withTheReader Ctx (fun c => { c with depth := c.depth + 1, site := none }) act
 
 /-!
-A mutation at `pos` of a binding of the current frame of locals (section 9.4). Each call, each
-constant, and each struct use nests one level deeper with a new frame. Thus the binding is
-older than the innermost guard when that guard started at the current depth: `S016`.
+Runs `act` in a structural context (section 9.4): its guard starts at the current depth, so it
+is the innermost guard.
 -/
-def mutation (pos : Pos) : M Unit := do
+def structural [Runs m] (act : m α) : m α :=
+  withTheReader Ctx (fun c => { c with guard := some ⟨.structural, c.depth⟩ }) act
+
+/-!
+A mutation at `pos` of the binding `x` of the current frame of locals (section 9.4). `x` is the
+root of the changed place. Each call, each constant, and each struct use nests one level deeper
+with a new frame. Thus the binding is older than the innermost guard when that guard started at
+the current depth: `S016`.
+-/
+def mutation (pos : Pos) (x : String) : M Unit := do
   let c ← read
   if let some g := c.guard then
-    if g.depth == c.depth then fail .S016 pos g.change
+    if g.depth == c.depth then fail .S016 pos (g.change x)
 
 /-!
 Runs `act` with an empty frame of locals and the return type `ret`. A waiting result of the

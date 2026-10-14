@@ -39,9 +39,12 @@ The operators follow v0.1 section 3. These rules settle the open points of slice
   (`hold`). A mutation of a held local charges the size of the local before the change
   (`held`). The charge is the last step before the change, and it comes once for each mutation.
   The mutations are an assignment, `push`, `pop`, and a write-back.
-- A hardware arm starts at the current nesting depth. A `push` or a `pop` on a binding of that
-  depth changes a binding from before the arm: `S016`. A call nests deeper with a new frame,
-  so a function that the arm calls can change its own bindings.
+- A hardware arm and a structural context each start a guard at the current nesting depth
+  (section 9.4). `structural` starts these contexts: a type expression, a type index,
+  `[T; N]`, `fn (...) -> R`, the first use of a constant, a struct use, and a `mem` depth. A
+  `push`, a `pop`, or a write-back on a binding of the depth of the guard changes a binding
+  from before it: `S016`. A call nests deeper with a new frame, so a function that the guard
+  calls can change its own bindings.
 - An element of a list, also through an assignment to `xs[i]` or to a part of it, holds no
   hardware leaf (`S011`). A module argument and the element of `push` hold none either.
 - A literal, a record constructor, and an assignment to a part can make a hardware aggregate.
@@ -124,7 +127,7 @@ Hardware values follow v0.1 sections 1 and 3:
 - A memory port call `read_port(m, addr, en)` or `write_port(m, addr, data, en)` runs in the
   order of section 6.2, each error at the call (`portCall`). The copies of the arguments charge
   first, and the memory handle has the size 1. The first argument is a raw context: a memory,
-  else `S010`. An enclosing hardware arm is `S016`. Then `addr` takes `UInt[A]`, `en` takes
+  else `S010`. An enclosing guard is `S016`. Then `addr` takes `UInt[A]`, `en` takes
   `Bool`, and `data` takes the word type, each as a typed use. The memory records the first
   request of each kind. A second call runs the same steps and charges, keeps the first request,
   and records its `S018`, which waits for the end of the body. `read_port` then charges the
@@ -932,7 +935,7 @@ writes into the live root.
 -/
 def writeBack (p : Pos) (outs : List (Place × Val)) : M Unit := do
   for (pl, v) in outs do
-    mutation p
+    mutation p pl.name
     -- Another value has the type of the place, so it keeps the depth of the root.
     if let .static w := v then bounded p (pl.keys.length + w.depth)
     charge p v.size
@@ -979,7 +982,7 @@ makes the typed use of the element, checks the depth, and charges the size of th
 -/
 def pushOnto (p x : Pos) (g : String) (pl : Place) (v : Val) : M (Option Out) := do
   let .static (.list e _) := pl.part | fail .S010 p s!"`{g}` needs a list, not {pl.part.text}"
-  mutation p
+  mutation p pl.name
   let w ← match ← data x (← settle p e v) with
     | .static w => conform p e w
     | .hw _ | .agg _ => fail .S011 x "a list holds no hardware value"
@@ -997,7 +1000,7 @@ def pushOnto (p x : Pos) (g : String) (pl : Place) (v : Val) : M (Option Out) :=
 def popFrom (p : Pos) (g : String) (pl : Place) : M (Option Out) := do
   let .static (.list e ys) := pl.part | fail .S010 p s!"`{g}` needs a list, not {pl.part.text}"
   let some w := ys.back? | fail .S013 p "`pop` of an empty list"
-  mutation p
+  mutation p pl.name
   charge p w.size
   -- The element type bounds the depth of a list from below, so only a deeper element lowers it.
   let d := if w.depth ≤ e.depth then some 0 else none
@@ -1226,7 +1229,7 @@ mutual
       | .index p b xs => do
         if let .name bp _ (.type k) := b then
           charge bp 1
-          return some ⟨.static (.type (← index n p k xs)), false, none⟩
+          return some ⟨.static (.type (← structural (index n p k xs))), false, none⟩
         if let .name bp _ (.item i) := b then
           if let some (.struct ..) := (← read).items[i]? then
             charge bp 1
@@ -1273,11 +1276,11 @@ mutual
         let o ← need b (← eval n b)
         let v ← data p o.value
         return some (part o v (← select p q i v))
-      | .arrayType p t k => do
+      | .arrayType p t k => structural do
         let e ← typeExpr n t
         let t ← arrayTy p k.pos e (← static k.pos (← need k (← eval n k)).value)
         return some ⟨.static (.type t), false, none⟩
-      | .fnType p ps r => do
+      | .fnType p ps r => structural do
         let qs ← params n ps
         return some ⟨.static (.type (← fnTy p qs (← typeExpr n r))), false, none⟩
   termination_by (b, 3)
@@ -1287,7 +1290,7 @@ mutual
     | 0 => exhausted t.pos
     | n + 1 => do
       charge t.pos 1
-      match t with
+      structural <| match t with
       | .name p x r => do typeOf p x (← name n p x r).value
       | .index p (.name bp _ (.type k)) xs => do
         charge bp 1
@@ -1329,7 +1332,7 @@ mutual
   evaluate is a cycle (`S019`). The prelude struct has no source position, so each error of its
   work reports at `p` (`atUse`).
   -/
-  def spec (n : Nat) (p : Pos) (i : Nat) (xs : List Resolve.Expr) : M Ty := do
+  def spec (n : Nat) (p : Pos) (i : Nat) (xs : List Resolve.Expr) : M Ty := structural do
     let some (.struct _ x ps fs pre) := (← read).items[i]?
       | fail .S007 p "a complete type takes no index"
     let args ← operands n xs fun _ o => do

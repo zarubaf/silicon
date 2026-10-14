@@ -62,8 +62,8 @@ These rules settle the open points of slice 1:
 - `S018` errors wait for the end of the body. The second binding of a resource gives one.
   A resource without a binding gives one at its declaration. A child input without a binding
   gives one at the `instance` statement. The error with the lowest position wins.
-- `S016` cannot occur in slice 1. An arm of a hardware `if` is an expression. A function of
-  slice 1 declares no resource and binds nothing.
+- `S016` comes from the guards of `Eval` (section 9.4). The word type and the depth of a `mem`
+  statement are structural contexts. A function declares no resource and binds nothing.
 - The owner guard of section 9.5 has no check in slice 1. Module arguments are static
   (`S011`), and ports carry data, so a handle cannot reach another owner.
 - The units of an instantiation are its charges from the start of its parameters to the end
@@ -453,7 +453,7 @@ mutual
           if (← get).work.body.domain.isNone then
             fail .S017 p "a combinational module has no memory"
           let t ← memWord p (← typeExpr n w)
-          let k ← memDepth p (← need d (← eval n d)).value
+          let k ← memDepth p (← structural do return (← need d (← eval n d)).value)
           let path ← fresh x.id x.name.name
           let id ← monadLift (do return (← get).naming.mems.size : Eval.M Nat)
           let m : Mem := { name := x.name.name, path := path, word := t, depth := k, pos := p }

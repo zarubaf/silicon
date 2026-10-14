@@ -143,7 +143,7 @@ def constant (p : Pos) (x : String) (i : Nat) (body : M Value) : M Value := do
   match (← get).consts[i]? with
   | some (.done c) => return c
   | some .inProgress => fail .S019 p s!"`{x}` depends on itself"
-  | _ => nested p do
+  | _ => structural <| nested p do
     setConst i .inProgress
     let c ← inFrame none <| withReader (fun c => { c with item := i }) body
     setConst i (.done c)

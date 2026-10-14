@@ -197,6 +197,10 @@ theorem nested_e (p : Pos) {x y : EM α} (h : EFollows cap x y) :
     EFollows cap (nested p x) (nested p y) := by
   unfold nested; efollows [h]
 
+theorem structural_e {x y : EM α} (h : EFollows cap x y) :
+    EFollows cap (structural x) (structural y) := by
+  unfold structural; efollows [h]
+
 theorem inFrame_e (r : Option Ty) {x y : EM α} (h : EFollows cap x y) :
     EFollows cap (inFrame r x) (inFrame r y) := by
   unfold inFrame; efollows [h]
@@ -309,13 +313,15 @@ theorem follows_all : ∀ n,
           arguments_e (he.1 k) (he.2.1 k), he.1 k, he.2.1 k, need_f, copy_f,
           conform_f, static_f, conformVal_f, lit_f, fresh_f, bindLocal_f, test_f, int_f, range_f,
           iteration_e, dataType_e, memWord_e, memDepth_e, port_e, resource_e, modifyBody_e,
-          target_e, bindTarget_e, sinkValue_e, copyUse_f, settle_f, hold_f, release_f]
+          target_e, bindTarget_e, sinkValue_e, copyUse_f, settle_f, hold_f, release_f,
+          structural_e]
       · refine EFollows.charge_one _ fun _ => ?_
         efollows [hs m, hb m, instantiate_e (he.2.1 m) (hb m),
           arguments_e (he.1 m) (he.2.1 m), he.1 m, he.2.1 m, need_f, copy_f,
           conform_f, static_f, conformVal_f, lit_f, fresh_f, bindLocal_f, test_f, int_f, range_f,
           iteration_e, dataType_e, memWord_e, memDepth_e, port_e, resource_e, modifyBody_e,
-          target_e, bindTarget_e, sinkValue_e, copyUse_f, settle_f, hold_f, release_f]
+          target_e, bindTarget_e, sinkValue_e, copyUse_f, settle_f, hold_f, release_f,
+          structural_e]
     · rcases n' with _ | m
       · rw [block.eq_def (k + 1), block.eq_def 0]
         exact EFollows.exhaust (cap := k) _ _ fun _ => by efollows [hs k]
