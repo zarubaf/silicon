@@ -1,0 +1,32 @@
+// Records of static values: each form renders as its canonical serialization.
+// TOP M()
+// CHECK: (module M
+// OBSERVE: (record 22 5 M () (string "int") (int -5))
+// OBSERVE-NEXT: (record 23 5 M () (string "bool") (bool true))
+// OBSERVE-NEXT: (record 24 5 M () (string "string") (string "hi"))
+// OBSERVE-NEXT: (record 25 5 M () (string "unit") (unit))
+// OBSERVE-NEXT: (record 26 5 M () (string "uint") (uint 8 3))
+// OBSERVE-NEXT: (record 27 5 M () (string "tuple") (tuple ((int 1) (bool true))))
+// OBSERVE-NEXT: (record 28 5 M () (string "array") (array int ((int 1) (int 2))))
+// OBSERVE-NEXT: (record 29 5 M () (string "record") (record (struct root P ()) ((uint 8 3) (bool false))))
+// OBSERVE-NEXT: (record 30 5 M () (string "list") (list int ((int 1) (int 2))))
+struct P {
+    a: UInt[8],
+    b: Bool,
+}
+module M() {
+    output o: Bool;
+    let mut xs = list(Int);
+    xs.push(1);
+    xs.push(2);
+    diagnostic("int", -5);
+    diagnostic("bool", true);
+    diagnostic("string", "hi");
+    diagnostic("unit", ());
+    diagnostic("uint", UInt[8](3));
+    diagnostic("tuple", (1, true));
+    diagnostic("array", [1, 2]);
+    diagnostic("record", P(UInt[8](3), false));
+    diagnostic("list", xs);
+    o := true;
+}

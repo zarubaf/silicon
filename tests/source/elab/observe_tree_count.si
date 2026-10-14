@@ -1,0 +1,20 @@
+// A module that instantiates the module of the next lower depth twice gives exactly 31 records
+// for d = 30: one for each depth 0 to 30, because the second child is a done instantiation.
+// TOP M(30)
+// CHECK: (module M$30
+// OBSERVE-COUNT-31: (record 10 5 M${{[0-9]+}} () (string "depth") (int {{[0-9]+}}))
+// OBSERVE-NOT: (string "depth")
+module M(comptime d: Nat) domains() {
+    input a: UInt[1];
+    output q: UInt[1];
+    diagnostic("depth", d);
+    comptime if (d == 0) {
+        q := a;
+    } else {
+        instance l = M(d - 1);
+        instance r = M(d - 1);
+        l.a := a;
+        r.a := l.q;
+        q := r.q;
+    }
+}

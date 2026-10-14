@@ -1,0 +1,23 @@
+// Call frames of a record, three deep, outermost first: a plain call, a call through a function
+// value, and a receiver call. A receiver call starts at its receiver.
+// TOP M()
+// CHECK: (module M
+// OBSERVE: (record 8 5 M ((call k 20 13) (call g 16 12) (call h 13 12)) (string "h") (int 3))
+// OBSERVE-NEXT: (record 21 5 M () (string "m") (int 3))
+fn h(x: Nat) -> Nat {
+    diagnostic("h", x);
+    return x;
+}
+fn g(x: Nat) -> Nat {
+    let f = h;
+    return f(x);
+}
+fn k(x: Nat) -> Nat {
+    return x.g();
+}
+module M() {
+    output o: Bool;
+    let z = k(3);
+    diagnostic("m", z);
+    o := true;
+}

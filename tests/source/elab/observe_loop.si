@@ -1,0 +1,13 @@
+// A record in a `comptime for` loop: one record for each iteration, at the same position.
+// TOP M()
+// CHECK: (module M
+// OBSERVE: (record 10 9 M () (string "i") (int 0))
+// OBSERVE-NEXT: (record 10 9 M () (string "i") (int 1))
+// OBSERVE-NEXT: (record 10 9 M () (string "i") (int 2))
+module M() {
+    output o: Bool;
+    comptime for i in 0..3 {
+        diagnostic("i", i);
+    }
+    o := true;
+}

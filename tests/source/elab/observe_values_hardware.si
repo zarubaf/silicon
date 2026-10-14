@@ -1,0 +1,19 @@
+// Records of hardware values: a scalar, a leaf in a tuple, and a reference whose parts without a
+// hardware leaf render as their static zero.
+// TOP M()
+// CHECK: (module M
+// OBSERVE: (record 14 5 M () (string "scalar") (hw (uint 8)))
+// OBSERVE-NEXT: (record 15 5 M () (string "bool") (hw bool))
+// OBSERVE-NEXT: (record 16 5 M () (string "tuple") (tuple ((hw (uint 8)) (int 1) (hw bool))))
+// OBSERVE-NEXT: (record 17 5 M () (string "ref") (tuple ((hw (uint 8)) (array bool ()) (unit))))
+module M() {
+    input d: UInt[8];
+    input c: Bool;
+    input a: (UInt[8], [Bool; 0], ());
+    output o: Bool;
+    diagnostic("scalar", d);
+    diagnostic("bool", c);
+    diagnostic("tuple", (d, 1, c));
+    diagnostic("ref", a);
+    o := c;
+}
