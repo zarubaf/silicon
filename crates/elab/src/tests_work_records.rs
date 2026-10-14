@@ -533,3 +533,39 @@ fn the_length_of_the_decimal_form_is_exact() {
     }
     check_len(&Int::zero());
 }
+
+/// A finite struct argument measures its length from the bit length: the argument of 65,536
+/// bits formats no digit, whether the record stops at its charge or not before it.
+#[test]
+fn a_finite_struct_argument_formats_no_integer() {
+    let src = "struct S(comptime v: UInt[65536]) { a: Bool }\n\
+               module M() {\n  let x: UInt[65536] = (1 << 65536) - 1;\n  diagnostic(\"s\", S[x]);\n}\n";
+    // The least fuel that appends the record is 27,039.
+    let (records, code, counts) = run_at(src, 27_038);
+    assert_eq!((records, code), (0, Some(crate::Code::S015)));
+    assert_eq!(counts.formatted, 0);
+}
+
+/// Types of a large computed length near one power of ten: making 1,000 of them formats no
+/// digit and builds no power, and one record of 50 of them builds one power of ten and
+/// formats no digit before the charge of its bytes.
+#[test]
+fn types_near_one_power_of_ten_build_one_power() {
+    let big = format!("1{}", "0".repeat(19_000));
+    let unused = format!(
+        "module M() {{\n  comptime for i in 0..1000 {{\n    type T = [Unit; {big} + i];\n  }}\n}}\n"
+    );
+    let (_, code, counts) = run_at(&unused, 500_000_400);
+    assert_eq!(code, None);
+    assert_eq!((counts.formatted, counts.powered), (0, 0));
+
+    let mut used = String::from("module M() {\n");
+    let names: Vec<String> = (0..50).map(|i| format!("T{i}")).collect();
+    for name in &names {
+        writeln!(used, "  type {name} = [Unit; {big} + {}];", &name[1..]).unwrap_or_default();
+    }
+    writeln!(used, "  diagnostic(\"t\", ({}));\n}}", names.join(", ")).unwrap_or_default();
+    let (records, code, counts) = run_at(&used, 400_000);
+    assert_eq!((records, code), (0, Some(crate::Code::S015)));
+    assert_eq!((counts.formatted, counts.powered), (0, 1));
+}
