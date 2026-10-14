@@ -6,7 +6,7 @@ The `srcgen` crate is the source generator of `cargo xtask diff-si`. It is a dev
 
 ## Owns
 
-This crate owns the lift of a core design to a source program, and the map from core vectors to source vectors. The lift makes aggregate ports from a shape tape: it groups adjacent ports into a tuple, an array, or a record. An array has the type of its widest member, and the lift resizes a narrower leaf. It makes a source memory from the core block of a registered read. The vector map lists the leaves in the port layout, not in byte order. It also owns the typed form of a generated program, its printer, and its static evaluator. Its builder makes random typed programs and their input lines. The twin of a typed program writes out each comptime construct of the program. A mutation of a typed program changes one site, and it predicts the first error code where the pass order makes that code certain.
+This crate owns the lift of a core design to a source program, and the map from core vectors to source vectors. The lift makes aggregate ports from a shape tape: it groups adjacent ports into a tuple, an array, or a record. An array has the type of its widest member, and the lift resizes a narrower leaf. It makes a source memory from the core block of a registered read. The vector map lists the leaves in the port layout, not in byte order. It also owns the typed form of a generated program, its printer, and its static evaluator. Its builder makes random typed programs and their input lines. The programs hold the forms of slice 2: static containers, records, strings, lists, `mut` formals, function values, and `diagnostic` statements. The builder also predicts the record of each `diagnostic` from the contexts of its modules, and `Program::records()` gives the tails. The twin of a typed program writes out each comptime construct of the program. A mutation of a typed program changes one site, and it predicts the first error code where the pass order makes that code certain.
 
 The static evaluator models only the programs that the builder makes. It works on the typed program, never on source text or on a syntax tree. It can reject a program that the language accepts, but it must never give a value that differs from the language. It does not resolve names, check types, compute `cost`, or lower to core IR. A need outside these limits needs a new ADR.
 
@@ -17,9 +17,12 @@ The static evaluator models only the programs that the builder makes. It works o
 - Each design of `Config::source()` lifts to a program that lexes with no error, with any shape tape. Check: `cargo nextest run -p srcgen`.
 - A core memory lifts only if it has the exact block of section 7.6. Any other shape is `Unsupported::Memory`. Check: `cargo nextest run -p srcgen`.
 - Each memory and each aggregate kind occurs in at least 10% of 256 lifted designs. Check: `cargo nextest run -p srcgen`.
-- The builder of `typed()` gives no fault on the tested tapes. Each program lexes with no error, and its forms cover slice 1. Check: `cargo nextest run -p srcgen`.
+- The builder of `typed()` gives no fault on the tested tapes. Each program lexes with no error, and each form of slice 2 occurs in at least 10% of 256 programs. Check: `cargo nextest run -p srcgen`.
+- The builder calls no function that runs a `diagnostic` in a width, a `const`, a struct argument, a parameter type, or a hardware arm. Check: `cargo nextest run -p srcgen`.
+- A type expression that reads a mutable root is not reused after a write to the root. Check: `cargo nextest run -p srcgen`.
+- The records of `Program::records()` come from the contexts of the builder, with no second identity rule (ADR 0018). Check: `cargo nextest run -p srcgen`.
 - Each twin of a `typed()` program lexes with no error, and it has no comptime construct and no static name. Check: `cargo nextest run -p srcgen`.
-- Each mutant differs from its program and lexes with no error token. Check: `cargo nextest run -p srcgen`.
+- Each mutant differs from its program and lexes with no error token. A prediction holds on the slice-2 forms, or it is `None`. Check: `cargo nextest run -p srcgen`.
 - Non-test code has no `unwrap`, no `expect`, and no panic on user input. Check: `just clippy`.
 
 ## Dependencies

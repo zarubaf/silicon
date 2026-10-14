@@ -198,11 +198,12 @@ The lift mode lifts random core designs to source programs. The generator of `co
 
 - `silicon run` and `silicon-check run` run the source program. Both must print the `out=` lines of the core interpreter. `silicon elab` writes the core IR of the program, and `silicon-check validate` must print `ok`.
 
-The typed mode builds random typed source programs. The builder is `typed()` of the crate `srcgen`. A program has parameters, `const` items, `comptime` functions, helpers, `comptime if`, `comptime for`, and instances. The typed mode checks these oracles of the front-end spec, section 11.4:
+The typed mode builds random typed source programs. The builder is `typed()` of the crate `srcgen`. A program has parameters, `const` items, `comptime` functions, helpers, `comptime if`, `comptime for`, and instances. It also has the forms of slice 2: static containers, records, strings, lists, functions with a `mut` formal, function values, and `diagnostic` statements. A function that runs a `diagnostic` is effectful. The builder calls it only at a statement of a module body. The typed mode checks these oracles of the front-end spec, section 11.4:
 
 - `silicon-check validate` accepts the output of `silicon elab`.
 - The probe `eval` gives the same value in the static evaluator of the generator, in `silicon eval`, and in `silicon-check eval`.
 - `silicon cost` and `silicon-check cost` both exit 0 and print equal output.
+- `silicon observe` and `silicon-check observe` print equal output, with no error line. The tails of the record lines equal `Program::records()` of the generator, as multisets. A tail is the message `dK` and the value, for example `(string "d3") (int 5)`. The compare of the two outputs uses `compare_observe` of the crate `testkit`.
 - The twin of the program gives the same `out=` lines as the program, in `silicon run` and in `silicon-check run`, on the same input lines. The twin writes out each comptime construct, so it has no static computation. The twin shows an error in the static part of the elaboration of each front end. It does not check the hardware semantics.
 
 The input lines come from `lines()`. They follow the ports of the top. The reset of the domain is likely in the first cycle and rare after it, in both modes. Thus the state of a design lives for several cycles.
