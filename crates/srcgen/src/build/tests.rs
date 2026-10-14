@@ -303,6 +303,7 @@ fn programs_cover_static_containers() {
     let mut with = BTreeMap::<&str, usize>::new();
     let (mut leaves, mut leaf_fallbacks) = (0, 0);
     let (mut indexes, mut index_fallbacks) = (0, 0);
+    let (mut arguments, mut argument_fallbacks) = (0, 0);
     for tape in tapes(TAPES) {
         let mut b = Builder::new(tape);
         let p = b.program();
@@ -315,6 +316,10 @@ fn programs_cover_static_containers() {
             ("selector", s.selects > 0),
             ("index", s.indexes > 0),
             ("len", s.lens > 0),
+            ("record", s.records > 0),
+            ("zero", s.zeros > 0),
+            ("field", s.fields > 0),
+            ("data_bits", s.data_bits > 0),
         ] {
             *with.entry(form).or_default() += usize::from(seen);
         }
@@ -335,6 +340,8 @@ fn programs_cover_static_containers() {
         leaves += s.leaves;
         leaf_fallbacks += s.leaf_fallbacks;
         indexes += s.indexes;
+        arguments += s.arguments;
+        argument_fallbacks += s.argument_fallbacks;
         index_fallbacks += s.index_fallbacks;
     }
     for (form, n) in &with {
@@ -343,7 +350,7 @@ fn programs_cover_static_containers() {
             "{form} occurs in {n} of {TAPES} programs: {with:?}"
         );
     }
-    assert_eq!(with.len(), 6, "{with:?}");
+    assert_eq!(with.len(), 10, "{with:?}");
     assert!(
         leaf_fallbacks * 5 <= leaves,
         "leaf fallbacks {leaf_fallbacks} of {leaves}"
@@ -351,6 +358,10 @@ fn programs_cover_static_containers() {
     assert!(
         index_fallbacks * 5 <= indexes,
         "index fallbacks {index_fallbacks} of {indexes}"
+    );
+    assert!(
+        argument_fallbacks * 5 <= arguments,
+        "argument fallbacks {argument_fallbacks} of {arguments}"
     );
 }
 
