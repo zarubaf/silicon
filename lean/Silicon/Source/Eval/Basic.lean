@@ -249,11 +249,13 @@ inductive Kind where
   deriving Repr, DecidableEq, BEq, Inhabited
 
 /-!
-A handle. Its number indexes the resources or the instances of its instantiation. A child
-input holds the number of its instance.
+A handle. Its number indexes the resources, the memories, or the instances of its
+instantiation. A child input holds the number of its instance. A memory holds its word type and
+its depth (section 5.1).
 -/
 inductive Handle where
   | res (kind : Kind) (id : Nat) (ty : Ty) (path : Path)
+  | mem (id : Nat) (path : Path) (word : Ty) (depth : Nat)
   | inst (id : Nat) (path : Path) (iface : Iface)
   | input (inst : Nat) (path : Path) (port : Port)
   | domain (name : String)
@@ -334,6 +336,7 @@ def Val.text : Val → String
   | .handle (.res .reg ..) => "a register"
   | .handle (.res .wire ..) => "a wire"
   | .handle (.res .output ..) => "an output"
+  | .handle (.mem ..) => "a memory"
   | .handle (.inst ..) => "an instance"
   | .handle (.input ..) => "an input of a child"
   | .handle (.domain _) => "a domain"
