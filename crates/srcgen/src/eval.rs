@@ -275,9 +275,26 @@ fn callee<'s>(name: &'s str, env: &'s Env, scope: &'s Scope) -> Result<&'s str, 
     }
 }
 
+/// The tail of an observation record: the message and the value, as `observe`
+/// prints them after the frames (front-end spec 8.2).
+fn record_tail(message: &str, value: &Value) -> String {
+    format!(
+        "{} {}",
+        Value::Str(message.to_owned()).serialize(),
+        value.serialize()
+    )
+}
+
 /// A call of a `comptime fn` with a `mut` formal: the final value of the
-/// formal, which the call writes back to its root, and the result.
-fn call_mut(def: &MutFn, root: Value, arg: Value, scope: &Scope) -> Result<(Value, Value), Fault> {
+/// formal, which the call writes back to its root, and the result. A
+/// `diagnostic` of the function appends its record tail to `log`.
+fn call_mut(
+    def: &MutFn,
+    root: Value,
+    arg: Value,
+    scope: &Scope,
+    log: &mut Vec<String>,
+) -> Result<(Value, Value), Fault> {
     let mut inner = Env::default();
     inner.statics.insert("x1".to_owned(), arg);
     inner.statics.insert("a0".to_owned(), root);
@@ -293,6 +310,9 @@ fn call_mut(def: &MutFn, root: Value, arg: Value, scope: &Scope) -> Result<(Valu
             return Err(Fault::Bound);
         }
     }
+    if let Some((message, value)) = &def.diag {
+        log.push(record_tail(message, &eval(value, &inner, scope)?));
+    }
     let result = typed(&STy::Int, eval(&def.ret, &inner, scope)?)?;
     let new = inner.statics.remove("a0").ok_or(Fault::Type)?;
     Ok((new, result))
@@ -300,8 +320,23 @@ fn call_mut(def: &MutFn, root: Value, arg: Value, scope: &Scope) -> Result<(Valu
 
 /// Executes a static statement on `env`: a `let`, a `push`, or a `pop`. The
 /// builder and the twin both run the static statements of a frame with it.
+/// They drop the records of a `diagnostic`; `exec_logged` keeps them.
 pub(crate) fn exec_static(s: &Stmt, env: &mut Env, scope: &Scope) -> Result<(), Fault> {
+    exec_logged(s, env, scope, &mut Vec::new())
+}
+
+/// `exec_static`, and the record tails of the `diagnostic` calls that the
+/// statement runs, appended to `log` in evaluation order.
+pub(crate) fn exec_logged(
+    s: &Stmt,
+    env: &mut Env,
+    scope: &Scope,
+    log: &mut Vec<String>,
+) -> Result<(), Fault> {
     match s {
+        Stmt::Diagnostic(message, value) => {
+            log.push(record_tail(message, &eval(value, env, scope)?));
+        }
         Stmt::StaticLet(name, _, value) | Stmt::MutLet(name, _, value) => {
             let v = eval(value, env, scope)?;
             env.statics.insert(name.clone(), v);
@@ -332,7 +367,7 @@ pub(crate) fn exec_static(s: &Stmt, env: &mut Env, scope: &Scope) -> Result<(), 
             };
             let arg = typed(&STy::Int, eval(arg, env, scope)?)?;
             let old = env.statics.get(root).cloned().ok_or(Fault::Type)?;
-            let (new, result) = call_mut(def, typed(&def.root, old)?, arg, scope)?;
+            let (new, result) = call_mut(def, typed(&def.root, old)?, arg, scope, log)?;
             env.statics.insert(root.clone(), new);
             env.statics.insert(name.clone(), result);
         }
@@ -1247,6 +1282,7 @@ mod tests {
             root: STy::Int,
             update: bin(SBin::Add, name_expr("a0"), name_expr("x1")),
             ret: bin(SBin::Mul, name_expr("a0"), int(2)),
+            diag: None,
         };
         let k1 = MutFn {
             name: "k1".to_owned(),
@@ -1257,6 +1293,7 @@ mod tests {
                 name_expr("x1"),
                 SExpr::Len(Box::new(name_expr("a0"))),
             ),
+            diag: None,
         };
         Scope::new(&[Item::MutFn(k0), Item::MutFn(k1)]).unwrap_or_default()
     }
@@ -1344,6 +1381,7 @@ mod tests {
             root: STy::Int,
             update: bin(SBin::Add, name_expr("a0"), name_expr("x1")),
             ret: name_expr("a0"),
+            diag: None,
         };
         let consts = [
             (

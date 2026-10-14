@@ -298,7 +298,7 @@ fn levels(t: &STy) -> u32 {
 }
 
 /// The forms of the static containers that a program holds, by name.
-fn static_forms(s: &Stats) -> [(&'static str, bool); 29] {
+fn static_forms(s: &Stats) -> [(&'static str, bool); 32] {
     [
         ("tuple", s.tuples > 0),
         ("array", s.arrays > 0),
@@ -329,6 +329,9 @@ fn static_forms(s: &Stats) -> [(&'static str, bool); 29] {
         ("mut call through a function value", s.mut_value_calls > 0),
         ("helper call through a function value", s.hw_value_calls > 0),
         ("function as a module argument", s.fn_arguments > 0),
+        ("diagnostic statement", s.diagnostics > 0),
+        ("effectful function", s.effectful_fns > 0),
+        ("call of an effectful function", s.effectful_calls > 0),
     ]
 }
 
@@ -388,7 +391,7 @@ fn programs_cover_static_containers() {
         let nested = statics.map(levels).max().unwrap_or(0) >= 2;
         *with.entry("nested or probed").or_default() += usize::from(probed || nested);
     }
-    assert_eq!(with.len(), 30, "{with:?}");
+    assert_eq!(with.len(), 33, "{with:?}");
     for (form, n) in &with {
         assert!(
             n * 10 >= TAPES,
@@ -401,6 +404,79 @@ fn programs_cover_static_containers() {
             "{form}: {fallbacks} fallbacks of {total} positions"
         );
     }
+}
+
+/// The names of the effectful functions of `p` (a `diagnostic` in the body)
+/// and of the consts that hold one.
+fn effectful(p: &Program) -> BTreeSet<String> {
+    let mut names: BTreeSet<String> = p
+        .items
+        .iter()
+        .filter_map(|i| match i {
+            Item::MutFn(f) if f.diag.is_some() => Some(f.name.clone()),
+            _ => None,
+        })
+        .collect();
+    for i in &p.items {
+        if let Item::Const {
+            name,
+            value: SExpr::Name(target),
+            ..
+        } = i
+            && names.contains(target)
+        {
+            names.insert(name.clone());
+        }
+    }
+    names
+}
+
+/// No effectful function reaches a width, a `const`, a struct argument, a
+/// parameter type, or a hardware arm (spec 9.4). Its name occurs only in
+/// its declaration, in the `const` that holds it, and as the callee of a
+/// call statement `let sN: Int = f(...)` or `let sN: Int = root.f(...)`.
+/// Those statements are not in a helper body, which holds hardware
+/// statements only.
+#[test]
+fn no_effectful_function_reaches_a_structural_position() {
+    let mut effectful_programs = 0;
+    for tape in tapes(256) {
+        let Ok(p) = build(tape) else {
+            panic!("a program faults");
+        };
+        let names = effectful(&p);
+        effectful_programs += usize::from(!names.is_empty());
+        for item in &p.items {
+            if let Item::Helper { body, .. } = item {
+                assert!(
+                    stmts_of_body(body)
+                        .iter()
+                        .all(|s| !matches!(s, Stmt::MutCall { .. } | Stmt::Diagnostic(..))),
+                    "a helper holds a static call or a diagnostic:\n{}",
+                    p.text()
+                );
+            }
+        }
+        for line in p.text().lines() {
+            let tokens: Vec<&str> = line
+                .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                .collect();
+            let uses = tokens.iter().filter(|t| names.contains(**t)).count();
+            if uses == 0 {
+                continue;
+            }
+            let t = line.trim_start();
+            let declaration = t.starts_with("comptime fn ") && uses == 1;
+            let held = t.starts_with("const F") && t.ends_with(';') && uses <= 2;
+            let call = t.starts_with("let s") && t.contains(": Int = ") && uses == 1;
+            assert!(
+                declaration || held || call,
+                "an effectful function in a structural position: {line}\n{}",
+                p.text()
+            );
+        }
+    }
+    assert!(effectful_programs >= 25, "{effectful_programs} of 256");
 }
 
 /// The depth of the instance tree below module `m`.

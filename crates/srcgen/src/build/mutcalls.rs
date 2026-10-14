@@ -63,21 +63,35 @@ impl Builder {
             envs: None,
         };
         let update = self.sexpr(Kind::Int, super::stat::DEPTH, reach(&names));
-        let mut ret = self.sexpr(Kind::Int, super::stat::DEPTH, reach(&result_names));
-        if root != STy::Int {
-            // The length of the list after the push.
-            let len = SExpr::Len(Box::new(SExpr::Name("a0".to_owned())));
-            ret = super::stat::bin(crate::program::SBin::Add, ret, len);
-        }
+        let over_result = |b: &mut Builder| {
+            let e = b.sexpr(Kind::Int, super::stat::DEPTH, reach(&result_names));
+            if root == STy::Int {
+                e
+            } else {
+                // The length of the list after the push.
+                let len = SExpr::Len(Box::new(SExpr::Name("a0".to_owned())));
+                super::stat::bin(crate::program::SBin::Add, e, len)
+            }
+        };
+        let ret = over_result(self);
+        // One function in two is effectful: it runs a `diagnostic`.
+        let diag = (self.tape.below(2) == 0).then(|| (self.next_message(), over_result(self)));
         let mut f = MutFn {
             name: format!("k{k}"),
             root,
             update,
             ret,
+            diag,
         };
         if !self.mut_sample(&f) {
             f.update = SExpr::Name("x1".to_owned());
             f.ret = SExpr::Name("x1".to_owned());
+            if let Some((_, value)) = &mut f.diag {
+                *value = SExpr::Name("x1".to_owned());
+            }
+        }
+        if f.diag.is_some() {
+            note!(self, effectful_fns);
         }
         f
     }
@@ -137,6 +151,9 @@ impl Builder {
             };
             if self.try_run(ctx, &stmt) {
                 note!(self, mut_calls);
+                if f.diag.is_some() {
+                    note!(self, effectful_calls);
+                }
                 ctx.statics.push((result, STy::Int));
                 out.push(stmt);
                 return Ok(());
