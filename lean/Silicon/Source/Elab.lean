@@ -47,8 +47,10 @@ These rules settle the open points of slice 1:
 - A register in a combinational module is `S017` at the statement, before its type.
 - A `mem` statement checks in the order of section 6.2, each error at the statement: a
   combinational module (`S017`), the word type (`memWord`), then the depth (`memDepth`). It
-  makes no `[T; N]` type. Its name binds a memory handle, which is never data (`S010`). A memory
-  without a `read_port` or a `write_port` call is `S018` at its statement.
+  makes no `[T; N]` type. Its name binds a memory handle, which is never data (`S010`). The
+  memory goes into the names of the instantiation (`Naming.mems`), where `Eval.portCall` records
+  its requests. A memory without a `read_port` or a `write_port` call is `S018` at its
+  statement. A second call of one kind is `S018` at that call.
 - A `:=` target resolves without a charge. A register, a wire, an own output, and a child input
   are targets, also through a handle alias. Each other target fails with `S017` (rule). A
   target with an index or a selector `.N` is a part of a resource: `S017` at the target.
@@ -95,13 +97,6 @@ structure WireDecl where
   ty : Ty
   pos : Pos
 
-/-! A memory: its path, its word type, its depth, and its `mem` statement (section 7.6). -/
-structure MemDecl where
-  path : Path
-  word : Ty
-  depth : Nat
-  pos : Pos
-
 /-! A child instance: its path, the interface of its instantiation, and its statement. -/
 structure ChildDecl where
   path : Path
@@ -131,7 +126,7 @@ structure Body where
   ports : Array PortDecl := #[]
   regs : Array RegDecl := #[]
   wires : Array WireDecl := #[]
-  mems : Array MemDecl := #[]
+  mems : Array Mem := #[]
   lets : Array Let := #[]
   children : Array ChildDecl := #[]
   binds : Array Bind := #[]
@@ -143,25 +138,14 @@ structure Need where
   count : Nat
 
 /-!
-The port calls of one memory by its number: its name, its `mem` statement, and the counts of its
-`read_port` calls and its `write_port` calls (section 6.2).
--/
-structure MemUse where
-  name : String
-  pos : Pos
-  reads : Nat := 0
-  writes : Nat := 0
-
-/-!
-The work of the current instantiation. The resource number indexes `needs`, the memory number
-indexes `mems`, and the instance number indexes `bound`. `inputs` counts the bindings of each
-child input. `dup` holds the first `S018` of a second binding by position. `spent` is the fuel of
-the new children.
+The work of the current instantiation. The resource number indexes `needs`, and the instance
+number indexes `bound`. The memories are in the names of the instantiation (`Naming.mems`).
+`inputs` counts the bindings of each child input. `dup` holds the first `S018` of a second
+binding by position. `spent` is the fuel of the new children.
 -/
 structure Work where
   body : Body
   needs : Array Need := #[]
-  mems : Array MemUse := #[]
   bound : Array Nat := #[]
   inputs : Std.HashMap (Nat × Nat) Nat := {}
   dup : Option Error := none
@@ -360,13 +344,15 @@ that of its free input with the least symbol.
 -/
 def bindings : EM Unit := do
   let w := (← get).work
+  let mems ← monadLift (do return (← get).naming.mems : Eval.M (Array Mem))
   let mut err := w.dup
   for r in w.needs do
     if r.count == 0 then err := earlier err ⟨.S018, r.pos, s!"`{r.name}` has no binding"⟩
-  for m in w.mems do
-    if m.reads == 0 then
+  for m in mems do
+    if let some e := m.dup then err := earlier err e
+    if m.read.isNone then
       err := earlier err ⟨.S018, m.pos, s!"the memory `{m.name}` has no `read_port`"⟩
-    else if m.writes == 0 then
+    else if m.write.isNone then
       err := earlier err ⟨.S018, m.pos, s!"the memory `{m.name}` has no `write_port`"⟩
   let mut first : Option (ChildDecl × Nat) := none
   for (c, k) in w.body.children.zipIdx do
@@ -469,9 +455,9 @@ mutual
           let t ← memWord p (← typeExpr n w)
           let k ← memDepth p (← need d (← eval n d)).value
           let path ← fresh x.id x.name.name
-          let id := (← get).work.mems.size
-          modify fun s => { s with work.mems := s.work.mems.push ⟨x.name.name, p, 0, 0⟩ }
-          modifyBody fun b => { b with mems := b.mems.push ⟨path, t, k, p⟩ }
+          let id ← monadLift (do return (← get).naming.mems.size : Eval.M Nat)
+          let m : Mem := { name := x.name.name, path := path, word := t, depth := k, pos := p }
+          monadLift (modify fun s => { s with naming.mems := s.naming.mems.push m } : Eval.M Unit)
           bindLocal x.id ⟨none, false, .handle (.mem id path t k)⟩
         | .connect p tgt v => do
           let t ← target p tgt
@@ -547,7 +533,7 @@ mutual
       set { s with table := s.table.insert key .inProgress, names := s.names.insert text,
                    work := { body := { domain := ds.head?.map fun (d : Binder) => d.name.name } } }
       monadLift (modify fun t => { t with naming := {} } : Eval.M Unit)
-      let (lets, used) ← measure do
+      let (made, used) ← measure do
         inFrame none <| withTheReader Ctx (fun c => { c with item := i, frame := ⟨none, 0⟩ }) do
           for (q, v) in ps.zip vs do
             let t ← typeExpr n q.ty
@@ -556,11 +542,11 @@ mutual
             bindLocal d.id ⟨none, false, .handle (.domain d.name.name)⟩
           block n mp body
         bindings
-        let lets ← monadLift (do return (← get).naming.lets : Eval.M (Array Let))
+        let made ← monadLift (do return (← get).naming : Eval.M Naming)
         monadLift (modify fun t => { t with naming } : Eval.M Unit)
-        return lets
+        return made
       let w := (← get).work
-      let body := { w.body with lets }
+      let body := { w.body with lets := made.lets, mems := made.mems }
       let c := iface name body
       let k := (← get).done.size
       modify fun t => { t with

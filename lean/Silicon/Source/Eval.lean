@@ -121,6 +121,15 @@ Hardware values follow v0.1 sections 1 and 3:
   at the next version of the root. It charges the size of the new root from the stored sizes,
   before the path copies and before a reference on the path expands. The held root then
   charges, and the change and the core `let` statements follow (section 5.4).
+- A memory port call `read_port(m, addr, en)` or `write_port(m, addr, data, en)` runs in the
+  order of section 6.2, each error at the call (`portCall`). The copies of the arguments charge
+  first, and the memory handle has the size 1. The first argument is a raw context: a memory,
+  else `S010`. An enclosing hardware arm is `S016`. Then `addr` takes `UInt[A]`, `en` takes
+  `Bool`, and `data` takes the word type, each as a typed use. The memory records the first
+  request of each kind. A second call runs the same steps and charges, keeps the first request,
+  and records its `S018`, which waits for the end of the body. `read_port` then charges the
+  struct use of `ReadResponse[T]`, checks the depth of the response, and charges its zero size.
+  The response refers to the word and to `m$0rvalid`, so it has no other charge.
 - `Source.Resolve` gives each call node its call site `k`: its number in the pre-order of the
   body of the enclosing item. The call frame is `<fn>$<k>c`. A call outside a body has only
   static values, so it never names hardware.
@@ -687,16 +696,25 @@ def conformVal (pos : Pos) (t : Ty) (v : Val) : M Val := do
   | v => fail .S010 pos s!"{v.text} is not data"
 
 /-!
+The typed use of `v` at `t` at `pos` after the copy of `v` charged. A read of an aggregate
+handle gives a reference, so it charges the zero size of its type before the typed use.
+-/
+def readUse (pos : Pos) (t : Ty) (v : Val) : M Val := do
+  let d ← data pos (← settle pos t v)
+  if v matches .handle _ && d matches .agg _ then charge pos d.size
+  conformVal pos t d
+
+/-!
 The copy of `v` when `copies`, then its typed use at `t` at `pos`. The copy charges the size of
 `v`, and a handle has the size 1 as in slice 1. A typed use then reads a handle. A read of an
 aggregate gives a reference, and its binding expands the reference into its leaves. Thus the
 copy also charges the size of the reference, the zero size of its type, before the typed use.
 -/
 def copyUse (pos : Pos) (t : Ty) (copies : Bool) (v : Val) : M Val := do
-  if copies then charge pos v.size
-  let d ← data pos (← settle pos t v)
-  if copies && v matches .handle _ && d matches .agg _ then charge pos d.size
-  conformVal pos t d
+  if copies then
+    charge pos v.size
+    readUse pos t v
+  else conformVal pos t v
 
 /-!
 The frame of the field pair `u` and `f` inside the current frame, with its path. Two frames
@@ -1049,6 +1067,92 @@ def primCall (p : Pos) (g : String) (h : PrimFn) (vs : List Val) : M (Option Out
     | _, vs => fail .S010 p s!"`{g}` does not accept {vs.map Val.text}"
 
 /-!
+The use at `p` of the struct item `i` with the name `x`, the parameters `ps`, the fields `fs`,
+and the prelude flag `pre`, with the values `args` of its arguments (`spec`). `ty` evaluates a
+type expression.
+-/
+def specOf (ty : Resolve.TypeExpr → M Ty) (p : Pos) (i : Nat) (x : Ident)
+    (ps : List Resolve.Param) (fs : List Resolve.StructField) (pre : Bool) (args : List Val) :
+    M Ty := do
+  if ps.length != args.length then
+    fail .S007 p s!"`{x.name}` takes {ps.length} argument(s), but it has {args.length}"
+  if (← read).binding.contains i then
+    fail .S019 p s!"the parameter types of `{x.name}` depend on `{x.name}`"
+  let work := nested p <| inFrame none <|
+      withReader (fun c => { c with item := i, frame := ⟨none, 0⟩ }) do
+    let keys ← withReader (fun c => { c with binding := i :: c.binding }) <|
+      (ps.zip args).mapM fun (q, v) => do
+        let t ← ty q.ty
+        let w ← conform p t (← static p (← settle p t v))
+        bindLocal q.name.id ⟨some t, false, .static w⟩
+        return w
+    specialize p x.name i pre keys (fs.mapM fun f => ty f.ty)
+  if pre then atUse p work else work
+
+/-!
+The use at `p` of the prelude struct `ReadResponse` at the word type `t`: `ReadResponse[T]`. It
+is the item after the user items (`Resolve.response`), and it charges as a struct use.
+-/
+def responseTy (ty : Resolve.TypeExpr → M Ty) (p : Pos) (t : Ty) : M Ty := do
+  let i := (← read).items.size - 1
+  let some (.struct _ x ps fs true) := (← read).items[i]?
+    | fail .S010 p "the prelude struct `ReadResponse` is missing"
+  specOf ty p i x ps fs true [.static (.type t)]
+
+/-!
+The typed use of `v` at `t` at `pos` as a part of a request (`readUse`). A typed use gives a
+static value, a hardware value, or a hardware aggregate.
+-/
+def requestPart (pos : Pos) (t : Ty) (v : Val) : M Agg := do
+  match (← readUse pos t v).agg? with
+  | some a => return a
+  | none => fail .S010 pos s!"{v.text} is not data"
+
+/-!
+A call at `p` of the memory port `h` with the values `vs` of its arguments in the order of the
+parameters (section 6.2). `g` is the name of the callee, and `use` gives `ReadResponse[T]` for a
+word type `T` (`responseTy`). The copies of the arguments charge first, and the memory handle
+has the size 1. The first argument is a raw context, so a memory is never read. Then come the
+effect rule (`S016`), the typed uses in the order of the arguments, and the count of the call.
+A second call of one kind runs the same steps and charges, and it gives the same response. It
+keeps the first request and records its `S018` at the call, which waits for the end of the body.
+The response of `read_port` is a record of `ReadResponse[T]`: `data` refers to the word of the
+memory at the offset 0, and `valid` refers to `m$0rvalid` (section 7.6). It charges the zero
+size of its type before it exists, so it never walks the word. `write_port` gives `()`.
+-/
+def portCall (p : Pos) (g : String) (h : PrimFn) (vs : List Val) (use : Ty → M Ty) :
+    M (Option Out) := do
+  charge p (vs.map Val.size).sum
+  let .handle (.mem id path t k) :: rest := vs
+    | fail .S010 p s!"`{g}` needs a memory, not {(vs.head?.map Val.text).getD "nothing"}"
+  if (← read).arm.isSome then
+    fail .S016 p s!"a hardware arm has no graph effect such as `{g}`"
+  let a := Ty.uint (addrWidth k)
+  let second (m : Mem) : Mem :=
+    { m with dup := earlier m.dup ⟨.S018, p, s!"a second `{g}` of the memory `{m.name}`"⟩ }
+  match h, rest with
+  | .readPort, [x, e] =>
+    let addr ← requestPart p a x
+    let en ← requestPart p .bool e
+    modify fun s => { s with naming.mems := s.naming.mems.modify id fun m =>
+      if m.read.isSome then second m else { m with read := some (addr, en) } }
+    let r ← use t
+    bounded p r.zeroDepth
+    charge p r.info.zeroSize
+    let some d := Agg.part (← get).specs p (.word path 0) t
+      | fail .S010 p s!"{t.text} has no zero"
+    let valid := Agg.hw (.mk p .bool (.ref (path.push (.role .rvalid))) [])
+    return some ⟨(Agg.mkRecord r #[d, valid]).val, false, none⟩
+  | .writePort, [x, y, e] =>
+    let addr ← requestPart p a x
+    let d ← requestPart p t y
+    let en ← requestPart p .bool e
+    modify fun s => { s with naming.mems := s.naming.mems.modify id fun m =>
+      if m.write.isSome then second m else { m with write := some (addr, d, en) } }
+    return some ⟨.static .unit, false, none⟩
+  | _, vs => fail .S010 p s!"`{g}` does not accept {vs.map Val.text}"
+
+/-!
 The evaluator. `eval`, `typeExpr`, `stmt`, and `block` are the entry functions. Each charges
 one unit, then calls deeper with the bound `n`. The helpers `name`, `spec`, `index`, `params`,
 `placeAt`, `args`, `ctor`, `actuals`, `invoke`, and `call` get the bound `n` of their caller
@@ -1233,20 +1337,7 @@ mutual
       match o.value with
       | v@(.pending ..) => pure v
       | v => return .static (← static p v)
-    if ps.length != args.length then
-      fail .S007 p s!"`{x.name}` takes {ps.length} argument(s), but it has {args.length}"
-    if (← read).binding.contains i then
-      fail .S019 p s!"the parameter types of `{x.name}` depend on `{x.name}`"
-    let work := nested p <| inFrame none <|
-        withReader (fun c => { c with item := i, frame := ⟨none, 0⟩ }) do
-      let keys ← withReader (fun c => { c with binding := i :: c.binding }) <|
-        (ps.zip args).mapM fun (q, v) => do
-          let t ← typeExpr n q.ty
-          let w ← conform p t (← static p (← settle p t v))
-          bindLocal q.name.id ⟨some t, false, .static w⟩
-          return w
-      specialize p x.name i pre keys (fs.mapM fun f => typeExpr n f.ty)
-    if pre then atUse p work else work
+    specOf (fun t => typeExpr n t) p i x ps fs pre args
   termination_by (n + 1, 0)
 
   /--
@@ -1461,7 +1552,9 @@ mutual
       let pl ← placeAt n l.pos .S008 l
       shut pl.id
       popFrom p g pl
-    | .prim g h => primCall p g h (← args n b xs)
+    | .prim g h =>
+      if h.port then portCall p g h (← args n b xs) (responseTy (fun t => typeExpr n t) p)
+      else primCall p g h (← args n b xs)
     | .value o =>
       let .static (.function i g qs _) := o.value | ctor n p o b xs
       if qs.size != xs.length then
