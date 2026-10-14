@@ -543,4 +543,178 @@ def andChain (n : Nat) : String :=
   | .error _ => "error"
 #guard andChain 100000 == "ok 1587"
 
+/-!
+The memory block of section 7.6. The memory has the depth `n` and the word type `w`. It has one
+read and one write, and `r` binds the response.
+-/
+def memory (name w : String) (n : Nat) (a : Nat) : String :=
+  s!"module M() \{\n  input ra: UInt[{a}];\n  input re: Bool;\n  input wa: UInt[{a}];\n" ++
+  s!"  input wd: {w};\n  input we: Bool;\n  output v: Bool;\n" ++
+  s!"  mem {name}: [{w}; {n}];\n  let r = read_port({name}, ra, re);\n" ++
+  s!"  write_port({name}, wa, wd, we);\n  v := r.valid;\n}\n"
+
+/-! The lowered design before the canonical sort: the statements in the order of the lowering. -/
+def raw (src t : String) : String :=
+  match Cli.elabChecked {} src t Names.sha16 with
+  | .ok c => Core.print c.design
+  | .error _ => "error"
+
+/-! The ports and the domain of `memory`, in layout order. -/
+def memPorts (a w : Nat) : List String := [
+  "    (input clock$0clk clock)",
+  "    (input clock$0rst (bits 1))",
+  s!"    (input ra (bits {a}))",
+  "    (input re (bits 1))",
+  s!"    (input wa (bits {a}))",
+  s!"    (input wd (bits {w}))",
+  "    (input we (bits 1))",
+  "    (output v (bits 1))"]
+
+/-!
+The block of one memory in the order of the lowering. The memory comes first, then the two
+response registers and the request `let` values. The two `next` statements and the write come
+last. A depth of `2^A` has the `valid` bit `(const 1 1)`.
+-/
+#guard raw (memory "m" "UInt[8]" 4 2) "M" == text ([
+  "(design M",
+  "  (module M"] ++ memPorts 2 8 ++ [
+  "    (mem m (bits 8) 4 clock$0clk)",
+  "    (reg m$0rdata (bits 8) clock$0clk (reset sync clock$0rst (const 8 0)))",
+  "    (reg m$0rvalid (bits 1) clock$0clk (reset sync clock$0rst (const 1 0)))",
+  "    (let m$0ren (bits 1) re)",
+  "    (let m$0raddr (bits 2) ra)",
+  "    (next m$0rdata (mux m$0ren (read m m$0raddr) m$0rdata))",
+  "    (next m$0rvalid (and m$0ren (const 1 1)))",
+  "    (write m 0 wa wd (and we (xor clock$0rst (const 1 1))))",
+  "    (let r$data (bits 8) (extract m$0rdata 0 8))",
+  "    (let r$valid (bits 1) m$0rvalid)",
+  "    (assign v r$valid)))"])
+
+/-!
+The memories lower after the registers and before the named `let` values, in declaration order.
+-/
+def twoMems : String :=
+  "module M() {\n  input a: UInt[1];\n  input e: Bool;\n  output y: Bool;\n" ++
+  "  reg q: Bool = false;\n  mem b: [Bool; 2];\n  mem a1: [Bool; 2];\n" ++
+  "  let x = b.read_port(a, e);\n  b.write_port(a, e, e);\n" ++
+  "  let z = a1.read_port(a, e);\n  a1.write_port(a, e, e);\n" ++
+  "  q := x.data;\n  y := z.valid;\n}\n"
+#guard ((raw twoMems "M").splitOn "\n").filterMap (fun l =>
+    let w := (l.trimAsciiStart.toString.splitOn " ").take 2
+    if l.startsWith "    (" && !l.startsWith "    (input" && !l.startsWith "    (output" then
+      some (" ".intercalate w) else none) == [
+  "(reg q", "(mem b", "(reg b$0rdata", "(reg b$0rvalid", "(let b$0ren", "(let b$0raddr",
+  "(next b$0rdata", "(next b$0rvalid", "(write b", "(mem a1", "(reg a1$0rdata",
+  "(reg a1$0rvalid", "(let a1$0ren", "(let a1$0raddr", "(next a1$0rdata", "(next a1$0rvalid",
+  "(write a1", "(let x$data", "(let x$valid", "(let z$data", "(let z$valid", "(next q",
+  "(assign y"]
+
+/-! A depth that is not `2^A`, such as 3, 1, or 5, compares the read address with the depth. -/
+#guard (sil (memory "m" "UInt[8]" 3 2) "M").splitOn "\n" |>.contains
+  "    (next m$0rvalid (and m$0ren (icmp ult m$0raddr (const 2 3))))"
+#guard (sil (memory "m" "UInt[8]" 1 1) "M").splitOn "\n" |>.contains
+  "    (next m$0rvalid (and m$0ren (icmp ult m$0raddr (const 1 1))))"
+#guard (sil (memory "m" "UInt[8]" 2 1) "M").splitOn "\n" |>.contains
+  "    (next m$0rvalid (and m$0ren (const 1 1)))"
+#guard (sil (memory "m" "UInt[8]" 5 3) "M").splitOn "\n" |>.contains
+  "    (next m$0rvalid (and m$0ren (icmp ult m$0raddr (const 3 5))))"
+
+/-!
+A word of a record: each leaf is an `extract` at the sum of the widths of the earlier leaves.
+The write data is the `concat` chain with the first leaf in the least significant bits. A
+second `read_port` is `S018` at the call.
+-/
+def recordWord : String :=
+  "struct W { a: UInt[3], b: Bool, c: SInt[4] }\n" ++
+  "module M() {\n  input ra: UInt[2];\n  input re: Bool;\n  input wd: W;\n" ++
+  "  output o: W;\n  output q: SInt[4];\n  mem m: [W; 3];\n" ++
+  "  let r = m.read_port(ra, re);\n  m.write_port(ra, wd, re);\n" ++
+  "  o := r.data;\n  q := m.read_port(ra, re).data.c;\n}\n"
+#guard sil recordWord "M" == "S018 12:8"
+def recordWord1 : String := recordWord.replace "m.read_port(ra, re).data.c" "r.data.c"
+#guard ((sil recordWord1 "M").splitOn "\n").filter (fun l =>
+    (l.splitOn "extract").length > 1 || (l.splitOn "(write").length > 1) == [
+  "    (let r$data$a (bits 3) (extract m$0rdata 0 3))",
+  "    (let r$data$b (bits 1) (extract m$0rdata 3 1))",
+  "    (let r$data$c (bits 4) (extract m$0rdata 4 4))",
+  "    (write m 0 ra (concat wd$c (concat wd$b wd$a)) (and re (xor clock$0rst (const 1 1))))"]
+
+/-!
+An array word: the element `k` is at the offset `k * w`. A static leaf of the data is a constant.
+-/
+def arrayWord : String :=
+  "module M() {\n  input a: UInt[2];\n  input x: UInt[5];\n  output q: UInt[5];\n" ++
+  "  mem m: [[UInt[5]; 3]; 4];\n  let r = m.read_port(a, true);\n" ++
+  "  m.write_port(a, [x, 7, x], true);\n  q := r.data[2];\n}\n"
+#guard ((sil arrayWord "M").splitOn "\n").filter (fun l =>
+    (l.splitOn "extract").length > 1 || (l.splitOn "(write").length > 1 ||
+    (l.splitOn "$0r").length > 1 && l.startsWith "    (let") == [
+  "    (let m$0raddr (bits 2) a)",
+  "    (let m$0ren (bits 1) (const 1 1))",
+  "    (let r$data$0e (bits 5) (extract m$0rdata 0 5))",
+  "    (let r$data$1e (bits 5) (extract m$0rdata 5 5))",
+  "    (let r$data$2e (bits 5) (extract m$0rdata 10 5))",
+  "    (let r$valid (bits 1) m$0rvalid)",
+  "    (write m 0 a (concat x (concat (const 5 7) x)) " ++
+    "(and (const 1 1) (xor clock$0rst (const 1 1))))"]
+
+/-!
+A word of 200 leaves: the spine of the write data binds `m$<k>t` each time it reaches the height
+64. The first temporary holds the leaves 0 to 63, and each later one holds 63 more leaves and
+the earlier temporary. The temporaries of the address come first, and those of the enable last.
+-/
+def wideWord : String :=
+  "module M() {\n  input x: [Bool; 200];\n  input a: UInt[3];\n  input c: UInt[8];\n" ++
+  "  output v: Bool;\n  mem m: [[Bool; 200]; 8];\n" ++
+  "  let r = m.read_port(a >> (c +% c), true);\n" ++
+  "  m.write_port(a >> (c +% c), x, (a >> (c +% c)) == a);\n  v := r.valid;\n}\n"
+
+/-! The chain of the leaves `x$<lo>e` to `x$<hi>e` over `base`. -/
+def cat (lo hi : Nat) (base : String) : String :=
+  (List.range (hi + 1 - lo)).foldl (fun e i => s!"(concat x${lo + i}e {e})") base
+
+/-! The shift `a >> (c +% c)` with the temporary `t` for its count. -/
+def shiftBy (t : String) : String :=
+  s!"(mux (icmp uge {t} (const 8 3)) (const 3 0) (shru a (extract {t} 0 3)))"
+
+#guard ((sil wideWord "M").splitOn "\n").filter (fun l =>
+    l.startsWith "    (write" || l.startsWith "    (let m$0raddr" ||
+    ["0", "1", "2", "3", "4"].any (fun k => l.startsWith s!"    (let m${k}t")) == [
+  s!"    (let m$0raddr (bits 3) {shiftBy "m$0raddr$0t"})",
+  "    (let m$0raddr$0t (bits 8) (add c c))",
+  "    (let m$0t (bits 8) (add c c))",
+  s!"    (let m$1t (bits 64) {cat 1 63 "x$0e"})",
+  s!"    (let m$2t (bits 127) {cat 64 126 "m$1t"})",
+  s!"    (let m$3t (bits 190) {cat 127 189 "m$2t"})",
+  "    (let m$4t (bits 8) (add c c))",
+  s!"    (write m 0 {shiftBy "m$0t"} {cat 190 199 "m$3t"} " ++
+    s!"(and (icmp eq {shiftBy "m$4t"} a) (xor clock$0rst (const 1 1))))"]
+
+/-!
+A user name alone that equals a core keyword gets the field `0k`, and its role names do not.
+The source keyword `mem` cannot name a memory.
+-/
+#guard ((sil (memory "add" "UInt[8]" 4 2) "M").splitOn "\n").filter (fun l =>
+    l.startsWith "    (mem" || l.startsWith "    (next" || l.startsWith "    (write") == [
+  "    (mem add$0k (bits 8) 4 clock$0clk)",
+  "    (next add$0rdata (mux add$0ren (read add$0k add$0raddr) add$0rdata))",
+  "    (next add$0rvalid (and add$0ren (const 1 1)))",
+  "    (write add$0k 0 wa wd (and we (xor clock$0rst (const 1 1))))"]
+#guard ((sil (memory "read" "UInt[8]" 4 2) "M").splitOn "\n").filter (fun l =>
+    l.startsWith "    (mem" || l.startsWith "    (reg") == [
+  "    (reg read$0rdata (bits 8) clock$0clk (reset sync clock$0rst (const 8 0)))",
+  "    (reg read$0rvalid (bits 1) clock$0clk (reset sync clock$0rst (const 1 0)))",
+  "    (mem read$0k (bits 8) 4 clock$0clk)"]
+#guard sil (memory "mem" "UInt[8]" 4 2) "M" == "S001 8:7"
+
+/-!
+The lowering of `memory` with the depth 4 charges 245 units. The module charges 2, the domain
+20, the ports 17, and the block 164. The response lets charge 31, the binding 9, and the design
+2. A fuel one unit below the total
+gives `S015` at the top selection.
+-/
+#guard lowering (memory "m" "UInt[8]" 4 2) == 245
+#guard sil (memory "m" "UInt[8]" 4 2) "M" (Test.Elab.total (memory "m" "UInt[8]" 4 2) "M" - 1) ==
+  "S015 1:1"
+
 end Silicon.Source.Test.Flatten
