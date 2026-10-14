@@ -116,9 +116,13 @@ pub(crate) fn run(resolved: &Resolved) -> Vec<Error> {
         seq: 0,
         mutable: BTreeSet::new(),
         pending: BTreeMap::new(),
+        comptime: false,
     };
-    for item in resolved.ast() {
-        walker.item(item);
+    for (i, item) in resolved.ast().iter().enumerate() {
+        // The prelude struct has no source position, so its errors would not rank by position.
+        if !resolved.is_prelude_item(i) {
+            walker.item(item);
+        }
     }
     walker.finish()
 }
@@ -135,6 +139,7 @@ pub(crate) fn run_expr(resolved: &Resolved, expr: &ResolvedExpr) -> Vec<Error> {
         seq: 0,
         mutable: BTreeSet::new(),
         pending: BTreeMap::new(),
+        comptime: false,
     };
     walker.expr(true, expr.expr());
     walker.finish()
@@ -194,6 +199,8 @@ struct Walker<'a> {
     /// For each root, the number of open windows that hold it as pending. A `mut` actual reads
     /// and changes only the counter of its root, so it needs no scan of the open windows.
     pending: BTreeMap<DeclId, usize>,
+    /// Whether the body of a `comptime fn` is open, for `S006` at a memory port call.
+    comptime: bool,
 }
 
 fn type_arity(p: Prelude) -> usize {
@@ -471,6 +478,24 @@ impl<'a> Walker<'a> {
         self.visit(is_static, false, expr);
     }
 
+    /// `S006` at the call `pos` of a memory port function in a `comptime fn`. It reads the
+    /// resolved callee, so a user function with such a name has no rule. It comes before the
+    /// `S007` of the call.
+    fn port_call(&mut self, pos: Pos, id: NodeId) {
+        if self.comptime
+            && matches!(
+                self.target(id),
+                Some(Target::Prelude(Prelude::ReadPort | Prelude::WritePort))
+            )
+        {
+            self.report(
+                Code::S006,
+                pos,
+                "a `comptime fn` has no memory port call".to_owned(),
+            );
+        }
+    }
+
     /// An expression. `is_static` is true in a static position. `base` is true for the base of
     /// an index, whose index holds the arguments of a type name. The result is the type head
     /// of a type in an expression: a type name, an index of one, or `[T; N]`. Another
@@ -505,6 +530,9 @@ impl<'a> Walker<'a> {
             Expr::Call {
                 pos, callee, args, ..
             } => {
+                if let Expr::Name { id, .. } = &**callee {
+                    self.port_call(*pos, *id);
+                }
                 let head = self.visit(true, false, callee);
                 let target = self.call(*pos, callee, head.as_ref(), args.len());
                 let mut roots = Vec::new();
@@ -525,6 +553,7 @@ impl<'a> Walker<'a> {
                 // The receiver evaluates first. It binds to the parameter `bound`, so the
                 // argument `k` binds to the parameter `k` before `bound` and to `k + 1` from
                 // `bound` on.
+                self.port_call(*pos, name.id);
                 let bound = self.receiver(*pos, *id, name.id, &name.name, args.len());
                 let callee = bound.map(|(c, _)| c);
                 let at = bound.map_or(0, |(_, b)| b);
@@ -762,7 +791,9 @@ impl<'a> Walker<'a> {
                 } else {
                     Owner::Fn
                 };
+                self.comptime = *comptime;
                 self.stmts(owner, body);
+                self.comptime = false;
             }
             Item::Module { params, body, .. } => {
                 self.params(params);
