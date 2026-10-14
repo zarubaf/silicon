@@ -27,6 +27,11 @@ pub(crate) fn port_name(x: &str) -> Name {
 pub(crate) enum Op {
     Ref(PathId),
     Out(PathId, PathId),
+    /// A leaf of the word of the memory at the path, at a bit offset. It holds the path once, as
+    /// an id, and it lowers to an `extract` of the read register (section 7.6).
+    // The memory block reads it in a later commit.
+    #[allow(dead_code)]
+    Word(PathId, u64),
     Lit(Value),
     /// A static shift count `k`, as the `Int` constant of Lean. The lowering reads only
     /// `min k w` for a width `w` of at most 65536, so the node keeps `min k 65536`, and the
@@ -47,15 +52,16 @@ pub(crate) enum Op {
 }
 
 impl Op {
-    /// The size of a node of the type `ty` without its operands. A name and a child output refer
-    /// to a core name, and each has the size of a finite value of its type (section 5.4). A
+    /// The size of a node of the type `ty` without its operands. A name, a child output, and a
+    /// leaf of a memory word refer to a core name, and each has the size of a finite value of its
+    /// type (section 5.4). A
     /// constant has the size of its value. Each other node has the size 1.
     fn size(&self, ty: &Ty) -> u64 {
         match self {
             Op::Lit(v) => v.size(),
             Op::Count { size, .. } => *size,
             Op::Share(_) => 0,
-            Op::Ref(_) | Op::Out(..) => match ty {
+            Op::Ref(_) | Op::Out(..) | Op::Word(..) => match ty {
                 Ty::UInt(w) | Ty::SInt(w) => width_size(*w),
                 _ => 1,
             },

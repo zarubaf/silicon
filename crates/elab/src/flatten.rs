@@ -1058,6 +1058,7 @@ impl Lower<'_> {
                         let port = with_fields(&self.path(*q), below);
                         Ok(self.out_leaf(pos, &inst, &port)?.0)
                     }
+                    Base::Word(..) => defect("a memory word has no lowering yet"),
                 }
             }
             Src::Missing | Src::Agg(_) | Src::Ref(..) => defect("a bound value has no leaf there"),

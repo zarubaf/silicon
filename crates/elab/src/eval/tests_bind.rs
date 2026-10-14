@@ -30,6 +30,7 @@ fn base_text(ev: &Evaluator<'_>, b: &Base) -> String {
     match b {
         Base::Name(p) => name_of(ev, *p),
         Base::Out(i, q) => format!("{}.{}", name_of(ev, *i), name_of(ev, *q)),
+        Base::Word(m, off) => format!("{}+{off}", name_of(ev, *m)),
     }
 }
 

@@ -219,6 +219,11 @@ struct Entry {
     meta: Meta,
     /// The depth of the zero value of the type, from the type alone (section 5.5).
     zero_depth: u64,
+    /// For a tuple or a struct type, the bit offset of each part in a word of the type: the
+    /// sum of the widths of the parts before it, saturated. Thus a step on the base of a word
+    /// reads one number (`Types::offset`) and sums nothing. The offsets of a type that is no
+    /// memory word never serve, so a width above `u64` saturates.
+    prefix: Vec<u64>,
 }
 
 /// The state of a struct specialization.
@@ -235,6 +240,8 @@ pub struct Spec {
     name: String,
     args: Vec<Value>,
     state: SpecState,
+    /// Whether the struct item is the prelude struct `ReadResponse`.
+    prelude: bool,
 }
 
 impl Spec {
@@ -248,6 +255,12 @@ impl Spec {
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Whether the struct item is the prelude struct `ReadResponse`.
+    #[must_use]
+    pub fn prelude(&self) -> bool {
+        self.prelude
     }
 }
 
@@ -345,6 +358,7 @@ static ABSENT_SPEC: Spec = Spec {
     name: String::new(),
     args: Vec::new(),
     state: SpecState::InProgress,
+    prelude: false,
 };
 
 impl Types {
@@ -431,7 +445,24 @@ impl Types {
             Ty::Tuple(parts) => parts.iter().any(|part| part.funcs),
             _ => false,
         };
-        self.insert_shaped(ty, (size, depth), (strings, funcs), meta)
+        let prefix = match &ty {
+            Ty::Tuple(parts) => self.prefix_of(parts),
+            _ => Vec::new(),
+        };
+        self.insert_shaped(ty, (size, depth), (strings, funcs), meta, prefix)
+    }
+
+    /// The offsets of the parts `parts`: for each, the sum of the widths of the parts before it.
+    fn prefix_of(&self, parts: &[TyId]) -> Vec<u64> {
+        let mut sum = 0u64;
+        parts
+            .iter()
+            .map(|part| {
+                let before = sum;
+                sum = sum.saturating_add(self.meta(*part).width.to_u64().unwrap_or(u64::MAX));
+                before
+            })
+            .collect()
     }
 
     fn insert_shaped(
@@ -440,6 +471,7 @@ impl Types {
         (size, depth): (u64, u64),
         (strings, funcs): (bool, bool),
         meta: Meta,
+        prefix: Vec<u64>,
     ) -> TyId {
         let id = TyId {
             index: self.entries.len(),
@@ -454,6 +486,7 @@ impl Types {
             text_len: None,
             meta,
             zero_depth,
+            prefix,
         });
         self.index.insert(ty, id);
         id
@@ -590,6 +623,28 @@ impl Types {
             .sum()
     }
 
+    /// The bit offset of the part `k` in a word of the container type `t` (section 7.6). The
+    /// first leaf is in the least significant bits. For an array it is `k` times the width of
+    /// the element, and for a tuple or a struct type the sum of the widths of the earlier parts.
+    /// The type stores the sums, so the work is constant.
+    #[must_use]
+    pub fn offset(&self, t: TyId, k: u64) -> u64 {
+        match self.get(t) {
+            Ty::Array(elem, _) => self
+                .meta(*elem)
+                .width
+                .to_u64()
+                .unwrap_or(u64::MAX)
+                .saturating_mul(k),
+            Ty::Tuple(_) | Ty::Struct(_) => usize::try_from(k)
+                .ok()
+                .and_then(|k| self.entries.get(t.index)?.prefix.get(k))
+                .copied()
+                .unwrap_or(0),
+            _ => 0,
+        }
+    }
+
     /// The depth of the zero value of `t`, from the type alone.
     #[must_use]
     pub fn zero_depth(&self, t: TyId) -> u64 {
@@ -723,9 +778,15 @@ impl Types {
         Some((found, self.spec_ty(found)))
     }
 
-    /// Starts the specialization of the struct item `item` named `name`. The caller paid the
-    /// size of the arguments, which it moves here.
-    pub fn begin_spec(&mut self, name: &str, item: usize, args: Vec<Value>) -> SpecId {
+    /// Starts the specialization of the struct item `item` named `name`, which is the prelude
+    /// struct if `prelude`. The caller paid the size of the arguments, which it moves here.
+    pub fn begin_spec(
+        &mut self,
+        name: &str,
+        item: usize,
+        args: Vec<Value>,
+        prelude: bool,
+    ) -> SpecId {
         #[cfg(test)]
         self.tick(1 + args.len() as u64);
         let s = SpecId(self.specs.len());
@@ -738,6 +799,7 @@ impl Types {
             name: name.to_owned(),
             args,
             state: SpecState::InProgress,
+            prelude,
         });
         s
     }
@@ -772,7 +834,8 @@ impl Types {
         let strings = fields.iter().any(|field| field.strings);
         // The function flag of a struct reads the field types, not the static arguments.
         let funcs = fields.iter().any(|field| field.funcs);
-        let ty = self.insert_shaped(Ty::Struct(s), (size, depth), (strings, funcs), meta);
+        let prefix = self.prefix_of(&fields);
+        let ty = self.insert_shaped(Ty::Struct(s), (size, depth), (strings, funcs), meta, prefix);
         if let Some(spec) = self.specs.get_mut(s.0) {
             spec.state = SpecState::Done { ty, fields };
         }

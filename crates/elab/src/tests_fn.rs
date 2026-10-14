@@ -92,11 +92,11 @@ fn the_function_flag_of_the_metadata() {
     let plain_list = tys.list(strings);
     let plain_array = tys.array(plain_list, Int::from_u64(2));
     assert!(!plain.holds_fn() && !plain_array.holds_fn() && !flag.holds_fn());
-    let spec = tys.begin_spec("Holder", 0, Vec::new());
+    let spec = tys.begin_spec("Holder", 0, Vec::new(), false);
     let (meta, depth) = tys.struct_meta(spec, &[pred]);
     let holder = tys.finish_spec(spec, vec![pred], meta, depth);
     assert!(holder.holds_fn() && tys.list(holder).holds_fn());
-    let spec = tys.begin_spec("Tag", 1, vec![Value::Type(pred)]);
+    let spec = tys.begin_spec("Tag", 1, vec![Value::Type(pred)], false);
     let (meta, depth) = tys.struct_meta(spec, &[]);
     let tag = tys.finish_spec(spec, Vec::new(), meta, depth);
     assert!(!tag.holds_fn());

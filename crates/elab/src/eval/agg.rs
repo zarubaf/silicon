@@ -124,11 +124,12 @@ impl Evaluator<'_> {
         #[cfg(test)]
         crate::counters::add(crate::counters::Count::Selected, 1);
         let lazy = match self.store.seen(&out) {
-            Seen::Agg(Agg::Ref(base, _)) => {
+            Seen::Agg(Agg::Ref(base, parent)) => {
                 let Some(ft) = ft else {
                     return fail(Code::S010, pos, "the part has no type".to_owned());
                 };
-                Some((base.sub(&mut self.paths, step), ft))
+                let offset = self.tys.offset(*parent, k as u64);
+                Some((base.sub(&mut self.paths, step, offset), ft))
             }
             _ => None,
         };
@@ -552,21 +553,23 @@ impl Evaluator<'_> {
         }
     }
 
-    /// The type and the leaf field of the part `k` of the container type `t`.
-    pub(super) fn child_of(&self, pos: Pos, t: TyId, k: u64) -> Res<(TyId, Step)> {
+    /// The type, the leaf field, and the bit offset in a word of the part `k` of the container
+    /// type `t`. The table stores the offsets, so the work is constant.
+    pub(super) fn child_of(&self, pos: Pos, t: TyId, k: u64) -> Res<(TyId, Step, u64)> {
         let idx = usize::try_from(k).unwrap_or(usize::MAX);
-        match self.tys.get(t) {
-            Ty::Array(e, _) => Ok((*e, Step::Elem(k))),
+        let (part, step) = match self.tys.get(t) {
+            Ty::Array(e, _) => (*e, Step::Elem(k)),
             Ty::Tuple(ts) => match ts.get(idx) {
-                Some(u) => Ok((*u, Step::Elem(k))),
-                None => fail(Code::S010, pos, "the part does not exist".to_owned()),
+                Some(u) => (*u, Step::Elem(k)),
+                None => return fail(Code::S010, pos, "the part does not exist".to_owned()),
             },
             Ty::Struct(_) => match self.tys.fields(t).and_then(|(_, fs)| fs.get(idx)) {
-                Some(u) => Ok((*u, self.field_step(t, idx, pos)?)),
-                None => fail(Code::S010, pos, "the part does not exist".to_owned()),
+                Some(u) => (*u, self.field_step(t, idx, pos)?),
+                None => return fail(Code::S010, pos, "the part does not exist".to_owned()),
             },
-            _ => fail(Code::S010, pos, "the type has no parts".to_owned()),
-        }
+            _ => return fail(Code::S010, pos, "the type has no parts".to_owned()),
+        };
+        Ok((part, step, self.tys.offset(t, k)))
     }
 
     /// The core `let` statements of the leaves of the reference to `base` of type `t`, at the
@@ -628,8 +631,8 @@ impl Evaluator<'_> {
             let k = top.next;
             top.next += 1;
             let (ty, base_ty, path) = (top.ty, top.base.clone(), top.path);
-            let (child, step) = self.child_of(pos, ty, k)?;
-            let sub = base_ty.sub(&mut self.paths, step.clone());
+            let (child, step, offset) = self.child_of(pos, ty, k)?;
+            let sub = base_ty.sub(&mut self.paths, step.clone(), offset);
             visit = Some((sub, self.paths.push(path, step), child));
         }
     }
@@ -674,7 +677,7 @@ impl Evaluator<'_> {
                     work.push(Bind::Build(n.ty, parts.len()));
                     let mut children = Vec::with_capacity(parts.len());
                     for (k, x) in parts.into_iter().enumerate() {
-                        let (_, step) = self.child_of(pos, n.ty, k as u64)?;
+                        let (_, step, _) = self.child_of(pos, n.ty, k as u64)?;
                         children.push(Bind::Visit(x, self.paths.push(path, step)));
                     }
                     work.extend(children.into_iter().rev());
@@ -707,8 +710,8 @@ impl Evaluator<'_> {
         for k in 0..count {
             #[cfg(test)]
             crate::counters::add(crate::counters::Count::Expanded, 1);
-            let (ty, step) = self.child_of(pos, t, k)?;
-            let sub = base.sub(&mut self.paths, step);
+            let (ty, step, offset) = self.child_of(pos, t, k)?;
+            let sub = base.sub(&mut self.paths, step, offset);
             parts.push(self.part_of(pos, sub, ty)?);
         }
         match Agg::node(&self.graph, &self.tys, t, parts) {
