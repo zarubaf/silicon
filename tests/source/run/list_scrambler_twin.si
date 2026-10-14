@@ -1,0 +1,57 @@
+// An LFSR scrambler whose tap list is a table that a list builds. A helper with a `mut` list adds each tap
+// through a receiver call. A comptime loop over the length of the table builds the XOR network of the feedback.
+// A static assert fixes the tap count, and a diagnostic record names the table with a string.
+// TOP Scrambler()
+comptime fn add_tap(mut xs: List[Nat], t: Nat) -> () {
+    xs.push(t);
+    return ();
+}
+comptime fn taps(comptime n: Nat) -> List[Nat] {
+    let mut xs = list(Nat);
+    comptime for i in 0..4 {
+        xs.add_tap(n - 1 - 2 * i);
+    }
+    return xs;
+}
+const TAPS: List[Nat] = taps(8);
+module Scrambler() {
+    input en: Bool;
+    input d: UInt[8];
+    output y: UInt[8];
+    reg lfsr: UInt[8] = 1;
+    static_assert(len(TAPS) == 4, "four taps");
+    diagnostic("taps " + str(len(TAPS)), TAPS);
+    let mut fb = UInt[8](0);
+    comptime for k in 0..len(TAPS) {
+        fb = fb ^ ((lfsr >> TAPS[k]) & 1);
+    }
+    lfsr := if (en) { (lfsr << 1) | fb } else { lfsr };
+    y := d ^ lfsr;
+}
+// The record: one for the top, once, with the table that the list builds. The element type token of the list is not fixed by the spec text for a Nat list, so the pattern accepts any word.
+// OBSERVE-COUNT-1: (record 23 5 Scrambler () (string "taps 4") (list {{[a-z]+}} ((int 7) (int 5) (int 3) (int 1))))
+// OBSERVE-NOT: (record
+// reset from the all-zero start: the output shows d xor 0, and the register takes its reset value 1
+// STEP in=(clock$0rst true d 170 en false) out=(y 170)
+// the register shifts, and no tap is set in 1, so the feedback is 0
+// STEP in=(clock$0rst false d 0 en true) out=(y 1)
+// the register is 2: the tap at bit 1 gives the feedback 1
+// STEP in=(clock$0rst false d 0 en true) out=(y 2)
+// the register is 5: no tap is set
+// STEP in=(clock$0rst false d 255 en true) out=(y 250)
+// the register is 10 and takes no step
+// STEP in=(clock$0rst false d 15 en false) out=(y 5)
+// STEP in=(clock$0rst false d 0 en true) out=(y 10)
+// STEP in=(clock$0rst false d 1 en true) out=(y 21)
+// STEP in=(clock$0rst false d 0 en true) out=(y 40)
+// STEP in=(clock$0rst false d 0 en true) out=(y 80)
+// the register is 160: the two taps at bits 7 and 5 give the feedback 0
+// STEP in=(clock$0rst false d 0 en true) out=(y 160)
+// STEP in=(clock$0rst false d 0 en true) out=(y 64)
+// the register is 128: the tap at bit 7 gives the feedback 1, and the shift drops bit 7
+// STEP in=(clock$0rst false d 0 en true) out=(y 128)
+// the register is 1 again
+// STEP in=(clock$0rst false d 85 en true) out=(y 84)
+// reset with the enable on: the output shows the register 2, and the next register is 1
+// STEP in=(clock$0rst true d 7 en true) out=(y 5)
+// STEP in=(clock$0rst false d 0 en false) out=(y 1)
