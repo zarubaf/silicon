@@ -8,12 +8,14 @@ use anyhow::{Context, Result, bail};
 use cargo_metadata::MetadataCommand;
 use regex::Regex;
 
+use crate::arch_review::paths::{self as arch_paths, Pattern};
 use crate::lean::strip_comments_and_strings;
 use crate::paths;
 use crate::repo::Repo;
 use crate::violation::{Severity, Violation};
 use crate::workspace::EXEMPT;
 
+const ARCHITECTURE: &str = "doc/architecture.md";
 const TRUST: &str = "doc/trust.md";
 const LAKEFILE: &str = "lean/lakefile.toml";
 const EXE: &str = "silicon-check";
@@ -566,6 +568,58 @@ fn core_modules(repo: &Repo) -> Vec<String> {
         .collect()
 }
 
+/// The Lean files that no architecture path needs to cover: proofs, tests, and executable
+/// support. `doc/architecture.md` names them too. Same syntax as an architecture path.
+const NON_NORMATIVE: &[&str] = &[
+    "lean/Silicon/Core/Canonical/",
+    "lean/Silicon/Core/Interp/",
+    "lean/Silicon/Core/Proof/",
+    "lean/Silicon/Core/Test/",
+    "lean/Silicon/Source/Proof/",
+    "lean/Silicon/Source/Test/",
+    "lean/Silicon/Core/Interp.lean",
+    "lean/Silicon/Core/Vectors.lean",
+    "lean/Silicon/Core/Complete.lean",
+    "lean/Silicon/Core/DependencyTable.lean",
+    "lean/Silicon/Core/DepsReach.lean",
+    "lean/Silicon/Core/Graph*.lean",
+    "lean/Silicon/Core/Index.lean",
+    "lean/Silicon/Core/List.lean",
+    "lean/Silicon/Core/Order.lean",
+    "lean/Silicon/Core/Reassemble.lean",
+    "lean/Silicon/Core/StatementOrder.lean",
+];
+
+/// Rule `arch-paths`: each Lean file under `lean/Silicon/Core/` and `lean/Silicon/Source/`
+/// matches an architecture path or a `NON_NORMATIVE` path. Else a change there skips the
+/// architecture review.
+pub fn architecture_path_violations(
+    files: &[String],
+    architecture: &str,
+) -> Result<Vec<Violation>> {
+    let covered = arch_paths::parse(architecture)?;
+    let skipped = NON_NORMATIVE
+        .iter()
+        .map(|p| Pattern::parse(p))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(files
+        .iter()
+        .filter(|f| Path::new(f).extension().is_some_and(|e| e == "lean"))
+        .filter(|f| f.starts_with("lean/Silicon/Core/") || f.starts_with("lean/Silicon/Source/"))
+        .filter(|f| !covered.iter().chain(&skipped).any(|p| p.matches(f)))
+        .map(|f| {
+            error(
+                f,
+                None,
+                "arch-paths",
+                format!(
+                    "no architecture path covers this Lean file: add it to {ARCHITECTURE}, or to `NON_NORMATIVE` in xtask/src/arch.rs"
+                ),
+            )
+        })
+        .collect())
+}
+
 /// The root module of the `silicon-check` executable.
 pub fn exe_root(lakefile: &str) -> Result<String> {
     let doc: toml::Table = lakefile
@@ -622,6 +676,15 @@ pub fn check(repo: &Repo) -> Result<Vec<Violation>> {
     };
     out.extend(exe_import_violations(&root, &read)?);
     out.extend(core_import_violations(&core_modules(repo), &read)?);
+    let files: Vec<String> = repo
+        .files
+        .iter()
+        .filter_map(|f| f.path.to_str().map(str::to_owned))
+        .collect();
+    out.extend(architecture_path_violations(
+        &files,
+        &repo.read(Path::new(ARCHITECTURE))?,
+    )?);
     Ok(out)
 }
 
@@ -964,6 +1027,49 @@ mod tests {
                 .message
                 .contains("Silicon.Core.A -> Silicon.Util -> Silicon.Source.Names")
         );
+    }
+
+    const ARCH_DOC: &str = "## Architecture review\n\nThese are the architecture paths.\n\n- `lean/Silicon/Source/*.lean` and `lean/Silicon/Source/Eval/`\n";
+
+    fn files(xs: &[&str]) -> Vec<String> {
+        xs.iter().map(|x| (*x).to_owned()).collect()
+    }
+
+    #[test]
+    fn covered_and_non_normative_lean_files_pass() {
+        let list = files(&[
+            "lean/Silicon/Source/Parse.lean",
+            "lean/Silicon/Source/Eval/Basic.lean",
+            "lean/Silicon/Source/Proof/Fuel/Other.lean",
+            "lean/Silicon/Core/GraphReach.lean",
+            "lean/Silicon/Core/Test/Check.lean",
+            "crates/driver/src/lib.rs",
+            "lean/Other/X.lean",
+        ]);
+        assert!(
+            architecture_path_violations(&list, ARCH_DOC)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn uncovered_lean_file_fails() {
+        let list = files(&[
+            "lean/Silicon/Source/New/Deep.lean",
+            "lean/Silicon/Core/Fresh.lean",
+        ]);
+        let got = architecture_path_violations(&list, ARCH_DOC).unwrap();
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].rule, "arch-paths");
+        assert_eq!(got[0].path, Path::new("lean/Silicon/Source/New/Deep.lean"));
+    }
+
+    #[test]
+    fn missing_eval_path_fails() {
+        let doc = ARCH_DOC.replace(" and `lean/Silicon/Source/Eval/`", "");
+        let list = files(&["lean/Silicon/Source/Eval/Types.lean"]);
+        assert_eq!(architecture_path_violations(&list, &doc).unwrap().len(), 1);
     }
 
     #[test]

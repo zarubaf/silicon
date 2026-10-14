@@ -2,7 +2,7 @@
 //! Tooling for the continuous architecture review of ADR 0013.
 
 mod due;
-mod paths;
+pub mod paths;
 mod scope;
 mod summary;
 
