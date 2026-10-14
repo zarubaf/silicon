@@ -147,16 +147,22 @@ impl Name {
 /// The core name: the fields joined with `$`, and `0k` after a keyword alone.
 #[must_use]
 pub fn encode(p: &Name) -> String {
-    let mut out = p.head.clone();
-    if p.keyword() {
-        out.push_str("$0k");
-    } else {
-        for f in &p.rest {
-            out.push('$');
-            out.push_str(&f.encode());
-        }
-    }
+    let mut out = String::new();
+    write_encoded(p, &mut out).unwrap_or_default();
     out
+}
+
+/// Writes `encode(p)` into `out`.
+pub(crate) fn write_encoded(p: &Name, out: &mut impl std::fmt::Write) -> std::fmt::Result {
+    out.write_str(&p.head)?;
+    if p.keyword() {
+        return out.write_str("$0k");
+    }
+    for f in &p.rest {
+        out.write_char('$')?;
+        out.write_str(&f.encode())?;
+    }
+    Ok(())
 }
 
 /// A decimal number without leading zeros.
@@ -331,6 +337,41 @@ impl Paths {
 
     pub(crate) fn push(&mut self, p: PathId, step: Step) -> PathId {
         self.add(PathNode::Push(p, step))
+    }
+
+    /// Writes the encoded name of the path `p` into `out`, equal to `encode(&self.name(p,
+    /// texts))`. A user field is written from `texts` with no copy.
+    pub(crate) fn write_name(
+        &self,
+        p: PathId,
+        texts: &[String],
+        out: &mut impl std::fmt::Write,
+    ) -> std::fmt::Result {
+        let text = |s: Sym| texts.get(s).map_or("", String::as_str);
+        let mut steps = Vec::new();
+        let mut at = p;
+        let head = loop {
+            match self.nodes.get(at.0) {
+                Some(PathNode::Push(parent, step)) => {
+                    steps.push(step);
+                    at = *parent;
+                }
+                Some(PathNode::Outer(s)) => break text(*s),
+                None => break "",
+            }
+        };
+        out.write_str(head)?;
+        if steps.is_empty() && core_ir::text::is_keyword(head) {
+            return out.write_str("$0k");
+        }
+        for step in steps.into_iter().rev() {
+            out.write_char('$')?;
+            match step {
+                Step::User(s) => out.write_str(text(*s))?,
+                other => out.write_str(&other.field(texts).encode())?,
+            }
+        }
+        Ok(())
     }
 
     /// The name of a path, with the text of each symbol from `texts`.

@@ -55,9 +55,15 @@ impl Sink for Len {
     }
 
     fn quoted(&mut self, s: &str) {
-        let mut text = String::new();
-        parse::quote(s, &mut text);
-        self.0 = self.0.saturating_add(text.len() as u64);
+        // The two quotes, and two bytes for each escape of `parse::quote`.
+        let escaped = s
+            .chars()
+            .map(|c| match c {
+                '"' | '\\' | '\n' | '\r' | '\t' => 2,
+                c => c.len_utf8() as u64,
+            })
+            .sum::<u64>();
+        self.0 = self.0.saturating_add(escaped + 2);
     }
 }
 

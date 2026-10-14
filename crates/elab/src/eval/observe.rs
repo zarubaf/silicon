@@ -22,7 +22,7 @@ use super::{Evaluator, Opnd, Out, Res, fail};
 use crate::Code;
 use crate::agg::Agg;
 use crate::hw::{Handle, Kind, Seen};
-use crate::names::encode;
+use crate::names::{Name, PathId, write_encoded};
 use crate::serial::{self, Item, Len, Sink};
 use crate::types::{Ty, TyId, Types};
 use crate::value::Value;
@@ -32,6 +32,12 @@ use parse::ast::Pos;
 enum Piece<'a> {
     Text(&'static str),
     Owned(String),
+    /// An instance `(instance <module> `, written from the borrowed module name.
+    Instance(Option<&'a Name>),
+    /// The name of a path, encoded into the sink.
+    Path(PathId),
+    /// A port name and the closing bracket, ` <name>)`.
+    Port(&'a str),
     /// A frame `(call <name> <line> <col>)`, written from the borrowed name.
     Frame(&'a str, Pos),
     /// A domain `(domain <name>)`, written from the shared name.
@@ -290,6 +296,18 @@ impl Evaluator<'_> {
                 Piece::Frame(name, q) => {
                     write!(out, "(call {name} {} {})", q.line, q.col).unwrap_or_default();
                 }
+                Piece::Instance(module) => {
+                    out.write_str("(instance ").unwrap_or_default();
+                    if let Some(m) = module {
+                        write_encoded(m, out).unwrap_or_default();
+                    }
+                    out.write_str(" ").unwrap_or_default();
+                }
+                Piece::Path(p) => self
+                    .paths
+                    .write_name(p, &self.syms.texts, out)
+                    .unwrap_or_default(),
+                Piece::Port(n) => write!(out, " {n})").unwrap_or_default(),
                 Piece::Domain(d) => write!(out, "(domain {d})").unwrap_or_default(),
                 Piece::Quoted(s) => out.quoted(s),
                 Piece::Value(v) => serial::write(&self.tys, Item::Value(v), out),
@@ -408,7 +426,7 @@ impl Evaluator<'_> {
     /// type and their core name, an instance its emitted module name and its core name, a
     /// child input the core name of its instance and its port name, and a domain itself.
     fn handle_pieces<'a>(&'a self, h: &'a Handle, work: &mut Vec<Piece<'a>>) {
-        let name = |p| Piece::Owned(encode(&self.paths.name(p, &self.syms.texts)));
+        let name = Piece::Path;
         let pieces = match h {
             Handle::Res { kind, ty, path, .. } => {
                 let kind = match kind {
@@ -435,15 +453,8 @@ impl Evaluator<'_> {
                 None => vec![Piece::Text("-")],
             },
             Handle::Inst { path, inst, .. } => {
-                let module = self
-                    .elab
-                    .interface(*inst)
-                    .map_or_else(String::new, |i| encode(&i.name));
-                vec![
-                    Piece::Owned(format!("(instance {module} ")),
-                    name(*path),
-                    Piece::Text(")"),
-                ]
+                let module = self.elab.interface(*inst).map(|i| &i.name);
+                vec![Piece::Instance(module), name(*path), Piece::Text(")")]
             }
             Handle::Input { path, port, .. } => {
                 let port_name = self.syms.texts.get(port.sym).map_or("", String::as_str);
@@ -452,7 +463,7 @@ impl Evaluator<'_> {
                     Piece::Node(&port.ty),
                     Piece::Text(" "),
                     name(*path),
-                    Piece::Owned(format!(" {port_name})")),
+                    Piece::Port(port_name),
                 ]
             }
             Handle::Domain(d) => vec![Piece::Domain(d)],
