@@ -45,6 +45,17 @@ enum Piece<'a> {
     Hw(crate::hw::HwId),
 }
 
+impl Piece<'_> {
+    /// Whether the piece writes a scalar form and expands to no other piece.
+    #[cfg(test)]
+    fn is_leaf(&self) -> bool {
+        matches!(
+            self,
+            Piece::Value(_) | Piece::Type(_) | Piece::Node(_) | Piece::Hw(_)
+        )
+    }
+}
+
 /// Pushes `pieces` so that they come off the stack in their order.
 fn push_all<'a>(work: &mut Vec<Piece<'a>>, pieces: Vec<Piece<'a>>) {
     work.extend(pieces.into_iter().rev());
@@ -153,6 +164,8 @@ impl Evaluator<'_> {
         self.charge(pos, u128::from(len.0))?;
         let mut text = String::with_capacity(usize::try_from(len.0).unwrap_or(0));
         self.line(pos, &message, self.store.seen(&value), &mut text);
+        #[cfg(test)]
+        crate::counters::add(crate::counters::Count::Recorded, 1);
         self.records.push(text);
         Ok(Some(Out::Made(crate::hw::Val::Static(Value::Unit))))
     }
@@ -235,6 +248,8 @@ impl Evaluator<'_> {
     /// `out`. The walk is pure and keeps its own stack.
     fn line<S: Sink>(&self, pos: Pos, message: &str, root: Seen<'_>, out: &mut S) {
         let head = format!("(record {} {} {} (", pos.line, pos.col, self.inst);
+        #[cfg(test)]
+        crate::counters::add(crate::counters::Count::Framed, self.calls.len() as u64);
         let frames = spaced(self.calls.iter().map(|&(i, q)| {
             let name = self.file.ast().get(i).map_or("", |item| &item.name().name);
             Piece::Owned(format!("(call {name} {} {})", q.line, q.col))
@@ -258,6 +273,13 @@ impl Evaluator<'_> {
         ]);
         push_all(&mut work, pieces);
         while let Some(piece) = work.pop() {
+            #[cfg(test)]
+            {
+                crate::counters::add(crate::counters::Count::Rendered, 1);
+                if piece.is_leaf() {
+                    crate::counters::add(crate::counters::Count::RenderedLeaves, 1);
+                }
+            }
             match piece {
                 Piece::Text(s) => out.write_str(s).unwrap_or_default(),
                 Piece::Owned(s) => out.write_str(&s).unwrap_or_default(),

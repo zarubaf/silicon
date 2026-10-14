@@ -64,6 +64,18 @@ pub(crate) struct Counts {
     pub blocked: u64,
     /// The second calls of a port that recorded their `S018`.
     pub seconds: u64,
+    /// The pieces that the walk of the text of a record visited. The walk runs twice for a
+    /// record: once to count its bytes and once to write them.
+    pub rendered: u64,
+    /// The pieces of the walk of the text of a record that are a leaf: a static value, a
+    /// hardware leaf, a name, or a type.
+    pub rendered_leaves: u64,
+    /// The frames that the walk of the text of a record wrote out.
+    pub framed: u64,
+    /// The records that `diagnostic` appended.
+    pub recorded: u64,
+    /// The guards that a hardware arm or a structural context entered.
+    pub guarded: u64,
 }
 
 /// What a counter counts.
@@ -94,6 +106,11 @@ pub(crate) enum Count {
     Chained,
     Blocked,
     Seconds,
+    Rendered,
+    RenderedLeaves,
+    Framed,
+    Recorded,
+    Guarded,
 }
 
 static COUNTS: Mutex<BTreeMap<u64, Counts>> = Mutex::new(BTreeMap::new());
@@ -157,6 +174,11 @@ pub(crate) fn add(count: Count, n: u64) {
             Count::Chained => &mut c.chained,
             Count::Blocked => &mut c.blocked,
             Count::Seconds => &mut c.seconds,
+            Count::Rendered => &mut c.rendered,
+            Count::RenderedLeaves => &mut c.rendered_leaves,
+            Count::Framed => &mut c.framed,
+            Count::Recorded => &mut c.recorded,
+            Count::Guarded => &mut c.guarded,
         };
         *field += n;
     }

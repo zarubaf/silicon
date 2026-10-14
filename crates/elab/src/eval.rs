@@ -1363,6 +1363,8 @@ impl Evaluator<'_> {
     /// Runs `act` in a structural context (section 9.4): its guard starts at the current depth,
     /// so it is the innermost guard. Setting and restoring it is O(1).
     pub(super) fn structural<T>(&mut self, act: impl FnOnce(&mut Self) -> Res<T>) -> Res<T> {
+        #[cfg(test)]
+        crate::counters::add(crate::counters::Count::Guarded, 1);
         let saved = self.guard.replace(Guard {
             kind: GuardKind::Structural,
             depth: self.depth,
@@ -1599,6 +1601,8 @@ impl Evaluator<'_> {
                         format!("a condition is a Bool, not {}", self.tys.text_of(&ty)),
                     );
                 }
+                #[cfg(test)]
+                crate::counters::add(crate::counters::Count::Guarded, 1);
                 let saved = self.guard.replace(Guard {
                     kind: GuardKind::Arm,
                     depth: self.depth,
