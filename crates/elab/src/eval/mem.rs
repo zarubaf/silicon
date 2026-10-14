@@ -6,7 +6,7 @@
 //!    handle has the size 1. The caller paid them.
 //! 2. The first argument is a raw context, so a memory is never read: it must be a memory
 //!    (`S010`).
-//! 3. A call inside a hardware arm has an effect that the arm cannot take (`S016`).
+//! 3. A call inside a guard has an effect that the guard cannot take (`S016`).
 //! 4. The typed uses come in the order of the arguments: `addr` at `UInt[A]`, `en` at `Bool`,
 //!    and `data` at the word type.
 //! 5. The memory records the first request of each kind. A second call runs the same steps and
@@ -47,12 +47,8 @@ impl Evaluator<'_> {
                 return fail(Code::S010, pos, format!("`{g}` needs a memory, not {text}"));
             }
         };
-        if self.arm.is_some() {
-            return fail(
-                Code::S016,
-                pos,
-                format!("a hardware arm has no graph effect such as `{g}`"),
-            );
+        if let Some(guard) = self.guard {
+            return fail(Code::S016, pos, guard.effect(g));
         }
         let Some(mem) = self.mem(id) else {
             return fail(Code::S010, pos, format!("`{g}` needs a memory"));

@@ -864,14 +864,12 @@ impl Evaluator<'_> {
     }
 
     /// A mutation at `pos` of a binding of the current frame (section 9.4). The binding is older
-    /// than the innermost hardware arm when that arm started at the current depth: `S016`.
+    /// than the innermost guard when that guard started at the current depth: `S016`.
     pub(super) fn mutation(&self, pos: Pos) -> Res<()> {
-        if self.arm == Some(self.depth) {
-            return fail(
-                Code::S016,
-                pos,
-                "a hardware arm changes a binding from before the arm".to_owned(),
-            );
+        if let Some(guard) = self.guard
+            && guard.depth == self.depth
+        {
+            return fail(Code::S016, pos, guard.change());
         }
         Ok(())
     }
