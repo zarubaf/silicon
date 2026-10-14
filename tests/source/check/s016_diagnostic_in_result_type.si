@@ -1,0 +1,15 @@
+// S016: the result type of a `fn` is a structural context (section 9.4, item 1), so a helper with
+// a diagnostic cannot build its width.
+// TOP M()
+fn note() -> Nat {
+    // expected-error S016 @+1
+    diagnostic("result", 8);
+    return 8;
+}
+fn three() -> UInt[note()] {
+    return 3;
+}
+module M() {
+    output o: UInt[8];
+    o := three();
+}

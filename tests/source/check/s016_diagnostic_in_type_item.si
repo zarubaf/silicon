@@ -1,0 +1,12 @@
+// S016: a `type` item is a structural context at its first use (section 9.4, item 3), so a helper
+// with a diagnostic cannot build its width.
+// TOP M()
+fn note() -> Nat {
+    // expected-error S016 @+1
+    diagnostic("item", 8);
+    return 8;
+}
+type T = UInt[note()];
+module M() {
+    let a: T = 0;
+}

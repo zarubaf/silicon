@@ -1,0 +1,10 @@
+// S016: a port annotation is a structural context (section 9.4, item 1), so a pop of a list from
+// before the annotation changes it.
+// TOP M()
+module M() {
+    let mut ts = list(Nat);
+    ts.push(8);
+    // expected-error S016 @+2
+    // expected-message: a type or a constant cannot change `ts`; change `ts` before it, keep the result in a `let`, and use that name here
+    input p: UInt[ts.pop()];
+}
