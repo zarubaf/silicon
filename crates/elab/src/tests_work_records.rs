@@ -10,6 +10,7 @@
 use crate::counters::{Counts, of};
 use crate::tests_elab::load;
 use crate::{Budget, observe_with};
+use std::fmt::Write;
 
 /// The sizes of a family: each is double the one before.
 const SIZES: [u64; 4] = [32, 64, 128, 256];
@@ -393,5 +394,43 @@ fn a_record_that_does_not_fit_builds_no_name() {
         let (records, code, counts) = run_at(src, least - 1);
         assert_eq!((records, code), (0, Some(crate::Code::S015)), "case {k}");
         assert_eq!(counts.copied, 0, "case {k}: {} bytes", counts.copied);
+    }
+}
+
+/// The module `M()` that records a handle `kind` of the struct type nested `levels` deep. Each
+/// level holds the one before in its type argument and in two empty arrays of it, so the term
+/// of the type triples at each level while its size grows by a constant.
+fn nested_handle(kind: &str, levels: u64) -> String {
+    let mut src = String::from(
+        "struct R(comptime A: Type, comptime e: [A; 0], comptime f: [A; 0]) { x: Bool }\n\
+         type T0 = R[Bool, [], []];\n",
+    );
+    for i in 1..=levels {
+        writeln!(src, "type T{i} = R[T{}, [], []];", i - 1).unwrap_or_default();
+    }
+    let body = if kind == "mem" {
+        format!("  mem m: [T{levels}; 4];\n  diagnostic(\"m\", m);\n")
+    } else {
+        format!("  {kind} m: T{levels};\n  diagnostic(\"m\", m);\n")
+    };
+    format!("{src}module M() domains(clk) {{\n{body}}}\n")
+}
+
+/// The type of a handle measures through the table once: the type nodes that a record unfolds
+/// grow by a constant at each level of nesting, not by the triple of the term. The record stops
+/// at the charge of its bytes, so no walk follows it.
+#[test]
+fn the_type_of_a_handle_measures_through_the_table() {
+    // A handle unfolds its levels once each and a constant number of nodes besides.
+    for (k, (kind, extra)) in [("mem", 2), ("input", 3), ("output", 3)]
+        .into_iter()
+        .enumerate()
+    {
+        for (j, n) in [6u64, 8, 10, 12].into_iter().enumerate() {
+            let src = nested_handle(kind, n);
+            let (_, code, counts) = run_at(&src, 9_100 + (k * 10 + j) as u64);
+            assert_eq!(code, Some(crate::Code::S015), "{kind} {n}");
+            assert_eq!(counts.unfolded, n + extra, "{kind} {n}");
+        }
     }
 }
