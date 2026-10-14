@@ -82,11 +82,11 @@ inductive PrimType where
 
 /-!
 The prelude functions of slice 1, and `len`, `data_bits`, `list`, `push`, `pop`, `str`,
-`read_port`, and `write_port` of slice 2.
+`read_port`, `write_port`, and `diagnostic` of slice 2.
 -/
 inductive PrimFn where
   | resize | reinterpret | staticAssert | error | len | dataBits | list | push | pop | str
-  | readPort | writePort
+  | readPort | writePort | diagnostic
   deriving Repr, DecidableEq, BEq, Inhabited
 
 /-!
@@ -107,7 +107,7 @@ def fnModes : PrimFn → Array ParamMode
   | .list => #[.comptime]
   | .push => #[.mut, .none]
   | .pop => #[.mut]
-  | .staticAssert => #[.none, .none]
+  | .staticAssert | .diagnostic => #[.none, .none]
   | .error | .len | .dataBits | .str => #[.none]
   | .readPort => #[.none, .none, .none]
   | .writePort => #[.none, .none, .none, .none]
@@ -122,8 +122,9 @@ The prelude. It holds the scalar types of section 12.1 and the functions `resize
 `reinterpret`, `static_assert`, and `error` of slice 1. It also holds `Unit` and `len`, the
 names of the containers of slice 2, and `Type` and `data_bits`, the names of the types as values.
 The names of the strings and the lists are `String`, `List`, `list`, `push`, `pop`, and `str`.
-The memory ports are `read_port` and `write_port`. `true` and `false` are keywords, and `T(n)`
-is syntax, so they need no name. The prelude struct `ReadResponse` is an item (`responseName`).
+The memory ports are `read_port` and `write_port`, and `diagnostic` makes a record. `true` and
+`false` are keywords, and `T(n)` is syntax, so they need no name. The prelude struct
+`ReadResponse` is an item (`responseName`).
 -/
 def prelude : List (String × Ref) :=
   [("Bool", .type .bool), ("UInt", .type .uint), ("SInt", .type .sint), ("Nat", .type .nat),
@@ -132,7 +133,7 @@ def prelude : List (String × Ref) :=
    ("error", .fn .error), ("len", .fn .len), ("data_bits", .fn .dataBits),
    ("String", .type .string), ("List", .type .list), ("list", .fn .list), ("push", .fn .push),
    ("pop", .fn .pop), ("str", .fn .str), ("read_port", .fn .readPort),
-   ("write_port", .fn .writePort)]
+   ("write_port", .fn .writePort), ("diagnostic", .fn .diagnostic)]
 
 /-! The name of the prelude struct (section 5.6). -/
 def responseName : String := "ReadResponse"
@@ -142,8 +143,7 @@ The prelude names of later slices, with their slice. A use of one is `S003`, and
 names the slice.
 -/
 def laterPrelude : List (String × Nat) :=
-  [("diagnostic", 2),
-   ("Reg", 3), ("Wire", 3), ("Mem", 3), ("Input", 3), ("Instance", 3), ("Domain", 3),
+  [("Reg", 3), ("Wire", 3), ("Mem", 3), ("Input", 3), ("Instance", 3), ("Domain", 3),
    ("read", 3), ("FieldInfo", 4), ("TypeInfo", 4), ("PortKey", 4), ("PortInfo", 4)]
 
 /-! A declared name and its local number. -/
