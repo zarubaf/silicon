@@ -74,11 +74,20 @@ pub(crate) fn cost_fuel(src: &str, top: &str, fuel: u64) -> String {
     cost_with(src, top, fuel, Budget::default().depth, sha16)
 }
 
+/// `ok` with the units of the elaboration alone at the fuel `fuel` and the depth `depth`, or the
+/// code and the position of the first error.
+pub(crate) fn elab_only(src: &str, top: &str, fuel: u64, depth: u64) -> String {
+    match run(src, top, fuel, depth, sha16) {
+        Ok(d) => format!("ok {}", d.used()),
+        Err(e) => e,
+    }
+}
+
 pub(crate) fn cost_depth(src: &str, top: &str, depth: u64) -> String {
     cost_with(src, top, Budget::default().fuel, depth, sha16)
 }
 
-fn design(src: &str, top: &str) -> Design {
+pub(crate) fn design(src: &str, top: &str) -> Design {
     let b = Budget::default();
     run(src, top, b.fuel, b.depth, sha16).unwrap()
 }
