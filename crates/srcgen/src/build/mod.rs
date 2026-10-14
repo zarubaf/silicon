@@ -341,6 +341,7 @@ struct Stats {
     pushes: u32,
     pops: u32,
     push_fallbacks: u32,
+    pop_fallbacks: u32,
     mut_calls: u32,
     mut_call_fallbacks: u32,
     hw_mut_calls: u32,

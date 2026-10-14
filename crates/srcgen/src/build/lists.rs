@@ -204,6 +204,8 @@ impl Builder {
             ctx.forget(&list);
             ctx.statics.push((name, STy::Int));
             out.push(stmt);
+        } else {
+            note!(self, pop_fallbacks);
         }
     }
 
