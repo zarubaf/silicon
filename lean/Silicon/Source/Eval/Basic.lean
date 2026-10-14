@@ -64,11 +64,13 @@ def Specs.find? (s : Specs) (i : Nat) (args : List Value) : Option (Nat × Spec)
 A node of a hardware value. Section 7.4 lowers each node to core operations. `share k` marks its
 one operand, the condition of an aggregate `if`, as shared by several leaf statements. The
 lowering binds it to one temporary at its first use (section 7.4). `k` numbers the marks of one
-instantiation.
+instantiation. `word m off` is a leaf of the word of the memory `m` at the bit offset `off`. It
+holds the path of the memory once and lowers to `(extract m$0rdata off w)` (section 7.6).
 -/
 inductive Op where
   | ref (name : Path)
   | out (inst : Path) (port : Name)
+  | word (mem : Path) (off : Nat)
   | lit (value : Value)
   | un (op : UnOp)
   | bin (op : BinOp)
@@ -91,14 +93,14 @@ def Hw.ty : Hw → Ty | .node _ t .. => t
 def Hw.size : Hw → Nat | .node _ _ s .. => s
 
 /-!
-The size of a node of the type `ty` without its operands. A name and a child output refer to a
-core name. Each has the size of a finite value of its type (section 5.4). A constant has the
-size of its value. A mark of a shared operand has no charge, so it adds no size. Each other
-node has the size 1.
+The size of a node of the type `ty` without its operands. A name, a child output, and a leaf of a
+memory word refer to a core name. Each has the size of a finite value of its type (section 5.4).
+A constant has the size of its value. A mark of a shared operand has no charge, so it adds no
+size. Each other node has the size 1.
 -/
 def Op.size (ty : Ty) : Op → Nat
   | .lit v => v.size
-  | .ref _ | .out .. => ty.info.zeroSize
+  | .ref _ | .out .. | .word .. => ty.info.zeroSize
   | .share _ => 0
   | _ => 1
 
@@ -109,27 +111,51 @@ def Hw.mk (pos : Pos) (ty : Ty) (op : Op) (args : List Hw) : Hw :=
 def portName (x : String) : Name := ⟨x, []⟩
 
 /-!
-The base of a reference aggregate: a core name, or an output of a child instance. A child output
-holds the name of its port and the fields of its part in reverse order. Thus a step adds a field
-at the front.
+The base of a reference aggregate: a core name, an output of a child instance, or the word of a
+memory. A child output holds the name of its port and the fields of its part in reverse order.
+Thus a step adds a field at the front. A word holds the path of its memory and the bit offset of
+its part (section 7.6).
 -/
 inductive Base where
   | name (path : Path)
   | out (inst : Path) (port : String) (rev : List Field)
+  | word (mem : Path) (off : Nat)
   deriving Repr, Inhabited
 
 /-! The operation of a leaf of the base `b`. A child output puts its fields in order once. -/
 def Base.op : Base → Op
   | .name p => .ref p
   | .out i q r => .out i { portName q with rest := r.reverse }
+  | .word m o => .word m o
 
 /-!
-The part of the base `b` with the leaf field `f` (section 7.3). The field is a field `.f` of
-a record, or the element `<k>e` of an array or a tuple. Each base adds the field in one step.
+The fields of a struct type for the offset of a word part: the number and the type of each field
+in declaration order. A table can leave out a field without a leaf, because its width is 0.
 -/
-def Base.sub : Base → Field → Base
-  | .name p, f => .name (p.push f)
-  | .out i q r, f => .out i q (f :: r)
+abbrev Parts := Ty → Option (Array (Nat × Ty))
+
+/-!
+The bit offset of the part `k` in a word of the type `t` (section 7.6). The first leaf is in the
+least significant bits. For an array, the offset is `k` times the width of the element. For a
+tuple or a record, it is the sum of the widths of the earlier parts. `ps` gives the fields of a
+struct type. The metadata gives each width, so the work is at most the parts of `t`.
+-/
+def Ty.offset (ps : Parts) (t : Ty) (k : Nat) : Nat :=
+  match t with
+  | .array e _ => k * e.info.width
+  | .tuple ts => ((ts.extract 0 k).map (·.info.width)).sum
+  | t => ((((ps t).getD #[]).filter (·.1 < k)).map (·.2.info.width)).sum
+
+/-!
+The part `k` of the type `t` of the base `b`, with the leaf field `f` (section 7.3). The field is
+a field `.f` of a record, or the element `<k>e` of an array or a tuple. A name and a child output
+add the field in one step. A word adds the offset of the part (`Ty.offset`), and only a word
+reads `ps`.
+-/
+def Base.sub (ps : Parts) (t : Ty) (k : Nat) (f : Field) : Base → Base
+  | .name p => .name (p.push f)
+  | .out i q r => .out i q (f :: r)
+  | .word m o => .word m (o + Ty.offset ps t k)
 
 /-!
 The stored numbers of a container node of an aggregate: its type, its size, its depth, and the

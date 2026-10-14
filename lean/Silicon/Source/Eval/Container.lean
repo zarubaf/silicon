@@ -47,7 +47,9 @@ The static containers of slice 2 follow section 5.1. These rules settle its open
   output, give a lazy reference with no charge. A step on a reference gives a reference to the
   part, in a number of steps that the path bounds. Thus `p[i]` takes the same work for a huge
   array type. A part without a hardware leaf is a static value: it charges its zero size from
-  the metadata first (`normalize`). A hardware index stays `S011`.
+  the metadata first (`normalize`). A hardware index stays `S011`. The word of a memory is a
+  reference with a bit offset (section 7.6). A step adds the offset of the part from the widths
+  in the metadata (`Base.sub`), so a leaf of a word refers to its bits.
 - A typed use of a hardware aggregate checks a reference by its type in one step, so it never
   expands. The other parts check first: a hardware leaf needs the type of its position, and a
   static leaf its sign. Then the conversion charges, and the static leaves convert.
@@ -263,9 +265,10 @@ def selectKey (pos q : Pos) (i : Nat) : Val → M (Nat × Val)
     match xs[i]? with
     | some x => do return (i, ← normalize pos x)
     | none => fail .S013 q s!"the selector {i} is out of range for {v.text}"
-  | v@(.agg (.ref b (.tuple ts))) =>
+  | v@(.agg (.ref b r@(.tuple ts))) =>
     match ts[i]? with
-    | some t => do return (i, ← normalize pos (.ref (b.sub (.elem i)) t))
+    | some t => do
+      return (i, ← normalize pos (.ref (b.sub (partsIn (← get).specs) r i (.elem i)) t))
     | none => fail .S013 q s!"the selector {i} is out of range for {v.text}"
   | v => do
     let (k, w) ← selectAt pos q i v
@@ -321,13 +324,13 @@ def pickKey (pos q : Pos) (v : Val) (i : Value) : M (Nat × Val) := do
     match xs[k]? with
     | some x => return (k, ← normalize pos x)
     | none => fail .S013 q s!"the index is out of range for {xs.size} element(s)"
-  | .agg (.ref b (.array e n)) => do
+  | .agg (.ref b r@(.array e n)) => do
     let k ← within q n i
-    return (k, ← normalize pos (.ref (b.sub (.elem k)) e))
-  | .agg (.ref b (.tuple ts)) => do
+    return (k, ← normalize pos (.ref (b.sub (partsIn (← get).specs) r k (.elem k)) e))
+  | .agg (.ref b r@(.tuple ts)) => do
     let k ← within q ts.size i
     match ts[k]? with
-    | some t => return (k, ← normalize pos (.ref (b.sub (.elem k)) t))
+    | some t => return (k, ← normalize pos (.ref (b.sub (partsIn (← get).specs) r k (.elem k)) t))
     | none => fail .S013 q s!"the index is out of range for {ts.size} element(s)"
   | v =>
     let (k, w) ← pickAt pos q v i
@@ -382,6 +385,10 @@ def fieldsNamed (items : Array Resolve.Item) (specs : Specs) (t : Ty) :
   let some (.struct _ _ _ ds _) := items[i]? | none
   return (ds.toArray.map (·.name.name)).zip fs
 
+/-! The numbered field types of a struct type from its named fields `fs`, for a word part. -/
+def typesOf (fs : Ty → Option (Array (String × Ty))) : Parts := fun t =>
+  (fs t).map fun xs => xs.zipIdx.map fun ((_, u), k) => (k, u)
+
 /-!
 The reference of the type `t` to the base `b`, expanded one level into references to its parts
 in their normal form. The caller paid for the parts, so this has no charge. `fs` gives the named
@@ -389,12 +396,15 @@ fields of a struct type.
 -/
 def Agg.expand (fs : Ty → Option (Array (String × Ty))) (specs : Specs) (pos : Pos) (b : Base) :
     Ty → Option Agg
-  | .array e n => do
-    return .mkArray e (← (Array.range n).mapM fun k => Agg.part specs pos (b.sub (.elem k)) e)
-  | .tuple ts => do
-    return .mkTuple ts (← ts.zipIdx.mapM fun (t, k) => Agg.part specs pos (b.sub (.elem k)) t)
+  | r@(.array e n) => do
+    let sub (k : Nat) := b.sub (partsIn specs) r k (.elem k)
+    return .mkArray e (← (Array.range n).mapM fun k => Agg.part specs pos (sub k) e)
+  | r@(.tuple ts) => do
+    let sub (k : Nat) := b.sub (partsIn specs) r k (.elem k)
+    return .mkTuple ts (← ts.zipIdx.mapM fun (t, k) => Agg.part specs pos (sub k) t)
   | t@(.struct ..) => do
-    return .mkRecord t (← (← fs t).mapM fun (x, ft) => Agg.part specs pos (b.sub (.user x)) ft)
+    let sub (k : Nat) (x : String) := b.sub (partsIn specs) t k (.user x)
+    return .mkRecord t (← (← fs t).zipIdx.mapM fun ((x, ft), k) => Agg.part specs pos (sub k x) ft)
   | _ => none
 
 /-!
@@ -545,7 +555,7 @@ def fieldKey (pos : Pos) (f : Ident) : Val → M (Nat × Val × Ty)
     | none => fail .S010 pos s!"{v.text} has no field `{f.name}`"
   | v@(.agg (.ref b t@(.struct ..))) => do
     let (k, ft) ← fieldOf pos f t v.text
-    return (k, ← normalize pos (.ref (b.sub (.user f.name)) ft), ft)
+    return (k, ← normalize pos (.ref (b.sub (partsIn (← get).specs) t k (.user f.name)) ft), ft)
   | v => do
     let (k, w, ft) ← fieldAt pos f v
     return (k, .static w, ft)
@@ -749,15 +759,17 @@ def leafLets (fs : Ty → Option (Array (String × Ty))) (pos : Pos) :
     Nat → Base → Path → Ty → Binds Unit
   | 0, _, _, t => throw (.S010, s!"{t.text} is deeper than its depth")
   | d + 1, b, path, t =>
+    let sub (k : Nat) (f : Field) := b.sub (typesOf fs) t k f
     match t with
     | .bool | .uint _ | .sint _ => modify (·.push ⟨path, .mk pos t b.op [], pos⟩)
     | .array e n => do
-      for k in [0:n] do leafLets fs pos d (b.sub (.elem k)) (path.push (.elem k)) e
+      for k in [0:n] do leafLets fs pos d (sub k (.elem k)) (path.push (.elem k)) e
     | .tuple ts => do
-      for (u, k) in ts.zipIdx do leafLets fs pos d (b.sub (.elem k)) (path.push (.elem k)) u
+      for (u, k) in ts.zipIdx do leafLets fs pos d (sub k (.elem k)) (path.push (.elem k)) u
     | .struct .. => do
       let some nfs := fs t | throw (.S010, s!"{t.text} has no specialization")
-      for (x, u) in nfs do leafLets fs pos d (b.sub (.user x)) (path.push (.user x)) u
+      for ((x, u), k) in nfs.zipIdx do
+        leafLets fs pos d (sub k (.user x)) (path.push (.user x)) u
     | _ => pure ()
 
 /-!

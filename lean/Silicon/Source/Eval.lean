@@ -453,14 +453,16 @@ structure Pairs where
 /-!
 The part `k` of the part `a` of an equality walk. `f` is its leaf field and `t` its type. An
 element of a node or of a static container keeps its form. A part of a reference is a reference
-to the part, or a hardware leaf of a scalar type. Thus the walk never expands a reference.
+to the part, or a hardware leaf of a scalar type. Thus the walk never expands a reference. `ps`
+gives the fields of a struct type, for the offset of a word part.
 -/
-def Agg.child (pos : Pos) (k : Nat) (f : Field) (t : Ty) : Agg → Option Agg
+def Agg.child (ps : Parts) (pos : Pos) (k : Nat) (f : Field) (t : Ty) :
+    Agg → Option Agg
   | .array _ xs | .tuple _ xs | .record _ xs => xs[k]?
   | .static (.array _ xs) | .static (.tuple xs) | .static (.record _ xs) => xs[k]?.map .static
-  | .ref b _ =>
-    if t matches .bool | .uint _ | .sint _ then some (.hw (.mk pos t (b.sub f).op []))
-    else some (.ref (b.sub f) t)
+  | .ref b r =>
+    let c := b.sub ps r k f
+    if t matches .bool | .uint _ | .sint _ then some (.hw (.mk pos t c.op [])) else some (.ref c t)
   | _ => none
 
 /-!
@@ -501,7 +503,7 @@ def eqWalk (fs : Ty → Option (Array (String × Ty))) (pos : Pos) :
   | d + 1, t, a, b, acc => do
     charge pos 1
     let pair (k : Nat) (f : Field) (u : Ty) (acc : Pairs) : M Pairs :=
-      match a.child pos k f u, b.child pos k f u with
+      match a.child (typesOf fs) pos k f u, b.child (typesOf fs) pos k f u with
       | some x, some y => eqWalk fs pos d u x y acc
       | _, _ => fail .S010 pos s!"`==` needs a common type, not {a.val.text} and {b.val.text}"
     match t with
@@ -605,7 +607,7 @@ def ifWalk (fs : Ty → Option (Array (String × Ty))) (pos : Pos) (c : Hw) :
   | d + 1, t, a, b => do
     charge pos 1
     let pair (k : Nat) (f : Field) (u : Ty) : M Agg :=
-      match a.child pos k f u, b.child pos k f u with
+      match a.child (typesOf fs) pos k f u, b.child (typesOf fs) pos k f u with
       | some x, some y => ifWalk fs pos c d u x y
       | _, _ =>
         fail .S010 pos s!"the arms of an `if` have one type, not {a.val.text} and {b.val.text}"

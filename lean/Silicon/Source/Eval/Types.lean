@@ -191,6 +191,10 @@ def fieldsIn (specs : Specs) : Ty → Option (Nat × Array Ty)
     | .inProgress => none
   | _ => none
 
+/-! The numbered field types of the struct type `t` (`fieldsIn`), for the offset of a word part. -/
+def partsIn (specs : Specs) : Parts := fun t =>
+  (fieldsIn specs t).map fun (_, fs) => fs.zipIdx.map fun (u, k) => (k, u)
+
 /-!
 The zero of a hardware data type `t` (section 5.6): 0 for each integer leaf and `false` for each
 `Bool` leaf. A struct type takes the field types of its done entry. The bound `b` is the depth
