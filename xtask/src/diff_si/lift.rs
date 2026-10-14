@@ -13,18 +13,24 @@ use core_ir::r#gen::{self, Config};
 use core_ir::interp::Sim;
 use core_ir::text::print;
 use core_ir::vectors::parse_input;
+use proptest::collection::vec;
+use proptest::prelude::any;
 use proptest::strategy::{Just, Strategy};
-use srcgen::{lift, vector_in, vector_out};
+use srcgen::{Lifted, lift};
 
 use super::{Mode, Tools, repeat, reproducer, run_trace, stdin, validated, verdict_of};
 use crate::diff::{CYCLES, Trace, compare};
 
-/// A core design and its `in=` lines.
-pub(super) type Case = (ast::Design, Vec<String>);
+/// A core design, its `in=` lines, and the shape tape of the lift.
+pub(super) type Case = (ast::Design, Vec<String>, Vec<u32>);
+
+/// The most numbers of a shape tape: a design has at most 6 modules of 8
+/// ports, and a port takes up to 4 numbers.
+const SHAPE_NUMBERS: usize = 256;
 
 /// Random designs of the source forms, each with `CYCLES` matching input
-/// lines. A design that fails the checker gets no lines, so the case then
-/// reports the checker error.
+/// lines and a shape tape. A design that fails the checker gets no lines,
+/// so the case then reports the checker error.
 pub(super) fn cases() -> impl Strategy<Value = Case> {
     r#gen::design_with(Config::source()).prop_flat_map(|design| {
         let lines = check(&design)
@@ -34,14 +40,18 @@ pub(super) fn cases() -> impl Strategy<Value = Case> {
                 || Just(Vec::new()).boxed(),
                 |top| r#gen::lines(&top, CYCLES).boxed(),
             );
-        (Just(design), lines)
+        (Just(design), lines, vec(any::<u32>(), 0..SHAPE_NUMBERS))
     })
 }
 
 /// The `in=` and `out=` lines of the source vectors for `case`, from the
-/// core interpreter. The inner error is the message of the checker.
-fn reference(case: &Case) -> Result<std::result::Result<Vec<(String, String)>, String>> {
-    let (design, lines) = case;
+/// core interpreter and the vector map of `lifted`. The inner error is the
+/// message of the checker.
+fn reference(
+    case: &Case,
+    lifted: &Lifted,
+) -> Result<std::result::Result<Vec<(String, String)>, String>> {
+    let (design, lines, _) = case;
     let typed = match check(design) {
         Ok(typed) => typed,
         Err(e) => {
@@ -57,9 +67,18 @@ fn reference(case: &Case) -> Result<std::result::Result<Vec<(String, String)>, S
     for line in lines {
         let inputs = parse_input(line, top).map_err(|e| anyhow!("{line}: {e}"))?;
         let outputs = sim.step(&inputs);
-        steps.push((vector_in(top, &inputs), vector_out(top, &outputs)));
+        steps.push((
+            lifted.vector_in(top, &inputs),
+            lifted.vector_out(top, &outputs),
+        ));
     }
     Ok(Ok(steps))
+}
+
+/// The lift of `case`, or the message of the rejection.
+fn lifted(case: &Case) -> Result<Lifted> {
+    lift(&case.0, &case.2)
+        .map_err(|e| anyhow!("the lift rejects the design: {e}\n{}", print(&case.0)))
 }
 
 fn top_selection(design: &ast::Design) -> String {
@@ -73,12 +92,12 @@ pub(super) fn verdict(tools: &Tools, dir: &Path, case: &Case) -> Result<Option<S
 }
 
 fn try_verdict(tools: &Tools, dir: &Path, case: &Case) -> Result<Option<String>> {
-    let steps = match reference(case)? {
+    let lifted = lifted(case)?;
+    let steps = match reference(case, &lifted)? {
         Ok(steps) => steps,
         Err(message) => return Ok(Some(message)),
     };
-    let source = lift(&case.0)
-        .map_err(|e| anyhow!("the lift rejects the design: {e}\n{}", print(&case.0)))?;
+    let source = lifted.text;
     let file = dir.join("design.si");
     std::fs::write(&file, &source).with_context(|| format!("cannot write {}", file.display()))?;
     let top = top_selection(&case.0);
@@ -102,8 +121,13 @@ fn try_verdict(tools: &Tools, dir: &Path, case: &Case) -> Result<Option<String>>
 pub(super) fn report(seed: u64, case: &Case, message: &str) {
     println!("FAIL seed {seed} (lift): {message}");
     println!("{}", print(&case.0));
-    if let (Ok(source), Ok(Ok(steps))) = (lift(&case.0), reference(case)) {
-        print!("{}", reproducer(&source, &top_selection(&case.0), &steps));
+    if let Ok(lifted) = lifted(case)
+        && let Ok(Ok(steps)) = reference(case, &lifted)
+    {
+        print!(
+            "{}",
+            reproducer(&lifted.text, &top_selection(&case.0), &steps)
+        );
     }
     println!("Run `{}` to repeat it.", repeat(Mode::Lift, seed));
 }
@@ -122,17 +146,17 @@ mod tests {
 
     #[test]
     fn the_same_seed_gives_the_same_case() {
-        let ((_, lines_a), text_a) = case(7);
-        let ((_, lines_b), text_b) = case(7);
-        assert_eq!((text_a, &lines_a), (text_b, &lines_b));
+        let ((_, lines_a, tape_a), text_a) = case(7);
+        let ((_, lines_b, tape_b), text_b) = case(7);
+        assert_eq!((text_a, &lines_a, tape_a), (text_b, &lines_b, tape_b));
         assert_eq!(lines_a.len(), CYCLES);
     }
 
     #[test]
     fn cases_use_source_forms() {
         for seed in 1..=20 {
-            let ((design, _), _) = case(seed);
-            assert!(lift(&design).is_ok(), "seed {seed}");
+            let ((design, _, tape), _) = case(seed);
+            assert!(lift(&design, &tape).is_ok(), "seed {seed}");
         }
     }
 }

@@ -3,6 +3,7 @@
 //! `UInt[w]`; `Bool` appears only in `if` conditions.
 
 use super::lift::Unsupported;
+use super::shape::Shape;
 use core_ir::Pred;
 use core_ir::ast::{BinOp, Expr, Module, UnOp};
 use core_ir::r#gen::RESET;
@@ -17,6 +18,8 @@ pub(super) struct Env<'a> {
     /// A name that source spells as another text, for example the
     /// response register of a memory.
     pub alias: HashMap<&'a str, String>,
+    /// The groups of each module, by module name.
+    pub shapes: &'a HashMap<&'a str, Shape>,
 }
 
 impl Env<'_> {
@@ -68,7 +71,15 @@ impl Env<'_> {
                     .get(n.text.as_str())
                     .map_or_else(|| n.text.clone(), Clone::clone)
             }
-            Expr::InstOut { inst, port, .. } => format!("{}.{}", inst.text, port.text),
+            Expr::InstOut { inst, port, .. } => {
+                let leaf = self
+                    .insts
+                    .get(inst.text.as_str())
+                    .and_then(|m| self.shapes.get(m.name.text.as_str()))
+                    .and_then(|shape| shape.read(&port.text))
+                    .unwrap_or_else(|| port.text.clone());
+                format!("{}.{leaf}", inst.text)
+            }
             Expr::Const { width, value, .. } => format!("UInt[{}]({value})", width.value),
             Expr::Unary {
                 op: UnOp::Not, arg, ..

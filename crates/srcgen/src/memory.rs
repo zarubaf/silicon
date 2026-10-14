@@ -284,7 +284,7 @@ mod tests {
     use core_ir::text::parse;
 
     fn lifted(core: &str) -> Result<String, Unsupported> {
-        lift(&parse(core).unwrap())
+        lift(&parse(core).unwrap(), &[]).map(|l| l.text)
     }
 
     /// A clocked module `m0` with the inputs `ra`, `re`, `wa`, `wd`, `we`
