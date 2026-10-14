@@ -728,11 +728,41 @@ struct Evaluator<'a> {
     item: usize,
     frame: FrameRef,
     elab: Elab,
-    /// The nesting depth at the start of the innermost hardware arm (section 9.4).
-    arm: Option<u64>,
+    /// The innermost guard (section 9.4): its kind and the nesting depth at its start.
+    guard: Option<Guard>,
     /// The name of a function value while its signature evaluates: each depth check there
     /// reports at it. A nested level clears it, so it keeps its own positions.
     site: Option<Pos>,
+}
+
+/// The kind of a guard (section 9.4): a hardware arm.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GuardKind {
+    Arm,
+}
+
+/// The innermost guard: its kind and the nesting depth at its start. The texts of `S016` name
+/// the kind and are normative, so they equal those of Lean `Guard`.
+#[derive(Clone, Copy)]
+pub(crate) struct Guard {
+    pub(crate) kind: GuardKind,
+    pub(crate) depth: u64,
+}
+
+impl Guard {
+    /// The text of a mutation of a binding.
+    pub(crate) fn change(self) -> String {
+        match self.kind {
+            GuardKind::Arm => "a hardware arm changes a binding from before the arm".to_owned(),
+        }
+    }
+
+    /// The text of the graph effect `g`.
+    pub(crate) fn effect(self, g: &str) -> String {
+        match self.kind {
+            GuardKind::Arm => format!("a hardware arm has no graph effect such as `{g}`"),
+        }
+    }
 }
 
 /// Why an evaluation stops: its first error, or a deeper level for which the machine cannot
@@ -869,7 +899,7 @@ impl<'a> Evaluator<'a> {
             item: 0,
             frame: ROOT,
             elab,
-            arm: None,
+            guard: None,
             site: None,
         }
     }
@@ -1537,11 +1567,14 @@ impl Evaluator<'_> {
                         format!("a condition is a Bool, not {}", self.tys.text_of(&ty)),
                     );
                 }
-                let saved = self.arm.replace(self.depth);
+                let saved = self.guard.replace(Guard {
+                    kind: GuardKind::Arm,
+                    depth: self.depth,
+                });
                 let arms = self
                     .operand(pos, yes)
                     .and_then(|a| self.operand_after(pos, a, no));
-                self.arm = saved;
+                self.guard = saved;
                 let (a, b) = arms?;
                 Ok(Some(Out::Made(self.mux(pos, c, &a, &b)?)))
             }
