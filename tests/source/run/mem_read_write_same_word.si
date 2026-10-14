@@ -1,0 +1,24 @@
+// A read and a write of one word in one cycle: the read gives the old word (v0.1 section 5, frontend spec 7.6).
+// Inputs: ra, re, wa, wd, we. Outputs: data, valid.
+// TOP M()
+module M() {
+    input ra: UInt[2];
+    input re: Bool;
+    input wa: UInt[2];
+    input wd: UInt[8];
+    input we: Bool;
+    output data: UInt[8];
+    output valid: Bool;
+    mem m: [UInt[8]; 4];
+    let r = m.read_port(ra, re);
+    write_port(m, wa, wd, we);
+    data := r.data;
+    valid := r.valid;
+}
+// word 1 takes 5
+// STEP in=(clock$0rst false ra 0 re false wa 1 wd 5 we true) out=(data 0 valid false)
+// read and write of word 1 together: the read takes the old word, 5; the word becomes 9
+// STEP in=(clock$0rst false ra 1 re true wa 1 wd 9 we true) out=(data 0 valid false)
+// the next read sees 9; the response of the last cycle is 5
+// STEP in=(clock$0rst false ra 1 re true wa 0 wd 0 we false) out=(data 5 valid true)
+// STEP in=(clock$0rst false ra 0 re false wa 0 wd 0 we false) out=(data 9 valid true)

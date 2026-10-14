@@ -1,0 +1,30 @@
+// A reset: the response becomes (zero, false), the write of the reset cycle has no effect, and the words hold
+// (v0.1 section 5, frontend spec 7.6).
+// Inputs: ra, re, wa, wd, we. Outputs: data, valid.
+// TOP M()
+module M() {
+    input ra: UInt[2];
+    input re: Bool;
+    input wa: UInt[2];
+    input wd: UInt[8];
+    input we: Bool;
+    output data: UInt[8];
+    output valid: Bool;
+    mem m: [UInt[8]; 4];
+    let r = m.read_port(ra, re);
+    write_port(m, wa, wd, we);
+    data := r.data;
+    valid := r.valid;
+}
+// word 2 takes 6
+// STEP in=(clock$0rst false ra 0 re false wa 2 wd 6 we true) out=(data 0 valid false)
+// read word 2
+// STEP in=(clock$0rst false ra 2 re true wa 0 wd 0 we false) out=(data 0 valid false)
+// reset edge with a read of word 2 and a write of 8 to word 1: the outputs still show the response of the last cycle
+// STEP in=(clock$0rst true ra 2 re true wa 1 wd 8 we true) out=(data 6 valid true)
+// the response is (0, false); read word 1: the write was cancelled
+// STEP in=(clock$0rst false ra 1 re true wa 0 wd 0 we false) out=(data 0 valid false)
+// word 1 is 0; read word 2: it held 6
+// STEP in=(clock$0rst false ra 2 re true wa 0 wd 0 we false) out=(data 0 valid true)
+// STEP in=(clock$0rst false ra 0 re false wa 0 wd 0 we false) out=(data 6 valid true)
+// STEP in=(clock$0rst false ra 0 re false wa 0 wd 0 we false) out=(data 6 valid false)

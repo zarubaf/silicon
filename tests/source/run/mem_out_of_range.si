@@ -1,0 +1,33 @@
+// Depth 5 has the address width 3, so 5, 6, and 7 are out of range. A read there gives
+// (zero, false). A write there changes no word (v0.1 section 5, frontend spec 7.6).
+// Inputs: ra, re, wa, wd, we. Outputs: data, valid.
+// TOP M()
+module M() {
+    input ra: UInt[3];
+    input re: Bool;
+    input wa: UInt[3];
+    input wd: UInt[8];
+    input we: Bool;
+    output data: UInt[8];
+    output valid: Bool;
+    mem m: [UInt[8]; 5];
+    let r = m.read_port(ra, re);
+    write_port(m, wa, wd, we);
+    data := r.data;
+    valid := r.valid;
+}
+// word 4 takes 7
+// STEP in=(clock$0rst false ra 0 re false wa 4 wd 7 we true) out=(data 0 valid false)
+// read word 4; write 99 to address 5 (out of range)
+// STEP in=(clock$0rst false ra 4 re true wa 5 wd 99 we true) out=(data 0 valid false)
+// read address 5 (out of range); write 98 to address 7 (out of range)
+// STEP in=(clock$0rst false ra 5 re true wa 7 wd 98 we true) out=(data 7 valid true)
+// the response of the read out of range is (0, false); read word 0; write 1 to address 6
+// STEP in=(clock$0rst false ra 0 re true wa 6 wd 1 we true) out=(data 0 valid false)
+// no write out of range reached word 0, 1, 2, 3, or 4
+// STEP in=(clock$0rst false ra 1 re true wa 0 wd 0 we false) out=(data 0 valid true)
+// STEP in=(clock$0rst false ra 2 re true wa 0 wd 0 we false) out=(data 0 valid true)
+// STEP in=(clock$0rst false ra 3 re true wa 0 wd 0 we false) out=(data 0 valid true)
+// STEP in=(clock$0rst false ra 4 re true wa 0 wd 0 we false) out=(data 0 valid true)
+// STEP in=(clock$0rst false ra 6 re true wa 0 wd 0 we false) out=(data 7 valid true)
+// STEP in=(clock$0rst false ra 0 re false wa 0 wd 0 we false) out=(data 0 valid false)

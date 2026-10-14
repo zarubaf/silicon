@@ -1,0 +1,28 @@
+// A depth of 1 has the address width 1 (max(1, ceil(log2 1))), so address 1 is out of range. A read and a
+// write of the one word still give the old word (v0.1 section 5, frontend spec 7.6).
+// Inputs: ra, re, wa, wd, we. Outputs: data, valid.
+// TOP M()
+module M() {
+    input ra: UInt[1];
+    input re: Bool;
+    input wa: UInt[1];
+    input wd: UInt[8];
+    input we: Bool;
+    output data: UInt[8];
+    output valid: Bool;
+    mem m: [UInt[8]; 1];
+    let r = m.read_port(ra, re);
+    write_port(m, wa, wd, we);
+    data := r.data;
+    valid := r.valid;
+}
+// the word takes 3
+// STEP in=(clock$0rst false ra 0 re false wa 0 wd 3 we true) out=(data 0 valid false)
+// read and write together: the read takes the old 3; the word becomes 8
+// STEP in=(clock$0rst false ra 0 re true wa 0 wd 8 we true) out=(data 0 valid false)
+// read address 1 (out of range) and write 5 to it
+// STEP in=(clock$0rst false ra 1 re true wa 1 wd 5 we true) out=(data 3 valid true)
+// the response is (0, false); read the word: still 8
+// STEP in=(clock$0rst false ra 0 re true wa 0 wd 0 we false) out=(data 0 valid false)
+// STEP in=(clock$0rst false ra 0 re false wa 0 wd 0 we false) out=(data 8 valid true)
+// STEP in=(clock$0rst false ra 0 re false wa 0 wd 0 we false) out=(data 8 valid false)

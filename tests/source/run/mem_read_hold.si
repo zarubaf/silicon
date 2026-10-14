@@ -1,0 +1,29 @@
+// A disabled read holds `data` and gives `valid` false (v0.1 section 5, frontend spec 7.6).
+// Inputs: ra, re, wa, wd, we. Outputs: data, valid.
+// TOP M()
+module M() {
+    input ra: UInt[2];
+    input re: Bool;
+    input wa: UInt[2];
+    input wd: UInt[8];
+    input we: Bool;
+    output data: UInt[8];
+    output valid: Bool;
+    mem m: [UInt[8]; 4];
+    let r = m.read_port(ra, re);
+    write_port(m, wa, wd, we);
+    data := r.data;
+    valid := r.valid;
+}
+// word 2 takes 9
+// STEP in=(clock$0rst false ra 0 re false wa 2 wd 9 we true) out=(data 0 valid false)
+// read word 2
+// STEP in=(clock$0rst false ra 2 re true wa 0 wd 0 we false) out=(data 0 valid false)
+// the read is off and word 3 takes 7: data holds 9, the pulse ends
+// STEP in=(clock$0rst false ra 3 re false wa 3 wd 7 we true) out=(data 9 valid true)
+// the address points at word 3 but the read is off: data still holds 9
+// STEP in=(clock$0rst false ra 3 re false wa 0 wd 0 we false) out=(data 9 valid false)
+// the read of word 3 is on
+// STEP in=(clock$0rst false ra 3 re true wa 0 wd 0 we false) out=(data 9 valid false)
+// STEP in=(clock$0rst false ra 0 re false wa 0 wd 0 we false) out=(data 7 valid true)
+// STEP in=(clock$0rst false ra 0 re false wa 0 wd 0 we false) out=(data 7 valid false)
