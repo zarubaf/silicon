@@ -16,10 +16,11 @@ function of the evaluator follows itself. The cap holds the invariant "fuel ≤ 
 
 `follows_all` gives `Follows n' (f n a) (f n' a)` for `eval`, `typeExpr`, `stmt`, and `block`
 at any two bounds `n` and `n'`. `Follows.shift` and `Follows.short` read off the two
-directions for one run. `run_budget` is the budget boundary of `Eval.run`: it needs only
-`∀ n n', Follows n' (act n) (act n')` of the action. The elaborator and the lowering prove
-this premise for their actions with the lemmas here (`Follows.bind` and the other lemmas
-of the monad, and the tactic `follows`).
+directions for one run. `observe_budget` is the budget boundary of `Eval.observeRun`, with the
+records: it needs only `∀ n n', Follows n' (act n) (act n')` of the action. `run_budget` is its
+projection to the result. The elaborator and the lowering prove this premise for their actions
+with the lemmas here (`Follows.bind` and the other lemmas of the monad, and the tactic
+`follows`).
 -/
 namespace Silicon.Source.Eval.Fuel
 
@@ -935,16 +936,47 @@ theorem Follows.short {x y : M α} (h : Follows cap x y) {c : Ctx} {s s' : St} {
   delta Follows at h
   exact ((h c s a s' hx).2 F hcap).2 hF
 
-theorem run_apply (budget : Budget) (items : Array Resolve.Item) (act : Nat → M α)
+theorem observeRun_apply (budget : Budget) (items : Array Resolve.Item) (act : Nat → M α)
     (top : Scan) :
-    run budget items act top =
+    observeRun budget items act top =
       match act budget.fuel (start budget items top).1 (start budget items top).2 with
-      | .ok (a, s) => .ok (a, budget.fuel - s.fuel)
-      | .error e => .error e.err := by
-  unfold run observeRun
+      | .ok (a, s) => (s.records, .ok (a, budget.fuel - s.fuel))
+      | .error e => (e.records, .error e.err) := by
+  unfold observeRun
   rcases hs : start budget items top with ⟨ctx, st⟩
-  simp only []
-  cases act budget.fuel ctx st <;> rfl
+  rfl
+
+/--
+The budget boundary of `Eval.observeRun`. Let the runs of an action follow each other at each
+pair of bounds. Then the action uses the same fuel `u` with each budget. Each fuel from `u`
+gives the same records and result, and each fuel below `u` gives `S015`.
+-/
+theorem observe_budget {act : Nat → M α} (hact : ∀ n n', Follows n' (act n) (act n'))
+    {budget : Budget} {items : Array Resolve.Item} {top : Scan} {rs : Array Record} {a : α}
+    {u : Nat} (h : observeRun budget items act top = (rs, .ok (a, u))) (F : Nat) :
+    (u ≤ F → observeRun { budget with fuel := F } items act top = (rs, .ok (a, u))) ∧
+    (F < u → ∃ p m,
+      (observeRun { budget with fuel := F } items act top).2 = .error ⟨.S015, p, m⟩) := by
+  rw [observeRun_apply] at h
+  split at h
+  next a' s' hx =>
+    simp only [Prod.mk.injEq, Except.ok.injEq] at h
+    obtain ⟨rfl, rfl, rfl⟩ := h
+    have hf := hact budget.fuel F
+    unfold Follows at hf
+    obtain ⟨_, k⟩ := hf _ _ a' s' hx
+    have r := k F (Nat.le_refl F)
+    have e : start { budget with fuel := F } items top =
+        ((start budget items top).1, { (start budget items top).2 with fuel := F }) := rfl
+    refine ⟨fun hu => ?_, fun hu => ?_⟩
+    · rw [observeRun_apply, e]
+      have hs : (start budget items top).2.fuel = budget.fuel := rfl
+      simp only [r.1 hu, Prod.mk.injEq, Except.ok.injEq, true_and]
+      simp only [used, hs] at hu ⊢
+      omega
+    · obtain ⟨p, m, rs, he⟩ := r.2 hu
+      exact ⟨p, m, by rw [observeRun_apply, e]; simp only [he]⟩
+  next => simp at h
 
 /--
 The budget boundary of `Eval.run`. Let the runs of an action follow each other at each pair
@@ -955,33 +987,10 @@ theorem run_budget {act : Nat → M α} (hact : ∀ n n', Follows n' (act n) (ac
     {budget : Budget} {items : Array Resolve.Item} {top : Scan} {a : α} {u : Nat}
     (h : run budget items act top = .ok (a, u)) (F : Nat) :
     (u ≤ F → run { budget with fuel := F } items act top = .ok (a, u)) ∧
-    (F < u → ∃ p m, run { budget with fuel := F } items act top = .error ⟨.S015, p, m⟩) := by
-  rw [run_apply] at h
-  split at h
-  next a' s' hx =>
-    cases h
-    have hf : Follows F (act budget.fuel) (act F) := hact budget.fuel F
-    unfold Follows at hf
-    obtain ⟨_, k⟩ := hf _ _ a s' hx
-    have r := k F (Nat.le_refl F)
-    refine ⟨fun hu => ?_, fun hu => ?_⟩
-    · rw [run_apply]
-      show (match act F (start budget items top).1
-          { (start budget items top).2 with fuel := F } with
-        | .ok (a, s) => Except.ok (a, F - s.fuel) | .error e => Except.error e.err) = _
-      rw [r.1 hu]
-      simp only [used] at hu ⊢
-      congr 2
-      show F - (F - (budget.fuel - s'.fuel)) = budget.fuel - s'.fuel
-      omega
-    · obtain ⟨p, m, rs, he⟩ := r.2 hu
-      refine ⟨p, m, ?_⟩
-      rw [run_apply]
-      show (match act F (start budget items top).1
-          { (start budget items top).2 with fuel := F } with
-        | .ok (a, s) => Except.ok (a, F - s.fuel) | .error e => Except.error e.err) = _
-      rw [he]
-  next => cases h
+    (F < u → ∃ p m, run { budget with fuel := F } items act top = .error ⟨.S015, p, m⟩) :=
+  have r := observe_budget hact
+    (Prod.ext rfl h : observeRun budget items act top = (_, .ok (a, u))) F
+  ⟨fun hu => congrArg Prod.snd (r.1 hu), r.2⟩
 
 /-- The budget boundary of a static expression in the file scope. -/
 theorem evalExpr_budget {budget : Budget} {items : Array Resolve.Item} {e : Resolve.Expr}

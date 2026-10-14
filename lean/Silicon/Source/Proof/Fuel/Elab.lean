@@ -14,7 +14,8 @@ The walk runs in `EM`, a state monad over `Eval.M`. `EFollows cap x y` holds whe
 difference is the same in each run that succeeds, so `measure` keeps `EFollows`.
 
 `follows_all` gives `EFollows n' (f n a) (f n' a)` for `stmt` and `block` at any two bounds,
-and `elaborate_budget` is the budget boundary of `Elab.elaborate` by `Eval.Fuel.run_budget`.
+and `observe_budget` is the budget boundary of `Elab.observe` by `Eval.Fuel.observe_budget`.
+`elaborate_budget` is its projection to the result.
 The tactic `efollows` is the tactic `follows` with the lemmas of `EM`.
 -/
 namespace Silicon.Source.Elab.Fuel
@@ -326,6 +327,23 @@ theorem follows_all : ∀ n,
         exact EFollows.charge_one _ fun _ => by efollows [hs m]
 
 /--
+The budget boundary of `observe`. If the elaboration uses `u` units, each fuel from `u` gives
+the same records, design, and units, and each fuel below `u` gives `S015`.
+-/
+theorem observe_budget {budget : Budget} {items : Array Resolve.Item}
+    {digest : String → String} {pos : Pos} {top : Nat} {xs : List Resolve.Expr}
+    {rs : Array Record} {d : Design} {u : Nat}
+    (h : observe budget items digest pos top xs = (rs, .ok (d, u))) (F : Nat) :
+    (u ≤ F → observe { budget with fuel := F } items digest pos top xs = (rs, .ok (d, u))) ∧
+    (F < u → ∃ p m,
+      (observe { budget with fuel := F } items digest pos top xs).2 = .error ⟨.S015, p, m⟩) := by
+  refine Eval.Fuel.observe_budget (fun n n' => ?_) h F
+  follows [EFollows.run]
+  efollows [(Eval.Fuel.follows_all n).1 n', static_f, need_f,
+    instantiate_e ((Eval.Fuel.follows_all n).2.1 n') ((follows_all n).2 n'),
+    arguments_e ((Eval.Fuel.follows_all n).1 n') ((Eval.Fuel.follows_all n).2.1 n')]
+
+/--
 The budget boundary of `elaborate`. If the elaboration uses `u` units, each fuel from `u` gives
 the same design and units, and each fuel below `u` gives `S015`.
 -/
@@ -334,11 +352,9 @@ theorem elaborate_budget {budget : Budget} {items : Array Resolve.Item}
     {u : Nat} (h : elaborate budget items digest pos top xs = .ok (d, u)) (F : Nat) :
     (u ≤ F → elaborate { budget with fuel := F } items digest pos top xs = .ok (d, u)) ∧
     (F < u → ∃ p m,
-      elaborate { budget with fuel := F } items digest pos top xs = .error ⟨.S015, p, m⟩) := by
-  refine run_budget (fun n n' => ?_) h F
-  follows [EFollows.run]
-  efollows [(Eval.Fuel.follows_all n).1 n', static_f, need_f,
-    instantiate_e ((Eval.Fuel.follows_all n).2.1 n') ((follows_all n).2 n'),
-    arguments_e ((Eval.Fuel.follows_all n).1 n') ((Eval.Fuel.follows_all n).2.1 n')]
+      elaborate { budget with fuel := F } items digest pos top xs = .error ⟨.S015, p, m⟩) :=
+  have r := observe_budget
+    (Prod.ext rfl h : observe budget items digest pos top xs = (_, .ok (d, u))) F
+  ⟨fun hu => congrArg Prod.snd (r.1 hu), r.2⟩
 
 end Silicon.Source.Elab.Fuel
