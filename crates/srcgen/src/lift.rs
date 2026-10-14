@@ -102,7 +102,10 @@ struct Layout {
 
 impl Layout {
     fn of(top: &Module, shape: Shape) -> Self {
-        let clocked = top.ports.iter().any(|p| p.ty == Ty::Clock);
+        let clocked = top
+            .ports
+            .iter()
+            .any(|p| p.dir == Dir::Input && p.ty == Ty::Clock);
         let data = |dir| {
             top.ports
                 .iter()
