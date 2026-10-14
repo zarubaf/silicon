@@ -1,0 +1,96 @@
+// A generic FIFO over a record entry. The child holds the storage as a memory, the two pointers, and a
+// fill count; the pointer width comes from a comptime function of the depth. An empty queue shows the zero
+// of the entry type. The top fixes the entry type, and a static assert pins the width of the entry there.
+// TOP Top()
+struct Entry(comptime W: Nat) {
+    valid: Bool,
+    data: UInt[W],
+    tag: UInt[2],
+}
+comptime fn addr_bits(d: Nat) -> Nat {
+    let mut a = 1;
+    comptime for i in 0..8 {
+        a = if (d > (1 << a)) { a + 1 } else { a };
+    }
+    return a;
+}
+module Fifo(comptime T: Type, comptime D: Nat) {
+    input push: Bool;
+    input pop: Bool;
+    input din: T;
+    output head: T;
+    output full: Bool;
+    output empty: Bool;
+    mem q: [T; D];
+    reg wp: UInt[addr_bits(D)] = 0;
+    reg rp: UInt[addr_bits(D)] = 0;
+    reg cnt: UInt[addr_bits(D) + 1] = 0;
+    full := cnt == D;
+    empty := cnt == 0;
+    let do_push = push && cnt != D;
+    let do_pop = pop && cnt != 0;
+    write_port(q, wp, din, do_push);
+    let r = q.read_port(rp, do_pop);
+    head := if (r.valid) { r.data } else { T() };
+    wp := if (do_push) { wp +% 1 } else { wp };
+    rp := if (do_pop) { rp +% 1 } else { rp };
+    cnt := if (do_push && !do_pop) { cnt +% 1 } else { if (do_pop && !do_push) { cnt -% 1 } else { cnt } };
+}
+module Top() {
+    input push: Bool;
+    input pop: Bool;
+    input din: Entry[4];
+    output head: Entry[4];
+    output full: Bool;
+    output empty: Bool;
+    static_assert(data_bits(Entry[4]) == 7, "the entry has 7 bits");
+    instance f = Fifo(Entry[4], 8);
+    f.push := push;
+    f.pop := pop;
+    f.din := din;
+    head := f.head;
+    full := f.full;
+    empty := f.empty;
+}
+// reset from the all-zero start: the queue is empty and the response is the zero entry
+// STEP in=(clock$0rst true din.valid false din.data 0 din.tag 0 pop false push false) out=(empty true full false head.valid false head.data 0 head.tag 0)
+// push eight entries, one in each cycle; the response stays the zero entry
+// STEP in=(clock$0rst false din.valid true din.data 5 din.tag 1 pop false push true) out=(empty true full false head.valid false head.data 0 head.tag 0)
+// STEP in=(clock$0rst false din.valid true din.data 6 din.tag 2 pop false push true) out=(empty false full false head.valid false head.data 0 head.tag 0)
+// STEP in=(clock$0rst false din.valid false din.data 7 din.tag 3 pop false push true) out=(empty false full false head.valid false head.data 0 head.tag 0)
+// STEP in=(clock$0rst false din.valid true din.data 8 din.tag 0 pop false push true) out=(empty false full false head.valid false head.data 0 head.tag 0)
+// STEP in=(clock$0rst false din.valid true din.data 9 din.tag 1 pop false push true) out=(empty false full false head.valid false head.data 0 head.tag 0)
+// STEP in=(clock$0rst false din.valid true din.data 10 din.tag 2 pop false push true) out=(empty false full false head.valid false head.data 0 head.tag 0)
+// STEP in=(clock$0rst false din.valid true din.data 11 din.tag 3 pop false push true) out=(empty false full false head.valid false head.data 0 head.tag 0)
+// the eighth push: the count is 7 now, so the queue is not full yet
+// STEP in=(clock$0rst false din.valid true din.data 12 din.tag 1 pop false push true) out=(empty false full false head.valid false head.data 0 head.tag 0)
+// the queue is full; a push on a full queue is dropped
+// STEP in=(clock$0rst false din.valid true din.data 13 din.tag 0 pop false push true) out=(empty false full true head.valid false head.data 0 head.tag 0)
+// pop from full: the response comes one cycle later
+// STEP in=(clock$0rst false din.valid false din.data 0 din.tag 0 pop true push false) out=(empty false full true head.valid false head.data 0 head.tag 0)
+// the first entry shows; the second pop is taken
+// STEP in=(clock$0rst false din.valid false din.data 0 din.tag 0 pop true push false) out=(empty false full false head.valid true head.data 5 head.tag 1)
+// push and pop in one cycle at count 6: the second entry shows; the pop reads the old word 2
+// STEP in=(clock$0rst false din.valid true din.data 14 din.tag 2 pop true push true) out=(empty false full false head.valid true head.data 6 head.tag 2)
+// the third entry shows with its valid field false, because the response is valid
+// STEP in=(clock$0rst false din.valid false din.data 0 din.tag 0 pop false push false) out=(empty false full false head.valid false head.data 7 head.tag 3)
+// the pulse has ended: the response is the zero entry again
+// STEP in=(clock$0rst false din.valid false din.data 0 din.tag 0 pop false push false) out=(empty false full false head.valid false head.data 0 head.tag 0)
+// pop the six entries that remain; the last one is the entry that the push at count 6 wrote at word 0
+// STEP in=(clock$0rst false din.valid false din.data 0 din.tag 0 pop true push false) out=(empty false full false head.valid false head.data 0 head.tag 0)
+// STEP in=(clock$0rst false din.valid false din.data 0 din.tag 0 pop true push false) out=(empty false full false head.valid true head.data 8 head.tag 0)
+// STEP in=(clock$0rst false din.valid false din.data 0 din.tag 0 pop true push false) out=(empty false full false head.valid true head.data 9 head.tag 1)
+// STEP in=(clock$0rst false din.valid false din.data 0 din.tag 0 pop true push false) out=(empty false full false head.valid true head.data 10 head.tag 2)
+// STEP in=(clock$0rst false din.valid false din.data 0 din.tag 0 pop true push false) out=(empty false full false head.valid true head.data 11 head.tag 3)
+// the count is 1 and the read pointer wrapped to word 0
+// STEP in=(clock$0rst false din.valid false din.data 0 din.tag 0 pop true push false) out=(empty false full false head.valid true head.data 12 head.tag 1)
+// a pop on the empty queue is dropped; the last response shows
+// STEP in=(clock$0rst false din.valid false din.data 0 din.tag 0 pop true push false) out=(empty true full false head.valid true head.data 14 head.tag 2)
+// STEP in=(clock$0rst false din.valid false din.data 0 din.tag 0 pop false push false) out=(empty true full false head.valid false head.data 0 head.tag 0)
+// push and pop in one cycle on the empty queue: only the push counts
+// STEP in=(clock$0rst false din.valid true din.data 15 din.tag 3 pop true push true) out=(empty true full false head.valid false head.data 0 head.tag 0)
+// pop the one entry
+// STEP in=(clock$0rst false din.valid false din.data 0 din.tag 0 pop true push false) out=(empty false full false head.valid false head.data 0 head.tag 0)
+// reset with a push in the same cycle: the response shows, and the next state is all zero
+// STEP in=(clock$0rst true din.valid true din.data 1 din.tag 1 pop false push true) out=(empty true full false head.valid true head.data 15 head.tag 3)
+// STEP in=(clock$0rst false din.valid false din.data 0 din.tag 0 pop false push false) out=(empty true full false head.valid false head.data 0 head.tag 0)
