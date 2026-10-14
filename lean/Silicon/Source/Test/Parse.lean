@@ -125,6 +125,10 @@ index with two arguments parses: the type rules reject it.
 #guard stFails "a.x(1) = 1;" .S001 8
 #guard stFails "x.f().g = 1;" .S001 9
 #guard st "mem m: [T; 4];" == "(mem \"m\" (name \"T\") (num 4))"
+#guard st "mem m: [UInt[8]; N + 1];" ==
+  "(mem \"m\" (index (name \"UInt\") ((num 8))) (binary add (name \"N\") (num 1)))"
+#guard stFails "mem m: T;" .S001 8
+#guard stFails "mem m: [T; 4] = 0;" .S001 15
 #guard st "[T; 4];" == "(expr (arraytype (name \"T\") (num 4)))"
 #guard stFails "[T; 4] = 1;" .S001 8
 #guard match parseSource defaultSyntaxDepth (ctBody "a.1[0] = x;") with
@@ -383,6 +387,7 @@ type: the parser accepts it, and pass 4 rejects it.
 #guard stFails "@typeInfo(T);" .S004 1
 #guard stFails "reg r: T in d = 0;" .S004 10
 #guard stFails "wire w: T in d;" .S004 11
+#guard stFails "mem m: [T; 4] in d;" .S004 15
 #guard stFails "input i: T in d;" .S004 12
 #guard stFails "input i[0]: T;" .S004 8
 #guard stFails "output o: T as k;" .S004 13
@@ -400,12 +405,14 @@ def plainBody (s : String) : String := "fn f() -> T {\n" ++ s ++ "\n}"
 #guard fails (plainBody "output o: Bool;") .S004 2 1
 #guard fails (plainBody "reg r: Bool = false;") .S004 2 1
 #guard fails (plainBody "wire w: Bool;") .S004 2 1
+#guard fails (plainBody "mem m: [Bool; 4];") .S004 2 1
 #guard fails (plainBody "instance u = M();") .S004 2 1
 #guard fails (plainBody "let x = 1;\n{\ncomptime if (c) { wire w: Bool; }\n}") .S004 4 19
 #guard fails (plainBody "comptime for i in 0..2 {\nreg r: Bool = false;\n}") .S004 3 1
 #guard (parseSource defaultSyntaxDepth (plainBody "let x = 1;\nx = 2;\nreturn x;")).toBool
 #guard (parseSource defaultSyntaxDepth (ctBody "wire w: Bool;\nreturn 1;")).toBool
 #guard (parseSource defaultSyntaxDepth "module M() {\nwire w: Bool;\n}").toBool
+#guard (parseSource defaultSyntaxDepth "module M() {\nmem m: [Bool; 4];\n}").toBool
 #guard stFails "@field(a, \"0\") = 1;" .S004 1
 #guard stFails "@field(a, b) = 1;" .S004 1
 #guard stFails "@field(x, \"f\") = 1;" .S004 1
@@ -661,6 +668,8 @@ def helper : Item :=
 #guard exprs.all fun e => roundtrip [.const p (nm "X") (t "T") e]
 #guard roundtrip [counter, helper, .const p (nm "N") (uint (n 4)) (n 3)]
 #guard roundtrip [.module p (nm "C") [] (some []) [], .module p (nm "D") [] none []]
+#guard roundtrip
+  [.module p (nm "M") [] none [.mem p (nm "m") (uint (n 8)) (bin .add (v "N") (n 1))]]
 #guard roundtrip []
 
 /-! Parse, print, and parse again. The second parse gives the AST of the first. -/

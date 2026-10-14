@@ -75,6 +75,8 @@ def exprText (e : Expr) : String := e.print 0
 #guard stmtDump (.reg p (nm "r") (t "Bool") (.bool p false)) ==
   "(reg \"r\" (name \"Bool\") (bool false))"
 #guard stmtDump (.wire p (nm "w") (t "Bool")) == "(wire \"w\" (name \"Bool\"))"
+#guard stmtDump (.mem p (nm "m") u8 (n 4)) ==
+  "(mem \"m\" (index (name \"UInt\") ((num 8))) (num 4))"
 #guard stmtDump (.input p (nm "i") (t "Bool")) == "(input \"i\" (name \"Bool\"))"
 #guard stmtDump (.output p (nm "o") (t "Bool")) == "(output \"o\" (name \"Bool\"))"
 #guard stmtDump (.inst p (nm "u") (nm "M") [n 8]) == "(inst \"u\" \"M\" ((num 8)))"
@@ -276,6 +278,8 @@ type and in an expression. The arrow binds to the right.
 #guard (Stmt.ctFor p (nm "i") (n 0) (n 4) [.block p [.connect p (v "o") (v "i")]]).print 0 ==
   "comptime for i in 0 .. 4 {\n    {\n        o := i;\n    }\n}\n"
 #guard (Stmt.alias p (nm "B") (.tuple p [t "Bool"])).print 1 == "    type B = (Bool,);\n"
+#guard (Stmt.mem p (nm "m") (.array p u8 (n 2)) (bin .add (v "N") (n 1))).print 1 ==
+  "    mem m: [[UInt[8]; 2]; N + 1];\n"
 
 /-! Each parameter mode prints its mark. -/
 #guard Print.print [.fn p true (nm "f")
