@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use core_ir::ast::{Design, Dir, Expr, Item, Module, Stmt, Ty};
+use core_ir::ast::{BinOp, Design, Dir, Expr, Item, Module, Stmt, Ty};
 use core_ir::check::check;
 use core_ir::r#gen;
 use core_ir::interp::Sim;
@@ -739,31 +739,6 @@ fn registered_shape(m: &Module) -> Result<usize, String> {
             continue;
         };
         mems += 1;
-        let is_next = |s: &&Stmt| matches!(s, Stmt::Next { .. });
-        let reads: Vec<_> = m
-            .stmts
-            .iter()
-            .filter(is_next)
-            .filter_map(|s| match s {
-                Stmt::Next {
-                    reg,
-                    expr:
-                        Expr::Mux {
-                            cond, then, els, ..
-                        },
-                    ..
-                } => match (&**then, &**els) {
-                    (Expr::Read { mem, .. }, Expr::Ref(held)) if mem.text == name.text => {
-                        (held.text == reg.text).then_some((reg.text.as_str(), &**cond))
-                    }
-                    _ => None,
-                },
-                _ => None,
-            })
-            .collect();
-        let [(data, read_en)] = reads[..] else {
-            return Err(format!("{}: not one registered read", name.text));
-        };
         let reset_to_zero = |reg: &str| {
             m.stmts.iter().any(|s| match s {
                 Stmt::Reg {
@@ -775,33 +750,61 @@ fn registered_shape(m: &Module) -> Result<usize, String> {
                 _ => false,
             })
         };
-        if !reset_to_zero(data) {
+        let reads: Vec<_> = m
+            .stmts
+            .iter()
+            .filter_map(|s| match s {
+                Stmt::Next {
+                    reg,
+                    expr:
+                        Expr::Mux {
+                            cond, then, els, ..
+                        },
+                    ..
+                } => match (&**then, &**els) {
+                    (Expr::Read { mem, addr, .. }, Expr::Ref(held))
+                        if mem.text == name.text && held.text == reg.text =>
+                    {
+                        Some((reg.text.as_str(), &**cond, &**addr))
+                    }
+                    _ => None,
+                },
+                _ => None,
+            })
+            .filter(|(data, ..)| reset_to_zero(data))
+            .collect();
+        let [(data, read_en, read_addr)] = reads[..] else {
             return Err(format!(
-                "{}: the data register has no reset to 0",
+                "{}: not one registered read with a data register that resets to 0",
                 name.text
             ));
-        }
+        };
         let depth = depth.value;
-        let valid = m.stmts.iter().find_map(|s| match s {
+        let valid = m.stmts.iter().any(|s| match s {
             Stmt::Next {
                 reg,
-                expr: Expr::Binary { lhs, rhs, .. },
+                expr:
+                    Expr::Binary {
+                        op: BinOp::And,
+                        lhs,
+                        rhs,
+                        ..
+                    },
                 ..
-            } if reg.text != data && **lhs == *read_en => match &**rhs {
-                Expr::Icmp { rhs: limit, .. } if is_const_depth(limit, depth) => Some(reg),
-                full if is_const(full, 1, 1) && depth > 1 && depth.is_power_of_two() => Some(reg),
-                _ => None,
-            },
-            _ => None,
+            } if reg.text != data && **lhs == *read_en && reset_to_zero(&reg.text) => {
+                match &**rhs {
+                    Expr::Icmp {
+                        lhs: addr,
+                        rhs: limit,
+                        ..
+                    } => **addr == *read_addr && is_const_depth(limit, depth),
+                    full => is_const(full, 1, 1) && depth > 1 && depth.is_power_of_two(),
+                }
+            }
+            _ => false,
         });
-        let Some(valid) = valid else {
-            return Err(format!("{}: no valid register", name.text));
-        };
-        if !reset_to_zero(&valid.text) {
-            return Err(format!(
-                "{}: the valid register has no reset to 0",
-                name.text
-            ));
+        if !valid {
+            return Err(format!("{}: no valid register that resets to 0", name.text));
         }
         let writes: Vec<_> = m
             .stmts
