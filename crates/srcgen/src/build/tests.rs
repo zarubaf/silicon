@@ -388,7 +388,7 @@ fn top_ports_are_evaluated_and_sorted() {
     );
     let items = vec![Item::Module {
         name: "M0".to_owned(),
-        params: vec![("P0".to_owned(), StaticTy::Nat)],
+        params: vec![("P0".to_owned(), STy::Nat)],
         clocked: false,
         body: vec![
             Stmt::Input("i1".to_owned(), Ty::UInt(width)),

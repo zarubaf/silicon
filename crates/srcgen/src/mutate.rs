@@ -482,9 +482,7 @@ mod tests {
     use super::super::build::typed;
     use super::super::eval::Value;
     use super::super::program::tests::{TEXT, program};
-    use super::super::program::{
-        HExpr, Item, Place, Ports, Program, Radix, SExpr, StaticTy, Stmt, Ty,
-    };
+    use super::super::program::{HExpr, Item, Place, Ports, Program, Radix, SExpr, STy, Stmt, Ty};
     use super::*;
     use num_bigint::BigInt;
     use proptest::strategy::{Strategy, ValueTree};
@@ -634,7 +632,7 @@ mod tests {
         };
         let c0 = Item::Const {
             name: "C0".to_owned(),
-            ty: StaticTy::Nat,
+            ty: STy::Nat,
             value: dec(8),
         };
         let m0 = module(
