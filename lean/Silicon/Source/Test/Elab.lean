@@ -926,4 +926,144 @@ def copies (w : Nat) : String :=
 #guard total (copies 256) "M" == total (copies 64) "M" + 9
 #guard exact (copies 256) "M" 99
 
+/-!
+The memory port calls (section 6.2). The elaboration alone runs them, with the fuel `fuel` and
+the depth `depth`. A call gives each error at the call, and a receiver call starts at its
+receiver.
+-/
+def elabAt (src t : String) (fuel : Nat) (depth : Nat := 1000) : String :=
+  match Cli.load 4096 src with
+  | .error e => s!"{e.code} {e.pos.line}:{e.pos.col}"
+  | .ok (items, checked) =>
+    match Cli.topSelection 4096 items checked t with
+    | .error _ => "usage"
+    | .ok (p, i, _, xs) =>
+      match Elab.elaborate { fuel, depth } checked Names.sha16 p i xs with
+      | .ok (_, u) => s!"ok {u}"
+      | .error e => s!"{e.code} {e.pos.line}:{e.pos.col}"
+
+def portBody (ss : String) : String :=
+  "module M() {\n  input a: UInt[2];\n  input e: Bool;\n  input d: UInt[8];\n" ++ ss ++ "}\n"
+def port (ss : String) : String := elabOnly (portBody ss) "M"
+def portAt (ss : String) (fuel : Nat) (depth : Nat := 1000) : String :=
+  elabAt (portBody ss) "M" fuel depth
+def m4 : String := "  mem m: [UInt[8]; 4];\n"
+def wr : String := "  write_port(m, a, d, e);\n"
+def rw : String := m4 ++ wr ++ "  let r = m.read_port(a, e);\n"
+
+/-! A hardware leaf of a binding: a leaf of a word with its offset and type, or a name. -/
+def leafOp (h : Eval.Hw) : String :=
+  match h with
+  | .node _ t _ (.word m o) _ => s!"word {Names.encode m.name}@{o}:{t.text}"
+  | .node _ _ _ (.ref p) _ => s!"ref {Names.encode p.name}"
+  | _ => "other"
+
+/-! The bindings of the top instantiation with their leaves. -/
+def portLets (ss : String) : Option (List (String × String)) :=
+  (topBody (portBody ss) "M").map
+    (·.lets.toList.map fun l => (Names.encode l.path.name, leafOp l.value))
+
+/-! The requests of each memory of the top instantiation, as the texts of their parts. -/
+def requests (ss : String) : Option (List (Option (List String) × Option (List String))) :=
+  (topBody (portBody ss) "M").map (·.mems.toList.map fun m =>
+    (m.read.map fun (x, y) => [x.text, y.text],
+     m.write.map fun (x, y, z) => [x.text, y.text, z.text]))
+
+/-!
+The memory records the first request of each kind after its typed uses. The response refers to
+the word at the offset 0 and to `m$0rvalid`, and its binding binds each hardware leaf.
+-/
+#guard port rw == "ok 95"
+#guard requests rw == some [(some ["hardware UInt[2]", "hardware Bool"],
+  some ["hardware UInt[2]", "hardware UInt[8]", "hardware Bool"])]
+#guard requests (m4 ++ "  write_port(m, 1, 7, true);\n  let r = m.read_port(a, e);\n") ==
+  some [(some ["hardware UInt[2]", "hardware Bool"], some ["UInt[2]", "UInt[8]", "Bool"])]
+#guard portLets rw == some [("r$data", "word m@0:UInt[8]"), ("r$valid", "ref m$0rvalid")]
+#guard portLets ("  mem m: [(UInt[3], Bool, UInt[5]); 4];\n" ++
+  "  write_port(m, a, (1, true, 2), e);\n  let r = m.read_port(a, e);\n") ==
+  some [("r$data$0e", "word m@0:UInt[3]"), ("r$data$1e", "word m@3:Bool"),
+    ("r$data$2e", "word m@4:UInt[5]"), ("r$valid", "ref m$0rvalid")]
+
+/-!
+The first argument is a memory, else `S010` at the call. The address has the type `UInt[A]`
+with `A = max(1, ⌈log₂ N⌉)`. The enable has the type `Bool`, and the data the word type. Another
+hardware type is `S010`, and a static value that does not fit is `S012`. The typed uses run in
+the order of the arguments. A static address that fits but is not below `N` is valid, not `S013`.
+-/
+#guard port (m4 ++ wr ++ "  let q = read_port(e, a, e);\n") == "S010 7:11"
+#guard port (m4 ++ wr ++ "  let q = read_port(5, a, e);\n") == "S010 7:11"
+#guard port ("  reg g: UInt[8] = 0;\n  g := g;\n" ++ m4 ++ "  write_port(g, a, d, e);\n") ==
+  "S010 8:3"
+#guard port ("  mem m: [UInt[8]; 3];\n  let r = read_port(m, d, e);\n") == "S010 6:11"
+#guard port (m4 ++ "  let r = read_port(m, a, d);\n") == "S010 6:11"
+#guard port (m4 ++ "  write_port(m, a, a, e);\n") == "S010 6:3"
+#guard port (m4 ++ "  let q = read_port(m, 4, d);\n") == "S012 6:11"
+#guard port (m4 ++ "  write_port(m, 4, 256, d);\n") == "S012 6:3"
+#guard port (m4 ++ "  write_port(m, a, 256, d);\n") == "S012 6:3"
+#guard port ("  mem m: [UInt[8]; 1];\n  write_port(m, 2, 1, true);\n") == "S012 6:3"
+#guard port ("  mem m: [UInt[8]; 3];\n  write_port(m, 3, 1, true);\n" ++
+  "  let r = read_port(m, 3, false);\n") == "ok 106"
+#guard port ("  mem m: [UInt[8]; 1];\n  write_port(m, 1, 1, true);\n" ++
+  "  let r = read_port(m, 0, false);\n") == "ok 106"
+
+/-!
+A call in a hardware arm is `S016` at the call, after the memory check and before the typed
+uses.
+-/
+#guard port (m4 ++ "  let q = if (e) { read_port(m, 4, d) } else { 1 };\n") == "S016 6:20"
+#guard port (m4 ++ "  let q = if (e) { read_port(a, 4, d) } else { 1 };\n") == "S010 6:20"
+
+/-!
+`S018`: a second call of one kind is `S018` at the call, also by a receiver and through a `let`
+alias. It waits for the end of the body, so a later error comes first. A memory without a read
+or without a write is `S018` at its statement, and all of them compete by position.
+-/
+def rr : String := rw ++ "  let q = m.read_port(a, e);\n"
+#guard port rr == "S018 8:11"
+#guard port (rw ++ "  m.write_port(a, d, e);\n") == "S018 8:3"
+#guard port (m4 ++ "  let k = m;\n  write_port(k, a, d, e);\n" ++
+  "  let r = m.read_port(a, e);\n  let q = k.read_port(a, e);\n") == "S018 9:11"
+#guard port (rr ++ "  let z: Bool = d;\n") == "S010 9:3"
+#guard port (m4 ++ "  let r = m.read_port(a, e);\n") == "S018 5:3"
+#guard port (m4 ++ wr) == "S018 5:3"
+#guard port (m4 ++ "  mem n: [UInt[8]; 4];\n  write_port(n, a, d, e);\n" ++
+  "  let r = read_port(n, a, e);\n  let q = read_port(n, a, e);\n") == "S018 5:3"
+#guard port (m4 ++ wr ++ wr ++ "  let r = read_port(m, a, e);\n  let q = read_port(m, a, e);\n") ==
+  "S018 7:3"
+
+/-!
+An error in the work of the prelude struct reports at the call (D7): the depth of
+`ReadResponse[T]`.
+-/
+#guard portAt rw 100000 (depth := 2) == "S015 7:11"
+#guard portAt rw 100000 (depth := 3) == "ok 95"
+
+/-!
+The charges. The zero size of the response is the last charge of the call. A second read
+charges as a read with a done specialization of `ReadResponse[T]`, also of another memory. A
+wide word charges the copy of its data and the zero size of its response, with no walk.
+-/
+#guard portAt rw 95 == "ok 95"
+#guard portAt rw 94 == "S015 7:11"
+#guard portAt rr 110 == "S018 8:11"
+#guard portAt rr 109 == "S015 8:11"
+#guard portAt (rw ++ wr) 106 == "S018 8:3"
+#guard portAt (rw ++ wr) 105 == "S015 8:3"
+def spec8 : String := "  let t = ReadResponse[UInt[8]];\n"
+#guard portAt (m4 ++ wr) 63 == "S018 5:3"
+#guard portAt (m4 ++ wr) 62 == "S015 6:3"
+#guard port (spec8 ++ rw) == "ok 107"
+#guard portAt (spec8 ++ m4 ++ wr) 92 == "S018 6:3"
+#guard portAt (spec8 ++ m4 ++ wr) 91 == "S015 7:3"
+#guard 110 - 95 == 107 - 92
+def mn : String := rw ++ "  mem n: [UInt[8]; 4];\n  write_port(n, a, d, e);\n"
+#guard port (mn ++ "  let q = n.read_port(a, e);\n") == "ok 130"
+#guard portAt mn 115 == "S018 8:3"
+#guard portAt mn 114 == "S015 9:3"
+def wideW (k : Nat) : String :=
+  s!"  input x: [Bool; {k}];\n  mem m: [[Bool; {k}]; 4];\n  let r = m.read_port(a, e);\n" ++
+  "  write_port(m, a, x, e);\n"
+#guard port (wideW 4) == "ok 120"
+#guard port (wideW 4096) == s!"ok {120 + 2 * (4096 - 4)}"
+
 end Silicon.Source.Test.Elab
