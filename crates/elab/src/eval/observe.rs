@@ -252,6 +252,8 @@ impl Evaluator<'_> {
         crate::counters::add(crate::counters::Count::Framed, self.calls.len() as u64);
         let frames = spaced(self.calls.iter().map(|&(i, q)| {
             let name = self.file.ast().get(i).map_or("", |item| &item.name().name);
+            #[cfg(test)]
+            crate::counters::add(crate::counters::Count::Copied, name.len() as u64);
             Piece::Owned(format!("(call {name} {} {})", q.line, q.col))
         }));
         let mut work = Vec::new();

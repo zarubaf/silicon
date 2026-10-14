@@ -76,6 +76,9 @@ pub(crate) struct Counts {
     pub recorded: u64,
     /// The guards that a hardware arm or a structural context entered.
     pub guarded: u64,
+    /// The bytes of a name that the walks of `diagnostic` and the reads of a domain copied into
+    /// a new string, outside the text of a record.
+    pub copied: u64,
 }
 
 /// What a counter counts.
@@ -111,6 +114,7 @@ pub(crate) enum Count {
     Framed,
     Recorded,
     Guarded,
+    Copied,
 }
 
 static COUNTS: Mutex<BTreeMap<u64, Counts>> = Mutex::new(BTreeMap::new());
@@ -179,6 +183,7 @@ pub(crate) fn add(count: Count, n: u64) {
             Count::Framed => &mut c.framed,
             Count::Recorded => &mut c.recorded,
             Count::Guarded => &mut c.guarded,
+            Count::Copied => &mut c.copied,
         };
         *field += n;
     }
