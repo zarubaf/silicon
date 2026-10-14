@@ -327,3 +327,53 @@ fn a_place_pays_an_empty_part_before_the_next_step() {
     assert_eq!(sil_fuel(src, "M", 87), "S015 1:70");
     assert_eq!(sil_fuel(src, "M", 94), "S015 1:79");
 }
+
+/// The walk over the leaves gives `down` the bit offset of each part in a word of its container:
+/// `k` times the element width for an array, and the sum of the widths of the earlier parts for
+/// a tuple or a record. A part without a leaf adds its width 0 and is skipped.
+#[test]
+fn the_walk_over_leaves_gives_the_offset_of_each_part() {
+    use crate::layout::{Env, Shapes, for_each_leaf};
+    let mut tys = Types::default();
+    let bool_ty = tys.mk(Ty::Bool);
+    let byte = tys.mk(Ty::UInt(8));
+    let unit = tys.mk(Ty::Unit);
+    let pair = tys.tuple(vec![bool_ty, byte]);
+    let tuple = tys.tuple(vec![unit, bool_ty, byte, pair]);
+    let root = tys.array(tuple, Int::from_u64(2));
+    let mut shapes = Shapes::default();
+    let env = Env {
+        tys: &tys,
+        order: &[],
+        texts: &[],
+    };
+    // The source of a part is its offset in the word of the root.
+    let mut offsets = Vec::new();
+    let done: Result<(), ()> = for_each_leaf(
+        env,
+        &mut shapes,
+        root,
+        0u64,
+        |at, _, _, _, offset| at + offset,
+        |_| (),
+        |_, t, at| {
+            offsets.push((env.tys.text(t), *at));
+            Ok(())
+        },
+    );
+    assert!(done.is_ok());
+    // A tuple has the width 1 + 8 + 9 = 18.
+    assert_eq!(
+        offsets,
+        [
+            ("Bool".to_owned(), 0),
+            ("UInt[8]".to_owned(), 1),
+            ("Bool".to_owned(), 9),
+            ("UInt[8]".to_owned(), 10),
+            ("Bool".to_owned(), 18),
+            ("UInt[8]".to_owned(), 19),
+            ("Bool".to_owned(), 27),
+            ("UInt[8]".to_owned(), 28),
+        ]
+    );
+}
