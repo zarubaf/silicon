@@ -183,7 +183,8 @@ pub(crate) enum Handle {
         path: PathId,
         port: Port,
     },
-    Domain,
+    /// A domain by its declared name.
+    Domain(String),
 }
 
 /// Where a reference starts: the local of the frame at this index of the frame stack, or the
@@ -285,7 +286,7 @@ impl Seen<'_> {
                 Handle::Mem(_) => "a memory",
                 Handle::Inst { .. } => "an instance",
                 Handle::Input { .. } => "an input of a child",
-                Handle::Domain => "a domain",
+                Handle::Domain(_) => "a domain",
             }
             .to_owned(),
             Seen::Agg(a) => a.stored_ty().map_or_else(
