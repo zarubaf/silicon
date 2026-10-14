@@ -1,0 +1,13 @@
+// S011: a register as the message of a diagnostic in a comptime loop. The first iteration fails.
+// TOP M()
+module M() {
+    input a: Bool;
+    output o: Bool;
+    reg r: Bool = false;
+    r := a;
+    comptime for i in 0..3 {
+        // expected-error S011 @+1
+        diagnostic(r, i);
+    }
+    o := r;
+}

@@ -1,0 +1,7 @@
+// S016: a diagnostic in the width of a UInt type. A type has no graph effect.
+// TOP M()
+module M() {
+    // expected-error S016 @+2
+    // expected-message: a type or a constant has no graph effect such as `diagnostic`; call it before and use the result
+    let a: UInt[diagnostic("width", 1)] = 0;
+}

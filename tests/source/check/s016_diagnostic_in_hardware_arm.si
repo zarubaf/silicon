@@ -1,0 +1,9 @@
+// S016: a diagnostic in the arm of a hardware if. The record is a graph effect, so an arm cannot make it.
+// TOP M()
+module M() {
+    input c: Bool;
+    output o: UInt[8];
+    // expected-error S016 @+1
+    let u = if (c) { diagnostic("arm", 1) } else { () };
+    o := 0;
+}

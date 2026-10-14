@@ -1,0 +1,14 @@
+// S016: a function value that calls diagnostic, called in the arm of a hardware if. The mode of the arm follows the call.
+// TOP M()
+fn note() -> Nat {
+    // expected-error S016 @+1
+    diagnostic("value", 1);
+    return 3;
+}
+module M() {
+    input c: Bool;
+    output o: UInt[8];
+    let f = note;
+    let n = if (c) { f() } else { 0 };
+    o := 0;
+}

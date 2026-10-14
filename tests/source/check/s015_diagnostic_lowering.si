@@ -1,0 +1,10 @@
+// S015: the fuel runs out in the lowering, after the elaboration made its records. The 7.7 * 10^6 elements of the arrays pay for the
+// elaboration of the body, but not for the lowering of the connection.
+// TOP M()
+module M() domains() {
+    input p: [UInt[8]; 7700000];
+    output y: [UInt[8]; 7700000];
+    diagnostic("before", 1);
+    // expected-error S015 @+1
+    y := p;
+}

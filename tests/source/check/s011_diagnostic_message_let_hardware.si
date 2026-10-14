@@ -1,0 +1,10 @@
+// S011: the message of a diagnostic is a hardware value that a let holds.
+// TOP M()
+module M() {
+    input a: UInt[8];
+    output o: UInt[8];
+    let s = a +% 1;
+    // expected-error S011 @+1
+    diagnostic(s, 1);
+    o := s;
+}

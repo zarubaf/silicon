@@ -1,0 +1,13 @@
+// S016: a helper that calls diagnostic, called in the arm of a hardware if. The error is at the diagnostic call in the helper.
+// TOP M()
+fn note(x: UInt[8]) -> UInt[8] {
+    // expected-error S016 @+1
+    diagnostic("helper", 1);
+    return x;
+}
+module M() {
+    input c: Bool;
+    input x: UInt[8];
+    output o: UInt[8];
+    o := if (c) { note(x) } else { 0 };
+}

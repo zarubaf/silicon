@@ -1,0 +1,11 @@
+// S016: a diagnostic in a type statement.
+// TOP M()
+fn note() -> Nat {
+    // expected-error S016 @+1
+    diagnostic("type", 8);
+    return 8;
+}
+module M() {
+    type T = UInt[note()];
+    let a: T = 0;
+}

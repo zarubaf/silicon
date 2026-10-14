@@ -1,0 +1,10 @@
+// S016: a helper that calls diagnostic, called in the length of an array type of a let.
+// TOP M()
+fn note() -> Nat {
+    // expected-error S016 @+1
+    diagnostic("length", 1);
+    return 2;
+}
+module M() {
+    let a: [Bool; note()] = [false, false];
+}

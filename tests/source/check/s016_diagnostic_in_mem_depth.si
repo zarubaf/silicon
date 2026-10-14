@@ -1,0 +1,10 @@
+// S016: a diagnostic in the depth of a mem statement.
+// TOP M()
+fn note() -> Nat {
+    // expected-error S016 @+1
+    diagnostic("depth", 4);
+    return 4;
+}
+module M() {
+    mem m: [UInt[8]; note()];
+}

@@ -1,0 +1,10 @@
+// S016: a diagnostic in the else arm of a nested hardware if.
+// TOP M()
+module M() {
+    input c: Bool;
+    input d: Bool;
+    output o: UInt[8];
+    // expected-error S016 @+1
+    let u = if (c) { () } else { if (d) { () } else { diagnostic("else", 2) } };
+    o := 0;
+}
