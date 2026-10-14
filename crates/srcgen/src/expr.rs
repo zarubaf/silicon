@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The source spelling of each core expression form. Every value is a
-//! `UInt[w]`; `Bool` appears only in `if` conditions.
+//! The source spelling of each core expression form. Core has only bit
+//! vectors, so every value is a `UInt[w]`. `Bool` appears only where source
+//! requires it: in `if` conditions and at the enable and valid flag of a
+//! memory port, where the lift converts to and from `UInt[1]`.
 
 use super::lift::Unsupported;
 use super::shape::Shape;
