@@ -1,0 +1,11 @@
+// The cost of the function flag (section 5.4): a type constructor computes the flag of a tuple type
+// from the flags of its parts, with no charge. The tuple type with a function part thus costs the
+// same as the tuple type `((Int, Int), Bool)` of the same size, which has none. The fuel equal to
+// the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 166
+// TOP M()
+module M() domains() {
+    comptime for i in 0..8 {
+        let t = (fn (Int) -> Int, Bool);
+    }
+}
