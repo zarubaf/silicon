@@ -1,0 +1,165 @@
+// SPDX-License-Identifier: Apache-2.0
+//! One mutation of a typed program (front-end spec 11.4, mode 3).
+//!
+//! The mutation edits a copy of the items and prints it with the one
+//! printer, so each mutant parses. The original program elaborates, and
+//! each pass of the front ends stops the run (spec 6.2). A mutation that
+//! adds one error of an early pass therefore fixes the first code, and
+//! `Mutant::expect` predicts it:
+//!
+//! - A copy of a declaration is `S002` (pass 2): all local kinds and the
+//!   items share one namespace in a scope, and the copy is in that scope.
+//! - A name reference `q0` is `S003` (pass 3): `q` is no prefix of the
+//!   builder, and the resolver checks each name, also in dead code.
+//! - A deleted declaration that its item still mentions (an item: that
+//!   any item still mentions) is `S003`. Generated names are unique in an
+//!   item, so no other declaration catches the use.
+//! - One argument more or less in a call of a named function is `S007`
+//!   (pass 4), on all code. In a call through a function value, pass 5
+//!   finds it when the call runs: `S007` where the site always runs (the
+//!   top frame of a module, outside a lazy operand or branch), else no
+//!   prediction. A `const` runs at its first use, so it predicts nothing.
+//! - A deleted `:=` in the top frame of a module body is `S018` (pass 5):
+//!   each module of a program has a context, so its top frame runs, and
+//!   nothing else fails.
+//!
+//! Any other mutation can fail in pass 5 at a point that depends on the
+//! values, or pass, so its prediction is `None`.
+
+use super::program::{Item, Program, render_items};
+use walk::Walk;
+
+mod walk;
+
+#[cfg(test)]
+mod tests;
+
+/// A mutant: its source text, what the mutation did, and the first code
+/// that both front ends must report, where the pass order makes it certain.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Mutant {
+    pub text: String,
+    pub what: String,
+    pub expect: Option<&'static str>,
+}
+
+/// The kinds of mutation, in the cyclic order of the fallback.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Kind {
+    /// A statement of a module or helper body, or an item other than the
+    /// top module, goes.
+    Delete,
+    /// A declaration statement or an item, copied right after itself.
+    Duplicate,
+    /// A name reference becomes `q0`.
+    Rename,
+    /// The last argument of an instance or a call goes.
+    DropArg,
+    /// An instance or a call gets the argument `0` at its end.
+    AddArg,
+    /// A width `w` becomes `(w + 1)`.
+    Widen,
+    /// A width becomes `0`.
+    ZeroWidth,
+    /// A static expression becomes `(1 / 0)`.
+    Fault,
+}
+
+const KINDS: [Kind; 8] = [
+    Kind::Delete,
+    Kind::Duplicate,
+    Kind::Rename,
+    Kind::DropArg,
+    Kind::AddArg,
+    Kind::Widen,
+    Kind::ZeroWidth,
+    Kind::Fault,
+];
+
+/// The mutant of `program` for the kind `kind % 8`, or for the next kind
+/// in cyclic order that has a site, at the site `site % count` in the
+/// pre-order of the items.
+#[must_use]
+pub fn mutate(program: &Program, kind: u32, site: u32) -> Mutant {
+    let first = kind as usize % KINDS.len();
+    let mutant = KINDS
+        .iter()
+        .cycle()
+        .skip(first)
+        .take(KINDS.len())
+        .find_map(|&kind| {
+            let count = sites(kind, &program.items, &program.top);
+            if count == 0 {
+                return None;
+            }
+            let mut items = program.items.clone();
+            let (what, expect) = apply(kind, &mut items, &program.top, site as usize % count)?;
+            Some(Mutant {
+                text: render_items(&items),
+                what,
+                expect,
+            })
+        });
+    // A built program has the `:=` of a top output, a `Delete` site. The
+    // equal text shows the bug to `diff-si`.
+    mutant.unwrap_or_else(|| Mutant {
+        text: program.text(),
+        what: "no mutation site".to_owned(),
+        expect: None,
+    })
+}
+
+/// The number of sites of `kind` in `items`.
+fn sites(kind: Kind, items: &[Item], top: &str) -> usize {
+    let mut w = Walk::new(kind, top, None);
+    w.items(&mut items.to_vec());
+    w.seen
+}
+
+/// Applies `kind` at the site `site` and gives what it did and the
+/// predicted code, or `None` if `site` is not below `sites`.
+fn apply(
+    kind: Kind,
+    items: &mut Vec<Item>,
+    top: &str,
+    site: usize,
+) -> Option<(String, Option<&'static str>)> {
+    let mut w = Walk::new(kind, top, Some(site));
+    w.items(items);
+    let Hit { what, effect } = w.hit?;
+    let expect = match effect {
+        Effect::Code(c) => c,
+        Effect::Gone(name, scope) => {
+            let scope = match scope {
+                Some(i) => items.get(i..=i).unwrap_or_default(),
+                None => items.as_slice(),
+            };
+            mentions(&name, scope).then_some("S003")
+        }
+    };
+    Some((what, expect))
+}
+
+/// Whether a name reference in `items` is `name`: a value, an assignment
+/// target, the instance of a field, an instance module, or a callee. The
+/// guard `x == 0` of a `comptime fn` is no walked expression, so neither
+/// this check nor `Rename` sees it. That costs no prediction: the guard
+/// names the first parameter, and no mutation deletes a parameter.
+fn mentions(name: &str, items: &[Item]) -> bool {
+    let mut w = Walk::new(Kind::Rename, "", None);
+    w.items(&mut items.to_vec());
+    w.names.iter().any(|n| n == name)
+}
+
+/// The effect of a mutation on the first error.
+enum Effect {
+    Code(Option<&'static str>),
+    /// The declaration of a name went: `S003` if the item at the index
+    /// (all items if `None`) still mentions it.
+    Gone(String, Option<usize>),
+}
+
+struct Hit {
+    what: String,
+    effect: Effect,
+}
