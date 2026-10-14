@@ -1,0 +1,31 @@
+// A binding of the response binds its hardware leaves: `r$data$a`, `r$data$b`, and `r$valid`.
+// TOP M()
+// CHECK: (reg m$0rdata (bits 5) clock$0clk (reset sync clock$0rst (const 5 0)))
+// CHECK-NEXT: (reg m$0rvalid (bits 1) clock$0clk (reset sync clock$0rst (const 1 0)))
+// CHECK-NEXT: (mem m (bits 5) 2 clock$0clk)
+// CHECK-NEXT: (let m$0raddr (bits 1) a)
+// CHECK-NEXT: (let m$0ren (bits 1) e)
+// CHECK-NEXT: (let r$data$a (bits 4) (extract m$0rdata 0 4))
+// CHECK-NEXT: (let r$data$b (bits 1) (extract m$0rdata 4 1))
+// CHECK-NEXT: (let r$valid (bits 1) m$0rvalid)
+// CHECK-NEXT: (next m$0rdata (mux m$0ren (read m m$0raddr) m$0rdata))
+// CHECK-NEXT: (next m$0rvalid (and m$0ren (const 1 1)))
+// CHECK-NEXT: (write m 0 a (concat d$b d$a) (and e (xor clock$0rst (const 1 1))))
+// CHECK-NEXT: (assign q r$data$a)
+// CHECK-NEXT: (assign v r$valid)))
+struct W {
+    a: UInt[4],
+    b: Bool,
+}
+module M() {
+    input a: UInt[1];
+    input e: Bool;
+    input d: W;
+    output q: UInt[4];
+    output v: Bool;
+    mem m: [W; 2];
+    let r = m.read_port(a, e);
+    m.write_port(a, d, e);
+    q := r.data.a;
+    v := r.valid;
+}

@@ -1,0 +1,23 @@
+// A memory named `read`, a core keyword, takes the field `0k`: `read$0k`. Its role names stay plain.
+// TOP M()
+// CHECK: (reg read$0rdata (bits 8) clock$0clk (reset sync clock$0rst (const 8 0)))
+// CHECK-NEXT: (reg read$0rvalid (bits 1) clock$0clk (reset sync clock$0rst (const 1 0)))
+// CHECK-NEXT: (mem read$0k (bits 8) 4 clock$0clk)
+// CHECK-NEXT: (let r$data (bits 8) (extract read$0rdata 0 8))
+// CHECK-NEXT: (let r$valid (bits 1) read$0rvalid)
+// CHECK-NEXT: (let read$0raddr (bits 2) a)
+// CHECK-NEXT: (let read$0ren (bits 1) e)
+// CHECK-NEXT: (next read$0rdata (mux read$0ren (read read$0k read$0raddr) read$0rdata))
+// CHECK-NEXT: (next read$0rvalid (and read$0ren (const 1 1)))
+// CHECK-NEXT: (write read$0k 0 a d (and e (xor clock$0rst (const 1 1))))
+// CHECK-NEXT: (assign q r$data)))
+module M() {
+    input a: UInt[2];
+    input e: Bool;
+    input d: UInt[8];
+    output q: UInt[8];
+    mem read: [UInt[8]; 4];
+    let r = read.read_port(a, e);
+    read.write_port(a, d, e);
+    q := r.data;
+}

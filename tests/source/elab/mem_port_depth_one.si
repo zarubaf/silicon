@@ -1,0 +1,28 @@
+// A depth of 1: the address has 1 bit, and `valid` compares it with the depth.
+// TOP M()
+// CHECK: (reg m$0rdata (bits 8) clock$0clk (reset sync clock$0rst (const 8 0)))
+// CHECK-NEXT: (reg m$0rvalid (bits 1) clock$0clk (reset sync clock$0rst (const 1 0)))
+// CHECK-NEXT: (mem m (bits 8) 1 clock$0clk)
+// CHECK-NEXT: (let m$0raddr (bits 1) ra)
+// CHECK-NEXT: (let m$0ren (bits 1) re)
+// CHECK-NEXT: (let r$data (bits 8) (extract m$0rdata 0 8))
+// CHECK-NEXT: (let r$valid (bits 1) m$0rvalid)
+// CHECK-NEXT: (next m$0rdata (mux m$0ren (read m m$0raddr) m$0rdata))
+// CHECK-NEXT: (next m$0rvalid (and m$0ren (icmp ult m$0raddr (const 1 1))))
+// CHECK-NEXT: (write m 0 wa wd (and we (xor clock$0rst (const 1 1))))
+// CHECK-NEXT: (assign q r$data)
+// CHECK-NEXT: (assign v r$valid)))
+module M() {
+    input ra: UInt[1];
+    input re: Bool;
+    input wa: UInt[1];
+    input we: Bool;
+    input wd: UInt[8];
+    output q: UInt[8];
+    output v: Bool;
+    mem m: [UInt[8]; 1];
+    let r = m.read_port(ra, re);
+    m.write_port(wa, wd, we);
+    q := r.data;
+    v := r.valid;
+}
