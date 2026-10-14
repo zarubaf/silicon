@@ -394,10 +394,29 @@ impl Builder {
                 _ => self.binding(ctx, &mut m.names, &mut out, false)?,
             }
         }
-        for (r, w) in regs {
-            out.push(Stmt::Connect(Place::Name(r), self.driver(ctx, &w)));
-        }
+        self.close_regs(ctx, regs, &mut out)?;
         Ok(out)
+    }
+
+    /// The `:=` of each register. The wanted type is read from `ctx` now: a
+    /// write to a root since the declaration may have dropped the type
+    /// expression, and a copy kept from the declaration would print it.
+    pub(super) fn close_regs(
+        &mut self,
+        ctx: &Ctx,
+        regs: Vec<String>,
+        out: &mut Vec<Stmt>,
+    ) -> Built {
+        for r in regs {
+            let want = ctx
+                .hw
+                .iter()
+                .find(|h| matches!(&h.expr, HExpr::Name(n) if *n == r))
+                .map(Want::of)
+                .ok_or(Fault::Type)?;
+            out.push(Stmt::Connect(Place::Name(r), self.driver(ctx, &want)));
+        }
+        Ok(())
     }
 
     /// `let` or `let mut`, with or without its type.
@@ -528,7 +547,7 @@ impl Builder {
         ctx: &mut Ctx,
         names: &mut Names,
         out: &mut Vec<Stmt>,
-        regs: &mut Vec<(String, Want)>,
+        regs: &mut Vec<String>,
     ) -> Built {
         let (ty, want) = self.decl(ctx)?;
         let reset = self.fit(&want.types, self.reach(ctx), &ctx.envs);
@@ -540,7 +559,7 @@ impl Builder {
             types: want.types.clone(),
             mutable: false,
         });
-        regs.push((name, want));
+        regs.push(name);
         Ok(())
     }
 
