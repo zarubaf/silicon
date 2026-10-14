@@ -343,12 +343,12 @@ fn fallback_pairs(s: &Stats) -> [(&'static str, u32, u32); 8] {
         ("type argument", s.arguments, s.argument_fallbacks),
         ("list call", s.list_calls, s.list_call_fallbacks),
         ("push", s.pushes + s.push_fallbacks, s.push_fallbacks),
+        ("pop", s.pops + s.pop_fallbacks, s.pop_fallbacks),
         (
             "mut call",
             s.mut_calls + s.mut_call_fallbacks,
             s.mut_call_fallbacks,
         ),
-        ("hardware mut call", s.hw_mut_calls, 0),
         (
             "call through a function value",
             s.value_calls,
