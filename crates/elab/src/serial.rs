@@ -20,6 +20,9 @@ pub(crate) trait Sink: Write {
 
     /// Writes a string with the escapes of the grammar.
     fn quoted(&mut self, s: &str);
+
+    /// Writes the decimal form of an integer.
+    fn int(&mut self, n: &Int);
 }
 
 impl Sink for String {
@@ -29,6 +32,10 @@ impl Sink for String {
 
     fn quoted(&mut self, s: &str) {
         parse::quote(s, self);
+    }
+
+    fn int(&mut self, n: &Int) {
+        write!(self, "{n}").unwrap_or_default();
     }
 }
 
@@ -52,6 +59,10 @@ impl Sink for Len {
             }
             None => false,
         }
+    }
+
+    fn int(&mut self, n: &Int) {
+        self.0 = self.0.saturating_add(n.decimal_len());
     }
 
     fn quoted(&mut self, s: &str) {
@@ -98,7 +109,7 @@ pub(crate) fn write<S: Sink>(tys: &Types, first: Item<'_>, out: &mut S) {
     while let Some(item) = work.pop() {
         match item {
             Item::Text(s) | Item::Name(s) => out.write_str(s).unwrap_or_default(),
-            Item::Int(n) => write!(out, "{n}").unwrap_or_default(),
+            Item::Int(n) => out.int(n),
             Item::Ty(t) => {
                 if !out.whole_type(tys, t) {
                     #[cfg(test)]
@@ -172,7 +183,11 @@ fn type_node<'a, S: Sink>(tys: &'a Types, ty: &'a Ty, out: &mut S, work: &mut Ve
 /// The node of a value. Its parts wait on the stack.
 fn value_node<'a, S: Sink>(tys: &Types, v: &'a Value, out: &mut S, work: &mut Vec<Item<'a>>) {
     match v {
-        Value::Int(n) => write!(out, "(int {n})").unwrap_or_default(),
+        Value::Int(n) => {
+            out.write_str("(int ").unwrap_or_default();
+            out.int(n);
+            out.write_str(")").unwrap_or_default();
+        }
         Value::Bool(b) => write!(out, "(bool {b})").unwrap_or_default(),
         Value::Str(s) => {
             out.write_str("(string ").unwrap_or_default();
