@@ -261,3 +261,118 @@ fn a_part_of_a_child_input_is_never_read() {
         assert_eq!(elab(&read_child(ty, read)), format!("S017 {at}"), "{read}");
     }
 }
+
+fn mem_body(ss: &str) -> String {
+    format!("module M() {{\n{ss}}}\n")
+}
+
+fn fuel_at(src: &str, fuel: u64) -> String {
+    crate::tests_elab::cost_fuel(src, "M", fuel)
+}
+
+/// The `mem` statement (spec section 6.2). Each check is at the statement, in this order: the
+/// charge, a combinational module, the word type, then the depth. The cases and their values
+/// come from `Silicon.Source.Test.Elab`.
+#[test]
+fn the_mem_statement_checks_in_order() {
+    let comb = "module M() domains() {\n  mem m: [Int; 0];\n}\n";
+    assert_eq!(cost(comb, "M"), "S017 2:3");
+    assert_eq!(fuel_at(comb, 28), "S017 2:3");
+    assert_eq!(fuel_at(comb, 27), "S015 2:3");
+    let hw = "  input x: UInt[4];\n  let h = x;\n";
+    let cases = [
+        ("  mem m: [Int; 4];\n".to_owned(), "S010 2:3"),
+        ("  mem m: [(); 4];\n".to_owned(), "S010 2:3"),
+        ("  mem m: [[Unit; 4]; 4];\n".to_owned(), "S010 2:3"),
+        ("  mem m: [[fn () -> Bool; 0]; 4];\n".to_owned(), "S010 2:3"),
+        (
+            "  mem m: [UInt[65536]; 4];\n  mem k: [[UInt[65536]; 2]; 4];\n".to_owned(),
+            "S012 3:3",
+        ),
+        ("  mem m: [Bool; 0];\n".to_owned(), "S012 2:3"),
+        ("  mem m: [Bool; 16777217];\n".to_owned(), "S012 2:3"),
+        ("  mem m: [Bool; -1];\n".to_owned(), "S012 2:3"),
+        ("  mem m: [Bool; true];\n".to_owned(), "S010 2:3"),
+        ("  mem m: [Bool; \"a\"];\n".to_owned(), "S010 2:3"),
+        ("  mem m: [Bool; []];\n".to_owned(), "S010 2:3"),
+        (format!("{hw}  mem m: [Bool; h];\n"), "S011 4:3"),
+        (format!("{hw}  mem m: [Int; h];\n"), "S010 4:3"),
+        (format!("{hw}  mem m: [[UInt[65536]; 2]; h];\n"), "S012 4:3"),
+    ];
+    for (body, want) in cases {
+        assert_eq!(cost(&mem_body(&body), "M"), want, "{body}");
+    }
+}
+
+/// A static `UInt[8]` depth is not an `Int`: `S010`, as the length of an array type.
+#[test]
+fn a_static_uint_depth_is_s010() {
+    let src = mem_body("  mem m: [Bool; UInt[8](3)];\n");
+    assert_eq!(cost(&src, "M"), "S010 2:3");
+}
+
+/// The charge: the statement, the type, and the depth, with no array type. A wide word with
+/// the largest depth costs as much as one with the depth 1.
+#[test]
+fn the_mem_charge_has_no_array_type() {
+    let small = mem_body("  mem m: [Bool; 4];\n");
+    assert_eq!(fuel_at(&small, 31), "S018 2:3");
+    assert_eq!(fuel_at(&small, 30), "S015 2:17");
+    for depth in ["16777216", "1"] {
+        let wide = mem_body(&format!("  mem m: [UInt[65536]; {depth}];\n"));
+        assert_eq!(fuel_at(&wide, 36), "S018 2:3", "{depth}");
+        assert_eq!(fuel_at(&wide, 35), "S015 2:24", "{depth}");
+    }
+}
+
+/// A memory is never data: a read, an index, a field, and an operand are `S010` at the use. A
+/// `let` alias keeps the handle, so only its read fails.
+#[test]
+fn a_memory_is_never_data() {
+    let cases = [
+        (
+            "  output y: Bool;\n  mem m: [Bool; 4];\n  y := m;\n",
+            "S010 4:3",
+        ),
+        (
+            "  output y: Bool;\n  mem m: [Bool; 4];\n  y := m[0];\n",
+            "S010 4:8",
+        ),
+        (
+            "  output y: Bool;\n  mem m: [Bool; 4];\n  y := m.a;\n",
+            "S010 4:8",
+        ),
+        (
+            "  output y: Bool;\n  mem m: [Bool; 4];\n  y := m + 1;\n",
+            "S010 4:8",
+        ),
+        (
+            "  mem m: [Bool; 4];\n  let a = m;\n  let b: Bool = a;\n",
+            "S010 4:3",
+        ),
+        ("  mem m: [Bool; 16777216];\n  let a = m;\n", "S018 2:3"),
+    ];
+    for (body, want) in cases {
+        assert_eq!(cost(&mem_body(body), "M"), want, "{body}");
+    }
+}
+
+/// `S018` at the statement competes by position with the other bindings, also in a loop.
+#[test]
+fn a_memory_without_a_port_call_is_s018_at_its_statement() {
+    let cases = [
+        ("  mem m: [Bool; 4];\n  wire w: Bool;\n", "S018 2:3"),
+        ("  wire w: Bool;\n  mem m: [Bool; 4];\n", "S018 2:3"),
+        (
+            "  output y: Bool;\n  y := true;\n  mem m: [Bool; 4];\n  y := false;\n",
+            "S018 4:3",
+        ),
+        (
+            "  comptime for i in 0..2 {\n    mem m: [Bool; 2];\n  }\n",
+            "S018 3:5",
+        ),
+    ];
+    for (body, want) in cases {
+        assert_eq!(cost(&mem_body(body), "M"), want, "{body}");
+    }
+}
