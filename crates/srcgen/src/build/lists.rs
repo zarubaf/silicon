@@ -178,13 +178,15 @@ impl Builder {
         let stmt = Stmt::Push(list.clone(), e);
         if self.try_run(ctx, &stmt) {
             note!(self, pushes);
+            ctx.forget(&list);
             out.push(stmt);
             return;
         }
         note!(self, push_fallbacks);
-        let stmt = Stmt::Push(list, int(0));
+        let stmt = Stmt::Push(list.clone(), int(0));
         if self.try_run(ctx, &stmt) {
             note!(self, pushes);
+            ctx.forget(&list);
             out.push(stmt);
         }
     }
@@ -196,9 +198,10 @@ impl Builder {
             return;
         };
         let name = names.fresh("s");
-        let stmt = Stmt::PopLet(name.clone(), list);
+        let stmt = Stmt::PopLet(name.clone(), list.clone());
         if self.try_run(ctx, &stmt) {
             note!(self, pops);
+            ctx.forget(&list);
             ctx.statics.push((name, STy::Int));
             out.push(stmt);
         }

@@ -611,3 +611,36 @@ fn top_ports_are_evaluated_and_sorted() {
         ]
     );
 }
+
+/// A type `SInt[(s0[0] + s1)]` printed after `s0.pop()` would mean another
+/// width, so the name loses the expression (seed 416 of the typed mode).
+#[test]
+fn a_write_to_a_root_drops_the_types_that_read_it() {
+    let width = |root: &str| {
+        Ty::SInt(SExpr::Binary(
+            SBin::Add,
+            Box::new(SExpr::Index(
+                Box::new(SExpr::Name(root.to_owned())),
+                Box::new(SExpr::Int(BigInt::from(0), Radix::Dec)),
+            )),
+            Box::new(SExpr::Name("s1".to_owned())),
+        ))
+    };
+    let hw = |name: &str, ty: Ty| Hw {
+        expr: HExpr::Name(name.to_owned()),
+        ty: Some(ty),
+        types: vec![Scalar::SInt(3)],
+        mutable: false,
+    };
+    let mut ctx = Ctx {
+        hw: vec![
+            hw("l0", width("s0")),
+            hw("l1", width("s00")),
+            hw("l2", Ty::Bool),
+        ],
+        ..Ctx::default()
+    };
+    ctx.forget("s0");
+    let kept: Vec<bool> = ctx.hw.iter().map(|h| h.ty.is_some()).collect();
+    assert_eq!(kept, [false, true, true]);
+}

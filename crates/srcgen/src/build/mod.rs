@@ -236,6 +236,24 @@ struct Ctx {
 }
 
 impl Ctx {
+    /// A write to the root `root` changes what a width over it means. A
+    /// hardware name whose type expression reads `root` loses the
+    /// expression, so later statements do not print it again; they print
+    /// a literal type or choose another name.
+    fn forget(&mut self, root: &str) {
+        for h in &mut self.hw {
+            let reads = h.ty.as_ref().is_some_and(|t| match t {
+                Ty::UInt(w) | Ty::SInt(w) => crate::program::sexpr(w)
+                    .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                    .any(|token| token == root),
+                Ty::Bool => false,
+            });
+            if reads {
+                h.ty = None;
+            }
+        }
+    }
+
     /// The scope of a nested frame whose env `i` extends `parents[i]`.
     fn derive(&self, parents: &[usize], envs: Vec<Env>) -> Ctx {
         let hw = self
