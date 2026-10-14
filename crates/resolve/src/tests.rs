@@ -1141,10 +1141,10 @@ fn s003_the_name_of_a_receiver_call_is_not_a_function_there() {
         message(&fn_body("return p.Bool();")),
         "`Bool` is not a function"
     );
-    fails(&fn_body("return p.diagnostic();"), 2, 10);
+    fails(&fn_body("return p.Reg();"), 2, 10);
     assert_eq!(
-        message(&fn_body("return p.diagnostic();")),
-        "`diagnostic` is not supported yet; it comes in slice 2"
+        message(&fn_body("return p.Reg();")),
+        "`Reg` is not supported yet; it comes in slice 3"
     );
     assert_eq!(
         message(&fn_body("return p.read();")),
