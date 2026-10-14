@@ -266,6 +266,7 @@ fn describe(ev: &Evaluator<'_>, out: &Out) -> String {
             let name = match ev.graph.node(h).map(|n| &n.op) {
                 Some(Op::Ref(p)) => base_text(ev, &Base::Name(*p)),
                 Some(Op::Out(i, q)) => base_text(ev, &Base::Out(*i, *q)),
+                Some(Op::Word(m, off)) => base_text(ev, &Base::Word(*m, *off)),
                 _ => String::new(),
             };
             let t = ev.graph.ty(h);
@@ -567,4 +568,95 @@ fn len_of_a_reference_reads_its_type() {
         assert_eq!(len(ev, v), "(int 2)");
         assert_eq!(f - ev.fuel.left(), 0);
     });
+}
+
+/// `struct R { a: Bool, b: UInt[8], c: SInt[3] }` as a specialization of the table.
+fn three_fields(ev: &mut Evaluator<'_>) -> TyId {
+    let s = ev.tys.begin_spec("R", 0, Vec::new(), false);
+    let fields = vec![
+        ev.tys.mk(Ty::Bool),
+        ev.tys.mk(Ty::UInt(8)),
+        ev.tys.mk(Ty::SInt(3)),
+    ];
+    let (meta, depth) = ev.tys.struct_meta(s, &fields);
+    ev.tys.finish_spec(s, fields, meta, depth)
+}
+
+#[test]
+fn the_table_stores_the_offset_of_each_part_of_a_word() {
+    with(100, |ev| {
+        let arr = array(ev, Ty::UInt(8), 4);
+        let tup = tuple(
+            ev,
+            vec![Ty::Bool, Ty::UInt(8), Ty::SInt(3), Ty::Unit, Ty::Bool],
+        );
+        let rec = three_fields(ev);
+        let offsets = |ev: &Evaluator<'_>, t: TyId, n: u64| -> Vec<u64> {
+            (0..n).map(|k| ev.tys.offset(t, k)).collect()
+        };
+        assert_eq!(offsets(ev, arr, 4), [0, 8, 16, 24]);
+        assert_eq!(offsets(ev, tup, 5), [0, 1, 9, 12, 12]);
+        assert_eq!(offsets(ev, rec, 3), [0, 1, 9]);
+        let nested = tuple(ev, vec![Ty::Bool]);
+        let both = ev.tys.tuple(vec![rec, arr, nested]);
+        assert_eq!(offsets(ev, both, 3), [0, 12, 44]);
+        let scalar = ev.tys.mk(Ty::UInt(8));
+        assert_eq!(ev.tys.offset(scalar, 0), 0);
+    });
+}
+
+#[test]
+fn a_step_on_a_word_adds_the_offset_and_makes_no_path_node() {
+    let fuel = 700_000_120;
+    with(fuel, |ev| {
+        let m = ev.paths.child(None, 1);
+        let before = counters::of(fuel).paths;
+        let tup = tuple(ev, vec![Ty::Bool, Ty::UInt(8), Ty::SInt(3)]);
+        let word = Base::Word(m, 5);
+        let part = word.sub(&mut ev.paths, Step::Elem(2), ev.tys.offset(tup, 2));
+        assert_eq!(part, Base::Word(m, 14));
+        let again = part.sub(&mut ev.paths, Step::Elem(0), 0);
+        assert_eq!(again, Base::Word(m, 14));
+        assert_eq!(counters::of(fuel).paths, before);
+        // A name ignores the offset and adds its field.
+        let name = Base::Name(m).sub(&mut ev.paths, Step::Elem(2), 9);
+        assert_ne!(name, Base::Name(m));
+        assert_eq!(counters::of(fuel).paths, before + 1);
+    });
+}
+
+#[test]
+fn a_word_leaf_has_the_size_of_a_name_of_its_type() {
+    with(100, |ev| {
+        let m = ev.paths.child(None, 1);
+        let op = Base::Word(m, 12).op();
+        assert!(matches!(op, Op::Word(p, 12) if p == m));
+        let wide = ev.graph.mk(AT, Ty::UInt(256), op, Vec::new());
+        assert_eq!(ev.graph.size(wide), 4);
+        let flag = ev.graph.mk(AT, Ty::Bool, Op::Word(m, 0), Vec::new());
+        assert_eq!(ev.graph.size(flag), 1);
+    });
+}
+
+#[test]
+fn a_selection_on_a_word_reference_adds_the_offset_of_the_part() {
+    let word = |ev: &mut Evaluator<'_>| {
+        ev.syms.texts.push("w".to_owned());
+        let m = ev.paths.child(None, ev.syms.texts.len() - 1);
+        let t = record(ev, 2);
+        vec![Agg::Ref(Base::Word(m, 5), t).into_val()]
+    };
+    // The record `P` has the parts `a: UInt[8]`, `z` and `e` without bits, and
+    // `t: (Bool, [UInt[4]; 3])`. A step reads the stored offset: 8 for `t`, 1 for its second
+    // part, and 4 for the element 1. The text ends with the used fuel, which these cases do
+    // not compare.
+    let part = |expr: &str, fuel: u64| {
+        let text = sel(expr, fuel, word);
+        text.rsplit_once(' ')
+            .map_or(text.clone(), |(head, _)| head.to_owned())
+    };
+    assert_eq!(part("X.a", 700_000_121), "hw UInt[8] w+5 1 true");
+    assert_eq!(part("X.t.0", 700_000_122), "hw Bool w+13 1 true");
+    assert_eq!(part("X.t.1[0]", 700_000_123), "hw UInt[4] w+14 1 true");
+    assert_eq!(part("X.t.1[2]", 700_000_124), "hw UInt[4] w+22 1 true");
 }

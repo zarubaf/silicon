@@ -474,3 +474,87 @@ fn a_metadata_sum_adds_small_parts_in_place() {
         );
     }
 }
+
+/// The result of `expr` at each fuel from 0: the runs of fuels with one result, then the
+/// fuel that finishes and its value. The values come from the Lean binary.
+fn at_each_fuel(expr: &str, runs: &[(u64, u64, &str)], done: (u64, &str)) {
+    for &(from, to, want) in runs {
+        for fuel in from..=to {
+            assert_eq!(o_at(expr, fuel), want, "{expr} with the fuel {fuel}");
+        }
+    }
+    assert_eq!(
+        o_at(expr, done.0),
+        done.1,
+        "{expr} with the fuel {}",
+        done.0
+    );
+    assert_eq!(o_at(expr, done.0 + 1000), done.1);
+}
+
+fn o_at(expr: &str, fuel: u64) -> String {
+    out("", expr, fuel, 1000)
+}
+
+#[test]
+fn the_prelude_struct_serializes_with_the_token_prelude() {
+    assert_eq!(
+        o("", "ReadResponse[UInt[8]]"),
+        "(type (struct prelude ReadResponse ((type (uint 8)))))"
+    );
+    assert_eq!(
+        o("", "ReadResponse[Bool]"),
+        "(type (struct prelude ReadResponse ((type bool))))"
+    );
+    assert_eq!(
+        o("", "[ReadResponse[Bool]; 2]"),
+        "(type (array (struct prelude ReadResponse ((type bool))) 2))"
+    );
+    assert_eq!(
+        o("", "ReadResponse[UInt[8]](UInt[8](3), true)"),
+        "(record (struct prelude ReadResponse ((type (uint 8)))) ((uint 8 3) (bool true)))"
+    );
+    assert_eq!(o("", "ReadResponse[Bool]().valid"), "(bool false)");
+}
+
+#[test]
+fn a_user_struct_with_the_name_serializes_with_the_token_root() {
+    let items = "struct ReadResponse(comptime T: Type) { data: T, valid: Bool }\n";
+    assert_eq!(
+        o(items, "ReadResponse[UInt[8]]"),
+        "(type (struct root ReadResponse ((type (uint 8)))))"
+    );
+}
+
+#[test]
+fn the_prelude_struct_checks_its_argument_like_a_struct() {
+    assert_eq!(o("", "ReadResponse[1]"), "S010 1:1");
+    assert_eq!(
+        o("", "ReadResponse[Int]"),
+        "(type (struct prelude ReadResponse ((type int))))"
+    );
+}
+
+/// Each error in the work of the prelude struct reports at the use, never at the position
+/// `0:0` of the item (design section 6.2). The fuel that runs out in its parameter type, in its
+/// field types, or in its metadata is such an error. The last fuel finishes the evaluation, which
+/// is 28 units for `UInt[8]` and 21 units for `Bool`.
+#[test]
+fn an_error_in_the_prelude_struct_reports_at_the_use() {
+    at_each_fuel(
+        "ReadResponse[UInt[8]]",
+        &[
+            (0, 1, "S015 1:1"),
+            (2, 3, "S015 1:14"),
+            (4, 5, "S015 1:19"),
+            (6, 7, "S015 1:14"),
+            (8, 27, "S015 1:1"),
+        ],
+        (28, "(type (struct prelude ReadResponse ((type (uint 8)))))"),
+    );
+    at_each_fuel(
+        "ReadResponse[Bool]",
+        &[(0, 1, "S015 1:1"), (2, 2, "S015 1:14"), (3, 20, "S015 1:1")],
+        (21, "(type (struct prelude ReadResponse ((type bool))))"),
+    );
+}
