@@ -53,8 +53,8 @@ Each rule is one list line. It ends with `Check:` and the check. A rule without 
 
 ## Workflow
 
-1. Issue: state the goal, the mechanical done criteria, and the area.
-2. Worktree: work on `<type>/<issue>-<slug>` in `.claude/worktrees/`. Put notes and plans in `.scratch/`.
+1. Issue: state the goal, the mechanical done criteria, and the area. GitHub tracks all work: put each issue in a milestone, give it `C-` and `A-` labels, and split a large outcome into sub-issues.
+2. Worktree: work on `<type>/<issue>-<slug>` in `.claude/worktrees/`. `.scratch/` holds only temporary notes and plans, never the status of the work.
 3. Verify: run `just check` before each commit. Run `just ci` before the pull request.
 4. Commit: one logical change per commit, in the format `type(scope): subject`.
 5. Pull request: it must pass `just ci`. The workflow also requires the cross-vendor review. Then rebase-merge.

@@ -6,7 +6,7 @@ This guide gives the branch, commit, and merge conventions. [The foundation spec
 
 1. **Issue.** The issue template has three fields: Goal, Done criteria (mechanical), and Area.
 2. **Worktree.** Claude Code creates it at `.claude/worktrees/<branch>`. The branch name is `<type>/<issue>-<slug>`, for example `feat/42-core-ir-memories`.
-3. **Work.** Hand-off notes and plans go to `.scratch/`. Git ignores this directory, and it dies with the worktree.
+3. **Work.** Temporary notes and plans go to `.scratch/`. GitHub issues hold the status of the work. Git ignores this directory, and it dies with the worktree.
 4. **Pull request.** The pull request must pass `just ci` and the cross-vendor review. The orchestrator then rebase-merges it. History stays linear, and each commit stays separate.
 5. **Cleanup.** The worktree and the branch are deleted.
 
