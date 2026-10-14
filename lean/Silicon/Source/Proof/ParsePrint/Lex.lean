@@ -589,7 +589,7 @@ theorem Stmt.lexes {D : Nat} (plain : Bool) (s : Stmt) :
   have eq : Lexes D .any " = ".toList [.symbol "="] := Lexes.glue (by decide)
   have nl : Lexes D .any "\n".toList [] := Lexes.glue (by decide)
   induction s using Stmt.erase.induct with
-  | case15 p n ty =>
+  | case16 p n ty =>
     intro h d
     simp only [Stmt.printable, Bool.and_eq_true] at h
     rw [Stmt.print, Stmt.toks]
@@ -653,7 +653,20 @@ theorem Stmt.lexes {D : Nat} (plain : Bool) (s : Stmt) :
     have := (Lexes.indent (D := D) d).append (g.append ((Lexes.decl h.1.2 h.2).append
       semi (Starts.glue ";\n" (by decide) _)) (Starts.any _)) (Starts.any _)
     simpa using this
-  | case6 p n ty =>
+  | case6 p n ty v =>
+    intro h d
+    simp only [Stmt.printable, Bool.and_eq_true] at h
+    rw [Stmt.print, Stmt.toks]
+    have g : Lexes D .any "mem ".toList [.keyword "mem"] := Lexes.glue (by decide)
+    have ho : Lexes D .any ": [".toList [.symbol ":", .symbol "["] := Lexes.glue (by decide)
+    have hs : Lexes D .any "; ".toList [.symbol ";"] := Lexes.glue (by decide)
+    have hc : Lexes D .any "];\n".toList [.symbol "]", .symbol ";"] := Lexes.glue (by decide)
+    have := (Lexes.indent (D := D) d).append (g.append ((Lexes.name h.1.1.2).append
+      (ho.append ((TypeExpr.lexes ty h.1.2).append (hs.append ((Expr.lexes v h.2 0).append hc
+      (Starts.lit (by decide))) (Starts.any _)) (Starts.glue "; " (by decide) _))
+      (Starts.any _)) (Starts.glue ": [" (by decide) _)) (Starts.any _)) (Starts.any _)
+    simpa using this
+  | case7 p n ty =>
     intro h d
     simp only [Stmt.printable, Bool.and_eq_true] at h
     rw [Stmt.print, Stmt.toks]
@@ -661,7 +674,7 @@ theorem Stmt.lexes {D : Nat} (plain : Bool) (s : Stmt) :
     have := (Lexes.indent (D := D) d).append (g.append ((Lexes.decl h.1.2 h.2).append
       semi (Starts.glue ";\n" (by decide) _)) (Starts.any _)) (Starts.any _)
     simpa using this
-  | case7 p n ty =>
+  | case8 p n ty =>
     intro h d
     simp only [Stmt.printable, Bool.and_eq_true] at h
     rw [Stmt.print, Stmt.toks]
@@ -669,7 +682,7 @@ theorem Stmt.lexes {D : Nat} (plain : Bool) (s : Stmt) :
     have := (Lexes.indent (D := D) d).append (g.append ((Lexes.decl h.1.2 h.2).append
       semi (Starts.glue ";\n" (by decide) _)) (Starts.any _)) (Starts.any _)
     simpa using this
-  | case8 p n m xs =>
+  | case9 p n m xs =>
     intro h d
     simp only [Stmt.printable, Bool.and_eq_true, Expr.printableAll_eq,
       List.all_eq_true] at h
@@ -684,7 +697,7 @@ theorem Stmt.lexes {D : Nat} (plain : Bool) (s : Stmt) :
       (Starts.glue "(" (by decide) _)) (Starts.any _)) (Starts.glue " = " (by decide) _))
       (Starts.any _)) (Starts.any _)
     simpa using this
-  | case9 p v =>
+  | case10 p v =>
     intro h d
     cases v with
     | none =>
@@ -699,7 +712,7 @@ theorem Stmt.lexes {D : Nat} (plain : Bool) (s : Stmt) :
       have := (Lexes.indent (D := D) d).append (g.append ((Expr.lexes v h 0).append semi
         (Starts.glue ";\n" (by decide) _)) (Starts.any _)) (Starts.any _)
       simpa using this
-  | case10 p c y ih =>
+  | case11 p c y ih =>
     intro h d
     simp only [Stmt.printable, Bool.and_eq_true, Stmt.printableAll_eq,
       List.all_eq_true] at h
@@ -712,7 +725,7 @@ theorem Stmt.lexes {D : Nat} (plain : Bool) (s : Stmt) :
       (g2.append (hb.append nl (Starts.any _)) (Starts.any _)) (Starts.glue ") " (by decide) _))
       (Starts.any _)) (Starts.any _)
     simpa using this
-  | case11 p c y n ihy ihn =>
+  | case12 p c y n ihy ihn =>
     intro h d
     simp only [Stmt.printable, Bool.and_eq_true, Stmt.printableAll_eq,
       List.all_eq_true] at h
@@ -728,7 +741,7 @@ theorem Stmt.lexes {D : Nat} (plain : Bool) (s : Stmt) :
       (Starts.any _)) (Starts.any _)) (Starts.glue ") " (by decide) _)) (Starts.any _))
       (Starts.any _)
     simpa using this
-  | case12 p i lo hi b ih =>
+  | case13 p i lo hi b ih =>
     intro h d
     simp only [Stmt.printable, Bool.and_eq_true, Stmt.printableAll_eq,
       List.all_eq_true] at h
@@ -745,14 +758,14 @@ theorem Stmt.lexes {D : Nat} (plain : Bool) (s : Stmt) :
       (Starts.any _)) (Starts.glue " .. " (by decide) _)) (Starts.any _))
       (Starts.glue " in " (by decide) _)) (Starts.any _)) (Starts.any _)
     simpa using this
-  | case13 p b ih =>
+  | case14 p b ih =>
     intro h d
     simp only [Stmt.printable, Stmt.printableAll_eq, List.all_eq_true] at h
     rw [Stmt.print, Stmt.toks]
     have hb := Lexes.body (D := D) b (fun x hx => ih x hx (h x hx)) d
     have := (Lexes.indent (D := D) d).append (hb.append nl (Starts.any _)) (Starts.any _)
     simpa using this
-  | case14 p v =>
+  | case15 p v =>
     intro h d
     simp only [Stmt.printable] at h
     rw [Stmt.print, Stmt.toks]

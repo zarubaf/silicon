@@ -84,6 +84,9 @@ mutual
       [.keyword "reg", .ident n.name, .symbol ":"] ++ ty.toks ++ .symbol "=" :: i.toks 0
         ++ [.symbol ";"]
     | .wire _ n ty => [.keyword "wire", .ident n.name, .symbol ":"] ++ ty.toks ++ [.symbol ";"]
+    | .mem _ n ty d =>
+      [.keyword "mem", .ident n.name, .symbol ":", .symbol "["] ++ ty.toks
+        ++ .symbol ";" :: d.toks 0 ++ [.symbol "]", .symbol ";"]
     | .input _ n ty => [.keyword "input", .ident n.name, .symbol ":"] ++ ty.toks ++ [.symbol ";"]
     | .output _ n ty =>
       [.keyword "output", .ident n.name, .symbol ":"] ++ ty.toks ++ [.symbol ";"]

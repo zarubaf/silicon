@@ -92,6 +92,7 @@ inductive Stmt where
   | connect (pos : Pos) (target value : Expr)
   | reg (pos : Pos) (name : Ident) (ty : TypeExpr) (init : Expr)
   | wire (pos : Pos) (name : Ident) (ty : TypeExpr)
+  | mem (pos : Pos) (name : Ident) (word : TypeExpr) (depth : Expr)
   | input (pos : Pos) (name : Ident) (ty : TypeExpr)
   | output (pos : Pos) (name : Ident) (ty : TypeExpr)
   | inst (pos : Pos) (name module : Ident) (args : List Expr)

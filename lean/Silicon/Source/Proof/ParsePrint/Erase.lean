@@ -79,6 +79,7 @@ def Stmt.erase : Stmt → Stmt
   | .connect _ t v => .connect Pos.zero t.erase v.erase
   | .reg _ n ty i => .reg Pos.zero n.erase ty.erase i.erase
   | .wire _ n ty => .wire Pos.zero n.erase ty.erase
+  | .mem _ n ty d => .mem Pos.zero n.erase ty.erase d.erase
   | .input _ n ty => .input Pos.zero n.erase ty.erase
   | .output _ n ty => .output Pos.zero n.erase ty.erase
   | .inst _ n m xs => .inst Pos.zero n.erase m.erase (xs.map Expr.erase)
@@ -185,6 +186,7 @@ mutual
     | .connect _ t v => t.place && t.printable && v.printable
     | .reg _ n ty i => !plain && validName n.name && ty.printable && i.printable
     | .wire _ n ty => !plain && validName n.name && ty.printable
+    | .mem _ n ty d => !plain && validName n.name && ty.printable && d.printable
     | .input _ n ty => !plain && validName n.name && ty.printable
     | .output _ n ty => !plain && validName n.name && ty.printable
     | .inst _ n m xs =>
@@ -424,7 +426,7 @@ theorem Stmt.body_erase (l : List Stmt) (h : ∀ s ∈ l, ∀ d, s.erase.print d
 
 theorem Stmt.print_erase (s : Stmt) : ∀ d, s.erase.print d = s.print d := by
   induction s using Stmt.erase.induct with
-  | case9 _ v => intro d; cases v <;> simp [Stmt.erase, Stmt.print, Expr.print_erase]
+  | case10 _ v => intro d; cases v <;> simp [Stmt.erase, Stmt.print, Expr.print_erase]
   | _ => intro d; simp_all [Stmt.erase, Stmt.print, Expr.print_erase, TypeExpr.print_erase,
       List.map_map, Function.comp_def, Stmt.body_erase]
 
@@ -525,24 +527,24 @@ private theorem printable_erase_all :
 @[simp] theorem Stmt.printable_erase (plain : Bool) (s : Stmt) :
     s.erase.printable plain = s.printable plain := by
   induction s using Stmt.erase.induct with
-  | case10 _ c y ih =>
+  | case11 _ c y ih =>
     simp only [Stmt.erase, Stmt.printable, Expr.printable_erase, Stmt.printableAll_eq,
       List.all_map, Function.comp_def]
     rw [all_congr_mem ih]
-  | case11 _ c y n ihy ihn =>
+  | case12 _ c y n ihy ihn =>
     simp only [Stmt.erase, Stmt.printable, Expr.printable_erase, Stmt.printableAll_eq,
       List.all_map, Function.comp_def]
     rw [all_congr_mem ihy, all_congr_mem ihn]
-  | case12 _ i lo hi b ih =>
+  | case13 _ i lo hi b ih =>
     simp only [Stmt.erase, Stmt.printable, Expr.printable_erase, Stmt.printableAll_eq,
       List.all_map, Function.comp_def, Ident.erase_name]
     rw [all_congr_mem ih]
-  | case13 _ b ih =>
+  | case14 _ b ih =>
     simp only [Stmt.erase, Stmt.printable, Stmt.printableAll_eq, List.all_map,
       Function.comp_def]
     rw [all_congr_mem ih]
   | case1 _ _ _ ty _ => cases ty <;> simp [Stmt.erase, Stmt.printable]
-  | case9 _ v => cases v <;> simp [Stmt.erase, Stmt.printable]
+  | case10 _ v => cases v <;> simp [Stmt.erase, Stmt.printable]
   | _ => simp [Stmt.erase, Stmt.printable, Expr.printableAll_eq, List.all_map,
       Function.comp_def]
 

@@ -338,6 +338,41 @@ theorem Runs.stmt_wire (p : Pos) (n : Ident) (ty : TypeExpr) : SGoal (.wire p n 
   refine Runs.sym_bind w2.head (Runs.idx (by omega) (Runs.pure ?_))
   simp [Stmt.erase, Ident.erase_of_name (b := n) hid, hty']
 
+/-! A memory: `mem`, a name, and `[T; N]`. The brackets belong to the statement. -/
+theorem Runs.stmt_mem (p : Pos) (n : Ident) (ty : TypeExpr) (v : Expr) :
+    SGoal (.mem p n ty v) := by
+  intro ctx i f t R hp hw ht hf hd
+  simp only [Stmt.printable, Bool.and_eq_true, Bool.not_eq_true'] at hp
+  obtain ⟨⟨⟨hpl, hn⟩, hty⟩, hv⟩ := hp
+  have e : (Stmt.mem p n ty v).toks ++ t :: R = .keyword "mem" :: .ident n.name ::
+      .symbol ":" :: .symbol "[" :: (ty.toks ++ .symbol ";" :: (v.toks 0 ++ .symbol "]" ::
+      .symbol ";" :: t :: R)) := by
+    simp [Stmt.toks]
+  have hT : (Stmt.mem p n ty v).toks.length = ty.toks.length + (v.toks 0).length + 7 := by
+    simp [Stmt.toks] <;> omega
+  rw [e] at hw
+  rw [hT] at hf hd ⊢
+  obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
+  rw [Parse.stmt]
+  refine Runs.peek_bind (Runs.read_bind ?_)
+  simp only [stmt_res (Or.inl hpl), hw.head, Bool.false_eq_true, ite_false]
+  refine Runs.bump_bind ?_
+  refine Runs.bind (Runs.ident hw.tail.head) fun id hid => ?_
+  have w := hw.tail.tail
+  refine Runs.sym_bind w.head (Runs.sym_bind w.tail.head ?_)
+  have w2 := w.tail.tail
+  refine Runs.bind (Runs.typeTop ty hty ctx _ f _ _ w2 (by decide) (by omega) (by omega))
+    fun ty' hty' => ?_
+  have w3 := w2.drop
+  refine Runs.sym_bind w3.head ?_
+  refine Runs.bind (Runs.value v hv ctx _ f _ _ w3.tail (After.close (Or.inr rfl)) (by omega)
+    (by omega)) fun v' hv' => ?_
+  have w4 := w3.tail.drop
+  refine Runs.sym_bind w4.head ?_
+  refine Runs.bind (Runs.noDomain (by rw [w4.tail.head]; decide)) fun _ _ => ?_
+  refine Runs.sym_bind w4.tail.head (Runs.idx (by omega) (Runs.pure ?_))
+  simp [Stmt.erase, Ident.erase_of_name (b := n) hid, hv', hty']
+
 /-! A port: `input` or `output`, a name, and a type. -/
 theorem Runs.port {ctx : Ctx} {i f : Nat} {k : Kind} (n : Ident) (ty : TypeExpr)
     (hty : ty.printable = true) (make : Pos → Ident → TypeExpr → Stmt) (t : Kind)
@@ -628,7 +663,7 @@ theorem Runs.stmt_fallback {ctx : Ctx} {i f l : Nat} {k : Kind} {Q : Stmt → Pr
     rw [hk]
     refine hE.ne_kw ?_
     simp only [resourceKeywords, List.mem_cons, List.not_mem_nil, or_false] at hw
-    rcases hw with rfl | rfl | rfl | rfl | rfl <;> decide
+    rcases hw with rfl | rfl | rfl | rfl | rfl | rfl <;> decide
   simp only [hres, Bool.false_eq_true, ite_false]
   generalize (tokenAt ctx.input i).kind = K at hk
   subst hk
@@ -942,6 +977,7 @@ theorem Runs.stmt_of (s : Stmt) (hIH : ∀ x : Stmt, x.toks.length < s.toks.leng
   | connect p t v => exact Runs.stmt_connect p t v
   | reg p n ty v => exact Runs.stmt_reg p n ty v
   | wire p n ty => exact Runs.stmt_wire p n ty
+  | mem p n ty v => exact Runs.stmt_mem p n ty v
   | input p n ty => exact Runs.stmt_input p n ty
   | output p n ty => exact Runs.stmt_output p n ty
   | inst p n m xs => exact Runs.stmt_inst p n m xs

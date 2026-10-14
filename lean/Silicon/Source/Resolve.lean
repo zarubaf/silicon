@@ -494,6 +494,10 @@ mutual
       let i ← expr i
       return .reg p (← declare n) ty i
     | .wire p n ty => do let ty ← typeExpr ty; return .wire p (← declare n) ty
+    -- TODO(#209): resolve the memory binder. Until the later passes take a memory, it is `S004`.
+    | .mem p .. => do
+      recordDup ⟨.S004, p, "a memory is not supported yet"⟩
+      return .block p []
     | .input p n ty => do let ty ← typeExpr ty; return .input p (← declare n) ty
     | .output p n ty => do let ty ← typeExpr ty; return .output p (← declare n) ty
     | .inst p n m xs => do

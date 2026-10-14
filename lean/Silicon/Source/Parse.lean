@@ -13,9 +13,9 @@ position order, and it reports the first. This rule also orders a lexical error 
 `S004`. The lexer ends the tokens with an `error` token. The parser reports that token only
 if it gets to it. `S004` is at these tokens:
 
-- The keyword: `import`, `pub`, and `extern` at an item. `mem` at a statement. `in`, `as`,
-  `with`, and `conforms` after their forms. `input`, `output`, `reg`, `wire`, and `instance`
-  in the body of a `fn` without `comptime`: a helper that declares resources is slice 3.
+- The keyword: `import`, `pub`, and `extern` at an item. `in`, `as`, `with`, and `conforms`
+  after their forms. `input`, `output`, `reg`, `wire`, `mem`, and `instance` in the body of a
+  `fn` without `comptime`: a helper that declares resources is slice 3.
 - The opening token: `@` of one of the five builtins.
 - A later token of the construct: the `::` of a path. The `(` after a type, which is a type
   function call. The second name in a `domains` clause.
@@ -590,7 +590,7 @@ def aliasDecl (f : Nat) (start : Pos) (make : Pos → Ident → TypeExpr → α)
   return make start n ty
 
 /-! The statements that declare a port, a resource, or an instance. -/
-def resourceKeywords : List String := ["input", "output", "reg", "wire", "instance"]
+def resourceKeywords : List String := ["input", "output", "reg", "wire", "mem", "instance"]
 
 mutual
   def stmt : Nat → P Stmt
@@ -625,6 +625,18 @@ mutual
         noDomain
         sym ";"
         return .wire t.pos n ty
+      | .keyword "mem" =>
+        bump
+        let n ← ident
+        sym ":"
+        sym "["
+        let ty ← typeTop f
+        sym ";"
+        let d ← value f
+        sym "]"
+        noDomain
+        sym ";"
+        return .mem t.pos n ty d
       | .keyword "input" => port f t .input
       | .keyword "output" => port f t .output
       | .keyword "instance" =>
@@ -664,7 +676,6 @@ mutual
           let hi ← value f
           return .ctFor t.pos i lo hi (← block f)
         else unexpected u "`if` or `for`"
-      | .keyword "mem" => later t "a memory"
       | .keyword "type" => aliasDecl f t.pos .alias
       | .symbol "{" => return .block t.pos (← block f)
       | .ident _ =>

@@ -124,7 +124,7 @@ index with two arguments parses: the type rules reject it.
 #guard stFails "a[] = 1;" .S001 3
 #guard stFails "a.x(1) = 1;" .S001 8
 #guard stFails "x.f().g = 1;" .S001 9
-#guard stFails "mem m: [T; 4];" .S004 1
+#guard st "mem m: [T; 4];" == "(mem \"m\" (name \"T\") (num 4))"
 #guard st "[T; 4];" == "(expr (arraytype (name \"T\") (num 4)))"
 #guard stFails "[T; 4] = 1;" .S001 8
 #guard match parseSource defaultSyntaxDepth (ctBody "a.1[0] = x;") with
