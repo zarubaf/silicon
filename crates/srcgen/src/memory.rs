@@ -235,23 +235,16 @@ impl Memory<'_> {
     }
 
     /// The names that the lift declares for this block.
-    fn names(&self) -> [String; 6] {
+    pub(super) fn names(&self) -> [String; 6] {
         let n = self.name;
         ["ra", "re", "wa", "wd", "we", "r"].map(|suffix| format!("{n}_{suffix}"))
     }
 
     /// The source lines of the block. The request of each port binds to a
     /// wire, because the read address can depend on the read data.
-    pub(super) fn lines(
-        &self,
-        env: &Env<'_>,
-        taken: &impl Fn(&str) -> bool,
-    ) -> Result<Lines, Unsupported> {
+    pub(super) fn lines(&self, env: &Env<'_>) -> Result<Lines, Unsupported> {
         let n = self.name;
         let names = self.names();
-        if names.iter().any(|x| taken(x)) {
-            return Err(Unsupported::Name(names[0].clone()));
-        }
         let [ra, re, wa, wd, we, r] = &names;
         let (a, w, depth) = (address_width(self.depth), self.width, self.depth);
         let flag = |e: &Expr| Ok::<_, Unsupported>(format!("({} == UInt[1](1))", env.source(e)?));
@@ -401,6 +394,14 @@ mod tests {
             assert!(text.contains("mem mem0:"), "{text}");
             assert!(text.contains("reg x"), "{text}");
         }
+    }
+
+    #[test]
+    fn a_wire_of_the_block_with_a_taken_name_is_an_error() {
+        let extra = "(inst mem0_ra m1)";
+        let core = module(8, 4, "ra", "").replace("(design m0 ", "(design m0 (module m1) ");
+        let taken = core.replace("(assign ov v0)", &format!("(assign ov v0){extra}"));
+        assert_eq!(lifted(&taken), Err(Unsupported::Name("mem0_ra".into())));
     }
 
     #[test]

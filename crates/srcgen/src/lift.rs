@@ -8,7 +8,7 @@ use super::shape::{self, Shape};
 use core_ir::ast::{Conn, Design, Dir, Expr, Item, Module, Port, Stmt, Ty};
 use core_ir::r#gen::RESET;
 use core_ir::{interp, typed};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use syntax::SyntaxKind;
 
@@ -109,12 +109,20 @@ pub(super) fn lift_shaped(
             Item::Extern(e) => return Err(Unsupported::Extern(e.name.text.clone())),
         }
     }
+    // Modules and struct items share one namespace.
+    let mut items = Names::default();
+    for m in modules.keys() {
+        items.claim(m)?;
+    }
     let mut text = String::new();
     for item in &design.items {
         if let Item::Module(m) = item
             && let Some(shape) = shapes.get(m.name.text.as_str())
         {
             for group in &shape.groups {
+                if let Some(n) = group.struct_name() {
+                    items.claim(&n)?;
+                }
                 text.extend(group.struct_item());
             }
         }
@@ -143,6 +151,34 @@ pub(super) fn lift_shaped(
             .cloned()
             .unwrap_or_default(),
     })
+}
+
+/// The names of one scope. The lift makes names for aggregate ports and for
+/// the wires of memories, and each one must differ from every other name
+/// of its scope.
+#[derive(Default)]
+struct Names(HashSet<String>);
+
+impl Names {
+    /// The names that the core module `m` declares in source.
+    fn declared(m: &Module, env: &Env<'_>) -> Self {
+        let mut names = Self::default();
+        names.0.extend(env.widths.keys().map(|n| (*n).to_owned()));
+        names.0.extend(env.insts.keys().map(|n| (*n).to_owned()));
+        names.0.extend(m.stmts.iter().filter_map(|s| match s {
+            Stmt::Mem { name, .. } => Some(name.text.clone()),
+            _ => None,
+        }));
+        names
+    }
+
+    fn claim(&mut self, n: &str) -> Result<(), Unsupported> {
+        if self.0.insert(n.to_owned()) {
+            Ok(())
+        } else {
+            Err(Unsupported::Name(n.to_owned()))
+        }
+    }
 }
 
 fn name(text: &str) -> Result<&str, Unsupported> {
@@ -225,12 +261,16 @@ fn module<'a>(
             env.alias.insert(p.name.text.as_str(), path);
         }
     }
+    let memories = memory::find(m, &env)?;
+    let mut scope = Names::declared(m, &env);
     for g in &shape.groups {
-        if env.widths.contains_key(g.name.as_str()) {
-            return Err(Unsupported::Name(g.name.clone()));
+        scope.claim(&g.name)?;
+    }
+    for mem in &memories {
+        for n in mem.names() {
+            scope.claim(&n)?;
         }
     }
-    let memories = memory::find(m, &env)?;
     for mem in &memories {
         for s in &m.stmts {
             if let Stmt::Reg { name, .. } = s
@@ -257,8 +297,7 @@ fn module<'a>(
         }
     }
     for mem in &memories {
-        let taken = |n: &str| env.widths.contains_key(n) || env.insts.contains_key(n);
-        let lines = mem.lines(&env, &taken)?;
+        let lines = mem.lines(&env)?;
         sections.wires.extend(lines.wires);
         sections.mems.extend(lines.mems);
         sections.assigns.extend(lines.assigns);
@@ -931,6 +970,45 @@ mod tests {
         assert_eq!(
             vector_in(&top, &shape, &inputs),
             "in=(clock$0rst true p.f0 6 p.f1 3)"
+        );
+    }
+
+    #[test]
+    fn a_made_name_that_another_name_holds_is_an_error() {
+        let ab = |name: &str, extra: &str| {
+            let core = format!(
+                "(design m0 (module m1) (module m0 (input clk clock) (input rst (bits 1)) \
+                 (input a (bits 4)) (input b (bits 4)) (output o (bits 4)) \
+                 (assign o a){extra}))"
+            );
+            let shapes = shapes(vec![(
+                "m0",
+                vec![group(name, Dir::Input, Kind::Tuple, &[("a", 4), ("b", 4)])],
+            )]);
+            lift_shaped(&parse(&core).unwrap(), &shapes).err()
+        };
+        assert_eq!(ab("p", ""), None);
+        // An instance or a wire that holds the name of the port.
+        let inst = "(inst p m1)";
+        assert_eq!(ab("p", inst), Some(Unsupported::Name("p".into())));
+        let wire = "(let p (bits 4) a)";
+        assert_eq!(ab("p", wire), Some(Unsupported::Name("p".into())));
+
+        // A record type with the name of a module.
+        let core = "(design m0 (module m0 (input a (bits 4)) (input b (bits 4)) \
+                    (output o (bits 4)) (assign o a)) (module R0 (output o (bits 1)) \
+                    (assign o (const 1 0))))";
+        let record = Kind::Record {
+            id: 0,
+            param: false,
+        };
+        let shapes = shapes(vec![(
+            "m0",
+            vec![group("p", Dir::Input, record, &[("a", 4), ("b", 4)])],
+        )]);
+        assert_eq!(
+            lift_shaped(&parse(core).unwrap(), &shapes).err(),
+            Some(Unsupported::Name("R0".into()))
         );
     }
 
