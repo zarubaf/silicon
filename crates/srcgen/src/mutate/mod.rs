@@ -30,6 +30,15 @@
 //!   pass 5 finds the window when the call runs: `S008` where the site
 //!   always runs, else no prediction.
 //!
+//! - A call of a function that runs a `diagnostic`, or that writes back a
+//!   `mut` actual of the module frame, in an arm of a hardware `if` or in
+//!   a width is `S016` (pass 5, spec 9.4), where the site always runs. A
+//!   hardware `if` evaluates both arms, but its condition must be a port
+//!   or a register, or the negation of one: the front ends fold any other
+//!   condition that is static by value, and that `if` takes one arm. A
+//!   site in a branch, a loop, a lazy operand, or another item than a
+//!   module body predicts nothing.
+//!
 //! Any other mutation can fail in pass 5 at a point that depends on the
 //! values, or pass, so its prediction is `None`.
 
@@ -78,9 +87,20 @@ enum Kind {
     Window,
     /// The same, in a call through a function value.
     ValueWindow,
+    /// A static operand in an arm becomes a call of a function that runs a
+    /// `diagnostic`: a graph effect in an arm.
+    ArmEffect,
+    /// A width becomes a call of that function: a graph effect in a type.
+    TypeEffect,
+    /// A static operand in an arm becomes a call that takes a `let mut`
+    /// static `Int` from before the arm as its `mut` actual: a write-back
+    /// in an arm.
+    ArmMutation,
+    /// The same for a width.
+    TypeMutation,
 }
 
-const KINDS: [Kind; 11] = [
+const KINDS: [Kind; 15] = [
     Kind::Delete,
     Kind::Duplicate,
     Kind::Rename,
@@ -92,7 +112,32 @@ const KINDS: [Kind; 11] = [
     Kind::Immutable,
     Kind::Window,
     Kind::ValueWindow,
+    Kind::ArmEffect,
+    Kind::TypeEffect,
+    Kind::ArmMutation,
+    Kind::TypeMutation,
 ];
+
+/// The name of the function that runs a `diagnostic`.
+const EFFECT_FN: &str = "e0";
+
+/// The name of the function with a `mut` formal that it never changes.
+const KEEP_FN: &str = "p0";
+
+impl Kind {
+    /// The function that the mutant adds, with its newline.
+    fn function(self) -> &'static str {
+        match self {
+            Kind::ArmEffect | Kind::TypeEffect => {
+                "comptime fn e0(x: Int) -> Int {\n    diagnostic(\"e0\", x);\n    return x;\n}\n"
+            }
+            Kind::ArmMutation | Kind::TypeMutation => {
+                "comptime fn p0(mut n: Int, x: Int) -> Int {\n    return x;\n}\n"
+            }
+            _ => "",
+        }
+    }
+}
 
 /// The mutant of `program` for the kind `kind % KINDS.len()`, or for the next kind
 /// in cyclic order that has a site, at the site `site % count` in the
@@ -113,7 +158,7 @@ pub fn mutate(program: &Program, kind: u32, site: u32) -> Mutant {
             let mut items = program.items.clone();
             let (what, expect) = apply(kind, &mut items, &program.top, site as usize % count)?;
             Some(Mutant {
-                text: render_items(&items),
+                text: render_items(&items) + kind.function(),
                 what,
                 expect,
             })

@@ -5,7 +5,7 @@ use super::super::build::typed;
 use super::super::eval::Value;
 use super::super::program::tests::{TEXT, program};
 use super::super::program::{
-    FieldTy, HBin, HExpr, Item, Place, Ports, Program, Radix, SBin, SExpr, STy, Stmt, Ty,
+    FieldTy, HBin, HExpr, Item, Place, Ports, Program, Radix, SBin, SExpr, STy, Stmt, Ty, Un,
 };
 use super::*;
 use num_bigint::BigInt;
@@ -872,10 +872,337 @@ fn value_window_has_no_site_on_a_named_call() {
     assert_eq!(sites(Kind::ValueWindow, &p.items, &p.top), 0);
 }
 
+fn bool_name_if(arm_then: HExpr, arm_else: HExpr) -> HExpr {
+    HExpr::If(Box::new(name("c0")), Box::new(arm_then), Box::new(arm_else))
+}
+
+fn make(n: i64) -> HExpr {
+    HExpr::Make(u8(), dec(n))
+}
+
+/// A module with the port `c0: Bool`, the register `r0` and the output
+/// `o0: UInt[8]`, then `body`, then `o0 := value`.
+fn arm_module(body: Vec<Stmt>, value: HExpr) -> Program {
+    let mut stmts = vec![
+        Stmt::Input("c0".to_owned(), Ty::Bool),
+        Stmt::Reg("r0".to_owned(), Ty::Bool, SExpr::Bool(false)),
+        Stmt::Output("o0".to_owned(), u8()),
+    ];
+    stmts.extend(body);
+    stmts.push(connect("o0", value));
+    of(vec![module("M0", stmts)])
+}
+
+const EFFECT: &str =
+    "comptime fn e0(x: Int) -> Int {\n    diagnostic(\"e0\", x);\n    return x;\n}\n";
+const KEEP: &str = "comptime fn p0(mut n: Int, x: Int) -> Int {\n    return x;\n}\n";
+
+#[test]
+fn arm_effect_predicts_s016_in_the_arm_of_a_port_condition() {
+    let p = arm_module(vec![], bool_name_if(make(1), make(2)));
+    assert_eq!(sites(Kind::ArmEffect, &p.items, &p.top), 2);
+    let ms = all(&p, Kind::ArmEffect);
+    assert_eq!(
+        ms[0].text,
+        format!(
+            "{}{EFFECT}",
+            p.text().replace("UInt[8](1)", "UInt[8](e0(1))")
+        )
+    );
+    assert_eq!(ms[0].what, "call e0 on 1 in an arm of M0");
+    assert_eq!(
+        ms[1].text,
+        format!(
+            "{}{EFFECT}",
+            p.text().replace("UInt[8](2)", "UInt[8](e0(2))")
+        )
+    );
+    assert!(ms.iter().all(|m| m.expect == Some("S016")));
+    // A register, and the negation of a port or a register.
+    let not = |n: &str| HExpr::Unary(Un::Not, Box::new(name(n)));
+    for cond in [name("r0"), not("c0"), not("r0")] {
+        let e = HExpr::If(Box::new(cond), Box::new(make(1)), Box::new(make(2)));
+        let p = arm_module(vec![], e);
+        assert!(
+            all(&p, Kind::ArmEffect)
+                .iter()
+                .all(|m| m.expect == Some("S016"))
+        );
+    }
+    // A static `Int` operand without a type around it is a site too, and a
+    // `Bool` operand or a name is not.
+    let sum = SExpr::Binary(SBin::Add, Box::new(dec(1)), Box::new(dec(2)));
+    let p = arm_module(
+        vec![],
+        bool_name_if(HExpr::Static(sum), HExpr::Static(SExpr::Bool(true))),
+    );
+    let ms = all(&p, Kind::ArmEffect);
+    assert_eq!(ms.len(), 1);
+    assert!(ms[0].text.contains("e0((1 + 2))"));
+    assert_eq!(ms[0].expect, Some("S016"));
+}
+
+#[test]
+fn arm_effect_predicts_nothing_where_the_if_may_take_one_arm() {
+    let has_site = |p: &Program, expect| {
+        let ms = all(p, Kind::ArmEffect);
+        assert!(!ms.is_empty());
+        assert!(ms.iter().all(|m| m.expect == expect), "{ms:?}");
+    };
+    // A static condition takes one arm.
+    let p = arm_module(
+        vec![],
+        HExpr::If(
+            Box::new(HExpr::Static(SExpr::Bool(true))),
+            Box::new(make(1)),
+            Box::new(make(2)),
+        ),
+    );
+    has_site(&p, None);
+    // Any other condition may fold: a comparison, a call, or a name that is
+    // no port or register.
+    let cmp = HExpr::Binary(HBin::Eq, Box::new(name("c0")), Box::new(name("c0")));
+    let p = arm_module(
+        vec![],
+        HExpr::If(Box::new(cmp), Box::new(make(1)), Box::new(make(2))),
+    );
+    has_site(&p, None);
+    let p = arm_module(
+        vec![let_of("l0", name("c0"))],
+        HExpr::If(Box::new(name("l0")), Box::new(make(1)), Box::new(make(2))),
+    );
+    has_site(&p, None);
+    // An arm in the arm of a static `if`, or in a lazy operand.
+    let inner = bool_name_if(make(1), make(2));
+    let outer = HExpr::If(
+        Box::new(HExpr::Static(SExpr::Bool(true))),
+        Box::new(inner),
+        Box::new(make(3)),
+    );
+    let sites: Vec<_> = all(&arm_module(vec![], outer), Kind::ArmEffect)
+        .iter()
+        .map(|m| m.expect)
+        .collect();
+    assert_eq!(sites, [None, None, None]);
+    let lazy = HExpr::Binary(
+        HBin::Land,
+        Box::new(name("c0")),
+        Box::new(bool_name_if(name("c0"), name("c0"))),
+    );
+    let p = arm_module(vec![let_of("l0", lazy)], make(1));
+    assert_eq!(sites_of(&p, Kind::ArmEffect), 0);
+    // A hardware `if` in the arm of a hardware `if` runs.
+    let nested = bool_name_if(bool_name_if(make(1), make(2)), make(3));
+    let ms = all(&arm_module(vec![], nested), Kind::ArmEffect);
+    assert_eq!(ms.len(), 3);
+    assert!(ms.iter().all(|m| m.expect == Some("S016")));
+    // The top frame only: a loop, a branch, and a helper body.
+    for inner in [
+        Stmt::For(
+            "j0".to_owned(),
+            dec(0),
+            dec(0),
+            vec![let_of("l0", bool_name_if(make(1), make(2)))],
+        ),
+        Stmt::If(
+            SExpr::Bool(true),
+            vec![let_of("l0", bool_name_if(make(1), make(2)))],
+            None,
+        ),
+        Stmt::Block(vec![let_of("l0", bool_name_if(make(1), make(2)))]),
+    ] {
+        has_site(&arm_module(vec![inner], make(0)), None);
+    }
+    let helper = Item::Helper {
+        name: "h0".to_owned(),
+        params: vec![("c0".to_owned(), Ty::Bool)],
+        mut_first: false,
+        ret: u8(),
+        body: vec![],
+        result: bool_name_if(make(1), make(2)),
+    };
+    has_site(&of(vec![helper]), None);
+}
+
+fn sites_of(p: &Program, kind: Kind) -> usize {
+    sites(kind, &p.items, &p.top)
+}
+
+#[test]
+fn type_effect_predicts_s016_in_a_width_of_the_top_frame() {
+    let p = arm_module(vec![], make(1));
+    let ms = all(&p, Kind::TypeEffect);
+    // The widths of `o0: UInt[8]` and of `UInt[8](1)`.
+    assert_eq!(ms.len(), 2);
+    assert_eq!(
+        ms[0].text,
+        format!(
+            "{}{EFFECT}",
+            p.text()
+                .replace("output o0: UInt[8]", "output o0: UInt[e0(8)]")
+        )
+    );
+    assert_eq!(ms[0].what, "call e0 in the width 8 in M0");
+    assert!(ms.iter().all(|m| m.expect == Some("S016")));
+    // A width in the value of a statement, in an arm and in a lazy operand.
+    let l = Stmt::Let {
+        name: "l0".to_owned(),
+        mutable: false,
+        ty: Some(u8()),
+        value: name("c0"),
+    };
+    let ms = all(&arm_module(vec![l], make(1)), Kind::TypeEffect);
+    assert!(ms.iter().all(|m| m.expect == Some("S016")));
+}
+
+#[test]
+fn type_effect_predicts_nothing_off_the_top_frame() {
+    let l = || let_of("l0", HExpr::Resize(u8(), Box::new(name("c0"))));
+    for inner in [
+        Stmt::For("j0".to_owned(), dec(0), dec(0), vec![l()]),
+        Stmt::If(SExpr::Bool(true), vec![l()], None),
+    ] {
+        let p = arm_module(vec![inner], make(0));
+        let ms = all(&p, Kind::TypeEffect);
+        let nested = ms
+            .iter()
+            .filter(|m| m.text.contains("resize(UInt[e0(8)]"))
+            .collect::<Vec<_>>();
+        assert_eq!(nested.len(), 1);
+        assert_eq!(nested[0].expect, None);
+    }
+    // A lazy operand of `&&`.
+    let lazy = HExpr::Binary(
+        HBin::Land,
+        Box::new(name("c0")),
+        Box::new(HExpr::Resize(u8(), Box::new(name("c0")))),
+    );
+    let ms = all(
+        &arm_module(vec![let_of("l0", lazy)], make(0)),
+        Kind::TypeEffect,
+    );
+    let m = ms
+        .iter()
+        .find(|m| m.text.contains("resize(UInt[e0(8)]"))
+        .unwrap();
+    assert_eq!(m.expect, None);
+    // A struct field and a helper signature.
+    let p = slice_two();
+    let m = find(&p, Kind::TypeEffect, "m0: UInt[e0(W0)],");
+    assert_eq!(m.expect, None);
+    let helper = Item::Helper {
+        name: "h0".to_owned(),
+        params: vec![("x0".to_owned(), u8())],
+        mut_first: false,
+        ret: u8(),
+        body: vec![],
+        result: name("x0"),
+    };
+    assert!(
+        all(&of(vec![helper]), Kind::TypeEffect)
+            .iter()
+            .all(|m| m.expect.is_none())
+    );
+}
+
+fn counter_let() -> Stmt {
+    Stmt::MutLet("s0".to_owned(), STy::Int, dec(0))
+}
+
+#[test]
+fn mutation_kinds_of_a_context_use_the_newest_int_root() {
+    // A root from before the arm: the write-back is `S016`.
+    let p = arm_module(vec![counter_let()], bool_name_if(make(1), make(2)));
+    let ms = all(&p, Kind::ArmMutation);
+    assert_eq!(ms.len(), 2);
+    assert_eq!(
+        ms[0].text,
+        format!(
+            "{}{KEEP}",
+            p.text().replace("UInt[8](1)", "UInt[8](p0(s0, 1))")
+        )
+    );
+    assert_eq!(ms[0].what, "call p0 on s0 and 1 in an arm of M0");
+    assert!(ms.iter().all(|m| m.expect == Some("S016")));
+    let ms = all(&p, Kind::TypeMutation);
+    assert_eq!(ms[0].what, "call p0 on s0 in the width 8 in M0");
+    assert!(ms.iter().all(|m| m.expect == Some("S016")));
+    // A list root is no `Int` root, and a root after the site is no root
+    // from before it.
+    let p = arm_module(vec![mut_let("s0")], bool_name_if(make(1), make(2)));
+    assert_eq!(sites_of(&p, Kind::ArmMutation), 0);
+    assert_eq!(sites_of(&p, Kind::TypeMutation), 0);
+    // The ports come before the root: only the width after it is a site.
+    let p = arm_module(vec![counter_let()], make(0));
+    let ms = all(&p, Kind::TypeMutation);
+    assert_eq!(ms.len(), 1);
+    assert!(ms[0].text.contains("o0 := UInt[p0(s0, 8)](0);"));
+}
+
+#[test]
+fn mutation_kinds_need_a_root_in_scope() {
+    // No root: no site.
+    let p = arm_module(vec![], bool_name_if(make(1), make(2)));
+    assert_eq!(sites_of(&p, Kind::ArmMutation), 0);
+    // The root of a loop body is out of scope after the loop.
+    let body = vec![counter_let()];
+    let p = arm_module(vec![Stmt::Block(body)], bool_name_if(make(1), make(2)));
+    assert_eq!(sites_of(&p, Kind::ArmMutation), 0);
+    // The `Int` root of the enclosing frame is in scope in a loop, and the
+    // site predicts nothing there.
+    let inner = let_of("l0", bool_name_if(make(1), make(2)));
+    let p = arm_module(
+        vec![
+            counter_let(),
+            Stmt::For("j0".to_owned(), dec(0), dec(1), vec![inner]),
+        ],
+        make(0),
+    );
+    let ms = all(&p, Kind::ArmMutation);
+    assert_eq!(ms.len(), 2);
+    assert!(ms.iter().all(|m| m.expect.is_none()));
+    // A static operand in the arm of a static `if` predicts nothing.
+    let e = HExpr::If(
+        Box::new(HExpr::Static(SExpr::Bool(true))),
+        Box::new(make(1)),
+        Box::new(make(2)),
+    );
+    let p = arm_module(vec![counter_let()], e);
+    assert!(
+        all(&p, Kind::ArmMutation)
+            .iter()
+            .all(|m| m.expect.is_none())
+    );
+}
+
+#[test]
+fn the_fixed_set_of_mutants_reaches_s008_and_s016() {
+    let mut runner = TestRunner::deterministic();
+    let mut counts = std::collections::BTreeMap::<&str, usize>::new();
+    let mut by_kind = std::collections::BTreeMap::<usize, usize>::new();
+    for tape in 0..256u32 {
+        let p = typed().new_tree(&mut runner).unwrap().current().unwrap();
+        for (k, kind) in KINDS.iter().enumerate().skip(8) {
+            let count = sites(*kind, &p.items, &p.top);
+            if count == 0 {
+                continue;
+            }
+            let m = mutate(&p, u32::try_from(k).unwrap(), tape.wrapping_mul(7919));
+            if let Some(code) = m.expect {
+                *counts.entry(code).or_default() += 1;
+                *by_kind.entry(k).or_default() += 1;
+            }
+        }
+    }
+    assert!(counts.get("S008").copied().unwrap_or(0) >= 5, "{counts:?}");
+    assert!(counts.get("S016").copied().unwrap_or(0) >= 5, "{counts:?}");
+    assert_eq!(by_kind.len(), 7, "{by_kind:?}");
+}
+
 #[test]
 fn mutation_is_deterministic() {
     let p = program();
-    for kind in 0..11 {
+    for kind in 0..15 {
         assert_eq!(mutate(&p, kind, 11), mutate(&p, kind, 11));
     }
 }
