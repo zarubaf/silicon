@@ -809,6 +809,91 @@ mutual
     | _, xs => pure xs
 end
 
+/-! The field types of the struct type `t` from its done entry, in declaration order. -/
+def fieldTys (specs : Specs) (t : Ty) : List Ty := ((fieldsIn specs t).map (·.2.toList)).getD []
+
+/-!
+The text of a part of the type `t` of a reference in a record (section 8.2): the value that it
+stands for. A part without a hardware leaf is the static zero of its type, and a part of a scalar
+type is a hardware leaf `(hw <type>)`. Another part is its container form with each part
+rendered. The metadata and the done struct entries of `specs` give it, so it reads no base and
+has no charge. The bound `b` is the depth of `t`, because each part is less deep than its type.
+-/
+def Ty.render (specs : Specs) : Nat → Ty → String
+  | 0, _ => "-"
+  | b + 1, t =>
+    if t.info.leaves = 0 then ((zeroOf specs t.depth t).map Value.serialize).getD "-"
+    else
+      let parts (ts : List Ty) := Print.list (ts.map (Ty.render specs b))
+      match t with
+      | .array e n =>
+        Print.node "array" [e.serialize, Print.list (.replicate n (Ty.render specs b e))]
+      | .tuple ⟨ts⟩ => Print.node "tuple" [parts ts]
+      | .struct .. => Print.node "record" [t.serialize, parts (fieldTys specs t)]
+      | t => Print.node "hw" [t.serialize]
+
+/-!
+The charge of the rendering of a part of the type `t` of a reference (section 5.4). Each
+container part with a hardware leaf charges 1. A part without a hardware leaf renders as its
+static zero with no charge, because the copy of the reference paid its zero size. An array
+multiplies the charge of its element, so the charge reads each type once. The bound `b` is the
+depth of `t`.
+-/
+def Ty.renderCharge (specs : Specs) : Nat → Ty → Nat
+  | 0, _ => 0
+  | b + 1, t =>
+    if t.info.leaves = 0 then 0
+    else
+      let parts (ts : List Ty) := (ts.map (Ty.renderCharge specs b)).sum
+      match t with
+      | .array e n => 1 + n * Ty.renderCharge specs b e
+      | .tuple ⟨ts⟩ => 1 + parts ts
+      | .struct .. => 1 + parts (fieldTys specs t)
+      | _ => 0
+
+/-! The element type text of a container node: the element type of an array, the record type. -/
+def Node.tyText (n : Node) : String :=
+  match n.ty with
+  | .array e _ => e.serialize
+  | t => t.serialize
+
+/-!
+The text of the aggregate `a` in a record (section 8.2). A static part is its canonical
+serialization, and a hardware leaf is `(hw <type>)`. A reference renders by its type
+(`Ty.render`). A container node is its container form of section 7.1 with each part rendered.
+The text is pure.
+-/
+mutual
+  def Agg.render (specs : Specs) : Agg → String
+    | .static v => v.serialize
+    | .hw h => Print.node "hw" [h.ty.serialize]
+    | .ref _ t => Ty.render specs t.depth t
+    | .array n ⟨xs⟩ => Print.node "array" [n.tyText, Print.list (Agg.renderAll specs xs)]
+    | .tuple _ ⟨xs⟩ => Print.node "tuple" [Print.list (Agg.renderAll specs xs)]
+    | .record n ⟨xs⟩ => Print.node "record" [n.tyText, Print.list (Agg.renderAll specs xs)]
+
+  def Agg.renderAll (specs : Specs) : List Agg → List String
+    | [] => []
+    | x :: xs => Agg.render specs x :: Agg.renderAll specs xs
+end
+
+/-!
+The measure charge of the aggregate `a` in a record (section 5.4). A static part charges its
+`Value.measureCharge`. A container node charges 1, and a reference charges its rendered
+containers (`Ty.renderCharge`). A hardware leaf has no container, so it charges nothing.
+-/
+mutual
+  def Agg.renderCharge (specs : Specs) : Agg → Nat
+    | .static v => v.measureCharge
+    | .hw _ => 0
+    | .ref _ t => Ty.renderCharge specs t.depth t
+    | .array _ ⟨xs⟩ | .tuple _ ⟨xs⟩ | .record _ ⟨xs⟩ => 1 + Agg.renderChargeAll specs xs
+
+  def Agg.renderChargeAll (specs : Specs) : List Agg → Nat
+    | [] => 0
+    | x :: xs => Agg.renderCharge specs x + Agg.renderChargeAll specs xs
+end
+
 /-!
 `len` of an array, a list, or a string at the call `pos`. It refers to an array or a list, so
 it charges no size. A string needs a scan, so it charges the size of the string first.
