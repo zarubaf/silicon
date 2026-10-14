@@ -629,6 +629,8 @@ impl Types {
     /// The type stores the sums, so the work is constant.
     #[must_use]
     pub fn offset(&self, t: TyId, k: u64) -> u64 {
+        #[cfg(test)]
+        crate::counters::add(crate::counters::Count::Offsets, 1);
         match self.get(t) {
             Ty::Array(elem, _) => self
                 .meta(*elem)
