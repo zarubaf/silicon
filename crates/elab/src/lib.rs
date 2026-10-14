@@ -137,10 +137,32 @@ pub enum Abort {
     Stack(StackError),
 }
 
-/// The elaboration of the top selection `top` in `file`, as Lean `Elab.elaborate` and the
-/// top selection of `silicon-check` give it. `top` is a module name, then literal arguments
-/// in parentheses. Its positions are in its own text, parsed with the syntax depth
+/// What an elaboration made: the records of `diagnostic` in evaluation order, and its outcome.
+/// An error keeps the records before it (section 8.2).
+pub struct Observed {
+    pub records: Vec<String>,
+    pub outcome: Result<Design, Error>,
+}
+
+/// The elaboration of the top selection `top` in `file`, as Lean `Elab.observe` gives it, with
+/// the records of both outcomes. `top` is a module name, then literal arguments in
+/// parentheses. Its positions are in its own text, parsed with the syntax depth
 /// `syntax_depth`. The file passed the pre-check.
+///
+/// # Errors
+/// Returns `Abort::Usage` for a bad top selection, and `Abort::Stack` if the machine cannot
+/// give a stack.
+pub fn observe(
+    file: &Resolved,
+    top: &str,
+    syntax_depth: usize,
+    budget: Budget,
+) -> Result<Observed, Abort> {
+    observe_with(file, top, syntax_depth, budget, names::sha16)
+}
+
+/// The elaboration of the top selection `top` in `file`, as Lean `Elab.elaborate` and the
+/// top selection of `silicon-check` give it: the outcome of `observe`.
 ///
 /// # Errors
 /// Returns `Abort::Usage` for a bad top selection, and `Abort::Stack` if the machine cannot
@@ -151,10 +173,11 @@ pub fn elaborate(
     syntax_depth: usize,
     budget: Budget,
 ) -> Result<Result<Design, Error>, Abort> {
-    elaborate_with(file, top, syntax_depth, budget, names::sha16)
+    observe(file, top, syntax_depth, budget).map(|o| o.outcome)
 }
 
 /// `elaborate` with the digest function `digest` of the emitted names.
+#[cfg(test)]
 fn elaborate_with(
     file: &Resolved,
     top: &str,
@@ -162,28 +185,43 @@ fn elaborate_with(
     budget: Budget,
     digest: fn(&str) -> String,
 ) -> Result<Result<Design, Error>, Abort> {
+    observe_with(file, top, syntax_depth, budget, digest).map(|o| o.outcome)
+}
+
+/// `observe` with the digest function `digest` of the emitted names.
+fn observe_with(
+    file: &Resolved,
+    top: &str,
+    syntax_depth: usize,
+    budget: Budget,
+    digest: fn(&str) -> String,
+) -> Result<Observed, Abort> {
     let (pos, item, params, xs) = top_selection(file, top, syntax_depth)?;
     if params != xs.len() {
-        return Ok(Err(Error {
-            code: Code::S007,
-            pos,
-            message: format!(
-                "the top takes {params} argument(s), but it has {}",
-                xs.len()
-            ),
-        }));
+        return Ok(Observed {
+            records: Vec::new(),
+            outcome: Err(Error {
+                code: Code::S007,
+                pos,
+                message: format!(
+                    "the top takes {params} argument(s), but it has {}",
+                    xs.len()
+                ),
+            }),
+        });
     }
     let scan = parse::on_stack(file.depth(), || scan::of(file, None)).map_err(Abort::Stack)?;
     let stack = scan.stack;
     #[cfg(test)]
     let fuel = budget.fuel;
-    let run = stack
+    let (records, run) = stack
         .run(|| eval::elaborate(file, budget, scan, digest, pos, item, xs))
         .map_err(Abort::Stack)?;
     // The lowering that follows counts into the run, also from the thread that calls it.
     #[cfg(test)]
     counters::join(fuel);
-    finish(run).map_err(Abort::Stack)
+    let outcome = finish(run).map_err(Abort::Stack)?;
+    Ok(Observed { records, outcome })
 }
 
 /// The result of an evaluation, or the stack error that stopped it.
