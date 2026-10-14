@@ -1,0 +1,25 @@
+// A memory whose word is a record of 6 leaves: the first use of `ReadResponse[W]`, the zero of the
+// response, the write chain, and the extracts charge for each leaf. The exact fuel succeeds, and one
+// unit less gives `S015`.
+// FUEL 620
+// TOP M()
+struct W {
+    a: UInt[4],
+    b: Bool,
+    c: SInt[3],
+    d: UInt[8],
+    e: Bool,
+    f: UInt[2],
+}
+module M() {
+    input ra: UInt[3];
+    input re: Bool;
+    input wa: UInt[3];
+    input we: Bool;
+    input wd: W;
+    output q: W;
+    mem m: [W; 5];
+    let r = m.read_port(ra, re);
+    m.write_port(wa, wd, we);
+    q := r.data;
+}

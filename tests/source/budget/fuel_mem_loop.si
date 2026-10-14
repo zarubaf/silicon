@@ -1,0 +1,19 @@
+// A loop of 4 memories: each one pays for its call, its block, and its response. The second and later
+// memories use `ReadResponse[UInt[8]]` again, so they do not pay its specialization. The exact fuel
+// succeeds, and one unit less gives `S015`.
+// FUEL 1285
+// TOP M()
+module M() {
+    input a: UInt[2];
+    input e: Bool;
+    input d: UInt[8];
+    output q: UInt[8];
+    let mut acc = UInt[8](0);
+    comptime for i in 0..4 {
+        mem m: [UInt[8]; 4];
+        let r = m.read_port(a, e);
+        m.write_port(a, d, e);
+        acc = acc +% r.data;
+    }
+    q := acc;
+}
