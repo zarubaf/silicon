@@ -369,30 +369,22 @@ pub(crate) fn elaborate(
     pos: Pos,
     top: usize,
     xs: Vec<Literal>,
-) -> Res<Design> {
+) -> (Vec<String>, Res<Design>) {
     let mut ev = Evaluator::new(file, None, budget, scan, Elab::new(digest));
-    let mut vs = Vec::with_capacity(xs.len());
-    for x in xs {
-        vs.push(ev.literal(x)?);
-    }
-    let mut sizes = 0u128;
-    for v in &vs {
-        sizes += u128::from(v.size());
-    }
-    ev.charge(pos, sizes)?;
-    let top = ev.instantiate(pos, top, vs)?;
-    Ok(Design {
-        insts: ev.elab.done,
+    let outcome = ev.top_selection(pos, top, xs);
+    let design = outcome.map(|top| Design {
+        insts: std::mem::take(&mut ev.elab.done),
         top,
         pos,
         used: budget.fuel - ev.fuel.left(),
         left: ev.fuel.left(),
-        graph: ev.graph,
-        paths: ev.paths,
-        tys: ev.tys,
-        field_order: ev.syms.field_order,
-        texts: ev.syms.texts,
-    })
+        graph: std::mem::take(&mut ev.graph),
+        paths: std::mem::take(&mut ev.paths),
+        tys: std::mem::take(&mut ev.tys),
+        field_order: std::mem::take(&mut ev.syms.field_order),
+        texts: std::mem::take(&mut ev.syms.texts),
+    });
+    (Vec::new(), design)
 }
 
 fn before(a: Pos, b: Pos) -> bool {
@@ -432,6 +424,21 @@ enum Missing {
 }
 
 impl Evaluator<'_> {
+    /// The instantiation of the top selection at `pos`: the module item `top` with the literal
+    /// arguments `xs`. The result is the index of its done instantiation.
+    fn top_selection(&mut self, pos: Pos, top: usize, xs: Vec<Literal>) -> Res<usize> {
+        let mut vs = Vec::with_capacity(xs.len());
+        for x in xs {
+            vs.push(self.literal(x)?);
+        }
+        let mut sizes = 0u128;
+        for v in &vs {
+            sizes += u128::from(v.size());
+        }
+        self.charge(pos, sizes)?;
+        self.instantiate(pos, top, vs)
+    }
+
     /// A literal of the top selection, as `eval` charges it.
     fn literal(&mut self, x: Literal) -> Res<Value> {
         Ok(match x {
