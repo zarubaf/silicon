@@ -1,0 +1,25 @@
+// A done instantiation gives no second record: two instances of C(8) give one record of C$8.
+// TOP M()
+// CHECK: (module M
+// OBSERVE: (record 11 5 C$8 () (string "child") (int 8))
+// OBSERVE-NEXT: (record 11 5 C$2 () (string "child") (int 2))
+// OBSERVE-NEXT: (record 23 5 M () (string "end") (int 0))
+// OBSERVE-NOT: (string "child")
+module C(comptime W: Nat) {
+    input a: Bool;
+    output q: Bool;
+    diagnostic("child", W);
+    q := a;
+}
+module M() {
+    input d: Bool;
+    output o: Bool;
+    instance u = C(8);
+    u.a := d;
+    instance v = C(8);
+    v.a := d;
+    instance s = C(2);
+    s.a := d;
+    diagnostic("end", 0);
+    o := u.q;
+}

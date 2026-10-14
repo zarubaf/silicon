@@ -1,0 +1,37 @@
+// Records of each handle kind: a register, a wire, an output, a memory, an instance, an input of a
+// child, and the domain. A handle shows its type and its core name, and no sampled bits.
+// TOP M()
+// CHECK: (module M
+// OBSERVE: (record 29 5 M () (string "reg") (reg (uint 8) {{[^ )]+}}))
+// OBSERVE-NEXT: (record 30 5 M () (string "wire") (wire bool {{[^ )]+}}))
+// OBSERVE-NEXT: (record 31 5 M () (string "output") (output bool {{[^ )]+}}))
+// OBSERVE-NEXT: (record 32 5 M () (string "mem") (mem (array (uint 8) 4) {{[^ )]+}}))
+// OBSERVE-NEXT: (record 33 5 M () (string "instance") (instance C {{[^ )]+}}))
+// OBSERVE-NEXT: (record 34 5 M () (string "input") (input bool {{[^ )]+}} a))
+// OBSERVE-NEXT: (record 35 5 M () (string "domain") (domain clock))
+module C() {
+    input a: Bool;
+    output q: Bool;
+    q := a;
+}
+module M() {
+    input d: UInt[8];
+    input c: Bool;
+    output o: Bool;
+    reg r: UInt[8] = 0;
+    r := d;
+    wire w: Bool;
+    w := c;
+    mem m: [UInt[8]; 4];
+    write_port(m, 0, d, c); let rr = m.read_port(0, c);
+    instance u = C();
+    u.a := c;
+    diagnostic("reg", r);
+    diagnostic("wire", w);
+    diagnostic("output", o);
+    diagnostic("mem", m);
+    diagnostic("instance", u);
+    diagnostic("input", u.a);
+    diagnostic("domain", clock);
+    o := u.q;
+}

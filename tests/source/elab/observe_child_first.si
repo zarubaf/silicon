@@ -1,0 +1,27 @@
+// A child gives its records, with its own emitted name, when its instance statement runs: before
+// the rest of the parent.
+// TOP M()
+// CHECK: (module M
+// OBSERVE: (record 19 5 M () (string "before") (int 0))
+// OBSERVE-NEXT: (record 13 5 C$8 () (string "child") (int 8))
+// OBSERVE-NEXT: (record 22 5 M () (string "after") (int 1))
+// OBSERVE-NEXT: (record 13 5 C$2 () (string "child") (int 2))
+// OBSERVE-NEXT: (record 25 5 M () (string "last") (int 2))
+module C(comptime W: Nat) {
+    input a: Bool;
+    output q: Bool;
+    diagnostic("child", W);
+    q := a;
+}
+module M() {
+    input d: Bool;
+    output o: Bool;
+    diagnostic("before", 0);
+    instance u = C(8);
+    u.a := d;
+    diagnostic("after", 1);
+    instance s = C(2);
+    s.a := d;
+    diagnostic("last", 2);
+    o := u.q;
+}
