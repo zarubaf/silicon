@@ -140,16 +140,19 @@ structure Checked where
   typed : Core.Typed.Design
   accepted : Core.check design = .ok typed
 
-/-! The elaboration of the top selection `t`, its lowering, and the check of pass 6. -/
-def elabChecked (o : Opts) (source t : String) (digest : String → String) :
-    Except Outcome Checked :=
-  match elabRun o source t digest with
+/-! The check of pass 6 on the lowered design of an elaboration, or the outcome of its failure. -/
+def checkLowered : Except Outcome (Elab.Design × Flatten.Lowered × Nat) → Except Outcome Checked
   | .ok (d, l, _) =>
     match Flatten.checkDesign l.design with
     | .ok ⟨typed, h⟩ => .ok ⟨d, l.design, typed, h⟩
     | .error (.source e) => .error (.error e)
     | .error (.defect msg) => .error (.defect msg)
   | .error out => .error out
+
+/-! The elaboration of the top selection `t`, its lowering, and the check of pass 6. -/
+def elabChecked (o : Opts) (source t : String) (digest : String → String) :
+    Except Outcome Checked :=
+  checkLowered (elabRun o source t digest)
 
 /-! The canonical text of a design. -/
 def canonicalText (d : Core.Design) : String := Core.print (Core.canonicalize d)
