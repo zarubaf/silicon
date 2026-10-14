@@ -33,6 +33,12 @@ pub fn parse_message(stdout: &str) -> Option<&str> {
     rest.lines().next()?.strip_prefix(' ')
 }
 
+/// True when `stdout` holds exactly the `want` message in its first report line, or `want` is none.
+#[must_use]
+pub fn message_matches(stdout: &str, want: Option<&str>) -> bool {
+    want.is_none_or(|text| parse_message(stdout) == Some(text))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

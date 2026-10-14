@@ -10,7 +10,7 @@ use crate::directive::{
     BudgetKind, Expectation, Expected, Marker, budgets, expectation, expected_error, has_check, top,
 };
 use crate::outcome::{Outcome, classify};
-use crate::report::{parse_message, parse_report};
+use crate::report::{message_matches, parse_report};
 use crate::spawn::spawn;
 
 /// Runs `command` of the two front ends on `file` with the further arguments `args` and `stdin`.
@@ -114,9 +114,10 @@ fn compare_message(want: &Expected, out: &Output) -> Result<(), String> {
     let Some(message) = &want.message else {
         return Ok(());
     };
-    match parse_message(&String::from_utf8_lossy(&out.stdout)) {
-        Some(got) if got == message => Ok(()),
-        _ => Err(format!("expected the message `{message}`")),
+    if message_matches(&String::from_utf8_lossy(&out.stdout), Some(message)) {
+        Ok(())
+    } else {
+        Err(format!("expected the message `{message}`"))
     }
 }
 
