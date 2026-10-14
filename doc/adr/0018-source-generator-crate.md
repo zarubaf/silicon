@@ -16,6 +16,7 @@ The generator of `just diff-si` ([front-end spec](../design/2026-10-09-frontend.
 - The evaluator of the generator models only the static semantics of the programs that the builder makes. It works on the typed program of the generator, never on source text or on a syntax tree. Each construct that it evaluates has a builder that emits it.
 - It can be stricter than the language: it can reject a program that the language accepts, and the builder then does not emit that program. It must never give a value that differs from the language.
 - In slice 2, it can model the static values that the builder emits: aggregates, `List`, strings, and the width of `data_bits(T)`. It can also model the leaves of the ports that the builder declares.
+- It predicts the static value of each `diagnostic` record from the contexts of the builder (`Builder.contexts` in `crates/srcgen/src/build/inst.rs`). It thus uses the dedupe of contexts that the builder does, and adds no second identity rule.
 - It does not resolve names, infer or check types, compute `cost` or fuel, make instantiation identities or emitted names, or lower to core IR. It predicts an error code only where the pass order makes the code certain. A need outside these limits needs a new ADR.
 
 ## Consequences
