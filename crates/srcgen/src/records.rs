@@ -71,7 +71,8 @@ fn run(body: &[Stmt], env: &mut Env, scope: &Scope, log: &mut Vec<String>) -> Re
                 }
             }
             // A frame that no env reaches holds the `error`; it never runs.
-            Stmt::Error(_) => return Err(Fault::Type),
+            // The builder never emits a `Block`.
+            Stmt::Error(_) | Stmt::Block(_) => return Err(Fault::Type),
             _ => {}
         }
     }
