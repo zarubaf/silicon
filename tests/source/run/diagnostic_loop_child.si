@@ -1,0 +1,21 @@
+// Diagnostics in a comptime loop and in a child, with a static value and a hardware input. The records
+// leave the outputs unchanged.
+// TOP M()
+module Inv() domains() {
+    input a: UInt[4];
+    output y: UInt[4];
+    diagnostic("child", a);
+    y := ~a;
+}
+module M() domains() {
+    input a: UInt[4];
+    output y: UInt[4];
+    comptime for i in 0..3 {
+        diagnostic("loop", i);
+    }
+    instance c = Inv();
+    c.a := a;
+    y := c.y;
+}
+// STEP in=(a 5) out=(y 10)
+// STEP in=(a 15) out=(y 0)
