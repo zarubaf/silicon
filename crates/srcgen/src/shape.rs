@@ -49,9 +49,9 @@ impl Group {
 
     /// The width of the leaf `i` in the source type of the port.
     pub fn leaf_width(&self, i: usize) -> u32 {
-        match (self.kind, self.members.get(i)) {
-            (Kind::Array, _) | (_, None) => self.widest(),
-            (_, Some((_, w))) => *w,
+        match self.kind {
+            Kind::Array => self.widest(),
+            _ => self.members[i].1,
         }
     }
 
