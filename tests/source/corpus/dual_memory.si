@@ -1,4 +1,4 @@
-// Four memories in two modules. The top holds a memory of five array words, a depth that is not a power of 2,
+// Three memories in two modules. The top holds a memory of five array words, a depth that is not a power of 2,
 // and a memory of four 3-bit words, whose write enable depends on the data. A child holds a memory of one
 // 3-bit word, the depth 1. Every port has a non-constant enable (#20). The child remembers the XOR of the two
 // lanes of the last written word, and the top outputs the responses of all three memories.
