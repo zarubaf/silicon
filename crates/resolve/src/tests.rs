@@ -121,13 +121,19 @@ impl Ids {
                     self.ty(ty);
                     self.expr(init);
                 }
-                Stmt::Mem { .. } => {}
                 Stmt::Wire { name, ty, .. }
                 | Stmt::Input { name, ty, .. }
                 | Stmt::Output { name, ty, .. }
                 | Stmt::Alias { name, ty, .. } => {
                     self.ident(name);
                     self.ty(ty);
+                }
+                Stmt::Mem {
+                    name, word, depth, ..
+                } => {
+                    self.ident(name);
+                    self.ty(word);
+                    self.expr(depth);
                 }
                 Stmt::Inst {
                     name, module, args, ..
@@ -653,6 +659,26 @@ fn a_local_has_its_own_value_out_of_scope() {
         errors("module M(comptime A: UInt[B], comptime B: Nat) {}\n"),
         [(S003, 1, 27)]
     );
+}
+
+fn mem_body(body: &str) -> String {
+    format!("module M(comptime W: Nat) {{\n{body}\n}}\n")
+}
+
+#[test]
+fn a_mem_declares_its_name_after_its_word_and_its_depth() {
+    ok(&mem_body("mem m: [UInt[W]; W + 1];\nlet x = m;"));
+    let cases = [
+        ("mem m: [T; 4];", S003, 2, 9),
+        ("mem m: [Bool; n];", S003, 2, 15),
+        ("mem m: [Bool; m];", S003, 2, 15),
+        ("wire m: Bool;\nmem m: [Bool; 4];", S002, 3, 5),
+        ("mem m: [Bool; 4];\nlet m = 1;", S002, 3, 5),
+        ("mem W: [Bool; 4];", S002, 2, 5),
+    ];
+    for (body, code, line, col) in cases {
+        assert_eq!(errors(&mem_body(body)), [(code, line, col)], "{body}");
+    }
 }
 
 #[test]
