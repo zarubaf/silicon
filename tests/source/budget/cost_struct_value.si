@@ -1,0 +1,17 @@
+// The cost of a struct value (section 5.4): a copy and an equality read a record in full, so each
+// charges its recursive size. The record holds an array of 12 elements. A copy charges 1 for each
+// element of the array, and an equality charges 2 for each. The fuel equal to the total of `cost`
+// succeeds, and one unit less gives `S015`.
+// FUEL 365
+// TOP M()
+struct P(comptime N: Nat) {
+    v: [UInt[8]; N],
+    b: Bool,
+}
+module M() domains() {
+    let a = P[12]([UInt[8]; 12](), true);
+    comptime for i in 0..4 {
+        let c = a;
+        let e = a == c;
+    }
+}

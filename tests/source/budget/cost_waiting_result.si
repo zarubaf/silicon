@@ -1,0 +1,19 @@
+// The cost of a waiting result that holds no root (section 5.4). The left operand of `+` waits
+// while `xs.pop()` evaluates. A made value `1 + 2` holds no local, and `ys[0]` holds `ys`, not
+// `xs`. The `pop` thus charges no size of `xs`. With `xs[0]` as left operand, each pop would charge
+// the size of `xs` before it changes: 9 + 8 + ... + 2 = 44 for 8 passes. The fuel equal to the
+// total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 261
+// TOP M()
+module M() domains() {
+    let mut xs = list(Int);
+    let mut ys = list(Int);
+    comptime for i in 0..8 {
+        xs.push(i);
+        ys.push(i);
+    }
+    comptime for i in 0..4 {
+        let a = (1 + 2) + xs.pop();
+        let b = ys[0] + xs.pop();
+    }
+}
