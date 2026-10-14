@@ -590,9 +590,13 @@ theorem conformVal_f (p : Pos) (t : Ty) (v : Val) :
     Follows cap (conformVal p t v) (conformVal p t v) := by
   unfold conformVal; follows [settle_f, data_f, conform_f, typedAgg_f]
 
+theorem readUse_f (p : Pos) (t : Ty) (v : Val) :
+    Follows cap (readUse p t v) (readUse p t v) := by
+  unfold readUse; follows [settle_f, data_f, conformVal_f]
+
 theorem copyUse_f (p : Pos) (t : Ty) (c : Bool) (v : Val) :
     Follows cap (copyUse p t c v) (copyUse p t c v) := by
-  unfold copyUse; follows [settle_f, data_f, conformVal_f]
+  unfold copyUse; follows [readUse_f, conformVal_f]
 
 theorem version_f (k : Tag) (b : Names.Path) :
     Follows cap (version k b) (version k b) := by
@@ -729,6 +733,26 @@ theorem primCall_f (p : Pos) (g : String) (h : PrimFn) (vs : List Val) :
   unfold primCall
   follows [lenOf_f, dataBitsOf_f, static_f, data_f, apply_f, hwConvert_f, bounded_f]
 
+theorem specOf_f {ty ty' : Resolve.TypeExpr → M Ty} (h : ∀ t, Follows cap (ty t) (ty' t))
+    (p : Pos) (i : Nat) (x : Ident) (ps : List Resolve.Param) (fs : List Resolve.StructField)
+    (pre : Bool) (args : List Val) :
+    Follows cap (specOf ty p i x ps fs pre args) (specOf ty' p i x ps fs pre args) := by
+  unfold specOf
+  follows [h, specialize_f, nested_f, inFrame_f, conform_f, static_f, settle_f, bindLocal_f,
+    atUse_f]
+
+theorem responseTy_f {ty ty' : Resolve.TypeExpr → M Ty} (h : ∀ t, Follows cap (ty t) (ty' t))
+    (p : Pos) (t : Ty) : Follows cap (responseTy ty p t) (responseTy ty' p t) := by
+  unfold responseTy; follows [specOf_f h]
+
+theorem requestPart_f (p : Pos) (t : Ty) (v : Val) :
+    Follows cap (requestPart p t v) (requestPart p t v) := by
+  unfold requestPart; follows [readUse_f]
+
+theorem portCall_f {u u' : Ty → M Ty} (h : ∀ t, Follows cap (u t) (u' t)) (p : Pos) (g : String)
+    (f : PrimFn) (vs : List Val) : Follows cap (portCall p g f vs u) (portCall p g f vs u') := by
+  unfold portCall; follows [h, requestPart_f, bounded_f]
+
 end helpers
 
 /-!
@@ -754,8 +778,7 @@ theorem spec_f (he : ∀ e, Follows m (eval k e) (eval m e))
     (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t)) (p : Pos) (i : Nat)
     (xs : List Resolve.Expr) : Follows m (spec k p i xs) (spec m p i xs) := by
   rw [spec.eq_def k, spec.eq_def m]
-  follows [he, ht, operands_f he, need_f, static_f, settle_f, specialize_f, nested_f,
-    inFrame_f, conform_f, bindLocal_f, atUse_f]
+  follows [operands_f he, need_f, static_f, specOf_f ht]
 
 theorem params_f (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t))
     (ps : List Resolve.FnParam) : Follows m (params k ps) (params m ps) := by
@@ -805,7 +828,8 @@ theorem call_f (he : ∀ e, Follows m (eval k e) (eval m e))
     Follows m (call k p f xs b j) (call m p f xs b j) := by
   rw [call.eq_def k, call.eq_def m]
   follows [he, placeAt_f he, args_f he, ctor_f he, actuals_f he, invoke_f ht hb, need_f,
-    hold_f, release_f, shut_f, pushOnto_f, popFrom_f, primCall_f]
+    hold_f, release_f, shut_f, pushOnto_f, popFrom_f, primCall_f,
+    portCall_f (responseTy_f ht _)]
 
 set_option maxHeartbeats 400000 in
 /--

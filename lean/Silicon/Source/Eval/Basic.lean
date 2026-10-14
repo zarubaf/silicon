@@ -432,16 +432,37 @@ structure Let where
   pos : Pos
 
 /-!
+A memory of one instantiation (section 7.6): its name, its path, its word type, its depth, and
+its `mem` statement. `read` holds the request of its first `read_port` call: the address and the
+enable. `write` holds the request of its first `write_port` call: the address, the data, and the
+enable. Each part of a request is after its typed use. `dup` holds the first `S018` of a second
+call by position (section 6.2).
+-/
+structure Mem where
+  name : String
+  path : Path
+  word : Ty
+  depth : Nat
+  pos : Pos
+  read : Option (Agg × Agg) := none
+  write : Option (Agg × Agg × Agg) := none
+  dup : Option Error := none
+
+/-! The address width of a memory of the depth `n`: `max(1, ⌈log₂ n⌉)` (section 7.6). -/
+def addrWidth (n : Nat) : Nat := max 1 (Nat.log2 (n - 1) + 1)
+
+/-!
 The names of one instantiation. `frames` numbers each frame by its parent and its field pair.
 `versions` counts the bindings of each tag in each frame. `lets` holds the named bindings in
 evaluation order. Each table grows only with the bindings that run. `shares` counts the marks of
-shared operands (`Op.share`).
+shared operands (`Op.share`). `mems` holds the memories by their number, with their port calls.
 -/
 structure Naming where
   frames : Std.HashMap (Nat × Nat × Field) Nat := {}
   versions : Std.HashMap (Nat × Tag) Nat := {}
   lets : Array Let := #[]
   shares : Nat := 0
+  mems : Array Mem := #[]
 
 /-!
 The state holds the fuel, the table of constants by item index, and the table of struct
