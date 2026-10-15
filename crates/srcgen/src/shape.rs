@@ -25,6 +25,10 @@ pub(super) enum Kind {
 pub(super) enum Home {
     /// An input or output port.
     Port(Dir),
+    /// A register.
+    Reg,
+    /// A wire.
+    Wire,
 }
 
 /// Adjacent core names of one home that source declares as one aggregate.

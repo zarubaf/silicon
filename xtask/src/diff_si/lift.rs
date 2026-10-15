@@ -24,28 +24,31 @@ use crate::diff::{CYCLES, Trace, compare};
 /// A core design, its `in=` lines, and the shape tape of the lift.
 pub(super) type Case = (ast::Design, Vec<String>, Vec<u32>);
 
-/// The designs that agree, and how many of them have a memory or an
-/// aggregate port.
+/// The designs that agree, and how many of them have a memory, an aggregate
+/// port, an aggregate register, or an aggregate wire.
 #[derive(Default)]
 pub(super) struct Tally {
     lifted: u64,
     memories: u64,
     aggregates: u64,
+    registers: u64,
+    wires: u64,
 }
 
 impl Tally {
     /// The success line for the seeds `seed` to `last`.
     pub(super) fn summary(&self, seed: u64, last: u64) -> String {
         format!(
-            "diff-si: {} lifted designs agree (seeds {seed} to {last}): {} with memories, {} with aggregate ports",
-            self.lifted, self.memories, self.aggregates
+            "diff-si: {} lifted designs agree (seeds {seed} to {last}): {} with memories, {} with aggregate ports, {} with aggregate registers, {} with aggregate wires",
+            self.lifted, self.memories, self.aggregates, self.registers, self.wires
         )
     }
 }
 
-/// The most numbers of a shape tape: a design has at most 6 modules of 8
-/// ports, and a port takes up to 4 numbers.
-const SHAPE_NUMBERS: usize = 256;
+/// The most numbers of a shape tape: a design has at most 6 modules, a
+/// module has at most 17 names to group (4 inputs, 4 outputs, 3 registers,
+/// and 6 `let` values), and each name takes at most 4 numbers.
+const SHAPE_NUMBERS: usize = 6 * 17 * 4;
 
 /// Random designs of the source forms, each with `CYCLES` matching input
 /// lines and a shape tape. A design that fails the checker gets no lines,
@@ -115,6 +118,8 @@ pub(super) fn verdict(
         tally.lifted += 1;
         tally.memories += u64::from(lifted.memories > 0);
         tally.aggregates += u64::from(lifted.aggregates > 0);
+        tally.registers += u64::from(lifted.aggregate_regs > 0);
+        tally.wires += u64::from(lifted.aggregate_wires > 0);
     }
     Ok(message)
 }
@@ -172,15 +177,17 @@ mod tests {
     }
 
     #[test]
-    fn the_summary_counts_memories_and_aggregate_ports() {
+    fn the_summary_counts_memories_and_aggregates() {
         let tally = Tally {
             lifted: 100,
             memories: 41,
             aggregates: 58,
+            registers: 30,
+            wires: 35,
         };
         assert_eq!(
             tally.summary(1, 100),
-            "diff-si: 100 lifted designs agree (seeds 1 to 100): 41 with memories, 58 with aggregate ports"
+            "diff-si: 100 lifted designs agree (seeds 1 to 100): 41 with memories, 58 with aggregate ports, 30 with aggregate registers, 35 with aggregate wires"
         );
     }
 

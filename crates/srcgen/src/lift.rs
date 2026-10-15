@@ -5,7 +5,7 @@
 use super::expr::Env;
 use super::memory;
 use super::shape::{self, Group, Home, Shape};
-use core_ir::ast::{Conn, Design, Dir, Expr, Item, Module, Port, Stmt, Ty};
+use core_ir::ast::{Conn, Design, Dir, Expr, Item, Module, Port, Reset, Stmt, Ty};
 use core_ir::r#gen::RESET;
 use core_ir::interp;
 use std::collections::{HashMap, HashSet};
@@ -47,6 +47,10 @@ pub struct Lifted {
     pub memories: usize,
     /// The aggregate ports of the design.
     pub aggregates: usize,
+    /// The aggregate registers of the design.
+    pub aggregate_regs: usize,
+    /// The aggregate wires of the design.
+    pub aggregate_wires: usize,
     top: Layout,
 }
 
@@ -176,6 +180,7 @@ fn checked<T>(expected: usize, values: &[T]) -> Result<&[T], VectorLen> {
 pub fn lift(design: &Design, tape: &[u32]) -> Result<Lifted, Unsupported> {
     let mut numbers = tape.iter().copied();
     let mut ids = 0;
+    let modules = modules_of(design)?;
     let mut shapes = HashMap::new();
     for item in &design.items {
         if let Item::Module(m) = item {
@@ -186,13 +191,58 @@ pub fn lift(design: &Design, tape: &[u32]) -> Result<Lifted, Unsupported> {
                 .filter(|p| !is_domain_reset(clocked, &p.name.text))
                 .filter_map(|p| Some((p.name.text.clone(), Home::Port(p.dir), width(p)?)))
                 .collect();
-            shapes.insert(
-                m.name.text.as_str(),
-                shape::draw(&ports, &mut numbers, &mut ids),
-            );
+            let mut shape = shape::draw(&ports, &mut numbers, &mut ids);
+            let state = state_names(m, &modules);
+            shape
+                .groups
+                .extend(shape::draw(&state, &mut numbers, &mut ids).groups);
+            shapes.insert(m.name.text.as_str(), shape);
         }
     }
     lift_shaped(design, &shapes)
+}
+
+/// The modules of `design` by name.
+fn modules_of(design: &Design) -> Result<HashMap<&str, &Module>, Unsupported> {
+    let mut modules = HashMap::new();
+    for item in &design.items {
+        match item {
+            Item::Module(m) => {
+                modules.insert(m.name.text.as_str(), m);
+            }
+            Item::Extern(e) => return Err(Unsupported::Extern(e.name.text.clone())),
+        }
+    }
+    Ok(modules)
+}
+
+/// The registers and then the `let` values of `m` that a group can hold,
+/// as `(name, home, width)`. The one `next` of a register becomes the `:=`
+/// of its group. A register of a memory block stays with its block. A module that the lift rejects has no state names.
+fn state_names(m: &Module, modules: &HashMap<&str, &Module>) -> Vec<(String, Home, u32)> {
+    let shapes = HashMap::new();
+    let Ok(env) = env_of(
+        m,
+        m.ports.iter().any(|p| p.ty == Ty::Clock),
+        modules,
+        &shapes,
+    ) else {
+        return Vec::new();
+    };
+    let Ok(memories) = memory::find(m, &env) else {
+        return Vec::new();
+    };
+    let regs = m.stmts.iter().filter_map(|s| match s {
+        Stmt::Reg { name, width, .. } if !memories.iter().any(|mem| mem.owns(s)) => {
+            Some((name.text.clone(), Home::Reg, width.value))
+        }
+        _ => None,
+    });
+    let lets = m.stmts.iter().filter_map(|s| match s {
+        Stmt::Let { name, width, .. } => Some((name.text.clone(), Home::Wire, width.value)),
+        _ => None,
+    });
+    regs.chain(lets).collect()
 }
 
 /// Like [`lift`], with the groups of each module given.
@@ -237,7 +287,9 @@ pub(super) fn lift_shaped(
     Ok(Lifted {
         text,
         memories,
-        aggregates: shapes.values().map(|s| s.groups.len()).sum(),
+        aggregates: count_homes(shapes, |h| matches!(h, Home::Port(_))),
+        aggregate_regs: count_homes(shapes, |h| h == Home::Reg),
+        aggregate_wires: count_homes(shapes, |h| h == Home::Wire),
         top: Layout::of(
             modules
                 .get(design.top.text.as_str())
@@ -250,18 +302,12 @@ pub(super) fn lift_shaped(
     })
 }
 
-/// The modules of `design` by name.
-fn modules_of(design: &Design) -> Result<HashMap<&str, &Module>, Unsupported> {
-    let mut modules = HashMap::new();
-    for item in &design.items {
-        match item {
-            Item::Module(m) => {
-                modules.insert(m.name.text.as_str(), m);
-            }
-            Item::Extern(e) => return Err(Unsupported::Extern(e.name.text.clone())),
-        }
-    }
-    Ok(modules)
+fn count_homes(shapes: &HashMap<&str, Shape>, home: impl Fn(Home) -> bool) -> usize {
+    shapes
+        .values()
+        .flat_map(|s| &s.groups)
+        .filter(|g| home(g.home))
+        .count()
 }
 
 /// The names of one scope. The lift makes names for aggregate ports and for
@@ -367,9 +413,13 @@ fn module<'a>(
         .cloned()
         .unwrap_or_default();
     let mut env = env_of(m, clocked, modules, shapes)?;
-    for p in &m.ports {
-        if let Some(path) = shape.read(&p.name.text, None) {
-            env.alias.insert(p.name.text.as_str(), path);
+    let named = m.stmts.iter().filter_map(|s| match s {
+        Stmt::Reg { name, .. } | Stmt::Let { name, .. } => Some(name),
+        _ => None,
+    });
+    for n in m.ports.iter().map(|p| &p.name).chain(named) {
+        if let Some(path) = shape.read(&n.text, None) {
+            env.alias.insert(n.text.as_str(), path);
         }
     }
     let memories = memory::find(m, &env)?;
@@ -414,7 +464,13 @@ fn module<'a>(
         sections.assigns.extend(lines.assigns);
     }
     for s in &m.stmts {
-        let grouped = matches!(s, Stmt::Assign { out, .. } if shape.group_of(&out.text).is_some());
+        let grouped = match s {
+            Stmt::Assign { out: n, .. }
+            | Stmt::Next { reg: n, .. }
+            | Stmt::Reg { name: n, .. }
+            | Stmt::Let { name: n, .. } => shape.group_of(&n.text).is_some(),
+            _ => false,
+        };
         if !grouped && !memories.iter().any(|mem| mem.owns(s)) {
             statement(s, &env, &mut sections)?;
         }
@@ -442,13 +498,14 @@ fn module<'a>(
     Ok(text)
 }
 
-/// The lines of the aggregate `g` of `m`: its one `:=`.
+/// The lines of the aggregate `g` of `m`: its declaration and its one `:=`.
 fn group_lines(
     g: &Group,
     m: &Module,
     env: &Env<'_>,
     sections: &mut Sections,
 ) -> Result<(), Unsupported> {
+    let gname = name(&g.name)?;
     match g.home {
         Home::Port(Dir::Input) => {}
         Home::Port(Dir::Output) => {
@@ -458,7 +515,50 @@ fn group_lines(
             })?;
             sections
                 .assigns
-                .push(format!("    {} := {};", name(&g.name)?, g.literal(&parts)));
+                .push(format!("    {gname} := {};", g.literal(&parts)));
+        }
+        Home::Wire => {
+            let parts = leaves(g, m, env, |s| match s {
+                Stmt::Let { name, expr, .. } => Some((name.text.as_str(), expr)),
+                _ => None,
+            })?;
+            sections
+                .wires
+                .push(format!("    wire {gname}: {};", g.ty()));
+            sections
+                .assigns
+                .push(format!("    {gname} := {};", g.literal(&parts)));
+        }
+        Home::Reg => {
+            let resets = g
+                .members
+                .iter()
+                .enumerate()
+                .map(|(i, (reg, _))| {
+                    let reset = m.stmts.iter().find_map(|s| match s {
+                        Stmt::Reg { name, reset, .. } if name.text == *reg => Some(reset.as_ref()),
+                        _ => None,
+                    });
+                    match reset_value(reg, reset.ok_or_else(|| Unsupported::Name(reg.clone()))?)? {
+                        Expr::Const { value, .. } => {
+                            Ok(format!("UInt[{}]({value})", g.leaf_width(i)))
+                        }
+                        _ => Err(Unsupported::Reset(reg.clone())),
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            sections.regs.push(format!(
+                "    reg {gname}: {} = {};",
+                g.ty(),
+                g.literal(&resets)
+            ));
+            let parts = leaves(g, m, env, |s| match s {
+                Stmt::Next { reg, expr, .. } => Some((reg.text.as_str(), expr)),
+                _ => None,
+            })?;
+            sections
+                .assigns
+                .push(format!("    {gname} := {};", g.literal(&parts)));
         }
     }
     Ok(())
@@ -488,6 +588,20 @@ fn leaves<'a>(
             )
         })
         .collect()
+}
+
+/// The constant that a register resets to on the module reset. Source
+/// expresses no other reset.
+fn reset_value<'a>(name: &str, reset: Option<&'a Reset>) -> Result<&'a Expr, Unsupported> {
+    match reset {
+        Some(r)
+            if matches!(&r.signal, Expr::Ref(s) if s.text == RESET)
+                && matches!(r.value, Expr::Const { .. }) =>
+        {
+            Ok(&r.value)
+        }
+        _ => Err(Unsupported::Reset(name.to_owned())),
+    }
 }
 
 /// The source of `e` as an element of an aggregate literal with the leaf
@@ -527,15 +641,7 @@ fn statement(s: &Stmt, env: &Env<'_>, out: &mut Sections) -> Result<(), Unsuppor
             ..
         } => {
             let n = name(&n.text)?;
-            let value = match reset {
-                Some(r)
-                    if matches!(&r.signal, Expr::Ref(s) if s.text == RESET)
-                        && matches!(r.value, Expr::Const { .. }) =>
-                {
-                    env.source(&r.value)?
-                }
-                _ => return Err(Unsupported::Reset(n.to_owned())),
-            };
+            let value = env.source(reset_value(n, reset.as_ref())?)?;
             out.regs
                 .push(format!("    reg {n}: UInt[{}] = {value};", width.value));
         }
@@ -1264,6 +1370,57 @@ mod tests {
         );
     }
 
+    #[test]
+    fn registers_and_wires_lift_to_one_aggregate_each() {
+        let core = "(design m0 \
+            (module m0 (input clk clock) (input rst (bits 1)) (input a (bits 4)) \
+              (output o (bits 4)) (output q (bits 2)) \
+              (reg r0 (bits 4) clk (reset sync rst (const 4 3))) \
+              (reg r1 (bits 2) clk (reset sync rst (const 2 1))) \
+              (let w0 (bits 4) (add a r0)) (let w1 (bits 2) (extract w0 0 2)) \
+              (next r0 w0) (next r1 w1) (assign o w0) (assign q r1)))";
+        let shapes = shapes(vec![(
+            "m0",
+            vec![
+                group("rr", Home::Reg, Kind::Array, &[("r0", 4), ("r1", 2)]),
+                group("ww", Home::Wire, Kind::Tuple, &[("w0", 4), ("w1", 2)]),
+            ],
+        )]);
+        let lifted = lift_shaped(&parse(core).unwrap(), &shapes).unwrap();
+        assert_eq!((lifted.aggregate_regs, lifted.aggregate_wires), (1, 1));
+        let text = lifted.text;
+        for line in [
+            "    reg rr: [UInt[4]; 2] = [UInt[4](3), UInt[4](1)];",
+            "    wire ww: (UInt[4], UInt[2]);",
+            "    ww := ((a +% rr[0]), resize(UInt[2], ww.0));",
+            "    rr := [resize(UInt[4], ww.0), resize(UInt[4], ww.1)];",
+            "    q := resize(UInt[2], rr[1]);",
+        ] {
+            assert!(text.contains(line), "{line}\n{text}");
+        }
+    }
+
+    #[test]
+    fn the_registers_of_a_memory_block_join_no_group() {
+        let core = "(design m0 (module m0 (input clk clock) (input rst (bits 1)) \
+            (input ra (bits 1)) (input re (bits 1)) (input wa (bits 1)) \
+            (input wd (bits 4)) (input we (bits 1)) (output od (bits 4)) \
+            (mem mem0 (bits 4) 2 clk) \
+            (reg d0 (bits 4) clk (reset sync rst (const 4 0))) \
+            (reg v0 (bits 1) clk (reset sync rst (const 1 0))) \
+            (reg r0 (bits 4) clk (reset sync rst (const 4 0))) \
+            (next d0 (mux re (read mem0 ra) d0)) (next v0 (and re (const 1 1))) \
+            (next r0 wd) \
+            (write mem0 0 wa wd (and we (xor rst (const 1 1)))) \
+            (assign od r0)))";
+        let design = parse(core).unwrap();
+        let Item::Module(m) = &design.items[0] else {
+            panic!("a module");
+        };
+        let state = state_names(m, &modules_of(&design).unwrap());
+        assert_eq!(state, vec![("r0".to_owned(), Home::Reg, 4)]);
+    }
+
     /// The lifted designs of 256 random tapes.
     fn lifted_sample() -> Vec<String> {
         let strategy = (design_with(Config::source()), vec(any::<u32>(), 0..256));
@@ -1280,7 +1437,7 @@ mod tests {
     fn each_memory_and_aggregate_kind_occurs_in_a_tenth_of_the_designs() {
         type Has = fn(&str) -> bool;
         let texts = lifted_sample();
-        let kinds: [(&str, Has); 5] = [
+        let kinds: [(&str, Has); 7] = [
             ("memory", |t| t.contains("    mem ")),
             ("tuple", |t| t.contains(": (UInt[")),
             ("array", |t| {
@@ -1293,6 +1450,8 @@ mod tests {
                 t.contains("struct R") && !t.contains("(comptime")
             }),
             ("record with width", |t| t.contains("(comptime W: Nat)")),
+            ("aggregate register", |t| t.contains("    reg g_")),
+            ("aggregate wire", |t| t.contains("    wire g_")),
         ];
         for (kind, has) in kinds {
             let count = texts.iter().filter(|t| has(t)).count();
