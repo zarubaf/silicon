@@ -43,6 +43,7 @@ mod tests_mem;
 #[cfg(test)]
 mod tests_work_hw;
 mod types;
+mod undo;
 
 pub use inst::Design;
 pub(crate) use inst::{Bind, Elab, Inst, Literal, Mem, Sink, elaborate};
@@ -155,6 +156,13 @@ struct Cursor {
     witness: Option<Witness>,
     /// The steps that the read has left, so the witness need not go deeper than the read can.
     left: usize,
+    /// Whether the path still follows the read. A step with no number, or a decided hold, ends
+    /// it. A cursor that is not live stays in the table, because its window of the undo log
+    /// rebuilds the old value when a mutation copies the read.
+    live: bool,
+    /// The length of the undo log of the root when the read parked. The changes of the list
+    /// parts from here on are the window of the read.
+    mark: usize,
 }
 
 /// A path to a hardware leaf, and what is known of its end.
@@ -193,9 +201,15 @@ fn overlap(path: &[usize], keys: Option<&[usize]>) -> bool {
 }
 
 impl Cursor {
-    /// Whether a change at `keys` can reach the part of the cursor.
+    /// Whether a change at `keys` can reach the part of the cursor. A cursor that is not live
+    /// waits at the path of its parked reference.
     fn reaches(&self, keys: Option<&[usize]>) -> bool {
-        overlap(&self.part.path, keys)
+        let n = if self.live {
+            self.part.path.len()
+        } else {
+            self.base
+        };
+        overlap(self.part.path.get(..n).unwrap_or_default(), keys)
     }
 }
 
@@ -227,6 +241,9 @@ struct Store {
     cursors: Vec<Option<Cursor>>,
     /// The parked results with an index that evaluates now, by their local.
     armed: BTreeMap<Root, Vec<usize>>,
+    /// The push and pop changes of the list parts of each aggregate root that a read waits at,
+    /// from the oldest. A change appends one entry, and no read copies the root for it.
+    undo: BTreeMap<Root, undo::Log>,
     /// The roots with an open window (section 9.1). A root has at most one, since a second one is
     /// `S008`. The
     /// root names its frame, so a call switches no frame of this table and copies nothing.
@@ -357,13 +374,18 @@ impl Store {
     /// The read parked at `at` waits at the part `r` of an aggregate root, and a later index
     /// with a call may hold the root there.
     fn cursor(&mut self, at: usize, r: Ref) {
+        let mark = self.open_log(r.root);
         if let Some(slot) = self.cursors.get_mut(at) {
             *slot = Some(Cursor {
                 base: r.path.len(),
                 part: r,
                 witness: None,
                 left: 0,
+                live: true,
+                mark,
             });
+        } else {
+            self.close_log(r.root);
         }
     }
 
@@ -374,7 +396,7 @@ impl Store {
             return;
         };
         match (k, slot.as_mut()) {
-            (Some(k), Some(c)) => {
+            (Some(k), Some(c)) if c.live => {
                 if let Some(w) = c.witness.as_mut()
                     && w.common == c.part.path.len()
                     && w.path.get(w.common) == Some(&k)
@@ -383,14 +405,17 @@ impl Store {
                 }
                 c.part.path.push(k);
             }
-            _ => *slot = None,
+            (_, Some(c)) => c.live = false,
+            _ => {}
         }
     }
 
     /// An index with a call of the read at `at` evaluates: the first change of the local in that
     /// time decides the hold.
     fn arm(&mut self, at: usize, left: usize) {
-        if let Some(Some(c)) = self.cursors.get_mut(at) {
+        if let Some(Some(c)) = self.cursors.get_mut(at)
+            && c.live
+        {
             c.left = left;
             let root = c.part.root;
             self.armed.entry(root).or_default().push(at);
@@ -428,14 +453,14 @@ impl Store {
         };
         for at in list {
             let located = match self.cursors.get(at) {
-                Some(Some(c)) if !c.on_witness() => Some(self.locate(at, c)),
+                Some(Some(c)) if c.live && !c.on_witness() => Some(self.locate(at, c)),
                 _ => None,
             };
             match located {
                 Some(Located::Static) => {
                     self.hold_parked(at, root);
-                    if let Some(slot) = self.cursors.get_mut(at) {
-                        *slot = None;
+                    if let Some(Some(c)) = self.cursors.get_mut(at) {
+                        c.live = false;
                     }
                 }
                 Some(Located::Open(w)) => {
@@ -520,7 +545,14 @@ impl Store {
     fn resume(&mut self, from: usize) -> Vec<Out> {
         let from = from.min(self.parked.len());
         let outs = self.parked.split_off(from);
-        self.cursors.truncate(from);
+        for c in self
+            .cursors
+            .split_off(from.min(self.cursors.len()))
+            .into_iter()
+            .flatten()
+        {
+            self.close_log(c.part.root);
+        }
         for root in self.held_by.split_off(from).into_iter().flatten() {
             if let Some(n) = self.holds.get_mut(&root) {
                 *n -= 1;
@@ -578,29 +610,39 @@ impl Store {
     /// copies only the references that it can reach: a reference to a part that is no prefix and
     /// no extension of `keys` reads the same value after the change, so it stays a reference. A
     /// write that binds the root again (`None`) gives new names to each leaf, so it copies all.
-    fn settle_root(&mut self, root: Root, keys: Option<&[usize]>) {
+    ///
+    /// A `push` or `pop` (`logged`) copies no read that follows the steps of its index and does
+    /// not hold the root. The change goes to the undo log of the root, and the read resolves it
+    /// when its last step is known (`resolve`). A copy of a read first undoes the changes of its
+    /// window, so that it keeps the value the read waited at.
+    fn settle_root(&mut self, root: Root, keys: Option<&[usize]>, logged: bool) {
         self.decide_holds(root);
         let Some(at) = self.parked_at.remove(&root) else {
             return;
         };
         let mut kept = Vec::new();
         for k in at {
+            let cursor = self.cursors.get(k).and_then(Option::as_ref);
+            let deferred = logged
+                && cursor.is_some_and(|c| c.live)
+                && matches!(self.held_by.get(k), Some(None));
             // A read that walks a path waits at the part of its cursor, and its later steps only
             // go deeper. Other references wait at their own path.
-            let reached = match (self.cursors.get(k), self.parked.get(k)) {
-                (Some(Some(c)), _) => c.reaches(keys),
+            let reached = match (cursor, self.parked.get(k)) {
+                (Some(c), _) => c.reaches(keys),
                 (_, Some(Out::Ref(r))) => overlap(&r.path, keys),
                 _ => true,
             };
-            if !reached {
+            if deferred || !reached {
                 kept.push(k);
                 continue;
             }
+            let mark = cursor.map(|c| c.mark);
             let Some(slot) = self.parked.get_mut(k) else {
                 continue;
             };
             let old = std::mem::replace(slot, Out::Made(Val::Static(Value::Unit)));
-            let copy = Out::Kept(self.take(old), root);
+            let copy = Out::Kept(self.old_copy(root, mark, old), root);
             if let Some(slot) = self.parked.get_mut(k) {
                 *slot = copy;
             }
@@ -616,7 +658,7 @@ impl Store {
         let Root::Local(frame, id) = root else {
             return None;
         };
-        self.settle_root(root, Some(keys));
+        self.settle_root(root, Some(keys), false);
         stepped(&self.steps, keys.len() as u64);
         let Val::Static(value) = &mut self.frames.get_mut(frame)?.get_mut(&id)?.value else {
             return None;
@@ -1018,6 +1060,7 @@ impl<'a> Evaluator<'a> {
                 held_by: Vec::new(),
                 cursors: Vec::new(),
                 armed: BTreeMap::new(),
+                undo: BTreeMap::new(),
                 pending: BTreeSet::new(),
                 links: BTreeMap::new(),
                 #[cfg(test)]

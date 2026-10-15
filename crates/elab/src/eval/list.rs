@@ -6,6 +6,7 @@
 
 use super::agg::Delta;
 use super::place::Held;
+use super::undo::Undo;
 use super::{Evaluator, Opnd, Out, Res, at, expr_pos, fail, need};
 use crate::Code;
 use crate::hw::{Seen, Val};
@@ -69,7 +70,7 @@ impl Evaluator<'_> {
         let o = self.eval(x)?;
         let o = need(x, o)?;
         self.store.shut_window(place.root);
-        let Held::List { elem, .. } = place.held else {
+        let Held::List { elem, len } = place.held else {
             return self.not_a_list(pos, g, &place);
         };
         self.mutation(pos, place.id)?;
@@ -93,7 +94,18 @@ impl Evaluator<'_> {
             size,
             depth: 1 + depth,
         };
+        let stats = self.store.stats_before(place.root, &place.keys);
         self.edit_list(pos, &place, Some(delta), |ys| ys.push(w))?;
+        if let Some(stats) = stats {
+            let keys = place.keys.clone();
+            let undo = Undo {
+                keys,
+                len_before: len,
+                saved: None,
+                stats,
+            };
+            self.store.log_edit(place.root, undo);
+        }
         Ok(Some(Out::Made(Val::Static(Value::Unit))))
     }
 
@@ -161,11 +173,21 @@ impl Evaluator<'_> {
             }
             self.charge_held(pos, place.root)?;
             let delta = (!deep).then_some(Delta::Shrink { size });
+            let stats = self.store.stats_before(place.root, &place.keys);
             let Some(w) =
                 self.edit_list(pos, &place, delta, |ys| ys.pop().unwrap_or(Value::Unit))?
             else {
                 return self.not_a_list(pos, g, &place);
             };
+            if let Some(stats) = stats {
+                let undo = Undo {
+                    keys: place.keys.clone(),
+                    len_before: len,
+                    saved: Some(w.clone()),
+                    stats,
+                };
+                self.store.log_edit(place.root, undo);
+            }
             return Ok(Some(Out::Made(Val::Static(w))));
         }
         let Evaluator { store, fuel, .. } = self;
