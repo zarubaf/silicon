@@ -1525,7 +1525,7 @@ module M() {
                 "ok",
             ),
             (
-                Some(311),
+                Some(312),
                 &[
                     "(record 4 3 C$8 () (string \"child\") (int 8))",
                     "(record 4 3 C$2 () (string \"child\") (int 2))",
@@ -1533,7 +1533,7 @@ module M() {
                 "S015 16:13 the fuel cannot pay 2 unit(s); 0 remain",
             ),
             (
-                Some(312),
+                Some(313),
                 &[
                     "(record 4 3 C$8 () (string \"child\") (int 8))",
                     "(record 4 3 C$2 () (string \"child\") (int 2))",
@@ -1541,20 +1541,12 @@ module M() {
                 "S015 16:13 the fuel cannot pay 2 unit(s); 1 remain",
             ),
             (
-                Some(313),
-                &[
-                    "(record 4 3 C$8 () (string \"child\") (int 8))",
-                    "(record 4 3 C$2 () (string \"child\") (int 2))",
-                ],
-                "S015 17:3 the fuel cannot pay 1 unit(s); 0 remain",
-            ),
-            (
                 Some(314),
                 &[
                     "(record 4 3 C$8 () (string \"child\") (int 8))",
                     "(record 4 3 C$2 () (string \"child\") (int 2))",
                 ],
-                "S015 17:8 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 17:3 the fuel cannot pay 1 unit(s); 0 remain",
             ),
             (
                 Some(315),
@@ -1570,7 +1562,7 @@ module M() {
                     "(record 4 3 C$8 () (string \"child\") (int 8))",
                     "(record 4 3 C$2 () (string \"child\") (int 2))",
                 ],
-                "S015 17:3 the fuel cannot pay 2 unit(s); 0 remain",
+                "S015 17:8 the fuel cannot pay 1 unit(s); 0 remain",
             ),
             (
                 Some(317),
@@ -1578,10 +1570,18 @@ module M() {
                     "(record 4 3 C$8 () (string \"child\") (int 8))",
                     "(record 4 3 C$2 () (string \"child\") (int 2))",
                 ],
-                "S015 17:3 the fuel cannot pay 2 unit(s); 1 remain",
+                "S015 17:3 the fuel cannot pay 2 unit(s); 0 remain",
             ),
             (
                 Some(318),
+                &[
+                    "(record 4 3 C$8 () (string \"child\") (int 8))",
+                    "(record 4 3 C$2 () (string \"child\") (int 2))",
+                ],
+                "S015 17:3 the fuel cannot pay 2 unit(s); 1 remain",
+            ),
+            (
+                Some(319),
                 &[
                     "(record 4 3 C$8 () (string \"child\") (int 8))",
                     "(record 4 3 C$2 () (string \"child\") (int 2))",

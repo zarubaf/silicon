@@ -135,9 +135,9 @@ module Main() {
 
 #[test]
 fn the_counter() {
-    assert_eq!(cost(COUNTER, "Main"), "total 168\nCounter$4 67\nMain 69\n");
+    assert_eq!(cost(COUNTER, "Main"), "total 168\nCounter$4 66\nMain 70\n");
     exact(COUNTER, "Main", 168);
-    assert_eq!(cost(COUNTER, "Counter(8)"), "total 118\nCounter$8 67\n");
+    assert_eq!(cost(COUNTER, "Counter(8)"), "total 118\nCounter$8 66\n");
     assert_eq!(order(COUNTER, "Main"), ["Counter$4", "Main"]);
 }
 
@@ -145,17 +145,18 @@ const LEAF: &str = "module C(comptime n: Nat) {\n}\n";
 
 /// A child finishes before its parent. A repeated `InstantiationId` elaborates once. Its
 /// `instance` statement charges 1, and its argument charges 2 for the node and the literal,
-/// and 1 for the recursive size. Its serialization charges 1 for the decimal form and 32 for
-/// its bytes. These are 37 units.
+/// Its parameter type `Nat` charges 1, and the recursive size 1. Its serialization charges 1 for
+/// the decimal form and 32 for its bytes. These are 38 units. The child pays nothing for its
+/// parameter.
 #[test]
 fn the_table_of_instantiations() {
     let one = format!("{LEAF}module T() {{\n  instance a = C(5);\n}}\n");
     let two = format!("{LEAF}module T() {{\n  instance a = C(5);\n  instance b = C(5);\n}}\n");
     let other = format!("{LEAF}module T() {{\n  instance a = C(5);\n  instance b = C(6);\n}}\n");
-    assert_eq!(total(&two, "T"), total(&one, "T") + 37);
+    assert_eq!(total(&two, "T"), total(&one, "T") + 38);
     assert_eq!(order(&two, "T"), ["C$5", "T"]);
     assert_eq!(order(&other, "T"), ["C$5", "C$6", "T"]);
-    assert_eq!(cost(&other, "T"), "total 111\nC$5 2\nC$6 2\nT 81\n");
+    assert_eq!(cost(&other, "T"), "total 111\nC$5 1\nC$6 1\nT 83\n");
 }
 
 /// An instantiation that depends on itself is `S019` at its `instance` statement.
@@ -271,19 +272,19 @@ fn the_branching_hierarchy() {
     assert_eq!(total(BRANCH, "M(10, 0)"), 175_878);
     exact(BRANCH, "M(10, 0)", 175_878);
     let lines = cost(BRANCH, "M(10, 0)");
-    assert!(lines.starts_with("total 175878\nM$0$0 16\nM$0$1 16\nM$0$10 16\n"));
+    assert!(lines.starts_with("total 175878\nM$0$0 14\nM$0$1 14\nM$0$10 14\n"));
 }
 
 /// The shared hierarchy of section 11.3 with `d = 30`: 31 instantiations, linear in `d`.
 #[test]
 fn the_shared_hierarchy() {
     assert_eq!(order(SHARED, "M(30)").len(), 31);
-    exact(SHARED, "M(30)", 3296);
+    exact(SHARED, "M(30)", 3326);
     assert_eq!(
         total(SHARED, "M(30)") - total(SHARED, "M(29)"),
         total(SHARED, "M(20)") - total(SHARED, "M(19)")
     );
-    assert_eq!(total(SHARED, "M(30)") - total(SHARED, "M(29)"), 109);
+    assert_eq!(total(SHARED, "M(30)") - total(SHARED, "M(29)"), 110);
 }
 
 const CHAIN: &str = "module Chain(comptime d: Nat) {
@@ -305,7 +306,7 @@ fn the_nesting_depth_of_instantiations() {
     assert!(cost_depth(&shallow_first, "Top", 5).starts_with("total"));
     assert_eq!(cost_depth(&shallow_first, "Top", 4), "S015 2:25");
     assert_eq!(total(&deep_first, "Top"), total(&shallow_first, "Top"));
-    assert_eq!(total(&deep_first, "Top"), 439);
+    assert_eq!(total(&deep_first, "Top"), 440);
 }
 
 /// A deep chain of instantiations runs a group of levels on each thread, so a large nesting
@@ -748,9 +749,9 @@ fn the_order_of_the_binding_rule() {
 #[test]
 fn the_top_selection() {
     let src = "module Counter(comptime W: Nat, comptime E: Bool) {\n}";
-    assert_eq!(cost(src, "Counter(8, true)"), "total 72\nCounter$8$1b 3\n");
+    assert_eq!(cost(src, "Counter(8, true)"), "total 72\nCounter$8$1b 1\n");
     exact(src, "Counter(8, true)", 72);
-    assert_eq!(cost_fuel(src, "Counter(8, true)", 5), "S015 1:1");
+    assert_eq!(cost_fuel(src, "Counter(8, true)", 5), "S015 1:45");
     assert_eq!(cost(src, "Counter(-1, true)"), "S012 1:1");
     assert_eq!(cost(src, "Counter(8, 1)"), "S010 1:1");
     assert_eq!(cost(src, "Counter(8)"), "S007 1:1");
@@ -771,7 +772,10 @@ fn the_top_selection_nests_one_level() {
         writeln!(src, "const C{k}: Nat = C{} + 1;", k - 1).unwrap();
     }
     src.push_str("module Top(comptime x: UInt[C299 + 1]) {\n}\n");
-    assert_eq!(cost_depth(&src, "Top(5)", 301), "total 2156\nTop$5 2113\n");
+    assert_eq!(
+        cost_depth(&src, "Top(5)", 301),
+        "total 2206\nTop$0h0273b3d2163c05de 1\n"
+    );
     assert_eq!(cost_depth(&src, "Top(5)", 300), "S015 2:17");
 }
 
@@ -962,4 +966,122 @@ fn a_list_argument_is_measured_and_charged_before_it_is_written() {
     assert!(first >= before + text.len() as u64, "{first} {before}");
     assert_eq!(written(first), text.len() as u64);
     assert_eq!(written(first - 1), 0);
+}
+
+/// The module `C` with the parameter type `ty`, and a top that instantiates it with `a` and `b`.
+fn two_arguments(ty: &str, a: &str, b: &str) -> String {
+    format!(
+        "module C(comptime x: {ty}) {{\n}}\nmodule T() {{\n  instance a = C({a});\n  \
+         instance b = C({b});\n}}\n"
+    )
+}
+
+/// The `InstantiationId` holds the arguments after their typed use (section 7.1). `C(1)` and
+/// `C(UInt[8](1))` give one instantiation, and so do `[1, 2]` and `[UInt[8](1), UInt[8](2)]`
+/// at `[UInt[8]; 2]`. Two arguments of type `Nat` that differ give two.
+#[test]
+fn converted_arguments_give_one_instantiation() {
+    let one = |ty: &str, a: &str, b: &str| order(&two_arguments(ty, a, b), "T").len();
+    assert_eq!(one("UInt[8]", "1", "UInt[8](1)"), 2);
+    assert_eq!(one("UInt[8]", "UInt[8](1)", "1"), 2);
+    assert_eq!(one("[UInt[8]; 2]", "[1, 2]", "[UInt[8](1), UInt[8](2)]"), 2);
+    assert_eq!(one("[UInt[8]; 2]", "[UInt[8](1), UInt[8](2)]", "[1, 2]"), 2);
+    assert_eq!(one("[Nat; 2]", "[1, 2]", "[1, 2]"), 2);
+    assert_eq!(one("UInt[8]", "1", "2"), 3);
+}
+
+/// `C(1)` that reaches `C(UInt[8](1))` reaches itself: `S019` at the inner statement.
+#[test]
+fn a_converted_instantiation_depends_on_itself() {
+    let src = "module C(comptime x: UInt[8]) {\n  instance a = C(UInt[8](1));\n}\n";
+    assert_eq!(cost(src, "C(1)"), "S019 2:3");
+}
+
+/// A failed typed use is at the statement, before `S017`.
+#[test]
+fn a_failed_typed_use_comes_before_s017() {
+    let comb = |arg: &str| {
+        format!(
+            "module Clocked(comptime n: UInt[8]) {{\n}}\n\
+             module Comb() domains() {{\n  instance u = Clocked({arg});\n}}\n"
+        )
+    };
+    assert_eq!(cost(&comb("300"), "Comb"), "S012 4:3");
+    assert_eq!(cost(&comb("3"), "Comb"), "S017 4:3");
+    assert_eq!(cost(&comb("true"), "Comb"), "S010 4:3");
+}
+
+/// The typed use nests one level at each `instance` statement, also at a repeat of a done
+/// instantiation. `Leaf()` in `Wrap` is a repeat at the depth 3.
+#[test]
+fn the_typed_use_of_a_repeat_nests_one_level() {
+    let src = "module Leaf() {\n}\nmodule Wrap() {\n  instance c = Leaf();\n}\n\
+               module Top() {\n  instance a = Leaf();\n  instance b = Wrap();\n}\n";
+    assert!(cost_depth(src, "Top", 3).starts_with("total"));
+    assert_eq!(cost_depth(src, "Top", 2), "S015 4:3");
+}
+
+/// The counts of the work of an elaboration with the fuel budget `fuel`.
+fn counted(src: &str, fuel: u64) -> [u64; 6] {
+    assert!(cost_fuel(src, "T", fuel).starts_with("total"));
+    let c = crate::counters::of(fuel);
+    [
+        c.walked,
+        c.typed,
+        c.nodes,
+        c.compared,
+        c.table,
+        c.serialized,
+    ]
+}
+
+/// A repeat of an instantiation with a container argument does work linear in the size of the
+/// argument: the typed use of `k` repeats walks and converts the `n` elements `k` times, and
+/// nothing else grows with `n * k`. The argument is the constant `XS` of the type `ty`. The
+/// typed use either keeps the value of the caller or converts it.
+fn repeat_work(family: u64, ty: &str) {
+    let source = |n: usize, k: usize| {
+        let elems = vec!["1"; n].join(", ");
+        let mut src = format!(
+            "const XS: [{ty}; {n}] = [{elems}];\nmodule C(comptime xs: [UInt[8]; {n}]) {{\n}}\n\
+             module T() {{\n"
+        );
+        for j in 0..k {
+            writeln!(src, "  instance c{j} = C(XS);").unwrap();
+        }
+        src.push_str("}\n");
+        src
+    };
+    let at = |n: usize, k: usize| {
+        let fuel = 600_000_000 + family * 1_000_000 + (n as u64) * 1000 + k as u64;
+        counted(&source(n, k), fuel)
+    };
+    // The work of ten more repeats, for three sizes.
+    let growth = |n: usize| {
+        let (low, high) = (at(n, 10), at(n, 20));
+        let (more, top) = (at(n, 40), at(n, 80));
+        let mut d = [0; 6];
+        for m in 0..6 {
+            // Each repeat costs the same: the growth is linear in `k`.
+            assert_eq!(top[m] - more[m], 2 * (more[m] - high[m]), "count {m} in k");
+            assert_eq!(more[m] - high[m], 2 * (high[m] - low[m]), "count {m} in k");
+            d[m] = high[m] - low[m];
+        }
+        d
+    };
+    let (d1, d2, d4) = (growth(50), growth(100), growth(200));
+    for m in 0..6 {
+        // Each repeat costs a constant plus a multiple of `n`: linear in the size.
+        assert_eq!(d4[m] - d2[m], 2 * (d2[m] - d1[m]), "count {m} in n");
+    }
+    assert!(
+        d4.iter().sum::<u64>() > d1.iter().sum::<u64>(),
+        "{d1:?} {d4:?}"
+    );
+}
+
+#[test]
+fn a_repeat_with_a_container_argument_does_linear_work() {
+    repeat_work(1, "UInt[8]");
+    repeat_work(2, "Int");
 }

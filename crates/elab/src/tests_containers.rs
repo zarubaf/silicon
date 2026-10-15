@@ -219,7 +219,7 @@ fn a_container_holds_hardware_elements_but_no_handle() {
     let top = |body: &str, arg: &str| top_cost(&hw(body), arg);
     assert_eq!(
         lowered_cost(&hw("  let t = (1, x);"), "M(1)"),
-        "total 146\nM$1 104\n"
+        "total 146\nM$1 103\n"
     );
     assert_eq!(top("  let t = [r];", "M(1)"), "S010 5:12");
     assert_eq!(
@@ -678,7 +678,7 @@ fn a_container_argument_gives_the_digest_name() {
         [
             format!(
                 "C$0h{}",
-                sha16("(instantiation root C ((array int ((int 1) (int 2)))))")
+                sha16("(instantiation root C ((array (uint 8) ((uint 8 1) (uint 8 2)))))")
             ),
             "T".to_owned()
         ]
@@ -716,15 +716,16 @@ fn units(lines: &str) -> u64 {
 }
 
 /// The serialization of a container charges 1 for each container node, then its bytes. The
-/// parent pays it. `[[1, 2]]` costs `T` 31 units more than `[1, 2]`: the outer literal charges
-/// 1 for its node and 4 for its size, the copy adds 1, the walk 1, and the serialization 24
-/// bytes. The totals with the lowering are 173 and 204 in Lean, and the driver prints them.
+/// parent pays it, with the parameter type and the conversion of each element. `[[1, 2]]` costs
+/// `T` 50 units more than `[1, 2]`: the outer literal, the outer array type, the size of the
+/// outer node, the walk, and the longer serialization. The totals with the lowering are 206 and
+/// 256 in Lean, and the driver prints them.
 #[test]
 fn the_serialization_of_a_container_charges_each_node() {
     let flat = units(&top_cost(&container("[UInt[8]; 2]", "[1, 2]"), "T"));
     let nested = units(&top_cost(&container("[[UInt[8]; 2]; 1]", "[[1, 2]]"), "T"));
-    assert_eq!(flat, 90);
-    assert_eq!(nested - flat, 31);
+    assert_eq!(flat, 123);
+    assert_eq!(nested - flat, 50);
 }
 
 #[test]
