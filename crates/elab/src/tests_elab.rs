@@ -173,16 +173,22 @@ fn a_cycle_of_instantiations() {
 /// second. A test digest function makes all digests equal.
 #[test]
 fn two_identities_share_a_digest() {
-    let src = "module M(comptime x: UInt[8]) {\n}\n\
-               module T() {\n  instance a = M(UInt[8](1));\n  instance b = M(UInt[8](2));\n}\n";
+    let src = "module M(comptime x: [UInt[8]; 1]) {\n}\n\
+               module T() {\n  instance a = M([1]);\n  instance b = M([2]);\n}\n";
     assert!(cost(src, "T").starts_with("total"));
     let b = Budget::default();
     assert_eq!(cost_with(src, "T", b.fuel, b.depth, collide), "S019 5:3");
     assert_eq!(
         order(src, "T"),
         [
-            format!("M$0h{}", sha16("(instantiation root M ((uint 8 1)))")),
-            format!("M$0h{}", sha16("(instantiation root M ((uint 8 2)))")),
+            format!(
+                "M$0h{}",
+                sha16("(instantiation root M ((array (uint 8) ((uint 8 1)))))")
+            ),
+            format!(
+                "M$0h{}",
+                sha16("(instantiation root M ((array (uint 8) ((uint 8 2)))))")
+            ),
             "T".to_owned()
         ]
     );
@@ -192,12 +198,12 @@ fn two_identities_share_a_digest() {
 /// emitted name of an active ancestor is thus `S019` at its own `instance` statement.
 #[test]
 fn a_name_is_taken_at_the_start() {
-    let src = "module M(comptime x: UInt[8]) {\n\
-               \x20 comptime if (x == UInt[8](1)) { instance a = M(UInt[8](0)); }\n}\n\
-               module T() {\n  instance b = M(UInt[8](1));\n}\n";
+    let src = "module M(comptime x: [UInt[8]; 1]) {\n\
+               \x20 comptime if (x[0] == UInt[8](1)) { instance a = M([0]); }\n}\n\
+               module T() {\n  instance b = M([1]);\n}\n";
     assert!(cost(src, "T").starts_with("total"));
     let b = Budget::default();
-    assert_eq!(cost_with(src, "T", b.fuel, b.depth, collide), "S019 2:35");
+    assert_eq!(cost_with(src, "T", b.fuel, b.depth, collide), "S019 2:38");
 }
 
 /// A serialization charges its length in bytes, and an emitted name too. A module with a long
@@ -772,10 +778,7 @@ fn the_top_selection_nests_one_level() {
         writeln!(src, "const C{k}: Nat = C{} + 1;", k - 1).unwrap();
     }
     src.push_str("module Top(comptime x: UInt[C299 + 1]) {\n}\n");
-    assert_eq!(
-        cost_depth(&src, "Top(5)", 301),
-        "total 2206\nTop$0h0273b3d2163c05de 1\n"
-    );
+    assert_eq!(cost_depth(&src, "Top(5)", 301), "total 2189\nTop$5 1\n");
     assert_eq!(cost_depth(&src, "Top(5)", 300), "S015 2:17");
 }
 
