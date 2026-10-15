@@ -1,0 +1,24 @@
+// A repeat of a done instantiation pays for the parameter type, the conversion, and the size
+// of its converted argument at its own statement. The child of `cost` pays nothing for them.
+// FUEL 669
+// TOP Top()
+module C(comptime xs: [UInt[8]; 3]) domains() {
+    input a: UInt[8];
+    output q: UInt[8];
+    q := a +% xs[0];
+}
+module Top() domains() {
+    input a: UInt[8];
+    output p: UInt[8];
+    output q: UInt[8];
+    output r: UInt[8];
+    instance first = C([1, 2, 3]);
+    instance second = C([1, 2, 3]);
+    instance third = C([UInt[8](1), UInt[8](2), UInt[8](3)]);
+    first.a := a;
+    second.a := a;
+    third.a := a;
+    p := first.q;
+    q := second.q;
+    r := third.q;
+}

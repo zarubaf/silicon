@@ -1,0 +1,24 @@
+// A module argument gets its typed use at the parameter type before the instantiation has an
+// identity. `C(1)` and `C(UInt[8](1))` convert to one value, so they give one module `C$1`.
+// TOP Top()
+// CHECK-COUNT-1: (module C$1
+// CHECK-NOT: (module C$
+// CHECK: (module Top
+// CHECK: (inst first C$1
+// CHECK: (inst second C$1
+module C(comptime x: UInt[8]) domains() {
+    input a: UInt[8];
+    output q: UInt[8];
+    q := a +% x;
+}
+module Top() domains() {
+    input a: UInt[8];
+    output p: UInt[8];
+    output q: UInt[8];
+    instance first = C(1);
+    instance second = C(UInt[8](1));
+    first.a := a;
+    second.a := a;
+    p := first.q;
+    q := second.q;
+}

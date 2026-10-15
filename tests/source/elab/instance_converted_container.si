@@ -1,0 +1,24 @@
+// The element-wise conversion of a container argument gives the same identity as the
+// converted elements: `[1, 2]` and `[UInt[8](1), UInt[8](2)]` give one module.
+// TOP Top()
+// CHECK-COUNT-1: (module D$
+// CHECK-NOT: (module D$
+// CHECK: (module Top
+// CHECK: (inst first D$
+// CHECK: (inst second D$
+module D(comptime xs: [UInt[8]; 2]) domains() {
+    input a: UInt[8];
+    output q: UInt[8];
+    q := a +% xs[0];
+}
+module Top() domains() {
+    input a: UInt[8];
+    output p: UInt[8];
+    output q: UInt[8];
+    instance first = D([1, 2]);
+    instance second = D([UInt[8](1), UInt[8](2)]);
+    first.a := a;
+    second.a := a;
+    p := first.q;
+    q := second.q;
+}
