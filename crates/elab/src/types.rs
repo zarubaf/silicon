@@ -839,7 +839,9 @@ impl Types {
                 Step::Array(elem, n) => {
                     let first = done.pop()?;
                     let mut xs = Vec::with_capacity(n);
-                    xs.resize(n - 1, first.clone());
+                    if n > 1 {
+                        xs.resize(n - 1, first.clone());
+                    }
                     xs.push(first);
                     done.push(Value::Array(elem, xs));
                 }
