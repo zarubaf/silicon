@@ -636,12 +636,12 @@ impl Types {
         }
     }
 
-    /// The length in bytes of the serialization of `t`, if the table holds `t`. It computes
-    /// the length of each part once, and no text of a type is built.
+    /// The length in bytes of the serialization of `t`. It computes the length of each part
+    /// once, and no text of a type is built.
     #[must_use]
-    pub fn text_len(&self, t: TyId) -> Option<u64> {
-        self.entries.get(t.index)?;
-        Some(Len::default().type_len(self, t))
+    pub fn text_len(&self, t: TyId) -> u64 {
+        self.entry(t);
+        Len::default().type_len(self, t)
     }
 
     #[must_use]
