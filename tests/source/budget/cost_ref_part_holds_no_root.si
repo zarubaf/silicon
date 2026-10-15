@@ -1,0 +1,14 @@
+// The cost of a read below a hardware reference (section 5.4). The index of `t.0.0[...]` waits at
+// a part of the port `p`, which is no static part of `t`, so the read holds no local and the
+// `push` charges no size of `t`. The static `UInt[8]` parts of `t` keep the bound of the walk
+// above the leaves of the part. The fuel equal to the total of `cost` succeeds, and one unit
+// less gives `S015`.
+// FUEL 257
+// TOP M()
+module M() domains() {
+    input p: ([UInt[8]; 2], UInt[4]);
+    output y: UInt[8];
+    let mut t = (p, [UInt[8](1), UInt[8](2), UInt[8](3), UInt[8](4), UInt[8](5), UInt[8](6)], list(Nat));
+    let k = t.0.0[(t.2.push(1), 0).1];
+    y := k;
+}
