@@ -10,14 +10,24 @@ The generator of `just diff-si` ([front-end spec](../design/2026-10-09-frontend.
 ## Decision
 
 - The generator moves to the new crate `srcgen`. Its place in the layer order is directly after `syntax`. It depends on `syntax`, on `core-ir` with the feature `gen`, on `num-bigint`, and on `proptest`.
+
 - `srcgen` is a dev-only crate, as `testkit` is. Only `xtask` and `[dev-dependencies]` name it. A new list `[workspace.metadata.layers] dev-only` names both crates. The new rule `workspace-dev-only` of `cargo xtask check` rejects a normal or build dependency on a crate of this list.
+
 - The rule `workspace-layers` keeps `srcgen` independent of `parse`, `resolve`, `typeck`, and `elab`. The generator is an oracle for these stages, so it must not use their code.
+
 - `syntax` keeps the lexer, the kinds, and the numbers. It loses the feature `gen` and its optional dependencies.
+
 - The evaluator of the generator models only the static semantics of the programs that the builder makes. It works on the typed program of the generator, never on source text or on a syntax tree. Each construct that it evaluates has a builder that emits it.
+
 - It can be stricter than the language: it can reject a program that the language accepts, and the builder then does not emit that program. It must never give a value that differs from the language.
+
 - In slice 2, it can model the static values that the builder emits: aggregates, `List`, strings, and the width of `data_bits(T)`. It can also model the leaves of the ports that the builder declares.
+
 - It predicts the static value of each `diagnostic` record from the contexts of the builder (`Builder.contexts` in `crates/srcgen/src/build/inst.rs`). It thus uses the dedupe of contexts that the builder does, and adds no second identity rule.
-- It does not resolve names, infer or check types, compute `cost` or fuel, make instantiation identities or emitted names, or lower to core IR. It predicts an error code only where the pass order makes the code certain. A need outside these limits needs a new ADR.
+
+- It does not resolve names, infer or check types, compute `cost` or fuel, make instantiation identities, or lower to core IR. It predicts an error code only where the pass order makes the code certain. A need outside these limits needs a new ADR.
+
+- One bounded exception covers the record lines of `observe` (issue #232). The generator makes the emitted name of the argument tuples that its builder emits: integers, Booleans, and function values. It also takes the line and the column of a record from its printed text. The digest form uses the crate `sha2`, a normal dependency of the dev-only crate `srcgen`. An own SHA-256 was the other choice. The crate keeps the oracle independent of `elab` and is shorter. No other emitted name or identity belongs to the generator.
 
 ## Consequences
 
