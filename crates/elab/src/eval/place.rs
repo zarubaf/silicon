@@ -4,7 +4,7 @@
 //! result is the copy. An assignment to a place updates the one element in the local, because
 //! no other binding shares the container. A read and a place each walk their path once.
 
-use super::undo::{Walk, Win};
+use super::undo::Win;
 use super::{Evaluator, Frame, Opnd, Out, Res, expr_pos, fail, need, same_form};
 use crate::Code;
 use crate::agg::Agg;
@@ -590,16 +590,6 @@ impl Evaluator<'_> {
                 }
                 base = Opnd::of_out(out);
             }
-            // The lists that the window changed show the length and the elements that the read
-            // began with.
-            let mut walk = match &base {
-                Opnd::Static(Out::Ref(r)) => Walk::start(win, self.store.entries(r.root), r),
-                _ => None,
-            };
-            let from = match (&walk, &base) {
-                (Some(_), Opnd::Static(Out::Ref(r))) => r.path.clone(),
-                _ => Vec::new(),
-            };
             let mut cur = self.opnd_seen(&base);
             let mut numbers = Vec::with_capacity(rest.len());
             let mut string_step = None;
@@ -612,27 +602,15 @@ impl Evaluator<'_> {
                         string_step = Some(at);
                         break;
                     }
-                    Key::Index(q, xp, i) => {
-                        match walk.as_ref().and_then(|w| self.old_len(w, cur)) {
-                            Some(len) => Self::within(*q, len as u64, i)?,
-                            None => self.pick_at(*q, *xp, cur, i)?,
-                        }
-                    }
+                    Key::Index(q, xp, i) => self.pick_at(*q, *xp, cur, i)?,
                     Key::Select(q, r, index) => self.select_at(*q, *r, index, cur)?,
                     Key::Field(q, f) => self.field_at(*q, f, cur)?.0,
                 };
-                cur = match walk.as_mut() {
-                    Some(w) => self.window_step(w, cur, number),
-                    None => self.store.step(cur, number),
-                };
+                cur = self.store.step(cur, number);
                 numbers.push(number);
             }
             let at_type = matches!(cur, Seen::Static(Value::Type(_)));
-            let copy = match (&walk, cur) {
-                (Some(w), Seen::Static(v)) if w.is_saved() => Some(v.clone()),
-                _ => None,
-            };
-            let mut path = numbers.iter().copied();
+            let mut path = numbers.into_iter();
             let mut out = match path.next() {
                 Some(number) => elem(base, number),
                 None => match base {
@@ -643,8 +621,7 @@ impl Evaluator<'_> {
             for number in path {
                 out = elem(Opnd::Static(out), number);
             }
-            let from: Vec<usize> = from.into_iter().chain(numbers).collect();
-            let out = self.resolve(walk, out, copy, &from);
+            let out = self.resolve_ref(win, out);
             let Some(at) = string_step else {
                 return Ok((out, at_type));
             };
