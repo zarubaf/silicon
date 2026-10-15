@@ -27,7 +27,7 @@ fn run_with(pre: &str, t: &str, s: &str, run: u64) -> Result<Run, String> {
         Some(Ok(units)) if text.contains(" | ") => Ok(Run {
             counts: counters::of(run),
             units,
-            copied: counters::of(run).copies,
+            copied: counters::run(run).map_or(0, |c| c.copies),
         }),
         _ => Err(text),
     }

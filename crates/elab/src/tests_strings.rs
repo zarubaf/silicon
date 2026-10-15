@@ -32,8 +32,8 @@ fn the_types_string_and_list() {
 
 /// The copies of the run with the fuel `fuel`, and the counts of its work.
 fn work(fuel: u64) -> (u64, Counts) {
-    let counts = of(fuel);
-    (counts.copies, counts)
+    let counts = crate::counters::run(fuel);
+    (counts.map_or(u64::MAX, |c| c.copies), of(fuel))
 }
 
 /// `+` joins two strings and charges the sum of their sizes: 1 for the node, 4 for each

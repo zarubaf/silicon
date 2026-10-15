@@ -222,3 +222,12 @@ pub(crate) fn of(fuel: u64) -> Counts {
         .and_then(|counts| counts.get(&fuel).copied())
         .unwrap_or_default()
 }
+
+/// The counts of the last run with the fuel budget `fuel`, or `None` when no such run started.
+/// A test that needs the run to exist reads the counts with this function.
+pub(crate) fn run(fuel: u64) -> Option<Counts> {
+    COUNTS
+        .lock()
+        .ok()
+        .and_then(|counts| counts.get(&fuel).copied())
+}
