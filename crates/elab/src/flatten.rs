@@ -20,7 +20,7 @@
 //! after its operands lower, in operand order.
 //!
 //! A port, a register, and a `:=` binding lower one leaf at a time in packing order, and each
-//! leaf charges before it exists (`layout::for_each_leaf`). An empty part gives nothing. A static
+//! leaf charges before it exists (`layout::Leaves`). An empty part gives nothing. A static
 //! leaf is a constant, and a leaf of a reference refers to its core name at the position of the
 //! statement. The temporaries of a leaf statement count from 0 and take the name of the leaf. A
 //! shared condition binds in the first leaf statement of the module that lowers it.
@@ -40,7 +40,7 @@ use crate::agg::{Agg, Base};
 use crate::eval::{Bind, Design, Inst, Mem, Sink, addr_width};
 use crate::hw::{HwId, Kind, Op};
 use crate::int::{Nat, constant, nat};
-use crate::layout::{self, Env, Shapes};
+use crate::layout::{self, Env, Leaves, Shapes};
 use crate::names::{Field, Name, PathId, Role, Sym, encode};
 use crate::types::{Ty, TyId};
 use crate::value::{Value, int_size};
@@ -404,7 +404,7 @@ struct Twice {
     height: u64,
 }
 
-impl Lower<'_> {
+impl<'d> Lower<'d> {
     fn charge(&mut self, pos: Pos, units: u128) -> R<()> {
         match u64::try_from(units) {
             Ok(units) if units <= self.fuel => {
@@ -836,22 +836,17 @@ impl Lower<'_> {
             let at = span(decl.pos);
             let source = self.text(decl.sym);
             let mut leaves = Vec::new();
-            self.walk(
-                &decl.ty,
-                (),
-                |(), _, _, _, _| (),
-                |lower, fields, t, ()| {
-                    lower.charge(decl.pos, 1)?;
-                    let name = lower.name(decl.pos, &layout::leaf_name(&source, fields))?;
-                    leaves.push(Port {
-                        dir: if decl.input { Dir::Input } else { Dir::Output },
-                        name,
-                        ty: CTy::Bits(num(width(t), at)),
-                        span: at,
-                    });
-                    Ok(())
-                },
-            )?;
+            let mut cursor = self.leaves(&decl.ty, ())?;
+            while let Some((t, ())) = self.next_leaf(&mut cursor, |(), _, _, _, _| ())? {
+                self.charge(decl.pos, 1)?;
+                let name = self.name(decl.pos, &layout::leaf_name(&source, cursor.fields()))?;
+                leaves.push(Port {
+                    dir: if decl.input { Dir::Input } else { Dir::Output },
+                    name,
+                    ty: CTy::Bits(num(width(t), at)),
+                    span: at,
+                });
+            }
             ports.push(layout::Declared {
                 name: source,
                 input: decl.input,
@@ -873,33 +868,28 @@ impl Lower<'_> {
             };
             let at = span(reg.pos);
             let base = self.path(reg.path);
-            self.walk(
-                &reg.ty,
-                Src::Val(&reg.init),
-                parts,
-                |lower, fields, t, src| {
-                    lower.charge(reg.pos, 2)?;
-                    let name = lower.name(reg.pos, &with_fields(&base, fields))?;
-                    let clk = lower.name(reg.pos, &lower.role(domain, Role::Clk))?;
-                    let signal = lower.domain_ref(reg.pos, &lower.role(domain, Role::Rst))?;
-                    lower.charge(reg.pos, 1)?;
-                    let Src::Val(zero) = src else {
-                        return defect("a register value has no constant leaf");
-                    };
-                    stmts.push(Stmt::Reg {
-                        name,
-                        width: num(width(t), at),
-                        clk,
-                        reset: Some(Reset {
-                            signal,
-                            value: const_of(at, zero)?,
-                            span: at,
-                        }),
+            let mut cursor = self.leaves(&reg.ty, Src::Val(&reg.init))?;
+            while let Some((t, src)) = self.next_leaf(&mut cursor, parts)? {
+                self.charge(reg.pos, 2)?;
+                let name = self.name(reg.pos, &with_fields(&base, cursor.fields()))?;
+                let clk = self.name(reg.pos, &self.role(domain, Role::Clk))?;
+                let signal = self.domain_ref(reg.pos, &self.role(domain, Role::Rst))?;
+                self.charge(reg.pos, 1)?;
+                let Src::Val(zero) = src else {
+                    return defect("a register value has no constant leaf");
+                };
+                stmts.push(Stmt::Reg {
+                    name,
+                    width: num(width(t), at),
+                    clk,
+                    reset: Some(Reset {
+                        signal,
+                        value: const_of(at, zero)?,
                         span: at,
-                    });
-                    Ok(())
-                },
-            )?;
+                    }),
+                    span: at,
+                });
+            }
         }
         Ok(())
     }
@@ -986,23 +976,23 @@ impl Lower<'_> {
         let one = design.tys.meta(word).leaves.cmp_u64(1).is_eq();
         let ty = design.tys.get(word).clone();
         let mut chain: Option<(Low, u32)> = None;
-        self.walk(&ty, Src::of(a, 0), parts, |lower, fields, t, src| {
+        let mut cursor = self.leaves(&ty, Src::of(a, 0))?;
+        while let Some((t, src)) = self.next_leaf(&mut cursor, parts)? {
             let w = width(t);
             chain = Some(match chain.take() {
-                None => (lower.leaf_low(m, one, pos, fields, (t, src))?, w),
+                None => (self.leaf_low(m, one, pos, cursor.fields(), (t, &src))?, w),
                 Some((low, bits)) => {
-                    let low = lower.deep(pos, m, bits, false, low)?;
+                    let low = self.deep(pos, m, bits, false, low)?;
                     #[cfg(test)]
                     crate::counters::add(crate::counters::Count::Chained, 1);
-                    lower.charge(pos, 1)?;
-                    let high = lower.leaf_low(m, false, pos, fields, (t, src))?;
+                    self.charge(pos, 1)?;
+                    let high = self.leaf_low(m, false, pos, cursor.fields(), (t, &src))?;
                     let height = up(high.height.max(low.height));
                     let expr = bin(span(pos), CBin::Concat, high.expr, low.expr);
                     (inner(expr, height), bits + w)
                 }
             });
-            Ok(())
-        })?;
+        }
         match chain {
             Some((low, _)) => Ok(low.expr),
             None => defect("the memory word has no leaf"),
@@ -1170,11 +1160,13 @@ impl Lower<'_> {
         match bind.sink {
             Sink::Own { kind, ref ty, path } => {
                 let base = self.path(path);
-                self.walk(ty, src, parts, |lower, fields, t, src| {
-                    lower.charge(bind.pos, 1)?;
+                let mut cursor = self.leaves(ty, src)?;
+                while let Some((t, src)) = self.next_leaf(&mut cursor, parts)? {
+                    self.charge(bind.pos, 1)?;
+                    let fields = cursor.fields();
                     let name = with_fields(&base, fields);
-                    let x = lower.name(bind.pos, &name)?;
-                    let expr = lower.leaf_value(&name, bind.pos, fields, (t, src))?;
+                    let x = self.name(bind.pos, &name)?;
+                    let expr = self.leaf_value(&name, bind.pos, fields, (t, &src))?;
                     stmts.push(match kind {
                         Kind::Reg => Stmt::Next {
                             reg: x,
@@ -1193,8 +1185,8 @@ impl Lower<'_> {
                             span: at,
                         },
                     });
-                    Ok(())
-                })
+                }
+                Ok(())
             }
             Sink::Child {
                 index,
@@ -1208,57 +1200,50 @@ impl Lower<'_> {
                 let mut base = self.path(inst);
                 base.rest.push(Field::User(port.head.clone()));
                 base.rest.extend(port.rest.iter().cloned());
-                self.walk(ty, src, parts, |lower, fields, t, src| {
-                    lower.charge(bind.pos, 1)?;
-                    let x = lower.name(bind.pos, &with_fields(port, fields))?;
-                    let expr = lower.leaf_value(
-                        &with_fields(&base, fields),
-                        bind.pos,
-                        fields,
-                        (t, src),
-                    )?;
+                let mut cursor = self.leaves(ty, src)?;
+                while let Some((t, src)) = self.next_leaf(&mut cursor, parts)? {
+                    self.charge(bind.pos, 1)?;
+                    let fields = cursor.fields();
+                    let x = self.name(bind.pos, &with_fields(port, fields))?;
+                    let expr =
+                        self.leaf_value(&with_fields(&base, fields), bind.pos, fields, (t, &src))?;
                     conns.push(Conn {
                         port: x,
                         expr,
                         span: at,
                     });
-                    Ok(())
-                })
+                }
+                Ok(())
             }
         }
     }
 
-    /// Runs `leaf` on each leaf of the type `ty` in packing order. `src` is the source of the
-    /// root, and `down` gives the source of a part. The walk makes no list of the leaves, so
-    /// `leaf` charges each leaf before it makes it.
-    fn walk<S>(
+    /// The cursor over the leaves of the type `ty` in packing order. `src` is the source of the
+    /// root. The cursor makes no list of the leaves, so a caller charges each leaf before it
+    /// makes it.
+    fn leaves<S>(&self, ty: &Ty, src: S) -> R<Leaves<S>> {
+        match self.design.tys.id_of(ty) {
+            Some(root) => Ok(Leaves::new(root, src)),
+            None => defect("a type is not in the table of types"),
+        }
+    }
+
+    /// The next leaf of `cursor`: its type and its source. `down` gives the source of a part.
+    fn next_leaf<S>(
         &mut self,
-        ty: &Ty,
-        src: S,
-        down: impl FnMut(&S, u64, &Field, usize, u64) -> S,
-        mut leaf: impl FnMut(&mut Self, &[Field], &Ty, &S) -> R<()>,
-    ) -> R<()> {
+        cursor: &mut Leaves<S>,
+        down: impl Fn(&S, u64, &Field, usize, u64) -> S,
+    ) -> R<Option<(&'d Ty, S)>> {
         let design = self.design;
-        let Some(root) = design.tys.id_of(ty) else {
-            return defect("a type is not in the table of types");
-        };
         let env = Env {
             tys: &design.tys,
             order: &design.field_order,
             texts: &design.texts,
         };
-        let mut shapes = std::mem::take(&mut self.shapes);
-        let done = layout::for_each_leaf(
-            env,
-            &mut shapes,
-            root,
-            src,
-            down,
-            |_| Failure::Defect("a struct type has no field names".to_owned()),
-            |fields, t, src| leaf(self, fields, design.tys.get(t), src),
-        );
-        self.shapes = shapes;
-        done
+        let next = cursor.next(env, &mut self.shapes, down, |_| {
+            Failure::Defect("a struct type has no field names".to_owned())
+        })?;
+        Ok(next.map(|(t, src)| (design.tys.get(t), src)))
     }
 
     /// The value of a leaf statement with the target `target` at `pos`. A static leaf is a

@@ -242,7 +242,7 @@ fn a_chain_of_100000_links_lowers_in_a_loop() {
 /// steps, and an array of 2^40 empty parts takes one.
 #[test]
 fn the_walk_over_leaves_skips_the_empty_parts() {
-    use crate::layout::{Env, Shapes, for_each_leaf};
+    use crate::layout::{Env, Leaves, Shapes};
     fn run(
         fuel: u64,
         tys: &mut Types,
@@ -257,19 +257,14 @@ fn the_walk_over_leaves_skips_the_empty_parts() {
             order: &[],
             texts: &[],
         };
-        let done: Result<(), ()> = for_each_leaf(
-            env,
-            &mut shapes,
-            root,
-            (),
-            |(), _, _, _, _| (),
-            |_| (),
-            |_, _, ()| {
-                seen += 1;
-                Ok(())
-            },
-        );
-        assert!(done.is_ok());
+        let mut cursor = Leaves::new(root, ());
+        while cursor
+            .next(env, &mut shapes, |(), _, _, _, _| (), |_| ())
+            .expect("the walk has no missing field names")
+            .is_some()
+        {
+            seen += 1;
+        }
         (seen, counters::of(fuel).leaves)
     }
     let big = |t: &mut Types| {
@@ -333,7 +328,7 @@ fn a_place_pays_an_empty_part_before_the_next_step() {
 /// a tuple or a record. A part without a leaf adds its width 0 and is skipped.
 #[test]
 fn the_walk_over_leaves_gives_the_offset_of_each_part() {
-    use crate::layout::{Env, Shapes, for_each_leaf};
+    use crate::layout::{Env, Leaves, Shapes};
     let mut tys = Types::default();
     let bool_ty = tys.mk(Ty::Bool);
     let byte = tys.mk(Ty::UInt(8));
@@ -349,19 +344,13 @@ fn the_walk_over_leaves_gives_the_offset_of_each_part() {
     };
     // The source of a part is its offset in the word of the root.
     let mut offsets = Vec::new();
-    let done: Result<(), ()> = for_each_leaf(
-        env,
-        &mut shapes,
-        root,
-        0u64,
-        |at, _, _, _, offset| at + offset,
-        |_| (),
-        |_, t, at| {
-            offsets.push((env.tys.text(t), *at));
-            Ok(())
-        },
-    );
-    assert!(done.is_ok());
+    let mut cursor = Leaves::new(root, 0u64);
+    while let Some((t, at)) = cursor
+        .next(env, &mut shapes, |at, _, _, _, offset| at + offset, |_| ())
+        .expect("the walk has no missing field names")
+    {
+        offsets.push((env.tys.text(t), at));
+    }
     // A tuple has the width 1 + 8 + 9 = 18.
     assert_eq!(
         offsets,

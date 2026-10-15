@@ -9,7 +9,7 @@
 //! resolver makes the port names of a module unique, so two ports never tie and the sort
 //! needs no tie break.
 //!
-//! `for_each_leaf` streams the leaves of a type in packing order with its own stack: it makes no
+//! `Leaves` streams the leaves of a type in packing order with its own stack: it makes no
 //! list of them, so a caller charges each leaf before it makes the leaf. A part without a leaf
 //! takes no step: a tuple or a struct visits only the parts that the metadata of its type counts
 //! as non-empty, and an array without leaves is skipped whole. A port, a register, and a `:=`
@@ -100,87 +100,111 @@ struct Frame<S> {
     pushed: bool,
 }
 
-/// Runs `f` on each leaf of the type `root` in packing order, with the leaf fields of the leaf
-/// and its scalar type. `src` is the source of the root. `down` gives the source of the part
-/// `k` of a container with the leaf field `field`, which is the last of `depth` leaf fields,
-/// and the bit offset of the part in a word of the container (`Types::offset`). `f` gets the
-/// source of each leaf.
-/// A struct type without field names gives `missing`. The walk stops at the first error of `f`.
-pub(crate) fn for_each_leaf<S, E>(
-    env: Env<'_>,
-    shapes: &mut Shapes,
-    root: TyId,
-    src: S,
-    mut down: impl FnMut(&S, u64, &Field, usize, u64) -> S,
-    missing: impl Fn(TyId) -> E,
-    mut f: impl FnMut(&[Field], TyId, &S) -> Result<(), E>,
-) -> Result<(), E> {
-    let mut fields: Vec<Field> = Vec::new();
-    let mut stack: Vec<Frame<S>> = Vec::new();
-    let mut enter = Some((root, src, false));
-    loop {
-        if let Some((t, s, pushed)) = enter.take() {
-            #[cfg(test)]
-            crate::counters::add(crate::counters::Count::Leaves, 1);
-            let parts = if env.tys.meta(t).leaves.is_zero() {
-                None
-            } else {
-                match env.tys.get(t) {
-                    Ty::Bool | Ty::UInt(_) | Ty::SInt(_) => {
-                        f(&fields, t, &s)?;
-                        None
-                    }
-                    Ty::Array(elem, n) => Some(Parts::Array {
-                        elem: *elem,
-                        len: n.to_u64().unwrap_or(u64::MAX),
-                    }),
-                    Ty::Tuple(_) | Ty::Struct(_) => Some(Parts::Kids(
-                        shapes.kids_of(env, t).ok_or_else(|| missing(t))?,
-                    )),
-                    _ => None,
-                }
-            };
-            match parts {
-                Some(parts) => stack.push(Frame {
-                    ty: t,
-                    parts,
-                    next: 0,
-                    src: s,
-                    pushed,
-                }),
-                None if pushed => {
-                    fields.pop();
-                }
-                None => {}
-            }
+/// The cursor over the leaves of a type in packing order. It keeps its own stack, so a caller
+/// charges each leaf before it makes the leaf.
+pub(crate) struct Leaves<S> {
+    fields: Vec<Field>,
+    stack: Vec<Frame<S>>,
+    enter: Option<(TyId, S, bool)>,
+    /// The leaf that the last step gave is a part: its leaf field leaves the path at the next
+    /// step.
+    leave: bool,
+}
+
+impl<S> Leaves<S> {
+    /// The cursor before the first leaf of the type `root`. `src` is the source of the root.
+    pub(crate) fn new(root: TyId, src: S) -> Self {
+        Self {
+            fields: Vec::new(),
+            stack: Vec::new(),
+            enter: Some((root, src, false)),
+            leave: false,
         }
-        let Some(top) = stack.last_mut() else {
-            return Ok(());
-        };
-        let step = match &top.parts {
-            Parts::Array { elem, len } if top.next < *len => Some((
-                top.next,
-                Field::Elem(crate::int::Int::from_u64(top.next)),
-                *elem,
-            )),
-            Parts::Kids(k) => shapes
-                .kids
-                .get(*k)
-                .and_then(|kids| kids.get(usize::try_from(top.next).unwrap_or(usize::MAX)))
-                .map(|kid| (kid.index, kid.field.clone(), kid.ty)),
-            Parts::Array { .. } => None,
-        };
-        match step {
-            Some((index, field, ty)) => {
-                top.next += 1;
-                let offset = env.tys.offset(top.ty, index);
-                let child = down(&top.src, index, &field, fields.len() + 1, offset);
-                fields.push(field);
-                enter = Some((ty, child, true));
+    }
+
+    /// The leaf fields of the leaf that the last step gave.
+    pub(crate) fn fields(&self) -> &[Field] {
+        &self.fields
+    }
+
+    /// The next leaf in packing order: its scalar type and its source, or `None` after the last
+    /// leaf. `down` gives the source of the part `k` of a container with the leaf field `field`,
+    /// which is the last of `depth` leaf fields, and the bit offset of the part in a word of the
+    /// container (`Types::offset`). A struct type without field names gives `missing`.
+    pub(crate) fn next<E>(
+        &mut self,
+        env: Env<'_>,
+        shapes: &mut Shapes,
+        down: impl Fn(&S, u64, &Field, usize, u64) -> S,
+        missing: impl Fn(TyId) -> E,
+    ) -> Result<Option<(TyId, S)>, E> {
+        if std::mem::take(&mut self.leave) {
+            self.fields.pop();
+        }
+        loop {
+            if let Some((t, s, pushed)) = self.enter.take() {
+                #[cfg(test)]
+                crate::counters::add(crate::counters::Count::Leaves, 1);
+                let parts = if env.tys.meta(t).leaves.is_zero() {
+                    None
+                } else {
+                    match env.tys.get(t) {
+                        Ty::Bool | Ty::UInt(_) | Ty::SInt(_) => {
+                            self.leave = pushed;
+                            return Ok(Some((t, s)));
+                        }
+                        Ty::Array(elem, n) => Some(Parts::Array {
+                            elem: *elem,
+                            len: n.to_u64().unwrap_or(u64::MAX),
+                        }),
+                        Ty::Tuple(_) | Ty::Struct(_) => Some(Parts::Kids(
+                            shapes.kids_of(env, t).ok_or_else(|| missing(t))?,
+                        )),
+                        _ => None,
+                    }
+                };
+                match parts {
+                    Some(parts) => self.stack.push(Frame {
+                        ty: t,
+                        parts,
+                        next: 0,
+                        src: s,
+                        pushed,
+                    }),
+                    None if pushed => {
+                        self.fields.pop();
+                    }
+                    None => {}
+                }
             }
-            None => {
-                if stack.pop().is_some_and(|frame| frame.pushed) {
-                    fields.pop();
+            let Some(top) = self.stack.last_mut() else {
+                return Ok(None);
+            };
+            let step = match &top.parts {
+                Parts::Array { elem, len } if top.next < *len => Some((
+                    top.next,
+                    Field::Elem(crate::int::Int::from_u64(top.next)),
+                    *elem,
+                )),
+                Parts::Kids(k) => shapes
+                    .kids
+                    .get(*k)
+                    .and_then(|kids| kids.get(usize::try_from(top.next).unwrap_or(usize::MAX)))
+                    .map(|kid| (kid.index, kid.field.clone(), kid.ty)),
+                Parts::Array { .. } => None,
+            };
+            match step {
+                Some((index, field, ty)) => {
+                    top.next += 1;
+                    let offset = env.tys.offset(top.ty, index);
+                    let child = down(&top.src, index, &field, self.fields.len() + 1, offset);
+                    self.fields.push(field);
+                    self.enter = Some((ty, child, true));
+                }
+                None => {
+                    if self.stack.pop().is_some_and(|frame| frame.pushed) {
+                        self.fields.pop();
+                    }
                 }
             }
         }
