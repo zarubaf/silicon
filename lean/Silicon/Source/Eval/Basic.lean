@@ -257,6 +257,7 @@ structure Port where
   sym : Nat
   input : Bool
   ty : Ty
+  pos : Pos
   deriving Repr, Inhabited
 
 /-!

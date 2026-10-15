@@ -105,11 +105,12 @@ structure WireDecl where
   ty : Ty
   pos : Pos
 
-/-! A child instance: its path, the interface of its instantiation, and its statement. -/
+/-! A child instance: its path, the interface of its instantiation, its statement, and its name. -/
 structure ChildDecl where
   path : Path
   iface : Iface
   pos : Pos
+  name : String
 
 /-!
 The target of a `:=` binding: an own resource, or an input of the child number `index`. The
@@ -348,7 +349,7 @@ def sinkValue (p : Pos) (t : Ty) : Val → EM Agg
 The binding rule at the end of a body. A missing binding of an own resource is at its
 declaration, and one of a child input is at the `instance` statement. The counts select the
 first child with a free input, so only the interface of that child is searched. The name is
-that of its free input with the least symbol.
+that of its free input with the first source position.
 -/
 def bindings : EM Unit := do
   let w := (← get).work
@@ -368,14 +369,15 @@ def bindings : EM Unit := do
       if first.all fun (d, _) => before c.pos d.pos then first := some (c, k)
   if let some (c, k) := first then
     let free := c.iface.ports.fold (init := none) fun f _ q =>
-      if q.input && !w.inputs.contains (k, q.sym) && f.all (q.sym < ·.sym) then some q else f
+      if q.input && !w.inputs.contains (k, q.sym) && f.all (before q.pos ·.pos) then some q else f
     let x := (free.map (·.name)).getD ""
-    err := earlier err ⟨.S018, c.pos, s!"the input `{x}` of the child has no binding"⟩
+    let msg := s!"the input `{x}` of the instance `{c.name}` has no binding; "
+    err := earlier err ⟨.S018, c.pos, msg ++ s!"bind it with `{c.name}.{x} := ...;`"⟩
   if let some e := err then fail e.code e.pos e.msg
 
 /-! The interface of a done instantiation. -/
 def iface (name : Name) (b : Body) : Iface :=
-  ⟨name, b.ports.foldl (fun m q => m.insert q.sym ⟨q.name, q.sym, q.input, q.ty⟩) {},
+  ⟨name, b.ports.foldl (fun m q => m.insert q.sym ⟨q.name, q.sym, q.input, q.ty, q.pos⟩) {},
    (b.ports.filter (·.input)).size, b.domain⟩
 
 /-!
@@ -480,7 +482,7 @@ mutual
           let (c, _) ← instantiate n p i tvs
           let path ← fresh u.id u.name.name
           let k := (← get).work.body.children.size
-          modifyBody fun b => { b with children := b.children.push ⟨path, c, p⟩ }
+          modifyBody fun b => { b with children := b.children.push ⟨path, c, p, u.name.name⟩ }
           modify fun s => { s with work.bound := s.work.bound.push 0 }
           bindLocal u.id ⟨none, false, .handle (.inst k path c)⟩
         | .ctIf p c yes no => do
