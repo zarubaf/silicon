@@ -64,14 +64,20 @@ pub fn agree(command: &str, rust: &Output, lean: &Output) -> Result<Outcome, Str
 
 /// The `parse` suite (frontend spec sections 8 and 11.3): the Lean
 /// `silicon-check parse` and the Rust `silicon parse` run on each `.si` file.
-/// They must agree as `agreed` says.
+/// They must agree as `agree` says. A file with `// expected-error SXXX @+N` (or `@-N`) expects
+/// that code on that line in both, as `check` does. A file without it expects both to succeed
+/// with the same dump.
 ///
 /// # Errors
 ///
-/// Returns an error when a front end misbehaves or the two disagree.
+/// Returns an error when a directive is malformed, a front end misbehaves, the two disagree,
+/// or the result differs from the expectation.
 pub fn parse(binary: &Path, file: &Path) -> datatest_stable::Result<()> {
-    agreed(binary, "parse", file, &[])?;
-    Ok(())
+    let source = std::fs::read_to_string(file)?;
+    let in_file = |e: String| format!("{}: {e}", file.display());
+    let want = expected_error(&source, Marker::Si).map_err(in_file)?;
+    let (rust, lean) = run_both(binary, "parse", file, &[], "")?;
+    Ok(compare_check("parse", &rust, &lean, want.as_ref()).map_err(in_file)?)
 }
 
 /// Compares the runs of the command `name` in the two front ends with the expectation of the
