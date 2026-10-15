@@ -434,10 +434,13 @@ impl Evaluator<'_> {
         let held = self.held_path(&base, known);
         let on_agg = matches!(self.opnd_seen(&base), Seen::Agg(_));
         let at = self.store.park(base.into_out());
-        let mut held = held.map(|(r, ty)| {
-            self.store.cursor(at, r);
-            ty
-        });
+        let mut held = match held {
+            Some((r, ty)) => {
+                self.store.cursor(at, r);
+                Some(ty)
+            }
+            None => None,
+        };
         for (n, step) in steps.iter().enumerate() {
             // A selection of a hardware aggregate normalizes an empty part, which charges its
             // size. As in Lean, that charge comes before the next index evaluates, so the
