@@ -1,0 +1,14 @@
+// S018: the message names the first unbound input of the child in declaration order.
+// TOP M()
+const a: UInt[8] = 1;
+module C() {
+    input p: Bool;
+    input a: Bool;
+    output o: Bool;
+    o := p;
+}
+module M() {
+    // expected-error S018 @+2
+    // expected-message: the input `p` of the instance `c` has no binding; bind it with `c.p := ...;`
+    instance c = C();
+}
