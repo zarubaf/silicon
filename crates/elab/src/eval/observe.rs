@@ -27,6 +27,7 @@ use crate::serial::{self, Item, Len, Sink};
 use crate::types::{Ty, TyId, Types};
 use crate::value::Value;
 use parse::ast::Pos;
+use resolve::DeclId;
 
 /// A piece of the text that waits on the stack of the walk, in the order it is written.
 enum Piece<'a> {
@@ -55,6 +56,29 @@ enum Piece<'a> {
     Rest(TyId, u64),
     Handle(&'a Handle),
     Hw(crate::hw::HwId),
+}
+
+impl Evaluator<'_> {
+    /// The emitted name of the current instantiation, else `-`. An index that `emitted` does not
+    /// hold is a bug of the evaluator, never an input of the user.
+    fn emitted_name(&self) -> &str {
+        let Some(i) = self.inst else {
+            return "-";
+        };
+        let Some(name) = self.emitted.get(i) else {
+            panic!("the emitted name {i} is not in the table of emitted names");
+        };
+        name
+    }
+
+    /// The text of the name of the domain `id`. A handle makes the text before it exists, so a
+    /// missing text is a bug of the evaluator, never an input of the user.
+    fn domain_name(&self, id: DeclId) -> &str {
+        let Some(name) = self.domains.get(&id) else {
+            panic!("the domain handle has no name in the table of domains");
+        };
+        name
+    }
 }
 
 impl Piece<'_> {
@@ -244,12 +268,7 @@ impl Evaluator<'_> {
             Seen::Hw(h) => Piece::Hw(h),
             Seen::Pending(..) => Piece::Text("-"),
         };
-        let mut pieces = vec![Piece::Head(
-            pos,
-            self.inst
-                .and_then(|i| self.emitted.get(i))
-                .map_or("-", String::as_str),
-        )];
+        let mut pieces = vec![Piece::Head(pos, self.emitted_name())];
         pieces.extend(frames);
         pieces.extend([
             Piece::Text(") (string "),
@@ -446,11 +465,7 @@ impl Evaluator<'_> {
                     Piece::Port(port_name),
                 ]
             }
-            Handle::Domain(d) => {
-                vec![Piece::Domain(
-                    self.domains.get(d).map_or("", String::as_str),
-                )]
-            }
+            Handle::Domain(d) => vec![Piece::Domain(self.domain_name(*d))],
         };
         push_all(work, pieces);
     }

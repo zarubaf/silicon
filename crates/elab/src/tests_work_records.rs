@@ -316,7 +316,11 @@ fn a_record_that_does_not_fit_copies_no_frame() {
     assert_eq!((records, code), (0, Some(crate::Code::S015)));
     assert_eq!(counts.recorded, 0);
     // The line holds `depth + 1` frames of the name; none of them exists before its charge.
-    assert_eq!(counts.copied, 0, "{} bytes for {len}", counts.copied);
+    assert_eq!(
+        counts.text_bytes, 0,
+        "{} bytes for {len}",
+        counts.text_bytes
+    );
 }
 
 /// A read of a domain shares its name: the loop of `n` reads of a name of `len` characters
@@ -334,18 +338,18 @@ fn a_domain_read_copies_no_name() {
         let (_, code, counts) = run_at(&source(1000, *n), 736_000_000 + k as u64);
         assert_eq!(code, None);
         assert!(
-            counts.copied <= 1000,
+            counts.text_bytes <= 1000,
             "{} bytes at {n} reads",
-            counts.copied
+            counts.text_bytes
         );
     }
     for (k, len) in [500usize, 1000, 2000].into_iter().enumerate() {
         let (_, code, counts) = run_at(&source(len, 64), 737_000_000 + k as u64);
         assert_eq!(code, None);
         assert!(
-            counts.copied <= len as u64,
+            counts.text_bytes <= len as u64,
             "{} bytes at {len}",
-            counts.copied
+            counts.text_bytes
         );
     }
 }
@@ -394,7 +398,11 @@ fn a_record_that_does_not_fit_builds_no_name() {
         assert_eq!(run_at(src, *least).0, 1, "case {k}");
         let (records, code, counts) = run_at(src, least - 1);
         assert_eq!((records, code), (0, Some(crate::Code::S015)), "case {k}");
-        assert_eq!(counts.copied, 0, "case {k}: {} bytes", counts.copied);
+        assert_eq!(
+            counts.text_bytes, 0,
+            "case {k}: {} bytes",
+            counts.text_bytes
+        );
     }
 }
 
