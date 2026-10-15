@@ -42,23 +42,7 @@ pub(crate) fn analyze<'d>(module: &Module, child_deps: impl Fn(Callee) -> &'d De
             component_of[v] = c;
         }
     }
-    // The inputs that each component reaches, as sorted input positions. A
-    // component comes after each component that it reads.
-    let mut reached: Vec<Vec<usize>> = Vec::with_capacity(components.len());
-    for (c, component) in components.iter().enumerate() {
-        let mut inputs = Vec::new();
-        for &v in component {
-            inputs.extend(graph.inputs[v].iter().map(|i| i.index()));
-            for &w in &graph.reads[v] {
-                if component_of[w] != c {
-                    inputs.extend_from_slice(&reached[component_of[w]]);
-                }
-            }
-        }
-        inputs.sort_unstable();
-        inputs.dedup();
-        reached.push(inputs);
-    }
+    let reached = reached_inputs(&graph, &components, &component_of);
     let deps = (0..module.outputs.len())
         .map(|o| {
             reached[component_of[graph.output_base + o]]
@@ -83,6 +67,31 @@ pub(crate) fn analyze<'d>(module: &Module, child_deps: impl Fn(Callee) -> &'d De
         Err(on_cycle)
     };
     Analysis { deps, schedule }
+}
+
+/// The inputs that each component reaches, as sorted input positions. A
+/// component comes after each component that it reads.
+fn reached_inputs(
+    graph: &Graph,
+    components: &[Vec<usize>],
+    component_of: &[usize],
+) -> Vec<Vec<usize>> {
+    let mut reached: Vec<Vec<usize>> = Vec::with_capacity(components.len());
+    for (c, component) in components.iter().enumerate() {
+        let mut inputs = Vec::new();
+        for &v in component {
+            inputs.extend(graph.inputs[v].iter().map(|i| i.index()));
+            for &w in &graph.reads[v] {
+                if component_of[w] != c {
+                    inputs.extend_from_slice(&reached[component_of[w]]);
+                }
+            }
+        }
+        inputs.sort_unstable();
+        inputs.dedup();
+        reached.push(inputs);
+    }
+    reached
 }
 
 /// The combinational graph. A node is a position in `nodes`: the `let`s
