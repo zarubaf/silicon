@@ -350,7 +350,26 @@ impl Evaluator<'_> {
         args: Vec<Out>,
     ) -> Res<TyId> {
         self.binding.push(i);
-        let mut keys = Vec::with_capacity(args.len());
+        let keys: Vec<Out> = self
+            .bind_params(pos, params, args)?
+            .into_iter()
+            .map(|(_, o)| o)
+            .collect();
+        self.binding.pop();
+        self.first_or_later_use(pos, name, i, &keys, fields)
+    }
+
+    /// The typed uses at `pos` of the arguments `args` at the parameters `params`, in order,
+    /// in the item scope and the frame that the caller sets. Each parameter type evaluates with
+    /// the earlier parameters bound. Each argument settles, is static, and converts to its type.
+    /// The parameter binds to the result. It gives each parameter type with its result.
+    pub(super) fn bind_params(
+        &mut self,
+        pos: Pos,
+        params: &[Param],
+        args: Vec<Out>,
+    ) -> Res<Vec<(TyId, Out)>> {
+        let mut bound = Vec::with_capacity(args.len());
         for (q, o) in params.iter().zip(args) {
             let t = self.type_expr(&q.ty)?;
             let o = if matches!(self.store.seen(&o), Seen::Pending(..)) {
@@ -360,10 +379,9 @@ impl Evaluator<'_> {
             };
             self.check_static(pos, &o)?;
             let id = self.decl(&q.name)?;
-            keys.push(self.bind_argument(pos, t, id, o)?);
+            bound.push((t, self.bind_argument(pos, t, id, o)?));
         }
-        self.binding.pop();
-        self.first_or_later_use(pos, name, i, &keys, fields)
+        Ok(bound)
     }
 
     /// The typed use of the argument `o` at the type `t`, bound to the parameter `id`. The
