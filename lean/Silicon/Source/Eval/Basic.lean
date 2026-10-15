@@ -31,7 +31,7 @@ inductive Entry where
 
 /-!
 A struct specialization in the table of specializations (section 5.6): the struct item, its
-static arguments as they evaluate, and its state. A done entry holds its struct type and its
+static arguments after their typed use, and its state. A done entry holds its struct type and its
 field types. A specialization that is not started has no entry.
 -/
 inductive SpecState where
