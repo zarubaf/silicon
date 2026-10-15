@@ -87,7 +87,7 @@ pub(crate) fn run(src: &str, expr: &str, fuel: u64, depth: u64) -> (String, u64)
 pub(crate) fn type_work(src: &str, expr: &str) -> u64 {
     let budget = Budget::default();
     match evaluated(src, expr, budget.fuel, budget.depth) {
-        Ok((done, _)) => done.types.work(),
+        Ok((done, _)) => done.type_work(),
         Err(error) => panic!("{error}"),
     }
 }

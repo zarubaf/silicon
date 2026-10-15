@@ -526,13 +526,29 @@ impl Value {
 /// serialization.
 pub struct Evaluated {
     pub value: Value,
-    pub types: Types,
+    types: Types,
     /// The steps of the walks along paths into values, for a test of their work.
     #[cfg(test)]
     pub(crate) steps: u64,
 }
 
 impl Evaluated {
+    /// The value with the table that owns the ids of its types.
+    pub(crate) fn new(value: Value, types: Types) -> Self {
+        Evaluated {
+            value,
+            types,
+            #[cfg(test)]
+            steps: 0,
+        }
+    }
+
+    /// The work of the lookups in the table of the types, for a test.
+    #[cfg(test)]
+    pub(crate) fn type_work(&self) -> u64 {
+        self.types.work()
+    }
+
     /// The canonical serialization of section 7.1.
     #[must_use]
     pub fn serialize(&self) -> String {
