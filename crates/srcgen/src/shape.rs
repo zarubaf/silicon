@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The grouping of the ports of a module into aggregate ports, and the
-//! entry names of their leaves in a source vector (frontend spec 7.5).
+//! The grouping of the ports of a module into aggregates, and the entry
+//! names of their leaves in a source vector (frontend spec 7.5).
 
 use core_ir::ast::Dir;
 
-/// The most ports in one group.
+/// The most members in one group.
 const MAX_GROUP: usize = 4;
 
-/// The type of an aggregate port.
+/// The type of an aggregate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Kind {
     /// `(UInt[a], UInt[b])`
@@ -20,16 +20,22 @@ pub(super) enum Kind {
     Record { id: usize, param: bool },
 }
 
-/// Adjacent core ports of one direction that source declares as one
-/// aggregate port. The leaf `i` of the port is the core port
-/// `members[i]`.
+/// What a group is in source.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Home {
+    /// An input or output port.
+    Port(Dir),
+}
+
+/// Adjacent core names of one home that source declares as one aggregate.
+/// The leaf `i` of the aggregate is the core name `members[i]`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Group {
-    /// The source name of the port.
+    /// The source name of the aggregate.
     pub name: String,
-    pub dir: Dir,
+    pub home: Home,
     pub kind: Kind,
-    /// The core ports with their widths, in leaf order.
+    /// The core names with their widths, in leaf order.
     pub members: Vec<(String, u32)>,
 }
 
@@ -193,11 +199,11 @@ impl Shape {
     }
 }
 
-/// The data ports of a module as `(name, direction, width)` in port order,
-/// and the tape that chooses the groups. Choice 0 is a scalar port, so an
+/// The names of a module as `(name, home, width)` in declaration order, and
+/// the tape that chooses the groups. Choice 0 is a scalar port, so an
 /// empty tape gives no group.
 pub(super) fn draw(
-    ports: &[(String, Dir, u32)],
+    ports: &[(String, Home, u32)],
     tape: &mut impl Iterator<Item = u32>,
     ids: &mut usize,
 ) -> Shape {
@@ -208,7 +214,7 @@ pub(super) fn draw(
         let run = ports[at..]
             .iter()
             .take(MAX_GROUP)
-            .take_while(|(_, dir, _)| *dir == ports[at].1)
+            .take_while(|(_, home, _)| *home == ports[at].1)
             .count();
         if next(2) == 0 || run < 2 {
             at += 1;
@@ -234,7 +240,7 @@ pub(super) fn draw(
         };
         groups.push(Group {
             name: format!("g_{}", members[0].0),
-            dir: ports[at].1,
+            home: ports[at].1,
             kind,
             members,
         });
