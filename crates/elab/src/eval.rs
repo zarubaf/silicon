@@ -230,9 +230,9 @@ fn element<'a>(v: &'a Value, path: &[usize], steps: &Cell<u64>) -> &'a Value {
 }
 
 /// What the aggregate `a` finds at the numbers `path`, one for each container node below it. A
-/// static part continues as a static value. A reference does not continue: a step into it makes
-/// a new reference, which no path names.
-fn agg_element<'a>(a: &'a Agg, path: &[usize], steps: &Cell<u64>) -> Seen<'a> {
+/// static part continues as a static value. A reference or a hardware leaf does not continue: a
+/// step into it makes a new reference, which no path names, so the walk finds nothing there.
+fn agg_part<'a>(a: &'a Agg, path: &[usize], steps: &Cell<u64>) -> Option<Seen<'a>> {
     let mut cur = a.seen();
     for (i, &k) in path.iter().enumerate() {
         cur = match cur {
@@ -240,11 +240,16 @@ fn agg_element<'a>(a: &'a Agg, path: &[usize], steps: &Cell<u64>) -> Seen<'a> {
                 stepped(steps, 1);
                 p.0.get(k).map_or(Seen::Static(&ABSENT_VALUE), Agg::seen)
             }
-            Seen::Static(v) => return Seen::Static(element(v, &path[i..], steps)),
-            _ => return Seen::Static(&ABSENT_VALUE),
+            Seen::Static(v) => return Some(Seen::Static(element(v, &path[i..], steps))),
+            _ => return None,
         };
     }
-    cur
+    Some(cur)
+}
+
+/// The part that `agg_part` finds, or the absent value below a reference or a hardware leaf.
+fn agg_element<'a>(a: &'a Agg, path: &[usize], steps: &Cell<u64>) -> Seen<'a> {
+    agg_part(a, path, steps).unwrap_or(Seen::Static(&ABSENT_VALUE))
 }
 
 impl Store {
@@ -366,15 +371,17 @@ impl Store {
         for at in list {
             let (hold, bound) = match self.probes.get(at) {
                 Some(Some(p)) if p.leaves > p.bound => (false, None),
-                Some(Some(p)) => match self.at(&p.part) {
-                    Seen::Static(_) => (true, None),
-                    Seen::Hw(_) | Seen::Agg(Agg::Hw(_)) => {
+                Some(Some(p)) => match self.part_at(&p.part) {
+                    Some(Seen::Static(_)) => (true, None),
+                    Some(Seen::Hw(_) | Seen::Agg(Agg::Hw(_))) => {
                         (false, Some(p.leaves.saturating_sub(1)))
                     }
-                    Seen::Agg(Agg::Ref(..)) => (false, Some(0)),
-                    Seen::Agg(Agg::Array(n, _) | Agg::Tuple(n, _) | Agg::Record(n, _)) => {
+                    Some(Seen::Agg(Agg::Ref(..))) => (false, Some(0)),
+                    Some(Seen::Agg(Agg::Array(n, _) | Agg::Tuple(n, _) | Agg::Record(n, _))) => {
                         (false, Some(p.leaves.saturating_sub(n.leaves)))
                     }
+                    // A path that ends below a reference or a hardware leaf (`None`) has no
+                    // static part, as in Lean, where such a part has no root.
                     _ => (false, None),
                 },
                 _ => (false, None),
@@ -606,6 +613,15 @@ impl Store {
             (Val::Static(v), false) => Seen::Static(element(v, &r.path, &self.steps)),
             (Val::Agg(a), false) => agg_element(a, &r.path, &self.steps),
             _ => Seen::Static(&ABSENT_VALUE),
+        }
+    }
+
+    /// What a reference into an aggregate root finds, or `None` below a reference or a hardware
+    /// leaf of the root.
+    fn part_at<'s>(&'s self, r: &Ref) -> Option<Seen<'s>> {
+        match self.root(&r.root) {
+            Val::Agg(a) => agg_part(a, &r.path, &self.steps),
+            _ => Some(self.at(r)),
         }
     }
 
