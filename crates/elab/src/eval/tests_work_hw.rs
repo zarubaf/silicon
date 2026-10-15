@@ -643,41 +643,35 @@ fn a_held_read_rebuilds_the_old_value_within_its_charge() {
     }
 }
 
-/// A read that goes through the light part of a node at each level misses its witness, and each
-/// miss walks the path from the root once. Each light part has at most half the hardware leaves
-/// of the node, so the walks are at most the logarithm of the leaves of the root plus one for
-/// each step: the depth `n` here, since the leaves double at each level.
+/// A read that goes through the light part of a node misses its witness, and each miss walks the
+/// path from the root once. Each light part has at most half the hardware leaves of its node, so
+/// a read misses at most log2 of the leaves of the root plus one times. Here four levels near the
+/// leaf have a heavier sibling of 2, 4, 8, and 16 leaves, and the levels above have a sibling of
+/// one leaf. The read misses at four levels only, so its steps are linear in the depth `n`. A
+/// walk from the root at each level would take steps in the square of `n`.
 #[test]
 fn a_read_through_light_parts_walks_a_path_for_each_halving_of_the_leaves() {
-    for n in [3u64, 6, 9, 12] {
+    let at = |n: u64, k: u64| {
         let decls: String = (0..=n)
             .map(|i| {
                 if i == 0 {
                     "struct L0 { c: [UInt[8]; 1], h: [UInt[8]; 1], }\n".to_owned()
                 } else {
-                    format!(
-                        "struct L{i} {{ c: [L{}; 1], h: [UInt[8]; {}], }}\n",
-                        i - 1,
-                        1u64 << i
-                    )
+                    let w = if i <= 4 { 1u64 << i } else { 1 };
+                    format!("struct L{i} {{ c: [L{}; 1], h: [UInt[8]; {w}], }}\n", i - 1)
                 }
             })
             .collect();
         let place = rep(".c[0]", n + 1);
         let read = rep(".c[(m.1.push(0), 0).1]", n + 1);
-        let r = run_ok(
+        run_ok(
             &decls,
             &format!("L{n}"),
             &format!("let mut m = (x, list(Int));\n  m.0{place} = 7;\n  let y = m.0{read};"),
-            key(71, n),
-        );
-        let walks = n + 2;
-        assert!(
-            r.counts.stepped <= 8 * (n + 1) * walks + 64,
-            "{n}: {} steps",
-            r.counts.stepped
-        );
-    }
+            key(71, k),
+        )
+    };
+    assert_linear(at, |r| r.counts.stepped, 16, 64);
 }
 
 /// A `push` or `pop` of an aggregate root visits no read that only follows the steps of its
