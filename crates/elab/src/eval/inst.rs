@@ -45,7 +45,6 @@ use parse::StackError;
 use parse::ast::{Expr, Ident, Item, NodeId, Param, Pos, Stmt, TypeExpr, UnOp};
 use resolve::{Kind as DeclKind, Resolved, Target as Ref};
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
 
 /// A port declaration. A port keeps its source name.
 pub(crate) struct PortDecl {
@@ -1157,7 +1156,6 @@ impl Evaluator<'_> {
             let name = module_name(ev.elab.digest, &id, &key);
             ev.charge(pos, u128::from(name.byte_size()))?;
             let text = encode(&name);
-            let emitted: Arc<str> = Arc::from(text.as_str());
             if ev.elab.names.contains(&text) {
                 return fail(
                     Code::S019,
@@ -1166,13 +1164,14 @@ impl Evaluator<'_> {
                 );
             }
             ev.elab.table.insert(key.clone(), Status::InProgress);
+            ev.emitted.push(text.clone());
             ev.elab.names.insert(text);
             let parent = std::mem::replace(&mut ev.elab.work, Work::new(domain));
             let naming = std::mem::take(&mut ev.naming);
             let start = ev.fuel.left();
             let args = id.args.clone();
             // The records of the body name this instantiation and start with no call frames.
-            let outer_inst = std::mem::replace(&mut ev.inst, emitted);
+            let outer_inst = ev.inst.replace(ev.emitted.len() - 1);
             let outer_calls = std::mem::take(&mut ev.calls);
             let ran = ev.in_frame(None, |ev| {
                 ev.in_item(i, ROOT, |ev| {

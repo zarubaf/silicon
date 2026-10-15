@@ -64,7 +64,6 @@ use resolve::{DeclId, Kind, Prelude, Resolved, ResolvedExpr, Target};
 #[cfg(test)]
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
 
 /// The state of a constant in the table of constants. A done constant keeps its declared
 /// type, so a read through it knows the type of each part without a walk.
@@ -989,14 +988,17 @@ struct Evaluator<'a> {
     site: Option<Pos>,
     /// The records of `diagnostic` in evaluation order (section 8.2).
     records: Vec<String>,
-    /// The emitted name of the current instantiation, else `-`. A record shares it.
-    inst: Arc<str>,
+    /// The emitted names of the instantiations that started, in order. A record refers to one
+    /// by its index, so it copies no text.
+    emitted: Vec<String>,
+    /// The index in `emitted` of the current instantiation, else none (`-`).
+    inst: Option<usize>,
     /// The calls from the module body to the current node: the item index of the callee and
     /// the position of its call, outermost first. A call adds one in O(1), and a record
     /// writes them out after the charge of its bytes.
     calls: Vec<(usize, Pos)>,
-    /// The shared name of each domain that a read named.
-    domains: BTreeMap<DeclId, Arc<str>>,
+    /// The name of each domain that a read named.
+    domains: BTreeMap<DeclId, String>,
     /// The lengths of the types and the powers of ten that the records measured.
     lens: crate::serial::Cache,
 }
@@ -1176,7 +1178,8 @@ impl<'a> Evaluator<'a> {
             guard: None,
             site: None,
             records: Vec::new(),
-            inst: Arc::from("-"),
+            emitted: Vec::new(),
+            inst: None,
             calls: Vec::new(),
             domains: BTreeMap::new(),
             lens: crate::serial::Cache::default(),
@@ -2047,14 +2050,15 @@ impl Evaluator<'_> {
         }
     }
 
-    /// The shared name of the domain `id`: the first read copies the text, and each later read
-    /// shares it.
-    fn domain(&mut self, id: DeclId, x: &str) -> Arc<str> {
-        Arc::clone(self.domains.entry(id).or_insert_with(|| {
+    /// Keeps the name of the domain `id`: the first read copies the text, and each later read
+    /// copies none.
+    fn domain(&mut self, id: DeclId, x: &str) -> DeclId {
+        self.domains.entry(id).or_insert_with(|| {
             #[cfg(test)]
             crate::counters::add(crate::counters::Count::Copied, x.len() as u64);
-            Arc::from(x)
-        }))
+            x.to_string()
+        });
+        id
     }
 
     fn name(&mut self, pos: Pos, node: NodeId, x: &str) -> Res<Out> {

@@ -244,7 +244,12 @@ impl Evaluator<'_> {
             Seen::Hw(h) => Piece::Hw(h),
             Seen::Pending(..) => Piece::Text("-"),
         };
-        let mut pieces = vec![Piece::Head(pos, &self.inst)];
+        let mut pieces = vec![Piece::Head(
+            pos,
+            self.inst
+                .and_then(|i| self.emitted.get(i))
+                .map_or("-", String::as_str),
+        )];
         pieces.extend(frames);
         pieces.extend([
             Piece::Text(") (string "),
@@ -441,7 +446,11 @@ impl Evaluator<'_> {
                     Piece::Port(port_name),
                 ]
             }
-            Handle::Domain(d) => vec![Piece::Domain(d)],
+            Handle::Domain(d) => {
+                vec![Piece::Domain(
+                    self.domains.get(d).map_or("", String::as_str),
+                )]
+            }
         };
         push_all(work, pieces);
     }
