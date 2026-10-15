@@ -4,8 +4,9 @@
 //! front-end spec, section 11.4: `silicon-check validate` accepts the
 //! elaboration of `silicon elab`; the probe `eval` gives the value of the
 //! generator in both front ends; `cost` is equal in both; `observe` is equal
-//! in both, and its record lines are those that the generator predicts; and the program and its twin give equal outputs in `run` on the
-//! same input lines.
+//! in both, and its record lines are those that the generator predicts; and
+//! the program and its twin give equal outputs in `run` on the same input
+//! lines.
 
 use std::path::Path;
 use std::process::{Command, Output};
@@ -125,8 +126,10 @@ fn observed(tools: &Tools, file: &Path, top: &str, program: &Program) -> Result<
             "an error line for an accepted program: {line}"
         )));
     }
-    let got: Vec<&str> = std::str::from_utf8(&seen.records)
-        .map_or_else(|_| Vec::new(), |text| text.lines().collect());
+    let Ok(text) = std::str::from_utf8(&seen.records) else {
+        return Ok(Some("the records are not UTF-8".to_owned()));
+    };
+    let got: Vec<&str> = text.lines().collect();
     let want = program.records();
     Ok((got != want).then(|| {
         format!("the records differ from the generator\nobserved:  {got:#?}\npredicted: {want:#?}")
