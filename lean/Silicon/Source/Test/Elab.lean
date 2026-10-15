@@ -92,27 +92,28 @@ def counter : String :=
   "    value := counter.value;\n" ++
   "}\n"
 
-#guard cost counter "Main" == "total 427\nCounter$4 194\nMain 196\n"
+#guard cost counter "Main" == "total 427\nCounter$4 193\nMain 197\n"
 #guard exact counter "Main" 427
-#guard cost counter "Counter(8)" == "total 254\nCounter$8 194\n"
+#guard cost counter "Counter(8)" == "total 254\nCounter$8 193\n"
 #guard order counter "Main" == ["Counter$4", "Main"]
 
 /-!
 The table of instantiations. A child finishes before its parent. A repeated `InstantiationId`
 elaborates once. Its `instance` statement charges 1, and its argument charges 2 for the node and
-the literal, and 1 for the recursive size. Its serialization charges 1 for the decimal form and
-32 for its bytes. Its lowering charges 44. The `inst` node and its name charge 2, and the
-emitted name 2. Each of the two domain connections charges 20. These are 81 units.
+the literal. Its parameter type `Nat` charges 1, and the recursive size 1. Its serialization
+charges 1 for the decimal form and 32 for its bytes. Its lowering charges 44. The `inst` node and
+its name charge 2, and the emitted name 2. Each of the two domain connections charges 20. These
+are 82 units. The child pays nothing for its parameter.
 -/
 def leaf : String := "module C(comptime n: Nat) {\n}\n"
 def one : String := leaf ++ "module T() {\n  instance a = C(5);\n}\n"
 def two : String := leaf ++ "module T() {\n  instance a = C(5);\n  instance b = C(5);\n}\n"
 def other : String := leaf ++ "module T() {\n  instance a = C(5);\n  instance b = C(6);\n}\n"
 
-#guard total two "T" == total one "T" + 81
+#guard total two "T" == total one "T" + 82
 #guard order two "T" == ["C$5", "T"]
 #guard order other "T" == ["C$5", "C$6", "T"]
-#guard cost other "T" == s!"total {total other "T"}\nC$5 25\nC$6 25\nT 191\n"
+#guard cost other "T" == s!"total {total other "T"}\nC$5 24\nC$6 24\nT 193\n"
 
 /-! An instantiation that depends on itself is `S019` at its `instance` statement. -/
 def selfDep : String := "module M(comptime d: Nat) {\n  instance a = M(d);\n}\n"
@@ -221,6 +222,43 @@ def shallowFirst : String := chain ++
 #guard (cost shallowFirst "Top" (depth := 5)).startsWith "total"
 #guard cost shallowFirst "Top" (depth := 4) == "S015 2:25"
 #guard total deepFirst "Top" == total shallowFirst "Top"
+
+/-!
+The typed use of the module arguments nests one level at each `instance` statement, also at a
+repeat of a done instantiation (section 5.3). `Leaf()` in `Wrap` is a repeat at the depth 3.
+-/
+def repeatDeep : String :=
+  "module Leaf() {\n}\nmodule Wrap() {\n  instance c = Leaf();\n}\n" ++
+  "module Top() {\n  instance a = Leaf();\n  instance b = Wrap();\n}\n"
+#guard (cost repeatDeep "Top" (depth := 3)).startsWith "total"
+#guard cost repeatDeep "Top" (depth := 2) == "S015 4:3"
+
+/-!
+The `InstantiationId` holds the arguments after their typed use (section 7.1). `C(1)` and
+`C(UInt[8](1))` thus give one instantiation, and so do `[1, 2]` and `[UInt[8](1), UInt[8](2)]` at
+the type `[UInt[8]; 2]`.
+-/
+def convTwo (ty a b : String) : String :=
+  s!"module C(comptime x: {ty}) \{\n}\nmodule T() \{\n  instance a = C({a});\n" ++
+  s!"  instance b = C({b});\n}\n"
+#guard (order (convTwo "UInt[8]" "1" "UInt[8](1)") "T").length == 2
+#guard order (convTwo "UInt[8]" "1" "UInt[8](1)") "T" ==
+  order (convTwo "UInt[8]" "UInt[8](1)" "UInt[8](1)") "T"
+#guard (order (convTwo "[UInt[8]; 2]" "[1, 2]" "[UInt[8](1), UInt[8](2)]") "T").length == 2
+#guard order (convTwo "[UInt[8]; 2]" "[1, 2]" "[UInt[8](1), UInt[8](2)]") "T" ==
+  order (convTwo "[UInt[8]; 2]" "[UInt[8](1), UInt[8](2)]" "[1, 2]") "T"
+#guard (order (convTwo "[Nat; 2]" "[1, 2]" "[1, 2]") "T").length == 2
+
+/-!
+A failed typed use is at the statement, before `S017` (section 6.2). `Clocked(300)` in a
+combinational module is thus `S012`, and `Clocked(3)` is `S017`.
+-/
+def comb (arg : String) : String :=
+  "module Clocked(comptime n: UInt[8]) {\n}\n" ++
+  s!"module Comb() domains() \{\n  instance u = Clocked({arg});\n}\n"
+#guard cost (comb "300") "Comb" == "S012 4:3"
+#guard cost (comb "3") "Comb" == "S017 4:3"
+#guard cost (comb "true") "Comb" == "S010 4:3"
 
 /-! The core names of section 7.3: loop frames, call frames, versions, and the result role. -/
 def helpers : String :=
@@ -354,12 +392,14 @@ static position with `S005`, so these cases use a `let` binding of a port.
 
 /-!
 A container argument gives the digest form of the emitted name. The serialization holds the
-argument as it evaluates. A `[]` argument takes the type of its parameter, also nested.
+argument after its typed use: each element converts to the element type of the parameter. A `[]`
+argument takes the type of its parameter, also nested.
 -/
 def container (ty arg : String) : String :=
   s!"module C(comptime xs: {ty}) \{\n}\nmodule T() \{\n  instance a = C({arg});\n}\n"
 #guard order (container "[UInt[8]; 2]" "[1, 2]") "T" ==
-  ["C$0h" ++ Names.sha16 "(instantiation root C ((array int ((int 1) (int 2)))))", "T"]
+  ["C$0h" ++
+    Names.sha16 "(instantiation root C ((array (uint 8) ((uint 8 1) (uint 8 2)))))", "T"]
 #guard order (container "[Bool; 0]" "[]") "T" ==
   ["C$0h" ++ Names.sha16 "(instantiation root C ((array bool ())))", "T"]
 #guard order (container "([Bool; 0], Int)" "([], 1)") "T" ==
@@ -370,11 +410,12 @@ def container (ty arg : String) : String :=
 
 /-!
 The serialization of a container charges 1 for each container node, then its bytes. The parent
-pays it. `[[1, 2]]` costs `T` 31 units more than `[1, 2]`. The outer literal charges 1 for its
-node and 4 for its size. The copy adds 1, the walk 1, and the serialization 24 bytes.
+pays it, with the parameter type and the conversion of each element. `[[1, 2]]` costs `T` 50
+units more than `[1, 2]`: the outer literal, the outer array type, the size of the outer node,
+the walk, and the longer serialization.
 -/
-#guard (cost (container "[UInt[8]; 2]" "[1, 2]") "T").endsWith "\nT 173\n"
-#guard (cost (container "[[UInt[8]; 2]; 1]" "[[1, 2]]") "T").endsWith "\nT 204\n"
+#guard (cost (container "[UInt[8]; 2]" "[1, 2]") "T").endsWith "\nT 206\n"
+#guard (cost (container "[[UInt[8]; 2]; 1]" "[[1, 2]]") "T").endsWith "\nT 256\n"
 
 /-! The nested doubling of section 11.3 in a module: `S015` at the `let` of `a17`. -/
 def doubling (k : Nat) : String :=
@@ -845,18 +886,19 @@ def fnDigest (arg : String) : String :=
 
 /-!
 The parent pays for a function argument as for each argument. The units of `M` with `C(inc)`
-are those with `C(3)` at an `Int` parameter, plus 61. The name `inc` charges 16 units more than
-the literal `3` (`Test.Eval`). Each argument has the size 1. The walk that measures the
-serialization charges 1 for the integer and nothing for the function. The serialization has
-44 bytes instead of 32. The emitted name has 20 bytes instead of 3, and both the statement and
-the lowering of the child charge it.
+are those with `C(3)` at an `Int` parameter, plus 78. The name `inc` charges 16 units more than
+the literal `3` (`Test.Eval`). The parameter type `fn (UInt[8]) -> UInt[8]` charges 17 units more
+than `Int`. Each argument has the size 1. The walk that measures the serialization charges 1 for
+the integer and nothing for the function. The serialization has 44 bytes instead of 32. The
+emitted name has 20 bytes instead of 3, and both the statement and the lowering of the child
+charge it.
 -/
 def units (src t m : String) : Nat :=
   match (cost src t).splitOn "\n" |>.find? (·.startsWith s!"{m} ") with
   | some line => (line.drop (m.length + 1)).toString.toNat!
   | none => 0
 #guard units (fnArg fnTy "inc") "M" "M" ==
-  units (fnArg "Int" "3") "M" "M" + 16 + (44 - 32) + 2 * (20 - 3) - 1
+  units (fnArg "Int" "3") "M" "M" + 16 + 17 + (44 - 32) + 2 * (20 - 3) - 1
 #guard exact (fnArg fnTy "inc") "M" (total (fnArg fnTy "inc") "M")
 
 /-!
@@ -1195,6 +1237,16 @@ def observed (src : String) (fuel : Nat := 100000000) : List String :=
     | .ok _ => "ok"
     | .error (.error e) => s!"{e.code} {e.pos.line}:{e.pos.col}"
     | .error _ => "other"]
+
+/-!
+An instantiation of `C(1)` that reaches `C(UInt[8](1))` reaches itself: `S019` at the inner
+statement. The body of `C` runs once, so its record comes out once.
+-/
+def convSelf : String :=
+  "module C(comptime x: UInt[8]) {\n  diagnostic(\"c\", x);\n" ++
+  "  instance a = C(UInt[8](1));\n}\nmodule M() {\n  instance b = C(1);\n}\n"
+#guard (observed convSelf).length == 2
+#guard (observed convSelf).getLast? == some "S019 3:3"
 
 /-! At the fuel `fuel`, the elaboration of `src` stops at the charge of `units` at `pos`. -/
 def pays (src : String) (fuel : Nat) (pos : String) (units : Nat) : Bool :=
