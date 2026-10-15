@@ -1415,3 +1415,48 @@ fn each_data_port_keeps_its_position() {
     assert_eq!(positions(ext.inputs()), vec![2]);
     assert_eq!(positions(ext.outputs()), vec![0]);
 }
+
+#[test]
+fn a_memory_with_many_write_ports_rejects_a_repeated_port() {
+    let n = 3000;
+    let writes: String = (0..n)
+        .map(|i| format!("(write m {i} a d e) "))
+        .collect::<Vec<String>>()
+        .join(" ");
+    let src = |extra: &str| {
+        format!(
+            "(design top (module top (input clk clock) (input a (bits 4)) (input d (bits 8)) \
+             (input e (bits 1)) (output q (bits 8)) (mem m (bits 8) 16 clk) {writes}{extra} \
+             (assign q (read m a))))"
+        )
+    };
+    assert!(run(&src("")).is_ok());
+    let Err(d) = run(&src("(write m 7 a d e)")) else {
+        panic!("E012 expected, but the design checks");
+    };
+    assert_eq!(d.code, ErrorCode::E012);
+}
+
+#[test]
+fn an_extern_with_many_deps_inputs_rejects_a_repeated_input() {
+    let n = 3000;
+    let ports: String = (0..n)
+        .map(|i| format!("(input p{i} (bits 1)) "))
+        .collect::<Vec<String>>()
+        .join(" ");
+    let ins: String = (0..n)
+        .map(|i| format!("p{i} "))
+        .collect::<Vec<String>>()
+        .join(" ");
+    let src = |extra: &str| {
+        format!(
+            "(design top (module top (input a (bits 1)) (output y (bits 1)) (assign y a)) \
+             (extern e {ports} (output y (bits 1)) (deps y ({ins}{extra}))))"
+        )
+    };
+    assert!(run(&src("")).is_ok());
+    let Err(d) = run(&src("p5")) else {
+        panic!("E013 expected, but the design checks");
+    };
+    assert_eq!(d.code, ErrorCode::E013);
+}

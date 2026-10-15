@@ -350,3 +350,30 @@ fn counter_canonical_snapshot() {
     let design = parse(COUNTER).expect("counter parses");
     insta::assert_snapshot!(print(&canonicalize(&design)));
 }
+
+#[test]
+fn canonicalize_sorts_the_connections_of_an_instance_with_many_ports() {
+    let n = 3000;
+    let ports: String = (0..n)
+        .map(|i| format!("(input p{i} (bits 1)) "))
+        .collect::<Vec<String>>()
+        .join(" ");
+    let src = |order: Vec<usize>| {
+        let conns: String = order
+            .iter()
+            .map(|i| format!("(p{i} a) "))
+            .collect::<Vec<String>>()
+            .join(" ");
+        format!(
+            "(design top (module top (input a (bits 1)) (output y (bits 1)) \
+             (inst u c {conns}) (assign y u.y)) \
+             (module c {ports} (output y (bits 1)) (assign y p0)))"
+        )
+    };
+    let sorted = parse(&src((0..n).collect())).expect("parses");
+    let reversed = parse(&src((0..n).rev().collect())).expect("parses");
+    assert_eq!(
+        print(&canonicalize(&sorted)),
+        print(&canonicalize(&reversed))
+    );
+}
