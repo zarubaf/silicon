@@ -4,6 +4,7 @@
 //! result is the copy. An assignment to a place updates the one element in the local, because
 //! no other binding shares the container. A read and a place each walk their path once.
 
+use super::undo::{Walk, Win};
 use super::{Evaluator, Frame, Opnd, Out, Res, expr_pos, fail, need, same_form};
 use crate::Code;
 use crate::agg::Agg;
@@ -469,8 +470,12 @@ impl Evaluator<'_> {
             }
             known = known.and_then(|t| keyed.last().and_then(|k| self.key_ty(t, k)));
         }
-        let b = Opnd::of_out(self.store.resume_one(at));
-        let (out, at_type) = self.follow(b, &keyed)?;
+        let (parked, win) = self.store.unpark(at);
+        let followed = self.follow(Opnd::of_out(parked), &keyed, win.as_ref());
+        if let Some(win) = &win {
+            self.store.finish(win);
+        }
+        let (out, at_type) = followed?;
         if let Some(e) = stop {
             // The base of the step whose index failed is a type: that check comes first.
             if let Some(Sel::Index(q, _)) = steps.get(keyed.len())
@@ -545,9 +550,10 @@ impl Evaluator<'_> {
     /// The walk of a read along the evaluated indices `keyed`, in one pass: the result, and
     /// whether the container after the last step is a type. A string container ends a segment:
     /// its index makes a new string, which is the base of the next segment.
-    fn follow(&mut self, base: Opnd, keyed: &[Key<'_>]) -> Res<(Out, bool)> {
+    fn follow(&mut self, base: Opnd, keyed: &[Key<'_>], win: Option<&Win>) -> Res<(Out, bool)> {
         let mut base = base;
         let mut rest = keyed;
+        let mut win = win;
         loop {
             // The steps through the nodes of a stored root go on from the part that the last step
             // found, so the whole run walks the path from the root once.
@@ -555,7 +561,7 @@ impl Evaluator<'_> {
             base = through;
             rest = rest.get(taken..).unwrap_or_default();
             if taken > 0 && rest.is_empty() {
-                return Ok((base.into_out(), false));
+                return Ok((self.resolve_ref(win, base.into_out()), false));
             }
             // The steps on an aggregate each give a part in constant work, so they take no walk
             // along a path. A part that is not an aggregate ends them.
@@ -565,10 +571,20 @@ impl Evaluator<'_> {
                 let out = self.agg_key(base.into_out(), key)?;
                 rest = rest.get(1..).unwrap_or_default();
                 if rest.is_empty() {
-                    return Ok((out, false));
+                    return Ok((self.resolve_ref(win, out), false));
                 }
                 base = Opnd::of_out(out);
             }
+            // The lists that the window changed show the length and the elements that the read
+            // began with.
+            let mut walk = match &base {
+                Opnd::Static(Out::Ref(r)) => Walk::start(win, self.store.entries(r.root), r),
+                _ => None,
+            };
+            let from = match (&walk, &base) {
+                (Some(_), Opnd::Static(Out::Ref(r))) => r.path.clone(),
+                _ => Vec::new(),
+            };
             let mut cur = self.opnd_seen(&base);
             let mut numbers = Vec::with_capacity(rest.len());
             let mut string_step = None;
@@ -581,15 +597,27 @@ impl Evaluator<'_> {
                         string_step = Some(at);
                         break;
                     }
-                    Key::Index(q, xp, i) => self.pick_at(*q, *xp, cur, i)?,
+                    Key::Index(q, xp, i) => {
+                        match walk.as_ref().and_then(|w| self.old_len(w, cur)) {
+                            Some(len) => Self::within(*q, len as u64, i)?,
+                            None => self.pick_at(*q, *xp, cur, i)?,
+                        }
+                    }
                     Key::Select(q, r, index) => self.select_at(*q, *r, index, cur)?,
                     Key::Field(q, f) => self.field_at(*q, f, cur)?.0,
                 };
-                cur = self.store.step(cur, number);
+                cur = match walk.as_mut() {
+                    Some(w) => self.window_step(w, cur, number),
+                    None => self.store.step(cur, number),
+                };
                 numbers.push(number);
             }
             let at_type = matches!(cur, Seen::Static(Value::Type(_)));
-            let mut path = numbers.into_iter();
+            let copy = match (&walk, cur) {
+                (Some(w), Seen::Static(v)) if w.is_saved() => Some(v.clone()),
+                _ => None,
+            };
+            let mut path = numbers.iter().copied();
             let mut out = match path.next() {
                 Some(number) => elem(base, number),
                 None => match base {
@@ -600,6 +628,8 @@ impl Evaluator<'_> {
             for number in path {
                 out = elem(Opnd::Static(out), number);
             }
+            let from: Vec<usize> = from.into_iter().chain(numbers).collect();
+            let out = self.resolve(walk, out, copy, &from);
             let Some(at) = string_step else {
                 return Ok((out, at_type));
             };
@@ -608,6 +638,7 @@ impl Evaluator<'_> {
             };
             base = Opnd::Static(self.str_at(*q, *xp, &out, i)?);
             rest = rest.get(at + 1..).unwrap_or_default();
+            win = None;
         }
     }
 
@@ -861,7 +892,7 @@ impl Evaluator<'_> {
         if place.keys.is_empty() {
             let y = self.named(pos, place.id, y)?;
             self.charge_held(pos, place.root)?;
-            self.store.settle_root(place.root, None);
+            self.store.settle_root(place.root, None, false);
             if let Root::Local(frame, id) = place.root
                 && let Some(slot) = self
                     .store

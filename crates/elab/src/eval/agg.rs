@@ -1024,7 +1024,7 @@ impl Evaluator<'_> {
                 _ => None,
             });
         }
-        self.store.settle_root(place.root, Some(&place.keys));
+        self.store.settle_root(place.root, Some(&place.keys), true);
         self.store
             .steps
             .set(self.store.steps.get() + place.keys.len() as u64);
@@ -1081,7 +1081,7 @@ impl Evaluator<'_> {
             self.fuel.pay_int(&empty).map_err(at(pos))?;
         }
         self.charge_held(pos, place.root)?;
-        self.store.settle_root(place.root, None);
+        self.store.settle_root(place.root, None, false);
         let root = self.store.take_root(&place.root);
         let root = match root {
             Val::Agg(root) => *root,
