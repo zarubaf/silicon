@@ -160,6 +160,9 @@ struct Cursor {
     /// it. A cursor that is not live stays in the table, because its window of the undo log
     /// rebuilds the old value when a mutation copies the read.
     live: bool,
+    /// Whether the cursor is live and its read holds no root: it waits in `Store::quiet` and not
+    /// in `parked_at`, and a `push` or `pop` leaves it alone.
+    quiet: bool,
     /// The length of the undo log of the root when the read parked. The changes of the list
     /// parts from here on are the window of the read.
     mark: usize,
@@ -230,6 +233,10 @@ struct Store {
     /// to it, so a result keeps the value that its expression read.
     parked: Vec<Out>,
     parked_at: BTreeMap<Root, Vec<usize>>,
+    /// The positions of the reads that follow the steps of an index of an unheld aggregate root
+    /// (`Cursor::quiet`). A `push` or `pop` of the root changes none of them, so it does not
+    /// visit them, and its work does not depend on how many reads wait.
+    quiet: BTreeMap<Root, BTreeSet<usize>>,
     /// The number of parked results that hold each local (section 5.4): a reference to a static
     /// value in the local, from its park to its resume. A copy does not end the hold. The
     /// local that each parked result holds, if any, by its position.
@@ -375,6 +382,8 @@ impl Store {
     /// with a call may hold the root there.
     fn cursor(&mut self, at: usize, r: Ref) {
         let mark = self.open_log(r.root);
+        let root = r.root;
+        let quiet = matches!(self.held_by.get(at), Some(None));
         if let Some(slot) = self.cursors.get_mut(at) {
             *slot = Some(Cursor {
                 base: r.path.len(),
@@ -382,11 +391,50 @@ impl Store {
                 witness: None,
                 left: 0,
                 live: true,
+                quiet,
                 mark,
             });
+            if quiet {
+                self.quiet_remove_parked(root, at);
+                self.quiet.entry(root).or_default().insert(at);
+            }
         } else {
-            self.close_log(r.root);
+            self.close_log(root);
         }
+    }
+
+    /// The read at `at` leaves `parked_at` for `quiet`: it is the last position there.
+    fn quiet_remove_parked(&mut self, root: Root, at: usize) {
+        if let Some(list) = self.parked_at.get_mut(&root) {
+            if list.last() == Some(&at) {
+                list.pop();
+            }
+            if list.is_empty() {
+                self.parked_at.remove(&root);
+            }
+        }
+    }
+
+    /// The read at `at` can be changed by a mutation now: it moves from `quiet` back to
+    /// `parked_at`, in the order of the positions.
+    fn activate(&mut self, at: usize) {
+        let Some(Some(c)) = self.cursors.get_mut(at) else {
+            return;
+        };
+        if !c.quiet {
+            return;
+        }
+        c.quiet = false;
+        let root = c.part.root;
+        if let Some(q) = self.quiet.get_mut(&root) {
+            q.remove(&at);
+            if q.is_empty() {
+                self.quiet.remove(&root);
+            }
+        }
+        let list = self.parked_at.entry(root).or_default();
+        let i = list.partition_point(|&x| x < at);
+        list.insert(i, at);
     }
 
     /// The walk of the read takes the step `k` from the part of the cursor at `at`. A step with no
@@ -404,10 +452,12 @@ impl Store {
                     w.common += 1;
                 }
                 c.part.path.push(k);
+                return;
             }
             (_, Some(c)) => c.live = false,
-            _ => {}
+            _ => return,
         }
+        self.activate(at);
     }
 
     /// An index with a call of the read at `at` evaluates: the first change of the local in that
@@ -462,6 +512,7 @@ impl Store {
                     if let Some(Some(c)) = self.cursors.get_mut(at) {
                         c.live = false;
                     }
+                    self.activate(at);
                 }
                 Some(Located::Open(w)) => {
                     if let Some(Some(c)) = self.cursors.get_mut(at) {
@@ -545,12 +596,23 @@ impl Store {
     fn resume(&mut self, from: usize) -> Vec<Out> {
         let from = from.min(self.parked.len());
         let outs = self.parked.split_off(from);
-        for c in self
+        let mut quiet_at = BTreeSet::new();
+        for (i, c) in self
             .cursors
             .split_off(from.min(self.cursors.len()))
             .into_iter()
-            .flatten()
+            .enumerate()
         {
+            let Some(c) = c else { continue };
+            if c.quiet {
+                quiet_at.insert(from + i);
+                if let Some(q) = self.quiet.get_mut(&c.part.root) {
+                    q.remove(&(from + i));
+                    if q.is_empty() {
+                        self.quiet.remove(&c.part.root);
+                    }
+                }
+            }
             self.close_log(c.part.root);
         }
         for root in self.held_by.split_off(from).into_iter().flatten() {
@@ -561,8 +623,9 @@ impl Store {
                 }
             }
         }
-        for o in outs.iter().rev() {
+        for (i, o) in outs.iter().enumerate().rev() {
             if let Out::Ref(Ref { root, .. }) = o
+                && !quiet_at.contains(&(from + i))
                 && let Some(at) = self.parked_at.get_mut(root)
             {
                 at.pop();
@@ -611,21 +674,30 @@ impl Store {
     /// no extension of `keys` reads the same value after the change, so it stays a reference. A
     /// write that binds the root again (`None`) gives new names to each leaf, so it copies all.
     ///
-    /// A `push` or `pop` (`logged`) copies no read that follows the steps of its index and does
-    /// not hold the root. The change goes to the undo log of the root, and the read resolves it
-    /// when its last step is known (`resolve`). A copy of a read first undoes the changes of its
-    /// window, so that it keeps the value the read waited at.
+    /// A `push` or `pop` (`logged`) leaves the quiet reads alone: those that follow the steps of
+    /// their index and hold no root. The change goes to the undo log of the root, and the read
+    /// resolves it when its last step is known (`resolve_ref`). A copy of a read first undoes the
+    /// changes of its window, so that it keeps the value the read waited at. Thus the work of a
+    /// `push` or `pop` does not depend on the number of reads that wait.
     fn settle_root(&mut self, root: Root, keys: Option<&[usize]>, logged: bool) {
         self.decide_holds(root);
+        if !logged {
+            // A change that is no `push` or `pop` has no log entry, so each read copies.
+            let all: Vec<usize> = self
+                .quiet
+                .get(&root)
+                .map(|q| q.iter().copied().collect())
+                .unwrap_or_default();
+            for at in all {
+                self.activate(at);
+            }
+        }
         let Some(at) = self.parked_at.remove(&root) else {
             return;
         };
         let mut kept = Vec::new();
         for k in at {
             let cursor = self.cursors.get(k).and_then(Option::as_ref);
-            let deferred = logged
-                && cursor.is_some_and(|c| c.live)
-                && matches!(self.held_by.get(k), Some(None));
             // A read that walks a path waits at the part of its cursor, and its later steps only
             // go deeper. Other references wait at their own path.
             let reached = match (cursor, self.parked.get(k)) {
@@ -633,7 +705,7 @@ impl Store {
                 (_, Some(Out::Ref(r))) => overlap(&r.path, keys),
                 _ => true,
             };
-            if deferred || !reached {
+            if !reached {
                 kept.push(k);
                 continue;
             }
@@ -1082,6 +1154,7 @@ impl<'a> Evaluator<'a> {
                 steps: Cell::new(0),
                 parked: Vec::new(),
                 parked_at: BTreeMap::new(),
+                quiet: BTreeMap::new(),
                 holds: BTreeMap::new(),
                 held_by: Vec::new(),
                 cursors: Vec::new(),

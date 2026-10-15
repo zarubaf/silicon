@@ -241,6 +241,7 @@ impl Store {
 
     /// Takes the read parked at `at` back, and keeps the window of its changes until `finish`.
     pub(super) fn unpark(&mut self, at: usize) -> (Out, Option<Win>) {
+        self.activate(at);
         let own = self.cursors.get_mut(at).and_then(Option::take);
         let out = self.resume_one(at);
         let Some(c) = own else {
