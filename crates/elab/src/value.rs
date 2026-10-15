@@ -525,7 +525,7 @@ impl Value {
 /// A static value with the table of the types that it names. Only together do they have a
 /// serialization.
 pub struct Evaluated {
-    pub value: Value,
+    value: Value,
     types: Types,
     /// The steps of the walks along paths into values, for a test of their work.
     #[cfg(test)]
@@ -1018,6 +1018,13 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "is not in this table of types")]
+    fn an_unknown_type_id_has_no_text_length() {
+        let foreign = Types::default().mk(Ty::Bool);
+        let _ = Types::default().text_len(foreign);
+    }
+
+    #[test]
+    #[should_panic(expected = "is not in this table of types")]
     fn an_unknown_type_id_has_no_metadata() {
         let foreign = Types::default().mk(Ty::Bool);
         let _ = Types::default().meta(foreign);
@@ -1037,7 +1044,7 @@ mod tests {
         for v in &vs {
             assert_eq!(v.serialized_len(&tys), v.serialize(&tys).len() as u64);
         }
-        assert_eq!(tys.text_len(w), Some(tys.serialize(w).len() as u64));
+        assert_eq!(tys.text_len(w), tys.serialize(w).len() as u64);
     }
 
     #[test]
