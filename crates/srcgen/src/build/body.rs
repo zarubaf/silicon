@@ -368,21 +368,26 @@ impl Builder {
         let mut instances = 0;
         for _ in 0..self.tape.below(max + 1) {
             let nested = level < NESTING;
-            match self.tape.below(18) {
+            match self.tape.below(20) {
                 1 => self.static_let(ctx, &mut m.names, &mut out)?,
                 12 => self.list_let(ctx, &mut m.names, &mut out)?,
                 13 => self.push_stmt(ctx, &mut out),
                 14 => self.pop_stmt(ctx, &mut m.names, &mut out),
                 15 => self.static_mut_call(ctx, &mut m.names, &mut out)?,
                 16 => self.hw_mut_call(ctx, m, &mut out)?,
-                17 => self.diagnostic(ctx, &mut out),
+                17 | 19 => self.diagnostic(ctx, &mut out),
                 2 => self.binding(ctx, &mut m.names, &mut out, true)?,
                 3 => self.assign(ctx, &mut m.names, &mut out)?,
                 4 => self.wire(ctx, &mut m.names, &mut out)?,
                 5 if m.clocked => self.reg(ctx, &mut m.names, &mut out, &mut regs)?,
-                6 | 7 if instances < INSTANCES => {
+                6 | 7 | 18 if instances < INSTANCES => {
                     if self.instance(ctx, m, &mut out)? {
                         instances += 1;
+                        // A record after the child pins the order of the
+                        // records of the parent and the child.
+                        if self.tape.below(2) == 0 {
+                            self.diagnostic(ctx, &mut out);
+                        }
                     }
                 }
                 8 | 9 if nested => self.repeat(ctx, m, &mut out, level)?,

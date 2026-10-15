@@ -298,6 +298,31 @@ mod tests {
         assert_eq!(got, want, "{text}");
     }
 
+    /// A `comptime if` takes the branch of each context, so the child that
+    /// it holds elaborates only in the context that takes it.
+    #[test]
+    fn a_branch_records_in_the_contexts_that_take_it() {
+        let cond = SExpr::Binary(SBin::Gt, Box::new(name("P0")), Box::new(int(1)));
+        let m1 = module(
+            "M1",
+            &["P0"],
+            vec![Stmt::If(
+                cond,
+                vec![Stmt::Diagnostic("d0".to_owned(), name("P0"))],
+                Some(vec![Stmt::Diagnostic("d1".to_owned(), int(-1))]),
+            )],
+        );
+        let m0 = module("M0", &[], vec![instance("u0", 1), instance("u1", 2)]);
+        let items = [m0, m1];
+        let text = render_items(&items);
+        let got = records(&items, &text, ("M0", &[]), &contexts(&[1, 2])).unwrap();
+        let want = [
+            "(record 9 9 M1$1 () (string \"d1\") (int -1))",
+            "(record 7 9 M1$2 () (string \"d0\") (int 2))",
+        ];
+        assert_eq!(got, want, "{text}");
+    }
+
     /// A call of a function with a `mut` formal makes one frame, at the
     /// position of the call expression; the record is at the `diagnostic`
     /// of the function.
