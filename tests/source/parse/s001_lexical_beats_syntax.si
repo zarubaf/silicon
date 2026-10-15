@@ -1,3 +1,4 @@
-// S001: the lexical error at 1:9 comes before the later syntax error.
+// S001: the lexical error at 3:9 comes before the syntax error on line 4.
 // expected-error S001 @+1
-const X $ = ;
+const X $ = 1;
+const Y = ;
