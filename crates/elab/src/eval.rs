@@ -148,12 +148,39 @@ struct Cursor {
     /// The length of the path of the parked reference. After a mutation copied the reference,
     /// the steps of `part` past this length lead into the copy.
     base: usize,
-    /// The leaves in the type of the part.
-    leaves: u64,
-    /// The most leaves of the type that the part holds as static values. A part with more leaves
-    /// than this holds a hardware leaf, so it is no static value and its decision needs no
-    /// walk. A walk that finds the part lowers the bound to the exact count.
-    bound: u64,
+    /// A path from the root to a hardware leaf that follows the heavy part of each node, with
+    /// the length of its common prefix with the path of the part. A part on the witness holds a
+    /// hardware leaf, so it is no static part and its decision walks nothing. `None` until the
+    /// first decision.
+    witness: Option<Witness>,
+    /// The steps that the read has left, so the witness need not go deeper than the read can.
+    left: usize,
+}
+
+/// A path to a hardware leaf, and what is known of its end.
+struct Witness {
+    path: Vec<usize>,
+    /// The length of the common prefix of `path` and the path of the part.
+    common: usize,
+    /// The path ends at a hardware leaf or a reference, so a part below it has no root.
+    closed: bool,
+}
+
+impl Cursor {
+    /// Whether the witness shows that the part has no static value to hold: the part lies on the
+    /// witness, or below its closed end.
+    fn on_witness(&self) -> bool {
+        let n = self.part.path.len();
+        self.witness
+            .as_ref()
+            .is_some_and(|w| w.common == n.min(w.path.len()) && (n <= w.path.len() || w.closed))
+    }
+}
+
+/// What the decision of a cursor finds: a static part, or a witness for the part that is none.
+enum Located {
+    Static,
+    Open(Witness),
 }
 
 /// Whether a change in place at the numbers `keys` (`None`: a write that binds the root again)
@@ -329,27 +356,32 @@ impl Store {
 
     /// The read parked at `at` waits at the part `r` of an aggregate root, and a later index
     /// with a call may hold the root there.
-    fn cursor(&mut self, at: usize, r: Ref, leaves: u64, bound: u64) {
+    fn cursor(&mut self, at: usize, r: Ref) {
         if let Some(slot) = self.cursors.get_mut(at) {
             *slot = Some(Cursor {
                 base: r.path.len(),
                 part: r,
-                leaves,
-                bound,
+                witness: None,
+                left: 0,
             });
         }
     }
 
     /// The walk of the read takes the step `k` from the part of the cursor at `at`. A step with no
     /// number ends the cursor, because no static part follows it.
-    fn cursor_step(&mut self, at: usize, k: Option<usize>, leaves: u64) {
+    fn cursor_step(&mut self, at: usize, k: Option<usize>) {
         let Some(slot) = self.cursors.get_mut(at) else {
             return;
         };
         match (k, slot.as_mut()) {
-            (Some(k), Some(p)) => {
-                p.part.path.push(k);
-                p.leaves = leaves;
+            (Some(k), Some(c)) => {
+                if let Some(w) = c.witness.as_mut()
+                    && w.common == c.part.path.len()
+                    && w.path.get(w.common) == Some(&k)
+                {
+                    w.common += 1;
+                }
+                c.part.path.push(k);
             }
             _ => *slot = None,
         }
@@ -357,9 +389,10 @@ impl Store {
 
     /// An index with a call of the read at `at` evaluates: the first change of the local in that
     /// time decides the hold.
-    fn arm(&mut self, at: usize) {
-        if let Some(Some(p)) = self.cursors.get(at) {
-            let root = p.part.root;
+    fn arm(&mut self, at: usize, left: usize) {
+        if let Some(Some(c)) = self.cursors.get_mut(at) {
+            c.left = left;
+            let root = c.part.root;
             self.armed.entry(root).or_default().push(at);
         }
     }
@@ -383,42 +416,103 @@ impl Store {
     /// Decides the holds of the reads with an index that evaluates now, before a change of the
     /// local at `root`: the part of a cursor that is a static value holds the local, as Lean
     /// reads the part again from the live root. The decision uses the root as the index found
-    /// it, so it comes before the first change, and each armed cursor walks its path once.
+    /// it, so it comes before the first change. A part on the witness holds a hardware leaf
+    /// and needs no walk. Otherwise the decision walks the path of the part once. A static part
+    /// holds, and the charge of the held root pays for the walk. Any other part gives a new
+    /// witness through it, and the read has at most as many steps left as the witness is deep.
+    /// Each such walk enters a part with at most half the hardware leaves of the part before
+    /// it, so a read walks at most log2 of the leaves of the root plus one times its steps.
     fn decide_holds(&mut self, root: Root) {
         let Some(list) = self.armed.remove(&root) else {
             return;
         };
         for at in list {
-            let (hold, bound) = match self.cursors.get(at) {
-                Some(Some(p)) if p.leaves > p.bound => (false, None),
-                Some(Some(p)) => match self.decision_part(at, p) {
-                    Some(Seen::Static(_)) => (true, None),
-                    Some(Seen::Hw(_) | Seen::Agg(Agg::Hw(_))) => {
-                        (false, Some(p.leaves.saturating_sub(1)))
-                    }
-                    Some(Seen::Agg(Agg::Ref(..))) => (false, Some(0)),
-                    Some(Seen::Agg(Agg::Array(n, _) | Agg::Tuple(n, _) | Agg::Record(n, _))) => {
-                        (false, Some(p.leaves.saturating_sub(n.leaves)))
-                    }
-                    // A path that ends below a reference or a hardware leaf (`None`) has no
-                    // static part, as in Lean, where such a part has no root.
-                    _ => (false, None),
-                },
-                _ => (false, None),
+            let located = match self.cursors.get(at) {
+                Some(Some(c)) if !c.on_witness() => Some(self.locate(at, c)),
+                _ => None,
             };
-            if let (Some(b), Some(Some(p))) = (bound, self.cursors.get_mut(at))
-                && p.leaves != 0
-                && p.leaves != u64::MAX
-            {
-                p.bound = p.bound.min(b);
+            match located {
+                Some(Located::Static) => {
+                    self.hold_parked(at, root);
+                    if let Some(slot) = self.cursors.get_mut(at) {
+                        *slot = None;
+                    }
+                }
+                Some(Located::Open(w)) => {
+                    if let Some(Some(c)) = self.cursors.get_mut(at) {
+                        c.witness = Some(w);
+                    }
+                }
+                None => {}
             }
-            if hold {
-                self.hold_parked(at, root);
-                if let Some(slot) = self.cursors.get_mut(at) {
-                    *slot = None;
+        }
+    }
+
+    /// Walks the path of the cursor at `at` once: down the live root, or down the copy that a
+    /// mutation made once the result is a copy. A part that is a static value, or an absent one,
+    /// is `Static`. Else the witness goes through the part along the heavy part of each node,
+    /// for as many steps as the read has left. A path that ends below a reference or a hardware
+    /// leaf closes the witness there: as in Lean, such a part has no root.
+    fn locate(&self, at: usize, c: &Cursor) -> Located {
+        let path = &c.part.path;
+        let (value, rel) = match self.parked.get(at) {
+            Some(Out::Kept(v, _)) => (v, path.get(c.base..).unwrap_or_default()),
+            _ => (self.root(&c.part.root), &path[..]),
+        };
+        let skipped = path.len() - rel.len();
+        let closed_at = |n: usize| {
+            Located::Open(Witness {
+                path: path.get(..n).unwrap_or_default().to_vec(),
+                common: n,
+                closed: true,
+            })
+        };
+        let a = match value {
+            Val::Agg(a) => a,
+            Val::Hw(_) => return closed_at(skipped),
+            _ => return Located::Static,
+        };
+        let mut cur: &Agg = a;
+        for (i, &k) in rel.iter().enumerate() {
+            cur = match cur {
+                Agg::Array(_, p) | Agg::Tuple(_, p) | Agg::Record(_, p) => {
+                    stepped(&self.steps, 1);
+                    match p.0.get(k) {
+                        Some(x) => x,
+                        None => return Located::Static,
+                    }
+                }
+                Agg::Static(_) => return Located::Static,
+                Agg::Hw(_) | Agg::Ref(..) => return closed_at(skipped + i),
+            };
+        }
+        let mut witness = Witness {
+            path: path.clone(),
+            common: path.len(),
+            closed: false,
+        };
+        let limit = path.len().saturating_add(c.left);
+        loop {
+            match cur {
+                Agg::Static(_) => return Located::Static,
+                Agg::Hw(_) | Agg::Ref(..) => {
+                    witness.closed = true;
+                    break;
+                }
+                Agg::Array(n, p) | Agg::Tuple(n, p) | Agg::Record(n, p) => {
+                    let next = if n.leaves > 0 && witness.path.len() < limit {
+                        p.0.get(n.heavy)
+                    } else {
+                        None
+                    };
+                    let Some(next) = next else { break };
+                    stepped(&self.steps, 1);
+                    witness.path.push(n.heavy);
+                    cur = next;
                 }
             }
         }
+        Located::Open(witness)
     }
 
     /// Takes the results parked from the position `from` back, in their order. Parks and
@@ -498,12 +592,7 @@ impl Store {
                 (_, Some(Out::Ref(r))) => overlap(&r.path, keys),
                 _ => true,
             };
-            if reached {
-                // The change can turn a hardware leaf into a static one, so no bound holds.
-                if let Some(Some(p)) = self.cursors.get_mut(k) {
-                    p.bound = u64::MAX;
-                }
-            } else {
+            if !reached {
                 kept.push(k);
                 continue;
             }
@@ -627,33 +716,6 @@ impl Store {
             (Val::Static(v), false) => Seen::Static(element(v, &r.path, &self.steps)),
             (Val::Agg(a), false) => agg_element(a, &r.path, &self.steps),
             _ => Seen::Static(&ABSENT_VALUE),
-        }
-    }
-
-    /// The part that the cursor `p` of the result parked at `at` decides on. As in Lean, a read
-    /// decides on the value as it was before the index: the live root while the result is a
-    /// reference, and the copy that a mutation made once the result is a copy.
-    fn decision_part<'s>(&'s self, at: usize, p: &Cursor) -> Option<Seen<'s>> {
-        match self.parked.get(at) {
-            Some(Out::Kept(v, _)) => {
-                let path = p.part.path.get(p.base..).unwrap_or_default();
-                match v {
-                    Val::Static(x) => Some(Seen::Static(element(x, path, &self.steps))),
-                    Val::Agg(a) => agg_part(a, path, &self.steps),
-                    v if path.is_empty() => Some(v.seen()),
-                    _ => None,
-                }
-            }
-            _ => self.part_at(&p.part),
-        }
-    }
-
-    /// What a reference into an aggregate root finds, or `None` below a reference or a hardware
-    /// leaf of the root.
-    fn part_at<'s>(&'s self, r: &Ref) -> Option<Seen<'s>> {
-        match self.root(&r.root) {
-            Val::Agg(a) => agg_part(a, &r.path, &self.steps),
-            _ => Some(self.at(r)),
         }
     }
 

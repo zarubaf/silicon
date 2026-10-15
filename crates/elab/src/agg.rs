@@ -47,13 +47,15 @@ impl Base {
 }
 
 /// The stored numbers of a container node: its type, its recursive size, its depth, and the
-/// number of its hardware leaves.
+/// number of its hardware leaves, and the number of its part with the most hardware leaves (the
+/// first one, if several have as many).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Node {
     pub ty: TyId,
     pub size: u64,
     pub depth: u64,
     pub leaves: u64,
+    pub heavy: usize,
 }
 
 /// A hardware aggregate. A `Static` part holds no hardware leaf, a `Hw` part is a hardware
@@ -187,11 +189,17 @@ impl Agg {
             size: 1,
             depth: base,
             leaves: 0,
+            heavy: 0,
         };
-        for (size, depth, leaves) in parts {
+        let mut most = 0;
+        for (i, (size, depth, leaves)) in parts.into_iter().enumerate() {
             node.size = node.size.saturating_add(size);
             node.depth = node.depth.max(depth);
             node.leaves = node.leaves.saturating_add(leaves);
+            if leaves > most {
+                most = leaves;
+                node.heavy = i;
+            }
         }
         node.depth = node.depth.saturating_add(1);
         Some(node)

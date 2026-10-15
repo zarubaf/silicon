@@ -199,6 +199,7 @@ fn tower(ev: &mut Evaluator<'_>, n: u64) -> Agg {
                 size: k + 2,
                 depth: k + 2,
                 leaves: 1,
+                heavy: 0,
             },
             Parts(vec![a]),
         );
