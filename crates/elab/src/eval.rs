@@ -685,7 +685,8 @@ impl Store {
     fn settle_root(&mut self, root: Root, keys: Option<&[usize]>, logged: bool) {
         self.decide_holds(root);
         if !logged {
-            // A change that is no `push` or `pop` has no log entry, so each read copies.
+            // A change that is no `push` or `pop` has no log entry, so each read that it
+            // reaches copies.
             let all: Vec<usize> = self
                 .quiet
                 .get(&root)
