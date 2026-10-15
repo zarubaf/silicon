@@ -1,0 +1,17 @@
+// A read keeps the list it waited at when its first index pushes into it and its second index
+// holds the root. The part `t.x[1][0].1` is the list `l` with one element, so `len` is 1.
+// TOP M()
+struct S {
+    x: [[(UInt[8], List[Nat]); 1]; 2],
+    o: List[Nat],
+}
+module M() domains() {
+    input a: UInt[8];
+    output y: UInt[8];
+    let mut l = list(Nat);
+    l.push(1);
+    let mut t = S([[(a, l)], [(UInt[8](5), l)]], list(Nat));
+    let v = t.x[(t.x[1][0].1.push(7), 1).1][(t.o.push(1), 0).1].1.len();
+    y := UInt[8](v);
+}
+// STEP in=(a 3) out=(y 1)
