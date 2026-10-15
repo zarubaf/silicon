@@ -1,0 +1,19 @@
+// The cost of a read whose index pushes into a list part and then rebinds the root (section
+// 5.4). The write-back of `rebind` copies the waiting read, and the copy undoes the push first,
+// so the read finds the list as it was before the index. The fuel equal to the total of `cost`
+// succeeds, and one unit less gives `S015`.
+// FUEL 287
+// TOP M()
+fn rebind(mut z: ((UInt[8], List[Nat]), [Int; 2])) -> Int {
+    z = ((UInt[8](3), list(Nat)), [7, 8]);
+    return 0;
+}
+module M() domains() {
+    input a: UInt[8];
+    output y: UInt[8];
+    let mut t = ((a, list(Nat)), [1, 2]);
+    t.0.1.push(10);
+    t.0.1.push(20);
+    let v0 = t.0[(t.0.1.push(1), rebind(t), 1).2][1];
+    y := UInt[8](v0);
+}

@@ -1,0 +1,17 @@
+// The cost of a read that holds the root after an earlier index pushed into it (section 5.4).
+// The first index waits at the node `t`, so it holds nothing, and its push goes to the log. The
+// step to the static array `t.1` makes the second index hold the root, and the push there
+// charges the size of `t` and copies the waiting read, which undoes the first push. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 310
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output y: UInt[8];
+    let mut t: (UInt[8], [UInt[8]; 2], List[Nat]) = (x, [UInt[8](1), UInt[8](2)], list(Nat));
+    t.2.push(10);
+    t.2.push(20);
+    t[(t.2.push(1), 1).1][(t.2.push(2), 0).1];
+    t[(t.2.pop(), 1).1][(t.2.pop(), 1).1];
+    t[(t.2.pop(), t.2.pop(), 1).2][(t.2.push(2), 1).1];
+    y := x;
+}
