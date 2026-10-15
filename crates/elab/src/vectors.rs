@@ -67,23 +67,18 @@ impl Design {
             let source = text(q.sym);
             let root = self.tys.id_of(&q.ty)?;
             let mut leaves = Vec::new();
-            let walked: Result<(), ()> = layout::for_each_leaf(
-                env,
-                &mut shapes,
-                root,
-                (),
-                |(), _, _, _, _| (),
-                |_| (),
-                |fields, t, ()| {
-                    leaves.push(Entry {
-                        name: layout::leaf_entry(&source, fields),
-                        core: encode(&layout::leaf_name(&source, fields)),
-                        ty: self.tys.get(t).clone(),
-                    });
-                    Ok(())
-                },
-            );
-            walked.ok()?;
+            let mut cursor = layout::Leaves::new(root, ());
+            while let Some((t, ())) = cursor
+                .next(env, &mut shapes, |(), _, _, _, _| (), |_| ())
+                .ok()?
+            {
+                let fields = cursor.fields();
+                leaves.push(Entry {
+                    name: layout::leaf_entry(&source, fields),
+                    core: encode(&layout::leaf_name(&source, fields)),
+                    ty: self.tys.get(t).clone(),
+                });
+            }
             ports.push(layout::Declared {
                 name: source,
                 input: q.input,
