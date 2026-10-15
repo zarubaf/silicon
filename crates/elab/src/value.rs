@@ -1007,6 +1007,22 @@ mod tests {
         );
     }
 
+    /// An id of another table is a bug of the caller, so each lookup stops instead of
+    /// answering with a default type.
+    #[test]
+    #[should_panic(expected = "is not in this table of types")]
+    fn an_unknown_type_id_stops_the_lookup() {
+        let foreign = Types::default().mk(Ty::Bool);
+        let _ = Types::default().get(foreign);
+    }
+
+    #[test]
+    #[should_panic(expected = "is not in this table of types")]
+    fn an_unknown_type_id_has_no_metadata() {
+        let foreign = Types::default().mk(Ty::Bool);
+        let _ = Types::default().meta(foreign);
+    }
+
     #[test]
     fn the_length_of_a_record_needs_no_text() {
         let mut tys = Types::default();
