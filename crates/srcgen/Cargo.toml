@@ -11,5 +11,6 @@ workspace = true
 [dependencies]
 core-ir = { path = "../core-ir", features = ["gen"] }
 num-bigint = "0.4.6"
+sha2 = "0.10.9"
 proptest = { version = "1.11.0", default-features = false, features = ["std"] }
 syntax = { path = "../syntax" }

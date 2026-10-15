@@ -127,9 +127,10 @@ pub fn twin(program: &Program) -> Twin {
     }
 }
 
-/// The token of a static argument in an emitted module name (front-end
-/// design 7.1): decimal, `5n` for `-5`, `1b` or `0b`. A container argument
-/// has the digest form, which the builder never makes.
+/// The suffix of a twin module name for a static argument: decimal, `5n` for
+/// `-5`, `1b` or `0b`, and the item name of a function. It is the name of
+/// the twin only; the emitted name of an instantiation is in `emitted.rs`.
+/// A container argument has no suffix, and the builder never makes one.
 fn token(v: &Value) -> Option<String> {
     match v {
         Value::Int(n) if n.sign() == Sign::Minus => Some(format!("{}n", n.magnitude())),
