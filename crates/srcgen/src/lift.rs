@@ -4,7 +4,7 @@
 
 use super::expr::Env;
 use super::memory;
-use super::shape::{self, Shape};
+use super::shape::{self, Group, Home, Shape};
 use core_ir::ast::{Conn, Design, Dir, Expr, Item, Module, Port, Stmt, Ty};
 use core_ir::r#gen::RESET;
 use core_ir::interp;
@@ -184,7 +184,7 @@ pub fn lift(design: &Design, tape: &[u32]) -> Result<Lifted, Unsupported> {
                 .ports
                 .iter()
                 .filter(|p| !is_domain_reset(clocked, &p.name.text))
-                .filter_map(|p| Some((p.name.text.clone(), p.dir, width(p)?)))
+                .filter_map(|p| Some((p.name.text.clone(), Home::Port(p.dir), width(p)?)))
                 .collect();
             shapes.insert(
                 m.name.text.as_str(),
@@ -200,15 +200,7 @@ pub(super) fn lift_shaped(
     design: &Design,
     shapes: &HashMap<&str, Shape>,
 ) -> Result<Lifted, Unsupported> {
-    let mut modules = HashMap::new();
-    for item in &design.items {
-        match item {
-            Item::Module(m) => {
-                modules.insert(m.name.text.as_str(), m);
-            }
-            Item::Extern(e) => return Err(Unsupported::Extern(e.name.text.clone())),
-        }
-    }
+    let modules = modules_of(design)?;
     // Modules and struct items share one namespace.
     let mut items = Names::default();
     for m in modules.keys() {
@@ -256,6 +248,20 @@ pub(super) fn lift_shaped(
                 .unwrap_or_default(),
         ),
     })
+}
+
+/// The modules of `design` by name.
+fn modules_of(design: &Design) -> Result<HashMap<&str, &Module>, Unsupported> {
+    let mut modules = HashMap::new();
+    for item in &design.items {
+        match item {
+            Item::Module(m) => {
+                modules.insert(m.name.text.as_str(), m);
+            }
+            Item::Extern(e) => return Err(Unsupported::Extern(e.name.text.clone())),
+        }
+    }
+    Ok(modules)
 }
 
 /// The names of one scope. The lift makes names for aggregate ports and for
@@ -413,26 +419,8 @@ fn module<'a>(
             statement(s, &env, &mut sections)?;
         }
     }
-    for g in shape.groups.iter().filter(|g| g.dir == Dir::Output) {
-        let parts = g
-            .members
-            .iter()
-            .enumerate()
-            .map(|(i, (port, _))| {
-                let expr = m.stmts.iter().find_map(|s| match s {
-                    Stmt::Assign { out, expr, .. } if out.text == *port => Some(expr),
-                    _ => None,
-                });
-                element(
-                    &env,
-                    expr.ok_or_else(|| Unsupported::Name(port.clone()))?,
-                    g.leaf_width(i),
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        sections
-            .assigns
-            .push(format!("    {} := {};", name(&g.name)?, g.literal(&parts)));
+    for g in &shape.groups {
+        group_lines(g, m, &env, &mut sections)?;
     }
     let domains = if clocked { "" } else { " domains()" };
     let mut text = format!("module {}(){domains} {{\n", name(&m.name.text)?);
@@ -452,6 +440,54 @@ fn module<'a>(
     }
     text.push_str("}\n");
     Ok(text)
+}
+
+/// The lines of the aggregate `g` of `m`: its one `:=`.
+fn group_lines(
+    g: &Group,
+    m: &Module,
+    env: &Env<'_>,
+    sections: &mut Sections,
+) -> Result<(), Unsupported> {
+    match g.home {
+        Home::Port(Dir::Input) => {}
+        Home::Port(Dir::Output) => {
+            let parts = leaves(g, m, env, |s| match s {
+                Stmt::Assign { out, expr, .. } => Some((out.text.as_str(), expr)),
+                _ => None,
+            })?;
+            sections
+                .assigns
+                .push(format!("    {} := {};", name(&g.name)?, g.literal(&parts)));
+        }
+    }
+    Ok(())
+}
+
+/// The source of each leaf of the group `g` as an element of its literal.
+/// `bound` gives the name and the expression that a statement of `m` binds.
+fn leaves<'a>(
+    g: &Group,
+    m: &'a Module,
+    env: &Env<'_>,
+    bound: impl Fn(&'a Stmt) -> Option<(&'a str, &'a Expr)>,
+) -> Result<Vec<String>, Unsupported> {
+    g.members
+        .iter()
+        .enumerate()
+        .map(|(i, (member, _))| {
+            let expr = m
+                .stmts
+                .iter()
+                .filter_map(&bound)
+                .find_map(|(n, e)| (n == member).then_some(e));
+            element(
+                env,
+                expr.ok_or_else(|| Unsupported::Name(member.clone()))?,
+                g.leaf_width(i),
+            )
+        })
+        .collect()
 }
 
 /// The source of `e` as an element of an aggregate literal with the leaf
@@ -533,7 +569,7 @@ fn statement(s: &Stmt, env: &Env<'_>, out: &mut Sections) -> Result<(), Unsuppor
             for g in child_shape
                 .iter()
                 .flat_map(|s| &s.groups)
-                .filter(|g| g.dir == Dir::Input)
+                .filter(|g| g.home == Home::Port(Dir::Input))
             {
                 let parts = g
                     .members
@@ -599,7 +635,7 @@ fn is_domain_reset(clocked: bool, name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::super::shape::{Group, Kind};
+    use super::super::shape::{Group, Home, Kind};
     use super::*;
     use core_ir::r#gen::{Config, design_with};
     use core_ir::{Bits, check::check, text::parse, typed, vectors};
@@ -977,10 +1013,10 @@ mod tests {
         );
     }
 
-    fn group(name: &str, dir: Dir, kind: Kind, members: &[(&str, u32)]) -> Group {
+    fn group(name: &str, home: Home, kind: Kind, members: &[(&str, u32)]) -> Group {
         Group {
             name: name.to_owned(),
-            dir,
+            home,
             kind,
             members: members.iter().map(|(n, w)| ((*n).to_owned(), *w)).collect(),
         }
@@ -1004,10 +1040,15 @@ mod tests {
             (
                 "m0",
                 vec![
-                    group("ab", Dir::Input, Kind::Array, &[("a", 4), ("b", 4)]),
+                    group(
+                        "ab",
+                        Home::Port(Dir::Input),
+                        Kind::Array,
+                        &[("a", 4), ("b", 4)],
+                    ),
                     group(
                         "xy",
-                        Dir::Output,
+                        Home::Port(Dir::Output),
                         Kind::Record {
                             id: 0,
                             param: false,
@@ -1019,8 +1060,18 @@ mod tests {
             (
                 "m1",
                 vec![
-                    group("ii", Dir::Input, Kind::Tuple, &[("i0", 4), ("i1", 4)]),
-                    group("oo", Dir::Output, Kind::Tuple, &[("o0", 4), ("o1", 4)]),
+                    group(
+                        "ii",
+                        Home::Port(Dir::Input),
+                        Kind::Tuple,
+                        &[("i0", 4), ("i1", 4)],
+                    ),
+                    group(
+                        "oo",
+                        Home::Port(Dir::Output),
+                        Kind::Tuple,
+                        &[("o0", 4), ("o1", 4)],
+                    ),
                 ],
             ),
         ]);
@@ -1047,8 +1098,18 @@ mod tests {
         let shapes = shapes(vec![(
             "m0",
             vec![
-                group("ab", Dir::Input, Kind::Array, &[("a", 4), ("b", 8)]),
-                group("xy", Dir::Output, Kind::Array, &[("x", 8), ("y", 4)]),
+                group(
+                    "ab",
+                    Home::Port(Dir::Input),
+                    Kind::Array,
+                    &[("a", 4), ("b", 8)],
+                ),
+                group(
+                    "xy",
+                    Home::Port(Dir::Output),
+                    Kind::Array,
+                    &[("x", 8), ("y", 4)],
+                ),
             ],
         )]);
         let text = lift_shaped(&parse(core).unwrap(), &shapes).unwrap().text;
@@ -1070,11 +1131,16 @@ mod tests {
             vec![
                 group(
                     "ab",
-                    Dir::Input,
+                    Home::Port(Dir::Input),
                     Kind::Record { id: 3, param: true },
                     &[("a", 8), ("b", 8)],
                 ),
-                group("xy", Dir::Output, Kind::Tuple, &[("x", 8), ("y", 8)]),
+                group(
+                    "xy",
+                    Home::Port(Dir::Output),
+                    Kind::Tuple,
+                    &[("x", 8), ("y", 8)],
+                ),
             ],
         )]);
         let text = lift_shaped(&parse(core).unwrap(), &shapes).unwrap().text;
@@ -1090,8 +1156,18 @@ mod tests {
     fn the_vector_map_follows_the_layout_not_the_byte_order() {
         let shape = Shape {
             groups: vec![
-                group("b", Dir::Input, Kind::Tuple, &[("z", 4), ("a", 4)]),
-                group("g", Dir::Output, Kind::Array, &[("q", 4), ("p", 4)]),
+                group(
+                    "b",
+                    Home::Port(Dir::Input),
+                    Kind::Tuple,
+                    &[("z", 4), ("a", 4)],
+                ),
+                group(
+                    "g",
+                    Home::Port(Dir::Output),
+                    Kind::Array,
+                    &[("q", 4), ("p", 4)],
+                ),
             ],
         };
         let (top, top_layout) = top_of(
@@ -1119,7 +1195,7 @@ mod tests {
         let shape = Shape {
             groups: vec![group(
                 "p",
-                Dir::Input,
+                Home::Port(Dir::Input),
                 Kind::Record {
                     id: 0,
                     param: false,
@@ -1149,7 +1225,12 @@ mod tests {
             );
             let shapes = shapes(vec![(
                 "m0",
-                vec![group(name, Dir::Input, Kind::Tuple, &[("a", 4), ("b", 4)])],
+                vec![group(
+                    name,
+                    Home::Port(Dir::Input),
+                    Kind::Tuple,
+                    &[("a", 4), ("b", 4)],
+                )],
             )]);
             lift_shaped(&parse(&core).unwrap(), &shapes).err()
         };
@@ -1170,7 +1251,12 @@ mod tests {
         };
         let shapes = shapes(vec![(
             "m0",
-            vec![group("p", Dir::Input, record, &[("a", 4), ("b", 4)])],
+            vec![group(
+                "p",
+                Home::Port(Dir::Input),
+                record,
+                &[("a", 4), ("b", 4)],
+            )],
         )]);
         assert_eq!(
             lift_shaped(&parse(core).unwrap(), &shapes).err(),
