@@ -148,16 +148,25 @@ fn item_ports(item: &Item) -> &[Port] {
 
 /// The port order of one unit: the position of a port name among its ports.
 struct PortOrder<'a> {
-    ports: &'a [Port],
+    /// The first position of each port name, so a lookup costs one hash.
+    positions: HashMap<&'a str, usize>,
 }
 
-impl PortOrder<'_> {
+impl<'a> PortOrder<'a> {
+    fn new(ports: &'a [Port]) -> PortOrder<'a> {
+        let mut positions = HashMap::new();
+        for (position, port) in ports.iter().enumerate() {
+            positions.entry(port.name.text.as_str()).or_insert(position);
+        }
+        PortOrder { positions }
+    }
+
     /// The sort key of the port `name`: its position in port order.
     /// `canonicalize` is defined only for checked designs, where the key always
     /// exists. A name that is not a port has no key, and it sorts after every
     /// port. The sorts are stable, so such names keep their written order.
     fn key(&self, name: &Name) -> (bool, Option<usize>) {
-        let position = self.ports.iter().position(|p| p.name.text == name.text);
+        let position = self.positions.get(name.text.as_str()).copied();
         (position.is_none(), position)
     }
 }
@@ -177,9 +186,7 @@ pub fn canonicalize(design: &Design) -> Design {
         .items
         .iter()
         .map(|item| {
-            let order = PortOrder {
-                ports: item_ports(item),
-            };
+            let order = PortOrder::new(item_ports(item));
             (item_name(item).text.as_str(), order)
         })
         .collect();
@@ -196,7 +203,7 @@ pub fn canonicalize(design: &Design) -> Design {
                 }
             }
             Item::Extern(e) => {
-                let order = PortOrder { ports: &e.ports };
+                let order = PortOrder::new(&e.ports);
                 e.deps.sort_by_key(|d| order.key(&d.out));
             }
         }

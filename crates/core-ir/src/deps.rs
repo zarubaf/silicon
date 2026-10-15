@@ -34,6 +34,15 @@ pub(crate) struct Analysis {
 
 /// Infers the dependencies and orders the graph of `module`.
 pub(crate) fn analyze<'d>(module: &Module, child_deps: impl Fn(Callee) -> &'d Deps) -> Analysis {
+    analyze_counted(module, child_deps).0
+}
+
+/// [`analyze`] and the number of steps of its search for the inputs. The count
+/// is the work of the analysis, so that a test can bound the cost without a clock.
+fn analyze_counted<'d>(
+    module: &Module,
+    child_deps: impl Fn(Callee) -> &'d Deps,
+) -> (Analysis, usize) {
     let graph = Graph::build(module, &child_deps);
     let components = scc::components(&graph.reads);
     let mut component_of = vec![0; graph.nodes.len()];
@@ -42,14 +51,13 @@ pub(crate) fn analyze<'d>(module: &Module, child_deps: impl Fn(Callee) -> &'d De
             component_of[v] = c;
         }
     }
-    let reached = reached_inputs(&graph, &components, &component_of);
-    let deps = (0..module.outputs.len())
-        .map(|o| {
-            reached[component_of[graph.output_base + o]]
-                .iter()
-                .map(|&i| InputIdx::new(i))
-                .collect()
-        })
+    let outputs: Vec<usize> = (0..module.outputs.len())
+        .map(|o| component_of[graph.output_base + o])
+        .collect();
+    let (reached, work) = reached_inputs(&graph, &components, &component_of, &outputs);
+    let deps = reached
+        .into_iter()
+        .map(|inputs| inputs.into_iter().map(InputIdx::new).collect())
         .collect();
     let on_cycle: Vec<Node> = components
         .iter()
@@ -66,32 +74,94 @@ pub(crate) fn analyze<'d>(module: &Module, child_deps: impl Fn(Callee) -> &'d De
     } else {
         Err(on_cycle)
     };
-    Analysis { deps, schedule }
+    (Analysis { deps, schedule }, work)
 }
 
-/// The inputs that each component reaches, as sorted input positions. A
-/// component comes after each component that it reads.
+/// The inputs that each of the `outputs` components reaches, as sorted input
+/// positions, and the work of the search. A component comes after each
+/// component that it reads.
+///
+/// Only the components that an output reaches take part. A set of inputs is
+/// stored for an output component and for a component that two components
+/// read. A component with a single reader adds its inputs to the set of that
+/// reader, so a chain of such components costs one pass and no set of its own.
 fn reached_inputs(
     graph: &Graph,
     components: &[Vec<usize>],
     component_of: &[usize],
-) -> Vec<Vec<usize>> {
-    let mut reached: Vec<Vec<usize>> = Vec::with_capacity(components.len());
-    for (c, component) in components.iter().enumerate() {
-        let mut inputs = Vec::new();
+    outputs: &[usize],
+) -> (Vec<Vec<usize>>, usize) {
+    let mut work = 0;
+    let mut stored = vec![false; components.len()];
+    let mut wanted = vec![false; components.len()];
+    for &c in outputs {
+        stored[c] = true;
+        wanted[c] = true;
+    }
+    // A reader comes after what it reads, so the backward pass sees every
+    // reader of a component before the component.
+    let mut readers = vec![0usize; components.len()];
+    let mut last_reader = vec![usize::MAX; components.len()];
+    for (c, component) in components.iter().enumerate().rev() {
+        if !wanted[c] {
+            continue;
+        }
         for &v in component {
-            inputs.extend(graph.inputs[v].iter().map(|i| i.index()));
+            work += 1;
             for &w in &graph.reads[v] {
-                if component_of[w] != c {
-                    inputs.extend_from_slice(&reached[component_of[w]]);
+                work += 1;
+                let read = component_of[w];
+                if read != c {
+                    wanted[read] = true;
+                    if last_reader[read] != c {
+                        last_reader[read] = c;
+                        readers[read] += 1;
+                    }
                 }
             }
         }
+    }
+    for (c, &count) in readers.iter().enumerate() {
+        stored[c] |= count > 1;
+    }
+    let mut reached: Vec<Vec<usize>> = vec![Vec::new(); components.len()];
+    // The last component that took the set of a stored component, and whether
+    // a component with one reader was taken: each is taken once.
+    let mut taken_by = vec![usize::MAX; components.len()];
+    let mut taken = vec![false; components.len()];
+    for c in (0..components.len()).filter(|&c| stored[c]) {
+        let mut inputs = Vec::new();
+        let mut pending = vec![c];
+        while let Some(x) = pending.pop() {
+            for &v in &components[x] {
+                work += 1 + graph.inputs[v].len();
+                inputs.extend(graph.inputs[v].iter().map(|i| i.index()));
+                for &w in &graph.reads[v] {
+                    work += 1;
+                    let read = component_of[w];
+                    if read == x {
+                        continue;
+                    }
+                    if stored[read] {
+                        if taken_by[read] != c {
+                            taken_by[read] = c;
+                            work += reached[read].len();
+                            inputs.extend_from_slice(&reached[read]);
+                        }
+                    } else if !taken[read] {
+                        taken[read] = true;
+                        pending.push(read);
+                    }
+                }
+            }
+        }
+        work += inputs.len();
         inputs.sort_unstable();
         inputs.dedup();
-        reached.push(inputs);
+        reached[c] = inputs;
     }
-    reached
+    let sets = outputs.iter().map(|&c| reached[c].clone()).collect();
+    (sets, work)
 }
 
 /// The combinational graph. A node is a position in `nodes`: the `let`s
@@ -233,5 +303,124 @@ mod tests {
             deps,
             vec![vec![InputIdx::new(2)], vec![], vec![InputIdx::new(1)]]
         );
+    }
+
+    fn bin(a: Expr, b: Expr) -> Expr {
+        Expr::Bin(BinOp::And, Box::new(a), Box::new(b))
+    }
+
+    fn input(i: usize) -> Expr {
+        Expr::Input(InputIdx::new(i))
+    }
+
+    fn with_lets(mut m: Module, exprs: Vec<Expr>) -> Module {
+        m.lets = exprs
+            .into_iter()
+            .enumerate()
+            .map(|(i, expr)| crate::typed::Let {
+                name: format!("l{i}"),
+                width: std::num::NonZeroU32::MIN,
+                expr,
+            })
+            .collect();
+        m
+    }
+
+    /// The chain `l0 = i0`, `lk = l(k-1) & ik`, read by one output.
+    fn chain(n: usize) -> Module {
+        let names: Vec<String> = (0..n).map(|i| format!("i{i}")).collect();
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        let lets = (0..n)
+            .map(|k| match k {
+                0 => input(0),
+                _ => bin(Expr::Let(LetIdx::new(k - 1)), input(k)),
+            })
+            .collect();
+        let last = Expr::Let(LetIdx::new(n - 1));
+        with_lets(module(&names, &["y"], vec![], vec![last]), lets)
+    }
+
+    fn work(module: &Module) -> usize {
+        analyze_counted(module, |_| unreachable!("the module has no instance")).1
+    }
+
+    #[test]
+    fn the_work_of_a_chain_grows_in_proportion_to_its_length() {
+        let (small, large) = (work(&chain(2_000)), work(&chain(4_000)));
+        // Twice the statements: at most about twice the work.
+        assert!(large * 100 <= small * 220, "{small} then {large}");
+    }
+
+    #[test]
+    fn the_work_of_a_let_read_twice_by_one_reader_stays_in_proportion() {
+        // Each let reads the one before it twice, so a walk that follows each
+        // edge doubles at each step.
+        let doubled = |n: usize| {
+            let names: Vec<String> = (0..n).map(|i| format!("i{i}")).collect();
+            let names: Vec<&str> = names.iter().map(String::as_str).collect();
+            let lets = (0..n)
+                .map(|k| match k {
+                    0 => input(0),
+                    _ => bin(Expr::Let(LetIdx::new(k - 1)), Expr::Let(LetIdx::new(k - 1))),
+                })
+                .collect();
+            let last = Expr::Let(LetIdx::new(n - 1));
+            with_lets(module(&names, &["y"], vec![], vec![last]), lets)
+        };
+        let (small, large) = (work(&doubled(2_000)), work(&doubled(4_000)));
+        assert!(large * 100 <= small * 220, "{small} then {large}");
+    }
+
+    /// The inputs that `expr` reaches by walking the lets, with no sharing.
+    fn naive(module: &Module, expr: &Expr, found: &mut std::collections::BTreeSet<usize>) {
+        match expr {
+            Expr::Input(i) => {
+                found.insert(i.index());
+            }
+            Expr::Let(l) => naive(module, &module.lets[l.index()].expr, found),
+            Expr::Bin(_, a, b) => {
+                naive(module, a, found);
+                naive(module, b, found);
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn shared_lets_give_the_dependencies_of_a_walk_with_no_sharing() {
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut next = move |bound: usize| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            usize::try_from(seed % u64::try_from(bound).unwrap_or(1)).unwrap_or(0)
+        };
+        for _ in 0..50 {
+            let (inputs, lets) = (6, 40);
+            let names: Vec<String> = (0..inputs).map(|i| format!("i{i}")).collect();
+            let names: Vec<&str> = names.iter().map(String::as_str).collect();
+            let operand = |k: usize, next: &mut dyn FnMut(usize) -> usize| match next(3) {
+                0 | 1 if k > 0 => Expr::Let(LetIdx::new(next(k))),
+                _ => input(next(inputs)),
+            };
+            let exprs: Vec<Expr> = (0..lets)
+                .map(|k| bin(operand(k, &mut next), operand(k, &mut next)))
+                .collect();
+            let assigns: Vec<Expr> = (0..4).map(|_| Expr::Let(LetIdx::new(next(lets)))).collect();
+            let m = with_lets(
+                module(&names, &["a", "b", "c", "d"], vec![], assigns),
+                exprs,
+            );
+            let want: Deps = m
+                .assigns
+                .iter()
+                .map(|assign| {
+                    let mut found = std::collections::BTreeSet::new();
+                    naive(&m, assign, &mut found);
+                    found.into_iter().map(InputIdx::new).collect()
+                })
+                .collect();
+            assert_eq!(infer(&m, |_| unreachable!("no instance")), want);
+        }
     }
 }

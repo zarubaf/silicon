@@ -7,7 +7,7 @@ use super::rx::{Ex, ExAssign, ExModule, ExWrite};
 use super::scope::Scope;
 use crate::diag::{Diagnostic, ErrorCode, Span};
 use crate::typed::{MemIdx, OutputIdx, RegIdx};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// The unique definitions of a module, by table position.
 pub(super) struct Structure<'r> {
@@ -91,11 +91,9 @@ fn structure<'r>(
     for (i, mem) in scope.mems.iter().enumerate() {
         let mut ports = writes.remove(&MemIdx::new(i)).unwrap_or_default();
         let mut repeated = false;
-        for (j, w) in ports.iter().enumerate() {
-            let seen = ports
-                .get(..j)
-                .is_some_and(|b| b.iter().any(|b| b.port == w.port));
-            if seen {
+        let mut seen = HashSet::new();
+        for w in &ports {
+            if !seen.insert(w.port) {
                 repeated = true;
                 errors.push(error(
                     ErrorCode::E012,

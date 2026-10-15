@@ -9,7 +9,7 @@ use super::scope::{PortRef, Sig};
 use crate::ast::{Design, Extern, Item};
 use crate::diag::{Diagnostic, ErrorCode};
 use crate::typed::{Callee, Deps, InputIdx};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// The arguments of one instance.
 pub(super) struct LinkedInst<'r> {
@@ -64,9 +64,10 @@ fn deps(sig: &Sig, ext: &Extern) -> Result<Deps, Vec<Diagnostic>> {
     let mut by_output: HashMap<usize, Vec<InputIdx>> = HashMap::new();
     for dep in &ext.deps {
         let mut inputs: Vec<InputIdx> = Vec::new();
+        let mut listed: HashSet<InputIdx> = HashSet::new();
         for input in &dep.ins {
             match sig.port(&input.text) {
-                Some(PortRef::Input(i)) if inputs.contains(&i) => errors.push(error(
+                Some(PortRef::Input(i)) if !listed.insert(i) => errors.push(error(
                     ErrorCode::E013,
                     input.span,
                     format!("`{}` is listed twice", input.text),
