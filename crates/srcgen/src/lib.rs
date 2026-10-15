@@ -14,6 +14,7 @@
 //! pass order makes it certain.
 
 mod build;
+mod emitted;
 mod eval;
 mod expr;
 mod lift;

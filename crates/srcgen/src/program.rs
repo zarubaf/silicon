@@ -444,10 +444,9 @@ impl Program {
         &self.ports
     }
 
-    /// The tail of each observation record that `observe` prints, in the
-    /// order of the modules: the message and the value, for example
-    /// `(string "d0") (int 5)`. Compare the multiset of the tails, not the
-    /// order.
+    /// The observation records that `observe` prints, one line each, in
+    /// evaluation order, for example
+    /// `(record 12 5 M1$2 ((call k0 30 19)) (string "d0") (int 5))`.
     #[must_use]
     pub fn records(&self) -> &[String] {
         &self.records

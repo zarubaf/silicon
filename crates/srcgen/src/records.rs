@@ -1,88 +1,222 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The observation records of a typed program (front-end spec 8.2).
 //!
-//! Each instantiation records once (decision F15), so the records are the
-//! sum over the distinct contexts of each module: the argument tuples that
-//! the builder collected in `Builder.contexts`. This is the one identity
-//! rule; the walk below adds none. For each context it runs the static
-//! statements of the module body, with its loops and `comptime if`s, and
-//! keeps the tail of each `diagnostic`: the message and the value, as
-//! `observe` prints them after the frames.
+//! A record line is `(record <line> <col> <emitted> (<frames>) <message>
+//! <value>)`. Each instantiation records once (decision F15), when it
+//! elaborates: the walk below starts at the top, runs the static statements
+//! of a module body, and elaborates a child at its `instance` statement if
+//! its argument tuple is new. The line and the column come from the text of
+//! the program, not from the front ends. The builder emits one call frame at
+//! most: the call of a `comptime fn` with a `mut` formal, whose `diagnostic`
+//! is the only one that runs in a function. The walk ends by checking its
+//! argument tuples against the contexts that the builder collected, so the
+//! one identity rule is the equality of the argument values.
 
+use std::collections::BTreeMap;
+
+use super::emitted::emitted;
 use super::eval::{Env, Fault, Logged, Scope, Value, eval, exec_logged, loop_values};
 use super::program::{Item, Stmt};
 
 /// The distinct argument tuples of each module, by module name.
 pub(crate) type Contexts = [(String, Vec<Vec<Value>>)];
 
-/// The record tails of `items` over `contexts`, in evaluation order. A
-/// module without a context makes none.
-pub(crate) fn records(items: &[Item], contexts: &Contexts) -> Result<Vec<String>, Fault> {
-    let scope = Scope::new(items)?;
-    let mut log = Vec::new();
-    for item in items {
-        let Item::Module {
-            name, params, body, ..
-        } = item
-        else {
-            continue;
-        };
-        let Some((_, tuples)) = contexts.iter().find(|(n, _)| n == name) else {
-            continue;
-        };
-        for tuple in tuples {
-            run(body, &mut Env::of(params, tuple), &scope, &mut log)?;
-        }
-    }
-    Ok(log.iter().map(Logged::tail).collect())
+/// A position in the text: the line and the column, both from 1.
+type At = (usize, usize);
+
+/// The positions of the statements that make records, from the text of the
+/// program. The printer writes one statement in a line, and each message
+/// `dK` and each result name of a call is unique in its scope.
+#[derive(Default)]
+struct Sites {
+    /// The `diagnostic` statements, by message.
+    diagnostics: BTreeMap<String, At>,
+    /// The calls `let s: Int = ...;`, by module and result name. The
+    /// position is that of the call expression.
+    calls: BTreeMap<(String, String), At>,
 }
 
-/// The static statements of a frame. A nested frame works on a copy of the
-/// env: its names do not leave it, and the builder gives it no root of its
-/// parent to write.
-fn run(body: &[Stmt], env: &mut Env, scope: &Scope, log: &mut Vec<Logged>) -> Result<(), Fault> {
-    for s in body {
-        match s {
-            Stmt::StaticLet(..)
-            | Stmt::MutLet(..)
-            | Stmt::Push(..)
-            | Stmt::PopLet(..)
-            | Stmt::MutCall { .. }
-            | Stmt::Diagnostic(..) => exec_logged(s, env, scope, log)?,
-            Stmt::If(c, then, els) => {
-                let Value::Bool(taken) = eval(c, env, scope)? else {
-                    return Err(Fault::Type);
-                };
-                let branch = if taken { Some(then) } else { els.as_ref() };
-                if let Some(branch) = branch {
-                    run(branch, &mut env.clone(), scope, log)?;
+impl Sites {
+    fn of(text: &str) -> Sites {
+        let mut sites = Sites::default();
+        let mut module = String::new();
+        for (n, line) in text.lines().enumerate() {
+            let code = line.trim_start();
+            let col = line.len() - code.len() + 1;
+            if let Some(rest) = code.strip_prefix("module ") {
+                rest.split('(')
+                    .next()
+                    .unwrap_or_default()
+                    .clone_into(&mut module);
+            } else if let Some(rest) = code.strip_prefix("diagnostic(\"") {
+                let message = rest.split('"').next().unwrap_or_default();
+                sites.diagnostics.insert(message.to_owned(), (n + 1, col));
+            } else if let Some(rest) = code.strip_prefix("let ") {
+                let name = rest.split(':').next().unwrap_or_default();
+                let lead = "let ".len() + name.len() + ": Int = ".len();
+                if rest[name.len()..].starts_with(": Int = ") {
+                    sites
+                        .calls
+                        .insert((module.clone(), name.to_owned()), (n + 1, col + lead));
                 }
             }
-            Stmt::For(binder, lo, hi, body) => {
-                let (Value::Int(lo), Value::Int(hi)) =
-                    (eval(lo, env, scope)?, eval(hi, env, scope)?)
-                else {
-                    return Err(Fault::Type);
-                };
-                for value in loop_values(&lo, &hi) {
-                    let mut inner = env.clone();
-                    inner.statics.insert(binder.clone(), value);
-                    run(body, &mut inner, scope, log)?;
-                }
-            }
-            // A frame that no env reaches holds the `error`; it never runs.
-            // The builder never emits a `Block`.
-            Stmt::Error(_) | Stmt::Block(_) => return Err(Fault::Type),
-            _ => {}
+        }
+        sites
+    }
+}
+
+/// The module and the emitted name of the instantiation that the walk runs.
+struct Frame<'a> {
+    module: &'a str,
+    emitted: &'a str,
+}
+
+struct Walk<'a> {
+    items: &'a [Item],
+    scope: Scope,
+    sites: Sites,
+    /// The instantiations that have elaborated, in order.
+    done: Vec<(String, Vec<Value>)>,
+    lines: Vec<String>,
+}
+
+/// The record lines of `items`, whose printed text is `text`, in evaluation
+/// order. `top` is the name and the arguments of the top instantiation.
+/// `contexts` are the argument tuples that the builder collected.
+pub(crate) fn records(
+    items: &[Item],
+    text: &str,
+    top: (&str, &[Value]),
+    contexts: &Contexts,
+) -> Result<Vec<String>, Fault> {
+    let mut walk = Walk {
+        items,
+        scope: Scope::new(items)?,
+        sites: Sites::of(text),
+        done: Vec::new(),
+        lines: Vec::new(),
+    };
+    walk.elaborate(top.0, top.1)?;
+    for (name, tuples) in contexts {
+        let seen = walk.done.iter().filter(|(n, _)| n == name);
+        let same = seen.clone().count() == tuples.len()
+            && seen.into_iter().all(|(_, t)| tuples.contains(t));
+        if !same {
+            return Err(Fault::Type);
         }
     }
-    Ok(())
+    Ok(walk.lines)
+}
+
+impl Walk<'_> {
+    /// The records of module `name` for the arguments `args`, and of the
+    /// children that it elaborates.
+    fn elaborate(&mut self, name: &str, args: &[Value]) -> Result<(), Fault> {
+        self.done.push((name.to_owned(), args.to_vec()));
+        let module = self.items.iter().find_map(|item| match item {
+            Item::Module {
+                name: n,
+                params,
+                body,
+                ..
+            } if n == name => Some((params, body)),
+            _ => None,
+        });
+        let (params, body) = module.ok_or(Fault::Type)?;
+        let emitted = emitted(name, args);
+        let frame = Frame {
+            module: name,
+            emitted: &emitted,
+        };
+        self.run(body, &mut Env::of(params, args), &frame)
+    }
+
+    /// The static statements of a frame. A nested frame works on a copy of
+    /// the env: its names do not leave it, and the builder gives it no root
+    /// of its parent to write.
+    fn run(&mut self, body: &[Stmt], env: &mut Env, frame: &Frame) -> Result<(), Fault> {
+        for s in body {
+            match s {
+                Stmt::StaticLet(..)
+                | Stmt::MutLet(..)
+                | Stmt::Push(..)
+                | Stmt::PopLet(..)
+                | Stmt::MutCall { .. }
+                | Stmt::Diagnostic(..) => {
+                    let mut logged = Vec::new();
+                    exec_logged(s, env, &self.scope, &mut logged)?;
+                    for l in &logged {
+                        let line = self.line(frame, s, l)?;
+                        self.lines.push(line);
+                    }
+                }
+                Stmt::Instance(_, child, args) => {
+                    let args = args
+                        .iter()
+                        .map(|a| eval(a, env, &self.scope))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    if !self.done.iter().any(|(n, t)| n == child && *t == args) {
+                        self.elaborate(child, &args)?;
+                    }
+                }
+                Stmt::If(c, then, els) => {
+                    let Value::Bool(taken) = eval(c, env, &self.scope)? else {
+                        return Err(Fault::Type);
+                    };
+                    let branch = if taken { Some(then) } else { els.as_ref() };
+                    if let Some(branch) = branch {
+                        self.run(branch, &mut env.clone(), frame)?;
+                    }
+                }
+                Stmt::For(binder, lo, hi, body) => {
+                    let (Value::Int(lo), Value::Int(hi)) =
+                        (eval(lo, env, &self.scope)?, eval(hi, env, &self.scope)?)
+                    else {
+                        return Err(Fault::Type);
+                    };
+                    for value in loop_values(&lo, &hi) {
+                        let mut inner = env.clone();
+                        inner.statics.insert(binder.clone(), value);
+                        self.run(body, &mut inner, frame)?;
+                    }
+                }
+                // A frame that no env reaches holds the `error`; it never
+                // runs. The builder never emits a `Block`.
+                Stmt::Error(_) | Stmt::Block(_) => return Err(Fault::Type),
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// The record line of `logged`, which statement `s` of `frame` made.
+    fn line(&self, frame: &Frame, s: &Stmt, logged: &Logged) -> Result<String, Fault> {
+        let (line, col) = *self
+            .sites
+            .diagnostics
+            .get(&logged.message)
+            .ok_or(Fault::Type)?;
+        let frames = match (&logged.callee, s) {
+            (None, _) => String::new(),
+            (Some(callee), Stmt::MutCall { name, .. }) => {
+                let key = (frame.module.to_owned(), name.clone());
+                let (l, c) = *self.sites.calls.get(&key).ok_or(Fault::Type)?;
+                format!("(call {callee} {l} {c})")
+            }
+            (Some(_), _) => return Err(Fault::Type),
+        };
+        Ok(format!(
+            "(record {line} {col} {} ({frames}) {})",
+            frame.emitted,
+            logged.tail()
+        ))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::program::{Radix, SBin, SExpr, STy};
+    use crate::program::{MutFn, Radix, SBin, SExpr, STy, render_items};
     use num_bigint::BigInt;
 
     fn int(n: i64) -> SExpr {
@@ -93,84 +227,124 @@ mod tests {
         SExpr::Name(n.to_owned())
     }
 
-    fn module(params: &[&str], body: Vec<Stmt>) -> Item {
+    fn module(name: &str, params: &[&str], body: Vec<Stmt>) -> Item {
         Item::Module {
-            name: "M1".to_owned(),
+            name: name.to_owned(),
             params: params.iter().map(|p| ((*p).to_owned(), STy::Int)).collect(),
             clocked: false,
             body,
         }
     }
 
-    fn contexts(tuples: &[i64]) -> Vec<(String, Vec<Vec<Value>>)> {
-        let tuples = tuples
-            .iter()
-            .map(|n| vec![Value::Int(BigInt::from(*n))])
-            .collect();
-        vec![("M1".to_owned(), tuples)]
+    fn value(n: i64) -> Value {
+        Value::Int(BigInt::from(n))
     }
 
-    /// Two contexts and a loop of three: each context records its loop
-    /// iterations, and a diagnostic outside the loop records once for each
-    /// context. The value `P0 * 10 + j0` differs in each record.
+    fn contexts(m1: &[i64]) -> Vec<(String, Vec<Vec<Value>>)> {
+        let tuples = m1.iter().map(|n| vec![value(*n)]).collect();
+        vec![("M0".to_owned(), vec![vec![]]), ("M1".to_owned(), tuples)]
+    }
+
+    fn instance(u: &str, n: i64) -> Stmt {
+        Stmt::Instance(u.to_owned(), "M1".to_owned(), vec![int(n)])
+    }
+
+    /// The top elaborates a child at its `instance` statement, once for each
+    /// argument tuple: the records of the child come before the next record
+    /// of the parent, and a repeated tuple makes none. A loop makes one
+    /// record for each iteration at the line of its statement.
     #[test]
-    fn a_loop_and_two_contexts_make_each_record_once() {
-        let value = SExpr::Binary(
-            SBin::Add,
-            Box::new(SExpr::Binary(
-                SBin::Mul,
-                Box::new(name("P0")),
-                Box::new(int(10)),
-            )),
-            Box::new(name("j0")),
+    fn a_child_records_at_its_instance_statement_once() {
+        let m1 = module(
+            "M1",
+            &["P0"],
+            vec![
+                Stmt::Diagnostic("d0".to_owned(), name("P0")),
+                Stmt::For(
+                    "j0".to_owned(),
+                    int(0),
+                    int(2),
+                    vec![Stmt::Diagnostic(
+                        "d1".to_owned(),
+                        SExpr::Binary(SBin::Add, Box::new(name("P0")), Box::new(name("j0"))),
+                    )],
+                ),
+            ],
         );
-        let body = vec![
-            Stmt::Diagnostic("d0".to_owned(), name("P0")),
-            Stmt::For(
-                "j0".to_owned(),
-                int(0),
-                int(3),
-                vec![Stmt::Diagnostic("d1".to_owned(), value)],
-            ),
-        ];
-        let got = records(&[module(&["P0"], body)], &contexts(&[1, 2])).unwrap();
+        let m0 = module(
+            "M0",
+            &[],
+            vec![
+                Stmt::Diagnostic("d2".to_owned(), int(7)),
+                instance("u0", 1),
+                instance("u1", 2),
+                instance("u2", 1),
+                Stmt::Diagnostic("d3".to_owned(), int(8)),
+            ],
+        );
+        let items = [m0, m1];
+        let text = render_items(&items);
+        let got = records(&items, &text, ("M0", &[]), &contexts(&[1, 2])).unwrap();
         let want = [
-            "(string \"d0\") (int 1)",
-            "(string \"d1\") (int 10)",
-            "(string \"d1\") (int 11)",
-            "(string \"d1\") (int 12)",
-            "(string \"d0\") (int 2)",
-            "(string \"d1\") (int 20)",
-            "(string \"d1\") (int 21)",
-            "(string \"d1\") (int 22)",
+            "(record 2 5 M0 () (string \"d2\") (int 7))",
+            "(record 9 5 M1$1 () (string \"d0\") (int 1))",
+            "(record 11 9 M1$1 () (string \"d1\") (int 1))",
+            "(record 11 9 M1$1 () (string \"d1\") (int 2))",
+            "(record 9 5 M1$2 () (string \"d0\") (int 2))",
+            "(record 11 9 M1$2 () (string \"d1\") (int 2))",
+            "(record 11 9 M1$2 () (string \"d1\") (int 3))",
+            "(record 6 5 M0 () (string \"d3\") (int 8))",
         ];
-        assert_eq!(got, want);
+        assert_eq!(got, want, "{text}");
     }
 
-    /// A `comptime if` takes the branch of each context.
+    /// A call of a function with a `mut` formal makes one frame, at the
+    /// position of the call expression; the record is at the `diagnostic`
+    /// of the function.
     #[test]
-    fn a_branch_records_in_the_contexts_that_take_it() {
-        let cond = SExpr::Binary(SBin::Gt, Box::new(name("P0")), Box::new(int(1)));
-        let body = vec![Stmt::If(
-            cond,
-            vec![Stmt::Diagnostic("d0".to_owned(), name("P0"))],
-            Some(vec![Stmt::Diagnostic("d1".to_owned(), int(-1))]),
-        )];
-        let got = records(&[module(&["P0"], body)], &contexts(&[1, 2, 3])).unwrap();
+    fn a_call_makes_a_frame_at_its_expression() {
+        let k0 = Item::MutFn(MutFn {
+            name: "k0".to_owned(),
+            root: STy::Int,
+            update: name("x1"),
+            ret: name("x1"),
+            diag: Some(("d0".to_owned(), name("a0"))),
+        });
+        let call = |result: &str, receiver| Stmt::MutCall {
+            name: result.to_owned(),
+            root: "s0".to_owned(),
+            f: "k0".to_owned(),
+            args: vec![int(4)],
+            receiver,
+        };
+        let body = vec![
+            Stmt::MutLet("s0".to_owned(), STy::Int, int(0)),
+            call("s1", false),
+            Stmt::MutLet("s0".to_owned(), STy::Int, int(0)),
+            call("s2", true),
+        ];
+        let items = [k0, module("M0", &[], body)];
+        let text = render_items(&items);
+        let want = [
+            "(record 3 5 M0 ((call k0 8 19)) (string \"d0\") (int 4))",
+            "(record 3 5 M0 ((call k0 10 19)) (string \"d0\") (int 4))",
+        ];
+        let got = records(&items, &text, ("M0", &[]), &[]).unwrap();
+        assert_eq!(got, want, "{text}");
+    }
+
+    /// The builder and the walk must agree on the argument tuples.
+    #[test]
+    fn a_context_that_the_walk_misses_is_a_fault() {
+        let items = [
+            module("M0", &[], vec![instance("u0", 1)]),
+            module("M1", &["P0"], vec![]),
+        ];
+        let text = render_items(&items);
+        assert!(records(&items, &text, ("M0", &[]), &contexts(&[1])).is_ok());
         assert_eq!(
-            got,
-            [
-                "(string \"d1\") (int -1)",
-                "(string \"d0\") (int 2)",
-                "(string \"d0\") (int 3)"
-            ]
+            records(&items, &text, ("M0", &[]), &contexts(&[1, 2])),
+            Err(Fault::Type)
         );
-    }
-
-    /// A module that no context reaches makes no record.
-    #[test]
-    fn a_module_without_a_context_makes_no_record() {
-        let body = vec![Stmt::Diagnostic("d0".to_owned(), int(1))];
-        assert_eq!(records(&[module(&[], body)], &contexts(&[])), Ok(vec![]));
     }
 }
