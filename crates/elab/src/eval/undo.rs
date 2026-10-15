@@ -3,25 +3,23 @@
 //! evaluates sees the root as it was before that index (Lean keeps the old value in its result).
 //! A `push` or `pop` into a list part of the root appends one entry here, in constant work,
 //! instead of copying the parts that the waiting reads cover. A read then resolves the entries
-//! of its window once, when it knows its last step (`Evaluator::resolve`), and a copy of a read
-//! undoes the entries first, so that it keeps the old value.
+//! of its window once, when it knows its last step (`Evaluator::resolve_ref`), and a copy of a
+//! read undoes the entries first, so that it keeps the old value.
 //!
-//! A list changes only at its end, so an entry holds the length before the change and, for a
-//! `pop`, the element that left. The entries of one root are in the order of the changes, and
-//! the reads that wait at the root nest, so the window of a read is the entries from its mark.
+//! A list changes only at its end, so an entry holds, for a `pop`, the element that left. The
+//! entries of one root are in the order of the changes, and the reads that wait at the root
+//! nest, so the window of a read is the entries from its mark.
 //!
 //! Every walk keeps to the path of a place, and no walk recurses over the depth of a value.
 
 use super::{Evaluator, Out, Store};
 use crate::agg::Agg;
-use crate::hw::{Ref, Root, Seen, Val};
+use crate::hw::{Root, Val};
 use crate::value::Value;
 
 /// A change of the list at `keys` by `push` or `pop`.
 pub(super) struct Undo {
     pub(super) keys: Vec<usize>,
-    /// The length of the list before the change.
-    pub(super) len_before: usize,
     /// The element that a `pop` took out. A `push` has none.
     pub(super) saved: Option<Value>,
     /// The size and the depth of each aggregate node on the path before the change, from the
@@ -98,29 +96,9 @@ impl Span {
         }
     }
 
-    /// The positions of the entries for the list at the path of the run, oldest first and older
-    /// than `limit`.
-    pub(super) fn here(self, win: &Win, entries: &[Undo], limit: usize) -> Vec<usize> {
-        win.order
-            .get(self.lo..self.hi)
-            .unwrap_or_default()
-            .iter()
-            .copied()
-            .take_while(|&e| entries.get(e).is_some_and(|e| e.keys.len() == self.depth))
-            .filter(|&e| e < limit)
-            .collect()
-    }
-
-    /// The positions of all entries of the run older than `limit`, newest first.
-    pub(super) fn all(self, win: &Win, limit: usize) -> Vec<usize> {
-        let mut at: Vec<usize> = win
-            .order
-            .get(self.lo..self.hi)
-            .unwrap_or_default()
-            .iter()
-            .copied()
-            .filter(|&e| e < limit)
-            .collect();
+    /// The positions of all entries of the run, newest first.
+    pub(super) fn all(self, win: &Win) -> Vec<usize> {
+        let mut at: Vec<usize> = win.order.get(self.lo..self.hi).unwrap_or_default().to_vec();
         at.sort_unstable_by(|a, b| b.cmp(a));
         at
     }
@@ -309,126 +287,29 @@ impl Store {
     }
 }
 
-/// How a walk along the steps of a read sees the lists of its window.
-pub(super) struct Walk<'w> {
-    win: &'w Win,
-    span: Span,
-    /// Entries older than this apply: after a step into an element that left the list, the
-    /// walk is in the element as the pop saved it.
-    limit: usize,
-    /// The walk is in a saved element.
-    saved: bool,
-}
-
-impl<'w> Walk<'w> {
-    /// Whether the walk is in an element that a pop saved.
-    pub(super) fn is_saved(&self) -> bool {
-        self.saved
-    }
-
-    /// A walk from the root along the path of `r`, if the window is for that root.
-    pub(super) fn start(win: Option<&'w Win>, entries: &[Undo], r: &Ref) -> Option<Walk<'w>> {
-        let win = win.filter(|w| w.root == r.root)?;
-        Some(Walk {
-            win,
-            span: win.span_at(entries, &r.path),
-            limit: usize::MAX,
-            saved: false,
-        })
-    }
-}
-
 impl Evaluator<'_> {
-    /// The number of elements that the list `xs` had when the read began, if the window changed
-    /// it.
-    pub(super) fn old_len(&self, w: &Walk<'_>, cur: Seen<'_>) -> Option<usize> {
-        let Seen::Static(Value::List(..)) = cur else {
-            return None;
-        };
-        let here = w.span.here(w.win, self.store.entries(w.win.root), w.limit);
-        let first = here.first()?;
-        self.store
-            .entries(w.win.root)
-            .get(*first)
-            .map(|e| e.len_before)
-    }
-
-    /// The step to the element `number` of the container `cur`, in the window. A list that the
-    /// window changed gives an element that is below the shortest length it had as the element
-    /// of the list now, and an element that left the list as the pop saved it.
-    pub(super) fn window_step<'s>(
-        &'s self,
-        w: &mut Walk<'_>,
-        cur: Seen<'s>,
-        number: usize,
-    ) -> Seen<'s> {
-        let entries = self.store.entries(w.win.root);
-        let before = w.span;
-        w.span = before.step(w.win, entries, number);
-        if let Seen::Static(Value::List(_, xs)) = cur {
-            let here = before.here(w.win, entries, w.limit);
-            let low = here
-                .iter()
-                .filter_map(|&e| entries.get(e).map(|e| e.len_before))
-                .fold(xs.len(), usize::min);
-            if number >= low
-                && let Some(e) = here.iter().find_map(|&e| {
-                    entries
-                        .get(e)
-                        .filter(|x| x.saved.is_some() && x.len_before == number + 1)
-                        .map(|x| (e, x))
-                })
-                && let Some(saved) = &e.1.saved
-            {
-                w.limit = e.0;
-                w.saved = true;
-                return Seen::Static(saved);
-            }
-        }
-        self.store.step(cur, number)
-    }
-
-    /// The result `out` of a read, as the window left the part it refers to. A reference to a
-    /// part with no change below it stays a reference. Else the result is a copy of the old
-    /// value, which still holds the root (`Out::Kept`). `copy` is the value of a part that
-    /// left a list, `at` is the path of the part, and `w` is the walk to it.
-    pub(super) fn resolve(
-        &mut self,
-        w: Option<Walk<'_>>,
-        out: Out,
-        copy: Option<Value>,
-        at: &[usize],
-    ) -> Out {
-        let Some(w) = w else {
-            return out;
-        };
-        let root = w.win.root;
-        let positions = w.span.all(w.win, w.limit);
-        if positions.is_empty() && !w.saved {
-            return out;
-        }
-        let mut v = match copy {
-            Some(x) => Val::Static(x),
-            None => self.store.take(out),
-        };
-        let entries = self.store.entries(root);
-        for e in positions.iter().filter_map(|&e| entries.get(e)) {
-            undo_in(&mut v, at.len(), e);
-        }
-        Out::Kept(v, root)
-    }
-}
-
-impl Evaluator<'_> {
-    /// The result `out` of a read that took no step into a value, as the window left it.
+    /// The result `out` of a read, as the window left the part it refers to. A part that no
+    /// change reaches stays a reference. A part at or above a changed list gets a copy of its
+    /// old value, which still holds the root (`Out::Kept`). No step of a read goes into a list
+    /// that its window changed: a list has no hardware leaf, so the segment of the read ends
+    /// before the index into it, and the part before the index resolves here.
     pub(super) fn resolve_ref(&mut self, win: Option<&Win>, out: Out) -> Out {
-        let Out::Ref(r) = &out else {
+        let (Some(win), Out::Ref(r)) = (win, &out) else {
             return out;
         };
-        let Some(w) = Walk::start(win, self.store.entries(r.root), r) else {
+        if win.root != r.root {
             return out;
-        };
-        let at = r.path.clone();
-        self.resolve(Some(w), out, None, &at)
+        }
+        let entries = self.store.entries(r.root);
+        let positions = win.span_at(entries, &r.path).all(win);
+        if positions.is_empty() {
+            return out;
+        }
+        let at = r.path.len();
+        let mut v = self.store.take(out);
+        for e in positions.iter().filter_map(|&e| entries.get(e)) {
+            undo_in(&mut v, at, e);
+        }
+        Out::Kept(v, win.root)
     }
 }

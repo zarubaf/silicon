@@ -70,7 +70,7 @@ impl Evaluator<'_> {
         let o = self.eval(x)?;
         let o = need(x, o)?;
         self.store.shut_window(place.root);
-        let Held::List { elem, len } = place.held else {
+        let Held::List { elem, .. } = place.held else {
             return self.not_a_list(pos, g, &place);
         };
         self.mutation(pos, place.id)?;
@@ -100,7 +100,6 @@ impl Evaluator<'_> {
             let keys = place.keys.clone();
             let undo = Undo {
                 keys,
-                len_before: len,
                 saved: None,
                 stats,
             };
@@ -182,7 +181,6 @@ impl Evaluator<'_> {
             if let Some(stats) = stats {
                 let undo = Undo {
                     keys: place.keys.clone(),
-                    len_before: len,
                     saved: Some(w.clone()),
                     stats,
                 };
