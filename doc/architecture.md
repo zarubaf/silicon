@@ -21,7 +21,7 @@ Silicon is a standalone hardware description language. It is not a domain-specif
 - The semantics of a design is a Mealy machine. The step function has the form `step : State → Input → State × Output`.
 - Elaboration evaluates parameters, generics, and loops of a rich, pure source language. These constructs do not exist in the core IR. The formal core thus stays small, and the source language can grow.
 - A black box is a primitive with an assumed contract, for example an SRAM macro, a PLL, vendor IP, or a clock gate. Real designs need them.
-- Each clock domain has its own simple semantics. A crossing between clock domains goes through an explicit CDC primitive. The type system rejects a crossing without synchronization.
+- Each clock domain has its own simple semantics. A crossing between clock domains goes through an explicit CDC primitive. The type system rejects a crossing without synchronization. This is a design goal: today the semantics has one clock, and issue #11 adds more clock domains (see [the trust document](trust.md)).
 
 ## Pipeline
 
