@@ -1,2 +1,3 @@
 // S004: a wire in a named domain belongs to a later slice.
+// expected-error S004 @+1
 module M() { wire w: T in d; }

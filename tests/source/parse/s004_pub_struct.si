@@ -1,2 +1,3 @@
 // S004: pub belongs to a later slice, also on a struct.
+// expected-error S004 @+1
 pub struct P {}

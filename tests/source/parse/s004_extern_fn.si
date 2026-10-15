@@ -1,2 +1,3 @@
 // S004: extern belongs to a later slice, also on a fn.
+// expected-error S004 @+1
 extern fn f() -> T;

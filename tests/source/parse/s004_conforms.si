@@ -1,2 +1,3 @@
 // S004: conforms belongs to a later slice.
+// expected-error S004 @+1
 module M() conforms A() using B() { }

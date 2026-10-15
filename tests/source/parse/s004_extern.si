@@ -1,2 +1,3 @@
 // S004: extern module belongs to a later slice.
+// expected-error S004 @+1
 extern module M() = "m" { }

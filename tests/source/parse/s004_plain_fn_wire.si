@@ -1,4 +1,5 @@
 // S004: a plain fn has no wire statement. A comptime fn and a module keep it.
+// expected-error S004 @+2
 fn f() -> Nat {
     wire a: Bool;
     return 1;

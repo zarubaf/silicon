@@ -1,2 +1,3 @@
 // S001: a struct parameter has comptime.
+// expected-error S001 @+1
 struct P(W: Nat) {}

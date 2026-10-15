@@ -1,2 +1,3 @@
 // S001: an @ builtin belongs to a later slice, here it is no token.
+// expected-error S001 @+1
 const A: T = @foo(1);

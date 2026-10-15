@@ -1,2 +1,3 @@
 // S004: a builtin as an assignment target belongs to a later slice.
+// expected-error S004 @+1
 module M() { @field(x, "f") = 1; }

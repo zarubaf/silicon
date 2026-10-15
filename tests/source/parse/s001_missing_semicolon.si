@@ -1,3 +1,4 @@
 // S001: a missing semicolon, found at the next token.
+// expected-error S001 @+2
 const A: T = 1
 const B: T = 2;

@@ -1,2 +1,3 @@
 // S004: slice 1 has one domain or none.
+// expected-error S004 @+1
 module M() domains(a, b) { }

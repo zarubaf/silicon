@@ -1,3 +1,4 @@
 // S001: a string without the closing quote.
+// expected-error S001 @+1
 const A: Str = "open;
 const B: T = 1;

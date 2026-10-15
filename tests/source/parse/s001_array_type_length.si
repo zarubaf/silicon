@@ -1,2 +1,3 @@
 // S001: the type `[T; N]` needs a length.
+// expected-error S001 @+1
 const A: [Nat; ] = x;

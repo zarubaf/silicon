@@ -1,3 +1,4 @@
 // S001: the file ends inside a module body.
+// expected-error S001 @+3
 module M() {
     let a = 1;
