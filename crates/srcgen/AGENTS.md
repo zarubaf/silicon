@@ -20,7 +20,7 @@ The static evaluator models only the programs that the builder makes. It works o
 - The builder of `typed()` gives no fault on the tested tapes. Each program lexes with no error, and each form of slice 2 occurs in at least 10% of 256 programs. Check: `cargo nextest run -p srcgen`.
 - The builder calls no function that runs a `diagnostic` in a width, a `const`, a struct argument, a parameter type, or a hardware arm. Check: `cargo nextest run -p srcgen`.
 - A type expression that reads a mutable root is not reused after a write to the root. Check: `cargo nextest run -p srcgen`.
-- The records of `Program::records()` come from the contexts of the builder, with no second identity rule (ADR 0018). The walk of the records and the builder reach equal tuples. The emitted names follow the rule of section 7.1, with its own digest. Check: `cargo nextest run -p srcgen`.
+- The records of `Program::records()` come from the contexts of the builder, with no second identity rule (ADR 0018). The walk of the records and the builder reach equal tuples. The emitted names follow the rule of section 7.1, and the digest uses `sha2`. A parent record after a child record occurs in at least 1 program in 32 of 256. Both front ends accept each program, so the records before an error line have no prediction. Nested frames and other values wait for #244. Check: `cargo nextest run -p srcgen`.
 - Each twin of a `typed()` program lexes with no error, and it has no comptime construct and no static name. Check: `cargo nextest run -p srcgen`.
 - Each mutant differs from its program and lexes with no error token. A prediction holds on the slice-2 forms, or it is `None`. Check: `cargo nextest run -p srcgen`.
 - A prediction of `ValueWindow` or of the four `S016` kinds holds only at a site that always runs. A condition of an arm is a port, a register, or the negation of one. Else the prediction is `None`. Check: `cargo nextest run -p srcgen`.
@@ -29,7 +29,7 @@ The static evaluator models only the programs that the builder makes. It works o
 
 ## Dependencies
 
-This crate uses `syntax` for the lexer, `core-ir` with its feature `gen`, `num-bigint`, and `proptest`. Its only normal user is `xtask`.
+This crate uses `syntax` for the lexer, `core-ir` with its feature `gen`, `num-bigint`, `sha2`, and `proptest`. Its only normal user is `xtask`.
 
 ## How to test
 
