@@ -230,6 +230,13 @@ impl Agg {
                 _ => Value::Record(ty, vs),
             });
         }
+        // `normalize` turns a reference without a hardware leaf into a static value, so a node
+        // with no hardware leaf has static parts only, and `heavy` points at a part that holds
+        // a leaf whenever the node has one.
+        debug_assert!(
+            node.leaves > 0 || xs.iter().all(|x| matches!(x, Agg::Static(_))),
+            "a node without a hardware leaf holds a part that is no static value"
+        );
         match tys.get(ty) {
             Ty::Array(..) => Agg::Array(node, Parts(xs)),
             Ty::Tuple(_) => Agg::Tuple(node, Parts(xs)),
