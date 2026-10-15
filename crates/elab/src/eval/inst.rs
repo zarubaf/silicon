@@ -7,25 +7,33 @@
 //!
 //! The table of instantiations is normative. An `instance` statement works in these steps:
 //!
-//! 1. It evaluates the arguments from left to right. Each argument is static (`S011`). A
-//!    literal with `[]` takes the type of its parameter.
-//! 2. It charges the recursive size of the arguments, also for a done instantiation. Then the
-//!    serialization charges the square of the size of each integer, and its length in bytes.
+//! 1. It evaluates the arguments from left to right. Each argument is static (`S011`).
+//! 2. The typed use of the arguments nests one level (`S015`), in the scope of the module with
+//!    a new frame. Each parameter type evaluates in order, with each earlier parameter bound
+//!    to its converted argument. An error in it is at its own node. A literal with `[]` takes
+//!    this type. The argument converts to it: `S010` or `S012` at the statement. Then the
+//!    recursive size of the converted arguments charges, also for a done instantiation.
 //! 3. A clocked child in a combinational module is `S017` at the statement.
-//! 4. An instantiation in progress is `S019` at the statement. A done one gives its
+//! 4. The serialization charges the square of the size of each integer, and its length in
+//!    bytes. An instantiation in progress is `S019` at the statement. A done one gives its
 //!    interface.
 //! 5. A new one nests one level deeper (`S015`). Its emitted name charges its length in
 //!    bytes, and it must be new (`S019`). Then it goes in progress, runs its body, checks its
 //!    bindings, and is done.
 //!
-//! The units of an instantiation are its charges from the start of its parameters to the end
-//! of its binding check, without the units of its new children. The charges of an `instance`
-//! statement belong to the parent. The arguments of the top selection belong to no
-//! instantiation.
+//! The `InstantiationId` holds the converted arguments, so `C(1)` and `C(UInt[8](1))` give one
+//! instantiation when the parameter of `C` has the type `UInt[8]`. The parameters of a new
+//! instantiation bind to the converted arguments with their types. The types do not evaluate
+//! again, and the child charges nothing for them.
+//!
+//! The units of an instantiation are its charges from the start of its body to the end of its
+//! binding check, without the units of its new children. The charges of an `instance`
+//! statement, with the typed use of its arguments, belong to the parent. The arguments of the
+//! top selection and their typed use belong to no instantiation.
 
 use super::{Evaluator, Let, Out, ROOT, Res, Slot, fail, need};
 use crate::agg::{Agg, Base};
-use crate::hw::{Graph, Handle, Kind, Port, Seen, Val, port_name};
+use crate::hw::{Graph, Handle, Kind, Port, Root, Seen, Val, port_name};
 use crate::int::Int;
 use crate::names::{Name, PathId, Paths, Sym, encode, module_name};
 use crate::ops::int_text;
@@ -359,14 +367,8 @@ impl Literal {
 }
 
 /// The elaboration of the top selection at `pos`: the module item `top` with the literal
-/// arguments `xs`. The arguments charge as those of an `instance` statement.
-/// An argument after `settle_arguments`: kept as it is, or bound in the frame by its
-/// parameter.
-enum Kept {
-    Arg(Out),
-    Bound(resolve::DeclId),
-}
-
+/// arguments `xs`. The arguments get their typed use and charge as those of an `instance`
+/// statement.
 pub(crate) fn elaborate(
     file: &Resolved,
     budget: Budget,
@@ -433,16 +435,12 @@ impl Evaluator<'_> {
     /// The instantiation of the top selection at `pos`: the module item `top` with the literal
     /// arguments `xs`. The result is the index of its done instantiation.
     fn top_selection(&mut self, pos: Pos, top: usize, xs: Vec<Literal>) -> Res<usize> {
-        let mut vs = Vec::with_capacity(xs.len());
+        let mut outs = Vec::with_capacity(xs.len());
         for x in xs {
-            vs.push(self.literal(x)?);
+            outs.push(Out::Made(Val::Static(self.literal(x)?)));
         }
-        let mut sizes = 0u128;
-        for v in &vs {
-            sizes += u128::from(v.size());
-        }
-        self.charge(pos, sizes)?;
-        self.instantiate(pos, top, vs)
+        let args = self.typed_use(pos, top, outs)?;
+        self.instantiate(pos, top, args)
     }
 
     /// A literal of the top selection, as `eval` charges it.
@@ -579,103 +577,80 @@ impl Evaluator<'_> {
         }
     }
 
-    /// The arguments of an instantiation of the item `i` at `pos`, from left to right. Each
-    /// argument is static (`S011`) when it evaluates. A literal with `[]` takes the type of its
-    /// parameter, as the argument of a call does. Its parameter type then evaluates in the
-    /// scope of the module, with each earlier parameter bound to its argument. The parent pays
-    /// this work.
-    fn arguments(&mut self, pos: Pos, i: usize, xs: &[Expr]) -> Res<Vec<Out>> {
+    /// The arguments of an instantiation of the item `i` at `pos`, from left to right, after
+    /// their typed use (`typed_use`). Each argument is static (`S011`) when it evaluates. The
+    /// parent pays this work.
+    fn arguments(&mut self, pos: Pos, i: usize, xs: &[Expr]) -> Res<Vec<(TyId, Value)>> {
         let base = self.store.parked.len();
-        let mut waiting = false;
         for x in xs {
             let o = self.eval(x)?;
             let o = need(x, o)?;
-            if matches!(self.store.seen(&o), Seen::Pending(..)) {
-                waiting = true;
-            } else {
+            if !matches!(self.store.seen(&o), Seen::Pending(..)) {
                 self.check_static(pos, &o)?;
             }
             self.store.park(o);
         }
         let outs = self.store.resume(base);
-        if let Some(Item::Module { params, .. }) = self.file.ast().get(i)
-            && waiting
-            && params.len() == outs.len()
-        {
-            return self.in_frame(None, |ev| {
-                ev.in_item(i, ROOT, |ev| ev.settle_arguments(pos, params, outs))
-            });
-        }
-        for o in &outs {
-            self.check_static(pos, o)?;
-        }
-        Ok(outs)
+        self.typed_use(pos, i, outs)
     }
 
-    /// The arguments in the scope of the module: a literal that waits takes the type of its
-    /// parameter. Each parameter stays bound for the types after it. The values leave the
-    /// frame at the end.
-    ///
-    /// An argument that refers to a value of the caller stays a reference: its parameter
-    /// links to it, and the instance statement pays its copy after all arguments, as Lean
-    /// charges them. Thus no argument copies before its charge.
-    fn settle_arguments(&mut self, pos: Pos, params: &[Param], outs: Vec<Out>) -> Res<Vec<Out>> {
-        let frame = self.store.frames.len().saturating_sub(1);
-        let settled = self.settle_linked(pos, params, outs, frame);
-        self.store.unlink(frame);
-        settled
+    /// The typed use of the evaluated arguments `outs` of the module item `i` at `pos`. It
+    /// nests one level, in the scope of the module with a new frame, also for a repeat and for
+    /// a module without parameters. Each parameter type evaluates there with each earlier
+    /// parameter bound to its converted argument (`bind_params`). Then the recursive size of
+    /// the converted arguments charges, inside the frame. Only after that charge do the values
+    /// leave the frame: a converted value moves out, and an argument that already has the type
+    /// copies from its caller. The result is each parameter type with its converted argument.
+    fn typed_use(&mut self, pos: Pos, i: usize, outs: Vec<Out>) -> Res<Vec<(TyId, Value)>> {
+        let file = self.file;
+        let Some(Item::Module { params, .. }) = file.ast().get(i) else {
+            return fail(Code::S010, pos, "an instance needs a module".to_owned());
+        };
+        self.nested(pos, |ev| {
+            ev.in_frame(None, |ev| {
+                ev.in_item(i, ROOT, |ev| {
+                    let frame = ev.store.frames.len().saturating_sub(1);
+                    let args = ev.charged_arguments(pos, params, outs, frame);
+                    ev.store.unlink(frame);
+                    args
+                })
+            })
+        })
     }
 
-    /// `settle_arguments` in the frame `frame`.
-    fn settle_linked(
+    /// `typed_use` in the frame `frame`.
+    fn charged_arguments(
         &mut self,
         pos: Pos,
         params: &[Param],
         outs: Vec<Out>,
         frame: usize,
-    ) -> Res<Vec<Out>> {
-        let mut kept = Vec::with_capacity(outs.len());
-        for (q, o) in params.iter().zip(outs) {
-            let o = if matches!(self.store.seen(&o), Seen::Pending(..)) {
-                let t = self.type_expr(&q.ty)?;
-                self.settle(pos, t, o)?
-            } else {
-                o
-            };
-            if let Out::Ref(r) = &o {
-                self.check_static(pos, &o)?;
-                let id = self.decl(&q.name)?;
-                self.store.link(frame, id, r.clone());
-                kept.push(Kept::Arg(o));
-                continue;
-            }
-            let x = self.static_value(pos, o)?;
+    ) -> Res<Vec<(TyId, Value)>> {
+        let bound = self.bind_params(pos, params, outs)?;
+        let mut sizes = 0u128;
+        for (_, o) in &bound {
+            sizes += self.size(o);
+        }
+        self.charge(pos, sizes)?;
+        let mut args = Vec::with_capacity(bound.len());
+        for ((t, o), q) in bound.into_iter().zip(params) {
             let id = self.decl(&q.name)?;
-            let ty = Some(x.ty(&mut self.tys));
-            self.bind(
-                id,
-                Slot {
-                    ty,
-                    mutable: false,
-                    value: Val::Static(x),
-                },
-            );
-            kept.push(Kept::Bound(id));
+            let local = matches!(&o, Out::Ref(r) if r.root == Root::Local(frame, id));
+            let slot = if local {
+                self.store.frame_mut().and_then(|f| f.remove(&id))
+            } else {
+                None
+            };
+            let value = match slot {
+                Some(Slot {
+                    value: Val::Static(v),
+                    ..
+                }) => v,
+                _ => self.static_value(pos, o)?,
+            };
+            args.push((t, value));
         }
-        let mut done = Vec::with_capacity(kept.len());
-        for k in kept {
-            match k {
-                Kept::Arg(o) => done.push(o),
-                Kept::Bound(id) => {
-                    if let Some(Slot { value, .. }) =
-                        self.store.frame_mut().and_then(|f| f.remove(&id))
-                    {
-                        done.push(Out::Made(value));
-                    }
-                }
-            }
-        }
-        Ok(done)
+        Ok(args)
     }
 
     /// A `reg` statement. A register in a combinational module is `S017` before its type.
@@ -832,16 +807,7 @@ impl Evaluator<'_> {
             _ => None,
         }
         .unwrap_or(usize::MAX);
-        let outs = self.arguments(pos, i, args)?;
-        let mut sizes = 0u128;
-        for o in &outs {
-            sizes += self.size(o);
-        }
-        self.charge(pos, sizes)?;
-        let mut vs = Vec::with_capacity(outs.len());
-        for o in outs {
-            vs.push(self.static_value(pos, o)?);
-        }
+        let args = self.arguments(pos, i, args)?;
         if let Some(Item::Module {
             name: m, domains, ..
         }) = self.file.ast().get(i)
@@ -855,7 +821,7 @@ impl Evaluator<'_> {
                 );
             }
         }
-        let done = self.instantiate(pos, i, vs)?;
+        let done = self.instantiate(pos, i, args)?;
         let id = self.decl(name)?;
         let path = self.fresh(id);
         let k = self.elab.work.body.children.len();
@@ -1140,9 +1106,11 @@ impl Evaluator<'_> {
         Ok(InstantiationId::render(module, &parts))
     }
 
-    /// The instantiation of the module item `i` with the arguments `vs`, for the statement at
-    /// `pos`. The result is the index of the done instantiation.
-    fn instantiate(&mut self, pos: Pos, i: usize, vs: Vec<Value>) -> Res<usize> {
+    /// The instantiation of the module item `i` with the converted arguments `args` and their
+    /// parameter types, for the statement at `pos`. The parameters bind to them with no
+    /// charge. The result is the index of the done instantiation.
+    fn instantiate(&mut self, pos: Pos, i: usize, args: Vec<(TyId, Value)>) -> Res<usize> {
+        let (types, vs): (Vec<TyId>, Vec<Value>) = args.into_iter().unzip();
         let file = self.file;
         let Some(Item::Module {
             pos: mp,
@@ -1200,16 +1168,14 @@ impl Evaluator<'_> {
             let outer_calls = std::mem::take(&mut ev.calls);
             let ran = ev.in_frame(None, |ev| {
                 ev.in_item(i, ROOT, |ev| {
-                    for (q, v) in params.iter().zip(args) {
-                        let t = ev.type_expr(&q.ty)?;
-                        let x = ev.conform(pos, t, Out::Made(Val::Static(v)))?;
+                    for ((q, t), v) in params.iter().zip(types).zip(args) {
                         let qid = ev.decl(&q.name)?;
                         ev.bind(
                             qid,
                             Slot {
                                 ty: Some(t),
                                 mutable: false,
-                                value: Val::Static(x),
+                                value: Val::Static(v),
                             },
                         );
                     }

@@ -808,11 +808,11 @@ const TOPS: &str = "module Counter(comptime W: Nat, comptime E: Bool) {\n}\n\
 fn cost_prints_the_total_and_the_units_of_each_instantiation() -> Test {
     assert_eq!(
         cost(TOPS, "Counter(8, true)", &[])?,
-        ("total 114\nCounter$8$1b 34\n".to_owned(), Some(0))
+        ("total 114\nCounter$8$1b 32\n".to_owned(), Some(0))
     );
     assert_eq!(
         cost(TOPS, "Top", &[])?,
-        ("total 325\nCounter$8$1b 34\nTop 257\n".to_owned(), Some(0))
+        ("total 327\nCounter$8$1b 32\nTop 261\n".to_owned(), Some(0))
     );
     Ok(())
 }
