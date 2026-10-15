@@ -20,8 +20,9 @@ These rules settle the open points of the spec:
 - A digest is `0h` and at least one lowercase hexadecimal digit.
 - `encode` adds the field `0k` to a name with only one field that equals a core keyword. The
   name structure has no field for it. `decode` removes it, and it accepts `0k` only there.
-- The readable module name needs each argument to be an integer or a Boolean, and at most 64
-  bytes for the full name. The rule also holds for a module without arguments.
+- The readable module name needs each argument to be an integer, a finite integer, or a
+  Boolean. Each integer is below `2^256` in magnitude, and the full name has at most 64 bytes.
+  The rule also holds for a module without arguments.
 - The digest form hashes the serialization of the `InstantiationId`. The digest function is a
   parameter, so a test can make two identities share a digest.
 -/
@@ -158,9 +159,18 @@ def Path.name (p : Path) : Name := ⟨p.outer, p.inner.reverse⟩
 /-! The first 16 hexadecimal digits of the SHA-256 of `s`: the digest of section 7.1. -/
 def sha16 (s : String) : String := (Sha256.hex (Sha256.hash s.toUTF8)).take 16 |>.toString
 
-/-! The readable token of an argument. An integer above 256 bits has more than 64 digits. -/
+/-! The readable token of an integer. An integer above 256 bits has more than 64 digits. -/
+def intToken (n : Int) : Option Field := if n.natAbs.log2 < 256 then some (.int n) else none
+
+/-!
+The readable token of an argument. A finite integer gives the token of its integer value. Each
+parameter type follows from the module and the earlier arguments, so the name stays injective
+for one module.
+-/
 def readable : Value → Option Field
-  | .int n => if n.natAbs.log2 < 256 then some (.int n) else none
+  | .int n => intToken n
+  | .uint _ v => intToken v.toNat
+  | .sint _ v => intToken v.toInt
   | .bool b => some (.bool b)
   | _ => none
 

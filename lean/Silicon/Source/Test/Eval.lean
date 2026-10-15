@@ -364,8 +364,8 @@ def deep : String :=
 A chain of 300 acyclic constants. `eval` nests the 300 constants. The top selection nests one
 level more, as section 11.3 states. The typed use of the argument evaluates the parameter type.
 Thus the depth 301 passes, and 300 gives `S015`. The typed use belongs to the top selection, not
-to `Top`. The argument converts to `UInt[300]`, a finite value, so the emitted name has the
-digest form.
+to `Top`. The argument converts to `UInt[300]`, a finite integer, so the emitted name is
+`Top$5`.
 -/
 def chain : String := Id.run do
   let mut s := "const C0: Nat = 0;\n"
@@ -376,8 +376,7 @@ def chain : String := Id.run do
 #guard exact chain "C299" 2097
 #guard out chain "C299" (depth := 299) == "S015 2:17"
 #guard top chain "Top(5)" (depth := 301) ==
-  s!"total {cost chain "C299" + 173}\nTop$0h{Names.sha16 "(instantiation root Top ((uint 300 5)))"
-    } 43\n"
+  s!"total {cost chain "C299" + 122}\nTop$5 26\n"
 #guard top chain "Top(5)" (depth := 300) == "S015 2:17"
 
 /-!
