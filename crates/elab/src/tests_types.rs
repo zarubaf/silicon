@@ -4,7 +4,7 @@
 //! The tests of the work count the steps of the table and not the time, so a walk that does
 //! not share the parts of a type fails them.
 
-use crate::tests::{exact, message, out, serialized_len, type_work};
+use crate::tests::{exact, message, out, path_steps, serialized_len, type_work};
 use std::fmt::Write;
 
 /// The result of `eval` with the default budgets.
@@ -557,4 +557,63 @@ fn an_error_in_the_prelude_struct_reports_at_the_use() {
         &[(0, 1, "S015 1:1"), (2, 2, "S015 1:14"), (3, 20, "S015 1:1")],
         (21, "(type (struct prelude ReadResponse ((type bool))))"),
     );
+}
+
+/// A struct with `uses` fields that use its parameter `n` in their types, and a use of the
+/// struct whose argument is the leaf of a nested array of the depth `depth`.
+fn linked_path(depth: usize, uses: usize) -> String {
+    let fields = (0..uses)
+        .map(|i| format!("f{i}: UInt[n], g{i}: Q[n]"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "struct Q(comptime m: Nat) {{ x: UInt[m] }}\n\
+         struct P(comptime n: Nat) {{ {fields} }}\n\
+         fn f() -> Int {{ let a = {}3{}; type S = P[a{}]; return 0; }}",
+        "[".repeat(depth),
+        "]".repeat(depth),
+        "[0]".repeat(depth)
+    )
+}
+
+/// The argument walks its path a constant number of times, and a use of the parameter in a
+/// field type walks nothing: the steps do not grow with the uses, and the steps of the depth
+/// are the same for any number of uses.
+#[test]
+fn the_uses_of_a_parameter_linked_to_a_deep_path_do_constant_work() {
+    let steps = |depth: usize, uses: usize| path_steps(&linked_path(depth, uses), "f()");
+    let (base, more_uses) = (steps(100, 100), steps(100, 200));
+    assert_eq!(more_uses, base, "{base} {more_uses}");
+    assert_eq!(steps(200, 200) - steps(200, 100), 0);
+}
+
+/// `k` parameters of one array of `len` elements, all linked to the same element of `a`.
+fn linked_target(len: usize, k: usize) -> String {
+    let xs = vec!["0"; len].join(", ");
+    let params = (0..k)
+        .map(|i| format!("comptime x{i}: [Nat; {len}]"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let args = vec!["a[0]"; k].join(", ");
+    format!(
+        "struct P({params}) {{ v: Bool }}\n\
+         const X: [Nat; {len}] = [{xs}];\n\
+         fn f() -> Int {{ let a = [X]; type S = P[{args}]; return 0; }}"
+    )
+}
+
+/// The copies of the targets wait for the charge of the argument sizes. A run that fails at
+/// that charge copies none, so its work does not grow with `k` times the size of the target.
+#[test]
+fn a_failed_charge_copies_no_linked_target() {
+    let cloned = |k: usize| {
+        let src = linked_target(1000, k);
+        // The sizes of the `k` arguments charge twice at a first use, after the copies of the
+        // targets would run. This fuel stops the run at the first charge.
+        let fuel = crate::tests::cost(&src, "f()") - 1000 * k as u64 - 1500;
+        let text = crate::tests::out(&src, "f()", fuel, 1000);
+        assert!(text.starts_with("S015"), "{text}");
+        crate::counters::of(fuel).cloned
+    };
+    assert_eq!(cloned(4), cloned(16));
 }

@@ -350,13 +350,11 @@ impl Evaluator<'_> {
         args: Vec<Out>,
     ) -> Res<TyId> {
         self.binding.push(i);
-        let keys: Vec<Out> = self
-            .bind_params(pos, params, args)?
-            .into_iter()
-            .map(|(_, o)| o)
-            .collect();
+        let bound = self.bind_params(pos, params, args)?;
         self.binding.pop();
-        self.first_or_later_use(pos, name, i, &keys, fields)
+        let deep = self.deep_links(params, &bound)?;
+        let keys: Vec<Out> = bound.into_iter().map(|(_, o)| o).collect();
+        self.first_or_later_use(pos, name, i, (&keys, deep), fields)
     }
 
     /// The typed uses at `pos` of the arguments `args` at the parameters `params`, in order,
@@ -417,6 +415,45 @@ impl Evaluator<'_> {
         }
     }
 
+    /// The parameters that link to an argument with a path, with their types. A link keeps the
+    /// caller's reference, so nothing copies before a charge pays.
+    fn deep_links(
+        &mut self,
+        params: &[Param],
+        bound: &[(TyId, Out)],
+    ) -> Res<Vec<(DeclId, TyId, Ref)>> {
+        let mut deep = Vec::new();
+        for (q, (t, o)) in params.iter().zip(bound) {
+            if let Out::Ref(r) = o
+                && !r.path.is_empty()
+            {
+                deep.push((self.decl(&q.name)?, *t, r.clone()));
+            }
+        }
+        Ok(deep)
+    }
+
+    /// Binds each deep link to a copy of its target in the frame of the struct. A use of the
+    /// parameter then reads a local and walks no path. The caller runs this after the charge of
+    /// the argument sizes, which counts each target once for each link, so the copies cost at
+    /// most that charge. The uses of a linked parameter in the later parameter types come
+    /// before the charge: each walks the path of its link, so the work is at most the number of
+    /// type nodes of the parameters times the length of the path, which the evaluation of the
+    /// argument expression walked once in the same call.
+    fn copy_deep_links(&mut self, deep: Vec<(DeclId, TyId, Ref)>) {
+        for (id, t, r) in deep {
+            let value = self.store.value_at(&r).clone();
+            self.bind(
+                id,
+                Slot {
+                    ty: Some(t),
+                    mutable: false,
+                    value: Val::Static(value),
+                },
+            );
+        }
+    }
+
     /// The specialization of the struct item `i` with the arguments `keys`. Each use charges
     /// the sizes of the arguments before the lookup, which hashes and compares them in full.
     /// A done entry charges nothing more. A first use charges the size of the struct type,
@@ -427,7 +464,7 @@ impl Evaluator<'_> {
         pos: Pos,
         name: &Ident,
         i: usize,
-        keys: &[Out],
+        (keys, deep): (&[Out], Vec<(DeclId, TyId, Ref)>),
         fields: &[StructField],
     ) -> Res<TyId> {
         let values: Vec<&Value> = keys.iter().map(|o| self.store.value(o)).collect();
@@ -453,6 +490,7 @@ impl Evaluator<'_> {
         let args: Vec<Value> = values.into_iter().cloned().collect();
         let prelude = self.file.is_prelude_item(i);
         let s = self.tys.begin_spec(&name.name, i, args, prelude);
+        self.copy_deep_links(deep);
         let mut types = Vec::with_capacity(fields.len());
         for f in fields {
             types.push(self.type_expr(&f.ty)?);
