@@ -1208,12 +1208,12 @@ pub(crate) fn run(
     let out = need(e, out)?;
     let value = ev.static_value(expr_pos(e), out)?;
     let used = budget.fuel - ev.fuel.left();
-    let evaluated = Evaluated {
-        value,
-        types: ev.tys,
-        #[cfg(test)]
-        steps: ev.store.steps.get(),
-    };
+    #[cfg_attr(not(test), allow(unused_mut))]
+    let mut evaluated = Evaluated::new(value, ev.tys);
+    #[cfg(test)]
+    {
+        evaluated.steps = ev.store.steps.get();
+    }
     Ok((evaluated, used))
 }
 
