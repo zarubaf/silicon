@@ -101,12 +101,19 @@ fn reached_inputs(
     }
 }
 
+/// The comparisons that the sort of `len` elements takes, up to a constant:
+/// `len` times the bit length of `len`.
+fn sort_steps(len: usize) -> usize {
+    usize::try_from(usize::BITS - len.leading_zeros()).unwrap_or(0)
+}
+
 fn reached_by_output(
     graph: &Graph,
     outputs: &[usize],
     input_count: usize,
 ) -> (Vec<Vec<usize>>, usize) {
-    let mut work = 0;
+    // The two tables are initialized once.
+    let mut work = graph.nodes.len() + input_count;
     let mut visited = vec![usize::MAX; graph.nodes.len()];
     let mut input_seen = vec![usize::MAX; input_count];
     let mut sets = Vec::with_capacity(outputs.len());
@@ -129,7 +136,7 @@ fn reached_by_output(
                 }
             }
         }
-        work += found.len();
+        work += found.len() * sort_steps(found.len());
         found.sort_unstable();
         sets.push(found);
     }
@@ -141,7 +148,8 @@ fn reached_by_input(
     outputs: &[usize],
     input_count: usize,
 ) -> (Vec<Vec<usize>>, usize) {
-    let mut work = graph.nodes.len();
+    // The tables are initialized once.
+    let mut work = 3 * graph.nodes.len() + input_count + outputs.len();
     let mut readers: Vec<Vec<usize>> = vec![Vec::new(); graph.nodes.len()];
     let mut seeds: Vec<Vec<usize>> = vec![Vec::new(); input_count];
     for v in 0..graph.nodes.len() {
@@ -518,6 +526,17 @@ mod tests {
             }
             one_output(n, lets)
         });
+    }
+
+    #[test]
+    fn unused_inputs_add_to_the_work() {
+        let shape = |inputs: usize| {
+            let names: Vec<String> = (0..inputs).map(|i| format!("i{i}")).collect();
+            let names: Vec<&str> = names.iter().map(String::as_str).collect();
+            module(&names, &["y"], vec![], vec![input(0)])
+        };
+        let (few, many) = (work(&shape(10)), work(&shape(1_000)));
+        assert!(many >= few + 990, "{few} then {many}");
     }
 
     #[test]
