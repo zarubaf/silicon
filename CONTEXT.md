@@ -146,7 +146,7 @@ The identity of a module: a `PackageId` and the qualified declaration path.
 
 ### InstantiationId
 
-The identity of an instantiation: a `ModuleId` and the canonical elaboration inputs.
+The identity of an instantiation: a `ModuleId` and the module arguments after their typed use at the parameter types.
 
 ### uniquification
 
