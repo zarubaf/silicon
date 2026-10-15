@@ -11,12 +11,15 @@ bindings, child instances, and `:=` bindings.
 
 The table of instantiations is normative. An `instance` statement works in these steps:
 
-1. It evaluates the arguments from left to right. Each argument is static (`S011`). A literal
-   with `[]` takes the type of its parameter (`arguments`).
-2. It charges the recursive size of the arguments, also for a done instantiation. Then the
-   serialization charges the square of the size of each integer, and its length in bytes.
+1. It evaluates the arguments from left to right. Each argument is static (`S011`).
+2. The typed use of the arguments nests one level (`S015`), in the scope of the module with a
+   new frame (`arguments`). Each parameter type evaluates in order, with each earlier parameter
+   bound to its converted argument. An error in it is at its own node. A literal with `[]`
+   takes this type. The argument converts to it: `S010` or `S012` at the statement. Then the
+   recursive size of the converted arguments charges, also for a done instantiation.
 3. A clocked child in a combinational module is `S017` at the statement.
-4. An instantiation in progress is `S019` at the statement. A done one gives its interface.
+4. The serialization charges the square of the size of each integer, and its length in bytes.
+   An instantiation in progress is `S019` at the statement. A done one gives its interface.
 5. A new one nests one level deeper (`S015`). Its emitted name charges its length in bytes,
    and it must be new (`S019`). Then it goes in progress, runs its body, checks its bindings,
    and is done.
@@ -24,8 +27,10 @@ The table of instantiations is normative. An `instance` statement works in these
 A new instantiation sets the emitted name of its records and starts with no call frames. A done
 instantiation does not run its body again, so its records come out once (decision F15).
 
-The `InstantiationId` holds the arguments as they evaluate, before the typed use at the
-parameters. The parameters then bind in the body of the new instantiation, as a typed use.
+The `InstantiationId` holds the converted arguments. Thus `C(1)` and `C(UInt[8](1))` give one
+instantiation when the parameter of `C` has the type `UInt[8]`. The parameters of a new
+instantiation bind to the converted arguments with their types. The types do not evaluate again,
+and the child charges nothing for them.
 
 These rules settle the open points of slice 1:
 
@@ -69,10 +74,10 @@ These rules settle the open points of slice 1:
   statement are structural contexts. A function declares no resource and binds nothing.
 - The owner guard of section 9.5 has no check in slice 1. Module arguments are static
   (`S011`), and ports carry data, so a handle cannot reach another owner.
-- The units of an instantiation are its charges from the start of its parameters to the end
-  of its binding check. The units of its new children are not part of them. The charges of
-  an `instance` statement belong to the parent. The arguments of the top selection belong to
-  no instantiation.
+- The units of an instantiation are its charges from the start of its body to the end of its
+  binding check. The units of its new children are not part of them. The charges of an
+  `instance` statement, with the typed use of its arguments, belong to the parent. The
+  arguments of the top selection and their typed use belong to no instantiation.
 
 Each table grows only with charged work: a new instantiation charges its body, and each
 declaration, binding, and child charges its statement.
@@ -384,12 +389,16 @@ def serialize (pos : Pos) (m : String) (vs : List Value) : EM String := do
   return InstantiationId.render m parts
 
 /-!
-The arguments of an instantiation of the item `i` at `pos`, from left to right. Each argument is
-static (`S011`) when it evaluates. A literal with `[]` takes the type of its parameter, as the
-argument of a call does. Its parameter type then evaluates in the scope of the module, with each
-earlier parameter bound to its argument. The parent pays this work.
+The arguments of an instantiation of the item `i` at `pos`, from left to right, after their
+typed use (section 5.3). Each argument is static (`S011`) when it evaluates. Then the typed use
+nests one level, in the scope of the module with a new frame (`Eval.bindParams`). Each parameter
+type evaluates there, with each earlier parameter bound to its converted argument. The argument
+converts to it, and a literal with `[]` takes this type. Then the recursive size of the
+converted arguments charges. The parent pays this work. The result is each parameter type with
+its converted argument.
 -/
-def arguments (n : Nat) (pos : Pos) (i : Nat) (xs : List Resolve.Expr) : EM (List Value) := do
+def arguments (n : Nat) (pos : Pos) (i : Nat) (xs : List Resolve.Expr) :
+    EM (List (Ty × Value)) := do
   let os ← xs.mapM fun x => do
     let o ← need x (← eval n x)
     let v ← match o.value with
@@ -398,19 +407,13 @@ def arguments (n : Nat) (pos : Pos) (i : Nat) (xs : List Resolve.Expr) : EM (Lis
     hold o
     return (v, o)
   for (_, o) in os do release o
-  let vs := os.map (·.1)
-  match (← read).items[i]? with
-  | some (.module _ _ ps _ _) =>
-    if vs.any (· matches .pending ..) && ps.length == vs.length then
-      inFrame none <| withTheReader Ctx (fun c => { c with item := i, frame := ⟨none, 0⟩ }) do
-        (ps.zip vs).mapM fun (q, v) => do
-          let x ← match v with
-            | .pending .. => do static pos (← settle pos (← typeExpr n q.ty) v)
-            | v => static pos v
-          bindLocal q.name.id ⟨x.ty?, false, .static x⟩
-          return x
-    else vs.mapM fun v => do static pos v
-  | _ => vs.mapM fun v => do static pos v
+  let some (.module _ _ ps _ _) := (← read).items[i]?
+    | fail .S010 pos "an instance needs a module"
+  nested pos <| inFrame none <|
+      withTheReader Ctx (fun c => { c with item := i, frame := ⟨none, 0⟩ }) do
+    let tvs ← bindParams (typeExpr n) pos ps (os.map (·.1))
+    charge pos (tvs.map (·.2.size)).sum
+    return tvs
 
 /-! Runs `act` and gives the fuel that it uses. The result reads only a difference of fuel. -/
 def measure (act : EM α) : EM (α × Nat) := do
@@ -470,12 +473,11 @@ mutual
             | .child _ _ q => q.ty
           bindTarget p t (← sinkValue p ty (← copyUse p ty o.ref o.value))
         | .inst p u _ i xs => do
-          let vs ← arguments n p i xs
-          charge p (vs.map Value.size).sum
+          let tvs ← arguments n p i xs
           if let some (.module _ m _ ds _) := (← read).items[i]? then
             if (← get).work.body.domain.isNone && !ds.isEmpty then
               fail .S017 p s!"a combinational module has no clocked child `{m.name}`"
-          let (c, _) ← instantiate n p i vs
+          let (c, _) ← instantiate n p i tvs
           let path ← fresh u.id u.name.name
           let k := (← get).work.body.children.size
           modifyBody fun b => { b with children := b.children.push ⟨path, c, p⟩ }
@@ -509,12 +511,15 @@ mutual
   termination_by (b, 1)
 
   /--
-  The instantiation of the module item `i` with the arguments `vs`, for the statement at `pos`.
-  The result is its interface and its index among the done instantiations.
+  The instantiation of the module item `i` with the converted arguments `tvs` and their
+  parameter types, for the statement at `pos`. The parameters bind to them with no charge. The
+  result is its interface and its index among the done instantiations.
   -/
-  def instantiate (n : Nat) (pos : Pos) (i : Nat) (vs : List Value) : EM (Iface × Nat) := do
+  def instantiate (n : Nat) (pos : Pos) (i : Nat) (tvs : List (Ty × Value)) :
+      EM (Iface × Nat) := do
     let some (.module mp m ps ds body) := (← read).items[i]?
       | fail .S010 pos "an instance needs a module"
+    let vs := tvs.map (·.2)
     let id : InstantiationId := ⟨m.name, vs⟩
     let key ← serialize pos m.name vs
     let s ← get
@@ -539,9 +544,8 @@ mutual
       let (made, used) ← measure do
         inFrame none <| withTheReader Ctx (fun c =>
             { c with item := i, frame := ⟨none, 0⟩, inst := text, calls := [] }) do
-          for (q, v) in ps.zip vs do
-            let t ← typeExpr n q.ty
-            bindLocal q.name.id ⟨some t, false, .static (← conform pos t v)⟩
+          for (q, t, v) in ps.zip tvs do
+            bindLocal q.name.id ⟨some t, false, .static v⟩
           for d in ds do
             bindLocal d.id ⟨none, false, .handle (.domain d.name.name)⟩
           block n mp body
@@ -563,7 +567,8 @@ end
 
 /-!
 The elaboration of the top selection at `pos`: the module item `top` with the literal
-arguments `xs`. The arguments charge as those of an `instance` statement. The result is the
+arguments `xs`. The arguments get their typed use and charge as those of an `instance`
+statement. The result is the
 records and the design with the used fuel, or the records and the first error (section 8.2).
 -/
 def observe (budget : Budget) (items : Array Resolve.Item) (digest : String → String)
@@ -571,9 +576,8 @@ def observe (budget : Budget) (items : Array Resolve.Item) (digest : String → 
     Array Record × Except Error (Design × Nat) :=
   Eval.observeRun budget items fun n => do
     let go : EM Nat := do
-      let vs ← arguments n pos top xs
-      charge pos (vs.map Value.size).sum
-      return (← instantiate n pos top vs).2
+      let tvs ← arguments n pos top xs
+      return (← instantiate n pos top tvs).2
     let (k, s) ← go.run { digest, work := { body := { domain := none } } }
     let table := leafFields items (← get).specs
     return ⟨s.done, k, fieldsOf table⟩

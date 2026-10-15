@@ -362,11 +362,10 @@ def deep : String :=
 
 /-!
 A chain of 300 acyclic constants. `eval` nests the 300 constants. The top selection nests one
-level more, as section 11.3 states: the depth 301 passes, and 300 gives `S015`. The top adds
-59 units. Its argument charges 2, the `instance` charge 1, and the decimal form 1. Its
-serialization charges 34 bytes and `Top$5` 5 bytes. The parameter type charges 9, its
-conversion 6, and its body 1. The lowering charges 30: the module and its name 5, the domain
-ports 20, and the design and its name 5.
+level more, as section 11.3 states. The typed use of the argument evaluates the parameter type.
+Thus the depth 301 passes, and 300 gives `S015`. The typed use belongs to the top selection, not
+to `Top`. The argument converts to `UInt[300]`, a finite value, so the emitted name has the
+digest form.
 -/
 def chain : String := Id.run do
   let mut s := "const C0: Nat = 0;\n"
@@ -377,18 +376,19 @@ def chain : String := Id.run do
 #guard exact chain "C299" 2097
 #guard out chain "C299" (depth := 299) == "S015 2:17"
 #guard top chain "Top(5)" (depth := 301) ==
-  s!"total {cost chain "C299" + 89}\nTop$5 {cost chain "C299" + 41}\n"
+  s!"total {cost chain "C299" + 173}\nTop$0h{Names.sha16 "(instantiation root Top ((uint 300 5)))"
+    } 43\n"
 #guard top chain "Top(5)" (depth := 300) == "S015 2:17"
 
 /-!
 `cost` covers the top selection: its arguments with their `instance` charge, its serialization
-of 50 bytes, and its emitted name of 12 bytes. Then its instantiation charges its parameter types
-and its body. The lowering charges 42: the module and its name 11, the domain ports 20, and the
-design and its name 11.
+of 50 bytes, and its emitted name of 12 bytes. The parameter types charge at the top selection
+too, so the fuel 5 ends at the type `Bool`. Then its instantiation charges its body. The lowering
+charges 42: the module and its name 11, the domain ports 20, and the design and its name 11.
 -/
 def counter : String := "module Counter(comptime W: Nat, comptime E: Bool) {\n}"
-#guard top counter "Counter(8, true)" == "total 114\nCounter$8$1b 34\n"
-#guard top counter "Counter(8, true)" (fuel := 5) == "S015 1:1"
+#guard top counter "Counter(8, true)" == "total 114\nCounter$8$1b 32\n"
+#guard top counter "Counter(8, true)" (fuel := 5) == "S015 1:45"
 #guard top counter "Counter(-1, true)" == "S012 1:1"
 #guard top counter "Counter(8, 1)" == "S010 1:1"
 #guard top counter "Counter(8)" == "S007 1:1"
@@ -536,7 +536,7 @@ element until slice 3. A hardware index is `S011` at the index.
 def hw (body : String) : String :=
   "module M(comptime N: Nat) {\n  input x: UInt[8];\n  output y: UInt[8];\n" ++
   "  reg r: UInt[8] = 0;\n" ++ body ++ "\n  r := x;\n  y := r;\n}\n"
-#guard top (hw "  let t = (1, x);") "M(1)" == "total 146\nM$1 104\n"
+#guard top (hw "  let t = (1, x);") "M(1)" == "total 146\nM$1 103\n"
 #guard top (hw "  let t = [r];") "M(1)" == "S010 5:12"
 #guard top (hw "  let h = x +% 1;\n  let u = [1, 2][h];") "M(1)" == "S011 6:18"
 #guard top (hw "  let h = x +% 1;\n  let u: [Int; h] = [1];") "M(1)" == "S011 6:16"
@@ -2448,9 +2448,9 @@ def gb : String := "fn g(mut a: Bool) -> Int {\n  a = !a;\n  return 0;\n}\n"
 
 /-! Each new aggregate node checks its depth at its node (`S015`). -/
 #guard top (hw "  let t = [[x]];") "M(1)" (depth := 2) == "S015 5:11"
-#guard top (hw "  let t = [[x]];") "M(1)" (depth := 3) == "total 148\nM$1 106\n"
+#guard top (hw "  let t = [[x]];") "M(1)" (depth := 3) == "total 148\nM$1 105\n"
 #guard top (hw "  let t = ((x,),);") "M(1)" (depth := 2) == "S015 5:11"
-#guard top (hw "  let t = ((x,),);") "M(1)" (depth := 3) == "total 148\nM$1 106\n"
+#guard top (hw "  let t = ((x,),);") "M(1)" (depth := 3) == "total 148\nM$1 105\n"
 
 /-!
 The prelude struct `ReadResponse` acts as `struct ReadResponse(comptime T: Type) { data: T,

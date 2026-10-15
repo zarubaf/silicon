@@ -266,18 +266,17 @@ end helpers
 section walk
 variable {k m : Nat}
 
-theorem instantiate_e (ht : ∀ t, Follows m (Eval.typeExpr k t) (Eval.typeExpr m t))
-    (hb : ∀ p ss, EFollows m (block k p ss) (block m p ss)) (pos : Pos) (i : Nat)
-    (vs : List Value) : EFollows m (instantiate k pos i vs) (instantiate m pos i vs) := by
+theorem instantiate_e (hb : ∀ p ss, EFollows m (block k p ss) (block m p ss)) (pos : Pos)
+    (i : Nat) (tvs : List (Ty × Value)) :
+    EFollows m (instantiate k pos i tvs) (instantiate m pos i tvs) := by
   rw [instantiate.eq_def k, instantiate.eq_def m]
-  efollows [ht, hb, serialize_e, bindings_e, nested_e, inFrame_e, EFollows.measure, conform_f,
-    bindLocal_f]
+  efollows [hb, serialize_e, bindings_e, nested_e, inFrame_e, EFollows.measure, bindLocal_f]
 
 theorem arguments_e (he : ∀ e, Follows m (Eval.eval k e) (Eval.eval m e))
     (ht : ∀ t, Follows m (Eval.typeExpr k t) (Eval.typeExpr m t)) (pos : Pos) (i : Nat)
     (xs : List Resolve.Expr) : EFollows m (arguments k pos i xs) (arguments m pos i xs) := by
   unfold arguments
-  efollows [he, ht, need_f, static_f, settle_f, inFrame_e, bindLocal_f, hold_f, release_f]
+  efollows [he, need_f, static_f, nested_e, inFrame_e, bindParams_f ht, hold_f, release_f]
 
 end walk
 
@@ -307,14 +306,14 @@ theorem follows_all : ∀ n,
         | skip
       all_goals rcases n' with _ | m
       · refine EFollows.exhaust (cap := k) _ _ fun _ => ?_
-        efollows [hs k, hb k, instantiate_e (he.2.1 k) (hb k),
+        efollows [hs k, hb k, instantiate_e (hb k),
           arguments_e (he.1 k) (he.2.1 k), he.1 k, he.2.1 k, need_f, copy_f,
           conform_f, static_f, conformVal_f, lit_f, fresh_f, bindLocal_f, test_f, int_f, range_f,
           iteration_e, dataType_e, memWord_e, memDepth_e, port_e, resource_e, modifyBody_e,
           target_e, bindTarget_e, sinkValue_e, copyUse_f, settle_f, hold_f, release_f,
           structural_e]
       · refine EFollows.charge_one _ fun _ => ?_
-        efollows [hs m, hb m, instantiate_e (he.2.1 m) (hb m),
+        efollows [hs m, hb m, instantiate_e (hb m),
           arguments_e (he.1 m) (he.2.1 m), he.1 m, he.2.1 m, need_f, copy_f,
           conform_f, static_f, conformVal_f, lit_f, fresh_f, bindLocal_f, test_f, int_f, range_f,
           iteration_e, dataType_e, memWord_e, memDepth_e, port_e, resource_e, modifyBody_e,
@@ -340,7 +339,7 @@ theorem observe_budget {budget : Budget} {items : Array Resolve.Item}
   refine Eval.Fuel.observe_budget (fun n n' => ?_) h F
   follows [EFollows.run]
   efollows [(Eval.Fuel.follows_all n).1 n', static_f, need_f,
-    instantiate_e ((Eval.Fuel.follows_all n).2.1 n') ((follows_all n).2 n'),
+    instantiate_e ((follows_all n).2 n'),
     arguments_e ((Eval.Fuel.follows_all n).1 n') ((Eval.Fuel.follows_all n).2.1 n')]
 
 /--
