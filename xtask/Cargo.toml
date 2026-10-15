@@ -15,9 +15,11 @@ cargo_metadata = "0.23.1"
 clap = { version = "4.6.7", features = ["derive"] }
 core-ir = { path = "../crates/core-ir", features = ["gen"] }
 num-bigint = "0.4.6"
+proc-macro2 = { version = "1.0.107", features = ["span-locations"] }
 proptest = { version = "1.11.0", default-features = false, features = ["std"] }
 regex = "1.13.1"
 srcgen = { path = "../crates/srcgen" }
+syn = { version = "2.0.119", features = ["full", "visit"] }
 tempfile = "3.27.0"
 testkit = { path = "../crates/testkit" }
 toml = "1.1.7"
