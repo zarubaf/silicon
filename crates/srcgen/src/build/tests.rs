@@ -736,3 +736,30 @@ fn a_write_to_a_root_drops_the_type_of_a_register_driver() {
     assert!(text.contains("resize"), "{text}");
     assert!(!text.contains("s0"), "{text}");
 }
+
+/// The record lines cover each field that the oracle compares: a frame, a
+/// digest name, a readable name with arguments, a record in a loop, and a
+/// parent record after the record of a child.
+#[test]
+fn the_records_cover_frames_names_and_order() {
+    const TAPES: usize = 256;
+    let (mut frames, mut digests, mut args, mut resumed) = (0, 0, 0, 0);
+    for tape in tapes(TAPES) {
+        let Ok(p) = build(tape) else { continue };
+        let names: Vec<&str> = p
+            .records()
+            .iter()
+            .filter_map(|r| r.split(' ').nth(3))
+            .collect();
+        let back = |i: usize| names[..i].contains(&names[i]) && names[i - 1] != names[i];
+        frames += usize::from(p.records().iter().any(|r| r.contains("((call ")));
+        digests += usize::from(names.iter().any(|n| n.contains("$0h")));
+        args += usize::from(names.iter().any(|n| n.contains('$') && !n.contains("$0h")));
+        resumed += usize::from((1..names.len()).any(back));
+    }
+    let want = TAPES / 32;
+    assert!(
+        frames >= want && digests >= want && args >= want && resumed >= 1,
+        "frames {frames}, digests {digests}, arguments {args}, resumed {resumed}"
+    );
+}

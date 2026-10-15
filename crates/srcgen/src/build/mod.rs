@@ -50,7 +50,8 @@ pub use lines::lines;
 
 use super::eval::{Env, Fault, Scope, Value, concrete};
 use super::program::{
-    ComptimeFn, HExpr, Item, ListFn, MutFn, Ports, Program, SExpr, STy, Scalar, Stmt, StructDef, Ty,
+    ComptimeFn, HExpr, Item, ListFn, MutFn, Ports, Program, SExpr, STy, Scalar, Stmt, StructDef,
+    Ty, render_items,
 };
 use super::records::records;
 use proptest::collection::vec;
@@ -438,7 +439,7 @@ impl Builder {
             .zip(&self.contexts)
             .map(|(s, c)| (s.name.clone(), c.clone()))
             .collect();
-        let records = records(&items, &named)?;
+        let records = records(&items, &render_items(&items), ("M0", &args), &named)?;
         Ok(Program {
             items,
             top: "M0".to_owned(),
