@@ -279,6 +279,8 @@ impl Store {
                 .rev()
             {
                 if extends(e, &path) {
+                    #[cfg(test)]
+                    self.copy_counted(e.saved.as_ref().map_or(0, Value::size));
                     undo_in(&mut v, path.len(), e);
                 }
             }
@@ -308,6 +310,9 @@ impl Evaluator<'_> {
         let at = r.path.len();
         let mut v = self.store.take(out);
         for e in positions.iter().filter_map(|&e| entries.get(e)) {
+            #[cfg(test)]
+            self.store
+                .copy_counted(e.saved.as_ref().map_or(0, Value::size));
             undo_in(&mut v, at, e);
         }
         Out::Kept(v, win.root)

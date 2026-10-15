@@ -811,10 +811,36 @@ impl Store {
                 Seen::Hw(h) => Val::Hw(h),
                 Seen::Handle(h) => Val::Handle(h.clone()),
                 Seen::Pending(q, p) => Val::Pending(q, p.clone()),
-                Seen::Agg(a) => Val::Agg(Box::new(a.clone())),
+                Seen::Agg(a) => {
+                    #[cfg(test)]
+                    self.copy_counted(static_size(a));
+                    Val::Agg(Box::new(a.clone()))
+                }
             },
         }
     }
+
+    /// Counts `n` units of the recursive size that a copy made.
+    #[cfg(test)]
+    fn copy_counted(&self, n: u64) {
+        self.copied.0.set(self.copied.0.get() + n);
+    }
+}
+
+/// The recursive size of the static parts of `a`: the values that a clone of it copies. The walk
+/// keeps its own stack.
+#[cfg(test)]
+fn static_size(a: &Agg) -> u64 {
+    let mut total = 0u64;
+    let mut work = vec![a];
+    while let Some(x) = work.pop() {
+        match x {
+            Agg::Static(v) => total = total.saturating_add(v.size()),
+            Agg::Array(_, p) | Agg::Tuple(_, p) | Agg::Record(_, p) => work.extend(p.0.iter()),
+            Agg::Hw(_) | Agg::Ref(..) => {}
+        }
+    }
+    total
 }
 
 /// Which map of targets the names read: the top expression is its own parse, with its own ids.

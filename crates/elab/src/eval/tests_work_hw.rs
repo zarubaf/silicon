@@ -15,6 +15,8 @@ const FUEL: u64 = 1_000_000_000_000;
 struct Run {
     counts: Counts,
     units: u64,
+    /// The recursive size of the values that references copied.
+    copied: u64,
 }
 
 /// The run of `pre` and the statement `s` in the body of `f` with the formal `x` of the type
@@ -25,6 +27,11 @@ fn run_with(pre: &str, t: &str, s: &str, run: u64) -> Result<Run, String> {
         Some(Ok(units)) if text.contains(" | ") => Ok(Run {
             counts: counters::of(run),
             units,
+            copied: crate::eval::COPIES
+                .lock()
+                .ok()
+                .and_then(|copies| copies.get(&run).copied())
+                .unwrap_or(0),
         }),
         _ => Err(text),
     }
@@ -537,4 +544,138 @@ fn a_sibling_push_in_an_index_copies_no_parked_part() {
         )
     };
     assert_linear(at, |r| r.counts.nodes, 16, 16);
+}
+
+/// An index chain over static siblings takes steps in the depth. Each level `Si` holds the next
+/// level and a static `Bool`, and the deepest leaf is hardware. The root has many static type
+/// leaves, so no bound on them tells that a part holds a hardware leaf. The read has a `push`
+/// into a sibling list at each level, and the decision of each level follows the witness to the
+/// hardware leaf instead of walking the path from the root again.
+#[test]
+fn an_index_chain_over_static_siblings_takes_linear_steps() {
+    let at = |n: u64, k: u64| {
+        let place = rep(".a[0]", n + 1);
+        let read = rep(".a[(m.1.push(0), 0).1]", n + 1);
+        run_ok(
+            &chain_decls(
+                n,
+                "struct S{i} { a: [S{}; 1], b: Bool, }\n",
+                "struct S{i} { a: [UInt[8]; 1], b: Bool, }\n",
+            ),
+            "UInt[8]",
+            &format!("let mut m = (S0(), list(Int));\n  m.0{place} = x;\n  let y = m.0{read};"),
+            key(60, k),
+        )
+    };
+    assert_linear(at, |r| r.counts.stepped, 16, 16);
+}
+
+/// The count `of` of the run `at(n)` at most doubles when the input doubles, up to a constant
+/// `slack`. Unlike `assert_linear`, the count can be zero.
+fn assert_doubles(at: impl Fn(u64, u64) -> Run, of: fn(&Run) -> u64, slack: u64) {
+    let mut before: Option<u64> = None;
+    for (k, n) in SIZES.into_iter().enumerate() {
+        let count = of(&at(n, k as u64));
+        if let Some(b) = before {
+            assert!(count <= 2 * b + slack, "{n}: the work {b} grew to {count}");
+        }
+        before = Some(count);
+    }
+}
+
+/// A read at a part of a hardware root, with a `push` into a list part of the root in its index,
+/// copies no part of the root: the list changes in place, and the read resolves the change when
+/// its last step is known. The copied size of the values stays at most linear in the number of
+/// reads. The kinds: a sibling list, a list below a hardware node, and a `pop`.
+#[test]
+fn a_push_in_an_index_copies_no_list_for_a_read_that_misses_it() {
+    let kinds = [
+        ("(x, list(Nat))", "t[(t.1.push(1), 0).1];"),
+        (
+            "(x, list(Nat))",
+            "t[(t.1.push(1), 0).1];\n    t[(t.1.pop(), 0).1];",
+        ),
+        ("((x, list(Nat)), [1, 2])", "t.0[(t.0.1.push(1), 0).1];"),
+        (
+            "(x, list(Nat))",
+            "t[(t.1.push(1), t[(t.1.push(2), 0).1], 0).2];",
+        ),
+    ];
+    for (family, (root, read)) in (61..).zip(kinds) {
+        let at = |n: u64, k: u64| {
+            run_ok(
+                "",
+                "UInt[8]",
+                &format!("let mut t = {root};\n  comptime for i in 0..{n} {{\n    {read}\n  }}"),
+                key(family, k),
+            )
+        };
+        assert_doubles(at, |r| r.copied, 16);
+        assert_linear(at, |r| r.counts.stepped, 16, 16);
+    }
+}
+
+/// A mutation that holds the root copies the waiting read, and the held charge pays for the
+/// copy: the copy undoes the changes that came before, so the old list comes back from the log.
+/// The copied size stays within the fuel.
+#[test]
+fn a_held_read_rebuilds_the_old_value_within_its_charge() {
+    let at = |n: u64, k: u64| {
+        run_ok(
+            "",
+            "UInt[8]",
+            &format!(
+                "let mut t: (UInt[8], [UInt[8]; 2], List[Nat]) =\n    (x, [UInt[8](1), UInt[8](2)], list(Nat));\n  \
+                 comptime for i in 0..{n} {{\n    t[(t.2.push(1), 1).1][(t.2.push(2), 0).1];\n  }}"
+            ),
+            key(70, k),
+        )
+    };
+    for (k, n) in SIZES.into_iter().enumerate() {
+        let r = at(n, k as u64);
+        assert!(r.copied > 0, "{n}: no copy");
+        assert!(
+            r.copied <= r.units,
+            "{n}: copied {} for {}",
+            r.copied,
+            r.units
+        );
+    }
+}
+
+/// A read that goes through the light part of a node at each level misses its witness, and each
+/// miss walks the path from the root once. Each light part has at most half the hardware leaves
+/// of the node, so the walks are at most the logarithm of the leaves of the root plus one for
+/// each step: the depth `n` here, since the leaves double at each level.
+#[test]
+fn a_read_through_light_parts_walks_a_path_for_each_halving_of_the_leaves() {
+    for n in [3u64, 6, 9, 12] {
+        let decls: String = (0..=n)
+            .map(|i| {
+                if i == 0 {
+                    "struct L0 { c: [UInt[8]; 1], h: [UInt[8]; 1], }\n".to_owned()
+                } else {
+                    format!(
+                        "struct L{i} {{ c: [L{}; 1], h: [UInt[8]; {}], }}\n",
+                        i - 1,
+                        1u64 << i
+                    )
+                }
+            })
+            .collect();
+        let place = rep(".c[0]", n + 1);
+        let read = rep(".c[(m.1.push(0), 0).1]", n + 1);
+        let r = run_ok(
+            &decls,
+            &format!("L{n}"),
+            &format!("let mut m = (x, list(Int));\n  m.0{place} = 7;\n  let y = m.0{read};"),
+            key(71, n),
+        );
+        let walks = n + 2;
+        assert!(
+            r.counts.stepped <= 8 * (n + 1) * walks + 64,
+            "{n}: {} steps",
+            r.counts.stepped
+        );
+    }
 }
