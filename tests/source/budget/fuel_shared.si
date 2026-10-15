@@ -1,6 +1,6 @@
 // A shared hierarchy: identical instances share one module, so `cost` lists 31
 // instantiations and the total stays linear in the depth.
-// FUEL 4612
+// FUEL 4642
 // TOP M(30)
 module M(comptime d: Nat) domains() {
     input a: UInt[1];
