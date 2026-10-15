@@ -158,6 +158,7 @@ pub(crate) struct Port {
     pub sym: Sym,
     pub input: bool,
     pub ty: Ty,
+    pub pos: Pos,
 }
 
 /// A handle. Its number indexes the resources or the instances of its instantiation. An
