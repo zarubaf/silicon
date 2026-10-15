@@ -86,6 +86,8 @@ pub(crate) struct Counts {
     pub formatted: u64,
     /// The powers of ten that the exact check of a digit count built.
     pub powered: u64,
+    /// The waiting reads that a change of an aggregate root visited.
+    pub settled: u64,
 }
 
 /// What a counter counts.
@@ -125,6 +127,7 @@ pub(crate) enum Count {
     Unfolded,
     Formatted,
     Powered,
+    Settled,
 }
 
 static COUNTS: Mutex<BTreeMap<u64, Counts>> = Mutex::new(BTreeMap::new());
@@ -197,6 +200,7 @@ pub(crate) fn add(count: Count, n: u64) {
             Count::Unfolded => &mut c.unfolded,
             Count::Formatted => &mut c.formatted,
             Count::Powered => &mut c.powered,
+            Count::Settled => &mut c.settled,
         };
         *field += n;
     }

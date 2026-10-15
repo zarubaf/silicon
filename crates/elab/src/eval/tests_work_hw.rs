@@ -679,3 +679,37 @@ fn a_read_through_light_parts_walks_a_path_for_each_halving_of_the_leaves() {
         );
     }
 }
+
+/// A `push` or `pop` of an aggregate root visits no read that only follows the steps of its
+/// index, however many reads wait. The reads nest `k` deep, and the innermost index has `m`
+/// pushes. The visits depend on neither `k` nor the copies of the reads.
+#[test]
+fn a_push_visits_no_quiet_read() {
+    let at = |k: u64, m: u64, family: u64| {
+        let pushes = rep("t.1.push(1), ", m);
+        let mut e = format!("({pushes}0).{m}");
+        for _ in 0..k {
+            e = format!("t[({e}, 0).1]");
+        }
+        run_ok(
+            "",
+            "UInt[8]",
+            &format!("let mut t = (x, list(Nat));\n  {e};"),
+            key(family, k * 8 + m % 8),
+        )
+    };
+    let few = at(2, 64, 75);
+    for (family, k) in (76..).zip([4u64, 8, 16]) {
+        let many = at(k, 64, family);
+        assert_eq!(many.counts.settled, few.counts.settled, "{k} reads");
+        assert_eq!(many.copied, 0, "{k} reads");
+    }
+    for (family, m) in (80..).zip([32u64, 64, 128]) {
+        let run = at(8, m, family);
+        assert!(
+            run.counts.settled <= m + 8,
+            "{m} pushes: {}",
+            run.counts.settled
+        );
+    }
+}
