@@ -144,7 +144,7 @@ fn the_counter() {
 const LEAF: &str = "module C(comptime n: Nat) {\n}\n";
 
 /// A child finishes before its parent. A repeated `InstantiationId` elaborates once. Its
-/// `instance` statement charges 1, and its argument charges 2 for the node and the literal,
+/// `instance` statement charges 1, and its argument charges 2 for the node and the literal.
 /// Its parameter type `Nat` charges 1, and the recursive size 1. Its serialization charges 1 for
 /// the decimal form and 32 for its bytes. These are 38 units. The child pays nothing for its
 /// parameter.
