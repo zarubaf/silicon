@@ -658,7 +658,7 @@ fn many_uses_of_one_function_name_cost_linear_work() {
         let fuel = 200_000_000 + n as u64;
         let text = out(FNS, &uses(n), fuel, 1000);
         assert!(text.starts_with("(tuple ((function root g)"), "{n}");
-        let copies = of(fuel).copies;
+        let copies = crate::counters::run(fuel).map_or(u64::MAX, |c| c.copies);
         (
             of(fuel).params,
             copies,
