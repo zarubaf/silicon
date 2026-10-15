@@ -27,11 +27,7 @@ fn run_with(pre: &str, t: &str, s: &str, run: u64) -> Result<Run, String> {
         Some(Ok(units)) if text.contains(" | ") => Ok(Run {
             counts: counters::of(run),
             units,
-            copied: crate::eval::COPIES
-                .lock()
-                .ok()
-                .and_then(|copies| copies.get(&run).copied())
-                .unwrap_or(0),
+            copied: counters::of(run).copies,
         }),
         _ => Err(text),
     }

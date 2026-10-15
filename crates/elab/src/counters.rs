@@ -90,6 +90,8 @@ pub(crate) struct Counts {
     pub settled: u64,
     /// The nodes of the values that a clone visited.
     pub cloned: u64,
+    /// The recursive size of the values that references copied.
+    pub copies: u64,
 }
 
 /// What a counter counts.
@@ -131,6 +133,7 @@ pub(crate) enum Count {
     Powered,
     Settled,
     Cloned,
+    Copies,
 }
 
 static COUNTS: Mutex<BTreeMap<u64, Counts>> = Mutex::new(BTreeMap::new());
@@ -205,6 +208,7 @@ pub(crate) fn add(count: Count, n: u64) {
             Count::Powered => &mut c.powered,
             Count::Settled => &mut c.settled,
             Count::Cloned => &mut c.cloned,
+            Count::Copies => &mut c.copies,
         };
         *field += n;
     }

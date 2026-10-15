@@ -258,25 +258,6 @@ struct Store {
     /// `S008`. The
     /// root names its frame, so a call switches no frame of this table and copies nothing.
     pending: BTreeSet<Root>,
-    /// The recursive size of the values that references copied, and the fuel budget of the
-    /// run, for the test of copies before a charge.
-    #[cfg(test)]
-    copied: (Cell<u64>, u64),
-}
-
-/// The copies of each run of a test, by its fuel budget: a test finds its run by a fuel that
-/// no other test uses, also when the tests share a process.
-#[cfg(test)]
-pub(crate) static COPIES: std::sync::Mutex<BTreeMap<u64, u64>> =
-    std::sync::Mutex::new(BTreeMap::new());
-
-#[cfg(test)]
-impl Drop for Store {
-    fn drop(&mut self) {
-        if let Ok(mut copies) = COPIES.lock() {
-            copies.insert(self.copied.1, self.copied.0.get());
-        }
-    }
 }
 
 impl Store {
@@ -897,7 +878,7 @@ impl Store {
             Out::Ref(r) => match self.at(&r) {
                 Seen::Static(v) => {
                     #[cfg(test)]
-                    self.copied.0.set(self.copied.0.get() + v.size());
+                    self.copy_counted(v.size());
                     Val::Static(v.clone())
                 }
                 Seen::Hw(h) => Val::Hw(h),
@@ -914,8 +895,9 @@ impl Store {
 
     /// Counts `n` units of the recursive size that a copy made.
     #[cfg(test)]
+    #[allow(clippy::unused_self)]
     fn copy_counted(&self, n: u64) {
-        self.copied.0.set(self.copied.0.get() + n);
+        crate::counters::add(crate::counters::Count::Copies, n);
     }
 }
 
@@ -1183,8 +1165,6 @@ impl<'a> Evaluator<'a> {
                 undo: BTreeMap::new(),
                 pending: BTreeSet::new(),
                 links: BTreeMap::new(),
-                #[cfg(test)]
-                copied: (Cell::new(0), budget.fuel),
             },
             graph: Graph::default(),
             paths: Paths::default(),
@@ -1624,11 +1604,13 @@ impl Evaluator<'_> {
         let site = self.site.take();
         let stack = self.stack;
         #[cfg(test)]
-        let fuel = self.store.copied.1;
+        let fuel = crate::counters::current();
         let act = move |ev: &mut Self| {
             // A level that starts a thread counts into the run of its parent.
             #[cfg(test)]
-            crate::counters::join(fuel);
+            if let Some(fuel) = fuel {
+                crate::counters::join(fuel);
+            }
             act(ev)
         };
         let r = stack
