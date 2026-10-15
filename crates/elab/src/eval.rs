@@ -141,8 +141,9 @@ static ABSENT_VALUE: Value = Value::Bool(false);
 
 type Frame = BTreeMap<DeclId, Slot>;
 
-/// The part of an aggregate root that a read waits at, with the root not held yet.
-struct Probe {
+/// The part of an aggregate root that a read waits at, with the root not held yet. The cursor
+/// follows the steps of the read, so one path names the part.
+struct Cursor {
     part: Ref,
     /// The length of the path of the parked reference. After a mutation copied the reference,
     /// the steps of `part` past this length lead into the copy.
@@ -153,6 +154,22 @@ struct Probe {
     /// than this holds a hardware leaf, so it is no static value and its decision needs no
     /// walk. A walk that finds the part lowers the bound to the exact count.
     bound: u64,
+}
+
+/// Whether a change in place at the numbers `keys` (`None`: a write that binds the root again)
+/// can reach the part at `path`: the part is a prefix or an extension of `keys`.
+fn overlap(path: &[usize], keys: Option<&[usize]>) -> bool {
+    keys.is_none_or(|keys| {
+        let n = path.len().min(keys.len());
+        path.get(..n) == keys.get(..n)
+    })
+}
+
+impl Cursor {
+    /// Whether a change at `keys` can reach the part of the cursor.
+    fn reaches(&self, keys: Option<&[usize]>) -> bool {
+        overlap(&self.part.path, keys)
+    }
 }
 
 /// The values that a result can refer to: the table of constants by item index, and the
@@ -178,10 +195,9 @@ struct Store {
     holds: BTreeMap<Root, usize>,
     held_by: Vec<Option<Root>>,
     /// The read that waits at a part of an aggregate root and has not held the root yet, by the
-    /// position of its parked result: the path of the part, and whether an index with a call
-    /// evaluates now. The decision to hold comes at the first change of the root during that
+    /// position of its parked result: the path of the part. The decision to hold comes at the first change of the root during that
     /// index (`decide_holds`), so an index that leaves the root alone walks no path.
-    probes: Vec<Option<Probe>>,
+    cursors: Vec<Option<Cursor>>,
     /// The parked results with an index that evaluates now, by their local.
     armed: BTreeMap<Root, Vec<usize>>,
     /// The roots with an open window (section 9.1). A root has at most one, since a second one is
@@ -297,7 +313,7 @@ impl Store {
         }
         self.parked.push(o);
         self.held_by.push(holds);
-        self.probes.push(None);
+        self.cursors.push(None);
         at
     }
 
@@ -313,9 +329,9 @@ impl Store {
 
     /// The read parked at `at` waits at the part `r` of an aggregate root, and a later index
     /// with a call may hold the root there.
-    fn probe(&mut self, at: usize, r: Ref, leaves: u64, bound: u64) {
-        if let Some(slot) = self.probes.get_mut(at) {
-            *slot = Some(Probe {
+    fn cursor(&mut self, at: usize, r: Ref, leaves: u64, bound: u64) {
+        if let Some(slot) = self.cursors.get_mut(at) {
+            *slot = Some(Cursor {
                 base: r.path.len(),
                 part: r,
                 leaves,
@@ -324,10 +340,10 @@ impl Store {
         }
     }
 
-    /// The walk of the read takes the step `k` from the part of the probe at `at`. A step with no
-    /// number ends the probe, because no static part follows it.
-    fn probe_step(&mut self, at: usize, k: Option<usize>, leaves: u64) {
-        let Some(slot) = self.probes.get_mut(at) else {
+    /// The walk of the read takes the step `k` from the part of the cursor at `at`. A step with no
+    /// number ends the cursor, because no static part follows it.
+    fn cursor_step(&mut self, at: usize, k: Option<usize>, leaves: u64) {
+        let Some(slot) = self.cursors.get_mut(at) else {
             return;
         };
         match (k, slot.as_mut()) {
@@ -342,7 +358,7 @@ impl Store {
     /// An index with a call of the read at `at` evaluates: the first change of the local in that
     /// time decides the hold.
     fn arm(&mut self, at: usize) {
-        if let Some(Some(p)) = self.probes.get(at) {
+        if let Some(Some(p)) = self.cursors.get(at) {
             let root = p.part.root;
             self.armed.entry(root).or_default().push(at);
         }
@@ -350,7 +366,7 @@ impl Store {
 
     /// The index of the read at `at` finished. A decision that a change made stays made.
     fn disarm(&mut self, at: usize) {
-        let root = match self.probes.get(at) {
+        let root = match self.cursors.get(at) {
             Some(Some(p)) => p.part.root,
             _ => return,
         };
@@ -365,15 +381,15 @@ impl Store {
     }
 
     /// Decides the holds of the reads with an index that evaluates now, before a change of the
-    /// local at `root`: the part of a probe that is a static value holds the local, as Lean
+    /// local at `root`: the part of a cursor that is a static value holds the local, as Lean
     /// reads the part again from the live root. The decision uses the root as the index found
-    /// it, so it comes before the first change, and each armed probe walks its path once.
+    /// it, so it comes before the first change, and each armed cursor walks its path once.
     fn decide_holds(&mut self, root: Root) {
         let Some(list) = self.armed.remove(&root) else {
             return;
         };
         for at in list {
-            let (hold, bound) = match self.probes.get(at) {
+            let (hold, bound) = match self.cursors.get(at) {
                 Some(Some(p)) if p.leaves > p.bound => (false, None),
                 Some(Some(p)) => match self.decision_part(at, p) {
                     Some(Seen::Static(_)) => (true, None),
@@ -390,7 +406,7 @@ impl Store {
                 },
                 _ => (false, None),
             };
-            if let (Some(b), Some(Some(p))) = (bound, self.probes.get_mut(at))
+            if let (Some(b), Some(Some(p))) = (bound, self.cursors.get_mut(at))
                 && p.leaves != 0
                 && p.leaves != u64::MAX
             {
@@ -398,7 +414,7 @@ impl Store {
             }
             if hold {
                 self.hold_parked(at, root);
-                if let Some(slot) = self.probes.get_mut(at) {
+                if let Some(slot) = self.cursors.get_mut(at) {
                     *slot = None;
                 }
             }
@@ -410,7 +426,7 @@ impl Store {
     fn resume(&mut self, from: usize) -> Vec<Out> {
         let from = from.min(self.parked.len());
         let outs = self.parked.split_off(from);
-        self.probes.truncate(from);
+        self.cursors.truncate(from);
         for root in self.held_by.split_off(from).into_iter().flatten() {
             if let Some(n) = self.holds.get_mut(&root) {
                 *n -= 1;
@@ -473,24 +489,18 @@ impl Store {
         let Some(at) = self.parked_at.remove(&root) else {
             return;
         };
-        let overlaps = |path: &[usize]| {
-            keys.is_none_or(|keys| {
-                let n = path.len().min(keys.len());
-                path.get(..n) == keys.get(..n)
-            })
-        };
         let mut kept = Vec::new();
         for k in at {
-            // A read that walks a path waits at the part of its probe, and its later steps only
+            // A read that walks a path waits at the part of its cursor, and its later steps only
             // go deeper. Other references wait at their own path.
-            let reached = match (self.probes.get(k), self.parked.get(k)) {
-                (Some(Some(p)), _) => overlaps(&p.part.path),
-                (_, Some(Out::Ref(r))) => overlaps(&r.path),
+            let reached = match (self.cursors.get(k), self.parked.get(k)) {
+                (Some(Some(c)), _) => c.reaches(keys),
+                (_, Some(Out::Ref(r))) => overlap(&r.path, keys),
                 _ => true,
             };
             if reached {
                 // The change can turn a hardware leaf into a static one, so no bound holds.
-                if let Some(Some(p)) = self.probes.get_mut(k) {
+                if let Some(Some(p)) = self.cursors.get_mut(k) {
                     p.bound = u64::MAX;
                 }
             } else {
@@ -620,10 +630,10 @@ impl Store {
         }
     }
 
-    /// The part that the probe `p` of the result parked at `at` decides on. As in Lean, a read
+    /// The part that the cursor `p` of the result parked at `at` decides on. As in Lean, a read
     /// decides on the value as it was before the index: the live root while the result is a
     /// reference, and the copy that a mutation made once the result is a copy.
-    fn decision_part<'s>(&'s self, at: usize, p: &Probe) -> Option<Seen<'s>> {
+    fn decision_part<'s>(&'s self, at: usize, p: &Cursor) -> Option<Seen<'s>> {
         match self.parked.get(at) {
             Some(Out::Kept(v, _)) => {
                 let path = p.part.path.get(p.base..).unwrap_or_default();
@@ -944,7 +954,7 @@ impl<'a> Evaluator<'a> {
                 parked_at: BTreeMap::new(),
                 holds: BTreeMap::new(),
                 held_by: Vec::new(),
-                probes: Vec::new(),
+                cursors: Vec::new(),
                 armed: BTreeMap::new(),
                 pending: BTreeSet::new(),
                 links: BTreeMap::new(),
