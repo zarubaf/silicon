@@ -393,14 +393,22 @@ impl Evaluator<'_> {
         {
             return fail_type_index(*q);
         }
+        let mut known = self.base_ty(&b);
         let mut base = b;
         let mut rest: &[Sel<'_>] = &steps;
         loop {
-            let (out, done) = self.segment(base, rest)?;
+            let (out, done, after) = self.segment(base, rest, known)?;
             rest = rest.get(done..).unwrap_or_default();
             if rest.is_empty() {
                 return Ok(Some(out));
             }
+            // The type of a reference goes on from the segment, so the path is not walked
+            // again. A new value has no known type.
+            known = if matches!(out, Out::Ref(_)) {
+                after
+            } else {
+                None
+            };
             base = Opnd::Static(out);
         }
     }
@@ -413,11 +421,17 @@ impl Evaluator<'_> {
     /// segment, and its index makes the base of the next one. The type of the base tells which
     /// container is a string, with no walk. A base without a known type ends the segment at each
     /// index, which is cheap: such a base is a new value, so a step takes its element.
-    fn segment(&mut self, base: Opnd, steps: &[Sel<'_>]) -> Res<(Out, usize)> {
-        let mut known = self.base_ty(&base);
+    fn segment(
+        &mut self,
+        base: Opnd,
+        steps: &[Sel<'_>],
+        known: Option<TyId>,
+    ) -> Res<(Out, usize, Option<TyId>)> {
+        let mut known = known;
+        let mut after = known;
         let mut keyed = Vec::with_capacity(steps.len());
         let mut stop = None;
-        let held = self.held_path(&base);
+        let held = self.held_path(&base, known);
         let on_agg = matches!(self.opnd_seen(&base), Seen::Agg(_));
         let at = self.store.park(base.into_out());
         let mut held = held.map(|(r, ty)| {
@@ -455,6 +469,7 @@ impl Evaluator<'_> {
                     let next = held.and_then(|ty| self.held_step(ty, &k));
                     self.store.cursor_step(at, next.map(|(number, _)| number));
                     held = next.map(|(_, ty)| ty);
+                    after = known.and_then(|t| self.key_ty(t, &k));
                     keyed.push(k);
                 }
                 Err(e) => {
@@ -468,7 +483,7 @@ impl Evaluator<'_> {
             {
                 break;
             }
-            known = known.and_then(|t| keyed.last().and_then(|k| self.key_ty(t, k)));
+            known = after;
         }
         let (parked, win) = self.store.unpark(at);
         let followed = self.follow(Opnd::of_out(parked), &keyed, win.as_ref());
@@ -485,18 +500,18 @@ impl Evaluator<'_> {
             }
             return Err(e);
         }
-        Ok((out, keyed.len()))
+        Ok((out, keyed.len(), after))
     }
 
     /// The path that follows the steps of a segment from a part of an aggregate root of a local,
     /// with the type of its part, or `None` if the base is no such part. An index that waits at a
     /// static part of the root holds the root local.
-    fn held_path(&self, base: &Opnd) -> Option<(Ref, Option<TyId>)> {
+    fn held_path(&self, base: &Opnd, ty: Option<TyId>) -> Option<(Ref, Option<TyId>)> {
         let Opnd::Static(Out::Ref(r)) = base else {
             return None;
         };
         (matches!(r.root, Root::Local(..)) && matches!(self.store.root(&r.root), Val::Agg(_)))
-            .then(|| (r.clone(), self.base_ty(base)))
+            .then(|| (r.clone(), ty))
     }
 
     /// The number of the step `key`, which the walk takes from a part of type `ty`, and the type
