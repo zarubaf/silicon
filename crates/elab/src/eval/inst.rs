@@ -78,11 +78,12 @@ pub(crate) struct Mem {
     pub dup: Option<(Pos, &'static str)>,
 }
 
-/// A child instance: its path, the index of its done instantiation, and its statement.
+/// A child instance: its path, the index of its done instantiation, its statement, and its name.
 pub(crate) struct ChildDecl {
     pub path: PathId,
     pub inst: usize,
     pub pos: Pos,
+    pub name: String,
 }
 
 /// The target of a `:=` binding: an own resource, or an input of the child number `index`.
@@ -197,6 +198,7 @@ impl Iface {
                     sym: q.sym,
                     input: q.input,
                     ty: q.ty.clone(),
+                    pos: q.pos,
                 },
             );
             inputs += usize::from(q.input);
@@ -829,6 +831,7 @@ impl Evaluator<'_> {
             path,
             inst: done,
             pos,
+            name: name.name.clone(),
         });
         self.elab.work.bound.push(0);
         self.bind(
@@ -1065,10 +1068,15 @@ impl Evaluator<'_> {
                 let port = iface.and_then(|i| {
                     i.ports
                         .values()
-                        .find(|q| q.input && !work.inputs.contains_key(&(k, q.sym)))
+                        .filter(|q| q.input && !work.inputs.contains_key(&(k, q.sym)))
+                        .min_by_key(|q| (q.pos.line, q.pos.col))
                 });
                 let name = port.map_or("", |q| text(q.sym));
-                format!("the input `{name}` of the child has no binding")
+                let inst = work.body.children.get(k).map_or("", |c| c.name.as_str());
+                format!(
+                    "the input `{name}` of the instance `{inst}` has no binding; \
+                     bind it with `{inst}.{name} := ...;`"
+                )
             }
         };
         fail(Code::S018, pos, message)
