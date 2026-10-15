@@ -877,7 +877,7 @@ impl Store {
             Out::Ref(r) => match self.at(&r) {
                 Seen::Static(v) => {
                     #[cfg(test)]
-                    self.copy_counted(v.size());
+                    crate::counters::add(crate::counters::Count::Copies, v.size());
                     Val::Static(v.clone())
                 }
                 Seen::Hw(h) => Val::Hw(h),
@@ -885,18 +885,11 @@ impl Store {
                 Seen::Pending(q, p) => Val::Pending(q, p.clone()),
                 Seen::Agg(a) => {
                     #[cfg(test)]
-                    self.copy_counted(static_size(a));
+                    crate::counters::add(crate::counters::Count::Copies, static_size(a));
                     Val::Agg(Box::new(a.clone()))
                 }
             },
         }
-    }
-
-    /// Counts `n` units of the recursive size that a copy made.
-    #[cfg(test)]
-    #[allow(clippy::unused_self)]
-    fn copy_counted(&self, n: u64) {
-        crate::counters::add(crate::counters::Count::Copies, n);
     }
 }
 
@@ -2052,13 +2045,12 @@ impl Evaluator<'_> {
 
     /// Keeps the name of the domain `id`: the first read copies the text, and each later read
     /// copies none.
-    fn domain(&mut self, id: DeclId, x: &str) -> DeclId {
+    fn keep_domain(&mut self, id: DeclId, x: &str) {
         self.domains.entry(id).or_insert_with(|| {
             #[cfg(test)]
-            crate::counters::add(crate::counters::Count::Copied, x.len() as u64);
+            crate::counters::add(crate::counters::Count::TextBytes, x.len() as u64);
             x.to_string()
         });
-        id
     }
 
     fn name(&mut self, pos: Pos, node: NodeId, x: &str) -> Res<Out> {
@@ -2086,7 +2078,10 @@ impl Evaluator<'_> {
                     None => fail(Code::S010, pos, format!("`{x}` is not an item")),
                 },
                 Kind::Module => fail(Code::S010, pos, format!("`{x}` is not a value")),
-                Kind::Domain => Ok(Out::Named(Val::Handle(Handle::Domain(self.domain(id, x))))),
+                Kind::Domain => {
+                    self.keep_domain(id, x);
+                    Ok(Out::Named(Val::Handle(Handle::Domain(id))))
+                }
                 _ => {
                     let k = self.store.frames.len().saturating_sub(1);
                     // An empty input port refers to its name. The read pays its zero, a new

@@ -78,7 +78,7 @@ pub(crate) struct Counts {
     pub guarded: u64,
     /// The bytes of a name that the walks of `diagnostic` and the reads of a domain copied into
     /// a new string, outside the text of a record.
-    pub copied: u64,
+    pub text_bytes: u64,
     /// The types that a serialization to a sink without the stored length expanded part by
     /// part. A length pass never expands one.
     pub unfolded: u64,
@@ -127,7 +127,7 @@ pub(crate) enum Count {
     Framed,
     Recorded,
     Guarded,
-    Copied,
+    TextBytes,
     Unfolded,
     Formatted,
     Powered,
@@ -202,7 +202,7 @@ pub(crate) fn add(count: Count, n: u64) {
             Count::Framed => &mut c.framed,
             Count::Recorded => &mut c.recorded,
             Count::Guarded => &mut c.guarded,
-            Count::Copied => &mut c.copied,
+            Count::TextBytes => &mut c.text_bytes,
             Count::Unfolded => &mut c.unfolded,
             Count::Formatted => &mut c.formatted,
             Count::Powered => &mut c.powered,
