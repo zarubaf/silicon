@@ -243,8 +243,9 @@ struct Store {
     holds: BTreeMap<Root, usize>,
     held_by: Vec<Option<Root>>,
     /// The read that waits at a part of an aggregate root and has not held the root yet, by the
-    /// position of its parked result: the path of the part. The decision to hold comes at the first change of the root during that
-    /// index (`decide_holds`), so an index that leaves the root alone walks no path.
+    /// position of its parked result: the path of the part. The decision to hold comes at the
+    /// first change of the root during that index (`decide_holds`), so an index that leaves the
+    /// root alone walks no path.
     cursors: Vec<Option<Cursor>>,
     /// The parked results with an index that evaluates now, by their local.
     armed: BTreeMap<Root, Vec<usize>>,
