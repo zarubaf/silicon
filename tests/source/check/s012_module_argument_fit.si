@@ -1,0 +1,11 @@
+// S012: a module argument that does not fit its parameter type, at the `instance` statement.
+// TOP Top()
+module C(comptime x: UInt[8]) domains() {
+    input a: UInt[8];
+    output q: UInt[8];
+    q := a +% x;
+}
+module Top() domains() {
+    // expected-error S012 @+1
+    instance c = C(300);
+}

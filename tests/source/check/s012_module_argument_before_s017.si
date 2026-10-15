@@ -1,0 +1,10 @@
+// S012: the typed use of a module argument comes before the clocked-child check, so the
+// argument that does not fit is the first error, not `S017`.
+// TOP Top()
+module Clocked(comptime x: UInt[8]) {
+    input a: UInt[8];
+}
+module Top() domains() {
+    // expected-error S012 @+1
+    instance u = Clocked(300);
+}

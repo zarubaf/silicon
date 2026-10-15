@@ -1,0 +1,7 @@
+// S019: `C(1)` instantiates `C(UInt[8](1))`. Both convert to one identity, so the inner
+// instance is the instantiation in progress.
+// TOP C(1)
+module C(comptime x: UInt[8]) domains() {
+    // expected-error S019 @+1
+    instance c = C(UInt[8](1));
+}

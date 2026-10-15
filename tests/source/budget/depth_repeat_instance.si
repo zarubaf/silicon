@@ -1,0 +1,26 @@
+// A repeat of a done instantiation nests one level for the typed use of its arguments, so
+// the repeat in `Mid` reaches the depth below the body of `Mid`. With one level less, it
+// is `S015`.
+// DEPTH 3
+// TOP Top()
+module Leaf(comptime x: UInt[8]) domains() {
+    input a: UInt[8];
+    output q: UInt[8];
+    q := a +% x;
+}
+module Mid() domains() {
+    input a: UInt[8];
+    output q: UInt[8];
+    instance again = Leaf(1);
+    again.a := a;
+    q := again.q;
+}
+module Top() domains() {
+    input a: UInt[8];
+    output q: UInt[8];
+    instance first = Leaf(1);
+    instance second = Mid();
+    first.a := a;
+    second.a := first.q;
+    q := second.q;
+}
