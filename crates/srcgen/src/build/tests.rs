@@ -759,7 +759,7 @@ fn the_records_cover_frames_names_and_order() {
     }
     let want = TAPES / 32;
     assert!(
-        frames >= want && digests >= want && args >= want && resumed >= 1,
+        frames >= want && digests >= want && args >= want && resumed >= want,
         "frames {frames}, digests {digests}, arguments {args}, resumed {resumed}"
     );
 }
