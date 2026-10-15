@@ -40,7 +40,7 @@ Each language has one tree. A suite is one directory of a tree. The directory se
 | `tests/source/check/`  | `elab` in Rust and in Lean                                      | The same first code, line, and column in both    | `TOP`, `expected-error`, `expected-message` |
 | `tests/source/run/`    | `run` in Rust and in Lean                                       | The expected outputs in both                     | `TOP`, `STEP`                               |
 | `tests/source/elab/`   | `elab`, then `FileCheck` on both outputs                        | Equal outputs, then LLVM `FileCheck` on both     | `TOP`, `CHECK` lines, `OBSERVE` lines       |
-| `tests/source/budget/` | `elab` with the budgets of the file                             | Success at the limit, failure one unit above     | `TOP`, `FUEL`, `DEPTH`, `SYNTAX-DEPTH`      |
+| `tests/source/budget/` | `elab` with the budgets of the file                             | Success at the limit, failure one unit below     | `TOP`, `FUEL`, `DEPTH`, `SYNTAX-DEPTH`      |
 | `tests/source/corpus/` | `validate`, then LEC and the differential tests                 | `silicon-check`, `circt-lec`, the interpreters   | `TOP`                                       |
 | `tests/source/llm/`    | `elab`, and the quality loop of the front-end spec, section 6.3 | The expected first error, and a fixed version    | `TOP`, `expected-error`                     |
 
@@ -92,7 +92,7 @@ Three measures find a missing test. Each has an inventory of known gaps in `test
 - **Error code.** At least 2 different files in the suite whose command reports the code. This suite is `check`, except for `E014`, which only `run` reports. The codes come from the code tables of the two specs, as rule `arch-codes` reads them. The intent is a minimal case and a case in another context. The review checks the intent.
 - **Construct.** At least 1 file in each behavior suite. These are `run` and `lower` for the core IR, and `run` and `elab` for the source.
 - **Command.** At least 1 suite or CLI test for each command of `silicon` and `silicon-check`.
-- **Budget.** For each budget of the front-end spec, section 5.4, a file at the limit that passes, and one unit above that fails.
+- **Budget.** For each budget of the front-end spec, section 5.4, a file that passes at the limit and fails one unit below it.
 
 A construct ID is `LANG:Enum::Variant`, for example `core:BinOp::Shrs` or `source:Item::Fn`. The enums are `Item`, `Stmt`, `Expr`, `UnOp`, `BinOp`, and `Pred` of `core-ir`, and `Item`, `Stmt`, `Expr`, `TypeExpr`, `UnOp`, and `BinOp` of `parse`. Each operator variant is a separate construct.
 
