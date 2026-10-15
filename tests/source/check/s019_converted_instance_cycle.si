@@ -1,7 +1,10 @@
 // S019: `C(1)` instantiates `C(UInt[8](1))`. Both convert to one identity, so the inner
-// instance is the instantiation in progress.
+// instance is the instantiation in progress. Only one instantiation starts, so one record shows.
 // TOP C(1)
+// OBSERVE-COUNT-1: (string "c")
+// OBSERVE-NOT: (string "c")
 module C(comptime x: UInt[8]) domains() {
+    diagnostic("c", x);
     // expected-error S019 @+1
     instance c = C(UInt[8](1));
 }
