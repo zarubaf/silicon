@@ -324,23 +324,6 @@ pub struct Types {
     work: std::sync::atomic::AtomicU64,
 }
 
-/// The type, the metadata, and the specialization that an absent id names. The table makes
-/// each id, so no id finds them.
-static ABSENT: Ty = Ty::Unit;
-static ABSENT_META: Meta = Meta {
-    width: Int::ZERO,
-    leaves: Int::ZERO,
-    zero_size: Int::ZERO,
-    data: false,
-};
-static ABSENT_SPEC: Spec = Spec {
-    item: 0,
-    name: String::new(),
-    args: Vec::new(),
-    state: SpecState::InProgress,
-    prelude: false,
-};
-
 impl Types {
     /// Counts `n` steps of work, for the tests of the work of the table.
     #[cfg(test)]
@@ -569,16 +552,26 @@ impl Types {
         self.joins.insert(key, joined);
     }
 
+    /// The entry of the id `t`. Only a table makes an id, so an id that this table does not
+    /// hold is a bug of the caller (an id of another table), never an input of the user.
+    /// Thus a lookup stops at once, and it never answers with a default type.
+    fn entry(&self, t: TyId) -> &Entry {
+        let Some(entry) = self.entries.get(t.index) else {
+            panic!("the type id {} is not in this table of types", t.index);
+        };
+        entry
+    }
+
     /// The type with the id `t`.
     #[must_use]
     pub fn get(&self, t: TyId) -> &Ty {
-        self.entries.get(t.index).map_or(&ABSENT, |e| &e.ty)
+        &self.entry(t).ty
     }
 
     /// The metadata of the type `t`.
     #[must_use]
     pub fn meta(&self, t: TyId) -> &Meta {
-        self.entries.get(t.index).map_or(&ABSENT_META, |e| &e.meta)
+        &self.entry(t).meta
     }
 
     /// The metadata sums of the parts `parts` of a tuple or a struct type, as Lean `Meta.sum`
@@ -619,7 +612,7 @@ impl Types {
                 .saturating_mul(k),
             Ty::Tuple(_) | Ty::Struct(_) => usize::try_from(k)
                 .ok()
-                .and_then(|k| self.entries.get(t.index)?.prefix.get(k))
+                .and_then(|k| self.entry(t).prefix.get(k))
                 .copied()
                 .unwrap_or(0),
             _ => 0,
@@ -629,7 +622,7 @@ impl Types {
     /// The depth of the zero value of `t`, from the type alone.
     #[must_use]
     pub fn zero_depth(&self, t: TyId) -> u64 {
-        self.entries.get(t.index).map_or(1, |e| e.zero_depth)
+        self.entry(t).zero_depth
     }
 
     /// The id of the part `k` of the container type `t`: the element type of an array or a
@@ -685,9 +678,16 @@ impl Types {
     }
 
     /// The specialization `s`.
+    ///
+    /// # Panics
+    ///
+    /// If `s` is not from this table, which is a bug of the caller.
     #[must_use]
     pub fn spec(&self, s: SpecId) -> &Spec {
-        self.specs.get(s.0).unwrap_or(&ABSENT_SPEC)
+        let Some(spec) = self.specs.get(s.0) else {
+            panic!("the specialization {} is not in this table of types", s.0);
+        };
+        spec
     }
 
     /// The struct type of the specialization `s`, if it is done.
