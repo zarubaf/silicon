@@ -243,10 +243,19 @@ pub fn sha16(s: &str) -> String {
     hex
 }
 
-/// The readable token of an argument. An integer above 256 bits has more than 64 digits.
+/// The readable token of an integer. An integer above 256 bits has more than 64 digits.
+fn int_token(n: Int) -> Option<Field> {
+    (n.log2() < 256).then_some(Field::Int(n))
+}
+
+/// The readable token of an argument. A finite integer gives the token of its integer value.
+/// Each parameter type follows from the module and the earlier arguments, so the name stays
+/// injective for one module.
 fn readable(v: &Value) -> Option<Field> {
     match v {
-        Value::Int(n) if n.log2() < 256 => Some(Field::Int(n.clone())),
+        Value::Int(n) => int_token(n.clone()),
+        Value::UInt(x) => int_token(Int::from_unsigned(x)),
+        Value::SInt(x) => int_token(Int::from_signed(x, x.width())),
         Value::Bool(b) => Some(Field::Bool(*b)),
         _ => None,
     }

@@ -324,6 +324,37 @@ fn the_readable_and_the_digest_module_names() {
     );
 }
 
+/// A finite integer gives the token of its integer value, so `C(1)` and `C(UInt[8](1))` share
+/// one name. A negative `SInt` value gets `n`. A magnitude of `2^256` or more has no token.
+#[test]
+fn a_finite_integer_gives_the_token_of_its_value() {
+    assert_eq!(emitted(&id("C", vec![uint(8, 1)])), "C$1");
+    assert_eq!(
+        module_name(sha16, &id("C", vec![uint(8, 1)]), ""),
+        module_name(sha16, &id("C", vec![Value::Int(int("1"))]), "")
+    );
+    assert_eq!(emitted(&id("C", vec![sint(8, 251)])), "C$5n");
+    assert_eq!(
+        emitted(&id("C", vec![sint(8, 0), uint(1, 1), Value::Bool(true)])),
+        "C$0$1$1b"
+    );
+    let wide = |k: u32| {
+        let two = Int::from_u64(1).shl(u64::from(k));
+        two.sub(&Int::from_u64(1))
+    };
+    let finite = |w: u32, n: &Int| n.to_finite(w).unwrap();
+    assert_eq!(
+        readable(&Value::UInt(finite(300, &wide(256)))).map(|f| f.encode()),
+        Some(wide(256).to_string())
+    );
+    assert!(readable(&Value::UInt(finite(300, &Int::from_u64(1).shl(256)))).is_none());
+    assert!(readable(&Value::UInt(finite(300, &wide(300)))).is_none());
+    assert!(emitted(&id("C", vec![Value::UInt(finite(300, &wide(300)))])).starts_with("C$0h"));
+    let minus = |n: &Int| Value::SInt(finite(300, &n.neg()));
+    assert!(readable(&minus(&wide(256))).is_some());
+    assert!(readable(&minus(&Int::from_u64(1).shl(256))).is_none());
+}
+
 /// The 64-byte limit: a name of 64 bytes stays readable, and one of 65 bytes takes the
 /// digest. The limit holds also without arguments.
 #[test]
