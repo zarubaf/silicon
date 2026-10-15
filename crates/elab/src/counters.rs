@@ -88,6 +88,8 @@ pub(crate) struct Counts {
     pub powered: u64,
     /// The waiting reads that a change of an aggregate root visited.
     pub settled: u64,
+    /// The nodes of the values that a clone visited.
+    pub cloned: u64,
 }
 
 /// What a counter counts.
@@ -128,6 +130,7 @@ pub(crate) enum Count {
     Formatted,
     Powered,
     Settled,
+    Cloned,
 }
 
 static COUNTS: Mutex<BTreeMap<u64, Counts>> = Mutex::new(BTreeMap::new());
@@ -201,6 +204,7 @@ pub(crate) fn add(count: Count, n: u64) {
             Count::Formatted => &mut c.formatted,
             Count::Powered => &mut c.powered,
             Count::Settled => &mut c.settled,
+            Count::Cloned => &mut c.cloned,
         };
         *field += n;
     }

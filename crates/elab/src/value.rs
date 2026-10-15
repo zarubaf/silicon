@@ -160,6 +160,10 @@ impl Clone for Value {
         let mut done = Vec::new();
         let mut work = vec![Build::Visit(self)];
         while let Some(step) = work.pop() {
+            #[cfg(test)]
+            if matches!(step, Build::Visit(_)) {
+                crate::counters::add(crate::counters::Count::Cloned, 1);
+            }
             match step {
                 Build::Visit(Value::Array(t, xs)) => {
                     work.push(Build::Array(*t, xs.len()));

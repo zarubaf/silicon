@@ -713,3 +713,22 @@ fn a_push_visits_no_quiet_read() {
         );
     }
 }
+
+/// The zero of a chain of `n` nested singleton arrays clones no child that it drops: the clones
+/// of its values are linear in `n`.
+#[test]
+fn the_zero_of_nested_singleton_arrays_clones_no_dropped_child() {
+    let at = |n: u64, k: u64| {
+        run_ok(
+            &chain_decls(
+                n,
+                "struct S{i} { a: [S{}; 1], }\n",
+                "struct S{i} { a: [Bool; 1], }\n",
+            ),
+            "UInt[8]",
+            "let z = S0();",
+            key(85, k),
+        )
+    };
+    assert_doubles(at, |r| r.counts.cloned, 16);
+}
