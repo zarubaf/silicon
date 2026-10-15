@@ -1025,9 +1025,7 @@ impl Evaluator<'_> {
             });
         }
         self.store.settle_root(place.root, Some(&place.keys), true);
-        self.store
-            .steps
-            .set(self.store.steps.get() + place.keys.len() as u64);
+        self.store.add_steps(place.keys.len() as u64);
         let Val::Agg(root) = self.store.take_root(&place.root) else {
             return fail(Code::S010, pos, "the root is not an aggregate".to_owned());
         };
