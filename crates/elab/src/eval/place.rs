@@ -421,7 +421,7 @@ impl Evaluator<'_> {
         let at = self.store.park(base.into_out());
         let mut held = held.map(|(r, ty)| {
             let bound = self.static_bound(&r);
-            self.store.probe(at, r, self.leaf_count(ty), bound);
+            self.store.cursor(at, r, self.leaf_count(ty), bound);
             ty
         });
         for (n, step) in steps.iter().enumerate() {
@@ -455,7 +455,7 @@ impl Evaluator<'_> {
                     let next = held.and_then(|ty| self.held_step(ty, &k));
                     let leaves = next.map_or(0, |(_, ty)| self.leaf_count(ty));
                     self.store
-                        .probe_step(at, next.map(|(number, _)| number), leaves);
+                        .cursor_step(at, next.map(|(number, _)| number), leaves);
                     held = next.map(|(_, ty)| ty);
                     keyed.push(k);
                 }
