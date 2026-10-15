@@ -1,2 +1,3 @@
 // S001: a conditional expression is an operand only in parentheses.
+// expected-error S001 @+1
 const A: T = x +% if (a) { 1 } else { 2 };

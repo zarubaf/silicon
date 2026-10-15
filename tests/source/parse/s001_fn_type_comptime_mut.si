@@ -1,2 +1,3 @@
 // S001: a parameter of a function type has one mark. The `comptime` mark is the error.
+// expected-error S001 @+1
 fn f(g: fn (mut comptime Nat) -> Nat) -> Nat {}

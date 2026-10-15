@@ -1,2 +1,3 @@
 // S001: a struct field has a type.
+// expected-error S001 @+1
 struct P { a }

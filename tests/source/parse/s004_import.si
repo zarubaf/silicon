@@ -1,2 +1,3 @@
 // S004: import belongs to a later slice.
+// expected-error S004 @+1
 import a::b as c;

@@ -1,2 +1,3 @@
 // S001: a hexadecimal literal without digits.
+// expected-error S001 @+1
 const A: T = 0x;

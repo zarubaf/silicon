@@ -1,2 +1,3 @@
 // S001: a fn without a return type.
+// expected-error S001 @+1
 fn f() { }

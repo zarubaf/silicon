@@ -1,2 +1,3 @@
 // S001: a struct parameter has the mode comptime, so mut there is an error at `mut`.
+// expected-error S001 @+1
 struct P(mut W: Nat) {}

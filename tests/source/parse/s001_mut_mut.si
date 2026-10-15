@@ -1,2 +1,3 @@
 // S001: a parameter has one mode. The second `mut` is the error.
+// expected-error S001 @+1
 fn f(mut mut x: T) -> T {}

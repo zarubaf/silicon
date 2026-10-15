@@ -1,2 +1,3 @@
 // S001: the rule of one mode also holds in a comptime fn.
+// expected-error S001 @+1
 comptime fn f(comptime mut x: T) -> T {}

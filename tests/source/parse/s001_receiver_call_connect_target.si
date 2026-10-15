@@ -1,4 +1,5 @@
 // S001: a receiver call is not a place, so it cannot be the target of a `:=` binding.
+// expected-error S001 @+2
 module M() {
     xs.f(1) := 1;
 }

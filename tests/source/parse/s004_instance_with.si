@@ -1,2 +1,3 @@
 // S004: instance with belongs to a later slice.
+// expected-error S004 @+1
 module M() { instance u = A() with { }; }

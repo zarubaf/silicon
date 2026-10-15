@@ -1,2 +1,3 @@
 // S001: a number followed by letters.
+// expected-error S001 @+1
 const A: T = 12ab;

@@ -1,2 +1,3 @@
 // S004: a builtin in a type position belongs to a later slice.
+// expected-error S004 @+1
 const A: @TypeOf(x) = f;

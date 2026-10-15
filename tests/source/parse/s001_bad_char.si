@@ -1,2 +1,3 @@
 // S001: a backtick is no token.
+// expected-error S001 @+1
 const A: T = `1`;

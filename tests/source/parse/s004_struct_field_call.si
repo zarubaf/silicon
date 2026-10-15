@@ -1,2 +1,3 @@
 // S004: a type function call in a field type belongs to a later slice.
+// expected-error S004 @+1
 struct P { a: T(x) }

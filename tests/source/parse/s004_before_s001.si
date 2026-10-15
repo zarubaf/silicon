@@ -1,3 +1,4 @@
 // S004 comes first by position: the import is before the bad token.
+// expected-error S004 @+1
 import x;
 const A: T = $;
