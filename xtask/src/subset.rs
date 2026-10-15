@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use proc_macro2::{TokenStream, TokenTree};
+use syn::ext::IdentExt;
 use syn::visit::{self, Visit};
 use syn::{Attribute, Meta, StaticMutability};
 
@@ -56,6 +57,23 @@ pub struct Found {
     pub modules: Vec<Vec<String>>,
 }
 
+/// The name of an identifier without the `r#` of a raw identifier.
+fn plain(ident: &syn::Ident) -> String {
+    ident.unraw().to_string()
+}
+
+/// The roots of the crates of the standard library.
+const STD_ROOTS: &[&str] = &["std", "core", "alloc"];
+
+/// The macros that read or define code that the scan cannot see.
+const BANNED_MACROS: &[&str] = &[
+    "thread_local",
+    "include",
+    "include_str",
+    "include_bytes",
+    "macro_rules",
+];
+
 /// True for `#[cfg(test)]`, and for no other attribute.
 fn is_cfg_test(attr: &Attribute) -> bool {
     match &attr.meta {
@@ -87,12 +105,14 @@ impl Scan {
                 continue;
             };
             let after = |n: usize| flat.get(i + n);
-            if is_banned_name(name) || name == "dyn" || name == "unsafe" || name == "thread_local" {
+            if is_banned_name(name) || name == "dyn" || name == "unsafe" {
                 self.hit(*line, name);
+            } else if BANNED_MACROS.contains(&name.as_str()) {
+                self.hit(*line, &format!("{name}!"));
             } else if name == "static" && matches!(after(1), Some(Flat::Ident(m, _)) if m == "mut")
             {
                 self.hit(*line, "static mut");
-            } else if (name == "std" || name == "core")
+            } else if STD_ROOTS.contains(&name.as_str())
                 && matches!(after(1), Some(Flat::Colon))
                 && matches!(after(2), Some(Flat::Colon))
                 && matches!(after(3), Some(Flat::Ident(t, _)) if t == "thread")
@@ -107,27 +127,44 @@ impl Scan {
         match tree {
             syn::UseTree::Path(p) => {
                 self.use_name(&p.ident, prefix);
-                prefix.push(p.ident.to_string());
+                prefix.push(plain(&p.ident));
                 self.use_tree(&p.tree, prefix);
                 prefix.pop();
             }
             syn::UseTree::Name(n) => self.use_name(&n.ident, prefix),
-            syn::UseTree::Rename(r) => self.use_name(&r.ident, prefix),
+            syn::UseTree::Rename(r) => {
+                self.use_name(&r.ident, prefix);
+                let name = plain(&r.ident);
+                let root = prefix.is_empty() && STD_ROOTS.contains(&name.as_str());
+                let this =
+                    name == "self" && prefix.len() == 1 && STD_ROOTS.contains(&prefix[0].as_str());
+                if root || this {
+                    self.hit(r.ident.span().start().line, "an alias of a standard crate");
+                }
+            }
             syn::UseTree::Group(g) => {
                 for t in &g.items {
                     self.use_tree(t, prefix);
                 }
             }
-            syn::UseTree::Glob(_) => {}
+            syn::UseTree::Glob(g) => {
+                if prefix.len() <= 1 && prefix.iter().all(|p| STD_ROOTS.contains(&p.as_str())) {
+                    self.hit(g.star_token.spans[0].start().line, "a glob of a crate root");
+                }
+            }
         }
     }
 
     fn use_name(&mut self, ident: &syn::Ident, prefix: &[String]) {
-        let name = ident.to_string();
+        let name = plain(ident);
         let line = ident.span().start().line;
         if is_banned_name(&name) {
             self.hit(line, &name);
-        } else if name == "thread" && prefix.last().is_some_and(|p| p == "std" || p == "core") {
+        } else if name == "thread"
+            && prefix
+                .last()
+                .is_some_and(|p| STD_ROOTS.contains(&p.as_str()))
+        {
             self.hit(line, "std::thread");
         }
     }
@@ -144,7 +181,11 @@ fn flatten(stream: TokenStream, out: &mut Vec<Flat>) {
     for tree in stream {
         match tree {
             TokenTree::Group(g) => flatten(g.stream(), out),
-            TokenTree::Ident(i) => out.push(Flat::Ident(i.to_string(), i.span().start().line)),
+            TokenTree::Ident(i) => {
+                let name = i.to_string();
+                let name = name.strip_prefix("r#").map_or(name.clone(), str::to_owned);
+                out.push(Flat::Ident(name, i.span().start().line));
+            }
             TokenTree::Punct(p) if p.as_char() == ':' => out.push(Flat::Colon),
             _ => out.push(Flat::Other),
         }
@@ -168,12 +209,9 @@ impl<'ast> Visit<'ast> for Scan {
         visit_item_struct(syn::ItemStruct) => visit::visit_item_struct,
         visit_item_enum(syn::ItemEnum) => visit::visit_item_enum,
         visit_item_union(syn::ItemUnion) => visit::visit_item_union,
-        visit_item_impl(syn::ItemImpl) => visit::visit_item_impl,
-        visit_item_trait(syn::ItemTrait) => visit::visit_item_trait,
         visit_item_const(syn::ItemConst) => visit::visit_item_const,
         visit_item_type(syn::ItemType) => visit::visit_item_type,
         visit_item_macro(syn::ItemMacro) => visit::visit_item_macro,
-        visit_item_foreign_mod(syn::ItemForeignMod) => visit::visit_item_foreign_mod,
         visit_impl_item_fn(syn::ImplItemFn) => visit::visit_impl_item_fn,
         visit_impl_item_const(syn::ImplItemConst) => visit::visit_impl_item_const,
         visit_impl_item_type(syn::ImplItemType) => visit::visit_impl_item_type,
@@ -201,7 +239,12 @@ impl<'ast> Visit<'ast> for Scan {
         if test_only(&node.attrs) {
             return;
         }
-        let name = node.ident.to_string();
+        for attr in &node.attrs {
+            if attr.path().is_ident("path") {
+                self.hit(attr.pound_token.span.start().line, "#[path]");
+            }
+        }
+        let name = plain(&node.ident);
         if let Some((_, items)) = &node.content {
             self.inline.push(name);
             for item in items {
@@ -224,12 +267,12 @@ impl<'ast> Visit<'ast> for Scan {
     fn visit_path(&mut self, path: &'ast syn::Path) {
         let names: Vec<&syn::Ident> = path.segments.iter().map(|s| &s.ident).collect();
         for pair in names.windows(2) {
-            if (pair[0] == "std" || pair[0] == "core") && pair[1] == "thread" {
+            if STD_ROOTS.contains(&plain(pair[0]).as_str()) && plain(pair[1]) == "thread" {
                 self.hit(pair[1].span().start().line, "std::thread");
             }
         }
         for segment in &path.segments {
-            let name = segment.ident.to_string();
+            let name = plain(&segment.ident);
             if is_banned_name(&name) {
                 self.hit(segment.ident.span().start().line, &name);
             }
@@ -238,15 +281,15 @@ impl<'ast> Visit<'ast> for Scan {
     }
 
     fn visit_macro(&mut self, node: &'ast syn::Macro) {
-        if node.path.is_ident("thread_local") {
-            self.hit(
-                node.path.segments[0].ident.span().start().line,
-                "thread_local!",
-            );
-        } else {
-            self.visit_path(&node.path);
-            self.tokens(node.tokens.clone());
+        self.visit_path(&node.path);
+        if let Some(last) = node.path.segments.last() {
+            let name = plain(&last.ident);
+            if BANNED_MACROS.contains(&name.as_str()) {
+                self.hit(last.ident.span().start().line, &format!("{name}!"));
+                return;
+            }
         }
+        self.tokens(node.tokens.clone());
     }
 
     fn visit_type_trait_object(&mut self, node: &'ast syn::TypeTraitObject) {
@@ -266,6 +309,42 @@ impl<'ast> Visit<'ast> for Scan {
             self.hit(token.span.start().line, "unsafe");
         }
         visit::visit_signature(self, node);
+    }
+
+    fn visit_item_impl(&mut self, node: &'ast syn::ItemImpl) {
+        if test_only(&node.attrs) {
+            return;
+        }
+        if let Some(token) = &node.unsafety {
+            self.hit(token.span.start().line, "unsafe");
+        }
+        visit::visit_item_impl(self, node);
+    }
+
+    fn visit_item_trait(&mut self, node: &'ast syn::ItemTrait) {
+        if test_only(&node.attrs) {
+            return;
+        }
+        if let Some(token) = &node.unsafety {
+            self.hit(token.span.start().line, "unsafe");
+        }
+        visit::visit_item_trait(self, node);
+    }
+
+    fn visit_item_foreign_mod(&mut self, node: &'ast syn::ItemForeignMod) {
+        if test_only(&node.attrs) {
+            return;
+        }
+        if let Some(token) = &node.unsafety {
+            self.hit(token.span.start().line, "unsafe");
+        }
+        visit::visit_item_foreign_mod(self, node);
+    }
+
+    fn visit_item_extern_crate(&mut self, node: &'ast syn::ItemExternCrate) {
+        if !test_only(&node.attrs) && node.rename.is_some() {
+            self.hit(node.crate_token.span.start().line, "an alias of a crate");
+        }
     }
 
     fn visit_item_static(&mut self, node: &'ast syn::ItemStatic) {
@@ -422,6 +501,61 @@ mod tests {
             ["std::thread"]
         );
         assert_eq!(names("fn f() { m!(static mut X); }\n"), ["static mut"]);
+    }
+
+    #[test]
+    fn a_hidden_source_is_banned() {
+        assert_eq!(names("#[path = \"x.rs\"]\nmod a;\n"), ["#[path]"]);
+        assert_eq!(names("fn f() { include!(\"x.rs\"); }\n"), ["include!"]);
+        assert_eq!(
+            names("const S: &str = include_str!(\"x\");\n"),
+            ["include_str!"]
+        );
+        assert_eq!(
+            names("const S: &[u8] = std::include_bytes!(\"x\");\n"),
+            ["include_bytes!"]
+        );
+        assert_eq!(names("macro_rules! m { () => {}; }\n"), ["macro_rules!"]);
+    }
+
+    #[test]
+    fn an_unsafe_item_is_banned() {
+        assert_eq!(names("unsafe trait T {}\n"), ["unsafe"]);
+        assert_eq!(names("unsafe impl T for S {}\n"), ["unsafe"]);
+        assert_eq!(names("unsafe extern \"C\" { }\n"), ["unsafe"]);
+    }
+
+    #[test]
+    fn a_qualified_macro_path_is_banned() {
+        assert_eq!(
+            names("std::thread_local! { static N: u8 = 0; }\n"),
+            ["thread_local!"]
+        );
+        assert_eq!(
+            names("fn f() { ::std::thread_local!{ } }\n"),
+            ["thread_local!"]
+        );
+    }
+
+    #[test]
+    fn a_raw_identifier_does_not_hide_a_construct() {
+        assert_eq!(names("fn f(x: r#Cell<u8>) {}\n"), ["Cell"]);
+        assert_eq!(names("use std::r#thread;\n"), ["std::thread"]);
+        assert_eq!(names("fn f() { m!(r#Rc, r#unsafe); }\n"), ["Rc", "unsafe"]);
+    }
+
+    #[test]
+    fn a_glob_or_an_alias_of_a_crate_root_is_banned() {
+        assert_eq!(names("use std::*;\n"), ["a glob of a crate root"]);
+        assert_eq!(names("use core::*;\n"), ["a glob of a crate root"]);
+        assert_eq!(names("use alloc::*;\n"), ["a glob of a crate root"]);
+        assert_eq!(names("use std as s;\n"), ["an alias of a standard crate"]);
+        assert_eq!(
+            names("use std::{self as s};\n"),
+            ["an alias of a standard crate"]
+        );
+        assert_eq!(names("extern crate std as s;\n"), ["an alias of a crate"]);
+        assert!(names("use std::collections::*;\nuse crate::a::*;\nuse super::*;\n").is_empty());
     }
 
     #[test]
