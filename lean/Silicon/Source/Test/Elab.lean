@@ -128,24 +128,24 @@ Two identities that share an emitted name are `S019` at the `instance` statement
 A test digest function makes all digests equal, as section 7.1 plan item 4 states.
 -/
 def digests : String :=
-  "module M(comptime x: UInt[8]) {\n}\n" ++
-  "module T() {\n  instance a = M(UInt[8](1));\n  instance b = M(UInt[8](2));\n}\n"
+  "module M(comptime x: [UInt[8]; 1]) {\n}\n" ++
+  "module T() {\n  instance a = M([1]);\n  instance b = M([2]);\n}\n"
 #guard (cost digests "T").startsWith "total"
 #guard cost digests "T" (digest := collide) == "S019 5:3"
 #guard order digests "T" ==
-  ["M$0h" ++ Names.sha16 "(instantiation root M ((uint 8 1)))",
-   "M$0h" ++ Names.sha16 "(instantiation root M ((uint 8 2)))", "T"]
+  ["M$0h" ++ Names.sha16 "(instantiation root M ((array (uint 8) ((uint 8 1)))))",
+   "M$0h" ++ Names.sha16 "(instantiation root M ((array (uint 8) ((uint 8 2)))))", "T"]
 
 /-!
 An emitted name is taken when its instantiation starts. A descendant that shares the emitted name
 of an active ancestor is thus `S019` at its own `instance` statement.
 -/
 def nested : String :=
-  "module M(comptime x: UInt[8]) {\n" ++
-  "  comptime if (x == UInt[8](1)) { instance a = M(UInt[8](0)); }\n}\n" ++
-  "module T() {\n  instance b = M(UInt[8](1));\n}\n"
+  "module M(comptime x: [UInt[8]; 1]) {\n" ++
+  "  comptime if (x[0] == UInt[8](1)) { instance a = M([0]); }\n}\n" ++
+  "module T() {\n  instance b = M([1]);\n}\n"
 #guard (cost nested "T").startsWith "total"
-#guard cost nested "T" (digest := collide) == "S019 2:35"
+#guard cost nested "T" (digest := collide) == "S019 2:38"
 
 /-!
 A serialization charges its length in bytes, and an emitted name too. A module with a long name

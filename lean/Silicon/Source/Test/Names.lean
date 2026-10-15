@@ -106,6 +106,23 @@ def long (n : Nat) : String := String.ofList (List.replicate n 'a')
 #guard (encode (moduleName sha16 (id "M" [.int (10 ^ 62)]))).startsWith "M$0h"
 #guard (encode (moduleName sha16 (id "M" [.int (2 ^ 300)]))).startsWith "M$0h"
 
+/-!
+A finite integer gives the token of its integer value, so `C(1)` and `C(UInt[8](1))` share one
+name. A negative `SInt` value gets `n`. A magnitude of `2^256` or more has no token.
+-/
+#guard encode (moduleName sha16 (id "C" [.uint 8 1])) == "C$1"
+#guard moduleName sha16 (id "C" [.uint 8 1]) == moduleName sha16 (id "C" [.int 1])
+#guard encode (moduleName sha16 (id "C" [.sint 8 (-5)])) == "C$5n"
+#guard encode (moduleName sha16 (id "C" [.sint 8 0, .uint 1 1, .bool true])) == "C$0$1$1b"
+#guard encode (moduleName sha16 (id "C" [.uint 300 (10 ^ 61)])) == "C$1" ++ String.ofList
+  (List.replicate 61 '0')
+#guard (encode (moduleName sha16 (id "C" [.uint 300 (2 ^ 300 - 1)]))).startsWith "C$0h"
+#guard readable (.uint 300 (2 ^ 256 - 1)) == some (.int (2 ^ 256 - 1))
+#guard readable (.uint 300 (2 ^ 256)) == none
+#guard readable (.sint 300 (-(2 ^ 256 - 1))) == some (.int (-(2 ^ 256 - 1)))
+#guard readable (.sint 300 (-(2 ^ 256))) == none
+#guard readable (.int (2 ^ 256)) == none
+
 /-! A keyword module without arguments keeps the readable form. -/
 #guard (moduleName sha16 (id "add" [])).rest.isEmpty
 
