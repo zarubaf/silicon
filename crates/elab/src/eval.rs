@@ -495,8 +495,10 @@ impl Store {
     /// and needs no walk. Otherwise the decision walks the path of the part once. A static part
     /// holds, and the charge of the held root pays for the walk. Any other part gives a new
     /// witness through it, and the read has at most as many steps left as the witness is deep.
-    /// Each such walk enters a part with at most half the hardware leaves of the part before
-    /// it, so a read walks at most log2 of the leaves of the root plus one times its steps.
+    /// A node without a hardware leaf is a static value (`Agg::finish`), so the heavy part of a
+    /// node leads to a leaf. Each walk that makes a new witness enters a part with at most half
+    /// the hardware leaves of the part before it. Thus a read walks at most log2 L plus one
+    /// times its steps, where L is the number of hardware leaves of the root.
     fn decide_holds(&mut self, root: Root) {
         let Some(list) = self.armed.remove(&root) else {
             return;
