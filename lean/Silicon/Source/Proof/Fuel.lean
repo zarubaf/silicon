@@ -743,13 +743,18 @@ theorem primCall_f (p : Pos) (g : String) (h : PrimFn) (vs : List Val) :
   follows [lenOf_f, dataBitsOf_f, static_f, data_f, apply_f, hwConvert_f, bounded_f,
     diagnose_f]
 
+theorem bindParams_f {ty ty' : Resolve.TypeExpr → M Ty} (h : ∀ t, Follows cap (ty t) (ty' t))
+    (p : Pos) (ps : List Resolve.Param) (args : List Val) :
+    Follows cap (bindParams ty p ps args) (bindParams ty' p ps args) := by
+  unfold bindParams
+  follows [h, conform_f, static_f, settle_f, bindLocal_f]
+
 theorem specOf_f {ty ty' : Resolve.TypeExpr → M Ty} (h : ∀ t, Follows cap (ty t) (ty' t))
     (p : Pos) (i : Nat) (x : Ident) (ps : List Resolve.Param) (fs : List Resolve.StructField)
     (pre : Bool) (args : List Val) :
     Follows cap (specOf ty p i x ps fs pre args) (specOf ty' p i x ps fs pre args) := by
   unfold specOf
-  follows [h, specialize_f, nested_f, inFrame_f, conform_f, static_f, settle_f, bindLocal_f,
-    atUse_f]
+  follows [h, bindParams_f h, specialize_f, nested_f, inFrame_f, atUse_f]
 
 theorem responseTy_f {ty ty' : Resolve.TypeExpr → M Ty} (h : ∀ t, Follows cap (ty t) (ty' t))
     (p : Pos) (t : Ty) : Follows cap (responseTy ty p t) (responseTy ty' p t) := by

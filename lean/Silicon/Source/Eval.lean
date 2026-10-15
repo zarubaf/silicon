@@ -1164,6 +1164,21 @@ def primCall (p : Pos) (g : String) (h : PrimFn) (vs : List Val) : M (Option Out
     | _, vs => fail .S010 p s!"`{g}` does not accept {vs.map Val.text}"
 
 /-!
+The typed use at `p` of the arguments `args` at the item parameters `ps`, in order. `ty`
+evaluates the type of a parameter, so the type of a later parameter can name an earlier one. Each
+argument settles, is static, and conforms to its parameter type, and the converted value binds
+the parameter name. It gives each parameter type with its converted value. The caller sets the
+item scope and the frame, and it checks the counts.
+-/
+def bindParams (ty : Resolve.TypeExpr → M Ty) (p : Pos) (ps : List Resolve.Param)
+    (args : List Val) : M (List (Ty × Value)) :=
+  (ps.zip args).mapM fun (q, v) => do
+    let t ← ty q.ty
+    let w ← conform p t (← static p (← settle p t v))
+    bindLocal q.name.id ⟨some t, false, .static w⟩
+    return (t, w)
+
+/-!
 The use at `p` of the struct item `i` with the name `x`, the parameters `ps`, the fields `fs`,
 and the prelude flag `pre`, with the values `args` of its arguments (`spec`). `ty` evaluates a
 type expression.
@@ -1178,12 +1193,8 @@ def specOf (ty : Resolve.TypeExpr → M Ty) (p : Pos) (i : Nat) (x : Ident)
   let work := nested p <| inFrame none <|
       withReader (fun c => { c with item := i, frame := ⟨none, 0⟩ }) do
     let keys ← withReader (fun c => { c with binding := i :: c.binding }) <|
-      (ps.zip args).mapM fun (q, v) => do
-        let t ← ty q.ty
-        let w ← conform p t (← static p (← settle p t v))
-        bindLocal q.name.id ⟨some t, false, .static w⟩
-        return w
-    specialize p x.name i pre keys (fs.mapM fun f => ty f.ty)
+      bindParams ty p ps args
+    specialize p x.name i pre (keys.map (·.2)) (fs.mapM fun f => ty f.ty)
   if pre then atUse p work else work
 
 /-!
