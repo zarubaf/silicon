@@ -247,7 +247,7 @@ impl Store {
             return (out, None);
         };
         let root = c.part.root;
-        let win = (c.live && matches!(out, Out::Ref(_)))
+        let win = matches!(out, Out::Ref(_))
             .then(|| Win::new(root, self.entries(root), c.mark))
             .flatten();
         if win.is_none() {
