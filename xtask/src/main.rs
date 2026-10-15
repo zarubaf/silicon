@@ -20,6 +20,7 @@ mod repo;
 mod review;
 mod silicon;
 mod skips;
+mod subset;
 #[cfg(test)]
 mod testgit;
 mod tree;
@@ -45,6 +46,7 @@ const CHECKS: &[Check] = &[
     workspace::check,
     lean::check,
     arch::check,
+    subset::check,
 ];
 
 #[derive(Parser)]
