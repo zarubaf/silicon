@@ -144,6 +144,9 @@ type Frame = BTreeMap<DeclId, Slot>;
 /// The part of an aggregate root that a read waits at, with the root not held yet.
 struct Probe {
     part: Ref,
+    /// The length of the path of the parked reference. After a mutation copied the reference,
+    /// the steps of `part` past this length lead into the copy.
+    base: usize,
     /// The leaves in the type of the part.
     leaves: u64,
     /// The most leaves of the type that the part holds as static values. A part with more leaves
@@ -313,6 +316,7 @@ impl Store {
     fn probe(&mut self, at: usize, r: Ref, leaves: u64, bound: u64) {
         if let Some(slot) = self.probes.get_mut(at) {
             *slot = Some(Probe {
+                base: r.path.len(),
                 part: r,
                 leaves,
                 bound,
@@ -371,7 +375,7 @@ impl Store {
         for at in list {
             let (hold, bound) = match self.probes.get(at) {
                 Some(Some(p)) if p.leaves > p.bound => (false, None),
-                Some(Some(p)) => match self.part_at(&p.part) {
+                Some(Some(p)) => match self.decision_part(at, p) {
                     Some(Seen::Static(_)) => (true, None),
                     Some(Seen::Hw(_) | Seen::Agg(Agg::Hw(_))) => {
                         (false, Some(p.leaves.saturating_sub(1)))
@@ -613,6 +617,24 @@ impl Store {
             (Val::Static(v), false) => Seen::Static(element(v, &r.path, &self.steps)),
             (Val::Agg(a), false) => agg_element(a, &r.path, &self.steps),
             _ => Seen::Static(&ABSENT_VALUE),
+        }
+    }
+
+    /// The part that the probe `p` of the result parked at `at` decides on. As in Lean, a read
+    /// decides on the value as it was before the index: the live root while the result is a
+    /// reference, and the copy that a mutation made once the result is a copy.
+    fn decision_part<'s>(&'s self, at: usize, p: &Probe) -> Option<Seen<'s>> {
+        match self.parked.get(at) {
+            Some(Out::Kept(v, _)) => {
+                let path = p.part.path.get(p.base..).unwrap_or_default();
+                match v {
+                    Val::Static(x) => Some(Seen::Static(element(x, path, &self.steps))),
+                    Val::Agg(a) => agg_part(a, path, &self.steps),
+                    v if path.is_empty() => Some(v.seen()),
+                    _ => None,
+                }
+            }
+            _ => self.part_at(&p.part),
         }
     }
 
