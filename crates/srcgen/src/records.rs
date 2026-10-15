@@ -9,7 +9,7 @@
 //! keeps the tail of each `diagnostic`: the message and the value, as
 //! `observe` prints them after the frames.
 
-use super::eval::{Env, Fault, Scope, Value, eval, exec_logged, loop_values};
+use super::eval::{Env, Fault, Logged, Scope, Value, eval, exec_logged, loop_values};
 use super::program::{Item, Stmt};
 
 /// The distinct argument tuples of each module, by module name.
@@ -34,13 +34,13 @@ pub(crate) fn records(items: &[Item], contexts: &Contexts) -> Result<Vec<String>
             run(body, &mut Env::of(params, tuple), &scope, &mut log)?;
         }
     }
-    Ok(log)
+    Ok(log.iter().map(Logged::tail).collect())
 }
 
 /// The static statements of a frame. A nested frame works on a copy of the
 /// env: its names do not leave it, and the builder gives it no root of its
 /// parent to write.
-fn run(body: &[Stmt], env: &mut Env, scope: &Scope, log: &mut Vec<String>) -> Result<(), Fault> {
+fn run(body: &[Stmt], env: &mut Env, scope: &Scope, log: &mut Vec<Logged>) -> Result<(), Fault> {
     for s in body {
         match s {
             Stmt::StaticLet(..)
