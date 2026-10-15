@@ -5,7 +5,6 @@
 //! gives `S015`. The tests of the work count steps and copies and not the time.
 
 use crate::counters::{Counts, of};
-use crate::eval::COPIES;
 use crate::tests::{cost, exact, message, out, path_steps};
 
 /// The result of `eval` with the default budgets.
@@ -33,12 +32,8 @@ fn the_types_string_and_list() {
 
 /// The copies of the run with the fuel `fuel`, and the counts of its work.
 fn work(fuel: u64) -> (u64, Counts) {
-    let copies = COPIES
-        .lock()
-        .ok()
-        .and_then(|c| c.get(&fuel).copied())
-        .unwrap_or(u64::MAX);
-    (copies, of(fuel))
+    let counts = of(fuel);
+    (counts.copies, counts)
 }
 
 /// `+` joins two strings and charges the sum of their sizes: 1 for the node, 4 for each

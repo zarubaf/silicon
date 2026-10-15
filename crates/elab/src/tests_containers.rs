@@ -659,12 +659,7 @@ fn a_module_argument_copies_after_its_charge() {
     // The arguments and the constant cost far less than this fuel, and their copies far more.
     let fuel = 100_003;
     assert!(cost_fuel(&src, "T", fuel).starts_with("S015"));
-    let copies = crate::eval::COPIES
-        .lock()
-        .map(|c| c.get(&fuel).copied())
-        .ok()
-        .flatten();
-    assert_eq!(copies, Some(0));
+    assert_eq!(crate::counters::of(fuel).copies, 0);
 }
 
 fn container(ty: &str, arg: &str) -> String {

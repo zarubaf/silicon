@@ -6,7 +6,6 @@
 //! walks and not the time.
 
 use crate::counters::of;
-use crate::eval::COPIES;
 use crate::int::Int;
 use crate::tests::{cost, exact, out, serialized_len, type_work};
 use crate::tests_elab::{cost as elab_cost, order};
@@ -659,11 +658,7 @@ fn many_uses_of_one_function_name_cost_linear_work() {
         let fuel = 200_000_000 + n as u64;
         let text = out(FNS, &uses(n), fuel, 1000);
         assert!(text.starts_with("(tuple ((function root g)"), "{n}");
-        let copies = COPIES
-            .lock()
-            .ok()
-            .and_then(|c| c.get(&fuel).copied())
-            .unwrap_or(u64::MAX);
+        let copies = of(fuel).copies;
         (
             of(fuel).params,
             copies,
