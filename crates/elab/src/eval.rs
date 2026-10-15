@@ -61,6 +61,7 @@ use crate::{Budget, Code, Error};
 use parse::ast::{BinOp, Expr, Ident, Item, NodeId, Pos, Stmt, TypeExpr};
 use parse::{NestedStack, StackError};
 use resolve::{DeclId, Kind, Prelude, Resolved, ResolvedExpr, Target};
+#[cfg(test)]
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -224,6 +225,7 @@ struct Store {
     frames: Vec<Frame>,
     /// The steps of the walks along paths into values: 1 for each container that a walk
     /// enters. A test counts them, so it checks the work of a walk and not its time.
+    #[cfg(test)]
     steps: Cell<u64>,
     /// The parameters of a frame that refer to an argument of the caller, by the number of
     /// the frame: a module argument refers until the instance statement pays its copy.
@@ -277,58 +279,70 @@ impl Drop for Store {
     }
 }
 
-/// Counts `n` steps of a walk along a path into a stored value.
-fn stepped(steps: &Cell<u64>, n: u64) {
-    steps.set(steps.get() + n);
-    #[cfg(test)]
-    crate::counters::add(crate::counters::Count::Stepped, n);
-}
-
-/// The element of `v` at the numbers `path`, one for each container below it.
-fn element<'a>(v: &'a Value, path: &[usize], steps: &Cell<u64>) -> &'a Value {
-    stepped(steps, path.len() as u64);
-    let mut cur = v;
-    for &k in path {
-        cur = match cur {
-            Value::Array(_, xs)
-            | Value::Tuple(_, xs)
-            | Value::Record(_, xs)
-            | Value::List(_, xs) => xs.get(k).unwrap_or(&ABSENT_VALUE),
-            _ => &ABSENT_VALUE,
-        };
-    }
-    cur
-}
-
-/// What the aggregate `a` finds at the numbers `path`, one for each container node below it. A
-/// static part continues as a static value. A reference or a hardware leaf does not continue: a
-/// step into it makes a new reference, which no path names, so the walk finds nothing there.
-fn agg_part<'a>(a: &'a Agg, path: &[usize], steps: &Cell<u64>) -> Option<Seen<'a>> {
-    let mut cur = a.seen();
-    for (i, &k) in path.iter().enumerate() {
-        cur = match cur {
-            Seen::Agg(Agg::Array(_, p) | Agg::Tuple(_, p) | Agg::Record(_, p)) => {
-                stepped(steps, 1);
-                p.0.get(k).map_or(Seen::Static(&ABSENT_VALUE), Agg::seen)
-            }
-            Seen::Static(v) => return Some(Seen::Static(element(v, &path[i..], steps))),
-            _ => return None,
-        };
-    }
-    Some(cur)
-}
-
-/// The part that `agg_part` finds, or the absent value below a reference or a hardware leaf.
-fn agg_element<'a>(a: &'a Agg, path: &[usize], steps: &Cell<u64>) -> Seen<'a> {
-    agg_part(a, path, steps).unwrap_or(Seen::Static(&ABSENT_VALUE))
-}
-
 impl Store {
+    /// Counts `n` steps of a walk along a path into a stored value.
+    fn stepped(&self, n: u64) {
+        self.add_steps(n);
+        #[cfg(test)]
+        crate::counters::add(crate::counters::Count::Stepped, n);
+    }
+
+    /// Adds `n` to the step count of the store, without the run counter.
+    #[cfg(test)]
+    pub(crate) fn add_steps(&self, n: u64) {
+        self.steps.set(self.steps.get() + n);
+    }
+
+    /// The tests count the steps of a walk; a release build does not.
+    #[cfg(not(test))]
+    #[allow(clippy::unused_self)]
+    pub(crate) fn add_steps(&self, _n: u64) {}
+
+    /// The element of `v` at the numbers `path`, one for each container below it.
+    fn element<'a>(&self, v: &'a Value, path: &[usize]) -> &'a Value {
+        self.stepped(path.len() as u64);
+        let mut cur = v;
+        for &k in path {
+            cur = match cur {
+                Value::Array(_, xs)
+                | Value::Tuple(_, xs)
+                | Value::Record(_, xs)
+                | Value::List(_, xs) => xs.get(k).unwrap_or(&ABSENT_VALUE),
+                _ => &ABSENT_VALUE,
+            };
+        }
+        cur
+    }
+
+    /// What the aggregate `a` finds at the numbers `path`, one for each container node below it. A
+    /// static part continues as a static value. A reference or a hardware leaf does not continue: a
+    /// step into it makes a new reference, which no path names, so the walk finds nothing there.
+    fn agg_part<'a>(&self, a: &'a Agg, path: &[usize]) -> Option<Seen<'a>> {
+        let mut cur = a.seen();
+        for (i, &k) in path.iter().enumerate() {
+            cur = match cur {
+                Seen::Agg(Agg::Array(_, p) | Agg::Tuple(_, p) | Agg::Record(_, p)) => {
+                    self.stepped(1);
+                    p.0.get(k).map_or(Seen::Static(&ABSENT_VALUE), Agg::seen)
+                }
+                Seen::Static(v) => return Some(Seen::Static(self.element(v, &path[i..]))),
+                _ => return None,
+            };
+        }
+        Some(cur)
+    }
+
+    /// The part that `agg_part` finds, or the absent value below a reference or a hardware leaf.
+    fn agg_element<'a>(&self, a: &'a Agg, path: &[usize]) -> Seen<'a> {
+        self.agg_part(a, path)
+            .unwrap_or(Seen::Static(&ABSENT_VALUE))
+    }
+
     /// The element `k` of the container that `cur` finds: one step of a walk along a path.
     fn step<'s>(&self, cur: Seen<'s>, k: usize) -> Seen<'s> {
         match cur {
-            Seen::Static(v) => Seen::Static(element(v, &[k], &self.steps)),
-            Seen::Agg(a) => agg_element(a, &[k], &self.steps),
+            Seen::Static(v) => Seen::Static(self.element(v, &[k])),
+            Seen::Agg(a) => self.agg_element(a, &[k]),
             s => s,
         }
     }
@@ -555,7 +569,7 @@ impl Store {
         for (i, &k) in rel.iter().enumerate() {
             cur = match cur {
                 Agg::Array(_, p) | Agg::Tuple(_, p) | Agg::Record(_, p) => {
-                    stepped(&self.steps, 1);
+                    self.stepped(1);
                     match p.0.get(k) {
                         Some(x) => x,
                         None => return Located::Static,
@@ -585,7 +599,7 @@ impl Store {
                         None
                     };
                     let Some(next) = next else { break };
-                    stepped(&self.steps, 1);
+                    self.stepped(1);
                     witness.path.push(n.heavy);
                     cur = next;
                 }
@@ -737,7 +751,7 @@ impl Store {
             return None;
         };
         self.settle_root(root, Some(keys), false);
-        stepped(&self.steps, keys.len() as u64);
+        self.stepped(keys.len() as u64);
         let Val::Static(value) = &mut self.frames.get_mut(frame)?.get_mut(&id)?.value else {
             return None;
         };
@@ -822,8 +836,8 @@ impl Store {
     /// What the local at `root` holds at the numbers `keys`.
     fn current(&self, root: Root, keys: &[usize]) -> Seen<'_> {
         match self.root(&root) {
-            Val::Static(v) => Seen::Static(element(v, keys, &self.steps)),
-            Val::Agg(a) => agg_element(a, keys, &self.steps),
+            Val::Static(v) => Seen::Static(self.element(v, keys)),
+            Val::Agg(a) => self.agg_element(a, keys),
             v => v.seen(),
         }
     }
@@ -833,8 +847,8 @@ impl Store {
         let root = self.root(&r.root);
         match (root, r.path.is_empty()) {
             (_, true) => root.seen(),
-            (Val::Static(v), false) => Seen::Static(element(v, &r.path, &self.steps)),
-            (Val::Agg(a), false) => agg_element(a, &r.path, &self.steps),
+            (Val::Static(v), false) => Seen::Static(self.element(v, &r.path)),
+            (Val::Agg(a), false) => self.agg_element(a, &r.path),
             _ => Seen::Static(&ABSENT_VALUE),
         }
     }
@@ -1157,6 +1171,7 @@ impl<'a> Evaluator<'a> {
             store: Store {
                 consts,
                 frames: vec![Frame::new()],
+                #[cfg(test)]
                 steps: Cell::new(0),
                 parked: Vec::new(),
                 parked_at: BTreeMap::new(),
