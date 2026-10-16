@@ -294,8 +294,17 @@ impl History {
 }
 
 /// The state of a local before a change of a list, which the log entry of the change needs
-/// (`Store::before_list_edit`). It holds nothing while no read waits at the local.
-pub(in crate::eval) struct Before(Option<Vec<(u64, u64)>>);
+/// (`Store::before_list_edit`). It holds the local, the path, and the length of the list that it
+/// was made for, so the log entry cannot name another change. It holds nothing while no read
+/// waits at the local.
+pub(in crate::eval) struct Before(Option<Pending>);
+
+struct Pending {
+    root: Root,
+    keys: Vec<usize>,
+    len: usize,
+    stats: Vec<(u64, u64)>,
+}
 
 /// A read that waits at a part of a local: the local, and the length of its log when the read
 /// parked. The window of the read is the entries from there on. The log lives while a read
@@ -500,38 +509,35 @@ impl Store {
         }
     }
 
-    /// The state of the local before a `push` or a `pop` along `keys`, which the log entry of the
-    /// change needs. It comes before the change.
-    pub(in crate::eval) fn before_list_edit(&self, root: Root, keys: &[usize]) -> Before {
-        Before(self.stats_before(root, keys))
-    }
-
-    /// Logs the `push` along `keys` onto a list that had `len` elements, if a read waits at the
-    /// local. `before` comes from `before_list_edit`, called before the change.
-    pub(in crate::eval) fn log_push(
-        &mut self,
+    /// The state of the local at `root` before a `push` or a `pop` along `keys` of a list that
+    /// has `len` elements. It comes before the change. The change then goes through
+    /// `push_static` or `take_agg` with `put_back` (`pop_static` for a `pop`), and the caller
+    /// logs it with `log_push` or `log_pop` on this token.
+    pub(in crate::eval) fn before_list_edit(
+        &self,
         root: Root,
         keys: &[usize],
         len: usize,
-        before: Before,
-    ) {
-        if let Some(stats) = before.0 {
-            self.log_edit(root, Edit::push(keys.to_vec(), len, stats));
+    ) -> Before {
+        Before(self.stats_before(root, keys).map(|stats| Pending {
+            root,
+            keys: keys.to_vec(),
+            len,
+            stats,
+        }))
+    }
+
+    /// Logs the `push` that `before` was made for, if a read waits at the local.
+    pub(in crate::eval) fn log_push(&mut self, before: Before) {
+        if let Some(p) = before.0 {
+            self.log_edit(p.root, Edit::push(p.keys, p.len, p.stats));
         }
     }
 
-    /// Logs the `pop` of `saved` along `keys` from a list that had `len` elements, if a read
-    /// waits at the local. `before` comes from `before_list_edit`, called before the change.
-    pub(in crate::eval) fn log_pop(
-        &mut self,
-        root: Root,
-        keys: &[usize],
-        saved: &Value,
-        len: usize,
-        before: Before,
-    ) {
-        if let Some(stats) = before.0 {
-            self.log_edit(root, Edit::pop(keys.to_vec(), saved.clone(), len, stats));
+    /// Logs the `pop` of `saved` that `before` was made for, if a read waits at the local.
+    pub(in crate::eval) fn log_pop(&mut self, before: Before, saved: &Value) {
+        if let Some(p) = before.0 {
+            self.log_edit(p.root, Edit::pop(p.keys, saved.clone(), p.len, p.stats));
         }
     }
 
