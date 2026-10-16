@@ -498,8 +498,19 @@ impl Evaluator<'_> {
             }
             known = after;
         }
-        let (parked, mark) = self.store.unpark(at);
-        let followed = self.follow(Opnd::of_out(parked), &keyed, mark.as_ref());
+        let (parked, mark, split) = self.store.unpark(at);
+        // A step that goes into a list a change reached splits the walk: the first steps walk
+        // the live local, and only the part where they end gets a copy of its old value.
+        let followed = match split {
+            Some(n) => {
+                let (first, rest) = keyed.split_at(n.min(keyed.len()));
+                match self.follow(Opnd::of_out(parked), first, mark.as_ref()) {
+                    Ok((out, _)) => self.follow(Opnd::of_out(out), rest, None),
+                    Err(e) => Err(e),
+                }
+            }
+            None => self.follow(Opnd::of_out(parked), &keyed, mark.as_ref()),
+        };
         if let Some(mark) = &mark {
             self.store.finish(mark);
         }

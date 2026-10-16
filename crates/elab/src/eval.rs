@@ -146,8 +146,7 @@ type Frame = BTreeMap<DeclId, Slot>;
 /// follows the steps of the read, so one path names the part.
 struct Cursor {
     part: Ref,
-    /// The length of the path of the parked reference. After a mutation copied the reference,
-    /// the steps of `part` past this length lead into the copy.
+    /// The length of the path of the parked reference. The trail of the steps follows it.
     base: usize,
     /// A path from the root to a hardware leaf that follows the heavy part of each node, with
     /// the length of its common prefix with the path of the part. A part on the witness holds a
@@ -489,8 +488,8 @@ impl Store {
         }
     }
 
-    /// Walks the path of the cursor at `at` once: down the live root, or down the copy that a
-    /// mutation made once the result is a copy. A part that is a static value, or an absent one,
+    /// Walks the path of the cursor at `at` once: down the live root, or down the old root in the
+    /// log after a write that bound the root again. A part that is a static value, or an absent one,
     /// is `Static`. Else the witness goes through the part along the heavy part of each node,
     /// for as many steps as the read has left. A path that ends below a reference or a hardware
     /// leaf closes the witness there: as in Lean, such a part has no root.
@@ -508,12 +507,7 @@ impl Store {
             }
             _ => None,
         };
-        let (value, rel) = match (self.parked.get(at), old) {
-            (Some(Out::Kept(v, _)), _) => (v, path.get(c.base..).unwrap_or_default()),
-            (_, Some(old)) => (old, &path[..]),
-            _ => (self.root(&c.part.root), &path[..]),
-        };
-        let skipped = path.len() - rel.len();
+        let value = old.unwrap_or_else(|| self.root(&c.part.root));
         let closed_at = |n: usize| {
             Located::Open(Witness {
                 path: path.get(..n).unwrap_or_default().to_vec(),
@@ -523,11 +517,11 @@ impl Store {
         };
         let a = match value {
             Val::Agg(a) => a,
-            Val::Hw(_) => return closed_at(skipped),
+            Val::Hw(_) => return closed_at(0),
             _ => return Located::Static,
         };
         let mut cur: &Agg = a;
-        for (i, &k) in rel.iter().enumerate() {
+        for (i, &k) in path.iter().enumerate() {
             cur = match cur {
                 Agg::Array(_, p) | Agg::Tuple(_, p) | Agg::Record(_, p) => {
                     self.stepped(1);
@@ -537,7 +531,7 @@ impl Store {
                     }
                 }
                 Agg::Static(_) => return Located::Static,
-                Agg::Hw(_) | Agg::Ref(..) => return closed_at(skipped + i),
+                Agg::Hw(_) | Agg::Ref(..) => return closed_at(i),
             };
         }
         let mut witness = Witness {
