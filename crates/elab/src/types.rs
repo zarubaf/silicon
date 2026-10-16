@@ -394,7 +394,7 @@ impl Types {
 
     /// Adds the type `ty` with its metadata to the table.
     fn insert(&mut self, ty: Ty, meta: Meta) -> TyId {
-        let (size, depth) = self.shape(&ty);
+        let (size, depth) = Types::shape(&ty);
         let strings = match &ty {
             Ty::String => true,
             Ty::Array(elem, _) | Ty::List(elem) => elem.strings,
@@ -457,7 +457,7 @@ impl Types {
     /// The recursive size and the depth of a type that is not a struct type. A struct type
     /// gets its size from its arguments and its depth from `struct_meta`.
     #[must_use]
-    pub fn shape(&self, ty: &Ty) -> (u64, u64) {
+    pub fn shape(ty: &Ty) -> (u64, u64) {
         match ty {
             Ty::Bool | Ty::Nat | Ty::Int | Ty::Unit | Ty::Type | Ty::String | Ty::Struct(_) => {
                 (1, 1)
