@@ -75,7 +75,7 @@ impl Builder {
 
     /// A call of a list builder, or `list(T)`, as a list of the type
     /// `List[T]`. A call that faults in an env takes `list(T)`.
-    fn list_value(&mut self, r: Reach<'_>) -> (SExpr, STy) {
+    pub(super) fn list_value(&mut self, r: Reach<'_>) -> (SExpr, STy) {
         let Some(envs) = r.envs else {
             return (SExpr::NewList(STy::Int), STy::Int);
         };
@@ -193,7 +193,7 @@ impl Builder {
 
     /// `let s: Int = xs.pop();` on a mutable list of the frame that is not
     /// empty in any env. The scan starts at a random list and takes the
-    /// first list that has an element.
+    /// first list that has an element, or pushes one.
     pub(super) fn pop_stmt(&mut self, ctx: &mut Ctx, names: &mut Names, out: &mut Vec<Stmt>) {
         let start = self.tape.index(ctx.lists.len());
         let name = names.fresh("s");
@@ -210,7 +210,19 @@ impl Builder {
                 return;
             }
         }
-        if !ctx.lists.is_empty() {
+        // Each list is empty: a `push` gives the `pop` an element.
+        let Some(list) = ctx.lists.first().cloned() else {
+            return;
+        };
+        let push = Stmt::Push(list.clone(), int(0));
+        let pop = Stmt::PopLet(name.clone(), list.clone());
+        if self.try_run(ctx, &push) && self.try_run(ctx, &pop) {
+            note!(self, pops);
+            ctx.forget(&list);
+            ctx.statics.push((name, STy::Int));
+            out.push(push);
+            out.push(pop);
+        } else {
             note!(self, pop_fallbacks);
         }
     }

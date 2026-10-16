@@ -516,8 +516,10 @@ fn no_effectful_function_reaches_a_structural_position() {
             let declaration = t.starts_with("comptime fn ") && uses == 1;
             let held = t.starts_with("const F") && t.ends_with(';') && uses <= 2;
             let call = t.starts_with("let s") && t.contains(": Int = ") && uses == 1;
+            // A function value is no call; `diagnostic` may show it.
+            let shown = t.starts_with("diagnostic(") && uses == 1;
             assert!(
-                declaration || held || call,
+                declaration || held || call || shown,
                 "an effectful function in a structural position: {line}\n{}",
                 p.text()
             );
@@ -787,4 +789,43 @@ fn the_arguments_cover_converted_identities() {
         params >= want && converted >= want && aliased >= want,
         "parameters {params}, conversions {converted}, aliases {aliased}"
     );
+}
+
+/// The value of a record line, after its message `(string "dK")`.
+fn record_value(line: &str) -> Option<&str> {
+    let (_, tail) = line.split_once("(string \"d")?;
+    let (_, value) = tail.split_once("\") ")?;
+    value.strip_suffix(')')
+}
+
+/// The records show each kind of static value that a `diagnostic` takes:
+/// a string, a tuple, an array, a record, a list, a function, and a finite
+/// integer (spec 7.1, 8.2). Each kind occurs in 1 program in 32.
+#[test]
+fn the_records_cover_the_kinds_of_values() {
+    const TAPES: usize = 256;
+    const KINDS: [&str; 10] = [
+        "(int ",
+        "(bool ",
+        "(string ",
+        "(tuple ",
+        "(array ",
+        "(record ",
+        "(list ",
+        "(function ",
+        "(uint ",
+        "(sint ",
+    ];
+    let mut with = BTreeMap::<&str, usize>::new();
+    for tape in tapes(TAPES) {
+        let Ok(p) = build(tape) else { continue };
+        let values: Vec<&str> = p.records().iter().filter_map(|r| record_value(r)).collect();
+        for kind in KINDS {
+            let seen = values.iter().any(|v| v.starts_with(kind));
+            *with.entry(kind).or_default() += usize::from(seen);
+        }
+    }
+    for (kind, n) in &with {
+        assert!(n * 32 >= TAPES, "{kind} occurs in {n} of {TAPES}: {with:?}");
+    }
 }
