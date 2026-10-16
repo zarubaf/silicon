@@ -909,7 +909,6 @@ fn k_reads_and_an_assignment_in_an_index_take_work_in_k_plus_m() {
 /// hold decides at the static part `t.0`, and the read must still copy only the part where it
 /// ends. The innermost index and a later index of each read clear the list `t.2` of `m` elements.
 #[test]
-#[ignore = "#242"]
 fn k_held_reads_after_a_rebind_take_work_in_k_plus_m() {
     let at = |n: u64, i: u64| {
         let mut e = "(clear(t.2), 0).1".to_owned();
@@ -933,7 +932,6 @@ fn k_held_reads_after_a_rebind_take_work_in_k_plus_m() {
 /// another list of the local, which has `m` elements. A read copies at most the part where it
 /// ends, so it copies none of the lists.
 #[test]
-#[ignore = "#242"]
 fn k_reads_of_a_static_part_and_m_pushes_into_another_part_take_work_in_k_plus_m() {
     let at = |n: u64, i: u64| {
         let mut e = "(u.0.push(1), 0).1".to_owned();
