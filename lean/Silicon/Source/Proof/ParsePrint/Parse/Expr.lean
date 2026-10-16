@@ -2264,8 +2264,12 @@ theorem Runs.operand (e : Expr) (c : Nat) (hc1 : 1 ≤ c) (hc : c ≤ 10)
   refine ⟨hm.1, ?_⟩
   have := hn.2; have := hm.2; simp only [List.length_nil] at *; omega
 
-theorem Expr.head_post_ne_if (e : Expr) (hl : e.level = 11) (c : Nat) :
-    (e.toks c).head? ≠ some (.keyword "if") := by
+/-!
+The first kind of an expression is no keyword `w` outside the starts `true`, `false`, and `fn`.
+At a level of 1 or more, a conditional has parentheses. Thus `if` and `match` are not first.
+-/
+theorem Expr.head_post_ne_kw (e : Expr) (hl : e.level = 11) (c : Nat) {w : String}
+    (hw : w ∉ ["true", "false", "fn"]) : (e.toks c).head? ≠ some (.keyword w) := by
   obtain ⟨k, hk, hpk⟩ := Expr.toks_head11 e
   rw [Expr.toks_paren] at hk ⊢
   split
@@ -2275,10 +2279,10 @@ theorem Expr.head_post_ne_if (e : Expr) (hl : e.level = 11) (c : Nat) :
     intro he
     simp only [Option.some.injEq] at he
     subst he
-    rcases hpk with ⟨_, h⟩ | ⟨_, h⟩ | ⟨_, h⟩ | h | h | h | h <;> simp at h
+    rcases hpk with ⟨_, h⟩ | ⟨_, h⟩ | ⟨_, h⟩ | h | h | h | h <;> simp_all
 
-theorem Expr.toks_head_ne_if (e : Expr) : ∀ c, 1 ≤ c →
-    (e.toks c).head? ≠ some (.keyword "if") := by
+theorem Expr.toks_head_ne_kw (e : Expr) {w : String} (hw : w ∉ ["true", "false", "fn"]) :
+    ∀ c, 1 ≤ c → (e.toks c).head? ≠ some (.keyword w) := by
   induction e using Expr.ind with
   | case5 p op a _ =>
     intro c _; rw [Expr.toks_paren]; split
@@ -2299,9 +2303,10 @@ theorem Expr.toks_head_ne_if (e : Expr) : ∀ c, 1 ≤ c →
   | case17 =>
     intro c _; rw [Expr.toks_paren]; split
     · simp
-    · simp [Expr.toks]
-  | _ => exact fun c _ => Expr.head_post_ne_if _ (by simp [Expr.level, postfixLevel]) c
-
+    · simp only [Expr.toks, Nat.not_lt_zero, ite_false, List.cons_append, List.head?_cons,
+        ne_eq, Option.some.injEq, Kind.keyword.injEq]
+      rintro rfl; simp at hw
+  | _ => exact fun c _ => Expr.head_post_ne_kw _ (by simp [Expr.level, postfixLevel]) c hw
 
 theorem Expr.toks_one (e : Expr) (h : 1 ≤ e.level) : e.toks 1 = e.toks 0 := by
   rw [Expr.toks_paren, ite_eq_right (by omega)]
@@ -2357,10 +2362,12 @@ theorem Runs.expr (e : Expr) (hIH : ∀ x, (x.toks 0).length < (e.toks 0).length
     obtain ⟨ks, hks⟩ := List.head?_eq_some_iff.1 hk
     have hk0 : (tokenAt ctx.input i).kind = k := by
       have := hw; rw [hks] at this; exact this.head
-    have hne : k ≠ .keyword "if" := by
-      have := Expr.toks_head_ne_if e 1 (Nat.le_refl _)
+    have hne : ∀ w ∈ ["if", "match"], k ≠ .keyword w := by
+      intro w hw
+      have := Expr.toks_head_ne_kw e (w := w) (by simp at hw; rcases hw with rfl | rfl <;> decide)
+        1 (Nat.le_refl _)
       rw [h1, hks] at this; simpa using this
-    simp only [isKw, hk0, beq_iff_eq, hne, ite_false]
+    simp only [isKw, hk0, beq_iff_eq, hne "if" (by simp), hne "match" (by simp), ite_false]
     have := hO hl hp ctx i t R f (by rw [h1]; exact hw) (ht.mono (by omega)) (by rw [h1]; omega)
     rw [h1] at this
     exact this

@@ -5,7 +5,7 @@ import Silicon.Source.Print
 /-!
 The parser of slices 1 and 2. It reads the tokens of `Source.Lex`. It gives the items of the
 file, or the first error in position order. `S001` is a token that the grammar does not accept.
-`S004` is the syntax of a later slice or of a later phase of slice 2.
+`S004` is the syntax of a later slice or of a later phase of slice 3.
 
 The parser reads the tokens from left to right. It stops at the first token that the grammar
 does not accept, or at the first token of a later construct. It thus finds the errors in
@@ -13,9 +13,10 @@ position order, and it reports the first. This rule also orders a lexical error 
 `S004`. The lexer ends the tokens with an `error` token. The parser reports that token only
 if it gets to it. `S004` is at these tokens:
 
-- The keyword: `import`, `pub`, and `extern` at an item. `in`, `as`, `with`, and `conforms`
-  after their forms. `input`, `output`, `reg`, `wire`, `mem`, and `instance` in the body of a
-  `fn` without `comptime`: a helper that declares resources is slice 3.
+- The keyword: `import`, `pub`, `extern`, and `enum` at an item. `match` at an expression.
+  `in`, `as`, `with`, and `conforms` after their forms. `input`, `output`, `reg`, `wire`,
+  `mem`, and `instance` in the body of a `fn` without `comptime`: a helper that declares
+  resources is slice 3.
 - The opening token: `@` of one of the five builtins.
 - A later token of the construct: the `::` of a path. The `(` after a type, which is a type
   function call. The second name in a `domains` clause.
@@ -264,7 +265,8 @@ mutual
     | 0 => exhausted
     | f + 1 => do
       let t ← peek
-      if isKw "if" t then
+      if isKw "match" t then later t "a `match`"
+      else if isKw "if" t then
         bump
         sym "("
         let c ← expr f
@@ -793,7 +795,8 @@ def structItem (f : Nat) (start : Pos) : P Item := do
   return .struct start n ps (← fields f [])
 
 def laterItems : List (String × String) :=
-  [("import", "an import"), ("pub", "`pub`"), ("extern", "an extern module")]
+  [("import", "an import"), ("pub", "`pub`"), ("extern", "an extern module"),
+   ("enum", "an enum")]
 
 def item (f : Nat) : P Item := do
   let t ← peek

@@ -57,6 +57,10 @@ def failsAt (s : String) (line col : Nat) (depth : Nat := defaultSyntaxDepth) : 
 #guard kinds "@foo" == [.symbol "@", .ident "foo", .eof]
 #guard kinds "fn()->UInt" ==
   [.keyword "fn", .symbol "(", .symbol ")", .symbol "->", .ident "UInt", .eof]
+#guard kinds "x=>y Op::Add" ==
+  [.ident "x", .symbol "=>", .ident "y", .ident "Op", .symbol "::", .ident "Add", .eof]
+#guard kinds "a==>b" == [.ident "a", .symbol "==", .symbol ">", .ident "b", .eof]
+#guard kinds "enum match matches" == [.keyword "enum", .keyword "match", .ident "matches", .eof]
 
 /-! Comments separate tokens and produce none. A block comment does not nest. -/
 #guard kinds "a // b c\nd" == [.ident "a", .ident "d", .eof]
