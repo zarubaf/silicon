@@ -43,6 +43,8 @@ Each rule is one list line. It ends with `Check:` and the check. A rule without 
 - Every crate sets `[lints] workspace = true`. Check: `cargo xtask check` (rule `workspace-lints`).
 - A crate of `[workspace.metadata.layers] dev-only` is never a normal or build dependency. Only `xtask` and `[dev-dependencies]` name it. Check: `cargo xtask check` (rule `workspace-dev-only`).
 - Keep the non-test code of `elab` in the Rust subset of design section 4.5 of the front end. The section lists the banned types, macros, and imports. Check: `cargo xtask check` (rule `elab-subset`).
+- An accepted ADR changes only in its `- Status:` line. A new ADR supersedes it. Check: `cargo xtask check` (rule `adr-frozen`).
+- List the public items of each library crate in `crates/<crate>/api.txt`. A new public item needs a reviewed change of the list. Check: `cargo xtask check` (rule `api-allowlist`).
 - Format all files with the pinned tools. Check: `just check`.
 - Write Markdown prose in ASD-STE100. Check: `vale`.
 - Keep the error codes of the spec, Lean, and Rust equal. The Rust front end can lack the codes of later slices that `LATER` in `xtask/src/arch.rs` lists. Check: `cargo xtask check` (rule `arch-codes`).
