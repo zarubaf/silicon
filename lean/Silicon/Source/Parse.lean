@@ -824,6 +824,10 @@ def items : Nat → List Item → P (List Item)
     let i ← item f
     items f (i :: acc)
 
+/-! The message of an expression or a type higher than the syntax depth `depth`. -/
+def heightText (depth : Nat) : String :=
+  s!"an expression or a type is higher than {depth} levels; raise --syntax-depth"
+
 /-!
 The items of a token list, or the first error. The fuel bounds the depth of the calls, not
 their number. On a chain of active calls the token index never decreases. A loop step starts
@@ -836,7 +840,7 @@ def parse (depth : Nat) (tokens : List Token) : Except Error (List Item) := do
   let ts := tokens.toArray
   let (items, s) ← ((items (32 * (ts.size + 1)) []).run ⟨Input.of ts, depth, false⟩).run ⟨0, none⟩
   match s.high with
-  | some p => throw ⟨.S001, p, s!"an expression or a type is higher than {depth} levels"⟩
+  | some p => throw ⟨.S001, p, heightText depth⟩
   | none => return items
 
 /-!
@@ -852,7 +856,7 @@ def parseExpr (depth : Nat) (s : String) : Except Error Expr := do
     return e
   let (e, st) ← (act.run ⟨Input.of ts, depth, false⟩).run ⟨0, none⟩
   match st.high with
-  | some p => throw ⟨.S001, p, s!"an expression or a type is higher than {depth} levels"⟩
+  | some p => throw ⟨.S001, p, heightText depth⟩
   | none => return e
 
 /-! The items of a source text, with the syntax depth `depth`. -/

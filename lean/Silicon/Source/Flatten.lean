@@ -82,7 +82,7 @@ def charge (pos : Pos) (units : Nat) : FM Unit := do
   let s ← get
   if units ≤ s.fuel then set { s with fuel := s.fuel - units }
   else throw (.source ⟨.S015, pos, s!"the fuel cannot pay {intText units} unit(s) of the " ++
-    s!"lowering; {intText s.fuel} remain"⟩)
+    s!"lowering; {intText s.fuel} remain; raise --fuel"⟩)
 
 def defect (msg : String) : FM α := throw (.defect msg)
 

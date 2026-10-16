@@ -47,7 +47,8 @@ or at the name of a function value whose signature evaluates.
 def bounded (pos : Pos) (d : Nat) : M Unit := do
   let c ← read
   if c.limit < d then
-    fail .S015 (c.site.getD pos) s!"the depth {d} goes above the nesting depth {c.limit}"
+    fail .S015 (c.site.getD pos)
+      s!"the depth {d} goes above the nesting depth {c.limit}; raise --depth to at least {d}"
 
 /-!
 A walk over types or values that counts its charge. A failure keeps the charge of the visits
@@ -63,7 +64,7 @@ when the fuel cannot pay it, so it does not know the whole count.
 def walked (pos : Pos) (w : Walk α) : M α := do
   let (r, k) := Id.run (w.run.run 0)
   chargeWith pos k fun left =>
-    s!"the fuel cannot pay the joins of the types; {intText left} remain"
+    s!"the fuel cannot pay the joins of the types; {intText left} remain; raise --fuel"
   lift pos r
 
 /-!

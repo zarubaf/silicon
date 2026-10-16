@@ -360,6 +360,21 @@ def deep : String :=
 #guard out deep "d(0)" (depth := 0) == "S015 1:1"
 #guard out deep "d(2000)" == "S015 3:12"
 
+/-! The message of the first error of `eval`. Each budget message names its flag (section 6.2). -/
+def msg (src expr : String) (fuel : Nat := 100000000) (depth : Nat := 1000) : String :=
+  match Cli.evalOutcome { budget := { fuel, depth } } src expr with
+  | .error e => e.msg
+  | _ => "no error"
+
+#guard msg deep "d(5)" (depth := 5) == "the nesting depth goes above 5; raise --depth"
+#guard msg "" "1 << 100000000000" ==
+  "the fuel cannot pay 1562500001 unit(s); 99999995 remain; raise --fuel"
+/-! The result of `eval` is the last charge, so its message names the fuel that suffices. -/
+#guard cost "" "[1, 2]" == 8
+#guard msg "" "[1, 2]" 18 ==
+  "the fuel cannot pay 29 unit(s) of the result; 10 remain; raise --fuel to at least 37"
+#guard msg "" "[1, 2]" 37 == "no error"
+
 /-!
 A chain of 300 acyclic constants. `eval` nests the 300 constants. The top selection nests one
 level more, as section 11.3 states. The typed use of the argument evaluates the parameter type.
@@ -527,6 +542,8 @@ of the sizes. The orderings take no container.
 #guard out "fn f() -> Int { let a = [[[1]]]; return 0; }" "f()" (depth := 4) == "(int 0)"
 #guard out "fn f() -> Int { let a = [[[1]]]; return 0; }" "f()" (depth := 3) == "S015 1:25"
 #guard out "fn f() -> Int { let a = (((1,),),); return 0; }" "f()" (depth := 3) == "S015 1:25"
+#guard msg "fn f() -> Int { let a = [[[1]]]; return 0; }" "f()" (depth := 3) ==
+  "the depth 4 goes above the nesting depth 3; raise --depth to at least 4"
 
 /-!
 A container holds hardware elements (section 5.1). A handle as an element is `S010` at the

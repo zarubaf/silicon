@@ -161,7 +161,9 @@ def nest (depth d : Nat) : Option Token → Option Token × Nat
   | some t =>
     if opening t then
       if d < depth then (some t, d + 1)
-      else (some ⟨t.pos, .error s!"brackets nest deeper than {depth} levels"⟩, d)
+      else
+        let msg := s!"brackets nest deeper than {depth} levels; raise --syntax-depth"
+        (some ⟨t.pos, .error msg⟩, d)
     else if closing t then (some t, d - 1)
     else (some t, d)
 

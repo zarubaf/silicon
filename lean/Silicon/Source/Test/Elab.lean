@@ -1260,7 +1260,7 @@ def pays (src : String) (fuel : Nat) (pos : String) (units : Nat) : Bool :=
       | .ok _ => false
       | .error e =>
         s!"{e.code} {e.pos.line}:{e.pos.col} {e.msg}" ==
-          s!"S015 {pos} the fuel cannot pay {units} unit(s); 0 remain"
+          s!"S015 {pos} the fuel cannot pay {units} unit(s); 0 remain; raise --fuel"
 
 /-! The code, the position, and the message of the first error of the elaboration of `src`. -/
 def failure (src : String) (fuel : Nat) : String :=
@@ -1276,16 +1276,20 @@ def failure (src : String) (fuel : Nat) : String :=
 
 -- The joins of two tuple types cost 2 units. A fuel below that names no count (issue #250).
 def joinSrc : String := "module M() domains() {\n    let t = [(1, (2, 3)), (4, (5, 6))];\n}\n"
-#guard failure joinSrc 61 == "S015 2:13 the fuel cannot pay the joins of the types; 0 remain"
-#guard failure joinSrc 62 == "S015 2:13 the fuel cannot pay the joins of the types; 1 remain"
+#guard failure joinSrc 61 ==
+  "S015 2:13 the fuel cannot pay the joins of the types; 0 remain; raise --fuel"
+#guard failure joinSrc 62 ==
+  "S015 2:13 the fuel cannot pay the joins of the types; 1 remain; raise --fuel"
 
 -- A scan that the fuel cannot pay names no count (issue #250).
 def scanSrc : String :=
   "module M() domains() {\n" ++
   "    let s = \"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz\";\n" ++
   "    let c = s[3];\n}\n"
-#guard failure scanSrc 87 == "S015 3:13 the fuel cannot pay the scan of the string; 0 remain"
-#guard failure scanSrc 90 == "S015 3:13 the fuel cannot pay the scan of the string; 3 remain"
+#guard failure scanSrc 87 ==
+  "S015 3:13 the fuel cannot pay the scan of the string; 0 remain; raise --fuel"
+#guard failure scanSrc 90 ==
+  "S015 3:13 the fuel cannot pay the scan of the string; 3 remain; raise --fuel"
 
 def d16 : String := dMod "  diagnostic(\"depth\", 16);\n"
 #guard observed d16 == ["(record 5 3 M () (string \"depth\") (int 16))", "ok"]
@@ -1580,7 +1584,8 @@ def dLow : String := dMod "  diagnostic(\"a\", d);\n" |>.replace "  o := 0;\n" "
 #guard observeOut dLow 143 == ("(record 5 3 M () (string \"a\") (hw (uint 8)))\n", 0)
 #guard observeOut dLow 142 ==
   ("(record 5 3 M () (string \"a\") (hw (uint 8)))\n" ++
-    "error[S015]: 1:1: the fuel cannot pay 1 unit(s) of the lowering; 0 remain\n", 1)
+    "error[S015]: 1:1: the fuel cannot pay 1 unit(s) of the lowering; 0 remain; raise --fuel\n",
+      1)
 #guard (Cli.usage.splitOn "|observe FILE --top T|").length == 2
 
 end Silicon.Source.Test.Elab

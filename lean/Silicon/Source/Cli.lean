@@ -225,8 +225,9 @@ def runSetup (o : Opts) (source t : String) (digest : String → String := Names
 
 /-!
 The outcome of `eval`. The result charges the length in bytes of its serialization against the
-fuel that remains. When the fuel cannot pay it, the result is `S015` at `1:1` (section 8). Only
-the charge is normative, so the reference makes the text first.
+fuel that remains. When the fuel cannot pay it, the result is `S015` at `1:1` (section 8). The
+result is the last charge, so the fuel `used` plus the length suffices. Only the charge is
+normative, so the reference makes the text first.
 -/
 def evalOutcome (o : Opts) (source expr : String) : Outcome :=
   match evalText o source expr with
@@ -234,8 +235,9 @@ def evalOutcome (o : Opts) (source expr : String) : Outcome :=
     let text := v.serialize
     let left := o.budget.fuel - used
     if left < text.utf8ByteSize then
-      .error ⟨.S015, ⟨1, 1⟩,
-        s!"the fuel cannot pay {text.utf8ByteSize} unit(s) of the result; {left} remain"⟩
+      let units := text.utf8ByteSize
+      .error ⟨.S015, ⟨1, 1⟩, s!"the fuel cannot pay {units} unit(s) of the result; {left} " ++
+        s!"remain; raise --fuel to at least {used + units}"⟩
     else .ok (text ++ "\n")
   | .error e => .error e
 

@@ -592,6 +592,16 @@ def high : String := "const B: T = " ++ chain 65 ++ ";"
 #guard fails (high ++ "\nimport x;") .S004 2 1 64
 #guard fails (high ++ "\n" ++ high) .S001 1 14 64
 
+/-! The message of the first parse error. A message of the syntax depth names its flag. -/
+def parseMsg (s : String) (depth : Nat) : String :=
+  match parseSource depth s with
+  | .error e => e.msg
+  | .ok _ => "no error"
+
+#guard parseMsg high 64 == "an expression or a type is higher than 64 levels; raise --syntax-depth"
+#guard parseMsg ("const A: T = " ++ parens 65 ++ ";") 64 ==
+  "brackets nest deeper than 64 levels; raise --syntax-depth"
+
 /-! The default syntax depth: depth and height 4096 pass, and 4097 fails. -/
 def elifs (n : Nat) : String :=
   String.join (List.replicate n "if (c) { x } else { ") ++ "x" ++ "".pushn '}' n
