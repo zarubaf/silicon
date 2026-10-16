@@ -79,7 +79,7 @@ fn array_of<'x>(
         tys,
         fuel.left(),
     );
-    fuel.pay_int(&units).map_err(at(pos))?;
+    fuel.pay_joins(&units).map_err(at(pos))?;
     let Some(t) = common else {
         return fail(
             Code::S010,
@@ -292,7 +292,7 @@ impl Evaluator<'_> {
             types.push(self.piece_ty(pos, p)?);
         }
         let (units, common) = ops::common_of(types, |t, _| *t, &mut self.tys, self.fuel.left());
-        self.fuel.pay_int(&units).map_err(at(pos))?;
+        self.fuel.pay_joins(&units).map_err(at(pos))?;
         let Some(t) = common else {
             return fail(
                 Code::S010,

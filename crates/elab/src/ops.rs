@@ -58,6 +58,25 @@ impl Fuel {
         }
     }
 
+    /// Pays the units of a walk over the pairs of two types, or gives `S015` with a message that
+    /// has no count. The walk stops when the fuel cannot pay it, so it does not know the whole
+    /// count (design section 6.2). Lean prints the same text.
+    pub(crate) fn pay_joins(&mut self, units: &Int) -> Result<(), Fault> {
+        match units.to_u64() {
+            Some(units) if units <= self.left => {
+                self.left -= units;
+                Ok(())
+            }
+            _ => Err((
+                Code::S015,
+                format!(
+                    "the fuel cannot pay the joins of the types; {} remain",
+                    self.left
+                ),
+            )),
+        }
+    }
+
     fn cannot_pay(&self, units: &str) -> Fault {
         (
             Code::S015,
