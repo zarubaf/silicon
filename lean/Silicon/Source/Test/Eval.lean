@@ -361,6 +361,11 @@ def zeroLimit : String := s!"S015 1:1 {Eval.zeroLimitText}"
   "(type (array bool 18446744073709551616))"
 #guard (said "" "[Bool; 1 << 4294967296]" maxFuel) == s!"S015 1:8 {Eval.intLimitText}"
 #guard said "" "[Bool; 18446744073709551616]()" maxFuel == zeroLimit
+#guard said "" "[[Bool; 2305843009213693952]; 0]()" maxFuel ==
+  "(array (array bool 2305843009213693952) ())"
+#guard said "" "[[[(); 2305843009213693952]; 0]; 2]()" maxFuel ==
+  "(array (array (array unit 2305843009213693952) 0) " ++
+  "((array (array unit 2305843009213693952) ()) (array (array unit 2305843009213693952) ())))"
 #guard Eval.arrayBits (Meta.finite 1) (2 ^ 32 - 1) == 32 + 2
 #guard Eval.arrayBits ⟨2 ^ 70, 1, 1, 1, true, false⟩ 1 == 71 + 1
 #guard Eval.arrayBits (Meta.finite 8) 4 == 3 + 4
