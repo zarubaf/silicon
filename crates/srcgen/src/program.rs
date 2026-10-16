@@ -204,6 +204,8 @@ pub(crate) enum SExpr {
     Str(String),
     /// `str(n)`.
     StrOf(Box<SExpr>),
+    /// `UInt[N](e)` or `SInt[N](e)`: a static integer as a finite value.
+    Convert(STy, Box<SExpr>),
     /// `list(T)`.
     NewList(STy),
     Unary(Un, Box<SExpr>),
@@ -834,6 +836,7 @@ pub(crate) fn sexpr(e: &SExpr) -> String {
         SExpr::Field(b, f) => format!("{}.{f}", postfix_base(b)),
         SExpr::Str(s) => string(s),
         SExpr::StrOf(n) => format!("str({})", sexpr(n)),
+        SExpr::Convert(t, e) => format!("{}({})", t.text(), sexpr(e)),
         SExpr::NewList(t) => format!("list({})", t.text()),
         SExpr::Unary(op, a) => format!("({}{})", un(*op), sexpr(a)),
         SExpr::Binary(op, a, b) => format!("({} {} {})", sexpr(a), sbin(*op), sexpr(b)),

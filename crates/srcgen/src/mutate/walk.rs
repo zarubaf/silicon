@@ -500,6 +500,7 @@ impl<'a> Walk<'a> {
             | SExpr::Field(a, _)
             | SExpr::Len(a)
             | SExpr::StrOf(a)
+            | SExpr::Convert(_, a)
             | SExpr::Unary(_, a) => {
                 self.sexpr(a);
             }

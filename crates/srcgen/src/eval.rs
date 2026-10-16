@@ -562,6 +562,7 @@ impl Evaluator<'_> {
             },
             SExpr::Str(s) => Value::Str(s.clone()),
             SExpr::StrOf(n) => Value::Str(int(self.eval(n, env)?)?.to_string()),
+            SExpr::Convert(t, e) => self.conversion(t, e, env)?,
             SExpr::NewList(t) => match t {
                 STy::Int | STy::Nat => Value::List(t.clone(), Vec::new()),
                 _ => return Err(Fault::Type),
@@ -623,6 +624,16 @@ impl Evaluator<'_> {
             }
         };
         bounded(v)
+    }
+
+    /// `T(e)`. The bound limits the results of operations. The literal of
+    /// a conversion is the builder's choice, and a wide finite type needs a
+    /// wide one.
+    fn conversion(&mut self, t: &STy, e: &SExpr, env: &Env) -> Result<Value, Fault> {
+        match e {
+            SExpr::Int(n, _) => convert(t, Value::Int(n.clone())),
+            e => convert(t, self.eval(e, env)?),
+        }
     }
 
     /// The call of a list builder: the list of the elements for the binder
@@ -823,6 +834,25 @@ fn typed(ty: &STy, v: Value) -> Result<Value, Fault> {
     }
 }
 
+/// The typed use of a module argument or of `T(n)` at a finite type: an
+/// integer that fits converts, and any other value has `typed`.
+pub(crate) fn convert(ty: &STy, v: Value) -> Result<Value, Fault> {
+    let fit = |w: u32, n: &BigInt, signed: bool| {
+        if signed {
+            let half = BigInt::from(1) << (w - 1);
+            -half.clone() <= *n && *n < half
+        } else {
+            BigInt::ZERO <= *n && *n < (BigInt::from(1) << w)
+        }
+    };
+    match (ty, v) {
+        (STy::UInt(w), Value::Int(n)) if fit(*w, &n, false) => Ok(Value::UInt(*w, n)),
+        (STy::SInt(w), Value::Int(n)) if fit(*w, &n, true) => Ok(Value::SInt(*w, n)),
+        (STy::UInt(_) | STy::SInt(_), Value::Int(_)) => Err(Fault::Bound),
+        (ty, v) => typed(ty, v),
+    }
+}
+
 fn typed_all<'t>(
     tys: impl Iterator<Item = &'t STy>,
     vs: impl Iterator<Item = Value>,
@@ -858,6 +888,25 @@ mod tests {
     #[expect(clippy::unnecessary_wraps, reason = "it compares with results")]
     fn value(n: i64) -> Result<Value, Fault> {
         Ok(Value::Int(BigInt::from(n)))
+    }
+
+    /// A module argument converts to its finite type when it fits.
+    #[test]
+    fn a_conversion_fits_or_faults() {
+        let uint = |w, n| convert(&STy::UInt(w), Value::Int(BigInt::from(n)));
+        assert_eq!(uint(8, 255), Ok(Value::UInt(8, BigInt::from(255))));
+        assert_eq!(uint(8, 256), Err(Fault::Bound));
+        assert_eq!(uint(8, -1), Err(Fault::Bound));
+        let sint = |w, n| convert(&STy::SInt(w), Value::Int(BigInt::from(n)));
+        assert_eq!(sint(8, -128), Ok(Value::SInt(8, BigInt::from(-128))));
+        assert_eq!(sint(8, 128), Err(Fault::Bound));
+        assert_eq!(sint(1, 0), Ok(Value::SInt(1, BigInt::ZERO)));
+        let wide = SExpr::Convert(
+            STy::UInt(257),
+            Box::new(SExpr::Int(BigInt::from(1) << 200, Radix::Hex)),
+        );
+        assert_eq!(run(&wide), Ok(Value::UInt(257, BigInt::from(1) << 200)));
+        assert_eq!(convert(&STy::Int, Value::Bool(true)), Err(Fault::Type));
     }
 
     #[test]

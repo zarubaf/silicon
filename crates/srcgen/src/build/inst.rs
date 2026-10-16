@@ -5,8 +5,9 @@
 use super::hw::Want;
 use super::stat::value_expr;
 use super::{Builder, Built, CONTEXTS, Ctx, Hw, Module};
-use crate::eval::{Env, Fault, Value};
-use crate::program::{HExpr, Place, SExpr, Stmt};
+use crate::eval::{Env, Fault, Value, convert};
+use crate::program::{HExpr, Place, SExpr, STy, Stmt};
+use num_bigint::BigInt;
 
 impl Builder {
     /// Whether module `m` can instantiate module `j`: a later module, and a
@@ -25,7 +26,27 @@ impl Builder {
         let children: Vec<usize> = (m.index + 1..self.sigs.len())
             .filter(|&j| self.reachable(m, j))
             .collect();
-        let Some(&j) = children.get(self.tape.index(children.len())) else {
+        // A child that already has a context and a finite parameter is
+        // instantiated again more often: its identity then occurs under
+        // two spellings (#188).
+        let again: Vec<usize> = children
+            .iter()
+            .copied()
+            .filter(|&j| {
+                self.contexts.get(j).is_some_and(|c| !c.is_empty())
+                    && self.sigs.get(j).is_some_and(|s| {
+                        s.params
+                            .iter()
+                            .any(|(_, t)| matches!(t, STy::UInt(_) | STy::SInt(_)))
+                    })
+            })
+            .collect();
+        let pool = if self.tape.below(3) == 0 && !again.is_empty() {
+            &again
+        } else {
+            &children
+        };
+        let Some(&j) = pool.get(self.tape.index(pool.len())) else {
             return Ok(false);
         };
         self.instantiate(ctx, m, j, out)?;
@@ -42,8 +63,12 @@ impl Builder {
     ) -> Built {
         let sig = self.sigs.get(j).cloned().ok_or(Fault::Type)?;
         let mut args = Vec::new();
-        for (_, t) in &sig.params {
-            args.push(self.argument(t, self.reach(ctx), &ctx.envs));
+        for (i, (_, t)) in sig.params.iter().enumerate() {
+            let again = self.known_value(j, i, t);
+            args.push(match again {
+                Some(n) => self.respelled(t, &n),
+                None => self.argument(t, self.reach(ctx), &ctx.envs),
+            });
         }
         let tuples = self.tuples(j, &mut args, &ctx.envs)?;
         let name = m.names.fresh("u");
@@ -67,18 +92,43 @@ impl Builder {
         Ok(())
     }
 
+    /// A value that a context of module `j` already holds for its finite
+    /// parameter `i` of type `t`, half the time: the argument then reaches
+    /// that context again, and the spelling may differ.
+    fn known_value(&mut self, j: usize, i: usize, t: &STy) -> Option<BigInt> {
+        if !matches!(t, STy::UInt(_) | STy::SInt(_)) || !self.tape.flag() {
+            return None;
+        }
+        let known = self.contexts.get(j)?;
+        let tuple = known.get(self.tape.index(known.len()))?;
+        match tuple.get(i)? {
+            Value::UInt(_, n) | Value::SInt(_, n) => Some(n.clone()),
+            _ => None,
+        }
+    }
+
     /// The argument tuple of each env, recorded as contexts of module `j`.
     /// When `j` would pass `CONTEXTS` tuples, the arguments become the
     /// literals of a tuple that it has.
     fn tuples(&mut self, j: usize, args: &mut Vec<SExpr>, envs: &[Env]) -> Built<Vec<Vec<Value>>> {
+        let params = self.sigs.get(j).ok_or(Fault::Type)?.params.clone();
+        // The identity is that of the converted arguments (#188).
         let columns: Vec<Vec<Value>> = args
             .iter()
-            .map(|a| self.values(a, envs))
+            .zip(&params)
+            .map(|(a, (_, t))| {
+                self.values(a, envs)?
+                    .into_iter()
+                    .map(|v| convert(t, v).ok())
+                    .collect()
+            })
             .collect::<Option<_>>()
             .ok_or(Fault::Type)?;
         let mut tuples: Vec<Vec<Value>> = (0..envs.len())
             .map(|i| columns.iter().filter_map(|c| c.get(i).cloned()).collect())
             .collect();
+        #[cfg(test)]
+        self.note_spellings(j, args, &tuples);
         let known = self.contexts.get(j).ok_or(Fault::Type)?.clone();
         let mut all = known.clone();
         for t in &tuples {
@@ -97,5 +147,26 @@ impl Builder {
         }
         *self.contexts.get_mut(j).ok_or(Fault::Type)? = all;
         Ok(tuples)
+    }
+
+    /// Counts the identities of a finite argument that two spellings reach.
+    #[cfg(test)]
+    fn note_spellings(&mut self, j: usize, args: &[SExpr], tuples: &[Vec<Value>]) {
+        use crate::program::sexpr;
+        let finite = tuples
+            .iter()
+            .flatten()
+            .any(|v| matches!(v, Value::UInt(..) | Value::SInt(..)));
+        if !finite {
+            return;
+        }
+        let text = args.iter().map(sexpr).collect::<Vec<_>>().join(", ");
+        for t in tuples {
+            let key = t.iter().map(Value::serialize).collect::<Vec<_>>().join(" ");
+            let seen = self.spellings.entry((j, key)).or_default();
+            if seen.insert(text.clone()) && seen.len() == 2 {
+                note!(self, aliased_args);
+            }
+        }
     }
 }

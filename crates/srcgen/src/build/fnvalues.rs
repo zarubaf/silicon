@@ -30,7 +30,7 @@ impl Builder {
         targets.extend(self.mut_fns.iter().map(|f| f.name.clone()));
         let mut next = 0;
         for target in targets {
-            if self.tape.below(2) == 0 {
+            if self.tape.below(3) == 0 {
                 continue;
             }
             let Some(ty) = self.scope.fn_ty(&target) else {
