@@ -70,7 +70,7 @@ impl Evaluator<'_> {
         let o = self.eval(x)?;
         let o = need(x, o)?;
         self.store.shut_window(place.root);
-        let Held::List { elem, .. } = place.held else {
+        let Held::List { elem, len } = place.held else {
             return self.not_a_list(pos, g, &place);
         };
         self.mutation(pos, place.id)?;
@@ -98,7 +98,8 @@ impl Evaluator<'_> {
         self.edit_list(pos, &place, Some(delta), |ys| ys.push(w))?;
         if let Some(stats) = stats {
             let keys = place.keys.clone();
-            self.store.log_edit(place.root, Entry::push(keys, stats));
+            self.store
+                .log_edit(place.root, Entry::push(keys, len, stats));
         }
         Ok(Some(Out::Made(Val::Static(Value::Unit))))
     }
@@ -187,6 +188,7 @@ impl Evaluator<'_> {
         let size = ys.last().map_or(0, Value::size);
         fuel.pay(u128::from(size)).map_err(at(pos))?;
         let w = ys.pop().unwrap_or(Value::Unit);
+        store.mutated(place.root);
         Ok(Some(Out::Made(Val::Static(w))))
     }
 }

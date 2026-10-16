@@ -27,11 +27,12 @@
 //!
 //! A waiting read copies at most the part where it ends. The exceptions are these:
 //!
-//! - A step of the read goes into a list or a part that a change reached (`Walk::Split`). The read
-//!   copies that list or part as it was, and no more: the first steps walk the live local. This
-//!   is the old list as a read result, and no charge pays for it yet (#237). A step into a part
-//!   that a `pop` took out or a write replaced above the read copies the part where the read
-//!   waits (`Walk::Copy`).
+//! - A step of the read goes into a list or a part that a change reached (`Walk::Split`). The
+//!   first steps walk the live local. An index in the old range of the list, which the log gives
+//!   (`Store::old_len`), copies only the element. Else the read copies the list as it was, and
+//!   the check of the step fails on it. An index that changed its own root pays for the size of
+//!   its result before the result is a new value (#237). A step into a part that a `pop` took out
+//!   or a write replaced above the read copies the part where the read waits (`Walk::Copy`).
 //! - A write that binds an aggregate root again copies the rest of the root once (`split_root`).
 //!   A hardware write pays it in its charge. A write that leaves no hardware leaf turns the root
 //!   static, and a root becomes an aggregate again only by a charge of its new size.
@@ -52,12 +53,10 @@ use std::collections::BTreeMap;
 
 /// A change of a local.
 pub(super) enum Change {
-    Push,
+    /// A `push`, and the length that the list had before.
+    Push { len: usize },
     /// A `pop`: the element that left, and the length that the list had before.
-    Pop {
-        saved: Value,
-        len: usize,
-    },
+    Pop { saved: Value, len: usize },
     /// A write into the part of a static local: the part that left.
     Replace(Value),
     /// A write that binds the local again: the local that left.
@@ -74,11 +73,11 @@ pub(super) struct Entry {
 }
 
 impl Entry {
-    /// A `push` into the list at `keys`.
-    pub(super) fn push(keys: Vec<usize>, stats: Vec<(u64, u64)>) -> Entry {
+    /// A `push` into the list at `keys`, which had `len` elements.
+    pub(super) fn push(keys: Vec<usize>, len: usize, stats: Vec<(u64, u64)>) -> Entry {
         Entry {
             keys,
-            change: Change::Push,
+            change: Change::Push { len },
             stats,
         }
     }
@@ -192,7 +191,7 @@ impl History {
             match &e.change {
                 Change::Replace(_) | Change::Rebind(_) => node.own.push(pos),
                 Change::Pop { len, .. } => node.pops.entry(*len).or_default().push(pos),
-                Change::Push => {}
+                Change::Push { .. } => {}
             }
         }
         self.entries.push(e);
@@ -235,6 +234,18 @@ impl History {
             at = path.get(d).and_then(|k| node.children.get(k)).copied();
         }
         None
+    }
+
+    /// The length that the list at `path` had at `mark`: the length before its first `push` or
+    /// `pop` from `mark` on. It is the length of the list as the read found it, if no write
+    /// replaced the list or a part above it (`start`).
+    fn old_len(&self, path: &[usize], mark: usize) -> Option<usize> {
+        let node = self.node(path)?;
+        let pos = first_from(&node.here, mark)?;
+        match self.entries.get(pos)?.change {
+            Change::Push { len } | Change::Pop { len, .. } => Some(len),
+            _ => None,
+        }
     }
 
     /// The earliest entry from `mark` on that replaced the part at `path` or a part above it:
@@ -333,7 +344,7 @@ fn value_at<'a>(v: &'a mut Value, keys: &[usize]) -> Option<&'a mut Value> {
 fn undo_in(copy: &mut Val, at: usize, e: &Entry) {
     let rel = e.keys.get(at..).unwrap_or_default();
     let apply = |part: &mut Value| match (&e.change, part) {
-        (Change::Push, Value::List(_, ys)) => {
+        (Change::Push { .. }, Value::List(_, ys)) => {
             ys.pop();
         }
         (Change::Pop { saved, .. }, Value::List(_, ys)) => ys.push(saved.clone()),
@@ -504,8 +515,7 @@ impl Store {
                 }
             }
             None => match log.first_crossed(&ends, c.base, mark.at, usize::MAX) {
-                Some(d) if d > c.base => Walk::Split(d - c.base),
-                Some(_) => Walk::Copy,
+                Some(d) => Walk::Split(d - c.base),
                 None => Walk::Live,
             },
             Some(s) if log.saved(s.pos).is_none() => Walk::Copy,
@@ -525,6 +535,13 @@ impl Store {
     pub(super) fn old_root(&self, mark: Mark, path: &[usize]) -> Option<&Val> {
         let log = self.history.get(&mark.root)?;
         log.saved(log.start(path, mark.at)?.pos)
+    }
+
+    /// The length that the list at `path` had when the read at `mark` parked, if a `push` or a
+    /// `pop` of the list is in its window. The read then checks an index against this length and
+    /// resolves the element, with no copy of the list.
+    pub(super) fn old_len(&self, mark: Mark, path: &[usize]) -> Option<usize> {
+        self.history.get(&mark.root)?.old_len(path, mark.at)
     }
 
     /// Whether the log has entries from the mark on.
@@ -618,7 +635,7 @@ impl Store {
                         Store::own(crate::hw::Seen::Static(self.element(part, rel)))
                     }
                     Change::Rebind(old) => Store::own(self.part_of(old, rel)),
-                    Change::Push => return None,
+                    Change::Push { .. } => return None,
                 }
             }
         };
@@ -629,7 +646,7 @@ impl Store {
             crate::counters::add(
                 crate::counters::Count::Copies,
                 match &e.change {
-                    Change::Push | Change::Rebind(_) => 0,
+                    Change::Push { .. } | Change::Rebind(_) => 0,
                     Change::Pop { saved: w, .. } | Change::Replace(w) => w.size(),
                 },
             );

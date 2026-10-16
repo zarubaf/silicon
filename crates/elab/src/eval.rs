@@ -238,6 +238,11 @@ struct Store {
     cursors: Vec<Option<Cursor>>,
     /// The parked results with an index that evaluates now, by their local.
     armed: BTreeMap<Root, Vec<usize>>,
+    /// The number of mutations of each local: an assignment, a `push`, a `pop`, and a write-back.
+    /// An index compares the number of the local of its base before and after its own index
+    /// evaluates, so it finds in constant work that the index changed the root (section 5.4). The
+    /// root names its frame, so a mutation in a callee frame is another local.
+    changes: BTreeMap<Root, u64>,
     /// The changes of each local that a read waits at, from the oldest. A change appends one
     /// entry, and no read copies the local for it.
     history: BTreeMap<Root, history::History>,
@@ -630,6 +635,16 @@ impl Store {
         #[cfg(test)]
         crate::counters::add(crate::counters::Count::Windows, 1);
         self.pending.remove(&root);
+    }
+
+    /// Counts a mutation of the local at `root`.
+    fn mutated(&mut self, root: Root) {
+        *self.changes.entry(root).or_default() += 1;
+    }
+
+    /// The number of mutations of the local at `root` so far.
+    fn changes_of(&self, root: Root) -> u64 {
+        self.changes.get(&root).copied().unwrap_or(0)
     }
 
     /// Whether a parked result holds the local at `root` (section 5.4).
@@ -1088,6 +1103,7 @@ impl<'a> Evaluator<'a> {
                 held_by: Vec::new(),
                 cursors: Vec::new(),
                 armed: BTreeMap::new(),
+                changes: BTreeMap::new(),
                 history: BTreeMap::new(),
                 pending: BTreeSet::new(),
                 links: BTreeMap::new(),
@@ -1229,13 +1245,15 @@ impl Evaluator<'_> {
 
     /// A mutation at `pos` of the local at `root` that a parked result holds charges the size of
     /// the local before the change (section 5.4). The charge pays for the copies that the change
-    /// causes, so it comes before the change reaches the history of the local.
+    /// causes, so it comes before the change reaches the history of the local. Each mutation
+    /// calls it as its last charge, so it also counts the change of the local.
     fn charge_held(&mut self, pos: Pos, root: Root) -> Res<()> {
-        if !self.store.is_held(root) {
-            return Ok(());
+        if self.store.is_held(root) {
+            let size = self.seen_size(self.store.root(&root).seen());
+            self.charge(pos, size)?;
         }
-        let size = self.seen_size(self.store.root(&root).seen());
-        self.charge(pos, size)
+        self.store.mutated(root);
+        Ok(())
     }
 
     fn size(&self, out: &Out) -> u128 {
