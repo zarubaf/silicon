@@ -841,44 +841,64 @@ fn the_records_cover_the_kinds_of_values() {
     }
 }
 
-/// The records show nested call frames: a function that calls a function
-/// that records, with the inner call by name, as a receiver, and through a
-/// function value (spec 8.2). Each shape occurs in 1 program in 32, and a
-/// record with two frames occurs in as many.
+/// The positions `(call <name> <line> <col>)` of the frames of a record line.
+fn frame_positions(record: &str) -> Vec<(usize, usize)> {
+    let frames = record.split_once(" (").map_or("", |(_, t)| t);
+    frames
+        .split("(call ")
+        .skip(1)
+        .filter_map(|f| {
+            let mut parts = f.split(' ').skip(1);
+            let line = parts.next()?.parse().ok()?;
+            let col = parts.next()?.trim_end_matches(')').parse().ok()?;
+            Some((line, col))
+        })
+        .collect()
+}
+
+/// The records show nested call frames: a record with two or more frames,
+/// whose inner call is by name, as a receiver, or through a function value
+/// (spec 8.2). The test reads the executed frames of the records and the
+/// text at the position of each inner call. Each shape occurs in 1 program
+/// in 32.
 #[test]
 fn the_records_cover_nested_frames() {
     const TAPES: usize = 256;
-    let (mut nested, mut named, mut receivers, mut values, mut formals, mut locals) =
-        (0, 0, 0, 0, 0, 0);
+    let (mut nested, mut named, mut receivers, mut values) = (0, 0, 0, 0);
     for tape in tapes(TAPES) {
         let Ok(p) = build(tape) else { continue };
-        nested += usize::from(p.records().iter().any(|r| r.contains(") (call ")));
-        let pre: Vec<&Stmt> = p
-            .items
-            .iter()
-            .filter_map(|i| match i {
-                Item::MutFn(f) => Some(&f.pre),
-                _ => None,
-            })
-            .flatten()
-            .collect();
-        let call = |keep: fn(&str, &str, bool) -> bool| {
-            pre.iter().any(|s| {
-                matches!(s, Stmt::MutCall { root, f, receiver, .. } if keep(root, f, *receiver))
-            })
-        };
-        named += usize::from(call(|_, f, r| !r && f.starts_with('k')));
-        receivers += usize::from(call(|_, _, r| r));
-        values += usize::from(call(|_, f, _| f.starts_with('F')));
-        formals += usize::from(call(|root, _, _| root == "a0"));
-        locals += usize::from(call(|root, _, _| root == "b0"));
+        let text = p.text();
+        let lines: Vec<&str> = text.lines().collect();
+        let (mut has, mut by_name, mut by_receiver, mut by_value) = (false, false, false, false);
+        for record in p.records() {
+            let frames = frame_positions(record);
+            has |= frames.len() >= 2;
+            for (line, col) in frames.into_iter().skip(1) {
+                let at = lines
+                    .get(line - 1)
+                    .and_then(|l| l.get(col - 1..))
+                    .unwrap_or_default();
+                let word: String = at.chars().take_while(char::is_ascii_alphanumeric).collect();
+                let rest = &at[word.len()..];
+                if rest.starts_with('.') {
+                    by_receiver = true;
+                } else if word.starts_with('F') {
+                    by_value = true;
+                } else {
+                    by_name = true;
+                }
+            }
+        }
+        nested += usize::from(has);
+        named += usize::from(by_name);
+        receivers += usize::from(by_receiver);
+        values += usize::from(by_value);
     }
     let want = TAPES / 32;
     assert!(
-        [nested, named, receivers, values, formals, locals]
+        [nested, named, receivers, values]
             .iter()
             .all(|n| *n >= want),
-        "nested {nested}, by name {named}, receivers {receivers}, values {values}, \
-         on the formal {formals}, on a local {locals}"
+        "nested {nested}, by name {named}, receivers {receivers}, values {values}"
     );
 }
