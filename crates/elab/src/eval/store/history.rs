@@ -538,6 +538,7 @@ impl Store {
     /// Writes `w` over the part of the static local at `keys`, and logs the part that left if a
     /// read waits at the local.
     pub(in crate::eval) fn replace_part(&mut self, root: Root, keys: &[usize], w: Value) {
+        self.decide_holds(root);
         if let Some(part) = self.part_mut(root, keys) {
             let old = std::mem::replace(part, w);
             if self.is_logged(root) {
@@ -549,6 +550,7 @@ impl Store {
     /// Binds the local at `root` again to `y`, and logs the value that left if a read waits at
     /// the local.
     pub(in crate::eval) fn rebind_local(&mut self, root: Root, y: Val) {
+        self.decide_holds(root);
         if let Root::Local(frame, id) = root
             && let Some(slot) = self.frames.get_mut(frame).and_then(|f| f.get_mut(&id))
         {
@@ -561,6 +563,7 @@ impl Store {
     /// read waits at the local, the log keeps the old local and the caller gets a copy to build
     /// the new one from. The caller gives the new local back with `put_back`.
     pub(in crate::eval) fn take_for_rebind(&mut self, root: Root, keys: &[usize]) -> Val {
+        self.decide_holds(root);
         let local = self.take_root(&root);
         if self.is_logged(root) {
             let (work, saved) = split_root(local, keys);
