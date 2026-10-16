@@ -9,6 +9,7 @@ mod flatten;
 mod hw;
 pub mod int;
 mod layout;
+mod limit;
 pub mod names;
 mod ops;
 mod scan;

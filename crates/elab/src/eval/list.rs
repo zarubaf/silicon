@@ -10,6 +10,7 @@ use super::place::Held;
 use super::{Evaluator, Opnd, Out, Res, at, expr_pos, fail, need};
 use crate::Code;
 use crate::hw::{Seen, Val};
+use crate::limit;
 use crate::ops;
 use crate::types::TyId;
 use crate::value::Value;
@@ -83,6 +84,7 @@ impl Evaluator<'_> {
             }
         };
         self.bounded(pos, place.keys.len() as u64 + 1 + depth)?;
+        limit::list(len as u128 + 1).map_err(at(pos))?;
         self.charge(pos, u128::from(size))?;
         let w = match typed {
             Typed::Converted(v) => v,

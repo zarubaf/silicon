@@ -18,10 +18,11 @@
 //! renders from the metadata of its type, and a part without a hardware leaf is its static
 //! zero.
 
-use super::{Evaluator, Opnd, Out, Res, fail};
+use super::{Evaluator, Opnd, Out, Res, at, fail};
 use crate::Code;
 use crate::agg::Agg;
 use crate::hw::{Handle, Kind, Seen};
+use crate::limit;
 use crate::names::{Name, PathId, write_encoded};
 use crate::serial::{self, Item, Len, Sink};
 use crate::types::{Ty, TyId, Types};
@@ -163,6 +164,7 @@ impl Evaluator<'_> {
                 ),
             );
         }
+        limit::record(self.seen_size(self.store.seen(&value))).map_err(at(pos))?;
         let measure = self.measure_charge(self.store.seen(&value));
         self.charge(pos, measure)?;
         let mut len = Len::with(std::mem::take(&mut self.lens));

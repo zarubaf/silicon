@@ -72,6 +72,12 @@ impl Int {
         self.0.bits().saturating_sub(1)
     }
 
+    /// The bit length of the magnitude: 0 for 0.
+    #[must_use]
+    pub fn bit_length(&self) -> u64 {
+        self.0.bits()
+    }
+
     /// The length in bytes of the decimal form, with the `-` of a negative value, computed
     /// without the form. The digits come from the bit length and the top 64 bits, which a
     /// float estimates. A value too near a power of ten for the estimate takes one exact

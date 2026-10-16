@@ -11,6 +11,7 @@ use super::{Evaluator, Names, Opnd, Out, Res, at, expr_pos, fail, need};
 use crate::Code;
 use crate::agg::Agg;
 use crate::hw::{Seen, Val};
+use crate::limit;
 use crate::types::{Ty, TyId};
 use crate::value::{Value, int_size};
 use parse::ast::{Expr, Ident, Item, Pos};
@@ -78,6 +79,7 @@ impl Evaluator<'_> {
             );
         }
         self.bounded(pos, self.tys.zero_depth(t))?;
+        limit::zero(&self.tys.meta(t).zero_size).map_err(at(pos))?;
         self.fuel
             .pay_int(&self.tys.meta(t).zero_size)
             .map_err(at(pos))?;
