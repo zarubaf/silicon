@@ -482,7 +482,7 @@ impl Evaluator<'_> {
                     DeclKind::Const | DeclKind::Fn | DeclKind::Module
                 ) =>
             {
-                self.store.frame().and_then(|f| f.get(&id))
+                self.store.slot(id)
             }
             _ => None,
         }
@@ -582,7 +582,7 @@ impl Evaluator<'_> {
     /// their typed use (`typed_use`). Each argument is static (`S011`) when it evaluates. The
     /// parent pays this work.
     fn arguments(&mut self, pos: Pos, i: usize, xs: &[Expr]) -> Res<Vec<(TyId, Value)>> {
-        let base = self.store.parked.len();
+        let base = self.store.parked_len();
         for x in xs {
             let o = self.eval(x)?;
             let o = need(x, o)?;
@@ -610,7 +610,7 @@ impl Evaluator<'_> {
         self.nested(pos, |ev| {
             ev.in_frame(None, |ev| {
                 ev.in_item(i, ROOT, |ev| {
-                    let frame = ev.store.frames.len().saturating_sub(1);
+                    let frame = ev.store.frame_index();
                     let args = ev.charged_arguments(pos, params, outs, frame);
                     ev.store.unlink(frame);
                     args
@@ -637,11 +637,7 @@ impl Evaluator<'_> {
         for ((t, o), q) in bound.into_iter().zip(params) {
             let id = self.decl(&q.name)?;
             let local = matches!(&o, Out::Ref(r) if r.root == Root::Local(frame, id));
-            let slot = if local {
-                self.store.frame_mut().and_then(|f| f.remove(&id))
-            } else {
-                None
-            };
+            let slot = if local { self.store.unbind(id) } else { None };
             let value = match slot {
                 Some(Slot {
                     value: Val::Static(v),

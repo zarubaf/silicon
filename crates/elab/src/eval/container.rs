@@ -373,7 +373,7 @@ impl Evaluator<'_> {
     /// The elements of a container literal, each checked as it evaluates. The position is that
     /// of the first `[]` among the elements that wait.
     pub(super) fn elements(&mut self, xs: &[Expr]) -> Res<(Vec<Out>, Option<Pos>)> {
-        let base = self.store.parked.len();
+        let base = self.store.parked_len();
         let mut waiting = None;
         for x in xs {
             let o = self.eval(x)?;

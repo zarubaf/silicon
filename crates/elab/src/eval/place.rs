@@ -5,7 +5,7 @@
 //! no other binding shares the container. A read and a place each walk their path once.
 
 use super::store::{Edit, Mark};
-use super::{Evaluator, Frame, Opnd, Out, Res, expr_pos, fail, need, same_form};
+use super::{Evaluator, Opnd, Out, Res, expr_pos, fail, need, same_form};
 use crate::Code;
 use crate::agg::Agg;
 use crate::hw::{Ref, Root, Seen, Val};
@@ -934,8 +934,7 @@ impl Evaluator<'_> {
         let found = match self.target(*root_id) {
             Some(Target::Decl(id)) => self
                 .store
-                .frame()
-                .and_then(|f: &Frame| f.get(&id))
+                .slot(id)
                 .filter(|s| s.mutable)
                 .map(|s| (id, s.ty)),
             _ => None,
@@ -943,7 +942,7 @@ impl Evaluator<'_> {
         let Some((id, slot_ty)) = found else {
             return bad();
         };
-        let frame = self.store.frames.len().saturating_sub(1);
+        let frame = self.store.frame_index();
         let root = Root::Local(frame, id);
         if !self.store.open_window(root) {
             return fail(

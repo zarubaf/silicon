@@ -48,7 +48,7 @@ mod types;
 pub use inst::Design;
 pub(crate) use inst::{Bind, Elab, Inst, Literal, Mem, Sink, elaborate};
 pub(crate) use mem::addr_width;
-use store::{Entry, Frame, Slot, Store};
+use store::{ConstStatus, Slot, Store};
 
 use crate::agg::{Agg, Base};
 use crate::hw::{Graph, Handle, HwId, Op, Part, Ref, Root, Seen, Val};
@@ -396,7 +396,7 @@ pub(crate) fn run(
     let mut evaluated = Evaluated::new(value, ev.tys);
     #[cfg(test)]
     {
-        evaluated.steps = ev.store.steps.get();
+        evaluated.steps = ev.store.steps();
     }
     Ok((evaluated, used))
 }
@@ -770,9 +770,7 @@ impl Evaluator<'_> {
     }
 
     fn bind(&mut self, id: DeclId, slot: Slot) {
-        if let Some(frame) = self.store.frame_mut() {
-            frame.insert(id, slot);
-        }
+        self.store.bind(id, slot);
     }
 
     /// Runs `act` one level deeper, or gives `S015` at `pos` above the limit. The one call of
@@ -829,11 +827,11 @@ impl Evaluator<'_> {
     /// Runs `act` in the file scope with a new empty frame of locals and the return type
     /// `ret`. The frames below stay, so a reference into them still finds its value.
     fn in_frame<T>(&mut self, ret: Option<TyId>, act: impl FnOnce(&mut Self) -> Res<T>) -> Res<T> {
-        self.store.frames.push(Frame::new());
+        self.store.push_frame();
         let saved_ret = std::mem::replace(&mut self.ret, ret);
         let names = std::mem::replace(&mut self.names, Names::File);
         let r = act(self);
-        self.store.frames.pop();
+        self.store.pop_frame();
         self.ret = saved_ret;
         self.names = names;
         r
@@ -919,7 +917,7 @@ impl Evaluator<'_> {
 
     /// The results of the arguments of a call, in order.
     fn args<'e>(&mut self, xs: impl IntoIterator<Item = &'e Expr>) -> Res<Vec<Out>> {
-        let base = self.store.parked.len();
+        let base = self.store.parked_len();
         for x in xs {
             let out = self.eval(x)?;
             let out = need(x, out)?;
@@ -1226,7 +1224,7 @@ impl Evaluator<'_> {
     /// is a handle in the whole body of its module, so it needs no slot.
     /// The path and the type of the local `id` if it is an input port without a hardware leaf.
     fn empty_input(&self, id: DeclId) -> Option<(PathId, TyId)> {
-        match self.store.frame().and_then(|f| f.get(&id)) {
+        match self.store.slot(id) {
             Some(Slot {
                 value: Val::Agg(a), ..
             }) => match &**a {
@@ -1279,7 +1277,7 @@ impl Evaluator<'_> {
                     Ok(Out::Named(Val::Handle(Handle::Domain(id))))
                 }
                 _ => {
-                    let k = self.store.frames.len().saturating_sub(1);
+                    let k = self.store.frame_index();
                     // An empty input port refers to its name. The read pays its zero, a new
                     // static value.
                     let empty = self.empty_input(id);
@@ -1287,7 +1285,7 @@ impl Evaluator<'_> {
                         Ok(Out::Made(
                             self.normalize(pos, Agg::Ref(Base::Name(path), ty))?,
                         ))
-                    } else if self.store.frame().is_some_and(|f| f.contains_key(&id)) {
+                    } else if self.store.slot(id).is_some() {
                         Ok(Out::Ref(Ref {
                             root: Root::Local(k, id),
                             path: Vec::new(),
@@ -1319,20 +1317,20 @@ impl Evaluator<'_> {
         if !matches!(item, Some(Item::Const { .. } | Item::Alias { .. })) {
             return fail(Code::S010, pos, format!("`{x}` is not a constant"));
         }
-        match self.store.consts.get(i) {
-            Some(Entry::Done(..)) => return Ok(const_ref(i)),
-            Some(Entry::InProgress) => {
+        match self.store.const_status(i) {
+            ConstStatus::Done => return Ok(const_ref(i)),
+            ConstStatus::InProgress => {
                 return fail(
                     Code::S019,
                     pos,
                     format!("the constant `{x}` depends on itself"),
                 );
             }
-            _ => {}
+            ConstStatus::Fresh => {}
         }
         self.structural(|ev| {
             ev.nested(pos, |ev| {
-                ev.store.consts[i] = Entry::InProgress;
+                ev.store.begin_const(i);
                 let c = ev.in_frame(None, |ev| match item {
                     Some(Item::Const {
                         pos: cp, ty, value, ..
@@ -1350,7 +1348,7 @@ impl Evaluator<'_> {
                     }
                     _ => fail(Code::S010, pos, format!("`{x}` is not a constant")),
                 })?;
-                ev.store.consts[i] = Entry::Done(Val::Static(c.0), c.1);
+                ev.store.finish_const(i, Val::Static(c.0), c.1);
                 Ok(const_ref(i))
             })
         })
