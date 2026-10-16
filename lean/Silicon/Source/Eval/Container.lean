@@ -299,9 +299,17 @@ The static index `i` at `q` of the string `s` at `pos`: a string with the scalar
 UTF-8 string needs a scan, so the index charges the size of `s`. The charge comes after the type
 check of the index and before its range check (section 5.4).
 -/
+/--
+The charge at `pos` for the scan of the string `v`. A charge above the fuel names no count: the
+Rust front end does not count the scalars of a string that the fuel cannot pay.
+-/
+def chargeScan (pos : Pos) (v : Value) : M Unit :=
+  chargeWith pos v.size fun left =>
+    s!"the fuel cannot pay the scan of the string; {intText left} remain"
+
 def strAt (pos q : Pos) (s : String) (i : Value) : M Value := do
   let k ← indexOf q i
-  charge pos (Value.str s).size
+  chargeScan pos (Value.str s)
   match if 0 ≤ k then s.toList[k.toNat]? else none with
   | some c => return .str (String.singleton c)
   | none => fail .S013 q s!"the index {intText k} is out of range for {s.length} scalar(s)"
@@ -904,7 +912,7 @@ def lenOf (pos : Pos) : List Val → M Value
     | .static (.array _ xs) | .static (.list _ xs) | .agg (.array _ xs) => return .int xs.size
     | .agg (.ref _ (.array _ k)) => return .int k
     | .static v@(.str s) => do
-      charge pos v.size
+      chargeScan pos v
       return .int s.length
     | v => fail .S010 pos s!"`len` takes an array, a list, or a string, not {v.text}"
   | vs => fail .S007 pos s!"`len` takes 1 argument(s), but it has {vs.length}"
