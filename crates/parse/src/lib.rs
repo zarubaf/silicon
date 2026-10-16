@@ -317,7 +317,7 @@ fn all_errors(
         .chain(raw.into_iter().map(|e| (e.offset, e.code, e.message)))
         .collect();
     if let (true, Some(offset)) = (raw_all.is_empty(), high) {
-        let message = format!("expression is higher than {depth} levels");
+        let message = format!("an expression or a type is higher than {depth} levels");
         raw_all.push((offset, Code::S001, message));
     }
     raw_all.sort_by_key(|(offset, ..)| *offset);

@@ -326,10 +326,10 @@ impl Parser<'_> {
     /// The arguments between a pair of delimiters, with an optional trailing comma. The
     /// opening delimiter is the one that pairs with `close`.
     pub(crate) fn arg_list(&mut self, close: SyntaxKind, may_be_empty: bool) -> Res {
-        let (open, what) = if close == RParen {
-            (LParen, "`(`")
+        let (open, what, next) = if close == RParen {
+            (LParen, "`(`", "`,` or `)`")
         } else {
-            (LBracket, "`[`")
+            (LBracket, "`[`", "`,` or `]`")
         };
         self.node(ArgList, |p| {
             p.expect(open, what)?;
@@ -343,7 +343,7 @@ impl Parser<'_> {
                     }
                 }
             }
-            p.expect(close, "a closing delimiter")?;
+            p.expect(close, next)?;
             p.height = height;
             Some(())
         })
