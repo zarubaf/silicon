@@ -1,0 +1,4 @@
+// S001: two elements of an array literal need a comma between them.
+// expected-error S001 @+2
+// expected-message: expected `,` or `]`
+const A: T = [1 2];
