@@ -4,7 +4,7 @@
 //! result is the copy. An assignment to a place updates the one element in the local, because
 //! no other binding shares the container. A read and a place each walk their path once.
 
-use super::history::Win;
+use super::history::{Entry, Mark};
 use super::{Evaluator, Frame, Opnd, Out, Res, expr_pos, fail, need, same_form};
 use crate::Code;
 use crate::agg::Agg;
@@ -488,10 +488,10 @@ impl Evaluator<'_> {
             }
             known = after;
         }
-        let (parked, win) = self.store.unpark(at);
-        let followed = self.follow(Opnd::of_out(parked), &keyed, win.as_ref());
-        if let Some(win) = &win {
-            self.store.finish(win);
+        let (parked, mark) = self.store.unpark(at);
+        let followed = self.follow(Opnd::of_out(parked), &keyed, mark.as_ref());
+        if let Some(mark) = &mark {
+            self.store.finish(mark);
         }
         let (out, at_type) = followed?;
         if let Some(e) = stop {
@@ -568,10 +568,10 @@ impl Evaluator<'_> {
     /// The walk of a read along the evaluated indices `keyed`, in one pass: the result, and
     /// whether the container after the last step is a type. A string container ends a segment:
     /// its index makes a new string, which is the base of the next segment.
-    fn follow(&mut self, base: Opnd, keyed: &[Key<'_>], win: Option<&Win>) -> Res<(Out, bool)> {
+    fn follow(&mut self, base: Opnd, keyed: &[Key<'_>], mark: Option<&Mark>) -> Res<(Out, bool)> {
         let mut base = base;
         let mut rest = keyed;
-        let mut win = win;
+        let mut mark = mark;
         loop {
             // The steps through the nodes of a stored root go on from the part that the last step
             // found, so the whole run walks the path from the root once.
@@ -579,7 +579,7 @@ impl Evaluator<'_> {
             base = through;
             rest = rest.get(taken..).unwrap_or_default();
             if taken > 0 && rest.is_empty() {
-                return Ok((self.resolve_ref(win, base.into_out()), false));
+                return Ok((self.resolve_ref(mark, base.into_out()), false));
             }
             // The steps on an aggregate each give a part in constant work, so they take no walk
             // along a path. A part that is not an aggregate ends them.
@@ -589,7 +589,7 @@ impl Evaluator<'_> {
                 let out = self.agg_key(base.into_out(), key)?;
                 rest = rest.get(1..).unwrap_or_default();
                 if rest.is_empty() {
-                    return Ok((self.resolve_ref(win, out), false));
+                    return Ok((self.resolve_ref(mark, out), false));
                 }
                 base = Opnd::of_out(out);
             }
@@ -624,7 +624,7 @@ impl Evaluator<'_> {
             for number in path {
                 out = elem(Opnd::Static(out), number);
             }
-            let out = self.resolve_ref(win, out);
+            let out = self.resolve_ref(mark, out);
             let Some(at) = string_step else {
                 return Ok((out, at_type));
             };
@@ -633,7 +633,7 @@ impl Evaluator<'_> {
             };
             base = Opnd::Static(self.str_at(*q, *xp, &out, i)?);
             rest = rest.get(at + 1..).unwrap_or_default();
-            win = None;
+            mark = None;
         }
     }
 
@@ -887,7 +887,6 @@ impl Evaluator<'_> {
         if place.keys.is_empty() {
             let y = self.named(pos, place.id, y)?;
             self.charge_held(pos, place.root)?;
-            self.store.settle_root(place.root, None, false);
             if let Root::Local(frame, id) = place.root
                 && let Some(slot) = self
                     .store
@@ -895,7 +894,8 @@ impl Evaluator<'_> {
                     .get_mut(frame)
                     .and_then(|f| f.get_mut(&id))
             {
-                slot.value = y;
+                let old = std::mem::replace(&mut slot.value, y);
+                self.store.log_edit(place.root, Entry::rebind(old));
             }
             return Ok(());
         }
@@ -914,7 +914,11 @@ impl Evaluator<'_> {
             Agg::Static(w) if static_root => {
                 self.charge_held(pos, place.root)?;
                 if let Some(part) = self.store.part_mut(place.root, &place.keys) {
-                    *part = w;
+                    let old = std::mem::replace(part, w);
+                    if self.store.is_logged(place.root) {
+                        let keys = place.keys.clone();
+                        self.store.log_edit(place.root, Entry::replace(keys, old));
+                    }
                 }
                 Ok(())
             }
