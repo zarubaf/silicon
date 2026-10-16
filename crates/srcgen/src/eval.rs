@@ -328,6 +328,9 @@ fn call_mut(
     let mut inner = Env::default();
     inner.statics.insert("x1".to_owned(), arg);
     inner.statics.insert("a0".to_owned(), root);
+    for s in &def.pre {
+        exec_in(s, &mut inner, scope, log, Some(&def.name))?;
+    }
     let v = typed(&STy::Int, eval(&def.update, &inner, scope)?)?;
     if def.root == STy::Int {
         inner.statics.insert("a0".to_owned(), v);
@@ -1380,6 +1383,7 @@ mod tests {
         let k0 = MutFn {
             name: "k0".to_owned(),
             root: STy::Int,
+            pre: Vec::new(),
             update: bin(SBin::Add, name_expr("a0"), name_expr("x1")),
             ret: bin(SBin::Mul, name_expr("a0"), int(2)),
             diag: None,
@@ -1387,6 +1391,7 @@ mod tests {
         let k1 = MutFn {
             name: "k1".to_owned(),
             root: STy::List(Box::new(STy::Int)),
+            pre: Vec::new(),
             update: name_expr("x1"),
             ret: bin(
                 SBin::Add,
@@ -1479,6 +1484,7 @@ mod tests {
         let mut_fn = MutFn {
             name: "k0".to_owned(),
             root: STy::Int,
+            pre: Vec::new(),
             update: bin(SBin::Add, name_expr("a0"), name_expr("x1")),
             ret: name_expr("a0"),
             diag: None,

@@ -484,6 +484,7 @@ fn slice_two_items() -> Vec<Item> {
     let k0 = Item::MutFn(MutFn {
         name: "k0".to_owned(),
         root: list.clone(),
+        pre: Vec::new(),
         update: SExpr::Name("x1".to_owned()),
         ret: SExpr::Len(Box::new(SExpr::Name("a0".to_owned()))),
         diag: None,

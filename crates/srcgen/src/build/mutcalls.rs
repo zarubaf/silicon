@@ -11,7 +11,7 @@
 
 use super::hw::Want;
 use super::stat::{Kind, Reach, int};
-use super::{Builder, Built, Ctx, Helper, Hw, MUT_FNS, MUT_HELPERS, Module, Names};
+use super::{Builder, Built, Ctx, Helper, Hw, MUT_FNS, MUT_HELPERS, Module, NESTED_FNS, Names};
 use crate::eval::{Env, Value};
 use crate::program::{HExpr, Item, MutFn, SExpr, STy, Stmt};
 
@@ -32,23 +32,60 @@ fn sample_roots(root: &STy) -> Vec<Value> {
 impl Builder {
     /// The functions `k<n>`, each checked on the sample.
     pub(super) fn mut_fns(&mut self) -> Built {
-        for k in 0..self.tape.below(MUT_FNS + 1) {
-            let f = self.mut_fn(k as usize);
+        for _ in 0..self.tape.below(MUT_FNS + 1) {
+            let f = self.mut_fn(self.mut_fns.len(), false);
             self.mut_fns.push(f);
             self.refresh()?;
         }
         Ok(())
     }
 
+    /// The functions that call an earlier one, and a function value for
+    /// some of them. A call of one makes a nested frame (spec 8.2). They
+    /// come after the function values, so a call can go through one.
+    pub(super) fn nested_fns(&mut self) -> Built {
+        if self.mut_fns.is_empty() {
+            return Ok(());
+        }
+        let first = self.mut_fns.len();
+        for _ in 0..self.tape.below(NESTED_FNS + 1) {
+            let f = self.mut_fn(self.mut_fns.len(), true);
+            self.mut_fns.push(f);
+            self.refresh()?;
+        }
+        let nested: Vec<String> = self
+            .mut_fns
+            .iter()
+            .skip(first)
+            .map(|f| f.name.clone())
+            .collect();
+        let mut next = self.fn_value_count();
+        for target in nested {
+            if self.tape.flag() {
+                self.fn_value(&target, &mut next)?;
+            }
+        }
+        Ok(())
+    }
+
     /// `k<n>(mut a0, x1: Int) -> Int`. An update or a result that faults on
-    /// the sample takes `x1`.
-    fn mut_fn(&mut self, k: usize) -> MutFn {
+    /// the sample takes `x1`. A nested function first calls an earlier one,
+    /// and its update and result can read the result `r0`.
+    fn mut_fn(&mut self, k: usize, nested: bool) -> MutFn {
         let root = if self.tape.flag() {
             STy::List(Box::new(STy::Int))
         } else {
             STy::Int
         };
+        let pre = if nested {
+            self.nested_call(&root)
+        } else {
+            Vec::new()
+        };
         let mut names = vec![("x1".to_owned(), STy::Int)];
+        if !pre.is_empty() {
+            names.push(("r0".to_owned(), STy::Int));
+        }
         let mut result_names = names.clone();
         if root == STy::Int {
             names.push(("a0".to_owned(), STy::Int));
@@ -75,15 +112,21 @@ impl Builder {
         };
         let ret = over_result(self);
         // One function in two is effectful: it runs a `diagnostic`.
-        let diag = (self.tape.below(2) == 0).then(|| (self.next_message(), over_result(self)));
+        let diag = (self.tape.below(2) == 0).then(|| {
+            let e = over_result(self);
+            let value = self.diagnostic_of_fn(e);
+            (self.next_message(), value)
+        });
         let mut f = MutFn {
             name: format!("k{k}"),
             root,
+            pre,
             update,
             ret,
             diag,
         };
         if !self.mut_sample(&f) {
+            f.pre = Vec::new();
             f.update = SExpr::Name("x1".to_owned());
             f.ret = SExpr::Name("x1".to_owned());
             if let Some((_, value)) = &mut f.diag {
@@ -93,7 +136,64 @@ impl Builder {
         if f.diag.is_some() {
             note!(self, effectful_fns);
         }
+        if !f.pre.is_empty() {
+            note!(self, nested_fns);
+        }
         f
+    }
+
+    /// The value of the `diagnostic` of a function: the integer `e`, the
+    /// root `a0` (an integer or a list), a pair, or `str(x1)`.
+    fn diagnostic_of_fn(&mut self, e: SExpr) -> SExpr {
+        let x1 = || SExpr::Name("x1".to_owned());
+        match self.tape.below(6) {
+            0 => SExpr::Name("a0".to_owned()),
+            1 => SExpr::Tuple(vec![x1(), e]),
+            2 => SExpr::StrOf(Box::new(x1())),
+            _ => e,
+        }
+    }
+
+    /// The statements of a nested function with the root type `root`: a
+    /// call of an earlier function on `a0` or on a local root `b0`, by its
+    /// name, as a receiver, or through a function value.
+    fn nested_call(&mut self, root: &STy) -> Vec<Stmt> {
+        let Some(inner) = self
+            .mut_fns
+            .get(self.tape.index(self.mut_fns.len()))
+            .cloned()
+        else {
+            return Vec::new();
+        };
+        let (callee, receiver) = self.mut_callee(&inner.name);
+        let mut pre = Vec::new();
+        let on = if inner.root == *root && self.tape.flag() {
+            "a0".to_owned()
+        } else {
+            let init = if inner.root == STy::Int {
+                self.number(0, 8)
+            } else {
+                SExpr::NewList(STy::Int)
+            };
+            pre.push(Stmt::MutLet("b0".to_owned(), inner.root.clone(), init));
+            "b0".to_owned()
+        };
+        let mut names = vec![("x1".to_owned(), STy::Int)];
+        names.extend(self.const_names());
+        let r = Reach {
+            names: &names,
+            fns: self.fns.len(),
+            envs: None,
+        };
+        let arg = self.sexpr(Kind::Int, 1, r);
+        pre.push(Stmt::MutCall {
+            name: "r0".to_owned(),
+            root: on,
+            f: callee,
+            args: vec![arg],
+            receiver,
+        });
+        pre
     }
 
     /// Whether `f` runs on each root and argument of the sample.

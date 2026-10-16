@@ -351,6 +351,7 @@ mod tests {
         let k0 = Item::MutFn(MutFn {
             name: "k0".to_owned(),
             root: STy::Int,
+            pre: Vec::new(),
             update: name("x1"),
             ret: name("x1"),
             diag: Some(("d0".to_owned(), name("a0"))),
@@ -373,6 +374,68 @@ mod tests {
         let want = [
             "(record 3 5 M0 ((call k0 8 19)) (string \"d0\") (int 4))",
             "(record 3 5 M0 ((call k0 10 19)) (string \"d0\") (int 4))",
+        ];
+        let got = records(&items, &text, ("M0", &[]), &[]).unwrap();
+        assert_eq!(got, want, "{text}");
+    }
+
+    /// A call inside a function adds a frame, at the call in the function
+    /// body, after the frame of the call in the module. The inner call can
+    /// have a local root, a receiver, and the formal as its root.
+    #[test]
+    fn a_nested_call_adds_a_frame_in_the_body_of_its_function() {
+        let k0 = Item::MutFn(MutFn {
+            name: "k0".to_owned(),
+            root: STy::Int,
+            pre: Vec::new(),
+            update: name("x1"),
+            ret: name("x1"),
+            diag: Some(("d0".to_owned(), name("a0"))),
+        });
+        let inner = |root: &str, receiver| Stmt::MutCall {
+            name: "r0".to_owned(),
+            root: root.to_owned(),
+            f: "k0".to_owned(),
+            args: vec![name("x1")],
+            receiver,
+        };
+        let k1 = Item::MutFn(MutFn {
+            name: "k1".to_owned(),
+            root: STy::Int,
+            pre: vec![
+                Stmt::MutLet("b0".to_owned(), STy::Int, int(0)),
+                inner("b0", false),
+            ],
+            update: name("r0"),
+            ret: name("x1"),
+            diag: Some(("d1".to_owned(), name("a0"))),
+        });
+        let k2 = Item::MutFn(MutFn {
+            name: "k2".to_owned(),
+            root: STy::Int,
+            pre: vec![inner("a0", true)],
+            update: name("x1"),
+            ret: name("x1"),
+            diag: None,
+        });
+        let call = |result: &str, f: &str| Stmt::MutCall {
+            name: result.to_owned(),
+            root: "s0".to_owned(),
+            f: f.to_owned(),
+            args: vec![int(4)],
+            receiver: false,
+        };
+        let body = vec![
+            Stmt::MutLet("s0".to_owned(), STy::Int, int(0)),
+            call("s1", "k1"),
+            call("s2", "k2"),
+        ];
+        let items = [k0, k1, k2, module("M0", &[], body)];
+        let text = render_items(&items);
+        let want = [
+            "(record 3 5 M0 ((call k1 20 19) (call k0 8 19)) (string \"d0\") (int 4))",
+            "(record 10 5 M0 ((call k1 20 19)) (string \"d1\") (int 4))",
+            "(record 3 5 M0 ((call k2 21 19) (call k0 14 19)) (string \"d0\") (int 4))",
         ];
         let got = records(&items, &text, ("M0", &[]), &[]).unwrap();
         assert_eq!(got, want, "{text}");
