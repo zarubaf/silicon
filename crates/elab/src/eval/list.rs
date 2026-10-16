@@ -6,7 +6,6 @@
 
 use super::agg::Delta;
 use super::place::Held;
-use super::store::Edit;
 use super::{Evaluator, Opnd, Out, Res, at, expr_pos, fail, need};
 use crate::Code;
 use crate::hw::{Seen, Val};
@@ -96,13 +95,13 @@ impl Evaluator<'_> {
             size,
             depth: 1 + depth,
         };
-        let stats = self.store.stats_before(place.root, &place.keys);
-        self.edit_list(pos, &place, Some(delta), |ys| ys.push(w))?;
-        if let Some(stats) = stats {
-            let keys = place.keys.clone();
-            self.store
-                .log_edit(place.root, Edit::push(keys, len, stats));
+        let before = self.store.before_list_edit(place.root, &place.keys);
+        if matches!(self.store.root(&place.root), Val::Agg(_)) {
+            self.edit_list(pos, &place, Some(delta), |ys| ys.push(w))?;
+        } else {
+            self.store.push_static(place.root, &place.keys, w);
         }
+        self.store.log_push(place.root, &place.keys, len, before);
         Ok(Some(Out::Made(Val::Static(Value::Unit))))
     }
 
@@ -170,27 +169,23 @@ impl Evaluator<'_> {
             }
             self.charge_held(pos, place.root)?;
             let delta = (!deep).then_some(Delta::Shrink { size });
-            let stats = self.store.stats_before(place.root, &place.keys);
-            let Some(w) =
+            let before = self.store.before_list_edit(place.root, &place.keys);
+            let popped = if matches!(self.store.root(&place.root), Val::Agg(_)) {
                 self.edit_list(pos, &place, delta, |ys| ys.pop().unwrap_or(Value::Unit))?
-            else {
+            } else {
+                self.store.pop_static(place.root, &place.keys)
+            };
+            let Some(w) = popped else {
                 return self.not_a_list(pos, g, &place);
             };
-            if let Some(stats) = stats {
-                let keys = place.keys.clone();
-                let entry = Edit::pop(keys, w.clone(), len, stats);
-                self.store.log_edit(place.root, entry);
-            }
+            self.store.log_pop(place.root, &place.keys, &w, len, before);
             return Ok(Some(Out::Made(Val::Static(w))));
         }
-        let Evaluator { store, fuel, .. } = self;
-        let Some(Value::List(_, ys)) = store.part_mut(place.root, &place.keys) else {
+        let Some(size) = self.store.last_size(place.root, &place.keys) else {
             return self.not_a_list(pos, g, &place);
         };
-        let size = ys.last().map_or(0, Value::size);
-        fuel.pay(u128::from(size)).map_err(at(pos))?;
-        let w = ys.pop().unwrap_or(Value::Unit);
-        store.mutated(place.root);
+        self.fuel.pay(u128::from(size)).map_err(at(pos))?;
+        let w = self.store.pop_last(place.root, &place.keys);
         Ok(Some(Out::Made(Val::Static(w))))
     }
 }

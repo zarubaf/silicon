@@ -4,7 +4,7 @@
 //! result is the copy. An assignment to a place updates the one element in the local, because
 //! no other binding shares the container. A read and a place each walk their path once.
 
-use super::store::{Edit, Mark};
+use super::store::Mark;
 use super::{Evaluator, Opnd, Out, Res, expr_pos, fail, need, same_form};
 use crate::Code;
 use crate::agg::Agg;
@@ -1015,16 +1015,7 @@ impl Evaluator<'_> {
         if place.keys.is_empty() {
             let y = self.named(pos, place.id, y)?;
             self.charge_held(pos, place.root)?;
-            if let Root::Local(frame, id) = place.root
-                && let Some(slot) = self
-                    .store
-                    .frames
-                    .get_mut(frame)
-                    .and_then(|f| f.get_mut(&id))
-            {
-                let old = std::mem::replace(&mut slot.value, y);
-                self.store.log_edit(place.root, Edit::rebind(old));
-            }
+            self.store.rebind_local(place.root, y);
             return Ok(());
         }
         if place.in_list && matches!(y, Val::Hw(_) | Val::Agg(_)) {
@@ -1041,13 +1032,7 @@ impl Evaluator<'_> {
         match x {
             Agg::Static(w) if static_root => {
                 self.charge_held(pos, place.root)?;
-                if let Some(part) = self.store.part_mut(place.root, &place.keys) {
-                    let old = std::mem::replace(part, w);
-                    if self.store.is_logged(place.root) {
-                        let keys = place.keys.clone();
-                        self.store.log_edit(place.root, Edit::replace(keys, old));
-                    }
-                }
+                self.store.replace_part(place.root, &place.keys, w);
                 Ok(())
             }
             x if static_root || matches!(self.store.root(&place.root), Val::Agg(_)) => {

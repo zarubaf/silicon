@@ -7,7 +7,7 @@ mod cursor;
 mod history;
 mod park;
 
-pub(super) use history::{Edit, Mark, split_root};
+pub(super) use history::Mark;
 
 use super::Out;
 use crate::agg::Agg;
@@ -56,7 +56,7 @@ type Frame = BTreeMap<DeclId, Slot>;
 /// that ran.
 pub(super) struct Store {
     consts: Vec<Entry>,
-    pub(super) frames: Vec<Frame>,
+    frames: Vec<Frame>,
     /// The steps of the walks along paths into values: 1 for each container that a walk
     /// enters. A test counts them, so it checks the work of a walk and not its time.
     #[cfg(test)]
@@ -129,14 +129,14 @@ impl Store {
 
     /// Adds `n` to the step count of the store, without the run counter.
     #[cfg(test)]
-    pub(super) fn add_steps(&self, n: u64) {
+    fn add_steps(&self, n: u64) {
         self.steps.set(self.steps.get() + n);
     }
 
     /// The tests count the steps of a walk; a release build does not.
     #[cfg(not(test))]
     #[allow(clippy::unused_self)]
-    pub(super) fn add_steps(&self, _n: u64) {}
+    fn add_steps(&self, _n: u64) {}
 
     /// The element of `v` at the numbers `path`, one for each container below it.
     pub(super) fn element<'a>(&self, v: &'a Value, path: &[usize]) -> &'a Value {
@@ -278,12 +278,21 @@ impl Store {
     }
 
     /// The part of the live value of the local at `root` at the numbers `keys`, for a change in
-    /// place: one walk down the path. A root that is not a static local has no part.
-    pub(super) fn part_mut(&mut self, root: Root, keys: &[usize]) -> Option<&mut Value> {
-        let Root::Local(frame, id) = root else {
+    /// place: one walk down the path, which counts its steps. A root that is not a static local
+    /// has no part.
+    fn part_mut(&mut self, root: Root, keys: &[usize]) -> Option<&mut Value> {
+        let Root::Local(..) = root else {
             return None;
         };
         self.stepped(keys.len() as u64);
+        self.part_in(root, keys)
+    }
+
+    /// `part_mut` without the count of its steps, for a walk that an earlier call counted.
+    fn part_in(&mut self, root: Root, keys: &[usize]) -> Option<&mut Value> {
+        let Root::Local(frame, id) = root else {
+            return None;
+        };
         let Val::Static(value) = &mut self.frames.get_mut(frame)?.get_mut(&id)?.value else {
             return None;
         };
@@ -300,9 +309,57 @@ impl Store {
         Some(cur)
     }
 
+    /// Pushes `w` onto the list at `keys` of the static local at `root`. The caller logs the
+    /// change with `log_push`.
+    pub(super) fn push_static(&mut self, root: Root, keys: &[usize], w: Value) {
+        if let Some(Value::List(_, ys)) = self.part_mut(root, keys) {
+            ys.push(w);
+        }
+    }
+
+    /// Pops the last element of the list at `keys` of the static local at `root`, if there is
+    /// a list. The caller logs the change with `log_pop`.
+    pub(super) fn pop_static(&mut self, root: Root, keys: &[usize]) -> Option<Value> {
+        match self.part_mut(root, keys) {
+            Some(Value::List(_, ys)) => Some(ys.pop().unwrap_or(Value::Unit)),
+            _ => None,
+        }
+    }
+
+    /// The size of the last element of the list at `keys` of the static local at `root`, if
+    /// there is a list. It counts the walk that `pop_last` makes after the caller paid.
+    pub(super) fn last_size(&mut self, root: Root, keys: &[usize]) -> Option<u64> {
+        match self.part_mut(root, keys) {
+            Some(Value::List(_, ys)) => Some(ys.last().map_or(0, Value::size)),
+            _ => None,
+        }
+    }
+
+    /// Pops the last element of the list that `last_size` found, and counts the mutation. No
+    /// read waits at the local, so nothing is logged. The walk repeats the counted walk of
+    /// `last_size`, so it counts no steps.
+    pub(super) fn pop_last(&mut self, root: Root, keys: &[usize]) -> Value {
+        let popped = match self.part_in(root, keys) {
+            Some(Value::List(_, ys)) => ys.pop().unwrap_or(Value::Unit),
+            _ => Value::Unit,
+        };
+        self.mutated(root);
+        popped
+    }
+
+    /// Takes the aggregate root of the local at `root` out of its slot, for a change along
+    /// `keys` that the caller makes on it. The caller gives it back with `put_back`, and logs the
+    /// change with `log_push` or `log_pop`.
+    pub(super) fn take_agg(&mut self, root: Root, keys: &[usize]) -> Option<Box<Agg>> {
+        self.add_steps(keys.len() as u64);
+        match self.take_root(&root) {
+            Val::Agg(a) => Some(a),
+            _ => None,
+        }
+    }
+
     /// Takes the value of the local at `root` out of its slot, for a change that rebuilds it.
-    /// The caller puts the new value back with `put_root`.
-    pub(super) fn take_root(&mut self, root: &Root) -> Val {
+    fn take_root(&mut self, root: &Root) -> Val {
         let Root::Local(k, id) = root else {
             return Val::Static(Value::Unit);
         };
@@ -312,10 +369,10 @@ impl Store {
         }
     }
 
-    /// Puts `v` into the slot of the local at `root`.
-    pub(super) fn put_root(&mut self, root: &Root, v: Val) {
+    /// Puts `v` into the slot of the local at `root`, after `take_agg` or `take_for_rebind`.
+    pub(super) fn put_back(&mut self, root: Root, v: Val) {
         if let Root::Local(k, id) = root
-            && let Some(slot) = self.frames.get_mut(*k).and_then(|f| f.get_mut(id))
+            && let Some(slot) = self.frames.get_mut(k).and_then(|f| f.get_mut(&id))
         {
             slot.value = v;
         }
