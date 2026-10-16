@@ -1,8 +1,8 @@
 // The cost of reads whose indices change lists inside a list part (section 5.4). A push into
 // `t.1[0]` and a pop of `t.1` are two changes of the log with paths one inside the other. A read
 // of the old element, of the old list, and of a part below it each finds the value from before
-// the index. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
-// FUEL 311
+// the index. Each such read charges the size of that value at its last step. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 342
 // TOP M()
 module M() domains() {
     input a: UInt[8];

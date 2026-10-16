@@ -2,9 +2,10 @@
 // that a later operand changes, an index into it, an element of a literal, and an argument of a
 // call all read the list as it was. The port widths show the lengths and the element that Lean
 // finds, so each width is a value of the Lean evaluator.
-// The charges are those of the Lean evaluator. The fuel
+// The charges are those of the Lean evaluator, with the size of the result for each index that
+// changes its own root. The fuel
 // equal to the total of `cost` succeeds, and one unit less gives `S015`.
-// FUEL 492
+// FUEL 497
 // TOP M()
 comptime fn len_of(xs: List[Nat], u: ()) -> Nat {
     return len(xs);
