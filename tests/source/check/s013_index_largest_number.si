@@ -1,0 +1,9 @@
+// S013: the largest index number is out of range for an array of one element. The history of the
+// local adds one to a step number, and it must not overflow before the range check.
+// TOP M()
+module M() domains() {
+    input a: UInt[8];
+    let xs = [0];
+    // expected-error S013 @+1
+    let y = xs[18446744073709551615];
+}
