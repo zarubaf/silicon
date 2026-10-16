@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #![allow(clippy::print_stdout)] // xtask is a CLI; stdout is its interface.
 
+mod adr;
 mod arch;
 mod arch_review;
 mod commit;
@@ -47,6 +48,7 @@ const CHECKS: &[Check] = &[
     lean::check,
     arch::check,
     subset::check,
+    adr::check,
 ];
 
 #[derive(Parser)]
