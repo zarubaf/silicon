@@ -905,3 +905,74 @@ fn k_reads_and_an_assignment_in_an_index_take_work_in_k_plus_m() {
     };
     assert_scales(at, 64);
 }
+
+/// A read that holds a static part of the root follows a write that bound the root again. The
+/// hold decides at the static part `t.0`, and the read must still copy only the part where it
+/// ends. The innermost index and a later index of each read clear the list `t.2` of `m` elements.
+#[test]
+#[ignore = "#242"]
+fn k_held_reads_after_a_rebind_take_work_in_k_plus_m() {
+    let at = |n: u64, i: u64| {
+        let mut e = "(clear(t.2), 0).1".to_owned();
+        for _ in 0..n / 8 {
+            e = format!("t[({e}, 0).1][(clear(t.2), 0).1]");
+        }
+        run_ok(
+            "fn clear(mut l: List[Nat]) -> Int { l = list(Nat); return 0; }\n",
+            "UInt[8]",
+            &format!(
+                "let mut l = list(Nat);\n  comptime for i in 0..{n} {{ l.push(1); }}\n  \
+                 let mut t: ((UInt[8], Int), UInt[8], List[Nat]) = ((0, 0), x, l);\n  {e};"
+            ),
+            key(97, i),
+        )
+    };
+    assert_scales(at, 64);
+}
+
+/// The reads of a part of a static local nest `k` deep while the innermost index pushes into
+/// another list of the local, which has `m` elements. A read copies at most the part where it
+/// ends, so it copies none of the lists.
+#[test]
+#[ignore = "#242"]
+fn k_reads_of_a_static_part_and_m_pushes_into_another_part_take_work_in_k_plus_m() {
+    let at = |n: u64, i: u64| {
+        let mut e = "(u.0.push(1), 0).1".to_owned();
+        for _ in 0..n / 8 {
+            e = format!("u.1[({e}, 0).1]");
+        }
+        run_ok(
+            "",
+            "UInt[8]",
+            &format!(
+                "let mut l = list(Nat);\n  comptime for i in 0..{n} {{ l.push(1); }}\n  \
+                 let mut u = (l, [1, 2]);\n  {e};"
+            ),
+            key(98, i),
+        )
+    };
+    assert_scales(at, 64);
+}
+
+/// A write that leaves an aggregate root with no hardware leaf copies the static rest of the
+/// root once, and the charge that built the root pays for it. The `k` reads of `t.0` nest, the
+/// innermost index replaces the hardware part, and the list `t.1` has `m` elements.
+#[test]
+fn k_reads_and_a_static_write_over_the_hardware_part_take_work_in_k_plus_m() {
+    let at = |n: u64, i: u64| {
+        let mut e = "(fix(t.0), 0).1".to_owned();
+        for _ in 0..n / 8 {
+            e = format!("t[({e}, 0).1]");
+        }
+        run_ok(
+            "fn fix(mut v: UInt[8]) -> Int { v = UInt[8](3); return 0; }\n",
+            "UInt[8]",
+            &format!(
+                "let mut l = list(Nat);\n  comptime for i in 0..{n} {{ l.push(1); }}\n  \
+                 let mut t: (UInt[8], List[Nat]) = (x, l);\n  {e};"
+            ),
+            key(99, i),
+        )
+    };
+    assert_scales(at, 64);
+}
