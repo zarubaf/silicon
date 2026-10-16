@@ -57,9 +57,11 @@ pub(super) enum Located {
 }
 
 impl Store {
-    /// The read parked at `at` waits at the part `r` of an aggregate root, and a later index
-    /// with a call may hold the root there.
-    pub(in crate::eval) fn cursor(&mut self, at: usize, r: Ref) {
+    /// The read parked at `at` waits at the part `r` of a local. With `live`, the part is in an
+    /// aggregate root and a later index with a call may hold the root there. Without it, the
+    /// part is in a static local: it decides no hold, since a reference to a part of a static
+    /// local holds it already, but it keeps the trail of its steps.
+    pub(in crate::eval) fn cursor(&mut self, at: usize, r: Ref, live: bool) {
         if let Some(slot) = self.cursors.get_mut(at) {
             *slot = Some(Cursor {
                 base: r.path.len(),
@@ -68,23 +70,7 @@ impl Store {
                 left: 0,
                 trail: Vec::new(),
                 exact: true,
-                live: true,
-            });
-        }
-    }
-
-    /// The read parked at `at` waits at the part `r` of a static local. It decides no hold, since a
-    /// reference to a part of a static local holds it already, but it keeps the trail of its steps.
-    pub(in crate::eval) fn cursor_static(&mut self, at: usize, r: Ref) {
-        if let Some(slot) = self.cursors.get_mut(at) {
-            *slot = Some(Cursor {
-                base: r.path.len(),
-                part: r,
-                witness: None,
-                left: 0,
-                trail: Vec::new(),
-                exact: true,
-                live: false,
+                live,
             });
         }
     }
