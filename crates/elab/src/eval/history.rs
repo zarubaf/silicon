@@ -27,9 +27,11 @@
 //!
 //! A waiting read copies at most the part where it ends. The exceptions are these:
 //!
-//! - A step of the read goes into a list or a part that a change took out or replaced (`Walk::Copy`).
-//!   The read copies the part where it waits, as it was. This is the old list or element as a
-//!   read result, and no charge pays for it yet (#237). The copy of an undone `pop` is the same.
+//! - A step of the read goes into a list or a part that a change reached (`Walk::Split`). The read
+//!   copies that list or part as it was, and no more: the first steps walk the live local. This
+//!   is the old list as a read result, and no charge pays for it yet (#237). A step into a part
+//!   that a `pop` took out or a write replaced above the read copies the part where the read
+//!   waits (`Walk::Copy`).
 //! - A write that binds an aggregate root again copies the rest of the root once (`split_root`).
 //!   A hardware write pays it in its charge. A write that leaves no hardware leaf turns the root
 //!   static, and a root becomes an aggregate again only by a charge of its new size.
@@ -214,21 +216,25 @@ impl History {
             .unwrap_or_default()
     }
 
-    /// Whether an entry from `mark` on and before `before` has a path that a walk down `path`
-    /// passes, from the depth `from` on, without ending there. Such an entry changes a list or a
-    /// part that the steps of a read go through.
-    fn crossed(&self, path: &[usize], from: usize, mark: usize, before: usize) -> bool {
+    /// The depth of the first node, from the depth `from` on, where a walk down `path` passes an
+    /// entry from `mark` on and before `before` that has the path of the node. Such an entry
+    /// changes a list or a part that the steps of a read go through.
+    fn first_crossed(
+        &self,
+        path: &[usize],
+        from: usize,
+        mark: usize,
+        before: usize,
+    ) -> Option<usize> {
         let mut at = Some(0usize);
         for d in 0..path.len() {
-            let Some(node) = at.and_then(|n| self.nodes.get(n)) else {
-                return false;
-            };
+            let node = at.and_then(|n| self.nodes.get(n))?;
             if d >= from && first_from(&node.here, mark).is_some_and(|pos| pos < before) {
-                return true;
+                return Some(d);
             }
             at = path.get(d).and_then(|k| node.children.get(k)).copied();
         }
-        false
+        None
     }
 
     /// The earliest entry from `mark` on that replaced the part at `path` or a part above it:
@@ -272,6 +278,8 @@ pub(super) struct Mark {
 enum Walk {
     Live,
     Old(usize),
+    /// The first steps walk the live local up to the list that a change reached.
+    Split(usize),
     Copy,
 }
 
@@ -495,12 +503,15 @@ impl Store {
                     Walk::Copy
                 }
             }
-            None if log.crossed(&ends, c.base, mark.at, usize::MAX) => Walk::Copy,
-            None => Walk::Live,
+            None => match log.first_crossed(&ends, c.base, mark.at, usize::MAX) {
+                Some(d) if d > c.base => Walk::Split(d - c.base),
+                Some(_) => Walk::Copy,
+                None => Walk::Live,
+            },
             Some(s) if log.saved(s.pos).is_none() => Walk::Copy,
             Some(s) => {
                 let clear = if c.exact {
-                    !log.crossed(&ends, c.base, mark.at, s.pos)
+                    log.first_crossed(&ends, c.base, mark.at, s.pos).is_none()
                 } else {
                     quiet && log.window(base, mark.at).first() == Some(&s.pos)
                 };
@@ -521,14 +532,13 @@ impl Store {
         self.logged(mark.root) > mark.at
     }
 
-    /// Takes the read parked at `at` back. A read that follows the steps of its index at a part
-    /// of an aggregate root and holds no root keeps its window until `finish`, so that its steps
-    /// walk the root and the result resolves once at its last step (`Evaluator::resolve_ref`).
-    /// While no change replaced the part or a part above it, the steps walk the live root. After
-    /// a write that bound the root again, they walk the old root in the log (`View`), so the
-    /// read copies only the part that it ends at. Any other read resolves now: its steps go on
-    /// from the old value.
-    pub(super) fn unpark(&mut self, at: usize) -> (Out, Option<Mark>) {
+    /// Takes the read parked at `at` back, with its mark and the number of steps to walk before
+    /// the copy. A read that follows the steps of its index at a part of a local keeps its window
+    /// until `finish`, so that its steps walk the local and the result resolves once at its last
+    /// step (`Evaluator::resolve_ref`). `walk_of` tells how the steps walk: the live local, the
+    /// old local in the log (`View`), the live local up to a list that a change reached (the
+    /// third result, and the copy is that list), or no walk, and the read resolves now.
+    pub(super) fn unpark(&mut self, at: usize) -> (Out, Option<Mark>, Option<usize>) {
         let quiet = matches!(self.held_by.get(at), Some(None));
         let cursor = self.cursors.get_mut(at).and_then(Option::take);
         let (outs, marks) = self.release(at);
@@ -542,28 +552,29 @@ impl Store {
             self.close_log(later.root);
         }
         let Some(mark) = mark else {
-            return (out, None);
+            return (out, None, None);
         };
         if let (Some(c), Out::Ref(_)) = (&cursor, &out) {
             match self.walk_of(mark, c, quiet) {
-                Walk::Live if self.changed_since(mark) => return (out, Some(mark)),
+                Walk::Live if self.changed_since(mark) => return (out, Some(mark), None),
                 Walk::Live => {
                     self.close_log(mark.root);
-                    return (out, None);
+                    return (out, None, None);
                 }
+                Walk::Split(head) => return (out, Some(mark), Some(head)),
                 Walk::Old(pos) => {
                     self.view = Some(View {
                         root: mark.root,
                         pos,
                     });
-                    return (out, Some(mark));
+                    return (out, Some(mark), None);
                 }
                 Walk::Copy => {}
             }
         }
         let out = self.resolved(out, mark);
         self.close_log(mark.root);
-        (out, None)
+        (out, None, None)
     }
 
     /// The read resolved: its window and its view are not needed any more.
@@ -645,9 +656,9 @@ impl Store {
 }
 
 impl Evaluator<'_> {
-    /// The result `out` of a read, as the window left the part it refers to. No step of a read
-    /// goes into a list that its window changed: a list has no hardware leaf, so the segment of
-    /// the read ends before the index into it, and the part before the index resolves here.
+    /// The result `out` of a read, as the window left the part it refers to. The steps of the
+    /// read have walked: the part is the one where the read ends, or the list where a split walk
+    /// stops, and it resolves here.
     pub(super) fn resolve_ref(&mut self, mark: Option<&Mark>, out: Out) -> Out {
         let Some(mark) = mark else {
             return out;
