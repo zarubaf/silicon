@@ -685,6 +685,26 @@ fn elab_names_no_count_when_the_fuel_cannot_pay_the_type_joins() -> Test {
     Ok(())
 }
 
+/// Rust does not count the scalars of a string that the fuel cannot pay, so the message names no
+/// count (issue #250). The same program and fuel give the same text in `Source/Test/Elab.lean`.
+#[test]
+fn elab_names_no_count_when_the_fuel_cannot_pay_a_string_scan() -> Test {
+    let src = "module M() domains() {\n    \
+        let s = \"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz\";\n    \
+        let c = s[3];\n}\n";
+    for (fuel, left) in [("87", "0"), ("90", "3")] {
+        let (out, code) = source("elab", src, &["--fuel", fuel], "M()", "")?;
+        assert_eq!(
+            out,
+            format!(
+                "error[S015]: 3:13: the fuel cannot pay the scan of the string; {left} remain\n"
+            )
+        );
+        assert_eq!(code, Some(1));
+    }
+    Ok(())
+}
+
 #[test]
 fn eval_takes_the_budgets() -> Test {
     // The evaluation uses 7 units, and the result `(int 3)` pays its 7 bytes.
