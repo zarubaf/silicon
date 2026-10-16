@@ -53,6 +53,11 @@ fn evaluated(src: &str, expr: &str, fuel: u64, depth: u64) -> Result<(Evaluated,
 /// The message of the error of `eval` for a source and an expression that pass the earlier
 /// passes.
 pub(crate) fn message(src: &str, expr: &str) -> String {
+    message_with(src, expr, Budget::default())
+}
+
+/// `message` with a budget.
+pub(crate) fn message_with(src: &str, expr: &str, budget: Budget) -> String {
     let depth_n = parse::DEFAULT_SYNTAX_DEPTH;
     let parsed = parse::parse_with_depth(src, depth_n).unwrap();
     let Ok(file) = resolve::resolve(parsed) else {
@@ -66,7 +71,7 @@ pub(crate) fn message(src: &str, expr: &str) -> String {
     let Ok(e) = typeck::check_expr(&file, e) else {
         panic!("the expression must check")
     };
-    match eval(&file, &e, Budget::default()).unwrap() {
+    match eval(&file, &e, budget).unwrap() {
         Ok(_) => panic!("the evaluation must fail"),
         Err(e) => e.message,
     }
@@ -589,6 +594,57 @@ fn the_cases_of_lean() {
         ),
         "S003 1:1"
     );
+}
+
+/// The size limit of design section 5.4 (issue #255): the check comes before the charge, so the
+/// default fuel and the largest fuel give the same message. The texts are those of Lean.
+#[test]
+fn a_value_above_the_size_limit_is_s015_before_its_charge() {
+    const INT: &str = "the result can have more than 2^32 bits, the limit of a static Int; \
+        use smaller operands";
+    const ZERO: &str = "the value of the type has a size above 2^32, the limit of a value \
+        from a type; use a smaller type or keep it a reference";
+    let max = Budget {
+        fuel: u64::MAX,
+        depth: 1000,
+    };
+    for expr in [
+        "1 << 4294967296",
+        "-1 << 4294967296",
+        "3 << 4294967295",
+        "1 << 18446744073709551616",
+        "1 << 340282366920938463463374607431768211455",
+        "[Bool; 1 << 4294967296]",
+    ] {
+        assert_eq!(message("", expr), INT, "{expr}");
+        assert_eq!(message_with("", expr, max), INT, "{expr}");
+    }
+    for expr in [
+        "[Bool; 2305843009213693952]()",
+        "[[Bool; 65536]; 65536]()",
+        "[Bool; 18446744073709551616]()",
+    ] {
+        assert_eq!(message("", expr), ZERO, "{expr}");
+        assert_eq!(message_with("", expr, max), ZERO, "{expr}");
+    }
+    // A shift at the limit passes the check, so the fuel pays its charge.
+    let small = Budget {
+        fuel: 1000,
+        depth: 1000,
+    };
+    assert_eq!(
+        message_with("", "1 << 4294967295", small),
+        "the fuel cannot pay 67108864 unit(s); 995 remain; raise --fuel"
+    );
+    assert_eq!(
+        message_with("", "1 << 4000000000", small),
+        "the fuel cannot pay 62500001 unit(s); 995 remain; raise --fuel"
+    );
+    assert_eq!(
+        message_with("", "~(1 << 4294967295)", small),
+        "the fuel cannot pay 67108864 unit(s); 994 remain; raise --fuel"
+    );
+    assert_eq!(out("", "0 << 18446744073709551616", 20, 1000), "(int 0)");
 }
 
 #[test]
