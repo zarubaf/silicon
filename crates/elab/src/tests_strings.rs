@@ -521,6 +521,85 @@ fn a_mutation_of_a_held_root_pays_for_its_copies() {
     assert!(copies <= full, "{copies} copies for {full} units");
 }
 
+/// The functions of the guards of `changes` in Lean. A pair differs only in the local that the
+/// index changes: `t` or `u`.
+const CHANGES: &str = "fn mk() -> (Int, List[Int]) { let mut xs = list(Int); xs.push(1); \
+    xs.push(2); return (0, xs); }\n\
+    fn a() -> Int { let mut t = mk(); let mut u = mk(); t[(t.1.push(3), 1).1]; return 0; }\n\
+    fn b() -> Int { let mut t = mk(); let mut u = mk(); t[(u.1.push(3), 1).1]; return 0; }\n\
+    fn c() -> Int { let mut t = mk(); let mut u = mk(); \
+    let y = t[(t.1.push(3), 1).1]; return 0; }\n\
+    fn d() -> Int { let mut t = mk(); let mut u = mk(); \
+    let y = t[(u.1.push(3), 1).1]; return 0; }\n\
+    fn e() -> Int { let mut t = mk(); let mut u = mk(); \
+    t[(t[(t.1.push(3), 1).1], 1).1]; return 0; }\n\
+    fn f() -> Int { let mut t = mk(); let mut u = mk(); \
+    t[(t[(u.1.push(3), 1).1], 1).1]; return 0; }\n\
+    fn g() -> Int { let mut t = mk(); let mut u = mk(); \
+    comptime for i in 0..3 { t[(t.1.push(i), 1).1]; } return 0; }\n\
+    fn h() -> Int { let mut t = mk(); let mut u = mk(); \
+    comptime for i in 0..3 { t[(u.1.push(i), 1).1]; } return 0; }\n\
+    fn v() -> Int { let mut t = mk(); return len(t[(t.1.push(3), 1).1]); }\n\
+    fn push9(mut l: List[Int]) -> Int { l.push(9); return 0; }\n\
+    fn own() -> Int { let mut l = list(Int); l.push(1); return 0; }\n\
+    fn bump(mut s: String) -> Int { s = s + \"c\"; return 0; }\n\
+    fn viacall() -> Int { let mut t = mk(); t[(push9(t.1), 1).1]; return 0; }\n\
+    fn incallee() -> Int { let mut t = mk(); t[(own(), 1).1]; return 0; }\n\
+    fn field() -> Int { let mut t = ((1, 2), list(Int)); return t[(t.1.push(3), 0).1].1; }\n\
+    fn after() -> Int { let mut t = (mk(), 5); return t.0[(t.0.1.push(3), 0).1]; }\n\
+    fn text() -> Int { let mut s = \"ab\"; let y = s[bump(s)]; return 0; }\n\
+    fn bad() -> Int { let mut t = mk(); t[(t.1.push(3), 9).1]; return 0; }";
+
+/// An index whose own index changed the local of its base reads an old part. It charges the size
+/// of its result as its last step, and the result is a new value (design section 5.4). Each pair
+/// differs only in the local that the index changes: the first line of the guards in Lean, with
+/// the read in a binding, a nested read, and a loop. A mutation in a callee frame is another local,
+/// the write-back of the call is the local, and a string index is exempt.
+#[test]
+fn an_index_that_changes_its_own_root_pays_for_its_result() {
+    assert_eq!(o(CHANGES, "v()"), "(int 2)");
+    // The `push` charges the held list, and the read charges the old list. A binding of the
+    // result is no copy, so `c()` costs as much as `a()` and `d()` costs 3 more than `b()`.
+    for (call, units) in [
+        ("a()", 152),
+        ("b()", 144),
+        ("c()", 152),
+        ("d()", 147),
+        ("e()", 166),
+        ("f()", 155),
+        ("g()", 216),
+        ("h()", 186),
+    ] {
+        exact(CHANGES, call, units);
+    }
+    // The result of a read after a selector, and a selector after a read.
+    exact(CHANGES, "after()", 101);
+    exact(CHANGES, "field()", 50);
+    // The write-back of a call changes the local. A mutation in the frame of a callee does not.
+    exact(CHANGES, "viacall()", 113);
+    exact(CHANGES, "incallee()", 98);
+    // A string index is exempt, and an error of the index comes before any charge.
+    exact(CHANGES, "text()", 49);
+    assert_eq!(o(CHANGES, "bad()"), "S013 19:39");
+}
+
+/// A read that goes into a list that its own index changed checks the index against the length
+/// that the list had, and finds the element as it was. The element past the new length of a
+/// `pop` is there, and the element past the old length of a `push` is out of range (`S013`).
+#[test]
+fn a_read_into_a_changed_list_uses_the_old_length() {
+    let src = "fn two() -> List[Int] { let mut xs = list(Int); xs.push(1); xs.push(2); return xs; }\n\
+        fn grown() -> Int { let mut xs = two(); return xs[(xs.push(7), 2).1]; }\n\
+        fn popped() -> Int { let mut xs = two(); return xs[(xs.pop(), 1).1]; }\n\
+        fn pushed() -> Int { let mut xs = two(); return xs[(xs.push(7), 1).1]; }\n\
+        fn nested() -> Int { let mut t = (0, two()); return t.1[(t.1.push(7), t.1.pop(), 1).2]; }";
+    assert_eq!(o(src, "grown()"), "S013 2:51");
+    for (call, units) in [("popped()", 54), ("pushed()", 56), ("nested()", 79)] {
+        assert_eq!(o(src, call), "(int 2)", "{call}");
+        exact(src, call, units);
+    }
+}
+
 /// The message of a `mut` actual of another type names the type of the place and the type of
 /// the formal, as Lean does.
 #[test]
