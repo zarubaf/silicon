@@ -97,7 +97,7 @@ const LIST_FNS: u32 = 2;
 const MUT_FNS: u32 = 2;
 const MUT_HELPERS: u32 = 2;
 /// The most functions that call an earlier function with a `mut` formal.
-const NESTED_FNS: u32 = 2;
+const NESTED_FNS: u32 = 3;
 const ENVS: usize = 64;
 const INSTANCES: u32 = 3;
 const CONTEXTS: usize = 3;

@@ -158,14 +158,29 @@ impl Builder {
     /// call of an earlier function on `a0` or on a local root `b0`, by its
     /// name, as a receiver, or through a function value.
     fn nested_call(&mut self, root: &STy) -> Vec<Stmt> {
-        let Some(inner) = self
+        // An effectful callee gives a record with a nested frame, so it is
+        // the likely choice.
+        let effectful: Vec<&MutFn> = self
             .mut_fns
-            .get(self.tape.index(self.mut_fns.len()))
-            .cloned()
-        else {
+            .iter()
+            .filter(|f| f.diag.is_some() || !f.pre.is_empty())
+            .collect();
+        let all: Vec<&MutFn> = self.mut_fns.iter().collect();
+        let pool = if effectful.is_empty() || self.tape.below(4) == 0 {
+            all
+        } else {
+            effectful
+        };
+        let Some(inner) = pool.get(self.tape.index(pool.len())).copied().cloned() else {
             return Vec::new();
         };
-        let (callee, receiver) = self.mut_callee(&inner.name);
+        // A quarter of the calls are receiver calls and a quarter are plain
+        // calls by name, whatever function values exist.
+        let (callee, receiver) = match self.tape.below(4) {
+            0 => (inner.name.clone(), true),
+            1 => (inner.name.clone(), false),
+            _ => self.mut_callee(&inner.name),
+        };
         let mut pre = Vec::new();
         let on = if inner.root == *root && self.tape.flag() {
             "a0".to_owned()
@@ -230,11 +245,15 @@ impl Builder {
         names: &mut Names,
         out: &mut Vec<Stmt>,
     ) -> Built {
-        let Some(f) = self
-            .mut_fns
-            .get(self.tape.index(self.mut_fns.len()))
-            .cloned()
-        else {
+        // A nested function is called more often, for its inner frame.
+        let nested: Vec<&MutFn> = self.mut_fns.iter().filter(|f| !f.pre.is_empty()).collect();
+        let all: Vec<&MutFn> = self.mut_fns.iter().collect();
+        let pool = if nested.is_empty() || self.tape.below(5) == 0 {
+            all
+        } else {
+            nested
+        };
+        let Some(f) = pool.get(self.tape.index(pool.len())).copied().cloned() else {
             return Ok(());
         };
         let root = self.static_root(ctx, names, out, &f.root)?;
