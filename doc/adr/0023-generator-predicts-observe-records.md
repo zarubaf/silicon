@@ -5,7 +5,11 @@
 
 ## Context
 
-[ADR 0018](0018-source-generator-crate.md) limits the evaluator of the source generator. It must not make instantiation identities or emitted names. A need outside these limits needs a new ADR. Two later changes went past this limit: the prediction of the `diagnostic` records (#185) and the full record lines of `observe` (#232). Each one edited ADR 0018 instead of a new ADR. [ADR 0001](0001-record-architecture-decisions.md) says that an accepted ADR does not change. The drift review of 2026-10-16 found both edits. This ADR records them, and ADR 0018 goes back to its accepted text.
+[ADR 0018](0018-source-generator-crate.md) limits the evaluator of the source generator. It must not make instantiation identities or emitted names. A need outside these limits needs a new ADR.
+
+Two later changes went past this limit: the prediction of the `diagnostic` records (#185) and the full record lines of `observe` (#232). Each one edited ADR 0018 instead of a new ADR. [ADR 0001](0001-record-architecture-decisions.md) says that an accepted ADR does not change.
+
+The drift review of 2026-10-16 found both edits. This ADR records them, and ADR 0018 goes back to its accepted text.
 
 ## Decision
 
