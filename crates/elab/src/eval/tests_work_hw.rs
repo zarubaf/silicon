@@ -996,7 +996,6 @@ fn the_largest_index_number_is_out_of_range_and_does_not_overflow() {
 /// same list. Each read goes into a list that a change reached, so it copies a part, and that part
 /// is the list and not the local: the sibling list `u.0` has `m` elements and no read copies it.
 #[test]
-#[ignore = "#242"]
 fn k_reads_that_cross_a_changed_list_copy_only_that_list() {
     let at = |n: u64, i: u64| {
         let mut e = "(u.1.push(1), 0).1".to_owned();
