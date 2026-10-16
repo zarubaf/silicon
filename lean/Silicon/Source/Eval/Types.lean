@@ -76,6 +76,21 @@ def atUse (p : Pos) (act : M α) : M α := fun c s =>
   | .ok r => .ok r
   | .error e => .error { e with err.pos := p }
 
+def metaLimitText : String :=
+  "the metadata of the type can have more than 2^32 bits, the limit of a static Int; " ++
+  "use a smaller type"
+
+/-! The largest bit length of the width, the leaf count, and the zero size of `m`. -/
+def metaBits (m : Meta) : Nat :=
+  max (bitLength m.width) (max (bitLength m.leaves) (bitLength m.zeroSize))
+
+/-!
+The bound on the bit lengths of the metadata of `[T; N]`, from the metadata `m` of `T`. Each
+product gets the bound of `*`. The zero size `1 + N * z` gets 1 more (section 5.4).
+-/
+def arrayBits (m : Meta) (n : Nat) : Nat :=
+  bitLength n + max (bitLength m.width) (max (bitLength m.leaves) (bitLength m.zeroSize + 1))
+
 /-!
 The charge at `pos` of the metadata sums of a tuple or a struct type with the metadata `m` and
 the parts `parts`. The sums read the four integers of each part, so they charge their sizes
@@ -83,6 +98,7 @@ first. Then they charge the sizes of the four new integers of `m`.
 -/
 def sums (pos : Pos) (parts : List Meta) (m : Meta) : M Unit := do
   charge pos (Meta.readCharge parts)
+  if over (metaBits m) then fail .S015 pos metaLimitText
   charge pos m.intCharge
 
 /-! A container type: an array, a tuple, a list, or a struct type. -/
@@ -222,14 +238,15 @@ def zeroOf (specs : Specs) : Nat → Ty → Option Value
     | .nat | .int | .type | .string | .list _ | .fn .. => none
 
 /-!
-The array type `[e; k]` at `pos`. The length at `q` is a static `Nat`. It charges its size and
-the products of its metadata.
+The array type `[e; k]` at `pos`. The length at `q` is a static `Nat`. After the depth check, the
+products of its metadata get the size limit. Then it charges its size and the products.
 -/
 def arrayTy (pos q : Pos) (e : Ty) : Value → M Ty
   | .int k => do
     if k < 0 then fail .S012 q s!"the length {intText k} is not a Nat"
     let t := Ty.array e k.toNat
     bounded pos t.depth
+    if over (arrayBits e.info k.toNat) then fail .S015 pos metaLimitText
     charge pos (t.size + e.info.arrayCharge k.toNat)
     return t
   | v => fail .S010 q s!"the length of an array is a static Nat, not {v.text}"
