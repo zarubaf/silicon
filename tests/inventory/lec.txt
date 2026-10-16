@@ -62,6 +62,8 @@ tests/source/corpus/memory_record.si lowering PASS
 - model mem$$6x5_r1w1 PASS
 tests/source/corpus/names_keywords.si main PASS
 tests/source/corpus/names_keywords.si lowering PASS
+tests/source/corpus/parked_reads.si main PASS
+tests/source/corpus/parked_reads.si lowering PASS
 tests/source/corpus/pipeline_map.si main PASS
 tests/source/corpus/pipeline_map.si lowering PASS
 tests/source/corpus/register_resets.si main PASS

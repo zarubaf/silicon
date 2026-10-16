@@ -1,0 +1,24 @@
+// A hardware tuple with a list of shift taps. A read that waits while a later operand changes the
+// list sees the list as it was: the old list decides the taps of the XOR network, and the new
+// list is empty. The read of the hardware part waits while the index pushes into the list.
+// TOP Parked()
+comptime fn wipe(mut l: List[Nat]) -> Nat {
+    l = list(Nat);
+    return 0;
+}
+module Parked() {
+    input d: UInt[8];
+    output y: UInt[8];
+    reg acc: UInt[8] = 0;
+    let mut t = (d, list(Nat));
+    t.1.push(1);
+    t.1.push(3);
+    let old = (t.1, t.1.push(5), wipe(t.1), t.1);
+    let mut sum = d;
+    comptime for i in 0..len(old.0) {
+        sum = sum ^ (d << old.0[i]);
+    }
+    let k = t[(t.1.push(2), 0).1];
+    acc := acc ^ sum ^ k ^ UInt[8](len(old.3) + len(t.1));
+    y := acc;
+}
