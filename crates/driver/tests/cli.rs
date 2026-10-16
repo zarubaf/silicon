@@ -666,6 +666,25 @@ fn eval_reports_the_first_error_of_the_file_then_of_the_expression() -> Test {
     Ok(())
 }
 
+/// Lean counts the joins of the two element types in full, and Rust stops its walk when the
+/// fuel cannot pay it, so the message names no count of units (issue #250). The same program
+/// and fuel give the same text in `Source/Test/Elab.lean`.
+#[test]
+fn elab_names_no_count_when_the_fuel_cannot_pay_the_type_joins() -> Test {
+    let src = "module M() domains() {\n    let t = [(1, (2, 3)), (4, (5, 6))];\n}\n";
+    for (fuel, left) in [("61", "0"), ("62", "1")] {
+        let (out, code) = source("elab", src, &["--fuel", fuel], "M()", "")?;
+        assert_eq!(
+            out,
+            format!(
+                "error[S015]: 2:13: the fuel cannot pay the joins of the types; {left} remain\n"
+            )
+        );
+        assert_eq!(code, Some(1));
+    }
+    Ok(())
+}
+
 #[test]
 fn eval_takes_the_budgets() -> Test {
     // The evaluation uses 7 units, and the result `(int 3)` pays its 7 bytes.
