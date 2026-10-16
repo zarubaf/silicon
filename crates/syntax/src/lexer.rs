@@ -2,6 +2,7 @@
 //! The lexer: text to tokens with byte ranges, lossless for every input.
 
 use crate::SyntaxKind;
+use std::borrow::Cow;
 use std::ops::Range;
 
 /// The code of every lexical error.
@@ -21,7 +22,7 @@ pub struct LexError {
     pub code: &'static str,
     /// The byte offset of the start of the offending token.
     pub offset: usize,
-    pub message: &'static str,
+    pub message: Cow<'static, str>,
 }
 
 /// The result of lexing: the tokens cover the input without gap.
@@ -129,7 +130,7 @@ const OPERATORS: &[(&str, SyntaxKind)] = &[
     ("@", SyntaxKind::At),
 ];
 
-type Scanned = (SyntaxKind, Option<&'static str>);
+type Scanned = (SyntaxKind, Option<Cow<'static, str>>);
 
 impl Lexer<'_> {
     fn rest(&self) -> &str {
@@ -175,7 +176,7 @@ impl Lexer<'_> {
             return self.bracket(*kind);
         }
         self.pos += first.len_utf8();
-        (SyntaxKind::Error, Some("invalid character"))
+        (SyntaxKind::Error, Some("invalid character".into()))
     }
 
     /// Tracks the open brackets. A token that is not a bracket passes unchanged.
@@ -193,7 +194,13 @@ impl Lexer<'_> {
                 let first = !std::mem::replace(&mut self.too_deep, true);
                 return (
                     SyntaxKind::Error,
-                    first.then_some("brackets nest deeper than the syntax depth"),
+                    first.then(|| {
+                        format!(
+                            "brackets nest deeper than {} levels; raise --syntax-depth",
+                            self.depth
+                        )
+                        .into()
+                    }),
                 );
             }
             _ => return (kind, None),
@@ -210,7 +217,7 @@ impl Lexer<'_> {
             (SyntaxKind::BlockComment, None)
         } else {
             self.pos = self.input.len();
-            (SyntaxKind::Error, Some("unterminated comment"))
+            (SyntaxKind::Error, Some("unterminated comment".into()))
         }
     }
 
@@ -244,7 +251,7 @@ impl Lexer<'_> {
         } else {
             (
                 SyntaxKind::Error,
-                Some("number literal is not below 2^65536"),
+                Some("number literal is not below 2^65536".into()),
             )
         }
     }
@@ -259,7 +266,10 @@ impl Lexer<'_> {
                 '"' => {
                     self.pos += i + 1;
                     return if bad {
-                        (SyntaxKind::Error, Some("invalid character in string"))
+                        (
+                            SyntaxKind::Error,
+                            Some("invalid character in string".into()),
+                        )
                     } else {
                         (SyntaxKind::Str, None)
                     };
@@ -268,20 +278,20 @@ impl Lexer<'_> {
                     Some((_, '"' | '\\' | 'n' | 'r' | 't')) => {}
                     Some((_, '\n')) | None => {
                         self.pos += i + 1;
-                        return (SyntaxKind::Error, Some("unterminated string"));
+                        return (SyntaxKind::Error, Some("unterminated string".into()));
                     }
                     Some(_) => bad = true,
                 },
                 '\n' => {
                     self.pos += i;
-                    return (SyntaxKind::Error, Some("unterminated string"));
+                    return (SyntaxKind::Error, Some("unterminated string".into()));
                 }
                 c if c.is_control() => bad = true,
                 _ => {}
             }
         }
         self.pos = self.input.len();
-        (SyntaxKind::Error, Some("unterminated string"))
+        (SyntaxKind::Error, Some("unterminated string".into()))
     }
 }
 
