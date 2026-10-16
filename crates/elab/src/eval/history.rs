@@ -31,8 +31,9 @@
 //!   first steps walk the live local. An index in the old range of the list, which the log gives
 //!   (`Store::old_len`), copies only the element. Else the read copies the list as it was, and
 //!   the check of the step fails on it. An index that changed its own root pays for the size of
-//!   its result before the result is a new value (#237). A step into a part that a `pop` took out
-//!   or a write replaced above the read copies the part where the read waits (`Walk::Copy`).
+//!   its result before the result is a new value (#237). The element that a `pop` took out is
+//!   the saved value of that `pop`, so a read of it takes the same way. A step into a part that
+//!   a write replaced above the read copies the part where the read waits (`Walk::Copy`).
 //! - A write that binds an aggregate root again copies the rest of the root once (`split_root`).
 //!   A hardware write pays it in its charge. A write that leaves no hardware leaf turns the root
 //!   static, and a root becomes an aggregate again only by a charge of its new size.
@@ -518,7 +519,15 @@ impl Store {
                 Some(d) => Walk::Split(d - c.base),
                 None => Walk::Live,
             },
-            Some(s) if log.saved(s.pos).is_none() => Walk::Copy,
+            // A `pop` took out the element that the steps name, or a part above it. The read
+            // walks the live local up to the list, and the saved element is the old part.
+            Some(s) if log.saved(s.pos).is_none() => match log.entries.get(s.pos) {
+                Some(Entry {
+                    change: Change::Pop { .. },
+                    ..
+                }) if c.exact && s.used > c.base => Walk::Split(s.used - 1 - c.base),
+                _ => Walk::Copy,
+            },
             Some(s) => {
                 let clear = if c.exact {
                     log.first_crossed(&ends, c.base, mark.at, s.pos).is_none()
