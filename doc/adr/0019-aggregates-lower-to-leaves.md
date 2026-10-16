@@ -1,6 +1,6 @@
 # 19. An aggregate lowers to its leaves
 
-- Status: accepted
+- Status: accepted, partly superseded by ADR 0025
 - Date: 2026-10-12
 
 ## Context
