@@ -6,8 +6,8 @@
 //! it copies nothing. Each walk keeps its own stack, and each charge comes before the work that
 //! it pays for.
 
-use super::history::{Entry, split_root};
 use super::place::{Index, PartInfo};
+use super::store::{Edit, split_root};
 use super::{Code, Evaluator, Let, Names, Out, Res, at, fail};
 use crate::agg::{Agg, Base};
 use crate::hw::{Seen, Val};
@@ -1092,7 +1092,7 @@ impl Evaluator<'_> {
         // moves into the log with the part that the write replaces.
         let root = if self.store.is_logged(place.root) {
             let (work, saved) = split_root(root, &place.keys);
-            self.store.log_edit(place.root, Entry::rebind(saved));
+            self.store.log_edit(place.root, Edit::rebind(saved));
             work
         } else {
             root

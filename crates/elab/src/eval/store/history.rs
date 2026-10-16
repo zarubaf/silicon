@@ -46,8 +46,9 @@
 //!
 //! Every walk keeps to the path of a place, and no walk recurses over the depth of a value.
 
-use super::{Cursor, Evaluator, Out, Store};
+use super::{Cursor, Store};
 use crate::agg::Agg;
+use crate::eval::Out;
 use crate::hw::{Root, Val};
 use crate::value::Value;
 use std::collections::BTreeMap;
@@ -65,7 +66,7 @@ pub(super) enum Change {
 }
 
 /// A change of the part at `keys`.
-pub(super) struct Entry {
+pub(in crate::eval) struct Edit {
     keys: Vec<usize>,
     change: Change,
     /// The size and the depth of each aggregate node on the path before a `Push` or a `Pop`,
@@ -73,10 +74,10 @@ pub(super) struct Entry {
     stats: Vec<(u64, u64)>,
 }
 
-impl Entry {
+impl Edit {
     /// A `push` into the list at `keys`, which had `len` elements.
-    pub(super) fn push(keys: Vec<usize>, len: usize, stats: Vec<(u64, u64)>) -> Entry {
-        Entry {
+    pub(in crate::eval) fn push(keys: Vec<usize>, len: usize, stats: Vec<(u64, u64)>) -> Edit {
+        Edit {
             keys,
             change: Change::Push { len },
             stats,
@@ -84,8 +85,13 @@ impl Entry {
     }
 
     /// A `pop` of the list at `keys`, which had `len` elements.
-    pub(super) fn pop(keys: Vec<usize>, saved: Value, len: usize, stats: Vec<(u64, u64)>) -> Entry {
-        Entry {
+    pub(in crate::eval) fn pop(
+        keys: Vec<usize>,
+        saved: Value,
+        len: usize,
+        stats: Vec<(u64, u64)>,
+    ) -> Edit {
+        Edit {
             keys,
             change: Change::Pop { saved, len },
             stats,
@@ -93,8 +99,8 @@ impl Entry {
     }
 
     /// A write that replaced the part of a static local at `keys`.
-    pub(super) fn replace(keys: Vec<usize>, old: Value) -> Entry {
-        Entry {
+    pub(in crate::eval) fn replace(keys: Vec<usize>, old: Value) -> Edit {
+        Edit {
             keys,
             change: Change::Replace(old),
             stats: Vec::new(),
@@ -102,8 +108,8 @@ impl Entry {
     }
 
     /// A write that bound the whole local again.
-    pub(super) fn rebind(old: Val) -> Entry {
-        Entry {
+    pub(in crate::eval) fn rebind(old: Val) -> Edit {
+        Edit {
             keys: Vec::new(),
             change: Change::Rebind(old),
             stats: Vec::new(),
@@ -138,7 +144,7 @@ fn first_from(list: &[usize], mark: usize) -> Option<usize> {
 
 /// The entries of a local, their index by path, and the number of reads that wait at the local.
 pub(super) struct History {
-    entries: Vec<Entry>,
+    entries: Vec<Edit>,
     /// The index by path. The node 0 is the root.
     nodes: Vec<Node>,
     open: usize,
@@ -177,7 +183,7 @@ impl History {
     }
 
     /// Appends the entry `e`, and lists it at the node of each prefix of its path.
-    fn append(&mut self, e: Entry) {
+    fn append(&mut self, e: Edit) {
         #[cfg(test)]
         crate::counters::add(crate::counters::Count::Logged, 1);
         self.memo.clear();
@@ -296,7 +302,7 @@ impl History {
 /// parked. The window of the read is the entries from there on. The log lives while a read
 /// waits, so a mark never outlives its log.
 #[derive(Clone, Copy)]
-pub(super) struct Mark {
+pub(in crate::eval) struct Mark {
     pub(super) root: Root,
     at: usize,
 }
@@ -357,7 +363,7 @@ fn value_at<'a>(v: &'a mut Value, keys: &[usize]) -> Option<&'a mut Value> {
 /// `e` extends: a push drops the last element, a pop puts its element back, a write puts its
 /// part back, and each node of the copy on the path gets the numbers that it had before the
 /// change.
-fn undo_in(copy: &mut Val, at: usize, e: &Entry) {
+fn undo_in(copy: &mut Val, at: usize, e: &Edit) {
     let rel = e.keys.get(at..).unwrap_or_default();
     let apply = |part: &mut Value| match (&e.change, part) {
         (Change::Push { .. }, Value::List(_, ys)) => {
@@ -430,7 +436,7 @@ fn node_at<'a>(a: &'a mut Agg, keys: &[usize]) -> Option<&'a mut Agg> {
 /// the root static, and a static root becomes an aggregate again only by a write that charges
 /// its new size. Thus the clone of a write with a lower charge is paid once for each build of the
 /// aggregate root, by the charge that built it. The clone comes after the charges of the write.
-pub(super) fn split_root(root: Val, keys: &[usize]) -> (Val, Val) {
+pub(in crate::eval) fn split_root(root: Val, keys: &[usize]) -> (Val, Val) {
     match root {
         Val::Agg(mut a) => {
             let taken =
@@ -475,7 +481,11 @@ impl Store {
 
     /// The numbers of the nodes on the path `keys`, if a read waits at the local and so a change
     /// must go to the log. They come before the change.
-    pub(super) fn stats_before(&self, root: Root, keys: &[usize]) -> Option<Vec<(u64, u64)>> {
+    pub(in crate::eval) fn stats_before(
+        &self,
+        root: Root,
+        keys: &[usize],
+    ) -> Option<Vec<(u64, u64)>> {
         self.history.get(&root)?;
         Some(match self.root(&root) {
             Val::Agg(a) => node_stats(a, keys),
@@ -484,12 +494,12 @@ impl Store {
     }
 
     /// Whether a read waits at the local, so that a change goes to the log.
-    pub(super) fn is_logged(&self, root: Root) -> bool {
+    pub(in crate::eval) fn is_logged(&self, root: Root) -> bool {
         self.history.contains_key(&root)
     }
 
     /// Appends the change `e` to the log of the local.
-    pub(super) fn log_edit(&mut self, root: Root, e: Entry) {
+    pub(in crate::eval) fn log_edit(&mut self, root: Root, e: Edit) {
         if let Some(log) = self.history.get_mut(&root) {
             log.append(e);
         }
@@ -522,7 +532,7 @@ impl Store {
             // A `pop` took out the element that the steps name, or a part above it. The read
             // walks the live local up to the list, and the saved element is the old part.
             Some(s) if log.saved(s.pos).is_none() => match log.entries.get(s.pos) {
-                Some(Entry {
+                Some(Edit {
                     change: Change::Pop { .. },
                     ..
                 }) if c.exact && s.used > c.base => Walk::Split(s.used - 1 - c.base),
@@ -542,7 +552,7 @@ impl Store {
     /// The length that the list at `path` had when the read at `mark` parked, if a `push` or a
     /// `pop` of the list is in its window. The read then checks an index against this length and
     /// resolves the element, with no copy of the list.
-    pub(super) fn old_len(&self, mark: Mark, path: &[usize]) -> Option<usize> {
+    pub(in crate::eval) fn old_len(&self, mark: Mark, path: &[usize]) -> Option<usize> {
         self.history.get(&mark.root)?.old_len(path, mark.at)
     }
 
@@ -557,7 +567,7 @@ impl Store {
     /// step (`Evaluator::resolve_ref`). `walk_of` tells how the steps walk: the live local, the
     /// old local in the log (`View`), the live local up to a list that a change reached (the
     /// third result, and the copy is that list), or no walk, and the read resolves now.
-    pub(super) fn unpark(&mut self, at: usize) -> (Out, Option<Mark>, Option<usize>) {
+    pub(in crate::eval) fn unpark(&mut self, at: usize) -> (Out, Option<Mark>, Option<usize>) {
         let quiet = matches!(self.held_by.get(at), Some(None));
         let cursor = self.cursors.get_mut(at).and_then(Option::take);
         let (outs, marks) = self.release(at);
@@ -597,7 +607,7 @@ impl Store {
     }
 
     /// The read resolved: its window and its view are not needed any more.
-    pub(super) fn finish(&mut self, mark: &Mark) {
+    pub(in crate::eval) fn finish(&mut self, mark: &Mark) {
         self.view = None;
         self.close_log(mark.root);
     }
@@ -615,7 +625,7 @@ impl Store {
     /// The part at `path` of the local, as it was at the mark of a read, if a change in its
     /// window reached it. A part that no change reaches is the same as the live part, so it
     /// needs no copy.
-    pub(super) fn old_part(&mut self, mark: Mark, path: &[usize]) -> Option<Val> {
+    fn old_part(&mut self, mark: Mark, path: &[usize]) -> Option<Val> {
         let log = self.history.get(&mark.root)?;
         #[cfg(test)]
         crate::counters::add(crate::counters::Count::Logged, 1);
@@ -690,7 +700,7 @@ impl Store {
     /// The result `out`, as the window of the read at `mark` left the part it refers to: a part
     /// that a change reached becomes a copy of its old value, which still holds the local
     /// (`Out::Kept`), and any other result stays as it is.
-    pub(super) fn resolved(&mut self, out: Out, mark: Mark) -> Out {
+    pub(in crate::eval) fn resolved(&mut self, out: Out, mark: Mark) -> Out {
         let Out::Ref(r) = out else {
             return out;
         };
@@ -701,17 +711,5 @@ impl Store {
             Some(v) => Out::Kept(v, mark.root),
             None => Out::Ref(r),
         }
-    }
-}
-
-impl Evaluator<'_> {
-    /// The result `out` of a read, as the window left the part it refers to. The steps of the
-    /// read have walked: the part is the one where the read ends, or the list where a split walk
-    /// stops, and it resolves here.
-    pub(super) fn resolve_ref(&mut self, mark: Option<&Mark>, out: Out) -> Out {
-        let Some(mark) = mark else {
-            return out;
-        };
-        self.store.resolved(out, *mark)
     }
 }

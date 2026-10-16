@@ -4,7 +4,7 @@
 //! result is the copy. An assignment to a place updates the one element in the local, because
 //! no other binding shares the container. A read and a place each walk their path once.
 
-use super::history::{Entry, Mark};
+use super::store::{Edit, Mark};
 use super::{Evaluator, Frame, Opnd, Out, Res, expr_pos, fail, need, same_form};
 use crate::Code;
 use crate::agg::Agg;
@@ -643,6 +643,16 @@ impl Evaluator<'_> {
         }
     }
 
+    /// The result `out` of a read, as the window left the part it refers to. The steps of the
+    /// read have walked: the part is the one where the read ends, or the list where a split walk
+    /// stops, and it resolves here.
+    fn resolve_ref(&mut self, mark: Option<&Mark>, out: Out) -> Out {
+        let Some(mark) = mark else {
+            return out;
+        };
+        self.store.resolved(out, *mark)
+    }
+
     /// The walk of a read along the evaluated indices `keyed`, in one pass: the result, and
     /// whether the container after the last step is a type. A string container ends a segment:
     /// its index makes a new string, which is the base of the next segment.
@@ -1014,7 +1024,7 @@ impl Evaluator<'_> {
                     .and_then(|f| f.get_mut(&id))
             {
                 let old = std::mem::replace(&mut slot.value, y);
-                self.store.log_edit(place.root, Entry::rebind(old));
+                self.store.log_edit(place.root, Edit::rebind(old));
             }
             return Ok(());
         }
@@ -1036,7 +1046,7 @@ impl Evaluator<'_> {
                     let old = std::mem::replace(part, w);
                     if self.store.is_logged(place.root) {
                         let keys = place.keys.clone();
-                        self.store.log_edit(place.root, Entry::replace(keys, old));
+                        self.store.log_edit(place.root, Edit::replace(keys, old));
                     }
                 }
                 Ok(())
