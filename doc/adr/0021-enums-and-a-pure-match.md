@@ -1,6 +1,6 @@
 # 21. Enums with payloads and a pure exhaustive match
 
-- Status: accepted
+- Status: accepted, partly superseded by ADR 0027
 - Date: 2026-10-13
 
 ## Context
