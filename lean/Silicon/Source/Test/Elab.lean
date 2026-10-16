@@ -1262,6 +1262,23 @@ def pays (src : String) (fuel : Nat) (pos : String) (units : Nat) : Bool :=
         s!"{e.code} {e.pos.line}:{e.pos.col} {e.msg}" ==
           s!"S015 {pos} the fuel cannot pay {units} unit(s); 0 remain"
 
+/-! The code, the position, and the message of the first error of the elaboration of `src`. -/
+def failure (src : String) (fuel : Nat) : String :=
+  match Cli.load 4096 src with
+  | .error _ => "load"
+  | .ok (items, checked) =>
+    match Cli.topSelection 4096 items checked "M" with
+    | .error _ => "top"
+    | .ok (p, i, _, xs) =>
+      match Elab.elaborate { fuel, depth := 1000 } checked Names.sha16 p i xs with
+      | .ok _ => "ok"
+      | .error e => s!"{e.code} {e.pos.line}:{e.pos.col} {e.msg}"
+
+-- The joins of two tuple types cost 2 units. A fuel below that names no count (issue #250).
+def joinSrc : String := "module M() domains() {\n    let t = [(1, (2, 3)), (4, (5, 6))];\n}\n"
+#guard failure joinSrc 61 == "S015 2:13 the fuel cannot pay the joins of the types; 0 remain"
+#guard failure joinSrc 62 == "S015 2:13 the fuel cannot pay the joins of the types; 1 remain"
+
 def d16 : String := dMod "  diagnostic(\"depth\", 16);\n"
 #guard observed d16 == ["(record 5 3 M () (string \"depth\") (int 16))", "ok"]
 -- 1. The statement, then the node and the name of the call.
