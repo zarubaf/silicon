@@ -1163,6 +1163,48 @@ def holds : String :=
 #guard cost holds "a()" == cost holds "b()" + 4
 
 /-!
+An index that changes its own root charges the size of its result, and the result is a new value
+(section 5.4). Each pair differs only in the local that the index changes: `t` or `u`. In `a()`,
+the `push` charges the size 5 of the held root `t`, and the read charges the size 3 of the old
+list `[1, 2]`. `v()` gives that old list. In `c()`, the binding of the result is not a copy, so
+it charges only the held root more than `d()`, where the binding copies the list. `b()`, `d()`,
+`f()`, and `h()` keep their charges. In `e()`, the inner and the outer read each charge 3, and the
+`push` charges the held root once. In `g()`, each iteration charges the root and the list that
+it holds then: 5 and 3, 6 and 4, 7 and 5. The cost line of `M` shows the 8 units of `a()`.
+-/
+def changes : String :=
+  "fn mk() -> (Int, List[Int]) { let mut xs = list(Int); xs.push(1); xs.push(2); " ++
+    "return (0, xs); }\n" ++
+  "fn a() -> Int { let mut t = mk(); let mut u = mk(); t[(t.1.push(3), 1).1]; return 0; }\n" ++
+  "fn b() -> Int { let mut t = mk(); let mut u = mk(); t[(u.1.push(3), 1).1]; return 0; }\n" ++
+  "fn c() -> Int { let mut t = mk(); let mut u = mk(); " ++
+    "let y = t[(t.1.push(3), 1).1]; return 0; }\n" ++
+  "fn d() -> Int { let mut t = mk(); let mut u = mk(); " ++
+    "let y = t[(u.1.push(3), 1).1]; return 0; }\n" ++
+  "fn e() -> Int { let mut t = mk(); let mut u = mk(); " ++
+    "t[(t[(t.1.push(3), 1).1], 1).1]; return 0; }\n" ++
+  "fn f() -> Int { let mut t = mk(); let mut u = mk(); " ++
+    "t[(t[(u.1.push(3), 1).1], 1).1]; return 0; }\n" ++
+  "fn g() -> Int { let mut t = mk(); let mut u = mk(); " ++
+    "comptime for i in 0..3 { t[(t.1.push(i), 1).1]; } return 0; }\n" ++
+  "fn h() -> Int { let mut t = mk(); let mut u = mk(); " ++
+    "comptime for i in 0..3 { t[(u.1.push(i), 1).1]; } return 0; }\n" ++
+  "fn v() -> Int { let mut t = mk(); return len(t[(t.1.push(3), 1).1]); }\n" ++
+  "module M() { output o: UInt[8]; o := UInt[8](a()); }\n" ++
+  "module N() { output o: UInt[8]; o := UInt[8](b()); }\n"
+#guard out changes "v()" == "(int 2)"
+#guard exact changes "a()" 152
+#guard exact changes "b()" 144
+#guard exact changes "c()" 152
+#guard exact changes "d()" 147
+#guard exact changes "e()" 166
+#guard exact changes "f()" 155
+#guard exact changes "g()" 216
+#guard exact changes "h()" 186
+#guard top changes "M" == "total 226\nM 198\n"
+#guard top changes "N" == "total 218\nN 190\n"
+
+/-!
 An assignment to a place with a step checks the new depth of the root, as `push` does. The
 depth is the steps of the place plus the depth of the value. Each case makes a root 4 deep, by
 an index, a `.N` selector, a field, and two steps. Thus the limit 4 passes, and 3 fails at the
