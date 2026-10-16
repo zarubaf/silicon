@@ -757,7 +757,8 @@ fn the_top_selection() {
     let src = "module Counter(comptime W: Nat, comptime E: Bool) {\n}";
     assert_eq!(cost(src, "Counter(8, true)"), "total 72\nCounter$8$1b 1\n");
     exact(src, "Counter(8, true)", 72);
-    assert_eq!(cost_fuel(src, "Counter(8, true)", 5), "S015 1:45");
+    assert_eq!(cost_fuel(src, "Counter(8, true)", 5), "S015 1:1");
+    assert_eq!(cost_fuel(src, "Counter(8, true)", 6), "S015 1:45");
     assert_eq!(cost(src, "Counter(-1, true)"), "S012 1:1");
     assert_eq!(cost(src, "Counter(8, 1)"), "S010 1:1");
     assert_eq!(cost(src, "Counter(8)"), "S007 1:1");
