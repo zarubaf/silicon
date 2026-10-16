@@ -22,19 +22,18 @@ follow sections 5.1, 5.4, 5.5, and 5.6. These rules settle their open points:
   visit.
 - A `type` item is a constant of type `Type` in the table of constants. Its first use evaluates
   its type expression, and a use while it is in progress is `S019`.
-- The key of a struct specialization is its struct item and its static arguments. Each
-  argument comes after its typed use at its parameter type: the normalized identity of v0.1.
-  Thus `P[8]` and
-  `P[UInt[4](8)]` are one type when the parameter of `P` has the type `UInt[4]`. Each use counts
-  toward the nesting depth (`S015`). It evaluates the parameter types in the scope of the
-  struct and binds the parameters as typed uses, with their charges and errors. The work of
-  the prelude struct `ReadResponse` reports each of its errors at the use (`atUse`). Then it
-  charges the sum of the sizes of the arguments, before the lookup, because the lookup reads
-  them in full. A first use then charges the size of the struct type and evaluates the field
-  types. Then it checks the depth of the struct type (`S015`) and charges the sums of its
-  metadata. A use in progress is `S019`. A use of a done entry charges nothing more. A use of
-  a struct item while its own parameter types evaluate is `S019` too, because its key does not
-  exist yet.
+- The key of a struct specialization is its struct item and its static arguments. Each argument
+  comes after its typed use at its parameter type: the normalized identity of v0.1. Thus `P[8]`
+  and `P[UInt[4](8)]` are one type when the parameter of `P` has the type `UInt[4]`. Each use
+  counts toward the nesting depth (`S015`). It evaluates the parameter types in the scope of the
+  struct and binds the parameters as typed uses, with their charges and errors. The size of each
+  argument charges right after its typed use, before the next parameter type. These charges come
+  before the lookup, because the lookup reads the arguments in full. The work of the prelude
+  struct `ReadResponse` reports each of its errors at the use (`atUse`). A first use then
+  charges the size of the struct type and evaluates the field types. Then it checks the depth of
+  the struct type (`S015`) and charges the sums of its metadata. A use in progress is `S019`. A
+  use of a done entry charges nothing more. A use of a struct item while its own parameter types
+  evaluate is `S019` too, because its key does not exist yet.
 -/
 namespace Silicon.Source.Eval
 
@@ -179,13 +178,12 @@ def constant (p : Pos) (x : String) (i : Nat) (body : M Value) : M Value := do
 
 /-!
 A use at `p` of the struct item `i` with the name `x`, the prelude flag `pre`, and the
-normalized static arguments `args`. It charges their sizes before the lookup. The key of the
-lookup is the item and the arguments, so its work stays in that charge. The first use runs
+normalized static arguments `args`. `bindParams` charged their sizes before the lookup. The key
+of the lookup is the item and the arguments, so its work stays in those charges. The first use runs
 `fields`, which evaluates the field types. The caller nests it.
 -/
 def specialize (p : Pos) (x : String) (i : Nat) (pre : Bool) (args : List Value)
     (fields : M (List Ty)) : M Ty := do
-  charge p (Value.sizeAll args)
   match (← get).specs.find? i args with
   | some (_, ⟨_, _, .done t _⟩) => return t
   | some (k, ⟨_, _, .inProgress⟩) =>
