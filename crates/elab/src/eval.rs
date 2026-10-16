@@ -570,14 +570,17 @@ impl Store {
     /// passes here, so none can miss a change.
     fn resume(&mut self, from: usize) -> Vec<Out> {
         let (outs, marks) = self.release(from);
-        let settled = outs
+        // The latest mark first: reads of one part then undo each entry of the log once.
+        let mut settled: Vec<Out> = outs
             .into_iter()
             .zip(marks.iter())
+            .rev()
             .map(|(out, mark)| match mark {
                 Some(mark) => self.resolved(out, *mark),
                 None => out,
             })
             .collect();
+        settled.reverse();
         for mark in marks.into_iter().flatten() {
             self.close_log(mark.root);
         }

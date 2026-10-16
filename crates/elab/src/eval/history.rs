@@ -142,6 +142,18 @@ pub(super) struct History {
     /// The index by path. The node 0 is the root.
     nodes: Vec<Node>,
     open: usize,
+    /// The last old part that a read resolved, so that reads of the same part replay each entry
+    /// of the log once, if they resolve the latest mark first. An appended entry clears it.
+    memo: Option<Memo>,
+}
+
+/// An old part that a read resolved: the mark position, the entry that started the part, the
+/// path, and the part. A read with an earlier mark continues from it.
+struct Memo {
+    at: usize,
+    from: Option<usize>,
+    path: Vec<usize>,
+    part: Val,
 }
 
 impl History {
@@ -150,6 +162,7 @@ impl History {
             entries: Vec::new(),
             nodes: vec![Node::default()],
             open: 0,
+            memo: None,
         }
     }
 
@@ -166,6 +179,7 @@ impl History {
     fn append(&mut self, e: Entry) {
         #[cfg(test)]
         crate::counters::add(crate::counters::Count::Logged, 1);
+        self.memo = None;
         let pos = self.entries.len();
         let mut at = 0usize;
         if let Some(node) = self.nodes.get_mut(at) {
@@ -600,31 +614,31 @@ impl Store {
     /// The part at `path` of the local, as it was at the mark of a read, if a change in its
     /// window reached it. A part that no change reaches is the same as the live part, so it
     /// needs no copy.
-    pub(super) fn old_part(&self, mark: Mark, path: &[usize]) -> Option<Val> {
+    pub(super) fn old_part(&mut self, mark: Mark, path: &[usize]) -> Option<Val> {
         let log = self.history.get(&mark.root)?;
         #[cfg(test)]
         crate::counters::add(crate::counters::Count::Logged, 1);
         let start = log.start(path, mark.at);
+        let from = start.as_ref().map(|s| s.pos);
         let below = log.window(path, mark.at);
-        let upto = start
-            .as_ref()
-            .map_or(below.len(), |s| below.partition_point(|&p| p < s.pos));
+        let upto = from.map_or(below.len(), |pos| below.partition_point(|&p| p < pos));
         let undo = below.get(..upto).unwrap_or_default();
         if start.is_none() && undo.is_empty() {
             return None;
         }
-        let mut v = match &start {
-            None => Store::own(self.current(mark.root, path)),
-            Some(s) => {
-                let rel = path.get(s.used..)?;
-                match &log.entries.get(s.pos)?.change {
-                    Change::Pop { saved: part, .. } | Change::Replace(part) => {
-                        Store::own(crate::hw::Seen::Static(self.element(part, rel)))
-                    }
-                    Change::Rebind(old) => Store::own(self.part_of(old, rel)),
-                    Change::Push { .. } => return None,
-                }
-            }
+        // A read that parked earlier continues the undo of a later read of the same part: the
+        // entries from its mark on and before the mark of the later read are left to undo.
+        let memo = log
+            .memo
+            .as_ref()
+            .filter(|m| m.from == from && m.path == path && mark.at <= m.at);
+        let (mut v, undo) = match memo {
+            Some(m) => (
+                m.part.clone(),
+                undo.get(..undo.partition_point(|&p| p < m.at))
+                    .unwrap_or_default(),
+            ),
+            None => (self.old_start(mark, path, start.as_ref())?, undo),
         };
         #[cfg(test)]
         crate::counters::add(crate::counters::Count::Logged, undo.len() as u64);
@@ -639,13 +653,41 @@ impl Store {
             );
             undo_in(&mut v, path.len(), e);
         }
+        // The memo serves another read that waits at the local. Without one, its clone is waste.
+        if let Some(log) = self.history.get_mut(&mark.root).filter(|l| l.open > 1) {
+            log.memo = Some(Memo {
+                at: mark.at,
+                from,
+                path: path.to_vec(),
+                part: v.clone(),
+            });
+        }
         Some(v)
+    }
+
+    /// The part at `path` before the undo: the live part, or the part that the entry `start`
+    /// took out.
+    fn old_start(&self, mark: Mark, path: &[usize], start: Option<&Start>) -> Option<Val> {
+        let log = self.history.get(&mark.root)?;
+        Some(match start {
+            None => Store::own(self.current(mark.root, path)),
+            Some(s) => {
+                let rel = path.get(s.used..)?;
+                match &log.entries.get(s.pos)?.change {
+                    Change::Pop { saved: part, .. } | Change::Replace(part) => {
+                        Store::own(crate::hw::Seen::Static(self.element(part, rel)))
+                    }
+                    Change::Rebind(old) => Store::own(self.part_of(old, rel)),
+                    Change::Push { .. } => return None,
+                }
+            }
+        })
     }
 
     /// The result `out`, as the window of the read at `mark` left the part it refers to: a part
     /// that a change reached becomes a copy of its old value, which still holds the local
     /// (`Out::Kept`), and any other result stays as it is.
-    pub(super) fn resolved(&self, out: Out, mark: Mark) -> Out {
+    pub(super) fn resolved(&mut self, out: Out, mark: Mark) -> Out {
         let Out::Ref(r) = out else {
             return out;
         };
