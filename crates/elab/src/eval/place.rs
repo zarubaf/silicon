@@ -43,6 +43,37 @@ enum Key<'a> {
     Field(Pos, &'a Ident),
 }
 
+/// The result of the walk of a read (`follow`).
+struct Followed {
+    out: Out,
+    /// The container after the last step is a type.
+    at_type: bool,
+    /// The last step is the index of a string.
+    string_last: bool,
+}
+
+impl Opnd {
+    /// The local that an index of this base can change while its own index evaluates: the local
+    /// of a reference, or of a copy that still holds its local.
+    fn changing_root(&self) -> Option<Root> {
+        match self {
+            Opnd::Static(Out::Ref(r)) if matches!(r.root, Root::Local(..)) => Some(r.root),
+            Opnd::Static(o) => o.kept(),
+            Opnd::Hw(_) => None,
+        }
+    }
+}
+
+impl Followed {
+    fn new(out: Out, at_type: bool, string_last: bool) -> Followed {
+        Followed {
+            out,
+            at_type,
+            string_last,
+        }
+    }
+}
+
 /// What the walk along a place knows of the type of the part: its type, no type, or the type
 /// of the element itself, which it finds at the end.
 #[derive(Clone, Copy)]
@@ -434,6 +465,8 @@ impl Evaluator<'_> {
         let held = self.held_path(&base, known);
         let tracked = held.is_none().then(|| self.static_path(&base)).flatten();
         let on_agg = matches!(self.opnd_seen(&base), Seen::Agg(_));
+        let root = base.changing_root();
+        let mut moved = None;
         let at = self.store.park(base.into_out());
         let mut held = match held {
             Some((r, ty)) => {
@@ -468,6 +501,7 @@ impl Evaluator<'_> {
             if armed {
                 self.store.arm(at, steps.len() - n);
             }
+            let before = root.map(|r| self.store.changes_of(r));
             let key = self.key(step);
             if armed {
                 self.store.disarm(at);
@@ -484,6 +518,14 @@ impl Evaluator<'_> {
                     held = next.map(|(_, ty)| ty);
                     after = known.and_then(|t| self.key_ty(t, &k));
                     keyed.push(k);
+                    // An index that changed the root reads an old part and pays for its result
+                    // (section 5.4). Its step ends the segment, so the charge is the last step.
+                    if let Sel::Index(q, _) = step
+                        && root.is_some_and(|r| Some(self.store.changes_of(r)) != before)
+                    {
+                        moved = Some(*q);
+                        break;
+                    }
                 }
                 Err(e) => {
                     stop = Some(e);
@@ -504,17 +546,22 @@ impl Evaluator<'_> {
         let followed = match split {
             Some(n) => {
                 let (first, rest) = keyed.split_at(n.min(keyed.len()));
-                match self.follow(Opnd::of_out(parked), first, mark.as_ref()) {
-                    Ok((out, _)) => self.follow(Opnd::of_out(out), rest, None),
-                    Err(e) => Err(e),
-                }
+                self.follow_crossed(parked, first, rest, mark.as_ref())
             }
             None => self.follow(Opnd::of_out(parked), &keyed, mark.as_ref()),
         };
         if let Some(mark) = &mark {
             self.store.finish(mark);
         }
-        let (out, at_type) = followed?;
+        let Followed {
+            out,
+            at_type,
+            string_last,
+        } = followed?;
+        let out = match moved {
+            Some(q) if !string_last => self.renewed(q, out)?,
+            _ => out,
+        };
         if let Some(e) = stop {
             // The base of the step whose index failed is a type: that check comes first.
             if let Some(Sel::Index(q, _)) = steps.get(keyed.len())
@@ -599,8 +646,9 @@ impl Evaluator<'_> {
     /// The walk of a read along the evaluated indices `keyed`, in one pass: the result, and
     /// whether the container after the last step is a type. A string container ends a segment:
     /// its index makes a new string, which is the base of the next segment.
-    fn follow(&mut self, base: Opnd, keyed: &[Key<'_>], mark: Option<&Mark>) -> Res<(Out, bool)> {
+    fn follow(&mut self, base: Opnd, keyed: &[Key<'_>], mark: Option<&Mark>) -> Res<Followed> {
         let mut base = base;
+        let mut string_last = false;
         let mut rest = keyed;
         let mut mark = mark;
         loop {
@@ -610,7 +658,11 @@ impl Evaluator<'_> {
             base = through;
             rest = rest.get(taken..).unwrap_or_default();
             if taken > 0 && rest.is_empty() {
-                return Ok((self.resolve_ref(mark, base.into_out()), false));
+                return Ok(Followed::new(
+                    self.resolve_ref(mark, base.into_out()),
+                    false,
+                    false,
+                ));
             }
             // The steps on an aggregate each give a part in constant work, so they take no walk
             // along a path. A part that is not an aggregate ends them.
@@ -620,7 +672,7 @@ impl Evaluator<'_> {
                 let out = self.agg_key(base.into_out(), key)?;
                 rest = rest.get(1..).unwrap_or_default();
                 if rest.is_empty() {
-                    return Ok((self.resolve_ref(mark, out), false));
+                    return Ok(Followed::new(self.resolve_ref(mark, out), false, false));
                 }
                 base = Opnd::of_out(out);
             }
@@ -657,15 +709,51 @@ impl Evaluator<'_> {
             }
             let out = self.resolve_ref(mark, out);
             let Some(at) = string_step else {
-                return Ok((out, at_type));
+                return Ok(Followed::new(out, at_type, string_last));
             };
             let Some(Key::Index(q, xp, i)) = rest.get(at) else {
-                return Ok((out, at_type));
+                return Ok(Followed::new(out, at_type, string_last));
             };
             base = Opnd::Static(self.str_at(*q, *xp, &out, i)?);
             rest = rest.get(at + 1..).unwrap_or_default();
+            string_last = rest.is_empty();
             mark = None;
         }
+    }
+
+    /// The result `out` of the index at `q` that changed its own root: it charges its size as the
+    /// last step of the read, and then it is a new value, so a binding of it is no copy.
+    fn renewed(&mut self, q: Pos, out: Out) -> Res<Out> {
+        let size = self.size(&out);
+        self.charge(q, size)?;
+        Ok(Out::Made(self.store.take(out)))
+    }
+
+    /// The walk of a read whose steps go into a list that a change reached: `first` leads to the
+    /// list, and `rest` starts with the step into it. An index in the old range of the list
+    /// resolves the element alone, so no copy of the list is made. Else the read copies the list
+    /// as it was, which gives the error of the step.
+    fn follow_crossed(
+        &mut self,
+        parked: Out,
+        first: &[Key<'_>],
+        rest: &[Key<'_>],
+        mark: Option<&Mark>,
+    ) -> Res<Followed> {
+        let list = self.follow(Opnd::of_out(parked), first, None)?.out;
+        if let (Some(mark), Some(Key::Index(_, _, Index::Number(j))), Out::Ref(r)) =
+            (mark, rest.first(), &list)
+            && self
+                .store
+                .old_len(*mark, &r.path)
+                .is_some_and(|len| *j < len)
+        {
+            let element = elem(Opnd::Static(list), *j);
+            let out = self.resolve_ref(Some(mark), element);
+            return self.follow(Opnd::of_out(out), rest.get(1..).unwrap_or_default(), None);
+        }
+        let list = self.resolve_ref(mark, list);
+        self.follow(Opnd::of_out(list), rest, None)
     }
 
     /// The longest run of steps of `keys` that stay inside the nodes of an aggregate root, taken
