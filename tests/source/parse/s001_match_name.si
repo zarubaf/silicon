@@ -1,0 +1,4 @@
+// S001: `match` is a keyword from slice 3 on (ADR 0021), so it is no name.
+// expected-error S001 @+2
+// expected-message: expected a name
+const match: Nat = 1;
