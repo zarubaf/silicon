@@ -835,10 +835,9 @@ fn k_static_references_and_m_pushes_take_work_in_k_plus_m() {
 
 /// The old list of a read that an index of the same read changed is a result of the read: the
 /// reads of a static list nest `k` deep, the innermost index pushes into the list, and the list
-/// has `m` elements. Each read copies the list, and no charge pays for the copies (#237). Once
-/// a charge pays for them, the copied size stays within the fuel.
+/// has `m` elements. Each read charges the size of its result, and it copies the element and
+/// not the list. Thus the copied size stays within the fuel (#237).
 #[test]
-#[ignore = "#237"]
 fn the_copies_of_an_old_list_that_a_read_finds_are_paid() {
     for (i, n) in SIZES.into_iter().enumerate() {
         let mut e = "(xs.push(0), 0).1".to_owned();
