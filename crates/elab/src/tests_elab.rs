@@ -1088,3 +1088,36 @@ fn a_repeat_with_a_container_argument_does_linear_work() {
     repeat_work(1, "UInt[8]");
     repeat_work(2, "Int");
 }
+
+/// A module `M` with `k` parameters after `n`, whose types read `n`, and a parent that
+/// instantiates it with a first argument at the end of a path of `depth` steps.
+fn module_parameter_reads(depth: usize, k: usize) -> String {
+    let params = (0..k)
+        .map(|i| format!("comptime z{i}: [Nat; n * 0 + 1]"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let args = vec!["[0]"; k].join(", ");
+    format!(
+        "module M(comptime n: Nat, {params}) {{ output o: Bool; o := true; }}\n\
+         module Main() {{ let a = {}3{}; instance m = M(a{}, {args}); }}",
+        "[".repeat(depth),
+        "]".repeat(depth),
+        "[0]".repeat(depth)
+    )
+}
+
+/// A read of an earlier parameter in a parameter type of a module is a local read: the steps do
+/// not grow with the number of reads, and they grow at most with the depth of the path (#190).
+#[test]
+#[ignore = "#190"]
+fn the_reads_of_an_earlier_module_parameter_do_constant_work() {
+    let steps = |depth: usize, k: usize| {
+        let fuel = 600_000_000 + (depth as u64) * 1000 + k as u64;
+        let text = elab_only(&module_parameter_reads(depth, k), "Main", fuel, 1000);
+        assert!(text.starts_with("ok"), "{text}");
+        crate::counters::of(fuel).stepped
+    };
+    let base = steps(100, 100);
+    assert_eq!(steps(100, 200), base);
+    assert!(steps(200, 100) <= 2 * base, "{base}");
+}

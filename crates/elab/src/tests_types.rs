@@ -617,3 +617,31 @@ fn a_failed_charge_copies_no_linked_target() {
     };
     assert_eq!(cloned(4), cloned(16));
 }
+
+/// `k` parameters after `n`, whose types read `n`, and a use whose first argument is the leaf of
+/// a nested array of the depth `depth`: a path with `depth` steps.
+fn parameter_reads(depth: usize, k: usize) -> String {
+    let params = (0..k)
+        .map(|i| format!("comptime z{i}: [Nat; n * 0 + 1]"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let args = vec!["[0]"; k].join(", ");
+    format!(
+        "struct P(comptime n: Nat, {params}) {{ v: Bool }}\n\
+         fn f() -> Int {{ let a = {}3{}; type S = P[a{}, {args}]; return 0; }}",
+        "[".repeat(depth),
+        "]".repeat(depth),
+        "[0]".repeat(depth)
+    )
+}
+
+/// A read of an earlier parameter in a parameter type is a local read: the steps do not grow with
+/// the number of reads, and they grow at most with the depth of the path of the argument (#190).
+#[test]
+#[ignore = "#190"]
+fn the_reads_of_an_earlier_parameter_do_constant_work() {
+    let steps = |depth: usize, k: usize| path_steps(&parameter_reads(depth, k), "f()");
+    let base = steps(100, 100);
+    assert_eq!(steps(100, 200), base);
+    assert!(steps(200, 100) <= 2 * base, "{base}");
+}
