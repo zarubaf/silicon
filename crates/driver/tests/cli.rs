@@ -677,7 +677,8 @@ fn elab_names_no_count_when_the_fuel_cannot_pay_the_type_joins() -> Test {
         assert_eq!(
             out,
             format!(
-                "error[S015]: 2:13: the fuel cannot pay the joins of the types; {left} remain\n"
+                "error[S015]: 2:13: the fuel cannot pay the joins of the types; {left} remain; \
+                 raise --fuel\n"
             )
         );
         assert_eq!(code, Some(1));
@@ -697,7 +698,8 @@ fn elab_names_no_count_when_the_fuel_cannot_pay_a_string_scan() -> Test {
         assert_eq!(
             out,
             format!(
-                "error[S015]: 3:13: the fuel cannot pay the scan of the string; {left} remain\n"
+                "error[S015]: 3:13: the fuel cannot pay the scan of the string; {left} remain; \
+                 raise --fuel\n"
             )
         );
         assert_eq!(code, Some(1));
@@ -762,6 +764,11 @@ fn eval_pays_the_length_of_its_result() -> Test {
         .ok_or(short.clone())?;
     let used = 100_000 - left;
     let exact = (used + len as u64).to_string();
+    assert!(
+        short
+            .trim_end()
+            .ends_with(&format!("raise --fuel to at least {exact}"))
+    );
     let out = agree("eval", &["f()", "--fuel", &exact], &path)?;
     assert_eq!(out.status.code(), Some(0));
     let less = (used + len as u64 - 1).to_string();
@@ -1011,7 +1018,7 @@ fn observe_prints_the_records_before_the_first_error() -> Test {
         source("observe", OBSERVE_SI, &["--fuel", "150"], "M()", "")?,
         (
             "(record 4 3 M () (string \"one\") (int 1))\n\
-             error[S015]: 5:3: the fuel cannot pay 46 unit(s); 39 remain\n"
+             error[S015]: 5:3: the fuel cannot pay 46 unit(s); 39 remain; raise --fuel\n"
                 .to_owned(),
             Some(1)
         )
@@ -1021,7 +1028,7 @@ fn observe_prints_the_records_before_the_first_error() -> Test {
         (
             format!(
                 "{OBSERVE_TWO}error[S015]: 1:1: the fuel cannot pay 1 unit(s) of the lowering; \
-                 0 remain\n"
+                 0 remain; raise --fuel\n"
             ),
             Some(1)
         )
