@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 36ca9c8d9fcc884e8a151b1f121c10c938813f170c3c9b56f8034bfe14ae02d3 # shrinks to p = Err(BuildFault(Bound))

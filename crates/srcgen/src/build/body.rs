@@ -20,6 +20,14 @@ fn domain(params: &[(String, STy)], builder: &Builder) -> Vec<Env> {
     for (name, t) in params {
         let values: Vec<Value> = if *t == STy::Bool {
             vec![Value::Bool(false), Value::Bool(true)]
+        } else if let STy::UInt(w) | STy::SInt(w) = t {
+            // Only widths read the domain, and they read `Nat` names, so
+            // one value stands for all.
+            vec![if matches!(t, STy::UInt(_)) {
+                Value::UInt(*w, BigInt::ZERO)
+            } else {
+                Value::SInt(*w, BigInt::ZERO)
+            }]
         } else if let STy::Fn(ft) = t {
             // Only widths read the domain, and they read `Nat` names, so
             // one function stands for all.
@@ -251,6 +259,7 @@ impl Builder {
                 // are scalars on the command line.
                 let t = match self.fn_param_ty() {
                     Some(f) if k > 0 && self.tape.below(5) == 0 => f,
+                    _ if self.tape.below(if k > 0 { 3 } else { 5 }) == 0 => self.finite_param_ty(),
                     _ => t,
                 };
                 params.push((names.fresh("P"), t));

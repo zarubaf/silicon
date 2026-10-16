@@ -58,6 +58,8 @@ use proptest::collection::vec;
 use proptest::prelude::*;
 use stat::Reach;
 use std::collections::BTreeMap;
+#[cfg(test)]
+use std::collections::BTreeSet;
 use std::fmt;
 
 /// The name prefixes of the static kinds: `P` parameter, `C` const, `f`
@@ -355,6 +357,9 @@ struct Stats {
     mut_value_calls: u32,
     hw_value_calls: u32,
     fn_arguments: u32,
+    converted_args: u32,
+    /// Identities that two spellings of a finite argument reached.
+    aliased_args: u32,
     diagnostics: u32,
     effectful_fns: u32,
     effectful_calls: u32,
@@ -380,6 +385,9 @@ struct Builder {
     scope: Scope,
     #[cfg(test)]
     stats: Stats,
+    /// The spellings of the finite arguments of each identity.
+    #[cfg(test)]
+    spellings: BTreeMap<(usize, String), BTreeSet<String>>,
 }
 
 impl Builder {
@@ -403,6 +411,8 @@ impl Builder {
             scope: Scope::default(),
             #[cfg(test)]
             stats: Stats::default(),
+            #[cfg(test)]
+            spellings: BTreeMap::new(),
         }
     }
 

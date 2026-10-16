@@ -15,8 +15,8 @@
 use std::collections::BTreeMap;
 
 use super::emitted::emitted;
-use super::eval::{Env, Fault, Logged, Scope, Value, eval, exec_logged, loop_values};
-use super::program::{Item, Stmt};
+use super::eval::{Env, Fault, Logged, Scope, Value, convert, eval, exec_logged, loop_values};
+use super::program::{Item, SExpr, Stmt};
 
 /// The distinct argument tuples of each module, by module name.
 pub(crate) type Contexts = [(String, Vec<Vec<Value>>)];
@@ -135,6 +135,26 @@ impl Walk<'_> {
         self.run(body, &mut Env::of(params, args), &frame)
     }
 
+    /// The arguments of `instance` of `child`, each converted to its
+    /// parameter type before it names an instantiation (#188).
+    fn converted(&self, child: &str, args: &[SExpr], env: &Env) -> Result<Vec<Value>, Fault> {
+        let params = self
+            .items
+            .iter()
+            .find_map(|item| match item {
+                Item::Module { name, params, .. } if name == child => Some(params),
+                _ => None,
+            })
+            .ok_or(Fault::Type)?;
+        if params.len() != args.len() {
+            return Err(Fault::Type);
+        }
+        args.iter()
+            .zip(params)
+            .map(|(a, (_, t))| convert(t, eval(a, env, &self.scope)?))
+            .collect()
+    }
+
     /// The static statements of a frame. A nested frame works on a copy of
     /// the env: its names do not leave it, and the builder gives it no root
     /// of its parent to write.
@@ -155,10 +175,7 @@ impl Walk<'_> {
                     }
                 }
                 Stmt::Instance(_, child, args) => {
-                    let args = args
-                        .iter()
-                        .map(|a| eval(a, env, &self.scope))
-                        .collect::<Result<Vec<_>, _>>()?;
+                    let args = self.converted(child, args, env)?;
                     if !self.done.iter().any(|(n, t)| n == child && *t == args) {
                         self.elaborate(child, &args)?;
                     }
@@ -359,6 +376,35 @@ mod tests {
         ];
         let got = records(&items, &text, ("M0", &[]), &[]).unwrap();
         assert_eq!(got, want, "{text}");
+    }
+
+    /// Two spellings of one finite argument give one instantiation: the
+    /// argument converts to the parameter type first (#188).
+    #[test]
+    fn a_plain_and_a_converted_argument_name_one_instantiation() {
+        let m1 = Item::Module {
+            name: "M1".to_owned(),
+            params: vec![("P0".to_owned(), STy::UInt(8))],
+            clocked: false,
+            body: vec![Stmt::Diagnostic("d0".to_owned(), name("P0"))],
+        };
+        let converted = SExpr::Convert(STy::UInt(8), Box::new(int(1)));
+        let body = vec![
+            Stmt::Instance("u0".to_owned(), "M1".to_owned(), vec![int(1)]),
+            Stmt::Instance("u1".to_owned(), "M1".to_owned(), vec![converted]),
+        ];
+        let items = [module("M0", &[], body), m1];
+        let text = render_items(&items);
+        let contexts = [
+            ("M0".to_owned(), vec![vec![]]),
+            ("M1".to_owned(), vec![vec![Value::UInt(8, BigInt::from(1))]]),
+        ];
+        let got = records(&items, &text, ("M0", &[]), &contexts).unwrap();
+        assert_eq!(
+            got,
+            ["(record 6 5 M1$1 () (string \"d0\") (uint 8 1))"],
+            "{text}"
+        );
     }
 
     /// The builder and the walk must agree on the argument tuples.

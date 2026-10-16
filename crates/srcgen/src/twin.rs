@@ -133,18 +133,16 @@ pub fn twin(program: &Program) -> Twin {
 /// A container argument has no suffix, and the builder never makes one.
 fn token(v: &Value) -> Option<String> {
     match v {
-        Value::Int(n) if n.sign() == Sign::Minus => Some(format!("{}n", n.magnitude())),
-        Value::Int(n) => Some(n.to_string()),
+        Value::Int(n) | Value::UInt(_, n) | Value::SInt(_, n) if n.sign() == Sign::Minus => {
+            Some(format!("{}n", n.magnitude()))
+        }
+        Value::Int(n) | Value::UInt(_, n) | Value::SInt(_, n) => Some(n.to_string()),
         Value::Bool(true) => Some("1b".to_owned()),
         Value::Bool(false) => Some("0b".to_owned()),
         Value::Function(item, _) => Some(item.clone()),
-        Value::Tuple(_)
-        | Value::Array(_)
-        | Value::UInt(..)
-        | Value::SInt(..)
-        | Value::Str(_)
-        | Value::List(..)
-        | Value::Record(..) => None,
+        Value::Tuple(_) | Value::Array(_) | Value::Str(_) | Value::List(..) | Value::Record(..) => {
+            None
+        }
     }
 }
 

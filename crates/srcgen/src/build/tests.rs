@@ -763,3 +763,28 @@ fn the_records_cover_frames_names_and_order() {
         "frames {frames}, digests {digests}, arguments {args}, resumed {resumed}"
     );
 }
+
+/// A module parameter of a finite type takes its argument as a plain
+/// integer and as a conversion, and one identity occurs under both
+/// spellings (spec 7.1, #188).
+#[test]
+fn the_arguments_cover_converted_identities() {
+    const TAPES: usize = 256;
+    let (mut params, mut converted, mut aliased) = (0, 0, 0);
+    for tape in tapes(TAPES) {
+        let mut b = Builder::new(tape);
+        let Ok(p) = b.program() else { continue };
+        let finite = p.items.iter().any(|i| {
+            matches!(i, Item::Module { params, .. }
+                if params.iter().any(|(_, t)| matches!(t, STy::UInt(_) | STy::SInt(_))))
+        });
+        params += usize::from(finite);
+        converted += usize::from(b.stats.converted_args > 0);
+        aliased += usize::from(b.stats.aliased_args > 0);
+    }
+    let want = TAPES / 32;
+    assert!(
+        params >= want && converted >= want && aliased >= want,
+        "parameters {params}, conversions {converted}, aliases {aliased}"
+    );
+}

@@ -3,8 +3,10 @@
 //!
 //! The generator writes the rule itself, so the names of the predicted
 //! records do not come from the front ends. An argument of the builder is
-//! an integer, a Boolean, or a function value. Only the first two are
-//! readable, so a function gives the digest form.
+//! an integer, a finite integer, a Boolean, or a function value. Only the
+//! first three are readable, so a function gives the digest form. A finite
+//! integer has the token of its value, so `C(1)` and `C(UInt[8](1))` give
+//! one name (#188).
 
 use super::eval::Value;
 use num_bigint::Sign;
@@ -35,9 +37,11 @@ pub(crate) fn emitted(module: &str, args: &[Value]) -> String {
 /// 256 bits, as `intToken` of the Lean spec), or of a Boolean.
 fn token(v: &Value) -> Option<String> {
     match v {
-        Value::Int(n) if n.bits() > 256 => None,
-        Value::Int(n) if n.sign() == Sign::Minus => Some(format!("{}n", n.magnitude())),
-        Value::Int(n) => Some(n.to_string()),
+        Value::Int(n) | Value::UInt(_, n) | Value::SInt(_, n) if n.bits() > 256 => None,
+        Value::Int(n) | Value::UInt(_, n) | Value::SInt(_, n) if n.sign() == Sign::Minus => {
+            Some(format!("{}n", n.magnitude()))
+        }
+        Value::Int(n) | Value::UInt(_, n) | Value::SInt(_, n) => Some(n.to_string()),
         Value::Bool(b) => Some(if *b { "1b" } else { "0b" }.to_owned()),
         _ => None,
     }
@@ -58,6 +62,23 @@ mod tests {
         ];
         assert_eq!(emitted("M1", &args), "M1$5n$1b$16");
         assert_eq!(emitted("M0", &[]), "M0");
+    }
+
+    /// A finite integer has the token of its value, so a plain argument and
+    /// a converted one name one module (#188). The 64 bytes of the name
+    /// still bound the readable form.
+    #[test]
+    fn a_finite_integer_has_the_token_of_its_value() {
+        let uint = |n: i64| Value::UInt(8, BigInt::from(n));
+        assert_eq!(
+            emitted("C", &[uint(1)]),
+            emitted("C", &[Value::Int(1.into())])
+        );
+        assert_eq!(emitted("C", &[Value::SInt(8, BigInt::from(-5))]), "C$5n");
+        let edge = Value::UInt(257, BigInt::from(1) << 200);
+        assert_eq!(emitted("C", &[edge]).len(), "C$".len() + 61);
+        let long = Value::UInt(257, BigInt::from(1) << 210);
+        assert!(emitted("C", &[long]).starts_with("C$0h"));
     }
 
     #[test]

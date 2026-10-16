@@ -192,19 +192,25 @@ impl Builder {
     }
 
     /// `let s: Int = xs.pop();` on a mutable list of the frame that is not
-    /// empty in any env.
+    /// empty in any env. The scan starts at a random list and takes the
+    /// first list that has an element.
     pub(super) fn pop_stmt(&mut self, ctx: &mut Ctx, names: &mut Names, out: &mut Vec<Stmt>) {
-        let Some(list) = ctx.lists.get(self.tape.index(ctx.lists.len())).cloned() else {
-            return;
-        };
+        let start = self.tape.index(ctx.lists.len());
         let name = names.fresh("s");
-        let stmt = Stmt::PopLet(name.clone(), list.clone());
-        if self.try_run(ctx, &stmt) {
-            note!(self, pops);
-            ctx.forget(&list);
-            ctx.statics.push((name, STy::Int));
-            out.push(stmt);
-        } else {
+        for k in 0..ctx.lists.len() {
+            let Some(list) = ctx.lists.get((start + k) % ctx.lists.len()).cloned() else {
+                return;
+            };
+            let stmt = Stmt::PopLet(name.clone(), list.clone());
+            if self.try_run(ctx, &stmt) {
+                note!(self, pops);
+                ctx.forget(&list);
+                ctx.statics.push((name, STy::Int));
+                out.push(stmt);
+                return;
+            }
+        }
+        if !ctx.lists.is_empty() {
             note!(self, pop_fallbacks);
         }
     }

@@ -9,7 +9,7 @@
 use super::{Builder, COUNT};
 use crate::eval::{BOUND, Env, Value, eval};
 use crate::program::{Radix, SBin, SExpr, STy, Scalar, Un};
-use num_bigint::BigInt;
+use num_bigint::{BigInt, BigUint};
 
 /// The depth of a static candidate.
 pub(super) const DEPTH: u32 = 2;
@@ -404,6 +404,9 @@ impl Builder {
     /// An argument for a parameter of type `t`: `Nat` in `1..=12`, `Int` in
     /// `-6..=6`, or a Bool, in each env.
     pub(super) fn argument(&mut self, t: &STy, r: Reach<'_>, envs: &[Env]) -> SExpr {
+        if matches!(t, STy::UInt(_) | STy::SInt(_)) {
+            return self.finite_argument(t, r, envs);
+        }
         if let STy::Fn(ft) = t {
             note!(self, fn_arguments);
             return self.fn_argument(ft);
@@ -435,8 +438,8 @@ impl Builder {
             }
             STy::Tuple(ts) => Value::Tuple(ts.iter().map(|t| self.top_value(t)).collect()),
             STy::Array(t, n) => Value::Array((0..*n).map(|_| self.top_value(t)).collect()),
-            STy::UInt(w) => Value::UInt(*w, BigInt::ZERO),
-            STy::SInt(w) => Value::SInt(*w, BigInt::ZERO),
+            STy::UInt(w) => Value::UInt(*w, self.finite_value(t, 3)),
+            STy::SInt(w) => Value::SInt(*w, self.finite_value(t, 3)),
             STy::Str => Value::Str(String::new()),
             STy::Fn(f) => Value::Function(String::new(), (**f).clone()),
             STy::List(t) => Value::List((**t).clone(), Vec::new()),
@@ -444,6 +447,98 @@ impl Builder {
                 r.clone(),
                 r.fields.iter().map(|(_, t)| self.top_value(t)).collect(),
             ),
+        }
+    }
+}
+
+impl Builder {
+    /// The type of a module parameter that takes a finite integer. The
+    /// widths reach 257, so a value passes `2^256` (spec 7.1).
+    pub(super) fn finite_param_ty(&mut self) -> STy {
+        const WIDTHS: [u32; 8] = [1, 2, 3, 4, 8, 16, 64, 257];
+        let w = self.pick(&WIDTHS);
+        if self.tape.flag() {
+            STy::UInt(w)
+        } else {
+            STy::SInt(w)
+        }
+    }
+
+    /// A value of the finite type `t`: at most `small` in magnitude for most
+    /// choices, and the edges of the type otherwise. A wide type also takes
+    /// values on both sides of the 64 bytes of a readable name.
+    pub(super) fn finite_value(&mut self, t: &STy, small: u32) -> BigInt {
+        let (STy::UInt(w) | STy::SInt(w)) = t else {
+            return BigInt::ZERO;
+        };
+        let (signed, w) = (matches!(t, STy::SInt(_)), *w);
+        let one = BigInt::from(1);
+        let (lo, hi): (BigInt, BigInt) = if signed {
+            (-(one.clone() << (w - 1)), (one.clone() << (w - 1)) - 1)
+        } else {
+            (BigInt::ZERO, (one.clone() << w) - 1)
+        };
+        let n = match self.tape.below(8) {
+            0 => BigInt::ZERO,
+            1 => one.clone(),
+            2 => hi.clone(),
+            3 => lo.clone(),
+            4 if signed => -one.clone(),
+            5 if w > 210 => one.clone() << 200,
+            6 if w > 210 => one << 210,
+            _ => BigInt::from(self.tape.below(small + 1)),
+        };
+        n.clamp(lo, hi)
+    }
+
+    /// A module argument for the finite parameter type `t`: a literal or a
+    /// candidate that fits, with or without the conversion `T(e)`. Both
+    /// spellings name one instantiation (#188).
+    fn finite_argument(&mut self, t: &STy, r: Reach<'_>, envs: &[Env]) -> SExpr {
+        let n = self.finite_value(t, 12);
+        let literal = self.finite_literal(n);
+        let candidate = self.sexpr(Kind::Int, 1, r);
+        let body = if self.tape.below(4) == 0
+            && self.holds(&candidate, envs, |v| {
+                crate::eval::convert(t, v.clone()).is_ok()
+            }) {
+            candidate
+        } else {
+            literal
+        };
+        self.conversion(t, body)
+    }
+
+    /// The argument that spells the value `n` of the finite type `t` again,
+    /// so that a context of the module is reached under a second spelling.
+    pub(super) fn respelled(&mut self, t: &STy, n: &BigInt) -> SExpr {
+        let literal = self.finite_literal(n.clone());
+        self.conversion(t, literal)
+    }
+
+    /// A literal of `n` with a random spelling; a negative one has one.
+    fn finite_literal(&mut self, n: BigInt) -> SExpr {
+        let radix = match self.tape.below(4) {
+            2 => Radix::Hex,
+            3 => Radix::Bin,
+            _ => Radix::Dec,
+        };
+        if n.sign() == num_bigint::Sign::Minus {
+            SExpr::Int(n, Radix::Dec)
+        } else {
+            SExpr::Int(n, radix)
+        }
+    }
+
+    /// `body`, or `T(body)`. A literal above the bound of the evaluator
+    /// stands only inside a conversion.
+    fn conversion(&mut self, t: &STy, body: SExpr) -> SExpr {
+        let wide = matches!(&body, SExpr::Int(n, _) if n.magnitude() > &BigUint::from(BOUND));
+        if wide || self.tape.flag() {
+            note!(self, converted_args);
+            SExpr::Convert(t.clone(), Box::new(body))
+        } else {
+            body
         }
     }
 }
@@ -472,7 +567,11 @@ pub(super) fn value_expr(v: &Value) -> SExpr {
         Value::Bool(b) => SExpr::Bool(*b),
         Value::Tuple(xs) => SExpr::Tuple(xs.iter().map(value_expr).collect()),
         Value::Array(xs) => SExpr::Array(xs.iter().map(value_expr).collect()),
-        Value::Int(n) | Value::UInt(_, n) | Value::SInt(_, n) => SExpr::Int(n.clone(), Radix::Dec),
+        Value::Int(n) => SExpr::Int(n.clone(), Radix::Dec),
+        // The conversion keeps the type and lets a wide literal stand.
+        Value::UInt(_, n) | Value::SInt(_, n) => {
+            SExpr::Convert(v.ty(), Box::new(SExpr::Int(n.clone(), Radix::Dec)))
+        }
         Value::Str(s) => SExpr::Str(s.clone()),
         Value::Function(item, _) => SExpr::Name(item.clone()),
         Value::List(t, _) => SExpr::NewList(t.clone()),
