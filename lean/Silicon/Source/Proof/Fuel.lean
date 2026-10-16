@@ -52,14 +52,19 @@ theorem bind_apply (x : M α) (f : α → M β) (c : Ctx) (s : St) :
   show (x c s >>= fun p => f p.1 c p.2) = _
   cases x c s <;> rfl
 
-theorem charge_apply (p : Pos) (k : Nat) (c : Ctx) (s : St) :
-    charge p k c s = if k ≤ s.fuel then .ok ((), { s with fuel := s.fuel - k })
-      else .error ⟨⟨.S015, p,
-        s!"the fuel cannot pay {intText k} unit(s); {intText s.fuel} remain"⟩, s.records⟩ := by
-  unfold charge
+theorem chargeWith_apply (p : Pos) (k : Nat) (cannot : Nat → String) (c : Ctx) (s : St) :
+    chargeWith p k cannot c s = if k ≤ s.fuel then .ok ((), { s with fuel := s.fuel - k })
+      else .error ⟨⟨.S015, p, cannot s.fuel⟩, s.records⟩ := by
+  unfold chargeWith
   rw [bind_apply]
   show (if k ≤ s.fuel then _ else _ : M Unit) c s = _
   by_cases h : k ≤ s.fuel <;> simp only [h, ↓reduceIte] <;> rfl
+
+theorem charge_apply (p : Pos) (k : Nat) (c : Ctx) (s : St) :
+    charge p k c s = if k ≤ s.fuel then .ok ((), { s with fuel := s.fuel - k })
+      else .error ⟨⟨.S015, p,
+        s!"the fuel cannot pay {intText k} unit(s); {intText s.fuel} remain"⟩, s.records⟩ :=
+  chargeWith_apply p k _ c s
 
 theorem get_apply (c : Ctx) (s : St) : (get : M St) c s = .ok (s, s) := rfl
 
@@ -121,22 +126,26 @@ theorem fail (code : ErrorCode) (p : Pos) (m : String) :
 theorem read : Follows cap (MonadReader.read : M Ctx) MonadReader.read :=
   of_frame fun _ _ _ _ h => by cases h; exact ⟨rfl, fun _ => rfl⟩
 
-theorem charge (p : Pos) (k : Nat) : Follows cap (Eval.charge p k) (Eval.charge p k) := by
+theorem chargeWith (p : Pos) (k : Nat) (cannot : Nat → String) :
+    Follows cap (Eval.chargeWith p k cannot) (Eval.chargeWith p k cannot) := by
   intro c s a s' h
-  rw [charge_apply] at h
+  rw [chargeWith_apply] at h
   split at h
   next hk =>
     cases h
     refine ⟨Nat.sub_le _ _, fun F _ => ⟨fun hF => ?_, fun hF => ?_⟩⟩
     · simp only [used] at hF ⊢
-      rw [charge_apply]
+      rw [chargeWith_apply]
       simp only [show k ≤ F by omega, ↓reduceIte]
       congr 3; omega
     · simp only [used] at hF
-      rw [charge_apply]
+      rw [chargeWith_apply]
       simp only [show ¬k ≤ F by omega, ↓reduceIte]
       exact ⟨_, _, _, rfl⟩
   · cases h
+
+theorem charge (p : Pos) (k : Nat) : Follows cap (Eval.charge p k) (Eval.charge p k) :=
+  chargeWith p k _
 
 theorem get_bind {k k' : St → M α} (h : ∀ s, Follows cap (k s) (k' s))
     (hk : ∀ s F, k' { s with fuel := F } = k' s) : Follows cap (get >>= k) (get >>= k') := by
@@ -273,6 +282,7 @@ macro_rules | `(tactic| follows [$ts,*]) => `(tactic| repeat' (first
   | intro _
   | with_reducible exact Follows.pure _
   | with_reducible exact Follows.charge _ _
+  | with_reducible exact Follows.chargeWith _ _ _
   | with_reducible exact Follows.fail _ _ _
   | with_reducible exact Follows.read
   | with_reducible exact Follows.readThe
