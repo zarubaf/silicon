@@ -611,9 +611,10 @@ fn a_push_in_an_index_copies_no_list_for_a_read_that_misses_it() {
     }
 }
 
-/// A mutation that holds the root can make the waiting read copy a part, and the held charge pays
-/// for the copy: the copy undoes the changes that came before, so the old list comes back from
-/// the log. The copied size stays within the fuel.
+/// A step of a read goes into a list that the index of the same read changes. The read copies
+/// the part where it waits, with the list as it was, and the held charge pays for the copy: the
+/// copy undoes the changes that came before, so the old list comes back from the log. The copied
+/// size is not zero, and it stays within the fuel.
 #[test]
 fn a_held_read_rebuilds_the_old_value_within_its_charge() {
     let at = |n: u64, k: u64| {
@@ -622,13 +623,14 @@ fn a_held_read_rebuilds_the_old_value_within_its_charge() {
             "UInt[8]",
             &format!(
                 "let mut t: (UInt[8], [UInt[8]; 2], List[Nat]) =\n    (x, [UInt[8](1), UInt[8](2)], list(Nat));\n  \
-                 comptime for i in 0..{n} {{\n    t[(t.2.push(1), 1).1][(t.2.push(2), 0).1];\n  }}"
+                 t.2.push(7);\n  comptime for i in 0..{n} {{\n    t.2[(t.2.push(1), 0).1];\n  }}"
             ),
             key(70, k),
         )
     };
     for (k, n) in SIZES.into_iter().enumerate() {
         let r = at(n, k as u64);
+        assert!(r.copied > 0, "{n}: no copy");
         assert!(
             r.copied <= r.units,
             "{n}: copied {} for {}",
@@ -969,6 +971,69 @@ fn k_reads_and_a_static_write_over_the_hardware_part_take_work_in_k_plus_m() {
                  let mut t: (UInt[8], List[Nat]) = (x, l);\n  {e};"
             ),
             key(99, i),
+        )
+    };
+    assert_scales(at, 64);
+}
+
+/// The largest step number is out of range, and the history of the local adds to it with a
+/// check: a read of such an index is `S013` and does not overflow.
+#[test]
+fn the_largest_index_number_is_out_of_range_and_does_not_overflow() {
+    let text = run_f(
+        &assign_in(
+            "UInt[8]",
+            "let xs = [0];\n  let y = xs[18446744073709551615];",
+        ),
+        key(100, 0),
+        FUEL,
+        ref_x,
+    );
+    assert!(text.starts_with("S013 "), "{text}");
+}
+
+/// The reads of a list of a static local nest `k` deep, and the innermost index pushes into the
+/// same list. Each read goes into a list that a change reached, so it copies a part, and that part
+/// is the list and not the local: the sibling list `u.0` has `m` elements and no read copies it.
+#[test]
+#[ignore = "#242"]
+fn k_reads_that_cross_a_changed_list_copy_only_that_list() {
+    let at = |n: u64, i: u64| {
+        let mut e = "(u.1.push(1), 0).1".to_owned();
+        for _ in 0..n / 8 {
+            e = format!("u.1[({e}, 0).1]");
+        }
+        run_ok(
+            "",
+            "UInt[8]",
+            &format!(
+                "let mut l = list(Nat);\n  comptime for i in 0..{n} {{ l.push(1); }}\n  \
+                 let mut s = list(Nat);\n  s.push(0);\n  let mut u = (l, s);\n  {e};"
+            ),
+            key(101, i),
+        )
+    };
+    assert_scales(at, 64);
+}
+
+/// A write gives a static local its first hardware leaf. The write copies the static rest of the
+/// local once, and the held local charged its size before. The `k` reads of `t.1` nest, the
+/// innermost index writes the hardware value `x` into `t.1`, and the list `t.0` has `m` elements.
+#[test]
+fn k_reads_and_a_hardware_write_into_a_static_local_take_work_in_k_plus_m() {
+    let at = |n: u64, i: u64| {
+        let mut e = "(put(t.1, x), 0).1".to_owned();
+        for _ in 0..n / 8 {
+            e = format!("t[({e}, 1).1]");
+        }
+        run_ok(
+            "fn put(mut v: UInt[8], y: UInt[8]) -> Int { v = y; return 0; }\n",
+            "UInt[8]",
+            &format!(
+                "let mut l = list(Nat);\n  comptime for i in 0..{n} {{ l.push(1); }}\n  \
+                 let mut t: (List[Nat], UInt[8]) = (l, UInt[8](0));\n  {e};"
+            ),
+            key(102, i),
         )
     };
     assert_scales(at, 64);
