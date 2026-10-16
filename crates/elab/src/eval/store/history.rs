@@ -54,7 +54,7 @@ use crate::value::Value;
 use std::collections::BTreeMap;
 
 /// A change of a local.
-pub(super) enum Change {
+enum Change {
     /// A `push`, and the length that the list had before.
     Push { len: usize },
     /// A `pop`: the element that left, and the length that the list had before.
@@ -66,7 +66,7 @@ pub(super) enum Change {
 }
 
 /// A change of the part at `keys`.
-pub(in crate::eval) struct Edit {
+struct Edit {
     keys: Vec<usize>,
     change: Change,
     /// The size and the depth of each aggregate node on the path before a `Push` or a `Pop`,
@@ -76,7 +76,7 @@ pub(in crate::eval) struct Edit {
 
 impl Edit {
     /// A `push` into the list at `keys`, which had `len` elements.
-    pub(in crate::eval) fn push(keys: Vec<usize>, len: usize, stats: Vec<(u64, u64)>) -> Edit {
+    fn push(keys: Vec<usize>, len: usize, stats: Vec<(u64, u64)>) -> Edit {
         Edit {
             keys,
             change: Change::Push { len },
@@ -85,12 +85,7 @@ impl Edit {
     }
 
     /// A `pop` of the list at `keys`, which had `len` elements.
-    pub(in crate::eval) fn pop(
-        keys: Vec<usize>,
-        saved: Value,
-        len: usize,
-        stats: Vec<(u64, u64)>,
-    ) -> Edit {
+    fn pop(keys: Vec<usize>, saved: Value, len: usize, stats: Vec<(u64, u64)>) -> Edit {
         Edit {
             keys,
             change: Change::Pop { saved, len },
@@ -99,7 +94,7 @@ impl Edit {
     }
 
     /// A write that replaced the part of a static local at `keys`.
-    pub(in crate::eval) fn replace(keys: Vec<usize>, old: Value) -> Edit {
+    fn replace(keys: Vec<usize>, old: Value) -> Edit {
         Edit {
             keys,
             change: Change::Replace(old),
@@ -108,7 +103,7 @@ impl Edit {
     }
 
     /// A write that bound the whole local again.
-    pub(in crate::eval) fn rebind(old: Val) -> Edit {
+    fn rebind(old: Val) -> Edit {
         Edit {
             keys: Vec::new(),
             change: Change::Rebind(old),
@@ -298,6 +293,10 @@ impl History {
     }
 }
 
+/// The state of a local before a change of a list, which the log entry of the change needs
+/// (`Store::before_list_edit`). It holds nothing while no read waits at the local.
+pub(in crate::eval) struct Before(Option<Vec<(u64, u64)>>);
+
 /// A read that waits at a part of a local: the local, and the length of its log when the read
 /// parked. The window of the read is the entries from there on. The log lives while a read
 /// waits, so a mark never outlives its log.
@@ -436,7 +435,7 @@ fn node_at<'a>(a: &'a mut Agg, keys: &[usize]) -> Option<&'a mut Agg> {
 /// the root static, and a static root becomes an aggregate again only by a write that charges
 /// its new size. Thus the clone of a write with a lower charge is paid once for each build of the
 /// aggregate root, by the charge that built it. The clone comes after the charges of the write.
-pub(in crate::eval) fn split_root(root: Val, keys: &[usize]) -> (Val, Val) {
+fn split_root(root: Val, keys: &[usize]) -> (Val, Val) {
     match root {
         Val::Agg(mut a) => {
             let taken =
@@ -481,11 +480,7 @@ impl Store {
 
     /// The numbers of the nodes on the path `keys`, if a read waits at the local and so a change
     /// must go to the log. They come before the change.
-    pub(in crate::eval) fn stats_before(
-        &self,
-        root: Root,
-        keys: &[usize],
-    ) -> Option<Vec<(u64, u64)>> {
+    fn stats_before(&self, root: Root, keys: &[usize]) -> Option<Vec<(u64, u64)>> {
         self.history.get(&root)?;
         Some(match self.root(&root) {
             Val::Agg(a) => node_stats(a, keys),
@@ -494,14 +489,85 @@ impl Store {
     }
 
     /// Whether a read waits at the local, so that a change goes to the log.
-    pub(in crate::eval) fn is_logged(&self, root: Root) -> bool {
+    fn is_logged(&self, root: Root) -> bool {
         self.history.contains_key(&root)
     }
 
     /// Appends the change `e` to the log of the local.
-    pub(in crate::eval) fn log_edit(&mut self, root: Root, e: Edit) {
+    fn log_edit(&mut self, root: Root, e: Edit) {
         if let Some(log) = self.history.get_mut(&root) {
             log.append(e);
+        }
+    }
+
+    /// The state of the local before a `push` or a `pop` along `keys`, which the log entry of the
+    /// change needs. It comes before the change.
+    pub(in crate::eval) fn before_list_edit(&self, root: Root, keys: &[usize]) -> Before {
+        Before(self.stats_before(root, keys))
+    }
+
+    /// Logs the `push` along `keys` onto a list that had `len` elements, if a read waits at the
+    /// local. `before` comes from `before_list_edit`, called before the change.
+    pub(in crate::eval) fn log_push(
+        &mut self,
+        root: Root,
+        keys: &[usize],
+        len: usize,
+        before: Before,
+    ) {
+        if let Some(stats) = before.0 {
+            self.log_edit(root, Edit::push(keys.to_vec(), len, stats));
+        }
+    }
+
+    /// Logs the `pop` of `saved` along `keys` from a list that had `len` elements, if a read
+    /// waits at the local. `before` comes from `before_list_edit`, called before the change.
+    pub(in crate::eval) fn log_pop(
+        &mut self,
+        root: Root,
+        keys: &[usize],
+        saved: &Value,
+        len: usize,
+        before: Before,
+    ) {
+        if let Some(stats) = before.0 {
+            self.log_edit(root, Edit::pop(keys.to_vec(), saved.clone(), len, stats));
+        }
+    }
+
+    /// Writes `w` over the part of the static local at `keys`, and logs the part that left if a
+    /// read waits at the local.
+    pub(in crate::eval) fn replace_part(&mut self, root: Root, keys: &[usize], w: Value) {
+        if let Some(part) = self.part_mut(root, keys) {
+            let old = std::mem::replace(part, w);
+            if self.is_logged(root) {
+                self.log_edit(root, Edit::replace(keys.to_vec(), old));
+            }
+        }
+    }
+
+    /// Binds the local at `root` again to `y`, and logs the value that left if a read waits at
+    /// the local.
+    pub(in crate::eval) fn rebind_local(&mut self, root: Root, y: Val) {
+        if let Root::Local(frame, id) = root
+            && let Some(slot) = self.frames.get_mut(frame).and_then(|f| f.get_mut(&id))
+        {
+            let old = std::mem::replace(&mut slot.value, y);
+            self.log_edit(root, Edit::rebind(old));
+        }
+    }
+
+    /// Takes the local at `root` out of its slot for a write that binds it again at `keys`. If a
+    /// read waits at the local, the log keeps the old local and the caller gets a copy to build
+    /// the new one from. The caller gives the new local back with `put_back`.
+    pub(in crate::eval) fn take_for_rebind(&mut self, root: Root, keys: &[usize]) -> Val {
+        let local = self.take_root(&root);
+        if self.is_logged(root) {
+            let (work, saved) = split_root(local, keys);
+            self.log_edit(root, Edit::rebind(saved));
+            work
+        } else {
+            local
         }
     }
 

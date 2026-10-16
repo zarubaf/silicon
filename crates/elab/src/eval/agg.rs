@@ -7,7 +7,6 @@
 //! it pays for.
 
 use super::place::{Index, PartInfo};
-use super::store::{Edit, split_root};
 use super::{Code, Evaluator, Let, Names, Out, Res, at, fail};
 use crate::agg::{Agg, Base};
 use crate::hw::{Seen, Val};
@@ -1010,10 +1009,11 @@ impl Evaluator<'_> {
         self.charge(pos, u128::from(size))
     }
 
-    /// Applies `f` to the list at the place, in place, for `push` and `pop`. The stored numbers
-    /// of the nodes above the list refresh by `delta` in the walk down the path. Without a
-    /// `delta` the change can lower a depth, and each node rebuilds from its parts. The caller
-    /// charged that refresh (`charge_refresh`). `None` if the part is no list.
+    /// Applies `f` to the list at the place of an aggregate root, in place, for `push` and `pop`.
+    /// The stored numbers of the nodes above the list refresh by `delta` in the walk down the
+    /// path. Without a `delta` the change can lower a depth, and each node rebuilds from its
+    /// parts. The caller charged that refresh (`charge_refresh`), and it logs the change. `None`
+    /// if the part is no list.
     pub(super) fn edit_list<R>(
         &mut self,
         pos: Pos,
@@ -1021,14 +1021,7 @@ impl Evaluator<'_> {
         delta: Option<Delta>,
         f: impl FnOnce(&mut Vec<Value>) -> R,
     ) -> Res<Option<R>> {
-        if !matches!(self.store.root(&place.root), Val::Agg(_)) {
-            return Ok(match self.store.part_mut(place.root, &place.keys) {
-                Some(Value::List(_, ys)) => Some(f(ys)),
-                _ => None,
-            });
-        }
-        self.store.add_steps(place.keys.len() as u64);
-        let Val::Agg(root) = self.store.take_root(&place.root) else {
+        let Some(root) = self.store.take_agg(place.root, &place.keys) else {
             return fail(Code::S010, pos, "the root is not an aggregate".to_owned());
         };
         let edit = |part: &mut Value| match part {
@@ -1043,7 +1036,7 @@ impl Evaluator<'_> {
             }
             None => self.edit_at(pos, *root, &place.keys, edit)?,
         };
-        self.store.put_root(&place.root, Val::Agg(Box::new(root)));
+        self.store.put_back(place.root, Val::Agg(Box::new(root)));
         Ok(r)
     }
 
@@ -1086,17 +1079,10 @@ impl Evaluator<'_> {
             self.fuel.pay_int(&empty).map_err(at(pos))?;
         }
         self.charge_held(pos, place.root)?;
-        let root = self.store.take_root(&place.root);
         // A read that waits at the root keeps the root as it is now. The new root is built from
         // a copy of the rest of the old one, which the charge above paid for, so the old root
         // moves into the log with the part that the write replaces.
-        let root = if self.store.is_logged(place.root) {
-            let (work, saved) = split_root(root, &place.keys);
-            self.store.log_edit(place.root, Edit::rebind(saved));
-            work
-        } else {
-            root
-        };
+        let root = self.store.take_for_rebind(place.root, &place.keys);
         let root = match root {
             Val::Agg(root) => *root,
             Val::Static(v) => Agg::Static(v),
@@ -1109,7 +1095,7 @@ impl Evaluator<'_> {
         } else {
             r.into_val()
         };
-        self.store.put_root(&place.root, v);
+        self.store.put_back(place.root, v);
         Ok(())
     }
 }
