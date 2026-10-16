@@ -75,37 +75,37 @@ fn a_static_integer() {
             (
                 Some(63),
                 &[],
-                "S015 5:3 the fuel cannot pay 43 unit(s); 0 remain",
+                "S015 5:3 the fuel cannot pay 43 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(105),
                 &[],
-                "S015 5:3 the fuel cannot pay 43 unit(s); 42 remain",
+                "S015 5:3 the fuel cannot pay 43 unit(s); 42 remain; raise --fuel",
             ),
             (
                 Some(106),
                 &["(record 5 3 M () (string \"depth\") (int 16))"],
-                "S015 6:3 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 6:3 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(107),
                 &["(record 5 3 M () (string \"depth\") (int 16))"],
-                "S015 6:8 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 6:8 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(108),
                 &["(record 5 3 M () (string \"depth\") (int 16))"],
-                "S015 6:8 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 6:8 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(109),
                 &["(record 5 3 M () (string \"depth\") (int 16))"],
-                "S015 6:3 the fuel cannot pay 2 unit(s); 0 remain",
+                "S015 6:3 the fuel cannot pay 2 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(110),
                 &["(record 5 3 M () (string \"depth\") (int 16))"],
-                "S015 6:3 the fuel cannot pay 2 unit(s); 1 remain",
+                "S015 6:3 the fuel cannot pay 2 unit(s); 1 remain; raise --fuel",
             ),
             (
                 Some(111),
@@ -140,37 +140,37 @@ fn a_large_integer_pays_the_square_of_its_size() {
             (
                 Some(60),
                 &[],
-                "S015 5:3 the fuel cannot pay 76 unit(s); 0 remain",
+                "S015 5:3 the fuel cannot pay 76 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(135),
                 &[],
-                "S015 5:3 the fuel cannot pay 76 unit(s); 75 remain",
+                "S015 5:3 the fuel cannot pay 76 unit(s); 75 remain; raise --fuel",
             ),
             (
                 Some(136),
                 &["(record 5 3 M () (string \"n\") (int 123456789012345678901234567890123456789))"],
-                "S015 6:3 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 6:3 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(137),
                 &["(record 5 3 M () (string \"n\") (int 123456789012345678901234567890123456789))"],
-                "S015 6:8 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 6:8 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(138),
                 &["(record 5 3 M () (string \"n\") (int 123456789012345678901234567890123456789))"],
-                "S015 6:8 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 6:8 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(139),
                 &["(record 5 3 M () (string \"n\") (int 123456789012345678901234567890123456789))"],
-                "S015 6:3 the fuel cannot pay 2 unit(s); 0 remain",
+                "S015 6:3 the fuel cannot pay 2 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(140),
                 &["(record 5 3 M () (string \"n\") (int 123456789012345678901234567890123456789))"],
-                "S015 6:3 the fuel cannot pay 2 unit(s); 1 remain",
+                "S015 6:3 the fuel cannot pay 2 unit(s); 1 remain; raise --fuel",
             ),
             (
                 Some(141),
@@ -207,47 +207,47 @@ fn static_containers_pay_one_for_each_container() {
             (
                 Some(100),
                 &[],
-                "S015 5:3 the fuel cannot pay 127 unit(s); 0 remain",
+                "S015 5:3 the fuel cannot pay 127 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(226),
                 &[],
-                "S015 5:3 the fuel cannot pay 127 unit(s); 126 remain",
+                "S015 5:3 the fuel cannot pay 127 unit(s); 126 remain; raise --fuel",
             ),
             (
                 Some(227),
                 &[
                     "(record 5 3 M () (string \"t\") (tuple ((int 1) (string \"x\") (array bool ((bool true) (bool false))) (tuple ((unit) (int -3))))))",
                 ],
-                "S015 6:3 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 6:3 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(228),
                 &[
                     "(record 5 3 M () (string \"t\") (tuple ((int 1) (string \"x\") (array bool ((bool true) (bool false))) (tuple ((unit) (int -3))))))",
                 ],
-                "S015 6:8 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 6:8 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(229),
                 &[
                     "(record 5 3 M () (string \"t\") (tuple ((int 1) (string \"x\") (array bool ((bool true) (bool false))) (tuple ((unit) (int -3))))))",
                 ],
-                "S015 6:8 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 6:8 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(230),
                 &[
                     "(record 5 3 M () (string \"t\") (tuple ((int 1) (string \"x\") (array bool ((bool true) (bool false))) (tuple ((unit) (int -3))))))",
                 ],
-                "S015 6:3 the fuel cannot pay 2 unit(s); 0 remain",
+                "S015 6:3 the fuel cannot pay 2 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(231),
                 &[
                     "(record 5 3 M () (string \"t\") (tuple ((int 1) (string \"x\") (array bool ((bool true) (bool false))) (tuple ((unit) (int -3))))))",
                 ],
-                "S015 6:3 the fuel cannot pay 2 unit(s); 1 remain",
+                "S015 6:3 the fuel cannot pay 2 unit(s); 1 remain; raise --fuel",
             ),
             (
                 Some(232),
@@ -288,12 +288,12 @@ fn a_message_is_quoted() {
             (
                 Some(135),
                 &["(record 5 3 M () (string \"a\\\"b\\\\c\\nd é☃\") (int 1))"],
-                "S015 6:3 the fuel cannot pay 36 unit(s); 0 remain",
+                "S015 6:3 the fuel cannot pay 36 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(170),
                 &["(record 5 3 M () (string \"a\\\"b\\\\c\\nd é☃\") (int 1))"],
-                "S015 6:3 the fuel cannot pay 36 unit(s); 35 remain",
+                "S015 6:3 the fuel cannot pay 36 unit(s); 35 remain; raise --fuel",
             ),
             (
                 Some(171),
@@ -301,7 +301,7 @@ fn a_message_is_quoted() {
                     "(record 5 3 M () (string \"a\\\"b\\\\c\\nd é☃\") (int 1))",
                     "(record 6 3 M () (string \"\") (unit))",
                 ],
-                "S015 7:3 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 7:3 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(172),
@@ -309,7 +309,7 @@ fn a_message_is_quoted() {
                     "(record 5 3 M () (string \"a\\\"b\\\\c\\nd é☃\") (int 1))",
                     "(record 6 3 M () (string \"\") (unit))",
                 ],
-                "S015 7:8 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 7:8 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(173),
@@ -317,7 +317,7 @@ fn a_message_is_quoted() {
                     "(record 5 3 M () (string \"a\\\"b\\\\c\\nd é☃\") (int 1))",
                     "(record 6 3 M () (string \"\") (unit))",
                 ],
-                "S015 7:8 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 7:8 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(174),
@@ -325,7 +325,7 @@ fn a_message_is_quoted() {
                     "(record 5 3 M () (string \"a\\\"b\\\\c\\nd é☃\") (int 1))",
                     "(record 6 3 M () (string \"\") (unit))",
                 ],
-                "S015 7:3 the fuel cannot pay 2 unit(s); 0 remain",
+                "S015 7:3 the fuel cannot pay 2 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(175),
@@ -333,7 +333,7 @@ fn a_message_is_quoted() {
                     "(record 5 3 M () (string \"a\\\"b\\\\c\\nd é☃\") (int 1))",
                     "(record 6 3 M () (string \"\") (unit))",
                 ],
-                "S015 7:3 the fuel cannot pay 2 unit(s); 1 remain",
+                "S015 7:3 the fuel cannot pay 2 unit(s); 1 remain; raise --fuel",
             ),
             (
                 Some(176),
@@ -375,12 +375,12 @@ fn a_hardware_scalar_and_tuple() {
             (
                 Some(120),
                 &["(record 5 3 M () (string \"s\") (hw (uint 8)))"],
-                "S015 6:3 the fuel cannot pay 72 unit(s); 0 remain",
+                "S015 6:3 the fuel cannot pay 72 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(191),
                 &["(record 5 3 M () (string \"s\") (hw (uint 8)))"],
-                "S015 6:3 the fuel cannot pay 72 unit(s); 71 remain",
+                "S015 6:3 the fuel cannot pay 72 unit(s); 71 remain; raise --fuel",
             ),
             (
                 Some(192),
@@ -388,7 +388,7 @@ fn a_hardware_scalar_and_tuple() {
                     "(record 5 3 M () (string \"s\") (hw (uint 8)))",
                     "(record 6 3 M () (string \"t\") (tuple ((hw (uint 8)) (int 1) (hw bool))))",
                 ],
-                "S015 7:3 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 7:3 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(193),
@@ -396,7 +396,7 @@ fn a_hardware_scalar_and_tuple() {
                     "(record 5 3 M () (string \"s\") (hw (uint 8)))",
                     "(record 6 3 M () (string \"t\") (tuple ((hw (uint 8)) (int 1) (hw bool))))",
                 ],
-                "S015 7:8 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 7:8 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(194),
@@ -404,7 +404,7 @@ fn a_hardware_scalar_and_tuple() {
                     "(record 5 3 M () (string \"s\") (hw (uint 8)))",
                     "(record 6 3 M () (string \"t\") (tuple ((hw (uint 8)) (int 1) (hw bool))))",
                 ],
-                "S015 7:8 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 7:8 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(195),
@@ -412,7 +412,7 @@ fn a_hardware_scalar_and_tuple() {
                     "(record 5 3 M () (string \"s\") (hw (uint 8)))",
                     "(record 6 3 M () (string \"t\") (tuple ((hw (uint 8)) (int 1) (hw bool))))",
                 ],
-                "S015 7:3 the fuel cannot pay 2 unit(s); 0 remain",
+                "S015 7:3 the fuel cannot pay 2 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(196),
@@ -420,7 +420,7 @@ fn a_hardware_scalar_and_tuple() {
                     "(record 5 3 M () (string \"s\") (hw (uint 8)))",
                     "(record 6 3 M () (string \"t\") (tuple ((hw (uint 8)) (int 1) (hw bool))))",
                 ],
-                "S015 7:3 the fuel cannot pay 2 unit(s); 1 remain",
+                "S015 7:3 the fuel cannot pay 2 unit(s); 1 remain; raise --fuel",
             ),
             (
                 Some(197),
@@ -460,47 +460,47 @@ fn nested_hardware_aggregates() {
             (
                 Some(102),
                 &[],
-                "S015 5:3 the fuel cannot pay 137 unit(s); 0 remain",
+                "S015 5:3 the fuel cannot pay 137 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(238),
                 &[],
-                "S015 5:3 the fuel cannot pay 137 unit(s); 136 remain",
+                "S015 5:3 the fuel cannot pay 137 unit(s); 136 remain; raise --fuel",
             ),
             (
                 Some(239),
                 &[
                     "(record 5 3 M () (string \"n\") (tuple ((tuple ((hw (uint 8)) (int 2))) (array bool ((hw bool) (hw bool))) (tuple ((unit) (string \"x\"))))))",
                 ],
-                "S015 6:3 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 6:3 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(240),
                 &[
                     "(record 5 3 M () (string \"n\") (tuple ((tuple ((hw (uint 8)) (int 2))) (array bool ((hw bool) (hw bool))) (tuple ((unit) (string \"x\"))))))",
                 ],
-                "S015 6:8 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 6:8 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(241),
                 &[
                     "(record 5 3 M () (string \"n\") (tuple ((tuple ((hw (uint 8)) (int 2))) (array bool ((hw bool) (hw bool))) (tuple ((unit) (string \"x\"))))))",
                 ],
-                "S015 6:8 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 6:8 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(242),
                 &[
                     "(record 5 3 M () (string \"n\") (tuple ((tuple ((hw (uint 8)) (int 2))) (array bool ((hw bool) (hw bool))) (tuple ((unit) (string \"x\"))))))",
                 ],
-                "S015 6:3 the fuel cannot pay 2 unit(s); 0 remain",
+                "S015 6:3 the fuel cannot pay 2 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(243),
                 &[
                     "(record 5 3 M () (string \"n\") (tuple ((tuple ((hw (uint 8)) (int 2))) (array bool ((hw bool) (hw bool))) (tuple ((unit) (string \"x\"))))))",
                 ],
-                "S015 6:3 the fuel cannot pay 2 unit(s); 1 remain",
+                "S015 6:3 the fuel cannot pay 2 unit(s); 1 remain; raise --fuel",
             ),
             (
                 Some(244),
@@ -545,14 +545,14 @@ fn a_reference_renders_from_its_type() {
                 &[
                     "(record 7 3 M () (string \"a\") (tuple ((hw (uint 8)) (array bool ()) (unit))))",
                 ],
-                "S015 8:3 the fuel cannot pay 91 unit(s); 0 remain",
+                "S015 8:3 the fuel cannot pay 91 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(298),
                 &[
                     "(record 7 3 M () (string \"a\") (tuple ((hw (uint 8)) (array bool ()) (unit))))",
                 ],
-                "S015 8:3 the fuel cannot pay 91 unit(s); 90 remain",
+                "S015 8:3 the fuel cannot pay 91 unit(s); 90 remain; raise --fuel",
             ),
             (
                 Some(299),
@@ -560,7 +560,7 @@ fn a_reference_renders_from_its_type() {
                     "(record 7 3 M () (string \"a\") (tuple ((hw (uint 8)) (array bool ()) (unit))))",
                     "(record 8 3 M () (string \"v\") (array (uint 4) ((hw (uint 4)) (hw (uint 4)) (hw (uint 4)))))",
                 ],
-                "S015 9:3 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 9:3 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(300),
@@ -568,7 +568,7 @@ fn a_reference_renders_from_its_type() {
                     "(record 7 3 M () (string \"a\") (tuple ((hw (uint 8)) (array bool ()) (unit))))",
                     "(record 8 3 M () (string \"v\") (array (uint 4) ((hw (uint 4)) (hw (uint 4)) (hw (uint 4)))))",
                 ],
-                "S015 9:8 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 9:8 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(301),
@@ -576,7 +576,7 @@ fn a_reference_renders_from_its_type() {
                     "(record 7 3 M () (string \"a\") (tuple ((hw (uint 8)) (array bool ()) (unit))))",
                     "(record 8 3 M () (string \"v\") (array (uint 4) ((hw (uint 4)) (hw (uint 4)) (hw (uint 4)))))",
                 ],
-                "S015 9:8 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 9:8 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(302),
@@ -584,7 +584,7 @@ fn a_reference_renders_from_its_type() {
                     "(record 7 3 M () (string \"a\") (tuple ((hw (uint 8)) (array bool ()) (unit))))",
                     "(record 8 3 M () (string \"v\") (array (uint 4) ((hw (uint 4)) (hw (uint 4)) (hw (uint 4)))))",
                 ],
-                "S015 9:3 the fuel cannot pay 2 unit(s); 0 remain",
+                "S015 9:3 the fuel cannot pay 2 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(303),
@@ -592,7 +592,7 @@ fn a_reference_renders_from_its_type() {
                     "(record 7 3 M () (string \"a\") (tuple ((hw (uint 8)) (array bool ()) (unit))))",
                     "(record 8 3 M () (string \"v\") (array (uint 4) ((hw (uint 4)) (hw (uint 4)) (hw (uint 4)))))",
                 ],
-                "S015 9:3 the fuel cannot pay 2 unit(s); 1 remain",
+                "S015 9:3 the fuel cannot pay 2 unit(s); 1 remain; raise --fuel",
             ),
             (
                 Some(304),
@@ -633,47 +633,47 @@ fn a_wide_reference_charges_each_container_once() {
             (
                 Some(934),
                 &[],
-                "S015 6:3 the fuel cannot pay 1021 unit(s); 726 remain",
+                "S015 6:3 the fuel cannot pay 1021 unit(s); 726 remain; raise --fuel",
             ),
             (
                 Some(1228),
                 &[],
-                "S015 6:3 the fuel cannot pay 1021 unit(s); 1020 remain",
+                "S015 6:3 the fuel cannot pay 1021 unit(s); 1020 remain; raise --fuel",
             ),
             (
                 Some(1229),
                 &[
                     "(record 6 3 M () (string \"big\") (array (tuple ((uint 1))) ((tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))))))",
                 ],
-                "S015 7:3 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 7:3 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(1230),
                 &[
                     "(record 6 3 M () (string \"big\") (array (tuple ((uint 1))) ((tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))))))",
                 ],
-                "S015 7:8 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 7:8 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(1231),
                 &[
                     "(record 6 3 M () (string \"big\") (array (tuple ((uint 1))) ((tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))))))",
                 ],
-                "S015 7:8 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 7:8 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(1232),
                 &[
                     "(record 6 3 M () (string \"big\") (array (tuple ((uint 1))) ((tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))))))",
                 ],
-                "S015 7:3 the fuel cannot pay 2 unit(s); 0 remain",
+                "S015 7:3 the fuel cannot pay 2 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(1233),
                 &[
                     "(record 6 3 M () (string \"big\") (array (tuple ((uint 1))) ((tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))) (tuple ((hw (uint 1)))))))",
                 ],
-                "S015 7:3 the fuel cannot pay 2 unit(s); 1 remain",
+                "S015 7:3 the fuel cannot pay 2 unit(s); 1 remain; raise --fuel",
             ),
             (
                 Some(1234),
@@ -723,7 +723,7 @@ module M() {
                     "(record 9 3 M () (string \"h\") (record (struct root H ()) ((hw (uint 4)) (hw bool))))",
                     "(record 10 3 M () (string \"g\") (record (struct root G ((int 4))) ((hw (uint 4)) (hw bool))))",
                 ],
-                "S015 11:3 the fuel cannot pay 45 unit(s); 0 remain",
+                "S015 11:3 the fuel cannot pay 45 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(349),
@@ -731,7 +731,7 @@ module M() {
                     "(record 9 3 M () (string \"h\") (record (struct root H ()) ((hw (uint 4)) (hw bool))))",
                     "(record 10 3 M () (string \"g\") (record (struct root G ((int 4))) ((hw (uint 4)) (hw bool))))",
                 ],
-                "S015 11:3 the fuel cannot pay 45 unit(s); 44 remain",
+                "S015 11:3 the fuel cannot pay 45 unit(s); 44 remain; raise --fuel",
             ),
             (
                 Some(350),
@@ -740,7 +740,7 @@ module M() {
                     "(record 10 3 M () (string \"g\") (record (struct root G ((int 4))) ((hw (uint 4)) (hw bool))))",
                     "(record 11 3 M () (string \"x\") (hw (uint 4)))",
                 ],
-                "S015 12:3 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 12:3 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(351),
@@ -749,7 +749,7 @@ module M() {
                     "(record 10 3 M () (string \"g\") (record (struct root G ((int 4))) ((hw (uint 4)) (hw bool))))",
                     "(record 11 3 M () (string \"x\") (hw (uint 4)))",
                 ],
-                "S015 12:8 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 12:8 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(352),
@@ -758,7 +758,7 @@ module M() {
                     "(record 10 3 M () (string \"g\") (record (struct root G ((int 4))) ((hw (uint 4)) (hw bool))))",
                     "(record 11 3 M () (string \"x\") (hw (uint 4)))",
                 ],
-                "S015 12:8 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 12:8 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(353),
@@ -767,7 +767,7 @@ module M() {
                     "(record 10 3 M () (string \"g\") (record (struct root G ((int 4))) ((hw (uint 4)) (hw bool))))",
                     "(record 11 3 M () (string \"x\") (hw (uint 4)))",
                 ],
-                "S015 12:3 the fuel cannot pay 2 unit(s); 0 remain",
+                "S015 12:3 the fuel cannot pay 2 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(354),
@@ -776,7 +776,7 @@ module M() {
                     "(record 10 3 M () (string \"g\") (record (struct root G ((int 4))) ((hw (uint 4)) (hw bool))))",
                     "(record 11 3 M () (string \"x\") (hw (uint 4)))",
                 ],
-                "S015 12:3 the fuel cannot pay 2 unit(s); 1 remain",
+                "S015 12:3 the fuel cannot pay 2 unit(s); 1 remain; raise --fuel",
             ),
             (
                 Some(355),
@@ -857,7 +857,7 @@ module M() {
                     "(record 25 3 M () (string \"q\") (hw bool))",
                     "(record 26 3 M () (string \"clk\") (domain clock))",
                 ],
-                "S015 27:3 the fuel cannot pay 114 unit(s); 0 remain",
+                "S015 27:3 the fuel cannot pay 114 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(808),
@@ -871,7 +871,7 @@ module M() {
                     "(record 25 3 M () (string \"q\") (hw bool))",
                     "(record 26 3 M () (string \"clk\") (domain clock))",
                 ],
-                "S015 27:3 the fuel cannot pay 114 unit(s); 113 remain",
+                "S015 27:3 the fuel cannot pay 114 unit(s); 113 remain; raise --fuel",
             ),
             (
                 Some(809),
@@ -886,7 +886,7 @@ module M() {
                     "(record 26 3 M () (string \"clk\") (domain clock))",
                     "(record 27 3 M () (string \"k\") (record (struct prelude ReadResponse ((type (uint 8)))) ((hw (uint 8)) (hw bool))))",
                 ],
-                "S015 28:3 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 28:3 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(810),
@@ -901,7 +901,7 @@ module M() {
                     "(record 26 3 M () (string \"clk\") (domain clock))",
                     "(record 27 3 M () (string \"k\") (record (struct prelude ReadResponse ((type (uint 8)))) ((hw (uint 8)) (hw bool))))",
                 ],
-                "S015 28:8 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 28:8 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(811),
@@ -916,7 +916,7 @@ module M() {
                     "(record 26 3 M () (string \"clk\") (domain clock))",
                     "(record 27 3 M () (string \"k\") (record (struct prelude ReadResponse ((type (uint 8)))) ((hw (uint 8)) (hw bool))))",
                 ],
-                "S015 28:8 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 28:8 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(812),
@@ -931,7 +931,7 @@ module M() {
                     "(record 26 3 M () (string \"clk\") (domain clock))",
                     "(record 27 3 M () (string \"k\") (record (struct prelude ReadResponse ((type (uint 8)))) ((hw (uint 8)) (hw bool))))",
                 ],
-                "S015 28:3 the fuel cannot pay 2 unit(s); 0 remain",
+                "S015 28:3 the fuel cannot pay 2 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(813),
@@ -946,7 +946,7 @@ module M() {
                     "(record 26 3 M () (string \"clk\") (domain clock))",
                     "(record 27 3 M () (string \"k\") (record (struct prelude ReadResponse ((type (uint 8)))) ((hw (uint 8)) (hw bool))))",
                 ],
-                "S015 28:3 the fuel cannot pay 2 unit(s); 1 remain",
+                "S015 28:3 the fuel cannot pay 2 unit(s); 1 remain; raise --fuel",
             ),
             (
                 Some(814),
@@ -1292,14 +1292,14 @@ module M() {
                 &[
                     "(record 6 5 M ((call l3 24 11) (call l2 14 12) (call l1 11 12)) (string \"l1\") (int 4))",
                 ],
-                "S015 25:3 the fuel cannot pay 39 unit(s); 0 remain",
+                "S015 25:3 the fuel cannot pay 39 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(228),
                 &[
                     "(record 6 5 M ((call l3 24 11) (call l2 14 12) (call l1 11 12)) (string \"l1\") (int 4))",
                 ],
-                "S015 25:3 the fuel cannot pay 39 unit(s); 38 remain",
+                "S015 25:3 the fuel cannot pay 39 unit(s); 38 remain; raise --fuel",
             ),
             (
                 Some(229),
@@ -1307,7 +1307,7 @@ module M() {
                     "(record 6 5 M ((call l3 24 11) (call l2 14 12) (call l1 11 12)) (string \"l1\") (int 4))",
                     "(record 25 3 M () (string \"m\") (int 4))",
                 ],
-                "S015 26:3 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 26:3 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(230),
@@ -1315,7 +1315,7 @@ module M() {
                     "(record 6 5 M ((call l3 24 11) (call l2 14 12) (call l1 11 12)) (string \"l1\") (int 4))",
                     "(record 25 3 M () (string \"m\") (int 4))",
                 ],
-                "S015 26:8 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 26:8 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(231),
@@ -1323,7 +1323,7 @@ module M() {
                     "(record 6 5 M ((call l3 24 11) (call l2 14 12) (call l1 11 12)) (string \"l1\") (int 4))",
                     "(record 25 3 M () (string \"m\") (int 4))",
                 ],
-                "S015 26:8 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 26:8 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(232),
@@ -1331,7 +1331,7 @@ module M() {
                     "(record 6 5 M ((call l3 24 11) (call l2 14 12) (call l1 11 12)) (string \"l1\") (int 4))",
                     "(record 25 3 M () (string \"m\") (int 4))",
                 ],
-                "S015 26:3 the fuel cannot pay 2 unit(s); 0 remain",
+                "S015 26:3 the fuel cannot pay 2 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(233),
@@ -1339,7 +1339,7 @@ module M() {
                     "(record 6 5 M ((call l3 24 11) (call l2 14 12) (call l1 11 12)) (string \"l1\") (int 4))",
                     "(record 25 3 M () (string \"m\") (int 4))",
                 ],
-                "S015 26:3 the fuel cannot pay 2 unit(s); 1 remain",
+                "S015 26:3 the fuel cannot pay 2 unit(s); 1 remain; raise --fuel",
             ),
             (
                 Some(234),
@@ -1414,7 +1414,7 @@ module M() {
                     "(record 4 3 C$3 () (string \"child\") (int 3))",
                     "(record 8 5 M ((call id 32 19)) (string \"id\") (int 1))",
                 ],
-                "S015 32:3 the fuel cannot pay 39 unit(s); 0 remain",
+                "S015 32:3 the fuel cannot pay 39 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(361),
@@ -1423,7 +1423,7 @@ module M() {
                     "(record 4 3 C$3 () (string \"child\") (int 3))",
                     "(record 8 5 M ((call id 32 19)) (string \"id\") (int 1))",
                 ],
-                "S015 32:3 the fuel cannot pay 39 unit(s); 38 remain",
+                "S015 32:3 the fuel cannot pay 39 unit(s); 38 remain; raise --fuel",
             ),
             (
                 Some(362),
@@ -1433,7 +1433,7 @@ module M() {
                     "(record 8 5 M ((call id 32 19)) (string \"id\") (int 1))",
                     "(record 32 3 M () (string \"p\") (int 1))",
                 ],
-                "S015 33:3 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 33:3 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(363),
@@ -1443,7 +1443,7 @@ module M() {
                     "(record 8 5 M ((call id 32 19)) (string \"id\") (int 1))",
                     "(record 32 3 M () (string \"p\") (int 1))",
                 ],
-                "S015 33:8 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 33:8 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(364),
@@ -1453,7 +1453,7 @@ module M() {
                     "(record 8 5 M ((call id 32 19)) (string \"id\") (int 1))",
                     "(record 32 3 M () (string \"p\") (int 1))",
                 ],
-                "S015 33:8 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 33:8 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(365),
@@ -1463,7 +1463,7 @@ module M() {
                     "(record 8 5 M ((call id 32 19)) (string \"id\") (int 1))",
                     "(record 32 3 M () (string \"p\") (int 1))",
                 ],
-                "S015 33:3 the fuel cannot pay 2 unit(s); 0 remain",
+                "S015 33:3 the fuel cannot pay 2 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(366),
@@ -1473,7 +1473,7 @@ module M() {
                     "(record 8 5 M ((call id 32 19)) (string \"id\") (int 1))",
                     "(record 32 3 M () (string \"p\") (int 1))",
                 ],
-                "S015 33:3 the fuel cannot pay 2 unit(s); 1 remain",
+                "S015 33:3 the fuel cannot pay 2 unit(s); 1 remain; raise --fuel",
             ),
             (
                 Some(367),
@@ -1530,7 +1530,7 @@ module M() {
                     "(record 4 3 C$8 () (string \"child\") (int 8))",
                     "(record 4 3 C$2 () (string \"child\") (int 2))",
                 ],
-                "S015 16:13 the fuel cannot pay 2 unit(s); 0 remain",
+                "S015 16:13 the fuel cannot pay 2 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(313),
@@ -1538,7 +1538,7 @@ module M() {
                     "(record 4 3 C$8 () (string \"child\") (int 8))",
                     "(record 4 3 C$2 () (string \"child\") (int 2))",
                 ],
-                "S015 16:13 the fuel cannot pay 2 unit(s); 1 remain",
+                "S015 16:13 the fuel cannot pay 2 unit(s); 1 remain; raise --fuel",
             ),
             (
                 Some(314),
@@ -1546,7 +1546,7 @@ module M() {
                     "(record 4 3 C$8 () (string \"child\") (int 8))",
                     "(record 4 3 C$2 () (string \"child\") (int 2))",
                 ],
-                "S015 17:3 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 17:3 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(315),
@@ -1554,7 +1554,7 @@ module M() {
                     "(record 4 3 C$8 () (string \"child\") (int 8))",
                     "(record 4 3 C$2 () (string \"child\") (int 2))",
                 ],
-                "S015 17:8 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 17:8 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(316),
@@ -1562,7 +1562,7 @@ module M() {
                     "(record 4 3 C$8 () (string \"child\") (int 8))",
                     "(record 4 3 C$2 () (string \"child\") (int 2))",
                 ],
-                "S015 17:8 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 17:8 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(317),
@@ -1570,7 +1570,7 @@ module M() {
                     "(record 4 3 C$8 () (string \"child\") (int 8))",
                     "(record 4 3 C$2 () (string \"child\") (int 2))",
                 ],
-                "S015 17:3 the fuel cannot pay 2 unit(s); 0 remain",
+                "S015 17:3 the fuel cannot pay 2 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(318),
@@ -1578,7 +1578,7 @@ module M() {
                     "(record 4 3 C$8 () (string \"child\") (int 8))",
                     "(record 4 3 C$2 () (string \"child\") (int 2))",
                 ],
-                "S015 17:3 the fuel cannot pay 2 unit(s); 1 remain",
+                "S015 17:3 the fuel cannot pay 2 unit(s); 1 remain; raise --fuel",
             ),
             (
                 Some(319),
@@ -1625,7 +1625,7 @@ fn a_loop_makes_a_record_for_each_iteration() {
                     "(record 6 5 M () (string \"i\") (int 0))",
                     "(record 6 5 M () (string \"i\") (int 1))",
                 ],
-                "S015 6:5 the fuel cannot pay 38 unit(s); 0 remain",
+                "S015 6:5 the fuel cannot pay 38 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(202),
@@ -1633,7 +1633,7 @@ fn a_loop_makes_a_record_for_each_iteration() {
                     "(record 6 5 M () (string \"i\") (int 0))",
                     "(record 6 5 M () (string \"i\") (int 1))",
                 ],
-                "S015 6:5 the fuel cannot pay 38 unit(s); 37 remain",
+                "S015 6:5 the fuel cannot pay 38 unit(s); 37 remain; raise --fuel",
             ),
             (
                 Some(203),
@@ -1642,7 +1642,7 @@ fn a_loop_makes_a_record_for_each_iteration() {
                     "(record 6 5 M () (string \"i\") (int 1))",
                     "(record 6 5 M () (string \"i\") (int 2))",
                 ],
-                "S015 8:3 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 8:3 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(204),
@@ -1651,7 +1651,7 @@ fn a_loop_makes_a_record_for_each_iteration() {
                     "(record 6 5 M () (string \"i\") (int 1))",
                     "(record 6 5 M () (string \"i\") (int 2))",
                 ],
-                "S015 8:8 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 8:8 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(205),
@@ -1660,7 +1660,7 @@ fn a_loop_makes_a_record_for_each_iteration() {
                     "(record 6 5 M () (string \"i\") (int 1))",
                     "(record 6 5 M () (string \"i\") (int 2))",
                 ],
-                "S015 8:8 the fuel cannot pay 1 unit(s); 0 remain",
+                "S015 8:8 the fuel cannot pay 1 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(206),
@@ -1669,7 +1669,7 @@ fn a_loop_makes_a_record_for_each_iteration() {
                     "(record 6 5 M () (string \"i\") (int 1))",
                     "(record 6 5 M () (string \"i\") (int 2))",
                 ],
-                "S015 8:3 the fuel cannot pay 2 unit(s); 0 remain",
+                "S015 8:3 the fuel cannot pay 2 unit(s); 0 remain; raise --fuel",
             ),
             (
                 Some(207),
@@ -1678,7 +1678,7 @@ fn a_loop_makes_a_record_for_each_iteration() {
                     "(record 6 5 M () (string \"i\") (int 1))",
                     "(record 6 5 M () (string \"i\") (int 2))",
                 ],
-                "S015 8:3 the fuel cannot pay 2 unit(s); 1 remain",
+                "S015 8:3 the fuel cannot pay 2 unit(s); 1 remain; raise --fuel",
             ),
             (
                 Some(208),
@@ -1771,7 +1771,7 @@ module M() {
                 "(record 2 3 M ((call rec 9 3) (call rec 3 35)) (string \"rec\") (int 4))",
                 "(record 2 3 M ((call rec 9 3) (call rec 3 35) (call rec 3 35)) (string \"rec\") (int 3))",
             ],
-            "S015 3:35 the nesting depth goes above 4",
+            "S015 3:35 the nesting depth goes above 4; raise --depth",
         )],
     );
 }
