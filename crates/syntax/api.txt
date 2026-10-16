@@ -1,5 +1,8 @@
 enum syntax::SiliconLanguage
+enum syntax::SyntaxKind
 fn syntax::lex
+method syntax::SyntaxKind::is_trivia
+method syntax::SyntaxKind::keyword
 struct syntax::LexError
 struct syntax::Lexed
 struct syntax::Token
