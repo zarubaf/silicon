@@ -2,6 +2,7 @@
 #![allow(clippy::print_stdout)] // xtask is a CLI; stdout is its interface.
 
 mod adr;
+mod api;
 mod arch;
 mod arch_review;
 mod commit;
@@ -49,6 +50,7 @@ const CHECKS: &[Check] = &[
     arch::check,
     subset::check,
     adr::check,
+    api::check,
 ];
 
 #[derive(Parser)]
@@ -127,6 +129,8 @@ enum Command {
         #[arg(long, default_value = "main")]
         base: String,
     },
+    /// Rewrite the list of public items of each library crate, `crates/<crate>/api.txt`.
+    ApiList,
     /// Print the facts for an architecture reviewer: crate graph, layers, public items, line counts, trust table, and error codes.
     ArchSummary,
     /// Run the Codex adversarial review of the current branch.
@@ -178,6 +182,10 @@ fn main() -> Result<ExitCode> {
         Command::CommitMsg { file } => Ok(report(&commit::check_message_file(&file)?)),
         Command::ReviewScope { base } => arch_review::review_scope(&base),
         Command::ReviewDue { base } => arch_review::review_due(&base),
+        Command::ApiList => {
+            api::write(&Repo::discover()?)?;
+            Ok(ExitCode::SUCCESS)
+        }
         Command::ArchSummary => {
             arch_review::arch_summary()?;
             Ok(ExitCode::SUCCESS)
