@@ -20,6 +20,7 @@
 mod agg;
 mod call;
 mod container;
+mod history;
 mod hwops;
 mod inst;
 mod list;
@@ -43,7 +44,6 @@ mod tests_mem;
 #[cfg(test)]
 mod tests_work_hw;
 mod types;
-mod undo;
 
 pub use inst::Design;
 pub(crate) use inst::{Bind, Elab, Inst, Literal, Mem, Sink, elaborate};
@@ -252,7 +252,7 @@ struct Store {
     armed: BTreeMap<Root, Vec<usize>>,
     /// The push and pop changes of the list parts of each aggregate root that a read waits at,
     /// from the oldest. A change appends one entry, and no read copies the root for it.
-    undo: BTreeMap<Root, undo::Log>,
+    history: BTreeMap<Root, history::History>,
     /// The roots with an open window (section 9.1). A root has at most one, since a second one is
     /// `S008`. The
     /// root names its frame, so a call switches no frame of this table and copies nothing.
@@ -1159,7 +1159,7 @@ impl<'a> Evaluator<'a> {
                 held_by: Vec::new(),
                 cursors: Vec::new(),
                 armed: BTreeMap::new(),
-                undo: BTreeMap::new(),
+                history: BTreeMap::new(),
                 pending: BTreeSet::new(),
                 links: BTreeMap::new(),
             },

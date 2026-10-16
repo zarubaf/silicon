@@ -1,14 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The undo log of an aggregate root. A read that waits at a part of a root while an index
-//! evaluates sees the root as it was before that index (Lean keeps the old value in its result).
-//! A `push` or `pop` into a list part of the root appends one entry here, in constant work,
-//! instead of copying the parts that the waiting reads cover. A read then resolves the entries
-//! of its window once, when it knows its last step (`Evaluator::resolve_ref`), and a copy of a
-//! read undoes the entries first, so that it keeps the old value.
+//! The history of a root that a read waits at. A read that waits at a part of a root while an
+//! index evaluates sees the root as it was before that index (Lean keeps the old value in its
+//! result). A `push` or `pop` into a list part of the root appends one entry here, instead of
+//! copying the parts that the waiting reads cover. A read then resolves the entries of its
+//! window once, when it knows its last step (`Evaluator::resolve_ref`), and a copy of a read
+//! undoes the entries first, so that it keeps the old value.
 //!
 //! A list changes only at its end, so an entry holds, for a `pop`, the element that left. The
 //! entries of one root are in the order of the changes, and the reads that wait at the root
 //! nest, so the window of a read is the entries from its mark.
+//!
+//! The entries have an index by path: a trie with one node for each path that a change named
+//! and for each prefix of it. Each node lists the entries at or below its path, in order. Thus
+//! the window of a read at a path is a binary search at one node, and a read handles only the
+//! entries that reach its part.
 //!
 //! Every walk keeps to the path of a place, and no walk recurses over the depth of a value.
 
@@ -16,94 +21,100 @@ use super::{Evaluator, Out, Store};
 use crate::agg::Agg;
 use crate::hw::{Root, Val};
 use crate::value::Value;
+use std::collections::BTreeMap;
 
-/// A change of the list at `keys` by `push` or `pop`.
-pub(super) struct Undo {
+/// A change of the list at the numbers of its entry.
+pub(super) enum Change {
+    Push,
+    /// The element that the `pop` took out.
+    Pop(Value),
+}
+
+/// A change of the list at `keys`.
+pub(super) struct Entry {
     pub(super) keys: Vec<usize>,
-    /// The element that a `pop` took out. A `push` has none.
-    pub(super) saved: Option<Value>,
+    pub(super) change: Change,
     /// The size and the depth of each aggregate node on the path before the change, from the
     /// root, so that a copy gets the stored numbers of its nodes back.
     pub(super) stats: Vec<(u64, u64)>,
 }
 
-/// The entries of a root and the number of reads that wait at it.
+/// A node of the index by path.
 #[derive(Default)]
-pub(super) struct Log {
-    pub(super) entries: Vec<Undo>,
+struct Node {
+    children: BTreeMap<usize, usize>,
+    /// The entries whose path starts with the path of the node, in the order of the changes.
+    below: Vec<usize>,
+}
+
+/// The entries of a root, their index by path, and the number of reads that wait at the root.
+pub(super) struct History {
+    entries: Vec<Entry>,
+    /// The index by path. The node 0 is the root.
+    nodes: Vec<Node>,
     pub(super) open: usize,
 }
 
-/// The window of a read, sorted by the path of the list. The entries whose paths start with a
-/// given path are one run, so a walk along a path narrows the run one step at a time.
+impl History {
+    fn new() -> History {
+        History {
+            entries: Vec::new(),
+            nodes: vec![Node::default()],
+            open: 0,
+        }
+    }
+
+    /// The node of the path `path`, if a change named it or an extension of it.
+    fn node(&self, path: &[usize]) -> Option<&Node> {
+        let mut at = 0usize;
+        for k in path {
+            at = *self.nodes.get(at)?.children.get(k)?;
+        }
+        self.nodes.get(at)
+    }
+
+    /// Appends the entry `e`, and lists it at the node of each prefix of its path.
+    fn append(&mut self, e: Entry) {
+        #[cfg(test)]
+        crate::counters::add(crate::counters::Count::Logged, 1);
+        let pos = self.entries.len();
+        let mut at = 0usize;
+        if let Some(node) = self.nodes.get_mut(at) {
+            node.below.push(pos);
+        }
+        for &k in &e.keys {
+            let known = self.nodes.get(at).and_then(|n| n.children.get(&k)).copied();
+            at = if let Some(next) = known {
+                next
+            } else {
+                self.nodes.push(Node::default());
+                let next = self.nodes.len() - 1;
+                if let Some(node) = self.nodes.get_mut(at) {
+                    node.children.insert(k, next);
+                }
+                next
+            };
+            if let Some(node) = self.nodes.get_mut(at) {
+                node.below.push(pos);
+            }
+        }
+        self.entries.push(e);
+    }
+
+    /// The positions of the entries from `mark` at or below `path`, in the order of the changes.
+    fn window(&self, path: &[usize], mark: usize) -> &[usize] {
+        let Some(node) = self.node(path) else {
+            return &[];
+        };
+        let from = node.below.partition_point(|&p| p < mark);
+        node.below.get(from..).unwrap_or_default()
+    }
+}
+
+/// The window of a read: the entries of a root from its mark on.
 pub(super) struct Win {
     pub(super) root: Root,
-    order: Vec<usize>,
-}
-
-/// A run of the entries of a window: those whose paths start with the path of `depth` steps.
-#[derive(Clone, Copy)]
-pub(super) struct Span {
-    lo: usize,
-    hi: usize,
-    depth: usize,
-}
-
-impl Win {
-    /// The window of the entries from `from`, if there are any.
-    fn new(root: Root, entries: &[Undo], from: usize) -> Option<Win> {
-        let mut order: Vec<usize> = (from..entries.len()).collect();
-        if order.is_empty() {
-            return None;
-        }
-        #[cfg(test)]
-        crate::counters::add(crate::counters::Count::Logged, order.len() as u64);
-        order.sort_by(|&a, &b| {
-            let (x, y) = (
-                entries.get(a).map(|e| &e.keys),
-                entries.get(b).map(|e| &e.keys),
-            );
-            x.cmp(&y).then(a.cmp(&b))
-        });
-        Some(Win { root, order })
-    }
-
-    /// The run of all entries, at the root.
-    pub(super) fn span(&self) -> Span {
-        Span {
-            lo: 0,
-            hi: self.order.len(),
-            depth: 0,
-        }
-    }
-
-    /// The run after the walk along `path` from the root.
-    pub(super) fn span_at(&self, entries: &[Undo], path: &[usize]) -> Span {
-        path.iter()
-            .fold(self.span(), |span, &k| span.step(self, entries, k))
-    }
-}
-
-impl Span {
-    /// The run after one step to the part `k`.
-    pub(super) fn step(self, win: &Win, entries: &[Undo], k: usize) -> Span {
-        let run = win.order.get(self.lo..self.hi).unwrap_or_default();
-        let key = |e: usize| entries.get(e).and_then(|e| e.keys.get(self.depth)).copied();
-        let before = run.partition_point(|&e| key(e).is_none_or(|x| x < k));
-        let upto = run.partition_point(|&e| key(e).is_none_or(|x| x <= k));
-        Span {
-            lo: self.lo + before,
-            hi: self.lo + upto,
-            depth: self.depth + 1,
-        }
-    }
-
-    /// The positions of all entries of the run, newest first.
-    pub(super) fn all(self, win: &Win) -> Vec<usize> {
-        let mut at: Vec<usize> = win.order.get(self.lo..self.hi).unwrap_or_default().to_vec();
-        at.sort_unstable_by(|a, b| b.cmp(a));
-        at
-    }
+    mark: usize,
 }
 
 /// The size and the depth of each aggregate node of `root` on the path `keys`, from the root.
@@ -144,13 +155,13 @@ fn list_at<'a>(v: &'a mut Value, keys: &[usize]) -> Option<&'a mut Vec<Value>> {
 /// Undoes the change `e` in `v`, a copy of the part of its root at a path of `at` steps that `e`
 /// extends: a push drops the last element, a pop puts its element back, and each node of the
 /// copy on the path gets the numbers that it had before the change.
-fn undo_in(copy: &mut Val, at: usize, e: &Undo) {
+fn undo_in(copy: &mut Val, at: usize, e: &Entry) {
     let rel = e.keys.get(at..).unwrap_or_default();
-    let apply = |ys: &mut Vec<Value>| match &e.saved {
-        None => {
+    let apply = |ys: &mut Vec<Value>| match &e.change {
+        Change::Push => {
             ys.pop();
         }
-        Some(w) => ys.push(w.clone()),
+        Change::Pop(w) => ys.push(w.clone()),
     };
     match copy {
         Val::Static(value) => {
@@ -193,39 +204,33 @@ fn undo_in(copy: &mut Val, at: usize, e: &Undo) {
     }
 }
 
-/// Whether the entry `e` is for a list at `at` or below it.
-fn extends(e: &Undo, at: &[usize]) -> bool {
-    e.keys.get(..at.len()) == Some(at)
-}
-
 impl Store {
     /// A read parks at the root: the mark of its window.
     pub(super) fn open_log(&mut self, root: Root) -> usize {
-        let log = self.undo.entry(root).or_default();
+        let log = self.history.entry(root).or_insert_with(History::new);
         log.open += 1;
         log.entries.len()
     }
 
     /// A read at the root resumed. The last one clears the log.
     pub(super) fn close_log(&mut self, root: Root) {
-        if let Some(log) = self.undo.get_mut(&root) {
+        if let Some(log) = self.history.get_mut(&root) {
             log.open = log.open.saturating_sub(1);
             if log.open == 0 {
-                self.undo.remove(&root);
+                self.history.remove(&root);
             }
         }
     }
 
-    pub(super) fn entries(&self, root: Root) -> &[Undo] {
-        self.undo
-            .get(&root)
-            .map_or(&[], |log| log.entries.as_slice())
+    /// The number of entries of the log of the root.
+    fn logged(&self, root: Root) -> usize {
+        self.history.get(&root).map_or(0, |log| log.entries.len())
     }
 
     /// The numbers of the nodes on the path `keys`, if a read waits at the aggregate root and
     /// so a change must go to the log. They come before the change.
     pub(super) fn stats_before(&self, root: Root, keys: &[usize]) -> Option<Vec<(u64, u64)>> {
-        if !self.undo.contains_key(&root) {
+        if !self.history.contains_key(&root) {
             return None;
         }
         match self.root(&root) {
@@ -235,9 +240,9 @@ impl Store {
     }
 
     /// Appends the change `e` to the log of the root.
-    pub(super) fn log_edit(&mut self, root: Root, e: Undo) {
-        if let Some(log) = self.undo.get_mut(&root) {
-            log.entries.push(e);
+    pub(super) fn log_edit(&mut self, root: Root, e: Entry) {
+        if let Some(log) = self.history.get_mut(&root) {
+            log.append(e);
         }
     }
 
@@ -250,9 +255,8 @@ impl Store {
             return (out, None);
         };
         let root = c.part.root;
-        let win = matches!(out, Out::Ref(_))
-            .then(|| Win::new(root, self.entries(root), c.mark))
-            .flatten();
+        let win = (matches!(out, Out::Ref(_)) && self.logged(root) > c.mark)
+            .then_some(Win { root, mark: c.mark });
         if win.is_none() {
             self.close_log(root);
         }
@@ -273,24 +277,20 @@ impl Store {
             _ => Vec::new(),
         };
         let mut v = self.take(old);
-        if let Some(mark) = mark {
-            for e in self
-                .entries(root)
-                .get(mark..)
-                .unwrap_or_default()
-                .iter()
-                .rev()
-            {
+        if let (Some(mark), Some(log)) = (mark, self.history.get(&root)) {
+            let window = log.window(&path, mark);
+            #[cfg(test)]
+            crate::counters::add(crate::counters::Count::Logged, 1 + window.len() as u64);
+            for e in window.iter().rev().filter_map(|&p| log.entries.get(p)) {
                 #[cfg(test)]
-                crate::counters::add(crate::counters::Count::Logged, 1);
-                if extends(e, &path) {
-                    #[cfg(test)]
-                    crate::counters::add(
-                        crate::counters::Count::Copies,
-                        e.saved.as_ref().map_or(0, Value::size),
-                    );
-                    undo_in(&mut v, path.len(), e);
-                }
+                crate::counters::add(
+                    crate::counters::Count::Copies,
+                    match &e.change {
+                        Change::Push => 0,
+                        Change::Pop(w) => w.size(),
+                    },
+                );
+                undo_in(&mut v, path.len(), e);
             }
         }
         v
@@ -310,20 +310,25 @@ impl Evaluator<'_> {
         if win.root != r.root {
             return out;
         }
-        let entries = self.store.entries(r.root);
-        let positions = win.span_at(entries, &r.path).all(win);
-        if positions.is_empty() {
+        let Some(log) = self.store.history.get(&r.root) else {
+            return out;
+        };
+        let window = log.window(&r.path, win.mark);
+        #[cfg(test)]
+        crate::counters::add(crate::counters::Count::Logged, 1 + window.len() as u64);
+        if window.is_empty() {
             return out;
         }
         let at = r.path.len();
         let mut v = self.store.take(out);
-        #[cfg(test)]
-        crate::counters::add(crate::counters::Count::Logged, positions.len() as u64);
-        for e in positions.iter().filter_map(|&e| entries.get(e)) {
+        for e in window.iter().rev().filter_map(|&p| log.entries.get(p)) {
             #[cfg(test)]
             crate::counters::add(
                 crate::counters::Count::Copies,
-                e.saved.as_ref().map_or(0, Value::size),
+                match &e.change {
+                    Change::Push => 0,
+                    Change::Pop(w) => w.size(),
+                },
             );
             undo_in(&mut v, at, e);
         }
