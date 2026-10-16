@@ -80,16 +80,23 @@ def metaLimitText : String :=
   "the metadata of the type can have more than 2^32 bits, the limit of a static Int; " ++
   "use a smaller type"
 
-/-! The largest bit length of the width, the leaf count, and the zero size of `m`. -/
+/-! The largest bit length of the width, the leaf count, and the zero size `+ 1` of `m`. -/
 def metaBits (m : Meta) : Nat :=
-  max (bitLength m.width) (max (bitLength m.leaves) (bitLength m.zeroSize))
+  max (bitLength m.width) (max (bitLength m.leaves) (bitLength m.zeroSize + 1))
+
+/-!
+The bound on the bit lengths of the metadata sums of the parts `parts`, before the sums run. A
+sum of `n` numbers below `2^b` is below `2^(b + bitLength n)`. The zero size gets 1 more, by
+`metaBits`.
+-/
+def sumBits (parts : List Meta) : Nat :=
+  (parts.map metaBits).foldl max 0 + bitLength parts.length
 
 /-!
 The bound on the bit lengths of the metadata of `[T; N]`, from the metadata `m` of `T`. Each
 product gets the bound of `*`. The zero size `1 + N * z` gets 1 more (section 5.4).
 -/
-def arrayBits (m : Meta) (n : Nat) : Nat :=
-  bitLength n + max (bitLength m.width) (max (bitLength m.leaves) (bitLength m.zeroSize + 1))
+def arrayBits (m : Meta) (n : Nat) : Nat := bitLength n + metaBits m
 
 /-!
 The charge at `pos` of the metadata sums of a tuple or a struct type with the metadata `m` and
@@ -98,7 +105,6 @@ first. Then they charge the sizes of the four new integers of `m`.
 -/
 def sums (pos : Pos) (parts : List Meta) (m : Meta) : M Unit := do
   charge pos (Meta.readCharge parts)
-  if over (metaBits m) then fail .S015 pos metaLimitText
   charge pos m.intCharge
 
 /-! A container type: an array, a tuple, a list, or a struct type. -/
@@ -192,6 +198,7 @@ def specialize (p : Pos) (x : String) (i : Nat) (pre : Bool) (args : List Value)
       s.specs.index.insert (i, args) k⟩ }
     let fs ← fields
     let ms := fs.map Ty.info
+    if over (sumBits ms) then fail .S015 p metaLimitText
     let m := Meta.struct ms (args.map Value.depth)
     bounded p m.depth
     sums p ms m
@@ -251,8 +258,12 @@ def arrayTy (pos q : Pos) (e : Ty) : Value → M Ty
     return t
   | v => fail .S010 q s!"the length of an array is a static Nat, not {v.text}"
 
-/-! The tuple type of `ts` at `pos`. It charges its size and the sums of its metadata. -/
+/-!
+The tuple type of `ts` at `pos`. The bound of its metadata sums gets the size limit first. Then
+it checks its depth and charges its size and the sums of its metadata.
+-/
 def tupleTy (pos : Pos) (ts : List Ty) : M Ty := do
+  if over (sumBits (ts.map Ty.info)) then fail .S015 pos metaLimitText
   let t := Ty.tuple ts.toArray
   bounded pos t.depth
   charge pos t.size

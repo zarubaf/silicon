@@ -353,18 +353,32 @@ def passes (b : Nat) : Bool := Eval.capped b ⟨0, fun _ => .ok .unit⟩ matches
 /-!
 `[T; N]`: the metadata products check the bound of `*`, with 1 more for the zero size. A large
 length alone passes, because the zero of the type charges its size before it exists. A tuple
-type checks its exact sums (`metaBits`).
+type checks a bound of its sums before they run (`sumBits`).
 -/
 def metaLimit : String := s!"S015 1:1 {Eval.metaLimitText}"
+def zeroLimit : String := s!"S015 1:1 {Eval.zeroLimitText}"
 #guard said "" "[Bool; 18446744073709551616]" maxFuel ==
   "(type (array bool 18446744073709551616))"
 #guard (said "" "[Bool; 1 << 4294967296]" maxFuel) == s!"S015 1:8 {Eval.intLimitText}"
-#guard (said "" "[Bool; 18446744073709551616]()" maxFuel).startsWith "S015 1:1 the fuel cannot pay"
+#guard said "" "[Bool; 18446744073709551616]()" maxFuel == zeroLimit
 #guard Eval.arrayBits (Meta.finite 1) (2 ^ 32 - 1) == 32 + 2
 #guard Eval.arrayBits ⟨2 ^ 70, 1, 1, 1, true, false⟩ 1 == 71 + 1
 #guard Eval.arrayBits (Meta.finite 8) 4 == 3 + 4
 #guard Eval.arrayBits Meta.unit 4 == 3 + 2
-#guard Eval.metaBits (Meta.finite 8) == 4 && Eval.metaBits Meta.static == 0
+#guard Eval.metaBits (Meta.finite 8) == 4 && Eval.metaBits Meta.static == 1
+#guard Eval.sumBits [Meta.finite 8, Meta.finite 8] == 4 + 2 && Eval.sumBits [] == 0
+#guard Eval.sumBits [⟨2 ^ 70, 1, 1, 1, true, false⟩] == 71 + 1
+
+/-!
+A value that a type makes has a zero size of at most 2^32. A zero above it fails before its
+charge, so the runtime never allocates it. A zero at the limit passes the check.
+-/
+#guard said "" "[Bool; 2305843009213693952]()" maxFuel == zeroLimit
+#guard said "" "[[Bool; 65536]; 65536]()" maxFuel == zeroLimit
+#guard (said "" "[Bool; 4294967295]()" 1000).startsWith "S015 1:1 the fuel cannot pay 4294967296"
+#guard Eval.shlBits 1 (2 ^ 100) == Eval.limit + 1 && Eval.shlBits 1 Eval.limit == Eval.limit + 1
+#guard said "" "1 << 340282366920938463463374607431768211456" maxFuel == intLimit
+#guard out "" "\"\"" == "(string \"\")"
 #guard said "" "data_bits([[UInt[65536]; 4294967296]; 4294967296])" maxFuel ==
   "(int 1208925819614629174706176)"
 

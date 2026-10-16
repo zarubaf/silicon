@@ -694,6 +694,13 @@ def strLimitText : String :=
 def listLimitText : String :=
   "the list has more than 2^32 elements, the limit of a list; use a shorter list"
 
+def zeroLimitText : String :=
+  "the value of the type has a size above 2^32, the limit of a value from a type; " ++
+  "use a smaller type or keep it a reference"
+
+def recordLimitText : String :=
+  "the recorded value has a size above 2^32, the limit of a record; record a smaller part"
+
 /-!
 The bound on the bit length of the result of a static integer operator, from the bit lengths
 `a` and `b` of its operands (section 5.4). `<<` has its own bound (`shlBits`). The other
@@ -705,8 +712,12 @@ def intBound (op : BinOp) (a b : Nat) : Nat :=
   | .add | .sub | .and | .or | .xor => max a b + 1
   | _ => max a b
 
-/-! The bit length of `x <<< k`. It is exact, and it needs no shift. -/
-def shlBits (x : Int) (k : Nat) : Nat := if x == 0 then 0 else bitLength x + k
+/-!
+The bit length of `x <<< k`. It is exact, and it needs no shift. A count above the limit is
+above the limit with no addition, so a huge `k` costs nothing.
+-/
+def shlBits (x : Int) (k : Nat) : Nat :=
+  if x == 0 then 0 else if over k then limit + 1 else bitLength x + k
 
 /-! The step `s` of an integer result with the bit length bound `b`, or `S015` above the limit. -/
 def capped (b : Nat) (s : Step) : Except Fault Step :=
