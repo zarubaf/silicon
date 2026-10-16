@@ -4,11 +4,10 @@
 //! specializations (design sections 5.1, 5.4, 5.5, and 5.6).
 //!
 //! A struct specialization is one entry of the table `Types` for its item and its static
-//! arguments after their typed use at the parameter types. Each use charges the sizes of its
-//! arguments before the lookup, because the lookup reads them in full. A first use then
-//! charges the size of the struct type, evaluates the field types, and charges the metadata. A
-//! later use finds the entry and charges nothing more. Thus a use of a struct type copies
-//! nothing: the arguments stay references until the first use pays for them.
+//! arguments after their typed use at the parameter types. Each argument charges its size right
+//! after its typed use, and only then is it copied into the frame, so a later parameter type
+//! reads it as a local. A first use then charges the size of the struct type, evaluates the
+//! field types, and charges the metadata. A later use finds the entry and charges nothing more.
 
 use super::{Evaluator, Out, ROOT, Res, Slot, Stop, at, fail, need, type_pos};
 use crate::hw::{Ref, Root, Seen, Val};
