@@ -33,7 +33,7 @@
 
 use super::{Evaluator, Let, Out, ROOT, Res, Slot, fail, need};
 use crate::agg::{Agg, Base};
-use crate::hw::{Graph, Handle, Kind, Port, Root, Seen, Val, port_name};
+use crate::hw::{Graph, Handle, Kind, Port, Seen, Val, port_name};
 use crate::int::Int;
 use crate::names::{Name, PathId, Paths, Sym, encode, module_name};
 use crate::ops::int_text;
@@ -598,10 +598,10 @@ impl Evaluator<'_> {
     /// The typed use of the evaluated arguments `outs` of the module item `i` at `pos`. It
     /// nests one level, in the scope of the module with a new frame, also for a repeat and for
     /// a module without parameters. Each parameter type evaluates there with each earlier
-    /// parameter bound to its converted argument (`bind_params`). Then the recursive size of
-    /// the converted arguments charges, inside the frame. Only after that charge do the values
-    /// leave the frame: a converted value moves out, and an argument that already has the type
-    /// copies from its caller. The result is each parameter type with its converted argument.
+    /// parameter bound to its converted argument (`bind_params`). The recursive size of each
+    /// converted argument charges there, before its copy into the frame and before the next
+    /// parameter type. The values then move out of the frame. The result is each parameter type
+    /// with its converted argument.
     fn typed_use(&mut self, pos: Pos, i: usize, outs: Vec<Out>) -> Res<Vec<(TyId, Value)>> {
         let file = self.file;
         let Some(Item::Module { params, .. }) = file.ast().get(i) else {
@@ -609,36 +609,23 @@ impl Evaluator<'_> {
         };
         self.nested(pos, |ev| {
             ev.in_frame(None, |ev| {
-                ev.in_item(i, ROOT, |ev| {
-                    let frame = ev.store.frame_index();
-                    let args = ev.charged_arguments(pos, params, outs, frame);
-                    ev.store.unlink(frame);
-                    args
-                })
+                ev.in_item(i, ROOT, |ev| ev.charged_arguments(pos, params, outs))
             })
         })
     }
 
-    /// `typed_use` in the frame `frame`.
+    /// `typed_use` in the frame of the module.
     fn charged_arguments(
         &mut self,
         pos: Pos,
         params: &[Param],
         outs: Vec<Out>,
-        frame: usize,
     ) -> Res<Vec<(TyId, Value)>> {
         let bound = self.bind_params(pos, params, outs)?;
-        let mut sizes = 0u128;
-        for (_, o) in &bound {
-            sizes += self.size(o);
-        }
-        self.charge(pos, sizes)?;
         let mut args = Vec::with_capacity(bound.len());
         for ((t, o), q) in bound.into_iter().zip(params) {
             let id = self.decl(&q.name)?;
-            let local = matches!(&o, Out::Ref(r) if r.root == Root::Local(frame, id));
-            let slot = if local { self.store.unbind(id) } else { None };
-            let value = match slot {
+            let value = match self.store.unbind(id) {
                 Some(Slot {
                     value: Val::Static(v),
                     ..

@@ -1292,8 +1292,6 @@ impl Evaluator<'_> {
                             root: Root::Local(k, id),
                             path: Vec::new(),
                         }))
-                    } else if let Some(r) = self.store.linked(k, id) {
-                        Ok(Out::Ref(r.clone()))
                     } else {
                         fail(Code::S011, pos, format!("`{x}` is not a static value"))
                     }

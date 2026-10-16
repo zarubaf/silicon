@@ -62,9 +62,6 @@ pub(super) struct Store {
     /// enters. A test counts them, so it checks the work of a walk and not its time.
     #[cfg(test)]
     steps: Cell<u64>,
-    /// The parameters of a frame that refer to an argument of the caller, by the number of
-    /// the frame: a module argument refers until the instance statement pays its copy.
-    links: BTreeMap<usize, BTreeMap<DeclId, Ref>>,
     /// The results that wait while a later operand of their node evaluates. A mutation of a
     /// local goes to its history and visits none of them. The resume of a result that refers to
     /// the local reads the history, so a result keeps the value that its expression read.
@@ -117,7 +114,6 @@ impl Store {
             changes: BTreeMap::new(),
             history: BTreeMap::new(),
             pending: BTreeSet::new(),
-            links: BTreeMap::new(),
         }
     }
 
@@ -384,21 +380,6 @@ impl Store {
         {
             slot.value = v;
         }
-    }
-
-    /// Links the parameter `id` of the frame `frame` to the argument `r` of the caller.
-    pub(super) fn link(&mut self, frame: usize, id: DeclId, r: Ref) {
-        self.links.entry(frame).or_default().insert(id, r);
-    }
-
-    /// The argument that the parameter `id` of the frame `frame` links to.
-    pub(super) fn linked(&self, frame: usize, id: DeclId) -> Option<&Ref> {
-        self.links.get(&frame).and_then(|ls| ls.get(&id))
-    }
-
-    /// Removes the links of the frame `frame`, in work for its own links only.
-    pub(super) fn unlink(&mut self, frame: usize) {
-        self.links.remove(&frame);
     }
 
     pub(super) fn root(&self, root: &Root) -> &Val {

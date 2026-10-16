@@ -322,10 +322,7 @@ impl Evaluator<'_> {
         let work = self.nested(pos, |ev| {
             ev.in_frame(None, |ev| {
                 ev.in_item(i, ROOT, |ev| {
-                    let frame = ev.store.frame_index();
-                    let t = ev.specialize(pos, name, i, params, fields, args);
-                    ev.store.unlink(frame);
-                    t
+                    ev.specialize(pos, name, i, params, fields, args)
                 })
             })
         });
@@ -356,15 +353,16 @@ impl Evaluator<'_> {
         self.binding.push(i);
         let bound = self.bind_params(pos, params, args)?;
         self.binding.pop();
-        let deep = self.deep_links(params, &bound)?;
         let keys: Vec<Out> = bound.into_iter().map(|(_, o)| o).collect();
-        self.first_or_later_use(pos, name, i, (&keys, deep), fields)
+        self.first_or_later_use(pos, name, i, &keys, fields)
     }
 
     /// The typed uses at `pos` of the arguments `args` at the parameters `params`, in order,
     /// in the item scope and the frame that the caller sets. Each parameter type evaluates with
     /// the earlier parameters bound. Each argument settles, is static, and converts to its type.
-    /// The parameter binds to the result. It gives each parameter type with its result.
+    /// The size of the converted argument charges, and then the parameter binds to a copy of it
+    /// in the frame, so a later parameter type reads a local. It gives each parameter type with
+    /// the reference to its local.
     pub(super) fn bind_params(
         &mut self,
         pos: Pos,
@@ -386,81 +384,39 @@ impl Evaluator<'_> {
         Ok(bound)
     }
 
-    /// The typed use of the argument `o` at the type `t`, bound to the parameter `id`. The
-    /// result refers to the value: an argument that is already of the type stays a reference
-    /// to its caller, so nothing copies before the first use pays.
+    /// The typed use of the argument `o` at the type `t`. The size of the converted value
+    /// charges first, so the copy of an argument that is already of the type is paid. The
+    /// parameter `id` then binds to the value.
     fn bind_argument(&mut self, pos: Pos, t: TyId, id: DeclId, o: Out) -> Res<Out> {
         let converted =
             ops::convert(t, self.store.value(&o), &mut self.fuel, &self.tys).map_err(at(pos))?;
+        let size = match &converted {
+            Some(v) => u128::from(v.size()),
+            None => self.size(&o),
+        };
+        self.charge(pos, size)?;
+        let value = match converted {
+            Some(v) => v,
+            None => self.static_value(pos, o)?,
+        };
         let frame = self.store.frame_index();
-        match (converted, o) {
-            (None, Out::Ref(r)) => {
-                self.store.link(frame, id, r.clone());
-                Ok(Out::Ref(r))
-            }
-            (converted, o) => {
-                let value = match converted {
-                    Some(v) => v,
-                    None => self.static_value(pos, o)?,
-                };
-                self.bind(
-                    id,
-                    Slot {
-                        ty: Some(t),
-                        mutable: false,
-                        value: Val::Static(value),
-                    },
-                );
-                Ok(Out::Ref(Ref {
-                    root: Root::Local(frame, id),
-                    path: Vec::new(),
-                }))
-            }
-        }
+        self.bind(
+            id,
+            Slot {
+                ty: Some(t),
+                mutable: false,
+                value: Val::Static(value),
+            },
+        );
+        Ok(Out::Ref(Ref {
+            root: Root::Local(frame, id),
+            path: Vec::new(),
+        }))
     }
 
-    /// The parameters that link to an argument with a path, with their types. A link keeps the
-    /// caller's reference, so nothing copies before a charge pays.
-    fn deep_links(
-        &mut self,
-        params: &[Param],
-        bound: &[(TyId, Out)],
-    ) -> Res<Vec<(DeclId, TyId, Ref)>> {
-        let mut deep = Vec::new();
-        for (q, (t, o)) in params.iter().zip(bound) {
-            if let Out::Ref(r) = o
-                && !r.path.is_empty()
-            {
-                deep.push((self.decl(&q.name)?, *t, r.clone()));
-            }
-        }
-        Ok(deep)
-    }
-
-    /// Binds each deep link to a copy of its target in the frame of the struct. A use of the
-    /// parameter then reads a local and walks no path. The caller runs this after the charge of
-    /// the argument sizes, which counts each target once for each link, so the copies cost at
-    /// most that charge. The uses of a linked parameter in the later parameter types come
-    /// before the charge: each walks the path of its link, so the work is at most the number of
-    /// type nodes of the parameters times the length of the path, which the evaluation of the
-    /// argument expression walked once in the same call.
-    fn copy_deep_links(&mut self, deep: Vec<(DeclId, TyId, Ref)>) {
-        for (id, t, r) in deep {
-            let value = self.store.value_at(&r).clone();
-            self.bind(
-                id,
-                Slot {
-                    ty: Some(t),
-                    mutable: false,
-                    value: Val::Static(value),
-                },
-            );
-        }
-    }
-
-    /// The specialization of the struct item `i` with the arguments `keys`. Each use charges
-    /// the sizes of the arguments before the lookup, which hashes and compares them in full.
-    /// A done entry charges nothing more. A first use charges the size of the struct type,
+    /// The specialization of the struct item `i` with the arguments `keys`. `bind_params`
+    /// charged the sizes of the arguments before the lookup, which hashes and compares them in
+    /// full. A done entry charges nothing more. A first use charges the size of the struct type,
     /// evaluates the field types, checks the depth of the struct type, and charges its
     /// metadata.
     fn first_or_later_use(
@@ -468,14 +424,13 @@ impl Evaluator<'_> {
         pos: Pos,
         name: &Ident,
         i: usize,
-        (keys, deep): (&[Out], Vec<(DeclId, TyId, Ref)>),
+        keys: &[Out],
         fields: &[StructField],
     ) -> Res<TyId> {
         let values: Vec<&Value> = keys.iter().map(|o| self.store.value(o)).collect();
         let sizes = values
             .iter()
             .fold(0u64, |sum, v| sum.saturating_add(v.size()));
-        self.fuel.pay(u128::from(sizes)).map_err(at(pos))?;
         match self.tys.find_spec(i, &values) {
             Some((_, Some(t))) => return Ok(t),
             Some((s, None)) => {
@@ -494,7 +449,6 @@ impl Evaluator<'_> {
         let args: Vec<Value> = values.into_iter().cloned().collect();
         let prelude = self.file.is_prelude_item(i);
         let s = self.tys.begin_spec(&name.name, i, args, prelude);
-        self.copy_deep_links(deep);
         let mut types = Vec::with_capacity(fields.len());
         for f in fields {
             types.push(self.type_expr(&f.ty)?);
