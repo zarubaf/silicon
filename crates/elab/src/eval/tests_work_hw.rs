@@ -861,6 +861,59 @@ fn the_copies_of_an_old_list_that_a_read_finds_are_paid() {
     }
 }
 
+/// The reads of a list nest `k` deep, and the innermost index pops the last of its `m` elements.
+/// Each read selects that element, which a `pop` took out. The read resolves the saved element
+/// and does not rebuild the list, so the work stays in `k + m` and the copies are paid.
+#[test]
+fn k_reads_of_a_popped_element_take_work_in_k_plus_m() {
+    let at = |n: u64, i: u64| {
+        let mut e = format!("(xs.pop(), {}).1", n - 1);
+        for _ in 0..n / 8 {
+            e = format!("xs[({e}, {}).1]", n - 1);
+        }
+        let r = run_ok(
+            "",
+            "UInt[8]",
+            &format!(
+                "let mut xs = list(Nat);\n  comptime for i in 0..{n} {{ xs.push(0); }}\n  {e};"
+            ),
+            key(103, i),
+        );
+        assert!(
+            r.copied <= r.units,
+            "{n}: copied {} for {}",
+            r.copied,
+            r.units
+        );
+        r
+    };
+    assert_scales(at, 64);
+}
+
+/// The case of #237: the result of a read is the whole old list, which the index of the read
+/// pushed into. Each iteration copies the list and pays its size, so `k` iterations take work in
+/// `k` and the copies stay within the fuel.
+#[test]
+fn k_reads_of_a_whole_old_list_take_work_in_k() {
+    let at = |n: u64, i: u64| {
+        let reads = rep("t[(t.1.push(1), 1).1];\n  t.1.pop();\n  ", n / 8);
+        let r = run_ok(
+            "",
+            "UInt[8]",
+            &format!("let mut t = (x, list(Nat));\n  {reads}"),
+            key(104, i),
+        );
+        assert!(
+            r.copied <= r.units,
+            "{n}: copied {} for {}",
+            r.copied,
+            r.units
+        );
+        r
+    };
+    assert_scales(at, 64);
+}
+
 /// The reads follow a write that bound the root again, and a later index of each read changes
 /// the root again. The old root stays in the log: the hold decisions walk it and copy nothing.
 /// The innermost index clears the list `t.1` of `m` elements, and the `k` reads of `t.0` nest.
