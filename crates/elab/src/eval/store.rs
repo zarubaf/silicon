@@ -312,6 +312,7 @@ impl Store {
     /// Pushes `w` onto the list at `keys` of the static local at `root`. The caller logs the
     /// change with `log_push`.
     pub(super) fn push_static(&mut self, root: Root, keys: &[usize], w: Value) {
+        self.decide_holds(root);
         if let Some(Value::List(_, ys)) = self.part_mut(root, keys) {
             ys.push(w);
         }
@@ -320,6 +321,7 @@ impl Store {
     /// Pops the last element of the list at `keys` of the static local at `root`, if there is
     /// a list. The caller logs the change with `log_pop`.
     pub(super) fn pop_static(&mut self, root: Root, keys: &[usize]) -> Option<Value> {
+        self.decide_holds(root);
         match self.part_mut(root, keys) {
             Some(Value::List(_, ys)) => Some(ys.pop().unwrap_or(Value::Unit)),
             _ => None,
@@ -339,6 +341,7 @@ impl Store {
     /// read waits at the local, so nothing is logged. The walk repeats the counted walk of
     /// `last_size`, so it counts no steps.
     pub(super) fn pop_last(&mut self, root: Root, keys: &[usize]) -> Value {
+        self.decide_holds(root);
         let popped = match self.part_in(root, keys) {
             Some(Value::List(_, ys)) => ys.pop().unwrap_or(Value::Unit),
             _ => Value::Unit,
@@ -351,6 +354,7 @@ impl Store {
     /// `keys` that the caller makes on it. The caller gives it back with `put_back`, and logs the
     /// change with `log_push` or `log_pop`.
     pub(super) fn take_agg(&mut self, root: Root, keys: &[usize]) -> Option<Box<Agg>> {
+        self.decide_holds(root);
         self.add_steps(keys.len() as u64);
         match self.take_root(&root) {
             Val::Agg(a) => Some(a),

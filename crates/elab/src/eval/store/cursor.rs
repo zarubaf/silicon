@@ -141,6 +141,9 @@ impl Store {
     /// node leads to a leaf. Each walk that makes a new witness enters a part with at most half
     /// the hardware leaves of the part before it. Thus a read walks at most log2 L plus one
     /// times its steps, where L is the number of hardware leaves of the root.
+    ///
+    /// Each method that changes a local calls it first, and a decision made stays made, so the
+    /// store decides the holds before the first change whatever the caller did before.
     pub(super) fn decide_holds(&mut self, root: Root) {
         let Some(list) = self.armed.remove(&root) else {
             return;
