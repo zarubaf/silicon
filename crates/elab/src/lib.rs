@@ -16,7 +16,7 @@ mod scan;
 mod serial;
 pub mod sha256;
 mod text;
-pub mod types;
+mod types;
 pub mod value;
 pub mod vectors;
 
