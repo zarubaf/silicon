@@ -502,9 +502,13 @@ theorem pickAt_f (p q : Pos) (v : Val) (i : Value) :
     Follows cap (pickAt p q v i) (pickAt p q v i) := by
   unfold pickAt; follows [indexOf_f]
 
+theorem chargeScan_f (p : Pos) (v : Value) :
+    Follows cap (chargeScan p v) (chargeScan p v) := by
+  unfold chargeScan; follows
+
 theorem strAt_f (p q : Pos) (s : String) (i : Value) :
     Follows cap (strAt p q s i) (strAt p q s i) := by
-  unfold strAt; follows [indexOf_f]
+  unfold strAt; follows [indexOf_f, chargeScan_f]
 
 theorem within_f (q : Pos) (n : Nat) (i : Value) :
     Follows cap (within q n i) (within q n i) := by
@@ -519,7 +523,7 @@ theorem pick_f (p q : Pos) (v : Val) (i : Value) :
   unfold pick; follows [pickKey_f]
 
 theorem lenOf_f (p : Pos) (vs : List Val) : Follows cap (lenOf p vs) (lenOf p vs) := by
-  unfold lenOf; follows [data_f]
+  unfold lenOf; follows [data_f, chargeScan_f]
 
 theorem fieldOf_f (p : Pos) (f : Ident) (t : Ty) (x : String) :
     Follows cap (fieldOf p f t x) (fieldOf p f t x) := by
