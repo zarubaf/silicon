@@ -672,6 +672,46 @@ def intXor : Int → Int → Int
 def intShr (a : Int) (k : Nat) : Int :=
   if a.natAbs.log2 < k then (if a < 0 then -1 else 0) else a >>> k
 
+/-!
+The size limit of section 5.4. It bounds the bits of a static integer and of a metadata number.
+It also bounds the bytes of a string and the elements of a list. A fuel near `2^64` pays for a
+value that no machine can hold, so the limit stops the value before its charge.
+-/
+def limit : Nat := 2 ^ 32
+
+/-! A number of bits, bytes, or elements above the limit. -/
+def over (n : Nat) : Bool := limit < n
+
+/-! The bit length of the magnitude of `n`. It is 0 for 0. -/
+def bitLength (n : Int) : Nat := if n == 0 then 0 else n.natAbs.log2 + 1
+
+def intLimitText : String :=
+  "the result can have more than 2^32 bits, the limit of a static Int; use smaller operands"
+
+def strLimitText : String :=
+  "the string has more than 2^32 bytes, the limit of a string; use shorter strings"
+
+def listLimitText : String :=
+  "the list has more than 2^32 elements, the limit of a list; use a shorter list"
+
+/-!
+The bound on the bit length of the result of a static integer operator, from the bit lengths
+`a` and `b` of its operands (section 5.4). `<<` has its own bound (`shlBits`). The other
+operators make no result longer than an operand, so their bound is in the limit.
+-/
+def intBound (op : BinOp) (a b : Nat) : Nat :=
+  match op with
+  | .mul => a + b
+  | .add | .sub | .and | .or | .xor => max a b + 1
+  | _ => max a b
+
+/-! The bit length of `x <<< k`. It is exact, and it needs no shift. -/
+def shlBits (x : Int) (k : Nat) : Nat := if x == 0 then 0 else bitLength x + k
+
+/-! The step `s` of an integer result with the bit length bound `b`, or `S015` above the limit. -/
+def capped (b : Nat) (s : Step) : Except Fault Step :=
+  if over b then .error (.S015, intLimitText) else .ok s
+
 /-! The size of `a * 2^k`, from the bit length of `a`, before the shift runs. -/
 def shlSize (a : Int) (k : Nat) : Nat :=
   if a == 0 then 1 else (a.natAbs.log2 + k) / 64 + 1
@@ -732,7 +772,7 @@ def unary (op : UnOp) (a : Value) : Except Fault Step :=
   let step (r : Unit → Value) : Except Fault Step := .ok ⟨a.size, fun u => .ok (r u)⟩
   match op, a with
   | .not, .bool b => step fun _ => .bool !b
-  | .inv, .int n => step fun _ => .int (Int.not n)
+  | .inv, .int n => capped (bitLength n + 1) ⟨a.size, fun _ => .ok (.int (Int.not n))⟩
   | .neg, .int n => step fun _ => .int (-n)
   | .inv, .uint w x => step fun _ => .uint w (~~~x)
   | .inv, .sint w x => step fun _ => .sint w (~~~x)
@@ -776,7 +816,7 @@ def shift (op : BinOp) (a b : Value) : Except Fault Step := do
   | .int x =>
     unless b matches .int _ do typeError "an Int shift needs a static Int count"
     let k ← count
-    if op == .shl then .ok ⟨shlSize x k, fun _ => .ok (.int (intShl x k))⟩
+    if op == .shl then capped (shlBits x k) ⟨shlSize x k, fun _ => .ok (.int (intShl x k))⟩
     else .ok ⟨a.size, fun _ => .ok (.int (intShr x k))⟩
   | .uint w x | .sint w x =>
     let k ← count

@@ -303,6 +303,79 @@ sizes 2. A use of a done constant charges only its node.
 #guard out "" "1 >> 100000000000" 20 == "(int 0)"
 #guard out "" "-1 >> 100000000000" 20 == "(int -1)"
 
+/-!
+The size limit of section 5.4 (issue #255). A static integer has at most 2^32 bits. A string
+has at most 2^32 bytes, and a list at most 2^32 elements. The check comes before the
+charge, so the largest fuel cannot pay for a larger value. A value at the limit passes the
+check, so a small fuel then fails at the charge.
+-/
+def said (src expr : String) (fuel : Nat) : String :=
+  match Cli.evalText { budget := { fuel, depth := 1000 } } src expr with
+  | .ok (v, _) => v.serialize
+  | .error e => s!"{e.code} {e.pos.line}:{e.pos.col} {e.msg}"
+
+def maxFuel : Nat := 2 ^ 64 - 1
+def intLimit : String := s!"S015 1:1 {Eval.intLimitText}"
+
+#guard Eval.limit == 4294967296
+#guard !Eval.over Eval.limit && Eval.over (Eval.limit + 1)
+#guard Eval.bitLength 0 == 0 && Eval.bitLength 1 == 1 && Eval.bitLength 255 == 8
+#guard Eval.bitLength (-256) == 9
+
+/-! `<<`: the repro of issue #255, with each sign of the operand. -/
+#guard said "" "1 << 4294967296" maxFuel == intLimit
+#guard said "" "-1 << 4294967296" maxFuel == intLimit
+#guard said "" "3 << 4294967295" maxFuel == intLimit
+#guard said "" "1 << 4294967295" 1000 ==
+  "S015 1:1 the fuel cannot pay 67108864 unit(s); 995 remain; raise --fuel"
+#guard said "" "0 << 18446744073709551616" maxFuel == "(int 0)"
+#guard Eval.shlBits 1 (Eval.limit - 1) == Eval.limit && Eval.shlBits 0 (2 ^ 64) == 0
+
+/-!
+The other integer operators check a bound from the bit lengths of the operands. Operands at the
+limit need a value of 2^32 bits, so these guards check the bounds and `capped` directly.
+-/
+def passes (b : Nat) : Bool := Eval.capped b ⟨0, fun _ => .ok .unit⟩ matches .ok _
+#guard passes Eval.limit && !passes (Eval.limit + 1)
+#guard Eval.intBound .add (Eval.limit - 1) 7 == Eval.limit
+#guard Eval.intBound .sub Eval.limit 0 == Eval.limit + 1
+#guard Eval.intBound .mul (2 ^ 31) (2 ^ 31) == Eval.limit
+#guard Eval.intBound .mul (2 ^ 31) (2 ^ 31 + 1) == Eval.limit + 1
+#guard Eval.intBound .and Eval.limit 1 == Eval.limit + 1
+#guard Eval.intBound .or (Eval.limit - 1) 1 == Eval.limit
+#guard Eval.intBound .xor 3 Eval.limit == Eval.limit + 1
+#guard Eval.intBound .div Eval.limit Eval.limit == Eval.limit
+#guard Eval.intBound .rem Eval.limit Eval.limit == Eval.limit
+#guard said "" "~(1 << 4294967295)" 1000 ==
+  "S015 1:3 the fuel cannot pay 67108864 unit(s); 994 remain; raise --fuel"
+#guard out "" "(1 << 100) * (1 << 100) + ~7 - (5 ^ 3)" == out "" "(1 << 200) - 8 - 6"
+
+/-!
+`[T; N]`: the metadata products check the bound of `*`, with 1 more for the zero size. A large
+length alone passes, because the zero of the type charges its size before it exists. A tuple
+type checks its exact sums (`metaBits`).
+-/
+def metaLimit : String := s!"S015 1:1 {Eval.metaLimitText}"
+#guard said "" "[Bool; 18446744073709551616]" maxFuel ==
+  "(type (array bool 18446744073709551616))"
+#guard (said "" "[Bool; 1 << 4294967296]" maxFuel) == s!"S015 1:8 {Eval.intLimitText}"
+#guard (said "" "[Bool; 18446744073709551616]()" maxFuel).startsWith "S015 1:1 the fuel cannot pay"
+#guard Eval.arrayBits (Meta.finite 1) (2 ^ 32 - 1) == 32 + 2
+#guard Eval.arrayBits ⟨2 ^ 70, 1, 1, 1, true, false⟩ 1 == 71 + 1
+#guard Eval.arrayBits (Meta.finite 8) 4 == 3 + 4
+#guard Eval.arrayBits Meta.unit 4 == 3 + 2
+#guard Eval.metaBits (Meta.finite 8) == 4 && Eval.metaBits Meta.static == 0
+#guard said "" "data_bits([[UInt[65536]; 4294967296]; 4294967296])" maxFuel ==
+  "(int 1208925819614629174706176)"
+
+/-!
+`s + t` checks the sum of the byte lengths, and `push` the length of the list plus 1. A value at
+the limit needs 2^32 bytes or elements, so the guards check the small cases end to end.
+-/
+#guard out "" "\"ab\" + \"ü\"" == "(string \"abü\")"
+#guard out "comptime fn f() -> Int { let mut xs = list(Int); push(xs, 1); return len(xs); }"
+  "f()" == "(int 1)"
+
 /-! A `comptime for` pays its range and each loop value. A large offset thus pays its size. -/
 def bigFor : String :=
   "comptime fn f() -> Int { let a = 1 << 64000000; comptime for i in a..a + 10000 {} return 0; }"
@@ -367,8 +440,8 @@ def msg (src expr : String) (fuel : Nat := 100000000) (depth : Nat := 1000) : St
   | _ => "no error"
 
 #guard msg deep "d(5)" (depth := 5) == "the nesting depth goes above 5; raise --depth"
-#guard msg "" "1 << 100000000000" ==
-  "the fuel cannot pay 1562500001 unit(s); 99999995 remain; raise --fuel"
+#guard msg "" "1 << 4000000000" 1000 ==
+  "the fuel cannot pay 62500001 unit(s); 995 remain; raise --fuel"
 /-! The result of `eval` is the last charge, so its message names the fuel that suffices. -/
 #guard cost "" "[1, 2]" == 8
 #guard msg "" "[1, 2]" 18 ==

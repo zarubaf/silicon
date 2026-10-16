@@ -182,6 +182,13 @@ its operation runs. When the fuel cannot pay it, the result is `S015` at the nod
    operations. A read of a handle and a lift of a static operand only refer, so they charge
    nothing.
 
+The size limit of section 5.4 comes before the charge of each operation that can make a large
+value (`over`). An integer operator checks a bound on the bit length of its result (`intBound`,
+`shlBits`, `capped`). `+` on strings checks the sum of the byte lengths, and `push` the length
+of the list. `[T; N]` checks its metadata products, and a tuple type and a struct
+specialization check their metadata sums (`Eval.Types`). Above the limit, the result is `S015`
+at the node of the charge.
+
 The nesting depth counts the active calls, the constants in progress, the struct uses, and the
 top selection. A struct use counts while it binds its parameters and while its specialization
 is in progress. A call and a struct use check it after their arguments, and a constant before
@@ -205,9 +212,12 @@ def binary (op : BinOp) (a b : Value) : Except Fault Step :=
   | .add | .sub | .mul | .div | .rem =>
     match a, b with
     | .int x, .int y =>
-      .ok ⟨if op == .add || op == .sub then sum else product, fun _ => intArith op x y⟩
+      capped (intBound op (bitLength x) (bitLength y))
+        ⟨if op == .add || op == .sub then sum else product, fun _ => intArith op x y⟩
     | .str x, .str y =>
-      if op == .add then .ok ⟨sum, fun _ => .ok (.str (x ++ y))⟩
+      if op == .add then
+        if over (x.utf8ByteSize + y.utf8ByteSize) then .error (.S015, strLimitText)
+        else .ok ⟨sum, fun _ => .ok (.str (x ++ y))⟩
       else typeError s!"`{op.text}` does not accept strings; `+` joins them"
     | _, _ => typeError s!"`{op.text}` accepts only Int and Nat, not {a.text} and {b.text}"
   | .addw | .subw | .mulw | .and | .or | .xor =>
@@ -217,7 +227,8 @@ def binary (op : BinOp) (a b : Value) : Except Fault Step :=
       .ok ⟨if op == .mulw then product else sum, fun _ => .ok (finiteOp c s w x y)⟩
     | .int x, .int y, _ =>
       let f := match op with | .and => intAnd | .or => intOr | _ => intXor
-      if op == .and || op == .or || op == .xor then .ok ⟨sum, fun _ => .ok (.int (f x y))⟩
+      if op == .and || op == .or || op == .xor then
+        capped (intBound op (bitLength x) (bitLength y)) ⟨sum, fun _ => .ok (.int (f x y))⟩
       else typeError s!"`{op.text}` needs a finite operand"
     | _, _, _ => typeError s!"`{op.text}` needs integers of one type, not {a.text} and {b.text}"
   | .eq | .ne => do
@@ -997,10 +1008,11 @@ def result (p : Pos) (path : Path) (u : String) : Option Val → M Val
 /-!
 `push` at `p` of the value `v` at the node `x` onto the list at the place `pl`. `g` is the name
 of the callee. The module doc gives the steps. It checks the list and the mutation rule. Then it
-makes the typed use of the element, checks the depth, and charges the size of the element.
+makes the typed use of the element and checks the depth. Then it checks the size limit of the
+list and charges the size of the element.
 -/
 def pushOnto (p x : Pos) (g : String) (pl : Place) (v : Val) : M (Option Out) := do
-  let .static (.list e _) := pl.part | fail .S010 p s!"`{g}` needs a list, not {pl.part.text}"
+  let .static (.list e ys) := pl.part | fail .S010 p s!"`{g}` needs a list, not {pl.part.text}"
   mutation p pl.name
   let w ← match ← data x (← settle p e v) with
     | .static w => conform p e w
@@ -1008,6 +1020,7 @@ def pushOnto (p x : Pos) (g : String) (pl : Place) (v : Val) : M (Option Out) :=
     | v => fail .S010 x s!"{v.text} is not an element of a list"
   -- The root is within the nesting depth, so only the element on the path can raise it.
   bounded p (pl.keys.length + 1 + w.depth)
+  if over (ys.size + 1) then fail .S015 p listLimitText
   charge p w.size
   changeAt p pl (fun | .list t ys => .list t (ys.push w) | v => v) (· + w.size) (some (1 + w.depth))
   return some ⟨.static .unit, false, none⟩
