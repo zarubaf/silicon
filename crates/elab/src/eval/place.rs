@@ -470,14 +470,14 @@ impl Evaluator<'_> {
         let at = self.store.park(base.into_out());
         let mut held = match held {
             Some((r, ty)) => {
-                self.store.cursor(at, r);
+                self.store.cursor(at, r, true);
                 Some(ty)
             }
             None => None,
         };
         let follows = tracked.is_some();
         if let Some(r) = tracked {
-            self.store.cursor_static(at, r);
+            self.store.cursor(at, r, false);
         }
         for (n, step) in steps.iter().enumerate() {
             // A selection of a hardware aggregate normalizes an empty part, which charges its
