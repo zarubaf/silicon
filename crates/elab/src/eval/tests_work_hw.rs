@@ -1110,14 +1110,12 @@ fn parked_whole_lists(n: u64, i: u64, family: u64, start: u64, changes: &str) ->
 /// `k` reads of the whole list wait while `m` pushes change it. The resume of a read must not
 /// replay the window of the pushes again for each of the `k` reads (#257).
 #[test]
-#[ignore = "#257"]
 fn k_parked_whole_lists_and_m_pushes_take_work_in_k_plus_m() {
     let at = |n: u64, i: u64| parked_whole_lists(n, i, 105, 0, &rep("xs.push(1), ", n));
     assert_scales(at, 64);
 }
 
 #[test]
-#[ignore = "#257"]
 fn k_parked_whole_lists_and_m_alternating_changes_take_work_in_k_plus_m() {
     let at =
         |n: u64, i: u64| parked_whole_lists(n, i, 107, 1, &rep("xs.push(1), xs.pop(), ", n / 2));
@@ -1127,7 +1125,6 @@ fn k_parked_whole_lists_and_m_alternating_changes_take_work_in_k_plus_m() {
 /// The same with a list in a list: the parked reads are of the outer list, and the changes go
 /// into the inner list.
 #[test]
-#[ignore = "#257"]
 fn k_parked_outer_lists_and_m_inner_changes_take_work_in_k_plus_m() {
     let at = |n: u64, i: u64| {
         let reads = rep("xs, ", n);
@@ -1141,6 +1138,25 @@ fn k_parked_outer_lists_and_m_inner_changes_take_work_in_k_plus_m() {
                 n + n
             ),
             key(108, i),
+        )
+    };
+    assert_scales(at, 64);
+}
+
+/// The reads park between the changes, so each read has its own mark: the list stays short, and
+/// the windows of the reads are different suffixes of one log.
+#[test]
+fn k_parked_whole_lists_between_alternating_changes_take_work_in_k_plus_m() {
+    let at = |n: u64, i: u64| {
+        let round = rep("xs, xs.push(1), xs.pop(), ", n / 2);
+        run_ok(
+            "",
+            "UInt[8]",
+            &format!(
+                "let mut xs = list(Nat);\n  xs.push(0);\n  ({round}0).{};",
+                3 * (n / 2)
+            ),
+            key(109, i),
         )
     };
     assert_scales(at, 64);
