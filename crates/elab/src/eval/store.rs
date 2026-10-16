@@ -121,7 +121,7 @@ impl Store {
     }
 
     /// Counts `n` steps of a walk along a path into a stored value.
-    pub(super) fn stepped(&self, n: u64) {
+    fn stepped(&self, n: u64) {
         self.add_steps(n);
         #[cfg(test)]
         crate::counters::add(crate::counters::Count::Stepped, n);
@@ -139,7 +139,7 @@ impl Store {
     fn add_steps(&self, _n: u64) {}
 
     /// The element of `v` at the numbers `path`, one for each container below it.
-    pub(super) fn element<'a>(&self, v: &'a Value, path: &[usize]) -> &'a Value {
+    fn element<'a>(&self, v: &'a Value, path: &[usize]) -> &'a Value {
         self.stepped(path.len() as u64);
         let mut cur = v;
         for &k in path {
@@ -157,7 +157,7 @@ impl Store {
     /// What the aggregate `a` finds at the numbers `path`, one for each container node below it. A
     /// static part continues as a static value. A reference or a hardware leaf does not continue: a
     /// step into it makes a new reference, which no path names, so the walk finds nothing there.
-    pub(super) fn agg_part<'a>(&self, a: &'a Agg, path: &[usize]) -> Option<Seen<'a>> {
+    fn agg_part<'a>(&self, a: &'a Agg, path: &[usize]) -> Option<Seen<'a>> {
         let mut cur = a.seen();
         for (i, &k) in path.iter().enumerate() {
             cur = match cur {
@@ -173,7 +173,7 @@ impl Store {
     }
 
     /// The part that `agg_part` finds, or the absent value below a reference or a hardware leaf.
-    pub(super) fn agg_element<'a>(&self, a: &'a Agg, path: &[usize]) -> Seen<'a> {
+    fn agg_element<'a>(&self, a: &'a Agg, path: &[usize]) -> Seen<'a> {
         self.agg_part(a, path)
             .unwrap_or(Seen::Static(&ABSENT_VALUE))
     }
@@ -492,7 +492,7 @@ impl Store {
 
     /// What `seen` finds, as an owned value. A static value and an aggregate copy, so the caller
     /// paid for the copy before.
-    pub(super) fn own(seen: Seen<'_>) -> Val {
+    fn own(seen: Seen<'_>) -> Val {
         match seen {
             Seen::Static(v) => {
                 #[cfg(test)]
@@ -511,7 +511,7 @@ impl Store {
     }
 
     /// What the value `v` holds at the numbers `path`.
-    pub(super) fn part_of<'a>(&self, v: &'a Val, path: &[usize]) -> Seen<'a> {
+    fn part_of<'a>(&self, v: &'a Val, path: &[usize]) -> Seen<'a> {
         match v {
             Val::Static(x) => Seen::Static(self.element(x, path)),
             Val::Agg(a) => self.agg_element(a, path),
