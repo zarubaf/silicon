@@ -70,7 +70,7 @@ impl Fuel {
             _ => Err((
                 Code::S015,
                 format!(
-                    "the fuel cannot pay the joins of the types; {} remain",
+                    "the fuel cannot pay the joins of the types; {} remain; raise --fuel",
                     self.left
                 ),
             )),
@@ -89,7 +89,7 @@ impl Fuel {
             _ => Err((
                 Code::S015,
                 format!(
-                    "the fuel cannot pay the scan of the string; {} remain",
+                    "the fuel cannot pay the scan of the string; {} remain; raise --fuel",
                     self.left
                 ),
             )),
@@ -97,11 +97,13 @@ impl Fuel {
     }
 
     fn cannot_pay(&self, units: &str) -> Fault {
-        (
-            Code::S015,
-            format!("the fuel cannot pay {units} unit(s); {} remain", self.left),
-        )
+        (Code::S015, pay_text(units, self.left))
     }
+}
+
+/// The message of a charge of `units` when `left` units remain. Lean prints the same text.
+pub(crate) fn pay_text(units: impl std::fmt::Display, left: u64) -> String {
+    format!("the fuel cannot pay {units} unit(s); {left} remain; raise --fuel")
 }
 
 /// An integer in a message: decimal up to 256 bits, else its bit length. The bit length needs

@@ -415,7 +415,7 @@ impl<'d> Lower<'d> {
                 code: Code::S015,
                 pos,
                 message: format!(
-                    "the fuel cannot pay {units} unit(s) of the lowering; {} remain",
+                    "the fuel cannot pay {units} unit(s) of the lowering; {} remain; raise --fuel",
                     self.fuel
                 ),
             })),

@@ -1518,7 +1518,7 @@ impl Evaluator<'_> {
             return fail(
                 Code::S015,
                 pos,
-                format!("the nesting depth goes above {}", self.limit),
+                format!("the nesting depth goes above {}; raise --depth", self.limit),
             );
         }
         self.depth += 1;

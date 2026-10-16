@@ -36,7 +36,9 @@ pub(super) fn bounded(limit: u64, site: Option<Pos>, pos: Pos, depth: u64) -> Re
         return fail(
             Code::S015,
             site.unwrap_or(pos),
-            format!("the depth {depth} goes above the nesting depth {limit}"),
+            format!(
+                "the depth {depth} goes above the nesting depth {limit}; raise --depth to at least {depth}"
+            ),
         );
     }
     Ok(())
