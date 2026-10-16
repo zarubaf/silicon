@@ -4,13 +4,13 @@ This guide is the authority for orchestration and model choice.
 
 ## Orchestrator
 
-The orchestrator is the main Claude Code session on Opus. It does these tasks:
+The orchestrator is the main Claude Code session, the lead. The user chooses its model for each session. It does these tasks:
 
 - It reads issues and splits the work.
 - It creates worktrees and dispatches subagents.
 - It reads the results of the subagents and merges.
 
-The orchestrator does not write product code. It does not read large file dumps. A search goes to the built-in `Explore` subagent.
+The orchestrator does not write product code. It does not read large file dumps. A search goes to the `@explorer` subagent.
 
 ## Workflow
 
@@ -33,7 +33,13 @@ The repository adds three rules to the Superpowers workflow:
 
 ## Model choice
 
-Model choice is advisory: Opus for design, proofs, and hard bugs. Sonnet for implementation. Haiku for search.
+Model choice is advisory. The lead dispatches each subagent with the cheapest model that can do the job:
+
+- Haiku for search and mechanical edits.
+- Sonnet for Rust and integration work.
+- Opus for Lean, design, and review.
+
+`@code-reviewer` (Opus, read-only) audits plans and diffs. `@explorer` (Haiku, read-only) searches the code. Codex does the cross-vendor reviews.
 
 `.codex/config.toml` pins the Codex model to `gpt-6-astra`. A change of the Codex model is a one-line change in that file. Codex reads this file for a trusted project.
 
