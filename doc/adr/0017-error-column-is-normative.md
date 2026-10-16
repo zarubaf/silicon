@@ -1,6 +1,6 @@
 # 17. The column of the first error is normative
 
-- Status: accepted
+- Status: accepted, partly superseded by ADR 0022
 - Date: 2026-10-10
 
 ## Context
