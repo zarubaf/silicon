@@ -40,7 +40,7 @@ theorem bind_apply (x : FM α) (f : α → FM β) (s : St) :
 theorem charge_apply (p : Pos) (k : Nat) (s : St) :
     charge p k s = if k ≤ s.fuel then .ok ((), { s with fuel := s.fuel - k })
       else .error (.source ⟨.S015, p, s!"the fuel cannot pay {intText k} unit(s) of the " ++
-        s!"lowering; {intText s.fuel} remain"⟩) := by
+        s!"lowering; {intText s.fuel} remain; raise --fuel"⟩) := by
   unfold charge
   rw [bind_apply]
   show (if k ≤ s.fuel then _ else _ : FM Unit) s = _

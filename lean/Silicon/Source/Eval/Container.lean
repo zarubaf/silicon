@@ -305,7 +305,7 @@ Rust front end does not count the scalars of a string that the fuel cannot pay.
 -/
 def chargeScan (pos : Pos) (v : Value) : M Unit :=
   chargeWith pos v.size fun left =>
-    s!"the fuel cannot pay the scan of the string; {intText left} remain"
+    s!"the fuel cannot pay the scan of the string; {intText left} remain; raise --fuel"
 
 def strAt (pos q : Pos) (s : String) (i : Value) : M Value := do
   let k ← indexOf q i

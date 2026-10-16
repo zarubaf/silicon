@@ -62,8 +62,7 @@ theorem chargeWith_apply (p : Pos) (k : Nat) (cannot : Nat → String) (c : Ctx)
 
 theorem charge_apply (p : Pos) (k : Nat) (c : Ctx) (s : St) :
     charge p k c s = if k ≤ s.fuel then .ok ((), { s with fuel := s.fuel - k })
-      else .error ⟨⟨.S015, p,
-        s!"the fuel cannot pay {intText k} unit(s); {intText s.fuel} remain"⟩, s.records⟩ :=
+      else .error ⟨⟨.S015, p, payText k s.fuel⟩, s.records⟩ :=
   chargeWith_apply p k _ c s
 
 theorem get_apply (c : Ctx) (s : St) : (get : M St) c s = .ok (s, s) := rfl

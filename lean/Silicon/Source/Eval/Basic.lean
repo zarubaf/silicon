@@ -570,14 +570,17 @@ def chargeWith (pos : Pos) (units : Nat) (cannot : Nat → String) : M Unit := d
   if units ≤ s.fuel then set { s with fuel := s.fuel - units }
   else fail .S015 pos (cannot s.fuel)
 
+/-! The message of a charge of `units` when `left` units remain. -/
+def payText (units left : Nat) : String :=
+  s!"the fuel cannot pay {intText units} unit(s); {intText left} remain; raise --fuel"
+
 def charge (pos : Pos) (units : Nat) : M Unit :=
-  chargeWith pos units fun left =>
-    s!"the fuel cannot pay {intText units} unit(s); {intText left} remain"
+  chargeWith pos units (payText units)
 
 /-! The charge of an entry function at the bound 0. The fuel is 0 there, so it fails. -/
 def exhausted (pos : Pos) : M α := do
   charge pos 1
-  fail .S015 pos "the fuel is exhausted"
+  fail .S015 pos "the fuel is exhausted; raise --fuel"
 
 /-! A monad that runs `M` and changes its context. `Elab` runs its walk in such a monad. -/
 class Runs (m : Type → Type) extends Monad m, MonadLiftT M m, MonadReaderOf Ctx m,
@@ -592,7 +595,7 @@ own depth checks, so it clears `site`.
 def nested [Runs m] (pos : Pos) (act : m α) : m α := do
   let c ← readThe Ctx
   if c.limit ≤ c.depth then
-    monadLift (fail .S015 pos s!"the nesting depth goes above {c.limit}" : M Unit)
+    monadLift (fail .S015 pos s!"the nesting depth goes above {c.limit}; raise --depth" : M Unit)
   withTheReader Ctx (fun c => { c with depth := c.depth + 1, site := none }) act
 
 /-!
