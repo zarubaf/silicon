@@ -432,6 +432,7 @@ impl Evaluator<'_> {
         let mut keyed = Vec::with_capacity(steps.len());
         let mut stop = None;
         let held = self.held_path(&base, known);
+        let tracked = held.is_none().then(|| self.static_path(&base)).flatten();
         let on_agg = matches!(self.opnd_seen(&base), Seen::Agg(_));
         let at = self.store.park(base.into_out());
         let mut held = match held {
@@ -441,6 +442,10 @@ impl Evaluator<'_> {
             }
             None => None,
         };
+        let follows = tracked.is_some();
+        if let Some(r) = tracked {
+            self.store.cursor_static(at, r);
+        }
         for (n, step) in steps.iter().enumerate() {
             // A selection of a hardware aggregate normalizes an empty part, which charges its
             // size. As in Lean, that charge comes before the next index evaluates, so the
@@ -470,7 +475,12 @@ impl Evaluator<'_> {
             match key {
                 Ok(k) => {
                     let next = held.and_then(|ty| self.held_step(ty, &k));
-                    self.store.cursor_step(at, next.map(|(number, _)| number));
+                    let number = if follows {
+                        self.held_step(known, &k).map(|(number, _)| number)
+                    } else {
+                        next.map(|(number, _)| number)
+                    };
+                    self.store.cursor_step(at, number);
                     held = next.map(|(_, ty)| ty);
                     after = known.and_then(|t| self.key_ty(t, &k));
                     keyed.push(k);
@@ -515,6 +525,16 @@ impl Evaluator<'_> {
         };
         (matches!(r.root, Root::Local(..)) && matches!(self.store.root(&r.root), Val::Agg(_)))
             .then(|| (r.clone(), ty))
+    }
+
+    /// The reference of a base that is a part of a static local. The read follows the numbers of
+    /// its steps, so its result resolves at the part where it ends.
+    fn static_path(&self, base: &Opnd) -> Option<Ref> {
+        let Opnd::Static(Out::Ref(r)) = base else {
+            return None;
+        };
+        (matches!(r.root, Root::Local(..)) && matches!(self.store.root(&r.root), Val::Static(_)))
+            .then(|| r.clone())
     }
 
     /// The number of the step `key`, which the walk takes from a part of type `ty`, and the type
