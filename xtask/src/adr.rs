@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The rule `adr-frozen`: an ADR whose status was `accepted` at the merge base with `origin/main`
-//! changes only in its `- Status:` line (ADR 0001). A new ADR is free. The check skips when the
-//! clone has no `origin/main`, because it has no base to compare with.
+//! changes only in its `- Status:` line (ADR 0001). A new ADR is free. On `origin/main` itself the
+//! base is the previous commit. A clone without `origin/main` skips the check, and a CI run (the
+//! variable `CI`) fails.
 
 use std::path::{Path, PathBuf};
 
@@ -55,15 +56,54 @@ pub fn problem(base: &str, now: Option<&str>) -> Option<String> {
     }
 }
 
-fn merge_base(root: &Path) -> Option<String> {
-    git(root, &["rev-parse", "--verify", "--quiet", BASE_REF]).ok()?;
-    let out = git(root, &["merge-base", "HEAD", BASE_REF]).ok()?;
-    Some(String::from_utf8(out).ok()?.trim().to_owned())
+/// What the check compares with.
+enum Base {
+    Commit(String),
+    /// There is no earlier commit to compare with.
+    Skip,
+    /// `origin/main` or the merge base is missing.
+    Missing,
 }
 
+/// The merge base with `origin/main`. On `origin/main` itself the base is the previous commit, so
+/// that the run on `main` catches a direct edit.
+fn base_commit(root: &Path) -> Base {
+    let rev = |args: &[&str]| -> Option<String> {
+        let out = git(root, args).ok()?;
+        Some(String::from_utf8(out).ok()?.trim().to_owned())
+    };
+    let Some(merge_base) = rev(&["merge-base", "HEAD", BASE_REF]) else {
+        return Base::Missing;
+    };
+    if rev(&["rev-parse", "HEAD"]).as_deref() != Some(merge_base.as_str()) {
+        return Base::Commit(merge_base);
+    }
+    match rev(&["rev-parse", "--verify", "--quiet", "HEAD~1"]) {
+        Some(parent) => Base::Commit(parent),
+        None => Base::Skip,
+    }
+}
+
+/// The check. `ci` is true on a CI run, where a missing base is a failure and not a skip.
 pub fn check(repo: &Repo) -> Result<Vec<Violation>> {
-    let Some(base) = merge_base(&repo.root) else {
-        return Ok(Vec::new());
+    check_with(repo, std::env::var_os("CI").is_some())
+}
+
+fn check_with(repo: &Repo, ci: bool) -> Result<Vec<Violation>> {
+    let base = match base_commit(&repo.root) {
+        Base::Commit(base) => base,
+        Base::Missing if ci => {
+            return Ok(vec![Violation {
+                path: PathBuf::from(ADR_DIR),
+                line: None,
+                rule: "adr-frozen",
+                severity: Severity::Error,
+                message: format!(
+                    "`{BASE_REF}` or the merge base is missing, so the check cannot compare the ADRs;                      fetch the full history (`fetch-depth: 0`) and `{BASE_REF}`"
+                ),
+            }]);
+        }
+        Base::Skip | Base::Missing => return Ok(Vec::new()),
     };
     let listing = git(
         &repo.root,
@@ -141,11 +181,57 @@ mod tests {
         run(dir, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
         std::fs::write(dir.join("doc/adr/0002-b.md"), ACCEPTED).unwrap();
         run(dir, &["add", "."]);
+        run(dir, &["commit", "--quiet", "-m", "new"]);
         let repo = Repo::discover_in(dir).unwrap();
-        assert!(check(&repo).unwrap().is_empty());
+        assert!(check_with(&repo, true).unwrap().is_empty());
         std::fs::write(dir.join("doc/adr/0001-a.md"), ACCEPTED.replace("A.", "B.")).unwrap();
-        let found = check(&repo).unwrap();
+        let found = check_with(&repo, true).unwrap();
         assert_eq!(found.len(), 1, "{found:?}");
         assert_eq!(found[0].rule, "adr-frozen");
+    }
+
+    fn repository() -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().unwrap();
+        init(tmp.path());
+        std::fs::create_dir_all(tmp.path().join(ADR_DIR)).unwrap();
+        std::fs::write(tmp.path().join("doc/adr/0001-a.md"), ACCEPTED).unwrap();
+        run(tmp.path(), &["add", "."]);
+        run(tmp.path(), &["commit", "--quiet", "-m", "x"]);
+        tmp
+    }
+
+    #[test]
+    fn missing_base_skips_locally_and_fails_in_ci() {
+        let tmp = repository();
+        let repo = Repo::discover_in(tmp.path()).unwrap();
+        assert!(check_with(&repo, false).unwrap().is_empty());
+        let found = check_with(&repo, true).unwrap();
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].message.contains("fetch-depth"));
+    }
+
+    #[test]
+    fn edit_on_main_is_caught_against_the_previous_commit() {
+        let tmp = repository();
+        let dir = tmp.path();
+        std::fs::write(dir.join("doc/adr/0001-a.md"), ACCEPTED.replace("A.", "B.")).unwrap();
+        run(dir, &["commit", "--quiet", "-am", "edit"]);
+        run(dir, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        let repo = Repo::discover_in(dir).unwrap();
+        let found = check_with(&repo, true).unwrap();
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].rule, "adr-frozen");
+    }
+
+    #[test]
+    fn clean_main_passes() {
+        let tmp = repository();
+        let dir = tmp.path();
+        std::fs::write(dir.join("doc/adr/0002-b.md"), ACCEPTED).unwrap();
+        run(dir, &["add", "."]);
+        run(dir, &["commit", "--quiet", "-m", "new"]);
+        run(dir, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        let repo = Repo::discover_in(dir).unwrap();
+        assert!(check_with(&repo, true).unwrap().is_empty());
     }
 }
