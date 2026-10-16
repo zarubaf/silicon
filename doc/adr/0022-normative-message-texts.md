@@ -5,7 +5,11 @@
 
 ## Context
 
-[ADR 0017](0017-error-column-is-normative.md) makes the code, the line, and the column of the first error normative. It keeps the message text outside the contract. Since then, the user made a rule. When a language rule rejects code, the message tells the user how to fix it. Lean and Rust print the same text. Section 6.2 of the front-end spec now makes some texts normative. Examples are `S016` (#178), `S018` for a child input (#200), and the budget messages with their fix (#250, #252). The harnesses pin them with `expected-message`. The drift review of 2026-10-16 found that this practice contradicts ADR 0017.
+[ADR 0017](0017-error-column-is-normative.md) makes the code, the line, and the column of the first error normative. It keeps the message text outside the contract.
+
+Since then, the user made a rule. When a language rule rejects code, the message tells the user how to fix it. Lean and Rust print the same text.
+
+Section 6.2 of the front-end spec now makes some texts normative. Examples are `S016` (#178), `S018` for a child input (#200), and the budget messages with their fix (#250, #252). The harnesses pin them with `expected-message`. The drift review of 2026-10-16 found that this practice contradicts ADR 0017.
 
 ## Decision
 
