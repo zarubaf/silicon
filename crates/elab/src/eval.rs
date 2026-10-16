@@ -697,6 +697,8 @@ impl Store {
         for k in at {
             #[cfg(test)]
             crate::counters::add(crate::counters::Count::Settled, 1);
+            #[cfg(test)]
+            crate::counters::add(crate::counters::Count::Logged, 1);
             let cursor = self.cursors.get(k).and_then(Option::as_ref);
             // A read that walks a path waits at the part of its cursor, and its later steps only
             // go deeper. Other references wait at their own path.
