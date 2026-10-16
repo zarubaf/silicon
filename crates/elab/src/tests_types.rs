@@ -587,8 +587,8 @@ fn the_uses_of_a_parameter_linked_to_a_deep_path_do_constant_work() {
     assert_eq!(steps(200, 200) - steps(200, 100), 0);
 }
 
-/// `k` parameters of one array of `len` elements, all linked to the same element of `a`.
-fn linked_target(len: usize, k: usize) -> String {
+/// `k` parameters of one array of `len` elements, all bound to the same element of `a`.
+fn shared_target(len: usize, k: usize) -> String {
     let xs = vec!["0"; len].join(", ");
     let params = (0..k)
         .map(|i| format!("comptime x{i}: [Nat; {len}]"))
@@ -602,20 +602,18 @@ fn linked_target(len: usize, k: usize) -> String {
     )
 }
 
-/// The copies of the targets wait for the charge of the argument sizes. A run that fails at
-/// that charge copies none, so its work does not grow with `k` times the size of the target.
+/// Each argument copies into the frame after the charge of its own size. A run that fails in the
+/// parameters copies at most the units that it charged, for any `k`.
 #[test]
-fn a_failed_charge_copies_no_linked_target() {
-    let cloned = |k: usize| {
-        let src = linked_target(1000, k);
-        // The sizes of the `k` arguments charge twice at a first use, after the copies of the
-        // targets would run. This fuel stops the run at the first charge.
-        let fuel = crate::tests::cost(&src, "f()") - 1000 * k as u64 - 1500;
+fn a_failed_charge_copies_at_most_the_charged_units() {
+    for k in [8, 16] {
+        let src = shared_target(1000, k);
+        let fuel = crate::tests::cost(&src, "f()") / 2;
         let text = crate::tests::out(&src, "f()", fuel, 1000);
         assert!(text.starts_with("S015"), "{text}");
-        crate::counters::of(fuel).cloned
-    };
-    assert_eq!(cloned(4), cloned(16));
+        let copies = crate::counters::of(fuel).copies;
+        assert!(0 < copies && copies <= fuel, "{k} {copies}");
+    }
 }
 
 /// `k` parameters after `n`, whose types read `n`, and a use whose first argument is the leaf of
