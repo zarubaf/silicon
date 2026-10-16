@@ -245,7 +245,7 @@ impl History {
             let own = first_from(&node.own, mark).map(|pos| Start { pos, used: d });
             let pop = path
                 .get(d)
-                .and_then(|k| node.pops.get(&(k + 1)))
+                .and_then(|k| k.checked_add(1).and_then(|len| node.pops.get(&len)))
                 .and_then(|list| first_from(list, mark))
                 .map(|pos| Start { pos, used: d + 1 });
             for s in own.into_iter().chain(pop) {
