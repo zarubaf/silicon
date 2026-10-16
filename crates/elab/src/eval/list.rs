@@ -5,8 +5,8 @@
 //! only after its charge, and `pop` charges the element before it takes the element out.
 
 use super::agg::Delta;
+use super::history::{Change, Entry};
 use super::place::Held;
-use super::undo::Undo;
 use super::{Evaluator, Opnd, Out, Res, at, expr_pos, fail, need};
 use crate::Code;
 use crate::hw::{Seen, Val};
@@ -98,12 +98,12 @@ impl Evaluator<'_> {
         self.edit_list(pos, &place, Some(delta), |ys| ys.push(w))?;
         if let Some(stats) = stats {
             let keys = place.keys.clone();
-            let undo = Undo {
+            let entry = Entry {
                 keys,
-                saved: None,
+                change: Change::Push,
                 stats,
             };
-            self.store.log_edit(place.root, undo);
+            self.store.log_edit(place.root, entry);
         }
         Ok(Some(Out::Made(Val::Static(Value::Unit))))
     }
@@ -179,12 +179,12 @@ impl Evaluator<'_> {
                 return self.not_a_list(pos, g, &place);
             };
             if let Some(stats) = stats {
-                let undo = Undo {
+                let entry = Entry {
                     keys: place.keys.clone(),
-                    saved: Some(w.clone()),
+                    change: Change::Pop(w.clone()),
                     stats,
                 };
-                self.store.log_edit(place.root, undo);
+                self.store.log_edit(place.root, entry);
             }
             return Ok(Some(Out::Made(Val::Static(w))));
         }
