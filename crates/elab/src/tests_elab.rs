@@ -1110,7 +1110,6 @@ fn module_parameter_reads(depth: usize, k: usize) -> String {
 /// A read of an earlier parameter in a parameter type of a module is a local read: the steps do
 /// not grow with the number of reads, and they grow at most with the depth of the path (#190).
 #[test]
-#[ignore = "#190"]
 fn the_reads_of_an_earlier_module_parameter_do_constant_work() {
     let steps = |depth: usize, k: usize| {
         let fuel = 600_000_000 + (depth as u64) * 1000 + k as u64;

@@ -636,7 +636,6 @@ fn parameter_reads(depth: usize, k: usize) -> String {
 /// A read of an earlier parameter in a parameter type is a local read: the steps do not grow with
 /// the number of reads, and they grow at most with the depth of the path of the argument (#190).
 #[test]
-#[ignore = "#190"]
 fn the_reads_of_an_earlier_parameter_do_constant_work() {
     let steps = |depth: usize, k: usize| path_steps(&parameter_reads(depth, k), "f()");
     let base = steps(100, 100);
