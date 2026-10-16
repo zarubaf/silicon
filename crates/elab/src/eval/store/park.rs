@@ -80,15 +80,13 @@ impl Store {
     pub(in crate::eval) fn resume(&mut self, from: usize) -> Vec<Out> {
         let (outs, marks) = self.release(from);
         // The latest mark first: reads of one part then undo each entry of the log once.
-        let mut settled: Vec<Out> = outs
-            .into_iter()
-            .zip(marks.iter())
-            .rev()
-            .map(|(out, mark)| match mark {
+        let mut settled: Vec<Out> = Vec::with_capacity(outs.len());
+        for (out, mark) in outs.into_iter().zip(marks.iter()).rev() {
+            settled.push(match mark {
                 Some(mark) => self.resolved(out, *mark),
                 None => out,
-            })
-            .collect();
+            });
+        }
         settled.reverse();
         for mark in marks.into_iter().flatten() {
             self.close_log(mark.root);

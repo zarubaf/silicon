@@ -12,6 +12,7 @@ pub(super) use history::Mark;
 use super::Out;
 use crate::agg::Agg;
 use crate::hw::{Part, Ref, Root, Seen, Val};
+use crate::ops::{Fault, Fuel};
 use crate::types::TyId;
 use crate::value::Value;
 use cursor::Cursor;
@@ -309,8 +310,8 @@ impl Store {
         Some(cur)
     }
 
-    /// Pushes `w` onto the list at `keys` of the static local at `root`. The caller logs the
-    /// change with `log_push`.
+    /// Pushes `w` onto the list at `keys` of the static local at `root`. The caller made a `Before` token
+    /// first and logs the change with `log_push` on it.
     pub(super) fn push_static(&mut self, root: Root, keys: &[usize], w: Value) {
         self.decide_holds(root);
         if let Some(Value::List(_, ys)) = self.part_mut(root, keys) {
@@ -319,7 +320,8 @@ impl Store {
     }
 
     /// Pops the last element of the list at `keys` of the static local at `root`, if there is
-    /// a list. The caller logs the change with `log_pop`.
+    /// a list. The caller made a `Before` token
+    /// first and logs the change with `log_pop` on it.
     pub(super) fn pop_static(&mut self, root: Root, keys: &[usize]) -> Option<Value> {
         self.decide_holds(root);
         match self.part_mut(root, keys) {
@@ -328,31 +330,32 @@ impl Store {
         }
     }
 
-    /// The size of the last element of the list at `keys` of the static local at `root`, if
-    /// there is a list. It counts the walk that `pop_last` makes after the caller paid.
-    pub(super) fn last_size(&mut self, root: Root, keys: &[usize]) -> Option<u64> {
-        match self.part_mut(root, keys) {
-            Some(Value::List(_, ys)) => Some(ys.last().map_or(0, Value::size)),
-            _ => None,
-        }
-    }
-
-    /// Pops the last element of the list that `last_size` found, and counts the mutation. No
-    /// read waits at the local, so nothing is logged. The walk repeats the counted walk of
-    /// `last_size`, so it counts no steps.
-    pub(super) fn pop_last(&mut self, root: Root, keys: &[usize]) -> Value {
+    /// Pops the last element of the list at `keys` of the static local at `root`, after it pays
+    /// the size of that element from `fuel`. No read waits at the local, so nothing is logged.
+    /// The walk down the path happens once, and a payment that fails leaves the list as it is.
+    /// `None` if the part is no list. The pay takes the fuel as a parameter because it must come
+    /// between the look at the element and its removal.
+    pub(super) fn pop_paying(
+        &mut self,
+        root: Root,
+        keys: &[usize],
+        fuel: &mut Fuel,
+    ) -> Option<Result<Value, Fault>> {
         self.decide_holds(root);
-        let popped = match self.part_in(root, keys) {
-            Some(Value::List(_, ys)) => ys.pop().unwrap_or(Value::Unit),
-            _ => Value::Unit,
+        let Some(Value::List(_, ys)) = self.part_mut(root, keys) else {
+            return None;
         };
+        if let Err(fault) = fuel.pay(u128::from(ys.last().map_or(0, Value::size))) {
+            return Some(Err(fault));
+        }
+        let popped = ys.pop().unwrap_or(Value::Unit);
         self.mutated(root);
-        popped
+        Some(Ok(popped))
     }
 
     /// Takes the aggregate root of the local at `root` out of its slot, for a change along
     /// `keys` that the caller makes on it. The caller gives it back with `put_back`, and logs the
-    /// change with `log_push` or `log_pop`.
+    /// change with `log_push` or `log_pop` on a `Before` token made before this call.
     pub(super) fn take_agg(&mut self, root: Root, keys: &[usize]) -> Option<Box<Agg>> {
         self.decide_holds(root);
         self.add_steps(keys.len() as u64);
@@ -373,7 +376,8 @@ impl Store {
         }
     }
 
-    /// Puts `v` into the slot of the local at `root`, after `take_agg` or `take_for_rebind`.
+    /// Puts `v` into the slot of the local at `root`, after `take_agg` or `take_for_rebind`. It logs
+    /// nothing and decides no hold, because the take did both.
     pub(super) fn put_back(&mut self, root: Root, v: Val) {
         if let Root::Local(k, id) = root
             && let Some(slot) = self.frames.get_mut(k).and_then(|f| f.get_mut(&id))
