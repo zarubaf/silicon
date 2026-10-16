@@ -31,23 +31,27 @@ type At = (usize, usize);
 struct Sites {
     /// The `diagnostic` statements, by message.
     diagnostics: BTreeMap<String, At>,
-    /// The calls `let s: Int = ...;`, by module and result name. The
-    /// position is that of the call expression.
+    /// The calls `let s: Int = ...;`, by the module or the function that
+    /// holds them and by result name. The position is that of the call
+    /// expression.
     calls: BTreeMap<(String, String), At>,
 }
 
 impl Sites {
     fn of(text: &str) -> Sites {
         let mut sites = Sites::default();
-        let mut module = String::new();
+        let mut scope = String::new();
         for (n, line) in text.lines().enumerate() {
             let code = line.trim_start();
             let col = line.len() - code.len() + 1;
-            if let Some(rest) = code.strip_prefix("module ") {
+            let head = code
+                .strip_prefix("module ")
+                .or_else(|| code.strip_prefix("comptime fn "));
+            if let Some(rest) = head {
                 rest.split('(')
                     .next()
                     .unwrap_or_default()
-                    .clone_into(&mut module);
+                    .clone_into(&mut scope);
             } else if let Some(rest) = code.strip_prefix("diagnostic(\"") {
                 let message = rest.split('"').next().unwrap_or_default();
                 sites.diagnostics.insert(message.to_owned(), (n + 1, col));
@@ -57,7 +61,7 @@ impl Sites {
                 if rest[name.len()..].starts_with(": Int = ") {
                     sites
                         .calls
-                        .insert((module.clone(), name.to_owned()), (n + 1, col + lead));
+                        .insert((scope.clone(), name.to_owned()), (n + 1, col + lead));
                 }
             }
         }
@@ -146,7 +150,7 @@ impl Walk<'_> {
                     let mut logged = Vec::new();
                     exec_logged(s, env, &self.scope, &mut logged)?;
                     for l in &logged {
-                        let line = self.line(frame, s, l)?;
+                        let line = self.line(frame, l)?;
                         self.lines.push(line);
                     }
                 }
@@ -189,22 +193,21 @@ impl Walk<'_> {
         Ok(())
     }
 
-    /// The record line of `logged`, which statement `s` of `frame` made.
-    fn line(&self, frame: &Frame, s: &Stmt, logged: &Logged) -> Result<String, Fault> {
+    /// The record line of `logged`, which a statement of `frame` made.
+    fn line(&self, frame: &Frame, logged: &Logged) -> Result<String, Fault> {
         let (line, col) = *self
             .sites
             .diagnostics
             .get(&logged.message)
             .ok_or(Fault::Type)?;
-        let frames = match (&logged.callee, s) {
-            (None, _) => String::new(),
-            (Some(callee), Stmt::MutCall { name, .. }) => {
-                let key = (frame.module.to_owned(), name.clone());
-                let (l, c) = *self.sites.calls.get(&key).ok_or(Fault::Type)?;
-                format!("(call {callee} {l} {c})")
-            }
-            (Some(_), _) => return Err(Fault::Type),
-        };
+        let mut frames = Vec::new();
+        for f in &logged.frames {
+            let scope = f.within.as_deref().unwrap_or(frame.module);
+            let key = (scope.to_owned(), f.result.clone());
+            let (l, c) = *self.sites.calls.get(&key).ok_or(Fault::Type)?;
+            frames.push(format!("(call {} {l} {c})", f.callee));
+        }
+        let frames = frames.join(" ");
         Ok(format!(
             "(record {line} {col} {} ({frames}) {})",
             frame.emitted,

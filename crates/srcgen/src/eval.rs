@@ -275,20 +275,30 @@ fn callee<'s>(name: &'s str, env: &'s Env, scope: &'s Scope) -> Result<&'s str, 
     }
 }
 
-/// The part of an observation record that the evaluator knows: the
-/// message and the value, and the function that the `diagnostic` ran in.
-/// A `diagnostic` of a module body has no callee.
+/// One call frame of an observation record: the item that the call runs,
+/// the function whose body holds the call (none: a module body), and the
+/// name that the call binds, which keys the call in the printed text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Frame {
+    pub(crate) callee: String,
+    pub(crate) within: Option<String>,
+    pub(crate) result: String,
+}
+
+/// The part of an observation record that the evaluator knows: the call
+/// frames from the module body to the `diagnostic`, outermost first, the
+/// message, and the value. A `diagnostic` of a module body has no frame.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Logged {
-    pub(crate) callee: Option<String>,
+    pub(crate) frames: Vec<Frame>,
     pub(crate) message: String,
     value: String,
 }
 
 impl Logged {
-    fn new(callee: Option<&str>, message: &str, value: &Value) -> Logged {
+    fn new(message: &str, value: &Value) -> Logged {
         Logged {
-            callee: callee.map(str::to_owned),
+            frames: Vec::new(),
             message: message.to_owned(),
             value: value.serialize(),
         }
@@ -331,11 +341,7 @@ fn call_mut(
         }
     }
     if let Some((message, value)) = &def.diag {
-        log.push(Logged::new(
-            Some(&def.name),
-            message,
-            &eval(value, &inner, scope)?,
-        ));
+        log.push(Logged::new(message, &eval(value, &inner, scope)?));
     }
     let result = typed(&STy::Int, eval(&def.ret, &inner, scope)?)?;
     let new = inner.statics.remove("a0").ok_or(Fault::Type)?;
@@ -357,9 +363,21 @@ pub(crate) fn exec_logged(
     scope: &Scope,
     log: &mut Vec<Logged>,
 ) -> Result<(), Fault> {
+    exec_in(s, env, scope, log, None)
+}
+
+/// `exec_logged` for a statement in the body of the function `within`, or
+/// in a module body if none.
+fn exec_in(
+    s: &Stmt,
+    env: &mut Env,
+    scope: &Scope,
+    log: &mut Vec<Logged>,
+    within: Option<&str>,
+) -> Result<(), Fault> {
     match s {
         Stmt::Diagnostic(message, value) => {
-            log.push(Logged::new(None, message, &eval(value, env, scope)?));
+            log.push(Logged::new(message, &eval(value, env, scope)?));
         }
         Stmt::StaticLet(name, _, value) | Stmt::MutLet(name, _, value) => {
             let v = eval(value, env, scope)?;
@@ -391,7 +409,16 @@ pub(crate) fn exec_logged(
             };
             let arg = typed(&STy::Int, eval(arg, env, scope)?)?;
             let old = env.statics.get(root).cloned().ok_or(Fault::Type)?;
+            let start = log.len();
             let (new, result) = call_mut(def, typed(&def.root, old)?, arg, scope, log)?;
+            let frame = Frame {
+                callee: def.name.clone(),
+                within: within.map(str::to_owned),
+                result: name.clone(),
+            };
+            for logged in log.iter_mut().skip(start) {
+                logged.frames.insert(0, frame.clone());
+            }
             env.statics.insert(root.clone(), new);
             env.statics.insert(name.clone(), result);
         }
