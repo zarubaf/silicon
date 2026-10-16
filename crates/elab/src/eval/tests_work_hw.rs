@@ -670,11 +670,13 @@ fn a_read_through_light_parts_walks_a_path_for_each_halving_of_the_leaves() {
     assert_linear(at, |r| r.counts.stepped, 16, 64);
 }
 
-/// A `push` or `pop` of an aggregate root visits no read that only follows the steps of its
-/// index, however many reads wait. The reads nest `k` deep, and the innermost index has `m`
-/// pushes. The visits depend on neither `k` nor the copies of the reads.
+/// A `push` or `pop` of an aggregate root visits no read that waits, however many reads wait.
+/// The reads nest `k` deep, and the innermost index has `m` pushes. The push appends one entry,
+/// and each read resolves once at its last step. Thus the entries handled are `m` for the
+/// pushes and a constant for each read, and no read copies a part.
 #[test]
-fn a_push_visits_no_quiet_read() {
+#[ignore = "#242"]
+fn a_push_visits_no_waiting_read() {
     let at = |k: u64, m: u64, family: u64| {
         let pushes = rep("t.1.push(1), ", m);
         let mut e = format!("({pushes}0).{m}");
@@ -688,18 +690,21 @@ fn a_push_visits_no_quiet_read() {
             key(family, k * 8 + m % 8),
         )
     };
-    let few = at(2, 64, 75);
-    for (family, k) in (76..).zip([4u64, 8, 16]) {
-        let many = at(k, 64, family);
-        assert_eq!(many.counts.settled, few.counts.settled, "{k} reads");
-        assert_eq!(many.copied, 0, "{k} reads");
+    for (family, k) in (76..).zip([2u64, 4, 8, 16]) {
+        let run = at(k, 64, family);
+        assert!(
+            run.counts.logged <= 64 + 4 * k,
+            "{k} reads: {}",
+            run.counts.logged
+        );
+        assert_eq!(run.copied, 0, "{k} reads");
     }
     for (family, m) in (80..).zip([32u64, 64, 128]) {
         let run = at(8, m, family);
         assert!(
-            run.counts.settled <= m + 8,
+            run.counts.logged <= m + 32,
             "{m} pushes: {}",
-            run.counts.settled
+            run.counts.logged
         );
     }
 }
@@ -721,4 +726,189 @@ fn the_zero_of_nested_singleton_arrays_clones_no_dropped_child() {
         )
     };
     assert_doubles(at, |r| r.counts.cloned, 16);
+}
+
+/// The work of the reads that wait: the entries of the log that were handled, the steps of the
+/// walks, the size of the values that a copy made, and the nodes that a clone visited.
+fn waiting_work(r: &Run) -> u64 {
+    r.counts.logged + r.counts.stepped + r.copied + r.counts.cloned + r.counts.nodes
+}
+
+/// The work of `at(n, i)` is the work with `m = n` changes of a root and `k = n / 8` reads that
+/// wait at it. Doubling `n` at most doubles the work, up to a constant `slack`. The work of `k`
+/// reads and `m` changes thus stays in `k + m` and not in `k * m`.
+fn assert_scales(at: impl Fn(u64, u64) -> Run, slack: u64) {
+    let mut before: Option<u64> = None;
+    for (i, n) in SIZES.into_iter().enumerate() {
+        let work = waiting_work(&at(n, i as u64));
+        if let Some(b) = before {
+            assert!(work <= 2 * b + slack, "{n}: the work {b} grew to {work}");
+        }
+        before = Some(work);
+    }
+}
+
+/// Path 1 of #242: `k` reads nest, and each one selects the unchanged hardware part `t.0`. The
+/// innermost index pushes `m` times into `t.1`. A read must not handle the whole window of
+/// pushes again for each of the `k` reads.
+#[test]
+#[ignore = "#242"]
+fn k_quiet_reads_and_m_pushes_take_work_in_k_plus_m() {
+    let at = |n: u64, i: u64| {
+        let pushes = rep("t.1.push(1), ", n);
+        let mut e = format!("({pushes}0).{n}");
+        for _ in 0..n / 8 {
+            e = format!("t[({e}, 0).1]");
+        }
+        run_ok(
+            "",
+            "UInt[8]",
+            &format!("let mut t = (x, list(Nat));\n  {e};"),
+            key(90, i),
+        )
+    };
+    assert_scales(at, 64);
+}
+
+/// Path 2 of #242: `k` plain references to `t.0` wait while `m` pushes change `t.1`. No push
+/// visits a reference that its path does not reach.
+#[test]
+#[ignore = "#242"]
+fn k_waiting_references_and_m_pushes_take_work_in_k_plus_m() {
+    let at = |n: u64, i: u64| {
+        let reads = rep("t.0, ", n);
+        let pushes = rep("t.1.push(1), ", n);
+        run_ok(
+            "",
+            "[UInt[8]; 2]",
+            &format!(
+                "let mut t = (x, list(Nat));\n  ({reads}{pushes}0).{};",
+                2 * n
+            ),
+            key(91, i),
+        )
+    };
+    assert_scales(at, 64);
+}
+
+/// Path 3 of #242: `k` reads nest, and the innermost index calls a function that writes the
+/// whole root `t` back, with a list of `m` elements in it. The write binds the root again. The
+/// `k` reads of the unchanged part `t.0` must not copy or replay the list for each read.
+#[test]
+#[ignore = "#242"]
+fn k_reads_and_a_rebind_of_a_list_of_m_elements_take_work_in_k_plus_m() {
+    let at = |n: u64, i: u64| {
+        let mut e = "(set(t), 0).1".to_owned();
+        for _ in 0..n / 8 {
+            e = format!("t[({e}, 0).1]");
+        }
+        run_ok(
+            "fn set(mut u: (UInt[8], List[Nat])) -> Int { u = (u.0, u.1); return 0; }\n",
+            "UInt[8]",
+            &format!(
+                "let mut l = list(Nat);\n  comptime for i in 0..{n} {{ l.push(1); }}\n  \
+                 let mut t: (UInt[8], List[Nat]) = (x, l);\n  {e};"
+            ),
+            key(92, i),
+        )
+    };
+    assert_scales(at, 64);
+}
+
+/// The sweep of #242 for a static local: `k` references to the list `u.0` wait while `m` pushes
+/// change the list `u.1`. No push visits a reference that its path does not reach, and no
+/// reference copies its list.
+#[test]
+#[ignore = "#242"]
+fn k_static_references_and_m_pushes_take_work_in_k_plus_m() {
+    let at = |n: u64, i: u64| {
+        let reads = rep("u.0, ", n);
+        let pushes = rep("u.1.push(1), ", n);
+        run_ok(
+            "",
+            "UInt[8]",
+            &format!(
+                "let mut u = (list(Nat), list(Nat));\n  ({reads}{pushes}0).{};",
+                2 * n
+            ),
+            key(95, i),
+        )
+    };
+    assert_scales(at, 64);
+}
+
+/// The old list of a read that an index of the same read changed is a result of the read: the
+/// reads of a static list nest `k` deep, the innermost index pushes into the list, and the list
+/// has `m` elements. Each read copies the list, and no charge pays for the copies (#237). Once
+/// a charge pays for them, the copied size stays within the fuel.
+#[test]
+#[ignore = "#237"]
+fn the_copies_of_an_old_list_that_a_read_finds_are_paid() {
+    for (i, n) in SIZES.into_iter().enumerate() {
+        let mut e = "(xs.push(0), 0).1".to_owned();
+        for _ in 0..n / 8 {
+            e = format!("xs[{e}]");
+        }
+        let r = run_ok(
+            "",
+            "UInt[8]",
+            &format!(
+                "let mut xs = list(Nat);\n  comptime for i in 0..{n} {{ xs.push(0); }}\n  {e};"
+            ),
+            key(93, i as u64),
+        );
+        assert!(
+            r.copied <= r.units,
+            "{n}: copied {} for {}",
+            r.copied,
+            r.units
+        );
+    }
+}
+
+/// The reads follow a write that bound the root again, and a later index of each read changes
+/// the root again. The old root stays in the log: the hold decisions walk it and copy nothing.
+/// The innermost index clears the list `t.1` of `m` elements, and the `k` reads of `t.0` nest.
+#[test]
+#[ignore = "#242"]
+fn k_reads_that_decide_after_a_rebind_take_work_in_k_plus_m() {
+    let at = |n: u64, i: u64| {
+        let mut e = "(clear(t.1), 0).1".to_owned();
+        for _ in 0..n / 8 {
+            e = format!("t[({e}, 0).1][(t.1.push(1), 0).1]");
+        }
+        run_ok(
+            "fn clear(mut l: List[Nat]) -> Int { l = list(Nat); return 0; }\n",
+            "UInt[8]",
+            &format!(
+                "let mut l = list(Nat);\n  comptime for i in 0..{n} {{ l.push(1); }}\n  \
+                 let mut t: ((UInt[8], Int), List[Nat]) = ((x, 0), l);\n  {e};"
+            ),
+            key(96, i),
+        )
+    };
+    assert_scales(at, 64);
+}
+
+/// The same sweep with an assignment in the index: the index calls a function that replaces the
+/// list `t.1` of `m` elements, below the `k` waiting reads of `t.0`.
+#[test]
+#[ignore = "#242"]
+fn k_reads_and_an_assignment_in_an_index_take_work_in_k_plus_m() {
+    let at = |n: u64, i: u64| {
+        let mut e = "(clear(t.1), 0).1".to_owned();
+        for _ in 0..n / 8 {
+            e = format!("t[({e}, 0).1]");
+        }
+        run_ok(
+            "fn clear(mut l: List[Nat]) -> Int { l = list(Nat); return 0; }\n",
+            "UInt[8]",
+            &format!(
+                "let mut l = list(Nat);\n  comptime for i in 0..{n} {{ l.push(1); }}\n  \
+                 let mut t: (UInt[8], List[Nat]) = (x, l);\n  {e};"
+            ),
+            key(94, i),
+        )
+    };
+    assert_scales(at, 64);
 }

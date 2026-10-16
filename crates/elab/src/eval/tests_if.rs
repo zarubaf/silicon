@@ -42,7 +42,7 @@ fn run_if(
     s: &str,
     run: u64,
     fuel: u64,
-    base: impl FnOnce(&mut Evaluator<'_>, PathId, TyId) -> Val,
+    base: impl FnOnce(&mut Evaluator<'_>, PathId, TyId) -> Val + Send,
 ) -> String {
     run_shown(&assign_in(t, s), run, fuel, base, tree)
 }

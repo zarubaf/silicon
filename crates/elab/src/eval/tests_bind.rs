@@ -325,13 +325,25 @@ pub(super) fn run_f(
     src: &str,
     run: u64,
     fuel: u64,
-    base: impl FnOnce(&mut Evaluator<'_>, PathId, TyId) -> Val,
+    base: impl FnOnce(&mut Evaluator<'_>, PathId, TyId) -> Val + Send,
 ) -> String {
     run_shown(src, run, fuel, base, hw_text)
 }
 
 /// `run_f` with the text `shown` of the hardware value of each core `let`.
 pub(super) fn run_shown(
+    src: &str,
+    run: u64,
+    fuel: u64,
+    base: impl FnOnce(&mut Evaluator<'_>, PathId, TyId) -> Val + Send,
+    shown: Shown,
+) -> String {
+    parse::on_stack(1024, move || run_shown_here(src, run, fuel, base, shown))
+        .unwrap_or_else(|_| "stack".to_owned())
+}
+
+/// `run_shown` on the thread that calls it.
+fn run_shown_here(
     src: &str,
     run: u64,
     fuel: u64,
