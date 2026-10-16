@@ -509,11 +509,17 @@ impl Builder {
         self.conversion(t, body)
     }
 
-    /// The argument that spells the value `n` of the finite type `t` again,
-    /// so that a context of the module is reached under a second spelling.
-    pub(super) fn respelled(&mut self, t: &STy, n: &BigInt) -> SExpr {
-        let literal = self.finite_literal(n.clone());
-        self.conversion(t, literal)
+    /// The argument that spells the value `v` of the parameter type `t`
+    /// again, so that a context of the module is reached under a second
+    /// spelling.
+    pub(super) fn respelled(&mut self, t: &STy, v: &Value) -> SExpr {
+        match v {
+            Value::UInt(_, n) | Value::SInt(_, n) => {
+                let literal = self.finite_literal(n.clone());
+                self.conversion(t, literal)
+            }
+            v => value_expr(v),
+        }
     }
 
     /// A literal of `n` with a random spelling; a negative one has one.

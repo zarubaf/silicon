@@ -11,9 +11,9 @@
 //! expression builder names such a function: a value call has no `mut`
 //! formal.
 
-use super::stat::Kind;
+use super::stat::{self, Kind};
 use super::{Builder, Ctx};
-use crate::program::Stmt;
+use crate::program::{SExpr, STy, Stmt};
 
 impl Builder {
     /// The next message `d<n>`. Each `diagnostic` has its own.
@@ -23,16 +23,69 @@ impl Builder {
         message
     }
 
-    /// `diagnostic("dK", value);` of an `Int` or a `Bool` that holds in each
-    /// env of the frame.
+    /// `diagnostic("dK", value);` of a static value that holds in each env
+    /// of the frame: an integer or a Boolean, a string, a container literal,
+    /// or a name of any other static type (a list, a function, a finite
+    /// integer). The record shows the serialization of the value (spec 7.1).
     pub(super) fn diagnostic(&mut self, ctx: &Ctx, out: &mut Vec<Stmt>) {
-        let kind = if self.tape.below(3) == 2 {
-            Kind::Bool
-        } else {
-            Kind::Int
-        };
-        let (value, _) = self.evaluated(kind, self.reach(ctx), &ctx.envs);
+        let value = self.diagnostic_value(ctx);
         note!(self, diagnostics);
         out.push(Stmt::Diagnostic(self.next_message(), value));
+    }
+
+    fn diagnostic_value(&mut self, ctx: &Ctx) -> SExpr {
+        let r = self.reach(ctx);
+        let scalar = |b: &mut Builder, kind| b.evaluated(kind, r, &ctx.envs).0;
+        // The names of each type that a literal does not make.
+        let named = |is: fn(&STy) -> bool| -> Vec<&String> {
+            ctx.statics
+                .iter()
+                .filter(|(_, t)| is(t))
+                .map(|(n, _)| n)
+                .collect()
+        };
+        let candidate = match self.tape.below(12) {
+            0..=2 => return scalar(self, Kind::Int),
+            3 => return scalar(self, Kind::Bool),
+            4 => self.sexpr(Kind::Str, stat::DEPTH, r),
+            5 | 6 => {
+                let ty = self.static_container_ty();
+                self.container(&ty, stat::DEPTH, r)
+            }
+            7 => match self.record_ty() {
+                Some(ty) => self.container(&ty, stat::DEPTH, r),
+                None => return scalar(self, Kind::Int),
+            },
+            8 => {
+                let finite = named(|t| matches!(t, STy::UInt(_) | STy::SInt(_)));
+                if finite.is_empty() {
+                    self.pick_name(&named(|t| matches!(t, STy::Fn(_))))
+                } else {
+                    self.pick_name(&finite)
+                }
+            }
+            9 | 10 => {
+                let lists = named(|t| matches!(t, STy::List(_)));
+                if lists.is_empty() || self.tape.below(3) == 0 {
+                    self.list_value(r).0
+                } else {
+                    self.pick_name(&lists)
+                }
+            }
+            _ => self.pick_name(&named(|t| !matches!(t, STy::Nat | STy::Int | STy::Bool))),
+        };
+        if self.values(&candidate, &ctx.envs).is_some() {
+            note!(self, structured_diagnostics);
+            return candidate;
+        }
+        scalar(self, Kind::Int)
+    }
+
+    /// One of `names`, or the literal `0` if there is none.
+    fn pick_name(&mut self, names: &[&String]) -> SExpr {
+        match names.get(self.tape.index(names.len())) {
+            Some(n) => SExpr::Name((*n).clone()),
+            None => stat::int(0),
+        }
     }
 }

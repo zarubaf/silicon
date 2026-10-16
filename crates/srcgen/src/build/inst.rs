@@ -7,7 +7,6 @@ use super::stat::value_expr;
 use super::{Builder, Built, CONTEXTS, Ctx, Hw, Module};
 use crate::eval::{Env, Fault, Value, convert};
 use crate::program::{HExpr, Place, SExpr, STy, Stmt};
-use num_bigint::BigInt;
 
 impl Builder {
     /// Whether module `m` can instantiate module `j`: a later module, and a
@@ -41,7 +40,7 @@ impl Builder {
                     })
             })
             .collect();
-        let pool = if self.tape.below(3) == 0 && !again.is_empty() {
+        let pool = if self.tape.below(2) == 0 && !again.is_empty() {
             &again
         } else {
             &children
@@ -50,6 +49,11 @@ impl Builder {
             return Ok(false);
         };
         self.instantiate(ctx, m, j, out)?;
+        // A second `instance` of a child with a finite parameter reaches
+        // its context again, often under another spelling (#188).
+        if again.contains(&j) && self.tape.flag() {
+            self.instantiate(ctx, m, j, out)?;
+        }
         Ok(true)
     }
 
@@ -63,10 +67,10 @@ impl Builder {
     ) -> Built {
         let sig = self.sigs.get(j).cloned().ok_or(Fault::Type)?;
         let mut args = Vec::new();
+        let again = self.known_tuple(j);
         for (i, (_, t)) in sig.params.iter().enumerate() {
-            let again = self.known_value(j, i, t);
-            args.push(match again {
-                Some(n) => self.respelled(t, &n),
+            args.push(match again.as_ref().and_then(|a| a.get(i)) {
+                Some(v) => self.respelled(t, v),
                 None => self.argument(t, self.reach(ctx), &ctx.envs),
             });
         }
@@ -92,19 +96,22 @@ impl Builder {
         Ok(())
     }
 
-    /// A value that a context of module `j` already holds for its finite
-    /// parameter `i` of type `t`, half the time: the argument then reaches
-    /// that context again, and the spelling may differ.
-    fn known_value(&mut self, j: usize, i: usize, t: &STy) -> Option<BigInt> {
-        if !matches!(t, STy::UInt(_) | STy::SInt(_)) || !self.tape.flag() {
+    /// An argument tuple that a context of module `j` already holds, in
+    /// three of four calls, if `j` has a finite parameter: the arguments
+    /// then reach that context again, and the spelling of a finite one may
+    /// differ.
+    fn known_tuple(&mut self, j: usize) -> Option<Vec<Value>> {
+        let finite = self
+            .sigs
+            .get(j)?
+            .params
+            .iter()
+            .any(|(_, t)| matches!(t, STy::UInt(_) | STy::SInt(_)));
+        if !finite || self.tape.below(4) == 0 {
             return None;
         }
         let known = self.contexts.get(j)?;
-        let tuple = known.get(self.tape.index(known.len()))?;
-        match tuple.get(i)? {
-            Value::UInt(_, n) | Value::SInt(_, n) => Some(n.clone()),
-            _ => None,
-        }
+        known.get(self.tape.index(known.len())).cloned()
     }
 
     /// The argument tuple of each env, recorded as contexts of module `j`.

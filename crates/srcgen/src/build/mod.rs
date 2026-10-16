@@ -80,7 +80,7 @@ const OUTPUTS: u32 = 3;
 const CONSTS: u32 = 3;
 const FNS: u32 = 2;
 const HELPERS: u32 = 2;
-const MODULE_STMTS: u32 = 8;
+const MODULE_STMTS: u32 = 10;
 const NESTED_STMTS: u32 = 4;
 const NESTING: u32 = 2;
 /// The most elements of a tuple or an array, and the most levels of
@@ -361,6 +361,7 @@ struct Stats {
     /// Identities that two spellings of a finite argument reached.
     aliased_args: u32,
     diagnostics: u32,
+    structured_diagnostics: u32,
     effectful_fns: u32,
     effectful_calls: u32,
 }

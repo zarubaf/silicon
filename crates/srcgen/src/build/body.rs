@@ -346,6 +346,16 @@ impl Builder {
             clocked: sig.clocked,
             names: Names::default(),
         };
+        // The record of a finite parameter shows its converted value.
+        for (n, t) in &ctx.statics {
+            if matches!(t, STy::UInt(_) | STy::SInt(_)) && self.tape.flag() {
+                note!(self, structured_diagnostics);
+                body.push(Stmt::Diagnostic(
+                    self.next_message(),
+                    SExpr::Name(n.clone()),
+                ));
+            }
+        }
         body.extend(self.frame(&mut ctx, &mut m, 0)?);
         // The first module that no parent reaches yet gets this one as a
         // parent, so that most signatures become modules of the tree.
@@ -377,14 +387,14 @@ impl Builder {
         let mut instances = 0;
         for _ in 0..self.tape.below(max + 1) {
             let nested = level < NESTING;
-            match self.tape.below(20) {
+            match self.tape.below(22) {
                 1 => self.static_let(ctx, &mut m.names, &mut out)?,
                 12 => self.list_let(ctx, &mut m.names, &mut out)?,
                 13 => self.push_stmt(ctx, &mut out),
                 14 => self.pop_stmt(ctx, &mut m.names, &mut out),
                 15 => self.static_mut_call(ctx, &mut m.names, &mut out)?,
                 16 => self.hw_mut_call(ctx, m, &mut out)?,
-                17 | 19 => self.diagnostic(ctx, &mut out),
+                17 | 19 | 20 | 21 => self.diagnostic(ctx, &mut out),
                 2 => self.binding(ctx, &mut m.names, &mut out, true)?,
                 3 => self.assign(ctx, &mut m.names, &mut out)?,
                 4 => self.wire(ctx, &mut m.names, &mut out)?,
