@@ -1,7 +1,7 @@
 // The cost of a read whose index pushes into a list part and then rebinds the root (section
 // 5.4). The write-back of `rebind` copies the waiting read, and the copy undoes the push first,
-// so the read finds the list as it was before the index and charges the size of its result. The fuel equal to the total of `cost`
-// succeeds, and one unit less gives `S015`.
+// so the read finds the list as it was before the index and charges the size of its result.
+// The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
 // FUEL 290
 // TOP M()
 fn rebind(mut z: ((UInt[8], List[Nat]), [Int; 2])) -> Int {

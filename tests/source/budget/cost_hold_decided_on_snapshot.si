@@ -1,8 +1,7 @@
-// The cost of a read whose indices rebind the root (section 5.4). Lean decides if an index holds
-// the root from the part as the read found it before the earlier index, not from the root after
-// that index. The first `g(t)` rebinds `t` to static parts, but the part of the read was
-// hardware when it waited, so the second index holds nothing and its `g(t)` charges no size of `t`. Each index whose
-// `g(t)` rebinds `t` then charges the size of its result as its last step.
+// The cost of a read whose indices rebind the root (section 5.4). The first `g(t)` rebinds `t`
+// to static parts. That index changed the root of its read, so the read ends there: it charges
+// the size of its result, and the result is a new value that holds no local. The second index
+// reads that new value, so its `g(t)` charges no size of `t`.
 // The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
 // FUEL 517
 // TOP M()
