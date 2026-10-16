@@ -92,6 +92,7 @@ const OPERATORS: &[(&str, SyntaxKind)] = &[
     (":=", SyntaxKind::ColonEq),
     ("::", SyntaxKind::ColonColon),
     ("->", SyntaxKind::Arrow),
+    ("=>", SyntaxKind::FatArrow),
     ("..", SyntaxKind::DotDot),
     ("+%", SyntaxKind::PlusPercent),
     ("-%", SyntaxKind::MinusPercent),
@@ -326,9 +327,9 @@ mod tests {
     fn every_keyword_of_the_grammar() {
         let words = "import as pub const type struct comptime fn module extern let mut return \
                      if else for in conforms using true false reg wire mem input output \
-                     instance domains with";
+                     instance domains with enum match";
         let lexed = kinds(words);
-        assert_eq!(lexed.len(), 29);
+        assert_eq!(lexed.len(), 31);
         assert!(lexed.iter().all(|k| format!("{k:?}").ends_with("Kw")));
     }
 
@@ -393,6 +394,9 @@ mod tests {
         assert_eq!(kinds(".."), [DotDot]);
         assert_eq!(kinds("::"), [ColonColon]);
         assert_eq!(kinds("->"), [Arrow]);
+        assert_eq!(kinds("=>"), [FatArrow]);
+        assert_eq!(kinds("==>"), [EqEq, Gt]);
+        assert_eq!(kinds("Op::Add"), [Ident, ColonColon, Ident]);
         assert_eq!(kinds(">>>"), [Shr, Gt]);
         assert_eq!(kinds("a.b"), [Ident, Dot, Ident]);
         assert_eq!(kinds("<<= "), [Shl, Eq]);

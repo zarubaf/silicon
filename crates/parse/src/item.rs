@@ -9,7 +9,16 @@ use syntax::SyntaxKind::{self, *};
 fn starts_item(kind: SyntaxKind) -> bool {
     matches!(
         kind,
-        ConstKw | FnKw | ModuleKw | ComptimeKw | ImportKw | PubKw | TypeKw | StructKw | ExternKw
+        ConstKw
+            | FnKw
+            | ModuleKw
+            | ComptimeKw
+            | ImportKw
+            | PubKw
+            | TypeKw
+            | StructKw
+            | ExternKw
+            | EnumKw
     )
 }
 
@@ -42,6 +51,10 @@ impl Parser<'_> {
             TypeKw => self.node(AliasItem, Self::alias_item),
             ImportKw | PubKw | ExternKw => {
                 self.later_slice(self.offset(), "this item");
+                None
+            }
+            EnumKw => {
+                self.later_slice(self.offset(), "an enum");
                 None
             }
             _ => {

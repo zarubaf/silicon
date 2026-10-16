@@ -512,6 +512,11 @@ fn later_slice_syntax_is_s004() {
         ("const X: T::U = f;", 1, 11),
         ("const X: a::T = f;", 1, 11),
         ("const X: T = @field(x, \"f\");", 1, 14),
+        ("enum E: UInt[1] { A = 0 }", 1, 1),
+        ("const X: T = match (x) { _ => 0 };", 1, 14),
+        ("const X: T = f(match (x) { _ => 0 });", 1, 16),
+        ("fn f() -> T { return match (x) { _ => 0 }; }", 1, 22),
+        ("fn f() -> T { match (x) { _ => 0 }; }", 1, 15),
     ];
     let wrong: Vec<_> = cases
         .iter()
@@ -532,6 +537,10 @@ fn later_slice_syntax_is_s004() {
 fn syntax_errors_are_s001_at_the_first_bad_token() {
     let cases = [
         ("const", 1, 6),
+        ("const match: T = 1;", 1, 7),
+        ("fn f(enum: T) -> T { }", 1, 6),
+        ("const X: T = a => b;", 1, 16),
+        ("const X: T = 1 + match (x) { _ => 1 };", 1, 18),
         ("const X: T = ;", 1, 14),
         ("const X: T = 1", 1, 15),
         ("const X: T = 1;\n\nfoo", 3, 1),
