@@ -192,19 +192,6 @@ enum Located {
     Open(Witness),
 }
 
-impl Cursor {
-    /// The path of the part that the read waits at. A cursor that is not live waits at the path
-    /// of its parked reference.
-    fn waits_at(&self) -> &[usize] {
-        let n = if self.live {
-            self.part.path.len()
-        } else {
-            self.base
-        };
-        self.part.path.get(..n).unwrap_or_default()
-    }
-}
-
 /// The values that a result can refer to: the table of constants by item index, and the
 /// stack of frames. The last frame is the current frame. A frame holds only the bindings
 /// that ran.
@@ -473,7 +460,7 @@ impl Store {
         };
         for at in list {
             let located = match self.cursors.get(at) {
-                Some(Some(c)) if c.live && !c.on_witness() => Some(self.locate(at, c)),
+                Some(Some(c)) if c.live && !c.on_witness() => Some(self.locate(c)),
                 _ => None,
             };
             match located {
@@ -493,26 +480,15 @@ impl Store {
         }
     }
 
-    /// Walks the path of the cursor at `at` once: down the live root, or down the old root in the
-    /// log after a write that bound the root again. A part that is a static value, or an absent one,
+    /// Walks the path of the cursor once down the live root. A read ends at its first index that
+    /// changes the root, so the window of a read that decides a hold is empty and the live root is
+    /// the root that the index found. A part that is a static value, or an absent one,
     /// is `Static`. Else the witness goes through the part along the heavy part of each node,
     /// for as many steps as the read has left. A path that ends below a reference or a hardware
     /// leaf closes the witness there: as in Lean, such a part has no root.
-    fn locate(&self, at: usize, c: &Cursor) -> Located {
+    fn locate(&self, c: &Cursor) -> Located {
         let path = &c.part.path;
-        let old = match (self.parked.get(at), self.marks.get(at)) {
-            (Some(Out::Ref(_)), Some(Some(mark))) => {
-                if self.restarted(*mark, c.waits_at())
-                    && self.old_root(*mark, c.waits_at()).is_none()
-                {
-                    // An element that a `pop` took out is a static value.
-                    return Located::Static;
-                }
-                self.old_root(*mark, c.waits_at())
-            }
-            _ => None,
-        };
-        let value = old.unwrap_or_else(|| self.root(&c.part.root));
+        let value = self.root(&c.part.root);
         let closed_at = |n: usize| {
             Located::Open(Witness {
                 path: path.get(..n).unwrap_or_default().to_vec(),

@@ -41,8 +41,8 @@
 //!   is held while a read waits, so the write charges its size first.
 //!
 //! Every other path copies nothing or the part where the read ends: a resume of a reference, a
-//! hold decision (it walks the old root in the log, or finds a static element), a view of the
-//! old root, an error, and a frame that ends.
+//! hold decision (it walks the live root, as a read ends at the index that changes it), a view of
+//! the old root, an error, and a frame that ends.
 //!
 //! Every walk keeps to the path of a place, and no walk recurses over the depth of a value.
 
@@ -480,21 +480,6 @@ impl Store {
         }
     }
 
-    /// The position of the entry in the window that starts the old part at `path` of the local:
-    /// the earliest entry that replaced it or a part above it.
-    fn restart_of(&self, mark: Mark, path: &[usize]) -> Option<usize> {
-        self.history
-            .get(&mark.root)?
-            .start(path, mark.at)
-            .map(|s| s.pos)
-    }
-
-    /// Whether the window has an entry that replaced the part at `path` of the local or a part
-    /// above it.
-    pub(super) fn restarted(&self, mark: Mark, path: &[usize]) -> bool {
-        self.restart_of(mark, path).is_some()
-    }
-
     /// How the steps of the read parked at `at` walk, when it takes its result back. The steps
     /// walk the live local while no entry crossed them and none started the old part. They walk
     /// the old local in the log (`View`) when a write that bound the local again started it and
@@ -537,13 +522,6 @@ impl Store {
                 if clear { Walk::Old(s.pos) } else { Walk::Copy }
             }
         }
-    }
-
-    /// The old local in the log for the part at `path`, if a write that bound the local again
-    /// started the old part. The hold decisions of a read walk it in place of a copy.
-    pub(super) fn old_root(&self, mark: Mark, path: &[usize]) -> Option<&Val> {
-        let log = self.history.get(&mark.root)?;
-        log.saved(log.start(path, mark.at)?.pos)
     }
 
     /// The length that the list at `path` had when the read at `mark` parked, if a `push` or a
