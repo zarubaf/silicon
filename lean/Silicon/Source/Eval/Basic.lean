@@ -504,8 +504,10 @@ abbrev Record := String
 The state holds the fuel, the table of constants by item index, and the table of struct
 specializations. It also holds the locals of the current frame and the names of the current
 instantiation. `holds` counts the waiting results that hold each local of the frame (section
-5.4). `pending` counts the open windows of each root of the frame (section 9.1). `records` holds
-the observation records of the elaboration in their order (section 8.2).
+5.4). `changes` counts the mutations of each local of the frame, so an index finds that it
+changed its root (section 5.4). `pending` counts the open windows of each root of the frame
+(section 9.1). `records` holds the observation records of the elaboration in their order
+(section 8.2).
 -/
 structure St where
   fuel : Nat
@@ -513,6 +515,7 @@ structure St where
   specs : Specs
   frame : Std.HashMap Nat Slot
   holds : Std.HashMap Nat Nat
+  changes : Std.HashMap Nat Nat
   pending : Std.TreeMap Nat Nat compare
   naming : Naming
   records : Array Record
@@ -616,11 +619,14 @@ caller holds no local of the new frame, and a window of the caller holds no root
 tables of the caller wait unchanged, with no copy.
 -/
 def inFrame [Runs m] (ret : Option Ty) (act : m α) : m α := do
-  let saved ← monadLift (do let s ← get; return (s.frame, s.holds, s.pending) : M _)
-  monadLift (modify fun s => { s with frame := {}, holds := {}, pending := {} } : M Unit)
+  let saved ← monadLift (do
+    let s ← get; return (s.frame, s.holds, s.changes, s.pending) : M _)
+  monadLift (modify fun s =>
+    { s with frame := {}, holds := {}, changes := {}, pending := {} } : M Unit)
   let r ← withTheReader Ctx (fun c => { c with ret }) act
   monadLift (modify fun s =>
-    { s with frame := saved.1, holds := saved.2.1, pending := saved.2.2 } : M Unit)
+    { s with frame := saved.1, holds := saved.2.1, changes := saved.2.2.1,
+             pending := saved.2.2.2 } : M Unit)
   return r
 
 /-!

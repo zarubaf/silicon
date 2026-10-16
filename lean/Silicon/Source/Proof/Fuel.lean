@@ -341,6 +341,9 @@ theorem shut_f (i : Nat) : Follows cap (shut i) (shut i) := by
 theorem held_f (p : Pos) (i : Nat) : Follows cap (held p i) (held p i) := by
   unfold held; follows
 
+theorem changesOf_f (o : Out) : Follows cap (changesOf o) (changesOf o) := by
+  unfold changesOf; follows
+
 theorem static_f (p : Pos) (v : Val) :
     Follows cap (static p v) (static p v) := by
   unfold static; follows
@@ -888,7 +891,7 @@ theorem follows_all : ∀ n,
           call_f (he k) (ht k) (hb k), spec_f (he k) (ht k), need_f, data_f, apply_f,
           hwUnary_f, test_f, hwBinary_f, unify_f, mux_f, static_f, pick_f, element_f, tupleOf_f,
           arrayOf_f, select_f, containerOp_f, arrayTy_f, field_f, strAt_f, hold_f, release_f,
-          normalize_f, aggEq_f,
+          changesOf_f, normalize_f, aggEq_f,
           operands_f (he k), comparable_f, params_f (ht k), fnTy_f, structural_f]
       · rw [eval.eq_def (k + 1), eval.eq_def (m + 1)]
         apply Follows.charge_one
@@ -897,7 +900,7 @@ theorem follows_all : ∀ n,
           call_f (he m) (ht m) (hb m), spec_f (he m) (ht m), need_f, data_f, apply_f,
           hwUnary_f, test_f, hwBinary_f, unify_f, mux_f, static_f, pick_f, element_f, tupleOf_f,
           arrayOf_f, select_f, containerOp_f, arrayTy_f, field_f, strAt_f, hold_f, release_f,
-          normalize_f, aggEq_f,
+          changesOf_f, normalize_f, aggEq_f,
           operands_f (he m), comparable_f, params_f (ht m), fnTy_f, structural_f]
     · rcases n' with _ | m
       · rw [typeExpr.eq_def (k + 1), typeExpr.eq_def 0]

@@ -38,7 +38,9 @@ The operators follow v0.1 section 3. These rules settle the open points of slice
   for` wait too. A waiting result that refers to a static value in a local holds the local
   (`hold`). A mutation of a held local charges the size of the local before the change
   (`held`). The charge is the last step before the change, and it comes once for each mutation.
-  The mutations are an assignment, `push`, `pop`, and a write-back.
+  The mutations are an assignment, `push`, `pop`, and a write-back. An index whose own index
+  changed the local of its base reads an old part. It charges the size of its result after the
+  range check, and the result is a new value (`changesOf`).
 - A hardware arm and a structural context each start a guard at the current nesting depth
   (section 9.4). `structural` starts these contexts: a type expression, a type index,
   `[T; N]`, `fn (...) -> R`, the first use of a constant, a struct use, and a `mem` depth. A
@@ -327,12 +329,20 @@ def release (o : Out) : M Unit := waits o (· - 1)
 
 /-!
 A mutation at `p` of the local `id` that a waiting result holds charges the size of the local
-before the change (section 5.4). Thus a later copy of the waiting results is paid.
+before the change (section 5.4). Thus a later copy of the waiting results is paid. Each mutation
+calls it as its last step, so it also counts the change of the local (`changes`).
 -/
 def held (p : Pos) (id : Nat) : M Unit := do
   let s ← get
   if s.holds.getD id 0 != 0 then
     if let some sl := s.frame[id]? then charge p sl.value.size
+  modify fun s => { s with changes := s.changes.insert id (s.changes.getD id 0 + 1) }
+
+/-! The number of mutations of the local that `o` refers to, if any (section 5.4). -/
+def changesOf (o : Out) : M Nat := do
+  match o.root with
+  | some id => return (← get).changes.getD id 0
+  | none => return 0
 
 /-!
 Opens at `p` a window of the root `id` of the current frame (section 9.1). A root that is
@@ -1343,12 +1353,18 @@ mutual
         let o ← need b (← eval n b)
         let v ← data p o.value
         if v matches .static (.type _) then fail .S007 p "a complete type takes no index"
+        let k ← changesOf o
         hold o
         let i ← static x.pos (← need x (← eval n x)).value
         release o
         if let .static (.str s) := v then
           return some ⟨.static (← strAt p x.pos s i), false, none⟩
-        return some (part o v (← pick p x.pos v i))
+        let r := part o v (← pick p x.pos v i)
+        -- An index that changed the root reads an old part: it pays the copy, and the result is
+        -- a new value (section 5.4).
+        if (← changesOf o) == k then return some r
+        charge p r.value.size
+        return some ⟨r.value, false, none⟩
       | .field p b f => do
         let o ← need b (← eval n b)
         match o.value with
@@ -1931,7 +1947,7 @@ of its top expression.
 def start (budget : Budget) (items : Array Resolve.Item) (top : Scan) : Ctx × St :=
   let syms := symbols items ((items.map scanItem).push top) (items.map scanRest)
   (⟨items, budget.depth, 0, none, 0, syms, ⟨none, 0⟩, [], none, none, "-", []⟩,
-   ⟨budget.fuel, Array.replicate items.size .notStarted, {}, {}, {}, {}, {}, #[]⟩)
+   ⟨budget.fuel, Array.replicate items.size .notStarted, {}, {}, {}, {}, {}, {}, #[]⟩)
 
 /-!
 Runs `act` with the budget. The result has the used fuel. The records come with both outcomes:
