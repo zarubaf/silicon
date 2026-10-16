@@ -675,7 +675,6 @@ fn a_read_through_light_parts_walks_a_path_for_each_halving_of_the_leaves() {
 /// and each read resolves once at its last step. Thus the entries handled are `m` for the
 /// pushes and a constant for each read, and no read copies a part.
 #[test]
-#[ignore = "#242"]
 fn a_push_visits_no_waiting_read() {
     let at = |k: u64, m: u64, family: u64| {
         let pushes = rep("t.1.push(1), ", m);
@@ -752,7 +751,6 @@ fn assert_scales(at: impl Fn(u64, u64) -> Run, slack: u64) {
 /// innermost index pushes `m` times into `t.1`. A read must not handle the whole window of
 /// pushes again for each of the `k` reads.
 #[test]
-#[ignore = "#242"]
 fn k_quiet_reads_and_m_pushes_take_work_in_k_plus_m() {
     let at = |n: u64, i: u64| {
         let pushes = rep("t.1.push(1), ", n);
@@ -773,7 +771,6 @@ fn k_quiet_reads_and_m_pushes_take_work_in_k_plus_m() {
 /// Path 2 of #242: `k` plain references to `t.0` wait while `m` pushes change `t.1`. No push
 /// visits a reference that its path does not reach.
 #[test]
-#[ignore = "#242"]
 fn k_waiting_references_and_m_pushes_take_work_in_k_plus_m() {
     let at = |n: u64, i: u64| {
         let reads = rep("t.0, ", n);
@@ -795,7 +792,6 @@ fn k_waiting_references_and_m_pushes_take_work_in_k_plus_m() {
 /// whole root `t` back, with a list of `m` elements in it. The write binds the root again. The
 /// `k` reads of the unchanged part `t.0` must not copy or replay the list for each read.
 #[test]
-#[ignore = "#242"]
 fn k_reads_and_a_rebind_of_a_list_of_m_elements_take_work_in_k_plus_m() {
     let at = |n: u64, i: u64| {
         let mut e = "(set(t), 0).1".to_owned();
@@ -819,7 +815,6 @@ fn k_reads_and_a_rebind_of_a_list_of_m_elements_take_work_in_k_plus_m() {
 /// change the list `u.1`. No push visits a reference that its path does not reach, and no
 /// reference copies its list.
 #[test]
-#[ignore = "#242"]
 fn k_static_references_and_m_pushes_take_work_in_k_plus_m() {
     let at = |n: u64, i: u64| {
         let reads = rep("u.0, ", n);
@@ -870,7 +865,6 @@ fn the_copies_of_an_old_list_that_a_read_finds_are_paid() {
 /// the root again. The old root stays in the log: the hold decisions walk it and copy nothing.
 /// The innermost index clears the list `t.1` of `m` elements, and the `k` reads of `t.0` nest.
 #[test]
-#[ignore = "#242"]
 fn k_reads_that_decide_after_a_rebind_take_work_in_k_plus_m() {
     let at = |n: u64, i: u64| {
         let mut e = "(clear(t.1), 0).1".to_owned();
@@ -893,7 +887,6 @@ fn k_reads_that_decide_after_a_rebind_take_work_in_k_plus_m() {
 /// The same sweep with an assignment in the index: the index calls a function that replaces the
 /// list `t.1` of `m` elements, below the `k` waiting reads of `t.0`.
 #[test]
-#[ignore = "#242"]
 fn k_reads_and_an_assignment_in_an_index_take_work_in_k_plus_m() {
     let at = |n: u64, i: u64| {
         let mut e = "(clear(t.1), 0).1".to_owned();
