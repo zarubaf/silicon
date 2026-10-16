@@ -1,6 +1,6 @@
 # 23. The source generator predicts the observe records
 
-- Status: accepted
+- Status: accepted, partly superseded by ADR 0024
 - Date: 2026-10-16
 
 ## Context
