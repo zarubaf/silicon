@@ -62,10 +62,16 @@ kinds! {
     InstanceKw,
     DomainsKw,
     WithKw,
+    /// `enum` of slice 3 (ADR 0021).
+    EnumKw,
+    /// `match` of slice 3 (ADR 0021).
+    MatchKw,
     // Operators of two characters.
     ColonEq,
     ColonColon,
     Arrow,
+    /// `=>`: the arrow of a `match` arm (slice 3).
+    FatArrow,
     DotDot,
     PlusPercent,
     MinusPercent,
@@ -211,6 +217,8 @@ impl SyntaxKind {
             "instance" => Self::InstanceKw,
             "domains" => Self::DomainsKw,
             "with" => Self::WithKw,
+            "enum" => Self::EnumKw,
+            "match" => Self::MatchKw,
             _ => return None,
         })
     }

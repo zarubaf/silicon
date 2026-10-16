@@ -186,11 +186,15 @@ impl Parser<'_> {
         Some(())
     }
 
-    /// An expression: a conditional, or the operators by precedence.
+    /// An expression: a conditional, or the operators by precedence. A `match` is at the
+    /// level of the conditional, and it is a later phase of slice 3.
     pub(crate) fn expr(&mut self) -> Res {
         let start = self.offset();
         self.outermost(start, |p| {
-            if p.is(IfKw) {
+            if p.is(MatchKw) {
+                p.later_slice(p.offset(), "a `match`");
+                None
+            } else if p.is(IfKw) {
                 p.cond_form()
             } else {
                 p.binary(0)
