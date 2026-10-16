@@ -56,6 +56,8 @@ impl Win {
         if order.is_empty() {
             return None;
         }
+        #[cfg(test)]
+        crate::counters::add(crate::counters::Count::Logged, order.len() as u64);
         order.sort_by(|&a, &b| {
             let (x, y) = (
                 entries.get(a).map(|e| &e.keys),
@@ -279,6 +281,8 @@ impl Store {
                 .iter()
                 .rev()
             {
+                #[cfg(test)]
+                crate::counters::add(crate::counters::Count::Logged, 1);
                 if extends(e, &path) {
                     #[cfg(test)]
                     crate::counters::add(
@@ -313,6 +317,8 @@ impl Evaluator<'_> {
         }
         let at = r.path.len();
         let mut v = self.store.take(out);
+        #[cfg(test)]
+        crate::counters::add(crate::counters::Count::Logged, positions.len() as u64);
         for e in positions.iter().filter_map(|&e| entries.get(e)) {
             #[cfg(test)]
             crate::counters::add(
