@@ -423,8 +423,11 @@ fn eval_source(source: &str, expr: &str, budget: &Budgets) -> Result<Output, Usa
                 let len = value.serialized_len();
                 let left = budget.fuel.saturating_sub(used);
                 if left < len {
-                    let message =
-                        format!("the fuel cannot pay {len} unit(s) of the result; {left} remain");
+                    let need = used.saturating_add(len);
+                    let message = format!(
+                        "the fuel cannot pay {len} unit(s) of the result; {left} remain; \
+                         raise --fuel to at least {need}"
+                    );
                     error_line(elab::Code::S015, Pos { line: 1, col: 1 }, &message)
                 } else {
                     (value.serialize() + "\n", Exit::Success)
