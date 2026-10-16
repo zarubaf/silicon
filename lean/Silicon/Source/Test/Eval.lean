@@ -489,12 +489,15 @@ def chain : String := Id.run do
 /-!
 `cost` covers the top selection: its arguments with their `instance` charge, its serialization
 of 50 bytes, and its emitted name of 12 bytes. The parameter types charge at the top selection
-too, so the fuel 5 ends at the type `Bool`. Then its instantiation charges its body. The lowering
-charges 42: the module and its name 11, the domain ports 20, and the design and its name 11.
+too, and the size of each argument charges right after its typed use. The fuel 5 thus ends at
+the size of `8`, and the fuel 6 ends at the type `Bool`. Then its instantiation charges its
+body. The lowering charges 42: the module and its name 11, the domain ports 20, and the design
+and its name 11.
 -/
 def counter : String := "module Counter(comptime W: Nat, comptime E: Bool) {\n}"
 #guard top counter "Counter(8, true)" == "total 114\nCounter$8$1b 32\n"
-#guard top counter "Counter(8, true)" (fuel := 5) == "S015 1:45"
+#guard top counter "Counter(8, true)" (fuel := 5) == "S015 1:1"
+#guard top counter "Counter(8, true)" (fuel := 6) == "S015 1:45"
 #guard top counter "Counter(-1, true)" == "S012 1:1"
 #guard top counter "Counter(8, 1)" == "S010 1:1"
 #guard top counter "Counter(8)" == "S007 1:1"

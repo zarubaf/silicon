@@ -16,7 +16,8 @@ The table of instantiations is normative. An `instance` statement works in these
    new frame (`arguments`). Each parameter type evaluates in order, with each earlier parameter
    bound to its converted argument. An error in it is at its own node. A literal with `[]`
    takes this type. The argument converts to it: `S010` or `S012` at the statement. Then the
-   recursive size of the converted arguments charges, also for a done instantiation.
+   recursive size of the converted argument charges, before the next parameter type, also for a
+   done instantiation.
 3. A clocked child in a combinational module is `S017` at the statement.
 4. The serialization charges the square of the size of each integer, and its length in bytes.
    An instantiation in progress is `S019` at the statement. A done one gives its interface.
@@ -396,7 +397,7 @@ typed use (section 5.3). Each argument is static (`S011`) when it evaluates. The
 nests one level, in the scope of the module with a new frame (`Eval.bindParams`). Each parameter
 type evaluates there, with each earlier parameter bound to its converted argument. The argument
 converts to it, and a literal with `[]` takes this type. Then the recursive size of the
-converted arguments charges. The parent pays this work. The result is each parameter type with
+converted argument charges. The parent pays this work. The result is each parameter type with
 its converted argument.
 -/
 def arguments (n : Nat) (pos : Pos) (i : Nat) (xs : List Resolve.Expr) :
@@ -413,9 +414,7 @@ def arguments (n : Nat) (pos : Pos) (i : Nat) (xs : List Resolve.Expr) :
     | fail .S010 pos "an instance needs a module"
   nested pos <| inFrame none <|
       withTheReader Ctx (fun c => { c with item := i, frame := ⟨none, 0⟩ }) do
-    let tvs ← bindParams (typeExpr n) pos ps (os.map (·.1))
-    charge pos (tvs.map (·.2.size)).sum
-    return tvs
+    bindParams (typeExpr n) pos ps (os.map (·.1))
 
 /-! Runs `act` and gives the fuel that it uses. The result reads only a difference of fuel. -/
 def measure (act : EM α) : EM (α × Nat) := do

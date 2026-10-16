@@ -1195,15 +1195,17 @@ def primCall (p : Pos) (g : String) (h : PrimFn) (vs : List Val) : M (Option Out
 /-!
 The typed use at `p` of the arguments `args` at the item parameters `ps`, in order. `ty`
 evaluates the type of a parameter, so the type of a later parameter can name an earlier one. Each
-argument settles, is static, and conforms to its parameter type, and the converted value binds
-the parameter name. It gives each parameter type with its converted value. The caller sets the
-item scope and the frame, and it checks the counts.
+argument settles, is static, and conforms to its parameter type. Then its recursive size charges,
+before the next parameter type evaluates, and the converted value binds the parameter name. It
+gives each parameter type with its converted value. The caller sets the item scope and the
+frame, and it checks the counts.
 -/
 def bindParams (ty : Resolve.TypeExpr → M Ty) (p : Pos) (ps : List Resolve.Param)
     (args : List Val) : M (List (Ty × Value)) :=
   (ps.zip args).mapM fun (q, v) => do
     let t ← ty q.ty
     let w ← conform p t (← static p (← settle p t v))
+    charge p w.size
     bindLocal q.name.id ⟨some t, false, .static w⟩
     return (t, w)
 
