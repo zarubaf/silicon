@@ -537,7 +537,7 @@ fn a_static_container_with_leaf_types_holds_the_root() {
                 "t.1.1.0.0[0][(t.0.push(1), 0).1].0",
                 "a",
             ),
-            251,
+            254,
         ),
     ];
     for (src, units) in cases {
