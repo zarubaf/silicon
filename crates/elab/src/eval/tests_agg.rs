@@ -5,7 +5,7 @@
 //! their own stack. The selection cases of `Test.Eval` follow: an implicit read of a register,
 //! the steps on a reference, the work of a huge array type, and the node of an aggregate.
 
-use super::{Code, Entry, Evaluator, Out, Res, Stop};
+use super::{Code, Evaluator, Out, Res, Stop};
 use crate::agg::{Agg, Base, Node, Parts};
 use crate::counters;
 use crate::hw::{Handle, Kind, Op, Seen, Val};
@@ -326,7 +326,7 @@ fn sel_counted(
     );
     let unit = ev.tys.mk(Ty::Unit);
     for (i, v) in make(&mut ev).into_iter().enumerate() {
-        ev.store.consts[i] = Entry::Done(v, unit);
+        ev.store.finish_const(i, v, unit);
     }
     let before = ev.fuel.left();
     let r = ev.eval(top.expr()).and_then(|o| super::need(top.expr(), o));

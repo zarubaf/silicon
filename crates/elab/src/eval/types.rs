@@ -106,7 +106,7 @@ impl Evaluator<'_> {
     }
 
     fn family(&mut self, pos: Pos, k: Prelude, xs: &[Expr]) -> Res<TyId> {
-        let base = self.store.parked.len();
+        let base = self.store.parked_len();
         for x in xs {
             let o = self.eval(x)?;
             let o = need(x, o)?;
@@ -274,7 +274,7 @@ impl Evaluator<'_> {
         else {
             return fail(Code::S007, pos, "a complete type takes no index".to_owned());
         };
-        let base = self.store.parked.len();
+        let base = self.store.parked_len();
         for x in xs {
             let o = self.eval(x)?;
             let o = need(x, o)?;
@@ -322,7 +322,7 @@ impl Evaluator<'_> {
         let work = self.nested(pos, |ev| {
             ev.in_frame(None, |ev| {
                 ev.in_item(i, ROOT, |ev| {
-                    let frame = ev.store.frames.len().saturating_sub(1);
+                    let frame = ev.store.frame_index();
                     let t = ev.specialize(pos, name, i, params, fields, args);
                     ev.store.unlink(frame);
                     t
@@ -392,7 +392,7 @@ impl Evaluator<'_> {
     fn bind_argument(&mut self, pos: Pos, t: TyId, id: DeclId, o: Out) -> Res<Out> {
         let converted =
             ops::convert(t, self.store.value(&o), &mut self.fuel, &self.tys).map_err(at(pos))?;
-        let frame = self.store.frames.len().saturating_sub(1);
+        let frame = self.store.frame_index();
         match (converted, o) {
             (None, Out::Ref(r)) => {
                 self.store.link(frame, id, r.clone());

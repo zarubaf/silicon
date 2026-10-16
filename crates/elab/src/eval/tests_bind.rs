@@ -388,11 +388,7 @@ fn run_shown_here(
                 break;
             }
         }
-        let last = ev
-            .store
-            .frame()
-            .and_then(|f| f.get(&id))
-            .map(|s| val_text(ev, &s.value));
+        let last = ev.store.slot(id).map(|s| val_text(ev, &s.value));
         Ok(format!(
             "{} | {} | {}",
             lets_text(ev, shown),

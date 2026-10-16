@@ -22,10 +22,18 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// The state of a constant in the table of constants. A done constant keeps its declared
 /// type, so a read through it knows the type of each part without a walk.
-pub(super) enum Entry {
+enum Entry {
     NotStarted,
     InProgress,
     Done(Val, TyId),
+}
+
+/// How far a constant is: not started, in progress, or done.
+#[derive(Clone, Copy)]
+pub(super) enum ConstStatus {
+    Fresh,
+    InProgress,
+    Done,
 }
 
 /// A local of the current frame. A handle has no `Ty`, so its `ty` is `None`.
@@ -41,25 +49,25 @@ pub(super) struct Slot {
 static ABSENT: Val = Val::Static(Value::Bool(false));
 static ABSENT_VALUE: Value = Value::Bool(false);
 
-pub(super) type Frame = BTreeMap<DeclId, Slot>;
+type Frame = BTreeMap<DeclId, Slot>;
 
 /// The values that a result can refer to: the table of constants by item index, and the
 /// stack of frames. The last frame is the current frame. A frame holds only the bindings
 /// that ran.
 pub(super) struct Store {
-    pub(super) consts: Vec<Entry>,
+    consts: Vec<Entry>,
     pub(super) frames: Vec<Frame>,
     /// The steps of the walks along paths into values: 1 for each container that a walk
     /// enters. A test counts them, so it checks the work of a walk and not its time.
     #[cfg(test)]
-    pub(super) steps: Cell<u64>,
+    steps: Cell<u64>,
     /// The parameters of a frame that refer to an argument of the caller, by the number of
     /// the frame: a module argument refers until the instance statement pays its copy.
     links: BTreeMap<usize, BTreeMap<DeclId, Ref>>,
     /// The results that wait while a later operand of their node evaluates. A mutation of a
     /// local goes to its history and visits none of them. The resume of a result that refers to
     /// the local reads the history, so a result keeps the value that its expression read.
-    pub(super) parked: Vec<Out>,
+    parked: Vec<Out>,
     /// The mark of each parked result that refers to a local, by its position.
     marks: Vec<Option<history::Mark>>,
     /// The old local that the walk of a read finds in place of a live one (`history::View`).
@@ -179,8 +187,70 @@ impl Store {
         }
     }
 
-    pub(super) fn frame(&self) -> Option<&Frame> {
-        self.frames.last()
+    /// Starts a new empty frame, the current one.
+    pub(super) fn push_frame(&mut self) {
+        self.frames.push(Frame::new());
+    }
+
+    /// Ends the current frame.
+    pub(super) fn pop_frame(&mut self) {
+        self.frames.pop();
+    }
+
+    /// The number of the current frame. A reference to a local names its frame by this number.
+    pub(super) fn frame_index(&self) -> usize {
+        self.frames.len().saturating_sub(1)
+    }
+
+    /// Binds the local `id` in the current frame.
+    pub(super) fn bind(&mut self, id: DeclId, slot: Slot) {
+        if let Some(frame) = self.frames.last_mut() {
+            frame.insert(id, slot);
+        }
+    }
+
+    /// The local `id` of the current frame.
+    pub(super) fn slot(&self, id: DeclId) -> Option<&Slot> {
+        self.frames.last().and_then(|f| f.get(&id))
+    }
+
+    /// Removes the local `id` from the current frame and gives it.
+    pub(super) fn unbind(&mut self, id: DeclId) -> Option<Slot> {
+        self.frames.last_mut().and_then(|f| f.remove(&id))
+    }
+
+    /// How far the constant at the index `i` of the items is.
+    pub(super) fn const_status(&self, i: usize) -> ConstStatus {
+        match self.consts.get(i) {
+            Some(Entry::Done(..)) => ConstStatus::Done,
+            Some(Entry::InProgress) => ConstStatus::InProgress,
+            _ => ConstStatus::Fresh,
+        }
+    }
+
+    /// The constant at the index `i` starts to evaluate.
+    pub(super) fn begin_const(&mut self, i: usize) {
+        if let Some(entry) = self.consts.get_mut(i) {
+            *entry = Entry::InProgress;
+        }
+    }
+
+    /// The constant at the index `i` is done, with its value and its declared type.
+    pub(super) fn finish_const(&mut self, i: usize, value: Val, ty: TyId) {
+        if let Some(entry) = self.consts.get_mut(i) {
+            *entry = Entry::Done(value, ty);
+        }
+    }
+
+    /// The number of results that wait.
+    pub(super) fn parked_len(&self) -> usize {
+        self.parked.len()
+    }
+
+    /// The steps of the walks along paths so far, for a test of their work.
+    #[cfg(test)]
+    pub(super) fn steps(&self) -> u64 {
+        self.steps.get()
     }
 
     /// Opens a window of `root`: `false`, with no change, if a window of it is open already.
@@ -264,10 +334,6 @@ impl Store {
     /// Removes the links of the frame `frame`, in work for its own links only.
     pub(super) fn unlink(&mut self, frame: usize) {
         self.links.remove(&frame);
-    }
-
-    pub(super) fn frame_mut(&mut self) -> Option<&mut Frame> {
-        self.frames.last_mut()
     }
 
     pub(super) fn root(&self, root: &Root) -> &Val {

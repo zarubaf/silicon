@@ -169,7 +169,7 @@ impl Evaluator<'_> {
     ) -> Res<Vec<Actual>> {
         let mut slots: Vec<Option<Actual>> = xs.iter().map(|_| None).collect();
         // The values wait in the store, so that a later actual cannot change them.
-        let base = self.store.parked.len();
+        let base = self.store.parked_len();
         let mut values = Vec::with_capacity(xs.len());
         for (k, x) in xs.iter().enumerate() {
             let at = parameter_of(k, bound);
@@ -338,11 +338,8 @@ impl Evaluator<'_> {
     fn finals(&mut self, places: Vec<(DeclId, Place)>) -> Vec<(Place, Val)> {
         let mut written = Vec::with_capacity(places.len());
         for (id, place) in places {
-            if let Some(slot) = self.store.frame_mut().and_then(|f| f.get_mut(&id)) {
-                written.push((
-                    place,
-                    std::mem::replace(&mut slot.value, Val::Static(Value::Unit)),
-                ));
+            if let Some(slot) = self.store.unbind(id) {
+                written.push((place, slot.value));
             }
         }
         written
