@@ -51,6 +51,10 @@ Write a revert as `revert: <subject>`. Squash the fixup commits before the push.
 
 Test expectations are the files under `snapshots/` directories and every file of the shared test data directories `tests/core/`, `tests/source/`, and `tests/inventory/`. Each such file is an oracle: an input with its expectation. Adding, deleting, or editing one of these files counts, whatever the line. A change to a `Cargo.toml`, such as a `[[test]]` entry, is non-test code and goes in its own commit. The suites find their files on their own.
 
+## Frozen ADRs and API lists
+
+An accepted ADR changes only in its `- Status:` line, and the status can become only `accepted, partly superseded by ADR NNNN` or `superseded by ADR NNNN`. To change a decision, write a new ADR. The rule `adr-frozen` compares each ADR with its text at the merge base with `origin/main`, and it skips when the clone has no `origin/main`. Each library crate lists its public items in `crates/<crate>/api.txt`. The rule `api-allowlist` fails when an item is public and not in the list, and when a list entry has no item. When the change is on purpose, run `cargo xtask api-list`, read the diff of the lists, and commit the lists with the change.
+
 ## Hooks
 
 `lefthook` runs the git hooks. Nix pins it. Run `just setup` once in each clone to install them. `lefthook.yml` calls `just` recipes only:
