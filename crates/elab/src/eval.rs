@@ -87,7 +87,7 @@ enum Out {
     /// A new value that the cost model treats as a reference: a type name, a domain, a child
     /// input, a child output, or an element of a new container.
     Named(Val),
-    /// A copy of a reference to a local that a mutation settled while the result waited. Lean
+    /// A copy of a reference to a local that a change reached while the result waited. Lean
     /// keeps the root of such a result, so a static copy, or a static part of it, still holds
     /// the local (section 5.4).
     Kept(Val, Root),
@@ -157,15 +157,9 @@ struct Cursor {
     /// The steps that the read has left, so the witness need not go deeper than the read can.
     left: usize,
     /// Whether the path still follows the read. A step with no number, or a decided hold, ends
-    /// it. A cursor that is not live stays in the table, because its window of the undo log
-    /// rebuilds the old value when a mutation copies the read.
+    /// it. A cursor that is not live stays in the table, because the log rebuilds the old value
+    /// when a change replaced the part of the read.
     live: bool,
-    /// Whether the cursor is live and its read holds no root: it waits in `Store::quiet` and not
-    /// in `parked_at`, and a `push` or `pop` leaves it alone.
-    quiet: bool,
-    /// The length of the undo log of the root when the read parked. The changes of the list
-    /// parts from here on are the window of the read.
-    mark: usize,
 }
 
 /// A path to a hardware leaf, and what is known of its end.
@@ -194,25 +188,16 @@ enum Located {
     Open(Witness),
 }
 
-/// Whether a change in place at the numbers `keys` (`None`: a write that binds the root again)
-/// can reach the part at `path`: the part is a prefix or an extension of `keys`.
-fn overlap(path: &[usize], keys: Option<&[usize]>) -> bool {
-    keys.is_none_or(|keys| {
-        let n = path.len().min(keys.len());
-        path.get(..n) == keys.get(..n)
-    })
-}
-
 impl Cursor {
-    /// Whether a change at `keys` can reach the part of the cursor. A cursor that is not live
-    /// waits at the path of its parked reference.
-    fn reaches(&self, keys: Option<&[usize]>) -> bool {
+    /// The path of the part that the read waits at. A cursor that is not live waits at the path
+    /// of its parked reference.
+    fn waits_at(&self) -> &[usize] {
         let n = if self.live {
             self.part.path.len()
         } else {
             self.base
         };
-        overlap(self.part.path.get(..n).unwrap_or_default(), keys)
+        self.part.path.get(..n).unwrap_or_default()
     }
 }
 
@@ -229,15 +214,14 @@ struct Store {
     /// The parameters of a frame that refer to an argument of the caller, by the number of
     /// the frame: a module argument refers until the instance statement pays its copy.
     links: BTreeMap<usize, BTreeMap<DeclId, Ref>>,
-    /// The results that wait while a later operand of their node evaluates, and the positions
-    /// of those that refer to each local. A mutation of a local first copies the references
-    /// to it, so a result keeps the value that its expression read.
+    /// The results that wait while a later operand of their node evaluates. A mutation of a
+    /// local goes to its history and visits none of them. The resume of a result that refers to
+    /// the local reads the history, so a result keeps the value that its expression read.
     parked: Vec<Out>,
-    parked_at: BTreeMap<Root, Vec<usize>>,
-    /// The positions of the reads that follow the steps of an index of an unheld aggregate root
-    /// (`Cursor::quiet`). A `push` or `pop` of the root changes none of them, so it does not
-    /// visit them, and its work does not depend on how many reads wait.
-    quiet: BTreeMap<Root, BTreeSet<usize>>,
+    /// The mark of each parked result that refers to a local, by its position.
+    marks: Vec<Option<history::Mark>>,
+    /// The old local that the walk of a read finds in place of a live one (`history::View`).
+    view: Option<history::View>,
     /// The number of parked results that hold each local (section 5.4): a reference to a static
     /// value in the local, from its park to its resume. A copy does not end the hold. The
     /// local that each parked result holds, if any, by its position.
@@ -250,8 +234,8 @@ struct Store {
     cursors: Vec<Option<Cursor>>,
     /// The parked results with an index that evaluates now, by their local.
     armed: BTreeMap<Root, Vec<usize>>,
-    /// The push and pop changes of the list parts of each aggregate root that a read waits at,
-    /// from the oldest. A change appends one entry, and no read copies the root for it.
+    /// The changes of each local that a read waits at, from the oldest. A change appends one
+    /// entry, and no read copies the local for it.
     history: BTreeMap<Root, history::History>,
     /// The roots with an open window (section 9.1). A root has at most one, since a second one is
     /// `S008`. The
@@ -332,16 +316,18 @@ impl Store {
     }
 
     /// Parks the result `o` while a later operand of its node evaluates. It returns the
-    /// position to resume from. A reference to a local registers, so that a mutation of the
-    /// local copies the value first (`settle_root`).
+    /// position to resume from. A reference to a local opens a window of the history of the
+    /// local, so that a change of the local goes to the log and the resume of the reference
+    /// finds the old value there.
     fn park(&mut self, o: Out) -> usize {
         let at = self.parked.len();
         let mut holds = None;
+        let mut mark = None;
         if let Out::Ref(r) = &o
             && let Root::Local(..) = r.root
         {
             let root = r.root;
-            self.parked_at.entry(root).or_default().push(at);
+            mark = Some(self.open_log(root));
             // A part that is a static value holds the local, also in an aggregate root.
             let static_part = match self.root(&root) {
                 Val::Static(_) => true,
@@ -358,6 +344,7 @@ impl Store {
             holds = Some(*root);
         }
         self.parked.push(o);
+        self.marks.push(mark);
         self.held_by.push(holds);
         self.cursors.push(None);
         at
@@ -376,9 +363,6 @@ impl Store {
     /// The read parked at `at` waits at the part `r` of an aggregate root, and a later index
     /// with a call may hold the root there.
     fn cursor(&mut self, at: usize, r: Ref) {
-        let mark = self.open_log(r.root);
-        let root = r.root;
-        let quiet = matches!(self.held_by.get(at), Some(None));
         if let Some(slot) = self.cursors.get_mut(at) {
             *slot = Some(Cursor {
                 base: r.path.len(),
@@ -386,50 +370,8 @@ impl Store {
                 witness: None,
                 left: 0,
                 live: true,
-                quiet,
-                mark,
             });
-            if quiet {
-                self.quiet_remove_parked(root, at);
-                self.quiet.entry(root).or_default().insert(at);
-            }
-        } else {
-            self.close_log(root);
         }
-    }
-
-    /// The read at `at` leaves `parked_at` for `quiet`: it is the last position there.
-    fn quiet_remove_parked(&mut self, root: Root, at: usize) {
-        if let Some(list) = self.parked_at.get_mut(&root) {
-            if list.last() == Some(&at) {
-                list.pop();
-            }
-            if list.is_empty() {
-                self.parked_at.remove(&root);
-            }
-        }
-    }
-
-    /// The read at `at` can be changed by a mutation now: it moves from `quiet` back to
-    /// `parked_at`, in the order of the positions.
-    fn activate(&mut self, at: usize) {
-        let Some(Some(c)) = self.cursors.get_mut(at) else {
-            return;
-        };
-        if !c.quiet {
-            return;
-        }
-        c.quiet = false;
-        let root = c.part.root;
-        if let Some(q) = self.quiet.get_mut(&root) {
-            q.remove(&at);
-            if q.is_empty() {
-                self.quiet.remove(&root);
-            }
-        }
-        let list = self.parked_at.entry(root).or_default();
-        let i = list.partition_point(|&x| x < at);
-        list.insert(i, at);
     }
 
     /// The walk of the read takes the step `k` from the part of the cursor at `at`. A step with no
@@ -447,12 +389,10 @@ impl Store {
                     w.common += 1;
                 }
                 c.part.path.push(k);
-                return;
             }
             (_, Some(c)) => c.live = false,
-            _ => return,
+            _ => {}
         }
-        self.activate(at);
     }
 
     /// An index with a call of the read at `at` evaluates: the first change of the local in that
@@ -483,6 +423,31 @@ impl Store {
         }
     }
 
+    /// The read at `at` waits at a part that a change in its window replaced, other than a write that
+    /// bound the root again (the hold decision walks the old root in the log for that), so the live root no
+    /// longer shows the part that the read decides on. The result becomes a copy of its old
+    /// value now (`Out::Kept`), and the cursor walks the copy, as it does after any copy.
+    fn freeze(&mut self, at: usize) {
+        let (Some(Some(c)), Some(Some(mark))) = (self.cursors.get(at), self.marks.get(at)) else {
+            return;
+        };
+        let mark = *mark;
+        if !matches!(self.parked.get(at), Some(Out::Ref(_)))
+            || !self.restarted(mark, c.waits_at())
+            || self.old_root(mark, c.waits_at()).is_some()
+        {
+            return;
+        }
+        let Some(slot) = self.parked.get_mut(at) else {
+            return;
+        };
+        let out = std::mem::replace(slot, Out::Made(Val::Static(Value::Unit)));
+        let kept = self.resolved(out, mark);
+        if let Some(slot) = self.parked.get_mut(at) {
+            *slot = kept;
+        }
+    }
+
     /// Decides the holds of the reads with an index that evaluates now, before a change of the
     /// local at `root`: the part of a cursor that is a static value holds the local, as Lean
     /// reads the part again from the live root. The decision uses the root as the index found
@@ -499,6 +464,7 @@ impl Store {
             return;
         };
         for at in list {
+            self.freeze(at);
             let located = match self.cursors.get(at) {
                 Some(Some(c)) if c.live && !c.on_witness() => Some(self.locate(at, c)),
                 _ => None,
@@ -509,7 +475,6 @@ impl Store {
                     if let Some(Some(c)) = self.cursors.get_mut(at) {
                         c.live = false;
                     }
-                    self.activate(at);
                 }
                 Some(Located::Open(w)) => {
                     if let Some(Some(c)) = self.cursors.get_mut(at) {
@@ -528,8 +493,13 @@ impl Store {
     /// leaf closes the witness there: as in Lean, such a part has no root.
     fn locate(&self, at: usize, c: &Cursor) -> Located {
         let path = &c.part.path;
-        let (value, rel) = match self.parked.get(at) {
-            Some(Out::Kept(v, _)) => (v, path.get(c.base..).unwrap_or_default()),
+        let old = match (self.parked.get(at), self.marks.get(at)) {
+            (Some(Out::Ref(_)), Some(Some(mark))) => self.old_root(*mark, c.waits_at()),
+            _ => None,
+        };
+        let (value, rel) = match (self.parked.get(at), old) {
+            (Some(Out::Kept(v, _)), _) => (v, path.get(c.base..).unwrap_or_default()),
+            (_, Some(old)) => (old, &path[..]),
             _ => (self.root(&c.part.root), &path[..]),
         };
         let skipped = path.len() - rel.len();
@@ -588,30 +558,14 @@ impl Store {
         Located::Open(witness)
     }
 
-    /// Takes the results parked from the position `from` back, in their order. Parks and
-    /// resumes nest like the evaluations that they wrap.
-    fn resume(&mut self, from: usize) -> Vec<Out> {
+    /// Takes the results parked from the position `from` out of the table, with their marks, and
+    /// ends the holds and the cursors of their positions. The windows stay open: the caller
+    /// closes each one after it reads the history.
+    fn release(&mut self, from: usize) -> (Vec<Out>, Vec<Option<history::Mark>>) {
         let from = from.min(self.parked.len());
         let outs = self.parked.split_off(from);
-        let mut quiet_at = BTreeSet::new();
-        for (i, c) in self
-            .cursors
-            .split_off(from.min(self.cursors.len()))
-            .into_iter()
-            .enumerate()
-        {
-            let Some(c) = c else { continue };
-            if c.quiet {
-                quiet_at.insert(from + i);
-                if let Some(q) = self.quiet.get_mut(&c.part.root) {
-                    q.remove(&(from + i));
-                    if q.is_empty() {
-                        self.quiet.remove(&c.part.root);
-                    }
-                }
-            }
-            self.close_log(c.part.root);
-        }
+        let marks = self.marks.split_off(from.min(self.marks.len()));
+        self.cursors.truncate(from);
         for root in self.held_by.split_off(from).into_iter().flatten() {
             if let Some(n) = self.holds.get_mut(&root) {
                 *n -= 1;
@@ -620,27 +574,43 @@ impl Store {
                 }
             }
         }
-        for (i, o) in outs.iter().enumerate().rev() {
-            if let Out::Ref(Ref { root, .. }) = o
-                && !quiet_at.contains(&(from + i))
-                && let Some(at) = self.parked_at.get_mut(root)
-            {
-                at.pop();
-                if at.is_empty() {
-                    self.parked_at.remove(root);
-                }
-            }
+        (outs, marks)
+    }
+
+    /// Takes the results parked from the position `from` back, in their order. Parks and
+    /// resumes nest like the evaluations that they wrap. A result that refers to a local gets
+    /// the value that it had when it parked: a part that a change reached becomes a copy of its
+    /// old value, and any other part stays a reference. Every site that takes results back
+    /// passes here, so none can miss a change.
+    fn resume(&mut self, from: usize) -> Vec<Out> {
+        let (outs, marks) = self.release(from);
+        let settled = outs
+            .into_iter()
+            .zip(marks.iter())
+            .map(|(out, mark)| match mark {
+                Some(mark) => self.resolved(out, *mark),
+                None => out,
+            })
+            .collect();
+        for mark in marks.into_iter().flatten() {
+            self.close_log(mark.root);
         }
-        outs
+        settled
     }
 
     /// Takes back the one result parked at `at`. A later evaluation that failed can leave its
     /// own results parked after it, so the result is the first one.
     fn resume_one(&mut self, at: usize) -> Out {
-        self.resume(at)
-            .into_iter()
-            .next()
-            .unwrap_or(Out::Made(Val::Static(Value::Unit)))
+        let (outs, marks) = self.release(at);
+        let mut outs = outs.into_iter();
+        let mut first = outs.next().unwrap_or(Out::Made(Val::Static(Value::Unit)));
+        if let Some(Some(mark)) = marks.first() {
+            first = self.resolved(first, *mark);
+        }
+        for mark in marks.into_iter().flatten() {
+            self.close_log(mark.root);
+        }
+        first
     }
 
     /// Opens a window of `root`: `false`, with no change, if a window of it is open already.
@@ -663,76 +633,12 @@ impl Store {
         self.holds.contains_key(&root)
     }
 
-    /// Copies the value of each parked reference to the local at `root`, before a mutation
-    /// changes the local. A reference to a static value holds the local, so the mutation paid
-    /// the size of the local before (`charge_held`). Each reference copies once, because the
-    /// copy is not a reference. A change in place of the part at the numbers `keys` (`Some`)
-    /// copies only the references that it can reach: a reference to a part that is no prefix and
-    /// no extension of `keys` reads the same value after the change, so it stays a reference. A
-    /// write that binds the root again (`None`) gives new names to each leaf, so it copies all.
-    ///
-    /// A `push` or `pop` (`logged`) leaves the quiet reads alone: those that follow the steps of
-    /// their index and hold no root. The change goes to the undo log of the root, and the read
-    /// resolves it when its last step is known (`resolve_ref`). A copy of a read first undoes the
-    /// changes of its window, so that it keeps the value the read waited at. Thus the work of a
-    /// `push` or `pop` does not depend on the number of reads that wait.
-    fn settle_root(&mut self, root: Root, keys: Option<&[usize]>, logged: bool) {
-        self.decide_holds(root);
-        if !logged {
-            // A change that is no `push` or `pop` has no log entry, so each read that it
-            // reaches copies.
-            let all: Vec<usize> = self
-                .quiet
-                .get(&root)
-                .map(|q| q.iter().copied().collect())
-                .unwrap_or_default();
-            for at in all {
-                self.activate(at);
-            }
-        }
-        let Some(at) = self.parked_at.remove(&root) else {
-            return;
-        };
-        let mut kept = Vec::new();
-        for k in at {
-            #[cfg(test)]
-            crate::counters::add(crate::counters::Count::Settled, 1);
-            #[cfg(test)]
-            crate::counters::add(crate::counters::Count::Logged, 1);
-            let cursor = self.cursors.get(k).and_then(Option::as_ref);
-            // A read that walks a path waits at the part of its cursor, and its later steps only
-            // go deeper. Other references wait at their own path.
-            let reached = match (cursor, self.parked.get(k)) {
-                (Some(c), _) => c.reaches(keys),
-                (_, Some(Out::Ref(r))) => overlap(&r.path, keys),
-                _ => true,
-            };
-            if !reached {
-                kept.push(k);
-                continue;
-            }
-            let mark = cursor.map(|c| c.mark);
-            let Some(slot) = self.parked.get_mut(k) else {
-                continue;
-            };
-            let old = std::mem::replace(slot, Out::Made(Val::Static(Value::Unit)));
-            let copy = Out::Kept(self.old_copy(root, mark, old), root);
-            if let Some(slot) = self.parked.get_mut(k) {
-                *slot = copy;
-            }
-        }
-        if !kept.is_empty() {
-            self.parked_at.insert(root, kept);
-        }
-    }
-
     /// The part of the live value of the local at `root` at the numbers `keys`, for a change in
     /// place: one walk down the path. A root that is not a static local has no part.
     fn part_mut(&mut self, root: Root, keys: &[usize]) -> Option<&mut Value> {
         let Root::Local(frame, id) = root else {
             return None;
         };
-        self.settle_root(root, Some(keys), false);
         self.stepped(keys.len() as u64);
         let Val::Static(value) = &mut self.frames.get_mut(frame)?.get_mut(&id)?.value else {
             return None;
@@ -791,6 +697,9 @@ impl Store {
     }
 
     fn root(&self, root: &Root) -> &Val {
+        if let Some(old) = self.viewed(root) {
+            return old;
+        }
         match root {
             Root::Local(k, id) => self
                 .frames
@@ -876,21 +785,36 @@ impl Store {
     fn take(&self, out: Out) -> Val {
         match out {
             Out::Made(v) | Out::Named(v) | Out::Kept(v, _) => v,
-            Out::Ref(r) => match self.at(&r) {
-                Seen::Static(v) => {
-                    #[cfg(test)]
-                    crate::counters::add(crate::counters::Count::Copies, v.size());
-                    Val::Static(v.clone())
-                }
-                Seen::Hw(h) => Val::Hw(h),
-                Seen::Handle(h) => Val::Handle(h.clone()),
-                Seen::Pending(q, p) => Val::Pending(q, p.clone()),
-                Seen::Agg(a) => {
-                    #[cfg(test)]
-                    crate::counters::add(crate::counters::Count::Copies, static_size(a));
-                    Val::Agg(Box::new(a.clone()))
-                }
-            },
+            Out::Ref(r) => Self::own(self.at(&r)),
+        }
+    }
+
+    /// What `seen` finds, as an owned value. A static value and an aggregate copy, so the caller
+    /// paid for the copy before.
+    fn own(seen: Seen<'_>) -> Val {
+        match seen {
+            Seen::Static(v) => {
+                #[cfg(test)]
+                crate::counters::add(crate::counters::Count::Copies, v.size());
+                Val::Static(v.clone())
+            }
+            Seen::Hw(h) => Val::Hw(h),
+            Seen::Handle(h) => Val::Handle(h.clone()),
+            Seen::Pending(q, p) => Val::Pending(q, p.clone()),
+            Seen::Agg(a) => {
+                #[cfg(test)]
+                crate::counters::add(crate::counters::Count::Copies, static_size(a));
+                Val::Agg(Box::new(a.clone()))
+            }
+        }
+    }
+
+    /// What the value `v` holds at the numbers `path`.
+    fn part_of<'a>(&self, v: &'a Val, path: &[usize]) -> Seen<'a> {
+        match v {
+            Val::Static(x) => Seen::Static(self.element(x, path)),
+            Val::Agg(a) => self.agg_element(a, path),
+            v => v.seen(),
         }
     }
 }
@@ -1153,8 +1077,8 @@ impl<'a> Evaluator<'a> {
                 #[cfg(test)]
                 steps: Cell::new(0),
                 parked: Vec::new(),
-                parked_at: BTreeMap::new(),
-                quiet: BTreeMap::new(),
+                marks: Vec::new(),
+                view: None,
                 holds: BTreeMap::new(),
                 held_by: Vec::new(),
                 cursors: Vec::new(),
@@ -1299,8 +1223,8 @@ impl Evaluator<'_> {
     }
 
     /// A mutation at `pos` of the local at `root` that a parked result holds charges the size of
-    /// the local before the change (section 5.4). The charge pays for the copies of
-    /// `settle_root`, so it comes before the change settles the parked references.
+    /// the local before the change (section 5.4). The charge pays for the copies that the change
+    /// causes, so it comes before the change reaches the history of the local.
     fn charge_held(&mut self, pos: Pos, root: Root) -> Res<()> {
         if !self.store.is_held(root) {
             return Ok(());

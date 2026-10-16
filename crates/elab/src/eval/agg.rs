@@ -6,6 +6,7 @@
 //! it copies nothing. Each walk keeps its own stack, and each charge comes before the work that
 //! it pays for.
 
+use super::history::{Entry, split_root};
 use super::place::{Index, PartInfo};
 use super::{Code, Evaluator, Let, Names, Out, Res, at, fail};
 use crate::agg::{Agg, Base};
@@ -1024,7 +1025,6 @@ impl Evaluator<'_> {
                 _ => None,
             });
         }
-        self.store.settle_root(place.root, Some(&place.keys), true);
         self.store.add_steps(place.keys.len() as u64);
         let Val::Agg(root) = self.store.take_root(&place.root) else {
             return fail(Code::S010, pos, "the root is not an aggregate".to_owned());
@@ -1079,8 +1079,17 @@ impl Evaluator<'_> {
             self.fuel.pay_int(&empty).map_err(at(pos))?;
         }
         self.charge_held(pos, place.root)?;
-        self.store.settle_root(place.root, None, false);
         let root = self.store.take_root(&place.root);
+        // A read that waits at the root keeps the root as it is now. The new root is built from
+        // a copy of the rest of the old one, which the charge above paid for, so the old root
+        // moves into the log with the part that the write replaces.
+        let root = if self.store.is_logged(place.root) {
+            let (work, saved) = split_root(root, &place.keys);
+            self.store.log_edit(place.root, Entry::rebind(saved));
+            work
+        } else {
+            root
+        };
         let root = match root {
             Val::Agg(root) => *root,
             Val::Static(v) => Agg::Static(v),

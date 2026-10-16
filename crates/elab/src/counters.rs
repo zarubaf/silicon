@@ -86,9 +86,7 @@ pub(crate) struct Counts {
     pub formatted: u64,
     /// The powers of ten that the exact check of a digit count built.
     pub powered: u64,
-    /// The waiting reads that a change of an aggregate root visited.
-    pub settled: u64,
-    /// The entries of the undo log that a sort, a replay, or a resolution handled, and the waiting reads that a change visited.
+    /// The entries that the log of a local gained, and the queries and the entries that a resolution handled.
     pub logged: u64,
     /// The nodes of the values that a clone visited.
     pub cloned: u64,
@@ -133,7 +131,6 @@ pub(crate) enum Count {
     Unfolded,
     Formatted,
     Powered,
-    Settled,
     Logged,
     Cloned,
     Copies,
@@ -209,7 +206,6 @@ pub(crate) fn add(count: Count, n: u64) {
             Count::Unfolded => &mut c.unfolded,
             Count::Formatted => &mut c.formatted,
             Count::Powered => &mut c.powered,
-            Count::Settled => &mut c.settled,
             Count::Logged => &mut c.logged,
             Count::Cloned => &mut c.cloned,
             Count::Copies => &mut c.copies,
