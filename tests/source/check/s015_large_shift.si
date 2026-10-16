@@ -1,6 +1,7 @@
-// S015: a static `1 << k` with a large `k` fails before it runs (section 11.3).
+// S015: a static `1 << k` with a count above 2^32 fails before it runs, also when the fuel could pay it (issue #255).
 // TOP M()
 module M() {
-    // expected-error S015 @+1
+    // expected-error S015 @+2
+    // expected-message: the result can have more than 2^32 bits, the limit of a static Int; use smaller operands
     static_assert((1 << 1000000000000) > 0, "big");
 }
