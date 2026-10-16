@@ -1,9 +1,10 @@
 // The cost of a read whose index pushes into or pops from a list part of the root it waits at
 // (section 5.4). The read keeps the list as it was before the index: the pushes and pops change
 // the live list in place, and the elements and the length that the read finds are the old ones.
-// The charges are those of the changes alone, with no copy of the root. The fuel equal to the
-// total of `cost` succeeds, and one unit less gives `S015`.
-// FUEL 249
+// The charges are those of the changes, and the size of the result as the last step of each read.
+// The root is not copied. The fuel equal to the total of `cost` succeeds, and one unit less gives
+// `S015`.
+// FUEL 265
 // TOP M()
 module M() domains() {
     input a: UInt[8];
