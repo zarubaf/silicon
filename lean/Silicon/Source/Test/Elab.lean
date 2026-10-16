@@ -1279,6 +1279,14 @@ def joinSrc : String := "module M() domains() {\n    let t = [(1, (2, 3)), (4, (
 #guard failure joinSrc 61 == "S015 2:13 the fuel cannot pay the joins of the types; 0 remain"
 #guard failure joinSrc 62 == "S015 2:13 the fuel cannot pay the joins of the types; 1 remain"
 
+-- A scan that the fuel cannot pay names no count (issue #250).
+def scanSrc : String :=
+  "module M() domains() {\n" ++
+  "    let s = \"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz\";\n" ++
+  "    let c = s[3];\n}\n"
+#guard failure scanSrc 87 == "S015 3:13 the fuel cannot pay the scan of the string; 0 remain"
+#guard failure scanSrc 90 == "S015 3:13 the fuel cannot pay the scan of the string; 3 remain"
+
 def d16 : String := dMod "  diagnostic(\"depth\", 16);\n"
 #guard observed d16 == ["(record 5 3 M () (string \"depth\") (int 16))", "ok"]
 -- 1. The statement, then the node and the name of the call.
