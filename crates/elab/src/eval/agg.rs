@@ -12,6 +12,7 @@ use super::{Code, Evaluator, Let, Names, Out, Res, at, fail};
 use crate::agg::{Agg, Base};
 use crate::hw::{Seen, Val};
 use crate::int::Int;
+use crate::limit;
 use crate::names::{PathId, Step, Sym};
 use crate::ops;
 use crate::types::{Ty, TyId};
@@ -77,6 +78,7 @@ impl Evaluator<'_> {
         match a {
             Agg::Ref(base, t) => {
                 if self.tys.meta(t).leaves.is_zero() {
+                    limit::zero(&self.tys.meta(t).zero_size).map_err(at(pos))?;
                     self.fuel
                         .pay_int(&self.tys.meta(t).zero_size)
                         .map_err(at(pos))?;
@@ -1070,6 +1072,11 @@ impl Evaluator<'_> {
             .saturating_sub(old.leaves)
             .saturating_add(x.leaves(&self.tys))
             != 0;
+        if let Val::Agg(a) = self.store.root(&place.root)
+            && let Some(t) = first_ref(a, &place.keys)
+        {
+            limit::zero(&self.tys.meta(t).zero_size).map_err(at(pos))?;
+        }
         if hardware {
             let new = u128::from(size.saturating_sub(old.size))
                 + u128::from(x.size(&self.graph, &self.tys));
@@ -1105,6 +1112,21 @@ impl Evaluator<'_> {
         self.store.put_root(&place.root, v);
         Ok(())
     }
+}
+
+/// The type of the first reference on the path `keys` of `a`. The write expands it and each
+/// reference in it, so its zero size bounds the parts that the expansion makes (Lean
+/// `Agg.firstRef`).
+fn first_ref(a: &Agg, keys: &[usize]) -> Option<TyId> {
+    let mut cur = a;
+    for &k in keys {
+        match cur {
+            Agg::Ref(_, t) => return Some(*t),
+            Agg::Array(_, p) | Agg::Tuple(_, p) | Agg::Record(_, p) => cur = p.0.get(k)?,
+            _ => return None,
+        }
+    }
+    None
 }
 
 /// The change of the stored numbers of a node above a list that `push` or `pop` changes (Lean

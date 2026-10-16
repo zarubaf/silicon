@@ -12,6 +12,7 @@
 
 use super::{Evaluator, Out, ROOT, Res, Slot, Stop, at, fail, need, type_pos};
 use crate::hw::{Ref, Root, Seen, Val};
+use crate::limit;
 use crate::ops;
 use crate::types::{Meta, Ty, TyId, TyParam, Types};
 use crate::value::Value;
@@ -129,6 +130,8 @@ impl Evaluator<'_> {
         for elem in elems {
             parts.push(self.type_expr(elem)?);
         }
+        limit::metadata(limit::sum_bits(parts.iter().map(|p| self.tys.meta(*p))))
+            .map_err(at(pos))?;
         let (size, depth) = Types::tuple_shape(&parts);
         self.bounded(pos, depth)?;
         self.charge(pos, u128::from(size))?;
@@ -233,6 +236,7 @@ impl Evaluator<'_> {
             Value::Int(n) => {
                 let (size, depth) = Types::array_shape(elem, n);
                 self.bounded(pos, depth)?;
+                limit::metadata(limit::array_bits(self.tys.meta(elem), n)).map_err(at(pos))?;
                 let units = u128::from(size) + self.tys.meta(elem).array_charge(n);
                 self.fuel.pay(units).map_err(at(pos))?;
                 let n = n.clone();
@@ -495,6 +499,8 @@ impl Evaluator<'_> {
         for f in fields {
             types.push(self.type_expr(&f.ty)?);
         }
+        limit::metadata(limit::sum_bits(types.iter().map(|p| self.tys.meta(*p))))
+            .map_err(at(pos))?;
         let depth = self.tys.struct_depth(s, &types);
         self.bounded(pos, depth)?;
         let meta = self.sums(pos, &types, depth)?;

@@ -52,6 +52,7 @@ pub(crate) use mem::addr_width;
 use crate::agg::{Agg, Base};
 use crate::hw::{Graph, Handle, HwId, Op, Part, Ref, Root, Seen, Val};
 use crate::int::Int;
+use crate::limit;
 use crate::names::{PathId, Paths, Step, Sym};
 use crate::ops::{self, Fault, Fuel};
 use crate::scan::{CallArgs, Numbers, Scan, Syms};
@@ -1681,6 +1682,7 @@ impl Evaluator<'_> {
             Expr::Num { pos, id, .. } => self.number(*pos, *id),
             Expr::Bool { pos, value } => self.made(*pos, Value::Bool(*value)),
             Expr::Str { pos, value } => {
+                limit::string(value.len() as u128).map_err(at(*pos))?;
                 // The size counts the characters, and the charge comes before the copy.
                 let size = 1 + value.chars().count() as u128;
                 self.charge(*pos, size)?;

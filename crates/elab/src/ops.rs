@@ -13,6 +13,7 @@ pub(crate) use container::{plan as plan_value, run as run_value};
 
 use crate::Code;
 use crate::int::Int;
+use crate::limit;
 use crate::types::{Ty, TyId, Types};
 use crate::value::{Value, width_size};
 use core_ir::{Bits, Pred};
@@ -232,6 +233,7 @@ pub(crate) fn unary(op: UnOp, a: &Value, fuel: &mut Fuel, tys: &Types) -> Result
             Ok(Value::Bool(!b))
         }
         (UnOp::Inv, Value::Int(n)) => {
+            limit::capped(u128::from(n.bit_length()) + 1)?;
             fuel.pay(size)?;
             Ok(Value::Int(n.not()))
         }
@@ -290,6 +292,7 @@ pub(crate) fn binary(
                 if op != BinOp::Add {
                     return type_error(format!("`{text}` does not accept strings; `+` joins them"));
                 }
+                limit::string(x.len() as u128 + y.len() as u128)?;
                 fuel.pay(sum(a, b))?;
                 return Ok(Value::Str(join(x, y)));
             }
@@ -300,6 +303,7 @@ pub(crate) fn binary(
                     b.text(tys)
                 ));
             };
+            limit::capped(limit::int_bound(op, x.bit_length(), y.bit_length()))?;
             let charge = if matches!(op, BinOp::Add | BinOp::Sub) {
                 sum(a, b)
             } else {
@@ -330,6 +334,7 @@ pub(crate) fn binary(
                     if !matches!(op, BinOp::And | BinOp::Or | BinOp::Xor) {
                         return type_error(format!("`{text}` needs a finite operand"));
                     }
+                    limit::capped(limit::int_bound(op, x.bit_length(), y.bit_length()))?;
                     fuel.pay(sum(a, b))?;
                     Ok(Value::Int(match op {
                         BinOp::And => x.and(y),
@@ -454,8 +459,9 @@ fn shift(op: BinOp, a: &Value, b: &Value, fuel: &mut Fuel, tys: &Types) -> Resul
             };
             let k = nonnegative(k)?;
             if op == BinOp::Shl {
+                limit::capped(limit::shl_bits(x, k))?;
                 fuel.pay_int(&shl_size(x, k))?;
-                int_shl(x, k)
+                Ok(int_shl(x, k))
             } else {
                 fuel.pay(u128::from(a.size()))?;
                 Ok(Value::Int(int_shr(x, k)))
@@ -508,19 +514,14 @@ fn shl_size(a: &Int, k: &Int) -> Int {
     }
 }
 
-/// `a * 2^k` without the power `2^k`. A zero operand makes no value at all, so the work stays
-/// in the charge `shl_size a k`.
-fn int_shl(a: &Int, k: &Int) -> Result<Value, Fault> {
-    if a.is_zero() {
-        return Ok(Value::Int(Int::zero()));
-    }
-    match k.to_u64() {
-        Some(k) => Ok(Value::Int(a.shl(k))),
-        None => Err((
-            Code::S015,
-            format!("the shift count {} is too large", int_text(k)),
-        )),
-    }
+/// `a * 2^k` without the power `2^k`, after the size limit. A count above `u64` passed the
+/// limit only with a zero operand, which makes no value at all, so the work stays in the charge
+/// `shl_size a k`.
+fn int_shl(a: &Int, k: &Int) -> Value {
+    Value::Int(match k.to_u64() {
+        Some(k) => a.shl(k),
+        None => Int::zero(),
+    })
 }
 
 /// `floor (a / 2^k)`. A count above the bit length gives 0 or -1 without a large shift.
