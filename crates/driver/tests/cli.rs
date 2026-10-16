@@ -707,6 +707,92 @@ fn elab_names_no_count_when_the_fuel_cannot_pay_a_string_scan() -> Test {
     Ok(())
 }
 
+const MAX_FUEL: &str = "18446744073709551615";
+const INT_LIMIT: &str = "the result can have more than 2^32 bits, the limit of a static Int; \
+    use smaller operands";
+const ZERO_LIMIT: &str = "the value of the type has a size above 2^32, the limit of a value from \
+    a type; use a smaller type or keep it a reference";
+const RECORD_LIMIT: &str = "the recorded value has a size above 2^32, the limit of a record; \
+    record a smaller part";
+
+/// The size limit of design section 5.4 stops a static value before its charge, also at the
+/// largest fuel (issue #255). Each run ends at once, and `Source/Test/Eval.lean` has the same text.
+#[test]
+fn eval_stops_a_value_above_the_size_limit_at_the_largest_fuel() -> Test {
+    for (expr, at, text) in [
+        ("1 << 4294967296", "1:1", INT_LIMIT),
+        ("-1 << 4294967296", "1:1", INT_LIMIT),
+        ("3 << 4294967295", "1:1", INT_LIMIT),
+        (
+            "1 << 340282366920938463463374607431768211455",
+            "1:1",
+            INT_LIMIT,
+        ),
+        ("[Bool; 1 << 4294967296]", "1:8", INT_LIMIT),
+        ("[Bool; 2305843009213693952]()", "1:1", ZERO_LIMIT),
+        ("[[Bool; 65536]; 65536]()", "1:1", ZERO_LIMIT),
+    ] {
+        assert_eq!(
+            eval("", expr, &["--fuel", MAX_FUEL])?,
+            (format!("error[S015]: {at}: {text}\n"), Some(1)),
+            "{expr}"
+        );
+    }
+    assert_eq!(
+        eval("", "0 << 18446744073709551616", &["--fuel", MAX_FUEL])?,
+        ("(int 0)\n".to_owned(), Some(0))
+    );
+    assert_eq!(
+        eval("", "[Bool; 18446744073709551616]", &["--fuel", MAX_FUEL])?,
+        (
+            "(type (array bool 18446744073709551616))\n".to_owned(),
+            Some(0)
+        )
+    );
+    Ok(())
+}
+
+/// A reference of a type with a huge empty part stays valid. A binding of it walks only its
+/// hardware leaves, and a value that the type makes fails before its charge (issue #255).
+#[test]
+fn elab_stops_a_value_from_a_huge_type_and_binds_a_reference_to_it() -> Test {
+    let module = |ty: &str, body: &str| format!("module M() {{\n  input x: {ty};\n{body}}}\n");
+    let huge = "([(); 2305843009213693952], Bool)";
+    let run =
+        |ty: &str, body: &str| source("elab", &module(ty, body), &["--fuel", MAX_FUEL], "M()", "");
+    let (out, code) = run(huge, "  let mut y = x;\n")?;
+    assert_eq!(code, Some(0), "{out}");
+    assert!(out.ends_with("(let y$1e (bits 1) x$1e)))\n"), "{out}");
+    for (ty, body, at, text) in [
+        (huge, "  let mut y = x;\n  y.1 = true;\n", "4:3", ZERO_LIMIT),
+        (
+            huge,
+            "  let mut y = x;\n  let w = y.0;\n",
+            "4:11",
+            ZERO_LIMIT,
+        ),
+        (
+            "[(); 2305843009213693952]",
+            "  let y = x;\n",
+            "3:11",
+            ZERO_LIMIT,
+        ),
+        (
+            huge,
+            "  let mut y = x;\n  diagnostic(\"d\", y);\n",
+            "4:3",
+            RECORD_LIMIT,
+        ),
+    ] {
+        assert_eq!(
+            run(ty, body)?,
+            (format!("error[S015]: {at}: {text}\n"), Some(1)),
+            "{body}"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn eval_takes_the_budgets() -> Test {
     // The evaluation uses 7 units, and the result `(int 3)` pays its 7 bytes.
