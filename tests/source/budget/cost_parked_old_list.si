@@ -1,0 +1,39 @@
+// A result that refers to a local keeps the value that its expression read (section 5.4). A list
+// that a later operand changes, an index into it, an element of a literal, and an argument of a
+// call all read the list as it was. The port widths show the lengths and the element that Lean
+// finds, so each width is a value of the Lean evaluator.
+// The charges are those of the Lean evaluator. The fuel
+// equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 492
+// TOP M()
+comptime fn len_of(xs: List[Nat], u: ()) -> Nat {
+    return len(xs);
+}
+comptime fn flag(x: Bool) -> Nat {
+    return if (x) { 2 } else { 1 };
+}
+module M() domains() {
+    input a: UInt[8];
+    let mut t = (a, list(Nat));
+    t.1.push(7);
+    t.1.push(8);
+    // The old list of a plain operand, a pop, and two pushes.
+    let p0 = (t.1, t.1.push(1));
+    let p1 = (t.1, t.1.pop(), t.1.pop());
+    let p2 = (t.1, t.1.push(5), t.1.push(6));
+    input w0: UInt[len(p0.0) + 1];
+    input w1: UInt[len(p1.0) + 1];
+    input w2: UInt[len(p2.0) + 1];
+    input w3: UInt[len(t.1) + 1];
+    // The old list as the base of an index, as the element of a literal, and as an argument.
+    let i0 = t.1[(t.1.push(9), 0).1];
+    let l0 = [t.1, (t.1.push(1), t.1).1];
+    let c0 = len_of(t.1, t.1.push(2));
+    input w4: UInt[i0 + 1];
+    input w5: UInt[len(l0[0]) + 1];
+    input w6: UInt[len(l0[1]) + 1];
+    input w7: UInt[c0 + 1];
+    // Two reads of the same list compare as the old lists.
+    let e0 = t[(t.1.push(1), 1).1] == t[(t.1.push(2), 1).1];
+    input w8: UInt[flag(e0)];
+}

@@ -1,0 +1,118 @@
+// A result that refers to a part of a static local keeps the value that it read when a later
+// operand writes the part, pops its list, or binds the local again. A list of lists loses the
+// element that the result refers to, and the pop is the first removal of that length. The port
+// widths are the values of the Lean evaluator.
+// TOP M()
+// CHECK: (input a (bits 8))
+// CHECK-NEXT: (input w0 (bits 20))
+// CHECK-NEXT: (input w1 (bits 455))
+// CHECK-NEXT: (input w2 (bits 129))
+// CHECK-NEXT: (input w3 (bits 123))
+// CHECK-NEXT: (input w4 (bits 232))
+// CHECK-NEXT: (input w5 (bits 123))
+// CHECK-NEXT: (input w6 (bits 210))
+// CHECK-NEXT: (input w7 (bits 202))
+// CHECK-NEXT: (input w8 (bits 201))
+comptime fn wipe(mut l: List[Nat]) -> Nat {
+    l = list(Nat);
+    return 0;
+}
+comptime fn bump(mut n: Nat) -> Nat {
+    n = n + 1;
+    return n;
+}
+comptime fn reset(mut u: (Nat, Nat)) -> Nat {
+    u = (9, 9);
+    return 0;
+}
+comptime fn s0() -> Nat {
+    let mut t: (List[Nat], Nat) = (list(Nat), 3);
+    t.0.push(1);
+    t.0.push(2);
+    let p = (t.0, wipe(t.0));
+    return len(p.0) * 10 + len(t.0);
+}
+comptime fn s1() -> Nat {
+    let mut t: (Nat, Nat) = (3, 4);
+    let q = (t.1, bump(t.1), t.1);
+    return q.0 * 100 + q.1 * 10 + q.2;
+}
+comptime fn s2() -> Nat {
+    let mut t: (Nat, Nat) = (1, 2);
+    let q = (t, reset(t), t.0);
+    return q.0.0 * 100 + q.0.1 * 10 + q.2;
+}
+comptime fn s3() -> Nat {
+    let mut t: (List[Nat], List[Nat]) = (list(Nat), list(Nat));
+    t.0.push(1);
+    t.1.push(2);
+    t.1.push(3);
+    let q = (t.0, t.1, t.1.pop(), t.0.push(4), wipe(t.1), t.0.pop());
+    return len(q.0) * 100 + len(q.1) * 10 + q.2;
+}
+comptime fn swap(mut l: List[List[Nat]]) -> Nat {
+    l = list(List[Nat]);
+    return 0;
+}
+comptime fn one(x: Nat) -> List[Nat] {
+    let mut l = list(Nat);
+    l.push(x);
+    return l;
+}
+comptime fn two(x: Nat, y: Nat) -> List[Nat] {
+    let mut l = one(x);
+    l.push(y);
+    return l;
+}
+comptime fn three(x: Nat, y: Nat, z: Nat) -> List[Nat] {
+    let mut l = two(x, y);
+    l.push(z);
+    return l;
+}
+comptime fn s4() -> Nat {
+    let mut t: List[List[Nat]] = list(List[Nat]);
+    t.push(one(1));
+    t.push(two(2, 3));
+    let q = (t[1], t.pop(), t.push(three(5, 6, 7)), t[1]);
+    return len(q.0) * 100 + len(q.3) * 10 + len(t);
+}
+comptime fn s5() -> Nat {
+    let mut t: List[List[Nat]] = list(List[Nat]);
+    t.push(one(1));
+    t.push(two(2, 3));
+    let q = (t[0], t.pop(), t.pop(), t.push(two(4, 4)), t.push(three(5, 6, 7)));
+    return len(q.0) * 100 + len(t[0]) * 10 + len(t[1]);
+}
+comptime fn s6() -> Nat {
+    let mut t: ((List[Nat], Nat), Nat) = ((list(Nat), 1), 2);
+    t.0.0.push(1);
+    t.0.0.push(2);
+    let q = (t.0, wipe(t.0.0), t.0.0);
+    return len(q.0.0) * 100 + q.0.1 * 10 + len(q.2);
+}
+comptime fn s7() -> Nat {
+    let mut t: ((List[Nat], Nat), Nat) = ((list(Nat), 1), 2);
+    t.0.0.push(1);
+    t.0.0.push(2);
+    let q = (t.0.0, t.0.0.push(3), wipe(t.0.0), t.0.0.push(4), t.0.0.push(5));
+    return len(q.0) * 100 + len(t.0.0);
+}
+comptime fn s8() -> Nat {
+    let mut t: List[List[Nat]] = list(List[Nat]);
+    t.push(one(1));
+    t.push(two(2, 3));
+    let q = (t[1], swap(t), t.push(one(9)), t);
+    return len(q.0) * 100 + len(q.3);
+}
+module M() domains() {
+    input a: UInt[8];
+    input w0: UInt[s0()];
+    input w1: UInt[s1()];
+    input w2: UInt[s2()];
+    input w3: UInt[s3()];
+    input w4: UInt[s4()];
+    input w5: UInt[s5()];
+    input w6: UInt[s6()];
+    input w7: UInt[s7()];
+    input w8: UInt[s8()];
+}

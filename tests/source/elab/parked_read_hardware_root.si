@@ -1,0 +1,49 @@
+// A result that refers to a hardware leaf, to a list, or to the whole root of a hardware aggregate
+// keeps the value that it read when a later operand replaces the list or binds the root again. The
+// widths of the ports and the `let` statements are those of the Lean elaborator.
+// TOP M()
+// CHECK: (input a (bits 8))
+// CHECK-NEXT: (input b (bits 8))
+// CHECK-NEXT: (input w0 (bits 3))
+// CHECK-NEXT: (input w1 (bits 1))
+// CHECK-NEXT: (input w2 (bits 2))
+// CHECK-NEXT: (input w3 (bits 1))
+// CHECK-NEXT: (input w4 (bits 3))
+// CHECK-NEXT: (output y (bits 8))
+// CHECK-NEXT: (let p$0e (bits 8) t$0e)
+// CHECK-NEXT: (let q$0e$0e (bits 8) t$1v$0e)
+// CHECK-NEXT: (let rebind$7c$z$0e (bits 8) t$1v$0e)
+// CHECK-NEXT: (let t$0e (bits 8) a)
+// CHECK-NEXT: (let t$1v$0e (bits 8) t$0e)
+// CHECK-NEXT: (assign y (xor (xor q$0e$0e (const 8 3)) p$0e))
+comptime fn wipe(mut l: List[Nat]) -> Nat {
+    l = list(Nat);
+    return 0;
+}
+fn rebind(mut z: (UInt[8], List[Nat])) -> Int {
+    z = (UInt[8](3), list(Nat));
+    return 0;
+}
+module M() domains() {
+    input a: UInt[8];
+    input b: UInt[8];
+    output y: UInt[8];
+    let mut t = (a, list(Nat));
+    t.1.push(7);
+    t.1.push(8);
+    // A plain reference to a hardware leaf and to the list, while the list is replaced.
+    let p = (t.0, t.1, wipe(t.1), t.1);
+    input w0: UInt[len(p.1) + 1];
+    input w1: UInt[len(p.3) + 1];
+    // A reference to the whole root while a write binds the root again.
+    t.1.push(5);
+    let q = (t, rebind(t), t);
+    input w2: UInt[len(q.0.1) + 1];
+    input w3: UInt[len(q.2.1) + 1];
+    // The first arm of a hardware `if` waits while the second arm reads the list.
+    t.1.push(6);
+    t.1.push(6);
+    let r = if (b == a) { t.1 } else { t.1 };
+    input w4: UInt[len(r) + 1];
+    y := q.0.0 ^ q.2.0 ^ p.0;
+}
