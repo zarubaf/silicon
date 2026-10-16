@@ -329,7 +329,7 @@ fn arm_join(
     let joined = if ops::container_ty(tys.get(lt)) || ops::container_ty(tys.get(rt)) {
         let mut budget = fuel.left();
         let joined = ops::common_ty(lt, rt, tys, &mut budget);
-        fuel.pay_int(&joined.charge).map_err(at(pos))?;
+        fuel.pay_joins(&joined.charge).map_err(at(pos))?;
         joined.ty
     } else {
         ops::scalar_join(lt, rt, tys)
@@ -817,7 +817,7 @@ impl Evaluator<'_> {
         };
         let mut budget = self.fuel.left();
         let joined = ops::common_ty(lhs_ty, rhs_ty, &mut self.tys, &mut budget);
-        self.fuel.pay_int(&joined.charge).map_err(at(pos))?;
+        self.fuel.pay_joins(&joined.charge).map_err(at(pos))?;
         let Some(joined) = joined.ty else {
             let texts = (
                 sa.text(&self.graph, &self.tys),

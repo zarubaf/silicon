@@ -621,7 +621,7 @@ pub(crate) fn container_op(
     match op {
         BinOp::Eq | BinOp::Ne => {
             let (units, checked) = same_check(a, b, tys, Joins::Charged(fuel.left()));
-            fuel.pay_int(&units)?;
+            fuel.pay_joins(&units)?;
             checked?;
             fuel.pay(u128::from(a.size()) + u128::from(b.size()))?;
             let x = same_run(a, b, tys)?;
