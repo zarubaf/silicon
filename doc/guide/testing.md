@@ -9,11 +9,12 @@ This guide is the single map of the tests. Each layer has one oracle. An oracle 
 
 ## Status
 
-Issue #87 builds this layout in steps. Section 11 of the testing spec gives the order. A step that has not landed keeps the old form:
+The core suites are in `tests/core/`. The inventories of LEC and the differential tests are `tests/inventory/lec.txt` and `tests/inventory/diff.txt`. The source suites are in `tests/source/`.
 
-- Step 2 has landed. The core suites are in `tests/core/`. The inventories of LEC and the differential tests are `tests/inventory/lec.txt` and `tests/inventory/diff.txt`.
-- Steps 3 to 5 add spec coverage, code coverage, and mutation testing.
-- Phase 9 of the front end (#73) has landed. The source suites are in `tests/source/`. The suites `llm` and the metamorphic tests wait for #116 and #117.
+- Spec coverage is issue #105.
+- Code coverage is issue #106.
+- Mutation testing is issue #107.
+- The suites `llm` and the metamorphic tests wait for #116 and #117.
 
 ## Oracles
 
