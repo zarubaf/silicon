@@ -1089,3 +1089,59 @@ fn k_reads_and_a_hardware_write_into_a_static_local_take_work_in_k_plus_m() {
     };
     assert_scales(at, 64);
 }
+
+/// The run of `k = n` parked reads of the whole list `xs` and then `changes`, in one tuple. The
+/// list starts with `start` elements. The tuple index selects the last unit, so the reads wait
+/// while every change runs (#257).
+fn parked_whole_lists(n: u64, i: u64, family: u64, start: u64, changes: &str) -> Run {
+    let reads = rep("xs, ", n);
+    run_ok(
+        "",
+        "UInt[8]",
+        &format!(
+            "let mut xs = list(Nat);\n  comptime for i in 0..{start} {{ xs.push(0); }}\n  \
+             ({reads}{changes}0).{};",
+            n + changes.matches("xs.p").count() as u64
+        ),
+        key(family, i),
+    )
+}
+
+/// `k` reads of the whole list wait while `m` pushes change it. The resume of a read must not
+/// replay the window of the pushes again for each of the `k` reads (#257).
+#[test]
+#[ignore = "#257"]
+fn k_parked_whole_lists_and_m_pushes_take_work_in_k_plus_m() {
+    let at = |n: u64, i: u64| parked_whole_lists(n, i, 105, 0, &rep("xs.push(1), ", n));
+    assert_scales(at, 64);
+}
+
+#[test]
+#[ignore = "#257"]
+fn k_parked_whole_lists_and_m_alternating_changes_take_work_in_k_plus_m() {
+    let at =
+        |n: u64, i: u64| parked_whole_lists(n, i, 107, 1, &rep("xs.push(1), xs.pop(), ", n / 2));
+    assert_scales(at, 64);
+}
+
+/// The same with a list in a list: the parked reads are of the outer list, and the changes go
+/// into the inner list.
+#[test]
+#[ignore = "#257"]
+fn k_parked_outer_lists_and_m_inner_changes_take_work_in_k_plus_m() {
+    let at = |n: u64, i: u64| {
+        let reads = rep("xs, ", n);
+        let changes = rep("xs[0].push(1), xs[0].pop(), ", n / 2);
+        run_ok(
+            "",
+            "UInt[8]",
+            &format!(
+                "let mut xs = list(List[Nat]);\n  xs.push(list(Nat));\n  \
+                 ({reads}{changes}0).{};",
+                n + n
+            ),
+            key(108, i),
+        )
+    };
+    assert_scales(at, 64);
+}
