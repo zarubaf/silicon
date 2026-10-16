@@ -55,10 +55,15 @@ before it.
 -/
 abbrev Walk := ExceptT Fault (StateM Nat)
 
-/-! Runs the walk `w` at `pos`. It charges the visits of the walk, then gives its result. -/
+/--
+Runs the walk `w` at `pos`. It charges the visits of the walk, then gives its result. A charge
+above the fuel is `S015` with a message that names no count. The Rust front end stops its walk
+when the fuel cannot pay it, so it does not know the whole count.
+-/
 def walked (pos : Pos) (w : Walk α) : M α := do
   let (r, k) := Id.run (w.run.run 0)
-  charge pos k
+  chargeWith pos k fun left =>
+    s!"the fuel cannot pay the joins of the types; {intText left} remain"
   lift pos r
 
 /-!

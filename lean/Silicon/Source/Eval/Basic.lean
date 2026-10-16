@@ -558,10 +558,18 @@ def lift (pos : Pos) : Except Fault α → M α
 
 def typeError (msg : String) : Except Fault α := .error (.S010, msg)
 
-def charge (pos : Pos) (units : Nat) : M Unit := do
+/-!
+Pays `units` from the fuel, or fails with `S015` at `pos`. `cannot left` is the message when
+`left` units remain.
+-/
+def chargeWith (pos : Pos) (units : Nat) (cannot : Nat → String) : M Unit := do
   let s ← get
   if units ≤ s.fuel then set { s with fuel := s.fuel - units }
-  else fail .S015 pos s!"the fuel cannot pay {intText units} unit(s); {intText s.fuel} remain"
+  else fail .S015 pos (cannot s.fuel)
+
+def charge (pos : Pos) (units : Nat) : M Unit :=
+  chargeWith pos units fun left =>
+    s!"the fuel cannot pay {intText units} unit(s); {intText left} remain"
 
 /-! The charge of an entry function at the bound 0. The fuel is 0 there, so it fails. -/
 def exhausted (pos : Pos) : M α := do
