@@ -397,6 +397,22 @@ type: the parser accepts it, and pass 4 rejects it.
 #guard stFails "@field(a.b, \"c\") := 1;" .S004 1
 
 /-!
+`S004`: an enum and a `match` are later phases of slice 3. The position is the keyword. `=>`
+and `::` lex as one token each.
+-/
+#guard fails "enum Op: UInt[2] { Add = 0 }" .S004 1 1
+#guard fails "module M() {}\nenum E: UInt[1] {}" .S004 2 1
+#guard ex "match (x) { 0 => 1, _ => 2 }" == "error S004 1:14"
+#guard ex "if (match (x) { _ => c }) { 1 } else { 2 }" == "error S004 1:18"
+#guard ex "f(match (x) { _ => 1 })" == "error S004 1:16"
+#guard stFails "return match (x) { _ => 0 };" .S004 8
+#guard stFails "match (x) { _ => 0 };" .S004 1
+#guard stFails "let match = 1;" .S001 5
+#guard ex "a + match (x) { _ => 1 }" == "error S001 1:18"
+#guard ex "a => b" == "error S001 1:16"
+#guard ex "Op::Add" == "error S004 1:16"
+
+/-!
 `S004`: a `fn` without `comptime` declares no port, resource, or instance. The position is the
 keyword, also in a nested block. A `comptime fn` and a module parse these statements.
 -/

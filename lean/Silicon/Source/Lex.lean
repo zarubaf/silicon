@@ -2,10 +2,10 @@
 import Silicon.Source.Syntax
 
 /-!
-The lexer of the full v0.1 token set. It covers the keywords of later slices, so the parser
-can reject their syntax with `S004` instead of `S001`. Each token takes the longest match.
-The lexer checks no rule between tokens: `12ab` is a number and an identifier. `@` is a
-symbol, so the parser checks the builtin name after it.
+The lexer of the full v0.1 token set, with the tokens of slice 3. It covers the keywords of
+later slices, so the parser can reject their syntax with `S004` instead of `S001`. Each token
+takes the longest match. The lexer checks no rule between tokens: `12ab` is a number and an
+identifier. `@` is a symbol, so the parser checks the builtin name after it.
 
 The input is a `String`, so it is valid UTF-8. The command line rejects other bytes as a
 usage error before it calls the lexer.
@@ -18,15 +18,21 @@ that closing bracket, because it comes first.
 -/
 namespace Silicon.Source.Lex
 
-/-! The keywords of the v0.1 grammar. No slice adds a keyword. -/
+/-!
+The keywords of the v0.1 grammar, and `enum` and `match` of slice 3 (ADR 0021). No other slice
+adds a keyword.
+-/
 def keywords : List String :=
   ["import", "as", "pub", "const", "type", "struct", "comptime", "fn", "module", "extern",
    "let", "mut", "return", "if", "else", "for", "in", "conforms", "using", "true", "false",
-   "reg", "wire", "mem", "input", "output", "instance", "domains", "with"]
+   "reg", "wire", "mem", "input", "output", "instance", "domains", "with", "enum", "match"]
 
-/-! The two-character operators. Longest match prefers them to the one-character ones. -/
+/-!
+The two-character operators. Longest match prefers them to the one-character ones. `=>` is the
+arrow of a `match` arm (slice 3).
+-/
 def longSymbols : List String :=
-  [":=", "::", "->", "..", "+%", "-%", "*%", "==", "!=", "<=", ">=", "<<", ">>", "&&", "||"]
+  [":=", "::", "->", "=>", "..", "+%", "-%", "*%", "==", "!=", "<=", ">=", "<<", ">>", "&&", "||"]
 
 def shortSymbols : List Char :=
   ['(', ')', '[', ']', '{', '}', ',', ';', ':', '.', '=', '+', '-', '*', '/', '%', '<', '>',
