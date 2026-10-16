@@ -11,7 +11,9 @@
 //! module `list` makes the lists and changes them in place. The child module `types` evaluates
 //! the type expressions and the struct specializations, the child module `record` makes and
 //! reads the records, and the child module `inst` runs the module statements and the
-//! instantiations of Lean `Source.Elab`.
+//! instantiations of Lean `Source.Elab`. The child module `store` owns the locals, the frames,
+//! the constants, the waiting results, and the change log. The evaluator calls its methods and
+//! reads none of its fields.
 //!
 //! A result that refers to an existing value, such as a local or a constant, stays a
 //! reference until a copy pays for it. Thus a read that the cost model does not charge does
