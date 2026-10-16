@@ -221,12 +221,14 @@ def Agg.part (specs : Specs) (pos : Pos) (b : Base) (t : Ty) : Option Agg :=
 
 /-!
 The normal form of the aggregate `a` at `pos` (section 5.1). A reference without a hardware leaf
-charges the zero size of its type from the metadata before the static value exists (section
-5.4). Another part keeps its form.
+checks the size limit before the static value exists (section 5.4). Then it charges the zero
+size of its type from the metadata. Another part keeps its form.
 -/
 def normalize (pos : Pos) : Agg → M Val
   | .ref b t => do
-    if t.info.leaves = 0 then charge pos t.info.zeroSize
+    if t.info.leaves = 0 then
+      if over t.info.zeroSize then fail .S015 pos zeroLimitText
+      charge pos t.info.zeroSize
     match Agg.part (← get).specs pos b t with
     | some a => return a.val
     | none => fail .S010 pos s!"{t.text} has no zero"
@@ -439,6 +441,19 @@ def Ty.emptySize (specs : Specs) : Ty → List Nat → Nat
     | none => here
 
 /-!
+The type of the first reference on the path `ks` of the aggregate `a`. `Agg.set` expands it and
+each reference in it, so its zero size bounds the parts that the expansion makes.
+-/
+def Agg.firstRef : Agg → List Nat → Option Ty
+  | _, [] => none
+  | .ref _ t, _ => some t
+  | .array _ xs, k :: ks | .tuple _ xs, k :: ks | .record _ xs, k :: ks =>
+    match xs[k]? with
+    | some x => Agg.firstRef x ks
+    | none => none
+  | _, _ => none
+
+/-!
 The sum of the zero sizes of the empty parts that `Agg.set` makes on the path `ks` of the
 aggregate `a` (`Ty.emptySize`). Only a reference on the path makes parts.
 -/
@@ -572,11 +587,13 @@ def field (pos : Pos) (f : Ident) (v : Val) : M Val := do return (← fieldKey p
 
 /-!
 The zero `T()` of the type `t` at `pos` (section 5.6). A type that is not hardware data is
-`S010`. The zero checks its depth and charges its size from the metadata before it exists.
+`S010`. The zero checks its depth and the size limit, and it charges its size from the metadata
+before it exists.
 -/
 def zero (pos : Pos) (t : Ty) : M Value := do
   unless t.info.data do fail .S010 pos s!"a zero `T()` needs a hardware data type, not {t.text}"
   bounded pos t.zeroDepth
+  if over t.info.zeroSize then fail .S015 pos zeroLimitText
   charge pos t.info.zeroSize
   match zeroOf (← get).specs t.depth t with
   | some v => return v
@@ -768,6 +785,8 @@ def leafLets (fs : Ty → Option (Array (String × Ty))) (pos : Pos) :
   | 0, _, _, t => throw (.S010, s!"{t.text} is deeper than its depth")
   | d + 1, b, path, t =>
     let sub (k : Nat) (f : Field) := b.sub (typesOf fs) t k f
+    -- A part without a hardware leaf has no `let`, so the walk skips it, as `Layout` does.
+    if t.info.leaves = 0 then pure () else
     match t with
     | .bool | .uint _ | .sint _ => modify (·.push ⟨path, .mk pos t b.op [], pos⟩)
     | .array e n => do

@@ -660,6 +660,32 @@ def emptyIn (ty body : String) : String := s!"module M() \{\n  input x: {ty};\n{
   elabUnits (emptyIn "[(); 8]" "") "M" + 11
 #guard elabUnits (emptyIn "()" "  let y = x;\n") "M" == elabUnits (emptyIn "()" "") "M" + 3
 
+/-!
+The size limit of section 5.4 at the largest fuel. A reference of a type with a zero size above
+2^32 stays valid, and a binding of it walks only its hardware leaves. A value that the type
+makes, an expansion in a place update, and a `diagnostic` record fail before their charges.
+-/
+def limited (src : String) : String :=
+  match Cli.load 4096 src with
+  | .error e => s!"{e.code} {e.pos.line}:{e.pos.col}"
+  | .ok (items, checked) =>
+    match Cli.topSelection 4096 items checked "M" with
+    | .error _ => "usage"
+    | .ok (p, i, _, xs) =>
+      match Elab.elaborate { fuel := 2 ^ 64 - 1 } checked Names.sha16 p i xs with
+      | .ok (_, u) => s!"ok {u}"
+      | .error e => s!"{e.code} {e.pos.line}:{e.pos.col} {e.msg}"
+
+def hugeIn (body : String) : String :=
+  emptyIn "([(); 2305843009213693952], Bool)" s!"  let mut y = x;\n{body}"
+def zeroAt (pos : String) : String := s!"S015 {pos} {Eval.zeroLimitText}"
+#guard (limited (hugeIn "")).startsWith "ok"
+#guard limited (hugeIn "  y.1 = true;\n") == zeroAt "4:3"
+#guard limited (hugeIn "  let w = y.0;\n") == zeroAt "4:11"
+#guard limited (emptyIn "[(); 2305843009213693952]" "  let y = x;\n") == zeroAt "3:11"
+#guard limited (hugeIn "  diagnostic(\"d\", y);\n") ==
+  s!"S015 4:3 {Eval.recordLimitText}"
+
 def emptyChild (bind : String) : String :=
   s!"module C() \{\n  input p: ();\n}\nmodule M() \{\n  instance c = C();\n{bind}}\n"
 #guard elabOnly (emptyChild "") "M" == "S018 5:3"

@@ -184,10 +184,12 @@ its operation runs. When the fuel cannot pay it, the result is `S015` at the nod
 
 The size limit of section 5.4 comes before the charge of each operation that can make a large
 value (`over`). An integer operator checks a bound on the bit length of its result (`intBound`,
-`shlBits`, `capped`). `+` on strings checks the sum of the byte lengths, and `push` the length
-of the list. `[T; N]` checks its metadata products, and a tuple type and a struct
-specialization check their metadata sums (`Eval.Types`). Above the limit, the result is `S015`
-at the node of the charge.
+`shlBits`, `capped`). `+` on strings and a string literal check the byte length, and `push` the
+length of the list. `[T; N]` checks its metadata products, and a tuple type and a struct
+specialization check a bound of their metadata sums (`Eval.Types`). A value that a type makes
+checks the zero size of the type. These values are `T()`, an empty part of a reference, and the
+expansion of a place update. A `diagnostic` checks the size of its value. Above the limit, the
+result is `S015` at the node of the charge.
 
 The nesting depth counts the active calls, the constants in progress, the struct uses, and the
 top selection. A struct use counts while it binds its parameters and while its specialization
@@ -877,10 +879,13 @@ path and before a reference on the path expands. Then the held root charges, the
 and each hardware leaf of the new root binds at the next version of the root. A new root without
 a hardware leaf is a static value. It has no rebind charge. Instead, at the same point, it charges
 the zero size of each empty part that a reference on the path makes when it expands
-(`Agg.emptySize`). The type metadata gives these sizes, as in `normalize`.
+(`Agg.emptySize`). The type metadata gives these sizes, as in `normalize`. Before these
+charges, the zero size of the first reference on the path gets the size limit (`Agg.firstRef`).
 -/
 def rebind (p : Pos) (pl : Place) (sl : Slot) (a o x : Agg) : M Unit := do
   let hw := a.leaves - o.leaves + x.leaves != 0
+  if let some t := Agg.firstRef a pl.keys then
+    if over t.info.zeroSize then fail .S015 p zeroLimitText
   if hw then charge p (a.size - o.size + x.size)
   else charge p (Agg.emptySize (← get).specs a pl.keys)
   held p pl.id
@@ -1129,6 +1134,7 @@ def diagnose (p : Pos) (g : String) (m v : Val) : M (Option Out) := do
   if v matches .pending .. then
     fail .S010 p s!"the value of `{g}` needs a type; {v.text}"
   let specs := (← get).specs
+  if over v.size then fail .S015 p recordLimitText
   charge p (v.measureCharge specs)
   let ctx ← read
   let line := recordLine p ctx.inst ctx.calls m (render specs v)
@@ -1298,7 +1304,9 @@ mutual
       match e with
       | .num p v => let x : Value := .int v; charge p x.size; return some ⟨.static x, false, none⟩
       | .bool p v => let x : Value := .bool v; charge p x.size; return some ⟨.static x, false, none⟩
-      | .str p v => let x : Value := .str v; charge p x.size; return some ⟨.static x, false, none⟩
+      | .str p v =>
+        if over v.utf8ByteSize then fail .S015 p strLimitText
+        let x : Value := .str v; charge p x.size; return some ⟨.static x, false, none⟩
       | .name p x r => return some (← name n p x r)
       | .unary p op a => do
         match ← data p (← need a (← eval n a)).value with
