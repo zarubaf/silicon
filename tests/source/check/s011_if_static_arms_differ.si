@@ -1,0 +1,10 @@
+// S011: the arms of a hardware `if` are static values, and they differ.
+// TOP M()
+module M() {
+    input c: Bool;
+    output o: UInt[8];
+    // expected-error S011 @+2
+    // expected-message: the arms of a hardware `if` differ in a static part: Int and Int
+    let z = if (c) { 1 } else { 2 };
+    o := 0;
+}
