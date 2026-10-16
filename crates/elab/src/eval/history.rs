@@ -25,9 +25,24 @@
 //! the entries at or below the path that came before that start, newest first. A part that no
 //! entry reaches stays a reference.
 //!
+//! A waiting read copies at most the part where it ends. The exceptions are these:
+//!
+//! - A step of the read goes into a list or a part that a change took out or replaced (`Walk::Copy`).
+//!   The read copies the part where it waits, as it was. This is the old list or element as a
+//!   read result, and no charge pays for it yet (#237). The copy of an undone `pop` is the same.
+//! - A write that binds an aggregate root again copies the rest of the root once (`split_root`).
+//!   A hardware write pays it in its charge. A write that leaves no hardware leaf turns the root
+//!   static, and a root becomes an aggregate again only by a charge of its new size.
+//! - A write that binds a static root again with a hardware leaf copies the whole root. The root
+//!   is held while a read waits, so the write charges its size first.
+//!
+//! Every other path copies nothing or the part where the read ends: a resume of a reference, a
+//! hold decision (it walks the old root in the log, or finds a static element), a view of the
+//! old root, an error, and a frame that ends.
+//!
 //! Every walk keeps to the path of a place, and no walk recurses over the depth of a value.
 
-use super::{Evaluator, Out, Store};
+use super::{Cursor, Evaluator, Out, Store};
 use crate::agg::Agg;
 use crate::hw::{Root, Val};
 use crate::value::Value;
@@ -100,6 +115,8 @@ struct Node {
     children: BTreeMap<usize, usize>,
     /// The entries whose path starts with the path of the node, in the order of the changes.
     below: Vec<usize>,
+    /// The entries whose path is the path of the node.
+    here: Vec<usize>,
     /// The `Replace` and `Rebind` entries at the path of the node.
     own: Vec<usize>,
     /// The `Pop` entries of the list at the path of the node, by the length of the list before.
@@ -169,6 +186,7 @@ impl History {
             }
         }
         if let Some(node) = self.nodes.get_mut(at) {
+            node.here.push(pos);
             match &e.change {
                 Change::Replace(_) | Change::Rebind(_) => node.own.push(pos),
                 Change::Pop { len, .. } => node.pops.entry(*len).or_default().push(pos),
@@ -194,6 +212,23 @@ impl History {
         node.below
             .get(node.below.partition_point(|&p| p < mark)..)
             .unwrap_or_default()
+    }
+
+    /// Whether an entry from `mark` on and before `before` has a path that a walk down `path`
+    /// passes, from the depth `from` on, without ending there. Such an entry changes a list or a
+    /// part that the steps of a read go through.
+    fn crossed(&self, path: &[usize], from: usize, mark: usize, before: usize) -> bool {
+        let mut at = Some(0usize);
+        for d in 0..path.len() {
+            let Some(node) = at.and_then(|n| self.nodes.get(n)) else {
+                return false;
+            };
+            if d >= from && first_from(&node.here, mark).is_some_and(|pos| pos < before) {
+                return true;
+            }
+            at = path.get(d).and_then(|k| node.children.get(k)).copied();
+        }
+        false
     }
 
     /// The earliest entry from `mark` on that replaced the part at `path` or a part above it:
@@ -231,6 +266,13 @@ impl History {
 pub(super) struct Mark {
     pub(super) root: Root,
     at: usize,
+}
+
+/// How the steps of a read walk (`Store::walk_of`).
+enum Walk {
+    Live,
+    Old(usize),
+    Copy,
 }
 
 /// The local that a read walks as it was: the log entry that took the local out. While it is set,
@@ -433,6 +475,40 @@ impl Store {
         self.restart_of(mark, path).is_some()
     }
 
+    /// How the steps of the read parked at `at` walk, when it takes its result back. The steps
+    /// walk the live local while no entry crossed them and none started the old part. They walk
+    /// the old local in the log (`View`) when a write that bound the local again started it and
+    /// no entry before that write crossed them. Otherwise the read copies the part where it
+    /// waits, because a step goes into a list or a part that a change took out or replaced.
+    fn walk_of(&self, mark: Mark, c: &Cursor, quiet: bool) -> Walk {
+        let Some(log) = self.history.get(&mark.root) else {
+            return Walk::Live;
+        };
+        let base = c.part.path.get(..c.base).unwrap_or_default();
+        let ends = [base, &c.trail].concat();
+        let path = if c.exact { &ends[..] } else { base };
+        match log.start(path, mark.at) {
+            None if !c.exact => {
+                if quiet {
+                    Walk::Live
+                } else {
+                    Walk::Copy
+                }
+            }
+            None if log.crossed(&ends, c.base, mark.at, usize::MAX) => Walk::Copy,
+            None => Walk::Live,
+            Some(s) if log.saved(s.pos).is_none() => Walk::Copy,
+            Some(s) => {
+                let clear = if c.exact {
+                    !log.crossed(&ends, c.base, mark.at, s.pos)
+                } else {
+                    quiet && log.window(base, mark.at).first() == Some(&s.pos)
+                };
+                if clear { Walk::Old(s.pos) } else { Walk::Copy }
+            }
+        }
+    }
+
     /// The old local in the log for the part at `path`, if a write that bound the local again
     /// started the old part. The hold decisions of a read walk it in place of a copy.
     pub(super) fn old_root(&self, mark: Mark, path: &[usize]) -> Option<&Val> {
@@ -468,27 +544,21 @@ impl Store {
         let Some(mark) = mark else {
             return (out, None);
         };
-        if let (true, Some(c), Out::Ref(_)) = (quiet, &cursor, &out) {
-            match self.restart_of(mark, c.waits_at()) {
-                None if self.changed_since(mark) => return (out, Some(mark)),
-                None => {
+        if let (Some(c), Out::Ref(_)) = (&cursor, &out) {
+            match self.walk_of(mark, c, quiet) {
+                Walk::Live if self.changed_since(mark) => return (out, Some(mark)),
+                Walk::Live => {
                     self.close_log(mark.root);
                     return (out, None);
                 }
-                Some(pos)
-                    if self
-                        .history
-                        .get(&mark.root)
-                        .and_then(|l| l.saved(pos))
-                        .is_some() =>
-                {
+                Walk::Old(pos) => {
                     self.view = Some(View {
                         root: mark.root,
                         pos,
                     });
                     return (out, Some(mark));
                 }
-                Some(_) => {}
+                Walk::Copy => {}
             }
         }
         let out = self.resolved(out, mark);

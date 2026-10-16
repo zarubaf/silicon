@@ -156,6 +156,11 @@ struct Cursor {
     witness: Option<Witness>,
     /// The steps that the read has left, so the witness need not go deeper than the read can.
     left: usize,
+    /// The numbers of the steps of the read from the parked reference, while each step had one.
+    /// A step with no number ends the trail (`exact`). The read ends at the part with the path of
+    /// the reference followed by the trail.
+    trail: Vec<usize>,
+    exact: bool,
     /// Whether the path still follows the read. A step with no number, or a decided hold, ends
     /// it. A cursor that is not live stays in the table, because the log rebuilds the old value
     /// when a change replaced the part of the read.
@@ -369,7 +374,25 @@ impl Store {
                 part: r,
                 witness: None,
                 left: 0,
+                trail: Vec::new(),
+                exact: true,
                 live: true,
+            });
+        }
+    }
+
+    /// The read parked at `at` waits at the part `r` of a static local. It decides no hold, since a
+    /// reference to a part of a static local holds it already, but it keeps the trail of its steps.
+    fn cursor_static(&mut self, at: usize, r: Ref) {
+        if let Some(slot) = self.cursors.get_mut(at) {
+            *slot = Some(Cursor {
+                base: r.path.len(),
+                part: r,
+                witness: None,
+                left: 0,
+                trail: Vec::new(),
+                exact: true,
+                live: false,
             });
         }
     }
@@ -380,6 +403,12 @@ impl Store {
         let Some(slot) = self.cursors.get_mut(at) else {
             return;
         };
+        if let Some(c) = slot.as_mut() {
+            match k {
+                Some(number) if c.exact => c.trail.push(number),
+                _ => c.exact = false,
+            }
+        }
         match (k, slot.as_mut()) {
             (Some(k), Some(c)) if c.live => {
                 if let Some(w) = c.witness.as_mut()
@@ -423,31 +452,6 @@ impl Store {
         }
     }
 
-    /// The read at `at` waits at a part that a change in its window replaced, other than a write that
-    /// bound the root again (the hold decision walks the old root in the log for that), so the live root no
-    /// longer shows the part that the read decides on. The result becomes a copy of its old
-    /// value now (`Out::Kept`), and the cursor walks the copy, as it does after any copy.
-    fn freeze(&mut self, at: usize) {
-        let (Some(Some(c)), Some(Some(mark))) = (self.cursors.get(at), self.marks.get(at)) else {
-            return;
-        };
-        let mark = *mark;
-        if !matches!(self.parked.get(at), Some(Out::Ref(_)))
-            || !self.restarted(mark, c.waits_at())
-            || self.old_root(mark, c.waits_at()).is_some()
-        {
-            return;
-        }
-        let Some(slot) = self.parked.get_mut(at) else {
-            return;
-        };
-        let out = std::mem::replace(slot, Out::Made(Val::Static(Value::Unit)));
-        let kept = self.resolved(out, mark);
-        if let Some(slot) = self.parked.get_mut(at) {
-            *slot = kept;
-        }
-    }
-
     /// Decides the holds of the reads with an index that evaluates now, before a change of the
     /// local at `root`: the part of a cursor that is a static value holds the local, as Lean
     /// reads the part again from the live root. The decision uses the root as the index found
@@ -464,7 +468,6 @@ impl Store {
             return;
         };
         for at in list {
-            self.freeze(at);
             let located = match self.cursors.get(at) {
                 Some(Some(c)) if c.live && !c.on_witness() => Some(self.locate(at, c)),
                 _ => None,
@@ -494,7 +497,15 @@ impl Store {
     fn locate(&self, at: usize, c: &Cursor) -> Located {
         let path = &c.part.path;
         let old = match (self.parked.get(at), self.marks.get(at)) {
-            (Some(Out::Ref(_)), Some(Some(mark))) => self.old_root(*mark, c.waits_at()),
+            (Some(Out::Ref(_)), Some(Some(mark))) => {
+                if self.restarted(*mark, c.waits_at())
+                    && self.old_root(*mark, c.waits_at()).is_none()
+                {
+                    // An element that a `pop` took out is a static value.
+                    return Located::Static;
+                }
+                self.old_root(*mark, c.waits_at())
+            }
             _ => None,
         };
         let (value, rel) = match (self.parked.get(at), old) {
