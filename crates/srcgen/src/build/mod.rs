@@ -96,6 +96,8 @@ const LIST_FNS: u32 = 2;
 /// The most functions with a `mut` formal, static and hardware.
 const MUT_FNS: u32 = 2;
 const MUT_HELPERS: u32 = 2;
+/// The most functions that call an earlier function with a `mut` formal.
+const NESTED_FNS: u32 = 2;
 const ENVS: usize = 64;
 const INSTANCES: u32 = 3;
 const CONTEXTS: usize = 3;
@@ -363,6 +365,7 @@ struct Stats {
     diagnostics: u32,
     structured_diagnostics: u32,
     effectful_fns: u32,
+    nested_fns: u32,
     effectful_calls: u32,
 }
 
@@ -426,6 +429,7 @@ impl Builder {
         self.helpers()?;
         self.mut_helpers()?;
         self.fn_values()?;
+        self.nested_fns()?;
         self.signatures();
         let params = self
             .sigs

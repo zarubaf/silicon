@@ -316,12 +316,16 @@ pub(crate) struct ListFn {
 ///
 /// A function with `diag` has `diagnostic(message, value);` before its
 /// `return`. It is effectful (9.4): a call stands only at a statement of a
-/// module body.
+/// module body. A function with `pre` runs those statements first: the
+/// call of an earlier function, which makes a nested call frame.
 #[derive(Clone, Debug)]
 pub(crate) struct MutFn {
     pub(crate) name: String,
     /// `Int` or `List[Int]`.
     pub(crate) root: STy,
+    /// A `let mut` root `b0` and the call `let r0: Int = ...;` of an earlier
+    /// function on `a0` or `b0`, before the update.
+    pub(crate) pre: Vec<Stmt>,
     /// The new value of `a0`, or the element to push. It reads `x1`.
     pub(crate) update: SExpr,
     /// The result. It reads `x1`, and `a0` after the update.
@@ -583,6 +587,7 @@ fn render_mut_fn(out: &mut String, f: &MutFn) {
         0,
         &format!("comptime fn {}(mut a0: {root}, x1: Int) -> Int {{", f.name),
     );
+    stmts(out, 1, &f.pre);
     match f.root {
         STy::Int => line(out, 1, &format!("a0 = {};", sexpr(&f.update))),
         _ => line(out, 1, &format!("a0.push({});", sexpr(&f.update))),
@@ -1245,6 +1250,7 @@ module M1(comptime P0: Nat) domains() {
         let by_int = Item::MutFn(MutFn {
             name: "k0".to_owned(),
             root: STy::Int,
+            pre: Vec::new(),
             update: SExpr::Binary(SBin::Add, Box::new(sname("a0")), Box::new(sname("x1"))),
             ret: sname("a0"),
             diag: None,
@@ -1252,6 +1258,7 @@ module M1(comptime P0: Nat) domains() {
         let by_list = Item::MutFn(MutFn {
             name: "k1".to_owned(),
             root: STy::List(Box::new(STy::Int)),
+            pre: Vec::new(),
             update: sname("x1"),
             ret: SExpr::Len(Box::new(sname("a0"))),
             diag: Some(("d0".to_owned(), sname("x1"))),

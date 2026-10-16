@@ -453,29 +453,37 @@ fn programs_hold_containers_for_the_depth_draw() {
     assert!(deepest >= 4, "the deepest value has the depth {deepest}");
 }
 
-/// The names of the effectful functions of `p` (a `diagnostic` in the body)
-/// and of the consts that hold one.
+/// The names of the effectful functions of `p` (a `diagnostic` in the body,
+/// or a call of an effectful function) and of the consts that hold one.
 fn effectful(p: &Program) -> BTreeSet<String> {
-    let mut names: BTreeSet<String> = p
-        .items
-        .iter()
-        .filter_map(|i| match i {
-            Item::MutFn(f) if f.diag.is_some() => Some(f.name.clone()),
-            _ => None,
-        })
-        .collect();
-    for i in &p.items {
-        if let Item::Const {
-            name,
-            value: SExpr::Name(target),
-            ..
-        } = i
-            && names.contains(target)
-        {
-            names.insert(name.clone());
+    let mut names = BTreeSet::new();
+    loop {
+        let before = names.len();
+        for i in &p.items {
+            match i {
+                Item::MutFn(f) => {
+                    let calls = f
+                        .pre
+                        .iter()
+                        .any(|s| matches!(s, Stmt::MutCall { f, .. } if names.contains(f)));
+                    if f.diag.is_some() || calls {
+                        names.insert(f.name.clone());
+                    }
+                }
+                Item::Const {
+                    name,
+                    value: SExpr::Name(target),
+                    ..
+                } if names.contains(target) => {
+                    names.insert(name.clone());
+                }
+                _ => {}
+            }
+        }
+        if names.len() == before {
+            return names;
         }
     }
-    names
 }
 
 /// No effectful function reaches a width, a `const`, a struct argument, a
@@ -515,7 +523,10 @@ fn no_effectful_function_reaches_a_structural_position() {
             let t = line.trim_start();
             let declaration = t.starts_with("comptime fn ") && uses == 1;
             let held = t.starts_with("const F") && t.ends_with(';') && uses <= 2;
-            let call = t.starts_with("let s") && t.contains(": Int = ") && uses == 1;
+            // The call of a module body, or the call of a nested function.
+            let call = (t.starts_with("let s") || t.starts_with("let r0"))
+                && t.contains(": Int = ")
+                && uses == 1;
             // A function value is no call; `diagnostic` may show it.
             let shown = t.starts_with("diagnostic(") && uses == 1;
             assert!(
@@ -828,4 +839,46 @@ fn the_records_cover_the_kinds_of_values() {
     for (kind, n) in &with {
         assert!(n * 32 >= TAPES, "{kind} occurs in {n} of {TAPES}: {with:?}");
     }
+}
+
+/// The records show nested call frames: a function that calls a function
+/// that records, with the inner call by name, as a receiver, and through a
+/// function value (spec 8.2). Each shape occurs in 1 program in 32, and a
+/// record with two frames occurs in as many.
+#[test]
+fn the_records_cover_nested_frames() {
+    const TAPES: usize = 256;
+    let (mut nested, mut named, mut receivers, mut values, mut formals, mut locals) =
+        (0, 0, 0, 0, 0, 0);
+    for tape in tapes(TAPES) {
+        let Ok(p) = build(tape) else { continue };
+        nested += usize::from(p.records().iter().any(|r| r.contains(") (call ")));
+        let pre: Vec<&Stmt> = p
+            .items
+            .iter()
+            .filter_map(|i| match i {
+                Item::MutFn(f) => Some(&f.pre),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        let call = |keep: fn(&str, &str, bool) -> bool| {
+            pre.iter().any(|s| {
+                matches!(s, Stmt::MutCall { root, f, receiver, .. } if keep(root, f, *receiver))
+            })
+        };
+        named += usize::from(call(|_, f, r| !r && f.starts_with('k')));
+        receivers += usize::from(call(|_, _, r| r));
+        values += usize::from(call(|_, f, _| f.starts_with('F')));
+        formals += usize::from(call(|root, _, _| root == "a0"));
+        locals += usize::from(call(|root, _, _| root == "b0"));
+    }
+    let want = TAPES / 32;
+    assert!(
+        [nested, named, receivers, values, formals, locals]
+            .iter()
+            .all(|n| *n >= want),
+        "nested {nested}, by name {named}, receivers {receivers}, values {values}, \
+         on the formal {formals}, on a local {locals}"
+    );
 }

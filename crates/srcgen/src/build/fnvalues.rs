@@ -33,19 +33,7 @@ impl Builder {
             if self.tape.below(3) == 0 {
                 continue;
             }
-            let Some(ty) = self.scope.fn_ty(&target) else {
-                continue;
-            };
-            let mutable = ty.params.iter().any(|(m, _)| *m);
-            let name = format!("F{next}");
-            next += 1;
-            self.consts
-                .push((name, STy::Fn(Box::new(ty)), SExpr::Name(target)));
-            self.refresh()?;
-            note!(self, fn_values);
-            if mutable {
-                note!(self, mut_values);
-            }
+            self.fn_value(&target, &mut next)?;
         }
         for h in self.helpers.clone() {
             if self.tape.below(2) == 0 {
@@ -60,6 +48,34 @@ impl Builder {
                 ret: h.ret.0.clone(),
             });
             note!(self, hw_values);
+        }
+        Ok(())
+    }
+
+    /// The number of function values so far; the next `F<n>` takes it.
+    pub(super) fn fn_value_count(&self) -> u32 {
+        let consts = self
+            .consts
+            .iter()
+            .filter(|(n, t, _)| n.starts_with('F') && matches!(t, STy::Fn(_)))
+            .count();
+        u32::try_from(consts + self.hw_values.len()).unwrap_or(u32::MAX)
+    }
+
+    /// The const `F<next>` that holds the function item `target`.
+    pub(super) fn fn_value(&mut self, target: &str, next: &mut u32) -> Built {
+        let Some(ty) = self.scope.fn_ty(target) else {
+            return Ok(());
+        };
+        let mutable = ty.params.iter().any(|(m, _)| *m);
+        let name = format!("F{next}");
+        *next += 1;
+        self.consts
+            .push((name, STy::Fn(Box::new(ty)), SExpr::Name(target.to_owned())));
+        self.refresh()?;
+        note!(self, fn_values);
+        if mutable {
+            note!(self, mut_values);
         }
         Ok(())
     }
