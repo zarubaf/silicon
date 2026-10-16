@@ -142,17 +142,18 @@ pub(super) struct History {
     /// The index by path. The node 0 is the root.
     nodes: Vec<Node>,
     open: usize,
-    /// The last old part that a read resolved, so that reads of the same part replay each entry
-    /// of the log once, if they resolve the latest mark first. An appended entry clears it.
-    memo: Option<Memo>,
+    /// The last old part that a read resolved, for each path. Reads of one part replay each entry
+    /// of the log once, if they resolve the latest mark first. There is one memo for each path
+    /// that a read resolved, so the reads of other parts do not evict it. An appended entry
+    /// clears them, and they go with the log when the last read resumes.
+    memo: BTreeMap<Vec<usize>, Memo>,
 }
 
-/// An old part that a read resolved: the mark position, the entry that started the part, the
-/// path, and the part. A read with an earlier mark continues from it.
+/// An old part that a read resolved: the mark position, the entry that started the part, and
+/// the part. A read with an earlier mark continues from it.
 struct Memo {
     at: usize,
     from: Option<usize>,
-    path: Vec<usize>,
     part: Val,
 }
 
@@ -162,7 +163,7 @@ impl History {
             entries: Vec::new(),
             nodes: vec![Node::default()],
             open: 0,
-            memo: None,
+            memo: BTreeMap::new(),
         }
     }
 
@@ -179,7 +180,7 @@ impl History {
     fn append(&mut self, e: Entry) {
         #[cfg(test)]
         crate::counters::add(crate::counters::Count::Logged, 1);
-        self.memo = None;
+        self.memo.clear();
         let pos = self.entries.len();
         let mut at = 0usize;
         if let Some(node) = self.nodes.get_mut(at) {
@@ -630,8 +631,8 @@ impl Store {
         // entries from its mark on and before the mark of the later read are left to undo.
         let memo = log
             .memo
-            .as_ref()
-            .filter(|m| m.from == from && m.path == path && mark.at <= m.at);
+            .get(path)
+            .filter(|m| m.from == from && mark.at <= m.at);
         let (mut v, undo) = match memo {
             Some(m) => (
                 m.part.clone(),
@@ -655,12 +656,14 @@ impl Store {
         }
         // The memo serves another read that waits at the local. Without one, its clone is waste.
         if let Some(log) = self.history.get_mut(&mark.root).filter(|l| l.open > 1) {
-            log.memo = Some(Memo {
-                at: mark.at,
-                from,
-                path: path.to_vec(),
-                part: v.clone(),
-            });
+            log.memo.insert(
+                path.to_vec(),
+                Memo {
+                    at: mark.at,
+                    from,
+                    part: v.clone(),
+                },
+            );
         }
         Some(v)
     }
