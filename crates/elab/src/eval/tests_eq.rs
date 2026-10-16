@@ -38,7 +38,7 @@ fn run_eq(
     e: &str,
     run: u64,
     fuel: u64,
-    base: impl FnOnce(&mut Evaluator<'_>, PathId, TyId) -> Val,
+    base: impl FnOnce(&mut Evaluator<'_>, PathId, TyId) -> Val + Send,
 ) -> String {
     let src = assign_in(t, &format!("let y = {e};"));
     run_shown(&src, run, fuel, base, tree)
