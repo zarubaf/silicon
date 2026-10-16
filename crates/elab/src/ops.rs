@@ -77,6 +77,25 @@ impl Fuel {
         }
     }
 
+    /// Pays the units of the scan of a string, or gives `S015` with a message that has no count.
+    /// A string that the fuel cannot pay is not counted (design section 6.2). Lean prints the
+    /// same text.
+    pub(crate) fn pay_scan(&mut self, units: u128) -> Result<(), Fault> {
+        match u64::try_from(units) {
+            Ok(units) if units <= self.left => {
+                self.left -= units;
+                Ok(())
+            }
+            _ => Err((
+                Code::S015,
+                format!(
+                    "the fuel cannot pay the scan of the string; {} remain",
+                    self.left
+                ),
+            )),
+        }
+    }
+
     fn cannot_pay(&self, units: &str) -> Fault {
         (
             Code::S015,
