@@ -545,12 +545,11 @@ fn a_later_index_after_an_index_of_an_aggregate_root_holds_the_root() {
     );
 }
 
-/// A mutation inside the index of an operand copies the waiting base, and the static result
-/// still holds the root while a later operand mutates it: the mutation charges the size of
-/// the root again. This holds for an aggregate root and for a static root. The totals and the
-/// `S015` positions are those of the Lean evaluator for the same module.
+/// The result of an index that changed its own root is a new value, so it holds no local while a
+/// later operand mutates the root. This holds for an aggregate root and for a static root. The
+/// totals and the `S015` positions are those of the Lean evaluator for the same module.
 #[test]
-fn a_result_copied_by_its_own_index_still_holds_the_root_for_the_next_operand() {
+fn a_result_of_an_index_that_changed_its_root_holds_no_local_for_the_next_operand() {
     let module = |root: &str, e: &str| {
         format!(
             "module M() domains() {{\n    input a: UInt[8];\n    output y: UInt[8];\n    \
