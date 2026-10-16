@@ -227,7 +227,8 @@ def partsIn (specs : Specs) : Parts := fun t =>
 /-!
 The zero of a hardware data type `t` (section 5.6): 0 for each integer leaf and `false` for each
 `Bool` leaf. A struct type takes the field types of its done entry. The bound `b` is the depth
-of `t`, because each part of a type is less deep than the type.
+of `t`, because each part of a type is less deep than the type. An array of the length 0 makes no
+zero of its element type. That zero can be above the size limit, and no value holds it.
 -/
 def zeroOf (specs : Specs) : Nat → Ty → Option Value
   | 0, _ => none
@@ -237,6 +238,7 @@ def zeroOf (specs : Specs) : Nat → Ty → Option Value
     | .uint w => some (.uint w 0)
     | .sint w => some (.sint w 0)
     | .unit => some .unit
+    | .array e 0 => some (.array e #[])
     | .array e k => do return .array e (Array.replicate k (← zeroOf specs b e))
     | .tuple ⟨ts⟩ => do return .tuple (← ts.mapM (zeroOf specs b)).toArray
     | .struct .. => do
