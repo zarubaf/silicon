@@ -420,18 +420,22 @@ fn if_static(
     };
     fuel.pay(u128::from(x.size()) + u128::from(y.size()))
         .map_err(at(pos))?;
-    let differ = || {
+    let differ = |tys: &Types| {
         fail(
             Code::S011,
             pos,
-            "the arms of a hardware `if` differ in a static part".to_owned(),
+            format!(
+                "the arms of a hardware `if` differ in a static part: {} and {}",
+                x.text(tys),
+                y.text(tys)
+            ),
         )
     };
     if x == y {
         return Ok((*x).clone());
     }
     if matches!(x, Value::Function(..)) {
-        return differ();
+        return differ(tys);
     }
     if ops::same_pair(x, y, tys).map_err(at(pos))? {
         // The type walks enter only tuples, so the charge of the two sizes covers them.
@@ -442,7 +446,7 @@ fn if_static(
             return Ok((*y).clone());
         }
     }
-    differ()
+    differ(tys)
 }
 
 /// A leaf pair of a hardware `if` of the joined data scalar type `t`. A static leaf converts to

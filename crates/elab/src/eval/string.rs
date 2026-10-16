@@ -5,7 +5,7 @@
 //! without a scan.
 
 use super::place::Index;
-use super::{Evaluator, Opnd, Out, Res, fail};
+use super::{Evaluator, Opnd, Out, Res, at, fail};
 use crate::Code;
 use crate::hw::Val;
 use crate::int::Int;
@@ -22,12 +22,12 @@ impl Evaluator<'_> {
         };
         let lower = 1 + (s.len() as u64).div_ceil(4);
         if lower > self.fuel.left() {
-            return self.charge(pos, u128::from(lower));
+            return self.fuel.pay_scan(u128::from(lower)).map_err(at(pos));
         }
         let chars = s.chars().count() as u64;
         #[cfg(test)]
         crate::counters::add(crate::counters::Count::Scanned, chars);
-        self.charge(pos, 1 + u128::from(chars))
+        self.fuel.pay_scan(1 + u128::from(chars)).map_err(at(pos))
     }
 
     /// The string with the scalar `i` of the string `base` at the index node `pos`, whose
