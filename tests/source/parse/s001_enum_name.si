@@ -1,0 +1,6 @@
+// S001: `enum` is a keyword from slice 3 on (ADR 0021), so it is no parameter name.
+// expected-error S001 @+2
+// expected-message: expected a name
+fn f(enum: Nat) -> Nat {
+    return 1;
+}

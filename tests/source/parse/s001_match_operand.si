@@ -1,0 +1,4 @@
+// S001: a `match` is at the level of the conditional, so an operand needs parentheses.
+// expected-error S001 @+2
+// expected-message: expected an expression
+const A: T = 1 + match (x) { _ => 1 };
