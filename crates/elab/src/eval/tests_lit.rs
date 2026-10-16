@@ -541,7 +541,7 @@ fn a_later_index_after_an_index_of_an_aggregate_root_holds_the_root() {
     );
     assert_eq!(
         lowered_cost(&module("t.3[(0, bumpl(t.1)).0].2[bumpl(t.1)]"), "M()"),
-        "total 305\nM 277\n"
+        "total 295\nM 267\n"
     );
 }
 
@@ -561,12 +561,12 @@ fn a_result_copied_by_its_own_index_still_holds_the_root_for_the_next_operand() 
     let agg = "(a, list(Nat), [1, 2], [(0, a, [3, 4])])";
     let fixed = "(0, list(Nat), [1, 2], [(0, 5, [3, 4])])";
     let both = module(agg, "t.2[(t.1.push(1), 0).1] + t.3[(t.1.push(1), 0).1].0");
-    assert_eq!(lowered_cost(&both, "M()"), "total 223\nM 195\n");
-    assert_eq!(cost_fuel(&both, "M()", 180), "S015 7:44");
+    assert_eq!(lowered_cost(&both, "M()"), "total 214\nM 186\n");
+    assert_eq!(cost_fuel(&both, "M()", 170), "S015 7:44");
     let nested = module(agg, "t.3[0].2[t.1.pop() - 4] + t.3[(t.1.push(1), 0).1].0");
-    assert_eq!(lowered_cost(&nested, "M()"), "total 221\nM 193\n");
-    assert_eq!(cost_fuel(&nested, "M()", 180), "S015 7:44");
+    assert_eq!(lowered_cost(&nested, "M()"), "total 214\nM 186\n");
+    assert_eq!(cost_fuel(&nested, "M()", 170), "S015 7:44");
     let plain = module(fixed, "t.2[(t.1.push(1), 0).1] + (t.1.push(1), 0).1");
-    assert_eq!(lowered_cost(&plain, "M()"), "total 193\nM 165\n");
-    assert_eq!(cost_fuel(&plain, "M()", 160), "S015 7:40");
+    assert_eq!(lowered_cost(&plain, "M()"), "total 178\nM 150\n");
+    assert_eq!(cost_fuel(&plain, "M()", 150), "S015 7:40");
 }
