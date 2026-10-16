@@ -1161,3 +1161,46 @@ fn k_parked_whole_lists_between_alternating_changes_take_work_in_k_plus_m() {
     };
     assert_scales(at, 64);
 }
+
+/// Reads of two lists park alternately, and the changes go to both lists. The replay progress of
+/// one list must not evict that of the other (#257).
+#[test]
+#[ignore = "#257"]
+fn k_parked_reads_of_two_lists_and_m_changes_take_work_in_k_plus_m() {
+    let at = |n: u64, i: u64| {
+        let reads = rep("t.0, t.1, ", n / 2);
+        let changes = rep("t.0.push(1), t.1.push(1), t.0.pop(), t.1.pop(), ", n / 4);
+        run_ok(
+            "",
+            "UInt[8]",
+            &format!(
+                "let mut t = (list(Nat), list(Nat));\n  ({reads}{changes}0).{};",
+                n + n
+            ),
+            key(110, i),
+        )
+    };
+    assert_scales(at, 64);
+}
+
+/// The same with reads between the changes: each read of each list has its own mark.
+#[test]
+#[ignore = "#257"]
+fn k_parked_reads_of_two_lists_between_changes_take_work_in_k_plus_m() {
+    let at = |n: u64, i: u64| {
+        let round = rep(
+            "t.0, t.1, t.0.push(1), t.1.push(1), t.0.pop(), t.1.pop(), ",
+            n / 4,
+        );
+        run_ok(
+            "",
+            "UInt[8]",
+            &format!(
+                "let mut t = (list(Nat), list(Nat));\n  ({round}0).{};",
+                6 * (n / 4)
+            ),
+            key(111, i),
+        )
+    };
+    assert_scales(at, 64);
+}
