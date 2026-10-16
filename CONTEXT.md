@@ -262,6 +262,50 @@ The order of the leaves of a hardware data type. Array index 0, tuple element 0,
 
 The order of the core ports of a module: the domain ports, the inputs, then the outputs, each group sorted by source name. The leaves of one port follow in packing order. `Source.Layout` and `elab::layout` define it.
 
+### enum
+
+A nominal hardware data type with a tag type and a set of variants. It lowers to two leaves: the tag, then the packed payload. Slice 3 of the front end adds it.
+
+### variant
+
+One case of an enum. It has a name, a fixed tag value, and zero or more payload types. A variant path such as `Op::Load` names it.
+
+### tag
+
+The leaf of an enum value that selects its variant. Its type is `UInt[W]`. A tag can have a value that no variant declares, for example from a port.
+
+### payload
+
+The leaf of an enum value that holds the data of its variant. It packs the payload values in packing order, with the high bits zero. Its width is the largest payload of the variants.
+
+### pattern
+
+The part of a `match` arm before `=>`: a literal, a variant path with binders, or `_`. A pattern matches a set of values of the scrutinee type.
+
+### binder
+
+A name in a variant pattern. It binds one payload value of the variant for the expression of its arm.
+
+### scrutinee
+
+The value that a `match` examines. A scrutinee without a hardware leaf selects one arm during elaboration.
+
+### coverage
+
+The rule that the arms of a `match` match each value of the scrutinee type exactly once. It counts each value of the type, not only the declared tags. A violation is `S021`.
+
+### handle
+
+A value that refers to a register, a wire, a memory, an instance, or a child input. Its identity is its structural path and its owner. A handle copies as an identity, and it is neither static nor hardware data.
+
+### handle type
+
+The type of a handle: `Reg[T]`, `Wire[T]`, `Mem[T, N]`, `Input[T]`, or `Instance[M, args]`. A typed use at a handle type keeps the handle, and a typed use at a data type reads it.
+
+### resource-typed formal
+
+A parameter of a function with a handle type. It keeps its argument as a handle and does not read it.
+
 ### observation record
 
 The record that one call of the source builtin `diagnostic` appends during elaboration. The command `observe` prints the records. An observation record is not a diagnostic.
