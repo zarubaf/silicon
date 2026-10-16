@@ -1,0 +1,8 @@
+// S015: a binding of a port without hardware leaves makes a static value, and its zero size is above 2^32 (issue #255).
+// TOP M()
+module M() {
+    input x: [(); 2305843009213693952];
+    // expected-error S015 @+2
+    // expected-message: the value of the type has a size above 2^32, the limit of a value from a type; use a smaller type or keep it a reference
+    let y = x;
+}
