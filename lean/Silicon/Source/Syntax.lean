@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: Apache-2.0
 /-!
-The source AST of slices 1 and 2, its source positions, and the error codes of the front end.
+The source AST of slices 1 to 3, its source positions, and the error codes of the front end.
 The AST dump prints each constructor name in lowercase, and the Rust front end uses the
 same names. Each node keeps the position of the first token of its form.
 -/
@@ -40,7 +40,8 @@ length `N` is an expression.
 A type in an expression position, such as `UInt[8]`, is an `index`. A `tuple` holds at least one
 element: `()` is `unit`. A `select` is the selector `.N` of a tuple. Its `litPos` is the position
 of the number literal, for `S013`. A `method` is the receiver call `recv.name(args)`. Its position
-is the position of the receiver, the start of the call.
+is the position of the receiver, the start of the call. A `path` is a variant path `E::V` of
+two names (slice 3). A constructor `E::V(args)` is a `call` of a `path`.
 
 A type expression is a type name, a type family with its static arguments, or the unit type
 `()`. It can also be a tuple type, an array type `[T; N]`, or a function type
@@ -67,6 +68,7 @@ mutual
     | arrayType (pos : Pos) (elem : TypeExpr) (len : Expr)
     | method (pos : Pos) (recv : Expr) (name : Ident) (args : List Expr)
     | fnType (pos : Pos) (params : List FnParam) (ret : TypeExpr)
+    | path (pos : Pos) (ty variant : Ident)
 
   inductive TypeExpr where
     | name (pos : Pos) (name : String)
@@ -127,10 +129,20 @@ structure StructField where
   deriving Repr, BEq, Inhabited
 
 /-!
+A variant of an enum: `name(payload) = tag`. A variant without payload types has an empty
+`payload`, so `Add` and `Add()` give one AST.
+-/
+structure Variant where
+  name : Ident
+  payload : List TypeExpr
+  tag : Expr
+  deriving Repr, BEq, Inhabited
+
+/-!
 A top-level item. A `struct` without parameters has an empty list of parameters. An `alias` is
 the item `type N = T;`. The `domains` of a module are `none` without a `domains` clause, which
 means the one default domain `clock`. An empty list means no domain: a combinational module.
-The list holds at most one name in slice 1.
+The list holds at most one name in slice 1. An `enum` has its tag type and its variants.
 -/
 inductive Item where
   | const (pos : Pos) (name : Ident) (ty : TypeExpr) (value : Expr)
@@ -140,6 +152,7 @@ inductive Item where
       (body : List Stmt)
   | struct (pos : Pos) (name : Ident) (params : List Param) (fields : List StructField)
   | alias (pos : Pos) (name : Ident) (ty : TypeExpr)
+  | enum (pos : Pos) (name : Ident) (tag : TypeExpr) (variants : List Variant)
   deriving Repr, BEq, Inhabited
 
 /-! The front-end error codes of the spec. The spec defines no `S009`. -/

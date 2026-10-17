@@ -145,6 +145,18 @@ example : ¬ Printable [.const p (nm "X") (t "T") (.method p (v "a") (nm "in") [
 example : ¬ Printable [.fn p false (nm "f") [] (t "T")
     [.assign p (.method p (v "a") (nm "m") []) (v "x")]] := by decide
 
+/-! An enum with and without payload types, a variant path, and a constructor call. -/
+example : Printable [.enum p (nm "Op") (t "T")
+    [⟨nm "A", [], .num p 0⟩, ⟨nm "B", [t "U", .tuple p [t "V"]], .num p 1⟩],
+    .enum p (nm "E") (t "T") [],
+    .const p (nm "X") (t "Op") (.call p (.path p (nm "Op") (nm "B")) [.path p (nm "E") (nm "C")])]
+    := by decide +kernel
+
+/-! A keyword in a variant path, and an empty tuple type as a payload type. -/
+example : ¬ Printable [.const p (nm "X") (t "T") (.path p (nm "in") (nm "A"))] := by decide
+example : ¬ Printable [.enum p (nm "E") (t "T") [⟨nm "A", [.tuple p []], .num p 0⟩]] := by
+  decide
+
 /-! A control character in a string, and a number that is too large. -/
 example : ¬ Printable [.const p (nm "X") (t "T") (.str p "\x01")] := by decide
 example : ¬ Printable [.const p (nm "X") (t "T") (.num p (2 ^ 65536))] := by decide +kernel

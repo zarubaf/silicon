@@ -51,6 +51,7 @@ mutual
       | .fnType _ ps r =>
         [.keyword "fn", .symbol "("] ++ argToks (ps.map FnParam.toks)
           ++ [.symbol ")", .symbol "->"] ++ r.toks
+      | .path _ t v => [.ident t.name, .symbol "::", .ident v.name]
     if e.level < ctx then .symbol "(" :: body ++ [.symbol ")"] else body
 
   def TypeExpr.toks : TypeExpr → List Kind
@@ -126,6 +127,14 @@ def Param.toks (p : Param) : List Kind :=
 def StructField.toks (f : StructField) : List Kind :=
   [.ident f.name.name, .symbol ":"] ++ f.ty.toks ++ [.symbol ","]
 
+/-! The kinds of the payload types of a variant. A variant without them has no parentheses. -/
+def Variant.payloadToks (ps : List TypeExpr) : List Kind :=
+  if ps.isEmpty then [] else .symbol "(" :: argToks (ps.map TypeExpr.toks) ++ [.symbol ")"]
+
+def Variant.toks (v : Variant) : List Kind :=
+  .ident v.name.name :: Variant.payloadToks v.payload ++ .symbol "=" :: v.tag.toks 0 ++
+    [.symbol ","]
+
 def Item.toks : Item → List Kind
   | .const _ n ty v =>
     [.keyword "const", .ident n.name, .symbol ":"] ++ ty.toks ++ .symbol "=" :: v.toks 0
@@ -147,6 +156,9 @@ def Item.toks : Item → List Kind
     [.keyword "struct", .ident n.name] ++ params ++ .symbol "{" :: fs.flatMap StructField.toks
       ++ [.symbol "}"]
   | .alias _ n ty => [.keyword "type", .ident n.name, .symbol "="] ++ ty.toks ++ [.symbol ";"]
+  | .enum _ n ty vs =>
+    [.keyword "enum", .ident n.name, .symbol ":"] ++ ty.toks ++ .symbol "{" ::
+      vs.flatMap Variant.toks ++ [.symbol "}"]
 
 /-! The kinds of `Print.print items`: the lexer gives these, then `eof`. -/
 def Print.toks (items : List Item) : List Kind := items.flatMap Item.toks

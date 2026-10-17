@@ -11,7 +11,8 @@ The Rust front end copies the dump byte for byte, so these rules fix each byte:
   no fields prints as `(<constructor>)`, for example `(unit)`. Thus `(` is followed by a name,
   except in an empty list.
 - The structure `Param` prints as `(param <mode> <name> <ty>)`. The structure `StructField`
-  prints as `(structfield <name> <ty>)`. A `FnParam` prints as `(fnparam <mutable> <ty>)`.
+  prints as `(structfield <name> <ty>)`. The structure `Variant` prints as
+  `(variant <name> <payload> <tag>)`. A `FnParam` prints as `(fnparam <mutable> <ty>)`.
 - A `ParamMode` prints as its constructor name: `none`, `comptime`, or `mut`.
 - A `pos` field does not print. An `Ident` prints as its name, as a string.
 - A `String` prints in double quotes. It escapes `"`, `\`, LF, CR, and tab as `\"`, `\\`,
@@ -108,6 +109,7 @@ mutual
     | .method _ r m xs =>
       Expr.dumpsTo (r.dumpTo (acc ++ "(method ") ++ " " ++ ident m ++ " (") xs ++ "))"
     | .fnType _ ps r => r.dumpTo (FnParam.dumpsTo (acc ++ "(fntype (") ps ++ ") ") ++ ")"
+    | .path _ t v => acc ++ "(path " ++ ident t ++ " " ++ ident v ++ ")"
 
   /-- `sepTo Expr.dumpTo`, which the recursion over `Expr` needs as its own function. -/
   def Expr.dumpsTo (acc : String) : List Expr → String
@@ -181,6 +183,10 @@ def Param.dumpTo (acc : String) (p : Param) : String :=
 def StructField.dumpTo (acc : String) (f : StructField) : String :=
   f.ty.dumpTo (acc ++ "(structfield " ++ ident f.name ++ " ") ++ ")"
 
+def Variant.dumpTo (acc : String) (v : Variant) : String :=
+  let acc := listTo TypeExpr.dumpTo (acc ++ "(variant " ++ ident v.name ++ " ") v.payload
+  v.tag.dumpTo (acc ++ " ") ++ ")"
+
 def Item.dumpTo (acc : String) : Item → String
   | .const _ n ty v => v.dumpTo (ty.dumpTo (acc ++ "(const " ++ ident n ++ " ") ++ " ") ++ ")"
   | .fn _ c n ps r b =>
@@ -194,6 +200,8 @@ def Item.dumpTo (acc : String) : Item → String
     let acc := listTo Param.dumpTo (acc ++ "(struct " ++ ident n ++ " ") ps ++ " "
     listTo StructField.dumpTo acc fs ++ ")"
   | .alias _ n ty => ty.dumpTo (acc ++ "(alias " ++ ident n ++ " ") ++ ")"
+  | .enum _ n ty vs =>
+    listTo Variant.dumpTo (ty.dumpTo (acc ++ "(enum " ++ ident n ++ " ") ++ " ") vs ++ ")"
 
 def Expr.dump (e : Expr) : String := e.dumpTo ""
 def TypeExpr.dump (t : TypeExpr) : String := t.dumpTo ""
@@ -222,7 +230,8 @@ after it. Thus it prints in parentheses as the base of a postfix form. A functio
 base of a type family index prints in parentheses for the same reason.
 
 A struct without parameters prints without parentheses. Each field of a struct prints on its own
-line and ends with `,`.
+line and ends with `,`. Each variant of an enum prints on its own line and ends with `,` too. A
+variant without payload types prints without parentheses. A variant path `E::V` is a primary.
 -/
 
 def BinOp.text : BinOp → String
@@ -279,6 +288,7 @@ mutual
       | .method _ r m xs =>
         r.print postfixLevel ++ "." ++ m.name ++ "(" ++ args (xs.map (Expr.print 0)) ++ ")"
       | .fnType _ ps r => fnText (ps.map FnParam.print) r.print
+      | .path _ t v => t.name ++ "::" ++ v.name
     if e.level < ctx then "(" ++ text ++ ")" else text
 
   def TypeExpr.print : TypeExpr → String
@@ -343,6 +353,11 @@ def Param.print (p : Param) : String := p.mode.mark ++ p.name.name ++ ": " ++ p.
 
 def StructField.print (f : StructField) : String := f.name.name ++ ": " ++ f.ty.print
 
+def Variant.print (v : Variant) : String :=
+  let payload :=
+    if v.payload.isEmpty then "" else "(" ++ args (v.payload.map TypeExpr.print) ++ ")"
+  v.name.name ++ payload ++ " = " ++ v.tag.print 0
+
 def Item.print : Item → String
   | .const _ n ty v => "const " ++ n.name ++ ": " ++ ty.print ++ " = " ++ v.print 0 ++ ";\n"
   | .fn _ c n ps r b => (if c then "comptime " else "") ++ "fn " ++ n.name ++ "("
@@ -359,6 +374,10 @@ def Item.print : Item → String
       else "{\n" ++ String.join (fs.map fun f => indent 1 ++ f.print ++ ",\n") ++ "}"
     "struct " ++ n.name ++ params ++ " " ++ fields ++ "\n"
   | .alias _ n ty => "type " ++ n.name ++ " = " ++ ty.print ++ ";\n"
+  | .enum _ n ty vs =>
+    let variants := if vs.isEmpty then "{}"
+      else "{\n" ++ String.join (vs.map fun v => indent 1 ++ v.print ++ ",\n") ++ "}"
+    "enum " ++ n.name ++ ": " ++ ty.print ++ " " ++ variants ++ "\n"
 
 /-! The source text of a file. A blank line separates two items. -/
 def Print.print (items : List Item) : String :=

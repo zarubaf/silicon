@@ -290,33 +290,33 @@ private theorem trans_all (s : Sep) :
     have ha := Inner.argToks (s := s) (xss := ps.map FnParam.toks) (by simpa using ih)
     intro d rest
     simp [Expr.toks, scan, OpenK, CloseK, ihr d, ha d]
-  case case18 =>
+  case case19 =>
     intro m t iht d rest
     cases m <;> simp [FnParam.toks, scan, OpenK, CloseK, iht d]
-  case case20 =>
+  case case21 =>
     intro p b xs ihb ih
     have ha := Inner.argToks (s := s) (xss := xs.map (Expr.toks 0))
       (by simpa using fun x hx => ih x hx 0)
     intro d rest
     rw [TypeExpr.toks.eq_def]
     cases b <;> simp [scan, OpenK, CloseK, ihb d, ihb (d + 1), ha d]
-  case case22 =>
+  case case23 =>
     intro p ts ih
     have ha := Inner.argToks (xss := ts.map TypeExpr.toks) (by simpa using ih)
     rw [TypeExpr.toks]
     split
     · simpa using Trans.paren (ha.append Inner.comma)
     · simpa using Trans.paren ha
-  case case23 =>
+  case case24 =>
     intro p t n iht ihn
     intro d rest
     simp [TypeExpr.toks, scan, OpenK, CloseK, iht (d + 1), ihn 0 (d + 1)]
-  case case24 =>
+  case case25 =>
     intro p ps r ih ihr
     have ha := Inner.argToks (s := s) (xss := ps.map FnParam.toks) (by simpa using ih)
     intro d rest
     simp [TypeExpr.toks, scan, OpenK, CloseK, ihr d, ha d]
-  case case19 | case21 =>
+  case case20 | case22 =>
     intros
     intro d rest
     simp [TypeExpr.toks, scan, OpenK, CloseK]
