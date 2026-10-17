@@ -1,0 +1,13 @@
+// W1 of the work-counter tests of the hardware `match` (issue #272). A scrutinee of 16 bits and N
+// literal arms with the arm `_`: the coverage check works in `O(n log n)` for N arms.
+// SCALE match_arms_narrow 256 512 1024 2048 4096
+// TOP M()
+module M() domains() {
+    input x: UInt[16];
+    match (x) {
+// REPEAT i {N}
+        {i} => (),
+// END
+        _ => (),
+    };
+}
