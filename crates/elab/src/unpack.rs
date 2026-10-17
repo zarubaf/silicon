@@ -37,11 +37,15 @@ pub(crate) fn unpack(tys: &Types, words: &[u64], t: TyId, off: u64) -> Option<Va
                     Ty::Unit => done.push(Value::Unit),
                     Ty::Array(elem, len) => {
                         let n = usize::try_from(len.to_u64()?).ok()?;
-                        let width = tys.meta(*elem).width.to_u64()?;
                         work.push(Step::Array(*elem, n));
-                        work.extend((0..n as u64).rev().map(|k| {
-                            Step::Visit(*elem, off.saturating_add(k.saturating_mul(width)))
-                        }));
+                        if n > 0 {
+                            // An empty array reads no element, so the width of its element
+                            // type, which can exceed `u64`, is never needed (Lean `Value.unpack`).
+                            let width = tys.meta(*elem).width.to_u64()?;
+                            work.extend((0..n as u64).rev().map(|k| {
+                                Step::Visit(*elem, off.saturating_add(k.saturating_mul(width)))
+                            }));
+                        }
                     }
                     Ty::Tuple(parts) => {
                         work.push(Step::Tuple(parts.len()));

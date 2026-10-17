@@ -390,3 +390,14 @@ fn a_binder_pays_the_zero_size_of_its_type() {
         "(int 2)"
     );
 }
+
+/// An empty array reads no element, so a binder of an empty array of a wide element type unpacks
+/// as Lean `Value.unpack` does, though the element width exceeds `u64`.
+#[test]
+fn a_binder_of_an_empty_array_of_a_wide_element_unpacks() {
+    let src = "enum E: UInt[1] { A([[UInt[1]; 18446744073709551616]; 0]) = 0 }\n";
+    assert_eq!(
+        at(src, "match (E::A([])) { E::A(x) => x, _ => [] }"),
+        "(array (array (uint 1) 18446744073709551616) ())"
+    );
+}
