@@ -198,6 +198,8 @@ impl<'a> Walk<'a> {
 
     fn stmts_in(&mut self, body: &mut Vec<Stmt>, top: bool) {
         let mark = self.scope.len();
+        // A name that a nested frame declares leaves scope with the frame.
+        let (hardware, typed) = (self.hardware.len(), self.typed.len());
         let mut i = 0;
         while let Some(s) = body.get(i) {
             self.stmt += 1;
@@ -245,6 +247,8 @@ impl<'a> Walk<'a> {
             i += 1;
         }
         self.scope.truncate(mark);
+        self.hardware.truncate(hardware);
+        self.typed.truncate(typed);
     }
 
     fn stmt_parts(&mut self, s: &mut Stmt) {
@@ -345,13 +349,19 @@ impl<'a> Walk<'a> {
     /// register, or a binder of such a value through an operator, a
     /// constructor, or `reinterpret`. A name of a `let` can hold a static
     /// value, so it does not count. A static operand does not make an
-    /// operator static, because the other operand is hardware.
+    /// operator static, because the other operand is hardware. An `if` and
+    /// a `match` fold when their condition or scrutinee is static, and a
+    /// call can drop its operands, so none of them counts.
     fn certainly_hardware(&self, e: &HExpr) -> bool {
         match e {
             HExpr::Name(n) => self.hardware.contains(n),
             HExpr::Unary(_, a) | HExpr::Resize(_, a) | HExpr::Reinterpret(_, a) => {
                 self.certainly_hardware(a)
             }
+            // `&&` and `||` do not run their right operand if the left one
+            // decides, so `false && x` is static. The other operators run
+            // both.
+            HExpr::Binary(HBin::Land | HBin::Lor, a, _) => self.certainly_hardware(a),
             HExpr::Binary(_, a, b) => self.certainly_hardware(a) || self.certainly_hardware(b),
             HExpr::Ctor(_, _, args) => args.iter().any(|a| self.certainly_hardware(a)),
             _ => false,
@@ -1192,4 +1202,49 @@ fn fault() -> SExpr {
 fn mentions_token(text: &str, token: &str) -> bool {
     text.split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
         .any(|word| word == token)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn walk() -> Walk<'static> {
+        let mut w = Walk::new(Kind::Rename, "M0", None);
+        w.hardware.push("i0".to_owned());
+        w
+    }
+
+    fn hw(name: &str) -> HExpr {
+        HExpr::Name(name.to_owned())
+    }
+
+    fn stat(b: bool) -> HExpr {
+        HExpr::Static(SExpr::Bool(b))
+    }
+
+    fn bin(op: HBin, a: HExpr, b: HExpr) -> HExpr {
+        HExpr::Binary(op, Box::new(a), Box::new(b))
+    }
+
+    /// `false && x` and `true || x` are static, so only the left operand of
+    /// `&&` and `||` decides. The other operators run both operands. A
+    /// folding `if` or `match` is no hardware.
+    #[test]
+    fn a_lazy_or_folding_form_is_hardware_by_its_first_operand() {
+        let w = walk();
+        assert!(w.certainly_hardware(&bin(HBin::Land, hw("i0"), stat(true))));
+        assert!(!w.certainly_hardware(&bin(HBin::Land, stat(false), hw("i0"))));
+        assert!(!w.certainly_hardware(&bin(HBin::Lor, stat(true), hw("i0"))));
+        assert!(w.certainly_hardware(&bin(HBin::Addw, stat(true), hw("i0"))));
+        assert!(w.certainly_hardware(&bin(HBin::Eq, hw("i0"), stat(true))));
+        let folding = HExpr::If(Box::new(stat(true)), Box::new(hw("i0")), Box::new(hw("i0")));
+        assert!(!w.certainly_hardware(&folding));
+        let selected = HExpr::Match(Match {
+            scrutinee: Box::new(stat(true)),
+            arms: vec![(Pattern::Wild, hw("i0"))],
+        });
+        assert!(!w.certainly_hardware(&selected));
+        assert!(!w.certainly_hardware(&HExpr::Call("h0".to_owned(), vec![hw("i0")])));
+        assert!(!w.certainly_hardware(&hw("l0")));
+    }
 }
