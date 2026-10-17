@@ -624,6 +624,15 @@ mutual
 end
 
 /-!
+An integer in a message: decimal up to 256 bits, else its bit length. The bit length needs no
+decimal conversion, so a message stays small and cheap for any computed integer.
+-/
+def intText (n : Int) : String :=
+  let bits := n.natAbs.log2 + 1
+  if bits ≤ 256 then toString n
+  else s!"{if n < 0 then "a negative" else "an"} integer of {bits} bits"
+
+/-!
 The text of a type in a message, and the source text of a static argument in it. A struct type
 prints its item, with its arguments in brackets when it has any: `P[8]`. A function type prints
 in its source form, and a function value prints its item. An enum type prints its name, and an
