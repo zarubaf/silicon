@@ -1103,3 +1103,62 @@ fn s007_diagnostic_takes_two_arguments() {
         fn_body("diagnostic(p);\nreturn p;")
     ));
 }
+
+const OPS: &str = "enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }\n";
+
+#[test]
+fn s007_a_variant_constructor_has_one_value_for_each_payload_type() {
+    ok(&format!(
+        "{OPS}fn f(x: UInt[8]) -> Op {{ let a = Op::Add(); return Op::Load(x); }}"
+    ));
+    ok(&format!("{OPS}fn f(x: UInt[8]) -> Op {{ return Op(x); }}"));
+    let two = format!("{OPS}fn f(x: UInt[8]) -> Op {{ return Op::Load(x, x); }}");
+    fails(&two, S007, 2, 33);
+    assert_eq!(
+        message(&two),
+        "the variant `Op::Load` has 1 payload value(s), but the constructor has 2; pass one \
+         value for each payload type"
+    );
+    fails(
+        &format!("{OPS}fn f() -> Op {{ return Op::Load; }}"),
+        S007,
+        2,
+        23,
+    );
+    fails(
+        &format!("{OPS}fn f() -> Op {{ return Op::Add(1); }}"),
+        S007,
+        2,
+        23,
+    );
+    fails(
+        &format!("{OPS}fn f() -> Op[1] {{ return Op(); }}"),
+        S007,
+        2,
+        11,
+    );
+    fails(
+        "enum E: UInt[1] { A = 0 }\nconst C: E = E::A(E::A);",
+        S007,
+        2,
+        14,
+    );
+}
+
+#[test]
+fn a_payload_value_in_a_static_position_is_static() {
+    fails(
+        &format!("{OPS}module M() {{\ninput a: UInt[8];\nreg q: Op = Op::Load(a);\n}}"),
+        S005,
+        4,
+        22,
+    );
+    ok(&format!(
+        "{OPS}module M() {{\ninput a: UInt[8];\nlet q = Op::Load(a);\n}}"
+    ));
+}
+
+#[test]
+fn the_tag_value_of_a_variant_is_a_static_position_also_in_an_unused_enum() {
+    fails("enum E: UInt[2] { A = UInt[2][1] }", S007, 1, 23);
+}

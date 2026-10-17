@@ -3,7 +3,7 @@
 //! so it runs on the front-end thread.
 
 use crate::{Code, Error};
-use parse::ast::{Expr, FnParam, Item, NodeId, Param, ParamMode, Pos, Stmt, TypeExpr};
+use parse::ast::{Expr, FnParam, Ident, Item, NodeId, Param, ParamMode, Pos, Stmt, TypeExpr};
 use resolve::{DeclId, Kind, Prelude, Resolved, ResolvedExpr, Target};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -29,6 +29,8 @@ enum Sig {
     Struct { params: usize, fields: usize },
     /// A `type` item. Only elaboration knows its type.
     Alias,
+    /// An `enum` item: a complete type.
+    Enum,
 }
 
 /// The rule of a constructor call `T(...)`.
@@ -150,7 +152,7 @@ fn sigs(resolved: &Resolved) -> BTreeMap<DeclId, Sig> {
     let mut sigs = BTreeMap::new();
     for item in resolved.ast() {
         let (name, sig) = match item {
-            Item::Const { .. } | Item::Enum { .. } => continue,
+            Item::Const { .. } => continue,
             Item::Fn {
                 comptime,
                 name,
@@ -177,6 +179,7 @@ fn sigs(resolved: &Resolved) -> BTreeMap<DeclId, Sig> {
                 },
             ),
             Item::Alias { name, .. } => (name, Sig::Alias),
+            Item::Enum { name, .. } => (name, Sig::Enum),
         };
         if let Some(Target::Decl(id)) = resolved.target(name.id) {
             sigs.insert(id, sig);
@@ -283,7 +286,7 @@ impl<'a> Walker<'a> {
                     missing: *params,
                     ctor: Ctor::Record(*fields),
                 }),
-                Sig::Alias => Some(Head {
+                Sig::Alias | Sig::Enum => Some(Head {
                     text,
                     missing: 0,
                     ctor: Ctor::Unknown,
@@ -515,17 +518,54 @@ impl<'a> Walker<'a> {
         head
     }
 
+    /// The variant path `ty::variant` with the payload values `args`, which a call gives. It is
+    /// `S007` at `pos` if the number of values differs from the number of payload types. A
+    /// payload value is not a static position.
+    fn constructor(
+        &mut self,
+        pos: Pos,
+        ty: &Ident,
+        variant: &Ident,
+        args: &[Expr],
+        is_static: bool,
+    ) {
+        let found = match self.expr {
+            Some(expr) => expr.variant(ty.id),
+            None => self.resolved.variant(ty.id),
+        };
+        if let Some(found) = found
+            && let Some(Item::Enum { variants, .. }) = self.resolved.ast().get(found.item)
+            && let Some(want) = variants.get(found.index).map(|v| v.payload.len())
+            && want != args.len()
+        {
+            self.report(
+                Code::S007,
+                pos,
+                format!(
+                    "the variant `{}::{}` has {want} payload value(s), but the constructor has \
+                     {}; pass one value for each payload type",
+                    ty.name,
+                    variant.name,
+                    args.len()
+                ),
+            );
+        }
+        for arg in args {
+            self.expr(is_static, arg);
+        }
+    }
+
     /// An expression. `is_static` is true in a static position. `base` is true for the base of
     /// an index, whose index holds the arguments of a type name. The result is the type head
     /// of a type in an expression: a type name, an index of one, or `[T; N]`. Another
     /// expression gives `None`. Thus the walk visits each node once.
     fn visit(&mut self, is_static: bool, base: bool, expr: &Expr) -> Option<Head> {
         match expr {
-            Expr::Num { .. }
-            | Expr::Bool { .. }
-            | Expr::Str { .. }
-            | Expr::Unit { .. }
-            | Expr::Path { .. } => None,
+            Expr::Num { .. } | Expr::Bool { .. } | Expr::Str { .. } | Expr::Unit { .. } => None,
+            Expr::Path { pos, ty, variant } => {
+                self.constructor(*pos, ty, variant, &[], is_static);
+                None
+            }
             Expr::Name { pos, id, name } => self.name_use(is_static, base, *pos, *id, name),
             Expr::Unary { arg, .. } => {
                 self.expr(is_static, arg);
@@ -545,6 +585,10 @@ impl<'a> Walker<'a> {
             Expr::Call {
                 pos, callee, args, ..
             } => {
+                if let Expr::Path { ty, variant, .. } = &**callee {
+                    self.constructor(*pos, ty, variant, args, is_static);
+                    return None;
+                }
                 if let Expr::Name { id, .. } = &**callee {
                     self.port_call(*pos, *id);
                 }
@@ -821,7 +865,15 @@ impl<'a> Walker<'a> {
                 }
             }
             Item::Alias { ty, .. } => self.type_expr(ty),
-            Item::Enum { .. } => {}
+            Item::Enum { tag, variants, .. } => {
+                self.type_expr(tag);
+                for variant in variants {
+                    for ty in &variant.payload {
+                        self.type_expr(ty);
+                    }
+                    self.expr(true, &variant.tag);
+                }
+            }
         }
     }
 }
