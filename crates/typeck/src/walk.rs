@@ -3,7 +3,9 @@
 //! so it runs on the front-end thread.
 
 use crate::{Code, Error};
-use parse::ast::{Arm, Expr, FnParam, Ident, Item, NodeId, Param, ParamMode, Pos, Stmt, TypeExpr};
+use parse::ast::{
+    Arm, Expr, FnParam, Ident, Item, NodeId, Param, ParamMode, Pattern, Pos, Stmt, TypeExpr,
+};
 use resolve::{DeclId, Kind, Prelude, Resolved, ResolvedExpr, Target};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -664,13 +666,49 @@ impl<'a> Walker<'a> {
         }
     }
 
-    // TODO(#272): the arity of the patterns.
+    /// A `match`: the scrutinee, then each arm. A binder is a plain local: a static position
+    /// can name it, and it is no mutable root.
     fn matched(&mut self, is_static: bool, scrut: &Expr, arms: &[Arm]) -> Option<Head> {
         self.expr(is_static, scrut);
         for arm in arms {
+            self.pattern(&arm.pat);
             self.expr(is_static, &arm.value);
         }
         None
+    }
+
+    /// `S007` at the start of a variant pattern whose binders and `_` do not match the payload
+    /// values of its variant.
+    fn pattern(&mut self, pat: &Pattern) {
+        let Pattern::Variant {
+            pos,
+            ty,
+            variant,
+            binders,
+        } = pat
+        else {
+            return;
+        };
+        let found = match self.expr {
+            Some(expr) => expr.variant(ty.id),
+            None => self.resolved.variant(ty.id),
+        };
+        if let Some(found) = found
+            && let Some(Item::Enum { variants, .. }) = self.resolved.ast().get(found.item)
+            && let Some(want) = variants.get(found.index).map(|v| v.payload.len())
+            && want != binders.len()
+        {
+            self.report(
+                Code::S007,
+                *pos,
+                format!(
+                    "the variant `{}` has {want} payload value(s), but the pattern has {}; \
+                     write one binder or `_` for each payload value",
+                    variant.name,
+                    binders.len()
+                ),
+            );
+        }
     }
 
     /// The parameter types and the result type of a function type.
