@@ -2,6 +2,7 @@
 import Silicon.Source.Flatten
 import Silicon.Core.Semantics.Expression
 import Silicon.Source.Proof.StaticOps.Spine
+import Silicon.Source.Proof.StaticOps.Bits
 
 /-!
 The finite static operations of the evaluator agree with the core (section 7.4 of the front-end
@@ -43,6 +44,16 @@ selects, at most one of them 1, and constant values. `lowerMatch` lowers its ope
 holds for at most 30 arms. The statements take the selects and the values as given: no proof
 here ties them to the walk of `Eval.matchHw` and `Eval.armWalk` (#286). Each select of
 `Eval.matchHw` can have a shared mark (`Eval.shared`), and the rows here have none.
+
+The rows of a pack take constant leaves, each a `Bool` or a finite value. The payload of `E::V(..)`
+is the node `pack P` of `Eval.packHw`. Its static side is the pack of `Eval.variantOf` into the
+word buffer `Bits` (`Bits.toNat_packAll`). `reinterpret(UInt[W + P], e)` of an enum value is the
+node `pack (W + P)` of the tag and the payload, and `Eval.recast` gives its static side.
+`lowerPack` builds the `concat` chain in a loop (`ok_pack`), and the claim about `lower` holds for
+at most 60 leaves. Then the chain stays below the height 64, so the height rule binds no
+temporary. The statements take the leaves as given. No proof here ties them to the walk of
+`Agg.packLeaves` or to the payload values of `Eval.variantOf` (#286). An aggregate payload value
+packs by recursion in `Value.pack`, and the statements cover only flat leaves.
 -/
 namespace Silicon.Source.StaticOps
 
@@ -473,6 +484,80 @@ def OnehotAgrees : Prop :=
     (∀ q, ev vals mems (onehotRow q k.width hb as) = ((as.find? (·.1)).map (·.2)).getD 0) ∧
       (as.length ≤ 30 → ∀ p, Lowers (onehotHw p k as) (5 * as.length)
         (onehotRow (ctx := ctx) (cpos p) k.width hb as).erase)
+
+/-! A constant leaf of a pack: a `Bool` or a finite value, with its bits. -/
+structure PackLeaf where
+  k : Leaf
+  x : BitVec k.width
+
+namespace PackLeaf
+
+def width (l : PackLeaf) : Nat := l.k.width
+
+def value (l : PackLeaf) : Value := l.k.value l.x
+
+/-! The literal node of the leaf, as `Agg.packLeaves` gives it for a constant. -/
+def hw (p : Pos) (l : PackLeaf) : Hw := litHw p l.k.ty l.value
+
+end PackLeaf
+
+/-! The node `pack P` of `Eval.packHw` over the leaves `ls`, in packing order. -/
+def packNode (p : Pos) (P : Nat) (ls : List PackLeaf) : Hw :=
+  Hw.mk p (.uint P) (.pack P) (ls.map (·.hw p))
+
+/-! The `concat` chain of the leaves `rs`, the last leaf first: `concat l_(n-1) (... l_0)`. -/
+def chainRow (q : Core.Pos) : (rs : List PackLeaf) → (rs.map (·.width)).sum ≤ 65536 →
+    Ex ctx (rs.map (·.width)).sum
+  | [], _ => .const q 0 0
+  | [l], _ => .const q l.width l.x.toNat
+  | l :: r :: rs, h =>
+    .concat (b := ((r :: rs).map (·.width)).sum) q (.const q l.width l.x.toNat)
+      (chainRow q (r :: rs) (by simp at h ⊢; omega)) (by simp at h ⊢; omega)
+
+/-!
+The row of `pack P` over the leaves `ls` of `S` bits: the `concat` chain, inside
+`concat (const (P - S) 0) ..` when `S < P`.
+-/
+def packRow (q : Core.Pos) (P : Nat) (ls : List PackLeaf) (hq : (ls.map (·.width)).sum ≤ P)
+    (hP : P ≤ 65536) : Ex ctx P :=
+  have hS : (ls.reverse.map (·.width)).sum = (ls.map (·.width)).sum := by
+    simp [List.map_reverse, List.sum_reverse]
+  if h : (ls.reverse.map (·.width)).sum < P then
+    (by omega : P - (ls.reverse.map (·.width)).sum + (ls.reverse.map (·.width)).sum = P) ▸
+      .concat q (.const q (P - (ls.reverse.map (·.width)).sum) 0)
+        (chainRow q ls.reverse (by omega)) (by omega)
+  else (by omega : (ls.reverse.map (·.width)).sum = P) ▸ chainRow q ls.reverse (by omega)
+
+/--
+The payload of `E::V(..)` with constant payload values: the row of `pack P` over the leaves `ls`
+of the values, in packing order. The static side is the pack of `Eval.variantOf`: `Value.packAll`
+into the word buffer of `P` bits. The leaves are each a `Bool` or a finite value, and they have
+at most `P` bits. The claim about `lower` holds for at most 60 leaves, as for the rows by leaf.
+Then the chain stays below the height 64, so `lowerPack` binds no temporary.
+-/
+def PackAgrees : Prop :=
+  ∀ (P : Nat) (hP : P ≤ 65536) (ls : List PackLeaf) (hq : (ls.map (·.width)).sum ≤ P), ls ≠ [] →
+    ∀ {ctx} (vals : Valuation ctx) (mems : Memories ctx),
+    (∀ q, ev vals mems (packRow q P ls hq hP) =
+      BitVec.ofNat P (Value.packAll (Eval.Bits.new P) (ls.map (·.value))).toNat) ∧
+      (ls.length ≤ 60 → ∀ p, Lowers (packNode p P ls) (2 * ls.length + 1)
+        (packRow (ctx := ctx) (cpos p) P ls hq hP).erase)
+
+/--
+`reinterpret(UInt[W + P], e)` of an enum value: the row `concat payload tag`. The static
+`reinterpret` of `Eval.recast` gives the number of the row. The hardware side is the node
+`pack (W + P)` of the two leaves. With `P` 0, `recast` gives the tag leaf itself, with no node.
+-/
+def PackEnumAgrees : Prop :=
+  ∀ (pos : Pos) (u : Ty) (w pw : Nat) (x : BitVec w) (y : BitVec pw) (c : Eval.Ctx)
+    (s s' : Eval.St) (v : Value) (hb : w + pw ≤ 65536), s.specs.widths u = some (w, pw) →
+    recast pos (.uint (w + pw)) (.static (.enum u w x pw y)) c s = .ok (.static v, s') →
+    ∀ {ctx} (vals : Valuation ctx) (mems : Memories ctx),
+    let e (q : Core.Pos) : Ex ctx (pw + w) :=
+      .concat q (.const q pw y.toNat) (.const q w x.toNat) (by omega)
+    (∀ q, v = .uint (w + pw) ((ev vals mems (e q)).cast (by omega))) ∧
+      ∀ p, Lowers (Hw.mk p (.uint (w + pw)) (.pack (w + pw)) [leaf p false w x, leaf p false pw y])
+        3 (e (cpos p)).erase
 
 /-! Facts about the lift and the operands. -/
 
@@ -1228,19 +1313,318 @@ theorem static_onehot_agrees : OnehotAgrees := by
     simp only [hs0, hv0, selE, valE]
     rfl
 
+/-! The proofs of the rows of a pack. -/
+
+/-! A leaf of a pack is a flat leaf of `Bits`, with its width and its number. -/
+private theorem PackLeaf.flat (l : PackLeaf) : Bits.Flat l.value := by
+  obtain ⟨k, x⟩ := l
+  cases k with
+  | bool => trivial
+  | fin s w => cases s <;> trivial
+
+private theorem PackLeaf.width_value (l : PackLeaf) : Bits.width l.value = l.width := by
+  obtain ⟨k, x⟩ := l
+  cases k with
+  | bool => rfl
+  | fin s w => cases s <;> rfl
+
+private theorem PackLeaf.bits_value (l : PackLeaf) : Bits.bits l.value = l.x.toNat := by
+  obtain ⟨k, x⟩ := l
+  cases k with
+  | bool => rcases BitVec.eq_zero_or_eq_one x with rfl | rfl <;> rfl
+  | fin s w => cases s <;> rfl
+
+/-! The offset after the reference pack: the sum of the widths. -/
+private theorem snd_refStep : ∀ (vs : List Value) (a n : Nat),
+    (vs.foldl Bits.refStep (a, n)).2 = n + (vs.map Bits.width).sum
+  | [], _, _ => by simp
+  | v :: vs, a, n => by
+    simp only [List.foldl_cons, Bits.refStep]
+    rw [snd_refStep vs]
+    simp; omega
+
+private theorem toNat_append_fn {a b : Nat} (x : BitVec a) (y : BitVec b) :
+    (x.append y).toNat = x.toNat <<< b ||| y.toNat := BitVec.toNat_append x y
+
+/-! The number of a `concat` node: its left operand above its right operand. -/
+private theorem ev_concat {ctx} (vals : Valuation ctx) (mems : Memories ctx) (q : Core.Pos)
+    {a b : Nat} (x : Ex ctx a) (y : Ex ctx b) (h : a + b ≤ 65536) :
+    (ev vals mems (.concat q x y h)).toNat =
+      (ev vals mems x).toNat <<< b ||| (ev vals mems y).toNat :=
+  BitVec.toNat_append _ _
+
+/-! The `concat` chain gives the reference number of `Bits.refStep` over the packing order. -/
+private theorem eval_chainRow {ctx} (vals : Valuation ctx) (mems : Memories ctx) (q : Core.Pos) :
+    ∀ (rs : List PackLeaf) (h : (rs.map (·.width)).sum ≤ 65536),
+      (ev vals mems (chainRow q rs h)).toNat =
+        ((rs.reverse.map (·.value)).foldl Bits.refStep (0, 0)).1
+  | [], _ => by simp [chainRow, Core.Semantics.evalExpr]
+  | [l], _ => by
+    simp [chainRow, Core.Semantics.evalExpr, Bits.refStep, PackLeaf.bits_value]
+    exact (BitVec.toNat_setWidth _ _).trans (Nat.mod_eq_of_lt l.x.isLt)
+  | l :: r :: rs, h => by
+    have ih := eval_chainRow vals mems q (r :: rs) (by simp at h ⊢; omega)
+    rw [List.reverse_cons, List.map_append, List.foldl_append]
+    rw [chainRow]
+    refine (ev_concat vals mems q _ _ _).trans ?_
+    rw [ih]
+    generalize hA : List.foldl Bits.refStep (0, 0) ((r :: rs).reverse.map (·.value)) = A
+    have hA2 : A.2 = ((r :: rs).map (·.width)).sum := by
+      rw [← hA, snd_refStep]
+      simp [List.map_reverse, List.sum_reverse, Function.comp_def, PackLeaf.width_value]
+      omega
+    obtain ⟨a, n⟩ := A
+    simp only at hA2
+    subst hA2
+    have hx : l.x.toNat % 2 ^ l.width = l.x.toNat := Nat.mod_eq_of_lt l.x.isLt
+    simp [Bits.refStep, PackLeaf.bits_value, Core.Semantics.evalExpr, hx, Nat.or_comm]
+
+
+/-! The row of `pack P` gives the static pack of `Eval.variantOf`. -/
+private theorem eval_packRow {ctx} (vals : Valuation ctx) (mems : Memories ctx) (q : Core.Pos)
+    (P : Nat) (hP : P ≤ 65536) (ls : List PackLeaf) (hq : (ls.map (·.width)).sum ≤ P) :
+    ev vals mems (packRow q P ls hq hP) =
+      BitVec.ofNat P (Value.packAll (Eval.Bits.new P) (ls.map (·.value))).toNat := by
+  have hS : (ls.reverse.map (·.width)).sum = (ls.map (·.width)).sum := by
+    simp [List.map_reverse, List.sum_reverse]
+  rw [Bits.toNat_packAll _ _ (by simp [PackLeaf.flat])]
+  have hc := eval_chainRow vals mems q ls.reverse (by simp [List.map_reverse]; omega)
+  rw [List.reverse_reverse] at hc
+  have hlt := (ev vals mems (chainRow q ls.reverse (by simp [List.map_reverse]; omega))).isLt
+  rw [hc] at hlt
+  apply BitVec.eq_of_toNat_eq
+  rw [BitVec.toNat_ofNat]
+  unfold packRow
+  split
+  · rw [eval_cast, BitVec.toNat_cast]
+    rw [ev_concat, hc]
+    simp only [Core.Semantics.evalExpr, BitVec.toNat_ofNat, Nat.zero_mod, Nat.zero_shiftLeft,
+      Nat.zero_or]
+    rw [Nat.mod_eq_of_lt (Nat.lt_of_lt_of_le hlt (Nat.pow_le_pow_right (by decide) (by omega)))]
+  · rw [eval_cast, BitVec.toNat_cast, hc]
+    rw [Nat.mod_eq_of_lt (Nat.lt_of_lt_of_le hlt (Nat.pow_le_pow_right (by decide) (by omega)))]
+
+
+/-! The erased `concat` chain of the leaves `rs`, the last leaf first. -/
+def chainCore (q : Core.Pos) : List PackLeaf → Core.Expr
+  | [] => .const q 0 0
+  | [l] => .const q l.width l.x.toNat
+  | l :: r :: rs => .bin q .concat (.const q l.width l.x.toNat) (chainCore q (r :: rs))
+
+/-! The erasure of the chain is `chainCore`. -/
+private theorem erase_chainRow {ctx} (q : Core.Pos) : ∀ (rs : List PackLeaf) h,
+    (chainRow (ctx := ctx) q rs h).erase = chainCore q rs
+  | [], _ => rfl
+  | [_], _ => rfl
+  | l :: r :: rs, h => by
+    rw [chainRow]
+    simp only [Core.Typed.Expr.erase, erase_chainRow q (r :: rs), chainCore]
+
+/-! The left fold of `lowerPack`: each leaf goes on top of the chain so far. -/
+def packStep (q : Core.Pos) (e : Core.Expr) (l : PackLeaf) : Core.Expr :=
+  .bin q .concat (.const q l.width l.x.toNat) e
+
+/-! The chain over `ls.reverse ++ R` is the fold of `lowerPack` over `ls`, from the chain of `R`. -/
+private theorem chainCore_append (q : Core.Pos) : ∀ (ls R : List PackLeaf), R ≠ [] →
+    chainCore q (ls.reverse ++ R) = ls.foldl (packStep q) (chainCore q R)
+  | [], _, _ => rfl
+  | a :: ls, R, hR => by
+    rw [List.reverse_cons, List.append_assoc, List.singleton_append,
+      chainCore_append q ls (a :: R) (by simp), List.foldl_cons]
+    congr 1
+    obtain ⟨r, R, rfl⟩ : ∃ r R', R = r :: R' := by
+      cases R with
+      | nil => exact absurd rfl hR
+      | cons r R => exact ⟨r, R, rfl⟩
+    rfl
+
+open Spine in
+/-- The loop of `pack` after the first leaf: one `concat` node for each leaf. -/
+private theorem ok_pack {b : Nat} (p : Pos) (target : Names.Path)
+    (g : {x : Hw // sizeOf x < b} → Option (Low × Nat) → FM (ForInStep (Option (Low × Nat))))
+    (hg : ∀ x lo n, g x (some (lo, n)) = (do
+      let lo ← deep p target n false lo
+      Flatten.charge p 1
+      let r ← lower target false x.1
+      pure (.yield (some (⟨.bin (cpos p) .concat r.expr lo.expr, none,
+        max r.height lo.height + 1⟩, n + width x.1.ty))))) :
+    ∀ (ls : List PackLeaf) (ys : List {x : Hw // sizeOf x < b}) (lo : Low) (n h : Nat)
+      (st : Flatten.St) (Q : Option (Low × Nat) → Flatten.St → Prop),
+      ys.map (·.1) = ls.map (·.hw p) → lo.height ≤ h → 1 ≤ h → h + ls.length < 64 →
+      2 * ls.length ≤ st.fuel →
+      (∀ lo', lo'.expr = ls.foldl (packStep (cpos p)) lo.expr → lo'.height ≤ h + ls.length →
+        Q (some (lo', n + (ls.map (·.width)).sum)) { st with fuel := st.fuel - 2 * ls.length }) →
+      Ok (forIn ys (some (lo, n)) g) st Q
+  | [], [], lo, n, h, st, Q, _, hl, _, _, _, hq => by
+    have hst : st = { st with fuel := st.fuel - 2 * 0 } := by simp
+    exact ok_pure (hst ▸ by simpa using hq lo rfl (by simpa using hl))
+  | [], _ :: _, _, _, _, _, _, hv, _, _, _, _, _ => by simp at hv
+  | _ :: _, [], _, _, _, _, _, hv, _, _, _, _, _ => by simp at hv
+  | l :: ls, y :: ys, lo, n, h, st, Q, hv, hl, h1, hh, hf, hq => by
+    simp only [List.map_cons, List.cons.injEq] at hv
+    obtain ⟨hy, hv⟩ := hv
+    simp only [List.length_cons] at hh hf
+    rw [List.forIn_cons, hg, hy]
+    refine ok_bind (ok_bind (ok_deep (by omega) (ok_bind (ok_charge (by omega) ?_))))
+    refine ok_bind ((runs_litHw p l.k.ty l.value _ (Leaf.const_value l.k _ l.x)).ok
+      (by simp; omega) fun r he hrh => ok_pure ?_)
+    refine ok_pack p target g hg ls ys _ _ (h + 1) _ Q hv (by simp; omega) (by omega) (by omega)
+      (by simp; omega) fun lo' he' hh' => ?_
+    rw [fuel_sub, fuel_sub]
+    have hx := hq lo' (by rw [he', List.foldl_cons, he]; rfl) (by simp; omega)
+    simp only [List.length_cons, List.map_cons, List.sum_cons] at hx
+    rw [show 2 * (ls.length + 1) = 1 + (1 + 2 * ls.length) by omega] at hx
+    have hw : Flatten.width (l.hw p).ty = l.k.width := Leaf.width_ty l.k
+    simpa [hw, PackLeaf.width, Nat.add_assoc] using hx
+
+/--
+`lower` emits the row of `pack P`. The first leaf takes 1 unit of fuel. Each further leaf takes 2
+units: its `concat` node and its literal. The high zero bits take 2 units when the leaves have
+fewer than `P` bits. At most 60 leaves keep the chain below the height 64.
+-/
+private theorem lowers_pack (P : Nat) (hP : P ≤ 65536) (ls : List PackLeaf)
+    (hq : (ls.map (·.width)).sum ≤ P) (hne : ls ≠ []) (hlen : ls.length ≤ 60) {ctx} (p : Pos) :
+    Lowers (packNode p P ls) (2 * ls.length - 1 + if (ls.map (·.width)).sum < P then 2 else 0)
+      (packRow (ctx := ctx) (cpos p) P ls hq hP).erase := by
+  obtain ⟨l, ls, rfl⟩ : ∃ l ls', ls = l :: ls' := by
+    cases ls with
+    | nil => exact absurd rfl hne
+    | cons l ls => exact ⟨l, ls, rfl⟩
+  intro target root st hf
+  simp only [List.length_cons] at hlen hf
+  simp only [packNode, Hw.mk]
+  rw [lower.eq_def]
+  simp only [lowerPack]
+  change Spine.Ok _ st fun (lo : Low) _ => lo.expr = _
+  generalize hL : Flatten.bounded _ _ _ = L
+  have hm : L.map (·.1) = _ := hL ▸ map_bounded _ _ _
+  have hw : ∀ m : PackLeaf, Flatten.width (m.hw p).ty = m.width := fun m => Leaf.width_ty m.k
+  have hsum : (L.map fun x => width x.1.ty).sum = ((l :: ls).map (·.width)).sum := by
+    have := congrArg (List.map fun h => width h.ty) hm
+    simp only [List.map_map, Function.comp_def, hw] at this
+    rw [this]
+  rw [hsum]
+  obtain ⟨y, ys, rfl, hy, hv⟩ : ∃ y ys, L = y :: ys ∧ y.1 = l.hw p ∧
+      ys.map (·.1) = ls.map (·.hw p) := by
+    cases L with
+    | nil => simp at hm
+    | cons y ys => simp only [List.map_cons, List.cons.injEq] at hm; exact ⟨y, ys, rfl, hm⟩
+  have hS : (List.map (fun x => x.width) (l :: ls).reverse).sum =
+      ((l :: ls).map (·.width)).sum := by
+    simp [List.map_reverse, List.sum_reverse]
+    omega
+  split
+  · rename_i hlt
+    simp only [hlt, ↓reduceIte] at hf
+    refine Spine.ok_bind (Spine.ok_bind (Spine.ok_charge (by omega) ?_))
+    refine Spine.ok_bind ?_
+    rw [List.forIn_cons]
+    refine Spine.ok_bind (Spine.ok_bind ?_)
+    rw [hy]
+    refine (runs_litHw p l.k.ty l.value _ (Leaf.const_value l.k _ l.x)).ok (by simp; omega)
+      fun r he hrh => Spine.ok_pure ?_
+    refine ok_pack p target _ (fun _ _ _ => rfl) ls ys r _ 1 _ _ hv hrh (Nat.le_refl _)
+      (by omega) (by simp; omega) fun lo' he' hh' => ?_
+    rw [hw]
+    dsimp only
+    have hlt' : l.width + (ls.map (·.width)).sum < P := by simpa using hlt
+    simp only [hlt', ↓reduceIte]
+    refine Spine.ok_bind (Spine.ok_deep (by omega) (Spine.ok_pure ?_))
+    refine Spine.ok_deep (by simp; omega) ?_
+    unfold packRow
+    have hr : ((l :: ls).reverse.map (·.width)).sum < P := by rw [hS]; exact hlt
+    simp only [hr, ↓reduceDIte]
+    rw [erase_cast]
+    simp only [Core.Typed.Expr.erase]
+    rw [erase_chainRow, List.reverse_cons, chainCore_append _ ls [l] (by simp), he', he]
+    simp [List.map_reverse, List.sum_reverse, chainCore, PackLeaf.width]
+    omega
+  · rename_i hlt
+    simp only [hlt, ↓reduceIte] at hf
+    refine Spine.ok_bind ?_
+    refine Spine.ok_bind ?_
+    rw [List.forIn_cons]
+    refine Spine.ok_bind (Spine.ok_bind ?_)
+    rw [hy]
+    refine (runs_litHw p l.k.ty l.value _ (Leaf.const_value l.k _ l.x)).ok (by omega)
+      fun r he hrh => Spine.ok_pure ?_
+    refine ok_pack p target _ (fun _ _ _ => rfl) ls ys r _ 1 _ _ hv hrh (Nat.le_refl _)
+      (by omega) (by simp; omega) fun lo' he' hh' => ?_
+    rw [hw]
+    dsimp only
+    have hlt' : ¬ l.width + (ls.map (·.width)).sum < P := by simpa using hlt
+    simp only [hlt', ↓reduceIte]
+    refine Spine.ok_pure (Spine.ok_deep (by omega) ?_)
+    unfold packRow
+    have hr : ¬ ((l :: ls).reverse.map (·.width)).sum < P := by rw [hS]; exact hlt
+    simp only [hr, ↓reduceDIte]
+    rw [erase_cast]
+    rw [erase_chainRow, List.reverse_cons, chainCore_append _ ls [l] (by simp), he', he]
+    rfl
+
+
+theorem static_pack_agrees : PackAgrees := by
+  intro P hP ls hq hne ctx vals mems
+  refine ⟨fun q => eval_packRow vals mems q P hP ls hq, fun hlen p => ?_⟩
+  intro target root st hf
+  have : 0 < ls.length := by cases ls <;> simp_all
+  refine lowers_pack P hP ls hq hne hlen p target root st (Nat.le_trans ?_ hf)
+  split <;> omega
+
+theorem static_pack_enum_agrees : PackEnumAgrees := by
+  intro pos u w pw x y c s s' v hb hw hr ctx vals mems
+  refine ⟨fun q => ?_, fun p => ?_⟩
+  · obtain ⟨i, n, m, rfl⟩ : ∃ i n m, u = .enum i n m := by
+      cases u <;> simp [Specs.widths] at hw ⊢
+    revert hr
+    simp [recast, bind, ReaderT.bind, StateT.bind, get, getThe, MonadStateOf.get, StateT.get,
+      Except.bind, hw, pure, Except.pure, ReaderT.pure, StateT.pure, liftM, monadLift,
+      MonadLift.monadLift, Val.ty?, Value.ty?, Ty.same, Ty.cmp]
+    split
+    · simp
+    · simp only [Except.ok.injEq, Prod.mk.injEq, Val.static.injEq]
+      rintro ⟨rfl, -⟩
+      congr 1
+      apply BitVec.eq_of_toNat_eq
+      have hx : x.toNat < 2 ^ (w + pw) :=
+        Nat.lt_of_lt_of_le x.isLt (Nat.pow_le_pow_right (by decide) (by omega))
+      have hy : y.toNat <<< w < 2 ^ (w + pw) := by
+        rw [Nat.shiftLeft_eq, Nat.pow_add, Nat.mul_comm (2 ^ w)]
+        exact Nat.mul_lt_mul_of_pos_right y.isLt (Nat.two_pow_pos w)
+      simp only [BitVec.toNat_or, BitVec.toNat_setWidth, BitVec.toNat_ofNat, BitVec.toNat_cast,
+        Core.Semantics.evalExpr, Core.Semantics.evalConcat, toNat_append_fn,
+        Nat.mod_eq_of_lt hx, Nat.mod_eq_of_lt hy, Nat.mod_eq_of_lt x.isLt,
+        Nat.mod_eq_of_lt y.isLt]
+      exact Nat.or_comm _ _
+  · intro target root st hf
+    have h := lowers_pack (ctx := ctx) (w + pw) hb [⟨.fin false w, x⟩, ⟨.fin false pw, y⟩]
+      (by simp [PackLeaf.width, Leaf.width]) (by simp) (by simp) p target root st
+      (by simp [PackLeaf.width, Leaf.width]; omega)
+    obtain ⟨lo, st', h1, h2⟩ := h
+    refine ⟨lo, st', h1, ?_⟩
+    rw [h2]
+    unfold packRow
+    have hr : ¬ (List.map (·.width)
+        [(⟨.fin false w, x⟩ : PackLeaf), ⟨.fin false pw, y⟩].reverse).sum < w + pw := by
+      simp [PackLeaf.width, Leaf.width]; omega
+    simp only [hr, ↓reduceDIte]
+    rw [erase_cast, erase_chainRow]
+    rfl
+
 /-! Each finite static operation agrees with its core row, and `lower` emits that row. -/
 theorem static_op_agrees :
     BinAgrees ∧ CmpAgrees ∧ BoolCmpAgrees ∧ LogicAgrees ∧ InvAgrees ∧ NegAgrees ∧
       NotAgrees ∧ ShiftAgrees ∧ ResizeSameAgrees ∧ ResizeTruncAgrees ∧ ResizeZextAgrees ∧
       ResizeSextAgrees ∧ ReinterpretAgrees ∧ EqLeavesAgrees ∧ NeLeavesAgrees ∧ IfLeafAgrees ∧
       UnpackEnumAgrees ∧ BinderLeafAgrees ∧ BinderBoolAgrees ∧ SelectAgrees ∧ SelectBoolAgrees ∧
-      RestAgrees ∧ OnehotAgrees :=
+      RestAgrees ∧ OnehotAgrees ∧ PackAgrees ∧ PackEnumAgrees :=
   ⟨static_bin_agrees, static_cmp_agrees, static_bool_cmp_agrees, static_logic_agrees,
     static_inv_agrees, static_neg_agrees, static_not_agrees, static_shift_agrees,
     static_resize_same_agrees, static_resize_trunc_agrees, static_resize_zext_agrees,
     static_resize_sext_agrees, static_reinterpret_agrees, static_eq_leaves_agrees,
     static_ne_leaves_agrees, static_if_leaf_agrees, static_unpack_enum_agrees,
     static_binder_leaf_agrees, static_binder_bool_agrees, static_select_agrees,
-    static_select_bool_agrees, static_rest_agrees, static_onehot_agrees⟩
+    static_select_bool_agrees, static_rest_agrees, static_onehot_agrees, static_pack_agrees,
+    static_pack_enum_agrees⟩
 
 end Silicon.Source.StaticOps
