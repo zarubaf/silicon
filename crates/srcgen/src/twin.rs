@@ -26,7 +26,8 @@
 use super::build::STATIC_PREFIXES;
 use super::eval::{Env, Scope, Value, eval, exec_static, loop_values};
 use super::program::{
-    HExpr, Item, Match, Place, Program, Radix, SExpr, STy, Stmt, Ty, render_items,
+    EnumDef, HBin, HExpr, Item, Match, Pattern, Place, Program, Radix, SExpr, STy, Scalar, Stmt,
+    Ty, render_items,
 };
 use num_bigint::{BigInt, Sign};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -78,6 +79,14 @@ pub fn twin(program: &Program) -> Twin {
             .iter()
             .filter_map(|item| match item {
                 Item::HwFnValue { name, target, .. } => Some((name.clone(), target.clone())),
+                _ => None,
+            })
+            .collect(),
+        enums: program
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Enum(def) => Some((def.name.clone(), def.clone())),
                 _ => None,
             })
             .collect(),
@@ -214,6 +223,8 @@ struct Writer<'a> {
     queue: VecDeque<(String, String, Vec<Value>)>,
     /// The helper that each function value of a helper holds.
     hw_values: BTreeMap<String, String>,
+    /// The enums of the program.
+    enums: BTreeMap<String, EnumDef>,
 }
 
 impl Writer<'_> {
@@ -281,6 +292,67 @@ impl Writer<'_> {
         }
     }
 
+    /// A hardware `match` as a chain of `if` expressions. The twin has no
+    /// `match`, so the run oracle tests the lowering of `match` against
+    /// the lowering of `if`, compares, `resize`, and shifts. An enum
+    /// scrutinee compares `resize(UInt[W], reinterpret(UInt[D], s))` with
+    /// the tag. A binder is the `resize` of the shifted bits, and a signed
+    /// binder is the `reinterpret` of that `resize` (ADR 0025).
+    fn chain(&self, m: &Match<HExpr, HExpr>, fr: &Frame) -> HExpr {
+        let scrutinee = self.hexpr(&m.scrutinee, fr);
+        let mut arms: Vec<(Option<HExpr>, HExpr)> = Vec::new();
+        for (pattern, arm) in &m.arms {
+            let arm = self.hexpr(arm, fr);
+            arms.push(self.arm_test(pattern, &scrutinee, arm));
+        }
+        // The last arm needs no test: `_`, or the arm that completes the
+        // match.
+        let mut out = arms.pop().map(|(_, a)| a);
+        while let Some((test, arm)) = arms.pop() {
+            out = match (test, out) {
+                (Some(t), Some(rest)) => {
+                    Some(HExpr::If(Box::new(t), Box::new(arm), Box::new(rest)))
+                }
+                (None, _) | (_, None) => Some(arm),
+            };
+        }
+        out.unwrap_or(scrutinee)
+    }
+
+    /// The test of an arm, and its value with the binders replaced.
+    fn arm_test(&self, pattern: &Pattern, s: &HExpr, arm: HExpr) -> (Option<HExpr>, HExpr) {
+        let eq =
+            |a: HExpr, b: SExpr| HExpr::Binary(HBin::Eq, Box::new(a), Box::new(HExpr::Static(b)));
+        match pattern {
+            Pattern::Wild => (None, arm),
+            Pattern::Bool(b) => (Some(eq(s.clone(), SExpr::Bool(*b))), arm),
+            Pattern::Int(n, _) => (Some(eq(s.clone(), SExpr::Int(n.clone(), Radix::Dec))), arm),
+            Pattern::Variant(e, v, binders) => {
+                let Some(def) = self.enums.get(e) else {
+                    return (None, arm);
+                };
+                let Some(variant) = def.variant(v) else {
+                    return (None, arm);
+                };
+                let uint = |w: u32| Ty::UInt(SExpr::Int(BigInt::from(w), Radix::Dec));
+                let bits = HExpr::Reinterpret(uint(def.data_bits()), Box::new(s.clone()));
+                let tag = HExpr::Resize(uint(def.tag_width), Box::new(bits.clone()));
+                let test = eq(
+                    tag,
+                    SExpr::Int(BigInt::from(variant.tag.clone()), Radix::Dec),
+                );
+                let mut map = BTreeMap::new();
+                for (b, (at, t)) in binders.iter().zip(variant.leaves()) {
+                    if let Some(b) = b {
+                        let off = def.tag_width + at;
+                        map.insert(b.clone(), leaf(&bits, off, t));
+                    }
+                }
+                (Some(test), subst(&arm, &map))
+            }
+        }
+    }
+
     fn hexpr(&self, e: &HExpr, fr: &Frame) -> HExpr {
         let sub = |a: &HExpr| Box::new(self.hexpr(a, fr));
         match e {
@@ -298,14 +370,7 @@ impl Writer<'_> {
                 let g = self.hw_values.get(g).unwrap_or(g);
                 HExpr::Call(g.clone(), args.iter().map(|a| self.hexpr(a, fr)).collect())
             }
-            HExpr::Match(m) => HExpr::Match(Match {
-                scrutinee: sub(&m.scrutinee),
-                arms: m
-                    .arms
-                    .iter()
-                    .map(|(p, a)| (p.clone(), self.hexpr(a, fr)))
-                    .collect(),
-            }),
+            HExpr::Match(m) => self.chain(m, fr),
             HExpr::Ctor(e, v, args) => HExpr::Ctor(
                 e.clone(),
                 v.clone(),
@@ -435,6 +500,56 @@ impl Writer<'_> {
             Stmt::Diagnostic(..) => {}
             Stmt::Block(body) => out.push(self.block(body, fr, fr.env.clone(), fr.suffix.clone())),
         }
+    }
+}
+
+/// The payload leaf of type `t` at the bit `off` of `bits`.
+fn leaf(bits: &HExpr, off: u32, t: Scalar) -> HExpr {
+    let uint = |w: u32| Ty::UInt(SExpr::Int(BigInt::from(w), Radix::Dec));
+    let shifted = if off == 0 {
+        bits.clone()
+    } else {
+        let k = HExpr::Static(SExpr::Int(BigInt::from(off), Radix::Dec));
+        HExpr::Binary(HBin::Shr, Box::new(bits.clone()), Box::new(k))
+    };
+    match t {
+        Scalar::Bool => {
+            let low = HExpr::Resize(uint(1), Box::new(shifted));
+            let zero = HExpr::Static(SExpr::Int(BigInt::ZERO, Radix::Dec));
+            HExpr::Binary(HBin::Ne, Box::new(low), Box::new(zero))
+        }
+        Scalar::UInt(w) => HExpr::Resize(uint(w), Box::new(shifted)),
+        Scalar::SInt(w) => {
+            let low = HExpr::Resize(uint(w), Box::new(shifted));
+            let signed = Ty::SInt(SExpr::Int(BigInt::from(w), Radix::Dec));
+            HExpr::Reinterpret(signed, Box::new(low))
+        }
+    }
+}
+
+/// `e` with each name of `map` replaced by its expression.
+fn subst(e: &HExpr, map: &BTreeMap<String, HExpr>) -> HExpr {
+    let sub = |a: &HExpr| Box::new(subst(a, map));
+    let all = |xs: &[HExpr]| xs.iter().map(|a| subst(a, map)).collect::<Vec<_>>();
+    match e {
+        HExpr::Name(n) => map.get(n).cloned().unwrap_or_else(|| e.clone()),
+        HExpr::Field(..) | HExpr::Static(_) | HExpr::Make(..) => e.clone(),
+        HExpr::Unary(op, a) => HExpr::Unary(*op, sub(a)),
+        HExpr::Binary(op, a, b) => HExpr::Binary(*op, sub(a), sub(b)),
+        HExpr::If(c, a, b) => HExpr::If(sub(c), sub(a), sub(b)),
+        HExpr::Resize(t, a) => HExpr::Resize(t.clone(), sub(a)),
+        HExpr::Reinterpret(t, a) => HExpr::Reinterpret(t.clone(), sub(a)),
+        HExpr::Call(f, args) => HExpr::Call(f.clone(), all(args)),
+        HExpr::Receiver(r, f, args) => HExpr::Receiver(sub(r), f.clone(), all(args)),
+        HExpr::Ctor(en, v, args) => HExpr::Ctor(en.clone(), v.clone(), all(args)),
+        HExpr::Match(m) => HExpr::Match(Match {
+            scrutinee: sub(&m.scrutinee),
+            arms: m
+                .arms
+                .iter()
+                .map(|(p, a)| (p.clone(), subst(a, map)))
+                .collect(),
+        }),
     }
 }
 
@@ -772,7 +887,7 @@ mod tests {
         fn twins_have_no_comptime_constructs(p in typed()) {
             let p = p.map_err(|e| TestCaseError::fail(e.to_string()))?;
             let t = twin(&p);
-            for word in ["comptime", "const ", "static_assert", "error("] {
+            for word in ["comptime", "const ", "static_assert", "error(", "match"] {
                 prop_assert!(!t.text.contains(word), "{} in\n{}", word, t.text);
             }
             let lexed = syntax::lex(&t.text, 4096);
