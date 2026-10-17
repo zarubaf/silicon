@@ -131,6 +131,12 @@ impl Int {
     /// `BitVec.ofInt width self`: the value modulo `2^width`, or `None` for the width 0.
     #[must_use]
     pub fn to_finite(&self, width: u32) -> Option<Bits> {
+        // The modulus `2^width` takes one word for each 64 bits of the width, whatever the value.
+        #[cfg(test)]
+        crate::counters::add(
+            crate::counters::Count::Words,
+            u64::from(width).div_ceil(64) + 1,
+        );
         let modulus = BigInt::from(1u8) << width;
         let rem = ((&self.0 % &modulus) + &modulus) % &modulus;
         Bits::new(width, rem.magnitude().clone())
