@@ -1,0 +1,2 @@
+// A call of a path constructs a variant.
+const A: T = a::f(1);

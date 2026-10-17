@@ -1,0 +1,15 @@
+// S010: `==` on records with an enum field.
+// TOP M()
+enum Op: UInt[2] { Add = 0 }
+struct P {
+    op: Op,
+    n: UInt[4],
+}
+module M() {
+    input a: P;
+    input b: P;
+    output y: Bool;
+    // expected-error S010 @+2
+    // expected-message: `P` has no `==`; compare with `match (x) { E::V => true, _ => false }`
+    y := a == b;
+}

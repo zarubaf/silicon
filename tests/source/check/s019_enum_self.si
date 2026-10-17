@@ -1,0 +1,8 @@
+// S019: an enum whose payload names the enum itself. The error is at the use in progress.
+// TOP M()
+// expected-error S019 @+1
+enum Op: UInt[2] { Add = 0, Wrap(Op) = 1 }
+module M() {
+    output y: Op;
+    y := Op::Add;
+}

@@ -1,0 +1,8 @@
+// S010: the tag type of an enum is `UInt[W]`.
+// TOP M()
+// expected-error S010 @+1
+enum Op: Bool { Add = 0 }
+module M() {
+    output y: Op;
+    y := Op::Add;
+}

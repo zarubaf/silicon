@@ -1,0 +1,2 @@
+// A variant path is an expression, so it can be a type argument.
+const A: UInt[a::W] = f;

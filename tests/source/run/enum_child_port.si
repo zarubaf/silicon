@@ -1,0 +1,20 @@
+// A child with an enum input and an enum output: the parent drives the input with a constructor and reads the
+// output. `Op()` is the zero of the enum.
+// TOP Top()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }
+module Child() domains() {
+    input op: Op;
+    output q: Op;
+    q := op;
+}
+module Top() domains() {
+    input x: UInt[8];
+    output y: Op;
+    output z: Op;
+    instance c = Child();
+    c.op := Op::Load(x);
+    y := c.q;
+    z := Op();
+}
+// STEP in=(x 4) out=(y.tag 1 y.payload 4 z.tag 0 z.payload 0)
+// STEP in=(x 200) out=(y.tag 1 y.payload 200 z.tag 0 z.payload 0)

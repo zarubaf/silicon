@@ -1,0 +1,10 @@
+// S010: a `.N` selector of an enum is S010 too, and `{f}` is the number.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }
+module M() {
+    input a: Op;
+    output y: UInt[8];
+    // expected-error S010 @+2
+    // expected-message: `Op` is an enum and has no field `1`; read a payload with `match`, or the bits with `reinterpret(UInt[10], e)`
+    y := a.1;
+}

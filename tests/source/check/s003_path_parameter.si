@@ -1,0 +1,9 @@
+// S003: a parameter named `Op` shadows the enum item `Op`.
+// TOP M(3)
+enum Op: UInt[2] { Add = 0 }
+module M(comptime Op: Nat) {
+    output y: Bool;
+    // expected-error S003 @+2
+    // expected-message: `Op` is not an enum, so `Op::Add` names no variant; use the name of an enum
+    y := Op::Add;
+}

@@ -1,0 +1,10 @@
+// S011: a module argument is a static position, so an enum value with a hardware leaf is S011.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }
+module C(comptime o: Op) {}
+module M() {
+    input x: UInt[8];
+    let o = Op::Load(x);
+    // expected-error S011 @+1
+    instance c = C(o);
+}

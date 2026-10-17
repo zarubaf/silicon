@@ -1,0 +1,11 @@
+// S010: `==` on enums. The error is at the start of the operator node.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }
+module M() {
+    input a: Op;
+    input b: Op;
+    output y: Bool;
+    // expected-error S010 @+2
+    // expected-message: `Op` has no `==`; compare with `match (x) { E::V => true, _ => false }`
+    y := a == b;
+}

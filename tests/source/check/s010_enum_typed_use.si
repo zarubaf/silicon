@@ -1,0 +1,9 @@
+// S010: a typed use at an enum type needs exactly this enum. A value of another enum is no enum of this type.
+// TOP M()
+enum Op: UInt[2] { Add = 0 }
+enum Mode: UInt[2] { Run = 0 }
+module M() {
+    output y: Op;
+    // expected-error S010 @+1
+    y := Mode::Run;
+}

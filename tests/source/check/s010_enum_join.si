@@ -1,0 +1,9 @@
+// S010: two enum types in one array have no common type.
+// TOP M()
+enum Op: UInt[2] { Add = 0 }
+enum Mode: UInt[2] { Run = 0 }
+module M() {
+    output y: [Op; 2];
+    // expected-error S010 @+1
+    y := [Op::Add, Mode::Run];
+}

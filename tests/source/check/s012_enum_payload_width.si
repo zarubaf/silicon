@@ -1,0 +1,8 @@
+// S012: the payload width is at most 65536 bits. The error is at the `enum` keyword.
+// TOP M()
+// expected-error S012 @+1
+enum Op: UInt[2] { Add = 0, Big(UInt[65537]) = 1 }
+module M() {
+    output y: Op;
+    y := Op::Add;
+}

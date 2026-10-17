@@ -1,0 +1,11 @@
+// S003: the first part of a path is a struct, not an enum. The error is at the start of the path.
+// TOP M()
+struct P {
+    a: Bool,
+}
+module M() {
+    output y: Bool;
+    // expected-error S003 @+2
+    // expected-message: `P` is not an enum, so `P::a` names no variant; use the name of an enum
+    y := P::a;
+}

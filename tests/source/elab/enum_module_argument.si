@@ -1,0 +1,23 @@
+// An enum argument always gives the digest name, as a record does. Two equal enum values share one module,
+// and a different value gives a second module.
+// TOP Top()
+// CHECK-COUNT-2: (module Tab$0h{{[0-9a-f]{16}$}}
+// CHECK: (module Top
+// CHECK-COUNT-3: (inst
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }
+module Tab(comptime O: Op) domains() {
+    input a: UInt[8];
+    output q: UInt[8];
+    q := a +% 1;
+}
+module Top() domains() {
+    input x: UInt[8];
+    output y: UInt[8];
+    instance t = Tab(Op::Load(1));
+    instance u = Tab(Op::Load(1));
+    instance v = Tab(Op::Load(2));
+    t.a := x;
+    u.a := t.q;
+    v.a := u.q;
+    y := v.q;
+}

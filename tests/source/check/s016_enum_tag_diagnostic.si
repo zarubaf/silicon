@@ -1,0 +1,13 @@
+// S016: a tag value is a structural context, so it cannot call `diagnostic`.
+// TOP M()
+comptime fn tag() -> Nat {
+    // expected-error S016 @+2
+    // expected-message: a type or a constant has no graph effect such as `diagnostic`; call it before and use the result
+    diagnostic("t", 1);
+    return 0;
+}
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = tag() }
+module M() {
+    output y: Op;
+    y := Op::Add;
+}

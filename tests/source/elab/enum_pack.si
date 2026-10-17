@@ -1,0 +1,21 @@
+// A constructor with a static tag gives the tag as a constant. The payload packs the leaves in a `concat` chain,
+// the first leaf in the low bits, and zero high bits first when the variant is narrower than the payload.
+// TOP M()
+// CHECK: (assign a$payload (const 8 0))
+// CHECK-NEXT: (assign a$tag (const 2 0))
+// CHECK-NEXT: (assign l$payload x)
+// CHECK-NEXT: (assign l$tag (const 2 1))
+// CHECK-NEXT: (assign p$payload (concat (const 3 0) (concat n b)))
+// CHECK-NEXT: (assign p$tag (const 2 2))
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }
+module M() domains() {
+    input b: Bool;
+    input n: UInt[4];
+    input x: UInt[8];
+    output p: Op;
+    output l: Op;
+    output a: Op;
+    p := Op::Pair(b, n);
+    l := Op::Load(x);
+    a := Op::Add;
+}

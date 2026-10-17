@@ -1,0 +1,9 @@
+// S003: the second part of a path names a variant of the enum. The error is at the second part.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }
+module M() {
+    output y: Op;
+    // expected-error S003 @+2
+    // expected-message: `Op` has no variant `Store`; use a variant that `Op` declares
+    y := Op::Store;
+}

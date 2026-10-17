@@ -1,0 +1,15 @@
+// A parameter named `Op` shadows the enum item `Op` inside the function. Elsewhere `Op::Load` is a variant.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }
+fn bump(Op: UInt[4]) -> UInt[4] {
+    return Op +% 1;
+}
+module M() domains() {
+    input x: UInt[4];
+    output y: UInt[4];
+    output e: Op;
+    y := bump(x);
+    e := Op::Load(7);
+}
+// STEP in=(x 3) out=(e.tag 1 e.payload 7 y 4)
+// STEP in=(x 15) out=(e.tag 1 e.payload 7 y 0)

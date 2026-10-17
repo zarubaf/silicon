@@ -1,0 +1,3 @@
+// A variant with `()` and a variant without payload parse to one AST, and an empty enum is valid.
+enum Op: UInt[1] { Add() = 0, Sub = 1 }
+enum Empty: UInt[1] {}

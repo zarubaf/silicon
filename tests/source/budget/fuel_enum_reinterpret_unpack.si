@@ -1,0 +1,11 @@
+// A hardware `reinterpret` into an enum charges the two extracts, and the mark of a shared operand once. The fuel equal to the
+// total succeeds, and one unit less gives `S015`.
+// FUEL 166
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }
+module M() domains() {
+    input b: UInt[10];
+    input c: UInt[10];
+    output y: Op;
+    y := reinterpret(Op, b +% c);
+}

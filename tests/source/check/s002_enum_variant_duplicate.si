@@ -1,0 +1,6 @@
+// S002: a variant name is unique in its enum. The error is at the second variant.
+// TOP M()
+// expected-error S002 @+1
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Add = 2 }
+module M() {
+}

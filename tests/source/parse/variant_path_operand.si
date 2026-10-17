@@ -1,0 +1,2 @@
+// A variant path is an operand.
+const A: T = 1 + a::b;

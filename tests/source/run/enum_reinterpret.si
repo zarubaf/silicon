@@ -1,0 +1,15 @@
+// `reinterpret` between an enum and its bits: the tag is in the low 2 bits and the payload is above it.
+// A tag without a variant, here 3, converts too.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }
+module M() domains() {
+    input b: UInt[10];
+    input e: Op;
+    output y: Op;
+    output z: UInt[10];
+    y := reinterpret(Op, b);
+    z := reinterpret(UInt[10], e);
+}
+// STEP in=(b 21 e.tag 3 e.payload 200) out=(y.tag 1 y.payload 5 z 803)
+// STEP in=(b 1023 e.tag 0 e.payload 0) out=(y.tag 3 y.payload 255 z 0)
+// STEP in=(b 0 e.tag 2 e.payload 11) out=(y.tag 0 y.payload 0 z 46)

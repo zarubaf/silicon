@@ -1,0 +1,27 @@
+// An enum port has the core ports `op$tag` and `op$payload`. An enum in a record adds its two leaves at its place.
+// An enum without payload bits has no `payload` port. A register names its leaves in the same way.
+// TOP M()
+// CHECK: (input m$tag (bits 2))
+// CHECK-NOT: m$payload
+// CHECK: (input op$tag (bits 2))
+// CHECK-NEXT: (input op$payload (bits 8))
+// CHECK-NEXT: (input p$n (bits 4))
+// CHECK-NEXT: (input p$op$tag (bits 2))
+// CHECK-NEXT: (input p$op$payload (bits 8))
+// CHECK: (reg r$payload (bits 8)
+// CHECK: (reg r$tag (bits 2)
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }
+enum Mode: UInt[2] { Idle = 0, Run = 1 }
+struct P {
+    n: UInt[4],
+    op: Op,
+}
+module M() {
+    input op: Op;
+    input p: P;
+    input m: Mode;
+    output y: Op;
+    reg r: Op = Op::Add;
+    r := op;
+    y := r;
+}

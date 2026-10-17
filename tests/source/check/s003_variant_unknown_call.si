@@ -1,0 +1,10 @@
+// S003: a constructor call of an unknown variant is S003 at the second part too.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }
+module M() {
+    input x: UInt[8];
+    output y: Op;
+    // expected-error S003 @+2
+    // expected-message: `Op` has no variant `Store`; use a variant that `Op` declares
+    y := Op::Store(x);
+}

@@ -1,0 +1,11 @@
+// S019: the cycle can go through a struct.
+// TOP M()
+struct P {
+    // expected-error S019 @+1
+    inner: Op,
+}
+enum Op: UInt[2] { Add = 0, Wrap(P) = 1 }
+module M() {
+    output y: Op;
+    y := Op::Add;
+}

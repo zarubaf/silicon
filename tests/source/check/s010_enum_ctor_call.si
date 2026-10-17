@@ -1,0 +1,10 @@
+// S010: `Op(x)` constructs no value. The error is at the call.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }
+module M() {
+    input x: UInt[8];
+    output y: Op;
+    // expected-error S010 @+2
+    // expected-message: `Op` is an enum, so `Op(...)` takes no arguments; construct a variant such as `Op::V(...)`, or write `Op()` for the zero
+    y := Op(x);
+}

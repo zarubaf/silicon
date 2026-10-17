@@ -1,0 +1,16 @@
+// An enum in a record port adds its two leaves at its place: `p.op.tag`, `p.op.payload`, then `p.n`.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }
+struct P {
+    op: Op,
+    n: UInt[4],
+}
+module M() domains() {
+    input p: P;
+    output y: Op;
+    output q: P;
+    y := p.op;
+    q := P(Op::Pair(true, p.n), p.n);
+}
+// STEP in=(p.op.tag 3 p.op.payload 99 p.n 5) out=(q.op.tag 2 q.op.payload 11 q.n 5 y.tag 3 y.payload 99)
+// STEP in=(p.op.tag 1 p.op.payload 4 p.n 0) out=(q.op.tag 2 q.op.payload 1 q.n 0 y.tag 1 y.payload 4)

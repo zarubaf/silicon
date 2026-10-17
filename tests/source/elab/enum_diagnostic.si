@@ -1,0 +1,25 @@
+// Records of enum values (frontend spec 8.2): a static enum, a hardware payload under a static tag, a
+// reference, and an enum without payload bits. The tag is an integer or a hardware leaf; the payload part is absent for `P = 0`.
+// TOP M()
+// CHECK: (module M
+// OBSERVE: (record 18 5 M () (string "static") (enum (enum root Op ()) 1 (uint 8 3)))
+// OBSERVE-NEXT: (record 19 5 M () (string "zero") (enum (enum root Op ()) 0 (uint 8 0)))
+// OBSERVE-NEXT: (record 20 5 M () (string "hardware") (enum (enum root Op ()) 1 (hw (uint 8))))
+// OBSERVE-NEXT: (record 21 5 M () (string "ref") (enum (enum root Op ()) (hw (uint 2)) (hw (uint 8))))
+// OBSERVE-NEXT: (record 22 5 M () (string "mode") (enum (enum root Mode ()) 1))
+// OBSERVE-NEXT: (record 23 5 M () (string "mode ref") (enum (enum root Mode ()) (hw (uint 2))))
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }
+enum Mode: UInt[2] { Idle = 0, Run = 1 }
+module M() domains() {
+    input x: UInt[8];
+    input op: Op;
+    input m: Mode;
+    output o: Bool;
+    diagnostic("static", Op::Load(3));
+    diagnostic("zero", Op());
+    diagnostic("hardware", Op::Load(x));
+    diagnostic("ref", op);
+    diagnostic("mode", Mode::Run);
+    diagnostic("mode ref", m);
+    o := true;
+}

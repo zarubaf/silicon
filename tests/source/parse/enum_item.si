@@ -1,0 +1,2 @@
+// An enum item has a tag type and variants. Each variant has a name, payload types, and a tag value.
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2, }

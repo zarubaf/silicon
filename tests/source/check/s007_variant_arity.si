@@ -1,0 +1,10 @@
+// S007: a constructor passes one value for each payload type. The error is at the start of the path.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Pair(Bool, UInt[4]) = 2 }
+module M() {
+    input x: Bool;
+    output y: Op;
+    // expected-error S007 @+2
+    // expected-message: the variant `Op::Pair` has 2 payload value(s), but the constructor has 1; pass one value for each payload type
+    y := Op::Pair(x);
+}

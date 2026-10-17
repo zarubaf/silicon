@@ -1,0 +1,11 @@
+// S010: `!=` on arrays of enums. The type of the first operand holds an enum at depth 1.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }
+module M() {
+    input a: [Op; 2];
+    input b: [Op; 2];
+    output y: Bool;
+    // expected-error S010 @+2
+    // expected-message: `[Op; 2]` has no `==`; compare with `match (x) { E::V => true, _ => false }`
+    y := a != b;
+}

@@ -1,0 +1,4 @@
+// S004: an enum with parameters belongs to a later slice. The error is at the `(`.
+// expected-error S004 @+2
+// expected-message: an enum with parameters is not supported yet; remove the parameters, and give each payload a fixed type
+enum E(comptime W: Nat): UInt[2] { A = 0 }

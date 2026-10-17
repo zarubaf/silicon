@@ -1,0 +1,9 @@
+// S010: the other side of `reinterpret` of an enum is exactly `UInt[W + P]`. Here W + P is 10.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }
+module M() {
+    input a: Op;
+    output y: UInt[9];
+    // expected-error S010 @+1
+    y := reinterpret(UInt[9], a);
+}

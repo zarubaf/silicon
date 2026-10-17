@@ -1,0 +1,10 @@
+// A hardware `reinterpret` from an enum to its bits charges the pack, one concat for the two leaves. The fuel equal to the
+// total succeeds, and one unit less gives `S015`.
+// FUEL 133
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }
+module M() domains() {
+    input e: Op;
+    output y: UInt[10];
+    y := reinterpret(UInt[10], e);
+}

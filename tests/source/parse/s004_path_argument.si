@@ -1,3 +1,0 @@
-// S004: a path in a call argument belongs to a later slice.
-// expected-error S004 @+1
-const A: T = f(a::b);

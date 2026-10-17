@@ -1,0 +1,8 @@
+// S010: a payload type is hardware data, and a function type is not.
+// TOP M()
+// expected-error S010 @+1
+enum Op: UInt[2] { Add = 0, Call(fn(Nat) -> Nat) = 1 }
+module M() {
+    output y: Op;
+    y := Op::Add;
+}

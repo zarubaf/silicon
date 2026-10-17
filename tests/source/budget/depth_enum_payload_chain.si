@@ -1,0 +1,12 @@
+// An enum in progress counts toward the nesting depth, as a struct specialization does. The first use of the outer enum
+// uses the payload struct, which uses the inner enum. The depth equal to the limit succeeds, and one level less gives `S015`.
+// DEPTH 4
+// TOP M()
+enum Inner: UInt[1] { A = 0, B(Bool) = 1 }
+struct S {
+    i: Inner,
+}
+enum Outer: UInt[1] { A = 0, B(S) = 1 }
+module M() domains() {
+    type T = Outer;
+}

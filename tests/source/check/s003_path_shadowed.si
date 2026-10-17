@@ -1,0 +1,11 @@
+// S003: a local named `Op` shadows the enum item `Op`, so `Op::Add` is no variant.
+// TOP M()
+enum Op: UInt[2] { Add = 0 }
+module M() {
+    input x: Bool;
+    output y: Bool;
+    let Op = x;
+    // expected-error S003 @+2
+    // expected-message: `Op` is not an enum, so `Op::Add` names no variant; use the name of an enum
+    y := Op::Add;
+}

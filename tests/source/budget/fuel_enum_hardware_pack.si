@@ -1,0 +1,11 @@
+// A hardware constructor charges one unit for each core node of its pack, and each leaf of the port. The fuel equal to the
+// total succeeds, and one unit less gives `S015`.
+// FUEL 161
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }
+module M() domains() {
+    input b: Bool;
+    input n: UInt[4];
+    output y: Op;
+    y := Op::Pair(b, n);
+}
