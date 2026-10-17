@@ -443,25 +443,31 @@ theorem aggEq_f (p : Pos) (op : BinOp) (a b : Val) :
     Follows cap (aggEq p op a b) (aggEq p op a b) := by
   unfold aggEq; follows [walked_f, eqWalk_f, lit_f, hwNode_f, node_f]
 
-theorem ifStatic_f (p : Pos) (t : Ty) (x y : Value) :
-    Follows cap (ifStatic p t x y) (ifStatic p t x y) := by
-  unfold ifStatic; follows
+theorem armsType_f (kw : String) (p : Pos) (ts : List String) (i : Nat) :
+    Follows cap (armsType kw p ts i : M α) (armsType kw p ts i) := by
+  unfold armsType; follows
 
-theorem ifLeaf_f (p : Pos) (c : Hw) (t : Ty) (a b : Agg) :
-    Follows cap (ifLeaf p c t a b) (ifLeaf p c t a b) := by
-  unfold ifLeaf; follows [litAt_f, hwPair_f, hwNode_f]
+theorem armStatic_f (kw : String) (p : Pos) (t : Ty) (x : Value) (ys : List Value) :
+    Follows cap (armStatic kw p t x ys) (armStatic kw p t x ys) := by
+  unfold armStatic; follows
 
-theorem ifPart_f (p : Pos) (c : Hw) (t : Ty) (a b : Agg) :
-    Follows cap (ifPart p c t a b) (ifPart p c t a b) := by
-  unfold ifPart; follows [ifStatic_f, ifLeaf_f]
+theorem ifLeaf_f (p : Pos) (c : Hw) (t : Ty) (as : List Agg) :
+    Follows cap (ifLeaf p c t as) (ifLeaf p c t as) := by
+  unfold ifLeaf; follows [litAt_f, hwPair_f, hwNode_f, armsType_f]
 
-theorem ifWalk_f (fs : Ty → Option (Array (String × Ty))) (p : Pos) (c : Hw) :
-    ∀ (d : Nat) (t : Ty) (a b : Agg),
-      Follows cap (ifWalk fs p c d t a b) (ifWalk fs p c d t a b)
-  | 0, t, a, b => by rw [ifWalk.eq_def]; follows
-  | d + 1, t, a, b => by
-    rw [ifWalk.eq_def]; dsimp only
-    follows [ifWalk_f fs p c d, ifPart_f]
+theorem armPart_f (kw : String) (p : Pos) (leaf : Ty → List Agg → M Hw)
+    (hl : ∀ t as, Follows cap (leaf t as) (leaf t as)) (t : Ty) (as : List Agg) :
+    Follows cap (armPart kw p leaf t as) (armPart kw p leaf t as) := by
+  unfold armPart; follows [armStatic_f, armsType_f, hl]
+
+theorem armWalk_f (fs : Ty → Option (Array (String × Ty))) (kw : String) (p : Pos)
+    (leaf : Ty → List Agg → M Hw) (hl : ∀ t as, Follows cap (leaf t as) (leaf t as)) :
+    ∀ (d : Nat) (t : Ty) (as : List Agg),
+      Follows cap (armWalk fs kw p leaf d t as) (armWalk fs kw p leaf d t as)
+  | 0, t, as => by rw [armWalk.eq_def]; follows
+  | d + 1, t, as => by
+    rw [armWalk.eq_def]; dsimp only
+    follows [armWalk_f fs kw p leaf hl d, armPart_f kw p leaf hl, armsType_f]
 
 theorem shared_f (pos : Pos) (c : Hw) (n : Nat) :
     Follows cap (shared pos c n) (shared pos c n) := by
@@ -469,7 +475,8 @@ theorem shared_f (pos : Pos) (c : Hw) (n : Nat) :
 
 theorem mux_f (p : Pos) (c : Hw) (a b : Val) :
     Follows cap (mux p c a b) (mux p c a b) := by
-  unfold mux; follows [walked_f, ifPart_f, shared_f, ifWalk_f]
+  unfold mux; follows [walked_f, armPart_f _ _ _ (ifLeaf_f _ _), shared_f,
+    armWalk_f _ _ _ _ (ifLeaf_f _ _)]
 
 theorem packHw_f (p : Pos) (w : Nat) (ps : List (Ty × Agg)) :
     Follows cap (packHw p w ps) (packHw p w ps) := by

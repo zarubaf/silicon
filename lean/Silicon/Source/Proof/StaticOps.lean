@@ -27,7 +27,7 @@ static pairs and the static `==` of each hardware pair. `Flatten.lower` takes th
 left spine (`Spine.runs_chain`). The claim about `lower` holds for at most 60 pairs. Then the
 spine stays below the height 64, so the height rule binds no temporary. The condition of an `if`
 is a constant here, so it gets no shared mark. The statements take the pairs and `s` as given:
-no proof here ties them to the walk of `Eval.eqWalk` and `Eval.ifWalk` (#286).
+no proof here ties them to the walk of `Eval.eqWalk` and `Eval.armWalk` (#286).
 -/
 namespace Silicon.Source.StaticOps
 
