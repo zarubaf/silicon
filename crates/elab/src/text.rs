@@ -92,6 +92,7 @@ impl<'a> Text<'a> {
                     }
                 }
             }
+            Ty::Enum(e) => self.out.push_str(tys.enum_name(*e)),
             Ty::Struct(s) => {
                 let spec = tys.spec(*s);
                 self.out.push_str(spec.name());
@@ -118,7 +119,9 @@ impl<'a> Text<'a> {
                 self.work.push(Piece::Owned(format!("; {}]", xs.len())));
                 self.work.push(Piece::Ty(*elem));
             }
-            Value::Record(t, _) | Value::Function(_, t) => self.work.push(Piece::Ty(*t)),
+            Value::Record(t, _) | Value::Function(_, t) | Value::Enum(t, ..) => {
+                self.work.push(Piece::Ty(*t));
+            }
             Value::List(elem, _) => {
                 self.out.push_str("List[");
                 self.work.push(Piece::Text("]"));
@@ -150,6 +153,7 @@ impl<'a> Text<'a> {
             Value::Type(t) => self.work.push(Piece::Ty(*t)),
             Value::Unit => self.out.push_str("()"),
             Value::Function(item, _) => self.out.push_str(tys.fn_name(*item)),
+            Value::Enum(_, tag, _) => self.out.push_str(&int_text(&Int::from_unsigned(tag))),
             Value::List(t, xs) if xs.is_empty() => {
                 self.out.push_str("list(");
                 self.work.push(Piece::Text(")"));

@@ -16,7 +16,7 @@
 //! binding all take their leaves from it.
 
 use crate::names::{Field, Name, Sym};
-use crate::types::{Ty, TyId, Types};
+use crate::types::{ENUM_PART_NAMES, PartNames, Ty, TyId, Types};
 use std::collections::BTreeMap;
 
 /// What the walk needs to name the parts of a type: the table of types, the field symbols of
@@ -64,14 +64,16 @@ impl Shapes {
                 .collect()
         } else {
             let parts = env.tys.parts(t)?;
-            let syms = env.order.get(parts.item())?;
             let mut kids = Vec::new();
             for (k, u) in parts.types.iter().enumerate() {
                 if full(*u) {
-                    let text = env.texts.get(*syms.get(k)?)?;
+                    let text = match parts.names {
+                        PartNames::Struct(item) => env.texts.get(*env.order.get(item)?.get(k)?)?,
+                        PartNames::Enum => *ENUM_PART_NAMES.get(k)?,
+                    };
                     kids.push(Kid {
                         index: k as u64,
-                        field: Field::User(text.clone()),
+                        field: Field::User(text.to_owned()),
                         ty: *u,
                     });
                 }

@@ -268,6 +268,7 @@ impl Evaluator<'_> {
                 "a hardware aggregate is expected".to_owned(),
             );
         };
+        self.no_enum_field(pos, index.as_str(), Seen::Agg(agg))?;
         let Some(len) = self.select_len(agg) else {
             return fail(
                 Code::S010,
@@ -322,7 +323,7 @@ impl Evaluator<'_> {
     /// reference to one with that field.
     pub(super) fn agg_field_at(&self, a: &Agg, f: &Ident) -> Option<(usize, TyId)> {
         let parts = self.tys.parts(self.record_ty(a)?)?;
-        let k = self.field_number(parts.item(), f)?;
+        let k = self.field_number(parts.item()?, f)?;
         Some((k, parts.types.get(k).copied()?))
     }
 
@@ -338,6 +339,7 @@ impl Evaluator<'_> {
                 "a hardware aggregate is expected".to_owned(),
             );
         };
+        self.no_enum_field(pos, &f.name, Seen::Agg(agg))?;
         let Some((k, ft)) = self.agg_field_at(agg, f) else {
             return fail(
                 Code::S010,
@@ -542,7 +544,7 @@ impl Evaluator<'_> {
         let sym = self
             .tys
             .parts(t)
-            .and_then(|parts| self.syms.field_order.get(parts.item()))
+            .and_then(|parts| self.syms.field_order.get(parts.item()?))
             .and_then(|syms| syms.get(k))
             .copied();
         match sym {

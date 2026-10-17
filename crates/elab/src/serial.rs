@@ -10,6 +10,7 @@
 use crate::int::{Int, Pow10};
 use crate::types::{Ty, TyId, TyParam, Types};
 use crate::value::Value;
+use core_ir::Bits;
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
@@ -103,7 +104,7 @@ fn held_types(v: &Value, out: &mut Vec<TyId>) {
     let mut work = vec![v];
     while let Some(v) = work.pop() {
         match v {
-            Value::Type(t) => out.push(*t),
+            Value::Type(t) | Value::Enum(t, ..) => out.push(*t),
             Value::Array(t, xs) | Value::Record(t, xs) | Value::List(t, xs) => {
                 out.push(*t);
                 work.extend(xs);
@@ -157,6 +158,8 @@ pub(crate) enum Item<'a> {
     Text(&'static str),
     Name(&'a str),
     Int(&'a Int),
+    /// The tag and the payload of an enum value after its type, and the closing parenthesis.
+    EnumRest(&'a Bits, Option<&'a Bits>),
 }
 
 /// Pushes `items` so that they come off the stack in order with `sep` between.
@@ -177,6 +180,16 @@ pub(crate) fn write<S: Sink>(tys: &Types, first: Item<'_>, out: &mut S) {
         match item {
             Item::Text(s) | Item::Name(s) => out.write_str(s).unwrap_or_default(),
             Item::Int(n) => out.int(n),
+            Item::EnumRest(tag, payload) => {
+                out.write_str(" ").unwrap_or_default();
+                out.int(&Int::from_unsigned(tag));
+                if let Some(p) = payload {
+                    write!(out, " (uint {} ", p.width()).unwrap_or_default();
+                    out.int(&Int::from_unsigned(p));
+                    out.write_str(")").unwrap_or_default();
+                }
+                out.write_str(")").unwrap_or_default();
+            }
             Item::Ty(t) => {
                 if !out.whole_type(tys, t) {
                     #[cfg(test)]
@@ -231,6 +244,11 @@ fn type_node<'a, S: Sink>(tys: &'a Types, ty: &'a Ty, out: &mut S, work: &mut Ve
             work.push(Item::Text(") "));
             push_list(work, params.iter().map(|p| Item::Param(*p)));
         }
+        Ty::Enum(e) => {
+            out.write_str("(enum root ").unwrap_or_default();
+            out.write_str(tys.enum_name(*e)).unwrap_or_default();
+            out.write_str(" ())").unwrap_or_default();
+        }
         Ty::Struct(s) => {
             let spec = tys.spec(*s);
             out.write_str(if spec.prelude() {
@@ -283,6 +301,11 @@ fn value_node<'a, S: Sink>(tys: &Types, v: &'a Value, out: &mut S, work: &mut Ve
         Value::Tuple(_, xs) => container(out, work, "(tuple ", None, xs),
         Value::Function(item, _) => {
             write!(out, "(function root {})", tys.fn_name(*item)).unwrap_or_default();
+        }
+        Value::Enum(t, tag, payload) => {
+            out.write_str("(enum ").unwrap_or_default();
+            work.push(Item::EnumRest(tag, payload.as_ref()));
+            work.push(Item::Ty(*t));
         }
     }
 }

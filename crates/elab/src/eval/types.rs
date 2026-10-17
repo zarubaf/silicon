@@ -9,17 +9,22 @@
 //! reads it as a local. A first use then charges the size of the struct type, evaluates the
 //! field types, and charges the metadata. A later use finds the entry and charges nothing more.
 
-use super::{Evaluator, Out, ROOT, Res, Slot, Stop, at, fail, need, type_pos};
+use super::{Evaluator, Out, ROOT, Res, Slot, Stop, at, expr_pos, fail, need, type_pos};
 use crate::hw::{Ref, Root, Seen, Val};
+use crate::int::Int;
 use crate::limit;
 use crate::ops;
-use crate::types::{Meta, Ty, TyId, TyParam, Types};
+use crate::types::{EnumStatus, Meta, Ty, TyId, TyParam, Types, Variant};
 use crate::value::Value;
 use crate::{Code, Error};
 use parse::ast::{
     Expr, FnParam, Ident, Item, NodeId, Param, ParamMode, Pos, StructField, TypeExpr,
+    Variant as VariantItem,
 };
 use resolve::{DeclId, Prelude, Target};
+
+/// The most bits of the payload of an enum.
+const PAYLOAD_LIMIT: u64 = 65536;
 
 impl Evaluator<'_> {
     /// The index of the struct item that the name node `id` refers to.
@@ -354,6 +359,140 @@ impl Evaluator<'_> {
         self.binding.pop();
         let keys: Vec<Out> = bound.into_iter().map(|(_, o)| o).collect();
         self.first_or_later_use(pos, name, i, &keys, fields)
+    }
+
+    /// A use at `pos` of the enum item `i` (sections 5.4 and 5.6). A later use reads the done
+    /// entry and charges nothing more. A use in progress is `S019`. The first use nests one
+    /// level deeper, in the scope of the enum, and runs in a structural context, so the tag
+    /// values have its guard (section 9.4).
+    pub(super) fn enum_use(&mut self, pos: Pos, i: usize) -> Res<TyId> {
+        self.structural(|ev| ev.enum_first_use(pos, i))
+    }
+
+    fn enum_first_use(&mut self, pos: Pos, i: usize) -> Res<TyId> {
+        let file = self.file;
+        let Some(Item::Enum {
+            pos: keyword,
+            name,
+            tag,
+            variants,
+        }) = file.ast().get(i)
+        else {
+            return fail(Code::S010, pos, "the enum item is missing".to_owned());
+        };
+        match self.tys.enum_status(i) {
+            EnumStatus::Done(t) => return Ok(t),
+            EnumStatus::InProgress => {
+                return fail(
+                    Code::S019,
+                    pos,
+                    format!("the enum `{}` depends on itself", name.name),
+                );
+            }
+            EnumStatus::Fresh => {}
+        }
+        self.nested(pos, |ev| {
+            ev.in_frame(None, |ev| {
+                ev.in_item(i, ROOT, |ev| {
+                    ev.enum_checks(pos, (i, *keyword, name), (tag, variants))
+                })
+            })
+        })
+    }
+
+    /// The checks of an enum in the order of section 5.6. It charges the size of the enum type,
+    /// then:
+    ///
+    /// 1. The tag type is `UInt[W]` (`S010`).
+    /// 2. For each variant: its tag value gets its typed use at `UInt[W]` (`S010`, `S012`).
+    ///    Then each payload type is hardware data (`S010`). Then the metadata sums of the tuple
+    ///    of the payload types charge, after their size-limit check.
+    /// 3. The payload width `P`, the largest width of these tuples, is at most 65536 (`S012` at
+    ///    the `enum` keyword). Then the metadata sums of the enum charge.
+    fn enum_checks(
+        &mut self,
+        pos: Pos,
+        (item, keyword, name): (usize, Pos, &Ident),
+        (tag, variants): (&TypeExpr, &[VariantItem]),
+    ) -> Res<TyId> {
+        self.charge(pos, 1)?;
+        self.tys.begin_enum(item, &name.name);
+        let tag_ty = self.type_expr(tag)?;
+        let Ty::UInt(tag_width) = *self.tys.get(tag_ty) else {
+            return fail(
+                Code::S010,
+                type_pos(tag),
+                format!(
+                    "the tag type of an enum is UInt[W], not {}",
+                    self.tys.text(tag_ty)
+                ),
+            );
+        };
+        let mut width = Int::zero();
+        let mut done = Vec::with_capacity(variants.len());
+        for variant in variants {
+            let tag_pos = expr_pos(&variant.tag);
+            let o = self.eval(&variant.tag)?;
+            let o = need(&variant.tag, o)?;
+            let converted = self.conform(tag_pos, tag_ty, o)?;
+            let tag = match &converted {
+                Value::UInt(bits) => bits.clone(),
+                other => {
+                    return fail(
+                        Code::S010,
+                        tag_pos,
+                        format!(
+                            "expected UInt[{tag_width}], but the value is {}",
+                            other.text(&self.tys)
+                        ),
+                    );
+                }
+            };
+            let mut payload = Vec::with_capacity(variant.payload.len());
+            for ty_expr in &variant.payload {
+                let payload_ty = self.type_expr(ty_expr)?;
+                if !self.tys.meta(payload_ty).data {
+                    return fail(
+                        Code::S010,
+                        type_pos(ty_expr),
+                        format!(
+                            "a payload type is hardware data, not {}",
+                            self.tys.text(payload_ty)
+                        ),
+                    );
+                }
+                payload.push(payload_ty);
+            }
+            limit::metadata(limit::sum_bits(payload.iter().map(|p| self.tys.meta(*p))))
+                .map_err(at(pos))?;
+            let (_, depth) = Types::tuple_shape(&payload);
+            let meta = self.sums(pos, &payload, depth)?;
+            if meta.width > width {
+                width = meta.width;
+            }
+            done.push(Variant { tag, payload });
+        }
+        if width > Int::from_u64(PAYLOAD_LIMIT) {
+            return fail(
+                Code::S012,
+                keyword,
+                format!(
+                    "the payload of `{}` has {} bits, above {PAYLOAD_LIMIT}; use smaller payloads",
+                    name.name,
+                    ops::int_text(&width)
+                ),
+            );
+        }
+        let payload_width = u32::try_from(width.to_u64().unwrap_or(0)).unwrap_or(0);
+        let mut parts = vec![tag_ty];
+        if payload_width > 0 {
+            parts.push(self.tys.mk(Ty::UInt(payload_width)));
+        }
+        let (_, depth) = Types::tuple_shape(&parts);
+        let meta = self.sums(pos, &parts, depth)?;
+        Ok(self
+            .tys
+            .finish_enum(item, (tag_width, payload_width), done, meta, depth))
     }
 
     /// The typed uses at `pos` of the arguments `args` at the parameters `params`, in order,

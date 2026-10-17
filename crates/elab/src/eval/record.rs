@@ -12,6 +12,7 @@ use crate::Code;
 use crate::agg::Agg;
 use crate::hw::{Seen, Val};
 use crate::limit;
+use crate::ops::int_text;
 use crate::types::{Ty, TyId};
 use crate::value::{Value, int_size};
 use parse::ast::{Expr, Ident, Item, Pos};
@@ -37,6 +38,17 @@ impl Evaluator<'_> {
                 format!(
                     "a constructor needs a hardware data type, not {}",
                     self.tys.text(ty)
+                ),
+            );
+        }
+        if matches!(self.tys.get(ty), Ty::Enum(_)) && !xs.is_empty() {
+            let t = self.tys.text(ty);
+            return fail(
+                Code::S010,
+                pos,
+                format!(
+                    "`{t}` is an enum, so `{t}(...)` takes no arguments; construct a variant \
+                     such as `{t}::V(...)`, or write `{t}()` for the zero"
                 ),
             );
         }
@@ -131,6 +143,30 @@ impl Evaluator<'_> {
         self.made_pieces(pos, ty, pieces)
     }
 
+    /// A field `.f` or a selector `.N` of an enum is `S010` (section 6.2). `f` is the field name
+    /// or the number of the selector. An enum has the leaves `tag` and `payload`, but no field.
+    /// Another value passes.
+    pub(super) fn no_enum_field(&self, pos: Pos, f: &str, seen: Seen<'_>) -> Res<()> {
+        let t = match seen {
+            Seen::Static(Value::Enum(t, ..)) => *t,
+            Seen::Agg(a) => match a.stored_ty() {
+                Some(t) if matches!(self.tys.get(t), Ty::Enum(_)) => t,
+                _ => return Ok(()),
+            },
+            _ => return Ok(()),
+        };
+        fail(
+            Code::S010,
+            pos,
+            format!(
+                "`{}` is an enum and has no field `{f}`; read a payload with `match`, or the bits \
+                 with `reinterpret(UInt[{}], e)`",
+                self.tys.text(t),
+                int_text(&self.tys.meta(t).width)
+            ),
+        )
+    }
+
     /// The number of the field `f` in the struct item `item`.
     pub(super) fn field_number(&self, item: usize, f: &Ident) -> Option<usize> {
         match self.names {
@@ -150,6 +186,7 @@ impl Evaluator<'_> {
     /// The number of the field `f` of the record that `cur` finds, and its type. A field
     /// selection refers to the field, so it charges no size. A missing field is `S010`.
     pub(super) fn field_at(&self, pos: Pos, f: &Ident, cur: Seen<'_>) -> Res<(usize, TyId)> {
+        self.no_enum_field(pos, &f.name, cur)?;
         let missing = || {
             fail(
                 Code::S010,
@@ -167,8 +204,9 @@ impl Evaluator<'_> {
             return missing();
         };
         let types = parts.types;
-        match self
-            .field_number(parts.item(), f)
+        match parts
+            .item()
+            .and_then(|item| self.field_number(item, f))
             .and_then(|k| types.get(k).map(|ft| (k, *ft)))
         {
             Some(found) => Ok(found),

@@ -11,6 +11,7 @@ use crate::int::Int;
 use crate::serial::{self, Item, Len};
 use crate::text::Text;
 use crate::value::{Value, int_size, width_int, width_size};
+use core_ir::Bits;
 use std::collections::BTreeMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
@@ -33,6 +34,8 @@ pub enum Ty {
     Array(TyId, Int),
     Tuple(Vec<TyId>),
     Struct(SpecId),
+    /// An enum, by its item (section 5.4). The table of enums holds its widths and variants.
+    Enum(EnumId),
     /// `String`, a static type only.
     String,
     /// `List[T]`, a static type only. Its length is a value, not a part of the type.
@@ -58,6 +61,7 @@ pub struct TyId {
     depth: u64,
     strings: bool,
     funcs: bool,
+    enums: bool,
 }
 
 impl TyId {
@@ -92,11 +96,31 @@ impl TyId {
     pub fn holds_fn(self) -> bool {
         self.funcs
     }
+
+    /// Whether an enum type is `self` or a part of it, at any depth (the enum flag of the type
+    /// metadata). A struct type reads its field types only. A value of a type with the flag
+    /// has no `==`.
+    #[must_use]
+    pub fn holds_enum(self) -> bool {
+        self.enums
+    }
 }
 
 /// A struct specialization in the table `Types`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SpecId(usize);
+
+/// An enum type: the index of its item.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct EnumId(usize);
+
+impl EnumId {
+    /// The index of the enum item.
+    #[must_use]
+    pub fn item(self) -> usize {
+        self.0
+    }
+}
 
 /// The type metadata of section 5.4 without the depth, which the id carries. It holds the bit
 /// width as hardware data, the leaf count, and the recursive size of the zero value. It also
@@ -266,6 +290,8 @@ impl Spec {
 pub enum PartNames {
     /// The field names of the struct item.
     Struct(usize),
+    /// The names `tag` and `payload` of an enum.
+    Enum,
 }
 
 /// The named parts of a type (`Types::parts`): where their names come from, and their types.
@@ -276,13 +302,63 @@ pub struct Parts<'a> {
 }
 
 impl Parts<'_> {
-    /// The struct item whose field names name the parts.
+    /// The struct item whose field names name the parts. An enum has no field.
     #[must_use]
-    pub fn item(&self) -> usize {
+    pub fn item(&self) -> Option<usize> {
         match self.names {
-            PartNames::Struct(item) => item,
+            PartNames::Struct(item) => Some(item),
+            PartNames::Enum => None,
         }
     }
+}
+
+/// The names of the two parts of an enum.
+pub const ENUM_PART_NAMES: [&str; 2] = ["tag", "payload"];
+
+/// A variant of a done enum: its tag value, converted to `UInt[W]`, and its payload types.
+pub struct Variant {
+    pub tag: Bits,
+    pub payload: Vec<TyId>,
+}
+
+/// An enum in the table of enums (section 5.6), by its item. A done entry holds the enum type,
+/// the tag width `W`, the payload width `P`, the types of its parts, and its variants in
+/// declaration order. An enum that is not started has no entry.
+enum EnumState {
+    InProgress,
+    Done(DoneEnum),
+}
+
+struct DoneEnum {
+    ty: TyId,
+    tag_width: u32,
+    payload_width: u32,
+    /// `UInt[W]`, then `UInt[P]` when `P` is not 0.
+    parts: Vec<TyId>,
+    variants: Vec<Variant>,
+}
+
+/// An enum in the table: its name and its state.
+struct EnumEntry {
+    name: String,
+    state: EnumState,
+}
+
+/// Where an enum item stands in the table of enums.
+pub enum EnumStatus {
+    /// No use yet.
+    Fresh,
+    /// Its checks run.
+    InProgress,
+    /// Done, with its enum type.
+    Done(TyId),
+}
+
+/// The widths of a done enum: the tag width `W` and the payload width `P`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Widths {
+    pub tag: u32,
+    pub payload: u32,
 }
 
 /// The result of a join of two types: the units that its walk charged, and the common type.
@@ -337,6 +413,8 @@ pub struct Types {
     /// The join of each pair of types that joined: its charge and its common type, if any.
     joins: BTreeMap<(TyId, TyId), Joined>,
     specs: Vec<Spec>,
+    /// The enums by their item.
+    enums: BTreeMap<usize, EnumEntry>,
     /// The name of each function item that a function value names, by its item. A value holds
     /// the item, so a copy of it copies no name.
     fn_names: BTreeMap<usize, String>,
@@ -432,11 +510,18 @@ impl Types {
             Ty::Tuple(parts) => parts.iter().any(|part| part.funcs),
             _ => false,
         };
+        let enums = match &ty {
+            Ty::Enum(_) => true,
+            Ty::Array(elem, _) | Ty::List(elem) => elem.enums,
+            Ty::Tuple(parts) => parts.iter().any(|part| part.enums),
+            Ty::Fn(params, ret) => ret.enums || params.iter().any(|p| p.ty.enums),
+            _ => false,
+        };
         let prefix = match &ty {
             Ty::Tuple(parts) => self.prefix_of(parts),
             _ => Vec::new(),
         };
-        self.insert_shaped(ty, (size, depth), (strings, funcs), meta, prefix)
+        self.insert_shaped(ty, (size, depth), (strings, funcs, enums), meta, prefix)
     }
 
     /// The offsets of the parts `parts`: for each, the sum of the widths of the parts before it.
@@ -456,7 +541,7 @@ impl Types {
         &mut self,
         ty: Ty,
         (size, depth): (u64, u64),
-        (strings, funcs): (bool, bool),
+        (strings, funcs, enums): (bool, bool, bool),
         meta: Meta,
         prefix: Vec<u64>,
     ) -> TyId {
@@ -466,6 +551,7 @@ impl Types {
             depth,
             strings,
             funcs,
+            enums,
         };
         let zero_depth = self.zero_depth_of(&ty, depth);
         self.entries.push(Entry {
@@ -483,9 +569,14 @@ impl Types {
     #[must_use]
     pub fn shape(ty: &Ty) -> (u64, u64) {
         match ty {
-            Ty::Bool | Ty::Nat | Ty::Int | Ty::Unit | Ty::Type | Ty::String | Ty::Struct(_) => {
-                (1, 1)
-            }
+            Ty::Bool
+            | Ty::Nat
+            | Ty::Int
+            | Ty::Unit
+            | Ty::Type
+            | Ty::String
+            | Ty::Struct(_)
+            | Ty::Enum(_) => (1, 1),
             Ty::UInt(w) | Ty::SInt(w) => (1 + int_size(&width_int(*w)), 1),
             Ty::Array(elem, len) => Types::array_shape(*elem, len),
             Ty::Tuple(parts) => Types::tuple_shape(parts),
@@ -540,7 +631,7 @@ impl Types {
                     .max()
                     .unwrap_or(0)
             }
-            Ty::Struct(_) => 1 + depth,
+            Ty::Struct(_) | Ty::Enum(_) => 1 + depth,
             _ => 1,
         }
     }
@@ -634,7 +725,7 @@ impl Types {
                 .to_u64()
                 .unwrap_or(u64::MAX)
                 .saturating_mul(k),
-            Ty::Tuple(_) | Ty::Struct(_) => usize::try_from(k)
+            Ty::Tuple(_) | Ty::Struct(_) | Ty::Enum(_) => usize::try_from(k)
                 .ok()
                 .and_then(|k| self.entry(t).prefix.get(k))
                 .copied()
@@ -797,8 +888,15 @@ impl Types {
         let strings = fields.iter().any(|field| field.strings);
         // The function flag of a struct reads the field types, not the static arguments.
         let funcs = fields.iter().any(|field| field.funcs);
+        let enums = fields.iter().any(|field| field.enums);
         let prefix = self.prefix_of(&fields);
-        let ty = self.insert_shaped(Ty::Struct(s), (size, depth), (strings, funcs), meta, prefix);
+        let ty = self.insert_shaped(
+            Ty::Struct(s),
+            (size, depth),
+            (strings, funcs, enums),
+            meta,
+            prefix,
+        );
         if let Some(spec) = self.specs.get_mut(s.0) {
             spec.state = SpecState::Done { ty, fields };
         }
@@ -806,21 +904,118 @@ impl Types {
     }
 
     /// The named parts of the type `t`, in packing order: the field types of a struct type,
-    /// from its done entry. Each walk over the parts of a type with named parts reads them here
-    /// and nowhere else. A type without named parts and an entry that is not done give `None`.
+    /// from its done entry. An enum type has the parts `tag` of type `UInt[W]` and `payload` of
+    /// type `UInt[P]`, without `payload` when `P` is 0. Each walk over the parts of a type with
+    /// named parts reads them here and nowhere else. A type without named parts and an entry
+    /// that is not done give `None`.
     #[must_use]
     pub fn parts(&self, t: TyId) -> Option<Parts<'_>> {
-        let Ty::Struct(s) = self.get(t) else {
+        match self.get(t) {
+            Ty::Struct(s) => {
+                let spec = self.spec(*s);
+                match &spec.state {
+                    SpecState::Done { fields, .. } => Some(Parts {
+                        names: PartNames::Struct(spec.item),
+                        types: fields,
+                    }),
+                    SpecState::InProgress => None,
+                }
+            }
+            Ty::Enum(_) => Some(Parts {
+                names: PartNames::Enum,
+                types: &self.done_enum(t)?.parts,
+            }),
+            _ => None,
+        }
+    }
+
+    /// The done entry of the enum type `t`.
+    fn done_enum(&self, t: TyId) -> Option<&DoneEnum> {
+        let Ty::Enum(e) = self.get(t) else {
             return None;
         };
-        let spec = self.spec(*s);
-        match &spec.state {
-            SpecState::Done { fields, .. } => Some(Parts {
-                names: PartNames::Struct(spec.item),
-                types: fields,
-            }),
-            SpecState::InProgress => None,
+        match &self.enums.get(&e.0)?.state {
+            EnumState::Done(done) => Some(done),
+            EnumState::InProgress => None,
         }
+    }
+
+    /// The tag width and the payload width of the enum type `t`.
+    #[must_use]
+    pub fn widths(&self, t: TyId) -> Option<Widths> {
+        let done = self.done_enum(t)?;
+        Some(Widths {
+            tag: done.tag_width,
+            payload: done.payload_width,
+        })
+    }
+
+    /// The variants of the enum type `t`, in declaration order.
+    #[must_use]
+    pub fn variants(&self, t: TyId) -> Option<&[Variant]> {
+        Some(&self.done_enum(t)?.variants)
+    }
+
+    /// The name of the enum type `t`.
+    #[must_use]
+    pub fn enum_name(&self, e: EnumId) -> &str {
+        self.enums.get(&e.0).map_or("", |entry| entry.name.as_str())
+    }
+
+    /// Where the enum item `item` stands in the table of enums.
+    #[must_use]
+    pub fn enum_status(&self, item: usize) -> EnumStatus {
+        match self.enums.get(&item).map(|entry| &entry.state) {
+            None => EnumStatus::Fresh,
+            Some(EnumState::InProgress) => EnumStatus::InProgress,
+            Some(EnumState::Done(done)) => EnumStatus::Done(done.ty),
+        }
+    }
+
+    /// Starts the checks of the enum item `item` named `name`.
+    pub fn begin_enum(&mut self, item: usize, name: &str) {
+        self.enums.insert(
+            item,
+            EnumEntry {
+                name: name.to_owned(),
+                state: EnumState::InProgress,
+            },
+        );
+    }
+
+    /// Completes the enum item `item` with its widths, its variants, and its metadata `meta`,
+    /// and gives its enum type. The caller paid the charge. The type has the size 1 and the
+    /// depth of its metadata.
+    pub fn finish_enum(
+        &mut self,
+        item: usize,
+        (tag_width, payload_width): (u32, u32),
+        variants: Vec<Variant>,
+        meta: Meta,
+        depth: u64,
+    ) -> TyId {
+        let mut parts = vec![self.mk(Ty::UInt(tag_width))];
+        if payload_width > 0 {
+            parts.push(self.mk(Ty::UInt(payload_width)));
+        }
+        let prefix = self.prefix_of(&parts);
+        let ty = self.insert_shaped(
+            Ty::Enum(EnumId(item)),
+            (1, depth),
+            (false, false, true),
+            meta,
+            prefix,
+        );
+        if let Some(entry) = self.enums.get_mut(&item) {
+            entry.state = EnumState::Done(DoneEnum {
+                ty,
+                tag_width,
+                payload_width,
+                parts,
+                variants,
+            });
+        }
+        ty
     }
 
     /// The zero value of the hardware data type `t` (section 5.6): 0 for each integer leaf
@@ -860,6 +1055,15 @@ impl Types {
                         let fields = self.parts(t)?.types;
                         work.push(Step::Record(t, fields.len()));
                         work.extend(fields.iter().rev().map(|f| Step::Visit(*f)));
+                    }
+                    Ty::Enum(_) => {
+                        let widths = self.widths(t)?;
+                        let tag = crate::int::finite(widths.tag, 0)?;
+                        let payload = match widths.payload {
+                            0 => None,
+                            p => Some(crate::int::finite(p, 0)?),
+                        };
+                        done.push(Value::Enum(t, tag, payload));
                     }
                     Ty::Nat | Ty::Int | Ty::Type | Ty::String | Ty::List(_) | Ty::Fn(..) => {
                         return None;

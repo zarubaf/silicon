@@ -308,6 +308,7 @@ impl Evaluator<'_> {
     /// The number of the element that the selector `.index` with its literal at `q` picks
     /// from `base`, a result of a selector at `pos`.
     fn select_at(&self, pos: Pos, q: Pos, index: &Nat, base: Seen<'_>) -> Res<usize> {
+        self.no_enum_field(pos, &selector_text(index), base)?;
         let len = match base {
             Seen::Static(Value::Tuple(_, xs)) => Some(xs.len()),
             Seen::Agg(a) => self.select_len(a),
@@ -605,7 +606,7 @@ impl Evaluator<'_> {
             Key::Select(_, _, index) => index.as_str().parse::<usize>().ok(),
             Key::Field(_, f) => ty
                 .and_then(|t| self.tys.parts(t))
-                .and_then(|parts| self.field_number(parts.item(), f)),
+                .and_then(|parts| self.field_number(parts.item()?, f)),
         }?;
         Some((k, ty.and_then(|t| self.part_ty(t, k))))
     }
@@ -640,7 +641,7 @@ impl Evaluator<'_> {
                 let parts = self.tys.parts(t)?;
                 parts
                     .types
-                    .get(self.field_number(parts.item(), f)?)
+                    .get(self.field_number(parts.item()?, f)?)
                     .copied()
             }
         }

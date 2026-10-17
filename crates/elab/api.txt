@@ -71,6 +71,7 @@ method elab::value::InstantiationId::serialize
 method elab::value::Value::depth
 method elab::value::Value::finite_ty
 method elab::value::Value::hash_into
+method elab::value::Value::holds_enum
 method elab::value::Value::holds_fn
 method elab::value::Value::measure_charge
 method elab::value::Value::scalar_ty
@@ -96,6 +97,7 @@ struct elab::Observed
 struct elab::int::Int
 struct elab::names::Name
 struct elab::value::Evaluated
+struct elab::value::Flags
 struct elab::value::InstantiationId
 struct elab::vectors::Entry
 struct elab::vectors::Schema

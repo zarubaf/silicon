@@ -140,7 +140,7 @@ impl Walk<'_> {
         };
         let d = self.file.decl(decl);
         match d.kind {
-            Kind::Const | Kind::Struct | Kind::Fn => true,
+            Kind::Const | Kind::Struct | Kind::Enum | Kind::Fn => true,
             Kind::Alias => self.file.item(&d.name) == Some(decl),
             _ => false,
         }
@@ -215,7 +215,15 @@ impl Walk<'_> {
                 struct_fields = numbers;
             }
             Item::Alias { ty, .. } => self.ty(ty, 1),
-            Item::Enum { .. } => {}
+            Item::Enum { tag, variants, .. } => {
+                self.ty(tag, 1);
+                for v in variants {
+                    for ty in &v.payload {
+                        self.ty(ty, 1);
+                    }
+                    self.expr(&v.tag, 1);
+                }
+            }
         }
         self.syms.struct_fields.push(struct_fields);
         self.syms.field_order.push(field_order);
@@ -347,7 +355,12 @@ impl Walk<'_> {
                 self.numbers.insert((self.top.is_some(), *id), n);
                 false
             }
-            Expr::Bool { .. } | Expr::Str { .. } | Expr::Unit { .. } | Expr::Path { .. } => false,
+            Expr::Bool { .. } | Expr::Str { .. } | Expr::Unit { .. } => false,
+            // The first use of the enum runs its checks one level deeper.
+            Expr::Path { .. } => {
+                self.nested = self.nested.max(depth);
+                false
+            }
             Expr::Name { id, .. } => {
                 if self.starts_nesting(*id) {
                     self.nested = self.nested.max(depth);

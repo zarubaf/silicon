@@ -33,7 +33,7 @@ fn is_of(v: &Value, t: TyId, tys: &Types) -> bool {
             | (Value::Bool(_), Ty::Bool)
             | (Value::Type(_), Ty::Type)
             | (Value::Str(_), Ty::String) => true,
-            (Value::Record(s, _), Ty::Struct(_)) => *s == t,
+            (Value::Record(s, _), Ty::Struct(_)) | (Value::Enum(s, ..), Ty::Enum(_)) => *s == t,
             (Value::UInt(x), Ty::UInt(w)) | (Value::SInt(x), Ty::SInt(w)) => x.width() == *w,
             (Value::Array(e, xs), Ty::Array(te, n)) => {
                 e == te && n.cmp_u64(xs.len() as u64) == Ordering::Equal
@@ -78,7 +78,11 @@ fn leaf(t: &Ty, v: &Value, tys: &Types) -> Result<Leaf, Fault> {
         | (Ty::Int, Value::Int(_))
         | (Ty::Type, Value::Type(_))
         | (Ty::String, Value::Str(_)) => Ok(Leaf::Same),
-        (Ty::Struct(_), Value::Record(s, _)) if tys.get(*s) == t => Ok(Leaf::Same),
+        (Ty::Struct(_), Value::Record(s, _)) | (Ty::Enum(_), Value::Enum(s, ..))
+            if tys.get(*s) == t =>
+        {
+            Ok(Leaf::Same)
+        }
         (Ty::Nat, Value::Int(n)) => {
             if n.is_negative() {
                 Err((Code::S012, format!("{} is not a Nat", int_text(n))))
@@ -378,7 +382,9 @@ fn visit(lhs: TyId, rhs: TyId, tys: &mut Types, budget: &mut u64) -> Visit {
             let (left, right) = (tys.get(lhs), tys.get(rhs));
             if matches!(
                 (left, right),
-                (Ty::Struct(_), Ty::Struct(_)) | (Ty::Fn(..), Ty::Fn(..))
+                (Ty::Struct(_), Ty::Struct(_))
+                    | (Ty::Fn(..), Ty::Fn(..))
+                    | (Ty::Enum(_), Ty::Enum(_))
             ) {
                 return Visit::Done(Joined {
                     charge: Int::from_u64(lhs.size()).add(&Int::from_u64(rhs.size())),
