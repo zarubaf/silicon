@@ -1,0 +1,2 @@
+// A path of two names is a variant in an expression.
+const A: T = a::b;

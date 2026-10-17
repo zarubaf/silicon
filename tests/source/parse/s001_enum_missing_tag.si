@@ -1,0 +1,4 @@
+// S001: a variant needs its tag value after `=`.
+// expected-error S001 @+2
+// expected-message: expected `=`
+enum Op: UInt[2] { Add }

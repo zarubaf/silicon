@@ -1,0 +1,9 @@
+// S007: a path without a call gives zero payload values, so a variant with a payload needs its values.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }
+module M() {
+    output y: Op;
+    // expected-error S007 @+2
+    // expected-message: the variant `Op::Load` has 1 payload value(s), but the constructor has 0; pass one value for each payload type
+    y := Op::Load;
+}

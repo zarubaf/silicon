@@ -1,0 +1,10 @@
+// S003: a `type` alias of an enum is not an enum item, so `A::Add` names no variant.
+// TOP M()
+enum Op: UInt[2] { Add = 0 }
+type A = Op;
+module M() {
+    output y: Op;
+    // expected-error S003 @+2
+    // expected-message: `A` is not an enum, so `A::Add` names no variant; use the name of an enum
+    y := A::Add;
+}

@@ -1,0 +1,16 @@
+// An enum with no payload bits has no `payload` entry: the port has the entry `m.tag` only.
+// TOP M()
+enum Mode: UInt[2] { Idle = 0, Run = 1 }
+module M() {
+    input m: Mode;
+    output y: Mode;
+    output bits: UInt[2];
+    reg r: Mode = Mode::Run;
+    r := m;
+    y := r;
+    bits := reinterpret(UInt[2], r);
+}
+// STEP in=(clock$0rst true m.tag 0) out=(bits 0 y.tag 0)
+// STEP in=(clock$0rst false m.tag 3) out=(bits 1 y.tag 1)
+// STEP in=(clock$0rst false m.tag 2) out=(bits 3 y.tag 3)
+// STEP in=(clock$0rst false m.tag 0) out=(bits 2 y.tag 2)

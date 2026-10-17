@@ -1,0 +1,9 @@
+// S010: `SInt[W + P]` is not `UInt[W + P]`.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }
+module M() {
+    input a: Op;
+    output y: SInt[10];
+    // expected-error S010 @+1
+    y := reinterpret(SInt[10], a);
+}

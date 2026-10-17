@@ -1,0 +1,10 @@
+// A static constructor in a loop pays the node, the payload values, and the result again at each pass; the first use of the
+// enum is paid once.
+// FUEL 346
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }
+module M() domains() {
+    comptime for i in 0..16 {
+        let a = Op::Pair(true, 9);
+    }
+}

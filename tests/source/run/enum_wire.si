@@ -1,0 +1,14 @@
+// A wire of an enum type takes a hardware `if` of two enum values. One arm is static, so its leaves are constants.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }
+module M() domains() {
+    input c: Bool;
+    input x: UInt[8];
+    output y: Op;
+    wire w: Op;
+    w := if (c) { Op::Load(x) } else { Op::Add };
+    y := w;
+}
+// STEP in=(c true x 9) out=(y.tag 1 y.payload 9)
+// STEP in=(c false x 9) out=(y.tag 0 y.payload 0)
+// STEP in=(c true x 255) out=(y.tag 1 y.payload 255)

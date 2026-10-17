@@ -1,0 +1,8 @@
+// S003: `std` is no declaration, so `std::x` is no variant.
+// TOP M()
+module M() {
+    output y: Bool;
+    // expected-error S003 @+2
+    // expected-message: `std` is not an enum, so `std::x` names no variant; use the name of an enum
+    y := std::x;
+}

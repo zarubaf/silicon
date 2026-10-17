@@ -1,0 +1,10 @@
+// The first use of an enum charges the size of the enum type once, then the tag type, each tag value, each payload type,
+// and the metadata of each variant and of the enum. A later use charges its node only. The fuel equal to the
+// total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 103
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }
+module M() domains() {
+    type A = Op;
+    type B = Op;
+}

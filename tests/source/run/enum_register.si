@@ -1,0 +1,20 @@
+// A register of an enum type resets each leaf to that leaf of its reset value: the tag 1 and the payload 5.
+// The register holds a tag and a payload that change together.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }
+module M() {
+    input en: Bool;
+    input b: Bool;
+    input n: UInt[4];
+    output y: Op;
+    reg r: Op = Op::Load(5);
+    r := if (en) { Op::Pair(b, n) } else { r };
+    y := r;
+}
+// STEP in=(clock$0rst true b false en false n 0) out=(y.tag 0 y.payload 0)
+// STEP in=(clock$0rst false b true en true n 3) out=(y.tag 1 y.payload 5)
+// STEP in=(clock$0rst false b false en false n 0) out=(y.tag 2 y.payload 7)
+// STEP in=(clock$0rst false b false en true n 15) out=(y.tag 2 y.payload 7)
+// STEP in=(clock$0rst false b false en false n 0) out=(y.tag 2 y.payload 30)
+// STEP in=(clock$0rst true b false en false n 0) out=(y.tag 2 y.payload 30)
+// STEP in=(clock$0rst false b false en false n 0) out=(y.tag 1 y.payload 5)

@@ -1,0 +1,10 @@
+// S010: `tag` is a leaf, not a field. The error is at the start of the selection node.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }
+module M() {
+    input a: Op;
+    output y: UInt[2];
+    // expected-error S010 @+2
+    // expected-message: `Op` is an enum and has no field `tag`; read a payload with `match`, or the bits with `reinterpret(UInt[10], e)`
+    y := a.tag;
+}

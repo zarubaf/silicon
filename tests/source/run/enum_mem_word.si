@@ -1,0 +1,31 @@
+// A word that is an enum: the tag is the low bits of the word and the payload is above it (frontend spec 7.6).
+// A tag without a variant, here 3, is stored and read back unchanged.
+// Inputs: ra, re, wa, we, w.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }
+module M() {
+    input ra: UInt[2];
+    input re: Bool;
+    input wa: UInt[2];
+    input we: Bool;
+    input w: Op;
+    output data: Op;
+    output valid: Bool;
+    mem m: [Op; 4];
+    let r = m.read_port(ra, re);
+    write_port(m, wa, w, we);
+    data := r.data;
+    valid := r.valid;
+}
+// word 1 takes (2, 7)
+// STEP in=(clock$0rst false ra 0 re false w.tag 2 w.payload 7 wa 1 we true) out=(data.tag 0 data.payload 0 valid false)
+// read word 1; word 2 takes (3, 200)
+// STEP in=(clock$0rst false ra 1 re true w.tag 3 w.payload 200 wa 2 we true) out=(data.tag 0 data.payload 0 valid false)
+// read word 2; no write. The response of the read of word 1 shows.
+// STEP in=(clock$0rst false ra 2 re true w.tag 1 w.payload 1 wa 0 we false) out=(data.tag 2 data.payload 7 valid true)
+// read word 0, which is zero. The response of the read of word 2 shows.
+// STEP in=(clock$0rst false ra 0 re true w.tag 1 w.payload 1 wa 0 we false) out=(data.tag 3 data.payload 200 valid true)
+// read word 1 again. The response of the read of word 0 shows.
+// STEP in=(clock$0rst false ra 1 re true w.tag 1 w.payload 1 wa 0 we false) out=(data.tag 0 data.payload 0 valid true)
+// STEP in=(clock$0rst false ra 0 re false w.tag 1 w.payload 1 wa 0 we false) out=(data.tag 2 data.payload 7 valid true)
+// STEP in=(clock$0rst false ra 0 re false w.tag 1 w.payload 1 wa 0 we false) out=(data.tag 2 data.payload 7 valid false)

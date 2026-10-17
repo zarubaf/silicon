@@ -1,0 +1,10 @@
+// A static constructor charges its node, the typed use of each payload value, and the size of the result. The first
+// use of the enum is paid once. The fuel equal to the total succeeds, and one unit less gives `S015`.
+// FUEL 127
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }
+module M() domains() {
+    let a = Op::Add;
+    let b = Op::Load(7);
+    let c = Op::Pair(true, 9);
+}

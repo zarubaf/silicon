@@ -1,0 +1,4 @@
+// S004: a third part of a path is a package path. The error is at the second `::`.
+// expected-error S004 @+2
+// expected-message: a package path is not supported yet; in this slice, a path is a variant `E::V` of an enum `E`, in an expression or a pattern
+const A: T = a::b::c;

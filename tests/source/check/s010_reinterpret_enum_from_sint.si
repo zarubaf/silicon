@@ -1,0 +1,9 @@
+// S010: `reinterpret(E, b)` needs `b: UInt[W + P]`, not an `SInt`.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }
+module M() {
+    input b: SInt[10];
+    output y: Op;
+    // expected-error S010 @+1
+    y := reinterpret(Op, b);
+}

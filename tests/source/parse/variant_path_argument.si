@@ -1,0 +1,2 @@
+// A variant path is an argument of a call.
+const A: T = f(a::b);

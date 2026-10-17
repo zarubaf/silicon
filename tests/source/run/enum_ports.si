@@ -1,0 +1,15 @@
+// Enum ports: a pass-through keeps a tag that no variant declares, and a constructor with a payload
+// gives the tag of its variant and the payload value. The tag is `op.tag`, the payload is `op.payload`.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }
+module M() domains() {
+    input op: Op;
+    input x: UInt[8];
+    output y: Op;
+    output z: Op;
+    y := op;
+    z := Op::Load(x);
+}
+// STEP in=(op.tag 0 op.payload 0 x 7) out=(y.tag 0 y.payload 0 z.tag 1 z.payload 7)
+// STEP in=(op.tag 3 op.payload 200 x 255) out=(y.tag 3 y.payload 200 z.tag 1 z.payload 255)
+// STEP in=(op.tag 2 op.payload 9 x 0) out=(y.tag 2 y.payload 9 z.tag 1 z.payload 0)

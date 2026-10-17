@@ -1,0 +1,14 @@
+// `reinterpret(E, b)` reads `b` in two leaf statements. When `b` is not a core name, it binds to a temporary,
+// so a chain of conversions stays linear: each level adds one temporary, and no level repeats the level below.
+// TOP M()
+// CHECK: (let y$tag$0t (bits 10) (concat (extract b 2 8) (extract b 0 2)))
+// CHECK-NEXT: (let y$tag$1t (bits 10) (concat (extract y$tag$0t 2 8) (extract y$tag$0t 0 2)))
+// CHECK-NEXT: (assign y$payload (extract y$tag$1t 2 8))
+// CHECK-NEXT: (assign y$tag (extract y$tag$1t 0 2))
+// CHECK-NOT: y$tag$2t
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }
+module M() domains() {
+    input b: UInt[10];
+    output y: Op;
+    y := reinterpret(Op, reinterpret(UInt[10], reinterpret(Op, reinterpret(UInt[10], reinterpret(Op, b)))));
+}

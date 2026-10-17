@@ -1,0 +1,8 @@
+// S012: a payload value that does not fit its payload type.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }
+module M() {
+    output y: Op;
+    // expected-error S012 @+1
+    y := Op::Load(256);
+}
