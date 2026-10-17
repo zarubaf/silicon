@@ -95,6 +95,11 @@ pub(crate) struct Counts {
     /// The word steps of the bit buffer of a static pack, and the parts that the walk of a
     /// hardware pack visited.
     pub packed: u64,
+    /// The keys that the coverage check of a `match` inserted into its map and visited in its
+    /// pass for the smallest uncovered value.
+    pub covered: u64,
+    /// The parts that the static unpack of the payload of a binder made.
+    pub unpacked: u64,
 }
 
 /// What a counter counts.
@@ -138,6 +143,8 @@ pub(crate) enum Count {
     Cloned,
     Copies,
     Packed,
+    Covered,
+    Unpacked,
 }
 
 static COUNTS: Mutex<BTreeMap<u64, Counts>> = Mutex::new(BTreeMap::new());
@@ -214,6 +221,8 @@ pub(crate) fn add(count: Count, n: u64) {
             Count::Cloned => &mut c.cloned,
             Count::Copies => &mut c.copies,
             Count::Packed => &mut c.packed,
+            Count::Covered => &mut c.covered,
+            Count::Unpacked => &mut c.unpacked,
         };
         *field += n;
     }

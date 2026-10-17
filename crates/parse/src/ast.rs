@@ -13,8 +13,8 @@ pub struct Pos {
     pub col: usize,
 }
 
-/// The id of a node: an `Ident`, an `Expr::Name`, a `TypeExpr::Name`, an `Expr::Num`, an
-/// `Expr::Call`, or an `Expr::Method`. The lowering gives each such node of one parse its own id, in source order. A
+/// The id of a node: an `Ident`, an `Expr::Name`, a `TypeExpr::Name`, an `Expr::Num`, a
+/// `Pattern::Int`, an `Expr::Call`, or an `Expr::Method`. The lowering gives each such node of one parse its own id, in source order. A
 /// later pass keys its facts about a node by the id and not by the position, because two nodes
 /// can share a position or have none. The id is not in the Lean AST, and the dump does not print it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -241,6 +241,7 @@ pub enum Pattern {
     },
     Int {
         pos: Pos,
+        id: NodeId,
         neg: bool,
         value: Nat,
     },

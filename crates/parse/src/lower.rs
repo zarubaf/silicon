@@ -546,11 +546,13 @@ impl<'a> Lower<'a> {
         Some(match first.kind() {
             SyntaxKind::Dec | SyntaxKind::Hex | SyntaxKind::Bin => Pattern::Int {
                 pos,
+                id: self.id(),
                 neg: false,
                 value: number(first.text()),
             },
             SyntaxKind::Minus => Pattern::Int {
                 pos,
+                id: self.id(),
                 neg: true,
                 value: number(tokens(node).nth(1)?.text()),
             },

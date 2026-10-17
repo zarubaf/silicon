@@ -16,7 +16,7 @@
 use crate::int::Int;
 use crate::names::Sym;
 use parse::NestedStack;
-use parse::ast::{Expr, FnParam, Ident, Item, NodeId, Stmt, TypeExpr};
+use parse::ast::{Expr, FnParam, Ident, Item, NodeId, Pattern, Stmt, TypeExpr};
 use resolve::{DeclId, Kind, Resolved, ResolvedExpr, Target};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -348,6 +348,22 @@ impl Walk<'_> {
         self.ty(ret, depth);
     }
 
+    /// The value of the literal of a pattern, and the symbols of its binders.
+    fn pattern(&mut self, pat: &Pattern) {
+        match pat {
+            Pattern::Int { id, value, .. } => {
+                let n = Int::from_decimal(value.as_str()).unwrap_or_else(Int::zero);
+                self.numbers.insert((self.top.is_some(), *id), n);
+            }
+            Pattern::Variant { binders, .. } => {
+                for b in binders.iter().flatten() {
+                    self.binder(b);
+                }
+            }
+            Pattern::Wild { .. } | Pattern::Bool { .. } => {}
+        }
+    }
+
     /// Walks the expression, and tells whether it holds a call, a receiver call, or a type
     /// expression.
     fn expr(&mut self, e: &Expr, depth: usize) -> bool {
@@ -430,10 +446,10 @@ impl Walk<'_> {
                 self.expr(base, d)
             }
             Expr::Select { base, .. } => self.expr(base, d),
-            // TODO(#272): scan the patterns.
             Expr::Match { scrut, arms, .. } => {
                 let mut calls = self.expr(scrut, d);
                 for arm in arms {
+                    self.pattern(&arm.pat);
                     calls |= self.expr(&arm.value, d);
                 }
                 calls

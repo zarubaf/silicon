@@ -198,12 +198,22 @@ fn product(a: &Value, b: &Value) -> u128 {
 }
 
 /// The range of a finite type, for the fit rule.
-fn fits(t: &Ty, n: &Int) -> bool {
+pub(crate) fn fits(t: &Ty, n: &Int) -> bool {
     match t {
         Ty::UInt(w) => n.fits_unsigned(u64::from(*w)),
         Ty::SInt(w) => n.fits_signed(u64::from(*w)),
         Ty::Nat => !n.is_negative(),
         _ => true,
+    }
+}
+
+/// The `S012` text of the static integer `n` that does not fit the type `t`. A typed use and a
+/// pattern share it.
+pub(crate) fn fit_text(t: &Ty, n: &Int, tys: &Types) -> String {
+    if matches!(t, Ty::Nat) {
+        format!("{} is not a Nat", int_text(n))
+    } else {
+        format!("{} does not fit {}", int_text(n), tys.text_of(t))
     }
 }
 
