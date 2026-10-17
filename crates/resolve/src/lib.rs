@@ -284,7 +284,8 @@ impl ResolvedExpr {
 
 /// Resolves the names of an expression in the file scope of `resolved`. A name in the
 /// expression is an item or a prelude name, and never a module. The result is the resolved
-/// expression, or the `S003` errors in position order.
+/// expression, or the errors in position order: the `S002` errors if there are any, else the
+/// `S003` errors.
 ///
 /// # Errors
 /// Returns an error if the machine cannot give the stack for the syntax depth of `expr`.
