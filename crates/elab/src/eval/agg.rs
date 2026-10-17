@@ -68,6 +68,14 @@ impl Evaluator<'_> {
         }
     }
 
+    /// A read at `pos` of the name `base` of the type `t`: a port, a register, a wire, or a
+    /// child output (section 5.5). The read makes a value of the depth of a zero of `t`, so it
+    /// checks this depth first, as `T()` does. Then it gives the reference in its normal form.
+    pub(super) fn read_ref(&mut self, pos: Pos, base: Base, t: TyId) -> Res<Val> {
+        self.bounded(pos, self.tys.zero_depth(t))?;
+        self.normalize(pos, Agg::Ref(base, t))
+    }
+
     /// The normal form of the aggregate `a` at `pos`. A reference without a hardware leaf is a
     /// static value, for example a part of the type `[Unit; 4]`. It charges the zero size of its
     /// type from the metadata before the zero exists (section 5.4), so a huge empty part fails

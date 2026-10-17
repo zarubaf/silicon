@@ -452,10 +452,11 @@ impl Evaluator<'_> {
         Ok(out)
     }
 
-    /// The size check and the charge of the zero size of the type `u` of a binder (section
-    /// 5.4): `S015` at the binder above the limit, then the charge of the zero size. Both come
-    /// before the unpack, which does work in the zero size.
+    /// The checks and the charge of the type `u` of a binder (sections 5.4 and 5.5): `S015` at
+    /// the binder above the depth of a zero of `u`, `S015` above the size limit, then the charge
+    /// of the zero size. All come before the unpack, which does work in the zero size.
     pub(super) fn charge_zero(&mut self, pos: Pos, u: TyId) -> Res<()> {
+        self.bounded(pos, self.tys.zero_depth(u))?;
         limit::zero(&self.tys.meta(u).zero_size).map_err(at(pos))?;
         self.fuel
             .pay_int(&self.tys.meta(u).zero_size)
@@ -463,7 +464,7 @@ impl Evaluator<'_> {
     }
 
     /// The binders `binders` of an arm with the payload `payload` (section 5.4). Each binder
-    /// checks the size limit at the zero size of its type, then charges that zero size. A static
+    /// checks the depth and the size limit of its type, then charges that zero size. A static
     /// payload binds the static unpack of its value, at its offset. A hardware payload binds its
     /// hardware unpack (`unpack_hw`), each `extract` charged 2, and the value gets its core name
     /// as a `let` does.

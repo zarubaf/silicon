@@ -719,7 +719,7 @@ impl Evaluator<'_> {
             Seen::Handle(Handle::Res { ty, path, .. }) => {
                 let (ty, path) = (ty.clone(), *path);
                 let t = self.tys.mk(ty);
-                match self.normalize(pos, Agg::Ref(Base::Name(path), t))? {
+                match self.read_ref(pos, Base::Name(path), t)? {
                     Val::Hw(h) => Ok(Opnd::Hw(h)),
                     v => Ok(Opnd::Static(Out::Made(v))),
                 }
@@ -1182,7 +1182,7 @@ impl Evaluator<'_> {
             Some(q) => {
                 let name = self.paths.child(None, q.sym);
                 let t = self.tys.mk(q.ty);
-                let v = self.normalize(pos, Agg::Ref(Base::Out(path, name), t))?;
+                let v = self.read_ref(pos, Base::Out(path, name), t)?;
                 Ok(if matches!(v, Val::Static(_)) {
                     Out::Made(v)
                 } else {
@@ -1296,6 +1296,19 @@ impl Evaluator<'_> {
         }
     }
 
+    /// The type of the local `id` if it holds a reference as its root.
+    fn ref_type(&self, id: DeclId) -> Option<TyId> {
+        match self.store.slot(id) {
+            Some(Slot {
+                value: Val::Agg(a), ..
+            }) => match &**a {
+                Agg::Ref(_, ty) => Some(*ty),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// Keeps the name of the domain `id`: the first read copies the text, and each later read
     /// copies none.
     fn keep_domain(&mut self, id: DeclId, x: &str) {
@@ -1348,10 +1361,11 @@ impl Evaluator<'_> {
                     // static value.
                     let empty = self.empty_input(id);
                     if let Some((path, ty)) = empty {
-                        Ok(Out::Made(
-                            self.normalize(pos, Agg::Ref(Base::Name(path), ty))?,
-                        ))
+                        Ok(Out::Made(self.read_ref(pos, Base::Name(path), ty)?))
                     } else if self.store.slot(id).is_some() {
+                        if let Some(t) = self.ref_type(id) {
+                            self.bounded(pos, self.tys.zero_depth(t))?;
+                        }
                         Ok(Out::Ref(Ref {
                             root: Root::Local(k, id),
                             path: Vec::new(),
