@@ -902,3 +902,109 @@ fn the_records_cover_nested_frames() {
         "nested {nested}, by name {named}, receivers {receivers}, values {values}"
     );
 }
+
+/// The forms of enums and `match` that a program holds, by name.
+fn enum_forms(p: &Program, s: &Stats) -> [(&'static str, bool); 24] {
+    let port = |ports: &[(String, Scalar)]| ports.iter().any(|(n, _)| n.contains(".tag"));
+    let ports = p.ports();
+    [
+        (
+            "enum item",
+            p.text().starts_with("enum ") || p.text().contains("\nenum "),
+        ),
+        ("static constructor", s.enum_ctors > 0),
+        ("enum zero", s.enum_zeros > 0),
+        ("static reinterpret", s.enum_unpacks > 0),
+        ("enum const", s.enum_consts > 0),
+        ("enum static let", s.enum_lets > 0),
+        ("enum diagnostic", s.enum_diagnostics > 0),
+        ("enum port", port(&ports.inputs) || port(&ports.outputs)),
+        ("enum register", s.hw_regs > 0),
+        ("enum wire", s.hw_wires > 0),
+        ("hardware constructor", s.hw_ctors > 0),
+        ("hardware reinterpret of bits", s.hw_unpacks > 0),
+        ("hardware enum let", s.hw_lets > 0),
+        ("bits of an enum name", s.hw_bits > 0),
+        ("enum probe", s.enum_probes > 0),
+        ("reinterpret of an enum value", s.enum_bits > 0),
+        ("static match on an enum", s.static_enum_matches > 0),
+        ("hardware match on an enum", s.hw_enum_matches > 0),
+        ("static match", s.static_matches > 0),
+        ("static binder", s.static_binders > 0),
+        ("hardware match", s.hw_matches > 0),
+        ("hardware binder", s.hw_binders > 0),
+        ("nested match", s.nested_matches > 0),
+        (
+            "complete match without _",
+            s.complete_matches > 0 || s.hw_complete_matches > 0,
+        ),
+    ]
+}
+
+/// Each form of enums and `match` occurs in at least 10% of 256 programs.
+#[test]
+fn programs_cover_enums_and_match() {
+    const TAPES: usize = 256;
+    let mut with = BTreeMap::<&str, usize>::new();
+    for tape in tapes(TAPES) {
+        let mut b = Builder::new(tape);
+        let p = b.program();
+        assert!(p.is_ok(), "a program faults: {p:?}");
+        let Ok(p) = p else { continue };
+        for (form, seen) in enum_forms(&p, &b.stats) {
+            *with.entry(form).or_default() += usize::from(seen);
+        }
+        *with.entry("finite match").or_default() += usize::from(b.stats.finite_matches > 0);
+        *with.entry("hardware match on an expression").or_default() +=
+            usize::from(b.stats.hw_expr_scrutinees > 0);
+    }
+    assert_eq!(with.len(), 26, "{with:?}");
+    for (form, n) in &with {
+        assert!(
+            n * 10 >= TAPES,
+            "{form} occurs in {n} of {TAPES} programs: {with:?}"
+        );
+    }
+}
+
+/// The work of the generator is bounded: the largest text, the most arms
+/// of a match, and the most open matches stay under fixed caps over 256
+/// tapes. The elaborator budget of a `match` is the subject of the
+/// budget mode of `diff-si`.
+#[test]
+fn matches_stay_within_the_work_caps() {
+    const TAPES: usize = 256;
+    const TEXT: usize = 16 * 1024;
+    const ARMS: usize = 5;
+    let (mut text, mut arms, mut levels) = (0, 0, 0);
+    for tape in tapes(TAPES) {
+        let mut b = Builder::new(tape);
+        let Ok(p) = b.program() else { continue };
+        text = text.max(p.text().len());
+        arms = arms.max(b.stats.max_arms);
+        assert_eq!(b.match_level, 0);
+        levels = levels.max(b.stats.max_level);
+    }
+    assert!(text <= TEXT, "the largest text has {text} bytes");
+    assert!(arms <= ARMS, "the largest match has {arms} arms");
+    assert!(arms >= 3, "the tapes make no wide match: {arms}");
+    assert!(levels <= NESTING, "matches open {levels} levels");
+    assert!(levels >= 2, "no match nests: {levels}");
+}
+
+/// The tags of an enum are distinct, and an enum with every tag of its
+/// tag type has exactly `2^W` variants.
+#[test]
+fn enums_have_distinct_tags() {
+    for tape in tapes(256) {
+        let mut b = Builder::new(tape);
+        let Ok(p) = b.program() else { continue };
+        for item in &p.items {
+            let Item::Enum(def) = item else { continue };
+            let tags: BTreeSet<_> = def.variants.iter().map(|v| v.tag.clone()).collect();
+            assert_eq!(tags.len(), def.variants.len(), "{def:?}");
+            assert!(def.variants.len() <= 1 << def.tag_width, "{def:?}");
+            assert!(def.payload_bits() <= 2 * 257, "{def:?}");
+        }
+    }
+}
