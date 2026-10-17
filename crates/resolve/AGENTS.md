@@ -16,9 +16,11 @@ The module `prelude` owns the prelude names. It also owns the parameter modes of
 
 - The position of `S002` is the name in the later declaration. Check: `cargo nextest run -p resolve`.
 
-- Each name resolves. A type name is a prelude type, a `struct` item, a `type` item, or a local, such as a `type` statement or a parameter of type `Type`. `elab` rejects a local that holds no type. The module of an `instance` is a module item, and a name in an expression is not a module. A local is in scope after its statement. A module without a `domains` clause has the domain `clock`. Items have no order. Check: `cargo nextest run -p resolve`.
+- Each name resolves. A type name is a prelude type, a `struct` item, a `type` item, an `enum` item, or a local, such as a `type` statement or a parameter of type `Type`. `elab` rejects a local that holds no type. The module of an `instance` is a module item, and a name in an expression is not a module. A local is in scope after its statement. A module without a `domains` clause has the domain `clock`. Items have no order. Check: `cargo nextest run -p resolve`.
 
-- The parameters of a struct and its field types share one scope. A second field with one name is `S002`. Check: `cargo nextest run -p resolve`.
+- The parameters of a struct and its field types share one scope. A second field with one name is `S002`. A variant name is in no scope: a second variant of one enum with the name is `S002` at it. Check: `cargo nextest run -p resolve`.
+
+- A variant path `X::Y`, also as the callee of a call, resolves `X` by the ordinary scoping, so a local or a parameter `X` shadows an enum item. When `X` is an enum item, `Y` names a variant, else `S003` at `Y`. Any other `X`, also a `type` alias of an enum, is `S003` at the start of the path. `Resolved::variant` gives the enum item and the variant index of a path, by the node id of its first name. A call of a path still takes a call site. The texts equal those of Lean. Check: `cargo nextest run -p resolve`.
 
 - The prelude has the names of slice 1, `Unit` and `len` of the containers of slice 2, `Type` and `data_bits` of the types as values, and `String`, `List`, `list`, `push`, `pop`, and `str`. It also has the memory functions `read_port` and `write_port`, the function `diagnostic`, and the prelude struct `ReadResponse`. A prelude name of a later phase or slice is `S003`. Check: `cargo nextest run -p resolve`.
 

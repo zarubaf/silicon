@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-use crate::{Code, Decl, Failed, Kind, Prelude, Resolved, Target, resolve};
+use crate::{Code, Decl, Failed, Kind, Prelude, Resolved, Target, VariantRef, resolve};
 use parse::ast::{Expr, FnParam, Ident, Item, NodeId, Param, ParamMode, Pos, Stmt, TypeExpr};
 use std::collections::BTreeMap;
 
@@ -1629,4 +1629,139 @@ fn diagnostic_is_a_prelude_function_with_two_parameters() {
                fn f(x: Nat) -> Nat { return diagnostic(x); }";
     let r = ok(src);
     assert_eq!(decl_at(&r, find(src, "diagnostic(x)")).kind, Kind::Fn);
+}
+
+// Enums (slice 3, section 5.6)
+
+const OPS: &str = "enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }\n";
+
+fn first_message(src: &str) -> String {
+    match run(src) {
+        Err(Failed::Names(errors)) => errors[0].message.clone(),
+        _ => panic!("expected a name error"),
+    }
+}
+
+#[test]
+fn an_enum_item_is_a_type_name_and_a_name_in_an_expression() {
+    ok(&format!(
+        "{OPS}fn f(x: UInt[8]) -> Op {{ let a: Op = Op::Add; return Op::Load(x); }}"
+    ));
+    ok("fn f() -> UInt[1] { return E::A; }\nenum E: UInt[1] { A = 0 }");
+    ok("enum E: UInt[1] {}");
+    let r = ok(OPS);
+    assert_eq!(r.decl(r.item("Op").unwrap()).kind, Kind::Enum);
+}
+
+#[test]
+fn a_variant_path_and_its_call_resolve_to_the_enum_and_the_variant() {
+    let src = format!(
+        "{OPS}fn f(x: UInt[8]) -> Op {{ return Op::Load(x); }}\nfn g() -> Op {{ return Op::Add; }}"
+    );
+    let r = ok(&src);
+    let (mut seen, mut index) = (Vec::new(), 0);
+    for item in r.ast() {
+        if let Item::Fn { body, .. } = item
+            && let [Stmt::Ret { value: Some(e), .. }] = body.as_slice()
+        {
+            let path = match e {
+                Expr::Call { callee, .. } => &**callee,
+                other => other,
+            };
+            if let Expr::Path { ty, .. } = path {
+                seen.push(r.variant(ty.id));
+                index += 1;
+            }
+        }
+    }
+    assert_eq!(index, 2);
+    assert_eq!(
+        seen,
+        [
+            Some(VariantRef { item: 0, index: 1 }),
+            Some(VariantRef { item: 0, index: 0 })
+        ]
+    );
+}
+
+#[test]
+fn a_second_variant_with_a_name_is_s002_at_its_name() {
+    assert_eq!(
+        errors("enum E: UInt[1] { A = 0, B = 1, A = 1 }"),
+        [(S002, 1, 33)]
+    );
+    assert_eq!(
+        first_message("enum E: UInt[1] { A = 0, A = 1 }"),
+        "the variant `A` is already declared in this enum; rename one of the two variants"
+    );
+    ok("enum E: UInt[1] { A = 0 }\nenum F: UInt[1] { A = 0 }");
+    assert_eq!(
+        errors(&format!("{OPS}fn Op() -> Bool {{}}")),
+        [(S002, 2, 4)]
+    );
+}
+
+#[test]
+fn an_unknown_variant_is_s003_at_the_second_part() {
+    let src = format!("{OPS}fn f() -> Op {{ return Op::Mul; }}");
+    assert_eq!(errors(&src), [(S003, 2, 27)]);
+    assert_eq!(
+        first_message(&src),
+        "`Op` has no variant `Mul`; use a variant that `Op` declares"
+    );
+}
+
+#[test]
+fn a_first_part_that_is_no_enum_is_s003_at_the_path() {
+    let src = format!("{OPS}fn f() -> Op {{ return std::x; }}");
+    assert_eq!(errors(&src), [(S003, 2, 23)]);
+    assert_eq!(
+        first_message(&src),
+        "`std` is not an enum, so `std::x` names no variant; use the name of an enum"
+    );
+    assert_eq!(
+        errors("struct S { a: Bool }\nfn f() -> S { return S::a; }"),
+        [(S003, 2, 22)]
+    );
+    assert_eq!(errors("fn f() -> Bool { return f::a; }"), [(S003, 1, 25)]);
+    assert_eq!(
+        errors("module M() {}\nfn f() -> Bool { return M::a; }"),
+        [(S003, 2, 25)]
+    );
+    assert_eq!(
+        errors("fn f() -> Bool { return Bool::A; }"),
+        [(S003, 1, 25)]
+    );
+    // A `type` alias of an enum is no enum item.
+    assert_eq!(
+        errors(&format!(
+            "{OPS}type A = Op;\nfn f() -> Op {{ return A::Add; }}"
+        )),
+        [(S003, 3, 23)]
+    );
+}
+
+#[test]
+fn a_local_or_a_parameter_shadows_an_enum_in_a_path() {
+    assert_eq!(
+        errors(&format!("{OPS}fn f(Op: Nat) -> Nat {{ return Op::Add; }}")),
+        [(S003, 2, 31)]
+    );
+    assert_eq!(
+        errors(&format!(
+            "{OPS}fn f() -> Op {{ let Op = 1; return Op::Add; }}"
+        )),
+        [(S003, 2, 35)]
+    );
+    ok(&format!(
+        "{OPS}fn f() -> Op {{ {{ let Op = 1; }} return Op::Add; }}"
+    ));
+}
+
+#[test]
+fn the_parts_of_an_enum_resolve_in_the_item_scope() {
+    assert_eq!(errors("enum E: T { A = 0 }"), [(S003, 1, 9)]);
+    assert_eq!(errors("enum E: UInt[1] { A(Q) = 0 }"), [(S003, 1, 21)]);
+    assert_eq!(errors("enum E: UInt[1] { A = N }"), [(S003, 1, 23)]);
+    ok("const N: Nat = 1;\nstruct S { a: Bool }\nenum E: UInt[N] { A(S, E) = N }");
 }

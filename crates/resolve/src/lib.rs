@@ -91,6 +91,17 @@ pub struct Decl {
     pub generic: bool,
 }
 
+/// The enum item and the variant that a variant path `E::V` names. The item is the index of the
+/// enum in [`Resolved::ast`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VariantRef {
+    pub item: usize,
+    pub index: usize,
+}
+
+/// For each enum item, the index of the first variant with each name.
+type VariantNames = BTreeMap<DeclId, BTreeMap<String, usize>>;
+
 /// The call site of a call node or a method node, with the parameter that the receiver binds to.
 #[derive(Clone, Copy)]
 pub(crate) struct Call {
@@ -120,6 +131,8 @@ pub struct Resolved {
     items: BTreeMap<String, DeclId>,
     names: BTreeMap<NodeId, Target>,
     calls: BTreeMap<NodeId, Call>,
+    variants: BTreeMap<NodeId, VariantRef>,
+    variant_names: VariantNames,
     response: DeclId,
 }
 
@@ -169,6 +182,13 @@ impl Resolved {
         self.calls.get(&id).map(|c| c.site)
     }
 
+    /// The variant that the path node with an id names. The id is the id of the first name of
+    /// the path.
+    #[must_use]
+    pub fn variant(&self, id: NodeId) -> Option<VariantRef> {
+        self.variants.get(&id).copied()
+    }
+
     /// The parameter that the receiver of the method node with an id binds to: the first
     /// parameter of the function without a written `comptime` mark. `None` if there is none.
     #[must_use]
@@ -194,6 +214,8 @@ pub fn resolve(parse: Parse) -> Result<Resolved, Failed> {
         items: table.items,
         names: table.names,
         calls: table.calls,
+        variants: table.variants,
+        variant_names: table.variant_names,
         response: table.response,
     })
 }
@@ -207,6 +229,7 @@ pub struct ResolvedExpr {
     depth: usize,
     names: BTreeMap<NodeId, Target>,
     calls: BTreeMap<NodeId, Call>,
+    variants: BTreeMap<NodeId, VariantRef>,
 }
 
 impl ResolvedExpr {
@@ -239,6 +262,12 @@ impl ResolvedExpr {
     pub fn receiver(&self, id: NodeId) -> Option<usize> {
         self.calls.get(&id).and_then(|c| c.receiver)
     }
+
+    /// The variant that the path node with an id names.
+    #[must_use]
+    pub fn variant(&self, id: NodeId) -> Option<VariantRef> {
+        self.variants.get(&id).copied()
+    }
 }
 
 /// Resolves the names of an expression in the file scope of `resolved`. A name in the
@@ -253,11 +282,12 @@ pub fn resolve_expr(
 ) -> Result<Result<ResolvedExpr, Vec<Error>>, StackError> {
     let (expr, depth) = expr.into_parts();
     let names = parse::on_stack(depth, || walk::run_expr(resolved, &expr))?;
-    Ok(names.map(|(names, calls)| ResolvedExpr {
+    Ok(names.map(|(names, calls, variants)| ResolvedExpr {
         expr,
         depth,
         names,
         calls,
+        variants,
     }))
 }
 
@@ -267,6 +297,8 @@ struct Table {
     items: BTreeMap<String, DeclId>,
     names: BTreeMap<NodeId, Target>,
     calls: BTreeMap<NodeId, Call>,
+    variants: BTreeMap<NodeId, VariantRef>,
+    variant_names: VariantNames,
     response: DeclId,
 }
 
