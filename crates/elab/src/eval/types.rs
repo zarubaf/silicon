@@ -459,9 +459,12 @@ impl Evaluator<'_> {
                     Code::S021,
                     tag_pos,
                     format!(
-                        "the variant `{}` has the tag `{key}` of the variant at {}:{}; give each \
+                        "the variant `{}` has the tag `{}` of the variant at {}:{}; give each \
                          variant its own tag value",
-                        variant.name.name, at.line, at.col
+                        variant.name.name,
+                        ops::int_text(&key),
+                        at.line,
+                        at.col
                     ),
                 );
             }
