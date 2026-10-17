@@ -833,9 +833,34 @@ theorem matchArms_f (p : Pos) (t : Ty) (as : List Resolve.Arm) :
     Follows cap (matchArms p t as) (matchArms p t as) := by
   unfold matchArms; follows [coverArm_f, coverCheck_f]
 
-theorem bindStatic_f (p : Pos) (t : Ty) (j : Nat) (bs : List (Option Binder)) (y : Nat) :
-    Follows cap (bindStatic p t j bs y) (bindStatic p t j bs y) := by
-  unfold bindStatic; follows [bindLocal_f]
+theorem unpackHw_f (specs : Specs) (p : Pos) (y : Hw) :
+    ∀ (d : Nat) (t : Ty) (off : Nat),
+      Follows cap (unpackHw specs p y d t off) (unpackHw specs p y d t off)
+  | 0, t, off => by rw [unpackHw.eq_def]; follows
+  | d + 1, t, off => by
+    rw [unpackHw.eq_def]; dsimp only
+    follows [unpackHw_f specs p y d, hwNode_f]
+
+theorem binderTys_f (q : Resolve.Pattern) : Follows cap (binderTys q) (binderTys q) := by
+  unfold binderTys; follows
+
+theorem bindArm_f (y : Payload) (bs : List (Binder × Ty × Nat)) :
+    Follows cap (bindArm y bs) (bindArm y bs) := by
+  unfold bindArm; follows [bindLocal_f, unpackHw_f, named_f]
+
+theorem scrutParts_f (p : Pos) (t : Ty) (v : Val) :
+    Follows cap (scrutParts p t v) (scrutParts p t v) := by
+  unfold scrutParts; follows [lit_f]
+
+theorem onehotLeaf_f (p : Pos) (cs : List Hw) (t : Ty) (as : List Agg) :
+    Follows cap (onehotLeaf p cs t as) (onehotLeaf p cs t as) := by
+  unfold onehotLeaf; follows [litAt_f, armsType_f, hwNode_f]
+
+theorem matchHw_f (p : Pos) (sel : Hw) (keys : List (Option Int)) (vs : List Val) :
+    Follows cap (matchHw p sel keys vs) (matchHw p sel keys vs) := by
+  unfold matchHw
+  follows [item_f, walked_f, conformAgg_f, shared_f, hwNode_f,
+    armWalk_f _ _ _ _ (onehotLeaf_f _ _), armPart_f _ _ _ (onehotLeaf_f _ _)]
 
 theorem requestPart_f (p : Pos) (t : Ty) (v : Val) :
     Follows cap (requestPart p t v) (requestPart p t v) := by
@@ -959,7 +984,7 @@ theorem follows_all : ∀ n,
           arrayOf_f, select_f, containerOp_f, arrayTy_f, field_f, strAt_f, hold_f, release_f,
           changesOf_f, normalize_f, aggEq_f, enumUse_f (he k) (ht k), variantOf_f,
           operands_f (he k), comparable_f, params_f (ht k), fnTy_f, structural_f, scrutTy_f,
-          matchArms_f, bindStatic_f]
+          matchArms_f, binderTys_f, bindArm_f, scrutParts_f, shared_f, matchHw_f]
       · rw [eval.eq_def (k + 1), eval.eq_def (m + 1)]
         apply Follows.charge_one
         intro _
@@ -969,7 +994,7 @@ theorem follows_all : ∀ n,
           arrayOf_f, select_f, containerOp_f, arrayTy_f, field_f, strAt_f, hold_f, release_f,
           changesOf_f, normalize_f, aggEq_f, enumUse_f (he m) (ht m), variantOf_f,
           operands_f (he m), comparable_f, params_f (ht m), fnTy_f, structural_f, scrutTy_f,
-          matchArms_f, bindStatic_f]
+          matchArms_f, binderTys_f, bindArm_f, scrutParts_f, shared_f, matchHw_f]
     · rcases n' with _ | m
       · rw [typeExpr.eq_def (k + 1), typeExpr.eq_def 0]
         apply Follows.exhaust (cap := k)
