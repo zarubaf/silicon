@@ -81,6 +81,11 @@ fn hexpr(root: &str, e: &HExpr, callees: &Callees, uses: &mut Uses) {
                 hexpr(root, x, callees, uses);
             }
         }
+        HExpr::Ctor(_, _, args) => {
+            for a in args {
+                hexpr(root, a, callees, uses);
+            }
+        }
         HExpr::Call(f, args) => {
             uses.named |= args.first().is_some_and(is_root) && callees.mut_helpers.contains(f);
             for a in args {

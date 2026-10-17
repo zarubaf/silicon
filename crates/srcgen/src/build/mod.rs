@@ -35,6 +35,7 @@ macro_rules! note {
 mod body;
 mod container;
 mod diagnostics;
+mod enum_hw;
 mod enums;
 mod file;
 mod fnvalues;
@@ -234,6 +235,16 @@ struct Hw {
     mutable: bool,
 }
 
+/// A hardware name of an enum type in scope: a port, a register, a wire, or
+/// a `let`. It has one type in every env.
+#[derive(Clone, Debug)]
+struct HwEnum {
+    name: String,
+    def: EnumDef,
+    /// Whether the value is hardware, not a static binding.
+    hardware: bool,
+}
+
 /// The scope of a frame: the env set, the static names, the hardware
 /// names, and how many helpers a call can name.
 #[derive(Clone, Debug, Default)]
@@ -246,6 +257,8 @@ struct Ctx {
     lists: Vec<String>,
     /// The mutable `Int` roots that this frame declares.
     counters: Vec<String>,
+    /// The hardware names of an enum type.
+    enums: Vec<HwEnum>,
 }
 
 impl Ctx {
@@ -259,7 +272,7 @@ impl Ctx {
                 Ty::UInt(w) | Ty::SInt(w) => crate::program::sexpr(w)
                     .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
                     .any(|token| token == root),
-                Ty::Bool => false,
+                Ty::Bool | Ty::Enum(_) => false,
             });
             if reads {
                 h.ty = None;
@@ -287,6 +300,7 @@ impl Ctx {
             helpers: self.helpers,
             lists: Vec::new(),
             counters: Vec::new(),
+            enums: self.enums.clone(),
         }
     }
 }
@@ -312,6 +326,9 @@ struct Sig {
     clocked: bool,
     inputs: Vec<(String, Ty)>,
     outputs: Vec<(String, Ty)>,
+    /// The enum ports of the top module.
+    enum_inputs: Vec<(String, EnumDef)>,
+    enum_outputs: Vec<(String, EnumDef)>,
 }
 
 /// The module whose body is under construction.
@@ -383,6 +400,12 @@ struct Stats {
     enum_diagnostics: u32,
     enum_probes: u32,
     enum_bits: u32,
+    hw_ctors: u32,
+    hw_unpacks: u32,
+    hw_lets: u32,
+    hw_wires: u32,
+    hw_regs: u32,
+    hw_bits: u32,
 }
 
 struct Builder {
