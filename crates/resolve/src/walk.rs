@@ -5,9 +5,11 @@
 
 use crate::prelude::{Prelude, RESPONSE, later_slice, node};
 use crate::scope::Scopes;
-use crate::{Call, Code, Decl, DeclId, Error, Kind, Resolved, Table, Target};
+use crate::{
+    Call, Code, Decl, DeclId, Error, Kind, Resolved, Table, Target, VariantNames, VariantRef,
+};
 use parse::ast::{
-    Expr, FnParam, Ident, Item, NodeId, Param, ParamMode, Pos, Stmt, StructField, TypeExpr,
+    Expr, FnParam, Ident, Item, NodeId, Param, ParamMode, Pos, Stmt, StructField, TypeExpr, Variant,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -29,6 +31,8 @@ pub(crate) fn run(items: &[Item]) -> Result<Table, Vec<Error>> {
         duplicates,
         unresolved,
         calls,
+        variants,
+        variant_names,
         ..
     } = walker;
     let mut errors = if duplicates.is_empty() {
@@ -42,6 +46,8 @@ pub(crate) fn run(items: &[Item]) -> Result<Table, Vec<Error>> {
             items: scopes.into_items(),
             names,
             calls,
+            variants,
+            variant_names,
             response,
         });
     }
@@ -56,20 +62,25 @@ pub(crate) fn run_expr(resolved: &Resolved, expr: &Expr) -> Result<ExprTable, Ve
     let mut walker = Walker {
         decls: resolved.decls.clone(),
         scopes: Scopes::of_items(resolved.items.clone()),
+        variant_names: resolved.variant_names.clone(),
         response: Some(resolved.response),
         ..Walker::default()
     };
     walker.expr(expr);
     let mut errors = walker.unresolved;
     if errors.is_empty() {
-        return Ok((walker.names, walker.calls));
+        return Ok((walker.names, walker.calls, walker.variants));
     }
     errors.sort_by_key(|e| e.pos);
     Err(errors)
 }
 
 /// The targets of the name nodes and the call sites of the call nodes.
-pub(crate) type ExprTable = (BTreeMap<NodeId, Target>, BTreeMap<NodeId, Call>);
+pub(crate) type ExprTable = (
+    BTreeMap<NodeId, Target>,
+    BTreeMap<NodeId, Call>,
+    BTreeMap<NodeId, VariantRef>,
+);
 
 #[derive(Default)]
 struct Walker {
@@ -82,6 +93,10 @@ struct Walker {
     unresolved: Vec<Error>,
     /// The call site of each call node and method node, and the receiver parameter.
     calls: BTreeMap<NodeId, Call>,
+    /// The variant that each variant path names, by the id of the first name of the path.
+    variants: BTreeMap<NodeId, VariantRef>,
+    /// For each enum item, the first variant with each name.
+    variant_names: VariantNames,
     /// The next call site of the current item body.
     next_site: usize,
     /// How many names so far resolved to a parameter. A `fn` item reads the change over its
@@ -133,6 +148,13 @@ impl Walker {
         let id = self.new_decl(name, kind, receiver);
         if let Err(first) = self.scopes.declare_item(&name.name, id) {
             self.duplicate(name, first);
+        }
+        if let Item::Enum { variants, .. } = item {
+            let mut names = BTreeMap::new();
+            for (j, v) in variants.iter().enumerate() {
+                names.entry(v.name.name.clone()).or_insert(j);
+            }
+            self.variant_names.insert(id, names);
         }
     }
 
@@ -248,7 +270,32 @@ impl Walker {
                 self.scopes.close();
             }
             Item::Alias { ty, .. } => self.ty(ty),
-            Item::Enum { .. } => {}
+            Item::Enum { tag, variants, .. } => {
+                self.ty(tag);
+                self.variants(variants);
+            }
+        }
+    }
+
+    /// A variant name is in no scope: only a second variant with the name is an error.
+    fn variants(&mut self, variants: &[Variant]) {
+        let mut seen = BTreeSet::new();
+        for variant in variants {
+            if !seen.insert(variant.name.name.as_str()) {
+                self.duplicates.push(Error {
+                    code: Code::S002,
+                    pos: variant.name.pos,
+                    message: format!(
+                        "the variant `{}` is already declared in this enum; rename one of the \
+                         two variants",
+                        variant.name.name
+                    ),
+                });
+            }
+            for ty in &variant.payload {
+                self.ty(ty);
+            }
+            self.expr(&variant.tag);
         }
     }
 
@@ -454,11 +501,47 @@ impl Walker {
                     self.expr(elem);
                 }
             }
-            Expr::Path { pos, ty, variant } => self.reject(
-                *pos,
+            Expr::Path { pos, ty, variant } => self.variant_path(*pos, ty, variant),
+        }
+    }
+
+    /// The variant path `ty::variant`. The first part resolves by the ordinary scoping, so a
+    /// local shadows an enum item. A first part that is no enum item is `S003` at the path, and
+    /// a second part that names no variant is `S003` at that part.
+    fn variant_path(&mut self, pos: Pos, ty: &Ident, variant: &Ident) {
+        let item = self
+            .scopes
+            .lookup(&ty.name)
+            .filter(|id| self.decls[id.0].kind == Kind::Enum);
+        let Some(item) = item else {
+            self.reject(
+                pos,
                 format!(
                     "`{}` is not an enum, so `{}::{}` names no variant; use the name of an enum",
                     ty.name, ty.name, variant.name
+                ),
+            );
+            return;
+        };
+        let index = self
+            .variant_names
+            .get(&item)
+            .and_then(|names| names.get(&variant.name));
+        match index {
+            Some(&index) => {
+                self.variants.insert(
+                    ty.id,
+                    VariantRef {
+                        item: item.0,
+                        index,
+                    },
+                );
+            }
+            None => self.reject(
+                variant.pos,
+                format!(
+                    "`{}` has no variant `{}`; use a variant that `{}` declares",
+                    ty.name, variant.name, ty.name
                 ),
             ),
         }

@@ -17,13 +17,16 @@ method resolve::Resolved::item
 method resolve::Resolved::receiver
 method resolve::Resolved::site
 method resolve::Resolved::target
+method resolve::Resolved::variant
 method resolve::ResolvedExpr::depth_with
 method resolve::ResolvedExpr::expr
 method resolve::ResolvedExpr::receiver
 method resolve::ResolvedExpr::site
 method resolve::ResolvedExpr::target
+method resolve::ResolvedExpr::variant
 struct resolve::Decl
 struct resolve::DeclId
 struct resolve::Error
 struct resolve::Resolved
 struct resolve::ResolvedExpr
+struct resolve::VariantRef
