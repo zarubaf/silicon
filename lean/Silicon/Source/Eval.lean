@@ -94,6 +94,12 @@ The operators follow v0.1 section 3. These rules settle the open points of slice
   conversion charges the size of its result. A hardware unpack makes two `extract` nodes of a
   shared operand, and the mark charges the size of the operand once. A hardware pack makes one
   `pack` node. With `P` 0, neither makes a node.
+- A `match` evaluates its scrutinee in a `data` context and checks its type (`scrutTy`). Then
+  each arm runs its pattern charge, its kind and fit checks, its coverage share, and its insert
+  into one ordered map, in arm order. The coverage check follows, with no walk over the values
+  of the type (`matchArms`). A static scrutinee then selects one arm by the map. Its binders
+  get a static unpack of the payload (`bindStatic`). Then only that arm evaluates. A hardware
+  enum with a static tag is a hardware scrutinee.
 - Another callee than the name of a function item or of a prelude function evaluates once,
   before the arguments. Its result waits while they evaluate. A type gives a constructor
   call. A function value checks the number of its arguments first (`S007` at the call). Then
@@ -1546,6 +1552,268 @@ def portCall (p : Pos) (g : String) (h : PrimFn) (vs : List Val) (use : Ty → M
   | _, vs => fail .S010 p s!"`{g}` does not accept {vs.map Val.text}"
 
 /-!
+The type check of the scrutinee `v` of a `match` at `sp` (section 5.6). The type is `Bool`,
+`UInt[W]`, `SInt[W]`, `Int`, `Nat`, or an enum, else `S010` with the text of section 6.2.
+-/
+def scrutTy (sp : Pos) (v : Val) : M Ty := do
+  if let some t := v.ty? then
+    if t matches .bool | .uint _ | .sint _ | .int | .nat | .enum .. then return t
+  fail .S010 sp (s!"a `match` takes `Bool`, `UInt`, `SInt`, `Int`, `Nat`, or an enum, not " ++
+    s!"`{(v.ty?.map Ty.text).getD v.text}`; match on a part of the value")
+
+/-!
+The keys of the scrutinee type `t` in the order of the type (section 5.6): the smallest key and
+the number `W` of the `2^W` keys. `false` is 0 and `true` is 1, `SInt[W]` starts at `-2^(W-1)`,
+and an enum has its tags. `Int` and `Nat` have no finite set of keys.
+-/
+def Specs.keys (s : Specs) (t : Ty) : Option (Int × Nat) :=
+  match t with
+  | .bool => some (0, 1)
+  | .uint w => some (0, w)
+  | .sint w => some (-((2 ^ (w - 1) : Nat) : Int), w)
+  | .enum .. => (s.widths t).map fun (w, _) => (0, w)
+  | _ => none
+
+/-!
+`n` distinct keys of a type with `2^w` keys are all its keys. The test reads `w` and the bit
+length of `n`, so it makes no number `2^w` (section 5.6).
+-/
+def allKeys (n w : Nat) : Bool := n != 0 && w ≤ n.log2
+
+/-!
+The source text of the variant `j` of the enum item `i` in the `S021` texts (section 6.2): its
+path, with one `_` for each payload value.
+-/
+def variantText (items : Array Resolve.Item) (i j : Nat) : String :=
+  match items[i]? with
+  | some (.enum _ x _ vs) =>
+    match vs[j]? with
+    | some v =>
+      let k := v.payload.length
+      x.name ++ "::" ++ v.name.name ++
+        if k = 0 then "" else "(" ++ ", ".intercalate (List.replicate k "_") ++ ")"
+    | none => toString j
+  | _ => toString j
+
+/-! The variant of the tag `k` of the enum type `t`, from the tag map of its done entry. -/
+def Specs.tagVariant (s : Specs) (t : Ty) (k : Int) : Option Nat :=
+  match t with
+  | .enum i .. =>
+    match s.enums[i]? with
+    | some (.done _ _ _ _ tags) => tags[k.toNat]?
+    | _ => none
+  | _ => none
+
+/-!
+The text `{v}` of the key `k` of the scrutinee type `t` (section 6.2). A `Bool` is `true` or
+`false`, the tag of a variant is the variant (`variantText`), and another key is a decimal
+integer with its sign. The tag map of the enum gives the variant of a tag.
+-/
+def keyText (items : Array Resolve.Item) (specs : Specs) (t : Ty) (k : Int) : String :=
+  match t, specs.tagVariant t k with
+  | .bool, _ => Print.boolean (k == 1)
+  | .enum i .., some j => variantText items i j
+  | _, _ => toString k
+
+/-! The kind `{k}` of a pattern of the scrutinee type `t` in the `S010` text (section 6.2). -/
+def kindText (t : Ty) : String :=
+  match t with
+  | .bool => "`true` or `false`"
+  | .enum .. => s!"a variant of `{t.text}`"
+  | _ => "an integer"
+
+/-!
+The text `{p}` of a pattern in the `S010` text of its kind (section 6.2). A literal is written
+as `{v}`, and a variant pattern as its path with its binders and `_`.
+-/
+def patternText : Resolve.Pattern → String
+  | .wild _ => "_"
+  | .int _ neg v => toString (if neg then -(v : Int) else v)
+  | .bool _ b => Print.boolean b
+  | .variant _ x y _ _ bs =>
+    let names := bs.map fun | some b => b.name.name | none => "_"
+    x.name ++ "::" ++ y.name ++ if names.isEmpty then "" else "(" ++ ", ".intercalate names ++ ")"
+
+/-! A pattern `q` at `qp` of another kind than the scrutinee type `t` takes: `S010`. -/
+def kindFail (qp : Pos) (t : Ty) (q : Resolve.Pattern) : M α :=
+  fail .S010 qp (s!"a pattern of `{t.text}` is {kindText t}, not `{patternText q}`; " ++
+    s!"write {kindText t}, or `_`")
+
+/-!
+Steps 1 to 3 of the arm checks of a `match` with the scrutinee type `t` (section 5.6), for the
+pattern `q`:
+
+1. The pattern charge at the pattern (section 5.4). `_` charges 1, and a literal `1 + s`. A
+   variant pattern charges `1 + s` and 1 for each binder and each `_`. `s` is the size of the
+   value of a literal. For a variant, it is `tagSize`, the size of a value of the tag type of
+   the scrutinee. It is 1 when the scrutinee is not an enum.
+2. The kind of the pattern (`S010`). A variant pattern compares the resolved enum items. Thus
+   it is no use of the enum of the pattern: no first use, no charge, and no error of it.
+3. The fit of a literal (`S012`). A negative literal does not fit `Nat`.
+
+The result is the position of the pattern, its key in the order of the type (none for `_`),
+and `s`.
+-/
+def patternKey (t : Ty) (tagSize : Nat) : Resolve.Pattern → M (Pos × Option Int × Nat)
+  | .wild qp => do
+    charge qp 1
+    return (qp, none, 0)
+  | q@(.int qp neg v) => do
+    let k : Int := if neg then -(v : Int) else v
+    let s := (Value.int k).size
+    charge qp (1 + s)
+    unless t matches .uint _ | .sint _ | .int | .nat do kindFail qp t q
+    unless fits t k do fail .S012 qp (fitText t k)
+    return (qp, some k, s)
+  | q@(.bool qp b) => do
+    charge qp 2
+    unless t matches .bool do kindFail qp t q
+    return (qp, some (if b then 1 else 0), 1)
+  | q@(.variant qp _ _ e j bs) => do
+    charge qp (1 + tagSize + bs.length)
+    unless (match t with | .enum e' .. => e' == e | _ => false) do kindFail qp t q
+    let some (.done _ _ _ vs _) := (← get).specs.enums[e]?
+      | fail .S010 qp s!"{t.text} has no entry"
+    let some (c, _) := vs[j]? | fail .S010 qp s!"{t.text} has no variant {j}"
+    return (qp, some (c : Int), tagSize)
+
+/-!
+The ordered map of a `match` (section 5.6): each key to its first arm and the position of its
+pattern. `wild` is the first arm `_` and its position.
+-/
+structure Cover where
+  keys : Std.TreeMap Int (Nat × Pos) compare := {}
+  wild : Option (Nat × Pos) := none
+
+/-!
+The arm checks of the arm `i` with the pattern `q` (section 5.6): steps 1 to 3 (`patternKey`),
+then these steps:
+
+4. The coverage share `1 + log + s` of a pattern that is not `_` (section 5.4). `log` is
+   `floor(log2 n)`, with `n` the number of the arms that are not `_` in the syntax.
+5. An arm after `_` is `S021`. Then a key in the map is a second match (`S021`, with the
+   position of the first arm), else the key goes into the map. The insert makes up to
+   `1 + log` compares: a log factor above its share (section 5.4).
+-/
+def coverArm (t : Ty) (log tagSize : Nat) (c : Cover) (i : Nat) (q : Resolve.Pattern) :
+    M Cover := do
+  let (qp, key, s) ← patternKey t tagSize q
+  if key.isSome then charge qp (1 + log + s)
+  if c.wild.isSome then
+    fail .S021 qp ("this arm comes after `_`, so it matches no value; move `_` to the end, " ++
+      "or remove this arm")
+  match key with
+  | none => return { c with wild := some (i, qp) }
+  | some k =>
+    if let some (_, b) := c.keys[k]? then
+      fail .S021 qp (s!"this arm matches `{keyText (← read).items (← get).specs t k}`, and the " ++
+        s!"arm at {b.line}:{b.col} matches it too; remove one of the two patterns")
+    return { c with keys := c.keys.insert k (i, qp) }
+
+/-!
+The coverage check of a `match` at `p` with the scrutinee type `t` after its last arm (section
+5.6), with no charge. A `_` without values is `S021` at the `_`. Then a value that no arm
+matches is `S021` at `p`. The count of the keys compares with `2^W` by `allKeys`, and the
+smallest uncovered value comes from one pass over the ordered keys. A tag without a variant has
+its own text.
+-/
+def coverCheck (p : Pos) (t : Ty) (c : Cover) : M Unit := do
+  let specs := (← get).specs
+  match c.wild, specs.keys t with
+  | some (_, wp), some (_, w) =>
+    if allKeys c.keys.size w then
+      fail .S021 wp s!"the arms before `_` cover each value of `{t.text}`; remove the `_` arm"
+  | some _, none => pure ()
+  | none, none =>
+    fail .S021 p (s!"a `match` on `{t.text}` has no finite set of values; " ++
+      "add `_ => ...` as the last arm")
+  | none, some (lo, w) =>
+    unless allKeys c.keys.size w do
+      let u := c.keys.foldl (fun e k _ => if k == e then e + 1 else e) lo
+      if t matches .enum .. && (specs.tagVariant t u).isNone then
+        fail .S021 p (s!"the tag `{u}` of `{t.text}` has no variant, but a port or a memory " ++
+          "can hold it; add `_ => ...` as the last arm")
+      fail .S021 p (s!"the `match` does not cover `{keyText (← read).items specs t u}` of " ++
+        s!"`{t.text}`; add an arm for it, or add `_ => ...` as the last arm")
+
+/-!
+The arm checks of the arms `as` of a `match` at `p` with the scrutinee type `t`, in arm order
+(`coverArm`), then its coverage check (`coverCheck`). They all run before an arm evaluates
+(section 5.6). The result is the ordered map.
+-/
+def matchArms (p : Pos) (t : Ty) (as : List Resolve.Arm) : M Cover := do
+  let log := (as.filter fun | .mk (.wild _) _ => false | _ => true).length.log2
+  let tagSize := match (← get).specs.widths t with
+    | some (w, _) => widthSize w
+    | none => 1
+  let mut c : Cover := {}
+  let mut i := 0
+  for a in as do
+    let .mk q _ := a
+    c ← coverArm t log tagSize c i q
+    i := i + 1
+  coverCheck p t c
+  return c
+
+/-! The key of a static scrutinee value in the order of its type (section 5.6). -/
+def Value.key : Value → Option Int
+  | .bool b => some (if b then 1 else 0)
+  | .uint _ x => some x.toNat
+  | .sint _ x => some x.toInt
+  | .int n => some n
+  | .enum _ _ x _ _ => some x.toNat
+  | _ => none
+
+/-!
+The static unpack of the bits `y` from the bit `off` into a value of the type `t` (section 7.4).
+It reads the leaves at the offsets of the pack (`Value.pack`), the first leaf in the low bits.
+The depth `d` of `t` bounds the walk. A Lean leaf shifts the whole payload. A front end reads
+each leaf in `w / 64 + 1` word steps, in the charge of the zero size (section 5.4).
+-/
+def Value.unpack (specs : Specs) (y : Nat) : Nat → Ty → Nat → Option Value
+  | 0, _, _ => none
+  | d + 1, t, off =>
+    let seq (ts : List Ty) : Option (Array Value) :=
+      (ts.foldlM (fun (acc : Array Value × Nat) u => do
+        return (acc.1.push (← Value.unpack specs y d u acc.2), acc.2 + u.info.width))
+        (#[], off)).map Prod.fst
+    match t with
+    | .bool => some (.bool (y.testBit off))
+    | .uint w => some (.uint w (BitVec.ofNat w (y >>> off)))
+    | .sint w => some (.sint w (BitVec.ofNat w (y >>> off)))
+    | .unit => some .unit
+    | .array e k => do
+      let xs ← (List.range k).mapM fun i => Value.unpack specs y d e (off + i * e.info.width)
+      return .array e xs.toArray
+    | .tuple ⟨ts⟩ => do return .tuple (← seq ts)
+    | .struct .. => do return .record t (← seq ((← specs.parts t).toList.map (·.2)))
+    | .enum .. => do
+      let (w, p) ← specs.widths t
+      return .enum t w (BitVec.ofNat w (y >>> off)) p (BitVec.ofNat p (y >>> (off + w)))
+    | _ => none
+
+/-!
+The binders `bs` of the variant `j` of the static enum value with the type `t` and the payload
+bits `y` (section 5.4). Each binder checks the size limit at the zero size of its type (`S015`
+at the binder), then charges that zero size. Then it binds the static unpack of its payload
+value, at the offset of the value in the pack of the payload tuple.
+-/
+def bindStatic (p : Pos) (t : Ty) (j : Nat) (bs : List (Option Binder)) (y : Nat) : M Unit := do
+  let specs := (← get).specs
+  let .enum e .. := t | fail .S010 p s!"{t.text} is not an enum"
+  let some (.done _ _ _ vs _) := specs.enums[e]? | fail .S010 p s!"{t.text} has no entry"
+  let some (_, ts) := vs[j]? | fail .S010 p s!"{t.text} has no variant {j}"
+  let mut off := 0
+  for (b, u) in bs.zip ts.toList do
+    if let some b := b then
+      if over u.info.zeroSize then fail .S015 b.name.pos zeroLimitText
+      charge b.name.pos u.info.zeroSize
+      let some x := Value.unpack specs y u.depth u off
+        | fail .S010 b.name.pos s!"{u.text} has no static unpack"
+      bindLocal b.id ⟨some u, false, .static x⟩
+    off := off + u.info.width
+
+/-!
 The evaluator. `eval`, `typeExpr`, `stmt`, and `block` are the entry functions. Each charges
 one unit, then calls deeper with the bound `n`. The helpers `name`, `spec`, `index`, `params`,
 `placeAt`, `args`, `ctor`, `actuals`, `invoke`, and `call` get the bound `n` of their caller
@@ -1686,8 +1954,21 @@ mutual
         let t ← enumUse n p i
         let vs ← operands n xs fun _ o => pure o.value
         return some ⟨← variantOf p t j vs, false, none⟩
-      -- TODO(#272): evaluate a `match` (checks, coverage, static and hardware selection).
-      | .«match» p .. => fail .S004 p "a `match` is not supported yet"
+      | .«match» p x as => do
+        let v ← data x.pos (← need x (← eval n x)).value
+        let t ← scrutTy x.pos v
+        let c ← matchArms p t as
+        match v with
+        | .static s =>
+          -- The coverage check passed, so the map or `_` selects an arm of `as`.
+          let some j := ((Value.key s).bind (c.keys[·]?)).map (·.1) <|> c.wild.map (·.1)
+            | fail .S021 p "the `match` has no arm for its value"
+          let some (.mk q y) := as[j]? | fail .S021 p s!"the `match` has no arm {j}"
+          if let .variant _ _ _ _ vj bs := q then
+            if let .enum _ _ _ _ bits := s then bindStatic p t vj bs bits.toNat
+          eval n y
+        -- TODO(#272): evaluate a hardware `match` (marks, binders, selects, join, and walk).
+        | _ => fail .S004 p "a hardware `match` is not supported yet"
   termination_by (b, 3)
 
   def typeExpr (b : Nat) (t : Resolve.TypeExpr) : M Ty :=

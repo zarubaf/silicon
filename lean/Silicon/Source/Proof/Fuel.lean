@@ -810,6 +810,33 @@ theorem enumOf_f {ty ty' : Resolve.TypeExpr → M Ty} (h : ∀ t, Follows cap (t
   unfold enumOf
   follows [h, he, conform_f, static_f, setEnum_f, sums_f, nested_f, inFrame_f]
 
+theorem scrutTy_f (sp : Pos) (v : Val) : Follows cap (scrutTy sp v) (scrutTy sp v) := by
+  unfold scrutTy; follows
+
+theorem kindFail_f (qp : Pos) (t : Ty) (q : Resolve.Pattern) :
+    Follows cap (kindFail qp t q : M α) (kindFail qp t q) := by
+  unfold kindFail; follows
+
+theorem patternKey_f (t : Ty) (s : Nat) (q : Resolve.Pattern) :
+    Follows cap (patternKey t s q) (patternKey t s q) := by
+  unfold patternKey; follows [kindFail_f]
+
+theorem coverArm_f (t : Ty) (log s : Nat) (c : Cover) (i : Nat) (q : Resolve.Pattern) :
+    Follows cap (coverArm t log s c i q) (coverArm t log s c i q) := by
+  unfold coverArm; follows [patternKey_f]
+
+theorem coverCheck_f (p : Pos) (t : Ty) (c : Cover) :
+    Follows cap (coverCheck p t c) (coverCheck p t c) := by
+  unfold coverCheck; follows
+
+theorem matchArms_f (p : Pos) (t : Ty) (as : List Resolve.Arm) :
+    Follows cap (matchArms p t as) (matchArms p t as) := by
+  unfold matchArms; follows [coverArm_f, coverCheck_f]
+
+theorem bindStatic_f (p : Pos) (t : Ty) (j : Nat) (bs : List (Option Binder)) (y : Nat) :
+    Follows cap (bindStatic p t j bs y) (bindStatic p t j bs y) := by
+  unfold bindStatic; follows [bindLocal_f]
+
 theorem requestPart_f (p : Pos) (t : Ty) (v : Val) :
     Follows cap (requestPart p t v) (requestPart p t v) := by
   unfold requestPart; follows [readUse_f]
@@ -931,7 +958,8 @@ theorem follows_all : ∀ n,
           hwUnary_f, test_f, hwBinary_f, unify_f, mux_f, static_f, pick_f, element_f, tupleOf_f,
           arrayOf_f, select_f, containerOp_f, arrayTy_f, field_f, strAt_f, hold_f, release_f,
           changesOf_f, normalize_f, aggEq_f, enumUse_f (he k) (ht k), variantOf_f,
-          operands_f (he k), comparable_f, params_f (ht k), fnTy_f, structural_f]
+          operands_f (he k), comparable_f, params_f (ht k), fnTy_f, structural_f, scrutTy_f,
+          matchArms_f, bindStatic_f]
       · rw [eval.eq_def (k + 1), eval.eq_def (m + 1)]
         apply Follows.charge_one
         intro _
@@ -940,7 +968,8 @@ theorem follows_all : ∀ n,
           hwUnary_f, test_f, hwBinary_f, unify_f, mux_f, static_f, pick_f, element_f, tupleOf_f,
           arrayOf_f, select_f, containerOp_f, arrayTy_f, field_f, strAt_f, hold_f, release_f,
           changesOf_f, normalize_f, aggEq_f, enumUse_f (he m) (ht m), variantOf_f,
-          operands_f (he m), comparable_f, params_f (ht m), fnTy_f, structural_f]
+          operands_f (he m), comparable_f, params_f (ht m), fnTy_f, structural_f, scrutTy_f,
+          matchArms_f, bindStatic_f]
     · rcases n' with _ | m
       · rw [typeExpr.eq_def (k + 1), typeExpr.eq_def 0]
         apply Follows.exhaust (cap := k)
