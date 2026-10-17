@@ -477,7 +477,7 @@ theorem packHw_f (p : Pos) (w : Nat) (ps : List (Ty × Agg)) :
 
 theorem recast_f (p : Pos) (t : Ty) (v : Val) :
     Follows cap (recast p t v) (recast p t v) := by
-  unfold recast; follows [shared_f, packHw_f]
+  unfold recast; follows [bounded_f, shared_f, packHw_f]
 
 theorem typeOf_f (p : Pos) (x : String) (v : Val) :
     Follows cap (typeOf p x v) (typeOf p x v) := by
@@ -626,7 +626,7 @@ theorem copyUse_f (p : Pos) (t : Ty) (c : Bool) (v : Val) :
 
 theorem variantOf_f (p : Pos) (t : Ty) (j : Nat) (vs : List Val) :
     Follows cap (variantOf p t j vs) (variantOf p t j vs) := by
-  unfold variantOf; follows [readUse_f, packHw_f]
+  unfold variantOf; follows [bounded_f, readUse_f, packHw_f]
 
 theorem version_f (k : Tag) (b : Names.Path) :
     Follows cap (version k b) (version k b) := by

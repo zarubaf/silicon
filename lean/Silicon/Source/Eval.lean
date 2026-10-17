@@ -790,6 +790,7 @@ def packHw (pos : Pos) (w : Nat) (ps : List (Ty × Agg)) : M Hw := do
 other side has exactly the type `UInt[W + P]`, else `S010` at the call. The tag is in the low `W`
 bits, and the payload in the next `P` bits.
 
+- An unpack checks the depth of the new enum value after the type check (`S015`, section 5.5).
 - A static unpack or pack charges the size of its result, as a conversion does (section 5.4).
   It splits or joins the bits with no loop over the bits.
 - A hardware unpack of `b` gives an enum node with `(extract b 0 W)` and `(extract b W P)`. Both
@@ -808,12 +809,14 @@ def recast (p : Pos) (t : Ty) (v : Val) : M Val := do
     match v with
     | .static (.uint n x) =>
       if n != w + pw then bad else
+      bounded p (Value.enum t w 0 pw 0).depth
       -- The size does not read the bits, so the charge comes before the split.
       charge p (Value.enum t w 0 pw 0).size
       return .static (.enum t w (BitVec.ofNat w x.toNat) pw (BitVec.ofNat pw (x.toNat >>> w)))
     | .hw b =>
-      if !b.ty.same (.uint (w + pw)) then bad
-      else if pw = 0 then return .agg (.mkRecord t #[.hw b])
+      if !b.ty.same (.uint (w + pw)) then bad else
+      bounded p (Value.enum t w 0 pw 0).depth
+      if pw = 0 then return .agg (.mkRecord t #[.hw b])
       else
         let b ← shared p b 2
         return .agg (.mkRecord t #[.hw (.mk p (.uint w) (.extract 0 w) [b]),
@@ -882,9 +885,10 @@ the use of the enum, and the payload values come before. Then these steps run:
 1. The copies of the payload values charge, by the rule of builtins.
 2. Each payload value gets its typed use at its payload type, in order (`S010`, `S012`). A
    register or a wire is read, and the read of an aggregate charges its zero size.
-3. The recursive size of the result charges, before the static or the hardware pack. A
-   hardware result reads its size from the node of its leaves. The copies paid for the walk
-   that collects the leaves, and the pack node has no charge, so no work is unpaid.
+3. The depth check of the result (`S015`, section 5.5). Then the recursive size of the result
+   charges, before the static or the hardware pack. A hardware result reads its size from the
+   node of its leaves. The copies paid for the walk that collects the leaves, and the
+   pack node has no charge, so no work is unpaid.
 4. The pack makes the result. The tag is the static tag value of the variant. When each payload
    value is static, the payload packs into one bit buffer (`Value.pack`), and the result is a
    static enum value. Else the payload is a hardware pack of the leaves of the payload values
@@ -901,6 +905,7 @@ def variantOf (p : Pos) (t : Ty) (j : Nat) (vs : List Val) : M Val := do
   charge p (vs.map Val.size).sum
   let xs ← (ts.toList.zip vs).mapM fun (u, v) => readUse p u v
   let tag : BitVec w := BitVec.ofNat w c
+  bounded p (Value.enum t w tag pw 0).depth
   match xs.mapM fun | .static y => some y | _ => none with
   | some ys =>
     -- The size does not read the payload bits, so the charge comes before the pack.

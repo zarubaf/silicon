@@ -1767,6 +1767,17 @@ def flagE (body : String) : String :=
 #guard elabOnly (hwEnum "  let a = reinterpret(UInt[8], e);\n") "M" == "S010 8:11"
 
 /-!
+A hardware enum value has the depth 3, as a static one has (section 5.5). A constructor with a
+hardware payload and a hardware unpack check it before the value exists: `S015` at the node.
+-/
+#guard (cost (hwEnum "  let a = Op::Load(x);\n") "M" (depth := 3)).startsWith "total"
+#guard cost (hwEnum "  let a = Op::Load(x);\n") "M" (depth := 2) == "S015 8:11"
+#guard (cost (hwEnum "  let a = reinterpret(Op, resize(UInt[10], x));\n") "M"
+  (depth := 3)).startsWith "total"
+#guard cost (hwEnum "  let a = reinterpret(Op, resize(UInt[10], x));\n") "M" (depth := 2) ==
+  "S015 8:11"
+
+/-!
 Nested conversions stay linear (G8). Each `reinterpret(E, b)` marks its operand once, so `k` nested
 round trips make `k` marks. The lowering binds each mark once. With each mark counted once, a round
 trip adds 5 nodes: a `pack`, two `extract` nodes, and two uses of one mark. Without the marks, the
