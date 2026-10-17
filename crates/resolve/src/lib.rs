@@ -62,6 +62,7 @@ pub enum Kind {
     Fn,
     Module,
     Struct,
+    Enum,
     /// A `type` item, or a `type` statement.
     Alias,
     Param,

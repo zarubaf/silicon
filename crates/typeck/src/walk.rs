@@ -150,7 +150,7 @@ fn sigs(resolved: &Resolved) -> BTreeMap<DeclId, Sig> {
     let mut sigs = BTreeMap::new();
     for item in resolved.ast() {
         let (name, sig) = match item {
-            Item::Const { .. } => continue,
+            Item::Const { .. } | Item::Enum { .. } => continue,
             Item::Fn {
                 comptime,
                 name,
@@ -496,22 +496,37 @@ impl<'a> Walker<'a> {
         }
     }
 
+    /// A name in an expression: the head of a type name, else a resource that a static position
+    /// must not name.
+    fn name_use(
+        &mut self,
+        is_static: bool,
+        base: bool,
+        pos: Pos,
+        id: NodeId,
+        name: &str,
+    ) -> Option<Head> {
+        let head = self.head(id, name);
+        match &head {
+            Some(h) if !base => self.arity(pos, &h.text, h.missing, 0),
+            Some(_) => {}
+            None => self.resource_name(is_static, pos, id, name),
+        }
+        head
+    }
+
     /// An expression. `is_static` is true in a static position. `base` is true for the base of
     /// an index, whose index holds the arguments of a type name. The result is the type head
     /// of a type in an expression: a type name, an index of one, or `[T; N]`. Another
     /// expression gives `None`. Thus the walk visits each node once.
     fn visit(&mut self, is_static: bool, base: bool, expr: &Expr) -> Option<Head> {
         match expr {
-            Expr::Num { .. } | Expr::Bool { .. } | Expr::Str { .. } | Expr::Unit { .. } => None,
-            Expr::Name { pos, id, name } => {
-                let head = self.head(*id, name);
-                match &head {
-                    Some(h) if !base => self.arity(*pos, &h.text, h.missing, 0),
-                    Some(_) => {}
-                    None => self.resource_name(is_static, *pos, *id, name),
-                }
-                head
-            }
+            Expr::Num { .. }
+            | Expr::Bool { .. }
+            | Expr::Str { .. }
+            | Expr::Unit { .. }
+            | Expr::Path { .. } => None,
+            Expr::Name { pos, id, name } => self.name_use(is_static, base, *pos, *id, name),
             Expr::Unary { arg, .. } => {
                 self.expr(is_static, arg);
                 None
@@ -806,6 +821,7 @@ impl<'a> Walker<'a> {
                 }
             }
             Item::Alias { ty, .. } => self.type_expr(ty),
+            Item::Enum { .. } => {}
         }
     }
 }
@@ -828,6 +844,7 @@ fn expr_pos(expr: &Expr) -> Pos {
         | Expr::Tuple { pos, .. }
         | Expr::Array { pos, .. }
         | Expr::Select { pos, .. }
+        | Expr::Path { pos, .. }
         | Expr::ArrayType { pos, .. }
         | Expr::FnType { pos, .. } => *pos,
     }

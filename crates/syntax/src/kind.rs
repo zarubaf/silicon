@@ -122,6 +122,10 @@ kinds! {
     StructField,
     /// `type N = T;` at an item.
     AliasItem,
+    /// `enum E: T { A(P) = 0 }`: the name, the tag type, then the `EnumVariant` children.
+    EnumItem,
+    /// `A(P, Q) = e` in an enum: the name, the payload types, then the tag value.
+    EnumVariant,
     ParamList,
     Param,
     DomainsClause,
@@ -156,6 +160,8 @@ kinds! {
     CallExpr,
     IndexExpr,
     FieldExpr,
+    /// `E::V`: two names.
+    PathExpr,
     /// `x.m(args)`: a receiver call. The arguments are in an `ArgList`.
     MethodExpr,
     /// `.N` after an expression.

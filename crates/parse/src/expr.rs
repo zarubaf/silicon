@@ -44,7 +44,7 @@ impl Parser<'_> {
                     Some(())
                 })?;
                 if self.is(ColonColon) {
-                    self.later_slice(self.offset(), "a path");
+                    self.package_path(self.offset());
                     return None;
                 }
                 self.height = 1;
@@ -277,7 +277,7 @@ impl Parser<'_> {
     /// A primary expression with its calls, indexes, field selections, and selectors `.N`.
     pub(crate) fn postfix_expr(&mut self) -> Res {
         let checkpoint = self.checkpoint();
-        let mut place = self.is(Ident);
+        let mut place = self.is(Ident) && self.next() != Some(ColonColon);
         self.primary()?;
         let mut height = self.height;
         loop {
@@ -361,15 +361,23 @@ impl Parser<'_> {
                     Some(())
                 })?;
             }
+            Some(Ident) if self.next() == Some(ColonColon) => {
+                self.node(PathExpr, |p| {
+                    p.bump();
+                    p.bump();
+                    p.expect(Ident, "a variant name")?;
+                    if p.is(ColonColon) {
+                        p.package_path(p.offset());
+                        return None;
+                    }
+                    Some(())
+                })?;
+            }
             Some(Ident) => {
                 self.node(NameExpr, |p| {
                     p.bump();
                     Some(())
                 })?;
-                if self.is(ColonColon) {
-                    self.later_slice(self.offset(), "a path");
-                    return None;
-                }
             }
             Some(LParen) => return self.paren(),
             Some(LBracket) => return self.array(),

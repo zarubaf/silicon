@@ -4,7 +4,7 @@
 
 use crate::ast::{
     BinOp, Expr, FnParam, Ident, Item, Nat, NodeId, Param, ParamMode, Pos, Stmt, StructField,
-    TypeExpr, UnOp,
+    TypeExpr, UnOp, Variant,
 };
 use crate::error::LineIndex;
 use rowan::NodeOrToken;
@@ -211,8 +211,30 @@ impl<'a> Lower<'a> {
                 name,
                 ty: self.type_expr(&node.children().find(is_type)?)?,
             }),
+            SyntaxKind::EnumItem => Some(Item::Enum {
+                pos,
+                name,
+                tag: self.type_expr(&node.children().find(is_type)?)?,
+                variants: node
+                    .children()
+                    .filter(|n| n.kind() == SyntaxKind::EnumVariant)
+                    .map(|variant| self.variant(&variant))
+                    .collect::<Option<_>>()?,
+            }),
             _ => None,
         }
+    }
+
+    fn variant(&self, node: &SyntaxNode) -> Option<Variant> {
+        Some(Variant {
+            name: self.ident(node)?,
+            payload: node
+                .children()
+                .filter(is_type)
+                .map(|t| self.type_expr(&t))
+                .collect::<Option<_>>()?,
+            tag: self.expr(&node.children().find(is_expr)?)?,
+        })
     }
 
     /// The parameters of a struct: none without parentheses.
@@ -450,6 +472,11 @@ impl<'a> Lower<'a> {
                 id: self.id(),
                 name: token(node, Ident)?.text().to_owned(),
             }),
+            PathExpr => Some(Expr::Path {
+                pos,
+                ty: self.ident_at(node, 0)?,
+                variant: self.ident_at(node, 1)?,
+            }),
             ParenExpr => self.expr(operands.first()?),
             UnaryExpr => Some(Expr::Unary {
                 pos,
@@ -561,6 +588,7 @@ fn is_expr(node: &SyntaxNode) -> bool {
         node.kind(),
         Literal
             | NameExpr
+            | PathExpr
             | ParenExpr
             | UnaryExpr
             | BinExpr

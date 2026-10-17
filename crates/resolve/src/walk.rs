@@ -128,6 +128,7 @@ impl Walker {
             Item::Module { name, .. } => (name, Kind::Module, None),
             Item::Struct { name, .. } => (name, Kind::Struct, None),
             Item::Alias { name, .. } => (name, Kind::Alias, None),
+            Item::Enum { name, .. } => (name, Kind::Enum, None),
         };
         let id = self.new_decl(name, kind, receiver);
         if let Err(first) = self.scopes.declare_item(&name.name, id) {
@@ -247,6 +248,7 @@ impl Walker {
                 self.scopes.close();
             }
             Item::Alias { ty, .. } => self.ty(ty),
+            Item::Enum { .. } => {}
         }
     }
 
@@ -452,6 +454,13 @@ impl Walker {
                     self.expr(elem);
                 }
             }
+            Expr::Path { pos, ty, variant } => self.reject(
+                *pos,
+                format!(
+                    "`{}` is not an enum, so `{}::{}` names no variant; use the name of an enum",
+                    ty.name, ty.name, variant.name
+                ),
+            ),
         }
     }
 

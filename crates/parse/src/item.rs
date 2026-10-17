@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The grammar of items: constants, functions, modules, structs, and type aliases.
+//! The grammar of items: constants, functions, modules, structs, enums, and type aliases.
 #![allow(clippy::enum_glob_use)] // The grammar names token kinds on almost every line.
 
 use crate::parser::{Parser, Res};
@@ -53,10 +53,7 @@ impl Parser<'_> {
                 self.later_slice(self.offset(), "this item");
                 None
             }
-            EnumKw => {
-                self.later_slice(self.offset(), "an enum");
-                None
-            }
+            EnumKw => self.node(EnumItem, Self::enum_item),
             _ => {
                 self.syntax_error("expected an item");
                 None
@@ -152,6 +149,42 @@ impl Parser<'_> {
             }
         }
         self.expect(RBrace, "`}`")
+    }
+
+    /// `enum E: T { A = 0, B(P, Q) = 1, }`. A `(` after the name is an enum with parameters.
+    fn enum_item(&mut self) -> Res {
+        self.bump();
+        self.expect(Ident, "a name")?;
+        if self.is(LParen) {
+            self.enum_parameters(self.offset());
+            return None;
+        }
+        self.expect(Colon, "`:`")?;
+        self.type_expr()?;
+        self.expect(LBrace, "`{`")?;
+        while !self.is(RBrace) {
+            self.node(EnumVariant, Self::variant)?;
+            if !self.eat(Comma) {
+                break;
+            }
+        }
+        self.expect(RBrace, "`}`")
+    }
+
+    /// `A = 0` or `B(P, Q,) = 1`. The tag value is required.
+    fn variant(&mut self) -> Res {
+        self.expect(Ident, "a variant name")?;
+        if self.eat(LParen) {
+            while !self.is(RParen) {
+                self.type_expr()?;
+                if !self.eat(Comma) {
+                    break;
+                }
+            }
+            self.expect(RParen, "`,` or `)`")?;
+        }
+        self.expect(Eq, "`=`")?;
+        self.expr()
     }
 
     /// `type N = T;`, at an item and at a statement.

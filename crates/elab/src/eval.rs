@@ -279,6 +279,7 @@ pub(crate) fn expr_pos(e: &Expr) -> Pos {
         | Expr::Tuple { pos, .. }
         | Expr::Array { pos, .. }
         | Expr::Select { pos, .. }
+        | Expr::Path { pos, .. }
         | Expr::ArrayType { pos, .. }
         | Expr::FnType { pos, .. } => *pos,
     }
@@ -1037,6 +1038,9 @@ impl Evaluator<'_> {
             Expr::FnType { pos, params, ret } => {
                 let t = self.fn_type(*pos, params, ret)?;
                 Ok(Some(Out::Made(Val::Static(Value::Type(t)))))
+            }
+            Expr::Path { pos, .. } => {
+                fail(Code::S010, *pos, "an enum is not supported yet".to_owned())
             }
         }
     }
