@@ -40,7 +40,6 @@
 //!   site in a branch, a loop, a lazy operand, or another item than a
 //!   module body predicts nothing.
 //!
-//!
 //! - A `match` whose arms no longer cover each value, or that has an arm
 //!   after `_` or an arm twice, is `S021` (pass 5, spec 5.6) where the
 //!   `match` always runs. The arms cover each value by construction, so
@@ -53,6 +52,7 @@
 //!   constructor or of a variant pattern, are `S002` (pass 2) and `S007`
 //!   (pass 4) on all code. A missing binder is one that is `_` or that no
 //!   arm reads, because pass 3 sees a missing name first.
+//!
 //! - A pattern of another kind than its scrutinee (`PatternSwap`), `==` on
 //!   enums (`EnumEq`), and a call `E(0)` of an enum type (`EnumCall`) are
 //!   `S010`. A static `Int` operand that becomes a `match` on a port with
@@ -195,6 +195,9 @@ fn beyond(signed: bool, width: u32) -> num_bigint::BigInt {
     }
 }
 
+/// The number of kinds that come before the kinds of `match` and enums.
+const EARLIER: usize = 15;
+
 /// The name of the function that runs a `diagnostic`.
 const EFFECT_FN: &str = "e0";
 
@@ -222,24 +225,26 @@ impl Kind {
 #[must_use]
 pub fn mutate(program: &Program, kind: u32, site: u32) -> Mutant {
     let first = kind as usize % KINDS.len();
-    let mutant = KINDS
-        .iter()
-        .cycle()
-        .skip(first)
-        .take(KINDS.len())
-        .find_map(|&kind| {
-            let count = sites(kind, &program.items, &program.top);
-            if count == 0 {
-                return None;
-            }
-            let mut items = program.items.clone();
-            let (what, expect) = apply(kind, &mut items, &program.top, site as usize % count)?;
-            Some(Mutant {
-                text: render_items(&items) + &kind.function(),
-                what,
-                expect,
-            })
-        });
+    // A kind without a site falls back to the earlier kinds, as it did
+    // before the kinds of `match`, so that a program without a `match`
+    // does not give the next kind in the list all the draws of the new ones.
+    let old = first % EARLIER;
+    let order = std::iter::once(first)
+        .chain((0..EARLIER).map(|i| (old + i) % EARLIER))
+        .chain(EARLIER..KINDS.len());
+    let mutant = order.filter_map(|i| KINDS.get(i)).find_map(|&kind| {
+        let count = sites(kind, &program.items, &program.top);
+        if count == 0 {
+            return None;
+        }
+        let mut items = program.items.clone();
+        let (what, expect) = apply(kind, &mut items, &program.top, site as usize % count)?;
+        Some(Mutant {
+            text: render_items(&items) + &kind.function(),
+            what,
+            expect,
+        })
+    });
     // A built program has the `:=` of a top output, a `Delete` site. The
     // equal text shows the bug to `diff-si`.
     mutant.unwrap_or_else(|| Mutant {
