@@ -38,30 +38,30 @@ impl Scopes {
         }
     }
 
-    /// Declares an item. If the name exists, returns the first declaration.
-    pub(crate) fn declare_item(&mut self, name: &str, id: DeclId) -> Result<(), DeclId> {
-        if let Some(&first) = self.items.get(name) {
-            return Err(first);
+    /// Declares an item. Returns false, and keeps the first declaration, if the name exists.
+    pub(crate) fn declare_item(&mut self, name: &str, id: DeclId) -> bool {
+        if self.items.contains_key(name) {
+            return false;
         }
         self.items.insert(name.to_owned(), id);
-        Ok(())
+        true
     }
 
     /// Declares a name in the innermost scope. A name of an outer scope is shadowed. If the
-    /// scope has the name, returns the first declaration.
-    pub(crate) fn declare_local(&mut self, name: &str, id: DeclId) -> Result<(), DeclId> {
+    /// scope has the name, returns false and keeps the first declaration.
+    pub(crate) fn declare_local(&mut self, name: &str, id: DeclId) -> bool {
         let level = self.opened.len();
         let stack = self.locals.entry(name.to_owned()).or_default();
-        if let Some(&(first, at)) = stack.last()
+        if let Some(&(_, at)) = stack.last()
             && at == level
         {
-            return Err(first);
+            return false;
         }
         stack.push((id, level));
         if let Some(scope) = self.opened.last_mut() {
             scope.push(name.to_owned());
         }
-        Ok(())
+        true
     }
 
     /// The item with the name, past each local.
