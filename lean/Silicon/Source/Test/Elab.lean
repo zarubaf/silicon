@@ -1813,6 +1813,26 @@ def deepBinder : String :=
 #guard cost deepBinder "M" (depth := 3) == "S015 6:41"
 
 /-!
+A read of a child output, a register, and an empty input checks the depth of its zero too
+(`readRef`). The child elaborates at its `instance` statement one level deeper, so its port type
+fails first. The reset value `S()` of a register checks the same depth before a read. An empty
+input makes its zero only at a read, so it fails at the name.
+-/
+def childOut : String :=
+  "struct S { a: UInt[8] }\nmodule C() {\n  input i: S;\n  output q: S;\n  q := i;\n}\n" ++
+  "module M() {\n  input s: S;\n  output o: S;\n  instance u = C();\n  u.i := s;\n  o := u.q;\n}\n"
+#guard (cost childOut "M" (depth := 3)).startsWith "total"
+#guard cost childOut "M" (depth := 2) == "S015 3:12"
+def regRead : String :=
+  "struct S { a: UInt[8] }\nmodule M() {\n  output o: S;\n  reg r: S = S();\n  r := r;\n" ++
+  "  o := r;\n}\n"
+#guard (cost regRead "M" (depth := 3)).startsWith "total"
+#guard cost regRead "M" (depth := 2) == "S015 4:14"
+def emptyRead : String := "struct S { a: () }\nmodule M() {\n  input x: S;\n  let y = x;\n}\n"
+#guard (cost emptyRead "M" (depth := 3)).startsWith "total"
+#guard cost emptyRead "M" (depth := 2) == "S015 4:11"
+
+/-!
 Nested conversions stay linear (G8). Each `reinterpret(E, b)` marks its operand once, so `k` nested
 round trips make `k` marks. The lowering binds each mark once. With each mark counted once, a round
 trip adds 5 nodes: a `pack`, two `extract` nodes, and two uses of one mark. Without the marks, the
