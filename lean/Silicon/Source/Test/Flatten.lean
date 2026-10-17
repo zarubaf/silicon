@@ -717,4 +717,74 @@ gives `S015` at the top selection.
 #guard sil (memory "m" "UInt[8]" 4 2) "M" (Test.Elab.total (memory "m" "UInt[8]" 4 2) "M" - 1) ==
   "S015 1:1"
 
+/-!
+The constructor of a hardware enum (section 7.4). The static tag needs no statement. The payload
+is the `concat` chain of its leaves, the first leaf in the low bits, inside zero high bits when
+the leaves are narrower than `P`. One leaf of `P` bits is that leaf. The high bits charge 2, a
+`concat` and a `const`, and each other `concat` node charges 1. `Op::Pair(c, y)` thus charges 5
+more than `Op::Load(x)`: these 3 nodes and one more leaf. A hardware `if` muxes each leaf.
+-/
+def enumLets (src : String) : List String :=
+  ((sil src "M").splitOn "\n").filter (·.startsWith "    (let ")
+def opLets (body : String) : List String := enumLets (Test.Elab.hwEnum body)
+def opUnits (body : String) : Nat := lowering (Test.Elab.hwEnum body)
+#guard opLets "  let a = Op::Load(x);\n" == ["    (let a$payload (bits 8) x)"]
+#guard opLets "  let a = Op::Pair(c, y);\n" ==
+  ["    (let a$payload (bits 8) (concat (const 3 0) (concat y c)))"]
+#guard opUnits "  let a = Op::Pair(c, y);\n" == opUnits "  let a = Op::Load(x);\n" + 5
+#guard opLets "  let a = if (c) { Op::Load(x) } else { Op::Pair(c, y) };\n" == [
+  "    (let a$payload (bits 8) (mux c x (concat (const 3 0) (concat y c))))",
+  "    (let a$tag (bits 2) (mux c (const 2 1) (const 2 2)))"]
+
+/-!
+A payload of 70 leaves is one `concat` chain. The loop builds it from the first leaf, and the
+chain so far binds to a temporary when its height reaches 64.
+-/
+def wideEnum : String :=
+  "enum W: UInt[1] { A([Bool; 70]) = 1 }\nmodule M() {\n  input x: [Bool; 70];\n" ++
+  "  output o: Bool;\n  let a = W::A(x);\n  o := true;\n}\n"
+#guard enumLets wideEnum == [
+  "    (let a$payload (bits 70) " ++ cat 64 69 "a$payload$0t" ++ ")",
+  "    (let a$payload$0t (bits 64) " ++ cat 1 63 "x$0e" ++ ")"]
+
+/-!
+`reinterpret` between an enum and its bits (section 7.4). The pack is `(concat payload tag)`. The
+unpack is `(extract b 0 W)` and `(extract b W P)`. Both leaves refer to a core name `b`. Another
+`b` binds to one temporary of the leaf statement that lowers first (G8), so a round trip refers to
+it twice.
+-/
+#guard opLets "  let d = Op::Pair(c, y);\n  let a = reinterpret(UInt[10], d);\n" == [
+  "    (let a (bits 10) (concat d$payload (const 2 2)))",
+  "    (let d$payload (bits 8) (concat (const 3 0) (concat y c)))"]
+#guard opLets "  let b = resize(UInt[10], x);\n  let a = reinterpret(Op, b);\n" == [
+  "    (let a$payload (bits 8) (extract b 2 8))",
+  "    (let a$tag (bits 2) (extract b 0 2))",
+  "    (let b (bits 10) (concat (const 2 0) x))"]
+#guard opLets "  let a = reinterpret(Op, resize(UInt[10], x));\n" == [
+  "    (let a$payload (bits 8) (extract a$tag$0t 2 8))",
+  "    (let a$tag (bits 2) (extract a$tag$0t 0 2))",
+  "    (let a$tag$0t (bits 10) (concat (const 2 0) x))"]
+#guard opLets "  let a = reinterpret(UInt[10], reinterpret(Op, resize(UInt[10], x)));\n" == [
+  "    (let a (bits 10) (concat (extract a$0t 2 8) (extract a$0t 0 2)))",
+  "    (let a$0t (bits 10) (concat (const 2 0) x))"]
+
+/-!
+`k` nested round trips bind `k` more temporaries, one for each shared operand. Each level adds
+21 units: the temporary 6, the `concat` 1, two `extract` nodes 2, and two references to the
+temporary 12. The output and the charge thus stay linear, where copies would give `2^k` nodes.
+-/
+def trips (k : Nat) : String :=
+  let b := "reinterpret(Op, resize(UInt[10], x))"
+  Test.Elab.hwEnum s!"  let a = {Test.Elab.roundTrips k b};\n"
+#guard (List.range 20).all fun k => (enumLets (trips k)).length == k + 3
+#guard (List.range 20).all fun k => lowering (trips (k + 1)) == lowering (trips k) + 21
+
+/-!
+With `P` 0, a conversion makes no core node: the unpack is `b`, and the pack is the tag.
+-/
+#guard enumLets (Test.Elab.flagE
+    "  let a = reinterpret(E, u +% 1);\n  let b = reinterpret(UInt[2], a);\n") == [
+  "    (let a$tag (bits 2) (add u (const 2 1)))",
+  "    (let b (bits 2) a$tag)"]
+
 end Silicon.Source.Test.Flatten

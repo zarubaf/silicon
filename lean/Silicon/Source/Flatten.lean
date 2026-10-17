@@ -211,6 +211,49 @@ structure Link (b : Nat) where
   right : { x : Hw // sizeOf x < b }
 
 /-!
+The hardware pack and unpack of an enum (section 7.4). `low` lowers an operand of `xs`, and `wd`
+gives its width.
+
+- `extract off w` of one operand is `(extract a off w)`.
+- `pack w` of the leaves `l_0` to `l_(n-1)` with `q` bits is `(concat l_(n-1) (concat ... l_0))`,
+  inside `(concat (const (w - q) 0) ..)` when `q < w`. One leaf is that leaf. The high bits
+  charge their two nodes first. Then the chain builds in a loop from `l_0`, as the write data of
+  a memory does: each step charges its `concat` node, then lowers its leaf. Before that, the chain
+  so far binds to a temporary of `target` when its effective height reaches 64. Thus the
+  recursion does not follow the leaf count.
+-/
+def lowerPack (pos : Pos) (target : Path) (op : Op) (xs : List α) (wd : α → Nat)
+    (low : α → FM Low) : FM Low := do
+  let c := cpos pos
+  match op, xs with
+  | .extract off w, [a] =>
+    charge pos 1
+    let a ← low a
+    return ⟨.extract c a.expr off w, none, a.height + 1⟩
+  | .pack w, xs =>
+    let q := (xs.map wd).sum
+    if q < w then charge pos 2
+    let mut acc : Option (Low × Nat) := none
+    for x in xs do
+      match acc with
+      | none => acc := some (← low x, wd x)
+      | some (lo, n) =>
+        let lo ← deep pos target n false lo
+        charge pos 1
+        let r ← low x
+        acc := some (⟨.bin c .concat r.expr lo.expr, none, max r.height lo.height + 1⟩, n + wd x)
+    let some (lo, n) := acc | defect s!"a pack into UInt[{w}] has no leaf"
+    if n < w then
+      let lo ← deep pos target n false lo
+      return ⟨.bin c .concat (.const c (w - n) 0) lo.expr, none, lo.height + 1⟩
+    return lo
+  | _, _ => defect "a hardware node has the wrong number of operands"
+
+/-! The operands `xs` of a node of the measure `b`, each with its bound. -/
+def bounded (xs : List Hw) (b : Nat) (h : sizeOf xs < b) : List { x : Hw // sizeOf x < b } :=
+  xs.attach.map fun x => ⟨x.1, by have := List.sizeOf_lt_of_mem x.2; omega⟩
+
+/-!
 The lowering of a hardware value for the statement of `target`. Each case charges its own core
 nodes, then lowers its operands from left to right. `root` marks the value of the statement.
 
@@ -350,13 +393,20 @@ def lower (target : Path) (root : Bool) : Hw → FM Low
           modify fun s => { s with shares := s.shares.insert k path }
           pure path
       pure ⟨← tempRef p path, some (1 + pathUnits path), 1⟩
-    -- TODO(#271): lower `pack` and `extract` by the enum rows of section 7.4.
+    | .pack w, xs =>
+      let ls := bounded xs (sizeOf (Hw.node p t sz (.pack w) xs)) (by simp; omega)
+      lowerPack p target (.pack w) ls (fun x => width x.1.ty) (fun x => lower target false x.1)
+    | .extract off w, xs =>
+      let ls := bounded xs (sizeOf (Hw.node p t sz (.extract off w) xs)) (by simp; omega)
+      lowerPack p target (.extract off w) ls (fun x => width x.1.ty)
+        (fun x => lower target false x.1)
     | _, _ => defect "a hardware node has the wrong number of operands"
     deep p target (width t) root lo
 termination_by h => sizeOf h
 decreasing_by
   all_goals first
     | exact Subtype.property (p := fun x => sizeOf x < b) _
+    | exact Subtype.property (p := fun x => sizeOf x < sizeOf (Hw.node _ _ _ _ _)) _
     | (simp_all only [Hw.node.sizeOf_spec, List.cons.sizeOf_spec]; omega)
 
 /-! The value of one statement with the target `target`. Its temporaries count from 0. -/
