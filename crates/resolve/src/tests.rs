@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 use crate::{Code, Decl, Failed, Kind, Prelude, Resolved, Target, VariantRef, resolve};
-use parse::ast::{Expr, FnParam, Ident, Item, NodeId, Param, ParamMode, Pos, Stmt, TypeExpr};
+use parse::ast::{
+    Expr, FnParam, Ident, Item, NodeId, Param, ParamMode, Pattern, Pos, Stmt, TypeExpr,
+};
 use std::collections::BTreeMap;
 
 fn pos(line: usize, col: usize) -> Pos {
@@ -250,6 +252,11 @@ impl Ids {
             Expr::Match { scrut, arms, .. } => {
                 self.expr(scrut);
                 for arm in arms {
+                    if let Pattern::Variant { binders, .. } = &arm.pat {
+                        for binder in binders.iter().flatten() {
+                            self.ident(binder);
+                        }
+                    }
                     self.expr(&arm.value);
                 }
             }
@@ -1770,4 +1777,138 @@ fn the_parts_of_an_enum_resolve_in_the_item_scope() {
     assert_eq!(errors("enum E: UInt[1] { A(Q) = 0 }"), [(S003, 1, 21)]);
     assert_eq!(errors("enum E: UInt[1] { A = N }"), [(S003, 1, 23)]);
     ok("const N: Nat = 1;\nstruct S { a: Bool }\nenum E: UInt[N] { A(S, E) = N }");
+}
+
+// Patterns (slice 3, section 5.6)
+
+const PAIR: &str = "enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }\n";
+
+/// A function `f` whose `return` is a `match` with the arms `arms`, on line 3 from column 20.
+fn arms(arms: &str) -> String {
+    format!("{PAIR}fn f(x: Op, p: UInt[8]) -> UInt[8] {{\nreturn match (x) {{ {arms} }};\n}}")
+}
+
+#[test]
+fn the_arms_of_a_match_resolve() {
+    ok(&arms(
+        "Op::Add => p, Op::Load(v) => v, Op::Pair(_, w) => p, -1 => 0, true => 0, _ => 0",
+    ));
+    ok(&arms("Op::Pair(_, _) => p, Op::Add() => p, _ => 0"));
+    ok(&arms("Op::Load(v) => v, Op::Pair(_, v) => p, _ => 0"));
+}
+
+#[test]
+fn a_variant_pattern_names_its_variant_and_a_binder_is_a_local() {
+    let r = ok(&arms("Op::Pair(_, w) => w, _ => 0"));
+    let Some(Item::Fn { body, .. }) = r.ast().get(1) else {
+        panic!("expected the function")
+    };
+    let [
+        Stmt::Ret {
+            value: Some(Expr::Match { arms, .. }),
+            ..
+        },
+    ] = body.as_slice()
+    else {
+        panic!("expected a match")
+    };
+    let Pattern::Variant { ty, binders, .. } = &arms[0].pat else {
+        panic!("expected a variant pattern")
+    };
+    assert_eq!(r.variant(ty.id), Some(VariantRef { item: 0, index: 2 }));
+    assert!(binders[0].is_none());
+    let binder = binders[1].as_ref().unwrap();
+    let Some(Target::Decl(declared)) = r.target(binder.id) else {
+        panic!("a binder declares a name")
+    };
+    assert_eq!(r.decl(declared).kind, Kind::Local);
+    let Expr::Name { id, .. } = &arms[0].value else {
+        panic!("expected a name")
+    };
+    assert_eq!(r.target(*id), Some(Target::Decl(declared)));
+}
+
+#[test]
+fn a_binder_shadows_a_parameter_and_its_scope_ends_with_its_arm() {
+    let r = ok(&arms("Op::Load(p) => p, _ => p"));
+    // The `p` of the first value is the binder, and the `p` of the second is the parameter.
+    assert_eq!(decl_at_use(&r, pos(3, 35)), Kind::Local);
+    assert_eq!(decl_at_use(&r, pos(3, 43)), Kind::Param);
+    assert_eq!(errors(&arms("Op::Load(v) => v, _ => v")), [(S003, 3, 43)]);
+    assert_eq!(
+        errors(&format!(
+            "{PAIR}fn f(x: Op) -> UInt[8] {{\nlet a = match (x) {{ Op::Load(v) => v, _ => 0 }};\nreturn v;\n}}"
+        )),
+        [(S003, 4, 8)]
+    );
+}
+
+#[test]
+fn a_nested_match_opens_its_own_scopes() {
+    ok(&arms(
+        "Op::Load(v) => match (x) { Op::Load(v) => v, _ => v }, _ => 0",
+    ));
+}
+
+#[test]
+fn the_path_resolves_before_the_binders() {
+    ok(&arms("Op::Load(Op) => Op, Op::Add => p, _ => 0"));
+}
+
+#[test]
+fn two_binders_with_one_name_are_s002_at_the_second() {
+    let src = arms("Op::Pair(a, a) => p, _ => 0");
+    assert_eq!(errors(&src), [(S002, 3, 32)]);
+    assert_eq!(first_message(&src), "`a` is already declared in this scope");
+}
+
+#[test]
+fn a_pattern_path_has_the_s003_texts_of_a_variant_path() {
+    let src = arms("Op::Mul => p, _ => 0");
+    assert_eq!(errors(&src), [(S003, 3, 24)]);
+    assert_eq!(
+        first_message(&src),
+        "`Op` has no variant `Mul`; use a variant that `Op` declares"
+    );
+    let src = arms("p::Add => 0, _ => 0");
+    assert_eq!(errors(&src), [(S003, 3, 20)]);
+    assert_eq!(
+        first_message(&src),
+        "`p` is not an enum, so `p::Add` names no variant; use the name of an enum"
+    );
+    assert_eq!(
+        errors(&format!(
+            "{PAIR}fn f(x: Op) -> UInt[8] {{\nlet Op = 1;\nreturn match (x) {{ Op::Add => 0 }};\n}}"
+        )),
+        [(S003, 4, 20)]
+    );
+    assert_eq!(errors(&arms("_ => q")), [(S003, 3, 25)]);
+    assert_eq!(
+        errors(&format!(
+            "{PAIR}fn f(x: Op) -> UInt[8] {{\nreturn match (q) {{ _ => 0 }};\n}}"
+        )),
+        [(S003, 3, 15)]
+    );
+}
+
+#[test]
+fn pass_2_comes_before_pass_3_in_a_match() {
+    assert_eq!(
+        errors(&arms("Op::Mul => q, Op::Pair(a, a) => 0")),
+        [(S002, 3, 46)]
+    );
+}
+
+#[test]
+fn a_binder_in_a_signature_does_not_make_a_function_generic() {
+    let generic = |src: &str| {
+        let r = ok(src);
+        r.decl(r.item("g").unwrap()).generic
+    };
+    assert!(!generic(&format!(
+        "{PAIR}fn g(y: UInt[match (Op::Load(8)) {{ Op::Load(v) => v, _ => 1 }}]) -> Bool {{ return true; }}"
+    )));
+    assert!(generic(&format!(
+        "{PAIR}fn g(n: Nat, y: UInt[match (n) {{ _ => n }}]) -> Bool {{ return true; }}"
+    )));
 }

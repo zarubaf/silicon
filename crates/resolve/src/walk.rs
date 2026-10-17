@@ -9,7 +9,8 @@ use crate::{
     Call, Code, Decl, DeclId, Error, Kind, Resolved, Table, Target, VariantNames, VariantRef,
 };
 use parse::ast::{
-    Expr, FnParam, Ident, Item, NodeId, Param, ParamMode, Pos, Stmt, StructField, TypeExpr, Variant,
+    Arm, Expr, FnParam, Ident, Item, NodeId, Param, ParamMode, Pattern, Pos, Stmt, StructField,
+    TypeExpr, Variant,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -120,15 +121,11 @@ impl Walker {
         id
     }
 
-    fn duplicate(&mut self, name: &Ident, first: DeclId) {
-        let at = self.decls[first.0].pos;
+    fn duplicate(&mut self, name: &Ident) {
         self.duplicates.push(Error {
             code: Code::S002,
             pos: name.pos,
-            message: format!(
-                "`{}` is already declared at {}:{}",
-                name.name, at.line, at.col
-            ),
+            message: format!("`{}` is already declared in this scope", name.name),
         });
     }
 
@@ -146,8 +143,8 @@ impl Walker {
             Item::Enum { name, .. } => (name, Kind::Enum, None),
         };
         let id = self.new_decl(name, kind, receiver);
-        if let Err(first) = self.scopes.declare_item(&name.name, id) {
-            self.duplicate(name, first);
+        if !self.scopes.declare_item(&name.name, id) {
+            self.duplicate(name);
         }
         if let Item::Enum { variants, .. } = item {
             let mut names = BTreeMap::new();
@@ -193,8 +190,8 @@ impl Walker {
     /// Declares a name in the innermost scope. A use resolves to it only after this call.
     fn declare(&mut self, name: &Ident, kind: Kind) {
         let id = self.new_decl(name, kind, None);
-        if let Err(first) = self.scopes.declare_local(&name.name, id) {
-            self.duplicate(name, first);
+        if !self.scopes.declare_local(&name.name, id) {
+            self.duplicate(name);
         }
     }
 
@@ -502,12 +499,36 @@ impl Walker {
                 }
             }
             Expr::Path { pos, ty, variant } => self.variant_path(*pos, ty, variant),
-            // TODO(#272): scopes for the binders and the paths of the patterns.
             Expr::Match { scrut, arms, .. } => {
                 self.expr(scrut);
                 for arm in arms {
-                    self.expr(&arm.value);
+                    self.arm(arm);
                 }
+            }
+        }
+    }
+
+    /// An arm. The path of a variant pattern resolves as a variant path in an expression. The
+    /// binders are locals of a new scope that holds only the value of the arm, so a binder
+    /// shadows an outer name, and a second binder with one name is `S002`.
+    fn arm(&mut self, arm: &Arm) {
+        match &arm.pat {
+            Pattern::Variant {
+                pos,
+                ty,
+                variant,
+                binders,
+            } => {
+                self.variant_path(*pos, ty, variant);
+                self.scopes.open();
+                for binder in binders.iter().flatten() {
+                    self.declare(binder, Kind::Local);
+                }
+                self.expr(&arm.value);
+                self.scopes.close();
+            }
+            Pattern::Wild { .. } | Pattern::Int { .. } | Pattern::Bool { .. } => {
+                self.expr(&arm.value);
             }
         }
     }
