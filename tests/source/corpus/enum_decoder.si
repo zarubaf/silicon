@@ -1,6 +1,6 @@
 // An instruction decoder. The instruction is an enum port with payloads. The decoder turns it
 // into control signals with `match`: binders, literal arms, and `_`. A second `match` decodes a
-// plain `UInt` with literal arms into a register.
+// plain `UInt` with literal arms.
 // TOP Decoder()
 enum Instr: UInt[3] {
     Nop = 0,
@@ -23,6 +23,7 @@ module Decoder() {
     imm := match (instr) { Instr::Load(v) => v, Instr::Store(a, _) => a, _ => 0 };
     reg_sel := match (instr) { Instr::Add(a, b) => a ^ b, _ => 0 };
     branch := match (instr) { Instr::Jump(off) => off, _ => 0 };
+    // TODO(#296): the `reg` only gives `just lec` a clock use. Drop it when #296 is fixed.
     reg decoded: UInt[2] = 0;
     decoded := match (raw) { 0 => UInt[2](0), 1 => UInt[2](1), 2 => UInt[2](1), 15 => UInt[2](2), _ => UInt[2](3) };
     raw_class := decoded;

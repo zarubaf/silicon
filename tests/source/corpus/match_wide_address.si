@@ -8,6 +8,7 @@ module Map() {
     output region: UInt[2];
     output step: SInt[4];
     output kind: UInt[2];
+    // TODO(#296): the `reg` only gives `just lec` a clock use. Drop it when #296 is fixed.
     reg picked: UInt[2] = 0;
     picked := match (addr) {
         0 => UInt[2](0),
