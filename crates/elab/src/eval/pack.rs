@@ -3,7 +3,8 @@
 //! into `UInt[W]` (`Op::Pack`), the hardware unpack of bits into a value (`Op::Extract`), and
 //! `reinterpret` between an enum and its bits (F26). Each walk keeps its own stack.
 
-use super::hwops::{Side, leaf_ty, lit_of, share};
+use super::arms::leaf_ty;
+use super::hwops::{Side, lit_of, share};
 use super::{Evaluator, Opnd, Res, fail};
 use crate::Code;
 use crate::agg::Agg;
