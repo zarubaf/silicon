@@ -95,7 +95,7 @@ impl Evaluator<'_> {
     /// hold a hardware value or a hardware aggregate. Then the record checks its depth and
     /// charges its size.
     fn record(&mut self, pos: Pos, ty: TyId, callee: Out, xs: &[Expr]) -> Res<Agg> {
-        let Some((_, fields)) = self.tys.fields(ty) else {
+        let Some(fields) = self.tys.parts(ty).map(|p| p.types) else {
             return fail(
                 Code::S010,
                 pos,
@@ -163,11 +163,12 @@ impl Evaluator<'_> {
         let Seen::Static(Value::Record(t, _)) = cur else {
             return missing();
         };
-        let Some((item, types)) = self.tys.fields(*t) else {
+        let Some(parts) = self.tys.parts(*t) else {
             return missing();
         };
+        let types = parts.types;
         match self
-            .field_number(item, f)
+            .field_number(parts.item(), f)
             .and_then(|k| types.get(k).map(|ft| (k, *ft)))
         {
             Some(found) => Ok(found),

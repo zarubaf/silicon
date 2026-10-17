@@ -321,9 +321,9 @@ impl Evaluator<'_> {
     /// The number of the field `f` of the aggregate `a` and its type, if `a` is a record or a
     /// reference to one with that field.
     pub(super) fn agg_field_at(&self, a: &Agg, f: &Ident) -> Option<(usize, TyId)> {
-        let (item, fts) = self.tys.fields(self.record_ty(a)?)?;
-        let k = self.field_number(item, f)?;
-        Some((k, fts.get(k).copied()?))
+        let parts = self.tys.parts(self.record_ty(a)?)?;
+        let k = self.field_number(parts.item(), f)?;
+        Some((k, parts.types.get(k).copied()?))
     }
 
     /// The field `f` of the aggregate `out`, a result of the field at `pos`. A reference to a
@@ -541,8 +541,8 @@ impl Evaluator<'_> {
     fn field_step(&self, t: TyId, k: usize, pos: Pos) -> Res<Step> {
         let sym = self
             .tys
-            .fields(t)
-            .and_then(|(item, _)| self.syms.field_order.get(item))
+            .parts(t)
+            .and_then(|parts| self.syms.field_order.get(parts.item()))
             .and_then(|syms| syms.get(k))
             .copied();
         match sym {
@@ -565,7 +565,7 @@ impl Evaluator<'_> {
                 Some(u) => (*u, Step::Elem(k)),
                 None => return fail(Code::S010, pos, "the part does not exist".to_owned()),
             },
-            Ty::Struct(_) => match self.tys.fields(t).and_then(|(_, fs)| fs.get(idx)) {
+            Ty::Struct(_) => match self.tys.parts(t).and_then(|p| p.types.get(idx)) {
                 Some(u) => (*u, self.field_step(t, idx, pos)?),
                 None => return fail(Code::S010, pos, "the part does not exist".to_owned()),
             },
@@ -611,7 +611,7 @@ impl Evaluator<'_> {
                         });
                     }
                     Ty::Struct(_) => {
-                        let len = self.tys.fields(t).map_or(0, |(_, fs)| fs.len() as u64);
+                        let len = self.tys.parts(t).map_or(0, |p| p.types.len() as u64);
                         stack.push(Level {
                             base,
                             path,
@@ -705,7 +705,7 @@ impl Evaluator<'_> {
         let count = match self.tys.get(t) {
             Ty::Array(_, n) => n.to_u64().unwrap_or(u64::MAX),
             Ty::Tuple(ts) => ts.len() as u64,
-            Ty::Struct(_) => self.tys.fields(t).map_or(0, |(_, fs)| fs.len() as u64),
+            Ty::Struct(_) => self.tys.parts(t).map_or(0, |p| p.types.len() as u64),
             _ => return fail(Code::S010, pos, "the type has no parts".to_owned()),
         };
         let mut parts = Vec::new();
@@ -766,7 +766,7 @@ impl Evaluator<'_> {
                     ts.get(k).copied()
                 }
                 Ty::Struct(_) => {
-                    let fs = self.tys.fields(t).map_or(&[][..], |(_, fs)| fs);
+                    let fs = self.tys.parts(t).map_or(&[][..], |p| p.types);
                     for &p in fs {
                         total.add_assign(&empty(self, p));
                     }

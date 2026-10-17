@@ -133,8 +133,8 @@ fn part_charge(tys: &Types, t: TyId) -> u128 {
             }
             Ty::Struct(_) => {
                 total = total.saturating_add(times);
-                if let Some((_, fields)) = tys.fields(t) {
-                    work.extend(fields.iter().map(|f| (*f, times)));
+                if let Some(parts) = tys.parts(t) {
+                    work.extend(parts.types.iter().map(|f| (*f, times)));
                 }
             }
             _ => {}
@@ -410,8 +410,8 @@ impl Evaluator<'_> {
             }
             Ty::Struct(_) => {
                 let mut pieces = vec![Piece::Text("(record "), Piece::Type(t), Piece::Text(" (")];
-                if let Some((_, fields)) = self.tys.fields(t) {
-                    pieces.extend(spaced(fields.iter().map(|f| Piece::Part(*f))));
+                if let Some(parts) = self.tys.parts(t) {
+                    pieces.extend(spaced(parts.types.iter().map(|f| Piece::Part(*f))));
                 }
                 pieces.push(Piece::Text("))"));
                 push_all(work, pieces);

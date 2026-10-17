@@ -179,7 +179,7 @@ impl Agg {
         let base = match tys.get(ty) {
             Ty::Array(elem, len) if len.to_u64() == u64::try_from(n).ok() => elem.depth(),
             Ty::Tuple(types) if types.len() == n => 0,
-            Ty::Struct(_) if tys.fields(ty).is_some_and(|(_, f)| f.len() == n) => ty.depth(),
+            Ty::Struct(_) if tys.parts(ty).is_some_and(|p| p.types.len() == n) => ty.depth(),
             _ => return None,
         };
         #[cfg(test)]

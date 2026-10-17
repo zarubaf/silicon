@@ -63,10 +63,10 @@ impl Shapes {
                 })
                 .collect()
         } else {
-            let (item, fields) = env.tys.fields(t)?;
-            let syms = env.order.get(item)?;
+            let parts = env.tys.parts(t)?;
+            let syms = env.order.get(parts.item())?;
             let mut kids = Vec::new();
-            for (k, u) in fields.iter().enumerate() {
+            for (k, u) in parts.types.iter().enumerate() {
                 if full(*u) {
                     let text = env.texts.get(*syms.get(k)?)?;
                     kids.push(Kid {
