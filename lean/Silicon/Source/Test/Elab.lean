@@ -1614,4 +1614,20 @@ def dLow : String := dMod "  diagnostic(\"a\", d);\n" |>.replace "  o := 0;\n" "
       1)
 #guard (Cli.usage.splitOn "|observe FILE --top T|").length == 2
 
+/-!
+An enum module argument (slice 3) needs its exact enum type, and it gives the digest form of the
+emitted name (section 7.1). A binding of an enum port binds each leaf of the enum: `tag`, then
+`payload` when `P` is not 0.
+-/
+def enumOps : String := "enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }\n"
+def enumArg (a : String) : String :=
+  enumOps ++ "module M(comptime e: Op) {\n}\n" ++ s!"module T() \{\n  instance a = M({a});\n}\n"
+#guard order (enumArg "Op()") "T" ==
+  ["M$0h" ++ Names.sha16 "(instantiation root M ((enum (enum root Op ()) 0 (uint 8 0))))", "T"]
+#guard cost (enumArg "1") "T" == "S010 5:3"
+def enumLet (e : String) : String :=
+  e ++ "module M() {\n  input a: Op;\n  output b: Bool;\n  let x = a;\n  b := true;\n}\n"
+#guard names (enumLet enumOps) "M" "M" == ["x$tag", "x$payload"]
+#guard names (enumLet "enum Op: UInt[2] { A = 0 }\n") "M" "M" == ["x$tag"]
+
 end Silicon.Source.Test.Elab

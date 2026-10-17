@@ -79,6 +79,12 @@ The operators follow v0.1 section 3. These rules settle the open points of slice
   charge.
 - A constructor call of a function type is `S010` at the call, before its arguments, because
   a constructor needs a hardware data type.
+- An enum (slice 3) is a nominal type in the table of enums. Its first use runs the checks of
+  section 5.6 in their order, one level deeper, in a structural context (`enumOf`). `T()` of an
+  enum is the static enum value with the tag 0 and the payload 0. `==` and `!=` on a type that
+  holds an enum are `S010` by the enum flag, after the function flag. A field or a selector of an
+  enum is `S010` (`noEnumField`), and so is a call of an enum type with arguments, before they
+  evaluate. Each of these texts is normative (section 6.2).
 - Another callee than the name of a function item or of a prelude function evaluates once,
   before the arguments. Its result waits while they evaluate. A type gives a constructor
   call. A function value checks the number of its arguments first (`S007` at the call). Then
@@ -191,11 +197,11 @@ checks the zero size of the type. These values are `T()`, an empty part of a ref
 expansion of a place update. A `diagnostic` checks the size of its value. Above the limit, the
 result is `S015` at the node of the charge.
 
-The nesting depth counts the active calls, the constants in progress, the struct uses, and the
-top selection. A struct use counts while it binds its parameters and while its specialization
-is in progress. A call and a struct use check it after their arguments, and a constant before
-it starts. Above the limit, the result is `S015` at the call or at the use of the constant or
-the struct.
+The nesting depth counts the active calls, the constants in progress, the struct uses, the enums
+in progress, and the top selection. A struct use counts while it binds its parameters and while
+its specialization is in progress. A call and a struct use check it after their arguments, and a
+constant before it starts. Above the limit, the result is `S015` at the call or at the use of the
+constant, the struct, or the enum.
 
 `Eval` is total by the fuel alone. Each recursive function takes a bound, and the first call
 gets the fuel as the bound. Each entry function charges one unit before it calls deeper with a
@@ -243,13 +249,20 @@ def binary (op : BinOp) (a b : Value) : Except Fault Step :=
   | .land | .lor => typeError s!"`{op.text}` selects; it has no step"
 
 /-!
-`==` and `!=` at `pos` take no operand whose type holds a function type (section 5.1), else
-`S010`. The check reads the function flag of the type, before each join and each charge.
+`==` and `!=` at `pos` take no operand whose type holds a function type or an enum type (section
+5.1), else `S010`. The check reads the function flag of the types, then their enum flag, before
+each join and each charge. The text of an enum names the type of the first operand with the
+flag, and it is normative (section 6.2).
 -/
 def comparable (pos : Pos) (op : BinOp) (a b : Val) : M Unit := do
   let funcs (v : Val) : Bool := (v.ty?.map (·.info.funcs)).getD false
-  if (op == .eq || op == .ne) && (funcs a || funcs b) then
-    fail .S010 pos s!"`{op.text}` takes no function, here {a.text} and {b.text}"
+  let enums (v : Val) : Option Ty := v.ty?.filter (·.info.enums)
+  if op == .eq || op == .ne then
+    if funcs a || funcs b then
+      fail .S010 pos s!"`{op.text}` takes no function, here {a.text} and {b.text}"
+    if let some t := enums a <|> enums b then
+      fail .S010 pos
+        s!"`{t.text}` has no `==`; compare with `match (x) \{ E::V => true, _ => false }`"
 
 /-! The operators at which a static integer takes the finite type of the other operand. -/
 def unifies : BinOp → Bool
@@ -559,7 +572,7 @@ def eqWalk (fs : Ty → Option (Array (String × Ty))) (pos : Pos) :
       let mut acc := acc
       for (u, k) in ts.toList.zipIdx do acc ← pair k (.elem k) u acc
       return acc
-    | .struct .. => do
+    | .struct .. | .enum .. => do
       let some nfs := fs t | fail .S010 pos s!"{t.text} has no specialization"
       let mut acc := acc
       for ((x, u), k) in nfs.toList.zipIdx do acc ← pair k (.user x) u acc
@@ -1237,6 +1250,58 @@ def responseTy (ty : Resolve.TypeExpr → M Ty) (p : Pos) (t : Ty) : M Ty := do
   specOf ty p i x ps fs true [.static (.type t)]
 
 /-!
+The first use at `p` of the enum item `i` (sections 5.4 and 5.6). The item has the name `x`, the
+`enum` keyword at `ep`, the tag type `tag`, and the variants `vs`. `ty` evaluates a type expression,
+and `ev` a tag value. A later use reads the done entry and charges nothing more. A use in progress
+is `S019`. The first use nests one level deeper, in the scope of the enum. It charges the size of
+the enum type, then runs the checks of section 5.6 in their order:
+
+1. The tag type is `UInt[W]` (`S010`).
+2. For each variant: its tag value gets its typed use at `UInt[W]` (`S010`, `S012`). Then each
+   payload type is hardware data (`S010`). Then the metadata sums of the tuple of the payload
+   types charge, after their size-limit check.
+3. The payload width `P`, the largest width of these tuples, is at most 65536 (`S012` at the
+   `enum` keyword). Then the metadata sums of the enum charge (`Meta.enum`).
+
+The caller runs this in a structural context, so the tag values have its guard (section 9.4).
+-/
+def enumOf (ty : Resolve.TypeExpr → M Ty) (ev : Resolve.Expr → M Val) (p : Pos) (i : Nat)
+    (ep : Pos) (x : String) (tag : Resolve.TypeExpr) (vs : List Resolve.Variant) : M Ty := do
+  match (← get).specs.enums[i]? with
+  | some (.done t ..) => return t
+  | some .inProgress => fail .S019 p s!"the enum `{x}` depends on itself"
+  | none => nested p <| inFrame none <|
+      withReader (fun c => { c with item := i, frame := ⟨none, 0⟩ }) do
+    charge p (Ty.enum i x Meta.static).size
+    setEnum i .inProgress
+    let w ← match ← ty tag with
+      | .uint w => pure w
+      | t => fail .S010 tag.pos s!"the tag type of an enum is UInt[W], not {t.text}"
+    let mut width := 0
+    let mut out : Array (Nat × Array Ty) := #[]
+    for v in vs do
+      let q := v.tag.pos
+      let n ← match ← conform q (.uint w) (← static q (← ev v.tag)) with
+        | .uint _ b => pure b.toNat
+        | u => fail .S010 q s!"expected UInt[{w}], but the value is {u.text}"
+      let ts ← v.payload.mapM fun e => do
+        let t ← ty e
+        unless t.info.data do fail .S010 e.pos s!"a payload type is hardware data, not {t.text}"
+        return t
+      let ms := ts.map Ty.info
+      if over (sumBits ms) then fail .S015 p metaLimitText
+      sums p ms (Meta.tuple ms)
+      width := max width (Meta.tuple ms).width
+      out := out.push (n, ts.toArray)
+    if 65536 < width then
+      fail .S012 ep s!"the payload of `{x}` has {width} bits, above 65536; use smaller payloads"
+    let m := Meta.enum w width
+    sums p (Meta.enumParts w width) m
+    let t := Ty.enum i x m
+    setEnum i (.done t w width out)
+    return t
+
+/-!
 The typed use of `v` at `t` at `pos` as a part of a request (`readUse`). A typed use gives a
 static value, a hardware value, or a hardware aggregate.
 -/
@@ -1487,12 +1552,24 @@ mutual
   termination_by (n + 1, 0)
 
   /--
+  A use of the enum item `i` at `p`, in the table of enums (`enumOf`). Its tag type, its tag
+  values, and its payload types are structural contexts (section 9.4).
+  -/
+  def enumUse (n : Nat) (p : Pos) (i : Nat) : M Ty := structural do
+    let some (.enum ep x tag vs) := (← read).items[i]?
+      | fail .S010 p "the enum item is missing"
+    enumOf (fun t => typeExpr n t) (fun e => do return (← need e (← eval n e)).value) p i ep
+      x.name tag vs
+  termination_by (n + 1, 0)
+
+  /--
   A name. A constant and a `type` item evaluate at their first use, in the table of constants.
-  A struct item is a use of its specialization without arguments. A function item gives a
-  function value. Its signature evaluates in the scope of the function, with no locals. It adds
-  no call frame, but it takes a nesting level. A signature can name its own function in a call,
-  and the nesting depth ends that cycle. Each depth check of the signature reports `S015` at the
-  name. The name makes the value, so a binding of it is no copy.
+  A struct item is a use of its specialization without arguments, and an enum item a use of the
+  enum (`enumUse`). A function item gives a function value. Its signature evaluates in the
+  scope of the function, with no locals. It adds no call frame, but it takes a nesting level. A
+  signature can name its own function in a call, and the nesting depth ends that cycle. Each
+  depth check of the signature reports `S015` at the name. The name makes the value, so a
+  binding of it is no copy.
   -/
   def name (n : Nat) (p : Pos) (x : String) : Ref → M Out
     | .local id => do
@@ -1517,8 +1594,7 @@ mutual
       | some (.alias _ _ ty) => do
         return ⟨.static (← constant p x i do return .type (← typeExpr n ty)), true, none⟩
       | some (.struct ..) => do return ⟨.static (.type (← spec n p i [])), true, none⟩
-      -- TODO(#271): give the enum type at its first use once the enum types exist.
-      | some (.enum ..) => fail .S004 p "an enum is not supported yet"
+      | some (.enum ..) => do return ⟨.static (.type (← enumUse n p i)), true, none⟩
       | some (.fn _ _ u ps ret _) => do
         if generic ps ret then fail .S010 p s!"`{x}` is generic; a generic function is not a value"
         let (qs, r) ← nested p <| inFrame none <|
@@ -1597,6 +1673,9 @@ mutual
       M (Option Out) := do
     let .static (.type t) := o.value | fail .S010 p s!"{o.value.text} is not a function"
     if t matches .fn .. then fail .S010 p s!"a constructor needs a hardware data type, not {t.text}"
+    if t matches .enum .. && !xs.isEmpty then
+      fail .S010 p (s!"`{t.text}` is an enum, so `{t.text}(...)` takes no arguments; construct " ++
+        s!"a variant such as `{t.text}::V(...)`, or write `{t.text}()` for the zero")
     match t, xs with
     | t, [] => return some ⟨.static (← zero p t), false, none⟩
     | t@(.struct ..), xs =>

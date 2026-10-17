@@ -180,20 +180,20 @@ def wrap : Ty := .struct 101 "Wrap" #[.type (.array (.array .bool 1) 1)] (Meta.s
 #guard (Ty.array (packet 8) 2).depth == 3
 
 /-! The metadata of the scalar types, of a tuple, and of a struct. -/
-#guard Ty.bool.info == ⟨1, 1, 1, 1, true, false⟩
-#guard (Ty.uint 65).info == ⟨65, 1, 2, 1, true, false⟩
-#guard Ty.unit.info == ⟨0, 0, 1, 1, true, false⟩
-#guard Ty.type.info == ⟨0, 0, 0, 1, false, false⟩
-#guard (Ty.tuple #[.bool, .int]).info == ⟨1, 1, 2, 2, false, false⟩
-#guard (packet 8).info == ⟨9, 2, 3, 2, true, false⟩
-#guard empty.info == ⟨0, 0, 1, 1, true, false⟩
-#guard wrap.info == ⟨0, 0, 1, 4, true, false⟩
+#guard Ty.bool.info == ⟨1, 1, 1, 1, true, false, false⟩
+#guard (Ty.uint 65).info == ⟨65, 1, 2, 1, true, false, false⟩
+#guard Ty.unit.info == ⟨0, 0, 1, 1, true, false, false⟩
+#guard Ty.type.info == ⟨0, 0, 0, 1, false, false, false⟩
+#guard (Ty.tuple #[.bool, .int]).info == ⟨1, 1, 2, 2, false, false, false⟩
+#guard (packet 8).info == ⟨9, 2, 3, 2, true, false, false⟩
+#guard empty.info == ⟨0, 0, 1, 1, true, false, false⟩
+#guard wrap.info == ⟨0, 0, 1, 4, true, false, false⟩
 #guard Meta.readCharge [Meta.finite 8, Meta.bool] == 8
 #guard (packet 8).info.intCharge == 4
 
 /-! `[T; N]` multiplies the numbers of `T` by `N`, and each product charges its two sizes. -/
-#guard (Ty.array (packet 8) 4).info == ⟨36, 8, 13, 3, true, false⟩
-#guard (Ty.array .bool 0).info == ⟨0, 0, 1, 2, true, false⟩
+#guard (Ty.array (packet 8) 4).info == ⟨36, 8, 13, 3, true, false, false⟩
+#guard (Ty.array .bool 0).info == ⟨0, 0, 1, 2, true, false, false⟩
 #guard Meta.arrayCharge (packet 8).info 4 == 3
 #guard (Ty.array (.uint 8) (2 ^ 64)).info.width == 2 ^ 67
 #guard Meta.arrayCharge (Ty.uint 8).info (2 ^ 64) == 6
@@ -206,7 +206,7 @@ def chain : Nat → Ty
   | 0 => .struct 1000 "S0" #[] (Meta.struct [Meta.finite 1] [])
   | k + 1 => let t := chain k; .struct (1001 + k) s!"S{k + 1}" #[] (Meta.struct [t.info, t.info] [])
 
-#guard (chain 200).info == ⟨2 ^ 200, 2 ^ 200, 3 * 2 ^ 200 - 1, 202, true, false⟩
+#guard (chain 200).info == ⟨2 ^ 200, 2 ^ 200, 3 * 2 ^ 200 - 1, 202, true, false, false⟩
 #guard (chain 200).size == 1
 #guard (chain 200).depth == 202
 #guard Meta.readCharge [(chain 199).info, (chain 199).info] == 26
@@ -259,9 +259,9 @@ def chain : Nat → Ty
 #guard (Value.list (.list .int) #[.list .int #[]]).depth == 3
 
 /-! `String` and `List[T]` are not hardware data. The depth of `List[T]` reads only `T`. -/
-#guard Ty.string.info == ⟨0, 0, 0, 1, false, false⟩
-#guard (Ty.list .bool).info == ⟨0, 0, 0, 2, false, false⟩
-#guard (Ty.list (packet 8)).info == ⟨0, 0, 0, 3, false, false⟩
+#guard Ty.string.info == ⟨0, 0, 0, 1, false, false, false⟩
+#guard (Ty.list .bool).info == ⟨0, 0, 0, 2, false, false, false⟩
+#guard (Ty.list (packet 8)).info == ⟨0, 0, 0, 3, false, false, false⟩
 #guard (Ty.list (chain 200)).info.depth == 203
 
 /-! The walk that measures a list charges 1 for its node. A string charges nothing. -/
@@ -301,14 +301,14 @@ def higher : Ty := .fn #[.mk false pred] (.array (.uint 8) 4)
 A function type is not hardware data: its three numbers are 0. Its metadata keeps its depth and
 sets the function flag.
 -/
-#guard incTy.info == ⟨0, 0, 0, 2, false, true⟩
-#guard pred.info == ⟨0, 0, 0, 2, false, true⟩
-#guard higher.info == ⟨0, 0, 0, 3, false, true⟩
+#guard incTy.info == ⟨0, 0, 0, 2, false, true, false⟩
+#guard pred.info == ⟨0, 0, 0, 2, false, true, false⟩
+#guard higher.info == ⟨0, 0, 0, 3, false, true, false⟩
 #guard (Ty.fn #[.mk true (.array .bool 1)] .bool).info.depth == 3
 
 /-! The function flag holds at any depth of a type, and a constructor takes it from its parts. -/
-#guard (Ty.array pred 0).info == ⟨0, 0, 1, 3, false, true⟩
-#guard (Ty.list pred).info == ⟨0, 0, 0, 3, false, true⟩
+#guard (Ty.array pred 0).info == ⟨0, 0, 1, 3, false, true, false⟩
+#guard (Ty.list pred).info == ⟨0, 0, 0, 3, false, true, false⟩
 #guard (Ty.tuple #[.bool, pred]).info.funcs
 #guard (Ty.array (.tuple #[.bool, .list pred]) 2).info.funcs
 #guard !(Ty.tuple #[.bool, .int]).info.funcs
@@ -370,5 +370,41 @@ def response (pre : Bool) : Ty :=
 #guard (response true).size == (response false).size
 #guard (Value.record (response true) #[.uint 8 3, .bool true]).serialize ==
   "(record (struct prelude ReadResponse ((type (uint 8)))) ((uint 8 3) (bool true)))"
+
+/-!
+An enum type (slice 3) is its item, its name, and its metadata. The metadata is the sums of a
+record of `UInt[W]` and `UInt[P]`, without the second part when `P` is 0. The type has the size
+1, sets the enum flag, and compares by its item. A static enum value has the size and the depth
+of a record of its tag and its payload. It serializes as one container node, without the payload
+when `P` is 0. Its measure charges 1 and the squares of the sizes of its two parts.
+-/
+def op : Ty := .enum 7 "Op" (Meta.enum 2 8)
+def flag : Ty := .enum 8 "Flag" (Meta.enum 1 0)
+#guard Meta.enumParts 2 8 == [Meta.finite 2, Meta.finite 8]
+#guard Meta.enumParts 1 0 == [Meta.finite 1]
+#guard op.info == ⟨10, 2, 3, 2, true, false, true⟩
+#guard flag.info == ⟨1, 1, 2, 2, true, false, true⟩
+#guard op.size == 1 && op.depth == 2 && op.zeroDepth == 3
+#guard op.serialize == "(enum root Op ())"
+#guard op.text == "Op"
+#guard op != .enum 7 "Op" (Meta.enum 2 9)
+#guard op.same (.enum 7 "Other" (Meta.enum 2 9)) && !op.same flag
+#guard (Ty.array op 4).info.enums && (Ty.tuple #[.bool, op]).info.enums
+#guard (Ty.list op).info.enums && (Ty.fn #[.mk false op] .bool).info.enums
+#guard (Ty.struct 9 "H" #[] (Meta.struct [op.info] [])).info.enums
+#guard !(packet 8).info.enums && !(Ty.array (.list .bool) 2).info.enums
+#guard (Value.enum op 2 1 8 3).serialize == "(enum (enum root Op ()) 1 (uint 8 3))"
+#guard (Value.enum flag 1 0 0 0).serialize == "(enum (enum root Flag ()) 0)"
+#guard (Value.enum op 2 1 8 3).size == 3 && (Value.enum flag 1 0 0 0).size == 2
+#guard (Value.enum op 2 1 8 3).size == op.info.zeroSize
+#guard (Value.enum op 2 1 8 3).depth == 3 && (Value.enum op 2 1 8 3).depth == op.zeroDepth
+#guard (Value.enum op 2 1 8 3).measureCharge == 3 && (Value.enum flag 1 0 0 0).measureCharge == 2
+#guard (Value.enum op 2 1 8 3).ty? == some op
+#guard (Value.enum op 2 1 8 3).text == "Op" && (Value.enum op 2 1 8 3).literal == "1"
+#guard Value.enum op 2 1 8 3 == Value.enum op 2 1 8 3
+#guard Value.enum op 2 1 8 3 != Value.enum op 2 1 8 4
+#guard (Value.enum op 2 1 8 3).cmp (.enum op 2 2 8 0) == .lt
+#guard (Value.enum op 2 1 8 3).cmp (.enum op 2 1 8 2) == .gt
+#guard (Value.enum op 2 1 8 3).cmp (.enum op 2 1 8 3) == .eq
 
 end Silicon.Source.Test.Value

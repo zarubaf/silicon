@@ -42,14 +42,23 @@ These rules settle the open points of the spec:
 - The prelude struct `ReadResponse` has the token `prelude` in the place of `root`:
   `(struct prelude ReadResponse ((type (uint 8))))`. A user struct with the same name thus has
   another serialization.
+- An enum type holds the index of its item, its name, and its metadata. It serializes as
+  `(enum root <name> ())`, has the size 1, and compares by its item. Its metadata is that of a
+  record of `UInt[W]` and `UInt[P]`, without the second part when `P` is 0.
+- A static enum value holds its type, its tag of `W` bits, and its payload of `P` bits. It is
+  the one static form of an enum value (section 5.1). It serializes as
+  `(enum <type> <tag> (uint P <payload>))`, without the payload when `P` is 0. Its size and its
+  depth are those of a record with the parts `tag` and `payload`. In a message, its tag prints
+  as its integer, because the value does not hold the name of a variant.
 -/
 namespace Silicon.Source
 
 /-!
 The type metadata of section 5.4. It holds the bit width as hardware data, the leaf count, the
 recursive size of the zero value, and the depth. It also tells if the type is hardware data.
-The function flag tells if a function type is a part of the type at any depth. A struct type
-stores it, so no operation walks the field types again. The three numbers of a type that is not
+The function flag tells if a function type is a part of the type at any depth. The enum flag
+tells the same for an enum type. A struct type stores both, so no operation walks the field
+types again. The three numbers of a type that is not
 hardware data have no meaning. Both front ends set them equally, so they charge the same.
 -/
 structure Meta where
@@ -59,6 +68,7 @@ structure Meta where
   depth : Nat
   data : Bool
   funcs : Bool
+  enums : Bool
   deriving Repr, DecidableEq, BEq, Inhabited
 
 mutual
@@ -67,7 +77,8 @@ mutual
   the types of the static containers of slice 2. `Type` and the struct types are forms too. A
   tuple type has at least one element type: `()` is `unit`. A struct type is the number of its
   entry in the table of specializations, its item, its static arguments, and its metadata. Its
-  flag `prelude` marks the prelude struct `ReadResponse` (section 7.1).
+  flag `prelude` marks the prelude struct `ReadResponse` (section 7.1). An enum type is the
+  index of its item, its name, and its metadata.
   `String` and `List[T]` are static types only. A function type is its parameter types with
   their `mut` marks, and its result type.
   -/
@@ -84,6 +95,7 @@ mutual
     | string
     | list (elem : Ty)
     | fn (params : Array TyParam) (ret : Ty)
+    | enum (item : Nat) (name : String) (info : Meta)
 
   /-- A parameter type of a function type, with its `mut` mark. -/
   inductive TyParam where
@@ -93,7 +105,8 @@ mutual
   A static value of slice 1, or a static container of slice 2. An array keeps its element type,
   and a record keeps its struct type. A tuple has at least one element: `()` is `unit`. A list
   keeps its element type, as an array does. A function value is a function item, by its index
-  and its name, with its signature.
+  and its name, with its signature. An enum value holds its type, its tag of `w` bits, and its
+  payload of `p` bits.
   -/
   inductive Value where
     | int (value : Int)
@@ -108,6 +121,8 @@ mutual
     | record (ty : Ty) (fields : Array Value)
     | list (elem : Ty) (elems : Array Value)
     | function (item : Nat) (name : String) (params : Array TyParam) (ret : Ty)
+    | enum (ty : Ty) (w : Nat) (tag : Core.Semantics.Value w) (p : Nat)
+        (payload : Core.Semantics.Value p)
 end
 
 deriving instance Repr for Ty, TyParam, Value
@@ -127,6 +142,7 @@ mutual
     | .struct a i ⟨xs⟩ m e, .struct b j ⟨ys⟩ n f =>
       a == b && i == j && Value.beqs xs ys && decide (m = n) && e == f
     | .fn ⟨ps⟩ r, .fn ⟨qs⟩ s => TyParam.beqs ps qs && Ty.beq r s
+    | .enum a i m, .enum b j n => a == b && i == j && decide (m = n)
     | _, _ => false
 
   def Ty.beqs : List Ty → List Ty → Bool
@@ -152,6 +168,8 @@ mutual
       Ty.beq s t && Value.beqs xs ys
     | .function a i ⟨ps⟩ r, .function b j ⟨qs⟩ s =>
       a == b && i == j && TyParam.beqs ps qs && Ty.beq r s
+    | .enum s w x p y, .enum t v x' q y' =>
+      Ty.beq s t && w == v && x.toNat == x'.toNat && p == q && y.toNat == y'.toNat
     | _, _ => false
 
   def Value.beqs : List Value → List Value → Bool
@@ -172,17 +190,19 @@ mutual
       cases b <;> simp [Ty.beq] at h ⊢
       exact Ty.eq_of_beq _ _ h
     | .tuple ⟨xs⟩, b, h => by
-      rcases b with _ | _ | _ | _ | _ | _ | _ | _ | ⟨⟨ys⟩⟩ | ⟨_, _, ⟨ys⟩, _, _⟩ | _ | _ | _ <;>
+      rcases b with _ | _ | _ | _ | _ | _ | _ | _ | ⟨⟨ys⟩⟩ | ⟨_, _, ⟨ys⟩, _, _⟩ | _ | _ | _ | _ <;>
         simp [Ty.beq] at h ⊢
       rw [Ty.eqs_of_beqs _ _ h]
     | .struct _ _ ⟨xs⟩ _ _, b, h => by
-      rcases b with _ | _ | _ | _ | _ | _ | _ | _ | ⟨⟨ys⟩⟩ | ⟨_, _, ⟨ys⟩, _, _⟩ | _ | _ | _ <;>
+      rcases b with _ | _ | _ | _ | _ | _ | _ | _ | ⟨⟨ys⟩⟩ | ⟨_, _, ⟨ys⟩, _, _⟩ | _ | _ | _ | _ <;>
         simp [Ty.beq] at h ⊢
       exact ⟨h.1.1.1.1, h.1.1.1.2, by rw [Value.eqs_of_beqs _ _ h.1.1.2], h.1.2, h.2⟩
     | .fn ⟨ps⟩ _, b, h => by
-      rcases b with _ | _ | _ | _ | _ | _ | _ | _ | _ | _ | _ | _ | ⟨⟨qs⟩, _⟩ <;>
+      rcases b with _ | _ | _ | _ | _ | _ | _ | _ | _ | _ | _ | _ | ⟨⟨qs⟩, _⟩ | _ <;>
         simp [Ty.beq] at h ⊢
       exact ⟨by rw [TyParam.eqs_of_beqs _ _ h.1], Ty.eq_of_beq _ _ h.2⟩
+    | .enum .., b, h => by
+      cases b <;> simp_all [Ty.beq]
 
   theorem Ty.eqs_of_beqs : ∀ xs ys : List Ty, Ty.beqs xs ys = true → xs = ys
     | [], ys, h => by cases ys <;> simp_all [Ty.beqs]
@@ -207,17 +227,24 @@ mutual
       obtain ⟨rfl, h⟩ := h
       exact ⟨rfl, heq_of_eq (BitVec.eq_of_toNat_eq h)⟩
     | .array _ ⟨xs⟩, b, h | .record _ ⟨xs⟩, b, h | .list _ ⟨xs⟩, b, h => by
-      rcases b with _ | _ | _ | _ | _ | _ | _ | ⟨_, ⟨ys⟩⟩ | ⟨⟨ys⟩⟩ | ⟨_, ⟨ys⟩⟩ | ⟨_, ⟨ys⟩⟩ | _ <;>
+      rcases b with _ | _ | _ | _ | _ | _ | _ | ⟨_, ⟨ys⟩⟩ | ⟨⟨ys⟩⟩ | ⟨_, ⟨ys⟩⟩ | ⟨_, ⟨ys⟩⟩ | _
+        | _ <;>
         simp [Value.beq] at h ⊢
       exact ⟨Ty.eq_of_beq _ _ h.1, by rw [Value.eqs_of_beqs _ _ h.2]⟩
     | .tuple ⟨xs⟩, b, h => by
-      rcases b with _ | _ | _ | _ | _ | _ | _ | ⟨_, ⟨ys⟩⟩ | ⟨⟨ys⟩⟩ | ⟨_, ⟨ys⟩⟩ | ⟨_, ⟨ys⟩⟩ | _ <;>
+      rcases b with _ | _ | _ | _ | _ | _ | _ | ⟨_, ⟨ys⟩⟩ | ⟨⟨ys⟩⟩ | ⟨_, ⟨ys⟩⟩ | ⟨_, ⟨ys⟩⟩ | _
+        | _ <;>
         simp [Value.beq] at h ⊢
       rw [Value.eqs_of_beqs _ _ h]
     | .function _ _ ⟨ps⟩ _, b, h => by
-      rcases b with _ | _ | _ | _ | _ | _ | _ | _ | _ | _ | _ | ⟨_, _, ⟨qs⟩, _⟩ <;>
+      rcases b with _ | _ | _ | _ | _ | _ | _ | _ | _ | _ | _ | ⟨_, _, ⟨qs⟩, _⟩ | _ <;>
         simp [Value.beq] at h ⊢
       exact ⟨h.1.1.1, h.1.1.2, by rw [TyParam.eqs_of_beqs _ _ h.1.2], Ty.eq_of_beq _ _ h.2⟩
+    | .enum _ _ x _ y, b, h => by
+      cases b <;> simp [Value.beq] at h ⊢
+      obtain ⟨⟨⟨⟨h1, rfl⟩, h2⟩, rfl⟩, h3⟩ := h
+      exact ⟨Ty.eq_of_beq _ _ h1, rfl, heq_of_eq (BitVec.eq_of_toNat_eq h2), rfl,
+        heq_of_eq (BitVec.eq_of_toNat_eq h3)⟩
 
   theorem Value.eqs_of_beqs : ∀ xs ys : List Value, Value.beqs xs ys = true → xs = ys
     | [], ys, h => by cases ys <;> simp_all [Value.beqs]
@@ -233,6 +260,7 @@ mutual
     | .tuple ⟨xs⟩ => by simp [Ty.beq, Ty.beqs_self xs]
     | .struct _ _ ⟨xs⟩ _ _ => by simp [Ty.beq, Value.beqs_self xs]
     | .fn ⟨ps⟩ r => by simp [Ty.beq, TyParam.beqs_self ps, Ty.beq_self r]
+    | .enum .. => by simp [Ty.beq]
 
   theorem Ty.beqs_self : ∀ xs : List Ty, Ty.beqs xs xs = true
     | [] => by simp [Ty.beqs]
@@ -249,6 +277,7 @@ mutual
       simp [Value.beq, Ty.beq_self t, Value.beqs_self xs]
     | .tuple ⟨xs⟩ => by simp [Value.beq, Value.beqs_self xs]
     | .function _ _ ⟨ps⟩ r => by simp [Value.beq, TyParam.beqs_self ps, Ty.beq_self r]
+    | .enum t .. => by simp [Value.beq, Ty.beq_self t]
 
   theorem Value.beqs_self : ∀ xs : List Value, Value.beqs xs xs = true
     | [] => by simp [Value.beqs]
@@ -267,18 +296,19 @@ instance : DecidableEq Value := fun a b =>
 def Ty.form : Ty → Nat
   | .bool => 0 | .nat => 1 | .int => 2 | .uint _ => 3 | .sint _ => 4 | .unit => 5 | .type => 6
   | .array .. => 7 | .tuple _ => 8 | .struct .. => 9 | .string => 10 | .list _ => 11
-  | .fn .. => 12
+  | .fn .. => 12 | .enum .. => 13
 
 def Value.form : Value → Nat
   | .int _ => 0 | .bool _ => 1 | .str _ => 2 | .uint .. => 3 | .sint .. => 4 | .type _ => 5
   | .unit => 6 | .array .. => 7 | .tuple _ => 8 | .record .. => 9 | .list _ _ => 10
-  | .function .. => 11
+  | .function .. => 11 | .enum .. => 12
 
 /-!
 An order of types and values by their numbers (section 5.6). A struct type compares by the
 number of its specialization, and a function value by the number of its item. Each number fixes
 the rest of its term, so the order compares no name. Each other part compares in full, so the
-work is at most the smaller size, plus the element types of arrays and lists.
+work is at most the smaller size, plus the element types of arrays and lists. An enum type
+compares by its item, and an enum value by its type, its tag, and its payload.
 -/
 mutual
   def Ty.cmp : Ty → Ty → Ordering
@@ -288,6 +318,7 @@ mutual
     | .tuple ⟨xs⟩, .tuple ⟨ys⟩ => Ty.cmps xs ys
     | .struct a .., .struct b .. => compare a b
     | .fn ⟨ps⟩ r, .fn ⟨qs⟩ s => (TyParam.cmps ps qs).then (Ty.cmp r s)
+    | .enum a .., .enum b .. => compare a b
     | s, t => compare s.form t.form
 
   def Ty.cmps : List Ty → List Ty → Ordering
@@ -313,6 +344,8 @@ mutual
     | .list s ⟨xs⟩, .list t ⟨ys⟩ => (Ty.cmp s t).then (Value.cmps xs ys)
     | .tuple ⟨xs⟩, .tuple ⟨ys⟩ => Value.cmps xs ys
     | .function a .., .function b .. => compare a b
+    | .enum s _ x _ y, .enum t _ x' _ y' =>
+      (Ty.cmp s t).then ((compare x.toNat x'.toNat).then (compare y.toNat y'.toNat))
     | x, y => compare x.form y.form
 
   def Value.cmps : List Value → List Value → Ordering
@@ -344,19 +377,19 @@ The metadata of the scalar types. `Bool`, `UInt[W]`, `SInt[W]`, and `Unit` are h
 `Unit` has no bit and no leaf, and its zero `()` has the size 1. `Nat`, `Int`, `Type`, and
 `String` are not hardware data, and their three numbers are 0. `List[T]` is not hardware data
 either. Its depth is 1 more than the depth of `T`, so its metadata reads only that depth. No
-scalar type holds a function type.
+scalar type holds a function type or an enum type.
 -/
-def Meta.bool : Meta := ⟨1, 1, 1, 1, true, false⟩
-def Meta.finite (width : Nat) : Meta := ⟨width, 1, widthSize width, 1, true, false⟩
-def Meta.unit : Meta := ⟨0, 0, 1, 1, true, false⟩
-def Meta.static : Meta := ⟨0, 0, 0, 1, false, false⟩
+def Meta.bool : Meta := ⟨1, 1, 1, 1, true, false, false⟩
+def Meta.finite (width : Nat) : Meta := ⟨width, 1, widthSize width, 1, true, false, false⟩
+def Meta.unit : Meta := ⟨0, 0, 1, 1, true, false, false⟩
+def Meta.static : Meta := ⟨0, 0, 0, 1, false, false, false⟩
 
 /-!
 The metadata of `[T; N]` from the metadata `m` of `T`: the product rule of section 5.4. The zero
 value is a node with `N` zeros of `T`.
 -/
 def Meta.array (m : Meta) (n : Nat) : Meta :=
-  ⟨n * m.width, n * m.leaves, 1 + n * m.zeroSize, 1 + m.depth, m.data, m.funcs⟩
+  ⟨n * m.width, n * m.leaves, 1 + n * m.zeroSize, 1 + m.depth, m.data, m.funcs, m.enums⟩
 
 /-!
 The charge of `Meta.array m n`, at the node of `[T; N]` before the type exists. Each of the three
@@ -371,7 +404,8 @@ part. The depth is 1 more than the deepest part and each extra depth in `extra`.
 -/
 def Meta.sum (parts : List Meta) (extra : List Nat) : Meta :=
   ⟨(parts.map (·.width)).sum, (parts.map (·.leaves)).sum, 1 + (parts.map (·.zeroSize)).sum,
-   1 + ((parts.map (·.depth)) ++ extra).foldl max 0, parts.all (·.data), parts.any (·.funcs)⟩
+   1 + ((parts.map (·.depth)) ++ extra).foldl max 0, parts.all (·.data), parts.any (·.funcs),
+   parts.any (·.enums)⟩
 
 /-! The metadata of a tuple type from the metadata of its element types. -/
 def Meta.tuple (elems : List Meta) : Meta := Meta.sum elems []
@@ -387,10 +421,22 @@ def Meta.struct (fields : List Meta) (argDepths : List Nat) : Meta := Meta.sum f
 /-!
 The metadata of a function type from the metadata of its parameter types and its result type.
 It is not hardware data, so its three numbers are 0. Its depth is 1 more than the deepest part,
-and a `mut` mark adds no depth. It sets the function flag.
+and a `mut` mark adds no depth. It sets the function flag, and it takes the enum flag of its
+parts.
 -/
 def Meta.fn (params : List Meta) (ret : Meta) : Meta :=
-  ⟨0, 0, 0, 1 + ((params.map (·.depth)).foldl max ret.depth), false, true⟩
+  ⟨0, 0, 0, 1 + ((params.map (·.depth)).foldl max ret.depth), false, true,
+   params.any (·.enums) || ret.enums⟩
+
+/-!
+The metadata of an enum with the tag width `w` and the payload width `p` (section 5.4). It is
+the sums of a record of `UInt[w]` and `UInt[p]`, without the second part when `p` is 0.
+`enumParts` gives the parts. An enum is hardware data, and it sets the enum flag.
+-/
+def Meta.enumParts (w p : Nat) : List Meta :=
+  Meta.finite w :: if p = 0 then [] else [Meta.finite p]
+
+def Meta.enum (w p : Nat) : Meta := { Meta.sum (Meta.enumParts w p) [] with enums := true }
 
 /-! The sizes of the four integers of `m`. A type constructor that makes them charges this. -/
 def Meta.intCharge (m : Meta) : Nat :=
@@ -412,11 +458,13 @@ mutual
     | .uint w | .sint w => Meta.finite w
     | .unit => Meta.unit
     | .nat | .int | .type | .string => Meta.static
-    | .list t => { Meta.static with depth := 1 + t.info.depth, funcs := t.info.funcs }
+    | .list t =>
+      { Meta.static with depth := 1 + t.info.depth, funcs := t.info.funcs, enums := t.info.enums }
     | .array t n => t.info.array n
     | .tuple ⟨ts⟩ => Meta.tuple (Ty.infoAll ts)
     | .struct _ _ _ m _ => m
     | .fn ⟨ps⟩ r => Meta.fn (TyParam.infoAll ps) r.info
+    | .enum _ _ m => m
 
   def Ty.infoAll : List Ty → List Meta
     | [] => []
@@ -444,6 +492,7 @@ mutual
     | .string => "string"
     | .list t => Print.node "list" [t.serialize]
     | .fn ⟨ps⟩ r => Print.node "fn" [Print.list (TyParam.serializeAll ps), r.serialize]
+    | .enum _ x _ => Print.node "enum" ["root", x, Print.list []]
 
   def Ty.serializeAll : List Ty → List String
     | [] => []
@@ -467,6 +516,9 @@ mutual
     | .record t ⟨xs⟩ => Print.node "record" [t.serialize, Print.list (Value.serializeAll xs)]
     | .list t ⟨xs⟩ => Print.node "list" [t.serialize, Print.list (Value.serializeAll xs)]
     | .function _ i _ _ => Print.node "function" ["root", i]
+    | .enum t _ x p y =>
+      Print.node "enum" ([t.serialize, toString x.toNat] ++
+        if p = 0 then [] else [Print.node "uint" [toString p, toString y.toNat]])
 
   def Value.serializeAll : List Value → List String
     | [] => []
@@ -476,7 +528,8 @@ end
 /-!
 The recursive size of section 5.4. A type has the number of nodes of its term. Each integer and
 each static argument in it adds its size. Each `mut` mark of a function type is one more node. A
-named function has the size 1.
+named function has the size 1. An enum type has the size 1, and an enum value the size of a
+record of its tag and its payload. An empty payload adds nothing.
 -/
 mutual
   def Ty.size : Ty → Nat
@@ -487,6 +540,7 @@ mutual
     | .tuple ⟨ts⟩ => 1 + Ty.sizeAll ts
     | .struct _ _ ⟨xs⟩ _ _ => 1 + Value.sizeAll xs
     | .fn ⟨ps⟩ r => 1 + TyParam.sizeAll ps + r.size
+    | .enum .. => 1
 
   def Ty.sizeAll : List Ty → Nat
     | [] => 0
@@ -503,6 +557,7 @@ mutual
     | .uint w _ | .sint w _ => widthSize w
     | .type t => t.size
     | .array _ ⟨xs⟩ | .tuple ⟨xs⟩ | .record _ ⟨xs⟩ | .list _ ⟨xs⟩ => 1 + Value.sizeAll xs
+    | .enum _ w _ p _ => 1 + widthSize w + if p = 0 then 0 else widthSize p
 
   def Value.sizeAll : List Value → Nat
     | [] => 0
@@ -511,14 +566,14 @@ end
 
 /-!
 The depth of section 5.5: 1 for a scalar type, and 1 more than its deepest part. A struct type
-has its stored depth, which counts its field types and its static arguments. A `mut` mark adds no
-depth.
+has its stored depth, which counts its field types and its static arguments. An enum type has the
+stored depth of its metadata. A `mut` mark adds no depth.
 -/
 mutual
   def Ty.depth : Ty → Nat
     | .array t _ | .list t => 1 + t.depth
     | .tuple ⟨ts⟩ => 1 + Ty.depthAll ts
-    | .struct _ _ _ m _ => m.depth
+    | .struct _ _ _ m _ | .enum _ _ m => m.depth
     | .fn ⟨ps⟩ r => 1 + max (TyParam.depthAll ps) r.depth
     | _ => 1
 
@@ -531,12 +586,16 @@ mutual
     | .mk _ t :: ps => max t.depth (TyParam.depthAll ps)
 end
 
-/-! The depth of section 5.5: 1 for a scalar value, and 1 more than its deepest part. -/
+/-!
+The depth of section 5.5: 1 for a scalar value, and 1 more than its deepest part. An enum value
+counts its type, as a record does, and its two parts have the depth 1.
+-/
 mutual
   def Value.depth : Value → Nat
     | .type t => t.depth
     | .array t ⟨xs⟩ | .record t ⟨xs⟩ | .list t ⟨xs⟩ => 1 + max t.depth (Value.depthAll xs)
     | .tuple ⟨xs⟩ => 1 + Value.depthAll xs
+    | .enum t .. => 1 + max t.depth 1
     | _ => 1
 
   def Value.depthAll : List Value → Nat
@@ -547,7 +606,8 @@ end
 /-!
 The depth of the zero value of a hardware data type, from the type alone. An array of length 0
 has the depth of its type, and another array 1 more than the zero of its element. A record is
-1 deeper than its struct type, because the depth of a record counts its type. Thus this walk
+1 deeper than its struct type, because the depth of a record counts its type. An enum is
+1 deeper than its type in the same way. Thus this walk
 never enters the field types of a struct. It gives the depth of section 5.5 of `T()`.
 -/
 mutual
@@ -555,7 +615,7 @@ mutual
     | .array t 0 => 1 + t.depth
     | .array t _ => 1 + t.zeroDepth
     | .tuple ⟨ts⟩ => 1 + Ty.zeroDepthAll ts
-    | t@(.struct ..) => 1 + t.depth
+    | t@(.struct ..) | t@(.enum ..) => 1 + t.depth
     | _ => 1
 
   def Ty.zeroDepthAll : List Ty → Nat
@@ -566,7 +626,8 @@ end
 /-!
 The text of a type in a message, and the source text of a static argument in it. A struct type
 prints its item, with its arguments in brackets when it has any: `P[8]`. A function type prints
-in its source form, and a function value prints its item.
+in its source form, and a function value prints its item. An enum type prints its name, and an
+enum value its tag, because the value does not hold the name of its variant.
 -/
 mutual
   def Ty.text : Ty → String
@@ -582,6 +643,7 @@ mutual
     | .string => "String"
     | .list t => s!"List[{t.text}]"
     | .fn ⟨ps⟩ r => Print.fnText (TyParam.textAll ps) r.text
+    | .enum _ x _ => x
 
   def Ty.textAll : List Ty → List String
     | [] => []
@@ -606,6 +668,7 @@ mutual
     | .list t ⟨[]⟩ => s!"list({t.text})"
     | .list _ ⟨xs⟩ => "[" ++ ", ".intercalate (Value.literalAll xs) ++ "]"
     | .function _ i _ _ => i
+    | .enum _ _ x _ _ => toString x.toNat
 
   def Value.literalAll : List Value → List String
     | [] => []
@@ -627,6 +690,7 @@ mutual
     | .str _ => some .string
     | .list t _ => some (.list t)
     | .function _ _ ps r => some (.fn ps r)
+    | .enum t .. => some t
 
   def Value.tyAll? : List Value → Option (List Ty)
     | [] => some []
@@ -649,13 +713,16 @@ The charge of the walk that measures the serialization of a value, before the ch
 bytes (section 5.4). Each array, tuple, record, and list charges 1. Each integer and each
 finite value charge the square of their size, because a naive decimal conversion takes this
 time. A scalar thus keeps the charge of slice 1. A type charges nothing: an integer in a type
-gets no charge for its decimal form.
+gets no charge for its decimal form. An enum value is one container node, so it charges 1 and
+the squares of the sizes of its tag and its payload.
 -/
 mutual
   def Value.measureCharge : Value → Nat
     | v@(.int _) | v@(.uint ..) | v@(.sint ..) => v.size * v.size
     | .array _ ⟨xs⟩ | .tuple ⟨xs⟩ | .record _ ⟨xs⟩ | .list _ ⟨xs⟩ =>
       1 + Value.measureChargeAll xs
+    | .enum _ w _ p _ =>
+      1 + widthSize w * widthSize w + if p = 0 then 0 else widthSize p * widthSize p
     | _ => 0
 
   def Value.measureChargeAll : List Value → Nat

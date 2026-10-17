@@ -259,10 +259,24 @@ def selectAt (pos q : Pos) (i : Nat) : Val → M (Nat × Value)
   | v => fail .S010 pos s!"the selector `.{i}` needs a tuple, not {v.text}"
 
 /-!
-The selector `.i` refers to an element. A selector of a reference to a tuple gives a reference
-to the element `<i>e`. The result is the number of the element and the element.
+A field `.f` or a selector `.N` of an enum value at `pos` is `S010`. Section 6.2 gives the text.
+An enum has the leaves `tag` and `payload`, but no field (section 5.1). `f` is the field name or
+the number of the selector. The text names `data_bits` of the enum, the width of its metadata.
+Another value passes.
 -/
-def selectKey (pos q : Pos) (i : Nat) : Val → M (Nat × Val)
+def noEnumField (pos : Pos) (f : String) (v : Val) : M Unit := do
+  if let some t@(.enum ..) := v.ty? then
+    fail .S010 pos (s!"`{t.text}` is an enum and has no field `{f}`; read a payload with " ++
+      s!"`match`, or the bits with `reinterpret(UInt[{t.info.width}], e)`")
+
+/-!
+The selector `.i` refers to an element. A selector of a reference to a tuple gives a reference
+to the element `<i>e`. The result is the number of the element and the element. An enum has no
+element (`noEnumField`).
+-/
+def selectKey (pos q : Pos) (i : Nat) (v : Val) : M (Nat × Val) := do
+  noEnumField pos (toString i) v
+  match v with
   | v@(.agg (.tuple _ xs)) =>
     match xs[i]? with
     | some x => do return (i, ← normalize pos x)
@@ -558,9 +572,11 @@ def fieldAt (pos : Pos) (f : Ident) : Val → M (Nat × Value × Ty)
 /-!
 The field `f` of a record or of a hardware aggregate at `pos`. A field of a reference to a record
 gives a reference to the part with the leaf field `f`. The result is the number of the field,
-its value, and its type.
+its value, and its type. An enum has no field (`noEnumField`).
 -/
-def fieldKey (pos : Pos) (f : Ident) : Val → M (Nat × Val × Ty)
+def fieldKey (pos : Pos) (f : Ident) (v : Val) : M (Nat × Val × Ty) := do
+  noEnumField pos f.name v
+  match v with
   | v@(.agg (.record n xs)) => do
     let (k, ft) ← fieldOf pos f n.ty v.text
     match xs[k]? with
@@ -767,8 +783,8 @@ abbrev Binds := StateT (Array Let) (Except Fault)
 
 /-!
 Take the part of the type `t` of the base `b`. Each of its hardware leaves gets a core `let`
-at `path` with its leaf fields (section 7.3), in packing order. `fs` gives the named fields of
-a struct type. The depth `d` of `t` bounds the walk.
+at `path` with its leaf fields (section 7.3), in packing order. `fs` gives the named parts of
+a struct type and of an enum type. The depth `d` of `t` bounds the walk.
 -/
 def leafLets (fs : Ty → Option (Array (String × Ty))) (pos : Pos) :
     Nat → Base → Path → Ty → Binds Unit
@@ -783,7 +799,7 @@ def leafLets (fs : Ty → Option (Array (String × Ty))) (pos : Pos) :
       for k in [0:n] do leafLets fs pos d (sub k (.elem k)) (path.push (.elem k)) e
     | .tuple ts => do
       for (u, k) in ts.zipIdx do leafLets fs pos d (sub k (.elem k)) (path.push (.elem k)) u
-    | .struct .. => do
+    | .struct .. | .enum .. => do
       let some nfs := fs t | throw (.S010, s!"{t.text} has no specialization")
       for ((x, u), k) in nfs.zipIdx do
         leafLets fs pos d (sub k (.user x)) (path.push (.user x)) u
