@@ -1260,22 +1260,7 @@ fn the_arm_kinds_follow_the_coverage_rules() {
 /// A mutant of a variant pattern: the binders and the tags.
 #[test]
 fn the_pattern_kinds_follow_the_pass_order() {
-    let enum_def = EnumDef {
-        name: "E0".to_owned(),
-        tag_width: 2,
-        variants: vec![
-            Variant {
-                name: "V0".to_owned(),
-                tag: BigUint::from(1u8),
-                payload: vec![Scalar::UInt(4), Scalar::Bool],
-            },
-            Variant {
-                name: "V1".to_owned(),
-                tag: BigUint::from(2u8),
-                payload: vec![],
-            },
-        ],
-    };
+    let enum_def = e0();
     let variant = |v: &str, binders: &[Option<&str>]| {
         Pattern::Variant(
             "E0".to_owned(),
@@ -1340,4 +1325,161 @@ fn the_fixed_set_of_mutants_reaches_s021_and_the_match_codes() {
         );
     }
     assert_eq!(by_kind.len(), KINDS.len() - 15, "{by_kind:?}");
+}
+
+/// `enum E0: UInt[2] { V0(UInt[4], Bool) = 1, V1 = 2 }`.
+fn e0() -> EnumDef {
+    EnumDef {
+        name: "E0".to_owned(),
+        tag_width: 2,
+        variants: vec![
+            Variant {
+                name: "V0".to_owned(),
+                tag: BigUint::from(1u8),
+                payload: vec![Scalar::UInt(4), Scalar::Bool],
+            },
+            Variant {
+                name: "V1".to_owned(),
+                tag: BigUint::from(2u8),
+                payload: vec![],
+            },
+        ],
+    }
+}
+
+/// `E0::V0(1, true)`, static.
+fn static_v0() -> SExpr {
+    SExpr::Ctor(
+        "E0".to_owned(),
+        "V0".to_owned(),
+        vec![dec(1), SExpr::Bool(true)],
+    )
+}
+
+/// A constructor with arguments, static and hardware, and a pattern with
+/// binders, pin the exact `S007` of each site.
+#[test]
+fn the_argument_kinds_of_constructors_and_patterns_are_s007() {
+    let pattern = Pattern::Variant(
+        "E0".to_owned(),
+        "V0".to_owned(),
+        vec![Some("B0".to_owned()), Some("B1".to_owned())],
+    );
+    let scrutinee = SExpr::Ctor("E0".to_owned(), "V1".to_owned(), vec![]);
+    let m = SExpr::Match(Match {
+        scrutinee: Box::new(scrutinee),
+        arms: vec![
+            (pattern, dec(1)),
+            (
+                Pattern::Variant("E0".to_owned(), "V1".to_owned(), vec![]),
+                dec(2),
+            ),
+            (Pattern::Wild, dec(3)),
+        ],
+    });
+    let hardware = HExpr::Ctor(
+        "E0".to_owned(),
+        "V0".to_owned(),
+        vec![HExpr::Static(dec(1)), HExpr::Static(SExpr::Bool(true))],
+    );
+    let top = module(
+        "M0",
+        vec![
+            Stmt::Output("eo".to_owned(), Ty::Enum("E0".to_owned())),
+            Stmt::StaticLet("s0".to_owned(), STy::Int, m),
+            Stmt::Diagnostic("d0".to_owned(), static_v0()),
+            connect("eo", hardware),
+        ],
+    );
+    let p = of(vec![Item::Enum(e0()), top]);
+    // The binder `B1` of the first pattern, the static constructor, and
+    // the hardware constructor.
+    assert_eq!(expects(&p, Kind::DropArg), [Some("S007"); 3]);
+    // The two patterns, the constructor of the scrutinee without arguments,
+    // and the two constructors with arguments.
+    assert_eq!(expects(&p, Kind::AddArg), [Some("S007"); 5]);
+}
+
+/// An effect in an arm of a hardware `match` over a port is `S016`. One
+/// over a folding scrutinee, such as `false && i0`, predicts nothing.
+#[test]
+fn the_arms_of_a_hardware_match_follow_the_scrutinee() {
+    let arms = |scrutinee: HExpr, pattern: Pattern| {
+        HExpr::Match(Match {
+            scrutinee: Box::new(scrutinee),
+            arms: vec![
+                (
+                    pattern,
+                    HExpr::Binary(
+                        HBin::Addw,
+                        Box::new(name("i0")),
+                        Box::new(HExpr::Static(dec(1))),
+                    ),
+                ),
+                (Pattern::Wild, name("i0")),
+            ],
+        })
+    };
+    let body = |e: HExpr| of(vec![module("M0", ports_then(vec![connect("o0", e)]))]);
+    let port = body(arms(name("i0"), literal(0)));
+    assert_eq!(expects(&port, Kind::ArmEffect), [Some("S016")]);
+    // `false && i0` is a static `Bool`, so it selects one arm.
+    let folded = HExpr::Binary(
+        HBin::Land,
+        Box::new(HExpr::Static(SExpr::Bool(false))),
+        Box::new(HExpr::Binary(
+            HBin::Ne,
+            Box::new(name("i0")),
+            Box::new(HExpr::Static(dec(0))),
+        )),
+    );
+    let p = body(arms(folded, Pattern::Bool(true)));
+    assert!(expects(&p, Kind::ArmEffect).iter().all(Option::is_none));
+    // The scrutinee of a static match is no hardware either.
+    let p = body(arms(HExpr::Static(dec(2)), literal(0)));
+    assert!(expects(&p, Kind::ArmEffect).iter().all(Option::is_none));
+}
+
+/// A register that a branch declares is out of scope after the branch, so
+/// `ArmStage` cannot name it.
+#[test]
+fn a_name_of_a_nested_frame_leaves_scope() {
+    let branch = Stmt::If(
+        SExpr::Bool(true),
+        vec![Stmt::Reg("r0".to_owned(), u8(), dec(0))],
+        None,
+    );
+    let sum = HExpr::Binary(
+        HBin::Addw,
+        Box::new(HExpr::Make(u8(), dec(3))),
+        Box::new(HExpr::Static(dec(1))),
+    );
+    let p = of(vec![module(
+        "M0",
+        vec![
+            branch,
+            Stmt::Output("o0".to_owned(), u8()),
+            connect("o0", sum),
+        ],
+    )]);
+    assert_eq!(sites(Kind::ArmStage, &p.items, &p.top), 0);
+}
+
+/// A kind without a site falls back to the earlier kinds, not to the next
+/// kind of the list.
+#[test]
+fn a_kind_without_a_site_falls_back_to_the_earlier_kinds() {
+    let sum = HExpr::Binary(
+        HBin::Addw,
+        Box::new(name("i0")),
+        Box::new(HExpr::Static(dec(1))),
+    );
+    let p = of(vec![module("M0", ports_then(vec![connect("o0", sum)]))]);
+    let staged = |k: u32| mutate(&p, k, 0).what.starts_with("stage the operand");
+    // The draws of the kinds of `match` that have no site here.
+    for k in 15..23 {
+        assert!(!staged(k), "kind {k}");
+    }
+    // The draw of the kind `ArmStage` has a site.
+    assert!(staged(index(Kind::ArmStage)));
 }
