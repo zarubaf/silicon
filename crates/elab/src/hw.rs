@@ -41,25 +41,34 @@ pub(crate) enum Op {
     Un(UnOp),
     Bin(BinOp),
     Mux,
-    /// The condition of an aggregate `if`, which several leaf statements share. The lowering
-    /// binds it to one temporary at its first use. `k` numbers the marks of one instantiation.
-    /// The mark has no charge and no size.
+    /// The operand of an aggregate `if` or of a hardware unpack, which several leaf statements
+    /// share. The lowering binds it to one temporary at its first use. `k` numbers the marks of
+    /// one instantiation. The mark charges the size of its operand once, when it is made, and
+    /// it has the size of a core name of its type.
     Share(u64),
     Resize,
     Reinterpret,
+    /// The pack of its operands, the leaves in packing order, into `UInt[w]`: the first leaf in
+    /// the low bits, and zero high bits (section 7.4).
+    Pack(u32),
+    /// The `w` bits of its one operand from the bit `off` (section 7.4).
+    Extract {
+        off: u32,
+        w: u32,
+    },
 }
 
 impl Op {
     /// The size of a node of the type `ty` without its operands. A name, a child output, and a
     /// leaf of a memory word refer to a core name, and each has the size of a finite value of its
-    /// type (section 5.4). A
-    /// constant has the size of its value. Each other node has the size 1.
+    /// type (section 5.4). A mark of a shared operand paid for its operand once, when it was
+    /// made. It lowers to a temporary, so it has this size too. A constant has the size of its
+    /// value. Each other node has the size 1.
     fn size(&self, ty: &Ty) -> u64 {
         match self {
             Op::Lit(v) => v.size(),
             Op::Count { size, .. } => *size,
-            Op::Share(_) => 0,
-            Op::Ref(_) | Op::Out(..) | Op::Word(..) => match ty {
+            Op::Ref(_) | Op::Out(..) | Op::Word(..) | Op::Share(_) => match ty {
                 Ty::UInt(w) | Ty::SInt(w) => width_size(*w),
                 _ => 1,
             },
@@ -88,12 +97,15 @@ pub(crate) struct Graph {
 }
 
 impl Graph {
-    /// A new node. Its size is the size of its operation plus the sizes of its operands. The
-    /// caller pays a hardware operation; a reference and a constant only refer.
+    /// A new node. Its size is the size of its operation plus the sizes of its operands, except
+    /// for a mark of a shared operand, whose operand does not count again. The caller pays a
+    /// hardware operation; a reference and a constant only refer.
     pub(crate) fn mk(&mut self, pos: Pos, ty: Ty, op: Op, args: Vec<HwId>) -> HwId {
         let mut size = op.size(&ty);
-        for a in &args {
-            size = size.saturating_add(self.size(*a));
+        if !matches!(op, Op::Share(_)) {
+            for a in &args {
+                size = size.saturating_add(self.size(*a));
+            }
         }
         let height = self.lowering_height(&op, &args);
         self.height = self.height.max(height);

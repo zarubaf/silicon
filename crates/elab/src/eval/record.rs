@@ -11,10 +11,11 @@ use super::{Evaluator, Names, Opnd, Out, Res, at, expr_pos, fail, need};
 use crate::Code;
 use crate::agg::Agg;
 use crate::hw::{Seen, Val};
+use crate::int::BitBuf;
 use crate::limit;
 use crate::ops::int_text;
 use crate::types::{Ty, TyId};
-use crate::value::{Value, int_size};
+use crate::value::{Value, int_size, width_size};
 use parse::ast::{Expr, Ident, Item, Pos};
 
 impl Evaluator<'_> {
@@ -74,6 +75,109 @@ impl Evaluator<'_> {
             }
         };
         Ok(Some(Out::Made(value)))
+    }
+
+    /// The variant that the path node `ty` names, from the resolver.
+    fn variant_ref(&self, ty: &Ident) -> Option<resolve::VariantRef> {
+        match self.names {
+            Names::Top => self.top.and_then(|t| t.variant(ty.id)),
+            Names::File => self.file.variant(ty.id),
+        }
+    }
+
+    /// A variant path `E::V` at `pos` with the arguments `xs` of a constructor call
+    /// (section 5.4). It uses the enum, then evaluates the payload values; each result waits
+    /// while the later ones evaluate. A constructor makes no call frame.
+    pub(super) fn variant(&mut self, pos: Pos, ty: &Ident, xs: &[Expr]) -> Res<Option<Out>> {
+        let Some(found) = self.variant_ref(ty) else {
+            return fail(Code::S010, pos, "the variant path has no target".to_owned());
+        };
+        let t = self.enum_use(pos, found.item)?;
+        let outs = self.args(xs)?;
+        let v = self.variant_of(pos, t, found.index, outs)?;
+        Ok(Some(Out::Made(v)))
+    }
+
+    /// The variant `j` of the enum type `t` at `pos` with the payload values `outs`
+    /// (section 5.4). The node, the use of the enum, and the payload values come before. Then
+    /// these steps run:
+    ///
+    /// 1. The copies of the payload values charge, by the rule of builtins.
+    /// 2. Each payload value gets its typed use at its payload type, in order (`S010`, `S012`).
+    ///    A register or a wire is read, and the read of an aggregate charges its zero size.
+    /// 3. The recursive size of the result charges, before the static or the hardware pack. A
+    ///    hardware result reads its size from the node of its leaves. The copies paid for the
+    ///    walk that collects the leaves, and the pack node has no charge, so no work is unpaid.
+    /// 4. The pack makes the result. The tag is the static tag value of the variant. When each
+    ///    payload value is static, the payload packs into one bit buffer, and the result is a
+    ///    static enum value. Else the payload is a hardware pack of the leaves of the payload
+    ///    values, and the lowering charges its core nodes (section 7.4).
+    fn variant_of(&mut self, pos: Pos, t: TyId, j: usize, outs: Vec<Out>) -> Res<Val> {
+        let entry = self
+            .tys
+            .widths(t)
+            .zip(self.tys.variants(t).and_then(|vs| vs.get(j)));
+        let Some((widths, variant)) = entry else {
+            return fail(
+                Code::S010,
+                pos,
+                format!("{} has no variant {j}", self.tys.text(t)),
+            );
+        };
+        let (tag, payload) = (variant.tag.clone(), variant.payload.clone());
+        if payload.len() != outs.len() {
+            // Pass 4 reports each arity (`S007`), so this is a defect.
+            return fail(
+                Code::S010,
+                pos,
+                format!(
+                    "{} has {} payload type(s) here, but {} value(s)",
+                    self.tys.text(t),
+                    payload.len(),
+                    outs.len()
+                ),
+            );
+        }
+        let mut copies = 0u128;
+        for o in &outs {
+            copies += self.size(o);
+        }
+        self.charge(pos, copies)?;
+        let mut vals = Vec::with_capacity(outs.len());
+        for (u, o) in payload.iter().zip(outs) {
+            vals.push(self.read_use(pos, *u, true, o)?);
+        }
+        let result_size =
+            |p: u32| 1 + width_size(widths.tag) + if p == 0 { 0 } else { width_size(p) };
+        if vals.iter().all(|v| matches!(v, Val::Static(_))) {
+            // The size does not read the payload bits, so the charge comes before the pack.
+            self.charge(pos, u128::from(result_size(widths.payload)))?;
+            let bits = (widths.payload > 0).then(|| {
+                let mut buf = BitBuf::new(widths.payload);
+                for v in &vals {
+                    if let Val::Static(v) = v {
+                        v.pack_into(&mut buf);
+                    }
+                }
+                buf.finish(widths.payload)
+            });
+            return Ok(Val::Static(Value::Enum(t, tag, bits.flatten())));
+        }
+        if widths.payload == 0 {
+            return fail(
+                Code::S010,
+                pos,
+                format!("a payload value of {} is not data", self.tys.text(t)),
+            );
+        }
+        let parts: Vec<(TyId, Val)> = payload.into_iter().zip(vals).collect();
+        let h = self.pack_hw(pos, widths.payload, &parts)?;
+        let parts = vec![Agg::Static(Value::UInt(tag)), Agg::Hw(h)];
+        let Some(node) = Agg::shape(&self.graph, &self.tys, t, &parts) else {
+            return fail(Code::S010, pos, "the part has the wrong shape".to_owned());
+        };
+        self.charge(pos, u128::from(node.size))?;
+        Ok(Agg::finish(&self.tys, node, parts).into_val())
     }
 
     /// The zero `T()` of the type `t` at `pos` (section 5.6). A type that is not hardware data

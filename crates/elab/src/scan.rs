@@ -64,6 +64,9 @@ pub(crate) struct Syms {
     pub field_order: Vec<Vec<Sym>>,
     /// The symbol of `clock`, the default domain.
     pub clock: Sym,
+    /// The symbols of `tag` and `payload`, the names of the parts of an enum.
+    pub tag: Sym,
+    pub payload: Sym,
 }
 
 /// The result of the pass before the evaluation of `top` in the file scope of `file`.
@@ -99,6 +102,8 @@ pub(crate) fn of(file: &Resolved, top: Option<&ResolvedExpr>) -> Scan {
         walk.syms.items.push(s);
     }
     walk.syms.clock = walk.intern("clock");
+    walk.syms.tag = walk.intern("tag");
+    walk.syms.payload = walk.intern("payload");
     for item in file.ast() {
         walk.item(item);
     }

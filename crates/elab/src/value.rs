@@ -9,7 +9,7 @@
 //! walk over a value or a type recurses: each one keeps its own stack, so it runs on any
 //! thread, also after the evaluator ends.
 
-use crate::int::Int;
+use crate::int::{BitBuf, Int};
 use crate::serial::{self, Item, Len};
 use crate::text::Text;
 use crate::types::{Ty, TyId, Types};
@@ -63,6 +63,20 @@ impl Value {
             enums: elems.iter().any(Value::holds_enum),
         };
         Value::Tuple(flags, elems)
+    }
+
+    /// The static enum value of the enum type `ty` with the static parts `vs`: the tag, then the
+    /// payload when it has bits. The parts of an enum always have this form, so another list
+    /// gives a record, which no enum type makes.
+    #[must_use]
+    pub(crate) fn of_enum(ty: TyId, vs: Vec<Value>) -> Value {
+        match vs.as_slice() {
+            [Value::UInt(tag)] => Value::Enum(ty, tag.clone(), None),
+            [Value::UInt(tag), Value::UInt(payload)] => {
+                Value::Enum(ty, tag.clone(), Some(payload.clone()))
+            }
+            _ => Value::Record(ty, vs),
+        }
     }
 
     fn take_children(&mut self, work: &mut Vec<Value>) {
@@ -453,6 +467,31 @@ impl Value {
             deepest = deepest.max(above + own);
         }
         deepest
+    }
+
+    /// Writes the leaves of the value into `buf` in packing order, the first leaf in the low
+    /// bits (section 5.1, ADR 0025). A `Bool` has 1 bit and a finite value its width. An enum
+    /// packs its tag, then its payload. `()` adds no bit. The payload values of a variant are
+    /// hardware data after their typed uses, so no other value occurs. The walk keeps its own
+    /// stack.
+    pub(crate) fn pack_into(&self, buf: &mut BitBuf) {
+        let mut work = vec![self];
+        while let Some(v) = work.pop() {
+            match v {
+                Value::Bool(b) => buf.put_bit(*b),
+                Value::UInt(x) | Value::SInt(x) => buf.put(x),
+                Value::Enum(_, tag, payload) => {
+                    buf.put(tag);
+                    if let Some(p) = payload {
+                        buf.put(p);
+                    }
+                }
+                Value::Array(_, xs) | Value::Tuple(_, xs) | Value::Record(_, xs) => {
+                    work.extend(xs.iter().rev());
+                }
+                _ => {}
+            }
+        }
     }
 
     /// Whether the type of the value holds a function type (the function flag of section 5.4).

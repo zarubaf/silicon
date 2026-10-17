@@ -546,3 +546,261 @@ fn a_static_container_with_leaf_types_holds_the_root() {
         assert!(sil_fuel(&src, "M", units - 1).starts_with("S015"), "{src}");
     }
 }
+
+/// The `let` lines of the canonical text of `src`.
+fn enum_lets(src: &str) -> Vec<String> {
+    sil(src, "M")
+        .lines()
+        .filter(|l| l.starts_with("    (let "))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The module `M` with the enum `Op` and the hardware inputs `x`, `c`, `y`, and `e`.
+fn op_module(body: &str) -> String {
+    format!(
+        "enum Op: UInt[2] {{ Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }}\n\
+         module M() {{\n  input x: UInt[8];\n  input c: Bool;\n  input y: UInt[4];\n  \
+         input e: Op;\n  output o: Bool;\n{body}  o := true;\n}}\n"
+    )
+}
+
+/// The constructor of a hardware enum (section 7.4). The static tag needs no statement. The
+/// payload is the `concat` chain of its leaves, the first leaf in the low bits, inside zero
+/// high bits when the leaves are narrower than `P`. One leaf of `P` bits is that leaf.
+#[test]
+fn a_hardware_constructor_lowers_to_a_concat_chain() {
+    let lets = |body: &str| enum_lets(&op_module(body));
+    assert_eq!(
+        lets("  let a = Op::Load(x);\n"),
+        ["    (let a$payload (bits 8) x)"]
+    );
+    assert_eq!(
+        lets("  let a = Op::Pair(c, y);\n"),
+        ["    (let a$payload (bits 8) (concat (const 3 0) (concat y c)))"]
+    );
+    // The units of the lowering alone.
+    let units = |body: &str| total(&op_module(body), "M") - elab_used(&op_module(body), "M");
+    assert_eq!(
+        units("  let a = Op::Pair(c, y);\n"),
+        units("  let a = Op::Load(x);\n") + 5
+    );
+    assert_eq!(
+        lets("  let a = if (c) { Op::Load(x) } else { Op::Pair(c, y) };\n"),
+        [
+            "    (let a$payload (bits 8) (mux c x (concat (const 3 0) (concat y c))))",
+            "    (let a$tag (bits 2) (mux c (const 2 1) (const 2 2)))"
+        ]
+    );
+}
+
+/// A payload of 70 leaves is one `concat` chain. The loop builds it from the first leaf, and the
+/// chain so far binds to a temporary when its height reaches 64.
+#[test]
+fn a_wide_pack_binds_a_temporary_at_the_height_64() {
+    let src = "enum W: UInt[1] { A([Bool; 70]) = 1 }\nmodule M() {\n  input x: [Bool; 70];\n  \
+               output o: Bool;\n  let a = W::A(x);\n  o := true;\n}\n";
+    let lets = enum_lets(src);
+    assert_eq!(lets.len(), 2, "{lets:?}");
+    let mut high = "a$payload$0t".to_owned();
+    for k in 64..=69 {
+        high = format!("(concat x${k}e {high})");
+    }
+    assert_eq!(lets[0], format!("    (let a$payload (bits 70) {high})"));
+    let mut low = "x$0e".to_owned();
+    for k in 1..=63 {
+        low = format!("(concat x${k}e {low})");
+    }
+    assert_eq!(lets[1], format!("    (let a$payload$0t (bits 64) {low})"));
+}
+
+/// `reinterpret` between an enum and its bits (section 7.4). The pack is `(concat payload
+/// tag)`. The unpack is `(extract b 0 W)` and `(extract b W P)`. Both leaves refer to a core
+/// name `b`. Another `b` binds to one temporary of the leaf statement that lowers first.
+#[test]
+fn reinterpret_lowers_to_concat_and_extract() {
+    let lets = |body: &str| enum_lets(&op_module(body));
+    assert_eq!(
+        lets("  let d = Op::Pair(c, y);\n  let a = reinterpret(UInt[10], d);\n"),
+        [
+            "    (let a (bits 10) (concat d$payload (const 2 2)))",
+            "    (let d$payload (bits 8) (concat (const 3 0) (concat y c)))"
+        ]
+    );
+    assert_eq!(
+        lets("  let b = resize(UInt[10], x);\n  let a = reinterpret(Op, b);\n"),
+        [
+            "    (let a$payload (bits 8) (extract b 2 8))",
+            "    (let a$tag (bits 2) (extract b 0 2))",
+            "    (let b (bits 10) (concat (const 2 0) x))"
+        ]
+    );
+    assert_eq!(
+        lets("  let a = reinterpret(Op, resize(UInt[10], x));\n"),
+        [
+            "    (let a$payload (bits 8) (extract a$tag$0t 2 8))",
+            "    (let a$tag (bits 2) (extract a$tag$0t 0 2))",
+            "    (let a$tag$0t (bits 10) (concat (const 2 0) x))"
+        ]
+    );
+    assert_eq!(
+        lets("  let a = reinterpret(UInt[10], reinterpret(Op, resize(UInt[10], x)));\n"),
+        [
+            "    (let a (bits 10) (concat (extract a$0t 2 8) (extract a$0t 0 2)))",
+            "    (let a$0t (bits 10) (concat (const 2 0) x))"
+        ]
+    );
+}
+
+/// `k` nested round trips bind `k` more temporaries, one for each shared operand. Each level adds
+/// 21 units. The output and the charge thus stay linear, where copies would give `2^k` nodes.
+#[test]
+fn nested_round_trips_stay_linear() {
+    let trips = |k: usize| {
+        let mut e = "reinterpret(Op, resize(UInt[10], x))".to_owned();
+        for _ in 0..k {
+            e = format!("reinterpret(Op, reinterpret(UInt[10], {e}))");
+        }
+        op_module(&format!("  let a = {e};\n"))
+    };
+    for k in 0..20 {
+        assert_eq!(enum_lets(&trips(k)).len(), k + 3, "{k}");
+        let lowering = |k: usize| total(&trips(k), "M") - elab_used(&trips(k), "M");
+        assert_eq!(lowering(k + 1), lowering(k) + 21, "{k}");
+    }
+}
+
+/// With `P` 0, a conversion makes no core node: the unpack is `b`, and the pack is the tag.
+#[test]
+fn a_conversion_with_an_empty_payload_makes_no_node() {
+    let src = "enum E: UInt[2] { A = 0, B = 1 }\nmodule M() {\n  input c: Bool;\n  input e: E;\n  \
+               input u: UInt[2];\n  output o: Bool;\n  let a = reinterpret(E, u +% 1);\n  \
+               let b = reinterpret(UInt[2], a);\n  o := true;\n}\n";
+    assert_eq!(
+        enum_lets(src),
+        [
+            "    (let a$tag (bits 2) (add u (const 2 1)))",
+            "    (let b (bits 2) a$tag)"
+        ]
+    );
+}
+
+/// An enum port, register, wire, and child port has the two leaves `tag` and `payload`, in this
+/// order, and an empty payload gives only `tag` (section 7.5). A register resets each leaf to
+/// that leaf of its reset value. An enum field of a record adds its two leaves at its place.
+#[test]
+fn an_enum_has_the_leaves_tag_and_payload() {
+    let src = "enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }\n\
+               enum F: UInt[1] { A = 0, B = 1 }\n\
+               struct S { f: Op, g: Bool }\nmodule C() {\n  input a: Op;\n  output b: Op;\n  \
+               b := a;\n}\nmodule M() {\n  input i: Op;\n  input s: S;\n  input x: UInt[8];\n  \
+               input z: F;\n  output o: Op;\n  output q: Op;\n  output t: S;\n  output y: F;\n  \
+               reg r: Op = Op::Load(7);\n  r := Op::Load(x);\n  wire w: Op;\n  w := i;\n  \
+               instance c = C();\n  c.a := r;\n  o := w;\n  q := c.b;\n  t := s;\n  y := z;\n}\n";
+    assert_eq!(
+        sil(src, "M"),
+        text(&[
+            "(design M",
+            "  (module C",
+            "    (input clock$0clk clock)",
+            "    (input clock$0rst (bits 1))",
+            "    (input a$tag (bits 2))",
+            "    (input a$payload (bits 8))",
+            "    (output b$tag (bits 2))",
+            "    (output b$payload (bits 8))",
+            "    (assign b$payload a$payload)",
+            "    (assign b$tag a$tag))",
+            "  (module M",
+            "    (input clock$0clk clock)",
+            "    (input clock$0rst (bits 1))",
+            "    (input i$tag (bits 2))",
+            "    (input i$payload (bits 8))",
+            "    (input s$f$tag (bits 2))",
+            "    (input s$f$payload (bits 8))",
+            "    (input s$g (bits 1))",
+            "    (input x (bits 8))",
+            "    (input z$tag (bits 1))",
+            "    (output o$tag (bits 2))",
+            "    (output o$payload (bits 8))",
+            "    (output q$tag (bits 2))",
+            "    (output q$payload (bits 8))",
+            "    (output t$f$tag (bits 2))",
+            "    (output t$f$payload (bits 8))",
+            "    (output t$g (bits 1))",
+            "    (output y$tag (bits 1))",
+            "    (reg r$payload (bits 8) clock$0clk (reset sync clock$0rst (const 8 7)))",
+            "    (reg r$tag (bits 2) clock$0clk (reset sync clock$0rst (const 2 1)))",
+            "    (inst c C (clock$0clk clock$0clk) (clock$0rst clock$0rst) (a$tag r$tag) \
+             (a$payload r$payload))",
+            "    (let w$payload (bits 8) i$payload)",
+            "    (let w$tag (bits 2) i$tag)",
+            "    (next r$payload x)",
+            "    (next r$tag (const 2 1))",
+            "    (assign o$payload w$payload)",
+            "    (assign o$tag w$tag)",
+            "    (assign q$payload c.b$payload)",
+            "    (assign q$tag c.b$tag)",
+            "    (assign t$f$payload s$f$payload)",
+            "    (assign t$f$tag s$f$tag)",
+            "    (assign t$g s$g)",
+            "    (assign y$tag z$tag)))"
+        ])
+    );
+}
+
+/// An enum memory word packs its leaves, `tag` in the low bits (section 7.6). The `data` of the
+/// response is a reference to the word, so its leaves are `extract` nodes at the offsets 0 and
+/// `W`. An enum field of a word starts at the offset of its field, here 1 after the `Bool`.
+#[test]
+fn an_enum_memory_word_packs_the_tag_in_the_low_bits() {
+    let src = "enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }\nmodule M() {\n  input a: UInt[2];\n  \
+               input c: Bool;\n  input d: Op;\n  output o: Op;\n  output t: UInt[10];\n  \
+               mem m: [Op; 4];\n  let k = read_port(m, a, c);\n  write_port(m, a, d, c);\n  \
+               o := k.data;\n  t := reinterpret(UInt[10], k.data);\n}\n";
+    assert_eq!(
+        sil(src, "M"),
+        text(&[
+            "(design M",
+            "  (module M",
+            "    (input clock$0clk clock)",
+            "    (input clock$0rst (bits 1))",
+            "    (input a (bits 2))",
+            "    (input c (bits 1))",
+            "    (input d$tag (bits 2))",
+            "    (input d$payload (bits 8))",
+            "    (output o$tag (bits 2))",
+            "    (output o$payload (bits 8))",
+            "    (output t (bits 10))",
+            "    (reg m$0rdata (bits 10) clock$0clk (reset sync clock$0rst (const 10 0)))",
+            "    (reg m$0rvalid (bits 1) clock$0clk (reset sync clock$0rst (const 1 0)))",
+            "    (mem m (bits 10) 4 clock$0clk)",
+            "    (let k$data$payload (bits 8) (extract m$0rdata 2 8))",
+            "    (let k$data$tag (bits 2) (extract m$0rdata 0 2))",
+            "    (let k$valid (bits 1) m$0rvalid)",
+            "    (let m$0raddr (bits 2) a)",
+            "    (let m$0ren (bits 1) c)",
+            "    (next m$0rdata (mux m$0ren (read m m$0raddr) m$0rdata))",
+            "    (next m$0rvalid (and m$0ren (const 1 1)))",
+            "    (write m 0 a (concat d$payload d$tag) (and c (xor clock$0rst (const 1 1))))",
+            "    (assign o$payload k$data$payload)",
+            "    (assign o$tag k$data$tag)",
+            "    (assign t (concat k$data$payload k$data$tag))))"
+        ])
+    );
+    let field = "enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }\nstruct S { b: Bool, f: Op }\n\
+                 module M() {\n  input c: Bool;\n  input d: S;\n  output o: S;\n  mem m: [S; 2];\n  \
+                 let k = read_port(m, 0, c);\n  write_port(m, 0, d, c);\n  o := k.data;\n}\n";
+    let lets: Vec<String> = sil(field, "M")
+        .lines()
+        .filter(|l| l.starts_with("    (let k$data"))
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(
+        lets,
+        [
+            "    (let k$data$b (bits 1) (extract m$0rdata 0 1))",
+            "    (let k$data$f$payload (bits 8) (extract m$0rdata 3 8))",
+            "    (let k$data$f$tag (bits 2) (extract m$0rdata 1 2))"
+        ]
+    );
+}

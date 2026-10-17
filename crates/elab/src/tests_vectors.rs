@@ -408,3 +408,55 @@ fn a_vector_runs_through_an_aggregate_design() {
         "input v.s exceeds its width"
     );
 }
+
+const ENUMS: &str = "enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }\n\
+    enum F: UInt[1] { A = 0, B = 1 }\n\
+    module E() {\n  input op: Op;\n  input f: F;\n  output q: Op;\n  output g: F;\n  \
+    reg r: Op = Op::Load(7);\n  r := op;\n  q := r;\n  g := f;\n}\n";
+
+/// An enum port has the entries `<port>.tag` and `<port>.payload`, and an empty payload has no
+/// entry (section 11.2). Each value is a `UInt`, so a tag needs no variant. A register of an enum
+/// resets each leaf.
+#[test]
+fn an_enum_port_has_an_entry_for_each_leaf() {
+    assert_eq!(
+        names(ENUMS, "E"),
+        (
+            pairs(&[
+                ("clock$0rst", "clock$0rst"),
+                ("f.tag", "f$tag"),
+                ("op.tag", "op$tag"),
+                ("op.payload", "op$payload"),
+            ]),
+            pairs(&[
+                ("g.tag", "g$tag"),
+                ("q.tag", "q$tag"),
+                ("q.payload", "q$payload"),
+            ])
+        )
+    );
+    assert_eq!(
+        run(
+            ENUMS,
+            "E",
+            &[
+                "in=(clock$0rst true f.tag 1 op.tag 3 op.payload 200)",
+                "in=(clock$0rst false f.tag 0 op.tag 3 op.payload 200)",
+                "in=(clock$0rst false f.tag 1 op.tag 0 op.payload 9)"
+            ]
+        ),
+        text(&[
+            "out=(g.tag 1 q.tag 0 q.payload 0)",
+            "out=(g.tag 0 q.tag 1 q.payload 7)",
+            "out=(g.tag 1 q.tag 3 q.payload 200)"
+        ])
+    );
+    assert_eq!(
+        run(
+            ENUMS,
+            "E",
+            &["in=(clock$0rst false f.tag 2 op.tag 0 op.payload 0)"]
+        ),
+        "input f.tag exceeds its width"
+    );
+}

@@ -22,6 +22,7 @@ use super::{Evaluator, Opnd, Out, Res, at, fail};
 use crate::Code;
 use crate::agg::Agg;
 use crate::hw::{Handle, Kind, Seen};
+use crate::int::Int;
 use crate::limit;
 use crate::names::{Name, PathId, write_encoded};
 use crate::serial::{self, Item, Len, Sink};
@@ -55,6 +56,8 @@ enum Piece<'a> {
     Part(TyId),
     /// The remaining copies of the element type of a reference array, each after a space.
     Rest(TyId, u64),
+    /// The static tag of a hardware enum as an integer, the first part of its node.
+    Tag(&'a Value),
     Handle(&'a Handle),
     Hw(crate::hw::HwId),
 }
@@ -88,7 +91,7 @@ impl Piece<'_> {
     fn is_leaf(&self) -> bool {
         matches!(
             self,
-            Piece::Value(_) | Piece::Type(_) | Piece::Node(_) | Piece::Hw(_)
+            Piece::Value(_) | Piece::Tag(_) | Piece::Type(_) | Piece::Node(_) | Piece::Hw(_)
         )
     }
 }
@@ -131,7 +134,7 @@ fn part_charge(tys: &Types, t: TyId) -> u128 {
                 total = total.saturating_add(times);
                 work.extend(parts.iter().map(|p| (*p, times)));
             }
-            Ty::Struct(_) => {
+            Ty::Struct(_) | Ty::Enum(_) => {
                 total = total.saturating_add(times);
                 if let Some(parts) = tys.parts(t) {
                     work.extend(parts.types.iter().map(|f| (*f, times)));
@@ -312,6 +315,10 @@ impl Evaluator<'_> {
                 Piece::Domain(d) => write!(out, "(domain {d})").unwrap_or_default(),
                 Piece::Quoted(s) => out.quoted(s),
                 Piece::Value(v) => serial::write(&self.tys, Item::Value(v), out),
+                Piece::Tag(v) => match v {
+                    Value::UInt(tag) => out.int(&Int::from_unsigned(tag)),
+                    other => serial::write(&self.tys, Item::Value(other), out),
+                },
                 Piece::Type(t) => serial::write(&self.tys, Item::Ty(t), out),
                 Piece::Node(t) => serial::write(&self.tys, Item::Node(t), out),
                 Piece::Agg(a) => self.agg_pieces(a, &mut work),
@@ -360,6 +367,20 @@ impl Evaluator<'_> {
                 let mut pieces = vec![Piece::Text("(tuple (")];
                 pieces.extend(spaced(ps.0.iter().map(Piece::Agg)));
                 pieces.push(Piece::Text("))"));
+                push_all(work, pieces);
+            }
+            Agg::Record(n, ps) if matches!(self.tys.get(n.ty), Ty::Enum(_)) => {
+                // A hardware enum is `(enum <type> <tag> <payload>)`, the form of a static
+                // enum value, so a static tag is an integer.
+                let mut pieces = vec![Piece::Text("(enum "), Piece::Type(n.ty)];
+                for (k, part) in ps.0.iter().enumerate() {
+                    pieces.push(Piece::Text(" "));
+                    pieces.push(match (k, part) {
+                        (0, Agg::Static(v)) => Piece::Tag(v),
+                        _ => Piece::Agg(part),
+                    });
+                }
+                pieces.push(Piece::Text(")"));
                 push_all(work, pieces);
             }
             Agg::Record(n, ps) => {
@@ -414,6 +435,17 @@ impl Evaluator<'_> {
                     pieces.extend(spaced(parts.types.iter().map(|f| Piece::Part(*f))));
                 }
                 pieces.push(Piece::Text("))"));
+                push_all(work, pieces);
+            }
+            Ty::Enum(_) => {
+                let mut pieces = vec![Piece::Text("(enum "), Piece::Type(t)];
+                if let Some(parts) = self.tys.parts(t) {
+                    for part in parts.types {
+                        pieces.push(Piece::Text(" "));
+                        pieces.push(Piece::Part(*part));
+                    }
+                }
+                pieces.push(Piece::Text(")"));
                 push_all(work, pieces);
             }
             ty => push_all(

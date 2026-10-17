@@ -568,6 +568,15 @@ fn same_check(a: &Value, b: &Value, tys: &mut Types, joins: Joins) -> (Int, Resu
                 }
                 work.extend(xs.iter().zip(ys).rev());
             }
+            // `==` never reaches two enums (the enum flag), but the static pair of a hardware
+            // `if` compares them here.
+            (Value::Enum(s, ..), Value::Enum(t, ..)) => {
+                let done = join_of(*s, *t, tys, joins, &mut budget);
+                charge = charge.add(&done.charge);
+                if done.ty.is_none() {
+                    return (charge, no_common_type(a, b, tys));
+                }
+            }
             _ if composite(a) || composite(b) => return (charge, no_common_type(a, b, tys)),
             _ => {
                 if let Err(fault) = leaf_eq_check(a, b, tys) {

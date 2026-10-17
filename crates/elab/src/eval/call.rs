@@ -102,6 +102,9 @@ impl Evaluator<'_> {
         f: &Expr,
         xs: &[Expr],
     ) -> Res<Option<Out>> {
+        if let Expr::Path { ty, .. } = f {
+            return self.variant(pos, ty, xs);
+        }
         let callee = self.callee(f)?;
         let args: Vec<&Expr> = xs.iter().collect();
         match callee {
@@ -492,32 +495,38 @@ impl Evaluator<'_> {
         builtin: Prelude,
         mut vs: Vec<Out>,
     ) -> Res<Option<Out>> {
-        let (Some(v), Some(t)) = (vs.pop(), vs.pop()) else {
+        let (Some(arg), Some(target)) = (vs.pop(), vs.pop()) else {
             return fail(Code::S010, pos, format!("`{g}` needs two arguments"));
         };
-        self.check_static(pos, &t)?;
-        let Value::Type(ty) = self.store.value(&t) else {
+        self.check_static(pos, &target)?;
+        let Value::Type(ty) = self.store.value(&target) else {
             return fail(
                 Code::S010,
                 pos,
                 format!(
                     "`{g}` needs a type, not {}",
-                    self.store.value(&t).text(&self.tys)
+                    self.store.value(&target).text(&self.tys)
                 ),
             );
         };
         let ty = *ty;
-        match self.data(pos, v)? {
-            Opnd::Static(v) => {
-                let v = self.store.value(&v);
+        let data = self.data(pos, arg)?;
+        if builtin == Prelude::Reinterpret
+            && (matches!(self.tys.get(ty), Ty::Enum(_)) || self.enum_of(&data).is_some())
+        {
+            return Ok(Some(Out::Made(self.recast(pos, ty, data)?)));
+        }
+        match data {
+            Opnd::Static(out) => {
+                let value = self.store.value(&out);
                 let made = if builtin == Prelude::Resize {
-                    ops::resize(ty, v, &mut self.fuel, &self.tys)
+                    ops::resize(ty, value, &mut self.fuel, &self.tys)
                 } else {
-                    ops::reinterpret(ty, v, &mut self.fuel, &self.tys)
+                    ops::reinterpret(ty, value, &mut self.fuel, &self.tys)
                 };
                 Ok(Some(Out::Made(Val::Static(made.map_err(at(pos))?))))
             }
-            Opnd::Hw(x) => Ok(Some(Out::Made(self.hw_convert(pos, builtin, ty, x)?))),
+            Opnd::Hw(hw) => Ok(Some(Out::Made(self.hw_convert(pos, builtin, ty, hw)?))),
         }
     }
 
