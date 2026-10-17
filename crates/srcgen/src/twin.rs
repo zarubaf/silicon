@@ -24,12 +24,12 @@
 //! with it, so they show the bug.
 
 use super::build::STATIC_PREFIXES;
-use super::eval::{Env, Scope, Value, eval, exec_static, loop_values};
+use super::eval::{Env, Scope, Value, eval, exec_static, leaf_bits, loop_values};
 use super::program::{
     EnumDef, HBin, HExpr, Item, Match, Pattern, Place, Program, Radix, SExpr, STy, Scalar, Stmt,
     Ty, render_items,
 };
-use num_bigint::{BigInt, Sign};
+use num_bigint::{BigInt, BigUint, Sign};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 /// The source text of a twin and its top selection.
@@ -168,6 +168,7 @@ fn token(v: &Value) -> Option<String> {
 /// A static value as a literal, if it has one: a finite integer has none,
 /// so a record of hardware data has none.
 fn literal(v: Value) -> Option<SExpr> {
+    let bits = v.bits();
     let all = |xs: Vec<Value>| xs.into_iter().map(literal).collect::<Option<Vec<_>>>();
     Some(match v {
         Value::Int(n) => SExpr::Int(n, Radix::Dec),
@@ -181,8 +182,7 @@ fn literal(v: Value) -> Option<SExpr> {
             let targs = all(rt.args.clone())?;
             SExpr::Record(rt.name.clone(), targs, all(xs)?)
         }
-        Value::Enum(def, tag, payload) => {
-            let bits = tag | (payload << def.tag_width);
+        Value::Enum(def, ..) => {
             let bits = SExpr::Int(BigInt::from(bits), Radix::Dec);
             let finite = SExpr::Convert(STy::UInt(def.data_bits()), Box::new(bits));
             SExpr::Unpack(def.name.clone(), Box::new(finite))
@@ -307,16 +307,63 @@ impl Writer<'_> {
         }
         // The last arm needs no test: `_`, or the arm that completes the
         // match.
-        let mut out = arms.pop().map(|(_, a)| a);
-        while let Some((test, arm)) = arms.pop() {
-            out = match (test, out) {
-                (Some(t), Some(rest)) => {
-                    Some(HExpr::If(Box::new(t), Box::new(arm), Box::new(rest)))
-                }
-                (None, _) | (_, None) => Some(arm),
+        let Some((_, last)) = arms.pop() else {
+            panic!("a match of the builder has no arm");
+        };
+        arms.into_iter().rev().fold(last, |rest, (test, arm)| {
+            let Some(test) = test else {
+                panic!("a match of the builder has a `_` before its last arm");
             };
+            HExpr::If(Box::new(test), Box::new(arm), Box::new(rest))
+        })
+    }
+
+    /// `E::V(a, b)` as `reinterpret(E, bits)`: the tag, and each payload
+    /// value shifted to its offset (ADR 0025). The twin thus packs the
+    /// payload on its own, not through the constructor of the front end.
+    fn constructor(&self, e: &str, v: &str, args: &[HExpr], fr: &Frame) -> HExpr {
+        let Some(variant) = self.enums.get(e).and_then(|def| def.variant(v)) else {
+            panic!("a constructor of the builder names no variant: {e}::{v}");
+        };
+        let def = &self.enums[e];
+        let d = def.data_bits();
+        let uint = |w: u32| Ty::UInt(SExpr::Int(BigInt::from(w), Radix::Dec));
+        let constant = |n: BigUint| HExpr::Make(uint(d), SExpr::Int(BigInt::from(n), Radix::Dec));
+        let mut fixed = variant.tag.clone();
+        let mut parts = Vec::new();
+        for (arg, (at, t)) in args.iter().zip(variant.leaves()) {
+            let off = def.tag_width + at;
+            if let HExpr::Static(s) = arg {
+                let Some(value) = self.value(s, fr) else {
+                    panic!("a static payload of the builder faults");
+                };
+                let Ok(bits) = leaf_bits(t, value) else {
+                    panic!("a static payload of the builder does not fit");
+                };
+                fixed |= bits << off;
+                continue;
+            }
+            let arg = self.hexpr(arg, fr);
+            let shift = |x: HExpr| {
+                let k = HExpr::Static(SExpr::Int(BigInt::from(off), Radix::Dec));
+                HExpr::Binary(HBin::Shl, Box::new(x), Box::new(k))
+            };
+            parts.push(match t {
+                Scalar::Bool => {
+                    let (one, zero) = (constant(BigUint::from(1u8)), constant(BigUint::ZERO));
+                    shift(HExpr::If(Box::new(arg), Box::new(one), Box::new(zero)))
+                }
+                Scalar::UInt(_) => shift(HExpr::Resize(uint(d), Box::new(arg))),
+                Scalar::SInt(w) => {
+                    let bits = HExpr::Reinterpret(uint(w), Box::new(arg));
+                    shift(HExpr::Resize(uint(d), Box::new(bits)))
+                }
+            });
         }
-        out.unwrap_or(scrutinee)
+        let bits = parts.into_iter().fold(constant(fixed), |acc, p| {
+            HExpr::Binary(HBin::Or, Box::new(acc), Box::new(p))
+        });
+        HExpr::Reinterpret(Ty::Enum(e.to_owned()), Box::new(bits))
     }
 
     /// The test of an arm, and its value with the binders replaced.
@@ -328,12 +375,10 @@ impl Writer<'_> {
             Pattern::Bool(b) => (Some(eq(s.clone(), SExpr::Bool(*b))), arm),
             Pattern::Int(n, _) => (Some(eq(s.clone(), SExpr::Int(n.clone(), Radix::Dec))), arm),
             Pattern::Variant(e, v, binders) => {
-                let Some(def) = self.enums.get(e) else {
-                    return (None, arm);
+                let Some(variant) = self.enums.get(e).and_then(|def| def.variant(v)) else {
+                    panic!("a pattern of the builder names no variant: {e}::{v}");
                 };
-                let Some(variant) = def.variant(v) else {
-                    return (None, arm);
-                };
+                let def = &self.enums[e];
                 let uint = |w: u32| Ty::UInt(SExpr::Int(BigInt::from(w), Radix::Dec));
                 let bits = HExpr::Reinterpret(uint(def.data_bits()), Box::new(s.clone()));
                 let tag = HExpr::Resize(uint(def.tag_width), Box::new(bits.clone()));
@@ -371,11 +416,7 @@ impl Writer<'_> {
                 HExpr::Call(g.clone(), args.iter().map(|a| self.hexpr(a, fr)).collect())
             }
             HExpr::Match(m) => self.chain(m, fr),
-            HExpr::Ctor(e, v, args) => HExpr::Ctor(
-                e.clone(),
-                v.clone(),
-                args.iter().map(|a| self.hexpr(a, fr)).collect(),
-            ),
+            HExpr::Ctor(e, v, args) => self.constructor(e, v, args, fr),
             HExpr::Receiver(recv, g, args) => HExpr::Receiver(
                 sub(recv),
                 g.clone(),

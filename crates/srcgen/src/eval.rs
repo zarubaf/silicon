@@ -921,7 +921,7 @@ fn selects(pattern: &Pattern, value: &Value) -> Result<Option<Vec<(String, Value
 
 /// The unsigned bits of a payload leaf of type `t`: the typed use of
 /// `value` at the leaf type, and its two's complement.
-fn leaf_bits(t: Scalar, value: Value) -> Result<BigUint, Fault> {
+pub(crate) fn leaf_bits(t: Scalar, value: Value) -> Result<BigUint, Fault> {
     let (ty, w) = match t {
         Scalar::Bool => (STy::Bool, 1),
         Scalar::UInt(w) => (STy::UInt(w), w),
