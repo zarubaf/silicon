@@ -35,10 +35,21 @@ pub enum Value {
     Type(TyId),
     Unit,
     Array(TyId, Vec<Value>),
-    Tuple(bool, Vec<Value>),
+    Tuple(Flags, Vec<Value>),
     Record(TyId, Vec<Value>),
     List(TyId, Vec<Value>),
     Function(usize, TyId),
+    /// An enum value: its enum type, its tag of `W` bits, and its payload of `P` bits. It is
+    /// the one static form of an enum value (section 5.1). A payload of 0 bits is `None`.
+    Enum(TyId, Bits, Option<Bits>),
+}
+
+/// The flags of the type of a tuple value that its elements give: a function type is a part,
+/// and an enum type is a part (section 5.4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Flags {
+    pub funcs: bool,
+    pub enums: bool,
 }
 
 impl Value {
@@ -47,7 +58,11 @@ impl Value {
     /// each element.
     #[must_use]
     pub fn tuple(elems: Vec<Value>) -> Value {
-        Value::Tuple(elems.iter().any(Value::holds_fn), elems)
+        let flags = Flags {
+            funcs: elems.iter().any(Value::holds_fn),
+            enums: elems.iter().any(Value::holds_enum),
+        };
+        Value::Tuple(flags, elems)
     }
 
     fn take_children(&mut self, work: &mut Vec<Value>) {
@@ -65,6 +80,7 @@ impl Value {
             | Value::SInt(_)
             | Value::Type(_)
             | Value::Function(..)
+            | Value::Enum(..)
             | Value::Unit => {}
         }
     }
@@ -106,6 +122,7 @@ impl fmt::Debug for Value {
                 Value::Type(t) => write!(f, "Type({t:?})")?,
                 Value::Unit => f.write_str("Unit")?,
                 Value::Function(i, t) => write!(f, "Function({i}, {t:?})")?,
+                Value::Enum(t, tag, payload) => write!(f, "Enum({t:?}, {tag:?}, {payload:?})")?,
                 Value::Array(t, xs) | Value::Record(t, xs) | Value::List(t, xs) => {
                     let form = match v {
                         Value::Array(..) => "Array",
@@ -227,6 +244,9 @@ impl PartialEq for Value {
                 (Value::UInt(a), Value::UInt(b)) | (Value::SInt(a), Value::SInt(b)) => a == b,
                 (Value::Type(a), Value::Type(b)) => a == b,
                 (Value::Function(i, s), Value::Function(j, t)) => i == j && s == t,
+                (Value::Enum(s, tag, payload), Value::Enum(t, other_tag, other_payload)) => {
+                    s == t && tag == other_tag && payload == other_payload
+                }
                 (Value::Unit, Value::Unit) => true,
                 _ => false,
             };
@@ -295,7 +315,7 @@ impl Value {
             Value::Str(_) => tys.mk(Ty::String),
             Value::Array(elem, xs) => tys.array(*elem, Int::from_u64(xs.len() as u64)),
             Value::List(elem, _) => tys.list(*elem),
-            Value::Record(t, _) | Value::Function(_, t) => *t,
+            Value::Record(t, _) | Value::Function(_, t) | Value::Enum(t, ..) => *t,
             Value::Unit | Value::Tuple(..) => tys.mk(Ty::Unit),
         }
     }
@@ -310,6 +330,7 @@ impl Value {
             Value::SInt(x) => Value::SInt(x.clone()),
             Value::Type(t) => Value::Type(*t),
             Value::Function(i, t) => Value::Function(*i, *t),
+            Value::Enum(t, tag, payload) => Value::Enum(*t, tag.clone(), payload.clone()),
             Value::Unit
             | Value::Array(..)
             | Value::Tuple(..)
@@ -386,6 +407,10 @@ impl Value {
             let own = match v {
                 Value::Int(n) => int_size(n),
                 Value::Bool(_) | Value::Unit | Value::Function(..) => 1,
+                Value::Enum(_, tag, payload) => {
+                    1 + width_size(tag.width())
+                        + payload.as_ref().map_or(0, |p| width_size(p.width()))
+                }
                 Value::Str(s) => 1 + s.chars().count() as u64,
                 Value::UInt(x) | Value::SInt(x) => width_size(x.width()),
                 Value::Type(t) => t.size(),
@@ -414,6 +439,7 @@ impl Value {
             crate::counters::add(crate::counters::Count::Walked, 1);
             let own = match v {
                 Value::Type(t) => t.depth(),
+                Value::Enum(t, ..) => 1 + t.depth().max(1),
                 Value::Array(t, xs) | Value::Record(t, xs) | Value::List(t, xs) => {
                     work.extend(xs.iter().map(|x| (x, above + 1)));
                     1 + t.depth()
@@ -436,7 +462,19 @@ impl Value {
         match self {
             Value::Function(..) => true,
             Value::Array(t, _) | Value::Record(t, _) | Value::List(t, _) => t.holds_fn(),
-            Value::Tuple(flag, _) => *flag,
+            Value::Tuple(flags, _) => flags.funcs,
+            _ => false,
+        }
+    }
+
+    /// Whether the type of the value holds an enum type (the enum flag of section 5.4). It
+    /// reads the flag of the type id or of the tuple, with no walk over the value.
+    #[must_use]
+    pub fn holds_enum(&self) -> bool {
+        match self {
+            Value::Enum(..) => true,
+            Value::Array(t, _) | Value::Record(t, _) | Value::List(t, _) => t.holds_enum(),
+            Value::Tuple(flags, _) => flags.enums,
             _ => false,
         }
     }
@@ -453,6 +491,10 @@ impl Value {
             sum += match v {
                 Value::Int(_) | Value::UInt(_) | Value::SInt(_) => {
                     u128::from(v.size()) * u128::from(v.size())
+                }
+                Value::Enum(_, tag, payload) => {
+                    let square = |x: &Bits| u128::from(width_size(x.width())).pow(2);
+                    1 + square(tag) + payload.as_ref().map_or(0, square)
                 }
                 Value::Array(_, xs)
                 | Value::Tuple(_, xs)
@@ -501,6 +543,15 @@ impl Value {
                     h.write_u8(12);
                     h.write_usize(*i);
                     t.hash_into(h);
+                }
+                Value::Enum(t, tag, payload) => {
+                    h.write_u8(13);
+                    t.hash_into(h);
+                    Int::from_unsigned(tag).hash_into(h);
+                    h.write_u32(payload.as_ref().map_or(0, Bits::width));
+                    if let Some(p) = payload {
+                        Int::from_unsigned(p).hash_into(h);
+                    }
                 }
                 Value::Array(t, xs) | Value::Record(t, xs) | Value::List(t, xs) => {
                     h.write_u8(match v {

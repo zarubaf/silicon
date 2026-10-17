@@ -567,6 +567,18 @@ impl Evaluator<'_> {
         }
     }
 
+    /// The type of the operand, for a message: a hardware aggregate names its type, and a
+    /// static value is what it is.
+    fn type_text(&self, o: &Opnd) -> String {
+        match o {
+            Opnd::Static(out) => match self.store.seen(out) {
+                Seen::Agg(a) => a.stored_ty().map(|t| self.tys.text(t)).unwrap_or_default(),
+                seen => self.text(seen),
+            },
+            Opnd::Hw(h) => self.tys.text_of(&self.graph.ty(*h)),
+        }
+    }
+
     /// Whether the operand is a hardware aggregate.
     fn opnd_is_agg(&self, o: &Opnd) -> bool {
         matches!(o, Opnd::Static(out) if self.is_agg(out))
@@ -1177,22 +1189,51 @@ impl Evaluator<'_> {
     /// `S010` at the operator. The check reads the function flag of the type, after both
     /// operands and before each join and each charge.
     fn comparable(&self, pos: Pos, op: BinOp, a: &Opnd, b: &Opnd) -> Res<()> {
-        let holds = |o: &Opnd| match o {
+        if !matches!(op, BinOp::Eq | BinOp::Ne) {
+            return Ok(());
+        }
+        // One read gives both flags of an operand: the function flag and the enum flag.
+        let flags = |o: &Opnd| match o {
             Opnd::Static(o) => {
                 #[cfg(test)]
                 crate::counters::add(crate::counters::Count::Flagged, 1);
-                match self.store.seen(o) {
-                    Seen::Agg(a) => a.stored_ty().is_some_and(TyId::holds_fn),
-                    _ => self.store.value(o).holds_fn(),
+                if let Seen::Agg(a) = self.store.seen(o) {
+                    a.stored_ty()
+                        .map_or((false, false), |t| (t.holds_fn(), t.holds_enum()))
+                } else {
+                    let v = self.store.value(o);
+                    (v.holds_fn(), v.holds_enum())
                 }
             }
-            Opnd::Hw(_) => false,
+            Opnd::Hw(_) => (false, false),
         };
-        if matches!(op, BinOp::Eq | BinOp::Ne) && (holds(a) || holds(b)) {
-            return fail(
+        let no_function = || {
+            fail(
                 Code::S010,
                 pos,
                 format!("`{}` takes no function", ops::binop_text(op)),
+            )
+        };
+        let (a_funcs, a_enums) = flags(a);
+        if a_funcs {
+            return no_function();
+        }
+        let (b_funcs, b_enums) = flags(b);
+        if b_funcs {
+            return no_function();
+        }
+        // The text names the type of the first operand with the enum flag.
+        if let Some(o) = [(a, a_enums), (b, b_enums)]
+            .into_iter()
+            .find_map(|(o, enums)| enums.then_some(o))
+        {
+            return fail(
+                Code::S010,
+                pos,
+                format!(
+                    "`{}` has no `==`; compare with `match (x) {{ E::V => true, _ => false }}`",
+                    self.type_text(o)
+                ),
             );
         }
         Ok(())
@@ -1266,6 +1307,13 @@ impl Evaluator<'_> {
                         return fail(Code::S010, pos, format!("`{x}` is not an item"));
                     };
                     let t = self.spec(pos, i, &[])?;
+                    Ok(Out::Named(Val::Static(Value::Type(t))))
+                }
+                Kind::Enum => {
+                    let Some(&i) = self.items.get(&id) else {
+                        return fail(Code::S010, pos, format!("`{x}` is not an item"));
+                    };
+                    let t = self.enum_use(pos, i)?;
                     Ok(Out::Named(Val::Static(Value::Type(t))))
                 }
                 Kind::Fn if self.file.decl(id).generic => fail(
