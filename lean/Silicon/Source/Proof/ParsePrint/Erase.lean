@@ -14,6 +14,7 @@ a check here:
 
 - A name, a field, or a binder is a source identifier that is not a keyword: `validName`. A
   binder of a pattern is also not `_`, because the parser reads `_` as no binder: `binderOk`.
+  The enum name and the variant name of a variant pattern are not `_`: `Pattern.printable`.
 - No index is empty: `Expr.printable` and `TypeExpr.printable` at `index`.
 - No tuple is empty: `Expr.printable` and `TypeExpr.printable` at `tuple`. The printer writes an
   empty tuple as `()`, which is the unit value or the unit type.
@@ -157,12 +158,13 @@ def binderOk : Option Ident → Bool
 
 /-!
 A pattern. A literal is below 2^65536. The first name of a variant pattern is not `_`, because
-`_` starts the pattern `_`.
+`_` starts the pattern `_`. The variant name is not `_`, because `E::_` is `S001`.
 -/
 def Pattern.printable : Pattern → Bool
   | .wild _ | .bool .. => true
   | .int _ _ v => v < numberBound
-  | .variant _ t v bs => validName t.name && t.name != "_" && validName v.name && bs.all binderOk
+  | .variant _ t v bs =>
+    validName t.name && t.name != "_" && validName v.name && v.name != "_" && bs.all binderOk
 
 /-! A place: a name, or a field, an index, or a selector of a place. -/
 def Expr.place : Expr → Bool

@@ -328,7 +328,7 @@ theorem Pattern.lexes {D : Nat} (q : Pattern) (h : q.printable = true) :
       simpa using hm.append hn hs
   | variant p t v bs =>
     simp only [Pattern.printable, Bool.and_eq_true, List.all_eq_true] at h
-    obtain ⟨⟨⟨ht, -⟩, hv⟩, hbs⟩ := h
+    obtain ⟨⟨⟨⟨ht, -⟩, hv⟩, -⟩, hbs⟩ := h
     have hc : Lexes D .any "::".toList [.symbol "::"] := Lexes.glue (by decide)
     have hpath := (Lexes.name (D := D) ht).append (hc.append (Lexes.name hv) (Starts.any _))
       (Starts.glue "::" (by decide) _)
