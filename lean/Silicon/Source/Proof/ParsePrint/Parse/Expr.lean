@@ -2365,7 +2365,7 @@ theorem bindersToks_length (bs : List (Option Ident)) : bs.length ≤ (bindersTo
 
 /-! A variant pattern after its first name: `::`, the variant name, and the binders. -/
 theorem Runs.variantPattern {ctx : Ctx} {i f : Nat} {start : Pos} {ty : Ident} {v : String}
-    {bs : List (Option Ident)} {R : List Kind} (hbs : ∀ o ∈ bs, binderOk o = true)
+    {bs : List (Option Ident)} {R : List Kind} (hv : v ≠ "_") (hbs : ∀ o ∈ bs, binderOk o = true)
     (hw : Win ctx.input i (.symbol "::" :: .ident v :: (bindersToks bs ++ .symbol "=>" :: R)))
     (hf : bs.length + 1 ≤ f) :
     Runs (Parse.variantPattern f start ty) ctx i (i + 2 + (bindersToks bs).length)
@@ -2375,13 +2375,13 @@ theorem Runs.variantPattern {ctx : Ctx} {i f : Nat} {start : Pos} {ty : Ident} {
   refine Runs.peek_bind ?_
   simp only [isSym, hw.head, beq_self_eq_true, ite_true]
   refine Runs.bump_bind (Runs.peek_bind ?_)
-  simp only [hw.tail.head]
+  simp only [hw.tail.head, beq_iff_eq, hv, ite_false]
   refine Runs.bump_bind (Runs.peek_bind ?_)
   have hw2 := hw.tail.tail
   cases bs with
   | nil =>
     simp only [bindersToks, List.isEmpty_nil, ite_true, List.nil_append] at hw2 ⊢
-    simp only [hw2.head, beq_iff_eq, Kind.symbol.injEq]
+    simp only [hw2.head, Kind.symbol.injEq]
     simp only [show ("=>" = "::") = False from by decide, ite_false]
     refine Runs.bind (Runs.acceptSym_false (by rw [hw2.head]; simp)) fun x hx => ?_
     subst hx
@@ -2392,7 +2392,7 @@ theorem Runs.variantPattern {ctx : Ctx} {i f : Nat} {start : Pos} {ty : Ident} {
   | cons b bs =>
     rw [bindersToks_cons] at hw2 ⊢
     simp only [List.cons_append, List.append_assoc] at hw2
-    simp only [hw2.head, beq_iff_eq, Kind.symbol.injEq]
+    simp only [hw2.head, Kind.symbol.injEq]
     simp only [show ("(" = "::") = False from by decide, ite_false]
     refine Runs.bind (Runs.acceptSym_true hw2.head) fun x hx => ?_
     subst hx
@@ -2452,13 +2452,13 @@ theorem Runs.pattern {q : Pattern} (hq : q.printable = true) {ctx : Ctx} {i f : 
       rintro _ rfl; subst hr; rfl
   | variant p t v bs =>
     simp only [Pattern.printable, Bool.and_eq_true, bne_iff_ne, ne_eq, List.all_eq_true] at hq
-    obtain ⟨⟨⟨ht, ht_⟩, hv⟩, hbs⟩ := hq
+    obtain ⟨⟨⟨⟨ht, ht_⟩, hv⟩, hv_⟩, hbs⟩ := hq
     rw [Pattern.toks_variant] at hw hf ⊢
     simp only [List.cons_append, List.nil_append] at hw
     simp only [hw.head]
     refine Runs.bump_bind ?_
     simp only [beq_iff_eq, ht_, ite_false]
-    refine Runs.bind (Runs.variantPattern hbs hw.tail ?_) fun r hr => ?_
+    refine Runs.bind (Runs.variantPattern hv_ hbs hw.tail ?_) fun r hr => ?_
     · have := bindersToks_length bs; simp at hf; omega
     · refine Runs.idx ?_ (Runs.mono (arrow _ r ?_) ?_)
       · simp; omega

@@ -250,6 +250,10 @@ def patternText : String :=
   "expected a pattern: an integer, `true`, `false`, `E::V(..)`, or `_`; compare with a " ++
     "constant in an `if`"
 
+/-! The `S001` text of the variant name `_` in a pattern (section 6.2). -/
+def variantWildText : String :=
+  "a variant pattern names a variant, not `_`; write `_` alone to match each other value"
+
 /-! `S001` at `t` in a pattern. A lexical error keeps the message of the lexer. -/
 def badPattern (t : Token) : P α :=
   match t.kind with
@@ -277,13 +281,17 @@ def binders : Nat → List (Option Ident) → P (List (Option Ident))
     let t ← peek
     if isSym "," t then bump; binders f acc else badPattern t
 
-/-! A variant pattern after its first name `ty`: `::`, the variant name, and the binders. -/
+/-!
+A variant pattern after its first name `ty`: `::`, the variant name, and the binders. The
+variant name `_` is `S001` with its own text.
+-/
 def variantPattern (f : Nat) (start : Pos) (ty : Ident) : P Pattern := do
   let c ← peek
   unless isSym "::" c do badPattern c
   bump
   let u ← peek
   let .ident v := u.kind | badPattern u
+  if v == "_" then throw ⟨.S001, u.pos, variantWildText⟩
   bump
   let w ← peek
   if isSym "::" w then packagePath w

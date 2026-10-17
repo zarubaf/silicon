@@ -492,7 +492,8 @@ A `match` can have zero arms. An operand of an operator needs parentheses around
 /-!
 `S001` in a pattern is at the first token that is not valid, with the text of section 6.2.
 These are a bare name, a nested pattern, an expression, a range, `|`, and a `-` without a
-number. A third part of a path is `S004` with the text of a package path.
+number. The variant name `_` has its own text. A third part of a path is `S004` with the text of
+a package path.
 -/
 #guard ex "match (x) { a => 1 }" == "error S001 1:28"
 #guard ex "match (x) { E::V(F::W) => 1 }" == "error S001 1:32"
@@ -506,6 +507,11 @@ number. A third part of a path is `S004` with the text of a package path.
 #guard ex "match (x) { - x => 1 }" == "error S001 1:28"
 #guard ex "match (x) { _::V => 1 }" == "error S001 1:27"
 #guard ex "match (x) { E::V::W => 1 }" == "error S004 1:30"
+#guard ex "match (x) { E::_ => 1 }" == "error S001 1:29"
+#guard ex "match (x) { E::_(a) => 1 }" == "error S001 1:29"
+#guard message "const X: T = match (x) { E::_ => 1 };" == Parse.variantWildText
+#guard Parse.variantWildText == "a variant pattern names a variant, not `_`; write `_` alone " ++
+  "to match each other value"
 #guard message "const X: T = match (x) { a => 1 };" == Parse.patternText
 #guard message "const X: T = match (x) { E::V::W => 1 };" == Parse.packagePathText
 #guard Parse.patternText == "expected a pattern: an integer, `true`, `false`, `E::V(..)`, " ++
