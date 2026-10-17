@@ -1,0 +1,15 @@
+// `data_bits` of an enum counts the tag and the widest payload: `Op` has 10 bits and `Mode` has 2.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }
+enum Mode: UInt[2] { Idle = 0, Run = 1 }
+module M() domains() {
+    input x: UInt[data_bits(Op)];
+    input y: UInt[data_bits(Mode)];
+    output a: UInt[data_bits(Op)];
+    output b: UInt[data_bits(Mode)];
+    a := x +% 1;
+    b := y +% 1;
+}
+// STEP in=(x 1023 y 3) out=(a 0 b 0)
+// STEP in=(x 0 y 0) out=(a 1 b 1)
+// STEP in=(x 300 y 1) out=(a 301 b 2)
