@@ -327,6 +327,14 @@ fn signed(t: &Ty) -> bool {
 /// The constant of a static scalar value at a hardware use: its value modulo `2^w`. A value
 /// that is not a scalar has no constant: a leaf never holds one.
 fn const_of(c: Span, v: &Value) -> R<Expr> {
+    #[cfg(test)]
+    crate::counters::add(
+        crate::counters::Count::Words,
+        match v {
+            Value::UInt(x) | Value::SInt(x) => crate::value::width_size(x.width()),
+            _ => 1,
+        },
+    );
     match v {
         Value::Bool(b) => Ok(small(c, 1, u32::from(*b))),
         Value::UInt(x) | Value::SInt(x) => Ok(konst(c, x.width(), constant(x))),
@@ -336,6 +344,11 @@ fn const_of(c: Span, v: &Value) -> R<Expr> {
 
 /// The constant of the bits of a static enum part.
 fn const_bits(c: Span, x: &Bits) -> Expr {
+    #[cfg(test)]
+    crate::counters::add(
+        crate::counters::Count::Words,
+        crate::value::width_size(x.width()),
+    );
     konst(c, x.width(), constant(x))
 }
 

@@ -15,6 +15,14 @@ use std::hash::{Hash, Hasher};
 pub struct Int(BigInt);
 
 impl Int {
+    /// The one place that makes an integer from a result: every operation ends here, so the
+    /// test counters see the 64-bit words of a wide result, which no charge site sees.
+    fn make(x: BigInt) -> Int {
+        #[cfg(test)]
+        crate::counters::add(crate::counters::Count::Words, x.bits().div_ceil(64).max(1));
+        Int(x)
+    }
+
     /// The integer 0, for a constant.
     pub const ZERO: Int = Int(BigInt::ZERO);
 
@@ -25,19 +33,19 @@ impl Int {
 
     #[must_use]
     pub fn from_u64(n: u64) -> Int {
-        Int(BigInt::from(n))
+        Int::make(BigInt::from(n))
     }
 
     /// The value of canonical decimal digits, such as those of a source number.
     #[must_use]
     pub fn from_decimal(digits: &str) -> Option<Int> {
-        BigInt::parse_bytes(digits.as_bytes(), 10).map(Int)
+        BigInt::parse_bytes(digits.as_bytes(), 10).map(Int::make)
     }
 
     /// The unsigned value of a finite value.
     #[must_use]
     pub fn from_unsigned(x: &Bits) -> Int {
-        Int(BigInt::from_biguint(Sign::Plus, x.to_biguint()))
+        Int::make(BigInt::from_biguint(Sign::Plus, x.to_biguint()))
     }
 
     /// The two's complement value of the bits of a finite value, read at the width `width`.
@@ -45,9 +53,9 @@ impl Int {
     pub fn from_signed(x: &Bits, width: u32) -> Int {
         let unsigned = BigInt::from_biguint(Sign::Plus, x.to_biguint());
         if width > 0 && bit(x, width - 1) {
-            Int(unsigned - (BigInt::from(1u8) << width))
+            Int::make(unsigned - (BigInt::from(1u8) << width))
         } else {
-            Int(unsigned)
+            Int::make(unsigned)
         }
     }
 
@@ -130,12 +138,17 @@ impl Int {
 
     #[must_use]
     pub fn add(&self, other: &Int) -> Int {
-        Int(&self.0 + &other.0)
+        Int::make(&self.0 + &other.0)
     }
 
     /// Adds `other` in place: the work is in the words of `other` and its carry, not in the
     /// words of `self`.
     pub fn add_assign(&mut self, other: &Int) {
+        #[cfg(test)]
+        crate::counters::add(
+            crate::counters::Count::Words,
+            other.0.bits().div_ceil(64).max(1),
+        );
         self.0 += &other.0;
     }
 
@@ -147,62 +160,62 @@ impl Int {
 
     #[must_use]
     pub fn sub(&self, other: &Int) -> Int {
-        Int(&self.0 - &other.0)
+        Int::make(&self.0 - &other.0)
     }
 
     #[must_use]
     pub fn mul(&self, other: &Int) -> Int {
-        Int(&self.0 * &other.0)
+        Int::make(&self.0 * &other.0)
     }
 
     /// The quotient rounded toward zero, `Int.tdiv`. The divisor is not 0.
     #[must_use]
     pub fn tdiv(&self, other: &Int) -> Int {
-        Int(&self.0 / &other.0)
+        Int::make(&self.0 / &other.0)
     }
 
     /// The remainder with the sign of the dividend, `Int.tmod`. The divisor is not 0.
     #[must_use]
     pub fn tmod(&self, other: &Int) -> Int {
-        Int(&self.0 % &other.0)
+        Int::make(&self.0 % &other.0)
     }
 
     #[must_use]
     pub fn neg(&self) -> Int {
-        Int(-&self.0)
+        Int::make(-&self.0)
     }
 
     /// `-self - 1`, the complement in infinite two's complement.
     #[must_use]
     pub fn not(&self) -> Int {
-        Int(!&self.0)
+        Int::make(!&self.0)
     }
 
     #[must_use]
     pub fn and(&self, other: &Int) -> Int {
-        Int(&self.0 & &other.0)
+        Int::make(&self.0 & &other.0)
     }
 
     #[must_use]
     pub fn or(&self, other: &Int) -> Int {
-        Int(&self.0 | &other.0)
+        Int::make(&self.0 | &other.0)
     }
 
     #[must_use]
     pub fn xor(&self, other: &Int) -> Int {
-        Int(&self.0 ^ &other.0)
+        Int::make(&self.0 ^ &other.0)
     }
 
     /// `self * 2^k`.
     #[must_use]
     pub fn shl(&self, k: u64) -> Int {
-        Int(&self.0 << k)
+        Int::make(&self.0 << k)
     }
 
     /// `floor (self / 2^k)`.
     #[must_use]
     pub fn shr(&self, k: u64) -> Int {
-        Int(&self.0 >> k)
+        Int::make(&self.0 >> k)
     }
 
     /// The order of `self` and a small number.
