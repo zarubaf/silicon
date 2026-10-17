@@ -28,6 +28,10 @@ left spine (`Spine.runs_chain`). The claim about `lower` holds for at most 60 pa
 spine stays below the height 64, so the height rule binds no temporary. The condition of an `if`
 is a constant here, so it gets no shared mark. The statements take the pairs and `s` as given:
 no proof here ties them to the walk of `Eval.eqWalk` and `Eval.armWalk` (#286).
+
+The rows of enums that unpack bits take a constant operand: the bits of `reinterpret(E, b)`, and
+the payload of a binder leaf. `Eval.recast` and `Value.unpack` give the static result. A literal
+gets no shared mark, so the hardware nodes read the constant directly.
 -/
 namespace Silicon.Source.StaticOps
 
@@ -311,6 +315,49 @@ def IfLeafAgrees : Prop :=
     (∀ q, (if c then pr.left else pr.right) = pr.value (ev vals mems (e q))) ∧
       ∀ p, Lowers (Hw.mk p pr.ty .mux [litHw p .bool (.bool c), litHw p pr.ty pr.left,
         litHw p pr.ty pr.right]) 4 (e (cpos p)).erase
+
+/--
+`reinterpret(E, b)`: the `tag` row `extract b 0 W` and the `payload` row `extract b W P`. The
+static `reinterpret` of `Eval.recast` gives the enum value of the two rows. The claim about
+`lower` needs `P` not 0: with `P` 0, `recast` gives `b` itself as the tag, with no node.
+-/
+def UnpackEnumAgrees : Prop :=
+  ∀ (pos : Pos) (t : Ty) (w pw : Nat) (x : BitVec (w + pw)) (c : Eval.Ctx) (s s' : Eval.St)
+    (v : Value),
+    s.specs.widths t = some (w, pw) →
+    recast pos t (.static (.uint (w + pw) x)) c s = .ok (.static v, s') →
+    ∀ {ctx} (vals : Valuation ctx) (mems : Memories ctx),
+    let tag (q : Core.Pos) : Ex ctx w :=
+      .extract q (.const q (w + pw) x.toNat) 0 w (by omega)
+    let pay (q : Core.Pos) : Ex ctx pw :=
+      .extract q (.const q (w + pw) x.toNat) w pw (by omega)
+    (∀ q, v = .enum t w (ev vals mems (tag q)) pw (ev vals mems (pay q))) ∧
+      (0 < pw → ∀ p, Lowers (Hw.mk p (.uint w) (.extract 0 w) [leaf p false (w + pw) x]) 2
+          (tag (cpos p)).erase ∧
+        Lowers (Hw.mk p (.uint pw) (.extract w pw) [leaf p false (w + pw) x]) 2
+          (pay (cpos p)).erase)
+
+/--
+A finite leaf of a binder: the row `extract y o w` of the payload `y` of `P` bits, at the
+offset `o` of the leaf. The static unpack `Value.unpack` of a static payload gives its value.
+-/
+def BinderLeafAgrees : Prop :=
+  ∀ (specs : Specs) (d : Nat) (s : Bool) (w pw off : Nat) (h : off + w ≤ pw) (y : BitVec pw)
+    (v : Value), Value.unpack specs y.toNat (d + 1) (finiteTy s w) off = some v →
+    ∀ {ctx} (vals : Valuation ctx) (mems : Memories ctx),
+    let e (q : Core.Pos) : Ex ctx w := .extract q (.const q pw y.toNat) off w h
+    (∀ q, v = finite s w (ev vals mems (e q))) ∧
+      ∀ p, Lowers (Hw.mk p (finiteTy s w) (.extract off w) [leaf p false pw y]) 2
+        (e (cpos p)).erase
+
+/-- A `Bool` leaf of a binder: the row `extract y o 1`, as for a finite leaf. -/
+def BinderBoolAgrees : Prop :=
+  ∀ (specs : Specs) (d pw off : Nat) (h : off + 1 ≤ pw) (y : BitVec pw) (v : Value),
+    Value.unpack specs y.toNat (d + 1) .bool off = some v →
+    ∀ {ctx} (vals : Valuation ctx) (mems : Memories ctx),
+    let e (q : Core.Pos) : Ex ctx 1 := .extract q (.const q pw y.toNat) off 1 h
+    (∀ q, ∃ r, v = .bool r ∧ ev vals mems (e q) = BitVec.ofBool r) ∧
+      ∀ p, Lowers (Hw.mk p .bool (.extract off 1) [leaf p false pw y]) 2 (e (cpos p)).erase
 
 /-! Facts about the lift and the operands. -/
 
@@ -661,15 +708,56 @@ theorem static_if_leaf_agrees : IfLeafAgrees := by
     | fin s w x y => cases s <;> lowers [Pair.ty, Pair.left, Pair.right, Pair.lc, Pair.rc,
         Pair.width]
 
+/-! The proofs of the rows of enums. -/
+
+theorem static_binder_leaf_agrees : BinderLeafAgrees := by
+  intro specs d s w pw off h y v hv ctx vals mems
+  refine ⟨fun q => ?_, fun p => ?_⟩
+  · cases s <;> simp [Value.unpack, finiteTy] at hv <;> subst hv <;>
+      simp [Core.Semantics.evalExpr, Core.Semantics.evalExtract, finite, BitVec.extractLsb']
+  · cases s <;> lowers [lowerPack, Flatten.bounded]
+
+theorem static_binder_bool_agrees : BinderBoolAgrees := by
+  intro specs d pw off h y v hv ctx vals mems
+  refine ⟨fun q => ?_, fun p => ?_⟩
+  · simp [Value.unpack] at hv; subst hv
+    refine ⟨_, rfl, ?_⟩
+    simp [Core.Semantics.evalExpr, Core.Semantics.evalExtract, BitVec.extractLsb']
+    ext i hi
+    obtain rfl : i = 0 := by omega
+    simp [← BitVec.getLsbD_eq_getElem, BitVec.getLsbD_ofNat]
+  · lowers [lowerPack, Flatten.bounded]
+
+theorem static_unpack_enum_agrees : UnpackEnumAgrees := by
+  intro pos t w pw x c s s' v hw hr ctx vals mems
+  refine ⟨fun q => ?_, fun _ p => ⟨?_, ?_⟩⟩
+  · obtain ⟨i, n, m, rfl⟩ : ∃ i n m, t = .enum i n m := by
+      cases t <;> simp [Specs.widths] at hw ⊢
+    revert hr
+    simp [recast, bind, ReaderT.bind, StateT.bind, get, getThe, MonadStateOf.get, StateT.get,
+      Except.bind, hw, pure, Except.pure, ReaderT.pure, StateT.pure, liftM, monadLift,
+      MonadLift.monadLift]
+    split
+    · simp
+    · split
+      · simp
+      · simp only [Except.ok.injEq, Prod.mk.injEq, Val.static.injEq]
+        rintro ⟨rfl, -⟩
+        simp [Core.Semantics.evalExpr, Core.Semantics.evalExtract, BitVec.extractLsb']
+  · lowers [lowerPack, Flatten.bounded]
+  · lowers [lowerPack, Flatten.bounded]
+
 /-! Each finite static operation agrees with its core row, and `lower` emits that row. -/
 theorem static_op_agrees :
     BinAgrees ∧ CmpAgrees ∧ BoolCmpAgrees ∧ LogicAgrees ∧ InvAgrees ∧ NegAgrees ∧
       NotAgrees ∧ ShiftAgrees ∧ ResizeSameAgrees ∧ ResizeTruncAgrees ∧ ResizeZextAgrees ∧
-      ResizeSextAgrees ∧ ReinterpretAgrees ∧ EqLeavesAgrees ∧ NeLeavesAgrees ∧ IfLeafAgrees :=
+      ResizeSextAgrees ∧ ReinterpretAgrees ∧ EqLeavesAgrees ∧ NeLeavesAgrees ∧ IfLeafAgrees ∧
+      UnpackEnumAgrees ∧ BinderLeafAgrees ∧ BinderBoolAgrees :=
   ⟨static_bin_agrees, static_cmp_agrees, static_bool_cmp_agrees, static_logic_agrees,
     static_inv_agrees, static_neg_agrees, static_not_agrees, static_shift_agrees,
     static_resize_same_agrees, static_resize_trunc_agrees, static_resize_zext_agrees,
     static_resize_sext_agrees, static_reinterpret_agrees, static_eq_leaves_agrees,
-    static_ne_leaves_agrees, static_if_leaf_agrees⟩
+    static_ne_leaves_agrees, static_if_leaf_agrees, static_unpack_enum_agrees,
+    static_binder_leaf_agrees, static_binder_bool_agrees⟩
 
 end Silicon.Source.StaticOps
