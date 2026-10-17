@@ -111,7 +111,6 @@ pub(crate) struct Counts {
 impl Counts {
     /// The work of the run: the sum of all counters. The field list has no `..`, so a new
     /// counter does not compile until it joins the sum.
-    #[expect(dead_code, reason = "the work oracle of tests_oracle reads it")]
     pub(crate) fn total(&self) -> u64 {
         let Counts {
             scanned,
