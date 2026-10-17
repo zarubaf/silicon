@@ -2800,6 +2800,9 @@ the earlier variant with that tag.
   "the variant `B` has the tag `1` of the variant at 1:19; give each variant its own tag value"
 #guard msg "enum E: UInt[2] { A = 1, B = 2, C(Bool) = 1 + 0, D = 1 }\n" "E" ==
   "the variant `C` has the tag `1` of the variant at 1:19; give each variant its own tag value"
+#guard msg "enum E: UInt[65536] { A = 1 << 65535, B = 1 << 65535 }\n" "E" ==
+  "the variant `B` has the tag `an integer of 65536 bits` of the variant at 1:23; give each " ++
+  "variant its own tag value"
 #guard out "enum E: UInt[2] { A = 1, B(Int) = 1 }\n" "E" == "S021 1:35"
 #guard out "enum E: UInt[2] { A = 1, B(Int) = 3 }\n" "E" == "S010 1:28"
 #guard out "enum E: UInt[2] { A = 1, B = 5 }\n" "E" == "S012 1:30"
@@ -3089,6 +3092,13 @@ scrutinee kind has its uncovered value: `false`, a decimal, a negative `SInt`, a
   "`2` of `UInt[2]`; add an arm for it, or add `_ => ...` as the last arm"
 #guard msg "" "match (SInt[4](-1)) { 0 => 10, 1 => 0 }" == "the `match` does not cover `-8` of " ++
   "`SInt[4]`; add an arm for it, or add `_ => ...` as the last arm"
+#guard msg "" "match (SInt[65536](0)) { 0 => 0 }" == "the `match` does not cover " ++
+  "`a negative integer of 65536 bits` of `SInt[65536]`; add an arm for it, or add `_ => ...` " ++
+  "as the last arm"
+#guard msg "" s!"match (true) \{ {2 ^ 300} => 1, _ => 0 }" == "a pattern of `Bool` is " ++
+  "`true` or `false`, not `an integer of 301 bits`; write `true` or `false`, or `_`"
+#guard msg "" s!"match (0) \{ {2 ^ 300} => 1, {2 ^ 300} => 2, _ => 0 }" == "this arm matches " ++
+  "`an integer of 301 bits`, and the arm at 1:13 matches it too; remove one of the two patterns"
 #guard msg "" "match (SInt[4](-1)) { -8 => 10, 1 => 0 }" == "the `match` does not cover `-7` of " ++
   "`SInt[4]`; add an arm for it, or add `_ => ...` as the last arm"
 #guard msg ops "match (Op::Add) { Op::Add => 1, Op::Pair(a, b) => 3 }" ==
@@ -3124,8 +3134,14 @@ by `W`. The smallest uncovered value comes from one pass over the keys.
   "cover `2` of `UInt[1024]`; add an arm for it, or add `_ => ...` as the last arm"
 #guard msg "" "match (UInt[65536](5)) { 0 => 1, 1 => 3, 5 => 2 }" == "the `match` does not " ++
   "cover `2` of `UInt[65536]`; add an arm for it, or add `_ => ...` as the last arm"
-#guard msg "" "match (SInt[1024](5)) { 0 => 1 }" == s!"the `match` does not cover " ++
-  s!"`{-(2 ^ 1023 : Int)}` of `SInt[1024]`; add an arm for it, or add `_ => ...` as the last arm"
+#guard msg "" "match (SInt[1024](5)) { 0 => 1 }" == "the `match` does not cover " ++
+  "`a negative integer of 1024 bits` of `SInt[1024]`; add an arm for it, or add `_ => ...` as " ++
+  "the last arm"
+#guard msg "" "match (SInt[257](5)) { 0 => 1 }" == "the `match` does not cover " ++
+  "`a negative integer of 257 bits` of `SInt[257]`; add an arm for it, or add `_ => ...` as " ++
+  "the last arm"
+#guard msg "" "match (SInt[256](5)) { 0 => 1 }" == s!"the `match` does not cover " ++
+  s!"`{-(2 ^ 255 : Int)}` of `SInt[256]`; add an arm for it, or add `_ => ...` as the last arm"
 #guard out "" "match (UInt[64](5)) { 0 => 1, 5 => 2, _ => 3 }" == "(int 2)"
 #guard exact "" "match (UInt[1024](5)) { 0 => 1, 5 => 2, _ => 3 }"
   (1 + 27 + 2 * (2 + 3) + 1 + 2)
