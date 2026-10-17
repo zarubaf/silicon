@@ -234,6 +234,11 @@ theorem deep_f (pos : Pos) (target : Names.Path) (w : Nat) (root : Bool) (lo : L
     FFollows (deep pos target w root lo) := by
   unfold deep; ffollows [bindTemp_f, tempRef_f]
 
+theorem lowerPack_f (pos : Pos) (target : Names.Path) (op : Op) (xs : List α) (wd : α → Nat)
+    {low : α → FM Low} (h : ∀ x, FFollows (low x)) :
+    FFollows (lowerPack pos target op xs wd low) := by
+  unfold lowerPack; ffollows [h, deep_f]
+
 theorem lower_f (target : Names.Path) :
     ∀ n (h : Hw), sizeOf h ≤ n → ∀ root, FFollows (lower target root h)
   | 0, .node .., hs => by simp at hs
@@ -244,7 +249,7 @@ theorem lower_f (target : Names.Path) :
         FFollows (lower target r x.1) := fun B x hB r => ih x.1 (by have := x.2; omega) r
     intro root
     rw [lower.eq_def]
-    ffollows [ihB, ih, twice_f, deep_f, bindTemp_f, tempRef_f, pathText_f, nameText_f,
+    ffollows [lowerPack_f, ihB, ih, twice_f, deep_f, bindTemp_f, tempRef_f, pathText_f, nameText_f,
       constOf_f]
     all_goals simp_all only [Hw.node.injEq, Hw.node.sizeOf_spec, List.cons.sizeOf_spec]
     all_goals omega
