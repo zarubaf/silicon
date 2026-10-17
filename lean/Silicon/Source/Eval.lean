@@ -1432,6 +1432,31 @@ def bindParams (ty : Resolve.TypeExpr → M Ty) (p : Pos) (ps : List Resolve.Par
     return (t, w)
 
 /-!
+The arguments `xs` of an instantiation of the item `i` at `p`, from left to right, after their
+typed use (section 5.3). `ev` evaluates an expression and `ty` a type expression. Each argument
+is static (`S011`) when it evaluates. Then the typed use nests one level, in the scope of the
+module with a new frame (`bindParams`). Each parameter type evaluates there, with each earlier
+parameter bound to its converted argument. The argument converts to it, and a literal with `[]`
+takes this type. Then the recursive size of the converted argument charges. The caller pays this
+work. The result is each parameter type with its converted argument.
+-/
+def arguments (ev : Resolve.Expr → M (Option Out)) (ty : Resolve.TypeExpr → M Ty) (p : Pos)
+    (i : Nat) (xs : List Resolve.Expr) : M (List (Ty × Value)) := do
+  let os ← xs.mapM fun x => do
+    let o ← need x (← ev x)
+    let v ← match o.value with
+      | v@(.pending ..) => pure v
+      | v => pure (.static (← static p v))
+    hold o
+    return (v, o)
+  for (_, o) in os do release o
+  let some (.module _ _ ps _ _) := (← read).items[i]?
+    | fail .S010 p "an instance needs a module"
+  nested p <| inFrame none <|
+      withReader (fun c => { c with item := i, frame := ⟨none, 0⟩ }) do
+    bindParams ty p ps (os.map (·.1))
+
+/-!
 The use at `p` of the struct item `i` with the name `x`, the parameters `ps`, the fields `fs`,
 and the prelude flag `pre`, with the values `args` of its arguments (`spec`). `ty` evaluates a
 type expression.

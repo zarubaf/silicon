@@ -272,12 +272,6 @@ theorem instantiate_e (hb : ∀ p ss, EFollows m (block k p ss) (block m p ss)) 
   rw [instantiate.eq_def k, instantiate.eq_def m]
   efollows [hb, serialize_e, bindings_e, nested_e, inFrame_e, EFollows.measure, bindLocal_f]
 
-theorem arguments_e (he : ∀ e, Follows m (Eval.eval k e) (Eval.eval m e))
-    (ht : ∀ t, Follows m (Eval.typeExpr k t) (Eval.typeExpr m t)) (pos : Pos) (i : Nat)
-    (xs : List Resolve.Expr) : EFollows m (arguments k pos i xs) (arguments m pos i xs) := by
-  unfold arguments
-  efollows [he, need_f, static_f, nested_e, inFrame_e, bindParams_f ht, hold_f, release_f]
-
 end walk
 
 /--
@@ -307,14 +301,14 @@ theorem follows_all : ∀ n,
       all_goals rcases n' with _ | m
       · refine EFollows.exhaust (cap := k) _ _ fun _ => ?_
         efollows [hs k, hb k, instantiate_e (hb k),
-          arguments_e (he.1 k) (he.2.1 k), he.1 k, he.2.1 k, need_f, copy_f,
+          arguments_f (he.1 k) (he.2.1 k), he.1 k, he.2.1 k, need_f, copy_f,
           conform_f, static_f, conformVal_f, lit_f, fresh_f, bindLocal_f, test_f, int_f, range_f,
           iteration_e, dataType_e, memWord_e, memDepth_e, port_e, resource_e, modifyBody_e,
           target_e, bindTarget_e, sinkValue_e, copyUse_f, settle_f, hold_f, release_f,
           structural_e]
       · refine EFollows.charge_one _ fun _ => ?_
         efollows [hs m, hb m, instantiate_e (hb m),
-          arguments_e (he.1 m) (he.2.1 m), he.1 m, he.2.1 m, need_f, copy_f,
+          arguments_f (he.1 m) (he.2.1 m), he.1 m, he.2.1 m, need_f, copy_f,
           conform_f, static_f, conformVal_f, lit_f, fresh_f, bindLocal_f, test_f, int_f, range_f,
           iteration_e, dataType_e, memWord_e, memDepth_e, port_e, resource_e, modifyBody_e,
           target_e, bindTarget_e, sinkValue_e, copyUse_f, settle_f, hold_f, release_f,
@@ -340,7 +334,7 @@ theorem observe_budget {budget : Budget} {items : Array Resolve.Item}
   follows [EFollows.run]
   efollows [(Eval.Fuel.follows_all n).1 n', static_f, need_f,
     instantiate_e ((follows_all n).2 n'),
-    arguments_e ((Eval.Fuel.follows_all n).1 n') ((Eval.Fuel.follows_all n).2.1 n')]
+    arguments_f ((Eval.Fuel.follows_all n).1 n') ((Eval.Fuel.follows_all n).2.1 n')]
 
 /--
 The budget boundary of `elaborate`. If the elaboration uses `u` units, each fuel from `u` gives
