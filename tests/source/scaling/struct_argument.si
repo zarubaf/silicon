@@ -1,0 +1,18 @@
+// A struct use whose parameters take two arrays of N elements. The arguments bind in order, and
+// the size of each converted argument charges right after its typed use (issue #266).
+// SCALE struct_argument 16 32 64 128 256
+// TOP M()
+struct S(comptime A: [Int; {N}], comptime B: [Int; {N}]) {
+    m: Bool,
+}
+module M() domains() {
+    output o: Bool;
+    let a = [
+// REPEAT i {N}
+        {i},
+// END
+    ];
+    let b = a;
+    let s = S[a, b](true);
+    o := s.m;
+}
