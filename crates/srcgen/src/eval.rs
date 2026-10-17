@@ -521,6 +521,17 @@ pub(crate) fn concrete(t: &Ty, env: &Env, scope: &Scope) -> Result<Scalar, Fault
     })
 }
 
+/// The entries of the port `name` of type `t`, in packing order. A scalar
+/// port is one entry.
+pub(crate) fn leaves(
+    name: &str,
+    t: &Ty,
+    env: &Env,
+    scope: &Scope,
+) -> Result<Vec<(String, Scalar)>, Fault> {
+    Ok(vec![(name.to_owned(), concrete(t, env, scope)?)])
+}
+
 struct Evaluator<'a> {
     scope: &'a Scope,
     calls: u32,
