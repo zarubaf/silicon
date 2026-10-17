@@ -99,10 +99,12 @@ fn judge(points: &[Point], c: f64) -> Result<(), String> {
         }
         last = Some(d);
     }
-    let tail = &growths[growths.len().saturating_sub(2)..];
-    if tail.len() == 2 && tail.iter().all(|g| *g >= GROWTH) {
+    if let Some(pair) = growths
+        .windows(2)
+        .find(|pair| pair.iter().all(|g| *g >= GROWTH))
+    {
         return Err(format!(
-            "the work for each unit of fuel grows at the exponents {tail:?}"
+            "the work for each unit of fuel grows at the exponents {pair:?}"
         ));
     }
     Ok(())
@@ -360,6 +362,23 @@ fn a_vacuous_step_is_skipped() {
         scan: 0,
     };
     assert_eq!(judge(&points, 1.0e9), Ok(()));
+}
+
+/// Two steps in a row of excess growth fail, also when the last step is flat.
+#[test]
+fn early_excess_growth_fails() {
+    let (w, f) = ([100, 200, 600, 2200, 5400], [100, 200, 400, 800, 1600]);
+    let points: Vec<Point> = w
+        .iter()
+        .zip(f)
+        .map(|(w, f)| Point {
+            w: *w,
+            f,
+            s: 50,
+            scan: 0,
+        })
+        .collect();
+    assert!(judge(&points, 1.0e9).is_err_and(|e| e.contains("exponents")));
 }
 
 /// The absolute check fails when the work is above `C * B`.
