@@ -433,10 +433,10 @@ fn share(
         return Ok(cond);
     }
     fuel.pay(u128::from(graph.size(cond))).map_err(at(pos))?;
-    let ty = node.ty.clone();
+    let (at_operand, ty) = (node.pos, node.ty.clone());
     let k = naming.shares;
     naming.shares += 1;
-    Ok(graph.mk(pos, ty, Op::Share(k), vec![cond]))
+    Ok(graph.mk(at_operand, ty, Op::Share(k), vec![cond]))
 }
 
 /// A static pair of a hardware `if` (section 7.4) of the joined type `t`. It charges the sum of
