@@ -1101,6 +1101,22 @@ fn a_read_of_a_wire_checks_the_depth_at_its_statement() -> Test {
     Ok(())
 }
 
+/// A read of a child output and of a register has the depth 3 of its zero. At the depth 2 the
+/// instance and the register initializer already fail, so the depth 3 pins that both succeed.
+#[test]
+fn a_read_of_a_child_output_and_of_a_register_fits_the_depth_3() -> Test {
+    let child = "struct S { a: UInt[8] }\nmodule C() {\n  input i: S;\n  output q: S;\n  q := i;\n}\n\
+                 module M() {\n  input s: S;\n  output o: S;\n  instance u = C();\n  u.i := s;\n  \
+                 o := u.q;\n}\n";
+    assert!(cost_at_depth(child, 3)?.starts_with("total"));
+    assert!(cost_at_depth(child, 2)?.starts_with("error[S015]: 3:12"));
+    let reg = "struct S { a: UInt[8] }\nmodule M() {\n  input s: S;\n  output o: S;\n  \
+               reg r: S = S();\n  r := s;\n  o := r;\n}\n";
+    assert!(cost_at_depth(reg, 3)?.starts_with("total"));
+    assert!(cost_at_depth(reg, 2)?.starts_with("error[S015]: 5:14"));
+    Ok(())
+}
+
 /// The payload `[S; 1]` has the depth 3, and the value of its binder the depth 4.
 #[test]
 fn the_binder_of_a_hardware_match_arm_checks_its_depth() -> Test {
