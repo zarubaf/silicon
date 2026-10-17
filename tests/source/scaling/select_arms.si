@@ -1,16 +1,15 @@
-// A hardware `match` with N literal arms on a scrutinee of 64 * N bits. Each select makes the key
-// literal of the scrutinee width, so the work is arms times words and the charge of the key
-// pays for it (issue #272).
+// The repro of the select audit of the hardware `match` (issue #272). The scrutinee has 64 * N
+// bits, and the N literal arms and the arm `_` have no result leaf. Only the selects are left, so
+// the charge of each select key pays for the key constant of 64 * N bits. Arms times words is
+// the work.
 // SCALE select_arms 4 8 16 32 64
 // TOP M()
 module M() domains() {
     input x: UInt[64 * {N}];
-    input y: UInt[8];
-    output o: UInt[8];
-    o := match (x) {
+    match (x) {
 // REPEAT i {N}
-        {i} => y +% {i},
+        {i} => (),
 // END
-        _ => y,
+        _ => (),
     };
 }

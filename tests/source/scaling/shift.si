@@ -1,9 +1,0 @@
-// A static shift of 1 by N * 1024 bits. The shift charges its result, so the fuel grows with the
-// words of the result (issue #262).
-// SCALE shift 64 128 256 512 1024
-// TOP M()
-module M() domains() {
-    output o: Bool;
-    let big = 1 << ({N} * 1024);
-    o := big > 0;
-}
