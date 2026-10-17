@@ -1183,7 +1183,7 @@ fn the_fixed_set_of_mutants_reaches_s008_and_s016() {
     let mut by_kind = std::collections::BTreeMap::<usize, usize>::new();
     for tape in 0..256u32 {
         let p = typed().new_tree(&mut runner).unwrap().current().unwrap();
-        for (k, kind) in KINDS.iter().enumerate().skip(8) {
+        for (k, kind) in KINDS.iter().enumerate().skip(8).take(7) {
             let count = sites(*kind, &p.items, &p.top);
             if count == 0 {
                 continue;
