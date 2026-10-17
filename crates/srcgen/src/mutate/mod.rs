@@ -40,6 +40,15 @@
 //!   site in a branch, a loop, a lazy operand, or another item than a
 //!   module body predicts nothing.
 //!
+//!
+//! - A `match` whose arms no longer cover each value, or that has an arm
+//!   after `_` or an arm twice, is `S021` (pass 5, spec 5.6) where the
+//!   `match` always runs. The arms cover each value by construction, so
+//!   `DeleteArm` is certain for the arm `_` of a match and for any arm of a
+//!   match without `_`, and it predicts nothing for another arm. Two
+//!   variants with one tag are `S021` at the first use of the enum, which
+//!   is certain where the enum is used in the top frame of a module.
+//!
 //! Any other mutation can fail in pass 5 at a point that depends on the
 //! values, or pass, so its prediction is `None`.
 
@@ -99,9 +108,19 @@ enum Kind {
     ArmMutation,
     /// The same for a width.
     TypeMutation,
+    /// An arm of a `match` goes.
+    DeleteArm,
+    /// An arm of a `match` is copied right after itself.
+    DuplicateArm,
+    /// The arm `_` moves before the last arm.
+    WildFirst,
+    /// A `_` joins the arms of a `match` that covers each value.
+    DeadWild,
+    /// The tag of a variant becomes the tag of the first variant.
+    SameTag,
 }
 
-const KINDS: [Kind; 15] = [
+const KINDS: [Kind; 20] = [
     Kind::Delete,
     Kind::Duplicate,
     Kind::Rename,
@@ -117,6 +136,11 @@ const KINDS: [Kind; 15] = [
     Kind::TypeEffect,
     Kind::ArmMutation,
     Kind::TypeMutation,
+    Kind::DeleteArm,
+    Kind::DuplicateArm,
+    Kind::WildFirst,
+    Kind::DeadWild,
+    Kind::SameTag,
 ];
 
 /// The name of the function that runs a `diagnostic`.
