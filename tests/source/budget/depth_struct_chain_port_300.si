@@ -1,7 +1,7 @@
 // A chain of 300 acyclic structs without parameters: each struct has one field of the next struct. The first use is a
 // port type, so the specializations in progress nest to the depth of the chain. The exact nesting depth succeeds, and
-// one level below gives `S015`.
-// DEPTH 301
+// one level below gives `S015`. The read of `p` has the depth 302 of its zero, so it sets the exact depth.
+// DEPTH 302
 // TOP M()
 struct S0 {
     a: S1,
