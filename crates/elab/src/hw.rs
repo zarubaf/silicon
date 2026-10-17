@@ -108,13 +108,13 @@ impl Graph {
     /// hardware operation; a reference and a constant only refer.
     pub(crate) fn mk(&mut self, pos: Pos, ty: Ty, op: Op, args: Vec<HwId>) -> HwId {
         let mut size = op.size(&ty);
-        // A node costs its operand slots and the words of its result, which no charge sees.
+        // A node costs its operand slots and the words of its constant, which no charge sees.
         #[cfg(test)]
         crate::counters::add(
             crate::counters::Count::Words,
             1 + args.len() as u64
-                + match &ty {
-                    Ty::UInt(w) | Ty::SInt(w) => width_size(*w),
+                + match &op {
+                    Op::Lit(Value::UInt(x) | Value::SInt(x)) => crate::int::word_count(x),
                     _ => 0,
                 },
         );
