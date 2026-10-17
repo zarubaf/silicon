@@ -46,11 +46,13 @@ structure Spec where
 /-!
 An enum in the table of enums (section 5.6), by its item. A done entry holds its enum type, its
 tag width `W`, and its payload width `P`. It also holds the tag value and the payload types of
-each variant, in declaration order. An enum that is not started has no entry.
+each variant, in declaration order. Its tag map gives the variant of each tag value. An enum that
+is not started has no entry.
 -/
 inductive EnumState where
   | inProgress
   | done (ty : Ty) (w p : Nat) (variants : Array (Nat × Array Ty))
+      (tags : Std.TreeMap Nat Nat compare)
 
 /-! The order of the keys of specializations: the struct item, then the static arguments. -/
 def Spec.cmp (a b : Nat × List Value) : Ordering := (compare a.1 b.1).then (Value.cmps a.2 b.2)
@@ -80,7 +82,7 @@ def Specs.item (s : Specs) : Ty → Option Nat
 def Specs.widths (s : Specs) : Ty → Option (Nat × Nat)
   | .enum i .. =>
     match s.enums[i]? with
-    | some (.done _ w p _) => some (w, p)
+    | some (.done _ w p ..) => some (w, p)
     | _ => none
   | _ => none
 
