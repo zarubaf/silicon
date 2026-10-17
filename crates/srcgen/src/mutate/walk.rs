@@ -122,7 +122,7 @@ impl<'a> Walk<'a> {
         self.hardware.clear();
         match item {
             Item::Const { value, .. } => self.sexpr(value),
-            Item::HwFnValue { .. } => {}
+            Item::HwFnValue { .. } | Item::Enum(_) => {}
             Item::ListFn(f) => self.sexpr(&mut f.element),
             Item::MutFn(f) => {
                 self.sexpr(&mut f.update);
@@ -490,6 +490,16 @@ impl<'a> Walk<'a> {
                     self.sexpr(x);
                 }
             }
+            SExpr::Ctor(name, _, args) => {
+                self.rename(name);
+                for x in args {
+                    self.sexpr(x);
+                }
+            }
+            SExpr::Unpack(name, a) | SExpr::Pack(name, a) | SExpr::BitsConv(name, a) => {
+                self.rename(name);
+                self.sexpr(a);
+            }
             SExpr::Zero(name, targs) | SExpr::DataBits(name, targs) => {
                 self.rename(name);
                 for x in targs {
@@ -689,6 +699,7 @@ fn item_name(item: &Item) -> &str {
         | Item::Module { name, .. } => name,
         Item::ComptimeFn(f) => &f.name,
         Item::Struct(def) => &def.name,
+        Item::Enum(def) => &def.name,
         Item::ListFn(f) => &f.name,
         Item::MutFn(f) => &f.name,
     }

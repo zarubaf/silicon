@@ -20,7 +20,7 @@ fn has_leaf(t: &STy, kind: Kind) -> bool {
         STy::Array(t, _) => has_leaf(t, kind),
         STy::Record(r) => r.fields.iter().any(|(_, t)| has_leaf(t, kind)),
         STy::List(t) => kind == Kind::Int || has_leaf(t, kind),
-        STy::UInt(_) | STy::SInt(_) | STy::Str | STy::Fn(_) => false,
+        STy::UInt(_) | STy::SInt(_) | STy::Str | STy::Fn(_) | STy::Enum(_) => false,
     }
 }
 
@@ -86,6 +86,7 @@ impl Builder {
             STy::Record(rt) => self.record(rt, depth, r),
             STy::Str => self.string_literal(),
             STy::List(t) => SExpr::NewList((**t).clone()),
+            STy::Enum(def) => SExpr::Zero(def.name.clone(), Vec::new()),
             STy::Bool => self.element(Kind::Bool, depth, r),
             STy::Nat | STy::Int | STy::UInt(_) | STy::SInt(_) | STy::Fn(_) => {
                 self.element(Kind::Int, depth, r)
@@ -164,6 +165,17 @@ impl Builder {
             .filter(|(_, t)| t.is_container())
             .map(|(n, _)| n)
             .collect();
+        if self.aside(4) {
+            let r = Reach {
+                names,
+                fns: 0,
+                envs: Some(envs),
+            };
+            if let Some((_, value)) = self.any_enum_value(r) {
+                note!(self, enum_probes);
+                return Some(value);
+            }
+        }
         match self.tape.below(6) {
             2 => consts
                 .get(self.tape.index(consts.len()))
@@ -248,7 +260,7 @@ impl Builder {
                 let sel = SExpr::Field(Box::new(base), field.clone());
                 self.descend(sel, ty, kind, depth, r)
             }
-            STy::UInt(_) | STy::SInt(_) | STy::Str | STy::Fn(_) => None,
+            STy::UInt(_) | STy::SInt(_) | STy::Str | STy::Fn(_) | STy::Enum(_) => None,
             STy::List(elem) => {
                 if kind == Kind::Int && self.tape.below(3) == 0 {
                     note!(self, list_lens);

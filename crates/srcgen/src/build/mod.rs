@@ -35,6 +35,7 @@ macro_rules! note {
 mod body;
 mod container;
 mod diagnostics;
+mod enums;
 mod file;
 mod fnvalues;
 mod hw;
@@ -50,8 +51,8 @@ pub use lines::lines;
 
 use super::eval::{Env, Fault, Scope, Value, leaves};
 use super::program::{
-    ComptimeFn, HExpr, Item, ListFn, MutFn, Ports, Program, SExpr, STy, Scalar, Stmt, StructDef,
-    Ty, render_items,
+    ComptimeFn, EnumDef, HExpr, Item, ListFn, MutFn, Ports, Program, SExpr, STy, Scalar, Stmt,
+    StructDef, Ty, render_items,
 };
 use super::records::records;
 use proptest::collection::vec;
@@ -374,13 +375,25 @@ struct Stats {
     effectful_fns: u32,
     nested_fns: u32,
     effectful_calls: u32,
+    enum_ctors: u32,
+    enum_zeros: u32,
+    enum_unpacks: u32,
+    enum_consts: u32,
+    enum_lets: u32,
+    enum_diagnostics: u32,
+    enum_probes: u32,
+    enum_bits: u32,
 }
 
 struct Builder {
     tape: Tape,
+    /// The same numbers from the end. The forms of enums draw from it, so
+    /// a program without them is the program of the main tape alone.
+    side: Tape,
     consts: Vec<(String, STy, SExpr)>,
     fns: Vec<ComptimeFn>,
     structs: Vec<StructDef>,
+    enums: Vec<EnumDef>,
     list_fns: Vec<ListFn>,
     helpers: Vec<Helper>,
     /// The helpers with a `mut` formal; a plain call never names one.
@@ -404,12 +417,16 @@ struct Builder {
 impl Builder {
     fn new(tape: Vec<u32>) -> Builder {
         Builder {
+            side: Tape {
+                numbers: tape.iter().rev().copied().collect::<Vec<_>>().into_iter(),
+            },
             tape: Tape {
                 numbers: tape.into_iter(),
             },
             consts: Vec::new(),
             fns: Vec::new(),
             structs: Vec::new(),
+            enums: Vec::new(),
             list_fns: Vec::new(),
             helpers: Vec::new(),
             mut_helpers: Vec::new(),
@@ -428,6 +445,7 @@ impl Builder {
     }
 
     fn program(&mut self) -> Result<Program, Fault> {
+        self.enums()?;
         self.structs()?;
         self.consts()?;
         self.fns()?;

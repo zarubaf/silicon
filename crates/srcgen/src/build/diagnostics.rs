@@ -44,6 +44,17 @@ impl Builder {
                 .map(|(n, _)| n)
                 .collect()
         };
+        if self.aside(5) {
+            note!(self, enum_diagnostics);
+            let packed = self.side.below(4) == 0;
+            if let Some((def, value)) = self.any_enum_value(r) {
+                if packed {
+                    note!(self, enum_bits);
+                    return SExpr::Pack(def.name, Box::new(value));
+                }
+                return value;
+            }
+        }
         let candidate = match self.tape.below(12) {
             0..=2 => return scalar(self, Kind::Int),
             3 => return scalar(self, Kind::Bool),
@@ -72,7 +83,9 @@ impl Builder {
                     self.pick_name(&lists)
                 }
             }
-            _ => self.pick_name(&named(|t| !matches!(t, STy::Nat | STy::Int | STy::Bool))),
+            _ => self.pick_name(&named(|t| {
+                !matches!(t, STy::Nat | STy::Int | STy::Bool | STy::Enum(_))
+            })),
         };
         if self.values(&candidate, &ctx.envs).is_some() {
             note!(self, structured_diagnostics);

@@ -36,6 +36,7 @@ pub(super) fn kind(t: &STy) -> Option<Kind> {
         | STy::UInt(_)
         | STy::SInt(_)
         | STy::Record(_)
+        | STy::Enum(_)
         | STy::List(_) => None,
     }
 }
@@ -447,6 +448,7 @@ impl Builder {
                 r.clone(),
                 r.fields.iter().map(|(_, t)| self.top_value(t)).collect(),
             ),
+            STy::Enum(d) => Value::Enum(d.clone(), BigUint::ZERO, BigUint::ZERO),
         }
     }
 }
@@ -523,7 +525,7 @@ impl Builder {
     }
 
     /// A literal of `n` with a random spelling; a negative one has one.
-    fn finite_literal(&mut self, n: BigInt) -> SExpr {
+    pub(super) fn finite_literal(&mut self, n: BigInt) -> SExpr {
         let radix = match self.tape.below(4) {
             2 => Radix::Hex,
             3 => Radix::Bin,
@@ -561,6 +563,7 @@ pub(super) fn arg_range(t: &STy) -> (i64, i64) {
         | STy::UInt(_)
         | STy::SInt(_)
         | STy::Record(_)
+        | STy::Enum(_)
         | STy::Str
         | STy::Fn(_)
         | STy::List(_) => (0, 0),
@@ -581,6 +584,13 @@ pub(super) fn value_expr(v: &Value) -> SExpr {
         Value::Str(s) => SExpr::Str(s.clone()),
         Value::Function(item, _) => SExpr::Name(item.clone()),
         Value::List(t, _) => SExpr::NewList(t.clone()),
+        Value::Enum(def, ..) => SExpr::Unpack(
+            def.name.clone(),
+            Box::new(SExpr::BitsConv(
+                def.name.clone(),
+                Box::new(SExpr::Int(BigInt::from(v.bits()), Radix::Dec)),
+            )),
+        ),
         Value::Record(rt, xs) => {
             let targs = rt.args.iter().map(value_expr).collect();
             if rt.zeroable() && xs.iter().all(is_zero) {
@@ -599,6 +609,7 @@ fn is_zero(v: &Value) -> bool {
         Value::Bool(b) => !b,
         Value::Tuple(xs) | Value::Array(xs) | Value::Record(_, xs) => xs.iter().all(is_zero),
         Value::Function(..) => false,
+        Value::Enum(_, tag, payload) => *tag == BigUint::ZERO && *payload == BigUint::ZERO,
         Value::Str(s) => s.is_empty(),
         Value::List(_, xs) => xs.is_empty(),
     }

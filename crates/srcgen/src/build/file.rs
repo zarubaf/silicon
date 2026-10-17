@@ -40,7 +40,11 @@ impl Builder {
         let fns = fns.chain(self.list_fns.iter().cloned().map(Item::ListFn));
         let fns = fns.chain(self.mut_fns.iter().cloned().map(Item::MutFn));
         let structs = self.structs.iter().cloned().map(Item::Struct);
-        structs.chain(consts).chain(fns).collect()
+        self.enum_items()
+            .chain(structs)
+            .chain(consts)
+            .chain(fns)
+            .collect()
     }
 
     /// The scope of the consts and `comptime fn`s so far. The builder adds
@@ -88,7 +92,7 @@ impl Builder {
             self.consts.push((format!("C{k}"), ty, value));
             self.refresh()?;
         }
-        Ok(())
+        self.enum_consts()
     }
 
     /// `Nat` for most non-negative values (a negative `Nat` is `S012`),

@@ -132,6 +132,12 @@ impl Builder {
     /// the position has no envs.
     pub(super) fn data_bits(&mut self, r: Reach<'_>) -> Option<SExpr> {
         let envs = r.envs?;
+        if self.aside(3)
+            && let Some(def) = self.any_enum()
+        {
+            note!(self, data_bits);
+            return Some(SExpr::DataBits(def.name, Vec::new()));
+        }
         let hardware: Vec<&StructDef> = self
             .structs
             .iter()

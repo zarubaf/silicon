@@ -385,21 +385,26 @@ impl Builder {
         let mut out = Vec::new();
         let mut regs = Vec::new();
         let mut instances = 0;
+        let mut extra = self.enum_stmts();
         for _ in 0..self.tape.below(max + 1) {
+            while extra > 0 && self.side.below(3) == 0 {
+                self.enum_stmt(ctx, &mut m.names, &mut out)?;
+                extra -= 1;
+            }
             let nested = level < NESTING;
-            match self.tape.below(22) {
+            match self.tape.below(25) {
                 1 => self.static_let(ctx, &mut m.names, &mut out)?,
                 12 => self.list_let(ctx, &mut m.names, &mut out)?,
                 13 => self.push_stmt(ctx, &mut out),
                 14 => self.pop_stmt(ctx, &mut m.names, &mut out),
-                15 => self.static_mut_call(ctx, &mut m.names, &mut out)?,
+                15 | 22 => self.static_mut_call(ctx, &mut m.names, &mut out)?,
                 16 => self.hw_mut_call(ctx, m, &mut out)?,
-                17 | 19 | 20 | 21 => self.diagnostic(ctx, &mut out),
+                17 | 19 | 20 => self.diagnostic(ctx, &mut out),
                 2 => self.binding(ctx, &mut m.names, &mut out, true)?,
                 3 => self.assign(ctx, &mut m.names, &mut out)?,
                 4 => self.wire(ctx, &mut m.names, &mut out)?,
                 5 if m.clocked => self.reg(ctx, &mut m.names, &mut out, &mut regs)?,
-                6 | 7 | 18 if instances < INSTANCES => {
+                6 | 7 | 18 | 21 | 23 | 24 if instances < INSTANCES => {
                     if self.instance(ctx, m, &mut out)? {
                         instances += 1;
                         // A record after the child pins the order of the
@@ -417,6 +422,9 @@ impl Builder {
                 }
                 _ => self.binding(ctx, &mut m.names, &mut out, false)?,
             }
+        }
+        for _ in 0..extra {
+            self.enum_stmt(ctx, &mut m.names, &mut out)?;
         }
         self.close_regs(ctx, regs, &mut out)?;
         Ok(out)
