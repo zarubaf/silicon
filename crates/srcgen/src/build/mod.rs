@@ -43,6 +43,7 @@ mod hw;
 mod inst;
 mod lines;
 mod lists;
+mod matches;
 mod mutcalls;
 mod record;
 mod stat;
@@ -65,9 +66,9 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 /// The name prefixes of the static kinds: `P` parameter, `C` const, `f`
-/// `comptime fn`, `s` static `let`, `j` loop binder. A static name is one
+/// `comptime fn`, `s` static `let`, `j` loop binder, `B` binder of a static `match`. A static name is one
 /// of them and digits; the twin must have none.
-pub(super) const STATIC_PREFIXES: &str = "PCfsjbSkF";
+pub(super) const STATIC_PREFIXES: &str = "PCfsjbSkFB";
 
 /// The result of a step whose faults the checks of the builder exclude.
 /// A fault reaches `build`, which the coverage test watches.
@@ -101,6 +102,8 @@ const MUT_HELPERS: u32 = 2;
 /// The most functions that call an earlier function with a `mut` formal.
 const NESTED_FNS: u32 = 3;
 const ENVS: usize = 64;
+/// A static `match` replaces one static expression in this many.
+const MATCH_ODDS: u32 = 30;
 const INSTANCES: u32 = 3;
 const CONTEXTS: usize = 3;
 /// The largest first argument (the recursion count) of a `comptime fn`
@@ -406,6 +409,12 @@ struct Stats {
     hw_wires: u32,
     hw_regs: u32,
     hw_bits: u32,
+    static_matches: u32,
+    static_enum_matches: u32,
+    static_binders: u32,
+    nested_matches: u32,
+    complete_matches: u32,
+    finite_matches: u32,
 }
 
 struct Builder {
@@ -413,6 +422,12 @@ struct Builder {
     /// The same numbers from the end. The forms of enums draw from it, so
     /// a program without them is the program of the main tape alone.
     side: Tape,
+    /// Whether `on_side` has swapped `tape` and `side`.
+    swapped: bool,
+    /// The binders `B<n>` of static matches made so far.
+    binders: u32,
+    /// The matches that are open: the arm being built is in this many.
+    match_level: u32,
     consts: Vec<(String, STy, SExpr)>,
     fns: Vec<ComptimeFn>,
     structs: Vec<StructDef>,
@@ -446,6 +461,9 @@ impl Builder {
             tape: Tape {
                 numbers: tape.into_iter(),
             },
+            swapped: false,
+            binders: 0,
+            match_level: 0,
             consts: Vec::new(),
             fns: Vec::new(),
             structs: Vec::new(),

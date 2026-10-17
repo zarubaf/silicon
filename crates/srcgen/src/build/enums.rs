@@ -33,19 +33,34 @@ const EXTRA_CONSTS: u32 = 2;
 
 impl Builder {
     /// Runs `f` with the side tape as the tape. A form of enums draws from
-    /// it, also when it calls the code of the other forms. `f` must not
-    /// call `on_side`.
+    /// it, also when it calls the code of the other forms. A call inside
+    /// `f` stays on the side tape.
     pub(super) fn on_side<T>(&mut self, f: impl FnOnce(&mut Builder) -> T) -> T {
+        if self.swapped {
+            return f(self);
+        }
+        self.swapped = true;
         std::mem::swap(&mut self.tape, &mut self.side);
         let out = f(self);
         std::mem::swap(&mut self.tape, &mut self.side);
+        self.swapped = false;
         out
+    }
+
+    /// A number below `n` from the side tape, also while `on_side` has
+    /// swapped the tapes.
+    pub(super) fn side_below(&mut self, n: u32) -> u32 {
+        if self.swapped {
+            self.tape.below(n)
+        } else {
+            self.side.below(n)
+        }
     }
 
     /// Whether a draw of the side tape with the odds `1 / odds` takes an
     /// enum form, if the file has an enum.
     pub(super) fn aside(&mut self, odds: u32) -> bool {
-        !self.enums.is_empty() && self.side.below(odds) == 0
+        !self.enums.is_empty() && self.side_below(odds) == 0
     }
 
     /// The `enum` items `E<k>`. They come first, so everything can use them.
@@ -165,7 +180,7 @@ impl Builder {
         if self.enums.is_empty() {
             0
         } else {
-            self.side.below(EXTRA_STMTS + 1)
+            self.side_below(EXTRA_STMTS + 1)
         }
     }
 

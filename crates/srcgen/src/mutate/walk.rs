@@ -3,7 +3,7 @@
 
 use super::super::program::sexpr as sexpr_text;
 use super::super::program::{
-    FieldTy, HBin, HExpr, Item, Place, Radix, SBin, SExpr, STy, Stmt, Ty, Un,
+    FieldTy, HBin, HExpr, Item, Pattern, Place, Radix, SBin, SExpr, STy, Stmt, Ty, Un,
 };
 use super::uses::{self, Callees};
 use super::{EFFECT_FN, Effect, Hit, KEEP_FN, Kind};
@@ -529,6 +529,19 @@ impl<'a> Walk<'a> {
                 self.lazily(|w| {
                     w.sexpr(t);
                     w.sexpr(f);
+                });
+            }
+            SExpr::Match(m) => {
+                self.sexpr(&mut m.scrutinee);
+                // Only the selected arm runs. The binders are declarations,
+                // so no site renames them.
+                self.lazily(|w| {
+                    for (p, arm) in &mut m.arms {
+                        if let Pattern::Variant(e, ..) = p {
+                            w.rename(e);
+                        }
+                        w.sexpr(arm);
+                    }
                 });
             }
         }

@@ -412,17 +412,17 @@ impl Builder {
         let mut instances = 0;
         let mut extra = self.enum_stmts();
         for _ in 0..self.tape.below(max + 1) {
-            while extra > 0 && self.side.below(3) == 0 {
+            while extra > 0 && self.side_below(3) == 0 {
                 self.enum_stmt(ctx, &mut m.names, m.clocked, &mut out, &mut eregs)?;
                 extra -= 1;
             }
             let nested = level < NESTING;
-            match self.tape.below(25) {
+            match self.tape.below(28) {
                 1 => self.static_let(ctx, &mut m.names, &mut out)?,
                 12 => self.list_let(ctx, &mut m.names, &mut out)?,
                 13 => self.push_stmt(ctx, &mut out),
-                14 => self.pop_stmt(ctx, &mut m.names, &mut out),
-                15 | 22 => self.static_mut_call(ctx, &mut m.names, &mut out)?,
+                14 | 22 | 25 => self.pop_stmt(ctx, &mut m.names, &mut out),
+                15 | 26 | 27 => self.static_mut_call(ctx, &mut m.names, &mut out)?,
                 16 => self.hw_mut_call(ctx, m, &mut out)?,
                 17 | 19 | 20 => self.diagnostic(ctx, &mut out),
                 2 => self.binding(ctx, &mut m.names, &mut out, true)?,

@@ -50,7 +50,7 @@ impl Builder {
         }
         let ports = |b: &mut Builder, prefix: &'static str| {
             let mut names = Names::default();
-            (0..b.side.below(PORTS + 1))
+            (0..b.side_below(PORTS + 1))
                 .filter_map(|_| b.any_enum().map(|d| (names.fresh(prefix), d)))
                 .collect::<Vec<_>>()
         };

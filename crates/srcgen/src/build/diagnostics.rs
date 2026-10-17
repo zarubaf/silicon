@@ -46,7 +46,12 @@ impl Builder {
         };
         if self.aside(5) {
             note!(self, enum_diagnostics);
-            let packed = self.side.below(4) == 0;
+            let packed = self.side_below(4) == 0;
+            if self.side_below(3) == 0
+                && let Some(m) = self.on_side(|b| b.finite_match(r))
+            {
+                return m;
+            }
             if let Some((def, value)) = self.any_enum_value(r) {
                 if packed {
                     note!(self, enum_bits);
