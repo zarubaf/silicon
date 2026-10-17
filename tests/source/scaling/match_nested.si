@@ -1,0 +1,20 @@
+// W7 of the work-counter tests of the hardware `match` (issue #272). N matches nest in the
+// scrutinee of the next one, and the work is `O(N)`: each level shares its select by a mark.
+// SCALE match_nested 8 16 32 64 128
+// TOP M()
+module M() domains() {
+    input c: Bool;
+    input p: Bool;
+    input q: Bool;
+    output o: Bool;
+    let a =
+// REPEAT i {N}
+        match (
+// END
+        c
+// REPEAT i {N}
+        ) { true => p, _ => q }
+// END
+    ;
+    o := a;
+}
