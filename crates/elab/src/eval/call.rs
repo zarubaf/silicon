@@ -80,7 +80,7 @@ impl Evaluator<'_> {
         {
             match self.target(*fid) {
                 Some(Target::Decl(id))
-                    if matches!(self.file.decl(id).kind, Kind::Fn | Kind::Module) =>
+                    if matches!(self.decl_ref(id).kind, Kind::Fn | Kind::Module) =>
                 {
                     return Ok(Callee::Item(*fp, g, id));
                 }

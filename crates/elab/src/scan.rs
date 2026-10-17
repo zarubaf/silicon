@@ -143,7 +143,10 @@ impl Walk<'_> {
         let Some(Target::Decl(decl)) = target else {
             return false;
         };
-        let d = self.file.decl(decl);
+        let d = match self.top {
+            Some(top) => top.decl(self.file, decl),
+            None => self.file.decl(decl),
+        };
         match d.kind {
             Kind::Const | Kind::Struct | Kind::Enum | Kind::Fn => true,
             Kind::Alias => self.file.item(&d.name) == Some(decl),

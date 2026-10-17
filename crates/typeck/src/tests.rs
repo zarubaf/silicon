@@ -1232,3 +1232,20 @@ fn a_match_is_a_static_position_and_a_binder_is_a_plain_local() {
         62,
     );
 }
+
+#[test]
+fn a_binder_in_an_expression_is_a_plain_local() {
+    let resolved = resolve::resolve(parse::parse(PAIR).unwrap()).ok().unwrap();
+    let expr = parse::parse_expr(
+        "match (Op::Load(3)) { Op::Load(v) => v, _ => 0 }",
+        parse::DEFAULT_SYNTAX_DEPTH,
+    )
+    .unwrap()
+    .ok()
+    .unwrap();
+    let expr = resolve::resolve_expr(&resolved, expr)
+        .unwrap()
+        .ok()
+        .unwrap();
+    assert!(crate::check_expr(&resolved, expr).is_ok());
+}

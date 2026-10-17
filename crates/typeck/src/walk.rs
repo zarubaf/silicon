@@ -235,6 +235,14 @@ impl<'a> Walker<'a> {
         }
     }
 
+    /// The declaration of an id: of the file, or of a binder of the expression.
+    fn decl(&self, id: DeclId) -> &resolve::Decl {
+        match self.expr {
+            Some(expr) => expr.decl(self.resolved, id),
+            None => self.resolved.decl(id),
+        }
+    }
+
     /// The parameter that the receiver of the method node with an id binds to.
     fn receiver_of(&self, id: NodeId) -> Option<usize> {
         match self.expr {
@@ -302,7 +310,7 @@ impl<'a> Walker<'a> {
     fn resource_name(&mut self, is_static: bool, pos: Pos, id: NodeId, name: &str) {
         if let Some(Target::Decl(id)) = self.target(id)
             && is_static
-            && let Some(what) = resource(self.resolved.decl(id).kind)
+            && let Some(what) = resource(self.decl(id).kind)
         {
             self.report(
                 Code::S005,
