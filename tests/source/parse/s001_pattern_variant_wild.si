@@ -1,0 +1,4 @@
+// S001: `_` is no variant name. The error is at the `_`, which follows `::`.
+// expected-error S001 @+2
+// expected-message: a variant pattern names a variant, not `_`; write `_` alone to match each other value
+const A: T = match (x) { E::_ => 1 };

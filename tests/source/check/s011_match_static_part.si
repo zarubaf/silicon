@@ -6,7 +6,7 @@ module M() {
     input a: UInt[4];
     output y: UInt[4];
     // expected-error S011 @+2
-    // expected-message: the arms of a hardware `match` differ in a static part: Int and Int
+    // expected-message: the arms of a hardware `match` differ in a static part: 1 and 2; give the part one value and type in each arm, or move it out of the `match`
     let p = match (x) { true => (h, 1), false => (h, 2) };
     y := 0;
 }

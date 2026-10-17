@@ -1,0 +1,10 @@
+// S021: the second tag has 65536 bits, so the message gives its bit length.
+// TOP M()
+// expected-error S021 @+2
+// expected-message: the variant `B` has the tag `an integer of 65536 bits` of the variant at 5:23; give each variant its own tag value
+enum E: UInt[65536] { A = 1 << 65535, B = 1 << 65535 }
+module M() {
+    input x: E;
+    output y: UInt[4];
+    y := match (x) { _ => 1 };
+}

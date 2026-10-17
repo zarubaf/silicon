@@ -1,0 +1,2 @@
+// A trailing `,` in the binders of a variant pattern is valid, also after `_`.
+const A: T = match (e) { Op::Load(a,) => a, Op::Pair(a, _,) => a, _ => 0 };

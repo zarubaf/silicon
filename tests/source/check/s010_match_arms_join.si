@@ -5,6 +5,7 @@ module M() {
     input c: UInt[4];
     input a: UInt[4];
     output y: UInt[4];
-    // expected-error S010 @+1
+    // expected-error S010 @+2
+    // expected-message: the arms of a hardware `match` have no common type; convert each arm to one type
     y := match (x) { true => c, false => (x, c) };
 }
