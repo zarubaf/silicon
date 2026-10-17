@@ -666,6 +666,33 @@ fn eval_reports_the_first_error_of_the_file_then_of_the_expression() -> Test {
     Ok(())
 }
 
+/// Pass 2 ranks before pass 3 in an expression, as in a file: a repeated binder of a pattern
+/// wins over an unresolved name, also when the name comes first.
+#[test]
+fn eval_reports_a_repeated_pattern_binder_before_an_unresolved_name() -> Test {
+    let src = "enum E: UInt[1] { V(UInt[8], UInt[8]) = 0 }\n";
+    for expr in [
+        "match (E::V(3, 9)) { E::V(x, x) => x, _ => 0 }",
+        "match (E::V(3, 9)) { E::V(x, x) => y, _ => 0 }",
+    ] {
+        assert_eq!(
+            eval(src, expr, &[])?,
+            (
+                "error[S002]: 1:30: `x` is already declared in this scope\n".to_owned(),
+                Some(1)
+            )
+        );
+    }
+    assert_eq!(
+        eval(src, "match (y) { E::V(x, x) => 1, _ => 0 }", &[])?,
+        (
+            "error[S002]: 1:21: `x` is already declared in this scope\n".to_owned(),
+            Some(1)
+        )
+    );
+    Ok(())
+}
+
 /// Lean counts the joins of the two element types in full, and Rust stops its walk when the
 /// fuel cannot pay it, so the message names no count of units (issue #250). The same program
 /// and fuel give the same text in `Source/Test/Elab.lean`.
