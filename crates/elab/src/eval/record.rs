@@ -147,6 +147,7 @@ impl Evaluator<'_> {
         for (u, o) in payload.iter().zip(outs) {
             vals.push(self.read_use(pos, *u, true, o)?);
         }
+        self.enum_depth(pos, t)?;
         let result_size =
             |p: u32| 1 + width_size(widths.tag) + if p == 0 { 0 } else { width_size(p) };
         if vals.iter().all(|v| matches!(v, Val::Static(_))) {
