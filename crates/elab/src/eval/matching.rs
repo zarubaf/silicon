@@ -9,8 +9,9 @@
 //! key makes up to `1 + log n` compares, each at most 1024 words: a log factor above its share
 //! of the coverage charge.
 
+use super::arms::onehot_leaf;
 use super::container::Piece;
-use super::hwops::{Side, onehot_leaf, share};
+use super::hwops::{Side, share};
 use super::{Evaluator, Guard, GuardKind, Names, Opnd, Out, Res, Slot, at, expr_pos, fail, need};
 use crate::Code;
 use crate::cover::{Cover, all_keys, key_bits, key_lo};
