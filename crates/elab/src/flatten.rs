@@ -295,6 +295,14 @@ fn mux(c: Span, s: Expr, a: Expr, b: Expr) -> Expr {
     }
 }
 
+fn replicate(c: Span, a: Expr, count: u32) -> Expr {
+    Expr::Replicate {
+        arg: Box::new(a),
+        count: num(count, c),
+        span: c,
+    }
+}
+
 fn extract(c: Span, a: Expr, lo: u32, w: u32) -> Expr {
     Expr::Extract {
         arg: Box::new(a),
@@ -566,10 +574,8 @@ impl<'d> Lower<'d> {
                     ..arg
                 }
             }
-            // TODO(#272): lower the `onehot` and `rest` nodes of a hardware `match` (section 7.4).
-            (Op::Onehot | Op::Rest, _) => {
-                return defect("a hardware `match` has no lowering yet");
-            }
+            (Op::Onehot, args) => self.onehot(target, pos, width(&ty), args)?,
+            (Op::Rest, args) => self.rest(target, pos, args)?,
             _ => return defect("a hardware node has the wrong number of operands"),
         };
         self.deep(pos, target, width(&ty), root, low)
@@ -613,6 +619,85 @@ impl<'d> Lower<'d> {
         Ok(inner(
             core_bin(span(pos), core, low.expr, right.expr),
             height,
+        ))
+    }
+
+    /// A `onehot` node of the selects `s_0` to `s_(m-1)` and the values `v_0` to `v_(m-1)`, in the
+    /// AND-OR form of section 7.4: `(or (... (or a_0 a_1) ...) a_(m-1))` with
+    /// `a_j = (and (replicate s_j w) v_j)`. The operands lower first, in order: the selects, then
+    /// the values. Thus the temporary numbers of the selects do not depend on the temporaries of
+    /// the values. Then a loop runs over the arms. Arm `j` charges and builds its `replicate`
+    /// node, then its `and` node. Each of them binds right after it is built when its effective
+    /// height reaches 64. From arm 1 on, the chain so far then binds by the same rule, and the
+    /// `or` node charges and builds. Thus the `and` node of an arm binds before the chain that
+    /// it joins, and the recursion does not follow the arm count.
+    fn onehot(&mut self, target: Target, pos: Pos, w: u32, args: &[HwId]) -> R<Low> {
+        let m = args.len() / 2;
+        if args.len() != 2 * m {
+            return defect("a `onehot` node has the wrong number of operands");
+        }
+        let at = span(pos);
+        let mut lows = Vec::with_capacity(args.len());
+        for arg in args {
+            lows.push(self.operand(target, *arg)?);
+        }
+        let values = lows.split_off(m);
+        let mut chain: Option<Low> = None;
+        for (select, value) in lows.into_iter().zip(values) {
+            #[cfg(test)]
+            crate::counters::add(crate::counters::Count::Chained, 1);
+            self.charge(pos, 1)?;
+            let low = inner(replicate(at, select.expr, w), up(select.height));
+            let mask = self.deep(pos, target, w, false, low)?;
+            self.charge(pos, 1)?;
+            let height = up(mask.height.max(value.height));
+            let term = inner(bin(at, CBin::And, mask.expr, value.expr), height);
+            let term = self.deep(pos, target, w, false, term)?;
+            chain = Some(match chain.take() {
+                None => term,
+                Some(low) => {
+                    let low = self.deep(pos, target, w, false, low)?;
+                    self.charge(pos, 1)?;
+                    let height = up(low.height.max(term.height));
+                    inner(bin(at, CBin::Or, low.expr, term.expr), height)
+                }
+            });
+        }
+        match chain {
+            Some(low) => Ok(low),
+            None => defect("a `onehot` node has no arm"),
+        }
+    }
+
+    /// A `rest` node of the selects `s_0` to `s_(n-1)`: `(xor (or (... (or s_0 s_1) ...) s_(n-1))
+    /// (const 1 1))`. The `xor` node and its constant charge first. Then the chain builds from
+    /// `s_0`: each step binds the chain so far, charges its `or` node, then lowers its select. At
+    /// the end, the chain binds before the `xor` node. One select gives `(xor s_0 (const 1 1))`.
+    fn rest(&mut self, target: Target, pos: Pos, args: &[HwId]) -> R<Low> {
+        let at = span(pos);
+        self.charge(pos, 2)?;
+        let mut chain: Option<Low> = None;
+        for arg in args {
+            #[cfg(test)]
+            crate::counters::add(crate::counters::Count::Chained, 1);
+            chain = Some(match chain.take() {
+                None => self.operand(target, *arg)?,
+                Some(low) => {
+                    let low = self.deep(pos, target, 1, false, low)?;
+                    self.charge(pos, 1)?;
+                    let select = self.operand(target, *arg)?;
+                    let height = up(low.height.max(select.height));
+                    inner(bin(at, CBin::Or, low.expr, select.expr), height)
+                }
+            });
+        }
+        let Some(low) = chain else {
+            return defect("a `rest` node has no select");
+        };
+        let low = self.deep(pos, target, 1, false, low)?;
+        Ok(inner(
+            bin(at, CBin::Xor, low.expr, small(at, 1, 1)),
+            up(low.height),
         ))
     }
 
