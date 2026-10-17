@@ -1,0 +1,9 @@
+// S019: the cycle can go through an array type in a payload.
+// TOP M()
+// expected-error S019 @+2
+// expected-message: the enum `Tree` depends on itself
+enum Tree: UInt[1] { Leaf = 0, Node([Tree; 2]) = 1 }
+module M() {
+    output y: Tree;
+    y := Tree::Leaf;
+}

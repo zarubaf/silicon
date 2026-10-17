@@ -1,0 +1,8 @@
+// S010: a `match` takes no `String`. The error is at the scrutinee.
+// TOP M()
+module M() {
+    output y: UInt[4];
+    // expected-error S010 @+2
+    // expected-message: a `match` takes `Bool`, `UInt`, `SInt`, `Int`, `Nat`, or an enum, not `String`; match on a part of the value
+    y := match ("a") { _ => 1 };
+}

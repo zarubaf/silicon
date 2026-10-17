@@ -1,0 +1,9 @@
+// S010: a payload value gets its typed use at the payload type, so a `Bool` is no `UInt[4]`.
+// TOP M()
+enum Op: UInt[1] { Add = 0, Load(UInt[4]) = 1 }
+module M() {
+    output y: Op;
+    // expected-error S010 @+2
+    // expected-message: expected UInt[4], but the value is Bool
+    y := Op::Load(true);
+}

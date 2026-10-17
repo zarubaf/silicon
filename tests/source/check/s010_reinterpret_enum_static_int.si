@@ -1,0 +1,9 @@
+// S010: `reinterpret(E, b)` needs `b: UInt[W + P]`, not a static `Int`.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }
+module M() {
+    output y: Op;
+    // expected-error S010 @+2
+    // expected-message: `reinterpret` makes Op only from UInt[10], not Int
+    y := reinterpret(Op, 5);
+}
