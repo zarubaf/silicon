@@ -5,7 +5,9 @@
 //! The dump recurses over the AST, so its depth of calls is at most about twice the syntax
 //! depth of the parse that made the AST. `Parse::dump` runs it on a stack for that depth.
 
-use crate::ast::{Expr, FnParam, Ident, Item, Param, Stmt, StructField, TypeExpr, Variant};
+use crate::ast::{
+    Arm, Expr, FnParam, Ident, Item, Param, Pattern, Stmt, StructField, TypeExpr, Variant,
+};
 use std::fmt::{Debug, Write};
 
 /// The dump of a file: one line for each item, and an LF ends each line.
@@ -168,6 +170,15 @@ fn expr(e: &Expr, out: &mut String) {
             sp(out);
             ident(variant, out);
         }),
+        Expr::Match { scrut, arms, .. } => match_expr(scrut, arms, out),
+        Expr::ArrayType { .. } | Expr::FnType { .. } => type_expr_in_expr(e, out),
+    }
+}
+
+/// An array type or a function type in an expression.
+fn type_expr_in_expr(e: &Expr, out: &mut String) {
+    let sp = |out: &mut String| out.push(' ');
+    match e {
         Expr::ArrayType { elem, len, .. } => node("arraytype", out, |out| {
             sp(out);
             type_expr(elem, out);
@@ -180,7 +191,55 @@ fn expr(e: &Expr, out: &mut String) {
             sp(out);
             type_expr(ret, out);
         }),
+        _ => {}
     }
+}
+
+fn match_expr(scrut: &Expr, arms: &[Arm], out: &mut String) {
+    node("match", out, |out| {
+        out.push(' ');
+        expr(scrut, out);
+        out.push(' ');
+        list(arms, out, arm);
+    });
+}
+
+fn pattern(p: &Pattern, out: &mut String) {
+    match p {
+        Pattern::Wild { .. } => node("wild", out, |_| {}),
+        Pattern::Int { neg, value, .. } => node("int", out, |out| {
+            out.push(' ');
+            boolean(*neg, out);
+            out.push(' ');
+            out.push_str(value.as_str());
+        }),
+        Pattern::Bool { value, .. } => node("bool", out, |out| {
+            out.push(' ');
+            boolean(*value, out);
+        }),
+        Pattern::Variant {
+            ty,
+            variant,
+            binders,
+            ..
+        } => node("variant", out, |out| {
+            out.push(' ');
+            ident(ty, out);
+            out.push(' ');
+            ident(variant, out);
+            out.push(' ');
+            list(binders, out, |b, out| option(b.as_ref(), out, ident));
+        }),
+    }
+}
+
+fn arm(a: &Arm, out: &mut String) {
+    node("arm", out, |out| {
+        out.push(' ');
+        pattern(&a.pat, out);
+        out.push(' ');
+        expr(&a.value, out);
+    });
 }
 
 fn fn_param(p: &FnParam, out: &mut String) {

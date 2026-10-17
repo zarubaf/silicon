@@ -3,7 +3,7 @@
 //! so it runs on the front-end thread.
 
 use crate::{Code, Error};
-use parse::ast::{Expr, FnParam, Ident, Item, NodeId, Param, ParamMode, Pos, Stmt, TypeExpr};
+use parse::ast::{Arm, Expr, FnParam, Ident, Item, NodeId, Param, ParamMode, Pos, Stmt, TypeExpr};
 use resolve::{DeclId, Kind, Prelude, Resolved, ResolvedExpr, Target};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -652,6 +652,7 @@ impl<'a> Walker<'a> {
                 self.expr(true, len);
                 Some(Head::complete(Ctor::Convert))
             }
+            Expr::Match { scrut, arms, .. } => self.matched(is_static, scrut, arms),
             Expr::FnType { params, ret, .. } => {
                 self.fn_type(params, ret);
                 Some(Head {
@@ -661,6 +662,15 @@ impl<'a> Walker<'a> {
                 })
             }
         }
+    }
+
+    // TODO(#272): the arity of the patterns.
+    fn matched(&mut self, is_static: bool, scrut: &Expr, arms: &[Arm]) -> Option<Head> {
+        self.expr(is_static, scrut);
+        for arm in arms {
+            self.expr(is_static, &arm.value);
+        }
+        None
     }
 
     /// The parameter types and the result type of a function type.
@@ -897,6 +907,7 @@ fn expr_pos(expr: &Expr) -> Pos {
         | Expr::Array { pos, .. }
         | Expr::Select { pos, .. }
         | Expr::Path { pos, .. }
+        | Expr::Match { pos, .. }
         | Expr::ArrayType { pos, .. }
         | Expr::FnType { pos, .. } => *pos,
     }

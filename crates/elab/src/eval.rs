@@ -280,6 +280,7 @@ pub(crate) fn expr_pos(e: &Expr) -> Pos {
         | Expr::Array { pos, .. }
         | Expr::Select { pos, .. }
         | Expr::Path { pos, .. }
+        | Expr::Match { pos, .. }
         | Expr::ArrayType { pos, .. }
         | Expr::FnType { pos, .. } => *pos,
     }
@@ -955,6 +956,11 @@ impl Evaluator<'_> {
         Ok(Some(Out::Made(Val::Static(v))))
     }
 
+    // TODO(#272): evaluate a `match`.
+    fn matched(pos: Pos) -> Res<Option<Out>> {
+        fail(Code::S010, pos, "a `match` is not supported yet".to_owned())
+    }
+
     fn eval(&mut self, e: &Expr) -> Res<Option<Out>> {
         self.charge(expr_pos(e), 1)?;
         match e {
@@ -968,6 +974,7 @@ impl Evaluator<'_> {
                 Ok(Some(Out::Made(Val::Static(Value::Str(value.clone())))))
             }
             Expr::Name { pos, id, name } => Ok(Some(self.name(*pos, *id, name)?)),
+            Expr::Match { pos, .. } => Self::matched(*pos),
             Expr::Unary { pos, op, arg } => match self.operand(*pos, arg)? {
                 Opnd::Static(a) if self.is_agg(&a) => fail(
                     Code::S010,

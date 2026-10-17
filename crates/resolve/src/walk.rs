@@ -502,6 +502,13 @@ impl Walker {
                 }
             }
             Expr::Path { pos, ty, variant } => self.variant_path(*pos, ty, variant),
+            // TODO(#272): scopes for the binders and the paths of the patterns.
+            Expr::Match { scrut, arms, .. } => {
+                self.expr(scrut);
+                for arm in arms {
+                    self.expr(&arm.value);
+                }
+            }
         }
     }
 

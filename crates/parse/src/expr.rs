@@ -186,20 +186,112 @@ impl Parser<'_> {
         Some(())
     }
 
-    /// An expression: a conditional, or the operators by precedence. A `match` is at the
-    /// level of the conditional, and it is a later phase of slice 3.
+    /// An expression: a conditional, a `match`, or the operators by precedence. A `match` is at
+    /// the level of the conditional.
     pub(crate) fn expr(&mut self) -> Res {
         let start = self.offset();
         self.outermost(start, |p| {
             if p.is(MatchKw) {
-                p.later_slice(p.offset(), "a `match`");
-                None
+                p.match_form()
             } else if p.is(IfKw) {
                 p.cond_form()
             } else {
                 p.binary(0)
             }
         })
+    }
+
+    /// `match (x) { p => e, }`. A `,` can end the arms. The height is 1 plus the largest height
+    /// of the scrutinee and the arm expressions: a pattern adds none.
+    fn match_form(&mut self) -> Res {
+        self.node(MatchExpr, |p| {
+            p.bump();
+            p.expect(LParen, "`(`")?;
+            p.expr()?;
+            let mut height = p.height;
+            p.expect(RParen, "`)`")?;
+            p.expect(LBrace, "`{`")?;
+            while !p.eat(RBrace) {
+                p.node(MatchArm, |p| {
+                    p.pattern()?;
+                    p.expr()
+                })?;
+                height = height.max(p.height);
+                if p.eat(RBrace) {
+                    break;
+                }
+                p.expect(Comma, "`,` or `}`")?;
+            }
+            p.height = height + 1;
+            Some(())
+        })
+    }
+
+    /// `S001` with the pattern text at the current token.
+    fn bad_pattern(&mut self) -> Res {
+        self.syntax_error(
+            "expected a pattern: an integer, `true`, `false`, `E::V(..)`, or `_`; compare with \
+             a constant in an `if`",
+        );
+        None
+    }
+
+    /// A pattern and the `=>` after it. A `=>` is in the arm, not in the pattern.
+    fn pattern(&mut self) -> Res {
+        self.node(Pattern, |p| match p.cur() {
+            Some(Dec | Hex | Bin | TrueKw | FalseKw) => {
+                p.bump();
+                Some(())
+            }
+            Some(Minus) => {
+                p.bump();
+                if !matches!(p.cur(), Some(Dec | Hex | Bin)) {
+                    return p.bad_pattern();
+                }
+                p.bump();
+                Some(())
+            }
+            Some(Ident) if p.cur_text() == "_" => {
+                p.bump();
+                Some(())
+            }
+            Some(Ident) => p.variant_pattern(),
+            _ => p.bad_pattern(),
+        })?;
+        if self.eat(FatArrow) {
+            Some(())
+        } else {
+            self.bad_pattern()
+        }
+    }
+
+    /// `E::V` and its binders: a name or `_` for each payload value.
+    fn variant_pattern(&mut self) -> Res {
+        self.bump();
+        if !self.eat(ColonColon) || !self.eat(Ident) {
+            return self.bad_pattern();
+        }
+        if self.is(ColonColon) {
+            self.package_path(self.offset());
+            return None;
+        }
+        if !self.eat(LParen) {
+            return Some(());
+        }
+        loop {
+            if self.eat(RParen) {
+                return Some(());
+            }
+            if !self.eat(Ident) {
+                return self.bad_pattern();
+            }
+            if self.eat(RParen) {
+                return Some(());
+            }
+            if !self.eat(Comma) {
+                return self.bad_pattern();
+            }
+        }
     }
 
     fn cond_form(&mut self) -> Res {
