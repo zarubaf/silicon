@@ -7,6 +7,7 @@
 
 use crate::counters::{Counts, of};
 use crate::tests::run;
+use crate::{Abort, Budget, elaborate};
 use std::fmt::Write as _;
 
 /// The result, the used fuel, and the counts of the evaluation of `expr`. The key makes the
@@ -118,4 +119,93 @@ fn w4_a_static_binder_unpacks_in_its_zero_size() {
     };
     assert_eq!(at(64, 30), 1 + 64 * (1 + 64));
     assert_eq!(at(128, 31), 1 + 128 * (1 + 128));
+}
+
+/// The counts of the elaboration of the module `M` of `src`, without its lowering, and the units
+/// that the run charged. The key makes the fuel budget of the run unique, so it keys the counters.
+fn elaborated(key: u64, depth: u64, src: &str) -> (Counts, u64) {
+    let fuel = 970_000_000 + key;
+    let file = crate::tests_elab::load(src).unwrap();
+    let budget = Budget { fuel, depth };
+    match elaborate(&file, "M", parse::DEFAULT_SYNTAX_DEPTH, budget) {
+        Ok(Ok(design)) => (of(fuel), design.used()),
+        Ok(Err(e)) => panic!("{} {}:{} {}", e.code, e.pos.line, e.pos.col, e.message),
+        Err(Abort::Usage(m)) => panic!("{m}"),
+        Err(Abort::Stack(e)) => panic!("{e}"),
+    }
+}
+
+/// W5. A hardware binder of a payload that nests `d` deep unpacks with its own stack: it visits
+/// each of the `d + 1` parts once, and one `extract` makes the only leaf.
+#[test]
+fn w5_a_hardware_binder_of_a_deep_payload_keeps_its_own_stack() {
+    let at = |depth: u64, key: u64| {
+        let mut src = "type T0 = UInt[8];\n".to_owned();
+        for k in 1..=depth {
+            writeln!(src, "type T{k} = (T{},);", k - 1).unwrap();
+        }
+        write!(
+            src,
+            "enum E: UInt[1] {{ A(T{depth}) = 0, B(T{depth}) = 1 }}\n\
+             module M() {{\n  input x: E;\n  input z: T{depth};\n  output y: T{depth};\n  \
+             y := match (x) {{ E::A(v) => v, E::B(_) => z }};\n}}\n"
+        )
+        .unwrap();
+        elaborated(key, 10_000, &src).0.unpacked
+    };
+    assert_eq!(at(1000, 40), 1001);
+    assert_eq!(at(2000, 41), 2001);
+    assert_eq!(at(3000, 42), 3001);
+}
+
+/// W6. A `match` with `m` arms and a result of `L` leaves makes `m` parts for each of the `L + 1`
+/// positions of the walk: the work is `m` times the positions, and the number of positions does
+/// not depend on `m`. Each leaf charges its `onehot` node `1 + 2m`, the walk charges `m - 1` at
+/// each position, and each of the `m` selects gets a mark of the size 3 when `L >= 2`. Thus a
+/// result of 256 leaves charges `768 m` more than a result of one leaf.
+#[test]
+fn w6_m_arms_and_l_leaves_take_m_times_l_steps() {
+    let at = |bits: u32, leaves: u64, key: u64| {
+        let m = 1u64 << bits;
+        let mut arms = String::new();
+        for i in 0..m {
+            write!(arms, "{i} => a, ").unwrap();
+        }
+        let src = format!(
+            "module M() {{\n  input s: UInt[{bits}];\n  input a: [UInt[8]; {leaves}];\n  \
+             output y: [UInt[8]; {leaves}];\n  y := match (s) {{ {arms} }};\n}}\n"
+        );
+        let (counts, used) = elaborated(key, 1000, &src);
+        (counts.sided, counts.paired, used)
+    };
+    for (bits, key) in [(10, 50), (11, 52), (12, 54)] {
+        let m = 1u64 << bits;
+        let (wide, narrow) = (at(bits, 256, key), at(bits, 1, key + 1));
+        assert_eq!((wide.0, wide.1), (m * 256, 257), "{bits}");
+        assert_eq!((narrow.0, narrow.1), (m, 2), "{bits}");
+        assert_eq!(wide.2 - narrow.2, 768 * m, "{bits}");
+    }
+}
+
+/// W7. `k` nested `match (match (c) { true => p, _ => q }) { true => p, _ => q }` charge a constant
+/// for each level (D7): the `+ 1` use of each select marks it, so no operand tree doubles with
+/// the level. Without the mark, the level `k` would build `2^k` nodes.
+#[test]
+fn w7_nested_matches_charge_a_constant_for_each_level() {
+    let used = |k: u64, key: u64| {
+        let mut e = "c".to_owned();
+        for _ in 0..k {
+            e = format!("match ({e}) {{ true => p, _ => q }}");
+        }
+        let src = format!(
+            "module M() {{\n  input c: Bool;\n  input p: Bool;\n  input q: Bool;\n  \
+             output y: Bool;\n  y := {e};\n}}\n"
+        );
+        elaborated(key, 1000, &src).1
+    };
+    let step = used(2, 60) - used(1, 61);
+    for k in 2..40 {
+        assert_eq!(used(k + 1, 100 + 2 * k) - used(k, 101 + 2 * k), step, "{k}");
+    }
+    assert_eq!(step, 23);
 }

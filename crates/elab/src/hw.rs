@@ -56,6 +56,12 @@ pub(crate) enum Op {
         off: u32,
         w: u32,
     },
+    /// One leaf of a hardware `match` (section 5.4): the `m` selects of its arms, then the `m`
+    /// values of the leaf. It gives the value of the arm whose select is true.
+    Onehot,
+    /// The select of the arm `_` of a hardware `match`: true when none of its operands, the other
+    /// selects, is true.
+    Rest,
 }
 
 impl Op {

@@ -26,7 +26,7 @@ fn amount(k: Option<u64>) -> u32 {
 }
 
 /// A static value as a constant node. Only a Boolean and a finite value have a hardware type.
-fn lit_of(pos: Pos, v: Value, graph: &mut Graph, tys: &Types) -> Res<HwId> {
+pub(super) fn lit_of(pos: Pos, v: Value, graph: &mut Graph, tys: &Types) -> Res<HwId> {
     match v {
         Value::Bool(_) | Value::UInt(_) | Value::SInt(_) => {
             let ty = v.scalar_ty().unwrap_or(Ty::Bool);
@@ -61,7 +61,7 @@ fn lit_value(pos: Pos, v: &Value, graph: &mut Graph, tys: &Types) -> Res<HwId> {
 
 /// The static value `v` next to a hardware operand of the type `t`. An integer takes the
 /// type `t`, with the charge of its conversion.
-fn lit_value_at(
+pub(super) fn lit_value_at(
     pos: Pos,
     t: &Ty,
     v: &Value,
@@ -100,7 +100,7 @@ impl<'a> Side<'a> {
     }
 
     /// The operand as a side, or `None` for a handle and a literal that waits.
-    fn of_opnd(store: &'a Store, o: &'a Opnd) -> Option<Side<'a>> {
+    pub(super) fn of_opnd(store: &'a Store, o: &'a Opnd) -> Option<Side<'a>> {
         match o {
             Opnd::Hw(h) => Some(Side::Hw(*h)),
             Opnd::Static(out) => match store.seen(out) {
@@ -113,7 +113,7 @@ impl<'a> Side<'a> {
     }
 
     /// The static value of the side, if it is one.
-    fn value(&self) -> Option<&Value> {
+    pub(super) fn value(&self) -> Option<&Value> {
         match self {
             Side::Val(v) => Some(v),
             Side::Own(v) => Some(v),
@@ -150,7 +150,7 @@ impl<'a> Side<'a> {
     /// expands. A part of a type without a hardware leaf (`empty`) is a reference that keeps the
     /// base of its parent: no leaf is ever made from it, so it adds no path. A stored node and
     /// a static container give the part they hold.
-    fn child(
+    pub(super) fn child(
         &self,
         k: usize,
         (step, offset, leaf, empty): (&Step, u64, Option<&Ty>, bool),
@@ -237,6 +237,8 @@ fn part_sides<'a>(
     let idx = usize::try_from(part).unwrap_or(usize::MAX);
     let mut parts = Vec::with_capacity(top.sides.len());
     for (i, side) in top.sides.iter().enumerate() {
+        #[cfg(test)]
+        crate::counters::add(crate::counters::Count::Sided, 1);
         match side.child(idx, (step, offset, leaf, empty), pos, (graph, paths)) {
             Some(child) => parts.push(child),
             None => return Err(i),
@@ -455,7 +457,7 @@ fn sides_type<T>(
 /// instantiation. A name, a child output, and a constant get no mark. The mark charges the
 /// recursive size of `cond` once, and a value that holds it counts it as a core name
 /// (section 5.4).
-fn share(
+pub(super) fn share(
     pos: Pos,
     uses: u64,
     (fuel, graph, naming): (&mut Fuel, &mut Graph, &mut Naming),
@@ -571,9 +573,31 @@ fn if_leaf(
     Ok(graph.mk(pos, ty, Op::Mux, vec![cond, left, right]))
 }
 
+/// A leaf of the type `t` of a hardware `match` at `pos` with the selects `selects` and the arms
+/// `sides` (section 5.4). A static leaf is a constant of `t`, also when each leaf is static. The
+/// node `onehot` takes the `m` selects, then the `m` values, and charges `1 + 2m`.
+pub(super) fn onehot_leaf(
+    pos: Pos,
+    selects: &[HwId],
+    t: &Ty,
+    sides: &[Side<'_>],
+    (fuel, graph, tys): (&mut Fuel, &mut Graph, &mut Types),
+) -> Res<HwId> {
+    let mut args = selects.to_vec();
+    for (i, side) in sides.iter().enumerate() {
+        match (side.value(), side) {
+            (Some(v), _) => args.push(lit_value_at(pos, t, v, fuel, graph, tys)?),
+            (None, Side::Hw(h)) if graph.ty(*h) == *t => args.push(*h),
+            _ => return sides_type(("match", pos), sides, i, (graph, tys)),
+        }
+    }
+    fuel.pay(1 + args.len() as u128).map_err(at(pos))?;
+    Ok(graph.mk(pos, t.clone(), Op::Onehot, args))
+}
+
 impl Evaluator<'_> {
     /// Makes a hardware node. It charges 1 plus the number of its operands.
-    fn node(&mut self, pos: Pos, ty: Ty, op: Op, args: Vec<HwId>) -> Res<Val> {
+    pub(super) fn node(&mut self, pos: Pos, ty: Ty, op: Op, args: Vec<HwId>) -> Res<Val> {
         self.charge(pos, 1 + args.len() as u128)?;
         Ok(Val::Hw(self.graph.mk(pos, ty, op, args)))
     }

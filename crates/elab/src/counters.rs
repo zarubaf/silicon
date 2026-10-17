@@ -100,6 +100,9 @@ pub(crate) struct Counts {
     pub covered: u64,
     /// The parts that the static unpack of the payload of a binder made.
     pub unpacked: u64,
+    /// The parts of the arms that a walk of a hardware `if` or `match` took, one for each arm
+    /// and position.
+    pub sided: u64,
 }
 
 /// What a counter counts.
@@ -145,6 +148,7 @@ pub(crate) enum Count {
     Packed,
     Covered,
     Unpacked,
+    Sided,
 }
 
 static COUNTS: Mutex<BTreeMap<u64, Counts>> = Mutex::new(BTreeMap::new());
@@ -223,6 +227,7 @@ pub(crate) fn add(count: Count, n: u64) {
             Count::Packed => &mut c.packed,
             Count::Covered => &mut c.covered,
             Count::Unpacked => &mut c.unpacked,
+            Count::Sided => &mut c.sided,
         };
         *field += n;
     }
