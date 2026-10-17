@@ -362,7 +362,7 @@ structure Binding where
 The state of the walk. `env` maps each visible name to its innermost declaration. `scope` is the
 number of the current scope, and `scopes` the next free scope number. `locals` is the next local
 number of the current item, and `sites` its next call site. `dup` holds the first `S002`, and
-`unknown` the first `S003`.
+`unknown` the first `S003`. `later` holds the first `S004` of a `match`, which wins over both.
 -/
 structure St where
   env : Std.TreeMap String Binding compare
@@ -372,6 +372,7 @@ structure St where
   sites : Nat
   dup : Option Error
   unknown : Option Error
+  later : Option Error
 
 /-!
 The context of the walk holds the parsed items, for the kind of an item. It also holds the item
@@ -545,6 +546,11 @@ mutual
     | .path p x y => do
       let (i, j) ← variantRef p x y
       return .variant p x y i j [] false
+    | .«match» p .. => do
+      -- TODO(#272): resolve the scrutinee, the patterns with their binders, and the arms.
+      let e : Error := ⟨.S004, p, "a `match` is not supported yet"⟩
+      modify fun s => { s with later := earlier s.later e }
+      return .unit p
 
   def typeExpr : Source.TypeExpr → M TypeExpr
     | .name p n => do
@@ -698,11 +704,10 @@ def inFile (items : List Source.Item) (act : M α) : Except Error α :=
     modify fun s => { s with scopes := 1 }
     act
   let names := items.zipIdx.foldl (fun m (it, i) => m.insert (itemName it).name i) {}
-  let (out, s) := (walk.run ⟨items.toArray, names⟩).run ⟨{}, 0, 0, 0, 0, none, none⟩
-  match s.dup, s.unknown with
-  | some e, _ => .error e
-  | none, some e => .error e
-  | none, none => .ok out
+  let (out, s) := (walk.run ⟨items.toArray, names⟩).run ⟨{}, 0, 0, 0, 0, none, none, none⟩
+  match s.later, s.dup, s.unknown with
+  | some e, _, _ | none, some e, _ | none, none, some e => .error e
+  | none, none, none => .ok out
 
 /-!
 The resolved items of a file, or the first error. The index of an item in the result is its

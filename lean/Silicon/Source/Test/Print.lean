@@ -42,6 +42,24 @@ def exprText (e : Expr) : String := e.print 0
 #guard exprText (.call p (.path p (nm "Op") (nm "Load")) [n 1]) == "Op::Load(1)"
 #guard exprText (.unary p .neg (.field p (.path p (nm "E") (nm "V")) (nm "x"))) == "-E::V.x"
 
+/-!
+A `match` (slice 3) prints its scrutinee and its arms, and each arm its pattern and its value. A
+binder `_` is `none`. Each arm ends with `,`, and a variant pattern without binders has no
+parentheses.
+-/
+def arm (pat : Pattern) (e : Expr) : Arm := .mk pat e
+def mat : Expr := .match p (v "x") [arm (.int p false 0) (n 1), arm (.int p true 3) (n 2),
+  arm (.bool p true) (n 3), arm (.variant p (nm "E") (nm "A") []) (n 4),
+  arm (.variant p (nm "E") (nm "B") [some (nm "a"), none]) (v "a"), arm (.wild p) (n 5)]
+#guard exprDump mat == "(match (name \"x\") ((arm (int false 0) (num 1)) " ++
+  "(arm (int true 3) (num 2)) (arm (bool true) (num 3)) (arm (variant \"E\" \"A\" ()) (num 4)) " ++
+  "(arm (variant \"E\" \"B\" ((some \"a\") none)) (name \"a\")) (arm (wild) (num 5))))"
+#guard exprText mat ==
+  "match (x) { 0 => 1, -3 => 2, true => 3, E::A => 4, E::B(a, _) => a, _ => 5, }"
+#guard exprDump (.match p (v "x") []) == "(match (name \"x\") ())"
+#guard exprText (.match p (v "x") []) == "match (x) { }"
+#guard exprText (bin .add (.match p (v "x") []) (n 1)) == "(match (x) { }) + 1"
+
 
 /-! Each container form of slice 2. A `select` prints its selector in decimal. -/
 #guard exprDump (.unit p) == "(unit)"

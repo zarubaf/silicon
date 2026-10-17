@@ -455,15 +455,61 @@ module of an `instance`.
 #guard Parse.packagePathText == "a package path is not supported yet; in this slice, a path " ++
   "is a variant `E::V` of an enum `E`, in an expression or a pattern"
 
-/-! `S004`: a `match` is a later phase of slice 3. The position is its keyword. -/
-#guard ex "match (x) { 0 => 1, _ => 2 }" == "error S004 1:14"
-#guard ex "if (match (x) { _ => c }) { 1 } else { 2 }" == "error S004 1:18"
-#guard ex "f(match (x) { _ => 1 })" == "error S004 1:16"
-#guard stFails "return match (x) { _ => 0 };" .S004 8
-#guard stFails "match (x) { _ => 0 };" .S004 1
+/-!
+A `match` (slice 3) is an expression at the level of `if`, also as an argument. Each pattern
+kind, a negative literal, binders with `_`, and a trailing `,`. `E::V()` is the pattern `E::V`.
+A `match` can have zero arms. An operand of an operator needs parentheses around it.
+-/
+#guard ex ("match (x) { 0 => 1, -3 => 2, true => a, false => b, Op::Add => 3, " ++
+    "Op::Load(v) => v, Op::Pair(a, _,) => a, _ => 2, }") ==
+  "(match (name \"x\") ((arm (int false 0) (num 1)) (arm (int true 3) (num 2)) " ++
+  "(arm (bool true) (name \"a\")) (arm (bool false) (name \"b\")) " ++
+  "(arm (variant \"Op\" \"Add\" ()) (num 3)) " ++
+  "(arm (variant \"Op\" \"Load\" ((some \"v\"))) (name \"v\")) " ++
+  "(arm (variant \"Op\" \"Pair\" ((some \"a\") none)) (name \"a\")) (arm (wild) (num 2))))"
+#guard ex "match (x) { Op::Add() => 1 }" == ex "match (x) { Op::Add => 1 }"
+#guard ex "match (x) {}" == "(match (name \"x\") ())"
+#guard ex "match (x) { _ => match (y) { _ => 1 } }" ==
+  "(match (name \"x\") ((arm (wild) (match (name \"y\") ((arm (wild) (num 1)))))))"
+#guard ex "if (match (x) { _ => c }) { 1 } else { 2 }" ==
+  "(cond (match (name \"x\") ((arm (wild) (name \"c\")))) (num 1) (num 2))"
+#guard ex "f(match (x) { _ => 1 })" ==
+  "(call (name \"f\") ((match (name \"x\") ((arm (wild) (num 1))))))"
+#guard ex "a + (match (x) { _ => 1 })" ==
+  "(binary add (name \"a\") (match (name \"x\") ((arm (wild) (num 1)))))"
+#guard st "return match (x) { _ => 0 };" ==
+  "(ret (some (match (name \"x\") ((arm (wild) (num 0))))))"
+#guard st "match (x) { _ => 0 };" == "(expr (match (name \"x\") ((arm (wild) (num 0)))))"
 #guard stFails "let match = 1;" .S001 5
 #guard ex "a + match (x) { _ => 1 }" == "error S001 1:18"
+#guard ex "match (x) { _ => 1 } + 1" == "error S001 1:35"
 #guard ex "a => b" == "error S001 1:16"
+#guard ex "match x { _ => 1 }" == "error S001 1:20"
+#guard ex "match (x) { 1 => 1 2 => 3 }" == "error S001 1:33"
+#guard ex "match (x) { 1 => 1,, }" == "error S001 1:33"
+#guard ex "match (x) { _ => 1 " == "error S001 1:33"
+
+/-!
+`S001` in a pattern is at the first token that is not valid, with the text of section 6.2.
+These are a bare name, a nested pattern, an expression, a range, `|`, and a `-` without a
+number. A third part of a path is `S004` with the text of a package path.
+-/
+#guard ex "match (x) { a => 1 }" == "error S001 1:28"
+#guard ex "match (x) { E::V(F::W) => 1 }" == "error S001 1:32"
+#guard ex "match (x) { E::V(1) => 1 }" == "error S001 1:31"
+#guard ex "match (x) { E::V(a b) => 1 }" == "error S001 1:33"
+#guard ex "match (x) { E::1 => 1 }" == "error S001 1:29"
+#guard ex "match (x) { (1) => 1 }" == "error S001 1:26"
+#guard ex "match (x) { 1 + 2 => 1 }" == "error S001 1:28"
+#guard ex "match (x) { 1..3 => 1 }" == "error S001 1:27"
+#guard ex "match (x) { 1 | 2 => 1 }" == "error S001 1:28"
+#guard ex "match (x) { - x => 1 }" == "error S001 1:28"
+#guard ex "match (x) { _::V => 1 }" == "error S001 1:27"
+#guard ex "match (x) { E::V::W => 1 }" == "error S004 1:30"
+#guard message "const X: T = match (x) { a => 1 };" == Parse.patternText
+#guard message "const X: T = match (x) { E::V::W => 1 };" == Parse.packagePathText
+#guard Parse.patternText == "expected a pattern: an integer, `true`, `false`, `E::V(..)`, " ++
+  "or `_`; compare with a constant in an `if`"
 
 /-!
 `S004`: a `fn` without `comptime` declares no port, resource, or instance. The position is the
@@ -773,6 +819,9 @@ def reparse (s : String) : Bool :=
 #guard reparse ("enum Op: UInt[2] { Add = 0, Load(UInt[8],) = 1, Pair(Bool, (T,)) = -x, }" ++
   "enum E: UInt[1] {} enum F: T { A() = if (c) { 1 } else { 2 } }")
 #guard reparse "fn f() -> Op { Op::Load(x); return -Op::Add + E::V(a::b).c[0]; }"
+#guard reparse ("fn f() -> T { match (x) { _ => 0 }; return match (match (y) {}) { -0 => a, " ++
+  "1 => if (c) { b } else { match (z) { true => 1, false => 2, } }, E::V(a, _) => a, " ++
+  "E::W() => (match (q) { _ => 1 }) + 1, _ => f(match (r) { E::X => 1 }), }; }")
 
 /-!
 The edge cases of the printer for `parse_print`. Each pair of operators nests in both
@@ -837,5 +886,21 @@ def fnT (ps : List FnParam) (r : TypeExpr) : TypeExpr := .fn p ps r
 #guard constRoundtrip (.unary p .neg (.fnType p [] (t "T")))
 #guard constRoundtrip (bin .add (.fnType p [] (t "T")) (.fnType p [] (t "U")))
 #guard fnRoundtrip [.expr p (.fnType p [] (t "T"))]
+
+/-!
+The printer and the parser agree on a `match`. The tests cover each pattern kind, a binder `_`,
+and zero arms. They also cover a `match` as an operand, as a scrutinee, and as an arm.
+-/
+def mat (s : Expr) (arms : List (Pattern × Expr)) : Expr :=
+  .match p s (arms.map fun a => .mk a.1 a.2)
+def pv (ty w : String) (bs : List (Option String)) : Pattern :=
+  .variant p (nm ty) (nm w) (bs.map (·.map nm))
+#guard constRoundtrip (mat (v "x") [(.int p false 0, n 1), (.int p true 0, n 2),
+  (.int p true 7, n 3), (.bool p true, v "a"), (.bool p false, v "b"),
+  (pv "E" "V" [], n 4), (pv "E" "W" [some "a", none, some "b"], v "a"), (.wild p, n 5)])
+#guard constRoundtrip (mat (mat (v "x") []) [(.wild p, mat (v "y") [(.wild p, n 1)])])
+#guard constRoundtrip (bin .add (mat (v "x") [(.wild p, n 1)]) (.unary p .neg (mat (v "y") [])))
+#guard constRoundtrip (.field p (mat (v "x") [(.wild p, .cond p (v "c") (n 1) (n 2))]) (nm "f"))
+#guard fnRoundtrip [.expr p (mat (v "x") [(.wild p, n 0)]), .ret p (some (mat (n 1) []))]
 
 end Silicon.Source.Test.Parse

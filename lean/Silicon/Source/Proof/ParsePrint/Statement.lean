@@ -157,6 +157,26 @@ example : ¬ Printable [.const p (nm "X") (t "T") (.path p (nm "in") (nm "A"))] 
 example : ¬ Printable [.enum p (nm "E") (t "T") [⟨nm "A", [.tuple p []], .num p 0⟩]] := by
   decide
 
+/-! A `match` with each pattern kind, a binder `_`, and zero arms. -/
+example : Printable [.const p (nm "X") (t "T") (.match p (v "x")
+    [.mk (.int p true 3) (v "a"), .mk (.bool p false) (.match p (v "y") []),
+     .mk (.variant p (nm "E") (nm "V") [some (nm "b"), none]) (v "b"), .mk (.wild p) (v "c")])]
+    := by decide +kernel
+
+/-!
+A binder named `_`, a variant pattern whose first name is `_`, a keyword as a binder, and a
+literal pattern that is too large.
+-/
+example : ¬ Printable [.const p (nm "X") (t "T")
+    (.match p (v "x") [.mk (.variant p (nm "E") (nm "V") [some (nm "_")]) (v "a")])] := by decide
+example : ¬ Printable [.const p (nm "X") (t "T")
+    (.match p (v "x") [.mk (.variant p (nm "_") (nm "V") []) (v "a")])] := by decide
+example : ¬ Printable [.const p (nm "X") (t "T")
+    (.match p (v "x") [.mk (.variant p (nm "E") (nm "V") [some (nm "if")]) (v "a")])] := by
+  decide
+example : ¬ Printable [.const p (nm "X") (t "T")
+    (.match p (v "x") [.mk (.int p false (2 ^ 65536)) (v "a")])] := by decide +kernel
+
 /-! A control character in a string, and a number that is too large. -/
 example : ¬ Printable [.const p (nm "X") (t "T") (.str p "\x01")] := by decide
 example : ¬ Printable [.const p (nm "X") (t "T") (.num p (2 ^ 65536))] := by decide +kernel

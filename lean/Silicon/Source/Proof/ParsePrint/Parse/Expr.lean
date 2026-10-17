@@ -42,6 +42,9 @@ The proof is an induction on the number of kinds. These parts of the parser need
 - `unary` at `fn`: a function type in an expression is a unary operand.
 - `primary` at a name: a `::` after the name starts a variant path, and `Runs.primary_path`
   reads it. No `::` follows the second name.
+- `expr` at `match`: `Runs.arms` reads the arms up to the `}`, and `Runs.pattern` reads each
+  pattern with its `=>`. A variant pattern prints its binders only if it has one, and
+  `Runs.binders` reads them up to their `)`.
 
 `Runs.value`, `Runs.args`, `Runs.type_end`, `Runs.typeTop`, `Runs.postfix_end`, and
 `Runs.postfix_climb` are the interfaces for the lemma of the statements.
@@ -1679,7 +1682,7 @@ theorem Runs.postfix (u : Expr) : PGoal u := by
   | case5 p op a _ => exact Runs.postfix_paren _ (by simp [Expr.level, unaryLevel]) rfl
   | case6 p op l r _ _ =>
     exact Runs.postfix_paren _ (by simp [Expr.level]; have := BinOp.level_lt op; omega) rfl
-  | case7 => exact Runs.postfix_paren _ (by simp [Expr.level]) rfl
+  | case7 | case19 => exact Runs.postfix_paren _ (by simp [Expr.level]) rfl
   | case8 p g xs ihg _ =>
     intro hp hIH ctx i f t R hw ht _ hf l Q hk
     unfold SufK at hk
@@ -2028,7 +2031,7 @@ theorem spine_spec (e : Expr) : ∀ c, 1 ≤ c → c ≤ 10 →
     · simp only [spine, hle, ite_false]
       refine ⟨rfl, by simp [pairToks], by simp, List.Pairwise.nil,
         Or.inl (by simp [Expr.level]; omega), hc, fun hp => ⟨hp, by simp⟩⟩
-  | case7 =>
+  | case7 | case19 =>
     intro c hc1 hc
     refine ⟨rfl, by simp [pairToks, spine], by simp [spine], List.Pairwise.nil,
       Or.inl (by simp [spine, Expr.level]; omega), hc,
@@ -2254,6 +2257,303 @@ theorem pairToks_mem {ps : List Pair} {q : Pair} (hq : q ∈ ps) :
     · omega
     · have := ih hq; omega
 
+/-! ## Patterns -/
+
+theorem Pattern.binderToks_eq (o : Option Ident) :
+    Pattern.binderToks o = [.ident (Pattern.binderText o)] := by
+  cases o <;> rfl
+
+/-! A binder of a variant pattern: a name, or `_` for none. -/
+theorem Runs.binder {ctx : Ctx} {i : Nat} {o : Option Ident} (ho : binderOk o = true)
+    (hk : (tokenAt ctx.input i).kind = .ident (Pattern.binderText o)) :
+    Runs Parse.binder ctx i (i + 1) (fun r => r.map Ident.erase = o.map Ident.erase) := by
+  unfold Parse.binder
+  refine Runs.peek_bind ?_
+  simp only [hk]
+  refine Runs.bump_bind (Runs.pure ?_)
+  cases o with
+  | none => rfl
+  | some x =>
+    simp only [binderOk, Bool.and_eq_true, bne_iff_ne, ne_eq] at ho
+    simp [Pattern.binderText, ho.2, Ident.erase]
+
+/-! The kinds of the binders after the first, each after its `,`. -/
+def binderRest (bs : List (Option Ident)) : List Kind :=
+  bs.flatMap fun o => [.symbol ",", .ident (Pattern.binderText o)]
+
+theorem argToks_binders (b : Option Ident) (bs : List (Option Ident)) :
+    argToks ((b :: bs).map Pattern.binderToks) =
+      .ident (Pattern.binderText b) :: binderRest bs := by
+  induction bs generalizing b with
+  | nil => simp [Print.argToks, binderRest, Pattern.binderToks_eq]
+  | cons c cs ih =>
+    have := ih c
+    simp only [List.map_cons] at this
+    simp only [List.map_cons, Print.argToks, List.intercalate_cons_cons] at this ⊢
+    rw [this]
+    simp [binderRest, Pattern.binderToks_eq]
+
+/-! `binders` reads the binders `b :: bs` up to their `)`. -/
+theorem Runs.binders (b : Option Ident) (bs : List (Option Ident))
+    (hb : ∀ o ∈ b :: bs, binderOk o = true) :
+    ∀ (ctx : Ctx) (i f : Nat) (R : List Kind) (acc : List (Option Ident)),
+    Win ctx.input i (.ident (Pattern.binderText b) :: binderRest bs ++ .symbol ")" :: R) →
+    bs.length + 1 ≤ f →
+    Runs (Parse.binders f acc) ctx i (i + 2 * bs.length + 2)
+      (fun r => r.map (·.map Ident.erase) =
+        (acc.reverse ++ b :: bs).map (·.map Ident.erase)) := by
+  induction bs generalizing b with
+  | nil =>
+    intro ctx i f R acc hw hf
+    obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
+    rw [Parse.binders]
+    refine Runs.bind (Runs.acceptSym_false (by rw [hw.head]; simp)) fun x hx => ?_
+    subst hx
+    simp only [Bool.false_eq_true, ite_false]
+    refine Runs.bind (Runs.binder (hb b (by simp)) hw.head) fun o ho => ?_
+    refine Runs.bind (Runs.acceptSym_true (by simpa [binderRest] using hw.tail.head))
+      fun x hx => ?_
+    subst hx
+    exact Runs.pure (by simp [ho])
+  | cons c cs ih =>
+    intro ctx i f R acc hw hf
+    obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
+    have hw1 : Win ctx.input i (.ident (Pattern.binderText b) :: .symbol "," ::
+        .ident (Pattern.binderText c) :: (binderRest cs ++ .symbol ")" :: R)) := by
+      simpa [binderRest] using hw
+    rw [Parse.binders]
+    refine Runs.bind (Runs.acceptSym_false (by rw [hw1.head]; simp)) fun x hx => ?_
+    subst hx
+    simp only [Bool.false_eq_true, ite_false]
+    refine Runs.bind (Runs.binder (hb b (by simp)) hw1.head) fun o ho => ?_
+    refine Runs.bind (Runs.acceptSym_false (by rw [hw1.tail.head]; simp)) fun x hx => ?_
+    subst hx
+    simp only [Bool.false_eq_true, ite_false]
+    refine Runs.peek_bind ?_
+    simp only [isSym, hw1.tail.head, beq_self_eq_true, ite_true]
+    refine Runs.bump_bind ?_
+    refine Runs.idx (by simp; omega) (Runs.mono (ih c (fun x hx => hb x (by simp_all))
+      ctx (i + 1 + 1) f R (o :: acc) hw1.tail.tail (by simp at hf ⊢; omega)) ?_)
+    intro r hr
+    rw [hr]
+    simp [ho]
+
+/-! The end of a variant pattern after its variant name: the binders in parentheses, if any. -/
+def bindersToks (bs : List (Option Ident)) : List Kind :=
+  if bs.isEmpty then [] else .symbol "(" :: argToks (bs.map Pattern.binderToks) ++ [.symbol ")"]
+
+theorem Pattern.toks_variant (p : Pos) (t v : Ident) (bs : List (Option Ident)) :
+    (Pattern.variant p t v bs).toks =
+      [.ident t.name, .symbol "::", .ident v.name] ++ bindersToks bs := rfl
+
+theorem binderRest_length (bs : List (Option Ident)) : (binderRest bs).length = 2 * bs.length := by
+  induction bs with
+  | nil => rfl
+  | cons b bs ih => simp [binderRest] at ih ⊢; omega
+
+theorem bindersToks_cons (b : Option Ident) (bs : List (Option Ident)) :
+    bindersToks (b :: bs) = .symbol "(" :: .ident (Pattern.binderText b) :: binderRest bs ++
+      [.symbol ")"] := by
+  have := argToks_binders b bs
+  simp only [List.map_cons] at this
+  simp [bindersToks, this]
+
+theorem bindersToks_length (bs : List (Option Ident)) : bs.length ≤ (bindersToks bs).length := by
+  cases bs with
+  | nil => simp [bindersToks]
+  | cons b bs => simp [bindersToks_cons, binderRest_length]; omega
+
+/-! A variant pattern after its first name: `::`, the variant name, and the binders. -/
+theorem Runs.variantPattern {ctx : Ctx} {i f : Nat} {start : Pos} {ty : Ident} {v : String}
+    {bs : List (Option Ident)} {R : List Kind} (hbs : ∀ o ∈ bs, binderOk o = true)
+    (hw : Win ctx.input i (.symbol "::" :: .ident v :: (bindersToks bs ++ .symbol "=>" :: R)))
+    (hf : bs.length + 1 ≤ f) :
+    Runs (Parse.variantPattern f start ty) ctx i (i + 2 + (bindersToks bs).length)
+      (fun r =>
+        r.erase = .variant Pos.zero ty.erase ⟨Pos.zero, v⟩ (bs.map (·.map Ident.erase))) := by
+  unfold Parse.variantPattern
+  refine Runs.peek_bind ?_
+  simp only [isSym, hw.head, beq_self_eq_true, ite_true]
+  refine Runs.bump_bind (Runs.peek_bind ?_)
+  simp only [hw.tail.head]
+  refine Runs.bump_bind (Runs.peek_bind ?_)
+  have hw2 := hw.tail.tail
+  cases bs with
+  | nil =>
+    simp only [bindersToks, List.isEmpty_nil, ite_true, List.nil_append] at hw2 ⊢
+    simp only [hw2.head, beq_iff_eq, Kind.symbol.injEq]
+    simp only [show ("=>" = "::") = False from by decide, ite_false]
+    refine Runs.bind (Runs.acceptSym_false (by rw [hw2.head]; simp)) fun x hx => ?_
+    subst hx
+    simp only [Bool.false_eq_true, ite_false]
+    refine Runs.bind (Runs.pure rfl) fun bs' hbs' => Runs.pure ?_
+    subst hbs'
+    simp [Pattern.erase, Ident.erase]
+  | cons b bs =>
+    rw [bindersToks_cons] at hw2 ⊢
+    simp only [List.cons_append, List.append_assoc] at hw2
+    simp only [hw2.head, beq_iff_eq, Kind.symbol.injEq]
+    simp only [show ("(" = "::") = False from by decide, ite_false]
+    refine Runs.bind (Runs.acceptSym_true hw2.head) fun x hx => ?_
+    subst hx
+    simp only [ite_true]
+    refine Runs.bind (Runs.binders b bs hbs ctx _ f (.symbol "=>" :: R) []
+      (by simpa using hw2.tail) (by simp at hf; omega)) fun r hr => ?_
+    refine Runs.idx (by simp [binderRest_length]; omega) (Runs.pure ?_)
+    simp only [List.reverse_nil, List.nil_append] at hr
+    simp [Pattern.erase, Ident.erase, hr]
+
+/-! A pattern and the `=>` after it. -/
+theorem Runs.pattern {q : Pattern} (hq : q.printable = true) {ctx : Ctx} {i f : Nat}
+    {R : List Kind} (hw : Win ctx.input i (q.toks ++ .symbol "=>" :: R))
+    (hf : q.toks.length ≤ f) :
+    Runs (Parse.pattern f) ctx i (i + q.toks.length + 1) (fun r => r.erase = q.erase) := by
+  have arrow : ∀ (j : Nat) (r : Pattern), (tokenAt ctx.input j).kind = .symbol "=>" →
+      Runs (do
+        let a ← Parse.peek
+        if isSym "=>" a then Parse.bump; return r else badPattern a : P Pattern) ctx j (j + 1)
+        (· = r) := by
+    intro j r hj
+    refine Runs.peek_bind ?_
+    simp only [isSym, hj, beq_self_eq_true, ite_true]
+    exact Runs.bump_bind (Runs.pure rfl)
+  unfold Parse.pattern
+  refine Runs.peek_bind ?_
+  cases q with
+  | wild p =>
+    simp only [Pattern.toks, List.cons_append, List.nil_append] at hw
+    simp only [hw.head]
+    refine Runs.bump_bind ?_
+    simp only [beq_self_eq_true, ite_true]
+    refine Runs.bind (Runs.pure rfl) fun r hr => ?_
+    refine Runs.mono (arrow _ r hw.tail.head) ?_
+    rintro _ rfl; subst hr; rfl
+  | bool p v =>
+    simp only [Pattern.toks, List.cons_append, List.nil_append] at hw
+    cases v <;> simp only [hw.head, boolean] <;> refine Runs.bump_bind ?_ <;>
+      refine Runs.bind (Runs.pure rfl) fun r hr => ?_ <;>
+      refine Runs.mono (arrow _ r hw.tail.head) ?_ <;> rintro _ rfl <;> subst hr <;> rfl
+  | int p neg v =>
+    cases neg
+    · simp only [Pattern.toks, Bool.false_eq_true, ite_false, List.nil_append,
+        List.cons_append] at hw ⊢
+      simp only [hw.head]
+      refine Runs.bump_bind ?_
+      refine Runs.bind (Runs.pure rfl) fun r hr => ?_
+      refine Runs.mono (arrow _ r hw.tail.head) ?_
+      rintro _ rfl; subst hr; rfl
+    · simp only [Pattern.toks, ite_true, List.cons_append] at hw ⊢
+      simp only [hw.head]
+      refine Runs.bump_bind (Runs.peek_bind ?_)
+      simp only [hw.tail.head]
+      refine Runs.bump_bind ?_
+      refine Runs.bind (Runs.pure rfl) fun r hr => ?_
+      refine Runs.idx (by simp) (Runs.mono (arrow _ r hw.tail.tail.head) ?_)
+      rintro _ rfl; subst hr; rfl
+  | variant p t v bs =>
+    simp only [Pattern.printable, Bool.and_eq_true, bne_iff_ne, ne_eq, List.all_eq_true] at hq
+    obtain ⟨⟨⟨ht, ht_⟩, hv⟩, hbs⟩ := hq
+    rw [Pattern.toks_variant] at hw hf ⊢
+    simp only [List.cons_append, List.nil_append] at hw
+    simp only [hw.head]
+    refine Runs.bump_bind ?_
+    simp only [beq_iff_eq, ht_, ite_false]
+    refine Runs.bind (Runs.variantPattern hbs hw.tail ?_) fun r hr => ?_
+    · have := bindersToks_length bs; simp at hf; omega
+    · refine Runs.idx ?_ (Runs.mono (arrow _ r ?_) ?_)
+      · simp; omega
+      · have := hw.drop (a := [_, _, _] ++ bindersToks bs)
+        simp at this
+        have h := this.head
+        rw [show i + ((bindersToks bs).length + 1 + 1 + 1) = i + 1 + 2 + (bindersToks bs).length
+          by omega] at h
+        exact h
+      · rintro _ rfl
+        rw [hr]; simp [Pattern.erase, Ident.erase]
+
+/-! ## The arms of a `match` -/
+
+theorem Pattern.toks_head (q : Pattern) : ∃ k ks, q.toks = k :: ks ∧ k ≠ .symbol "}" := by
+  cases q with
+  | int p neg v => cases neg <;> simp [Pattern.toks]
+  | bool p v => cases v <;> simp [Pattern.toks, boolean]
+  | _ => simp [Pattern.toks]
+
+theorem Arm.toks_mk (q : Pattern) (v : Expr) :
+    (Arm.mk q v).toks = q.toks ++ .symbol "=>" :: (v.toks 0 ++ [.symbol ","]) := by
+  simp [Arm.toks]
+
+/-! The kinds of an arm are part of the kinds of the arms. -/
+theorem armsToks_mem {as : List Arm} {q : Pattern} {v : Expr} (h : Arm.mk q v ∈ as) :
+    (v.toks 0).length + 2 ≤ (as.map Arm.toks).flatten.length := by
+  induction as with
+  | nil => simp at h
+  | cons a as ih =>
+    simp only [List.mem_cons] at h
+    rcases h with rfl | h
+    · simp only [List.map_cons, List.flatten_cons, List.length_append, Arm.toks_mk,
+        List.length_cons]
+      omega
+    · have := ih h
+      simp only [List.map_cons, List.flatten_cons, List.length_append]
+      omega
+
+/-! `arms` reads the arms `as` up to the `}` of the `match`. -/
+theorem Runs.arms (as : List Arm)
+    (hE : ∀ q v, Arm.mk q v ∈ as → EGoal v ∧ (Arm.mk q v).printable = true) :
+    ∀ (ctx : Ctx) (i f B : Nat) (R : List Kind) (acc : List (Arm × Nat)),
+    Win ctx.input i ((as.map Arm.toks).flatten ++ .symbol "}" :: R) →
+    4 * (as.map Arm.toks).flatten.length + 1 ≤ f →
+    (as.map Arm.toks).flatten.length ≤ B → (∀ x ∈ acc, x.2 ≤ B) →
+    Runs (Parse.arms f acc) ctx i (i + (as.map Arm.toks).flatten.length + 1)
+      (fun r => r.map (fun x => x.1.erase) = acc.reverse.map (fun x => x.1.erase) ++
+        as.map Arm.erase ∧ ∀ x ∈ r, x.2 ≤ B) := by
+  induction as with
+  | nil =>
+    intro ctx i f B R acc hw hf _ hacc
+    obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
+    rw [Parse.arms]
+    refine Runs.bind (Runs.acceptSym_true (by simpa using hw.head)) fun b hb => ?_
+    subst hb
+    exact Runs.pure ⟨by simp, fun x hx => hacc x (by simpa using hx)⟩
+  | cons a as ih =>
+    intro ctx i f B R acc hw hf hB hacc
+    obtain ⟨q, v⟩ := a
+    obtain ⟨hEv, hpa⟩ := hE q v (by simp)
+    simp only [Arm.printable, Bool.and_eq_true] at hpa
+    specialize ih fun q' v' h => hE q' v' (by simp [h])
+    obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
+    simp only [List.map_cons, List.flatten_cons, Arm.toks_mk, List.length_append,
+      List.length_cons, List.length_nil] at hw hf hB ⊢
+    simp only [List.append_assoc, List.cons_append] at hw
+    obtain ⟨k, ks, hks, hk⟩ := Pattern.toks_head q
+    rw [Parse.arms]
+    refine Runs.bind (Runs.acceptSym_false (by rw [hks] at hw; rw [hw.head]; exact hk))
+      fun b hb => ?_
+    subst hb
+    simp only [Bool.false_eq_true, ite_false]
+    refine Runs.bind (Runs.pattern hpa.1 hw (by omega)) fun p hp => ?_
+    have w1 := hw.drop.tail
+    refine Runs.bind (hEv hpa.2 ctx _ _ _ f w1 After.comma (by omega)) fun n hn => ?_
+    have w2 := w1.drop
+    refine Runs.bind (Runs.acceptSym_false (by rw [w2.head]; simp)) fun b hb => ?_
+    subst hb
+    simp only [Bool.false_eq_true, ite_false]
+    refine Runs.peek_bind ?_
+    simp only [isSym, w2.head, beq_self_eq_true, ite_true]
+    refine Runs.bump_bind ?_
+    refine Runs.idx (by omega) (Runs.mono (ih ctx _ f B R ((.mk p n.expr, n.height) :: acc)
+      w2.tail (by omega) (by omega) ?_) ?_)
+    · intro x hx
+      simp only [List.mem_cons] at hx
+      rcases hx with rfl | hx
+      · have := hn.2; simp only; omega
+      · exact hacc x hx
+    · rintro r ⟨hr, hh⟩
+      refine ⟨?_, hh⟩
+      rw [hr]
+      simp [Arm.erase, hp, hn.1]
+
 /-! ## Expressions -/
 
 theorem Runs.operand (e : Expr) (c : Nat) (hc1 : 1 ≤ c) (hc : c ≤ 10)
@@ -2329,7 +2629,7 @@ theorem Expr.toks_head_ne_kw (e : Expr) {w : String} (hw : w ∉ ["true", "false
       obtain ⟨k, hk, -⟩ := Expr.toks_head l (lhsLevel op)
       rw [hk] at this ⊢
       simpa using this
-  | case7 =>
+  | case7 | case19 =>
     intro c hc; rw [Expr.toks_paren, ite_eq_left (by simp [Expr.level]; omega)]; simp
   | case17 =>
     intro c _; rw [Expr.toks_paren]; split
@@ -2348,6 +2648,41 @@ theorem Runs.expr (e : Expr) (hIH : ∀ x, (x.toks 0).length < (e.toks 0).length
   obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
   rw [Parse.expr]
   refine Runs.peek_bind ?_
+  by_cases hm : ∃ p s as, e = .match p s as
+  · obtain ⟨p, s, as, rfl⟩ := hm
+    simp only [Expr.printable, Bool.and_eq_true, Arm.printableAll_eq, List.all_eq_true] at hp
+    obtain ⟨hps, hpa⟩ := hp
+    have hT : (Expr.match p s as).toks 0 = .keyword "match" :: .symbol "(" :: (s.toks 0 ++
+        .symbol ")" :: .symbol "{" :: ((as.map Arm.toks).flatten ++ [.symbol "}"])) := by
+      simp [Expr.toks]
+    rw [hT] at hw hf hIH ⊢
+    simp only [List.length_cons, List.length_append, List.length_nil] at hf hIH ⊢
+    simp only [List.cons_append, List.append_assoc, List.nil_append] at hw
+    simp only [isKw, hw.head, beq_self_eq_true, ite_true]
+    refine Runs.bump_bind (Runs.sym_bind hw.tail.head ?_)
+    have w1 := hw.tail.tail
+    refine Runs.bind (hIH s (by omega) hps ctx _ _ _ f w1 (After.close (Or.inl rfl)) (by omega))
+      fun ns hns => ?_
+    have w2 := w1.drop
+    refine Runs.sym_bind w2.head (Runs.sym_bind w2.tail.head ?_)
+    have w3 := w2.tail.tail
+    have hEa : ∀ q v, Arm.mk q v ∈ as → EGoal v ∧ (Arm.mk q v).printable = true :=
+      fun q v h => ⟨hIH v (by have := armsToks_mem h; omega), hpa _ h⟩
+    refine Runs.bind (Runs.arms as hEa ctx _ f ((s.toks 0).length +
+      (as.map Arm.toks).flatten.length) _ [] w3 (by omega) (by omega) (by simp))
+      fun ms hms => ?_
+    refine Runs.idx (by omega) (Runs.pure ⟨?_, ?_⟩)
+    · have h1 := hms.1
+      simp only [List.reverse_nil, List.map_nil, List.nil_append] at h1
+      simp [Expr.erase, hns.1, List.map_map, Function.comp_def, h1]
+    · have := hns.2
+      refine Nat.le_trans (height_le (B := (s.toks 0).length +
+        (as.map Arm.toks).flatten.length) ?_) (by omega)
+      intro x hx
+      simp only [List.mem_cons, List.mem_map] at hx
+      rcases hx with rfl | ⟨y, hy, rfl⟩
+      · omega
+      · exact hms.2 y hy
   by_cases hc : ∃ p c y n, e = .cond p c y n
   · obtain ⟨p, c, y, n, rfl⟩ := hc
     simp only [Expr.printable, Bool.and_eq_true] at hp
@@ -2491,6 +2826,7 @@ theorem Runs.postfix_climb (e : Expr) (hp : e.printable = true)
   have hl : 1 ≤ e.level := by
     cases e with
     | cond => simp [Expr.toks] at hnm
+    | «match» => simp [Expr.toks] at hnm
     | binary _ op => exact BinOp.level_pos op
     | _ => simp [Expr.level, unaryLevel, postfixLevel]
   have h01 := Expr.toks_one e hl

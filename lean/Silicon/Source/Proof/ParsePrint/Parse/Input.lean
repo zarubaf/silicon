@@ -208,11 +208,51 @@ theorem BinOp.trans {s : Sep} (op : BinOp) : Trans s [.symbol op.text] :=
 theorem UnOp.trans {s : Sep} (op : UnOp) : Trans s [.symbol op.text] :=
   Trans.single (by cases op <;> decide)
 
-/-! The kinds of each expression and of each type expression have balanced brackets. -/
+theorem Inner.flatten {s : Sep} {xss : List (List Kind)} (h : ∀ x ∈ xss, Inner s x) :
+    Inner s xss.flatten := by
+  induction xss with
+  | nil => exact (Trans.nil).inner
+  | cons x xs ih =>
+    simpa using (h x (by simp)).append (ih fun y hy => h y (by simp [hy]))
+
+/-! The kinds of a pattern have balanced brackets. -/
+theorem Pattern.trans (s : Sep) (q : Pattern) : Trans s q.toks := by
+  cases q with
+  | variant p t v bs =>
+    have hb : Inner s (argToks (bs.map Pattern.binderToks)) := by
+      apply Inner.argToks
+      simp only [List.mem_map]
+      rintro _ ⟨o, -, rfl⟩
+      cases o <;> intro d rest <;> simp [Pattern.binderToks, scan, OpenK, CloseK]
+    intro d rest
+    rw [Pattern.toks]
+    split
+    · simp [scan, OpenK, CloseK]
+    · simp [scan, OpenK, CloseK, hb d]
+  | int p neg v => intro d rest; cases neg <;> simp [Pattern.toks, scan, OpenK, CloseK]
+  | bool p v => intro d rest; cases v <;> simp [Pattern.toks, boolean, scan, OpenK, CloseK]
+  | wild => intro d rest; simp [Pattern.toks, scan, OpenK, CloseK]
+
+/-!
+The kinds of each expression and of each type expression have balanced brackets. An arm ends
+with its `,`, so it leaves only a positive depth as it is.
+-/
 private theorem trans_all (s : Sep) :
-    (∀ e : Expr, ∀ c, Trans s (e.toks c)) ∧ (∀ p : FnParam, Trans s p.toks) ∧
-      ∀ t : TypeExpr, Trans s t.toks := by
+    (∀ e : Expr, ∀ c, Trans s (e.toks c)) ∧ (∀ a : Arm, Inner s a.toks) ∧
+      (∀ p : FnParam, Trans s p.toks) ∧ ∀ t : TypeExpr, Trans s t.toks := by
   apply Expr.erase.mutual_induct
+  case case19 =>
+    intro p sc arms ihs ih
+    refine Expr.trans_paren _ ?_
+    have ha := Inner.flatten (s := s) (xss := arms.map Arm.toks) (by simpa using ih)
+    intro d rest
+    simp [Expr.toks, scan, OpenK, CloseK, ihs _ (d + 1), ha d]
+  case case20 =>
+    intro q v ih
+    have := (Pattern.trans s q).inner.append ((Trans.single (k := .symbol "=>")
+      (by decide)).inner.append ((ih 0).inner.append Inner.comma))
+    rw [Arm.toks]
+    simpa using this
   case case5 =>
     intro p op a ih
     refine Expr.trans_paren _ ?_
@@ -290,33 +330,33 @@ private theorem trans_all (s : Sep) :
     have ha := Inner.argToks (s := s) (xss := ps.map FnParam.toks) (by simpa using ih)
     intro d rest
     simp [Expr.toks, scan, OpenK, CloseK, ihr d, ha d]
-  case case19 =>
+  case case21 =>
     intro m t iht d rest
     cases m <;> simp [FnParam.toks, scan, OpenK, CloseK, iht d]
-  case case21 =>
+  case case23 =>
     intro p b xs ihb ih
     have ha := Inner.argToks (s := s) (xss := xs.map (Expr.toks 0))
       (by simpa using fun x hx => ih x hx 0)
     intro d rest
     rw [TypeExpr.toks.eq_def]
     cases b <;> simp [scan, OpenK, CloseK, ihb d, ihb (d + 1), ha d]
-  case case23 =>
+  case case25 =>
     intro p ts ih
     have ha := Inner.argToks (xss := ts.map TypeExpr.toks) (by simpa using ih)
     rw [TypeExpr.toks]
     split
     · simpa using Trans.paren (ha.append Inner.comma)
     · simpa using Trans.paren ha
-  case case24 =>
+  case case26 =>
     intro p t n iht ihn
     intro d rest
     simp [TypeExpr.toks, scan, OpenK, CloseK, iht (d + 1), ihn 0 (d + 1)]
-  case case25 =>
+  case case27 =>
     intro p ps r ih ihr
     have ha := Inner.argToks (s := s) (xss := ps.map FnParam.toks) (by simpa using ih)
     intro d rest
     simp [TypeExpr.toks, scan, OpenK, CloseK, ihr d, ha d]
-  case case20 | case22 =>
+  case case22 | case24 =>
     intros
     intro d rest
     simp [TypeExpr.toks, scan, OpenK, CloseK]
@@ -328,7 +368,7 @@ private theorem trans_all (s : Sep) :
 
 theorem Expr.trans (s : Sep) (e : Expr) : ∀ c, Trans s (e.toks c) := (trans_all s).1 e
 
-theorem TypeExpr.trans (s : Sep) (t : TypeExpr) : Trans s t.toks := (trans_all s).2.2 t
+theorem TypeExpr.trans (s : Sep) (t : TypeExpr) : Trans s t.toks := (trans_all s).2.2.2 t
 
 /-! The arguments of a call or an index are balanced. -/
 theorem Bal.args (xs : List Expr) : Bal (argToks (xs.map (Expr.toks 0))) :=

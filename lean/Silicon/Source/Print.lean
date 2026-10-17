@@ -12,7 +12,8 @@ The Rust front end copies the dump byte for byte, so these rules fix each byte:
   except in an empty list.
 - The structure `Param` prints as `(param <mode> <name> <ty>)`. The structure `StructField`
   prints as `(structfield <name> <ty>)`. The structure `Variant` prints as
-  `(variant <name> <payload> <tag>)`. A `FnParam` prints as `(fnparam <mutable> <ty>)`.
+  `(variant <name> <payload> <tag>)`. A `FnParam` prints as `(fnparam <mutable> <ty>)`. An
+  `Arm` prints as `(arm <pat> <value>)`.
 - A `ParamMode` prints as its constructor name: `none`, `comptime`, or `mut`.
 - A `pos` field does not print. An `Ident` prints as its name, as a string.
 - A `String` prints in double quotes. It escapes `"`, `\`, LF, CR, and tab as `\"`, `\\`,
@@ -89,6 +90,14 @@ def Print.optionTo (f : String → α → String) (acc : String) : Option α →
   | none => acc ++ "none"
   | some x => f (acc ++ "(some ") x ++ ")"
 
+def Pattern.dumpTo (acc : String) : Pattern → String
+  | .wild _ => acc ++ "(wild)"
+  | .int _ neg v => acc ++ "(int " ++ boolean neg ++ " " ++ toString v ++ ")"
+  | .bool _ v => acc ++ "(bool " ++ boolean v ++ ")"
+  | .variant _ t v bs =>
+    listTo (optionTo fun acc i => acc ++ ident i)
+      (acc ++ "(variant " ++ ident t ++ " " ++ ident v ++ " ") bs ++ ")"
+
 mutual
   def Expr.dumpTo (acc : String) : Expr → String
     | .num _ v => acc ++ "(num " ++ toString v ++ ")"
@@ -110,6 +119,7 @@ mutual
       Expr.dumpsTo (r.dumpTo (acc ++ "(method ") ++ " " ++ ident m ++ " (") xs ++ "))"
     | .fnType _ ps r => r.dumpTo (FnParam.dumpsTo (acc ++ "(fntype (") ps ++ ") ") ++ ")"
     | .path _ t v => acc ++ "(path " ++ ident t ++ " " ++ ident v ++ ")"
+    | .«match» _ s arms => Arm.dumpsTo (s.dumpTo (acc ++ "(match ") ++ " (") arms ++ "))"
 
   /-- `sepTo Expr.dumpTo`, which the recursion over `Expr` needs as its own function. -/
   def Expr.dumpsTo (acc : String) : List Expr → String
@@ -139,6 +149,15 @@ mutual
     | [] => acc
     | [p] => p.dumpTo acc
     | p :: ps => FnParam.dumpsTo (p.dumpTo acc ++ " ") ps
+
+  def Arm.dumpTo (acc : String) : Arm → String
+    | .mk p v => v.dumpTo (p.dumpTo (acc ++ "(arm ") ++ " ") ++ ")"
+
+  /-- `sepTo Arm.dumpTo`, which the recursion over `Arm` needs as its own function. -/
+  def Arm.dumpsTo (acc : String) : List Arm → String
+    | [] => acc
+    | [a] => a.dumpTo acc
+    | a :: as => Arm.dumpsTo (a.dumpTo acc ++ " ") as
 end
 
 mutual
@@ -232,6 +251,9 @@ base of a type family index prints in parentheses for the same reason.
 A struct without parameters prints without parentheses. Each field of a struct prints on its own
 line and ends with `,`. Each variant of an enum prints on its own line and ends with `,` too. A
 variant without payload types prints without parentheses. A variant path `E::V` is a primary.
+
+A `match` has the level of `if`. It prints on one line, and each arm ends with `,`. A variant
+pattern without binders prints without parentheses. A binder `none` prints as `_`.
 -/
 
 def BinOp.text : BinOp → String
@@ -255,10 +277,25 @@ def UnOp.text : UnOp → String
   | .not => "!" | .inv => "~" | .neg => "-"
 
 def Expr.level : Expr → Nat
-  | .cond .. => 0
+  | .cond .. | .«match» .. => 0
   | .binary _ op .. => op.level
   | .unary .. | .fnType .. => unaryLevel
   | _ => postfixLevel
+
+def Pattern.binderText : Option Ident → String
+  | none => "_"
+  | some i => i.name
+
+def Pattern.print : Pattern → String
+  | .wild _ => "_"
+  | .int _ neg v => (if neg then "-" else "") ++ toString v
+  | .bool _ v => boolean v
+  | .variant _ t v bs =>
+    let binders := if bs.isEmpty then "" else "(" ++ args (bs.map Pattern.binderText) ++ ")"
+    t.name ++ "::" ++ v.name ++ binders
+
+/-! The text of the arms of a `match` from the text of each arm. -/
+def Print.armsText (arms : List String) : String := String.join (arms.map (" " ++ · ++ ","))
 
 mutual
   /-- The text of `e` in a context that needs at least the level `ctx`. -/
@@ -289,6 +326,8 @@ mutual
         r.print postfixLevel ++ "." ++ m.name ++ "(" ++ args (xs.map (Expr.print 0)) ++ ")"
       | .fnType _ ps r => fnText (ps.map FnParam.print) r.print
       | .path _ t v => t.name ++ "::" ++ v.name
+      | .«match» _ s arms =>
+        "match (" ++ s.print 0 ++ ") {" ++ armsText (arms.map Arm.print) ++ " }"
     if e.level < ctx then "(" ++ text ++ ")" else text
 
   def TypeExpr.print : TypeExpr → String
@@ -303,6 +342,9 @@ mutual
 
   def FnParam.print : FnParam → String
     | .mk m t => (if m then "mut " else "") ++ t.print
+
+  def Arm.print : Arm → String
+    | .mk p v => p.print ++ " => " ++ v.print 0
 end
 
 mutual

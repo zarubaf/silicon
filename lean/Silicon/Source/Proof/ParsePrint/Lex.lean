@@ -265,6 +265,10 @@ theorem Expr.head (e : Expr) :
     simp only [Expr.printable, Bool.and_eq_true] at h
     simp only [Nat.not_lt_zero, ite_false, String.append_assoc]
     exact head_append (name_exprStart h.1)
+  | case19 =>
+    intro _; apply Expr.head_paren
+    rw [Expr.print]
+    exact head_of_cons (x := 'm') (by simp) (by decide)
 
 theorem Expr.starts {f : Follow} (hf : f ≠ .sep) (e : Expr) (h : e.printable = true)
     (ctx : Nat) : Starts f (e.print ctx).toList :=
@@ -295,13 +299,78 @@ theorem Lexes.argsClose {D : Nat} (xs : List Expr) {close : String} {kc : List K
       (argToks (xs.map (Expr.toks 0)) ++ kc) :=
   (Lexes.args _ _ xs h).append hc hs
 
+/-! A pattern. A negative literal is `-` and a number. -/
+theorem Pattern.lexes {D : Nat} (q : Pattern) (h : q.printable = true) :
+    Lexes D .sep q.print.toList q.toks := by
+  cases q with
+  | wild => rw [Pattern.print, Pattern.toks]; exact Lexes.glue (by decide)
+  | bool p v =>
+    rw [Pattern.print, Pattern.toks]
+    cases v
+    · exact Lexes.glue (cs := "false".toList) (by decide)
+    · exact Lexes.glue (cs := "true".toList) (by decide)
+  | int p neg v =>
+    simp only [Pattern.printable] at h
+    unfold numberBound at h
+    have hn := Lexes.number (D := D) (of_decide_eq_true h)
+    rw [Pattern.print, Pattern.toks]
+    cases neg
+    · simpa using hn
+    · have hm : Lexes D (.sym '-') "-".toList [.symbol "-"] := Lexes.glue (by decide)
+      have hs : Starts (.sym '-') (Nat.toDigits 10 v) := by
+        cases hdg : Nat.toDigits 10 v with
+        | nil => exact absurd hdg Nat.toDigits_ne_nil
+        | cons x xs =>
+          have hx : x.isDigit = true :=
+            Nat.isDigit_of_mem_toDigits (b := 10) (by decide) (by decide)
+              (by rw [hdg]; exact List.mem_cons_self)
+          exact starts_of_exprStart (by decide) ⟨x, xs, rfl, by simp [exprStart, hx]⟩
+      simpa using hm.append hn hs
+  | variant p t v bs =>
+    simp only [Pattern.printable, Bool.and_eq_true, List.all_eq_true] at h
+    obtain ⟨⟨⟨ht, -⟩, hv⟩, hbs⟩ := h
+    have hc : Lexes D .any "::".toList [.symbol "::"] := Lexes.glue (by decide)
+    have hpath := (Lexes.name (D := D) ht).append (hc.append (Lexes.name hv) (Starts.any _))
+      (Starts.glue "::" (by decide) _)
+    rw [Pattern.print, Pattern.toks]
+    cases bs with
+    | nil => simpa using hpath
+    | cons b bs =>
+      have hb : ∀ x ∈ b :: bs, Lexes D .sep (Pattern.binderText x).toList
+          (Pattern.binderToks x) := by
+        intro x hx
+        have := hbs x hx
+        cases x with
+        | none => exact Lexes.glue (by decide)
+        | some i =>
+          simp only [binderOk, Bool.and_eq_true] at this
+          exact Lexes.name this.1
+      have ho : Lexes D .any "(".toList [.symbol "("] := Lexes.glue (by decide)
+      have hcl : Lexes D .any ")".toList [.symbol ")"] := Lexes.glue (by decide)
+      have ha := Lexes.args (D := D) Pattern.binderText Pattern.binderToks (b :: bs) hb
+      have hpar := ho.append (ha.append hcl (Starts.lit (by decide))) (Starts.any _)
+      have := hpath.append hpar (Starts.glue "(" (by decide) _)
+      simpa using Lexes.any (f := .sep) this
+
+/-! The arms of a `match`, each with a space before it and a `,` after it. -/
+theorem Lexes.arms {D : Nat} (arms : List Arm)
+    (h : ∀ a ∈ arms, Lexes D .any (" " ++ a.print ++ ",").toList a.toks) :
+    Lexes D .any (armsText (arms.map Arm.print)).toList (arms.map Arm.toks).flatten := by
+  induction arms with
+  | nil => exact Lexes.nil
+  | cons a as ih =>
+    have := (h a (by simp)).append (ih fun x hx => h x (by simp [hx])) (Starts.any _)
+    simpa [armsText] using this
+
 private theorem lexes_all (D : Nat) :
     (∀ e : Expr, e.printable = true → ∀ ctx, Lexes D .sep (e.print ctx).toList (e.toks ctx)) ∧
       ∀ t : TypeExpr, t.printable = true → Lexes D .sep t.print.toList t.toks := by
   suffices h : (∀ e : Expr, e.printable = true → ∀ ctx,
       Lexes D .sep (e.print ctx).toList (e.toks ctx)) ∧
+      (∀ a : Arm, a.printable = true → Lexes D .any (" " ++ a.print ++ ",").toList a.toks) ∧
       (∀ p : FnParam, p.printable = true → Lexes D .sep p.print.toList p.toks) ∧
-      ∀ t : TypeExpr, t.printable = true → Lexes D .sep t.print.toList t.toks from ⟨h.1, h.2.2⟩
+      ∀ t : TypeExpr, t.printable = true → Lexes D .sep t.print.toList t.toks from
+    ⟨h.1, h.2.2.2⟩
   have hcl : Lexes D .any ")".toList [.symbol ")"] := Lexes.glue (by decide)
   have hcs : Starts .sep ")".toList := Starts.lit (by decide)
   have hop : Lexes D .any "(".toList [.symbol "("] := Lexes.glue (by decide)
@@ -319,12 +388,35 @@ private theorem lexes_all (D : Nat) :
       (Starts.any _)
     simpa [fnText] using this
   apply Expr.erase.mutual_induct
+  case case19 =>
+    intro p s arms ihs ih h; apply Lexes.wrap
+    simp only [Expr.printable, Bool.and_eq_true, Arm.printableAll_eq, List.all_eq_true] at h
+    rw [Expr.print, Expr.toks]
+    have g1 : Lexes D .any "match (".toList [.keyword "match", .symbol "("] :=
+      Lexes.glue (by decide)
+    have g2 : Lexes D .any ") {".toList [.symbol ")", .symbol "{"] := Lexes.glue (by decide)
+    have g3 : Lexes D .any " }".toList [.symbol "}"] := Lexes.glue (by decide)
+    have ha := Lexes.arms (D := D) arms fun x hx => ih x hx (h.2 x hx)
+    have := g1.append ((ihs h.1 0).append (g2.append (ha.append g3 (Starts.any _))
+      (Starts.any _)) (Starts.glue ") {" (by decide) _)) (Starts.any _)
+    simpa using Lexes.any (f := .sep) this
+  case case20 =>
+    intro q v ih h
+    simp only [Arm.printable, Bool.and_eq_true] at h
+    rw [Arm.print, Arm.toks]
+    have sp : Lexes D .any " ".toList [] := Lexes.glue (by decide)
+    have ga : Lexes D .any " => ".toList [.symbol "=>"] := Lexes.glue (by decide)
+    have gc : Lexes D .any ",".toList [.symbol ","] := Lexes.glue (by decide)
+    have := sp.append ((Pattern.lexes q h.1).append (ga.append ((ih h.2 0).append gc
+      (Starts.glue "," (by decide) _)) (Starts.any _)) (Starts.glue " => " (by decide) _))
+      (Starts.any _)
+    simpa using this
   case case17 =>
     intro p ps r ih ihr h; apply Lexes.wrap
     simp only [Expr.printable, Bool.and_eq_true, FnParam.printableAll_eq, List.all_eq_true] at h
     rw [Expr.print, Expr.toks]
     simpa using hfn ps r (fun x hx => ih x hx (h.1 x hx)) (ihr h.2)
-  case case19 =>
+  case case21 =>
     intro m t iht h
     simp only [FnParam.printable] at h
     rw [FnParam.print, FnParam.toks]
@@ -332,7 +424,7 @@ private theorem lexes_all (D : Nat) :
     · simpa using iht h
     · have g : Lexes D .any "mut ".toList [.keyword "mut"] := Lexes.glue (by decide)
       simpa using g.append (iht h) (Starts.any _)
-  case case25 =>
+  case case27 =>
     intro p ps r ih ihr h
     simp only [TypeExpr.printable, Bool.and_eq_true, FnParam.printableAll_eq,
       List.all_eq_true] at h
@@ -499,12 +591,12 @@ private theorem lexes_all (D : Nat) :
     have := (Lexes.name h.1).append (hc.append (Lexes.name h.2) (Starts.any _))
       (Starts.glue "::" (by decide) _)
     simpa using this
-  case case22 =>
+  case case24 =>
     intro p _
     rw [TypeExpr.print, TypeExpr.toks]
     simpa using Lexes.any (f := .sep) (Lexes.glue (D := D) (cs := "()".toList)
       (ks := [.symbol "(", .symbol ")"]) (by decide))
-  case case23 =>
+  case case25 =>
     intro p ts ih h
     simp only [TypeExpr.printable, Bool.and_eq_true, TypeExpr.printableAll_eq,
       List.all_eq_true] at h
@@ -523,7 +615,7 @@ private theorem lexes_all (D : Nat) :
       · exact Starts.lit (by decide)
     have := hop.append (ha.append hc hs) (Starts.any _)
     simpa using Lexes.any (f := .sep) this
-  case case24 =>
+  case case26 =>
     intro p t n iht ihn h
     simp only [TypeExpr.printable, Bool.and_eq_true] at h
     rw [TypeExpr.print, TypeExpr.toks]
@@ -532,12 +624,12 @@ private theorem lexes_all (D : Nat) :
     have := hb.append ((iht h.1).append (hs.append ((ihn h.2 0).append hc
       (Starts.lit (by decide))) (Starts.any _)) (Starts.glue "; " (by decide) _)) (Starts.any _)
     simpa using Lexes.any (f := .sep) this
-  case case20 =>
+  case case22 =>
     intro p n h
     simp only [TypeExpr.printable] at h
     rw [TypeExpr.print, TypeExpr.toks]
     exact Lexes.name h
-  case case21 =>
+  case case23 =>
     intro p b xs ih ihx h
     simp only [TypeExpr.printable, Bool.and_eq_true, Expr.printableAll_eq,
       List.all_eq_true] at h

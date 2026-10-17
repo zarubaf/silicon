@@ -13,7 +13,7 @@ position order, and it reports the first. This rule also orders a lexical error 
 `S004`. The lexer ends the tokens with an `error` token. The parser reports that token only
 if it gets to it. `S004` is at these tokens:
 
-- The keyword: `import`, `pub`, and `extern` at an item. `match` at an expression.
+- The keyword: `import`, `pub`, and `extern` at an item.
   `in`, `as`, `with`, and `conforms` after their forms. `input`, `output`, `reg`, `wire`,
   `mem`, and `instance` in the body of a `fn` without `comptime`: a helper that declares
   resources is slice 3.
@@ -53,6 +53,15 @@ These rules settle the open points of the grammar:
 - Slice 3 has no packages. A path in an expression is a name, or a variant path `E::V` of two
   names. A path in a type and the module of an `instance` are one name. A package path is `S004`
   with one text: the second `::` of an expression path, and the `::` of a type or of a module.
+- A `match` is an expression at the level of `if`: `match (x) { p => e, ... }`. Its scrutinee
+  is in parentheses. Each arm has a pattern, `=>`, and one expression. A `,` separates two arms,
+  and a `,` can end the arms. A `match` can have zero arms.
+- A pattern is a number, `-` and a number, `true`, `false`, `_`, or a variant path `E::V`. A
+  variant path can have binders in parentheses: a name or `_` each, and a `,` can end them.
+  `E::V` and `E::V()` give the same pattern. Each other token in a pattern is `S001` with the
+  text of section 6.2. This rule also holds for the token after the pattern, which must be
+  `=>`. Thus a bare name, a nested pattern, an expression, a range, and `|` are `S001`. A third
+  part of a path is `S004`, as in an expression.
 - An enum has its tag type after `:`. Each variant has a name, the payload types in
   parentheses, and its tag value after `=`. The tag value is not optional: without `=`, the
   variant is `S001`. A `,` can end the variants and the payload types. `Add` and `Add()` give
@@ -83,9 +92,10 @@ pass over the AST:
   repeat without limit first reads a bracket. Thus the recursion of the parser stays below a
   constant times N, for each input.
 - The parser builds each chain in a loop: binary operators, prefix operators, suffixes, and
-  the arrows of function types. It also reads the elements of a tuple, an array, or a tuple
-  type, and the parameters of a function type, in a loop. The branches of
-  `if` are in brackets.
+  the arrows of function types. It also reads each list in a loop. These are the elements of a
+  tuple, an array, or a tuple type, and the parameters of a function type. They are also the
+  arms of a `match` and the binders of a pattern. The branches of `if` and the arms of a
+  `match` are in brackets.
 - The height of each outermost expression or type is at most N. A name, a number, a
   string, `true`, `false`, `()`, and `[]` have height 1. Each other node has the height 1 plus
   the largest height of its parts. Parentheses make no node. A type has the same rule: a type
@@ -235,9 +245,70 @@ def opAt (level : Nat) (t : Token) : Option BinOp :=
 def unOp (t : Token) : Option UnOp :=
   [UnOp.not, .inv, .neg].find? fun op => isSym op.text t
 
+/-! The `S001` text of a token that is not valid in a pattern (section 6.2). -/
+def patternText : String :=
+  "expected a pattern: an integer, `true`, `false`, `E::V(..)`, or `_`; compare with a " ++
+    "constant in an `if`"
+
+/-! `S001` at `t` in a pattern. A lexical error keeps the message of the lexer. -/
+def badPattern (t : Token) : P α :=
+  match t.kind with
+  | .error msg => throw ⟨.S001, t.pos, msg⟩
+  | _ => throw ⟨.S001, t.pos, patternText⟩
+
+/-! A binder of a variant pattern: a name, or `_` for no name. -/
+def binder : P (Option Ident) := do
+  let t ← peek
+  match t.kind with
+  | .ident n => bump; return if n == "_" then none else some ⟨t.pos, n⟩
+  | _ => badPattern t
+
 /-! Fuel exhaustion cannot occur with the fuel of `parse`. -/
 def exhausted : P α := do
   throw ⟨.S001, (← peek).pos, "parser fuel exhausted"⟩
+
+/-! The binders of a variant pattern after its `(`, up to `)`. A `,` can end the list. -/
+def binders : Nat → List (Option Ident) → P (List (Option Ident))
+  | 0, _ => exhausted
+  | f + 1, acc => do
+    if ← acceptSym ")" then return acc.reverse
+    let acc := (← binder) :: acc
+    if ← acceptSym ")" then return acc.reverse
+    let t ← peek
+    if isSym "," t then bump; binders f acc else badPattern t
+
+/-! A variant pattern after its first name `ty`: `::`, the variant name, and the binders. -/
+def variantPattern (f : Nat) (start : Pos) (ty : Ident) : P Pattern := do
+  let c ← peek
+  unless isSym "::" c do badPattern c
+  bump
+  let u ← peek
+  let .ident v := u.kind | badPattern u
+  bump
+  let w ← peek
+  if isSym "::" w then packagePath w
+  let bs ← if ← acceptSym "(" then binders f [] else pure []
+  return .variant start ty ⟨u.pos, v⟩ bs
+
+/-! A pattern, then the `=>` of its arm. -/
+def pattern (f : Nat) : P Pattern := do
+  let t ← peek
+  let p ← match t.kind with
+    | .number v => bump; pure (.int t.pos false v)
+    | .symbol "-" => do
+      bump
+      let u ← peek
+      let .number v := u.kind | badPattern u
+      bump
+      pure (.int t.pos true v)
+    | .keyword "true" => bump; pure (.bool t.pos true)
+    | .keyword "false" => bump; pure (.bool t.pos false)
+    | .ident n =>
+      bump
+      if n == "_" then pure (.wild t.pos) else variantPattern f t.pos ⟨t.pos, n⟩
+    | _ => badPattern t
+  let a ← peek
+  if isSym "=>" a then bump; return p else badPattern a
 
 /-! The height of a node from the heights of its children. -/
 def height (children : List Nat) : Nat := children.foldl max 0 + 1
@@ -282,7 +353,14 @@ mutual
     | 0 => exhausted
     | f + 1 => do
       let t ← peek
-      if isKw "match" t then later t "a `match`"
+      if isKw "match" t then
+        bump
+        sym "("
+        let s ← expr f
+        sym ")"
+        sym "{"
+        let ms ← arms f []
+        return ⟨.«match» t.pos s.expr (ms.map (·.1)), height (s.height :: ms.map (·.2))⟩
       else if isKw "if" t then
         bump
         sym "("
@@ -297,6 +375,21 @@ mutual
         sym "}"
         return ⟨.cond t.pos c.expr y.expr n.expr, height [c.height, y.height, n.height]⟩
       else operand f 1
+
+  /--
+  The arms of a `match` after its `{`, up to `}`, each with the height of its expression. A `,`
+  can end the list.
+  -/
+  def arms : Nat → List (Arm × Nat) → P (List (Arm × Nat))
+    | 0, _ => exhausted
+    | f + 1, acc => do
+      if ← acceptSym "}" then return acc.reverse
+      let p ← pattern f
+      let e ← expr f
+      let acc := (.mk p e.expr, e.height) :: acc
+      if ← acceptSym "}" then return acc.reverse
+      let t ← peek
+      if isSym "," t then bump; arms f acc else unexpected t "`,` or `}`"
 
   /-- An expression of binding level `l` or higher. -/
   def operand : Nat → Nat → P Node
