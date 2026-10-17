@@ -4,7 +4,7 @@
 
 use super::hw::Want;
 use super::stat::value_expr;
-use super::{Builder, Built, CONTEXTS, Ctx, Hw, Module};
+use super::{Builder, Built, CONTEXTS, Ctx, Hw, HwEnum, Module};
 use crate::eval::{Env, Fault, Value, convert};
 use crate::program::{HExpr, Place, SExpr, STy, Stmt};
 
@@ -83,6 +83,17 @@ impl Builder {
             let value = self.driver(ctx, &Want { types, ty: None });
             let place = Place::Field(name.clone(), p.clone());
             out.push(Stmt::Connect(place, value));
+        }
+        for (p, def) in &sig.enum_inputs {
+            let value = self.enum_driver(ctx, def);
+            out.push(Stmt::Connect(Place::Field(name.clone(), p.clone()), value));
+        }
+        for (q, def) in &sig.enum_outputs {
+            ctx.enums.push(HwEnum {
+                expr: HExpr::Field(name.clone(), q.clone()),
+                def: def.clone(),
+                hardware: true,
+            });
         }
         for (q, t) in &sig.outputs {
             let types = self.types(t, &envs)?;

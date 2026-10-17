@@ -22,21 +22,25 @@ use num_bigint::BigInt;
 
 /// The most literal arms of a match on a finite integer.
 const ARMS: u32 = 4;
+/// The depth of the arms: a match is a wide node, so its arms stay shallow.
+const ARM_DEPTH: u32 = 1;
 
 impl Builder {
     /// A hardware `match` of the wanted type in one draw of `HW_MATCH_ODDS`
     /// of the side tape, if the nesting allows it.
     pub(super) fn hw_match_gate(&mut self, ctx: &Ctx, w: &Want, depth: u32) -> Option<HExpr> {
-        if depth == 0 || self.match_level >= NESTING || self.side_below(HW_MATCH_ODDS) != 1 {
+        if depth == 0
+            || self.match_level >= NESTING
+            || self.side_below(self.match_odds(HW_MATCH_ODDS)) != 1
+        {
             return None;
         }
         self.on_side(|b| {
-            if b.match_level > 0 {
-                note!(b, nested_matches);
+            let m = b.in_match(|b| b.hw_match(ctx, w, (depth - 1).min(ARM_DEPTH)));
+            #[cfg(test)]
+            if let Some(HExpr::Match(x)) = &m {
+                b.tally(x, true);
             }
-            b.match_level += 1;
-            let m = b.hw_match(ctx, w, depth - 1);
-            b.match_level -= 1;
             m
         })
     }
@@ -57,7 +61,6 @@ impl Builder {
             let h = (*names.get(self.tape.index(names.len()))?).clone();
             self.scalar_arms(ctx, &h, w, d)?
         };
-        note!(self, hw_matches);
         Some(HExpr::Match(m))
     }
 
@@ -65,8 +68,8 @@ impl Builder {
     /// hardware payload, or `reinterpret` of hardware bits, sometimes; else
     /// a hardware name.
     fn enum_scrutinee(&mut self, ctx: &Ctx, def: &EnumDef, d: u32) -> HExpr {
-        if self.tape.below(2) == 0 {
-            for _ in 0..3 {
+        if self.tape.below(4) != 0 {
+            for _ in 0..4 {
                 let e = self.enum_expr(ctx, def, d);
                 if matches!(e, HExpr::Ctor(..) | HExpr::Reinterpret(..)) && is_hardware(ctx, &e) {
                     note!(self, hw_expr_scrutinees);
@@ -74,14 +77,20 @@ impl Builder {
                 }
             }
         }
-        let names: Vec<&str> = ctx
+        let names: Vec<&HExpr> = ctx
             .enums
             .iter()
             .filter(|e| e.hardware && e.def == *def)
-            .map(|e| e.name.as_str())
+            .map(|e| &e.expr)
             .collect();
         let at = self.tape.index(names.len());
-        HExpr::Name(names.get(at).copied().unwrap_or_default().to_owned())
+        let Some(name) = names.get(at) else {
+            panic!(
+                "the scrutinee of the builder has no hardware name of {}",
+                def.name
+            );
+        };
+        (*name).clone()
     }
 
     fn enum_arms(
@@ -92,14 +101,12 @@ impl Builder {
         w: &Want,
         d: u32,
     ) -> Option<Match<HExpr, HExpr>> {
-        note!(self, hw_enum_matches);
         let listed = self.listed_variants(def);
         let mut arms = Vec::new();
         for v in &listed {
             let (pattern, binders) = self.hw_variant_pattern(def, v);
             let mut inner = ctx.clone();
             for (name, t) in binders {
-                note!(self, hw_binders);
                 inner.hw.push(Hw {
                     expr: HExpr::Name(name),
                     ty: Some(literal_ty(t)),
@@ -111,8 +118,6 @@ impl Builder {
         }
         if listed.len() < 1usize << def.tag_width {
             arms.push((Pattern::Wild, self.hw(ctx, w, d)?));
-        } else {
-            note!(self, hw_complete_matches);
         }
         Some(matched(scrutinee, arms))
     }
@@ -151,7 +156,6 @@ impl Builder {
             let mut arms = Vec::new();
             match self.tape.below(3) {
                 0 => {
-                    note!(self, hw_complete_matches);
                     for b in [flip, !flip] {
                         arms.push((Pattern::Bool(b), self.hw(ctx, w, d)?));
                     }
@@ -190,9 +194,7 @@ impl Builder {
             };
             arms.push((Pattern::Int(BigInt::from(v), radix), self.hw(ctx, w, d)?));
         }
-        if complete {
-            note!(self, hw_complete_matches);
-        } else {
+        if !complete {
             arms.push((Pattern::Wild, self.hw(ctx, w, d)?));
         }
         Some(matched(scrutinee, arms))

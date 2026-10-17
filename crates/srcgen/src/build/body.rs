@@ -50,7 +50,66 @@ fn domain(params: &[(String, STy)], builder: &Builder) -> Vec<Env> {
     envs
 }
 
+/// The kinds of statement of a frame.
+#[derive(Clone, Copy)]
+enum StmtKind {
+    StaticLet,
+    List,
+    Push,
+    Pop,
+    MutCall,
+    HwMutCall,
+    Diagnostic,
+    MutBinding,
+    Assign,
+    Wire,
+    Reg,
+    Instance,
+    Repeat,
+    Branch,
+    Assert,
+    /// A `let` of a hardware value, and the fallback of a kind that does
+    /// not apply.
+    Binding,
+}
+
+/// The weight of each kind. They are those of the 22 draws before enums,
+/// doubled, and `pop`, the calls with a `mut` formal, the instances, and
+/// the diagnostics weigh a little more, so that the forms that depend on
+/// them keep their coverage.
+const WEIGHTS: [(StmtKind, u32); 16] = [
+    (StmtKind::StaticLet, 2),
+    (StmtKind::List, 2),
+    (StmtKind::Push, 2),
+    (StmtKind::Pop, 3),
+    (StmtKind::MutCall, 3),
+    (StmtKind::HwMutCall, 3),
+    (StmtKind::Diagnostic, 10),
+    (StmtKind::MutBinding, 2),
+    (StmtKind::Binding, 2),
+    (StmtKind::Assign, 2),
+    (StmtKind::Wire, 2),
+    (StmtKind::Reg, 2),
+    (StmtKind::Instance, 8),
+    (StmtKind::Repeat, 4),
+    (StmtKind::Branch, 2),
+    (StmtKind::Assert, 2),
+];
+
 impl Builder {
+    /// A kind of statement, by the weights.
+    fn statement_kind(&mut self) -> StmtKind {
+        let total: u32 = WEIGHTS.iter().map(|(_, w)| w).sum();
+        let mut n = self.tape.below(total);
+        for (kind, w) in WEIGHTS {
+            if n < w {
+                return kind;
+            }
+            n -= w;
+        }
+        StmtKind::Binding
+    }
+
     pub(super) fn helpers(&mut self) -> Built {
         for k in 0..self.tape.below(HELPERS + 1) {
             let h = self.helper(k as usize)?;
@@ -299,11 +358,7 @@ impl Builder {
             for _ in 0..self.tape.between(1, OUTPUTS) {
                 outputs.push((names.fresh("o"), self.decl_ty(r, &domain)));
             }
-            let (enum_inputs, enum_outputs) = if k == 0 {
-                self.enum_ports()
-            } else {
-                (Vec::new(), Vec::new())
-            };
+            let (enum_inputs, enum_outputs) = self.enum_ports();
             self.sigs.push(Sig {
                 name: format!("M{k}"),
                 params,
@@ -346,7 +401,7 @@ impl Builder {
         for (n, def) in &sig.enum_inputs {
             body.push(Stmt::Input(n.clone(), Ty::Enum(def.name.clone())));
             ctx.enums.push(HwEnum {
-                name: n.clone(),
+                expr: HExpr::Name(n.clone()),
                 def: def.clone(),
                 hardware: true,
             });
@@ -417,19 +472,19 @@ impl Builder {
                 extra -= 1;
             }
             let nested = level < NESTING;
-            match self.tape.below(28) {
-                1 => self.static_let(ctx, &mut m.names, &mut out)?,
-                12 => self.list_let(ctx, &mut m.names, &mut out)?,
-                13 => self.push_stmt(ctx, &mut out),
-                14 | 22 | 25 => self.pop_stmt(ctx, &mut m.names, &mut out),
-                15 | 26 | 27 => self.static_mut_call(ctx, &mut m.names, &mut out)?,
-                16 => self.hw_mut_call(ctx, m, &mut out)?,
-                17 | 19 | 20 => self.diagnostic(ctx, &mut out),
-                2 => self.binding(ctx, &mut m.names, &mut out, true)?,
-                3 => self.assign(ctx, &mut m.names, &mut out)?,
-                4 => self.wire(ctx, &mut m.names, &mut out)?,
-                5 if m.clocked => self.reg(ctx, &mut m.names, &mut out, &mut regs)?,
-                6 | 7 | 18 | 21 | 23 | 24 if instances < INSTANCES => {
+            match self.statement_kind() {
+                StmtKind::StaticLet => self.static_let(ctx, &mut m.names, &mut out)?,
+                StmtKind::List => self.list_let(ctx, &mut m.names, &mut out)?,
+                StmtKind::Push => self.push_stmt(ctx, &mut out),
+                StmtKind::Pop => self.pop_stmt(ctx, &mut m.names, &mut out),
+                StmtKind::MutCall => self.static_mut_call(ctx, &mut m.names, &mut out)?,
+                StmtKind::HwMutCall => self.hw_mut_call(ctx, m, &mut out)?,
+                StmtKind::Diagnostic => self.diagnostic(ctx, &mut out),
+                StmtKind::MutBinding => self.binding(ctx, &mut m.names, &mut out, true)?,
+                StmtKind::Assign => self.assign(ctx, &mut m.names, &mut out)?,
+                StmtKind::Wire => self.wire(ctx, &mut m.names, &mut out)?,
+                StmtKind::Reg if m.clocked => self.reg(ctx, &mut m.names, &mut out, &mut regs)?,
+                StmtKind::Instance if instances < INSTANCES => {
                     if self.instance(ctx, m, &mut out)? {
                         instances += 1;
                         // A record after the child pins the order of the
@@ -439,9 +494,9 @@ impl Builder {
                         }
                     }
                 }
-                8 | 9 if nested => self.repeat(ctx, m, &mut out, level)?,
-                10 if nested => self.branch(ctx, m, &mut out, level)?,
-                11 => {
+                StmtKind::Repeat if nested => self.repeat(ctx, m, &mut out, level)?,
+                StmtKind::Branch if nested => self.branch(ctx, m, &mut out, level)?,
+                StmtKind::Assert => {
                     let c = self.assertion(self.reach(ctx), &ctx.envs);
                     out.push(Stmt::Assert(c, "holds".to_owned()));
                 }

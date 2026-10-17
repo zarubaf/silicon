@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Hardware enums: the ports of the top module, and the registers, wires,
+//! Hardware enums: the ports of a module, and the registers, wires,
 //! and `let`s of an enum type.
 //!
 //! An enum value has the two leaves `tag` and `payload`. The builder makes
@@ -15,10 +15,10 @@ use super::stat;
 use super::{Builder, Ctx, HwEnum, Names};
 use crate::program::{EnumDef, HExpr, Place, SExpr, Scalar, Stmt, Ty};
 
-/// The enum inputs and the enum outputs of the top module.
+/// The enum inputs and the enum outputs of a module.
 type EnumPorts = (Vec<(String, EnumDef)>, Vec<(String, EnumDef)>);
 
-/// The most enum ports of the top module, for each direction.
+/// The most enum ports of a module, for each direction.
 const PORTS: u32 = 2;
 
 /// Whether the enum value `e` is hardware: it reads a port, a register,
@@ -26,10 +26,10 @@ const PORTS: u32 = 2;
 /// `match` over it selects one arm at elaboration time.
 pub(super) fn is_hardware(ctx: &Ctx, e: &HExpr) -> bool {
     match e {
-        HExpr::Name(n) => ctx
+        HExpr::Name(_) | HExpr::Field(..) => ctx
             .enums
             .iter()
-            .find(|x| x.name == *n)
+            .find(|x| x.expr == *e)
             .map_or_else(|| reads_name(e), |x| x.hardware),
         HExpr::Ctor(_, _, args) => args.iter().any(|a| is_hardware(ctx, a)),
         HExpr::Reinterpret(_, a) => is_hardware(ctx, a),
@@ -43,7 +43,7 @@ fn bits_ty(def: &EnumDef) -> Ty {
 }
 
 impl Builder {
-    /// The enum ports of the top module: inputs `ei<k>` and outputs `eo<k>`.
+    /// The enum ports of a module: inputs `ei<k>` and outputs `eo<k>`.
     pub(super) fn enum_ports(&mut self) -> EnumPorts {
         if self.enums.is_empty() {
             return (Vec::new(), Vec::new());
@@ -93,7 +93,7 @@ impl Builder {
     fn enum_name(&mut self, ctx: &Ctx, def: &EnumDef) -> Option<HExpr> {
         let names: Vec<&HwEnum> = ctx.enums.iter().filter(|e| e.def == *def).collect();
         let e = names.get(self.tape.index(names.len()))?;
-        Some(HExpr::Name(e.name.clone()))
+        Some(e.expr.clone())
     }
 
     /// A hardware value of the enum `def`, with draws from the side tape.
@@ -119,7 +119,7 @@ impl Builder {
             }
             5 => {
                 let r = self.reach(ctx);
-                return HExpr::Static(self.enum_value(def, stat::DEPTH, r));
+                return HExpr::Static(self.enum_value(def, r));
             }
             _ => {}
         }
@@ -160,8 +160,8 @@ impl Builder {
         };
         match self.tape.below(8) {
             2 | 3 => self.enum_wire(ctx, names, &def, out),
-            4 | 5 if clocked => self.enum_reg(ctx, names, &def, out, regs),
-            6 | 7 => self.bits_let(ctx, names, out),
+            4..=6 if clocked => self.enum_reg(ctx, names, &def, out, regs),
+            7 => self.bits_let(ctx, names, out),
             _ => self.enum_let(ctx, names, &def, out),
         }
     }
@@ -179,7 +179,7 @@ impl Builder {
         });
         note!(self, hw_lets);
         ctx.enums.push(HwEnum {
-            name,
+            expr: HExpr::Name(name),
             def: def.clone(),
             hardware,
         });
@@ -193,7 +193,7 @@ impl Builder {
         out.push(Stmt::Connect(Place::Name(name.clone()), value));
         note!(self, hw_wires);
         ctx.enums.push(HwEnum {
-            name,
+            expr: HExpr::Name(name),
             def: def.clone(),
             hardware: true,
         });
@@ -208,13 +208,13 @@ impl Builder {
         out: &mut Vec<Stmt>,
         regs: &mut Vec<(String, EnumDef)>,
     ) {
-        let reset = self.enum_value(def, stat::DEPTH, self.reach(ctx));
+        let reset = self.enum_value(def, self.reach(ctx));
         let name = names.fresh("r");
         out.push(Stmt::Reg(name.clone(), Ty::Enum(def.name.clone()), reset));
         note!(self, hw_regs);
         regs.push((name.clone(), def.clone()));
         ctx.enums.push(HwEnum {
-            name,
+            expr: HExpr::Name(name),
             def: def.clone(),
             hardware: true,
         });
@@ -238,7 +238,7 @@ impl Builder {
             name: name.clone(),
             mutable: false,
             ty: None,
-            value: HExpr::Reinterpret(ty.clone(), Box::new(HExpr::Name(e.name))),
+            value: HExpr::Reinterpret(ty.clone(), Box::new(e.expr)),
         });
         note!(self, hw_bits);
         ctx.hw.push(super::Hw {
