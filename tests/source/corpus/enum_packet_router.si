@@ -1,0 +1,29 @@
+// A router for packets that are an enum with record payloads. A register keeps the last packet.
+// A nested `match` on an enum payload field picks the output port.
+// TOP Router()
+struct Header {
+    port: UInt[2],
+    urgent: Bool,
+}
+enum Packet: UInt[2] {
+    Empty = 0,
+    Data(Header, UInt[8]) = 1,
+    Ack(Header) = 2,
+}
+module Router() {
+    input pkt: Packet;
+    output target: UInt[2];
+    output rush: Bool;
+    output body: UInt[8];
+    output last: Packet;
+    reg held: Packet = Packet::Empty;
+    held := match (pkt) { Packet::Empty => held, _ => pkt };
+    target := match (pkt) { Packet::Data(h, _) => h.port, Packet::Ack(h) => h.port, _ => UInt[2](0) };
+    rush := match (pkt) {
+        Packet::Data(h, _) => h.urgent,
+        Packet::Ack(h) => match (h.port) { 3 => true, _ => h.urgent },
+        _ => false,
+    };
+    body := match (pkt) { Packet::Data(_, d) => d, _ => 0 };
+    last := held;
+}

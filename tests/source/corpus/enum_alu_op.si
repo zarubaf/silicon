@@ -1,0 +1,43 @@
+// An ALU over an `Op` enum. The operation comes in as an enum port, a register holds the last
+// operation, and the ALU child module takes the enum through its input port.
+// TOP Top()
+enum Op: UInt[3] {
+    Add = 0,
+    Sub = 1,
+    And = 2,
+    Shl(UInt[3]) = 3,
+    Cmp(Bool) = 4,
+}
+module Alu() {
+    input op: Op;
+    input a: UInt[8];
+    input b: UInt[8];
+    output y: UInt[8];
+    output flag: Bool;
+    y := match (op) {
+        Op::Add => a +% b,
+        Op::Sub => a -% b,
+        Op::And => a & b,
+        Op::Shl(k) => a << k,
+        Op::Cmp(signed) => if (signed) { if (reinterpret(SInt[8], a) < reinterpret(SInt[8], b)) { UInt[8](1) } else { UInt[8](0) } } else { if (a < b) { UInt[8](1) } else { UInt[8](0) } },
+        _ => 0,
+    };
+    flag := match (op) { Op::Cmp(_) => true, Op::Add => y == 0, _ => false };
+}
+module Top() {
+    input op: Op;
+    input a: UInt[8];
+    input b: UInt[8];
+    output y: UInt[8];
+    output last: Op;
+    output flag: Bool;
+    instance alu = Alu();
+    reg prev: Op = Op::Add;
+    prev := op;
+    alu.op := op;
+    alu.a := a;
+    alu.b := b;
+    y := alu.y;
+    flag := alu.flag;
+    last := prev;
+}

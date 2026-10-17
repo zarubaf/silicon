@@ -1,0 +1,21 @@
+// An address map. A `match` on a `UInt[70]` address with literal arms above 64 bits picks a
+// region. A `match` on an `SInt` offset and one on a `Bool` select the access.
+// TOP Map()
+module Map() {
+    input addr: UInt[70];
+    input offset: SInt[4];
+    input write: Bool;
+    output region: UInt[2];
+    output step: SInt[4];
+    output kind: UInt[2];
+    reg picked: UInt[2] = 0;
+    picked := match (addr) {
+        0 => UInt[2](0),
+        18446744073709551616 => UInt[2](1),
+        1180591620717411303423 => UInt[2](2),
+        _ => UInt[2](3),
+    };
+    region := picked;
+    step := match (offset) { -8 => SInt[4](7), -1 => SInt[4](1), 0 => SInt[4](0), _ => offset };
+    kind := match (write) { true => UInt[2](2), false => UInt[2](1) };
+}

@@ -1,0 +1,29 @@
+// An instruction decoder. The instruction is an enum port with payloads. The decoder turns it
+// into control signals with `match`: binders, literal arms, and `_`. A second `match` decodes a
+// plain `UInt` with literal arms into a register.
+// TOP Decoder()
+enum Instr: UInt[3] {
+    Nop = 0,
+    Add(UInt[4], UInt[4]) = 1,
+    Load(UInt[8]) = 2,
+    Store(UInt[8], Bool) = 3,
+    Jump(SInt[6]) = 5,
+}
+module Decoder() {
+    input instr: Instr;
+    input raw: UInt[4];
+    output reads: Bool;
+    output writes: Bool;
+    output imm: UInt[8];
+    output reg_sel: UInt[4];
+    output branch: SInt[6];
+    output raw_class: UInt[2];
+    reads := match (instr) { Instr::Add(_, _) => true, Instr::Store(_, _) => true, _ => false };
+    writes := match (instr) { Instr::Add(_, _) => true, Instr::Load(_) => true, _ => false };
+    imm := match (instr) { Instr::Load(v) => v, Instr::Store(a, _) => a, _ => 0 };
+    reg_sel := match (instr) { Instr::Add(a, b) => a ^ b, _ => 0 };
+    branch := match (instr) { Instr::Jump(off) => off, _ => 0 };
+    reg decoded: UInt[2] = 0;
+    decoded := match (raw) { 0 => UInt[2](0), 1 => UInt[2](1), 2 => UInt[2](1), 15 => UInt[2](2), _ => UInt[2](3) };
+    raw_class := decoded;
+}
