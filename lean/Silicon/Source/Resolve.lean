@@ -3,7 +3,8 @@ import Std.Data.TreeMap
 import Silicon.Source.Syntax
 
 /-!
-The resolver of slice 1 and of the containers and the types of slice 2. It reads the AST of
+The resolver of slice 1, of the containers and the types of slice 2, and of the enums of slice 3.
+It reads the AST of
 `Source.Parse`. It gives the resolved AST, in which each name points to its declaration. Else it
 gives the first `S002` or the first `S003`.
 
@@ -16,8 +17,8 @@ no name. These rules settle the open points:
   the `prelude` flag. It is built already resolved and never resolves in the item scope. Thus
   a user `struct Bool` or `type Type` does not change it, and the user items keep their indices.
   A prelude name `ReadResponse` refers to it. The walk never visits it, so it adds no error.
-- The item scope holds each `const`, `fn`, `module`, `struct`, and `type` item. An item is
-  visible in the full file, also before its declaration.
+- The item scope holds each `const`, `fn`, `module`, `struct`, `type`, and `enum` item. An item
+  is visible in the full file, also before its declaration.
 - The parameters of a function or a module are in its outer local scope. The domain names of a
   module and the top-level statements of its body are in the same scope. Thus a `let` with the
   name of a parameter is `S002`.
@@ -52,8 +53,8 @@ site, but it runs on static values only, so its site never names hardware.
 
 A position that needs a fixed kind gets a name of that kind, else `S003`:
 
-- A type name is a prelude type, a `struct` item, a `type` item, or a local. Only `Elab` knows
-  whether a local holds a type.
+- A type name is a prelude type, a `struct` item, a `type` item, an `enum` item, or a local.
+  Only `Elab` knows whether a local holds a type.
 - The module of an `instance` is a `module` item.
 - A name in an expression is not a module. Only an `instance` uses a module.
 
@@ -63,7 +64,20 @@ rule `S010` of `Elab` (section 5.1). `generic` tells from the resolved signature
 function is generic, with no evaluation. The types of a function type resolve as type
 expressions.
 
-The field names of a struct are not in a scope. Two fields with one name are `S002`.
+The field names of a struct are not in a scope. Two fields with one name are `S002`. The variant
+names of an enum are not in a scope either. Two variants with one name are `S002`.
+
+Section 5.6 gives the rules of a variant path `X::Y`:
+
+- The first part `X` resolves by the ordinary scoping of a name. Thus a local or a parameter `X`
+  shadows an enum item `X`.
+- When `X` is an enum item, `Y` names one of its variants, else `S003` at `Y`.
+- Else the path is `S003` at its start. This holds also for a `type` alias of an enum and for a
+  name with no declaration.
+
+A path and a call of a path are one `variant` node. It holds the enum item, the index of the
+variant, the payload values, and whether a call holds it. A call of a path still takes a call
+site, so each call node keeps its own site.
 
 `S002` is at the name of the second declaration or field. `S003` is at the name. The resolver
 reports the first `S002` by position. Without an `S002`, it reports the first `S003` by position.
@@ -181,6 +195,8 @@ mutual
     | method (pos : Pos) (recv : Expr) (name : Ident) (fn : Ref) (param : Option Nat)
         (args : List Expr) (site : Nat)
     | fnType (pos : Pos) (params : List FnParam) (ret : TypeExpr)
+    | variant (pos : Pos) (ty variant : Ident) (item index : Nat) (args : List Expr)
+        (called : Bool)
 
   inductive TypeExpr where
     | name (pos : Pos) (name : String) (ref : Ref)
@@ -230,10 +246,18 @@ structure StructField where
   ty : TypeExpr
   deriving Repr, BEq, Inhabited
 
+/-! A resolved variant of an enum: its name, its payload types, and its tag value. -/
+structure Variant where
+  name : Ident
+  payload : List TypeExpr
+  tag : Expr
+  deriving Repr, BEq, Inhabited
+
 /-!
 The resolved item. A `Ref.item` holds the index of an item in the resolved file. The `domains`
 of a module without a clause hold the one default domain `clock`. A struct has the `prelude`
-flag when it is the prelude struct `ReadResponse` (`response`).
+flag when it is the prelude struct `ReadResponse` (`response`). An enum has its tag type and its
+variants.
 -/
 inductive Item where
   | const (pos : Pos) (name : Ident) (ty : TypeExpr) (value : Expr)
@@ -244,13 +268,14 @@ inductive Item where
   | struct (pos : Pos) (name : Ident) (params : List Param) (fields : List StructField)
       (prelude : Bool)
   | alias (pos : Pos) (name : Ident) (ty : TypeExpr)
+  | enum (pos : Pos) (name : Ident) (tag : TypeExpr) (variants : List Variant)
   deriving Repr, BEq, Inhabited
 
 /-! The position of the first token of a form. -/
 def Expr.pos : Expr → Pos
   | .num p _ | .bool p _ | .str p _ | .name p .. | .unary p .. | .binary p ..
   | .cond p .. | .call p .. | .index p .. | .field p .. | .unit p | .tuple p ..
-  | .array p .. | .select p .. | .arrayType p .. | .method p .. | .fnType p .. => p
+  | .array p .. | .select p .. | .arrayType p .. | .method p .. | .fnType p .. | .variant p .. => p
 
 def TypeExpr.pos : TypeExpr → Pos
   | .name p .. | .index p .. | .unit p | .tuple p .. | .array p .. | .fn p .. => p
@@ -277,6 +302,7 @@ mutual
     | .array _ xs => Expr.anyLocal xs
     | .arrayType _ t n => t.namesLocal || n.namesLocal
     | .fnType _ ps r => FnParam.anyLocal ps || r.namesLocal
+    | .variant _ _ _ _ _ xs _ => Expr.anyLocal xs
 
   def Expr.anyLocal : List Expr → Bool
     | [] => false
@@ -419,14 +445,14 @@ def wrongKind (pos : Pos) (n what : String) : M Unit :=
   recordUnknown ⟨.S003, pos, s!"`{n}` is not {what}"⟩
 
 /-!
-A name in a type position refers to a type: a prelude type, a `struct` item, a `type` item, or a
-local. Only `Elab` knows whether a local holds a type.
+A name in a type position refers to a type: a prelude type, a `struct` item, a `type` item, an
+`enum` item, or a local. Only `Elab` knows whether a local holds a type.
 -/
 def isType : Ref → M Bool
   | .type _ | .local _ => return true
   | .item i => do
     match (← read).items[i]? with
-    | some (.struct ..) | some (.alias ..) => return true
+    | some (.struct ..) | some (.alias ..) | some (.enum ..) => return true
     | some _ => return false
     | none => return i == (← read).items.size
   | .fn _ => return false
@@ -460,6 +486,26 @@ def receiver : Ref → M (Option Nat)
   | .fn g => return (fnModes g).findIdx? (· != .comptime)
   | _ => return none
 
+/-!
+The enum item and the variant index of the path `x::y` at `pos`. `x` resolves by the ordinary
+scoping, so a local shadows an enum item. A first part that is not an enum item is `S003` at
+`pos`, and a second part that names no variant is `S003` at `y`. After an error, the result is a
+placeholder.
+-/
+def variantRef (pos : Pos) (x y : Ident) : M (Nat × Nat) := do
+  let notEnum : M (Nat × Nat) := do
+    recordUnknown ⟨.S003, pos, s!"`{x.name}` is not an enum, so `{x.name}::{y.name}` names no " ++
+      "variant; use the name of an enum"⟩
+    return (0, 0)
+  let some ⟨.item i, _⟩ := (← get).env.get? x.name | notEnum
+  let some (.enum _ _ _ vs) := (← read).items[i]? | notEnum
+  match vs.findIdx? (·.name.name == y.name) with
+  | some j => return (i, j)
+  | none =>
+    recordUnknown ⟨.S003, y.pos, s!"`{x.name}` has no variant `{y.name}`; use a variant " ++
+      s!"that `{x.name}` declares"⟩
+    return (i, 0)
+
 mutual
   def expr : Source.Expr → M Expr
     | .num p v => return .num p v
@@ -473,6 +519,11 @@ mutual
     | .unary p op a => return .unary p op (← expr a)
     | .binary p op l r => return .binary p op (← expr l) (← expr r)
     | .cond p c y n => return .cond p (← expr c) (← expr y) (← expr n)
+    | .call _ (.path q x y) xs => do
+      -- A constructor makes no call frame, but its call node keeps its site.
+      let _ ← site
+      let (i, j) ← variantRef q x y
+      return .variant q x y i j (← xs.mapM expr) true
     | .call p f xs => do
       let k ← site
       return .call p (← expr f) (← xs.mapM expr) k
@@ -492,10 +543,8 @@ mutual
       let ps ← ps.mapM fnParam
       return .fnType p ps (← typeExpr r)
     | .path p x y => do
-      -- `inFile` rejects each file with an enum, so no first part names an enum here.
-      recordUnknown ⟨.S003, p, s!"`{x.name}` is not an enum, so `{x.name}::{y.name}` names no " ++
-        "variant; use the name of an enum"⟩
-      return .name p x.name default
+      let (i, j) ← variantRef p x y
+      return .variant p x y i j [] false
 
   def typeExpr : Source.TypeExpr → M TypeExpr
     | .name p n => do
@@ -589,6 +638,22 @@ def fields (fs : List Source.StructField) : M (List StructField) := do
     out := out.push ⟨f.name, ← typeExpr f.ty⟩
   return out.toList
 
+/-!
+The variants of an enum. A variant name is not a local, so the variants have their own table of
+names. A second variant with one name is `S002` at its name.
+-/
+def variants (vs : List Source.Variant) : M (List Variant) := do
+  let mut seen : Std.TreeMap String Unit compare := {}
+  let mut out : Array Variant := #[]
+  for v in vs do
+    if seen.contains v.name.name then
+      recordDup ⟨.S002, v.name.pos, s!"the variant `{v.name.name}` is already declared in this " ++
+        "enum; rename one of the two variants"⟩
+    seen := seen.insert v.name.name ()
+    let ps ← v.payload.mapM typeExpr
+    out := out.push ⟨v.name, ps, ← expr v.tag⟩
+  return out.toList
+
 /-! The parameters, the domain names, and the body of an item share one new scope. -/
 def body (act : M α) : M α := do
   modify fun s => { s with locals := 0 }
@@ -617,23 +682,16 @@ def item : Source.Item → M Item
     let ps ← ps.mapM param
     return .struct p n ps (← fields fs) false
   | .alias p n t => return .alias p n (← typeExpr t)
-  -- `inFile` rejects each file with an enum before the walk.
-  | .enum p n .. => return .struct p n [] [] false
+  | .enum p n t vs => do
+    let t ← typeExpr t
+    return .enum p n t (← variants vs)
 
 def itemName : Source.Item → Ident
   | .const _ n .. | .fn _ _ n .. | .module _ n .. | .struct _ n .. | .alias _ n ..
   | .enum _ n .. => n
 
-/-! The first enum item of a file. -/
-def firstEnum : List Source.Item → Option Pos
-  | [] => none
-  | .enum p .. :: _ => some p
-  | _ :: items => firstEnum items
-
 /-! Runs `act` in the item scope of `items`. The result is the first error, if one occurs. -/
 def inFile (items : List Source.Item) (act : M α) : Except Error α :=
-  -- TODO(#271): resolve the enum items and the variant paths.
-  if let some p := firstEnum items then .error ⟨.S004, p, "an enum is not supported yet"⟩ else
   let walk : M α := do
     for (it, i) in items.zipIdx do
       bind (itemName it) (.item i)

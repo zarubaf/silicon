@@ -1427,6 +1427,8 @@ mutual
       | .fnType p ps r => structural do
         let qs ← params n ps
         return some ⟨.static (.type (← fnTy p qs (← typeExpr n r))), false, none⟩
+      -- TODO(#271): construct the enum value once the enum types and values exist.
+      | .variant p .. => fail .S004 p "an enum is not supported yet"
   termination_by (b, 3)
 
   def typeExpr (b : Nat) (t : Resolve.TypeExpr) : M Ty :=
@@ -1517,6 +1519,8 @@ mutual
       | some (.alias _ _ ty) => do
         return ⟨.static (← constant p x i do return .type (← typeExpr n ty)), true, none⟩
       | some (.struct ..) => do return ⟨.static (.type (← spec n p i [])), true, none⟩
+      -- TODO(#271): give the enum type at its first use once the enum types exist.
+      | some (.enum ..) => fail .S004 p "an enum is not supported yet"
       | some (.fn _ _ u ps ret _) => do
         if generic ps ret then fail .S010 p s!"`{x}` is generic; a generic function is not a value"
         let (qs, r) ← nested p <| inFrame none <|
@@ -1830,6 +1834,7 @@ mutual
     | .fnType _ ps r => do
       for q in ps do scanParam q
       scanType r
+    | .variant _ _ _ _ _ xs _ => for x in xs do scanExpr x
     | .num .. | .bool .. | .str .. | .name .. | .unit _ => pure ()
 
   def scanType : Resolve.TypeExpr → ScanM Unit
@@ -1893,19 +1898,25 @@ def scanItem (it : Resolve.Item) : Scan :=
         scanBinder q.name
         scanType q.ty
       for f in fs do scanType f.ty
-    | .const .. | .alias .. => pure ()
+    | .const .. | .alias .. | .enum .. => pure ()
   (go.run {}).2
 
 /-!
 The rest of the scan of an item. It scans the type and the value of a constant, the type of
-an alias, and the result type of a function. Their names take symbols after those of
-`scanItem`. Thus the symbols of `scanItem` keep their order.
+an alias, and the result type of a function. It also scans the tag type, the payload types, and
+the tag values of an enum. Their names take symbols after those of `scanItem`. Thus the symbols
+of `scanItem` keep their order.
 -/
 def scanRest (it : Resolve.Item) : Scan :=
   let go : ScanM Unit := match it with
     | .const _ _ ty v => do scanType ty; scanExpr v
     | .alias _ _ ty => scanType ty
     | .fn _ _ _ _ r _ => scanType r
+    | .enum _ _ t vs => do
+      scanType t
+      for v in vs do
+        for q in v.payload do scanType q
+        scanExpr v.tag
     | .module .. | .struct .. => pure ()
   (go.run {}).2
 
@@ -1913,7 +1924,8 @@ def scanRest (it : Resolve.Item) : Scan :=
 def scanTop (e : Resolve.Expr) : Scan := ((scanExpr e).run {}).2
 
 def itemName : Resolve.Item → String
-  | .const _ n .. | .fn _ _ n .. | .module _ n .. | .struct _ n .. | .alias _ n .. => n.name
+  | .const _ n .. | .fn _ _ n .. | .module _ n .. | .struct _ n .. | .alias _ n ..
+  | .enum _ n .. => n.name
 
 /-!
 The symbols of the items. `scans` holds the scan of each item and then that of the top

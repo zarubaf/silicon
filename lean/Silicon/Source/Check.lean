@@ -2,9 +2,9 @@
 import Silicon.Source.Resolve
 
 /-!
-The generic pre-check of slice 1 and of the containers and the types of slice 2: pass 4 of the
-front end. It reads the resolved AST of `Source.Resolve`. It gives the same AST, or the first
-error of `S005` to `S008` by position.
+The generic pre-check: pass 4 of the front end. It covers slice 1, the containers and the types
+of slice 2, and the enums of slice 3. It reads the resolved AST of `Source.Resolve`. It gives the
+same AST, or the first error of `S005` to `S008` by position.
 
 These checks need no static values. Widths, types, and the dynamic stage rule are for `Elab`.
 The check runs on each item, also on an item that no instantiation uses. It checks both
@@ -18,7 +18,7 @@ at the name. These are the static positions:
 1. Each argument of an index: `T[e]` in a type and `b[e]` in an expression. Thus each argument
    of a struct specialization `P[e]`. Also the length `N` of an array type `[T; N]`, in a type
    and in an expression.
-2. The value of a `const` item.
+2. The value of a `const` item, and the tag value of each variant of an `enum` item.
 3. The condition of a `comptime if`, and both bounds of a `comptime for`.
 4. Each argument of an `instance`.
 5. The reset value of a `reg`, and the depth `N` of a `mem m: [T; N]`.
@@ -31,8 +31,8 @@ at the name. These are the static positions:
    arguments of the prelude functions that take a message. The argument of `data_bits(T)` is
    not a static position (section 5.6).
 9. The argument of a constructor `T(n)`: a call whose callee is a prelude type, an index of
-   one, or an array type `[T; N]`. The arguments of a struct constructor are not static
-   positions.
+   one, or an array type `[T; N]`. The arguments of a struct constructor and of a variant
+   constructor are not static positions.
 10. Each part of an expression in a static position. A static expression is thus built only of
    static parts, also in a branch that a static condition does not select.
 
@@ -68,6 +68,10 @@ at the name. These are the static positions:
   an array type takes no index.
 - A function type takes no index, in a type and in an expression: `(fn () -> UInt)[8]` is
   `S007` at the index.
+- A variant constructor `E::V(args)` has one argument for each payload type of `V`. A path
+  `E::V` without a call has none. The error is at the start of the path (section 5.6). An enum
+  has no parameters, so its name takes no index. Only `Elab` checks a call `E(args)` of the
+  enum type (`S010`).
 
 A call through a function value, a local, or a `const` has no known arity. `Elab` checks it in
 pass 5: `S007` for a function value, else `S010`. The type of a `type` item and of a local is
@@ -137,7 +141,8 @@ inductive Local where
 /-!
 The signature of an item. A function has its `comptime` mark and the mode of each parameter.
 Each parameter of a `comptime fn` is static. A module has its number of parameters. A struct has
-its number of parameters and its number of fields.
+its number of parameters and its number of fields. An enum has the number of payload types of
+each variant.
 -/
 inductive Sig where
   | const
@@ -145,6 +150,7 @@ inductive Sig where
   | module (arity : Nat)
   | struct (params fields : Nat)
   | alias
+  | enum (payloads : Array Nat)
 
 def sig : Resolve.Item → Sig
   | .const .. => .const
@@ -152,6 +158,7 @@ def sig : Resolve.Item → Sig
   | .module _ _ ps _ _ => .module ps.length
   | .struct _ _ ps fs _ => .struct ps.length fs.length
   | .alias .. => .alias
+  | .enum _ _ _ vs => .enum (vs.map (·.payload.length)).toArray
 
 /-! The item of a statement, for `S006`. -/
 inductive Owner where
@@ -243,20 +250,26 @@ structure Head where
   ctor : Ctor
 
 /-!
-The type head of the type name `n`. A struct item misses its parameters. A `type` item is a
-complete type. A local has no known head.
+The type head of the type name `n`. A struct item misses its parameters. A `type` item and an
+`enum` item are complete types. A local has no known head.
 -/
 def head (n : String) : Ref → M (Option Head)
   | .type t => return some ⟨s!"`{n}`", typeArity t, .convert⟩
   | .item i => do
     match (← read)[i]? with
     | some (.struct k f) => return some ⟨s!"`{n}`", k, .record f⟩
-    | some .alias => return some ⟨s!"`{n}`", 0, .unknown⟩
+    | some .alias | some (.enum _) => return some ⟨s!"`{n}`", 0, .unknown⟩
     | _ => return none
   | _ => return none
 
 /-! The head of a type that a type node makes: a complete type. -/
 def complete (h : Head) : Head := { h with text := "a complete type", missing := 0 }
+
+/-! `S007` at `pos` if the variant `x::y` with `want` payload types has `got` payload values. -/
+def payloads (pos : Pos) (x y : Ident) (want got : Nat) : M Unit :=
+  if want == got then pure ()
+  else report .S007 pos (s!"the variant `{x.name}::{y.name}` has {want} payload value(s), but " ++
+    s!"the constructor has {got}; pass one value for each payload type")
 
 /-! A name that is not a type. A resource in a static position is `S005`. -/
 def name (static : Bool) (pos : Pos) (n : String) : Ref → M Unit
@@ -422,6 +435,10 @@ mutual
       for q in ps do fnParam q
       typeExpr r
       return some ⟨"a function type", 0, .unknown⟩
+    | .variant p x y i j xs _ => do
+      if let some (.enum ns) := (← read)[i]? then payloads p x y (ns.getD j 0) xs.length
+      for a in xs do let _ ← visit static false a
+      return none
 
   def typeExpr : Resolve.TypeExpr → M Unit
     | .name p n r => do
@@ -520,6 +537,11 @@ def item : Resolve.Item → M Unit
     for p in ps do typeExpr p.ty
     for f in fs do typeExpr f.ty
   | .alias _ _ ty => typeExpr ty
+  | .enum _ _ t vs => do
+    typeExpr t
+    for v in vs do
+      for q in v.payload do typeExpr q
+      expr true v.tag
 
 /-! The resolved items, or the first error of pass 4 by position. It runs after `resolve`. -/
 def check (items : Array Resolve.Item) : Except Error (Array Resolve.Item) :=

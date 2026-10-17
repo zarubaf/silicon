@@ -557,6 +557,31 @@ def chain (n : Nat) : String := " + ".intercalate (List.replicate n "W")
 #guard ok (modBody (String.join (List.replicate 20000 "{ let a = W; }\n")))
 
 /-!
+`S007` of a variant constructor (slice 3, section 5.6): one payload value for each payload type
+of the variant, at the start of the path. A path without a call has no payload value. An enum
+has no parameters, so its name takes no index. A call `E(args)` of the enum type is for `Elab`.
+-/
+def ops : String := "enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }\n"
+
+#guard ok (ops ++ "fn f(x: UInt[8]) -> Op { let a = Op::Add(); return Op::Load(x); }")
+#guard ok (ops ++ "fn f(x: UInt[8]) -> Op { return Op(x); }")
+#guard fails (ops ++ "fn f(x: UInt[8]) -> Op { return Op::Load(x, x); }") .S007 2 33
+#guard message (ops ++ "fn f(x: UInt[8]) -> Op { return Op::Load(x, x); }") ==
+  "the variant `Op::Load` has 1 payload value(s), but the constructor has 2; pass one value " ++
+  "for each payload type"
+#guard fails (ops ++ "fn f() -> Op { return Op::Load; }") .S007 2 23
+#guard fails (ops ++ "fn f() -> Op { return Op::Add(1); }") .S007 2 23
+#guard fails (ops ++ "fn f() -> Op[1] { return Op(); }") .S007 2 11
+#guard fails "enum E: UInt[1] { A = 0 }\nconst C: E = E::A(E::A);" .S007 2 14
+
+/-! The payload values of a constructor in a static position are static positions too. -/
+#guard fails (ops ++ "module M() {\ninput a: UInt[8];\nreg q: Op = Op::Load(a);\n}") .S005 4 22
+#guard ok (ops ++ "module M() {\ninput a: UInt[8];\nlet q = Op::Load(a);\n}")
+
+/-! The check reads the tag value of a variant as a static position, also in an unused enum. -/
+#guard fails "enum E: UInt[2] { A = UInt[2][1] }" .S007 1 23
+
+/-!
 The walk visits each index base once. A chain of indices at the default syntax depth, in an
 unused function, thus stays linear.
 -/
