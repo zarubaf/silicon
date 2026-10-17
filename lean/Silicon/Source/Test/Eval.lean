@@ -2738,4 +2738,16 @@ call charges 10 units for its node, its name, its arguments, and their copies. T
 #guard records "" "diagnostic(\"x\", 1)" == ["(record 1 1 - () (string \"x\") (int 1))"]
 #guard exact "" "diagnostic(\"x\", 1)" (10 + 1 + 38)
 
+/-!
+Enums (slice 3) resolve and pass the pre-check, but the evaluator has no enum value yet. An
+enum that no expression uses thus passes, and each use of an enum is `S004` at the use.
+-/
+def ops : String := "enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }\n"
+
+#guard out ops "1" == "(int 1)"
+#guard out ops "Op::Add" == "S004 1:1"
+#guard out ops "Op::Load(1)" == "S004 1:1"
+#guard out ops "Op()" == "S004 1:1"
+#guard out ops "data_bits(Op)" == "S004 1:11"
+
 end Silicon.Source.Test.Eval

@@ -513,6 +513,76 @@ the receiver form.
 #guard retRef "fn f() -> Bool { return diagnostic; }\nfn diagnostic() -> Bool {}" ==
   some (.item 1)
 
+/-!
+Enums (slice 3, section 5.6). An enum item is a type name and a name in an expression. A variant
+path resolves its first part by the ordinary scoping to an enum item, and its second part to a
+variant. `E::V` and `E::V(args)` are one `variant` node with the item and the variant index.
+-/
+def ops : String := "enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }\n"
+
+#guard ok (ops ++ "fn f(x: UInt[8]) -> Op { let a: Op = Op::Add; return Op::Load(x); }")
+#guard ok "fn f() -> UInt[1] { return E::A; }\nenum E: UInt[1] { A = 0 }"
+#guard ok "enum E: UInt[1] {}"
+#guard retRef ("fn f() -> Bool { return Op; }\n" ++ ops) == some (.item 1)
+#guard match (run (ops ++ "fn f(x: UInt[8]) -> Op { return Op::Load(x); }")).toOption with
+  | some #[_, .fn _ _ _ _ _ [.ret _ (some (.variant _ _ _ 0 1 [.name _ _ (.local 0)] true))], _] =>
+    true
+  | _ => false
+#guard match (run (ops ++ "fn f() -> Op { return Op::Add; }")).toOption with
+  | some #[_, .fn _ _ _ _ _ [.ret _ (some (.variant _ _ _ 0 0 [] false))], _] => true
+  | _ => false
+
+/-! A call of a path keeps its call site, so a later call gets the next site. -/
+#guard match (run (ops ++ "fn f(x: UInt[8]) -> Op { return g(Op::Load(g(x))); }\n" ++
+    "fn g(x: UInt[8]) -> UInt[8] { return x; }")).toOption with
+  | some #[_, .fn _ _ _ _ _ [.ret _ (some (.call _ _ [.variant _ _ _ _ _ [.call _ _ _ 2] _] 0))],
+      _, _] => true
+  | _ => false
+
+/-! `S002`: a second variant with one name in one enum, at its name. -/
+#guard fails "enum E: UInt[1] { A = 0, B = 1, A = 1 }" .S002 1 33
+#guard message "enum E: UInt[1] { A = 0, A = 1 }" ==
+  "the variant `A` is already declared in this enum; rename one of the two variants"
+#guard ok "enum E: UInt[1] { A = 0 }\nenum F: UInt[1] { A = 0 }"
+#guard fails (ops ++ "fn Op() -> Bool {}") .S002 2 4
+
+/-! `S003`: a second part that names no variant, at the second part. -/
+#guard fails (ops ++ "fn f() -> Op { return Op::Mul; }") .S003 2 27
+#guard message (ops ++ "fn f() -> Op { return Op::Mul; }") ==
+  "`Op` has no variant `Mul`; use a variant that `Op` declares"
+
+/-!
+`S003`: a first part that is not an enum item, at the start of the path, with the text of
+section 6.2. This holds for a struct, a function, a module, a prelude name, and a name with no
+declaration. A `type` alias of an enum is not an enum item (U2).
+-/
+#guard message (ops ++ "fn f() -> Op { return std::x; }") ==
+  "`std` is not an enum, so `std::x` names no variant; use the name of an enum"
+#guard fails (ops ++ "fn f() -> Op { return std::x; }") .S003 2 23
+#guard fails "struct S { a: Bool }\nfn f() -> S { return S::a; }" .S003 2 22
+#guard fails "fn f() -> Bool { return f::a; }" .S003 1 25
+#guard fails "module M() {}\nfn f() -> Bool { return M::a; }" .S003 2 25
+#guard fails "fn f() -> Bool { return Bool::A; }" .S003 1 25
+#guard fails (ops ++ "type A = Op;\nfn f() -> Op { return A::Add; }") .S003 3 23
+#guard message (ops ++ "type A = Op;\nfn f() -> Op { return A::Add; }") ==
+  "`A` is not an enum, so `A::Add` names no variant; use the name of an enum"
+
+/-!
+`S003`: a local or a parameter shadows an enum item by the ordinary scoping (U1). After the
+scope of the local ends, the path names the enum again.
+-/
+#guard fails (ops ++ "fn f(Op: Nat) -> Nat { return Op::Add; }") .S003 2 31
+#guard message (ops ++ "fn f(Op: Nat) -> Nat { return Op::Add; }") ==
+  "`Op` is not an enum, so `Op::Add` names no variant; use the name of an enum"
+#guard fails (ops ++ "fn f() -> Op { let Op = 1; return Op::Add; }") .S003 2 35
+#guard ok (ops ++ "fn f() -> Op { { let Op = 1; } return Op::Add; }")
+
+/-! The tag type, the payload types, and the tag values resolve in the item scope. -/
+#guard fails "enum E: T { A = 0 }" .S003 1 9
+#guard fails "enum E: UInt[1] { A(Q) = 0 }" .S003 1 21
+#guard fails "enum E: UInt[1] { A = N }" .S003 1 23
+#guard ok "const N: Nat = 1;\nstruct S { a: Bool }\nenum E: UInt[N] { A(S, E) = N }"
+
 /-! Pass 2 comes before pass 3: an `S002` wins over an earlier `S003`. -/
 #guard fails "fn f() -> Bool { return q; }\nconst f: Nat = 1;" .S002 2 7
 #guard fails (fnBody "let y = q;\nlet y = p;\nreturn y;") .S002 3 5
