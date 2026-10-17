@@ -103,6 +103,107 @@ pub(crate) struct Counts {
     /// The parts of the arms that a walk of a hardware `if` or `match` took, one for each arm
     /// and position.
     pub sided: u64,
+    /// The 64-bit words of the integers, constants, and hardware nodes that the run made. The
+    /// charge sites do not see this work, so the places that make a wide value count it.
+    pub words: u64,
+}
+
+impl Counts {
+    /// The work of the run: the sum of all counters. The field list has no `..`, so a new
+    /// counter does not compile until it joins the sum.
+    #[expect(dead_code, reason = "the work oracle of tests_oracle reads it")]
+    pub(crate) fn total(&self) -> u64 {
+        let Counts {
+            scanned,
+            converted,
+            walked,
+            joined,
+            serialized,
+            flagged,
+            params,
+            windows,
+            compared,
+            visited,
+            nodes,
+            selected,
+            typed,
+            bound,
+            expanded,
+            paired,
+            leaves,
+            paths,
+            stepped,
+            table,
+            ast,
+            offsets,
+            chained,
+            blocked,
+            seconds,
+            rendered,
+            rendered_leaves,
+            framed,
+            recorded,
+            guarded,
+            text_bytes,
+            unfolded,
+            formatted,
+            powered,
+            logged,
+            cloned,
+            copies,
+            packed,
+            covered,
+            unpacked,
+            sided,
+            words,
+        } = *self;
+        [
+            scanned,
+            converted,
+            walked,
+            joined,
+            serialized,
+            flagged,
+            params,
+            windows,
+            compared,
+            visited,
+            nodes,
+            selected,
+            typed,
+            bound,
+            expanded,
+            paired,
+            leaves,
+            paths,
+            stepped,
+            table,
+            ast,
+            offsets,
+            chained,
+            blocked,
+            seconds,
+            rendered,
+            rendered_leaves,
+            framed,
+            recorded,
+            guarded,
+            text_bytes,
+            unfolded,
+            formatted,
+            powered,
+            logged,
+            cloned,
+            copies,
+            packed,
+            covered,
+            unpacked,
+            sided,
+            words,
+        ]
+        .iter()
+        .fold(0u64, |a, n| a.saturating_add(*n))
+    }
 }
 
 /// What a counter counts.
@@ -149,6 +250,7 @@ pub(crate) enum Count {
     Covered,
     Unpacked,
     Sided,
+    Words,
 }
 
 static COUNTS: Mutex<BTreeMap<u64, Counts>> = Mutex::new(BTreeMap::new());
@@ -228,6 +330,7 @@ pub(crate) fn add(count: Count, n: u64) {
             Count::Covered => &mut c.covered,
             Count::Unpacked => &mut c.unpacked,
             Count::Sided => &mut c.sided,
+            Count::Words => &mut c.words,
         };
         *field += n;
     }
