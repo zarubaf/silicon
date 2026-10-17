@@ -800,6 +800,13 @@ theorem specOf_f {ty ty' : Resolve.TypeExpr → M Ty} (h : ∀ t, Follows cap (t
   unfold specOf
   follows [h, bindParams_f h, specialize_f, nested_f, inFrame_f, atUse_f]
 
+theorem arguments_f {ev ev' : Resolve.Expr → M (Option Out)} {ty ty' : Resolve.TypeExpr → M Ty}
+    (he : ∀ e, Follows cap (ev e) (ev' e)) (ht : ∀ t, Follows cap (ty t) (ty' t)) (p : Pos)
+    (i : Nat) (xs : List Resolve.Expr) :
+    Follows cap (arguments ev ty p i xs) (arguments ev' ty' p i xs) := by
+  unfold arguments
+  follows [he, need_f, static_f, nested_f, inFrame_f, bindParams_f ht, hold_f, release_f]
+
 theorem responseTy_f {ty ty' : Resolve.TypeExpr → M Ty} (h : ∀ t, Follows cap (ty t) (ty' t))
     (p : Pos) (t : Ty) : Follows cap (responseTy ty p t) (responseTy ty' p t) := by
   unfold responseTy; follows [specOf_f h]

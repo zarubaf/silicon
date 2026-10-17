@@ -13,8 +13,8 @@ The table of instantiations is normative. An `instance` statement works in these
 
 1. It evaluates the arguments from left to right. Each argument is static (`S011`).
 2. The typed use of the arguments nests one level (`S015`), in the scope of the module with a
-   new frame (`arguments`). Each parameter type evaluates in order, with each earlier parameter
-   bound to its converted argument. An error in it is at its own node. A literal with `[]`
+   new frame (`Eval.arguments`). Each parameter type evaluates in order, with each earlier
+   parameter bound to its converted argument. An error in it is at its own node. A literal with `[]`
    takes this type. The argument converts to it: `S010` or `S012` at the statement. Then the
    recursive size of the converted argument charges, before the next parameter type, also for a
    done instantiation.
@@ -396,31 +396,6 @@ def serialize (pos : Pos) (m : String) (vs : List Value) : EM String := do
   charge pos (InstantiationId.renderSize m parts)
   return InstantiationId.render m parts
 
-/-!
-The arguments of an instantiation of the item `i` at `pos`, from left to right, after their
-typed use (section 5.3). Each argument is static (`S011`) when it evaluates. Then the typed use
-nests one level, in the scope of the module with a new frame (`Eval.bindParams`). Each parameter
-type evaluates there, with each earlier parameter bound to its converted argument. The argument
-converts to it, and a literal with `[]` takes this type. Then the recursive size of the
-converted argument charges. The parent pays this work. The result is each parameter type with
-its converted argument.
--/
-def arguments (n : Nat) (pos : Pos) (i : Nat) (xs : List Resolve.Expr) :
-    EM (List (Ty × Value)) := do
-  let os ← xs.mapM fun x => do
-    let o ← need x (← eval n x)
-    let v ← match o.value with
-      | v@(.pending ..) => pure v
-      | v => pure (.static (← static pos v))
-    hold o
-    return (v, o)
-  for (_, o) in os do release o
-  let some (.module _ _ ps _ _) := (← read).items[i]?
-    | fail .S010 pos "an instance needs a module"
-  nested pos <| inFrame none <|
-      withTheReader Ctx (fun c => { c with item := i, frame := ⟨none, 0⟩ }) do
-    bindParams (typeExpr n) pos ps (os.map (·.1))
-
 /-! Runs `act` and gives the fuel that it uses. The result reads only a difference of fuel. -/
 def measure (act : EM α) : EM (α × Nat) := do
   let fuel : EM Nat := monadLift (do return (← get).fuel : Eval.M Nat)
@@ -479,7 +454,7 @@ mutual
             | .child _ _ q => q.ty
           bindTarget p t (← sinkValue p ty (← copyUse p ty o.ref o.value))
         | .inst p u _ i xs => do
-          let tvs ← arguments n p i xs
+          let tvs ← arguments (eval n) (typeExpr n) p i xs
           if let some (.module _ m _ ds _) := (← read).items[i]? then
             if (← get).work.body.domain.isNone && !ds.isEmpty then
               fail .S017 p s!"a combinational module has no clocked child `{m.name}`"
@@ -582,7 +557,7 @@ def observe (budget : Budget) (items : Array Resolve.Item) (digest : String → 
     Array Record × Except Error (Design × Nat) :=
   Eval.observeRun budget items fun n => do
     let go : EM Nat := do
-      let tvs ← arguments n pos top xs
+      let tvs ← arguments (eval n) (typeExpr n) pos top xs
       return (← instantiate n pos top tvs).2
     let (k, s) ← go.run { digest, work := { body := { domain := none } } }
     let specs := (← get).specs
