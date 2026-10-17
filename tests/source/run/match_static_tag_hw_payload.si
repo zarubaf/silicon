@@ -1,0 +1,13 @@
+// A constructor with a static tag and a hardware payload is a hardware scrutinee. Its selects are
+// compares of two constants, and the binder `v` reads the payload.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }
+module M() domains() {
+    input x: UInt[8];
+    output y: UInt[8];
+    output z: UInt[8];
+    y := match (Op::Load(x)) { Op::Add => 0, Op::Load(v) => v +% 1, _ => 9 };
+    z := match (Op::Add) { Op::Add => x, _ => 9 };
+}
+// STEP in=(x 5) out=(y 6 z 5)
+// STEP in=(x 255) out=(y 0 z 255)

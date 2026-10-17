@@ -1,0 +1,11 @@
+// S021: the uncovered variant `Load` has one payload value.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }
+module M() {
+    input x: Op;
+    input a: UInt[4];
+    output y: UInt[4];
+    // expected-error S021 @+2
+    // expected-message: the `match` does not cover `Op::Load(_)` of `Op`; add an arm for it, or add `_ => ...` as the last arm
+    y := match (x) { Op::Add => a, Op::Pair(_, _) => 2 };
+}

@@ -1,0 +1,11 @@
+// S002: two binders with one name in one pattern. The error is at the second binder.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }
+module M() {
+    input x: Op;
+    input a: UInt[4];
+    output y: UInt[4];
+    // expected-error S002 @+2
+    // expected-message: `b` is already declared in this scope
+    y := match (x) { Op::Pair(b, b) => a, _ => 2 };
+}

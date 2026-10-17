@@ -1,0 +1,20 @@
+// The marks of a hardware `match` bind to temporaries of the first leaf statement that lowers them: the
+// scrutinee `x +% y` (read by two selects), each select (read by 2 leaves and by the select of `_`), and
+// the select of `_` (read by 2 leaves). The numbers follow the order of the marks. The second leaf
+// statement adds no temporary.
+// TOP M()
+// CHECK: (let o$0e$0t (bits 2) (add x y))
+// CHECK-NEXT: (let o$0e$1t (bits 1) (icmp eq o$0e$0t (const 2 0)))
+// CHECK-NEXT: (let o$0e$2t (bits 1) (icmp eq o$0e$0t (const 2 1)))
+// CHECK-NEXT: (let o$0e$3t (bits 1) (xor (or o$0e$1t o$0e$2t) (const 1 1)))
+// CHECK-NEXT: (assign o$0e (or (or (and (replicate o$0e$1t 4) a$0e) (and (replicate o$0e$2t 4) b$0e)) (and (replicate o$0e$3t 4) a$0e)))
+// CHECK-NEXT: (assign o$1e (or (or (and (replicate o$0e$1t 1) a$1e) (and (replicate o$0e$2t 1) b$1e)) (and (replicate o$0e$3t 1) a$1e)))
+// CHECK-NOT: o$1e$
+module M() domains() {
+    input x: UInt[2];
+    input y: UInt[2];
+    input a: (UInt[4], Bool);
+    input b: (UInt[4], Bool);
+    output o: (UInt[4], Bool);
+    o := match (x +% y) { 0 => a, 1 => b, _ => a };
+}

@@ -1,0 +1,10 @@
+// S021: the second arm matches 1 too. `{b}` is the position of the pattern of the first arm.
+// TOP M()
+module M() {
+    input x: UInt[2];
+    input a: UInt[4];
+    output y: UInt[4];
+    // expected-error S021 @+2
+    // expected-message: this arm matches `1`, and the arm at 9:22 matches it too; remove one of the two patterns
+    y := match (x) { 1 => a, 1 => 2, _ => 3 };
+}

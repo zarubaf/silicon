@@ -1,6 +1,0 @@
-// S004: a `match` in a statement of a function is at its keyword too.
-// expected-error S004 @+3
-// expected-message: a `match` is not supported yet
-fn f(x: Bool) -> Nat {
-    return match (x) { true => 1, false => 0 };
-}

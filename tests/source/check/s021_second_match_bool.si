@@ -1,0 +1,10 @@
+// S021: the second arm matches `true`.
+// TOP M()
+module M() {
+    input x: Bool;
+    input a: UInt[4];
+    output y: UInt[4];
+    // expected-error S021 @+2
+    // expected-message: this arm matches `true`, and the arm at 9:22 matches it too; remove one of the two patterns
+    y := match (x) { true => a, true => 2, false => 3 };
+}

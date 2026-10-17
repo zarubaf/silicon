@@ -1,0 +1,9 @@
+// A `match` with the single arm `_` gives the arm.
+// TOP M()
+module M() domains() {
+    input x: UInt[4];
+    output y: UInt[4];
+    y := match (x) { _ => x +% 1 };
+}
+// STEP in=(x 3) out=(y 4)
+// STEP in=(x 15) out=(y 0)

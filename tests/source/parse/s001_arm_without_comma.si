@@ -1,0 +1,4 @@
+// S001: two arms need a `,` between them.
+// expected-error S001 @+2
+// expected-message: expected `,` or `}`
+const A: T = match (x) { 0 => 1 _ => 2 };

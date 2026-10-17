@@ -1,0 +1,10 @@
+// S010: the arms of a hardware `match` have no common type.
+// TOP M()
+module M() {
+    input x: Bool;
+    input c: UInt[4];
+    input a: UInt[4];
+    output y: UInt[4];
+    // expected-error S010 @+1
+    y := match (x) { true => c, false => (x, c) };
+}

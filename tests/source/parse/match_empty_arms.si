@@ -1,0 +1,2 @@
+// A `match` with zero arms parses. Its coverage check gives `S021`.
+const A: T = match (x) { };

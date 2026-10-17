@@ -1,0 +1,2 @@
+// A variant pattern with empty parentheses is the same pattern as the variant path.
+const A: T = match (e) { Op::Add() => 1, Op::Load(_) => 2, _ => 3 };

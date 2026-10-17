@@ -1,0 +1,10 @@
+// S010: a `Bool` scrutinee takes `true` or `false`.
+// TOP M()
+module M() {
+    input x: Bool;
+    input a: UInt[4];
+    output y: UInt[4];
+    // expected-error S010 @+2
+    // expected-message: a pattern of `Bool` is `true` or `false`, not `1`; write `true` or `false`, or `_`
+    y := match (x) { 1 => a, _ => 2 };
+}

@@ -1,0 +1,10 @@
+// S021: a `match` on `Int` has no finite set of values, so it needs `_`.
+// TOP M()
+const K: Int = 3;
+module M() {
+    input a: UInt[4];
+    output y: UInt[4];
+    // expected-error S021 @+2
+    // expected-message: a `match` on `Int` has no finite set of values; add `_ => ...` as the last arm
+    y := match (K) { 3 => a };
+}

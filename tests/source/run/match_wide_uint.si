@@ -1,0 +1,12 @@
+// A `match` on a `UInt[70]` input: the pattern values go above 64 bits.
+// TOP M()
+module M() domains() {
+    input a: UInt[4];
+    input x: UInt[70];
+    output y: UInt[4];
+    y := match (x) { 0 => a, 18446744073709551616 => 2, 1180591620717411303423 => 3, _ => 4 };
+}
+// STEP in=(a 1 x 0) out=(y 1)
+// STEP in=(a 1 x 18446744073709551616) out=(y 2)
+// STEP in=(a 1 x 1180591620717411303423) out=(y 3)
+// STEP in=(a 1 x 18446744073709551615) out=(y 4)

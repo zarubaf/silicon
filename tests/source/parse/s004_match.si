@@ -1,4 +1,0 @@
-// S004: a `match` expression comes in phase 3 of slice 3. The error is at the keyword.
-// expected-error S004 @+2
-// expected-message: a `match` is not supported yet
-const A: T = match (x) { 0 => 1, _ => 2 };

@@ -1,0 +1,4 @@
+// A `match` in a statement of a function parses.
+fn f(x: Bool) -> Nat {
+    return match (x) { true => 1, false => 0 };
+}

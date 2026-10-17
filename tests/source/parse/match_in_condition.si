@@ -1,0 +1,2 @@
+// A `match` in the condition of an `if` parses.
+const A: T = if (match (x) { _ => true }) { 1 } else { 2 };

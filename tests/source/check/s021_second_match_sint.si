@@ -1,0 +1,10 @@
+// S021: `{v}` of an `SInt` writes the sign: the second arm matches -8.
+// TOP M()
+module M() {
+    input x: SInt[4];
+    input a: UInt[4];
+    output y: UInt[4];
+    // expected-error S021 @+2
+    // expected-message: this arm matches `-8`, and the arm at 9:22 matches it too; remove one of the two patterns
+    y := match (x) { -8 => a, -8 => 2, _ => 3 };
+}

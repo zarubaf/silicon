@@ -1,0 +1,11 @@
+// S021: a variant pattern matches the value of an earlier variant pattern.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }
+module M() {
+    input x: Op;
+    input a: UInt[4];
+    output y: UInt[4];
+    // expected-error S021 @+2
+    // expected-message: this arm matches `Op::Load(_)`, and the arm at 10:22 matches it too; remove one of the two patterns
+    y := match (x) { Op::Load(a) => a, Op::Load(_) => 2, _ => 3 };
+}

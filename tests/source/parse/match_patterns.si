@@ -1,0 +1,6 @@
+// A `match` is an expression at the level of the conditional. An arm has a pattern and one expression.
+// A pattern is an integer, also with `-`, `true`, `false`, a variant path with binders and `_`, or `_`.
+// `Op::Add()` is the pattern `Op::Add`. A trailing `,` is valid.
+const A: T = match (x) { 0 => 1, 7 => 2, -3 => 4, _ => 5 };
+const B: T = match (b) { true => 1, false => 0, };
+const C: T = match (e) { Op::Add => 0, Op::Add() => 1, Op::Load(v) => v, Op::Pair(b, _) => 2, Op::Pair(_, _) => 3, _ => 4, };

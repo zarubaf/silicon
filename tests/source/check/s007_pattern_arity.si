@@ -1,0 +1,11 @@
+// S007: a variant pattern has one binder or `_` for each payload value.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }
+module M() {
+    input x: Op;
+    input a: UInt[4];
+    output y: UInt[4];
+    // expected-error S007 @+2
+    // expected-message: the variant `Load` has 1 payload value(s), but the pattern has 2; write one binder or `_` for each payload value
+    y := match (x) { Op::Load(a, b) => a, _ => 2 };
+}

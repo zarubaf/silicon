@@ -1,0 +1,14 @@
+// A `match` on an `SInt[4]` input with negative patterns. The value `_` takes the rest.
+// TOP M()
+module M() domains() {
+    input a: UInt[4];
+    input x: SInt[4];
+    output y: UInt[4];
+    y := match (x) { -8 => a, -1 => 2, 0 => 3, 7 => 4, _ => 15 };
+}
+// STEP in=(a 1 x -8) out=(y 1)
+// STEP in=(a 1 x -1) out=(y 2)
+// STEP in=(a 1 x 0) out=(y 3)
+// STEP in=(a 1 x 7) out=(y 4)
+// STEP in=(a 1 x 5) out=(y 15)
+// STEP in=(a 1 x -7) out=(y 15)

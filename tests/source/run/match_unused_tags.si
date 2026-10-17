@@ -1,0 +1,15 @@
+// A `match` on an input port of an enum: the tags 2 and 3 of `Op` have no variant, but the port can hold them.
+// The arm `_` takes them, whatever the payload bits are (slice 3a, ADR 0021, section 12.4 item 05).
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }
+module M() domains() {
+    input op: Op;
+    output y: UInt[8];
+    y := match (op) { Op::Add => 1, Op::Load(v) => v, _ => 9 };
+}
+// STEP in=(op.tag 0 op.payload 0) out=(y 1)
+// STEP in=(op.tag 1 op.payload 77) out=(y 77)
+// STEP in=(op.tag 2 op.payload 5) out=(y 9)
+// STEP in=(op.tag 3 op.payload 200) out=(y 9)
+// STEP in=(op.tag 1 op.payload 0) out=(y 0)
+// STEP in=(op.tag 3 op.payload 0) out=(y 9)

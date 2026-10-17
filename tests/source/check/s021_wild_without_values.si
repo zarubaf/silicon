@@ -1,0 +1,10 @@
+// S021: the arms before `_` cover each value of `Bool`, so `_` matches no value.
+// TOP M()
+module M() {
+    input x: Bool;
+    input a: UInt[4];
+    output y: UInt[4];
+    // expected-error S021 @+2
+    // expected-message: the arms before `_` cover each value of `Bool`; remove the `_` arm
+    y := match (x) { true => a, false => 2, _ => 3 };
+}

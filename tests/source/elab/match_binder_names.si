@@ -1,0 +1,13 @@
+// A binder of a hardware `match` gets a core name as a `let` does. Two arms with the binder `v` give `v`
+// and `v$1v`. A binder `_` gets no name.
+// TOP M()
+// CHECK: (let v (bits 8) (extract op$payload 0 8))
+// CHECK-NEXT: (let v$1v (bits 8) (extract op$payload 1 8))
+// CHECK-NOT: (let _
+// CHECK: (assign y
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[8]) = 2 }
+module M() domains() {
+    input op: Op;
+    output y: UInt[8];
+    y := match (op) { Op::Load(v) => v, Op::Pair(_, v) => v, _ => 0 };
+}

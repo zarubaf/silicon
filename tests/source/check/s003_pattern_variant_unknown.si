@@ -1,0 +1,11 @@
+// S003: the second part of a pattern path names a variant of the enum. The error is at the second part.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }
+module M() {
+    input x: Op;
+    input a: UInt[4];
+    output y: UInt[4];
+    // expected-error S003 @+2
+    // expected-message: `Op` has no variant `Store`; use a variant that `Op` declares
+    y := match (x) { Op::Store => a, _ => 2 };
+}

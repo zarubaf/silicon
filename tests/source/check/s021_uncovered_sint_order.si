@@ -1,0 +1,10 @@
+// S021: the message names the smallest uncovered value in the signed order, here -2.
+// TOP M()
+module M() {
+    input x: SInt[2];
+    input a: UInt[4];
+    output y: UInt[4];
+    // expected-error S021 @+2
+    // expected-message: the `match` does not cover `-2` of `SInt[2]`; add an arm for it, or add `_ => ...` as the last arm
+    y := match (x) { -1 => a, 0 => 2, 1 => 3 };
+}

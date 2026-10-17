@@ -1,0 +1,10 @@
+// S021: `false` comes before `true`.
+// TOP M()
+module M() {
+    input x: Bool;
+    input a: UInt[4];
+    output y: UInt[4];
+    // expected-error S021 @+2
+    // expected-message: the `match` does not cover `false` of `Bool`; add an arm for it, or add `_ => ...` as the last arm
+    y := match (x) { };
+}

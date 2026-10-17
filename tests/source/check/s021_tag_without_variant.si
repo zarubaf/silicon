@@ -1,0 +1,11 @@
+// S021: all variants are covered, but the port can hold the tag 3, which no variant declares.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }
+module M() {
+    input x: Op;
+    input a: UInt[4];
+    output y: UInt[4];
+    // expected-error S021 @+2
+    // expected-message: the tag `3` of `Op` has no variant, but a port or a memory can hold it; add `_ => ...` as the last arm
+    y := match (x) { Op::Add => a, Op::Load(_) => 2, Op::Pair(_, _) => 3 };
+}

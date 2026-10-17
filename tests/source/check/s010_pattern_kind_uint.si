@@ -1,0 +1,10 @@
+// S010: an integer scrutinee takes an integer literal.
+// TOP M()
+module M() {
+    input x: UInt[4];
+    input a: UInt[4];
+    output y: UInt[4];
+    // expected-error S010 @+2
+    // expected-message: a pattern of `UInt[4]` is an integer, not `true`; write an integer, or `_`
+    y := match (x) { true => a, _ => 2 };
+}

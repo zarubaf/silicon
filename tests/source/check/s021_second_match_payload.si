@@ -1,0 +1,11 @@
+// S021: a variant with two payload values writes two `_` in the message.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }
+module M() {
+    input x: Op;
+    input a: UInt[4];
+    output y: UInt[4];
+    // expected-error S021 @+2
+    // expected-message: this arm matches `Op::Pair(_, _)`, and the arm at 10:22 matches it too; remove one of the two patterns
+    y := match (x) { Op::Pair(a, _) => a, Op::Pair(_, b) => 2, _ => 3 };
+}

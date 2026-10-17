@@ -1,0 +1,10 @@
+// A binder of a payload with 50 leaves charges the zero size of its type and 2 for each `extract`.
+// The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 2531
+// TOP M()
+enum Op: UInt[1] { Idle = 0, Put([UInt[8]; 50]) = 1 }
+module M() domains() {
+    input op: Op;
+    output y: [UInt[8]; 50];
+    y := match (op) { Op::Put(v) => v, _ => [UInt[8]; 50]() };
+}

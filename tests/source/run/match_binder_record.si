@@ -1,0 +1,17 @@
+// A payload that is a record: the binder `p` unpacks into the fields of the record.
+// TOP M()
+struct P {
+    a: UInt[4],
+    b: Bool,
+}
+enum Op: UInt[1] { Idle = 0, Put(P) = 1 }
+module M() domains() {
+    input op: Op;
+    output y: UInt[4];
+    output z: Bool;
+    y := match (op) { Op::Put(p) => p.a, _ => 0 };
+    z := match (op) { Op::Put(p) => p.b, _ => false };
+}
+// STEP in=(op.tag 0 op.payload 0) out=(y 0 z false)
+// STEP in=(op.tag 1 op.payload 7) out=(y 7 z false)
+// STEP in=(op.tag 1 op.payload 25) out=(y 9 z true)

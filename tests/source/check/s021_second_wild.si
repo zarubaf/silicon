@@ -1,0 +1,10 @@
+// S021: a second `_` is an arm after `_`.
+// TOP M()
+module M() {
+    input x: UInt[2];
+    input a: UInt[4];
+    output y: UInt[4];
+    // expected-error S021 @+2
+    // expected-message: this arm comes after `_`, so it matches no value; move `_` to the end, or remove this arm
+    y := match (x) { _ => a, _ => 2 };
+}
