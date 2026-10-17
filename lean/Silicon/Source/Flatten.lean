@@ -350,6 +350,7 @@ def lower (target : Path) (root : Bool) : Hw → FM Low
           modify fun s => { s with shares := s.shares.insert k path }
           pure path
       pure ⟨← tempRef p path, some (1 + pathUnits path), 1⟩
+    -- TODO(#271): lower `pack` and `extract` by the enum rows of section 7.4.
     | _, _ => defect "a hardware node has the wrong number of operands"
     deep p target (width t) root lo
 termination_by h => sizeOf h

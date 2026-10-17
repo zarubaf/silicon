@@ -85,6 +85,14 @@ The operators follow v0.1 section 3. These rules settle the open points of slice
   holds an enum are `S010` by the enum flag, after the function flag. A field or a selector of an
   enum is `S010` (`noEnumField`), and so is a call of an enum type with arguments, before they
   evaluate. Each of these texts is normative (section 6.2).
+- A variant constructor `E::V(a, b)` is one node. It uses the enum, evaluates its payload values,
+  charges their copies and their typed uses, then the size of its result, then packs
+  (`variantOf`). A static payload packs into one bit buffer. A hardware payload is one `pack`
+  node of its leaves, and a static tag stays a static part of the enum node. A node of an enum
+  with only static parts is a static enum value (`Agg.mkRecord`).
+- `reinterpret` converts between an enum and exactly `UInt[W + P]` (`recast`). A static
+  conversion charges the size of its result. A hardware unpack makes two `extract` nodes of a
+  shared operand, and a hardware pack one `pack` node. With `P` 0, neither makes a node.
 - Another callee than the name of a function item or of a prelude function evaluates once,
   before the arguments. Its result waits while they evaluate. A type gives a constructor
   call. A function value checks the number of its arguments first (`S007` at the call). Then
@@ -109,11 +117,11 @@ Hardware values follow v0.1 sections 1 and 3:
   constant node: a static integer first takes the finite type of the other operand.
 - A static `&&` or `||` that does not decide gives its right operand, also a hardware one.
 - A hardware condition makes a mux of both arms. A static arm takes the type of the other arm.
-  Arms of a container type join with the join charge. Then the walk of section 7.4 makes one
-  `mux` for each leaf pair. Two scalar arms such as `3` and `3` are a static pair too. Equal
-  sides of a static pair give the value. The first difference is `S011` at the `if` (F19). A
-  walk with two or more `mux` nodes marks the condition once with `Op.share`. A core name and a
-  constant get no mark, and the mark has no charge (`mux`).
+  Arms of a container type or of an enum type join with the join charge. Then the walk of
+  section 7.4 makes one `mux` for each leaf pair. Two scalar arms such as `3` and `3` are a static
+  pair too. Equal sides of a static pair give the value. The first difference is `S011` at the
+  `if` (F19). A walk with two or more `mux` nodes marks the condition once with `Op.share`. A core
+  name and a constant get no mark, and the mark has no charge (`mux`).
 - A shift count is a hardware `UInt`, or a static count that becomes an `Int` constant node.
 - A `let`, an assignment, and a hardware argument of a function bind a hardware value to a
   core name of section 7.3. The hardware result of a function gets the role `0ret` in the call
@@ -510,17 +518,52 @@ structure Pairs where
 /-!
 The part `k` of the part `a` of an equality walk. `f` is its leaf field and `t` its type. An
 element of a node or of a static container keeps its form. A part of a reference is a reference
-to the part, or a hardware leaf of a scalar type. Thus the walk never expands a reference. `ps`
-gives the fields of a struct type, for the offset of a word part.
+to the part, or a hardware leaf of a scalar type. Thus the walk never expands a reference. A
+static enum opens into its parts `tag` and `payload`. `ps` gives the fields of a struct type,
+for the offset of a word part.
 -/
 def Agg.child (ps : Parts) (pos : Pos) (k : Nat) (f : Field) (t : Ty) :
     Agg → Option Agg
   | .array _ xs | .tuple _ xs | .record _ xs => xs[k]?
   | .static (.array _ xs) | .static (.tuple xs) | .static (.record _ xs) => xs[k]?.map .static
+  | .static (.enum _ w x p y) => (Value.enumParts w x p y)[k]?.map .static
   | .ref b r =>
     let c := b.sub ps r k f
     if t matches .bool | .uint _ | .sint _ then some (.hw (.mk pos t c.op [])) else some (.ref c t)
   | _ => none
+
+/-!
+The leaves of the part `a` of the type `t` at `pos` after `acc`, in packing order. They are the
+operands of a hardware pack (`Op.pack`, section 7.4). A static leaf is a constant. A leaf of a
+reference refers to its name (`Agg.child`), so the walk never expands a reference into a node. A
+part without a leaf adds nothing, and the metadata tells it with no walk. `fs` gives the named
+parts. The depth `d` of `t` bounds the walk. The copies of the payload values paid for each part
+that it visits.
+-/
+def Agg.packLeaves (fs : Ty → Option (Array (String × Ty))) (pos : Pos) :
+    Nat → Ty → Agg → Array Hw → Option (Array Hw)
+  | 0, _, _, _ => none
+  | d + 1, t, a, acc =>
+    let pair (acc : Array Hw) (k : Nat) (f : Field) (u : Ty) : Option (Array Hw) := do
+      Agg.packLeaves fs pos d u (← a.child (typesOf fs) pos k f u) acc
+    if t.info.leaves = 0 then some acc else
+    match t, a with
+    | .bool, .static v | .uint _, .static v | .sint _, .static v =>
+      some (acc.push (.mk pos t (.lit v) []))
+    | .bool, .hw h | .uint _, .hw h | .sint _, .hw h => some (acc.push h)
+    | .array e n, _ => do
+      let mut acc := acc
+      for k in [0:n] do acc ← pair acc k (.elem k) e
+      return acc
+    | .tuple ts, _ => do
+      let mut acc := acc
+      for (u, k) in ts.toList.zipIdx do acc ← pair acc k (.elem k) u
+      return acc
+    | .struct .., _ | .enum .., _ => do
+      let mut acc := acc
+      for ((x, u), k) in (← fs t).toList.zipIdx do acc ← pair acc k (.user x) u
+      return acc
+    | _, _ => none
 
 /-!
 A static pair of a hardware equality at `pos`. It charges as a static equality, the sum of the
@@ -654,9 +697,11 @@ def ifPart (pos : Pos) (c : Hw) (t : Ty) (a b : Agg) : M Agg :=
 /-!
 The walk of a hardware `if` at `pos` over the arms `a` and `b` of the joined type `t`, by the
 rules of section 7.4 in order. It charges 1 before it visits each pair. A container descends
-into its pairs in packing order, also a container that is not hardware data. Then it rebuilds
-the node in its normal form. `fs` gives the named fields of a struct type. The depth `d` of `t`
-bounds the walk.
+into its pairs in packing order, also a container that is not hardware data. An enum is a
+container pair with the parts `tag` and `payload`, and a static enum opens into them. With `P` 0,
+the walk visits only the root pair and the `tag` pair. Then it rebuilds the node in its normal
+form, so an enum node with static parts is a static enum. `fs` gives the named parts of a struct
+type and of an enum type. The depth `d` of `t` bounds the walk.
 -/
 def ifWalk (fs : Ty → Option (Array (String × Ty))) (pos : Pos) (c : Hw) :
     Nat → Ty → Agg → Agg → M Agg
@@ -677,7 +722,7 @@ def ifWalk (fs : Ty → Option (Array (String × Ty))) (pos : Pos) (c : Hw) :
       let mut xs := #[]
       for (u, k) in ts.toList.zipIdx do xs := xs.push (← pair k (.elem k) u)
       return .mkTuple ts xs
-    | .struct .. => do
+    | .struct .. | .enum .. => do
       let some nfs := fs t | fail .S010 pos s!"{t.text} has no specialization"
       let mut xs := #[]
       for ((x, u), k) in nfs.toList.zipIdx do xs := xs.push (← pair k (.user x) u)
@@ -700,17 +745,18 @@ def shared (c : Hw) (n : Nat) : M Hw := do
 A hardware `if` at `pos` with the condition `c` (section 5.4). Arms of a scalar type keep the
 rule of slice 1. They need a common type (`S010`), with no join charge and no walk unit. Then
 the rules 2 to 4 of the walk apply to the one pair (F19). Arms of a container type join
-with the join charge (`S010` without a join). An array, a tuple, or a record root then walks.
-The type metadata gives the number of `mux` nodes of the walk, its leaf count, so the mark of
-`c` comes before the walk.
+with the join charge (`S010` without a join). An enum counts as a container type for this rule
+(section 5.4). An array, a tuple, a record, or an enum root then walks. The type metadata gives
+the number of `mux` nodes of the walk, its leaf count, so the mark of `c` comes before the walk.
 -/
 def mux (pos : Pos) (c : Hw) (a b : Val) : M Val := do
   let bad : M Val := fail .S010 pos s!"the arms of an `if` have one type, not {a.text} and {b.text}"
   let (some s, some t, some x, some y) := (a.ty?, b.ty?, a.agg?, b.agg?) | bad
-  let some j ← if containerTy s || containerTy t then walked pos (joinTy s t : Walk (Option Ty))
+  let arm (u : Ty) : Bool := containerTy u || u matches .enum ..
+  let some j ← if arm s || arm t then walked pos (joinTy s t : Walk (Option Ty))
     else pure (scalarJoin s t) | bad
   match j with
-  | .array .. | .tuple _ | .struct .. =>
+  | .array .. | .tuple _ | .struct .. | .enum .. =>
     let c ← shared c j.info.leaves
     return (← ifWalk (← get).specs.parts pos c j.depth j x y).val
   | j => return (← ifPart pos c j x y).val
@@ -723,6 +769,67 @@ def hwConvert (pos : Pos) (f : PrimFn) (t : Ty) (x : Hw) : M Val :=
   | .reinterpret, .sint w, .uint u | .reinterpret, .sint w, .sint u =>
     if u == w then node pos t .reinterpret [x] else bad
   | _, _, _ => bad
+
+/-!
+The hardware pack at `pos` into `UInt[w]` of the leaves of the parts `ps`, each with its type,
+in packing order (`Op.pack`, section 7.4). The node has no charge here: the lowering charges each
+core node of a pack.
+-/
+def packHw (pos : Pos) (w : Nat) (ps : List (Ty × Agg)) : M Hw := do
+  let fs := (← get).specs.parts
+  let some ls := ps.foldlM (fun acc (t, a) => Agg.packLeaves fs pos t.depth t a acc) #[]
+    | fail .S010 pos s!"a part of UInt[{w}] has no leaves"
+  return .mk pos (.uint w) (.pack w) ls.toList
+
+/-!
+`reinterpret` at `p` between an enum and its bits (F26), after the copies of its arguments. The
+other side has exactly the type `UInt[W + P]`, else `S010` at the call. The tag is in the low `W`
+bits, and the payload in the next `P` bits.
+
+- A static unpack or pack charges the size of its result, as a conversion does (section 5.4).
+  It splits or joins the bits with no loop over the bits.
+- A hardware unpack of `b` gives an enum node with `(extract b 0 W)` and `(extract b W P)`. Both
+  leaves read `b`, so `b` gets one mark of a shared operand (`shared`). With `P` 0, the tag is `b`.
+- A hardware pack gives `(pack (W + P) tag payload)`. With `P` 0, it gives the tag leaf.
+- A hardware node has no charge here: the lowering charges each core node (section 7.4).
+-/
+def recast (p : Pos) (t : Ty) (v : Val) : M Val := do
+  let specs := (← get).specs
+  match t, v.ty? with
+  | .enum .., _ =>
+    let some (w, pw) := specs.widths t | fail .S010 p s!"{t.text} has no entry"
+    let bad : M Val :=
+      fail .S010 p s!"`reinterpret` makes {t.text} only from UInt[{w + pw}], not {v.text}"
+    match v with
+    | .static (.uint n x) =>
+      if n != w + pw then bad else
+      -- The size does not read the bits, so the charge comes before the split.
+      charge p (Value.enum t w 0 pw 0).size
+      return .static (.enum t w (BitVec.ofNat w x.toNat) pw (BitVec.ofNat pw (x.toNat >>> w)))
+    | .hw b =>
+      if !b.ty.same (.uint (w + pw)) then bad
+      else if pw = 0 then return .agg (.mkRecord t #[.hw b])
+      else
+        let b ← shared b 2
+        return .agg (.mkRecord t #[.hw (.mk p (.uint w) (.extract 0 w) [b]),
+          .hw (.mk p (.uint pw) (.extract w pw) [b])])
+    | _ => bad
+  | t, some u@(.enum ..) =>
+    let some (w, pw) := specs.widths u | fail .S010 p s!"{u.text} has no entry"
+    if !t.same (.uint (w + pw)) then
+      fail .S010 p s!"`reinterpret` gives the bits of {u.text} only as UInt[{w + pw}], not {t.text}"
+    match v with
+    | .static (.enum _ _ x _ y) =>
+      let r : Value := .uint (w + pw) 0
+      charge p r.size
+      return .static (.uint (w + pw) (BitVec.ofNat (w + pw) (x.toNat ||| (y.toNat <<< w))))
+    | v =>
+      let some a := v.agg? | fail .S010 p s!"{v.text} is not data"
+      let h ← packHw p (w + pw) [(u, a)]
+      match pw, h with
+      | 0, .node _ _ _ _ [tag] => return .hw tag
+      | _, h => return .hw h
+  | _, _ => fail .S010 p s!"`reinterpret` needs an enum here, not {v.text}"
 
 /-! `[]` outside a typed use has no type: `S010` at the `[]`. -/
 def known : Val → M Unit
@@ -762,6 +869,46 @@ def copyUse (pos : Pos) (t : Ty) (copies : Bool) (v : Val) : M Val := do
     charge pos v.size
     readUse pos t v
   else conformVal pos t v
+
+/-!
+The variant `j` of the enum type `t` at `p` with the payload values `vs` (section 5.4). The node,
+the use of the enum, and the payload values come before. Then these steps run:
+
+1. The copies of the payload values charge, by the rule of builtins.
+2. Each payload value gets its typed use at its payload type, in order (`S010`, `S012`). A
+   register or a wire is read, and the read of an aggregate charges its zero size.
+3. The recursive size of the result charges, before the static or the hardware pack. A
+   hardware result reads its size from the node of its leaves. The copies paid for the walk
+   that collects the leaves, and the pack node has no charge, so no work is unpaid.
+4. The pack makes the result. The tag is the static tag value of the variant. When each payload
+   value is static, the payload packs into one bit buffer (`Value.pack`), and the result is a
+   static enum value. Else the payload is a hardware pack of the leaves of the payload values
+   (`packHw`), and the lowering charges its core nodes (section 7.4).
+-/
+def variantOf (p : Pos) (t : Ty) (j : Nat) (vs : List Val) : M Val := do
+  let .enum i .. := t | fail .S010 p s!"{t.text} is not an enum"
+  let some (.done _ w pw variants) := (← get).specs.enums[i]?
+    | fail .S010 p s!"{t.text} has no entry"
+  let some (c, ts) := variants[j]? | fail .S010 p s!"{t.text} has no variant {j}"
+  if ts.size != vs.length then
+    -- Pass 4 reports each arity (`S007`), so this is a defect.
+    fail .S010 p s!"{t.text} has {ts.size} payload type(s) here, but {vs.length} value(s)"
+  charge p (vs.map Val.size).sum
+  let xs ← (ts.toList.zip vs).mapM fun (u, v) => readUse p u v
+  let tag : BitVec w := BitVec.ofNat w c
+  match xs.mapM fun | .static y => some y | _ => none with
+  | some ys =>
+    -- The size does not read the payload bits, so the charge comes before the pack.
+    charge p (Value.enum t w tag pw 0).size
+    let bits := Value.packAll (Bits.new pw) ys
+    return .static (.enum t w tag pw (BitVec.ofNat pw bits.toNat))
+  | none =>
+    let some ps := (ts.toList.zip xs).mapM fun (u, x) => x.agg?.map (u, ·)
+      | fail .S010 p s!"a payload value of {t.text} is not data"
+    let h ← packHw p pw ps
+    let r := Agg.mkRecord t #[.static (.uint w tag), .hw h]
+    charge p r.size
+    return r.val
 
 /-!
 The frame of the field pair `u` and `f` inside the current frame, with its path. Two frames
@@ -1157,6 +1304,7 @@ def diagnose (p : Pos) (g : String) (m v : Val) : M (Option Out) := do
 A call at `p` of the prelude function `h` other than `push` and `pop`, with the values `vs` of
 its arguments in the order of the parameters. `g` is the name of the callee. `len` only refers
 to its argument, and `data_bits` reads the metadata of its type. The others copy each argument.
+`reinterpret` with an enum on one side converts between the enum and its bits (`recast`).
 -/
 def primCall (p : Pos) (g : String) (h : PrimFn) (vs : List Val) : M (Option Out) := do
   match h with
@@ -1169,7 +1317,11 @@ def primCall (p : Pos) (g : String) (h : PrimFn) (vs : List Val) : M (Option Out
       let t ← match ← static p t with
         | .type t => pure t
         | t => fail .S010 p s!"`{g}` needs a type, not {t.text}"
-      match ← data p v with
+      let d ← data p v
+      let enum (u : Ty) : Bool := u matches .enum ..
+      if h == .reinterpret && (enum t || d.ty?.any enum) then
+        return some ⟨← recast p t d, false, none⟩
+      match d with
       | .static v =>
         let s := if h == .resize then resize t v else reinterpret t v
         return some ⟨.static (← apply p s), false, none⟩
@@ -1490,8 +1642,10 @@ mutual
       | .fnType p ps r => structural do
         let qs ← params n ps
         return some ⟨.static (.type (← fnTy p qs (← typeExpr n r))), false, none⟩
-      -- TODO(#271): construct the enum value once the enum types and values exist.
-      | .variant p .. => fail .S004 p "an enum is not supported yet"
+      | .variant p _ _ i j xs _ => do
+        let t ← enumUse n p i
+        let vs ← operands n xs fun _ o => pure o.value
+        return some ⟨← variantOf p t j vs, false, none⟩
   termination_by (b, 3)
 
   def typeExpr (b : Nat) (t : Resolve.TypeExpr) : M Ty :=

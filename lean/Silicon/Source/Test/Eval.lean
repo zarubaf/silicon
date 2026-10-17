@@ -2745,8 +2745,7 @@ The enums of slice 3. The first use of an enum charges as the first use of a str
 6. Then the variants `Add` 8, `Load` 18, and `Pair` 23 follow. Each variant charges its tag value
 with its typed use at `UInt[2]` 4, and its payload types as type expressions. Then the sums of the
 tuple of its payload types charge. The metadata of the enum then charges 12, the sums of the record
-of `UInt[2]` and `UInt[8]`. A later use charges only its node. The variant constructors come in a
-later step of #271, so a path stays `S004` here.
+of `UInt[2]` and `UInt[8]`. A later use charges only its node.
 -/
 def ops : String :=
   "enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }\n"
@@ -2755,7 +2754,6 @@ def ops : String :=
 #guard out ops "Op" == "(type (enum root Op ()))"
 #guard exact ops "Op" 69
 #guard exact ops "[Op, Op]" (1 + 69 + 1 + 3)
-#guard out ops "Op::Add" == "S004 1:1"
 
 /-!
 `T()` of an enum gives the tag 0 and the payload 0, and it charges the zero size 3 from the
@@ -2863,5 +2861,88 @@ not run. `E()` stays the zero.
 #guard out ops "Op(1)" == "S010 1:1"
 #guard msg ops "Op(1 / 0, 2)" == "`Op` is an enum, so `Op(...)` takes no arguments; construct " ++
   "a variant such as `Op::V(...)`, or write `Op()` for the zero"
+
+/-!
+A variant constructor (section 5.4) is one node, then a use of the enum. Then its payload values
+evaluate, their copies charge, and each gets its typed use at its payload type. Then the size of
+the result charges, 3 for a static `Op` value, and the static pack makes it. `Op::Add` charges
+its node, the first use 68, and the size 3. `Op::Load(5)` adds the literal 2, its copy 1, and its
+conversion to `UInt[8]` 2. `Op::Pair(true, 5)` adds two literals 4, two copies 2, and the
+conversion of `5` 2; `true` converts nothing. A later use of the enum charges nothing more.
+-/
+#guard out ops "Op::Add" == "(enum (enum root Op ()) 0 (uint 8 0))"
+#guard exact ops "Op::Add" (1 + 68 + 3)
+#guard out ops "Op::Load(5)" == "(enum (enum root Op ()) 1 (uint 8 5))"
+#guard exact ops "Op::Load(5)" (1 + 68 + 2 + 1 + 2 + 3)
+#guard exact ops "Op::Pair(true, 5)" (1 + 68 + 4 + 2 + 2 + 3)
+#guard exact ops "[Op::Add, Op::Add]" (1 + (1 + 68 + 3) + (1 + 3) + 2 + 7)
+
+/-!
+The payload packs its leaves in packing order, the first leaf in the low bits, with zero high
+bits up to `P` (ADR 0025). `Pair(true, 5)` thus has the payload `1 + 5 * 2`. A nested enum packs
+its tag, then its payload, and `()` adds no bit. A payload across several words of 64 bits packs
+each leaf at its offset.
+-/
+#guard out ops "Op::Pair(true, 5)" == "(enum (enum root Op ()) 2 (uint 8 11))"
+#guard out ops "Op::Pair(false, 15)" == "(enum (enum root Op ()) 2 (uint 8 30))"
+def nestedEnums : String :=
+  "enum F: UInt[1] { A = 0, B = 1 }\nenum E: UInt[2] { X(F, [UInt[3]; 2], ()) = 3 }\n"
+#guard out nestedEnums "E::X(F::B, [5, 2], ())" == "(enum (enum root E ()) 3 (uint 7 43))"
+def wideEnum : String := "enum E: UInt[1] { A(UInt[63], UInt[70], Bool) = 1, B = 0 }\n"
+#guard out wideEnum "E::A(UInt[63](0) -% 1, UInt[70](0) -% 3, true)" ==
+  s!"(enum (enum root E ()) 1 (uint 134 {(2 ^ 63 - 1) + (2 ^ 70 - 3) * 2 ^ 63 + 2 ^ 133}))"
+#guard out "enum E: UInt[1] { A(SInt[4], Bool) = 1 }\n" "E::A(-1, true)" ==
+  "(enum (enum root E ()) 1 (uint 5 31))"
+#guard out "enum E: UInt[1] { A(UInt[64], UInt[64], Bool) = 1 }\n"
+  "E::A(UInt[64](0) -% 1, 2, true)" ==
+  s!"(enum (enum root E ()) 1 (uint 129 {2 ^ 64 - 1 + 2 * 2 ^ 64 + 2 ^ 128}))"
+#guard out wideEnum "E::B" == "(enum (enum root E ()) 0 (uint 134 0))"
+#guard out "enum E: UInt[1] { A(UInt[65536]) = 1 }\n" "E::A(UInt[65536](0) -% 1)" ==
+  s!"(enum (enum root E ()) 1 (uint 65536 {2 ^ 65536 - 1}))"
+
+/-!
+The errors of a constructor come in its order. An error of a payload value comes first. Then
+each typed use runs in order. A value of another type is `S010`, and a value that does not fit
+is `S012`, each at the start of the path. The copies charge before the typed uses. Thus the fuel
+of the node, the use, the values, and the copies reaches the conversion charge.
+-/
+#guard out ops "Op::Pair(1 / 0, 16)" == "S013 1:10"
+#guard out ops "Op::Pair(1, 16)" == "S010 1:1"
+#guard out ops "Op::Pair(true, 16)" == "S012 1:1"
+#guard msg ops "Op::Pair(true, 16)" == "16 does not fit UInt[4]"
+#guard out ops "Op::Load(5)" (1 + 68 + 2 + 1) == "S015 1:1"
+#guard msg ops "Op::Load(256)" (1 + 68 + 2 + 1 + 2) == "256 does not fit UInt[8]"
+#guard out (ops ++ "fn f(x: UInt[8]) -> Op { return Op::Load(x); }\n") "f(7)" ==
+  "(enum (enum root Op ()) 1 (uint 8 7))"
+
+/-!
+`reinterpret` converts between an enum and exactly `UInt[W + P]` (F26): the tag in the low `W`
+bits, then the payload. A static conversion charges the copies of its arguments, then the size
+of its result. `reinterpret(UInt[10], Op::Pair(true, 5))` charges its node and name 2, the type
+6, the constructor 80, the copies 5, and the result 1. `reinterpret(Op, UInt[10](45))` charges
+its node and name 2, the use of `Op` 69, the constructor 12, the copies 2, and the result 3. The
+result can have a tag without a variant. Another type on the other side is `S010` at the call.
+-/
+#guard out ops "reinterpret(UInt[10], Op::Pair(true, 5))" == "(uint 10 46)"
+#guard exact ops "reinterpret(UInt[10], Op::Pair(true, 5))" (2 + 6 + 80 + 5 + 1)
+#guard out ops "reinterpret(Op, UInt[10](45))" == "(enum (enum root Op ()) 1 (uint 8 11))"
+#guard exact ops "reinterpret(Op, UInt[10](45))" (2 + 69 + 12 + 2 + 3)
+#guard out ops "reinterpret(Op, UInt[10](1023))" == "(enum (enum root Op ()) 3 (uint 8 255))"
+#guard out ops "reinterpret(Op, reinterpret(UInt[10], Op::Pair(true, 5)))" ==
+  "(enum (enum root Op ()) 2 (uint 8 11))"
+#guard out "enum E: UInt[3] { A = 5 }\n" "reinterpret(UInt[3], E::A)" == "(uint 3 5)"
+#guard out "enum E: UInt[3] { A = 5 }\n" "reinterpret(E, UInt[3](2))" == "(enum (enum root E ()) 2)"
+#guard out ops "reinterpret(Op, UInt[9](45))" == "S010 1:1"
+#guard msg ops "reinterpret(Op, UInt[9](45))" ==
+  "`reinterpret` makes Op only from UInt[10], not UInt[9]"
+#guard out ops "reinterpret(Op, SInt[10](45))" == "S010 1:1"
+#guard out ops "reinterpret(Op, 45)" == "S010 1:1"
+#guard out ops "reinterpret(Op, true)" == "S010 1:1"
+#guard out ops "reinterpret(UInt[9], Op::Add)" == "S010 1:1"
+#guard msg ops "reinterpret(SInt[10], Op::Add)" ==
+  "`reinterpret` gives the bits of Op only as UInt[10], not SInt[10]"
+#guard out ops "reinterpret(Bool, Op::Add)" == "S010 1:1"
+#guard out (ops ++ "enum F: UInt[10] { A = 0 }\n") "reinterpret(F, Op::Add)" == "S010 1:1"
+#guard out ops "reinterpret(UInt[10], Op)" == "S010 1:1"
 
 end Silicon.Source.Test.Eval
