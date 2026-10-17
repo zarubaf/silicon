@@ -618,15 +618,6 @@ structure Step where
   charge : Nat
   run : Unit → Except Fault Value
 
-/-!
-An integer in a message: decimal up to 256 bits, else its bit length. The bit length needs no
-decimal conversion, so a message stays small and cheap for any computed integer.
--/
-def intText (n : Int) : String :=
-  let bits := n.natAbs.log2 + 1
-  if bits ≤ 256 then toString n
-  else s!"{if n < 0 then "a negative" else "an"} integer of {bits} bits"
-
 /-! A string in a message: at most 64 characters, then a note of the full length. -/
 def strText (m : String) : String :=
   if m.length ≤ 64 then m else s!"{(m.take 64).toString}... ({m.length} characters)"

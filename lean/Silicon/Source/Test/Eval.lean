@@ -419,9 +419,9 @@ def skipped (locals : Nat) : String :=
 #guard cost (skipped 2000) "g(100)" == cost (skipped 1) "g(100)"
 
 /-! A message prints a large integer as its bit length and cuts a long string. -/
-#guard Eval.intText (2 ^ 256 - 1) == toString ((2 : Int) ^ 256 - 1)
-#guard Eval.intText (2 ^ 256) == "an integer of 257 bits"
-#guard Eval.intText (-(2 ^ 6400000)) == "a negative integer of 6400001 bits"
+#guard intText (2 ^ 256 - 1) == toString ((2 : Int) ^ 256 - 1)
+#guard intText (2 ^ 256) == "an integer of 257 bits"
+#guard intText (-(2 ^ 6400000)) == "a negative integer of 6400001 bits"
 #guard Eval.strText "abc" == "abc"
 #guard Eval.strText (String.ofList (List.replicate 100 'a')) ==
   String.ofList (List.replicate 64 'a') ++ "... (100 characters)"
