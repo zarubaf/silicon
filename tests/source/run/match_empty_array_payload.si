@@ -1,0 +1,17 @@
+// A payload that is an empty array of a wide element type: the binder `x` unpacks to the empty array.
+// The element width exceeds 64 bits, but an empty array reads no element.
+// TOP M()
+type Z = [[UInt[1]; 18446744073709551616]; 0];
+const Z0: Z = [];
+enum E: UInt[1] { A(Z) = 0, B = 1 }
+module M() domains() {
+    input e: E;
+    input i: UInt[1];
+    output y: UInt[1];
+    output z: Z;
+    y := match (e) { E::A(x) => i, _ => 0 };
+    z := match (e) { E::A(x) => x, _ => Z0 };
+}
+// STEP in=(e.tag 0 i 0) out=(y 0)
+// STEP in=(e.tag 0 i 1) out=(y 1)
+// STEP in=(e.tag 1 i 1) out=(y 0)

@@ -1,0 +1,13 @@
+// A static `match` on an enum with an empty array of a wide element type as its payload: the binder `x` unpacks to the empty array.
+// TOP M()
+type Z = [[UInt[1]; 18446744073709551616]; 0];
+const Z0: Z = [];
+enum E: UInt[1] { A(Z) = 0 }
+const SAME: Bool = match (E::A([])) { E::A(x) => x == Z0, _ => false };
+module M() domains() {
+    input i: Bool;
+    output y: Bool;
+    y := if (SAME) { i } else { false };
+}
+// STEP in=(i false) out=(y false)
+// STEP in=(i true) out=(y true)
