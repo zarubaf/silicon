@@ -36,6 +36,11 @@ def exprText (e : Expr) : String := e.print 0
 #guard exprDump (.call p (v "f") [n 1, n 2]) == "(call (name \"f\") ((num 1) (num 2)))"
 #guard exprDump (.index p (v "UInt") [n 8]) == "(index (name \"UInt\") ((num 8)))"
 #guard exprDump (.field p (v "x") (nm "0")) == "(field (name \"x\") \"0\")"
+#guard exprDump (.path p (nm "Op") (nm "Add")) == "(path \"Op\" \"Add\")"
+#guard exprDump (.call p (.path p (nm "Op") (nm "Load")) [n 1]) ==
+  "(call (path \"Op\" \"Load\") ((num 1)))"
+#guard exprText (.call p (.path p (nm "Op") (nm "Load")) [n 1]) == "Op::Load(1)"
+#guard exprText (.unary p .neg (.field p (.path p (nm "E") (nm "V")) (nm "x"))) == "-E::V.x"
 
 
 /-! Each container form of slice 2. A `select` prints its selector in decimal. -/
@@ -154,6 +159,19 @@ def bits : Item := .alias p (nm "B") (.array p (t "Bool") (n 4))
   "(structfield \"b\" (name \"Bool\"))))"
 #guard empty.dump == "(struct \"E\" () ())"
 #guard bits.dump == "(alias \"B\" (array (name \"Bool\") (num 4)))"
+
+/-! An enum with variants with and without payload types, and an enum without variants. -/
+def op : Item :=
+  .enum p (nm "Op") (.index p (t "UInt") [n 2])
+    [⟨nm "Add", [], n 0⟩, ⟨nm "Load", [u8], n 1⟩, ⟨nm "Pair", [t "Bool", u8], n 2⟩]
+
+def none_ : Item := .enum p (nm "E") (.index p (t "UInt") [n 1]) []
+
+#guard op.dump ==
+  "(enum \"Op\" (index (name \"UInt\") ((num 2))) ((variant \"Add\" () (num 0)) " ++
+  "(variant \"Load\" ((index (name \"UInt\") ((num 8)))) (num 1)) " ++
+  "(variant \"Pair\" ((name \"Bool\") (index (name \"UInt\") ((num 8)))) (num 2))))"
+#guard none_.dump == "(enum \"E\" (index (name \"UInt\") ((num 1))) ())"
 
 /-! One line for each item, each line ends with LF, and no items give an empty dump. -/
 #guard Print.dump [] == ""
@@ -298,5 +316,17 @@ ends with `,`.
   "}\n\n" ++
   "struct E {}\n\n" ++
   "type B = [Bool; 4];\n"
+
+/-!
+Each variant of an enum prints on its own line and ends with `,`. A variant without payload
+types prints without parentheses.
+-/
+#guard Print.print [op, none_] ==
+  "enum Op: UInt[2] {\n" ++
+  "    Add = 0,\n" ++
+  "    Load(UInt[8]) = 1,\n" ++
+  "    Pair(Bool, UInt[8]) = 2,\n" ++
+  "}\n\n" ++
+  "enum E: UInt[1] {}\n"
 
 end Silicon.Source.Test.Print

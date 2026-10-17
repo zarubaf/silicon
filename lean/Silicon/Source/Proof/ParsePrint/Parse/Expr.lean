@@ -40,6 +40,8 @@ The proof is an induction on the number of kinds. These parts of the parser need
 - `typeExpr` at `(` of an index of a function type: the window gives a false comma flag, and
   the bracket groups the function type.
 - `unary` at `fn`: a function type in an expression is a unary operand.
+- `primary` at a name: a `::` after the name starts a variant path, and `Runs.primary_path`
+  reads it. No `::` follows the second name.
 
 `Runs.value`, `Runs.args`, `Runs.type_end`, `Runs.typeTop`, `Runs.postfix_end`, and
 `Runs.postfix_climb` are the interfaces for the lemma of the statements.
@@ -337,8 +339,26 @@ theorem Runs.primary_name {ctx : Ctx} {i f : Nat} {n : String}
   rw [Parse.primary]
   refine Runs.peek_bind ?_
   simp only [hk]
-  exact Runs.bind (Runs.path hk h2) fun _ _ =>
-    Runs.pure ⟨rfl, rfl, by simp [leaf, Expr.erase]⟩
+  refine Runs.bump_bind (Runs.peek_bind ?_)
+  simp only [isSym, beq_iff_eq, h2, ite_false]
+  exact Runs.pure ⟨rfl, rfl, by simp [leaf, Expr.erase]⟩
+
+/-! A variant path `E::V`: a name, `::`, and a name, then no `::`. -/
+theorem Runs.primary_path {ctx : Ctx} {i f : Nat} {n v : String} {t : Kind} {R : List Kind}
+    (hw : Win ctx.input i (.ident n :: .symbol "::" :: .ident v :: t :: R))
+    (ht : t ≠ .symbol "::") :
+    Runs (primary (f + 1)) ctx i (i + 3) (fun r => r.2 = false ∧ r.1.height = 1 ∧
+      r.1.expr.erase = .path Pos.zero ⟨Pos.zero, n⟩ ⟨Pos.zero, v⟩) := by
+  rw [Parse.primary]
+  refine Runs.peek_bind ?_
+  simp only [hw.head]
+  refine Runs.bump_bind (Runs.peek_bind ?_)
+  simp only [isSym, hw.tail.head, beq_self_eq_true, ite_true]
+  refine Runs.bump_bind ?_
+  refine Runs.bind (Runs.ident hw.tail.tail.head) fun id hid => ?_
+  refine Runs.peek_bind ?_
+  simp only [beq_iff_eq, hw.tail.tail.tail.head, ht, ite_false]
+  exact Runs.idx (by omega) (Runs.pure ⟨rfl, rfl, by simp [leaf, Expr.erase, Ident.erase, hid]⟩)
 
 /-! ## Suffixes -/
 
@@ -1644,6 +1664,17 @@ theorem Runs.postfix (u : Expr) : PGoal u := by
     refine Runs.postfix_base (T := 1) (u := .name p v) (pl := true)
       (Runs.mono (Runs.primary_name hw.head (by rw [hw.tail.head]; exact ht)) ?_) ?_
     · rintro r ⟨h1, h2, h3⟩; exact ⟨⟨by simp [h3, Expr.erase], by omega⟩, h1⟩
+    · intro n f' hn hf'; exact hk n f' hn (by simp; omega)
+  | case18 p ty v =>
+    intro hp hIH ctx i f t R hw ht _ hf l Q hk
+    unfold SufK at hk
+    have hT : (Expr.path p ty v).toks 11 = [.ident ty.name, .symbol "::", .ident v.name] := by
+      simp [Expr.toks, Expr.level, postfixLevel]
+    rw [hT] at hw hf hk
+    obtain ⟨f, rfl⟩ : ∃ g, f = g + 2 := ⟨f - 2, by simp at hf; omega⟩
+    refine Runs.postfix_base (T := 3) (u := .path p ty v) (pl := false)
+      (Runs.mono (Runs.primary_path hw ht) ?_) ?_
+    · rintro r ⟨h1, h2, h3⟩; exact ⟨⟨by simp [h3, Expr.erase, Ident.erase], by omega⟩, h1⟩
     · intro n f' hn hf'; exact hk n f' hn (by simp; omega)
   | case5 p op a _ => exact Runs.postfix_paren _ (by simp [Expr.level, unaryLevel]) rfl
   | case6 p op l r _ _ =>

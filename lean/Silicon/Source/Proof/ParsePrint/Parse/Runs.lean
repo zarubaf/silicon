@@ -188,6 +188,8 @@ theorem Expr.toks_head11 (e : Expr) : ∃ k, (e.toks 11).head? = some k ∧ PSta
   | case3 p v => exact ⟨_, by simp [Expr.toks, Expr.level, postfixLevel],
       Or.inr (Or.inr (Or.inl ⟨v, rfl⟩))⟩
   | case4 p n => exact ⟨_, by simp [Expr.toks, Expr.level, postfixLevel], Or.inl ⟨n, rfl⟩⟩
+  | case18 p t v =>
+    exact ⟨_, by simp [Expr.toks, Expr.level, postfixLevel], Or.inl ⟨t.name, rfl⟩⟩
   | case5 | case17 => exact ⟨_, by simp [Expr.toks, Expr.level, unaryLevel],
       Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl rfl)))))⟩
   | case6 p op => exact ⟨_, by

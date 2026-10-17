@@ -7,6 +7,8 @@ The parser lemma of `parse_print` for items and files.
 `Runs.items` reads the kinds `Print.toks items` of a printable file back to its items, up to
 positions. It stops at `eof`. The fuel is four times the number of kinds, plus six. The
 fuel of `parse` is 32 times the number of tokens, plus 32, so it is sufficient.
+`Runs.enumItem` reads an enum: `Runs.variant` reads each variant, and `Runs.payload` reads its
+payload types.
 -/
 namespace Silicon.Source.ParsePrint
 
@@ -440,6 +442,191 @@ theorem Runs.structItem (p : Pos) (n : Ident) (ps : List Param) (fs : List Struc
     obtain ⟨ms, rfl, hms⟩ := hps'
     exact body _ _ (by simpa using hms) w.tail.drop.tail (by omega) (by rw [hT]; omega) id hid
 
+/-! `payload` reads the payload types of a variant after its `(`, up to its `)`. -/
+theorem Runs.payload (ts : List TypeExpr) : ∀ (ctx : Ctx) (i f : Nat) (R : List Kind)
+    (acc : List TypeExpr), ts.all TypeExpr.printable = true →
+    Win ctx.input i (argToks (ts.map TypeExpr.toks) ++ .symbol ")" :: R) →
+    4 * (argToks (ts.map TypeExpr.toks)).length + 2 ≤ f →
+    (argToks (ts.map TypeExpr.toks)).length ≤ ctx.depth →
+    Runs (payload f acc) ctx i (i + (argToks (ts.map TypeExpr.toks)).length + 1)
+      (fun r => ∃ ms, r = acc.reverse ++ ms ∧ ms.map TypeExpr.erase = ts.map TypeExpr.erase) := by
+  induction ts with
+  | nil =>
+    intro ctx i f R acc _ hw hf _
+    simp only [List.map_nil, Print.argToks, List.intercalate_nil, List.nil_append,
+      List.length_nil] at hw hf ⊢
+    obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
+    rw [Parse.payload]
+    refine Runs.bind (Runs.acceptSym_true hw.head) fun b hb => ?_
+    subst b
+    exact Runs.pure ⟨[], by simp, rfl⟩
+  | cons q qs ih =>
+    intro ctx i f R acc hp hw hf hd
+    simp only [List.all_cons, Bool.and_eq_true] at hp
+    obtain ⟨k, ks, hks, hk⟩ := TypeExpr.toks_head q
+    obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
+    rw [Parse.payload]
+    cases qs with
+    | nil =>
+      simp only [List.map_cons, List.map_nil, argToks_single] at hw hf hd ⊢
+      refine Runs.bind (Runs.acceptSym_false (by
+        rw [hw.head' (k := k) (by simp [hks])]; exact hk.1)) fun b hb => ?_
+      subst b
+      reduce_checks
+      refine Runs.bind (Runs.typeTop q hp.1 ctx i f _ R hw (by decide) (by omega) (by omega))
+        fun q' hq' => ?_
+      refine Runs.bind (Runs.acceptSym_true hw.drop.head) fun b hb => ?_
+      subst b
+      reduce_checks
+      exact Runs.pure ⟨[q'], by simp, by simp [hq']⟩
+    | cons q2 qs2 =>
+      simp only [List.map_cons, argToks_cons_cons, List.append_assoc, List.cons_append,
+        List.length_append, List.length_cons] at hw hf hd ⊢
+      have hw' : Win ctx.input i (q.toks ++ .symbol "," ::
+          (argToks ((q2 :: qs2).map TypeExpr.toks) ++ .symbol ")" :: R)) := by
+        simpa using hw
+      refine Runs.bind (Runs.acceptSym_false (by
+        rw [hw'.head' (k := k) (by simp [hks])]; exact hk.1)) fun b hb => ?_
+      subst b
+      reduce_checks
+      refine Runs.bind (Runs.typeTop q hp.1 ctx i f _ _ hw' (by decide) (by omega) (by omega))
+        fun q' hq' => ?_
+      have w := hw'.drop
+      refine Runs.bind (Runs.acceptSym_false (by rw [w.head]; decide)) fun b hb => ?_
+      subst b
+      reduce_checks
+      refine Runs.sym_bind w.head ?_
+      have := ih ctx _ f R (q' :: acc) hp.2 w.tail (by simp; omega) (by simp; omega)
+      refine Runs.idx (by simp; omega) (Runs.mono this ?_)
+      rintro r ⟨ms, rfl, hms⟩
+      exact ⟨q' :: ms, by simp, by simp [hq', hms]⟩
+
+/-! The kinds of a variant: its name, its payload, `=`, its tag value, and `,`. -/
+theorem Variant.toks_eq (v : Variant) : v.toks = .ident v.name.name ::
+    (Variant.payloadToks v.payload ++ .symbol "=" :: (v.tag.toks 0 ++ [.symbol ","])) := by
+  simp [Variant.toks]
+
+/-! `variant` reads a variant up to its `,`. -/
+theorem Runs.variant (n : Ident) (ps : List TypeExpr) (tag : Expr)
+    (hp : (Variant.mk n ps tag).printable = true) (ctx : Ctx) (i f : Nat) (R : List Kind)
+    (hw : Win ctx.input i (.ident n.name :: (Variant.payloadToks ps ++
+      .symbol "=" :: (tag.toks 0 ++ .symbol "," :: R))))
+    (hf : 4 * ((Variant.payloadToks ps).length + (tag.toks 0).length) + 5 ≤ f)
+    (hd : (Variant.payloadToks ps).length + (tag.toks 0).length ≤ ctx.depth) :
+    Runs (variant f) ctx i (i + 1 + (Variant.payloadToks ps).length + 1 + (tag.toks 0).length)
+      (fun v => v.erase = (Variant.mk n ps tag).erase) := by
+  simp only [Variant.printable, Bool.and_eq_true] at hp
+  obtain ⟨⟨hn, hps⟩, htag⟩ := hp
+  unfold Parse.variant
+  refine Runs.bind (Runs.ident hw.head) fun id hid => ?_
+  cases ps with
+  | nil =>
+    have e : Variant.payloadToks [] = [] := rfl
+    rw [e] at hw hf hd ⊢
+    simp only [List.nil_append, List.length_nil] at hw hf hd ⊢
+    refine Runs.bind (Runs.acceptSym_false (by rw [hw.tail.head]; decide)) fun b hb => ?_
+    subst b
+    reduce_checks
+    refine Runs.bind (Runs.pure (Q := (· = [])) rfl) fun ps' hps' => ?_
+    subst ps'
+    refine Runs.sym_bind hw.tail.head ?_
+    refine Runs.bind (Runs.value tag htag ctx _ f _ _ hw.tail.tail After.comma (by omega)
+      (by omega)) fun v' hv' => Runs.idx (by omega) (Runs.pure ?_)
+    simp [Variant.erase, Ident.erase_of_name (b := n) hid, hv']
+  | cons q qs =>
+    have e : Variant.payloadToks (q :: qs) =
+        .symbol "(" :: (argToks ((q :: qs).map TypeExpr.toks) ++ [.symbol ")"]) := rfl
+    rw [e] at hw hf hd ⊢
+    simp only [List.cons_append, List.append_assoc, List.length_cons, List.length_append,
+      List.length_nil] at hw hf hd ⊢
+    refine Runs.bind (Runs.acceptSym_true hw.tail.head) fun b hb => ?_
+    subst b
+    reduce_checks
+    refine Runs.bind (Runs.payload (q :: qs) ctx _ f _ [] hps hw.tail.tail (by omega)
+      (by omega)) fun ps' hps' => ?_
+    obtain ⟨ms, rfl, hms⟩ := hps'
+    have w := hw.tail.tail.drop.tail
+    refine Runs.sym_bind w.head ?_
+    refine Runs.bind (Runs.value tag htag ctx _ f _ _ w.tail After.comma (by omega)
+      (by omega)) fun v' hv' => Runs.idx (by omega) (Runs.pure ?_)
+    simp [Variant.erase, Ident.erase_of_name (b := n) hid, hv', hms]
+
+/-! `variants` reads the variants of an enum after its `{`, up to its `}`. -/
+theorem Runs.variants (vs : List Variant) (hp : vs.all Variant.printable = true) :
+    ∀ (ctx : Ctx) (i f : Nat) (R : List Kind) (acc : List Variant),
+    Win ctx.input i (vs.flatMap Variant.toks ++ .symbol "}" :: R) →
+    4 * (vs.flatMap Variant.toks).length + 1 ≤ f →
+    (vs.flatMap Variant.toks).length ≤ ctx.depth →
+    Runs (variants f acc) ctx i (i + (vs.flatMap Variant.toks).length + 1)
+      (fun r => ∃ ms, r = acc.reverse ++ ms ∧ ms.map Variant.erase = vs.map Variant.erase) := by
+  induction vs with
+  | nil =>
+    intro ctx i f R acc hw hf _
+    simp only [List.flatMap_nil, List.nil_append, List.length_nil] at hw hf ⊢
+    obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
+    rw [Parse.variants]
+    refine Runs.bind (Runs.acceptSym_true hw.head) fun b hb => ?_
+    subst b
+    exact Runs.pure ⟨[], by simp, rfl⟩
+  | cons x xs ih =>
+    intro ctx i f R acc hw hf hd
+    simp only [List.all_cons, Bool.and_eq_true] at hp
+    obtain ⟨n, ps, tag⟩ := x
+    simp only [List.flatMap_cons, List.length_append] at hw hf hd ⊢
+    rw [List.append_assoc, Variant.toks_eq] at hw
+    rw [Variant.toks_eq] at hf hd ⊢
+    simp only [List.cons_append, List.append_assoc, List.length_cons, List.length_append,
+      List.length_nil] at hw hf hd ⊢
+    obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
+    rw [Parse.variants]
+    refine Runs.bind (Runs.acceptSym_false (by rw [hw.head]; simp)) fun b hb => ?_
+    subst b
+    reduce_checks
+    refine Runs.bind (Runs.variant n ps tag hp.1 ctx i f _ hw (by omega) (by omega))
+      fun v hv => ?_
+    have w := hw.tail.drop.tail.drop
+    refine Runs.bind (Runs.acceptSym_false (by rw [w.head]; decide)) fun b hb => ?_
+    subst b
+    reduce_checks
+    refine Runs.sym_bind w.head ?_
+    refine Runs.idx (by omega) (Runs.mono (ih hp.2 ctx _ f R (v :: acc) w.tail
+      (by omega) (by omega)) ?_)
+    rintro r ⟨ms, rfl, hms⟩
+    exact ⟨v :: ms, by simp, by simp [hms, hv]⟩
+
+theorem Runs.enumItem (p : Pos) (n : Ident) (ty : TypeExpr) (vs : List Variant)
+    (hp : (Item.enum p n ty vs).printable = true) (ctx : Ctx) (i f : Nat) (R : List Kind)
+    (start : Pos) (hw : Win ctx.input i ((Item.enum p n ty vs).toks ++ R))
+    (hf : 4 * (Item.enum p n ty vs).toks.length + 5 ≤ f)
+    (hd : (Item.enum p n ty vs).toks.length ≤ ctx.depth) :
+    Runs (enumItem f start) ctx i (i + (Item.enum p n ty vs).toks.length)
+      (fun it => it.erase = (Item.enum p n ty vs).erase) := by
+  simp only [Item.printable, Bool.and_eq_true] at hp
+  obtain ⟨⟨hn, hty⟩, hvs⟩ := hp
+  have e : (Item.enum p n ty vs).toks ++ R = .keyword "enum" :: .ident n.name ::
+      .symbol ":" :: (ty.toks ++ .symbol "{" :: (vs.flatMap Variant.toks ++ .symbol "}" :: R)) := by
+    simp [Item.toks]
+  have hT : (Item.enum p n ty vs).toks.length =
+      ty.toks.length + (vs.flatMap Variant.toks).length + 5 := by
+    simp [Item.toks]; omega
+  rw [e] at hw
+  rw [hT] at hf hd ⊢
+  unfold Parse.enumItem
+  refine Runs.kw_bind hw.head ?_
+  refine Runs.bind (Runs.ident hw.tail.head) fun id hid => ?_
+  refine Runs.peek_bind ?_
+  simp only [show isSym "(" (tokenAt ctx.input (i + 1 + 1)) = false by
+    simp [isSym, hw.tail.tail.head], Bool.false_eq_true, ite_false]
+  refine Runs.bind (Runs.typeAnnotation ty hty ctx _ f _ _ hw.tail.tail (by decide) (by omega)
+    (by omega)) fun ty' hty' => ?_
+  have w := hw.tail.tail.tail.drop
+  refine Runs.sym_bind w.head ?_
+  refine Runs.bind (Runs.variants vs hvs ctx _ f R [] w.tail (by omega) (by omega))
+    fun vs' hvs' => ?_
+  obtain ⟨ms, rfl, hms⟩ := hvs'
+  refine Runs.idx (by omega) (Runs.pure ?_)
+  simp [Item.erase, Ident.erase_of_name (b := n) hid, hty', hms]
+
 /-! `item` reads the kinds of a printable item back to it, up to positions. -/
 theorem Runs.item (it : Item) (hp : it.printable = true) (ctx : Ctx) (hpl : ctx.plainFn = false)
     (i f : Nat) (R : List Kind) (hw : Win ctx.input i (it.toks ++ R))
@@ -447,6 +634,11 @@ theorem Runs.item (it : Item) (hp : it.printable = true) (ctx : Ctx) (hpl : ctx.
     Runs (item f) ctx i (i + it.toks.length) (fun r => r.erase = it.erase) := by
   unfold Parse.item
   cases it with
+  | enum p n ty vs =>
+    have hk : (tokenAt ctx.input i).kind = .keyword "enum" := hw.head' (by simp [Item.toks])
+    refine Runs.peek_bind ?_
+    simp only [hk]
+    exact Runs.enumItem p n ty vs hp ctx i f R _ hw hf hd
   | struct p n ps fs =>
     have hk : (tokenAt ctx.input i).kind = .keyword "struct" := hw.head' (by simp [Item.toks])
     refine Runs.peek_bind ?_
@@ -526,7 +718,7 @@ theorem Item.headKind (it : Item) : ∃ k ks, it.toks = k :: ks ∧ k ≠ .eof :
     cases it with
     | fn p c => cases c <;> simp [Item.toks]
     | module => simp [Item.toks_module]
-    | const | struct | alias => simp [Item.toks]
+    | const | struct | alias | enum => simp [Item.toks]
   obtain ⟨k, hk, hne⟩ := this
   obtain ⟨ks, hks⟩ := List.head?_eq_some_iff.1 hk
   exact ⟨k, ks, hks, hne⟩

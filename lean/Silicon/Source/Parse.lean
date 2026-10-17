@@ -3,7 +3,7 @@ import Silicon.Source.Lex
 import Silicon.Source.Print
 
 /-!
-The parser of slices 1 and 2. It reads the tokens of `Source.Lex`. It gives the items of the
+The parser of slices 1 to 3. It reads the tokens of `Source.Lex`. It gives the items of the
 file, or the first error in position order. `S001` is a token that the grammar does not accept.
 `S004` is the syntax of a later slice or of a later phase of slice 3.
 
@@ -13,13 +13,14 @@ position order, and it reports the first. This rule also orders a lexical error 
 `S004`. The lexer ends the tokens with an `error` token. The parser reports that token only
 if it gets to it. `S004` is at these tokens:
 
-- The keyword: `import`, `pub`, `extern`, and `enum` at an item. `match` at an expression.
+- The keyword: `import`, `pub`, and `extern` at an item. `match` at an expression.
   `in`, `as`, `with`, and `conforms` after their forms. `input`, `output`, `reg`, `wire`,
   `mem`, and `instance` in the body of a `fn` without `comptime`: a helper that declares
   resources is slice 3.
 - The opening token: `@` of one of the five builtins.
-- A later token of the construct: the `::` of a path. The `(` after a type, which is a type
-  function call. The second name in a `domains` clause.
+- A later token of the construct: the `::` of a package path. The `(` after a type, which is a
+  type function call. The second name in a `domains` clause. The `(` after the name of an enum,
+  which is an enum with parameters.
 
 Two constructs need a look ahead. At `(`, the parser looks for `)` as the next token, or for
 a `,` directly in the bracket: these give `()` or a tuple, else the bracket groups. At `[` in an
@@ -49,8 +50,13 @@ These rules settle the open points of the grammar:
   statement, so the conditional needs its `;`, and its arms hold only expressions.
 - A comparison does not chain. `a < b < c` is `S001` at the second `<`. Parentheses group:
   `(a < b) < c`.
-- Slice 2 has no packages, so a path is one identifier: a `name` expression, a `name` type, or
-  the module of an `inst`. A `::` after it is `S004`.
+- Slice 3 has no packages. A path in an expression is a name, or a variant path `E::V` of two
+  names. A path in a type and the module of an `instance` are one name. A package path is `S004`
+  with one text: the second `::` of an expression path, and the `::` of a type or of a module.
+- An enum has its tag type after `:`. Each variant has a name, the payload types in
+  parentheses, and its tag value after `=`. The tag value is not optional: without `=`, the
+  variant is `S001`. A `,` can end the variants and the payload types. `Add` and `Add()` give
+  the same variant.
 - The `domains` of a module are `none` without a clause and `some` with a clause.
 - A struct without parentheses and a struct with `()` both have no parameters.
 - Parentheses make no node. A node keeps the position of its first token, also if that token
@@ -175,6 +181,17 @@ def unexpected (t : Token) (what : String) : P α :=
 def later (t : Token) (what : String) : P α :=
   throw ⟨.S004, t.pos, what ++ " is not supported yet"⟩
 
+/-! The `S004` texts of section 6.2 with their fix. -/
+def packagePathText : String :=
+  "a package path is not supported yet; in this slice, a path is a variant `E::V` of an enum " ++
+    "`E`, in an expression or a pattern"
+
+def enumParamsText : String :=
+  "an enum with parameters is not supported yet; remove the parameters, and give each payload " ++
+    "a fixed type"
+
+def packagePath (t : Token) : P α := throw ⟨.S004, t.pos, packagePathText⟩
+
 def sym (s : String) : P Unit := do
   let t ← peek
   if isSym s t then bump else unexpected t s!"`{s}`"
@@ -195,11 +212,11 @@ def ident : P Ident := do
   | .ident n => bump; return ⟨t.pos, n⟩
   | _ => unexpected t "a name"
 
-/-! A path of slice 1 is one identifier. -/
+/-! The path of a type or of a module is one identifier. -/
 def path : P Ident := do
   let n ← ident
   let t ← peek
-  if isSym "::" t then later t "a package path" else return n
+  if isSym "::" t then packagePath t else return n
 
 /-! `@` at `t`: `S004` for a builtin, else `S001` at the name. -/
 def builtin (t : Token) : P α := do
@@ -383,8 +400,14 @@ mutual
       let t ← peek
       match t.kind with
       | .ident n =>
-        let _ ← path
-        return (leaf (.name t.pos n), true)
+        bump
+        if isSym "::" (← peek) then
+          bump
+          let v ← ident
+          let w ← peek
+          if isSym "::" w then packagePath w
+          else return (leaf (.path t.pos ⟨t.pos, n⟩ v), false)
+        else return (leaf (.name t.pos n), true)
       | .number v => bump; return (leaf (.num t.pos v), false)
       | .string s => bump; return (leaf (.str t.pos s), false)
       | .keyword "true" => bump; return (leaf (.bool t.pos true), false)
@@ -794,9 +817,45 @@ def structItem (f : Nat) (start : Pos) : P Item := do
   sym "{"
   return .struct start n ps (← fields f [])
 
+/-! The payload types of a variant after its `(`, up to `)`. A `,` can end the list. -/
+def payload : Nat → List TypeExpr → P (List TypeExpr)
+  | 0, _ => exhausted
+  | f + 1, acc => do
+    if ← acceptSym ")" then return acc.reverse
+    let acc := (← typeTop f) :: acc
+    if ← acceptSym ")" then return acc.reverse
+    sym ","
+    payload f acc
+
+/-! A variant: its name, its payload types in parentheses, `=`, and its tag value. -/
+def variant (f : Nat) : P Variant := do
+  let n ← ident
+  let ps ← if ← acceptSym "(" then payload f [] else pure []
+  sym "="
+  return ⟨n, ps, ← value f⟩
+
+/-! The variants of an enum after its `{`, up to `}`. A `,` can end the list. -/
+def variants : Nat → List Variant → P (List Variant)
+  | 0, _ => exhausted
+  | f + 1, acc => do
+    if ← acceptSym "}" then return acc.reverse
+    let acc := (← variant f) :: acc
+    if ← acceptSym "}" then return acc.reverse
+    sym ","
+    variants f acc
+
+/-! An enum. A `(` after its name is an enum with parameters, a later slice. -/
+def enumItem (f : Nat) (start : Pos) : P Item := do
+  kw "enum"
+  let n ← ident
+  let t ← peek
+  if isSym "(" t then throw ⟨.S004, t.pos, enumParamsText⟩
+  let ty ← typeAnnotation f
+  sym "{"
+  return .enum start n ty (← variants f [])
+
 def laterItems : List (String × String) :=
-  [("import", "an import"), ("pub", "`pub`"), ("extern", "an extern module"),
-   ("enum", "an enum")]
+  [("import", "an import"), ("pub", "`pub`"), ("extern", "an extern module")]
 
 def item (f : Nat) : P Item := do
   let t ← peek
@@ -814,6 +873,7 @@ def item (f : Nat) : P Item := do
   | .keyword "module" => moduleItem f t.pos
   | .keyword "struct" => structItem f t.pos
   | .keyword "type" => aliasDecl f t.pos .alias
+  | .keyword "enum" => enumItem f t.pos
   | .keyword w =>
     match laterItems.lookup w with
     | some what => later t what

@@ -491,6 +491,11 @@ mutual
     | .fnType p ps r => do
       let ps ← ps.mapM fnParam
       return .fnType p ps (← typeExpr r)
+    | .path p x y => do
+      -- `inFile` rejects each file with an enum, so no first part names an enum here.
+      recordUnknown ⟨.S003, p, s!"`{x.name}` is not an enum, so `{x.name}::{y.name}` names no " ++
+        "variant; use the name of an enum"⟩
+      return .name p x.name default
 
   def typeExpr : Source.TypeExpr → M TypeExpr
     | .name p n => do
@@ -612,12 +617,23 @@ def item : Source.Item → M Item
     let ps ← ps.mapM param
     return .struct p n ps (← fields fs) false
   | .alias p n t => return .alias p n (← typeExpr t)
+  -- `inFile` rejects each file with an enum before the walk.
+  | .enum p n .. => return .struct p n [] [] false
 
 def itemName : Source.Item → Ident
-  | .const _ n .. | .fn _ _ n .. | .module _ n .. | .struct _ n .. | .alias _ n .. => n
+  | .const _ n .. | .fn _ _ n .. | .module _ n .. | .struct _ n .. | .alias _ n ..
+  | .enum _ n .. => n
+
+/-! The first enum item of a file. -/
+def firstEnum : List Source.Item → Option Pos
+  | [] => none
+  | .enum p .. :: _ => some p
+  | _ :: items => firstEnum items
 
 /-! Runs `act` in the item scope of `items`. The result is the first error, if one occurs. -/
 def inFile (items : List Source.Item) (act : M α) : Except Error α :=
+  -- TODO(#271): resolve the enum items and the variant paths.
+  if let some p := firstEnum items then .error ⟨.S004, p, "an enum is not supported yet"⟩ else
   let walk : M α := do
     for (it, i) in items.zipIdx do
       bind (itemName it) (.item i)

@@ -396,12 +396,66 @@ type: the parser accepts it, and pass 4 rejects it.
 #guard stFails "@field(a, \"i\") = 1;" .S004 1
 #guard stFails "@field(a.b, \"c\") := 1;" .S004 1
 
+/-! The message of the error of `s`, or the empty string. -/
+def message (s : String) : String :=
+  match parseSource defaultSyntaxDepth s with
+  | .error e => e.msg
+  | .ok _ => ""
+
 /-!
-`S004`: an enum and a `match` are later phases of slice 3. The position is the keyword. `=>`
-and `::` lex as one token each.
+An enum (slice 3): the tag type, and each variant with its payload types and its tag value. A
+`,` can end the variants and the payload types. `A` and `A()` give one variant. A variant
+without a tag value is `S001`. An enum with parameters is `S004` at its `(`.
 -/
-#guard fails "enum Op: UInt[2] { Add = 0 }" .S004 1 1
-#guard fails "module M() {}\nenum E: UInt[1] {}" .S004 2 1
+#guard dump "enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4],) = 2, }" ==
+  "(enum \"Op\" (index (name \"UInt\") ((num 2))) ((variant \"Add\" () (num 0)) " ++
+  "(variant \"Load\" ((index (name \"UInt\") ((num 8)))) (num 1)) " ++
+  "(variant \"Pair\" ((name \"Bool\") (index (name \"UInt\") ((num 4)))) (num 2))))\n"
+#guard dump "enum E: UInt[1] {}" == "(enum \"E\" (index (name \"UInt\") ((num 1))) ())\n"
+#guard dump "enum E: T { A() = 0 }" == dump "enum E: T { A = 0 }"
+#guard dump "enum E: T { A = N + 1 }" ==
+  "(enum \"E\" (name \"T\") ((variant \"A\" () (binary add (name \"N\") (num 1)))))\n"
+#guard fails "enum E: T { A }" .S001 1 15
+#guard fails "enum E: T { A(B) }" .S001 1 18
+#guard fails "enum E: T { A = 0 B = 1 }" .S001 1 19
+#guard fails "enum E: T { A = 0,, }" .S001 1 19
+#guard fails "enum E { A = 0 }" .S001 1 8
+#guard fails "enum E: T { A(,) = 0 }" .S001 1 15
+#guard fails "enum E(comptime W: Nat): T { A = 0 }" .S004 1 7
+#guard fails "module M() {}\nenum E(): T {}" .S004 2 7
+#guard message "enum E(T): U {}" == "an enum with parameters is not supported yet; remove " ++
+  "the parameters, and give each payload a fixed type"
+
+/-!
+A variant path `E::V` is a primary, and `E::V(args)` is a call of it. A package path is
+`S004` with one text: the second `::` of an expression path, and the `::` of a type or of the
+module of an `instance`.
+-/
+#guard ex "Op::Add" == "(path \"Op\" \"Add\")"
+#guard ex "Op::Load(x, 1)" == "(call (path \"Op\" \"Load\") ((name \"x\") (num 1)))"
+#guard ex "Op::Load()" == "(call (path \"Op\" \"Load\") ())"
+#guard ex "-a::b" == "(unary neg (path \"a\" \"b\"))"
+#guard ex "x+a::f(1)" ==
+  "(binary add (name \"x\") (call (path \"a\" \"f\") ((num 1))))"
+#guard ex "a::b.c" == "(field (path \"a\" \"b\") \"c\")"
+#guard ex "a::b == c::d" == "(binary eq (path \"a\" \"b\") (path \"c\" \"d\"))"
+#guard ex "a::b::c" == "error S004 1:18"
+#guard ex "a::b::" == "error S004 1:18"
+#guard ex "a::(b)" == "error S001 1:17"
+#guard ex "a::1" == "error S001 1:17"
+#guard ex "a::" == "error S001 1:17"
+#guard st "Op::Load(x);" == "(expr (call (path \"Op\" \"Load\") ((name \"x\"))))"
+#guard st "let y = Op::Add;" == "(local false \"y\" none (path \"Op\" \"Add\"))"
+#guard stFails "Op::Add = 1;" .S001 9
+#guard stFails "Op::Add.x := 1;" .S001 11
+#guard message "const X: T = a::b::c;" == Parse.packagePathText
+#guard message "fn f() -> a::T {}" == Parse.packagePathText
+#guard message "fn f(x: a::T) -> T {}" == Parse.packagePathText
+#guard message (ctBody "instance u = p::M();") == Parse.packagePathText
+#guard Parse.packagePathText == "a package path is not supported yet; in this slice, a path " ++
+  "is a variant `E::V` of an enum `E`, in an expression or a pattern"
+
+/-! `S004`: a `match` is a later phase of slice 3. The position is its keyword. -/
 #guard ex "match (x) { 0 => 1, _ => 2 }" == "error S004 1:14"
 #guard ex "if (match (x) { _ => c }) { 1 } else { 2 }" == "error S004 1:18"
 #guard ex "f(match (x) { _ => 1 })" == "error S004 1:16"
@@ -410,7 +464,6 @@ and `::` lex as one token each.
 #guard stFails "let match = 1;" .S001 5
 #guard ex "a + match (x) { _ => 1 }" == "error S001 1:18"
 #guard ex "a => b" == "error S001 1:16"
-#guard ex "Op::Add" == "error S004 1:16"
 
 /-!
 `S004`: a `fn` without `comptime` declares no port, resource, or instance. The position is the
@@ -438,9 +491,6 @@ def plainBody (s : String) : String := "fn f() -> T {\n" ++ s ++ "\n}"
 #guard ex "@Struct(T)" == "error S004 1:14"
 #guard ex "@ports(M)" == "error S004 1:14"
 #guard ex "@field(x, \"f\")" == "error S004 1:14"
-#guard ex "-a::b" == "error S004 1:16"
-#guard ex "x+a::f(1)" == "error S004 1:17"
-#guard ex "a::b" == "error S004 1:15"
 #guard ex "@TypeOf(x)" == "error S004 1:14"
 #guard ex "@TypeOf(f(a, b), (c)), d)" == "error S004 1:14"
 
@@ -720,6 +770,9 @@ def reparse (s : String) : Bool :=
   "(fn () -> UInt)[8] + -fn () -> D;")
 #guard reparse ("fn f(g: fn (mut L,) -> ()) -> fn () -> T { fn () -> T; " ++
   "let h: List[fn () -> Bool] = g; return (fn () -> T)(x).y; }")
+#guard reparse ("enum Op: UInt[2] { Add = 0, Load(UInt[8],) = 1, Pair(Bool, (T,)) = -x, }" ++
+  "enum E: UInt[1] {} enum F: T { A() = if (c) { 1 } else { 2 } }")
+#guard reparse "fn f() -> Op { Op::Load(x); return -Op::Add + E::V(a::b).c[0]; }"
 
 /-!
 The edge cases of the printer for `parse_print`. Each pair of operators nests in both
