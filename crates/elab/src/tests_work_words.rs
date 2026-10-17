@@ -29,18 +29,19 @@ fn assert_linear(family: u64, body: &str) {
     assert_eq!(w8 - w4, 2 * (w4 - w2), "{w2} {w4} {w8}");
 }
 
-/// A wide constant has one word for each 64 bits of its width.
+/// A constant of all ones has one word for each 64 bits of its width.
 #[test]
 fn the_words_of_a_wide_constant_grow_linearly_in_its_width() {
-    assert_linear(1, "  output o: UInt[{w}];\n  o := UInt[{w}](3);\n");
+    assert_linear(1, "  output o: UInt[{w}];\n  o := ~UInt[{w}](0);\n");
 }
 
-/// A wide `concat`: the payload of an enum with two wide leaves is a pack of the doubled width.
+/// A wide `concat`: the payload of an enum with a wide constant leaf and a wide input leaf is
+/// a pack of the doubled width.
 #[test]
 fn the_words_of_a_wide_concat_grow_linearly_in_its_width() {
     assert_linear(
         2,
-        "  input x: UInt[{w}];\n  input y: UInt[{w}];\n  output o: Bool;\n  \
-         let a = P::A(x, y);\n  o := true;\n",
+        "  input y: UInt[{w}];\n  output o: Bool;\n  \
+         let a = P::A(~UInt[{w}](0), y);\n  o := true;\n",
     );
 }
