@@ -1,18 +1,28 @@
-// A struct use whose parameters take two arrays of N elements. The arguments bind in order, and
-// the size of each converted argument charges right after its typed use (issue #266).
-// SCALE struct_argument 16 32 64 128 256
+// The repro of the charge of a parameter argument (issue #266). A struct has N parameters of an
+// array of 256 elements, and each argument is the same element of `a`. Each argument charges
+// its size right after its typed use, before it copies into the frame, so a run that stops
+// at the charge copies at most the units that it paid.
+// SCALE struct_argument 4 8 16 32 64
 // TOP M()
-struct S(comptime A: [Int; {N}], comptime B: [Int; {N}]) {
-    m: Bool,
+struct P(
+// REPEAT i {N}
+    comptime x{i}: [Nat; 256],
+// END
+) {
+    v: Bool,
 }
+const X: [Nat; 256] = [
+// REPEAT i 256
+    0,
+// END
+];
 module M() domains() {
     output o: Bool;
-    let a = [
+    let a = [X];
+    type S = P[
 // REPEAT i {N}
-        {i},
+        a[0],
 // END
     ];
-    let b = a;
-    let s = S[a, b](true);
-    o := s.m;
+    o := true;
 }
