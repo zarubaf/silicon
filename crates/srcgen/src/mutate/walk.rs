@@ -3,7 +3,7 @@
 
 use super::super::program::sexpr as sexpr_text;
 use super::super::program::{
-    FieldTy, HBin, HExpr, Item, Pattern, Place, Radix, SBin, SExpr, STy, Stmt, Ty, Un,
+    FieldTy, HBin, HExpr, Item, Match, Pattern, Place, Radix, SBin, SExpr, STy, Stmt, Ty, Un,
 };
 use super::uses::{self, Callees};
 use super::{EFFECT_FN, Effect, Hit, KEEP_FN, Kind};
@@ -310,6 +310,46 @@ impl<'a> Walk<'a> {
         }
     }
 
+    /// Whether the value `e` is certainly hardware: it reads a port, a
+    /// register, or a binder of such a value through an operator, a
+    /// constructor, or `reinterpret`. A name of a `let` can hold a static
+    /// value, so it does not count. A static operand does not make an
+    /// operator static, because the other operand is hardware.
+    fn certainly_hardware(&self, e: &HExpr) -> bool {
+        match e {
+            HExpr::Name(n) => self.hardware.contains(n),
+            HExpr::Unary(_, a) | HExpr::Resize(_, a) | HExpr::Reinterpret(_, a) => {
+                self.certainly_hardware(a)
+            }
+            HExpr::Binary(_, a, b) => self.certainly_hardware(a) || self.certainly_hardware(b),
+            HExpr::Ctor(_, _, args) => args.iter().any(|a| self.certainly_hardware(a)),
+            _ => false,
+        }
+    }
+
+    /// The arms of a hardware `match` over a value that is certainly
+    /// hardware. All arms evaluate, each under the guard `arm` (spec 9.4),
+    /// so a graph effect in one is `S016`, as in an arm of a hardware `if`.
+    /// Its binders are certainly hardware too, and `Rename` skips their
+    /// declarations.
+    fn hardware_arms(&mut self, m: &mut Match<HExpr, HExpr>) {
+        let (always, reach, arm) = (self.always, self.reach, self.arm);
+        let marked = self.hardware.len();
+        for (p, body) in &mut m.arms {
+            (self.always, self.reach, self.arm) = (false, reach, true);
+            if let Pattern::Variant(e, _, binders) = p {
+                self.rename(e);
+                self.hardware.extend(binders.iter().flatten().cloned());
+            }
+            self.hexpr(body);
+            self.hardware.truncate(marked);
+            if self.hit.is_some() {
+                break;
+            }
+        }
+        (self.always, self.reach, self.arm) = (always, reach, arm);
+    }
+
     /// The newest static `let mut` `Int` in scope.
     fn counter(&self) -> Option<String> {
         let (name, _) = self.scope.iter().rev().find(|(_, t)| *t == STy::Int)?;
@@ -595,16 +635,21 @@ impl<'a> Walk<'a> {
             }
             HExpr::Match(m) => {
                 self.hexpr(&mut m.scrutinee);
-                // A scrutinee that is not a port or a register can fold to a
-                // static value that selects one arm, so no arm always runs.
-                self.lazily(|w| {
-                    for (p, arm) in &mut m.arms {
-                        if let Pattern::Variant(e, ..) = p {
-                            w.rename(e);
+                if self.certainly_hardware(&m.scrutinee) {
+                    self.hardware_arms(m);
+                } else {
+                    // The front ends fold a scrutinee that is static by
+                    // value, and the match then selects one arm, so no arm
+                    // always runs.
+                    self.lazily(|w| {
+                        for (p, arm) in &mut m.arms {
+                            if let Pattern::Variant(e, ..) = p {
+                                w.rename(e);
+                            }
+                            w.hexpr(arm);
                         }
-                        w.hexpr(arm);
-                    }
-                });
+                    });
+                }
             }
             HExpr::Ctor(name, _, args) => {
                 self.rename(name);
