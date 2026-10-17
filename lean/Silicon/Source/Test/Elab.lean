@@ -1494,6 +1494,28 @@ def dRec : String :=
   ["(record 6 3 M () (string \"r\") (array (array (uint 4) 2) ((array (uint 4) " ++
     "((hw (uint 4)) (hw (uint 4)))) (array (uint 4) ((hw (uint 4)) (hw (uint 4)))))))", "ok"]
 
+/-!
+A hardware enum renders as `(enum <type> <tag> <payload>)`: a static tag is an integer, and a
+hardware leaf is `(hw (uint ..))`. A reference of an enum type renders each leaf as a hardware
+leaf, and an empty payload has no part. The enum charges 1 as a container, and a static tag its
+measure charge.
+-/
+def dOp : String := "enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }\n"
+def dEnumRef : String := dIn "  input a: Op;\n" "  diagnostic(\"r\", a);\n" dOp
+#guard observed dEnumRef ==
+  ["(record 7 3 M () (string \"r\") (enum (enum root Op ()) (hw (uint 2)) (hw (uint 8))))", "ok"]
+#guard pays dEnumRef 102 "7:3" 1 && pays dEnumRef 103 "7:3" 83
+def dEnumHw : String := dIn "" "  diagnostic(\"h\", Op::Load(d));\n" dOp
+#guard observed dEnumHw ==
+  ["(record 6 3 M () (string \"h\") (enum (enum root Op ()) 1 (hw (uint 8))))", "ok"]
+#guard pays dEnumHw 107 "6:3" 2 && pays dEnumHw 109 "6:3" 71
+def dFlag : String :=
+  dIn "  input a: F;\n" "  diagnostic(\"r\", a);\n" "enum F: UInt[1] { A = 0 }\n"
+#guard observed dFlag ==
+  ["(record 7 3 M () (string \"r\") (enum (enum root F ()) (hw (uint 1))))", "ok"]
+#guard observed (dIn "" "  diagnostic(\"s\", Op::Load(3));\n" dOp) ==
+  ["(record 6 3 M () (string \"s\") (enum (enum root Op ()) 1 (uint 8 3)))", "ok"]
+
 -- The response of `read_port`: a record of the word reference and of `valid`.
 def dResp : String :=
   dIn "" ("  mem m: [(UInt[8], Bool); 4];\n  write_port(m, 0, (d, c), c);\n" ++

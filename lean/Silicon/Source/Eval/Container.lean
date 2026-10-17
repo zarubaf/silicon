@@ -913,8 +913,9 @@ def fieldTys (specs : Specs) (t : Ty) : List Ty := ((specs.parts t).getD #[]).to
 The text of a part of the type `t` of a reference in a record (section 8.2): the value that it
 stands for. A part without a hardware leaf is the static zero of its type, and a part of a scalar
 type is a hardware leaf `(hw <type>)`. Another part is its container form with each part
-rendered. The metadata and the done struct entries of `specs` give it, so it reads no base and
-has no charge. The bound `b` is the depth of `t`, because each part is less deep than its type.
+rendered. An enum is `(enum <type> <tag> <payload>)`. The metadata and the done entries of
+`specs` give it, so it reads no base and has no charge. The bound `b` is the depth of `t`,
+because each part is less deep than its type.
 -/
 def Ty.render (specs : Specs) : Nat → Ty → String
   | 0, _ => "-"
@@ -927,6 +928,7 @@ def Ty.render (specs : Specs) : Nat → Ty → String
         Print.node "array" [e.serialize, Print.list (.replicate n (Ty.render specs b e))]
       | .tuple ⟨ts⟩ => Print.node "tuple" [parts ts]
       | .struct .. => Print.node "record" [t.serialize, parts (fieldTys specs t)]
+      | .enum .. => Print.node "enum" (t.serialize :: (fieldTys specs t).map (Ty.render specs b))
       | t => Print.node "hw" [t.serialize]
 
 /-!
@@ -945,7 +947,7 @@ def Ty.renderCharge (specs : Specs) : Nat → Ty → Nat
       match t with
       | .array e n => 1 + n * Ty.renderCharge specs b e
       | .tuple ⟨ts⟩ => 1 + parts ts
-      | .struct .. => 1 + parts (fieldTys specs t)
+      | .struct .. | .enum .. => 1 + parts (fieldTys specs t)
       | _ => 0
 
 /-! The element type text of a container node: the element type of an array, the record type. -/
@@ -955,10 +957,19 @@ def Node.tyText (n : Node) : String :=
   | t => t.serialize
 
 /-!
+The texts `ys` of the parts `xs` of an enum node, with a static tag as an integer (section 8.2).
+A tag is a scalar leaf, so its other forms keep their text.
+-/
+def Agg.tagFirst : List Agg → List String → List String
+  | .static (.uint _ v) :: _, _ :: ys => toString v.toNat :: ys
+  | _, ys => ys
+
+/-!
 The text of the aggregate `a` in a record (section 8.2). A static part is its canonical
 serialization, and a hardware leaf is `(hw <type>)`. A reference renders by its type
-(`Ty.render`). A container node is its container form of section 7.1 with each part rendered.
-The text is pure.
+(`Ty.render`). A container node is its container form of section 7.1 with each part rendered. A
+hardware enum is `(enum <type> <tag> <payload>)`, the form of a static enum value, so a static
+tag is an integer (`Agg.tagFirst`). The text is pure.
 -/
 mutual
   def Agg.render (specs : Specs) : Agg → String
@@ -967,8 +978,10 @@ mutual
     | .ref _ t => Ty.render specs t.depth t
     | .array n ⟨xs⟩ => Print.node "array" [n.tyText, Print.list (Agg.renderAll specs xs)]
     | .tuple _ ⟨xs⟩ => Print.node "tuple" [Print.list (Agg.renderAll specs xs)]
-    -- TODO(#271): render a hardware enum as `(enum <type> <tag> <payload>)` (D9, section 8.2).
-    | .record n ⟨xs⟩ => Print.node "record" [n.tyText, Print.list (Agg.renderAll specs xs)]
+    | .record n ⟨xs⟩ =>
+      if n.ty matches .enum .. then
+        Print.node "enum" (n.ty.serialize :: Agg.tagFirst xs (Agg.renderAll specs xs))
+      else Print.node "record" [n.tyText, Print.list (Agg.renderAll specs xs)]
 
   def Agg.renderAll (specs : Specs) : List Agg → List String
     | [] => []

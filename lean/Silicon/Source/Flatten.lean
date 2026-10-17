@@ -417,7 +417,8 @@ def value (target : Path) (h : Hw) : FM Core.Expr := do
 /-!
 The source of the element `k` of the type `t` with the leaf field `f`, for the statement at `pos`
 (`Agg.child`). Elaboration gives each bound value the type of its sink, so a missing part is a
-defect at its leaf. `fs` gives the fields with a leaf of a struct type, for a word part.
+defect at its leaf. `fs` gives the parts with a leaf of a struct or an enum type, for a word
+part.
 -/
 def sub (fs : Layout.Fields) (pos : Pos) (a : Option Agg) (f : Field) (k : Nat) (t : Ty) :
     Option Agg :=
@@ -437,8 +438,8 @@ def leafConst (p : Core.Pos) : Option Agg → FM Core.Expr
   | some (.static v) => constOf p v
   | _ => defect "a register value has no constant leaf"
 
-/-! A struct type without its fields in the design. -/
-def noFields (_ : β) (t : Ty) : FM β := defect s!"{t.text} has no fields in the design"
+/-! A struct or an enum type without its parts in the design. -/
+def noFields (_ : β) (t : Ty) : FM β := defect s!"{t.text} has no parts in the design"
 
 /-! The domain ports `d$0clk` and `d$0rst`. -/
 def clockName (d : String) : Name := ⟨d, [.role .clk]⟩
@@ -562,7 +563,7 @@ def lowerMem (fs : Layout.Fields) (d : String) (body : Array Core.Stmt) (m : Mem
   return body.push (.write c mx 0 a.expr dt en)
 
 /-!
-The core module of one instantiation. `fs` names the fields of each struct type. Each port,
+The core module of one instantiation. `fs` names the parts of each struct and enum type. Each port,
 register, and `:=` binding lowers one leaf at a time in packing order, and each leaf charges
 before it exists. An empty one lowers to nothing.
 -/
