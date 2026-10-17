@@ -4,11 +4,11 @@
 use super::super::program::hexpr as hexpr_text;
 use super::super::program::sexpr as sexpr_text;
 use super::super::program::{
-    EnumDef, FieldTy, HBin, HExpr, Item, Match, Pattern, Place, Radix, SBin, SExpr, STy, Stmt, Ty,
-    Un,
+    EnumDef, FieldTy, HBin, HExpr, Item, Match, Pattern, Place, Radix, SBin, SExpr, STy, Scalar,
+    Stmt, Ty, Un, Variant,
 };
 use super::uses::{self, Callees};
-use super::{EFFECT_FN, Effect, Hit, KEEP_FN, Kind};
+use super::{EFFECT_FN, Effect, Hit, KEEP_FN, Kind, beyond};
 use num_bigint::BigInt;
 use std::mem;
 
@@ -43,6 +43,10 @@ pub(super) struct Walk<'a> {
     /// Whether the site being walked always runs: it is in the top frame of
     /// a module, and in no lazy operand or branch.
     always: bool,
+    /// The names of the enum items.
+    enum_names: Vec<String>,
+    /// The ports, registers, and wires of the module, with their types.
+    typed: Vec<(String, Ty)>,
     /// The enums that the top frame of a module uses, found by a first walk.
     used: Vec<String>,
     /// The name and index of the current item, and the count of its
@@ -69,6 +73,8 @@ impl<'a> Walk<'a> {
             arm: false,
             reach: false,
             always: false,
+            enum_names: Vec::new(),
+            typed: Vec::new(),
             used: Vec::new(),
             item: String::new(),
             index: 0,
@@ -90,11 +96,21 @@ impl<'a> Walk<'a> {
     }
 
     pub(super) fn items(&mut self, items: &mut Vec<Item>) {
-        if matches!(self.kind, Kind::SameTag) {
+        if matches!(
+            self.kind,
+            Kind::SameTag | Kind::TagFit | Kind::PayloadOverflow
+        ) {
             let mut first = Walk::new(Kind::Rename, self.top, None);
             first.items(&mut items.clone());
             self.used = first.used;
         }
+        self.enum_names = items
+            .iter()
+            .filter_map(|i| match i {
+                Item::Enum(d) => Some(d.name.clone()),
+                _ => None,
+            })
+            .collect();
         self.values = function_values(items);
         self.list_values = list_values(items);
         self.mut_helpers = mut_helpers(items);
@@ -130,6 +146,7 @@ impl<'a> Walk<'a> {
         self.arm = false;
         self.scope.clear();
         self.hardware.clear();
+        self.typed.clear();
         match item {
             Item::Const { value, .. } => self.sexpr(value),
             Item::HwFnValue { .. } => {}
@@ -307,6 +324,9 @@ impl<'a> Walk<'a> {
         if let Stmt::Input(n, _) | Stmt::Reg(n, ..) = s {
             self.hardware.push(n.clone());
         }
+        if let Stmt::Input(n, t) | Stmt::Reg(n, t, _) | Stmt::Wire(n, t) = s {
+            self.typed.push((n.clone(), t.clone()));
+        }
     }
 
     /// Whether the condition `c` is certainly not static by value: a port
@@ -447,6 +467,9 @@ impl<'a> Walk<'a> {
         let code = self.always.then_some("S021");
         let wild = m.arms.iter().any(|(p, _)| *p == Pattern::Wild);
         for i in 0..m.arms.len() {
+            if self.pattern_sites(m, i, text) {
+                return true;
+            }
             let is_wild = m.arms.get(i).is_some_and(|(p, _)| *p == Pattern::Wild);
             if self.site(Kind::DeleteArm) {
                 // Another arm of a match with `_` leaves the match covered.
@@ -506,23 +529,254 @@ impl<'a> Walk<'a> {
         false
     }
 
+    /// Whether `e` is an enum value that is certainly typed so: a
+    /// constructor, a `reinterpret` of bits, or the zero of an enum.
+    fn is_enum_value(&self, e: &SExpr) -> bool {
+        match e {
+            SExpr::Ctor(..) | SExpr::Unpack(..) => true,
+            SExpr::Zero(name, _) => self.enum_names.contains(name),
+            _ => false,
+        }
+    }
+
+    /// The sites `EnumEq` and `EnumCall` on a static enum value. Both are
+    /// `S010` (spec 5.1, 5.6) where the value always runs.
+    fn enum_sites(&mut self, e: &mut SExpr) -> bool {
+        if !self.is_enum_value(e) {
+            return false;
+        }
+        let code = self.always.then_some("S010");
+        if self.site(Kind::EnumEq) {
+            let what = format!("compare {} with itself in {}", sexpr_text(e), self.item);
+            *e = SExpr::Binary(SBin::Eq, Box::new(e.clone()), Box::new(e.clone()));
+            self.hit(what, Effect::Code(code));
+            return true;
+        }
+        if let SExpr::Zero(name, _) = e
+            && self.site(Kind::EnumCall)
+        {
+            let what = format!("call the enum {name} with an argument in {}", self.item);
+            *e = SExpr::Call(name.clone(), vec![zero()]);
+            self.hit(what, Effect::Code(code));
+            return true;
+        }
+        false
+    }
+
+    /// `EnumEq` on a hardware enum: a constructor, or the name of a port,
+    /// register, or wire of an enum type.
+    fn hardware_enum_eq(&mut self, e: &mut HExpr) -> bool {
+        let is_enum = match e {
+            HExpr::Ctor(..) => true,
+            HExpr::Name(n) => self
+                .typed
+                .iter()
+                .any(|(m, t)| m == n && matches!(t, Ty::Enum(_))),
+            _ => false,
+        };
+        if !is_enum || !self.site(Kind::EnumEq) {
+            return false;
+        }
+        let what = format!("compare {} with itself in {}", hexpr_text(e), self.item);
+        *e = HExpr::Binary(HBin::Eq, Box::new(e.clone()), Box::new(e.clone()));
+        self.hit(what, Effect::Code(self.always.then_some("S010")));
+        true
+    }
+
+    /// `ArmStage`: a static `Int` operand of a module body becomes a
+    /// `match` on a port with the arms `0 => 0` and `_ => 1`. A hardware
+    /// scrutinee evaluates both arms, whose static parts differ (`S011`,
+    /// spec 5.6).
+    fn arm_stage(&mut self, e: &mut HExpr) -> bool {
+        let port = self.typed.iter().find_map(|(n, t)| {
+            let finite = matches!(t, Ty::UInt(_) | Ty::SInt(_));
+            (finite && self.hardware.contains(n)).then(|| n.clone())
+        });
+        let Some(port) = port else { return false };
+        // Only a site that always runs is a site, so the top frame of a
+        // module body holds all of them.
+        if !self.always || !self.site(Kind::ArmStage) {
+            return false;
+        }
+        let zero_arm = HExpr::Static(zero());
+        let one_arm = HExpr::Static(SExpr::Int(BigInt::from(1), Radix::Dec));
+        let what = format!(
+            "stage the operand {} on {port} in {}",
+            hexpr_text(e),
+            self.item
+        );
+        *e = HExpr::Match(Match {
+            scrutinee: Box::new(HExpr::Name(port)),
+            arms: vec![
+                (Pattern::Int(BigInt::ZERO, Radix::Dec), zero_arm),
+                (Pattern::Wild, one_arm),
+            ],
+        });
+        self.hit(what, Effect::Code(Some("S011")));
+        true
+    }
+
+    /// The sites in the pattern of arm `i`: two binders with one name
+    /// (`S002`, pass 2), a binder more or less (`S007`, pass 4), and a
+    /// pattern of another kind (`S010`, pass 5). The binder that goes, and
+    /// the arm whose pattern changes its kind, are not read by the arm,
+    /// because pass 3 would see the missing name first.
+    fn pattern_sites<S, E>(
+        &mut self,
+        m: &mut Match<S, E>,
+        i: usize,
+        text: fn(&E) -> String,
+    ) -> bool {
+        let Some((pattern, body)) = m.arms.get_mut(i) else {
+            return false;
+        };
+        let body = text(body);
+        let read =
+            |binders: &[Option<String>]| binders.iter().flatten().any(|b| mentions_token(&body, b));
+        if let Pattern::Variant(e, v, binders) = pattern {
+            let named: Vec<usize> = (0..binders.len())
+                .filter(|&k| binders.get(k).is_some_and(Option::is_some))
+                .collect();
+            if let [first, second, ..] = named[..]
+                && self.site(Kind::DupBinder)
+            {
+                let name = binders.get(first).cloned().flatten();
+                if let Some(slot) = binders.get_mut(second) {
+                    *slot = name;
+                }
+                self.hit(
+                    format!("give two binders of {e}::{v} one name in {}", self.item),
+                    Effect::Code(Some("S002")),
+                );
+                return true;
+            }
+            let last_free = binders
+                .last()
+                .is_some_and(|b| b.as_ref().is_none_or(|b| !mentions_token(&body, b)));
+            if last_free && self.site(Kind::DropArg) {
+                binders.pop();
+                self.hit(
+                    format!("drop a binder of {e}::{v} in {}", self.item),
+                    Effect::Code(Some("S007")),
+                );
+                return true;
+            }
+            if self.site(Kind::AddArg) {
+                binders.push(None);
+                self.hit(
+                    format!("add a binder to {e}::{v} in {}", self.item),
+                    Effect::Code(Some("S007")),
+                );
+                return true;
+            }
+        }
+        let free = match pattern {
+            Pattern::Variant(_, _, bs) => !read(bs),
+            Pattern::Wild => false,
+            _ => true,
+        };
+        if free && self.site(Kind::PatternSwap) {
+            let new = match pattern {
+                Pattern::Int(..) => Pattern::Bool(true),
+                _ => Pattern::Int(BigInt::ZERO, Radix::Dec),
+            };
+            self.hit(
+                format!("change the kind of a pattern in {}", self.item),
+                Effect::Code(self.always.then_some("S010")),
+            );
+            *pattern = new;
+            return true;
+        }
+        false
+    }
+
+    /// `PatternFit`: a literal arm of a match on a port or register with a
+    /// literal width passes the type of the scrutinee (`S012`, spec 5.6).
+    fn pattern_fit(&mut self, m: &mut Match<HExpr, HExpr>) -> bool {
+        let HExpr::Name(n) = &*m.scrutinee else {
+            return false;
+        };
+        let known = self.typed.iter().find_map(|(name, t)| match t {
+            Ty::UInt(SExpr::Int(w, _)) if name == n => Some((false, w.clone())),
+            Ty::SInt(SExpr::Int(w, _)) if name == n => Some((true, w.clone())),
+            _ => None,
+        });
+        let Some((signed, width)) = known.and_then(|(s, w)| u32::try_from(w).ok().map(|w| (s, w)))
+        else {
+            return false;
+        };
+        for (p, _) in &mut m.arms {
+            if matches!(p, Pattern::Int(..)) && self.site(Kind::PatternFit) {
+                *p = Pattern::Int(beyond(signed, width), Radix::Dec);
+                self.hit(
+                    format!("make a literal pass {n} in {}", self.item),
+                    Effect::Code(self.always.then_some("S012")),
+                );
+                return true;
+            }
+        }
+        false
+    }
+
     /// The sites of an `enum` item: a tag that repeats the first tag is
     /// `S021` at the first use of the enum, which is certain if the top
     /// frame of a module uses the enum.
     fn enum_item(&mut self, def: &mut EnumDef) {
-        for i in 1..def.variants.len() {
-            if self.site(Kind::SameTag) {
+        let top = self.used.contains(&def.name).then_some("S021");
+        let fit = self.used.contains(&def.name).then_some("S012");
+        for i in 0..def.variants.len() {
+            if self.site(Kind::Duplicate) {
+                if let Some(v) = def.variants.get(i).cloned() {
+                    def.variants.insert(i + 1, v);
+                }
+                self.hit(
+                    format!("duplicate variant {} of {}", i + 1, def.name),
+                    Effect::Code(Some("S002")),
+                );
+                return;
+            }
+            if i > 0 && self.site(Kind::SameTag) {
                 let first = def.variants.first().map(|v| v.tag.clone());
-                let code = self.used.contains(&def.name).then_some("S021");
                 if let (Some(first), Some(v)) = (first, def.variants.get_mut(i)) {
                     v.tag = first;
                     self.hit(
                         format!("give variant {} of {} the first tag", i + 1, def.name),
-                        Effect::Code(code),
+                        Effect::Code(top),
                     );
                 }
                 return;
             }
+            if self.site(Kind::TagFit)
+                && let Some(v) = def.variants.get_mut(i)
+            {
+                v.tag = beyond(false, def.tag_width).into_parts().1;
+                self.hit(
+                    format!(
+                        "give variant {} of {} a tag that does not fit",
+                        i + 1,
+                        def.name
+                    ),
+                    Effect::Code(fit),
+                );
+                return;
+            }
+        }
+        // A tag is free if the tag type has more values than variants.
+        let free = (0..1u32 << def.tag_width)
+            .map(num_bigint::BigUint::from)
+            .find(|t| def.variants.iter().all(|v| v.tag != *t));
+        if let Some(tag) = free
+            && self.site(Kind::PayloadOverflow)
+        {
+            def.variants.push(Variant {
+                name: format!("V{}", def.variants.len()),
+                tag,
+                payload: vec![Scalar::UInt(65536), Scalar::Bool],
+            });
+            self.hit(
+                format!("add a variant of 65537 payload bits to {}", def.name),
+                Effect::Code(fit),
+            );
         }
     }
 
@@ -617,6 +871,9 @@ impl<'a> Walk<'a> {
             self.hit(what, Effect::Code(None));
             return;
         }
+        if self.enum_sites(e) {
+            return;
+        }
         match e {
             SExpr::Int(..) | SExpr::Bool(_) | SExpr::Str(_) | SExpr::NewList(_) => {}
             SExpr::Name(n) => self.rename(n),
@@ -640,6 +897,7 @@ impl<'a> Walk<'a> {
             }
             SExpr::Ctor(name, _, args) => {
                 self.use_name(name);
+                self.args(name, args, zero());
                 for x in args {
                     self.sexpr(x);
                 }
@@ -697,6 +955,11 @@ impl<'a> Walk<'a> {
     }
 
     fn hexpr(&mut self, e: &mut HExpr) {
+        if self.hardware_enum_eq(e)
+            || (matches!(e, HExpr::Static(s) if int_valued(s)) && self.arm_stage(e))
+        {
+            return;
+        }
         match e {
             HExpr::Name(n) | HExpr::Field(n, _) => self.rename(n),
             HExpr::Static(s) => {
@@ -743,7 +1006,7 @@ impl<'a> Walk<'a> {
                 }
             }
             HExpr::Match(m) => {
-                if self.arm_sites(m, hexpr_text) {
+                if self.arm_sites(m, hexpr_text) || self.pattern_fit(m) {
                     return;
                 }
                 self.hexpr(&mut m.scrutinee);
@@ -765,6 +1028,7 @@ impl<'a> Walk<'a> {
             }
             HExpr::Ctor(name, _, args) => {
                 self.use_name(name);
+                self.args(name, args, HExpr::Static(zero()));
                 for a in args {
                     self.hexpr(a);
                 }

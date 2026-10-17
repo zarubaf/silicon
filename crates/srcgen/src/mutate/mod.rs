@@ -49,6 +49,20 @@
 //!   variants with one tag are `S021` at the first use of the enum, which
 //!   is certain where the enum is used in the top frame of a module.
 //!
+//! - Two binders with one name, and an extra or a missing argument of a
+//!   constructor or of a variant pattern, are `S002` (pass 2) and `S007`
+//!   (pass 4) on all code. A missing binder is one that is `_` or that no
+//!   arm reads, because pass 3 sees a missing name first.
+//! - A pattern of another kind than its scrutinee (`PatternSwap`), `==` on
+//!   enums (`EnumEq`), and a call `E(0)` of an enum type (`EnumCall`) are
+//!   `S010`. A static `Int` operand that becomes a `match` on a port with
+//!   two unequal static arms is `S011`. They are certain where the site
+//!   always runs. A literal that passes the scrutinee type (`PatternFit`,
+//!   known for a port with a literal width), a tag of `2^W` (`TagFit`),
+//!   and a variant of 65537 payload bits (`PayloadOverflow`) are `S012`.
+//!   The two tag kinds are certain where the top frame of a module uses
+//!   the enum.
+//!
 //! Any other mutation can fail in pass 5 at a point that depends on the
 //! values, or pass, so its prediction is `None`.
 
@@ -118,9 +132,27 @@ enum Kind {
     DeadWild,
     /// The tag of a variant becomes the tag of the first variant.
     SameTag,
+    /// Two binders of a pattern get one name.
+    DupBinder,
+    /// An arm gets a pattern of another kind: a literal, `true`, or a
+    /// variant for the other kinds.
+    PatternSwap,
+    /// An enum value becomes `e == e`.
+    EnumEq,
+    /// The zero `E()` of an enum becomes `E(0)`.
+    EnumCall,
+    /// A static `Int` operand becomes a `match` on a port with two
+    /// unequal static arms.
+    ArmStage,
+    /// The tag of a variant becomes `2^W`.
+    TagFit,
+    /// A literal of a pattern passes the scrutinee type.
+    PatternFit,
+    /// A variant with a payload of 65537 bits joins an enum.
+    PayloadOverflow,
 }
 
-const KINDS: [Kind; 20] = [
+const KINDS: [Kind; 28] = [
     Kind::Delete,
     Kind::Duplicate,
     Kind::Rename,
@@ -141,7 +173,27 @@ const KINDS: [Kind; 20] = [
     Kind::WildFirst,
     Kind::DeadWild,
     Kind::SameTag,
+    Kind::DupBinder,
+    Kind::PatternSwap,
+    Kind::EnumEq,
+    Kind::EnumCall,
+    Kind::ArmStage,
+    Kind::TagFit,
+    Kind::PatternFit,
+    Kind::PayloadOverflow,
 ];
+
+/// The value `2^w`, or for a signed type the value `-2^(w - 1) - 1`, that
+/// no value of the type `w` bits wide has. Three kinds use it: a tag, and a
+/// literal of an unsigned and of a signed scrutinee.
+fn beyond(signed: bool, width: u32) -> num_bigint::BigInt {
+    let one = num_bigint::BigInt::from(1);
+    if signed {
+        -(one.clone() << width.saturating_sub(1)) - one
+    } else {
+        one << width
+    }
+}
 
 /// The name of the function that runs a `diagnostic`.
 const EFFECT_FN: &str = "e0";
