@@ -133,6 +133,12 @@ impl<'a> Parser<'a> {
         self.significant(2).map(|t| t.kind)
     }
 
+    /// The text of the current token.
+    pub(crate) fn cur_text(&self) -> &'a str {
+        self.significant(0)
+            .map_or("", |t| &self.input[t.range.clone()])
+    }
+
     /// The text of the token after the current one.
     pub(crate) fn next_text(&self) -> &'a str {
         self.significant(1)

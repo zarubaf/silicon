@@ -427,6 +427,14 @@ impl Walk<'_> {
                 self.expr(base, d)
             }
             Expr::Select { base, .. } => self.expr(base, d),
+            // TODO(#272): scan the patterns.
+            Expr::Match { scrut, arms, .. } => {
+                let mut calls = self.expr(scrut, d);
+                for arm in arms {
+                    calls |= self.expr(&arm.value, d);
+                }
+                calls
+            }
             Expr::Tuple { elems, .. } | Expr::Array { elems, .. } => {
                 let mut calls = false;
                 for e in elems {

@@ -162,6 +162,13 @@ kinds! {
     FieldExpr,
     /// `E::V`: two names.
     PathExpr,
+    /// `match (x) { p => e, }`: the scrutinee, then the `MatchArm` children.
+    MatchExpr,
+    /// `p => e` in a `match`: a `Pattern`, `=>`, and the expression.
+    MatchArm,
+    /// The pattern of an arm: a number with an optional `-`, `true`, `false`, `_`, or a
+    /// variant path `E::V` with optional binders in parentheses.
+    Pattern,
     /// `x.m(args)`: a receiver call. The arguments are in an `ArgList`.
     MethodExpr,
     /// `.N` after an expression.

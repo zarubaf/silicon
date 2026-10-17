@@ -247,6 +247,12 @@ impl Ids {
             }
             Expr::FnType { params, ret, .. } => self.fn_type(params, ret),
             Expr::Tuple { elems, .. } | Expr::Array { elems, .. } => self.exprs(elems),
+            Expr::Match { scrut, arms, .. } => {
+                self.expr(scrut);
+                for arm in arms {
+                    self.expr(&arm.value);
+                }
+            }
         }
     }
 }

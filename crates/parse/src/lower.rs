@@ -3,8 +3,8 @@
 //! tree that does not have the shape that the parser builds.
 
 use crate::ast::{
-    BinOp, Expr, FnParam, Ident, Item, Nat, NodeId, Param, ParamMode, Pos, Stmt, StructField,
-    TypeExpr, UnOp, Variant,
+    Arm, BinOp, Expr, FnParam, Ident, Item, Nat, NodeId, Param, ParamMode, Pattern, Pos, Stmt,
+    StructField, TypeExpr, UnOp, Variant,
 };
 use crate::error::LineIndex;
 use rowan::NodeOrToken;
@@ -500,6 +500,15 @@ impl<'a> Lower<'a> {
                 yes: operand(1)?,
                 no: operand(2)?,
             }),
+            MatchExpr => Some(Expr::Match {
+                pos,
+                scrut: operand(0)?,
+                arms: node
+                    .children()
+                    .filter(|n| n.kind() == MatchArm)
+                    .map(|arm| self.arm(&arm))
+                    .collect::<Option<_>>()?,
+            }),
             FnTypeExpr => Some(Expr::FnType {
                 pos,
                 params: self.fn_params(node)?,
@@ -522,6 +531,52 @@ impl<'a> Lower<'a> {
             }),
             _ => None,
         }
+    }
+
+    fn arm(&self, node: &SyntaxNode) -> Option<Arm> {
+        Some(Arm {
+            pat: self.pattern(&node.children().find(|n| n.kind() == SyntaxKind::Pattern)?)?,
+            value: self.expr(&node.children().find(is_expr)?)?,
+        })
+    }
+
+    fn pattern(&self, node: &SyntaxNode) -> Option<Pattern> {
+        let pos = self.pos_of(node);
+        let first = tokens(node).next()?;
+        Some(match first.kind() {
+            SyntaxKind::Dec | SyntaxKind::Hex | SyntaxKind::Bin => Pattern::Int {
+                pos,
+                neg: false,
+                value: number(first.text()),
+            },
+            SyntaxKind::Minus => Pattern::Int {
+                pos,
+                neg: true,
+                value: number(tokens(node).nth(1)?.text()),
+            },
+            SyntaxKind::TrueKw | SyntaxKind::FalseKw => Pattern::Bool {
+                pos,
+                value: first.kind() == SyntaxKind::TrueKw,
+            },
+            SyntaxKind::Ident if first.text() == "_" => Pattern::Wild { pos },
+            SyntaxKind::Ident => Pattern::Variant {
+                pos,
+                ty: self.ident_at(node, 0)?,
+                variant: self.ident_at(node, 1)?,
+                binders: tokens(node)
+                    .filter(|t| t.kind() == SyntaxKind::Ident)
+                    .skip(2)
+                    .map(|t| {
+                        (t.text() != "_").then(|| Ident {
+                            pos: self.pos_at(&t),
+                            id: self.id(),
+                            name: t.text().to_owned(),
+                        })
+                    })
+                    .collect(),
+            },
+            _ => return None,
+        })
     }
 
     /// A call, a receiver call, an index, a field, or a selector: the postfix forms, which
@@ -593,6 +648,7 @@ fn is_expr(node: &SyntaxNode) -> bool {
             | UnaryExpr
             | BinExpr
             | CondExpr
+            | MatchExpr
             | CallExpr
             | IndexExpr
             | FieldExpr

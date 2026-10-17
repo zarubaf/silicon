@@ -210,6 +210,12 @@ pub enum Expr {
         ty: Ident,
         variant: Ident,
     },
+    /// `match (scrut) { arms }`. It has the level of `Cond`.
+    Match {
+        pos: Pos,
+        scrut: Box<Expr>,
+        arms: Vec<Arm>,
+    },
     /// The array type `[T; N]` in an expression.
     ArrayType {
         pos: Pos,
@@ -222,6 +228,39 @@ pub enum Expr {
         params: Vec<FnParam>,
         ret: Box<TypeExpr>,
     },
+}
+
+/// A pattern of a `match` arm: `_`, an integer literal with its sign, `true`, `false`, or a
+/// variant path with one binder or `_` for each payload value. A binder `_` is `None`. A
+/// variant pattern without binders has an empty list, so `E::V` and `E::V()` give one AST.
+/// The position of a negative literal is the position of its `-`.
+#[cfg_attr(test, derive(Clone, Debug, PartialEq, Eq))]
+pub enum Pattern {
+    Wild {
+        pos: Pos,
+    },
+    Int {
+        pos: Pos,
+        neg: bool,
+        value: Nat,
+    },
+    Bool {
+        pos: Pos,
+        value: bool,
+    },
+    Variant {
+        pos: Pos,
+        ty: Ident,
+        variant: Ident,
+        binders: Vec<Option<Ident>>,
+    },
+}
+
+/// An arm of a `match`: a pattern and its expression.
+#[cfg_attr(test, derive(Clone, Debug, PartialEq, Eq))]
+pub struct Arm {
+    pub pat: Pattern,
+    pub value: Expr,
 }
 
 /// A type expression: a type name, a type family with its static arguments, the unit type,
@@ -523,6 +562,10 @@ impl Expr {
             }
             Expr::Field { base, .. } | Expr::Select { base, .. } => take_expr(base, work),
             Expr::Tuple { elems, .. } | Expr::Array { elems, .. } => take_exprs(elems, work),
+            Expr::Match { scrut, arms, .. } => {
+                take_expr(scrut, work);
+                work.extend(arms.drain(..).map(|arm| Pending::Expr(arm.value)));
+            }
             Expr::ArrayType { elem, len, .. } => {
                 take_type(elem, work);
                 take_expr(len, work);

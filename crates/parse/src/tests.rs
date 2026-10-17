@@ -63,6 +63,14 @@ fn sx(e: &Expr) -> String {
         Expr::Array { elems, .. } => format!("(array {})", list(elems)),
         Expr::Select { base, index, .. } => format!("(select {} {})", sx(base), index.as_str()),
         Expr::Path { ty, variant, .. } => format!("(path {} {})", ty.name, variant.name),
+        Expr::Match { scrut, arms, .. } => format!(
+            "(match {} {})",
+            sx(scrut),
+            arms.iter()
+                .map(|a| sx(&a.value))
+                .collect::<Vec<_>>()
+                .join(" ")
+        ),
         Expr::ArrayType { elem, len, .. } => format!("(arraytype {} {})", tx(elem), sx(len)),
         Expr::FnType { params, ret, .. } => format!("(fntype {})", fx(params, ret)),
     }
@@ -513,10 +521,6 @@ fn later_slice_syntax_is_s004() {
         ("const X: a::T = f;", 1, 11),
         ("const X: T = @field(x, \"f\");", 1, 14),
         ("enum E(T): U {}", 1, 7),
-        ("const X: T = match (x) { _ => 0 };", 1, 14),
-        ("const X: T = f(match (x) { _ => 0 });", 1, 16),
-        ("fn f() -> T { return match (x) { _ => 0 }; }", 1, 22),
-        ("fn f() -> T { match (x) { _ => 0 }; }", 1, 15),
     ];
     let wrong: Vec<_> = cases
         .iter()
@@ -981,6 +985,135 @@ fn enum_and_path_errors_have_the_lean_positions() {
         parse("const X: a::T = 1;").errors[0].message,
         "a package path is not supported yet; in this slice, a path is a variant `E::V` of an \
          enum `E`, in an expression or a pattern"
+    );
+}
+
+const PATTERN_TEXT: &str = "expected a pattern: an integer, `true`, `false`, `E::V(..)`, or `_`; compare with a constant in an `if`";
+
+/// The dump of the expression `e` in a `const`.
+fn expr_dump(e: &str) -> String {
+    let text = parse(&format!("const X: T = {e};"))
+        .dump()
+        .unwrap()
+        .unwrap();
+    text.strip_prefix("(const \"X\" (name \"T\") ")
+        .and_then(|t| t.strip_suffix(")\n"))
+        .unwrap_or(&text)
+        .to_owned()
+}
+
+#[test]
+fn match_dumps_like_lean() {
+    assert_eq!(
+        expr_dump(
+            "match (x) { 0 => 1, -3 => 2, true => a, false => b, Op::Add => 3, \
+             Op::Load(v) => v, Op::Pair(a, _,) => a, _ => 2, }"
+        ),
+        "(match (name \"x\") ((arm (int false 0) (num 1)) (arm (int true 3) (num 2)) \
+         (arm (bool true) (name \"a\")) (arm (bool false) (name \"b\")) \
+         (arm (variant \"Op\" \"Add\" ()) (num 3)) \
+         (arm (variant \"Op\" \"Load\" ((some \"v\"))) (name \"v\")) \
+         (arm (variant \"Op\" \"Pair\" ((some \"a\") none)) (name \"a\")) (arm (wild) (num 2))))"
+    );
+    assert_eq!(
+        expr_dump("match (x) { Op::Add() => 1 }"),
+        expr_dump("match (x) { Op::Add => 1 }")
+    );
+    assert_eq!(expr_dump("match (x) {}"), "(match (name \"x\") ())");
+    assert_eq!(
+        expr_dump("match (x) { _ => match (y) { _ => 1 } }"),
+        "(match (name \"x\") ((arm (wild) (match (name \"y\") ((arm (wild) (num 1)))))))"
+    );
+    assert_eq!(
+        expr_dump("if (match (x) { _ => c }) { 1 } else { 2 }"),
+        "(cond (match (name \"x\") ((arm (wild) (name \"c\")))) (num 1) (num 2))"
+    );
+    assert_eq!(
+        expr_dump("f(match (x) { _ => 1 })"),
+        "(call (name \"f\") ((match (name \"x\") ((arm (wild) (num 1))))))"
+    );
+    assert_eq!(
+        expr_dump("a + (match (x) { _ => 1 })"),
+        "(binary add (name \"a\") (match (name \"x\") ((arm (wild) (num 1)))))"
+    );
+    assert_eq!(
+        expr_dump("match (x) { 0x10 => 1 }"),
+        expr_dump("match (x) { 16 => 1 }")
+    );
+}
+
+#[test]
+fn match_statements_parse() {
+    for source in [
+        "fn f() -> T { return match (x) { _ => 0 }; }",
+        "fn f() -> T { match (x) { _ => 0 }; }",
+        "fn f() -> T { let y = match (x) { true => 1, false => 2 }; return y; }",
+    ] {
+        let parsed = parse(source);
+        assert!(parsed.errors.is_empty(), "{source}: {:?}", parsed.errors);
+    }
+}
+
+#[test]
+fn match_errors_are_at_the_first_bad_token() {
+    let cases = [
+        ("const X: T = match (x) { a => 1 };", Code::S001, 1, 28),
+        (
+            "const X: T = match (x) { E::V(F::W) => 1 };",
+            Code::S001,
+            1,
+            32,
+        ),
+        (
+            "const X: T = match (x) { E::V(1) => 1 };",
+            Code::S001,
+            1,
+            31,
+        ),
+        (
+            "const X: T = match (x) { E::V(a b) => 1 };",
+            Code::S001,
+            1,
+            33,
+        ),
+        ("const X: T = match (x) { E::1 => 1 };", Code::S001, 1, 29),
+        ("const X: T = match (x) { (1) => 1 };", Code::S001, 1, 26),
+        ("const X: T = match (x) { 1 + 2 => 1 };", Code::S001, 1, 28),
+        ("const X: T = match (x) { 1..3 => 1 };", Code::S001, 1, 27),
+        ("const X: T = match (x) { 1 | 2 => 1 };", Code::S001, 1, 28),
+        ("const X: T = match (x) { - x => 1 };", Code::S001, 1, 28),
+        ("const X: T = match (x) { _::V => 1 };", Code::S001, 1, 27),
+        (
+            "const X: T = match (x) { E::V::W => 1 };",
+            Code::S004,
+            1,
+            30,
+        ),
+        ("const X: T = match x { _ => 1 };", Code::S001, 1, 20),
+        (
+            "const X: T = match (x) { 1 => 1 2 => 3 };",
+            Code::S001,
+            1,
+            33,
+        ),
+        ("const X: T = match (x) { 1 => 1,, };", Code::S001, 1, 33),
+        (
+            "const X: T = match (x) { _ => 1 + match (y) { _ => 1 } };",
+            Code::S001,
+            1,
+            35,
+        ),
+        ("const X: T = match (x) { _ => 1 } + 1;", Code::S001, 1, 35),
+    ];
+    let wrong: Vec<_> = cases
+        .iter()
+        .filter(|(input, code, line, col)| first_error(input) != Some((*code, *line, *col)))
+        .map(|(input, ..)| (input, first_error(input)))
+        .collect();
+    assert_eq!(wrong, []);
+    assert_eq!(
+        parse("const X: T = match (x) { a => 1 };").errors[0].message,
+        PATTERN_TEXT
     );
 }
 

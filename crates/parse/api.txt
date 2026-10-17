@@ -6,6 +6,7 @@ enum parse::ast::BinOp
 enum parse::ast::Expr
 enum parse::ast::Item
 enum parse::ast::ParamMode
+enum parse::ast::Pattern
 enum parse::ast::Stmt
 enum parse::ast::TypeExpr
 enum parse::ast::UnOp
@@ -34,6 +35,7 @@ struct parse::NestedStack
 struct parse::Parse
 struct parse::ParsedExpr
 struct parse::StackError
+struct parse::ast::Arm
 struct parse::ast::FnParam
 struct parse::ast::Ident
 struct parse::ast::Nat
