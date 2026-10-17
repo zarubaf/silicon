@@ -1,0 +1,26 @@
+// A state machine whose state is an enum register with payloads. `Idle` waits for a start,
+// `Run` counts down a payload, `Done` holds a result until it is taken.
+// TOP Fsm()
+enum State: UInt[2] {
+    Idle = 0,
+    Run(UInt[4]) = 1,
+    Done(UInt[4]) = 2,
+}
+module Fsm() {
+    input start: Bool;
+    input length: UInt[4];
+    input take: Bool;
+    output busy: Bool;
+    output ready: Bool;
+    output left: UInt[4];
+    reg state: State = State::Idle;
+    state := match (state) {
+        State::Idle => if (start) { State::Run(length) } else { State::Idle },
+        State::Run(n) => if (n == 0) { State::Done(length) } else { State::Run(n -% 1) },
+        State::Done(r) => if (take) { State::Idle } else { State::Done(r) },
+        _ => State::Idle,
+    };
+    busy := match (state) { State::Run(_) => true, _ => false };
+    ready := match (state) { State::Done(_) => true, _ => false };
+    left := match (state) { State::Run(n) => n, State::Done(r) => r, _ => 0 };
+}
