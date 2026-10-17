@@ -50,9 +50,9 @@ impl Point {
     }
 }
 
-/// The verdict on a series of points, one for each size. `Err` names the failed check.
+/// The absolute check on a series of points, one for each size. `Err` names the failed size.
 #[allow(clippy::cast_precision_loss)]
-fn judge(points: &[Point], c: f64) -> Result<(), String> {
+fn within_bound(points: &[Point], c: f64) -> Result<(), String> {
     for (k, p) in points.iter().enumerate() {
         if p.w as f64 > c * p.bound() {
             return Err(format!(
@@ -62,6 +62,13 @@ fn judge(points: &[Point], c: f64) -> Result<(), String> {
             ));
         }
     }
+    Ok(())
+}
+
+/// The verdict on a series of runs with the whole fuel: the absolute check, then the growth.
+#[allow(clippy::cast_precision_loss)]
+fn judge(points: &[Point], c: f64) -> Result<(), String> {
+    within_bound(points, c)?;
     // The increments cancel the part of the program that does not scale. `last` is the
     // increment of the step before, and `growths` holds the growth of each step that has one.
     let mut last: Option<f64> = None;
@@ -224,24 +231,61 @@ fn table(sizes: &[u64], points: &[Point]) -> String {
     out
 }
 
-/// Each template stays within the bound and grows no faster than its fuel. A template that the
-/// front end rejects fails: a template is a program that the front end accepts.
+/// The fractions of the fuel of a successful run at which the run must fail with `S015`. The
+/// bound of the work holds at every budget (front-end spec 5.4), so a charge that comes after its
+/// work shows here.
+const FRACTIONS: [u64; 3] = [2, 4, 16];
+
+/// The point of a run with the fuel `fuel` that ends in `S015`: the work that the run made before
+/// it stopped, and the fuel as the budget.
+fn capped(src: &str, top: &str, fuel: u64) -> Result<Point, String> {
+    match lowered(src, top, fuel) {
+        Ok(_) => Err(format!("the run with the fuel {fuel} succeeds")),
+        Err(e) if e.starts_with("S015") => Ok(Point {
+            w: of(fuel).total(),
+            f: fuel,
+            s: src.len() as u64,
+            scan: of(fuel).ast,
+        }),
+        Err(e) => Err(format!("the run with the fuel {fuel} gives {e}")),
+    }
+}
+
+/// Each template stays within the bound with the whole fuel and with a fraction of it, and grows
+/// no faster than its fuel with the whole fuel. A template that the front end rejects fails: a template is a
+/// program that the front end accepts.
 #[test]
 fn the_templates_stay_in_the_bound() {
     let all = templates();
     assert!(!all.is_empty(), "no template");
     for (path, text) in all {
         let t = parse(&text).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-        let mut points = Vec::new();
+        let mut full = Vec::new();
+        let mut cut: Vec<Vec<Point>> = vec![Vec::new(); FRACTIONS.len()];
         for n in &t.sizes {
             let src = expand(&t, *n).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-            match measure(&src, &t.top) {
-                Ok(p) => points.push(p),
-                Err(e) => panic!("{}: N={n} is rejected: {e}\n{src}", t.name),
+            let p = measure(&src, &t.top)
+                .unwrap_or_else(|e| panic!("{}: N={n} is rejected: {e}\n{src}", t.name));
+            for (series, d) in cut.iter_mut().zip(FRACTIONS) {
+                let q = capped(&src, &t.top, p.f / d)
+                    .unwrap_or_else(|e| panic!("{}: N={n}, fuel/{d}: {e}", t.name));
+                series.push(q);
             }
+            full.push(p);
         }
-        if let Err(why) = judge(&points, C) {
-            panic!("scaling {}: {why}\n{}", t.name, table(&t.sizes, &points));
+        if let Err(why) = judge(&full, C) {
+            panic!("scaling {}: {why}\n{}", t.name, table(&t.sizes, &full));
+        }
+        for (series, d) in cut.iter().zip(FRACTIONS) {
+            // The run stops in a phase that depends on the size, so the work for each unit of
+            // fuel is not a growth here. Only the bound is.
+            if let Err(why) = within_bound(series, C) {
+                panic!(
+                    "scaling {} at fuel/{d}: {why}\n{}",
+                    t.name,
+                    table(&t.sizes, series)
+                );
+            }
         }
     }
 }
