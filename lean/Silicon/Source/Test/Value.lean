@@ -407,4 +407,34 @@ def flag : Ty := .enum 8 "Flag" (Meta.enum 1 0)
 #guard (Value.enum op 2 1 8 3).cmp (.enum op 2 1 8 2) == .gt
 #guard (Value.enum op 2 1 8 3).cmp (.enum op 2 1 8 3) == .eq
 
+/-!
+The text of a type or a value in a message has at most 1024 bytes, cut at a character, and then
+`...` (section 5.5). The walk stops soon after the bound, so a type with `2^64` parts prints at
+once. An integer above 256 bits prints its bit length.
+-/
+def tall : Nat → Ty
+  | 0 => .bool
+  | k + 1 => .list (tall k)
+def wide (k : Nat) : Ty := .tuple (Array.replicate k (.uint 8))
+def huge : Nat → Ty
+  | 0 => .bool
+  | k + 1 => let t := huge k; .tuple #[t, t]
+#guard (tall 300).text.utf8ByteSize == 1027 && (tall 300).text.endsWith "List[List..."
+#guard (tall 170).text.utf8ByteSize == 1024 && (tall 170).text.endsWith "]]]"
+#guard (wide 113).text.utf8ByteSize == 1017 && (wide 113).text.endsWith "UInt[8])"
+#guard (wide 114).text.utf8ByteSize == 1027 && (wide 114).text.endsWith "UInt[8..."
+def named (n : Nat) : Ty := .struct 0 "S" #[.str (String.ofList (List.replicate n 'a'))] Meta.static
+#guard (named 1019).text == "S[\"" ++ String.ofList (List.replicate 1019 'a') ++ "\"]"
+#guard (named 1020).text == "S[\"" ++ String.ofList (List.replicate 1020 'a') ++ "\"..."
+#guard (huge 64).text.utf8ByteSize == 1027 && (huge 64).text.endsWith "(((Bool, Bo..."
+#guard (Value.tuple (Array.replicate 1000 (.uint 8 0))).text.utf8ByteSize == 1027
+#guard (Value.str (String.ofList (List.replicate 5000 'é'))).literal.utf8ByteSize == 1026
+#guard (Ty.struct 0 "S" #[.str (String.ofList (List.replicate 5000 'é'))] Meta.static).text ==
+  "S[\"" ++ String.ofList (List.replicate 510 'é') ++ "..."
+#guard (Ty.array .bool (2 ^ 256)).text == "[Bool; an integer of 257 bits]"
+#guard (Ty.struct 0 "P" #[.int (-(2 ^ 300))] Meta.static).text ==
+  "P[a negative integer of 301 bits]"
+#guard (Value.enum (.enum 0 "E" (Meta.enum 300 0)) 300 (2 ^ 299) 0 0).literal ==
+  "an integer of 300 bits"
+
 end Silicon.Source.Test.Value

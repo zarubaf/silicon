@@ -50,6 +50,8 @@ These rules settle the open points of the spec:
   `(enum <type> <tag> (uint P <payload>))`, without the payload when `P` is 0. Its size and its
   depth are those of a record with the parts `tag` and `payload`. In a message, its tag prints
   as its integer, because the value does not hold the name of a variant.
+- A text of a type or a value in a message has at most 1024 bytes and then `...`. Each integer
+  in it is decimal up to 256 bits (section 5.5).
 -/
 namespace Silicon.Source
 
@@ -632,57 +634,94 @@ def intText (n : Int) : String :=
   if bits ≤ 256 then toString n
   else s!"{if n < 0 then "a negative" else "an"} integer of {bits} bits"
 
+/-! The longest text of a type or a value in a message, before `...` (section 5.5). -/
+def textLimit : Nat := 1024
+
+/-! The longest prefix of `cs` with at most `n` bytes in UTF-8. -/
+def takeBytes : List Char → Nat → List Char
+  | [], _ => []
+  | c :: cs, n => if c.utf8Size ≤ n then c :: takeBytes cs (n - c.utf8Size) else []
+
+/-!
+The text `s` in a message: `s` when it has at most `textLimit` bytes, else its longest prefix
+of at most `textLimit` bytes that ends at a character, then `...`.
+-/
+def boundText (s : String) : String :=
+  if s.utf8ByteSize ≤ textLimit then s
+  else String.ofList (takeBytes s.toList textLimit) ++ "..."
+
 /-!
 The text of a type in a message, and the source text of a static argument in it. A struct type
 prints its item, with its arguments in brackets when it has any: `P[8]`. A function type prints
 in its source form, and a function value prints its item. An enum type prints its name, and an
-enum value its tag, because the value does not hold the name of its variant.
+enum value its tag, because the value does not hold the name of its variant. Each integer
+prints as `intText` does.
+
+Each walk appends to the text `o` so far, and it stops when `o` has more than `textLimit` bytes.
+Each piece that it appends is short: a string argument appends at most `textLimit + 1`
+characters. Thus the walk of a huge type stops soon after the bound, and `boundText` cuts its
+text (section 5.5).
 -/
 mutual
-  def Ty.text : Ty → String
-    | .bool => "Bool" | .nat => "Nat" | .int => "Int"
-    | .uint w => s!"UInt[{w}]" | .sint w => s!"SInt[{w}]"
-    | .unit => "Unit"
-    | .type => "Type"
-    | .array t n => s!"[{t.text}; {n}]"
-    | .tuple ⟨[t]⟩ => s!"({t.text},)"
-    | .tuple ⟨ts⟩ => "(" ++ ", ".intercalate (Ty.textAll ts) ++ ")"
-    | .struct _ i ⟨[]⟩ _ _ => i
-    | .struct _ i ⟨xs⟩ _ _ => i ++ "[" ++ ", ".intercalate (Value.literalAll xs) ++ "]"
-    | .string => "String"
-    | .list t => s!"List[{t.text}]"
-    | .fn ⟨ps⟩ r => Print.fnText (TyParam.textAll ps) r.text
-    | .enum _ x _ => x
+  def Ty.put (o : String) (t : Ty) : String :=
+    if textLimit < o.utf8ByteSize then o
+    else match t with
+    | .bool => o ++ "Bool" | .nat => o ++ "Nat" | .int => o ++ "Int"
+    | .uint w => o ++ s!"UInt[{w}]" | .sint w => o ++ s!"SInt[{w}]"
+    | .unit => o ++ "Unit"
+    | .type => o ++ "Type"
+    | .array t n => t.put (o ++ "[") ++ s!"; {intText n}]"
+    | .tuple ⟨[t]⟩ => t.put (o ++ "(") ++ ",)"
+    | .tuple ⟨ts⟩ => Ty.putAll (o ++ "(") ts ++ ")"
+    | .struct _ i ⟨[]⟩ _ _ => o ++ i
+    | .struct _ i ⟨xs⟩ _ _ => Value.putAll (o ++ i ++ "[") xs ++ "]"
+    | .string => o ++ "String"
+    | .list t => t.put (o ++ "List[") ++ "]"
+    | .fn ⟨ps⟩ r => r.put (TyParam.putAll (o ++ "fn (") ps ++ ") -> ")
+    | .enum _ x _ => o ++ x
 
-  def Ty.textAll : List Ty → List String
-    | [] => []
-    | t :: ts => t.text :: Ty.textAll ts
+  /-- The types `ts` with `, ` between them. -/
+  def Ty.putAll (o : String) : List Ty → String
+    | [] => o
+    | [t] => t.put o
+    | t :: ts => Ty.putAll (t.put o ++ ", ") ts
 
-  def TyParam.textAll : List TyParam → List String
-    | [] => []
-    | .mk m t :: ps => ((if m then "mut " else "") ++ t.text) :: TyParam.textAll ps
+  def TyParam.putAll (o : String) : List TyParam → String
+    | [] => o
+    | [.mk m t] => t.put (if m then o ++ "mut " else o)
+    | .mk m t :: ps => TyParam.putAll (t.put (if m then o ++ "mut " else o) ++ ", ") ps
 
-  def Value.literal : Value → String
-    | .int n => toString n
-    | .bool b => Print.boolean b
-    | .str s => Print.quote s
-    | .uint _ v => toString v.toNat
-    | .sint _ v => toString v.toInt
-    | .type t => t.text
-    | .unit => "()"
-    | .array _ ⟨xs⟩ => "[" ++ ", ".intercalate (Value.literalAll xs) ++ "]"
-    | .tuple ⟨[x]⟩ => s!"({x.literal},)"
-    | .tuple ⟨xs⟩ => "(" ++ ", ".intercalate (Value.literalAll xs) ++ ")"
-    | .record t ⟨xs⟩ => t.text ++ "(" ++ ", ".intercalate (Value.literalAll xs) ++ ")"
-    | .list t ⟨[]⟩ => s!"list({t.text})"
-    | .list _ ⟨xs⟩ => "[" ++ ", ".intercalate (Value.literalAll xs) ++ "]"
-    | .function _ i _ _ => i
-    | .enum _ _ x _ _ => toString x.toNat
+  def Value.put (o : String) (v : Value) : String :=
+    if textLimit < o.utf8ByteSize then o
+    else match v with
+    | .int n => o ++ intText n
+    | .bool b => o ++ Print.boolean b
+    | .str s => o ++ Print.quote (s.take (textLimit + 1)).toString
+    | .uint _ v => o ++ intText v.toNat
+    | .sint _ v => o ++ intText v.toInt
+    | .type t => t.put o
+    | .unit => o ++ "()"
+    | .array _ ⟨xs⟩ => Value.putAll (o ++ "[") xs ++ "]"
+    | .tuple ⟨[x]⟩ => x.put (o ++ "(") ++ ",)"
+    | .tuple ⟨xs⟩ => Value.putAll (o ++ "(") xs ++ ")"
+    | .record t ⟨xs⟩ => Value.putAll (t.put o ++ "(") xs ++ ")"
+    | .list t ⟨[]⟩ => t.put (o ++ "list(") ++ ")"
+    | .list _ ⟨xs⟩ => Value.putAll (o ++ "[") xs ++ "]"
+    | .function _ i _ _ => o ++ i
+    | .enum _ _ x _ _ => o ++ intText x.toNat
 
-  def Value.literalAll : List Value → List String
-    | [] => []
-    | x :: xs => x.literal :: Value.literalAll xs
+  /-- The literals `xs` with `, ` between them. -/
+  def Value.putAll (o : String) : List Value → String
+    | [] => o
+    | [x] => x.put o
+    | x :: xs => Value.putAll (x.put o ++ ", ") xs
 end
+
+/-! The text of a type in a message, at most `textLimit` bytes and `...`. -/
+def Ty.text (t : Ty) : String := boundText (t.put "")
+
+/-! The source text of a static argument in a message, at most `textLimit` bytes and `...`. -/
+def Value.literal (v : Value) : String := boundText (v.put "")
 
 /-! The type of a value. A type value has the type `Type`, and a function its signature. -/
 mutual
@@ -706,11 +745,29 @@ mutual
     | x :: xs => do return (← x.ty?) :: (← Value.tyAll? xs)
 end
 
+/-!
+The text of the type of a value, appended to `o`. A tuple walks its elements, so it builds no
+type. Each other value has its type in one step.
+-/
+mutual
+  def Value.putTy (o : String) (v : Value) : String :=
+    if textLimit < o.utf8ByteSize then o
+    else match v with
+    | .tuple ⟨[x]⟩ => x.putTy (o ++ "(") ++ ",)"
+    | .tuple ⟨xs⟩ => Value.putTyAll (o ++ "(") xs ++ ")"
+    | v => (v.ty?.map (·.put o)).getD o
+
+  def Value.putTyAll (o : String) : List Value → String
+    | [] => o
+    | [x] => x.putTy o
+    | x :: xs => Value.putTyAll (x.putTy o ++ ", ") xs
+end
+
 /-! The text of a value in a message: its type, or its own text for a string and a type. -/
 def Value.text : Value → String
   | .str _ => "a string"
   | .type _ => "a type"
-  | v => (v.ty?.map Ty.text).getD "a tuple"
+  | v => boundText (v.putTy "")
 
 def Value.finiteTy? : Value → Option Ty
   | .uint w _ => some (.uint w)
