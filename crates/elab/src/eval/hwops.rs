@@ -10,12 +10,12 @@
 use super::{Evaluator, Naming, Opnd, Res, Store, at, fail};
 use crate::Code;
 use crate::agg::{Agg, Base};
-use crate::hw::{Graph, HwId, Node, Op, Seen, Val};
+use crate::hw::{Graph, HwId, Op, Seen, Val};
 use crate::int::{Int, unsigned_size};
 use crate::names::{Paths, Step};
 use crate::ops::{self, Fuel, MAX_WIDTH, binop_text, int_text, unop_text};
 use crate::types::{Ty, TyId, Types};
-use crate::value::{Value, int_size, width_size};
+use crate::value::{Value, int_size};
 use parse::ast::{BinOp, Pos, UnOp};
 use resolve::Prelude;
 
@@ -91,7 +91,7 @@ pub(super) enum Side<'a> {
 
 impl<'a> Side<'a> {
     /// The part in the form of the walk: a static part or a leaf is a value of its own.
-    fn of_agg(a: &'a Agg) -> Side<'a> {
+    pub(super) fn of_agg(a: &'a Agg) -> Side<'a> {
         match a {
             Agg::Static(v) => Side::Val(v),
             Agg::Hw(h) => Side::Hw(*h),
@@ -248,7 +248,7 @@ fn part_sides<'a>(
 }
 
 /// The scalar type of a part type, if it is a data scalar.
-fn leaf_ty(t: &Ty) -> Option<Ty> {
+pub(super) fn leaf_ty(t: &Ty) -> Option<Ty> {
     matches!(t, Ty::Bool | Ty::UInt(_) | Ty::SInt(_)).then(|| t.clone())
 }
 
@@ -1081,292 +1081,6 @@ impl Evaluator<'_> {
         }
         let one = self.lit(pos, Value::Bool(true))?;
         self.node(pos, Ty::Bool, Op::Bin(BinOp::Xor), vec![chain, one])
-    }
-
-    /// The hardware leaf of the scalar type `ty` that the side gives: a constant for a static
-    /// leaf, the node itself for a hardware leaf.
-    fn pack_leaf(&mut self, pos: Pos, side: &Side<'_>, width: u32) -> Res<HwId> {
-        match (side, side.value()) {
-            (Side::Hw(h), _) => Ok(*h),
-            (_, Some(v)) => lit_of(pos, v.clone(), &mut self.graph, &self.tys),
-            _ => fail(
-                Code::S010,
-                pos,
-                format!("a part of UInt[{width}] has no leaves"),
-            ),
-        }
-    }
-
-    /// Pushes the hardware leaves of the part `side` of the type `ty` onto `leaves`, in packing
-    /// order (section 7.4). A static leaf is a constant, and a leaf of a reference refers to its
-    /// name, so the walk never expands a reference into a node. A part without a leaf adds
-    /// nothing, and the metadata tells it with no walk. The walk keeps its own stack. The copies
-    /// of the payload values paid for each part that it visits.
-    fn pack_collect(
-        &mut self,
-        pos: Pos,
-        width: u32,
-        (ty, side): (TyId, Side<'_>),
-        leaves: &mut Vec<HwId>,
-    ) -> Res<()> {
-        /// A container whose parts wait: the next part to visit and the count.
-        struct Frame<'a> {
-            ty: TyId,
-            side: Side<'a>,
-            next: u64,
-            len: u64,
-        }
-        let mut stack: Vec<Frame<'_>> = Vec::new();
-        let mut visit = Some((ty, side));
-        loop {
-            if let Some((t, side)) = visit.take()
-                && !self.tys.meta(t).leaves.is_zero()
-            {
-                #[cfg(test)]
-                crate::counters::add(crate::counters::Count::Packed, 1);
-                let len = match self.tys.get(t) {
-                    Ty::Bool | Ty::UInt(_) | Ty::SInt(_) => {
-                        leaves.push(self.pack_leaf(pos, &side, width)?);
-                        None
-                    }
-                    Ty::Array(_, n) => Some(n.to_u64().unwrap_or(u64::MAX)),
-                    Ty::Tuple(ts) => Some(ts.len() as u64),
-                    Ty::Struct(_) | Ty::Enum(_) => {
-                        Some(self.tys.parts(t).map_or(0, |p| p.types.len() as u64))
-                    }
-                    _ => {
-                        return fail(
-                            Code::S010,
-                            pos,
-                            format!("a part of UInt[{width}] has no leaves"),
-                        );
-                    }
-                };
-                if let Some(len) = len {
-                    stack.push(Frame {
-                        ty: t,
-                        side,
-                        next: 0,
-                        len,
-                    });
-                }
-            }
-            let Some(top) = stack.last_mut() else {
-                return Ok(());
-            };
-            if top.next >= top.len {
-                stack.pop();
-                continue;
-            }
-            let part = top.next;
-            top.next += 1;
-            let (ct, step, offset) = self.child_of(pos, top.ty, part)?;
-            let leaf = leaf_ty(self.tys.get(ct));
-            let empty = leaf.is_none() && self.tys.meta(ct).leaves.is_zero();
-            let env = (&mut self.graph, &mut self.paths);
-            let idx = usize::try_from(part).unwrap_or(usize::MAX);
-            let Some(child) = top
-                .side
-                .child(idx, (&step, offset, leaf.as_ref(), empty), pos, env)
-            else {
-                return fail(
-                    Code::S010,
-                    pos,
-                    format!("a part of UInt[{width}] has no leaves"),
-                );
-            };
-            visit = Some((ct, child));
-        }
-    }
-
-    /// The hardware pack at `pos` into `UInt[width]` of the leaves of the parts `parts`, each
-    /// with its type, in packing order (`Op::Pack`, section 7.4). The node has no charge here:
-    /// the lowering charges each core node of a pack.
-    pub(super) fn pack_hw(&mut self, pos: Pos, width: u32, parts: &[(TyId, Val)]) -> Res<HwId> {
-        let mut leaves = Vec::new();
-        for (ty, val) in parts {
-            let side = match val {
-                Val::Static(v) => Side::Val(v),
-                Val::Hw(h) => Side::Hw(*h),
-                Val::Agg(a) => Side::of_agg(a),
-                Val::Handle(_) | Val::Pending(..) => {
-                    return fail(
-                        Code::S010,
-                        pos,
-                        format!("a part of UInt[{width}] has no leaves"),
-                    );
-                }
-            };
-            self.pack_collect(pos, width, (*ty, side), &mut leaves)?;
-        }
-        Ok(self.graph.mk(pos, Ty::UInt(width), Op::Pack(width), leaves))
-    }
-
-    /// The enum type that the data `d` has, if any.
-    pub(super) fn enum_of(&self, d: &Opnd) -> Option<TyId> {
-        let Opnd::Static(out) = d else {
-            return None;
-        };
-        let t = match self.store.seen(out) {
-            Seen::Static(Value::Enum(t, ..)) => *t,
-            Seen::Agg(a) => a.stored_ty()?,
-            _ => return None,
-        };
-        matches!(self.tys.get(t), Ty::Enum(_)).then_some(t)
-    }
-
-    /// `reinterpret` at `pos` between an enum and its bits (F26), after the copies of its
-    /// arguments. The other side has exactly the type `UInt[W + P]`, else `S010` at the call.
-    /// The tag is in the low `W` bits, and the payload in the next `P` bits.
-    ///
-    /// - A static unpack or pack charges the size of its result, as a conversion does
-    ///   (section 5.4). It splits or joins the bits with no loop over the bits.
-    /// - A hardware unpack of `b` gives an enum node with `(extract b 0 W)` and
-    ///   `(extract b W P)`. Both leaves read `b`, so `b` gets one mark of a shared operand. The
-    ///   mark charges the size of `b` after the type check. With `P` 0, the tag is `b`.
-    /// - A hardware pack gives `(pack (W + P) tag payload)`. With `P` 0, it gives the tag leaf.
-    /// - A hardware node has no charge here: the lowering charges each core node (section 7.4).
-    pub(super) fn recast(&mut self, pos: Pos, to: TyId, d: Opnd) -> Res<Val> {
-        if matches!(self.tys.get(to), Ty::Enum(_)) {
-            return self.unpack(pos, to, &d);
-        }
-        let Some(from) = self.enum_of(&d) else {
-            return fail(
-                Code::S010,
-                pos,
-                format!(
-                    "`reinterpret` needs an enum here, not {}",
-                    self.opnd_text(&d)
-                ),
-            );
-        };
-        self.pack(pos, to, from, d)
-    }
-
-    /// The depth check of a new enum value of the type `t` at `pos` (section 5.5): 1 more than
-    /// its type. It comes before the value, the charge, and the shared mark exist.
-    pub(super) fn enum_depth(&self, pos: Pos, t: TyId) -> Res<()> {
-        self.bounded(pos, 1 + t.depth().max(1))
-    }
-
-    /// The enum value of the type `to` from the bits `d`.
-    fn unpack(&mut self, pos: Pos, to: TyId, d: &Opnd) -> Res<Val> {
-        let Some(widths) = self.tys.widths(to) else {
-            return fail(
-                Code::S010,
-                pos,
-                format!("{} has no entry", self.tys.text(to)),
-            );
-        };
-        let total = widths.tag + widths.payload;
-        let bad = |ev: &Self| {
-            fail(
-                Code::S010,
-                pos,
-                format!(
-                    "`reinterpret` makes {} only from UInt[{total}], not {}",
-                    ev.tys.text(to),
-                    ev.opnd_text(d)
-                ),
-            )
-        };
-        match d {
-            Opnd::Static(out) => {
-                let Seen::Static(Value::UInt(x)) = self.store.seen(out) else {
-                    return bad(self);
-                };
-                if x.width() != total {
-                    return bad(self);
-                }
-                self.enum_depth(pos, to)?;
-                let x = x.clone();
-                // The size does not read the bits, so the charge comes before the split.
-                let size = 1
-                    + width_size(widths.tag)
-                    + if widths.payload == 0 {
-                        0
-                    } else {
-                        width_size(widths.payload)
-                    };
-                self.charge(pos, u128::from(size))?;
-                let tag = x.extract(0, widths.tag);
-                let payload = (widths.payload > 0).then(|| x.extract(widths.tag, widths.payload));
-                Ok(Val::Static(Value::Enum(to, tag, payload)))
-            }
-            Opnd::Hw(b) => {
-                let b = *b;
-                if self.graph.ty(b) != Ty::UInt(total) {
-                    return bad(self);
-                }
-                self.enum_depth(pos, to)?;
-                let parts = if widths.payload == 0 {
-                    vec![Agg::Hw(b)]
-                } else {
-                    let env = (&mut self.fuel, &mut self.graph, &mut self.naming);
-                    let b = share(pos, 2, env, b)?;
-                    let tag_ty = Ty::UInt(widths.tag);
-                    let extract = Op::Extract {
-                        off: 0,
-                        w: widths.tag,
-                    };
-                    let tag = self.graph.mk(pos, tag_ty, extract, vec![b]);
-                    let payload_ty = Ty::UInt(widths.payload);
-                    let extract = Op::Extract {
-                        off: widths.tag,
-                        w: widths.payload,
-                    };
-                    let payload = self.graph.mk(pos, payload_ty, extract, vec![b]);
-                    vec![Agg::Hw(tag), Agg::Hw(payload)]
-                };
-                let Some(node) = Agg::node(&self.graph, &self.tys, to, parts) else {
-                    return fail(Code::S010, pos, "the part has the wrong shape".to_owned());
-                };
-                Ok(node.into_val())
-            }
-        }
-    }
-
-    /// The bits `UInt[W + P]` of the enum value `d` of the enum type `from`.
-    fn pack(&mut self, pos: Pos, to: TyId, from: TyId, d: Opnd) -> Res<Val> {
-        let Some(widths) = self.tys.widths(from) else {
-            return fail(
-                Code::S010,
-                pos,
-                format!("{} has no entry", self.tys.text(from)),
-            );
-        };
-        let total = widths.tag + widths.payload;
-        if *self.tys.get(to) != Ty::UInt(total) {
-            return fail(
-                Code::S010,
-                pos,
-                format!(
-                    "`reinterpret` gives the bits of {} only as UInt[{total}], not {}",
-                    self.tys.text(from),
-                    self.tys.text(to)
-                ),
-            );
-        }
-        let Opnd::Static(out) = d else {
-            return fail(Code::S010, pos, "an enum is not hardware data".to_owned());
-        };
-        if let Seen::Static(Value::Enum(_, tag, payload)) = self.store.seen(&out) {
-            let bits = match payload {
-                Some(p) => p.concat(tag),
-                None => tag.clone(),
-            };
-            self.charge(pos, u128::from(width_size(total)))?;
-            return Ok(Val::Static(Value::UInt(bits)));
-        }
-        let val = self.store.take(out);
-        let h = self.pack_hw(pos, total, &[(from, val)])?;
-        if widths.payload == 0
-            && let Some(Node { args, .. }) = self.graph.node(h)
-            && let [tag] = args.as_slice()
-        {
-            return Ok(Val::Hw(*tag));
-        }
-        Ok(Val::Hw(h))
     }
 
     /// `resize` or `reinterpret` of a hardware value.

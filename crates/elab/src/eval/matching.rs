@@ -13,7 +13,6 @@ use super::container::Piece;
 use super::hwops::{Side, onehot_leaf, share};
 use super::{Evaluator, Guard, GuardKind, Names, Opnd, Out, Res, Slot, at, expr_pos, fail, need};
 use crate::Code;
-use crate::agg::Agg;
 use crate::cover::{Cover, all_keys, key_bits, key_lo};
 use crate::hw::Graph;
 use crate::hw::{HwId, Op, Seen, Val};
@@ -499,102 +498,6 @@ impl Evaluator<'_> {
             );
         }
         Ok(())
-    }
-
-    /// The hardware unpack of the payload leaf `y` from the bit `off` into a value of the type
-    /// `t` at `pos` (section 7.4). A data scalar is one `extract` node of `y`, charged as a
-    /// hardware operation with one operand: 2. A part without a leaf is its static value, which
-    /// the metadata tells with no walk. The other parts keep the packing order. The zero size of
-    /// the binder type paid for the walk before (section 5.4). The walk keeps its own stack.
-    fn unpack_hw(&mut self, pos: Pos, y: HwId, t: TyId, off: u64) -> Res<Agg> {
-        enum Step {
-            Visit(TyId, u64),
-            Node(TyId, usize),
-        }
-        let mut done: Vec<Agg> = Vec::new();
-        let mut work = vec![Step::Visit(t, off)];
-        while let Some(step) = work.pop() {
-            let (t, off) = match step {
-                Step::Visit(t, off) => (t, off),
-                Step::Node(t, n) => {
-                    let xs = done.split_off(done.len().saturating_sub(n));
-                    let Some(node) = Agg::node(&self.graph, &self.tys, t, xs) else {
-                        return fail(Code::S010, pos, "the part has the wrong shape".to_owned());
-                    };
-                    done.push(node);
-                    continue;
-                }
-            };
-            if self.tys.meta(t).leaves.is_zero() {
-                let Some(v) = unpack(&self.tys, &[], t, off) else {
-                    return fail(
-                        Code::S010,
-                        pos,
-                        format!("{} has no static unpack", self.tys.text(t)),
-                    );
-                };
-                done.push(Agg::Static(v));
-                continue;
-            }
-            #[cfg(test)]
-            crate::counters::add(crate::counters::Count::Unpacked, 1);
-            match self.tys.get(t).clone() {
-                scalar @ (Ty::Bool | Ty::UInt(_) | Ty::SInt(_)) => {
-                    let width = u32::try_from(self.tys.meta(t).width.to_u64().unwrap_or(0))
-                        .unwrap_or(u32::MAX);
-                    let start = u32::try_from(off).unwrap_or(u32::MAX);
-                    let op = Op::Extract {
-                        off: start,
-                        w: width,
-                    };
-                    let Val::Hw(h) = self.node(pos, scalar, op, vec![y])? else {
-                        return fail(Code::S010, pos, "an extract is hardware".to_owned());
-                    };
-                    done.push(Agg::Hw(h));
-                }
-                Ty::Array(elem, len) => {
-                    let n = usize::try_from(len.to_u64().unwrap_or(0)).unwrap_or(0);
-                    let width = self.tys.meta(elem).width.to_u64().unwrap_or(0);
-                    work.push(Step::Node(t, n));
-                    work.extend(
-                        (0..n as u64).rev().map(|k| {
-                            Step::Visit(elem, off.saturating_add(k.saturating_mul(width)))
-                        }),
-                    );
-                }
-                Ty::Tuple(parts) => {
-                    work.push(Step::Node(t, parts.len()));
-                    work.extend(parts.iter().enumerate().rev().map(|(k, part)| {
-                        Step::Visit(*part, off.saturating_add(self.tys.offset(t, k as u64)))
-                    }));
-                }
-                Ty::Struct(_) | Ty::Enum(_) => {
-                    let Some(parts) = self.tys.parts(t) else {
-                        return fail(
-                            Code::S010,
-                            pos,
-                            format!("{} has no specialization", self.tys.text(t)),
-                        );
-                    };
-                    let parts = parts.types.to_vec();
-                    work.push(Step::Node(t, parts.len()));
-                    work.extend(parts.iter().enumerate().rev().map(|(k, part)| {
-                        Step::Visit(*part, off.saturating_add(self.tys.offset(t, k as u64)))
-                    }));
-                }
-                other => {
-                    return fail(
-                        Code::S010,
-                        pos,
-                        format!("{} is not hardware data", self.tys.text_of(&other)),
-                    );
-                }
-            }
-        }
-        match done.pop() {
-            Some(a) => Ok(a),
-            None => fail(Code::S010, pos, "the unpack has no value".to_owned()),
-        }
     }
 
     /// The selector leaf and the payload of the hardware scrutinee `d` of the type `t`: the
