@@ -2990,6 +2990,20 @@ comes after the typed uses of the payload values and after the type check of `re
 #guard out ops "reinterpret(Op, UInt[9](0))" (depth := 2) == "S010 1:1"
 
 /-!
+A binder of a static `match` arm makes a value from the payload bits (section 5.5). Its depth can
+be above the depth of the enum value: the payload `T` has the depth 3, and its value the depth 4.
+The binder checks it before the size limit, at the binder.
+-/
+def deepPay : String :=
+  "struct S { a: UInt[8] }\nstruct T { s: S }\nenum E: UInt[1] { A = 0, B(T) = 1 }\n"
+#guard out deepPay "match (reinterpret(E, UInt[9](1))) { E::B(x) => x.s.a, _ => 0 }"
+  (depth := 4) == "(uint 8 0)"
+#guard out deepPay "match (reinterpret(E, UInt[9](1))) { E::B(x) => x.s.a, _ => 0 }"
+  (depth := 3) == "S015 1:43"
+#guard msg deepPay "match (reinterpret(E, UInt[9](1))) { E::B(x) => x.s.a, _ => 0 }"
+  (depth := 3) == "the depth 4 goes above the nesting depth 3; raise --depth to at least 4"
+
+/-!
 A `match` (section 5.4) charges its node 1, then its scrutinee. Each arm charges its pattern.
 `_` charges 1, and a literal `1 + s`, with the size `s` of its value. A variant charges `1 + s`
 and 1 for each binder and `_`, with `s` the size of a value of the tag type. Each arm

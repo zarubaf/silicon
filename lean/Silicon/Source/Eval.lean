@@ -1879,15 +1879,17 @@ def unpackHw (specs : Specs) (pos : Pos) (y : Hw) : Nat → Ty → Nat → M Agg
 
 /-!
 The binders `bs` of an arm with the payload `y` (section 5.4), each with its type and offset
-(`binderTys`). Each binder checks the size limit at the zero size of its type (`S015` at the
-binder), then charges that zero size. A static payload binds the static unpack of its value. A
-hardware payload binds its hardware unpack (`unpackHw`), each `extract` charged 2, and the value
-gets its core name as a `let` does (`named`).
+(`binderTys`). Each binder checks the depth of a zero of its type (section 5.5). Then it
+checks the size limit at its zero size, and charges that zero size. Both checks give `S015` at
+the binder. A static payload
+binds the static unpack of its value. A hardware payload binds its hardware unpack (`unpackHw`),
+each `extract` charged 2, and the value gets its core name as a `let` does (`named`).
 -/
 def bindArm (y : Payload) (bs : List (Binder × Ty × Nat)) : M Unit := do
   let specs := (← get).specs
   for (b, u, off) in bs do
     let p := b.name.pos
+    bounded p u.zeroDepth
     if over u.info.zeroSize then fail .S015 p zeroLimitText
     charge p u.info.zeroSize
     match y with
@@ -2091,7 +2093,7 @@ mutual
             if q.input then return some ⟨.handle (.input id path q), true, none⟩
             else
               -- A child output refers, unless it has no hardware leaf and is a new static value.
-              let r ← normalize p (.ref (.out path q.name []) q.ty)
+              let r ← readRef p (.out path q.name []) q.ty
               return some ⟨r, !(r matches .static _), none⟩
           | none => fail .S010 p s!"the instance has no port `{f.name}`"
         | v => do
@@ -2242,9 +2244,11 @@ mutual
     | .local id => do
       match (← get).frame[id]? with
       | some ⟨_, _, .agg (.ref b t)⟩ =>
-        -- An empty input port refers to its name. The read pays its zero, a new static value.
-        if t.info.leaves = 0 then return ⟨← normalize p (.ref b t), false, none⟩
-        else return ⟨.agg (.ref b t), true, some id⟩
+        -- An input port refers to its name. The read checks its depth (`readRef`). An empty
+        -- one pays its zero, a new static value.
+        if t.info.leaves = 0 then return ⟨← readRef p b t, false, none⟩
+        bounded p t.zeroDepth
+        return ⟨.agg (.ref b t), true, some id⟩
       | some s => return ⟨s.value, true, some id⟩
       | _ => fail .S011 p s!"`{x}` is not a static value"
     | .type k => do return ⟨.static (.type (← prim p x k)), true, none⟩

@@ -1780,6 +1780,39 @@ hardware payload and a hardware unpack check it before the value exists: `S015` 
   "S015 8:11"
 
 /-!
+A read of an aggregate port, a register, a wire, or a child output makes a value. Its depth is
+the depth of its zero, 3 for an enum or a struct of scalars (section 5.5). The read checks it. A
+port that no read uses makes no value. A hardware `if` of two port reads fails at the first read.
+-/
+#guard (cost (hwEnum "  let a = e;\n") "M" (depth := 3)).startsWith "total"
+#guard cost (hwEnum "  let a = e;\n") "M" (depth := 2) == "S015 8:11"
+#guard (cost (hwEnum "  let a = if (c) { e } else { e };\n") "M" (depth := 3)).startsWith "total"
+#guard cost (hwEnum "  let a = if (c) { e } else { e };\n") "M" (depth := 2) == "S015 8:20"
+#guard (cost (hwEnum "") "M" (depth := 2)).startsWith "total"
+
+def structPort (body : String) : String :=
+  "struct S { a: UInt[8] }\nmodule M() {\n  input c: Bool;\n  input s: S;\n  input t: S;\n" ++
+  "  wire w: S;\n  output o: S;\n" ++ body ++ "}\n"
+#guard (cost (structPort "  w := s;\n  o := w;\n") "M" (depth := 3)).startsWith "total"
+#guard cost (structPort "  w := s;\n  o := w;\n") "M" (depth := 2) == "S015 8:8"
+#guard cost (structPort "  o := w;\n  w := s;\n") "M" (depth := 2) == "S015 8:3"
+#guard (cost (structPort "  w := s;\n  o := if (c) { s } else { t };\n") "M"
+  (depth := 3)).startsWith "total"
+#guard cost (structPort "  w := t;\n  o := if (c) { s } else { t };\n") "M" (depth := 2) ==
+  "S015 8:8"
+
+/-!
+A binder of a `match` arm makes a value from the payload bits, so it checks its depth at the
+binder. Here the payload `[S; 1]` has the depth 3, and its value the depth 4.
+-/
+def deepBinder : String :=
+  "struct S { a: UInt[8] }\nenum E: UInt[1] { A = 0, B([S; 1]) = 1 }\nmodule M() {\n" ++
+  "  input u: UInt[9];\n  output o: UInt[8];\n" ++
+  "  o := match (reinterpret(E, u)) { E::B(x) => x[0].a, _ => 0 };\n}\n"
+#guard (cost deepBinder "M" (depth := 4)).startsWith "total"
+#guard cost deepBinder "M" (depth := 3) == "S015 6:41"
+
+/-!
 Nested conversions stay linear (G8). Each `reinterpret(E, b)` marks its operand once, so `k` nested
 round trips make `k` marks. The lowering binds each mark once. With each mark counted once, a round
 trip adds 5 nodes: a `pack`, two `extract` nodes, and two uses of one mark. Without the marks, the

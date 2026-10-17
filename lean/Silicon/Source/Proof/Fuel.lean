@@ -314,8 +314,15 @@ theorem apply_f (p : Pos) (st : Except Fault Step) : Follows cap (apply p st) (a
 theorem normalize_f (p : Pos) (a : Agg) : Follows cap (normalize p a) (normalize p a) := by
   unfold normalize; follows
 
+theorem bounded_f (p : Pos) (d : Nat) : Follows cap (bounded p d) (bounded p d) := by
+  unfold bounded; follows
+
+theorem readRef_f (p : Pos) (b : Base) (t : Ty) :
+    Follows cap (readRef p b t) (readRef p b t) := by
+  unfold readRef; follows [bounded_f, normalize_f]
+
 theorem data_f (p : Pos) (v : Val) : Follows cap (data p v) (data p v) := by
-  unfold data; follows [normalize_f]
+  unfold data; follows [readRef_f]
 
 theorem conform_f (p : Pos) (t : Ty) (v : Value) :
     Follows cap (conform p t v) (conform p t v) := by
@@ -409,9 +416,6 @@ theorem hwConvert_f (p : Pos) (f : PrimFn) (t : Ty) (x : Hw) :
 
 theorem known_f (v : Val) : Follows cap (known v) (known v) := by
   unfold known; follows
-
-theorem bounded_f (p : Pos) (d : Nat) : Follows cap (bounded p d) (bounded p d) := by
-  unfold bounded; follows
 
 theorem sums_f (p : Pos) (ps : List Meta) (m : Meta) : Follows cap (sums p ps m) (sums p ps m) := by
   unfold sums; follows
@@ -846,7 +850,7 @@ theorem binderTys_f (q : Resolve.Pattern) : Follows cap (binderTys q) (binderTys
 
 theorem bindArm_f (y : Payload) (bs : List (Binder × Ty × Nat)) :
     Follows cap (bindArm y bs) (bindArm y bs) := by
-  unfold bindArm; follows [bindLocal_f, unpackHw_f, named_f]
+  unfold bindArm; follows [bounded_f, bindLocal_f, unpackHw_f, named_f]
 
 theorem scrutParts_f (p : Pos) (t : Ty) (v : Val) :
     Follows cap (scrutParts p t v) (scrutParts p t v) := by
@@ -913,7 +917,8 @@ theorem name_f (he : ∀ e, Follows m (eval k e) (eval m e))
     Follows m (name k p x r) (name m p x r) := by
   rw [name.eq_def k, name.eq_def m]
   follows [he, ht, prim_f, need_f, copy_f, conform_f, static_f, settle_f, constant_f,
-    spec_f he ht, enumUse_f he ht, nested_f, inFrame_f, params_f ht, fnTy_f, normalize_f]
+    spec_f he ht, enumUse_f he ht, nested_f, inFrame_f, params_f ht, fnTy_f, normalize_f,
+    readRef_f, bounded_f]
 
 theorem placeAt_f (he : ∀ e, Follows m (eval k e) (eval m e)) (p : Pos) (c : ErrorCode)
     (t : Resolve.Expr) : Follows m (placeAt k p c t) (placeAt m p c t) := by
@@ -982,7 +987,7 @@ theorem follows_all : ∀ n,
           call_f (he k) (ht k) (hb k), spec_f (he k) (ht k), need_f, data_f, apply_f,
           hwUnary_f, test_f, hwBinary_f, unify_f, mux_f, static_f, pick_f, element_f, tupleOf_f,
           arrayOf_f, select_f, containerOp_f, arrayTy_f, field_f, strAt_f, hold_f, release_f,
-          changesOf_f, normalize_f, aggEq_f, enumUse_f (he k) (ht k), variantOf_f,
+          changesOf_f, normalize_f, readRef_f, aggEq_f, enumUse_f (he k) (ht k), variantOf_f,
           operands_f (he k), comparable_f, params_f (ht k), fnTy_f, structural_f, scrutTy_f,
           matchArms_f, binderTys_f, bindArm_f, scrutParts_f, shared_f, matchHw_f]
       · rw [eval.eq_def (k + 1), eval.eq_def (m + 1)]
@@ -992,7 +997,7 @@ theorem follows_all : ∀ n,
           call_f (he m) (ht m) (hb m), spec_f (he m) (ht m), need_f, data_f, apply_f,
           hwUnary_f, test_f, hwBinary_f, unify_f, mux_f, static_f, pick_f, element_f, tupleOf_f,
           arrayOf_f, select_f, containerOp_f, arrayTy_f, field_f, strAt_f, hold_f, release_f,
-          changesOf_f, normalize_f, aggEq_f, enumUse_f (he m) (ht m), variantOf_f,
+          changesOf_f, normalize_f, readRef_f, aggEq_f, enumUse_f (he m) (ht m), variantOf_f,
           operands_f (he m), comparable_f, params_f (ht m), fnTy_f, structural_f, scrutTy_f,
           matchArms_f, binderTys_f, bindArm_f, scrutParts_f, shared_f, matchHw_f]
     · rcases n' with _ | m

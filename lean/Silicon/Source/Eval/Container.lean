@@ -244,14 +244,24 @@ def normalize (pos : Pos) : Agg → M Val
   | a => pure a.val
 
 /-!
+A read at `pos` of the name `b` of the type `t`: a port, a register, a wire, or a child output
+(section 5.5). The read makes a value of the depth of a zero of `t`, so it checks this depth
+first (`S015`), as `T()` does. Then it gives the reference in its normal form. A selection of
+the reference has a smaller depth, so it makes no check.
+-/
+def readRef (pos : Pos) (b : Base) (t : Ty) : M Val := do
+  bounded pos t.zeroDepth
+  normalize pos (.ref b t)
+
+/-!
 The data of a value at a use that reads it: the implicit read. A register, a wire, and an own
-output give a reference to their name, in its normal form. Thus a scalar gives a hardware value,
-and an aggregate a lazy reference with no charge (section 9.2). A child input is never read
-(`S017`). An instance and a domain are not data.
+output give a reference to their name, in its normal form (`readRef`). Thus a scalar gives a
+hardware value, and an aggregate a lazy reference with no charge (section 9.2). A child input is
+never read (`S017`). An instance and a domain are not data.
 -/
 def data (pos : Pos) : Val → M Val
   | .pending q _ => fail .S010 q "`[]` needs the type [T; 0] from its context"
-  | .handle (.res _ _ ty path) => normalize pos (.ref (.name path) ty)
+  | .handle (.res _ _ ty path) => readRef pos (.name path) ty
   | .handle (.input ..) => fail .S017 pos "an input of a child is a target; it is never read"
   | .handle h => fail .S010 pos s!"{(Val.handle h).text} is not data"
   | v => pure v
