@@ -31,19 +31,20 @@ The core suites are in `tests/core/`. The inventories of LEC and the differentia
 
 Each language has one tree. A suite is one directory of a tree. The directory selects the command, and the crate `testkit` runs it. The suites use no shell `RUN:` lines. They find their files on their own, so a new file needs no change to `Cargo.toml`.
 
-| Suite                  | Command                                                         | Oracle                                           | Directives                                  |
-| ---------------------- | --------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------- |
-| `tests/core/check/`    | The Rust checker and the Lean checker                           | The same first code and line in both             | `expected-error`                            |
-| `tests/core/run/`      | The Rust interpreter and the Lean interpreter                   | The expected outputs in both                     | `STEP`                                      |
-| `tests/core/lower/`    | `silicon lower`                                                 | LLVM `FileCheck`                                 | `CHECK` lines                               |
-| `tests/core/corpus/`   | LEC and the differential tests                                  | `circt-lec`, the interpreters, `arcilator`       | None                                        |
-| `tests/source/parse/`  | `parse` in Rust and in Lean                                     | Equal AST dumps, or the same first code and line | `expected-error`                            |
-| `tests/source/check/`  | `elab` in Rust and in Lean                                      | The same first code, line, and column in both    | `TOP`, `expected-error`, `expected-message` |
-| `tests/source/run/`    | `run` in Rust and in Lean                                       | The expected outputs in both                     | `TOP`, `STEP`                               |
-| `tests/source/elab/`   | `elab`, then `FileCheck` on both outputs                        | Equal outputs, then LLVM `FileCheck` on both     | `TOP`, `CHECK` lines, `OBSERVE` lines       |
-| `tests/source/budget/` | `elab` with the budgets of the file                             | Success at the limit, failure one unit below     | `TOP`, `FUEL`, `DEPTH`, `SYNTAX-DEPTH`      |
-| `tests/source/corpus/` | `validate`, then LEC and the differential tests                 | `silicon-check`, `circt-lec`, the interpreters   | `TOP`                                       |
-| `tests/source/llm/`    | `elab`, and the quality loop of the front-end spec, section 6.3 | The expected first error, and a fixed version    | `TOP`, `expected-error`                     |
+| Suite                   | Command                                                          | Oracle                                                               | Directives                                  |
+| ----------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------------- | ------------------------------------------- |
+| `tests/core/check/`     | The Rust checker and the Lean checker                            | The same first code and line in both                                 | `expected-error`                            |
+| `tests/core/run/`       | The Rust interpreter and the Lean interpreter                    | The expected outputs in both                                         | `STEP`                                      |
+| `tests/core/lower/`     | `silicon lower`                                                  | LLVM `FileCheck`                                                     | `CHECK` lines                               |
+| `tests/core/corpus/`    | LEC and the differential tests                                   | `circt-lec`, the interpreters, `arcilator`                           | None                                        |
+| `tests/source/parse/`   | `parse` in Rust and in Lean                                      | Equal AST dumps, or the same first code and line                     | `expected-error`                            |
+| `tests/source/check/`   | `elab` in Rust and in Lean                                       | The same first code, line, and column in both                        | `TOP`, `expected-error`, `expected-message` |
+| `tests/source/run/`     | `run` in Rust and in Lean                                        | The expected outputs in both                                         | `TOP`, `STEP`                               |
+| `tests/source/elab/`    | `elab`, then `FileCheck` on both outputs                         | Equal outputs, then LLVM `FileCheck` on both                         | `TOP`, `CHECK` lines, `OBSERVE` lines       |
+| `tests/source/budget/`  | `elab` with the budgets of the file                              | Success at the limit, failure one unit below                         | `TOP`, `FUEL`, `DEPTH`, `SYNTAX-DEPTH`      |
+| `tests/source/scaling/` | `elab` at five sizes, with the work counters of the crate `elab` | Work within `c * B`, and no growth of the work for each unit of fuel | `SCALE`, `TOP`                              |
+| `tests/source/corpus/`  | `validate`, then LEC and the differential tests                  | `silicon-check`, `circt-lec`, the interpreters                       | `TOP`                                       |
+| `tests/source/llm/`     | `elab`, and the quality loop of the front-end spec, section 6.3  | The expected first error, and a fixed version                        | `TOP`, `expected-error`                     |
 
 The suites `elab`, `run`, `check`, and `budget` also compare the observation records of `observe` (front-end spec, section 8.2). They do this for each file whose text holds `diagnostic`. A `budget` file runs at its limit, with its budget flags. The record lines must be equal byte for byte in both front ends. A final error line compares by code, line, and column.
 
