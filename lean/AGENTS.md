@@ -14,7 +14,7 @@ This directory owns two models. Dispatch Lean work to a fresh Opus subagent.
 The front end holds a hardware aggregate (spec sections 5.1, 5.4, and 7.4) in these forms:
 
 - `Eval.Agg` is a tree of `static`, `hw`, `ref`, `array`, `tuple`, and `record` parts. Each container `Node` stores its type, its size, its depth, and its count of hardware leaves. Thus no charge walks the tree. A container without a hardware leaf stays a static `Value`.
-- A `ref` is lazy. A read of an aggregate port, register, wire, or child output gives a `ref` with no charge. A static selection gives a sub-reference in one step (`Base.sub`). `normalize` makes a part without a hardware leaf a static value, and it charges the zero size first.
+- A `ref` is lazy. A read of an aggregate port, register, wire, or child output checks the depth of its zero (`readRef`), then gives a `ref` with no charge. A static selection gives a sub-reference in one step (`Base.sub`). `normalize` makes a part without a hardware leaf a static value, and it charges the zero size first.
 - `Base.out` holds the fields of a child output part in reverse order, so a step adds a field in constant work. `Base.op` puts them in order once.
 - `Agg.change` refreshes the stored numbers of each node on the path of a list part in one step. The caller charges the part counts before the change.
 - `==`, `!=`, and a hardware `if` walk both operands by leaf. A static pair compares as a static equality. In an `if`, a static pair with different sides, or with equal sides without the joined type, is `S011` (F19), also at a scalar root.
