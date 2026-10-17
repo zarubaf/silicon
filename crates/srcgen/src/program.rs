@@ -11,7 +11,7 @@
 //! parse. A negative literal prints in parentheses too.
 
 use super::eval::Value;
-use num_bigint::{BigInt, Sign};
+use num_bigint::{BigInt, BigUint, Sign};
 
 /// The spelling of a non-negative literal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,6 +44,8 @@ pub(crate) enum STy {
     List(Box<STy>),
     /// The type of a function value.
     Fn(Box<FnTy>),
+    /// An enum, by its declaration.
+    Enum(Box<EnumDef>),
 }
 
 /// A function type `fn (T, mut U) -> V` of static types.
@@ -73,6 +75,80 @@ impl RecTy {
     }
 }
 
+/// A variant of an enum: its name, its tag, and its payload leaf types.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Variant {
+    pub(crate) name: String,
+    pub(crate) tag: BigUint,
+    /// The scalar types of the payload, which pack with the first in the
+    /// low bits (ADR 0025).
+    pub(crate) payload: Vec<Scalar>,
+}
+
+impl Variant {
+    /// The offset of each payload leaf in the packed payload, with its type.
+    pub(crate) fn leaves(&self) -> Vec<(u32, Scalar)> {
+        let mut at = 0;
+        self.payload
+            .iter()
+            .map(|t| {
+                let leaf = (at, *t);
+                at += t.bits();
+                leaf
+            })
+            .collect()
+    }
+
+    /// The number of payload bits.
+    pub(crate) fn bits(&self) -> u32 {
+        self.payload.iter().map(|t| t.bits()).sum()
+    }
+}
+
+/// `enum name: UInt[tag_width] { variants }`. The identity of an enum is
+/// its declaration, so the type carries the whole definition.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct EnumDef {
+    pub(crate) name: String,
+    pub(crate) tag_width: u32,
+    pub(crate) variants: Vec<Variant>,
+}
+
+impl EnumDef {
+    /// The payload width `P`: the largest payload of a variant.
+    pub(crate) fn payload_bits(&self) -> u32 {
+        self.variants.iter().map(Variant::bits).max().unwrap_or(0)
+    }
+
+    /// `data_bits` of the enum: the tag and the payload.
+    pub(crate) fn data_bits(&self) -> u32 {
+        self.tag_width + self.payload_bits()
+    }
+
+    pub(crate) fn variant(&self, name: &str) -> Option<&Variant> {
+        self.variants.iter().find(|v| v.name == name)
+    }
+}
+
+impl Scalar {
+    /// The number of bits of the type.
+    pub(crate) fn bits(self) -> u32 {
+        match self {
+            Scalar::Bool => 1,
+            Scalar::UInt(w) | Scalar::SInt(w) => w,
+        }
+    }
+
+    /// The source spelling of the type, with a literal width.
+    pub(crate) fn text(self) -> String {
+        match self {
+            Scalar::Bool => "Bool".to_owned(),
+            Scalar::UInt(w) => format!("UInt[{w}]"),
+            Scalar::SInt(w) => format!("SInt[{w}]"),
+        }
+    }
+}
+
 impl STy {
     /// The source spelling of the type.
     pub(crate) fn text(&self) -> String {
@@ -98,6 +174,7 @@ impl STy {
                     .collect();
                 format!("fn ({}) -> {}", params.join(", "), f.ret.text())
             }
+            STy::Enum(d) => d.name.clone(),
             STy::Record(r) if r.args.is_empty() => r.name.clone(),
             STy::Record(r) => {
                 let args: Vec<String> = r.args.iter().map(Value::spelling).collect();
@@ -208,6 +285,14 @@ pub(crate) enum SExpr {
     Convert(STy, Box<SExpr>),
     /// `list(T)`.
     NewList(STy),
+    /// `E::V` or `E::V(a, b)`: an enum value of a variant.
+    Ctor(String, String, Vec<SExpr>),
+    /// `reinterpret(E, e)` of a finite `UInt[data_bits(E)]`.
+    Unpack(String, Box<SExpr>),
+    /// `reinterpret(UInt[data_bits(E)], e)` of an enum value.
+    Pack(String, Box<SExpr>),
+    /// `UInt[data_bits(E)](e)`: an integer as the bits of an enum.
+    BitsConv(String, Box<SExpr>),
     Unary(Un, Box<SExpr>),
     Binary(SBin, Box<SExpr>, Box<SExpr>),
     If(Box<SExpr>, Box<SExpr>, Box<SExpr>),
@@ -375,6 +460,7 @@ pub(crate) enum Item {
     ComptimeFn(ComptimeFn),
     ListFn(ListFn),
     Struct(StructDef),
+    Enum(EnumDef),
     Helper {
         name: String,
         params: Vec<(String, Ty)>,
@@ -519,6 +605,7 @@ fn render_item(out: &mut String, item: &Item) {
         Item::ListFn(f) => render_list_fn(out, f),
         Item::MutFn(f) => render_mut_fn(out, f),
         Item::Struct(def) => render_struct(out, def),
+        Item::Enum(def) => render_enum(out, def),
         Item::Helper {
             name,
             params,
@@ -622,6 +709,24 @@ fn render_struct(out: &mut String, def: &StructDef) {
             FieldTy::SInt(w) => format!("SInt[{}]", sexpr(w)),
         };
         line(out, 1, &format!("{f}: {t},"));
+    }
+    line(out, 0, "}");
+}
+
+fn render_enum(out: &mut String, def: &EnumDef) {
+    line(
+        out,
+        0,
+        &format!("enum {}: UInt[{}] {{", def.name, def.tag_width),
+    );
+    for v in &def.variants {
+        let payload = if v.payload.is_empty() {
+            String::new()
+        } else {
+            let types: Vec<String> = v.payload.iter().map(|t| t.text()).collect();
+            format!("({})", types.join(", "))
+        };
+        line(out, 1, &format!("{}{payload} = {},", v.name, v.tag));
     }
     line(out, 0, "}");
 }
@@ -843,6 +948,11 @@ pub(crate) fn sexpr(e: &SExpr) -> String {
         SExpr::StrOf(n) => format!("str({})", sexpr(n)),
         SExpr::Convert(t, e) => format!("{}({})", t.text(), sexpr(e)),
         SExpr::NewList(t) => format!("list({})", t.text()),
+        SExpr::Ctor(e, v, args) if args.is_empty() => format!("{e}::{v}"),
+        SExpr::Ctor(e, v, args) => format!("{e}::{v}({})", list(args, sexpr)),
+        SExpr::Unpack(e, a) => format!("reinterpret({e}, {})", sexpr(a)),
+        SExpr::Pack(e, a) => format!("reinterpret(UInt[data_bits({e})], {})", sexpr(a)),
+        SExpr::BitsConv(e, a) => format!("UInt[data_bits({e})]({})", sexpr(a)),
         SExpr::Unary(op, a) => format!("({}{})", un(*op), sexpr(a)),
         SExpr::Binary(op, a, b) => format!("({} {} {})", sexpr(a), sbin(*op), sexpr(b)),
         SExpr::If(c, t, e) => {

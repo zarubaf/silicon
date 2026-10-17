@@ -4,7 +4,7 @@
 //! rules, next to the two front ends, so the `eval` probe compares it.
 
 use super::program::{
-    ComptimeFn, FieldTy, FnTy, Item, ListFn, MutFn, RecTy, SBin, SExpr, STy, Scalar, Stmt,
+    ComptimeFn, EnumDef, FieldTy, FnTy, Item, ListFn, MutFn, RecTy, SBin, SExpr, STy, Scalar, Stmt,
     StructDef, Ty, Un, string,
 };
 use num_bigint::{BigInt, BigUint, Sign};
@@ -28,6 +28,9 @@ pub(crate) enum Value {
     List(STy, Vec<Value>),
     /// A function value: the item and its function type.
     Function(String, FnTy),
+    /// An enum value: the enum, its tag, and its packed payload bits. The
+    /// tag can be one that no variant declares.
+    Enum(Box<EnumDef>, BigUint, BigUint),
 }
 
 impl Value {
@@ -52,6 +55,13 @@ impl Value {
                 STy::Record(t.clone()).serialize(),
                 serialized(xs)
             ),
+            Value::Enum(def, tag, payload) => {
+                let ty = STy::Enum(def.clone()).serialize();
+                match def.payload_bits() {
+                    0 => format!("(enum {ty} {tag})"),
+                    p => format!("(enum {ty} {tag} (uint {p} {payload}))"),
+                }
+            }
         }
     }
 
@@ -67,6 +77,12 @@ impl Value {
             Value::Str(s) => string(s),
             Value::List(t, _) => format!("list({})", t.text()),
             Value::Record(t, xs) => format!("{}({})", STy::Record(t.clone()).text(), spelled(xs)),
+            Value::Enum(def, ..) => format!(
+                "reinterpret({}, UInt[{}]({}))",
+                def.name,
+                def.data_bits(),
+                self.bits()
+            ),
         }
     }
 
@@ -87,6 +103,16 @@ impl Value {
             Value::UInt(w, _) => STy::UInt(*w),
             Value::SInt(w, _) => STy::SInt(*w),
             Value::Record(t, _) => STy::Record(t.clone()),
+            Value::Enum(def, ..) => STy::Enum(def.clone()),
+        }
+    }
+
+    /// The bits of an enum value: the tag in the low bits, then the
+    /// payload. Another value has none.
+    pub(crate) fn bits(&self) -> BigUint {
+        match self {
+            Value::Enum(def, tag, payload) => tag | (payload << def.tag_width),
+            _ => BigUint::ZERO,
         }
     }
 }
@@ -136,6 +162,7 @@ impl STy {
                 format!("(fn ({}) {})", params.join(" "), f.ret.serialize())
             }
             STy::Record(r) => format!("(struct root {} ({}))", r.name, serialized(&r.args)),
+            STy::Enum(d) => format!("(enum root {} ())", d.name),
         }
     }
 }
@@ -189,6 +216,7 @@ pub(crate) struct Scope {
     structs: BTreeMap<String, StructDef>,
     list_fns: BTreeMap<String, ListFn>,
     mut_fns: BTreeMap<String, MutFn>,
+    enums: BTreeMap<String, EnumDef>,
     consts: BTreeMap<String, Value>,
 }
 
@@ -236,6 +264,9 @@ impl Scope {
                 }
                 Item::Struct(def) => {
                     scope.structs.insert(def.name.clone(), def.clone());
+                }
+                Item::Enum(def) => {
+                    scope.enums.insert(def.name.clone(), def.clone());
                 }
                 _ => {}
             }
@@ -491,6 +522,7 @@ fn bits(t: &STy) -> Result<u32, Fault> {
         STy::Tuple(ts) => ts.iter().map(bits).sum(),
         STy::Array(t, n) => Ok(bits(t)?.saturating_mul(*n)),
         STy::Record(r) => r.fields.iter().map(|(_, t)| bits(t)).sum(),
+        STy::Enum(d) => Ok(d.data_bits()),
         STy::Nat | STy::Int | STy::Str | STy::List(_) | STy::Fn(_) => Err(Fault::Type),
     }
 }
@@ -581,6 +613,49 @@ impl Evaluator<'_> {
                 STy::Int | STy::Nat => Value::List(t.clone(), Vec::new()),
                 _ => return Err(Fault::Type),
             },
+            SExpr::Zero(name, _) | SExpr::DataBits(name, _)
+                if self.scope.enums.contains_key(name) =>
+            {
+                self.enum_form(e, env)?
+            }
+            SExpr::Ctor(..) | SExpr::Unpack(..) | SExpr::Pack(..) | SExpr::BitsConv(..) => {
+                self.enum_form(e, env)?
+            }
+            SExpr::Record(..) | SExpr::Zero(..) | SExpr::DataBits(..) | SExpr::Field(..) => {
+                self.record_form(e, env)?
+            }
+            SExpr::Unary(op, a) => match (op, self.eval(a, env)?) {
+                (Un::Neg, Value::Int(n)) => Value::Int(-n),
+                (Un::Inv, Value::Int(n)) => Value::Int(!n),
+                (Un::Not, Value::Bool(b)) => Value::Bool(!b),
+                _ => return Err(Fault::Type),
+            },
+            SExpr::Binary(SBin::Land, a, b) => {
+                Value::Bool(boolean(&self.eval(a, env)?)? && boolean(&self.eval(b, env)?)?)
+            }
+            SExpr::Binary(SBin::Lor, a, b) => {
+                Value::Bool(boolean(&self.eval(a, env)?)? || boolean(&self.eval(b, env)?)?)
+            }
+            SExpr::Binary(op, a, b) => {
+                let a = self.eval(a, env)?;
+                let b = self.eval(b, env)?;
+                binary(*op, a, b)?
+            }
+            SExpr::If(c, t, e) => {
+                if boolean(&self.eval(c, env)?)? {
+                    self.eval(t, env)?
+                } else {
+                    self.eval(e, env)?
+                }
+            }
+        };
+        bounded(v)
+    }
+
+    /// The forms of records: a constructor, the zero, `data_bits`, and a
+    /// field.
+    fn record_form(&mut self, e: &SExpr, env: &Env) -> Result<Value, Fault> {
+        Ok(match e {
             SExpr::Record(name, targs, fields) => {
                 let ty = self.specialize(name, targs, env)?;
                 let xs = self.all(fields, env)?;
@@ -612,32 +687,74 @@ impl Evaluator<'_> {
                     .ok_or(Fault::Type)?,
                 _ => return Err(Fault::Type),
             },
-            SExpr::Unary(op, a) => match (op, self.eval(a, env)?) {
-                (Un::Neg, Value::Int(n)) => Value::Int(-n),
-                (Un::Inv, Value::Int(n)) => Value::Int(!n),
-                (Un::Not, Value::Bool(b)) => Value::Bool(!b),
-                _ => return Err(Fault::Type),
-            },
-            SExpr::Binary(SBin::Land, a, b) => {
-                Value::Bool(boolean(&self.eval(a, env)?)? && boolean(&self.eval(b, env)?)?)
-            }
-            SExpr::Binary(SBin::Lor, a, b) => {
-                Value::Bool(boolean(&self.eval(a, env)?)? || boolean(&self.eval(b, env)?)?)
-            }
-            SExpr::Binary(op, a, b) => {
-                let a = self.eval(a, env)?;
-                let b = self.eval(b, env)?;
-                binary(*op, a, b)?
-            }
-            SExpr::If(c, t, e) => {
-                if boolean(&self.eval(c, env)?)? {
-                    self.eval(t, env)?
-                } else {
-                    self.eval(e, env)?
+            _ => return Err(Fault::Type),
+        })
+    }
+
+    /// The forms of enums: a constructor, the zero, `data_bits`, and the
+    /// conversions between an enum and its bits.
+    fn enum_form(&mut self, e: &SExpr, env: &Env) -> Result<Value, Fault> {
+        let def_of = |name: &String| self.scope.enums.get(name).ok_or(Fault::Type);
+        Ok(match e {
+            SExpr::Zero(name, _) => Value::Enum(
+                Box::new(def_of(name)?.clone()),
+                BigUint::ZERO,
+                BigUint::ZERO,
+            ),
+            SExpr::DataBits(name, _) => Value::Int(BigInt::from(def_of(name)?.data_bits())),
+            SExpr::Ctor(name, variant, args) => self.ctor(name, variant, args, env)?,
+            SExpr::Unpack(name, e) => {
+                let def = def_of(name)?.clone();
+                let Value::UInt(w, n) = self.eval(e, env)? else {
+                    return Err(Fault::Type);
+                };
+                if w != def.data_bits() {
+                    return Err(Fault::Type);
                 }
+                let n = n.magnitude();
+                let tag = n & ((BigUint::from(1u8) << def.tag_width) - 1u8);
+                Value::Enum(Box::new(def.clone()), tag, n >> def.tag_width)
             }
-        };
-        bounded(v)
+            SExpr::Pack(name, e) => {
+                let def = def_of(name)?.clone();
+                let v = self.eval(e, env)?;
+                if v.ty() != STy::Enum(Box::new(def.clone())) {
+                    return Err(Fault::Type);
+                }
+                Value::UInt(def.data_bits(), BigInt::from(v.bits()))
+            }
+            SExpr::BitsConv(name, e) => {
+                let width = def_of(name)?.data_bits();
+                let n = match &**e {
+                    SExpr::Int(n, _) => n.clone(),
+                    e => int(self.eval(e, env)?)?,
+                };
+                convert(&STy::UInt(width), Value::Int(n))?
+            }
+            _ => return Err(Fault::Type),
+        })
+    }
+
+    /// `E::V(args)`: each argument has its typed use at its payload type,
+    /// and the leaves pack with the first in the low bits.
+    fn ctor(
+        &mut self,
+        name: &str,
+        variant: &str,
+        args: &[SExpr],
+        env: &Env,
+    ) -> Result<Value, Fault> {
+        let def = self.scope.enums.get(name).ok_or(Fault::Type)?;
+        let v = def.variant(variant).ok_or(Fault::Type)?;
+        if v.payload.len() != args.len() {
+            return Err(Fault::Type);
+        }
+        let mut payload = BigUint::ZERO;
+        for (arg, (at, t)) in args.iter().zip(v.leaves()) {
+            let value = self.eval(arg, env)?;
+            payload |= leaf_bits(t, value)? << at;
+        }
+        Ok(Value::Enum(Box::new(def.clone()), v.tag.clone(), payload))
     }
 
     /// `T(e)`. The bound limits the results of operations. The literal of
@@ -738,6 +855,45 @@ impl Evaluator<'_> {
         let v = self.eval(body, &inner);
         self.depth -= 1;
         typed(&def.ret, v?)
+    }
+}
+
+/// The unsigned bits of a payload leaf of type `t`: the typed use of
+/// `value` at the leaf type, and its two's complement.
+fn leaf_bits(t: Scalar, value: Value) -> Result<BigUint, Fault> {
+    let (ty, w) = match t {
+        Scalar::Bool => (STy::Bool, 1),
+        Scalar::UInt(w) => (STy::UInt(w), w),
+        Scalar::SInt(w) => (STy::SInt(w), w),
+    };
+    Ok(match convert(&ty, value)? {
+        Value::Bool(b) => BigUint::from(u8::from(b)),
+        Value::UInt(_, n) => n.magnitude().clone(),
+        Value::SInt(_, n) => (n + (BigInt::from(1) << w)).magnitude() % (BigUint::from(1u8) << w),
+        _ => return Err(Fault::Type),
+    })
+}
+
+#[cfg(test)]
+/// The leaf of type `t` in the payload `bits` at `at`: the inverse of
+/// `leaf_bits`, with the sign extension of an `SInt`.
+pub(crate) fn unpack_leaf(t: Scalar, at: u32, payload: &BigUint) -> Value {
+    let bits = (payload >> at) & ((BigUint::from(1u8) << t.bits()) - 1u8);
+    match t {
+        Scalar::Bool => Value::Bool(bits != BigUint::ZERO),
+        Scalar::UInt(w) => Value::UInt(w, BigInt::from(bits)),
+        Scalar::SInt(w) => {
+            let n = BigInt::from(bits);
+            let half = BigInt::from(1) << (w - 1);
+            Value::SInt(
+                w,
+                if n >= half {
+                    n - (BigInt::from(1) << w)
+                } else {
+                    n
+                },
+            )
+        }
     }
 }
 
@@ -844,6 +1000,7 @@ fn typed(ty: &STy, v: Value) -> Result<Value, Fault> {
         (STy::Fn(want), Value::Function(_, have)) if **want == *have => Ok(v),
         (STy::UInt(w), Value::UInt(x, _)) | (STy::SInt(w), Value::SInt(x, _)) if w == x => Ok(v),
         (STy::Record(want), Value::Record(have, _)) if want == have => Ok(v),
+        (STy::Enum(want), Value::Enum(have, ..)) if want == have => Ok(v),
         _ => Err(Fault::Type),
     }
 }
@@ -1595,5 +1752,130 @@ mod tests {
         assert_eq!(Value::Int(BigInt::from(-5)).serialize(), "(int -5)");
         assert_eq!(Value::Bool(true).serialize(), "(bool true)");
         assert_eq!(Value::Bool(false).serialize(), "(bool false)");
+    }
+
+    fn variant(name: &str, tag: u32, payload: &[Scalar]) -> crate::program::Variant {
+        crate::program::Variant {
+            name: name.to_owned(),
+            tag: BigUint::from(tag),
+            payload: payload.to_vec(),
+        }
+    }
+
+    /// `enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }`
+    /// of the elaborator tests.
+    fn op() -> EnumDef {
+        EnumDef {
+            name: "Op".to_owned(),
+            tag_width: 2,
+            variants: vec![
+                variant("Add", 0, &[]),
+                variant("Load", 1, &[Scalar::UInt(8)]),
+                variant("Pair", 2, &[Scalar::Bool, Scalar::UInt(4)]),
+            ],
+        }
+    }
+
+    fn run_enum(def: EnumDef, e: &SExpr) -> Result<String, Fault> {
+        let Ok(scope) = Scope::new(&[Item::Enum(def)]) else {
+            panic!("the scope faults");
+        };
+        eval(e, &Env::default(), &scope).map(|v| v.serialize())
+    }
+
+    fn ctor(e: &str, v: &str, args: Vec<SExpr>) -> SExpr {
+        SExpr::Ctor(e.to_owned(), v.to_owned(), args)
+    }
+
+    /// The payload packs its leaves with the first in the low bits (ADR
+    /// 0025). The values are those of `crates/elab/src/tests_enum.rs`.
+    #[test]
+    fn a_payload_packs_the_first_leaf_low() {
+        let pair = |a: bool, b: i64| ctor("Op", "Pair", vec![SExpr::Bool(a), int(b)]);
+        let want = |tag: u32, bits: u32| format!("(enum (enum root Op ()) {tag} (uint 8 {bits}))");
+        assert_eq!(run_enum(op(), &pair(true, 5)), Ok(want(2, 11)));
+        assert_eq!(run_enum(op(), &pair(false, 15)), Ok(want(2, 30)));
+        assert_eq!(run_enum(op(), &ctor("Op", "Add", vec![])), Ok(want(0, 0)));
+        assert_eq!(
+            run_enum(op(), &ctor("Op", "Load", vec![int(5)])),
+            Ok(want(1, 5))
+        );
+        assert_eq!(run_enum(op(), &pair(true, 16)), Err(Fault::Bound));
+        assert_eq!(run_enum(op(), &pair(true, -1)), Err(Fault::Bound));
+    }
+
+    /// A signed leaf packs its two's complement.
+    #[test]
+    fn a_signed_leaf_packs_its_twos_complement() {
+        let def = EnumDef {
+            name: "E".to_owned(),
+            tag_width: 1,
+            variants: vec![variant("A", 1, &[Scalar::SInt(4), Scalar::Bool])],
+        };
+        let e = ctor("E", "A", vec![int(-1), SExpr::Bool(true)]);
+        assert_eq!(
+            run_enum(def.clone(), &e),
+            Ok("(enum (enum root E ()) 1 (uint 5 31))".to_owned())
+        );
+        let e = ctor("E", "A", vec![int(-8), SExpr::Bool(false)]);
+        assert_eq!(
+            run_enum(def.clone(), &e),
+            Ok("(enum (enum root E ()) 1 (uint 5 8))".to_owned())
+        );
+        let e = ctor("E", "A", vec![int(8), SExpr::Bool(false)]);
+        assert_eq!(run_enum(def, &e), Err(Fault::Bound));
+    }
+
+    /// An unpack gives back the leaves, with the sign extension of an `SInt`.
+    #[test]
+    fn a_leaf_unpacks_with_its_sign() {
+        let payload = BigUint::from(0b1_1001u8);
+        assert_eq!(
+            unpack_leaf(Scalar::SInt(4), 0, &payload),
+            Value::SInt(4, BigInt::from(-7))
+        );
+        assert_eq!(unpack_leaf(Scalar::Bool, 4, &payload), Value::Bool(true));
+        assert_eq!(
+            unpack_leaf(Scalar::UInt(3), 1, &payload),
+            Value::UInt(3, BigInt::from(4))
+        );
+    }
+
+    /// `E()` and `reinterpret` can make a tag that no variant declares.
+    #[test]
+    fn zero_and_reinterpret_make_any_tag() {
+        let bits = |n: i64| {
+            SExpr::Unpack(
+                "Op".to_owned(),
+                Box::new(SExpr::BitsConv("Op".to_owned(), Box::new(int(n)))),
+            )
+        };
+        let zero = SExpr::Zero("Op".to_owned(), Vec::new());
+        assert_eq!(
+            run_enum(op(), &zero),
+            Ok("(enum (enum root Op ()) 0 (uint 8 0))".to_owned())
+        );
+        assert_eq!(
+            run_enum(op(), &bits(2 + (11 << 2))),
+            Ok("(enum (enum root Op ()) 2 (uint 8 11))".to_owned())
+        );
+        assert_eq!(
+            run_enum(op(), &bits(3)),
+            Ok("(enum (enum root Op ()) 3 (uint 8 0))".to_owned())
+        );
+        assert_eq!(run_enum(op(), &bits(1 << 10)), Err(Fault::Bound));
+        let pack = SExpr::Pack("Op".to_owned(), Box::new(bits(2 + (11 << 2))));
+        assert_eq!(run_enum(op(), &pack), Ok("(uint 10 46)".to_owned()));
+        let empty = EnumDef {
+            name: "E".to_owned(),
+            tag_width: 3,
+            variants: vec![variant("A", 5, &[])],
+        };
+        assert_eq!(
+            run_enum(empty.clone(), &SExpr::Zero("E".to_owned(), Vec::new())),
+            Ok("(enum (enum root E ()) 0)".to_owned())
+        );
+        let size = SExpr::DataBits("Op".to_owned(), Vec::new());
+        assert_eq!(run_enum(op(), &size), Ok("(int 10)".to_owned()));
     }
 }

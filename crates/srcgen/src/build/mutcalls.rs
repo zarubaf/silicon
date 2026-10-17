@@ -61,7 +61,7 @@ impl Builder {
             .collect();
         let mut next = self.fn_value_count();
         for target in nested {
-            if self.tape.flag() {
+            if self.tape.below(3) != 0 {
                 self.fn_value(&target, &mut next)?;
             }
         }
@@ -174,9 +174,9 @@ impl Builder {
         let Some(inner) = pool.get(self.tape.index(pool.len())).copied().cloned() else {
             return Vec::new();
         };
-        // A quarter of the calls are receiver calls and a quarter are plain
+        // A fifth of the calls are receiver calls and a fifth are plain
         // calls by name, whatever function values exist.
-        let (callee, receiver) = match self.tape.below(4) {
+        let (callee, receiver) = match self.tape.below(5) {
             0 => (inner.name.clone(), true),
             1 => (inner.name.clone(), false),
             _ => self.mut_callee(&inner.name),

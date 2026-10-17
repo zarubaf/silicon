@@ -25,8 +25,8 @@
 
 use super::build::STATIC_PREFIXES;
 use super::eval::{Env, Scope, Value, eval, exec_static, loop_values};
-use super::program::{HExpr, Item, Place, Program, Radix, SExpr, Stmt, Ty, render_items};
-use num_bigint::Sign;
+use super::program::{HExpr, Item, Place, Program, Radix, SExpr, STy, Stmt, Ty, render_items};
+use num_bigint::{BigInt, Sign};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 /// The source text of a twin and its top selection.
@@ -120,7 +120,12 @@ pub fn twin(program: &Program) -> Twin {
     while let Some((name, module, args)) = w.queue.pop_front() {
         modules.push(w.module(name, &module, &args));
     }
-    let items: Vec<Item> = helpers.into_iter().chain(modules).collect();
+    let enums = program
+        .items
+        .iter()
+        .filter(|item| matches!(item, Item::Enum(_)))
+        .cloned();
+    let items: Vec<Item> = enums.chain(helpers).chain(modules).collect();
     Twin {
         text: render_items(&items),
         top: format!("{top}()"),
@@ -140,9 +145,12 @@ fn token(v: &Value) -> Option<String> {
         Value::Bool(true) => Some("1b".to_owned()),
         Value::Bool(false) => Some("0b".to_owned()),
         Value::Function(item, _) => Some(item.clone()),
-        Value::Tuple(_) | Value::Array(_) | Value::Str(_) | Value::List(..) | Value::Record(..) => {
-            None
-        }
+        Value::Tuple(_)
+        | Value::Array(_)
+        | Value::Str(_)
+        | Value::List(..)
+        | Value::Record(..)
+        | Value::Enum(..) => None,
     }
 }
 
@@ -161,6 +169,12 @@ fn literal(v: Value) -> Option<SExpr> {
         Value::Record(rt, xs) => {
             let targs = all(rt.args.clone())?;
             SExpr::Record(rt.name.clone(), targs, all(xs)?)
+        }
+        Value::Enum(def, tag, payload) => {
+            let bits = tag | (payload << def.tag_width);
+            let bits = SExpr::Int(BigInt::from(bits), Radix::Dec);
+            let finite = SExpr::Convert(STy::UInt(def.data_bits()), Box::new(bits));
+            SExpr::Unpack(def.name.clone(), Box::new(finite))
         }
     })
 }
