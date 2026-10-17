@@ -3215,17 +3215,17 @@ def tri : String := "(Bool, UInt[8], UInt[8])"
 /-!
 The exact charges of a `match` with one leaf, one arm that is not `_`, and `_`. The statement
 charges 1, the `match` node 1, and the scrutinee 2. The pattern `true` charges 2 and its share
-`1 + 0 + 1`, and `_` charges 1. Each arm charges 2. The select `s_0` has `L + 1 = 2` uses, so its
-mark charges the size 3 of `(== x$0e true)`. The scrutinee is a core name, and `n` is 1, so it
-gets no mark. The node `rest` charges `1 + 1`, and with `L = 1` it gets no mark. The node
-`onehot` charges `1 + 2 * 2`. `return true;` charges 4.
+`1 + 0 + 1`, and `_` charges 1. Each arm charges 2. The select `s_0` charges 1 for its key
+constant. It has `L + 1 = 2` uses, so its mark charges the size 3 of `(== x$0e true)`. The
+scrutinee is a core name, and `n` is 1, so it gets no mark. The node `rest` charges `1 + 1`, and
+with `L = 1` it gets no mark. The node `onehot` charges `1 + 2 * 2`. `return true;` charges 4.
 -/
 def oneLeaf : String := "let y = match (x.0) { true => x.1, _ => x.2 };"
 #guard runMatch tri oneLeaf ==
   "y=(onehot (share 0 (== x$0e (bool true))) (rest (share 0 (== x$0e (bool true)))) x$1e x$2e) " ++
-  "| ref x | " ++ toString (1 + 1 + 2 + 2 + 2 + 1 + 2 + 2 + 3 + 2 + 5 + 4)
-#guard runMatch tri oneLeaf (fuel := 22) == "S015 2:11"
-#guard runMatch tri oneLeaf (fuel := 23) == "S015 3:3"
+  "| ref x | " ++ toString (1 + 1 + 2 + 2 + 2 + 1 + 2 + 2 + 1 + 3 + 2 + 5 + 4)
+#guard runMatch tri oneLeaf (fuel := 23) == "S015 2:11"
+#guard runMatch tri oneLeaf (fuel := 24) == "S015 3:3"
 
 /-!
 Without `_`, a select has `L = 1` use and gets no mark, and no `rest` node exists. With two
@@ -3234,12 +3234,12 @@ node. Each select has two uses and gets a mark, in arm order. `rest` reads both 
 charges `1 + 2`. The node `onehot` charges `1 + 2 * 3`.
 -/
 #guard runMatch tri "let y = match (x.0) { true => x.1, false => x.2 };" ==
-  "y=(onehot (== x$0e (bool true)) (== x$0e (bool false)) x$1e x$2e) | ref x | 27"
+  "y=(onehot (== x$0e (bool true)) (== x$0e (bool false)) x$1e x$2e) | ref x | 29"
 #guard runMatch tri "let y = match (x.1 +% 1) { 0 => x.1, 1 => x.2, _ => x.1 };" ==
   "y=(onehot (share 1 (== (share 0 (+% x$1e (uint 8 1))) (uint 8 0))) " ++
   "(share 2 (== (share 0 (+% x$1e (uint 8 1))) (uint 8 1))) " ++
   "(rest (share 1 (== (share 0 (+% x$1e (uint 8 1))) (uint 8 0))) " ++
-  "(share 2 (== (share 0 (+% x$1e (uint 8 1))) (uint 8 1)))) x$1e x$2e x$1e) | ref x | 52"
+  "(share 2 (== (share 0 (+% x$1e (uint 8 1))) (uint 8 1)))) x$1e x$2e x$1e) | ref x | 54"
 
 /-!
 A joined type with two leaves walks the arms by position, one `onehot` node for each leaf. The
@@ -3251,18 +3251,18 @@ the `match`, and equal static parts give the static value.
   "y$0e=(onehot (share 0 (== x$0e (bool true))) " ++
   "(share 1 (rest (share 0 (== x$0e (bool true))))) x$1e x$2e) " ++
   "y$1e=(onehot (share 0 (== x$0e (bool true))) " ++
-  "(share 1 (rest (share 0 (== x$0e (bool true))))) x$2e x$1e) | ref x | 50"
+  "(share 1 (rest (share 0 (== x$0e (bool true))))) x$2e x$1e) | ref x | 51"
 #guard runMatch tri "let y = match (x.0) { _ => x.2 };" == "y=x$2e | ref x | 12"
 #guard runMatch tri "let y = match (x.0) { true => (1, x.1), _ => (2, x.2) };" == "S011 2:11"
 #guard runMatch tri "let y = match (x.0) { true => (1, x.1), _ => (1, x.2) };" ==
   "y$1e=(onehot (share 0 (== x$0e (bool true))) (rest (share 0 (== x$0e (bool true)))) " ++
-  "x$1e x$2e) | ref x | 45"
+  "x$1e x$2e) | ref x | 46"
 
 /-!
-The walk of `matchHw` with two tuple arms of a static `Int` and a hardware leaf. The join charges
-1, the select mark 3, and `rest` 2. The root charges 1, the static position 1 and its equality
-`1 + 1`, and the leaf position 1 and its `onehot` node 5. Different static parts are `S011`
-with the text of section 6.2.
+The walk of `matchHw` with two tuple arms of a static `Int` and a hardware leaf. The join charges 1,
+the key constant of the select 1, the select mark 3, and `rest` 2. The root charges 1, the static
+position 1 and its equality `1 + 1`, and the leaf position 1 and its `onehot` node 5. Different
+static parts are `S011` with the text of section 6.2.
 -/
 def partArms (a b : Value) : String :=
   let p : Pos := ⟨1, 1⟩
@@ -3273,7 +3273,7 @@ def partArms (a b : Value) : String :=
   with
   | .ok (v, used) => s!"{v.text} {used}"
   | .error e => s!"{e.code} {e.pos.line}:{e.pos.col} {e.msg}"
-#guard partArms (.int 1) (.int 1) == s!"hardware (Int, UInt[8]) {1 + 3 + 2 + 1 + 1 + 2 + 1 + 5}"
+#guard partArms (.int 1) (.int 1) == s!"hardware (Int, UInt[8]) {1 + 1 + 3 + 2 + 1 + 1 + 2 + 1 + 5}"
 #guard partArms (.int 1) (.int 2) ==
   "S011 1:1 the arms of a hardware `match` differ in a static part: Int and Int"
 
@@ -3287,13 +3287,13 @@ it gets no mark.
 #guard runMatch tri "let o = Op::Load(x.1);\n  let y = match (o) { Op::Load(v) => v, _ => 0 };"
   ops == "o$payload=(pack 8 x$1e) v=(extract 0 8 o$payload) " ++
   "y=(onehot (share 0 (== (uint 2 1) (uint 2 1))) (rest (share 0 (== (uint 2 1) (uint 2 1)))) " ++
-  "v (uint 8 0)) | ref x | 108"
+  "v (uint 8 0)) | ref x | 109"
 #guard runMatch tri ("let y = match (Op::Load(x.1)) { Op::Load(v) => v, " ++
   "Op::Pair(a, b) => resize(UInt[8], b), _ => 0 };") ops ==
   "v=(extract 0 8 (share 0 (pack 8 x$1e))) a=(extract 0 1 (share 0 (pack 8 x$1e))) " ++
   "b=(extract 1 4 (share 0 (pack 8 x$1e))) y=(onehot (share 1 (== (uint 2 1) (uint 2 1))) " ++
   "(share 2 (== (uint 2 1) (uint 2 2))) (rest (share 1 (== (uint 2 1) (uint 2 1))) " ++
-  "(share 2 (== (uint 2 1) (uint 2 2)))) v (resize b) (uint 8 0)) | ref x | 142"
+  "(share 2 (== (uint 2 1) (uint 2 2)))) v (resize b) (uint 8 0)) | ref x | 144"
 
 /-!
 A hardware binder charges the zero size of its type first (G5). A payload part
@@ -3307,18 +3307,18 @@ def bigTree : String :=
   "(onehot (share 0 (== (extract 0 1 x$2e) (uint 1 0))) " ++
   "(rest (share 0 (== (extract 0 1 x$2e) (uint 1 0)))) x$0e (bool false)) | ref x | "
 #guard runMatch bigT "let y = match (reinterpret(E, x.2)) { E::A(_) => x.0, _ => false };"
-  bigHw 100000000 == "y=" ++ bigTree ++ "131"
+  bigHw 100000000 == "y=" ++ bigTree ++ "132"
 #guard runMatch bigT "let y = match (reinterpret(E, x.2)) { E::A(z) => x.0, _ => false };"
-  bigHw 100000000 == "y=" ++ bigTree ++ toString (131 + 1 + 4096 * 4097)
+  bigHw 100000000 == "y=" ++ bigTree ++ toString (132 + 1 + 4096 * 4097)
 #guard runMatch bigT "let y = match (reinterpret(E, x.2)) { E::B(z, b) => b, _ => 2 };"
   bigHw 100000000 ==
   "b=(extract 0 8 (extract 1 8 x$2e)) y=(onehot (share 0 (== (extract 0 1 x$2e) (uint 1 1))) " ++
   "(rest (share 0 (== (extract 0 1 x$2e) (uint 1 1)))) b (uint 8 2)) | ref x | " ++
-  toString (136 + 1 + 4096 * 4097)
+  toString (137 + 1 + 4096 * 4097)
 
 /-!
 `k` nested `match (match (c) { true => p, _ => q }) { true => p, _ => q }` grow linearly (D7):
-each level adds 8 nodes and charges 25, because the `+ 1` use of each select marks it.
+each level adds 8 nodes and charges 26, because the `+ 1` use of each select marks it.
 `countNodes` counts each mark and its operand once.
 -/
 def countNodes : Nat → List Eval.Hw → List Nat → Nat → Nat
@@ -3337,8 +3337,8 @@ def nestedMatch (k : Nat) : String :=
   runF (assignIn "(Bool, Bool, Bool)" s!"let y = {nestMatch k};") refX 100000000
     fun h => toString (countNodes 1000000 [h] [] 0)
 #guard (List.range 5).map (nestedMatch ·.succ) ==
-  (List.range 5).map fun k => s!"y={1 + 8 * (k + 1)} | ref x | {2 + 25 * (k + 1)}"
-#guard nestedMatch 40 == s!"y={1 + 8 * 40} | ref x | {2 + 25 * 40}"
+  (List.range 5).map fun k => s!"y={1 + 8 * (k + 1)} | ref x | {2 + 26 * (k + 1)}"
+#guard nestedMatch 40 == s!"y={1 + 8 * 40} | ref x | {2 + 26 * 40}"
 
 /-!
 A hardware tag with two arms that are not `_` gets the mark `share 0`, then the payload gets
@@ -3351,7 +3351,7 @@ def hwTagTree : String :=
   "y=(onehot (share 2 (== (share 0 (extract 0 2 x$2e)) (uint 2 1))) " ++
   "(share 3 (== (share 0 (extract 0 2 x$2e)) (uint 2 2))) " ++
   "(rest (share 2 (== (share 0 (extract 0 2 x$2e)) (uint 2 1))) " ++
-  "(share 3 (== (share 0 (extract 0 2 x$2e)) (uint 2 2)))) v (resize b) (uint 8 0)) | ref x | 143"
+  "(share 3 (== (share 0 (extract 0 2 x$2e)) (uint 2 2)))) v (resize b) (uint 8 0)) | ref x | 145"
 #guard hwTag "a" == "v=(extract 0 8 (share 1 (extract 2 8 x$2e))) " ++
   "a=(extract 0 1 (share 1 (extract 2 8 x$2e))) b=(extract 1 4 (share 1 (extract 2 8 x$2e))) " ++
   hwTagTree

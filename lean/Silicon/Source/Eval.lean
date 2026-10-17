@@ -1940,9 +1940,10 @@ values:
 
 3. The arm types join as the elements of an array literal, with the join charge (`S010`
    without a join). Then each arm converts to the joined type.
-4. The selects `(icmp eq sel k)` build in arm order with no charge. A select has `u = L + 1`
-   uses with an arm `_`, else `L`, with `L` the leaf count of the joined type. At `u >= 2` it
-   gets a mark (`shared`), in arm order.
+4. The selects `(icmp eq sel k)` build in arm order. Each select first charges the size of a
+   finite value of the type of `sel`, for its key constant (`keyLit`), before the constant
+   exists. A select has `u = L + 1` uses with an arm `_`, else `L`, with `L` the leaf count of
+   the joined type. At `u >= 2` it then gets a mark (`shared`).
 5. The select of `_` is one node `rest` over the selects, charged `1 + n` before it exists.
    Then it gets a mark at `L >= 2`.
 6. The walk over the arms (`armWalk`), with one `onehot` node for each leaf (`onehotLeaf`). A
@@ -1955,7 +1956,8 @@ def matchHw (pos : Pos) (sel : Hw) (keys : List (Option Int)) (vs : List Val) : 
   let xs ← xs.mapM (conformAgg pos j)
   let l := j.info.leaves
   let wild := keys.any (·.isNone)
-  let ss ← (keys.filterMap id).mapM fun k =>
+  let ss ← (keys.filterMap id).mapM fun k => do
+    charge pos (widthSize sel.ty.info.width)
     shared pos (.mk pos .bool (.bin .eq) [sel, keyLit pos sel.ty k]) (l + if wild then 1 else 0)
   let r ← if wild then do shared pos (← hwNode pos .bool .rest ss) l else pure sel
   let (cs, _) := keys.foldl (fun (cs, rs) k => match k, rs with
