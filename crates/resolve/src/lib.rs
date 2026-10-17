@@ -227,6 +227,8 @@ pub fn resolve(parse: Parse) -> Result<Resolved, Failed> {
 pub struct ResolvedExpr {
     expr: Expr,
     depth: usize,
+    /// The declarations of the binders of the expression, after the declarations of its file.
+    extra: Vec<Decl>,
     names: BTreeMap<NodeId, Target>,
     calls: BTreeMap<NodeId, Call>,
     variants: BTreeMap<NodeId, VariantRef>,
@@ -249,6 +251,16 @@ impl ResolvedExpr {
     #[must_use]
     pub fn target(&self, id: NodeId) -> Option<Target> {
         self.names.get(&id).copied()
+    }
+
+    /// The declaration of an id of this expression: a declaration of its file, or a binder of a
+    /// pattern in the expression.
+    #[must_use]
+    pub fn decl<'a>(&'a self, file: &'a Resolved, id: DeclId) -> &'a Decl {
+        match id.0.checked_sub(file.decls.len()) {
+            Some(k) => self.extra.get(k).unwrap_or_else(|| file.decl(id)),
+            None => file.decl(id),
+        }
     }
 
     /// The call site of the call node or the method node with an id, from 0 in pre-order.
@@ -282,9 +294,10 @@ pub fn resolve_expr(
 ) -> Result<Result<ResolvedExpr, Vec<Error>>, StackError> {
     let (expr, depth) = expr.into_parts();
     let names = parse::on_stack(depth, || walk::run_expr(resolved, &expr))?;
-    Ok(names.map(|(names, calls, variants)| ResolvedExpr {
+    Ok(names.map(|(names, calls, variants, extra)| ResolvedExpr {
         expr,
         depth,
+        extra,
         names,
         calls,
         variants,

@@ -70,17 +70,20 @@ pub(crate) fn run_expr(resolved: &Resolved, expr: &Expr) -> Result<ExprTable, Ve
     walker.expr(expr);
     let mut errors = walker.unresolved;
     if errors.is_empty() {
-        return Ok((walker.names, walker.calls, walker.variants));
+        let extra = walker.decls.split_off(resolved.decls.len());
+        return Ok((walker.names, walker.calls, walker.variants, extra));
     }
     errors.sort_by_key(|e| e.pos);
     Err(errors)
 }
 
-/// The targets of the name nodes and the call sites of the call nodes.
+/// The targets of the name nodes, the call sites of the call nodes, the variants of the paths,
+/// and the declarations of the binders.
 pub(crate) type ExprTable = (
     BTreeMap<NodeId, Target>,
     BTreeMap<NodeId, Call>,
     BTreeMap<NodeId, VariantRef>,
+    Vec<Decl>,
 );
 
 #[derive(Default)]

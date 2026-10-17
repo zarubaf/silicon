@@ -1912,3 +1912,25 @@ fn a_binder_in_a_signature_does_not_make_a_function_generic() {
         "{PAIR}fn g(n: Nat, y: UInt[match (n) {{ _ => n }}]) -> Bool {{ return true; }}"
     )));
 }
+
+#[test]
+fn a_binder_of_an_expression_has_its_own_declaration() {
+    let file = ok(PAIR);
+    let expr = run_expr(PAIR, "match (Op::Load(3)) { Op::Load(v) => v, _ => 0 }").unwrap();
+    let Expr::Match { arms, .. } = expr.expr() else {
+        panic!("expected a match")
+    };
+    let Pattern::Variant { binders, .. } = &arms[0].pat else {
+        panic!("expected a variant pattern")
+    };
+    let binder = binders[0].as_ref().unwrap();
+    let Some(Target::Decl(id)) = expr.target(binder.id) else {
+        panic!("a binder declares a name")
+    };
+    assert_eq!(expr.decl(&file, id).kind, Kind::Local);
+    assert_eq!(expr.decl(&file, id).name, "v");
+    let Expr::Name { id: used, .. } = &arms[0].value else {
+        panic!("expected a name")
+    };
+    assert_eq!(expr.target(*used), Some(Target::Decl(id)));
+}

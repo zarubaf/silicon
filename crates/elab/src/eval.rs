@@ -472,9 +472,18 @@ impl Evaluator<'_> {
         }
     }
 
-    /// The declaration of a binder. Each binder is in the body of an item of the file.
+    /// The declaration of an id: of the file, or of a binder of the top expression.
+    fn decl_ref(&self, id: DeclId) -> &resolve::Decl {
+        match (self.names, self.top) {
+            (Names::Top, Some(top)) => top.decl(self.file, id),
+            _ => self.file.decl(id),
+        }
+    }
+
+    /// The declaration of a binder. Each binder is in the body of an item of the file, or in a
+    /// pattern of the top expression.
     fn decl(&self, name: &Ident) -> Res<DeclId> {
-        match self.file.target(name.id) {
+        match self.target(name.id) {
             Some(Target::Decl(id)) => Ok(id),
             _ => fail(
                 Code::S010,
@@ -1304,7 +1313,7 @@ impl Evaluator<'_> {
             Some(Target::Prelude(k)) if k.is_type() => Ok(Out::Named(Val::Static(Value::Type(
                 self.tys.mk(prim(pos, x, k)?),
             )))),
-            Some(Target::Decl(id)) => match self.file.decl(id).kind {
+            Some(Target::Decl(id)) => match self.decl_ref(id).kind {
                 Kind::Const => self.constant(pos, x, id),
                 Kind::Alias if self.items.contains_key(&id) => self.constant(pos, x, id),
                 Kind::Struct => {
@@ -1321,7 +1330,7 @@ impl Evaluator<'_> {
                     let t = self.enum_use(pos, i)?;
                     Ok(Out::Named(Val::Static(Value::Type(t))))
                 }
-                Kind::Fn if self.file.decl(id).generic => fail(
+                Kind::Fn if self.decl_ref(id).generic => fail(
                     Code::S010,
                     pos,
                     format!("`{x}` is generic; a generic function is not a value"),

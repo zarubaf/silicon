@@ -18,6 +18,7 @@ method resolve::Resolved::receiver
 method resolve::Resolved::site
 method resolve::Resolved::target
 method resolve::Resolved::variant
+method resolve::ResolvedExpr::decl
 method resolve::ResolvedExpr::depth_with
 method resolve::ResolvedExpr::expr
 method resolve::ResolvedExpr::receiver
