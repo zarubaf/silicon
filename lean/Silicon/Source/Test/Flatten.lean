@@ -891,4 +891,107 @@ def enumFieldMem : String :=
   "    (let k$data$f$payload (bits 8) (extract m$0rdata 3 8))",
   "    (let k$data$f$tag (bits 2) (extract m$0rdata 1 2))"]
 
+/-!
+A hardware `match` is a parallel AND-OR mux (section 7.4). Each result leaf of width `w` is
+`(or (and (replicate s_0 w) v_0) ...)`. Over `Bool`, the selects are `icmp eq` nodes of one use,
+so they stay inline. The row charges 10 more than the `mux` of an `if`. The `or`, `replicate`,
+and `and` nodes charge 5, and the two selects 4 each. The `mux` charges 1 and the condition 2.
+-/
+#guard opLets "  let a = match (c) { true => x, false => x +% 1 };\n" == [
+  "    (let a (bits 8) (or (and (replicate (icmp eq c (const 1 1)) 8) x) " ++
+  "(and (replicate (icmp eq c (const 1 0)) 8) (add x (const 8 1)))))"]
+#guard opUnits "  let a = match (c) { true => x, false => x +% 1 };\n" ==
+  opUnits "  let a = if (c) { x } else { x +% 1 };\n" + 10
+
+/-!
+An integer scrutinee with `_`. Each select has two uses, so it binds to a temporary of the first
+statement that lowers it, in arm order. The select of `_` is `(xor (or s_0 s_1) (const 1 1))`.
+A static value of an arm is a constant.
+-/
+#guard opLets "  let a = match (x) { 0 => y, 1 => y +% 1, _ => 3 };\n" == [
+  "    (let a (bits 4) (or (or (and (replicate a$0t 4) y) " ++
+  "(and (replicate a$1t 4) (add y (const 4 1)))) " ++
+  "(and (replicate (xor (or a$0t a$1t) (const 1 1)) 4) (const 4 3))))",
+  "    (let a$0t (bits 1) (icmp eq x (const 8 0)))",
+  "    (let a$1t (bits 1) (icmp eq x (const 8 1)))"]
+
+/-!
+An enum scrutinee with binders. The selects compare the `tag` leaf, and each binder is an
+`extract` of the `payload` leaf, bound as a `let`.
+-/
+#guard opLets ("  let a = match (e) { Op::Load(v) => v, " ++
+    "Op::Pair(b, z) => resize(UInt[8], z), _ => 0 };\n") == [
+  "    (let a (bits 8) (or (or (and (replicate a$0t 8) v) " ++
+  "(and (replicate a$1t 8) (concat (const 4 0) z))) " ++
+  "(and (replicate (xor (or a$0t a$1t) (const 1 1)) 8) (const 8 0))))",
+  "    (let a$0t (bits 1) (icmp eq e$tag (const 2 1)))",
+  "    (let a$1t (bits 1) (icmp eq e$tag (const 2 2)))",
+  "    (let b (bits 1) (extract e$payload 0 1))",
+  "    (let v (bits 8) (extract e$payload 0 8))",
+  "    (let z (bits 4) (extract e$payload 1 4))"]
+
+/-!
+A result of two leaves. The marks bind in the first leaf statement in the order of section 7.4.
+The select `s_0` binds first, then the select of `_`, which refers to it. The second leaf
+statement refers to both.
+-/
+#guard opLets "  let a = match (c) { true => (x, y), _ => (x +% 1, y) };\n" == [
+  "    (let a$0e (bits 8) (or (and (replicate a$0e$0t 8) x) " ++
+  "(and (replicate a$0e$1t 8) (add x (const 8 1)))))",
+  "    (let a$0e$0t (bits 1) (icmp eq c (const 1 1)))",
+  "    (let a$0e$1t (bits 1) (xor a$0e$0t (const 1 1)))",
+  "    (let a$1e (bits 4) (or (and (replicate a$0e$0t 4) y) (and (replicate a$0e$1t 4) y)))"]
+
+/-!
+`k` nested `match (match (c) { .. }) { true => c, _ => x == 0 }` add one temporary and 24 units
+for each level, so the output and the charge stay linear.
+-/
+def nestMatch : Nat → String
+  | 0 => "c"
+  | k + 1 => s!"match ({nestMatch k}) \{ true => c, _ => x == 0 }"
+def nestedMatch (k : Nat) : String := Test.Elab.hwEnum s!"  let a = {nestMatch k};\n"
+#guard (List.range 20).all fun k => (enumLets (nestedMatch (k + 1))).length == k + 2
+#guard (List.range 20).all fun k =>
+  lowering (nestedMatch (k + 2)) == lowering (nestedMatch (k + 1)) + 24
+
+/-!
+A `match` of 70 arms. Both chains build in a loop. The `or` chain of the select of `_` binds
+`a$69t` when its height reaches 64, after `s_63`. The chain of the result binds `a$70t` after
+the arm 61, where an `and` term has the height 3.
+-/
+def ors (xs : List String) : String :=
+  match xs with
+  | [] => ""
+  | x :: xs => xs.foldl (fun e y => s!"(or {e} {y})") x
+def term (i : Nat) : String := s!"(and (replicate a${i}t 4) y)"
+def arms70 : String :=
+  Test.Elab.hwEnum ("  let a = match (x) { " ++
+    String.join ((List.range 69).map (s!"{·} => y, ")) ++ "_ => 0 };\n")
+#guard (enumLets arms70).length == 72
+#guard (enumLets arms70).contains ("    (let a (bits 4) " ++
+  ors ("a$70t" :: (List.range 7).map (term <| 62 + ·) ++ ["(and (replicate (xor " ++
+    ors ("a$69t" :: (List.range 5).map (s!"a${64 + ·}t")) ++ " (const 1 1)) 4) (const 4 0))"]) ++
+  ")")
+#guard (enumLets arms70).contains
+  ("    (let a$69t (bits 1) " ++ ors ((List.range 64).map (s!"a${·}t")) ++ ")")
+#guard (enumLets arms70).contains
+  ("    (let a$70t (bits 4) " ++ ors ((List.range 62).map term) ++ ")")
+
+/-!
+The binding order in one arm. In 65 arms, the value of arm 62 has the height 63, so its `and`
+node binds `a$65t` before the chain of arms 0 to 61 binds `a$66t`. The `or` chain of the 64
+selects before `_` reaches the height 64 at its end, so it binds `a$64t` before the `xor`.
+-/
+def adds (k : Nat) : String := (List.range k).foldl (fun e _ => s!"{e} +% 1") "y"
+def arms65 : String :=
+  Test.Elab.hwEnum ("  let a = match (x) { " ++ String.join ((List.range 64).map fun i =>
+    if i == 62 then s!"62 => {adds 62}, " else s!"{i} => y, ") ++ "_ => 0 };\n")
+#guard (enumLets arms65).contains ("    (let a (bits 4) (or (or (or a$66t a$65t) " ++
+  "(and (replicate a$63t 4) y)) (and (replicate (xor a$64t (const 1 1)) 4) (const 4 0))))")
+#guard (enumLets arms65).contains
+  ("    (let a$64t (bits 1) " ++ ors ((List.range 64).map (s!"a${·}t")) ++ ")")
+#guard (enumLets arms65).any (·.startsWith "    (let a$65t (bits 4) (and (replicate a$62t 4) (add")
+#guard (enumLets arms65).contains
+  ("    (let a$66t (bits 4) " ++ ors ((List.range 62).map term) ++ ")")
+
 end Silicon.Source.Test.Flatten

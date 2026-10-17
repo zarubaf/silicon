@@ -1660,6 +1660,8 @@ def opText : Eval.Op → String
   | .share k => s!"share {k}"
   | .mux => "mux"
   | .resize => "resize"
+  | .onehot => "onehot"
+  | .rest => "rest"
   | _ => "op"
 
 mutual
@@ -1860,5 +1862,13 @@ hardware enum. A wire of an enum type reads as a reference to its leaves.
 #guard hwLets
   (hwEnum "  wire w: Op;\n  w := Op::Pair(c, y);\n  let a = reinterpret(UInt[10], w);\n") ==
   ["a = (pack 10 (ref w$tag) (ref w$payload))"]
+
+/-!
+A hardware `match` gives one `onehot` node for each leaf: the selects, then the values. The select
+of `_` is a `rest` node over the other selects.
+-/
+#guard hwLets (hwEnum "  let a = match (c) { true => x, _ => resize(UInt[8], y) };\n") ==
+  ["a = (onehot (share 0 (op (ref c) (bool true))) (rest (share 0 (op (ref c) (bool true)))) " ++
+    "(ref x) (resize (ref y)))"]
 
 end Silicon.Source.Test.Elab

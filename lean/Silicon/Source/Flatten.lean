@@ -51,6 +51,9 @@ These rules settle the open points of the spec:
 - The left spine of a chain of binary nodes lowers in a loop, in the order of the recursion. The
   chain of `==` on an aggregate is as long as its leaf count. The recursion only enters the
   operands of the chain, so its depth does not grow with the chain.
+- A hardware `match` lowers to the AND-OR form of section 7.4 (`lowerMatch`). A `onehot` node
+  lowers its selects, then its values, then charges and builds its `replicate`, `and`, and `or`
+  nodes. Its `or` chain and the `or` chain of `rest` build in a loop and bind at the height 64.
 - The charges of a module belong to the units of its instantiation. The design node and the name
   of the top belong to no instantiation.
 - A core `E008` becomes `S020` at its position. `Core.check` reports the cycle node with the
@@ -249,6 +252,68 @@ def lowerPack (pos : Pos) (target : Path) (op : Op) (xs : List α) (wd : α → 
     return lo
   | _, _ => defect "a hardware node has the wrong number of operands"
 
+/-!
+The AND-OR lowering of a hardware `match` (section 7.4). `low` lowers an operand of `xs`, and `w`
+is the width of the node. Each chain builds its left spine in a loop. Before each `or` node and
+before the `xor` node, the chain so far binds to a temporary of `target` when its effective
+height reaches 64. Thus the recursion does not follow the arm count.
+
+- `onehot` of the selects `s_0` to `s_(m-1)` and the values `v_0` to `v_(m-1)` is
+  `(or (... (or a_0 a_1) ...) a_(m-1))` with `a_j = (and (replicate s_j w) v_j)`. The operands
+  lower first, in order: the selects, then the values. Thus the temporary numbers of the selects
+  do not depend on the temporaries of the values. Then the loop over the arms runs. Arm `j`
+  charges and builds its `replicate` node, then its `and` node. Each of them binds right after it
+  is built when its effective height reaches 64. From arm 1 on, the chain so far then binds by the
+  rule above, and the `or` node charges and builds. Thus the `and` node of an arm binds before
+  the chain that it joins.
+- `rest` of the selects `s_0` to `s_(n-1)` is `(xor (or (... (or s_0 s_1) ...) s_(n-1))
+  (const 1 1))`. The `xor` node and its constant charge first. Then the chain builds from `s_0`:
+  each step binds the chain so far, charges its `or` node, then lowers its select. At the end, the
+  chain binds before the `xor` node. One select gives `(xor s_0 (const 1
+  1))`.
+-/
+def lowerMatch (pos : Pos) (target : Path) (w : Nat) (op : Op) (xs : List α)
+    (low : α → FM Low) : FM Low := do
+  let c := cpos pos
+  match op with
+  | .onehot =>
+    let m := xs.length / 2
+    if xs.length != 2 * m then
+      defect "a `onehot` node has the wrong number of operands"
+    let mut ls : Array Low := #[]
+    for x in xs do
+      ls := ls.push (← low x)
+    let mut acc : Option Low := none
+    for (s, v) in (ls.toList.take m).zip (ls.toList.drop m) do
+      charge pos 1
+      let r ← deep pos target w false ⟨.replicate c s.expr w, none, s.height + 1⟩
+      charge pos 1
+      let a ← deep pos target w false
+        ⟨.bin c .and r.expr v.expr, none, max r.height v.height + 1⟩
+      match acc with
+      | none => acc := some a
+      | some lo =>
+        let lo ← deep pos target w false lo
+        charge pos 1
+        acc := some ⟨.bin c .or lo.expr a.expr, none, max lo.height a.height + 1⟩
+    let some lo := acc | defect "a `onehot` node has no arm"
+    return lo
+  | .rest =>
+    charge pos 2
+    let mut acc : Option Low := none
+    for x in xs do
+      match acc with
+      | none => acc := some (← low x)
+      | some lo =>
+        let lo ← deep pos target 1 false lo
+        charge pos 1
+        let r ← low x
+        acc := some ⟨.bin c .or lo.expr r.expr, none, max lo.height r.height + 1⟩
+    let some lo := acc | defect "a `rest` node has no select"
+    let lo ← deep pos target 1 false lo
+    return ⟨.bin c .xor lo.expr (.const c 1 1), none, lo.height + 1⟩
+  | _ => defect "a hardware node is not a node of a `match`"
+
 /-! The operands `xs` of a node of the measure `b`, each with its bound. -/
 def bounded (xs : List Hw) (b : Nat) (h : sizeOf xs < b) : List { x : Hw // sizeOf x < b } :=
   xs.attach.map fun x => ⟨x.1, by have := List.sizeOf_lt_of_mem x.2; omega⟩
@@ -400,8 +465,12 @@ def lower (target : Path) (root : Bool) : Hw → FM Low
       let ls := bounded xs (sizeOf (Hw.node p t sz (.extract off w) xs)) (by simp; omega)
       lowerPack p target (.extract off w) ls (fun x => width x.1.ty)
         (fun x => lower target false x.1)
-    -- TODO(#272): lower the `onehot` and `rest` nodes of a hardware `match` (section 7.4).
-    | .onehot, _ | .rest, _ => defect "a hardware `match` has no lowering yet"
+    | .onehot, xs =>
+      let ls := bounded xs (sizeOf (Hw.node p t sz .onehot xs)) (by simp)
+      lowerMatch p target (width t) .onehot ls (fun x => lower target false x.1)
+    | .rest, xs =>
+      let ls := bounded xs (sizeOf (Hw.node p t sz .rest xs)) (by simp)
+      lowerMatch p target (width t) .rest ls (fun x => lower target false x.1)
     | _, _ => defect "a hardware node has the wrong number of operands"
     deep p target (width t) root lo
 termination_by h => sizeOf h
