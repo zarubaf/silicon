@@ -700,7 +700,7 @@ theorem constant_f (p : Pos) (x : String) (i : Nat) {b b' : M Value} (h : Follow
   unfold constant; follows [h, setConst_f, nested_f, inFrame_f, structural_f]
 
 theorem specialize_f (p : Pos) (x : String) (i : Nat) (pre : Bool) (args : List Value)
-    {f g : M (List Ty)} (h : Follows cap f g) :
+    {f g : M (List (String × Ty))} (h : Follows cap f g) :
     Follows cap (specialize p x i pre args f) (specialize p x i pre args g) := by
   unfold specialize; follows [h, bounded_f, sums_f]
 

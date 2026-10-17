@@ -208,13 +208,11 @@ structure Design where
 The fields with a leaf of each done struct specialization, by its number. `elaborate` makes the
 table once, from the fields that each specialization paid for when it completed.
 -/
-def leafFields (items : Array Resolve.Item) (specs : Specs) :
-    Array (Option (Array (Nat × String × Ty))) :=
+def leafFields (specs : Specs) : Array (Option (Array (Nat × String × Ty))) :=
   specs.entries.map fun e => do
-    let .done _ fs := e.state | none
-    let some (.struct _ _ _ ds _) := items[e.item]? | none
-    return ((ds.toArray.map (·.name.name)).zip fs).zipIdx.filterMap fun ((x, t), k) =>
-      if t.info.leaves = 0 then none else some (k, x, t)
+    let .done t _ := e.state | none
+    return (← specs.parts t).zipIdx.filterMap fun ((x, u), k) =>
+      if u.info.leaves = 0 then none else some (k, x, u)
 
 /-! The fields with a leaf of the struct type `t` in the table `table`. -/
 def fieldsOf (table : Array (Option (Array (Nat × String × Ty)))) :
@@ -580,7 +578,7 @@ def observe (budget : Budget) (items : Array Resolve.Item) (digest : String → 
       let tvs ← arguments n pos top xs
       return (← instantiate n pos top tvs).2
     let (k, s) ← go.run { digest, work := { body := { domain := none } } }
-    let table := leafFields items (← get).specs
+    let table := leafFields (← get).specs
     return ⟨s.done, k, fieldsOf table⟩
 
 /-! The elaboration of the top selection, without the records. -/
