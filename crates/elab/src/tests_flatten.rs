@@ -548,7 +548,7 @@ fn a_static_container_with_leaf_types_holds_the_root() {
 }
 
 /// The `let` lines of the canonical text of `src`.
-fn enum_lets(src: &str) -> Vec<String> {
+pub(crate) fn enum_lets(src: &str) -> Vec<String> {
     sil(src, "M")
         .lines()
         .filter(|l| l.starts_with("    (let "))
@@ -557,7 +557,7 @@ fn enum_lets(src: &str) -> Vec<String> {
 }
 
 /// The module `M` with the enum `Op` and the hardware inputs `x`, `c`, `y`, and `e`.
-fn op_module(body: &str) -> String {
+pub(crate) fn op_module(body: &str) -> String {
     format!(
         "enum Op: UInt[2] {{ Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }}\n\
          module M() {{\n  input x: UInt[8];\n  input c: Bool;\n  input y: UInt[4];\n  \

@@ -209,3 +209,30 @@ fn w7_nested_matches_charge_a_constant_for_each_level() {
     }
     assert_eq!(step, 23);
 }
+
+/// W9. An enum of `2^16` variants and a `match` with an arm for each variant. The first use of
+/// the enum makes one insert into the tag map for each variant, and the coverage check compares
+/// the count of the keys with `2^16` by the width of the tag. The work is `v log v`.
+#[test]
+fn w9_an_enum_with_many_variants_and_a_match_over_all_of_them() {
+    let at = |bits: u32, key: u64| {
+        let v = 1u64 << bits;
+        let mut variants = String::new();
+        let mut arms = String::new();
+        for i in 0..v {
+            write!(variants, "V{i} = {i}, ").unwrap();
+            write!(arms, "E::V{i} => {i}, ").unwrap();
+        }
+        let src = format!("enum E: UInt[{bits}] {{ {variants} }}\n");
+        let expr = format!("match (E::V7) {{ {arms} }}");
+        let (text, used, counts) = counted(key, &src, &expr);
+        assert_eq!(text, "(int 7)", "{bits}");
+        (used, counts.covered)
+    };
+    let (small, wide) = (at(10, 70), at(11, 71));
+    assert_eq!((small.1, wide.1), (1024, 2048));
+    // The patterns and the shares of the arms grow as `v log v`.
+    let share = |bits: u64| (1u64 << bits) * (2 + 1 + bits + 1);
+    assert!(wide.0 - small.0 >= share(11) - share(10));
+    assert_eq!(at(16, 72).1, 65536);
+}
