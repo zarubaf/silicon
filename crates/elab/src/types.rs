@@ -323,7 +323,8 @@ pub struct Variant {
 
 /// An enum in the table of enums (section 5.6), by its item. A done entry holds the enum type,
 /// the tag width `W`, the payload width `P`, the types of its parts, and its variants in
-/// declaration order. An enum that is not started has no entry.
+/// declaration order. Its tag map gives the variant of each tag value. An enum that is not
+/// started has no entry.
 enum EnumState {
     InProgress,
     Done(DoneEnum),
@@ -336,6 +337,8 @@ struct DoneEnum {
     /// `UInt[W]`, then `UInt[P]` when `P` is not 0.
     parts: Vec<TyId>,
     variants: Vec<Variant>,
+    /// The index of the variant with each tag value.
+    tags: BTreeMap<Int, usize>,
 }
 
 /// An enum in the table: its name and its state.
@@ -956,6 +959,12 @@ impl Types {
         Some(&self.done_enum(t)?.variants)
     }
 
+    /// The index of the variant of the enum type `t` with the tag value `tag`.
+    #[must_use]
+    pub fn variant_of_tag(&self, t: TyId, tag: &Int) -> Option<usize> {
+        self.done_enum(t)?.tags.get(tag).copied()
+    }
+
     /// The name of the enum type `t`.
     #[must_use]
     pub fn enum_name(&self, e: EnumId) -> &str {
@@ -983,14 +992,15 @@ impl Types {
         );
     }
 
-    /// Completes the enum item `item` with its widths, its variants, and its metadata `meta`,
-    /// and gives its enum type. The caller paid the charge. The type has the size 1 and the
+    /// Completes the enum item `item` with its widths, its variants, their tag map, and its
+    /// metadata `meta`, and gives its enum type. The caller paid the charge. The type has the size 1 and the
     /// depth of its metadata.
     pub fn finish_enum(
         &mut self,
         item: usize,
         (tag_width, payload_width): (u32, u32),
         variants: Vec<Variant>,
+        tags: BTreeMap<Int, usize>,
         meta: Meta,
         depth: u64,
     ) -> TyId {
@@ -1013,6 +1023,7 @@ impl Types {
                 payload_width,
                 parts,
                 variants,
+                tags,
             });
         }
         ty
