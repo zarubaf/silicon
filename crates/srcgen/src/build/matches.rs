@@ -92,7 +92,7 @@ impl Builder {
             .collect();
         // An integer has no last value, so `_` is always there.
         arms.push((Pattern::Wild, self.arm(kind, d, r)));
-        matched(scrutinee, arms)
+        SExpr::Match(matched(scrutinee, arms))
     }
 
     fn int_pattern(&mut self, v: i64) -> Pattern {
@@ -121,7 +121,7 @@ impl Builder {
             }
             _ => arms.push((Pattern::Wild, self.arm(kind, d, r))),
         }
-        matched(scrutinee, arms)
+        SExpr::Match(matched(scrutinee, arms))
     }
 
     /// A match on an enum value: a subset of the variants in shuffled
@@ -158,11 +158,11 @@ impl Builder {
         } else {
             note!(self, complete_matches);
         }
-        matched(scrutinee, arms)
+        SExpr::Match(matched(scrutinee, arms))
     }
 
     /// A random subset of the variants, in shuffled order.
-    fn listed_variants(&mut self, def: &EnumDef) -> Vec<Variant> {
+    pub(super) fn listed_variants(&mut self, def: &EnumDef) -> Vec<Variant> {
         let mut vs = def.variants.clone();
         for i in (1..vs.len()).rev() {
             let j = self.tape.index(i + 1);
@@ -244,7 +244,7 @@ impl Builder {
             arms.push((Pattern::Wild, self.finite_constant(t)));
         }
         note!(self, finite_matches);
-        Some(matched(scrutinee, arms))
+        Some(SExpr::Match(matched(scrutinee, arms)))
     }
 
     /// A static value of the finite type `t`.
@@ -268,9 +268,10 @@ impl Builder {
     }
 }
 
-fn matched(scrutinee: SExpr, arms: Vec<(Pattern, SExpr)>) -> SExpr {
-    SExpr::Match(Match {
+/// The arms of a `match` on `scrutinee`.
+pub(super) fn matched<S, E>(scrutinee: S, arms: Vec<(Pattern, E)>) -> Match<S, E> {
+    Match {
         scrutinee: Box::new(scrutinee),
         arms,
-    })
+    }
 }

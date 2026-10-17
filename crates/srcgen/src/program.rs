@@ -344,6 +344,8 @@ pub(crate) enum HExpr {
     Receiver(Box<HExpr>, String, Vec<HExpr>),
     /// `E::V(a, b)` with payload values of the leaf types.
     Ctor(String, String, Vec<HExpr>),
+    /// A `match` with a hardware scrutinee: all arms evaluate.
+    Match(Match<HExpr, HExpr>),
 }
 
 /// The target of `:=`.
@@ -1075,6 +1077,7 @@ fn hexpr(e: &HExpr) -> String {
         HExpr::Reinterpret(t, a) => format!("reinterpret({}, {})", ty(t), hexpr(a)),
         HExpr::Call(f, args) => format!("{f}({})", list(args, hexpr)),
         HExpr::Receiver(recv, f, args) => format!("{}.{f}({})", hexpr(recv), list(args, hexpr)),
+        HExpr::Match(m) => matched(m, hexpr, hexpr),
         HExpr::Ctor(e, v, args) if args.is_empty() => format!("{e}::{v}"),
         HExpr::Ctor(e, v, args) => format!("{e}::{v}({})", list(args, hexpr)),
     }

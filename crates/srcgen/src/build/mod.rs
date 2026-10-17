@@ -40,6 +40,7 @@ mod enums;
 mod file;
 mod fnvalues;
 mod hw;
+mod hw_match;
 mod inst;
 mod lines;
 mod lists;
@@ -104,6 +105,8 @@ const NESTED_FNS: u32 = 3;
 const ENVS: usize = 64;
 /// A static `match` replaces one static expression in this many.
 const MATCH_ODDS: u32 = 30;
+/// A hardware `match` replaces one hardware expression in this many.
+const HW_MATCH_ODDS: u32 = 36;
 const INSTANCES: u32 = 3;
 const CONTEXTS: usize = 3;
 /// The largest first argument (the recursion count) of a `comptime fn`
@@ -415,6 +418,11 @@ struct Stats {
     nested_matches: u32,
     complete_matches: u32,
     finite_matches: u32,
+    hw_matches: u32,
+    hw_enum_matches: u32,
+    hw_binders: u32,
+    hw_complete_matches: u32,
+    hw_expr_scrutinees: u32,
 }
 
 struct Builder {

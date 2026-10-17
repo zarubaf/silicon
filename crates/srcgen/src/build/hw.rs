@@ -132,6 +132,9 @@ impl Builder {
     /// that no name in scope has).
     pub(super) fn hw(&mut self, ctx: &Ctx, w: &Want, depth: u32) -> Option<HExpr> {
         let shape = w.shape()?;
+        if let Some(m) = self.hw_match_gate(ctx, w, depth) {
+            return Some(m);
+        }
         let choice = if depth == 0 { 0 } else { self.tape.below(12) };
         let d = depth - u32::from(depth > 0);
         let built = match (shape, choice) {
@@ -371,5 +374,6 @@ pub(super) fn reads_name(e: &HExpr) -> bool {
         HExpr::Binary(_, a, b) => reads_name(a) || reads_name(b),
         HExpr::If(c, t, e) => reads_name(c) || reads_name(t) || reads_name(e),
         HExpr::Call(_, args) | HExpr::Ctor(_, _, args) => args.iter().any(reads_name),
+        HExpr::Match(m) => reads_name(&m.scrutinee) || m.arms.iter().any(|(_, a)| reads_name(a)),
     }
 }
