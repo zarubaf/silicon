@@ -826,6 +826,10 @@ def fits (t : Ty) (n : Int) : Bool :=
   | .nat => 0 ≤ n
   | _ => true
 
+/-! The `S012` text of the static integer `n` that does not fit the type `t`. -/
+def fitText (t : Ty) (n : Int) : String :=
+  if t matches .nat then s!"{intText n} is not a Nat" else s!"{intText n} does not fit {t.text}"
+
 /-!
 A typed use of a scalar, `()`, a record, an enum value, or a function at `t`. Only a static
 integer at a finite type converts. A `()` part of a container comes here, because it has no
@@ -840,12 +844,12 @@ def convertLeaf (t : Ty) (v : Value) : Except Fault Step :=
   | .unit, .unit | .bool, .bool _ | .int, .int _ | .type, .type _ | .string, .str _ => same
   | .struct .., .record s _ | .enum .., .enum s .. => if s.same t then same else wrong
   | .fn .., .function _ _ ps r => if (Ty.fn ps r).same t then same else wrong
-  | .nat, .int n => if 0 ≤ n then same else .error (.S012, s!"{intText n} is not a Nat")
+  | .nat, .int n => if 0 ≤ n then same else .error (.S012, fitText t n)
   | .uint w, .uint u _ | .sint w, .sint u _ => if u == w then same else wrong
   | .uint w, .int n | .sint w, .int n =>
     .ok ⟨(Value.int n).size + widthSize w, fun _ =>
       if fits t n then .ok (finite (t matches .sint _) w (BitVec.ofInt w n))
-      else .error (.S012, s!"{intText n} does not fit {t.text}")⟩
+      else .error (.S012, fitText t n)⟩
   | _, _ => wrong
 
 /-! The size of a scalar `v` after its typed use at `t`. -/

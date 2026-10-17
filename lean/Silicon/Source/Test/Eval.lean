@@ -2986,7 +2986,207 @@ comes after the typed uses of the payload values and after the type check of `re
 #guard out ops "Op::Load(true)" (depth := 2) == "S010 1:1"
 #guard out ops "reinterpret(Op, UInt[9](0))" (depth := 2) == "S010 1:1"
 
-/-! A `match` (slice 3) is `S004` at its keyword until the evaluator handles it. -/
-#guard out "" "match (1) { _ => 2 }" == "S004 1:1"
+/-!
+A `match` (section 5.4) charges its node 1, then its scrutinee. Each arm charges its pattern.
+`_` charges 1, and a literal `1 + s`, with the size `s` of its value. A variant charges `1 + s`
+and 1 for each binder and `_`, with `s` the size of a value of the tag type. Each arm
+that is not `_` then charges its coverage share `1 + floor(log2 n) + s`, with `n` such arms.
+A static scrutinee then evaluates only the selected arm. `match (1) { _ => 2 }` charges the node
+1, the scrutinee 2, `_` 1, and the arm 2. Two `Bool` arms each charge 2 and the share 3.
+-/
+#guard out "" "match (1) { _ => 2 }" == "(int 2)"
+#guard exact "" "match (1) { _ => 2 }" (1 + 2 + 1 + 2)
+#guard out "" "match (true) { true => 1, false => 2 }" == "(int 1)"
+#guard out "" "match (false) { true => 1, false => 2 }" == "(int 2)"
+#guard exact "" "match (true) { true => 1, false => 2 }" (1 + 2 + 2 * (2 + 3) + 2)
+#guard out "" "match (true) { false => 2, _ => 3 }" == "(int 3)"
+#guard exact "" "match (true) { false => 2, _ => 3 }" (1 + 2 + (2 + 2) + 1 + 2)
+#guard out "" "match (UInt[2](3)) { 0 => 0, 1 => 1, 2 => 2, 3 => 3 }" == "(int 3)"
+#guard exact "" "match (UInt[2](3)) { 0 => 0, 1 => 1, 2 => 2, 3 => 3 }"
+  (1 + 12 + 4 * (2 + 4) + 2)
+#guard out "" "match (SInt[4](-1)) { -1 => 10, _ => 0 }" == "(int 10)"
+#guard out "" "match (-5) { 5 => 1, -5 => 3, _ => 2 }" == "(int 3)"
+#guard exact "" "match (-5) { 5 => 1, -5 => 3, _ => 2 }" (1 + 4 + 2 * (2 + 3) + 1 + 2)
+
+/-!
+The pattern charge is the first step of an arm, so the fuel stops at the pattern. The share
+comes after the checks of the arm, at the pattern too.
+-/
+#guard out "" "match (true) { true => 1, false => 2 }" 14 == "S015 1:24"
+#guard out "" "match (true) { true => 1, false => 2 }" 8 == "S015 1:27"
+#guard out "" "match (true) { true => 1, false => 2 }" 5 == "S015 1:16"
+#guard out "" "match (true) { true => 1, false => 2 }" 3 == "S015 1:16"
+
+/-!
+The scrutinee is `Bool`, `UInt[W]`, `SInt[W]`, `Int`, `Nat`, or an enum, else `S010` at the
+scrutinee, after it evaluates. An error of the scrutinee comes first.
+-/
+#guard out "" "match (\"a\") { _ => 3 }" == "S010 1:8"
+#guard msg "" "match (\"a\") { _ => 3 }" == "a `match` takes `Bool`, `UInt`, `SInt`, `Int`, " ++
+  "`Nat`, or an enum, not `String`; match on a part of the value"
+#guard msg "" "match ((1, 2)) { _ => 3 }" == "a `match` takes `Bool`, `UInt`, `SInt`, `Int`, " ++
+  "`Nat`, or an enum, not `(Int, Int)`; match on a part of the value"
+#guard out "" "match (1 / 0) { _ => 3 }" == "S013 1:8"
+
+/-!
+A pattern has the kind of the scrutinee type (`S010` at the pattern), and a literal fits it
+(`S012`). The kind check of a variant compares the enum items. Thus a variant of another enum is
+`S010`, also when that enum has an error of its own (`E` has two tags 0).
+-/
+#guard out "" "match (true) { 1 => 2, _ => 3 }" == "S010 1:16"
+#guard msg "" "match (true) { 1 => 2, _ => 3 }" ==
+  "a pattern of `Bool` is `true` or `false`, not `1`; write `true` or `false`, or `_`"
+#guard msg "" "match (1) { true => 2, _ => 3 }" ==
+  "a pattern of `Int` is an integer, not `true`; write an integer, or `_`"
+#guard msg "" "match (-1) { -3 => 2, true => 3, _ => 3 }" ==
+  "a pattern of `Int` is an integer, not `true`; write an integer, or `_`"
+#guard out ops "match (Op::Add) { 1 => 1, _ => 2 }" == "S010 1:19"
+#guard msg ops "match (Op::Add) { 1 => 1, _ => 2 }" ==
+  "a pattern of `Op` is a variant of `Op`, not `1`; write a variant of `Op`, or `_`"
+#guard msg ops "match (1) { Op::Pair(a, _) => 1, _ => 2 }" ==
+  "a pattern of `Int` is an integer, not `Op::Pair(a, _)`; write an integer, or `_`"
+#guard out (ops ++ "enum E: UInt[1] { A = 0, B = 0 }\n") "match (Op::Add) { E::A => 1, _ => 2 }" ==
+  "S010 1:19"
+#guard msg (ops ++ "enum E: UInt[1] { A = 0, B = 0 }\n") "match (Op::Add) { E::A => 1, _ => 2 }" ==
+  "a pattern of `Op` is a variant of `Op`, not `E::A`; write a variant of `Op`, or `_`"
+#guard out "" "match (UInt[2](0)) { 4 => 2, _ => 3 }" == "S012 1:22"
+#guard msg "" "match (UInt[2](0)) { 4 => 2, _ => 3 }" == "4 does not fit UInt[2]"
+#guard msg "" "match (UInt[2](0)) { -1 => 2, _ => 3 }" == "-1 does not fit UInt[2]"
+#guard msg "" "match (SInt[2](0)) { 2 => 2, _ => 3 }" == "2 does not fit SInt[2]"
+#guard out "" "match (SInt[2](0)) { -2 => 2, _ => 3 }" == "(int 3)"
+
+/-!
+Coverage (`S021`). An arm after `_`, also a second `_`, is `S021` at its pattern, before a second
+match. A second match of a value names the first arm. After the last arm, a `_` without values
+comes first, then the smallest uncovered value at the `match`, written in source syntax. Each
+scrutinee kind has its uncovered value: `false`, a decimal, a negative `SInt`, a variant with one
+`_` for each payload value, and a tag without a variant. `Int` and `Nat` need `_`.
+-/
+#guard out "" "match (5) { _ => 1, 5 => 2 }" == "S021 1:21"
+#guard msg "" "match (5) { _ => 1, 5 => 2 }" == "this arm comes after `_`, so it matches no " ++
+  "value; move `_` to the end, or remove this arm"
+#guard out "" "match (5) { _ => 1, _ => 2 }" == "S021 1:21"
+#guard out "" "match (5) { _ => 1, true => 2 }" == "S010 1:21"
+-- The share of an arm after `_` charges before its `S021`.
+#guard out "" "match (5) { _ => 1, 5 => 2 }" (1 + 2 + 1 + 2 + 1) == "S015 1:21"
+#guard out "" "match (5) { _ => 1, 5 => 2 }" (1 + 2 + 1 + 2 + 2) == "S021 1:21"
+#guard out "" "match (5) { 5 => 1, _ => 3, 5 => 2 }" == "S021 1:29"
+#guard out "" "match (5) { 5 => 1, 5 => 2, _ => 3 }" == "S021 1:21"
+#guard msg "" "match (5) { 5 => 1, 5 => 2, _ => 3 }" == "this arm matches `5`, and the arm at " ++
+  "1:13 matches it too; remove one of the two patterns"
+#guard msg ops "match (Op::Add) { Op::Load(x) => 1, Op::Load(_) => 3, _ => 2 }" ==
+  "this arm matches `Op::Load(_)`, and the arm at 1:19 matches it too; remove one of the two " ++
+  "patterns"
+#guard out "" "match (UInt[2](3)) { 0 => 0, 1 => 1, 2 => 2, 3 => 3, _ => 4 }" == "S021 1:54"
+#guard msg "" "match (UInt[2](3)) { 0 => 0, 1 => 1, 2 => 2, 3 => 3, _ => 4 }" ==
+  "the arms before `_` cover each value of `UInt[2]`; remove the `_` arm"
+#guard out "" "match (true) { true => 1 }" == "S021 1:1"
+#guard msg "" "match (true) { true => 1 }" == "the `match` does not cover `false` of `Bool`; " ++
+  "add an arm for it, or add `_ => ...` as the last arm"
+#guard msg "" "match (false) { false => 1 }" == "the `match` does not cover `true` of `Bool`; " ++
+  "add an arm for it, or add `_ => ...` as the last arm"
+#guard msg "" "match (UInt[2](3)) { 0 => 0, 1 => 1, 3 => 3 }" == "the `match` does not cover " ++
+  "`2` of `UInt[2]`; add an arm for it, or add `_ => ...` as the last arm"
+#guard msg "" "match (SInt[4](-1)) { 0 => 10, 1 => 0 }" == "the `match` does not cover `-8` of " ++
+  "`SInt[4]`; add an arm for it, or add `_ => ...` as the last arm"
+#guard msg "" "match (SInt[4](-1)) { -8 => 10, 1 => 0 }" == "the `match` does not cover `-7` of " ++
+  "`SInt[4]`; add an arm for it, or add `_ => ...` as the last arm"
+#guard msg ops "match (Op::Add) { Op::Add => 1, Op::Pair(a, b) => 3 }" ==
+  "the `match` does not cover `Op::Load(_)` of `Op`; add an arm for it, or add `_ => ...` as " ++
+  "the last arm"
+#guard msg ops "match (Op::Add) { Op::Load(x) => 1, Op::Pair(a, b) => 3 }" ==
+  "the `match` does not cover `Op::Add` of `Op`; add an arm for it, or add `_ => ...` as " ++
+  "the last arm"
+#guard out ops "match (Op::Add) { Op::Add => 1, Op::Load(x) => 2, Op::Pair(a, b) => 3 }" ==
+  "S021 1:1"
+#guard msg ops "match (Op::Add) { Op::Add => 1, Op::Load(x) => 2, Op::Pair(a, b) => 3 }" ==
+  "the tag `3` of `Op` has no variant, but a port or a memory can hold it; add `_ => ...` as " ++
+  "the last arm"
+#guard out "" "match (5) { 5 => 1 }" == "S021 1:1"
+#guard msg "" "match (5) { 5 => 1 }" == "a `match` on `Int` has no finite set of values; add " ++
+  "`_ => ...` as the last arm"
+#guard out "" "match (5) { }" == "S021 1:1"
+#guard out "" "match (true) { }" == "S021 1:1"
+
+/-!
+The checks of all arms and the coverage check come before an arm evaluates. Thus an error does
+not depend on the value of the scrutinee. The arms that are not selected never evaluate.
+-/
+#guard out "" "match (true) { true => 1, false => 1 / 0 }" == "(int 1)"
+#guard out "" "match (true) { true => 1 / 0, false => 1, true => 2 }" == "S021 1:43"
+
+/-!
+A wide scrutinee needs no walk over its `2^W` values. The count of the keys compares with `2^W`
+by `W`. The smallest uncovered value comes from one pass over the keys.
+-/
+#guard out "" "match (UInt[1024](5)) { 0 => 1, 5 => 2, _ => 3 }" == "(int 2)"
+#guard msg "" "match (UInt[1024](5)) { 0 => 1, 1 => 3, 5 => 2 }" == "the `match` does not " ++
+  "cover `2` of `UInt[1024]`; add an arm for it, or add `_ => ...` as the last arm"
+#guard msg "" "match (UInt[65536](5)) { 0 => 1, 1 => 3, 5 => 2 }" == "the `match` does not " ++
+  "cover `2` of `UInt[65536]`; add an arm for it, or add `_ => ...` as the last arm"
+#guard msg "" "match (SInt[1024](5)) { 0 => 1 }" == s!"the `match` does not cover " ++
+  s!"`{-(2 ^ 1023 : Int)}` of `SInt[1024]`; add an arm for it, or add `_ => ...` as the last arm"
+#guard out "" "match (UInt[64](5)) { 0 => 1, 5 => 2, _ => 3 }" == "(int 2)"
+#guard exact "" "match (UInt[1024](5)) { 0 => 1, 5 => 2, _ => 3 }"
+  (1 + 27 + 2 * (2 + 3) + 1 + 2)
+
+/-!
+A variant pattern charges `1 + s` with `s` the size 1 of a `UInt[2]` tag, and 1 for each binder
+and `_`. Three arms that are not `_` give the share `3 + s`. A binder of the selected arm then
+charges the zero size of its type. It binds the static unpack of its payload value, at the
+offset of the value in the pack. `Op::Load(7)` binds `x` for the zero size 1 of `UInt[8]`.
+-/
+#guard out ops "match (Op::Add) { Op::Add => 1, Op::Load(x) => 2, Op::Pair(a, b) => 3, _ => 4 }"
+  == "(int 1)"
+#guard exact ops "match (Op::Add) { Op::Add => 1, Op::Load(x) => 2, Op::Pair(a, b) => 3, _ => 4 }"
+  (1 + 72 + (2 + 3) + (3 + 3) + (4 + 3) + 1 + 2)
+#guard out ops "match (Op::Load(7)) { Op::Add => 1, Op::Load(x) => x, _ => 4 }" == "(uint 8 7)"
+#guard exact ops "match (Op::Load(7)) { Op::Add => 1, Op::Load(x) => x, _ => 4 }"
+  (1 + 77 + (2 + 3) + (3 + 3) + 1 + 1 + 1)
+#guard out ops "match (Op::Pair(true, 9)) { Op::Pair(a, b) => (a, b), _ => (false, 4) }" ==
+  "(tuple ((bool true) (uint 4 9)))"
+#guard out ops "match (Op::Pair(true, 9)) { Op::Pair(_, b) => b, _ => 4 }" == "(uint 4 9)"
+#guard out (ops ++ "fn f(o: Op) -> UInt[8] { return match (o) { Op::Load(v) => v, _ => 0 }; }\n")
+  "f(Op::Load(3)) +% f(Op::Add)" == "(uint 8 3)"
+def nestedPayload : String :=
+  "enum F: UInt[1] { A = 0, B = 1 }\nstruct S { a: UInt[3], f: F }\n" ++
+  "enum E: UInt[2] { X(F, [UInt[3]; 2], (), S, SInt[4]) = 3, Y = 0 }\n"
+#guard out nestedPayload ("match (E::X(F::B, [5, 2], (), S(6, F::B), -3)) { " ++
+  "E::X(f, a, u, s, i) => (f, a, u, s, i), _ => (F::A, [0, 0], (), S(0, F::A), 0) }") ==
+  "(tuple ((enum (enum root F ()) 1) (array (uint 3) ((uint 3 5) (uint 3 2))) (unit) " ++
+  "(record (struct root S ()) ((uint 3 6) (enum (enum root F ()) 1))) (sint 4 -3)))"
+#guard out wideEnum ("match (E::A(UInt[63](0) -% 1, UInt[70](0) -% 3, true)) { " ++
+  "E::A(a, b, c) => (a, b, c), E::B => (0, 0, false) }") ==
+  s!"(tuple ((uint 63 {2 ^ 63 - 1}) (uint 70 {2 ^ 70 - 3}) (bool true)))"
+
+/-!
+A binder checks the size limit at the zero size of its type, then charges the zero size. Thus a
+payload of no bits with a large zero size pays for its value. `A(x)` pays `1 + 4096 * 4097`.
+A zero size above 2^32 is `S015` at the binder, and `_` makes no value.
+-/
+def bigPayload : String :=
+  "enum E: UInt[1] { A([[(); 4096]; 4096]) = 0, B([[[(); 65536]; 65536]; 2]) = 1 }\n"
+#guard exact bigPayload "match (reinterpret(E, UInt[1](0))) { E::A(_) => 1, _ => 2 }" 124
+#guard exact bigPayload "match (reinterpret(E, UInt[1](0))) { E::A(x) => 1, _ => 2 }"
+  (124 + 1 + 4096 * 4097)
+#guard out bigPayload "match (reinterpret(E, UInt[1](1))) { E::A(x) => 1, E::B(y) => 2 }" ==
+  "S015 1:57"
+#guard msg bigPayload "match (reinterpret(E, UInt[1](1))) { E::A(x) => 1, E::B(y) => 2 }" ==
+  Eval.zeroLimitText
+#guard out bigPayload "match (reinterpret(E, UInt[1](1))) { E::A(x) => 1, E::B(_) => 2 }" ==
+  "(int 2)"
+
+/-!
+A hardware scrutinee runs the same checks first. A hardware enum with a static tag is a hardware
+scrutinee. The hardware `match` itself is `S004` at its keyword until the evaluator makes it.
+-/
+#guard top (hw "  let u = match (x) { 0 => 1 };") "M(1)" == "S021 5:11"
+#guard top (hw "  let u = match (x) { true => 1, _ => 2 };") "M(1)" == "S010 5:23"
+#guard top (ops ++ hw ("  let o = reinterpret(Op, resize(UInt[10], x));\n" ++
+  "  let u = match (o) { Op::Add => 1 };")) "M(1)" == "S021 7:11"
+-- TODO(#272): replace these `S004` cases with the hardware `match`.
+#guard top (hw "  let u = match (x) { 0 => 1, _ => 2 };") "M(1)" == "S004 5:11"
+#guard top (ops ++ hw "  let o = Op::Load(x);\n  let u = match (o) { Op::Load(v) => v, _ => 0 };")
+  "M(1)" == "S004 7:11"
 
 end Silicon.Source.Test.Eval
