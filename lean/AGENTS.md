@@ -21,7 +21,8 @@ The front end holds a hardware aggregate (spec sections 5.1, 5.4, and 7.4) in th
 - A binding with a hardware leaf takes one version, and each hardware leaf gets one `Let`.
 - `Op.share k` marks the condition of an aggregate `if` with two or more `mux` nodes, and the operand of a hardware unpack. It charges the size of its operand once, when it is made. In a value, it has the size of a core name of its type. `Flatten` binds it to a temporary at its first lowering in the module.
 - `Layout.foldLeaves` streams the leaves of a port in packing order. No other module expands a port. An enum has the leaves `tag` and `payload`, and `Design.fields` gives the named parts of a struct and an enum. `Flatten` charges each leaf before it makes the leaf, and `Vectors` gives each leaf one schema entry.
-- `Flatten` lowers the left spine of a chain of binary nodes in a loop. `lowerPack` and `memData` build their `concat` chains in a loop, and they bind a temporary at the height 64. Thus the `==` chain of a large aggregate and a wide pack do not grow the stack.
+- `Flatten` lowers the left spine of a chain of binary nodes in a loop. `lowerPack` and `memData` build their `concat` chains in a loop, and `lowerMatch` builds the `or` chains of a hardware `match` in a loop. They bind a temporary at the height 64. Thus the `==` chain of a large aggregate, a wide pack, and a `match` with many arms do not grow the stack.
+- `lowerMatch` lowers a `onehot` node in the order of section 7.4: the selects, then the values, then the `replicate`, `and`, and `or` nodes. `rest` is an `or` chain inside an `xor` with `(const 1 1)`. Each mark binds at its first lowering in the module.
 - The Lean walks over an aggregate recurse on its structure. The depth of the value bounds them.
 
 A memory (spec section 6.2 and section 7.6) uses these parts:
