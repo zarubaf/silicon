@@ -268,7 +268,17 @@ impl Parser<'_> {
     /// `E::V` and its binders: a name or `_` for each payload value.
     fn variant_pattern(&mut self) -> Res {
         self.bump();
-        if !self.eat(ColonColon) || !self.eat(Ident) {
+        if !self.eat(ColonColon) {
+            return self.bad_pattern();
+        }
+        if self.is(Ident) && self.cur_text() == "_" {
+            self.syntax_error(
+                "a variant pattern names a variant, not `_`; write `_` alone to match each \
+                 other value",
+            );
+            return None;
+        }
+        if !self.eat(Ident) {
             return self.bad_pattern();
         }
         if self.is(ColonColon) {

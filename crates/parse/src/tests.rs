@@ -1083,6 +1083,13 @@ fn match_errors_are_at_the_first_bad_token() {
         ("const X: T = match (x) { 1 | 2 => 1 };", Code::S001, 1, 28),
         ("const X: T = match (x) { - x => 1 };", Code::S001, 1, 28),
         ("const X: T = match (x) { _::V => 1 };", Code::S001, 1, 27),
+        ("const X: T = match (x) { E::_ => 1 };", Code::S001, 1, 29),
+        (
+            "const X: T = match (x) { E::_(a) => 1 };",
+            Code::S001,
+            1,
+            29,
+        ),
         (
             "const X: T = match (x) { E::V::W => 1 };",
             Code::S004,
@@ -1114,6 +1121,18 @@ fn match_errors_are_at_the_first_bad_token() {
     assert_eq!(
         parse("const X: T = match (x) { a => 1 };").errors[0].message,
         PATTERN_TEXT
+    );
+    assert_eq!(
+        parse("const X: T = match (x) { E::_ => 1 };").errors[0].message,
+        "a variant pattern names a variant, not `_`; write `_` alone to match each other value"
+    );
+}
+
+#[test]
+fn a_trailing_comma_ends_the_binders_of_a_pattern() {
+    assert_eq!(
+        expr_dump("match (e) { Op::Load(a,) => a }"),
+        expr_dump("match (e) { Op::Load(a) => a }")
     );
 }
 
