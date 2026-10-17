@@ -37,8 +37,12 @@ The rows of a hardware `match` take a constant selector and the key constant of 
 select is the `icmp eq` node of `Eval.matchHw`, and the static `match` compares `Value.key`.
 The row of `rest` takes the selects as constants. `lowerMatch` builds its `or` chain in a loop
 (`ok_rest`), and the claim about `lower` holds for at most 60 selects. Then the chain stays
-below the height 64, so the height rule binds no temporary. The statements take the selects as
-given: no proof here ties them to the walk of `Eval.matchHw` (#286).
+below the height 64, so the height rule binds no temporary. The row of `onehot` takes constant
+selects, at most one of them 1, and constant values. `lowerMatch` lowers its operands in one loop
+(`ok_push`) and builds its `or` chain in a second loop (`ok_onehot`). The claim about `lower`
+holds for at most 30 arms. The statements take the selects and the values as given: no proof
+here ties them to the walk of `Eval.matchHw` and `Eval.armWalk` (#286). Each select of
+`Eval.matchHw` can have a shared mark (`Eval.shared`), and the rows here have none.
 -/
 namespace Silicon.Source.StaticOps
 
@@ -416,6 +420,59 @@ def RestAgrees : Prop :=
     (∀ q, ev vals mems (restRow q bs) = BitVec.ofBool !(bs.any id)) ∧
       (bs.length ≤ 60 →
         ∀ p, Lowers (restHw p bs) (2 * bs.length + 1) (restRow (ctx := ctx) (cpos p) bs).erase)
+
+/-! The type of a constant leaf of a hardware `match`: `Bool`, or a finite type. -/
+inductive Leaf where
+  | bool
+  | fin (s : Bool) (w : Nat)
+
+namespace Leaf
+
+def ty : Leaf → Ty
+  | .bool => .bool
+  | .fin s w => finiteTy s w
+
+def width : Leaf → Nat
+  | .bool => 1
+  | .fin _ w => w
+
+/-! The static value of the bits `x`, as for `Pair.value`. -/
+def value : (k : Leaf) → BitVec k.width → Value
+  | .bool, x => .bool (x == 1)
+  | .fin s w, x => finite s w x
+
+end Leaf
+
+/-! The node `onehot` of `Eval.onehotLeaf` over the arms `as`: each with its select and value. -/
+def onehotHw (p : Pos) (k : Leaf) (as : List (Bool × BitVec k.width)) : Hw :=
+  Hw.mk p k.ty .onehot (as.map (fun a => litHw p .bool (.bool a.1)) ++
+    as.map fun a => litHw p k.ty (k.value a.2))
+
+/-! The row `and (replicate s w) v` of an arm with the select `s` and the value `v`. -/
+def armRow (q : Core.Pos) (w : Nat) (hb : w ≤ 65536) (a : Bool × BitVec w) : Ex ctx w :=
+  .bin q .and (by decide)
+    (Nat.one_mul w ▸ .replicate q (.const q 1 (bit a.1)) w (by omega)) (.const q w a.2.toNat)
+
+/-! The row of `onehot`: `or (... (or a_0 a_1) ...) a_(m-1)`, with `a_j` the row of arm `j`. -/
+def onehotRow (q : Core.Pos) (w : Nat) (hb : w ≤ 65536) : List (Bool × BitVec w) → Ex ctx w
+  | [] => .const q w 0
+  | a :: as =>
+    as.foldl (fun e a => .bin q .or (by decide) e (armRow q w hb a)) (armRow q w hb a)
+
+/--
+A result leaf of a hardware `match`: the row of `onehot` over the arms `as`, each with a constant
+select and a constant value. At most one select is 1, as the keys of the arms differ. The row
+gives the value of the arm whose select is 1, and 0 when no select is 1. The static `match`
+gives the value of that arm. The claim about `lower` holds for at most 30 arms. Then the node
+has at most 60 operands, as the rows by leaf have at most 60 pairs. The heights alone allow 61
+arms: the chain of `m` arms has the height `m + 2`, below 64, so `lowerMatch` binds no temporary.
+-/
+def OnehotAgrees : Prop :=
+  ∀ (k : Leaf) (hb : k.width ≤ 65536) (as : List (Bool × BitVec k.width)), as ≠ [] →
+    (as.filter (·.1)).length ≤ 1 → ∀ {ctx} (vals : Valuation ctx) (mems : Memories ctx),
+    (∀ q, ev vals mems (onehotRow q k.width hb as) = ((as.find? (·.1)).map (·.2)).getD 0) ∧
+      (as.length ≤ 30 → ∀ p, Lowers (onehotHw p k as) (5 * as.length)
+        (onehotRow (ctx := ctx) (cpos p) k.width hb as).erase)
 
 /-! Facts about the lift and the operands. -/
 
@@ -928,19 +985,262 @@ theorem static_rest_agrees : RestAgrees := by
       (Spine.ok_deep (by simp; omega) ?_)))
     simp [restRow, erase_orRow, he', he, Core.Typed.Expr.erase]
 
+/-! The bits of an arm: its value when its select is 1, else 0. -/
+def armBits {w : Nat} (a : Bool × BitVec w) : BitVec w := if a.1 then a.2 else 0
+
+private theorem eval_cast {ctx} (vals : Valuation ctx) (mems : Memories ctx) :
+    ∀ {a b : Nat} (h : a = b) (e : Ex ctx a),
+      ev vals mems (h ▸ e : Ex ctx b) = (ev vals mems e).cast h
+  | _, _, rfl, _ => rfl
+
+private theorem erase_cast {ctx} : ∀ {a b : Nat} (h : a = b) (e : Ex ctx a),
+    (h ▸ e : Ex ctx b).erase = e.erase
+  | _, _, rfl, _ => rfl
+
+private theorem eval_armRow {ctx} (vals : Valuation ctx) (mems : Memories ctx) (q : Core.Pos)
+    (w : Nat) (hb : w ≤ 65536) (a : Bool × BitVec w) :
+    ev vals mems (armRow q w hb a) = armBits a := by
+  obtain ⟨c, x⟩ := a
+  simp only [armRow, Core.Semantics.evalExpr, Core.Semantics.evalOp, eval_cast,
+    Core.Semantics.evalReplicate, armBits]
+  cases c <;> ext i hi <;> simp [BitVec.getElem_replicate, Nat.mod_one]
+
+private theorem eval_orArms {ctx} (vals : Valuation ctx) (mems : Memories ctx) (q : Core.Pos)
+    (w : Nat) (hb : w ≤ 65536) : ∀ (as : List (Bool × BitVec w)) (e : Ex ctx w),
+      ev vals mems (as.foldl (fun e a => .bin q .or (by decide) e (armRow q w hb a)) e) =
+        ev vals mems e ||| as.foldr (fun a r => armBits a ||| r) 0
+  | [], e => by simp
+  | a :: as, e => by
+    simp only [List.foldl_cons, List.foldr_cons]
+    rw [eval_orArms vals mems q w hb as]
+    simp [Core.Semantics.evalExpr, Core.Semantics.evalOp, eval_armRow, BitVec.or_assoc]
+
+private theorem orArms_none {w : Nat} : ∀ (as : List (Bool × BitVec w)),
+    (as.filter (·.1)).length = 0 → as.foldr (fun a r => armBits a ||| r) 0 = 0
+  | [], _ => rfl
+  | ⟨c, x⟩ :: as, h => by
+    cases c
+    · simp only [List.filter_cons, Bool.false_eq_true, ite_false] at h
+      rw [List.foldr_cons, orArms_none as h]
+      simp [armBits]
+    · simp at h
+
+private theorem orArms_find {w : Nat} : ∀ (as : List (Bool × BitVec w)),
+    (as.filter (·.1)).length ≤ 1 →
+      as.foldr (fun a r => armBits a ||| r) 0 = ((as.find? (·.1)).map (·.2)).getD 0
+  | [], _ => rfl
+  | ⟨c, x⟩ :: as, h => by
+    cases c
+    · simp only [List.filter_cons, Bool.false_eq_true, ite_false] at h
+      rw [List.foldr_cons, orArms_find as h]
+      simp [armBits]
+    · simp only [List.filter_cons, ite_true, List.length_cons] at h
+      rw [List.foldr_cons, orArms_none as (by omega)]
+      simp [armBits]
+
+private theorem Leaf.const_value (k : Leaf) (q : Core.Pos) (x : BitVec k.width) :
+    constOf q (k.value x) = pure (.const q k.width x.toNat) := by
+  cases k with
+  | bool => rcases BitVec.eq_zero_or_eq_one x with rfl | rfl <;> rfl
+  | fin s w => cases s <;> rfl
+
+private theorem Leaf.width_ty (k : Leaf) : Flatten.width k.ty = k.width := by
+  cases k with
+  | bool => rfl
+  | fin s w => cases s <;> rfl
+
+private theorem q_fuel {Q : Flatten.St → Prop} {st : Flatten.St} {a b : Nat} (h : a = b)
+    (hq : Q { st with fuel := st.fuel - a }) : Q { st with fuel := st.fuel - b } := h ▸ hq
+
+open Spine in
+/-- The first loop of `onehot`: it lowers each operand, in order, into an array. -/
+private theorem ok_push {b : Nat} (target : Names.Path)
+    (g : {x : Hw // sizeOf x < b} → Array Low → FM (ForInStep (Array Low)))
+    (hg : ∀ x arr, g x arr = (do
+      let d ← lower target false x.1
+      pure (.yield (arr.push d)))) :
+    ∀ (ys : List {x : Hw // sizeOf x < b}) (xs : List (Hw × Core.Expr)) (arr : Array Low)
+      (st : Flatten.St) (Q : Array Low → Flatten.St → Prop),
+      ys.map (·.1) = xs.map (·.1) → (∀ x ∈ xs, Runs x.1 1 x.2 1) → xs.length ≤ st.fuel →
+      (∀ arr' (ls : List Low), arr'.toList = arr.toList ++ ls → ls.map (·.expr) = xs.map (·.2) →
+        (∀ l ∈ ls, l.height ≤ 1) → Q arr' { st with fuel := st.fuel - xs.length }) →
+      Ok (forIn ys arr g) st Q
+  | [], [], arr, st, Q, _, _, _, hq => by
+    have hst : st = { st with fuel := st.fuel - 0 } := by simp
+    exact ok_pure (hst ▸ hq arr [] (by simp) rfl (by simp))
+  | [], _ :: _, _, _, _, hv, _, _, _ => by simp at hv
+  | _ :: _, [], _, _, _, hv, _, _, _ => by simp at hv
+  | y :: ys, x :: xs, arr, st, Q, hv, hr, hf, hq => by
+    simp only [List.map_cons, List.cons.injEq] at hv
+    obtain ⟨hy, hv⟩ := hv
+    simp only [List.length_cons] at hf
+    rw [List.forIn_cons, hg, hy]
+    refine ok_bind (ok_bind ((hr x (by simp)).ok (by omega) fun d he hh => ok_pure ?_))
+    refine ok_push target g hg ys xs _ _ Q hv (fun z hz => hr z (by simp [hz])) (by simp; omega)
+      fun arr' ls harr hls hlh => ?_
+    rw [fuel_sub]
+    refine q_fuel (Q := Q arr') (by simp; omega) (hq arr' (d :: ls) (by simp [harr]) ?_ ?_)
+    · simp [he, hls]
+    · simp only [List.mem_cons, forall_eq_or_imp]
+      exact ⟨hh, hlh⟩
+
+/-! The row `and (replicate s w) v` of an arm with the rows `s` and `v`. -/
+def armCore (q : Core.Pos) (w : Nat) (e : Core.Expr × Core.Expr) : Core.Expr :=
+  .bin q .and (.replicate q e.1 w) e.2
+
+open Spine in
+/-- The second loop of `onehot`, after the first arm: one `or` node for each arm. -/
+private theorem ok_onehot (p : Pos) (target : Names.Path) (w : Nat)
+    (g : Low × Low → Option Low → FM (ForInStep (Option Low)))
+    (hg : ∀ x lo, g x (some lo) = (do
+      Flatten.charge p 1
+      let r ← deep p target w false ⟨.replicate (cpos p) x.1.expr w, none, x.1.height + 1⟩
+      Flatten.charge p 1
+      let a ← deep p target w false
+        ⟨.bin (cpos p) .and r.expr x.2.expr, none, max r.height x.2.height + 1⟩
+      let lo ← deep p target w false lo
+      Flatten.charge p 1
+      pure (.yield (some ⟨.bin (cpos p) .or lo.expr a.expr, none, max lo.height a.height + 1⟩)))) :
+    ∀ (prs : List (Low × Low)) (lo : Low) (h : Nat) (st : Flatten.St)
+      (Q : Option Low → Flatten.St → Prop),
+      (∀ x ∈ prs, x.1.height ≤ 1 ∧ x.2.height ≤ 1) → lo.height ≤ h → 3 ≤ h →
+      h + prs.length < 64 → 3 * prs.length ≤ st.fuel →
+      (∀ lo', lo'.expr = prs.foldl
+          (fun e x => .bin (cpos p) .or e (armCore (cpos p) w (x.1.expr, x.2.expr))) lo.expr →
+        lo'.height ≤ h + prs.length →
+        Q (some lo') { st with fuel := st.fuel - 3 * prs.length }) →
+      Ok (forIn prs (some lo) g) st Q
+  | [], lo, h, st, Q, _, hl, _, _, _, hq => by
+    have hst : st = { st with fuel := st.fuel - 3 * 0 } := by simp
+    exact ok_pure (hst ▸ hq lo rfl (by simpa using hl))
+  | x :: prs, lo, h, st, Q, hx, hl, h3, hh, hf, hq => by
+    obtain ⟨hx1, hx2⟩ := hx x (by simp)
+    simp only [List.length_cons] at hh hf
+    rw [List.forIn_cons, hg]
+    refine ok_bind (ok_bind (ok_charge (by omega) (ok_bind (ok_deep (by simp; omega)
+      (ok_bind (ok_charge (by simp; omega) (ok_bind (ok_deep (by simp; omega)
+      (ok_bind (ok_deep (by omega) (ok_bind (ok_charge (by simp; omega) (ok_pure ?_)))))))))))))
+    refine ok_onehot p target w g hg prs _ (h + 1) _ Q (fun y hy => hx y (by simp [hy]))
+      (by simp; omega) (by omega) (by omega) (by simp; omega) fun lo' he' hh' => ?_
+    dsimp only
+    simp only [Nat.sub_sub]
+    refine q_fuel (Q := Q (some lo')) (by simp; omega) (hq lo' ?_ (by simp; omega))
+    simpa [armCore] using he'
+
+private theorem armRow_erase {ctx} (q : Core.Pos) (w : Nat) (hb : w ≤ 65536)
+    (a : Bool × BitVec w) :
+    (armRow (ctx := ctx) q w hb a).erase =
+      armCore q w (.const q 1 (bit a.1), .const q w a.2.toNat) := by
+  simp [armRow, Core.Typed.Expr.erase, erase_cast, armCore]
+
+private theorem erase_orArms {ctx} (q : Core.Pos) (w : Nat) (hb : w ≤ 65536) :
+    ∀ (as : List (Bool × BitVec w)) (e : Ex ctx w),
+      (as.foldl (fun e a => .bin q .or (by decide) e (armRow q w hb a)) e).erase =
+        as.foldl (fun e a => .bin q .or e (armRow (ctx := ctx) q w hb a).erase) e.erase
+  | [], _ => rfl
+  | a :: as, e => by simp [erase_orArms q w hb as, Core.Typed.Expr.erase]
+
+theorem static_onehot_agrees : OnehotAgrees := by
+  intro k hb as hne hone ctx vals mems
+  obtain ⟨a, as, rfl⟩ : ∃ a as', as = a :: as' := by
+    cases as with
+    | nil => exact absurd rfl hne
+    | cons a as => exact ⟨a, as, rfl⟩
+  refine ⟨fun q => ?_, fun hlen p => ?_⟩
+  · rw [onehotRow, eval_orArms, eval_armRow, ← orArms_find _ hone]
+    simp
+  · intro target root st hf
+    simp only [List.length_cons] at hlen hf
+    simp only [onehotHw, Hw.mk]
+    rw [lower.eq_def]
+    simp only [lowerMatch]
+    change Spine.Ok _ st fun (lo : Low) _ => lo.expr = _
+    generalize hL : Flatten.bounded _ _ _ = L
+    have hm : L.map (·.1) = _ := hL ▸ map_bounded _ _ _
+    have hLl : L.length = 2 * (as.length + 1) := by
+      have := congrArg List.length hm
+      simp at this
+      omega
+    rw [hLl]
+    simp only [Nat.mul_div_cancel_left _ (by decide : 0 < 2), bne_self_eq_false,
+      Bool.false_eq_true, ite_false, Leaf.width_ty]
+    let selE (a : Bool × BitVec k.width) : Core.Expr := .const (cpos p) 1 (bit a.1)
+    let valE (a : Bool × BitVec k.width) : Core.Expr := .const (cpos p) k.width a.2.toNat
+    obtain ⟨xs, hx⟩ : ∃ xs : List (Hw × Core.Expr), xs =
+        (a :: as).map (fun a => (litHw p .bool (.bool a.1), selE a)) ++
+          (a :: as).map (fun a => (litHw p k.ty (k.value a.2), valE a)) := ⟨_, rfl⟩
+    have hxl : xs.length = 2 * (as.length + 1) := by simp [hx]; omega
+    have hxs : L.map (·.1) = xs.map (·.1) := by rw [hm, hx]; simp [Function.comp_def]
+    have hruns : ∀ x ∈ xs, Spine.Runs x.1 1 x.2 1 := by
+      intro x hm'
+      simp only [hx, List.mem_append, List.mem_map] at hm'
+      rcases hm' with ⟨b, -, rfl⟩ | ⟨b, -, rfl⟩
+      · exact runs_litHw _ _ _ _ (const_bool _ _)
+      · exact runs_litHw _ _ _ _ (Leaf.const_value _ _ _)
+    refine Spine.ok_bind (Spine.ok_bind (ok_push target _ (fun _ _ => rfl) L xs #[] st _ hxs hruns
+      (by omega) fun arr ls harr hls hlh => Spine.ok_bind ?_))
+    rw [show arr.toList = ls by simpa using harr]
+    have hls' : ls.map (·.expr) = (a :: as).map selE ++ (a :: as).map valE := by
+      rw [hls, hx]; simp [Function.comp_def]
+    have hll : ls.length = 2 * (as.length + 1) := by
+      have := congrArg List.length hls'
+      simp at this
+      omega
+    have h1 : (ls.take (as.length + 1)).map (·.expr) = (a :: as).map selE := by
+      rw [List.map_take, hls', List.take_left' (by simp)]
+    have h2 : (ls.drop (as.length + 1)).map (·.expr) = (a :: as).map valE := by
+      rw [List.map_drop, hls', List.drop_left' (by simp)]
+    generalize hP : (ls.take (as.length + 1)).zip (ls.drop (as.length + 1)) = prs
+    have F1 : prs.map (fun x => (x.1.expr, x.2.expr)) =
+        (a :: as).map fun a => (selE a, valE a) := by
+      rw [← hP, show ((a :: as).map fun a => (selE a, valE a)) =
+        ((a :: as).map selE).zip ((a :: as).map valE) from List.zip_map'.symm, ← h1, ← h2,
+        List.zip_map]
+      rfl
+    have F2 : ∀ x ∈ prs, x.1.height ≤ 1 ∧ x.2.height ≤ 1 := by
+      intro x hxm
+      rw [← hP] at hxm
+      obtain ⟨m1, m2⟩ := List.of_mem_zip hxm
+      exact ⟨hlh _ (List.mem_of_mem_take m1), hlh _ (List.mem_of_mem_drop m2)⟩
+    obtain ⟨x0, prs, rfl⟩ : ∃ x0 prs', prs = x0 :: prs' := by
+      cases prs with
+      | nil => simp at F1
+      | cons x0 prs' => exact ⟨_, _, rfl⟩
+    simp only [List.map_cons, List.cons.injEq, Prod.mk.injEq] at F1
+    obtain ⟨⟨hs0, hv0⟩, F1⟩ := F1
+    have hpl : prs.length = as.length := by
+      have := congrArg List.length F1
+      simpa using this
+    obtain ⟨hx1, hx2⟩ := F2 x0 (by simp)
+    rw [List.forIn_cons]
+    refine Spine.ok_bind (Spine.ok_bind (Spine.ok_charge (by simp; omega)
+      (Spine.ok_bind (Spine.ok_deep (by simp; omega) (Spine.ok_bind (Spine.ok_charge
+      (by simp; omega) (Spine.ok_bind (Spine.ok_deep (by simp; omega) (Spine.ok_pure ?_)))))))))
+    refine ok_onehot p target k.width _ (fun _ _ => rfl) prs _ 3 _ _
+      (fun y hy => F2 y (by simp [hy])) (by simp; omega) (Nat.le_refl _) (by omega)
+      (by simp; omega) fun lo' he' hh' => ?_
+    refine Spine.ok_pure (Spine.ok_deep (by omega) ?_)
+    rw [he', onehotRow, erase_orArms]
+    simp only [armRow_erase]
+    rw [← List.foldl_map (f := fun x : Low × Low => (x.1.expr, x.2.expr))
+      (g := fun e y => Core.Expr.bin (cpos p) .or e (armCore (cpos p) k.width y)), F1,
+      List.foldl_map]
+    simp only [hs0, hv0, selE, valE]
+    rfl
+
 /-! Each finite static operation agrees with its core row, and `lower` emits that row. -/
 theorem static_op_agrees :
     BinAgrees ∧ CmpAgrees ∧ BoolCmpAgrees ∧ LogicAgrees ∧ InvAgrees ∧ NegAgrees ∧
       NotAgrees ∧ ShiftAgrees ∧ ResizeSameAgrees ∧ ResizeTruncAgrees ∧ ResizeZextAgrees ∧
       ResizeSextAgrees ∧ ReinterpretAgrees ∧ EqLeavesAgrees ∧ NeLeavesAgrees ∧ IfLeafAgrees ∧
       UnpackEnumAgrees ∧ BinderLeafAgrees ∧ BinderBoolAgrees ∧ SelectAgrees ∧ SelectBoolAgrees ∧
-      RestAgrees :=
+      RestAgrees ∧ OnehotAgrees :=
   ⟨static_bin_agrees, static_cmp_agrees, static_bool_cmp_agrees, static_logic_agrees,
     static_inv_agrees, static_neg_agrees, static_not_agrees, static_shift_agrees,
     static_resize_same_agrees, static_resize_trunc_agrees, static_resize_zext_agrees,
     static_resize_sext_agrees, static_reinterpret_agrees, static_eq_leaves_agrees,
     static_ne_leaves_agrees, static_if_leaf_agrees, static_unpack_enum_agrees,
     static_binder_leaf_agrees, static_binder_bool_agrees, static_select_agrees,
-    static_select_bool_agrees, static_rest_agrees⟩
+    static_select_bool_agrees, static_rest_agrees, static_onehot_agrees⟩
 
 end Silicon.Source.StaticOps
