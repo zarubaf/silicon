@@ -1907,3 +1907,68 @@ fn the_messages_of_diagnostic_equal_those_of_lean() {
         "the value of `diagnostic` needs a type; an array literal with `[]` without a type"
     );
 }
+
+/// A module `M` with the extra ports `ports` and the body `body`, over the enum `Op`.
+fn enum_module(ports: &str, body: &str, extra: &str) -> String {
+    format!(
+        "{extra}module M() {{\n  input d: UInt[8];\n{ports}  output o: Bool;\n{body}  o := true;\n}}\n"
+    )
+}
+
+/// A hardware enum renders as `(enum <type> <tag> <payload>)`: a static tag is an integer, and a
+/// hardware leaf is `(hw (uint ..))`. A reference of an enum type renders each leaf as a
+/// hardware leaf, and an empty payload has no part.
+#[test]
+fn an_enum_renders_as_its_tag_and_its_payload() {
+    let op = "enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }\n";
+    let reference = enum_module("  input a: Op;\n", "  diagnostic(\"r\", a);\n", op);
+    check(
+        &reference,
+        "M",
+        None,
+        &[(
+            None,
+            &[
+                "(record 6 3 M () (string \"r\") (enum (enum root Op ()) (hw (uint 2)) (hw (uint 8))))",
+            ],
+            "ok",
+        )],
+    );
+    let hardware = enum_module("", "  diagnostic(\"h\", Op::Load(d));\n", op);
+    check(
+        &hardware,
+        "M",
+        None,
+        &[(
+            None,
+            &["(record 5 3 M () (string \"h\") (enum (enum root Op ()) 1 (hw (uint 8))))"],
+            "ok",
+        )],
+    );
+    let flag = enum_module(
+        "  input a: F;\n",
+        "  diagnostic(\"r\", a);\n",
+        "enum F: UInt[1] { A = 0 }\n",
+    );
+    check(
+        &flag,
+        "M",
+        None,
+        &[(
+            None,
+            &["(record 6 3 M () (string \"r\") (enum (enum root F ()) (hw (uint 1))))"],
+            "ok",
+        )],
+    );
+    let fixed = enum_module("", "  diagnostic(\"s\", Op::Load(3));\n", op);
+    check(
+        &fixed,
+        "M",
+        None,
+        &[(
+            None,
+            &["(record 5 3 M () (string \"s\") (enum (enum root Op ()) 1 (uint 8 3)))"],
+            "ok",
+        )],
+    );
+}

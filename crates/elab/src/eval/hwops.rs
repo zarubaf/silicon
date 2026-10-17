@@ -10,12 +10,12 @@
 use super::{Evaluator, Naming, Opnd, Res, Store, at, fail};
 use crate::Code;
 use crate::agg::{Agg, Base};
-use crate::hw::{Graph, HwId, Op, Seen, Val};
+use crate::hw::{Graph, HwId, Node, Op, Seen, Val};
 use crate::int::unsigned_size;
 use crate::names::{Paths, Step};
 use crate::ops::{self, Fuel, MAX_WIDTH, binop_text, int_text, unop_text};
 use crate::types::{Ty, TyId, Types};
-use crate::value::{Value, int_size};
+use crate::value::{Value, int_size, width_size};
 use parse::ast::{BinOp, Pos, UnOp};
 use resolve::Prelude;
 
@@ -82,6 +82,8 @@ fn lit_value_at(
 /// so the walk copies no aggregate. A `Ref` is a reference that the walk made for a part.
 enum Side<'a> {
     Val(&'a Value),
+    /// A static leaf that the walk made: the tag or the payload of a static enum.
+    Own(Value),
     Agg(&'a Agg),
     Hw(HwId),
     Ref(Base),
@@ -110,10 +112,20 @@ impl<'a> Side<'a> {
         }
     }
 
+    /// The static value of the side, if it is one.
+    fn value(&self) -> Option<&Value> {
+        match self {
+            Side::Val(v) => Some(v),
+            Side::Own(v) => Some(v),
+            _ => None,
+        }
+    }
+
     /// The type of the side. A part that the walk made has none.
     fn ty(&self, g: &Graph, tys: &mut Types) -> Option<TyId> {
         match self {
             Side::Val(v) => Some(v.ty(tys)),
+            Side::Own(v) => Some(v.ty(tys)),
             Side::Hw(h) => Some(tys.mk(g.ty(*h))),
             Side::Agg(a) => Some(a.ty(g, tys)),
             Side::Ref(_) => None,
@@ -123,6 +135,7 @@ impl<'a> Side<'a> {
     fn text(&self, g: &Graph, tys: &Types) -> String {
         match self {
             Side::Val(v) => v.text(tys),
+            Side::Own(v) => v.text(tys),
             Side::Hw(h) => format!("hardware {}", tys.text_of(&g.ty(*h))),
             Side::Agg(a) => a.stored_ty().map_or_else(
                 || "hardware".to_owned(),
@@ -151,6 +164,11 @@ impl<'a> Side<'a> {
                     Value::Array(_, xs) | Value::Tuple(_, xs) | Value::Record(_, xs) => {
                         xs.get(k).map(Side::Val)
                     }
+                    Value::Enum(_, tag, payload) => match k {
+                        0 => Some(Side::Own(Value::UInt(tag.clone()))),
+                        1 => payload.as_ref().map(|p| Side::Own(Value::UInt(p.clone()))),
+                        _ => None,
+                    },
                     _ => None,
                 };
             }
@@ -165,7 +183,7 @@ impl<'a> Side<'a> {
                 }
             }
             Side::Ref(b) => b,
-            Side::Hw(_) => return None,
+            Side::Own(_) | Side::Hw(_) => return None,
         };
         if empty {
             return Some(Side::Ref(base.clone()));
@@ -245,7 +263,7 @@ fn static_pair(
     pairs: &mut Pairs,
     (fuel, graph, tys): (&mut Fuel, &mut Graph, &mut Types),
 ) -> Res<()> {
-    let (Side::Val(left), Side::Val(right)) = (lhs, rhs) else {
+    let (Some(left), Some(right)) = (lhs.value(), rhs.value()) else {
         let texts = (lhs.text(graph, tys), rhs.text(graph, tys));
         return fail(Code::S010, pos, no_common(op, &texts.0, &texts.1));
     };
@@ -267,11 +285,17 @@ fn hw_operands(
 ) -> Res<Option<(HwId, HwId)>> {
     Ok(Some(match (lhs, rhs) {
         (Side::Hw(x), Side::Hw(y)) => (*x, *y),
-        (Side::Hw(hw), Side::Val(value)) => {
+        (Side::Hw(hw), other) => {
+            let Some(value) = other.value() else {
+                return Ok(None);
+            };
             let at_ty = graph.ty(*hw);
             (*hw, lit_value_at(pos, &at_ty, value, fuel, graph, tys)?)
         }
-        (Side::Val(value), Side::Hw(hw)) => {
+        (other, Side::Hw(hw)) => {
+            let Some(value) = other.value() else {
+                return Ok(None);
+            };
             let at_ty = graph.ty(*hw);
             (lit_value_at(pos, &at_ty, value, fuel, graph, tys)?, *hw)
         }
@@ -289,7 +313,7 @@ fn leaf_pair(
     pairs: &mut Pairs,
     (fuel, graph, tys): (&mut Fuel, &mut Graph, &mut Types),
 ) -> Res<()> {
-    if let (Side::Val(_), Side::Val(_)) = (lhs, rhs) {
+    if lhs.value().is_some() && rhs.value().is_some() {
         return static_pair(pos, op, (lhs, rhs), pairs, (fuel, graph, tys));
     }
     let Some((left, right)) = hw_operands(pos, (lhs, rhs), (fuel, graph, tys))? else {
@@ -316,8 +340,14 @@ fn leaf_pair(
     Ok(())
 }
 
+/// Whether arms of the type `t` join with the join charge and walk by the rules of section 7.4:
+/// a container type, and an enum type (section 5.4).
+fn arm_ty(t: &Ty) -> bool {
+    ops::container_ty(t) || matches!(t, Ty::Enum(_))
+}
+
 /// The joined type of the two arms of a hardware `if`. Arms of a scalar type join with no
-/// charge. Arms of a container type pay the join charge.
+/// charge. Arms of a container type or of an enum type pay the join charge.
 fn arm_join(
     pos: Pos,
     (lhs, rhs): (&Side<'_>, &Side<'_>),
@@ -326,7 +356,7 @@ fn arm_join(
     let (Some(lt), Some(rt)) = (lhs.ty(graph, tys), rhs.ty(graph, tys)) else {
         return fail(Code::S010, pos, if_types("a value", "a value"));
     };
-    let joined = if ops::container_ty(tys.get(lt)) || ops::container_ty(tys.get(rt)) {
+    let joined = if arm_ty(tys.get(lt)) || arm_ty(tys.get(rt)) {
         let mut budget = fuel.left();
         let joined = ops::common_ty(lt, rt, tys, &mut budget);
         fuel.pay_joins(&joined.charge).map_err(at(pos))?;
@@ -363,7 +393,9 @@ fn if_pair(
     Ok(match tys.get(ty) {
         Ty::Array(_, n) => Walked::Parts(n.to_u64().unwrap_or(u64::MAX)),
         Ty::Tuple(ts) => Walked::Parts(ts.len() as u64),
-        Ty::Struct(_) => Walked::Parts(tys.parts(ty).map_or(0, |p| p.types.len() as u64)),
+        Ty::Struct(_) | Ty::Enum(_) => {
+            Walked::Parts(tys.parts(ty).map_or(0, |p| p.types.len() as u64))
+        }
         Ty::Unit => Walked::Done(Agg::Static(Value::Unit)),
         Ty::Bool | Ty::UInt(_) | Ty::SInt(_) => {
             let t = tys.get(ty).clone();
@@ -378,25 +410,33 @@ fn if_types(a: &str, b: &str) -> String {
     format!("the arms of an `if` have one type, not {a} and {b}")
 }
 
-/// The condition `cond` of an `if` whose walk makes `muxes` `mux` nodes. With two or more
-/// nodes, the leaf statements share it, so it gets one mark with the next number of the
-/// instantiation. A name, a child output, and a constant get no mark. The mark has no charge.
-fn share(graph: &mut Graph, naming: &mut Naming, cond: HwId, muxes: u64) -> HwId {
+/// The operand `cond` of a walk that makes `uses` leaf statements that read it, at `pos`. With
+/// two or more, the leaf statements share it, so it gets one mark with the next number of the
+/// instantiation. A name, a child output, and a constant get no mark. The mark charges the
+/// recursive size of `cond` once, and a value that holds it counts it as a core name
+/// (section 5.4).
+fn share(
+    pos: Pos,
+    uses: u64,
+    (fuel, graph, naming): (&mut Fuel, &mut Graph, &mut Naming),
+    cond: HwId,
+) -> Res<HwId> {
     let Some(node) = graph.node(cond) else {
-        return cond;
+        return Ok(cond);
     };
-    if muxes < 2
+    if uses < 2
         || matches!(
             node.op,
             Op::Ref(_) | Op::Out(..) | Op::Lit(_) | Op::Count { .. }
         )
     {
-        return cond;
+        return Ok(cond);
     }
-    let (pos, ty) = (node.pos, node.ty.clone());
+    fuel.pay(u128::from(graph.size(cond))).map_err(at(pos))?;
+    let ty = node.ty.clone();
     let k = naming.shares;
     naming.shares += 1;
-    graph.mk(pos, ty, Op::Share(k), vec![cond])
+    Ok(graph.mk(pos, ty, Op::Share(k), vec![cond]))
 }
 
 /// A static pair of a hardware `if` (section 7.4) of the joined type `t`. It charges the sum of
@@ -411,7 +451,7 @@ fn if_static(
     (lhs, rhs): (&Side<'_>, &Side<'_>),
     (fuel, graph, tys): (&mut Fuel, &Graph, &mut Types),
 ) -> Res<Value> {
-    let (Side::Val(x), Side::Val(y)) = (lhs, rhs) else {
+    let (Some(x), Some(y)) = (lhs.value(), rhs.value()) else {
         return fail(
             Code::S010,
             pos,
@@ -458,7 +498,7 @@ fn if_leaf(
     (lhs, rhs): (&Side<'_>, &Side<'_>),
     (fuel, graph, tys): (&mut Fuel, &mut Graph, &mut Types),
 ) -> Res<HwId> {
-    let pair = if let (Side::Val(x), Side::Val(y)) = (lhs, rhs) {
+    let pair = if let (Some(x), Some(y)) = (lhs.value(), rhs.value()) {
         let left = lit_value_at(pos, t, x, fuel, graph, tys)?;
         Some((left, lit_value_at(pos, t, y, fuel, graph, tys)?))
     } else {
@@ -715,11 +755,12 @@ impl Evaluator<'_> {
         let joined = arm_join(pos, (&sa, &sb), env)?;
         let root = matches!(
             self.tys.get(joined),
-            Ty::Array(..) | Ty::Tuple(_) | Ty::Struct(_)
+            Ty::Array(..) | Ty::Tuple(_) | Ty::Struct(_) | Ty::Enum(_)
         );
         let cond = if root {
             let muxes = self.tys.meta(joined).leaves.to_u64().unwrap_or(u64::MAX);
-            share(&mut self.graph, &mut self.naming, cond, muxes)
+            let env = (&mut self.fuel, &mut self.graph, &mut self.naming);
+            share(pos, muxes, env, cond)?
         } else {
             cond
         };
@@ -921,6 +962,284 @@ impl Evaluator<'_> {
         }
         let one = self.lit(pos, Value::Bool(true))?;
         self.node(pos, Ty::Bool, Op::Bin(BinOp::Xor), vec![chain, one])
+    }
+
+    /// The hardware leaf of the scalar type `ty` that the side gives: a constant for a static
+    /// leaf, the node itself for a hardware leaf.
+    fn pack_leaf(&mut self, pos: Pos, side: &Side<'_>, width: u32) -> Res<HwId> {
+        match (side, side.value()) {
+            (Side::Hw(h), _) => Ok(*h),
+            (_, Some(v)) => lit_of(pos, v.clone(), &mut self.graph, &self.tys),
+            _ => fail(
+                Code::S010,
+                pos,
+                format!("a part of UInt[{width}] has no leaves"),
+            ),
+        }
+    }
+
+    /// Pushes the hardware leaves of the part `side` of the type `ty` onto `leaves`, in packing
+    /// order (section 7.4). A static leaf is a constant, and a leaf of a reference refers to its
+    /// name, so the walk never expands a reference into a node. A part without a leaf adds
+    /// nothing, and the metadata tells it with no walk. The walk keeps its own stack. The copies
+    /// of the payload values paid for each part that it visits.
+    fn pack_collect(
+        &mut self,
+        pos: Pos,
+        width: u32,
+        (ty, side): (TyId, Side<'_>),
+        leaves: &mut Vec<HwId>,
+    ) -> Res<()> {
+        /// A container whose parts wait: the next part to visit and the count.
+        struct Frame<'a> {
+            ty: TyId,
+            side: Side<'a>,
+            next: u64,
+            len: u64,
+        }
+        let mut stack: Vec<Frame<'_>> = Vec::new();
+        let mut visit = Some((ty, side));
+        loop {
+            if let Some((t, side)) = visit.take()
+                && !self.tys.meta(t).leaves.is_zero()
+            {
+                #[cfg(test)]
+                crate::counters::add(crate::counters::Count::Packed, 1);
+                let len = match self.tys.get(t) {
+                    Ty::Bool | Ty::UInt(_) | Ty::SInt(_) => {
+                        leaves.push(self.pack_leaf(pos, &side, width)?);
+                        None
+                    }
+                    Ty::Array(_, n) => Some(n.to_u64().unwrap_or(u64::MAX)),
+                    Ty::Tuple(ts) => Some(ts.len() as u64),
+                    Ty::Struct(_) | Ty::Enum(_) => {
+                        Some(self.tys.parts(t).map_or(0, |p| p.types.len() as u64))
+                    }
+                    _ => {
+                        return fail(
+                            Code::S010,
+                            pos,
+                            format!("a part of UInt[{width}] has no leaves"),
+                        );
+                    }
+                };
+                if let Some(len) = len {
+                    stack.push(Frame {
+                        ty: t,
+                        side,
+                        next: 0,
+                        len,
+                    });
+                }
+            }
+            let Some(top) = stack.last_mut() else {
+                return Ok(());
+            };
+            if top.next >= top.len {
+                stack.pop();
+                continue;
+            }
+            let part = top.next;
+            top.next += 1;
+            let (ct, step, offset) = self.child_of(pos, top.ty, part)?;
+            let leaf = leaf_ty(self.tys.get(ct));
+            let empty = leaf.is_none() && self.tys.meta(ct).leaves.is_zero();
+            let env = (&mut self.graph, &mut self.paths);
+            let idx = usize::try_from(part).unwrap_or(usize::MAX);
+            let Some(child) = top
+                .side
+                .child(idx, (&step, offset, leaf.as_ref(), empty), pos, env)
+            else {
+                return fail(
+                    Code::S010,
+                    pos,
+                    format!("a part of UInt[{width}] has no leaves"),
+                );
+            };
+            visit = Some((ct, child));
+        }
+    }
+
+    /// The hardware pack at `pos` into `UInt[width]` of the leaves of the parts `parts`, each
+    /// with its type, in packing order (`Op::Pack`, section 7.4). The node has no charge here:
+    /// the lowering charges each core node of a pack.
+    pub(super) fn pack_hw(&mut self, pos: Pos, width: u32, parts: &[(TyId, Val)]) -> Res<HwId> {
+        let mut leaves = Vec::new();
+        for (ty, val) in parts {
+            let side = match val {
+                Val::Static(v) => Side::Val(v),
+                Val::Hw(h) => Side::Hw(*h),
+                Val::Agg(a) => Side::of_agg(a),
+                Val::Handle(_) | Val::Pending(..) => {
+                    return fail(
+                        Code::S010,
+                        pos,
+                        format!("a part of UInt[{width}] has no leaves"),
+                    );
+                }
+            };
+            self.pack_collect(pos, width, (*ty, side), &mut leaves)?;
+        }
+        Ok(self.graph.mk(pos, Ty::UInt(width), Op::Pack(width), leaves))
+    }
+
+    /// The enum type that the data `d` has, if any.
+    pub(super) fn enum_of(&self, d: &Opnd) -> Option<TyId> {
+        let Opnd::Static(out) = d else {
+            return None;
+        };
+        let t = match self.store.seen(out) {
+            Seen::Static(Value::Enum(t, ..)) => *t,
+            Seen::Agg(a) => a.stored_ty()?,
+            _ => return None,
+        };
+        matches!(self.tys.get(t), Ty::Enum(_)).then_some(t)
+    }
+
+    /// `reinterpret` at `pos` between an enum and its bits (F26), after the copies of its
+    /// arguments. The other side has exactly the type `UInt[W + P]`, else `S010` at the call.
+    /// The tag is in the low `W` bits, and the payload in the next `P` bits.
+    ///
+    /// - A static unpack or pack charges the size of its result, as a conversion does
+    ///   (section 5.4). It splits or joins the bits with no loop over the bits.
+    /// - A hardware unpack of `b` gives an enum node with `(extract b 0 W)` and
+    ///   `(extract b W P)`. Both leaves read `b`, so `b` gets one mark of a shared operand. The
+    ///   mark charges the size of `b` after the type check. With `P` 0, the tag is `b`.
+    /// - A hardware pack gives `(pack (W + P) tag payload)`. With `P` 0, it gives the tag leaf.
+    /// - A hardware node has no charge here: the lowering charges each core node (section 7.4).
+    pub(super) fn recast(&mut self, pos: Pos, to: TyId, d: Opnd) -> Res<Val> {
+        if matches!(self.tys.get(to), Ty::Enum(_)) {
+            return self.unpack(pos, to, &d);
+        }
+        let Some(from) = self.enum_of(&d) else {
+            return fail(
+                Code::S010,
+                pos,
+                format!(
+                    "`reinterpret` needs an enum here, not {}",
+                    self.opnd_text(&d)
+                ),
+            );
+        };
+        self.pack(pos, to, from, d)
+    }
+
+    /// The enum value of the type `to` from the bits `d`.
+    fn unpack(&mut self, pos: Pos, to: TyId, d: &Opnd) -> Res<Val> {
+        let Some(widths) = self.tys.widths(to) else {
+            return fail(
+                Code::S010,
+                pos,
+                format!("{} has no entry", self.tys.text(to)),
+            );
+        };
+        let total = widths.tag + widths.payload;
+        let bad = |ev: &Self| {
+            fail(
+                Code::S010,
+                pos,
+                format!(
+                    "`reinterpret` makes {} only from UInt[{total}], not {}",
+                    ev.tys.text(to),
+                    ev.opnd_text(d)
+                ),
+            )
+        };
+        match d {
+            Opnd::Static(out) => {
+                let Seen::Static(Value::UInt(x)) = self.store.seen(out) else {
+                    return bad(self);
+                };
+                if x.width() != total {
+                    return bad(self);
+                }
+                let x = x.clone();
+                // The size does not read the bits, so the charge comes before the split.
+                let size = 1
+                    + width_size(widths.tag)
+                    + if widths.payload == 0 {
+                        0
+                    } else {
+                        width_size(widths.payload)
+                    };
+                self.charge(pos, u128::from(size))?;
+                let tag = x.extract(0, widths.tag);
+                let payload = (widths.payload > 0).then(|| x.extract(widths.tag, widths.payload));
+                Ok(Val::Static(Value::Enum(to, tag, payload)))
+            }
+            Opnd::Hw(b) => {
+                let b = *b;
+                if self.graph.ty(b) != Ty::UInt(total) {
+                    return bad(self);
+                }
+                let parts = if widths.payload == 0 {
+                    vec![Agg::Hw(b)]
+                } else {
+                    let env = (&mut self.fuel, &mut self.graph, &mut self.naming);
+                    let b = share(pos, 2, env, b)?;
+                    let tag_ty = Ty::UInt(widths.tag);
+                    let extract = Op::Extract {
+                        off: 0,
+                        w: widths.tag,
+                    };
+                    let tag = self.graph.mk(pos, tag_ty, extract, vec![b]);
+                    let payload_ty = Ty::UInt(widths.payload);
+                    let extract = Op::Extract {
+                        off: widths.tag,
+                        w: widths.payload,
+                    };
+                    let payload = self.graph.mk(pos, payload_ty, extract, vec![b]);
+                    vec![Agg::Hw(tag), Agg::Hw(payload)]
+                };
+                let Some(node) = Agg::node(&self.graph, &self.tys, to, parts) else {
+                    return fail(Code::S010, pos, "the part has the wrong shape".to_owned());
+                };
+                Ok(node.into_val())
+            }
+        }
+    }
+
+    /// The bits `UInt[W + P]` of the enum value `d` of the enum type `from`.
+    fn pack(&mut self, pos: Pos, to: TyId, from: TyId, d: Opnd) -> Res<Val> {
+        let Some(widths) = self.tys.widths(from) else {
+            return fail(
+                Code::S010,
+                pos,
+                format!("{} has no entry", self.tys.text(from)),
+            );
+        };
+        let total = widths.tag + widths.payload;
+        if *self.tys.get(to) != Ty::UInt(total) {
+            return fail(
+                Code::S010,
+                pos,
+                format!(
+                    "`reinterpret` gives the bits of {} only as UInt[{total}], not {}",
+                    self.tys.text(from),
+                    self.tys.text(to)
+                ),
+            );
+        }
+        let Opnd::Static(out) = d else {
+            return fail(Code::S010, pos, "an enum is not hardware data".to_owned());
+        };
+        if let Seen::Static(Value::Enum(_, tag, payload)) = self.store.seen(&out) {
+            let bits = match payload {
+                Some(p) => p.concat(tag),
+                None => tag.clone(),
+            };
+            self.charge(pos, u128::from(width_size(total)))?;
+            return Ok(Val::Static(Value::UInt(bits)));
+        }
+        let val = self.store.take(out);
+        let h = self.pack_hw(pos, total, &[(from, val)])?;
+        if widths.payload == 0
+            && let Some(Node { args, .. }) = self.graph.node(h)
+            && let [tag] = args.as_slice()
+        {
+            return Ok(Val::Hw(*tag));
+        }
+        Ok(Val::Hw(h))
     }
 
     /// `resize` or `reinterpret` of a hardware value.

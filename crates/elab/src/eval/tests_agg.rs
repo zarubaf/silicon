@@ -510,6 +510,7 @@ fn the_leaf_fields_of_a_child_output_append_to_its_port_name() {
     with(100, |ev| {
         let inst = ev.paths.child(None, 5);
         ev.syms.texts.resize(8, String::new());
+        ev.syms.texts[5] = String::new();
         ev.syms.texts[6] = "q".to_owned();
         let port = ev.paths.child(None, 6);
         let out = Base::Out(inst, port);

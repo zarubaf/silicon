@@ -14,7 +14,7 @@ use crate::int::Int;
 use crate::limit;
 use crate::names::{PathId, Step, Sym};
 use crate::ops;
-use crate::types::{Ty, TyId};
+use crate::types::{PartNames, Ty, TyId};
 use crate::value::Value;
 use parse::ast::{Ident, Nat, Pos};
 
@@ -538,15 +538,13 @@ impl Evaluator<'_> {
         }
     }
 
-    /// The step of the field number `k` of the struct type `t`: a user field, with the symbol of
-    /// its name.
+    /// The step of the named part number `k` of the type `t`: a user field, with the symbol of
+    /// its name. An enum has the parts `tag` and `payload`.
     fn field_step(&self, t: TyId, k: usize, pos: Pos) -> Res<Step> {
-        let sym = self
-            .tys
-            .parts(t)
-            .and_then(|parts| self.syms.field_order.get(parts.item()?))
-            .and_then(|syms| syms.get(k))
-            .copied();
+        let sym = self.tys.parts(t).and_then(|parts| match parts.names {
+            PartNames::Struct(item) => self.syms.field_order.get(item)?.get(k).copied(),
+            PartNames::Enum => [self.syms.tag, self.syms.payload].get(k).copied(),
+        });
         match sym {
             Some(sym) => Ok(Step::User(sym)),
             None => fail(
@@ -567,7 +565,7 @@ impl Evaluator<'_> {
                 Some(u) => (*u, Step::Elem(k)),
                 None => return fail(Code::S010, pos, "the part does not exist".to_owned()),
             },
-            Ty::Struct(_) => match self.tys.parts(t).and_then(|p| p.types.get(idx)) {
+            Ty::Struct(_) | Ty::Enum(_) => match self.tys.parts(t).and_then(|p| p.types.get(idx)) {
                 Some(u) => (*u, self.field_step(t, idx, pos)?),
                 None => return fail(Code::S010, pos, "the part does not exist".to_owned()),
             },
@@ -612,7 +610,7 @@ impl Evaluator<'_> {
                             len,
                         });
                     }
-                    Ty::Struct(_) => {
+                    Ty::Struct(_) | Ty::Enum(_) => {
                         let len = self.tys.parts(t).map_or(0, |p| p.types.len() as u64);
                         stack.push(Level {
                             base,
@@ -707,7 +705,7 @@ impl Evaluator<'_> {
         let count = match self.tys.get(t) {
             Ty::Array(_, n) => n.to_u64().unwrap_or(u64::MAX),
             Ty::Tuple(ts) => ts.len() as u64,
-            Ty::Struct(_) => self.tys.parts(t).map_or(0, |p| p.types.len() as u64),
+            Ty::Struct(_) | Ty::Enum(_) => self.tys.parts(t).map_or(0, |p| p.types.len() as u64),
             _ => return fail(Code::S010, pos, "the type has no parts".to_owned()),
         };
         let mut parts = Vec::new();
@@ -767,7 +765,7 @@ impl Evaluator<'_> {
                     }
                     ts.get(k).copied()
                 }
-                Ty::Struct(_) => {
+                Ty::Struct(_) | Ty::Enum(_) => {
                     let fs = self.tys.parts(t).map_or(&[][..], |p| p.types);
                     for &p in fs {
                         total.add_assign(&empty(self, p));

@@ -219,6 +219,75 @@ pub fn finite(width: u32, n: u64) -> Option<Bits> {
     Bits::new(width, BigUint::from(n))
 }
 
+/// The low 32 bits of a word.
+fn low_half(word: u64) -> u32 {
+    u32::try_from(word & u64::from(u32::MAX)).unwrap_or(0)
+}
+
+/// The bit buffer of a static pack (section 5.1): the words of 64 bits, the least significant
+/// word first, and the next free bit. A pack allocates one buffer for its width and writes each
+/// leaf at its offset, so a leaf of `w` bits takes `w / 64 + 1` word steps at most, and no step
+/// reads an earlier leaf.
+pub(crate) struct BitBuf {
+    words: Vec<u64>,
+    next: u64,
+}
+
+impl BitBuf {
+    /// An empty buffer of `width` bits.
+    #[must_use]
+    pub(crate) fn new(width: u32) -> BitBuf {
+        BitBuf {
+            words: vec![0; usize::try_from(u64::from(width).div_ceil(64)).unwrap_or(0)],
+            next: 0,
+        }
+    }
+
+    /// Writes one word `word` of `bits` bits at the next free bit.
+    fn put_word(&mut self, word: u64, offset: u64) {
+        #[cfg(test)]
+        crate::counters::add(crate::counters::Count::Packed, 1);
+        let (index, shift) = (
+            usize::try_from(offset / 64).unwrap_or(usize::MAX),
+            offset % 64,
+        );
+        if let Some(low) = self.words.get_mut(index) {
+            *low |= word << shift;
+        }
+        if shift != 0
+            && let Some(high) = self.words.get_mut(index.saturating_add(1))
+        {
+            *high |= word >> (64 - shift);
+        }
+    }
+
+    /// Writes the bits of the finite value `x` at the next free bit, one word of `x` for each
+    /// step. The bits of `x` above its width are zero, so a word adds no bit after the leaf.
+    pub(crate) fn put(&mut self, x: &Bits) {
+        for (k, word) in x.value().iter_u64_digits().enumerate() {
+            self.put_word(word, self.next + 64 * k as u64);
+        }
+        self.next += u64::from(x.width());
+    }
+
+    /// Writes the bit `b` at the next free bit.
+    pub(crate) fn put_bit(&mut self, b: bool) {
+        self.put_word(u64::from(b), self.next);
+        self.next += 1;
+    }
+
+    /// The finite value of `width` bits that the buffer holds, or `None` for the width 0.
+    #[must_use]
+    pub(crate) fn finish(self, width: u32) -> Option<Bits> {
+        let halves: Vec<u32> = self
+            .words
+            .iter()
+            .flat_map(|w| [low_half(*w), low_half(*w >> 32)])
+            .collect();
+        Bits::new(width, BigUint::from_slice(&halves))
+    }
+}
+
 /// The bit at the index `i` of a finite value, read without a copy.
 #[must_use]
 pub fn bit(x: &Bits, i: u32) -> bool {

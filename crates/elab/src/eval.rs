@@ -1051,9 +1051,7 @@ impl Evaluator<'_> {
                 let t = self.fn_type(*pos, params, ret)?;
                 Ok(Some(Out::Made(Val::Static(Value::Type(t)))))
             }
-            Expr::Path { pos, .. } => {
-                fail(Code::S010, *pos, "an enum is not supported yet".to_owned())
-            }
+            Expr::Path { pos, ty, .. } => self.variant(*pos, ty, &[]),
         }
     }
 

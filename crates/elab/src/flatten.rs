@@ -45,12 +45,12 @@ use crate::names::{Field, Name, PathId, Role, Sym, encode};
 use crate::types::{Ty, TyId};
 use crate::value::{Value, int_size};
 use crate::{Code, Error};
-use core_ir::Pred;
 use core_ir::ast::{
     BinOp as CBin, Conn, Design as CDesign, Dir, Expr, Item, Module, Name as CName, Num, Port,
     Reset, Stmt, Ty as CTy, UnOp as CUn,
 };
 use core_ir::diag::{ErrorCode, Span};
+use core_ir::{Bits, Pred};
 use parse::StackError;
 use parse::ast::{BinOp, Pos, UnOp};
 use std::collections::BTreeMap;
@@ -159,6 +159,8 @@ fn defect<T>(msg: &str) -> R<T> {
 enum Src<'a> {
     Missing,
     Val(&'a Value),
+    /// The tag or the payload of a static enum: a finite value of the width of its bits.
+    Bits(&'a Bits),
     Hw(HwId),
     Agg(&'a Agg),
     /// A reference, the number of leaf fields at which it starts, and the bit offset of the
@@ -185,6 +187,11 @@ impl<'a> Src<'a> {
             Src::Val(Value::Array(_, xs) | Value::Tuple(_, xs) | Value::Record(_, xs)) => {
                 xs.get(k).map_or(Src::Missing, Src::Val)
             }
+            Src::Val(Value::Enum(_, tag, payload)) => match k {
+                0 => Src::Bits(tag),
+                1 => payload.as_ref().map_or(Src::Missing, Src::Bits),
+                _ => Src::Missing,
+            },
             Src::Agg(Agg::Array(_, p) | Agg::Tuple(_, p) | Agg::Record(_, p)) => {
                 p.0.get(k).map_or(Src::Missing, |a| Src::of(a, depth))
             }
@@ -317,6 +324,11 @@ fn const_of(c: Span, v: &Value) -> R<Expr> {
         Value::UInt(x) | Value::SInt(x) => Ok(konst(c, x.width(), constant(x))),
         _ => defect("a static leaf is not a scalar"),
     }
+}
+
+/// The constant of the bits of a static enum part.
+fn const_bits(c: Span, x: &Bits) -> Expr {
+    konst(c, x.width(), constant(x))
 }
 
 /// The core operation of a binary node that is not a shift, or its predicate.
@@ -540,6 +552,12 @@ impl<'d> Lower<'d> {
                 inner(mux(at, sel.expr, then.expr, els.expr), height)
             }
             (Op::Share(k), [arg]) => self.share(target, pos, *k, *arg)?,
+            (Op::Extract { off, w }, [arg]) => {
+                self.charge(pos, 1)?;
+                let arg = self.operand(target, *arg)?;
+                inner(extract(at, arg.expr, *off, *w), up(arg.height))
+            }
+            (Op::Pack(w), args) => self.pack(target, pos, *w, args)?,
             (Op::Resize, [arg]) => self.resize(target, pos, &ty, *arg)?,
             (Op::Reinterpret, [arg]) => {
                 let arg = self.operand(target, *arg)?;
@@ -592,6 +610,47 @@ impl<'d> Lower<'d> {
             core_bin(span(pos), core, low.expr, right.expr),
             height,
         ))
+    }
+
+    /// The pack of the leaves `args` into `UInt[w]` (section 7.4):
+    /// `(concat l_(n-1) (concat ... l_0))` of the leaves `l_0` to `l_(n-1)` with `q` bits, inside
+    /// `(concat (const (w - q) 0) ..)` when `q < w`. One leaf is that leaf. The high bits
+    /// charge their two nodes first. Then the chain builds in a loop from `l_0`, as the write
+    /// data of a memory does: each step charges its `concat` node, then lowers its leaf. Before
+    /// that, the chain so far binds to a temporary of `target` when its effective height reaches
+    /// 64. Thus the recursion does not follow the leaf count.
+    fn pack(&mut self, target: Target, pos: Pos, w: u32, args: &[HwId]) -> R<Low> {
+        let at = span(pos);
+        let widths: Vec<u32> = args.iter().map(|a| width(&self.ty(*a))).collect();
+        let bits: u64 = widths.iter().map(|x| u64::from(*x)).sum();
+        if bits < u64::from(w) {
+            self.charge(pos, 2)?;
+        }
+        let mut chain: Option<(Low, u32)> = None;
+        for (arg, leaf) in args.iter().zip(widths) {
+            chain = Some(match chain.take() {
+                None => (self.operand(target, *arg)?, leaf),
+                Some((low, n)) => {
+                    let low = self.deep(pos, target, n, false, low)?;
+                    #[cfg(test)]
+                    crate::counters::add(crate::counters::Count::Chained, 1);
+                    self.charge(pos, 1)?;
+                    let high = self.operand(target, *arg)?;
+                    let height = up(high.height.max(low.height));
+                    let expr = bin(at, CBin::Concat, high.expr, low.expr);
+                    (inner(expr, height), n + leaf)
+                }
+            });
+        }
+        let Some((low, n)) = chain else {
+            return defect("a pack has no leaf");
+        };
+        if n < w {
+            let low = self.deep(pos, target, n, false, low)?;
+            let expr = bin(at, CBin::Concat, small(at, w - n, 0), low.expr);
+            return Ok(inner(expr, up(low.height)));
+        }
+        Ok(low)
     }
 
     /// A shared condition. Its first lowering in the module binds it to a temporary of that
@@ -875,8 +934,10 @@ impl<'d> Lower<'d> {
                 let clk = self.name(reg.pos, &self.role(domain, Role::Clk))?;
                 let signal = self.domain_ref(reg.pos, &self.role(domain, Role::Rst))?;
                 self.charge(reg.pos, 1)?;
-                let Src::Val(zero) = src else {
-                    return defect("a register value has no constant leaf");
+                let value = match src {
+                    Src::Val(zero) => const_of(at, zero)?,
+                    Src::Bits(zero) => const_bits(at, zero),
+                    _ => return defect("a register value has no constant leaf"),
                 };
                 stmts.push(Stmt::Reg {
                     name,
@@ -884,7 +945,7 @@ impl<'d> Lower<'d> {
                     clk,
                     reset: Some(Reset {
                         signal,
-                        value: const_of(at, zero)?,
+                        value,
                         span: at,
                     }),
                     span: at,
@@ -1277,6 +1338,14 @@ impl<'d> Lower<'d> {
                 self.charge(pos, 1)?;
                 Ok(Low {
                     expr: const_of(span(pos), v)?,
+                    copy: Some(1),
+                    height: 1,
+                })
+            }
+            Src::Bits(x) => {
+                self.charge(pos, 1)?;
+                Ok(Low {
+                    expr: const_bits(span(pos), x),
                     copy: Some(1),
                     height: 1,
                 })

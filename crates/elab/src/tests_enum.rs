@@ -6,7 +6,7 @@
 
 use crate::counters::of;
 use crate::tests::{cost, exact, message, out, run, serialized_len, type_work};
-use crate::tests_elab::{cost_fuel, order};
+use crate::tests_elab::{cost as elab_cost, cost_fuel, names, order, total};
 use std::fmt::Write as _;
 
 const OPS: &str = "enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }\n";
@@ -161,6 +161,271 @@ fn an_enum_value_is_one_container_node_in_the_serialization() {
     let len = serialized_len(OPS, "[Op(), Op()]");
     let text = out(OPS, "[Op(), Op()]", 1 << 20, 1000);
     assert_eq!(len, text.len() as u64);
+}
+
+/// A variant constructor is one node, then a use of the enum. Then its payload values evaluate,
+/// their copies charge, and each gets its typed use at its payload type. Then the size of the
+/// result charges, 3 for a static `Op` value, and the static pack makes it.
+#[test]
+fn a_static_constructor_charges_in_the_order_of_section_5_4() {
+    let one = |expr: &str| out(OPS, expr, 1 << 20, 1000);
+    assert_eq!(one("Op::Add"), ZERO);
+    exact(OPS, "Op::Add", 1 + 68 + 3);
+    assert_eq!(one("Op::Load(5)"), "(enum (enum root Op ()) 1 (uint 8 5))");
+    exact(OPS, "Op::Load(5)", 1 + 68 + 2 + 1 + 2 + 3);
+    exact(OPS, "Op::Pair(true, 5)", 1 + 68 + 4 + 2 + 2 + 3);
+    exact(
+        OPS,
+        "[Op::Add, Op::Add]",
+        1 + (1 + 68 + 3) + (1 + 3) + 2 + 7,
+    );
+}
+
+/// The payload packs its leaves in packing order, the first leaf in the low bits, with zero high
+/// bits up to `P`. A nested enum packs its tag, then its payload, and `()` adds no bit. A payload
+/// across several words of 64 bits packs each leaf at its offset.
+#[test]
+fn a_static_payload_packs_into_one_bit_buffer() {
+    let at = |src: &str, expr: &str| out(src, expr, 1 << 24, 1000);
+    assert_eq!(
+        at(OPS, "Op::Pair(true, 5)"),
+        "(enum (enum root Op ()) 2 (uint 8 11))"
+    );
+    assert_eq!(
+        at(OPS, "Op::Pair(false, 15)"),
+        "(enum (enum root Op ()) 2 (uint 8 30))"
+    );
+    let nested = "enum F: UInt[1] { A = 0, B = 1 }\n\
+                  enum E: UInt[2] { X(F, [UInt[3]; 2], ()) = 3 }\n";
+    assert_eq!(
+        at(nested, "E::X(F::B, [5, 2], ())"),
+        "(enum (enum root E ()) 3 (uint 7 43))"
+    );
+    let wide = "enum E: UInt[1] { A(UInt[63], UInt[70], Bool) = 1, B = 0 }\n";
+    let one = num_bigint::BigUint::from(1u8);
+    let big = (&one << 63) - 1u8 + ((&one << 70) - 3u8) * (&one << 63) + (&one << 133);
+    assert_eq!(
+        at(wide, "E::A(UInt[63](0) -% 1, UInt[70](0) -% 3, true)"),
+        format!("(enum (enum root E ()) 1 (uint 134 {big}))")
+    );
+    assert_eq!(at(wide, "E::B"), "(enum (enum root E ()) 0 (uint 134 0))");
+    let signed = "enum E: UInt[1] { A(SInt[4], Bool) = 1 }\n";
+    assert_eq!(
+        at(signed, "E::A(-1, true)"),
+        "(enum (enum root E ()) 1 (uint 5 31))"
+    );
+    let words = "enum E: UInt[1] { A(UInt[64], UInt[64], Bool) = 1 }\n";
+    assert_eq!(
+        at(words, "E::A(UInt[64](0) -% 1, 2, true)"),
+        "(enum (enum root E ()) 1 (uint 129 340282366920938463518714839652896866303))"
+    );
+    let top = "enum E: UInt[1] { A(UInt[65536]) = 1 }\n";
+    let value = at(top, "E::A(UInt[65536](0) -% 1)");
+    assert!(
+        value.starts_with("(enum (enum root E ()) 1 (uint 65536 "),
+        "{}",
+        &value[..40]
+    );
+    assert!(value.ends_with("))") && value.len() > 19000);
+}
+
+/// The errors of a constructor come in its order. An error of a payload value comes first. Then
+/// each typed use runs in order. A value of another type is `S010`, and a value that does not
+/// fit is `S012`, each at the start of the path. The copies charge before the typed uses.
+#[test]
+fn the_errors_of_a_constructor_come_in_their_order() {
+    let at = |expr: &str, fuel: u64| out(OPS, expr, fuel, 1000);
+    assert_eq!(at("Op::Pair(1 / 0, 16)", 1 << 20), "S013 1:10");
+    assert_eq!(at("Op::Pair(1, 16)", 1 << 20), "S010 1:1");
+    assert_eq!(at("Op::Pair(true, 16)", 1 << 20), "S012 1:1");
+    assert_eq!(
+        message(OPS, "Op::Pair(true, 16)"),
+        "16 does not fit UInt[4]"
+    );
+    assert_eq!(at("Op::Load(5)", 1 + 68 + 2 + 1), "S015 1:1");
+    let fuel = 1 + 68 + 2 + 1 + 2;
+    assert_eq!(
+        message_fuel(OPS, "Op::Load(256)", fuel),
+        "256 does not fit UInt[8]"
+    );
+    let call = format!("{OPS}fn f(x: UInt[8]) -> Op {{ return Op::Load(x); }}\n");
+    assert_eq!(
+        out(&call, "f(7)", 1 << 20, 1000),
+        "(enum (enum root Op ()) 1 (uint 8 7))"
+    );
+}
+
+/// The message of the error of `expr` with the fuel `fuel`.
+fn message_fuel(src: &str, expr: &str, fuel: u64) -> String {
+    use crate::Budget;
+    let budget = Budget {
+        fuel,
+        ..Budget::default()
+    };
+    crate::tests::message_with(src, expr, budget)
+}
+
+/// `reinterpret` converts between an enum and exactly `UInt[W + P]` (F26): the tag in the low
+/// `W` bits, then the payload. A static conversion charges the copies of its arguments, then
+/// the size of its result. The result can have a tag without a variant. Another type on the
+/// other side is `S010` at the call.
+#[test]
+fn a_static_reinterpret_converts_between_an_enum_and_its_bits() {
+    let at = |src: &str, expr: &str| out(src, expr, 1 << 20, 1000);
+    assert_eq!(
+        at(OPS, "reinterpret(UInt[10], Op::Pair(true, 5))"),
+        "(uint 10 46)"
+    );
+    exact(
+        OPS,
+        "reinterpret(UInt[10], Op::Pair(true, 5))",
+        2 + 6 + 80 + 5 + 1,
+    );
+    assert_eq!(
+        at(OPS, "reinterpret(Op, UInt[10](45))"),
+        "(enum (enum root Op ()) 1 (uint 8 11))"
+    );
+    exact(OPS, "reinterpret(Op, UInt[10](45))", 2 + 69 + 12 + 2 + 3);
+    assert_eq!(
+        at(OPS, "reinterpret(Op, UInt[10](1023))"),
+        "(enum (enum root Op ()) 3 (uint 8 255))"
+    );
+    assert_eq!(
+        at(
+            OPS,
+            "reinterpret(Op, reinterpret(UInt[10], Op::Pair(true, 5)))"
+        ),
+        "(enum (enum root Op ()) 2 (uint 8 11))"
+    );
+    let tag = "enum E: UInt[3] { A = 5 }\n";
+    assert_eq!(at(tag, "reinterpret(UInt[3], E::A)"), "(uint 3 5)");
+    assert_eq!(
+        at(tag, "reinterpret(E, UInt[3](2))"),
+        "(enum (enum root E ()) 2)"
+    );
+    for bad in [
+        "reinterpret(Op, UInt[9](45))",
+        "reinterpret(Op, SInt[10](45))",
+        "reinterpret(Op, 45)",
+        "reinterpret(Op, true)",
+        "reinterpret(UInt[9], Op::Add)",
+        "reinterpret(Bool, Op::Add)",
+        "reinterpret(UInt[10], Op)",
+    ] {
+        assert_eq!(at(OPS, bad), "S010 1:1", "{bad}");
+    }
+    assert_eq!(
+        message(OPS, "reinterpret(Op, UInt[9](45))"),
+        "`reinterpret` makes Op only from UInt[10], not UInt[9]"
+    );
+    assert_eq!(
+        message(OPS, "reinterpret(SInt[10], Op::Add)"),
+        "`reinterpret` gives the bits of Op only as UInt[10], not SInt[10]"
+    );
+    let other = format!("{OPS}enum F: UInt[10] {{ A = 0 }}\n");
+    assert_eq!(at(&other, "reinterpret(F, Op::Add)"), "S010 1:1");
+}
+
+/// The module `M` with the hardware inputs `x`, `c`, `y`, and `e`, and the statements `body`.
+fn hw_enum(body: &str) -> String {
+    format!(
+        "{OPS}module M() {{\n  input x: UInt[8];\n  input c: Bool;\n  input y: UInt[4];\n  \
+         input e: Op;\n  output o: Bool;\n{body}  o := true;\n}}\n"
+    )
+}
+
+/// The units of the elaboration of the module of `hw_enum`.
+fn hw_units(body: &str) -> u64 {
+    total(&hw_enum(body), "M")
+}
+
+/// A hardware constructor charges as a static one: the payload values, their copies, and their
+/// typed uses. Then the size of the result charges from the stored sizes. The pack node has no
+/// charge, because the lowering charges each core node of a pack.
+#[test]
+fn a_hardware_constructor_charges_the_stored_sizes() {
+    let add = hw_units("  let a = Op::Add;\n");
+    assert_eq!(hw_units("  let a = Op::Load(x);\n"), add + 3);
+    assert_eq!(hw_units("  let a = Op::Pair(c, y);\n"), add + 6);
+    assert_eq!(hw_units("  let a = Op::Load(3);\n"), add + 5);
+    assert_eq!(
+        elab_cost(&hw_enum("  let a = Op::Load(y);\n"), "M"),
+        "S010 8:11"
+    );
+    assert_eq!(hw_units("  let a = reinterpret(UInt[10], e);\n"), add + 10);
+}
+
+/// The binding of an enum binds each of its leaves, `tag`, then `payload` when `P` is not 0.
+#[test]
+fn a_binding_of_an_enum_binds_its_leaves() {
+    let bind = |op: &str| {
+        format!(
+            "{op}module M() {{\n  input a: Op;\n  output b: Bool;\n  let x = a;\n  b := true;\n}}\n"
+        )
+    };
+    assert_eq!(names(&bind(OPS), "M", "M"), ["x$tag", "x$payload"]);
+    assert_eq!(
+        names(&bind("enum Op: UInt[2] { A = 0 }\n"), "M", "M"),
+        ["x$tag"]
+    );
+}
+
+/// The mark of a shared condition charges the size of the condition once, and a value that holds
+/// it counts a core name. `!c` charges its node 1 and its hardware operation 2, and its mark
+/// charges the size 2 of `(! c)`. Nested round trips charge 29 units each.
+#[test]
+fn a_shared_mark_charges_its_operand_once() {
+    let if_with = |c: &str| format!("  let a = if ({c}) {{ Op::Load(x) }} else {{ e }};\n");
+    assert_eq!(hw_units(&if_with("!c")), hw_units(&if_with("c")) + 3 + 2);
+    let copy = |c: &str| format!("{}  let b = a;\n", if_with(c));
+    assert_eq!(
+        hw_units(&copy("!c")) - hw_units(&if_with("!c")),
+        hw_units(&copy("c")) - hw_units(&if_with("c"))
+    );
+    let trips = |k: u64| {
+        let mut e = "reinterpret(Op, resize(UInt[10], x))".to_owned();
+        for _ in 0..k {
+            e = format!("reinterpret(Op, reinterpret(UInt[10], {e}))");
+        }
+        hw_units(&format!("  let a = {e};\n"))
+    };
+    for k in 0..30 {
+        assert_eq!(trips(k + 1), trips(k) + 29, "{k}");
+    }
+    assert_eq!(trips(30), 1011);
+}
+
+/// A hardware `if` with enum arms joins the two enum types, 1 plus 1. Then it walks them as a
+/// container pair: the root, `tag`, and `payload`, 1 each. Two different enums, and an enum and
+/// another type, have no join (`S010`). Two static enums in a static pair compare by their tags
+/// and payloads, and different ones are `S011`.
+#[test]
+fn a_hardware_if_walks_enum_arms_as_a_container_pair() {
+    let add = hw_units("  let a = Op::Add;\n");
+    // The node 1, `c` 1, the arms 5, the join 2, the walk 3, and two `mux` nodes 8.
+    assert_eq!(
+        hw_units("  let a = if (c) { Op::Add } else { e };\n") + 4,
+        add + (1 + 1 + 5 + 2 + 3 + 8)
+    );
+    let cost_of = |body: &str| elab_cost(&hw_enum(body), "M");
+    assert_eq!(
+        cost_of("  let a = if (c) { Op::Add } else { 1 };\n"),
+        "S010 8:11"
+    );
+    let both = format!(
+        "enum F: UInt[2] {{ A = 0 }}\n{}",
+        hw_enum("  let a = if (c) { Op::Add } else { F::A };\n")
+    );
+    assert_eq!(elab_cost(&both, "M"), "S010 9:11");
+    let lists = |b: &str| {
+        hw_enum(&format!(
+            "  let mut p = list(Op);\n  push(p, Op::Add);\n  let mut q = list(Op);\n  push(q, {b});\n  \
+             let k = if (c) {{ p }} else {{ q }};\n"
+        ))
+    };
+    assert_eq!(elab_cost(&lists("Op::Load(1)"), "M"), "S011 12:11");
+    assert_eq!(elab_cost(&lists("Op::Pair(false, 0)"), "M"), "S011 12:11");
+    assert!(elab_cost(&lists("Op::Add"), "M").starts_with("total"));
 }
 
 /// The measures of one run of `expr`: the steps of the table, the counters of the walks, and

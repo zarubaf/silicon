@@ -60,8 +60,9 @@ const ARMS: &str = "(Bool, [UInt[8]; 2], [UInt[8]; 2])";
 /// The exact charges of an `if` with array arms. The statement charges 1, the `if` node 1, and
 /// each operand 2. The join charges 1 for the pair of arrays. The walk charges 1 for the root
 /// pair, and each leaf pair charges 1 plus 4 for its `mux` node. `return true;` charges 4. The
-/// condition `x.0` is a core name, so it gets no mark. `!x.0` gets the mark `share 0`, with no
-/// charge, because the walk makes two `mux` nodes. One `mux` node and a `()` pair give no mark.
+/// condition `x.0` is a core name, so it gets no mark. `!x.0` gets the mark `share 0`, because
+/// the walk makes two `mux` nodes. The mark charges the size 2 of `!x.0` once, before the walk.
+/// One `mux` node and a `()` pair give no mark.
 #[test]
 fn an_if_with_array_arms_charges_the_join_the_pairs_and_the_muxes() {
     let r = |s: &str, run: u64, fuel: u64| run_if(ARMS, s, run, fuel, ref_x);
@@ -74,10 +75,11 @@ fn an_if_with_array_arms_charges_the_join_the_pairs_and_the_muxes() {
     assert_eq!(
         r(negated, 710_000_401, ALL),
         "y$0e=(mux (share 0 (! x$0e)) x$1e$0e x$2e$0e) \
-         y$1e=(mux (share 0 (! x$0e)) x$1e$1e x$2e$1e) | ref x | 27"
+         y$1e=(mux (share 0 (! x$0e)) x$1e$1e x$2e$1e) | ref x | 29"
     );
     assert_eq!(r(negated, 710_000_402, 22), "S015 2:11");
-    assert_eq!(r(negated, 710_000_403, 23), "S015 3:3");
+    assert_eq!(r(negated, 710_000_403, 24), "S015 2:11");
+    assert_eq!(r(negated, 710_000_498, 25), "S015 3:3");
     assert_eq!(
         run_if(
             "(Bool, (UInt[8], ()), (UInt[8], ()))",
@@ -102,7 +104,7 @@ fn static_leaves_make_muxes_and_static_lists_compare_by_equality() {
             710_000_410
         ),
         "y$0e=(mux (share 0 (! x$0e)) (uint 8 1) (uint 8 3)) \
-         y$1e=(mux (share 0 (! x$0e)) (uint 8 2) (uint 8 4)) | ref x | 67"
+         y$1e=(mux (share 0 (! x$0e)) (uint 8 2) (uint 8 4)) | ref x | 69"
     );
     let lists = |k: u32| {
         format!(
@@ -162,7 +164,7 @@ fn each_mark_of_an_instantiation_takes_the_next_number() {
         "y$0e=(mux (share 0 (! x$0e)) x$1e$0e x$2e$0e) \
          y$1e=(mux (share 0 (! x$0e)) x$1e$1e x$2e$1e) \
          z$0e=(mux (share 1 (! x$0e)) x$2e$0e x$1e$0e) \
-         z$1e=(mux (share 1 (! x$0e)) x$2e$1e x$1e$1e) | ref x | 50"
+         z$1e=(mux (share 1 (! x$0e)) x$2e$1e x$1e$1e) | ref x | 54"
     );
 }
 
@@ -177,7 +179,7 @@ fn a_record_descends_by_its_fields_and_joins_as_a_type_equality() {
     assert_eq!(
         run_shown(&src, 710_000_430, ALL, ref_x, tree),
         "y$a=(mux (share 0 (! x$0e)) x$1e$a x$2e$a) y$b=(mux (share 0 (! x$0e)) x$1e$b x$2e$b) \
-         | ref x | 28"
+         | ref x | 30"
     );
 }
 

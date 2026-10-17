@@ -92,6 +92,9 @@ pub(crate) struct Counts {
     pub cloned: u64,
     /// The recursive size of the values that references copied.
     pub copies: u64,
+    /// The word steps of the bit buffer of a static pack, and the parts that the walk of a
+    /// hardware pack visited.
+    pub packed: u64,
 }
 
 /// What a counter counts.
@@ -134,6 +137,7 @@ pub(crate) enum Count {
     Logged,
     Cloned,
     Copies,
+    Packed,
 }
 
 static COUNTS: Mutex<BTreeMap<u64, Counts>> = Mutex::new(BTreeMap::new());
@@ -209,6 +213,7 @@ pub(crate) fn add(count: Count, n: u64) {
             Count::Logged => &mut c.logged,
             Count::Cloned => &mut c.cloned,
             Count::Copies => &mut c.copies,
+            Count::Packed => &mut c.packed,
         };
         *field += n;
     }

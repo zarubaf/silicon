@@ -11,8 +11,8 @@
 //!
 //! `Leaves` streams the leaves of a type in packing order with its own stack: it makes no
 //! list of them, so a caller charges each leaf before it makes the leaf. A part without a leaf
-//! takes no step: a tuple or a struct visits only the parts that the metadata of its type counts
-//! as non-empty, and an array without leaves is skipped whole. A port, a register, and a `:=`
+//! takes no step: a tuple, a struct, or an enum visits only the parts that the metadata of its
+//! type counts as non-empty, and an array without leaves is skipped whole. A port, a register, and a `:=`
 //! binding all take their leaves from it.
 
 use crate::names::{Field, Name, Sym};
@@ -159,7 +159,7 @@ impl<S> Leaves<S> {
                             elem: *elem,
                             len: n.to_u64().unwrap_or(u64::MAX),
                         }),
-                        Ty::Tuple(_) | Ty::Struct(_) => Some(Parts::Kids(
+                        Ty::Tuple(_) | Ty::Struct(_) | Ty::Enum(_) => Some(Parts::Kids(
                             shapes.kids_of(env, t).ok_or_else(|| missing(t))?,
                         )),
                         _ => None,
