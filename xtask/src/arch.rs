@@ -222,8 +222,8 @@ struct Family {
 }
 
 /// The codes of later slices that the Rust front end does not report yet; front-end spec,
-/// section 12. Slice 2 reports `S016`, so no code waits.
-const LATER: &[&str] = &[];
+/// section 12. `S021` waits for the Rust front end of slice 3 phase 3.
+const LATER: &[&str] = &["S021"];
 
 const FAMILIES: &[Family] = &[
     Family {

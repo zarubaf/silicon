@@ -2790,6 +2790,23 @@ The checks of section 5.6 run in their order, each error at its node. The tag ty
 #guard out "enum E: UInt[1] { A(UInt[65536]) = 0 }\n" "data_bits(E)" == "(int 65537)"
 
 /-!
+A tag value of an earlier variant is `S021` at the tag value of the second variant. The check runs
+right after the typed use of the tag, before the payload types of its variant. It has no charge,
+so the fuel of the typed use of the second tag reaches it. `{b}` is the position of the name of
+the earlier variant with that tag.
+-/
+#guard out "enum E: UInt[2] { A = 1, B = 1 }\n" "E" == "S021 1:30"
+#guard msg "enum E: UInt[2] { A = 1, B = 1 }\n" "E" ==
+  "the variant `B` has the tag `1` of the variant at 1:19; give each variant its own tag value"
+#guard msg "enum E: UInt[2] { A = 1, B = 2, C(Bool) = 1 + 0, D = 1 }\n" "E" ==
+  "the variant `C` has the tag `1` of the variant at 1:19; give each variant its own tag value"
+#guard out "enum E: UInt[2] { A = 1, B(Int) = 1 }\n" "E" == "S021 1:35"
+#guard out "enum E: UInt[2] { A = 1, B(Int) = 3 }\n" "E" == "S010 1:28"
+#guard out "enum E: UInt[2] { A = 1, B = 5 }\n" "E" == "S012 1:30"
+#guard out "enum E: UInt[2] { A = 1, B = 1 }\n" "E" (fuel := 20) == "S021 1:30"
+#guard out "enum E: UInt[2] { A = 1, B = 1 }\n" "E" (fuel := 19) == "S015 1:30"
+
+/-!
 An enum whose payload names the enum, directly or through a struct, is `S019` at the use of the
 enum in progress. The first use of an enum counts toward the nesting depth.
 -/

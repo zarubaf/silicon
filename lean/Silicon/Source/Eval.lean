@@ -896,7 +896,7 @@ the use of the enum, and the payload values come before. Then these steps run:
 -/
 def variantOf (p : Pos) (t : Ty) (j : Nat) (vs : List Val) : M Val := do
   let .enum i .. := t | fail .S010 p s!"{t.text} is not an enum"
-  let some (.done _ w pw variants) := (← get).specs.enums[i]?
+  let some (.done _ w pw variants _) := (← get).specs.enums[i]?
     | fail .S010 p s!"{t.text} has no entry"
   let some (c, ts) := variants[j]? | fail .S010 p s!"{t.text} has no variant {j}"
   if ts.size != vs.length then
@@ -1419,9 +1419,10 @@ is `S019`. The first use nests one level deeper, in the scope of the enum. It ch
 the enum type, then runs the checks of section 5.6 in their order:
 
 1. The tag type is `UInt[W]` (`S010`).
-2. For each variant: its tag value gets its typed use at `UInt[W]` (`S010`, `S012`). Then each
-   payload type is hardware data (`S010`). Then the metadata sums of the tuple of the payload
-   types charge, after their size-limit check.
+2. For each variant: its tag value gets its typed use at `UInt[W]` (`S010`, `S012`). Then the
+   tag goes into the tag map with no charge, and a tag of an earlier variant is `S021` at the tag
+   value. Then each payload type is hardware data (`S010`). Then the metadata sums of the tuple
+   of the payload types charge, after their size-limit check.
 3. The payload width `P`, the largest width of these tuples, is at most 65536 (`S012` at the
    `enum` keyword). Then the metadata sums of the enum charge (`Meta.enum`).
 
@@ -1441,11 +1442,17 @@ def enumOf (ty : Resolve.TypeExpr → M Ty) (ev : Resolve.Expr → M Val) (p : P
       | t => fail .S010 tag.pos s!"the tag type of an enum is UInt[W], not {t.text}"
     let mut width := 0
     let mut out : Array (Nat × Array Ty) := #[]
+    let mut tags : Std.TreeMap Nat Nat compare := {}
     for v in vs do
       let q := v.tag.pos
       let n ← match ← conform q (.uint w) (← static q (← ev v.tag)) with
         | .uint _ b => pure b.toNat
         | u => fail .S010 q s!"expected UInt[{w}], but the value is {u.text}"
+      if let some j := tags[n]? then
+        let b := vs[j]!.name.pos
+        fail .S021 q (s!"the variant `{v.name.name}` has the tag `{n}` of the variant at " ++
+          s!"{b.line}:{b.col}; give each variant its own tag value")
+      tags := tags.insert n out.size
       let ts ← v.payload.mapM fun e => do
         let t ← ty e
         unless t.info.data do fail .S010 e.pos s!"a payload type is hardware data, not {t.text}"
@@ -1460,7 +1467,7 @@ def enumOf (ty : Resolve.TypeExpr → M Ty) (ev : Resolve.Expr → M Val) (p : P
     let m := Meta.enum w width
     sums p (Meta.enumParts w width) m
     let t := Ty.enum i x m
-    setEnum i (.done t w width out)
+    setEnum i (.done t w width out tags)
     return t
 
 /-!
