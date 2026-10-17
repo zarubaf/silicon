@@ -363,7 +363,7 @@ fn if_pair(
     Ok(match tys.get(ty) {
         Ty::Array(_, n) => Walked::Parts(n.to_u64().unwrap_or(u64::MAX)),
         Ty::Tuple(ts) => Walked::Parts(ts.len() as u64),
-        Ty::Struct(_) => Walked::Parts(tys.fields(ty).map_or(0, |(_, fs)| fs.len() as u64)),
+        Ty::Struct(_) => Walked::Parts(tys.parts(ty).map_or(0, |p| p.types.len() as u64)),
         Ty::Unit => Walked::Done(Agg::Static(Value::Unit)),
         Ty::Bool | Ty::UInt(_) | Ty::SInt(_) => {
             let t = tys.get(ty).clone();
@@ -844,7 +844,7 @@ impl Evaluator<'_> {
                 let len = match self.tys.get(ty) {
                     Ty::Array(_, n) => Some(n.to_u64().unwrap_or(u64::MAX)),
                     Ty::Tuple(ts) => Some(ts.len() as u64),
-                    Ty::Struct(_) => Some(self.tys.fields(ty).map_or(0, |(_, fs)| fs.len() as u64)),
+                    Ty::Struct(_) => Some(self.tys.parts(ty).map_or(0, |p| p.types.len() as u64)),
                     Ty::Unit => None,
                     Ty::Bool | Ty::UInt(_) | Ty::SInt(_) => {
                         let env = (&mut self.fuel, &mut self.graph, &mut self.tys);

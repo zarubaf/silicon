@@ -604,8 +604,8 @@ impl Evaluator<'_> {
             Key::Index(..) => None,
             Key::Select(_, _, index) => index.as_str().parse::<usize>().ok(),
             Key::Field(_, f) => ty
-                .and_then(|t| self.tys.fields(t))
-                .and_then(|(item, _)| self.field_number(item, f)),
+                .and_then(|t| self.tys.parts(t))
+                .and_then(|parts| self.field_number(parts.item(), f)),
         }?;
         Some((k, ty.and_then(|t| self.part_ty(t, k))))
     }
@@ -627,7 +627,7 @@ impl Evaluator<'_> {
     pub(super) fn part_ty(&self, t: TyId, k: usize) -> Option<TyId> {
         self.tys
             .part(t, k)
-            .or_else(|| self.tys.fields(t).and_then(|(_, fs)| fs.get(k).copied()))
+            .or_else(|| self.tys.parts(t).and_then(|p| p.types.get(k).copied()))
     }
 
     /// The type of the part that the evaluated step `key` selects in a container of type `t`.
@@ -637,8 +637,11 @@ impl Evaluator<'_> {
             Key::Index(..) => None,
             Key::Select(_, _, index) => self.part_ty(t, index.as_str().parse().ok()?),
             Key::Field(_, f) => {
-                let (item, fs) = self.tys.fields(t)?;
-                fs.get(self.field_number(item, f)?).copied()
+                let parts = self.tys.parts(t)?;
+                parts
+                    .types
+                    .get(self.field_number(parts.item(), f)?)
+                    .copied()
             }
         }
     }

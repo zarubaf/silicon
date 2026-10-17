@@ -261,6 +261,30 @@ impl Spec {
     }
 }
 
+/// What names the parts of a type with named parts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PartNames {
+    /// The field names of the struct item.
+    Struct(usize),
+}
+
+/// The named parts of a type (`Types::parts`): where their names come from, and their types.
+#[derive(Clone, Copy, Debug)]
+pub struct Parts<'a> {
+    pub names: PartNames,
+    pub types: &'a [TyId],
+}
+
+impl Parts<'_> {
+    /// The struct item whose field names name the parts.
+    #[must_use]
+    pub fn item(&self) -> usize {
+        match self.names {
+            PartNames::Struct(item) => item,
+        }
+    }
+}
+
 /// The result of a join of two types: the units that its walk charged, and the common type.
 #[derive(Clone)]
 pub struct Joined {
@@ -781,15 +805,20 @@ impl Types {
         ty
     }
 
-    /// The struct item and the field types of the struct type `t`.
+    /// The named parts of the type `t`, in packing order: the field types of a struct type,
+    /// from its done entry. Each walk over the parts of a type with named parts reads them here
+    /// and nowhere else. A type without named parts and an entry that is not done give `None`.
     #[must_use]
-    pub fn fields(&self, t: TyId) -> Option<(usize, &[TyId])> {
+    pub fn parts(&self, t: TyId) -> Option<Parts<'_>> {
         let Ty::Struct(s) = self.get(t) else {
             return None;
         };
         let spec = self.spec(*s);
         match &spec.state {
-            SpecState::Done { fields, .. } => Some((spec.item, fields)),
+            SpecState::Done { fields, .. } => Some(Parts {
+                names: PartNames::Struct(spec.item),
+                types: fields,
+            }),
             SpecState::InProgress => None,
         }
     }
@@ -828,7 +857,7 @@ impl Types {
                         work.extend(parts.iter().rev().map(|part| Step::Visit(*part)));
                     }
                     Ty::Struct(_) => {
-                        let (_, fields) = self.fields(t)?;
+                        let fields = self.parts(t)?.types;
                         work.push(Step::Record(t, fields.len()));
                         work.extend(fields.iter().rev().map(|f| Step::Visit(*f)));
                     }
