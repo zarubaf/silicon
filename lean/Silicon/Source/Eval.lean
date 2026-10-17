@@ -92,7 +92,8 @@ The operators follow v0.1 section 3. These rules settle the open points of slice
   with only static parts is a static enum value (`Agg.mkRecord`).
 - `reinterpret` converts between an enum and exactly `UInt[W + P]` (`recast`). A static
   conversion charges the size of its result. A hardware unpack makes two `extract` nodes of a
-  shared operand, and a hardware pack one `pack` node. With `P` 0, neither makes a node.
+  shared operand, and the mark charges the size of the operand once. A hardware pack makes one
+  `pack` node. With `P` 0, neither makes a node.
 - Another callee than the name of a function item or of a prelude function evaluates once,
   before the arguments. Its result waits while they evaluate. A type gives a constructor
   call. A function value checks the number of its arguments first (`S007` at the call). Then
@@ -121,7 +122,8 @@ Hardware values follow v0.1 sections 1 and 3:
   section 7.4 makes one `mux` for each leaf pair. Two scalar arms such as `3` and `3` are a static
   pair too. Equal sides of a static pair give the value. The first difference is `S011` at the
   `if` (F19). A walk with two or more `mux` nodes marks the condition once with `Op.share`. A core
-  name and a constant get no mark, and the mark has no charge (`mux`).
+  name and a constant get no mark. The mark charges the size of the condition once, and a value
+  that holds it counts it as a core name (`shared`).
 - A shift count is a hardware `UInt`, or a static count that becomes an `Int` constant node.
 - A `let`, an assignment, and a hardware argument of a function bind a hardware value to a
   core name of section 7.3. The hardware result of a function gets the role `0ret` in the call
@@ -732,11 +734,13 @@ def ifWalk (fs : Ty → Option (Array (String × Ty))) (pos : Pos) (c : Hw) :
 /-!
 The condition `c` of an `if` whose walk makes `n` `mux` nodes. With two or more nodes, the leaf
 statements share `c`, so it gets one mark with the next number of the instantiation. A core
-name, a child output, and a constant get no mark. The mark has no charge.
+name, a child output, and a constant get no mark. The mark charges the size of `c` once at `pos`,
+and a value that holds the mark counts it as a core name (`Op.size`, section 5.4).
 -/
-def shared (c : Hw) (n : Nat) : M Hw := do
+def shared (pos : Pos) (c : Hw) (n : Nat) : M Hw := do
   let .node _ _ _ op _ := c
   if n < 2 || op matches .ref _ | .out .. | .lit _ then return c
+  charge pos c.size
   let k := (← get).naming.shares
   modify fun s => { s with naming := { s.naming with shares := k + 1 } }
   return Hw.mk c.pos c.ty (.share k) [c]
@@ -757,7 +761,7 @@ def mux (pos : Pos) (c : Hw) (a b : Val) : M Val := do
     else pure (scalarJoin s t) | bad
   match j with
   | .array .. | .tuple _ | .struct .. | .enum .. =>
-    let c ← shared c j.info.leaves
+    let c ← shared pos c j.info.leaves
     return (← ifWalk (← get).specs.parts pos c j.depth j x y).val
   | j => return (← ifPart pos c j x y).val
 
@@ -789,7 +793,8 @@ bits, and the payload in the next `P` bits.
 - A static unpack or pack charges the size of its result, as a conversion does (section 5.4).
   It splits or joins the bits with no loop over the bits.
 - A hardware unpack of `b` gives an enum node with `(extract b 0 W)` and `(extract b W P)`. Both
-  leaves read `b`, so `b` gets one mark of a shared operand (`shared`). With `P` 0, the tag is `b`.
+  leaves read `b`, so `b` gets one mark of a shared operand (`shared`). The mark charges the size
+  of `b` after the type check. With `P` 0, the tag is `b`.
 - A hardware pack gives `(pack (W + P) tag payload)`. With `P` 0, it gives the tag leaf.
 - A hardware node has no charge here: the lowering charges each core node (section 7.4).
 -/
@@ -810,7 +815,7 @@ def recast (p : Pos) (t : Ty) (v : Val) : M Val := do
       if !b.ty.same (.uint (w + pw)) then bad
       else if pw = 0 then return .agg (.mkRecord t #[.hw b])
       else
-        let b ← shared b 2
+        let b ← shared p b 2
         return .agg (.mkRecord t #[.hw (.mk p (.uint w) (.extract 0 w) [b]),
           .hw (.mk p (.uint pw) (.extract w pw) [b])])
     | _ => bad

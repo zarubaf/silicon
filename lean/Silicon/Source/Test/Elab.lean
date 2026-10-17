@@ -1763,6 +1763,16 @@ def tripNodes (k : Nat) : Nat :=
 #guard tripNodes 20 == 6 + 20 * 5
 
 /-!
+The charge of nested round trips is linear too. Each mark charges the size of its operand once.
+A value that holds the mark counts it as a core name, so each round trip adds 29 units, up to
+`k = 30`.
+-/
+def tripUnits (k : Nat) : Nat :=
+  hwUnits s!"  let a = {roundTrips k "reinterpret(Op, resize(UInt[10], x))"};\n"
+#guard (List.range 30).all fun k => tripUnits (k + 1) == tripUnits k + 29
+#guard tripUnits 30 == 1011
+
+/-!
 A hardware `if` with enum arms joins the two enum types, 1 plus 1. Then it walks them as a container
 pair (section 7.4): the root, then `tag`, then `payload`, 1 each. A static enum opens into its
 parts. Each leaf pair makes one `mux`, also a pair of two static leaves. With `P` 0, the walk visits
@@ -1783,6 +1793,15 @@ no join (`S010`).
 #guard hwLets (hwEnum "  let a = if (x == 1) { Op::Load(x) } else { e };\n") ==
   ["a$tag = (mux (share 0 (op (ref x) (uint 8 1))) (uint 2 1) (ref e$tag))",
    "a$payload = (mux (share 0 (op (ref x) (uint 8 1))) (pack 8 (ref x)) (ref e$payload))"]
+
+/-!
+A shared condition charges once. `!c` charges its node 1 and its hardware operation 2, and its
+mark charges the size 2 of `(! c)`. A copy of the result counts the mark as the core name `c`.
+-/
+def ifC (c : String) : String := s!"  let a = if ({c}) \{ Op::Load(x) } else \{ e };\n"
+#guard hwUnits (ifC "!c") == hwUnits (ifC "c") + 3 + 2
+#guard hwUnits (ifC "!c" ++ "  let b = a;\n") - hwUnits (ifC "!c") ==
+  hwUnits (ifC "c" ++ "  let b = a;\n") - hwUnits (ifC "c")
 #guard elabOnly (hwEnum "  let a = if (c) { Op::Add } else { 1 };\n") "M" == "S010 8:11"
 #guard elabOnly ("enum F: UInt[2] { A = 0 }\n" ++
   hwEnum "  let a = if (c) { Op::Add } else { F::A };\n") "M" == "S010 9:11"
