@@ -254,6 +254,28 @@ pub(crate) enum HBin {
     Lor,
 }
 
+/// A pattern of a `match` arm.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Pattern {
+    /// An integer literal; a negative one prints as `-3`.
+    Int(BigInt, Radix),
+    Bool(bool),
+    /// `E::V(a, _)`: the enum, the variant, and a binder or `_` for each
+    /// payload value. A binder is `None` for `_`.
+    Variant(String, String, Vec<Option<String>>),
+    Wild,
+}
+
+/// `match (scrutinee) { pattern => arm, ... }`. The arms cover every
+/// value of the scrutinee type by construction: `_` is the last arm, and
+/// it is there exactly when the other arms cover fewer than `2^W` values
+/// (`Bool`: 2). The literals of the arms are distinct and fit.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Match<S, E> {
+    pub(crate) scrutinee: Box<S>,
+    pub(crate) arms: Vec<(Pattern, E)>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum SExpr {
     Int(BigInt, Radix),
@@ -298,6 +320,8 @@ pub(crate) enum SExpr {
     Unary(Un, Box<SExpr>),
     Binary(SBin, Box<SExpr>, Box<SExpr>),
     If(Box<SExpr>, Box<SExpr>, Box<SExpr>),
+    /// A `match` on a static scrutinee: only the selected arm runs.
+    Match(Match<SExpr, SExpr>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -958,6 +982,7 @@ pub(crate) fn sexpr(e: &SExpr) -> String {
         SExpr::Unpack(e, a) => format!("reinterpret({e}, {})", sexpr(a)),
         SExpr::Pack(e, a) => format!("reinterpret(UInt[data_bits({e})], {})", sexpr(a)),
         SExpr::BitsConv(e, a) => format!("UInt[data_bits({e})]({})", sexpr(a)),
+        SExpr::Match(m) => matched(m, sexpr, sexpr),
         SExpr::Unary(op, a) => format!("({}{})", un(*op), sexpr(a)),
         SExpr::Binary(op, a, b) => format!("({} {} {})", sexpr(a), sbin(*op), sexpr(b)),
         SExpr::If(c, t, e) => {
@@ -968,6 +993,47 @@ pub(crate) fn sexpr(e: &SExpr) -> String {
                 sexpr(e)
             )
         }
+    }
+}
+
+/// A `match` in parentheses, so that it is an operand like an `if`.
+pub(crate) fn matched<S, E>(
+    m: &Match<S, E>,
+    scrutinee: fn(&S) -> String,
+    arm: fn(&E) -> String,
+) -> String {
+    let arms: Vec<String> = m
+        .arms
+        .iter()
+        .map(|(p, e)| format!("{} => {}", pattern(p), arm(e)))
+        .collect();
+    format!(
+        "(match ({}) {{ {} }})",
+        scrutinee(&m.scrutinee),
+        arms.join(", ")
+    )
+}
+
+fn pattern(p: &Pattern) -> String {
+    match p {
+        Pattern::Int(n, radix) => {
+            let digits = literal(&BigInt::from(n.magnitude().clone()), *radix);
+            if n.sign() == Sign::Minus {
+                format!("-{digits}")
+            } else {
+                digits
+            }
+        }
+        Pattern::Bool(b) => b.to_string(),
+        Pattern::Variant(e, v, binders) if binders.is_empty() => format!("{e}::{v}"),
+        Pattern::Variant(e, v, binders) => {
+            let names: Vec<&str> = binders
+                .iter()
+                .map(|b| b.as_deref().unwrap_or("_"))
+                .collect();
+            format!("{e}::{v}({})", names.join(", "))
+        }
+        Pattern::Wild => "_".to_owned(),
     }
 }
 

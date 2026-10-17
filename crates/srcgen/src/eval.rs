@@ -4,8 +4,8 @@
 //! rules, next to the two front ends, so the `eval` probe compares it.
 
 use super::program::{
-    ComptimeFn, EnumDef, FieldTy, FnTy, Item, ListFn, MutFn, RecTy, SBin, SExpr, STy, Scalar, Stmt,
-    StructDef, Ty, Un, string,
+    ComptimeFn, EnumDef, FieldTy, FnTy, Item, ListFn, Match, MutFn, Pattern, RecTy, SBin, SExpr,
+    STy, Scalar, Stmt, StructDef, Ty, Un, string,
 };
 use num_bigint::{BigInt, BigUint, Sign};
 use std::collections::BTreeMap;
@@ -650,6 +650,7 @@ impl Evaluator<'_> {
                 let b = self.eval(b, env)?;
                 binary(*op, a, b)?
             }
+            SExpr::Match(m) => self.static_match(m, env)?,
             SExpr::If(c, t, e) => {
                 if boolean(&self.eval(c, env)?)? {
                     self.eval(t, env)?
@@ -659,6 +660,23 @@ impl Evaluator<'_> {
             }
         };
         bounded(v)
+    }
+
+    /// A `match` on a static scrutinee: the first arm whose pattern holds
+    /// is the only one that runs. A binder of a variant pattern gets the
+    /// unpack of the payload at the leaf offsets.
+    fn static_match(&mut self, m: &Match<SExpr, SExpr>, env: &Env) -> Result<Value, Fault> {
+        let scrutinee = self.eval(&m.scrutinee, env)?;
+        for (pattern, arm) in &m.arms {
+            let Some(binds) = selects(pattern, &scrutinee)? else {
+                continue;
+            };
+            let mut inner = env.clone();
+            inner.statics.extend(binds);
+            return self.eval(arm, &inner);
+        }
+        // The arms cover each value by construction.
+        Err(Fault::Type)
     }
 
     /// The forms of records: a constructor, the zero, `data_bits`, and a
@@ -867,6 +885,40 @@ impl Evaluator<'_> {
     }
 }
 
+/// The binders of `pattern` if it holds for `value`, else `None`.
+fn selects(pattern: &Pattern, value: &Value) -> Result<Option<Vec<(String, Value)>>, Fault> {
+    Ok(match (pattern, value) {
+        (Pattern::Wild, _) => Some(Vec::new()),
+        (Pattern::Int(k, _), Value::Int(n) | Value::UInt(_, n) | Value::SInt(_, n)) => {
+            (k == n).then(Vec::new)
+        }
+        (Pattern::Bool(k), Value::Bool(b)) => (k == b).then(Vec::new),
+        (Pattern::Variant(e, v, binders), Value::Enum(def, tag, payload)) => {
+            if def.name != *e {
+                return Err(Fault::Type);
+            }
+            let variant = def.variant(v).ok_or(Fault::Type)?;
+            if variant.tag != *tag {
+                return Ok(None);
+            }
+            if binders.len() != variant.payload.len() {
+                return Err(Fault::Type);
+            }
+            let leaves = variant.leaves();
+            Some(
+                binders
+                    .iter()
+                    .zip(leaves)
+                    .filter_map(|(b, (at, t))| {
+                        b.as_ref().map(|b| (b.clone(), unpack_leaf(t, at, payload)))
+                    })
+                    .collect(),
+            )
+        }
+        _ => return Err(Fault::Type),
+    })
+}
+
 /// The unsigned bits of a payload leaf of type `t`: the typed use of
 /// `value` at the leaf type, and its two's complement.
 fn leaf_bits(t: Scalar, value: Value) -> Result<BigUint, Fault> {
@@ -883,7 +935,6 @@ fn leaf_bits(t: Scalar, value: Value) -> Result<BigUint, Fault> {
     })
 }
 
-#[cfg(test)]
 /// The leaf of type `t` in the payload `bits` at `at`: the inverse of
 /// `leaf_bits`, with the sign extension of an `SInt`.
 pub(crate) fn unpack_leaf(t: Scalar, at: u32, payload: &BigUint) -> Value {
@@ -1886,5 +1937,58 @@ mod tests {
         );
         let size = SExpr::DataBits("Op".to_owned(), Vec::new());
         assert_eq!(run_enum(op(), &size), Ok("(int 10)".to_owned()));
+    }
+
+    fn arm_match(scrutinee: SExpr, arms: Vec<(Pattern, SExpr)>) -> SExpr {
+        SExpr::Match(Match {
+            scrutinee: Box::new(scrutinee),
+            arms,
+        })
+    }
+
+    /// Only the selected arm runs: a fault in another arm is no fault.
+    #[test]
+    fn a_static_match_runs_the_selected_arm_only() {
+        let lit = |n: i64| Pattern::Int(BigInt::from(n), Radix::Dec);
+        let boom = bin(SBin::Div, int(1), int(0));
+        let m = arm_match(
+            int(2),
+            vec![
+                (lit(1), boom.clone()),
+                (lit(2), int(7)),
+                (Pattern::Wild, boom),
+            ],
+        );
+        assert_eq!(run(&m), value(7));
+        let none = arm_match(int(5), vec![(lit(1), int(1))]);
+        assert_eq!(run(&none), Err(Fault::Type));
+        let b = arm_match(
+            SExpr::Bool(true),
+            vec![
+                (Pattern::Bool(false), int(0)),
+                (Pattern::Bool(true), int(1)),
+            ],
+        );
+        assert_eq!(run(&b), value(1));
+    }
+
+    /// A variant pattern binds the unpacked leaves, with sign extension.
+    #[test]
+    fn a_static_match_unpacks_binders() {
+        let def = EnumDef {
+            name: "E".to_owned(),
+            tag_width: 1,
+            variants: vec![variant("A", 1, &[Scalar::SInt(4), Scalar::Bool])],
+        };
+        let pattern = Pattern::Variant(
+            "E".to_owned(),
+            "A".to_owned(),
+            vec![Some("B0".to_owned()), Some("B1".to_owned())],
+        );
+        let scrutinee = ctor("E", "A", vec![int(-3), SExpr::Bool(true)]);
+        let m = arm_match(scrutinee.clone(), vec![(pattern.clone(), name("B0"))]);
+        assert_eq!(run_enum(def.clone(), &m), Ok("(sint 4 -3)".to_owned()));
+        let m = arm_match(scrutinee, vec![(pattern, name("B1"))]);
+        assert_eq!(run_enum(def, &m), Ok("(bool true)".to_owned()));
     }
 }

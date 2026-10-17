@@ -119,6 +119,9 @@ impl Builder {
         if kind == Kind::Str {
             return self.string_expr(depth, r);
         }
+        if let Some(m) = self.static_match_gate(kind, depth, r) {
+            return m;
+        }
         let names: Vec<&String> = r
             .names
             .iter()
