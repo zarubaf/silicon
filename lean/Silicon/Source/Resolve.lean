@@ -79,6 +79,11 @@ A path and a call of a path are one `variant` node. It holds the enum item, the 
 variant, the payload values, and whether a call holds it. A call of a path still takes a call
 site, so each call node keeps its own site.
 
+A `match` resolves its scrutinee, then each arm in source order. The path of a variant pattern
+resolves as a variant path in an expression. The binders of a pattern are locals in a new scope,
+which holds only the value of their arm. Thus a binder shadows an outer name, and two binders
+with one name in one pattern are `S002` at the second binder. A binder `_` declares no name.
+
 `S002` is at the name of the second declaration or field. `S003` is at the name. The resolver
 reports the first `S002` by position. Without an `S002`, it reports the first `S003` by position.
 
@@ -105,8 +110,9 @@ inductive PrimFn where
 
 /-!
 The declaration of a name. An `item` holds the index of the item in the file. A `local` holds
-the number of the local declaration in its item. The numbers start at 0 in each item, in source
-order: the implicit `clock`, the parameters, the domain names, and then the statements.
+the number of the local declaration in its item. The numbers start at 0 in each item, in the
+order of the declarations: the implicit `clock`, the parameters, the domain names, and then the
+statements. A binder of a pattern takes its number when its arm starts.
 -/
 inductive Ref where
   | type (t : PrimType)
@@ -167,13 +173,24 @@ structure Binder where
   deriving Repr, DecidableEq, BEq, Inhabited
 
 /-!
+A resolved pattern. A variant pattern holds the enum item, the index of the variant, and one
+binder or `_` (`none`) for each written place.
+-/
+inductive Pattern where
+  | wild (pos : Pos)
+  | int (pos : Pos) (neg : Bool) (value : Nat)
+  | bool (pos : Pos) (value : Bool)
+  | variant (pos : Pos) (ty v : Ident) (item index : Nat) (binders : List (Option Binder))
+  deriving Repr, BEq, Inhabited
+
+/-!
 The resolved expression and type expression. They are those of `Source.Syntax` with a `Ref` at
 each name, so they are mutually recursive too. The container forms keep the shape of the parsed
 forms. A `call` and a `method` hold their call site. The `fn` of a `method` is a `fn` item or
 a prelude function, and its `param` is the parameter that the receiver binds to. A type name
 refers to a prelude type, a `struct` item, a `type` item, or a local. A local holds a value of
 type `Type`, which `Elab` checks. A function type keeps its form, with the `mut` mark of each
-parameter type.
+parameter type. A `match` holds its scrutinee and its arms.
 -/
 mutual
   inductive Expr where
@@ -197,6 +214,7 @@ mutual
     | fnType (pos : Pos) (params : List FnParam) (ret : TypeExpr)
     | variant (pos : Pos) (ty variant : Ident) (item index : Nat) (args : List Expr)
         (called : Bool)
+    | «match» (pos : Pos) (scrut : Expr) (arms : List Arm)
 
   inductive TypeExpr where
     | name (pos : Pos) (name : String) (ref : Ref)
@@ -208,9 +226,12 @@ mutual
 
   inductive FnParam where
     | mk (mutable : Bool) (ty : TypeExpr)
+
+  inductive Arm where
+    | mk (pat : Pattern) (value : Expr)
 end
 
-deriving instance Repr, BEq, Inhabited for Expr, TypeExpr, FnParam
+deriving instance Repr, BEq, Inhabited for Expr, TypeExpr, FnParam, Arm
 
 /-!
 The resolved statement. Each declaration has a `Binder`. An `inst` has its module item. An
@@ -275,7 +296,8 @@ inductive Item where
 def Expr.pos : Expr → Pos
   | .num p _ | .bool p _ | .str p _ | .name p .. | .unary p .. | .binary p ..
   | .cond p .. | .call p .. | .index p .. | .field p .. | .unit p | .tuple p ..
-  | .array p .. | .select p .. | .arrayType p .. | .method p .. | .fnType p .. | .variant p .. => p
+  | .array p .. | .select p .. | .arrayType p .. | .method p .. | .fnType p .. | .variant p ..
+  | .«match» p .. => p
 
 def TypeExpr.pos : TypeExpr → Pos
   | .name p .. | .index p .. | .unit p | .tuple p .. | .array p .. | .fn p .. => p
@@ -285,44 +307,54 @@ def Stmt.pos : Stmt → Pos
   | .input p .. | .output p .. | .inst p .. | .ret p .. | .ctIf p .. | .ctFor p .. | .block p ..
   | .expr p .. | .alias p .. => p
 
-/-! Whether a form names a local. In a signature, each local is a parameter. -/
+/-!
+Whether a form names one of the locals `ps`. In a signature, a binder of a pattern is a local
+that is no parameter, so the check takes the parameters as a set.
+-/
+abbrev Ids := Std.TreeMap Nat Unit compare
+
 mutual
-  def Expr.namesLocal : Expr → Bool
-    | .name _ _ r => (r matches .local _)
+  def Expr.namesLocal (ps : Ids) : Expr → Bool
+    | .name _ _ r => match r with | .local id => ps.contains id | _ => false
     | .num .. | .bool .. | .str .. | .unit _ => false
-    | .unary _ _ a => a.namesLocal
-    | .field _ a _ => a.namesLocal
-    | .select _ a .. => a.namesLocal
-    | .binary _ _ l r => l.namesLocal || r.namesLocal
-    | .cond _ c y n => c.namesLocal || y.namesLocal || n.namesLocal
-    | .call _ f xs _ => f.namesLocal || Expr.anyLocal xs
-    | .index _ f xs => f.namesLocal || Expr.anyLocal xs
-    | .method _ r _ _ _ xs _ => r.namesLocal || Expr.anyLocal xs
-    | .tuple _ xs => Expr.anyLocal xs
-    | .array _ xs => Expr.anyLocal xs
-    | .arrayType _ t n => t.namesLocal || n.namesLocal
-    | .fnType _ ps r => FnParam.anyLocal ps || r.namesLocal
-    | .variant _ _ _ _ _ xs _ => Expr.anyLocal xs
+    | .unary _ _ a => a.namesLocal ps
+    | .field _ a _ => a.namesLocal ps
+    | .select _ a .. => a.namesLocal ps
+    | .binary _ _ l r => l.namesLocal ps || r.namesLocal ps
+    | .cond _ c y n => c.namesLocal ps || y.namesLocal ps || n.namesLocal ps
+    | .call _ f xs _ => f.namesLocal ps || Expr.anyLocal ps xs
+    | .index _ f xs => f.namesLocal ps || Expr.anyLocal ps xs
+    | .method _ r _ _ _ xs _ => r.namesLocal ps || Expr.anyLocal ps xs
+    | .tuple _ xs => Expr.anyLocal ps xs
+    | .array _ xs => Expr.anyLocal ps xs
+    | .arrayType _ t n => t.namesLocal ps || n.namesLocal ps
+    | .fnType _ qs r => FnParam.anyLocal ps qs || r.namesLocal ps
+    | .variant _ _ _ _ _ xs _ => Expr.anyLocal ps xs
+    | .«match» _ x as => x.namesLocal ps || Arm.anyLocal ps as
 
-  def Expr.anyLocal : List Expr → Bool
+  def Expr.anyLocal (ps : Ids) : List Expr → Bool
     | [] => false
-    | x :: xs => x.namesLocal || Expr.anyLocal xs
+    | x :: xs => x.namesLocal ps || Expr.anyLocal ps xs
 
-  def TypeExpr.namesLocal : TypeExpr → Bool
-    | .name _ _ r => (r matches .local _)
+  def Arm.anyLocal (ps : Ids) : List Arm → Bool
+    | [] => false
+    | .mk _ v :: as => v.namesLocal ps || Arm.anyLocal ps as
+
+  def TypeExpr.namesLocal (ps : Ids) : TypeExpr → Bool
+    | .name _ _ r => match r with | .local id => ps.contains id | _ => false
     | .unit _ => false
-    | .index _ b xs => b.namesLocal || Expr.anyLocal xs
-    | .tuple _ ts => TypeExpr.anyLocal ts
-    | .array _ t n => t.namesLocal || n.namesLocal
-    | .fn _ ps r => FnParam.anyLocal ps || r.namesLocal
+    | .index _ b xs => b.namesLocal ps || Expr.anyLocal ps xs
+    | .tuple _ ts => TypeExpr.anyLocal ps ts
+    | .array _ t n => t.namesLocal ps || n.namesLocal ps
+    | .fn _ qs r => FnParam.anyLocal ps qs || r.namesLocal ps
 
-  def TypeExpr.anyLocal : List TypeExpr → Bool
+  def TypeExpr.anyLocal (ps : Ids) : List TypeExpr → Bool
     | [] => false
-    | t :: ts => t.namesLocal || TypeExpr.anyLocal ts
+    | t :: ts => t.namesLocal ps || TypeExpr.anyLocal ps ts
 
-  def FnParam.anyLocal : List FnParam → Bool
+  def FnParam.anyLocal (ps : Ids) : List FnParam → Bool
     | [] => false
-    | .mk _ t :: ps => t.namesLocal || FnParam.anyLocal ps
+    | .mk _ t :: qs => t.namesLocal ps || FnParam.anyLocal ps qs
 end
 
 /-!
@@ -331,7 +363,8 @@ A function with the parameters `ps` and the result type `ret` is generic in two 
 of its parameters. The check reads only the resolved signature, so it needs no evaluation.
 -/
 def generic (ps : List Param) (ret : TypeExpr) : Bool :=
-  ps.any (fun q => q.mode == .comptime || q.ty.namesLocal) || ret.namesLocal
+  let ids : Ids := ps.foldl (fun m q => m.insert q.name.id ()) {}
+  ps.any (fun q => q.mode == .comptime || q.ty.namesLocal ids) || ret.namesLocal ids
 
 /-! Position order: the lower line, then the lower column. -/
 def before (a b : Pos) : Bool := a.line < b.line || (a.line == b.line && a.col < b.col)
@@ -362,7 +395,7 @@ structure Binding where
 The state of the walk. `env` maps each visible name to its innermost declaration. `scope` is the
 number of the current scope, and `scopes` the next free scope number. `locals` is the next local
 number of the current item, and `sites` its next call site. `dup` holds the first `S002`, and
-`unknown` the first `S003`. `later` holds the first `S004` of a `match`, which wins over both.
+`unknown` the first `S003`.
 -/
 structure St where
   env : Std.TreeMap String Binding compare
@@ -372,7 +405,6 @@ structure St where
   sites : Nat
   dup : Option Error
   unknown : Option Error
-  later : Option Error
 
 /-!
 The context of the walk holds the parsed items, for the kind of an item. It also holds the item
@@ -546,11 +578,9 @@ mutual
     | .path p x y => do
       let (i, j) ← variantRef p x y
       return .variant p x y i j [] false
-    | .«match» p .. => do
-      -- TODO(#272): resolve the scrutinee, the patterns with their binders, and the arms.
-      let e : Error := ⟨.S004, p, "a `match` is not supported yet"⟩
-      modify fun s => { s with later := earlier s.later e }
-      return .unit p
+    | .«match» p x as => do
+      let x ← expr x
+      return .«match» p x (← as.mapM arm)
 
   def typeExpr : Source.TypeExpr → M TypeExpr
     | .name p n => do
@@ -570,6 +600,19 @@ mutual
   /-- A parameter type of a function type. It declares no name. -/
   def fnParam : Source.FnParam → M FnParam
     | .mk m t => return .mk m (← typeExpr t)
+
+  /-- An arm: its pattern path, then its binders and its value in a new scope. -/
+  def arm : Source.Arm → M Arm
+    | .mk q v => do
+      match q with
+      | .wild p => return .mk (.wild p) (← expr v)
+      | .int p n k => return .mk (.int p n k) (← expr v)
+      | .bool p b => return .mk (.bool p b) (← expr v)
+      | .variant p x y bs =>
+        let (i, j) ← variantRef p x y
+        inScope do
+          let bs ← bs.mapM (·.mapM declare)
+          return .mk (.variant p x y i j bs) (← expr v)
 end
 
 /-! The module item of an `instance`. -/
@@ -704,10 +747,11 @@ def inFile (items : List Source.Item) (act : M α) : Except Error α :=
     modify fun s => { s with scopes := 1 }
     act
   let names := items.zipIdx.foldl (fun m (it, i) => m.insert (itemName it).name i) {}
-  let (out, s) := (walk.run ⟨items.toArray, names⟩).run ⟨{}, 0, 0, 0, 0, none, none, none⟩
-  match s.later, s.dup, s.unknown with
-  | some e, _, _ | none, some e, _ | none, none, some e => .error e
-  | none, none, none => .ok out
+  let (out, s) := (walk.run ⟨items.toArray, names⟩).run ⟨{}, 0, 0, 0, 0, none, none⟩
+  match s.dup, s.unknown with
+  | some e, _ => .error e
+  | none, some e => .error e
+  | none, none => .ok out
 
 /-!
 The resolved items of a file, or the first error. The index of an item in the result is its

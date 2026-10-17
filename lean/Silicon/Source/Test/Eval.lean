@@ -2986,4 +2986,7 @@ comes after the typed uses of the payload values and after the type check of `re
 #guard out ops "Op::Load(true)" (depth := 2) == "S010 1:1"
 #guard out ops "reinterpret(Op, UInt[9](0))" (depth := 2) == "S010 1:1"
 
+/-! A `match` (slice 3) is `S004` at its keyword until the evaluator handles it. -/
+#guard out "" "match (1) { _ => 2 }" == "S004 1:1"
+
 end Silicon.Source.Test.Eval

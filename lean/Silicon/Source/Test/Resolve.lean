@@ -604,11 +604,83 @@ def chain (n : Nat) : String := " + ".intercalate (List.replicate n "p")
 #guard ok (fnBody (String.join (List.replicate 20000 "{ let a = p; }\n") ++ "return p;"))
 
 /-!
-A `match` (slice 3) is `S004` at its keyword until the resolver handles it. The first `match` in
-position order wins, also over an earlier `S002` or `S003`.
+A `match` (slice 3, section 5.6) resolves its scrutinee, then each arm. The path of a variant
+pattern resolves as a variant path in an expression. The binders of a pattern are locals in a new
+scope that holds only the value of their arm. `arms s` puts the arms `s` on line 3, from
+column 20.
 -/
-#guard fails (fnBody "return match (p) { _ => q };") .S004 2 8
-#guard fails (fnBody "let a = 1; let a = y;\nreturn match (p) { _ => match (p) {} };") .S004 3 8
-#guard message (fnBody "return match (p) { _ => p };") == "a `match` is not supported yet"
+def pair : String := "enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }\n"
+def arms (s : String) : String :=
+  pair ++ "fn f(x: Op, p: UInt[8]) -> UInt[8] {\nreturn match (x) { " ++ s ++ " };\n}"
+
+/-! The arms of the `match` in the `return` of `f`. -/
+def matchArms (s : String) : Option (List Resolve.Arm) :=
+  match run s with
+  | .ok items =>
+    match items[1]? with
+    | some (Resolve.Item.fn _ _ _ _ _ [.ret _ (some (.«match» _ _ as))]) => some as
+    | _ => none
+  | .error _ => none
+
+#guard ok (arms "Op::Add => p, Op::Load(v) => v, Op::Pair(_, w) => p, -1 => 0, true => 0, _ => 0")
+#guard ok (arms "Op::Pair(_, _) => p, Op::Add() => p, _ => 0")
+#guard ok (arms "Op::Load(v) => v, Op::Pair(_, v) => p, _ => 0")
+
+/-! A variant pattern holds its enum item, its variant, and a binder or `_` for each place. -/
+#guard match matchArms (arms "Op::Pair(_, w) => w, _ => 0") with
+  | some [.mk (.variant _ _ _ 0 2 [none, some ⟨_, 2⟩]) (.name _ _ (.local 2)), .mk (.wild _) _] =>
+    true
+  | _ => false
+
+/-! A binder shadows a parameter, and its scope ends with its arm. -/
+#guard match matchArms (arms "Op::Load(p) => p, _ => p") with
+  | some [.mk _ (.name _ _ (.local 2)), .mk _ (.name _ _ (.local 1))] => true
+  | _ => false
+#guard fails (arms "Op::Load(v) => v, _ => v") .S003 3 43
+#guard fails (pair ++ "fn f(x: Op) -> UInt[8] {\n" ++
+  "let a = match (x) { Op::Load(v) => v, _ => 0 };\nreturn v;\n}") .S003 4 8
+
+/-! A nested `match` opens its own scopes. An inner binder shadows an outer binder. -/
+#guard ok (arms "Op::Load(v) => match (x) { Op::Load(v) => v, _ => v }, _ => 0")
+
+/-! The path resolves before the binders, so a binder can have the name of the enum. -/
+#guard ok (arms "Op::Load(Op) => Op, Op::Add => p, _ => 0")
+
+/-! `S002`: two binders with one name in one pattern, at the second binder. -/
+#guard fails (arms "Op::Pair(a, a) => p, _ => 0") .S002 3 32
+#guard message (arms "Op::Pair(a, a) => p, _ => 0") == "`a` is already declared in this scope"
+
+/-! `S003` of a pattern path, with the texts of a variant path in an expression. -/
+#guard fails (arms "Op::Mul => p, _ => 0") .S003 3 24
+#guard message (arms "Op::Mul => p, _ => 0") ==
+  "`Op` has no variant `Mul`; use a variant that `Op` declares"
+#guard fails (arms "p::Add => 0, _ => 0") .S003 3 20
+#guard message (arms "p::Add => 0, _ => 0") ==
+  "`p` is not an enum, so `p::Add` names no variant; use the name of an enum"
+#guard fails (pair ++ "fn f(x: Op) -> UInt[8] {\nlet Op = 1;\n" ++
+  "return match (x) { Op::Add => 0 };\n}")
+  .S003 4 20
+#guard fails (arms "_ => q") .S003 3 25
+#guard fails (pair ++ "fn f(x: Op) -> UInt[8] {\nreturn match (q) { _ => 0 };\n}") .S003 3 15
+
+/-! Pass 2 comes before pass 3 in a `match` too. -/
+#guard fails (arms "Op::Mul => q, Op::Pair(a, a) => 0") .S002 3 46
+
+/-!
+A binder in a signature is no parameter, so it does not make a function generic. A parameter in
+the same position does.
+-/
+def genericFn (s : String) : Option Bool :=
+  match run s with
+  | .ok items =>
+    match items[1]? with
+    | some (Resolve.Item.fn _ _ _ ps r _) => some (generic ps r)
+    | _ => none
+  | .error _ => none
+
+#guard genericFn (pair ++ "fn g(y: UInt[match (Op::Load(8)) { Op::Load(v) => v, _ => 1 }]) " ++
+  "-> Bool { return true; }") == some false
+#guard genericFn (pair ++ "fn g(n: Nat, y: UInt[match (n) { _ => n }]) -> Bool { return true; }") ==
+  some true
 
 end Silicon.Source.Test.Resolve
