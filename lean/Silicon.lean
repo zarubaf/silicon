@@ -130,6 +130,7 @@ import Silicon.Source.Layout
 import Silicon.Source.Flatten
 import Silicon.Source.Test.Flatten
 import Silicon.Source.Proof.StaticOps.Spine
+import Silicon.Source.Proof.StaticOps.Bits
 import Silicon.Source.Proof.StaticOps
 import Silicon.Source.Vectors
 import Silicon.Source.Test.Vectors
