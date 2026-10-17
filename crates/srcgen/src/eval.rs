@@ -550,6 +550,7 @@ pub(crate) fn concrete(t: &Ty, env: &Env, scope: &Scope) -> Result<Scalar, Fault
         Ty::Bool => Scalar::Bool,
         Ty::UInt(w) => Scalar::UInt(width(w)?),
         Ty::SInt(w) => Scalar::SInt(width(w)?),
+        Ty::Enum(_) => return Err(Fault::Type),
     })
 }
 
@@ -561,7 +562,15 @@ pub(crate) fn leaves(
     env: &Env,
     scope: &Scope,
 ) -> Result<Vec<(String, Scalar)>, Fault> {
-    Ok(vec![(name.to_owned(), concrete(t, env, scope)?)])
+    let Ty::Enum(e) = t else {
+        return Ok(vec![(name.to_owned(), concrete(t, env, scope)?)]);
+    };
+    let def = scope.enums.get(e).ok_or(Fault::Type)?;
+    let mut out = vec![(format!("{name}.tag"), Scalar::UInt(def.tag_width))];
+    if def.payload_bits() > 0 {
+        out.push((format!("{name}.payload"), Scalar::UInt(def.payload_bits())));
+    }
+    Ok(out)
 }
 
 struct Evaluator<'a> {

@@ -412,8 +412,10 @@ impl<'a> Walk<'a> {
     }
 
     fn ty(&mut self, t: &mut Ty) {
-        if let Ty::UInt(w) | Ty::SInt(w) = t {
-            self.width(w);
+        match t {
+            Ty::UInt(w) | Ty::SInt(w) => self.width(w),
+            Ty::Enum(name) => self.rename(name),
+            Ty::Bool => {}
         }
     }
 
@@ -574,6 +576,12 @@ impl<'a> Walk<'a> {
             HExpr::Call(f, args) => {
                 self.rename(f);
                 self.args(f, args, HExpr::Static(zero()));
+                for a in args {
+                    self.hexpr(a);
+                }
+            }
+            HExpr::Ctor(name, _, args) => {
+                self.rename(name);
                 for a in args {
                     self.hexpr(a);
                 }

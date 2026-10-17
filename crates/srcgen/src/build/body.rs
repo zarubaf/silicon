@@ -5,7 +5,7 @@
 use super::hw::{DEPTH, Want};
 use super::stat::{self, Kind, Reach};
 use super::{
-    Builder, Built, COUNT, Ctx, ENVS, HELPERS, Helper, Hw, INPUTS, INSTANCES, MODULE_STMTS,
+    Builder, Built, COUNT, Ctx, ENVS, HELPERS, Helper, Hw, HwEnum, INPUTS, INSTANCES, MODULE_STMTS,
     MODULES, Module, NESTED_STMTS, NESTING, Names, OUTPUTS, PARAMS, SAMPLE_INTS, Sig,
 };
 use crate::eval::{Env, Fault, Value, concrete, eval, loop_values};
@@ -125,6 +125,7 @@ impl Builder {
             helpers: k,
             lists: Vec::new(),
             counters: Vec::new(),
+            enums: Vec::new(),
         };
         let mut body = Vec::new();
         for _ in 0..self.tape.below(3) {
@@ -298,12 +299,19 @@ impl Builder {
             for _ in 0..self.tape.between(1, OUTPUTS) {
                 outputs.push((names.fresh("o"), self.decl_ty(r, &domain)));
             }
+            let (enum_inputs, enum_outputs) = if k == 0 {
+                self.enum_ports()
+            } else {
+                (Vec::new(), Vec::new())
+            };
             self.sigs.push(Sig {
                 name: format!("M{k}"),
                 params,
                 clocked,
                 inputs,
                 outputs,
+                enum_inputs,
+                enum_outputs,
             });
         }
     }
@@ -322,6 +330,7 @@ impl Builder {
             helpers: self.helpers.len(),
             lists: Vec::new(),
             counters: Vec::new(),
+            enums: Vec::new(),
         };
         let mut body = Vec::new();
         for (n, t) in &sig.inputs {
@@ -334,12 +343,23 @@ impl Builder {
                 mutable: false,
             });
         }
+        for (n, def) in &sig.enum_inputs {
+            body.push(Stmt::Input(n.clone(), Ty::Enum(def.name.clone())));
+            ctx.enums.push(HwEnum {
+                name: n.clone(),
+                def: def.clone(),
+                hardware: true,
+            });
+        }
         let mut outputs = Vec::new();
         for (n, t) in &sig.outputs {
             body.push(Stmt::Output(n.clone(), t.clone()));
             let types = self.types(t, &ctx.envs)?;
             let ty = Some(t.clone());
             outputs.push((n.clone(), Want { types, ty }));
+        }
+        for (n, def) in &sig.enum_outputs {
+            body.push(Stmt::Output(n.clone(), Ty::Enum(def.name.clone())));
         }
         let mut m = Module {
             index: k,
@@ -367,6 +387,10 @@ impl Builder {
         for (n, w) in outputs {
             body.push(Stmt::Connect(Place::Name(n), self.driver(&ctx, &w)));
         }
+        for (n, def) in &sig.enum_outputs {
+            let value = self.enum_driver(&ctx, def);
+            body.push(Stmt::Connect(Place::Name(n.clone()), value));
+        }
         *self.bodies.get_mut(k).ok_or(Fault::Type)? = Some(body);
         Ok(())
     }
@@ -384,11 +408,12 @@ impl Builder {
         };
         let mut out = Vec::new();
         let mut regs = Vec::new();
+        let mut eregs = Vec::new();
         let mut instances = 0;
         let mut extra = self.enum_stmts();
         for _ in 0..self.tape.below(max + 1) {
             while extra > 0 && self.side.below(3) == 0 {
-                self.enum_stmt(ctx, &mut m.names, &mut out)?;
+                self.enum_stmt(ctx, &mut m.names, m.clocked, &mut out, &mut eregs)?;
                 extra -= 1;
             }
             let nested = level < NESTING;
@@ -424,9 +449,10 @@ impl Builder {
             }
         }
         for _ in 0..extra {
-            self.enum_stmt(ctx, &mut m.names, &mut out)?;
+            self.enum_stmt(ctx, &mut m.names, m.clocked, &mut out, &mut eregs)?;
         }
         self.close_regs(ctx, regs, &mut out)?;
+        self.close_enum_regs(ctx, eregs, &mut out);
         Ok(out)
     }
 

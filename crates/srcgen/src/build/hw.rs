@@ -95,6 +95,7 @@ impl Want {
             Ty::Bool => Ty::Bool,
             Ty::UInt(w) => Ty::SInt(w.clone()),
             Ty::SInt(w) => Ty::UInt(w.clone()),
+            Ty::Enum(name) => Ty::Enum(name.clone()),
         });
         Want { types, ty }
     }
@@ -369,6 +370,6 @@ pub(super) fn reads_name(e: &HExpr) -> bool {
         HExpr::Unary(_, a) | HExpr::Resize(_, a) | HExpr::Reinterpret(_, a) => reads_name(a),
         HExpr::Binary(_, a, b) => reads_name(a) || reads_name(b),
         HExpr::If(c, t, e) => reads_name(c) || reads_name(t) || reads_name(e),
-        HExpr::Call(_, args) => args.iter().any(reads_name),
+        HExpr::Call(_, args) | HExpr::Ctor(_, _, args) => args.iter().any(reads_name),
     }
 }

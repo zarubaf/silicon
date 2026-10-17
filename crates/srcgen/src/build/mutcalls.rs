@@ -364,6 +364,7 @@ impl Builder {
             helpers: self.helpers.len(),
             lists: Vec::new(),
             counters: Vec::new(),
+            enums: Vec::new(),
         };
         let mut body = Vec::new();
         for _ in 0..self.tape.below(2) {

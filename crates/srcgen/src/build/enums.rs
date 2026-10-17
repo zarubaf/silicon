@@ -115,7 +115,7 @@ impl Builder {
     }
 
     /// A random enum of the file. The file has one.
-    fn pick_enum(&mut self) -> Option<EnumDef> {
+    pub(super) fn pick_enum(&mut self) -> Option<EnumDef> {
         self.enums.get(self.tape.index(self.enums.len())).cloned()
     }
 
@@ -169,14 +169,24 @@ impl Builder {
         }
     }
 
-    /// One enum statement of a frame.
+    /// One enum statement of a frame: a static `let`, or a hardware form.
+    /// A register joins `regs`.
     pub(super) fn enum_stmt(
         &mut self,
         ctx: &mut Ctx,
         names: &mut Names,
+        clocked: bool,
         out: &mut Vec<Stmt>,
+        regs: &mut Vec<(String, EnumDef)>,
     ) -> Built {
-        self.on_side(|b| b.enum_static_let(ctx, names, out))
+        self.on_side(|b| {
+            if b.tape.below(6) == 0 {
+                b.enum_static_let(ctx, names, out)
+            } else {
+                b.enum_hw_stmt(ctx, names, clocked, out, regs);
+                Ok(())
+            }
+        })
     }
 
     /// `let s: E = value;` of a static enum value.

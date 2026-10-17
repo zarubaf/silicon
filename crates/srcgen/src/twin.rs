@@ -275,6 +275,7 @@ impl Writer<'_> {
             Ty::Bool => Ty::Bool,
             Ty::UInt(w) => Ty::UInt(self.fold(w, fr)),
             Ty::SInt(w) => Ty::SInt(self.fold(w, fr)),
+            Ty::Enum(name) => Ty::Enum(name.clone()),
         }
     }
 
@@ -295,6 +296,11 @@ impl Writer<'_> {
                 let g = self.hw_values.get(g).unwrap_or(g);
                 HExpr::Call(g.clone(), args.iter().map(|a| self.hexpr(a, fr)).collect())
             }
+            HExpr::Ctor(e, v, args) => HExpr::Ctor(
+                e.clone(),
+                v.clone(),
+                args.iter().map(|a| self.hexpr(a, fr)).collect(),
+            ),
             HExpr::Receiver(recv, g, args) => HExpr::Receiver(
                 sub(recv),
                 g.clone(),

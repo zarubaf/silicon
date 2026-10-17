@@ -198,6 +198,8 @@ pub(crate) enum Ty {
     Bool,
     UInt(SExpr),
     SInt(SExpr),
+    /// An enum, by name. It has the two leaves `tag` and `payload`.
+    Enum(String),
 }
 
 /// The unary operators, static and hardware: `-`, `~`, `!`.
@@ -316,6 +318,8 @@ pub(crate) enum HExpr {
     Call(String, Vec<HExpr>),
     /// A receiver call `recv.f(args)` of a helper `fn`.
     Receiver(Box<HExpr>, String, Vec<HExpr>),
+    /// `E::V(a, b)` with payload values of the leaf types.
+    Ctor(String, String, Vec<HExpr>),
 }
 
 /// The target of `:=`.
@@ -833,6 +837,7 @@ fn ty(t: &Ty) -> String {
         Ty::Bool => "Bool".to_owned(),
         Ty::UInt(w) => format!("UInt[{}]", sexpr(w)),
         Ty::SInt(w) => format!("SInt[{}]", sexpr(w)),
+        Ty::Enum(name) => name.clone(),
     }
 }
 
@@ -1004,6 +1009,8 @@ fn hexpr(e: &HExpr) -> String {
         HExpr::Reinterpret(t, a) => format!("reinterpret({}, {})", ty(t), hexpr(a)),
         HExpr::Call(f, args) => format!("{f}({})", list(args, hexpr)),
         HExpr::Receiver(recv, f, args) => format!("{}.{f}({})", hexpr(recv), list(args, hexpr)),
+        HExpr::Ctor(e, v, args) if args.is_empty() => format!("{e}::{v}"),
+        HExpr::Ctor(e, v, args) => format!("{e}::{v}({})", list(args, hexpr)),
     }
 }
 
