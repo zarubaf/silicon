@@ -63,6 +63,9 @@ pub enum Code {
     S019,
     /// A combinational cycle in the lowered design.
     S020,
+    /// A `match` that does not cover its scrutinee, or an arm that no value reaches, or a tag
+    /// value that two variants of an enum share.
+    S021,
 }
 
 impl fmt::Display for Code {
@@ -82,6 +85,7 @@ impl fmt::Display for Code {
             Code::S018 => "S018",
             Code::S019 => "S019",
             Code::S020 => "S020",
+            Code::S021 => "S021",
         })
     }
 }

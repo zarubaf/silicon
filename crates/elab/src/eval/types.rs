@@ -22,6 +22,7 @@ use parse::ast::{
     Variant as VariantItem,
 };
 use resolve::{DeclId, Prelude, Target};
+use std::collections::BTreeMap;
 
 /// The most bits of the payload of an enum.
 const PAYLOAD_LIMIT: u64 = 65536;
@@ -405,7 +406,8 @@ impl Evaluator<'_> {
     ///
     /// 1. The tag type is `UInt[W]` (`S010`).
     /// 2. For each variant: its tag value gets its typed use at `UInt[W]` (`S010`, `S012`).
-    ///    Then each payload type is hardware data (`S010`). Then the metadata sums of the tuple
+    ///    Then the tag goes into the tag map with no charge, and a tag of an earlier variant is
+    ///    `S021` at the tag value. Then each payload type is hardware data (`S010`). Then the metadata sums of the tuple
     ///    of the payload types charge, after their size-limit check.
     /// 3. The payload width `P`, the largest width of these tuples, is at most 65536 (`S012` at
     ///    the `enum` keyword). Then the metadata sums of the enum charge.
@@ -430,6 +432,7 @@ impl Evaluator<'_> {
         };
         let mut width = Int::zero();
         let mut done = Vec::with_capacity(variants.len());
+        let mut tags: BTreeMap<Int, usize> = BTreeMap::new();
         for variant in variants {
             let tag_pos = expr_pos(&variant.tag);
             let o = self.eval(&variant.tag)?;
@@ -448,6 +451,21 @@ impl Evaluator<'_> {
                     );
                 }
             };
+            // The check is one map insert, O(log v) compares: no charge (the log factor).
+            let key = Int::from_unsigned(&tag);
+            if let Some(&earlier) = tags.get(&key) {
+                let at = variants[earlier].name.pos;
+                return fail(
+                    Code::S021,
+                    tag_pos,
+                    format!(
+                        "the variant `{}` has the tag `{key}` of the variant at {}:{}; give each \
+                         variant its own tag value",
+                        variant.name.name, at.line, at.col
+                    ),
+                );
+            }
+            tags.insert(key, done.len());
             let mut payload = Vec::with_capacity(variant.payload.len());
             for ty_expr in &variant.payload {
                 let payload_ty = self.type_expr(ty_expr)?;
@@ -492,7 +510,7 @@ impl Evaluator<'_> {
         let meta = self.sums(pos, &parts, depth)?;
         Ok(self
             .tys
-            .finish_enum(item, (tag_width, payload_width), done, meta, depth))
+            .finish_enum(item, (tag_width, payload_width), done, tags, meta, depth))
     }
 
     /// The typed uses at `pos` of the arguments `args` at the parameters `params`, in order,

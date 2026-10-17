@@ -71,6 +71,32 @@ fn the_checks_of_an_enum_run_in_their_order() {
     );
 }
 
+/// A tag value of an earlier variant is `S021` at the tag value of the second variant. The check
+/// runs right after the typed use of the tag, before the payload types of its variant. It has no
+/// charge, so the fuel of the typed use of the second tag reaches it.
+#[test]
+fn a_second_tag_value_is_s021_at_the_tag_value() {
+    let e = |src: &str| out(src, "E", 1 << 20, 1000);
+    assert_eq!(e("enum E: UInt[2] { A = 1, B = 1 }\n"), "S021 1:30");
+    assert_eq!(
+        message("enum E: UInt[2] { A = 1, B = 1 }\n", "E"),
+        "the variant `B` has the tag `1` of the variant at 1:19; give each variant its own tag value"
+    );
+    assert_eq!(
+        message(
+            "enum E: UInt[2] { A = 1, B = 2, C(Bool) = 1 + 0, D = 1 }\n",
+            "E"
+        ),
+        "the variant `C` has the tag `1` of the variant at 1:19; give each variant its own tag value"
+    );
+    assert_eq!(e("enum E: UInt[2] { A = 1, B(Int) = 1 }\n"), "S021 1:35");
+    assert_eq!(e("enum E: UInt[2] { A = 1, B(Int) = 3 }\n"), "S010 1:28");
+    assert_eq!(e("enum E: UInt[2] { A = 1, B = 5 }\n"), "S012 1:30");
+    let src = "enum E: UInt[2] { A = 1, B = 1 }\n";
+    assert_eq!(out(src, "E", 20, 1000), "S021 1:30");
+    assert_eq!(out(src, "E", 19, 1000), "S015 1:30");
+}
+
 #[test]
 fn an_enum_that_names_itself_is_s019_and_a_use_counts_toward_the_depth() {
     let e = |src: &str, depth: u64| out(src, "E", 1 << 20, depth);
