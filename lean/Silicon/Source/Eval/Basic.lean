@@ -43,17 +43,28 @@ structure Spec where
   args : List Value
   state : SpecState
 
+/-!
+An enum in the table of enums (section 5.6), by its item. A done entry holds its enum type, its
+tag width `W`, and its payload width `P`. It also holds the tag value and the payload types of
+each variant, in declaration order. An enum that is not started has no entry.
+-/
+inductive EnumState where
+  | inProgress
+  | done (ty : Ty) (w p : Nat) (variants : Array (Nat × Array Ty))
+
 /-! The order of the keys of specializations: the struct item, then the static arguments. -/
 def Spec.cmp (a b : Nat × List Value) : Ordering := (compare a.1 b.1).then (Value.cmps a.2 b.2)
 
 /-!
 The table of specializations. A struct type holds the number of its entry. `index` finds the
 number of an entry by its key in logarithmic time (section 5.6). A comparison of two keys walks
-at most the smaller arguments, so the lookup stays in the charge of the arguments.
+at most the smaller arguments, so the lookup stays in the charge of the arguments. `enums` is
+the table of enums by their item, also in logarithmic time.
 -/
 structure Specs where
   entries : Array Spec := #[]
   index : Std.TreeMap (Nat × List Value) Nat Spec.cmp := {}
+  enums : Std.TreeMap Nat EnumState compare := {}
 
 /-! The number and the entry of the struct item `i` with the static arguments `args`. -/
 def Specs.find? (s : Specs) (i : Nat) (args : List Value) : Option (Nat × Spec) := do
@@ -65,17 +76,30 @@ def Specs.item (s : Specs) : Ty → Option Nat
   | .struct k .. => (s.entries[k]?).map (·.item)
   | _ => none
 
+/-! The tag width and the payload width of the enum type `t`, from its done entry. -/
+def Specs.widths (s : Specs) : Ty → Option (Nat × Nat)
+  | .enum i .. =>
+    match s.enums[i]? with
+    | some (.done _ w p _) => some (w, p)
+    | _ => none
+  | _ => none
+
 /-!
 The named parts of the type `t`, in packing order: the name and the type of each field of a
-struct type, from its done entry. Each walk over the parts of a type with named parts reads them
-here and nowhere else. A type without named parts and an entry that is not done give `none`. A
-record exists only after its specialization is done, so each record type has its parts.
+struct type, from its done entry. An enum type has the parts `tag` of type `UInt[W]` and
+`payload` of type `UInt[P]`, without `payload` when `P` is 0 (section 5.1). Each walk over the
+parts of a type with named parts reads them here and nowhere else. A type without named parts
+and an entry that is not done give `none`. A record or an enum value exists only after its entry
+is done, so each such type has its parts.
 -/
 def Specs.parts (s : Specs) : Ty → Option (Array (String × Ty))
   | .struct k .. => do
     match (← s.entries[k]?).state with
     | .done _ fs => some fs
     | .inProgress => none
+  | t@(.enum ..) => do
+    let (w, p) ← s.widths t
+    return #[("tag", .uint w)] ++ if p = 0 then #[] else #[("payload", .uint p)]
   | _ => none
 
 /-!
@@ -774,17 +798,18 @@ def fits (t : Ty) (n : Int) : Bool :=
   | _ => true
 
 /-!
-A typed use of a scalar, `()`, a record, or a function at `t`. Only a static integer at a finite
-type converts. A `()` part of a container comes here, because it has no elements. A record needs
-its own struct type, because a struct type is nominal. A function needs its exact function type,
-also in the `mut` marks, and charges nothing.
+A typed use of a scalar, `()`, a record, an enum value, or a function at `t`. Only a static
+integer at a finite type converts. A `()` part of a container comes here, because it has no
+elements. A record needs its own struct type, because a struct type is nominal. An enum value
+needs its own enum type for the same reason, and it converts nothing (section 5.1). A function
+needs its exact function type, also in the `mut` marks, and charges nothing.
 -/
 def convertLeaf (t : Ty) (v : Value) : Except Fault Step :=
   let same := Except.ok ⟨0, fun _ => .ok v⟩
   let wrong := typeError s!"expected {t.text}, but the value is {v.text}"
   match t, v with
   | .unit, .unit | .bool, .bool _ | .int, .int _ | .type, .type _ | .string, .str _ => same
-  | .struct .., .record s _ => if s.same t then same else wrong
+  | .struct .., .record s _ | .enum .., .enum s .. => if s.same t then same else wrong
   | .fn .., .function _ _ ps r => if (Ty.fn ps r).same t then same else wrong
   | .nat, .int n => if 0 ≤ n then same else .error (.S012, s!"{intText n} is not a Nat")
   | .uint w, .uint u _ | .sint w, .sint u _ => if u == w then same else wrong

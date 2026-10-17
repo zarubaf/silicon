@@ -367,12 +367,12 @@ def zeroLimit : String := s!"S015 1:1 {Eval.zeroLimitText}"
   "(array (array (array unit 2305843009213693952) 0) " ++
   "((array (array unit 2305843009213693952) ()) (array (array unit 2305843009213693952) ())))"
 #guard Eval.arrayBits (Meta.finite 1) (2 ^ 32 - 1) == 32 + 2
-#guard Eval.arrayBits ⟨2 ^ 70, 1, 1, 1, true, false⟩ 1 == 71 + 1
+#guard Eval.arrayBits ⟨2 ^ 70, 1, 1, 1, true, false, false⟩ 1 == 71 + 1
 #guard Eval.arrayBits (Meta.finite 8) 4 == 3 + 4
 #guard Eval.arrayBits Meta.unit 4 == 3 + 2
 #guard Eval.metaBits (Meta.finite 8) == 4 && Eval.metaBits Meta.static == 1
 #guard Eval.sumBits [Meta.finite 8, Meta.finite 8] == 4 + 2 && Eval.sumBits [] == 0
-#guard Eval.sumBits [⟨2 ^ 70, 1, 1, 1, true, false⟩] == 71 + 1
+#guard Eval.sumBits [⟨2 ^ 70, 1, 1, 1, true, false, false⟩] == 71 + 1
 
 /-!
 A value that a type makes has a zero size of at most 2^32. A zero above it fails before its
@@ -1815,7 +1815,8 @@ def mixed : Eval.Agg :=
   .mkTuple #[.bool, .int, .array (.uint 8) 4] #[boolLeaf, .static (.int 3), arrayRef]
 #guard mixed.size == 8 && mixed.depth == 3
 #guard (Eval.Val.agg mixed).text == "hardware (Bool, Int, [UInt[8]; 4])"
-#guard (Eval.Agg.mkRecord (.struct 0 "P" #[] ⟨8, 1, 2, 5, true, false⟩) #[boolLeaf]).depth == 6
+#guard (Eval.Agg.mkRecord (.struct 0 "P" #[] ⟨8, 1, 2, 5, true, false, false⟩)
+  #[boolLeaf]).depth == 6
 #guard match Eval.Agg.mkArray .int #[.static (.int 1), .static (.int 2)] with
   | .static v => v.serialize == "(array int ((int 1) (int 2)))"
   | _ => false
@@ -2098,7 +2099,7 @@ reference part keeps its form and counts its zero size, here 5, in both sizes.
 /-! A record needs its own struct type, and it converts nothing. -/
 #guard typedUse tupleAliases "Q" (fun t => .agg (.mkRecord t #[boolLeaf])) 0 == "[b] 0"
 #guard typedUse tupleAliases "Q"
-  (fun _ => .agg (.mkRecord (.struct 5 "R" #[] ⟨1, 1, 2, 2, true, false⟩) #[boolLeaf])) 0 ==
+  (fun _ => .agg (.mkRecord (.struct 5 "R" #[] ⟨1, 1, 2, 2, true, false, false⟩) #[boolLeaf])) 0 ==
   "S010 1:1"
 
 /-!
@@ -2739,15 +2740,128 @@ call charges 10 units for its node, its name, its arguments, and their copies. T
 #guard exact "" "diagnostic(\"x\", 1)" (10 + 1 + 38)
 
 /-!
-Enums (slice 3) resolve and pass the pre-check, but the evaluator has no enum value yet. An
-enum that no expression uses thus passes, and each use of an enum is `S004` at the use.
+The enums of slice 3. The first use of an enum charges as the first use of a struct specialization:
+`Op` charges 69 units. They are the node 1, the size of the enum type 1, and the tag type `UInt[2]`
+6. Then the variants `Add` 8, `Load` 18, and `Pair` 23 follow. Each variant charges its tag value
+with its typed use at `UInt[2]` 4, and its payload types as type expressions. Then the sums of the
+tuple of its payload types charge. The metadata of the enum then charges 12, the sums of the record
+of `UInt[2]` and `UInt[8]`. A later use charges only its node. The variant constructors come in a
+later step of #271, so a path stays `S004` here.
 -/
-def ops : String := "enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }\n"
+def ops : String :=
+  "enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }\n"
 
 #guard out ops "1" == "(int 1)"
+#guard out ops "Op" == "(type (enum root Op ()))"
+#guard exact ops "Op" 69
+#guard exact ops "[Op, Op]" (1 + 69 + 1 + 3)
 #guard out ops "Op::Add" == "S004 1:1"
-#guard out ops "Op::Load(1)" == "S004 1:1"
-#guard out ops "Op()" == "S004 1:1"
-#guard out ops "data_bits(Op)" == "S004 1:11"
+
+/-!
+`T()` of an enum gives the tag 0 and the payload 0, and it charges the zero size 3 from the
+metadata. `data_bits(Op)` is `W + P`. An enum without payload has no payload part, and its tag can
+have no variant.
+-/
+#guard out ops "Op()" == "(enum (enum root Op ()) 0 (uint 8 0))"
+#guard exact ops "Op()" (1 + 69 + 3)
+#guard out ops "data_bits(Op)" == "(int 10)"
+#guard exact ops "data_bits(Op)" (2 + 69 + 1)
+#guard out "enum E: UInt[3] { A = 5 }\n" "E()" == "(enum (enum root E ()) 0)"
+#guard out "enum E: UInt[1] {}\n" "data_bits(E)" == "(int 1)"
+#guard out ops "[Op(), Op()]" ==
+  "(array (enum root Op ()) ((enum (enum root Op ()) 0 (uint 8 0)) " ++
+    "(enum (enum root Op ()) 0 (uint 8 0))))"
+
+/-!
+The checks of section 5.6 run in their order, each error at its node. The tag type comes first
+(`S010`). Then each variant checks its tag value at `UInt[W]` (`S010`, `S012`) and its payload types
+(`S010`). The payload width `P` is at most 65536, `S012` at the `enum` keyword after all variants.
+-/
+#guard out "enum E: Bool { A = 0 }\n" "E" == "S010 1:9"
+#guard out "enum E: UInt[1] { A = 2 }\n" "E" == "S012 1:23"
+#guard out "enum E: UInt[1] { A = true }\n" "E" == "S010 1:23"
+#guard out "enum E: UInt[1] { A = SInt[1](0) }\n" "E" == "S010 1:23"
+#guard out "enum E: UInt[1] { A(Int) = 0 }\n" "E" == "S010 1:21"
+#guard out "enum E: UInt[1] { A(Int) = 2 }\n" "E" == "S012 1:28"
+#guard out "enum E: UInt[1] { A(UInt[65536], Bool) = 0, B(Int) = 1 }\n" "E" == "S010 1:47"
+#guard out "enum E: UInt[1] { A(UInt[65536], Bool) = 0 }\n" "E" == "S012 1:1"
+#guard msg "enum E: UInt[1] { A(UInt[65536], Bool) = 0 }\n" "E" ==
+  "the payload of `E` has 65537 bits, above 65536; use smaller payloads"
+#guard out "enum E: UInt[1] { A(UInt[65536]) = 0 }\n" "data_bits(E)" == "(int 65537)"
+
+/-!
+An enum whose payload names the enum, directly or through a struct, is `S019` at the use of the
+enum in progress. The first use of an enum counts toward the nesting depth.
+-/
+#guard out "enum E: UInt[1] { A(E) = 0 }\n" "E" == "S019 1:21"
+#guard msg "enum E: UInt[1] { A(E) = 0 }\n" "E" == "the enum `E` depends on itself"
+#guard out "enum E: UInt[1] { A(S) = 0 }\nstruct S { e: E }\n" "E" == "S019 2:15"
+#guard out "enum E: UInt[1] { A(S) = 0 }\nstruct S { e: E }\n" "S" == "S019 1:21"
+#guard out "enum E: UInt[1] { A(S) = 0 }\nstruct S { a: Bool }\n" "E" (depth := 2) ==
+  "(type (enum root E ()))"
+#guard out "enum E: UInt[1] { A(S) = 0 }\nstruct S { a: Bool }\n" "E" (depth := 1) ==
+  "S015 1:21"
+
+/-!
+A tag value is a structural context (section 9.4). A call there nests deeper, so it can change
+its own locals.
+-/
+#guard out ("fn f() -> UInt[1] { let mut xs = list(Int); push(xs, 1); return 0; }\n" ++
+  "enum E: UInt[1] { A = f() }\n") "E" == "(type (enum root E ()))"
+
+/-!
+`==` and `!=` on a type that holds an enum are `S010` at the operator, with the text of section
+6.2. The check reads the enum flag after the function flag, before each join and each charge.
+The text names the type of the first operand with the flag.
+-/
+def enumEq : String := "`Op` has no `==`; compare with `match (x) { E::V => true, _ => false }`"
+#guard out ops "Op() == Op()" == "S010 1:1"
+#guard msg ops "Op() == Op()" == enumEq
+#guard msg ops "Op() != 1" == enumEq
+#guard msg ops "1 == Op()" == enumEq
+#guard msg ops "[Op()] != [Op()]" ==
+  "`[Op; 1]` has no `==`; compare with `match (x) { E::V => true, _ => false }`"
+#guard msg ops "(1, Op()) == (1, Op())" ==
+  "`(Int, Op)` has no `==`; compare with `match (x) { E::V => true, _ => false }`"
+#guard msg ops "Op == Op" == "no error"
+#guard msg ops "(fn (Op) -> Bool) == (fn (Op) -> Bool)" == "no error"
+
+/-!
+A typed use at an enum type needs a value of exactly this enum type. It converts nothing, so it
+charges no conversion. Two enum types join as a type equality, 1 plus 1, and two different enums
+have no join (`S010`).
+-/
+def flags : String := ops ++ "enum Flag: UInt[1] { On = 1 }\n"
+#guard out (ops ++ "fn f(x: Op) -> Op { return x; }\n") "f(Op())" ==
+  "(enum (enum root Op ()) 0 (uint 8 0))"
+#guard out (ops ++ "fn f(x: Op) -> Op { return x; }\n") "f(1)" == "S010 1:1"
+#guard out (flags ++ "fn f(x: Op) -> Op { return x; }\n") "f(Flag())" == "S010 1:1"
+#guard out (flags ++ "const C: Op = Flag();\n") "C" == "S010 3:1"
+#guard out flags "[Op(), Op()]" != "S010 1:1"
+#guard out flags "[Op(), Flag()]" == "S010 1:1"
+#guard out flags "[Op(), 1]" == "S010 1:1"
+/-! The literal charges its node, both zeros, the join 2 of the two enum types, and its size 7. -/
+#guard exact flags "[Op(), Op()]" (1 + (1 + 69 + 3) + (1 + 1 + 3) + 2 + 7)
+
+/-!
+A field `.f` or a selector `.N` of an enum is `S010` at the selection node, with the text of
+section 6.2: `tag` and `payload` are leaves, not fields. The text names `data_bits` of the enum.
+-/
+#guard out ops "Op().tag" == "S010 1:1"
+#guard msg ops "Op().tag" == "`Op` is an enum and has no field `tag`; read a payload with " ++
+  "`match`, or the bits with `reinterpret(UInt[10], e)`"
+#guard msg ops "Op().0" == "`Op` is an enum and has no field `0`; read a payload with " ++
+  "`match`, or the bits with `reinterpret(UInt[10], e)`"
+#guard out (ops ++ "fn f() -> Int { let mut e = Op(); e.payload = 1; return 0; }\n") "f()" ==
+  "S010 2:35"
+
+/-!
+A call of an enum type with arguments is `S010` at the call, with the text of section 6.2. The
+check comes after the callee and before the arguments evaluate, so an argument with an error does
+not run. `E()` stays the zero.
+-/
+#guard out ops "Op(1)" == "S010 1:1"
+#guard msg ops "Op(1 / 0, 2)" == "`Op` is an enum, so `Op(...)` takes no arguments; construct " ++
+  "a variant such as `Op::V(...)`, or write `Op()` for the zero"
 
 end Silicon.Source.Test.Eval

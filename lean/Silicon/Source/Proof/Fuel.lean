@@ -489,9 +489,13 @@ theorem selectAt_f (p q : Pos) (i : Nat) (v : Val) :
     Follows cap (selectAt p q i v) (selectAt p q i v) := by
   unfold selectAt; follows
 
+theorem noEnumField_f (p : Pos) (f : String) (v : Val) :
+    Follows cap (noEnumField p f v) (noEnumField p f v) := by
+  unfold noEnumField; follows
+
 theorem selectKey_f (p q : Pos) (i : Nat) (v : Val) :
     Follows cap (selectKey p q i v) (selectKey p q i v) := by
-  unfold selectKey; follows [selectAt_f, normalize_f]
+  unfold selectKey; follows [noEnumField_f, selectAt_f, normalize_f]
 
 theorem select_f (p q : Pos) (i : Nat) (v : Val) :
     Follows cap (select p q i v) (select p q i v) := by
@@ -537,7 +541,7 @@ theorem fieldAt_f (p : Pos) (f : Ident) (v : Val) :
 
 theorem fieldKey_f (p : Pos) (f : Ident) (v : Val) :
     Follows cap (fieldKey p f v) (fieldKey p f v) := by
-  unfold fieldKey; follows [fieldOf_f, fieldAt_f, normalize_f]
+  unfold fieldKey; follows [noEnumField_f, fieldOf_f, fieldAt_f, normalize_f]
 
 theorem field_f (p : Pos) (f : Ident) (v : Val) :
     Follows cap (field p f v) (field p f v) := by
@@ -776,6 +780,16 @@ theorem responseTy_f {ty ty' : Resolve.TypeExpr → M Ty} (h : ∀ t, Follows ca
     (p : Pos) (t : Ty) : Follows cap (responseTy ty p t) (responseTy ty' p t) := by
   unfold responseTy; follows [specOf_f h]
 
+theorem setEnum_f (i : Nat) (e : EnumState) : Follows cap (setEnum i e) (setEnum i e) := by
+  unfold setEnum; follows
+
+theorem enumOf_f {ty ty' : Resolve.TypeExpr → M Ty} (h : ∀ t, Follows cap (ty t) (ty' t))
+    {ev ev' : Resolve.Expr → M Val} (he : ∀ e, Follows cap (ev e) (ev' e)) (p : Pos) (i : Nat)
+    (ep : Pos) (x : String) (tag : Resolve.TypeExpr) (vs : List Resolve.Variant) :
+    Follows cap (enumOf ty ev p i ep x tag vs) (enumOf ty' ev' p i ep x tag vs) := by
+  unfold enumOf
+  follows [h, he, conform_f, static_f, setEnum_f, sums_f, nested_f, inFrame_f]
+
 theorem requestPart_f (p : Pos) (t : Ty) (v : Val) :
     Follows cap (requestPart p t v) (requestPart p t v) := by
   unfold requestPart; follows [readUse_f]
@@ -811,6 +825,12 @@ theorem spec_f (he : ∀ e, Follows m (eval k e) (eval m e))
   rw [spec.eq_def k, spec.eq_def m]
   follows [operands_f he, need_f, static_f, specOf_f ht, structural_f]
 
+theorem enumUse_f (he : ∀ e, Follows m (eval k e) (eval m e))
+    (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t)) (p : Pos) (i : Nat) :
+    Follows m (enumUse k p i) (enumUse m p i) := by
+  rw [enumUse.eq_def k, enumUse.eq_def m]
+  follows [enumOf_f ht (fun e => by follows [he, need_f]), structural_f]
+
 theorem params_f (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t))
     (ps : List Resolve.FnParam) : Follows m (params k ps) (params m ps) := by
   rw [params.eq_def k, params.eq_def m]
@@ -821,7 +841,7 @@ theorem name_f (he : ∀ e, Follows m (eval k e) (eval m e))
     Follows m (name k p x r) (name m p x r) := by
   rw [name.eq_def k, name.eq_def m]
   follows [he, ht, prim_f, need_f, copy_f, conform_f, static_f, settle_f, constant_f,
-    spec_f he ht, nested_f, inFrame_f, params_f ht, fnTy_f, normalize_f]
+    spec_f he ht, enumUse_f he ht, nested_f, inFrame_f, params_f ht, fnTy_f, normalize_f]
 
 theorem placeAt_f (he : ∀ e, Follows m (eval k e) (eval m e)) (p : Pos) (c : ErrorCode)
     (t : Resolve.Expr) : Follows m (placeAt k p c t) (placeAt m p c t) := by

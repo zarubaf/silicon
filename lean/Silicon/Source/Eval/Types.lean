@@ -16,7 +16,8 @@ follow sections 5.1, 5.4, 5.5, and 5.6. These rules settle their open points:
   charges its size (`fnTy`).
 - A join walks two types together. It charges 1 before it visits each pair of container types:
   arrays, tuples, lists, and struct types. A pair of two struct types charges as a type
-  equality, the sum of the two sizes, and compares the identities. A pair of two function types
+  equality, the sum of the two sizes, and compares the identities. So does a pair of two enum
+  types, with the size 1 each. An enum and another type have no join. A pair of two function types
   charges in the same way and needs two equal types, also in their `mut` marks. Another pair
   charges nothing. A visit that fails stops the walk, so the charge counts the pairs up to that
   visit.
@@ -34,6 +35,8 @@ follow sections 5.1, 5.4, 5.5, and 5.6. These rules settle their open points:
   the struct type (`S015`) and charges the sums of its metadata. A use in progress is `S019`. A
   use of a done entry charges nothing more. A use of a struct item while its own parameter types
   evaluate is `S019` too, because its key does not exist yet.
+- The table of enums holds each enum by its item (`Specs.enums`). `Eval.enumOf` runs the first
+  use of an enum, and a later use reads its done entry.
 -/
 namespace Silicon.Source.Eval
 
@@ -141,7 +144,8 @@ mutual
         let r ← joinAll ss ts
         return r.map fun us => .tuple us.toArray
       else return none
-    | s@(.struct ..), t@(.struct ..) | s@(.fn ..), t@(.fn ..) => do
+    | s@(.struct ..), t@(.struct ..) | s@(.fn ..), t@(.fn ..)
+    | s@(.enum ..), t@(.enum ..) => do
       modify (· + (s.size + t.size))
       return if s.same t then some s else none
     | s, t => do
@@ -192,8 +196,9 @@ def specialize (p : Pos) (x : String) (i : Nat) (pre : Bool) (args : List Value)
   | none => do
     let k := (← get).specs.entries.size
     charge p (Ty.struct k x args.toArray Meta.static pre).size
-    modify fun s => { s with specs := ⟨s.specs.entries.push ⟨i, args, .inProgress⟩,
-      s.specs.index.insert (i, args) k⟩ }
+    modify fun s => { s with specs := { s.specs with
+      entries := s.specs.entries.push ⟨i, args, .inProgress⟩,
+      index := s.specs.index.insert (i, args) k } }
     let fs ← fields
     let ms := fs.map (·.2.info)
     if over (sumBits ms) then fail .S015 p metaLimitText
@@ -205,14 +210,20 @@ def specialize (p : Pos) (x : String) (i : Nat) (pre : Bool) (args : List Value)
       entries := s.specs.entries.set! k ⟨i, args, .done t fs.toArray⟩ } }
     return t
 
+/-! Sets the entry of the enum item `i` in the table of enums. -/
+def setEnum (i : Nat) (e : EnumState) : M Unit :=
+  modify fun s => { s with specs := { s.specs with enums := s.specs.enums.insert i e } }
+
 /-! The numbered part types of the type `t` (`Specs.parts`), for the offset of a word part. -/
 def partsIn (specs : Specs) : Parts := typesOf specs.parts
 
 /-!
 The zero of a hardware data type `t` (section 5.6): 0 for each integer leaf and `false` for each
-`Bool` leaf. A struct type takes the types of its named parts (`Specs.parts`). The bound `b` is
-the depth of `t`, because each part of a type is less deep than the type. An array of the length
-0 makes no zero of its element type. That zero can be above the size limit, and no value holds it.
+`Bool` leaf. A struct type takes the types of its named parts (`Specs.parts`). An enum gives the
+static enum value with the tag 0 and the payload 0, from the widths of its done entry. The bound
+`b` is the depth of `t`, because each part of a type is less deep than the type. An array of the
+length 0 makes no zero of its element type. That zero can be above the size limit, and no value
+holds it.
 -/
 def zeroOf (specs : Specs) : Nat → Ty → Option Value
   | 0, _ => none
@@ -228,6 +239,9 @@ def zeroOf (specs : Specs) : Nat → Ty → Option Value
     | .struct .. => do
       let fs ← specs.parts t
       return .record t (← fs.mapM fun (_, u) => zeroOf specs b u)
+    | .enum .. => do
+      let (w, p) ← specs.widths t
+      return .enum t w 0 p 0
     | .nat | .int | .type | .string | .list _ | .fn .. => none
 
 /-!
