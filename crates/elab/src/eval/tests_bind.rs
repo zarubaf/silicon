@@ -68,7 +68,7 @@ fn val_text(ev: &Evaluator<'_>, v: &Val) -> String {
     }
 }
 
-fn error_text<T>(r: Result<T, Stop>) -> Result<T, String> {
+pub(super) fn error_text<T>(r: Result<T, Stop>) -> Result<T, String> {
     match r {
         Ok(v) => Ok(v),
         Err(Stop::Error(e)) => Err(format!("{} {}:{}", e.code, e.pos.line, e.pos.col)),
@@ -77,7 +77,7 @@ fn error_text<T>(r: Result<T, Stop>) -> Result<T, String> {
 }
 
 /// An evaluator over `src` with the run number `run`, which keys its counters.
-fn evaluator(file: &resolve::Resolved, run: u64) -> Evaluator<'_> {
+pub(super) fn evaluator(file: &resolve::Resolved, run: u64) -> Evaluator<'_> {
     Evaluator::new(
         file,
         None,
@@ -98,7 +98,7 @@ fn leaf(ev: &mut Evaluator<'_>, name: &str, ty: Ty) -> Agg {
     Agg::Hw(ev.graph.mk(AT, ty, Op::Ref(p), Vec::new()))
 }
 
-fn tuple_of(ev: &mut Evaluator<'_>, parts: Vec<Ty>) -> TyId {
+pub(super) fn tuple_of(ev: &mut Evaluator<'_>, parts: Vec<Ty>) -> TyId {
     let parts = parts.into_iter().map(|t| ev.tys.mk(t)).collect();
     ev.tys.tuple(parts)
 }

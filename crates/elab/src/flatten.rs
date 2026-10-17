@@ -566,6 +566,10 @@ impl<'d> Lower<'d> {
                     ..arg
                 }
             }
+            // TODO(#272): lower the `onehot` and `rest` nodes of a hardware `match` (section 7.4).
+            (Op::Onehot | Op::Rest, _) => {
+                return defect("a hardware `match` has no lowering yet");
+            }
             _ => return defect("a hardware node has the wrong number of operands"),
         };
         self.deep(pos, target, width(&ty), root, low)

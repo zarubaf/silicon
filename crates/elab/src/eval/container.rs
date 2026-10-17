@@ -168,7 +168,7 @@ impl Evaluator<'_> {
     }
 
     /// The type of a piece.
-    fn piece_ty(&mut self, pos: Pos, p: &Piece<'_>) -> Res<TyId> {
+    pub(super) fn piece_ty(&mut self, pos: Pos, p: &Piece<'_>) -> Res<TyId> {
         match piece_seen(&self.store, p).ty(&self.graph, &mut self.tys) {
             Some(t) => Ok(t),
             None => fail(Code::S010, pos, "an element has no type".to_owned()),

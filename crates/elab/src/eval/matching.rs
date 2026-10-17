@@ -9,17 +9,28 @@
 //! key makes up to `1 + log n` compares, each at most 1024 words: a log factor above its share
 //! of the coverage charge.
 
-use super::{Evaluator, Names, Opnd, Out, Res, Slot, at, expr_pos, fail};
+use super::container::Piece;
+use super::hwops::{Side, onehot_leaf, share};
+use super::{Evaluator, Guard, GuardKind, Names, Opnd, Out, Res, Slot, at, expr_pos, fail, need};
 use crate::Code;
+use crate::agg::Agg;
 use crate::cover::{Cover, all_keys, key_bits, key_lo};
-use crate::hw::{Seen, Val};
+use crate::hw::Graph;
+use crate::hw::{HwId, Op, Seen, Val};
 use crate::int::{Int, words};
 use crate::limit;
-use crate::ops;
-use crate::types::{Ty, TyId};
+use crate::ops::{self, Fuel};
+use crate::types::{Ty, TyId, Types};
 use crate::unpack::unpack;
 use crate::value::{Value, int_size, width_size};
-use parse::ast::{Arm, Expr, Ident, Item, Pattern, Pos};
+use parse::ast::{Arm, BinOp, Expr, Ident, Item, Pattern, Pos};
+
+/// The payload of a scrutinee for its binders: the words of a static payload, or the hardware
+/// `payload` leaf of a hardware enum.
+pub(super) enum Payload {
+    Static(Vec<u64>),
+    Hw(HwId),
+}
 
 /// A binder of a variant pattern: its name, its type, and the bit offset of its value in the
 /// pack of the payload tuple.
@@ -78,14 +89,7 @@ impl Evaluator<'_> {
         let cover = self.match_arms(pos, t, arms)?;
         let out = match d {
             Opnd::Static(out) if !self.is_agg(&out) => out,
-            // TODO(#272): evaluate a hardware `match` (marks, binders, selects, join, and walk).
-            _ => {
-                return fail(
-                    Code::S010,
-                    pos,
-                    "a hardware `match` is not supported yet".to_owned(),
-                );
-            }
+            d => return self.hw_match((pos, sp), t, &d, arms, &cover),
         };
         // The coverage check passed, so the map or `_` selects an arm.
         let value = self.store.value(&out);
@@ -106,7 +110,7 @@ impl Evaluator<'_> {
         };
         if let Some(bits) = bits {
             let binders = self.binder_tys(t, &arm.pat)?;
-            self.bind_static(&bits, binders)?;
+            self.bind_binders(&Payload::Static(bits), binders)?;
         }
         self.eval(&arm.value)
     }
@@ -457,18 +461,30 @@ impl Evaluator<'_> {
             .map_err(at(pos))
     }
 
-    /// The binders `binders` of an arm with the static payload bits `bits` (section 5.4). Each
-    /// binder checks the size limit at the zero size of its type, then charges that zero size.
-    /// Then it binds the static unpack of its value, at its offset.
-    fn bind_static(&mut self, bits: &[u64], binders: Vec<Binder<'_>>) -> Res<()> {
+    /// The binders `binders` of an arm with the payload `payload` (section 5.4). Each binder
+    /// checks the size limit at the zero size of its type, then charges that zero size. A static
+    /// payload binds the static unpack of its value, at its offset. A hardware payload binds its
+    /// hardware unpack (`unpack_hw`), each `extract` charged 2, and the value gets its core name
+    /// as a `let` does.
+    fn bind_binders(&mut self, payload: &Payload, binders: Vec<Binder<'_>>) -> Res<()> {
         for Binder { name, ty, off } in binders {
             self.charge_zero(name.pos, ty)?;
-            let Some(x) = unpack(&self.tys, bits, ty, off) else {
-                return fail(
-                    Code::S010,
-                    name.pos,
-                    format!("{} has no static unpack", self.tys.text(ty)),
-                );
+            let value = match payload {
+                Payload::Static(bits) => {
+                    let Some(x) = unpack(&self.tys, bits, ty, off) else {
+                        return fail(
+                            Code::S010,
+                            name.pos,
+                            format!("{} has no static unpack", self.tys.text(ty)),
+                        );
+                    };
+                    Val::Static(x)
+                }
+                Payload::Hw(y) => {
+                    let a = self.unpack_hw(name.pos, *y, ty, off)?;
+                    let id = self.decl(name)?;
+                    self.named(name.pos, id, a.into_val())?
+                }
             };
             let id = self.decl(name)?;
             self.bind(
@@ -476,10 +492,361 @@ impl Evaluator<'_> {
                 Slot {
                     ty: Some(ty),
                     mutable: false,
-                    value: Val::Static(x),
+                    value,
                 },
             );
         }
         Ok(())
     }
+
+    /// The hardware unpack of the payload leaf `y` from the bit `off` into a value of the type
+    /// `t` at `pos` (section 7.4). A data scalar is one `extract` node of `y`, charged as a
+    /// hardware operation with one operand: 2. A part without a leaf is its static value, which
+    /// the metadata tells with no walk. The other parts keep the packing order. The zero size of
+    /// the binder type paid for the walk before (section 5.4). The walk keeps its own stack.
+    fn unpack_hw(&mut self, pos: Pos, y: HwId, t: TyId, off: u64) -> Res<Agg> {
+        enum Step {
+            Visit(TyId, u64),
+            Node(TyId, usize),
+        }
+        let mut done: Vec<Agg> = Vec::new();
+        let mut work = vec![Step::Visit(t, off)];
+        while let Some(step) = work.pop() {
+            let (t, off) = match step {
+                Step::Visit(t, off) => (t, off),
+                Step::Node(t, n) => {
+                    let xs = done.split_off(done.len().saturating_sub(n));
+                    let Some(node) = Agg::node(&self.graph, &self.tys, t, xs) else {
+                        return fail(Code::S010, pos, "the part has the wrong shape".to_owned());
+                    };
+                    done.push(node);
+                    continue;
+                }
+            };
+            if self.tys.meta(t).leaves.is_zero() {
+                let Some(v) = unpack(&self.tys, &[], t, off) else {
+                    return fail(
+                        Code::S010,
+                        pos,
+                        format!("{} has no static unpack", self.tys.text(t)),
+                    );
+                };
+                done.push(Agg::Static(v));
+                continue;
+            }
+            #[cfg(test)]
+            crate::counters::add(crate::counters::Count::Unpacked, 1);
+            match self.tys.get(t).clone() {
+                scalar @ (Ty::Bool | Ty::UInt(_) | Ty::SInt(_)) => {
+                    let width = u32::try_from(self.tys.meta(t).width.to_u64().unwrap_or(0))
+                        .unwrap_or(u32::MAX);
+                    let start = u32::try_from(off).unwrap_or(u32::MAX);
+                    let op = Op::Extract {
+                        off: start,
+                        w: width,
+                    };
+                    let Val::Hw(h) = self.node(pos, scalar, op, vec![y])? else {
+                        return fail(Code::S010, pos, "an extract is hardware".to_owned());
+                    };
+                    done.push(Agg::Hw(h));
+                }
+                Ty::Array(elem, len) => {
+                    let n = usize::try_from(len.to_u64().unwrap_or(0)).unwrap_or(0);
+                    let width = self.tys.meta(elem).width.to_u64().unwrap_or(0);
+                    work.push(Step::Node(t, n));
+                    work.extend(
+                        (0..n as u64).rev().map(|k| {
+                            Step::Visit(elem, off.saturating_add(k.saturating_mul(width)))
+                        }),
+                    );
+                }
+                Ty::Tuple(parts) => {
+                    work.push(Step::Node(t, parts.len()));
+                    work.extend(parts.iter().enumerate().rev().map(|(k, part)| {
+                        Step::Visit(*part, off.saturating_add(self.tys.offset(t, k as u64)))
+                    }));
+                }
+                Ty::Struct(_) | Ty::Enum(_) => {
+                    let Some(parts) = self.tys.parts(t) else {
+                        return fail(
+                            Code::S010,
+                            pos,
+                            format!("{} has no specialization", self.tys.text(t)),
+                        );
+                    };
+                    let parts = parts.types.to_vec();
+                    work.push(Step::Node(t, parts.len()));
+                    work.extend(parts.iter().enumerate().rev().map(|(k, part)| {
+                        Step::Visit(*part, off.saturating_add(self.tys.offset(t, k as u64)))
+                    }));
+                }
+                other => {
+                    return fail(
+                        Code::S010,
+                        pos,
+                        format!("{} is not hardware data", self.tys.text_of(&other)),
+                    );
+                }
+            }
+        }
+        match done.pop() {
+            Some(a) => Ok(a),
+            None => fail(Code::S010, pos, "the unpack has no value".to_owned()),
+        }
+    }
+
+    /// The selector leaf and the payload of the hardware scrutinee `d` of the type `t`: the
+    /// scalar itself, or the `tag` and `payload` leaves of an enum (section 5.4). A static tag
+    /// is a constant, so its selects compare two constants (section 5.6). A part of a reference
+    /// is a leaf that refers to its core name.
+    fn scrut_parts(&mut self, sp: Pos, t: TyId, d: &Opnd) -> Res<(HwId, Payload)> {
+        if let Opnd::Hw(h) = d {
+            return Ok((*h, Payload::Static(Vec::new())));
+        }
+        let Some(widths) = self.tys.widths(t) else {
+            return fail(Code::S010, sp, format!("{} has no entry", self.tys.text(t)));
+        };
+        let (_, tag_step, tag_off) = self.child_of(sp, t, 0)?;
+        let payload_part = if widths.payload > 0 {
+            Some(self.child_of(sp, t, 1)?)
+        } else {
+            None
+        };
+        let Some(side) = Side::of_opnd(&self.store, d) else {
+            return fail(Code::S010, sp, "the scrutinee is not data".to_owned());
+        };
+        let tag_ty = Ty::UInt(widths.tag);
+        let env = (&mut self.graph, &mut self.paths);
+        let tag = match side.child(0, (&tag_step, tag_off, Some(&tag_ty), false), sp, env) {
+            Some(Side::Hw(h)) => h,
+            Some(part) => match part.value() {
+                Some(v) => super::hwops::lit_of(sp, v.clone(), &mut self.graph, &self.tys)?,
+                None => return fail(Code::S010, sp, no_leaf(&self.tys, t, "tag")),
+            },
+            None => return fail(Code::S010, sp, no_leaf(&self.tys, t, "tag")),
+        };
+        let Some((_, payload_step, payload_off)) = payload_part else {
+            return Ok((tag, Payload::Static(Vec::new())));
+        };
+        let payload_ty = Ty::UInt(widths.payload);
+        let env = (&mut self.graph, &mut self.paths);
+        let part = side.child(
+            1,
+            (&payload_step, payload_off, Some(&payload_ty), false),
+            sp,
+            env,
+        );
+        match part {
+            Some(Side::Hw(h)) => Ok((tag, Payload::Hw(h))),
+            Some(part) => match part.value() {
+                Some(Value::UInt(y)) => Ok((tag, Payload::Static(words(y)))),
+                _ => fail(Code::S010, sp, no_leaf(&self.tys, t, "payload")),
+            },
+            None => fail(Code::S010, sp, no_leaf(&self.tys, t, "payload")),
+        }
+    }
+
+    /// A mark of the operand `h` at `pos` that `uses` leaf statements read (section 5.4).
+    fn mark(&mut self, pos: Pos, uses: u64, h: HwId) -> Res<HwId> {
+        let env = (&mut self.fuel, &mut self.graph, &mut self.naming);
+        share(pos, uses, env, h)
+    }
+
+    /// A hardware `match` at `pos` with the scrutinee `d` of the type `t`, after the checks of
+    /// its arms (section 5.4). These steps run:
+    ///
+    /// 1. The selector leaf gets a mark when two or more arms are not `_`. The payload leaf of
+    ///    a hardware enum gets a mark when the binders of all arms have two or more leaves.
+    /// 2. Each arm evaluates in source order under the guard `arm`, its binders first. The
+    ///    results wait while the later arms evaluate.
+    /// 3. One arm `_` gives its value, with no node. Else the arms join (`match_join`).
+    fn hw_match(
+        &mut self,
+        (pos, sp): (Pos, Pos),
+        t: TyId,
+        d: &Opnd,
+        arms: &[Arm],
+        cover: &Cover,
+    ) -> Res<Option<Out>> {
+        let (sel, payload) = self.scrut_parts(sp, t, d)?;
+        let keys = &cover.arms;
+        let others = keys.iter().flatten().count() as u64;
+        let sel = self.mark(pos, others, sel)?;
+        let mut binders = Vec::with_capacity(arms.len());
+        for arm in arms {
+            binders.push(self.binder_tys(t, &arm.pat)?);
+        }
+        let payload = match payload {
+            Payload::Hw(h) => {
+                let leaves = binders
+                    .iter()
+                    .flatten()
+                    .map(|b| self.tys.meta(b.ty).leaves.to_u64().unwrap_or(u64::MAX))
+                    .fold(0u64, u64::saturating_add);
+                Payload::Hw(self.mark(pos, leaves, h)?)
+            }
+            payload @ Payload::Static(_) => payload,
+        };
+        let mut outs = self.hw_arms(pos, &payload, arms, binders)?;
+        match outs.pop() {
+            Some(only) if outs.is_empty() => Ok(Some(only)),
+            Some(last) => {
+                outs.push(last);
+                let val = self.match_join(pos, sel, keys, outs)?;
+                Ok(Some(Out::Made(val)))
+            }
+            None => fail(Code::S021, pos, "the `match` has no arm".to_owned()),
+        }
+    }
+
+    /// The results of the arms in source order. Each arm runs under the guard `arm`: its binders
+    /// bind first, then its value evaluates in a data context. The result of an arm waits while
+    /// the later arms evaluate.
+    fn hw_arms(
+        &mut self,
+        pos: Pos,
+        payload: &Payload,
+        arms: &[Arm],
+        binders: Vec<Vec<Binder<'_>>>,
+    ) -> Res<Vec<Out>> {
+        #[cfg(test)]
+        crate::counters::add(crate::counters::Count::Guarded, 1);
+        let saved = self.guard.replace(Guard {
+            kind: GuardKind::Arm,
+            depth: self.depth,
+        });
+        let base = self.store.parked_len();
+        let ran = self.run_arms(pos, payload, arms, binders);
+        self.guard = saved;
+        ran?;
+        Ok(self.store.resume(base))
+    }
+
+    fn run_arms(
+        &mut self,
+        pos: Pos,
+        payload: &Payload,
+        arms: &[Arm],
+        binders: Vec<Vec<Binder<'_>>>,
+    ) -> Res<()> {
+        for (arm, bs) in arms.iter().zip(binders) {
+            self.bind_binders(payload, bs)?;
+            let o = self.eval(&arm.value)?;
+            let o = need(&arm.value, o)?;
+            let was_ref = o.is_ref();
+            let o = match self.data(pos, o)? {
+                Opnd::Hw(h) if was_ref => Out::Named(Val::Hw(h)),
+                Opnd::Hw(h) => Out::Made(Val::Hw(h)),
+                Opnd::Static(Out::Made(v)) if was_ref => Out::Named(v),
+                Opnd::Static(o) => o,
+            };
+            self.store.park(o);
+        }
+        Ok(())
+    }
+
+    /// The constant of the key `k` of a select on a leaf of the type `ty` (section 5.6).
+    fn key_lit(&mut self, pos: Pos, ty: &Ty, k: &Int) -> Res<HwId> {
+        let value = match ty {
+            Ty::Bool => Some(Value::Bool(*k == Int::from_u64(1))),
+            Ty::UInt(w) => k.to_finite(*w).map(Value::UInt),
+            Ty::SInt(w) => k.to_finite(*w).map(Value::SInt),
+            _ => None,
+        };
+        match value {
+            Some(v) => Ok(self.graph.mk(pos, ty.clone(), Op::Lit(v), Vec::new())),
+            None => fail(
+                Code::S010,
+                pos,
+                format!("{} has no key literal", self.tys.text_of(ty)),
+            ),
+        }
+    }
+
+    /// Steps 3 to 6 of a hardware `match` at `pos` (section 5.4). `sel` is the selector leaf with
+    /// its mark, `keys` the key of each arm in arm order (none for `_`), and `outs` the arm
+    /// values:
+    ///
+    /// 3. The arm types join as the elements of an array literal, with the join charge (`S010`
+    ///    without a join). Then each arm converts to the joined type.
+    /// 4. The selects `(icmp eq sel k)` build in arm order with no charge. A select has `u = L + 1`
+    ///    uses with an arm `_`, else `L`, with `L` the leaf count of the joined type. At `u >= 2`
+    ///    it gets a mark, in arm order.
+    /// 5. The select of `_` is one node `rest` over the selects, charged `1 + n` before it
+    ///    exists. Then it gets a mark at `L >= 2`.
+    /// 6. The walk over the arms (`arm_walk`), with one `onehot` node for each leaf
+    ///    (`onehot_leaf`). A root of a scalar type gets no walk charge.
+    pub(super) fn match_join(
+        &mut self,
+        pos: Pos,
+        sel: HwId,
+        keys: &[Option<Int>],
+        outs: Vec<Out>,
+    ) -> Res<Val> {
+        let pieces: Vec<Piece<'_>> = outs.into_iter().map(Piece::Out).collect();
+        let mut types = Vec::with_capacity(pieces.len());
+        for p in &pieces {
+            types.push(self.piece_ty(pos, p)?);
+        }
+        let (units, common) = ops::common_of(types, |t, _| *t, &mut self.tys, self.fuel.left());
+        self.fuel.pay_joins(&units).map_err(at(pos))?;
+        let Some(joined) = common else {
+            return fail(
+                Code::S010,
+                pos,
+                "the arms of a `match` have no common type".to_owned(),
+            );
+        };
+        let mut opnds = Vec::with_capacity(pieces.len());
+        for p in pieces {
+            let p = self.conform_piece(pos, joined, p)?;
+            opnds.push(match p {
+                Piece::Out(o) => Opnd::of_out(o),
+                Piece::New(a) => Opnd::of_out(Out::Made(a.into_val())),
+                Piece::Part(a) => Opnd::of_out(Out::Made(a.clone().into_val())),
+            });
+        }
+        let leaves = self.tys.meta(joined).leaves.to_u64().unwrap_or(u64::MAX);
+        let wild = keys.iter().any(Option::is_none);
+        let uses = leaves.saturating_add(u64::from(wild));
+        let sel_ty = self.graph.ty(sel);
+        let mut selects = Vec::new();
+        for k in keys.iter().flatten() {
+            let key = self.key_lit(pos, &sel_ty, k)?;
+            let eq = self
+                .graph
+                .mk(pos, Ty::Bool, Op::Bin(BinOp::Eq), vec![sel, key]);
+            selects.push(self.mark(pos, uses, eq)?);
+        }
+        let rest = if wild {
+            let Val::Hw(r) = self.node(pos, Ty::Bool, Op::Rest, selects.clone())? else {
+                return fail(Code::S010, pos, "a select is hardware".to_owned());
+            };
+            Some(self.mark(pos, leaves, r)?)
+        } else {
+            None
+        };
+        let mut next = selects.iter();
+        let mut selected = Vec::with_capacity(keys.len());
+        for key in keys {
+            let s = match (key, rest) {
+                (Some(_), _) => next.next().copied(),
+                (None, r) => r,
+            };
+            let Some(s) = s else {
+                return fail(Code::S010, pos, "an arm has no select".to_owned());
+            };
+            selected.push(s);
+        }
+        let leaf = |t: &Ty, sides: &[Side<'_>], env: (&mut Fuel, &mut Graph, &mut Types)| {
+            onehot_leaf(pos, &selected, t, sides, env)
+        };
+        let refs: Vec<&Opnd> = opnds.iter().collect();
+        self.arm_walk(("match", pos), joined, &refs, &leaf)
+    }
+}
+
+/// The text of a leaf `name` of the enum type `t` that the scrutinee does not have.
+fn no_leaf(tys: &Types, t: TyId, name: &str) -> String {
+    format!("{} has no {name} leaf", tys.text(t))
 }
