@@ -207,7 +207,7 @@ fn w7_nested_matches_charge_a_constant_for_each_level() {
     for k in 2..40 {
         assert_eq!(used(k + 1, 100 + 2 * k) - used(k, 101 + 2 * k), step, "{k}");
     }
-    assert_eq!(step, 23);
+    assert_eq!(step, 24);
 }
 
 /// W9. An enum of `2^16` variants and a `match` with an arm for each variant. The first use of

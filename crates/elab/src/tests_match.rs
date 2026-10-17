@@ -154,6 +154,20 @@ fn the_coverage_check_names_the_first_problem() {
         message("", "match (5) { 5 => 1, 5 => 2, _ => 3 }"),
         "this arm matches `5`, and the arm at 1:13 matches it too; remove one of the two patterns"
     );
+    let big = format!("{}", crate::int::Int::from_u64(1).shl(300));
+    assert_eq!(
+        message("", &format!("match (true) {{ {big} => 1, _ => 0 }}")),
+        "a pattern of `Bool` is `true` or `false`, not `an integer of 301 bits`; write `true` or \
+         `false`, or `_`"
+    );
+    assert_eq!(
+        message(
+            "",
+            &format!("match (0) {{ {big} => 1, {big} => 2, _ => 0 }}")
+        ),
+        "this arm matches `an integer of 301 bits`, and the arm at 1:13 matches it too; remove \
+         one of the two patterns"
+    );
     assert_eq!(
         message(
             OPS,
@@ -258,13 +272,24 @@ fn a_wide_scrutinee_needs_no_walk_over_its_values() {
         message("", "match (UInt[65536](5)) { 0 => 1, 1 => 3, 5 => 2 }"),
         uncovered("UInt[65536]")
     );
-    let low = format!("-{}", crate::int::Int::from_u64(1).shl(1023));
+    let wide = |ty: &str, low: &str| {
+        format!(
+            "the `match` does not cover `{low}` of `{ty}`; add an arm for it, or add `_ => ...` \
+             as the last arm"
+        )
+    };
     assert_eq!(
         message("", "match (SInt[1024](5)) { 0 => 1 }"),
-        format!(
-            "the `match` does not cover `{low}` of `SInt[1024]`; add an arm for it, or add `_ => \
-             ...` as the last arm"
-        )
+        wide("SInt[1024]", "a negative integer of 1024 bits")
+    );
+    assert_eq!(
+        message("", "match (SInt[257](5)) { 0 => 1 }"),
+        wide("SInt[257]", "a negative integer of 257 bits")
+    );
+    let low = format!("-{}", crate::int::Int::from_u64(1).shl(255));
+    assert_eq!(
+        message("", "match (SInt[256](5)) { 0 => 1 }"),
+        wide("SInt[256]", &low)
     );
     assert_eq!(
         at("", "match (UInt[64](5)) { 0 => 1, 5 => 2, _ => 3 }"),

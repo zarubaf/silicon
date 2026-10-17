@@ -89,6 +89,14 @@ fn a_second_tag_value_is_s021_at_the_tag_value() {
         ),
         "the variant `C` has the tag `1` of the variant at 1:19; give each variant its own tag value"
     );
+    assert_eq!(
+        message(
+            "enum E: UInt[65536] { A = 1 << 65535, B = 1 << 65535 }\n",
+            "E"
+        ),
+        "the variant `B` has the tag `an integer of 65536 bits` of the variant at 1:23; give each \
+         variant its own tag value"
+    );
     assert_eq!(e("enum E: UInt[2] { A = 1, B(Int) = 1 }\n"), "S021 1:35");
     assert_eq!(e("enum E: UInt[2] { A = 1, B(Int) = 3 }\n"), "S010 1:28");
     assert_eq!(e("enum E: UInt[2] { A = 1, B = 5 }\n"), "S012 1:30");

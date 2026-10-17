@@ -11,7 +11,7 @@ use super::{Evaluator, Naming, Opnd, Res, Store, at, fail};
 use crate::Code;
 use crate::agg::{Agg, Base};
 use crate::hw::{Graph, HwId, Node, Op, Seen, Val};
-use crate::int::unsigned_size;
+use crate::int::{Int, unsigned_size};
 use crate::names::{Paths, Step};
 use crate::ops::{self, Fuel, MAX_WIDTH, binop_text, int_text, unop_text};
 use crate::types::{Ty, TyId, Types};
@@ -481,6 +481,23 @@ pub(super) fn share(
     Ok(graph.mk(at_operand, ty, Op::Share(k), vec![cond]))
 }
 
+/// The text of a static side in the `S011` text of the arms (section 6.2). An integer is
+/// decimal and bounded, a Boolean is `true` or `false`, and a finite value is its type with its
+/// integer, for example `UInt[8](3)`. Another value is its text.
+fn side_text(v: &Value, tys: &Types) -> String {
+    match v {
+        Value::Int(n) => int_text(n),
+        Value::Bool(b) => b.to_string(),
+        Value::UInt(x) => format!("UInt[{}]({})", x.width(), int_text(&Int::from_unsigned(x))),
+        Value::SInt(x) => format!(
+            "SInt[{}]({})",
+            x.width(),
+            int_text(&Int::from_signed(x, x.width()))
+        ),
+        v => v.text(tys),
+    }
+}
+
 /// The static parts of the arms of a hardware `kw` (section 7.4) of the joined type `t`. Each
 /// arm `y` after the first compares with the first arm `x` in arm order, and the compare
 /// charges the sum of the two sizes, as a static equality does. Identical arms pass, so a
@@ -510,9 +527,10 @@ fn arm_static(
             Code::S011,
             pos,
             format!(
-                "the arms of a hardware `{kw}` differ in a static part: {} and {}",
-                x.text(tys),
-                y.text(tys)
+                "the arms of a hardware `{kw}` differ in a static part: {} and {}; give the \
+                 part one value and type in each arm, or move it out of the `{kw}`",
+                side_text(x, tys),
+                side_text(y, tys)
             ),
         )
     };

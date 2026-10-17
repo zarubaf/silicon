@@ -51,14 +51,14 @@ fn run_match(t: &str, s: &str, src: &str, run: u64, fuel: u64) -> String {
 
 /// The exact charges of a `match` with one leaf, one arm that is not `_`, and `_`. The statement
 /// charges 1, the `match` node 1, and the scrutinee 2. The pattern `true` charges 2 and its share
-/// `1 + 0 + 1`, and `_` charges 1. Each arm charges 2. The select `s_0` has `L + 1 = 2` uses, so
-/// its mark charges the size 3 of `(== x$0e true)`. The scrutinee is a core name, and `n` is 1,
+/// `1 + 0 + 1`, and `_` charges 1. Each arm charges 2. The select `s_0` charges 1 for its key
+/// constant. It has `L + 1 = 2` uses, so its mark charges the size 3 of `(== x$0e true)`. The scrutinee is a core name, and `n` is 1,
 /// so it gets no mark. The node `rest` charges `1 + 1`, and with `L = 1` it gets no mark. The
 /// node `onehot` charges `1 + 2 * 2`. `return true;` charges 4.
 #[test]
 fn one_leaf_with_a_wild_arm_charges_the_marks_and_the_nodes() {
     let one_leaf = "let y = match (x.0) { true => x.1, _ => x.2 };";
-    let total = 1 + 1 + 2 + 2 + 2 + 1 + 2 + 2 + 3 + 2 + 5 + 4;
+    let total = 1 + 1 + 2 + 2 + 2 + 1 + 2 + 2 + 1 + 3 + 2 + 5 + 4;
     assert_eq!(
         run_match(TRI, one_leaf, "", 720_000_001, ALL),
         format!(
@@ -66,8 +66,8 @@ fn one_leaf_with_a_wild_arm_charges_the_marks_and_the_nodes() {
              x$1e x$2e) | ref x | {total}"
         )
     );
-    assert_eq!(run_match(TRI, one_leaf, "", 720_000_002, 22), "S015 2:11");
-    assert_eq!(run_match(TRI, one_leaf, "", 720_000_003, 23), "S015 3:3");
+    assert_eq!(run_match(TRI, one_leaf, "", 720_000_002, 23), "S015 2:11");
+    assert_eq!(run_match(TRI, one_leaf, "", 720_000_003, 24), "S015 3:3");
 }
 
 /// Without `_`, a select has `L = 1` use and gets no mark, and no `rest` node exists. With two
@@ -84,7 +84,7 @@ fn selects_get_marks_by_their_uses_in_arm_order() {
             720_000_010,
             ALL
         ),
-        "y=(onehot (== x$0e (bool true)) (== x$0e (bool false)) x$1e x$2e) | ref x | 27"
+        "y=(onehot (== x$0e (bool true)) (== x$0e (bool false)) x$1e x$2e) | ref x | 29"
     );
     assert_eq!(
         run_match(
@@ -97,7 +97,7 @@ fn selects_get_marks_by_their_uses_in_arm_order() {
         "y=(onehot (share 1 (== (share 0 (+% x$1e (uint 8 1))) (uint 8 0))) \
          (share 2 (== (share 0 (+% x$1e (uint 8 1))) (uint 8 1))) \
          (rest (share 1 (== (share 0 (+% x$1e (uint 8 1))) (uint 8 0))) \
-         (share 2 (== (share 0 (+% x$1e (uint 8 1))) (uint 8 1)))) x$1e x$2e x$1e) | ref x | 52"
+         (share 2 (== (share 0 (+% x$1e (uint 8 1))) (uint 8 1)))) x$1e x$2e x$1e) | ref x | 54"
     );
 }
 
@@ -116,7 +116,7 @@ fn a_joined_type_with_two_leaves_has_one_onehot_for_each() {
         "y$0e=(onehot (share 0 (== x$0e (bool true))) \
          (share 1 (rest (share 0 (== x$0e (bool true))))) x$1e x$2e) \
          y$1e=(onehot (share 0 (== x$0e (bool true))) \
-         (share 1 (rest (share 0 (== x$0e (bool true))))) x$2e x$1e) | ref x | 50"
+         (share 1 (rest (share 0 (== x$0e (bool true))))) x$2e x$1e) | ref x | 51"
     );
     assert_eq!(
         tree2("let y = match (x.0) { _ => x.2 };", 720_000_021),
@@ -135,7 +135,7 @@ fn a_joined_type_with_two_leaves_has_one_onehot_for_each() {
             720_000_023
         ),
         "y$1e=(onehot (share 0 (== x$0e (bool true))) (rest (share 0 (== x$0e (bool true)))) \
-         x$1e x$2e) | ref x | 45"
+         x$1e x$2e) | ref x | 46"
     );
 }
 
@@ -156,7 +156,7 @@ fn an_enum_with_a_static_tag_is_a_hardware_scrutinee() {
         ),
         "o$payload=(pack 8 x$1e) v=(extract 0 8 o$payload) \
          y=(onehot (share 0 (== (uint 2 1) (uint 2 1))) \
-         (rest (share 0 (== (uint 2 1) (uint 2 1)))) v (uint 8 0)) | ref x | 108"
+         (rest (share 0 (== (uint 2 1) (uint 2 1)))) v (uint 8 0)) | ref x | 109"
     );
     assert_eq!(
         run_match(
@@ -170,7 +170,7 @@ fn an_enum_with_a_static_tag_is_a_hardware_scrutinee() {
         "v=(extract 0 8 (share 0 (pack 8 x$1e))) a=(extract 0 1 (share 0 (pack 8 x$1e))) \
          b=(extract 1 4 (share 0 (pack 8 x$1e))) y=(onehot (share 1 (== (uint 2 1) (uint 2 1))) \
          (share 2 (== (uint 2 1) (uint 2 2))) (rest (share 1 (== (uint 2 1) (uint 2 1))) \
-         (share 2 (== (uint 2 1) (uint 2 2)))) v (resize b) (uint 8 0)) | ref x | 142"
+         (share 2 (== (uint 2 1) (uint 2 2)))) v (resize b) (uint 8 0)) | ref x | 144"
     );
 }
 
@@ -192,14 +192,14 @@ fn a_hardware_binder_pays_the_zero_size_of_its_type_first() {
             "let y = match (reinterpret(E, x.2)) { E::A(_) => x.0, _ => false };",
             720_000_040
         ),
-        format!("y={BIG_TREE}131")
+        format!("y={BIG_TREE}132")
     );
     assert_eq!(
         big(
             "let y = match (reinterpret(E, x.2)) { E::A(z) => x.0, _ => false };",
             720_000_041
         ),
-        format!("y={BIG_TREE}{}", 131 + 1 + 4096 * 4097)
+        format!("y={BIG_TREE}{}", 132 + 1 + 4096 * 4097)
     );
     assert_eq!(
         big(
@@ -210,13 +210,13 @@ fn a_hardware_binder_pays_the_zero_size_of_its_type_first() {
             "b=(extract 0 8 (extract 1 8 x$2e)) y=(onehot (share 0 (== (extract 0 1 x$2e) \
              (uint 1 1))) (rest (share 0 (== (extract 0 1 x$2e) (uint 1 1)))) b (uint 8 2)) \
              | ref x | {}",
-            136 + 1 + 4096 * 4097
+            137 + 1 + 4096 * 4097
         )
     );
 }
 
 /// `k` nested `match (match (c) { true => p, _ => q }) { true => p, _ => q }` grow linearly (D7):
-/// each level adds 8 nodes and charges 25, because the `+ 1` use of each select marks it.
+/// each level adds 8 nodes and charges 26, because the `+ 1` use of each select marks it.
 /// `count` counts each mark and its operand once.
 #[test]
 fn nested_matches_grow_linearly() {
@@ -260,13 +260,13 @@ fn nested_matches_grow_linearly() {
     for k in 1..=5 {
         assert_eq!(
             at(k, 720_000_050 + k),
-            format!("y={} | ref x | {}", 1 + 8 * k, 2 + 25 * k),
+            format!("y={} | ref x | {}", 1 + 8 * k, 2 + 26 * k),
             "{k}"
         );
     }
     assert_eq!(
         at(40, 720_000_060),
-        format!("y={} | ref x | {}", 1 + 8 * 40, 2 + 25 * 40)
+        format!("y={} | ref x | {}", 1 + 8 * 40, 2 + 26 * 40)
     );
 }
 
@@ -290,7 +290,7 @@ fn a_hardware_tag_and_payload_get_marks_and_the_binders_get_core_names() {
                 (share 3 (== (share 0 (extract 0 2 x$2e)) (uint 2 2))) \
                 (rest (share 2 (== (share 0 (extract 0 2 x$2e)) (uint 2 1))) \
                 (share 3 (== (share 0 (extract 0 2 x$2e)) (uint 2 2)))) v (resize b) \
-                (uint 8 0)) | ref x | 143";
+                (uint 8 0)) | ref x | 145";
     assert_eq!(
         tag("a", 720_000_070),
         format!(
@@ -400,10 +400,11 @@ fn the_walk_compares_the_static_parts_of_the_arms() {
     };
     assert_eq!(
         parts(1, 1, 720_000_090),
-        format!("hardware {}", 1 + 3 + 2 + 1 + 1 + 2 + 1 + 5)
+        format!("hardware {}", 1 + 1 + 3 + 2 + 1 + 1 + 2 + 1 + 5)
     );
     assert_eq!(
         parts(1, 2, 720_000_091),
-        "S011 1:1 the arms of a hardware `match` differ in a static part: Int and Int"
+        "S011 1:1 the arms of a hardware `match` differ in a static part: 1 and 2; give the part one \
+         value and type in each arm, or move it out of the `match`"
     );
 }

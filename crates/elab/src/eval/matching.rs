@@ -19,7 +19,7 @@ use crate::hw::Graph;
 use crate::hw::{HwId, Op, Seen, Val};
 use crate::int::{Int, words};
 use crate::limit;
-use crate::ops::{self, Fuel};
+use crate::ops::{self, Fuel, int_text};
 use crate::types::{Ty, TyId, Types};
 use crate::unpack::unpack;
 use crate::value::{Value, int_size, width_size};
@@ -54,7 +54,7 @@ fn kind_text(t: &Ty, text: &str) -> String {
 fn pattern_text(pat: &Pattern, value: Option<&Int>) -> String {
     match pat {
         Pattern::Wild { .. } => "_".to_owned(),
-        Pattern::Int { .. } => value.map_or_else(String::new, ToString::to_string),
+        Pattern::Int { .. } => value.map_or_else(String::new, int_text),
         Pattern::Bool { value, .. } => value.to_string(),
         Pattern::Variant {
             ty,
@@ -327,9 +327,9 @@ impl Evaluator<'_> {
             Ty::Bool => (*k == Int::from_u64(1)).to_string(),
             Ty::Enum(e) => match self.tys.variant_of_tag(t, k) {
                 Some(j) => self.variant_text(e.item(), j),
-                None => k.to_string(),
+                None => int_text(k),
             },
-            _ => k.to_string(),
+            _ => int_text(k),
         }
     }
 
@@ -373,8 +373,9 @@ impl Evaluator<'_> {
                             Code::S021,
                             pos,
                             format!(
-                                "the tag `{u}` of `{text}` has no variant, but a port or a \
-                                 memory can hold it; add `_ => ...` as the last arm"
+                                "the tag `{}` of `{text}` has no variant, but a port or a \
+                                 memory can hold it; add `_ => ...` as the last arm",
+                                int_text(&u)
                             ),
                         );
                     }
@@ -745,8 +746,16 @@ impl Evaluator<'_> {
         Ok(())
     }
 
-    /// The constant of the key `k` of a select on a leaf of the type `ty` (section 5.6).
+    /// The constant of the key `k` of a select on a leaf of the type `ty` (section 5.6). The
+    /// size of a finite value of `ty` charges first.
     fn key_lit(&mut self, pos: Pos, ty: &Ty, k: &Int) -> Res<HwId> {
+        if let Ty::Bool | Ty::UInt(_) | Ty::SInt(_) = ty {
+            let size = match ty {
+                Ty::UInt(w) | Ty::SInt(w) => width_size(*w),
+                _ => 1,
+            };
+            self.charge(pos, u128::from(size))?;
+        }
         let value = match ty {
             Ty::Bool => Some(Value::Bool(*k == Int::from_u64(1))),
             Ty::UInt(w) => k.to_finite(*w).map(Value::UInt),
@@ -769,9 +778,10 @@ impl Evaluator<'_> {
     ///
     /// 3. The arm types join as the elements of an array literal, with the join charge (`S010`
     ///    without a join). Then each arm converts to the joined type.
-    /// 4. The selects `(icmp eq sel k)` build in arm order with no charge. A select has `u = L + 1`
-    ///    uses with an arm `_`, else `L`, with `L` the leaf count of the joined type. At `u >= 2`
-    ///    it gets a mark, in arm order.
+    /// 4. The selects `(icmp eq sel k)` build in arm order. Each select first charges the size of
+    ///    a finite value of the type of `sel`, for its key constant, before the constant exists. A
+    ///    select has `u = L + 1` uses with an arm `_`, else `L`, with `L` the leaf count of the
+    ///    joined type. At `u >= 2` it then gets a mark.
     /// 5. The select of `_` is one node `rest` over the selects, charged `1 + n` before it
     ///    exists. Then it gets a mark at `L >= 2`.
     /// 6. The walk over the arms (`arm_walk`), with one `onehot` node for each leaf
@@ -794,7 +804,8 @@ impl Evaluator<'_> {
             return fail(
                 Code::S010,
                 pos,
-                "the arms of a `match` have no common type".to_owned(),
+                "the arms of a hardware `match` have no common type; convert each arm to one type"
+                    .to_owned(),
             );
         };
         let mut opnds = Vec::with_capacity(pieces.len());
