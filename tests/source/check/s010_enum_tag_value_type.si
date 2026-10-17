@@ -1,0 +1,12 @@
+// S010: a tag value gets its typed use at the tag type `UInt[2]`, so a `Bool` is no tag value.
+// TOP M()
+enum Op: UInt[2] {
+    // expected-error S010 @+2
+    // expected-message: expected UInt[2], but the value is Bool
+    Add = true,
+    Sub = 1,
+}
+module M() {
+    output y: Op;
+    y := Op::Sub;
+}

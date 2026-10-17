@@ -1,0 +1,12 @@
+// S012: a negative tag value does not fit the tag type `UInt[2]`.
+// TOP M()
+enum Op: UInt[2] {
+    // expected-error S012 @+2
+    // expected-message: -1 does not fit UInt[2]
+    Add = -1,
+    Sub = 1,
+}
+module M() {
+    output y: Op;
+    y := Op::Sub;
+}

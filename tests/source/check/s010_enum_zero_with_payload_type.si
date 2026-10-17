@@ -1,0 +1,10 @@
+// S010: the arms of a hardware `match` on an enum need a common type: an enum arm and a number differ.
+// TOP M()
+enum Op: UInt[1] { Add = 0, Load(UInt[4]) = 1 }
+module M() {
+    input op: Op;
+    output y: Op;
+    // expected-error S010 @+2
+    // expected-message: the arms of a hardware `match` have no common type; convert each arm to one type
+    y := match (op) { Op::Add => Op::Add, _ => 0 };
+}

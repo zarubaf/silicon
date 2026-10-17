@@ -1,0 +1,10 @@
+// S010: `reinterpret(E, b)` needs `b: UInt[W + P]`, not a `Bool`.
+// TOP M()
+enum Op: UInt[1] { Add = 0, Flag = 1 }
+module M() {
+    input b: Bool;
+    output y: Op;
+    // expected-error S010 @+2
+    // expected-message: `reinterpret` makes Op only from UInt[1], not hardware Bool
+    y := reinterpret(Op, b);
+}

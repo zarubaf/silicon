@@ -1,0 +1,10 @@
+// S002: an enum and a constant share one namespace of items.
+// TOP M()
+const Op: Nat = 1;
+// expected-error S002 @+2
+// expected-message: `Op` is already declared in this scope
+enum Op: UInt[1] { Add = 0 }
+module M() {
+    output y: Bool;
+    y := true;
+}
