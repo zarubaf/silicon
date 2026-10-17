@@ -1630,4 +1630,183 @@ def enumLet (e : String) : String :=
 #guard names (enumLet enumOps) "M" "M" == ["x$tag", "x$payload"]
 #guard names (enumLet "enum Op: UInt[2] { A = 0 }\n") "M" "M" == ["x$tag"]
 
+/-! The text of a hardware value: each node with its operation and its operands. -/
+def opText : Eval.Op → String
+  | .ref p => s!"ref {Names.encode p.name}"
+  | .pack w => s!"pack {w}"
+  | .extract o w => s!"extract {o} {w}"
+  | .share k => s!"share {k}"
+  | .mux => "mux"
+  | .resize => "resize"
+  | _ => "op"
+
+mutual
+  def hwText : Eval.Hw → String
+    | .node _ _ _ (.lit v) _ => v.serialize
+    | .node _ _ _ op args => "(" ++ " ".intercalate (opText op :: hwTexts args) ++ ")"
+
+  def hwTexts : List Eval.Hw → List String
+    | [] => []
+    | h :: hs => hwText h :: hwTexts hs
+end
+
+/-!
+The number of nodes of a hardware value when each shared operand counts once. The lowering
+binds such an operand once to a temporary (section 7.4). `seen` holds the marks that counted before.
+-/
+mutual
+  def dagSize (seen : List Nat) : Eval.Hw → Nat × List Nat
+    | .node _ _ _ op args =>
+      match op with
+      | .share k =>
+        if seen.contains k then (1, seen)
+        else
+          let (n, s) := dagSizes (k :: seen) args
+          (1 + n, s)
+      | _ =>
+        let (n, s) := dagSizes seen args
+        (1 + n, s)
+
+  def dagSizes (seen : List Nat) : List Eval.Hw → Nat × List Nat
+    | [] => (0, seen)
+    | h :: hs =>
+      let (n, s) := dagSize seen h
+      let (m, t) := dagSizes s hs
+      (n + m, t)
+end
+
+/-! The named bindings of the top instantiation `M` with the text of their values. -/
+def hwLets (src : String) : List String :=
+  ((topBody src "M").map fun b =>
+    b.lets.toList.map fun l => s!"{Names.encode l.path.name} = {hwText l.value}").getD []
+
+def enumPair : String :=
+  "enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }\n"
+def hwEnum (body : String) : String :=
+  enumPair ++ "module M() {\n  input x: UInt[8];\n  input c: Bool;\n  input y: UInt[4];\n" ++
+  "  input e: Op;\n  output o: Bool;\n" ++ body ++ "  o := true;\n}\n"
+def hwUnits (body : String) : Nat := elabUnits (hwEnum body) "M"
+
+/-!
+A variant constructor with a hardware payload value gives a hardware enum. Its parts are the static
+tag and one `pack` node of the payload leaves in packing order (D7). A static leaf is a constant,
+and a leaf of a reference refers to its name, also through a struct and an array. A part without a
+leaf, here `()`, adds no operand. The static tag needs no `let`, so the binding names only the
+payload.
+-/
+#guard hwLets (hwEnum "  let a = Op::Load(x);\n") == ["a$payload = (pack 8 (ref x))"]
+#guard hwLets (hwEnum "  let a = Op::Pair(c, y);\n") == ["a$payload = (pack 8 (ref c) (ref y))"]
+#guard hwLets (hwEnum "  let a = Op::Pair(true, y);\n") ==
+  ["a$payload = (pack 8 (bool true) (ref y))"]
+#guard hwLets (hwEnum "  let a = Op::Pair(c, 3);\n") ==
+  ["a$payload = (pack 8 (ref c) (uint 4 3))"]
+#guard hwLets ("struct S { a: UInt[3], b: (Bool, ()) }\n" ++
+  "enum E: UInt[1] { A(S, [UInt[2]; 2]) = 1 }\n" ++
+  "module M() {\n  input s: S;\n  input v: [UInt[2]; 2];\n  output o: Bool;\n" ++
+  "  let a = E::A(s, v);\n  o := true;\n}\n") ==
+  ["a$payload = (pack 8 (ref s$a) (ref s$b$0e) (ref v$0e) (ref v$1e))"]
+
+/-!
+A hardware constructor charges as a static one: the payload values, their copies, and their typed
+uses. Then the size of the result charges from the stored sizes. These are the node 1, the tag 1,
+and the pack node 1 with the size of each leaf. `Op::Load(x)` thus charges 3 more than `Op::Add`:
+the name 1, its copy 1, and the larger result 4. `Op::Pair(c, y)` charges 6 more: two names, two
+copies, and the result 5. The pack node makes no hardware operation here, because the lowering
+charges each core node of a pack (section 7.4).
+-/
+#guard hwUnits "  let a = Op::Load(x);\n" == hwUnits "  let a = Op::Add;\n" + 3
+#guard hwUnits "  let a = Op::Pair(c, y);\n" == hwUnits "  let a = Op::Add;\n" + 6
+#guard hwUnits "  let a = Op::Load(3);\n" == hwUnits "  let a = Op::Add;\n" + 5
+#guard elabOnly (hwEnum "  let a = Op::Load(y);\n") "M" == "S010 8:11"
+
+/-!
+`reinterpret(UInt[W + P], e)` of a hardware enum packs its leaves `tag` and `payload` (section
+7.4). A reference gives both leaves by name. `reinterpret(E, b)` makes `(extract b 0 W)` and
+`(extract b W P)`. Both leaves read `b`, so `b` gets one mark of a shared operand, unless it is a
+core name or a constant (G8). With `P` 0, no conversion makes a node. A hardware conversion
+charges only its node, its name, its arguments, and their copies: 10 more than `Op::Add`.
+-/
+#guard hwLets (hwEnum "  let a = reinterpret(UInt[10], e);\n") ==
+  ["a = (pack 10 (ref e$tag) (ref e$payload))"]
+#guard hwUnits "  let a = reinterpret(UInt[10], e);\n" == hwUnits "  let a = Op::Add;\n" + 10
+#guard hwLets (hwEnum "  let a = reinterpret(UInt[10], Op::Load(x));\n") ==
+  ["a = (pack 10 (uint 2 1) (pack 8 (ref x)))"]
+#guard hwLets (hwEnum "  let b = resize(UInt[10], x);\n  let a = reinterpret(Op, b);\n") ==
+  ["b = (resize (ref x))", "a$tag = (extract 0 2 (ref b))", "a$payload = (extract 2 8 (ref b))"]
+#guard hwLets (hwEnum "  let a = reinterpret(Op, resize(UInt[10], x));\n") ==
+  ["a$tag = (extract 0 2 (share 0 (resize (ref x))))",
+   "a$payload = (extract 2 8 (share 0 (resize (ref x))))"]
+def flagE (body : String) : String :=
+  "enum E: UInt[2] { A = 0, B = 1 }\nmodule M() {\n  input c: Bool;\n  input e: E;\n" ++
+  "  input u: UInt[2];\n  output o: Bool;\n" ++ body ++ "  o := true;\n}\n"
+#guard hwLets (flagE "  let a = reinterpret(UInt[2], e);\n  let b = reinterpret(E, u +% 1);\n") ==
+  ["a = (ref e$tag)", "b$tag = (op (ref u) (uint 2 1))"]
+#guard elabOnly (hwEnum "  let a = reinterpret(Op, x);\n") "M" == "S010 8:11"
+#guard elabOnly (hwEnum "  let a = reinterpret(UInt[8], e);\n") "M" == "S010 8:11"
+
+/-!
+Nested conversions stay linear (G8). Each `reinterpret(E, b)` marks its operand once, so `k` nested
+round trips make `k` marks. The lowering binds each mark once. With each mark counted once, a round
+trip adds 5 nodes: a `pack`, two `extract` nodes, and two uses of one mark. Without the marks, the
+leaves would hold `2^k` copies of `x`.
+-/
+def roundTrips : Nat → String → String
+  | 0, b => b
+  | k + 1, b => s!"reinterpret(Op, reinterpret(UInt[10], {roundTrips k b}))"
+def tripNodes (k : Nat) : Nat :=
+  match topBody (hwEnum s!"  let a = {roundTrips k "reinterpret(Op, resize(UInt[10], x))"};\n")
+      "M" with
+  | some b => (dagSizes [] (b.lets.toList.map (·.value))).1
+  | none => 0
+#guard tripNodes 0 == 6
+#guard tripNodes 1 == 6 + 5
+#guard tripNodes 20 == 6 + 20 * 5
+
+/-!
+A hardware `if` with enum arms joins the two enum types, 1 plus 1. Then it walks them as a container
+pair (section 7.4): the root, then `tag`, then `payload`, 1 each. A static enum opens into its
+parts. Each leaf pair makes one `mux`, also a pair of two static leaves. With `P` 0, the walk visits
+only the root and `tag`. Thus `if (c) { Op::Add } else { e }` charges its node, `c`, the arms 5, the
+join 2, the walk 3, and two `mux` nodes 8. Two different enums, and an enum and another type, have
+no join (`S010`).
+-/
+#guard hwLets (hwEnum "  let a = if (c) { Op::Load(x) } else { e };\n") ==
+  ["a$tag = (mux (ref c) (uint 2 1) (ref e$tag))",
+   "a$payload = (mux (ref c) (pack 8 (ref x)) (ref e$payload))"]
+#guard hwUnits "  let a = if (c) { Op::Add } else { e };\n" + 4 ==
+  hwUnits "  let a = Op::Add;\n" + (1 + 1 + 5 + 2 + 3 + 8)
+#guard hwLets (hwEnum "  let a = if (c) { Op::Add } else { Op::Load(3) };\n") ==
+  ["a$tag = (mux (ref c) (uint 2 0) (uint 2 1))",
+   "a$payload = (mux (ref c) (uint 8 0) (uint 8 3))"]
+#guard hwLets (flagE "  let a = if (c) { E::A } else { e };\n") ==
+  ["a$tag = (mux (ref c) (uint 2 0) (ref e$tag))"]
+#guard hwLets (hwEnum "  let a = if (x == 1) { Op::Load(x) } else { e };\n") ==
+  ["a$tag = (mux (share 0 (op (ref x) (uint 8 1))) (uint 2 1) (ref e$tag))",
+   "a$payload = (mux (share 0 (op (ref x) (uint 8 1))) (pack 8 (ref x)) (ref e$payload))"]
+#guard elabOnly (hwEnum "  let a = if (c) { Op::Add } else { 1 };\n") "M" == "S010 8:11"
+#guard elabOnly ("enum F: UInt[2] { A = 0 }\n" ++
+  hwEnum "  let a = if (c) { Op::Add } else { F::A };\n") "M" == "S010 9:11"
+
+/-!
+Two static enums in a static pair of a hardware `if`, here in two lists, compare by their tags
+and payloads. Different enums are `S011` at the `if`, as each static pair with different sides,
+and equal ones give the value.
+-/
+def enumLists (b : String) : String :=
+  hwEnum ("  let mut p = list(Op);\n  push(p, Op::Add);\n  let mut q = list(Op);\n" ++
+    s!"  push(q, {b});\n  let k = if (c) \{ p } else \{ q };\n")
+#guard elabOnly (enumLists "Op::Load(1)") "M" == "S011 12:11"
+#guard elabOnly (enumLists "Op::Pair(false, 0)") "M" == "S011 12:11"
+#guard (elabOnly (enumLists "Op::Add") "M").startsWith "ok"
+
+/-!
+A register of an enum type takes a static enum as its reset value, and a `:=` binding takes a
+hardware enum. A wire of an enum type reads as a reference to its leaves.
+-/
+#guard ((topBody (hwEnum "  reg r: Op = Op::Pair(true, 3);\n  r := Op::Load(x);\n") "M").map
+  (·.regs.toList.map (·.init.serialize))) == some ["(enum (enum root Op ()) 2 (uint 8 7))"]
+#guard hwLets
+  (hwEnum "  wire w: Op;\n  w := Op::Pair(c, y);\n  let a = reinterpret(UInt[10], w);\n") ==
+  ["a = (pack 10 (ref w$tag) (ref w$payload))"]
+
 end Silicon.Source.Test.Elab

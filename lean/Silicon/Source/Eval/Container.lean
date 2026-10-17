@@ -57,6 +57,10 @@ The static containers of slice 2 follow section 5.1. These rules settle its open
   A static part on the path that takes a value with a hardware leaf opens one level.
 - `T()` is the zero of a hardware data type, also of a struct type. Another type is `S010`. The
   zero checks its depth (`Ty.zeroDepth`) and charges its size from the metadata before it exists.
+- A static enum payload packs into one bit buffer of `P` bits (`Bits`, `Value.pack`). Each leaf
+  writes its words at its offset, so no step reads an earlier leaf. A node of an enum type with
+  only static parts is a static enum value (`Agg.mkRecord`), and a static enum opens into its
+  parts `tag` and `payload` (`Agg.opened`).
 - An assignment to a place with indices, selectors `.N`, and fields evaluates its indices from
   left to right. Each index checks when it evaluates: its stage (`S011`), the container and its own
   type (`S010`), then its range (`S013`). Then the right side evaluates, with the element type
@@ -152,7 +156,8 @@ def leafEq (a b : Value) : Except Fault (Unit → Except Fault Bool) :=
 /-!
 The type check of `==` on containers, by the operand rule for each pair of elements, and the
 comparison for the step after the charge. Each pair compares, so each conversion checks its
-fit.
+fit. Two static enums of one type are equal when their tags and payloads are equal. `==` never
+reaches them (the enum flag), but the static pair of a hardware `if` compares them here.
 -/
 mutual
   def same : Value → Value → Walk (Unit → Except Fault Bool)
@@ -172,6 +177,10 @@ mutual
     | a@(.record s ⟨xs⟩), b@(.record t ⟨ys⟩) => do
       let j ← joinTy s t
       if j.isSome then sameAll xs ys
+      else throw (.S010, s!"`==` needs a common type, not {a.text} and {b.text}")
+    | a@(.enum s ..), b@(.enum t ..) => do
+      let j ← joinTy s t
+      if j.isSome then return fun _ => .ok (a == b)
       else throw (.S010, s!"`==` needs a common type, not {a.text} and {b.text}")
     | a, b =>
       if composite a || composite b then
@@ -405,7 +414,7 @@ def update (f : Value → Value) : Value → List Nat → Value
 /-!
 The reference of the type `t` to the base `b`, expanded one level into references to its parts
 in their normal form. The caller paid for the parts, so this has no charge. `fs` gives the named
-fields of a struct type.
+parts of a struct type and of an enum type.
 -/
 def Agg.expand (fs : Ty → Option (Array (String × Ty))) (specs : Specs) (pos : Pos) (b : Base) :
     Ty → Option Agg
@@ -415,7 +424,7 @@ def Agg.expand (fs : Ty → Option (Array (String × Ty))) (specs : Specs) (pos 
   | r@(.tuple ts) => do
     let sub (k : Nat) := b.sub (partsIn specs) r k (.elem k)
     return .mkTuple ts (← ts.zipIdx.mapM fun (t, k) => Agg.part specs pos (sub k) t)
-  | t@(.struct ..) => do
+  | t@(.struct ..) | t@(.enum ..) => do
     let sub (k : Nat) (x : String) := b.sub (partsIn specs) t k (.user x)
     return .mkRecord t (← (← fs t).zipIdx.mapM fun ((x, ft), k) => Agg.part specs pos (sub k x) ft)
   | _ => none
@@ -507,7 +516,8 @@ where
 
 /-!
 The static container `v` opened one level: its elements as static parts, and the builder of its
-node. A list never holds a hardware leaf, so it does not open.
+node. A static enum opens into its parts `tag` and `payload` (section 7.4). A list never holds a
+hardware leaf, so it does not open.
 -/
 def Agg.opened : Value → Option (Array Agg × (Array Agg → Agg))
   | .array e xs => some (xs.map .static, .mkArray e)
@@ -515,6 +525,7 @@ def Agg.opened : Value → Option (Array Agg × (Array Agg → Agg))
     let ts ← Value.tyAll? xs.toList
     return (xs.map .static, .mkTuple ts.toArray)
   | .record t xs => some (xs.map .static, .mkRecord t)
+  | .enum t w x p y => some ((Value.enumParts w x p y).map .static, .mkRecord t)
   | _ => none
 
 /-!
@@ -778,6 +789,59 @@ def recordOf (pos : Pos) (t : Ty) (fs : List Ty) (ps : List Pos) (vs : List Val)
     conformAgg pos ft (← item q (← data q (← settle pos ft v)))
   made pos (.mkRecord t xs.toArray)
 
+/-!
+The bit buffer of a static pack (section 5.1): its words of 64 bits, the least significant word
+first, and the next free bit. A pack allocates one buffer for the payload width and writes each
+leaf at its offset. Thus a leaf of `w` bits takes at most `w / 64 + 1` word steps, and no step
+reads the earlier leaves. Each Lean step shifts a natural number; a Rust word takes O(1) work.
+-/
+structure Bits where
+  words : Array UInt64
+  next : Nat
+
+/-! An empty buffer of `n` bits. -/
+def Bits.new (n : Nat) : Bits := ⟨Array.replicate ((n + 63) / 64) 0, 0⟩
+
+/-!
+Writes the low `w` bits of `x` at the next free bit, one word of `x` for each step. The bits of
+`x` above `w` are zero, so a word adds no bit after the leaf.
+-/
+def Bits.put (b : Bits) (w x : Nat) : Bits := Id.run do
+  let mut ws := b.words
+  let mut y := x
+  let mut o := b.next
+  for _ in [0:(w + 63) / 64] do
+    let c := y.toUInt64
+    let i := o / 64
+    let s := o % 64
+    ws := ws.modify i (· ||| (c <<< s.toUInt64))
+    if s != 0 then ws := ws.modify (i + 1) (· ||| (c >>> (64 - s).toUInt64))
+    y := y >>> 64
+    o := o + 64
+  return ⟨ws, b.next + w⟩
+
+/-! The number of the bits of the buffer, the first word in the low bits. -/
+def Bits.toNat (b : Bits) : Nat := b.words.foldr (fun w acc => (acc <<< 64) ||| w.toNat) 0
+
+/-!
+The static pack of a value into the buffer `b` (section 5.1, ADR 0025). Its leaves go in packing
+order, the first leaf in the low bits. A `Bool` has 1 bit, and a finite value its width. An enum
+packs its tag, then its payload. `()` adds no bit. The payload values of a variant are hardware
+data after their typed uses, so no other value occurs.
+-/
+mutual
+  def Value.pack (b : Bits) : Value → Bits
+    | .bool x => b.put 1 (if x then 1 else 0)
+    | .uint w x | .sint w x => b.put w x.toNat
+    | .enum _ w x p y => (b.put w x.toNat).put p y.toNat
+    | .array _ ⟨xs⟩ | .tuple ⟨xs⟩ | .record _ ⟨xs⟩ => Value.packAll b xs
+    | _ => b
+
+  def Value.packAll (b : Bits) : List Value → Bits
+    | [] => b
+    | x :: xs => Value.packAll (Value.pack b x) xs
+end
+
 /-! The core `let` statements that a binding of an aggregate makes, in packing order. -/
 abbrev Binds := StateT (Array Let) (Except Fault)
 
@@ -903,6 +967,7 @@ mutual
     | .ref _ t => Ty.render specs t.depth t
     | .array n ⟨xs⟩ => Print.node "array" [n.tyText, Print.list (Agg.renderAll specs xs)]
     | .tuple _ ⟨xs⟩ => Print.node "tuple" [Print.list (Agg.renderAll specs xs)]
+    -- TODO(#271): render a hardware enum as `(enum <type> <tag> <payload>)` (D9, section 8.2).
     | .record n ⟨xs⟩ => Print.node "record" [n.tyText, Print.list (Agg.renderAll specs xs)]
 
   def Agg.renderAll (specs : Specs) : List Agg → List String

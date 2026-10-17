@@ -470,6 +470,14 @@ theorem mux_f (p : Pos) (c : Hw) (a b : Val) :
     Follows cap (mux p c a b) (mux p c a b) := by
   unfold mux; follows [walked_f, ifPart_f, shared_f, ifWalk_f]
 
+theorem packHw_f (p : Pos) (w : Nat) (ps : List (Ty × Agg)) :
+    Follows cap (packHw p w ps) (packHw p w ps) := by
+  unfold packHw; follows
+
+theorem recast_f (p : Pos) (t : Ty) (v : Val) :
+    Follows cap (recast p t v) (recast p t v) := by
+  unfold recast; follows [shared_f, packHw_f]
+
 theorem typeOf_f (p : Pos) (x : String) (v : Val) :
     Follows cap (typeOf p x v) (typeOf p x v) := by
   unfold typeOf; follows
@@ -614,6 +622,10 @@ theorem readUse_f (p : Pos) (t : Ty) (v : Val) :
 theorem copyUse_f (p : Pos) (t : Ty) (c : Bool) (v : Val) :
     Follows cap (copyUse p t c v) (copyUse p t c v) := by
   unfold copyUse; follows [readUse_f, conformVal_f]
+
+theorem variantOf_f (p : Pos) (t : Ty) (j : Nat) (vs : List Val) :
+    Follows cap (variantOf p t j vs) (variantOf p t j vs) := by
+  unfold variantOf; follows [readUse_f, packHw_f]
 
 theorem version_f (k : Tag) (b : Names.Path) :
     Follows cap (version k b) (version k b) := by
@@ -761,7 +773,7 @@ theorem primCall_f (p : Pos) (g : String) (h : PrimFn) (vs : List Val) :
     Follows cap (primCall p g h vs) (primCall p g h vs) := by
   unfold primCall
   follows [lenOf_f, dataBitsOf_f, static_f, data_f, apply_f, hwConvert_f, bounded_f,
-    diagnose_f]
+    diagnose_f, recast_f]
 
 theorem bindParams_f {ty ty' : Resolve.TypeExpr → M Ty} (h : ∀ t, Follows cap (ty t) (ty' t))
     (p : Pos) (ps : List Resolve.Param) (args : List Val) :
@@ -910,7 +922,7 @@ theorem follows_all : ∀ n,
           call_f (he k) (ht k) (hb k), spec_f (he k) (ht k), need_f, data_f, apply_f,
           hwUnary_f, test_f, hwBinary_f, unify_f, mux_f, static_f, pick_f, element_f, tupleOf_f,
           arrayOf_f, select_f, containerOp_f, arrayTy_f, field_f, strAt_f, hold_f, release_f,
-          changesOf_f, normalize_f, aggEq_f,
+          changesOf_f, normalize_f, aggEq_f, enumUse_f (he k) (ht k), variantOf_f,
           operands_f (he k), comparable_f, params_f (ht k), fnTy_f, structural_f]
       · rw [eval.eq_def (k + 1), eval.eq_def (m + 1)]
         apply Follows.charge_one
@@ -919,7 +931,7 @@ theorem follows_all : ∀ n,
           call_f (he m) (ht m) (hb m), spec_f (he m) (ht m), need_f, data_f, apply_f,
           hwUnary_f, test_f, hwBinary_f, unify_f, mux_f, static_f, pick_f, element_f, tupleOf_f,
           arrayOf_f, select_f, containerOp_f, arrayTy_f, field_f, strAt_f, hold_f, release_f,
-          changesOf_f, normalize_f, aggEq_f,
+          changesOf_f, normalize_f, aggEq_f, enumUse_f (he m) (ht m), variantOf_f,
           operands_f (he m), comparable_f, params_f (ht m), fnTy_f, structural_f]
     · rcases n' with _ | m
       · rw [typeExpr.eq_def (k + 1), typeExpr.eq_def 0]

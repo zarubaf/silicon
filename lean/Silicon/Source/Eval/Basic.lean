@@ -108,6 +108,9 @@ one operand, the condition of an aggregate `if`, as shared by several leaf state
 lowering binds it to one temporary at its first use (section 7.4). `k` numbers the marks of one
 instantiation. `word m off` is a leaf of the word of the memory `m` at the bit offset `off`. It
 holds the path of the memory once and lowers to `(extract m$0rdata off w)` (section 7.6).
+`pack w` packs its operands, the leaves in packing order, into `UInt[w]`: the first leaf in the
+low bits, and zero high bits (ADR 0025). `extract off w` gives the `w` bits of its one operand
+from the bit `off`. They are the hardware pack and unpack of an enum (section 7.4).
 -/
 inductive Op where
   | ref (name : Path)
@@ -120,6 +123,8 @@ inductive Op where
   | resize
   | reinterpret
   | share (k : Nat)
+  | pack (w : Nat)
+  | extract (off w : Nat)
   deriving Repr, Inhabited
 
 /-!
@@ -280,8 +285,29 @@ def Agg.mkArray (e : Ty) (xs : Array Agg) : Agg :=
 def Agg.mkTuple (ts : Array Ty) (xs : Array Agg) : Agg :=
   Agg.container .tuple .tuple (.tuple ts) 0 xs
 
+/-!
+The parts of a static enum value with the tag `x` of `w` bits and the payload `y` of `p` bits:
+`tag`, then `payload` when `p` is not 0 (section 5.1).
+-/
+def Value.enumParts (w : Nat) (x : BitVec w) (p : Nat) (y : BitVec p) : Array Value :=
+  #[.uint w x] ++ if p = 0 then #[] else #[.uint p y]
+
+/-!
+The static enum value of the enum type `t` with the static parts `vs` (`Value.enumParts`). The
+parts of an enum always have this form, so the last case does not occur.
+-/
+def Value.ofEnum (t : Ty) (vs : Array Value) : Value :=
+  match vs.toList with
+  | [.uint w x] => .enum t w x 0 0
+  | [.uint w x, .uint p y] => .enum t w x p y
+  | _ => .record t vs
+
+/-!
+A record node, or a hardware enum node when `t` is an enum type (section 5.1). An enum node with
+only static parts is the one static form of its value, a static enum value.
+-/
 def Agg.mkRecord (t : Ty) (xs : Array Agg) : Agg :=
-  Agg.container .record (.record t) t t.depth xs
+  Agg.container .record (if t matches .enum .. then Value.ofEnum t else .record t) t t.depth xs
 
 /-! The text of the aggregate part `a` in a message. -/
 def Agg.text : Agg → String
