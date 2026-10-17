@@ -301,6 +301,13 @@ impl BitBuf {
     }
 }
 
+/// The number of 64-bit words that the value of `x` takes, at least 1. A constant of a wide type
+/// with a small value takes one word: the width is a number beside it.
+#[cfg(test)]
+pub(crate) fn word_count(x: &Bits) -> u64 {
+    x.value().bits().div_ceil(64).max(1)
+}
+
 /// The 64-bit words of a finite value, the least significant word first. A value of at most
 /// 65536 bits has at most 1024 words.
 #[must_use]

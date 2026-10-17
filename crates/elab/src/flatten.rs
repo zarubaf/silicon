@@ -331,7 +331,7 @@ fn const_of(c: Span, v: &Value) -> R<Expr> {
     crate::counters::add(
         crate::counters::Count::Words,
         match v {
-            Value::UInt(x) | Value::SInt(x) => crate::value::width_size(x.width()),
+            Value::UInt(x) | Value::SInt(x) => crate::int::word_count(x),
             _ => 1,
         },
     );
@@ -345,10 +345,7 @@ fn const_of(c: Span, v: &Value) -> R<Expr> {
 /// The constant of the bits of a static enum part.
 fn const_bits(c: Span, x: &Bits) -> Expr {
     #[cfg(test)]
-    crate::counters::add(
-        crate::counters::Count::Words,
-        crate::value::width_size(x.width()),
-    );
+    crate::counters::add(crate::counters::Count::Words, crate::int::word_count(x));
     konst(c, x.width(), constant(x))
 }
 
