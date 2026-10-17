@@ -1663,6 +1663,8 @@ mutual
         let t ← enumUse n p i
         let vs ← operands n xs fun _ o => pure o.value
         return some ⟨← variantOf p t j vs, false, none⟩
+      -- TODO(#272): evaluate a `match` (checks, coverage, static and hardware selection).
+      | .«match» p .. => fail .S004 p "a `match` is not supported yet"
   termination_by (b, 3)
 
   def typeExpr (b : Nat) (t : Resolve.TypeExpr) : M Ty :=
@@ -2083,7 +2085,16 @@ mutual
       for q in ps do scanParam q
       scanType r
     | .variant _ _ _ _ _ xs _ => for x in xs do scanExpr x
+    | .«match» _ x as => do
+      scanExpr x
+      for a in as do scanArm a
     | .num .. | .bool .. | .str .. | .name .. | .unit _ => pure ()
+
+  def scanArm : Resolve.Arm → ScanM Unit
+    | .mk q v => do
+      if let .variant _ _ _ _ _ bs := q then
+        for b in bs do if let some b := b then scanBinder b
+      scanExpr v
 
   def scanType : Resolve.TypeExpr → ScanM Unit
     | .name .. | .unit _ => pure ()

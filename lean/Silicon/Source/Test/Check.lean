@@ -582,6 +582,45 @@ def ops : String := "enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }\n"
 #guard fails "enum E: UInt[2] { A = UInt[2][1] }" .S007 1 23
 
 /-!
+`S007` of a variant pattern (slice 3, section 5.6): one binder or `_` for each payload value of
+the variant, at the start of the path. `Op::Add()` has no binder. `arms s` puts the arms `s` on
+line 3, from column 20.
+-/
+def pair : String := "enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }\n"
+def arms (s : String) : String :=
+  pair ++ "fn f(x: Op) -> UInt[8] {\nreturn match (x) { " ++ s ++ " };\n}"
+
+#guard ok (arms "Op::Add() => 0, Op::Load(_) => 0, Op::Pair(b, w) => 0, _ => 0")
+#guard fails (arms "Op::Add => 0, Op::Pair(a) => 0, _ => 0") .S007 3 34
+#guard message (arms "Op::Add => 0, Op::Pair(a) => 0, _ => 0") ==
+  "the variant `Pair` has 2 payload value(s), but the pattern has 1; write one binder or `_` " ++
+  "for each payload value"
+#guard fails (arms "Op::Load => 0, _ => 0") .S007 3 20
+#guard fails (arms "Op::Add(_) => 0, _ => 0") .S007 3 20
+#guard message (arms "Op::Add(_) => 0, _ => 0") ==
+  "the variant `Add` has 0 payload value(s), but the pattern has 1; write one binder or `_` " ++
+  "for each payload value"
+
+/-! The first error by position wins: a pattern before an error in an earlier arm value. -/
+#guard fails (arms "Op::Load => Op::Add(1), _ => 0") .S007 3 20
+#guard fails (arms "Op::Add => Op::Add(1), Op::Load => 0") .S007 3 31
+
+/-!
+A `match` in a static position: its scrutinee and its arm values are static positions. A binder
+is a plain local, not a resource, so a static position can name it. It is not a mutable root.
+-/
+#guard ok (pair ++ "module M() {\nreg r: UInt[8] = " ++
+  "match (Op::Load(1)) { Op::Load(v) => v, _ => 0 };\n}")
+#guard fails (pair ++ "module M() {\ninput a: Op;\nreg r: UInt[8] = match (a) { _ => 0 };\n}")
+  .S005 4 25
+#guard fails (pair ++ "module M() {\ninput a: UInt[8];\n" ++
+  "reg r: UInt[8] = match (Op::Add) { _ => a };\n}")
+  .S005 4 41
+#guard ok (pair ++ "module M() {\ninput a: Op;\nlet r = match (a) { Op::Load(v) => v, _ => 0 };\n}")
+#guard fails (pair ++ "fn g(mut y: UInt[8]) -> UInt[8] { return y; }\n" ++
+  "fn f(x: Op) -> UInt[8] { return match (x) { Op::Load(v) => g(v), _ => 0 }; }") .S008 3 62
+
+/-!
 The walk visits each index base once. A chain of indices at the default syntax depth, in an
 unused function, thus stays linear.
 -/

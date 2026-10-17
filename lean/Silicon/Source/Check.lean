@@ -72,6 +72,9 @@ at the name. These are the static positions:
   `E::V` without a call has none. The error is at the start of the path (section 5.6). An enum
   has no parameters, so its name takes no index. Only `Elab` checks a call `E(args)` of the
   enum type (`S010`).
+- A variant pattern `E::V(b, _)` has one binder or `_` for each payload type of `V`. The error
+  is at the start of the path. A binder is a plain local: a static position can name it, and it
+  is no mutable root.
 
 A call through a function value, a local, or a `const` has no known arity. `Elab` checks it in
 pass 5: `S007` for a function value, else `S010`. The type of a `type` item and of a local is
@@ -271,6 +274,19 @@ def payloads (pos : Pos) (x y : Ident) (want got : Nat) : M Unit :=
   else report .S007 pos (s!"the variant `{x.name}::{y.name}` has {want} payload value(s), but " ++
     s!"the constructor has {got}; pass one value for each payload type")
 
+/-!
+`S007` at the start of a variant pattern whose binders and `_` do not match the payload values
+of its variant.
+-/
+def pattern : Resolve.Pattern → M Unit
+  | .variant p _ y i j bs => do
+    let some (.enum ns) := (← read)[i]? | pure ()
+    let n := ns.getD j 0
+    unless n == bs.length do
+      report .S007 p (s!"the variant `{y.name}` has {n} payload value(s), but the pattern has " ++
+        s!"{bs.length}; write one binder or `_` for each payload value")
+  | _ => pure ()
+
 /-! A name that is not a type. A resource in a static position is `S005`. -/
 def name (static : Bool) (pos : Pos) (n : String) : Ref → M Unit
   | .local id => do
@@ -439,6 +455,14 @@ mutual
       if let some (.enum ns) := (← read)[i]? then payloads p x y (ns.getD j 0) xs.length
       for a in xs do let _ ← visit static false a
       return none
+    | .«match» _ x as => do
+      let _ ← visit static false x
+      for a in as do arm static a
+      return none
+
+  /-- An arm: the arity of its pattern, then its value. A binder is a plain local. -/
+  def arm (static : Bool) : Resolve.Arm → M Unit
+    | .mk q v => do pattern q; let _ ← visit static false v
 
   def typeExpr : Resolve.TypeExpr → M Unit
     | .name p n r => do
