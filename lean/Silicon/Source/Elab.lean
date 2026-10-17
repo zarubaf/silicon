@@ -195,14 +195,18 @@ instance : Runs EM := {}
 
 /-!
 A design: the done instantiations in the order they finish, and the top among them. `fields`
-gives the fields with a leaf of each struct type of the design: the number, the name, and the
-type of each, in declaration order. The lowering thus names the leaves of a record, and it skips
-an empty field with no step.
+gives the named parts with a leaf of each struct type and each enum type of the design. It gives
+the number, the name, and the type of each part, in packing order. The lowering thus names the
+leaves of a record and of an enum, and it skips an empty part with no step.
 -/
 structure Design where
   insts : Array Inst
   top : Nat
   fields : Ty → Option (Array (Nat × String × Ty))
+
+/-! The named parts `ps` with a leaf (`Specs.parts`), each with its number. -/
+def leafParts (ps : Array (String × Ty)) : Array (Nat × String × Ty) :=
+  ps.zipIdx.filterMap fun ((x, u), k) => if u.info.leaves = 0 then none else some (k, x, u)
 
 /-!
 The fields with a leaf of each done struct specialization, by its number. `elaborate` makes the
@@ -211,13 +215,16 @@ table once, from the fields that each specialization paid for when it completed.
 def leafFields (specs : Specs) : Array (Option (Array (Nat × String × Ty))) :=
   specs.entries.map fun e => do
     let .done t _ := e.state | none
-    return (← specs.parts t).zipIdx.filterMap fun ((x, u), k) =>
-      if u.info.leaves = 0 then none else some (k, x, u)
+    return leafParts (← specs.parts t)
 
-/-! The fields with a leaf of the struct type `t` in the table `table`. -/
-def fieldsOf (table : Array (Option (Array (Nat × String × Ty)))) :
+/-!
+The named parts with a leaf of the type `t`. A struct type reads them from the table `table`.
+An enum type reads them from its done entry in `specs`, with no walk.
+-/
+def fieldsOf (specs : Specs) (table : Array (Option (Array (Nat × String × Ty)))) :
     Ty → Option (Array (Nat × String × Ty))
   | .struct k .. => table[k]?.join
+  | t@(.enum ..) => (specs.parts t).map leafParts
   | _ => none
 
 def modifyBody (f : Body → Body) : EM Unit :=
@@ -578,8 +585,8 @@ def observe (budget : Budget) (items : Array Resolve.Item) (digest : String → 
       let tvs ← arguments n pos top xs
       return (← instantiate n pos top tvs).2
     let (k, s) ← go.run { digest, work := { body := { domain := none } } }
-    let table := leafFields (← get).specs
-    return ⟨s.done, k, fieldsOf table⟩
+    let specs := (← get).specs
+    return ⟨s.done, k, fieldsOf specs (leafFields specs)⟩
 
 /-! The elaboration of the top selection, without the records. -/
 def elaborate (budget : Budget) (items : Array Resolve.Item) (digest : String → String)

@@ -787,4 +787,108 @@ With `P` 0, a conversion makes no core node: the unpack is `b`, and the pack is 
   "    (let a$tag (bits 2) (add u (const 2 1)))",
   "    (let b (bits 2) a$tag)"]
 
+/-!
+An enum port, register, wire, and child port has the two leaves `tag` and `payload`, in this
+order, and an empty payload gives only `tag` (section 7.5). A register resets each leaf to that
+leaf of its reset value. An enum field of a record adds its two leaves at its place.
+-/
+def enumPorts : String :=
+  "enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }\nenum F: UInt[1] { A = 0, B = 1 }\n" ++
+  "struct S { f: Op, g: Bool }\nmodule C() {\n  input a: Op;\n  output b: Op;\n" ++
+  "  b := a;\n}\nmodule M() {\n  input i: Op;\n  input s: S;\n  input x: UInt[8];\n" ++
+  "  input z: F;\n  output o: Op;\n  output q: Op;\n  output t: S;\n  output y: F;\n" ++
+  "  reg r: Op = Op::Load(7);\n  r := Op::Load(x);\n  wire w: Op;\n  w := i;\n" ++
+  "  instance c = C();\n  c.a := r;\n  o := w;\n  q := c.b;\n  t := s;\n  y := z;\n}\n"
+#guard sil enumPorts "M" == text [
+  "(design M",
+  "  (module C",
+  "    (input clock$0clk clock)",
+  "    (input clock$0rst (bits 1))",
+  "    (input a$tag (bits 2))",
+  "    (input a$payload (bits 8))",
+  "    (output b$tag (bits 2))",
+  "    (output b$payload (bits 8))",
+  "    (assign b$payload a$payload)",
+  "    (assign b$tag a$tag))",
+  "  (module M",
+  "    (input clock$0clk clock)",
+  "    (input clock$0rst (bits 1))",
+  "    (input i$tag (bits 2))",
+  "    (input i$payload (bits 8))",
+  "    (input s$f$tag (bits 2))",
+  "    (input s$f$payload (bits 8))",
+  "    (input s$g (bits 1))",
+  "    (input x (bits 8))",
+  "    (input z$tag (bits 1))",
+  "    (output o$tag (bits 2))",
+  "    (output o$payload (bits 8))",
+  "    (output q$tag (bits 2))",
+  "    (output q$payload (bits 8))",
+  "    (output t$f$tag (bits 2))",
+  "    (output t$f$payload (bits 8))",
+  "    (output t$g (bits 1))",
+  "    (output y$tag (bits 1))",
+  "    (reg r$payload (bits 8) clock$0clk (reset sync clock$0rst (const 8 7)))",
+  "    (reg r$tag (bits 2) clock$0clk (reset sync clock$0rst (const 2 1)))",
+  "    (inst c C (clock$0clk clock$0clk) (clock$0rst clock$0rst) (a$tag r$tag) " ++
+    "(a$payload r$payload))",
+  "    (let w$payload (bits 8) i$payload)",
+  "    (let w$tag (bits 2) i$tag)",
+  "    (next r$payload x)",
+  "    (next r$tag (const 2 1))",
+  "    (assign o$payload w$payload)",
+  "    (assign o$tag w$tag)",
+  "    (assign q$payload c.b$payload)",
+  "    (assign q$tag c.b$tag)",
+  "    (assign t$f$payload s$f$payload)",
+  "    (assign t$f$tag s$f$tag)",
+  "    (assign t$g s$g)",
+  "    (assign y$tag z$tag)))"]
+
+/-!
+An enum memory word packs its leaves, `tag` in the low bits (section 7.6). The `data` of the
+response is a reference to the word, so its leaves are `extract` nodes at the offsets 0 and `W`.
+-/
+def enumMem : String :=
+  "enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }\nmodule M() {\n  input a: UInt[2];\n" ++
+  "  input c: Bool;\n  input d: Op;\n  output o: Op;\n  output t: UInt[10];\n" ++
+  "  mem m: [Op; 4];\n  let k = read_port(m, a, c);\n  write_port(m, a, d, c);\n" ++
+  "  o := k.data;\n  t := reinterpret(UInt[10], k.data);\n}\n"
+#guard sil enumMem "M" == text [
+  "(design M",
+  "  (module M",
+  "    (input clock$0clk clock)",
+  "    (input clock$0rst (bits 1))",
+  "    (input a (bits 2))",
+  "    (input c (bits 1))",
+  "    (input d$tag (bits 2))",
+  "    (input d$payload (bits 8))",
+  "    (output o$tag (bits 2))",
+  "    (output o$payload (bits 8))",
+  "    (output t (bits 10))",
+  "    (reg m$0rdata (bits 10) clock$0clk (reset sync clock$0rst (const 10 0)))",
+  "    (reg m$0rvalid (bits 1) clock$0clk (reset sync clock$0rst (const 1 0)))",
+  "    (mem m (bits 10) 4 clock$0clk)",
+  "    (let k$data$payload (bits 8) (extract m$0rdata 2 8))",
+  "    (let k$data$tag (bits 2) (extract m$0rdata 0 2))",
+  "    (let k$valid (bits 1) m$0rvalid)",
+  "    (let m$0raddr (bits 2) a)",
+  "    (let m$0ren (bits 1) c)",
+  "    (next m$0rdata (mux m$0ren (read m m$0raddr) m$0rdata))",
+  "    (next m$0rvalid (and m$0ren (const 1 1)))",
+  "    (write m 0 a (concat d$payload d$tag) (and c (xor clock$0rst (const 1 1))))",
+  "    (assign o$payload k$data$payload)",
+  "    (assign o$tag k$data$tag)",
+  "    (assign t (concat k$data$payload k$data$tag))))"]
+
+/-! An enum field of a word starts at the offset of its field, here 1 after the `Bool`. -/
+def enumFieldMem : String :=
+  "enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }\nstruct S { b: Bool, f: Op }\n" ++
+  "module M() {\n  input c: Bool;\n  input d: S;\n  output o: S;\n  mem m: [S; 2];\n" ++
+  "  let k = read_port(m, 0, c);\n  write_port(m, 0, d, c);\n  o := k.data;\n}\n"
+#guard ((sil enumFieldMem "M").splitOn "\n").filter (·.startsWith "    (let k$data") == [
+  "    (let k$data$b (bits 1) (extract m$0rdata 0 1))",
+  "    (let k$data$f$payload (bits 8) (extract m$0rdata 3 8))",
+  "    (let k$data$f$tag (bits 2) (extract m$0rdata 1 2))"]
+
 end Silicon.Source.Test.Flatten

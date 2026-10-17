@@ -14,7 +14,8 @@ output values to a source output line.
 These rules settle the open points of the spec:
 
 - Schema order is the port layout of `Source.Layout`, without the clock. Each leaf of a port
-  has one entry.
+  has one entry. An enum port thus has the entries `op.tag` and `op.payload`, or only `op.tag`
+  when its payload is empty.
 - An input line lists the reset `d$0rst` of the domain `d` first. A combinational top has none.
 - The reset is a `Bool` value. The clock has no entry.
 - An input value has the decimal forms of a core value. A `UInt` value and the magnitude of an

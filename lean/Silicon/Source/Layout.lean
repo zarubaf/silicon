@@ -14,16 +14,17 @@ stable.
 
 `foldLeaves` streams the leaves of a type in packing order: it makes no list of them. A caller
 thus charges each leaf before it makes the leaf. A part without a leaf takes one step, and a
-struct visits only its fields with a leaf. A port, a register, and a `:=` binding all take their
-leaves from it.
+struct visits only its fields with a leaf. An enum has the two leaves `tag` and `payload`, or
+only `tag` when its payload is empty (section 5.1). A port, a register, a wire, a child port, a
+memory word, and a `:=` binding all take their leaves from it.
 -/
 namespace Silicon.Source.Layout
 
 open Names Eval
 
 /-!
-The fields with a leaf of a struct type, in declaration order: the number of each field, its
-name, and its type (`Elab.Design.fields`).
+The named parts with a leaf of a struct type or an enum type, in packing order. Each has its
+number, its name, and its type (`Elab.Design.fields`). An enum has the parts `tag` and `payload`.
 -/
 abbrev Fields := Ty → Option (Array (Nat × String × Ty))
 
@@ -51,8 +52,8 @@ where
 Runs `f` on each leaf of the part of the type `t` at the path `p` in packing order, from the
 start value `b`. `x` is the source of the part. `sub` gives the source of its element `k` of the
 type `u` with the leaf field `fd`. `f` gets the source of each leaf. The bound `d` is the
-depth of `t`. A part without a leaf takes one step, and a struct visits only its fields with a
-leaf. A struct type without its fields in `fs` gives `bad`.
+depth of `t`. A part without a leaf takes one step, and a struct or an enum visits only its parts
+with a leaf. A struct or an enum type without its parts in `fs` gives `bad`.
 -/
 def foldLeaves [Monad m] (fs : Fields) (sub : α → Field → Nat → Ty → α)
     (f : β → Leaf → α → m β) (bad : β → Ty → m β) : Nat → Path → Ty → α → β → m β
@@ -72,7 +73,7 @@ def foldLeaves [Monad m] (fs : Fields) (sub : α → Field → Nat → Ty → α
         let u := ts.getD k .unit
         b ← foldLeaves fs sub f bad d (p.push (.elem k)) u (sub x (.elem k) k u) b
       return b
-    | .struct .. => do
+    | .struct .. | .enum .. => do
       let some nfs := fs t | bad b t
       let mut b := b
       for (k, y, u) in nfs do
