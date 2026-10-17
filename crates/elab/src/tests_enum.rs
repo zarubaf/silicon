@@ -397,6 +397,48 @@ fn hw_units(body: &str) -> u64 {
     total(&hw_enum(body), "M")
 }
 
+/// A read of an aggregate port, wire, or child output makes a value of the depth 3 of its zero
+/// (section 5.5), so it checks this depth at the read. An unread port makes no value.
+#[test]
+fn a_read_of_an_aggregate_checks_its_depth() {
+    let at = |src: &str, depth: u64| crate::tests_elab::elab_only(src, "M", 1 << 20, depth);
+    let read = hw_enum("  let a = e;\n");
+    assert_eq!(at(&read, 2), "S015 8:11");
+    assert!(at(&read, 3).starts_with("ok"));
+    let join = hw_enum("  let a = if (c) { e } else { e };\n");
+    assert_eq!(at(&join, 2), "S015 8:20");
+    assert!(at(&join, 3).starts_with("ok"));
+    assert!(at(&hw_enum(""), 2).starts_with("ok"));
+    // The depth comes before the operand check of `==`.
+    assert_eq!(at(&hw_enum("  let a = e == e;\n"), 2), "S015 8:11");
+    assert_eq!(at(&hw_enum("  let a = e == e;\n"), 3), "S010 8:11");
+    let wire = |body: &str| {
+        format!(
+            "struct S {{ a: UInt[8] }}\nmodule M() {{\n  input c: Bool;\n  input s: S;\n  \
+             input t: S;\n  wire w: S;\n  output o: S;\n{body}}}\n"
+        )
+    };
+    assert_eq!(at(&wire("  w := s;\n  o := w;\n"), 2), "S015 8:8");
+    assert!(at(&wire("  w := s;\n  o := w;\n"), 3).starts_with("ok"));
+    assert_eq!(at(&wire("  o := w;\n  w := s;\n"), 2), "S015 8:3");
+}
+
+/// The binder of an arm checks the depth of its value before the size limit: the payload
+/// `[S; 1]` has the depth 3, and its value the depth 4.
+#[test]
+fn a_binder_of_an_arm_checks_its_depth() {
+    let src = "struct S { a: UInt[8] }\nenum E: UInt[1] { A = 0, B([S; 1]) = 1 }\nmodule M() {\n  \
+               input u: UInt[9];\n  output o: UInt[8];\n  \
+               o := match (reinterpret(E, u)) { E::B(x) => x[0].a, _ => 0 };\n}\n";
+    let at = |depth: u64| crate::tests_elab::elab_only(src, "M", 1 << 20, depth);
+    assert_eq!(at(3), "S015 6:41");
+    assert!(at(4).starts_with("ok"));
+    let deep = "struct S { a: UInt[8] }\nstruct T { s: S }\nenum E: UInt[1] { A = 0, B(T) = 1 }\n";
+    let stat = "match (reinterpret(E, UInt[9](1))) { E::B(x) => x.s.a, _ => 0 }";
+    assert_eq!(out(deep, stat, 1 << 20, 4), "(uint 8 0)");
+    assert_eq!(out(deep, stat, 1 << 20, 3), "S015 1:43");
+}
+
 /// A hardware constructor charges as a static one: the payload values, their copies, and their
 /// typed uses. Then the size of the result charges from the stored sizes. The pack node has no
 /// charge, because the lowering charges each core node of a pack.
