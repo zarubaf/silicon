@@ -58,7 +58,7 @@ pub(crate) fn run(items: &[Item]) -> Result<Table, Vec<Error>> {
 
 /// Resolves the names of an expression in the file scope of `resolved`. Returns the map from
 /// the id of each name node of the expression to its target and the id of each call node to
-/// its call site, or the `S003` errors.
+/// its call site, or the errors of the first pass with an error.
 pub(crate) fn run_expr(resolved: &Resolved, expr: &Expr) -> Result<ExprTable, Vec<Error>> {
     let mut walker = Walker {
         decls: resolved.decls.clone(),
@@ -68,7 +68,11 @@ pub(crate) fn run_expr(resolved: &Resolved, expr: &Expr) -> Result<ExprTable, Ve
         ..Walker::default()
     };
     walker.expr(expr);
-    let mut errors = walker.unresolved;
+    let mut errors = if walker.duplicates.is_empty() {
+        walker.unresolved
+    } else {
+        walker.duplicates
+    };
     if errors.is_empty() {
         let extra = walker.decls.split_off(resolved.decls.len());
         return Ok((walker.names, walker.calls, walker.variants, extra));
