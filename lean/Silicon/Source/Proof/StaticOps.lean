@@ -35,6 +35,10 @@ gets no shared mark, so the hardware nodes read the constant directly.
 
 The rows of a hardware `match` take a constant selector and the key constant of `keyLit`. A
 select is the `icmp eq` node of `Eval.matchHw`, and the static `match` compares `Value.key`.
+The row of `rest` takes the selects as constants. `lowerMatch` builds its `or` chain in a loop
+(`ok_rest`), and the claim about `lower` holds for at most 60 selects. Then the chain stays
+below the height 64, so the height rule binds no temporary. The statements take the selects as
+given: no proof here ties them to the walk of `Eval.matchHw` (#286).
 -/
 namespace Silicon.Source.StaticOps
 
@@ -387,6 +391,31 @@ def SelectBoolAgrees : Prop :=
     (∀ q, ev vals mems (e q) = BitVec.ofBool (Value.key (.bool b) == some k)) ∧
       ∀ p, Lowers (Hw.mk p .bool (.bin .eq) [litHw p .bool (.bool b), keyLit p .bool k]) 3
         (e (cpos p)).erase
+
+/-! The `or` chain of constant bits over the row `e`, in list order. -/
+def orRow (q : Core.Pos) (e : Ex ctx 1) (bs : List Bool) : Ex ctx 1 :=
+  bs.foldl (fun e b => .bin q .or (by decide) e (.const q 1 (bit b))) e
+
+/-! The node `rest` of `Eval.matchHw` over the constant selects `bs`. -/
+def restHw (p : Pos) (bs : List Bool) : Hw :=
+  Hw.mk p .bool .rest (bs.map fun b => litHw p .bool (.bool b))
+
+/-! The row of `rest`: `xor (or (... (or s_0 s_1) ...) s_(n-1)) (const 1 1)`. -/
+def restRow (q : Core.Pos) : List Bool → Ex ctx 1
+  | [] => .const q 1 1
+  | b :: bs => .bin q .xor (by decide) (orRow q (.const q 1 (bit b)) bs) (.const q 1 1)
+
+/--
+The select of the arm `_` of a hardware `match`: the row of `rest` over the constant selects `bs`
+of the keys. The static `match` takes the arm `_` when no key matches, thus when no select is 1.
+The claim about `lower` holds for at most 60 selects, as for the rows by leaf. Then the `or`
+chain stays below the height 64, so `lowerMatch` binds no temporary.
+-/
+def RestAgrees : Prop :=
+  ∀ (bs : List Bool), bs ≠ [] → ∀ {ctx} (vals : Valuation ctx) (mems : Memories ctx),
+    (∀ q, ev vals mems (restRow q bs) = BitVec.ofBool !(bs.any id)) ∧
+      (bs.length ≤ 60 →
+        ∀ p, Lowers (restHw p bs) (2 * bs.length + 1) (restRow (ctx := ctx) (cpos p) bs).erase)
 
 /-! Facts about the lift and the operands. -/
 
@@ -796,18 +825,122 @@ theorem static_select_bool_agrees : SelectBoolAgrees := by
       simp +decide [Core.Semantics.evalExpr, Core.Semantics.evalPred, Value.key]
   · lowers [keyLit]
 
+/-! The proofs of the rows of a hardware `match`. -/
+
+private theorem eval_orRow {ctx} (vals : Valuation ctx) (mems : Memories ctx) (q : Core.Pos) :
+    ∀ (bs : List Bool) (e : Ex ctx 1) (b : Bool), ev vals mems e = BitVec.ofBool b →
+      ev vals mems (orRow q e bs) = BitVec.ofBool (b || bs.any id)
+  | [], _, b, he => by simpa [orRow] using he
+  | c :: bs, e, b, he => by
+    simp only [orRow, List.foldl_cons, List.any_cons]
+    rw [← orRow, eval_orRow vals mems q bs _ (b || c)]
+    · simp [Bool.or_assoc]
+    · cases b <;> cases c <;>
+        simp [Core.Semantics.evalExpr, Core.Semantics.evalOp, he] <;> rfl
+
+private theorem erase_orRow {ctx} (q : Core.Pos) : ∀ (bs : List Bool) (e : Ex ctx 1),
+    (orRow q e bs).erase =
+      bs.foldl (fun e b => .bin q .or e (.const q 1 (bit b))) e.erase
+  | [], _ => rfl
+  | b :: bs, e => by
+    simp only [orRow, List.foldl_cons]
+    rw [← orRow, erase_orRow q bs]
+    rfl
+
+private theorem const_bool (q : Core.Pos) (b : Bool) :
+    constOf q (.bool b) = pure (.const q 1 (bit b)) := rfl
+
+private theorem map_bounded (xs : List Hw) (b : Nat) (h : sizeOf xs < b) :
+    (Flatten.bounded xs b h).map (·.1) = xs := by
+  rw [Flatten.bounded, List.map_map]
+  exact List.attach_map_subtype_val xs
+
+open Spine in
+/-- The loop of `rest` over the selects after the first: one `or` node for each select. -/
+private theorem ok_rest {b : Nat} (p : Pos) (target : Names.Path)
+    (g : {x : Hw // sizeOf x < b} → Option Low → FM (ForInStep (Option Low)))
+    (hg : ∀ x lo, g x (some lo) = (do
+      let lo ← deep p target 1 false lo
+      Flatten.charge p 1
+      let r ← lower target false x.1
+      pure (.yield (some ⟨.bin (cpos p) .or lo.expr r.expr, none, max lo.height r.height + 1⟩)))) :
+    ∀ (bs : List Bool) (ys : List {x : Hw // sizeOf x < b}) (lo : Low) (h : Nat)
+      (st : Flatten.St) (Q : Option Low → Flatten.St → Prop),
+      ys.map (·.1) = bs.map (fun c => litHw p .bool (.bool c)) → lo.height ≤ h → 1 ≤ h →
+      h + bs.length < 64 → 2 * bs.length ≤ st.fuel →
+      (∀ lo', lo'.expr = bs.foldl (fun e c => .bin (cpos p) .or e (.const (cpos p) 1 (bit c)))
+          lo.expr → lo'.height ≤ h + bs.length →
+        Q (some lo') { st with fuel := st.fuel - 2 * bs.length }) →
+      Ok (forIn ys (some lo) g) st Q
+  | [], [], lo, h, st, Q, _, hl, _, _, _, hq => by
+    have hst : st = { st with fuel := st.fuel - 2 * 0 } := by simp
+    exact ok_pure (hst ▸ hq lo rfl (by simpa using hl))
+  | [], _ :: _, _, _, _, _, hv, _, _, _, _, _ => by simp at hv
+  | _ :: _, [], _, _, _, _, hv, _, _, _, _, _ => by simp at hv
+  | c :: bs, y :: ys, lo, h, st, Q, hv, hl, h1, hh, hf, hq => by
+    simp only [List.map_cons, List.cons.injEq] at hv
+    obtain ⟨hy, hv⟩ := hv
+    simp only [List.length_cons] at hh hf
+    rw [List.forIn_cons, hg, hy]
+    refine ok_bind (ok_bind (ok_deep (by omega) (ok_bind (ok_charge (by omega) ?_))))
+    refine ok_bind ((runs_litHw p .bool (.bool c) _ (const_bool _ c)).ok (by simp; omega)
+      fun r he hrh => ok_pure ?_)
+    refine ok_rest p target g hg bs ys _ (h + 1) _ Q hv (by simp; omega) (by omega) (by omega)
+      (by simp; omega) fun lo' he' hh' => ?_
+    rw [fuel_sub, fuel_sub]
+    have hx := hq lo' (by simpa [he] using he') (by simp; omega)
+    simp only [List.length_cons] at hx
+    rwa [show 2 * (bs.length + 1) = 1 + (1 + 2 * bs.length) by omega] at hx
+
+theorem static_rest_agrees : RestAgrees := by
+  intro bs hne ctx vals mems
+  obtain ⟨c, bs, rfl⟩ : ∃ c bs', bs = c :: bs' := by
+    cases bs with
+    | nil => exact absurd rfl hne
+    | cons c bs => exact ⟨c, bs, rfl⟩
+  refine ⟨fun q => ?_, fun hlen p => ?_⟩
+  · have := eval_orRow vals mems q bs (.const q 1 (bit c)) c (by cases c <;> rfl)
+    simp only [restRow, Core.Semantics.evalExpr, Core.Semantics.evalOp, this, List.any_cons,
+      id_eq]
+    cases (c || bs.any id) <;> rfl
+  · intro target root st hf
+    simp only [List.length_cons] at hlen hf
+    simp only [restHw, Hw.mk]
+    rw [lower.eq_def]
+    simp only [lowerMatch]
+    change Spine.Ok _ st fun (lo : Low) _ => lo.expr = _
+    generalize hL : Flatten.bounded _ _ _ = L
+    have hm : L.map (·.1) = _ := hL ▸ map_bounded _ _ _
+    obtain ⟨y, ys, rfl, hy, hv⟩ : ∃ y ys, L = y :: ys ∧ y.1 = litHw p .bool (.bool c) ∧
+        ys.map (·.1) = bs.map fun b => litHw p .bool (.bool b) := by
+      cases L with
+      | nil => simp at hm
+      | cons y ys => simp only [List.map_cons, List.cons.injEq] at hm; exact ⟨y, ys, rfl, hm⟩
+    refine Spine.ok_bind (Spine.ok_bind (Spine.ok_charge (by omega) (Spine.ok_bind ?_)))
+    rw [List.forIn_cons]
+    refine Spine.ok_bind (Spine.ok_bind ?_)
+    rw [hy]
+    refine (runs_litHw p .bool (.bool c) _ (const_bool _ c)).ok (by simp; omega)
+      fun r he hrh => Spine.ok_pure ?_
+    refine ok_rest p target _ (fun _ _ => rfl) bs ys r 1 _ _ hv hrh (Nat.le_refl _)
+      (by omega) (by simp; omega) fun lo' he' hh' => ?_
+    refine Spine.ok_bind (Spine.ok_deep (by omega) (Spine.ok_pure
+      (Spine.ok_deep (by simp; omega) ?_)))
+    simp [restRow, erase_orRow, he', he, Core.Typed.Expr.erase]
+
 /-! Each finite static operation agrees with its core row, and `lower` emits that row. -/
 theorem static_op_agrees :
     BinAgrees ∧ CmpAgrees ∧ BoolCmpAgrees ∧ LogicAgrees ∧ InvAgrees ∧ NegAgrees ∧
       NotAgrees ∧ ShiftAgrees ∧ ResizeSameAgrees ∧ ResizeTruncAgrees ∧ ResizeZextAgrees ∧
       ResizeSextAgrees ∧ ReinterpretAgrees ∧ EqLeavesAgrees ∧ NeLeavesAgrees ∧ IfLeafAgrees ∧
-      UnpackEnumAgrees ∧ BinderLeafAgrees ∧ BinderBoolAgrees ∧ SelectAgrees ∧ SelectBoolAgrees :=
+      UnpackEnumAgrees ∧ BinderLeafAgrees ∧ BinderBoolAgrees ∧ SelectAgrees ∧ SelectBoolAgrees ∧
+      RestAgrees :=
   ⟨static_bin_agrees, static_cmp_agrees, static_bool_cmp_agrees, static_logic_agrees,
     static_inv_agrees, static_neg_agrees, static_not_agrees, static_shift_agrees,
     static_resize_same_agrees, static_resize_trunc_agrees, static_resize_zext_agrees,
     static_resize_sext_agrees, static_reinterpret_agrees, static_eq_leaves_agrees,
     static_ne_leaves_agrees, static_if_leaf_agrees, static_unpack_enum_agrees,
     static_binder_leaf_agrees, static_binder_bool_agrees, static_select_agrees,
-    static_select_bool_agrees⟩
+    static_select_bool_agrees, static_rest_agrees⟩
 
 end Silicon.Source.StaticOps
