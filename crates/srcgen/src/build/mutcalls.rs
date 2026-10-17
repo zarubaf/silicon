@@ -174,9 +174,9 @@ impl Builder {
         let Some(inner) = pool.get(self.tape.index(pool.len())).copied().cloned() else {
             return Vec::new();
         };
-        // A fifth of the calls are receiver calls and a fifth are plain
+        // A quarter of the calls are receiver calls and a quarter are plain
         // calls by name, whatever function values exist.
-        let (callee, receiver) = match self.tape.below(5) {
+        let (callee, receiver) = match self.tape.below(6) {
             0 => (inner.name.clone(), true),
             1 => (inner.name.clone(), false),
             _ => self.mut_callee(&inner.name),

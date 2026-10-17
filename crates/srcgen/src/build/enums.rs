@@ -10,8 +10,8 @@
 //! all variants needs no `_`.
 //!
 //! Every draw of an enum form comes from the side tape (`on_side`). A form
-//! adds a statement or replaces a subexpression, so the main tape of a
-//! program keeps the statements that it would draw without enums.
+//! adds a statement, which leaves the draws of the main tape alone, or
+//! replaces a subexpression, which shifts the later draws of the main tape.
 
 use super::stat::{self, Reach};
 use super::{Builder, Built, Ctx, Names};
@@ -29,7 +29,7 @@ const WIDTHS: [u32; 7] = [1, 2, 3, 4, 8, 16, 64];
 const WIDE: u32 = 257;
 /// The most enum statements that a frame adds, and the most enum consts.
 const EXTRA_STMTS: u32 = 3;
-const EXTRA_CONSTS: u32 = 2;
+const EXTRA_CONSTS: u32 = 1;
 
 impl Builder {
     /// Runs `f` with the side tape as the tape. A form of enums draws from
@@ -66,7 +66,7 @@ impl Builder {
     /// The `enum` items `E<k>`. They come first, so everything can use them.
     pub(super) fn enums(&mut self) -> Built {
         self.on_side(|b| {
-            for k in 0..b.tape.below(ENUMS + 1) {
+            for k in 0..b.tape.below(ENUMS + 2).saturating_sub(1) {
                 let def = b.enum_def(k);
                 b.enums.push(def);
                 b.refresh()?;
@@ -139,7 +139,7 @@ impl Builder {
     pub(super) fn any_enum_value(&mut self, r: Reach<'_>) -> Option<(EnumDef, SExpr)> {
         self.on_side(|b| {
             let def = b.pick_enum()?;
-            let value = b.enum_value(&def, stat::DEPTH, r);
+            let value = b.enum_value(&def, r);
             Some((def, value))
         })
     }
@@ -164,7 +164,7 @@ impl Builder {
                     fns: 0,
                     envs: Some(&envs),
                 };
-                let value = b.enum_value(&def, stat::DEPTH, r);
+                let value = b.enum_value(&def, r);
                 note!(b, enum_consts);
                 let k = b.consts.len();
                 b.consts
@@ -195,8 +195,12 @@ impl Builder {
         regs: &mut Vec<(String, EnumDef)>,
     ) -> Built {
         self.on_side(|b| {
-            if b.tape.below(6) == 0 {
+            let kind = b.tape.below(8);
+            if kind == 0 {
                 b.enum_static_let(ctx, names, out)
+            } else if kind <= 2 {
+                b.enum_diagnostic(ctx, out);
+                Ok(())
             } else {
                 b.enum_hw_stmt(ctx, names, clocked, out, regs);
                 Ok(())
@@ -204,12 +208,37 @@ impl Builder {
         })
     }
 
+    /// `diagnostic("dK", value);` of an enum value, the bits of one, or a
+    /// finite match over one. The record shows the serialization of the
+    /// value (spec 7.1). A hardware enum is no static value, so none is a
+    /// name of a frame.
+    fn enum_diagnostic(&mut self, ctx: &Ctx, out: &mut Vec<Stmt>) {
+        let r = self.reach(ctx);
+        let value = match self.tape.below(8) {
+            0..=2 => self.finite_match(r),
+            3..=4 => self.pick_enum().map(|def| {
+                note!(self, enum_bits);
+                let value = self.enum_value(&def, r);
+                SExpr::Pack(def.name, Box::new(value))
+            }),
+            _ => self.pick_enum().map(|def| {
+                note!(self, enum_diagnostics);
+                self.enum_value(&def, r)
+            }),
+        };
+        if let Some(value) = value
+            && self.values(&value, &ctx.envs).is_some()
+        {
+            out.push(Stmt::Diagnostic(self.next_message(), value));
+        }
+    }
+
     /// `let s: E = value;` of a static enum value.
     fn enum_static_let(&mut self, ctx: &mut Ctx, names: &mut Names, out: &mut Vec<Stmt>) -> Built {
         let Some(def) = self.pick_enum() else {
             return Ok(());
         };
-        let value = self.enum_value(&def, stat::DEPTH, self.reach(ctx));
+        let value = self.enum_value(&def, self.reach(ctx));
         let (value, vs) = if let Some(vs) = self.values(&value, &ctx.envs) {
             (value, vs)
         } else {
@@ -233,7 +262,7 @@ impl Builder {
     /// A static value of the enum `def`: a constructor, the zero `E()`, or
     /// the bits of any tag through `reinterpret`. The caller is on the side
     /// tape.
-    pub(super) fn enum_value(&mut self, def: &EnumDef, depth: u32, r: Reach<'_>) -> SExpr {
+    pub(super) fn enum_value(&mut self, def: &EnumDef, r: Reach<'_>) -> SExpr {
         match self.tape.below(8) {
             5 => {
                 note!(self, enum_zeros);
@@ -241,35 +270,38 @@ impl Builder {
             }
             6 | 7 => {
                 note!(self, enum_unpacks);
-                let n = self.finite_value(&STy::UInt(def.data_bits()), 3);
+                // The edges of a wide type make long literals, so most values
+                // are small. The tag is in the low bits.
+                let d = def.data_bits();
+                let n = if d <= 20 || self.tape.below(4) != 0 {
+                    num_bigint::BigInt::from(self.tape.below(1 << d.min(20)))
+                } else {
+                    self.finite_value(&STy::UInt(d), 3)
+                };
                 let bits = self.finite_literal(n);
                 SExpr::Unpack(
                     def.name.clone(),
                     Box::new(SExpr::BitsConv(def.name.clone(), Box::new(bits))),
                 )
             }
-            _ => self.constructor(def, depth, r),
+            _ => self.constructor(def, r),
         }
     }
 
     /// `E::V` or `E::V(a, b)` of a random variant, with arguments that
     /// fit their payload types in each env.
-    fn constructor(&mut self, def: &EnumDef, depth: u32, r: Reach<'_>) -> SExpr {
+    fn constructor(&mut self, def: &EnumDef, r: Reach<'_>) -> SExpr {
         let at = self.tape.index(def.variants.len());
         let Some(v) = def.variants.get(at) else {
             return SExpr::Zero(def.name.clone(), Vec::new());
         };
         note!(self, enum_ctors);
-        let args = v
-            .payload
-            .iter()
-            .map(|t| self.payload_arg(*t, depth, r))
-            .collect();
+        let args = v.payload.iter().map(|t| self.payload_arg(*t, r)).collect();
         SExpr::Ctor(def.name.clone(), v.name.clone(), args)
     }
 
     /// An argument for a payload leaf of type `t`.
-    fn payload_arg(&mut self, t: Scalar, _depth: u32, r: Reach<'_>) -> SExpr {
+    fn payload_arg(&mut self, t: Scalar, r: Reach<'_>) -> SExpr {
         match r.envs {
             Some(envs) => self.fit(&vec![t; envs.len()], r, envs),
             None => match t {

@@ -10,7 +10,7 @@
 //! the whole `match` to a literal, so no binder remains.
 
 use super::stat::{Kind, Reach, int};
-use super::{Builder, MATCH_ODDS};
+use super::{Builder, MATCH_ODDS, NESTING};
 use crate::program::{EnumDef, Match, Pattern, Radix, SExpr, STy, Scalar, Variant};
 use num_bigint::BigInt;
 
@@ -27,18 +27,85 @@ impl Builder {
         depth: u32,
         r: Reach<'_>,
     ) -> Option<SExpr> {
-        if depth == 0 || self.side_below(MATCH_ODDS) != 1 {
+        if depth == 0
+            || self.match_level >= NESTING
+            || self.side_below(self.match_odds(MATCH_ODDS)) != 1
+        {
             return None;
         }
         self.on_side(|b| {
-            if b.match_level > 0 {
-                note!(b, nested_matches);
+            let m = b.in_match(|b| b.static_match(kind, depth - 1, r));
+            #[cfg(test)]
+            if let Some(SExpr::Match(x)) = &m {
+                b.tally(x, false);
             }
-            b.match_level += 1;
-            let m = b.static_match(kind, depth - 1, r);
-            b.match_level -= 1;
             m
         })
+    }
+
+    /// Builds the arms of a match one level deeper. A match inside an arm
+    /// counts as nested only if it is built.
+    pub(super) fn in_match<T>(
+        &mut self,
+        build: impl FnOnce(&mut Builder) -> Option<T>,
+    ) -> Option<T> {
+        let nested = self.match_level > 0;
+        self.match_level += 1;
+        #[cfg(test)]
+        {
+            self.stats.max_level = self.stats.max_level.max(self.match_level);
+        }
+        let m = build(self);
+        self.match_level -= 1;
+        if m.is_some() && nested {
+            note!(self, nested_matches);
+        }
+        m
+    }
+
+    /// Counts the forms of a built match for the coverage tests.
+    #[cfg(test)]
+    pub(super) fn tally<S, E>(&mut self, m: &Match<S, E>, hardware: bool) {
+        let variants = m
+            .arms
+            .iter()
+            .filter(|(p, _)| matches!(p, Pattern::Variant(..)))
+            .count();
+        let binders: usize = m
+            .arms
+            .iter()
+            .map(|(p, _)| match p {
+                Pattern::Variant(_, _, bs) => bs.iter().flatten().count(),
+                _ => 0,
+            })
+            .sum();
+        let complete = !m.arms.iter().any(|(p, _)| *p == Pattern::Wild);
+        let s = &mut self.stats;
+        s.max_arms = s.max_arms.max(m.arms.len());
+        let (all, enums, bound, whole) = if hardware {
+            (
+                &mut s.hw_matches,
+                &mut s.hw_enum_matches,
+                &mut s.hw_binders,
+                &mut s.hw_complete_matches,
+            )
+        } else {
+            (
+                &mut s.static_matches,
+                &mut s.static_enum_matches,
+                &mut s.static_binders,
+                &mut s.complete_matches,
+            )
+        };
+        *all += 1;
+        *enums += u32::from(variants > 0);
+        *bound += u32::from(binders > 0);
+        *whole += u32::from(complete);
+    }
+
+    /// The odds of a match: a match inside an arm is three times as likely.
+    pub(super) fn match_odds(&self, odds: u32) -> u32 {
+        if self.match_level > 0 { odds / 3 } else { odds }
     }
 
     /// The names of `r` that hold an enum value.
@@ -54,7 +121,6 @@ impl Builder {
 
     /// The caller is on the side tape.
     fn static_match(&mut self, kind: Kind, d: u32, r: Reach<'_>) -> Option<SExpr> {
-        note!(self, static_matches);
         match self.tape.below(5) {
             0 | 1 => Some(self.int_match(kind, d, r)),
             2 => Some(self.bool_match(kind, d, r)),
@@ -65,16 +131,11 @@ impl Builder {
                     (SExpr::Name(n.clone()), def.clone())
                 } else {
                     let def = self.pick_enum()?;
-                    (self.enum_value(&def, d, r), def)
+                    (self.enum_value(&def, r), def)
                 };
                 Some(self.enum_match(scrutinee, &def, kind, d, r))
             }
         }
-    }
-
-    /// An arm: an expression of `kind`.
-    fn arm(&mut self, kind: Kind, d: u32, r: Reach<'_>) -> SExpr {
-        self.sexpr(kind, d, r)
     }
 
     fn int_match(&mut self, kind: Kind, d: u32, r: Reach<'_>) -> SExpr {
@@ -88,10 +149,10 @@ impl Builder {
         let mut arms: Vec<(Pattern, SExpr)> = values
             .into_iter()
             .take(count)
-            .map(|v| (self.int_pattern(v), self.arm(kind, d, r)))
+            .map(|v| (self.int_pattern(v), self.sexpr(kind, d, r)))
             .collect();
         // An integer has no last value, so `_` is always there.
-        arms.push((Pattern::Wild, self.arm(kind, d, r)));
+        arms.push((Pattern::Wild, self.sexpr(kind, d, r)));
         SExpr::Match(matched(scrutinee, arms))
     }
 
@@ -110,16 +171,15 @@ impl Builder {
         let mut arms = Vec::new();
         match self.tape.below(3) {
             0 => {
-                note!(self, complete_matches);
                 for b in [first, !first] {
-                    arms.push((Pattern::Bool(b), self.arm(kind, d, r)));
+                    arms.push((Pattern::Bool(b), self.sexpr(kind, d, r)));
                 }
             }
             1 => {
-                arms.push((Pattern::Bool(first), self.arm(kind, d, r)));
-                arms.push((Pattern::Wild, self.arm(kind, d, r)));
+                arms.push((Pattern::Bool(first), self.sexpr(kind, d, r)));
+                arms.push((Pattern::Wild, self.sexpr(kind, d, r)));
             }
-            _ => arms.push((Pattern::Wild, self.arm(kind, d, r))),
+            _ => arms.push((Pattern::Wild, self.sexpr(kind, d, r))),
         }
         SExpr::Match(matched(scrutinee, arms))
     }
@@ -134,7 +194,6 @@ impl Builder {
         d: u32,
         r: Reach<'_>,
     ) -> SExpr {
-        note!(self, static_enum_matches);
         let listed = self.listed_variants(def);
         let wild = listed.len() < 1usize << def.tag_width;
         let mut arms = Vec::new();
@@ -149,14 +208,12 @@ impl Builder {
             };
             let body = match binders.first() {
                 Some(b) if kind == Kind::Bool && self.tape.flag() => SExpr::Name(b.clone()),
-                _ => self.arm(kind, d, inner),
+                _ => self.sexpr(kind, d, inner),
             };
             arms.push((pattern, body));
         }
         if wild {
-            arms.push((Pattern::Wild, self.arm(kind, d, r)));
-        } else {
-            note!(self, complete_matches);
+            arms.push((Pattern::Wild, self.sexpr(kind, d, r)));
         }
         SExpr::Match(matched(scrutinee, arms))
     }
@@ -169,7 +226,7 @@ impl Builder {
             vs.swap(i, j);
         }
         // Choice 0 lists the most variants, which can complete the match.
-        let keep = vs.len() - self.tape.index(vs.len() + 1).min(vs.len());
+        let keep = vs.len() - self.tape.index(vs.len() + 1);
         vs.truncate(keep);
         vs
     }
@@ -184,12 +241,11 @@ impl Builder {
             .payload
             .iter()
             .map(|t| {
-                if self.tape.flag() {
+                if self.tape.below(4) == 0 {
                     return None;
                 }
                 let name = format!("B{}", self.binders);
                 self.binders += 1;
-                note!(self, static_binders);
                 if *t == Scalar::Bool {
                     readable.push(name.clone());
                 }
@@ -214,7 +270,7 @@ impl Builder {
             .flat_map(|v| v.payload.iter().enumerate().map(move |(i, t)| (v, i, *t)))
             .collect();
         let (_, _, t) = *with.get(self.tape.index(with.len()))?;
-        let scrutinee = self.enum_value(&def, 1, r);
+        let scrutinee = self.enum_value(&def, r);
         let wild = def.variants.len() < 1usize << def.tag_width;
         let mut arms = Vec::new();
         for v in &def.variants {
@@ -229,10 +285,7 @@ impl Builder {
                 })
                 .collect();
             let body = match binders.iter().flatten().next() {
-                Some(b) => {
-                    note!(self, static_binders);
-                    SExpr::Name(b.clone())
-                }
+                Some(b) => SExpr::Name(b.clone()),
                 None => self.finite_constant(t),
             };
             arms.push((

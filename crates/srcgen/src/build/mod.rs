@@ -104,9 +104,9 @@ const MUT_HELPERS: u32 = 2;
 const NESTED_FNS: u32 = 3;
 const ENVS: usize = 64;
 /// A static `match` replaces one static expression in this many.
-const MATCH_ODDS: u32 = 30;
+const MATCH_ODDS: u32 = 56;
 /// A hardware `match` replaces one hardware expression in this many.
-const HW_MATCH_ODDS: u32 = 36;
+const HW_MATCH_ODDS: u32 = 40;
 const INSTANCES: u32 = 3;
 const CONTEXTS: usize = 3;
 /// The largest first argument (the recursion count) of a `comptime fn`
@@ -245,7 +245,8 @@ struct Hw {
 /// a `let`. It has one type in every env.
 #[derive(Clone, Debug)]
 struct HwEnum {
-    name: String,
+    /// A port, a register, a wire, a `let`, or a child output.
+    expr: HExpr,
     def: EnumDef,
     /// Whether the value is hardware, not a static binding.
     hardware: bool,
@@ -332,7 +333,7 @@ struct Sig {
     clocked: bool,
     inputs: Vec<(String, Ty)>,
     outputs: Vec<(String, Ty)>,
-    /// The enum ports of the top module.
+    /// The enum ports of the module.
     enum_inputs: Vec<(String, EnumDef)>,
     enum_outputs: Vec<(String, EnumDef)>,
 }
@@ -423,6 +424,10 @@ struct Stats {
     hw_binders: u32,
     hw_complete_matches: u32,
     hw_expr_scrutinees: u32,
+    /// The most arms of one match.
+    max_arms: usize,
+    /// The most matches open at once.
+    max_level: u32,
 }
 
 struct Builder {
