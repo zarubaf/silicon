@@ -1451,6 +1451,12 @@ each container node charges 1. A reference renders as the value that it stands f
 without a hardware leaf is its static zero, with no charge. Each container part with a hardware
 leaf charges 1. A handle renders by its kind and has no measure charge.
 -/
+-- A type value renders in its serialization form, also a handle type (section 7.1).
+#guard Eval.Agg.render {} (.static (.type (.reg (.uint 8)))) == "(type (reg (uint 8)))"
+#guard Eval.Agg.render {} (.static (.type (.inst 0 "C" #[.int 8]))) ==
+  "(type (instance root C ((int 8))))"
+#guard Eval.Agg.renderCharge {} (.static (.type (.mem .bool 4))) == 0
+
 def dIn (ports body : String) (items : String := "") : String :=
   items ++ "module M() {\n  input c: Bool;\n  input d: UInt[8];\n" ++ ports ++
     "  output o: UInt[8];\n" ++ body ++ "  o := 0;\n}\n"

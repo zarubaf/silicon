@@ -50,6 +50,11 @@ These rules settle the open points of the spec:
   `(enum <type> <tag> (uint P <payload>))`, without the payload when `P` is 0. Its size and its
   depth are those of a record with the parts `tag` and `payload`. In a message, its tag prints
   as its integer, because the value does not hold the name of a variant.
+- A handle type `Reg[T]`, `Wire[T]`, `Input[T]`, or `Mem[T, N]` holds its parts. It
+  serializes as `(reg <type>)`, `(wire <type>)`, `(input <type>)`, or `(mem <type> <N>)`.
+  `Instance[M, args]` holds the index of the module item, its name, and its converted arguments.
+  It serializes as `(instance root <name> (<argument> ...))`, the form of an `InstantiationId`.
+  Its size is 1 plus the sizes of its arguments, as for a struct type.
 - A text of a type or a value in a message has at most 1024 bytes and then `...`. Each integer
   in it is decimal up to 256 bits (section 5.5).
 -/
@@ -82,7 +87,9 @@ mutual
   flag `prelude` marks the prelude struct `ReadResponse` (section 7.1). An enum type is the
   index of its item, its name, and its metadata.
   `String` and `List[T]` are static types only. A function type is its parameter types with
-  their `mut` marks, and its result type.
+  their `mut` marks, and its result type. The handle types `Reg[T]`, `Wire[T]`, `Input[T]`,
+  `Mem[T, N]`, and `Instance[M, args]` are static types too (section 5.1). An instance type is
+  the index of its module item, its name, and its converted arguments.
   -/
   inductive Ty where
     | bool | nat | int
@@ -98,6 +105,11 @@ mutual
     | list (elem : Ty)
     | fn (params : Array TyParam) (ret : Ty)
     | enum (item : Nat) (name : String) (info : Meta)
+    | reg (data : Ty)
+    | wire (data : Ty)
+    | input (data : Ty)
+    | mem (word : Ty) (depth : Nat)
+    | inst (item : Nat) (name : String) (args : Array Value)
 
   /-- A parameter type of a function type, with its `mut` mark. -/
   inductive TyParam where
@@ -145,6 +157,9 @@ mutual
       a == b && i == j && Value.beqs xs ys && decide (m = n) && e == f
     | .fn ⟨ps⟩ r, .fn ⟨qs⟩ s => TyParam.beqs ps qs && Ty.beq r s
     | .enum a i m, .enum b j n => a == b && i == j && decide (m = n)
+    | .reg s, .reg t | .wire s, .wire t | .input s, .input t => Ty.beq s t
+    | .mem s n, .mem t m => Ty.beq s t && n == m
+    | .inst a i ⟨xs⟩, .inst b j ⟨ys⟩ => a == b && i == j && Value.beqs xs ys
     | _, _ => false
 
   def Ty.beqs : List Ty → List Ty → Bool
@@ -192,19 +207,33 @@ mutual
       cases b <;> simp [Ty.beq] at h ⊢
       exact Ty.eq_of_beq _ _ h
     | .tuple ⟨xs⟩, b, h => by
-      rcases b with _ | _ | _ | _ | _ | _ | _ | _ | ⟨⟨ys⟩⟩ | ⟨_, _, ⟨ys⟩, _, _⟩ | _ | _ | _ | _ <;>
+      rcases b with _ | _ | _ | _ | _ | _ | _ | _ | ⟨⟨ys⟩⟩ | ⟨_, _, ⟨ys⟩, _, _⟩ | _ | _ | _ | _
+        | _ | _ | _ | _ | ⟨_, _, ⟨ys⟩⟩ <;>
         simp [Ty.beq] at h ⊢
       rw [Ty.eqs_of_beqs _ _ h]
     | .struct _ _ ⟨xs⟩ _ _, b, h => by
-      rcases b with _ | _ | _ | _ | _ | _ | _ | _ | ⟨⟨ys⟩⟩ | ⟨_, _, ⟨ys⟩, _, _⟩ | _ | _ | _ | _ <;>
+      rcases b with _ | _ | _ | _ | _ | _ | _ | _ | ⟨⟨ys⟩⟩ | ⟨_, _, ⟨ys⟩, _, _⟩ | _ | _ | _ | _
+        | _ | _ | _ | _ | ⟨_, _, ⟨ys⟩⟩ <;>
         simp [Ty.beq] at h ⊢
       exact ⟨h.1.1.1.1, h.1.1.1.2, by rw [Value.eqs_of_beqs _ _ h.1.1.2], h.1.2, h.2⟩
     | .fn ⟨ps⟩ _, b, h => by
-      rcases b with _ | _ | _ | _ | _ | _ | _ | _ | _ | _ | _ | _ | ⟨⟨qs⟩, _⟩ | _ <;>
+      rcases b with _ | _ | _ | _ | _ | _ | _ | _ | _ | _ | _ | _ | ⟨⟨qs⟩, _⟩ | _
+        | _ | _ | _ | _ | _ <;>
         simp [Ty.beq] at h ⊢
       exact ⟨by rw [TyParam.eqs_of_beqs _ _ h.1], Ty.eq_of_beq _ _ h.2⟩
     | .enum .., b, h => by
       cases b <;> simp_all [Ty.beq]
+    | .reg s, b, h | .wire s, b, h | .input s, b, h => by
+      cases b <;> simp [Ty.beq] at h ⊢
+      exact Ty.eq_of_beq _ _ h
+    | .mem s n, b, h => by
+      cases b <;> simp [Ty.beq] at h ⊢
+      exact ⟨Ty.eq_of_beq _ _ h.1, h.2⟩
+    | .inst _ _ ⟨xs⟩, b, h => by
+      rcases b with _ | _ | _ | _ | _ | _ | _ | _ | _ | _ | _ | _ | _ | _
+        | _ | _ | _ | _ | ⟨_, _, ⟨ys⟩⟩ <;>
+        simp [Ty.beq] at h ⊢
+      exact ⟨h.1.1, h.1.2, by rw [Value.eqs_of_beqs _ _ h.2]⟩
 
   theorem Ty.eqs_of_beqs : ∀ xs ys : List Ty, Ty.beqs xs ys = true → xs = ys
     | [], ys, h => by cases ys <;> simp_all [Ty.beqs]
@@ -263,6 +292,8 @@ mutual
     | .struct _ _ ⟨xs⟩ _ _ => by simp [Ty.beq, Value.beqs_self xs]
     | .fn ⟨ps⟩ r => by simp [Ty.beq, TyParam.beqs_self ps, Ty.beq_self r]
     | .enum .. => by simp [Ty.beq]
+    | .reg s | .wire s | .input s | .mem s _ => by simp [Ty.beq, Ty.beq_self s]
+    | .inst _ _ ⟨xs⟩ => by simp [Ty.beq, Value.beqs_self xs]
 
   theorem Ty.beqs_self : ∀ xs : List Ty, Ty.beqs xs xs = true
     | [] => by simp [Ty.beqs]
@@ -298,7 +329,8 @@ instance : DecidableEq Value := fun a b =>
 def Ty.form : Ty → Nat
   | .bool => 0 | .nat => 1 | .int => 2 | .uint _ => 3 | .sint _ => 4 | .unit => 5 | .type => 6
   | .array .. => 7 | .tuple _ => 8 | .struct .. => 9 | .string => 10 | .list _ => 11
-  | .fn .. => 12 | .enum .. => 13
+  | .fn .. => 12 | .enum .. => 13 | .reg _ => 14 | .wire _ => 15 | .input _ => 16
+  | .mem .. => 17 | .inst .. => 18
 
 def Value.form : Value → Nat
   | .int _ => 0 | .bool _ => 1 | .str _ => 2 | .uint .. => 3 | .sint .. => 4 | .type _ => 5
@@ -310,7 +342,8 @@ An order of types and values by their numbers (section 5.6). A struct type compa
 number of its specialization, and a function value by the number of its item. Each number fixes
 the rest of its term, so the order compares no name. Each other part compares in full, so the
 work is at most the smaller size, plus the element types of arrays and lists. An enum type
-compares by its item, and an enum value by its type, its tag, and its payload.
+compares by its item, and an enum value by its type, its tag, and its payload. A handle type
+compares its parts, and an instance type its module item and then its arguments.
 -/
 mutual
   def Ty.cmp : Ty → Ty → Ordering
@@ -321,6 +354,9 @@ mutual
     | .struct a .., .struct b .. => compare a b
     | .fn ⟨ps⟩ r, .fn ⟨qs⟩ s => (TyParam.cmps ps qs).then (Ty.cmp r s)
     | .enum a .., .enum b .. => compare a b
+    | .reg s, .reg t | .wire s, .wire t | .input s, .input t => Ty.cmp s t
+    | .mem s n, .mem t m => (Ty.cmp s t).then (compare n m)
+    | .inst a _ ⟨xs⟩, .inst b _ ⟨ys⟩ => (compare a b).then (Value.cmps xs ys)
     | s, t => compare s.form t.form
 
   def Ty.cmps : List Ty → List Ty → Ordering
@@ -359,7 +395,8 @@ end
 
 /-!
 The equality of two types by their numbers. For the types of one evaluation it agrees with `=`,
-because a struct type comes only from its entry in the table of specializations.
+because a struct type comes only from its entry in the table of specializations. The name of an
+instance type follows from its module item in the same way.
 -/
 def Ty.same (s t : Ty) : Bool := Ty.cmp s t == .eq
 
@@ -451,8 +488,46 @@ bounds the work of the additions, so it comes before them.
 def Meta.readCharge (parts : List Meta) : Nat := (parts.map Meta.intCharge).sum
 
 /-!
+The depth of section 5.5: 1 for a scalar type or value, and 1 more than its deepest part. A
+struct type has its stored depth, which counts its field types and its static arguments. An enum
+type has the stored depth of its metadata. A `mut` mark adds no depth. A handle type is 1 deeper
+than its deepest part, and the depth `N` of `Mem[T, N]` is an integer of the depth 1. An enum
+value counts its type, as a record does, and its two parts have the depth 1.
+-/
+mutual
+  def Ty.depth : Ty → Nat
+    | .array t _ | .list t | .reg t | .wire t | .input t | .mem t _ => 1 + t.depth
+    | .tuple ⟨ts⟩ => 1 + Ty.depthAll ts
+    | .struct _ _ _ m _ | .enum _ _ m => m.depth
+    | .fn ⟨ps⟩ r => 1 + max (TyParam.depthAll ps) r.depth
+    | .inst _ _ ⟨xs⟩ => 1 + Value.depthAll xs
+    | _ => 1
+
+  def Ty.depthAll : List Ty → Nat
+    | [] => 0
+    | t :: ts => max t.depth (Ty.depthAll ts)
+
+  def TyParam.depthAll : List TyParam → Nat
+    | [] => 0
+    | .mk _ t :: ps => max t.depth (TyParam.depthAll ps)
+
+  def Value.depth : Value → Nat
+    | .type t => t.depth
+    | .array t ⟨xs⟩ | .record t ⟨xs⟩ | .list t ⟨xs⟩ => 1 + max t.depth (Value.depthAll xs)
+    | .tuple ⟨xs⟩ => 1 + Value.depthAll xs
+    | .enum t .. => 1 + max t.depth 1
+    | _ => 1
+
+  def Value.depthAll : List Value → Nat
+    | [] => 0
+    | x :: xs => max x.depth (Value.depthAll xs)
+end
+
+/-!
 The metadata of a type. A type constructor computes it from its parts. A struct type stores
-it, so this walk never enters the field types of a struct.
+it, so this walk never enters the field types of a struct. A handle type has the metadata of
+`List[T]` (section 5.4). It is not hardware data, and it takes the function flag and the enum
+flag of `T`. An instance type has neither flag, and its depth counts its arguments.
 -/
 mutual
   def Ty.info : Ty → Meta
@@ -460,13 +535,14 @@ mutual
     | .uint w | .sint w => Meta.finite w
     | .unit => Meta.unit
     | .nat | .int | .type | .string => Meta.static
-    | .list t =>
+    | .list t | .reg t | .wire t | .input t | .mem t _ =>
       { Meta.static with depth := 1 + t.info.depth, funcs := t.info.funcs, enums := t.info.enums }
     | .array t n => t.info.array n
     | .tuple ⟨ts⟩ => Meta.tuple (Ty.infoAll ts)
     | .struct _ _ _ m _ => m
     | .fn ⟨ps⟩ r => Meta.fn (TyParam.infoAll ps) r.info
     | .enum _ _ m => m
+    | .inst _ _ ⟨xs⟩ => { Meta.static with depth := 1 + Value.depthAll xs }
 
   def Ty.infoAll : List Ty → List Meta
     | [] => []
@@ -495,6 +571,11 @@ mutual
     | .list t => Print.node "list" [t.serialize]
     | .fn ⟨ps⟩ r => Print.node "fn" [Print.list (TyParam.serializeAll ps), r.serialize]
     | .enum _ x _ => Print.node "enum" ["root", x, Print.list []]
+    | .reg t => Print.node "reg" [t.serialize]
+    | .wire t => Print.node "wire" [t.serialize]
+    | .input t => Print.node "input" [t.serialize]
+    | .mem t n => Print.node "mem" [t.serialize, toString n]
+    | .inst _ x ⟨xs⟩ => Print.node "instance" ["root", x, Print.list (Value.serializeAll xs)]
 
   def Ty.serializeAll : List Ty → List String
     | [] => []
@@ -531,7 +612,8 @@ end
 The recursive size of section 5.4. A type has the number of nodes of its term. Each integer and
 each static argument in it adds its size. Each `mut` mark of a function type is one more node. A
 named function has the size 1. An enum type has the size 1, and an enum value the size of a
-record of its tag and its payload. An empty payload adds nothing.
+record of its tag and its payload. An empty payload adds nothing. A handle type has the size 1
+plus its parts, and `Instance[M, args]` adds its arguments as a struct type does (section 5.4).
 -/
 mutual
   def Ty.size : Ty → Nat
@@ -543,6 +625,9 @@ mutual
     | .struct _ _ ⟨xs⟩ _ _ => 1 + Value.sizeAll xs
     | .fn ⟨ps⟩ r => 1 + TyParam.sizeAll ps + r.size
     | .enum .. => 1
+    | .reg t | .wire t | .input t => 1 + t.size
+    | .mem t n => 1 + t.size + intSize n
+    | .inst _ _ ⟨xs⟩ => 1 + Value.sizeAll xs
 
   def Ty.sizeAll : List Ty → Nat
     | [] => 0
@@ -564,45 +649,6 @@ mutual
   def Value.sizeAll : List Value → Nat
     | [] => 0
     | x :: xs => x.size + Value.sizeAll xs
-end
-
-/-!
-The depth of section 5.5: 1 for a scalar type, and 1 more than its deepest part. A struct type
-has its stored depth, which counts its field types and its static arguments. An enum type has the
-stored depth of its metadata. A `mut` mark adds no depth.
--/
-mutual
-  def Ty.depth : Ty → Nat
-    | .array t _ | .list t => 1 + t.depth
-    | .tuple ⟨ts⟩ => 1 + Ty.depthAll ts
-    | .struct _ _ _ m _ | .enum _ _ m => m.depth
-    | .fn ⟨ps⟩ r => 1 + max (TyParam.depthAll ps) r.depth
-    | _ => 1
-
-  def Ty.depthAll : List Ty → Nat
-    | [] => 0
-    | t :: ts => max t.depth (Ty.depthAll ts)
-
-  def TyParam.depthAll : List TyParam → Nat
-    | [] => 0
-    | .mk _ t :: ps => max t.depth (TyParam.depthAll ps)
-end
-
-/-!
-The depth of section 5.5: 1 for a scalar value, and 1 more than its deepest part. An enum value
-counts its type, as a record does, and its two parts have the depth 1.
--/
-mutual
-  def Value.depth : Value → Nat
-    | .type t => t.depth
-    | .array t ⟨xs⟩ | .record t ⟨xs⟩ | .list t ⟨xs⟩ => 1 + max t.depth (Value.depthAll xs)
-    | .tuple ⟨xs⟩ => 1 + Value.depthAll xs
-    | .enum t .. => 1 + max t.depth 1
-    | _ => 1
-
-  def Value.depthAll : List Value → Nat
-    | [] => 0
-    | x :: xs => max x.depth (Value.depthAll xs)
 end
 
 /-!
@@ -654,8 +700,9 @@ def boundText (s : String) : String :=
 The text of a type in a message, and the source text of a static argument in it. A struct type
 prints its item, with its arguments in brackets when it has any: `P[8]`. A function type prints
 in its source form, and a function value prints its item. An enum type prints its name, and an
-enum value its tag, because the value does not hold the name of its variant. Each integer
-prints as `intText` does.
+enum value its tag, because the value does not hold the name of its variant. A handle type
+prints in its source form: `Reg[UInt[8]]`, `Mem[UInt[8], 16]`, or `Instance[Counter, 8]`. Each
+integer prints as `intText` does.
 
 Each walk appends to the text `o` so far, and it stops when `o` has more than `textLimit` bytes.
 Each piece that it appends is short: a string argument appends at most `textLimit + 1`
@@ -679,6 +726,12 @@ mutual
     | .list t => t.put (o ++ "List[") ++ "]"
     | .fn ⟨ps⟩ r => r.put (TyParam.putAll (o ++ "fn (") ps ++ ") -> ")
     | .enum _ x _ => o ++ x
+    | .reg t => t.put (o ++ "Reg[") ++ "]"
+    | .wire t => t.put (o ++ "Wire[") ++ "]"
+    | .input t => t.put (o ++ "Input[") ++ "]"
+    | .mem t n => t.put (o ++ "Mem[") ++ s!", {intText n}]"
+    | .inst _ x ⟨[]⟩ => o ++ "Instance[" ++ x ++ "]"
+    | .inst _ x ⟨xs⟩ => Value.putAll (o ++ "Instance[" ++ x ++ ", ") xs ++ "]"
 
   /-- The types `ts` with `, ` between them. -/
   def Ty.putAll (o : String) : List Ty → String
