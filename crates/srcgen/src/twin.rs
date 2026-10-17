@@ -25,7 +25,9 @@
 
 use super::build::STATIC_PREFIXES;
 use super::eval::{Env, Scope, Value, eval, exec_static, loop_values};
-use super::program::{HExpr, Item, Place, Program, Radix, SExpr, STy, Stmt, Ty, render_items};
+use super::program::{
+    HExpr, Item, Match, Place, Program, Radix, SExpr, STy, Stmt, Ty, render_items,
+};
 use num_bigint::{BigInt, Sign};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -296,6 +298,14 @@ impl Writer<'_> {
                 let g = self.hw_values.get(g).unwrap_or(g);
                 HExpr::Call(g.clone(), args.iter().map(|a| self.hexpr(a, fr)).collect())
             }
+            HExpr::Match(m) => HExpr::Match(Match {
+                scrutinee: sub(&m.scrutinee),
+                arms: m
+                    .arms
+                    .iter()
+                    .map(|(p, a)| (p.clone(), self.hexpr(a, fr)))
+                    .collect(),
+            }),
             HExpr::Ctor(e, v, args) => HExpr::Ctor(
                 e.clone(),
                 v.clone(),

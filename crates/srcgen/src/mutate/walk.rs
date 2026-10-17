@@ -593,6 +593,19 @@ impl<'a> Walk<'a> {
                     self.hexpr(a);
                 }
             }
+            HExpr::Match(m) => {
+                self.hexpr(&mut m.scrutinee);
+                // A scrutinee that is not a port or a register can fold to a
+                // static value that selects one arm, so no arm always runs.
+                self.lazily(|w| {
+                    for (p, arm) in &mut m.arms {
+                        if let Pattern::Variant(e, ..) = p {
+                            w.rename(e);
+                        }
+                        w.hexpr(arm);
+                    }
+                });
+            }
             HExpr::Ctor(name, _, args) => {
                 self.rename(name);
                 for a in args {

@@ -81,6 +81,12 @@ fn hexpr(root: &str, e: &HExpr, callees: &Callees, uses: &mut Uses) {
                 hexpr(root, x, callees, uses);
             }
         }
+        HExpr::Match(m) => {
+            hexpr(root, &m.scrutinee, callees, uses);
+            for (_, a) in &m.arms {
+                hexpr(root, a, callees, uses);
+            }
+        }
         HExpr::Ctor(_, _, args) => {
             for a in args {
                 hexpr(root, a, callees, uses);
