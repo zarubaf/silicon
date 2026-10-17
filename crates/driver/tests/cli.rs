@@ -686,6 +686,19 @@ fn elab_names_no_count_when_the_fuel_cannot_pay_the_type_joins() -> Test {
     Ok(())
 }
 
+/// The mark of a shared condition keeps the position of its operand, so a lowering that runs out
+/// of fuel at the temporary reports there, as Lean does (`Source/Test/Elab.lean`).
+#[test]
+fn elab_reports_a_shared_temporary_at_the_position_of_its_operand() -> Test {
+    let src = "module M() domains() {\n    input u: UInt[4];\n    input v: UInt[4];\n    \
+        input a: (UInt[4], UInt[4], Bool);\n    input b: (UInt[4], UInt[4], Bool);\n    \
+        output y: (UInt[4], UInt[4], Bool);\n    y := if (u == v) { a } else { b };\n}\n";
+    let (out, code) = source("elab", src, &["--fuel", "228"], "M()", "")?;
+    assert!(out.starts_with("error[S015]: 7:14: "), "{out}");
+    assert_eq!(code, Some(1));
+    Ok(())
+}
+
 /// Rust does not count the scalars of a string that the fuel cannot pay, so the message names no
 /// count (issue #250). The same program and fuel give the same text in `Source/Test/Elab.lean`.
 #[test]
