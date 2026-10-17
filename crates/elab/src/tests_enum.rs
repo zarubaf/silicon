@@ -326,6 +326,30 @@ fn a_static_reinterpret_converts_between_an_enum_and_its_bits() {
     assert_eq!(at(&other, "reinterpret(F, Op::Add)"), "S010 1:1");
 }
 
+/// A new enum value has the depth 3 of section 5.5: 1 more than its type `Op` of the depth 2. A
+/// variant constructor and `reinterpret` to an enum check it before the value exists, as `T()`
+/// does, after the typed uses and after the type check.
+#[test]
+fn a_new_enum_value_checks_its_depth() {
+    let at = |expr: &str, depth: u64| out(OPS, expr, 1 << 20, depth);
+    for expr in ["Op::Add", "Op::Load(5)", "reinterpret(Op, UInt[10](0))"] {
+        assert!(!at(expr, 3).starts_with('S'), "{expr}");
+        assert_eq!(at(expr, 2), "S015 1:1", "{expr}");
+    }
+    assert_eq!(at("Op()", 2), "S015 1:1");
+    assert_eq!(at("[Op::Add][0]", 2), "S015 1:2");
+    let text = "the depth 3 goes above the nesting depth 2; raise --depth to at least 3";
+    for expr in ["Op::Add", "reinterpret(Op, UInt[10](0))"] {
+        let budget = crate::Budget {
+            depth: 2,
+            ..crate::Budget::default()
+        };
+        assert_eq!(crate::tests::message_with(OPS, expr, budget), text);
+    }
+    assert_eq!(at("Op::Load(true)", 2), "S010 1:1");
+    assert_eq!(at("reinterpret(Op, UInt[9](0))", 2), "S010 1:1");
+}
+
 /// The module `M` with the hardware inputs `x`, `c`, `y`, and `e`, and the statements `body`.
 fn hw_enum(body: &str) -> String {
     format!(

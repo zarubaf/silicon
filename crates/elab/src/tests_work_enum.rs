@@ -114,11 +114,16 @@ fn w8_nested_reinterpret_is_linear() {
             "enum Op: UInt[2] {{ Add = 0, Load(UInt[8]) = 1 }}\n\
              module M() {{\n  input x: UInt[10];\n  output y: UInt[10];\n  y := {e};\n}}\n"
         );
-        run(key, 1000, &src).units
+        let r = run(key, 1000, &src);
+        (r.units, r.counts.paths)
     };
-    let first = units(2, 30) - units(1, 31);
+    let step = |k: u64, key: u64| {
+        let (a, b) = (units(k + 1, key), units(k, key + 100));
+        (a.0 - b.0, a.1 - b.1)
+    };
+    let first = step(1, 30);
     for k in 2..24 {
-        assert_eq!(units(k + 1, 40 + k) - units(k, 70 + k), first, "{k}");
+        assert_eq!(step(k, 100 + 2 * k), first, "{k}");
     }
 }
 
@@ -149,5 +154,6 @@ fn w10_the_layout_of_enums_is_per_leaf() {
     };
     let (a, b, c) = (leaves(1024, 60), leaves(2048, 61), leaves(4096, 62));
     assert_eq!(c - b, 2 * (b - a));
-    assert!(leaves(65536, 63) > 0);
+    assert_eq!(c, 9 * 4096 + 3);
+    assert_eq!(leaves(65536, 63), 9 * 65536 + 3);
 }

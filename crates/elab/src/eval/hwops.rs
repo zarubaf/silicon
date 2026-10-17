@@ -1124,6 +1124,12 @@ impl Evaluator<'_> {
         self.pack(pos, to, from, d)
     }
 
+    /// The depth check of a new enum value of the type `t` at `pos` (section 5.5): 1 more than
+    /// its type. It comes before the value, the charge, and the shared mark exist.
+    pub(super) fn enum_depth(&self, pos: Pos, t: TyId) -> Res<()> {
+        self.bounded(pos, 1 + t.depth().max(1))
+    }
+
     /// The enum value of the type `to` from the bits `d`.
     fn unpack(&mut self, pos: Pos, to: TyId, d: &Opnd) -> Res<Val> {
         let Some(widths) = self.tys.widths(to) else {
@@ -1153,6 +1159,7 @@ impl Evaluator<'_> {
                 if x.width() != total {
                     return bad(self);
                 }
+                self.enum_depth(pos, to)?;
                 let x = x.clone();
                 // The size does not read the bits, so the charge comes before the split.
                 let size = 1
@@ -1172,6 +1179,7 @@ impl Evaluator<'_> {
                 if self.graph.ty(b) != Ty::UInt(total) {
                     return bad(self);
                 }
+                self.enum_depth(pos, to)?;
                 let parts = if widths.payload == 0 {
                     vec![Agg::Hw(b)]
                 } else {
