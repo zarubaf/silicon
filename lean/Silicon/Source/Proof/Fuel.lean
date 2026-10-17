@@ -463,7 +463,8 @@ theorem ifWalk_f (fs : Ty → Option (Array (String × Ty))) (p : Pos) (c : Hw) 
     rw [ifWalk.eq_def]; dsimp only
     follows [ifWalk_f fs p c d, ifPart_f]
 
-theorem shared_f (c : Hw) (n : Nat) : Follows cap (shared c n) (shared c n) := by
+theorem shared_f (pos : Pos) (c : Hw) (n : Nat) :
+    Follows cap (shared pos c n) (shared pos c n) := by
   unfold shared; follows
 
 theorem mux_f (p : Pos) (c : Hw) (a b : Val) :

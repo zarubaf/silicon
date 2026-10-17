@@ -103,7 +103,7 @@ theorem size_chain (base : Hw) : ∀ R : List Lk, R.length ≤ (chain base R).si
   | l :: R => by
     have := size_chain base R
     simp only [chain, Hw.mk, Hw.size.eq_1, Op.size, List.map, List.sum_cons, List.sum_nil,
-      List.length_cons]
+      List.length_cons, Bool.false_eq_true, ite_false]
     omega
 
 theorem fuel_sub (st : Flatten.St) (a b : Nat) :

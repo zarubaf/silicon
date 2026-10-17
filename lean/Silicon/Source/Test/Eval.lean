@@ -2426,17 +2426,19 @@ def runIf (t s : String) (base : Ty → Eval.Val := refX) (fuel : Nat := 1000000
 The exact charges of an `if` with array arms. The statement charges 1, the `if` node 1, and each
 operand 2. The join charges 1 for the pair of arrays. The walk charges 1 for the root pair, and
 each leaf pair charges 1 plus 4 for its `mux` node. `return true;` charges 4. The condition `x.0`
-is a core name, so it gets no mark. `!x.0` gets the mark `share 0`, with no charge, because the
-walk makes two `mux` nodes. One `mux` node and a `()` pair give no mark.
+is a core name, so it gets no mark. `!x.0` gets the mark `share 0`, because the walk makes two
+`mux` nodes. The mark charges the size 2 of `!x.0` once, before the walk. One `mux` node and a
+`()` pair give no mark.
 -/
 def armsT : String := "(Bool, [UInt[8]; 2], [UInt[8]; 2])"
 #guard runIf armsT "let y = if (x.0) { x.1 } else { x.2 };" ==
   "y$0e=(mux x$0e x$1e$0e x$2e$0e) y$1e=(mux x$0e x$1e$1e x$2e$1e) | ref x | 24"
 #guard runIf armsT "let y = if (!x.0) { x.1 } else { x.2 };" ==
   "y$0e=(mux (share 0 (! x$0e)) x$1e$0e x$2e$0e) " ++
-  "y$1e=(mux (share 0 (! x$0e)) x$1e$1e x$2e$1e) | ref x | 27"
+  "y$1e=(mux (share 0 (! x$0e)) x$1e$1e x$2e$1e) | ref x | 29"
 #guard runIf armsT "let y = if (!x.0) { x.1 } else { x.2 };" (fuel := 22) == "S015 2:11"
-#guard runIf armsT "let y = if (!x.0) { x.1 } else { x.2 };" (fuel := 23) == "S015 3:3"
+#guard runIf armsT "let y = if (!x.0) { x.1 } else { x.2 };" (fuel := 24) == "S015 2:11"
+#guard runIf armsT "let y = if (!x.0) { x.1 } else { x.2 };" (fuel := 25) == "S015 3:3"
 #guard runIf "(Bool, (UInt[8], ()), (UInt[8], ()))" "let y = if (!x.0) { x.1 } else { x.2 };" ==
   "y$0e=(mux (! x$0e) x$1e$0e x$2e$0e) | ref x | 23"
 
@@ -2447,7 +2449,7 @@ equals the typed list `xs`, and the result has the joined type.
 -/
 #guard runIf armsT ("let a: [UInt[8]; 2] = [1, 2];\n  let y = if (!x.0) { a } else { [3, 4] };") ==
   "y$0e=(mux (share 0 (! x$0e)) (uint 8 1) (uint 8 3)) " ++
-  "y$1e=(mux (share 0 (! x$0e)) (uint 8 2) (uint 8 4)) | ref x | 67"
+  "y$1e=(mux (share 0 (! x$0e)) (uint 8 2) (uint 8 4)) | ref x | 69"
 def listArms (k : Nat) : String :=
   s!"let mut xs = list(UInt[8]);\n  push(xs, 1);\n  let mut ys = list(Int);\n  push(ys, {k});\n" ++
   "  let y = if (x.0) { ys } else { xs };"
@@ -2479,7 +2481,7 @@ def crossArms (a b : String) : String :=
   "y$0e=(mux (share 0 (! x$0e)) x$1e$0e x$2e$0e) " ++
   "y$1e=(mux (share 0 (! x$0e)) x$1e$1e x$2e$1e) " ++
   "z$0e=(mux (share 1 (! x$0e)) x$2e$0e x$1e$0e) " ++
-  "z$1e=(mux (share 1 (! x$0e)) x$2e$1e x$1e$1e) | ref x | 50"
+  "z$1e=(mux (share 1 (! x$0e)) x$2e$1e x$1e$1e) | ref x | 54"
 
 /-!
 A record descends by its named fields. The join of two struct types charges as a type
@@ -2488,7 +2490,7 @@ equality, the sum of the two sizes 1 + 1, instead of 1.
 #guard runF ("struct S { a: UInt[8], b: Bool }\n" ++
   assignIn "(Bool, S, S)" "let y = if (!x.0) { x.1 } else { x.2 };") refX 1000000 ifTree ==
   "y$a=(mux (share 0 (! x$0e)) x$1e$a x$2e$a) y$b=(mux (share 0 (! x$0e)) x$1e$b x$2e$b) | " ++
-  "ref x | 28"
+  "ref x | 30"
 
 /-!
 Scalar arms keep the rule of slice 1: no join charge and no walk unit. Two arms of type `()`

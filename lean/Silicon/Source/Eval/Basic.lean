@@ -142,17 +142,18 @@ def Hw.size : Hw → Nat | .node _ _ s .. => s
 /-!
 The size of a node of the type `ty` without its operands. A name, a child output, and a leaf of a
 memory word refer to a core name. Each has the size of a finite value of its type (section 5.4).
-A constant has the size of its value. A mark of a shared operand has no charge, so it adds no
-size. Each other node has the size 1.
+A constant has the size of its value. A mark of a shared operand paid for its operand once, when
+it was made (section 5.4). It lowers to a temporary, so it has the size of a core name, and its
+operand does not count again. Each other node has the size 1 plus the sizes of its operands.
 -/
 def Op.size (ty : Ty) : Op → Nat
   | .lit v => v.size
-  | .ref _ | .out .. | .word .. => ty.info.zeroSize
-  | .share _ => 0
+  | .ref _ | .out .. | .word .. | .share _ => ty.info.zeroSize
   | _ => 1
 
 def Hw.mk (pos : Pos) (ty : Ty) (op : Op) (args : List Hw) : Hw :=
-  .node pos ty (op.size ty + (args.map Hw.size).sum) op args
+  let reads := if op matches .share _ then 0 else (args.map Hw.size).sum
+  .node pos ty (op.size ty + reads) op args
 
 /-! The core name of the port with the source name `x`. A port keeps its source name. -/
 def portName (x : String) : Name := ⟨x, []⟩

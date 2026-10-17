@@ -19,7 +19,7 @@ The front end holds a hardware aggregate (spec sections 5.1, 5.4, and 7.4) in th
 - `Agg.change` refreshes the stored numbers of each node on the path of a list part in one step. The caller charges the part counts before the change.
 - `==`, `!=`, and a hardware `if` walk both operands by leaf. A static pair compares as a static equality. In an `if`, a static pair with different sides, or with equal sides without the joined type, is `S011` (F19), also at a scalar root.
 - A binding with a hardware leaf takes one version, and each hardware leaf gets one `Let`.
-- `Op.share k` marks the condition of an aggregate `if` with two or more `mux` nodes. It has no charge. `Flatten` binds it to a temporary at its first lowering in the module.
+- `Op.share k` marks the condition of an aggregate `if` with two or more `mux` nodes, and the operand of a hardware unpack. It charges the size of its operand once, when it is made. In a value, it has the size of a core name of its type. `Flatten` binds it to a temporary at its first lowering in the module.
 - `Layout.foldLeaves` streams the leaves of a port in packing order. No other module expands a port. `Flatten` charges each leaf before it makes the leaf, and `Vectors` gives each leaf one schema entry.
 - `Flatten` lowers the left spine of a chain of binary nodes in a loop. Thus the `==` chain of a large aggregate does not grow the stack.
 - The Lean walks over an aggregate recurse on its structure. The depth of the value bounds them.
