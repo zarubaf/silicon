@@ -66,6 +66,7 @@ impl Ids {
                     ids.ident(name);
                     ids.ty(ty);
                 }
+                Item::Enum { name, .. } => ids.ident(name),
             }
         }
         ids
@@ -204,7 +205,11 @@ impl Ids {
 
     fn expr(&mut self, expr: &Expr) {
         match expr {
-            Expr::Num { .. } | Expr::Bool { .. } | Expr::Str { .. } | Expr::Unit { .. } => {}
+            Expr::Num { .. }
+            | Expr::Bool { .. }
+            | Expr::Str { .. }
+            | Expr::Unit { .. }
+            | Expr::Path { .. } => {}
             Expr::Name { pos, id, .. } => self.add(*pos, *id),
             Expr::Unary { arg, .. } => self.expr(arg),
             Expr::Binary { lhs, rhs, .. } => {

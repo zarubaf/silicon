@@ -62,6 +62,7 @@ fn sx(e: &Expr) -> String {
         Expr::Tuple { elems, .. } => format!("(tuple {})", list(elems)),
         Expr::Array { elems, .. } => format!("(array {})", list(elems)),
         Expr::Select { base, index, .. } => format!("(select {} {})", sx(base), index.as_str()),
+        Expr::Path { ty, variant, .. } => format!("(path {} {})", ty.name, variant.name),
         Expr::ArrayType { elem, len, .. } => format!("(arraytype {} {})", tx(elem), sx(len)),
         Expr::FnType { params, ret, .. } => format!("(fntype {})", fx(params, ret)),
     }
@@ -503,16 +504,15 @@ fn later_slice_syntax_is_s004() {
         ("const X: T = @typeInfo(T);", 1, 14),
         ("const X: T = @Struct(T);", 1, 14),
         ("const X: T = @ports(M);", 1, 14),
-        ("const X: T = -a::b;", 1, 16),
+        ("const X: T = a::b::c;", 1, 18),
         ("const X: T = @TypeOf(x);", 1, 14),
-        ("const X: T = a::b;", 1, 15),
         ("const X: @typeInfo(T) = f;", 1, 10),
         ("const X: @Struct(T) = f;", 1, 10),
         ("const X: @ports(M) = f;", 1, 10),
         ("const X: T::U = f;", 1, 11),
         ("const X: a::T = f;", 1, 11),
         ("const X: T = @field(x, \"f\");", 1, 14),
-        ("enum E: UInt[1] { A = 0 }", 1, 1),
+        ("enum E(T): U {}", 1, 7),
         ("const X: T = match (x) { _ => 0 };", 1, 14),
         ("const X: T = f(match (x) { _ => 0 });", 1, 16),
         ("fn f() -> T { return match (x) { _ => 0 }; }", 1, 22),
@@ -811,9 +811,9 @@ fn many_errors_on_one_line_scale_linearly() {
 #[test]
 fn rules_of_the_lean_parser() {
     let cases = [
-        // A path in an operand: S004 at the `::`, also after a field.
-        ("const X: T = x+a::f(1);", Code::S004, 1, 17),
-        ("const X: T = x.f+a::g(1);", Code::S004, 1, 19),
+        // A path in an operand has two parts: a third part is S004 at the second `::`.
+        ("const X: T = x+a::f::h(1);", Code::S004, 1, 20),
+        ("const X: T = x.f+a::g::h(1);", Code::S004, 1, 22),
         // `mut`: S001 at a module parameter. A path in a function parameter is S004.
         ("module M(mut x: T) { }", Code::S001, 1, 10),
         ("module M(comptime mut x: T) { }", Code::S001, 1, 19),
@@ -854,12 +854,12 @@ fn rules_of_the_lean_parser() {
         ("module M() { @field(a, f(x)).b = e; }", Code::S004, 1, 14),
         ("module M() { f(x)[0] = e; }", Code::S001, 1, 22),
         ("module M() { f(x) = e; }", Code::S001, 1, 19),
-        // A path in parentheses or after a longer name: S004 at the `::`.
-        ("const X: T = (a::b);", Code::S004, 1, 16),
-        ("const X: T = ab::c;", Code::S004, 1, 16),
+        // A third part of a path, also in parentheses: S004 at the second `::`.
+        ("const X: T = (a::b::c);", Code::S004, 1, 19),
+        ("const X: T = ab::c::d;", Code::S004, 1, 19),
         // A statement with `if` is an expression statement and needs a `;`.
         ("module M() { if (a) { 1 } else { 2 } }", Code::S001, 1, 38),
-        // A path is one name.
+        // The path of a type and of a module is one name.
         ("module M() { instance u = a::B(); }", Code::S004, 1, 28),
         ("const X: a::T = 1;", Code::S004, 1, 11),
         // A builtin in a type is S004, as in an expression. Another name is S001.
@@ -918,6 +918,70 @@ fn container_expressions() {
     ] {
         assert_eq!(shape(input), want, "{input}");
     }
+}
+
+#[test]
+fn enums_and_paths_dump_like_lean() {
+    let dump = |source: &str| {
+        let parsed = parse(source);
+        assert!(parsed.errors.is_empty(), "{source}: {:?}", parsed.errors);
+        parsed.dump().unwrap().unwrap()
+    };
+    let e = |x: &str| {
+        dump(&format!("const X: T = {x};"))
+            .strip_prefix("(const \"X\" (name \"T\") ")
+            .and_then(|d| d.strip_suffix(")\n"))
+            .unwrap()
+            .to_owned()
+    };
+    assert_eq!(e("Op::Add"), "(path \"Op\" \"Add\")");
+    assert_eq!(
+        e("Op::Load(x, 1)"),
+        "(call (path \"Op\" \"Load\") ((name \"x\") (num 1)))"
+    );
+    assert_eq!(e("a::b.c"), "(field (path \"a\" \"b\") \"c\")");
+    assert_eq!(
+        dump("enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4],) = 2, }"),
+        "(enum \"Op\" (index (name \"UInt\") ((num 2))) ((variant \"Add\" () (num 0)) \
+         (variant \"Load\" ((index (name \"UInt\") ((num 8)))) (num 1)) \
+         (variant \"Pair\" ((name \"Bool\") (index (name \"UInt\") ((num 4)))) (num 2))))\n"
+    );
+    assert_eq!(dump("enum E: T { A() = 0 }"), dump("enum E: T { A = 0 }"));
+    assert_eq!(
+        dump("enum E: UInt[1] {}"),
+        "(enum \"E\" (index (name \"UInt\") ((num 1))) ())\n"
+    );
+}
+
+#[test]
+fn enum_and_path_errors_have_the_lean_positions() {
+    let cases = [
+        ("enum E: T { A }", Code::S001, 1, 15),
+        ("enum E: T { A(B) }", Code::S001, 1, 18),
+        ("enum E: T { A = 0 B = 1 }", Code::S001, 1, 19),
+        ("enum E: T { A = 0,, }", Code::S001, 1, 19),
+        ("enum E { A = 0 }", Code::S001, 1, 8),
+        ("enum E: T { A(,) = 0 }", Code::S001, 1, 15),
+        ("enum E(comptime W: Nat): T { A = 0 }", Code::S004, 1, 7),
+        ("module M() {}\nenum E(): T {}", Code::S004, 2, 7),
+        ("const X: T = a::;", Code::S001, 1, 17),
+        ("const X: T = a::1;", Code::S001, 1, 17),
+        ("const X: T = a::b::;", Code::S004, 1, 18),
+        ("fn f() -> T { Op::Add = 1; }", Code::S001, 1, 23),
+    ];
+    for (input, code, line, col) in cases {
+        assert_eq!(first_error(input), Some((code, line, col)), "{input}");
+    }
+    assert_eq!(
+        parse("enum E(T): U {}").errors[0].message,
+        "an enum with parameters is not supported yet; remove the parameters, and give each \
+         payload a fixed type"
+    );
+    assert_eq!(
+        parse("const X: a::T = 1;").errors[0].message,
+        "a package path is not supported yet; in this slice, a path is a variant `E::V` of an \
+         enum `E`, in an expression or a pattern"
+    );
 }
 
 #[test]

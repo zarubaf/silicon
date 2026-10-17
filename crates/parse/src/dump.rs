@@ -5,7 +5,7 @@
 //! The dump recurses over the AST, so its depth of calls is at most about twice the syntax
 //! depth of the parse that made the AST. `Parse::dump` runs it on a stack for that depth.
 
-use crate::ast::{Expr, FnParam, Ident, Item, Param, Stmt, StructField, TypeExpr};
+use crate::ast::{Expr, FnParam, Ident, Item, Param, Stmt, StructField, TypeExpr, Variant};
 use std::fmt::{Debug, Write};
 
 /// The dump of a file: one line for each item, and an LF ends each line.
@@ -162,6 +162,12 @@ fn expr(e: &Expr, out: &mut String) {
             sp(out);
             out.push_str(index.as_str());
         }),
+        Expr::Path { ty, variant, .. } => node("path", out, |out| {
+            sp(out);
+            ident(ty, out);
+            sp(out);
+            ident(variant, out);
+        }),
         Expr::ArrayType { elem, len, .. } => node("arraytype", out, |out| {
             sp(out);
             type_expr(elem, out);
@@ -301,6 +307,12 @@ fn struct_field(f: &StructField, out: &mut String) {
     });
 }
 
+fn variant(v: &Variant, out: &mut String) {
+    node("variant", out, |out| {
+        fields!(out; ident(&v.name, out), list(&v.payload, out, type_expr), expr(&v.tag, out));
+    });
+}
+
 fn item_dump(item: &Item, out: &mut String) {
     match item {
         Item::Const {
@@ -341,6 +353,14 @@ fn item_dump(item: &Item, out: &mut String) {
         }),
         Item::Alias { name, ty, .. } => node("alias", out, |out| {
             fields!(out; ident(name, out), type_expr(ty, out));
+        }),
+        Item::Enum {
+            name,
+            tag,
+            variants,
+            ..
+        } => node("enum", out, |out| {
+            fields!(out; ident(name, out), type_expr(tag, out), list(variants, out, variant));
         }),
     }
 }

@@ -41,3 +41,4 @@ struct parse::ast::NodeId
 struct parse::ast::Param
 struct parse::ast::Pos
 struct parse::ast::StructField
+struct parse::ast::Variant

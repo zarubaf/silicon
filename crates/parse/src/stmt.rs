@@ -180,7 +180,7 @@ impl Parser<'_> {
         self.expect(Eq, "`=`")?;
         self.expect(Ident, "a module name")?;
         if self.is(ColonColon) {
-            self.later_slice(self.offset(), "a path");
+            self.package_path(self.offset());
             return None;
         }
         self.arg_list(RParen, true)?;

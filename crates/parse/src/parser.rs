@@ -341,6 +341,28 @@ impl<'a> Parser<'a> {
         self.report(Code::S004, offset, format!("{what} is not supported yet"));
     }
 
+    /// A package path, `S004`, at an offset. Slice 3 has the path `E::V` of two names only.
+    pub(crate) fn package_path(&mut self, offset: usize) {
+        self.report(
+            Code::S004,
+            offset,
+            "a package path is not supported yet; in this slice, a path is a variant `E::V` of \
+             an enum `E`, in an expression or a pattern"
+                .to_owned(),
+        );
+    }
+
+    /// An enum with parameters, `S004`, at an offset.
+    pub(crate) fn enum_parameters(&mut self, offset: usize) {
+        self.report(
+            Code::S004,
+            offset,
+            "an enum with parameters is not supported yet; remove the parameters, and give each \
+             payload a fixed type"
+                .to_owned(),
+        );
+    }
+
     /// Moves the current token into the tree, or reports that the kind is missing.
     pub(crate) fn expect(&mut self, kind: SyntaxKind, what: &str) -> Res {
         if self.eat(kind) {

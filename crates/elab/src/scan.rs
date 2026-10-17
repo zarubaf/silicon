@@ -215,6 +215,7 @@ impl Walk<'_> {
                 struct_fields = numbers;
             }
             Item::Alias { ty, .. } => self.ty(ty, 1),
+            Item::Enum { .. } => {}
         }
         self.syms.struct_fields.push(struct_fields);
         self.syms.field_order.push(field_order);
@@ -346,7 +347,7 @@ impl Walk<'_> {
                 self.numbers.insert((self.top.is_some(), *id), n);
                 false
             }
-            Expr::Bool { .. } | Expr::Str { .. } | Expr::Unit { .. } => false,
+            Expr::Bool { .. } | Expr::Str { .. } | Expr::Unit { .. } | Expr::Path { .. } => false,
             Expr::Name { id, .. } => {
                 if self.starts_nesting(*id) {
                     self.nested = self.nested.max(depth);

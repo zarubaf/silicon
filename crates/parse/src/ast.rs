@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The source AST of slices 1 and 2. It mirrors `Silicon.Source.Syntax` in Lean: the same types,
+//! The source AST of slices 1 to 3. It mirrors `Silicon.Source.Syntax` in Lean: the same types,
 //! the same constructors, and the same field order. Only the `NodeId` of a node is not in
 //! Lean. The Lean name of a constructor is the lowercase name of the variant here, so the
 //! AST dump can print both with one rule.
@@ -204,6 +204,12 @@ pub enum Expr {
         lit_pos: Pos,
         index: Nat,
     },
+    /// The variant path `E::V` of two names. A constructor `E::V(args)` is a `Call` of a `Path`.
+    Path {
+        pos: Pos,
+        ty: Ident,
+        variant: Ident,
+    },
     /// The array type `[T; N]` in an expression.
     ArrayType {
         pos: Pos,
@@ -372,6 +378,15 @@ pub struct StructField {
     pub ty: TypeExpr,
 }
 
+/// A variant of an enum: `name(payload) = tag`. A variant without payload types has an empty
+/// `payload`.
+#[cfg_attr(test, derive(Clone, Debug, PartialEq, Eq))]
+pub struct Variant {
+    pub name: Ident,
+    pub payload: Vec<TypeExpr>,
+    pub tag: Expr,
+}
+
 /// A top-level item. A `Struct` without parameters has an empty list of parameters. An `Alias`
 /// is the item `type N = T;`. The `domains` of a module are `None` without a clause and `Some` with
 /// one. The list holds at most one name in slice 1.
@@ -409,6 +424,13 @@ pub enum Item {
         name: Ident,
         ty: TypeExpr,
     },
+    /// An enum has its tag type and its variants.
+    Enum {
+        pos: Pos,
+        name: Ident,
+        tag: TypeExpr,
+        variants: Vec<Variant>,
+    },
 }
 
 impl Item {
@@ -419,7 +441,8 @@ impl Item {
         | Item::Fn { name, .. }
         | Item::Module { name, .. }
         | Item::Struct { name, .. }
-        | Item::Alias { name, .. }) = self;
+        | Item::Alias { name, .. }
+        | Item::Enum { name, .. }) = self;
         name
     }
 }
@@ -512,6 +535,7 @@ impl Expr {
             | Expr::Bool { .. }
             | Expr::Str { .. }
             | Expr::Name { .. }
+            | Expr::Path { .. }
             | Expr::Unit { .. } => {}
         }
     }
