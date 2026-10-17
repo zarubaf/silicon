@@ -3291,7 +3291,44 @@ def partArms (a b : Value) : String :=
   | .error e => s!"{e.code} {e.pos.line}:{e.pos.col} {e.msg}"
 #guard partArms (.int 1) (.int 1) == s!"hardware (Int, UInt[8]) {1 + 1 + 3 + 2 + 1 + 1 + 2 + 1 + 5}"
 #guard partArms (.int 1) (.int 2) ==
-  "S011 1:1 the arms of a hardware `match` differ in a static part: Int and Int"
+  "S011 1:1 the arms of a hardware `match` differ in a static part: 1 and 2; give the part one " ++
+  "value and type in each arm, or move it out of the `match`"
+
+#guard
+  let p : Pos := ⟨1, 1⟩
+  let sel := Eval.Hw.mk p .bool (.ref ⟨"c", []⟩) []
+  let h := Eval.Hw.mk p (.uint 8) (.ref ⟨"h", []⟩) []
+  match Eval.run { fuel := 1000 } #[]
+    (fun _ => Eval.matchHw p sel [some 1, none] [.hw h, .static (.bool true)]) with
+  | .ok _ => false
+  | .error e => e.msg == "the arms of a hardware `match` have no common type; convert each " ++
+    "arm to one type"
+
+/-!
+The sides of the `S011` text of the arms (section 6.2). An integer is bounded as `{v}`. A finite
+value has its type, and another value is its text. A hardware `if` prints the same sides.
+-/
+def sides (kw : String) (x y : Value) : String :=
+  match Eval.run { fuel := 1000 } #[] (fun _ => Eval.armStatic kw ⟨1, 1⟩ .int x [y]) with
+  | .ok (v, _) => v.text
+  | .error e => e.msg
+#guard sides "if" (.int 3) (.int 4) == "the arms of a hardware `if` differ in a static part: " ++
+  "3 and 4; give the part one value and type in each arm, or move it out of the `if`"
+#guard sides "match" (.int (-(2 ^ 300))) (.int 2) == "the arms of a hardware `match` " ++
+  "differ in a static part: a negative integer of 301 bits and 2; give the part one value " ++
+  "and type in each arm, or move it out of the `match`"
+#guard sides "match" (.bool true) (.bool false) == "the arms of a hardware `match` differ in " ++
+  "a static part: true and false; give the part one value and type in each arm, or move it " ++
+  "out of the `match`"
+#guard sides "if" (.uint 8 3) (.uint 8 4) == "the arms of a hardware `if` differ in a " ++
+  "static part: UInt[8](3) and UInt[8](4); give the part one value and type in each arm, or " ++
+  "move it out of the `if`"
+#guard sides "if" (.sint 4 (-2)) (.sint 4 1) == "the arms of a hardware `if` differ in a " ++
+  "static part: SInt[4](-2) and SInt[4](1); give the part one value and type in each arm, or " ++
+  "move it out of the `if`"
+#guard sides "if" (.str "a") (.str "b") == "the arms of a hardware `if` differ in a static " ++
+  "part: a string and a string; give the part one value and type in each arm, or move it out " ++
+  "of the `if`"
 
 /-!
 An enum with a static tag is a hardware scrutinee (G7): its selects compare two constants. The

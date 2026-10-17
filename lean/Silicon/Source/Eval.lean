@@ -677,6 +677,18 @@ def armsType (kw : String) (pos : Pos) (ts : List String) (i : Nat) : M α :=
     s!"the arms of {armsNoun kw} have one type, not {ts.getD 0 ""} and {ts.getD (max i 1) ""}"
 
 /-!
+The text of a static side in the `S011` text of the arms (section 6.2). An integer is decimal,
+bounded by `intText`, a Boolean is `true` or `false`, and a finite value is its type with its
+integer, for example `UInt[8](3)`. Another value is its text (`Value.text`).
+-/
+def sideText : Value → String
+  | .int n => intText n
+  | .bool b => Print.boolean b
+  | .uint w x => s!"UInt[{w}]({intText x.toNat})"
+  | .sint w x => s!"SInt[{w}]({intText x.toInt})"
+  | v => v.text
+
+/-!
 The static parts `x :: ys` of the arms of a hardware `kw` at `pos` (section 7.4) with the joined
 type `t`. Each arm `y` of `ys` compares with `x` in arm order, and the compare charges as a
 static equality, the sum of the two sizes. Identical sides pass, so a function compares by its
@@ -688,7 +700,8 @@ conversion. The text names `x` and the first arm that differs from it.
 -/
 def armStatic (kw : String) (pos : Pos) (t : Ty) (x : Value) (ys : List Value) : M Value := do
   let differ (y : Value) : M Value :=
-    fail .S011 pos s!"the arms of a hardware `{kw}` differ in a static part: {x.text} and {y.text}"
+    fail .S011 pos (s!"the arms of a hardware `{kw}` differ in a static part: {sideText x} and " ++
+      s!"{sideText y}; give the part one value and type in each arm, or move it out of the `{kw}`")
   let mut odd : Option Value := none
   for y in ys do
     charge pos (x.size + y.size)
@@ -1953,7 +1966,8 @@ values:
 def matchHw (pos : Pos) (sel : Hw) (keys : List (Option Int)) (vs : List Val) : M Val := do
   let xs ← vs.mapM (item pos)
   let some j ← walked pos (commonOf (xs.map Agg.ty?))
-    | fail .S010 pos "the arms of a `match` have no common type"
+    | fail .S010 pos ("the arms of a hardware `match` have no common type; convert each arm to " ++
+      "one type")
   let xs ← xs.mapM (conformAgg pos j)
   let l := j.info.leaves
   let wild := keys.any (·.isNone)
