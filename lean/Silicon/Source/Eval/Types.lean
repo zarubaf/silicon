@@ -242,7 +242,8 @@ def zeroOf (specs : Specs) : Nat → Ty → Option Value
     | .enum .. => do
       let (w, p) ← specs.widths t
       return .enum t w 0 p 0
-    | .nat | .int | .type | .string | .list _ | .fn .. => none
+    | .nat | .int | .type | .string | .list _ | .fn .. | .reg _ | .wire _ | .input _ | .mem ..
+    | .inst .. => none
 
 /-!
 The array type `[e; k]` at `pos`. The length at `q` is a static `Nat`. After the depth check, the

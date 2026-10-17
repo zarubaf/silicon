@@ -408,6 +408,54 @@ def flag : Ty := .enum 8 "Flag" (Meta.enum 1 0)
 #guard (Value.enum op 2 1 8 3).cmp (.enum op 2 1 8 3) == .eq
 
 /-!
+The handle types (slice 3, section 5.1). `Reg[T]`, `Wire[T]`, and `Input[T]` are a node with
+`T`, `Mem[T, N]` adds the integer `N`, and `Instance[M, args]` holds its converted arguments, as
+a struct type does. The metadata is that of `List[T]`: not hardware data, with the flags of `T`.
+`Instance` has neither flag. They serialize as in section 7.1, print in their source form, and
+compare by their parts. A handle type is never a zero.
+-/
+def counter : Ty := .inst 3 "Counter" #[.int 8]
+#guard (Value.type (.reg (.uint 8))).serialize == "(type (reg (uint 8)))"
+#guard (Value.type (.wire .bool)).serialize == "(type (wire bool))"
+#guard (Value.type (.mem (.uint 8) 16)).serialize == "(type (mem (uint 8) 16))"
+#guard (Value.type (.input (.uint 8))).serialize == "(type (input (uint 8)))"
+#guard (Value.type counter).serialize == "(type (instance root Counter ((int 8))))"
+#guard (Value.type (.inst 3 "Top" #[])).serialize == "(type (instance root Top ()))"
+#guard (Value.type (.reg (packet 8))).serialize == "(type (reg (struct root Packet ((int 8)))))"
+#guard (Ty.reg (.uint 8)).size == 3 && (Ty.wire .bool).size == 2 && (Ty.input .bool).size == 2
+#guard (Ty.mem (.uint 8) 16).size == 4 && (Ty.mem .bool (2 ^ 64)).size == 4
+#guard counter.size == 2 && (Ty.inst 3 "Top" #[]).size == 1
+#guard (Ty.inst 3 "C" #[.type (.array .bool 4), .int (2 ^ 64)]).size == 6
+#guard (Ty.reg (.uint 8)).depth == 2 && (Ty.mem (.array .bool 4) 16).depth == 3
+#guard counter.depth == 2 && (Ty.inst 3 "Top" #[]).depth == 1
+#guard (Ty.inst 3 "C" #[.type (.reg (.array .bool 4))]).depth == 4
+#guard (Ty.reg (.uint 8)).info == ⟨0, 0, 0, 2, false, false, false⟩
+#guard (Ty.mem (.array .bool 4) 16).info == ⟨0, 0, 0, 3, false, false, false⟩
+#guard (Ty.wire op).info == ⟨0, 0, 0, 3, false, false, true⟩
+#guard (Ty.input (.array op 2)).info.enums && (Ty.mem (.fn #[] .bool) 2).info.funcs
+#guard counter.info == ⟨0, 0, 0, 2, false, false, false⟩
+#guard (Ty.inst 3 "C" #[.type op]).info == ⟨0, 0, 0, 3, false, false, false⟩
+#guard [Ty.reg .bool, .wire .bool, .input .bool, .mem .bool 2, counter].all
+  fun t => t.info.depth == t.depth && t.zeroDepth == 1
+#guard (Ty.reg (.uint 8)).text == "Reg[UInt[8]]"
+#guard (Ty.wire .bool).text == "Wire[Bool]"
+#guard (Ty.input (.uint 8)).text == "Input[UInt[8]]"
+#guard (Ty.mem (.uint 8) 16).text == "Mem[UInt[8], 16]"
+#guard counter.text == "Instance[Counter, 8]"
+#guard (Ty.inst 3 "Top" #[]).text == "Instance[Top]"
+#guard (Ty.inst 3 "C" #[.type (.reg .bool), .bool true]).text == "Instance[C, Reg[Bool], true]"
+#guard (Ty.mem .bool (2 ^ 300)).text == "Mem[Bool, an integer of 301 bits]"
+#guard (Value.type (.reg .bool)).literal == "Reg[Bool]"
+#guard (Value.type (.reg .bool)).text == "a type"
+#guard Ty.reg .bool == Ty.reg .bool && Ty.reg .bool != Ty.wire .bool
+#guard Ty.mem .bool 2 != Ty.mem .bool 3 && counter != .inst 3 "Counter" #[.int 9]
+#guard counter.same (.inst 3 "Other" #[.int 8]) && !counter.same (.inst 4 "Counter" #[.int 8])
+#guard (Ty.reg .bool).cmp (.reg (.uint 1)) == .lt && (Ty.reg .bool).cmp (.wire .bool) == .lt
+#guard (Ty.mem .bool 3).cmp (.mem .bool 2) == .gt && counter.cmp (.inst 3 "C" #[.int 9]) == .lt
+#guard (Ty.enum 0 "E" (Meta.enum 1 0)).cmp (.reg .bool) == .lt
+#guard (Value.type (.reg .bool)).measureCharge == 0
+
+/-!
 The text of a type or a value in a message has at most 1024 bytes, cut at a character, and then
 `...` (section 5.5). The walk stops soon after the bound, so a type with `2^64` parts prints at
 once. An integer above 256 bits prints its bit length.
