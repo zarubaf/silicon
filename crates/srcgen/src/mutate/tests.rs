@@ -5,10 +5,11 @@ use super::super::build::typed;
 use super::super::eval::Value;
 use super::super::program::tests::{TEXT, program};
 use super::super::program::{
-    FieldTy, HBin, HExpr, Item, Place, Ports, Program, Radix, SBin, SExpr, STy, Stmt, Ty, Un,
+    EnumDef, FieldTy, HBin, HExpr, Item, Match, Pattern, Place, Ports, Program, Radix, SBin, SExpr,
+    STy, Scalar, Stmt, Ty, Un, Variant,
 };
 use super::*;
-use num_bigint::BigInt;
+use num_bigint::{BigInt, BigUint};
 use proptest::strategy::{Strategy, ValueTree};
 use proptest::test_runner::TestRunner;
 
@@ -1206,4 +1207,137 @@ fn mutation_is_deterministic() {
     for kind in 0..15 {
         assert_eq!(mutate(&p, kind, 11), mutate(&p, kind, 11));
     }
+}
+
+/// `match (scrutinee) { patterns => values }` of static `Int`s.
+fn matching(scrutinee: SExpr, arms: &[(Pattern, i64)]) -> SExpr {
+    SExpr::Match(Match {
+        scrutinee: Box::new(scrutinee),
+        arms: arms.iter().map(|(p, v)| (p.clone(), dec(*v))).collect(),
+    })
+}
+
+fn literal(n: i64) -> Pattern {
+    Pattern::Int(BigInt::from(n), Radix::Dec)
+}
+
+/// `module M0() domains() { <body> }` where a static `let` holds `e`.
+fn with_static(e: SExpr, nested: bool) -> Program {
+    let held = Stmt::StaticLet("s0".to_owned(), STy::Int, e);
+    let body = if nested {
+        vec![Stmt::If(SExpr::Bool(true), vec![held], None)]
+    } else {
+        vec![held]
+    };
+    of(vec![module("M0", body)])
+}
+
+fn expects(p: &Program, kind: Kind) -> Vec<Option<&'static str>> {
+    all(p, kind).into_iter().map(|m| m.expect).collect()
+}
+
+#[test]
+fn the_arm_kinds_follow_the_coverage_rules() {
+    let arms = [(literal(1), 10), (literal(2), 20), (Pattern::Wild, 30)];
+    let p = with_static(matching(dec(3), &arms), false);
+    // Only the arm `_` and a match without `_` lose their coverage.
+    assert_eq!(expects(&p, Kind::DeleteArm), [None, None, Some("S021")]);
+    assert_eq!(expects(&p, Kind::DuplicateArm), [Some("S021"); 3]);
+    assert_eq!(expects(&p, Kind::WildFirst), [Some("S021")]);
+    assert!(expects(&p, Kind::DeadWild).is_empty());
+    let both = [(Pattern::Bool(true), 1), (Pattern::Bool(false), 2)];
+    let p = with_static(matching(SExpr::Bool(true), &both), false);
+    assert_eq!(expects(&p, Kind::DeleteArm), [Some("S021"); 2]);
+    assert_eq!(expects(&p, Kind::DeadWild), [Some("S021")]);
+    assert!(expects(&p, Kind::WildFirst).is_empty());
+    // A match in a branch may not run.
+    let p = with_static(matching(SExpr::Bool(true), &both), true);
+    assert_eq!(expects(&p, Kind::DeleteArm), [None; 2]);
+    assert_eq!(expects(&p, Kind::DuplicateArm), [None; 2]);
+    assert_eq!(expects(&p, Kind::DeadWild), [None]);
+}
+
+/// A mutant of a variant pattern: the binders and the tags.
+#[test]
+fn the_pattern_kinds_follow_the_pass_order() {
+    let enum_def = EnumDef {
+        name: "E0".to_owned(),
+        tag_width: 2,
+        variants: vec![
+            Variant {
+                name: "V0".to_owned(),
+                tag: BigUint::from(1u8),
+                payload: vec![Scalar::UInt(4), Scalar::Bool],
+            },
+            Variant {
+                name: "V1".to_owned(),
+                tag: BigUint::from(2u8),
+                payload: vec![],
+            },
+        ],
+    };
+    let variant = |v: &str, binders: &[Option<&str>]| {
+        Pattern::Variant(
+            "E0".to_owned(),
+            v.to_owned(),
+            binders.iter().map(|b| b.map(str::to_owned)).collect(),
+        )
+    };
+    let scrutinee = SExpr::Ctor("E0".to_owned(), "V1".to_owned(), vec![]);
+    let m = SExpr::Match(Match {
+        scrutinee: Box::new(scrutinee),
+        arms: vec![
+            (variant("V0", &[Some("B0"), Some("B1")]), dec(1)),
+            (variant("V1", &[]), dec(2)),
+            (Pattern::Wild, dec(3)),
+        ],
+    });
+    let top = module("M0", vec![Stmt::StaticLet("s0".to_owned(), STy::Int, m)]);
+    let p = of(vec![Item::Enum(enum_def), top]);
+    // The arm `V0` binds `B0` and `B1`, and no arm reads them.
+    assert_eq!(expects(&p, Kind::DupBinder), [Some("S002")]);
+    assert!(
+        expects(&p, Kind::DropArg)
+            .iter()
+            .all(|c| *c == Some("S007"))
+    );
+    assert!(expects(&p, Kind::AddArg).iter().all(|c| *c == Some("S007")));
+    // The enum is used in the top frame by the constructor.
+    assert_eq!(expects(&p, Kind::SameTag), [Some("S021")]);
+    assert_eq!(expects(&p, Kind::TagFit), [Some("S012"); 2]);
+    assert_eq!(expects(&p, Kind::PayloadOverflow), [Some("S012")]);
+    // A pattern of another kind is `S010` in an arm that reads no binder.
+    assert_eq!(expects(&p, Kind::PatternSwap), [Some("S010"); 2]);
+}
+
+/// A fixed set of 256 programs gives at least 5 predictions of `S021`, and
+/// the kinds of the match reach each new code. Each mutant lexes.
+#[test]
+fn the_fixed_set_of_mutants_reaches_s021_and_the_match_codes() {
+    let mut runner = TestRunner::deterministic();
+    let mut counts = std::collections::BTreeMap::<&str, usize>::new();
+    let mut by_kind = std::collections::BTreeMap::<usize, usize>::new();
+    for tape in 0..256u32 {
+        let p = typed().new_tree(&mut runner).unwrap().current().unwrap();
+        for (k, kind) in KINDS.iter().enumerate().skip(15) {
+            if sites(*kind, &p.items, &p.top) == 0 {
+                continue;
+            }
+            let m = mutate(&p, u32::try_from(k).unwrap(), tape.wrapping_mul(7919));
+            let lexed = syntax::lex(&m.text, usize::MAX);
+            assert!(lexed.errors.is_empty(), "{:?} in\n{}", lexed.errors, m.text);
+            if let Some(code) = m.expect {
+                *counts.entry(code).or_default() += 1;
+                *by_kind.entry(k).or_default() += 1;
+            }
+        }
+    }
+    assert!(counts.get("S021").copied().unwrap_or(0) >= 5, "{counts:?}");
+    for code in ["S002", "S010", "S011", "S012"] {
+        assert!(
+            counts.get(code).copied().unwrap_or(0) >= 1,
+            "{code}: {counts:?}"
+        );
+    }
+    assert_eq!(by_kind.len(), KINDS.len() - 15, "{by_kind:?}");
 }
