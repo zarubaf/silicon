@@ -48,7 +48,7 @@ mod strings;
 
 pub use lines::lines;
 
-use super::eval::{Env, Fault, Scope, Value, concrete};
+use super::eval::{Env, Fault, Scope, Value, leaves};
 use super::program::{
     ComptimeFn, HExpr, Item, ListFn, MutFn, Ports, Program, SExpr, STy, Scalar, Stmt, StructDef,
     Ty, render_items,
@@ -137,7 +137,9 @@ fn build(tape: Vec<u32>) -> Result<Program, BuildFault> {
     Builder::new(tape).program().map_err(BuildFault)
 }
 
-/// The ports of the module `top` at the arguments `args`, byte-sorted.
+/// The ports of the module `top` at the arguments `args`. Each list follows
+/// the port layout of front-end spec 7.5: the ports by byte order of their
+/// source names, then the leaves of one port in packing order.
 pub(crate) fn ports(items: &[Item], top: &str, args: &[Value]) -> Result<Ports, Fault> {
     let scope = Scope::new(items)?;
     let Some(Item::Module {
@@ -155,21 +157,26 @@ pub(crate) fn ports(items: &[Item], top: &str, args: &[Value]) -> Result<Ports, 
         return Err(Fault::Type);
     }
     let env = Env::of(params, args);
-    let mut ports = Ports {
-        clocked: *clocked,
-        inputs: Vec::new(),
-        outputs: Vec::new(),
-    };
+    let mut inputs = Vec::new();
+    let mut outputs = Vec::new();
     for s in body {
         match s {
-            Stmt::Input(n, t) => ports.inputs.push((n.clone(), concrete(t, &env, &scope)?)),
-            Stmt::Output(n, t) => ports.outputs.push((n.clone(), concrete(t, &env, &scope)?)),
+            Stmt::Input(n, t) => inputs.push((n.clone(), leaves(n, t, &env, &scope)?)),
+            Stmt::Output(n, t) => outputs.push((n.clone(), leaves(n, t, &env, &scope)?)),
             _ => {}
         }
     }
-    ports.inputs.sort_by(|a, b| a.0.cmp(&b.0));
-    ports.outputs.sort_by(|a, b| a.0.cmp(&b.0));
-    Ok(ports)
+    Ok(Ports {
+        clocked: *clocked,
+        inputs: flatten(inputs),
+        outputs: flatten(outputs),
+    })
+}
+
+/// The entries of the ports, sorted by port name before the leaves expand.
+fn flatten(mut ports: Vec<(String, Vec<(String, Scalar)>)>) -> Vec<(String, Scalar)> {
+    ports.sort_by(|a, b| a.0.cmp(&b.0));
+    ports.into_iter().flat_map(|(_, leaves)| leaves).collect()
 }
 
 /// The tape of choices. A copy of `below`, `between`, `index`, and `flag`
