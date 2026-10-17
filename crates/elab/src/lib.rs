@@ -337,6 +337,9 @@ mod tests_types;
 mod tests_vectors;
 
 #[cfg(test)]
+mod tests_scaling;
+
+#[cfg(test)]
 mod tests_work;
 
 #[cfg(test)]
