@@ -1486,8 +1486,8 @@ def enumOf (ty : Resolve.TypeExpr → M Ty) (ev : Resolve.Expr → M Val) (p : P
         | u => fail .S010 q s!"expected UInt[{w}], but the value is {u.text}"
       if let some j := tags[n]? then
         let b := vs[j]!.name.pos
-        fail .S021 q (s!"the variant `{v.name.name}` has the tag `{n}` of the variant at " ++
-          s!"{b.line}:{b.col}; give each variant its own tag value")
+        fail .S021 q (s!"the variant `{v.name.name}` has the tag `{intText n}` of the variant " ++
+          s!"at {b.line}:{b.col}; give each variant its own tag value")
       tags := tags.insert n out.size
       let ts ← v.payload.mapM fun e => do
         let t ← ty e
@@ -1613,14 +1613,15 @@ def Specs.tagVariant (s : Specs) (t : Ty) (k : Int) : Option Nat :=
 
 /-!
 The text `{v}` of the key `k` of the scrutinee type `t` (section 6.2). A `Bool` is `true` or
-`false`, the tag of a variant is the variant (`variantText`), and another key is a decimal
-integer with its sign. The tag map of the enum gives the variant of a tag.
+`false`, and the tag of a variant is the variant (`variantText`). Another key is a decimal
+integer with its sign. Above 256 bits, it is its bit length (`intText`). The tag map of the enum
+gives the variant of a tag.
 -/
 def keyText (items : Array Resolve.Item) (specs : Specs) (t : Ty) (k : Int) : String :=
   match t, specs.tagVariant t k with
   | .bool, _ => Print.boolean (k == 1)
   | .enum i .., some j => variantText items i j
-  | _, _ => toString k
+  | _, _ => intText k
 
 /-! The kind `{k}` of a pattern of the scrutinee type `t` in the `S010` text (section 6.2). -/
 def kindText (t : Ty) : String :=
@@ -1635,7 +1636,7 @@ as `{v}`, and a variant pattern as its path with its binders and `_`.
 -/
 def patternText : Resolve.Pattern → String
   | .wild _ => "_"
-  | .int _ neg v => toString (if neg then -(v : Int) else v)
+  | .int _ neg v => intText (if neg then -(v : Int) else v)
   | .bool _ b => Print.boolean b
   | .variant _ x y _ _ bs =>
     let names := bs.map fun | some b => b.name.name | none => "_"
@@ -1741,8 +1742,8 @@ def coverCheck (p : Pos) (t : Ty) (c : Cover) : M Unit := do
     unless allKeys c.keys.size w do
       let u := c.keys.foldl (fun e k _ => if k == e then e + 1 else e) lo
       if t matches .enum .. && (specs.tagVariant t u).isNone then
-        fail .S021 p (s!"the tag `{u}` of `{t.text}` has no variant, but a port or a memory " ++
-          "can hold it; add `_ => ...` as the last arm")
+        fail .S021 p (s!"the tag `{intText u}` of `{t.text}` has no variant, but a port or a " ++
+          "memory can hold it; add `_ => ...` as the last arm")
       fail .S021 p (s!"the `match` does not cover `{keyText (← read).items specs t u}` of " ++
         s!"`{t.text}`; add an arm for it, or add `_ => ...` as the last arm")
 
