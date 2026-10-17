@@ -78,7 +78,7 @@ impl Evaluator<'_> {
     }
 
     /// The variant that the path node `ty` names, from the resolver.
-    fn variant_ref(&self, ty: &Ident) -> Option<resolve::VariantRef> {
+    pub(super) fn variant_ref(&self, ty: &Ident) -> Option<resolve::VariantRef> {
         match self.names {
             Names::Top => self.top.and_then(|t| t.variant(ty.id)),
             Names::File => self.file.variant(ty.id),

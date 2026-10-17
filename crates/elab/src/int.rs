@@ -288,6 +288,49 @@ impl BitBuf {
     }
 }
 
+/// The 64-bit words of a finite value, the least significant word first. A value of at most
+/// 65536 bits has at most 1024 words.
+#[must_use]
+pub(crate) fn words(x: &Bits) -> Vec<u64> {
+    x.value().to_u64_digits()
+}
+
+/// The 32 bits of the little-endian words `words` from the bit `at`. A bit above the words is 0.
+fn half(words: &[u64], at: u64) -> u32 {
+    let (index, shift) = (usize::try_from(at / 64).unwrap_or(usize::MAX), at % 64);
+    let low = words.get(index).copied().unwrap_or(0) >> shift;
+    let high = if shift == 0 {
+        0
+    } else {
+        words.get(index.saturating_add(1)).copied().unwrap_or(0) << (64 - shift)
+    };
+    low_half(low | high)
+}
+
+/// The bit at the index `at` of the little-endian words. A bit above the words is 0.
+#[must_use]
+pub(crate) fn word_bit(words: &[u64], at: u64) -> bool {
+    let index = usize::try_from(at / 64).unwrap_or(usize::MAX);
+    words.get(index).is_some_and(|w| (w >> (at % 64)) & 1 == 1)
+}
+
+/// The finite value of `width` bits that the little-endian words hold from the bit `off`, or
+/// `None` for the width 0. A bit above the words is 0. It takes one step for each 32 bits of
+/// the width, so a read costs `width / 32 + 1` steps whatever the offset and the length of the
+/// words are.
+#[must_use]
+pub(crate) fn read_bits(words: &[u64], off: u64, width: u32) -> Option<Bits> {
+    let mut halves: Vec<u32> = (0..u64::from(width).div_ceil(32))
+        .map(|k| half(words, off.saturating_add(32 * k)))
+        .collect();
+    if !width.is_multiple_of(32)
+        && let Some(last) = halves.last_mut()
+    {
+        *last &= (1u32 << (width % 32)) - 1;
+    }
+    Bits::new(width, BigUint::from_slice(&halves))
+}
+
 /// The bit at the index `i` of a finite value, read without a copy.
 #[must_use]
 pub fn bit(x: &Bits, i: u32) -> bool {

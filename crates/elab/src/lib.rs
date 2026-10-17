@@ -4,6 +4,7 @@
 //! design](../../doc/design/2026-10-09-frontend.md), sections 4.4, 4.5, 5, and 7.
 
 mod agg;
+mod cover;
 mod eval;
 mod flatten;
 mod hw;
@@ -17,6 +18,7 @@ mod serial;
 pub mod sha256;
 mod text;
 mod types;
+mod unpack;
 pub mod value;
 pub mod vectors;
 
@@ -307,6 +309,8 @@ mod tests_flatten;
 mod tests_leaves;
 
 #[cfg(test)]
+mod tests_match;
+#[cfg(test)]
 mod tests_memory;
 
 #[cfg(test)]
@@ -335,6 +339,8 @@ mod tests_work;
 
 #[cfg(test)]
 mod tests_work_enum;
+#[cfg(test)]
+mod tests_work_match;
 
 #[cfg(test)]
 mod tests_work_records;

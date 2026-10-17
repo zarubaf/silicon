@@ -14,6 +14,7 @@ use crate::serial::{self, Item, Len};
 use crate::text::Text;
 use crate::types::{Ty, TyId, Types};
 use core_ir::Bits;
+use std::borrow::Cow;
 use std::fmt;
 use std::hash::Hasher;
 
@@ -492,6 +493,20 @@ impl Value {
                 _ => {}
             }
         }
+    }
+
+    /// The key of a static scrutinee in the order of its type (section 5.6): `false` is 0 and
+    /// `true` is 1, a `SInt` reads its two's complement value, and an enum gives its tag.
+    /// An `Int` is borrowed, so a key costs no copy of a large scrutinee. A finite value has at
+    /// most 1024 words.
+    pub(crate) fn key(&self) -> Option<Cow<'_, Int>> {
+        Some(Cow::Owned(match self {
+            Value::Bool(b) => Int::from_u64(u64::from(*b)),
+            Value::UInt(x) | Value::Enum(_, x, _) => Int::from_unsigned(x),
+            Value::SInt(x) => Int::from_signed(x, x.width()),
+            Value::Int(n) => return Some(Cow::Borrowed(n)),
+            _ => return None,
+        }))
     }
 
     /// Whether the type of the value holds a function type (the function flag of section 5.4).

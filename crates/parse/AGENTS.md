@@ -10,7 +10,7 @@ This crate owns the grammar of the current slice, the error recovery, and the ty
 
 ## Invariants
 
-- The AST mirrors `Silicon.Source.Syntax` in Lean: the same types, the same constructors, and the same field order. A column counts Unicode characters. Each name node, number literal, call, and receiver call also has a `NodeId`, which is not in Lean. The ids are unique in one parse and in source order. The dump does not print them. Check: `cargo nextest run -p parse`.
+- The AST mirrors `Silicon.Source.Syntax` in Lean: the same types, the same constructors, and the same field order. A column counts Unicode characters. Each name node, number literal, pattern literal, call, and receiver call also has a `NodeId`, which is not in Lean. The ids are unique in one parse and in source order. The dump does not print them. Check: `cargo nextest run -p parse`.
 - The text of the tree equals the input, and `parse` never panics, for every string. Check: `cargo nextest run -p parse`.
 - The first error in position order is the normative error. It is `S001` or `S004` with the position rules of design section 6.2. Later errors have no oracle. Check: `cargo nextest run -p parse`.
 - Syntax of a later slice gives `S004`, never `S001`. Brackets nest at most the syntax depth N, and the lexer marks the first bracket above it. After a parse with no other error, each outermost expression or type has a height of at most N. The error is at its first token. A parser builds a chain in a loop, so the bracket depth limits its recursion for any input. The default is 4096, the cap `MAX_SYNTAX_DEPTH` is 65536, and a deeper input is `S001`, never a stack overflow. Check: `cargo nextest run -p parse`.

@@ -5,7 +5,7 @@
 //! type error thus costs no fuel, and a value that does not fit (`S012`) fails after the
 //! charge.
 
-use super::{Fault, Fuel, finite, fits, int_text, type_error};
+use super::{Fault, Fuel, finite, fit_text, fits, type_error};
 use crate::Code;
 use crate::int::Int;
 use crate::types::{Joined, Ty, TyId, Types};
@@ -85,7 +85,7 @@ fn leaf(t: &Ty, v: &Value, tys: &Types) -> Result<Leaf, Fault> {
         }
         (Ty::Nat, Value::Int(n)) => {
             if n.is_negative() {
-                Err((Code::S012, format!("{} is not a Nat", int_text(n))))
+                Err((Code::S012, fit_text(t, n, tys)))
             } else {
                 Ok(Leaf::Same)
             }
@@ -108,10 +108,7 @@ fn fit(t: &Ty, n: &Int, tys: &Types) -> Result<Value, Fault> {
         return wrong(t, &Value::Int(n.clone()), tys);
     };
     if !fits(t, n) {
-        return Err((
-            Code::S012,
-            format!("{} does not fit {}", int_text(n), tys.text_of(t)),
-        ));
+        return Err((Code::S012, fit_text(t, n, tys)));
     }
     let bits = n
         .to_finite(*w)
