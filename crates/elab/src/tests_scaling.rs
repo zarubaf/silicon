@@ -8,6 +8,21 @@
 //!
 //! The absolute check guards against a regression. It does not show that the bound holds,
 //! because `C` absorbs the escapes that exist when it is set.
+//!
+//! A template is a file of `tests/source/scaling/`. Its header has a line
+//! `// SCALE <name> <n0> <n1> <n2> <n3> <n4>` and a line `// TOP <top>`. The placeholder `{N}`
+//! stands for the size of the run. A block between `// REPEAT <i> <count>` and `// END` repeats
+//! `count` times, and `{i}` stands for the number of the copy. Each budget fix adds a template
+//! that makes the extreme shape of the fix and grows it.
+
+use crate::counters::of;
+use crate::tests_flatten::lowered;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// The constant of the absolute check: the next power of 2 of 4 times the largest `W / B` of
+/// the templates.
+const C: f64 = 0.5;
 
 /// The growth exponent at which two steps in a row fail: the work for each unit of fuel then
 /// grows by a factor of at least `2^0.5` when a size doubles.
@@ -84,6 +99,160 @@ fn judge(points: &[Point], c: f64) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// The number of the next run. It keeps the fuel of each run unique, so the counters of two
+/// runs do not meet.
+static RUNS: AtomicU64 = AtomicU64::new(0);
+
+/// A run of the program text `src` with the top `top`. The error is the code and the position
+/// of a rejection.
+fn measure(src: &str, top: &str) -> Result<Point, String> {
+    let fuel = (1u64 << 40) + RUNS.fetch_add(1, Ordering::Relaxed);
+    let (_, run) = lowered(src, top, fuel)?;
+    let counts = of(fuel);
+    Ok(Point {
+        w: counts.total(),
+        f: run.used(),
+        s: src.len() as u64,
+        scan: counts.ast,
+    })
+}
+
+/// A template: its name, its five sizes, its top, and its lines.
+struct Template {
+    name: String,
+    sizes: Vec<u64>,
+    top: String,
+    lines: Vec<String>,
+}
+
+fn parse(text: &str) -> Result<Template, String> {
+    let mut scale = None;
+    let mut top = None;
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("// SCALE ") {
+            scale = Some(
+                rest.split_whitespace()
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>(),
+            );
+        }
+        if let Some(rest) = line.strip_prefix("// TOP ") {
+            top = Some(rest.trim().to_owned());
+        }
+    }
+    let scale = scale.ok_or("no `// SCALE` line")?;
+    let (name, sizes) = scale.split_first().ok_or("an empty `// SCALE` line")?;
+    let sizes = sizes
+        .iter()
+        .map(|n| n.parse::<u64>().map_err(|e| format!("size {n}: {e}")))
+        .collect::<Result<Vec<_>, _>>()?;
+    if sizes.len() != 5 {
+        return Err(format!("{} sizes, not 5", sizes.len()));
+    }
+    Ok(Template {
+        name: name.clone(),
+        sizes,
+        top: top.ok_or("no `// TOP` line")?,
+        lines: text.lines().map(str::to_owned).collect(),
+    })
+}
+
+/// The source of the template at the size `n`.
+fn expand(t: &Template, n: u64) -> Result<String, String> {
+    let mut out = String::new();
+    let mut lines = t.lines.iter();
+    while let Some(line) = lines.next() {
+        let Some(rest) = line.strip_prefix("// REPEAT ") else {
+            out.push_str(&line.replace("{N}", &n.to_string()));
+            out.push('\n');
+            continue;
+        };
+        let (var, count) = rest.split_once(' ').ok_or("a bad `// REPEAT` line")?;
+        let count = count.replace("{N}", &n.to_string());
+        let count: u64 = count
+            .trim()
+            .parse()
+            .map_err(|e| format!("count {count}: {e}"))?;
+        let mut block = Vec::new();
+        for l in lines.by_ref() {
+            if l.starts_with("// END") {
+                break;
+            }
+            block.push(l);
+        }
+        for i in 0..count {
+            for l in &block {
+                out.push_str(
+                    &l.replace("{N}", &n.to_string())
+                        .replace(&format!("{{{var}}}"), &i.to_string()),
+                );
+                out.push('\n');
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// The files of `tests/source/scaling/`.
+fn templates() -> Vec<(PathBuf, String)> {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/source/scaling");
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "si"))
+        .collect();
+    files.sort();
+    files
+        .into_iter()
+        .map(|p| {
+            let text =
+                std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
+            (p, text)
+        })
+        .collect()
+}
+
+/// The table of a series, for a failure.
+fn table(sizes: &[u64], points: &[Point]) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::from("      N        W        F      s\n");
+    for (n, p) in sizes.iter().zip(points) {
+        let _ = writeln!(out, "{n:>7} {:>8} {:>8} {:>6}", p.w, p.f, p.s);
+    }
+    out
+}
+
+/// Each template stays within the bound and grows no faster than its fuel. A template that the
+/// front end rejects fails: a template is a program that the front end accepts.
+#[test]
+fn the_templates_stay_in_the_bound() {
+    let all = templates();
+    assert!(!all.is_empty(), "no template");
+    for (path, text) in all {
+        let t = parse(&text).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let mut points = Vec::new();
+        for n in &t.sizes {
+            let src = expand(&t, *n).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            match measure(&src, &t.top) {
+                Ok(p) => points.push(p),
+                Err(e) => panic!("{}: N={n} is rejected: {e}\n{src}", t.name),
+            }
+        }
+        if let Err(why) = judge(&points, C) {
+            panic!("scaling {}: {why}\n{}", t.name, table(&t.sizes, &points));
+        }
+    }
+}
+
+#[test]
+fn a_template_expands_its_placeholders_and_repeats() {
+    let t =
+        parse("// SCALE s 1 2 3 4 5\n// TOP M()\nx{N}\n// REPEAT i {N}\na{i}\n// END\n").unwrap();
+    assert_eq!(t.sizes, [1, 2, 3, 4, 5]);
+    assert!(expand(&t, 3).unwrap().ends_with("x3\na0\na1\na2\n"));
+    assert!(parse("// TOP M()\n").is_err());
 }
 
 fn linear(a: u64, b: u64) -> Vec<Point> {
