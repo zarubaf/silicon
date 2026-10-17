@@ -2245,10 +2245,9 @@ mutual
       match (← get).frame[id]? with
       | some ⟨_, _, .agg (.ref b t)⟩ =>
         -- An input port refers to its name. The read checks its depth (`readRef`). An empty
-        -- one pays its zero, a new static value.
-        if t.info.leaves = 0 then return ⟨← readRef p b t, false, none⟩
-        bounded p t.zeroDepth
-        return ⟨.agg (.ref b t), true, some id⟩
+        -- one pays its zero, a new static value, so it is no use of the binding.
+        let v ← readRef p b t
+        return if t.info.leaves = 0 then ⟨v, false, none⟩ else ⟨v, true, some id⟩
       | some s => return ⟨s.value, true, some id⟩
       | _ => fail .S011 p s!"`{x}` is not a static value"
     | .type k => do return ⟨.static (.type (← prim p x k)), true, none⟩
