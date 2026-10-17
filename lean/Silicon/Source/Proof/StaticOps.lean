@@ -32,6 +32,9 @@ no proof here ties them to the walk of `Eval.eqWalk` and `Eval.armWalk` (#286).
 The rows of enums that unpack bits take a constant operand: the bits of `reinterpret(E, b)`, and
 the payload of a binder leaf. `Eval.recast` and `Value.unpack` give the static result. A literal
 gets no shared mark, so the hardware nodes read the constant directly.
+
+The rows of a hardware `match` take a constant selector and the key constant of `keyLit`. A
+select is the `icmp eq` node of `Eval.matchHw`, and the static `match` compares `Value.key`.
 -/
 namespace Silicon.Source.StaticOps
 
@@ -358,6 +361,32 @@ def BinderBoolAgrees : Prop :=
     let e (q : Core.Pos) : Ex ctx 1 := .extract q (.const q pw y.toNat) off 1 h
     (∀ q, ∃ r, v = .bool r ∧ ev vals mems (e q) = BitVec.ofBool r) ∧
       ∀ p, Lowers (Hw.mk p .bool (.extract off 1) [leaf p false pw y]) 2 (e (cpos p)).erase
+
+/--
+The select of a key `k` of a hardware `match` on a finite selector: the row `icmp eq a c`, with `c`
+the constant of `keyLit`. The key is a value of the selector type, as the coverage check of
+`matchArms` makes sure: it keeps its value through `BitVec.ofInt`. The static `match` compares
+`Value.key` of the selector with `k`. A tag of an enum is a `UInt` selector.
+-/
+def SelectAgrees : Prop :=
+  ∀ (s : Bool) (w : Nat) (x : BitVec w) (k : Int),
+    Value.key (finite s w (BitVec.ofInt w k)) = some k →
+    ∀ {ctx} (vals : Valuation ctx) (mems : Memories ctx),
+    let e (q : Core.Pos) : Ex ctx 1 :=
+      .icmp q .eq (.const q w x.toNat) (.const q w (BitVec.ofInt w k).toNat)
+    (∀ q, ev vals mems (e q) = BitVec.ofBool (Value.key (finite s w x) == some k)) ∧
+      ∀ p, Lowers (Hw.mk p .bool (.bin .eq) [leaf p s w x, keyLit p (finiteTy s w) k]) 3
+        (e (cpos p)).erase
+
+/-- The select of a key `k` of a hardware `match` on a `Bool` selector, as for a finite one. -/
+def SelectBoolAgrees : Prop :=
+  ∀ (b : Bool) (k : Int), (k = 0 ∨ k = 1) →
+    ∀ {ctx} (vals : Valuation ctx) (mems : Memories ctx),
+    let e (q : Core.Pos) : Ex ctx 1 :=
+      .icmp q .eq (.const q 1 (bit b)) (.const q 1 (bit (k == 1)))
+    (∀ q, ev vals mems (e q) = BitVec.ofBool (Value.key (.bool b) == some k)) ∧
+      ∀ p, Lowers (Hw.mk p .bool (.bin .eq) [litHw p .bool (.bool b), keyLit p .bool k]) 3
+        (e (cpos p)).erase
 
 /-! Facts about the lift and the operands. -/
 
@@ -747,17 +776,38 @@ theorem static_unpack_enum_agrees : UnpackEnumAgrees := by
   · lowers [lowerPack, Flatten.bounded]
   · lowers [lowerPack, Flatten.bounded]
 
+theorem static_select_agrees : SelectAgrees := by
+  intro s w x k hk ctx vals mems
+  refine ⟨fun q => ?_, fun p => ?_⟩
+  · generalize BitVec.ofInt w k = y at hk ⊢
+    simp only [Core.Semantics.evalExpr, Core.Semantics.evalPred, BitVec.ofNat_toNat,
+      BitVec.setWidth_eq]
+    cases s <;> simp only [finite, Value.key, Bool.false_eq_true, ite_true, ite_false,
+      Option.some.injEq] at hk ⊢ <;> subst hk <;> congr 1
+    · rw [Bool.eq_iff_iff]; simp only [beq_iff_eq, Option.some.injEq]
+      exact ⟨fun h => h ▸ rfl, fun h => BitVec.eq_of_toNat_eq (by exact_mod_cast h)⟩
+    · rw [Bool.eq_iff_iff]; simp [BitVec.toInt_inj]
+  · cases s <;> lowers [keyLit]
+
+theorem static_select_bool_agrees : SelectBoolAgrees := by
+  intro b k hk ctx vals mems
+  refine ⟨fun q => ?_, fun p => ?_⟩
+  · rcases hk with rfl | rfl <;> cases b <;>
+      simp +decide [Core.Semantics.evalExpr, Core.Semantics.evalPred, Value.key]
+  · lowers [keyLit]
+
 /-! Each finite static operation agrees with its core row, and `lower` emits that row. -/
 theorem static_op_agrees :
     BinAgrees ∧ CmpAgrees ∧ BoolCmpAgrees ∧ LogicAgrees ∧ InvAgrees ∧ NegAgrees ∧
       NotAgrees ∧ ShiftAgrees ∧ ResizeSameAgrees ∧ ResizeTruncAgrees ∧ ResizeZextAgrees ∧
       ResizeSextAgrees ∧ ReinterpretAgrees ∧ EqLeavesAgrees ∧ NeLeavesAgrees ∧ IfLeafAgrees ∧
-      UnpackEnumAgrees ∧ BinderLeafAgrees ∧ BinderBoolAgrees :=
+      UnpackEnumAgrees ∧ BinderLeafAgrees ∧ BinderBoolAgrees ∧ SelectAgrees ∧ SelectBoolAgrees :=
   ⟨static_bin_agrees, static_cmp_agrees, static_bool_cmp_agrees, static_logic_agrees,
     static_inv_agrees, static_neg_agrees, static_not_agrees, static_shift_agrees,
     static_resize_same_agrees, static_resize_trunc_agrees, static_resize_zext_agrees,
     static_resize_sext_agrees, static_reinterpret_agrees, static_eq_leaves_agrees,
     static_ne_leaves_agrees, static_if_leaf_agrees, static_unpack_enum_agrees,
-    static_binder_leaf_agrees, static_binder_bool_agrees⟩
+    static_binder_leaf_agrees, static_binder_bool_agrees, static_select_agrees,
+    static_select_bool_agrees⟩
 
 end Silicon.Source.StaticOps
