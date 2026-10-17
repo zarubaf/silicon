@@ -1,0 +1,10 @@
+// The binder of a hardware `match` arm checks the depth of its value, 4, as the payload `[S; 1]` has the depth 3.
+// DEPTH 4
+// TOP M()
+struct S { a: UInt[8] }
+enum E: UInt[1] { A = 0, B([S; 1]) = 1 }
+module M() domains() {
+  input u: UInt[9];
+  output o: UInt[8];
+  o := match (reinterpret(E, u)) { E::B(x) => x[0].a, _ => 0 };
+}

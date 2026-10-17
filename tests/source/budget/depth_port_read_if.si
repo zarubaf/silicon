@@ -1,0 +1,13 @@
+// A hardware `if` of two reads of an enum port checks the depth of the first read.
+// DEPTH 3
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }
+module M() domains() {
+  input x: UInt[8];
+  input c: Bool;
+  input y: UInt[4];
+  input e: Op;
+  output o: Bool;
+  let a = if (c) { e } else { e };
+  o := true;
+}

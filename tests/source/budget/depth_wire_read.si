@@ -1,0 +1,13 @@
+// A read of a wire of a struct checks the depth of its zero, 3, at the statement that reads it.
+// DEPTH 3
+// TOP M()
+struct S { a: UInt[8] }
+module M() domains() {
+  input c: Bool;
+  input s: S;
+  input t: S;
+  wire w: S;
+  output o: S;
+  w := s;
+  o := w;
+}

@@ -1026,6 +1026,108 @@ fn cost_of_a_bad_top_selection_is_a_usage_error() -> Test {
     Ok(())
 }
 
+/// The hardware design of the depth tests of a read: an enum port `e`, and the `body` in `M`.
+fn enum_port_design(body: &str) -> String {
+    format!(
+        "enum Op: UInt[2] {{ Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }}\n\
+         module M() {{\n  input x: UInt[8];\n  input c: Bool;\n  input y: UInt[4];\n  \
+         input e: Op;\n  output o: Bool;\n{body}  o := true;\n}}\n"
+    )
+}
+
+/// The design with a struct port, a wire, and an output of the struct `S`.
+fn struct_port_design(body: &str) -> String {
+    format!(
+        "struct S {{ a: UInt[8] }}\nmodule M() {{\n  input c: Bool;\n  input s: S;\n  \
+         input t: S;\n  wire w: S;\n  output o: S;\n{body}}}\n"
+    )
+}
+
+/// The first line of `silicon cost` and `silicon-check cost` on `src` at the nesting `depth`,
+/// when the two front ends agree.
+fn cost_at_depth(src: &str, depth: u32) -> Result<String, Box<dyn std::error::Error>> {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let path = file(
+        &format!("depth-read-{}-{n}.si", std::process::id()),
+        src.as_bytes(),
+    )?;
+    let depth = depth.to_string();
+    let out = agree("cost", &["--top", "M", "--depth", &depth], &path)?;
+    Ok(text(&out).lines().next().unwrap_or_default().to_owned())
+}
+
+const DEPTH_3: &str = "error[S015]: ";
+
+/// A read of an aggregate makes a value of the depth of its zero (design section 5.5), so it
+/// checks that depth, at the name of the read, before the value exists.
+#[test]
+fn a_read_of_an_aggregate_checks_the_depth_of_its_zero() -> Test {
+    let at = |pos: &str| {
+        format!(
+            "{DEPTH_3}{pos}: the depth 3 goes above the nesting depth 2; raise --depth to at least 3"
+        )
+    };
+    let read = enum_port_design("  let a = e;\n");
+    assert_eq!(cost_at_depth(&read, 2)?, at("8:11"));
+    assert!(cost_at_depth(&read, 3)?.starts_with("total"));
+    let join = enum_port_design("  let a = if (c) { e } else { e };\n");
+    assert_eq!(cost_at_depth(&join, 2)?, at("8:20"));
+    assert!(cost_at_depth(&join, 3)?.starts_with("total"));
+    // A port that no read uses makes no value.
+    assert!(cost_at_depth(&enum_port_design(""), 2)?.starts_with("total"));
+    // The depth check comes before the check of the operands of `==`.
+    let equal = enum_port_design("  let a = e == e;\n");
+    assert_eq!(cost_at_depth(&equal, 2)?, at("8:11"));
+    assert!(cost_at_depth(&equal, 3)?.starts_with("error[S010]"));
+    Ok(())
+}
+
+#[test]
+fn a_read_of_a_wire_checks_the_depth_at_its_statement() -> Test {
+    let at = |pos: &str| {
+        format!(
+            "{DEPTH_3}{pos}: the depth 3 goes above the nesting depth 2; raise --depth to at least 3"
+        )
+    };
+    let forward = struct_port_design("  w := s;\n  o := w;\n");
+    assert_eq!(cost_at_depth(&forward, 2)?, at("8:8"));
+    assert!(cost_at_depth(&forward, 3)?.starts_with("total"));
+    let reversed = struct_port_design("  o := w;\n  w := s;\n");
+    assert_eq!(cost_at_depth(&reversed, 2)?, at("8:3"));
+    let join = struct_port_design("  w := t;\n  o := if (c) { s } else { t };\n");
+    assert_eq!(cost_at_depth(&join, 2)?, at("8:8"));
+    assert!(cost_at_depth(&join, 3)?.starts_with("total"));
+    Ok(())
+}
+
+/// The payload `[S; 1]` has the depth 3, and the value of its binder the depth 4.
+#[test]
+fn the_binder_of_a_hardware_match_arm_checks_its_depth() -> Test {
+    let src = "struct S { a: UInt[8] }\nenum E: UInt[1] { A = 0, B([S; 1]) = 1 }\nmodule M() {\n  \
+               input u: UInt[9];\n  output o: UInt[8];\n  \
+               o := match (reinterpret(E, u)) { E::B(x) => x[0].a, _ => 0 };\n}\n";
+    assert_eq!(
+        cost_at_depth(src, 3)?,
+        "error[S015]: 6:41: the depth 4 goes above the nesting depth 3; raise --depth to at least 4"
+    );
+    assert!(cost_at_depth(src, 4)?.starts_with("total"));
+    Ok(())
+}
+
+/// The binder of a static `match` arm checks its depth before its size limit.
+#[test]
+fn the_binder_of_a_static_match_arm_checks_its_depth() -> Test {
+    let src = "struct S { a: UInt[8] }\nstruct T { s: S }\nenum E: UInt[1] { A = 0, B(T) = 1 }\n";
+    let expr = "match (reinterpret(E, UInt[9](1))) { E::B(x) => x.s.a, _ => 0 }";
+    let path = file("depth-static-binder.si", src.as_bytes())?;
+    let out = agree("eval", &[expr, "--depth", "4"], &path)?;
+    assert_eq!(text(&out), "(uint 8 0)\n");
+    let out = agree("eval", &[expr, "--depth", "3"], &path)?;
+    assert!(text(&out).starts_with("error[S015]: 1:43: the depth 4 goes above"));
+    Ok(())
+}
+
 /// Runs `silicon COMMAND FILE ARGS --top TOP` with the input `stdin`. Each call has its own
 /// file.
 fn source(

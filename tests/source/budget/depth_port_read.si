@@ -1,0 +1,13 @@
+// A read of a port of an enum makes a value of the depth of its zero, 3. The read checks it, so the depth 2 gives `S015` at the name.
+// DEPTH 3
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }
+module M() domains() {
+  input x: UInt[8];
+  input c: Bool;
+  input y: UInt[4];
+  input e: Op;
+  output o: Bool;
+  let a = e;
+  o := true;
+}
