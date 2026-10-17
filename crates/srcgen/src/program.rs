@@ -1057,7 +1057,7 @@ fn postfix_base(e: &SExpr) -> String {
     }
 }
 
-fn hexpr(e: &HExpr) -> String {
+pub(crate) fn hexpr(e: &HExpr) -> String {
     match e {
         HExpr::Name(n) => n.clone(),
         HExpr::Field(u, n) => format!("{u}.{n}"),

@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The pre-order walk over the sites of a mutation kind.
 
+use super::super::program::hexpr as hexpr_text;
 use super::super::program::sexpr as sexpr_text;
 use super::super::program::{
-    FieldTy, HBin, HExpr, Item, Match, Pattern, Place, Radix, SBin, SExpr, STy, Stmt, Ty, Un,
+    EnumDef, FieldTy, HBin, HExpr, Item, Match, Pattern, Place, Radix, SBin, SExpr, STy, Stmt, Ty,
+    Un,
 };
 use super::uses::{self, Callees};
 use super::{EFFECT_FN, Effect, Hit, KEEP_FN, Kind};
@@ -41,6 +43,8 @@ pub(super) struct Walk<'a> {
     /// Whether the site being walked always runs: it is in the top frame of
     /// a module, and in no lazy operand or branch.
     always: bool,
+    /// The enums that the top frame of a module uses, found by a first walk.
+    used: Vec<String>,
     /// The name and index of the current item, and the count of its
     /// statements so far.
     item: String,
@@ -65,6 +69,7 @@ impl<'a> Walk<'a> {
             arm: false,
             reach: false,
             always: false,
+            used: Vec::new(),
             item: String::new(),
             index: 0,
             stmt: 0,
@@ -85,6 +90,11 @@ impl<'a> Walk<'a> {
     }
 
     pub(super) fn items(&mut self, items: &mut Vec<Item>) {
+        if matches!(self.kind, Kind::SameTag) {
+            let mut first = Walk::new(Kind::Rename, self.top, None);
+            first.items(&mut items.clone());
+            self.used = first.used;
+        }
         self.values = function_values(items);
         self.list_values = list_values(items);
         self.mut_helpers = mut_helpers(items);
@@ -122,7 +132,8 @@ impl<'a> Walk<'a> {
         self.hardware.clear();
         match item {
             Item::Const { value, .. } => self.sexpr(value),
-            Item::HwFnValue { .. } | Item::Enum(_) => {}
+            Item::HwFnValue { .. } => {}
+            Item::Enum(def) => self.enum_item(def),
             Item::ListFn(f) => self.sexpr(&mut f.element),
             Item::MutFn(f) => {
                 self.sexpr(&mut f.update);
@@ -420,6 +431,101 @@ impl<'a> Walk<'a> {
         }
     }
 
+    /// A use of the enum or struct `name`, which counts as a use of the top
+    /// frame if the site always runs, and a site of `Rename`.
+    fn use_name(&mut self, name: &mut String) {
+        if self.always {
+            self.used.push(name.clone());
+        }
+        self.rename(name);
+    }
+
+    /// The sites of the arms of a `match` that always runs: `S021` by the
+    /// coverage rules of spec 5.6. The arms cover each value, so `_` is
+    /// there exactly when the other arms cover fewer than `2^W` values.
+    fn arm_sites<S, E: Clone>(&mut self, m: &mut Match<S, E>, text: fn(&E) -> String) -> bool {
+        let code = self.always.then_some("S021");
+        let wild = m.arms.iter().any(|(p, _)| *p == Pattern::Wild);
+        for i in 0..m.arms.len() {
+            let is_wild = m.arms.get(i).is_some_and(|(p, _)| *p == Pattern::Wild);
+            if self.site(Kind::DeleteArm) {
+                // Another arm of a match with `_` leaves the match covered.
+                let code = (is_wild || !wild).then_some(code).flatten();
+                m.arms.remove(i);
+                self.hit(
+                    format!("delete arm {} of a match in {}", i + 1, self.item),
+                    Effect::Code(code),
+                );
+                return true;
+            }
+            if self.site(Kind::DuplicateArm) {
+                let copy = m.arms.get(i).cloned();
+                if let Some(copy) = copy {
+                    m.arms.insert(i + 1, copy);
+                }
+                self.hit(
+                    format!("copy arm {} of a match in {}", i + 1, self.item),
+                    Effect::Code(code),
+                );
+                return true;
+            }
+        }
+        let last_wild =
+            m.arms.len() >= 2 && m.arms.last().is_some_and(|(p, _)| *p == Pattern::Wild);
+        if last_wild && self.site(Kind::WildFirst) {
+            let at = m.arms.len() - 2;
+            let arm = m.arms.pop();
+            if let Some(arm) = arm {
+                m.arms.insert(at, arm);
+            }
+            self.hit(
+                format!("move `_` before the last arm of a match in {}", self.item),
+                Effect::Code(code),
+            );
+            return true;
+        }
+        // The new arm takes the body of an arm that reads no binder.
+        let body = m.arms.iter().find(|(p, e)| {
+            let binders = match p {
+                Pattern::Variant(_, _, bs) => bs.iter().flatten().cloned().collect(),
+                _ => Vec::new(),
+            };
+            binders.iter().all(|b| !mentions_token(&text(e), b))
+        });
+        if !wild
+            && let Some((_, body)) = body.cloned()
+            && self.site(Kind::DeadWild)
+        {
+            m.arms.push((Pattern::Wild, body));
+            self.hit(
+                format!("add `_` to a match that covers each value in {}", self.item),
+                Effect::Code(code),
+            );
+            return true;
+        }
+        false
+    }
+
+    /// The sites of an `enum` item: a tag that repeats the first tag is
+    /// `S021` at the first use of the enum, which is certain if the top
+    /// frame of a module uses the enum.
+    fn enum_item(&mut self, def: &mut EnumDef) {
+        for i in 1..def.variants.len() {
+            if self.site(Kind::SameTag) {
+                let first = def.variants.first().map(|v| v.tag.clone());
+                let code = self.used.contains(&def.name).then_some("S021");
+                if let (Some(first), Some(v)) = (first, def.variants.get_mut(i)) {
+                    v.tag = first;
+                    self.hit(
+                        format!("give variant {} of {} the first tag", i + 1, def.name),
+                        Effect::Code(code),
+                    );
+                }
+                return;
+            }
+        }
+    }
+
     fn rename(&mut self, name: &mut String) {
         if self.kind == Kind::Rename && self.target.is_none() {
             self.names.push(name.clone());
@@ -454,7 +560,7 @@ impl<'a> Walk<'a> {
     fn ty(&mut self, t: &mut Ty) {
         match t {
             Ty::UInt(w) | Ty::SInt(w) => self.width(w),
-            Ty::Enum(name) => self.rename(name),
+            Ty::Enum(name) => self.use_name(name),
             Ty::Bool => {}
         }
     }
@@ -533,17 +639,17 @@ impl<'a> Walk<'a> {
                 }
             }
             SExpr::Ctor(name, _, args) => {
-                self.rename(name);
+                self.use_name(name);
                 for x in args {
                     self.sexpr(x);
                 }
             }
             SExpr::Unpack(name, a) | SExpr::Pack(name, a) | SExpr::BitsConv(name, a) => {
-                self.rename(name);
+                self.use_name(name);
                 self.sexpr(a);
             }
             SExpr::Zero(name, targs) | SExpr::DataBits(name, targs) => {
-                self.rename(name);
+                self.use_name(name);
                 for x in targs {
                     self.sexpr(x);
                 }
@@ -572,6 +678,9 @@ impl<'a> Walk<'a> {
                 });
             }
             SExpr::Match(m) => {
+                if self.arm_sites(m, sexpr_text) {
+                    return;
+                }
                 self.sexpr(&mut m.scrutinee);
                 // Only the selected arm runs. The binders are declarations,
                 // so no site renames them.
@@ -634,6 +743,9 @@ impl<'a> Walk<'a> {
                 }
             }
             HExpr::Match(m) => {
+                if self.arm_sites(m, hexpr_text) {
+                    return;
+                }
                 self.hexpr(&mut m.scrutinee);
                 if self.certainly_hardware(&m.scrutinee) {
                     self.hardware_arms(m);
@@ -652,7 +764,7 @@ impl<'a> Walk<'a> {
                 }
             }
             HExpr::Ctor(name, _, args) => {
-                self.rename(name);
+                self.use_name(name);
                 for a in args {
                     self.hexpr(a);
                 }
@@ -809,4 +921,11 @@ fn zero() -> SExpr {
 fn fault() -> SExpr {
     let one = SExpr::Int(BigInt::from(1), Radix::Dec);
     SExpr::Binary(SBin::Div, Box::new(one), Box::new(zero()))
+}
+
+/// Whether `token` is a word of `text`: a name between characters that no
+/// name has.
+fn mentions_token(text: &str, token: &str) -> bool {
+    text.split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .any(|word| word == token)
 }
