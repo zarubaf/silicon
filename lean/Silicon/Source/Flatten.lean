@@ -400,6 +400,8 @@ def lower (target : Path) (root : Bool) : Hw → FM Low
       let ls := bounded xs (sizeOf (Hw.node p t sz (.extract off w) xs)) (by simp; omega)
       lowerPack p target (.extract off w) ls (fun x => width x.1.ty)
         (fun x => lower target false x.1)
+    -- TODO(#272): lower the `onehot` and `rest` nodes of a hardware `match` (section 7.4).
+    | .onehot, _ | .rest, _ => defect "a hardware `match` has no lowering yet"
     | _, _ => defect "a hardware node has the wrong number of operands"
     deep p target (width t) root lo
 termination_by h => sizeOf h

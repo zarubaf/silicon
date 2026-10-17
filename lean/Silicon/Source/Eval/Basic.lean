@@ -112,7 +112,10 @@ instantiation. `word m off` is a leaf of the word of the memory `m` at the bit o
 holds the path of the memory once and lowers to `(extract m$0rdata off w)` (section 7.6).
 `pack w` packs its operands, the leaves in packing order, into `UInt[w]`: the first leaf in the
 low bits, and zero high bits (ADR 0025). `extract off w` gives the `w` bits of its one operand
-from the bit `off`. They are the hardware pack and unpack of an enum (section 7.4).
+from the bit `off`. They are the hardware pack and unpack of an enum (section 7.4). `onehot` of a
+hardware `match` takes the `m` selects of its arms, then the `m` values of one leaf. It gives
+the value of the arm whose select is true (section 5.4). `rest` is the select of the arm `_`: it
+is true when none of its operands, the other selects, is true.
 -/
 inductive Op where
   | ref (name : Path)
@@ -127,6 +130,8 @@ inductive Op where
   | share (k : Nat)
   | pack (w : Nat)
   | extract (off w : Nat)
+  | onehot
+  | rest
   deriving Repr, Inhabited
 
 /-!

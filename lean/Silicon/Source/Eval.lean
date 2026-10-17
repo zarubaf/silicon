@@ -98,8 +98,15 @@ The operators follow v0.1 section 3. These rules settle the open points of slice
   each arm runs its pattern charge, its kind and fit checks, its coverage share, and its insert
   into one ordered map, in arm order. The coverage check follows, with no walk over the values
   of the type (`matchArms`). A static scrutinee then selects one arm by the map. Its binders
-  get a static unpack of the payload (`bindStatic`). Then only that arm evaluates. A hardware
+  get a static unpack of the payload (`bindArm`). Then only that arm evaluates. A hardware
   enum with a static tag is a hardware scrutinee.
+- A hardware scrutinee marks its selector leaf, the scalar or the `tag`, when two or more arms
+  are not `_`. It marks a hardware `payload` leaf when the binders of all arms have two or more
+  leaves. Then each arm evaluates in source order under the guard `arm`, its binders first. A
+  binder is a hardware unpack of the payload with one `extract` for each leaf. It gets a core
+  name as a `let` does. The arms join as the elements of an array literal (`matchHw`). The
+  selects `icmp eq` and the select `rest` of `_` get their marks by their use counts. The walk
+  of the arms (`armWalk`) makes one `onehot` node for each leaf. One arm `_` gives its value.
 - Another callee than the name of a function item or of a prelude function evaluates once,
   before the arguments. Its result waits while they evaluate. A type gives a constructor
   call. A function value checks the number of its arguments first (`S007` at the call). Then
@@ -1649,7 +1656,7 @@ pattern `q`:
    the scrutinee. It is 1 when the scrutinee is not an enum.
 2. The kind of the pattern (`S010`). A variant pattern compares the resolved enum items. Thus
    it is no use of the enum of the pattern: no first use, no charge, and no error of it.
-3. The fit of a literal (`S012`). A negative literal does not fit `Nat`.
+3. The fit of a literal (`S012`).
 
 The result is the position of the pattern, its key in the order of the type (none for `_`),
 and `s`.
@@ -1679,11 +1686,13 @@ def patternKey (t : Ty) (tagSize : Nat) : Resolve.Pattern → M (Pos × Option I
 
 /-!
 The ordered map of a `match` (section 5.6): each key to its first arm and the position of its
-pattern. `wild` is the first arm `_` and its position.
+pattern. `wild` is the first arm `_` and its position. `arms` holds the key of each arm in arm
+order, none for `_`, for the selects of a hardware scrutinee.
 -/
 structure Cover where
   keys : Std.TreeMap Int (Nat × Pos) compare := {}
   wild : Option (Nat × Pos) := none
+  arms : Array (Option Int) := #[]
 
 /-!
 The arm checks of the arm `i` with the pattern `q` (section 5.6): steps 1 to 3 (`patternKey`),
@@ -1702,6 +1711,7 @@ def coverArm (t : Ty) (log tagSize : Nat) (c : Cover) (i : Nat) (q : Resolve.Pat
   if c.wild.isSome then
     fail .S021 qp ("this arm comes after `_`, so it matches no value; move `_` to the end, " ++
       "or remove this arm")
+  let c := { c with arms := c.arms.push key }
   match key with
   | none => return { c with wild := some (i, qp) }
   | some k =>
@@ -1793,25 +1803,169 @@ def Value.unpack (specs : Specs) (y : Nat) : Nat → Ty → Nat → Option Value
     | _ => none
 
 /-!
-The binders `bs` of the variant `j` of the static enum value with the type `t` and the payload
-bits `y` (section 5.4). Each binder checks the size limit at the zero size of its type (`S015`
-at the binder), then charges that zero size. Then it binds the static unpack of its payload
-value, at the offset of the value in the pack of the payload tuple.
+The binders of the pattern `q`, each with its type and the bit offset of its value. The offset
+is the offset of the value in the pack of the payload tuple. `_` and the other patterns bind
+nothing.
 -/
-def bindStatic (p : Pos) (t : Ty) (j : Nat) (bs : List (Option Binder)) (y : Nat) : M Unit := do
+def binderTys : Resolve.Pattern → M (List (Binder × Ty × Nat))
+  | .variant p _ _ e j bs => do
+    let some (.done _ _ _ vs _) := (← get).specs.enums[e]?
+      | fail .S010 p s!"enum {e} has no entry"
+    let some (_, ts) := vs[j]? | fail .S010 p s!"enum {e} has no variant {j}"
+    -- Pass 4 reports each arity (`S007`), so this is a defect.
+    if ts.size != bs.length then fail .S010 p s!"variant {j} has {ts.size} payload type(s) here"
+    let mut off := 0
+    let mut r := #[]
+    for (b, u) in bs.zip ts.toList do
+      if let some b := b then r := r.push (b, u, off)
+      off := off + u.info.width
+    return r.toList
+  | _ => return []
+
+/-!
+The payload of a scrutinee for its binders: the static bits of a static payload, or the
+hardware `payload` leaf of a hardware enum.
+-/
+inductive Payload where
+  | static (bits : Nat)
+  | hw (h : Hw)
+
+/-!
+The hardware unpack of the payload leaf `y` from the bit `off` into a value of the type `t` at
+`pos` (section 7.4). A data scalar is one `extract` node of `y`, charged as a hardware operation
+with one operand: 2. A part without a leaf is its static value, which the metadata tells with no
+walk. The other parts keep the packing order of `Value.pack`. The zero size of the binder type
+paid for the walk before (section 5.4). The depth `d` of `t` bounds the walk.
+-/
+def unpackHw (specs : Specs) (pos : Pos) (y : Hw) : Nat → Ty → Nat → M Agg
+  | 0, t, _ => fail .S010 pos s!"{t.text} is deeper than its depth"
+  | d + 1, t, off => do
+    if t.info.leaves = 0 then
+      let some v := Value.unpack specs 0 (d + 1) t off
+        | fail .S010 pos s!"{t.text} has no static unpack"
+      return .static v
+    let seq (ts : List Ty) : M (Array Agg) := do
+      let mut xs := #[]
+      let mut o := off
+      for u in ts do
+        xs := xs.push (← unpackHw specs pos y d u o)
+        o := o + u.info.width
+      return xs
+    match t with
+    | .bool | .uint _ | .sint _ => return .hw (← hwNode pos t (.extract off t.info.width) [y])
+    | .array e k => do
+      let mut xs := #[]
+      for i in [0:k] do xs := xs.push (← unpackHw specs pos y d e (off + i * e.info.width))
+      return .mkArray e xs
+    | .tuple ts => return .mkTuple ts (← seq ts.toList)
+    | .struct .. | .enum .. =>
+      let some fs := specs.parts t | fail .S010 pos s!"{t.text} has no specialization"
+      return .mkRecord t (← seq (fs.toList.map (·.2)))
+    | t => fail .S010 pos s!"{t.text} is not hardware data"
+
+/-!
+The binders `bs` of an arm with the payload `y` (section 5.4), each with its type and offset
+(`binderTys`). Each binder checks the size limit at the zero size of its type (`S015` at the
+binder), then charges that zero size. A static payload binds the static unpack of its value. A
+hardware payload binds its hardware unpack (`unpackHw`), each `extract` charged 2, and the value
+gets its core name as a `let` does (`named`).
+-/
+def bindArm (y : Payload) (bs : List (Binder × Ty × Nat)) : M Unit := do
   let specs := (← get).specs
-  let .enum e .. := t | fail .S010 p s!"{t.text} is not an enum"
-  let some (.done _ _ _ vs _) := specs.enums[e]? | fail .S010 p s!"{t.text} has no entry"
-  let some (_, ts) := vs[j]? | fail .S010 p s!"{t.text} has no variant {j}"
-  let mut off := 0
-  for (b, u) in bs.zip ts.toList do
-    if let some b := b then
-      if over u.info.zeroSize then fail .S015 b.name.pos zeroLimitText
-      charge b.name.pos u.info.zeroSize
-      let some x := Value.unpack specs y u.depth u off
-        | fail .S010 b.name.pos s!"{u.text} has no static unpack"
+  for (b, u, off) in bs do
+    let p := b.name.pos
+    if over u.info.zeroSize then fail .S015 p zeroLimitText
+    charge p u.info.zeroSize
+    match y with
+    | .static bits =>
+      let some x := Value.unpack specs bits u.depth u off
+        | fail .S010 p s!"{u.text} has no static unpack"
       bindLocal b.id ⟨some u, false, .static x⟩
-    off := off + u.info.width
+    | .hw h =>
+      let a ← unpackHw specs p h u.depth u off
+      bindLocal b.id ⟨some u, false, ← named p b.id b.name.name a.val⟩
+
+/-!
+The selector leaf and the payload of the hardware scrutinee `v` of the type `t` at `pos`. They
+are the scalar itself, or the `tag` and `payload` leaves of an enum (section 5.4). A static tag is a
+constant, so its selects compare two constants (section 5.6). A part of a reference is a leaf
+that refers to its core name.
+-/
+def scrutParts (pos : Pos) (t : Ty) (v : Val) : M (Hw × Payload) := do
+  let specs := (← get).specs
+  match v with
+  | .hw h => return (h, .static 0)
+  | .agg a =>
+    let some (w, pw) := specs.widths t | fail .S010 pos s!"{t.text} has no entry"
+    let ps := typesOf specs.parts
+    let tag ← match a.child ps pos 0 (.user "tag") (.uint w) with
+      | some (.hw h) => pure h
+      | some (.static x) => lit pos x
+      | _ => fail .S010 pos s!"{t.text} has no tag leaf"
+    if pw = 0 then return (tag, .static 0)
+    match a.child ps pos 1 (.user "payload") (.uint pw) with
+    | some (.hw h) => return (tag, .hw h)
+    | some (.static (.uint _ y)) => return (tag, .static y.toNat)
+    | _ => fail .S010 pos s!"{t.text} has no payload leaf"
+  | v => fail .S010 pos s!"{v.text} is not a hardware scrutinee"
+
+/-! The constant of the key `k` of a select on the leaf type `t` (section 5.6). -/
+def keyLit (pos : Pos) (t : Ty) (k : Int) : Hw :=
+  match t with
+  | .bool => .mk pos t (.lit (.bool (k == 1))) []
+  | .sint w => .mk pos t (.lit (.sint w (BitVec.ofInt w k))) []
+  | .uint w => .mk pos t (.lit (.uint w (BitVec.ofInt w k))) []
+  | t => .mk pos t (.lit (.int k)) []
+
+/-!
+A leaf of the type `t` of a hardware `match` at `pos` with the selects `cs` and the arms `as`
+(section 5.4). A static leaf is a constant of `t`, also when each leaf is static. The node
+`onehot` takes the `m` selects, then the `m` values, and charges `1 + 2m`.
+-/
+def onehotLeaf (pos : Pos) (cs : List Hw) (t : Ty) (as : List Agg) : M Hw := do
+  let mut vs := #[]
+  for (a, i) in as.zipIdx do
+    match a with
+    | .static v => vs := vs.push (← litAt pos t v)
+    | .hw h =>
+      unless h.ty.same t do armsType "match" pos (as.map (·.val.text)) i
+      vs := vs.push h
+    | _ => armsType "match" pos (as.map (·.val.text)) i
+  hwNode pos t .onehot (cs ++ vs.toList)
+
+/-!
+Steps 3 to 6 of a hardware `match` at `pos` (section 5.4). `sel` is the selector leaf with its
+mark, `keys` the key of each arm in arm order (`Cover.arms`, none for `_`), and `vs` the arm
+values:
+
+3. The arm types join as the elements of an array literal, with the join charge (`S010`
+   without a join). Then each arm converts to the joined type.
+4. The selects `(icmp eq sel k)` build in arm order with no charge. A select has `u = L + 1`
+   uses with an arm `_`, else `L`, with `L` the leaf count of the joined type. At `u >= 2` it
+   gets a mark (`shared`), in arm order.
+5. The select of `_` is one node `rest` over the selects, charged `1 + n` before it exists.
+   Then it gets a mark at `L >= 2`.
+6. The walk over the arms (`armWalk`), with one `onehot` node for each leaf (`onehotLeaf`). A
+   root of a scalar type gets no walk charge.
+-/
+def matchHw (pos : Pos) (sel : Hw) (keys : List (Option Int)) (vs : List Val) : M Val := do
+  let xs ← vs.mapM (item pos)
+  let some j ← walked pos (commonOf (xs.map Agg.ty?))
+    | fail .S010 pos "the arms of a `match` have no common type"
+  let xs ← xs.mapM (conformAgg pos j)
+  let l := j.info.leaves
+  let wild := keys.any (·.isNone)
+  let ss ← (keys.filterMap id).mapM fun k =>
+    shared pos (.mk pos .bool (.bin .eq) [sel, keyLit pos sel.ty k]) (l + if wild then 1 else 0)
+  let r ← if wild then do shared pos (← hwNode pos .bool .rest ss) l else pure sel
+  let (cs, _) := keys.foldl (fun (cs, rs) k => match k, rs with
+    | some _, s :: rs => (cs.push s, rs)
+    | _, rs => (cs.push r, rs)) (#[], ss)
+  let leaf := onehotLeaf pos cs.toList
+  match j with
+  | .array .. | .tuple _ | .struct .. | .enum .. =>
+    return (← armWalk (← get).specs.parts "match" pos leaf j.depth j xs).val
+  | j => return (← armPart "match" pos leaf j xs).val
 
 /-!
 The evaluator. `eval`, `typeExpr`, `stmt`, and `block` are the entry functions. Each charges
@@ -1964,11 +2118,30 @@ mutual
           let some j := ((Value.key s).bind (c.keys[·]?)).map (·.1) <|> c.wild.map (·.1)
             | fail .S021 p "the `match` has no arm for its value"
           let some (.mk q y) := as[j]? | fail .S021 p s!"the `match` has no arm {j}"
-          if let .variant _ _ _ _ vj bs := q then
-            if let .enum _ _ _ _ bits := s then bindStatic p t vj bs bits.toNat
+          if let .enum _ _ _ _ bits := s then bindArm (.static bits.toNat) (← binderTys q)
           eval n y
-        -- TODO(#272): evaluate a hardware `match` (marks, binders, selects, join, and walk).
-        | _ => fail .S004 p "a hardware `match` is not supported yet"
+        | v => do
+          -- Steps 1 and 2 of a hardware `match` (section 5.4): the marks, then the arms.
+          let (sel, y) ← scrutParts x.pos t v
+          let keys := c.arms.toList
+          let sel ← shared p sel (keys.filterMap id).length
+          let bss ← as.mapM fun (.mk q _) => binderTys q
+          let y ← match y with
+            | .hw h => do
+              let l := (bss.map fun bs => (bs.map (·.2.1.info.leaves)).sum).sum
+              pure (.hw (← shared p h l))
+            | y => pure y
+          let os ← (as.zip bss).mapM fun (.mk _ e, bs) =>
+            withReader (fun c => { c with guard := some ⟨.arm, c.depth⟩ }) do
+              bindArm y bs
+              let o ← need e (← eval n e)
+              let o := { o with value := ← data p o.value }
+              hold o
+              return o
+          for o in os do release o
+          -- One arm `_` gives its value with no node.
+          if let [o] := os then return some o
+          return some ⟨← matchHw p sel keys (os.map (·.value)), false, none⟩
   termination_by (b, 3)
 
   def typeExpr (b : Nat) (t : Resolve.TypeExpr) : M Ty :=
