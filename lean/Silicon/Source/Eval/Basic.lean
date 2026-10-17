@@ -31,12 +31,12 @@ inductive Entry where
 
 /-!
 A struct specialization in the table of specializations (section 5.6): the struct item, its
-static arguments after their typed use, and its state. A done entry holds its struct type and its
-field types. A specialization that is not started has no entry.
+static arguments after their typed use, and its state. A done entry holds its struct type and the
+name and the type of each field. A specialization that is not started has no entry.
 -/
 inductive SpecState where
   | inProgress
-  | done (ty : Ty) (fields : Array Ty)
+  | done (ty : Ty) (fields : Array (String × Ty))
 
 structure Spec where
   item : Nat
@@ -59,6 +59,24 @@ structure Specs where
 def Specs.find? (s : Specs) (i : Nat) (args : List Value) : Option (Nat × Spec) := do
   let k ← s.index[(i, args)]?
   return (k, ← s.entries[k]?)
+
+/-! The struct item of the struct type `t`, from its entry. -/
+def Specs.item (s : Specs) : Ty → Option Nat
+  | .struct k .. => (s.entries[k]?).map (·.item)
+  | _ => none
+
+/-!
+The named parts of the type `t`, in packing order: the name and the type of each field of a
+struct type, from its done entry. Each walk over the parts of a type with named parts reads them
+here and nowhere else. A type without named parts and an entry that is not done give `none`. A
+record exists only after its specialization is done, so each record type has its parts.
+-/
+def Specs.parts (s : Specs) : Ty → Option (Array (String × Ty))
+  | .struct k .. => do
+    match (← s.entries[k]?).state with
+    | .done _ fs => some fs
+    | .inProgress => none
+  | _ => none
 
 /-!
 A node of a hardware value. Section 7.4 lowers each node to core operations. `share k` marks its
@@ -133,6 +151,10 @@ The fields of a struct type for the offset of a word part: the number and the ty
 in declaration order. A table can leave out a field without a leaf, because its width is 0.
 -/
 abbrev Parts := Ty → Option (Array (Nat × Ty))
+
+/-! The numbered part types of the named parts `fs` (`Specs.parts`), for a word part. -/
+def typesOf (fs : Ty → Option (Array (String × Ty))) : Parts := fun t =>
+  (fs t).map fun xs => xs.zipIdx.map fun ((_, u), k) => (k, u)
 
 /-!
 The bit offset of the part `k` in a word of the type `t` (section 7.6). The first leaf is in the

@@ -388,17 +388,6 @@ def update (f : Value → Value) : Value → List Nat → Value
   | .list t xs, k :: ks => .list t (xs.modify k (update f · ks))
   | v, _ :: _ => v
 
-/-! The field names and the field types of the struct type `t`, in declaration order. -/
-def fieldsNamed (items : Array Resolve.Item) (specs : Specs) (t : Ty) :
-    Option (Array (String × Ty)) := do
-  let (i, fs) ← fieldsIn specs t
-  let some (.struct _ _ _ ds _) := items[i]? | none
-  return (ds.toArray.map (·.name.name)).zip fs
-
-/-! The numbered field types of a struct type from its named fields `fs`, for a word part. -/
-def typesOf (fs : Ty → Option (Array (String × Ty))) : Parts := fun t =>
-  (fs t).map fun xs => xs.zipIdx.map fun ((_, u), k) => (k, u)
-
 /-!
 The reference of the type `t` to the base `b`, expanded one level into references to its parts
 in their normal form. The caller paid for the parts, so this has no charge. `fs` gives the named
@@ -432,7 +421,7 @@ def Ty.emptySize (specs : Specs) : Ty → List Nat → Nat
       | t =>
         let ps : Array Ty := match t with
           | .tuple ts => ts
-          | t => ((fieldsIn specs t).map Prod.snd).getD #[]
+          | t => ((specs.parts t).getD #[]).map Prod.snd
         ((ps.map empty).sum, ps[k]?)
     match p with
     | some p =>
@@ -541,14 +530,15 @@ value. The record type holds the number of its specialization, and the symbol of
 number of the field, so the selection compares no name.
 -/
 def fieldOf (pos : Pos) (f : Ident) (t : Ty) (text : String) : M (Nat × Ty) := do
-  let some (i, fs) := fieldsIn (← get).specs t
+  let specs := (← get).specs
+  let (some i, some fs) := (specs.item t, specs.parts t)
     | fail .S010 pos s!"{text} has no specialization"
   let some (.struct ..) := (← read).items[i]?
     | fail .S010 pos s!"{text} has no struct item"
   let c ← read
   let found := do
     let k ← c.field f.pos >>= fun x => c.syms.members[i]? >>= (·[x]?)
-    return (k, ← fs[k]?)
+    return (k, ← fs[k]?.map (·.2))
   match found with
   | some r => return r
   | none => fail .S010 pos s!"{text} has no field `{f.name}`"
@@ -836,8 +826,8 @@ mutual
     | _, xs => pure xs
 end
 
-/-! The field types of the struct type `t` from its done entry, in declaration order. -/
-def fieldTys (specs : Specs) (t : Ty) : List Ty := ((fieldsIn specs t).map (·.2.toList)).getD []
+/-! The types of the named parts of the type `t` (`Specs.parts`), in packing order. -/
+def fieldTys (specs : Specs) (t : Ty) : List Ty := ((specs.parts t).getD #[]).toList.map Prod.snd
 
 /-!
 The text of a part of the type `t` of a reference in a record (section 8.2): the value that it

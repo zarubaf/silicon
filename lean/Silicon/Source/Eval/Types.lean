@@ -183,7 +183,7 @@ of the lookup is the item and the arguments, so its work stays in those charges.
 `fields`, which evaluates the field types. The caller nests it.
 -/
 def specialize (p : Pos) (x : String) (i : Nat) (pre : Bool) (args : List Value)
-    (fields : M (List Ty)) : M Ty := do
+    (fields : M (List (String × Ty))) : M Ty := do
   match (← get).specs.find? i args with
   | some (_, ⟨_, _, .done t _⟩) => return t
   | some (k, ⟨_, _, .inProgress⟩) =>
@@ -195,7 +195,7 @@ def specialize (p : Pos) (x : String) (i : Nat) (pre : Bool) (args : List Value)
     modify fun s => { s with specs := ⟨s.specs.entries.push ⟨i, args, .inProgress⟩,
       s.specs.index.insert (i, args) k⟩ }
     let fs ← fields
-    let ms := fs.map Ty.info
+    let ms := fs.map (·.2.info)
     if over (sumBits ms) then fail .S015 p metaLimitText
     let m := Meta.struct ms (args.map Value.depth)
     bounded p m.depth
@@ -205,28 +205,14 @@ def specialize (p : Pos) (x : String) (i : Nat) (pre : Bool) (args : List Value)
       entries := s.specs.entries.set! k ⟨i, args, .done t fs.toArray⟩ } }
     return t
 
-/-!
-The struct item and the field types of the struct type `t`, from its done entry in the table of
-specializations. The type holds the number of the entry. A record exists only after its
-specialization is done, so each record type has one.
--/
-def fieldsIn (specs : Specs) : Ty → Option (Nat × Array Ty)
-  | .struct k .. => do
-    let e ← specs.entries[k]?
-    match e.state with
-    | .done _ fs => some (e.item, fs)
-    | .inProgress => none
-  | _ => none
-
-/-! The numbered field types of the struct type `t` (`fieldsIn`), for the offset of a word part. -/
-def partsIn (specs : Specs) : Parts := fun t =>
-  (fieldsIn specs t).map fun (_, fs) => fs.zipIdx.map fun (u, k) => (k, u)
+/-! The numbered part types of the type `t` (`Specs.parts`), for the offset of a word part. -/
+def partsIn (specs : Specs) : Parts := typesOf specs.parts
 
 /-!
 The zero of a hardware data type `t` (section 5.6): 0 for each integer leaf and `false` for each
-`Bool` leaf. A struct type takes the field types of its done entry. The bound `b` is the depth
-of `t`, because each part of a type is less deep than the type. An array of the length 0 makes no
-zero of its element type. That zero can be above the size limit, and no value holds it.
+`Bool` leaf. A struct type takes the types of its named parts (`Specs.parts`). The bound `b` is
+the depth of `t`, because each part of a type is less deep than the type. An array of the length
+0 makes no zero of its element type. That zero can be above the size limit, and no value holds it.
 -/
 def zeroOf (specs : Specs) : Nat → Ty → Option Value
   | 0, _ => none
@@ -240,8 +226,8 @@ def zeroOf (specs : Specs) : Nat → Ty → Option Value
     | .array e k => do return .array e (Array.replicate k (← zeroOf specs b e))
     | .tuple ⟨ts⟩ => do return .tuple (← ts.mapM (zeroOf specs b)).toArray
     | .struct .. => do
-      let (_, fs) ← fieldsIn specs t
-      return .record t (← fs.mapM (zeroOf specs b))
+      let fs ← specs.parts t
+      return .record t (← fs.mapM fun (_, u) => zeroOf specs b u)
     | .nat | .int | .type | .string | .list _ | .fn .. => none
 
 /-!

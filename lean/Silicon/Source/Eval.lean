@@ -582,7 +582,7 @@ def aggEq (pos : Pos) (op : BinOp) (a b : Val) : M Val := do
   let bad : M Val := fail .S010 pos s!"`{op.text}` needs a common type, not {a.text} and {b.text}"
   let (some s, some t, some x, some y) := (a.ty?, b.ty?, a.agg?, b.agg?) | bad
   let some j ← walked pos (joinTy s t : Walk (Option Ty)) | bad
-  let r ← eqWalk (fieldsNamed (← read).items (← get).specs) pos j.depth j x y {}
+  let r ← eqWalk (← get).specs.parts pos j.depth j x y {}
   match r.nodes.toList with
   | [] => return .static (.bool (if op == .eq then r.equal else !r.equal))
   | n :: ns =>
@@ -699,8 +699,7 @@ def mux (pos : Pos) (c : Hw) (a b : Val) : M Val := do
   match j with
   | .array .. | .tuple _ | .struct .. =>
     let c ← shared c j.info.leaves
-    let fs := fieldsNamed (← read).items (← get).specs
-    return (← ifWalk fs pos c j.depth j x y).val
+    return (← ifWalk (← get).specs.parts pos c j.depth j x y).val
   | j => return (← ifPart pos c j x y).val
 
 def hwConvert (pos : Pos) (f : PrimFn) (t : Ty) (x : Hw) : M Val :=
@@ -793,8 +792,7 @@ one core `let`, and a reference expands into its leaves. The copy of the value p
 leaf before. The result refers to the names.
 -/
 def bindAgg (pos : Pos) (path : Path) (a : Agg) : M Agg := do
-  let fs := fieldsNamed (← read).items (← get).specs
-  let (r, lets) ← lift pos ((Agg.bindAt fs pos path a).run #[])
+  let (r, lets) ← lift pos ((Agg.bindAt (← get).specs.parts pos path a).run #[])
   modify fun s => { s with naming.lets := s.naming.lets ++ lets }
   return r
 
@@ -838,7 +836,7 @@ the path expands one level. The caller paid for the expansion.
 -/
 def setAt (pos : Pos) (a y : Agg) (ks : List Nat) : M Agg := do
   let specs := (← get).specs
-  match Agg.set (Agg.expand (fieldsNamed (← read).items specs) specs pos) y a ks with
+  match Agg.set (Agg.expand specs.parts specs pos) y a ks with
   | some r => return r
   | none => fail .S010 pos "the place has no part for its value"
 
@@ -1225,7 +1223,7 @@ def specOf (ty : Resolve.TypeExpr → M Ty) (p : Pos) (i : Nat) (x : Ident)
       withReader (fun c => { c with item := i, frame := ⟨none, 0⟩ }) do
     let keys ← withReader (fun c => { c with binding := i :: c.binding }) <|
       bindParams ty p ps args
-    specialize p x.name i pre (keys.map (·.2)) (fs.mapM fun f => ty f.ty)
+    specialize p x.name i pre (keys.map (·.2)) (fs.mapM fun f => return (f.name.name, ← ty f.ty))
   if pre then atUse p work else work
 
 /-!
@@ -1602,7 +1600,7 @@ mutual
     match t, xs with
     | t, [] => return some ⟨.static (← zero p t), false, none⟩
     | t@(.struct ..), xs =>
-      let some (_, fs) := fieldsIn (← get).specs t
+      let some fs := (← get).specs.parts t
         | fail .S010 p s!"{t.text} has no specialization"
       if fs.size != xs.length then
         fail .S007 p
@@ -1611,7 +1609,7 @@ mutual
       let vs ← args n b xs
       release o
       charge p (vs.map Val.size).sum
-      return some ⟨(← recordOf p t fs.toList (xs.map (·.pos)) vs).val, false, none⟩
+      return some ⟨(← recordOf p t (fs.toList.map (·.2)) (xs.map (·.pos)) vs).val, false, none⟩
     | t, [x] =>
       hold o
       let a ← need x (← eval n x)
