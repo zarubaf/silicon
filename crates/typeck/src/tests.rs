@@ -1162,3 +1162,73 @@ fn a_payload_value_in_a_static_position_is_static() {
 fn the_tag_value_of_a_variant_is_a_static_position_also_in_an_unused_enum() {
     fails("enum E: UInt[2] { A = UInt[2][1] }", S007, 1, 23);
 }
+
+// Patterns (slice 3, section 5.6). The cases come from the `#guard` lines of
+// `Silicon.Source.Test.Check` in Lean.
+
+const PAIR: &str = "enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }\n";
+
+/// A function `f` whose `return` is a `match` with the arms `arms`, on line 3 from column 20.
+fn arms(arms: &str) -> String {
+    format!("{PAIR}fn f(x: Op) -> UInt[8] {{\nreturn match (x) {{ {arms} }};\n}}")
+}
+
+#[test]
+fn s007_a_variant_pattern_has_a_binder_for_each_payload_value() {
+    ok(&arms(
+        "Op::Add() => 0, Op::Load(_) => 0, Op::Pair(b, w) => 0, _ => 0",
+    ));
+    let src = arms("Op::Add => 0, Op::Pair(a) => 0, _ => 0");
+    fails(&src, S007, 3, 34);
+    assert_eq!(
+        message(&src),
+        "the variant `Pair` has 2 payload value(s), but the pattern has 1; write one binder or \
+         `_` for each payload value"
+    );
+    fails(&arms("Op::Load => 0, _ => 0"), S007, 3, 20);
+    let src = arms("Op::Add(_) => 0, _ => 0");
+    fails(&src, S007, 3, 20);
+    assert_eq!(
+        message(&src),
+        "the variant `Add` has 0 payload value(s), but the pattern has 1; write one binder or \
+         `_` for each payload value"
+    );
+}
+
+#[test]
+fn s007_the_first_error_by_position_wins_in_a_match() {
+    fails(&arms("Op::Load => Op::Add(1), _ => 0"), S007, 3, 20);
+    fails(&arms("Op::Add => Op::Add(1), Op::Load => 0"), S007, 3, 31);
+}
+
+#[test]
+fn a_match_is_a_static_position_and_a_binder_is_a_plain_local() {
+    ok(&format!(
+        "{PAIR}module M() {{\nreg r: UInt[8] = match (Op::Load(1)) {{ Op::Load(v) => v, _ => 0 }};\n}}"
+    ));
+    fails(
+        &format!("{PAIR}module M() {{\ninput a: Op;\nreg r: UInt[8] = match (a) {{ _ => 0 }};\n}}"),
+        S005,
+        4,
+        25,
+    );
+    fails(
+        &format!(
+            "{PAIR}module M() {{\ninput a: UInt[8];\nreg r: UInt[8] = match (Op::Add) {{ _ => a }};\n}}"
+        ),
+        S005,
+        4,
+        41,
+    );
+    ok(&format!(
+        "{PAIR}module M() {{\ninput a: Op;\nlet r = match (a) {{ Op::Load(v) => v, _ => 0 }};\n}}"
+    ));
+    fails(
+        &format!(
+            "{PAIR}fn g(mut y: UInt[8]) -> UInt[8] {{ return y; }}\nfn f(x: Op) -> UInt[8] {{ return match (x) {{ Op::Load(v) => g(v), _ => 0 }}; }}"
+        ),
+        S008,
+        3,
+        62,
+    );
+}
