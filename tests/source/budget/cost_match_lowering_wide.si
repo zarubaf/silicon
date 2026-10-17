@@ -1,6 +1,6 @@
 // A hardware `match` with a result of 53 leaves lowers one AND-OR chain for each leaf. The fuel equal to
 // the total of `cost` succeeds, and one unit less gives `S015`.
-// FUEL 4238
+// FUEL 4241
 // TOP M()
 module M() domains() {
     input x: UInt[2];

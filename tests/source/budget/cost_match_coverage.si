@@ -1,6 +1,6 @@
 // The coverage check of a `match` with 40 arms and `_` charges a share of `1 + floor(log2 n) + size(v)`
 // for each arm (section 5.4). The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
-// FUEL 1554
+// FUEL 1594
 // TOP M()
 module M() domains() {
     input x: UInt[6];

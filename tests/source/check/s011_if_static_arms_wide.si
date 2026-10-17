@@ -1,0 +1,11 @@
+// S011: the arms of a hardware `if` differ in a static part. A side above 256 bits prints its bit length.
+// TOP M()
+module M() {
+    input c: Bool;
+    input h: Bool;
+    output o: UInt[8];
+    // expected-error S011 @+2
+    // expected-message: the arms of a hardware `if` differ in a static part: a negative integer of 301 bits and 2; give the part one value and type in each arm, or move it out of the `if`
+    let p = if (c) { (h, 0 - (1 << 300)) } else { (h, 2) };
+    o := 0;
+}
