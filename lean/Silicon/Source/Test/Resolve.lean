@@ -603,4 +603,12 @@ def chain (n : Nat) : String := " + ".intercalate (List.replicate n "p")
 #guard ok (fnBody ("return " ++ chain 4096 ++ ";"))
 #guard ok (fnBody (String.join (List.replicate 20000 "{ let a = p; }\n") ++ "return p;"))
 
+/-!
+A `match` (slice 3) is `S004` at its keyword until the resolver handles it. The first `match` in
+position order wins, also over an earlier `S002` or `S003`.
+-/
+#guard fails (fnBody "return match (p) { _ => q };") .S004 2 8
+#guard fails (fnBody "let a = 1; let a = y;\nreturn match (p) { _ => match (p) {} };") .S004 3 8
+#guard message (fnBody "return match (p) { _ => p };") == "a `match` is not supported yet"
+
 end Silicon.Source.Test.Resolve

@@ -195,7 +195,7 @@ theorem Expr.toks_head11 (e : Expr) : ∃ k, (e.toks 11).head? = some k ∧ PSta
   | case6 p op => exact ⟨_, by
       simp [Expr.toks, Expr.level, (by have := BinOp.level_lt op; omega : op.level < 11)],
       Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl rfl)))))⟩
-  | case7 => exact ⟨_, by simp [Expr.toks, Expr.level],
+  | case7 | case19 => exact ⟨_, by simp [Expr.toks, Expr.level],
       Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl rfl)))))⟩
   | case8 p f xs ihf _ =>
     rw [Expr.toks.eq_def]
@@ -248,6 +248,10 @@ theorem Expr.toks_head (e : Expr) : ∀ c, ∃ k, (e.toks c).head? = some k ∧ 
     intro c; rw [Expr.toks_paren]; split
     · exact ⟨_, rfl, by simp [NotClose]⟩
     · exact ⟨.keyword "if", by simp [Expr.toks], by simp [NotClose]⟩
+  | case19 =>
+    intro c; rw [Expr.toks_paren]; split
+    · exact ⟨_, rfl, by simp [NotClose]⟩
+    · exact ⟨.keyword "match", by simp [Expr.toks], by simp [NotClose]⟩
   | case17 =>
     intro c; rw [Expr.toks_paren]; split
     · exact ⟨_, rfl, by simp [NotClose]⟩

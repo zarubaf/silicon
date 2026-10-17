@@ -53,9 +53,13 @@ theorem Runs.typeAnnotation (ty : TypeExpr) (hp : ty.printable = true) (ctx : Ct
 
 /-! ## The first kind of an expression -/
 
-/-! The kinds that start the text of an expression. A function type starts with `fn`. -/
+/-!
+The kinds that start the text of an expression. A function type starts with `fn`, and a
+`match` with its keyword.
+-/
 def EHead (k : Kind) : Prop :=
-  PStart k ∨ k = .keyword "if" ∨ (∃ op : UnOp, k = .symbol op.text) ∨ k = .keyword "fn"
+  PStart k ∨ k = .keyword "if" ∨ (∃ op : UnOp, k = .symbol op.text) ∨ k = .keyword "fn" ∨
+    k = .keyword "match"
 
 theorem Expr.headKind (e : Expr) : ∀ c, ∃ k, (e.toks c).head? = some k ∧ EHead k := by
   have post : ∀ e : Expr, e.level = 11 → ∀ c, ∃ k, (e.toks c).head? = some k ∧ EHead k := by
@@ -83,19 +87,24 @@ theorem Expr.headKind (e : Expr) : ∀ c, ∃ k, (e.toks c).head? = some k ∧ E
   | case17 =>
     intro c; rw [Expr.toks_paren]; split
     · exact ⟨_, rfl, Or.inl (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl rfl))))))⟩
-    · exact ⟨.keyword "fn", by simp [Expr.toks], Or.inr (Or.inr (Or.inr rfl))⟩
+    · exact ⟨.keyword "fn", by simp [Expr.toks], Or.inr (Or.inr (Or.inr (Or.inl rfl)))⟩
+  | case19 =>
+    intro c; rw [Expr.toks_paren]; split
+    · exact ⟨_, rfl, Or.inl (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl rfl))))))⟩
+    · exact ⟨.keyword "match", by simp [Expr.toks], Or.inr (Or.inr (Or.inr (Or.inr rfl)))⟩
   | _ => exact post _ (by simp [Expr.level, postfixLevel])
 
 theorem EHead.ne_kw {k : Kind} (h : EHead k) {w : String}
-    (hw : w ≠ "if" ∧ w ≠ "true" ∧ w ≠ "false" ∧ w ≠ "fn") : k ≠ .keyword w := by
+    (hw : w ≠ "if" ∧ w ≠ "true" ∧ w ≠ "false" ∧ w ≠ "fn" ∧ w ≠ "match") :
+    k ≠ .keyword w := by
   rintro rfl
-  rcases h with (⟨_, h⟩ | ⟨_, h⟩ | ⟨_, h⟩ | h | h | h | h) | h | ⟨op, h⟩ | h <;>
+  rcases h with (⟨_, h⟩ | ⟨_, h⟩ | ⟨_, h⟩ | h | h | h | h) | h | ⟨op, h⟩ | h | h <;>
     simp_all
 
 theorem EHead.ne_sym {k : Kind} (h : EHead k) {s : String}
     (hs : s ≠ "(" ∧ s ≠ "[" ∧ s ≠ "!" ∧ s ≠ "~" ∧ s ≠ "-") : k ≠ .symbol s := by
   rintro rfl
-  rcases h with (⟨_, h⟩ | ⟨_, h⟩ | ⟨_, h⟩ | h | h | h | h) | h | ⟨op, h⟩ | h
+  rcases h with (⟨_, h⟩ | ⟨_, h⟩ | ⟨_, h⟩ | h | h | h | h) | h | ⟨op, h⟩ | h | h
   all_goals simp only [Kind.symbol.injEq, reduceCtorEq] at h
   · exact hs.1 h
   · exact hs.2.1 h
@@ -103,12 +112,12 @@ theorem EHead.ne_sym {k : Kind} (h : EHead k) {s : String}
 
 theorem EHead.ne_eof {k : Kind} (h : EHead k) : k ≠ .eof := by
   rintro rfl
-  rcases h with (⟨_, h⟩ | ⟨_, h⟩ | ⟨_, h⟩ | h | h | h | h) | h | ⟨op, h⟩ | h <;> simp at h
+  rcases h with (⟨_, h⟩ | ⟨_, h⟩ | ⟨_, h⟩ | h | h | h | h) | h | ⟨op, h⟩ | h | h <;> simp at h
 
 theorem EHead.ne_ident {k : Kind} (h : EHead k) (_hn : ∀ n, k ≠ .ident n) :
-    ∀ w, k ≠ .keyword w ∨ w = "if" ∨ w = "true" ∨ w = "false" ∨ w = "fn" := by
+    ∀ w, k ≠ .keyword w ∨ w = "if" ∨ w = "true" ∨ w = "false" ∨ w = "fn" ∨ w = "match" := by
   intro w
-  by_cases hw : w = "if" ∨ w = "true" ∨ w = "false" ∨ w = "fn"
+  by_cases hw : w = "if" ∨ w = "true" ∨ w = "false" ∨ w = "fn" ∨ w = "match"
   · exact Or.inr hw
   · exact Or.inl (h.ne_kw (by simp_all))
 

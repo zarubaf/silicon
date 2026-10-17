@@ -15,6 +15,20 @@ open Lex Print
 /-! The kinds of a list of arguments, with a `,` between two arguments. -/
 def Print.argToks (xs : List (List Kind)) : List Kind := List.intercalate [.symbol ","] xs
 
+def Pattern.binderToks : Option Ident → List Kind
+  | none => [.ident "_"]
+  | some i => [.ident i.name]
+
+/-! The kinds of `q.print`. A negative literal is `-` and a number. -/
+def Pattern.toks : Pattern → List Kind
+  | .wild _ => [.ident "_"]
+  | .int _ neg v => (if neg then [.symbol "-"] else []) ++ [.number v]
+  | .bool _ v => [.keyword (boolean v)]
+  | .variant _ t v bs =>
+    [.ident t.name, .symbol "::", .ident v.name] ++
+      (if bs.isEmpty then [] else .symbol "(" :: argToks (bs.map Pattern.binderToks) ++
+        [.symbol ")"])
+
 mutual
   /-- The kinds of `e.print ctx`. -/
   def Expr.toks (ctx : Nat) (e : Expr) : List Kind :=
@@ -52,6 +66,9 @@ mutual
         [.keyword "fn", .symbol "("] ++ argToks (ps.map FnParam.toks)
           ++ [.symbol ")", .symbol "->"] ++ r.toks
       | .path _ t v => [.ident t.name, .symbol "::", .ident v.name]
+      | .«match» _ s arms =>
+        [.keyword "match", .symbol "("] ++ s.toks 0 ++ [.symbol ")", .symbol "{"]
+          ++ (arms.map Arm.toks).flatten ++ [.symbol "}"]
     if e.level < ctx then .symbol "(" :: body ++ [.symbol ")"] else body
 
   def TypeExpr.toks : TypeExpr → List Kind
@@ -70,6 +87,10 @@ mutual
 
   def FnParam.toks : FnParam → List Kind
     | .mk m t => (if m then [.keyword "mut"] else []) ++ t.toks
+
+  /-- The kinds of an arm with the `,` after it. -/
+  def Arm.toks : Arm → List Kind
+    | .mk q v => q.toks ++ .symbol "=>" :: v.toks 0 ++ [.symbol ","]
 end
 
 mutual

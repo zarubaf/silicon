@@ -33,6 +33,20 @@ inductive BinOp where
   deriving Repr, DecidableEq, BEq, Inhabited
 
 /-!
+A pattern of a `match` arm (slice 3) is `_`, an integer literal with its sign, `true`, or
+`false`. It can also be a variant path with one binder or `_` for each payload value. A binder
+`_` is `none`. A
+variant pattern without binders has an empty list, so `E::V` and `E::V()` give one AST. The
+position of a negative literal is the position of its `-`.
+-/
+inductive Pattern where
+  | wild (pos : Pos)
+  | int (pos : Pos) (neg : Bool) (value : Nat)
+  | bool (pos : Pos) (value : Bool)
+  | variant (pos : Pos) (ty v : Ident) (binders : List (Option Ident))
+  deriving Repr, BEq, Inhabited
+
+/-!
 An expression and a type expression. The two are mutually recursive, because an array type
 `[T; N]` is also an expression (`arrayType`). Its element `T` is a type expression, and its
 length `N` is an expression.
@@ -41,7 +55,8 @@ A type in an expression position, such as `UInt[8]`, is an `index`. A `tuple` ho
 element: `()` is `unit`. A `select` is the selector `.N` of a tuple. Its `litPos` is the position
 of the number literal, for `S013`. A `method` is the receiver call `recv.name(args)`. Its position
 is the position of the receiver, the start of the call. A `path` is a variant path `E::V` of
-two names (slice 3). A constructor `E::V(args)` is a `call` of a `path`.
+two names (slice 3). A constructor `E::V(args)` is a `call` of a `path`. A `match` holds its
+scrutinee and its arms, and an `Arm` holds a pattern and its expression (slice 3).
 
 A type expression is a type name, a type family with its static arguments, or the unit type
 `()`. It can also be a tuple type, an array type `[T; N]`, or a function type
@@ -69,6 +84,7 @@ mutual
     | method (pos : Pos) (recv : Expr) (name : Ident) (args : List Expr)
     | fnType (pos : Pos) (params : List FnParam) (ret : TypeExpr)
     | path (pos : Pos) (ty variant : Ident)
+    | «match» (pos : Pos) (scrut : Expr) (arms : List Arm)
 
   inductive TypeExpr where
     | name (pos : Pos) (name : String)
@@ -80,9 +96,12 @@ mutual
 
   inductive FnParam where
     | mk (mutable : Bool) (ty : TypeExpr)
+
+  inductive Arm where
+    | mk (pat : Pattern) (value : Expr)
 end
 
-deriving instance Repr, BEq, Inhabited for Expr, TypeExpr, FnParam
+deriving instance Repr, BEq, Inhabited for Expr, TypeExpr, FnParam, Arm
 
 /-!
 A statement. A target of `assign` or `connect` is a `name` or a `field` expression. An `alias` is
