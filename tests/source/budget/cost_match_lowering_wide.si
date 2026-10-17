@@ -1,0 +1,11 @@
+// A hardware `match` with a result of 53 leaves lowers one AND-OR chain for each leaf. The fuel equal to
+// the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 4238
+// TOP M()
+module M() domains() {
+    input x: UInt[2];
+    input a: ([UInt[8]; 50], (Bool, UInt[4]));
+    input b: ([UInt[8]; 50], (Bool, UInt[4]));
+    output y: ([UInt[8]; 50], (Bool, UInt[4]));
+    y := match (x) { 0 => a, 1 => b, 2 => a, _ => b };
+}

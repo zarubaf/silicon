@@ -1,0 +1,13 @@
+// S010: a pattern of another enum is the wrong kind. The kind check compares the enum items and does not use
+// `Other`, so the error in the declaration of `Other` (S012) does not show.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }
+enum Other: UInt[2] { A = 4 }
+module M() {
+    input x: Op;
+    input a: UInt[4];
+    output y: UInt[4];
+    // expected-error S010 @+2
+    // expected-message: a pattern of `Op` is a variant of `Op`, not `Other::A`; write a variant of `Op`, or `_`
+    y := match (x) { Other::A => a, _ => 2 };
+}

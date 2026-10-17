@@ -1,0 +1,10 @@
+// S010: a `match` takes no tuple either.
+// TOP M()
+module M() {
+    input a: Bool;
+    input b: UInt[4];
+    output y: UInt[4];
+    // expected-error S010 @+2
+    // expected-message: a `match` takes `Bool`, `UInt`, `SInt`, `Int`, `Nat`, or an enum, not `(Bool, UInt[4])`; match on a part of the value
+    y := match ((a, b)) { _ => a };
+}

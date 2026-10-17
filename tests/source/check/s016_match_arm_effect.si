@@ -1,0 +1,10 @@
+// S016: a diagnostic in the arm of a hardware `match`. The record is a graph effect, so an arm cannot make it.
+// TOP M()
+module M() {
+    input x: Bool;
+    input a: UInt[4];
+    output y: UInt[4];
+    // expected-error S016 @+1
+    let u = match (x) { true => diagnostic("arm", 1), false => () };
+    y := 0;
+}

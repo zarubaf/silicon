@@ -1,0 +1,16 @@
+// A `match` in the arm of a `match`, and a `match` as the scrutinee of another `match`.
+// TOP M()
+module M() domains() {
+    input a: UInt[4];
+    input c: Bool;
+    input x: UInt[2];
+    output y: UInt[4];
+    output z: UInt[4];
+    y := match (c) { true => match (x) { 0 => a, 1 => 2, _ => 3 }, false => 9 };
+    z := match (match (x) { 0 => c, _ => !c }) { true => a, false => 6 };
+}
+// STEP in=(a 1 c true x 0) out=(y 1 z 1)
+// STEP in=(a 1 c true x 1) out=(y 2 z 6)
+// STEP in=(a 1 c true x 3) out=(y 3 z 6)
+// STEP in=(a 1 c false x 0) out=(y 9 z 6)
+// STEP in=(a 1 c false x 2) out=(y 9 z 1)

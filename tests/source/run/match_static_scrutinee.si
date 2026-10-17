@@ -1,0 +1,12 @@
+// A `match` on a static scrutinee selects one arm at elaboration. Only that arm evaluates.
+// TOP M()
+const K: UInt[2] = 2;
+module M() domains() {
+    input a: UInt[4];
+    output y: UInt[4];
+    output z: UInt[4];
+    y := match (K) { 0 => a, 2 => a +% 1, _ => 0 };
+    z := match (K) { 0 => 5, _ => a +% 2 };
+}
+// STEP in=(a 3) out=(y 4 z 5)
+// STEP in=(a 15) out=(y 0 z 1)

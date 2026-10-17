@@ -1,0 +1,4 @@
+// S001: an expression is no pattern. The error is at the first token that is not valid.
+// expected-error S001 @+2
+// expected-message: expected a pattern: an integer, `true`, `false`, `E::V(..)`, or `_`; compare with a constant in an `if`
+const A: T = match (x) { (1) => 1, _ => 2 };

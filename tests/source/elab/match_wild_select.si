@@ -1,0 +1,12 @@
+// The select of `_` is `(xor (or s_0 ... s_(n-1)) (const 1 1))`. With one earlier select the `or` is
+// that select. The select of arm 0 is read by its leaf and by the select of `_`, so it binds to a temporary.
+// TOP M()
+// CHECK: (let y$0t (bits 1) (icmp eq x (const 2 0)))
+// CHECK-NEXT: (assign y (or (and (replicate y$0t 4) a) (and (replicate (xor y$0t (const 1 1)) 4) b)))
+module M() domains() {
+    input x: UInt[2];
+    input a: UInt[4];
+    input b: UInt[4];
+    output y: UInt[4];
+    y := match (x) { 0 => a, _ => b };
+}

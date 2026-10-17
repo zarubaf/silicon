@@ -1,0 +1,10 @@
+// S021: an arm after `_` matches no value. The error is at the pattern of that arm.
+// TOP M()
+module M() {
+    input x: UInt[2];
+    input a: UInt[4];
+    output y: UInt[4];
+    // expected-error S021 @+2
+    // expected-message: this arm comes after `_`, so it matches no value; move `_` to the end, or remove this arm
+    y := match (x) { _ => a, 0 => 2 };
+}

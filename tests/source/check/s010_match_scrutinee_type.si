@@ -1,0 +1,14 @@
+// S010: a `match` takes no record. The error is at the scrutinee.
+// TOP M()
+struct P {
+    a: Bool,
+    b: UInt[4],
+}
+module M() {
+    input x: P;
+    input a: UInt[4];
+    output y: UInt[4];
+    // expected-error S010 @+2
+    // expected-message: a `match` takes `Bool`, `UInt`, `SInt`, `Int`, `Nat`, or an enum, not `P`; match on a part of the value
+    y := match (x) { _ => a };
+}

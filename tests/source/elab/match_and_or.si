@@ -1,0 +1,15 @@
+// A hardware `match` lowers to a parallel AND-OR mux (section 7.4). The select of an arm is a compare of the
+// tag, and the select of `_` is the `xor` of the `or` of the earlier selects with 1. The binder `v` is an
+// `extract` of the payload.
+// TOP M()
+// CHECK: (let v (bits 8) (extract op$payload 0 8))
+// CHECK-NEXT: (let y$0t (bits 1) (icmp eq op$tag (const 2 0)))
+// CHECK-NEXT: (let y$1t (bits 1) (icmp eq op$tag (const 2 1)))
+// CHECK-NEXT: (assign y (or (or (and (replicate y$0t 8) a) (and (replicate y$1t 8) v)) (and (replicate (xor (or y$0t y$1t) (const 1 1)) 8) (const 8 9))))
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }
+module M() domains() {
+    input op: Op;
+    input a: UInt[8];
+    output y: UInt[8];
+    y := match (op) { Op::Add => a, Op::Load(v) => v, _ => 9 };
+}

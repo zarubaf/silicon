@@ -1,0 +1,11 @@
+// S003: a pattern path resolves as a path in an expression, so `Foo` must be an enum.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }
+module M() {
+    input x: Op;
+    input a: UInt[4];
+    output y: UInt[4];
+    // expected-error S003 @+2
+    // expected-message: `Foo` is not an enum, so `Foo::Add` names no variant; use the name of an enum
+    y := match (x) { Foo::Add => a, _ => 2 };
+}

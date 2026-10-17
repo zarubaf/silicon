@@ -1,0 +1,11 @@
+// S021: a second variant with the tag value of an earlier variant. The error is at the second tag value.
+// TOP M()
+// expected-error S021 @+2
+// expected-message: the variant `Load` has the tag `1` of the variant at 5:20; give each variant its own tag value
+enum Op: UInt[2] { Add = 1, Load(UInt[8]) = 1 }
+module M() {
+    input x: Op;
+    input a: UInt[4];
+    output y: UInt[4];
+    y := match (x) { _ => a };
+}

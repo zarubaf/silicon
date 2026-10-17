@@ -1,0 +1,16 @@
+// The arms of a `match` give records. The join works leaf by leaf.
+// TOP M()
+struct P {
+    a: UInt[4],
+    b: Bool,
+}
+module M() domains() {
+    input c: UInt[2];
+    input x: UInt[4];
+    output q: P;
+    q := match (c) { 0 => P(x, true), 1 => P(x +% 1, false), _ => P(0, true) };
+}
+// STEP in=(c 0 x 3) out=(q.a 3 q.b true)
+// STEP in=(c 1 x 15) out=(q.a 0 q.b false)
+// STEP in=(c 2 x 3) out=(q.a 0 q.b true)
+// STEP in=(c 3 x 3) out=(q.a 0 q.b true)

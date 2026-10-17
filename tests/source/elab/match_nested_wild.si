@@ -1,0 +1,12 @@
+// Nested `match` as scrutinee: the select of `_` reads each select once, so the selects bind to
+// temporaries, and k = 3 nested matches make 3 `xor` nodes and not 2^3 (section 5.4, the use count of a select).
+// TOP M()
+// CHECK-COUNT-3: (xor
+// CHECK-NOT: (xor
+module M() domains() {
+    input c: Bool;
+    input p: UInt[4];
+    input q: UInt[4];
+    output y: UInt[4];
+    y := match (match (match (c) { true => p, _ => q }) { 3 => p, _ => q }) { 5 => p, _ => q };
+}

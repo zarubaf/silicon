@@ -1,0 +1,9 @@
+// S012: a literal pattern must fit the scrutinee type `UInt[2]`.
+// TOP M()
+module M() {
+    input x: UInt[2];
+    input a: UInt[4];
+    output y: UInt[4];
+    // expected-error S012 @+1
+    y := match (x) { 4 => a, _ => 2 };
+}

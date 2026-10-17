@@ -1,0 +1,11 @@
+// S010: an enum scrutinee takes a variant of the same enum, not an integer.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }
+module M() {
+    input x: Op;
+    input a: UInt[4];
+    output y: UInt[4];
+    // expected-error S010 @+2
+    // expected-message: a pattern of `Op` is a variant of `Op`, not `0`; write a variant of `Op`, or `_`
+    y := match (x) { 0 => a, _ => 2 };
+}

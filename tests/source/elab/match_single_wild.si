@@ -1,0 +1,10 @@
+// A `match` with the single arm `_` gives the arm and makes no core node for the `match`.
+// TOP M()
+// CHECK: (assign y (add x (const 4 1)))
+// CHECK-NOT: replicate
+// CHECK-NOT: xor
+module M() domains() {
+    input x: UInt[4];
+    output y: UInt[4];
+    y := match (x) { _ => x +% 1 };
+}

@@ -1,0 +1,10 @@
+// S021: the checks run in arm order. The second match of arm 1 comes before the kind error of arm 2.
+// TOP M()
+module M() {
+    input x: UInt[2];
+    input a: UInt[4];
+    output y: UInt[4];
+    // expected-error S021 @+2
+    // expected-message: this arm matches `0`, and the arm at 9:22 matches it too; remove one of the two patterns
+    y := match (x) { 0 => a, 0 => 2, true => 3, _ => 4 };
+}

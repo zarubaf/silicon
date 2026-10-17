@@ -1,0 +1,9 @@
+// A `_` after all three variants of `Op` is valid: it matches the tag 3, which no variant declares.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }
+module M() {
+    input x: Op;
+    input a: UInt[4];
+    output y: UInt[4];
+    y := match (x) { Op::Add => a, Op::Load(_) => 2, Op::Pair(_, _) => 3, _ => 4 };
+}

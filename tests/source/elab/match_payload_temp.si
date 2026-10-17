@@ -1,0 +1,29 @@
+// A scrutinee that is no core name makes marks: its `tag` leaf (read by the selects) and its `payload`
+// leaf (read by the binder leaves of the arms). The temporary of the payload belongs to the statement
+// of the first binder `b` that reads it, and the binders of the second `match` get the version `1v`.
+// TOP M()
+// CHECK: (let b (bits 1) (extract b$0t 0 1))
+// CHECK-NEXT: (let b$0t (bits 8) (mux c op1$payload op2$payload))
+// CHECK-NEXT: (let b$1v (bits 1) (extract op1$payload 0 1))
+// CHECK-NEXT: (let n (bits 4) (extract b$0t 1 4))
+// CHECK-NEXT: (let n$1v (bits 4) (extract op1$payload 1 4))
+// CHECK-NEXT: (let v (bits 8) (extract b$0t 0 8))
+// CHECK-NEXT: (let v$1v (bits 8) (extract op1$payload 0 8))
+// CHECK-NEXT: (let y$0t (bits 2) (mux c op1$tag op2$tag))
+// CHECK-NEXT: (let y$1t (bits 1) (icmp eq y$0t (const 2 2)))
+// CHECK-NEXT: (let y$2t (bits 1) (icmp eq y$0t (const 2 1)))
+// CHECK-NEXT: (let z$0t (bits 1) (icmp eq op1$tag (const 2 2)))
+// CHECK-NEXT: (let z$1t (bits 1) (icmp eq op1$tag (const 2 1)))
+// CHECK-NEXT: (assign y (or (or (and (replicate y$1t 4) (mux b n a)) (and (replicate y$2t 4) a)) (and (replicate (xor (or y$1t y$2t) (const 1 1)) 4) (const 4 1))))
+// CHECK-NEXT: (assign z (or (or (and (replicate z$0t 4) n$1v) (and (replicate z$1t 4) a)) (and (replicate (xor (or z$0t z$1t) (const 1 1)) 4) (const 4 1))))
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }
+module M() domains() {
+    input c: Bool;
+    input op1: Op;
+    input op2: Op;
+    input a: UInt[4];
+    output y: UInt[4];
+    output z: UInt[4];
+    y := match (if (c) { op1 } else { op2 }) { Op::Pair(b, n) => if (b) { n } else { a }, Op::Load(v) => a, _ => 1 };
+    z := match (op1) { Op::Pair(b, n) => n, Op::Load(v) => a, _ => 1 };
+}

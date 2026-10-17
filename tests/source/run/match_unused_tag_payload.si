@@ -1,0 +1,21 @@
+// Three variants leave the tag 3 unused. The arm `_` takes it, and the payload bits of that tag change nothing.
+// A variant with two payload values binds both from the same payload bits.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[8]) = 2 }
+module M() domains() {
+    input op: Op;
+    output y: UInt[8];
+    y := match (op) {
+        Op::Add => 0,
+        Op::Load(v) => v,
+        Op::Pair(b, n) => if (b) { n } else { 10 },
+        _ => 200,
+    };
+}
+// STEP in=(op.tag 0 op.payload 255) out=(y 0)
+// STEP in=(op.tag 1 op.payload 42) out=(y 42)
+// STEP in=(op.tag 2 op.payload 6) out=(y 10)
+// STEP in=(op.tag 2 op.payload 25) out=(y 12)
+// STEP in=(op.tag 2 op.payload 511) out=(y 255)
+// STEP in=(op.tag 3 op.payload 0) out=(y 200)
+// STEP in=(op.tag 3 op.payload 255) out=(y 200)

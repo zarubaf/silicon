@@ -1,0 +1,11 @@
+// A `match` on a `Bool` input with the arms `true` and `false` selects one arm.
+// TOP M()
+module M() domains() {
+    input c: Bool;
+    input a: UInt[4];
+    input b: UInt[4];
+    output y: UInt[4];
+    y := match (c) { true => a, false => b };
+}
+// STEP in=(a 3 b 9 c true) out=(y 3)
+// STEP in=(a 3 b 9 c false) out=(y 9)

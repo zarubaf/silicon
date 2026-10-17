@@ -1,0 +1,10 @@
+// A `match` on a static scrutinee charges its patterns and its coverage shares, and evaluates only the
+// selected arm. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 141
+// TOP M()
+const K: UInt[4] = 9;
+module M() domains() {
+    input a: UInt[8];
+    output y: UInt[8];
+    y := match (K) { 0 => a, 1 => a, 2 => a, 3 => a, 4 => a, 5 => a, 6 => a, 7 => a, 9 => a +% 1, _ => 0 };
+}

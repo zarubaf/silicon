@@ -1,4 +1,0 @@
-// S004: a `match` in the condition of an `if` is at its keyword.
-// expected-error S004 @+2
-// expected-message: a `match` is not supported yet
-const A: T = if (match (x) { _ => true }) { 1 } else { 2 };

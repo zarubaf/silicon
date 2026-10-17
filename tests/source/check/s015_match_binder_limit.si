@@ -1,0 +1,11 @@
+// S015: a binder with a zero size above 2^32 fails before its charge.
+// TOP M()
+enum Big: UInt[1] { A = 0, B([(); 4294967297]) = 1 }
+module M() {
+    input x: Big;
+    input a: UInt[4];
+    output y: UInt[4];
+    // expected-error S015 @+2
+    // expected-message: the value of the type has a size above 2^32, the limit of a value from a type; use a smaller type or keep it a reference
+    y := match (x) { Big::B(v) => a, _ => 2 };
+}
