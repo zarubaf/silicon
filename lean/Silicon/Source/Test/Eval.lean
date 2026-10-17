@@ -2947,4 +2947,26 @@ result can have a tag without a variant. Another type on the other side is `S010
 #guard out (ops ++ "enum F: UInt[10] { A = 0 }\n") "reinterpret(F, Op::Add)" == "S010 1:1"
 #guard out ops "reinterpret(UInt[10], Op)" == "S010 1:1"
 
+/-!
+A new enum value has the depth 3 of section 5.5: 1 more than its type `Op` of the depth 2. Thus
+a variant constructor and `reinterpret` to an enum check it before the value exists, as `T()`
+does. Above the nesting depth, the result is `S015` at the node that makes the value. The check
+comes after the typed uses of the payload values and after the type check of `reinterpret`.
+-/
+#guard out ops "Op::Add" (depth := 3) == "(enum (enum root Op ()) 0 (uint 8 0))"
+#guard out ops "Op::Load(5)" (depth := 3) == "(enum (enum root Op ()) 1 (uint 8 5))"
+#guard out ops "reinterpret(Op, UInt[10](0))" (depth := 3) ==
+  "(enum (enum root Op ()) 0 (uint 8 0))"
+#guard out ops "Op()" (depth := 2) == "S015 1:1"
+#guard out ops "Op::Add" (depth := 2) == "S015 1:1"
+#guard out ops "Op::Load(5)" (depth := 2) == "S015 1:1"
+#guard out ops "reinterpret(Op, UInt[10](0))" (depth := 2) == "S015 1:1"
+#guard out ops "[Op::Add][0]" (depth := 2) == "S015 1:2"
+#guard msg ops "Op::Add" (depth := 2) ==
+  "the depth 3 goes above the nesting depth 2; raise --depth to at least 3"
+#guard msg ops "reinterpret(Op, UInt[10](0))" (depth := 2) ==
+  "the depth 3 goes above the nesting depth 2; raise --depth to at least 3"
+#guard out ops "Op::Load(true)" (depth := 2) == "S010 1:1"
+#guard out ops "reinterpret(Op, UInt[9](0))" (depth := 2) == "S010 1:1"
+
 end Silicon.Source.Test.Eval
