@@ -27,11 +27,11 @@ pub(super) trait Site {
     ) -> Res<Self::Used>;
 }
 
-/// A typed `let` or an assignment to a `let mut` local. A handle type keeps the handle.
-pub(super) struct Binding;
-
-/// An argument, a `return`, or the value of a `:=`.
-pub(super) struct Passed;
+/// The whole value of a typed `let`, an assignment to a `let mut` local, an argument, a `return`,
+/// or the value of a `:=`. A handle type keeps the handle (`handle_use`), and another type reads
+/// it. A read of an aggregate gives a reference, and its binding expands the reference into its
+/// leaves. Thus a copy also charges the size of the reference before the typed use (`read_use`).
+pub(super) struct Whole;
 
 /// A field of a constructor, with its argument at the node `0`, in a data context
 /// (section 9.2).
@@ -40,7 +40,7 @@ pub(super) struct Field(pub(super) Pos);
 /// A `push` element at the node `0`. A list holds only static values.
 pub(super) struct Element(pub(super) Pos);
 
-impl Site for Binding {
+impl Site for Whole {
     type Used = Val;
 
     fn site_use(
@@ -54,24 +54,8 @@ impl Site for Binding {
         if ev.tys.get(t).is_handle() {
             ev.handle_use(pos, t, &out)
         } else {
-            Passed.site_use(ev, pos, t, copies, out)
+            ev.read_use(pos, t, copies, out)
         }
-    }
-}
-
-impl Site for Passed {
-    type Used = Val;
-
-    fn site_use(
-        self,
-        ev: &mut Evaluator<'_>,
-        pos: Pos,
-        t: TyId,
-        copies: bool,
-        out: Out,
-    ) -> Res<Val> {
-        ev.later_handle(pos, t)?;
-        ev.read_use(pos, t, copies, out)
     }
 }
 

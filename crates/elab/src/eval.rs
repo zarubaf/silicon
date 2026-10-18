@@ -58,7 +58,7 @@ pub use inst::Design;
 pub(crate) use inst::{Bind, Elab, Inst, Literal, Mem, Sink, elaborate};
 pub(crate) use mem::addr_width;
 use store::{ConstStatus, Slot, Store};
-use typed::{Binding, Passed};
+use typed::Whole;
 
 use crate::agg::{Agg, Base};
 use crate::hw::{Graph, Handle, HwId, Kind as Resource, Op, Part, Ref, Root, Seen, Val};
@@ -817,11 +817,10 @@ impl Evaluator<'_> {
     /// The handle of `out` at the handle type `t`: the same check as `handle_use`, for a caller
     /// that stores the handle as a leaf of a container.
     pub(super) fn handle_leaf(&mut self, pos: Pos, t: TyId, out: &Out) -> Res<Handle> {
-        if let Seen::Handle(h) = self.store.seen(out) {
-            let h = h.clone();
-            if self.handle_ty(&h) == Some(t) {
-                return Ok(h);
-            }
+        if let Seen::Handle(h) = self.store.seen(out)
+            && self.handle_is(h, t)
+        {
+            return Ok(h.clone());
         }
         self.handle_wrong(pos, t, self.store.seen(out))
     }
@@ -874,6 +873,27 @@ impl Evaluator<'_> {
              the literal, for example `(r, read(r))`",
             self.tys.text(t)
         )
+    }
+
+    /// The type of what a result is (Lean `Val.ty?`). A handle has its handle type, and a literal
+    /// that waits has none.
+    pub(super) fn out_ty(&mut self, out: &Out) -> Option<TyId> {
+        if let Seen::Handle(h) = self.store.seen(out) {
+            let h = h.clone();
+            return self.handle_ty(&h);
+        }
+        self.store.seen(out).ty(&self.graph, &mut self.tys)
+    }
+
+    /// Whether the handle type of `h` is the type `t` (Lean `Handle.ty?` and `Ty.same`). The type
+    /// `t` is in the table, so the compare looks up the handle type and makes none.
+    pub(super) fn handle_is(&self, h: &Handle, t: TyId) -> bool {
+        match h {
+            Handle::Inst { ty, .. } => *ty == t,
+            _ => self
+                .handle_form(h)
+                .is_some_and(|form| self.tys.id_of(&form) == Some(t)),
+        }
     }
 
     /// The handle type of `h` as an id (Lean `Handle.ty?`). It reads the stored ids and charges
@@ -1696,7 +1716,7 @@ impl Evaluator<'_> {
         let o = self.eval(value)?;
         let o = need(value, o)?;
         let x = if let Some(t) = t {
-            self.typed_use(pos, t, o.is_ref(), o, Binding)?
+            self.typed_use(pos, t, o.is_ref(), o, Whole)?
         } else {
             self.copy(pos, &o)?;
             self.known(&o)?;
@@ -1742,7 +1762,7 @@ impl Evaluator<'_> {
                 };
                 let o = self.eval(value)?;
                 let o = need(value, o)?;
-                let v = self.typed_use(*pos, rt, true, o, Passed)?;
+                let v = self.typed_use(*pos, rt, true, o, Whole)?;
                 // A module body runs on after a `return`, as the walk of Lean `Elab` does.
                 Ok((!module).then_some(v))
             }

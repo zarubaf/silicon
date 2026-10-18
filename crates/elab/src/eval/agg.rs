@@ -487,10 +487,21 @@ impl Evaluator<'_> {
         while let Some((want, part)) = work.pop() {
             #[cfg(test)]
             crate::counters::add(crate::counters::Count::Typed, 1);
+            // A handle type needs a handle of exactly this type (Lean `Agg.handleAt`).
+            if self.tys.get(want).is_handle() {
+                if let Agg::Handle(h) = part
+                    && self.handle_is(h, want)
+                {
+                    size = size.saturating_add(1);
+                    continue;
+                }
+                let a = self.about(part.seen());
+                return fail(Code::S010, pos, self.handle_use_text(want, &a));
+            }
             match (part, self.tys.get(want)) {
                 (Agg::Ref(_, has), _) if *has == want => {}
                 (Agg::Hw(leaf), ty) if self.graph.ty(*leaf) == *ty => {}
-                (Agg::Record(node, _), _) if node.ty == want => {}
+                (Agg::Record(node, _) | Agg::List(node, _), _) if node.ty == want => {}
                 (Agg::Static(value), _) => {
                     size = size
                         .saturating_add(ops::plan_value(want, value, &self.tys).map_err(at(pos))?);
@@ -507,6 +518,20 @@ impl Evaluator<'_> {
                     size = size.saturating_add(1);
                     work.extend(types.iter().copied().zip(&parts.0).rev());
                     continue;
+                }
+                (Agg::List(_, parts), Ty::List(elem)) => {
+                    size = size.saturating_add(1);
+                    work.extend(parts.0.iter().rev().map(|x| (*elem, x)));
+                    continue;
+                }
+                (Agg::Handle(_), _) => {
+                    let a = self.about(part.seen());
+                    let text = if want.holds_handles() {
+                        self.handle_use_text(want, &a)
+                    } else {
+                        self.data_leaf_text(want, &a)
+                    };
+                    return fail(Code::S010, pos, text);
                 }
                 _ => return self.wrong_part(pos, want, part),
             }
@@ -526,15 +551,23 @@ impl Evaluator<'_> {
             crate::counters::add(crate::counters::Count::Typed, 1);
             match step {
                 Convert::Visit(t, Agg::Static(v)) => {
-                    done.push(Agg::Static(
-                        ops::run_value(t, &v, &self.tys).map_err(at(pos))?,
-                    ));
+                    let v = ops::run_value(t, &v, &self.tys).map_err(at(pos))?;
+                    done.push(Agg::typed(&mut self.tys, t, v));
                 }
-                Convert::Visit(t, Agg::Array(_, mut p) | Agg::Tuple(_, mut p)) => {
+                Convert::Visit(t, Agg::Record(n, p) | Agg::List(n, p)) if n.ty == t => {
+                    done.push(match self.tys.get(t) {
+                        Ty::List(_) => Agg::List(n, p),
+                        _ => Agg::Record(n, p),
+                    });
+                }
+                Convert::Visit(
+                    t,
+                    Agg::Array(_, mut p) | Agg::Tuple(_, mut p) | Agg::List(_, mut p),
+                ) => {
                     let parts = std::mem::take(&mut p.0);
                     work.push(Convert::Build(t, parts.len()));
                     let tys: Vec<TyId> = match self.tys.get(t) {
-                        Ty::Array(e, _) => vec![*e; parts.len()],
+                        Ty::Array(e, _) | Ty::List(e) => vec![*e; parts.len()],
                         Ty::Tuple(ts) => ts.clone(),
                         _ => Vec::new(),
                     };

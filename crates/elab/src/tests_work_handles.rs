@@ -324,3 +324,54 @@ fn c10_the_data_type_of_a_container_is_made_once() {
         twice.counts.read
     );
 }
+
+/// Issue #278, W2. `k` calls that each pass an array of `n` registers to a formal of the same
+/// type. Each call charges the copy of the array, and the typed use compares the type once, so the
+/// work is linear in the copy charges.
+#[test]
+fn c2_calls_that_pass_an_array_of_handles_are_linear_in_their_copies() {
+    let at = |n: usize, k: usize, key: u64| {
+        let mut src = format!(
+            "fn take(h: [Reg[UInt[8]]; {n}]) -> Nat {{\n    return 1;\n}}\nmodule M() {{\n    \
+             output o: Bool;\n"
+        );
+        src.push_str(&registers(n, "UInt[8]"));
+        for j in 0..k {
+            writeln!(src, "    let c{j} = take(rs);").unwrap();
+        }
+        src.push_str("    o := true;\n}\n");
+        passing(key, 1000, &src)
+    };
+    let (small, twice) = (at(32, 16, 130), at(32, 32, 131));
+    doubles(&small, &twice);
+    assert!(twice.counts.total() <= 8 * twice.used);
+    let (wide, wider) = (at(32, 16, 132), at(64, 16, 133));
+    doubles(&wide, &wider);
+}
+
+/// Issue #278, W6. The typed use of a tuple of `n` registers at `Reg[T]` leaves, where `T` is a
+/// tuple of 4096 elements, compares two ids for each leaf and walks no type. The work of one more
+/// leaf does not follow the size of `T`.
+#[test]
+fn c6_a_typed_use_at_handle_leaves_walks_no_type() {
+    let at = |n: usize, key: u64| {
+        let mut src = "type T = (\n".to_owned();
+        src.push_str(&"    UInt[8],\n".repeat(4096));
+        src.push_str(");\nmodule M() {\n    output o: Bool;\n    reg r: T = T();\n    r := T();\n");
+        let leaves = vec!["Reg[T]"; n].join(", ");
+        let regs = vec!["r"; n].join(", ");
+        writeln!(
+            src,
+            "    let t: ({leaves}, UInt[8]) = ({regs}, 5);\n    o := true;\n}}"
+        )
+        .unwrap();
+        passing(key, 1000, &src).counts.total()
+    };
+    let slope = |n: usize, key: u64| (at(2 * n, key + 1) - at(n, key)) / n as u64;
+    let (small, large) = (slope(32, 140), slope(64, 150));
+    assert_eq!(
+        small, large,
+        "the work of a leaf follows the work of the run"
+    );
+    assert!(small <= 60, "{small}");
+}
