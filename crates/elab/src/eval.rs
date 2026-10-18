@@ -195,8 +195,12 @@ struct Evaluator<'a> {
     item: usize,
     frame: FrameRef,
     elab: Elab,
-    /// The innermost guard (section 9.4): its kind and the nesting depth at its start.
+    /// The innermost guard (section 9.4): its kind, the nesting depth at its start, and the item
+    /// of the outermost call under it.
     guard: Option<Guard>,
+    /// The static mode (section 9.4), else none. A call sets it in O(1), and the name renders
+    /// only in an error.
+    mode: Option<Mode>,
     /// The name of a function value while its signature evaluates: each depth check there
     /// reports at it. A nested level clears it, so it keeps its own positions.
     site: Option<Pos>,
@@ -227,12 +231,24 @@ pub(crate) enum GuardKind {
     Structural,
 }
 
-/// The innermost guard: its kind and the nesting depth at its start. The texts of `S016` name
+/// The innermost guard: its kind, the nesting depth at its start, and `callee`. The `callee` is
+/// the item of the outermost call under the guard. A call records its item only when the guard
+/// has no record, so a deeper call keeps it, and the return of the call ends it. The record is
+/// an index, so it costs O(1), and the name renders only in an error. The texts of `S016` name
 /// the kind and are normative, so they equal those of Lean `Guard`.
 #[derive(Clone, Copy)]
 pub(crate) struct Guard {
     pub(crate) kind: GuardKind,
     pub(crate) depth: u64,
+    pub(crate) callee: Option<usize>,
+}
+
+/// The static mode (section 9.4): the `eval` command, or the item of the outermost
+/// `comptime fn` of the call chain.
+#[derive(Clone, Copy)]
+pub(crate) enum Mode {
+    Eval,
+    Static(usize),
 }
 
 impl Guard {
@@ -249,7 +265,10 @@ impl Guard {
     /// The text of the graph effect `g`.
     pub(crate) fn effect(self, g: &str) -> String {
         match self.kind {
-            GuardKind::Arm => format!("a hardware arm has no graph effect such as `{g}`"),
+            GuardKind::Arm => format!(
+                "a hardware arm has no graph effect such as `{g}`; call `{g}` before the `if` or \
+                 `match`, and use its result in the arm"
+            ),
             GuardKind::Structural => format!(
                 "a type or a constant has no graph effect such as `{g}`; call it before and use the result"
             ),
@@ -354,6 +373,7 @@ impl<'a> Evaluator<'a> {
             frame: ROOT,
             elab,
             guard: None,
+            mode: top.map(|_| Mode::Eval),
             site: None,
             records: Vec::new(),
             emitted: Vec::new(),
@@ -1079,6 +1099,7 @@ impl Evaluator<'_> {
         let saved = self.guard.replace(Guard {
             kind: GuardKind::Structural,
             depth: self.depth,
+            callee: None,
         });
         let r = act(self);
         self.guard = saved;
@@ -1322,6 +1343,7 @@ impl Evaluator<'_> {
                 let saved = self.guard.replace(Guard {
                     kind: GuardKind::Arm,
                     depth: self.depth,
+                    callee: None,
                 });
                 let arms = self
                     .operand(pos, yes)
@@ -1720,7 +1742,7 @@ impl Evaluator<'_> {
     }
 
     /// A statement. The result is the value of a `return`. A statement of a module body makes
-    /// hardware; in a function body such a statement is `S011`.
+    /// hardware, also in a function body (section 9.4).
     fn stmt(&mut self, s: &Stmt) -> Res<Option<Val>> {
         self.charge(stmt_pos(s), 1)?;
         match s {
@@ -1792,18 +1814,12 @@ impl Evaluator<'_> {
             | Stmt::Reg { pos, .. }
             | Stmt::Wire { pos, .. }
             | Stmt::Mem { pos, .. }
-            | Stmt::Input { pos, .. }
-            | Stmt::Output { pos, .. }
-            | Stmt::Inst { pos, .. }
-                if self.ret.is_some() =>
-            {
-                fail(
-                    Code::S011,
-                    *pos,
-                    "a static evaluation makes no hardware".to_owned(),
-                )
+            | Stmt::Inst { pos, .. } => {
+                self.hardware_checks(*pos, s)?;
+                self.module_stmt(s)?;
+                Ok(None)
             }
-            _ => {
+            Stmt::Input { .. } | Stmt::Output { .. } => {
                 self.module_stmt(s)?;
                 Ok(None)
             }

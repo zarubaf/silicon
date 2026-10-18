@@ -32,7 +32,7 @@
 //! top selection and their typed use belong to no instantiation.
 
 use super::typed::Whole;
-use super::{Evaluator, Let, Out, ROOT, Res, Slot, fail, need};
+use super::{Evaluator, Let, Mode, Out, ROOT, Res, Slot, fail, need};
 use crate::agg::{Agg, Base};
 use crate::hw::{Graph, Handle, Kind, Port, Seen, Val, port_name};
 use crate::int::Int;
@@ -470,6 +470,54 @@ impl Evaluator<'_> {
         })
     }
 
+    /// The source name of the item `i`, for an error text.
+    fn item_name(&self, i: usize) -> &str {
+        self.file
+            .ast()
+            .get(i)
+            .map_or("", |item| item.name().name.as_str())
+    }
+
+    /// The two checks of a declaration or a `:=` statement before its module steps, with no
+    /// charge (section 6.2). Under a guard it is `S016`, and the text names the function of the
+    /// outermost call under the guard. In the static mode it is `S011`. A module body has
+    /// neither.
+    pub(super) fn hardware_checks(&self, pos: Pos, s: &Stmt) -> Res<()> {
+        let here = self.item_name(self.item);
+        if let Some(guard) = self.guard {
+            let callee = self.item_name(guard.callee.unwrap_or(self.item));
+            return fail(Code::S016, pos, guard.effect(callee));
+        }
+        let kind = match s {
+            Stmt::Reg { .. } => "register",
+            Stmt::Wire { .. } => "wire",
+            Stmt::Mem { .. } => "memory",
+            Stmt::Inst { .. } => "instance",
+            _ => "`:=`",
+        };
+        match self.mode {
+            Some(Mode::Static(m)) => fail(
+                Code::S011,
+                pos,
+                format!(
+                    "the `comptime fn` `{}` makes no hardware, but its call reaches this {kind} \
+                     in `{here}`; call `{here}` from a `fn` or a module body",
+                    self.item_name(m)
+                ),
+            ),
+            Some(Mode::Eval) => fail(
+                Code::S011,
+                pos,
+                format!(
+                    "the `eval` command makes no hardware, but its expression reaches this \
+                     {kind} in `{here}`; evaluate an expression that makes no hardware, or \
+                     elaborate a module that calls `{here}`"
+                ),
+            ),
+            None => Ok(()),
+        }
+    }
+
     /// A statement of a module body that makes hardware. Its statement charge is paid.
     pub(super) fn module_stmt(&mut self, s: &Stmt) -> Res<()> {
         match s {
@@ -565,7 +613,9 @@ impl Evaluator<'_> {
             return fail(
                 Code::S017,
                 pos,
-                "a combinational module has no register".to_owned(),
+                "a combinational module has no register; remove `domains()` from the module, or \
+                 move the register to a clocked module"
+                    .to_owned(),
             );
         }
         let tid = self.type_expr(ty)?;
@@ -613,7 +663,9 @@ impl Evaluator<'_> {
             return fail(
                 Code::S017,
                 pos,
-                "a combinational module has no memory".to_owned(),
+                "a combinational module has no memory; remove `domains()` from the module, or \
+                 move the memory to a clocked module"
+                    .to_owned(),
             );
         }
         let tid = self.type_expr(word)?;
@@ -667,7 +719,11 @@ impl Evaluator<'_> {
             return fail(
                 Code::S017,
                 pos,
-                format!("a combinational module has no clocked child `{}`", m.name),
+                format!(
+                    "a combinational module has no clocked child `{}`; remove `domains()` from \
+                     the module, or move the instance to a clocked module",
+                    m.name
+                ),
             );
         }
         // The converted arguments paid for their sizes, so the type adds no charge.

@@ -5,7 +5,7 @@
 
 use super::place::Place;
 use super::typed::Whole;
-use super::{Evaluator, Names, Opnd, Out, Res, Slot, at, fail, need};
+use super::{Evaluator, Mode, Names, Opnd, Out, Res, Slot, at, fail, need};
 use crate::Code;
 use crate::hw::{Ref, Seen, Val};
 use crate::names::{Role, Step};
@@ -299,6 +299,13 @@ impl Evaluator<'_> {
         let site = self.site(node);
         let u = self.syms.items.get(i).copied().unwrap_or(0);
         self.calls.push((i, pos));
+        // The call sets the mode when it names none and `comptime` holds, and it records its
+        // item in a guard without a record. Both are O(1), and the return of the call ends both.
+        let saved = (self.mode, self.guard);
+        self.mode = self.mode.or((*comptime).then_some(Mode::Static(i)));
+        if let Some(g) = &mut self.guard {
+            g.callee = g.callee.or(Some(i));
+        }
         let ran = self.nested(pos, |ev| {
             ev.in_frame(None, |ev| {
                 let (path, frame) = ev.frame_of(u, Step::Call(site));
@@ -332,6 +339,7 @@ impl Evaluator<'_> {
             })
         });
         self.calls.pop();
+        (self.mode, self.guard) = saved;
         let (result, written) = ran?;
         self.write_back(pos, written)?;
         Ok(Some(result))
