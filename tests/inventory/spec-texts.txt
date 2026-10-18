@@ -16,21 +16,7 @@
 lean | S011 Static part of a `match` | 311
 rust | S011 Static part of a `match` | 311
 lean | S010 Memory as data | 278
-rust | S004 Port in a `fn` | 279
-rust | S018 Second binding | 279
-rust | S018 Second binding in a helper | 279
-rust | S018 No binding | 279
-rust | S018 Memory without a port call | 279
-rust | S018 Second `read_port` | 279
-rust | S018 Second `read_port` in a helper | 279
-rust | S018 Second `write_port` | 279
-rust | S018 Second `write_port` in a helper | 279
-rust | S011 Hardware in a `comptime fn` | 279
-rust | S011 Hardware in `eval` | 279
 pin | S011 Hardware in `eval` | 279
-rust | S017 Register in a combinational module | 279
-rust | S017 Memory in a combinational module | 279
-rust | S017 Clocked child in a combinational module | 279
 fix | S010 `read` of another value | 314
 lean | S010 `read` of another value | 314
 rust | S010 `read` of another value | 314
