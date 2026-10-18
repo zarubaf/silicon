@@ -109,7 +109,8 @@ def dataType (p : Pos) (t : Ty) : Eval.M Ty := do
 /-! A resource that needs one binding. The result is its handle. -/
 def resource (k : Kind) (path : Path) (t : Ty) (p : Pos) (x : String) : Eval.M Val := do
   let id := (← get).inst.work.needs.size
-  modify fun s => { s with inst.work.needs := s.inst.work.needs.push ⟨x, p, 0⟩ }
+  modify fun s =>
+    { s with inst.work.needs := s.inst.work.needs.push { name := x, pos := p, count := 0 } }
   return .handle (.res k id t path)
 
 /-!
@@ -183,23 +184,45 @@ def targetStep (s : Pos) (v : Val) (step : Sel × Option Value) : Eval.M Val := 
       return (← fieldKey q f v).2.1
   | _, _ => fail .S017 s partText
 
-/-! Records the binding of `t` to `h`. The second binding of one target is an `S018`. -/
+/-! Records the `S018` data `x` at `p`. The first by position wins (section 6.2). -/
+def breach (p : Pos) (x : Breach) : Eval.M Unit :=
+  modify fun s => { s with inst.work.dup := firstBreach s.inst.work.dup p x }
+
+/-!
+The helper of a second binding or port call at `p` whose first one is at `b`. When both are at
+`p`, one `:=` or call runs again, and in a function body its text names the function (section
+6.2).
+-/
+def again (p b : Pos) : Eval.M (Option Nat) := do
+  if b == p then return (← read).helper else return none
+
+/-! The `S018` data of a second binding at `p` of `r`, with its declaration at `d`. -/
+def second (p : Pos) (r : Res) (b d : Pos) : Eval.M Breach := do
+  match ← again p b with
+  | some h => return .secondIn r h
+  | none => return .second r b d
+
+/-!
+Records the binding of `t` to `h` at `p`. The second binding of one target is an `S018`, and
+the first binding keeps its position for its text.
+-/
 def bindTarget (p : Pos) (t : Target) (h : Agg) : Eval.M Unit := do
-  let second : Error := ⟨.S018, p, "a second binding of one target"⟩
   let w := (← get).inst.work
   match t with
   | .own r k t path =>
-    let c := (w.needs[k]?.map (·.count)).getD 0
-    if c == 1 then modify fun s => { s with inst.work.dup := earlier s.inst.work.dup second }
-    modify fun s =>
-      { s with inst.work.needs := s.inst.work.needs.modify k fun r => { r with count := c + 1 } }
+    if let some n := w.needs[k]? then
+      if n.count == 1 then breach p (← second p (.own n.name) (n.first.getD p) n.pos)
+      modify fun s => { s with inst.work.needs := s.inst.work.needs.modify k fun r =>
+        { r with count := n.count + 1, first := r.first <|> some p } }
     modifyBody fun b => { b with binds := b.binds.push ⟨.own r t path, h, p⟩ }
   | .child k path q =>
-    let c := w.inputs.getD (k, q.sym) 0
+    let (c, b) := w.inputs.getD (k, q.sym) (0, p)
     if c == 0 then
       modify fun s => { s with inst.work.bound := s.inst.work.bound.modify k (· + 1) }
-    if c == 1 then modify fun s => { s with inst.work.dup := earlier s.inst.work.dup second }
-    modify fun s => { s with inst.work.inputs := s.inst.work.inputs.insert (k, q.sym) (c + 1) }
+    if c == 1 then
+      let (u, d) := ((w.body.children[k]?).map fun c => (c.name, c.pos)).getD ("", p)
+      breach p (← second p (.input u q.name) b d)
+    modify fun s => { s with inst.work.inputs := s.inst.work.inputs.insert (k, q.sym) (c + 1, b) }
     modifyBody fun b =>
       { b with binds := b.binds.push ⟨.child k path (portName q.name) q.ty, h, p⟩ }
 
@@ -207,20 +230,18 @@ def bindTarget (p : Pos) (t : Target) (h : Agg) : Eval.M Unit := do
 The binding rule at the end of a body. A missing binding of an own resource is at its
 declaration, and one of a child input is at the `instance` statement. The counts select the
 first child with a free input, so only the interface of that child is searched. The name is
-that of its free input with the first source position.
+that of its free input with the first source position. The records compete by position, and the
+text of the winner renders once (section 6.2).
 -/
 def bindings : Eval.M Unit := do
   let w := (← get).inst.work
   let mems := (← get).naming.mems
   let mut err := w.dup
   for r in w.needs do
-    if r.count == 0 then err := earlier err ⟨.S018, r.pos, s!"`{r.name}` has no binding"⟩
+    if r.count == 0 then err := firstBreach err r.pos (.unbound r.name)
   for m in mems do
-    if let some e := m.dup then err := earlier err e
-    if m.read.isNone then
-      err := earlier err ⟨.S018, m.pos, s!"the memory `{m.name}` has no `read_port`"⟩
-    else if m.write.isNone then
-      err := earlier err ⟨.S018, m.pos, s!"the memory `{m.name}` has no `write_port`"⟩
+    if m.read.isNone then err := firstBreach err m.pos (.noPort m.name false)
+    else if m.write.isNone then err := firstBreach err m.pos (.noPort m.name true)
   let mut first : Option (ChildDecl × Nat) := none
   for (c, k) in w.body.children.zipIdx do
     if w.bound.getD k 0 < c.iface.inputs then
@@ -228,10 +249,8 @@ def bindings : Eval.M Unit := do
   if let some (c, k) := first then
     let free := c.iface.ports.fold (init := none) fun f _ q =>
       if q.input && !w.inputs.contains (k, q.sym) && f.all (before q.pos ·.pos) then some q else f
-    let x := (free.map (·.name)).getD ""
-    let msg := s!"the input `{x}` of the instance `{c.name}` has no binding; "
-    err := earlier err ⟨.S018, c.pos, msg ++ s!"bind it with `{c.name}.{x} := ...;`"⟩
-  if let some e := err then fail e.code e.pos e.msg
+    err := firstBreach err c.pos (.input c.name ((free.map (·.name)).getD ""))
+  if let some (p, x) := err then fail .S018 p (x.text (← read).itemName)
 
 /-! The interface of a done instantiation. -/
 def iface (name : Name) (b : Body) : Iface :=

@@ -27,7 +27,7 @@ The front end holds a hardware aggregate (spec sections 5.1, 5.4, and 7.4) in th
 
 A memory (spec section 6.2 and section 7.6) uses these parts:
 
-- `Handle.mem` is the handle of a `mem` statement. `Eval.Mem` in `Naming.mems` holds its path, depth, word type, first read request, first write request, and first second call (`dup`). `Body.mems` gives them to `Flatten`.
+- `Handle.mem` is the handle of a `mem` statement. `Eval.Mem` in `Naming.mems` holds its path, depth, word type, first read request, first write request, and the positions of the first calls. A second call records its `S018` data (`Breach`) in `Work.dup`, and the text renders once, for the error that wins. `Body.mems` gives them to `Flatten`.
 - A word reference is `Base.word mem off` or `Op.word mem off`. The `off` is the bit offset in the word. A step with `Base.sub` adds `Ty.offset`, the sum of the earlier widths. Both hold a path id, never a path copy.
 - `Eval.portCall` runs a port call in this order: the copies, the memory check, `S016` in a guard, and the typed uses. Then it records the request. A read then charges the struct use of `ReadResponse[T]`, its depth, and its zero size. The response is lazy: `data` is the word at the offset 0, and `valid` is `m$0rvalid`. A second call charges the same and keeps `S018` for the end of the body.
 - `Flatten.lowerMem` lowers each memory as one block, in the order of section 7.6. The write chain is a fold over `Layout.foldLeaves`. It binds a temporary at the height 64. Each core node charges before it exists, at the position of the `mem` statement. A word leaf is an `extract` of `m$0rdata`.

@@ -998,9 +998,19 @@ theorem requestPart_f (p : Pos) (t : Ty) (v : Val) :
     Follows cap (requestPart p t v) (requestPart p t v) := by
   unfold requestPart; follows [readUse_f]
 
+theorem again_f (p b : Pos) : Follows cap (Elab.again p b) (Elab.again p b) := by
+  unfold Elab.again; follows
+
+theorem breach_f (p : Pos) (x : Breach) : Follows cap (Elab.breach p x) (Elab.breach p x) := by
+  unfold Elab.breach; follows
+
+theorem second_f (p : Pos) (r : Res) (b d : Pos) :
+    Follows cap (Elab.second p r b d) (Elab.second p r b d) := by
+  unfold Elab.second; follows [again_f]
+
 theorem portCall_f {u u' : Ty → M Ty} (h : ∀ t, Follows cap (u t) (u' t)) (p : Pos) (g : String)
     (f : PrimFn) (vs : List Val) : Follows cap (portCall p g f vs u) (portCall p g f vs u') := by
-  unfold portCall; follows [h, requestPart_f, bounded_f]
+  unfold portCall; follows [h, requestPart_f, bounded_f, again_f, breach_f]
 
 end helpers
 

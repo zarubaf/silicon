@@ -695,11 +695,84 @@ structure Let where
   pos : Pos
 
 /-!
+The function whose body runs, the `{h}` of the `S018` texts of a helper (section 6.2). A module
+body gives `none`.
+-/
+def Ctx.helper (c : Ctx) : Option Nat :=
+  if c.items[c.item]? matches some (.fn ..) then some c.item else none
+
+/-!
+A resource in an `S018` text (section 6.2): an own resource by its source name, or the input `p`
+of the instance `u`, which renders as `u.p`.
+-/
+inductive Res where
+  | own (r : String)
+  | input (u p : String)
+
+def Res.text : Res → String
+  | .own r => r
+  | .input u p => s!"{u}.{p}"
+
+/-!
+The data of an `S018` text of section 6.2. A binding or a port call records it with no walk.
+It holds names, positions, and the item `h` of a helper. Its text renders once, for the error
+that wins. `w` is true for `write_port`.
+-/
+inductive Breach where
+  | second (r : Res) (b d : Pos)
+  | secondIn (r : Res) (h : Nat)
+  | unbound (r : String)
+  | input (u p : String)
+  | noPort (r : String) (w : Bool)
+  | port (r : String) (w : Bool) (b : Pos)
+  | portIn (r : String) (w : Bool) (h : Nat)
+
+/-! The text of `x` (section 6.2). `name` gives the source name of an item. -/
+def Breach.text (name : Nat → String) (x : Breach) : String :=
+  let at_ (b : Pos) := s!"{b.line}:{b.col}"
+  let call (w : Bool) := if w then "write_port" else "read_port"
+  match x with
+  | .second r b d =>
+    s!"`{r.text}` has a second binding; the first binding is at {at_ b}, and the declaration " ++
+      s!"is at {at_ d}; remove one of the two bindings"
+  | .secondIn r h =>
+    s!"`{r.text}` has a second binding, because the `:=` in `{name h}` runs again for it; " ++
+      s!"run the `:=` once for each resource, for example with one call of `{name h}` for each"
+  | .unbound r => s!"`{r}` has no binding; bind it with `{r} := ...;`, or remove its declaration"
+  | .input u p =>
+    s!"the input `{p}` of the instance `{u}` has no binding; bind it with `{u}.{p} := ...;`"
+  | .noPort r w =>
+    s!"the memory `{r}` has no `{call w}`; call `{call w}` on it once, or remove the memory"
+  | .port r false b =>
+    s!"the memory `{r}` has a second `read_port`; the first call is at {at_ b}; call " ++
+      "`read_port` once and keep its response in a `let`"
+  | .port r true b =>
+    s!"the memory `{r}` has a second `write_port`; the first call is at {at_ b}; make one " ++
+      "call, and select its address, data, and enable with a hardware `if`"
+  | .portIn r false h =>
+    s!"the memory `{r}` has a second `read_port`, because the call in `{name h}` runs again " ++
+      s!"for it; run the call once for each memory, for example with one call of `{name h}` " ++
+      "for each"
+  | .portIn r true h =>
+    s!"the memory `{r}` has a second `write_port`, because the call in `{name h}` runs again " ++
+      s!"for it; run the call once for each memory, for example with one call of `{name h}` " ++
+      "for each"
+
+/-!
+The first of two `S018` records by position. On a tie, the first recorded one wins (section
+6.2).
+-/
+def firstBreach (old : Option (Pos × Breach)) (p : Pos) (x : Breach) : Option (Pos × Breach) :=
+  match old with
+  | some (q, y) => if before p q then some (p, x) else some (q, y)
+  | none => some (p, x)
+
+/-!
 A memory of one instantiation (section 7.6): its name, its path, its word type, its depth, and
 its `mem` statement. `read` holds the request of its first `read_port` call: the address and the
 enable. `write` holds the request of its first `write_port` call: the address, the data, and the
-enable. Each part of a request is after its typed use. `dup` holds the first `S018` of a second
-call by position (section 6.2).
+enable. Each part of a request is after its typed use. `readAt` and `writeAt` hold the
+positions of the first calls (section 6.2).
 -/
 structure Mem where
   name : String
@@ -709,7 +782,8 @@ structure Mem where
   pos : Pos
   read : Option (Agg × Agg) := none
   write : Option (Agg × Agg × Agg) := none
-  dup : Option Error := none
+  readAt : Option Pos := none
+  writeAt : Option Pos := none
 
 /-! The address width of a memory of the depth `n`: `max(1, ⌈log₂ n⌉)` (section 7.6). -/
 def addrWidth (n : Nat) : Nat := max 1 (Nat.log2 (n - 1) + 1)
@@ -791,24 +865,29 @@ structure Body where
   children : Array ChildDecl := #[]
   binds : Array Bind := #[]
 
-/-! A resource that needs one binding, by its number: its declaration and its bindings. -/
+/-!
+A resource that needs one binding, by its number: its declaration, its bindings, and the
+position of its first binding.
+-/
 structure Need where
   name : String
   pos : Pos
   count : Nat
+  first : Option Pos := none
 
 /-!
 The work of the current instantiation. The resource number indexes `needs`, and the instance
 number indexes `bound`. The memories are in the names of the instantiation (`Naming.mems`).
-`inputs` counts the bindings of each child input. `dup` holds the first `S018` of a second
-binding by position. `spent` is the fuel of the new children.
+`inputs` counts the bindings of each child input, with the position of the first one. `dup`
+holds the first `S018` of a second binding or a second port call by position. `spent` is the
+fuel of the new children.
 -/
 structure Work where
   body : Body
   needs : Array Need := #[]
   bound : Array Nat := #[]
-  inputs : Std.HashMap (Nat × Nat) Nat := {}
-  dup : Option Error := none
+  inputs : Std.HashMap (Nat × Nat) (Nat × Pos) := {}
+  dup : Option (Pos × Breach) := none
   spent : Nat := 0
 
 /-! The state of an `InstantiationId` in the table of instantiations. -/
