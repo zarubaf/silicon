@@ -1,0 +1,28 @@
+// T2 of the work-counter tests of the handle types (issue #277). The type `Instance[C, ...]` has N arguments
+// of an array of 256 elements, and each argument is the same element of `a`. Each argument charges its
+// size right after its typed use, as in `struct_argument`, so the work is linear in the charged sizes.
+// SCALE instance_type_argument 4 8 16 32 64
+// TOP M()
+module C(
+// REPEAT i {N}
+    comptime x{i}: [Nat; 256],
+// END
+) domains() {
+    output o: Bool;
+    o := true;
+}
+const X: [Nat; 256] = [
+// REPEAT i 256
+    0,
+// END
+];
+module M() domains() {
+    output o: Bool;
+    let a = [X];
+    type H = Instance[C,
+// REPEAT i {N}
+        a[0],
+// END
+    ];
+    o := true;
+}
