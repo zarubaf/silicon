@@ -245,15 +245,17 @@ def staticHandle (pos : Pos) (s : String) (t : Ty) : M Unit := do
 /-!
 The kind `{k}` and the source name `{r}` of the handle `h` in the text "Handle at a static
 position" (section 6.2). A child input names its instance and its port, as in `u.p`. An own
-output and a domain have no handle type, so they keep the text of `static`.
+output and a domain have no handle type, but they are not static either, so they give the text
+too.
 -/
-def Handle.static? : Handle → Option (String × String)
-  | .res .reg _ _ path => some ("register", sourceOf path)
-  | .res .wire _ _ path => some ("wire", sourceOf path)
-  | .mem _ path .. => some ("memory", sourceOf path)
-  | .inst _ path .. => some ("instance", sourceOf path)
-  | .input _ path q => some ("input", s!"{sourceOf path}.{q.name}")
-  | .res .output .. | .domain _ => none
+def Handle.static : Handle → String × String
+  | .res .reg _ _ path => ("register", sourceOf path)
+  | .res .wire _ _ path => ("wire", sourceOf path)
+  | .res .output _ _ path => ("output", sourceOf path)
+  | .mem _ path .. => ("memory", sourceOf path)
+  | .inst _ path .. => ("instance", sourceOf path)
+  | .input _ path q => ("input", s!"{sourceOf path}.{q.name}")
+  | .domain x => ("domain", x)
 
 /-!
 The value `v` at the static position `s` at `pos`, before its typed use (sections 5.1 and 5.3).
@@ -264,9 +266,9 @@ value passes, and `static` checks it.
 -/
 def staticValue (pos : Pos) (s : String) : Val → M Unit
   | .handle h => do
-    if let some (k, r) := h.static? then
-      fail .S011 pos (s!"{s} holds the {k} handle `{r}`, but it takes only static values; " ++
-        "pass the data through a port, or use the handle in the module that declares it")
+    let (k, r) := h.static
+    fail .S011 pos (s!"{s} holds the {k} `{r}`, but it takes only static values; pass the data " ++
+      "through a port, or use it in the module that declares it")
   | .agg a => do
     if let some t := a.ty? then
       if t.info.handles then
