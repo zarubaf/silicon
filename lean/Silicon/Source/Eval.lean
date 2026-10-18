@@ -319,9 +319,6 @@ def family (t : PrimType) (args : List Value) : Except Fault Ty := do
     unless 1 ≤ w && w ≤ 65536 do .error (.S012, s!"the width {intText w} is not 1 to 65536")
     .ok (if t == .uint then .uint w.toNat else .sint w.toNat)
   | .uint, [v] | .sint, [v] => typeError s!"a width is a static Int, not {v.text}"
-  -- TODO(#277): evaluate the handle type families (section 5.4).
-  | .reg, _ | .wire, _ | .input, _ | .mem, _ | .instance, _ =>
-    typeError "a handle type has no evaluation yet"
   | _, _ => .error (.S007, "a type family takes one index argument")
 
 def prim (pos : Pos) (x : String) : PrimType → M Ty
@@ -1278,6 +1275,7 @@ the metadata of the type. `g` is the name of the callee.
 -/
 def dataBitsOf (p : Pos) (g : String) : List Val → M (Option Out)
   | [.static (.type t)] => do
+    notHandle p t
     if t.info.data then
       charge p (intSize t.info.width)
       return some ⟨.static (.int t.info.width), false, none⟩
@@ -1466,6 +1464,25 @@ def arguments (ev : Resolve.Expr → M (Option Out)) (ty : Resolve.TypeExpr → 
   nested p <| inFrame none <|
       withReader (fun c => { c with item := i, frame := ⟨none, 0⟩ }) do
     bindParams ty p ps (os.map (·.1))
+
+/-!
+The use `Instance[M, args]` at `p` of the module item `i` with the arguments `xs` after `M`
+(section 5.4). Pass 4 checks the number of arguments, so another number is a defect. The
+arguments get the typed uses of an `instance` statement (`arguments`), one level deeper. The
+type then checks its depth and charges its size. It makes no instantiation and elaborates no
+module.
+-/
+def instanceTy (ev : Resolve.Expr → M (Option Out)) (ty : Resolve.TypeExpr → M Ty) (p : Pos)
+    (i : Nat) (xs : List Resolve.Expr) : M Ty := do
+  let some (.module _ x ps _ _) := (← read).items[i]?
+    | fail .S010 p "`Instance` needs a module"
+  if ps.length != xs.length then
+    fail .S007 p (familyArity "Instance" "Instance[M, args]" (1 + ps.length) (1 + xs.length))
+  let tvs ← arguments ev ty p i xs
+  let t := Ty.inst i x.name (tvs.map (·.2)).toArray
+  bounded p t.depth
+  charge p t.size
+  return t
 
 /-!
 The use at `p` of the struct item `i` with the name `x`, the parameters `ps`, the fields `fs`,
@@ -2228,13 +2245,26 @@ mutual
     ps.mapM fun | .mk m q => do return TyParam.mk m (← typeExpr n q)
   termination_by (n + 1, 0)
 
-  /-- `UInt[e]` or `SInt[e]` in a type or an expression. The base charged its node. -/
+  /--
+  A use of the prelude type family `k` at `p`, in a type or an expression. The base charged its
+  node. The arguments evaluate from left to right. `UInt`, `SInt`, and `List` take static
+  arguments. A handle type family checks its arguments after they evaluate (`handleTy`), and
+  `Instance` takes its module and the typed uses of its arguments (`instanceTy`).
+  -/
   def index (n : Nat) (p : Pos) (k : PrimType) (xs : List Resolve.Expr) : M Ty := do
-    let args ← operands n xs fun _ o => static p o.value
-    let t ← lift p (family k args)
-    if t matches .list _ then bounded p t.depth
-    charge p (Value.type t).size
-    return t
+    match k, xs with
+    | .instance, .name _ _ (.item i) :: as =>
+      instanceTy (fun e => eval n e) (fun t => typeExpr n t) p i as
+    | .instance, _ =>
+      fail .S007 p (familyArity "Instance" "Instance[M, args]" 1 xs.length)
+    | .reg, _ | .wire, _ | .input, _ | .mem, _ =>
+      handleTy p k (← operands n xs fun _ o => pure o.value)
+    | _, _ =>
+      let args ← operands n xs fun _ o => static p o.value
+      let t ← lift p (family k args)
+      if t matches .list _ then bounded p t.depth
+      charge p (Value.type t).size
+      return t
   termination_by (n + 1, 0)
 
   /--

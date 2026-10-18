@@ -317,11 +317,18 @@ theorem normalize_f (p : Pos) (a : Agg) : Follows cap (normalize p a) (normalize
 theorem bounded_f (p : Pos) (d : Nat) : Follows cap (bounded p d) (bounded p d) := by
   unfold bounded; follows
 
+theorem notHandle_f (p : Pos) (t : Ty) : Follows cap (notHandle p t) (notHandle p t) := by
+  unfold notHandle; follows
+
 theorem memWord_f (p : Pos) (t : Ty) : Follows cap (memWord p t) (memWord p t) := by
-  unfold memWord; follows
+  unfold memWord; follows [notHandle_f]
 
 theorem memDepth_f (p : Pos) (v : Val) : Follows cap (memDepth p v) (memDepth p v) := by
   unfold memDepth; follows
+
+theorem handleTy_f (p : Pos) (k : PrimType) (vs : List Val) :
+    Follows cap (handleTy p k vs) (handleTy p k vs) := by
+  unfold handleTy; follows [notHandle_f, memWord_f, memDepth_f, bounded_f]
 
 theorem readRef_f (p : Pos) (b : Base) (t : Ty) :
     Follows cap (readRef p b t) (readRef p b t) := by
@@ -574,7 +581,7 @@ theorem field_f (p : Pos) (f : Ident) (v : Val) :
   unfold field; follows [fieldKey_f]
 
 theorem zero_f (p : Pos) (t : Ty) : Follows cap (zero p t) (zero p t) := by
-  unfold zero; follows [bounded_f]
+  unfold zero; follows [notHandle_f, bounded_f]
 
 theorem typedAgg_f (p : Pos) (t : Ty) (a : Agg) :
     Follows cap (typedAgg p t a) (typedAgg p t a) := by
@@ -777,7 +784,7 @@ theorem popFrom_f (p : Pos) (g : String) (pl : Place) :
 
 theorem dataBitsOf_f (p : Pos) (g : String) (vs : List Val) :
     Follows cap (dataBitsOf p g vs) (dataBitsOf p g vs) := by
-  unfold dataBitsOf; follows
+  unfold dataBitsOf; follows [notHandle_f]
 
 theorem message_f (p : Pos) (g : String) (v : Val) :
     Follows cap (message p g v) (message p g v) := by
@@ -812,6 +819,13 @@ theorem arguments_f {ev ev' : Resolve.Expr → M (Option Out)} {ty ty' : Resolve
     Follows cap (arguments ev ty p i xs) (arguments ev' ty' p i xs) := by
   unfold arguments
   follows [he, need_f, static_f, nested_f, inFrame_f, bindParams_f ht, hold_f, release_f]
+
+theorem instanceTy_f {ev ev' : Resolve.Expr → M (Option Out)} {ty ty' : Resolve.TypeExpr → M Ty}
+    (he : ∀ e, Follows cap (ev e) (ev' e)) (ht : ∀ t, Follows cap (ty t) (ty' t)) (p : Pos)
+    (i : Nat) (xs : List Resolve.Expr) :
+    Follows cap (instanceTy ev ty p i xs) (instanceTy ev' ty' p i xs) := by
+  unfold instanceTy
+  follows [arguments_f he ht, bounded_f]
 
 theorem responseTy_f {ty ty' : Resolve.TypeExpr → M Ty} (h : ∀ t, Follows cap (ty t) (ty' t))
     (p : Pos) (t : Ty) : Follows cap (responseTy ty p t) (responseTy ty' p t) := by
@@ -903,10 +917,11 @@ theorem operands_f (he : ∀ e, Follows m (eval k e) (eval m e)) (xs : List Reso
   rw [operands.eq_def k, operands.eq_def m]
   follows [he, hf, need_f, hold_f, release_f]
 
-theorem index_f (he : ∀ e, Follows m (eval k e) (eval m e)) (p : Pos) (kd : PrimType)
+theorem index_f (he : ∀ e, Follows m (eval k e) (eval m e))
+    (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t)) (p : Pos) (kd : PrimType)
     (xs : List Resolve.Expr) : Follows m (index k p kd xs) (index m p kd xs) := by
   rw [index.eq_def k, index.eq_def m]
-  follows [he, operands_f he, static_f, need_f, bounded_f]
+  follows [he, operands_f he, static_f, need_f, bounded_f, handleTy_f, instanceTy_f he ht]
 
 theorem spec_f (he : ∀ e, Follows m (eval k e) (eval m e))
     (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t)) (p : Pos) (i : Nat)
@@ -996,7 +1011,7 @@ theorem follows_all : ∀ n,
       · rw [eval.eq_def (k + 1), eval.eq_def 0]
         apply Follows.exhaust (cap := k)
         intro _
-        follows [he k, ht k, index_f (he k), name_f (he k) (ht k),
+        follows [he k, ht k, index_f (he k) (ht k), name_f (he k) (ht k),
           call_f (he k) (ht k) (hb k), spec_f (he k) (ht k), need_f, data_f, apply_f,
           hwUnary_f, test_f, hwBinary_f, unify_f, mux_f, static_f, pick_f, element_f, tupleOf_f,
           arrayOf_f, select_f, containerOp_f, arrayTy_f, field_f, strAt_f, hold_f, release_f,
@@ -1006,7 +1021,7 @@ theorem follows_all : ∀ n,
       · rw [eval.eq_def (k + 1), eval.eq_def (m + 1)]
         apply Follows.charge_one
         intro _
-        follows [he m, ht m, index_f (he m), name_f (he m) (ht m),
+        follows [he m, ht m, index_f (he m) (ht m), name_f (he m) (ht m),
           call_f (he m) (ht m) (hb m), spec_f (he m) (ht m), need_f, data_f, apply_f,
           hwUnary_f, test_f, hwBinary_f, unify_f, mux_f, static_f, pick_f, element_f, tupleOf_f,
           arrayOf_f, select_f, containerOp_f, arrayTy_f, field_f, strAt_f, hold_f, release_f,
@@ -1017,13 +1032,13 @@ theorem follows_all : ∀ n,
       · rw [typeExpr.eq_def (k + 1), typeExpr.eq_def 0]
         apply Follows.exhaust (cap := k)
         intro _
-        follows [he k, ht k, index_f (he k), name_f (he k) (ht k), spec_f (he k) (ht k),
+        follows [he k, ht k, index_f (he k) (ht k), name_f (he k) (ht k), spec_f (he k) (ht k),
           typeOf_f, tupleTy_f, arrayTy_f, static_f, need_f, params_f (ht k), fnTy_f,
           structural_f]
       · rw [typeExpr.eq_def (k + 1), typeExpr.eq_def (m + 1)]
         apply Follows.charge_one
         intro _
-        follows [he m, ht m, index_f (he m), name_f (he m) (ht m), spec_f (he m) (ht m),
+        follows [he m, ht m, index_f (he m) (ht m), name_f (he m) (ht m), spec_f (he m) (ht m),
           typeOf_f, tupleTy_f, arrayTy_f, static_f, need_f, params_f (ht m), fnTy_f,
           structural_f]
     · rcases n' with _ | m

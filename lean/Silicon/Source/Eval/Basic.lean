@@ -449,6 +449,25 @@ def Val.text : Val → String
   | .handle (.domain _) => "a domain"
   | .pending _ p => s!"{p.text} without a type"
 
+/-!
+The value `{a}` of a message (section 6.2). A handle names its handle type (section 5.1), an own
+output its source name, and a domain its name. A literal that waits for its type is `[]`. Each
+other value names its type. Thus the text reads no value in full, and each type text is bounded.
+-/
+def Val.about : Val → String
+  | .handle (.res .reg _ t _) => s!"a handle of `{(Ty.reg t).text}`"
+  | .handle (.res .wire _ t _) => s!"a handle of `{(Ty.wire t).text}`"
+  | .handle (.res .output _ _ path) =>
+    let r := (path.inner.findSome? fun | .user u => some u | _ => none).getD path.outer
+    s!"the output `{r}`"
+  | .handle (.mem _ _ w d) => s!"a handle of `{(Ty.mem w d).text}`"
+  | .handle (.input _ _ q) => s!"a handle of `{(Ty.input q.ty).text}`"
+  | .handle (.domain x) => s!"the domain `{x}`"
+  | .pending .. => "`[]`"
+  | v => match v.ty? with
+    | some t => s!"a value of `{t.text}`"
+    | none => v.text
+
 /-! A local. A string, a type, and a handle have no `Ty`, so their `ty` is `none`. -/
 structure Slot where
   ty : Option Ty

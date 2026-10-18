@@ -3439,4 +3439,142 @@ the pattern 1 on top of its value: `let y = x.2;` charges 8.
   "let mut xs = list(Int);\n  let y = match (x.0) { true => xs.push(1), _ => () };" == "S016 3:33"
 #guard runMatch tri "let y = x.2;" == "y=x$2e | ref x | 8"
 
+/-!
+The handle types of slice 3b (section 5.4). `Reg[T]`, `Wire[T]`, `Input[T]`, and `Mem[T, N]`
+evaluate their arguments, check them, check the depth, then charge the size of the type. Each
+error is at the start of the use. `Reg[UInt[8]]` charges its node 1, `Reg` 1, `UInt[8]` 6, and
+the size 3 of the type.
+-/
+def handles : String := "module C(comptime W: Nat, comptime E: Bool) {\n}\nmodule D() {\n}\n"
+#guard out "" "Reg[UInt[8]]" == "(type (reg (uint 8)))"
+#guard out "" "Wire[[Bool; 0]]" == "(type (wire (array bool 0)))"
+#guard out "" "Input[Unit]" == "(type (input unit))"
+#guard out "" "Mem[UInt[8], 16]" == "(type (mem (uint 8) 16))"
+#guard exact "" "Reg[UInt[8]]" 11
+#guard exact "" "Wire[UInt[8]]" 11
+#guard exact "" "Input[UInt[8]]" 11
+#guard exact "" "Mem[UInt[8], 16]" 14
+#guard out "" "List[Reg[Bool]]" == "(type (list (reg bool)))"
+#guard out "" "[Reg[Bool]; 0]" == "(type (array (reg bool) 0))"
+/-! The depth of `Reg[UInt[8]]` is 2, and the depth of `Mem[UInt[8], 4]` is 2. -/
+#guard out "" "Reg[UInt[8]]" (depth := 2) == "(type (reg (uint 8)))"
+#guard out "" "Reg[UInt[8]]" (depth := 1) == "S015 1:1"
+#guard out "" "Mem[UInt[8], 4]" (depth := 2) == "(type (mem (uint 8) 4))"
+#guard out "" "Mem[UInt[8], 4]" (depth := 1) == "S015 1:1"
+
+/-! The first argument is a type. A value and `[]` are `S010`, and the text names the value. -/
+#guard out "" "Reg[1]" == "S010 1:1"
+#guard msg "" "Reg[1]" ==
+  "the first argument of `Reg` is a type, not a value of `Int`; write a type, for example " ++
+    "`Reg[UInt[8]]`"
+#guard msg "" "Reg[[]]" ==
+  "the first argument of `Reg` is a type, not `[]`; write a type, for example `Reg[UInt[8]]`"
+#guard msg "" "Mem[(), 1]" ==
+  "the first argument of `Mem` is a type, not a value of `Unit`; write a type, for example " ++
+    "`Mem[UInt[8], 16]`"
+
+/-! `T` of `Reg`, `Wire`, and `Input` is hardware data, and it can be empty. -/
+#guard out "" "Wire[Unit]" == "(type (wire unit))"
+#guard out "" "Wire[String]" == "S010 1:1"
+#guard msg "" "Wire[String]" ==
+  "`Wire` takes a hardware data type, not `String`; use a fixed-width type, for example " ++
+    "`Wire[UInt[8]]`"
+#guard msg "" "Reg[Int]" ==
+  "`Reg` takes a hardware data type, not `Int`; use a fixed-width type, for example " ++
+    "`Reg[UInt[8]]`"
+#guard out "" "Input[fn () -> Bool]" == "S010 1:1"
+
+/-! A handle type is not hardware data: its text names the data type to use (section 6.2). -/
+#guard msg "" "Reg[Reg[Bool]]" ==
+  "`Reg[Bool]` is a handle type, not hardware data; use its data type `Bool`"
+#guard msg "" "Input[Input[Bool]]" ==
+  "`Input[Bool]` is a handle type, not hardware data; use its data type `Bool`"
+#guard msg "" "Wire[Mem[Bool, 2]]" ==
+  "`Mem[Bool, 2]` is a handle type, not hardware data; use its data type `Bool`"
+#guard msg handles "Mem[Instance[D], 4]" ==
+  "`Instance[D]` is a handle type, not hardware data; an instance has no data type, so read " ++
+    "its outputs as `u.q`"
+#guard msg "" "Reg[UInt[8]]()" ==
+  "`Reg[UInt[8]]` is a handle type, not hardware data; use its data type `UInt[8]`"
+#guard msg "" "data_bits(Wire[Bool])" ==
+  "`Wire[Bool]` is a handle type, not hardware data; use its data type `Bool`"
+#guard msg handles "Instance[D]()" ==
+  "`Instance[D]` is a handle type, not hardware data; an instance has no data type, so read " ++
+    "its outputs as `u.q`"
+#guard out "" "data_bits(Bool)" == "(int 1)"
+
+/-!
+`Mem[T, N]` has the word and the depth checks of a `mem` statement (section 6.2). The word has
+at least one bit and at most 65536 bits. The depth is a static integer of 1 to 16777216, and a
+large integer prints by its bit length.
+-/
+#guard msg "" "Mem[Int, 4]" ==
+  "a memory word is a nonempty hardware data type, not `Int`; use a type with at least one " ++
+    "bit, for example `UInt[8]`"
+#guard msg "" "Mem[Unit, 1]" ==
+  "a memory word is a nonempty hardware data type, not `Unit`; use a type with at least one " ++
+    "bit, for example `UInt[8]`"
+#guard out "" "Mem[UInt[65536], 1]" == "(type (mem (uint 65536) 1))"
+#guard out "" "Mem[[UInt[65536]; 2], 1]" == "S012 1:1"
+#guard msg "" "Mem[[UInt[65536]; 2], 1]" ==
+  "a memory word has at most 65536 bits, not 131072; split the word over more than one memory"
+#guard out "" "Mem[UInt[8], 1]" == "(type (mem (uint 8) 1))"
+#guard out "" "Mem[UInt[8], 0]" == "S012 1:1"
+#guard msg "" "Mem[UInt[8], 0]" ==
+  "a memory depth is 1 to 16777216, not 0; use a depth in this range"
+#guard out "" "Mem[UInt[8], 16777216]" == "(type (mem (uint 8) 16777216))"
+#guard out "" "Mem[UInt[8], 16777217]" == "S012 1:1"
+#guard msg "" "Mem[UInt[8], 1 << 300]" ==
+  "a memory depth is 1 to 16777216, not an integer of 301 bits; use a depth in this range"
+#guard msg "" "Mem[UInt[8], true]" ==
+  "a memory depth is a static integer, not a value of `Bool`; write an integer, for example `16`"
+#guard msg "" "Mem[UInt[8], UInt[8](4)]" ==
+  "a memory depth is a static integer, not a value of `UInt[8]`; write an integer, for " ++
+    "example `16`"
+#guard msg "" "Mem[UInt[8], []]" ==
+  "a memory depth is a static integer, not `[]`; write an integer, for example `16`"
+
+/-!
+`Instance[M, args]` gives its arguments the typed uses of an `instance` statement, one level
+deeper, then checks its depth and charges its size. It makes no instantiation. `M` in a
+parameter type of `M` nests one level at each use, so it ends with `S015` at a use.
+-/
+#guard out handles "Instance[C, 8, true]" == "(type (instance root C ((int 8) (bool true))))"
+#guard out handles "Instance[D]" == "(type (instance root D ()))"
+#guard exact handles "Instance[C, 8, true]" 13
+#guard exact handles "Instance[D]" 3
+#guard out handles "Instance[C, 8, true]" (depth := 2) ==
+  "(type (instance root C ((int 8) (bool true))))"
+#guard out handles "Instance[C, 8, true]" (depth := 1) == "S015 1:1"
+#guard out handles "Instance[C, 8, 1]" == "S010 1:1"
+#guard out handles "Instance[C, -1, true]" == "S012 1:1"
+#guard out handles "Instance[C, 8, UInt[1](1) == 1]" ==
+  "(type (instance root C ((int 8) (bool true))))"
+#guard out handles "Instance[C, 8, true] == Instance[C, 8, true]" == "(bool true)"
+#guard out "module R(comptime t: Instance[R, 1]) {\n}\n" "Instance[R, 1]" == "S015 1:22"
+
+/-!
+A pair with a handle type in a join charges the sum of the two sizes, then needs one type
+(section 5.4). `Reg[Bool]` has the size 2, so the join of two `List[Reg[Bool]]` charges 1 and
+then 4. Each `list(Reg[Bool])` costs 5 more than `list(Bool)`.
+-/
+#guard exact "" "[list(Bool), list(Bool)]" 15
+#guard exact "" "[list(Reg[Bool]), list(Reg[Bool])]" 29
+#guard out "" "list(Reg[Bool]) == list(Reg[Bool])" == "(bool true)"
+#guard exact "" "list(Reg[Bool]) == list(Reg[Bool])" 27
+#guard out "" "[list(Reg[Bool]), list(Wire[Bool])]" == "S010 1:1"
+#guard msg "" "[list(Reg[Bool]), list(Mem[Bool, 2])]" ==
+  "`Reg[Bool]` and `Mem[Bool, 2]` have no common type; a handle type joins only with the same " ++
+    "handle type, so give both sides one type"
+#guard msg "" "list(Reg[Bool]) == list(Reg[UInt[1]])" ==
+  "`Reg[Bool]` and `Reg[UInt[1]]` have no common type; a handle type joins only with the same " ++
+    "handle type, so give both sides one type"
+#guard msg "" "[list(Reg[Bool]), list(Bool)]" ==
+  "`Reg[Bool]` and `Bool` have no common type; a handle type joins only with the same handle " ++
+    "type, so give both sides one type"
+#guard exact handles "[list(Instance[C, 8, true]), list(Instance[C, 8, true])]" 49
+#guard msg handles "[list(Instance[C, 8, true]), list(Instance[C, 9, true])]" ==
+  "`Instance[C, 8, true]` and `Instance[C, 9, true]` have no common type; a handle type joins " ++
+    "only with the same handle type, so give both sides one type"
+
 end Silicon.Source.Test.Eval

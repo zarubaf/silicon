@@ -221,7 +221,7 @@ theorem slot_e (id : Nat) : EFollows cap (slot id) (slot id) := by
   unfold slot; efollows
 
 theorem dataType_e (p : Pos) (t : Ty) : EFollows cap (dataType p t) (dataType p t) := by
-  unfold dataType; efollows
+  unfold dataType; efollows [notHandle_f]
 
 theorem resource_e (k : Kind) (path : Names.Path) (t : Ty) (p : Pos) (x : String) :
     EFollows cap (resource k path t p x) (resource k path t p x) := by

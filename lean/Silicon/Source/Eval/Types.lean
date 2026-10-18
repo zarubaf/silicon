@@ -17,7 +17,9 @@ follow sections 5.1, 5.4, 5.5, and 5.6. These rules settle their open points:
 - A join walks two types together. It charges 1 before it visits each pair of container types:
   arrays, tuples, lists, and struct types. A pair of two struct types charges as a type
   equality, the sum of the two sizes, and compares the identities. So does a pair of two enum
-  types, with the size 1 each. An enum and another type have no join. A pair of two function types
+  types, with the size 1 each. An enum and another type have no join. A pair with a handle type
+  charges the sum of the two sizes too. Two handle types join only when they are the same type,
+  else `S010` with its own text (section 6.2). A pair of two function types
   charges in the same way and needs two equal types, also in their `mut` marks. Another pair
   charges nothing. A visit that fails stops the walk, so the charge counts the pairs up to that
   visit.
@@ -35,6 +37,10 @@ follow sections 5.1, 5.4, 5.5, and 5.6. These rules settle their open points:
   the struct type (`S015`) and charges the sums of its metadata. A use in progress is `S019`. A
   use of a done entry charges nothing more. A use of a struct item while its own parameter types
   evaluate is `S019` too, because its key does not exist yet.
+- A handle type `Reg[T]`, `Wire[T]`, `Input[T]`, or `Mem[T, N]` checks its evaluated arguments
+  with no charge, then its depth, then charges its size (`handleTy`). `Mem` shares the word and
+  depth checks of a `mem` statement (`memWord`, `memDepth`). A handle type where a position
+  needs hardware data is `S010` with a text that names the data type (`handleData`).
 - The table of enums holds each enum by its item (`Specs.enums`). `Eval.enumOf` runs the first
   use of an enum, and a later use reads its done entry.
 -/
@@ -53,29 +59,93 @@ def bounded (pos : Pos) (d : Nat) : M Unit := do
       s!"the depth {d} goes above the nesting depth {c.limit}; raise --depth to at least {d}"
 
 /-!
-The word type of a memory at its `mem` statement `p` (section 6.2). It is hardware data with at
-least one leaf (`S010`), so an empty word is `S010` and not `S012`. Its width is at most 65536
-bits (`S012`). The metadata gives both, with no walk.
+The text of a handle type `t` where a position needs hardware data, if `t` is a handle type
+(section 6.2). It names the data type to use. An instance type has no data type. A container
+that holds a handle type is not a handle type, so its position keeps its own text.
 -/
-def memWord (p : Pos) (t : Ty) : M Ty :=
-  if !t.info.data || t.info.leaves = 0 then
-    fail .S010 p s!"a memory needs a nonempty hardware data type, not {t.text}"
-  else if t.info.width > 65536 then
-    fail .S012 p s!"a memory word has at most 65536 bits, not {t.info.width}"
-  else pure t
+def handleData : Ty → Option String
+  | t@(.reg d) | t@(.wire d) | t@(.input d) | t@(.mem d _) =>
+    some s!"`{t.text}` is a handle type, not hardware data; use its data type `{d.text}`"
+  | t@(.inst ..) =>
+    some (s!"`{t.text}` is a handle type, not hardware data; an instance has no data type, " ++
+      "so read its outputs as `u.q`")
+  | _ => none
+
+/-! `S010` at `p` when `t` is a handle type, with the text of `handleData`. -/
+def notHandle (p : Pos) (t : Ty) : M Unit := do
+  if let some m := handleData t then fail .S010 p m
 
 /-!
-The depth of a memory at its `mem` statement `p` (section 6.2): a static value (`S011`), an
-integer (`S010`), and 1 to 16777216 (`S012`). Each error is at the statement.
+The word type of a memory at `p`: its `mem` statement or its use `Mem[T, N]` (section 6.2). It is
+hardware data with at least one leaf (`S010`), so an empty word is `S010` and not `S012`. Its
+width is at most 65536 bits (`S012`). The metadata gives both, with no walk.
+-/
+def memWord (p : Pos) (t : Ty) : M Ty := do
+  notHandle p t
+  if !t.info.data || t.info.leaves = 0 then
+    fail .S010 p (s!"a memory word is a nonempty hardware data type, not `{t.text}`; use a " ++
+      "type with at least one bit, for example `UInt[8]`")
+  if t.info.width > 65536 then
+    fail .S012 p (s!"a memory word has at most 65536 bits, not {intText t.info.width}; split " ++
+      "the word over more than one memory")
+  return t
+
+/-!
+The depth of a memory at `p`: its `mem` statement or its use `Mem[T, N]` (section 6.2). It is a
+static value (`S011`), an integer (`S010`), and 1 to 16777216 (`S012`). Each error is at `p`.
 -/
 def memDepth (p : Pos) : Val → M Nat
   | .static (.int k) =>
     if k < 1 || k > 16777216 then
-      fail .S012 p s!"a memory depth is 1 to 16777216, not {intText k}"
+      fail .S012 p s!"a memory depth is 1 to 16777216, not {intText k}; use a depth in this range"
     else pure k.toNat
-  | .static v => fail .S010 p s!"a memory depth is a static integer, not {v.text}"
-  | .pending .. => fail .S010 p "a memory depth is a static integer, not `[]`"
-  | v => fail .S011 p s!"a memory depth is static, not {v.text}"
+  | v@(.static _) | v@(.pending ..) =>
+    fail .S010 p
+      s!"a memory depth is a static integer, not {v.about}; write an integer, for example `16`"
+  | v => fail .S011 p
+      s!"a memory depth is static, not {v.about}; compute the depth from static values"
+
+/-! The name of a handle type family, its signature, and an example of a use (section 6.2). -/
+def familyText : PrimType → String × String × String
+  | .reg => ("Reg", "Reg[T]", "Reg[UInt[8]]")
+  | .wire => ("Wire", "Wire[T]", "Wire[UInt[8]]")
+  | .input => ("Input", "Input[T]", "Input[UInt[8]]")
+  | .mem => ("Mem", "Mem[T, N]", "Mem[UInt[8], 16]")
+  | .instance => ("Instance", "Instance[M, args]", "Instance[Counter, 8]")
+  | .bool | .uint | .sint | .nat | .int | .unit | .type | .string | .list => ("", "", "")
+
+/-! The `S007` text of a type family `x` with the signature `g`, `n` arguments, and `m` uses. -/
+def familyArity (x g : String) (n m : Nat) : String :=
+  s!"`{x}` takes {n} argument(s), but it has {m}; write `{g}`"
+
+/-!
+The use at `p` of the handle type family `k`, `Reg`, `Wire`, `Input`, or `Mem`, with its
+evaluated arguments `vs` (section 5.4). Pass 4 checks the number of arguments, so another number
+is a defect. The first argument is a type (`S010`). `T` of `Reg`, `Wire`, and `Input` is hardware
+data, which can be empty (`S010`). `Mem` runs the word and depth checks of a `mem` statement. Each
+check reads the metadata, with no charge. Then the type checks its depth and charges its size.
+-/
+def handleTy (p : Pos) (k : PrimType) (vs : List Val) : M Ty := do
+  let (x, g, e) := familyText k
+  let want := if k == .mem then 2 else 1
+  if vs.length != want then fail .S007 p (familyArity x g want vs.length)
+  let d ← match vs.head? with
+    | some (.static (.type d)) => pure d
+    | v => fail .S010 p (s!"the first argument of `{x}` is a type, not " ++
+        s!"{(v.map Val.about).getD "`[]`"}; write a type, for example `{e}`")
+  let t ← match k, vs with
+    | .mem, [_, n] => do
+      let d ← memWord p d
+      pure (Ty.mem d (← memDepth p n))
+    | _, _ => do
+      notHandle p d
+      unless d.info.data do
+        fail .S010 p (s!"`{x}` takes a hardware data type, not `{d.text}`; use a fixed-width " ++
+          s!"type, for example `{e}`")
+      pure (if k == .reg then Ty.reg d else if k == .wire then Ty.wire d else Ty.input d)
+  bounded p t.depth
+  charge p t.size
+  return t
 
 /-!
 A walk over types or values that counts its charge. A failure keeps the charge of the visits
@@ -139,6 +209,11 @@ def containerTy : Ty → Bool
   | .array .. | .tuple _ | .list _ | .struct .. => true
   | _ => false
 
+/-! A handle type: `Reg[T]`, `Wire[T]`, `Input[T]`, `Mem[T, N]`, or `Instance[M, args]`. -/
+def handleTy? : Ty → Bool
+  | .reg _ | .wire _ | .input _ | .mem .. | .inst .. => true
+  | _ => false
+
 /-! The common type of two types that are not two arrays or two tuples: the operand rule. -/
 def scalarJoin : Ty → Ty → Option Ty
   | .nat, .nat => some .nat
@@ -150,7 +225,7 @@ def scalarJoin : Ty → Ty → Option Ty
 /-!
 The join of two types: their common type by the operand rule. A static integer takes the finite
 type of the other side. Arrays need one length and tuples one arity. Two lists join their
-element types.
+element types. A pair with a handle type charges as a type equality, then needs one type.
 -/
 mutual
   def joinTy : Ty → Ty → Walk (Option Ty)
@@ -174,6 +249,11 @@ mutual
       modify (· + (s.size + t.size))
       return if s.same t then some s else none
     | s, t => do
+      if handleTy? s || handleTy? t then
+        modify (· + (s.size + t.size))
+        if handleTy? s && s.same t then return some s
+        throw (.S010, s!"`{s.text}` and `{t.text}` have no common type; a handle type joins " ++
+          "only with the same handle type, so give both sides one type")
       if containerTy s && containerTy t then modify (· + 1)
       return scalarJoin s t
 
