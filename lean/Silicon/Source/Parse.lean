@@ -715,16 +715,21 @@ def aliasDecl (f : Nat) (start : Pos) (make : Pos → Ident → TypeExpr → α)
   sym ";"
   return make start n ty
 
-/-! The statements that declare a port, a resource, or an instance. -/
-def resourceKeywords : List String := ["input", "output", "reg", "wire", "mem", "instance"]
+/-! The statements that declare a port. A `fn` without `comptime` declares no port. -/
+def portKeywords : List String := ["input", "output"]
+
+/-! The `S004` text "Port in a `fn`" of section 6.2. -/
+def portFnText : String :=
+  "a helper cannot declare a port; declare the port in the module body and pass its value to " ++
+    "the helper"
 
 mutual
   def stmt : Nat → P Stmt
     | 0 => exhausted
     | f + 1 => do
       let t ← peek
-      if (← read).plainFn && resourceKeywords.any (isKw · t) then
-        later t "a port, a resource, or an instance in a `fn` without `comptime`"
+      if (← read).plainFn && portKeywords.any (isKw · t) then
+        throw ⟨.S004, t.pos, portFnText⟩
       match t.kind with
       | .keyword "let" =>
         bump

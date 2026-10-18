@@ -118,9 +118,10 @@ example : ¬ Printable [.const p (nm "X") (t "Type") (.arrayType p (.tuple p [])
 example : ¬ Printable [.module p (nm "M") [⟨p, .none, nm "W", t "Nat"⟩] none []] := by decide
 example : ¬ Printable [.module p (nm "M") [] (some [nm "a", nm "b"]) []] := by decide
 
-/-! A resource in a `fn` without `comptime`, but not in a `comptime fn`. -/
-example : ¬ Printable [.fn p false (nm "f") [] (t "T") [.wire p (nm "w") (t "T")]] := by decide
-example : Printable [.fn p true (nm "f") [] (t "T") [.wire p (nm "w") (t "T")]] := by decide
+/-! A port in a `fn` without `comptime`, but not in a `comptime fn`. Each `fn` holds a resource. -/
+example : ¬ Printable [.fn p false (nm "f") [] (t "T") [.input p (nm "i") (t "T")]] := by decide
+example : Printable [.fn p true (nm "f") [] (t "T") [.input p (nm "i") (t "T")]] := by decide
+example : Printable [.fn p false (nm "f") [] (t "T") [.wire p (nm "w") (t "T")]] := by decide
 
 /-! A `mut` parameter of a function, but not of a module or a struct. -/
 example : Printable [.fn p false (nm "f") [⟨p, .mut, nm "x", t "T"⟩, ⟨p, .none, nm "y", t "T"⟩]

@@ -747,7 +747,7 @@ theorem Stmt.lexes {D : Nat} (plain : Bool) (s : Stmt) :
     simp only [Stmt.printable, Bool.and_eq_true] at h
     rw [Stmt.print, Stmt.toks]
     have g : Lexes D .any "reg ".toList [.keyword "reg"] := Lexes.glue (by decide)
-    have := (Lexes.indent (D := D) d).append (g.append ((Lexes.decl h.1.1.2 h.1.2).append
+    have := (Lexes.indent (D := D) d).append (g.append ((Lexes.decl h.1.1 h.1.2).append
       (eq.append ((Expr.lexes i h.2 0).append semi (Starts.glue ";\n" (by decide) _))
       (Starts.any _)) (Starts.glue " = " (by decide) _)) (Starts.any _)) (Starts.any _)
     simpa using this
@@ -756,7 +756,7 @@ theorem Stmt.lexes {D : Nat} (plain : Bool) (s : Stmt) :
     simp only [Stmt.printable, Bool.and_eq_true] at h
     rw [Stmt.print, Stmt.toks]
     have g : Lexes D .any "wire ".toList [.keyword "wire"] := Lexes.glue (by decide)
-    have := (Lexes.indent (D := D) d).append (g.append ((Lexes.decl h.1.2 h.2).append
+    have := (Lexes.indent (D := D) d).append (g.append ((Lexes.decl h.1 h.2).append
       semi (Starts.glue ";\n" (by decide) _)) (Starts.any _)) (Starts.any _)
     simpa using this
   | case6 p n ty v =>
@@ -767,7 +767,7 @@ theorem Stmt.lexes {D : Nat} (plain : Bool) (s : Stmt) :
     have ho : Lexes D .any ": [".toList [.symbol ":", .symbol "["] := Lexes.glue (by decide)
     have hs : Lexes D .any "; ".toList [.symbol ";"] := Lexes.glue (by decide)
     have hc : Lexes D .any "];\n".toList [.symbol "]", .symbol ";"] := Lexes.glue (by decide)
-    have := (Lexes.indent (D := D) d).append (g.append ((Lexes.name h.1.1.2).append
+    have := (Lexes.indent (D := D) d).append (g.append ((Lexes.name h.1.1).append
       (ho.append ((TypeExpr.lexes ty h.1.2).append (hs.append ((Expr.lexes v h.2 0).append hc
       (Starts.lit (by decide))) (Starts.any _)) (Starts.glue "; " (by decide) _))
       (Starts.any _)) (Starts.glue ": [" (by decide) _)) (Starts.any _)) (Starts.any _)
@@ -798,7 +798,7 @@ theorem Stmt.lexes {D : Nat} (plain : Bool) (s : Stmt) :
     have ha := Lexes.argsClose (D := D) xs (fun x hx => Expr.lexes x (h.2 x hx) 0)
       (Lexes.glue (cs := ");\n".toList) (ks := [.symbol ")", .symbol ";"])
         (by decide)) (Starts.lit (by decide))
-    have := (Lexes.indent (D := D) d).append (g.append ((Lexes.name h.1.1.2).append
+    have := (Lexes.indent (D := D) d).append (g.append ((Lexes.name h.1.1).append
       (eq.append ((Lexes.name h.1.2).append (ho.append ha (Starts.any _))
       (Starts.glue "(" (by decide) _)) (Starts.any _)) (Starts.glue " = " (by decide) _))
       (Starts.any _)) (Starts.any _)

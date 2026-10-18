@@ -21,9 +21,9 @@ a check here:
 - Each module parameter and each struct parameter has `comptime`: `Param.printable true`.
 - A `domains` declaration has at most one name: `Item.printable` at `module`.
 - Each assignment and connection target is a place: `Expr.place`.
-- No resource statement is in a `fn` without `comptime`: the flag `plain` of `Stmt.printable`.
+- No port is in a `fn` without `comptime`: the flag `plain` of `Stmt.printable`.
 - Each body has only the statement kinds that the parser accepts in that body. The parser
-  accepts each statement kind in each body, except a resource in a `fn` without `comptime`.
+  accepts each statement kind in each body, except a port in a `fn` without `comptime`.
   Thus the flag `plain` also covers this clause.
 - No string has a control character other than LF, CR, and tab: `printableChar`.
 - Each number is below 2^65536: `Expr.printable` at `num` and at `select`, and
@@ -231,13 +231,13 @@ mutual
     | .local _ _ n ty v => validName n.name && ty.all TypeExpr.printable && v.printable
     | .assign _ t v => t.place && t.printable && v.printable
     | .connect _ t v => t.place && t.printable && v.printable
-    | .reg _ n ty i => !plain && validName n.name && ty.printable && i.printable
-    | .wire _ n ty => !plain && validName n.name && ty.printable
-    | .mem _ n ty d => !plain && validName n.name && ty.printable && d.printable
+    | .reg _ n ty i => validName n.name && ty.printable && i.printable
+    | .wire _ n ty => validName n.name && ty.printable
+    | .mem _ n ty d => validName n.name && ty.printable && d.printable
     | .input _ n ty => !plain && validName n.name && ty.printable
     | .output _ n ty => !plain && validName n.name && ty.printable
     | .inst _ n m xs =>
-      !plain && validName n.name && validName m.name && Expr.printableAll xs
+      validName n.name && validName m.name && Expr.printableAll xs
     | .ret _ v => v.all Expr.printable
     | .ctIf _ c y none => c.printable && Stmt.printableAll plain y
     | .ctIf _ c y (some n) =>
