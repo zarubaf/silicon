@@ -52,6 +52,10 @@ struct Head {
     text: String,
     missing: usize,
     ctor: Ctor,
+    /// The end of the text of its `S007`: the signature of a handle type family.
+    fix: String,
+    /// True for `Instance`, which also misses one argument for each parameter of its module.
+    inst: bool,
 }
 
 impl Head {
@@ -61,6 +65,8 @@ impl Head {
             text: "a complete type".to_owned(),
             missing: 0,
             ctor,
+            fix: String::new(),
+            inst: false,
         }
     }
 }
@@ -210,9 +216,31 @@ struct Walker<'a> {
 
 fn type_arity(p: Prelude) -> usize {
     match p {
-        Prelude::UInt | Prelude::SInt | Prelude::List => 1,
+        Prelude::UInt
+        | Prelude::SInt
+        | Prelude::List
+        | Prelude::Reg
+        | Prelude::Wire
+        | Prelude::Input
+        | Prelude::Instance => 1,
+        Prelude::Mem => 2,
         _ => 0,
     }
+}
+
+/// The signature of a prelude type family, for the fix of its `S007` (design section 6.2).
+fn signature(p: Prelude) -> Option<&'static str> {
+    Some(match p {
+        Prelude::UInt => "UInt[W]",
+        Prelude::SInt => "SInt[W]",
+        Prelude::List => "List[T]",
+        Prelude::Reg => "Reg[T]",
+        Prelude::Wire => "Wire[T]",
+        Prelude::Input => "Input[T]",
+        Prelude::Mem => "Mem[T, N]",
+        Prelude::Instance => "Instance[M, args]",
+        _ => return None,
+    })
 }
 
 fn resource(kind: Kind) -> Option<&'static str> {
@@ -268,14 +296,36 @@ impl<'a> Walker<'a> {
         self.errors.push((seq, Error { code, pos, message }));
     }
 
-    /// `S007` at `pos` if `what` has `got` arguments, not `want`.
-    fn arity(&mut self, pos: Pos, what: &str, want: usize, got: usize) {
+    /// `S007` at `pos` if `what` has `got` arguments, not `want`. `fix` ends the text.
+    fn arity(&mut self, pos: Pos, what: &str, want: usize, got: usize, fix: &str) {
         if want != got {
             self.report(
                 Code::S007,
                 pos,
-                format!("{what} takes {want} argument(s), but it has {got}"),
+                format!("{what} takes {want} argument(s), but it has {got}{fix}"),
             );
+        }
+    }
+
+    /// `S007` at `pos` if the head with the index arguments `args` misses arguments. The module
+    /// of `Instance` is its first argument, a module item after `resolve`.
+    fn index_arity(&mut self, pos: Pos, head: &Head, args: &[Expr]) {
+        let mut want = head.missing;
+        if head.inst
+            && let Some(Expr::Name { id, .. }) = args.first()
+            && let Some(Target::Decl(id)) = self.target(*id)
+            && let Some(Sig::Module(k)) = self.sigs.get(&id)
+        {
+            want += k;
+        }
+        self.arity(pos, &head.text, want, args.len(), &head.fix);
+    }
+
+    /// The fix of the `S007` text of the prelude `read`. Another callee has none.
+    fn read_fix(&self, id: NodeId) -> &'static str {
+        match self.target(id) {
+            Some(Target::Prelude(Prelude::Read)) => "; write `read(h)` with one register or wire",
+            _ => "",
         }
     }
 
@@ -288,6 +338,8 @@ impl<'a> Walker<'a> {
                 text,
                 missing: type_arity(p),
                 ctor: Ctor::Convert,
+                fix: signature(p).map_or_else(String::new, |sig| format!("; write `{sig}`")),
+                inst: p == Prelude::Instance,
             }),
             Target::Prelude(_) => None,
             Target::Decl(id) => match self.sigs.get(&id)? {
@@ -295,11 +347,15 @@ impl<'a> Walker<'a> {
                     text,
                     missing: *params,
                     ctor: Ctor::Record(*fields),
+                    fix: String::new(),
+                    inst: false,
                 }),
                 Sig::Alias | Sig::Enum => Some(Head {
                     text,
                     missing: 0,
                     ctor: Ctor::Unknown,
+                    fix: String::new(),
+                    inst: false,
                 }),
                 Sig::Fn { .. } | Sig::Module(_) => None,
             },
@@ -384,7 +440,8 @@ impl<'a> Walker<'a> {
             return None;
         };
         let callee = self.callee(*id)?;
-        self.arity(pos, &format!("`{name}`"), callee.modes.len(), got);
+        let fix = self.read_fix(*id);
+        self.arity(pos, &format!("`{name}`"), callee.modes.len(), got, fix);
         Some(callee)
     }
 
@@ -409,7 +466,8 @@ impl<'a> Walker<'a> {
             );
             return None;
         };
-        self.arity(pos, &format!("`{name}`"), callee.modes.len(), got + 1);
+        let fix = self.read_fix(id);
+        self.arity(pos, &format!("`{name}`"), callee.modes.len(), got + 1, fix);
         Some((callee, bound))
     }
 
@@ -521,7 +579,7 @@ impl<'a> Walker<'a> {
     ) -> Option<Head> {
         let head = self.head(id, name);
         match &head {
-            Some(h) if !base => self.arity(pos, &h.text, h.missing, 0),
+            Some(h) if !base => self.arity(pos, &h.text, h.missing, 0, &h.fix),
             Some(_) => {}
             None => self.resource_name(is_static, pos, id, name),
         }
@@ -640,7 +698,7 @@ impl<'a> Walker<'a> {
             Expr::Index { pos, base, args } => {
                 let head = self.visit(is_static, true, base);
                 if let Some(h) = &head {
-                    self.arity(*pos, &h.text, h.missing, args.len());
+                    self.index_arity(*pos, h, args);
                 }
                 for arg in args {
                     self.expr(true, arg);
@@ -663,14 +721,7 @@ impl<'a> Walker<'a> {
                 Some(Head::complete(Ctor::Convert))
             }
             Expr::Match { scrut, arms, .. } => self.matched(is_static, scrut, arms),
-            Expr::FnType { params, ret, .. } => {
-                self.fn_type(params, ret);
-                Some(Head {
-                    text: "a function type".to_owned(),
-                    missing: 0,
-                    ctor: Ctor::Unknown,
-                })
-            }
+            Expr::FnType { params, ret, .. } => Some(self.fn_type_head(params, ret)),
         }
     }
 
@@ -719,6 +770,18 @@ impl<'a> Walker<'a> {
         }
     }
 
+    /// The head of a function type in an expression, after its parts.
+    fn fn_type_head(&mut self, params: &[FnParam], ret: &TypeExpr) -> Head {
+        self.fn_type(params, ret);
+        Head {
+            text: "a function type".to_owned(),
+            missing: 0,
+            ctor: Ctor::Unknown,
+            fix: String::new(),
+            inst: false,
+        }
+    }
+
     /// The parameter types and the result type of a function type.
     fn fn_type(&mut self, params: &[FnParam], ret: &TypeExpr) {
         for param in params {
@@ -731,13 +794,13 @@ impl<'a> Walker<'a> {
         match ty {
             TypeExpr::Name { pos, id, name } => {
                 if let Some(h) = self.head(*id, name) {
-                    self.arity(*pos, &h.text, h.missing, 0);
+                    self.arity(*pos, &h.text, h.missing, 0, &h.fix);
                 }
             }
             TypeExpr::Index { pos, base, args } => {
                 if let TypeExpr::Name { id, name, .. } = &**base {
                     if let Some(h) = self.head(*id, name) {
-                        self.arity(*pos, &h.text, h.missing, args.len());
+                        self.index_arity(*pos, &h, args);
                     }
                 } else {
                     let what = if matches!(**base, TypeExpr::Fn { .. }) {
@@ -745,7 +808,7 @@ impl<'a> Walker<'a> {
                     } else {
                         "a complete type"
                     };
-                    self.arity(*pos, what, 0, args.len());
+                    self.arity(*pos, what, 0, args.len(), "");
                     self.type_expr(base);
                 }
                 for arg in args {
@@ -838,7 +901,7 @@ impl<'a> Walker<'a> {
                     && let Some(Sig::Module(want)) = self.sigs.get(&id)
                 {
                     let want = *want;
-                    self.arity(*pos, &format!("`{}`", module.name), want, args.len());
+                    self.arity(*pos, &format!("`{}`", module.name), want, args.len(), "");
                 }
                 for arg in args {
                     self.expr(true, arg);
