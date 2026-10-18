@@ -698,6 +698,112 @@ structure Naming where
   shares : Nat := 0
   mems : Array Mem := #[]
 
+end Silicon.Source.Eval
+
+/-!
+The hardware description and the work of an instantiation (section 5.3). `Elab` makes
+them, and the lowering reads them.
+-/
+namespace Silicon.Source.Elab
+
+open Resolve Names Eval
+
+/-! A port declaration. A port keeps its source name. -/
+structure PortDecl where
+  name : String
+  sym : Nat
+  input : Bool
+  ty : Ty
+  pos : Pos
+
+structure RegDecl where
+  path : Path
+  ty : Ty
+  init : Value
+  pos : Pos
+
+structure WireDecl where
+  path : Path
+  ty : Ty
+  pos : Pos
+
+/-! A child instance: its path, the interface of its instantiation, its statement, and its name. -/
+structure ChildDecl where
+  path : Path
+  iface : Iface
+  pos : Pos
+  name : String
+
+/-!
+The target of a `:=` binding: an own resource, or an input of the child number `index`. The
+input names its port by its core name, and `ty` gives its leaves.
+-/
+inductive Sink where
+  | own (kind : Kind) (ty : Ty) (path : Path)
+  | child (index : Nat) (inst : Path) (port : Name) (ty : Ty)
+
+/-! A `:=` binding. Its value has the type of the sink, and the lowering takes it leaf by leaf. -/
+structure Bind where
+  sink : Sink
+  value : Agg
+  pos : Pos
+
+/-!
+The hardware description of one instantiation, in evaluation order. A combinational module
+has no domain.
+-/
+structure Body where
+  domain : Option String
+  ports : Array PortDecl := #[]
+  regs : Array RegDecl := #[]
+  wires : Array WireDecl := #[]
+  mems : Array Mem := #[]
+  lets : Array Let := #[]
+  children : Array ChildDecl := #[]
+  binds : Array Bind := #[]
+
+/-! A resource that needs one binding, by its number: its declaration and its bindings. -/
+structure Need where
+  name : String
+  pos : Pos
+  count : Nat
+
+/-!
+The work of the current instantiation. The resource number indexes `needs`, and the instance
+number indexes `bound`. The memories are in the names of the instantiation (`Naming.mems`).
+`inputs` counts the bindings of each child input. `dup` holds the first `S018` of a second
+binding by position. `spent` is the fuel of the new children.
+-/
+structure Work where
+  body : Body
+  needs : Array Need := #[]
+  bound : Array Nat := #[]
+  inputs : Std.HashMap (Nat × Nat) Nat := {}
+  dup : Option Error := none
+  spent : Nat := 0
+
+/-! The state of an `InstantiationId` in the table of instantiations. -/
+inductive Status where
+  | inProgress
+  | done (index : Nat)
+
+/-!
+A done instantiation: its identity, its interface, its description, its units, and the position
+of its module item.
+-/
+structure Inst where
+  id : InstantiationId
+  iface : Iface
+  body : Body
+  units : Nat
+  pos : Pos
+
+end Silicon.Source.Elab
+
+namespace Silicon.Source.Eval
+
+open Resolve Names
+
 /-! An observation record: its line of section 8.2, with no line end. -/
 abbrev Record := String
 
