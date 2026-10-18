@@ -910,8 +910,20 @@ def known : Val → M Unit
   | _ => pure ()
 
 /-!
-A typed use of `v` at the type `t`. It reads a handle. A hardware value needs the type `t`, and
-a hardware aggregate converts part by part (`typedAgg`).
+The error at `pos` of a typed use of `v` at the handle type `t`: `S010` with the text "Typed use
+at a handle type". An own output has no handle type, so its text names the fix: use it as data.
+-/
+def handleWrong (pos : Pos) (t : Ty) (v : Val) : M α := do
+  if let .handle (.res .output _ _ path) := v then
+    let r := sourceOf path
+    fail .S010 pos
+      s!"`{r}` is an output, and an output has no handle type; use `{r}` directly as data"
+  fail .S010 pos (handleUseText t v.about)
+
+/-!
+A typed use of `v` at the type `t`. It reads a handle at a type without the handle flag. A
+hardware value needs the type `t`, and a hardware aggregate converts part by part (`typedAgg`).
+A type with the flag reads nothing, so a handle there is `S010` (`handleWrong`).
 -/
 def conformVal (pos : Pos) (t : Ty) (v : Val) : M Val := do
   match ← dataAt pos t (← settle pos t v) with
@@ -920,6 +932,7 @@ def conformVal (pos : Pos) (t : Ty) (v : Val) : M Val := do
     if h.ty.same t then return .hw h
     else fail .S010 pos s!"expected {t.text}, but the value is {h.ty.text}"
   | .agg a => return .agg (← typedAgg pos t a)
+  | .handle _ => handleWrong pos t v
   | v => fail .S010 pos s!"{v.text} is not data"
 
 /-!
@@ -930,17 +943,6 @@ def readUse (pos : Pos) (t : Ty) (v : Val) : M Val := do
   let d ← dataAt pos t (← settle pos t v)
   if v matches .handle _ && d matches .agg _ then charge pos d.size
   conformVal pos t d
-
-/-!
-The error at `pos` of a typed use of `v` at the handle type `t`: `S010` with the text "Typed use
-at a handle type". An own output has no handle type, so its text names the fix: use it as data.
--/
-def handleWrong (pos : Pos) (t : Ty) (v : Val) : M α := do
-  if let .handle (.res .output _ _ path) := v then
-    let r := sourceOf path
-    fail .S010 pos
-      s!"`{r}` is an output, and an output has no handle type; use `{r}` directly as data"
-  fail .S010 pos (handleUseText t v.about)
 
 /-!
 The typed use at `pos` of `v` at the handle type `t` (section 5.4, step 3 of a typed use at a
@@ -991,14 +993,16 @@ def siteUse (pos : Pos) (t : Ty) (copies : Bool) (v : Val) : Site α → M α
   | .binding | .value => valueUse pos t copies v
   | .field q => do
     if handleTy? t then return .handle (← handleUse pos t v)
-    conformAgg pos t (← item q (← dataAt q t (← settle pos t v)))
+    match ← dataAt q t (← settle pos t v) with
+    | .handle _ => handleWrong pos t v
+    | w => conformAgg pos t (← item q w)
   | .element x => do
     if handleTy? t then return .handle (← handleUse pos t v)
     let w ← dataAt x t (← settle pos t v)
     if w.hasHw then fail .S011 x "a list holds no hardware value"
     match w with
     | .static w => return .typed t (← conform pos t w)
-    | .handle h => return .handle h
+    | .handle _ => handleWrong pos t v
     | .agg a => typedAgg pos t a
     | w => fail .S010 x s!"{w.text} is not an element of a list"
 

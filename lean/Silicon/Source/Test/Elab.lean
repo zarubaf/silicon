@@ -2672,4 +2672,37 @@ def perStore (step : String) (n : Nat) : Int :=
 #guard [10, 20, 40].map (perStore "    let b = swap(rs[0], q);\n") == [54, 64, 84]
 #guard exact (handleArray 10 10 "    let b = swap(rs[0], q);\n") "M" 782
 
+/-!
+A position of a type with the handle flag is `raw` (section 9.2), so its typed use reads nothing.
+A handle there is `S010` with the text "Typed use at a handle type". This holds at a typed
+`let`, at an assignment to a local without a type, at a field, and at a `push` element. The
+copy charges first, so one unit less stops at the statement.
+-/
+def flagLets (body : String) : String :=
+  "struct T { a: [Reg[UInt[8]]; 1] }\n" ++ handleLets ("  mem m: [UInt[8]; 4];\n" ++ body)
+def flagUse0 : String := flagLets "  let a: [Reg[UInt[8]]; 1] = r;\n"
+#guard said flagUse0 == typedText "[Reg[UInt[8]]; 1]" "a handle of `Reg[UInt[8]]`"
+#guard cost flagUse0 "M" (fuel := 181) == "S010 22:3"
+#guard cost flagUse0 "M" (fuel := 180) == "S015 22:3"
+def flagUse1 : String := flagLets "  let a: [Input[UInt[8]]; 1] = u.x;\n"
+#guard said flagUse1 == typedText "[Input[UInt[8]]; 1]" "a handle of `Input[UInt[8]]`"
+#guard cost flagUse1 "M" (fuel := 182) == "S010 22:3"
+#guard cost flagUse1 "M" (fuel := 181) == "S015 22:3"
+def flagUse2 : String := flagLets "  let a: [Mem[UInt[8], 4]; 1] = m;\n"
+#guard said flagUse2 == typedText "[Mem[UInt[8], 4]; 1]" "a handle of `Mem[UInt[8], 4]`"
+#guard cost flagUse2 "M" (fuel := 185) == "S010 22:3"
+#guard cost flagUse2 "M" (fuel := 184) == "S015 22:3"
+def flagUse3 : String := flagLets "  let mut a = [r];\n  a = r;\n"
+#guard said flagUse3 == typedText "[Reg[UInt[8]]; 1]" "a handle of `Reg[UInt[8]]`"
+#guard cost flagUse3 "M" (fuel := 164) == "S010 23:3"
+#guard cost flagUse3 "M" (fuel := 163) == "S015 23:3"
+def flagUse4 : String := flagLets "  let mut a = list([Reg[UInt[8]]; 1]);\n  a.push(r);\n"
+#guard said flagUse4 == typedText "[Reg[UInt[8]]; 1]" "a handle of `Reg[UInt[8]]`"
+#guard cost flagUse4 "M" (fuel := 191) == "S010 23:3"
+#guard cost flagUse4 "M" (fuel := 190) == "S015 23:10"
+def flagUse5 : String := flagLets "  let a = T(r);\n"
+#guard said flagUse5 == typedText "[Reg[UInt[8]]; 1]" "a handle of `Reg[UInt[8]]`"
+#guard cost flagUse5 "M" (fuel := 192) == "S010 22:11"
+#guard cost flagUse5 "M" (fuel := 191) == "S015 22:11"
+
 end Silicon.Source.Test.Elab
