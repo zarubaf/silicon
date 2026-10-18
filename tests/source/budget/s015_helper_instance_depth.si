@@ -1,0 +1,25 @@
+// A helper that makes a child nests through the call and through `instantiate`. With the depth equal to the nesting, the file elaborates, and with one level less it is `S015`.
+// DEPTH 4
+// TOP M()
+module Leaf() domains() {
+    input a: UInt[8];
+    output q: UInt[8];
+    q := a;
+}
+module Mid() domains() {
+    input a: UInt[8];
+    output q: UInt[8];
+    instance l = Leaf();
+    l.a := a;
+    q := l.q;
+}
+fn spawn(x: UInt[8]) -> UInt[8] {
+    instance u = Mid();
+    u.a := x;
+    return u.q;
+}
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    o := spawn(x);
+}

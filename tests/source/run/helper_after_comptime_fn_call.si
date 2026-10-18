@@ -1,0 +1,19 @@
+// A call of a `comptime fn` sets the mode `static` and clears it at the return. A helper that declares a register after the call is valid.
+// TOP M()
+comptime fn width() -> Nat {
+    return 8;
+}
+fn mk(x: UInt[8]) -> UInt[8] {
+    reg r: UInt[8] = 0;
+    r := x;
+    return r;
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let n = width();
+    o := mk(x);
+}
+// STEP in=(clock$0rst true x 0) out=(o 0)
+// STEP in=(clock$0rst false x 6) out=(o 0)
+// STEP in=(clock$0rst false x 7) out=(o 6)

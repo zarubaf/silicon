@@ -1,0 +1,24 @@
+// A helper takes a memory as a `Mem` formal and makes the port calls on it. The module declares the memory.
+// TOP M()
+fn put(m: Mem[UInt[8], 4], a: UInt[2], d: UInt[8], w: Bool) -> () {
+    write_port(m, a, d, w);
+    return ();
+}
+fn get(m: Mem[UInt[8], 4], a: UInt[2], e: Bool) -> UInt[8] {
+    let r = m.read_port(a, e);
+    return r.data;
+}
+module M() {
+    input ra: UInt[2];
+    input re: Bool;
+    input wa: UInt[2];
+    input wd: UInt[8];
+    input we: Bool;
+    output o: UInt[8];
+    mem m: [UInt[8]; 4];
+    put(m, wa, wd, we);
+    o := get(m, ra, re);
+}
+// STEP in=(clock$0rst false ra 0 re false wa 2 wd 11 we true) out=(o 0)
+// STEP in=(clock$0rst false ra 2 re true wa 0 wd 0 we false) out=(o 0)
+// STEP in=(clock$0rst false ra 0 re false wa 0 wd 0 we false) out=(o 11)

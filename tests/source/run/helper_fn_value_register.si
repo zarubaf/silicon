@@ -1,0 +1,16 @@
+// A call through a function value runs the helper in its own frame. The value names the function, so the call declares the register.
+// TOP M()
+fn cell(x: UInt[8]) -> UInt[8] {
+    reg r: UInt[8] = 0;
+    r := x;
+    return r;
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let f = cell;
+    o := f(x);
+}
+// STEP in=(clock$0rst true x 0) out=(o 0)
+// STEP in=(clock$0rst false x 5) out=(o 0)
+// STEP in=(clock$0rst false x 6) out=(o 5)

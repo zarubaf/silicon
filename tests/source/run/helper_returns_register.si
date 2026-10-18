@@ -1,0 +1,17 @@
+// A helper returns the handle of a register that it declares, and the caller binds the register with `:=` through the result.
+// TOP M()
+fn make() -> Reg[UInt[8]] {
+    reg r: UInt[8] = 5;
+    return r;
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let r = make();
+    r := x +% 1;
+    o := r;
+}
+// STEP in=(clock$0rst true x 0) out=(o 0)
+// STEP in=(clock$0rst false x 4) out=(o 5)
+// STEP in=(clock$0rst false x 9) out=(o 5)
+// STEP in=(clock$0rst false x 0) out=(o 10)

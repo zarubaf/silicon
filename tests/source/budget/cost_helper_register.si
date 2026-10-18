@@ -1,0 +1,13 @@
+// A register that a helper declares costs what a register in a module costs, and the caller instantiation pays it. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 184
+// TOP M()
+fn cell(x: UInt[8]) -> UInt[8] {
+    reg r: UInt[8] = 0;
+    r := x;
+    return r;
+}
+module M() {
+    input a: UInt[8];
+    output o: UInt[8];
+    o := cell(a);
+}

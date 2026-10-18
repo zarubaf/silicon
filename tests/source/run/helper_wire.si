@@ -1,0 +1,16 @@
+// A helper declares a wire, binds it, and returns its handle. The caller reads the wire in the same cycle.
+// TOP M()
+fn make(x: UInt[8]) -> Wire[UInt[8]] {
+    wire w: UInt[8];
+    w := x +% 1;
+    return w;
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let w = make(x);
+    o := read(w) +% read(w);
+}
+// STEP in=(clock$0rst false x 0) out=(o 2)
+// STEP in=(clock$0rst false x 4) out=(o 10)
+// STEP in=(clock$0rst false x 255) out=(o 0)

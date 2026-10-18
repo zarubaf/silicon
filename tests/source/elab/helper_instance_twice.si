@@ -1,0 +1,23 @@
+// A helper makes a child with `instance`. Two calls with one argument make two instances of one module, and each instance has the path of its call frame.
+// TOP M()
+// CHECK: (module C$8
+// CHECK-NOT: (module C$8
+// CHECK: (inst spawn$0c$u C$8
+// CHECK: (inst spawn$1c$u C$8
+module C(comptime K: UInt[8]) domains() {
+    input a: UInt[8];
+    output q: UInt[8];
+    q := a +% K;
+}
+fn spawn(x: UInt[8]) -> UInt[8] {
+    instance u = C(8);
+    u.a := x;
+    return u.q;
+}
+module M() domains() {
+    input x: UInt[8];
+    output p: UInt[8];
+    output q: UInt[8];
+    p := spawn(x);
+    q := spawn(x);
+}

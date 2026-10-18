@@ -1,0 +1,18 @@
+// A helper calls itself and declares a register in each frame. The recursion makes a chain of N registers.
+// TOP M()
+fn chain(x: UInt[8], n: Nat) -> UInt[8] {
+    reg r: UInt[8] = 0;
+    r := x;
+    return if (n == 0) { read(r) } else { chain(read(r), n - 1) };
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    o := chain(x, 2);
+}
+// STEP in=(clock$0rst true x 0) out=(o 0)
+// STEP in=(clock$0rst false x 7) out=(o 0)
+// STEP in=(clock$0rst false x 8) out=(o 0)
+// STEP in=(clock$0rst false x 9) out=(o 0)
+// STEP in=(clock$0rst false x 10) out=(o 7)
+// STEP in=(clock$0rst false x 11) out=(o 8)
