@@ -8,7 +8,7 @@ use super::store::Mark;
 use super::{Evaluator, Opnd, Out, Res, expr_pos, fail, need, same_form};
 use crate::Code;
 use crate::agg::Agg;
-use crate::hw::{Ref, Root, Seen, Val};
+use crate::hw::{Handle, Kind as Resource, Ref, Root, Seen, Val};
 use crate::int::Int;
 use crate::names::Step;
 use crate::ops::int_text;
@@ -891,26 +891,61 @@ impl Evaluator<'_> {
         let o = need(value, o)?;
         self.store.shut_window(place.root);
         let y = if let Some(t) = place.ty {
-            self.copy_use(pos, t, o.is_ref(), o)?
+            self.local_use(pos, t, o.is_ref(), o)?
         } else {
-            self.copy(pos, &o)?;
-            let old = self.store.current(place.root, &place.keys);
-            let new = self.store.seen(&o);
-            if !same_form(old, new) {
-                return fail(
-                    Code::S010,
-                    pos,
-                    format!(
-                        "expected {}, but the value is {}",
-                        self.text(old),
-                        self.text(new)
-                    ),
-                );
-            }
-            self.store.take(o)
+            self.held_use(pos, &place, o)?
         };
         self.store_at(pos, expr_pos(value), &place, y)?;
         Ok(None)
+    }
+
+    /// The assignment at `pos` of the result `o` to the place of a local without a type that
+    /// holds a value (section 5.4). The local has the type of its value. A handle with a handle
+    /// type thus gets the typed use at that type (`handle_use`). Another value keeps its form
+    /// after the copy (`same_form`). A local that holds an own output takes only an own output
+    /// of the same data type. Its text names the fix: use the output directly.
+    fn held_use(&mut self, pos: Pos, place: &Place, o: Out) -> Res<Val> {
+        let held = match self.store.current(place.root, &place.keys) {
+            Seen::Handle(h) => Some(h.clone()),
+            _ => None,
+        };
+        if let Some(t) = held.as_ref().and_then(|h| self.handle_ty(h)) {
+            return self.handle_use(pos, t, o.is_ref(), o);
+        }
+        self.copy(pos, &o)?;
+        let old = self.store.current(place.root, &place.keys);
+        let new = self.store.seen(&o);
+        if same_form(old, new) {
+            return Ok(self.store.take(o));
+        }
+        if let Seen::Handle(Handle::Res {
+            kind: Resource::Output,
+            ty,
+            path,
+            ..
+        }) = old
+        {
+            let r = self.paths.source(*path, &self.syms.texts);
+            return fail(
+                Code::S010,
+                pos,
+                format!(
+                    "the local holds the output `{r}`, so it takes only an output of `{}`, not \
+                     {}; use the output `{r}` directly",
+                    self.tys.text(*ty),
+                    self.about(new)
+                ),
+            );
+        }
+        fail(
+            Code::S010,
+            pos,
+            format!(
+                "expected {}, but the value is {}",
+                self.text(old),
+                self.text(new)
+            ),
+        )
     }
 
     /// The place `target` at `pos` (section 5.2). Its root is a `let mut` local, else the error

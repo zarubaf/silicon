@@ -106,6 +106,8 @@ pub(crate) struct Counts {
     /// The 64-bit words of the integers, constants, and hardware nodes that the run made. The
     /// charge sites do not see this work, so the places that make a wide value count it.
     pub words: u64,
+    /// The pieces that the walk of the text of a type or a value in a message visited.
+    pub texted: u64,
 }
 
 impl Counts {
@@ -155,6 +157,7 @@ impl Counts {
             unpacked,
             sided,
             words,
+            texted,
         } = *self;
         [
             scanned,
@@ -199,6 +202,7 @@ impl Counts {
             unpacked,
             sided,
             words,
+            texted,
         ]
         .iter()
         .fold(0u64, |a, n| a.saturating_add(*n))
@@ -250,6 +254,7 @@ pub(crate) enum Count {
     Unpacked,
     Sided,
     Words,
+    Texted,
 }
 
 static COUNTS: Mutex<BTreeMap<u64, Counts>> = Mutex::new(BTreeMap::new());
@@ -330,6 +335,7 @@ pub(crate) fn add(count: Count, n: u64) {
             Count::Unpacked => &mut c.unpacked,
             Count::Sided => &mut c.sided,
             Count::Words => &mut c.words,
+            Count::Texted => &mut c.texted,
         };
         *field += n;
     }

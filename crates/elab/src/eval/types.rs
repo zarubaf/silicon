@@ -143,15 +143,16 @@ impl Evaluator<'_> {
     /// type (Lean `handleData`). It names the data type to use. An instance type has no data
     /// type. A container that holds a handle type is not a handle type.
     fn handle_data(&self, t: TyId) -> Option<String> {
-        let text = self.tys.text(t);
         match self.tys.get(t) {
             Ty::Reg(d) | Ty::Wire(d) | Ty::Input(d) | Ty::Mem(d, _) => Some(format!(
-                "`{text}` is a handle type, not hardware data; use its data type `{}`",
+                "`{}` is a handle type, not hardware data; use its data type `{}`",
+                self.tys.text(t),
                 self.tys.text(*d)
             )),
             Ty::Instance(_) => Some(format!(
-                "`{text}` is a handle type, not hardware data; an instance has no data type, so \
-                 read its outputs as `u.q`"
+                "`{}` is a handle type, not hardware data; an instance has no data type, so \
+                 read its outputs as `u.q`",
+                self.tys.text(t)
             )),
             _ => None,
         }

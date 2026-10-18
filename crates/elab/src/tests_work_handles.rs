@@ -114,3 +114,71 @@ fn w6_a_huge_memory_depth_is_rejected_by_its_bit_length() {
     );
     assert!(r.counts.total() < 1_000_000, "{:?}", r.counts);
 }
+
+/// W1. Typed lets at `Reg[T]`, where `T` is an alias of a tuple of `m` elements. A typed use at a
+/// handle type compares two ids and walks no type, so the work of one more `let` does not depend
+/// on `m`.
+#[test]
+fn w1_a_typed_let_at_a_handle_type_walks_no_type() {
+    let at = |m: usize, lets: usize, key: u64| {
+        let mut src = "module M() {\n    input x: UInt[8];\n    type T = (\n".to_owned();
+        src.push_str(&"        UInt[8],\n".repeat(m));
+        src.push_str("    );\n    reg r: T = T();\n    r := T();\n");
+        for k in 0..lets {
+            writeln!(src, "    let a{k}: Reg[T] = r;").unwrap();
+        }
+        src.push_str("}\n");
+        passing(key, 1000, &src).counts.total()
+    };
+    let slope = |m: usize, key: u64| (at(m, 128, key + 1) - at(m, 64, key)) / 64;
+    let (small, large) = (slope(64, 30), slope(512, 40));
+    assert_eq!(
+        small, large,
+        "the work of a let follows the size of the tuple"
+    );
+    assert!(small <= 40, "{small}");
+    let (a, b) = (at(512, 64, 50), at(512, 128, 51));
+    assert!(a < b && b <= 2 * a, "{a} {b}");
+}
+
+/// W4. An `S010` typed use with a type of `n` parts in its text. The text stops after 1024 bytes,
+/// so the walk of the text visits a number of pieces that does not follow `n`.
+#[test]
+fn w4_the_text_of_a_huge_type_in_a_message_is_bounded() {
+    let at = |n: usize, key: u64| {
+        let src = format!(
+            "struct S(comptime A: [UInt[8]; {n}]) {{}}\nmodule M() {{\n    reg r: UInt[8] = 0;\n    \
+             r := 0;\n    let a: Reg[UInt[8]] = S[[UInt[8]; {n}]()]();\n}}\n"
+        );
+        let r = run(key, 1000, &src);
+        let (code, message) = r.error.clone().unwrap_or_default();
+        assert_eq!(code, "S010");
+        assert!(message.contains("..."), "{message}");
+        (r.counts.texted, message.len())
+    };
+    let ((small, len), (large, same)) = (at(1 << 10, 60), at(1 << 14, 61));
+    assert_eq!(len, same);
+    assert!(small <= 1100 && large <= 1100, "{small} {large}");
+    assert_eq!(small, large);
+}
+
+/// W7. An `instance` statement with wide arguments interns its type from the converted arguments
+/// that the typed use already paid for. More statements give linear work.
+#[test]
+fn w7_the_type_of_an_instance_statement_costs_its_arguments() {
+    let at = |k: usize, key: u64| {
+        let mut src = "module C(comptime x: [Nat; 256]) domains() {\n    output o: Bool;\n    o := true;\n}\n"
+            .to_owned();
+        src.push_str("const X: [Nat; 256] = [\n");
+        src.push_str(&"    0,\n".repeat(256));
+        src.push_str("];\nmodule M() domains() {\n    output o: Bool;\n    o := true;\n");
+        for i in 0..k {
+            writeln!(src, "    instance u{i} = C(X);").unwrap();
+        }
+        src.push_str("}\n");
+        passing(key, 1000, &src)
+    };
+    let (n, twice) = (at(16, 70), at(32, 71));
+    doubles(&n, &twice);
+    assert!(twice.counts.total() <= 6 * twice.used);
+}

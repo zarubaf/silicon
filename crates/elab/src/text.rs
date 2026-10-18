@@ -206,6 +206,8 @@ impl<'a> Text<'a> {
         while self.out.len() <= TEXT_LIMIT
             && let Some(piece) = self.work.pop()
         {
+            #[cfg(test)]
+            crate::counters::add(crate::counters::Count::Texted, 1);
             match piece {
                 Piece::Value(v) => self.value(v),
                 Piece::Lit(v) => self.lit(tys, v),

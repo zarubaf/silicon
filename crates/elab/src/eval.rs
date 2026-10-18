@@ -767,7 +767,90 @@ impl Evaluator<'_> {
         if copies {
             self.charge(pos, self.size(&out))?;
         }
+        self.later_handle(pos, t)?;
         self.read_use(pos, t, copies, out)
+    }
+
+    /// `S010` at `pos` when `t` is a handle type at a typed use other than a typed `let` and an
+    /// assignment to a `let mut` local. There, a handle type is `S010` until #278 (section 5.4),
+    /// with the text of section 6.2. A static position has `static_handle` instead. The caller
+    /// charged the copy first.
+    pub(super) fn later_handle(&self, pos: Pos, t: TyId) -> Res<()> {
+        if self.tys.get(t).is_handle() {
+            return fail(
+                Code::S010,
+                pos,
+                format!(
+                    "the handle type `{}` is not supported here yet; use it in a typed `let`, or \
+                     pass the data value, for example `read(h)`",
+                    self.tys.text(t)
+                ),
+            );
+        }
+        Ok(())
+    }
+
+    /// The typed use of `out` at the declared type `t` of a local, in a `let` or an assignment to
+    /// a `let mut` local (Lean `localUse`). A handle type keeps the handle (`handle_use`), and
+    /// another type copies and reads it (`copy_use`).
+    fn local_use(&mut self, pos: Pos, t: TyId, copies: bool, out: Out) -> Res<Val> {
+        if self.tys.get(t).is_handle() {
+            self.handle_use(pos, t, copies, out)
+        } else {
+            self.copy_use(pos, t, copies, out)
+        }
+    }
+
+    /// The typed use at `pos` of `out` at the handle type `t`, in a typed `let` or an assignment
+    /// to a `let mut` local (section 5.4). The copy charges when `copies`, and a handle has the
+    /// size 1. Then the handle type of the value equals `t`, else `S010`. The compare is an id
+    /// compare, it has no charge, and nothing reads the value. An own output has no handle type,
+    /// so its text names the fix: use it as data.
+    fn handle_use(&mut self, pos: Pos, t: TyId, copies: bool, out: Out) -> Res<Val> {
+        if copies {
+            self.charge(pos, self.size(&out))?;
+        }
+        if let Seen::Handle(h) = self.store.seen(&out) {
+            let h = h.clone();
+            if self.handle_ty(&h) == Some(t) {
+                return Ok(self.store.take(out));
+            }
+        }
+        if let Seen::Handle(Handle::Res {
+            kind: Resource::Output,
+            path,
+            ..
+        }) = self.store.seen(&out)
+        {
+            let r = self.paths.source(*path, &self.syms.texts);
+            return fail(
+                Code::S010,
+                pos,
+                format!(
+                    "`{r}` is an output, and an output has no handle type; use `{r}` directly as data"
+                ),
+            );
+        }
+        fail(
+            Code::S010,
+            pos,
+            format!(
+                "expected `{}`, but the value is {}; a handle type takes only a handle of \
+                 exactly this type, so give such a handle or change the type",
+                self.tys.text(t),
+                self.about(self.store.seen(&out))
+            ),
+        )
+    }
+
+    /// The handle type of `h` as an id (Lean `Handle.ty?`). It reads the stored ids and charges
+    /// nothing.
+    fn handle_ty(&mut self, h: &Handle) -> Option<TyId> {
+        let form = self.handle_form(h)?;
+        Some(match h {
+            Handle::Inst { ty, .. } => *ty,
+            _ => self.tys.mk(form),
+        })
     }
 
     /// The typed use of `out` at `t` after its copy charged. A read of a handle that gives an
@@ -1541,7 +1624,7 @@ impl Evaluator<'_> {
         let o = self.eval(value)?;
         let o = need(value, o)?;
         let x = if let Some(t) = t {
-            self.copy_use(pos, t, o.is_ref(), o)?
+            self.local_use(pos, t, o.is_ref(), o)?
         } else {
             self.copy(pos, &o)?;
             self.known(&o)?;
