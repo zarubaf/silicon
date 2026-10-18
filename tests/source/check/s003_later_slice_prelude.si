@@ -1,6 +1,6 @@
-// S003: `Wire` is a prelude name of slice 3, so slice 1 does not know it.
+// S003: `TypeInfo` is a prelude name of slice 4, so slice 1 does not know it.
 // TOP M()
 // expected-error S003 @+1
-const L: Wire = 1;
+const L: TypeInfo = 1;
 module M() {
 }
