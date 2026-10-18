@@ -986,6 +986,10 @@ fn enum_and_path_errors_have_the_lean_positions() {
         "a package path is not supported yet; in this slice, a path is a variant `E::V` of an \
          enum `E`, in an expression or a pattern"
     );
+    assert_eq!(
+        parse("struct S { a: T(1) }").errors[0].message,
+        "a type function call is not supported yet"
+    );
 }
 
 const PATTERN_TEXT: &str = "expected a pattern: an integer, `true`, `false`, `E::V(..)`, or `_`; compare with a constant in an `if`";

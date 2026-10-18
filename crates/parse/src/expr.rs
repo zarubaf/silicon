@@ -69,7 +69,7 @@ impl Parser<'_> {
                     height = height.max(self.height) + 1;
                 }
                 Some(LParen) => {
-                    self.later_slice(self.offset(), "a call in a type");
+                    self.later_slice(self.offset(), "a type function call");
                     return None;
                 }
                 _ => break,
