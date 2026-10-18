@@ -2355,7 +2355,7 @@ mutual
         match ← data p (← need c (← eval n c)).value with
         | .hw h =>
           unless h.ty == .bool do fail .S010 p s!"a condition is a Bool, not {h.ty.text}"
-          let (a, b) ← withReader (fun c => { c with guard := some ⟨.arm, c.depth⟩ }) do
+          let (a, b) ← withReader (·.guarded .arm) do
             let o ← need y (← eval n y)
             let a ← data p o.value
             hold o
@@ -2461,7 +2461,7 @@ mutual
               pure (.hw (← shared p h l))
             | y => pure y
           let os ← (as.zip bss).mapM fun (.mk _ e, bs) =>
-            withReader (fun c => { c with guard := some ⟨.arm, c.depth⟩ }) do
+            withReader (·.guarded .arm) do
               bindArm y bs
               let o ← need e (← eval n e)
               let o := { o with value := ← data p o.value }
@@ -3122,10 +3122,6 @@ def scanRest (it : Resolve.Item) : Scan :=
 
 /-! The scan of a top expression. -/
 def scanTop (e : Resolve.Expr) : Scan := ((scanExpr e).run {}).2
-
-def itemName : Resolve.Item → String
-  | .const _ n .. | .fn _ _ n .. | .module _ n .. | .struct _ n .. | .alias _ n ..
-  | .enum _ n .. => n.name
 
 /-!
 The symbols of the items. `scans` holds the scan of each item and then that of the top
