@@ -15,32 +15,20 @@
 # remove the lines in a `test` commit.
 lean | S011 Static part of a `match` | 311
 rust | S011 Static part of a `match` | 311
-lean | S011 Handle at a static position | 278
 rust | S011 Handle at a static position | 278
-lean | S010 Record of handles as data | 278
 rust | S010 Record of handles as data | 278
-lean | S011 Static handle type | 278
 rust | S011 Static handle type | 278
-lean | S011 Handles at a static position | 278
 rust | S011 Handles at a static position | 278
 rust | S011 Domain at a static position | 278
-lean | S010 List of handles as data | 278
 rust | S010 List of handles as data | 278
-lean | S010 Handles as data | 278
 rust | S010 Handles as data | 278
-lean | S010 Handle at a data leaf | 278
 rust | S010 Handle at a data leaf | 278
 lean | S010 Memory as data | 278
 rust | S010 Memory as data | 278
-lean | S010 Instance as data | 278
 rust | S010 Instance as data | 278
-lean | S010 Domain element | 278
 rust | S010 Domain element | 278
-lean | S017 `:=` target kind | 278
 rust | S017 `:=` target kind | 278
-lean | S017 Part as a `:=` target | 278
 rust | S017 Part as a `:=` target | 278
-lean | S017 Child output as a `:=` target | 278
 rust | S017 Child output as a `:=` target | 278
 lean | S004 Port in a `fn` | 279
 rust | S004 Port in a `fn` | 279
