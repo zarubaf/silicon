@@ -3,8 +3,9 @@
 //! parts, hardware leaves, lazy references, and container nodes. Each node stores its type, its
 //! recursive size, its depth, and its number of hardware leaves, so no charge walks the tree.
 //! A handle is a leaf of size 1 and depth 1 with no hardware leaf, and a list node holds the
-//! elements of a list whose element type has the handle flag. A reference holds its type and does not expand: its size, its depth, and its leaf count
-//! come from the metadata of the type in constant work.
+//! elements of a list whose element type has the handle flag. A reference holds its type and
+//! does not expand: its size, its depth, and its leaf count come from the metadata of the type
+//! in constant work.
 //!
 //! Every walk over an aggregate keeps its own stack, so an aggregate of any depth is safe on
 //! any stack.
@@ -221,7 +222,8 @@ impl Agg {
     }
 
     /// The container of type `ty` with the parts `xs`, in its normal form: with no hardware
-    /// leaf and without the handle flag of its type it is a static value. A part is in its normal form too (`Evaluator::normalize`).
+    /// leaf and without the handle flag of its type it is a static value. A part is in its
+    /// normal form too (`Evaluator::normalize`).
     /// The caller charged the size and checked the depth of `shape`.
     pub(crate) fn node(g: &Graph, tys: &Types, ty: TyId, xs: Vec<Agg>) -> Option<Agg> {
         let node = Agg::shape(g, tys, ty, &xs)?;

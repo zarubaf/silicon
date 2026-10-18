@@ -1115,11 +1115,13 @@ impl Evaluator<'_> {
 
     /// The place update of an aggregate root, or of a static root that takes a hardware leaf
     /// (section 5.4). The part `x` replaces the old part, which has `old_size` and
-    /// `old_leaves`. The new root has a hardware leaf unless the update replaces each one. Then the rebind charges the size of the new root from the
-    /// stored sizes: the old size, minus the size of the old part, plus the size of `x`. This
-    /// charge comes before the copy of the path and before a reference on the path expands.
+    /// `old_leaves`. The new root has a hardware leaf unless the update replaces each one. Then
+    /// the rebind charges the size of the new root from the stored sizes: the old size, minus
+    /// the size of the old part, plus the size of `x`. This charge comes before the copy of the
+    /// path and before a reference on the path expands.
     /// Then the held root charges, the path copies, and each hardware leaf of the new root binds
-    /// at the next version of the root. A new root without a hardware leaf is a static value.
+    /// at the next version of the root. A new root without a hardware leaf and without the handle
+    /// flag is a static value.
     pub(super) fn rebind(&mut self, pos: Pos, place: &super::place::Place, x: Agg) -> Res<()> {
         let (size, leaves) = match self.store.root(&place.root) {
             Val::Agg(a) => (a.size(&self.graph, &self.tys), a.leaves(&self.tys)),
