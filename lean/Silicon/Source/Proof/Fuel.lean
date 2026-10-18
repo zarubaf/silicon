@@ -177,9 +177,6 @@ theorem withReader {x y : M α} (f : Ctx → Ctx) (h : Follows cap x y) :
 theorem readThe : Follows cap (_root_.readThe Ctx : M Ctx) (_root_.readThe Ctx) :=
   of_frame fun _ _ _ _ h => by cases h; exact ⟨rfl, fun _ => rfl⟩
 
-theorem monadLift {x y : M α} (h : Follows cap x y) :
-    Follows cap (MonadLiftT.monadLift x : M α) (MonadLiftT.monadLift y) := h
-
 theorem withTheReader {x y : M α} (f : Ctx → Ctx) (h : Follows cap x y) :
     Follows cap (_root_.withTheReader Ctx f x) (_root_.withTheReader Ctx f y) :=
   fun c => h (f c)
@@ -319,7 +316,6 @@ macro_rules | `(tactic| follows [$ts,*]) => `(tactic| repeat' (first
   | with_reducible exact Follows.fail _ _ _
   | with_reducible exact Follows.read
   | with_reducible exact Follows.readThe
-  | with_reducible apply Follows.monadLift
   | with_reducible apply Follows.withTheReader
   | with_reducible exact Follows.lift _ _
   | (with_reducible apply Follows.modify <;> intros <;> rfl)
