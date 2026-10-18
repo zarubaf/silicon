@@ -248,32 +248,34 @@ def staticHandle (pos : Pos) (s : String) (t : Ty) : M Unit := do
       "that holds a handle type; use a data type, for example `UInt[8]`")
 
 /-!
-The kind `{k}` and the source name `{r}` of the handle `h` in the text "Handle at a static
-position" (section 6.2). A child input names its instance and its port, as in `u.p`. An own
-output and a domain have no handle type, but they are not static either, so they give the text
-too.
+The text of the handle `h` at the static position `s` (section 6.2). A handle gives "Handle at a
+static position" with its kind `{k}` and its source name `{r}`. A child input names its instance
+and its port, as in `u.p`. An own output has no handle type, but it is not static either, so it
+gives this text too. A domain has no data, so it gives "Domain at a static position".
 -/
-def Handle.static : Handle → String × String
-  | .res .reg _ _ path => ("register", sourceOf path)
-  | .res .wire _ _ path => ("wire", sourceOf path)
-  | .res .output _ _ path => ("output", sourceOf path)
-  | .mem _ path .. => ("memory", sourceOf path)
-  | .inst _ path .. => ("instance", sourceOf path)
-  | .input _ path q => ("input", s!"{sourceOf path}.{q.name}")
-  | .domain x => ("domain", x)
+def Handle.staticText (s : String) : Handle → String
+  | .res .reg _ _ path => held "register" (sourceOf path)
+  | .res .wire _ _ path => held "wire" (sourceOf path)
+  | .res .output _ _ path => held "output" (sourceOf path)
+  | .mem _ path .. => held "memory" (sourceOf path)
+  | .inst _ path .. => held "instance" (sourceOf path)
+  | .input _ path q => held "input" s!"{sourceOf path}.{q.name}"
+  | .domain x =>
+    s!"{s} holds the domain `{x}`, but a domain is never static; remove it from this static " ++
+      "position"
+where held (k r : String) : String :=
+  s!"{s} holds the {k} `{r}`, but it takes only static values; pass the data through a port, " ++
+    "or use it in the module that declares it"
 
 /-!
 The value `v` at the static position `s` at `pos`, before its typed use (sections 5.1 and 5.3).
-A handle is `S011` with the text "Handle at a static position". Another value of a type with the
+A handle is `S011` with the text of `Handle.staticText`. Another value of a type with the
 handle flag is `S011` with the text "Handles at a static position", which names its type. The
 check reads the kind of the value and the flag of its type, so it walks no value. Each other
 value passes, and `static` checks it.
 -/
 def staticValue (pos : Pos) (s : String) : Val → M Unit
-  | .handle h => do
-    let (k, r) := h.static
-    fail .S011 pos (s!"{s} holds the {k} `{r}`, but it takes only static values; pass the data " ++
-      "through a port, or use it in the module that declares it")
+  | .handle h => fail .S011 pos (h.staticText s)
   | .agg a => do
     if let some t := a.ty? then
       if t.info.handles then
