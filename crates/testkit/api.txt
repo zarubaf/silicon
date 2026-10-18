@@ -1,4 +1,6 @@
 const testkit::bins::CHECK_VARIABLE
+const testkit::source::MESSAGE_SUITES
+enum testkit::Marker
 fn testkit::bins::silicon
 fn testkit::bins::silicon_check
 fn testkit::bins::under_test
@@ -6,6 +8,7 @@ fn testkit::core::check
 fn testkit::core::corpus
 fn testkit::core::lower
 fn testkit::core::run
+fn testkit::expected_error
 fn testkit::parse_report
 fn testkit::root
 fn testkit::source::agree
@@ -21,11 +24,13 @@ fn testkit::source::split_observed
 fn testkit::spawn::spawn
 fn testkit::suite::root
 fn testkit::top
+method testkit::Marker::prefix
 mod testkit::bins
 mod testkit::core
 mod testkit::source
 mod testkit::spawn
 mod testkit::suite
+struct testkit::Expected
 struct testkit::Outcome
 struct testkit::Report
 struct testkit::source::Observed
