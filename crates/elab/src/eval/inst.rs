@@ -62,11 +62,14 @@ pub(crate) struct RegDecl {
     pub pos: Pos,
 }
 
+/// A position with the number of the call frame that ran it (`Ev::call`).
+pub(crate) type Here = (Pos, usize);
+
 /// A memory of one instantiation (section 7.6): its name, its path, its word type, its depth,
 /// and its `mem` statement. `read` holds the request of its first `read_port` call: the address
 /// and the enable. `write` holds the request of its first `write_port` call: the address, the
 /// data, and the enable. Each part of a request is after its typed use. `read_at` and `write_at`
-/// hold the positions of the first calls (section 6.2).
+/// hold the positions of the first calls, each with its call frame number (section 6.2).
 pub(crate) struct Mem {
     pub name: Sym,
     pub path: PathId,
@@ -75,8 +78,8 @@ pub(crate) struct Mem {
     pub pos: Pos,
     pub read: Option<(Agg, Agg)>,
     pub write: Option<(Agg, Agg, Agg)>,
-    pub read_at: Option<Pos>,
-    pub write_at: Option<Pos>,
+    pub read_at: Option<Here>,
+    pub write_at: Option<Here>,
 }
 
 /// A child instance: its path, the index of its done instantiation, its statement, and its name.
@@ -141,12 +144,12 @@ impl Body {
 }
 
 /// A resource that needs one binding: its name, its declaration, its bindings, and the position
-/// of the first one.
+/// of the first one with its call frame number.
 struct Need {
     name: Sym,
     pos: Pos,
     count: u64,
-    first: Option<Pos>,
+    first: Option<Here>,
 }
 
 /// A resource in an `S018` text (section 6.2): an own resource by its source name, or the input
@@ -192,14 +195,14 @@ enum Breach {
 
 /// The work of the current instantiation. The resource number indexes `needs`, and the instance
 /// number indexes `bound`. The memories are in the body, where `Handle::Mem` indexes them.
-/// `inputs` counts the bindings of each child input, with the position of the first one. `dup`
+/// `inputs` counts the bindings of each child input, with the position and the call frame number of the first one. `dup`
 /// holds the first `S018` of a second binding or a second port call by position. `spent` is the
 /// fuel of the new children.
 struct Work {
     body: Body,
     needs: Vec<Need>,
     bound: Vec<usize>,
-    inputs: BTreeMap<(usize, Sym), (u64, Pos)>,
+    inputs: BTreeMap<(usize, Sym), (u64, Here)>,
     dup: Option<(Pos, Breach)>,
     spent: u64,
 }
@@ -882,10 +885,15 @@ impl Evaluator<'_> {
     }
 
     /// The `S018` data of a second binding or a second port call at `pos`, whose first one is at
-    /// `first`. When both are at `pos`, one `:=` or call runs again, and in a function body its
-    /// text names the function (section 6.2).
-    fn again(&self, pos: Pos, first: Pos) -> Option<usize> {
-        if first == pos { self.helper() } else { None }
+    /// `first.0` in the call frame `first.1`. When both are at `pos`, one `:=` or call runs
+    /// again. When the first one ran in another call, the text names the function. A repeat in
+    /// one call keeps the plain text (section 6.2).
+    fn again(&self, pos: Pos, first: Here) -> Option<usize> {
+        if first.0 == pos && first.1 != self.call {
+            self.helper()
+        } else {
+            None
+        }
     }
 
     /// Records the second port call of the memory number `id` at `pos`, if its first call of
@@ -901,7 +909,11 @@ impl Evaluator<'_> {
         crate::counters::add(crate::counters::Count::Seconds, 1);
         let x = match self.again(pos, b) {
             Some(h) => Breach::PortIn { mem: id, write, h },
-            None => Breach::Port { mem: id, write, b },
+            None => Breach::Port {
+                mem: id,
+                write,
+                b: b.0,
+            },
         };
         self.breach(pos, x);
         true
@@ -909,12 +921,12 @@ impl Evaluator<'_> {
 
     /// The `S018` data of the second binding at `pos` of the resource `subject`, whose first
     /// binding is at `first` and whose declaration is at `decl`.
-    fn second_binding(&self, pos: Pos, subject: Subject, first: Pos, decl: Pos) -> Breach {
+    fn second_binding(&self, pos: Pos, subject: Subject, first: Here, decl: Pos) -> Breach {
         match self.again(pos, first) {
             Some(h) => Breach::SecondIn { r: subject, h },
             None => Breach::Second {
                 r: subject,
-                b: first,
+                b: first.0,
                 d: decl,
             },
         }
@@ -923,6 +935,7 @@ impl Evaluator<'_> {
     /// Records the binding of `t` to `value`. The second binding of one target is an `S018`,
     /// and the first binding keeps its position for its text.
     fn bind_target(&mut self, pos: Pos, t: Target, value: Agg) {
+        let here = (pos, self.call);
         let sink = match t {
             Target::Own { kind, id, ty, path } => {
                 let need = self.elab.work.needs.get(id);
@@ -932,14 +945,14 @@ impl Evaluator<'_> {
                         let x = self.second_binding(
                             pos,
                             Subject::Own(name),
-                            first.unwrap_or(pos),
+                            first.unwrap_or(here),
                             decl,
                         );
                         self.breach(pos, x);
                     }
                     if let Some(n) = self.elab.work.needs.get_mut(id) {
                         n.count += 1;
-                        n.first = n.first.or(Some(pos));
+                        n.first = n.first.or(Some(here));
                     }
                 }
                 let ty = self.tys.get(ty).clone();
@@ -947,7 +960,13 @@ impl Evaluator<'_> {
             }
             Target::Child { inst, path, port } => {
                 let key = (inst, port.sym);
-                let (count, first) = self.elab.work.inputs.get(&key).copied().unwrap_or((0, pos));
+                let (count, first) = self
+                    .elab
+                    .work
+                    .inputs
+                    .get(&key)
+                    .copied()
+                    .unwrap_or((0, here));
                 if count == 0
                     && let Some(n) = self.elab.work.bound.get_mut(inst)
                 {
@@ -1241,6 +1260,7 @@ impl Evaluator<'_> {
             // The records of the body name this instantiation and start with no call frames.
             let outer_inst = ev.inst.replace(ev.emitted.len() - 1);
             let outer_calls = std::mem::take(&mut ev.calls);
+            let outer_call = std::mem::take(&mut ev.call);
             let ran = ev.in_frame(None, |ev| {
                 ev.in_item(i, ROOT, |ev| {
                     for ((q, t), v) in params.iter().zip(types).zip(args) {
@@ -1259,6 +1279,7 @@ impl Evaluator<'_> {
             });
             ev.inst = outer_inst;
             ev.calls = outer_calls;
+            ev.call = outer_call;
             ran?;
             ev.bindings()?;
             let lets = std::mem::take(&mut ev.naming.lets);
