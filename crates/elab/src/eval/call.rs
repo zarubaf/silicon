@@ -309,7 +309,7 @@ impl Evaluator<'_> {
                     }
                     let rt = ev.type_expr(ret)?;
                     ev.ret = Some(rt);
-                    let result = match ev.block(*ip, body, false)? {
+                    let result = match ev.block(*ip, body)? {
                         Some(Val::Hw(h)) => {
                             let role = ev.paths.push(path, Step::Role(Role::Ret));
                             Out::Made(ev.bind_hw(pos, role, h))

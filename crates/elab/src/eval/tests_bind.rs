@@ -385,7 +385,7 @@ fn run_shown_here(
         ev.fresh(id);
         ev.fuel = Fuel::new(fuel);
         for stmt in body {
-            if ev.stmt(stmt, false)?.is_some() {
+            if ev.stmt(stmt)?.is_some() {
                 break;
             }
         }
