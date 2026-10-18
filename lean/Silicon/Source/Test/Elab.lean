@@ -2104,6 +2104,17 @@ the same check at the call.
 #guard cost (handleLets "  let mut b = s;\n  let a = h(b);\n") "M" (fuel := 165) == "S010 21:11"
 #guard cost (handleLets "  let mut b = s;\n  let a = h(b);\n") "M" (fuel := 164) == "S015 21:11"
 #guard said (handleLets "  let mut b = o;\n  let a = h(b);\n") == ownText
+
+/-!
+A `mut` actual of a handle type at a formal of a data type keeps the `mut` text. Only the type of
+the formal decides (section 5.6).
+-/
+def dataFormal : String :=
+  "fn d(mut x: UInt[8]) -> Bool { return true; }\n" ++
+    handleLets "  let mut b = r;\n  let a = d(b);\n"
+#guard said dataFormal == "a `mut` actual has the type Reg[UInt[8]], but its formal has UInt[8]"
+#guard cost dataFormal "M" (fuel := 160) == "S010 22:11"
+#guard cost dataFormal "M" (fuel := 159) == "S015 22:11"
 #guard said (handleLets "  let mut xs = list(Reg[UInt[8]]);\n  xs.push(s);\n") ==
   typedText "Reg[UInt[8]]" "a handle of `Reg[UInt[4]]`"
 #guard cost (handleLets "  let mut xs = list(Reg[UInt[8]]);\n  xs.push(s);\n") "M"
