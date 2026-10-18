@@ -2132,7 +2132,8 @@ def handleFormals (body : String) : String :=
 A handle position of a container type needs a handle of exactly its type (section 5.4). The text
 names the type of the position and the leaf at it. All checks come first in packing order, then
 the conversion charge, then the fit checks. Thus `(300, s)` is `S010`, and `(300, r)` is `S012`
-after the charge. A handle at a data position is not read.
+after the charge. Nothing reads a handle at a data position. It is `S010` with the text "Handle
+at a data leaf", and `read` in the literal is the fix.
 -/
 #guard exact (handleFormals "  let a = k((3, r));\n  r := i;\n") "M" 400
 #guard said (handleFormals "  let a = k((300, s));\n") ==
@@ -2142,8 +2143,12 @@ after the charge. A handle at a data position is not read.
 #guard said (handleFormals "  let a = k((300, r));\n") == "300 does not fit UInt[8]"
 #guard cost (handleFormals "  let a = k((300, r));\n") "M" (fuel := 202) == "S012 34:11"
 #guard cost (handleFormals "  let a = k((300, r));\n") "M" (fuel := 201) == "S015 34:11"
+#guard said (handleFormals "  let a = k((r, r));\n") ==
+  "expected `UInt[8]`, but the value is a handle of `Reg[UInt[8]]`; a literal element keeps " ++
+    "its handle, so read it in the literal, for example `(r, read(r))`"
 #guard cost (handleFormals "  let a = k((r, r));\n") "M" (fuel := 195) == "S010 34:11"
 #guard cost (handleFormals "  let a = k((r, r));\n") "M" (fuel := 194) == "S015 34:11"
+#guard (cost (handleFormals "  let a = k((read(r), r));\n  r := i;\n") "M").startsWith "total"
 
 /-!
 A `mut` formal of a container type passes the handles in and writes them back. A place of

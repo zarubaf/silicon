@@ -786,13 +786,14 @@ def Agg.handleAt (t : Ty) (a : Agg) : Except Fault (Nat × (Unit → Except Faul
 where bad := typeError (handleUseText t a.val.about)
 
 /-!
-The typed use of the aggregate `a` at `t` (section 5.4), part by part. The result is the size of
-the converted aggregate and the conversion. A reference checks by its type in one step, so it
-never expands. A handle position needs a handle of its type (`Agg.handleAt`). A hardware leaf
-needs the type of its position. A static part checks its type and its sign (`plan`). All these
-checks come before the charge. A static value that does not fit its finite type is `S012` in the
-conversion, after the charge. An array, a tuple, and a list of a type with the handle flag walk
-part by part. A record compares the identity of its type, so the walk does not enter it.
+The typed use of the aggregate `a` at `t` (section 5.4), part by part. The result is the size of the
+converted aggregate and the conversion. A reference checks by its type in one step, so it never
+expands. A handle position needs a handle of its type (`Agg.handleAt`). A handle at another position
+is `S010`, and nothing reads it: at a data type, its text "Handle at a data leaf" names the fix. A
+hardware leaf needs the type of its position. A static part checks its type and its sign (`plan`).
+All these checks come before the charge. A static value that does not fit its finite type is `S012`
+in the conversion, after the charge. An array, a tuple, and a list of a type with the handle flag
+walk part by part. A record compares the identity of its type, so the walk does not enter it.
 -/
 mutual
   def Agg.plan : Ty → Agg → Except Fault (Nat × (Unit → Except Fault Agg))
@@ -819,6 +820,9 @@ mutual
         .ok (1 + k, fun u => do return .mkList e (← f u).toArray)
     | t, a@(.record n _) | t, a@(.list n ..) =>
       if n.ty.same t then .ok (a.size, fun _ => .ok a) else Agg.wrong t a
+    | t, a@(.handle _) =>
+      if t.info.handles then typeError (handleUseText t a.val.about)
+      else typeError (dataLeafText t a.val.about)
     | t, a => Agg.wrong t a
 
   def Agg.planEach (t : Ty) : List Agg → Except Fault (Nat × (Unit → Except Fault (List Agg)))
