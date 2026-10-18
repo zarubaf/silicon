@@ -1268,7 +1268,7 @@ fn container_forms_give_s001_and_s004_like_lean() {
         ("module M() { a.x(1) = 1; }", Code::S001, 1, 21),
         ("module M() { x.f().g = 1; }", Code::S001, 1, 22),
         ("module M() { mem m: [T; 4] in d; }", Code::S004, 1, 28),
-        ("fn f() -> T { mem m: [T; 4]; }", Code::S004, 1, 15),
+        ("fn f() -> T { input a: T; }", Code::S004, 1, 15),
         ("const A: (,) = 0;", Code::S001, 1, 11),
         ("const A: (T U) = 0;", Code::S001, 1, 13),
         ("const A: (T, U V) = 0;", Code::S001, 1, 16),
