@@ -530,6 +530,32 @@ fn take_params(params: &mut Vec<FnParam>, work: &mut Vec<Pending>) {
 }
 
 impl Expr {
+    /// The position of the expression: the start of its first token.
+    #[must_use]
+    pub fn pos(&self) -> Pos {
+        match self {
+            Expr::Num { pos, .. }
+            | Expr::Bool { pos, .. }
+            | Expr::Str { pos, .. }
+            | Expr::Name { pos, .. }
+            | Expr::Unary { pos, .. }
+            | Expr::Binary { pos, .. }
+            | Expr::Cond { pos, .. }
+            | Expr::Call { pos, .. }
+            | Expr::Method { pos, .. }
+            | Expr::Index { pos, .. }
+            | Expr::Field { pos, .. }
+            | Expr::Unit { pos }
+            | Expr::Tuple { pos, .. }
+            | Expr::Array { pos, .. }
+            | Expr::Select { pos, .. }
+            | Expr::Path { pos, .. }
+            | Expr::Match { pos, .. }
+            | Expr::ArrayType { pos, .. }
+            | Expr::FnType { pos, .. } => *pos,
+        }
+    }
+
     fn leaf() -> Expr {
         Expr::Bool {
             pos: Pos { line: 0, col: 0 },

@@ -267,30 +267,6 @@ fn at(pos: Pos) -> impl Fn(Fault) -> Stop {
     move |(code, message)| Stop::Error(Error { code, pos, message })
 }
 
-pub(crate) fn expr_pos(e: &Expr) -> Pos {
-    match e {
-        Expr::Num { pos, .. }
-        | Expr::Bool { pos, .. }
-        | Expr::Str { pos, .. }
-        | Expr::Name { pos, .. }
-        | Expr::Unary { pos, .. }
-        | Expr::Binary { pos, .. }
-        | Expr::Cond { pos, .. }
-        | Expr::Call { pos, .. }
-        | Expr::Method { pos, .. }
-        | Expr::Index { pos, .. }
-        | Expr::Field { pos, .. }
-        | Expr::Unit { pos }
-        | Expr::Tuple { pos, .. }
-        | Expr::Array { pos, .. }
-        | Expr::Select { pos, .. }
-        | Expr::Path { pos, .. }
-        | Expr::Match { pos, .. }
-        | Expr::ArrayType { pos, .. }
-        | Expr::FnType { pos, .. } => *pos,
-    }
-}
-
 fn type_pos(t: &TypeExpr) -> Pos {
     match t {
         TypeExpr::Name { pos, .. }
@@ -399,7 +375,7 @@ pub(crate) fn run(
     let e = top.expr();
     let out = ev.eval(e)?;
     let out = need(e, out)?;
-    let value = ev.static_value(expr_pos(e), out)?;
+    let value = ev.static_value(e.pos(), out)?;
     let used = budget.fuel - ev.fuel.left();
     #[cfg_attr(not(test), allow(unused_mut))]
     let mut evaluated = Evaluated::new(value, ev.tys);
@@ -433,7 +409,7 @@ fn need(e: &Expr, out: Option<Out>) -> Res<Out> {
         Some(out) => Ok(out),
         None => fail(
             Code::S010,
-            expr_pos(e),
+            e.pos(),
             "`static_assert` gives no value".to_owned(),
         ),
     }
@@ -459,18 +435,51 @@ fn prim(pos: Pos, name: &str, k: Prelude) -> Res<Ty> {
     }
 }
 
-/// The number of arguments of a type family and its signature, for the fix of its `S007`
-/// (Lean `familyText`). A defect of `typeck` gives the other names an empty signature.
+/// A handle type family for a message (Lean `familyText`): its name, its signature, an example
+/// of a use, and its number of index arguments.
+pub(crate) struct Family {
+    pub name: &'static str,
+    pub signature: &'static str,
+    pub example: &'static str,
+    pub args: usize,
+}
+
+/// The text of the handle type family `k`, or `None` for another name.
+pub(crate) fn family_text(k: Prelude) -> Option<Family> {
+    let (name, signature, example, args) = match k {
+        Prelude::Reg => ("Reg", "Reg[T]", "Reg[UInt[8]]", 1),
+        Prelude::Wire => ("Wire", "Wire[T]", "Wire[UInt[8]]", 1),
+        Prelude::Input => ("Input", "Input[T]", "Input[UInt[8]]", 1),
+        Prelude::Mem => ("Mem", "Mem[T, N]", "Mem[UInt[8], 16]", 2),
+        Prelude::Instance => ("Instance", "Instance[M, args]", "Instance[Counter, 8]", 1),
+        _ => return None,
+    };
+    Some(Family {
+        name,
+        signature,
+        example,
+        args,
+    })
+}
+
+impl Family {
+    /// The `S007` text of a use with `got` arguments, where `want` are right (Lean
+    /// `familyArity`).
+    pub(crate) fn arity(&self, want: usize, got: usize) -> String {
+        format!(
+            "`{}` takes {want} argument(s), but it has {got}; write `{}`",
+            self.name, self.signature
+        )
+    }
+}
+
+/// The number of arguments of a type family and its signature, for the fix of its `S007`.
 fn family_signature(k: Prelude) -> (usize, &'static str) {
-    match k {
-        Prelude::UInt => (1, "UInt[W]"),
-        Prelude::SInt => (1, "SInt[W]"),
-        Prelude::List => (1, "List[T]"),
-        Prelude::Reg => (1, "Reg[T]"),
-        Prelude::Wire => (1, "Wire[T]"),
-        Prelude::Input => (1, "Input[T]"),
-        Prelude::Mem => (2, "Mem[T, N]"),
-        Prelude::Instance => (1, "Instance[M, args]"),
+    match (k, family_text(k)) {
+        (_, Some(f)) => (f.args, f.signature),
+        (Prelude::UInt, _) => (1, "UInt[W]"),
+        (Prelude::SInt, _) => (1, "SInt[W]"),
+        (Prelude::List, _) => (1, "List[T]"),
         _ => (1, ""),
     }
 }
@@ -1200,7 +1209,7 @@ impl Evaluator<'_> {
     }
 
     fn eval(&mut self, e: &Expr) -> Res<Option<Out>> {
-        self.charge(expr_pos(e), 1)?;
+        self.charge(e.pos(), 1)?;
         match e {
             Expr::Num { pos, id, .. } => self.number(*pos, *id),
             Expr::Bool { pos, value } => self.made(*pos, Value::Bool(*value)),

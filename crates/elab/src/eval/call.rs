@@ -4,7 +4,7 @@
 //! new call frame.
 
 use super::place::Place;
-use super::{Evaluator, Names, Opnd, Out, Res, Slot, at, expr_pos, fail, need};
+use super::{Evaluator, Names, Opnd, Out, Res, Slot, at, fail, need};
 use crate::Code;
 use crate::hw::{Ref, Seen, Val};
 use crate::names::{Role, Step};
@@ -177,7 +177,7 @@ impl Evaluator<'_> {
         for (k, x) in xs.iter().enumerate() {
             let at = parameter_of(k, bound);
             if is_mut(at) {
-                let place = Actual::Place(self.place_at(expr_pos(x), Code::S008, x)?);
+                let place = Actual::Place(self.place_at(x.pos(), Code::S008, x)?);
                 if let Some(slot) = slots.get_mut(at) {
                     *slot = Some(place);
                 }

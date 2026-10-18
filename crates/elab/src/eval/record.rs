@@ -7,7 +7,7 @@
 //! exists, and `data_bits` reads the width from the metadata, so neither walks the field types.
 
 use super::container::Piece;
-use super::{Evaluator, Names, Opnd, Out, Res, at, expr_pos, fail, need};
+use super::{Evaluator, Names, Opnd, Out, Res, at, fail, need};
 use crate::Code;
 use crate::agg::Agg;
 use crate::hw::{Seen, Val};
@@ -244,7 +244,7 @@ impl Evaluator<'_> {
         for ((field, arg), x) in fields.into_iter().zip(args).zip(xs) {
             self.later_handle(pos, field)?;
             let arg = self.settle(pos, field, arg)?;
-            let arg = self.data(expr_pos(x), arg)?.into_out();
+            let arg = self.data(x.pos(), arg)?.into_out();
             pieces.push(self.conform_piece(pos, field, Piece::Out(arg))?);
         }
         self.made_pieces(pos, ty, pieces)

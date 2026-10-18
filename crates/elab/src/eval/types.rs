@@ -9,7 +9,7 @@
 //! reads it as a local. A first use then charges the size of the struct type, evaluates the
 //! field types, and charges the metadata. A later use finds the entry and charges nothing more.
 
-use super::{Evaluator, Out, ROOT, Res, Slot, Stop, at, expr_pos, fail, need, type_pos};
+use super::{Evaluator, Out, ROOT, Res, Slot, Stop, at, fail, family_text, need, type_pos};
 use crate::hw::{Ref, Root, Seen, Val};
 use crate::int::Int;
 use crate::limit;
@@ -198,22 +198,15 @@ impl Evaluator<'_> {
             self.store.park(o);
         }
         let outs = self.store.resume(base);
-        let (name, signature, example) = match k {
-            Prelude::Reg => ("Reg", "Reg[T]", "Reg[UInt[8]]"),
-            Prelude::Wire => ("Wire", "Wire[T]", "Wire[UInt[8]]"),
-            Prelude::Input => ("Input", "Input[T]", "Input[UInt[8]]"),
-            _ => ("Mem", "Mem[T, N]", "Mem[UInt[8], 16]"),
-        };
-        let want = if k == Prelude::Mem { 2 } else { 1 };
-        if outs.len() != want {
+        let Some(family) = family_text(k) else {
             return fail(
                 Code::S007,
                 pos,
-                format!(
-                    "`{name}` takes {want} argument(s), but it has {}; write `{signature}`",
-                    outs.len()
-                ),
+                "a type family takes one argument".to_owned(),
             );
+        };
+        if outs.len() != family.args {
+            return fail(Code::S007, pos, family.arity(family.args, outs.len()));
         }
         let Some(Seen::Static(Value::Type(d))) = outs.first().map(|o| self.store.seen(o)) else {
             let about = outs
@@ -223,8 +216,9 @@ impl Evaluator<'_> {
                 Code::S010,
                 pos,
                 format!(
-                    "the first argument of `{name}` is a type, not {about}; write a type, for \
-                     example `{example}`"
+                    "the first argument of `{}` is a type, not {about}; write a type, for \
+                     example `{}`",
+                    family.name, family.example
                 ),
             );
         };
@@ -239,8 +233,9 @@ impl Evaluator<'_> {
                     Code::S010,
                     pos,
                     format!(
-                        "`{name}` takes a hardware data type, not `{}`; use a fixed-width type, \
+                        "`{}` takes a hardware data type, not `{}`; use a fixed-width type, \
                          for example `UInt[8]`",
+                        family.name,
                         self.tys.text(d)
                     ),
                 );
@@ -267,15 +262,11 @@ impl Evaluator<'_> {
             Some(Expr::Name { id, .. }) => self.item_of(*id),
             _ => None,
         };
+        let Some(family) = family_text(Prelude::Instance) else {
+            return fail(Code::S010, pos, "`Instance` needs a module".to_owned());
+        };
         let Some(i) = item else {
-            return fail(
-                Code::S007,
-                pos,
-                format!(
-                    "`Instance` takes 1 argument(s), but it has {}; write `Instance[M, args]`",
-                    xs.len()
-                ),
-            );
+            return fail(Code::S007, pos, family.arity(1, xs.len()));
         };
         let rest = xs.get(1..).unwrap_or_default();
         let Some(Item::Module { name, params, .. }) = self.file.ast().get(i) else {
@@ -285,11 +276,7 @@ impl Evaluator<'_> {
             return fail(
                 Code::S007,
                 pos,
-                format!(
-                    "`Instance` takes {} argument(s), but it has {}; write `Instance[M, args]`",
-                    1 + params.len(),
-                    1 + rest.len()
-                ),
+                family.arity(1 + params.len(), 1 + rest.len()),
             );
         }
         let args: Vec<Value> = self
@@ -473,7 +460,7 @@ impl Evaluator<'_> {
         let elem = self.type_expr(elem)?;
         let out = self.eval(len)?;
         let out = need(len, out)?;
-        let at_len = super::expr_pos(len);
+        let at_len = len.pos();
         self.check_static(at_len, &out)?;
         match self.store.value(&out) {
             Value::Int(n) if n.is_negative() => fail(
@@ -677,7 +664,7 @@ impl Evaluator<'_> {
         let mut done = Vec::with_capacity(variants.len());
         let mut tags: BTreeMap<Int, usize> = BTreeMap::new();
         for variant in variants {
-            let tag_pos = expr_pos(&variant.tag);
+            let tag_pos = variant.tag.pos();
             let o = self.eval(&variant.tag)?;
             let o = need(&variant.tag, o)?;
             let converted = self.conform(tag_pos, tag_ty, o)?;

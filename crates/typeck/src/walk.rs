@@ -509,17 +509,13 @@ impl<'a> Walker<'a> {
     /// root, for `release`.
     fn mut_actual(&mut self, x: &Expr) -> Option<DeclId> {
         let Some(root) = self.root(x) else {
-            self.report(
-                Code::S008,
-                expr_pos(x),
-                "a `mut` actual is a place".to_owned(),
-            );
+            self.report(Code::S008, x.pos(), "a `mut` actual is a place".to_owned());
             return None;
         };
         if !self.mutable.contains(&root) {
             self.report(
                 Code::S008,
-                expr_pos(x),
+                x.pos(),
                 "a `mut` actual has a `let mut` local or a `mut` formal as its root".to_owned(),
             );
             return None;
@@ -527,7 +523,7 @@ impl<'a> Walker<'a> {
         if self.pending.get(&root).copied().unwrap_or(0) > 0 {
             self.report(
                 Code::S008,
-                expr_pos(x),
+                x.pos(),
                 "the root of this `mut` actual is pending in its window".to_owned(),
             );
         }
@@ -994,30 +990,5 @@ impl<'a> Walker<'a> {
                 }
             }
         }
-    }
-}
-
-/// The position of an expression.
-fn expr_pos(expr: &Expr) -> Pos {
-    match expr {
-        Expr::Num { pos, .. }
-        | Expr::Bool { pos, .. }
-        | Expr::Str { pos, .. }
-        | Expr::Name { pos, .. }
-        | Expr::Unary { pos, .. }
-        | Expr::Binary { pos, .. }
-        | Expr::Cond { pos, .. }
-        | Expr::Call { pos, .. }
-        | Expr::Method { pos, .. }
-        | Expr::Index { pos, .. }
-        | Expr::Field { pos, .. }
-        | Expr::Unit { pos }
-        | Expr::Tuple { pos, .. }
-        | Expr::Array { pos, .. }
-        | Expr::Select { pos, .. }
-        | Expr::Path { pos, .. }
-        | Expr::Match { pos, .. }
-        | Expr::ArrayType { pos, .. }
-        | Expr::FnType { pos, .. } => *pos,
     }
 }
