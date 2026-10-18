@@ -1,0 +1,17 @@
+// T1 of the work-counter tests of helpers that declare resources (issue #279). N calls of a helper that declares a register,
+// binds it, and returns its read. Each call declares one register in its own call frame, so the work is `O(N)`.
+// SCALE helper_register_calls 32 64 128 256 512
+// TOP M()
+fn cell(x: UInt[8]) -> UInt[8] {
+    reg r: UInt[8] = 0;
+    r := x;
+    return read(r);
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+// REPEAT i {N}
+    let t{i} = cell(x);
+// END
+    o := t0;
+}

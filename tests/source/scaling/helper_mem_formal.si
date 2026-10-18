@@ -1,0 +1,24 @@
+// T4 of the work-counter tests of helpers that declare resources (issue #279). N memories, each declared by a helper. A
+// second helper makes the `write_port` and the `read_port` calls through a `Mem` formal, once for each memory.
+// SCALE helper_mem_formal 16 32 64 128 256
+// TOP M()
+fn make() -> Mem[UInt[8], 4] {
+    mem m: [UInt[8]; 4];
+    return m;
+}
+fn use_mem(m: Mem[UInt[8], 4], a: UInt[2], d: UInt[8], e: Bool) -> UInt[8] {
+    write_port(m, a, d, e);
+    let r = m.read_port(a, e);
+    return r.data;
+}
+module M() {
+    input a: UInt[2];
+    input d: UInt[8];
+    input e: Bool;
+    output o: UInt[8];
+// REPEAT i {N}
+    let m{i} = make();
+    let v{i} = use_mem(m{i}, a, d, e);
+// END
+    o := v0;
+}

@@ -1,0 +1,18 @@
+// T2 of the work-counter tests of helpers that declare resources (issue #279). One helper declares and binds N wires in a
+// `comptime for`. The path of each wire comes from the frame of the loop in constant work, so the work is `O(N)`.
+// SCALE helper_wire_loop 32 64 128 256 512
+// TOP M()
+fn fill(x: UInt[8]) -> UInt[8] {
+    let mut v = x;
+    comptime for i in 0..{N} {
+        wire w: UInt[8];
+        w := v;
+        v = read(w);
+    }
+    return v;
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    o := fill(x);
+}
