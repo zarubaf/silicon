@@ -2232,14 +2232,15 @@ def domainElem (e : String) : String := s!"module M() domains(clk) \{\n  let a =
 #guard cost (domainElem "(1, clk)") "M" (fuel := 31) == "S015 2:15"
 
 /-!
-A handle leaf in the value of `diagnostic` renders by its kind and charges 1 (section 5.4). An
-array of one handle thus charges 2 for its measure, and a handle alone 0.
+A handle leaf in the value of `diagnostic` renders by its kind and charges 0, as a hardware leaf
+does (section 5.4). An array of one handle thus charges 1 for its measure, and a handle alone 0.
+The byte charge pays for the text.
 -/
 #guard observed (handleLets "  r := i;\n  diagnostic(\"h\", [q, r]);\n") ==
   ["(record 21 3 M () (string \"h\") (array (reg (uint 8)) ((reg (uint 8) q) (reg (uint 8) r))))",
     "ok"]
-#guard total (handleLets "  r := i;\n  diagnostic(\"h\", [q, r]);\n") "M" == 455
-#guard total (handleLets "  r := i;\n  diagnostic(\"h\", [q]);\n") "M" == 428
+#guard exact (handleLets "  r := i;\n  diagnostic(\"h\", [q, r]);\n") "M" 453
+#guard exact (handleLets "  r := i;\n  diagnostic(\"h\", [q]);\n") "M" 427
 #guard total (handleLets "  r := i;\n  diagnostic(\"h\", q);\n") "M" == 397
 
 /-!
