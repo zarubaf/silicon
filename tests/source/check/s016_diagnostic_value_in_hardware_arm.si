@@ -1,7 +1,8 @@
 // S016: a function value that calls diagnostic, called in the arm of a hardware if. The mode of the arm follows the call.
 // TOP M()
 fn note() -> Nat {
-    // expected-error S016 @+1
+    // expected-error S016 @+2
+    // expected-message: a hardware arm has no graph effect such as `diagnostic`; call `diagnostic` before the `if` or `match`, and use its result in the arm
     diagnostic("value", 1);
     return 3;
 }

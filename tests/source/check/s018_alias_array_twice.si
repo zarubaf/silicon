@@ -6,6 +6,7 @@ module M() {
     reg r: UInt[8] = 0;
     let rs = [r, r];
     rs[0] := x;
-    // expected-error S018 @+1
+    // expected-error S018 @+2
+    // expected-message: `r` has a second binding; the first binding is at 8:5, and the declaration is at 6:5; remove one of the two bindings
     rs[1] := x;
 }

@@ -7,7 +7,8 @@ module M() {
     output o: UInt[8];
     mem m: [UInt[8]; 4];
     let r = m.read_port(a, e);
-    // expected-error S016 @+1
+    // expected-error S016 @+2
+    // expected-message: a hardware arm has no graph effect such as `write_port`; call `write_port` before the `if` or `match`, and use its result in the arm
     let u = if (e) { m.write_port(a, d, e) } else { () };
     o := r.data;
 }

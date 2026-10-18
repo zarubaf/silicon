@@ -5,7 +5,8 @@ module M() {
     output y: Bool;
     reg r: Bool = false;
     r := a;
-    // expected-error S018 @+1
+    // expected-error S018 @+2
+    // expected-message: `r` has a second binding; the first binding is at 7:5, and the declaration is at 6:5; remove one of the two bindings
     r := !a;
     y := r;
 }

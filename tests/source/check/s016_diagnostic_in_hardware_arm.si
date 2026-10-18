@@ -3,7 +3,8 @@
 module M() {
     input c: Bool;
     output o: UInt[8];
-    // expected-error S016 @+1
+    // expected-error S016 @+2
+    // expected-message: a hardware arm has no graph effect such as `diagnostic`; call `diagnostic` before the `if` or `match`, and use its result in the arm
     let u = if (c) { diagnostic("arm", 1) } else { () };
     o := 0;
 }

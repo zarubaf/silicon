@@ -8,7 +8,8 @@ module M() {
     mem m: [UInt[8]; 4];
     let r = read_port(m, a, e);
     write_port(m, a, d, e);
-    // expected-error S018 @+1
+    // expected-error S018 @+2
+    // expected-message: the memory `m` has a second `read_port`; the first call is at 9:13; call `read_port` once and keep its response in a `let`
     let s = read_port(m, a, e);
     o := r.data;
 }

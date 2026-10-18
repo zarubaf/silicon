@@ -1,7 +1,8 @@
 // S016: a helper that calls diagnostic, called in the arm of a hardware if. The error is at the diagnostic call in the helper.
 // TOP M()
 fn note(x: UInt[8]) -> UInt[8] {
-    // expected-error S016 @+1
+    // expected-error S016 @+2
+    // expected-message: a hardware arm has no graph effect such as `diagnostic`; call `diagnostic` before the `if` or `match`, and use its result in the arm
     diagnostic("helper", 1);
     return x;
 }

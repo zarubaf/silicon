@@ -1,6 +1,7 @@
 // S018: an empty wire (type `()`) still needs one `:=`.
 // TOP M()
 module M() {
-    // expected-error S018 @+1
+    // expected-error S018 @+2
+    // expected-message: `w` has no binding; bind it with `w := ...;`, or remove its declaration
     wire w: ();
 }
