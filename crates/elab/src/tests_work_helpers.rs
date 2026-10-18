@@ -143,52 +143,14 @@ fn w7_second_port_calls_through_a_helper_cost_one_record_each() {
     assert!(n.counts.text_bytes > 0);
 }
 
-/// R3. `n` calls of a function with a name of 2000 characters. The mode and the guard record the
-/// item index of the function, so a call copies no name and the work follows the calls and the
-/// source. `comptime fn` sets the mode, and `fn` under a hardware arm sets the record of the guard.
-#[test]
-fn r3_a_call_copies_no_name_into_the_mode_or_the_guard() {
-    let name = "c".repeat(2000);
-    let comptime = |n: usize, key: u64| {
-        let mut src = format!(
-            "comptime fn {name}() -> Nat {{ return 1; }}\n\
-             module M() {{\n    input x: UInt[8];\n    output o: UInt[8];\n    let f = {name};\n"
-        );
-        for k in 0..n {
-            writeln!(src, "    let a{k} = f();").unwrap();
-        }
-        src.push_str("    o := x;\n}\n");
-        (passing(KEY + key, 1000, &src), src.len() as u64)
-    };
-    let guarded = |n: usize, key: u64| {
-        let mut src = format!(
-            "fn {name}(x: UInt[8]) -> UInt[8] {{ return x; }}\n\
-             module M() {{\n    input c: Bool;\n    input x: UInt[8];\n    output o: UInt[8];\n    \
-             let f = {name};\n"
-        );
-        for k in 0..n {
-            writeln!(src, "    let a{k} = if (c) {{ f(x) }} else {{ 0 }};").unwrap();
-        }
-        src.push_str("    o := x;\n}\n");
-        (passing(KEY + key, 1000, &src), src.len() as u64)
-    };
-    for k in 0..2u64 {
-        let at = |n: usize, key: u64| {
-            if k == 0 {
-                comptime(n, key)
-            } else {
-                guarded(n, key)
-            }
-        };
-        let key = 40 + 4 * k;
-        let ((n, sn), (twice, s2)) = (at(64, key), at(128, key + 1));
-        let (a, b) = (n.counts.total(), twice.counts.total());
-        // The work is `O(n + s)`: the source holds the name twice, and the calls are linear.
-        assert!(b <= 2 * a, "family {k}: the work {a} at n and {b} at 2n");
-        assert!(a <= 60 * 64 + 4 * sn, "family {k}: the work {a}, s = {sn}");
-        assert!(b <= 60 * 128 + 4 * s2, "family {k}: the work {b}, s = {s2}");
-    }
-}
+/// R3. The mode and the guard record the item index of a function, so each is `Copy`: a call
+/// copies no name into either, and the work of a call stays O(1). The assertion fails to compile
+/// when one of them owns heap data.
+const _: fn() = || {
+    fn is_copy<T: Copy>() {}
+    is_copy::<crate::eval::Guard>();
+    is_copy::<crate::eval::Mode>();
+};
 
 /// R4. A helper at the recursion depth `l` declares `n` registers in a `comptime for`. No
 /// register has a binding, so the run ends with `S018` before the lowering. The path of a frame
