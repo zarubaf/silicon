@@ -1,0 +1,17 @@
+// T2 of the work-counter tests of the handles in containers (issue #278). N pushes of a register and N pops of a list of
+// handles. A `push` refreshes the stored numbers by a delta, and a `pop` charges the root size of a list that holds
+// handles only, so the work is `O(N)` for the pushes and the pops of a list that grows to N.
+// SCALE handle_list_push 32 64 128 256 512
+// TOP M()
+module M() {
+    input x: UInt[8];
+    reg r: UInt[8] = 0;
+    r := x;
+    let mut xs = list(Reg[UInt[8]]);
+// REPEAT i {N}
+    xs.push(r);
+// END
+// REPEAT i {N}
+    let y{i} = xs.pop();
+// END
+}
