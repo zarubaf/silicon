@@ -1,16 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The part that a `:=` target selects (Lean `Elab.targetPart`, design sections 5.2 and 9.4). The
-//! steps of the target run from the root outward, and the static type of each base decides. A
-//! field of an `Instance` handle selects a child input with no charge. A container of a type with
-//! the handle flag charges 1 for a step, then its index evaluates and gets the checks of an index.
-//! Each other base, also another handle, is `S017` at the start of the target, before the charge
-//! and before the index evaluates. The target is an identity, so it opens no window and charges
-//! no held root.
+//! The part that a `:=` target selects (Lean `Elab.targetPart`, design sections 5.2 and 9.4). As in
+//! a place, the indices come first, and one walk from the root then selects. A root that is not a
+//! local evaluates first. Each index step charges 1, evaluates its index, and gets the static
+//! check. A local root gives its live value after them. The walk then runs the steps from the
+//! root outward, and the static type of each base decides. A base that is not an `Instance`
+//! handle and has no handle flag is `S017` at the start of the target. A field of an `Instance`
+//! handle selects a child input with no charge. A field and a selector `.N` of a container of a
+//! type with the handle flag charge 1, then the step gets the checks of a selection. The target
+//! is an identity, so it opens no window and charges no held root.
 
-use super::place::{Sel, chain};
+use super::place::{Key, Sel, chain, key_pos};
 use super::{Evaluator, Out, Res, fail, need};
 use crate::Code;
 use crate::hw::{Handle, Ref, Root, Seen, Val};
+use crate::types::TyId;
 use parse::ast::{Expr, Ident, Pos};
 use resolve::Target as Resolved;
 
@@ -30,92 +33,70 @@ impl Evaluator<'_> {
             },
             _ => None,
         };
-        let mut cur = if let Some(decl) = local {
-            Out::Ref(Ref {
-                root: Root::Local(self.store.frame_index(), decl),
-                path: Vec::new(),
-            })
+        let start = if let Some(decl) = local {
+            Err(decl)
         } else {
             let out = self.eval(root)?;
-            need(root, out)?
+            Ok(need(root, out)?)
         };
-        let mut done = 0;
-        while done < steps.len() {
-            let (out, taken) = self.target_run(cur, steps.get(done..).unwrap_or_default())?;
+        let mut keys = Vec::with_capacity(steps.len());
+        for step in &steps {
+            if matches!(step, Sel::Index(..)) {
+                self.charge(step.pos(), 1)?;
+            }
+            keys.push(self.key(step)?);
+        }
+        let mut cur = match start {
+            Ok(out) => out,
+            Err(decl) => Out::Ref(Ref {
+                root: Root::Local(self.store.frame_index(), decl),
+                path: Vec::new(),
+            }),
+        };
+        let mut rest = keys.as_slice();
+        while let Some(key) = rest.first() {
+            let (out, taken) = self.target_run(cur, rest)?;
             cur = out;
-            done += taken;
-            if let Some(step) = steps.get(done) {
-                cur = self.target_step(e.pos(), cur, step)?;
-                done += 1;
+            rest = rest.get(taken..).unwrap_or_default();
+            if taken == 0 {
+                cur = self.target_step(e.pos(), cur, key)?;
+                rest = rest.get(1..).unwrap_or_default();
             }
         }
         Ok(cur)
     }
 
-    /// The longest run of steps of `steps` through containers of a type with the handle flag,
-    /// from the reference `base`: the part where the run ends, and the number of steps taken. The
-    /// type of each base decides its check, so the run reads no node while the indices evaluate.
-    /// Their steps then walk the path of `base` from the root once (`followed`), and the path
-    /// does not grow again at each step. The root is parked for the whole run, so an index that
-    /// changes it cannot change what the steps select. A step that fails comes after the walk of
-    /// the steps before it, as in the order of Lean. An index without a call has no effect that
-    /// a later check could reorder, so only an index with a call ends a run.
-    fn target_run(&mut self, base: Out, steps: &[Sel<'_>]) -> Res<(Out, usize)> {
-        let Out::Ref(r) = &base else {
+    /// The longest run of steps of `keys` through containers of a type with the handle flag,
+    /// from the reference `base`: the reference to the part where the run ends, and the number
+    /// of steps taken. One cursor walks the path of `base` from the root, so each step takes
+    /// constant work. The checks read no node that a charge changes, so they run before the
+    /// charges of the run, and the first step that fails ends the run before it: `target_step`
+    /// gives its charge and its error.
+    fn target_run(&mut self, base: Out, keys: &[Key<'_>]) -> Res<(Out, usize)> {
+        let Out::Ref(mut r) = base else {
             return Ok((base, 0));
         };
-        let Seen::Agg(a) = self.store.seen(&base) else {
-            return Ok((base, 0));
-        };
-        let Some(mut ty) = a.stored_ty().filter(|t| t.holds_handles()) else {
-            return Ok((base, 0));
-        };
-        let root = r.root;
-        let local = matches!(root, Root::Local(..));
-        let cursor = local.then(|| r.clone());
-        let at = self.store.park(base);
-        if let Some(r) = cursor {
-            self.store.cursor(at, r, true);
-        }
-        let mut keyed = Vec::with_capacity(steps.len());
-        let mut stop = None;
-        for step in steps {
-            // An index with a call can record a diagnostic or change a local, so the selections
-            // before it must have walked and passed their checks first (Lean selects each part
-            // before the next index evaluates). The run ends here and the step runs alone.
-            if !keyed.is_empty()
-                && matches!(step, Sel::Index(_, args) if self.call_args.has_call(args))
-            {
+        let mut taken = Vec::new();
+        let mut cur = self.store.at(&r);
+        for key in keys {
+            let Seen::Agg(a) = cur else { break };
+            if !a.stored_ty().is_some_and(TyId::holds_handles) {
                 break;
             }
-            if let Err(e) = self.charge(step.pos(), 1) {
-                stop = Some(e);
+            let Some((k, next)) = self.node_step(cur, key) else {
                 break;
-            }
-            let before = local.then(|| self.store.changes_of(root));
-            let key = match self.key(step) {
-                Ok(key) => key,
-                Err(e) => {
-                    stop = Some(e);
-                    break;
-                }
             };
-            let next = self.held_step(Some(ty), &key);
-            self.store.cursor_step(at, next.map(|(number, _)| number));
-            keyed.push(key);
-            if before.is_some_and(|b| self.store.changes_of(root) != b) {
-                break;
-            }
-            match next.and_then(|(_, t)| t) {
-                Some(t) if t.holds_handles() && !self.tys.get(t).is_handle() => ty = t,
-                _ => break,
+            taken.push(k);
+            cur = next;
+        }
+        for key in keys.iter().take(taken.len()) {
+            if !matches!(key, Key::Index(..)) {
+                self.charge(key_pos(key), 1)?;
             }
         }
-        let out = self.followed(at, &keyed)?.out;
-        match stop {
-            Some(e) => Err(e),
-            None => Ok((out, keyed.len())),
-        }
+        let count = taken.len();
+        r.path.extend(taken);
+        Ok((Out::Ref(r), count))
     }
 
     /// The text "`:=` target kind" of section 6.2 for the selected value `a`.
@@ -126,27 +107,26 @@ impl Evaluator<'_> {
         )
     }
 
-    /// The step `sel` of a target that starts at `start`, on the base `base`.
-    fn target_step(&mut self, start: Pos, base: Out, sel: &Sel<'_>) -> Res<Out> {
-        if let (Seen::Handle(Handle::Inst { id, path, inst, .. }), Sel::Field(q, f)) =
-            (self.store.seen(&base), sel)
+    /// The step `key` of a target that starts at `start`, on the base `base`. An index step
+    /// charged with its index.
+    fn target_step(&mut self, start: Pos, base: Out, key: &Key<'_>) -> Res<Out> {
+        if let (Seen::Handle(Handle::Inst { id, path, inst, .. }), Key::Field(q, f)) =
+            (self.store.seen(&base), key)
         {
             let (id, path, inst) = (*id, *path, *inst);
             return self.child_port(start, *q, f, (id, path, inst));
         }
         let flagged = matches!(
             self.store.seen(&base),
-            Seen::Agg(a) if a.stored_ty().is_some_and(crate::types::TyId::holds_handles)
+            Seen::Agg(a) if a.stored_ty().is_some_and(TyId::holds_handles)
         );
         if !flagged {
             return fail(Code::S017, start, PART_TEXT.to_owned());
         }
-        self.charge(sel.pos(), 1)?;
-        // The base waits while the index evaluates, so the index cannot change what it selects.
-        let at = self.store.park(base);
-        let key = self.key(sel);
-        let base = self.store.resume_one(at);
-        self.agg_key(base, &key?)
+        if !matches!(key, Key::Index(..)) {
+            self.charge(key_pos(key), 1)?;
+        }
+        self.agg_key(base, key)
     }
 
     /// The input `f` of the child `inst` at `q`, with no charge. An output is `S017` at `start`.
