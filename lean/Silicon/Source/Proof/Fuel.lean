@@ -338,12 +338,38 @@ theorem handleTy_f (p : Pos) (k : PrimType) (vs : List Val) :
     Follows cap (handleTy p k vs) (handleTy p k vs) := by
   unfold handleTy; follows [notHandle_f, memWord_f, memDepth_f, bounded_f]
 
-theorem readRef_f (p : Pos) (b : Base) (t : Ty) :
-    Follows cap (readRef p b t) (readRef p b t) := by
+theorem readRef_f (p : Pos) (b : Base) (t : Ty) (k : Nat) :
+    Follows cap (readRef p b t k) (readRef p b t k) := by
   unfold readRef; follows [bounded_f, normalize_f]
 
+theorem readHandle_f (p : Pos) (k : Nat) (h : Handle) :
+    Follows cap (readHandle p k h) (readHandle p k h) := by
+  unfold readHandle; follows [readRef_f]
+
+theorem baseData_f (p : Pos) (v : Val) : Follows cap (baseData p v) (baseData p v) := by
+  unfold baseData; follows [readHandle_f]
+
+mutual
+  theorem readPart_f (p : Pos) :
+      ∀ (k : Nat) (a : Agg), Follows cap (readPart p k a) (readPart p k a)
+    | k, .array n ⟨xs⟩ => by
+      rw [readPart.eq_def]; dsimp only; follows [readParts_f p (k + 1) xs]
+    | k, .tuple n ⟨xs⟩ => by
+      rw [readPart.eq_def]; dsimp only; follows [readParts_f p (k + 1) xs]
+    | k, .static _ | k, .hw _ | k, .ref .. | k, .handle _ | k, .record .. | k, .list .. => by
+      rw [readPart.eq_def]; dsimp only; follows [readHandle_f]
+
+  theorem readParts_f (p : Pos) (k : Nat) :
+      ∀ xs : List Agg, Follows cap (readParts p k xs) (readParts p k xs)
+    | [] => by rw [readParts]; follows
+    | x :: xs => by rw [readParts]; follows [readPart_f p k x, readParts_f p k xs]
+end
+
 theorem data_f (p : Pos) (v : Val) : Follows cap (data p v) (data p v) := by
-  unfold data; follows [readRef_f]
+  unfold data; follows [readPart_f, baseData_f]
+
+theorem dataAt_f (p : Pos) (t : Ty) (v : Val) : Follows cap (dataAt p t v) (dataAt p t v) := by
+  unfold dataAt; follows [data_f, baseData_f]
 
 theorem conform_f (p : Pos) (t : Ty) (v : Value) :
     Follows cap (conform p t v) (conform p t v) := by
@@ -570,7 +596,7 @@ theorem pick_f (p q : Pos) (v : Val) (i : Value) :
   unfold pick; follows [pickKey_f]
 
 theorem lenOf_f (p : Pos) (vs : List Val) : Follows cap (lenOf p vs) (lenOf p vs) := by
-  unfold lenOf; follows [data_f, chargeScan_f]
+  unfold lenOf; follows [baseData_f, chargeScan_f]
 
 theorem fieldOf_f (p : Pos) (f : Ident) (t : Ty) (x : String) :
     Follows cap (fieldOf p f t x) (fieldOf p f t x) := by
@@ -600,7 +626,7 @@ theorem conformAgg_f (p : Pos) (t : Ty) (a : Agg) :
   unfold conformAgg; follows [conform_f, typedAgg_f]
 
 theorem element_f (p : Pos) (v : Val) : Follows cap (element p v) (element p v) := by
-  unfold element; follows [data_f]
+  unfold element; follows [baseData_f]
 
 theorem item_f (p : Pos) (v : Val) : Follows cap (item p v) (item p v) := by
   unfold item; follows [element_f]
@@ -642,11 +668,11 @@ theorem settle_f (p : Pos) (t : Ty) (v : Val) :
 
 theorem conformVal_f (p : Pos) (t : Ty) (v : Val) :
     Follows cap (conformVal p t v) (conformVal p t v) := by
-  unfold conformVal; follows [settle_f, data_f, conform_f, typedAgg_f]
+  unfold conformVal; follows [settle_f, dataAt_f, conform_f, typedAgg_f]
 
 theorem readUse_f (p : Pos) (t : Ty) (v : Val) :
     Follows cap (readUse p t v) (readUse p t v) := by
-  unfold readUse; follows [settle_f, data_f, conformVal_f]
+  unfold readUse; follows [settle_f, dataAt_f, conformVal_f]
 
 theorem handleUse_f (p : Pos) (t : Ty) (v : Val) :
     Follows cap (handleUse p t v) (handleUse p t v) := by
@@ -659,7 +685,7 @@ theorem valueUse_f (p : Pos) (t : Ty) (c : Bool) (v : Val) :
 theorem siteUse_f (p : Pos) (t : Ty) (c : Bool) (v : Val) (k : Site α) :
     Follows cap (siteUse p t c v k) (siteUse p t c v k) := by
   cases k <;> unfold siteUse <;>
-    follows [handleUse_f, valueUse_f, laterHandle_f, conformAgg_f, item_f, data_f, settle_f,
+    follows [handleUse_f, valueUse_f, laterHandle_f, conformAgg_f, item_f, dataAt_f, settle_f,
       conform_f]
 
 theorem typedUse_f (p : Pos) (t : Ty) (c : Bool) (v : Val) (k : Site α) :
@@ -1045,7 +1071,7 @@ theorem follows_all : ∀ n,
         apply Follows.exhaust (cap := k)
         intro _
         follows [he k, ht k, index_f (he k) (ht k), name_f (he k) (ht k),
-          call_f (he k) (ht k) (hb k), spec_f (he k) (ht k), need_f, data_f, apply_f,
+          call_f (he k) (ht k) (hb k), spec_f (he k) (ht k), need_f, data_f, baseData_f, apply_f,
           hwUnary_f, test_f, hwBinary_f, unify_f, mux_f, static_f, pick_f, element_f, tupleOf_f,
           arrayOf_f, select_f, containerOp_f, arrayTy_f, field_f, strAt_f, hold_f, release_f,
           changesOf_f, normalize_f, readRef_f, aggEq_f, enumUse_f (he k) (ht k), variantOf_f,
@@ -1055,7 +1081,7 @@ theorem follows_all : ∀ n,
         apply Follows.charge_one
         intro _
         follows [he m, ht m, index_f (he m) (ht m), name_f (he m) (ht m),
-          call_f (he m) (ht m) (hb m), spec_f (he m) (ht m), need_f, data_f, apply_f,
+          call_f (he m) (ht m) (hb m), spec_f (he m) (ht m), need_f, data_f, baseData_f, apply_f,
           hwUnary_f, test_f, hwBinary_f, unify_f, mux_f, static_f, pick_f, element_f, tupleOf_f,
           arrayOf_f, select_f, containerOp_f, arrayTy_f, field_f, strAt_f, hold_f, release_f,
           changesOf_f, normalize_f, readRef_f, aggEq_f, enumUse_f (he m) (ht m), variantOf_f,

@@ -1388,8 +1388,10 @@ def dRes (msg : String) : String :=
   ["(record 5 3 M () (string \"r\") (hw (uint 8)))", "ok"]
 #guard said (dRes "r") == "the message of `diagnostic` is a static String, not a register"
 #guard said (dRes "d") == "the message of `diagnostic` is a static String, not hardware UInt[8]"
-#guard said (dRes "u.a") == "an input of a child is a target; it is never read"
-#guard said (dRes "m") == "a memory is not data"
+#guard said (dRes "u.a") ==
+  "the input `a` of `u` is a target only; read the value that you bind to it"
+#guard said (dRes "m") == "`m` is a memory, not data; read a word with `read_port`"
+#guard said (dRes "u") == "`u` is an instance, not data; read its outputs as `u.q`"
 #guard said (dRes "5") == "the message of `diagnostic` is a String, not Int"
 #guard said (dRes "[]") == "the message of `diagnostic` is a String, not `[]` without a type"
 #guard said (dMod "  diagnostic(5, []);\n") == "the message of `diagnostic` is a String, not Int"
@@ -2241,5 +2243,104 @@ def readGrowth (t0 t1 : String) : Int :=
 #guard readGrowth "[Unit; 0]" "[Unit; 100]" == 100
 #guard exact (readAgg "(UInt[8], [Unit; 100])" "  let x = read(r);\n") "M" 443
 #guard exact (readAgg "[Unit; 100]" "  let x = read(r);\n") "M" 376
+
+
+/-!
+A `data` context reads each register leaf and each wire leaf of a container of handles (section
+5.4). It charges the recursive size of the value first. Thus one unit less stops at the node in
+the `data` context, before any leaf error. These parts give their texts of section 6.2: a memory,
+an instance, a child input, a record of handles, and a list of handles. The same holds one
+container deeper. The arms of a hardware `if` and `match` and a data field read too. A static
+`if` or `match` passes the handles on, so it reads nothing.
+-/
+def dataLets (body : String) : String :=
+  "module C(comptime W: Nat) {\n  input x: UInt[8];\n}\n" ++
+  "struct S { a: Reg[UInt[8]] }\nstruct P { a: [UInt[8]; 1] }\n" ++
+  "module M() {\n  input c: Bool;\n  input i: UInt[8];\n  output o: Bool;\n" ++
+  "  reg r: UInt[8] = 0;\n  reg q: UInt[8] = 0;\n  reg p: (UInt[8], Bool) = (0, false);\n" ++
+  "  mem m: [UInt[8]; 4];\n  write_port(m, 0, i, c);\n  let k = read_port(m, 0, c);\n" ++
+  "  instance u = C(8);\n  r := i;\n  q := i;\n  p := (i, c);\n  u.x := i;\n" ++ body ++ "}\n"
+#guard exact (dataLets "  o := [r, q] == [q, r];\n") "M" 683
+#guard exact (dataLets "  o := [p] == [p];\n") "M" 677
+#guard exact (dataLets "  let a = if (c) { [r] } else { [q] };\n  o := a[0] == i;\n") "M" 675
+#guard exact (dataLets "  let a = P([r]);\n  o := c;\n") "M" 677
+#guard exact (dataLets "  let a = [r, q];\n  o := a[0] == i;\n") "M" 655
+#guard exact (dataLets "  let a = if (true) { [m] } else { [m] };\n  o := c;\n") "M" 640
+#guard exact (dataLets "  let a = match (true) { true => [u], _ => [u] };\n  o := c;\n") "M" 645
+def memData : String := "`m` is a memory, not data; read a word with `read_port`"
+#guard said (dataLets "  o := [m] == [m];\n") == memData
+#guard cost (dataLets "  o := [m] == [m];\n") "M" (fuel := 230) == "S010 21:8"
+#guard cost (dataLets "  o := [m] == [m];\n") "M" (fuel := 229) == "S015 21:8"
+#guard said (dataLets "  o := [[m]] == [[m]];\n") == memData
+#guard cost (dataLets "  o := [[m]] == [[m]];\n") "M" (fuel := 235) == "S010 21:8"
+#guard cost (dataLets "  o := [[m]] == [[m]];\n") "M" (fuel := 234) == "S015 21:8"
+#guard said (dataLets "  o := [u] == [u];\n") ==
+  "`u` is an instance, not data; read its outputs as `u.q`"
+#guard cost (dataLets "  o := [u] == [u];\n") "M" (fuel := 230) == "S010 21:8"
+#guard cost (dataLets "  o := [u] == [u];\n") "M" (fuel := 229) == "S015 21:8"
+#guard said (dataLets "  o := (u.x, 1) == (u.x, 1);\n") ==
+  "the input `x` of `u` is a target only; read the value that you bind to it"
+#guard cost (dataLets "  o := (u.x, 1) == (u.x, 1);\n") "M" (fuel := 235) == "S017 21:8"
+#guard cost (dataLets "  o := (u.x, 1) == (u.x, 1);\n") "M" (fuel := 234) == "S015 21:8"
+def recordData : String :=
+  "a `data` context does not read the record of handles `S`; construct the data record from " ++
+    "the fields, for example `P(read(h.a), read(h.b))`"
+#guard said (dataLets "  o := S(r) == S(r);\n") == recordData
+#guard cost (dataLets "  o := S(r) == S(r);\n") "M" (fuel := 252) == "S010 21:8"
+#guard cost (dataLets "  o := S(r) == S(r);\n") "M" (fuel := 251) == "S015 21:8"
+#guard said (dataLets "  o := (1, S(r)) == (1, S(r));\n") == recordData
+#guard cost (dataLets "  o := (1, S(r)) == (1, S(r));\n") "M" (fuel := 261) == "S010 21:8"
+#guard cost (dataLets "  o := (1, S(r)) == (1, S(r));\n") "M" (fuel := 260) == "S015 21:8"
+def listLets (body : String) : String :=
+  dataLets ("  let hs: List[Reg[UInt[8]]] = list(Reg[UInt[8]]);\n" ++ body)
+def listData : String :=
+  "a `data` context does not read the list of handles `List[Reg[UInt[8]]]`; read each " ++
+    "element, for example `read(hs[0])`"
+#guard said (listLets "  o := hs == hs;\n") == listData
+#guard cost (listLets "  o := hs == hs;\n") "M" (fuel := 261) == "S010 22:8"
+#guard cost (listLets "  o := hs == hs;\n") "M" (fuel := 260) == "S015 22:8"
+#guard said (listLets "  diagnostic(hs, 1);\n  o := c;\n") == listData
+#guard cost (listLets "  diagnostic(hs, 1);\n  o := c;\n") "M" (fuel := 266) == "S010 22:3"
+#guard cost (listLets "  diagnostic(hs, 1);\n  o := c;\n") "M" (fuel := 265) == "S015 22:3"
+#guard said (dataLets "  let a = if (c) { [m] } else { [m] };\n  o := c;\n") == memData
+#guard cost (dataLets "  let a = if (c) { [m] } else { [m] };\n  o := c;\n") "M" (fuel := 231) ==
+  "S010 21:11"
+#guard cost (dataLets "  let a = if (c) { [m] } else { [m] };\n  o := c;\n") "M" (fuel := 230) ==
+  "S015 21:11"
+#guard cost (dataLets "  let a = match (c) { true => [u], _ => [u] };\n  o := c;\n") "M"
+  (fuel := 236) == "S010 21:11"
+#guard cost (dataLets "  let a = match (c) { true => [u], _ => [u] };\n  o := c;\n") "M"
+  (fuel := 235) == "S015 21:11"
+#guard said (dataLets "  let a = P([m]);\n  o := c;\n") == memData
+#guard cost (dataLets "  let a = P([m]);\n  o := c;\n") "M" (fuel := 258) == "S010 21:13"
+#guard cost (dataLets "  let a = P([m]);\n  o := c;\n") "M" (fuel := 257) == "S015 21:13"
+
+/-!
+A register leaf of an aggregate type reads as a reference. It charges the zero size of its type
+before it goes into the result. Take the zero size of `[Unit; 100]` less that of `[Unit; 0]`.
+The record `Q((r, 1))` grows by it twice, 200 units: once for the read, once for its own size.
+-/
+def fieldAgg (t body : String) : String :=
+  s!"type T = {t};\nstruct Q \{ a: (T, Int) }\nmodule M() \{\n  input i: T;\n  reg r: T = T();\n" ++
+    "  r := i;\n" ++ body ++ "}\n"
+def leafGrowth (body : String) : Int :=
+  let used (t b : String) : Int := (total (fieldAgg t b) "M" : Int)
+  let t0 := "(UInt[8], [Unit; 0])"
+  let t1 := "(UInt[8], [Unit; 100])"
+  (used t1 body - used t1 "") - (used t0 body - used t0 "")
+#guard leafGrowth "  let a = Q((r, 1));\n" == 200
+
+/-!
+The read of a leaf checks the depth of the result: the nodes above the leaf plus the depth of
+`T()` (section 5.4). A tuple node has the depth 2 over a handle, so only this check sees the
+depth of the result. It stops at the node in the `data` context.
+-/
+def deepLets (body : String) : String :=
+  "type T = [[[UInt[8]; 1]; 1]; 1];\nmodule M() {\n  input c: Bool;\n  input i: T;\n" ++
+    "  output o: Bool;\n  reg p: T = T();\n  p := i;\n" ++ body ++ "}\n"
+#guard (cost (deepLets "  let a = ((p, 1), 1);\n  o := a == a;\n") "M" (depth := 6)).startsWith
+  "total"
+#guard cost (deepLets "  let a = ((p, 1), 1);\n  o := a == a;\n") "M" (depth := 5) == "S015 9:8"
+#guard (cost (deepLets "  let a = ((p, 1), 1);\n  o := c;\n") "M" (depth := 4)).startsWith "total"
 
 end Silicon.Source.Test.Elab
