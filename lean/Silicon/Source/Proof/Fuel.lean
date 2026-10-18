@@ -660,6 +660,10 @@ theorem localUse_f (p : Pos) (t : Ty) (c : Bool) (v : Val) :
     Follows cap (localUse p t c v) (localUse p t c v) := by
   unfold localUse; follows [handleUse_f, copyUse_f]
 
+theorem heldUse_f (p : Pos) (h : Val) (o : Out) :
+    Follows cap (heldUse p h o) (heldUse p h o) := by
+  unfold heldUse; follows [handleUse_f, copy_f]
+
 theorem variantOf_f (p : Pos) (t : Ty) (j : Nat) (vs : List Val) :
     Follows cap (variantOf p t j vs) (variantOf p t j vs) := by
   unfold variantOf; follows [bounded_f, readUse_f, packHw_f]
@@ -1063,14 +1067,14 @@ theorem follows_all : ∀ n,
         apply Follows.exhaust (cap := k)
         intro _
         follows [he k, ht k, hs k, hb k, placeAt_f (he k), need_f, copy_f, copyUse_f, localUse_f,
-          known_f, named_f, bindLocal_f, test_f, int_f, range_f, iteration_f, static_f,
-          store_f, hold_f, release_f, shut_f]
+          heldUse_f, known_f, named_f, bindLocal_f, test_f, int_f, range_f, iteration_f,
+          static_f, store_f, hold_f, release_f, shut_f]
       · rw [stmt.eq_def (k + 1), stmt.eq_def (m + 1)]
         apply Follows.charge_one
         intro _
         follows [he m, ht m, hs m, hb m, placeAt_f (he m), need_f, copy_f, copyUse_f, localUse_f,
-          known_f, named_f, bindLocal_f, test_f, int_f, range_f, iteration_f, static_f,
-          store_f, hold_f, release_f, shut_f]
+          heldUse_f, known_f, named_f, bindLocal_f, test_f, int_f, range_f, iteration_f,
+          static_f, store_f, hold_f, release_f, shut_f]
     · rcases n' with _ | m
       · rw [block.eq_def (k + 1), block.eq_def 0]
         apply Follows.exhaust (cap := k)
