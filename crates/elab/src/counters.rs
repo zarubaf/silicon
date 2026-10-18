@@ -77,7 +77,7 @@ pub(crate) struct Counts {
     /// The guards that a hardware arm or a structural context entered.
     pub guarded: u64,
     /// The bytes of a name that the walks of `diagnostic` and the reads of a domain copied into
-    /// a new string, outside the text of a record.
+    /// a new string, outside the text of a record, and the bytes of the text of an `S018`.
     pub text_bytes: u64,
     /// The types that a serialization to a sink without the stored length expanded part by
     /// part. A length pass never expands one.
