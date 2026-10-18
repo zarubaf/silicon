@@ -291,15 +291,20 @@ impl Val {
     /// aggregate with a hardware leaf. A container of handles has none. A use that takes only
     /// static values asks this, so it does not depend on the form of the value.
     pub(crate) fn has_hw(&self, tys: &Types) -> bool {
-        match self {
-            Val::Hw(_) => true,
-            Val::Agg(a) => a.leaves(tys) > 0,
-            _ => false,
-        }
+        self.seen().has_hw(tys)
     }
 }
 
 impl Seen<'_> {
+    /// Whether the value has a hardware leaf (`Val::has_hw`), with no copy of the value.
+    pub(crate) fn has_hw(&self, tys: &Types) -> bool {
+        match self {
+            Seen::Hw(_) => true,
+            Seen::Agg(a) => a.leaves(tys) > 0,
+            _ => false,
+        }
+    }
+
     /// The type. A handle and a literal that waits have none.
     pub(crate) fn ty(&self, g: &Graph, tys: &mut Types) -> Option<TyId> {
         match self {
