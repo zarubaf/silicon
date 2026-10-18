@@ -1,0 +1,17 @@
+// S017: a combinational module calls a helper that makes a clocked child.
+// TOP M()
+module C() {
+    output q: Bool;
+    q := true;
+}
+fn spawn() -> Nat {
+    // expected-error S017 @+2
+    // expected-message: a combinational module has no clocked child `C`; remove `domains()` from the module, or move the instance to a clocked module
+    instance u = C();
+    return 1;
+}
+module M() domains() {
+    output o: Bool;
+    let n = spawn();
+    o := true;
+}

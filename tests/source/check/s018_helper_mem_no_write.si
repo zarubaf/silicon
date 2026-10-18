@@ -1,0 +1,14 @@
+// S018: a helper declares a memory and reads it, but the memory has no write_port.
+// TOP M()
+fn mk(a: UInt[2]) -> UInt[8] {
+    // expected-error S018 @+2
+    // expected-message: the memory `m` has no `write_port`; call `write_port` on it once, or remove the memory
+    mem m: [UInt[8]; 4];
+    let r = m.read_port(a, true);
+    return r.data;
+}
+module M() {
+    input a: UInt[2];
+    output o: UInt[8];
+    o := mk(a);
+}

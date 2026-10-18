@@ -1,0 +1,14 @@
+// S017: a combinational module calls a helper that declares a register.
+// TOP M()
+fn mk(x: UInt[8]) -> UInt[8] {
+    // expected-error S017 @+2
+    // expected-message: a combinational module has no register; remove `domains()` from the module, or move the register to a clocked module
+    reg r: UInt[8] = 0;
+    r := x;
+    return r;
+}
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    o := mk(x);
+}

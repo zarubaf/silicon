@@ -1,0 +1,15 @@
+// S016: a helper that declares a register, called in the arm of a hardware if. The error is at the declaration in the helper.
+// TOP M()
+fn mk(x: UInt[8]) -> UInt[8] {
+    // expected-error S016 @+2
+    // expected-message: a hardware arm has no graph effect such as `mk`; call `mk` before the `if` or `match`, and use its result in the arm
+    reg r: UInt[8] = 0;
+    r := x;
+    return r;
+}
+module M() {
+    input c: Bool;
+    input x: UInt[8];
+    output o: UInt[8];
+    o := if (c) { mk(x) } else { 0 };
+}

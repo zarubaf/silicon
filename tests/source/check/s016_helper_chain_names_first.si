@@ -1,0 +1,18 @@
+// S016: a helper calls a second helper that declares a register, in the arm of a hardware if. The text names the helper that the arm calls.
+// TOP M()
+fn inner(x: UInt[8]) -> UInt[8] {
+    // expected-error S016 @+2
+    // expected-message: a hardware arm has no graph effect such as `outer`; call `outer` before the `if` or `match`, and use its result in the arm
+    reg r: UInt[8] = 0;
+    r := x;
+    return r;
+}
+fn outer(x: UInt[8]) -> UInt[8] {
+    return inner(x);
+}
+module M() {
+    input c: Bool;
+    input x: UInt[8];
+    output o: UInt[8];
+    o := if (c) { outer(x) } else { 0 };
+}

@@ -1,0 +1,18 @@
+// S011: a comptime fn calls a helper that makes a child. The instance statement is hardware.
+// TOP M()
+module C() domains() {
+    output q: Bool;
+    q := true;
+}
+fn spawn() -> Nat {
+    // expected-error S011 @+2
+    // expected-message: the `comptime fn` `cf` makes no hardware, but its call reaches this instance in `spawn`; call `spawn` from a `fn` or a module body
+    instance u = C();
+    return 1;
+}
+comptime fn cf() -> Nat {
+    return spawn();
+}
+module M() domains() {
+    let n = cf();
+}

@@ -1,0 +1,11 @@
+// S019: a helper in M makes an instance of M. The instantiation depends on itself.
+// TOP M(3)
+fn again(d: Nat) -> Nat {
+    // expected-error S019 @+2
+    // expected-message: the instantiation of `M` depends on itself
+    instance u = M(d);
+    return 1;
+}
+module M(comptime d: Nat) {
+    let n = again(d);
+}

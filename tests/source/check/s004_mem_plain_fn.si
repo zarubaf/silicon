@@ -1,9 +1,0 @@
-// S004: a plain fn has no mem statement.
-// TOP M()
-// expected-error S004 @+2
-fn f() -> Nat {
-    mem m: [UInt[8]; 4];
-    return 1;
-}
-module M() {
-}

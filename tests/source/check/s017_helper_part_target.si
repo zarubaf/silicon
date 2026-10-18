@@ -1,0 +1,20 @@
+// S017: a helper binds a part of a register with `:=`. A `:=` target is a whole resource.
+// TOP M()
+struct P {
+    a: UInt[8],
+    b: UInt[8],
+}
+fn bind(r: Reg[P], e: UInt[8]) -> () {
+    // expected-error S017 @+2
+    // expected-message: a `:=` target is a whole resource, not a part of a value; bind the whole resource, for example `r := P(a, b);`
+    r.a := e;
+    return ();
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    reg r: P = P(0, 0);
+    bind(r, x);
+    r.b := x;
+    o := r.a;
+}

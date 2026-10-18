@@ -1,0 +1,15 @@
+// S016: a helper that makes a child, called in the length of an array type. The length is a structural context.
+// TOP M()
+module C() domains() {
+    output q: Bool;
+    q := true;
+}
+fn spawn() -> Nat {
+    // expected-error S016 @+2
+    // expected-message: a type or a constant has no graph effect such as `spawn`; call it before and use the result
+    instance u = C();
+    return 2;
+}
+module M() domains() {
+    let a: [Bool; spawn()] = [false, false];
+}

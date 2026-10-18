@@ -1,0 +1,21 @@
+// S018: a helper makes a child, and the module binds one input of the child twice.
+// TOP M()
+module C() domains() {
+    input p: UInt[8];
+    output q: UInt[8];
+    q := p;
+}
+fn spawn() -> Instance[C] {
+    instance u = C();
+    return u;
+}
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let u = spawn();
+    u.p := x;
+    // expected-error S018 @+2
+    // expected-message: `u.p` has a second binding; the first binding is at 16:5, and the declaration is at 9:5; remove one of the two bindings
+    u.p := x;
+    o := u.q;
+}

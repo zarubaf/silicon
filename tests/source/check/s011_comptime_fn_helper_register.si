@@ -1,0 +1,16 @@
+// S011: a comptime fn calls a helper that declares a register. The mode static makes no hardware.
+// TOP M()
+fn mk() -> UInt[8] {
+    // expected-error S011 @+2
+    // expected-message: the `comptime fn` `cf` makes no hardware, but its call reaches this register in `mk`; call `mk` from a `fn` or a module body
+    reg r: UInt[8] = 0;
+    r := 1;
+    return r;
+}
+comptime fn cf() -> UInt[8] {
+    return mk();
+}
+module M() {
+    output o: UInt[8];
+    o := cf();
+}

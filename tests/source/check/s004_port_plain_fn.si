@@ -1,0 +1,10 @@
+// S004: a plain fn has no input statement. A helper declares resources, but it declares no port.
+// TOP M()
+fn f() -> Nat {
+    // expected-error S004 @+2
+    // expected-message: a helper cannot declare a port; declare the port in the module body and pass its value to the helper
+    input a: Bool;
+    return 1;
+}
+module M() {
+}
