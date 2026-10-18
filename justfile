@@ -33,6 +33,9 @@ clippy:
 repo-check:
     cargo xtask check
 
+spec-texts-strict:
+    cargo xtask spec-texts --strict
+
 prose *files:
     cargo xtask prose "$@"
 
@@ -66,7 +69,7 @@ commit-msg file:
 commit-check base="origin/main":
     cargo xtask commit-check --base {{ base }}
 
-ci base="origin/main": check test lean-check diff diff-si lec (commit-check base)
+ci base="origin/main": check spec-texts-strict test lean-check diff diff-si lec (commit-check base)
 
 setup:
     lefthook install

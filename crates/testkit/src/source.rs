@@ -62,6 +62,10 @@ pub fn agree(command: &str, rust: &Output, lean: &Output) -> Result<Outcome, Str
     ))
 }
 
+/// The suites of `tests/source` whose runner compares `expected-error` and `expected-message`.
+/// The `elab`, `budget`, and `corpus` runners do not read them.
+pub const MESSAGE_SUITES: [&str; 3] = ["parse", "check", "run"];
+
 /// The `parse` suite (frontend spec sections 8 and 11.3): the Lean
 /// `silicon-check parse` and the Rust `silicon parse` run on each `.si` file.
 /// They must agree as `agree` says. A file with `// expected-error SXXX @+N` (or `@-N`) expects

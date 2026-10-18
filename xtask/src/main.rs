@@ -22,6 +22,7 @@ mod repo;
 mod review;
 mod silicon;
 mod skips;
+mod spec_texts;
 mod subset;
 #[cfg(test)]
 mod testgit;
@@ -51,6 +52,7 @@ const CHECKS: &[Check] = &[
     subset::check,
     adr::check,
     api::check,
+    spec_texts::check,
 ];
 
 #[derive(Parser)]
@@ -76,6 +78,12 @@ enum Command {
     Prose {
         /// Lint only these files. The `pre-commit` hook passes the staged files. Empty means every tracked file.
         files: Vec<PathBuf>,
+    },
+    /// Run the rule `spec-texts` alone.
+    SpecTexts {
+        /// Make a stale entry of `tests/inventory/spec-texts.txt` an error, as `just ci` does.
+        #[arg(long)]
+        strict: bool,
     },
     /// Check one commit message file. The `commit-msg` hook calls this.
     CommitMsg {
@@ -182,6 +190,17 @@ fn main() -> Result<ExitCode> {
         } else {
             ExitCode::FAILURE
         }),
+        Command::SpecTexts { strict } => {
+            let violations = spec_texts::run(&Repo::discover()?, strict)?;
+            for violation in &violations {
+                println!("{violation}");
+            }
+            Ok(if violations.iter().any(|v| v.severity.fails_run()) {
+                ExitCode::FAILURE
+            } else {
+                ExitCode::SUCCESS
+            })
+        }
         Command::CommitMsg { file } => Ok(report(&commit::check_message_file(&file)?)),
         Command::ReviewScope { base } => arch_review::review_scope(&base),
         Command::ReviewDue { base } => arch_review::review_due(&base),
