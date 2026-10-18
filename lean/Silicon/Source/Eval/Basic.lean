@@ -626,6 +626,14 @@ def Guard.effect (g : Guard) (f : String) : String :=
   | .structural =>
     s!"a type or a constant has no graph effect such as `{f}`; call it before and use the result"
 
+/-!
+The static mode (section 9.4): the `eval` command, or the item of the outermost `comptime fn`
+of the call chain.
+-/
+inductive Mode where
+  | eval
+  | static (i : Nat)
+
 /-! The source name of an item. -/
 def itemName : Resolve.Item → String
   | .const _ n .. | .fn _ _ n .. | .module _ n .. | .struct _ n .. | .alias _ n ..
@@ -635,14 +643,13 @@ def itemName : Resolve.Item → String
 The items, the depth limit, the current depth, and the return type of the current call. The
 item whose body runs, its symbols, and the current frame name the hardware. `binding` holds
 the struct items whose parameter types evaluate now. `guard` is the innermost guard
-(section 9.4). `mode` is the item of the outermost `comptime fn` of the call chain, else
-`none` (section 9.4). A call sets it in O(1), and the name renders only in an error. `site`
-is the name of a function value while its signature evaluates: each depth check there reports
-at it. `inst` is the emitted name of the current instantiation, else
-`-`. `calls` holds the call frames from the module body, innermost first (section 8.2). A frame
-is the item name of the callee and the position of its call. A call adds its frame in one step,
-and the records share the list. `digest` makes the digest of an emitted name (section 7.1), so a
-test can replace it.
+(section 9.4). `mode` is the static mode, else `none` (section 9.4). A call sets it in O(1),
+and the name renders only in an error. `site` is the name of a function value while its
+signature evaluates: each depth check there reports at it. `inst` is the emitted name of the
+current instantiation, else `-`. `calls` holds the call frames from the module body, innermost
+first (section 8.2). A frame is the item name of the callee and the position of its call. A
+call adds its frame in one step, and the records share the list. `digest` makes the digest of an
+emitted name (section 7.1), so a test can replace it.
 -/
 structure Ctx where
   items : Array Resolve.Item
@@ -654,7 +661,7 @@ structure Ctx where
   frame : Frame
   binding : List Nat
   guard : Option Guard
-  mode : Option Nat
+  mode : Option Mode
   site : Option Pos
   inst : String
   calls : List (String × Pos)

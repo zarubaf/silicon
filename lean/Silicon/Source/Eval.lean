@@ -2323,6 +2323,14 @@ def staticHardware (g k h : String) : String :=
   s!"the `comptime fn` `{g}` makes no hardware, but its call reaches this {k} in `{h}`; " ++
     s!"call `{h}` from a `fn` or a module body"
 
+/-!
+The text "Hardware in `eval`" of `S011` (section 6.2): the expression of the `eval` command
+reaches the statement of the kind `k` in the function `h`.
+-/
+def evalHardware (k h : String) : String :=
+  s!"the `eval` command makes no hardware, but its expression reaches this {k} in `{h}`; " ++
+    s!"evaluate an expression that makes no hardware, or elaborate a module that calls `{h}`"
+
 mutual
   def eval (b : Nat) (e : Resolve.Expr) : M (Option Out) :=
     match b with
@@ -2753,7 +2761,7 @@ mutual
       let (path, fr) ← frameOf u.name (ctx.syms.items.getD i 0) (.call k)
       withReader (fun x => { x with
           item := i, frame := fr, calls := (u.name, p) :: x.calls,
-          mode := x.mode <|> (if c then some i else none),
+          mode := x.mode <|> (if c then some (.static i) else none),
           guard := x.guard.map fun g => { g with callee := g.callee <|> some i } }) do
         for (q, a) in ps.zip acts do copyIn p c q (← typeExpr n q.ty) a
         let rt ← typeExpr n ret
@@ -2883,8 +2891,11 @@ mutual
         -- current item stands in only for a guard without a call.
         if let some g := c.guard then
           fail .S016 p (g.effect (c.itemName (g.callee.getD c.item)))
-        if let some m := c.mode then
+        match c.mode with
+        | some (.static m) =>
           fail .S011 p (staticHardware (c.itemName m) (stmtKind s) (c.itemName c.item))
+        | some .eval => fail .S011 p (evalHardware (stmtKind s) (c.itemName c.item))
+        | none => pure ()
         hwStmt n s
         return none
       | .input .. | .output .. => do
@@ -3232,12 +3243,13 @@ def run (budget : Budget) (items : Array Resolve.Item) (act : Nat → M α) (top
 
 /-!
 The value of a static expression in the file scope, the used fuel, and the records. The
-expression has the symbols of the entry after the items.
+expression has the symbols of the entry after the items. It belongs to no instantiation, so it
+runs in the mode of the `eval` command (section 9.4).
 -/
 def observeExpr (budget : Budget) (items : Array Resolve.Item) (e : Resolve.Expr) :
     Array Record × Except Error (Value × Nat) :=
   observeRun budget items (top := scanTop e) fun n =>
-    withReader (fun c => { c with item := items.size }) do
+    withReader (fun c => { c with item := items.size, mode := some .eval }) do
       static e.pos (← need e (← eval n e)).value
 
 /-! The value of a static expression in the file scope and the used fuel, without the records. -/
