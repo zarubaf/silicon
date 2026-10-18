@@ -1,4 +1,5 @@
-// S013: a selector `.2` of a tuple in a `:=` target is out of range before the next index evaluates, so the call in the next index never runs.
+// S013: the indices of a `:=` target evaluate before the walk selects (section 5.2). The call in the index records its diagnostic, then the selector `.2` of the tuple is out of range.
+// OBSERVE: (string "idx") (int 0)
 // TOP M()
 fn idx() -> Nat {
     diagnostic("idx", 0);

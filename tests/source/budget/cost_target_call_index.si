@@ -1,4 +1,4 @@
-// A `:=` target through two nested arrays with a call in its second index. The call records a diagnostic after the first step selected. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// A `:=` target through two nested arrays with a call in its second index. The call records a diagnostic before the walk selects the steps. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
 // FUEL 235
 // TOP M()
 fn idx() -> Nat {
