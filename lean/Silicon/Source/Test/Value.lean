@@ -471,6 +471,24 @@ def huge : Nat → Ty
 #guard (tall 170).text.utf8ByteSize == 1024 && (tall 170).text.endsWith "]]]"
 #guard (wide 113).text.utf8ByteSize == 1017 && (wide 113).text.endsWith "UInt[8])"
 #guard (wide 114).text.utf8ByteSize == 1027 && (wide 114).text.endsWith "UInt[8..."
+#guard (wide (2 ^ 20)).text.utf8ByteSize == 1027 && (wide (2 ^ 20)).text.endsWith "UInt[8..."
+#guard (Value.tuple (Array.replicate (2 ^ 20) (.uint 8 0))).text.utf8ByteSize == 1027
+/-!
+Past the bound, each walk returns its text at once and visits no part. Thus a list of `2^20`
+parts adds one step after the bound, not one step for each part.
+-/
+example (o : String) (h : textLimit < o.utf8ByteSize) (t : Ty) : t.put o = o := by
+  unfold Ty.put; simp [h]
+example (o : String) (h : textLimit < o.utf8ByteSize) (ts : List Ty) : Ty.putAll o ts = o := by
+  unfold Ty.putAll; simp [h]
+example (o : String) (h : textLimit < o.utf8ByteSize) (ps : List TyParam) :
+    TyParam.putAll o ps = o := by
+  unfold TyParam.putAll; simp [h]
+example (o : String) (h : textLimit < o.utf8ByteSize) (v : Value) : v.put o = o := by
+  unfold Value.put; simp [h]
+example (o : String) (h : textLimit < o.utf8ByteSize) (xs : List Value) :
+    Value.putAll o xs = o := by
+  unfold Value.putAll; simp [h]
 def named (n : Nat) : Ty := .struct 0 "S" #[.str (String.ofList (List.replicate n 'a'))] Meta.static
 #guard (named 1019).text == "S[\"" ++ String.ofList (List.replicate 1019 'a') ++ "\"]"
 #guard (named 1020).text == "S[\"" ++ String.ofList (List.replicate 1020 'a') ++ "\"..."
