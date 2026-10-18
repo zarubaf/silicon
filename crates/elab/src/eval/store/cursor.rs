@@ -194,7 +194,7 @@ impl Store {
         let mut cur: &Agg = a;
         for (i, &k) in path.iter().enumerate() {
             cur = match cur {
-                Agg::Array(_, p) | Agg::Tuple(_, p) | Agg::Record(_, p) => {
+                Agg::Array(_, p) | Agg::Tuple(_, p) | Agg::Record(_, p) | Agg::List(_, p) => {
                     self.stepped(1);
                     match p.0.get(k) {
                         Some(x) => x,
@@ -202,7 +202,7 @@ impl Store {
                     }
                 }
                 Agg::Static(_) => return Located::Static,
-                Agg::Hw(_) | Agg::Ref(..) => return closed_at(i),
+                Agg::Hw(_) | Agg::Ref(..) | Agg::Handle(_) => return closed_at(i),
             };
         }
         let mut witness = Witness {
@@ -214,11 +214,11 @@ impl Store {
         loop {
             match cur {
                 Agg::Static(_) => return Located::Static,
-                Agg::Hw(_) | Agg::Ref(..) => {
+                Agg::Hw(_) | Agg::Ref(..) | Agg::Handle(_) => {
                     witness.closed = true;
                     break;
                 }
-                Agg::Array(n, p) | Agg::Tuple(n, p) | Agg::Record(n, p) => {
+                Agg::Array(n, p) | Agg::Tuple(n, p) | Agg::Record(n, p) | Agg::List(n, p) => {
                     let next = if n.leaves > 0 && witness.path.len() < limit {
                         p.0.get(n.heavy)
                     } else {

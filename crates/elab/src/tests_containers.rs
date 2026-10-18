@@ -212,16 +212,19 @@ fn hw(body: &str) -> String {
     )
 }
 
-/// A container holds static values and hardware values. A handle is `S010` at the element until
-/// slice 3. The totals include the lowering.
+/// A container holds static values, hardware values, and handles. The totals include the
+/// lowering.
 #[test]
-fn a_container_holds_hardware_elements_but_no_handle() {
+fn a_container_holds_hardware_elements_and_handles() {
     let top = |body: &str, arg: &str| top_cost(&hw(body), arg);
     assert_eq!(
         lowered_cost(&hw("  let t = (1, x);"), "M(1)"),
         "total 146\nM$1 103\n"
     );
-    assert_eq!(top("  let t = [r];", "M(1)"), "S010 5:12");
+    assert_eq!(
+        lowered_cost(&hw("  let t = [r];"), "M(1)"),
+        "total 138\nM$1 95\n"
+    );
     assert_eq!(
         top("  let h = x +% 1;\n  let u = [1, 2][h];", "M(1)"),
         "S011 6:18"

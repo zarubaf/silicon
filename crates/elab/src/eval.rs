@@ -687,12 +687,21 @@ impl Evaluator<'_> {
         matches!(o, Opnd::Static(out) if self.is_agg(out))
     }
 
-    /// Whether the result is a handle. A handle is the whole value of a local, so a reference
-    /// with a path is none, and the check does not walk it.
+    /// Whether the result is a handle: a local, or a leaf of a container of handles. The type of
+    /// the root tells if a path can end at a handle, so a reference into a root without the
+    /// handle flag walks no path.
     fn is_handle(&self, out: &Out) -> bool {
         match out {
             Out::Made(v) | Out::Named(v) | Out::Kept(v, _) => matches!(v, Val::Handle(_)),
-            Out::Ref(r) => r.path.is_empty() && matches!(self.store.root(&r.root), Val::Handle(_)),
+            Out::Ref(r) => match self.store.root(&r.root) {
+                Val::Handle(_) => r.path.is_empty(),
+                Val::Agg(a)
+                    if !r.path.is_empty() && a.stored_ty().is_some_and(TyId::holds_handles) =>
+                {
+                    matches!(self.store.at(r), Seen::Handle(_))
+                }
+                _ => false,
+            },
         }
     }
 
@@ -748,8 +757,12 @@ impl Evaluator<'_> {
     /// The typed use of the data `d` at the type `t`.
     fn conform_data(&mut self, pos: Pos, t: TyId, d: Opnd) -> Res<Val> {
         match d {
+            Opnd::Static(o) if self.is_handle(&o) => self.handle_wrong(pos, t, self.store.seen(&o)),
             Opnd::Static(o) if self.is_agg(&o) => Ok(self.typed_agg(pos, t, o)?.into_val()),
-            Opnd::Static(o) => Ok(Val::Static(self.conform(pos, t, o)?)),
+            Opnd::Static(o) => {
+                let v = self.conform(pos, t, o)?;
+                Ok(Agg::typed(&mut self.tys, t, v).into_val())
+            }
             Opnd::Hw(h) => {
                 let ty = self.graph.ty(h);
                 if ty == *self.tys.get(t) {
@@ -792,18 +805,31 @@ impl Evaluator<'_> {
     /// The handle type of the value equals `t`, else `S010`. The compare is an id compare, it has
     /// no charge, and nothing reads the value. An own output has no handle type, so its text
     /// names the fix: use it as data.
-    fn handle_use(&mut self, pos: Pos, t: TyId, out: Out) -> Res<Val> {
-        if let Seen::Handle(h) = self.store.seen(&out) {
+    fn handle_use(&mut self, pos: Pos, t: TyId, out: &Out) -> Res<Val> {
+        Ok(Val::Handle(self.handle_leaf(pos, t, out)?))
+    }
+
+    /// The handle of `out` at the handle type `t`: the same check as `handle_use`, for a caller
+    /// that stores the handle as a leaf of a container.
+    pub(super) fn handle_leaf(&mut self, pos: Pos, t: TyId, out: &Out) -> Res<Handle> {
+        if let Seen::Handle(h) = self.store.seen(out) {
             let h = h.clone();
             if self.handle_ty(&h) == Some(t) {
-                return Ok(self.store.take(out));
+                return Ok(h);
             }
         }
+        self.handle_wrong(pos, t, self.store.seen(out))
+    }
+
+    /// The error at `pos` of a typed use of `v` at the type `t` with the handle flag (Lean
+    /// `handleWrong`): `S010` with the text of `handle_use_text`. An own output has no handle
+    /// type, so its text names the fix: use it as data.
+    fn handle_wrong<T>(&self, pos: Pos, t: TyId, v: Seen<'_>) -> Res<T> {
         if let Seen::Handle(Handle::Res {
             kind: Resource::Output,
             path,
             ..
-        }) = self.store.seen(&out)
+        }) = v
         {
             let r = self.paths.source(*path, &self.syms.texts);
             return fail(
@@ -814,15 +840,34 @@ impl Evaluator<'_> {
                 ),
             );
         }
-        fail(
-            Code::S010,
-            pos,
+        fail(Code::S010, pos, self.handle_use_text(t, &self.about(v)))
+    }
+
+    /// The text of a wrong value or leaf `a` at the type `t` with the handle flag (section 6.2,
+    /// Lean `handleUseText`). A handle type gives "Typed use at a handle type". Another type, such
+    /// as `[Reg[UInt[8]]; 1]`, gives "Typed use at a container of handles".
+    pub(super) fn handle_use_text(&self, t: TyId, a: &str) -> String {
+        let ty = self.tys.text(t);
+        if self.tys.get(t).is_handle() {
             format!(
-                "expected `{}`, but the value is {}; a handle type takes only a handle of \
-                 exactly this type, so give such a handle or change the type",
-                self.tys.text(t),
-                self.about(self.store.seen(&out))
-            ),
+                "expected `{ty}`, but the value is {a}; a handle type takes only a handle of \
+                 exactly this type, so give such a handle or change the type"
+            )
+        } else {
+            format!(
+                "expected `{ty}`, but the value is {a}; a value of `{ty}` takes only handles of \
+                 exactly its handle types, so give such a value or change the type"
+            )
+        }
+    }
+
+    /// The text "Handle at a data leaf" of section 6.2 (Lean `dataLeafText`): it names the data
+    /// type `t` of the position in a container and the handle leaf `a` at it.
+    pub(super) fn data_leaf_text(&self, t: TyId, a: &str) -> String {
+        format!(
+            "expected `{}`, but the value is {a}; a literal element keeps its handle, so read it in \
+             the literal, for example `(r, read(r))`",
+            self.tys.text(t)
         )
     }
 
@@ -841,7 +886,7 @@ impl Evaluator<'_> {
     fn read_use(&mut self, pos: Pos, t: TyId, copies: bool, out: Out) -> Res<Val> {
         let out = self.settle(pos, t, out)?;
         let handle = self.is_handle(&out);
-        let d = self.data(pos, out)?;
+        let d = self.data_at(pos, t, out)?;
         if copies
             && handle
             && let Opnd::Static(o) = &d
@@ -850,6 +895,17 @@ impl Evaluator<'_> {
             self.charge(pos, self.size(o))?;
         }
         self.conform_data(pos, t, d)
+    }
+
+    /// The data of a result at a typed use at the type `t` (Lean `dataAt`). A position of a type
+    /// with the handle flag is `raw` (section 9.2), so it reads nothing: a handle and a container
+    /// keep their handles. A position of another type reads each handle (`data`).
+    pub(super) fn data_at(&mut self, pos: Pos, t: TyId, out: Out) -> Res<Opnd> {
+        if t.holds_handles() {
+            Ok(Opnd::of_out(out))
+        } else {
+            self.data(pos, out)
+        }
     }
 
     /// The data of a result at a use that reads it. A register, a wire, and an own output
@@ -1142,14 +1198,16 @@ impl Evaluator<'_> {
     }
 
     /// A binding of the local `id`. Only a value with a hardware leaf gets a core name. An
-    /// aggregate takes one version, and each of its hardware leaves gets a core `let`.
+    /// aggregate with a hardware leaf takes one version, and each of its hardware leaves gets a
+    /// core `let`. An aggregate without one, for example an array of handles, takes no version
+    /// (section 7.3).
     fn named(&mut self, pos: Pos, id: DeclId, v: Val) -> Res<Val> {
         match v {
             Val::Hw(h) => {
                 let path = self.fresh(id);
                 Ok(self.bind_hw(pos, path, h))
             }
-            Val::Agg(a) => {
+            Val::Agg(a) if a.leaves(&self.tys) > 0 => {
                 let path = self.fresh(id);
                 Ok(Val::Agg(Box::new(self.bind_agg(pos, path, *a)?)))
             }
@@ -1364,7 +1422,7 @@ impl Evaluator<'_> {
         let b = match self.store.seen(&b) {
             Seen::Handle(Handle::Inst { .. }) => return self.port_of(pos, b, field),
             // A field selection is a data context (section 9.2): a child input is `S017`.
-            Seen::Handle(Handle::Res { .. } | Handle::Mem(_) | Handle::Input { .. }) => {
+            Seen::Handle(Handle::Res { .. } | Handle::Input { .. }) => {
                 self.data(pos, b)?.into_out()
             }
             _ => b,

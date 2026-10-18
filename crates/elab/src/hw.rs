@@ -286,6 +286,17 @@ impl Val {
     pub(crate) fn ty(&self, g: &Graph, tys: &mut Types) -> Option<TyId> {
         self.seen().ty(g, tys)
     }
+
+    /// Whether the value has a hardware leaf (Lean `Val.hasHw`): a hardware value, or an
+    /// aggregate with a hardware leaf. A container of handles has none. A use that takes only
+    /// static values asks this, so it does not depend on the form of the value.
+    pub(crate) fn has_hw(&self, tys: &Types) -> bool {
+        match self {
+            Val::Hw(_) => true,
+            Val::Agg(a) => a.leaves(tys) > 0,
+            _ => false,
+        }
+    }
 }
 
 impl Seen<'_> {
@@ -321,9 +332,16 @@ impl Seen<'_> {
                 Handle::Domain(_) => "a domain",
             }
             .to_owned(),
+            // A node without a hardware leaf names its type only, because it is not hardware.
             Seen::Agg(a) => a.stored_ty().map_or_else(
                 || "hardware".to_owned(),
-                |t| format!("hardware {}", tys.text(t)),
+                |t| {
+                    if a.leaves(tys) == 0 {
+                        tys.text(t)
+                    } else {
+                        format!("hardware {}", tys.text(t))
+                    }
+                },
             ),
             Seen::Pending(..) => return None,
         })

@@ -447,7 +447,7 @@ impl Store {
             Val::Static(v) => Part::Value(Agg::Static(v)),
             Val::Hw(h) => Part::Value(Agg::Hw(h)),
             Val::Agg(a) => Part::Value(*a),
-            Val::Handle(_) => Part::Value(Agg::Static(Value::Unit)),
+            Val::Handle(h) => Part::Value(Agg::Handle(h)),
         }
     }
 
@@ -514,8 +514,10 @@ fn static_size(a: &Agg) -> u64 {
     while let Some(x) = work.pop() {
         match x {
             Agg::Static(v) => total = total.saturating_add(v.size()),
-            Agg::Array(_, p) | Agg::Tuple(_, p) | Agg::Record(_, p) => work.extend(p.0.iter()),
-            Agg::Hw(_) | Agg::Ref(..) => {}
+            Agg::Array(_, p) | Agg::Tuple(_, p) | Agg::Record(_, p) | Agg::List(_, p) => {
+                work.extend(p.0.iter());
+            }
+            Agg::Hw(_) | Agg::Ref(..) | Agg::Handle(_) => {}
         }
     }
     total

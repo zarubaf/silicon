@@ -660,6 +660,8 @@ impl Evaluator<'_> {
             crate::counters::add(crate::counters::Count::Bound, 1);
             match step {
                 Bind::Visit(Agg::Static(v), _) => done.push(Agg::Static(v)),
+                // A handle and a list node hold no hardware leaf, so they keep their form.
+                Bind::Visit(a @ (Agg::Handle(_) | Agg::List(..)), _) => done.push(a),
                 Bind::Visit(Agg::Hw(h), path) => {
                     let ty = self.graph.ty(h);
                     self.naming.lets.push(Let {
@@ -1078,7 +1080,12 @@ impl Evaluator<'_> {
         {
             limit::zero(&self.tys.meta(t).zero_size).map_err(at(pos))?;
         }
-        if hardware {
+        // A root of a type with the handle flag rebuilds its node, so it pays the new size too.
+        let handles = matches!(
+            self.store.root(&place.root),
+            Val::Agg(a) if a.stored_ty().is_some_and(TyId::holds_handles)
+        );
+        if hardware || handles {
             let new = u128::from(size.saturating_sub(old.size))
                 + u128::from(x.size(&self.graph, &self.tys));
             self.charge(pos, new)?;

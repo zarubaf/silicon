@@ -2,13 +2,14 @@
 //! The hardware aggregate of Lean `Source.Eval.Agg` (design section 5.1): a tree of static
 //! parts, hardware leaves, lazy references, and container nodes. Each node stores its type, its
 //! recursive size, its depth, and its number of hardware leaves, so no charge walks the tree.
-//! A reference holds its type and does not expand: its size, its depth, and its leaf count
+//! A handle is a leaf of size 1 and depth 1 with no hardware leaf, and a list node holds the
+//! elements of a list whose element type has the handle flag. A reference holds its type and does not expand: its size, its depth, and its leaf count
 //! come from the metadata of the type in constant work.
 //!
 //! Every walk over an aggregate keeps its own stack, so an aggregate of any depth is safe on
 //! any stack.
 
-use crate::hw::{Graph, HwId, Op, Seen, Val};
+use crate::hw::{Graph, Handle, HwId, Op, Seen, Val};
 use crate::names::{PathId, Paths, Step};
 use crate::types::{Ty, TyId, Types};
 use crate::value::Value;
@@ -59,15 +60,19 @@ pub(crate) struct Node {
 }
 
 /// A hardware aggregate. A `Static` part holds no hardware leaf, a `Hw` part is a hardware
-/// value, and a `Ref` refers to a part of a port, a register, a wire, or a child output. A node
-/// built by `Agg::node` has at least one hardware leaf: a node with none is a static value.
+/// value, and a `Ref` refers to a part of a port, a register, a wire, or a child output. A
+/// `Handle` is a handle leaf, and a `List` holds the elements of a list whose element type has
+/// the handle flag. A node built by `Agg::node` has at least one hardware leaf,
+/// or its type has the handle flag: a node with neither is a static value.
 pub(crate) enum Agg {
     Static(Value),
     Hw(HwId),
     Ref(Base, TyId),
+    Handle(Handle),
     Array(Node, Parts),
     Tuple(Node, Parts),
     Record(Node, Parts),
+    List(Node, Parts),
 }
 
 /// The parts of a container node. Its drop keeps its own stack, as the derived drop would
@@ -78,7 +83,11 @@ impl Drop for Parts {
     fn drop(&mut self) {
         let mut work: Vec<Agg> = std::mem::take(&mut self.0);
         while let Some(a) = work.pop() {
-            if let Agg::Array(_, mut p) | Agg::Tuple(_, mut p) | Agg::Record(_, mut p) = a {
+            if let Agg::Array(_, mut p)
+            | Agg::Tuple(_, mut p)
+            | Agg::Record(_, mut p)
+            | Agg::List(_, mut p) = a
+            {
                 work.append(&mut p.0);
             }
         }
@@ -98,7 +107,8 @@ impl Agg {
         let mut sum = 0u64;
         let mut cur = self;
         for &k in keys {
-            let (Agg::Array(_, p) | Agg::Tuple(_, p) | Agg::Record(_, p)) = cur else {
+            let (Agg::Array(_, p) | Agg::Tuple(_, p) | Agg::Record(_, p) | Agg::List(_, p)) = cur
+            else {
                 break;
             };
             sum = sum.saturating_add(p.0.len() as u64);
@@ -116,7 +126,8 @@ impl Agg {
             Agg::Static(v) => v.size(),
             Agg::Hw(h) => g.size(*h),
             Agg::Ref(_, t) => small(&tys.meta(*t).zero_size),
-            Agg::Array(n, _) | Agg::Tuple(n, _) | Agg::Record(n, _) => n.size,
+            Agg::Handle(_) => 1,
+            Agg::Array(n, _) | Agg::Tuple(n, _) | Agg::Record(n, _) | Agg::List(n, _) => n.size,
         }
     }
 
@@ -124,28 +135,29 @@ impl Agg {
     pub(crate) fn depth(&self, tys: &Types) -> u64 {
         match self {
             Agg::Static(v) => v.depth(),
-            Agg::Hw(_) => 1,
+            Agg::Hw(_) | Agg::Handle(_) => 1,
             Agg::Ref(_, t) => tys.zero_depth(*t),
-            Agg::Array(n, _) | Agg::Tuple(n, _) | Agg::Record(n, _) => n.depth,
+            Agg::Array(n, _) | Agg::Tuple(n, _) | Agg::Record(n, _) | Agg::List(n, _) => n.depth,
         }
     }
 
     /// The number of hardware leaves. Each leaf of a reference is a hardware leaf.
     pub(crate) fn leaves(&self, tys: &Types) -> u64 {
         match self {
-            Agg::Static(_) => 0,
+            Agg::Static(_) | Agg::Handle(_) => 0,
             Agg::Hw(_) => 1,
             Agg::Ref(_, t) => small(&tys.meta(*t).leaves),
-            Agg::Array(n, _) | Agg::Tuple(n, _) | Agg::Record(n, _) => n.leaves,
+            Agg::Array(n, _) | Agg::Tuple(n, _) | Agg::Record(n, _) | Agg::List(n, _) => n.leaves,
         }
     }
 
-    /// The type that a reference or a node stores. A static part and a hardware leaf look it up.
+    /// The type that a reference or a node stores. A static part and a hardware leaf look it up,
+    /// and a handle has its handle type (`Evaluator::handle_ty`).
     pub(crate) fn stored_ty(&self) -> Option<TyId> {
         match self {
-            Agg::Static(_) | Agg::Hw(_) => None,
+            Agg::Static(_) | Agg::Hw(_) | Agg::Handle(_) => None,
             Agg::Ref(_, t) => Some(*t),
-            Agg::Array(n, _) | Agg::Tuple(n, _) | Agg::Record(n, _) => Some(n.ty),
+            Agg::Array(n, _) | Agg::Tuple(n, _) | Agg::Record(n, _) | Agg::List(n, _) => Some(n.ty),
         }
     }
 
@@ -178,6 +190,7 @@ impl Agg {
     ) -> Option<Node> {
         let base = match tys.get(ty) {
             Ty::Array(elem, len) if len.to_u64() == u64::try_from(n).ok() => elem.depth(),
+            Ty::List(elem) => elem.depth(),
             Ty::Tuple(types) if types.len() == n => 0,
             Ty::Struct(_) | Ty::Enum(_) if tys.parts(ty).is_some_and(|p| p.types.len() == n) => {
                 ty.depth()
@@ -208,7 +221,7 @@ impl Agg {
     }
 
     /// The container of type `ty` with the parts `xs`, in its normal form: with no hardware
-    /// leaf it is a static value. A part is in its normal form too (`Evaluator::normalize`).
+    /// leaf and without the handle flag of its type it is a static value. A part is in its normal form too (`Evaluator::normalize`).
     /// The caller charged the size and checked the depth of `shape`.
     pub(crate) fn node(g: &Graph, tys: &Types, ty: TyId, xs: Vec<Agg>) -> Option<Agg> {
         let node = Agg::shape(g, tys, ty, &xs)?;
@@ -218,7 +231,8 @@ impl Agg {
     /// The container of the stored numbers `node` with the parts `xs`, in its normal form.
     pub(crate) fn finish(tys: &Types, node: Node, xs: Vec<Agg>) -> Agg {
         let ty = node.ty;
-        if node.leaves == 0 && xs.iter().all(|x| matches!(x, Agg::Static(_))) {
+        if node.leaves == 0 && !ty.holds_handles() && xs.iter().all(|x| matches!(x, Agg::Static(_)))
+        {
             let vs: Vec<Value> = xs
                 .into_iter()
                 .filter_map(|x| match x {
@@ -234,15 +248,16 @@ impl Agg {
             });
         }
         // `normalize` turns a reference without a hardware leaf into a static value, so a node
-        // with no hardware leaf has static parts only, and `heavy` points at a part that holds
-        // a leaf whenever the node has one.
+        // with no hardware leaf and without the handle flag has static parts only, and `heavy`
+        // points at a part that holds a leaf whenever the node has one.
         debug_assert!(
-            node.leaves > 0 || xs.iter().all(|x| matches!(x, Agg::Static(_))),
+            node.leaves > 0 || ty.holds_handles() || xs.iter().all(|x| matches!(x, Agg::Static(_))),
             "a node without a hardware leaf holds a part that is no static value"
         );
         match tys.get(ty) {
             Ty::Array(..) => Agg::Array(node, Parts(xs)),
             Ty::Tuple(_) => Agg::Tuple(node, Parts(xs)),
+            Ty::List(_) => Agg::List(node, Parts(xs)),
             _ => Agg::Record(node, Parts(xs)),
         }
     }
@@ -253,6 +268,7 @@ impl Agg {
         match self {
             Agg::Static(v) => Seen::Static(v),
             Agg::Hw(h) => Seen::Hw(*h),
+            Agg::Handle(h) => Seen::Handle(h),
             a => Seen::Agg(a),
         }
     }
@@ -263,18 +279,46 @@ impl Agg {
         match self {
             Agg::Static(v) => Val::Static(v),
             Agg::Hw(h) => Val::Hw(h),
+            Agg::Handle(h) => Val::Handle(h),
             a => Val::Agg(Box::new(a)),
         }
     }
 
-    /// The part that the value `v` gives, or the value itself if a handle or a literal that
-    /// waits has no part.
+    /// The part that the value `v` gives, or the value itself if a literal that waits has no
+    /// part. A handle is a handle leaf.
     pub(crate) fn of_val(v: Val) -> Result<Agg, Val> {
         match v {
             Val::Static(v) => Ok(Agg::Static(v)),
             Val::Hw(h) => Ok(Agg::Hw(h)),
+            Val::Handle(h) => Ok(Agg::Handle(h)),
             Val::Agg(a) => Ok(*a),
-            v @ (Val::Handle(_) | Val::Pending(..)) => Err(v),
+            v @ Val::Pending(..) => Err(v),
+        }
+    }
+
+    /// The static value `v` after its typed use at `t`, as an aggregate part (Lean `Agg.typed`).
+    /// A static value of a type with the handle flag holds no element, because an element that
+    /// holds a handle is a part of a node. Thus it is an empty array or an empty list, and it
+    /// becomes the empty node of its type. The conversion that made `v` paid for it.
+    pub(crate) fn typed(tys: &mut Types, t: TyId, v: Value) -> Agg {
+        if !t.holds_handles() {
+            return Agg::Static(v);
+        }
+        let (ty, elem) = match &v {
+            Value::Array(e, xs) if xs.is_empty() => (tys.array(*e, crate::int::Int::zero()), *e),
+            Value::List(e, xs) if xs.is_empty() => (tys.list(*e), *e),
+            _ => return Agg::Static(v),
+        };
+        let node = Node {
+            ty,
+            size: 1,
+            depth: 1 + elem.depth(),
+            leaves: 0,
+            heavy: 0,
+        };
+        match v {
+            Value::List(..) => Agg::List(node, Parts(Vec::new())),
+            _ => Agg::Array(node, Parts(Vec::new())),
         }
     }
 
@@ -284,15 +328,17 @@ impl Agg {
             Agg::Array(n, _) => Agg::Array(*n, Parts(xs)),
             Agg::Tuple(n, _) => Agg::Tuple(*n, Parts(xs)),
             Agg::Record(n, _) => Agg::Record(*n, Parts(xs)),
+            Agg::List(n, _) => Agg::List(*n, Parts(xs)),
             Agg::Static(v) => Agg::Static(v.clone()),
             Agg::Hw(h) => Agg::Hw(*h),
+            Agg::Handle(h) => Agg::Handle(h.clone()),
             Agg::Ref(b, t) => Agg::Ref(b.clone(), *t),
         }
     }
 
     fn parts(&self) -> &[Agg] {
         match self {
-            Agg::Array(_, xs) | Agg::Tuple(_, xs) | Agg::Record(_, xs) => &xs.0,
+            Agg::Array(_, xs) | Agg::Tuple(_, xs) | Agg::Record(_, xs) | Agg::List(_, xs) => &xs.0,
             _ => &[],
         }
     }
