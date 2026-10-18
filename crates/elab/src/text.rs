@@ -18,6 +18,15 @@ pub(crate) enum Piece<'a> {
     /// The literal form of a static argument.
     Lit(&'a Value),
     Ty(TyId),
+    /// The types of a list, with `, ` between them. A step takes the first and keeps the rest,
+    /// so the walk of a list with `2^20` parts stops soon after the bound (Lean `Ty.putAll`).
+    Tys(&'a [TyId]),
+    /// The parameter types of a function type, with `, ` between them.
+    Params(&'a [TyParam]),
+    /// The types of the values of a list, with `, ` between them.
+    Values(&'a [Value]),
+    /// The literal forms of a list of static arguments, with `, ` between them.
+    Lits(&'a [Value]),
     /// A parameter type of a function type, with `mut ` before it if it has the mark.
     Param(TyParam),
     Text(&'static str),
@@ -33,23 +42,16 @@ pub(crate) struct Text<'a> {
 }
 
 impl<'a> Text<'a> {
-    /// Pushes `items` so that they come off the stack in order with `sep` between.
-    fn push_list(
-        &mut self,
-        items: &'a [Value],
-        sep: &'static str,
-        piece: fn(&'a Value) -> Piece<'a>,
-    ) {
-        for (k, x) in items.iter().enumerate().rev() {
-            self.work.push(piece(x));
-            if k > 0 {
-                self.work.push(Piece::Text(sep));
-            }
+    /// Pushes the rest of a list behind its first part, with `, ` between them.
+    fn rest<T>(&mut self, rest: &'a [T], piece: fn(&'a [T]) -> Piece<'a>) {
+        if !rest.is_empty() {
+            self.work.push(piece(rest));
+            self.work.push(Piece::Text(", "));
         }
     }
 
     /// The node `ty`. Its parts wait on the stack.
-    pub(crate) fn ty_node(&mut self, tys: &'a Types, ty: &Ty) {
+    pub(crate) fn ty_node(&mut self, tys: &'a Types, ty: &'a Ty) {
         match ty {
             Ty::Bool => self.out.push_str("Bool"),
             Ty::Nat => self.out.push_str("Nat"),
@@ -74,23 +76,13 @@ impl<'a> Text<'a> {
                 self.out.push('(');
                 self.work
                     .push(Piece::Text(if parts.len() == 1 { ",)" } else { ")" }));
-                for (k, part) in parts.iter().enumerate().rev() {
-                    self.work.push(Piece::Ty(*part));
-                    if k > 0 {
-                        self.work.push(Piece::Text(", "));
-                    }
-                }
+                self.work.push(Piece::Tys(parts));
             }
             Ty::Fn(params, ret) => {
                 self.out.push_str("fn (");
                 self.work.push(Piece::Ty(*ret));
                 self.work.push(Piece::Text(") -> "));
-                for (k, p) in params.iter().enumerate().rev() {
-                    self.work.push(Piece::Param(*p));
-                    if k > 0 {
-                        self.work.push(Piece::Text(", "));
-                    }
-                }
+                self.work.push(Piece::Params(params));
             }
             Ty::Enum(e) => self.out.push_str(tys.enum_name(*e)),
             Ty::Struct(s) => {
@@ -99,7 +91,7 @@ impl<'a> Text<'a> {
                 if !spec.args().is_empty() {
                     self.out.push('[');
                     self.work.push(Piece::Text("]"));
-                    self.push_list(spec.args(), ", ", Piece::Lit);
+                    self.work.push(Piece::Lits(spec.args()));
                 }
             }
         }
@@ -131,7 +123,7 @@ impl<'a> Text<'a> {
                 self.out.push('(');
                 self.work
                     .push(Piece::Text(if xs.len() == 1 { ",)" } else { ")" }));
-                self.push_list(xs, ", ", Piece::Value);
+                self.work.push(Piece::Values(xs));
             }
             Value::Str(_) => self.out.push_str("String"),
         }
@@ -162,17 +154,17 @@ impl<'a> Text<'a> {
             Value::Array(_, xs) | Value::List(_, xs) => {
                 self.out.push('[');
                 self.work.push(Piece::Text("]"));
-                self.push_list(xs, ", ", Piece::Lit);
+                self.work.push(Piece::Lits(xs));
             }
             Value::Tuple(_, xs) => {
                 self.out.push('(');
                 self.work
                     .push(Piece::Text(if xs.len() == 1 { ",)" } else { ")" }));
-                self.push_list(xs, ", ", Piece::Lit);
+                self.work.push(Piece::Lits(xs));
             }
             Value::Record(t, xs) => {
                 self.work.push(Piece::Text(")"));
-                self.push_list(xs, ", ", Piece::Lit);
+                self.work.push(Piece::Lits(xs));
                 self.work.push(Piece::Text("("));
                 self.work.push(Piece::Ty(*t));
             }
@@ -190,6 +182,30 @@ impl<'a> Text<'a> {
                 Piece::Value(v) => self.value(v),
                 Piece::Lit(v) => self.lit(tys, v),
                 Piece::Ty(t) => self.ty_node(tys, tys.get(t)),
+                Piece::Tys(xs) => {
+                    if let Some((first, rest)) = xs.split_first() {
+                        self.rest(rest, Piece::Tys);
+                        self.work.push(Piece::Ty(*first));
+                    }
+                }
+                Piece::Params(xs) => {
+                    if let Some((first, rest)) = xs.split_first() {
+                        self.rest(rest, Piece::Params);
+                        self.work.push(Piece::Param(*first));
+                    }
+                }
+                Piece::Values(xs) => {
+                    if let Some((first, rest)) = xs.split_first() {
+                        self.rest(rest, Piece::Values);
+                        self.work.push(Piece::Value(first));
+                    }
+                }
+                Piece::Lits(xs) => {
+                    if let Some((first, rest)) = xs.split_first() {
+                        self.rest(rest, Piece::Lits);
+                        self.work.push(Piece::Lit(first));
+                    }
+                }
                 Piece::Param(p) => {
                     if p.mutable {
                         self.out.push_str("mut ");

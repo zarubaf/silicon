@@ -1470,4 +1470,16 @@ mod tests {
             assert!(worker.is_ok_and(|w| w.join().is_ok()));
         });
     }
+
+    /// The text of a type with `2^20` parts stops after the bound, and the walk visits no part
+    /// after it.
+    #[test]
+    fn the_text_of_a_wide_tuple_type_stops_at_the_bound() {
+        let mut tys = Types::default();
+        let u8t = tys.mk(Ty::UInt(8));
+        let wide = tys.tuple(vec![u8t; 1 << 20]);
+        let text = tys.text(wide);
+        assert_eq!(text.len(), 1027);
+        assert!(text.ends_with("UInt[8..."));
+    }
 }

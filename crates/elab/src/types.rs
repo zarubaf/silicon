@@ -778,7 +778,7 @@ impl Types {
     /// The source form of the node `ty`, for a message. A text stops after `TEXT_LIMIT`
     /// bytes, because a type shares its parts and its text can be far longer than its size.
     #[must_use]
-    pub fn text_of(&self, ty: &Ty) -> String {
+    pub fn text_of<'a>(&'a self, ty: &'a Ty) -> String {
         let mut out = Text::default();
         out.ty_node(self, ty);
         out.finish(self)
