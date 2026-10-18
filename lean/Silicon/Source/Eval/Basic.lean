@@ -648,8 +648,10 @@ and the name renders only in an error. `site` is the name of a function value wh
 signature evaluates: each depth check there reports at it. `inst` is the emitted name of the
 current instantiation, else `-`. `calls` holds the call frames from the module body, innermost
 first (section 8.2). A frame is the item name of the callee and the position of its call. A
-call adds its frame in one step, and the records share the list. `digest` makes the digest of an
-emitted name (section 7.1), so a test can replace it.
+call adds its frame in one step, and the records share the list. `call` is the number of the
+frame of the current call, and a module body has 0. It tells two calls of one function apart
+(section 6.2). `digest` makes the digest of an emitted name (section 7.1), so a test can replace
+it.
 -/
 structure Ctx where
   items : Array Resolve.Item
@@ -665,6 +667,7 @@ structure Ctx where
   site : Option Pos
   inst : String
   calls : List (String × Pos)
+  call : Nat
   digest : String → String
 
 /-! The source name of the item `i`, for an error text. -/
@@ -772,7 +775,7 @@ A memory of one instantiation (section 7.6): its name, its path, its word type, 
 its `mem` statement. `read` holds the request of its first `read_port` call: the address and the
 enable. `write` holds the request of its first `write_port` call: the address, the data, and the
 enable. Each part of a request is after its typed use. `readAt` and `writeAt` hold the
-positions of the first calls (section 6.2).
+positions of the first calls, each with the number of its call frame (`Ctx.call`, section 6.2).
 -/
 structure Mem where
   name : String
@@ -782,8 +785,8 @@ structure Mem where
   pos : Pos
   read : Option (Agg × Agg) := none
   write : Option (Agg × Agg × Agg) := none
-  readAt : Option Pos := none
-  writeAt : Option Pos := none
+  readAt : Option (Pos × Nat) := none
+  writeAt : Option (Pos × Nat) := none
 
 /-! The address width of a memory of the depth `n`: `max(1, ⌈log₂ n⌉)` (section 7.6). -/
 def addrWidth (n : Nat) : Nat := max 1 (Nat.log2 (n - 1) + 1)
@@ -866,19 +869,20 @@ structure Body where
   binds : Array Bind := #[]
 
 /-!
-A resource that needs one binding, by its number: its declaration, its bindings, and the
-position of its first binding.
+A resource that needs one binding, by its number: its declaration, its bindings, and its first
+binding. The first binding holds its position and the number of its call frame (`Ctx.call`).
 -/
 structure Need where
   name : String
   pos : Pos
   count : Nat
-  first : Option Pos := none
+  first : Option (Pos × Nat) := none
 
 /-!
 The work of the current instantiation. The resource number indexes `needs`, and the instance
 number indexes `bound`. The memories are in the names of the instantiation (`Naming.mems`).
-`inputs` counts the bindings of each child input, with the position of the first one. `dup`
+`inputs` counts the bindings of each child input, with the position and the call frame number
+of the first one. `dup`
 holds the first `S018` of a second binding or a second port call by position. `spent` is the
 fuel of the new children.
 -/
@@ -886,7 +890,7 @@ structure Work where
   body : Body
   needs : Array Need := #[]
   bound : Array Nat := #[]
-  inputs : Std.HashMap (Nat × Nat) (Nat × Pos) := {}
+  inputs : Std.HashMap (Nat × Nat) (Nat × Pos × Nat) := {}
   dup : Option (Pos × Breach) := none
   spent : Nat := 0
 

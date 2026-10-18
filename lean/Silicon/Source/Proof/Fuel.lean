@@ -998,13 +998,13 @@ theorem requestPart_f (p : Pos) (t : Ty) (v : Val) :
     Follows cap (requestPart p t v) (requestPart p t v) := by
   unfold requestPart; follows [readUse_f]
 
-theorem again_f (p b : Pos) : Follows cap (Elab.again p b) (Elab.again p b) := by
+theorem again_f (p : Pos) (b : Pos × Nat) : Follows cap (Elab.again p b) (Elab.again p b) := by
   unfold Elab.again; follows
 
 theorem breach_f (p : Pos) (x : Breach) : Follows cap (Elab.breach p x) (Elab.breach p x) := by
   unfold Elab.breach; follows
 
-theorem second_f (p : Pos) (r : Res) (b d : Pos) :
+theorem second_f (p : Pos) (r : Res) (b : Pos × Nat) (d : Pos) :
     Follows cap (Elab.second p r b d) (Elab.second p r b d) := by
   unfold Elab.second; follows [again_f]
 
