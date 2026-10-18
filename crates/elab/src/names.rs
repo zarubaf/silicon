@@ -383,7 +383,7 @@ impl Paths {
         Ok(())
     }
 
-    /// The source name of a resource at the path `p`: the first user field of the path, else
+    /// The source name of a resource at the path `p`: the innermost user field of the path, else
     /// its outer name (Lean `sourceOf`).
     pub(crate) fn source(&self, p: PathId, texts: &[String]) -> String {
         let text = |s: Sym| texts.get(s).cloned().unwrap_or_default();
@@ -392,7 +392,9 @@ impl Paths {
         loop {
             match self.nodes.get(at.0) {
                 Some(PathNode::Push(parent, step)) => {
-                    if let Step::User(s) = step {
+                    if let Step::User(s) = step
+                        && first.is_none()
+                    {
                         first = Some(*s);
                     }
                     at = *parent;
