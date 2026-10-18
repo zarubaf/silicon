@@ -1930,4 +1930,59 @@ of `_` is a `rest` node over the other selects.
   ["a = (onehot (share 0 (op (ref c) (bool true))) (rest (share 0 (op (ref c) (bool true)))) " ++
     "(ref x) (resize (ref y)))"]
 
+/-!
+A handle type is not hardware data (section 5.1). A port, a `reg`, a `wire`, and a memory word of
+a handle type are `S010` at the statement, and the text names the data type to use. A container
+that holds a handle type keeps the text of its position.
+-/
+def handleMods : String := "module D() {\n}\n"
+#guard cost (memBody "  reg r: Reg[UInt[8]] = 0;\n") "M" == "S010 2:3"
+#guard said (memBody "  reg r: Reg[UInt[8]] = 0;\n") ==
+  "`Reg[UInt[8]]` is a handle type, not hardware data; use its data type `UInt[8]`"
+#guard cost (memBody "  wire w: Wire[Bool];\n") "M" == "S010 2:3"
+#guard cost (memBody "  input i: Input[Bool];\n") "M" == "S010 2:3"
+#guard said (handleMods ++ memBody "  output o: Instance[D];\n") ==
+  "`Instance[D]` is a handle type, not hardware data; an instance has no data type, so read " ++
+    "its outputs as `u.q`"
+#guard cost (memBody "  mem m: [Reg[UInt[8]]; 4];\n") "M" == "S010 2:3"
+#guard said (memBody "  mem m: [Reg[UInt[8]]; 4];\n") ==
+  "`Reg[UInt[8]]` is a handle type, not hardware data; use its data type `UInt[8]`"
+#guard said (memBody "  wire w: [Reg[Bool]; 0];\n") ==
+  "a port, a register, and a wire need a hardware data type, not [Reg[Bool]; 0]"
+
+/-! The memory texts of a `mem` statement name their fix (section 6.2). -/
+#guard said (memBody "  mem m: [Int; 4];\n") ==
+  "a memory word is a nonempty hardware data type, not `Int`; use a type with at least one " ++
+    "bit, for example `UInt[8]`"
+#guard said (memBody "  mem m: [[UInt[65536]; 2]; 4];\n") ==
+  "a memory word has at most 65536 bits, not 131072; split the word over more than one memory"
+#guard said (memBody "  mem m: [Bool; 0];\n") ==
+  "a memory depth is 1 to 16777216, not 0; use a depth in this range"
+#guard said (memBody "  mem m: [Bool; true];\n") ==
+  "a memory depth is a static integer, not a value of `Bool`; write an integer, for example `16`"
+#guard said (memBody "  mem m: [Bool; []];\n") ==
+  "a memory depth is a static integer, not `[]`; write an integer, for example `16`"
+#guard said (memBody "  input x: UInt[4];\n  let h = x;\n  mem m: [Bool; h];\n") ==
+  "a memory depth is static, not a value of `UInt[4]`; compute the depth from static values"
+
+/-!
+A hardware argument of a handle type is at the start of the use. It is not a type (`S010`), or
+a memory depth that is not static (`S011`). An argument of `Instance` is static (`S011`).
+-/
+#guard cost (memBody "  input x: UInt[4];\n  let h = x;\n  let t = Reg[h];\n") "M" == "S010 4:11"
+#guard said (memBody "  input x: UInt[4];\n  let h = x;\n  let t = Reg[h];\n") ==
+  "the first argument of `Reg` is a type, not a value of `UInt[4]`; write a type, for example " ++
+    "`Reg[UInt[8]]`"
+#guard cost (memBody "  input x: UInt[4];\n  let h = x;\n  let t = Mem[Bool, h];\n") "M" ==
+  "S011 4:11"
+#guard (cost (memBody "  input x: UInt[4];\n  let h = 4;\n  let t = Mem[Bool, h];\n") "M")
+  |>.startsWith "total"
+#guard cost ("module C(comptime W: Nat) {\n}\n" ++
+  memBody "  input x: UInt[4];\n  let h = x;\n  let t = Instance[C, h];\n") "M" == "S011 6:11"
+#guard (cost ("module C(comptime W: Nat) {\n}\n" ++
+  memBody "  input x: UInt[4];\n  let h = 4;\n  let t = Instance[C, h];\n") "M").startsWith "total"
+/-! A parameter type error of `Instance[M, args]` is at its own node. -/
+#guard cost ("module B(comptime x: UInt[0]) {\n}\n" ++ memBody "  let t = Instance[B, 1];\n") "M" ==
+  "S012 1:22"
+
 end Silicon.Source.Test.Elab

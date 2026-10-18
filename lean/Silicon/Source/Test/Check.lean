@@ -248,9 +248,16 @@ shadows it.
 -/
 #guard ok (modBody "reg r: UInt[W] = 0;\nlet x = read(r);\nlet y = r.read();")
 #guard fails (fnBody "return read();") .S007 2 8
-#guard message (fnBody "return read(p, p);") == "`read` takes 1 argument(s), but it has 2"
+#guard message (fnBody "return read(p, p);") ==
+  "`read` takes 1 argument(s), but it has 2; write `read(h)` with one register or wire"
+#guard message (fnBody "return p.read(p);") ==
+  "`read` takes 1 argument(s), but it has 2; write `read(h)` with one register or wire"
+#guard message (fnBody "return read();") ==
+  "`read` takes 1 argument(s), but it has 0; write `read(h)` with one register or wire"
 #guard fails (fnBody "return p.read(p);") .S007 2 8
 #guard ok ("fn read(a: Bool, b: Bool) -> Bool { return a; }\n" ++ fnBody "return read(p, p);")
+#guard message ("fn read(a: Bool) -> Bool { return a; }\n" ++ fnBody "return read(p, p);") ==
+  "`read` takes 1 argument(s), but it has 2"
 
 /-! `S007`: `len` has one argument. The position is the call. -/
 #guard fails (fnBody "return len();") .S007 2 8

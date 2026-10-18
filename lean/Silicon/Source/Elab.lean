@@ -234,9 +234,11 @@ def slot (id : Nat) : EM (Option Slot) := monadLift (do return (← get).frame[i
 
 /-!
 A port, a register, and a wire have a hardware data type (section 5.1). The metadata gives it,
-so a type with a function type at any depth is `S010` with no walk. The type can be empty.
+so a type with a function type at any depth is `S010` with no walk. The type can be empty. A
+handle type names its data type (`notHandle`).
 -/
-def dataType (p : Pos) (t : Ty) : EM Ty :=
+def dataType (p : Pos) (t : Ty) : EM Ty := do
+  notHandle p t
   if t.info.data then pure t
   else fail .S010 p s!"a port, a register, and a wire need a hardware data type, not {t.text}"
 

@@ -329,6 +329,11 @@ def name (static : Bool) (pos : Pos) (n : String) : Ref → M Unit
         report .S005 pos s!"`{n}` is {r.text}; a static position needs a static value"
   | _ => pure ()
 
+/-! The fix of the `S007` text of the prelude `read` (section 6.2). Another callee has none. -/
+def readFix : Ref → String
+  | .fn .read => "; write `read(h)` with one register or wire"
+  | _ => ""
+
 /-!
 The arity of a call at `pos` with the callee `f` and `got` arguments. `h` is the type head of a
 type callee. The result is the callee: the modes of the parameters and the static positions.
@@ -349,7 +354,7 @@ def call (pos : Pos) (f : Resolve.Expr) (h : Option Head) (got : Nat) : M (Optio
     | .unknown => return none
   | none, .name _ g r =>
     let c ← callee r
-    if let some c := c then arity pos s!"`{g}`" c.modes.size got
+    if let some c := c then arity pos s!"`{g}`" c.modes.size got (readFix r)
     return c
   | none, _ => return none
 
@@ -366,7 +371,7 @@ def receiver (pos : Pos) (m : Ident) (r : Ref) (b : Option Nat) (got : Nat) :
     report .S007 pos s!"`{m.name}` has no parameter without `comptime` for the receiver"
     return none
   | some b =>
-    arity pos s!"`{m.name}`" c.modes.size (got + 1)
+    arity pos s!"`{m.name}`" c.modes.size (got + 1) (readFix r)
     return some (c, b)
 
 /-! The local of the root of a place, if the expression is a place with a local root. -/
