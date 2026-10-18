@@ -1,0 +1,13 @@
+// The value of `diagnostic` stays `raw`. An array of handles renders each handle with its kind, its data type, and its
+// core name (section 8.2).
+// TOP M()
+// CHECK: (module M
+// OBSERVE: (record 12 5 M () (string "rs") (array (reg (uint 8)) ((reg (uint 8) {{[^ )]+}}) (reg (uint 8) {{[^ )]+}}))))
+module M() {
+    input x: UInt[8];
+    reg r: UInt[8] = 0;
+    reg s: UInt[8] = 0;
+    r := x;
+    s := x;
+    diagnostic("rs", [r, s]);
+}

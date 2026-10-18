@@ -1,0 +1,21 @@
+// A binding with no hardware leaf takes no version (section 7.3). The array `[r, s]` holds only handles, so `a` and its
+// rebinding take no version and no `let` for a core name. The two `let` lines of `y` follow each other, and the second
+// reads the register `s` that the handle `a[0]` names.
+// TOP M()
+// CHECK: (let y (bits 8) x)
+// CHECK-NEXT: (let y$1v (bits 8) (add y s))
+// CHECK-NOT: a$
+// CHECK: (assign o y$1v)
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    reg r: UInt[8] = 0;
+    reg s: UInt[8] = 0;
+    r := x;
+    s := x;
+    let mut a = [r, s];
+    a = [s, r];
+    let mut y = x;
+    y = y +% read(a[0]);
+    o := y;
+}
