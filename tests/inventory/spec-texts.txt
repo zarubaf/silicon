@@ -1,0 +1,35 @@
+# The known gaps of the rule `spec-texts` (`cargo xtask check`, `xtask/src/spec_texts.rs`).
+#
+# One line for each gap: `<part> | <row> | <issue>`.
+#   part   one of `fix`, `lean`, `rust`, `pin`: the part of the text that is missing.
+#   row    the code and the case of a row of a message table of section 6.2, as the
+#          rule prints it, for example `S021 Uncovered value`.
+#   issue  the number of the issue that closes the gap, with no `#`.
+# A line that starts with `#` is a comment. An entry with no issue, or for a row that is not in
+# the spec, is an error.
+#
+# Two modes. `cargo xtask check` (and `just check`) reports an entry whose gap is closed as a
+# warning, so a commit that adds a text can pass. `cargo xtask spec-texts --strict`, which
+# `just ci` runs, makes it an error: remove the line in a `test` commit. A gap that no line
+# names is an error in both modes.
+lean | S011 Static part of a `match` | 311
+rust | S011 Static part of a `match` | 311
+lean | S011 Handle at a static position | 277
+rust | S011 Handle at a static position | 277
+pin | S011 Handle at a static position | 277
+lean | S010 Record of handles as data | 277
+rust | S010 Record of handles as data | 277
+pin | S010 Record of handles as data | 277
+lean | S004 Port in a `fn` | 279
+rust | S004 Port in a `fn` | 279
+pin | S004 Port in a `fn` | 279
+lean | S018 Second binding | 279
+rust | S018 Second binding | 279
+pin | S018 Second binding | 279
+fix | S010 `read` of another value | 314
+lean | S010 `read` of another value | 314
+rust | S010 `read` of another value | 314
+lean | S007 Arity of `read` | 314
+rust | S007 Arity of `read` | 314
+rust | S012 Width of a memory word | 314
+rust | S012 Memory depth out of range | 314
