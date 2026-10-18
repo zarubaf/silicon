@@ -807,11 +807,15 @@ theorem diagnose_f (p : Pos) (g : String) (m v : Val) :
     Follows cap (diagnose p g m v) (diagnose p g m v) := by
   unfold diagnose; follows [message_f]
 
+theorem readOf_f (p : Pos) (g : String) (vs : List Val) :
+    Follows cap (readOf p g vs) (readOf p g vs) := by
+  unfold readOf; follows [readRef_f]
+
 theorem primCall_f (p : Pos) (g : String) (h : PrimFn) (vs : List Val) :
     Follows cap (primCall p g h vs) (primCall p g h vs) := by
   unfold primCall
   follows [lenOf_f, dataBitsOf_f, static_f, data_f, apply_f, hwConvert_f, bounded_f,
-    diagnose_f, recast_f]
+    diagnose_f, recast_f, readOf_f]
 
 theorem bindParams_f {ty ty' : Resolve.TypeExpr → M Ty} (h : ∀ t, Follows cap (ty t) (ty' t))
     (p : Pos) (ps : List Resolve.Param) (args : List Val) :

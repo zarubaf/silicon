@@ -1401,16 +1401,50 @@ def diagnose (p : Pos) (g : String) (m v : Val) : M (Option Out) := do
   modify fun s => { s with records := s.records.push line }
   return some ⟨.static .unit, false, none⟩
 
+/-! The fix `{h}` of the `S010` text of `read` (section 6.2), by the kind of the value. -/
+def readHint : Val → String
+  | .handle (.mem ..) => "read a word with `read_port`"
+  | .handle (.inst ..) => "read an output of the instance, for example `u.q`"
+  | .handle (.domain _) => "a domain has no value, so remove the `read`"
+  | _ => "use the value directly, without `read`"
+
+/-!
+`read` at `p` with the values `vs` of its arguments, after its node and its name (section 5.4).
+`g` is the name of the callee. The argument evaluated in the `raw` context, so its copy charges
+first, and a handle has the size 1. A child input is `S017`. An own output, a memory, an
+instance, a domain, and a value that is not a handle are `S010`, each with its fix (section 6.2).
+Then the register or the wire reads by the rule of references (`readRef`). A depth check comes
+first. The read gives a hardware name, a lazy reference with no charge, or a new static value
+that charged its zero size. The result refers to the resource, so a binding of it is a copy,
+and the binding pays for the leaves before they expand. A new static value is no copy, so its
+zero size charges once.
+-/
+def readOf (p : Pos) (g : String) (vs : List Val) : M (Option Out) := do
+  charge p (vs.map Val.size).sum
+  let [v] := vs
+    | fail .S007 p (s!"`{g}` takes 1 argument(s), but it has {vs.length}" ++
+        Check.readFix (.fn .read))
+  match v with
+  | .handle (.res .reg _ t path) | .handle (.res .wire _ t path) =>
+    let r ← readRef p (.name path) t
+    return some ⟨r, !(r matches .static _), none⟩
+  | .handle (.input _ path q) =>
+    fail .S017 p (s!"the input `{q.name}` of `{sourceOf path}` is a target only; read the " ++
+      "value that you bind to it")
+  | v => fail .S010 p s!"`{g}` takes a register or a wire, not {v.about}; {readHint v}"
+
 /-!
 A call at `p` of the prelude function `h` other than `push` and `pop`, with the values `vs` of
 its arguments in the order of the parameters. `g` is the name of the callee. `len` only refers
-to its argument, and `data_bits` reads the metadata of its type. The others copy each argument.
+to its argument, and `data_bits` reads the metadata of its type. `read` reads a handle
+(`readOf`). The others copy each argument.
 `reinterpret` with an enum on one side converts between the enum and its bits (`recast`).
 -/
 def primCall (p : Pos) (g : String) (h : PrimFn) (vs : List Val) : M (Option Out) := do
   match h with
   | .len => return some ⟨.static (← lenOf p vs), false, none⟩
   | .dataBits => dataBitsOf p g vs
+  | .read => readOf p g vs
   | h =>
     charge p (vs.map Val.size).sum
     match h, vs with
