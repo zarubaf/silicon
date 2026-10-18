@@ -620,6 +620,7 @@ impl Evaluator<'_> {
         let saved = self.guard.replace(Guard {
             kind: GuardKind::Arm,
             depth: self.depth,
+            callee: None,
         });
         let base = self.store.parked_len();
         let ran = self.run_arms(pos, payload, arms, binders);
