@@ -191,18 +191,23 @@ def breach (p : Pos) (x : Breach) : Eval.M Unit :=
   modify fun s => { s with inst.work.dup := firstBreach s.inst.work.dup p x }
 
 /-!
-The helper of a second binding or port call at `p` whose first one is at `b`. When both are at
-`p`, one `:=` or call runs again, and in a function body its text names the function (section
-6.2).
+The helper of a second binding or port call at `p` whose first one is at `b` in the call frame
+`f`. When both are at `p`, one `:=` or call runs again. When the first one also ran in another
+call, the text names the function (section 6.2). A repeat in one call, for example in a
+`comptime for` of the function, keeps the plain text.
 -/
-def again (p b : Pos) : Eval.M (Option Nat) := do
-  if b == p then return (← read).helper else return none
+def again (p : Pos) (b : Pos × Nat) : Eval.M (Option Nat) := do
+  let c ← read
+  if b.1 == p && b.2 != c.call then return c.helper else return none
 
-/-! The `S018` data of a second binding at `p` of `r`, with its declaration at `d`. -/
-def second (p : Pos) (r : Res) (b d : Pos) : Eval.M Breach := do
+/-!
+The `S018` data of a second binding at `p` of `r`, with the first binding at `b` in the call
+frame of `b.2` and its declaration at `d`.
+-/
+def second (p : Pos) (r : Res) (b : Pos × Nat) (d : Pos) : Eval.M Breach := do
   match ← again p b with
   | some h => return .secondIn r h
-  | none => return .second r b d
+  | none => return .second r b.1 d
 
 /-!
 Records the binding of `t` to `h` at `p`. The second binding of one target is an `S018`, and
@@ -210,15 +215,16 @@ the first binding keeps its position for its text.
 -/
 def bindTarget (p : Pos) (t : Target) (h : Agg) : Eval.M Unit := do
   let w := (← get).inst.work
+  let here := (p, (← read).call)
   match t with
   | .own r k t path =>
     if let some n := w.needs[k]? then
-      if n.count == 1 then breach p (← second p (.own n.name) (n.first.getD p) n.pos)
+      if n.count == 1 then breach p (← second p (.own n.name) (n.first.getD here) n.pos)
       modify fun s => { s with inst.work.needs := s.inst.work.needs.modify k fun r =>
-        { r with count := n.count + 1, first := r.first <|> some p } }
+        { r with count := n.count + 1, first := r.first <|> some here } }
     modifyBody fun b => { b with binds := b.binds.push ⟨.own r t path, h, p⟩ }
   | .child k path q =>
-    let (c, b) := w.inputs.getD (k, q.sym) (0, p)
+    let (c, b) := w.inputs.getD (k, q.sym) (0, here)
     if c == 0 then
       modify fun s => { s with inst.work.bound := s.inst.work.bound.modify k (· + 1) }
     if c == 1 then

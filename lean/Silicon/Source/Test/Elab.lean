@@ -2989,9 +2989,10 @@ def staticUses : String :=
 
 /-!
 The `S018` texts of section 6.2. A second binding names the first binding and the declaration.
-When one `:=` of a function body runs again for one resource, the text names the function. A
-module body that runs one `:=` again in a `comptime for` keeps "Second binding". The port calls
-follow the same rule. On a tie of positions, the first recorded error wins.
+When one `:=` of a function body runs again for one resource in another call, the text names
+the function. A module body that runs one `:=` again in a `comptime for` keeps "Second binding",
+and so does one call that runs its `:=` again in a `comptime for`. The port calls follow the
+same rule. On a tie of positions, the first recorded error wins.
 -/
 def s018 (body : String) (pre : String := "") : String :=
   failure (pre ++ s!"module M() \{\n  input x: UInt[8];\n  input e: Bool;\n{body}}\n") 100000000
@@ -3056,5 +3057,21 @@ def memFns : String :=
 #guard s018 ("  mem m: [UInt[8]; 4];\n  let r = read_port(m, 0, e);\n  let a = wr(m, x, e);\n" ++
     "  let b = wr(m, x, e);\n") memFns ==
   s!"S018 5:3 {portIn "m" "write_port" "wr"}"
+-- One call that runs its `:=` or its `read_port` twice keeps the plain text.
+def driveLoop : String :=
+  "fn drive(w: Wire[UInt[8]], x: UInt[8]) -> () {\n  comptime for i in 0..2 {\n" ++
+  "    w := x;\n  }\n  return ();\n}\n"
+#guard s018 "  wire w: UInt[8];\n  drive(w, x);\n" driveLoop ==
+  s!"S018 3:5 {twice "w" "3:5" "10:3"}"
+def readLoop : String :=
+  "fn rd2(m: Mem[UInt[8], 4], e: Bool) -> UInt[8] {\n  comptime for i in 0..2 {\n" ++
+  "    let r = read_port(m, 0, e);\n  }\n  return 0;\n}\n"
+#guard s018 "  mem m: [UInt[8]; 4];\n  let a = rd2(m, e);\n  write_port(m, 0, x, e);\n" readLoop ==
+  "S018 3:13 the memory `m` has a second `read_port`; the first call is at 3:13; call " ++
+    "`read_port` once and keep its response in a `let`"
+-- Two calls from one call site in a `comptime for` of the module are two calls.
+#guard s018 "  wire w: UInt[8];\n  comptime for i in 0..2 {\n    drive(w, x);\n  }\n"
+    "fn drive(w: Wire[UInt[8]], x: UInt[8]) -> () {\n  w := x;\n  return ();\n}\n" ==
+  s!"S018 2:3 {twiceIn "w" "drive"}"
 
 end Silicon.Source.Test.Elab

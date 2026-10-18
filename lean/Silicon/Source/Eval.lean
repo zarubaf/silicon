@@ -1774,7 +1774,7 @@ has the size 1. The first argument is a raw context, so a memory is never read. 
 effect rule (`S016`), the typed uses in the order of the arguments, and the count of the call.
 A second call of one kind runs the same steps and charges, and it gives the same response. It
 keeps the first request and records its `S018` at the call, which waits for the end of the body.
-The first call keeps its position for the text (section 6.2).
+The first call keeps its position and its call frame number for the text (section 6.2).
 The response of `read_port` is a record of `ReadResponse[T]`: `data` refers to the word of the
 memory at the offset 0, and `valid` refers to `m$0rvalid` (section 7.6). It charges the zero
 size of its type before it exists, so it never walks the word. `write_port` gives `()`.
@@ -1786,12 +1786,13 @@ def portCall (p : Pos) (g : String) (h : PrimFn) (vs : List Val) (use : Ty → M
     | fail .S010 p s!"`{g}` needs a memory, not {(vs.head?.map Val.text).getD "nothing"}"
   if let some gd := (← read).guard then fail .S016 p (gd.effect g)
   let a := Ty.uint (addrWidth k)
-  let second (w : Bool) (first : Mem → Option Pos) : M Bool := do
+  let here := (p, (← read).call)
+  let second (w : Bool) (first : Mem → Option (Pos × Nat)) : M Bool := do
     let some m := (← get).naming.mems[id]? | return false
     let some b := first m | return false
     Elab.breach p <| match ← Elab.again p b with
       | some i => .portIn m.name w i
-      | none => .port m.name w b
+      | none => .port m.name w b.1
     return true
   match h, rest with
   | .readPort, [x, e] =>
@@ -1799,7 +1800,7 @@ def portCall (p : Pos) (g : String) (h : PrimFn) (vs : List Val) (use : Ty → M
     let en ← requestPart p .bool e
     unless ← second false (·.readAt) do
       modify fun s => { s with naming.mems := s.naming.mems.modify id fun m =>
-        { m with read := some (addr, en), readAt := some p } }
+        { m with read := some (addr, en), readAt := some here } }
     let r ← use t
     bounded p r.zeroDepth
     charge p r.info.zeroSize
@@ -1813,7 +1814,7 @@ def portCall (p : Pos) (g : String) (h : PrimFn) (vs : List Val) (use : Ty → M
     let en ← requestPart p .bool e
     unless ← second true (·.writeAt) do
       modify fun s => { s with naming.mems := s.naming.mems.modify id fun m =>
-        { m with write := some (addr, d, en), writeAt := some p } }
+        { m with write := some (addr, d, en), writeAt := some here } }
     return some ⟨.static .unit, false, none⟩
   | _, vs => fail .S010 p s!"`{g}` does not accept {vs.map Val.text}"
 
@@ -2759,7 +2760,8 @@ mutual
   each actual, then the body `body` at `ip` with the return type `ret`. The write-backs of its
   `mut` actuals then run in the frame of the caller. `c` is true for a `comptime fn`. The call
   sets the mode when it names no function and `c` holds, and it records `i` in a guard without
-  a record (section 9.4). Both are O(1), and the return of the call ends both.
+  a record (section 9.4). It sets `call` to the number of its frame (section 6.2). Each is O(1),
+  and the return of the call ends each.
   -/
   def invoke (n : Nat) (p : Pos) (i k : Nat) (c : Bool) (u : Ident) (ps : List Resolve.Param)
       (ret : Resolve.TypeExpr) (ip : Pos) (body : List Resolve.Stmt) (acts : List Actual) :
@@ -2768,7 +2770,7 @@ mutual
     let (r, outs) ← nested p <| inFrame none do
       let (path, fr) ← frameOf u.name (ctx.syms.items.getD i 0) (.call k)
       withReader (fun x => { x with
-          item := i, frame := fr, calls := (u.name, p) :: x.calls,
+          item := i, frame := fr, calls := (u.name, p) :: x.calls, call := fr.id,
           mode := x.mode <|> (if c then some (.static i) else none),
           guard := x.guard.map fun g => { g with callee := g.callee <|> some i } }) do
         for (q, a) in ps.zip acts do copyIn p c q (← typeExpr n q.ty) a
@@ -3022,7 +3024,7 @@ mutual
         naming := {} }
       let (made, used) ← measure do
         inFrame none <| withTheReader Ctx (fun c =>
-            { c with item := i, frame := ⟨none, 0⟩, inst := text, calls := [] }) do
+            { c with item := i, frame := ⟨none, 0⟩, inst := text, calls := [], call := 0 }) do
           for (q, t, v) in ps.zip tvs do
             bindLocal q.name.id ⟨some t, false, .static v⟩
           for d in ds do
@@ -3232,7 +3234,7 @@ of its top expression. The digest function is `Names.sha16`, and `Elab.observe` 
 -/
 def start (budget : Budget) (items : Array Resolve.Item) (top : Scan) : Ctx × St :=
   let syms := symbols items ((items.map scanItem).push top) (items.map scanRest)
-  (⟨items, budget.depth, 0, none, 0, syms, ⟨none, 0⟩, [], none, none, none, "-", [],
+  (⟨items, budget.depth, 0, none, 0, syms, ⟨none, 0⟩, [], none, none, none, "-", [], 0,
     Names.sha16⟩,
    ⟨budget.fuel, Array.replicate items.size .notStarted, {}, {}, {}, {}, {}, {}, {}, #[]⟩)
 
