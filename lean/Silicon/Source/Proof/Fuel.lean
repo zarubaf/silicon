@@ -14,13 +14,13 @@ equal. Only `charge` reads the fuel in the evaluator, and nothing catches an err
 function of the evaluator follows itself. The cap holds the invariant "fuel ≤ bound" of the run
 `y`. A run `y` within the cap never reaches the bound 0 when it has fuel for the work.
 
-`follows_all` gives `Follows n' (f n a) (f n' a)` for `eval`, `typeExpr`, `stmt`, and `block`
-at any two bounds `n` and `n'`. `Follows.shift` and `Follows.short` read off the two
-directions for one run. `observe_budget` is the budget boundary of `Eval.observeRun`, with the
-records: it needs only `∀ n n', Follows n' (act n) (act n')` of the action. `run_budget` is its
-projection to the result. The elaborator and the lowering prove this premise for their actions
-with the lemmas here (`Follows.bind` and the other lemmas of the monad, and the tactic
-`follows`).
+`Proof.Fuel.Inst` closes `follows_all`: it gives `Follows n' (f n a) (f n' a)` for `eval`,
+`typeExpr`, `stmt`, and `block` at any two bounds `n` and `n'`. `Follows.shift` and
+`Follows.short` read off the two directions for one run. `observe_budget` is the budget boundary
+of `Eval.observeRun`, with the records: it needs only `∀ n n', Follows n' (act n) (act n')` of the
+action. `run_budget` is its projection to the result. The elaborator and the lowering prove this
+premise for their actions with the lemmas here (`Follows.bind` and the other lemmas of the monad,
+and the tactic `follows`).
 -/
 namespace Silicon.Source.Eval.Fuel
 
@@ -1089,83 +1089,6 @@ theorem call_f (he : ∀ e, Follows m (eval k e) (eval m e))
     hold_f, release_f, shut_f, pushOnto_f, popFrom_f, primCall_f,
     portCall_f (responseTy_f ht _)]
 
-set_option maxHeartbeats 400000 in
-/--
-Each function of the evaluator at any bound `n` is followed by the same function at the
-bound `n'`, with each fuel up to `n'`. The proof splits each branch of the evaluator, so it
-needs more than the default heartbeats.
--/
-theorem follows_all : ∀ n,
-    (∀ n' e, Follows n' (eval n e) (eval n' e)) ∧
-    (∀ n' t, Follows n' (typeExpr n t) (typeExpr n' t)) ∧
-    (∀ n' s, Follows n' (stmt n s) (stmt n' s)) ∧
-    (∀ n' p ss, Follows n' (block n p ss) (block n' p ss))
-  | 0 => by
-    refine ⟨fun _ e => ?_, fun _ t => ?_, fun _ s => ?_, fun _ p ss => ?_⟩
-    · rw [eval.eq_def]; exact Follows.exhausted_left _ _
-    · rw [typeExpr.eq_def]; exact Follows.exhausted_left _ _
-    · rw [stmt.eq_def]; exact Follows.exhausted_left _ _
-    · rw [block.eq_def]; exact Follows.exhausted_left _ _
-  | k + 1 => by
-    obtain ⟨he, ht, hs, hb⟩ := follows_all k
-    refine ⟨fun n' e => ?_, fun n' t => ?_, fun n' s => ?_, fun n' p ss => ?_⟩
-    · rcases n' with _ | m
-      · rw [eval.eq_def (k + 1), eval.eq_def 0]
-        apply Follows.exhaust (cap := k)
-        intro _
-        follows [he k, ht k, index_f (he k) (ht k), name_f (he k) (ht k),
-          call_f (he k) (ht k) (hb k), spec_f (he k) (ht k), need_f, data_f, baseData_f, apply_f,
-          hwUnary_f, test_f, hwBinary_f, unify_f, mux_f, static_f, pick_f, element_f, tupleOf_f,
-          arrayOf_f, select_f, containerOp_f, arrayTy_f, field_f, strAt_f, hold_f, release_f,
-          changesOf_f, normalize_f, readRef_f, aggEq_f, enumUse_f (he k) (ht k), variantOf_f,
-          operands_f (he k), comparable_f, params_f (ht k), fnTy_f, structural_f, scrutTy_f,
-          matchArms_f, binderTys_f, bindArm_f, scrutParts_f, shared_f, matchHw_f]
-      · rw [eval.eq_def (k + 1), eval.eq_def (m + 1)]
-        apply Follows.charge_one
-        intro _
-        follows [he m, ht m, index_f (he m) (ht m), name_f (he m) (ht m),
-          call_f (he m) (ht m) (hb m), spec_f (he m) (ht m), need_f, data_f, baseData_f, apply_f,
-          hwUnary_f, test_f, hwBinary_f, unify_f, mux_f, static_f, pick_f, element_f, tupleOf_f,
-          arrayOf_f, select_f, containerOp_f, arrayTy_f, field_f, strAt_f, hold_f, release_f,
-          changesOf_f, normalize_f, readRef_f, aggEq_f, enumUse_f (he m) (ht m), variantOf_f,
-          operands_f (he m), comparable_f, params_f (ht m), fnTy_f, structural_f, scrutTy_f,
-          matchArms_f, binderTys_f, bindArm_f, scrutParts_f, shared_f, matchHw_f]
-    · rcases n' with _ | m
-      · rw [typeExpr.eq_def (k + 1), typeExpr.eq_def 0]
-        apply Follows.exhaust (cap := k)
-        intro _
-        follows [he k, ht k, index_f (he k) (ht k), name_f (he k) (ht k), spec_f (he k) (ht k),
-          typeOf_f, tupleTy_f, arrayTy_f, static_f, need_f, params_f (ht k), fnTy_f,
-          structural_f]
-      · rw [typeExpr.eq_def (k + 1), typeExpr.eq_def (m + 1)]
-        apply Follows.charge_one
-        intro _
-        follows [he m, ht m, index_f (he m) (ht m), name_f (he m) (ht m), spec_f (he m) (ht m),
-          typeOf_f, tupleTy_f, arrayTy_f, static_f, need_f, params_f (ht m), fnTy_f,
-          structural_f]
-    · rcases n' with _ | m
-      · rw [stmt.eq_def (k + 1), stmt.eq_def 0]
-        apply Follows.exhaust (cap := k)
-        intro _
-        follows [he k, ht k, hs k, hb k, placeAt_f (he k), need_f, copy_f, typedUse_f,
-          heldUse_f, known_f, named_f, bindLocal_f, test_f, int_f, range_f, iteration_f,
-          static_f, store_f, hold_f, release_f, shut_f]
-      · rw [stmt.eq_def (k + 1), stmt.eq_def (m + 1)]
-        apply Follows.charge_one
-        intro _
-        follows [he m, ht m, hs m, hb m, placeAt_f (he m), need_f, copy_f, typedUse_f,
-          heldUse_f, known_f, named_f, bindLocal_f, test_f, int_f, range_f, iteration_f,
-          static_f, store_f, hold_f, release_f, shut_f]
-    · rcases n' with _ | m
-      · rw [block.eq_def (k + 1), block.eq_def 0]
-        apply Follows.exhaust (cap := k)
-        intro _
-        follows [hs k]
-      · rw [block.eq_def (k + 1), block.eq_def (m + 1)]
-        apply Follows.charge_one
-        intro _
-        follows [hs m]
-
 end evaluator
 
 /-! The two directions of `Follows` for one run. -/
@@ -1241,12 +1164,5 @@ theorem run_budget {act : Nat → M α} (hact : ∀ n n', Follows n' (act n) (ac
   have r := observe_budget hact
     (Prod.ext rfl h : observeRun budget items act top = (_, .ok (a, u))) F
   ⟨fun hu => congrArg Prod.snd (r.1 hu), r.2⟩
-
-/-- The budget boundary of a static expression in the file scope. -/
-theorem evalExpr_budget {budget : Budget} {items : Array Resolve.Item} {e : Resolve.Expr}
-    {v : Value} {u : Nat} (h : evalExpr budget items e = .ok (v, u)) (F : Nat) :
-    (u ≤ F → evalExpr { budget with fuel := F } items e = .ok (v, u)) ∧
-    (F < u → ∃ p m, evalExpr { budget with fuel := F } items e = .error ⟨.S015, p, m⟩) :=
-  run_budget (fun n n' => by follows [(follows_all n).1 n', static_f, need_f]) h F
 
 end Silicon.Source.Eval.Fuel

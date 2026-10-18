@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: Apache-2.0
 import Silicon.Source.Check
-import Silicon.Source.Eval.Container
+import Silicon.Source.Eval.Inst
 
 /-!
 The evaluator of slice 1 with the budgets and the cost model of section 5.4 of the front-end
@@ -2223,11 +2223,84 @@ def matchHw (pos : Pos) (sel : Hw) (keys : List (Option Int)) (vs : List Val) : 
   | j => return (← armPart "match" pos leaf j xs).val
 
 /-!
+The index of each step of `sels` of a `:=` target, in source order (section 5.2). An index step
+charges 1, then its index evaluates by `ev` and is static (`S011`). Another step has no index
+here.
+-/
+def targetKeys (ev : Resolve.Expr → M (Option Out)) (sels : List Sel) :
+    M (List (Sel × Option Value)) := do
+  let mut keys : Array (Sel × Option Value) := #[]
+  for sel in sels do
+    match sel with
+    | .index q [i] =>
+      charge q 1
+      keys := keys.push (sel, some (← static i.pos (← need i (← ev i)).value))
+    | .index q _ =>
+      charge q 1
+      fail .S010 q "an index of a value has one argument"
+    | _ => keys := keys.push (sel, none)
+  return keys.toList
+
+/-! The value of the root `root` of a `:=` target. A local gives its value with no charge. -/
+def targetRoot (ev : Resolve.Expr → M (Option Out)) (root : Resolve.Expr) : M Val := do
+  match root with
+  | .name _ _ (.local id) => do
+    match (← get).frame[id]? with
+    | some sl => pure sl.value
+    | none => pure (← need root (← ev root)).value
+  | _ => pure (← need root (← ev root)).value
+
+/-!
+The part that the `:=` target `e` selects. A root that is not a local evaluates first. Then
+the indices evaluate (`targetKeys`), and a local root gives its value after them. One walk then
+runs the steps from the root outward (`Elab.targetStep`). Another root has no slot, and its value
+names it in the text of `S017`. The target is an identity, so it opens no window and charges
+no held root.
+-/
+def targetPart (ev : Resolve.Expr → M (Option Out)) (e : Resolve.Expr) : M Val := do
+  let (root, sels) := (chain e).getD (e, [])
+  let early ← match root with
+    | .name _ _ (.local _) => pure none
+    | _ => do pure (some (← targetRoot ev root))
+  let keys ← targetKeys ev sels
+  let mut v ← match early with
+    | some v => pure v
+    | none => targetRoot ev root
+  for key in keys do
+    v ← Elab.targetStep e.pos v key
+  return v
+
+/-!
+The target of a `:=` binding: a register, a wire, an own output, or a child input. A handle
+alias and the steps of `targetPart` can select it. Each other part is `S017` at the start of
+the target. `S018` counts the target by its resource.
+-/
+def target (ev : Resolve.Expr → M (Option Out)) (e : Resolve.Expr) : M Elab.Target := do
+  match ← targetPart ev e with
+  | .handle (.res r k t path) => return .own r k t path
+  | .handle (.input k path q) => return .child k path q
+  | v => fail .S017 e.pos (Elab.kindText v.about)
+
+/-!
+The value of a `:=` binding of the type `t` at `p`, after its typed use. A static scalar becomes
+a hardware constant. A static value of another type is empty or has only static leaves, so it
+stays static. A hardware value and a hardware aggregate stay as they are.
+-/
+def sinkValue (p : Pos) (t : Ty) : Val → M Agg
+  | .static v =>
+    match t with
+    | .bool | .uint _ | .sint _ => do return .hw (← lit p v)
+    | _ => pure (.static v)
+  | .hw h => pure (.hw h)
+  | .agg a => pure a
+  | v => fail .S010 p s!"{v.text} is not data"
+
+/-!
 The evaluator. `eval`, `typeExpr`, `stmt`, and `block` are the entry functions. Each charges
 one unit, then calls deeper with the bound `n`. The helpers `name`, `spec`, `index`, `params`,
-`placeAt`, `args`, `ctor`, `actuals`, `invoke`, and `call` get the bound `n` of their caller
-after its charge. They call entry functions, `spec`, which a name of a struct item uses, and
-the helpers that `call` uses.
+`placeAt`, `args`, `ctor`, `actuals`, `invoke`, `call`, `hwStmt`, and `instantiate` get the
+bound `n` of their caller after its charge. They call entry functions, `spec`, which a name of a
+struct item uses, and the helpers that `call` and `hwStmt` use.
 -/
 mutual
   def eval (b : Nat) (e : Resolve.Expr) : M (Option Out) :=
@@ -2779,8 +2852,11 @@ mutual
         if let some o ← eval n v then known o.value
         return none
       | .connect p .. | .reg p .. | .wire p .. | .mem p .. | .input p .. | .output p ..
-      | .inst p .. =>
-        fail .S011 p "a static evaluation makes no hardware"
+      | .inst p .. => do
+        -- Only a function body has a return type.
+        if (← read).ret.isSome then fail .S011 p "a static evaluation makes no hardware"
+        hwStmt n s
+        return none
       | .alias _ x ty => do
         bindLocal x.id ⟨some .type, false, .static (.type (← typeExpr n ty))⟩
         return none
@@ -2796,6 +2872,121 @@ mutual
         if let some r ← stmt n s then return some r
       return none
   termination_by (b, 3)
+
+  /--
+  A module statement: a port, a register, a wire, a memory, a `:=` binding, or an `instance`
+  (`Source.Eval.Inst`). `stmt` charged it.
+  -/
+  def hwStmt (n : Nat) (s : Resolve.Stmt) : M Unit :=
+    match s with
+    | .input p x ty | .output p x ty => do
+      let t ← Elab.dataType p (← typeExpr n ty)
+      let v ← Elab.port p (s matches .input ..) x t
+      bindLocal x.id ⟨some t, false, v⟩
+    | .reg p x ty init => do
+      if (← get).inst.work.body.domain.isNone then
+        fail .S017 p "a combinational module has no register"
+      let t ← Elab.dataType p (← typeExpr n ty)
+      let o ← need init (← eval n init)
+      copy p o
+      let v ← conform p t (← static p (← settle p t o.value))
+      let path ← fresh x.id x.name.name
+      Elab.modifyBody fun b => { b with regs := b.regs.push ⟨path, t, v, p⟩ }
+      bindLocal x.id ⟨some t, false, ← Elab.resource .reg path t p x.name.name⟩
+    | .wire p x ty => do
+      let t ← Elab.dataType p (← typeExpr n ty)
+      let path ← fresh x.id x.name.name
+      Elab.modifyBody fun b => { b with wires := b.wires.push ⟨path, t, p⟩ }
+      bindLocal x.id ⟨some t, false, ← Elab.resource .wire path t p x.name.name⟩
+    | .mem p x w d => do
+      if (← get).inst.work.body.domain.isNone then
+        fail .S017 p "a combinational module has no memory"
+      let t ← memWord p (← typeExpr n w)
+      let k ← memDepth p (← structural do return (← need d (← eval n d)).value)
+      let path ← fresh x.id x.name.name
+      let id := (← get).naming.mems.size
+      let m : Mem := { name := x.name.name, path := path, word := t, depth := k, pos := p }
+      modify fun s => { s with naming.mems := s.naming.mems.push m }
+      bindLocal x.id ⟨none, false, .handle (.mem id path t k)⟩
+    | .connect p tgt v => do
+      let t ← target (eval n) tgt
+      let o ← need v (← eval n v)
+      let ty := match t with
+        | .own _ _ ty _ => ty
+        | .child _ _ q => q.ty
+      Elab.bindTarget p t (← sinkValue p ty (← typedUse p ty o.ref o.value .value))
+    | .inst p u _ i xs => do
+      let tvs ← arguments (eval n) (typeExpr n) p i xs
+      let some (.module _ m _ ds _) := (← read).items[i]?
+        | fail .S010 p "an instance needs a module"
+      if (← get).inst.work.body.domain.isNone && !ds.isEmpty then
+        fail .S017 p s!"a combinational module has no clocked child `{m.name}`"
+      let (c, _) ← instantiate n p i tvs
+      let path ← fresh u.id u.name.name
+      let k := (← get).inst.work.body.children.size
+      Elab.modifyBody fun b => { b with children := b.children.push ⟨path, c, p, u.name.name⟩ }
+      modify fun s => { s with inst.work.bound := s.inst.work.bound.push 0 }
+      -- The converted arguments paid for their sizes, so the type adds no charge.
+      let t := Ty.inst i m.name (tvs.map (·.2)).toArray
+      bindLocal u.id ⟨none, false, .handle (.inst k path c t)⟩
+    | _ => pure ()
+  termination_by (n, 5)
+
+  /--
+  The instantiation of the module item `i` with the converted arguments `tvs` and their
+  parameter types, for the statement at `pos`. The parameters bind to them with no charge. The
+  result is its interface and its index among the done instantiations.
+  -/
+  def instantiate (n : Nat) (pos : Pos) (i : Nat) (tvs : List (Ty × Value)) :
+      M (Iface × Nat) := do
+    let some (.module mp m ps ds body) := (← read).items[i]?
+      | fail .S010 pos "an instance needs a module"
+    let vs := tvs.map (·.2)
+    let id : InstantiationId := ⟨m.name, vs⟩
+    let key ← Elab.serialize pos m.name vs
+    let s := (← get).inst
+    match s.table[key]? with
+    | some .inProgress =>
+      fail .S019 pos s!"the instantiation of `{m.name}` depends on itself"
+    | some (.done k) =>
+      match s.done[k]? with
+      | some d => return (d.iface, k)
+      | none => fail .S019 pos s!"the instantiation of `{m.name}` is not in the table"
+    | none => nested pos do
+      let name := moduleName (← read).digest id key
+      charge pos (byteSize name)
+      let text := encode name
+      if s.names.contains text then
+        fail .S019 pos s!"two instantiations have the emitted name `{text}`"
+      let parent := s.work
+      let naming := (← get).naming
+      modify fun t => { t with
+        inst.table := t.inst.table.insert key .inProgress,
+        inst.names := t.inst.names.insert text,
+        inst.work := { body := { domain := ds.head?.map fun (d : Binder) => d.name.name } },
+        naming := {} }
+      let (made, used) ← measure do
+        inFrame none <| withTheReader Ctx (fun c =>
+            { c with item := i, frame := ⟨none, 0⟩, inst := text, calls := [] }) do
+          for (q, t, v) in ps.zip tvs do
+            bindLocal q.name.id ⟨some t, false, .static v⟩
+          for d in ds do
+            bindLocal d.id ⟨none, false, .handle (.domain d.name.name)⟩
+          let _ ← block n mp body
+        Elab.bindings
+        let made := (← get).naming
+        modify fun t => { t with naming }
+        return made
+      let w := (← get).inst.work
+      let body := { w.body with lets := made.lets, mems := made.mems }
+      let c := Elab.iface name body
+      let k := (← get).inst.done.size
+      modify fun t => { t with
+        inst.table := t.inst.table.insert key (.done k),
+        inst.done := t.inst.done.push ⟨id, c, body, used - w.spent, mp⟩,
+        inst.work := { parent with spent := parent.spent + used } }
+      return (c, k)
+  termination_by (n, 4)
 end
 
 /-!
