@@ -1,5 +1,5 @@
-// S017: the base of the step decides, and the error comes before the index evaluates. The index is out of range, but the
-// base is a data array, so the error is `S017` and not `S013`.
+// S017: the base of the step decides, and the error comes before the range check of the index. The index is out of range,
+// but the base is a data array, so the error is `S017` and not `S013`.
 // TOP M()
 module M() {
     input x: UInt[8];
