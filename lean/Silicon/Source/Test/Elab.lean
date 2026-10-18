@@ -2480,6 +2480,16 @@ def hwElement : String := handleList "  let mut ys = list(P);\n  ys.push((r, i))
 #guard said (handleList "  xs.push(s);\n") == typedText "Reg[UInt[8]]" "a handle of `Reg[UInt[4]]`"
 
 /-!
+The hardware leaf of a `push` element is `S011` before the compare of a handle type. A read at
+a list of data that gives a hardware leaf is `S011` too (section 5.4, step 4).
+-/
+#guard cost (handleList "  xs.push(i);\n") "M" (fuel := 106) == "S011 20:11"
+#guard cost (handleList "  xs.push(i);\n") "M" (fuel := 105) == "S015 20:11"
+def readElement : String := handleList "  let mut ys = list(UInt[8]);\n  ys.push(r);\n"
+#guard cost readElement "M" (fuel := 118) == "S011 21:11"
+#guard cost readElement "M" (fuel := 117) == "S015 21:11"
+
+/-!
 A `push` checks the depth of the new element on its path (section 5.4). The type value of the
 depth 5 makes a tuple of the depth 6, so the path of `ys` reaches the depth 7.
 -/

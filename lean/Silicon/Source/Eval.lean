@@ -987,7 +987,9 @@ def valueUse (pos : Pos) (t : Ty) (copies : Bool) (v : Val) : M Val := do
 /-!
 The typed use of `v` at the type `t` at a position after its copy (section 5.4). A position of a
 handle type is in the `raw` context (section 9.2), so it keeps the handle (`handleUse`), also at
-an argument, a `return`, and a `field`. Then the value converts by the rule of its position.
+an argument, a `return`, and a `field`. Then the value converts by the rule of its position. A
+`push` element with a hardware leaf is `S011` before the compare of a handle type, and again
+when a read gives one (section 5.4).
 -/
 def siteUse (pos : Pos) (t : Ty) (copies : Bool) (v : Val) : Site α → M α
   | .binding | .value => valueUse pos t copies v
@@ -997,6 +999,7 @@ def siteUse (pos : Pos) (t : Ty) (copies : Bool) (v : Val) : Site α → M α
     | .handle _ => handleWrong pos t v
     | w => conformAgg pos t (← item q w)
   | .element x => do
+    if v.hasHw then fail .S011 x "a list holds no hardware value"
     if handleTy? t then return .handle (← handleUse pos t v)
     let w ← dataAt x t (← settle pos t v)
     if w.hasHw then fail .S011 x "a list holds no hardware value"
