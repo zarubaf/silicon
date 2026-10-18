@@ -47,6 +47,19 @@ impl Repo {
         Self { root, files }
     }
 
+    /// The repository narrowed to `paths`, or unchanged when `paths` is empty.
+    pub fn only(self, paths: &[PathBuf]) -> Self {
+        if paths.is_empty() {
+            return self;
+        }
+        let files = self
+            .files
+            .into_iter()
+            .filter(|f| paths.contains(&f.path))
+            .collect();
+        Self { files, ..self }
+    }
+
     pub fn read(&self, rel: &Path) -> Result<String> {
         let path = self.root.join(rel);
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))

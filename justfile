@@ -31,8 +31,8 @@ clippy:
 repo-check:
     cargo xtask check
 
-prose:
-    cargo xtask prose
+prose *files:
+    cargo xtask prose {{ files }}
 
 deny:
     cargo deny --log-level error check

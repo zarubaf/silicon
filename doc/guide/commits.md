@@ -62,7 +62,11 @@ An accepted ADR changes only in its `- Status:` line, and the status can become 
 | Hook         | Recipe            |
 | ------------ | ----------------- |
 | `pre-commit` | `just fmt-check`  |
+| `pre-commit` | `just prose`      |
+| `pre-commit` | `just clippy`     |
 | `commit-msg` | `just commit-msg` |
 | `pre-push`   | `just ci main`    |
+
+The `pre-commit` hook runs `just prose` on the staged Markdown and Lean files, and `just clippy` when the commit changes a Rust file. It does not run `lake build` or the test suites. The hook has no bypass flag.
 
 The `commit-msg` hook runs the message rules: `commit-subject`, `commit-scope`, `commit-length`, and `commit-attribution`. The rules for changed paths run in `commit-check` only.

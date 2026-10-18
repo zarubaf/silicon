@@ -72,8 +72,11 @@ enum Command {
     },
     /// Regenerate the vale vocabulary from `CONTEXT.md`.
     ValeVocab,
-    /// Regenerate the vale vocabulary, then lint tracked Markdown with vale and lychee.
-    Prose,
+    /// Regenerate the vale vocabulary, then lint tracked Markdown and Lean prose with vale and lychee.
+    Prose {
+        /// Lint only these files. The `pre-commit` hook passes the staged files. Empty means every tracked file.
+        files: Vec<PathBuf>,
+    },
     /// Check one commit message file. The `commit-msg` hook calls this.
     CommitMsg {
         /// Path of the message file.
@@ -152,7 +155,7 @@ fn main() -> Result<ExitCode> {
             vocab::write(&Repo::discover()?)?;
             Ok(ExitCode::SUCCESS)
         }
-        Command::Prose => Ok(if prose::run(&Repo::discover()?)? {
+        Command::Prose { files } => Ok(if prose::run(&Repo::discover()?.only(&files))? {
             ExitCode::SUCCESS
         } else {
             ExitCode::FAILURE
