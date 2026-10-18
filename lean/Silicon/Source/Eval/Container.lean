@@ -1185,15 +1185,15 @@ end
 /-!
 The measure charge of the aggregate `a` in a record (section 5.4). A static part charges its
 `Value.measureCharge`. A container node charges 1, and a reference charges its rendered
-containers (`Ty.renderCharge`). A hardware leaf has no container, so it charges nothing. A
-handle leaf charges 1 (section 5.4).
+containers (`Ty.renderCharge`). A hardware leaf and a handle leaf have no container, so they
+charge nothing (section 5.4). The byte charge pays for their text.
 -/
 mutual
   def Agg.renderCharge (specs : Specs) : Agg → Nat
     | .static v => v.measureCharge
     | .hw _ => 0
     | .ref _ t => Ty.renderCharge specs t.depth t
-    | .handle _ => 1
+    | .handle _ => 0
     | .array _ ⟨xs⟩ | .tuple _ ⟨xs⟩ | .record _ ⟨xs⟩ | .list _ _ ⟨xs⟩ =>
       1 + Agg.renderChargeAll specs xs
 
