@@ -150,11 +150,11 @@ fn the_other_effects_in_a_type_expression() {
     let ty = "  let x: UInt[g()] = 0;\n";
     assert_eq!(
         at(ty, "fn g() -> Nat { reg r: UInt[8] = 0; return 1; }\n"),
-        "S004 1:17"
+        "S016 1:17"
     );
     assert_eq!(
         at(ty, "fn g() -> Nat { mem q: [UInt[8]; 4]; return 1; }\n"),
-        "S004 1:17"
+        "S016 1:17"
     );
     assert_eq!(
         at(
@@ -173,7 +173,7 @@ fn the_other_effects_in_a_type_expression() {
     let g1 = "  let x: UInt[g(1)] = 0;\n";
     assert_eq!(
         at(g1, "fn g(x: UInt[8]) -> Nat { x := 1; return 1; }\n"),
-        "S011 1:27"
+        "S016 1:27"
     );
     assert_eq!(
         at(
@@ -240,6 +240,7 @@ fn each_text_of_s016_is_pinned_in_full() {
             true,
             "  let z = if (c) { read_port(q, a, c) } else { 0 };\n"
         )),
-        "a hardware arm has no graph effect such as `read_port`"
+        "a hardware arm has no graph effect such as `read_port`; call `read_port` before the `if` \
+         or `match`, and use its result in the arm"
     );
 }
