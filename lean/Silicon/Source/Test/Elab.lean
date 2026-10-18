@@ -2597,8 +2597,9 @@ def heldStatic (s k r : String) : String :=
   heldStatic "an argument of a comptime fn" "register" "r"
 
 /-!
-An own output and a domain have no handle type, but they are not static either. Thus they give
-the text "Handle at a static position" too, with the kind `output` or `domain` (section 6.2).
+An own output has no handle type, but it is not static either. Thus it gives the text "Handle
+at a static position" too, with the kind `output`. A domain has no data, so it gives the text
+"Domain at a static position" (section 6.2).
 -/
 #guard said (targets "  u.x := i;\n  let h = o;\n  instance v = K(h);\n") ==
   heldStatic "a module argument" "output" "o"
@@ -2609,7 +2610,8 @@ the text "Handle at a static position" too, with the kind `output` or `domain` (
 def domainArg : String :=
   "comptime fn g(x: Int) -> Int { return 0; }\nmodule M() domains(clk) {\n  let h = clk;\n" ++
     "  let z = g(h);\n}\n"
-#guard said domainArg == heldStatic "an argument of a comptime fn" "domain" "clk"
+#guard said domainArg == "an argument of a comptime fn holds the domain `clk`, but a domain " ++
+  "is never static; remove it from this static position"
 #guard cost domainArg "M" (fuel := 36) == "S011 4:11"
 #guard cost domainArg "M" (fuel := 35) == "S015 4:11"
 #guard cost (targets "  u.x := i;\n  let h = r;\n  let z = g(h);\n") "M" (fuel := 147) ==
