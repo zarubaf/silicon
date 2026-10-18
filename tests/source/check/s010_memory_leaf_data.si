@@ -1,0 +1,12 @@
+// S010: an array of memories in a `data` context. The register leaves of an array read, but a memory leaf has no data.
+// TOP M()
+module M() {
+    input d: UInt[8];
+    input c: Bool;
+    mem m: [UInt[8]; 4];
+    write_port(m, 0, d, c); let rr = m.read_port(0, c);
+    let ms = [m, m];
+    // expected-error S010 @+2
+    // expected-message: `m` is a memory, not data; read a word with `read_port`
+    let e = ms == ms;
+}

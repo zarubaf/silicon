@@ -1,0 +1,11 @@
+// S010: the arms of a hardware `if` read in a `data` context. A list of handles has no data form, so the read stops at the
+// list node.
+// TOP M()
+module M() {
+    input flag: Bool;
+    output o: Bool;
+    o := flag;
+    // expected-error S010 @+2
+    // expected-message: a `data` context does not read the list of handles `List[Reg[Bool]]`; read each element, for example `read(hs[0])`
+    let q = if (flag) { list(Reg[Bool]) } else { list(Reg[Bool]) };
+}

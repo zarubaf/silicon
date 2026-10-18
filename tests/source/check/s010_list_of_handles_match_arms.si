@@ -1,0 +1,14 @@
+// S010: the arms of a hardware `match` read in a `data` context. A list of handles has no data form, so the read stops at
+// the list node.
+// TOP M()
+module M() {
+    input s: UInt[1];
+    output o: Bool;
+    o := true;
+    // expected-error S010 @+2
+    // expected-message: a `data` context does not read the list of handles `List[Reg[Bool]]`; read each element, for example `read(hs[0])`
+    let q = match (s) {
+        0 => list(Reg[Bool]),
+        _ => list(Reg[Bool]),
+    };
+}

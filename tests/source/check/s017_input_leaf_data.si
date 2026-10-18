@@ -1,0 +1,16 @@
+// S017: an array of child inputs in a `data` context. A child input is no data, and its read is `S017`.
+// TOP M()
+module Leaf() {
+    input a: Bool;
+    output o: Bool;
+    o := a;
+}
+module M() {
+    input c: Bool;
+    instance u = Leaf();
+    u.a := c;
+    let ins = [u.a, u.a];
+    // expected-error S017 @+2
+    // expected-message: the input `a` of `u` is a target only; read the value that you bind to it
+    let e = ins == ins;
+}

@@ -1,0 +1,14 @@
+// S010: a handle where a tuple type with the handle flag stands. The formal takes only handles of exactly its handle types
+// inside a tuple.
+// TOP M()
+fn k(p: (Reg[UInt[8]], Wire[UInt[8]])) -> Nat {
+    return 1;
+}
+module M() {
+    input x: UInt[8];
+    reg r: UInt[8] = 0;
+    r := x;
+    // expected-error S010 @+2
+    // expected-message: expected `(Reg[UInt[8]], Wire[UInt[8]])`, but the value is a handle of `Reg[UInt[8]]`; a value of `(Reg[UInt[8]], Wire[UInt[8]])` takes only handles of exactly its handle types, so give such a value or change the type
+    let n = k(r);
+}

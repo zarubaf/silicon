@@ -1,0 +1,9 @@
+// S010: `==` reads its operands in a `data` context. A list of handles has no data form, so the read stops at the list
+// node. The text names the type of the list.
+// TOP M()
+module M() {
+    output o: Bool;
+    // expected-error S010 @+2
+    // expected-message: a `data` context does not read the list of handles `List[Reg[Bool]]`; read each element, for example `read(hs[0])`
+    o := list(Reg[Bool]) == list(Reg[Bool]);
+}
