@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The prelude of slices 1 and 2. A later slice adds its own names, so a use of one of them is
+//! The prelude of slices 1 to 3. A later slice adds its own names, so a use of one of them is
 //! `S003` until then. The prelude struct `ReadResponse` is an item, built here already resolved.
 
 use parse::ast::{Ident, Item, NodeId, Param, ParamMode, Pos, StructField, TypeExpr};
@@ -7,7 +7,8 @@ use parse::ast::{Ident, Item, NodeId, Param, ParamMode, Pos, StructField, TypeEx
 /// A name of the prelude: the scalar types and functions of slice 1, `Unit` and `len` of the
 /// containers of slice 2, `Type` and `data_bits` of the types as values, and `String`, `List`,
 /// `list`, `push`, `pop`, and `str` of the strings and the lists, and `read_port` and
-/// `write_port` of the memories, and `diagnostic` of the records.
+/// `write_port` of the memories, `diagnostic` of the records, and `Reg`, `Wire`, `Input`, `Mem`,
+/// `Instance`, and `read` of the handles.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Prelude {
     Bool,
@@ -32,6 +33,12 @@ pub enum Prelude {
     ReadPort,
     WritePort,
     Diagnostic,
+    Reg,
+    Wire,
+    Input,
+    Mem,
+    Instance,
+    Read,
 }
 
 impl Prelude {
@@ -59,6 +66,12 @@ impl Prelude {
             "read_port" => Prelude::ReadPort,
             "write_port" => Prelude::WritePort,
             "diagnostic" => Prelude::Diagnostic,
+            "Reg" => Prelude::Reg,
+            "Wire" => Prelude::Wire,
+            "Input" => Prelude::Input,
+            "Mem" => Prelude::Mem,
+            "Instance" => Prelude::Instance,
+            "read" => Prelude::Read,
             _ => return None,
         })
     }
@@ -77,6 +90,11 @@ impl Prelude {
                 | Prelude::SInt
                 | Prelude::String
                 | Prelude::List
+                | Prelude::Reg
+                | Prelude::Wire
+                | Prelude::Input
+                | Prelude::Mem
+                | Prelude::Instance
         )
     }
 
@@ -121,6 +139,7 @@ impl Prelude {
                 | Prelude::ReadPort
                 | Prelude::WritePort
                 | Prelude::Diagnostic
+                | Prelude::Read
         )
     }
 }
@@ -179,8 +198,15 @@ pub(crate) fn response_item() -> Item {
 /// The slice of a prelude name that a later slice adds, for the message of `S003`.
 pub(crate) fn later_slice(name: &str) -> Option<u8> {
     Some(match name {
-        "Reg" | "Wire" | "Mem" | "Input" | "Instance" | "Domain" | "read" => 3,
         "FieldInfo" | "TypeInfo" | "PortKey" | "PortInfo" => 4,
         _ => return None,
     })
 }
+
+/// The text of `S003` at `Domain`, which waits for more domains (#11).
+pub(crate) const DOMAIN_TEXT: &str = "`Domain` is not supported yet; it comes with more domains \
+    (#11); a module has one domain or none, so it needs no `Domain` value";
+
+/// The text of `S003` at a first argument of `Instance` that is not a module.
+pub(crate) const INSTANCE_TEXT: &str = "the first argument of `Instance` is not a module; write \
+    the module first, for example `Instance[Counter, 8]`";

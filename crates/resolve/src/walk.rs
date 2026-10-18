@@ -3,7 +3,7 @@
 //! of passes 2 and 3 apart, because pass 2 errors rank before pass 3 errors (design
 //! section 6.2). It recurses over the AST, so it runs on the front-end thread.
 
-use crate::prelude::{Prelude, RESPONSE, later_slice, node};
+use crate::prelude::{DOMAIN_TEXT, INSTANCE_TEXT, Prelude, RESPONSE, later_slice, node};
 use crate::scope::Scopes;
 use crate::{
     Call, Code, Decl, DeclId, Error, Kind, Resolved, Table, Target, VariantNames, VariantRef,
@@ -424,9 +424,9 @@ impl Walker {
             TypeExpr::Name { pos, id, name } => self.type_name(*pos, *id, name),
             TypeExpr::Index { base, args, .. } => {
                 self.ty(base);
-                for arg in args {
-                    self.expr(arg);
-                }
+                let inst = matches!(&**base, TypeExpr::Name { id, .. }
+                    if self.names.get(id) == Some(&Target::Prelude(Prelude::Instance)));
+                self.index_args(inst, args);
             }
             TypeExpr::Unit { .. } => {}
             TypeExpr::Tuple { elems, .. } => {
@@ -490,9 +490,9 @@ impl Walker {
             }
             Expr::Index { base, args, .. } => {
                 self.expr(base);
-                for arg in args {
-                    self.expr(arg);
-                }
+                let inst = matches!(&**base, Expr::Name { id, .. }
+                    if self.names.get(id) == Some(&Target::Prelude(Prelude::Instance)));
+                self.index_args(inst, args);
             }
             Expr::Field { base, .. } | Expr::Select { base, .. } => self.expr(base),
             Expr::ArrayType { elem, len, .. } => {
@@ -513,6 +513,40 @@ impl Walker {
                 }
             }
         }
+    }
+
+    /// The arguments of an index. The first argument of the prelude `Instance` (`inst`) resolves
+    /// by the ordinary scoping to a module item. Another first argument is `S003` at its start.
+    /// That error replaces each `S003` in the argument, as Lean `indexArgs` does.
+    fn index_args(&mut self, inst: bool, args: &[Expr]) {
+        let Some((first, rest)) = args.split_first() else {
+            return;
+        };
+        if inst {
+            self.module_argument(first);
+        } else {
+            self.expr(first);
+        }
+        for arg in rest {
+            self.expr(arg);
+        }
+    }
+
+    fn module_argument(&mut self, arg: &Expr) {
+        if let Expr::Name { id, name, .. } = arg
+            && let Some(module) = self.scopes.lookup(name)
+            && self.decls[module.0].kind == Kind::Module
+        {
+            self.names.insert(*id, Target::Decl(module));
+            return;
+        }
+        let before = self.unresolved.len();
+        // A name stays unresolved: it is the placeholder of Lean.
+        if !matches!(arg, Expr::Name { .. }) {
+            self.expr(arg);
+        }
+        self.unresolved.truncate(before);
+        self.reject(expr_pos(arg), INSTANCE_TEXT.to_owned());
     }
 
     /// An arm. The path of a variant pattern resolves as a variant path in an expression. The
@@ -661,6 +695,7 @@ impl Walker {
     fn unknown(&mut self, pos: Pos, name: &str) {
         let message = match later_slice(name) {
             Some(slice) => format!("`{name}` is not supported yet; it comes in slice {slice}"),
+            None if name == "Domain" => DOMAIN_TEXT.to_owned(),
             None => format!("`{name}` is not declared"),
         };
         self.reject(pos, message);
@@ -714,5 +749,30 @@ impl Walker {
             Some(_) => self.reject(pos, format!("`{name}` is not a module")),
             None => self.unknown(pos, name),
         }
+    }
+}
+
+/// The position of an expression.
+fn expr_pos(expr: &Expr) -> Pos {
+    match expr {
+        Expr::Num { pos, .. }
+        | Expr::Bool { pos, .. }
+        | Expr::Str { pos, .. }
+        | Expr::Name { pos, .. }
+        | Expr::Unary { pos, .. }
+        | Expr::Binary { pos, .. }
+        | Expr::Cond { pos, .. }
+        | Expr::Call { pos, .. }
+        | Expr::Method { pos, .. }
+        | Expr::Index { pos, .. }
+        | Expr::Field { pos, .. }
+        | Expr::Unit { pos }
+        | Expr::Tuple { pos, .. }
+        | Expr::Array { pos, .. }
+        | Expr::Select { pos, .. }
+        | Expr::Path { pos, .. }
+        | Expr::Match { pos, .. }
+        | Expr::ArrayType { pos, .. }
+        | Expr::FnType { pos, .. } => *pos,
     }
 }
