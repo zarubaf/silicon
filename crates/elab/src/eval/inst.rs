@@ -42,7 +42,7 @@ use crate::types::{Ty, TyId, Types};
 use crate::value::{InstantiationId, Value, int_size};
 use crate::{Budget, Code};
 use parse::StackError;
-use parse::ast::{Expr, Ident, Item, NodeId, Param, Pos, Stmt, TypeExpr, UnOp};
+use parse::ast::{Expr, Ident, Item, NodeId, Pos, Stmt, TypeExpr, UnOp};
 use resolve::{Kind as DeclKind, Resolved, Target as Ref};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -576,65 +576,6 @@ impl Evaluator<'_> {
                 format!("{} is not data", self.text(v.seen())),
             ),
         }
-    }
-
-    /// The arguments of an instantiation of the item `i` at `pos`, from left to right, after
-    /// their typed use (`typed_use`). Each argument is static (`S011`) when it evaluates. The
-    /// parent pays this work.
-    fn arguments(&mut self, pos: Pos, i: usize, xs: &[Expr]) -> Res<Vec<(TyId, Value)>> {
-        let base = self.store.parked_len();
-        for x in xs {
-            let o = self.eval(x)?;
-            let o = need(x, o)?;
-            if !matches!(self.store.seen(&o), Seen::Pending(..)) {
-                self.check_static(pos, &o)?;
-            }
-            self.store.park(o);
-        }
-        let outs = self.store.resume(base);
-        self.typed_use(pos, i, outs)
-    }
-
-    /// The typed use of the evaluated arguments `outs` of the module item `i` at `pos`. It
-    /// nests one level, in the scope of the module with a new frame, also for a repeat and for
-    /// a module without parameters. Each parameter type evaluates there with each earlier
-    /// parameter bound to its converted argument (`bind_params`). The recursive size of each
-    /// converted argument charges there, before its copy into the frame and before the next
-    /// parameter type. The values then move out of the frame. The result is each parameter type
-    /// with its converted argument.
-    fn typed_use(&mut self, pos: Pos, i: usize, outs: Vec<Out>) -> Res<Vec<(TyId, Value)>> {
-        let file = self.file;
-        let Some(Item::Module { params, .. }) = file.ast().get(i) else {
-            return fail(Code::S010, pos, "an instance needs a module".to_owned());
-        };
-        self.nested(pos, |ev| {
-            ev.in_frame(None, |ev| {
-                ev.in_item(i, ROOT, |ev| ev.charged_arguments(pos, params, outs))
-            })
-        })
-    }
-
-    /// `typed_use` in the frame of the module.
-    fn charged_arguments(
-        &mut self,
-        pos: Pos,
-        params: &[Param],
-        outs: Vec<Out>,
-    ) -> Res<Vec<(TyId, Value)>> {
-        let bound = self.bind_params(pos, params, outs)?;
-        let mut args = Vec::with_capacity(bound.len());
-        for ((t, o), q) in bound.into_iter().zip(params) {
-            let id = self.decl(&q.name)?;
-            let value = match self.store.unbind(id) {
-                Some(Slot {
-                    value: Val::Static(v),
-                    ..
-                }) => v,
-                _ => self.static_value(pos, o)?,
-            };
-            args.push((t, value));
-        }
-        Ok(args)
     }
 
     /// A `reg` statement. A register in a combinational module is `S017` before its type.
