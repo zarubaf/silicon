@@ -267,7 +267,7 @@ fn register(ev: &mut Evaluator<'_>, t: TyId) -> Val {
     Val::Handle(Handle::Res {
         kind: Kind::Reg,
         id: 0,
-        ty: ev.tys.get(t).clone(),
+        ty: t,
         path,
     })
 }

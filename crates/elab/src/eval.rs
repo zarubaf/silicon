@@ -719,8 +719,7 @@ impl Evaluator<'_> {
             Seen::Hw(h) => Ok(Opnd::Hw(h)),
             Seen::Pending(q, _) => no_type(q),
             Seen::Handle(Handle::Res { ty, path, .. }) => {
-                let (ty, path) = (ty.clone(), *path);
-                let t = self.tys.mk(ty);
+                let (t, path) = (*ty, *path);
                 match self.read_ref(pos, Base::Name(path), t)? {
                     Val::Hw(h) => Ok(Opnd::Hw(h)),
                     v => Ok(Opnd::Static(Out::Made(v))),
@@ -1183,8 +1182,7 @@ impl Evaluator<'_> {
             }))),
             Some(q) => {
                 let name = self.paths.child(None, q.sym);
-                let t = self.tys.mk(q.ty);
-                let v = self.read_ref(pos, Base::Out(path, name), t)?;
+                let v = self.read_ref(pos, Base::Out(path, name), q.ty)?;
                 Ok(if matches!(v, Val::Static(_)) {
                     Out::Made(v)
                 } else {

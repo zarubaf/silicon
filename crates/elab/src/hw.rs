@@ -184,7 +184,7 @@ pub(crate) enum Kind {
 pub(crate) struct Port {
     pub sym: Sym,
     pub input: bool,
-    pub ty: Ty,
+    pub ty: TyId,
     pub pos: Pos,
 }
 
@@ -196,7 +196,7 @@ pub(crate) enum Handle {
     Res {
         kind: Kind,
         id: usize,
-        ty: Ty,
+        ty: TyId,
         path: PathId,
     },
     /// A memory by its number in the memories of its instantiation. It is never data, so it

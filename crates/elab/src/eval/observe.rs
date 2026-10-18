@@ -469,7 +469,7 @@ impl Evaluator<'_> {
                 };
                 vec![
                     Piece::Text(kind),
-                    Piece::Node(ty),
+                    Piece::Node(self.tys.get(*ty)),
                     Piece::Text(" "),
                     name(*path),
                     Piece::Text(")"),
@@ -493,7 +493,7 @@ impl Evaluator<'_> {
                 let port_name = self.syms.texts.get(port.sym).map_or("", String::as_str);
                 vec![
                     Piece::Text("(input "),
-                    Piece::Node(&port.ty),
+                    Piece::Node(self.tys.get(port.ty)),
                     Piece::Text(" "),
                     name(*path),
                     Piece::Port(port_name),
