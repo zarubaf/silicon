@@ -1,0 +1,10 @@
+// An own output has no handle type, so as an element of a tuple literal it reads as data (section 5.1). The file has no
+// error: the element is the bit value of the output.
+// TOP M()
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    o := x;
+    let t = (o, 1);
+    let u = t.0 +% 1;
+}

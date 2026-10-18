@@ -1,0 +1,11 @@
+// S010: a domain has no value, so it is no element of a tuple.
+// TOP M()
+module M() {
+    let t = (
+        1,
+        // expected-error S010 @+2
+        // expected-message: the domain `clock` is not an element; a domain has no value, so remove it from the literal
+        clock,
+        2
+    );
+}

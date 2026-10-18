@@ -36,7 +36,6 @@ lean | S010 Instance as data | 278
 rust | S010 Instance as data | 278
 lean | S010 Domain element | 278
 rust | S010 Domain element | 278
-pin | S010 Domain element | 278
 lean | S017 `:=` target kind | 278
 rust | S017 `:=` target kind | 278
 lean | S017 Part as a `:=` target | 278
