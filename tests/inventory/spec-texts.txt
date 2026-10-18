@@ -38,6 +38,15 @@ rust | S011 Hardware in a `comptime fn` | 279
 pin | S011 Hardware in a `comptime fn` | 279
 rust | S011 Hardware in `eval` | 279
 pin | S011 Hardware in `eval` | 279
+lean | S017 Register in a combinational module | 279
+rust | S017 Register in a combinational module | 279
+pin | S017 Register in a combinational module | 279
+lean | S017 Memory in a combinational module | 279
+rust | S017 Memory in a combinational module | 279
+pin | S017 Memory in a combinational module | 279
+lean | S017 Clocked child in a combinational module | 279
+rust | S017 Clocked child in a combinational module | 279
+pin | S017 Clocked child in a combinational module | 279
 fix | S010 `read` of another value | 314
 lean | S010 `read` of another value | 314
 rust | S010 `read` of another value | 314
