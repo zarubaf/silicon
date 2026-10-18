@@ -51,6 +51,7 @@ pub(crate) struct PortDecl {
     pub sym: Sym,
     pub input: bool,
     pub ty: Ty,
+    pub tid: TyId,
     pub pos: Pos,
 }
 
@@ -196,7 +197,7 @@ impl Iface {
                 Port {
                     sym: q.sym,
                     input: q.input,
-                    ty: q.ty.clone(),
+                    ty: q.tid,
                     pos: q.pos,
                 },
             );
@@ -406,7 +407,7 @@ enum Target {
     Own {
         kind: Kind,
         id: usize,
-        ty: Ty,
+        ty: TyId,
         path: PathId,
     },
     Child {
@@ -494,7 +495,7 @@ impl Evaluator<'_> {
             Stmt::Input { pos, name, ty } | Stmt::Output { pos, name, ty } => {
                 let tid = self.type_expr(ty)?;
                 let t = self.data_type(*pos, tid)?;
-                let v = self.port(*pos, matches!(s, Stmt::Input { .. }), name, t)?;
+                let v = self.port(*pos, matches!(s, Stmt::Input { .. }), name, (t, tid))?;
                 let id = self.decl(name)?;
                 self.bind(
                     id,
@@ -519,12 +520,12 @@ impl Evaluator<'_> {
             } => self.mem_stmt(*pos, name, word, depth)?,
             Stmt::Wire { pos, name, ty } => {
                 let tid = self.type_expr(ty)?;
-                let t = self.data_type(*pos, tid)?;
+                self.data_type(*pos, tid)?;
                 let id = self.decl(name)?;
                 let path = self.fresh(id);
                 #[cfg(test)]
                 self.elab.work.body.wires.push(path);
-                let w = self.resource(Kind::Wire, path, t, *pos, self.sym(id));
+                let w = self.resource(Kind::Wire, path, tid, *pos, self.sym(id));
                 self.bind(
                     id,
                     Slot {
@@ -539,10 +540,9 @@ impl Evaluator<'_> {
                 let o = self.eval(value)?;
                 let o = need(value, o)?;
                 let ty = match &t {
-                    Target::Own { ty, .. } => ty.clone(),
-                    Target::Child { port, .. } => port.ty.clone(),
+                    Target::Own { ty, .. } => *ty,
+                    Target::Child { port, .. } => port.ty,
                 };
-                let ty = self.tys.mk(ty);
                 let copies = o.is_ref();
                 let v = self.copy_use(*pos, ty, copies, o)?;
                 let v = self.sink_value(*pos, ty, v)?;
@@ -602,7 +602,7 @@ impl Evaluator<'_> {
             init,
             pos,
         });
-        let reg = self.resource(Kind::Reg, path, ty, pos, self.sym(id));
+        let reg = self.resource(Kind::Reg, path, tid, pos, self.sym(id));
         self.bind(
             id,
             Slot {
@@ -773,7 +773,7 @@ impl Evaluator<'_> {
     }
 
     /// A resource that needs one binding. The result is its handle.
-    fn resource(&mut self, kind: Kind, path: PathId, ty: Ty, pos: Pos, name: Sym) -> Val {
+    fn resource(&mut self, kind: Kind, path: PathId, ty: TyId, pos: Pos, name: Sym) -> Val {
         let id = self.elab.work.needs.len();
         self.elab.work.needs.push(Need {
             name,
@@ -785,7 +785,7 @@ impl Evaluator<'_> {
 
     /// The port `name`. Its core name is its source name. The root frame counts it with the
     /// bindings of its name, so a name that is taken is `S019`.
-    fn port(&mut self, pos: Pos, input: bool, name: &Ident, ty: Ty) -> Res<Val> {
+    fn port(&mut self, pos: Pos, input: bool, name: &Ident, (ty, tid): (Ty, TyId)) -> Res<Val> {
         let id = self.decl(name)?;
         let sym = self.sym(id);
         let key = (ROOT.id, sym);
@@ -802,21 +802,21 @@ impl Evaluator<'_> {
             sym,
             input,
             ty: ty.clone(),
+            tid,
             pos,
         });
         let path = self.paths.child(None, sym);
         if input {
             // An input refers to its name. An empty one stays a reference, so only a read of it
             // pays its zero (`name`).
-            let t = self.tys.mk(ty);
-            let r = Agg::Ref(Base::Name(path), t);
-            if self.tys.meta(t).leaves.is_zero() {
+            let r = Agg::Ref(Base::Name(path), tid);
+            if self.tys.meta(tid).leaves.is_zero() {
                 Ok(Val::Agg(Box::new(r)))
             } else {
                 self.normalize(pos, r)
             }
         } else {
-            Ok(self.resource(Kind::Output, path, ty, pos, sym))
+            Ok(self.resource(Kind::Output, path, tid, pos, sym))
         }
     }
 
@@ -835,7 +835,7 @@ impl Evaluator<'_> {
                 Some(Val::Handle(Handle::Res { kind, id, ty, path })) => Ok(Target::Own {
                     kind: *kind,
                     id: *id,
-                    ty: ty.clone(),
+                    ty: *ty,
                     path: *path,
                 }),
                 Some(Val::Handle(Handle::Input { inst, path, port })) => Ok(Target::Child {
@@ -893,7 +893,11 @@ impl Evaluator<'_> {
                     need.count += 1;
                 }
                 w.body.binds.push(Bind {
-                    sink: Sink::Own { kind, ty, path },
+                    sink: Sink::Own {
+                        kind,
+                        ty: self.tys.get(ty).clone(),
+                        path,
+                    },
                     value: h,
                     pos,
                 });
@@ -914,7 +918,7 @@ impl Evaluator<'_> {
                         index: inst,
                         inst: path,
                         port: port_name(self.syms.texts.get(port.sym).map_or("", String::as_str)),
-                        ty: port.ty,
+                        ty: self.tys.get(port.ty).clone(),
                     },
                     value: h,
                     pos,
