@@ -35,6 +35,7 @@ mod place;
 mod record;
 mod store;
 mod string;
+mod target;
 #[cfg(test)]
 mod tests_agg;
 #[cfg(test)]
@@ -1650,6 +1651,7 @@ impl Evaluator<'_> {
                         let o = ev.eval(value)?;
                         let o = need(value, o)?;
                         ev.copy(*cp, &o)?;
+                        ev.static_position(*cp, "a const", &o)?;
                         ev.static_handle(*cp, "a const", t)?;
                         let o = ev.settle(*cp, t, o)?;
                         Ok((ev.conform(*cp, t, o)?, t))

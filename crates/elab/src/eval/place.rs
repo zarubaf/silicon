@@ -22,7 +22,7 @@ use std::borrow::Cow;
 /// A step of a place or a read after its root: an index at the position with its arguments,
 /// a selector `.N` with the positions of its node and of its number literal, or a field `.f`.
 #[derive(Clone, Copy)]
-enum Sel<'a> {
+pub(super) enum Sel<'a> {
     Index(Pos, &'a [Expr]),
     Select(Pos, Pos, &'a Nat),
     Field(Pos, &'a Ident),
@@ -30,7 +30,7 @@ enum Sel<'a> {
 
 impl Sel<'_> {
     /// The position of the node of the step, where the step charges.
-    fn pos(&self) -> Pos {
+    pub(super) fn pos(&self) -> Pos {
         let (Sel::Index(q, _) | Sel::Select(q, ..) | Sel::Field(q, _)) = *self;
         q
     }
@@ -38,7 +38,7 @@ impl Sel<'_> {
 
 /// A step of a place whose index evaluated: an index at its node, with the position of its
 /// index expression and the index, or a selector `.N` as in `Sel`.
-enum Key<'a> {
+pub(super) enum Key<'a> {
     Index(Pos, Pos, Index),
     Select(Pos, Pos, &'a Nat),
     Field(Pos, &'a Ident),
@@ -195,7 +195,7 @@ fn fail_type_index<T>(q: Pos) -> Res<T> {
 }
 
 /// The root of a place and its steps from the root outward. Another target has no place.
-fn chain(e: &Expr) -> Option<(&Expr, Vec<Sel<'_>>)> {
+pub(super) fn chain(e: &Expr) -> Option<(&Expr, Vec<Sel<'_>>)> {
     let mut steps = Vec::new();
     let mut cur = e;
     loop {
@@ -859,7 +859,7 @@ impl Evaluator<'_> {
     }
 
     /// The step `key` on the aggregate `b`.
-    fn agg_key(&mut self, b: Out, key: &Key<'_>) -> Res<Out> {
+    pub(super) fn agg_key(&mut self, b: Out, key: &Key<'_>) -> Res<Out> {
         match key {
             Key::Index(q, xp, i) => self.agg_index(*q, *xp, b, i),
             Key::Select(q, r, index) => self.agg_select(*q, *r, index, b),
@@ -1116,7 +1116,7 @@ impl Evaluator<'_> {
     }
 
     /// The step `step` of a place or a read with its index, which gets its static check.
-    fn key<'a>(&mut self, step: &Sel<'a>) -> Res<Key<'a>> {
+    pub(super) fn key<'a>(&mut self, step: &Sel<'a>) -> Res<Key<'a>> {
         match *step {
             Sel::Index(q, args) => {
                 let [i] = args else {
