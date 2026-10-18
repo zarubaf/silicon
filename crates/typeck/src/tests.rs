@@ -1249,3 +1249,139 @@ fn a_binder_in_an_expression_is_a_plain_local() {
         .unwrap();
     assert!(crate::check_expr(&resolved, expr).is_ok());
 }
+
+#[test]
+fn s007_the_text_of_a_type_family_ends_with_its_signature() {
+    assert_eq!(
+        message("const A: UInt = 0;"),
+        "`UInt` takes 1 argument(s), but it has 0; write `UInt[W]`"
+    );
+    assert_eq!(
+        message("const A: SInt[1, 2] = 0;"),
+        "`SInt` takes 1 argument(s), but it has 2; write `SInt[W]`"
+    );
+    assert_eq!(
+        message("const A: List = 0;"),
+        "`List` takes 1 argument(s), but it has 0; write `List[T]`"
+    );
+    assert_eq!(
+        message("const A: Bool[1] = true;"),
+        "`Bool` takes 0 argument(s), but it has 1"
+    );
+}
+
+#[test]
+fn s007_the_handle_type_families_have_their_arguments() {
+    let counter = "module C(comptime W: Nat, comptime B: Bool) {}\n";
+    ok(&mod_body(
+        "type T = (Reg[UInt[W]], Wire[Bool], Input[UInt[8]]);\nlet m = Mem[UInt[8], 16];",
+    ));
+    ok(&format!(
+        "{counter}const T: Type = Instance[C, 8, true];\n\
+         fn f(x: Instance[C, 8, true]) -> Bool {{ return true; }}"
+    ));
+    ok("module D() {}\nconst T: Type = Instance[D];");
+    fails("const A: Reg = 0;", S007, 1, 10);
+    assert_eq!(
+        message("const A: Reg = 0;"),
+        "`Reg` takes 1 argument(s), but it has 0; write `Reg[T]`"
+    );
+    let wire = fn_body("let t = Wire[Bool, Bool];\nreturn p;");
+    fails(&wire, S007, 2, 9);
+    assert_eq!(
+        message(&wire),
+        "`Wire` takes 1 argument(s), but it has 2; write `Wire[T]`"
+    );
+    assert_eq!(
+        message("const A: Input = 0;"),
+        "`Input` takes 1 argument(s), but it has 0; write `Input[T]`"
+    );
+    fails("const A: Mem[UInt[8]] = 0;", S007, 1, 10);
+    assert_eq!(
+        message("const A: Mem[UInt[8]] = 0;"),
+        "`Mem` takes 2 argument(s), but it has 1; write `Mem[T, N]`"
+    );
+    fails("const A: Instance = 0;", S007, 1, 10);
+    assert_eq!(
+        message("const A: Instance = 0;"),
+        "`Instance` takes 1 argument(s), but it has 0; write `Instance[M, args]`"
+    );
+    fails(&fn_body("let t = Instance;\nreturn p;"), S007, 2, 9);
+    let short = format!("{counter}const T: Type = Instance[C, 8];");
+    fails(&short, S007, 2, 17);
+    assert_eq!(
+        message(&short),
+        "`Instance` takes 3 argument(s), but it has 2; write `Instance[M, args]`"
+    );
+    assert_eq!(
+        message(&format!(
+            "{counter}fn f(x: Instance[C, 8, true, 1]) -> Bool {{ return true; }}"
+        )),
+        "`Instance` takes 3 argument(s), but it has 4; write `Instance[M, args]`"
+    );
+    fails(
+        "module D() {}\nconst T: Type = Instance[D, 1];",
+        S007,
+        2,
+        17,
+    );
+}
+
+#[test]
+fn s005_each_argument_of_a_handle_type_is_static() {
+    let body = mod_body("reg r: UInt[W] = 0;\nlet t = Reg[r];");
+    fails(&body, S005, 3, 13);
+    assert_eq!(
+        message(&body),
+        "`r` is a register; a static position needs a static value"
+    );
+    fails(
+        &mod_body("wire w: Bool;\nlet t = Mem[UInt[8], w];"),
+        S005,
+        3,
+        22,
+    );
+    fails(
+        "module C(comptime W: Nat, comptime B: Bool) {}\n\
+         module M() {\ninput a: UInt[8];\nlet t: Instance[C, a, true] = 0;\n}",
+        S005,
+        4,
+        20,
+    );
+    ok(&mod_body(
+        "reg r: UInt[W] = 0;\nlet t = Reg[UInt[W]];\nlet x: UInt[W] = r;",
+    ));
+}
+
+#[test]
+fn s007_read_has_one_argument() {
+    ok(&mod_body(
+        "reg r: UInt[W] = 0;\nlet x = read(r);\nlet y = r.read();",
+    ));
+    fails(&fn_body("return read();"), S007, 2, 8);
+    let fix = "; write `read(h)` with one register or wire";
+    assert_eq!(
+        message(&fn_body("return read(p, p);")),
+        format!("`read` takes 1 argument(s), but it has 2{fix}")
+    );
+    assert_eq!(
+        message(&fn_body("return p.read(p);")),
+        format!("`read` takes 1 argument(s), but it has 2{fix}")
+    );
+    assert_eq!(
+        message(&fn_body("return read();")),
+        format!("`read` takes 1 argument(s), but it has 0{fix}")
+    );
+    fails(&fn_body("return p.read(p);"), S007, 2, 8);
+    ok(&format!(
+        "fn read(a: Bool, b: Bool) -> Bool {{ return a; }}\n{}",
+        fn_body("return read(p, p);")
+    ));
+    assert_eq!(
+        message(&format!(
+            "fn read(a: Bool) -> Bool {{ return a; }}\n{}",
+            fn_body("return read(p, p);")
+        )),
+        "`read` takes 1 argument(s), but it has 2"
+    );
+}
