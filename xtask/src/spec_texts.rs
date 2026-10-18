@@ -55,9 +55,11 @@ struct Gap {
     issue: u32,
 }
 
-/// Reads the known gaps from the inventory, which `ALLOW_FILE` names and documents.
-fn parse_allow(text: &str) -> Result<Vec<Gap>> {
+/// Reads the known gaps from the inventory, which `ALLOW_FILE` names and documents. A malformed
+/// line is a problem in the second value and has no gap.
+fn parse_allow(text: &str) -> (Vec<Gap>, Vec<String>) {
     let mut gaps = Vec::new();
+    let mut problems = Vec::new();
     for (i, line) in text.lines().enumerate() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -66,19 +68,28 @@ fn parse_allow(text: &str) -> Result<Vec<Gap>> {
         let at = i + 1;
         let cells: Vec<&str> = line.split(" | ").map(str::trim).collect();
         let [part, row, issue] = cells[..] else {
-            bail!("{ALLOW_FILE}:{at}: write `<part> | <row> | <issue>`");
+            problems.push(format!(
+                "{ALLOW_FILE}:{at}: write `<part> | <row> | <issue>`"
+            ));
+            continue;
         };
         let part = match part {
             "fix" => Part::Fix,
             "lean" => Part::Lean,
             "rust" => Part::Rust,
             "pin" => Part::Pin,
-            other => bail!("{ALLOW_FILE}:{at}: the part `{other}` is not fix, lean, rust, or pin"),
+            other => {
+                problems.push(format!(
+                    "{ALLOW_FILE}:{at}: the part `{other}` is not fix, lean, rust, or pin"
+                ));
+                continue;
+            }
         };
         let Ok(issue) = issue.parse() else {
-            bail!(
+            problems.push(format!(
                 "{ALLOW_FILE}:{at}: `{issue}` is not an issue number; name the issue that closes the gap"
-            );
+            ));
+            continue;
         };
         gaps.push(Gap {
             row: row.to_owned(),
@@ -86,7 +97,7 @@ fn parse_allow(text: &str) -> Result<Vec<Gap>> {
             issue,
         });
     }
-    Ok(gaps)
+    (gaps, problems)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -342,12 +353,18 @@ fn pin_regex(normal: &str) -> Result<Regex> {
     Ok(Regex::new(&format!("^{}$", parts.join(".*")))?)
 }
 
-fn violation(row: &Row, message: String) -> Violation {
+/// A finding of the rule. Every finding is a warning in `cargo xtask check`, so a commit that
+/// adds a row without its gap lines can pass. `--strict`, which `just ci` runs, makes it an error.
+fn finding(strict: bool, path: &str, line: Option<usize>, message: String) -> Violation {
     Violation {
-        path: Path::new(SPEC).to_path_buf(),
-        line: Some(row.line),
+        path: Path::new(path).to_path_buf(),
+        line,
         rule: RULE,
-        severity: Severity::Error,
+        severity: if strict {
+            Severity::Error
+        } else {
+            Severity::Warning
+        },
         message,
     }
 }
@@ -360,10 +377,17 @@ struct Sources {
     pins: Vec<(String, String)>,
 }
 
-/// `strict` makes a stale entry of the inventory an error. Otherwise it is a warning, so a commit
-/// that closes a gap passes `just check`. `just ci` runs the strict mode.
-fn violations(rows: &[Row], src: &Sources, allow: &[Gap], strict: bool) -> Result<Vec<Violation>> {
+fn violations(
+    rows: &[Row],
+    src: &Sources,
+    allow: &[Gap],
+    problems: &[String],
+    strict: bool,
+) -> Result<Vec<Violation>> {
     let mut out = Vec::new();
+    for problem in problems {
+        out.push(finding(strict, ALLOW_FILE, None, problem.clone()));
+    }
     for row in rows {
         let normal = normalize(&row.text);
         let pin = pin_regex(&normal)?;
@@ -382,38 +406,34 @@ fn violations(rows: &[Row], src: &Sources, allow: &[Gap], strict: bool) -> Resul
             let id = row.id();
             let gap = allow.iter().find(|g| g.row == id && g.part == part);
             match (ok, gap) {
-                (true, Some(g)) => out.push(Violation {
-                    severity: if strict {
-                        Severity::Error
-                    } else {
-                        Severity::Warning
-                    },
-                    ..violation(
-                        row,
-                        format!(
-                            "`{id}` now has a {}: remove its line from `{ALLOW_FILE}` (#{})",
-                            part.name(),
-                            g.issue
-                        ),
-                    )
-                }),
+                (true, Some(g)) => out.push(finding(
+                    strict,
+                    SPEC,
+                    Some(row.line),
+                    format!(
+                        "`{id}` now has a {}: remove its line from `{ALLOW_FILE}` (#{})",
+                        part.name(),
+                        g.issue
+                    ),
+                )),
                 (true, None) | (false, Some(_)) => {}
-                (false, None) => out.push(violation(row, missing(&id, part))),
+                (false, None) => {
+                    out.push(finding(strict, SPEC, Some(row.line), missing(&id, part)));
+                }
             }
         }
     }
     for g in allow {
         if !rows.iter().any(|r| r.id() == g.row) {
-            out.push(Violation {
-                path: Path::new(SPEC).to_path_buf(),
-                line: None,
-                rule: RULE,
-                severity: Severity::Error,
-                message: format!(
+            out.push(finding(
+                strict,
+                SPEC,
+                None,
+                format!(
                     "`{ALLOW_FILE}` names `{}`, which is not a row: remove its line",
                     g.row
                 ),
-            });
+            ));
         }
     }
     Ok(out)
@@ -448,12 +468,12 @@ fn pin_of(text: &str) -> Option<(String, String)> {
     Some((expected.code, expected.message?))
 }
 
-/// The rule in `cargo xtask check`: a stale entry of the inventory is a warning.
+/// The rule in `cargo xtask check`: every finding is a warning.
 pub fn check(repo: &Repo) -> Result<Vec<Violation>> {
     run(repo, false)
 }
 
-/// The rule in `cargo xtask spec-texts --strict`, which `just ci` runs.
+/// The rule in `cargo xtask spec-texts --strict`, which `just ci` runs: every finding is an error.
 pub fn run(repo: &Repo, strict: bool) -> Result<Vec<Violation>> {
     let rows = spec_rows(&repo.read(Path::new(SPEC))?)?;
     let mut src = Sources {
@@ -475,12 +495,8 @@ pub fn run(repo: &Repo, strict: bool) -> Result<Vec<Violation>> {
             src.pins.extend(pin_of(&text?));
         }
     }
-    violations(
-        &rows,
-        &src,
-        &parse_allow(&repo.read(Path::new(ALLOW_FILE))?)?,
-        strict,
-    )
+    let (allow, problems) = parse_allow(&repo.read(Path::new(ALLOW_FILE))?);
+    violations(&rows, &src, &allow, &problems, strict)
 }
 
 #[cfg(test)]
@@ -522,7 +538,7 @@ mod tests {
     }
 
     fn messages(rows: &[Row], s: &Sources, allow: &[Gap]) -> Vec<String> {
-        violations(rows, s, allow, true)
+        violations(rows, s, allow, &[], true)
             .unwrap()
             .into_iter()
             .map(|v| v.message)
@@ -639,14 +655,10 @@ mod tests {
         let stale = messages(&rows, &complete(), &gap);
         assert_eq!(stale.len(), 1);
         assert!(stale[0].contains("remove its line from `tests/inventory/spec-texts.txt` (#1)"));
-        let lax = violations(&rows, &complete(), &gap, false).unwrap();
+        let lax = violations(&rows, &complete(), &gap, &[], false).unwrap();
         assert_eq!((lax.len(), lax[0].severity), (1, Severity::Warning));
-        let strict = violations(&rows, &complete(), &gap, true).unwrap();
+        let strict = violations(&rows, &complete(), &gap, &[], true).unwrap();
         assert_eq!((strict.len(), strict[0].severity), (1, Severity::Error));
-        let mut missing = complete();
-        missing.pins.remove(1);
-        let lax = violations(&rows, &missing, &[], false).unwrap();
-        assert_eq!((lax.len(), lax[0].severity), (1, Severity::Error));
         let unknown = [Gap {
             row: "S999 Gone".to_owned(),
             part: Part::Pin,
@@ -656,9 +668,34 @@ mod tests {
     }
 
     #[test]
-    fn the_allow_file_parses_and_rejects_a_bad_line() {
-        let ok =
-            parse_allow("# c\n\nlean | S021 Uncovered value | 12\npin | S011 A `b` | 3\n").unwrap();
+    fn every_finding_is_a_warning_unless_strict() {
+        let rows = spec_rows(TABLE).unwrap();
+        let mut missing = complete();
+        missing.pins.remove(1);
+        missing.rust.remove(1);
+        let unknown = [Gap {
+            row: "S999 Gone".to_owned(),
+            part: Part::Pin,
+            issue: 1,
+        }];
+        let bad = ["ALLOW:1: malformed".to_owned()];
+        for strict in [false, true] {
+            let want = if strict {
+                Severity::Error
+            } else {
+                Severity::Warning
+            };
+            let got = violations(&rows, &missing, &unknown, &bad, strict).unwrap();
+            assert_eq!(got.len(), 4, "{got:?}");
+            assert!(got.iter().all(|v| v.severity == want), "{got:?}");
+        }
+    }
+
+    #[test]
+    fn the_allow_file_parses_and_reports_a_bad_line() {
+        let (ok, problems) =
+            parse_allow("# c\n\nlean | S021 Uncovered value | 12\npin | S011 A `b` | 3\n");
+        assert!(problems.is_empty());
         assert_eq!(ok.len(), 2);
         assert_eq!(
             (ok[1].row.as_str(), ok[1].part, ok[1].issue),
@@ -670,7 +707,8 @@ mod tests {
             "lean | S021 X | #3",
             "text | S021 X | 3",
         ] {
-            assert!(parse_allow(bad).is_err(), "{bad}");
+            let (gaps, problems) = parse_allow(bad);
+            assert!(gaps.is_empty() && problems.len() == 1, "{bad}");
         }
     }
 
