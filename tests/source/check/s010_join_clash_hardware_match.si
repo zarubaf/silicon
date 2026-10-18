@@ -1,0 +1,13 @@
+// S010: The arms of a hardware `match` join their types. Two handle types join only when they are one type.
+// TOP M()
+module M() {
+    input s: UInt[1];
+    output o: Bool;
+    o := true;
+    // expected-error S010 @+2
+    // expected-message: `Reg[Bool]` and `Wire[Bool]` have no common type; a handle type joins only with the same handle type, so give both sides one type
+    let q = match (s) {
+        0 => list(Reg[Bool]),
+        _ => list(Wire[Bool]),
+    };
+}
