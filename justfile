@@ -1,3 +1,5 @@
+set positional-arguments
+
 default:
     @just --list
 
@@ -32,7 +34,7 @@ repo-check:
     cargo xtask check
 
 prose *files:
-    cargo xtask prose {{ files }}
+    cargo xtask prose "$@"
 
 deny:
     cargo deny --log-level error check
