@@ -615,9 +615,6 @@ fn same_check(a: &Value, b: &Value, tys: &mut Types, joins: Joins) -> (Int, Resu
             (Value::Enum(s, ..), Value::Enum(t, ..)) => {
                 let done = join_of(*s, *t, tys, joins, &mut budget);
                 charge = charge.add(&done.charge);
-                if let Some(pair) = done.clash {
-                    return (charge, Err(clash_fault(pair, tys)));
-                }
                 if done.ty.is_none() {
                     return (charge, no_common_type(a, b, tys));
                 }
