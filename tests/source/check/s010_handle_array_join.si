@@ -1,0 +1,12 @@
+// S010: an array literal joins the types of its elements. A register and a wire are two handle types with no common type.
+// TOP M()
+module M() {
+    input x: UInt[8];
+    reg r: UInt[8] = 0;
+    wire w: UInt[8];
+    r := x;
+    w := x;
+    // expected-error S010 @+2
+    // expected-message: `Reg[UInt[8]]` and `Wire[UInt[8]]` have no common type; a handle type joins only with the same handle type, so give both sides one type
+    let a = [r, w];
+}
