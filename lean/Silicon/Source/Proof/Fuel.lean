@@ -376,7 +376,7 @@ theorem data_f (p : Pos) (v : Val) : Follows cap (data p v) (data p v) := by
   unfold data; follows [readPart_f, baseData_f]
 
 theorem dataAt_f (p : Pos) (t : Ty) (v : Val) : Follows cap (dataAt p t v) (dataAt p t v) := by
-  unfold dataAt; follows [data_f, baseData_f]
+  unfold dataAt; follows [data_f]
 
 theorem conform_f (p : Pos) (t : Ty) (v : Value) :
     Follows cap (conform p t v) (conform p t v) := by
@@ -673,17 +673,17 @@ theorem settle_f (p : Pos) (t : Ty) (v : Val) :
     Follows cap (settle p t v) (settle p t v) := by
   unfold settle; follows [build_f]
 
+theorem handleWrong_f (p : Pos) (t : Ty) (v : Val) :
+    Follows cap (handleWrong (α := α) p t v) (handleWrong p t v) := by
+  unfold handleWrong; follows
+
 theorem conformVal_f (p : Pos) (t : Ty) (v : Val) :
     Follows cap (conformVal p t v) (conformVal p t v) := by
-  unfold conformVal; follows [settle_f, dataAt_f, conform_f, typedAgg_f]
+  unfold conformVal; follows [settle_f, dataAt_f, conform_f, typedAgg_f, handleWrong_f]
 
 theorem readUse_f (p : Pos) (t : Ty) (v : Val) :
     Follows cap (readUse p t v) (readUse p t v) := by
   unfold readUse; follows [settle_f, dataAt_f, conformVal_f]
-
-theorem handleWrong_f (p : Pos) (t : Ty) (v : Val) :
-    Follows cap (handleWrong (α := α) p t v) (handleWrong p t v) := by
-  unfold handleWrong; follows
 
 theorem handleUse_f (p : Pos) (t : Ty) (v : Val) :
     Follows cap (handleUse p t v) (handleUse p t v) := by
@@ -697,7 +697,7 @@ theorem siteUse_f (p : Pos) (t : Ty) (c : Bool) (v : Val) (k : Site α) :
     Follows cap (siteUse p t c v k) (siteUse p t c v k) := by
   cases k <;> unfold siteUse <;>
     follows [handleUse_f, valueUse_f, conformAgg_f, typedAgg_f, item_f, dataAt_f, settle_f,
-      conform_f]
+      conform_f, handleWrong_f]
 
 theorem typedUse_f (p : Pos) (t : Ty) (c : Bool) (v : Val) (k : Site α) :
     Follows cap (typedUse p t c v k) (typedUse p t c v k) := by

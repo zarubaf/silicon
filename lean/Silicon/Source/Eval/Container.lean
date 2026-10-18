@@ -379,11 +379,11 @@ def data (pos : Pos) : Val → M Val
 
 /-!
 The data of a value at a typed use at the type `t`. A position of a type with the handle flag
-is `raw` (section 9.2). Thus a container there keeps its handles, and only a scalar handle reads
-(`baseData`). A position of another type reads each handle (`data`).
+is `raw` (section 9.2), so it reads nothing: a handle and a container keep their handles. A
+position of another type reads each handle (`data`).
 -/
 def dataAt (pos : Pos) (t : Ty) (v : Val) : M Val :=
-  if t.info.handles then baseData pos v else data pos v
+  if t.info.handles then pure v else data pos v
 
 /-!
 The selector `.i` at `pos`, with its number literal at `q`. The result is the number of the
