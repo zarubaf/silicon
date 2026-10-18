@@ -347,6 +347,17 @@ impl<'a> Parser<'a> {
         self.report(Code::S004, offset, format!("{what} is not supported yet"));
     }
 
+    /// A port in a `fn` without `comptime`, `S004`, at an offset.
+    pub(crate) fn port_in_fn(&mut self, offset: usize) {
+        self.report(
+            Code::S004,
+            offset,
+            "a helper cannot declare a port; declare the port in the module body and pass its \
+             value to the helper"
+                .to_owned(),
+        );
+    }
+
     /// A package path, `S004`, at an offset. Slice 3 has the path `E::V` of two names only.
     pub(crate) fn package_path(&mut self, offset: usize) {
         self.report(
