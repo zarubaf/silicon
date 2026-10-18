@@ -399,8 +399,10 @@ fn c3_pushes_and_pops_of_handles_refresh_by_a_delta() {
 }
 
 /// Issue #278, W8. The write-back of a `List[List[Reg[T]]]` formal checks the depth of the value
-/// from its stored numbers, so `k` calls on a list with `m` elements take work within a constant
-/// of their fuel, which pays the copy of the list.
+/// from its stored numbers. A call charges the copy of the list, so the work of `k` calls is
+/// within a constant of their fuel, and the work for each unit of the fuel of a call does not grow
+/// with the length `m` of the list. A walk over the nodes for the depth would add work with no
+/// fuel, and it would raise that ratio.
 #[test]
 fn c8_the_write_back_of_a_list_of_lists_reads_only_the_depth() {
     let at = |m: usize, k: usize, key: u64| {
@@ -416,11 +418,20 @@ fn c8_the_write_back_of_a_list_of_lists_reads_only_the_depth() {
         src.push_str("    o := true;\n}\n");
         passing(key, 1000, &src)
     };
-    let (n, twice) = (at(64, 8, 170), at(64, 16, 171));
-    doubles(&n, &twice);
-    assert!(twice.counts.total() <= 8 * twice.used);
-    let wide = at(128, 8, 172);
-    assert!(wide.counts.total() <= 8 * wide.used);
+    // The calls alone: the runs with `k` calls less the runs with none.
+    let per_call = |m: usize, key: u64| {
+        let (with, without) = (at(m, 8, key), at(m, 0, key + 1));
+        let work = with.counts.total() - without.counts.total();
+        let fuel = with.used - without.used;
+        (work, fuel)
+    };
+    let (small, large) = (per_call(64, 170), per_call(128, 172));
+    // A call does about half a unit of work for each unit of its fuel. A walk over the list adds
+    // about one unit for each node of the copy, which pushes the ratio above three quarters.
+    assert!(
+        4 * small.0 <= 3 * small.1 && 4 * large.0 <= 3 * large.1,
+        "the work and the fuel of the calls: {small:?} at 64, {large:?} at 128"
+    );
 }
 
 /// Issue #278, W9. A `pop` of an element that is deeper than the element type charges the size of
