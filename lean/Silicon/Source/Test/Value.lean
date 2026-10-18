@@ -180,20 +180,20 @@ def wrap : Ty := .struct 101 "Wrap" #[.type (.array (.array .bool 1) 1)] (Meta.s
 #guard (Ty.array (packet 8) 2).depth == 3
 
 /-! The metadata of the scalar types, of a tuple, and of a struct. -/
-#guard Ty.bool.info == ⟨1, 1, 1, 1, true, false, false⟩
-#guard (Ty.uint 65).info == ⟨65, 1, 2, 1, true, false, false⟩
-#guard Ty.unit.info == ⟨0, 0, 1, 1, true, false, false⟩
-#guard Ty.type.info == ⟨0, 0, 0, 1, false, false, false⟩
-#guard (Ty.tuple #[.bool, .int]).info == ⟨1, 1, 2, 2, false, false, false⟩
-#guard (packet 8).info == ⟨9, 2, 3, 2, true, false, false⟩
-#guard empty.info == ⟨0, 0, 1, 1, true, false, false⟩
-#guard wrap.info == ⟨0, 0, 1, 4, true, false, false⟩
+#guard Ty.bool.info == ⟨1, 1, 1, 1, true, false, false, false⟩
+#guard (Ty.uint 65).info == ⟨65, 1, 2, 1, true, false, false, false⟩
+#guard Ty.unit.info == ⟨0, 0, 1, 1, true, false, false, false⟩
+#guard Ty.type.info == ⟨0, 0, 0, 1, false, false, false, false⟩
+#guard (Ty.tuple #[.bool, .int]).info == ⟨1, 1, 2, 2, false, false, false, false⟩
+#guard (packet 8).info == ⟨9, 2, 3, 2, true, false, false, false⟩
+#guard empty.info == ⟨0, 0, 1, 1, true, false, false, false⟩
+#guard wrap.info == ⟨0, 0, 1, 4, true, false, false, false⟩
 #guard Meta.readCharge [Meta.finite 8, Meta.bool] == 8
 #guard (packet 8).info.intCharge == 4
 
 /-! `[T; N]` multiplies the numbers of `T` by `N`, and each product charges its two sizes. -/
-#guard (Ty.array (packet 8) 4).info == ⟨36, 8, 13, 3, true, false, false⟩
-#guard (Ty.array .bool 0).info == ⟨0, 0, 1, 2, true, false, false⟩
+#guard (Ty.array (packet 8) 4).info == ⟨36, 8, 13, 3, true, false, false, false⟩
+#guard (Ty.array .bool 0).info == ⟨0, 0, 1, 2, true, false, false, false⟩
 #guard Meta.arrayCharge (packet 8).info 4 == 3
 #guard (Ty.array (.uint 8) (2 ^ 64)).info.width == 2 ^ 67
 #guard Meta.arrayCharge (Ty.uint 8).info (2 ^ 64) == 6
@@ -206,7 +206,7 @@ def chain : Nat → Ty
   | 0 => .struct 1000 "S0" #[] (Meta.struct [Meta.finite 1] [])
   | k + 1 => let t := chain k; .struct (1001 + k) s!"S{k + 1}" #[] (Meta.struct [t.info, t.info] [])
 
-#guard (chain 200).info == ⟨2 ^ 200, 2 ^ 200, 3 * 2 ^ 200 - 1, 202, true, false, false⟩
+#guard (chain 200).info == ⟨2 ^ 200, 2 ^ 200, 3 * 2 ^ 200 - 1, 202, true, false, false, false⟩
 #guard (chain 200).size == 1
 #guard (chain 200).depth == 202
 #guard Meta.readCharge [(chain 199).info, (chain 199).info] == 26
@@ -259,9 +259,9 @@ def chain : Nat → Ty
 #guard (Value.list (.list .int) #[.list .int #[]]).depth == 3
 
 /-! `String` and `List[T]` are not hardware data. The depth of `List[T]` reads only `T`. -/
-#guard Ty.string.info == ⟨0, 0, 0, 1, false, false, false⟩
-#guard (Ty.list .bool).info == ⟨0, 0, 0, 2, false, false, false⟩
-#guard (Ty.list (packet 8)).info == ⟨0, 0, 0, 3, false, false, false⟩
+#guard Ty.string.info == ⟨0, 0, 0, 1, false, false, false, false⟩
+#guard (Ty.list .bool).info == ⟨0, 0, 0, 2, false, false, false, false⟩
+#guard (Ty.list (packet 8)).info == ⟨0, 0, 0, 3, false, false, false, false⟩
 #guard (Ty.list (chain 200)).info.depth == 203
 
 /-! The walk that measures a list charges 1 for its node. A string charges nothing. -/
@@ -301,14 +301,14 @@ def higher : Ty := .fn #[.mk false pred] (.array (.uint 8) 4)
 A function type is not hardware data: its three numbers are 0. Its metadata keeps its depth and
 sets the function flag.
 -/
-#guard incTy.info == ⟨0, 0, 0, 2, false, true, false⟩
-#guard pred.info == ⟨0, 0, 0, 2, false, true, false⟩
-#guard higher.info == ⟨0, 0, 0, 3, false, true, false⟩
+#guard incTy.info == ⟨0, 0, 0, 2, false, true, false, false⟩
+#guard pred.info == ⟨0, 0, 0, 2, false, true, false, false⟩
+#guard higher.info == ⟨0, 0, 0, 3, false, true, false, false⟩
 #guard (Ty.fn #[.mk true (.array .bool 1)] .bool).info.depth == 3
 
 /-! The function flag holds at any depth of a type, and a constructor takes it from its parts. -/
-#guard (Ty.array pred 0).info == ⟨0, 0, 1, 3, false, true, false⟩
-#guard (Ty.list pred).info == ⟨0, 0, 0, 3, false, true, false⟩
+#guard (Ty.array pred 0).info == ⟨0, 0, 1, 3, false, true, false, false⟩
+#guard (Ty.list pred).info == ⟨0, 0, 0, 3, false, true, false, false⟩
 #guard (Ty.tuple #[.bool, pred]).info.funcs
 #guard (Ty.array (.tuple #[.bool, .list pred]) 2).info.funcs
 #guard !(Ty.tuple #[.bool, .int]).info.funcs
@@ -382,8 +382,8 @@ def op : Ty := .enum 7 "Op" (Meta.enum 2 8)
 def flag : Ty := .enum 8 "Flag" (Meta.enum 1 0)
 #guard Meta.enumParts 2 8 == [Meta.finite 2, Meta.finite 8]
 #guard Meta.enumParts 1 0 == [Meta.finite 1]
-#guard op.info == ⟨10, 2, 3, 2, true, false, true⟩
-#guard flag.info == ⟨1, 1, 2, 2, true, false, true⟩
+#guard op.info == ⟨10, 2, 3, 2, true, false, true, false⟩
+#guard flag.info == ⟨1, 1, 2, 2, true, false, true, false⟩
 #guard op.size == 1 && op.depth == 2 && op.zeroDepth == 3
 #guard op.serialize == "(enum root Op ())"
 #guard op.text == "Op"
@@ -429,12 +429,23 @@ def counter : Ty := .inst 3 "Counter" #[.int 8]
 #guard (Ty.reg (.uint 8)).depth == 2 && (Ty.mem (.array .bool 4) 16).depth == 3
 #guard counter.depth == 2 && (Ty.inst 3 "Top" #[]).depth == 1
 #guard (Ty.inst 3 "C" #[.type (.reg (.array .bool 4))]).depth == 4
-#guard (Ty.reg (.uint 8)).info == ⟨0, 0, 0, 2, false, false, false⟩
-#guard (Ty.mem (.array .bool 4) 16).info == ⟨0, 0, 0, 3, false, false, false⟩
-#guard (Ty.wire op).info == ⟨0, 0, 0, 3, false, false, true⟩
+#guard (Ty.reg (.uint 8)).info == ⟨0, 0, 0, 2, false, false, false, true⟩
+#guard (Ty.mem (.array .bool 4) 16).info == ⟨0, 0, 0, 3, false, false, false, true⟩
+#guard (Ty.wire op).info == ⟨0, 0, 0, 3, false, false, true, true⟩
 #guard (Ty.input (.array op 2)).info.enums && (Ty.mem (.fn #[] .bool) 2).info.funcs
-#guard counter.info == ⟨0, 0, 0, 2, false, false, false⟩
-#guard (Ty.inst 3 "C" #[.type op]).info == ⟨0, 0, 0, 3, false, false, false⟩
+#guard counter.info == ⟨0, 0, 0, 2, false, false, false, true⟩
+#guard (Ty.inst 3 "C" #[.type op]).info == ⟨0, 0, 0, 3, false, false, false, true⟩
+/-!
+The handle flag comes from each part of an array, a tuple, a list, and a struct type, at any depth
+(section 5.4). A function type and `Type` do not have it.
+-/
+#guard (Ty.array (.wire .bool) 0).info.handles && (Ty.tuple #[.bool, .input .bool]).info.handles
+#guard (Ty.list (.array (.mem .bool 2) 1)).info.handles
+#guard (Meta.struct [(Ty.reg .bool).info] []).handles
+#guard !Ty.type.info.handles && !(Ty.list .bool).info.handles && !(packet 8).info.handles
+#guard !(Ty.fn #[.mk false (.reg .bool)] (.wire .bool)).info.handles
+#guard (Ty.array (.fn #[.mk true (.reg .bool)] .bool) 2).info ==
+  ⟨0, 0, 1, 4, false, true, false, false⟩
 #guard [Ty.reg .bool, .wire .bool, .input .bool, .mem .bool 2, counter].all
   fun t => t.info.depth == t.depth && t.zeroDepth == 1
 #guard (Ty.reg (.uint 8)).text == "Reg[UInt[8]]"

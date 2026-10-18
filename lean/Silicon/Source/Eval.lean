@@ -910,7 +910,7 @@ a hardware aggregate converts part by part (`typedAgg`).
 -/
 def conformVal (pos : Pos) (t : Ty) (v : Val) : M Val := do
   match ← data pos (← settle pos t v) with
-  | .static x => return .static (← conform pos t x)
+  | .static x => return (Agg.typed t (← conform pos t x)).val
   | .hw h =>
     if h.ty.same t then return .hw h
     else fail .S010 pos s!"expected {t.text}, but the value is {h.ty.text}"
@@ -970,14 +970,18 @@ def valueUse (pos : Pos) (t : Ty) (copies : Bool) (v : Val) : M Val := do
 
 /-!
 The typed use of `v` at the type `t` at a position after its copy (section 5.4). A handle type at
-a `binding` keeps the handle (`handleUse`). At each other position, a handle type is `S010` until
-#278 (`laterHandle`). Then the value converts by the rule of its position.
+a `binding` and at a `field` keeps the handle (`handleUse`): a field of a handle type is in the
+`raw` context (section 9.2). At each other position, a handle type is `S010` until #278
+(`laterHandle`). Then the value converts by the rule of its position.
 -/
 def siteUse (pos : Pos) (t : Ty) (copies : Bool) (v : Val) : Site α → M α
   | .binding => if handleTy? t then handleUse pos t v else valueUse pos t copies v
   | .value => valueUse pos t copies v
   | .field q => do
-    laterHandle pos t
+    if handleTy? t then
+      match (← handleUse pos t v).agg? with
+      | some a => return a
+      | none => fail .S010 pos s!"{v.text} is not a handle"
     conformAgg pos t (← item q (← data q (← settle pos t v)))
   | .element x => do
     laterHandle pos t
@@ -999,9 +1003,9 @@ def typedUse (pos : Pos) (t : Ty) (copies : Bool) (v : Val) (site : Site α) : M
 /-!
 A record constructor of the struct type `t` with the field types `fs` at `pos`. The arguments
 `vs` at the positions `ps` paid their copies. Each field is a typed use in declaration order, in
-a data context (section 9.2): a register or a wire is read. A literal with `[]` takes the type
-of its field. A field can hold a hardware value or a hardware aggregate. Then the record checks
-its depth and charges its size.
+a data context (section 9.2): a register or a wire is read. A field of a handle type is `raw`, so
+it keeps the handle. A literal with `[]` takes the type of its field. A field can hold a hardware
+value, an aggregate, or a handle. Then the record checks its depth and charges its size.
 -/
 def recordOf (pos : Pos) (t : Ty) (fs : List Ty) (ps : List Pos) (vs : List Val) : M Agg := do
   let xs ← (fs.zip (ps.zip vs)).mapM fun (ft, q, v) => typedUse pos ft false v (.field q)
@@ -1115,11 +1119,15 @@ def bindAgg (pos : Pos) (path : Path) (a : Agg) : M Agg := do
 
 /-!
 A binding of the local `id` with the source name `u`. Only a value with a hardware leaf gets a
-core name. An aggregate takes one version, and each of its hardware leaves gets a core `let`.
+core name. An aggregate with a hardware leaf takes one version, and each of its hardware leaves
+gets a core `let`. An aggregate without one, for example an array of handles, takes no version
+(section 7.3).
 -/
 def named (pos : Pos) (id : Nat) (u : String) : Val → M Val
   | .hw h => do bindHw pos (← fresh id u) h
-  | .agg a => do return .agg (← bindAgg pos (← fresh id u) a)
+  | .agg a => do
+    if a.leaves = 0 then return .agg a
+    return .agg (← bindAgg pos (← fresh id u) a)
   | v => pure v
 
 /-!
@@ -1389,20 +1397,6 @@ def message (p : Pos) (g : String) : Val → M String
     | .static (.str s) => return s
     | .static v => fail .S010 p s!"the message of `{g}` is a String, not {v.text}"
     | v => fail .S011 p s!"the message of `{g}` is a static String, not {v.text}"
-
-/-!
-The text of the handle `h` in a record (section 8.2), by its kind. A resource and a memory name
-their type and their core name. An instance names its emitted module name and its core name, and
-a child input the core name of its instance and its port name. A domain names itself.
--/
-def Handle.render : Handle → String
-  | .res k _ t path =>
-    let kind := match k with | .reg => "reg" | .wire => "wire" | .output => "output"
-    Print.node kind [t.serialize, encode path.name]
-  | .mem _ path t k => Print.node "mem" [(Ty.array t k).serialize, encode path.name]
-  | .inst _ path i _ => Print.node "instance" [encode i.name, encode path.name]
-  | .input _ path q => Print.node "input" [q.ty.serialize, encode path.name, q.name]
-  | .domain d => Print.node "domain" [d]
 
 /-!
 The text of a value in a record (section 8.2). A static value is its canonical serialization,

@@ -635,7 +635,8 @@ The typed use of the aggregate `a` at `t` (section 5.4), part by part. The resul
 the converted aggregate and the conversion. A reference checks by its type in one step, so it
 never expands. A hardware leaf needs the type of its position. A static part checks its type and
 its sign (`plan`). All these checks come before the charge. A static value that does not fit its
-finite type is `S012` in the conversion, after the charge. A record needs its own struct type.
+finite type is `S012` in the conversion, after the charge. A record and a list node need their
+own type, and a handle leaf its own handle type.
 -/
 mutual
   def Agg.plan : Ty → Agg → Except Fault (Nat × (Unit → Except Fault Agg))
@@ -643,7 +644,7 @@ mutual
     | t, a@(.hw h) => if h.ty.same t then .ok (a.size, fun _ => .ok a) else Agg.wrong t a
     | t, .static v => do
       let (k, f) ← Eval.plan t v
-      .ok (k, fun u => do return .static (← f u))
+      .ok (k, fun u => do return .typed t (← f u))
     | .array e n, a@(.array _ ⟨xs⟩) =>
       if xs.length = n then do
         let (k, f) ← Agg.planEach e xs
@@ -654,7 +655,9 @@ mutual
         let (k, f) ← Agg.planZip ts xs
         .ok (1 + k, fun u => do return .mkTuple ⟨ts⟩ (← f u).toArray)
       else Agg.wrong (.tuple ⟨ts⟩) a
-    | t, a@(.record n _) => if n.ty.same t then .ok (a.size, fun _ => .ok a) else Agg.wrong t a
+    | t, a@(.record n _) | t, a@(.list n ..) =>
+      if n.ty.same t then .ok (a.size, fun _ => .ok a) else Agg.wrong t a
+    | t, a@(.handle h) => if h.ty?.any (·.same t) then .ok (1, fun _ => .ok a) else Agg.wrong t a
     | t, a => Agg.wrong t a
 
   def Agg.planEach (t : Ty) : List Agg → Except Fault (Nat × (Unit → Except Fault (List Agg)))
@@ -690,7 +693,7 @@ The typed use of the part `a` of a container at `t` at `pos`. A static part conv
 leaf needs the type `t`, and a hardware aggregate converts part by part (`typedAgg`).
 -/
 def conformAgg (pos : Pos) (t : Ty) : Agg → M Agg
-  | .static v => do return .static (← conform pos t v)
+  | .static v => do return .typed t (← conform pos t v)
   | .hw h =>
     if h.ty.same t then pure (.hw h)
     else fail .S010 pos s!"expected {t.text}, but the value is {h.ty.text}"
@@ -698,12 +701,20 @@ def conformAgg (pos : Pos) (t : Ty) : Agg → M Agg
 
 /-!
 An element of a container literal at `pos`, and the position of its first `[]` if it waits for
-its type. A static value, a hardware value, and a hardware aggregate are elements (section 5.1).
-A handle is `S010` until slice 3.
+its type. An element is in the `raw` context (section 9.2), so a handle is a handle leaf. An own
+output has no handle type, so it reads as data (`data`). A domain has no value, so it is `S010`,
+with the text of section 6.2.
 -/
 def element (pos : Pos) : Val → M (Part × Option Pos)
   | .pending q p => pure (p, some q)
-  | .handle h => fail .S010 pos s!"{(Val.handle h).text} is not an element before slice 3"
+  | .handle (.domain x) =>
+    fail .S010 pos (s!"the domain `{x}` is not an element; a domain has no value, so remove " ++
+      "it from the literal")
+  | v@(.handle (.res .output ..)) => do
+    match (← data pos v).agg? with
+    | some a => pure (.value a, none)
+    | none => fail .S010 pos s!"{v.text} is not data"
+  | .handle h => pure (.value (.handle h), none)
   | .static v => pure (.value (.static v), none)
   | .hw h => pure (.value (.hw h), none)
   | .agg a => pure (.value a, none)
@@ -748,8 +759,8 @@ def arrayOf (pos : Pos) (xs : List Agg) : M Agg := do
 /-!
 A literal that waits, at a typed use of the type `t` at `pos`. The type flows into each
 element: `[]` takes the type `[T; 0]`, and a literal of the shape of `t` makes its elements at
-the element types of `t`. Then the literal charges as it does at its node. Another shape is
-`S010` at `pos`.
+the element types of `t`. An empty array of a type with the handle flag is a node (section 5.1).
+Then the literal charges as it does at its node. Another shape is `S010` at `pos`.
 -/
 mutual
   def build (pos : Pos) (t : Ty) : Part → M Agg
@@ -758,7 +769,7 @@ mutual
       match t with
       | .array e 0 => do
         bounded q (Value.array e #[]).depth
-        return .static (.array e #[])
+        return .mkArray e #[]
       | _ => fail .S010 pos s!"expected {t.text}, but the value is {p.text}"
     | p@(.array q ps) =>
       match t with
@@ -871,12 +882,15 @@ def leafLets (fs : Ty → Option (Array (String × Ty))) (pos : Pos) :
 The binding of the aggregate `a` to the core name `path` (section 7.3). Each hardware leaf gets
 one core `let` at `path` with its leaf fields, and a reference expands into its leaves. The
 result refers to the names: a hardware leaf becomes a name, a reference becomes a reference to
-`path`, and a static part keeps its value.
+`path`, and a static part keeps its value. A handle and a list node hold no hardware leaf, so
+they keep their form.
 -/
 mutual
   def Agg.bindAt (fs : Ty → Option (Array (String × Ty))) (pos : Pos) (path : Path) :
       Agg → Binds Agg
     | .static v => pure (.static v)
+    | .handle h => pure (.handle h)
+    | a@(.list ..) => pure a
     | .hw h => do
       modify (·.push ⟨path, h, pos⟩)
       return .hw (.mk pos h.ty (.ref path) [])
@@ -963,17 +977,34 @@ def Agg.tagFirst : List Agg → List String → List String
   | _, ys => ys
 
 /-!
+The text of the handle `h` in a record (section 8.2), by its kind. A resource and a memory name
+their type and their core name. An instance names its emitted module name and its core name, and
+a child input the core name of its instance and its port name. A domain names itself.
+-/
+def Handle.render : Handle → String
+  | .res k _ t path =>
+    let kind := match k with | .reg => "reg" | .wire => "wire" | .output => "output"
+    Print.node kind [t.serialize, encode path.name]
+  | .mem _ path t k => Print.node "mem" [(Ty.array t k).serialize, encode path.name]
+  | .inst _ path i _ => Print.node "instance" [encode i.name, encode path.name]
+  | .input _ path q => Print.node "input" [q.ty.serialize, encode path.name, q.name]
+  | .domain d => Print.node "domain" [d]
+
+/-!
 The text of the aggregate `a` in a record (section 8.2). A static part is its canonical
 serialization, and a hardware leaf is `(hw <type>)`. A reference renders by its type
 (`Ty.render`). A container node is its container form of section 7.1 with each part rendered. A
 hardware enum is `(enum <type> <tag> <payload>)`, the form of a static enum value, so a static
-tag is an integer (`Agg.tagFirst`). The text is pure.
+tag is an integer (`Agg.tagFirst`). A handle leaf renders by its kind (`Handle.render`), and a
+list node as a static list does. The text is pure.
 -/
 mutual
   def Agg.render (specs : Specs) : Agg → String
     | .static v => v.serialize
     | .hw h => Print.node "hw" [h.ty.serialize]
     | .ref _ t => Ty.render specs t.depth t
+    | .handle h => h.render
+    | .list _ e ⟨xs⟩ => Print.node "list" [e.serialize, Print.list (Agg.renderAll specs xs)]
     | .array n ⟨xs⟩ => Print.node "array" [n.tyText, Print.list (Agg.renderAll specs xs)]
     | .tuple _ ⟨xs⟩ => Print.node "tuple" [Print.list (Agg.renderAll specs xs)]
     | .record n ⟨xs⟩ =>
@@ -989,14 +1020,17 @@ end
 /-!
 The measure charge of the aggregate `a` in a record (section 5.4). A static part charges its
 `Value.measureCharge`. A container node charges 1, and a reference charges its rendered
-containers (`Ty.renderCharge`). A hardware leaf has no container, so it charges nothing.
+containers (`Ty.renderCharge`). A hardware leaf has no container, so it charges nothing. A
+handle leaf charges 1 (section 5.4).
 -/
 mutual
   def Agg.renderCharge (specs : Specs) : Agg → Nat
     | .static v => v.measureCharge
     | .hw _ => 0
     | .ref _ t => Ty.renderCharge specs t.depth t
-    | .array _ ⟨xs⟩ | .tuple _ ⟨xs⟩ | .record _ ⟨xs⟩ => 1 + Agg.renderChargeAll specs xs
+    | .handle _ => 1
+    | .array _ ⟨xs⟩ | .tuple _ ⟨xs⟩ | .record _ ⟨xs⟩ | .list _ _ ⟨xs⟩ =>
+      1 + Agg.renderChargeAll specs xs
 
   def Agg.renderChargeAll (specs : Specs) : List Agg → Nat
     | [] => 0

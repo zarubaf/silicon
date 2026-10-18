@@ -64,9 +64,10 @@ namespace Silicon.Source
 The type metadata of section 5.4. It holds the bit width as hardware data, the leaf count, the
 recursive size of the zero value, and the depth. It also tells if the type is hardware data.
 The function flag tells if a function type is a part of the type at any depth. The enum flag
-tells the same for an enum type. A struct type stores both, so no operation walks the field
-types again. The three numbers of a type that is not
-hardware data have no meaning. Both front ends set them equally, so they charge the same.
+tells the same for an enum type, and the handle flag for a handle type. A value of a type with
+the handle flag is never static (section 5.1). A struct type stores the flags, so no operation
+walks the field types again. The three numbers of a type that is not hardware data have no
+meaning. Both front ends set them equally, so they charge the same.
 -/
 structure Meta where
   width : Nat
@@ -76,6 +77,7 @@ structure Meta where
   data : Bool
   funcs : Bool
   enums : Bool
+  handles : Bool
   deriving Repr, DecidableEq, BEq, Inhabited
 
 mutual
@@ -416,19 +418,20 @@ The metadata of the scalar types. `Bool`, `UInt[W]`, `SInt[W]`, and `Unit` are h
 `Unit` has no bit and no leaf, and its zero `()` has the size 1. `Nat`, `Int`, `Type`, and
 `String` are not hardware data, and their three numbers are 0. `List[T]` is not hardware data
 either. Its depth is 1 more than the depth of `T`, so its metadata reads only that depth. No
-scalar type holds a function type or an enum type.
+scalar type holds a function type, an enum type, or a handle type.
 -/
-def Meta.bool : Meta := ⟨1, 1, 1, 1, true, false, false⟩
-def Meta.finite (width : Nat) : Meta := ⟨width, 1, widthSize width, 1, true, false, false⟩
-def Meta.unit : Meta := ⟨0, 0, 1, 1, true, false, false⟩
-def Meta.static : Meta := ⟨0, 0, 0, 1, false, false, false⟩
+def Meta.bool : Meta := ⟨1, 1, 1, 1, true, false, false, false⟩
+def Meta.finite (width : Nat) : Meta := ⟨width, 1, widthSize width, 1, true, false, false, false⟩
+def Meta.unit : Meta := ⟨0, 0, 1, 1, true, false, false, false⟩
+def Meta.static : Meta := ⟨0, 0, 0, 1, false, false, false, false⟩
 
 /-!
 The metadata of `[T; N]` from the metadata `m` of `T`: the product rule of section 5.4. The zero
 value is a node with `N` zeros of `T`.
 -/
 def Meta.array (m : Meta) (n : Nat) : Meta :=
-  ⟨n * m.width, n * m.leaves, 1 + n * m.zeroSize, 1 + m.depth, m.data, m.funcs, m.enums⟩
+  ⟨n * m.width, n * m.leaves, 1 + n * m.zeroSize, 1 + m.depth, m.data, m.funcs, m.enums,
+   m.handles⟩
 
 /-!
 The charge of `Meta.array m n`, at the node of `[T; N]` before the type exists. Each of the three
@@ -444,7 +447,7 @@ part. The depth is 1 more than the deepest part and each extra depth in `extra`.
 def Meta.sum (parts : List Meta) (extra : List Nat) : Meta :=
   ⟨(parts.map (·.width)).sum, (parts.map (·.leaves)).sum, 1 + (parts.map (·.zeroSize)).sum,
    1 + ((parts.map (·.depth)) ++ extra).foldl max 0, parts.all (·.data), parts.any (·.funcs),
-   parts.any (·.enums)⟩
+   parts.any (·.enums), parts.any (·.handles)⟩
 
 /-! The metadata of a tuple type from the metadata of its element types. -/
 def Meta.tuple (elems : List Meta) : Meta := Meta.sum elems []
@@ -461,11 +464,11 @@ def Meta.struct (fields : List Meta) (argDepths : List Nat) : Meta := Meta.sum f
 The metadata of a function type from the metadata of its parameter types and its result type.
 It is not hardware data, so its three numbers are 0. Its depth is 1 more than the deepest part,
 and a `mut` mark adds no depth. It sets the function flag, and it takes the enum flag of its
-parts.
+parts. It never takes the handle flag, because a function value holds no handle (section 5.4).
 -/
 def Meta.fn (params : List Meta) (ret : Meta) : Meta :=
   ⟨0, 0, 0, 1 + ((params.map (·.depth)).foldl max ret.depth), false, true,
-   params.any (·.enums) || ret.enums⟩
+   params.any (·.enums) || ret.enums, false⟩
 
 /-!
 The metadata of an enum with the tag width `w` and the payload width `p` (section 5.4). It is
@@ -527,7 +530,8 @@ end
 The metadata of a type. A type constructor computes it from its parts. A struct type stores
 it, so this walk never enters the field types of a struct. A handle type has the metadata of
 `List[T]` (section 5.4). It is not hardware data, and it takes the function flag and the enum
-flag of `T`. An instance type has neither flag, and its depth counts its arguments.
+flag of `T`. An instance type has neither flag, and its depth counts its arguments. Each handle
+type has the handle flag, and `List[T]` takes it from `T`. `Type` does not have it.
 -/
 mutual
   def Ty.info : Ty → Meta
@@ -535,14 +539,19 @@ mutual
     | .uint w | .sint w => Meta.finite w
     | .unit => Meta.unit
     | .nat | .int | .type | .string => Meta.static
-    | .list t | .reg t | .wire t | .input t | .mem t _ =>
-      { Meta.static with depth := 1 + t.info.depth, funcs := t.info.funcs, enums := t.info.enums }
+    | .list t =>
+      { Meta.static with
+        depth := 1 + t.info.depth, funcs := t.info.funcs, enums := t.info.enums
+        handles := t.info.handles }
+    | .reg t | .wire t | .input t | .mem t _ =>
+      { Meta.static with
+        depth := 1 + t.info.depth, funcs := t.info.funcs, enums := t.info.enums, handles := true }
     | .array t n => t.info.array n
     | .tuple ⟨ts⟩ => Meta.tuple (Ty.infoAll ts)
     | .struct _ _ _ m _ => m
     | .fn ⟨ps⟩ r => Meta.fn (TyParam.infoAll ps) r.info
     | .enum _ _ m => m
-    | .inst _ _ ⟨xs⟩ => { Meta.static with depth := 1 + Value.depthAll xs }
+    | .inst _ _ ⟨xs⟩ => { Meta.static with depth := 1 + Value.depthAll xs, handles := true }
 
   def Ty.infoAll : List Ty → List Meta
     | [] => []
