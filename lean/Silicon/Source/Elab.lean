@@ -240,31 +240,6 @@ def dataType (p : Pos) (t : Ty) : EM Ty :=
   if t.info.data then pure t
   else fail .S010 p s!"a port, a register, and a wire need a hardware data type, not {t.text}"
 
-/-!
-The word type of a memory at its `mem` statement `p` (section 6.2). It is hardware data with at
-least one leaf (`S010`), so an empty word is `S010` and not `S012`. Its width is at most 65536
-bits (`S012`). The metadata gives both, with no walk.
--/
-def memWord (p : Pos) (t : Ty) : EM Ty :=
-  if !t.info.data || t.info.leaves = 0 then
-    fail .S010 p s!"a memory needs a nonempty hardware data type, not {t.text}"
-  else if t.info.width > 65536 then
-    fail .S012 p s!"a memory word has at most 65536 bits, not {t.info.width}"
-  else pure t
-
-/-!
-The depth of a memory at its `mem` statement `p` (section 6.2): a static value (`S011`), an
-integer (`S010`), and 1 to 16777216 (`S012`). Each error is at the statement.
--/
-def memDepth (p : Pos) : Val → EM Nat
-  | .static (.int k) =>
-    if k < 1 || k > 16777216 then
-      fail .S012 p s!"a memory depth is 1 to 16777216, not {intText k}"
-    else pure k.toNat
-  | .static v => fail .S010 p s!"a memory depth is a static integer, not {v.text}"
-  | .pending .. => fail .S010 p "a memory depth is a static integer, not `[]`"
-  | v => fail .S011 p s!"a memory depth is static, not {v.text}"
-
 /-! A resource that needs one binding. The result is its handle. -/
 def resource (k : Kind) (path : Path) (t : Ty) (p : Pos) (x : String) : EM Val := do
   let id := (← get).work.needs.size

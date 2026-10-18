@@ -223,12 +223,6 @@ theorem slot_e (id : Nat) : EFollows cap (slot id) (slot id) := by
 theorem dataType_e (p : Pos) (t : Ty) : EFollows cap (dataType p t) (dataType p t) := by
   unfold dataType; efollows
 
-theorem memWord_e (p : Pos) (t : Ty) : EFollows cap (memWord p t) (memWord p t) := by
-  unfold memWord; efollows
-
-theorem memDepth_e (p : Pos) (v : Val) : EFollows cap (memDepth p v) (memDepth p v) := by
-  unfold memDepth; efollows
-
 theorem resource_e (k : Kind) (path : Names.Path) (t : Ty) (p : Pos) (x : String) :
     EFollows cap (resource k path t p x) (resource k path t p x) := by
   unfold resource; efollows
@@ -303,14 +297,14 @@ theorem follows_all : ∀ n,
         efollows [hs k, hb k, instantiate_e (hb k),
           arguments_f (he.1 k) (he.2.1 k), he.1 k, he.2.1 k, need_f, copy_f,
           conform_f, static_f, conformVal_f, lit_f, fresh_f, bindLocal_f, test_f, int_f, range_f,
-          iteration_e, dataType_e, memWord_e, memDepth_e, port_e, resource_e, modifyBody_e,
+          iteration_e, dataType_e, memWord_f, memDepth_f, port_e, resource_e, modifyBody_e,
           target_e, bindTarget_e, sinkValue_e, copyUse_f, settle_f, hold_f, release_f,
           structural_e]
       · refine EFollows.charge_one _ fun _ => ?_
         efollows [hs m, hb m, instantiate_e (hb m),
           arguments_f (he.1 m) (he.2.1 m), he.1 m, he.2.1 m, need_f, copy_f,
           conform_f, static_f, conformVal_f, lit_f, fresh_f, bindLocal_f, test_f, int_f, range_f,
-          iteration_e, dataType_e, memWord_e, memDepth_e, port_e, resource_e, modifyBody_e,
+          iteration_e, dataType_e, memWord_f, memDepth_f, port_e, resource_e, modifyBody_e,
           target_e, bindTarget_e, sinkValue_e, copyUse_f, settle_f, hold_f, release_f,
           structural_e]
     · rcases n' with _ | m
