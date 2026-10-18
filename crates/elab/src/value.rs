@@ -382,12 +382,17 @@ impl Value {
         match self {
             Value::Str(_) => "a string".to_owned(),
             Value::Type(_) => "a type".to_owned(),
-            v => {
-                let mut out = Text::default();
-                out.value(v);
-                out.finish(tys)
-            }
+            v => v.type_text(tys),
         }
+    }
+
+    /// The text of the type of the value, for a message, whatever the value. The walk of a
+    /// tuple stops after `TEXT_LIMIT` bytes.
+    #[must_use]
+    pub(crate) fn type_text(&self, tys: &Types) -> String {
+        let mut out = Text::default();
+        out.value(self);
+        out.finish(tys)
     }
 
     /// The canonical serialization of section 7.1.

@@ -53,6 +53,7 @@ impl Evaluator<'_> {
                 ),
             );
         }
+        self.not_handle(pos, ty)?;
         let value = match xs {
             [] => Val::Static(self.zero(pos, ty)?),
             _ if matches!(self.tys.get(ty), Ty::Struct(_)) => {
@@ -333,6 +334,7 @@ impl Evaluator<'_> {
             [v] => match self.store.seen(v) {
                 Seen::Static(Value::Type(t)) => {
                     let t = *t;
+                    self.not_handle(pos, t)?;
                     let meta = self.tys.meta(t);
                     if meta.data {
                         let units = u128::from(int_size(&meta.width));

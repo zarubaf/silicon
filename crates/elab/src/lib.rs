@@ -344,6 +344,9 @@ mod tests_work;
 
 #[cfg(test)]
 mod tests_work_enum;
+
+#[cfg(test)]
+mod tests_work_handles;
 #[cfg(test)]
 mod tests_work_match;
 

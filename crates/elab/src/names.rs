@@ -383,6 +383,26 @@ impl Paths {
         Ok(())
     }
 
+    /// The source name of a resource at the path `p`: the first user field of the path, else
+    /// its outer name (Lean `sourceOf`).
+    pub(crate) fn source(&self, p: PathId, texts: &[String]) -> String {
+        let text = |s: Sym| texts.get(s).cloned().unwrap_or_default();
+        let mut first = None;
+        let mut at = p;
+        loop {
+            match self.nodes.get(at.0) {
+                Some(PathNode::Push(parent, step)) => {
+                    if let Step::User(s) = step {
+                        first = Some(*s);
+                    }
+                    at = *parent;
+                }
+                Some(PathNode::Outer(s)) => return text(first.unwrap_or(*s)),
+                None => return first.map_or_else(String::new, text),
+            }
+        }
+    }
+
     /// The name of a path, with the text of each symbol from `texts`.
     pub(crate) fn name(&self, p: PathId, texts: &[String]) -> Name {
         let text = |s: Sym| texts.get(s).cloned().unwrap_or_default();

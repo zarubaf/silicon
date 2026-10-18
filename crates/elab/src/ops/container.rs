@@ -301,7 +301,22 @@ fn joined(charge: u64, ty: Option<TyId>) -> Joined {
     Joined {
         charge: Int::from_u64(charge),
         ty,
+        clash: None,
     }
+}
+
+/// The `S010` fault of a pair that a join stopped at: a handle type joins only with the same
+/// handle type (Lean `joinTy`).
+pub(crate) fn clash_fault((lhs, rhs): (TyId, TyId), tys: &Types) -> Fault {
+    (
+        Code::S010,
+        format!(
+            "`{}` and `{}` have no common type; a handle type joins only with the same handle \
+             type, so give both sides one type",
+            tys.text(lhs),
+            tys.text(rhs)
+        ),
+    )
 }
 
 /// A container type: an array, a tuple, a list, or a struct type.
@@ -370,6 +385,7 @@ fn visit(lhs: TyId, rhs: TyId, tys: &mut Types, budget: &mut u64) -> Visit {
                 return Visit::Done(Joined {
                     charge: Int::from_u64(u64::MAX).add(&Int::from_u64(1)),
                     ty: None,
+                    clash: None,
                 });
             }
             *budget -= 1;
@@ -386,6 +402,16 @@ fn visit(lhs: TyId, rhs: TyId, tys: &mut Types, budget: &mut u64) -> Visit {
                 return Visit::Done(Joined {
                     charge: Int::from_u64(lhs.size()).add(&Int::from_u64(rhs.size())),
                     ty: (lhs == rhs).then_some(lhs),
+                    clash: None,
+                });
+            }
+            if left.is_handle() || right.is_handle() {
+                // A pair with a handle type charges as a type equality, then needs one type.
+                let same = left.is_handle() && lhs == rhs;
+                return Visit::Done(Joined {
+                    charge: Int::from_u64(lhs.size()).add(&Int::from_u64(rhs.size())),
+                    ty: same.then_some(lhs),
+                    clash: (!same).then_some((lhs, rhs)),
                 });
             }
             let units = u64::from(container_ty(left) && container_ty(right));
@@ -418,6 +444,17 @@ pub(crate) fn common_ty(lhs: TyId, rhs: TyId, tys: &mut Types, budget: &mut u64)
             let Some(top) = stack.last_mut() else {
                 return done;
             };
+            if done.clash.is_some() {
+                // The walk stops: its units are those of the open pairs and of this pair.
+                let total = stack
+                    .iter()
+                    .fold(done.charge.clone(), |sum, open| sum.add(&open.charge));
+                return Joined {
+                    charge: total,
+                    ty: None,
+                    clash: done.clash,
+                };
+            }
             top.charge = top.charge.add(&done.charge);
             match done.ty {
                 Some(t) => top.parts.push(t),
@@ -449,6 +486,7 @@ pub(crate) fn common_ty(lhs: TyId, rhs: TyId, tys: &mut Types, budget: &mut u64)
         let done = Joined {
             charge: finished.charge,
             ty,
+            clash: None,
         };
         tys.join(finished.key, done.clone());
         delivered = Some(done);
@@ -463,22 +501,23 @@ pub(crate) fn common_of<T>(
     ty_of: impl Fn(&T, &mut Types) -> TyId,
     tys: &mut Types,
     mut budget: u64,
-) -> (Int, Option<TyId>) {
+) -> (Int, Option<TyId>, Option<Fault>) {
     let mut charge = Int::zero();
     let mut items = items.into_iter();
     let Some(mut t) = items.next().map(|v| ty_of(&v, tys)) else {
-        return (charge, None);
+        return (charge, None, None);
     };
     for w in items {
         let u = ty_of(&w, tys);
         let done = common_ty(t, u, tys, &mut budget);
         charge = charge.add(&done.charge);
         let Some(next) = done.ty else {
-            return (charge, None);
+            let fault = done.clash.map(|c| clash_fault(c, tys));
+            return (charge, None, fault);
         };
         t = next;
     }
-    (charge, Some(t))
+    (charge, Some(t), None)
 }
 
 /// `==` on two scalars of a container: the check. A static integer takes the finite type of
@@ -544,6 +583,9 @@ fn same_check(a: &Value, b: &Value, tys: &mut Types, joins: Joins) -> (Int, Resu
             | (Value::Record(s, xs), Value::Record(t, ys)) => {
                 let done = join_of(*s, *t, tys, joins, &mut budget);
                 charge = charge.add(&done.charge);
+                if let Some(pair) = done.clash {
+                    return (charge, Err(clash_fault(pair, tys)));
+                }
                 if done.ty.is_none() || (matches!(a, Value::Array(..)) && xs.len() != ys.len()) {
                     return (charge, no_common_type(a, b, tys));
                 }
@@ -552,6 +594,9 @@ fn same_check(a: &Value, b: &Value, tys: &mut Types, joins: Joins) -> (Int, Resu
             (Value::List(s, xs), Value::List(t, ys)) => {
                 let done = join_of(*s, *t, tys, joins, &mut budget);
                 charge = charge.add(&done.charge);
+                if let Some(pair) = done.clash {
+                    return (charge, Err(clash_fault(pair, tys)));
+                }
                 if done.ty.is_none() {
                     return (charge, no_common_type(a, b, tys));
                 }
@@ -570,6 +615,9 @@ fn same_check(a: &Value, b: &Value, tys: &mut Types, joins: Joins) -> (Int, Resu
             (Value::Enum(s, ..), Value::Enum(t, ..)) => {
                 let done = join_of(*s, *t, tys, joins, &mut budget);
                 charge = charge.add(&done.charge);
+                if let Some(pair) = done.clash {
+                    return (charge, Err(clash_fault(pair, tys)));
+                }
                 if done.ty.is_none() {
                     return (charge, no_common_type(a, b, tys));
                 }

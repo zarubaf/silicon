@@ -75,13 +75,16 @@ fn array_of<'x>(
     pos: Pos,
     elems: Vec<Cow<'x, Value>>,
 ) -> Res<Value> {
-    let (units, common) = ops::common_of(
+    let (units, common, clash) = ops::common_of(
         elems.iter().map(|e| &**e),
         |v, tys| v.ty(tys),
         tys,
         fuel.left(),
     );
     fuel.pay_joins(&units).map_err(at(pos))?;
+    if let Some(fault) = clash {
+        return Err(at(pos)(fault));
+    }
     let Some(t) = common else {
         return fail(
             Code::S010,
@@ -293,8 +296,12 @@ impl Evaluator<'_> {
         for p in &pieces {
             types.push(self.piece_ty(pos, p)?);
         }
-        let (units, common) = ops::common_of(types, |t, _| *t, &mut self.tys, self.fuel.left());
+        let (units, common, clash) =
+            ops::common_of(types, |t, _| *t, &mut self.tys, self.fuel.left());
         self.fuel.pay_joins(&units).map_err(at(pos))?;
+        if let Some(fault) = clash {
+            return Err(at(pos)(fault));
+        }
         let Some(t) = common else {
             return fail(
                 Code::S010,

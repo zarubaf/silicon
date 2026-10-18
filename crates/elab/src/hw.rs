@@ -206,6 +206,8 @@ pub(crate) enum Handle {
         id: usize,
         path: PathId,
         inst: usize,
+        /// The instance type `Instance[M, args]` of the `instance` statement (section 5.1).
+        ty: TyId,
     },
     Input {
         inst: usize,

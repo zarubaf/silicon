@@ -77,7 +77,7 @@ impl Evaluator<'_> {
 
     /// The text of the name of the domain `id`. A handle makes the text before it exists, so a
     /// missing text is a bug of the evaluator, never an input of the user.
-    fn domain_name(&self, id: DeclId) -> &str {
+    pub(super) fn domain_name(&self, id: DeclId) -> &str {
         let Some(name) = self.domains.get(&id) else {
             panic!("the domain handle has no name in the table of domains");
         };

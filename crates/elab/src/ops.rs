@@ -7,7 +7,8 @@
 mod container;
 
 pub(crate) use container::{
-    common_of, common_ty, composite, container_op, container_ty, same_pair, scalar_join,
+    clash_fault, common_of, common_ty, composite, container_op, container_ty, same_pair,
+    scalar_join,
 };
 pub(crate) use container::{plan as plan_value, run as run_value};
 
