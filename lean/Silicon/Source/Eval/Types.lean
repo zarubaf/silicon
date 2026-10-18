@@ -215,15 +215,12 @@ def handleTy? : Ty → Bool
   | _ => false
 
 /-!
-A typed use at `pos` at the type `t`, at a hardware position other than a typed `let` and an
-assignment to a `let mut` local. There, a handle type is `S010` until #278 (section 5.4), with
-the text of section 6.2. A static position has `staticHandle` instead. The caller charged the
-copy first.
+The text "Typed use at a handle type" of section 6.2. It names the handle type `t` of the
+position and the value or the leaf `a` at it.
 -/
-def laterHandle (pos : Pos) (t : Ty) : M Unit := do
-  if handleTy? t then
-    fail .S010 pos (s!"the handle type `{t.text}` is not supported here yet; use it in a " ++
-      "typed `let`, or pass the data value, for example `read(h)`")
+def handleUseText (t : Ty) (a : String) : String :=
+  s!"expected `{t.text}`, but the value is {a}; a handle type takes only a handle of exactly " ++
+    "this type, so give such a handle or change the type"
 
 /-!
 A typed use at `pos` at the type `t` at the static position `s`: `a module argument`, `a comptime

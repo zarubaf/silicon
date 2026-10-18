@@ -744,15 +744,29 @@ def Agg.wrong (t : Ty) (a : Agg) : Except Fault α :=
   typeError s!"expected {t.text}, but the value is {a.val.text}"
 
 /-!
+A part `a` at a position of the handle type `t` (section 5.4). It needs a handle of exactly this
+type, else `S010` with the text "Typed use at a handle type", which names the leaf. The compare
+has no charge, and nothing reads the handle.
+-/
+def Agg.handleAt (t : Ty) (a : Agg) : Except Fault (Nat × (Unit → Except Fault Agg)) :=
+  match a with
+  | .handle h => if h.ty?.any (·.same t) then .ok (1, fun _ => .ok a) else bad
+  | _ => bad
+where bad := typeError (handleUseText t a.val.about)
+
+/-!
 The typed use of the aggregate `a` at `t` (section 5.4), part by part. The result is the size of
 the converted aggregate and the conversion. A reference checks by its type in one step, so it
-never expands. A hardware leaf needs the type of its position. A static part checks its type and
-its sign (`plan`). All these checks come before the charge. A static value that does not fit its
-finite type is `S012` in the conversion, after the charge. A record and a list node need their
-own type, and a handle leaf its own handle type.
+never expands. A handle position needs a handle of its type (`Agg.handleAt`). A hardware leaf
+needs the type of its position. A static part checks its type and its sign (`plan`). All these
+checks come before the charge. A static value that does not fit its finite type is `S012` in the
+conversion, after the charge. An array, a tuple, and a list of a type with the handle flag walk
+part by part. A record compares the identity of its type, so the walk does not enter it.
 -/
 mutual
   def Agg.plan : Ty → Agg → Except Fault (Nat × (Unit → Except Fault Agg))
+    | t@(.reg _), a | t@(.wire _), a | t@(.input _), a | t@(.mem ..), a | t@(.inst ..), a =>
+      Agg.handleAt t a
     | t, a@(.ref _ u) => if u.same t then .ok (a.size, fun _ => .ok a) else Agg.wrong t a
     | t, a@(.hw h) => if h.ty.same t then .ok (a.size, fun _ => .ok a) else Agg.wrong t a
     | t, .static v => do
@@ -768,9 +782,12 @@ mutual
         let (k, f) ← Agg.planZip ts xs
         .ok (1 + k, fun u => do return .mkTuple ⟨ts⟩ (← f u).toArray)
       else Agg.wrong (.tuple ⟨ts⟩) a
+    | .list e, a@(.list n _ ⟨xs⟩) =>
+      if n.ty.same (.list e) then .ok (a.size, fun _ => .ok a) else do
+        let (k, f) ← Agg.planEach e xs
+        .ok (1 + k, fun u => do return .mkList e (← f u).toArray)
     | t, a@(.record n _) | t, a@(.list n ..) =>
       if n.ty.same t then .ok (a.size, fun _ => .ok a) else Agg.wrong t a
-    | t, a@(.handle h) => if h.ty?.any (·.same t) then .ok (1, fun _ => .ok a) else Agg.wrong t a
     | t, a => Agg.wrong t a
 
   def Agg.planEach (t : Ty) : List Agg → Except Fault (Nat × (Unit → Except Fault (List Agg)))
