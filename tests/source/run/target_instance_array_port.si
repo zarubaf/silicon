@@ -1,0 +1,22 @@
+// The target `us[i].a := e` selects an instance from an array of instances, and the field selects its child input.
+// TOP M()
+module Leaf() {
+    input a: UInt[8];
+    output q: UInt[8];
+    q := a +% 1;
+}
+module M() {
+    input x: UInt[8];
+    output p: UInt[8];
+    output o: UInt[8];
+    instance u = Leaf();
+    instance v = Leaf();
+    let us = [u, v];
+    us[0].a := x;
+    us[1].a := x +% 10;
+    p := u.q;
+    o := v.q;
+}
+// STEP in=(clock$0rst false x 0) out=(o 11 p 1)
+// STEP in=(clock$0rst false x 5) out=(o 16 p 6)
+// STEP in=(clock$0rst false x 255) out=(o 10 p 0)

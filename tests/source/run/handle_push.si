@@ -1,0 +1,15 @@
+// A `push` element at a list of handles keeps the handle (section 5.4, "Lists"). The list holds the register, and an
+// index gives it back.
+// TOP M()
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    reg r: UInt[8] = 0;
+    r := x;
+    let mut xs = list(Reg[UInt[8]]);
+    xs.push(r);
+    o := read(xs[0]);
+}
+// STEP in=(clock$0rst true x 0) out=(o 0)
+// STEP in=(clock$0rst false x 4) out=(o 0)
+// STEP in=(clock$0rst false x 5) out=(o 4)

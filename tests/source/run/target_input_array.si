@@ -1,0 +1,22 @@
+// The target `ins[i] := e` selects a child input from an array of child inputs. A child input is a target.
+// TOP M()
+module Leaf() {
+    input a: UInt[8];
+    output q: UInt[8];
+    q := a;
+}
+module M() {
+    input x: UInt[8];
+    output p: UInt[8];
+    output o: UInt[8];
+    instance u = Leaf();
+    instance v = Leaf();
+    let ins = [u.a, v.a];
+    ins[0] := x;
+    ins[1] := x +% 1;
+    p := u.q;
+    o := v.q;
+}
+// STEP in=(clock$0rst false x 0) out=(o 1 p 0)
+// STEP in=(clock$0rst false x 5) out=(o 6 p 5)
+// STEP in=(clock$0rst false x 255) out=(o 0 p 255)

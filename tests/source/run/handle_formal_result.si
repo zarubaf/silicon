@@ -1,0 +1,25 @@
+// Row "a resource-typed formal and a resource-typed result" of the frontend spec, section 9.2. The formal takes a tuple of
+// handles and the result is an array of handles. Both keep the handles, so a `:=` through an element of the result
+// binds the register, and a read of the formal's leaf reads the wire.
+// TOP M()
+fn pair(p: (Reg[UInt[8]], Wire[UInt[8]])) -> [Reg[UInt[8]]; 2] {
+    return [p.0, p.0];
+}
+fn sum(p: (Reg[UInt[8]], Wire[UInt[8]])) -> UInt[8] {
+    return read(p.0) +% read(p.1);
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    output s: UInt[8];
+    reg r: UInt[8] = 0;
+    wire w: UInt[8];
+    w := x;
+    let rs = pair((r, w));
+    rs[1] := x;
+    o := r;
+    s := sum((r, w));
+}
+// STEP in=(clock$0rst true x 0) out=(o 0 s 0)
+// STEP in=(clock$0rst false x 4) out=(o 0 s 4)
+// STEP in=(clock$0rst false x 5) out=(o 4 s 9)

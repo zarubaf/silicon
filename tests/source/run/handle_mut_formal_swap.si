@@ -1,0 +1,26 @@
+// Row "a `mut` actual" of the frontend spec, section 9.2. The `mut` actuals are two locals of handle types. The callee swaps
+// the handles, and the write-back gives each root the handle of the other.
+// TOP M()
+fn swap(mut a: Reg[UInt[8]], mut b: Reg[UInt[8]]) -> Nat {
+    let t = a;
+    a = b;
+    b = t;
+    return 1;
+}
+module M() {
+    input x: UInt[8];
+    output p: UInt[8];
+    output q: UInt[8];
+    reg r: UInt[8] = 0;
+    reg s: UInt[8] = 0;
+    let mut a: Reg[UInt[8]] = r;
+    let mut b: Reg[UInt[8]] = s;
+    let n = swap(a, b);
+    a := x;
+    b := x +% 1;
+    p := r;
+    q := s;
+}
+// STEP in=(clock$0rst true x 0) out=(p 0 q 0)
+// STEP in=(clock$0rst false x 4) out=(p 0 q 0)
+// STEP in=(clock$0rst false x 9) out=(p 5 q 4)

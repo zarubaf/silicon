@@ -1,0 +1,21 @@
+// A `mut` actual of a handle type: the formal gets the handle, and the write-back gives the root the handle that
+// the callee leaves in the formal (section 5.6). `swap_to` binds `a` to the second register.
+// TOP M()
+fn swap_to(mut h: Reg[UInt[8]], other: Reg[UInt[8]]) -> Nat {
+    h = other;
+    return 1;
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    reg r: UInt[8] = 0;
+    reg s: UInt[8] = 0;
+    r := x;
+    s := x +% 1;
+    let mut a: Reg[UInt[8]] = r;
+    let n = swap_to(a, s);
+    o := read(a);
+}
+// STEP in=(clock$0rst true x 0) out=(o 0)
+// STEP in=(clock$0rst false x 4) out=(o 0)
+// STEP in=(clock$0rst false x 5) out=(o 5)

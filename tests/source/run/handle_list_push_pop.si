@@ -1,0 +1,24 @@
+// A list of handles: `push` and `pop` change the stored list, an index selects a register, and `len` gives the length. The
+// popped handle is the last register pushed.
+// TOP M()
+module M() {
+    input x: UInt[8];
+    output p: UInt[8];
+    output q: UInt[8];
+    output n: UInt[8];
+    reg r: UInt[8] = 0;
+    reg s: UInt[8] = 0;
+    r := x;
+    s := x +% 1;
+    let mut hs = list(Reg[UInt[8]]);
+    hs.push(r);
+    hs.push(s);
+    hs.push(r);
+    let last = hs.pop();
+    p := read(hs[0]);
+    q := read(last);
+    n := UInt[8](len(hs));
+}
+// STEP in=(clock$0rst true x 0) out=(n 2 p 0 q 0)
+// STEP in=(clock$0rst false x 4) out=(n 2 p 0 q 0)
+// STEP in=(clock$0rst false x 9) out=(n 2 p 4 q 4)

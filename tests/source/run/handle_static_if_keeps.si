@@ -1,0 +1,22 @@
+// An arm of a static `if` passes its value on, so a handle stays a handle (section 9.2). The `if` selects the register or
+// the wire from a `comptime` parameter, and the `:=` through the local binds the selected resource.
+// TOP M(0)
+module M(comptime k: Nat) {
+    input x: UInt[8];
+    output p: UInt[8];
+    output q: UInt[8];
+    reg r: UInt[8] = 0;
+    wire w: UInt[8];
+    p := r;
+    q := w;
+    let pick = if (k == 0) { r } else { w };
+    pick := x;
+    comptime if (k == 0) {
+        w := 0;
+    } else {
+        r := 0;
+    }
+}
+// STEP in=(clock$0rst true x 0) out=(p 0 q 0)
+// STEP in=(clock$0rst false x 4) out=(p 0 q 0)
+// STEP in=(clock$0rst false x 5) out=(p 4 q 0)

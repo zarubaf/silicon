@@ -1,0 +1,16 @@
+// An argument at a formal of a handle type keeps the handle (section 5.4, "Typed use at a handle type"). `f` reads
+// the register through its formal, so the output follows the register.
+// TOP M()
+fn f(h: Reg[UInt[8]]) -> UInt[8] {
+    return read(h);
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    reg r: UInt[8] = 0;
+    r := x;
+    o := f(r);
+}
+// STEP in=(clock$0rst true x 0) out=(o 0)
+// STEP in=(clock$0rst false x 4) out=(o 0)
+// STEP in=(clock$0rst false x 5) out=(o 4)

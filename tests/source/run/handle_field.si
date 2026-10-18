@@ -1,0 +1,17 @@
+// A constructor argument at a field of a handle type keeps the handle (section 5.4). The record holds the register,
+// and the field read gives the register back.
+// TOP M()
+struct P {
+    h: Reg[UInt[8]],
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    reg r: UInt[8] = 0;
+    r := x;
+    let p = P(r);
+    o := read(p.h);
+}
+// STEP in=(clock$0rst true x 0) out=(o 0)
+// STEP in=(clock$0rst false x 4) out=(o 0)
+// STEP in=(clock$0rst false x 5) out=(o 4)

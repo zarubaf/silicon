@@ -1,0 +1,19 @@
+// Row "a `:=` target" of the frontend spec, section 9.2. The target `rs[i] := e` selects one register of an array of
+// registers by a static index. Each register has one binding.
+// TOP M()
+module M() {
+    input x: UInt[8];
+    output p: UInt[8];
+    output q: UInt[8];
+    reg a: UInt[8] = 0;
+    reg b: UInt[8] = 0;
+    let rs = [a, b];
+    comptime for i in 0..2 {
+        rs[i] := x +% i;
+    }
+    p := a;
+    q := b;
+}
+// STEP in=(clock$0rst true x 0) out=(p 0 q 0)
+// STEP in=(clock$0rst false x 4) out=(p 0 q 0)
+// STEP in=(clock$0rst false x 9) out=(p 4 q 5)
