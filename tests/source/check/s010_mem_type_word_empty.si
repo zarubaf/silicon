@@ -1,0 +1,6 @@
+// S010: a memory word has at least one bit, and an empty array has none.
+// TOP M()
+module M() {
+    // expected-error S010 @+1
+    type H = Mem[[UInt[8]; 0], 4];
+}

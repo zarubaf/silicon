@@ -1,0 +1,6 @@
+// S010: a register has a hardware data type, and a handle type is none.
+// TOP M()
+module M() {
+    // expected-error S010 @+1
+    reg r: Wire[UInt[8]] = 0;
+}

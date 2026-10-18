@@ -1,0 +1,6 @@
+// S010: a memory depth is a static integer, and `true` is none.
+// TOP M()
+module M() {
+    // expected-error S010 @+1
+    type H = Mem[UInt[8], true];
+}

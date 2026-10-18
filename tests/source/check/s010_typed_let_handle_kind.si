@@ -1,0 +1,12 @@
+// S010: a typed `let` at a handle type takes only a handle of exactly this type, and a wire is no register.
+// TOP M()
+module M() {
+    input x: UInt[8];
+    reg r: UInt[8] = 0;
+    wire w: UInt[8];
+    r := x;
+    w := x;
+    // expected-error S010 @+2
+    // expected-message: expected `Reg[UInt[8]]`, but the value is a handle of `Wire[UInt[8]]`; a handle type takes only a handle of exactly this type, so give such a handle or change the type
+    let a: Reg[UInt[8]] = w;
+}

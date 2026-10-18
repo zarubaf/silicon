@@ -1,0 +1,11 @@
+// S010: `Instance[C, 2]` is another type than `Instance[C, 1]`, because the arguments differ.
+// TOP M()
+module C(comptime W: UInt[8]) {
+    output q: UInt[8];
+    q := W;
+}
+module M() {
+    instance u = C(UInt[8](1));
+    // expected-error S010 @+1
+    let e: Instance[C, 2] = u;
+}

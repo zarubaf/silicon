@@ -1,0 +1,6 @@
+// S010: `T()` makes the zero of hardware data, and a handle type has none.
+// TOP M()
+module M() {
+    // expected-error S010 @+1
+    let z = Reg[UInt[8]]();
+}

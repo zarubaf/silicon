@@ -1,0 +1,6 @@
+// S012: a memory word has at most 65536 bits.
+// TOP M()
+module M() {
+    // expected-error S012 @+1
+    type H = Mem[[UInt[65536]; 2], 4];
+}

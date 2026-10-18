@@ -1,0 +1,7 @@
+// S003: `Domain` waits for more domains (#11), so it is no prelude name yet.
+// TOP M()
+module M() {
+    // expected-error S003 @+2
+    // expected-message: `Domain` is not supported yet; it comes with more domains (#11); a module has one domain or none, so it needs no `Domain` value
+    type D = Domain;
+}

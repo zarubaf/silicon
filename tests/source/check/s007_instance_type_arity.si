@@ -1,0 +1,10 @@
+// S007: `Instance` takes the module and one argument for each parameter of it.
+// TOP M()
+module C(comptime W: UInt[8]) {
+    output q: UInt[8];
+    q := W;
+}
+module M() {
+    // expected-error S007 @+1
+    type H = Instance[C];
+}

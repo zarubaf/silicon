@@ -1,0 +1,5 @@
+// S015: a parameter of `M` has the type `Instance[M, 1]`, and its evaluation needs the parameters of `M` again, so the nesting depth goes above the budget.
+// TOP M(0)
+// expected-error S015 @+1
+module M(comptime n: Instance[M, 1]) {
+}

@@ -1,0 +1,12 @@
+// S010: `read` takes a register or a wire. An instance has outputs, which read as `u.q`.
+// TOP M()
+module C() {
+    output q: UInt[8];
+    q := 0;
+}
+module M() {
+    instance u = C();
+    // expected-error S010 @+2
+    // expected-message: `read` takes a register or a wire, not a handle of `Instance[C]`; read an output of the instance, for example `u.q`
+    let x = read(u);
+}

@@ -1,0 +1,13 @@
+// S010: a `let mut` local without a type that holds a register keeps this type at an assignment. A wire is another handle type.
+// TOP M()
+module M() {
+    input x: UInt[8];
+    reg r: UInt[8] = 0;
+    wire w: UInt[8];
+    r := x;
+    w := x;
+    let mut a = r;
+    // expected-error S010 @+2
+    // expected-message: expected `Reg[UInt[8]]`, but the value is a handle of `Wire[UInt[8]]`; a handle type takes only a handle of exactly this type, so give such a handle or change the type
+    a = w;
+}

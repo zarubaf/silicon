@@ -1,0 +1,10 @@
+// S011: a comptime parameter of a struct takes only static values, so its type is no handle type.
+// TOP M()
+struct P(comptime p: Wire[UInt[8]]) {
+    v: Bool,
+}
+module M() {
+    // expected-error S011 @+2
+    // expected-message: a comptime parameter takes only static values, so its type cannot be the handle type `Wire[UInt[8]]`; use a data type, for example `UInt[8]`
+    type S = P[3];
+}

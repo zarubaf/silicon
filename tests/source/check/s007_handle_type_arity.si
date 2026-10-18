@@ -1,0 +1,7 @@
+// S007: `Reg` takes 1 argument.
+// TOP M()
+module M() {
+    // expected-error S007 @+2
+    // expected-message: `Reg` takes 1 argument(s), but it has 2; write `Reg[T]`
+    type H = Reg[UInt[8], 1];
+}

@@ -1,0 +1,11 @@
+// S010: a port has a hardware data type, and an instance type is none. An instance has no data type, so its outputs are read as `u.q`.
+// TOP M()
+module C(comptime W: UInt[8]) {
+    output q: UInt[8];
+    q := W;
+}
+module M() {
+    // expected-error S010 @+2
+    // expected-message: `Instance[C, 1]` is a handle type, not hardware data; an instance has no data type, so read its outputs as `u.q`
+    input p: Instance[C, 1];
+}

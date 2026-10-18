@@ -1,0 +1,13 @@
+// S010: a `let mut` local without a type that holds an output takes only an output of the same data type.
+// TOP M()
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    output p: UInt[8];
+    o := x;
+    p := x;
+    let mut a = o;
+    // expected-error S010 @+2
+    // expected-message: the local holds the output `o`, so it takes only an output of `UInt[8]`, not a value of `UInt[8]`; use the output `o` directly
+    a = x;
+}

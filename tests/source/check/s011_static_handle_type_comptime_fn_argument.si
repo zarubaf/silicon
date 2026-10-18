@@ -1,0 +1,10 @@
+// S011: an argument of a comptime `fn` takes only static values, so its type is no handle type.
+// TOP M()
+comptime fn f(x: Reg[UInt[8]]) -> Nat {
+    return 1;
+}
+module M() {
+    // expected-error S011 @+2
+    // expected-message: an argument of a comptime fn takes only static values, so its type cannot be the handle type `Reg[UInt[8]]`; use a data type, for example `UInt[8]`
+    let n = f(3);
+}
