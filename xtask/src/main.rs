@@ -81,7 +81,7 @@ enum Command {
     },
     /// Run the rule `spec-texts` alone.
     SpecTexts {
-        /// Make a stale entry of `tests/inventory/spec-texts.txt` an error, as `just ci` does.
+        /// Make every finding an error, as `just ci` does. Otherwise each finding is a warning.
         #[arg(long)]
         strict: bool,
     },
@@ -195,6 +195,9 @@ fn main() -> Result<ExitCode> {
             for violation in &violations {
                 println!("{violation}");
             }
+            if !strict && !violations.is_empty() {
+                println!("{} warning(s)", violations.len());
+            }
             Ok(if violations.iter().any(|v| v.severity.fails_run()) {
                 ExitCode::FAILURE
             } else {
@@ -241,11 +244,16 @@ fn report(problems: &[String]) -> ExitCode {
 fn run_checks() -> Result<ExitCode> {
     let repo = Repo::discover()?;
     let mut failed = false;
+    let mut warnings = 0;
     for check in CHECKS {
         for violation in check(&repo)? {
             println!("{violation}");
             failed |= violation.severity.fails_run();
+            warnings += usize::from(!violation.severity.fails_run());
         }
+    }
+    if warnings > 0 {
+        println!("{warnings} warning(s)");
     }
     Ok(if failed {
         ExitCode::FAILURE
