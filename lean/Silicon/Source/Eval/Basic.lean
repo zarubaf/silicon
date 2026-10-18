@@ -621,6 +621,11 @@ def Guard.effect (g : Guard) (f : String) : String :=
   | .structural =>
     s!"a type or a constant has no graph effect such as `{f}`; call it before and use the result"
 
+/-! The source name of an item. -/
+def itemName : Resolve.Item → String
+  | .const _ n .. | .fn _ _ n .. | .module _ n .. | .struct _ n .. | .alias _ n ..
+  | .enum _ n .. => n.name
+
 /-!
 The items, the depth limit, the current depth, and the return type of the current call. The
 item whose body runs, its symbols, and the current frame name the hardware. `binding` holds
@@ -646,6 +651,10 @@ structure Ctx where
   inst : String
   calls : List (String × Pos)
   digest : String → String
+
+/-! The context with a new guard of the kind `k` at the current depth: the innermost guard. -/
+def Ctx.guarded (c : Ctx) (k : GuardKind) : Ctx :=
+  { c with guard := some ⟨k, c.depth⟩ }
 
 /-! The symbol of the local number `id` in the current item. Each binder has one. -/
 def Ctx.binder (c : Ctx) (id : Nat) : Nat := ((c.syms.binders[c.item]?).bind (·[id]?)).getD 0
@@ -915,7 +924,7 @@ Runs `act` in a structural context (section 9.4): its guard starts at the curren
 is the innermost guard.
 -/
 def structural (act : M α) : M α :=
-  withTheReader Ctx (fun c => { c with guard := some ⟨.structural, c.depth⟩ }) act
+  withTheReader Ctx (·.guarded .structural) act
 
 /-!
 A mutation at `pos` of the binding `x` of the current frame of locals (section 9.4). `x` is the
