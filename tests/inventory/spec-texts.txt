@@ -18,28 +18,20 @@ rust | S011 Static part of a `match` | 311
 lean | S010 Memory as data | 278
 rust | S004 Port in a `fn` | 279
 pin | S004 Port in a `fn` | 279
-lean | S018 Second binding | 279
 rust | S018 Second binding | 279
 pin | S018 Second binding | 279
-lean | S018 Second binding in a helper | 279
 rust | S018 Second binding in a helper | 279
 pin | S018 Second binding in a helper | 279
-lean | S018 No binding | 279
 rust | S018 No binding | 279
 pin | S018 No binding | 279
-lean | S018 Memory without a port call | 279
 rust | S018 Memory without a port call | 279
 pin | S018 Memory without a port call | 279
-lean | S018 Second `read_port` | 279
 rust | S018 Second `read_port` | 279
 pin | S018 Second `read_port` | 279
-lean | S018 Second `read_port` in a helper | 279
 rust | S018 Second `read_port` in a helper | 279
 pin | S018 Second `read_port` in a helper | 279
-lean | S018 Second `write_port` | 279
 rust | S018 Second `write_port` | 279
 pin | S018 Second `write_port` | 279
-lean | S018 Second `write_port` in a helper | 279
 rust | S018 Second `write_port` in a helper | 279
 pin | S018 Second `write_port` in a helper | 279
 rust | S011 Hardware in a `comptime fn` | 279
