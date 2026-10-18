@@ -48,16 +48,26 @@ impl Repo {
     }
 
     /// The repository narrowed to `paths`, or unchanged when `paths` is empty.
-    pub fn only(self, paths: &[PathBuf]) -> Self {
+    /// A path that is not a tracked file is an error, so a check never passes on nothing.
+    pub fn only(self, paths: &[PathBuf]) -> Result<Self> {
         if paths.is_empty() {
-            return self;
+            return Ok(self);
+        }
+        if let Some(unknown) = paths
+            .iter()
+            .find(|p| !self.files.iter().any(|f| &f.path == *p))
+        {
+            bail!(
+                "{} is not a tracked file; pass paths relative to the repository root, or stage the file with `git add`",
+                unknown.display()
+            );
         }
         let files = self
             .files
             .into_iter()
             .filter(|f| paths.contains(&f.path))
             .collect();
-        Self { files, ..self }
+        Ok(Self { files, ..self })
     }
 
     pub fn read(&self, rel: &Path) -> Result<String> {

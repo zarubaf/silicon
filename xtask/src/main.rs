@@ -155,7 +155,7 @@ fn main() -> Result<ExitCode> {
             vocab::write(&Repo::discover()?)?;
             Ok(ExitCode::SUCCESS)
         }
-        Command::Prose { files } => Ok(if prose::run(&Repo::discover()?.only(&files))? {
+        Command::Prose { files } => Ok(if prose::run(&Repo::discover()?.only(&files)?)? {
             ExitCode::SUCCESS
         } else {
             ExitCode::FAILURE
