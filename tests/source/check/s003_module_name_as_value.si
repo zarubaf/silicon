@@ -1,0 +1,8 @@
+// S003: outside an `instance` statement and its argument, a module name is no value.
+// TOP M()
+module C() {
+}
+module M() {
+    // expected-error S003 @+1
+    let x = C;
+}

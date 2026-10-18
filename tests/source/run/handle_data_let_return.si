@@ -1,0 +1,34 @@
+// Row "a `let` with a data annotation, an assignment of a data place, and a data return" of the frontend spec, section 9.2.
+// The annotation `[UInt[8]; 2]` reads each register of the array. An assignment to a `UInt[8]` place reads a register.
+// A data return reads the parts of a tuple of handles.
+// TOP M()
+fn first(h: (Reg[UInt[8]], Wire[UInt[8]])) -> (UInt[8], UInt[8]) {
+    return h;
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    output p: UInt[8];
+    output s: UInt[8];
+    output t: UInt[8];
+    reg r0: UInt[8] = 0;
+    reg r1: UInt[8] = 0;
+    wire w: UInt[8];
+    w := x +% 1;
+    r0 := x;
+    r1 := x +% 2;
+    let rs = [r0, r1];
+    let a: [UInt[8]; 2] = rs;
+    let mut b: UInt[8] = 0;
+    b = rs[1];
+    let f = first((r0, w));
+    o := a[0] +% a[1];
+    p := b;
+    s := f.0;
+    t := f.1;
+}
+// STEP in=(clock$0rst true x 0) out=(o 0 p 0 s 0 t 1)
+// STEP in=(clock$0rst false x 4) out=(o 0 p 0 s 0 t 5)
+// STEP in=(clock$0rst false x 9) out=(o 10 p 6 s 4 t 10)
+// STEP in=(clock$0rst false x 255) out=(o 20 p 11 s 9 t 0)
+// STEP in=(clock$0rst false x 7) out=(o 0 p 1 s 255 t 8)

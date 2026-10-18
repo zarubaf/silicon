@@ -1,0 +1,43 @@
+// Helpers declare the child instances and a scratch memory. A child holds a register and adds a constant. A helper binds the
+// input of each child through a list of `Input` handles. The sum of the lane outputs and a scratch read are the outputs.
+// TOP Lanes(3)
+module Acc(comptime K: UInt[8]) {
+    input a: UInt[8];
+    output q: UInt[8];
+    reg r: UInt[8] = 0;
+    r := a +% K;
+    q := r;
+}
+fn lane(comptime k: UInt[8]) -> Instance[Acc, k] {
+    instance u = Acc(k);
+    return u;
+}
+fn bind_inputs(ins: List[Input[UInt[8]]], x: UInt[8]) -> () {
+    comptime for i in 0..len(ins) {
+        ins[i] := x ^ UInt[8](i);
+    }
+    return ();
+}
+fn scratch(a: UInt[2], d: UInt[8], w: Bool) -> UInt[8] {
+    mem m: [UInt[8]; 4];
+    write_port(m, a, d, w);
+    let r = m.read_port(a, true);
+    return r.data;
+}
+module Lanes(comptime N: Nat) {
+    input x: UInt[8];
+    input a: UInt[2];
+    input w: Bool;
+    output o: UInt[8];
+    output s: UInt[8];
+    let mut ins = list(Input[UInt[8]]);
+    let mut acc = UInt[8](0);
+    comptime for i in 0..N {
+        let u = lane(UInt[8](i + 1));
+        ins.push(u.a);
+        acc = acc ^ u.q;
+    }
+    bind_inputs(ins, x);
+    o := acc;
+    s := scratch(a, acc, w);
+}

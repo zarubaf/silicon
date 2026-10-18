@@ -1,0 +1,10 @@
+// S005: each argument of a handle type is a static position, so an input is no argument of an `Instance` type.
+// TOP M()
+module C(comptime N: Nat) {
+}
+module M() {
+    input x: UInt[8];
+    instance u = C(1);
+    // expected-error S005 @+1
+    let a: Instance[C, x] = u;
+}

@@ -15,8 +15,8 @@
 # remove the lines in a `test` commit.
 lean | S011 Static part of a `match` | 311
 rust | S011 Static part of a `match` | 311
-lean | S010 Memory as data | 278
-pin | S011 Hardware in `eval` | 279
+lean | S010 Memory as data | 314
+pin | S011 Hardware in `eval` | 320
 fix | S010 `read` of another value | 314
 lean | S010 `read` of another value | 314
 rust | S010 `read` of another value | 314

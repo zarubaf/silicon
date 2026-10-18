@@ -1,0 +1,49 @@
+// A bus slice. Each slot is a record of a valid register and a data register. A helper declares the slot and returns the
+// record of handles. A list holds the data registers, and two helpers bind them through the containers. The sum of the
+// data registers and the last beat are the outputs.
+// TOP Bus(4)
+struct Beat {
+    valid: Bool,
+    data: UInt[8],
+}
+struct Slot {
+    valid: Reg[Bool],
+    data: Reg[UInt[8]],
+}
+fn slot() -> Slot {
+    reg v: Bool = false;
+    reg d: UInt[8] = 0;
+    return Slot(v, d);
+}
+fn bind_all(rs: List[Reg[UInt[8]]], x: UInt[8], en: Bool) -> () {
+    comptime for i in 0..len(rs) {
+        rs[i] := if (en) { x } else { rs[i] };
+    }
+    return ();
+}
+fn bind_slot(s: Slot, b: Beat, en: Bool) -> () {
+    s.valid := if (en) { b.valid } else { s.valid };
+    s.data := if (en) { b.data } else { s.data };
+    return ();
+}
+module Bus(comptime N: Nat) {
+    input x: UInt[8];
+    input en: Bool;
+    input b: Beat;
+    output sum: UInt[8];
+    output q: Beat;
+    let mut rs = list(Reg[UInt[8]]);
+    comptime for i in 0..N {
+        reg r: UInt[8] = 0;
+        rs.push(r);
+    }
+    bind_all(rs, x, en);
+    let s = slot();
+    bind_slot(s, b, en);
+    let mut acc = UInt[8](0);
+    comptime for i in 0..len(rs) {
+        acc = acc +% rs[i];
+    }
+    sum := acc;
+    q := Beat(s.valid, s.data);
+}

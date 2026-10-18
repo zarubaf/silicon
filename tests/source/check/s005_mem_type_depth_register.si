@@ -1,0 +1,9 @@
+// S005: each argument of a handle type is a static position, so a register is no depth of a `Mem` type.
+// TOP M()
+module M() {
+    reg r: UInt[2] = 0;
+    r := r +% 1;
+    mem m: [UInt[8]; 4];
+    // expected-error S005 @+1
+    let a: Mem[UInt[8], r] = m;
+}
