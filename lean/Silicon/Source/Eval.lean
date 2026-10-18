@@ -118,8 +118,8 @@ The operators follow v0.1 section 3. These rules settle the open points of slice
   A function without `return` at its end is `S010` at the call.
 - A resource, an instance, or a `:=` in a helper runs as in a module body, after two checks
   with no charge (section 6.2). Under a guard, it is `S016`, and the text names the function of
-  the outermost call under the guard. In the mode of a `comptime fn`, it is `S011`. The parser
-  rejects a port in a function body, so only a module body has one.
+  the outermost call under the guard. In the mode of a `comptime fn` or of the `eval` command, it is
+  `S011`. The parser rejects a port in a function body, so only a module body has one.
 - A static position needs a static value, else `S011` at the node that uses the value. The
   index arguments, the conditions, and the loop bounds are static positions. The arguments at
   a `comptime` parameter, of `static_assert`, of `error`, and of a constructor `T(x)` are too.
@@ -2937,7 +2937,8 @@ mutual
       bindLocal x.id ⟨some t, false, v⟩
     | .reg p x ty init => do
       if (← get).inst.work.body.domain.isNone then
-        fail .S017 p "a combinational module has no register"
+        fail .S017 p ("a combinational module has no register; remove `domains()` from the " ++
+          "module, or move the register to a clocked module")
       let t ← Elab.dataType p (← typeExpr n ty)
       let o ← need init (← eval n init)
       copy p o
@@ -2952,7 +2953,8 @@ mutual
       bindLocal x.id ⟨some t, false, ← Elab.resource .wire path t p x.name.name⟩
     | .mem p x w d => do
       if (← get).inst.work.body.domain.isNone then
-        fail .S017 p "a combinational module has no memory"
+        fail .S017 p ("a combinational module has no memory; remove `domains()` from the " ++
+          "module, or move the memory to a clocked module")
       let t ← memWord p (← typeExpr n w)
       let k ← memDepth p (← structural do return (← need d (← eval n d)).value)
       let path ← fresh x.id x.name.name
@@ -2972,7 +2974,8 @@ mutual
       let some (.module _ m _ ds _) := (← read).items[i]?
         | fail .S010 p "an instance needs a module"
       if (← get).inst.work.body.domain.isNone && !ds.isEmpty then
-        fail .S017 p s!"a combinational module has no clocked child `{m.name}`"
+        fail .S017 p (s!"a combinational module has no clocked child `{m.name}`; remove " ++
+          "`domains()` from the module, or move the instance to a clocked module")
       let (c, _) ← instantiate n p i tvs
       let path ← fresh u.id u.name.name
       let k := (← get).inst.work.body.children.size
