@@ -817,7 +817,9 @@ mutual
     | .tuple ⟨xs⟩ => Value.putTyAll (o ++ "(") xs ++ ")"
     | v => (v.ty?.map (·.put o)).getD o
 
-  def Value.putTyAll (o : String) : List Value → String
+  def Value.putTyAll (o : String) (xs : List Value) : String :=
+    if textLimit < o.utf8ByteSize then o
+    else match xs with
     | [] => o
     | [x] => x.putTy o
     | x :: xs => Value.putTyAll (x.putTy o ++ ", ") xs

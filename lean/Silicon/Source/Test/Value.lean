@@ -489,6 +489,13 @@ example (o : String) (h : textLimit < o.utf8ByteSize) (v : Value) : v.put o = o 
 example (o : String) (h : textLimit < o.utf8ByteSize) (xs : List Value) :
     Value.putAll o xs = o := by
   unfold Value.putAll; simp [h]
+example (o : String) (h : textLimit < o.utf8ByteSize) (v : Value) : v.putTy o = o := by
+  unfold Value.putTy; simp [h]
+example (o : String) (h : textLimit < o.utf8ByteSize) (xs : List Value) :
+    Value.putTyAll o xs = o := by
+  unfold Value.putTyAll; simp [h]
+#guard (Value.tuple (Array.replicate 3000 (.tuple #[.uint 8 0, .bool true]))).text.utf8ByteSize
+  == 1027
 def named (n : Nat) : Ty := .struct 0 "S" #[.str (String.ofList (List.replicate n 'a'))] Meta.static
 #guard (named 1019).text == "S[\"" ++ String.ofList (List.replicate 1019 'a') ++ "\"]"
 #guard (named 1020).text == "S[\"" ++ String.ofList (List.replicate 1020 'a') ++ "\"..."
