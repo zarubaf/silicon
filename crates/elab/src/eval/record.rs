@@ -6,7 +6,7 @@
 //! value only after it paid for it. The zero charges its size from the metadata before it
 //! exists, and `data_bits` reads the width from the metadata, so neither walks the field types.
 
-use super::container::Piece;
+use super::typed::Field;
 use super::{Evaluator, Names, Opnd, Out, Res, at, fail, need};
 use crate::Code;
 use crate::agg::Agg;
@@ -242,10 +242,7 @@ impl Evaluator<'_> {
         self.charge(pos, sizes)?;
         let mut pieces = Vec::with_capacity(args.len());
         for ((field, arg), x) in fields.into_iter().zip(args).zip(xs) {
-            self.later_handle(pos, field)?;
-            let arg = self.settle(pos, field, arg)?;
-            let arg = self.data(x.pos(), arg)?.into_out();
-            pieces.push(self.conform_piece(pos, field, Piece::Out(arg))?);
+            pieces.push(self.typed_use(pos, field, false, arg, Field(x.pos()))?);
         }
         self.made_pieces(pos, ty, pieces)
     }

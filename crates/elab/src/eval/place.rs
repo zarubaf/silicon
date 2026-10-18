@@ -5,6 +5,7 @@
 //! no other binding shares the container. A read and a place each walk their path once.
 
 use super::store::Mark;
+use super::typed::Binding;
 use super::{Evaluator, Opnd, Out, Res, fail, need, same_form};
 use crate::Code;
 use crate::agg::Agg;
@@ -891,7 +892,7 @@ impl Evaluator<'_> {
         let o = need(value, o)?;
         self.store.shut_window(place.root);
         let y = if let Some(t) = place.ty {
-            self.local_use(pos, t, o.is_ref(), o)?
+            self.typed_use(pos, t, o.is_ref(), o, Binding)?
         } else {
             self.held_use(pos, &place, o)?
         };
@@ -901,7 +902,7 @@ impl Evaluator<'_> {
 
     /// The assignment at `pos` of the result `o` to the place of a local without a type that
     /// holds a value (section 5.4). The local has the type of its value. A handle with a handle
-    /// type thus gets the typed use at that type (`handle_use`). Another value keeps its form
+    /// type thus gets the typed use at that type (`typed_use`). Another value keeps its form
     /// after the copy (`same_form`). A local that holds an own output takes only an own output
     /// of the same data type. Its text names the fix: use the output directly.
     fn held_use(&mut self, pos: Pos, place: &Place, o: Out) -> Res<Val> {
@@ -910,7 +911,7 @@ impl Evaluator<'_> {
             _ => None,
         };
         if let Some(t) = held.as_ref().and_then(|h| self.handle_ty(h)) {
-            return self.handle_use(pos, t, o.is_ref(), o);
+            return self.typed_use(pos, t, o.is_ref(), o, Binding);
         }
         self.copy(pos, &o)?;
         let old = self.store.current(place.root, &place.keys);

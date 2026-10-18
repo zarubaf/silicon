@@ -6,6 +6,7 @@
 
 use super::agg::Delta;
 use super::place::Held;
+use super::typed::Element;
 use super::{Evaluator, Opnd, Out, Res, at, fail, need};
 use crate::Code;
 use crate::hw::{Seen, Val};
@@ -17,7 +18,7 @@ use parse::ast::{Expr, Pos};
 
 /// The element of a `push` after its typed use. A value that is already of the element type
 /// stays where it is until its charge is paid.
-enum Typed {
+pub(super) enum Typed {
     Converted(Value),
     Same(Out),
 }
@@ -74,8 +75,7 @@ impl Evaluator<'_> {
             return self.not_a_list(pos, g, &place);
         };
         self.mutation(pos, place.id)?;
-        self.later_handle(pos, elem)?;
-        let typed = self.typed_element(pos, x.pos(), elem, o)?;
+        let typed = self.typed_use(pos, elem, false, o, Element(x.pos()))?;
         let (depth, size) = match &typed {
             Typed::Converted(v) => (v.depth(), v.size()),
             Typed::Same(o) => {
@@ -109,7 +109,7 @@ impl Evaluator<'_> {
     /// The typed use of the result `o` at the element type `elem` of a list. A hardware value is
     /// `S011` at `xp`. A static value of another type converts and charges, and a static value
     /// of the type stays a reference.
-    fn typed_element(&mut self, pos: Pos, xp: Pos, elem: TyId, o: Out) -> Res<Typed> {
+    pub(super) fn typed_element(&mut self, pos: Pos, xp: Pos, elem: TyId, o: Out) -> Res<Typed> {
         let o = self.settle(pos, elem, o)?;
         let Opnd::Static(o) = self.data(xp, o)? else {
             return fail(Code::S011, xp, "a list holds no hardware value".to_owned());

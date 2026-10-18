@@ -50,12 +50,14 @@ mod tests_match;
 mod tests_mem;
 #[cfg(test)]
 mod tests_work_hw;
+mod typed;
 mod types;
 
 pub use inst::Design;
 pub(crate) use inst::{Bind, Elab, Inst, Literal, Mem, Sink, elaborate};
 pub(crate) use mem::addr_width;
 use store::{ConstStatus, Slot, Store};
+use typed::{Binding, Passed};
 
 use crate::agg::{Agg, Base};
 use crate::hw::{Graph, Handle, HwId, Kind as Resource, Op, Part, Ref, Root, Seen, Val};
@@ -767,19 +769,6 @@ impl Evaluator<'_> {
         }
     }
 
-    /// The copy of `out` when `copies`, then its typed use at `t` at `pos`. The copy charges the
-    /// size of the result, and a handle has the size 1. A typed use then reads a handle. A read
-    /// of an aggregate gives a reference, and its binding expands the reference into its
-    /// leaves. Thus the copy also charges the size of the reference, the zero size of its type,
-    /// before the typed use.
-    fn copy_use(&mut self, pos: Pos, t: TyId, copies: bool, out: Out) -> Res<Val> {
-        if copies {
-            self.charge(pos, self.size(&out))?;
-        }
-        self.later_handle(pos, t)?;
-        self.read_use(pos, t, copies, out)
-    }
-
     /// `S010` at `pos` when `t` is a handle type at a typed use other than a typed `let` and an
     /// assignment to a `let mut` local. There, a handle type is `S010` until #278 (section 5.4),
     /// with the text of section 6.2. A static position has `static_handle` instead. The caller
@@ -799,26 +788,11 @@ impl Evaluator<'_> {
         Ok(())
     }
 
-    /// The typed use of `out` at the declared type `t` of a local, in a `let` or an assignment to
-    /// a `let mut` local (Lean `localUse`). A handle type keeps the handle (`handle_use`), and
-    /// another type copies and reads it (`copy_use`).
-    fn local_use(&mut self, pos: Pos, t: TyId, copies: bool, out: Out) -> Res<Val> {
-        if self.tys.get(t).is_handle() {
-            self.handle_use(pos, t, copies, out)
-        } else {
-            self.copy_use(pos, t, copies, out)
-        }
-    }
-
-    /// The typed use at `pos` of `out` at the handle type `t`, in a typed `let` or an assignment
-    /// to a `let mut` local (section 5.4). The copy charges when `copies`, and a handle has the
-    /// size 1. Then the handle type of the value equals `t`, else `S010`. The compare is an id
-    /// compare, it has no charge, and nothing reads the value. An own output has no handle type,
-    /// so its text names the fix: use it as data.
-    fn handle_use(&mut self, pos: Pos, t: TyId, copies: bool, out: Out) -> Res<Val> {
-        if copies {
-            self.charge(pos, self.size(&out))?;
-        }
+    /// The typed use at `pos` of `out` at the handle type `t` (section 5.4, Lean `handleUse`).
+    /// The handle type of the value equals `t`, else `S010`. The compare is an id compare, it has
+    /// no charge, and nothing reads the value. An own output has no handle type, so its text
+    /// names the fix: use it as data.
+    fn handle_use(&mut self, pos: Pos, t: TyId, out: Out) -> Res<Val> {
         if let Seen::Handle(h) = self.store.seen(&out) {
             let h = h.clone();
             if self.handle_ty(&h) == Some(t) {
@@ -1703,7 +1677,7 @@ impl Evaluator<'_> {
         let o = self.eval(value)?;
         let o = need(value, o)?;
         let x = if let Some(t) = t {
-            self.local_use(pos, t, o.is_ref(), o)?
+            self.typed_use(pos, t, o.is_ref(), o, Binding)?
         } else {
             self.copy(pos, &o)?;
             self.known(&o)?;
@@ -1749,7 +1723,7 @@ impl Evaluator<'_> {
                 };
                 let o = self.eval(value)?;
                 let o = need(value, o)?;
-                let v = self.copy_use(*pos, rt, true, o)?;
+                let v = self.typed_use(*pos, rt, true, o, Passed)?;
                 // A module body runs on after a `return`, as the walk of Lean `Elab` does.
                 Ok((!module).then_some(v))
             }
