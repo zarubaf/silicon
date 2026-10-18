@@ -311,8 +311,11 @@ theorem need_f (e : Resolve.Expr) (o : Option Out) : Follows cap (need e o) (nee
 theorem apply_f (p : Pos) (st : Except Fault Step) : Follows cap (apply p st) (apply p st) := by
   unfold apply; follows
 
+theorem normal_f (p : Pos) (a : Agg) : Follows cap (Agg.normal p a) (Agg.normal p a) := by
+  unfold Agg.normal; follows
+
 theorem normalize_f (p : Pos) (a : Agg) : Follows cap (normalize p a) (normalize p a) := by
-  unfold normalize; follows
+  unfold normalize; follows [normal_f]
 
 theorem bounded_f (p : Pos) (d : Nat) : Follows cap (bounded p d) (bounded p d) := by
   unfold bounded; follows
@@ -338,13 +341,17 @@ theorem handleTy_f (p : Pos) (k : PrimType) (vs : List Val) :
     Follows cap (handleTy p k vs) (handleTy p k vs) := by
   unfold handleTy; follows [notHandle_f, memWord_f, memDepth_f, bounded_f]
 
+theorem readAgg_f (p : Pos) (b : Base) (t : Ty) (k : Nat) :
+    Follows cap (readAgg p b t k) (readAgg p b t k) := by
+  unfold readAgg; follows [bounded_f, normal_f]
+
 theorem readRef_f (p : Pos) (b : Base) (t : Ty) (k : Nat) :
     Follows cap (readRef p b t k) (readRef p b t k) := by
-  unfold readRef; follows [bounded_f, normalize_f]
+  unfold readRef; follows [readAgg_f]
 
 theorem readHandle_f (p : Pos) (k : Nat) (h : Handle) :
     Follows cap (readHandle p k h) (readHandle p k h) := by
-  unfold readHandle; follows [readRef_f]
+  unfold readHandle; follows [readAgg_f]
 
 theorem baseData_f (p : Pos) (v : Val) : Follows cap (baseData p v) (baseData p v) := by
   unfold baseData; follows [readHandle_f]

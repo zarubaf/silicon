@@ -947,9 +947,9 @@ The typed use at `pos` of `v` at the handle type `t` (section 5.4, step 3 of a t
 handle type). The handle type of `v` equals `t`, else `S010`. The compare has no charge, and
 nothing reads `v` (`handleWrong`).
 -/
-def handleUse (pos : Pos) (t : Ty) (v : Val) : M Val := do
+def handleUse (pos : Pos) (t : Ty) (v : Val) : M Handle := do
   match v with
-  | .handle h => if h.ty?.any (·.same t) then return v
+  | .handle h => if h.ty?.any (·.same t) then return h
   | _ => pure ()
   handleWrong pos t v
 
@@ -979,7 +979,7 @@ copy also charges the size of the reference, the zero size of its type, before t
 each handle position by its type (`typedAgg`).
 -/
 def valueUse (pos : Pos) (t : Ty) (copies : Bool) (v : Val) : M Val := do
-  if handleTy? t then handleUse pos t v
+  if handleTy? t then return .handle (← handleUse pos t v)
   else if copies then readUse pos t v else conformVal pos t v
 
 /-!
@@ -990,13 +990,11 @@ an argument, a `return`, and a `field`. Then the value converts by the rule of i
 def siteUse (pos : Pos) (t : Ty) (copies : Bool) (v : Val) : Site α → M α
   | .binding | .value => valueUse pos t copies v
   | .field q => do
-    if handleTy? t then
-      match (← handleUse pos t v).agg? with
-      | some a => return a
-      | none => fail .S010 pos s!"{v.text} is not a handle"
+    if handleTy? t then return .handle (← handleUse pos t v)
     conformAgg pos t (← item q (← dataAt q t (← settle pos t v)))
   | .element x => do
-    let w ← if handleTy? t then handleUse pos t v else dataAt x t (← settle pos t v)
+    if handleTy? t then return .handle (← handleUse pos t v)
+    let w ← dataAt x t (← settle pos t v)
     if w.hasHw then fail .S011 x "a list holds no hardware value"
     match w with
     | .static w => return .typed t (← conform pos t w)
