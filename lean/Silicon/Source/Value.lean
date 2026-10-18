@@ -704,10 +704,11 @@ enum value its tag, because the value does not hold the name of its variant. A h
 prints in its source form: `Reg[UInt[8]]`, `Mem[UInt[8], 16]`, or `Instance[Counter, 8]`. Each
 integer prints as `intText` does.
 
-Each walk appends to the text `o` so far, and it stops when `o` has more than `textLimit` bytes.
-Each piece that it appends is short: a string argument appends at most `textLimit + 1`
-characters. Thus the walk of a huge type stops soon after the bound, and `boundText` cuts its
-text (section 5.5).
+Each walk appends to the text `o` so far. Each step, of a part and of a list of parts, first
+checks the bound: it returns `o` at once when `o` has more than `textLimit` bytes. Each piece
+that it appends is short: a string argument appends at most `textLimit + 1` characters. Thus the
+walk of a huge type, also of a tuple with `2^20` parts, stops soon after the bound. Each open
+step then adds its closing piece in constant work, and `boundText` cuts the text (section 5.5).
 -/
 mutual
   def Ty.put (o : String) (t : Ty) : String :=
@@ -734,12 +735,16 @@ mutual
     | .inst _ x ⟨xs⟩ => Value.putAll (o ++ "Instance[" ++ x ++ ", ") xs ++ "]"
 
   /-- The types `ts` with `, ` between them. -/
-  def Ty.putAll (o : String) : List Ty → String
+  def Ty.putAll (o : String) (ts : List Ty) : String :=
+    if textLimit < o.utf8ByteSize then o
+    else match ts with
     | [] => o
     | [t] => t.put o
     | t :: ts => Ty.putAll (t.put o ++ ", ") ts
 
-  def TyParam.putAll (o : String) : List TyParam → String
+  def TyParam.putAll (o : String) (ps : List TyParam) : String :=
+    if textLimit < o.utf8ByteSize then o
+    else match ps with
     | [] => o
     | [.mk m t] => t.put (if m then o ++ "mut " else o)
     | .mk m t :: ps => TyParam.putAll (t.put (if m then o ++ "mut " else o) ++ ", ") ps
@@ -764,7 +769,9 @@ mutual
     | .enum _ _ x _ _ => o ++ intText x.toNat
 
   /-- The literals `xs` with `, ` between them. -/
-  def Value.putAll (o : String) : List Value → String
+  def Value.putAll (o : String) (xs : List Value) : String :=
+    if textLimit < o.utf8ByteSize then o
+    else match xs with
     | [] => o
     | [x] => x.put o
     | x :: xs => Value.putAll (x.put o ++ ", ") xs
