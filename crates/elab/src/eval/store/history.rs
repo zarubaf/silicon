@@ -58,7 +58,7 @@ enum Change {
     /// A `push`, and the length that the list had before.
     Push { len: usize },
     /// A `pop`: the element that left, and the length that the list had before.
-    Pop { saved: Value, len: usize },
+    Pop { saved: Agg, len: usize },
     /// A write into the part of a static local: the part that left.
     Replace(Value),
     /// A write that binds the local again: the local that left.
@@ -85,7 +85,7 @@ impl Edit {
     }
 
     /// A `pop` of the list at `keys`, which had `len` elements.
-    fn pop(keys: Vec<usize>, saved: Value, len: usize, stats: Vec<(u64, u64)>) -> Edit {
+    fn pop(keys: Vec<usize>, saved: Agg, len: usize, stats: Vec<(u64, u64)>) -> Edit {
         Edit {
             keys,
             change: Change::Pop { saved, len },
@@ -335,19 +335,24 @@ pub(super) struct View {
     pos: usize,
 }
 
-/// The size and the depth of each aggregate node of `root` on the path `keys`, from the root.
+/// The size and the depth of each aggregate node of `root` on the path `keys`, from the root. A
+/// list node at the end of the path counts too, because a `push` and a `pop` change its numbers.
 fn node_stats(root: &Agg, keys: &[usize]) -> Vec<(u64, u64)> {
     let mut stats = Vec::new();
     let mut cur = root;
     for &k in keys {
-        let (Agg::Array(n, p) | Agg::Tuple(n, p) | Agg::Record(n, p)) = cur else {
-            break;
+        let (Agg::Array(n, p) | Agg::Tuple(n, p) | Agg::Record(n, p) | Agg::List(n, p)) = cur
+        else {
+            return stats;
         };
         stats.push((n.size, n.depth));
         match p.0.get(k) {
             Some(x) => cur = x,
-            None => break,
+            None => return stats,
         }
+    }
+    if let Agg::List(n, _) = cur {
+        stats.push((n.size, n.depth));
     }
     stats
 }
@@ -377,7 +382,13 @@ fn undo_in(copy: &mut Val, at: usize, e: &Edit) {
         (Change::Push { .. }, Value::List(_, ys)) => {
             ys.pop();
         }
-        (Change::Pop { saved, .. }, Value::List(_, ys)) => ys.push(saved.clone()),
+        (
+            Change::Pop {
+                saved: Agg::Static(saved),
+                ..
+            },
+            Value::List(_, ys),
+        ) => ys.push(saved.clone()),
         (Change::Replace(saved), part) => *part = saved.clone(),
         _ => {}
     };
@@ -393,7 +404,8 @@ fn undo_in(copy: &mut Val, at: usize, e: &Edit) {
                 match cur {
                     Agg::Array(node, parts)
                     | Agg::Tuple(node, parts)
-                    | Agg::Record(node, parts) => {
+                    | Agg::Record(node, parts)
+                    | Agg::List(node, parts) => {
                         if let Some(&(size, depth)) = e.stats.get(at + i) {
                             node.size = size;
                             node.depth = depth;
@@ -412,8 +424,22 @@ fn undo_in(copy: &mut Val, at: usize, e: &Edit) {
                     _ => return,
                 }
             }
-            if let Agg::Static(value) = cur {
-                apply(value);
+            match cur {
+                Agg::Static(value) => apply(value),
+                Agg::List(node, parts) => {
+                    if let Some(&(size, depth)) = e.stats.get(at + rel.len()) {
+                        node.size = size;
+                        node.depth = depth;
+                    }
+                    match &e.change {
+                        Change::Push { .. } => {
+                            parts.0.pop();
+                        }
+                        Change::Pop { saved, .. } => parts.0.push(saved.clone()),
+                        _ => {}
+                    }
+                }
+                _ => {}
             }
         }
         _ => {}
@@ -425,7 +451,9 @@ fn node_at<'a>(a: &'a mut Agg, keys: &[usize]) -> Option<&'a mut Agg> {
     let mut cur = a;
     for &k in keys {
         cur = match cur {
-            Agg::Array(_, p) | Agg::Tuple(_, p) | Agg::Record(_, p) => p.0.get_mut(k)?,
+            Agg::Array(_, p) | Agg::Tuple(_, p) | Agg::Record(_, p) | Agg::List(_, p) => {
+                p.0.get_mut(k)?
+            }
             _ => return None,
         };
     }
@@ -535,7 +563,7 @@ impl Store {
     }
 
     /// Logs the `pop` of `saved` that `before` was made for, if a read waits at the local.
-    pub(in crate::eval) fn log_pop(&mut self, before: Before, saved: &Value) {
+    pub(in crate::eval) fn log_pop(&mut self, before: Before, saved: &Agg) {
         if let Some(p) = before.0 {
             self.log_edit(p.root, Edit::pop(p.keys, saved.clone(), p.len, p.stats));
         }
@@ -734,7 +762,8 @@ impl Store {
                 crate::counters::Count::Copies,
                 match &e.change {
                     Change::Push { .. } | Change::Rebind(_) => 0,
-                    Change::Pop { saved: w, .. } | Change::Replace(w) => w.size(),
+                    Change::Pop { saved: w, .. } => super::static_size(w),
+                    Change::Replace(w) => w.size(),
                 },
             );
             undo_in(&mut v, path.len(), e);
@@ -762,7 +791,8 @@ impl Store {
             Some(s) => {
                 let rel = path.get(s.used..)?;
                 match &log.entries.get(s.pos)?.change {
-                    Change::Pop { saved: part, .. } | Change::Replace(part) => {
+                    Change::Pop { saved: part, .. } => Store::own(self.agg_element(part, rel)),
+                    Change::Replace(part) => {
                         Store::own(crate::hw::Seen::Static(self.element(part, rel)))
                     }
                     Change::Rebind(old) => Store::own(self.part_of(old, rel)),
