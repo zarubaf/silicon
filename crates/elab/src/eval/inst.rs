@@ -504,7 +504,7 @@ impl Evaluator<'_> {
     }
 
     /// The source name of the item `i`, for an error text.
-    fn item_name(&self, i: usize) -> &str {
+    pub(super) fn item_name(&self, i: usize) -> &str {
         self.file
             .ast()
             .get(i)
@@ -1029,23 +1029,23 @@ impl Evaluator<'_> {
     /// The text of the `S018` data `x` (section 6.2).
     fn breach_text(&self, x: Breach) -> String {
         let work = &self.elab.work;
-        let text = |sym: Sym| self.syms.texts.get(sym).map_or("", String::as_str);
+        let sym_text = |sym: Sym| self.syms.texts.get(sym).map_or("", String::as_str);
         let at = |p: Pos| format!("{}:{}", p.line, p.col);
         let subject = |r: Subject| match r {
-            Subject::Own(sym) => text(sym).to_owned(),
+            Subject::Own(sym) => sym_text(sym).to_owned(),
             Subject::Input { child, port } => {
                 let u = work
                     .body
                     .children
                     .get(child)
                     .map_or("", |c| c.name.as_str());
-                format!("{u}.{}", text(port))
+                format!("{u}.{}", sym_text(port))
             }
         };
-        let mem_name = |k: usize| work.body.mems.get(k).map_or("", |m| text(m.name));
+        let mem_name = |k: usize| work.body.mems.get(k).map_or("", |m| sym_text(m.name));
         let call = |write: bool| if write { "write_port" } else { "read_port" };
         let item = |h: usize| self.item_name(h);
-        match x {
+        let text = match x {
             Breach::Second { r, b, d } => format!(
                 "`{}` has a second binding; the first binding is at {}, and the declaration is \
                  at {}; remove one of the two bindings",
@@ -1061,7 +1061,7 @@ impl Evaluator<'_> {
                 item(h)
             ),
             Breach::Unbound(sym) => {
-                let r = text(sym);
+                let r = sym_text(sym);
                 format!(
                     "`{r}` has no binding; bind it with `{r} := ...;`, or remove its declaration"
                 )
@@ -1079,7 +1079,7 @@ impl Evaluator<'_> {
                         .filter(|q| q.input && !work.inputs.contains_key(&(k, q.sym)))
                         .min_by_key(|q| (q.pos.line, q.pos.col))
                 });
-                let name = port.map_or("", |q| text(q.sym));
+                let name = port.map_or("", |q| sym_text(q.sym));
                 let inst = work.body.children.get(k).map_or("", |c| c.name.as_str());
                 format!(
                     "the input `{name}` of the instance `{inst}` has no binding; \
@@ -1120,7 +1120,10 @@ impl Evaluator<'_> {
                 item(h),
                 item(h)
             ),
-        }
+        };
+        #[cfg(test)]
+        crate::counters::add(crate::counters::Count::TextBytes, text.len() as u64);
+        text
     }
 
     /// A port, a register, and a wire have a hardware data type (section 5.1), also an
