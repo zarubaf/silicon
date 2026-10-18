@@ -2,6 +2,12 @@ pre-commit:
   commands:
     fmt-check:
       run: just fmt-check
+    prose:
+      glob: "*.{md,lean}"
+      run: just prose {staged_files}
+    clippy:
+      glob: "*.rs"
+      run: just clippy
 
 commit-msg:
   commands:

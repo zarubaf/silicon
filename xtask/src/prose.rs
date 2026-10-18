@@ -113,7 +113,8 @@ fn run_vale(repo: &Repo, extracted: &[LeanProse]) -> Result<bool> {
         return Ok(true);
     }
     let output = Command::new("vale")
-        .args(["--no-wrap", "--output=line"])
+        .args(["--no-wrap", "--output=line", "--config"])
+        .arg(repo.root.join(".vale.ini"))
         .args(paths)
         .current_dir(&repo.root)
         .output()
