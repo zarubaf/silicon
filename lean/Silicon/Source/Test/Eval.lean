@@ -3628,4 +3628,26 @@ def pushHandle : String :=
   s!"S010 1:1 {laterText}"
 #guard out "module C(comptime t: Reg[Bool]) {\n}" "Instance[C, true]" 8 == "S015 1:22"
 
+/-!
+`read` takes a register or a wire (section 5.4). A value that is not a handle is `S010` at the
+call. It comes after the node, the name, the argument, and its copy, so one unit less stops at
+the copy.
+The receiver form binds the receiver. A user function `read` and a local `read` shadow the
+prelude function, and their uses get no rule of `read`.
+-/
+def readText (a : String) : String :=
+  s!"S010 1:1 `read` takes a register or a wire, not {a}; use the value directly, without `read`"
+#guard said "" "read(1)" 5 == readText "a value of `Int`"
+#guard out "" "read(1)" 4 == "S015 1:1"
+#guard said "" "read([])" 5 == readText "`[]`"
+#guard out "" "read([])" 4 == "S015 1:1"
+#guard said "" "(1).read()" 5 == readText "a value of `Int`"
+#guard out "" "(1).read()" 4 == "S015 1:1"
+#guard said "" "read(1, 2)" 100 ==
+  "S007 1:1 `read` takes 1 argument(s), but it has 2; write `read(h)` with one register or wire"
+#guard out "fn read(x: Int) -> Int { return x + 1; }" "read(1)" == "(int 2)"
+#guard out "fn read(x: Int) -> Int { return x + 1; }" "(1).read()" == "(int 2)"
+#guard out "fn f() -> Int { let read = 3; return read; }" "f()" == "(int 3)"
+#guard out "fn f(read: Int) -> Int { return read; }" "f(4)" == "(int 4)"
+
 end Silicon.Source.Test.Eval

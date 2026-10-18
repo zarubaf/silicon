@@ -2087,4 +2087,68 @@ def laterText : String :=
   memBody "  reg r: UInt[8] = 0;\n  r := r;\n  let h = r;\n  instance u = C(h);\n") "M" ==
   "S011 7:3"
 
+/-!
+`read(h)` reads a register or a wire as a `data` context does (section 5.4), also in the
+receiver form. A local named `read` shadows the prelude function, so it binds the handle.
+-/
+def readLets (body : String) : String := handleLets ("  r := i;\n" ++ body)
+#guard exact
+  (readLets "  let a: UInt[8] = read(r);\n  let b = w.read();\n  let c = read(r) == r;\n") "M"
+  382
+#guard exact (readLets "  let read = r;\n  let a: Reg[UInt[8]] = read;\n") "M" 356
+
+/-!
+A child input is `S017`. An own output, an instance, an own input, a domain, and a memory are
+`S010`. Each error is at the call, with its fix (section 6.2). The copy of the argument charges
+before the check, so one unit less stops at the call.
+-/
+def readText (a h : String) : String := s!"`read` takes a register or a wire, not {a}; {h}"
+def inputText : String :=
+  "the input `x` of `u` is a target only; read the value that you bind to it"
+def directly : String := "use the value directly, without `read`"
+#guard said (readLets "  let a = read(u.x);\n") == inputText
+#guard cost (readLets "  let a = read(u.x);\n") "M" (fuel := 156) == "S017 21:11"
+#guard cost (readLets "  let a = read(u.x);\n") "M" (fuel := 155) == "S015 21:11"
+#guard said (readLets "  let a = u.x.read();\n") == inputText
+#guard cost (readLets "  let a = u.x.read();\n") "M" (fuel := 156) == "S017 21:11"
+#guard cost (readLets "  let a = u.x.read();\n") "M" (fuel := 155) == "S015 21:11"
+#guard said (readLets "  let a = read(o);\n") == readText "the output `o`" directly
+#guard cost (readLets "  let a = read(o);\n") "M" (fuel := 155) == "S010 21:11"
+#guard cost (readLets "  let a = read(o);\n") "M" (fuel := 154) == "S015 21:11"
+#guard said (readLets "  let a = read(u);\n") ==
+  readText "a handle of `Instance[C, 8]`" "read an output of the instance, for example `u.q`"
+#guard cost (readLets "  let a = read(u);\n") "M" (fuel := 155) == "S010 21:11"
+#guard cost (readLets "  let a = read(u);\n") "M" (fuel := 154) == "S015 21:11"
+#guard said (readLets "  let a = read(i);\n") == readText "a value of `UInt[8]`" directly
+#guard cost (readLets "  let a = read(i);\n") "M" (fuel := 155) == "S010 21:11"
+#guard cost (readLets "  let a = read(i);\n") "M" (fuel := 154) == "S015 21:11"
+#guard said (readLets "  let a = read(clock);\n") ==
+  readText "the domain `clock`" "a domain has no value, so remove the `read`"
+#guard cost (readLets "  let a = read(clock);\n") "M" (fuel := 155) == "S010 21:11"
+#guard cost (readLets "  let a = read(clock);\n") "M" (fuel := 154) == "S015 21:11"
+def readMem : String := memBody "  mem m: [UInt[8]; 4];\n  let a = read(m);\n"
+#guard said readMem ==
+  readText "a handle of `Mem[UInt[8], 4]`" "read a word with `read_port`"
+#guard cost readMem "M" (fuel := 41) == "S010 3:11"
+#guard cost readMem "M" (fuel := 40) == "S015 3:11"
+#guard said (readLets "  let a = read(r, w);\n") ==
+  "`read` takes 1 argument(s), but it has 2; write `read(h)` with one register or wire"
+
+/-!
+The result of `read` refers to the register, so `let x = read(r);` is a copy: it charges the
+zero size of the type once, before the leaves bind. A part without a hardware leaf is a new
+static value, so its binding is no copy, and the read charges its zero size once. Thus each
+binding below grows by the zero size of `[Unit; 100]` less that of `[Unit; 0]`, 100 units.
+-/
+def readAgg (t body : String) : String :=
+  s!"type P = {t};\nmodule M() \{\n  reg r: P = P();\n  r := r;\n" ++ body ++ "}\n"
+def readGrowth (t0 t1 : String) : Int :=
+  let used (t b : String) : Int := (total (readAgg t b) "M" : Int)
+  let b := "  let x = read(r);\n"
+  (used t1 b - used t1 "") - (used t0 b - used t0 "")
+#guard readGrowth "(UInt[8], [Unit; 0])" "(UInt[8], [Unit; 100])" == 100
+#guard readGrowth "[Unit; 0]" "[Unit; 100]" == 100
+#guard exact (readAgg "(UInt[8], [Unit; 100])" "  let x = read(r);\n") "M" 443
+#guard exact (readAgg "[Unit; 100]" "  let x = read(r);\n") "M" 376
+
 end Silicon.Source.Test.Elab

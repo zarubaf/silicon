@@ -37,6 +37,8 @@ The evaluator holds the innermost guard of section 9.4 in `Ctx.guard : Option Gu
 
 `diagnostic(message, value)` (spec sections 5.4, 6.2, and 8.2) adds one `Record` (a line of text) to `St.records`. `Eval.diagnose` runs after the copy charge: the guard, the message, the measure charge (`Val.measureCharge`), the byte charge, and then the record. The text comes from the pure `render` functions (`Ty.render`, `Agg.render`, `Handle.render`). They never call `normalize`, and a `ref` renders from its type. `Ctx.inst` holds the emitted name, and `Ctx.calls` holds the frames. A frame push is O(1), and the byte charge pays for the frames. `fail` is the only error: it builds a `Stop { err, records }` from `St.records`, so an error keeps the records. `Eval.observeRun`, `Eval.observeExpr`, and `Elab.observe` return the records with both outcomes. `Eval.run`, `Eval.evalExpr`, and `Elab.elaborate` are their projections.
 
+`read(h)` (spec section 5.4) is `Eval.readOf`: the copy, then `S017` for a child input or `S010` with the fix `readHint`, then `readRef`. Its result refers to the resource (`Out.ref`), so `let x = read(r)` charges the zero size once, before the leaves bind. A result without a hardware leaf is a new static value, so its binding is no copy.
+
 ## Invariants
 
 - Do not use `sorry`. Check: `cargo xtask check` (rule `lean-sorry`).
