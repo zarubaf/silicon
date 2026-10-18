@@ -58,7 +58,8 @@ impl Evaluator<'_> {
     /// Their steps then walk the path of `base` from the root once (`followed`), and the path
     /// does not grow again at each step. The root is parked for the whole run, so an index that
     /// changes it cannot change what the steps select. A step that fails comes after the walk of
-    /// the steps before it, as in the order of Lean.
+    /// the steps before it, as in the order of Lean. An index without a call has no effect that
+    /// a later check could reorder, so only an index with a call ends a run.
     fn target_run(&mut self, base: Out, steps: &[Sel<'_>]) -> Res<(Out, usize)> {
         let Out::Ref(r) = &base else {
             return Ok((base, 0));
@@ -79,6 +80,14 @@ impl Evaluator<'_> {
         let mut keyed = Vec::with_capacity(steps.len());
         let mut stop = None;
         for step in steps {
+            // An index with a call can record a diagnostic or change a local, so the selections
+            // before it must have walked and passed their checks first (Lean selects each part
+            // before the next index evaluates). The run ends here and the step runs alone.
+            if !keyed.is_empty()
+                && matches!(step, Sel::Index(_, args) if self.call_args.has_call(args))
+            {
+                break;
+            }
             if let Err(e) = self.charge(step.pos(), 1) {
                 stop = Some(e);
                 break;
