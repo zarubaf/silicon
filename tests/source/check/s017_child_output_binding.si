@@ -9,7 +9,8 @@ module M() domains() {
     output y: Bool;
     instance c = C();
     c.a := false;
-    // expected-error S017 @+1
+    // expected-error S017 @+2
+    // expected-message: `q` is an output of the child, not a target; the child drives its outputs, so bind an input of the child
     c.q := true;
     y := c.q;
 }

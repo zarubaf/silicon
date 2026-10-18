@@ -1,0 +1,13 @@
+// S017: a `:=` target is a wire, a register, an own output, or a child input. The step selects a memory from an array of
+// memories.
+// TOP M()
+module M() {
+    input d: UInt[8];
+    input c: Bool;
+    mem m: [UInt[8]; 4];
+    write_port(m, 0, d, c); let rr = m.read_port(0, c);
+    let ms = [m, m];
+    // expected-error S017 @+2
+    // expected-message: a `:=` target is a wire, a register, an own output, or a child input, not a handle of `Mem[UInt[8], 4]`; select one of these, or assign a local with `=`
+    ms[0] := d;
+}

@@ -2,6 +2,7 @@
 // TOP M()
 module M() {
     let a = [1];
-    // expected-error S017 @+1
+    // expected-error S017 @+2
+    // expected-message: a `:=` target is a whole resource, not a part of a value; bind the whole resource, for example `r := P(a, b);`
     a[0] := 1;
 }

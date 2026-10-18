@@ -1,0 +1,10 @@
+// S017: the base of the step decides, and the error comes before the index evaluates. The index is out of range, but the
+// base is a data array, so the error is `S017` and not `S013`.
+// TOP M()
+module M() {
+    input x: UInt[8];
+    let a = [x, x];
+    // expected-error S017 @+2
+    // expected-message: a `:=` target is a whole resource, not a part of a value; bind the whole resource, for example `r := P(a, b);`
+    a[5] := x;
+}
