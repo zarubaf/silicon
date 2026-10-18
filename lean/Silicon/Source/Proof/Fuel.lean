@@ -640,10 +640,6 @@ theorem settle_f (p : Pos) (t : Ty) (v : Val) :
     Follows cap (settle p t v) (settle p t v) := by
   unfold settle; follows [build_f]
 
-theorem recordOf_f (p : Pos) (t : Ty) (fs : List Ty) (ps : List Pos) (vs : List Val) :
-    Follows cap (recordOf p t fs ps vs) (recordOf p t fs ps vs) := by
-  unfold recordOf; follows [laterHandle_f, conformAgg_f, item_f, data_f, settle_f, made_f]
-
 theorem conformVal_f (p : Pos) (t : Ty) (v : Val) :
     Follows cap (conformVal p t v) (conformVal p t v) := by
   unfold conformVal; follows [settle_f, data_f, conform_f, typedAgg_f]
@@ -652,21 +648,31 @@ theorem readUse_f (p : Pos) (t : Ty) (v : Val) :
     Follows cap (readUse p t v) (readUse p t v) := by
   unfold readUse; follows [settle_f, data_f, conformVal_f]
 
-theorem copyUse_f (p : Pos) (t : Ty) (c : Bool) (v : Val) :
-    Follows cap (copyUse p t c v) (copyUse p t c v) := by
-  unfold copyUse; follows [laterHandle_f, readUse_f, conformVal_f]
-
-theorem handleUse_f (p : Pos) (t : Ty) (c : Bool) (v : Val) :
-    Follows cap (handleUse p t c v) (handleUse p t c v) := by
+theorem handleUse_f (p : Pos) (t : Ty) (v : Val) :
+    Follows cap (handleUse p t v) (handleUse p t v) := by
   unfold handleUse; follows
 
-theorem localUse_f (p : Pos) (t : Ty) (c : Bool) (v : Val) :
-    Follows cap (localUse p t c v) (localUse p t c v) := by
-  unfold localUse; follows [handleUse_f, copyUse_f]
+theorem valueUse_f (p : Pos) (t : Ty) (c : Bool) (v : Val) :
+    Follows cap (valueUse p t c v) (valueUse p t c v) := by
+  unfold valueUse; follows [laterHandle_f, readUse_f, conformVal_f]
+
+theorem siteUse_f (p : Pos) (t : Ty) (c : Bool) (v : Val) (k : Site α) :
+    Follows cap (siteUse p t c v k) (siteUse p t c v k) := by
+  cases k <;> unfold siteUse <;>
+    follows [handleUse_f, valueUse_f, laterHandle_f, conformAgg_f, item_f, data_f, settle_f,
+      conform_f]
+
+theorem typedUse_f (p : Pos) (t : Ty) (c : Bool) (v : Val) (k : Site α) :
+    Follows cap (typedUse p t c v k) (typedUse p t c v k) := by
+  unfold typedUse; follows [siteUse_f]
+
+theorem recordOf_f (p : Pos) (t : Ty) (fs : List Ty) (ps : List Pos) (vs : List Val) :
+    Follows cap (recordOf p t fs ps vs) (recordOf p t fs ps vs) := by
+  unfold recordOf; follows [typedUse_f, made_f]
 
 theorem heldUse_f (p : Pos) (h : Val) (o : Out) :
     Follows cap (heldUse p h o) (heldUse p h o) := by
-  unfold heldUse; follows [handleUse_f, copy_f]
+  unfold heldUse; follows [typedUse_f, copy_f]
 
 theorem variantOf_f (p : Pos) (t : Ty) (j : Nat) (vs : List Val) :
     Follows cap (variantOf p t j vs) (variantOf p t j vs) := by
@@ -788,7 +794,7 @@ theorem iteration_f (p : Pos) (i : Binder) (v : Int) {x y : M α} (h : Follows c
 theorem copyIn_f (p : Pos) (c : Bool) (q : Resolve.Param) (t : Ty) (a : Actual) :
     Follows cap (copyIn p c q t a) (copyIn p c q t a) := by
   unfold copyIn
-  follows [laterHandle_f, staticHandle_f, static_f, settle_f, conform_f, copyUse_f, named_f,
+  follows [laterHandle_f, staticHandle_f, static_f, settle_f, conform_f, typedUse_f, named_f,
     bindLocal_f]
 
 theorem result_f (p : Pos) (path : Names.Path) (u : String) (o : Option Val) :
@@ -798,7 +804,7 @@ theorem result_f (p : Pos) (path : Names.Path) (u : String) (o : Option Val) :
 theorem pushOnto_f (p x : Pos) (g : String) (pl : Place) (v : Val) :
     Follows cap (pushOnto p x g pl v) (pushOnto p x g pl v) := by
   unfold pushOnto
-  follows [mutation_f, laterHandle_f, data_f, settle_f, conform_f, bounded_f, changeAt_f]
+  follows [mutation_f, typedUse_f, bounded_f, changeAt_f]
 
 theorem popFrom_f (p : Pos) (g : String) (pl : Place) :
     Follows cap (popFrom p g pl) (popFrom p g pl) := by
@@ -1072,13 +1078,13 @@ theorem follows_all : ∀ n,
       · rw [stmt.eq_def (k + 1), stmt.eq_def 0]
         apply Follows.exhaust (cap := k)
         intro _
-        follows [he k, ht k, hs k, hb k, placeAt_f (he k), need_f, copy_f, copyUse_f, localUse_f,
+        follows [he k, ht k, hs k, hb k, placeAt_f (he k), need_f, copy_f, typedUse_f,
           heldUse_f, known_f, named_f, bindLocal_f, test_f, int_f, range_f, iteration_f,
           static_f, store_f, hold_f, release_f, shut_f]
       · rw [stmt.eq_def (k + 1), stmt.eq_def (m + 1)]
         apply Follows.charge_one
         intro _
-        follows [he m, ht m, hs m, hb m, placeAt_f (he m), need_f, copy_f, copyUse_f, localUse_f,
+        follows [he m, ht m, hs m, hb m, placeAt_f (he m), need_f, copy_f, typedUse_f,
           heldUse_f, known_f, named_f, bindLocal_f, test_f, int_f, range_f, iteration_f,
           static_f, store_f, hold_f, release_f, shut_f]
     · rcases n' with _ | m

@@ -64,7 +64,7 @@ These rules settle the open points of slice 1:
   are targets, also through a handle alias. Each other target fails with `S017` (rule). A
   target with an index or a selector `.N` is a part of a resource: `S017` at the target.
 - The value of `:=` is a typed use. It copies a reference, as a `let` with a type does. A read
-  of an aggregate handle charges the handle, then the zero size of its type (`copyUse`).
+  of an aggregate handle charges the handle, then the zero size of its type (`typedUse`).
 - A `:=` binding holds its value as an aggregate part. A static scalar becomes a hardware
   constant. An aggregate or an empty value stays one part, so the lowering makes its leaf
   statements and charges each one before it makes it.
@@ -429,7 +429,7 @@ mutual
           let ty := match t with
             | .own _ _ ty _ => ty
             | .child _ _ q => q.ty
-          bindTarget p t (← sinkValue p ty (← copyUse p ty o.ref o.value))
+          bindTarget p t (← sinkValue p ty (← typedUse p ty o.ref o.value .value))
         | .inst p u _ i xs => do
           let tvs ← arguments (eval n) (typeExpr n) p i xs
           let some (.module _ m _ ds _) := (← read).items[i]?

@@ -2109,7 +2109,7 @@ A scalar read charges only the handle, as in slice 1. A read without a hardware 
 static value with the charge of its zero size.
 -/
 def copyRead (t : Ty) (fuel : Nat := 100) : String :=
-  match Eval.run { fuel } #[] (fun _ => Eval.copyUse at1 t true (regOf t)) with
+  match Eval.run { fuel } #[] (fun _ => Source.Eval.typedUse at1 t true (regOf t) .value) with
   | .ok (v, used) => s!"{valText v} {used}"
   | .error e => s!"{e.code} {e.pos.line}:{e.pos.col}"
 #guard copyRead (.array (.uint 8) 4) == "ref r 6"

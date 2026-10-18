@@ -788,19 +788,6 @@ def settle (pos : Pos) (t : Ty) : Val → M Val
   | v => pure v
 
 /-!
-A record constructor of the struct type `t` with the field types `fs` at `pos`. The arguments
-`vs` at the positions `ps` paid their copies. Each field is a typed use in declaration order, in
-a data context (section 9.2): a register or a wire is read. A literal with `[]` takes the type
-of its field. A field can hold a hardware value or a hardware aggregate. Then the record checks
-its depth and charges its size.
--/
-def recordOf (pos : Pos) (t : Ty) (fs : List Ty) (ps : List Pos) (vs : List Val) : M Agg := do
-  let xs ← (fs.zip (ps.zip vs)).mapM fun (ft, q, v) => do
-    laterHandle pos ft
-    conformAgg pos ft (← item q (← data q (← settle pos ft v)))
-  made pos (.mkRecord t xs.toArray)
-
-/-!
 The bit buffer of a static pack (section 5.1): its words of 64 bits, the least significant word
 first, and the next free bit. A pack allocates one buffer for the payload width and writes each
 leaf at its offset. Thus a leaf of `w` bits takes at most `w / 64 + 1` word steps, and no step

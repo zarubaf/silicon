@@ -298,14 +298,14 @@ theorem follows_all : ∀ n,
           arguments_f (he.1 k) (he.2.1 k), he.1 k, he.2.1 k, need_f, copy_f,
           conform_f, static_f, conformVal_f, lit_f, fresh_f, bindLocal_f, test_f, int_f, range_f,
           iteration_e, dataType_e, memWord_f, memDepth_f, port_e, resource_e, modifyBody_e,
-          target_e, bindTarget_e, sinkValue_e, copyUse_f, settle_f, hold_f, release_f,
+          target_e, bindTarget_e, sinkValue_e, typedUse_f, settle_f, hold_f, release_f,
           structural_e]
       · refine EFollows.charge_one _ fun _ => ?_
         efollows [hs m, hb m, instantiate_e (hb m),
           arguments_f (he.1 m) (he.2.1 m), he.1 m, he.2.1 m, need_f, copy_f,
           conform_f, static_f, conformVal_f, lit_f, fresh_f, bindLocal_f, test_f, int_f, range_f,
           iteration_e, dataType_e, memWord_f, memDepth_f, port_e, resource_e, modifyBody_e,
-          target_e, bindTarget_e, sinkValue_e, copyUse_f, settle_f, hold_f, release_f,
+          target_e, bindTarget_e, sinkValue_e, typedUse_f, settle_f, hold_f, release_f,
           structural_e]
     · rcases n' with _ | m
       · rw [block.eq_def (k + 1), block.eq_def 0]
