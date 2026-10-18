@@ -1,0 +1,18 @@
+// T4 of the work-counter tests of the handles in containers (issue #278). N targets `rs[i] := x` select N registers of an
+// array of N registers. Each target charges 1 for its step and evaluates its index, so the work is `O(N)`.
+// SCALE handle_target_index 32 64 128 256 512
+// TOP M()
+module M() {
+    input x: UInt[8];
+// REPEAT i {N}
+    reg r{i}: UInt[8] = 0;
+// END
+    let rs = [
+// REPEAT i {N}
+        r{i},
+// END
+    ];
+// REPEAT i {N}
+    rs[{i}] := x;
+// END
+}
