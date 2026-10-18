@@ -954,6 +954,38 @@ fn eval_of_a_function_cycle_through_its_signature_does_not_overflow_the_stack() 
     Ok(())
 }
 
+/// The text "Hardware in `eval`" of `S011` (section 6.2): the expression of the command reaches
+/// a declaration in the function `{h}`, directly or through another helper.
+#[test]
+fn eval_of_hardware_in_a_helper_is_s011_with_the_function_that_declares() -> Test {
+    let src = "\
+fn mk() -> Nat {
+    reg r: UInt[8] = 0;
+    return 1;
+}
+fn outer() -> Nat {
+    return mk();
+}
+";
+    let text_of = |hw: &str, line: usize| {
+        format!(
+            "error[S011]: {line}:5: the `eval` command makes no hardware, but its expression \
+             reaches this {hw} in `mk`; evaluate an expression that makes no hardware, or \
+             elaborate a module that calls `mk`\n"
+        )
+    };
+    for expr in ["mk()", "outer()"] {
+        assert_eq!(
+            eval(src, expr, &[])?,
+            (text_of("register", 2), Some(1)),
+            "{expr}"
+        );
+        let out = agree("eval", &[expr], &file("eval-hardware.si", src.as_bytes())?)?;
+        assert_eq!(text(&out), text_of("register", 2), "{expr}");
+    }
+    Ok(())
+}
+
 /// Runs `silicon cost FILE --top TOP` with the flags `flags`. Each call has its own file.
 fn cost(src: &str, top: &str, flags: &[&str]) -> std::io::Result<(String, Option<i32>)> {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
