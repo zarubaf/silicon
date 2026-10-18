@@ -498,3 +498,50 @@ fn c5_targets_through_an_array_of_registers_are_linear() {
     doubles(&n, &twice);
     assert!(twice.counts.total() <= 8 * twice.used);
 }
+
+/// Issue #278, review. The target `a[0]...[0] := x` through `d` nested containers of a register
+/// steps along the path once for each level, so the work that the target adds is linear in the
+/// depth `d`, and a walk of the grown path from the root at each level would be quadratic. The
+/// containers are arrays, or lists that `push` builds.
+#[test]
+fn c11_a_deep_target_through_nested_containers_is_linear_in_its_depth() {
+    let extra = |d: usize, lists: bool, key: u64| {
+        let build = |target: bool| {
+            let mut src = "module M() {\n    input x: UInt[8];\n    output o: Bool;\n    \
+                           reg r: UInt[8] = 0;\n"
+                .to_owned();
+            if lists {
+                src.push_str("    let mut a0 = list(Reg[UInt[8]]);\n    a0.push(r);\n");
+                for k in 1..d {
+                    let elem = format!("{}Reg[UInt[8]]{}", "List[".repeat(k), "]".repeat(k));
+                    writeln!(
+                        src,
+                        "    let mut a{k} = list({elem});\n    a{k}.push(a{});",
+                        k - 1
+                    )
+                    .unwrap();
+                }
+                writeln!(src, "    let a = a{};", d - 1).unwrap();
+            } else {
+                writeln!(src, "    let a = {}r{};", "[".repeat(d), "]".repeat(d)).unwrap();
+            }
+            if target {
+                writeln!(src, "    a{} := x;", "[0]".repeat(d)).unwrap();
+            } else {
+                src.push_str("    r := x;\n");
+            }
+            src.push_str("    o := true;\n}\n");
+            src
+        };
+        let with = passing(key, 1000, &build(true));
+        let without = passing(key + 1, 1000, &build(false));
+        with.counts.total().abs_diff(without.counts.total())
+    };
+    for (lists, key) in [(false, 210), (true, 220)] {
+        let (n, twice) = (extra(32, lists, key), extra(64, lists, key + 2));
+        assert!(
+            n < twice && twice <= 2 * n + 64,
+            "the work {n} at depth 32 and {twice} at depth 64 (lists: {lists})"
+        );
+    }
+}
