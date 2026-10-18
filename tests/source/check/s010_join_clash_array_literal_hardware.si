@@ -1,0 +1,10 @@
+// S010: An array literal with a hardware element joins the types of its elements one by one. Two handle types join only when they are one type.
+// TOP M()
+module M() {
+    input flag: Bool;
+    output o: Bool;
+    o := flag;
+    // expected-error S010 @+2
+    // expected-message: `Reg[Bool]` and `Wire[Bool]` have no common type; a handle type joins only with the same handle type, so give both sides one type
+    let q = [list(Reg[Bool]), list(Wire[Bool]), flag];
+}

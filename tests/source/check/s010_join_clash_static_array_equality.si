@@ -1,0 +1,10 @@
+// S010: `==` on two static arrays joins their element types. Two handle types join only when they are one type.
+// TOP M()
+module M() {
+    output o: Bool;
+    let a: [Reg[Bool]; 0] = [];
+    let b: [Wire[Bool]; 0] = [];
+    // expected-error S010 @+2
+    // expected-message: `Reg[Bool]` and `Wire[Bool]` have no common type; a handle type joins only with the same handle type, so give both sides one type
+    o := a == b;
+}
