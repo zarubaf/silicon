@@ -1,0 +1,7 @@
+// S007: `UInt` takes 1 argument. The text shares its form with the other type families.
+// TOP M()
+module M() {
+    // expected-error S007 @+2
+    // expected-message: `UInt` takes 1 argument(s), but it has 2; write `UInt[W]`
+    type T = UInt[8, 1];
+}

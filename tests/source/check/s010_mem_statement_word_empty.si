@@ -1,0 +1,7 @@
+// S010: a memory word has at least one bit. The `mem` statement and `Mem[T, N]` share the text.
+// TOP M()
+module M() {
+    // expected-error S010 @+2
+    // expected-message: a memory word is a nonempty hardware data type, not `[UInt[8]; 0]`; use a type with at least one bit, for example `UInt[8]`
+    mem m: [[UInt[8]; 0]; 4];
+}

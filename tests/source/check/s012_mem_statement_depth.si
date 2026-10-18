@@ -1,0 +1,7 @@
+// S012: a memory depth is at most 16777216. The `mem` statement and `Mem[T, N]` share the text.
+// TOP M()
+module M() {
+    // expected-error S012 @+2
+    // expected-message: a memory depth is 1 to 16777216, not 1073741824; use a depth in this range
+    mem m: [UInt[8]; 1 << 30];
+}
