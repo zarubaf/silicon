@@ -493,15 +493,14 @@ impl Evaluator<'_> {
             #[cfg(test)]
             crate::counters::add(crate::counters::Count::Typed, 1);
             // A handle type needs a handle of exactly this type (Lean `Agg.handleAt`).
-            if self.tys.get(want).is_handle() {
-                if let Agg::Handle(h) = part
-                    && self.handle_is(h, want)
-                {
-                    size = size.saturating_add(1);
-                    continue;
+            if self.tys.get(want).is_handle() || matches!(part, Agg::Handle(_)) {
+                match part {
+                    Agg::Handle(h) if self.handle_fits(h, want) => {
+                        size = size.saturating_add(1);
+                        continue;
+                    }
+                    _ => return self.handle_mismatch(pos, want, part.seen()),
                 }
-                let a = self.about(part.seen());
-                return fail(Code::S010, pos, self.handle_use_text(want, &a));
             }
             match (part, self.tys.get(want)) {
                 (Agg::Ref(_, has), _) if *has == want => {}
@@ -528,15 +527,6 @@ impl Evaluator<'_> {
                     size = size.saturating_add(1);
                     work.extend(parts.0.iter().rev().map(|x| (*elem, x)));
                     continue;
-                }
-                (Agg::Handle(_), _) => {
-                    let a = self.about(part.seen());
-                    let text = if want.holds_handles() {
-                        self.handle_use_text(want, &a)
-                    } else {
-                        self.data_leaf_text(want, &a)
-                    };
-                    return fail(Code::S010, pos, text);
                 }
                 _ => return self.wrong_part(pos, want, part),
             }
