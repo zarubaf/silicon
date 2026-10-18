@@ -5,7 +5,7 @@
 //! no other binding shares the container. A read and a place each walk their path once.
 
 use super::store::Mark;
-use super::typed::Binding;
+use super::typed::Whole;
 use super::{Evaluator, Opnd, Out, Res, fail, need, same_form};
 use crate::Code;
 use crate::agg::Agg;
@@ -918,7 +918,7 @@ impl Evaluator<'_> {
         let o = need(value, o)?;
         self.store.shut_window(place.root);
         let y = if let Some(t) = place.ty {
-            self.typed_use(pos, t, o.is_ref(), o, Binding)?
+            self.typed_use(pos, t, o.is_ref(), o, Whole)?
         } else {
             self.held_use(pos, &place, o)?
         };
@@ -937,7 +937,7 @@ impl Evaluator<'_> {
             _ => None,
         };
         if let Some(t) = held.as_ref().and_then(|h| self.handle_ty(h)) {
-            return self.typed_use(pos, t, o.is_ref(), o, Binding);
+            return self.typed_use(pos, t, o.is_ref(), o, Whole);
         }
         self.copy(pos, &o)?;
         let old = self.store.current(place.root, &place.keys);

@@ -4,7 +4,7 @@
 //! new call frame.
 
 use super::place::Place;
-use super::typed::Passed;
+use super::typed::Whole;
 use super::{Evaluator, Names, Opnd, Out, Res, Slot, at, fail, need};
 use crate::Code;
 use crate::hw::{Ref, Seen, Val};
@@ -355,9 +355,14 @@ impl Evaluator<'_> {
     fn write_back(&mut self, pos: Pos, written: Vec<(Place, Val)>) -> Res<()> {
         for (place, value) in written {
             self.mutation(pos, place.id)?;
-            // Another value has the type of the place, so it keeps the depth of the root.
-            if let Val::Static(v) = &value {
-                self.bounded(pos, place.keys.len() as u64 + v.depth())?;
+            // Another value has the type of the place, so it keeps the depth of the root. A list in
+            // a value of a type with the handle flag can grow, so its depth comes from the value.
+            match &value {
+                Val::Static(v) => self.bounded(pos, place.keys.len() as u64 + v.depth())?,
+                Val::Agg(a) if a.stored_ty().is_some_and(TyId::holds_handles) => {
+                    self.bounded(pos, place.keys.len() as u64 + a.depth(&self.tys))?;
+                }
+                _ => {}
             }
             self.charge(pos, self.seen_size(value.seen()))?;
             self.store_at(pos, pos, &place, value)?;
@@ -391,7 +396,7 @@ impl Evaluator<'_> {
                     let v = self.settle(pos, t, v)?;
                     Val::Static(self.conform(pos, t, v)?)
                 } else {
-                    self.typed_use(pos, t, true, v, Passed)?
+                    self.typed_use(pos, t, true, v, Whole)?
                 };
                 (x, false)
             }
@@ -406,13 +411,15 @@ impl Evaluator<'_> {
                 self.charge(pos, self.size(&part))?;
                 if comptime {
                     self.static_handle(pos, "an argument of a comptime fn", t)?;
-                } else {
-                    self.later_handle(pos, t)?;
                 }
-                let ty = place
-                    .ty
-                    .or_else(|| self.store.seen(&part).ty(&self.graph, &mut self.tys));
+                let ty = match place.ty {
+                    Some(ty) => Some(ty),
+                    None => self.out_ty(&part),
+                };
                 if ty != Some(t) {
+                    if t.holds_handles() {
+                        return self.handle_wrong(pos, t, self.store.seen(&part));
+                    }
                     let actual = ty
                         .map_or_else(|| self.text(self.store.seen(&part)), |ty| self.tys.text(ty));
                     return fail(

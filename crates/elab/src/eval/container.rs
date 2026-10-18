@@ -263,9 +263,8 @@ impl Evaluator<'_> {
         let Seen::Handle(h) = piece_seen(&self.store, p) else {
             return Ok(());
         };
-        let h = h.clone();
         if self.tys.get(t).is_handle() {
-            if self.handle_ty(&h) == Some(t) {
+            if self.handle_is(h, t) {
                 return Ok(());
             }
             let a = self.about(piece_seen(&self.store, p));

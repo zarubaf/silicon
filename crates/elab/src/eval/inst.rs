@@ -31,7 +31,7 @@
 //! statement, with the typed use of its arguments, belong to the parent. The arguments of the
 //! top selection and their typed use belong to no instantiation.
 
-use super::typed::Passed;
+use super::typed::Whole;
 use super::{Evaluator, Let, Out, ROOT, Res, Slot, fail, need};
 use crate::agg::{Agg, Base};
 use crate::hw::{Graph, Handle, Kind, Port, Val, port_name};
@@ -540,7 +540,7 @@ impl Evaluator<'_> {
                     Target::Child { port, .. } => port.ty,
                 };
                 let copies = o.is_ref();
-                let v = self.typed_use(*pos, ty, copies, o, Passed)?;
+                let v = self.typed_use(*pos, ty, copies, o, Whole)?;
                 let v = self.sink_value(*pos, ty, v)?;
                 self.bind_target(*pos, t, v);
             }
