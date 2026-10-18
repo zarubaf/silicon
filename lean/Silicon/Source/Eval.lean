@@ -1345,9 +1345,9 @@ A value charges its copy, then its typed use. It is static in a `comptime fn` an
 parameter. A place charges the copy of its part, and its type is exactly `t`, else `S010` at the
 call `p`. It is static in a `comptime fn`. Its formal is a mutable local. At a static position,
 a value with the handle flag is `S011` (`staticValue`), and then so is a type with the flag
-(`staticHandle`). A `mut` actual gets no typed use. Take a formal
-or a place of a type with the handle flag. There, another type is `S010` with the text "Typed
-use at a handle type" (section 5.6).
+(`staticHandle`). A `mut` actual gets no typed use. At a formal of a type with the handle flag,
+another type is `S010` with the text "Typed use at a handle type" (section 5.6). A formal of
+another type keeps the `mut` text, also for a place of a handle type.
 -/
 def copyIn (p : Pos) (c : Bool) (q : Resolve.Param) (t : Ty) : Actual → M Unit
   | .value v => do
@@ -1366,8 +1366,7 @@ def copyIn (p : Pos) (c : Bool) (q : Resolve.Param) (t : Ty) : Actual → M Unit
       staticHandle p "an argument of a comptime fn" t
     let pt := pl.ty <|> pl.part.ty?
     unless pt.any (·.same t) do
-      if t.info.handles || pt.any (·.info.handles) then
-        handleWrong p t pl.part
+      if t.info.handles then handleWrong p t pl.part
       let u := match pt with | some u => u.text | none => pl.part.text
       fail .S010 p s!"a `mut` actual has the type {u}, but its formal has {t.text}"
     let x ← if c then pure (Val.static (← static p pl.part)) else pure pl.part
