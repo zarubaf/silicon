@@ -1,11 +1,13 @@
-// S010: no handle is a container element, so a memory is no element of a tuple.
+// S010: a tuple literal holds a memory as an element, and `==` reads the tuple in a `data` context. The memory leaf has
+// no data.
 // TOP M()
 module M() {
+    input d: UInt[8];
+    input c: Bool;
     mem m: [UInt[8]; 4];
-    let t = (
-        1,
-        // expected-error S010 @+1
-        m,
-        2
-    );
+    write_port(m, 0, d, c); let rr = m.read_port(0, c);
+    let t = (1, m, 2);
+    // expected-error S010 @+2
+    // expected-message: `m` is a memory, not data; read a word with `read_port`
+    let b = t == t;
 }

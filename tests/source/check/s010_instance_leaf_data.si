@@ -1,0 +1,16 @@
+// S010: a tuple with an instance in a `data` context. The register leaf reads, but an instance leaf has no data.
+// TOP M()
+module Leaf() {
+    output o: Bool;
+    o := true;
+}
+module M() {
+    input c: Bool;
+    reg r: Bool = false;
+    r := c;
+    instance u = Leaf();
+    let t = (r, u);
+    // expected-error S010 @+2
+    // expected-message: `u` is an instance, not data; read its outputs as `u.q`
+    let e = if (c) { t } else { t };
+}

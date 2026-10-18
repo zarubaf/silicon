@@ -1,0 +1,10 @@
+// `==` reads its operands in a `data` context. A tuple with an empty array of registers reads as a tuple with an empty
+// array of `Bool`, so the two operands join. The file has no error.
+// TOP M()
+module M() {
+    input flag: Bool;
+    output o: Bool;
+    let l: ([Bool; 0], Bool) = ([], flag);
+    let t: ([Reg[Bool]; 0], Bool) = ([], true);
+    o := l == t;
+}

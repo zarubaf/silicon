@@ -1,0 +1,18 @@
+// S010: a hardware `if` reads its arms in a `data` context. A record of handles has no data form, so the read stops at the
+// record node.
+// TOP M()
+struct P {
+    a: Reg[UInt[8]],
+    b: Reg[UInt[8]],
+}
+module M() {
+    input c: Bool;
+    reg r: UInt[8] = 0;
+    reg s: UInt[8] = 0;
+    r := 1;
+    s := 2;
+    let p = P(r, s);
+    // expected-error S010 @+2
+    // expected-message: a `data` context does not read the record of handles `P`; construct the data record from the fields, for example `P(read(h.a), read(h.b))`
+    let q = if (c) { p } else { p };
+}

@@ -1,4 +1,5 @@
-// S010: no handle is a container element, so an instance is no element of an array.
+// S010: an array literal holds an instance as an element, and `==` reads the array in a `data` context. The instance
+// leaf has no data.
 // TOP M()
 module Leaf() {
     output o: Bool;
@@ -6,9 +7,8 @@ module Leaf() {
 }
 module M() {
     instance u = Leaf();
-    let a = [
-        // expected-error S010 @+1
-        u,
-        u
-    ];
+    let a = [u, u];
+    // expected-error S010 @+2
+    // expected-message: `u` is an instance, not data; read its outputs as `u.q`
+    let b = a == a;
 }

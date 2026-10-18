@@ -1,0 +1,9 @@
+// `==` reads its operands in a `data` context. An empty array of registers has no leaf, so it reads as an empty array of
+// `Bool`, and the two operands join. The file has no error.
+// TOP M()
+module M() {
+    output o: Bool;
+    let a: [Reg[Bool]; 0] = [];
+    let b: [Wire[Bool]; 0] = [];
+    o := a == b;
+}

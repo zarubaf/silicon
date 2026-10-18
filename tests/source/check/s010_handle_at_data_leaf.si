@@ -1,0 +1,14 @@
+// S010: a handle at a data leaf of a typed use is not read. The formal takes `(Reg[UInt[8]], UInt[8])`, and the second
+// leaf `r` is a handle. The fix is to read it in the literal.
+// TOP M()
+fn k(p: (Reg[UInt[8]], UInt[8])) -> Nat {
+    return 1;
+}
+module M() {
+    input x: UInt[8];
+    reg r: UInt[8] = 0;
+    r := x;
+    // expected-error S010 @+2
+    // expected-message: expected `UInt[8]`, but the value is a handle of `Reg[UInt[8]]`; a literal element keeps its handle, so read it in the literal, for example `(r, read(r))`
+    let n = k((r, r));
+}
