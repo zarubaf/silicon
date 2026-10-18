@@ -9,7 +9,7 @@ The Lean model is the normative spec for Silicon.
 This directory owns two models. Dispatch Lean work to a fresh Opus subagent.
 
 - `Silicon/Core/` holds the core IR semantics.
-- `Silicon/Source/` holds the reference front end: the lexer, the parser, the printer, the resolver, the generic pre-check, the evaluator, the elaborator, and the lowering. `Source/Test/` holds its `#guard` tests. Its spec is [the front-end spec](../doc/design/2026-10-09-frontend.md).
+- `Silicon/Source/` holds the reference front end: the lexer, the parser, the printer, the resolver, the generic pre-check, the evaluator, the elaborator, and the lowering. The evaluator holds the one statement walk: `Eval.stmt` charges a statement, and a module statement then runs in `Eval.hwStmt`, which can instantiate a child (`Eval.instantiate`). `Eval/Inst.lean` holds the parts of an instantiation that need no evaluation. `Elab` holds the top selection and the design. `Source/Test/` holds its `#guard` tests. Its spec is [the front-end spec](../doc/design/2026-10-09-frontend.md).
 
 The front end holds a hardware aggregate (spec sections 5.1, 5.4, and 7.4) in these forms:
 
@@ -37,7 +37,7 @@ The evaluator holds the innermost guard of section 9.4 in `Ctx.guard : Option Gu
 
 `diagnostic(message, value)` (spec sections 5.4, 6.2, and 8.2) adds one `Record` (a line of text) to `St.records`. `Eval.diagnose` runs after the copy charge: the guard, the message, the measure charge (`Val.measureCharge`), the byte charge, and then the record. The text comes from the pure `render` functions (`Ty.render`, `Agg.render`, `Handle.render`). They never call `normalize`, and a `ref` renders from its type. `Ctx.inst` holds the emitted name, and `Ctx.calls` holds the frames. A frame push is O(1), and the byte charge pays for the frames. `fail` is the only error: it builds a `Stop { err, records }` from `St.records`, so an error keeps the records. `Eval.observeRun`, `Eval.observeExpr`, and `Elab.observe` return the records with both outcomes. `Eval.run`, `Eval.evalExpr`, and `Elab.elaborate` are their projections.
 
-Handles (spec sections 5.1, 5.2, and 9.4): `typedUse` compares each handle leaf by its type. `data` charges the size, then reads each register leaf and wire leaf in packing order. A static position checks the value (`staticValue`), then the type (`staticHandle`). Both read only the flag and the kind. `Elab.targetPart` walks the steps of a `:=` target; the type of each base decides. `read(h)` (spec section 5.4) is `Eval.readOf`: the copy, then `S017` for a child input or `S010` with the fix `readHint`, then `readRef`. Its result refers to the resource (`Out.ref`), so `let x = read(r)` charges the zero size once, before the leaves bind. A result without a hardware leaf is a new static value, so its binding is no copy.
+Handles (spec sections 5.1, 5.2, and 9.4): `typedUse` compares each handle leaf by its type. `data` charges the size, then reads each register leaf and wire leaf in packing order. A static position checks the value (`staticValue`), then the type (`staticHandle`). Both read only the flag and the kind. `Eval.targetPart` walks the steps of a `:=` target; the type of each base decides. `read(h)` (spec section 5.4) is `Eval.readOf`: the copy, then `S017` for a child input or `S010` with the fix `readHint`, then `readRef`. Its result refers to the resource (`Out.ref`), so `let x = read(r)` charges the zero size once, before the leaves bind. A result without a hardware leaf is a new static value, so its binding is no copy.
 
 ## Invariants
 
