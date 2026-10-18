@@ -1,0 +1,12 @@
+// Row "an explicit `read(h)`" of the frontend spec, section 9.2. `read(w)` of a wire gives the value
+// that the wire has in the same cycle.
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    wire w: UInt[8];
+    w := x +% 1;
+    o := read(w);
+}
+// STEP in=(x 3) out=(o 4)
+// STEP in=(x 255) out=(o 0)

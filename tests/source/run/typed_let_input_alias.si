@@ -1,0 +1,18 @@
+// Row "a `let` with a handle type" of the frontend spec, section 9.2. The input `a` of a child has the
+// handle type `Input[UInt[8]]`. An alias keeps the handle, so `p := x;` binds the input of the child.
+// TOP M()
+module C() domains() {
+    input a: UInt[8];
+    output q: UInt[8];
+    q := a +% 1;
+}
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    instance u = C();
+    let p: Input[UInt[8]] = u.a;
+    p := x;
+    o := u.q;
+}
+// STEP in=(x 1) out=(o 2)
+// STEP in=(x 255) out=(o 0)
