@@ -160,7 +160,7 @@ impl Cur<'_> {
 }
 
 /// The position of the node of a step.
-fn key_pos(key: &Key<'_>) -> Pos {
+pub(super) fn key_pos(key: &Key<'_>) -> Pos {
     let (Key::Index(q, ..) | Key::Select(q, ..) | Key::Field(q, _)) = *key;
     q
 }
