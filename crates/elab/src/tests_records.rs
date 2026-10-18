@@ -1851,7 +1851,8 @@ fn the_messages_of_diagnostic_equal_those_of_lean() {
         said(&body(
             "  let z = if (c) { diagnostic(\"a\", 1) } else { 0 };\n"
         )),
-        "a hardware arm has no graph effect such as `diagnostic`"
+        "a hardware arm has no graph effect such as `diagnostic`; call `diagnostic` before the \
+         `if` or `match`, and use its result in the arm"
     );
     assert_eq!(
         said(&with_ports(
