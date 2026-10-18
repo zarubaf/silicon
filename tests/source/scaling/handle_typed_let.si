@@ -1,0 +1,18 @@
+// T1 of the work-counter tests of the handle types (issue #277). N typed lets of `Reg[T]`, where `T` is an alias of a tuple
+// of N elements. A typed use at a handle type compares the types by identity and walks no type, so the
+// work is `O(N)`.
+// SCALE handle_typed_let 32 64 128 256 512
+// TOP M()
+module M() {
+    input x: UInt[8];
+    type T = (
+// REPEAT i {N}
+        UInt[8],
+// END
+    );
+    reg r: T = T();
+    r := T();
+// REPEAT i {N}
+    let a{i}: Reg[T] = r;
+// END
+}
