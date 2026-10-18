@@ -214,6 +214,16 @@ def handleTy? : Ty → Bool
   | .reg _ | .wire _ | .input _ | .mem .. | .inst .. => true
   | _ => false
 
+/-!
+A typed use at `pos` at the type `t`, at a position other than a typed `let` and an assignment
+to a `let mut` local. There, a handle type is `S010` until #278 (section 5.4), with the text of
+section 6.2. The caller charged the copy first.
+-/
+def laterHandle (pos : Pos) (t : Ty) : M Unit := do
+  if handleTy? t then
+    fail .S010 pos (s!"the handle type `{t.text}` is not supported here yet; use it in a " ++
+      "typed `let`, or pass the data value, for example `read(h)`")
+
 /-! The common type of two types that are not two arrays or two tuples: the operand rule. -/
 def scalarJoin : Ty → Ty → Option Ty
   | .nat, .nat => some .nat

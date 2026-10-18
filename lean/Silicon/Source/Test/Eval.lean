@@ -1976,7 +1976,7 @@ fields to the port name.
 def child (c : Eval.Ctx) (t : Ty) : Eval.Val :=
   let k := (c.field (stepArg 0)).getD 0
   let ports := ({} : Std.HashMap Nat Eval.Port).insert k ⟨"q", k, false, t, ⟨1, 1⟩⟩
-  .handle (.inst 0 ⟨"u", []⟩ ⟨⟨"C", []⟩, ports, 0, none⟩)
+  .handle (.inst 0 ⟨"u", []⟩ ⟨⟨"C", []⟩, ports, 0, none⟩ (.inst 0 "C" #[]))
 #guard sel shapes "P" child [.fld "q"] == "ref P u.q 1099511627789 true 2"
 #guard sel shapes "P" child [.fld "q", .fld "t", .dot 1, .idx 2] ==
   "hw UInt[4] u.q$t$1e$2e 1 true 7"
@@ -3576,5 +3576,56 @@ then 4. Each `list(Reg[Bool])` costs 5 more than `list(Bool)`.
 #guard msg handles "[list(Instance[C, 8, true]), list(Instance[C, 9, true])]" ==
   "`Instance[C, 8, true]` and `Instance[C, 9, true]` have no common type; a handle type joins " ++
     "only with the same handle type, so give both sides one type"
+
+/-!
+A typed `let` at a handle type needs a handle of exactly this type (section 5.4). A static value
+is `S010` at the `let`, and the compare has no charge. A fresh value is not a copy, so one unit
+less stops at its literal. A name is a copy, so one unit less stops at the copy of the `let`.
+-/
+def handleText (v : String) : String :=
+  s!"expected `Reg[Bool]`, but the value is {v}; a handle type takes only a handle of exactly " ++
+    "this type, so give such a handle or change the type"
+#guard said "fn f() -> Int { let a: Reg[Bool] = true; return 0; }" "f()" 12 ==
+  s!"S010 1:17 {handleText "a value of `Bool`"}"
+#guard out "fn f() -> Int { let a: Reg[Bool] = true; return 0; }" "f()" 11 == "S015 1:36"
+#guard said "fn f() -> Int { let a: Reg[Bool] = []; return 0; }" "f()" 12 ==
+  s!"S010 1:17 {handleText "`[]`"}"
+#guard out "fn f() -> Int { let a: Reg[Bool] = []; return 0; }" "f()" 11 == "S015 1:36"
+#guard said "fn f() -> Int { let x = true; let a: Reg[Bool] = x; return 0; }" "f()" 15 ==
+  s!"S010 1:31 {handleText "a value of `Bool`"}"
+#guard out "fn f() -> Int { let x = true; let a: Reg[Bool] = x; return 0; }" "f()" 14 ==
+  "S015 1:31"
+
+/-!
+Each other typed use at a handle type is `S010` until #278, after the copy (section 5.4). A
+`return` has it at the statement. An argument, a `mut` actual, a `push` element, and a field of a
+constructor have it at the call. A constant and a module argument have it at the start of the
+node.
+-/
+def laterText : String :=
+  "the handle type `Reg[Bool]` is not supported here yet; use it in a typed `let`, or pass the " ++
+    "data value, for example `read(h)`"
+#guard said "fn f() -> Reg[Bool] { return true; }" "f()" 12 == s!"S010 1:23 {laterText}"
+#guard out "fn f() -> Reg[Bool] { return true; }" "f()" 11 == "S015 1:23"
+#guard said "fn g(x: Reg[Bool]) -> Int { return 0; }" "g(true)" 10 == s!"S010 1:1 {laterText}"
+#guard out "fn g(x: Reg[Bool]) -> Int { return 0; }" "g(true)" 9 == "S015 1:1"
+#guard said "fn g(comptime x: Reg[Bool]) -> Int { return 0; }" "g(true)" 10 ==
+  s!"S010 1:1 {laterText}"
+#guard out "fn g(comptime x: Reg[Bool]) -> Int { return 0; }" "g(true)" 9 == "S015 1:1"
+def mutHandle : String :=
+  "fn h(mut x: Reg[Bool]) -> Int { return 0; }\nfn f() -> Int { let mut a = true; return h(a); }"
+#guard said mutHandle "f()" 16 == s!"S010 2:42 {laterText}"
+#guard out mutHandle "f()" 15 == "S015 2:42"
+def pushHandle : String :=
+  "fn f() -> Int { let mut xs = list(Reg[Bool]); xs.push(true); return 0; }"
+#guard said pushHandle "f()" 20 == s!"S010 1:47 {laterText}"
+#guard out pushHandle "f()" 19 == "S015 1:55"
+#guard said "struct S { a: Reg[Bool] }" "S(true)" 19 == s!"S010 1:1 {laterText}"
+#guard out "struct S { a: Reg[Bool] }" "S(true)" 18 == "S015 1:1"
+#guard said "const K: Reg[Bool] = true;" "K" 8 == s!"S010 1:1 {laterText}"
+#guard out "const K: Reg[Bool] = true;" "K" 7 == "S015 1:22"
+#guard said "module C(comptime t: Reg[Bool]) {\n}" "Instance[C, true]" 9 ==
+  s!"S010 1:1 {laterText}"
+#guard out "module C(comptime t: Reg[Bool]) {\n}" "Instance[C, true]" 8 == "S015 1:22"
 
 end Silicon.Source.Test.Eval

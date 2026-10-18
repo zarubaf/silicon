@@ -928,12 +928,42 @@ The copy of `v` when `copies`, then its typed use at `t` at `pos`. The copy char
 `v`, and a handle has the size 1 as in slice 1. A typed use then reads a handle. A read of an
 aggregate gives a reference, and its binding expands the reference into its leaves. Thus the
 copy also charges the size of the reference, the zero size of its type, before the typed use.
+A handle type `t` is `S010` after the copy until #278 (`laterHandle`).
 -/
 def copyUse (pos : Pos) (t : Ty) (copies : Bool) (v : Val) : M Val := do
   if copies then
     charge pos v.size
+    laterHandle pos t
     readUse pos t v
-  else conformVal pos t v
+  else
+    laterHandle pos t
+    conformVal pos t v
+
+/-!
+The typed use at `pos` of `v` at the handle type `t`, in a typed `let` or an assignment to a
+`let mut` local (section 5.4). The copy charges when `copies`, and a handle has the size 1. Then
+the handle type of `v` equals `t`, else `S010`. The compare has no charge, and nothing reads `v`.
+An own output has no handle type, so its text names the fix: use it as data.
+-/
+def handleUse (pos : Pos) (t : Ty) (copies : Bool) (v : Val) : M Val := do
+  if copies then charge pos v.size
+  match v with
+  | .handle h => if h.ty?.any (·.same t) then return v
+  | _ => pure ()
+  if let .handle (.res .output _ _ path) := v then
+    let r := sourceOf path
+    fail .S010 pos
+      s!"`{r}` is an output, and an output has no handle type; use `{r}` directly as data"
+  fail .S010 pos (s!"expected `{t.text}`, but the value is {v.about}; a handle type takes only " ++
+    "a handle of exactly this type, so give such a handle or change the type")
+
+/-!
+The typed use at `pos` of `v` at the declared type `t` of a local: of a `let` or of an
+assignment to a `let mut` local. A handle type keeps the handle (`handleUse`), and another type
+copies and reads it (`copyUse`).
+-/
+def localUse (pos : Pos) (t : Ty) (copies : Bool) (v : Val) : M Val :=
+  if handleTy? t then handleUse pos t copies v else copyUse pos t copies v
 
 /-!
 The variant `j` of the enum type `t` at `p` with the payload values `vs` (section 5.4). The node,
@@ -1211,11 +1241,13 @@ def copyIn (p : Pos) (c : Bool) (q : Resolve.Param) (t : Ty) : Actual → M Unit
   | .value v => do
     let x ← if c || q.mode == .comptime then do
         charge p v.size
+        laterHandle p t
         pure (.static (← conform p t (← static p (← settle p t v))))
       else copyUse p t true v
     bindLocal q.name.id ⟨some t, false, ← named p q.name.id q.name.name.name x⟩
   | .place pl => do
     charge p pl.part.size
+    laterHandle p t
     let pt := pl.ty <|> pl.part.ty?
     unless pt.any (·.same t) do
       let u := match pt with | some u => u.text | none => pl.part.text
@@ -1244,6 +1276,7 @@ list and charges the size of the element.
 def pushOnto (p x : Pos) (g : String) (pl : Place) (v : Val) : M (Option Out) := do
   let .static (.list e ys) := pl.part | fail .S010 p s!"`{g}` needs a list, not {pl.part.text}"
   mutation p pl.name
+  laterHandle p e
   let w ← match ← data x (← settle p e v) with
     | .static w => conform p e w
     | .hw _ | .agg _ => fail .S011 x "a list holds no hardware value"
@@ -1308,7 +1341,7 @@ def Handle.render : Handle → String
     let kind := match k with | .reg => "reg" | .wire => "wire" | .output => "output"
     Print.node kind [t.serialize, encode path.name]
   | .mem _ path t k => Print.node "mem" [(Ty.array t k).serialize, encode path.name]
-  | .inst _ path i => Print.node "instance" [encode i.name, encode path.name]
+  | .inst _ path i _ => Print.node "instance" [encode i.name, encode path.name]
   | .input _ path q => Print.node "input" [q.ty.serialize, encode path.name, q.name]
   | .domain d => Print.node "domain" [d]
 
@@ -1435,6 +1468,7 @@ def bindParams (ty : Resolve.TypeExpr → M Ty) (p : Pos) (ps : List Resolve.Par
     (args : List Val) : M (List (Ty × Value)) :=
   (ps.zip args).mapM fun (q, v) => do
     let t ← ty q.ty
+    laterHandle p t
     let w ← conform p t (← static p (← settle p t v))
     charge p w.size
     bindLocal q.name.id ⟨some t, false, .static w⟩
@@ -2140,7 +2174,7 @@ mutual
       | .field p b f => do
         let o ← need b (← eval n b)
         match o.value with
-        | .handle (.inst id path iface) =>
+        | .handle (.inst id path iface _) =>
           match (← read).field f.pos >>= (iface.ports[·]?) with
           | some q =>
             if q.input then return some ⟨.handle (.input id path q), true, none⟩
@@ -2325,6 +2359,7 @@ mutual
           let t ← typeExpr n ty
           let o ← need v (← eval n v)
           copy cp o
+          laterHandle cp t
           conform cp t (← static cp (← settle cp t o.value))
         return ⟨.static c, true, none⟩
       | some (.alias _ _ ty) => do
@@ -2541,7 +2576,7 @@ mutual
         let t ← ty.mapM (typeExpr n)
         let o ← need v (← eval n v)
         let x ← match t with
-          | some t => copyUse p t o.ref o.value
+          | some t => localUse p t o.ref o.value
           | none => do
             copy p o
             known o.value
@@ -2554,7 +2589,7 @@ mutual
         let o ← need v (← eval n v)
         shut pl.id
         let y ← match pl.ty with
-          | some t => copyUse p t o.ref o.value
+          | some t => localUse p t o.ref o.value
           | none =>
             copy p o
             if sameForm pl.part o.value then pure o.value
