@@ -152,22 +152,13 @@ impl Evaluator<'_> {
         }
     }
 
-    /// Whether the result has a hardware leaf (Lean `Val.hasHw`).
-    fn out_has_hw(&self, o: &Out) -> bool {
-        match self.store.seen(o) {
-            Seen::Hw(_) => true,
-            Seen::Agg(a) => a.leaves(&self.tys) > 0,
-            _ => false,
-        }
-    }
-
     /// The typed use of the result `o` at the element type `elem` of a list (Lean `siteUse` at an
     /// element). A value with a hardware leaf is `S011` at `xp`, also after a read. A handle type
     /// keeps the handle. A value of another type reads (`data_at`), and a static value converts.
     /// A node of the type stays where it is, and another node converts part by part.
     pub(super) fn typed_element(&mut self, pos: Pos, xp: Pos, elem: TyId, o: Out) -> Res<Typed> {
         let hardware = || fail(Code::S011, xp, "a list holds no hardware value".to_owned());
-        if self.out_has_hw(&o) {
+        if self.store.seen(&o).has_hw(&self.tys) {
             return hardware();
         }
         if self.tys.get(elem).is_handle() {
@@ -179,7 +170,7 @@ impl Evaluator<'_> {
         let Opnd::Static(o) = self.data_at(xp, elem, o)? else {
             return hardware();
         };
-        if self.out_has_hw(&o) {
+        if self.store.seen(&o).has_hw(&self.tys) {
             return hardware();
         }
         match self.store.seen(&o) {
