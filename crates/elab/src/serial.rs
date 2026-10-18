@@ -71,7 +71,12 @@ impl Len {
             }
             let mut parts = Vec::new();
             match tys.get(t) {
-                Ty::Array(elem, _) | Ty::List(elem) => parts.push(*elem),
+                Ty::Array(elem, _)
+                | Ty::List(elem)
+                | Ty::Reg(elem)
+                | Ty::Wire(elem)
+                | Ty::Input(elem)
+                | Ty::Mem(elem, _) => parts.push(*elem),
                 Ty::Tuple(ts) => parts.extend(ts.iter().copied()),
                 Ty::Fn(ps, ret) => {
                     parts.extend(ps.iter().map(|p| p.ty));
@@ -79,6 +84,11 @@ impl Len {
                 }
                 Ty::Struct(s) => {
                     for arg in tys.spec(*s).args() {
+                        held_types(arg, &mut parts);
+                    }
+                }
+                Ty::Instance(i) => {
+                    for arg in tys.inst(*i).args() {
                         held_types(arg, &mut parts);
                     }
                 }
@@ -244,6 +254,24 @@ fn type_node<'a, S: Sink>(tys: &'a Types, ty: &'a Ty, out: &mut S, work: &mut Ve
             work.push(Item::Text(") "));
             push_list(work, params.iter().map(|p| Item::Param(*p)));
         }
+        Ty::Reg(t) => handle(out, work, "(reg ", *t),
+        Ty::Wire(t) => handle(out, work, "(wire ", *t),
+        Ty::Input(t) => handle(out, work, "(input ", *t),
+        Ty::Mem(t, depth) => {
+            out.write_str("(mem ").unwrap_or_default();
+            work.push(Item::Text(")"));
+            work.push(Item::Int(depth));
+            work.push(Item::Text(" "));
+            work.push(Item::Ty(*t));
+        }
+        Ty::Instance(i) => {
+            let inst = tys.inst(*i);
+            out.write_str("(instance root ").unwrap_or_default();
+            work.push(Item::Text("))"));
+            push_list(work, inst.args().iter().map(Item::Value));
+            work.push(Item::Text(" ("));
+            work.push(Item::Name(inst.name()));
+        }
         Ty::Enum(e) => {
             out.write_str("(enum root ").unwrap_or_default();
             out.write_str(tys.enum_name(*e)).unwrap_or_default();
@@ -263,6 +291,13 @@ fn type_node<'a, S: Sink>(tys: &'a Types, ty: &'a Ty, out: &mut S, work: &mut Ve
             work.push(Item::Name(spec.name()));
         }
     }
+}
+
+/// `(<form> <type>)` of a handle type with one part.
+fn handle<S: Sink>(out: &mut S, work: &mut Vec<Item<'_>>, form: &'static str, t: TyId) {
+    out.write_str(form).unwrap_or_default();
+    work.push(Item::Text(")"));
+    work.push(Item::Ty(t));
 }
 
 /// The node of a value. Its parts wait on the stack.
