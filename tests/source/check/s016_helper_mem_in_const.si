@@ -1,0 +1,12 @@
+// S016: a helper that declares a memory, called in a constant.
+// TOP M()
+fn mk() -> Nat {
+    // expected-error S016 @+2
+    // expected-message: a type or a constant has no graph effect such as `mk`; call it before and use the result
+    mem m: [UInt[8]; 4];
+    return 2;
+}
+const K: Nat = mk();
+module M() {
+    let n = K;
+}

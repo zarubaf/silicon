@@ -1,0 +1,13 @@
+// S017: a combinational module calls a helper that declares a memory.
+// TOP M()
+fn mk() -> Nat {
+    // expected-error S017 @+2
+    // expected-message: a combinational module has no memory; remove `domains()` from the module, or move the memory to a clocked module
+    mem m: [UInt[8]; 4];
+    return 1;
+}
+module M() domains() {
+    output o: Bool;
+    let n = mk();
+    o := true;
+}

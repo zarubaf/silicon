@@ -1,0 +1,17 @@
+// S016: the arm calls a helper that declares nothing, and then a helper that declares a register. The text names the second helper.
+// TOP M()
+fn quiet() -> UInt[8] {
+    return 1;
+}
+fn mk() -> UInt[8] {
+    // expected-error S016 @+2
+    // expected-message: a hardware arm has no graph effect such as `mk`; call `mk` before the `if` or `match`, and use its result in the arm
+    reg r: UInt[8] = 0;
+    r := 1;
+    return r;
+}
+module M() {
+    input c: Bool;
+    output o: UInt[8];
+    o := if (c) { quiet() +% mk() } else { 0 };
+}

@@ -1,0 +1,13 @@
+// S010: an own output has no handle type, so it is no argument for a `Reg` formal of a helper.
+// TOP M()
+fn take(r: Reg[UInt[8]]) -> () {
+    return ();
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    o := x;
+    // expected-error S010 @+2
+    // expected-message: `o` is an output, and an output has no handle type; use `o` directly as data
+    take(o);
+}

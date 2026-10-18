@@ -1,0 +1,19 @@
+// S018: a helper binds a wire, and the module calls it twice for each of two wires. The second call for `w` and the second call for `v` fail at the same `:=`. The first error in the order of evaluation wins, so the text names `w`.
+// TOP M()
+fn drive(w: Wire[UInt[8]], x: UInt[8]) -> () {
+    // expected-error S018 @+2
+    // expected-message: `w` has a second binding, because the `:=` in `drive` runs again for it; run the `:=` once for each resource, for example with one call of `drive` for each
+    w := x;
+    return ();
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    wire w: UInt[8];
+    wire v: UInt[8];
+    drive(w, x);
+    drive(w, x);
+    drive(v, x);
+    drive(v, x);
+    o := w +% v;
+}

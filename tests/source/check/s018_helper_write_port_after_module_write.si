@@ -1,0 +1,18 @@
+// S018: the module writes a memory, and then a helper writes it again.
+// TOP M()
+fn put(m: Mem[UInt[8], 4], a: UInt[2], d: UInt[8]) -> () {
+    // expected-error S018 @+2
+    // expected-message: the memory `m` has a second `write_port`; the first call is at 15:5; make one call, and select its address, data, and enable with a hardware `if`
+    write_port(m, a, d, true);
+    return ();
+}
+module M() {
+    input a: UInt[2];
+    input d: UInt[8];
+    output o: UInt[8];
+    mem m: [UInt[8]; 4];
+    let r = m.read_port(a, true);
+    write_port(m, a, d, true);
+    put(m, a, d);
+    o := r.data;
+}

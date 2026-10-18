@@ -1,0 +1,12 @@
+// S018: a helper declares a register and never binds it.
+// TOP M()
+fn mk() -> UInt[8] {
+    // expected-error S018 @+2
+    // expected-message: `r` has no binding; bind it with `r := ...;`, or remove its declaration
+    reg r: UInt[8] = 0;
+    return r;
+}
+module M() {
+    output o: UInt[8];
+    o := mk();
+}

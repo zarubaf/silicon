@@ -1,0 +1,13 @@
+// A `fn` that declares a memory and has no call adds no hardware to the design.
+// TOP M()
+fn f() -> Nat {
+    mem m: [UInt[8]; 4];
+    return 1;
+}
+module M() domains() {
+    input x: Bool;
+    output o: Bool;
+    o := x;
+}
+// STEP in=(x true) out=(o true)
+// STEP in=(x false) out=(o false)

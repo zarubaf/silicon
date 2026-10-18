@@ -1,0 +1,15 @@
+// S016: a call through a function value, in the arm of a hardware if. The text names the function of the value.
+// TOP M()
+fn mk() -> UInt[8] {
+    // expected-error S016 @+2
+    // expected-message: a hardware arm has no graph effect such as `mk`; call `mk` before the `if` or `match`, and use its result in the arm
+    reg r: UInt[8] = 0;
+    r := 1;
+    return r;
+}
+module M() {
+    input c: Bool;
+    output o: UInt[8];
+    let f = mk;
+    o := if (c) { f() } else { 0 };
+}

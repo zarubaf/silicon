@@ -1,0 +1,18 @@
+// S018: a helper writes a memory, and the module calls the helper twice for the memory.
+// TOP M()
+fn put(m: Mem[UInt[8], 4], a: UInt[2], d: UInt[8]) -> () {
+    // expected-error S018 @+2
+    // expected-message: the memory `m` has a second `write_port`, because the call in `put` runs again for it; run the call once for each memory, for example with one call of `put` for each
+    write_port(m, a, d, true);
+    return ();
+}
+module M() {
+    input a: UInt[2];
+    input d: UInt[8];
+    output o: UInt[8];
+    mem m: [UInt[8]; 4];
+    let r = m.read_port(a, true);
+    put(m, a, d);
+    put(m, a, d);
+    o := r.data;
+}

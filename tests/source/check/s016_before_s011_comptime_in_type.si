@@ -1,0 +1,15 @@
+// S016 comes before S011: a comptime fn calls a helper that declares a register, in the length of an array type. The structural context reports the effect first.
+// TOP M()
+fn mk() -> Nat {
+    // expected-error S016 @+2
+    // expected-message: a type or a constant has no graph effect such as `cf`; call it before and use the result
+    reg r: UInt[8] = 0;
+    r := 1;
+    return 2;
+}
+comptime fn cf() -> Nat {
+    return mk();
+}
+module M() {
+    let a: [Bool; cf()] = [false, false];
+}

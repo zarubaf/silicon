@@ -1,0 +1,15 @@
+// S011: a helper returns a register handle, and the handle is a module argument. A module argument takes only static values.
+// TOP M()
+module C(comptime p: UInt[8]) {
+}
+fn make() -> Reg[UInt[8]] {
+    reg r: UInt[8] = 0;
+    r := 1;
+    return r;
+}
+module M() {
+    let a = make();
+    // expected-error S011 @+2
+    // expected-message: a module argument holds the register `r`, but it takes only static values; pass the data through a port, or use it in the module that declares it
+    instance u = C(a);
+}

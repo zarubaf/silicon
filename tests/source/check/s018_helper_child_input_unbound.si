@@ -1,0 +1,18 @@
+// S018: a helper makes a child, and nobody binds its input.
+// TOP M()
+module C() domains() {
+    input p: UInt[8];
+    output q: UInt[8];
+    q := p;
+}
+fn spawn() -> Instance[C] {
+    // expected-error S018 @+2
+    // expected-message: the input `p` of the instance `u` has no binding; bind it with `u.p := ...;`
+    instance u = C();
+    return u;
+}
+module M() domains() {
+    output o: UInt[8];
+    let u = spawn();
+    o := u.q;
+}

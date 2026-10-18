@@ -1,0 +1,16 @@
+// S016: a helper that binds a wire with `:=`, called in the arm of a hardware match.
+// TOP M()
+fn feed(w: Wire[UInt[8]], v: UInt[8]) -> () {
+    // expected-error S016 @+2
+    // expected-message: a hardware arm has no graph effect such as `feed`; call `feed` before the `if` or `match`, and use its result in the arm
+    w := v;
+    return ();
+}
+module M() {
+    input s: UInt[2];
+    input x: UInt[8];
+    output o: UInt[8];
+    wire w: UInt[8];
+    let u = match (s) { 0 => feed(w, x), _ => () };
+    o := w;
+}

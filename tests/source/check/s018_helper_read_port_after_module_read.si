@@ -1,0 +1,17 @@
+// S018: the module reads a memory, and then a helper reads it again.
+// TOP M()
+fn get(m: Mem[UInt[8], 4], a: UInt[2]) -> UInt[8] {
+    // expected-error S018 @+2
+    // expected-message: the memory `m` has a second `read_port`; the first call is at 15:13; call `read_port` once and keep its response in a `let`
+    let r = m.read_port(a, true);
+    return r.data;
+}
+module M() {
+    input a: UInt[2];
+    input d: UInt[8];
+    output o: UInt[8];
+    mem m: [UInt[8]; 4];
+    write_port(m, a, d, true);
+    let r = m.read_port(a, true);
+    o := r.data +% get(m, a);
+}

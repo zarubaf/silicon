@@ -1,0 +1,16 @@
+// S018: a helper returns a register, and the module binds the result twice.
+// TOP M()
+fn make() -> Reg[UInt[8]] {
+    reg r: UInt[8] = 0;
+    return r;
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let a = make();
+    a := x;
+    // expected-error S018 @+2
+    // expected-message: `r` has a second binding; the first binding is at 11:5, and the declaration is at 4:5; remove one of the two bindings
+    a := x +% 1;
+    o := a;
+}
