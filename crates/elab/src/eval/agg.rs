@@ -8,7 +8,7 @@
 
 use super::place::{Index, PartInfo};
 use super::{Code, Evaluator, Let, Names, Out, Res, at, fail};
-use crate::agg::{Agg, Base};
+use crate::agg::{Agg, Base, Node};
 use crate::hw::{Seen, Val};
 use crate::int::Int;
 use crate::limit;
@@ -189,7 +189,10 @@ impl Evaluator<'_> {
                         "a hardware aggregate is expected".to_owned(),
                     );
                 };
-                let (Agg::Array(_, mut p) | Agg::Tuple(_, mut p) | Agg::Record(_, mut p)) = *a
+                let (Agg::Array(_, mut p)
+                | Agg::Tuple(_, mut p)
+                | Agg::Record(_, mut p)
+                | Agg::List(_, mut p)) = *a
                 else {
                     return fail(Code::S010, pos, "the part does not exist".to_owned());
                 };
@@ -226,7 +229,9 @@ impl Evaluator<'_> {
     /// parts, and a reference to an array or a tuple reads its type.
     pub(super) fn index_len(&self, a: &Agg) -> Option<u64> {
         match a {
-            Agg::Array(_, parts) | Agg::Tuple(_, parts) => Some(parts.0.len() as u64),
+            Agg::Array(_, parts) | Agg::Tuple(_, parts) | Agg::List(_, parts) => {
+                Some(parts.0.len() as u64)
+            }
             Agg::Ref(_, ty) => match self.tys.get(*ty) {
                 Ty::Array(_, count) => Some(count.to_u64().unwrap_or(u64::MAX)),
                 Ty::Tuple(parts) => Some(parts.len() as u64),
@@ -394,7 +399,7 @@ impl Evaluator<'_> {
             );
         };
         let n = match a {
-            Agg::Array(_, p) => Some(Int::from_u64(p.0.len() as u64)),
+            Agg::Array(_, p) | Agg::List(_, p) => Some(Int::from_u64(p.0.len() as u64)),
             Agg::Ref(_, t) => match self.tys.get(*t) {
                 Ty::Array(_, n) => Some(n.clone()),
                 _ => None,
@@ -786,10 +791,12 @@ impl Evaluator<'_> {
         while let Some((&k, rest)) = keys.split_first() {
             match cur {
                 Agg::Ref(_, t) => return self.empty_size_in(*t, keys),
-                Agg::Array(_, p) | Agg::Tuple(_, p) | Agg::Record(_, p) => match p.0.get(k) {
-                    Some(x) => cur = x,
-                    None => break,
-                },
+                Agg::Array(_, p) | Agg::Tuple(_, p) | Agg::Record(_, p) | Agg::List(_, p) => {
+                    match p.0.get(k) {
+                        Some(x) => cur = x,
+                        None => break,
+                    }
+                }
                 _ => break,
             }
             keys = rest;
@@ -872,9 +879,10 @@ impl Evaluator<'_> {
                 cur = self.expand(pos, base, *t)?;
             }
             let (ty, mut parts) = match cur {
-                Agg::Array(n, mut p) | Agg::Tuple(n, mut p) | Agg::Record(n, mut p) => {
-                    (n.ty, std::mem::take(&mut p.0))
-                }
+                Agg::Array(n, mut p)
+                | Agg::Tuple(n, mut p)
+                | Agg::Record(n, mut p)
+                | Agg::List(n, mut p) => (n.ty, std::mem::take(&mut p.0)),
                 Agg::Static(mut v) if open => {
                     let ty = match opened {
                         Some(ty) => ty,
@@ -968,41 +976,57 @@ impl Evaluator<'_> {
         self.rebuild(pos, above, cur)
     }
 
-    /// Applies `f` to the static part of the aggregate `root` at the numbers `keys`, in place:
-    /// the nodes on the path copy, and the part itself does not. The caller paid for the change.
+    /// Applies `f` to the list of the aggregate `root` at the numbers `keys`, in place: the nodes
+    /// on the path copy, and the list itself does not. A list node builds again from its
+    /// elements, which the charge of the root paid for. The caller paid for the change.
     fn edit_at<R>(
         &mut self,
         pos: Pos,
         root: Agg,
         keys: &[usize],
-        f: impl FnOnce(&mut Value) -> Option<R>,
+        f: impl FnOnce(ListMut<'_>) -> R,
     ) -> Res<(Agg, Option<R>)> {
-        let (above, mut cur, used) = self.descend(pos, root, keys, false)?;
-        let part = match &mut cur {
-            Agg::Static(v) => keys.get(used..).and_then(|rest| part_in(v, rest)),
-            _ => None,
-        };
-        let Some(part) = part else {
-            return fail(
+        let wrong = || {
+            fail(
                 Code::S010,
                 pos,
                 "the place has no static part to change".to_owned(),
-            );
+            )
         };
-        let r = f(part);
+        let (above, mut cur, used) = self.descend(pos, root, keys, false)?;
+        let r = match &mut cur {
+            Agg::Static(v) => keys
+                .get(used..)
+                .and_then(|rest| part_in(v, rest))
+                .and_then(ListMut::of_value)
+                .map(f),
+            Agg::List(_, p) if used == keys.len() => Some(f(ListMut::Node(&mut p.0))),
+            _ => None,
+        };
+        if r.is_none() {
+            return wrong();
+        }
+        if let Agg::List(n, mut p) = cur {
+            let xs = std::mem::take(&mut p.0);
+            cur = match Agg::node(&self.graph, &self.tys, n.ty, xs) {
+                Some(rebuilt) => rebuilt,
+                None => return wrong(),
+            };
+        }
         Ok((self.rebuild(pos, above, cur)?, r))
     }
 
-    /// Applies `f` to the static part of `root` at the numbers `keys`, with one refresh of each
-    /// node on the path from the stored numbers (Lean `Agg.change`): the size changes by
-    /// `delta`, and a growing depth becomes at least `depth` plus the steps from the node to the
-    /// end of the path. No sibling is read, and the walk keeps no stack.
+    /// Applies `f` to the list of `root` at the numbers `keys`, with one refresh of each node on
+    /// the path from the stored numbers (Lean `Agg.change`): the size changes by `delta`, and a
+    /// growing depth becomes at least `depth` plus the steps from the node to the end of the
+    /// path. A list node at the end of the path refreshes by the delta too, and no element is
+    /// read. No sibling is read, and the walk keeps no stack.
     fn change_at<R>(
         pos: Pos,
         root: &mut Agg,
         keys: &[usize],
         delta: Delta,
-        f: impl FnOnce(&mut Value) -> Option<R>,
+        f: impl FnOnce(ListMut<'_>) -> R,
     ) -> Res<Option<R>> {
         let wrong = || {
             fail(
@@ -1014,31 +1038,29 @@ impl Evaluator<'_> {
         let mut cur = root;
         for (i, &k) in keys.iter().enumerate() {
             match cur {
-                Agg::Array(n, p) | Agg::Tuple(n, p) | Agg::Record(n, p) => {
-                    n.size = match delta {
-                        Delta::Grow { size, .. } => n.size.saturating_add(size),
-                        Delta::Shrink { size } => n.size.saturating_sub(size),
-                    };
-                    if let Delta::Grow { depth, .. } = delta {
-                        let rest = (keys.len() - i) as u64;
-                        n.depth = n.depth.max(rest.saturating_add(depth));
-                    }
+                Agg::Array(n, p) | Agg::Tuple(n, p) | Agg::Record(n, p) | Agg::List(n, p) => {
+                    delta.refresh(n, (keys.len() - i) as u64);
                     cur = match p.0.get_mut(k) {
                         Some(x) => x,
                         None => return wrong(),
                     };
                 }
                 Agg::Static(v) => {
-                    let Some(part) = keys.get(i..).and_then(|rest| part_in(v, rest)) else {
-                        return wrong();
-                    };
-                    return Ok(f(part));
+                    let part = keys
+                        .get(i..)
+                        .and_then(|rest| part_in(v, rest))
+                        .and_then(ListMut::of_value);
+                    return Ok(part.map(f));
                 }
                 _ => return wrong(),
             }
         }
         match cur {
-            Agg::Static(v) => Ok(f(v)),
+            Agg::Static(v) => Ok(ListMut::of_value(v).map(f)),
+            Agg::List(n, p) => {
+                delta.refresh(n, 0);
+                Ok(Some(f(ListMut::Node(&mut p.0))))
+            }
             _ => wrong(),
         }
     }
@@ -1074,22 +1096,18 @@ impl Evaluator<'_> {
         pos: Pos,
         place: &super::place::Place,
         delta: Option<Delta>,
-        f: impl FnOnce(&mut Vec<Value>) -> R,
+        f: impl FnOnce(ListMut<'_>) -> R,
     ) -> Res<Option<R>> {
         let Some(root) = self.store.take_agg(place.root, &place.keys) else {
             return fail(Code::S010, pos, "the root is not an aggregate".to_owned());
         };
-        let edit = |part: &mut Value| match part {
-            Value::List(_, ys) => Some(f(ys)),
-            _ => None,
-        };
         let (root, r) = match delta {
             Some(delta) => {
                 let mut root = *root;
-                let r = Self::change_at(pos, &mut root, &place.keys, delta, edit)?;
+                let r = Self::change_at(pos, &mut root, &place.keys, delta, f)?;
                 (root, r)
             }
-            None => self.edit_at(pos, *root, &place.keys, edit)?,
+            None => self.edit_at(pos, *root, &place.keys, f)?,
         };
         self.store.put_back(place.root, Val::Agg(Box::new(root)));
         Ok(r)
@@ -1168,7 +1186,9 @@ fn first_ref(a: &Agg, keys: &[usize]) -> Option<TyId> {
     for &k in keys {
         match cur {
             Agg::Ref(_, t) => return Some(*t),
-            Agg::Array(_, p) | Agg::Tuple(_, p) | Agg::Record(_, p) => cur = p.0.get(k)?,
+            Agg::Array(_, p) | Agg::Tuple(_, p) | Agg::Record(_, p) | Agg::List(_, p) => {
+                cur = p.0.get(k)?;
+            }
             _ => return None,
         }
     }
@@ -1182,6 +1202,35 @@ fn first_ref(a: &Agg, keys: &[usize]) -> Option<TyId> {
 pub(super) enum Delta {
     Grow { size: u64, depth: u64 },
     Shrink { size: u64 },
+}
+
+impl Delta {
+    /// The refreshed numbers of the node `n`, which has `rest` steps to the end of the path.
+    fn refresh(self, n: &mut Node, rest: u64) {
+        n.size = match self {
+            Delta::Grow { size, .. } => n.size.saturating_add(size),
+            Delta::Shrink { size } => n.size.saturating_sub(size),
+        };
+        if let Delta::Grow { depth, .. } = self {
+            n.depth = n.depth.max(rest.saturating_add(depth));
+        }
+    }
+}
+
+/// The list that a `push` or a `pop` changes: a static list, or the elements of a list node.
+pub(super) enum ListMut<'a> {
+    Static(&'a mut Vec<Value>),
+    Node(&'a mut Vec<Agg>),
+}
+
+impl<'a> ListMut<'a> {
+    /// The list that the static value `v` is, if it is one.
+    fn of_value(v: &'a mut Value) -> Option<ListMut<'a>> {
+        match v {
+            Value::List(_, ys) => Some(ListMut::Static(ys)),
+            _ => None,
+        }
+    }
 }
 
 /// The static part of `v` at the numbers `keys`, for a change in place.

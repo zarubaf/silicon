@@ -158,7 +158,9 @@ impl Store {
         let mut cur = a.seen();
         for (i, &k) in path.iter().enumerate() {
             cur = match cur {
-                Seen::Agg(Agg::Array(_, p) | Agg::Tuple(_, p) | Agg::Record(_, p)) => {
+                Seen::Agg(
+                    Agg::Array(_, p) | Agg::Tuple(_, p) | Agg::Record(_, p) | Agg::List(_, p),
+                ) => {
                     self.stepped(1);
                     p.0.get(k).map_or(Seen::Static(&ABSENT_VALUE), Agg::seen)
                 }
@@ -508,7 +510,7 @@ impl Store {
 /// The recursive size of the static parts of `a`: the values that a clone of it copies. The walk
 /// keeps its own stack.
 #[cfg(test)]
-fn static_size(a: &Agg) -> u64 {
+pub(super) fn static_size(a: &Agg) -> u64 {
     let mut total = 0u64;
     let mut work = vec![a];
     while let Some(x) = work.pop() {

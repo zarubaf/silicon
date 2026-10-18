@@ -787,25 +787,6 @@ impl Evaluator<'_> {
         }
     }
 
-    /// `S010` at `pos` when `t` is a handle type at a typed use other than a typed `let` and an
-    /// assignment to a `let mut` local. There, a handle type is `S010` until #278 (section 5.4),
-    /// with the text of section 6.2. A static position has `static_handle` instead. The caller
-    /// charged the copy first.
-    pub(super) fn later_handle(&self, pos: Pos, t: TyId) -> Res<()> {
-        if self.tys.get(t).is_handle() {
-            return fail(
-                Code::S010,
-                pos,
-                format!(
-                    "the handle type `{}` is not supported here yet; use it in a typed `let`, or \
-                     pass the data value, for example `read(h)`",
-                    self.tys.text(t)
-                ),
-            );
-        }
-        Ok(())
-    }
-
     /// The typed use at `pos` of `out` at the handle type `t` (section 5.4, Lean `handleUse`).
     /// The handle type of the value equals `t`, else `S010`. The compare is an id compare, it has
     /// no charge, and nothing reads the value. An own output has no handle type, so its text

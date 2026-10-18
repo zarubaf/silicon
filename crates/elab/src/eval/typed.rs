@@ -93,7 +93,6 @@ impl Site for Element {
         _copies: bool,
         out: Out,
     ) -> Res<Typed> {
-        ev.later_handle(pos, t)?;
         ev.typed_element(pos, self.0, t, out)
     }
 }

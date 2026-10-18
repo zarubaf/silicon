@@ -810,7 +810,9 @@ impl Evaluator<'_> {
         let mut taken: Vec<usize> = Vec::new();
         let mut cur = self.store.at(r);
         for key in keys {
-            let Seen::Agg(a @ (Agg::Array(..) | Agg::Tuple(..) | Agg::Record(..))) = cur else {
+            let Seen::Agg(a @ (Agg::Array(..) | Agg::Tuple(..) | Agg::Record(..) | Agg::List(..))) =
+                cur
+            else {
                 break;
             };
             let Some(k) = self.node_key(a, key) else {
@@ -842,9 +844,10 @@ impl Evaluator<'_> {
     /// its checks.
     fn node_key(&self, a: &Agg, key: &Key<'_>) -> Option<usize> {
         match (key, a) {
-            (Key::Index(_, _, Index::Number(k)), Agg::Array(_, p) | Agg::Tuple(_, p)) => {
-                (*k < p.0.len()).then_some(*k)
-            }
+            (
+                Key::Index(_, _, Index::Number(k)),
+                Agg::Array(_, p) | Agg::Tuple(_, p) | Agg::List(_, p),
+            ) => (*k < p.0.len()).then_some(*k),
             (Key::Select(_, _, index), Agg::Tuple(_, p)) => index
                 .as_str()
                 .parse::<usize>()
@@ -1171,7 +1174,11 @@ impl Evaluator<'_> {
                 ) => Known::Ty(*elem),
                 (None, Known::Absent | Known::Element, _) => Known::Element,
             };
-            in_list = in_list || matches!(seen, Seen::Static(Value::List(..)));
+            in_list = in_list
+                || matches!(
+                    seen,
+                    Seen::Static(Value::List(..)) | Seen::Agg(Agg::List(..))
+                );
             // A step into a reference makes a new reference to the part, in constant work.
             let lazy = match seen {
                 Seen::Agg(Agg::Ref(b, t)) => Some((b.clone(), *t)),
@@ -1200,13 +1207,7 @@ impl Evaluator<'_> {
             });
         }
         let seen = cur.seen();
-        let held = match seen {
-            Seen::Static(Value::List(elem, xs)) => Held::List {
-                elem: *elem,
-                len: xs.len(),
-            },
-            _ => Held::Other,
-        };
+        let held = self.held_of(seen);
         // A static part of the live root has no stored size: `push` and `pop` need none, and a
         // rebind reads it once when it charges (`part: None`).
         let part = aggregate
@@ -1242,6 +1243,25 @@ impl Evaluator<'_> {
             own: cur.into_own(),
             settled: false,
         })
+    }
+
+    /// What the part `seen` of a place is, for the operations that change it in place: a static
+    /// list or a list node with its element type and its length, else another part.
+    fn held_of(&self, seen: Seen<'_>) -> Held {
+        match seen {
+            Seen::Static(Value::List(elem, xs)) => Held::List {
+                elem: *elem,
+                len: xs.len(),
+            },
+            Seen::Agg(Agg::List(n, p)) => match self.tys.get(n.ty) {
+                Ty::List(elem) => Held::List {
+                    elem: *elem,
+                    len: p.0.len(),
+                },
+                _ => Held::Other,
+            },
+            _ => Held::Other,
+        }
     }
 
     /// The part `k` of the reference to `base` of type `t` that the step `key` selects, in its

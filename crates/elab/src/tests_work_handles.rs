@@ -375,3 +375,79 @@ fn c6_a_typed_use_at_handle_leaves_walks_no_type() {
     );
     assert!(small <= 60, "{small}");
 }
+
+/// Issue #278, W3. `n` pushes of a register and `n` pops of a list of handles. A `push` refreshes
+/// the stored numbers by a delta, and a `pop` of an element of the element depth does too, so the
+/// work is linear in `n`, and a rebuild of the list at each step would not be.
+#[test]
+fn c3_pushes_and_pops_of_handles_refresh_by_a_delta() {
+    let at = |n: usize, key: u64| {
+        let mut src =
+            "module M() {\n    output o: Bool;\n    reg r: UInt[8] = 0;\n    r := 0;\n    \
+                       let mut hs = list(Reg[UInt[8]]);\n"
+                .to_owned();
+        src.push_str(&"    hs.push(r);\n".repeat(n));
+        for k in 0..n {
+            writeln!(src, "    let p{k} = hs.pop();").unwrap();
+        }
+        src.push_str("    o := true;\n}\n");
+        passing(key, 1000, &src)
+    };
+    let (n, twice) = (at(64, 160), at(128, 161));
+    doubles(&n, &twice);
+    assert!(twice.counts.total() <= 8 * twice.used);
+}
+
+/// Issue #278, W8. The write-back of a `List[List[Reg[T]]]` formal checks the depth of the value
+/// from its stored numbers, so `k` calls on a list with `m` elements take work within a constant
+/// of their fuel, which pays the copy of the list.
+#[test]
+fn c8_the_write_back_of_a_list_of_lists_reads_only_the_depth() {
+    let at = |m: usize, k: usize, key: u64| {
+        let mut src = "fn grow(mut l: List[List[Reg[UInt[8]]]], r: Reg[UInt[8]]) -> Nat {\n    \
+                       l[0].push(r);\n    return 1;\n}\nmodule M() {\n    output o: Bool;\n    \
+                       reg r: UInt[8] = 0;\n    r := 0;\n    \
+                       let mut ll = list(List[Reg[UInt[8]]]);\n    ll.push(list(Reg[UInt[8]]));\n"
+            .to_owned();
+        src.push_str(&"    ll[0].push(r);\n".repeat(m));
+        for j in 0..k {
+            writeln!(src, "    let c{j} = grow(ll, r);").unwrap();
+        }
+        src.push_str("    o := true;\n}\n");
+        passing(key, 1000, &src)
+    };
+    let (n, twice) = (at(64, 8, 170), at(64, 16, 171));
+    doubles(&n, &twice);
+    assert!(twice.counts.total() <= 8 * twice.used);
+    let wide = at(128, 8, 172);
+    assert!(wide.counts.total() <= 8 * wide.used);
+}
+
+/// Issue #278, W9. A `pop` of an element that is deeper than the element type charges the size of
+/// the root and builds the list node again, in a list of tuples of a handle and a type. The work
+/// of `p` such pops from a list of `k` elements stays within a constant of the fuel.
+#[test]
+fn c9_a_deep_pop_from_a_list_of_handle_tuples_is_paid_by_the_root_size() {
+    let at = |k: usize, p: usize, key: u64| {
+        let mut src = "type D = [[[UInt[8]; 2]; 2]; 2];\ntype E = (Reg[UInt[8]], Type);\n\
+                       module M() {\n    output o: Bool;\n    reg r: UInt[8] = 0;\n    r := 0;\n    \
+                       let mut hs = list(E);\n"
+            .to_owned();
+        src.push_str(&"    hs.push((r, D));\n".repeat(k));
+        for j in 0..p {
+            writeln!(src, "    let p{j} = hs.pop();").unwrap();
+        }
+        src.push_str("    o := true;\n}\n");
+        passing(key, 1000, &src)
+    };
+    let (n, twice) = (at(32, 16, 180), at(32, 32, 181));
+    assert!(
+        n.counts.total() <= 8 * n.used,
+        "{} {}",
+        n.counts.total(),
+        n.used
+    );
+    assert!(twice.counts.total() <= 8 * twice.used);
+    let long = at(64, 16, 182);
+    assert!(long.counts.total() <= 8 * long.used);
+}
