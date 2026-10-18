@@ -1220,22 +1220,25 @@ def changeAt (p : Pos) (pl : Place) (f : Value → Value) (g : Array Agg → Arr
   | _, _ => fail .S010 p "the place has no static part to change"
 
 /-!
-The place update at `p` of the aggregate root `a` of the slot `sl` (section 5.4). The part `x`
-at the place replaces the old part `o`. The new root has a hardware leaf unless the update
-replaces each one. Then the rebind charges the size of the new root from the stored sizes: the
-old size, minus the size of `o`, plus the size of `x`. This charge comes before the copy of the
-path and before a reference on the path expands. Then the held root charges, the path copies,
-and each hardware leaf of the new root binds at the next version of the root. A new root without
-a hardware leaf is a static value. It has no rebind charge. Instead, at the same point, it charges
-the zero size of each empty part that a reference on the path makes when it expands
-(`Agg.emptySize`). The type metadata gives these sizes, as in `normalize`. Before these
-charges, the zero size of the first reference on the path gets the size limit (`Agg.firstRef`).
+The place update at `p` of the aggregate root `a` of the slot `sl` (section 5.4). The part `x` at
+the place replaces the old part `o`. The new root has a hardware leaf unless the update replaces
+each one. A new root with a hardware leaf, or of a type with the handle flag, has the rebind charge.
+It is the size of the new root from the stored sizes: the old size, minus the size of `o`, plus the
+size of `x`. It pays for the copy of the path, also of a list node of handles. This charge comes
+before the copy of the path and before a reference on the path expands. Then the held root charges,
+and the path copies. Only a new root with a hardware leaf binds each hardware leaf at the next
+version of the root. A new root without a hardware leaf and without the flag is a static value. It
+has no rebind charge. Instead, at the same point, it charges the zero size of each empty part that a
+reference on the path makes when it expands (`Agg.emptySize`). The type metadata gives these sizes,
+as in `normalize`. Before these charges, the zero size of the first reference on the path gets the
+size limit (`Agg.firstRef`).
 -/
 def rebind (p : Pos) (pl : Place) (sl : Slot) (a o x : Agg) : M Unit := do
   let hw := a.leaves - o.leaves + x.leaves != 0
   if let some t := Agg.firstRef a pl.keys then
     if over t.info.zeroSize then fail .S015 p zeroLimitText
-  if hw then charge p (a.size - o.size + x.size)
+  let handles := a.ty?.any (·.info.handles)
+  if hw || handles then charge p (a.size - o.size + x.size)
   else charge p (Agg.emptySize (← get).specs a pl.keys)
   held p pl.id
   let r ← setAt p a x pl.keys

@@ -2149,7 +2149,7 @@ after the charge. A handle at a data position is not read.
 A `mut` formal of a container type passes the handles in and writes them back. A place of
 another type is `S010` at the call, with the type of the formal and the value of the place.
 -/
-#guard exact (handleFormals "  let mut p = (r, q);\n  let a = sw(p);\n  r := i;\n") "M" 416
+#guard exact (handleFormals "  let mut p = (r, q);\n  let a = sw(p);\n  r := i;\n") "M" 422
 #guard said (handleFormals "  let mut p = (r, s);\n  let a = sw(p);\n") ==
   typedText "(Reg[UInt[8]], Reg[UInt[8]])" "a value of `(Reg[UInt[8]], Reg[UInt[4]])`"
 #guard cost (handleFormals "  let mut p = (r, s);\n  let a = sw(p);\n") "M" (fuel := 202) ==
@@ -2180,7 +2180,7 @@ passes the `push` and stops at the write-back, at the call. The depth 8 passes.
 def growing : String :=
   handleFormals "  let mut t = ((r, list(Type)),);\n  let a = gt(t.0);\n  r := i;\n"
 #guard cost growing "M" (depth := 7) == "S015 35:11"
-#guard (cost growing "M" (depth := 8)).startsWith "total 490"
+#guard (cost growing "M" (depth := 8)).startsWith "total 504"
 
 /-!
 A container holds handle leaves (section 5.1). An element and a field of a handle type are `raw`
@@ -2435,7 +2435,7 @@ def handleList (body : String) : String :=
 #guard exact (handleList ("  xs.push(r);\n  xs.push(q);\n  let b: Reg[UInt[8]] = xs[0];\n" ++
   "  let n = len(xs);\n  b := i;\n  o := i;\n")) "M" 253
 #guard exact (handleList "  xs.push(r);\n  let h = xs.pop();\n  h := i;\n  o := i;\n") "M" 231
-#guard exact (handleList "  xs.push(r);\n  xs[0] = q;\n  r := i;\n  o := i;\n") "M" 233
+#guard exact (handleList "  xs.push(r);\n  xs[0] = q;\n  r := i;\n  o := i;\n") "M" 235
 #guard exact (handleList "  let a = grow(xs, r);\n  r := i;\n  o := i;\n") "M" 269
 #guard names (handleList "  xs.push(r);\n  let h = xs.pop();\n  h := i;\n  o := i;\n") "M" "M" ==
   ["r", "q", "s"]
@@ -2493,7 +2493,7 @@ A list of `Reg[T]` alone cannot grow above the depth of its type, so `P` holds a
 def deepBack : String :=
   handleList ("  let mut ys = list(P);\n  let mut t = (list(List[P]),);\n  t.0.push(ys);\n" ++
     "  let a = deep(t.0, r);\n  r := i;\n  o := i;\n")
-#guard (cost deepBack "M" (depth := 9)).startsWith "total 439"
+#guard (cost deepBack "M" (depth := 9)).startsWith "total 454"
 #guard cost deepBack "M" (depth := 8) == "S015 23:11"
 #guard (match Cli.costText { budget := { fuel := 100000000, depth := 8 } } deepBack "M" with
   | .error e => e.msg
@@ -2651,5 +2651,25 @@ def kindAt (a : String) : String :=
 #guard said (targets ("  u.x := i;\n  mem m: [UInt[8]; 4];\n  write_port(m, 0, i, true);\n" ++
   "  let k = read_port(m, 0, true);\n  let ms = [m];\n  ms[0] := i;\n")) ==
   kindAt "a handle of `Mem[UInt[8], 4]`"
+
+/-!
+A store into an array of handles copies the path, so it charges the size of its root (section
+5.4, **Rebind**). Thus each store into an array of `n` registers costs `n` plus a constant, and
+`n` stores cost `O(n^2)`, as their work does. A `mut` write-back into an element takes the same
+path, so it charges the same size.
+-/
+def handleArray (n k : Nat) (step : String) : String :=
+  "fn swap(mut x: Reg[UInt[8]], h: Reg[UInt[8]]) -> Bool {\n  x = h;\n  return true;\n}\n" ++
+  "module M() {\n  input i: UInt[8];\n  output o: UInt[8];\n  reg r: UInt[8] = 0;\n" ++
+  "  reg q: UInt[8] = 0;\n  r := i;\n  q := i;\n  o := i;\n" ++
+  s!"  let mut rs = [{", ".intercalate (List.replicate n "r")}];\n" ++
+  s!"  comptime for k in 0..{k} \{\n" ++ step ++ "  }\n}\n"
+def perStore (step : String) (n : Nat) : Int :=
+  (total (handleArray n 1 step) "M" : Int) - total (handleArray n 0 step) "M"
+#guard [10, 20, 40].map (perStore "    rs[0] = q;\n") == [19, 29, 49]
+#guard [10, 20, 40].map (fun n => total (handleArray n n "    rs[0] = q;\n") "M") ==
+  [432, 902, 2442]
+#guard [10, 20, 40].map (perStore "    let b = swap(rs[0], q);\n") == [54, 64, 84]
+#guard exact (handleArray 10 10 "    let b = swap(rs[0], q);\n") "M" 782
 
 end Silicon.Source.Test.Elab
