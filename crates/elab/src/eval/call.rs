@@ -381,6 +381,12 @@ impl Evaluator<'_> {
             Actual::Value(v) => {
                 let x = if comptime || q.mode == ParamMode::Comptime {
                     self.charge(pos, self.size(&v))?;
+                    let position = if comptime {
+                        "an argument of a comptime fn"
+                    } else {
+                        "a comptime parameter"
+                    };
+                    self.static_handle(pos, position, t)?;
                     let v = self.settle(pos, t, v)?;
                     Val::Static(self.conform(pos, t, v)?)
                 } else {
@@ -397,6 +403,11 @@ impl Evaluator<'_> {
                     }),
                 };
                 self.charge(pos, self.size(&part))?;
+                if comptime {
+                    self.static_handle(pos, "an argument of a comptime fn", t)?;
+                } else {
+                    self.later_handle(pos, t)?;
+                }
                 let ty = place
                     .ty
                     .or_else(|| self.store.seen(&part).ty(&self.graph, &mut self.tys));

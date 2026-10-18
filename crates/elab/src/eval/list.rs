@@ -74,6 +74,7 @@ impl Evaluator<'_> {
             return self.not_a_list(pos, g, &place);
         };
         self.mutation(pos, place.id)?;
+        self.later_handle(pos, elem)?;
         let typed = self.typed_element(pos, expr_pos(x), elem, o)?;
         let (depth, size) = match &typed {
             Typed::Converted(v) => (v.depth(), v.size()),

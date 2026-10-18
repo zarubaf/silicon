@@ -242,6 +242,7 @@ impl Evaluator<'_> {
         self.charge(pos, sizes)?;
         let mut pieces = Vec::with_capacity(args.len());
         for ((field, arg), x) in fields.into_iter().zip(args).zip(xs) {
+            self.later_handle(pos, field)?;
             let arg = self.settle(pos, field, arg)?;
             let arg = self.data(expr_pos(x), arg)?.into_out();
             pieces.push(self.conform_piece(pos, field, Piece::Out(arg))?);
