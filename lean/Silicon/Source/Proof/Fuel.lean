@@ -317,6 +317,12 @@ theorem normalize_f (p : Pos) (a : Agg) : Follows cap (normalize p a) (normalize
 theorem bounded_f (p : Pos) (d : Nat) : Follows cap (bounded p d) (bounded p d) := by
   unfold bounded; follows
 
+theorem memWord_f (p : Pos) (t : Ty) : Follows cap (memWord p t) (memWord p t) := by
+  unfold memWord; follows
+
+theorem memDepth_f (p : Pos) (v : Val) : Follows cap (memDepth p v) (memDepth p v) := by
+  unfold memDepth; follows
+
 theorem readRef_f (p : Pos) (b : Base) (t : Ty) :
     Follows cap (readRef p b t) (readRef p b t) := by
   unfold readRef; follows [bounded_f, normalize_f]

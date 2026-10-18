@@ -53,6 +53,31 @@ def bounded (pos : Pos) (d : Nat) : M Unit := do
       s!"the depth {d} goes above the nesting depth {c.limit}; raise --depth to at least {d}"
 
 /-!
+The word type of a memory at its `mem` statement `p` (section 6.2). It is hardware data with at
+least one leaf (`S010`), so an empty word is `S010` and not `S012`. Its width is at most 65536
+bits (`S012`). The metadata gives both, with no walk.
+-/
+def memWord (p : Pos) (t : Ty) : M Ty :=
+  if !t.info.data || t.info.leaves = 0 then
+    fail .S010 p s!"a memory needs a nonempty hardware data type, not {t.text}"
+  else if t.info.width > 65536 then
+    fail .S012 p s!"a memory word has at most 65536 bits, not {t.info.width}"
+  else pure t
+
+/-!
+The depth of a memory at its `mem` statement `p` (section 6.2): a static value (`S011`), an
+integer (`S010`), and 1 to 16777216 (`S012`). Each error is at the statement.
+-/
+def memDepth (p : Pos) : Val → M Nat
+  | .static (.int k) =>
+    if k < 1 || k > 16777216 then
+      fail .S012 p s!"a memory depth is 1 to 16777216, not {intText k}"
+    else pure k.toNat
+  | .static v => fail .S010 p s!"a memory depth is a static integer, not {v.text}"
+  | .pending .. => fail .S010 p "a memory depth is a static integer, not `[]`"
+  | v => fail .S011 p s!"a memory depth is static, not {v.text}"
+
+/-!
 A walk over types or values that counts its charge. A failure keeps the charge of the visits
 before it.
 -/
@@ -128,7 +153,7 @@ type of the other side. Arrays need one length and tuples one arity. Two lists j
 element types.
 -/
 mutual
-  def joinTy : Ty → Ty → StateM Nat (Option Ty)
+  def joinTy : Ty → Ty → Walk (Option Ty)
     | .array s n, .array t m => do
       modify (· + 1)
       if n = m then
@@ -152,7 +177,7 @@ mutual
       if containerTy s && containerTy t then modify (· + 1)
       return scalarJoin s t
 
-  def joinAll : List Ty → List Ty → StateM Nat (Option (List Ty))
+  def joinAll : List Ty → List Ty → Walk (Option (List Ty))
     | s :: ss, t :: ts => do
       let some u ← joinTy s t | return none
       let r ← joinAll ss ts
