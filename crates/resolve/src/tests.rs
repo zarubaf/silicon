@@ -462,12 +462,98 @@ fn an_unknown_name_is_s003_at_the_name() {
 
 #[test]
 fn a_name_of_a_later_slice_prelude_is_s003() {
-    assert_eq!(errors("const A: Wire = 1;\n"), [(S003, 1, 10)]);
-    assert_eq!(errors("const A: Nat = read(1);\n"), [(S003, 1, 16)]);
+    assert_eq!(errors("const A: PortKey = 1;\n"), [(S003, 1, 10)]);
+    assert_eq!(errors("const A: Nat = TypeInfo(1);\n"), [(S003, 1, 16)]);
+    ok("const A: Wire[Bool] = 1;\nconst B: Nat = read(1);\n");
+    ok("module M() {\n  reg r: Reg[Bool] = false;\n}\n");
+}
+
+#[test]
+fn domain_is_s003_with_its_own_text() {
     assert_eq!(
-        errors("module M() {\n  reg r: Reg[Bool] = false;\n}\n"),
-        [(S003, 2, 10)]
+        errors("fn f(x: Domain) -> Bool { return true; }\n"),
+        [(S003, 1, 9)]
     );
+    assert_eq!(
+        message("fn f(x: Domain) -> Bool { return true; }\n"),
+        "`Domain` is not supported yet; it comes with more domains (#11); a module has one \
+         domain or none, so it needs no `Domain` value"
+    );
+    ok("const Domain: Nat = 1;\nconst N: Nat = Domain;\n");
+}
+
+#[test]
+fn the_first_argument_of_instance_is_a_module_item() {
+    let counter = "module C(comptime W: Nat) {}\n";
+    ok(&format!(
+        "{counter}module M() {{\nlet t = Instance[C, 8];\nlet x: Instance[C, 8] = t;\n}}\n"
+    ));
+    ok(&format!(
+        "{counter}fn f(x: Instance[C, 8]) -> Bool {{ return true; }}\n"
+    ));
+    let text = "the first argument of `Instance` is not a module; write the module first, for \
+                example `Instance[Counter, 8]`";
+    for (src, line, col) in [
+        (
+            "const N: Nat = 1;\nconst T: Type = Instance[N, 8];\n",
+            3,
+            26,
+        ),
+        ("fn f(x: Instance[Q, 8]) -> Bool { return true; }\n", 2, 18),
+        (
+            "module M() {\nlet C = 1;\nlet t = Instance[C, 8];\n}\n",
+            4,
+            18,
+        ),
+        ("const T: Type = Instance[1 + 2];\n", 2, 26),
+        ("const T: Type = Instance[q::A];\n", 2, 26),
+    ] {
+        let src = format!("{counter}{src}");
+        assert_eq!(errors(&src), [(S003, line, col)], "{src}");
+        assert_eq!(message(&src), text, "{src}");
+    }
+    // The error replaces each `S003` of the argument; an error of another argument stays.
+    let src = format!("{counter}const T: Type = (z, Instance[N]);\n");
+    assert_eq!(message(&src), "`z` is not declared");
+    let src = format!("{counter}const T: Type = Instance[C, C];\n");
+    assert_eq!(errors(&src), [(S003, 2, 29)]);
+    assert_eq!(
+        message(&src),
+        "`C` is not a value; a module is used only in an `instance`"
+    );
+    assert_eq!(
+        errors(&format!("{counter}const T: Type = Reg[C];\n")),
+        [(S003, 2, 21)]
+    );
+}
+
+#[test]
+fn the_handle_families_and_read_are_prelude_names() {
+    for (name, want) in [
+        ("Reg", Prelude::Reg),
+        ("Wire", Prelude::Wire),
+        ("Input", Prelude::Input),
+        ("Mem", Prelude::Mem),
+        ("Instance", Prelude::Instance),
+    ] {
+        let src = format!("const A: {name} = 1;\n");
+        let r = ok(&src);
+        assert_eq!(target_at(&r, find(&src, name)), Some(Target::Prelude(want)));
+        assert!(want.is_type() && !want.is_fn());
+    }
+    let src = "fn f() -> Nat { return read; }";
+    let r = ok(src);
+    assert_eq!(
+        target_at(&r, find(src, "read")),
+        Some(Target::Prelude(Prelude::Read))
+    );
+    assert!(Prelude::Read.is_fn() && !Prelude::Read.is_type());
+    assert_eq!(Prelude::Read.modes().len(), 1);
+    assert_eq!(Prelude::Read.receiver(), Some(0));
+    ok(
+        "fn read(a: Bool, b: Bool) -> Bool { return a; }\nfn g(p: Bool) -> Bool { return read(p, p); }\n",
+    );
+    ok("module read() {}\nmodule M() {\ninstance read = read();\nlet x = read.q;\n}\n");
 }
 
 #[test]
@@ -606,10 +692,6 @@ fn the_message_of_a_later_slice_name_names_the_slice() {
     assert_eq!(
         message("fn f(x: TypeInfo) -> Bool { return true; }\n"),
         "`TypeInfo` is not supported yet; it comes in slice 4"
-    );
-    assert_eq!(
-        message("module M() {\n  reg r: Reg[Bool] = 0;\n}\n"),
-        "`Reg` is not supported yet; it comes in slice 3"
     );
     assert_eq!(message("const A: Foo = 1;\n"), "`Foo` is not declared");
     ok("const Wire: Nat = 1;\nconst N: Nat = Wire;\n");
@@ -1162,11 +1244,11 @@ fn s003_the_name_of_a_receiver_call_is_not_a_function_there() {
     fails(&fn_body("return p.Reg();"), 2, 10);
     assert_eq!(
         message(&fn_body("return p.Reg();")),
-        "`Reg` is not supported yet; it comes in slice 3"
+        "`Reg` is not a function"
     );
     assert_eq!(
-        message(&fn_body("return p.read();")),
-        "`read` is not supported yet; it comes in slice 3"
+        message(&fn_body("return p.PortKey();")),
+        "`PortKey` is not supported yet; it comes in slice 4"
     );
 }
 
