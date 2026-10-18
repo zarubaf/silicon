@@ -319,13 +319,24 @@ def family (t : PrimType) (args : List Value) : Except Fault Ty := do
     unless 1 ≤ w && w ≤ 65536 do .error (.S012, s!"the width {intText w} is not 1 to 65536")
     .ok (if t == .uint then .uint w.toNat else .sint w.toNat)
   | .uint, [v] | .sint, [v] => typeError s!"a width is a static Int, not {v.text}"
+  -- TODO(#277): evaluate the handle type families (section 5.4).
+  | .reg, _ | .wire, _ | .input, _ | .mem, _ | .instance, _ =>
+    typeError "a handle type has no evaluation yet"
   | _, _ => .error (.S007, "a type family takes one index argument")
 
 def prim (pos : Pos) (x : String) : PrimType → M Ty
   | .bool => pure .bool
   | .nat => pure .nat
   | .int => pure .int
-  | .uint | .sint | .list => fail .S007 pos s!"`{x}` takes 1 argument(s), but it has 0"
+  | .uint => fail .S007 pos s!"`{x}` takes 1 argument(s), but it has 0; write `UInt[W]`"
+  | .sint => fail .S007 pos s!"`{x}` takes 1 argument(s), but it has 0; write `SInt[W]`"
+  | .list => fail .S007 pos s!"`{x}` takes 1 argument(s), but it has 0; write `List[T]`"
+  | .reg => fail .S007 pos s!"`{x}` takes 1 argument(s), but it has 0; write `Reg[T]`"
+  | .wire => fail .S007 pos s!"`{x}` takes 1 argument(s), but it has 0; write `Wire[T]`"
+  | .input => fail .S007 pos s!"`{x}` takes 1 argument(s), but it has 0; write `Input[T]`"
+  | .mem => fail .S007 pos s!"`{x}` takes 2 argument(s), but it has 0; write `Mem[T, N]`"
+  | .instance =>
+    fail .S007 pos s!"`{x}` takes 1 argument(s), but it has 0; write `Instance[M, args]`"
   | .unit => pure .unit
   | .type => pure .type
   | .string => pure .string

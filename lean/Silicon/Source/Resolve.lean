@@ -56,7 +56,12 @@ A position that needs a fixed kind gets a name of that kind, else `S003`:
 - A type name is a prelude type, a `struct` item, a `type` item, an `enum` item, or a local.
   Only `Elab` knows whether a local holds a type.
 - The module of an `instance` is a `module` item.
-- A name in an expression is not a module. Only an `instance` uses a module.
+- The first argument `M` of the prelude `Instance[M, args]` resolves by the ordinary scoping to a
+  `module` item, as the first part of a variant path does. Another first argument is `S003` at
+  its start, with the text of section 6.2.
+- A name in an expression is not a module. Only an `instance` and `Instance` use a module.
+- `Domain` is `S003` until more domains come (#11). A user item or a local can shadow each prelude
+  name, also `read`.
 
 A function item is a name in an expression too: a callee, or a function value in another
 position. Whether it is a value of the right kind, not generic and not a builtin, is the type
@@ -94,18 +99,22 @@ its declaration, so each lookup takes logarithmic time.
 -/
 namespace Silicon.Source.Resolve
 
-/-! The prelude types of slice 1, and `Unit`, `Type`, `String`, and `List` of slice 2. -/
+/-!
+The prelude types of slice 1, `Unit`, `Type`, `String`, and `List` of slice 2, and the handle
+type families `Reg`, `Wire`, `Input`, `Mem`, and `Instance` of slice 3.
+-/
 inductive PrimType where
   | bool | uint | sint | nat | int | unit | type | string | list
+  | reg | wire | input | mem | «instance»
   deriving Repr, DecidableEq, BEq, Inhabited
 
 /-!
 The prelude functions of slice 1, and `len`, `data_bits`, `list`, `push`, `pop`, `str`,
-`read_port`, `write_port`, and `diagnostic` of slice 2.
+`read_port`, `write_port`, and `diagnostic` of slice 2, and `read` of slice 3.
 -/
 inductive PrimFn where
   | resize | reinterpret | staticAssert | error | len | dataBits | list | push | pop | str
-  | readPort | writePort | diagnostic
+  | readPort | writePort | diagnostic | read
   deriving Repr, DecidableEq, BEq, Inhabited
 
 /-!
@@ -128,7 +137,7 @@ def fnModes : PrimFn → Array ParamMode
   | .push => #[.mut, .none]
   | .pop => #[.mut]
   | .staticAssert | .diagnostic => #[.none, .none]
-  | .error | .len | .dataBits | .str => #[.none]
+  | .error | .len | .dataBits | .str | .read => #[.none]
   | .readPort => #[.none, .none, .none]
   | .writePort => #[.none, .none, .none, .none]
 
@@ -142,8 +151,9 @@ The prelude. It holds the scalar types of section 12.1 and the functions `resize
 `reinterpret`, `static_assert`, and `error` of slice 1. It also holds `Unit` and `len`, the
 names of the containers of slice 2, and `Type` and `data_bits`, the names of the types as values.
 The names of the strings and the lists are `String`, `List`, `list`, `push`, `pop`, and `str`.
-The memory ports are `read_port` and `write_port`, and `diagnostic` makes a record. `true` and
-`false` are keywords, and `T(n)` is syntax, so they need no name. The prelude struct
+The memory ports are `read_port` and `write_port`, and `diagnostic` makes a record. The handle
+type families are `Reg`, `Wire`, `Input`, `Mem`, and `Instance`, and `read` reads a handle.
+`true` and `false` are keywords, and `T(n)` is syntax, so they need no name. The prelude struct
 `ReadResponse` is an item (`responseName`).
 -/
 def prelude : List (String × Ref) :=
@@ -153,18 +163,28 @@ def prelude : List (String × Ref) :=
    ("error", .fn .error), ("len", .fn .len), ("data_bits", .fn .dataBits),
    ("String", .type .string), ("List", .type .list), ("list", .fn .list), ("push", .fn .push),
    ("pop", .fn .pop), ("str", .fn .str), ("read_port", .fn .readPort),
-   ("write_port", .fn .writePort), ("diagnostic", .fn .diagnostic)]
+   ("write_port", .fn .writePort), ("diagnostic", .fn .diagnostic), ("Reg", .type .reg),
+   ("Wire", .type .wire), ("Input", .type .input), ("Mem", .type .mem),
+   ("Instance", .type .instance), ("read", .fn .read)]
 
 /-! The name of the prelude struct (section 5.6). -/
 def responseName : String := "ReadResponse"
 
 /-!
 The prelude names of later slices, with their slice. A use of one is `S003`, and the message
-names the slice.
+names the slice. `Domain` waits for more domains (#11), so it has its own text (`domainText`).
 -/
 def laterPrelude : List (String × Nat) :=
-  [("Reg", 3), ("Wire", 3), ("Mem", 3), ("Input", 3), ("Instance", 3), ("Domain", 3),
-   ("read", 3), ("FieldInfo", 4), ("TypeInfo", 4), ("PortKey", 4), ("PortInfo", 4)]
+  [("FieldInfo", 4), ("TypeInfo", 4), ("PortKey", 4), ("PortInfo", 4)]
+
+def domainText : String :=
+  "`Domain` is not supported yet; it comes with more domains (#11); a module has one domain " ++
+    "or none, so it needs no `Domain` value"
+
+/-! The `S003` text of a first argument of `Instance` that is not a module (section 6.2). -/
+def instanceText : String :=
+  "the first argument of `Instance` is not a module; write the module first, for example " ++
+    "`Instance[Counter, 8]`"
 
 /-! A declared name and its local number. -/
 structure Binder where
@@ -449,7 +469,7 @@ def inScope (act : M α) : M α := do
 def missing (pos : Pos) (n : String) : M Unit :=
   let msg := match laterPrelude.lookup n with
     | some k => s!"`{n}` is not supported yet; it comes in slice {k}"
-    | none => s!"`{n}` is not declared"
+    | none => if n == "Domain" then domainText else s!"`{n}` is not declared"
   recordUnknown ⟨.S003, pos, msg⟩
 
 /-! The prelude declaration of the name `n`. `ReadResponse` is the item after the user items. -/
@@ -560,7 +580,9 @@ mutual
     | .call p f xs => do
       let k ← site
       return .call p (← expr f) (← xs.mapM expr) k
-    | .index p b xs => return .index p (← expr b) (← xs.mapM expr)
+    | .index p b xs => do
+      let b ← expr b
+      return .index p b (← indexArgs (b matches .name _ _ (.type .instance)) xs)
     | .field p b f => return .field p (← expr b) f
     | .unit p => return .unit p
     | .tuple p xs => return .tuple p (← xs.mapM expr)
@@ -589,13 +611,35 @@ mutual
         unless ← isType r do wrongKind p n "a type"
         return .name p n r
       | none => return .name p n default
-    | .index p b xs => return .index p (← typeExpr b) (← xs.mapM expr)
+    | .index p b xs => do
+      let b ← typeExpr b
+      return .index p b (← indexArgs (b matches .name _ _ (.type .instance)) xs)
     | .unit p => return .unit p
     | .tuple p ts => return .tuple p (← ts.mapM typeExpr)
     | .array p t n => return .array p (← typeExpr t) (← expr n)
     | .fn p ps r => do
       let ps ← ps.mapM fnParam
       return .fn p ps (← typeExpr r)
+
+  /--
+  The arguments of an index. The first argument of the prelude `Instance` (`inst`) resolves by
+  the ordinary scoping to a module item. Another first argument is `S003` at its start. That
+  error comes first at its position, so it replaces each `S003` in the argument.
+  -/
+  def indexArgs (inst : Bool) : List Source.Expr → M (List Expr)
+    | x :: xs => do
+      if !inst then return (← expr x) :: (← xs.mapM expr)
+      let rest (m : Expr) : M (List Expr) := return m :: (← xs.mapM expr)
+      if let .name p n := x then
+        if let some ⟨.item i, _⟩ := (← get).env.get? n then
+          if ← isModule i then return ← rest (.name p n (.item i))
+      let old := (← get).unknown
+      let m ← match x with
+        | .name p n => pure (Expr.name p n default)
+        | x => expr x
+      modify fun s => { s with unknown := earlier old ⟨.S003, m.pos, instanceText⟩ }
+      rest m
+    | [] => return []
 
   /-- A parameter type of a function type. It declares no name. -/
   def fnParam : Source.FnParam → M FnParam
