@@ -257,13 +257,21 @@ end helpers
 section walk
 variable {k m : Nat}
 
-theorem targetStep_f (he : ∀ e, Follows m (eval k e) (eval m e)) (s : Pos) (v : Val)
-    (sel : Sel) : Follows m (targetStep k s v sel) (targetStep m s v sel) := by
-  unfold targetStep; follows [he, need_f, static_f, pickKey_f, selectKey_f, fieldKey_f]
+theorem targetKeys_f (he : ∀ e, Follows m (eval k e) (eval m e)) (sels : List Sel) :
+    Follows m (targetKeys k sels) (targetKeys m sels) := by
+  unfold targetKeys; follows [he, need_f, static_f]
+
+theorem targetStep_f (s : Pos) (v : Val) (step : Sel × Option Value) :
+    Follows m (targetStep s v step) (targetStep s v step) := by
+  unfold targetStep; follows [pickKey_f, selectKey_f, fieldKey_f]
+
+theorem targetRoot_f (he : ∀ e, Follows m (eval k e) (eval m e)) (root : Resolve.Expr) :
+    Follows m (targetRoot k root) (targetRoot m root) := by
+  unfold targetRoot; follows [he, need_f]
 
 theorem targetPart_f (he : ∀ e, Follows m (eval k e) (eval m e)) (e : Resolve.Expr) :
     Follows m (targetPart k e) (targetPart m e) := by
-  unfold targetPart; follows [he, need_f, targetStep_f he]
+  unfold targetPart; follows [targetRoot_f he, targetKeys_f he, targetStep_f]
 
 theorem target_e (he : ∀ e, Follows m (eval k e) (eval m e)) (e : Resolve.Expr) :
     EFollows m (target k e) (target m e) := by
