@@ -26,6 +26,7 @@ method parse::Parse::into_ast
 method parse::ParsedExpr::depth
 method parse::ParsedExpr::expr
 method parse::ParsedExpr::into_parts
+method parse::ast::Expr::pos
 method parse::ast::Item::name
 method parse::ast::Nat::as_str
 method parse::ast::NodeId::prelude

@@ -385,7 +385,7 @@ impl Evaluator<'_> {
         for x in xs {
             let o = self.eval(x)?;
             let o = need(x, o)?;
-            if let Some(q) = self.held(super::expr_pos(x), &o)? {
+            if let Some(q) = self.held(x.pos(), &o)? {
                 waiting.get_or_insert(q);
             }
             self.store.park(o);
@@ -420,11 +420,7 @@ impl Evaluator<'_> {
                 let a = self.array_piece(*pos, Piece::of_outs(outs))?;
                 Ok(Some(Out::Made(a.into_val())))
             }
-            _ => fail(
-                Code::S010,
-                super::expr_pos(e),
-                "not a container expression".to_owned(),
-            ),
+            _ => fail(Code::S010, e.pos(), "not a container expression".to_owned()),
         }
     }
 

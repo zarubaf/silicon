@@ -12,7 +12,7 @@
 use super::arms::onehot_leaf;
 use super::container::Piece;
 use super::hwops::{Side, share};
-use super::{Evaluator, Guard, GuardKind, Names, Opnd, Out, Res, Slot, at, expr_pos, fail, need};
+use super::{Evaluator, Guard, GuardKind, Names, Opnd, Out, Res, Slot, at, fail, need};
 use crate::Code;
 use crate::cover::{Cover, all_keys, key_bits, key_lo};
 use crate::hw::Graph;
@@ -83,7 +83,7 @@ impl Evaluator<'_> {
     /// the map, else `_`. Its binders get a static unpack of the payload (`bind_static`). Then
     /// only that arm evaluates.
     pub(super) fn match_expr(&mut self, pos: Pos, scrut: &Expr, arms: &[Arm]) -> Res<Option<Out>> {
-        let sp = expr_pos(scrut);
+        let sp = scrut.pos();
         let d = self.operand(sp, scrut)?;
         let t = self.scrut_ty(sp, &d)?;
         let cover = self.match_arms(pos, t, arms)?;

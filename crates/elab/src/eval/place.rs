@@ -5,7 +5,7 @@
 //! no other binding shares the container. A read and a place each walk their path once.
 
 use super::store::Mark;
-use super::{Evaluator, Opnd, Out, Res, expr_pos, fail, need, same_form};
+use super::{Evaluator, Opnd, Out, Res, fail, need, same_form};
 use crate::Code;
 use crate::agg::Agg;
 use crate::hw::{Handle, Kind as Resource, Ref, Root, Seen, Val};
@@ -392,7 +392,7 @@ impl Evaluator<'_> {
             steps.push(step);
             next = self.read_step(base);
             if next.is_some() {
-                self.charge(expr_pos(base), 1)?;
+                self.charge(base.pos(), 1)?;
             }
             root = base;
         }
@@ -895,7 +895,7 @@ impl Evaluator<'_> {
         } else {
             self.held_use(pos, &place, o)?
         };
-        self.store_at(pos, expr_pos(value), &place, y)?;
+        self.store_at(pos, value.pos(), &place, y)?;
         Ok(None)
     }
 
@@ -1098,7 +1098,7 @@ impl Evaluator<'_> {
                 };
                 let o = self.eval(i)?;
                 let o = need(i, o)?;
-                let xp = expr_pos(i);
+                let xp = i.pos();
                 self.check_static(xp, &o)?;
                 Ok(Key::Index(q, xp, self.index_of(&o)))
             }

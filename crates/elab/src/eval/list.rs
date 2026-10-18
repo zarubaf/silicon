@@ -6,7 +6,7 @@
 
 use super::agg::Delta;
 use super::place::Held;
-use super::{Evaluator, Opnd, Out, Res, at, expr_pos, fail, need};
+use super::{Evaluator, Opnd, Out, Res, at, fail, need};
 use crate::Code;
 use crate::hw::{Seen, Val};
 use crate::limit;
@@ -66,7 +66,7 @@ impl Evaluator<'_> {
                 format!("`{g}` takes 2 argument(s), but it has {}", xs.len()),
             );
         };
-        let place = self.place_at(expr_pos(list), Code::S008, list)?;
+        let place = self.place_at(list.pos(), Code::S008, list)?;
         let o = self.eval(x)?;
         let o = need(x, o)?;
         self.store.shut_window(place.root);
@@ -75,7 +75,7 @@ impl Evaluator<'_> {
         };
         self.mutation(pos, place.id)?;
         self.later_handle(pos, elem)?;
-        let typed = self.typed_element(pos, expr_pos(x), elem, o)?;
+        let typed = self.typed_element(pos, x.pos(), elem, o)?;
         let (depth, size) = match &typed {
             Typed::Converted(v) => (v.depth(), v.size()),
             Typed::Same(o) => {
@@ -138,7 +138,7 @@ impl Evaluator<'_> {
                 format!("`{g}` takes 1 argument(s), but it has {}", xs.len()),
             );
         };
-        let place = self.place_at(expr_pos(list), Code::S008, list)?;
+        let place = self.place_at(list.pos(), Code::S008, list)?;
         self.store.shut_window(place.root);
         let Held::List { elem, len } = place.held else {
             return self.not_a_list(pos, g, &place);

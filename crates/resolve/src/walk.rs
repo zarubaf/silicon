@@ -546,7 +546,7 @@ impl Walker {
             self.expr(arg);
         }
         self.unresolved.truncate(before);
-        self.reject(expr_pos(arg), INSTANCE_TEXT.to_owned());
+        self.reject(arg.pos(), INSTANCE_TEXT.to_owned());
     }
 
     /// An arm. The path of a variant pattern resolves as a variant path in an expression. The
@@ -749,30 +749,5 @@ impl Walker {
             Some(_) => self.reject(pos, format!("`{name}` is not a module")),
             None => self.unknown(pos, name),
         }
-    }
-}
-
-/// The position of an expression.
-fn expr_pos(expr: &Expr) -> Pos {
-    match expr {
-        Expr::Num { pos, .. }
-        | Expr::Bool { pos, .. }
-        | Expr::Str { pos, .. }
-        | Expr::Name { pos, .. }
-        | Expr::Unary { pos, .. }
-        | Expr::Binary { pos, .. }
-        | Expr::Cond { pos, .. }
-        | Expr::Call { pos, .. }
-        | Expr::Method { pos, .. }
-        | Expr::Index { pos, .. }
-        | Expr::Field { pos, .. }
-        | Expr::Unit { pos }
-        | Expr::Tuple { pos, .. }
-        | Expr::Array { pos, .. }
-        | Expr::Select { pos, .. }
-        | Expr::Path { pos, .. }
-        | Expr::Match { pos, .. }
-        | Expr::ArrayType { pos, .. }
-        | Expr::FnType { pos, .. } => *pos,
     }
 }
