@@ -1,0 +1,18 @@
+// Row "an element of an array literal" of the frontend spec, section 9.2. The element position is `raw`, so `[r, s]` holds
+// two registers of one type. An index selects a register, and a `:=` through the element binds it.
+// TOP M()
+module M() {
+    input x: UInt[8];
+    output p: UInt[8];
+    output q: UInt[8];
+    reg r: UInt[8] = 0;
+    reg s: UInt[8] = 0;
+    let rs = [r, s];
+    rs[0] := x;
+    rs[1] := x +% 1;
+    p := r;
+    q := read(rs[1]);
+}
+// STEP in=(clock$0rst true x 0) out=(p 0 q 0)
+// STEP in=(clock$0rst false x 4) out=(p 0 q 0)
+// STEP in=(clock$0rst false x 9) out=(p 4 q 5)

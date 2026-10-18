@@ -1,0 +1,17 @@
+// A `return` at a result of a handle type keeps the handle (section 5.6, "Resource-typed formals and results"). `pick`
+// returns its argument, and a `:=` through the result binds the register.
+// TOP M()
+fn pick(h: Reg[UInt[8]]) -> Reg[UInt[8]] {
+    return h;
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    reg r: UInt[8] = 0;
+    let a = pick(r);
+    a := x;
+    o := r;
+}
+// STEP in=(clock$0rst true x 0) out=(o 0)
+// STEP in=(clock$0rst false x 4) out=(o 0)
+// STEP in=(clock$0rst false x 5) out=(o 4)

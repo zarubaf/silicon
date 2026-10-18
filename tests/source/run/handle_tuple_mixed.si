@@ -1,0 +1,26 @@
+// A tuple that mixes a register, a wire, a memory, an instance, a hardware value, and a static value. Only the register and
+// the wire are read, and the others stay handles or values. A selection picks each part.
+// TOP M()
+module Leaf() {
+    output o: UInt[8];
+    o := 7;
+}
+module M() {
+    input x: UInt[8];
+    input c: Bool;
+    output p: UInt[8];
+    output q: UInt[8];
+    reg r: UInt[8] = 0;
+    wire w: UInt[8];
+    r := x;
+    w := x +% 1;
+    mem m: [UInt[8]; 4];
+    write_port(m, 0, x, c); let rr = m.read_port(0, c);
+    instance u = Leaf();
+    let t = (r, w, m, u, x, 5);
+    p := read(t.0) +% read(t.1);
+    q := t.3.o +% t.5;
+}
+// STEP in=(clock$0rst true c true x 0) out=(p 1 q 12)
+// STEP in=(clock$0rst false c true x 4) out=(p 5 q 12)
+// STEP in=(clock$0rst false c true x 9) out=(p 14 q 12)

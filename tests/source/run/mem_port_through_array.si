@@ -1,0 +1,21 @@
+// A memory selected from an array of memories takes the port calls. The call `ms[1].read_port(...)` refers to the second
+// memory, and `write_port(ms[0], ...)` to the first.
+// TOP M()
+module M() {
+    input d: UInt[8];
+    input a: UInt[2];
+    input w: Bool;
+    output o: UInt[8];
+    mem m0: [UInt[8]; 4];
+    mem m1: [UInt[8]; 4];
+    let ms = [m0, m1];
+    let r0 = m0.read_port(a, true);
+    write_port(ms[0], a, d, w);
+    write_port(ms[1], a, d +% 1, w);
+    let r = ms[1].read_port(a, true);
+    o := r.data;
+}
+// STEP in=(clock$0rst false a 0 d 5 w true) out=(o 0)
+// STEP in=(clock$0rst false a 0 d 0 w false) out=(o 0)
+// STEP in=(clock$0rst false a 1 d 0 w false) out=(o 6)
+// STEP in=(clock$0rst false a 1 d 0 w false) out=(o 0)

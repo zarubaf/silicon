@@ -1,0 +1,20 @@
+// Row "an arm of a hardware `if`" of the frontend spec, section 9.2. The arm position is `data`, so the registers in the
+// arms read as data. Both arms are arrays of registers, and the `if` joins their read values.
+// TOP M()
+module M() {
+    input c: Bool;
+    input x: UInt[8];
+    output p: UInt[8];
+    output q: UInt[8];
+    reg r: UInt[8] = 0;
+    reg s: UInt[8] = 0;
+    r := x;
+    s := x +% 1;
+    let v = if (c) { [r, s] } else { [s, r] };
+    p := v[0];
+    q := v[1];
+}
+// STEP in=(clock$0rst true c true x 0) out=(p 0 q 0)
+// STEP in=(clock$0rst false c true x 4) out=(p 0 q 0)
+// STEP in=(clock$0rst false c true x 9) out=(p 4 q 5)
+// STEP in=(clock$0rst false c false x 9) out=(p 10 q 9)

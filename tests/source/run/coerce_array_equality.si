@@ -1,0 +1,21 @@
+// `==` reads both operands in a `data` context, so two arrays of registers compare by the values of the registers
+// (section 9.2, the recursion of `coerce`).
+// TOP M()
+module M() {
+    input x: UInt[8];
+    input y: UInt[8];
+    output o: Bool;
+    reg a: UInt[8] = 0;
+    reg b: UInt[8] = 0;
+    reg c: UInt[8] = 0;
+    reg d: UInt[8] = 0;
+    a := x;
+    b := x;
+    c := y;
+    d := y;
+    o := [a, b] == [c, d];
+}
+// STEP in=(clock$0rst true x 0 y 0) out=(o true)
+// STEP in=(clock$0rst false x 4 y 4) out=(o true)
+// STEP in=(clock$0rst false x 1 y 2) out=(o true)
+// STEP in=(clock$0rst false x 7 y 7) out=(o false)
