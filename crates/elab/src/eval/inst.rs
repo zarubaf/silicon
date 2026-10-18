@@ -65,8 +65,8 @@ pub(crate) struct RegDecl {
 /// A memory of one instantiation (section 7.6): its name, its path, its word type, its depth,
 /// and its `mem` statement. `read` holds the request of its first `read_port` call: the address
 /// and the enable. `write` holds the request of its first `write_port` call: the address, the
-/// data, and the enable. Each part of a request is after its typed use. `dup` holds the earliest
-/// second call by position, with the callee, for its `S018` at the end of the body.
+/// data, and the enable. Each part of a request is after its typed use. `read_at` and `write_at`
+/// hold the positions of the first calls (section 6.2).
 pub(crate) struct Mem {
     pub name: Sym,
     pub path: PathId,
@@ -75,7 +75,8 @@ pub(crate) struct Mem {
     pub pos: Pos,
     pub read: Option<(Agg, Agg)>,
     pub write: Option<(Agg, Agg, Agg)>,
-    pub dup: Option<(Pos, &'static str)>,
+    pub read_at: Option<Pos>,
+    pub write_at: Option<Pos>,
 }
 
 /// A child instance: its path, the index of its done instantiation, its statement, and its name.
@@ -139,23 +140,67 @@ impl Body {
     }
 }
 
-/// A resource that needs one binding: its name, its declaration, and its bindings.
+/// A resource that needs one binding: its name, its declaration, its bindings, and the position
+/// of the first one.
 struct Need {
     name: Sym,
     pos: Pos,
     count: u64,
+    first: Option<Pos>,
+}
+
+/// A resource in an `S018` text (section 6.2): an own resource by its source name, or the input
+/// `port` of the child number `child`, which renders as `u.p`.
+#[derive(Clone, Copy)]
+enum Subject {
+    Own(Sym),
+    Input { child: usize, port: Sym },
+}
+
+/// The data of an `S018` text of section 6.2. A binding or a port call records it with no walk.
+/// It holds symbols, indices, positions, and the item `h` of a helper. Its text renders once,
+/// for the error that wins. `write` is true for `write_port`.
+#[derive(Clone, Copy)]
+enum Breach {
+    Second {
+        r: Subject,
+        b: Pos,
+        d: Pos,
+    },
+    SecondIn {
+        r: Subject,
+        h: usize,
+    },
+    Unbound(Sym),
+    /// The first child with a free input, by its number.
+    Input(usize),
+    NoPort {
+        mem: usize,
+        write: bool,
+    },
+    Port {
+        mem: usize,
+        write: bool,
+        b: Pos,
+    },
+    PortIn {
+        mem: usize,
+        write: bool,
+        h: usize,
+    },
 }
 
 /// The work of the current instantiation. The resource number indexes `needs`, and the instance
 /// number indexes `bound`. The memories are in the body, where `Handle::Mem` indexes them.
-/// `inputs` counts the bindings of each child input. `dup` holds the first `S018` of a second
-/// binding by position. `spent` is the fuel of the new children.
+/// `inputs` counts the bindings of each child input, with the position of the first one. `dup`
+/// holds the first `S018` of a second binding or a second port call by position. `spent` is the
+/// fuel of the new children.
 struct Work {
     body: Body,
     needs: Vec<Need>,
     bound: Vec<usize>,
-    inputs: BTreeMap<(usize, Sym), u64>,
-    dup: Option<Pos>,
+    inputs: BTreeMap<(usize, Sym), (u64, Pos)>,
+    dup: Option<(Pos, Breach)>,
     spent: u64,
 }
 
@@ -417,18 +462,6 @@ enum Target {
     },
 }
 
-/// The kind of the first `S018` of a body.
-#[derive(Clone, Copy)]
-enum Missing {
-    Second,
-    Need(usize),
-    /// The memory has no `read_port` or no `write_port`.
-    Mem(usize),
-    /// The second call of a port function of the memory.
-    Port(usize),
-    Input(usize),
-}
-
 impl Evaluator<'_> {
     /// The instantiation of the top selection at `pos`: the module item `top` with the literal
     /// arguments `xs`. The result is the index of its done instantiation.
@@ -687,7 +720,8 @@ impl Evaluator<'_> {
             pos,
             read: None,
             write: None,
-            dup: None,
+            read_at: None,
+            write_at: None,
         });
         self.bind(
             id,
@@ -763,6 +797,7 @@ impl Evaluator<'_> {
             name,
             pos,
             count: 0,
+            first: None,
         });
         Val::Handle(Handle::Res {
             kind,
@@ -830,70 +865,147 @@ impl Evaluator<'_> {
         }
     }
 
-    /// Records the binding of `t` to `h`. The second binding of one target is an `S018`.
-    fn bind_target(&mut self, pos: Pos, t: Target, h: Agg) {
+    /// The function whose body runs, the `{h}` of the `S018` texts of a helper (section 6.2). A
+    /// module body gives none.
+    fn helper(&self) -> Option<usize> {
+        matches!(self.file.ast().get(self.item), Some(Item::Fn { .. })).then_some(self.item)
+    }
+
+    /// Records the `S018` data `x` at `pos`. The first by position wins, and a tie keeps the
+    /// first recorded one (section 6.2).
+    fn breach(&mut self, pos: Pos, x: Breach) {
         let w = &mut self.elab.work;
-        match t {
+        w.dup = Some(match w.dup {
+            Some((q, y)) if !before(pos, q) => (q, y),
+            _ => (pos, x),
+        });
+    }
+
+    /// The `S018` data of a second binding or a second port call at `pos`, whose first one is at
+    /// `first`. When both are at `pos`, one `:=` or call runs again, and in a function body its
+    /// text names the function (section 6.2).
+    fn again(&self, pos: Pos, first: Pos) -> Option<usize> {
+        if first == pos { self.helper() } else { None }
+    }
+
+    /// Records the second port call of the memory number `id` at `pos`, if its first call of
+    /// that kind exists. The result tells if the call is a second one.
+    pub(super) fn second_call(&mut self, pos: Pos, id: usize, write: bool) -> bool {
+        let Some(mem) = self.mem(id) else {
+            return false;
+        };
+        let Some(b) = (if write { mem.write_at } else { mem.read_at }) else {
+            return false;
+        };
+        #[cfg(test)]
+        crate::counters::add(crate::counters::Count::Seconds, 1);
+        let x = match self.again(pos, b) {
+            Some(h) => Breach::PortIn { mem: id, write, h },
+            None => Breach::Port { mem: id, write, b },
+        };
+        self.breach(pos, x);
+        true
+    }
+
+    /// The `S018` data of the second binding at `pos` of the resource `subject`, whose first
+    /// binding is at `first` and whose declaration is at `decl`.
+    fn second_binding(&self, pos: Pos, subject: Subject, first: Pos, decl: Pos) -> Breach {
+        match self.again(pos, first) {
+            Some(h) => Breach::SecondIn { r: subject, h },
+            None => Breach::Second {
+                r: subject,
+                b: first,
+                d: decl,
+            },
+        }
+    }
+
+    /// Records the binding of `t` to `value`. The second binding of one target is an `S018`,
+    /// and the first binding keeps its position for its text.
+    fn bind_target(&mut self, pos: Pos, t: Target, value: Agg) {
+        let sink = match t {
             Target::Own { kind, id, ty, path } => {
-                if let Some(need) = w.needs.get_mut(id) {
-                    if need.count == 1 {
-                        w.dup = Some(earlier(w.dup, pos));
+                let need = self.elab.work.needs.get(id);
+                let seen = need.map(|n| (n.count, n.first, n.name, n.pos));
+                if let Some((count, first, name, decl)) = seen {
+                    if count == 1 {
+                        let x = self.second_binding(
+                            pos,
+                            Subject::Own(name),
+                            first.unwrap_or(pos),
+                            decl,
+                        );
+                        self.breach(pos, x);
                     }
-                    need.count += 1;
+                    if let Some(n) = self.elab.work.needs.get_mut(id) {
+                        n.count += 1;
+                        n.first = n.first.or(Some(pos));
+                    }
                 }
-                w.body.binds.push(Bind {
-                    sink: Sink::Own {
-                        kind,
-                        ty: self.tys.get(ty).clone(),
-                        path,
-                    },
-                    value: h,
-                    pos,
-                });
+                let ty = self.tys.get(ty).clone();
+                Sink::Own { kind, ty, path }
             }
             Target::Child { inst, path, port } => {
-                let c = w.inputs.get(&(inst, port.sym)).copied().unwrap_or(0);
-                if c == 0
-                    && let Some(b) = w.bound.get_mut(inst)
+                let key = (inst, port.sym);
+                let (count, first) = self.elab.work.inputs.get(&key).copied().unwrap_or((0, pos));
+                if count == 0
+                    && let Some(n) = self.elab.work.bound.get_mut(inst)
                 {
-                    *b += 1;
+                    *n += 1;
                 }
-                if c == 1 {
-                    w.dup = Some(earlier(w.dup, pos));
+                self.elab.work.inputs.insert(key, (count + 1, first));
+                if count == 1 {
+                    let decl = self
+                        .elab
+                        .work
+                        .body
+                        .children
+                        .get(inst)
+                        .map_or(pos, |child| child.pos);
+                    let subject = Subject::Input {
+                        child: inst,
+                        port: port.sym,
+                    };
+                    let x = self.second_binding(pos, subject, first, decl);
+                    self.breach(pos, x);
                 }
-                w.inputs.insert((inst, port.sym), c + 1);
-                w.body.binds.push(Bind {
-                    sink: Sink::Child {
-                        index: inst,
-                        inst: path,
-                        port: port_name(self.syms.texts.get(port.sym).map_or("", String::as_str)),
-                        ty: self.tys.get(port.ty).clone(),
-                    },
-                    value: h,
-                    pos,
-                });
+                let name = port_name(self.syms.texts.get(port.sym).map_or("", String::as_str));
+                let ty = self.tys.get(port.ty).clone();
+                Sink::Child {
+                    index: inst,
+                    inst: path,
+                    port: name,
+                    ty,
+                }
             }
-        }
+        };
+        self.elab.work.body.binds.push(Bind { sink, value, pos });
     }
 
     /// The binding rule at the end of a body. A missing binding of an own resource is at its
     /// declaration, and one of a child input is at the `instance` statement. The counts
     /// select the first child with a free input, so only the interface of that child is
-    /// searched. The error with the lowest position wins; only its message is made.
+    /// searched. The records compete by position, and the text of the winner renders once
+    /// (section 6.2).
     fn bindings(&self) -> Res<()> {
         let work = &self.elab.work;
-        let mut first = work.dup.map(|at| (at, Missing::Second));
-        for (k, need) in work.needs.iter().enumerate() {
+        let first_of = |old: Option<(Pos, Breach)>, at: Pos, x: Breach| match old {
+            Some(o) if !before(at, o.0) => Some(o),
+            _ => Some((at, x)),
+        };
+        let mut first = work.dup;
+        for need in &work.needs {
             if need.count == 0 {
-                first = Some(first_of(first, need.pos, Missing::Need(k)));
+                first = first_of(first, need.pos, Breach::Unbound(need.name));
             }
         }
         for (k, mem) in work.body.mems.iter().enumerate() {
-            if let Some((at, _)) = mem.dup {
-                first = Some(first_of(first, at, Missing::Port(k)));
-            }
             if mem.read.is_none() || mem.write.is_none() {
-                first = Some(first_of(first, mem.pos, Missing::Mem(k)));
+                let x = Breach::NoPort {
+                    mem: k,
+                    write: mem.read.is_some(),
+                };
+                first = first_of(first, mem.pos, x);
             }
         }
         let mut free: Option<(Pos, usize)> = None;
@@ -906,35 +1018,55 @@ impl Evaluator<'_> {
             }
         }
         if let Some((at, k)) = free {
-            first = Some(first_of(first, at, Missing::Input(k)));
+            first = first_of(first, at, Breach::Input(k));
         }
-        let Some((pos, missing)) = first else {
+        let Some((pos, x)) = first else {
             return Ok(());
         };
+        fail(Code::S018, pos, self.breach_text(x))
+    }
+
+    /// The text of the `S018` data `x` (section 6.2).
+    fn breach_text(&self, x: Breach) -> String {
+        let work = &self.elab.work;
         let text = |sym: Sym| self.syms.texts.get(sym).map_or("", String::as_str);
-        let message = match missing {
-            Missing::Second => "a second binding of one target".to_owned(),
-            Missing::Need(k) => {
-                let name = work.needs.get(k).map_or("", |need| text(need.name));
-                format!("`{name}` has no binding")
+        let at = |p: Pos| format!("{}:{}", p.line, p.col);
+        let subject = |r: Subject| match r {
+            Subject::Own(sym) => text(sym).to_owned(),
+            Subject::Input { child, port } => {
+                let u = work
+                    .body
+                    .children
+                    .get(child)
+                    .map_or("", |c| c.name.as_str());
+                format!("{u}.{}", text(port))
             }
-            Missing::Mem(k) => {
-                let mem = work.body.mems.get(k);
-                let name = mem.map_or("", |mem| text(mem.name));
-                let port = if mem.is_some_and(|mem| mem.read.is_none()) {
-                    "read_port"
-                } else {
-                    "write_port"
-                };
-                format!("the memory `{name}` has no `{port}`")
+        };
+        let mem_name = |k: usize| work.body.mems.get(k).map_or("", |m| text(m.name));
+        let call = |write: bool| if write { "write_port" } else { "read_port" };
+        let item = |h: usize| self.item_name(h);
+        match x {
+            Breach::Second { r, b, d } => format!(
+                "`{}` has a second binding; the first binding is at {}, and the declaration is \
+                 at {}; remove one of the two bindings",
+                subject(r),
+                at(b),
+                at(d)
+            ),
+            Breach::SecondIn { r, h } => format!(
+                "`{}` has a second binding, because the `:=` in `{}` runs again for it; run \
+                 the `:=` once for each resource, for example with one call of `{}` for each",
+                subject(r),
+                item(h),
+                item(h)
+            ),
+            Breach::Unbound(sym) => {
+                let r = text(sym);
+                format!(
+                    "`{r}` has no binding; bind it with `{r} := ...;`, or remove its declaration"
+                )
             }
-            Missing::Port(k) => {
-                let mem = work.body.mems.get(k);
-                let name = mem.map_or("", |mem| text(mem.name));
-                let port = mem.and_then(|mem| mem.dup).map_or("", |(_, port)| port);
-                format!("a second `{port}` of the memory `{name}`")
-            }
-            Missing::Input(k) => {
+            Breach::Input(k) => {
                 let iface = work
                     .body
                     .children
@@ -954,8 +1086,41 @@ impl Evaluator<'_> {
                      bind it with `{inst}.{name} := ...;`"
                 )
             }
-        };
-        fail(Code::S018, pos, message)
+            Breach::NoPort { mem, write } => format!(
+                "the memory `{}` has no `{}`; call `{}` on it once, or remove the memory",
+                mem_name(mem),
+                call(write),
+                call(write)
+            ),
+            Breach::Port {
+                mem,
+                write: false,
+                b,
+            } => format!(
+                "the memory `{}` has a second `read_port`; the first call is at {}; call \
+                 `read_port` once and keep its response in a `let`",
+                mem_name(mem),
+                at(b)
+            ),
+            Breach::Port {
+                mem,
+                write: true,
+                b,
+            } => format!(
+                "the memory `{}` has a second `write_port`; the first call is at {}; make one \
+                 call, and select its address, data, and enable with a hardware `if`",
+                mem_name(mem),
+                at(b)
+            ),
+            Breach::PortIn { mem, write, h } => format!(
+                "the memory `{}` has a second `{}`, because the call in `{}` runs again for it; \
+                 run the call once for each memory, for example with one call of `{}` for each",
+                mem_name(mem),
+                call(write),
+                item(h),
+                item(h)
+            ),
+        }
     }
 
     /// A port, a register, and a wire have a hardware data type (section 5.1), also an
@@ -1089,21 +1254,5 @@ impl Evaluator<'_> {
             ev.elab.work.spent += used;
             Ok(k)
         })
-    }
-}
-
-/// The first of an `S018` and an earlier one. A tie keeps the earlier one.
-fn first_of(old: Option<(Pos, Missing)>, at: Pos, missing: Missing) -> (Pos, Missing) {
-    match old {
-        Some((o, m)) if !before(at, o) => (o, m),
-        _ => (at, missing),
-    }
-}
-
-/// The earlier of two positions of an `S018`.
-fn earlier(old: Option<Pos>, p: Pos) -> Pos {
-    match old {
-        Some(o) if !before(p, o) => o,
-        _ => p,
     }
 }
