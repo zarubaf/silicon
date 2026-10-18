@@ -1205,20 +1205,21 @@ def said (src : String) : String :=
   "`let`, and use that name here"
 
 /-!
-The other effects (section 9.4). A declaration or a `:=` in a `fn` is `S011`, and in a
-`comptime fn` `S006` (pass 4). A memory port call in a structural context is `S016` at the call.
-The check rejects a memory name at a static position (`S005`), so an alias reaches the call.
+The other effects (section 9.4). A declaration or a `:=` in a helper is a graph effect, so in a
+structural context it is `S016` at the statement. In a `comptime fn` it is `S006` (pass 4). A
+memory port call in a structural context is `S016` at the call. The check rejects a memory name
+at a static position (`S005`), so an alias reaches the call.
 -/
 #guard sRun "  let x: UInt[g()] = 0;\n" "fn g() -> Nat { reg r: UInt[8] = 0; return 1; }\n" ==
-  "S011 1:17"
+  "S016 1:17"
 #guard sRun "  let x: UInt[g()] = 0;\n" "fn g() -> Nat { mem q: [UInt[8]; 4]; return 1; }\n" ==
-  "S011 1:17"
+  "S016 1:17"
 #guard sRun "  let x: UInt[g()] = 0;\n"
   "comptime fn g() -> Nat { reg r: UInt[8] = 0; return 1; }\n" == "S006 1:26"
 #guard sRun "  let x: UInt[g()] = 0;\n"
   "comptime fn g() -> Nat { mem q: [UInt[8]; 4]; return 1; }\n" == "S006 1:26"
 #guard sRun "  let x: UInt[g(1)] = 0;\n" "fn g(x: UInt[8]) -> Nat { x := 1; return 1; }\n" ==
-  "S011 1:27"
+  "S016 1:27"
 #guard sRun "  let x: UInt[g(1)] = 0;\n"
   "comptime fn g(x: UInt[8]) -> Nat { x := 1; return 1; }\n" == "S006 1:36"
 def sMem (wr : Bool) (rest : String) : String :=
@@ -1232,6 +1233,9 @@ def sMem (wr : Bool) (rest : String) : String :=
 #guard elabOnly (sMem true "  let x: UInt[read_port(q, 0, true)] = 0;\n") "M" == "S005 16:25"
 
 /-! Each normative text of `S016` (section 9.4), in full. -/
+def armEffect (g : String) : String :=
+  s!"a hardware arm has no graph effect such as `{g}`; call `{g}` before the `if` or `match`, " ++
+    "and use its result in the arm"
 #guard said (sMod "  let x: [Bool; pop(xs)] = [false, false, false];\n") ==
   "a type or a constant cannot change `xs`; change `xs` before it, keep the result in a " ++
   "`let`, and use that name here"
@@ -1243,7 +1247,7 @@ def sMem (wr : Bool) (rest : String) : String :=
 #guard said (sMod "  let z = if (c) { pop(xs) } else { 0 };\n") ==
   "a hardware arm changes a binding from before the arm"
 #guard said (sMem true "  let z = if (c) { read_port(q, a, c) } else { 0 };\n") ==
-  "a hardware arm has no graph effect such as `read_port`"
+  armEffect "read_port"
 
 /-!
 `diagnostic` (sections 6.2 and 8.2). A call charges its node and its name, then its arguments
@@ -1395,7 +1399,7 @@ def dRes (msg : String) : String :=
 #guard said (dRes "[]") == "the message of `diagnostic` is a String, not `[]` without a type"
 #guard said (dMod "  diagnostic(5, []);\n") == "the message of `diagnostic` is a String, not Int"
 #guard said (dMod "  let z = if (c) { diagnostic(5, []) } else { 0 };\n") ==
-  "a hardware arm has no graph effect such as `diagnostic`"
+  armEffect "diagnostic"
 #guard said dWait == "the value of `diagnostic` needs a type; `[]` without a type"
 
 /-!
@@ -1432,7 +1436,7 @@ def dg : String := "fn g() -> Nat { diagnostic(\"a\", 1); return 2; }\n"
   "a type or a constant has no graph effect such as `diagnostic`; call it before and use the " ++
   "result"
 #guard said (dg ++ sMod "  let z = if (c) { UInt[8](g()) } else { 0 };\n") ==
-  "a hardware arm has no graph effect such as `diagnostic`"
+  armEffect "diagnostic"
 -- Not structural: each makes one record.
 #guard observed (dg ++ sMod "  let x = UInt[8](g());\n") ==
   ["(record 1 17 M ((call g 14 19)) (string \"a\") (int 1))", "ok"]
@@ -2780,5 +2784,198 @@ def emptyInputs : String :=
 #guard cost emptyInputs "M" (fuel := 193) == "S015 24:11"
 #guard (cost (handleLets ("  let e: [Reg[UInt[8]]; 0] = [];\n  let b: [UInt[8]; 0] = e;\n" ++
   "  r := i;\n")) "M").startsWith "total"
+
+/-!
+Helpers that declare resources (sections 5.6, 7.3, 9.4, and 9.5). A helper declares in the
+instantiation of its caller. Each resource gets the call frame of the helper. The tests cover a
+register, a loop, a recursion, an instance, the roles of a memory, and the version field `$1v`.
+-/
+def helperPaths : String :=
+  "fn cell(x: UInt[8]) -> Reg[UInt[8]] {\n" ++
+  "  reg r: UInt[8] = 0;\n" ++
+  "  r := x;\n" ++
+  "  return r;\n" ++
+  "}\n" ++
+  "fn loop(x: UInt[8]) -> UInt[8] {\n" ++
+  "  comptime for i in 0..3 {\n" ++
+  "    reg r: UInt[8] = 0;\n" ++
+  "    r := x;\n" ++
+  "  }\n" ++
+  "  return x;\n" ++
+  "}\n" ++
+  "fn rec(comptime n: Nat, x: UInt[8]) -> UInt[8] {\n" ++
+  "  reg r: UInt[8] = 0;\n" ++
+  "  r := x;\n" ++
+  "  comptime if (n > 0) {\n" ++
+  "    let y = rec(n - 1, x);\n" ++
+  "  }\n" ++
+  "  return x;\n" ++
+  "}\n" ++
+  "fn twice(x: UInt[8]) -> UInt[8] {\n" ++
+  "  comptime if (true) {\n" ++
+  "    wire r: UInt[8];\n" ++
+  "    r := x;\n" ++
+  "  }\n" ++
+  "  comptime if (true) {\n" ++
+  "    wire r: UInt[8];\n" ++
+  "    r := x;\n" ++
+  "  }\n" ++
+  "  return x;\n" ++
+  "}\n" ++
+  "fn mk(x: UInt[8]) -> UInt[8] {\n" ++
+  "  mem m: [UInt[8]; 4];\n" ++
+  "  write_port(m, 0, x, true);\n" ++
+  "  let q = read_port(m, 0, true);\n" ++
+  "  instance u = C(8);\n" ++
+  "  u.p := x;\n" ++
+  "  return u.q;\n" ++
+  "}\n" ++
+  "module C(comptime W: Nat) {\n" ++
+  "  input p: UInt[W];\n" ++
+  "  output q: UInt[W];\n" ++
+  "  q := p;\n" ++
+  "}\n" ++
+  "module M() {\n" ++
+  "  input x: UInt[8];\n" ++
+  "  output o: UInt[8];\n" ++
+  "  let a = cell(x);\n" ++
+  "  let b = cell(x);\n" ++
+  "  let c = loop(x);\n" ++
+  "  let d = rec(1, x);\n" ++
+  "  let e = twice(x);\n" ++
+  "  o := mk(x);\n" ++
+  "}\n"
+#guard names helperPaths "M()" "M" == [
+  "cell$0c$x", "cell$1c$x", "loop$2c$x", "loop$2c$0ret", "c", "rec$3c$x", "rec$3c$rec$0c$x",
+  "rec$3c$rec$0c$0ret", "rec$3c$y", "rec$3c$0ret", "d", "twice$4c$x", "twice$4c$0ret", "e",
+  "mk$5c$x", "mk$5c$q$data", "mk$5c$q$valid", "mk$5c$0ret", "cell$0c$r", "cell$1c$r",
+  "loop$2c$i$0$r", "loop$2c$i$1$r", "loop$2c$i$2$r", "rec$3c$r", "rec$3c$rec$0c$r",
+  "twice$4c$r", "twice$4c$r$1v", "mk$5c$u"]
+#guard order helperPaths "M()" == ["C$8", "M"]
+#guard (topBody helperPaths "M()").map (·.mems.toList.map (Names.encode ·.path.name)) ==
+  some ["mk$5c$m"]
+#guard match Cli.elabText {} helperPaths "M()" with
+  | .ok t => ["(reg mk$5c$m$0rdata ", "(mem mk$5c$m ", "(inst mk$5c$u C$8 "].all (t.contains ·)
+  | _ => false
+
+/-!
+An instance in a helper: the caller pays the statement, and the new child pays its body
+(section 5.4). The child line equals the line of the same `instance` in the module body. A
+second call reuses the done child, so its body runs once.
+-/
+def helperChild : String :=
+  "module C(comptime W: Nat) {\n" ++
+  "  input p: UInt[W];\n" ++
+  "  output q: UInt[W];\n" ++
+  "  q := p;\n" ++
+  "}\n" ++
+  "fn mk(x: UInt[8]) -> UInt[8] {\n" ++
+  "  instance u = C(8);\n" ++
+  "  u.p := x;\n" ++
+  "  return u.q;\n" ++
+  "}\n" ++
+  "module M() {\n" ++
+  "  input x: UInt[8];\n" ++
+  "  output o: UInt[8];\n" ++
+  "  o := mk(x);\n" ++
+  "}\n"
+def directChild : String :=
+  "module C(comptime W: Nat) {\n" ++
+  "  input p: UInt[W];\n" ++
+  "  output q: UInt[W];\n" ++
+  "  q := p;\n" ++
+  "}\n" ++
+  "module M() {\n" ++
+  "  input x: UInt[8];\n" ++
+  "  output o: UInt[8];\n" ++
+  "  instance u = C(8);\n" ++
+  "  u.p := x;\n" ++
+  "  o := u.q;\n" ++
+  "}\n"
+#guard cost helperChild "M()" == "total 267\nC$8 47\nM 192\n"
+#guard cost directChild "M()" == "total 217\nC$8 47\nM 142\n"
+#guard exact helperChild "M()" 267
+#guard order (helperChild.replace "o := mk(x);" "o := mk(x) +% mk(x);") "M()" == ["C$8", "M"]
+#guard ((names (helperChild.replace "o := mk(x);" "o := mk(x) +% mk(x);") "M()" "M").filter
+  (·.endsWith "$u")) == ["mk$0c$u", "mk$1c$u"]
+
+/-! A register in a helper charges as in a module body, before its work. -/
+def helperReg : String :=
+  "fn cell(x: UInt[8]) -> UInt[8] {\n  reg r: UInt[8] = 0;\n  r := x;\n  return r;\n}\n" ++
+  "module M() {\n  input x: UInt[8];\n  output o: UInt[8];\n  o := cell(x);\n}\n"
+#guard cost helperReg "M()" == "total 184\nM 156\n"
+#guard exact helperReg "M()" 184
+
+/-!
+The mode and the guard of a helper (section 9.4). The return of a `comptime fn` ends its mode,
+and its arguments run in the mode of the caller. `{g}` of `S016` is the function of the
+outermost call under the guard, also through a function value. A guard in the body of a helper
+starts a new record. `{g}` of `S011` is the outermost `comptime fn`, and `{h}` holds the
+statement. `S016` comes before `S011`, and `S011` before `S017`. A helper at a static position
+that is not structural declares in the caller.
+-/
+def scopePre : String :=
+  "fn g() -> Nat {\n" ++
+  "  reg r: UInt[8] = 0;\n" ++
+  "  r := r;\n" ++
+  "  return 1;\n" ++
+  "}\n" ++
+  "fn k() -> Nat {\n" ++
+  "  return 1;\n" ++
+  "}\n" ++
+  "fn outer() -> Nat {\n" ++
+  "  return g();\n" ++
+  "}\n" ++
+  "fn own(c: Bool) -> UInt[8] {\n" ++
+  "  return if (c) { UInt[8](g()) } else { 0 };\n" ++
+  "}\n" ++
+  "comptime fn cf(n: Nat) -> Nat {\n" ++
+  "  return n;\n" ++
+  "}\n" ++
+  "comptime fn cg() -> Nat {\n" ++
+  "  return g();\n" ++
+  "}\n" ++
+  "comptime fn ch() -> Nat {\n" ++
+  "  return cg();\n" ++
+  "}\n" ++
+  "module C(comptime W: Nat) {\n" ++
+  "  input p: UInt[W];\n" ++
+  "  output q: UInt[W];\n" ++
+  "  q := p;\n" ++
+  "}\n"
+def scope (body : String) (domains : String := "") : String :=
+  scopePre ++ s!"module M(){domains} \{\n  input c: Bool;\n  input d: UInt[8];\n" ++
+    "  output o: UInt[8];\n" ++ body ++ "  o := d;\n}\n"
+def gArm (g : String) : String :=
+  s!"a hardware arm has no graph effect such as `{g}`; call `{g}` before the `if` or `match`, " ++
+    "and use its result in the arm"
+def gType (g : String) : String :=
+  s!"a type or a constant has no graph effect such as `{g}`; call it before and use the result"
+def gStatic (g h : String) : String :=
+  s!"the `comptime fn` `{g}` makes no hardware, but its call reaches this register in `{h}`; " ++
+    s!"call `{h}` from a `fn` or a module body"
+#guard said (scope "  let z = cf(1);\n  let y = g();\n") == "ok"
+#guard said (scope "  let z = cf(g());\n") == "ok"
+#guard said (scope "  let z = if (c) { UInt[8](k() + g()) } else { d };\n") == gArm "g"
+#guard said (scope "  let z = if (c) { UInt[8](outer()) } else { d };\n") == gArm "outer"
+#guard said (scope "  let z = own(c);\n") == gArm "g"
+#guard said (scope "  let z = if (c) { own(c) } else { d };\n") == gArm "g"
+#guard said (scope "  let fv = g;\n  let z = if (c) { UInt[8](fv()) } else { d };\n") == gArm "g"
+#guard said (scope "  let x: UInt[g()] = 0;\n") == gType "g"
+#guard said (scope "  let x = K;\n" ++ "const K: Nat = g();\n") == gType "g"
+#guard elabOnly (scope "  let x: UInt[g()] = 0;\n") "M" == "S016 2:3"
+#guard said (scope "  let z = ch();\n") == gStatic "ch" "g"
+#guard elabOnly (scope "  let z = ch();\n") "M" == "S011 2:3"
+#guard said (scope "  let x: UInt[ch()] = 0;\n") == gType "ch"
+#guard said (scope "  let z = cg();\n" " domains()") == gStatic "cg" "g"
+#guard said (scope "  let z = g();\n" " domains()") == "a combinational module has no register"
+#guard said (scope "  let z = cm();\n" " domains()" ++
+  "fn cm() -> Nat { mem q: [UInt[8]; 4]; return 1; }\n") == "a combinational module has no memory"
+def staticUses : String :=
+  scope ("  comptime if (g() == 1) {}\n  static_assert(g() == 1, \"one\");\n" ++
+    "  instance u = C(8 * g());\n  u.p := d;\n  comptime for i in 0..g() {}\n")
+#guard said staticUses == "ok"
+#guard ((names staticUses "M()" "M").filter (·.endsWith "$r")) ==
+  ["g$0c$r", "g$2c$r", "g$3c$r", "g$4c$r"]
 
 end Silicon.Source.Test.Elab

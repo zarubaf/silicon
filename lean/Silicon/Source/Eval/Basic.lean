@@ -601,13 +601,17 @@ inductive GuardKind where
   deriving DecidableEq, BEq
 
 /-!
-The innermost guard (section 9.4): its kind and the nesting depth at its start. Its texts of
-`S016` name the kind: `change` for a mutation of the binding `x`, and `effect` for the graph
+The innermost guard (section 9.4): its kind, the nesting depth at its start, and `callee`. The
+`callee` is the item of the outermost call under the guard. A call records its item only when
+the guard has no record. A deeper call thus keeps the record, and the return of the call ends
+it. The record is an index, so it costs O(1), and the name renders only in an error. Its texts
+of `S016` name the kind: `change` for a mutation of the binding `x`, and `effect` for the graph
 effect `g`. The texts are normative, and the front ends print them exactly.
 -/
 structure Guard where
   kind : GuardKind
   depth : Nat
+  callee : Option Nat := none
 
 def Guard.change (g : Guard) (x : String) : String :=
   match g.kind with
@@ -617,7 +621,8 @@ def Guard.change (g : Guard) (x : String) : String :=
 
 def Guard.effect (g : Guard) (f : String) : String :=
   match g.kind with
-  | .arm => s!"a hardware arm has no graph effect such as `{f}`"
+  | .arm => s!"a hardware arm has no graph effect such as `{f}`; call `{f}` before the `if` " ++
+    "or `match`, and use its result in the arm"
   | .structural =>
     s!"a type or a constant has no graph effect such as `{f}`; call it before and use the result"
 
@@ -630,8 +635,10 @@ def itemName : Resolve.Item → String
 The items, the depth limit, the current depth, and the return type of the current call. The
 item whose body runs, its symbols, and the current frame name the hardware. `binding` holds
 the struct items whose parameter types evaluate now. `guard` is the innermost guard
-(section 9.4). `site` is the name of a function value while its signature evaluates: each
-depth check there reports at it. `inst` is the emitted name of the current instantiation, else
+(section 9.4). `mode` is the item of the outermost `comptime fn` of the call chain, else
+`none` (section 9.4). A call sets it in O(1), and the name renders only in an error. `site`
+is the name of a function value while its signature evaluates: each depth check there reports
+at it. `inst` is the emitted name of the current instantiation, else
 `-`. `calls` holds the call frames from the module body, innermost first (section 8.2). A frame
 is the item name of the callee and the position of its call. A call adds its frame in one step,
 and the records share the list. `digest` makes the digest of an emitted name (section 7.1), so a
@@ -647,14 +654,18 @@ structure Ctx where
   frame : Frame
   binding : List Nat
   guard : Option Guard
+  mode : Option Nat
   site : Option Pos
   inst : String
   calls : List (String × Pos)
   digest : String → String
 
+/-! The source name of the item `i`, for an error text. -/
+def Ctx.itemName (c : Ctx) (i : Nat) : String := (c.items[i]?.map Eval.itemName).getD ""
+
 /-! The context with a new guard of the kind `k` at the current depth: the innermost guard. -/
 def Ctx.guarded (c : Ctx) (k : GuardKind) : Ctx :=
-  { c with guard := some ⟨k, c.depth⟩ }
+  { c with guard := some { kind := k, depth := c.depth } }
 
 /-! The symbol of the local number `id` in the current item. Each binder has one. -/
 def Ctx.binder (c : Ctx) (id : Nat) : Nat := ((c.syms.binders[c.item]?).bind (·[id]?)).getD 0
