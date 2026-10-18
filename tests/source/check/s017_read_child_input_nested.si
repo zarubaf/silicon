@@ -1,0 +1,24 @@
+// S017: the message names the instance by its innermost user name. The two loops add two user
+// names to the path of `u`, and the text uses the name of the instance.
+// TOP M()
+module C(comptime K: Int) domains() {
+    input a: UInt[8];
+    output q: UInt[8];
+    q := a;
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    o := x;
+    comptime for i in 0..2 {
+        comptime for j in 0..2 {
+            instance u = C(i);
+            u.a := x;
+            comptime if (i == 1) {
+                // expected-error S017 @+2
+                // expected-message: the input `a` of `u` is a target only; read the value that you bind to it
+                let z = u.a.read();
+            }
+        }
+    }
+}
