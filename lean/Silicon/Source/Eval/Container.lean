@@ -365,16 +365,28 @@ mutual
 end
 
 /-!
+The text "Handles as data" of section 6.2 for a value of the type `t`.
+-/
+def handlesDataText (t : Ty) : String :=
+  s!"a `data` context does not read `{t.text}`, a type that holds a memory, an instance, or an " ++
+    "input; read the data of each element"
+
+/-!
 The data of a value at a use that reads it: the implicit read (section 9.2). A handle reads by
 `readHandle`. A container of a type with the handle flag charges its recursive size first.
-Then each leaf reads in packing order (`readPart`), and the error is at `pos`. Another value is
-data already.
+Then each leaf reads in packing order (`readPart`), and the error is at `pos`. An empty
+container of memories, instances, or inputs has no leaf to report at. Thus a result that keeps
+the flag is `S010` with the text "Handles as data". The check reads the flag of the result type.
+Another value is data already.
 -/
 def data (pos : Pos) : Val → M Val
   | .agg a => do
-    unless a.ty?.any (·.info.handles) do return .agg a
+    let some t := a.ty? | return .agg a
+    unless t.info.handles do return .agg a
     charge pos a.size
-    return (← readPart pos 0 a).val
+    let r ← readPart pos 0 a
+    if r.ty?.any (·.info.handles) then fail .S010 pos (handlesDataText t)
+    return r.val
   | v => baseData pos v
 
 /-!
