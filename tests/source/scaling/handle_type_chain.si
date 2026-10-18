@@ -1,0 +1,12 @@
+// T4 of the work-counter tests of the handle types (issue #277). A loop of N steps makes the type `t` deeper by one
+// level at each step and uses `Mem[t, 4]` at each level. The depth check and the charge for each level
+// make the work `O(N)` for the sum of the sizes, and the sizes are a chain of arrays of one element.
+// SCALE handle_type_chain 8 16 32 64 128
+// TOP M()
+module M() {
+    let mut t = UInt[8];
+    comptime for i in 0..{N} {
+        type H = Mem[t, 4];
+        t = [t; 1];
+    }
+}
