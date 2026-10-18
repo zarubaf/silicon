@@ -1,0 +1,12 @@
+; Purpose: a register that nothing reads. firtool deletes it, and LEC removes
+; it on both sides with the canonicalize pass (#323).
+(design top
+  (module top
+    (input clk clock)
+    (input a (bits 4))
+    (output q (bits 4))
+    (reg live (bits 4) clk)
+    (reg dead (bits 4) clk)
+    (next live (add live a))
+    (next dead a)
+    (assign q live)))

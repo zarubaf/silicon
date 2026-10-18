@@ -1,0 +1,14 @@
+// A memory whose read port has a valid flag that nothing reads. The register of the flag has no reader, and
+// firtool deletes it (#323). The top outputs the data of the read.
+// TOP Top()
+module Top() {
+    input ra: UInt[2];
+    input wa: UInt[2];
+    input wd: UInt[4];
+    input we: Bool;
+    output data: UInt[4];
+    mem store: [UInt[4]; 4];
+    let r = store.read_port(ra, true);
+    store.write_port(wa, wd, we);
+    data := r.data;
+}
