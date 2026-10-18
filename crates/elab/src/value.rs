@@ -1471,6 +1471,86 @@ mod tests {
         });
     }
 
+    /// The handle types of `Silicon.Source.Test.Value`: serialization, size, depth, and text.
+    #[test]
+    fn the_handle_types_have_their_forms() {
+        let mut tys = Types::default();
+        let u8t = tys.mk(Ty::UInt(8));
+        let bool_t = tys.mk(Ty::Bool);
+        let reg = tys.reg(u8t);
+        let wire = tys.wire(bool_t);
+        let input = tys.input(u8t);
+        let mem = tys.mem(u8t, Int::from_u64(16));
+        let counter = tys.instance(3, "Counter", vec![int("8")]);
+        let top = tys.instance(3, "Top", Vec::new());
+        assert_eq!(Value::Type(reg).serialize(&tys), "(type (reg (uint 8)))");
+        assert_eq!(Value::Type(wire).serialize(&tys), "(type (wire bool))");
+        assert_eq!(
+            Value::Type(input).serialize(&tys),
+            "(type (input (uint 8)))"
+        );
+        assert_eq!(Value::Type(mem).serialize(&tys), "(type (mem (uint 8) 16))");
+        assert_eq!(
+            Value::Type(counter).serialize(&tys),
+            "(type (instance root Counter ((int 8))))"
+        );
+        assert_eq!(
+            Value::Type(top).serialize(&tys),
+            "(type (instance root Top ()))"
+        );
+        let p8 = packet(&mut tys, 8);
+        let reg_packet = tys.reg(p8);
+        assert_eq!(
+            Value::Type(reg_packet).serialize(&tys),
+            "(type (reg (struct root Packet ((int 8)))))"
+        );
+        for t in [reg, wire, input, mem, counter, top, reg_packet] {
+            assert_eq!(tys.text_len(t), tys.serialize(t).len() as u64);
+        }
+        let big = tys.mem(bool_t, Int::from_u64(1).shl(64));
+        let arr = array_ty(&mut tys, bool_t, 4);
+        let many = tys.instance(3, "C", vec![Value::Type(arr), int("18446744073709551616")]);
+        let sizes = [reg, wire, input, mem, big, counter, top, many].map(TyId::size);
+        assert_eq!(sizes, [3, 2, 3, 4, 4, 2, 1, 6]);
+        let deep = tys.mem(arr, Int::from_u64(16));
+        let reg_arr = tys.reg(arr);
+        let nested = tys.instance(3, "C", vec![Value::Type(reg_arr)]);
+        assert_eq!(
+            [reg, deep, counter, top, nested].map(TyId::depth),
+            [2, 3, 2, 1, 4]
+        );
+        assert_eq!(tys.text(reg), "Reg[UInt[8]]");
+        assert_eq!(tys.text(wire), "Wire[Bool]");
+        assert_eq!(tys.text(input), "Input[UInt[8]]");
+        assert_eq!(tys.text(mem), "Mem[UInt[8], 16]");
+        assert_eq!(tys.text(counter), "Instance[Counter, 8]");
+        assert_eq!(tys.text(top), "Instance[Top]");
+        let sees = tys.reg(bool_t);
+        let two = tys.instance(3, "C", vec![Value::Type(sees), Value::Bool(true)]);
+        assert_eq!(tys.text(two), "Instance[C, Reg[Bool], true]");
+        let huge = tys.mem(bool_t, Int::from_u64(1).shl(300));
+        assert_eq!(tys.text(huge), "Mem[Bool, an integer of 301 bits]");
+        assert_eq!(Value::Type(sees).measure_charge(), 0);
+        assert!(!tys.meta(reg).data && tys.zero(reg).is_none());
+    }
+
+    /// An instance type is one id for its module item and its arguments.
+    #[test]
+    fn instance_types_are_equal_by_item_and_arguments() {
+        let mut tys = Types::default();
+        let a = tys.instance(3, "Counter", vec![int("8")]);
+        assert_eq!(tys.instance(3, "Counter", vec![int("8")]), a);
+        assert_ne!(tys.instance(3, "Counter", vec![int("9")]), a);
+        assert_ne!(tys.instance(4, "Counter", vec![int("8")]), a);
+        let u8t = tys.mk(Ty::UInt(8));
+        assert_eq!(tys.reg(u8t), tys.reg(u8t));
+        assert_ne!(tys.reg(u8t), tys.wire(u8t));
+        assert_ne!(
+            tys.mem(u8t, Int::from_u64(2)),
+            tys.mem(u8t, Int::from_u64(3))
+        );
+    }
+
     /// The text of a type with `2^20` parts stops after the bound, and the walk visits no part
     /// after it.
     #[test]

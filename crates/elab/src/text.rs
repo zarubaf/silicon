@@ -84,6 +84,27 @@ impl<'a> Text<'a> {
                 self.work.push(Piece::Text(") -> "));
                 self.work.push(Piece::Params(params));
             }
+            Ty::Reg(t) => self.handle("Reg[", *t),
+            Ty::Wire(t) => self.handle("Wire[", *t),
+            Ty::Input(t) => self.handle("Input[", *t),
+            Ty::Mem(t, depth) => {
+                self.out.push_str("Mem[");
+                self.work
+                    .push(Piece::Owned(format!(", {}]", int_text(depth))));
+                self.work.push(Piece::Ty(*t));
+            }
+            Ty::Instance(i) => {
+                let inst = tys.inst(*i);
+                self.out.push_str("Instance[");
+                self.out.push_str(inst.name());
+                if inst.args().is_empty() {
+                    self.out.push(']');
+                } else {
+                    self.out.push_str(", ");
+                    self.work.push(Piece::Text("]"));
+                    self.work.push(Piece::Lits(inst.args()));
+                }
+            }
             Ty::Enum(e) => self.out.push_str(tys.enum_name(*e)),
             Ty::Struct(s) => {
                 let spec = tys.spec(*s);
@@ -95,6 +116,13 @@ impl<'a> Text<'a> {
                 }
             }
         }
+    }
+
+    /// A handle type with one part: `form`, the part, and `]`.
+    fn handle(&mut self, form: &'static str, t: TyId) {
+        self.out.push_str(form);
+        self.work.push(Piece::Text("]"));
+        self.work.push(Piece::Ty(t));
     }
 
     /// The type of the value `v`. Its elements wait on the stack.

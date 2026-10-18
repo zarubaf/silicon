@@ -74,7 +74,17 @@ pub(crate) fn unpack(tys: &Types, words: &[u64], t: TyId, off: u64) -> Option<Va
                             .flatten();
                         done.push(Value::Enum(t, tag, payload));
                     }
-                    Ty::Nat | Ty::Int | Ty::Type | Ty::String | Ty::List(_) | Ty::Fn(..) => {
+                    Ty::Nat
+                    | Ty::Int
+                    | Ty::Type
+                    | Ty::String
+                    | Ty::List(_)
+                    | Ty::Fn(..)
+                    | Ty::Reg(_)
+                    | Ty::Wire(_)
+                    | Ty::Input(_)
+                    | Ty::Mem(..)
+                    | Ty::Instance(_) => {
                         return None;
                     }
                 }

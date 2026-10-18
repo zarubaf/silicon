@@ -42,6 +42,16 @@ pub enum Ty {
     List(TyId),
     /// `fn (T, mut U) -> V`, a static type only. It keeps the `mut` mark of each parameter.
     Fn(Vec<TyParam>, TyId),
+    /// `Reg[T]`, a static type only: the handle of a register of the data type `T` (section 5.1).
+    Reg(TyId),
+    /// `Wire[T]`, a static type only.
+    Wire(TyId),
+    /// `Input[T]`, a static type only.
+    Input(TyId),
+    /// `Mem[T, N]`, a static type only: the handle of a memory of `N` words of the data type `T`.
+    Mem(TyId, Int),
+    /// `Instance[M, args]`, a static type only, by its entry in the table of instance types.
+    Instance(InstId),
 }
 
 /// A parameter type of a function type, with its `mut` mark.
@@ -109,6 +119,40 @@ impl TyId {
 /// A struct specialization in the table `Types`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SpecId(usize);
+
+/// An instance type `Instance[M, args]` in the table `Types`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct InstId(usize);
+
+/// An instance type (section 5.4): the module item, its name, and its converted arguments. The
+/// arguments are static values, so a `Vec<Value>` cannot be the key of the index of types. The
+/// table finds an instance type by the fingerprint of its item and its arguments, as it finds a
+/// struct specialization.
+pub struct InstTy {
+    item: usize,
+    name: String,
+    args: Vec<Value>,
+}
+
+impl InstTy {
+    /// The index of the module item.
+    #[must_use]
+    pub fn item(&self) -> usize {
+        self.item
+    }
+
+    /// The name of the module item.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The converted arguments of the module.
+    #[must_use]
+    pub fn args(&self) -> &[Value] {
+        &self.args
+    }
+}
 
 /// An enum type: the index of its item.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -423,6 +467,9 @@ pub struct Types {
     fn_names: BTreeMap<usize, String>,
     /// The specializations by the fingerprint of their item and arguments.
     spec_index: BTreeMap<u64, Vec<SpecId>>,
+    /// The instance types, and their ids by the fingerprint of their item and arguments.
+    insts: Vec<InstTy>,
+    inst_index: BTreeMap<u64, Vec<(InstId, TyId)>>,
     /// The work of the lookups: 1 for each type and 1 for each part of a container type. The
     /// type of a value adds 1 for each node that its walk visits.
     #[cfg(test)]
@@ -444,6 +491,7 @@ impl Types {
             1 + match ty {
                 Ty::Tuple(parts) => parts.len() as u64,
                 Ty::Fn(params, _) => params.len() as u64 + 1,
+                Ty::Instance(i) => 1 + self.insts.get(i.0).map_or(0, |t| t.args.len() as u64),
                 _ => 0,
             },
         );
@@ -502,20 +550,35 @@ impl Types {
         let (size, depth) = Types::shape(&ty);
         let strings = match &ty {
             Ty::String => true,
-            Ty::Array(elem, _) | Ty::List(elem) => elem.strings,
+            Ty::Array(elem, _)
+            | Ty::List(elem)
+            | Ty::Reg(elem)
+            | Ty::Wire(elem)
+            | Ty::Input(elem)
+            | Ty::Mem(elem, _) => elem.strings,
             Ty::Tuple(parts) => parts.iter().any(|part| part.strings),
             Ty::Fn(params, ret) => ret.strings || params.iter().any(|p| p.ty.strings),
             _ => false,
         };
         let funcs = match &ty {
             Ty::Fn(..) => true,
-            Ty::Array(elem, _) | Ty::List(elem) => elem.funcs,
+            Ty::Array(elem, _)
+            | Ty::List(elem)
+            | Ty::Reg(elem)
+            | Ty::Wire(elem)
+            | Ty::Input(elem)
+            | Ty::Mem(elem, _) => elem.funcs,
             Ty::Tuple(parts) => parts.iter().any(|part| part.funcs),
             _ => false,
         };
         let enums = match &ty {
             Ty::Enum(_) => true,
-            Ty::Array(elem, _) | Ty::List(elem) => elem.enums,
+            Ty::Array(elem, _)
+            | Ty::List(elem)
+            | Ty::Reg(elem)
+            | Ty::Wire(elem)
+            | Ty::Input(elem)
+            | Ty::Mem(elem, _) => elem.enums,
             Ty::Tuple(parts) => parts.iter().any(|part| part.enums),
             Ty::Fn(params, ret) => ret.enums || params.iter().any(|p| p.ty.enums),
             _ => false,
@@ -579,11 +642,19 @@ impl Types {
             | Ty::Type
             | Ty::String
             | Ty::Struct(_)
+            | Ty::Instance(_)
             | Ty::Enum(_) => (1, 1),
             Ty::UInt(w) | Ty::SInt(w) => (1 + int_size(&width_int(*w)), 1),
             Ty::Array(elem, len) => Types::array_shape(*elem, len),
             Ty::Tuple(parts) => Types::tuple_shape(parts),
-            Ty::List(elem) => (1u64.saturating_add(elem.size), 1 + elem.depth),
+            Ty::List(elem) | Ty::Reg(elem) | Ty::Wire(elem) | Ty::Input(elem) => {
+                (1u64.saturating_add(elem.size), 1 + elem.depth)
+            }
+            Ty::Mem(elem, depth) => (
+                1u64.saturating_add(elem.size)
+                    .saturating_add(int_size(depth)),
+                1 + elem.depth,
+            ),
             Ty::Fn(params, ret) => Types::fn_shape(params, *ret),
         }
     }
@@ -652,6 +723,26 @@ impl Types {
     #[must_use]
     pub fn list(&mut self, elem: TyId) -> TyId {
         self.mk(Ty::List(elem))
+    }
+
+    #[must_use]
+    pub fn reg(&mut self, data: TyId) -> TyId {
+        self.mk(Ty::Reg(data))
+    }
+
+    #[must_use]
+    pub fn wire(&mut self, data: TyId) -> TyId {
+        self.mk(Ty::Wire(data))
+    }
+
+    #[must_use]
+    pub fn input(&mut self, data: TyId) -> TyId {
+        self.mk(Ty::Input(data))
+    }
+
+    #[must_use]
+    pub fn mem(&mut self, word: TyId, depth: Int) -> TyId {
+        self.mk(Ty::Mem(word, depth))
     }
 
     #[must_use]
@@ -859,6 +950,58 @@ impl Types {
             prelude,
         });
         s
+    }
+
+    /// The instance type `s`.
+    ///
+    /// # Panics
+    ///
+    /// If `s` is not from this table, which is a bug of the caller.
+    #[must_use]
+    pub fn inst(&self, s: InstId) -> &InstTy {
+        let Some(inst) = self.insts.get(s.0) else {
+            panic!("the instance type {} is not in this table of types", s.0);
+        };
+        inst
+    }
+
+    /// The instance type of the module item `item` named `name` with the converted arguments
+    /// `args`. The fingerprint narrows the search, and the arguments decide. The hash and the
+    /// comparison read each argument in full, and the size of the type reads them again, so the
+    /// caller pays their sizes. A new type has the size 1 plus the sizes of its arguments, as a
+    /// struct type does, and the depth 1 plus the deepest argument.
+    pub fn instance(&mut self, item: usize, name: &str, args: Vec<Value>) -> TyId {
+        #[cfg(test)]
+        self.tick(1 + args.iter().map(read_work).sum::<u64>());
+        let print = fingerprint(item, &args);
+        let found = self.inst_index.get(&print).and_then(|bucket| {
+            bucket.iter().copied().find(|(i, _)| {
+                let inst = self.inst(*i);
+                inst.item == item && inst.args == args
+            })
+        });
+        if let Some((_, ty)) = found {
+            return ty;
+        }
+        let size = args
+            .iter()
+            .fold(1u64, |sum, arg| sum.saturating_add(arg.size()));
+        let depth = 1 + args.iter().map(Value::depth).max().unwrap_or(0);
+        let i = InstId(self.insts.len());
+        self.insts.push(InstTy {
+            item,
+            name: name.to_owned(),
+            args,
+        });
+        let ty = self.insert_shaped(
+            Ty::Instance(i),
+            (size, depth),
+            (false, false, false),
+            Meta::new(0, 0, 0, false),
+            Vec::new(),
+        );
+        self.inst_index.entry(print).or_default().push((i, ty));
+        ty
     }
 
     /// The metadata and the depth of the struct type of `s` from its field types `fields`, as
@@ -1076,7 +1219,17 @@ impl Types {
                         };
                         done.push(Value::Enum(t, tag, payload));
                     }
-                    Ty::Nat | Ty::Int | Ty::Type | Ty::String | Ty::List(_) | Ty::Fn(..) => {
+                    Ty::Nat
+                    | Ty::Int
+                    | Ty::Type
+                    | Ty::String
+                    | Ty::List(_)
+                    | Ty::Fn(..)
+                    | Ty::Reg(_)
+                    | Ty::Wire(_)
+                    | Ty::Input(_)
+                    | Ty::Mem(..)
+                    | Ty::Instance(_) => {
                         return None;
                     }
                 },
