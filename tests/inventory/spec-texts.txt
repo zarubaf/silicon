@@ -30,6 +30,9 @@ pin | S011 Handles at a static position | 278
 lean | S010 List of handles as data | 278
 rust | S010 List of handles as data | 278
 pin | S010 List of handles as data | 278
+lean | S010 Handles as data | 278
+rust | S010 Handles as data | 278
+pin | S010 Handles as data | 278
 lean | S010 Memory as data | 278
 rust | S010 Memory as data | 278
 pin | S010 Memory as data | 278
