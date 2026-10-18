@@ -223,6 +223,14 @@ def handleUseText (t : Ty) (a : String) : String :=
     "this type, so give such a handle or change the type"
 
 /-!
+The text "Handle at a data leaf" of section 6.2. It names the data type `t` of the position in a
+container and the handle leaf `a` at it.
+-/
+def dataLeafText (t : Ty) (a : String) : String :=
+  s!"expected `{t.text}`, but the value is {a}; a literal element keeps its handle, so read it " ++
+    "in the literal, for example `(r, read(r))`"
+
+/-!
 A typed use at `pos` at the type `t` at the static position `s` (section 5.1). `s` is `a module
 argument`, `a comptime parameter`, `an argument of a comptime fn`, or `a const`. No value of a
 type with the handle flag is static. Thus such a type there is `S011`, with the text "Static
