@@ -1,0 +1,21 @@
+// Row "a `let` with a handle type" of the frontend spec, section 9.2. An assignment to a `let mut`
+// local of a handle type is a typed use. It takes a handle of exactly this type and reads nothing.
+// After it, the local names the other register.
+// TOP M()
+module M() {
+    input x: UInt[8];
+    input y: UInt[8];
+    output o1: UInt[8];
+    output o2: UInt[8];
+    reg r1: UInt[8] = 0;
+    reg r2: UInt[8] = 0;
+    let mut a: Reg[UInt[8]] = r1;
+    a := x;
+    a = r2;
+    a := y;
+    o1 := r1;
+    o2 := r2;
+}
+// STEP in=(clock$0rst true x 0 y 0) out=(o1 0 o2 0)
+// STEP in=(clock$0rst false x 1 y 2) out=(o1 0 o2 0)
+// STEP in=(clock$0rst false x 3 y 4) out=(o1 1 o2 2)

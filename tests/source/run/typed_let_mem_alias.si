@@ -1,0 +1,21 @@
+// Row "a `let` with a handle type" of the frontend spec, section 9.2. An alias of a memory takes the
+// port calls of the memory.
+// TOP M()
+module M() {
+    input ra: UInt[2];
+    input re: Bool;
+    input wa: UInt[2];
+    input wd: UInt[8];
+    input we: Bool;
+    output data: UInt[8];
+    output valid: Bool;
+    mem m: [UInt[8]; 4];
+    let a: Mem[UInt[8], 4] = m;
+    let r = a.read_port(ra, re);
+    write_port(a, wa, wd, we);
+    data := r.data;
+    valid := r.valid;
+}
+// STEP in=(clock$0rst false ra 0 re false wa 2 wd 11 we true) out=(data 0 valid false)
+// STEP in=(clock$0rst false ra 2 re true wa 0 wd 0 we false) out=(data 0 valid false)
+// STEP in=(clock$0rst false ra 0 re false wa 0 wd 0 we false) out=(data 11 valid true)

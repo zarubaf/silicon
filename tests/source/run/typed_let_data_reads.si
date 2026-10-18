@@ -1,0 +1,18 @@
+// Row "a `let` with a handle type" of the frontend spec, section 9.2. The typed `let` reads nothing. A
+// later use of the alias in a `data` context reads the register of the cycle before.
+// TOP M()
+module M() {
+    input x: UInt[8];
+    output implicit: UInt[8];
+    output explicit: UInt[8];
+    output sum: UInt[8];
+    reg r: UInt[8] = 0;
+    r := x;
+    let a: Reg[UInt[8]] = r;
+    implicit := a;
+    explicit := read(a);
+    sum := a +% 1;
+}
+// STEP in=(clock$0rst true x 0) out=(explicit 0 implicit 0 sum 1)
+// STEP in=(clock$0rst false x 4) out=(explicit 0 implicit 0 sum 1)
+// STEP in=(clock$0rst false x 5) out=(explicit 4 implicit 4 sum 5)

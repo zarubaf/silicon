@@ -1,0 +1,13 @@
+// A user `fn read` shadows the prelude function `read`. Its calls follow the rules of a user function,
+// so a plain value is a valid argument.
+// TOP M()
+fn read(v: UInt[8]) -> UInt[8] {
+    return v +% 1;
+}
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    o := read(x);
+}
+// STEP in=(x 3) out=(o 4)
+// STEP in=(x 255) out=(o 0)

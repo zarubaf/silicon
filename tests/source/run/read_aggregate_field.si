@@ -1,0 +1,23 @@
+// Row "an explicit `read(h)`" of the frontend spec, section 9.2. `read` of a register of a record is a
+// reference to it. A field of the result and a `let` of the result read the register.
+// TOP M()
+struct P {
+    a: UInt[4],
+    b: Bool,
+}
+module M() {
+    input x: UInt[4];
+    input y: Bool;
+    output field: UInt[4];
+    output whole_a: UInt[4];
+    output whole_b: Bool;
+    reg r: P = P(0, false);
+    r := P(x, y);
+    field := read(r).a;
+    let q = read(r);
+    whole_a := q.a;
+    whole_b := q.b;
+}
+// STEP in=(clock$0rst true x 0 y false) out=(field 0 whole_a 0 whole_b false)
+// STEP in=(clock$0rst false x 9 y true) out=(field 0 whole_a 0 whole_b false)
+// STEP in=(clock$0rst false x 2 y false) out=(field 9 whole_a 9 whole_b true)

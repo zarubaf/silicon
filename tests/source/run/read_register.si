@@ -1,0 +1,18 @@
+// Row "an explicit `read(h)`" of the frontend spec, section 9.2. `read(r)` of a register gives the
+// same vectors as the read of `r` in a `data` context: the value of the cycle before.
+// TOP M()
+module M() {
+    input en: Bool;
+    input x: UInt[8];
+    output explicit: UInt[8];
+    output implicit: UInt[8];
+    reg r: UInt[8] = 0;
+    r := if (en) { x } else { read(r) };
+    explicit := read(r);
+    implicit := r;
+}
+// STEP in=(clock$0rst true en false x 0) out=(explicit 0 implicit 0)
+// STEP in=(clock$0rst false en true x 7) out=(explicit 0 implicit 0)
+// STEP in=(clock$0rst false en false x 9) out=(explicit 7 implicit 7)
+// STEP in=(clock$0rst false en true x 200) out=(explicit 7 implicit 7)
+// STEP in=(clock$0rst false en false x 1) out=(explicit 200 implicit 200)

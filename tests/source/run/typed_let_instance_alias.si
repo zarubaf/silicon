@@ -1,0 +1,19 @@
+// Row "a `let` with a handle type" of the frontend spec, section 9.2. `Instance[C, 1]` is the type of the
+// handle of `instance u = C(UInt[8](1))`. The argument `1` gets the typed use at `UInt[8]`, so both
+// forms have one key (section 5.3). An alias binds the inputs and reads the outputs of the child.
+// TOP M()
+module C(comptime K: UInt[8]) domains() {
+    input a: UInt[8];
+    output q: UInt[8];
+    q := a +% K;
+}
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    instance u = C(UInt[8](1));
+    let e: Instance[C, 1] = u;
+    e.a := x;
+    o := e.q;
+}
+// STEP in=(x 3) out=(o 4)
+// STEP in=(x 255) out=(o 0)

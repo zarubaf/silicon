@@ -1,0 +1,15 @@
+// Row "an explicit `read(h)`" of the frontend spec, section 9.2. The receiver form `h.read()` binds the
+// receiver to the parameter of `read`, so it gives the same value as `read(h)`.
+// TOP M()
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    output p: UInt[8];
+    reg r: UInt[8] = 0;
+    r := x;
+    o := r.read();
+    p := read(r);
+}
+// STEP in=(clock$0rst true x 0) out=(o 0 p 0)
+// STEP in=(clock$0rst false x 5) out=(o 0 p 0)
+// STEP in=(clock$0rst false x 6) out=(o 5 p 5)
