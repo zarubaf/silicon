@@ -97,13 +97,16 @@ pub fn import(sv: &str, top: &str) -> Result<String> {
 /// `top`. The Lean modules are public, so the flattening inlines public
 /// modules too. The Verilog import gives each clock as an `i1` that
 /// `seq.to_clock` converts. `--prepare-for-bmc` makes it a clock port again,
-/// because `--externalize-registers` accepts only a clock port.
+/// because `--externalize-registers` accepts only a clock port. The first
+/// `--canonicalize` removes a register that nothing reads, as firtool does
+/// on the Rust side.
 pub fn externalized(mlir: &str, top: &str) -> Result<String> {
     let prepare = format!("--prepare-for-bmc=top-module={top}");
     run(
         "circt-opt",
         &args(&[
             "--hw-flatten-modules=hw-inline-public",
+            "--canonicalize",
             &prepare,
             "--externalize-registers",
             "--canonicalize",
