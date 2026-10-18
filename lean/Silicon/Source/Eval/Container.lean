@@ -469,13 +469,14 @@ def within (q : Pos) (n : Nat) (i : Value) : M Nat := do
   else fail .S013 q s!"the index {intText k} is out of range for {n} element(s)"
 
 /-!
-A static index refers to an element. An index of a reference to an array or a tuple gives a
-reference to the element `<k>e`. Its type gives the length, so a huge array takes no more work.
-The result is the number of the element and the element.
+A static index refers to an element. An index of a list node refers to its element too (section
+5.4). An index of a reference to an array or a tuple gives a reference to the element `<k>e`.
+Its type gives the length, so a huge array takes no more work. The result is the number of the
+element and the element.
 -/
 def pickKey (pos q : Pos) (v : Val) (i : Value) : M (Nat × Val) := do
   match v with
-  | .agg (.array _ xs) | .agg (.tuple _ xs) =>
+  | .agg (.array _ xs) | .agg (.tuple _ xs) | .agg (.list _ _ xs) =>
     let k ← within q xs.size i
     match xs[k]? with
     | some x => return (k, ← normalize pos x)
@@ -582,7 +583,8 @@ each reference in it, so its zero size bounds the parts that the expansion makes
 def Agg.firstRef : Agg → List Nat → Option Ty
   | _, [] => none
   | .ref _ t, _ => some t
-  | .array _ xs, k :: ks | .tuple _ xs, k :: ks | .record _ xs, k :: ks =>
+  | .array _ xs, k :: ks | .tuple _ xs, k :: ks | .record _ xs, k :: ks
+  | .list _ _ xs, k :: ks =>
     match xs[k]? with
     | some x => Agg.firstRef x ks
     | none => none
@@ -595,7 +597,8 @@ aggregate `a` (`Ty.emptySize`). Only a reference on the path makes parts.
 def Agg.emptySize (specs : Specs) : Agg → List Nat → Nat
   | _, [] => 0
   | .ref _ t, ks => Ty.emptySize specs t ks
-  | .array _ xs, k :: ks | .tuple _ xs, k :: ks | .record _ xs, k :: ks =>
+  | .array _ xs, k :: ks | .tuple _ xs, k :: ks | .record _ xs, k :: ks
+  | .list _ _ xs, k :: ks =>
     match xs[k]? with
     | some x => Agg.emptySize specs x ks
     | none => 0
@@ -604,34 +607,44 @@ def Agg.emptySize (specs : Specs) : Agg → List Nat → Nat
 /-!
 The sum of the part counts of the container nodes on the path `ks` of the aggregate `a`. A change
 of a static part copies each of these nodes (`Agg.change`), so this sum bounds the work of the
-refresh. The path ends at the first part that is not a container node.
+refresh. A list node above the end of the path counts too. The list node at the end of the path
+changes by a delta (`Agg.change`), so it adds nothing (section 5.4). The path ends at the first
+part that is not a container node.
 -/
 def Agg.pathWidth : Agg → List Nat → Nat
-  | .array _ xs, k :: ks | .tuple _ xs, k :: ks | .record _ xs, k :: ks =>
+  | .array _ xs, k :: ks | .tuple _ xs, k :: ks | .record _ xs, k :: ks
+  | .list _ _ xs, k :: ks =>
     xs.size + match xs[k]? with
       | some x => Agg.pathWidth x ks
       | none => 0
   | _, _ => 0
 
 /-!
-The aggregate `a` with `f` applied to the static part at the numbers `ks`, for a change that
-keeps each hardware leaf. Each container node on the path maps its stored size by `sz`. Its depth
-becomes at least `d` plus the number of steps from the node to the end of the path. Thus each
-node refreshes in one step, and the walk reads no sibling. The caller makes these numbers exact.
-`sz` adds or removes the size of one element. `d` is the depth that the value at the end of the
+The aggregate `a` with a change of the list at the numbers `ks`. The change keeps each hardware
+leaf. A static list changes by `f`, and a list node changes its elements by `g`. Each
+container node on the path maps its stored size by `sz`. Its depth becomes at least `d` plus the
+number of steps from the node to the end of the path. Thus each node refreshes in one step, and
+the walk reads no sibling. A list node at the end of the path refreshes by the delta of one
+element, so it reads no element (section 5.4). The caller makes these numbers exact.
+`sz` adds or removes the size of one element. `d` is the depth that the list at the end of the
 path can reach. A change that can lower a depth does not use this walk.
 -/
-def Agg.change (f : Value → Value) (sz : Nat → Nat) (d : Nat) : Agg → List Nat → Option Agg
+def Agg.change (f : Value → Value) (g : Array Agg → Array Agg) (sz : Nat → Nat) (d : Nat) :
+    Agg → List Nat → Option Agg
   | .static v, ks => some (.static (update f v ks))
+  | .list n e xs, [] => some (.list { n with size := sz n.size, depth := max n.depth d } e (g xs))
   | .array n xs, k :: ks => do
-    let x ← Agg.change f sz d (← xs[k]?) ks
+    let x ← Agg.change f g sz d (← xs[k]?) ks
     return .array (refresh n ks) (xs.set! k x)
   | .tuple n xs, k :: ks => do
-    let x ← Agg.change f sz d (← xs[k]?) ks
+    let x ← Agg.change f g sz d (← xs[k]?) ks
     return .tuple (refresh n ks) (xs.set! k x)
   | .record n xs, k :: ks => do
-    let x ← Agg.change f sz d (← xs[k]?) ks
+    let x ← Agg.change f g sz d (← xs[k]?) ks
     return .record (refresh n ks) (xs.set! k x)
+  | .list n e xs, k :: ks => do
+    let x ← Agg.change f g sz d (← xs[k]?) ks
+    return .list (refresh n ks) e (xs.set! k x)
   | _, _ => none
 where
   refresh (n : Node) (ks : List Nat) : Node :=
@@ -668,7 +681,7 @@ def Agg.set (ex : Base → Ty → Option Agg) (y : Agg) : Agg → List Nat → O
     | .static v, _ => do
       let (xs, mk) ← Agg.opened v
       return mk (xs.set! k (← Agg.set ex y (← xs[k]?) ks))
-    | .array _ xs, _ | .tuple _ xs, _ | .record _ xs, _ => do
+    | .array _ xs, _ | .tuple _ xs, _ | .record _ xs, _ | .list _ _ xs, _ => do
       return a.rebuild (xs.set! k (← Agg.set ex y (← xs[k]?) ks))
     | _, _ => none
 
@@ -1168,13 +1181,15 @@ mutual
 end
 
 /-!
-`len` of an array, a list, or a string at the call `pos`. It refers to an array or a list, so
-it charges no size. A string needs a scan, so it charges the size of the string first.
+`len` of an array, a list, or a string at the call `pos`. It refers to an array or a list, also
+to a list node, so it charges no size. A string needs a scan, so it charges the size of the
+string first.
 -/
 def lenOf (pos : Pos) : List Val → M Value
   | [v] => do
     match ← baseData pos v with
-    | .static (.array _ xs) | .static (.list _ xs) | .agg (.array _ xs) => return .int xs.size
+    | .static (.array _ xs) | .static (.list _ xs) => return .int xs.size
+    | .agg (.array _ xs) | .agg (.list _ _ xs) => return .int xs.size
     | .agg (.ref _ (.array _ k)) => return .int k
     | .static v@(.str s) => do
       chargeScan pos v
