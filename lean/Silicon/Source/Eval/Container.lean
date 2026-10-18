@@ -614,11 +614,10 @@ def field (pos : Pos) (f : Ident) (v : Val) : M Val := do return (← fieldKey p
 
 /-!
 The zero `T()` of the type `t` at `pos` (section 5.6). A type that is not hardware data is
-`S010`, and a handle type names its data type (`notHandle`). The zero checks its depth and the
-size limit, and it charges its size from the metadata before it exists.
+`S010`. The call rejects a handle type before (`ctor`). The zero checks its depth and the size
+limit, and it charges its size from the metadata before it exists.
 -/
 def zero (pos : Pos) (t : Ty) : M Value := do
-  notHandle pos t
   unless t.info.data do fail .S010 pos s!"a zero `T()` needs a hardware data type, not {t.text}"
   bounded pos t.zeroDepth
   if over t.info.zeroSize then fail .S015 pos zeroLimitText
