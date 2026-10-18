@@ -1,0 +1,23 @@
+// The cost of a call with an array of handles at a resource-typed formal (section 5.6): the copy of the argument charges
+// its size, then the typed use compares the types by identity and charges nothing more. The fuel equal to the total of
+// `cost` succeeds, and one unit less gives `S015`.
+// FUEL 416
+// TOP M()
+fn k(p: [Reg[UInt[8]]; 4]) -> Nat {
+    return 1;
+}
+module M() {
+    input x: UInt[8];
+    reg a: UInt[8] = 0;
+    reg b: UInt[8] = 0;
+    reg c: UInt[8] = 0;
+    reg d: UInt[8] = 0;
+    a := x;
+    b := x;
+    c := x;
+    d := x;
+    let rs = [a, b, c, d];
+    comptime for i in 0..4 {
+        let n = k(rs);
+    }
+}

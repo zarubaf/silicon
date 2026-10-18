@@ -1,0 +1,19 @@
+// The cost of a `data` read of an array of registers (section 5.4, "Read of handles in a container"): the recursive size of
+// the array charges first, then each register leaf reads. The fuel equal to the total of `cost` succeeds, and one unit
+// less gives `S015`.
+// FUEL 323
+// TOP M()
+module M() {
+    input x: UInt[8];
+    output o: Bool;
+    reg a: UInt[8] = 0;
+    reg b: UInt[8] = 0;
+    reg c: UInt[8] = 0;
+    reg d: UInt[8] = 0;
+    a := x;
+    b := x;
+    c := x;
+    d := x;
+    let rs = [a, b, c, d];
+    o := rs == rs;
+}
