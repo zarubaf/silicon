@@ -392,6 +392,7 @@ impl Evaluator<'_> {
                     } else {
                         "a comptime parameter"
                     };
+                    self.static_position(pos, position, &v)?;
                     self.static_handle(pos, position, t)?;
                     let v = self.settle(pos, t, v)?;
                     Val::Static(self.conform(pos, t, v)?)
@@ -410,6 +411,7 @@ impl Evaluator<'_> {
                 };
                 self.charge(pos, self.size(&part))?;
                 if comptime {
+                    self.static_position(pos, "an argument of a comptime fn", &part)?;
                     self.static_handle(pos, "an argument of a comptime fn", t)?;
                 }
                 let ty = match place.ty {

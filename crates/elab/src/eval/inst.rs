@@ -34,7 +34,7 @@
 use super::typed::Whole;
 use super::{Evaluator, Let, Out, ROOT, Res, Slot, fail, need};
 use crate::agg::{Agg, Base};
-use crate::hw::{Graph, Handle, Kind, Port, Val, port_name};
+use crate::hw::{Graph, Handle, Kind, Port, Seen, Val, port_name};
 use crate::int::Int;
 use crate::names::{Name, PathId, Paths, Sym, encode, module_name};
 use crate::scan::Scan;
@@ -42,8 +42,8 @@ use crate::types::{Ty, TyId, Types};
 use crate::value::{InstantiationId, Value, int_size};
 use crate::{Budget, Code};
 use parse::StackError;
-use parse::ast::{Expr, Ident, Item, NodeId, Pos, Stmt, TypeExpr, UnOp};
-use resolve::{Kind as DeclKind, Resolved, Target as Ref};
+use parse::ast::{Expr, Ident, Item, Pos, Stmt, TypeExpr, UnOp};
+use resolve::{Resolved, Target as Ref};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// A port declaration. A port keeps its source name.
@@ -470,21 +470,6 @@ impl Evaluator<'_> {
         })
     }
 
-    /// The local slot that the name node `id` refers to.
-    fn slot_of(&self, id: NodeId) -> Option<&Slot> {
-        match self.file.target(id) {
-            Some(Ref::Decl(id))
-                if !matches!(
-                    self.file.decl(id).kind,
-                    DeclKind::Const | DeclKind::Fn | DeclKind::Module
-                ) =>
-            {
-                self.store.slot(id)
-            }
-            _ => None,
-        }
-    }
-
     /// A statement of a module body that makes hardware. Its statement charge is paid.
     pub(super) fn module_stmt(&mut self, s: &Stmt) -> Res<()> {
         match s {
@@ -532,7 +517,7 @@ impl Evaluator<'_> {
                 );
             }
             Stmt::Connect { pos, target, value } => {
-                let t = self.connect_target(*pos, target)?;
+                let t = self.connect_target(target)?;
                 let o = self.eval(value)?;
                 let o = need(value, o)?;
                 let ty = match &t {
@@ -768,64 +753,24 @@ impl Evaluator<'_> {
         }
     }
 
-    /// The target of a `:=` binding: a register, a wire, an own output, or a child input,
-    /// also through a handle alias.
-    fn connect_target(&self, pos: Pos, e: &Expr) -> Res<Target> {
-        let bad = || {
-            fail(
-                Code::S017,
-                pos,
-                "a `:=` target is a wire, a register, an own output, or a child input".to_owned(),
-            )
-        };
-        match e {
-            Expr::Name { id: nid, .. } => match self.slot_of(*nid).map(|s| &s.value) {
-                Some(Val::Handle(Handle::Res { kind, id, ty, path })) => Ok(Target::Own {
-                    kind: *kind,
-                    id: *id,
-                    ty: *ty,
-                    path: *path,
-                }),
-                Some(Val::Handle(Handle::Input { inst, path, port })) => Ok(Target::Child {
-                    inst: *inst,
-                    path: *path,
-                    port: port.clone(),
-                }),
-                _ => bad(),
-            },
-            Expr::Field { base, field, .. } => {
-                let Expr::Name { id: nid, .. } = &**base else {
-                    return bad();
-                };
-                let Some(Val::Handle(Handle::Inst { id, path, inst, .. })) =
-                    self.slot_of(*nid).map(|s| &s.value)
-                else {
-                    return bad();
-                };
-                let port = self
-                    .syms
-                    .fields
-                    .get(&field.id)
-                    .and_then(|s| self.elab.port(*inst, *s));
-                match port {
-                    Some(q) if q.input => Ok(Target::Child {
-                        inst: *id,
-                        path: *path,
-                        port: q,
-                    }),
-                    Some(_) => fail(
-                        Code::S017,
-                        pos,
-                        format!("`{}` is an output of the child, not a target", field.name),
-                    ),
-                    None => fail(
-                        Code::S010,
-                        pos,
-                        format!("the instance has no port `{}`", field.name),
-                    ),
-                }
-            }
-            _ => bad(),
+    /// The target of a `:=` binding: a register, a wire, an own output, or a child input. A handle
+    /// alias and the steps of `target_part` can select it. Each other part is `S017` at the start
+    /// of the target. `S018` counts the target by its resource.
+    fn connect_target(&mut self, e: &Expr) -> Res<Target> {
+        let part = self.target_part(e)?;
+        match self.store.seen(&part) {
+            Seen::Handle(Handle::Res { kind, id, ty, path }) => Ok(Target::Own {
+                kind: *kind,
+                id: *id,
+                ty: *ty,
+                path: *path,
+            }),
+            Seen::Handle(Handle::Input { inst, path, port }) => Ok(Target::Child {
+                inst: *inst,
+                path: *path,
+                port: port.clone(),
+            }),
+            seen => fail(Code::S017, e.pos(), Self::kind_text(&self.about(seen))),
         }
     }
 

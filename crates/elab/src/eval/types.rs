@@ -10,7 +10,7 @@
 //! field types, and charges the metadata. A later use finds the entry and charges nothing more.
 
 use super::{Evaluator, Out, ROOT, Res, Slot, Stop, at, fail, family_text, need, type_pos};
-use crate::hw::{Ref, Root, Seen, Val};
+use crate::hw::{Handle, Kind as Resource, Ref, Root, Seen, Val};
 use crate::int::Int;
 use crate::limit;
 use crate::ops;
@@ -158,21 +158,86 @@ impl Evaluator<'_> {
         }
     }
 
-    /// `S011` at `pos` when `t` is a handle type at the static position `position`: no handle
-    /// fits there (section 5.1). The caller charged the copy first.
+    /// `S011` at `pos` when `t` has the handle flag at the static position `position`: no value of
+    /// such a type is static (section 5.1). The flag decides, so `[Reg[T]; 2]` is `S011` too. The
+    /// caller charged the copy first.
     pub(super) fn static_handle(&self, pos: Pos, position: &str, t: TyId) -> Res<()> {
-        if self.tys.get(t).is_handle() {
+        if t.holds_handles() {
             return fail(
                 Code::S011,
                 pos,
                 format!(
-                    "{position} takes only static values, so its type cannot be the handle type \
-                     `{}`; use a data type, for example `UInt[8]`",
+                    "{position} takes only static values, so its type cannot be `{}`, a type \
+                     that holds a handle type; use a data type, for example `UInt[8]`",
                     self.tys.text(t)
                 ),
             );
         }
         Ok(())
+    }
+
+    /// `S011` at `pos` when the result `out` is a handle or a value of a type with the handle flag
+    /// at the static position `position`, before its typed use (Lean `staticValue`, sections 5.1
+    /// and 5.3). A handle gives the text of `static_text`. Another value of such a type gives the
+    /// text "Handles at a static position", which names its type. The check reads the kind of the
+    /// value and the flag of its type, so it walks no value. Each other value passes, and
+    /// `check_static` checks it.
+    pub(super) fn static_position(&self, pos: Pos, position: &str, out: &Out) -> Res<()> {
+        match self.store.seen(out) {
+            Seen::Handle(h) => fail(Code::S011, pos, self.static_text(position, h)),
+            Seen::Agg(a) => match a.stored_ty() {
+                Some(t) if t.holds_handles() => fail(
+                    Code::S011,
+                    pos,
+                    format!(
+                        "{position} takes only static values, but a value of `{}` can hold \
+                         handles; pass the data through a port, or use the handles in the module \
+                         that declares them",
+                        self.tys.text(t)
+                    ),
+                ),
+                _ => Ok(()),
+            },
+            _ => Ok(()),
+        }
+    }
+
+    /// The text of the handle `h` at the static position `position` (section 6.2, Lean
+    /// `Handle.staticText`): its kind and its source name. A child input names its instance and
+    /// its port, as in `u.p`. An own output has no handle type, but it is not static either. A
+    /// domain has no data, so it gives "Domain at a static position".
+    fn static_text(&self, position: &str, h: &Handle) -> String {
+        let held = |kind: &str, name: &str| {
+            format!(
+                "{position} holds the {kind} `{name}`, but it takes only static values; pass the \
+                 data through a port, or use it in the module that declares it"
+            )
+        };
+        let source = |path| self.paths.source(path, &self.syms.texts);
+        match h {
+            Handle::Res { kind, path, .. } => held(
+                match kind {
+                    Resource::Reg => "register",
+                    Resource::Wire => "wire",
+                    Resource::Output => "output",
+                },
+                &source(*path),
+            ),
+            Handle::Mem(id) => held(
+                "memory",
+                &self.mem(*id).map_or_else(String::new, |m| source(m.path)),
+            ),
+            Handle::Inst { path, .. } => held("instance", &source(*path)),
+            Handle::Input { path, port, .. } => {
+                let name = self.syms.texts.get(port.sym).map_or("", String::as_str);
+                held("input", &format!("{}.{name}", source(*path)))
+            }
+            Handle::Domain(d) => format!(
+                "{position} holds the domain `{}`, but a domain is never static; remove it from \
+                 this static position",
+                self.domain_name(*d)
+            ),
+        }
     }
 
     /// `S010` at `pos` when `t` is a handle type, with the text of `handle_data`.
@@ -514,6 +579,7 @@ impl Evaluator<'_> {
             let o = self.eval(x)?;
             let o = need(x, o)?;
             if !matches!(self.store.seen(&o), Seen::Pending(..)) {
+                self.static_position(pos, "a comptime parameter", &o)?;
                 self.check_static(pos, &o)?;
             }
             self.store.park(o);
@@ -814,6 +880,7 @@ impl Evaluator<'_> {
             let o = self.eval(x)?;
             let o = need(x, o)?;
             if !matches!(self.store.seen(&o), Seen::Pending(..)) {
+                self.static_position(pos, "a module argument", &o)?;
                 self.check_static(pos, &o)?;
             }
             self.store.park(o);
