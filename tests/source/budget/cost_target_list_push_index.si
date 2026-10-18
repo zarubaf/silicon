@@ -1,0 +1,18 @@
+// A `:=` target through a list of lists with an index that pushes onto the root list while it evaluates. The target selects the old value. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 241
+// TOP M()
+fn grow(mut l: List[List[Reg[UInt[8]]]]) -> Nat {
+    l.push(list(Reg[UInt[8]]));
+    return 0;
+}
+module M() {
+    input x: UInt[8];
+    output o: Bool;
+    reg r: UInt[8] = 0;
+    let mut l = list(List[Reg[UInt[8]]]);
+    l.push(list(Reg[UInt[8]]));
+    l[0].push(r);
+    l[0].push(r);
+    l[grow(l)][1] := x;
+    o := true;
+}

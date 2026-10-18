@@ -1,0 +1,16 @@
+// S013: the step `[1]` of a `:=` target selects before the next index evaluates. The index is out of range, so the call in the next index never runs and records nothing.
+// TOP M()
+fn idx() -> Nat {
+    diagnostic("idx", 0);
+    return 0;
+}
+module M() {
+    input x: UInt[8];
+    output o: Bool;
+    reg r: UInt[8] = 0;
+    let a = [[r]];
+    // expected-error S013 @+2
+    // expected-message: the index 1 is out of range for 1 element(s)
+    a[1][idx()] := x;
+    o := true;
+}
