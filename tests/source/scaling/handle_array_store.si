@@ -1,0 +1,20 @@
+// Store template of the review of issue #278 (R15). N stores `xs[i] = q` into an array of N registers, where the array
+// holds no hardware leaf. Each store rebuilds the array, so the work of each store is the size of the array, and the
+// charge covers it.
+// SCALE handle_array_store 32 64 128 256 512
+// TOP M()
+module M() {
+    input x: UInt[8];
+// REPEAT i {N}
+    reg r{i}: UInt[8] = 0;
+    r{i} := x;
+// END
+    let mut xs = [
+// REPEAT i {N}
+        r{i},
+// END
+    ];
+// REPEAT i {N}
+    xs[{i}] = r0;
+// END
+}
