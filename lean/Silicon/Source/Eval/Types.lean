@@ -215,14 +215,26 @@ def handleTy? : Ty → Bool
   | _ => false
 
 /-!
-A typed use at `pos` at the type `t`, at a position other than a typed `let` and an assignment
-to a `let mut` local. There, a handle type is `S010` until #278 (section 5.4), with the text of
-section 6.2. The caller charged the copy first.
+A typed use at `pos` at the type `t`, at a hardware position other than a typed `let` and an
+assignment to a `let mut` local. There, a handle type is `S010` until #278 (section 5.4), with
+the text of section 6.2. A static position has `staticHandle` instead. The caller charged the
+copy first.
 -/
 def laterHandle (pos : Pos) (t : Ty) : M Unit := do
   if handleTy? t then
     fail .S010 pos (s!"the handle type `{t.text}` is not supported here yet; use it in a " ++
       "typed `let`, or pass the data value, for example `read(h)`")
+
+/-!
+A typed use at `pos` at the type `t` at the static position `s`: `a module argument`, `a comptime
+parameter`, `an argument of a comptime fn`, or `a const` (section 5.1). No handle fits a static
+position, so a handle type there is `S011`, with the text of section 6.2. The caller charged the
+copy first.
+-/
+def staticHandle (pos : Pos) (s : String) (t : Ty) : M Unit := do
+  if handleTy? t then
+    fail .S011 pos (s!"{s} takes only static values, so its type cannot be the handle type " ++
+      s!"`{t.text}`; use a data type, for example `UInt[8]`")
 
 /-! The common type of two types that are not two arrays or two tuples: the operand rule. -/
 def scalarJoin : Ty → Ty → Option Ty

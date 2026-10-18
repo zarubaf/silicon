@@ -324,6 +324,10 @@ theorem laterHandle_f (p : Pos) (t : Ty) :
     Follows cap (laterHandle p t) (laterHandle p t) := by
   unfold laterHandle; follows
 
+theorem staticHandle_f (p : Pos) (s : String) (t : Ty) :
+    Follows cap (staticHandle p s t) (staticHandle p s t) := by
+  unfold staticHandle; follows
+
 theorem memWord_f (p : Pos) (t : Ty) : Follows cap (memWord p t) (memWord p t) := by
   unfold memWord; follows [notHandle_f]
 
@@ -784,7 +788,8 @@ theorem iteration_f (p : Pos) (i : Binder) (v : Int) {x y : M α} (h : Follows c
 theorem copyIn_f (p : Pos) (c : Bool) (q : Resolve.Param) (t : Ty) (a : Actual) :
     Follows cap (copyIn p c q t a) (copyIn p c q t a) := by
   unfold copyIn
-  follows [laterHandle_f, static_f, settle_f, conform_f, copyUse_f, named_f, bindLocal_f]
+  follows [laterHandle_f, staticHandle_f, static_f, settle_f, conform_f, copyUse_f, named_f,
+    bindLocal_f]
 
 theorem result_f (p : Pos) (path : Names.Path) (u : String) (o : Option Val) :
     Follows cap (result p path u o) (result p path u o) := by
@@ -822,10 +827,10 @@ theorem primCall_f (p : Pos) (g : String) (h : PrimFn) (vs : List Val) :
     diagnose_f, recast_f, readOf_f]
 
 theorem bindParams_f {ty ty' : Resolve.TypeExpr → M Ty} (h : ∀ t, Follows cap (ty t) (ty' t))
-    (p : Pos) (ps : List Resolve.Param) (args : List Val) :
-    Follows cap (bindParams ty p ps args) (bindParams ty' p ps args) := by
+    (p : Pos) (s : String) (ps : List Resolve.Param) (args : List Val) :
+    Follows cap (bindParams ty p s ps args) (bindParams ty' p s ps args) := by
   unfold bindParams
-  follows [h, laterHandle_f, conform_f, static_f, settle_f, bindLocal_f]
+  follows [h, staticHandle_f, conform_f, static_f, settle_f, bindLocal_f]
 
 theorem specOf_f {ty ty' : Resolve.TypeExpr → M Ty} (h : ∀ t, Follows cap (ty t) (ty' t))
     (p : Pos) (i : Nat) (x : Ident) (ps : List Resolve.Param) (fs : List Resolve.StructField)
@@ -965,9 +970,9 @@ theorem name_f (he : ∀ e, Follows m (eval k e) (eval m e))
     (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t)) (p : Pos) (x : String) (r : Ref) :
     Follows m (name k p x r) (name m p x r) := by
   rw [name.eq_def k, name.eq_def m]
-  follows [he, ht, prim_f, need_f, copy_f, laterHandle_f, conform_f, static_f, settle_f, constant_f,
-    spec_f he ht, enumUse_f he ht, nested_f, inFrame_f, params_f ht, fnTy_f, normalize_f,
-    readRef_f, bounded_f]
+  follows [he, ht, prim_f, need_f, copy_f, staticHandle_f, conform_f, static_f, settle_f,
+    constant_f, spec_f he ht, enumUse_f he ht, nested_f, inFrame_f, params_f ht, fnTy_f,
+    normalize_f, readRef_f, bounded_f]
 
 theorem placeAt_f (he : ∀ e, Follows m (eval k e) (eval m e)) (p : Pos) (c : ErrorCode)
     (t : Resolve.Expr) : Follows m (placeAt k p c t) (placeAt m p c t) := by
