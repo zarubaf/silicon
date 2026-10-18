@@ -451,3 +451,50 @@ fn c9_a_deep_pop_from_a_list_of_handle_tuples_is_paid_by_the_root_size() {
     let long = at(64, 16, 182);
     assert!(long.counts.total() <= 8 * long.used);
 }
+
+/// Issue #278, W4. A list of `n` handles as a module argument is `S011` from the flag of its type
+/// and the kind of the value, so the check walks no element. The work of the statement does not
+/// follow `n`: the difference of the runs with and without it is the same at both sizes.
+#[test]
+fn c4_a_container_of_handles_at_a_static_position_is_rejected_in_constant_work() {
+    let build = |n: usize, last: &str| {
+        format!(
+            "module C(comptime p: List[Reg[UInt[8]]]) {{\n}}\nmodule M() {{\n    output o: Bool;\n    \
+             reg r: UInt[8] = 0;\n    r := 0;\n    let mut hs = list(Reg[UInt[8]]);\n    \
+             comptime for i in 0..{n} {{\n        hs.push(r);\n    }}\n    {last}\n}}\n"
+        )
+    };
+    let extra = |n: usize, key: u64| {
+        let rejected = run(key, 1000, &build(n, "instance u = C(hs);\n    o := true;"));
+        assert_eq!(rejected.error.as_ref().map(|e| e.0.as_str()), Some("S011"));
+        let accepted = passing(key + 1, 1000, &build(n, "o := true;"));
+        rejected.counts.total().abs_diff(accepted.counts.total())
+    };
+    let (small, large) = (extra(1 << 10, 190), extra(1 << 12, 192));
+    assert!(small <= 600 && large <= 600, "{small} {large}");
+}
+
+/// Issue #278, W5. `n` targets `rs[i] := e` through an array of registers. Each target charges 1
+/// for its step and selects the register, so the work is linear in `n`.
+#[test]
+fn c5_targets_through_an_array_of_registers_are_linear() {
+    let at = |n: usize, key: u64| {
+        let mut src = "module M() {\n    input x: UInt[8];\n    output o: Bool;\n".to_owned();
+        for k in 0..n {
+            writeln!(src, "    reg r{k}: UInt[8] = 0;").unwrap();
+        }
+        let list = (0..n)
+            .map(|k| format!("r{k}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        writeln!(src, "    let rs = [{list}];").unwrap();
+        for k in 0..n {
+            writeln!(src, "    rs[{k}] := x;").unwrap();
+        }
+        src.push_str("    o := true;\n}\n");
+        passing(key, 1000, &src)
+    };
+    let (n, twice) = (at(64, 200), at(128, 201));
+    doubles(&n, &twice);
+    assert!(twice.counts.total() <= 8 * twice.used);
+}
