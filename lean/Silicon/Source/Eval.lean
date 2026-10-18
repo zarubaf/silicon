@@ -6,7 +6,8 @@ import Silicon.Source.Eval.Inst
 The evaluator of slice 1 with the budgets and the cost model of section 5.4 of the front-end
 spec. It reads the resolved AST after the pre-check. It evaluates expressions, the bodies of
 `comptime fn` and `fn` items, and top-level constants. A value is static, hardware, or a handle
-(section 5.1). `Source.Elab` runs the module statements and the instantiations.
+(section 5.1). `Eval.stmt`, `hwStmt`, and `instantiate` run the module statements and the
+instantiations.
 `Source.Eval.Container` gives the rules of the static containers of slice 2, and
 `Source.Eval.Types` the rules of the types as values.
 
