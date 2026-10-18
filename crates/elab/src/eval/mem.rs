@@ -66,11 +66,12 @@ impl Evaluator<'_> {
                 };
                 let addr = self.request_part(pos, addr_ty, x)?;
                 let en = self.request_part(pos, bool_ty, e)?;
+                let here = (pos, self.call);
                 if !self.second_call(pos, id, false)
                     && let Some(mem) = self.mem_mut(id)
                 {
                     mem.read = Some((addr, en));
-                    mem.read_at = Some(pos);
+                    mem.read_at = Some(here);
                 }
                 self.response(pos, path, word).map(Some)
             }
@@ -81,11 +82,12 @@ impl Evaluator<'_> {
                 let addr = self.request_part(pos, addr_ty, x)?;
                 let data = self.request_part(pos, word, y)?;
                 let en = self.request_part(pos, bool_ty, e)?;
+                let here = (pos, self.call);
                 if !self.second_call(pos, id, true)
                     && let Some(mem) = self.mem_mut(id)
                 {
                     mem.write = Some((addr, data, en));
-                    mem.write_at = Some(pos);
+                    mem.write_at = Some(here);
                 }
                 Ok(Some(Out::Made(Val::Static(Value::Unit))))
             }

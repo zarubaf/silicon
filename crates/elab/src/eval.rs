@@ -215,6 +215,9 @@ struct Evaluator<'a> {
     /// the position of its call, outermost first. A call adds one in O(1), and a record
     /// writes them out after the charge of its bytes.
     calls: Vec<(usize, Pos)>,
+    /// The number of the frame of the current call, and 0 in a module body. It tells two calls
+    /// of one function apart (section 6.2). A call sets it in O(1), and its return restores it.
+    call: usize,
     /// The name of each domain that a read named.
     domains: BTreeMap<DeclId, String>,
     /// The data type of each type with the handle flag that a read of a container made
@@ -379,6 +382,7 @@ impl<'a> Evaluator<'a> {
             emitted: Vec::new(),
             inst: None,
             calls: Vec::new(),
+            call: 0,
             domains: BTreeMap::new(),
             data_tys: BTreeMap::new(),
             lens: crate::serial::Cache::default(),

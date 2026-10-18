@@ -301,7 +301,7 @@ impl Evaluator<'_> {
         self.calls.push((i, pos));
         // The call sets the mode when it names none and `comptime` holds, and it records its
         // item in a guard without a record. Both are O(1), and the return of the call ends both.
-        let saved = (self.mode, self.guard);
+        let saved = (self.mode, self.guard, self.call);
         self.mode = self.mode.or((*comptime).then_some(Mode::Static(i)));
         if let Some(g) = &mut self.guard {
             g.callee = g.callee.or(Some(i));
@@ -309,6 +309,7 @@ impl Evaluator<'_> {
         let ran = self.nested(pos, |ev| {
             ev.in_frame(None, |ev| {
                 let (path, frame) = ev.frame_of(u, Step::Call(site));
+                ev.call = frame.id;
                 ev.in_item(i, frame, |ev| {
                     let mut places = Vec::new();
                     for (q, a) in params.iter().zip(acts) {
@@ -339,7 +340,7 @@ impl Evaluator<'_> {
             })
         });
         self.calls.pop();
-        (self.mode, self.guard) = saved;
+        (self.mode, self.guard, self.call) = saved;
         let (result, written) = ran?;
         self.write_back(pos, written)?;
         Ok(Some(result))
