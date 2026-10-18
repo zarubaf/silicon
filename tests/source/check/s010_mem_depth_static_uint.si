@@ -1,6 +1,7 @@
 // S010: a memory depth is an Int value, not a UInt.
 // TOP M()
 module M() {
-    // expected-error S010 @+1
+    // expected-error S010 @+2
+    // expected-message: a memory depth is a static integer, not a value of `UInt[8]`; write an integer, for example `16`
     mem m: [UInt[8]; UInt[8](4)];
 }
