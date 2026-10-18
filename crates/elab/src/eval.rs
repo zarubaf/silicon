@@ -23,6 +23,7 @@ mod agg;
 mod arms;
 mod call;
 mod container;
+mod data;
 mod hwops;
 mod inst;
 mod list;
@@ -211,6 +212,9 @@ struct Evaluator<'a> {
     calls: Vec<(usize, Pos)>,
     /// The name of each domain that a read named.
     domains: BTreeMap<DeclId, String>,
+    /// The data type of each type with the handle flag that a read of a container made
+    /// (`data_ty`).
+    data_tys: BTreeMap<TyId, TyId>,
     /// The lengths of the types and the powers of ten that the records measured.
     lens: crate::serial::Cache,
 }
@@ -355,6 +359,7 @@ impl<'a> Evaluator<'a> {
             inst: None,
             calls: Vec::new(),
             domains: BTreeMap::new(),
+            data_tys: BTreeMap::new(),
             lens: crate::serial::Cache::default(),
         }
     }
@@ -897,42 +902,6 @@ impl Evaluator<'_> {
         self.conform_data(pos, t, d)
     }
 
-    /// The data of a result at a typed use at the type `t` (Lean `dataAt`). A position of a type
-    /// with the handle flag is `raw` (section 9.2), so it reads nothing: a handle and a container
-    /// keep their handles. A position of another type reads each handle (`data`).
-    pub(super) fn data_at(&mut self, pos: Pos, t: TyId, out: Out) -> Res<Opnd> {
-        if t.holds_handles() {
-            Ok(Opnd::of_out(out))
-        } else {
-            self.data(pos, out)
-        }
-    }
-
-    /// The data of a result at a use that reads it. A register, a wire, and an own output
-    /// give a reference to their name in its normal form: the implicit read. Thus a scalar is
-    /// hardware, and an aggregate is a lazy reference with no charge. A child input is never read
-    /// (`S017`). An instance and a domain are not data.
-    fn data(&mut self, pos: Pos, out: Out) -> Res<Opnd> {
-        match self.store.seen(&out) {
-            Seen::Static(_) | Seen::Agg(_) => Ok(Opnd::Static(out)),
-            Seen::Hw(h) => Ok(Opnd::Hw(h)),
-            Seen::Pending(q, _) => no_type(q),
-            Seen::Handle(Handle::Res { ty, path, .. }) => {
-                let (t, path) = (*ty, *path);
-                match self.read_ref(pos, Base::Name(path), t)? {
-                    Val::Hw(h) => Ok(Opnd::Hw(h)),
-                    v => Ok(Opnd::Static(Out::Made(v))),
-                }
-            }
-            Seen::Handle(Handle::Input { .. }) => fail(
-                Code::S017,
-                pos,
-                "an input of a child is a target; it is never read".to_owned(),
-            ),
-            s @ Seen::Handle(_) => fail(Code::S010, pos, format!("{} is not data", self.text(s))),
-        }
-    }
-
     /// `read` at the call `pos` with the results `vs` of its arguments, after its node, its name,
     /// and the copies (section 5.4, Lean `readOf`). `g` is the name of the callee. A child input
     /// is `S017`. An own output, a memory, an instance, a domain, and a value that is not a
@@ -969,16 +938,8 @@ impl Evaluator<'_> {
                 }))
             }
             Seen::Handle(Handle::Input { path, port, .. }) => {
-                let port_name = self.syms.texts.get(port.sym).map_or("", String::as_str);
-                fail(
-                    Code::S017,
-                    pos,
-                    format!(
-                        "the input `{port_name}` of `{}` is a target only; read the value that \
-                         you bind to it",
-                        self.paths.source(*path, &self.syms.texts)
-                    ),
-                )
+                let text = self.input_text(*path, port);
+                fail(Code::S017, pos, text)
             }
             s => {
                 let hint = match s {

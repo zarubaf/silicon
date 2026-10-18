@@ -420,7 +420,7 @@ impl Evaluator<'_> {
         let Some(first) = steps.first().map(Sel::pos) else {
             return Ok(Some(b));
         };
-        let b = self.data(first, b)?;
+        let b = self.base_data(first, b)?;
         if let Some(Sel::Index(q, _)) = steps.first()
             && matches!(self.opnd_seen(&b), Seen::Static(Value::Type(_)))
         {
@@ -457,7 +457,7 @@ impl Evaluator<'_> {
                     }
                     base = Opnd::Static(out);
                 } else {
-                    base = self.data(next.pos(), base.into_out())?;
+                    base = self.base_data(next.pos(), base.into_out())?;
                 }
             }
         }
@@ -874,7 +874,7 @@ impl Evaluator<'_> {
                 format!("`len` takes 1 argument(s), but it has {}", vs.len() + 1),
             );
         };
-        let n = match self.data(pos, v)? {
+        let n = match self.base_data(pos, v)? {
             Opnd::Static(o) if matches!(self.store.seen(&o), Seen::Agg(_)) => {
                 return self.agg_len(pos, &o);
             }
