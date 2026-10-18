@@ -11,15 +11,15 @@ use crate::{Abort, Budget, elaborate};
 use std::fmt::Write;
 
 /// A run: its counts, the units that it used, and its first error.
-struct Run {
-    counts: Counts,
-    used: u64,
-    error: Option<(String, String)>,
+pub(crate) struct Run {
+    pub(crate) counts: Counts,
+    pub(crate) used: u64,
+    pub(crate) error: Option<(String, String)>,
 }
 
 /// The run of the module `M` in `src` with the depth limit `depth`. The key makes the fuel
 /// budget unique, and the counts of the run are keyed by it.
-fn run(key: u64, depth: u64, src: &str) -> Run {
+pub(crate) fn run(key: u64, depth: u64, src: &str) -> Run {
     let fuel = 920_000_000 + key;
     let file = load(src).unwrap();
     let budget = Budget { fuel, depth };
@@ -40,14 +40,14 @@ fn run(key: u64, depth: u64, src: &str) -> Run {
 }
 
 /// The work of a run that must pass.
-fn passing(key: u64, depth: u64, src: &str) -> Run {
+pub(crate) fn passing(key: u64, depth: u64, src: &str) -> Run {
     let r = run(key, depth, src);
     assert_eq!(r.error, None, "{src}");
     r
 }
 
 /// The doubled size gives at most twice the work, and more than the work at the size `n`.
-fn doubles(n: &Run, twice: &Run) {
+pub(crate) fn doubles(n: &Run, twice: &Run) {
     let (a, b) = (n.counts.total(), twice.counts.total());
     assert!(a < b && b <= 2 * a, "the work {a} at n and {b} at 2n");
 }
