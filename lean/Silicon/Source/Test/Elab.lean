@@ -1205,15 +1205,14 @@ def said (src : String) : String :=
   "`let`, and use that name here"
 
 /-!
-The other effects (section 9.4). A declaration in a `fn` is `S004` (pass 1), and in a
-`comptime fn` `S006` (pass 4). A `:=` in a `fn` is `S011`, and in a `comptime fn` `S006`. A
-memory port call in a structural context is `S016` at the call. The check rejects a memory name
-at a static position (`S005`), so an alias reaches the call.
+The other effects (section 9.4). A declaration or a `:=` in a `fn` is `S011`, and in a
+`comptime fn` `S006` (pass 4). A memory port call in a structural context is `S016` at the call.
+The check rejects a memory name at a static position (`S005`), so an alias reaches the call.
 -/
 #guard sRun "  let x: UInt[g()] = 0;\n" "fn g() -> Nat { reg r: UInt[8] = 0; return 1; }\n" ==
-  "S004 1:17"
+  "S011 1:17"
 #guard sRun "  let x: UInt[g()] = 0;\n" "fn g() -> Nat { mem q: [UInt[8]; 4]; return 1; }\n" ==
-  "S004 1:17"
+  "S011 1:17"
 #guard sRun "  let x: UInt[g()] = 0;\n"
   "comptime fn g() -> Nat { reg r: UInt[8] = 0; return 1; }\n" == "S006 1:26"
 #guard sRun "  let x: UInt[g()] = 0;\n"

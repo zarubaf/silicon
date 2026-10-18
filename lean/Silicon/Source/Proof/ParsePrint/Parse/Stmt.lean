@@ -160,17 +160,17 @@ def SGoal (s : Stmt) : Prop :=
     s.toks.length ≤ ctx.depth →
     Runs (stmt f) ctx i (i + s.toks.length) (fun s' => s'.erase = s.erase)
 
-/-! The check for a resource in a `fn` without `comptime` passes. -/
+/-! The check for a port in a `fn` without `comptime` passes. -/
 theorem stmt_res {ctx : Ctx} {tok : Token}
-    (h : ctx.plainFn = false ∨ ∀ w ∈ resourceKeywords, tok.kind ≠ .keyword w) :
-    (ctx.plainFn && resourceKeywords.any fun x => isKw x tok) = false := by
+    (h : ctx.plainFn = false ∨ ∀ w ∈ portKeywords, tok.kind ≠ .keyword w) :
+    (ctx.plainFn && portKeywords.any fun x => isKw x tok) = false := by
   rcases h with h | h
   · simp [h]
   · simp only [Bool.and_eq_false_iff, List.any_eq_false, isKw, beq_iff_eq]
     exact Or.inr fun w hw he => h w hw he
 
-theorem not_res {k : Kind} (h : ∀ w, k = .keyword w → w ∉ resourceKeywords) :
-    ∀ w ∈ resourceKeywords, k ≠ .keyword w := fun w hw he => h w he hw
+theorem not_res {k : Kind} (h : ∀ w, k = .keyword w → w ∉ portKeywords) :
+    ∀ w ∈ portKeywords, k ≠ .keyword w := fun w hw he => h w he hw
 
 /-! The window of a statement, with its kinds as a list of single kinds and parts. -/
 macro "norm_win" : tactic => `(tactic| simp only [Stmt.toks, ite_true, ite_false,
@@ -205,13 +205,13 @@ theorem Win.head' {inp : Input} {i : Nat} {a R : List Kind} {k : Kind} (h : Win 
   | cons x xs => simp only [List.head?_cons, Option.some.injEq] at ha; subst ha; exact h.head
 
 theorem stmt_res_kw {ctx : Ctx} {tok : Token} {w : String} (h : tok.kind = .keyword w)
-    (hw : resourceKeywords.contains w = false) :
-    (ctx.plainFn && resourceKeywords.any fun x => isKw x tok) = false :=
+    (hw : portKeywords.contains w = false) :
+    (ctx.plainFn && portKeywords.any fun x => isKw x tok) = false :=
   stmt_res (Or.inr fun w' hw' he => by
     rw [h] at he; cases he; simp_all)
 
 theorem stmt_res_nkw {ctx : Ctx} {tok : Token} (h : ∀ w, tok.kind ≠ .keyword w) :
-    (ctx.plainFn && resourceKeywords.any fun x => isKw x tok) = false :=
+    (ctx.plainFn && portKeywords.any fun x => isKw x tok) = false :=
   stmt_res (Or.inr fun w _ => h w)
 
 theorem Runs.stmt_local (p : Pos) (m : Bool) (n : Ident) (ty : Option TypeExpr) (v : Expr) :
@@ -296,8 +296,8 @@ theorem After.brace {c : Nat} : After c (.symbol "{") :=
 theorem Runs.stmt_reg (p : Pos) (n : Ident) (ty : TypeExpr) (v : Expr) :
     SGoal (.reg p n ty v) := by
   intro ctx i f t R hp hw ht hf hd
-  simp only [Stmt.printable, Bool.and_eq_true, Bool.not_eq_true'] at hp
-  obtain ⟨⟨⟨hpl, hn⟩, hty⟩, hv⟩ := hp
+  simp only [Stmt.printable, Bool.and_eq_true] at hp
+  obtain ⟨⟨hn, hty⟩, hv⟩ := hp
   have e : (Stmt.reg p n ty v).toks ++ t :: R = .keyword "reg" :: .ident n.name ::
       .symbol ":" :: (ty.toks ++ .symbol "=" :: (v.toks 0 ++ .symbol ";" :: t :: R)) := by
     simp [Stmt.toks]
@@ -308,7 +308,7 @@ theorem Runs.stmt_reg (p : Pos) (n : Ident) (ty : TypeExpr) (v : Expr) :
   obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
   rw [Parse.stmt]
   refine Runs.peek_bind (Runs.read_bind ?_)
-  simp only [stmt_res (Or.inl hpl), hw.head, Bool.false_eq_true, ite_false]
+  simp only [stmt_res_kw hw.head (by decide), hw.head, Bool.false_eq_true, ite_false]
   refine Runs.bump_bind ?_
   refine Runs.bind (Runs.ident hw.tail.head) fun id hid => ?_
   have w := hw.tail.tail
@@ -324,8 +324,8 @@ theorem Runs.stmt_reg (p : Pos) (n : Ident) (ty : TypeExpr) (v : Expr) :
 
 theorem Runs.stmt_wire (p : Pos) (n : Ident) (ty : TypeExpr) : SGoal (.wire p n ty) := by
   intro ctx i f t R hp hw ht hf hd
-  simp only [Stmt.printable, Bool.and_eq_true, Bool.not_eq_true'] at hp
-  obtain ⟨⟨hpl, hn⟩, hty⟩ := hp
+  simp only [Stmt.printable, Bool.and_eq_true] at hp
+  obtain ⟨hn, hty⟩ := hp
   have e : (Stmt.wire p n ty).toks ++ t :: R = .keyword "wire" :: .ident n.name ::
       .symbol ":" :: (ty.toks ++ .symbol ";" :: t :: R) := by
     simp [Stmt.toks]
@@ -336,7 +336,7 @@ theorem Runs.stmt_wire (p : Pos) (n : Ident) (ty : TypeExpr) : SGoal (.wire p n 
   obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
   rw [Parse.stmt]
   refine Runs.peek_bind (Runs.read_bind ?_)
-  simp only [stmt_res (Or.inl hpl), hw.head, Bool.false_eq_true, ite_false]
+  simp only [stmt_res_kw hw.head (by decide), hw.head, Bool.false_eq_true, ite_false]
   refine Runs.bump_bind ?_
   refine Runs.bind (Runs.ident hw.tail.head) fun id hid => ?_
   have w := hw.tail.tail
@@ -351,8 +351,8 @@ theorem Runs.stmt_wire (p : Pos) (n : Ident) (ty : TypeExpr) : SGoal (.wire p n 
 theorem Runs.stmt_mem (p : Pos) (n : Ident) (ty : TypeExpr) (v : Expr) :
     SGoal (.mem p n ty v) := by
   intro ctx i f t R hp hw ht hf hd
-  simp only [Stmt.printable, Bool.and_eq_true, Bool.not_eq_true'] at hp
-  obtain ⟨⟨⟨hpl, hn⟩, hty⟩, hv⟩ := hp
+  simp only [Stmt.printable, Bool.and_eq_true] at hp
+  obtain ⟨⟨hn, hty⟩, hv⟩ := hp
   have e : (Stmt.mem p n ty v).toks ++ t :: R = .keyword "mem" :: .ident n.name ::
       .symbol ":" :: .symbol "[" :: (ty.toks ++ .symbol ";" :: (v.toks 0 ++ .symbol "]" ::
       .symbol ";" :: t :: R)) := by
@@ -364,7 +364,7 @@ theorem Runs.stmt_mem (p : Pos) (n : Ident) (ty : TypeExpr) (v : Expr) :
   obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
   rw [Parse.stmt]
   refine Runs.peek_bind (Runs.read_bind ?_)
-  simp only [stmt_res (Or.inl hpl), hw.head, Bool.false_eq_true, ite_false]
+  simp only [stmt_res_kw hw.head (by decide), hw.head, Bool.false_eq_true, ite_false]
   refine Runs.bump_bind ?_
   refine Runs.bind (Runs.ident hw.tail.head) fun id hid => ?_
   have w := hw.tail.tail
@@ -448,9 +448,9 @@ theorem Runs.stmt_output (p : Pos) (n : Ident) (ty : TypeExpr) : SGoal (.output 
 
 theorem Runs.stmt_inst (p : Pos) (n m : Ident) (xs : List Expr) : SGoal (.inst p n m xs) := by
   intro ctx i f t R hp hw ht hf hd
-  simp only [Stmt.printable, Bool.and_eq_true, Bool.not_eq_true', Expr.printableAll_eq,
+  simp only [Stmt.printable, Bool.and_eq_true, Expr.printableAll_eq,
     List.all_eq_true] at hp
-  obtain ⟨⟨⟨hpl, hn⟩, hm⟩, hxs⟩ := hp
+  obtain ⟨⟨hn, hm⟩, hxs⟩ := hp
   have e : (Stmt.inst p n m xs).toks ++ t :: R = .keyword "instance" :: .ident n.name ::
       .symbol "=" :: .ident m.name :: .symbol "(" :: (argToks (xs.map (Expr.toks 0)) ++
       .symbol ")" :: .symbol ";" :: t :: R) := by
@@ -462,7 +462,7 @@ theorem Runs.stmt_inst (p : Pos) (n m : Ident) (xs : List Expr) : SGoal (.inst p
   obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
   rw [Parse.stmt]
   refine Runs.peek_bind (Runs.read_bind ?_)
-  simp only [stmt_res (Or.inl hpl), hw.head, Bool.false_eq_true, ite_false]
+  simp only [stmt_res_kw hw.head (by decide), hw.head, Bool.false_eq_true, ite_false]
   refine Runs.bump_bind ?_
   refine Runs.bind (Runs.ident hw.tail.head) fun id hid => ?_
   have w := hw.tail.tail
@@ -666,13 +666,13 @@ theorem Runs.stmt_fallback {ctx : Ctx} {i f l : Nat} {k : Kind} {Q : Stmt → Pr
     Runs (stmt (f + 1)) ctx i l Q := by
   rw [Parse.stmt]
   refine Runs.peek_bind (Runs.read_bind ?_)
-  have hres : (ctx.plainFn && resourceKeywords.any fun x => isKw x (tokenAt ctx.input i)) =
+  have hres : (ctx.plainFn && portKeywords.any fun x => isKw x (tokenAt ctx.input i)) =
       false := by
     refine stmt_res (Or.inr fun w hw => ?_)
     rw [hk]
     refine hE.ne_kw ?_
-    simp only [resourceKeywords, List.mem_cons, List.not_mem_nil, or_false] at hw
-    rcases hw with rfl | rfl | rfl | rfl | rfl | rfl <;> decide
+    simp only [portKeywords, List.mem_cons, List.not_mem_nil, or_false] at hw
+    rcases hw with rfl | rfl <;> decide
   simp only [hres, Bool.false_eq_true, ite_false]
   generalize (tokenAt ctx.input i).kind = K at hk
   subst hk

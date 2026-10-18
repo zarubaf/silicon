@@ -518,19 +518,27 @@ a package path.
   "or `_`; compare with a constant in an `if`"
 
 /-!
-`S004`: a `fn` without `comptime` declares no port, resource, or instance. The position is the
-keyword, also in a nested block. A `comptime fn` and a module parse these statements.
+`S004`: a `fn` without `comptime` declares no port, with the text "Port in a `fn`" of section
+6.2. The position is the keyword, also in a nested block. A `comptime fn` and a module parse a
+port. Each body parses a resource, an instance, and a `:=`.
 -/
 def plainBody (s : String) : String := "fn f() -> T {\n" ++ s ++ "\n}"
 #guard fails (plainBody "input i: Bool;") .S004 2 1
 #guard fails (plainBody "output o: Bool;") .S004 2 1
-#guard fails (plainBody "reg r: Bool = false;") .S004 2 1
-#guard fails (plainBody "wire w: Bool;") .S004 2 1
-#guard fails (plainBody "mem m: [Bool; 4];") .S004 2 1
-#guard fails (plainBody "instance u = M();") .S004 2 1
-#guard fails (plainBody "let x = 1;\n{\ncomptime if (c) { wire w: Bool; }\n}") .S004 4 19
-#guard fails (plainBody "comptime for i in 0..2 {\nreg r: Bool = false;\n}") .S004 3 1
+#guard fails (plainBody "let x = 1;\n{\ncomptime if (c) { input i: Bool; }\n}") .S004 4 19
+#guard fails (plainBody "comptime for i in 0..2 {\noutput o: Bool;\n}") .S004 3 1
+#guard message (plainBody "input i: Bool;") == Parse.portFnText
+#guard message (plainBody "output o: Bool;") == Parse.portFnText
+#guard Parse.portFnText == "a helper cannot declare a port; declare the port in the module " ++
+  "body and pass its value to the helper"
 #guard (parseSource defaultSyntaxDepth (plainBody "let x = 1;\nx = 2;\nreturn x;")).toBool
+#guard (parseSource defaultSyntaxDepth (plainBody
+  "reg r: Bool = false;\nwire w: Bool;\nmem m: [Bool; 4];\ninstance u = M();\nw := r;")).toBool
+#guard (parseSource defaultSyntaxDepth (plainBody
+  "let x = 1;\n{\ncomptime if (c) { wire w: Bool; }\n}")).toBool
+#guard (parseSource defaultSyntaxDepth (plainBody
+  "comptime for i in 0..2 {\nreg r: Bool = false;\n}")).toBool
+#guard (parseSource defaultSyntaxDepth (ctBody "input i: Bool;\nreturn 1;")).toBool
 #guard (parseSource defaultSyntaxDepth (ctBody "wire w: Bool;\nreturn 1;")).toBool
 #guard (parseSource defaultSyntaxDepth "module M() {\nwire w: Bool;\n}").toBool
 #guard (parseSource defaultSyntaxDepth "module M() {\nmem m: [Bool; 4];\n}").toBool

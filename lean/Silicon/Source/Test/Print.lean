@@ -1,4 +1,5 @@
 -- SPDX-License-Identifier: Apache-2.0
+import Silicon.Source.Parse
 import Silicon.Source.Print
 
 /-!
@@ -346,5 +347,27 @@ types prints without parentheses.
   "    Pair(Bool, UInt[8]) = 2,\n" ++
   "}\n\n" ++
   "enum E: UInt[1] {}\n"
+
+/-!
+A `fn` without `comptime` with a register, a wire, a memory, an instance, and a `:=` prints,
+and the printed text parses again to the same dump.
+-/
+def helper : Item :=
+  .fn p false (nm "mk") [⟨p, .none, nm "x", t "Bool"⟩] (t "Bool")
+    [.reg p (nm "r") (t "Bool") (v "x"), .wire p (nm "w") (t "Bool"),
+     .mem p (nm "m") u8 (n 4), .inst p (nm "u") (nm "C") [n 8],
+     .connect p (v "w") (v "r"), .ret p (some (v "w"))]
+
+#guard Print.print [helper] ==
+  "fn mk(x: Bool) -> Bool {\n" ++
+  "    reg r: Bool = x;\n" ++
+  "    wire w: Bool;\n" ++
+  "    mem m: [UInt[8]; 4];\n" ++
+  "    instance u = C(8);\n" ++
+  "    w := r;\n" ++
+  "    return w;\n" ++
+  "}\n"
+#guard (Parse.parseSource Lex.defaultSyntaxDepth (Print.print [helper])).toOption.map Print.dump ==
+  some (Print.dump [helper])
 
 end Silicon.Source.Test.Print
