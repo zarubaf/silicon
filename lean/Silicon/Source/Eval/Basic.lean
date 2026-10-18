@@ -358,12 +358,12 @@ inductive Kind where
 /-!
 A handle. Its number indexes the resources, the memories, or the instances of its
 instantiation. A child input holds the number of its instance. A memory holds its word type and
-its depth (section 5.1).
+its depth, and an instance its type `Instance[M, args]` (section 5.1).
 -/
 inductive Handle where
   | res (kind : Kind) (id : Nat) (ty : Ty) (path : Path)
   | mem (id : Nat) (path : Path) (word : Ty) (depth : Nat)
-  | inst (id : Nat) (path : Path) (iface : Iface)
+  | inst (id : Nat) (path : Path) (iface : Iface) (ty : Ty)
   | input (inst : Nat) (path : Path) (port : Port)
   | domain (name : String)
 
@@ -450,25 +450,41 @@ def Val.text : Val → String
   | .pending _ p => s!"{p.text} without a type"
 
 /-!
+The handle type of `h` (section 5.1). It comes from the stored types and the depth, with no
+charge. An own output and a domain have none.
+-/
+def Handle.ty? : Handle → Option Ty
+  | .res .reg _ t _ => some (.reg t)
+  | .res .wire _ t _ => some (.wire t)
+  | .res .output .. | .domain _ => none
+  | .mem _ _ w d => some (.mem w d)
+  | .inst _ _ _ t => some t
+  | .input _ _ q => some (.input q.ty)
+
+/-! The source name of the resource at `path`: its first user name, else its outer name. -/
+def sourceOf (path : Path) : String :=
+  (path.inner.findSome? fun | .user u => some u | _ => none).getD path.outer
+
+/-!
 The value `{a}` of a message (section 6.2). A handle names its handle type (section 5.1), an own
 output its source name, and a domain its name. A literal that waits for its type is `[]`. Each
 other value names its type. Thus the text reads no value in full, and each type text is bounded.
 -/
 def Val.about : Val → String
-  | .handle (.res .reg _ t _) => s!"a handle of `{(Ty.reg t).text}`"
-  | .handle (.res .wire _ t _) => s!"a handle of `{(Ty.wire t).text}`"
-  | .handle (.res .output _ _ path) =>
-    let r := (path.inner.findSome? fun | .user u => some u | _ => none).getD path.outer
-    s!"the output `{r}`"
-  | .handle (.mem _ _ w d) => s!"a handle of `{(Ty.mem w d).text}`"
-  | .handle (.input _ _ q) => s!"a handle of `{(Ty.input q.ty).text}`"
+  | .handle (.res .output _ _ path) => s!"the output `{sourceOf path}`"
   | .handle (.domain x) => s!"the domain `{x}`"
+  | .handle h => match h.ty? with
+    | some t => s!"a handle of `{t.text}`"
+    | none => (Val.handle h).text
   | .pending .. => "`[]`"
   | v => match v.ty? with
     | some t => s!"a value of `{t.text}`"
     | none => v.text
 
-/-! A local. A string, a type, and a handle have no `Ty`, so their `ty` is `none`. -/
+/-!
+A local. A string, a type, and a handle without an annotation have no `Ty`, so their `ty` is
+`none`. A local of a handle type holds its handle type (section 5.4).
+-/
 structure Slot where
   ty : Option Ty
   mutable : Bool

@@ -797,6 +797,7 @@ its depth and charges its size.
 -/
 def recordOf (pos : Pos) (t : Ty) (fs : List Ty) (ps : List Pos) (vs : List Val) : M Agg := do
   let xs ← (fs.zip (ps.zip vs)).mapM fun (ft, q, v) => do
+    laterHandle pos ft
     conformAgg pos ft (← item q (← data q (← settle pos ft v)))
   made pos (.mkRecord t xs.toArray)
 

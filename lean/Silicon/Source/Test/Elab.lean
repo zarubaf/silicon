@@ -1985,4 +1985,106 @@ a memory depth that is not static (`S011`). An argument of `Instance` is static 
 #guard cost ("module B(comptime x: UInt[0]) {\n}\n" ++ memBody "  let t = Instance[B, 1];\n") "M" ==
   "S012 1:22"
 
+/-!
+A typed `let` at a handle type keeps the handle, and it reads nothing (section 5.4). Thus `a := i`
+binds `r` through `a`. An assignment to a `let mut` local of a handle type changes the handle,
+so `b := i` binds `r`, not `q`. The handle of an instance holds its type `Instance[M, args]`, and
+the handle of a child input its type `Input[T]`.
+-/
+def handleLets (body : String) : String :=
+  "module C(comptime W: Nat) {\n  input x: UInt[8];\n}\n" ++
+  "struct S { a: Reg[UInt[8]] }\n" ++
+  "fn g(x: Reg[UInt[8]]) -> Bool { return true; }\n" ++
+  "fn h(mut x: Reg[UInt[8]]) -> Bool { return true; }\n" ++
+  "module M() {\n  input i: UInt[8];\n  output o: UInt[8];\n  reg r: UInt[8] = 0;\n" ++
+  "  reg q: UInt[8] = 0;\n  reg s: UInt[4] = 0;\n  wire w: UInt[8];\n" ++
+  "  instance u = C(8);\n  o := i;\n  q := i;\n  s := 0;\n  w := i;\n  u.x := i;\n" ++ body ++ "}\n"
+#guard exact (handleLets "  let a: Reg[UInt[8]] = r;\n  a := i;\n") "M" 353
+#guard exact (handleLets "  let mut b: Reg[UInt[8]] = q;\n  b = r;\n  b := i;\n") "M" 356
+#guard exact
+  (handleLets "  let e: Instance[C, 8] = u;\n  let f: Input[UInt[8]] = u.x;\n  r := i;\n") "M" 365
+
+/-!
+A handle of another handle type, an own input, and an own output are `S010` at the statement
+(section 6.2). The value text names the handle type of the handle. The copy charges 1 before the
+compare, so one unit less stops at the statement.
+-/
+def typedText (t a : String) : String :=
+  s!"expected `{t}`, but the value is {a}; a handle type takes only a handle of exactly this " ++
+    "type, so give such a handle or change the type"
+def ownText : String :=
+  "`o` is an output, and an output has no handle type; use `o` directly as data"
+#guard said (handleLets "  let a: Reg[UInt[8]] = s;\n") ==
+  typedText "Reg[UInt[8]]" "a handle of `Reg[UInt[4]]`"
+#guard cost (handleLets "  let a: Reg[UInt[8]] = s;\n") "M" (fuel := 161) == "S010 20:3"
+#guard cost (handleLets "  let a: Reg[UInt[8]] = s;\n") "M" (fuel := 160) == "S015 20:3"
+#guard said (handleLets "  let a: Reg[UInt[8]] = w;\n") ==
+  typedText "Reg[UInt[8]]" "a handle of `Wire[UInt[8]]`"
+#guard said (handleLets "  let a: Reg[UInt[8]] = i;\n") ==
+  typedText "Reg[UInt[8]]" "a value of `UInt[8]`"
+#guard said (handleLets "  let a: Reg[UInt[8]] = o;\n") == ownText
+#guard cost (handleLets "  let a: Reg[UInt[8]] = o;\n") "M" (fuel := 161) == "S010 20:3"
+#guard cost (handleLets "  let a: Reg[UInt[8]] = o;\n") "M" (fuel := 160) == "S015 20:3"
+#guard said (handleLets "  let a: Instance[C, 9] = u;\n") ==
+  typedText "Instance[C, 9]" "a handle of `Instance[C, 8]`"
+#guard cost (handleLets "  let a: Instance[C, 9] = u;\n") "M" (fuel := 158) == "S010 20:3"
+#guard cost (handleLets "  let a: Instance[C, 9] = u;\n") "M" (fuel := 157) == "S015 20:3"
+#guard said (handleLets "  let a: Input[UInt[4]] = u.x;\n") ==
+  typedText "Input[UInt[4]]" "a handle of `Input[UInt[8]]`"
+#guard said (memBody "  mem m: [UInt[8]; 4];\n  let a: Mem[UInt[8], 2] = m;\n") ==
+  typedText "Mem[UInt[8], 2]" "a handle of `Mem[UInt[8], 4]`"
+#guard cost (memBody "  mem m: [UInt[8]; 4];\n  let a: Mem[UInt[8], 2] = m;\n") "M" (fuel := 53) ==
+  "S010 3:3"
+#guard cost (memBody "  mem m: [UInt[8]; 4];\n  let a: Mem[UInt[8], 2] = m;\n") "M" (fuel := 52) ==
+  "S015 3:3"
+/-! The same handle type passes, and the compare adds no charge. -/
+#guard cost (memBody "  mem m: [UInt[8]; 4];\n  let a: Mem[UInt[8], 4] = m;\n") "M" (fuel := 53) ==
+  "S018 2:3"
+
+/-! The arguments of `Instance` take the typed uses of the `instance` statement: one key. -/
+def oneKey : String :=
+  "module C(comptime W: UInt[8]) {\n}\nmodule M() {\n  instance u = C(UInt[8](1));\n" ++
+  "  let a: Instance[C, 1] = u;\n  let b: Instance[C, 2] = u;\n}\n"
+#guard said oneKey == typedText "Instance[C, 2]" "a handle of `Instance[C, 1]`"
+#guard cost oneKey "M" (fuel := 123) == "S010 6:3"
+#guard cost oneKey "M" (fuel := 122) == "S015 6:3"
+
+/-! An assignment to a `let mut` local of a handle type has the same check at the assignment. -/
+#guard said (handleLets "  let mut b: Reg[UInt[8]] = r;\n  b = w;\n") ==
+  typedText "Reg[UInt[8]]" "a handle of `Wire[UInt[8]]`"
+#guard cost (handleLets "  let mut b: Reg[UInt[8]] = r;\n  b = w;\n") "M" (fuel := 164) ==
+  "S010 21:3"
+#guard cost (handleLets "  let mut b: Reg[UInt[8]] = r;\n  b = w;\n") "M" (fuel := 163) ==
+  "S015 21:3"
+#guard said (handleLets "  let mut b: Reg[UInt[8]] = r;\n  b = o;\n") == ownText
+
+/-!
+A handle at an argument, a `mut` actual, a `push` element, or a field of a constructor is `S010`
+at the call until #278 (section 6.2).
+-/
+def laterText : String :=
+  "the handle type `Reg[UInt[8]]` is not supported here yet; use it in a typed `let`, or pass " ++
+    "the data value, for example `read(h)`"
+#guard said (handleLets "  let a = g(r);\n") == laterText
+#guard cost (handleLets "  let a = g(r);\n") "M" (fuel := 163) == "S010 20:11"
+#guard cost (handleLets "  let a = g(r);\n") "M" (fuel := 162) == "S015 20:11"
+#guard said (handleLets "  let mut b: Reg[UInt[8]] = r;\n  let a = h(b);\n") == laterText
+#guard cost (handleLets "  let mut b: Reg[UInt[8]] = r;\n  let a = h(b);\n") "M" (fuel := 176) ==
+  "S010 21:11"
+#guard cost (handleLets "  let mut b: Reg[UInt[8]] = r;\n  let a = h(b);\n") "M" (fuel := 175) ==
+  "S015 21:11"
+#guard said (handleLets "  let mut xs = list(Reg[UInt[8]]);\n  xs.push(r);\n") == laterText
+#guard cost (handleLets "  let mut xs = list(Reg[UInt[8]]);\n  xs.push(r);\n") "M"
+  (fuel := 169) == "S010 21:3"
+#guard cost (handleLets "  let mut xs = list(Reg[UInt[8]]);\n  xs.push(r);\n") "M"
+  (fuel := 168) == "S015 21:11"
+#guard said (handleLets "  let a = S(r);\n") == laterText
+#guard cost (handleLets "  let a = S(r);\n") "M" (fuel := 172) == "S010 20:11"
+#guard cost (handleLets "  let a = S(r);\n") "M" (fuel := 171) == "S015 20:11"
+
+/-! A handle as a module argument is `S011` before its typed use at a handle type (5.3). -/
+#guard cost ("module C(comptime t: Reg[UInt[8]]) {\n}\n" ++
+  memBody "  reg r: UInt[8] = 0;\n  r := r;\n  let h = r;\n  instance u = C(h);\n") "M" ==
+  "S011 7:3"
+
 end Silicon.Source.Test.Elab

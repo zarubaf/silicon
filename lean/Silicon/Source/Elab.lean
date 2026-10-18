@@ -285,7 +285,7 @@ def target (p : Pos) (e : Resolve.Expr) : EM Target := do
     | _ => bad
   | .field _ (.name _ _ (.local id)) f =>
     match ← slot id with
-    | some ⟨_, _, .handle (.inst k path iface)⟩ =>
+    | some ⟨_, _, .handle (.inst k path iface _)⟩ =>
       match (← readThe Ctx).field f.pos >>= (iface.ports[·]?) with
       | some q =>
         if q.input then return .child k path q
@@ -432,15 +432,18 @@ mutual
           bindTarget p t (← sinkValue p ty (← copyUse p ty o.ref o.value))
         | .inst p u _ i xs => do
           let tvs ← arguments (eval n) (typeExpr n) p i xs
-          if let some (.module _ m _ ds _) := (← read).items[i]? then
-            if (← get).work.body.domain.isNone && !ds.isEmpty then
-              fail .S017 p s!"a combinational module has no clocked child `{m.name}`"
+          let some (.module _ m _ ds _) := (← read).items[i]?
+            | fail .S010 p "an instance needs a module"
+          if (← get).work.body.domain.isNone && !ds.isEmpty then
+            fail .S017 p s!"a combinational module has no clocked child `{m.name}`"
           let (c, _) ← instantiate n p i tvs
           let path ← fresh u.id u.name.name
           let k := (← get).work.body.children.size
           modifyBody fun b => { b with children := b.children.push ⟨path, c, p, u.name.name⟩ }
           modify fun s => { s with work.bound := s.work.bound.push 0 }
-          bindLocal u.id ⟨none, false, .handle (.inst k path c)⟩
+          -- The converted arguments paid for their sizes, so the type adds no charge.
+          let t := Ty.inst i m.name (tvs.map (·.2)).toArray
+          bindLocal u.id ⟨none, false, .handle (.inst k path c t)⟩
         | .ctIf p c yes no => do
           if ← test p (← need c (← eval n c)).value then block n p yes
           else if let some ss := no then block n p ss
