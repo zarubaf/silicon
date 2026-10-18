@@ -246,6 +246,39 @@ is `S011` at its statement (section 9.4).
 #guard out ("fn g() -> Int {\n    reg r: UInt[8] = 0;\n    return 1;\n}\n" ++
   "comptime fn cf() -> Int {\n    return g();\n}") "cf()" == "S011 2:5"
 
+/-!
+The expression of `eval` belongs to no instantiation, so it runs in the static mode of the `eval`
+command (section 9.4). Each declaration and each `:=` that it reaches is `S011` at the statement,
+with the text "Hardware in `eval`", before the `S017` of a combinational module.
+-/
+def evalHw : String :=
+  "fn w() -> Int {\n    wire q: UInt[8];\n    q := 1;\n    return 1;\n}\n" ++
+  "fn r() -> Int {\n    reg q: UInt[8] = 0;\n    return 1;\n}\n" ++
+  "fn m() -> Int {\n    mem q: [UInt[8]; 4];\n    return 1;\n}\n" ++
+  "fn i() -> Int {\n    instance u = C();\n    return 1;\n}\n" ++
+  "fn outer() -> Int {\n    return w();\n}\n" ++
+  "comptime fn cw() -> Int {\n    return w();\n}\n" ++
+  "module C() domains() {\n}\n"
+def evalSaid (src expr : String) : String :=
+  match Cli.evalText {} src expr with
+  | .ok _ => "ok"
+  | .error e => e.msg
+def evalHwText (k h : String) : String :=
+  s!"the `eval` command makes no hardware, but its expression reaches this {k} in `{h}`; " ++
+    s!"evaluate an expression that makes no hardware, or elaborate a module that calls `{h}`"
+#guard out evalHw "w()" == "S011 2:5"
+#guard out evalHw "outer()" == "S011 2:5"
+#guard out evalHw "r()" == "S011 7:5"
+#guard out evalHw "m()" == "S011 11:5"
+#guard out evalHw "i()" == "S011 15:5"
+#guard out evalHw "cw()" == "S011 2:5"
+#guard evalSaid evalHw "w()" == evalHwText "wire" "w"
+#guard evalSaid evalHw "outer()" == evalHwText "wire" "w"
+#guard evalSaid evalHw "r()" == evalHwText "register" "r"
+#guard evalSaid evalHw "m()" == evalHwText "memory" "m"
+#guard evalSaid evalHw "i()" == evalHwText "instance" "i"
+#guard evalSaid evalHw "cw()" == evalHwText "wire" "w"
+
 /-! Constants evaluate once. A constant that depends on itself is `S019` at the use. -/
 def consts : String :=
   "const A: Nat = 2;\n" ++
