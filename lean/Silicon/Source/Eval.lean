@@ -1256,19 +1256,21 @@ def writeBack (p : Pos) (outs : List (Place × Val)) : M Unit := do
 Binds the actual `a` to the formal `q` of the type `t` in the frame of the callee (section 9.1).
 A value charges its copy, then its typed use. It is static in a `comptime fn` and at a `comptime`
 parameter. A place charges the copy of its part, and its type is exactly `t`, else `S010` at the
-call `p`. It is static in a `comptime fn`. Its formal is a mutable local.
+call `p`. It is static in a `comptime fn`. Its formal is a mutable local. A handle type is
+`S011` at a static position (`staticHandle`), and `S010` elsewhere until #278 (`laterHandle`).
 -/
 def copyIn (p : Pos) (c : Bool) (q : Resolve.Param) (t : Ty) : Actual → M Unit
   | .value v => do
     let x ← if c || q.mode == .comptime then do
         charge p v.size
-        laterHandle p t
+        let sp := if c then "an argument of a comptime fn" else "a comptime parameter"
+        staticHandle p sp t
         pure (.static (← conform p t (← static p (← settle p t v))))
       else copyUse p t true v
     bindLocal q.name.id ⟨some t, false, ← named p q.name.id q.name.name.name x⟩
   | .place pl => do
     charge p pl.part.size
-    laterHandle p t
+    if c then staticHandle p "an argument of a comptime fn" t else laterHandle p t
     let pt := pl.ty <|> pl.part.ty?
     unless pt.any (·.same t) do
       let u := match pt with | some u => u.text | none => pl.part.text
@@ -1517,13 +1519,14 @@ evaluates the type of a parameter, so the type of a later parameter can name an 
 argument settles, is static, and conforms to its parameter type. Then its recursive size charges,
 before the next parameter type evaluates, and the converted value binds the parameter name. It
 gives each parameter type with its converted value. The caller sets the item scope and the
-frame, and it checks the counts.
+frame, and it checks the counts. `s` names the static position for the text of a handle type
+(`staticHandle`).
 -/
-def bindParams (ty : Resolve.TypeExpr → M Ty) (p : Pos) (ps : List Resolve.Param)
+def bindParams (ty : Resolve.TypeExpr → M Ty) (p : Pos) (s : String) (ps : List Resolve.Param)
     (args : List Val) : M (List (Ty × Value)) :=
   (ps.zip args).mapM fun (q, v) => do
     let t ← ty q.ty
-    laterHandle p t
+    staticHandle p s t
     let w ← conform p t (← static p (← settle p t v))
     charge p w.size
     bindLocal q.name.id ⟨some t, false, .static w⟩
@@ -1552,7 +1555,7 @@ def arguments (ev : Resolve.Expr → M (Option Out)) (ty : Resolve.TypeExpr → 
     | fail .S010 p "an instance needs a module"
   nested p <| inFrame none <|
       withReader (fun c => { c with item := i, frame := ⟨none, 0⟩ }) do
-    bindParams ty p ps (os.map (·.1))
+    bindParams ty p "a module argument" ps (os.map (·.1))
 
 /-!
 The use `Instance[M, args]` at `p` of the module item `i` with the arguments `xs` after `M`
@@ -1588,7 +1591,7 @@ def specOf (ty : Resolve.TypeExpr → M Ty) (p : Pos) (i : Nat) (x : Ident)
   let work := nested p <| inFrame none <|
       withReader (fun c => { c with item := i, frame := ⟨none, 0⟩ }) do
     let keys ← withReader (fun c => { c with binding := i :: c.binding }) <|
-      bindParams ty p ps args
+      bindParams ty p "a comptime parameter" ps args
     specialize p x.name i pre (keys.map (·.2)) (fs.mapM fun f => return (f.name.name, ← ty f.ty))
   if pre then atUse p work else work
 
@@ -2414,7 +2417,7 @@ mutual
           let t ← typeExpr n ty
           let o ← need v (← eval n v)
           copy cp o
-          laterHandle cp t
+          staticHandle cp "a const" t
           conform cp t (← static cp (← settle cp t o.value))
         return ⟨.static c, true, none⟩
       | some (.alias _ _ ty) => do

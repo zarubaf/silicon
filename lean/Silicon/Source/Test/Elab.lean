@@ -2109,6 +2109,18 @@ def laterText : String :=
 #guard cost (handleLets "  let a = S(r);\n") "M" (fuel := 172) == "S010 20:11"
 #guard cost (handleLets "  let a = S(r);\n") "M" (fuel := 171) == "S015 20:11"
 
+/-!
+A module parameter of a handle type is `S011` at the `instance` statement (section 5.1): a static
+position takes no handle. The check follows the parameter type, so one unit less stops there.
+-/
+def staticInst : String :=
+  "module C(comptime t: Reg[UInt[8]]) {\n}\n" ++ memBody "  instance u = C(5);\n"
+#guard said staticInst ==
+  "a module argument takes only static values, so its type cannot be the handle type " ++
+    "`Reg[UInt[8]]`; use a data type, for example `UInt[8]`"
+#guard cost staticInst "M" (fuel := 41) == "S011 4:3"
+#guard cost staticInst "M" (fuel := 40) == "S015 1:22"
+
 /-! A handle as a module argument is `S011` before its typed use at a handle type (5.3). -/
 #guard cost ("module C(comptime t: Reg[UInt[8]]) {\n}\n" ++
   memBody "  reg r: UInt[8] = 0;\n  r := r;\n  let h = r;\n  instance u = C(h);\n") "M" ==

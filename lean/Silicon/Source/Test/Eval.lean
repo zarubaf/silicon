@@ -3614,8 +3614,7 @@ def handleText (v : String) : String :=
 /-!
 Each other typed use at a handle type is `S010` until #278, after the copy (section 5.4). A
 `return` has it at the statement. An argument, a `mut` actual, a `push` element, and a field of a
-constructor have it at the call. A constant and a module argument have it at the start of the
-node.
+constructor have it at the call.
 -/
 def laterText : String :=
   "the handle type `Reg[Bool]` is not supported here yet; use it in a typed `let`, or pass the " ++
@@ -3624,9 +3623,6 @@ def laterText : String :=
 #guard out "fn f() -> Reg[Bool] { return true; }" "f()" 11 == "S015 1:23"
 #guard said "fn g(x: Reg[Bool]) -> Int { return 0; }" "g(true)" 10 == s!"S010 1:1 {laterText}"
 #guard out "fn g(x: Reg[Bool]) -> Int { return 0; }" "g(true)" 9 == "S015 1:1"
-#guard said "fn g(comptime x: Reg[Bool]) -> Int { return 0; }" "g(true)" 10 ==
-  s!"S010 1:1 {laterText}"
-#guard out "fn g(comptime x: Reg[Bool]) -> Int { return 0; }" "g(true)" 9 == "S015 1:1"
 def mutHandle : String :=
   "fn h(mut x: Reg[Bool]) -> Int { return 0; }\nfn f() -> Int { let mut a = true; return h(a); }"
 #guard said mutHandle "f()" 16 == s!"S010 2:42 {laterText}"
@@ -3637,11 +3633,28 @@ def pushHandle : String :=
 #guard out pushHandle "f()" 19 == "S015 1:55"
 #guard said "struct S { a: Reg[Bool] }" "S(true)" 19 == s!"S010 1:1 {laterText}"
 #guard out "struct S { a: Reg[Bool] }" "S(true)" 18 == "S015 1:1"
-#guard said "const K: Reg[Bool] = true;" "K" 8 == s!"S010 1:1 {laterText}"
+
+/-!
+A static position takes no handle, so a handle type there is `S011` after the copy (section 5.1).
+The text names the position. A `comptime` parameter and an argument of a `comptime fn` have it at
+the call. A constant has it at its item, and a module or a struct argument at the start of the use.
+-/
+def staticText (s : String) : String :=
+  s!"{s} takes only static values, so its type cannot be the handle type `Reg[Bool]`; use a " ++
+    "data type, for example `UInt[8]`"
+#guard said "fn g(comptime x: Reg[Bool]) -> Int { return 0; }" "g(true)" 10 ==
+  s!"S011 1:1 {staticText "a comptime parameter"}"
+#guard out "fn g(comptime x: Reg[Bool]) -> Int { return 0; }" "g(true)" 9 == "S015 1:1"
+#guard said "comptime fn g(x: Reg[Bool]) -> Int { return 0; }" "g(true)" 10 ==
+  s!"S011 1:1 {staticText "an argument of a comptime fn"}"
+#guard out "comptime fn g(x: Reg[Bool]) -> Int { return 0; }" "g(true)" 9 == "S015 1:1"
+#guard said "const K: Reg[Bool] = true;" "K" 8 == s!"S011 1:1 {staticText "a const"}"
 #guard out "const K: Reg[Bool] = true;" "K" 7 == "S015 1:22"
 #guard said "module C(comptime t: Reg[Bool]) {\n}" "Instance[C, true]" 9 ==
-  s!"S010 1:1 {laterText}"
+  s!"S011 1:1 {staticText "a module argument"}"
 #guard out "module C(comptime t: Reg[Bool]) {\n}" "Instance[C, true]" 8 == "S015 1:22"
+#guard msg "struct P(comptime t: Reg[Bool]) { a: Bool }" "P[true]" ==
+  staticText "a comptime parameter"
 
 /-!
 `read` takes a register or a wire (section 5.4). A value that is not a handle is `S010` at the
