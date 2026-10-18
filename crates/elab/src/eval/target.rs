@@ -39,10 +39,74 @@ impl Evaluator<'_> {
             let out = self.eval(root)?;
             need(root, out)?
         };
-        for step in &steps {
-            cur = self.target_step(e.pos(), cur, step)?;
+        let mut done = 0;
+        while done < steps.len() {
+            let (out, taken) = self.target_run(cur, steps.get(done..).unwrap_or_default())?;
+            cur = out;
+            done += taken;
+            if let Some(step) = steps.get(done) {
+                cur = self.target_step(e.pos(), cur, step)?;
+                done += 1;
+            }
         }
         Ok(cur)
+    }
+
+    /// The longest run of steps of `steps` through containers of a type with the handle flag,
+    /// from the reference `base`: the part where the run ends, and the number of steps taken. The
+    /// type of each base decides its check, so the run reads no node while the indices evaluate.
+    /// Their steps then walk the path of `base` from the root once (`followed`), and the path
+    /// does not grow again at each step. The root is parked for the whole run, so an index that
+    /// changes it cannot change what the steps select. A step that fails comes after the walk of
+    /// the steps before it, as in the order of Lean.
+    fn target_run(&mut self, base: Out, steps: &[Sel<'_>]) -> Res<(Out, usize)> {
+        let Out::Ref(r) = &base else {
+            return Ok((base, 0));
+        };
+        let Seen::Agg(a) = self.store.seen(&base) else {
+            return Ok((base, 0));
+        };
+        let Some(mut ty) = a.stored_ty().filter(|t| t.holds_handles()) else {
+            return Ok((base, 0));
+        };
+        let root = r.root;
+        let local = matches!(root, Root::Local(..));
+        let cursor = local.then(|| r.clone());
+        let at = self.store.park(base);
+        if let Some(r) = cursor {
+            self.store.cursor(at, r, true);
+        }
+        let mut keyed = Vec::with_capacity(steps.len());
+        let mut stop = None;
+        for step in steps {
+            if let Err(e) = self.charge(step.pos(), 1) {
+                stop = Some(e);
+                break;
+            }
+            let before = local.then(|| self.store.changes_of(root));
+            let key = match self.key(step) {
+                Ok(key) => key,
+                Err(e) => {
+                    stop = Some(e);
+                    break;
+                }
+            };
+            let next = self.held_step(Some(ty), &key);
+            self.store.cursor_step(at, next.map(|(number, _)| number));
+            keyed.push(key);
+            if before.is_some_and(|b| self.store.changes_of(root) != b) {
+                break;
+            }
+            match next.and_then(|(_, t)| t) {
+                Some(t) if t.holds_handles() && !self.tys.get(t).is_handle() => ty = t,
+                _ => break,
+            }
+        }
+        let out = self.followed(at, &keyed)?.out;
+        match stop {
+            Some(e) => Err(e),
+            None => Ok((out, keyed.len())),
+        }
     }
 
     /// The text "`:=` target kind" of section 6.2 for the selected value `a`.

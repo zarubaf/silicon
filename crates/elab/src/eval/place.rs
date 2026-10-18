@@ -45,8 +45,8 @@ pub(super) enum Key<'a> {
 }
 
 /// The result of the walk of a read (`follow`).
-struct Followed {
-    out: Out,
+pub(super) struct Followed {
+    pub(super) out: Out,
     /// The container after the last step is a type.
     at_type: bool,
     /// The last step is the index of a string.
@@ -587,7 +587,7 @@ impl Evaluator<'_> {
     /// The walk of the segment that waited at `at` along its evaluated steps `keyed`. A step that
     /// goes into a list a change reached splits the walk: the first steps walk the live local, and
     /// only the part where they end gets a copy of its old value.
-    fn followed(&mut self, at: usize, keyed: &[Key<'_>]) -> Res<Followed> {
+    pub(super) fn followed(&mut self, at: usize, keyed: &[Key<'_>]) -> Res<Followed> {
         let (parked, mark, split) = self.store.unpark(at);
         let followed = match split {
             Some(n) => {
@@ -626,7 +626,11 @@ impl Evaluator<'_> {
     /// The number of the step `key`, which the walk takes from a part of type `ty`, and the type
     /// of the part that follows. A dynamic index or a field without a number ends the path: no
     /// static part follows it.
-    fn held_step(&self, ty: Option<TyId>, key: &Key<'_>) -> Option<(usize, Option<TyId>)> {
+    pub(super) fn held_step(
+        &self,
+        ty: Option<TyId>,
+        key: &Key<'_>,
+    ) -> Option<(usize, Option<TyId>)> {
         let k = match key {
             Key::Index(_, _, Index::Number(k)) => Some(*k),
             Key::Index(..) => None,
