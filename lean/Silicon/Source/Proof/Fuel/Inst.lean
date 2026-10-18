@@ -45,7 +45,7 @@ theorem port_f (p : Pos) (input : Bool) (b : Binder) (t : Ty) :
 
 theorem bindTarget_f (p : Pos) (t : Elab.Target) (h : Agg) :
     Follows cap (Elab.bindTarget p t h) (Elab.bindTarget p t h) := by
-  unfold Elab.bindTarget; follows [modifyBody_f]
+  unfold Elab.bindTarget; follows [modifyBody_f, breach_f, second_f]
 
 theorem serialize_f (p : Pos) (m : String) (vs : List Value) :
     Follows cap (Elab.serialize p m vs) (Elab.serialize p m vs) := by

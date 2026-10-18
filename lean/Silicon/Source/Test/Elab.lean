@@ -1637,7 +1637,8 @@ def dAfter : String :=
     "error[S010]: 7:3: the message of `diagnostic` is a String, not Int\n", 1)
 -- An `S018` at the end of the body comes after the records of the body.
 #guard observeOut (dMod "  wire w: Bool;\n  diagnostic(\"a\", 1);\n") ==
-  ("(record 6 3 M () (string \"a\") (int 1))\nerror[S018]: 5:3: `w` has no binding\n", 1)
+  ("(record 6 3 M () (string \"a\") (int 1))\nerror[S018]: 5:3: `w` has no binding; " ++
+    "bind it with `w := ...;`, or remove its declaration\n", 1)
 -- An `S015` in the lowering keeps the records of the elaboration.
 def dLow : String := dMod "  diagnostic(\"a\", d);\n" |>.replace "  o := 0;\n" "  o := d +% 1;\n"
 #guard observeOut dLow 143 == ("(record 5 3 M () (string \"a\") (hw (uint 8)))\n", 0)
@@ -2977,5 +2978,75 @@ def staticUses : String :=
 #guard said staticUses == "ok"
 #guard ((names staticUses "M()" "M").filter (·.endsWith "$r")) ==
   ["g$0c$r", "g$2c$r", "g$3c$r", "g$4c$r"]
+
+/-!
+The `S018` texts of section 6.2. A second binding names the first binding and the declaration.
+When one `:=` of a function body runs again for one resource, the text names the function. A
+module body that runs one `:=` again in a `comptime for` keeps "Second binding". The port calls
+follow the same rule. On a tie of positions, the first recorded error wins.
+-/
+def s018 (body : String) (pre : String := "") : String :=
+  failure (pre ++ s!"module M() \{\n  input x: UInt[8];\n  input e: Bool;\n{body}}\n") 100000000
+def twice (r b d : String) : String :=
+  s!"`{r}` has a second binding; the first binding is at {b}, and the declaration is at {d}; " ++
+    "remove one of the two bindings"
+def twiceIn (r h : String) : String :=
+  s!"`{r}` has a second binding, because the `:=` in `{h}` runs again for it; run the `:=` " ++
+    s!"once for each resource, for example with one call of `{h}` for each"
+def portIn (r g h : String) : String :=
+  s!"the memory `{r}` has a second `{g}`, because the call in `{h}` runs again for it; run " ++
+    s!"the call once for each memory, for example with one call of `{h}` for each"
+def setFn : String :=
+  "fn set(r: Reg[UInt[8]], x: UInt[8]) -> UInt[8] {\n  r := x;\n  return x;\n}\n"
+#guard s018 "  output y: Bool;\n  y := true;\n  y := false;\n" ==
+  s!"S018 6:3 {twice "y" "5:3" "4:3"}"
+#guard s018 "  output y: Bool;\n  comptime for i in 0..2 {\n    y := true;\n  }\n" ==
+  s!"S018 6:5 {twice "y" "6:5" "4:3"}"
+#guard s018 ("  instance c = C();\n  c.p := x;\n  c.p := x;\n")
+    "module C() {\n  input p: UInt[8];\n}\n" ==
+  s!"S018 9:3 {twice "c.p" "8:3" "7:3"}"
+#guard s018 "  reg r: UInt[8] = 0;\n  r := x;\n  let a = set(r, x);\n" setFn ==
+  s!"S018 2:3 {twice "r" "9:3" "8:3"}"
+#guard s018 "  reg r: UInt[8] = 0;\n  let a = set(r, x);\n  let b = set(r, x);\n" setFn ==
+  s!"S018 2:3 {twiceIn "r" "set"}"
+-- The tie: `q` gets its second binding first, so its text wins at the one `:=` of `set`.
+#guard s018 ("  reg r: UInt[8] = 0;\n  reg q: UInt[8] = 0;\n  let a = set(r, x);\n" ++
+    "  let b = set(q, x);\n  let c = set(q, x);\n  let d = set(r, x);\n") setFn ==
+  s!"S018 2:3 {twiceIn "q" "set"}"
+def bindIn : String :=
+  "fn bind(u: Input[UInt[8]], x: UInt[8]) -> UInt[8] {\n  u := x;\n  return x;\n}\n" ++
+  "module C() {\n  input p: UInt[8];\n}\n"
+#guard s018 "  instance c = C();\n  let a = bind(c.p, x);\n  let b = bind(c.p, x);\n" bindIn ==
+  s!"S018 2:3 {twiceIn "c.p" "bind"}"
+#guard s018 "  wire w: UInt[8];\n" ==
+  "S018 4:3 `w` has no binding; bind it with `w := ...;`, or remove its declaration"
+#guard s018 "  instance c = C();\n" "module C() {\n  input p: UInt[8];\n}\n" ==
+  "S018 7:3 the input `p` of the instance `c` has no binding; bind it with `c.p := ...;`"
+#guard s018 "  mem m: [UInt[8]; 4];\n" ==
+  "S018 4:3 the memory `m` has no `read_port`; call `read_port` on it once, or remove the memory"
+#guard s018 "  mem m: [UInt[8]; 4];\n  let r = read_port(m, 0, e);\n" ==
+  "S018 4:3 the memory `m` has no `write_port`; call `write_port` on it once, or remove the " ++
+    "memory"
+def memRw : String :=
+  "  mem m: [UInt[8]; 4];\n  let r = read_port(m, 0, e);\n  write_port(m, 0, x, e);\n"
+#guard s018 (memRw ++ "  let q = read_port(m, 1, e);\n") ==
+  "S018 7:11 the memory `m` has a second `read_port`; the first call is at 5:11; call " ++
+    "`read_port` once and keep its response in a `let`"
+#guard s018 (memRw ++ "  write_port(m, 1, x, e);\n") ==
+  "S018 7:3 the memory `m` has a second `write_port`; the first call is at 6:3; make one call, " ++
+    "and select its address, data, and enable with a hardware `if`"
+def memFns : String :=
+  "fn rd(m: Mem[UInt[8], 4], e: Bool) -> UInt[8] {\n  return read_port(m, 0, e).data;\n}\n" ++
+  "fn wr(m: Mem[UInt[8], 4], x: UInt[8], e: Bool) -> UInt[8] {\n" ++
+  "  write_port(m, 0, x, e);\n  return x;\n}\n"
+#guard s018 (memRw ++ "  let q = rd(m, e);\n") memFns ==
+  "S018 2:10 the memory `m` has a second `read_port`; the first call is at 12:11; call " ++
+    "`read_port` once and keep its response in a `let`"
+#guard s018 ("  mem m: [UInt[8]; 4];\n  let a = rd(m, e);\n  let b = rd(m, e);\n" ++
+    "  write_port(m, 0, x, e);\n") memFns ==
+  s!"S018 2:10 {portIn "m" "read_port" "rd"}"
+#guard s018 ("  mem m: [UInt[8]; 4];\n  let r = read_port(m, 0, e);\n  let a = wr(m, x, e);\n" ++
+    "  let b = wr(m, x, e);\n") memFns ==
+  s!"S018 5:3 {portIn "m" "write_port" "wr"}"
 
 end Silicon.Source.Test.Elab

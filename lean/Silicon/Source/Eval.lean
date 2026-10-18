@@ -1774,6 +1774,7 @@ has the size 1. The first argument is a raw context, so a memory is never read. 
 effect rule (`S016`), the typed uses in the order of the arguments, and the count of the call.
 A second call of one kind runs the same steps and charges, and it gives the same response. It
 keeps the first request and records its `S018` at the call, which waits for the end of the body.
+The first call keeps its position for the text (section 6.2).
 The response of `read_port` is a record of `ReadResponse[T]`: `data` refers to the word of the
 memory at the offset 0, and `valid` refers to `m$0rvalid` (section 7.6). It charges the zero
 size of its type before it exists, so it never walks the word. `write_port` gives `()`.
@@ -1785,14 +1786,20 @@ def portCall (p : Pos) (g : String) (h : PrimFn) (vs : List Val) (use : Ty → M
     | fail .S010 p s!"`{g}` needs a memory, not {(vs.head?.map Val.text).getD "nothing"}"
   if let some gd := (← read).guard then fail .S016 p (gd.effect g)
   let a := Ty.uint (addrWidth k)
-  let second (m : Mem) : Mem :=
-    { m with dup := earlier m.dup ⟨.S018, p, s!"a second `{g}` of the memory `{m.name}`"⟩ }
+  let second (w : Bool) (first : Mem → Option Pos) : M Bool := do
+    let some m := (← get).naming.mems[id]? | return false
+    let some b := first m | return false
+    Elab.breach p <| match ← Elab.again p b with
+      | some i => .portIn m.name w i
+      | none => .port m.name w b
+    return true
   match h, rest with
   | .readPort, [x, e] =>
     let addr ← requestPart p a x
     let en ← requestPart p .bool e
-    modify fun s => { s with naming.mems := s.naming.mems.modify id fun m =>
-      if m.read.isSome then second m else { m with read := some (addr, en) } }
+    unless ← second false (·.readAt) do
+      modify fun s => { s with naming.mems := s.naming.mems.modify id fun m =>
+        { m with read := some (addr, en), readAt := some p } }
     let r ← use t
     bounded p r.zeroDepth
     charge p r.info.zeroSize
@@ -1804,8 +1811,9 @@ def portCall (p : Pos) (g : String) (h : PrimFn) (vs : List Val) (use : Ty → M
     let addr ← requestPart p a x
     let d ← requestPart p t y
     let en ← requestPart p .bool e
-    modify fun s => { s with naming.mems := s.naming.mems.modify id fun m =>
-      if m.write.isSome then second m else { m with write := some (addr, d, en) } }
+    unless ← second true (·.writeAt) do
+      modify fun s => { s with naming.mems := s.naming.mems.modify id fun m =>
+        { m with write := some (addr, d, en), writeAt := some p } }
     return some ⟨.static .unit, false, none⟩
   | _, vs => fail .S010 p s!"`{g}` does not accept {vs.map Val.text}"
 
