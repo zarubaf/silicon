@@ -1,0 +1,10 @@
+// S011: a parameter of the type `[Reg[UInt[8]]; 2]` has a type that holds a handle type, so it is no static position
+// either. The check reads the handle flag of the type.
+// TOP M()
+module C(comptime p: [Reg[UInt[8]]; 2]) {
+}
+module M() {
+    // expected-error S011 @+2
+    // expected-message: a module argument takes only static values, so its type cannot be `[Reg[UInt[8]]; 2]`, a type that holds a handle type; use a data type, for example `UInt[8]`
+    instance u = C([]);
+}

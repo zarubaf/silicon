@@ -1,0 +1,12 @@
+// S011: a module argument takes only static values, so a register is no argument. The text names the kind of the handle.
+// TOP M()
+module C(comptime p: UInt[8]) {
+}
+module M() {
+    reg r: UInt[8] = 0;
+    r := 1;
+    let a = r;
+    // expected-error S011 @+2
+    // expected-message: a module argument holds the register `r`, but it takes only static values; pass the data through a port, or use it in the module that declares it
+    instance u = C(a);
+}

@@ -17,17 +17,13 @@ lean | S011 Static part of a `match` | 311
 rust | S011 Static part of a `match` | 311
 lean | S011 Handle at a static position | 278
 rust | S011 Handle at a static position | 278
-pin | S011 Handle at a static position | 278
 lean | S010 Record of handles as data | 278
 rust | S010 Record of handles as data | 278
 lean | S011 Static handle type | 278
 rust | S011 Static handle type | 278
-pin | S011 Static handle type | 278
 lean | S011 Handles at a static position | 278
 rust | S011 Handles at a static position | 278
-pin | S011 Handles at a static position | 278
 rust | S011 Domain at a static position | 278
-pin | S011 Domain at a static position | 278
 lean | S010 List of handles as data | 278
 rust | S010 List of handles as data | 278
 lean | S010 Handles as data | 278

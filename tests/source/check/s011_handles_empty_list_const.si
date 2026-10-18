@@ -1,0 +1,9 @@
+// S011: a `const` takes only static values. An empty list of registers has the handle flag, so it is no static value
+// either. The check reads the type and walks no value.
+// TOP M()
+// expected-error S011 @+2
+// expected-message: a const takes only static values, but a value of `List[Reg[UInt[8]]]` can hold handles; pass the data through a port, or use the handles in the module that declares them
+const XS: List[Reg[UInt[8]]] = list(Reg[UInt[8]]);
+module M() {
+    let q = XS;
+}

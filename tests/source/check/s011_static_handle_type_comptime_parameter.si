@@ -5,6 +5,6 @@ struct P(comptime p: Wire[UInt[8]]) {
 }
 module M() {
     // expected-error S011 @+2
-    // expected-message: a comptime parameter takes only static values, so its type cannot be the handle type `Wire[UInt[8]]`; use a data type, for example `UInt[8]`
+    // expected-message: a comptime parameter takes only static values, so its type cannot be `Wire[UInt[8]]`, a type that holds a handle type; use a data type, for example `UInt[8]`
     type S = P[3];
 }

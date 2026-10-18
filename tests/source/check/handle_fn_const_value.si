@@ -1,0 +1,14 @@
+// A function type does not carry the handle flag. A `const` that holds the function value `f` is thus accepted, although
+// `f` has a parameter of a handle type.
+// TOP M()
+fn f(r: Reg[UInt[8]]) -> UInt[8] {
+    return read(r);
+}
+const G: fn (Reg[UInt[8]]) -> UInt[8] = f;
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    reg r: UInt[8] = 0;
+    r := x;
+    o := G(r);
+}
