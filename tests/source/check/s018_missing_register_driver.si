@@ -2,7 +2,8 @@
 // TOP M()
 module M() {
     output y: Bool;
-    // expected-error S018 @+1
+    // expected-error S018 @+2
+    // expected-message: `r` has no binding; bind it with `r := ...;`, or remove its declaration
     reg r: Bool = false;
     y := r;
 }

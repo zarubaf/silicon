@@ -9,7 +9,8 @@ module M() {
     let n = m;
     let r = m.read_port(a, e);
     m.write_port(a, d, e);
-    // expected-error S018 @+1
+    // expected-error S018 @+2
+    // expected-message: the memory `m` has a second `write_port`; the first call is at 11:5; make one call, and select its address, data, and enable with a hardware `if`
     n.write_port(a, d, e);
     o := r.data;
 }

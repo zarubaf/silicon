@@ -9,7 +9,8 @@ module M() {
     let n = m;
     let r = m.read_port(a, e);
     m.write_port(a, d, e);
-    // expected-error S018 @+1
+    // expected-error S018 @+2
+    // expected-message: the memory `m` has a second `read_port`; the first call is at 10:13; call `read_port` once and keep its response in a `let`
     let s = n.read_port(a, e);
     o := r.data;
 }

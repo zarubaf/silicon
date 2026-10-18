@@ -5,7 +5,8 @@ module M() {
     input e: Bool;
     input d: UInt[8];
     output o: UInt[8];
-    // expected-error S018 @+1
+    // expected-error S018 @+2
+    // expected-message: the memory `m` has no `read_port`; call `read_port` on it once, or remove the memory
     mem m: [UInt[8]; 4];
     m.write_port(a, d, e);
     o := d;

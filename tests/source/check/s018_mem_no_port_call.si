@@ -1,6 +1,7 @@
 // S018: a memory without a read port and a write port.
 // TOP M()
 module M() {
-    // expected-error S018 @+1
+    // expected-error S018 @+2
+    // expected-message: the memory `m` has no `read_port`; call `read_port` on it once, or remove the memory
     mem m: [UInt[8]; 4];
 }

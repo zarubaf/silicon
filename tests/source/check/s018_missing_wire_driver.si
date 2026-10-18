@@ -2,7 +2,8 @@
 // TOP M()
 module M() {
     output y: Bool;
-    // expected-error S018 @+1
+    // expected-error S018 @+2
+    // expected-message: `w` has no binding; bind it with `w := ...;`, or remove its declaration
     wire w: Bool;
     y := w;
 }

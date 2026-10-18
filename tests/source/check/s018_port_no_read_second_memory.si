@@ -9,7 +9,8 @@ module M() {
     let r = m.read_port(a, e);
     m.write_port(a, d, e);
     input b: UInt[1];
-    // expected-error S018 @+1
+    // expected-error S018 @+2
+    // expected-message: the memory `n` has no `read_port`; call `read_port` on it once, or remove the memory
     mem n: [UInt[8]; 2];
     n.write_port(b, d, e);
     o := r.data;
