@@ -1,0 +1,9 @@
+// S011: a memory depth is static, and a value computed from a port is hardware.
+// TOP M()
+module M() {
+    input a: UInt[4];
+    let d = a +% 1;
+    // expected-error S011 @+2
+    // expected-message: a memory depth is static, not a value of `UInt[4]`; compute the depth from static values
+    mem m: [UInt[8]; d];
+}
