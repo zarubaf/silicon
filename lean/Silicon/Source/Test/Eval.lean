@@ -367,12 +367,12 @@ def zeroLimit : String := s!"S015 1:1 {Eval.zeroLimitText}"
   "(array (array (array unit 2305843009213693952) 0) " ++
   "((array (array unit 2305843009213693952) ()) (array (array unit 2305843009213693952) ())))"
 #guard Eval.arrayBits (Meta.finite 1) (2 ^ 32 - 1) == 32 + 2
-#guard Eval.arrayBits ⟨2 ^ 70, 1, 1, 1, true, false, false⟩ 1 == 71 + 1
+#guard Eval.arrayBits ⟨2 ^ 70, 1, 1, 1, true, false, false, false⟩ 1 == 71 + 1
 #guard Eval.arrayBits (Meta.finite 8) 4 == 3 + 4
 #guard Eval.arrayBits Meta.unit 4 == 3 + 2
 #guard Eval.metaBits (Meta.finite 8) == 4 && Eval.metaBits Meta.static == 1
 #guard Eval.sumBits [Meta.finite 8, Meta.finite 8] == 4 + 2 && Eval.sumBits [] == 0
-#guard Eval.sumBits [⟨2 ^ 70, 1, 1, 1, true, false, false⟩] == 71 + 1
+#guard Eval.sumBits [⟨2 ^ 70, 1, 1, 1, true, false, false, false⟩] == 71 + 1
 
 /-!
 A value that a type makes has a zero size of at most 2^32. A zero above it fails before its
@@ -641,14 +641,15 @@ of the sizes. The orderings take no container.
   "the depth 4 goes above the nesting depth 3; raise --depth to at least 4"
 
 /-!
-A container holds hardware elements (section 5.1). A handle as an element is `S010` at the
-element until slice 3. A hardware index is `S011` at the index.
+A container holds hardware elements and handles (section 5.1). An element is `raw`, so `[r]`
+holds the handle of `r`. A hardware index is `S011` at the index.
 -/
 def hw (body : String) : String :=
   "module M(comptime N: Nat) {\n  input x: UInt[8];\n  output y: UInt[8];\n" ++
   "  reg r: UInt[8] = 0;\n" ++ body ++ "\n  r := x;\n  y := r;\n}\n"
 #guard top (hw "  let t = (1, x);") "M(1)" == "total 146\nM$1 103\n"
-#guard top (hw "  let t = [r];") "M(1)" == "S010 5:12"
+#guard top (hw "  let t = [r];") "M(1)" == "total 138\nM$1 95\n"
+#guard top (hw "  let t = [r];") "M(1)" (fuel := 137) == "S015 1:1"
 #guard top (hw "  let h = x +% 1;\n  let u = [1, 2][h];") "M(1)" == "S011 6:18"
 #guard top (hw "  let h = x +% 1;\n  let u: [Int; h] = [1];") "M(1)" == "S011 6:16"
 #guard top (hw "  let u = x.0;") "M(1)" == "S010 5:11"
@@ -1815,10 +1816,36 @@ def mixed : Eval.Agg :=
   .mkTuple #[.bool, .int, .array (.uint 8) 4] #[boolLeaf, .static (.int 3), arrayRef]
 #guard mixed.size == 8 && mixed.depth == 3
 #guard (Eval.Val.agg mixed).text == "hardware (Bool, Int, [UInt[8]; 4])"
-#guard (Eval.Agg.mkRecord (.struct 0 "P" #[] ⟨8, 1, 2, 5, true, false, false⟩)
+#guard (Eval.Agg.mkRecord (.struct 0 "P" #[] ⟨8, 1, 2, 5, true, false, false, false⟩)
   #[boolLeaf]).depth == 6
 #guard match Eval.Agg.mkArray .int #[.static (.int 1), .static (.int 2)] with
   | .static v => v.serialize == "(array int ((int 1) (int 2)))"
+  | _ => false
+
+/-!
+A handle leaf has the size 1 and the depth 1, and it is not a hardware leaf (section 5.1). A
+container of a type with the handle flag stays a node, also when it is empty. Its type and the
+type of its leaf come from the stored types.
+-/
+def regLeaf : Eval.Agg := .handle (.res .reg 0 .bool ⟨"r", []⟩)
+def regs : Eval.Agg := .mkArray (.reg .bool) #[regLeaf, regLeaf]
+#guard regLeaf.size == 1 && regLeaf.depth == 1 && regLeaf.leaves == 0
+#guard regLeaf.ty? == some (.reg .bool) && (Eval.Val.handle (.res .reg 0 .bool ⟨"r", []⟩)).ty? ==
+  some (.reg .bool)
+#guard regs.size == 3 && regs.depth == 3 && regs.leaves == 0
+#guard regs.ty? == some (.array (.reg .bool) 2)
+#guard (Eval.Val.agg regs).text == "[Reg[Bool]; 2]" && !(Eval.Val.agg regs).hasHw
+#guard match Eval.Agg.mkArray (.reg .bool) #[] with
+  | .array n _ => n.size == 1 && n.depth == 3
+  | _ => false
+#guard match Eval.Agg.mkTuple #[.reg .bool, .bool] #[regLeaf, boolLeaf] with
+  | t@(.tuple n _) => n.leaves == 1 && (Eval.Val.agg t).hasHw
+  | _ => false
+#guard match Eval.Agg.mkList (.reg .bool) #[regLeaf] with
+  | .list n e _ => n.size == 2 && n.depth == 3 && e == .reg .bool
+  | _ => false
+#guard match Eval.Agg.mkList .bool #[.static (.bool true)] with
+  | .static v => v.serialize == "(list bool ((bool true)))"
   | _ => false
 
 /-!
@@ -2024,7 +2051,8 @@ mutual
     | .static v => v.serialize
     | .hw h => nameText h
     | .ref b _ => s!"ref {opText b.op}"
-    | .array _ ⟨xs⟩ | .tuple _ ⟨xs⟩ | .record _ ⟨xs⟩ => s!"[{aggTexts xs}]"
+    | .handle h => Eval.Handle.render h
+    | .array _ ⟨xs⟩ | .tuple _ ⟨xs⟩ | .record _ ⟨xs⟩ | .list _ _ ⟨xs⟩ => s!"[{aggTexts xs}]"
 
   def aggTexts : List Eval.Agg → String
     | [] => ""
@@ -2099,7 +2127,8 @@ reference part keeps its form and counts its zero size, here 5, in both sizes.
 /-! A record needs its own struct type, and it converts nothing. -/
 #guard typedUse tupleAliases "Q" (fun t => .agg (.mkRecord t #[boolLeaf])) 0 == "[b] 0"
 #guard typedUse tupleAliases "Q"
-  (fun _ => .agg (.mkRecord (.struct 5 "R" #[] ⟨1, 1, 2, 2, true, false, false⟩) #[boolLeaf])) 0 ==
+  (fun _ =>
+    .agg (.mkRecord (.struct 5 "R" #[] ⟨1, 1, 2, 2, true, false, false, false⟩) #[boolLeaf])) 0 ==
   "S010 1:1"
 
 /-!
@@ -3574,10 +3603,13 @@ parameter type of `M` nests one level at each use, so it ends with `S015` at a u
 /-!
 A pair with a handle type in a join charges the sum of the two sizes, then needs one type
 (section 5.4). `Reg[Bool]` has the size 2, so the join of two `List[Reg[Bool]]` charges 1 and
-then 4. Each `list(Reg[Bool])` costs 5 more than `list(Bool)`.
+then 4. Each `list(Reg[Bool])` costs 5 more than `list(Bool)`. An array of a type with the handle
+flag is not static (section 5.1), so `len` reads it, and `len` adds 2.
 -/
 #guard exact "" "[list(Bool), list(Bool)]" 15
-#guard exact "" "[list(Reg[Bool]), list(Reg[Bool])]" 29
+#guard exact "" "len([list(Reg[Bool]), list(Reg[Bool])])" 31
+#guard out "" "[list(Reg[Bool]), list(Reg[Bool])]" == "S011 1:1"
+#guard out "" "[list(Reg[Bool]), list(Reg[Bool])]" 28 == "S015 1:1"
 #guard out "" "list(Reg[Bool]) == list(Reg[Bool])" == "(bool true)"
 #guard exact "" "list(Reg[Bool]) == list(Reg[Bool])" 27
 #guard out "" "[list(Reg[Bool]), list(Wire[Bool])]" == "S010 1:1"
@@ -3590,7 +3622,7 @@ then 4. Each `list(Reg[Bool])` costs 5 more than `list(Bool)`.
 #guard msg "" "[list(Reg[Bool]), list(Bool)]" ==
   "`Reg[Bool]` and `Bool` have no common type; a handle type joins only with the same handle " ++
     "type, so give both sides one type"
-#guard exact handles "[list(Instance[C, 8, true]), list(Instance[C, 8, true])]" 49
+#guard exact handles "len([list(Instance[C, 8, true]), list(Instance[C, 8, true])])" 51
 #guard msg handles "[list(Instance[C, 8, true]), list(Instance[C, 9, true])]" ==
   "`Instance[C, 8, true]` and `Instance[C, 9, true]` have no common type; a handle type joins " ++
     "only with the same handle type, so give both sides one type"
@@ -3616,8 +3648,8 @@ def handleText (v : String) : String :=
 
 /-!
 Each other typed use at a handle type is `S010` until #278, after the copy (section 5.4). A
-`return` has it at the statement. An argument, a `mut` actual, a `push` element, and a field of a
-constructor have it at the call.
+`return` has it at the statement. An argument, a `mut` actual, and a `push` element have it at
+the call.
 -/
 def laterText : String :=
   "the handle type `Reg[Bool]` is not supported here yet; use it in a typed `let`, or pass the " ++
@@ -3634,8 +3666,25 @@ def pushHandle : String :=
   "fn f() -> Int { let mut xs = list(Reg[Bool]); xs.push(true); return 0; }"
 #guard said pushHandle "f()" 20 == s!"S010 1:47 {laterText}"
 #guard out pushHandle "f()" 19 == "S015 1:55"
-#guard said "struct S { a: Reg[Bool] }" "S(true)" 19 == s!"S010 1:1 {laterText}"
+
+/-!
+A field of a handle type is `raw` (section 9.2), so a value there gets the typed use at a handle
+type, at the call. An empty array of a type with the handle flag is not static (section 5.1), so
+`len` reads it, and a static position rejects it.
+-/
+#guard said "struct S { a: Reg[Bool] }" "S(true)" 19 ==
+  s!"S010 1:1 {handleText "a value of `Bool`"}"
 #guard out "struct S { a: Reg[Bool] }" "S(true)" 18 == "S015 1:1"
+#guard out "fn f() -> [Reg[Bool]; 0] { return []; }" "len(f())" == "(int 0)"
+#guard out "fn f() -> [Reg[Bool]; 0] { return []; }" "f()" 22 == "S011 1:1"
+#guard out "fn f() -> [Reg[Bool]; 0] { return []; }" "f()" 21 == "S015 1:28"
+/-! A static value converted to a type with the handle flag is a node too, also in a tuple. -/
+def emptyRegs : String := "fn f() -> [Reg[Bool]; 0] { let e: [Bool; 0] = []; return e; }"
+#guard exact emptyRegs "len(f())" 38
+#guard out emptyRegs "f()" == "S011 1:1"
+#guard out "fn f() -> ([Reg[Bool]; 0], Int) { let e: [Bool; 0] = []; return (e, 1); }" "f().0" ==
+  "S011 1:1"
+#guard out "fn f() -> [Bool; 0] { return []; }" "f()" == "(array bool ())"
 
 /-!
 A static position takes no handle, so a handle type there is `S011` after the copy (section 5.1).

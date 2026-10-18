@@ -216,121 +216,6 @@ def Base.sub (ps : Parts) (t : Ty) (k : Nat) (f : Field) : Base → Base
   | .out i q r => .out i q (f :: r)
   | .word m o => .word m (o + Ty.offset ps t k)
 
-/-!
-The stored numbers of a container node of an aggregate: its type, its size, its depth, and the
-number of its hardware leaves.
--/
-structure Node where
-  ty : Ty
-  size : Nat
-  depth : Nat
-  leaves : Nat
-  deriving Repr, Inhabited
-
-/-!
-A hardware aggregate (section 5.1): a tree with at least one hardware leaf. A `static` part
-holds no hardware leaf, and a `hw` part is a hardware value. A `ref` refers to a part of a port,
-a register, a wire, or a child output. Its type is `ty`, and it does not expand into its leaves.
-Each container node stores its type, its recursive size, its depth, and the number of its hardware
-leaves. Thus no charge walks the tree.
--/
-inductive Agg where
-  | static (v : Value)
-  | hw (h : Hw)
-  | ref (base : Base) (ty : Ty)
-  | array (node : Node) (elems : Array Agg)
-  | tuple (node : Node) (elems : Array Agg)
-  | record (node : Node) (elems : Array Agg)
-  deriving Repr, Inhabited
-
-/-!
-The recursive size (section 5.4). Each leaf of a reference has the size of a finite value of its
-type. Thus a reference has the zero size of its type, and the metadata gives it in one step.
--/
-def Agg.size : Agg → Nat
-  | .static v => v.size
-  | .hw h => h.size
-  | .ref _ t => t.info.zeroSize
-  | .array n _ | .tuple n _ | .record n _ => n.size
-
-/-! The depth (section 5.5). A reference has the depth of a value of its type. -/
-def Agg.depth : Agg → Nat
-  | .static v => v.depth
-  | .hw _ => 1
-  | .ref _ t => t.zeroDepth
-  | .array n _ | .tuple n _ | .record n _ => n.depth
-
-/-! The number of hardware leaves. Each leaf of a reference is a hardware leaf. -/
-def Agg.leaves : Agg → Nat
-  | .static _ => 0
-  | .hw _ => 1
-  | .ref _ t => t.info.leaves
-  | .array n _ | .tuple n _ | .record n _ => n.leaves
-
-def Agg.ty? : Agg → Option Ty
-  | .static v => v.ty?
-  | .hw h => some h.ty
-  | .ref _ t => some t
-  | .array n _ | .tuple n _ | .record n _ => some n.ty
-
-/-!
-A container node with the elements `xs` and the type `t`. When no element has a hardware leaf, it
-is a static value. The depth of the node also counts `d`: the depth of the element type of an
-array, of the struct type of a record, or 0. Each element is in its normal form
-(`normalize`), so a node has at least one hardware leaf.
--/
-def Agg.container (mk : Node → Array Agg → Agg) (static : Array Value → Value) (t : Ty) (d : Nat)
-    (xs : Array Agg) : Agg :=
-  let vs := xs.filterMap fun | .static v => some v | _ => none
-  if vs.size = xs.size then .static (static vs)
-  else
-    mk ⟨t, 1 + (xs.toList.map Agg.size).sum, 1 + xs.foldl (fun m x => max m x.depth) d,
-      (xs.toList.map Agg.leaves).sum⟩ xs
-
-def Agg.mkArray (e : Ty) (xs : Array Agg) : Agg :=
-  Agg.container .array (.array e) (.array e xs.size) e.depth xs
-
-def Agg.mkTuple (ts : Array Ty) (xs : Array Agg) : Agg :=
-  Agg.container .tuple .tuple (.tuple ts) 0 xs
-
-/-!
-The parts of a static enum value with the tag `x` of `w` bits and the payload `y` of `p` bits:
-`tag`, then `payload` when `p` is not 0 (section 5.1).
--/
-def Value.enumParts (w : Nat) (x : BitVec w) (p : Nat) (y : BitVec p) : Array Value :=
-  #[.uint w x] ++ if p = 0 then #[] else #[.uint p y]
-
-/-!
-The static enum value of the enum type `t` with the static parts `vs` (`Value.enumParts`). The
-parts of an enum always have this form, so the last case does not occur.
--/
-def Value.ofEnum (t : Ty) (vs : Array Value) : Value :=
-  match vs.toList with
-  | [.uint w x] => .enum t w x 0 0
-  | [.uint w x, .uint p y] => .enum t w x p y
-  | _ => .record t vs
-
-/-!
-A record node, or a hardware enum node when `t` is an enum type (section 5.1). An enum node with
-only static parts is the one static form of its value, a static enum value.
--/
-def Agg.mkRecord (t : Ty) (xs : Array Agg) : Agg :=
-  Agg.container .record (if t matches .enum .. then Value.ofEnum t else .record t) t t.depth xs
-
-/-! The text of the aggregate part `a` in a message. -/
-def Agg.text : Agg → String
-  | .static v => v.text
-  | .hw h => s!"hardware {h.ty.text}"
-  | a => s!"hardware {(a.ty?.map Ty.text).getD "a tuple"}"
-
-/-! The container node `a` with the new elements `xs`, in its normal form. -/
-def Agg.rebuild (a : Agg) (xs : Array Agg) : Agg :=
-  match a with
-  | .array { ty := .array e _, .. } _ => .mkArray e xs
-  | .tuple { ty := .tuple ts, .. } _ => .mkTuple ts xs
-  | .record n _ => .mkRecord n.ty xs
-  | a => a
-
 /-! A port of an instantiation, as its parent sees it. `sym` is the symbol of its name. -/
 structure Port where
   name : String
@@ -366,6 +251,207 @@ inductive Handle where
   | inst (id : Nat) (path : Path) (iface : Iface) (ty : Ty)
   | input (inst : Nat) (path : Path) (port : Port)
   | domain (name : String)
+
+/-! A handle shows its kind and its path. An interface has no `Repr`, so the derive cannot. -/
+instance : Repr Handle where
+  reprPrec
+    | .res _ _ _ p, _ | .mem _ p .., _ | .inst _ p .., _ | .input _ p _, _ => s!"handle {repr p}"
+    | .domain x, _ => s!"domain {x}"
+
+/-!
+The handle type of `h` (section 5.1). It comes from the stored types and the depth, with no
+charge. An own output and a domain have none.
+-/
+def Handle.ty? : Handle → Option Ty
+  | .res .reg _ t _ => some (.reg t)
+  | .res .wire _ t _ => some (.wire t)
+  | .res .output .. | .domain _ => none
+  | .mem _ _ w d => some (.mem w d)
+  | .inst _ _ _ t => some t
+  | .input _ _ q => some (.input q.ty)
+
+/-! The text of the handle `h` in a message, by its kind. -/
+def Handle.text : Handle → String
+  | .res .reg .. => "a register"
+  | .res .wire .. => "a wire"
+  | .res .output .. => "an output"
+  | .mem .. => "a memory"
+  | .inst .. => "an instance"
+  | .input .. => "an input of a child"
+  | .domain _ => "a domain"
+
+/-!
+The stored numbers of a container node of an aggregate: its type, its size, its depth, and the
+number of its hardware leaves.
+-/
+structure Node where
+  ty : Ty
+  size : Nat
+  depth : Nat
+  leaves : Nat
+  deriving Repr, Inhabited
+
+/-!
+An aggregate (section 5.1): a tree with at least one hardware leaf, or a container of a type with
+the handle flag. A `static` part holds no hardware leaf and no handle, and a `hw` part is a
+hardware value. A `ref` refers to a part of a port, a register, a wire, or a child output. Its
+type is `ty`, and it does not expand into its leaves. A `handle` is a handle leaf (slice 3b). A
+`list` is a list of the element type `elem` with the handle flag. Each container node stores its
+type, its recursive size, its depth, and the number of its hardware leaves. Thus no charge walks
+the tree.
+-/
+inductive Agg where
+  | static (v : Value)
+  | hw (h : Hw)
+  | ref (base : Base) (ty : Ty)
+  | handle (h : Handle)
+  | array (node : Node) (elems : Array Agg)
+  | tuple (node : Node) (elems : Array Agg)
+  | record (node : Node) (elems : Array Agg)
+  | list (node : Node) (elem : Ty) (elems : Array Agg)
+  deriving Repr, Inhabited
+
+/-!
+The recursive size (section 5.4). Each leaf of a reference has the size of a finite value of its
+type. Thus a reference has the zero size of its type, and the metadata gives it in one step. A
+handle has the size 1.
+-/
+def Agg.size : Agg → Nat
+  | .static v => v.size
+  | .hw h => h.size
+  | .ref _ t => t.info.zeroSize
+  | .handle _ => 1
+  | .array n _ | .tuple n _ | .record n _ | .list n .. => n.size
+
+/-!
+The depth (section 5.5). A reference has the depth of a value of its type, and a handle the
+depth 1.
+-/
+def Agg.depth : Agg → Nat
+  | .static v => v.depth
+  | .hw _ | .handle _ => 1
+  | .ref _ t => t.zeroDepth
+  | .array n _ | .tuple n _ | .record n _ | .list n .. => n.depth
+
+/-!
+The number of hardware leaves. Each leaf of a reference is a hardware leaf. A handle is not a
+hardware leaf.
+-/
+def Agg.leaves : Agg → Nat
+  | .static _ | .handle _ => 0
+  | .hw _ => 1
+  | .ref _ t => t.info.leaves
+  | .array n _ | .tuple n _ | .record n _ | .list n .. => n.leaves
+
+/-! The type of a part. A handle has its handle type (`Handle.ty?`). -/
+def Agg.ty? : Agg → Option Ty
+  | .static v => v.ty?
+  | .hw h => some h.ty
+  | .ref _ t => some t
+  | .handle h => h.ty?
+  | .array n _ | .tuple n _ | .record n _ | .list n .. => some n.ty
+
+/-!
+A container node with the elements `xs` and the type `t`. When `t` has no handle flag and no
+element has a hardware leaf, it is a static value. A node of a type with the handle flag stays a
+node, also without a hardware leaf or an element (section 5.1). The depth of the node also counts
+`d`. This is the depth of the element type of an array or a list, the depth of the struct type of
+a record, or 0. Each element is in its normal form (`normalize`).
+-/
+def Agg.container (mk : Node → Array Agg → Agg) (static : Array Value → Value) (t : Ty) (d : Nat)
+    (xs : Array Agg) : Agg :=
+  let vs := xs.filterMap fun | .static v => some v | _ => none
+  if !t.info.handles && vs.size = xs.size then .static (static vs)
+  else
+    mk ⟨t, 1 + (xs.toList.map Agg.size).sum, 1 + xs.foldl (fun m x => max m x.depth) d,
+      (xs.toList.map Agg.leaves).sum⟩ xs
+
+def Agg.mkArray (e : Ty) (xs : Array Agg) : Agg :=
+  Agg.container .array (.array e) (.array e xs.size) e.depth xs
+
+def Agg.mkTuple (ts : Array Ty) (xs : Array Agg) : Agg :=
+  Agg.container .tuple .tuple (.tuple ts) 0 xs
+
+/-! A list of the element type `e`. With the handle flag, it is a list node (section 5.1). -/
+def Agg.mkList (e : Ty) (xs : Array Agg) : Agg :=
+  Agg.container (fun n => .list n e) (.list e) (.list e) e.depth xs
+
+/-!
+The parts of a static enum value with the tag `x` of `w` bits and the payload `y` of `p` bits:
+`tag`, then `payload` when `p` is not 0 (section 5.1).
+-/
+def Value.enumParts (w : Nat) (x : BitVec w) (p : Nat) (y : BitVec p) : Array Value :=
+  #[.uint w x] ++ if p = 0 then #[] else #[.uint p y]
+
+/-!
+The static enum value of the enum type `t` with the static parts `vs` (`Value.enumParts`). The
+parts of an enum always have this form, so the last case does not occur.
+-/
+def Value.ofEnum (t : Ty) (vs : Array Value) : Value :=
+  match vs.toList with
+  | [.uint w x] => .enum t w x 0 0
+  | [.uint w x, .uint p y] => .enum t w x p y
+  | _ => .record t vs
+
+/-!
+A record node, or a hardware enum node when `t` is an enum type (section 5.1). An enum node with
+only static parts is the one static form of its value, a static enum value.
+-/
+def Agg.mkRecord (t : Ty) (xs : Array Agg) : Agg :=
+  Agg.container .record (if t matches .enum .. then Value.ofEnum t else .record t) t t.depth xs
+
+/-!
+The static value `v` in its normal form. A container of a type with the handle flag is a node,
+also when it holds no handle (section 5.1), for example `[]` converted to `[Reg[Bool]; 0]`. The
+conversion that made `v` paid for its size, so this walk has no charge.
+-/
+mutual
+  def Agg.ofStatic : Value → Agg
+    | v@(.array e ⟨xs⟩) =>
+      if e.info.handles then .mkArray e (Agg.ofStaticAll xs).toArray else .static v
+    | v@(.tuple ⟨xs⟩) =>
+      match Value.tyAll? xs with
+      | some ts =>
+        if (Ty.tuple ts.toArray).info.handles then .mkTuple ts.toArray (Agg.ofStaticAll xs).toArray
+        else .static v
+      | none => .static v
+    | v@(.record t ⟨xs⟩) =>
+      if t.info.handles then .mkRecord t (Agg.ofStaticAll xs).toArray else .static v
+    | v@(.list e ⟨xs⟩) =>
+      if e.info.handles then .mkList e (Agg.ofStaticAll xs).toArray else .static v
+    | v => .static v
+
+  def Agg.ofStaticAll : List Value → List Agg
+    | [] => []
+    | x :: xs => Agg.ofStatic x :: Agg.ofStaticAll xs
+end
+
+/-!
+The static value `v` after its typed use at `t`. Only a type with the handle flag can need a
+node (`Agg.ofStatic`).
+-/
+def Agg.typed (t : Ty) (v : Value) : Agg := if t.info.handles then .ofStatic v else .static v
+
+/-!
+The text of the aggregate part `a` in a message. A node without a hardware leaf names its type
+only, because it is not hardware.
+-/
+def Agg.text : Agg → String
+  | .static v => v.text
+  | .hw h => s!"hardware {h.ty.text}"
+  | .handle h => h.text
+  | a =>
+    let t := (a.ty?.map Ty.text).getD "a tuple"
+    if a.leaves = 0 then t else s!"hardware {t}"
+
+/-! The container node `a` with the new elements `xs`, in its normal form. -/
+def Agg.rebuild (a : Agg) (xs : Array Agg) : Agg :=
+  match a with
+  | .array { ty := .array e _, .. } _ => .mkArray e xs
+  | .tuple { ty := .tuple ts, .. } _ => .mkTuple ts xs
+  | .record n _ => .mkRecord n.ty xs
+  | .list _ e _ => .mkList e xs
+  | a => a
 
 /-!
 A part of a literal that waits for its type. It is a value with its normal form as an aggregate
@@ -421,53 +507,44 @@ def Val.size : Val → Nat
 def Agg.val : Agg → Val
   | .static v => .static v
   | .hw h => .hw h
+  | .handle h => .handle h
   | a => .agg a
 
-/-! The part of a container that the value `v` gives. A handle and a waiting literal have none. -/
+/-!
+The part of a container that the value `v` gives. A handle is a handle leaf. A waiting literal
+has none.
+-/
 def Val.agg? : Val → Option Agg
   | .static v => some (.static v)
   | .hw h => some (.hw h)
   | .agg a => some a
-  | .handle _ | .pending .. => none
+  | .handle h => some (.handle h)
+  | .pending .. => none
 
 /-!
-A value with a hardware leaf: each hardware value and each hardware aggregate. A use that takes
-only static values asks this, so it does not depend on the form of the value.
+A value with a hardware leaf: each hardware value and each aggregate with a hardware leaf. A
+container of handles has none. A use that takes only static values asks this, so it does not
+depend on the form of the value.
 -/
 def Val.hasHw : Val → Bool
-  | .hw _ | .agg _ => true
+  | .hw _ => true
+  | .agg a => 0 < a.leaves
   | _ => false
 
+/-! The type of a value. A handle has its handle type (`Handle.ty?`). -/
 def Val.ty? : Val → Option Ty
   | .static v => v.ty?
   | .hw h => some h.ty
   | .agg a => a.ty?
-  | .handle _ | .pending .. => none
+  | .handle h => h.ty?
+  | .pending .. => none
 
 def Val.text : Val → String
   | .static v => v.text
   | .hw h => (Agg.hw h).text
   | .agg a => a.text
-  | .handle (.res .reg ..) => "a register"
-  | .handle (.res .wire ..) => "a wire"
-  | .handle (.res .output ..) => "an output"
-  | .handle (.mem ..) => "a memory"
-  | .handle (.inst ..) => "an instance"
-  | .handle (.input ..) => "an input of a child"
-  | .handle (.domain _) => "a domain"
+  | .handle h => h.text
   | .pending _ p => s!"{p.text} without a type"
-
-/-!
-The handle type of `h` (section 5.1). It comes from the stored types and the depth, with no
-charge. An own output and a domain have none.
--/
-def Handle.ty? : Handle → Option Ty
-  | .res .reg _ t _ => some (.reg t)
-  | .res .wire _ t _ => some (.wire t)
-  | .res .output .. | .domain _ => none
-  | .mem _ _ w d => some (.mem w d)
-  | .inst _ _ _ t => some t
-  | .input _ _ q => some (.input q.ty)
 
 /-! The source name of the resource at `path`: its first user name, else its outer name. -/
 def sourceOf (path : Path) : String :=
@@ -490,8 +567,9 @@ def Val.about : Val → String
     | none => v.text
 
 /-!
-A local. A string, a type, and a handle without an annotation have no `Ty`, so their `ty` is
-`none`. A local of a handle type holds its handle type (section 5.4).
+A local. A string, a type, an own output, and a domain without an annotation have no `Ty`, so
+their `ty` is `none`. A local of a handle, also without an annotation, holds its handle type
+(section 5.4).
 -/
 structure Slot where
   ty : Option Ty

@@ -600,7 +600,7 @@ theorem conformAgg_f (p : Pos) (t : Ty) (a : Agg) :
   unfold conformAgg; follows [conform_f, typedAgg_f]
 
 theorem element_f (p : Pos) (v : Val) : Follows cap (element p v) (element p v) := by
-  unfold element; follows
+  unfold element; follows [data_f]
 
 theorem item_f (p : Pos) (v : Val) : Follows cap (item p v) (item p v) := by
   unfold item; follows [element_f]

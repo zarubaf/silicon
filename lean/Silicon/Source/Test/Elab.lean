@@ -2086,8 +2086,8 @@ def heldText (a : String) : String :=
 #guard said (handleLets "  let mut a = o;\n  a = 5;\n") == heldText "a value of `Int`"
 
 /-!
-A handle at an argument, a `mut` actual, a `push` element, or a field of a constructor is `S010`
-at the call until #278 (section 6.2).
+A handle at an argument, a `mut` actual, or a `push` element is `S010` at the call until #278
+(section 6.2).
 -/
 def laterText : String :=
   "the handle type `Reg[UInt[8]]` is not supported here yet; use it in a typed `let`, or pass " ++
@@ -2105,9 +2105,61 @@ def laterText : String :=
   (fuel := 169) == "S010 21:3"
 #guard cost (handleLets "  let mut xs = list(Reg[UInt[8]]);\n  xs.push(r);\n") "M"
   (fuel := 168) == "S015 21:11"
-#guard said (handleLets "  let a = S(r);\n") == laterText
-#guard cost (handleLets "  let a = S(r);\n") "M" (fuel := 172) == "S010 20:11"
-#guard cost (handleLets "  let a = S(r);\n") "M" (fuel := 171) == "S015 20:11"
+
+/-!
+A container holds handle leaves (section 5.1). An element and a field of a handle type are `raw`
+(section 9.2), so they keep the handle, and an index gives it back. A value without a hardware
+leaf takes no version (section 7.3), so the first binding with a hardware leaf has none.
+-/
+#guard exact (handleLets "  r := i;\n  let a = S(r);\n") "M" 366
+#guard names (handleLets "  r := i;\n  let a = S(r);\n") "M" "M" == ["r", "q", "s", "w", "u"]
+#guard exact (handleLets "  let a = [q, r];\n  let b: Reg[UInt[8]] = a[1];\n  b := i;\n") "M" 369
+#guard exact (handleLets "  r := i;\n  let a = [u, u];\n  let t = (u.x, w, r);\n") "M" 360
+#guard names (handleLets "  r := i;\n  let mut a = (q, UInt[8](0));\n  a.1 = i;\n") "M" "M" ==
+  ["a$1e", "r", "q", "s", "w", "u"]
+#guard names (handleLets "  r := i;\n  let mut a = (q, UInt[8](0));\n  a = (q, i);\n") "M" "M" ==
+  ["a$1e", "r", "q", "s", "w", "u"]
+#guard exact (handleLets "  r := i;\n  let mut a = (q, UInt[8](0));\n  a = (q, i);\n") "M" 369
+def fieldRegs (body : String) : String :=
+  "struct T { a: [Reg[UInt[8]]; 1] }\n" ++ handleLets body
+#guard exact (fieldRegs "  r := i;\n  let a = T([q]);\n  let b: Reg[UInt[8]] = a.a[0];\n") "M" 400
+#guard cost (fieldRegs "  r := i;\n  let a = T([s]);\n") "M" (fuel := 190) == "S010 22:11"
+#guard cost (fieldRegs "  r := i;\n  let a = T([s]);\n") "M" (fuel := 189) == "S015 22:11"
+
+/-! An own output reads as data in a literal (section 5.1), so its element is a hardware leaf. -/
+#guard exact (handleLets "  r := i;\n  let a = [o, i];\n") "M" 356
+#guard names (handleLets "  r := i;\n  let a = [o, i];\n") "M" "M" ==
+  ["a$0e", "a$1e", "r", "q", "s", "w", "u"]
+
+/-!
+Two handle types join only when they are equal (section 5.4). The join charges the sizes of
+the pair first, so one unit less stops at the join. A domain is no element (section 6.2).
+-/
+#guard said (handleLets "  r := i;\n  let a = [r, s];\n") ==
+  "`Reg[UInt[8]]` and `Reg[UInt[4]]` have no common type; a handle type joins only with the " ++
+    "same handle type, so give both sides one type"
+#guard cost (handleLets "  r := i;\n  let a = [r, s];\n") "M" (fuel := 160) == "S010 21:11"
+#guard cost (handleLets "  r := i;\n  let a = [r, s];\n") "M" (fuel := 159) == "S015 21:11"
+#guard cost (handleLets "  r := i;\n  let a = [r, w, q];\n") "M" (fuel := 161) == "S010 21:11"
+#guard cost (handleLets "  r := i;\n  let a = [r, w, q];\n") "M" (fuel := 160) == "S015 21:11"
+def domainElem (e : String) : String := s!"module M() domains(clk) \{\n  let a = {e};\n}\n"
+#guard said (domainElem "[clk]") ==
+  "the domain `clk` is not an element; a domain has no value, so remove it from the literal"
+#guard cost (domainElem "[clk]") "M" (fuel := 30) == "S010 2:12"
+#guard cost (domainElem "[clk]") "M" (fuel := 29) == "S015 2:12"
+#guard cost (domainElem "(1, clk)") "M" (fuel := 32) == "S010 2:15"
+#guard cost (domainElem "(1, clk)") "M" (fuel := 31) == "S015 2:15"
+
+/-!
+A handle leaf in the value of `diagnostic` renders by its kind and charges 1 (section 5.4). An
+array of one handle thus charges 2 for its measure, and a handle alone 0.
+-/
+#guard observed (handleLets "  r := i;\n  diagnostic(\"h\", [q, r]);\n") ==
+  ["(record 21 3 M () (string \"h\") (array (reg (uint 8)) ((reg (uint 8) q) (reg (uint 8) r))))",
+    "ok"]
+#guard total (handleLets "  r := i;\n  diagnostic(\"h\", [q, r]);\n") "M" == 455
+#guard total (handleLets "  r := i;\n  diagnostic(\"h\", [q]);\n") "M" == 428
+#guard total (handleLets "  r := i;\n  diagnostic(\"h\", q);\n") "M" == 397
 
 /-!
 A module parameter of a handle type is `S011` at the `instance` statement (section 5.1): a static
