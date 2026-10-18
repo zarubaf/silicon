@@ -45,6 +45,9 @@ pin | S017 `:=` target kind | 278
 lean | S017 Part as a `:=` target | 278
 rust | S017 Part as a `:=` target | 278
 pin | S017 Part as a `:=` target | 278
+lean | S017 Child output as a `:=` target | 278
+rust | S017 Child output as a `:=` target | 278
+pin | S017 Child output as a `:=` target | 278
 lean | S004 Port in a `fn` | 279
 rust | S004 Port in a `fn` | 279
 pin | S004 Port in a `fn` | 279
