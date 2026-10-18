@@ -223,15 +223,49 @@ def handleUseText (t : Ty) (a : String) : String :=
     "this type, so give such a handle or change the type"
 
 /-!
-A typed use at `pos` at the type `t` at the static position `s`: `a module argument`, `a comptime
-parameter`, `an argument of a comptime fn`, or `a const` (section 5.1). No handle fits a static
-position, so a handle type there is `S011`, with the text of section 6.2. The caller charged the
-copy first.
+A typed use at `pos` at the type `t` at the static position `s` (section 5.1). `s` is `a module
+argument`, `a comptime parameter`, `an argument of a comptime fn`, or `a const`. No value of a
+type with the handle flag is static. Thus such a type there is `S011`, with the text "Static
+handle type" of section 6.2. The flag decides, so `[Reg[T]; 2]` is `S011` too. The caller
+charged the copy first.
 -/
 def staticHandle (pos : Pos) (s : String) (t : Ty) : M Unit := do
-  if handleTy? t then
-    fail .S011 pos (s!"{s} takes only static values, so its type cannot be the handle type " ++
-      s!"`{t.text}`; use a data type, for example `UInt[8]`")
+  if t.info.handles then
+    fail .S011 pos (s!"{s} takes only static values, so its type cannot be `{t.text}`, a type " ++
+      "that holds a handle type; use a data type, for example `UInt[8]`")
+
+/-!
+The kind `{k}` and the source name `{r}` of the handle `h` in the text "Handle at a static
+position" (section 6.2). A child input names its instance and its port, as in `u.p`. An own
+output and a domain have no handle type, so they keep the text of `static`.
+-/
+def Handle.static? : Handle → Option (String × String)
+  | .res .reg _ _ path => some ("register", sourceOf path)
+  | .res .wire _ _ path => some ("wire", sourceOf path)
+  | .mem _ path .. => some ("memory", sourceOf path)
+  | .inst _ path .. => some ("instance", sourceOf path)
+  | .input _ path q => some ("input", s!"{sourceOf path}.{q.name}")
+  | .res .output .. | .domain _ => none
+
+/-!
+The value `v` at the static position `s` at `pos`, before its typed use (sections 5.1 and 5.3).
+A handle is `S011` with the text "Handle at a static position". Another value of a type with the
+handle flag is `S011` with the text "Handles at a static position", which names its type. The
+check reads the kind of the value and the flag of its type, so it walks no value. Each other
+value passes, and `static` checks it.
+-/
+def staticValue (pos : Pos) (s : String) : Val → M Unit
+  | .handle h => do
+    if let some (k, r) := h.static? then
+      fail .S011 pos (s!"{s} holds the {k} handle `{r}`, but it takes only static values; " ++
+        "pass the data through a port, or use the handle in the module that declares it")
+  | .agg a => do
+    if let some t := a.ty? then
+      if t.info.handles then
+        fail .S011 pos (s!"{s} takes only static values, but a value of `{t.text}` can hold " ++
+          "handles; pass the data through a port, or use the handles in the module that " ++
+          "declares them")
+  | _ => pure ()
 
 /-! The common type of two types that are not two arrays or two tuples: the operand rule. -/
 def scalarJoin : Ty → Ty → Option Ty

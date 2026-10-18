@@ -1335,8 +1335,9 @@ def writeBack (p : Pos) (outs : List (Place × Val)) : M Unit := do
 Binds the actual `a` to the formal `q` of the type `t` in the frame of the callee (section 9.1).
 A value charges its copy, then its typed use. It is static in a `comptime fn` and at a `comptime`
 parameter. A place charges the copy of its part, and its type is exactly `t`, else `S010` at the
-call `p`. It is static in a `comptime fn`. Its formal is a mutable local. A handle type is
-`S011` at a static position (`staticHandle`). A `mut` actual gets no typed use. Take a formal
+call `p`. It is static in a `comptime fn`. Its formal is a mutable local. At a static position,
+a value with the handle flag is `S011` (`staticValue`), and then so is a type with the flag
+(`staticHandle`). A `mut` actual gets no typed use. Take a formal
 or a place of a type with the handle flag. There, another type is `S010` with the text "Typed
 use at a handle type" (section 5.6).
 -/
@@ -1345,13 +1346,16 @@ def copyIn (p : Pos) (c : Bool) (q : Resolve.Param) (t : Ty) : Actual → M Unit
     let x ← if c || q.mode == .comptime then do
         charge p v.size
         let sp := if c then "an argument of a comptime fn" else "a comptime parameter"
+        staticValue p sp v
         staticHandle p sp t
         pure (.static (← conform p t (← static p (← settle p t v))))
       else typedUse p t true v .value
     bindLocal q.name.id ⟨some t, false, ← named p q.name.id q.name.name.name x⟩
   | .place pl => do
     charge p pl.part.size
-    if c then staticHandle p "an argument of a comptime fn" t
+    if c then
+      staticValue p "an argument of a comptime fn" pl.part
+      staticHandle p "an argument of a comptime fn" t
     let pt := pl.ty <|> pl.part.ty?
     unless pt.any (·.same t) do
       if t.info.handles || pt.any (·.info.handles) then
@@ -1611,7 +1615,8 @@ def bindParams (ty : Resolve.TypeExpr → M Ty) (p : Pos) (s : String) (ps : Lis
 /-!
 The arguments `xs` of an instantiation of the item `i` at `p`, from left to right, after their
 typed use (section 5.3). `ev` evaluates an expression and `ty` a type expression. Each argument
-is static (`S011`) when it evaluates. Then the typed use nests one level, in the scope of the
+is static (`S011`) when it evaluates, and a value with the handle flag has the texts of
+`staticValue`. Then the typed use nests one level, in the scope of the
 module with a new frame (`bindParams`). Each parameter type evaluates there, with each earlier
 parameter bound to its converted argument. The argument converts to it, and a literal with `[]`
 takes this type. Then the recursive size of the converted argument charges. The caller pays this
@@ -1623,7 +1628,9 @@ def arguments (ev : Resolve.Expr → M (Option Out)) (ty : Resolve.TypeExpr → 
     let o ← need x (← ev x)
     let v ← match o.value with
       | v@(.pending ..) => pure v
-      | v => pure (.static (← static p v))
+      | v => do
+        staticValue p "a module argument" v
+        pure (.static (← static p v))
     hold o
     return (v, o)
   for (_, o) in os do release o
@@ -2451,7 +2458,9 @@ mutual
     let args ← operands n xs fun _ o => do
       match o.value with
       | v@(.pending ..) => pure v
-      | v => return .static (← static p v)
+      | v => do
+        staticValue p "a comptime parameter" v
+        return .static (← static p v)
     specOf (fun t => typeExpr n t) p i x ps fs pre args
   termination_by (n + 1, 0)
 
@@ -2494,6 +2503,7 @@ mutual
           let t ← typeExpr n ty
           let o ← need v (← eval n v)
           copy cp o
+          staticValue cp "a const" o.value
           staticHandle cp "a const" t
           conform cp t (← static cp (← settle cp t o.value))
         return ⟨.static c, true, none⟩

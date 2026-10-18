@@ -324,6 +324,10 @@ theorem staticHandle_f (p : Pos) (s : String) (t : Ty) :
     Follows cap (staticHandle p s t) (staticHandle p s t) := by
   unfold staticHandle; follows
 
+theorem staticValue_f (p : Pos) (s : String) (v : Val) :
+    Follows cap (staticValue p s v) (staticValue p s v) := by
+  unfold staticValue; follows
+
 theorem memWord_f (p : Pos) (t : Ty) : Follows cap (memWord p t) (memWord p t) := by
   unfold memWord; follows [notHandle_f]
 
@@ -821,8 +825,8 @@ theorem iteration_f (p : Pos) (i : Binder) (v : Int) {x y : M α} (h : Follows c
 theorem copyIn_f (p : Pos) (c : Bool) (q : Resolve.Param) (t : Ty) (a : Actual) :
     Follows cap (copyIn p c q t a) (copyIn p c q t a) := by
   unfold copyIn
-  follows [handleWrong_f, staticHandle_f, static_f, settle_f, conform_f, typedUse_f, named_f,
-    bindLocal_f]
+  follows [handleWrong_f, staticValue_f, staticHandle_f, static_f, settle_f, conform_f, typedUse_f,
+    named_f, bindLocal_f]
 
 theorem result_f (p : Pos) (path : Names.Path) (u : String) (o : Option Val) :
     Follows cap (result p path u o) (result p path u o) := by
@@ -877,7 +881,8 @@ theorem arguments_f {ev ev' : Resolve.Expr → M (Option Out)} {ty ty' : Resolve
     (i : Nat) (xs : List Resolve.Expr) :
     Follows cap (arguments ev ty p i xs) (arguments ev' ty' p i xs) := by
   unfold arguments
-  follows [he, need_f, static_f, nested_f, inFrame_f, bindParams_f ht, hold_f, release_f]
+  follows [he, need_f, staticValue_f, static_f, nested_f, inFrame_f, bindParams_f ht, hold_f,
+    release_f]
 
 theorem instanceTy_f {ev ev' : Resolve.Expr → M (Option Out)} {ty ty' : Resolve.TypeExpr → M Ty}
     (he : ∀ e, Follows cap (ev e) (ev' e)) (ht : ∀ t, Follows cap (ty t) (ty' t)) (p : Pos)
@@ -986,7 +991,7 @@ theorem spec_f (he : ∀ e, Follows m (eval k e) (eval m e))
     (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t)) (p : Pos) (i : Nat)
     (xs : List Resolve.Expr) : Follows m (spec k p i xs) (spec m p i xs) := by
   rw [spec.eq_def k, spec.eq_def m]
-  follows [operands_f he, need_f, static_f, specOf_f ht, structural_f]
+  follows [operands_f he, need_f, staticValue_f, static_f, specOf_f ht, structural_f]
 
 theorem enumUse_f (he : ∀ e, Follows m (eval k e) (eval m e))
     (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t)) (p : Pos) (i : Nat) :
@@ -1003,8 +1008,8 @@ theorem name_f (he : ∀ e, Follows m (eval k e) (eval m e))
     (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t)) (p : Pos) (x : String) (r : Ref) :
     Follows m (name k p x r) (name m p x r) := by
   rw [name.eq_def k, name.eq_def m]
-  follows [he, ht, prim_f, need_f, copy_f, staticHandle_f, conform_f, static_f, settle_f,
-    constant_f, spec_f he ht, enumUse_f he ht, nested_f, inFrame_f, params_f ht, fnTy_f,
+  follows [he, ht, prim_f, need_f, copy_f, staticValue_f, staticHandle_f, conform_f, static_f,
+    settle_f, constant_f, spec_f he ht, enumUse_f he ht, nested_f, inFrame_f, params_f ht, fnTy_f,
     normalize_f, readRef_f, bounded_f]
 
 theorem placeAt_f (he : ∀ e, Follows m (eval k e) (eval m e)) (p : Pos) (c : ErrorCode)

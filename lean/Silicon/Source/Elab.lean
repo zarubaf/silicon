@@ -60,9 +60,12 @@ These rules settle the open points of slice 1:
   memory goes into the names of the instantiation (`Naming.mems`), where `Eval.portCall` records
   its requests. A memory without a `read_port` or a `write_port` call is `S018` at its
   statement. A second call of one kind is `S018` at that call.
-- A `:=` target resolves without a charge. A register, a wire, an own output, and a child input
-  are targets, also through a handle alias. Each other target fails with `S017` (rule). A
-  target with an index or a selector `.N` is a part of a resource: `S017` at the target.
+- A `:=` target is a register, a wire, an own output, or a child input, also through a handle
+  alias. Its steps run from the root outward (section 5.2), and the static type of each base
+  decides. A field of an `Instance` handle selects a child input with no charge. A step on a
+  container of a type with the handle flag charges 1, then its index evaluates and checks. Each
+  other step is a part of a value: `S017` at the start of the target, before its index. So is
+  a selected part of another kind. The target is an identity, so it has no window.
 - The value of `:=` is a typed use. It copies a reference, as a `let` with a type does. A read
   of an aggregate handle charges the handle, then the zero size of its type (`typedUse`).
 - A `:=` binding holds its value as an aggregate part. A static scalar becomes a hardware
@@ -269,31 +272,80 @@ def port (p : Pos) (input : Bool) (b : Binder) (t : Ty) : EM Val := do
   else if t.info.leaves = 0 then pure (.agg (.ref (.name ⟨x, []⟩) t))
   else monadLift (normalize p (.ref (.name ⟨x, []⟩) t) : Eval.M Val)
 
-/-! The target of a `:=` binding. It refers, so it charges nothing. -/
+/-! The target of a `:=` binding: an own resource, or the input `port` of the child `inst`. -/
 inductive Target where
   | own (kind : Kind) (id : Nat) (ty : Ty) (path : Path)
   | child (inst : Nat) (path : Path) (port : Port)
 
-def target (p : Pos) (e : Resolve.Expr) : EM Target := do
-  let bad : EM Target :=
-    fail .S017 p "a `:=` target is a wire, a register, an own output, or a child input"
-  match e with
-  | .name _ _ (.local id) =>
-    match ← slot id with
-    | some ⟨_, _, .handle (.res r k t path)⟩ => return .own r k t path
-    | some ⟨_, _, .handle (.input k path q)⟩ => return .child k path q
-    | _ => bad
-  | .field _ (.name _ _ (.local id)) f =>
-    match ← slot id with
-    | some ⟨_, _, .handle (.inst k path iface _)⟩ =>
-      match (← readThe Ctx).field f.pos >>= (iface.ports[·]?) with
-      | some q =>
-        if q.input then return .child k path q
-        else fail .S017 p s!"`{f.name}` is an output of the child, not a target"
-      | none => fail .S010 p s!"the instance has no port `{f.name}`"
-    | _ => bad
-  | .index q .. | .select q .. => fail .S017 q "a `:=` target is a whole resource, not a part"
-  | _ => bad
+/-! The `S017` text "Part as a `:=` target" of section 6.2. -/
+def partText : String :=
+  "a `:=` target is a whole resource, not a part of a value; bind the whole resource, for " ++
+    "example `r := P(a, b);`"
+
+/-! The `S017` text "`:=` target kind" of section 6.2, with the selected value `a`. -/
+def kindText (a : String) : String :=
+  s!"a `:=` target is a wire, a register, an own output, or a child input, not {a}; select one " ++
+    "of these, or assign a local with `=`"
+
+/-! The `S017` text "Child output as a `:=` target" of section 6.2, for the output `f`. -/
+def outputText (f : String) : String :=
+  s!"`{f}` is an output of the child, not a target; the child drives its outputs, so bind an " ++
+    "input of the child"
+
+/-!
+The step `sel` of a `:=` target that starts at `s`, on the base `v` (sections 5.2 and 9.4). The
+static type of the base decides. A field of an `Instance` handle selects the child port with no
+charge, and an output there is `S017`. A container of a type with the handle flag charges 1.
+Then the index evaluates and gets the checks of an index (`S011`, `S010`, and `S013`). Then the
+step selects the part. Each other base, also another handle, is `S017` at `s`, before the
+charge and before the index evaluates.
+-/
+def targetStep (n : Nat) (s : Pos) (v : Val) (sel : Sel) : Eval.M Val := do
+  match v, sel with
+  | .handle (.inst k path iface _), .field q f =>
+    match (← read).field f.pos >>= (iface.ports[·]?) with
+    | some port =>
+      if port.input then return .handle (.input k path port)
+      else fail .S017 s (outputText f.name)
+    | none => fail .S010 q s!"the instance has no port `{f.name}`"
+  | .agg a, sel =>
+    unless a.ty?.any (·.info.handles) do fail .S017 s partText
+    charge sel.pos 1
+    match sel with
+    | .index q [i] => return (← pickKey q i.pos v (← static i.pos (← need i (← eval n i)).value)).2
+    | .index q _ => fail .S010 q "an index of a value has one argument"
+    | .select q r i => return (← selectKey q r i v).2
+    | .field q f => return (← fieldKey q f v).2.1
+  | _, _ => fail .S017 s partText
+
+/-!
+The part that the `:=` target `e` selects. Its steps run from the root outward (`targetStep`). A
+local root gives its value with no charge. Another root has no slot, so it evaluates, and its
+value names it in the text of `S017`. The target is an identity, so it opens no window and
+charges no held root.
+-/
+def targetPart (n : Nat) (e : Resolve.Expr) : Eval.M Val := do
+  let (root, sels) := (chain e).getD (e, [])
+  let mut v ← match root with
+    | .name _ _ (.local id) => do
+      match (← get).frame[id]? with
+      | some sl => pure sl.value
+      | none => pure (← need root (← eval n root)).value
+    | _ => pure (← need root (← eval n root)).value
+  for sel in sels do
+    v ← targetStep n e.pos v sel
+  return v
+
+/-!
+The target of a `:=` binding: a register, a wire, an own output, or a child input. A handle
+alias and the steps of `targetPart` can select it. Each other part is `S017` at the start of
+the target. `S018` counts the target by its resource.
+-/
+def target (n : Nat) (e : Resolve.Expr) : EM Target := do
+  match ← monadLift (targetPart n e : Eval.M Val) with
+  | .handle (.res r k t path) => return .own r k t path
+  | .handle (.input k path q) => return .child k path q
+  | v => fail .S017 e.pos (kindText v.about)
 
 /-! Records the binding of `t` to `h`. The second binding of one target is an `S018`. -/
 def bindTarget (p : Pos) (t : Target) (h : Agg) : EM Unit := do
@@ -424,7 +476,7 @@ mutual
           monadLift (modify fun s => { s with naming.mems := s.naming.mems.push m } : Eval.M Unit)
           bindLocal x.id ⟨none, false, .handle (.mem id path t k)⟩
         | .connect p tgt v => do
-          let t ← target p tgt
+          let t ← target n tgt
           let o ← need v (← eval n v)
           let ty := match t with
             | .own _ _ ty _ => ty

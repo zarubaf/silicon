@@ -238,9 +238,6 @@ theorem port_e (p : Pos) (input : Bool) (b : Resolve.Binder) (t : Ty) :
     exact ⟨rfl, fun _ => rfl⟩
   · efollows [resource_e, modifyBody_e, normalize_f]
 
-theorem target_e (p : Pos) (e : Resolve.Expr) : EFollows cap (target p e) (target p e) := by
-  unfold target; efollows [slot_e]
-
 theorem bindTarget_e (p : Pos) (t : Target) (h : Agg) :
     EFollows cap (bindTarget p t h) (bindTarget p t h) := by
   unfold bindTarget; efollows [modifyBody_e]
@@ -259,6 +256,18 @@ end helpers
 
 section walk
 variable {k m : Nat}
+
+theorem targetStep_f (he : ∀ e, Follows m (eval k e) (eval m e)) (s : Pos) (v : Val)
+    (sel : Sel) : Follows m (targetStep k s v sel) (targetStep m s v sel) := by
+  unfold targetStep; follows [he, need_f, static_f, pickKey_f, selectKey_f, fieldKey_f]
+
+theorem targetPart_f (he : ∀ e, Follows m (eval k e) (eval m e)) (e : Resolve.Expr) :
+    Follows m (targetPart k e) (targetPart m e) := by
+  unfold targetPart; follows [he, need_f, targetStep_f he]
+
+theorem target_e (he : ∀ e, Follows m (eval k e) (eval m e)) (e : Resolve.Expr) :
+    EFollows m (target k e) (target m e) := by
+  unfold target; efollows [targetPart_f he]
 
 theorem instantiate_e (hb : ∀ p ss, EFollows m (block k p ss) (block m p ss)) (pos : Pos)
     (i : Nat) (tvs : List (Ty × Value)) :
@@ -298,14 +307,14 @@ theorem follows_all : ∀ n,
           arguments_f (he.1 k) (he.2.1 k), he.1 k, he.2.1 k, need_f, copy_f,
           conform_f, static_f, conformVal_f, lit_f, fresh_f, bindLocal_f, test_f, int_f, range_f,
           iteration_e, dataType_e, memWord_f, memDepth_f, port_e, resource_e, modifyBody_e,
-          target_e, bindTarget_e, sinkValue_e, typedUse_f, settle_f, hold_f, release_f,
+          target_e (he.1 k), bindTarget_e, sinkValue_e, typedUse_f, settle_f, hold_f, release_f,
           structural_e]
       · refine EFollows.charge_one _ fun _ => ?_
         efollows [hs m, hb m, instantiate_e (hb m),
           arguments_f (he.1 m) (he.2.1 m), he.1 m, he.2.1 m, need_f, copy_f,
           conform_f, static_f, conformVal_f, lit_f, fresh_f, bindLocal_f, test_f, int_f, range_f,
           iteration_e, dataType_e, memWord_f, memDepth_f, port_e, resource_e, modifyBody_e,
-          target_e, bindTarget_e, sinkValue_e, typedUse_f, settle_f, hold_f, release_f,
+          target_e (he.1 m), bindTarget_e, sinkValue_e, typedUse_f, settle_f, hold_f, release_f,
           structural_e]
     · rcases n' with _ | m
       · rw [block.eq_def (k + 1), block.eq_def 0]
