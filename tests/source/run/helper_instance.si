@@ -1,0 +1,21 @@
+// A helper makes a child and returns the `Instance` handle. The caller binds the input of the child and reads its output.
+// TOP M()
+module C(comptime K: UInt[8]) domains() {
+    input a: UInt[8];
+    output q: UInt[8];
+    q := a +% K;
+}
+fn spawn() -> Instance[C, 8] {
+    instance u = C(8);
+    return u;
+}
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let u = spawn();
+    u.a := x;
+    o := u.q;
+}
+// STEP in=(x 1) out=(o 9)
+// STEP in=(x 250) out=(o 2)
+// STEP in=(x 255) out=(o 7)

@@ -1,0 +1,21 @@
+// A helper returns the handle of a memory that it declares, and the caller makes the port calls on the result.
+// TOP M()
+fn make() -> Mem[UInt[8], 4] {
+    mem m: [UInt[8]; 4];
+    return m;
+}
+module M() {
+    input ra: UInt[2];
+    input re: Bool;
+    input wa: UInt[2];
+    input wd: UInt[8];
+    input we: Bool;
+    output o: UInt[8];
+    let m = make();
+    write_port(m, wa, wd, we);
+    let r = m.read_port(ra, re);
+    o := r.data;
+}
+// STEP in=(clock$0rst false ra 0 re false wa 3 wd 21 we true) out=(o 0)
+// STEP in=(clock$0rst false ra 3 re true wa 0 wd 0 we false) out=(o 0)
+// STEP in=(clock$0rst false ra 0 re false wa 0 wd 0 we false) out=(o 21)

@@ -1,0 +1,20 @@
+// A helper takes the input of a child as an `Input` formal and binds it. The caller reads the output of the child.
+// TOP M()
+module C() domains() {
+    input a: UInt[8];
+    output q: UInt[8];
+    q := a +% 1;
+}
+fn feed(p: Input[UInt[8]], v: UInt[8]) -> () {
+    p := v;
+    return ();
+}
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    instance u = C();
+    feed(u.a, x);
+    o := u.q;
+}
+// STEP in=(x 1) out=(o 2)
+// STEP in=(x 255) out=(o 0)

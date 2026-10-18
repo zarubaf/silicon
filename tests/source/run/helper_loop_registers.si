@@ -1,0 +1,22 @@
+// A helper declares a register in each iteration of a `comptime for`. The registers form a three-stage delay line.
+// TOP M()
+fn pipe(x: UInt[8]) -> UInt[8] {
+    let mut v = x;
+    comptime for i in 0..3 {
+        reg r: UInt[8] = 0;
+        r := v;
+        v = read(r);
+    }
+    return v;
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    o := pipe(x);
+}
+// STEP in=(clock$0rst true x 0) out=(o 0)
+// STEP in=(clock$0rst false x 1) out=(o 0)
+// STEP in=(clock$0rst false x 2) out=(o 0)
+// STEP in=(clock$0rst false x 3) out=(o 0)
+// STEP in=(clock$0rst false x 4) out=(o 1)
+// STEP in=(clock$0rst false x 5) out=(o 2)

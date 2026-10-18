@@ -1,0 +1,21 @@
+// The arguments of a call evaluate before the call. The helper in the argument of a `comptime fn` runs in the mode of the caller, so it declares its register.
+// TOP M()
+comptime fn pass(v: Bool) -> Bool {
+    return v;
+}
+fn mk() -> Bool {
+    reg r: UInt[8] = 0;
+    r := 1;
+    return true;
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    comptime if (pass(mk())) {
+        o := x;
+    } else {
+        o := 0;
+    }
+}
+// STEP in=(clock$0rst false x 3) out=(o 3)
+// STEP in=(clock$0rst false x 4) out=(o 4)

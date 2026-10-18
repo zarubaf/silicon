@@ -1,0 +1,20 @@
+// A helper `fn` declares a register, and each call makes its own register. The two calls give the registers of two call
+// frames, so the two outputs hold different values.
+// TOP M()
+fn cell(x: UInt[8]) -> UInt[8] {
+    reg r: UInt[8] = 0;
+    r := x;
+    return r;
+}
+module M() {
+    input a: UInt[8];
+    input b: UInt[8];
+    output p: UInt[8];
+    output q: UInt[8];
+    p := cell(a);
+    q := cell(b);
+}
+// STEP in=(clock$0rst true a 0 b 0) out=(p 0 q 0)
+// STEP in=(clock$0rst false a 3 b 9) out=(p 0 q 0)
+// STEP in=(clock$0rst false a 4 b 8) out=(p 3 q 9)
+// STEP in=(clock$0rst false a 0 b 0) out=(p 4 q 8)

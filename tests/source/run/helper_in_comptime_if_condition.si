@@ -1,0 +1,18 @@
+// A helper that declares a register is valid in the condition of a `comptime if`, a static position that is not structural. The register goes into the module that calls the helper.
+// TOP M()
+fn probe() -> Bool {
+    reg r: UInt[8] = 0;
+    r := 1;
+    return true;
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    comptime if (probe()) {
+        o := x;
+    } else {
+        o := 0;
+    }
+}
+// STEP in=(clock$0rst false x 3) out=(o 3)
+// STEP in=(clock$0rst false x 9) out=(o 9)

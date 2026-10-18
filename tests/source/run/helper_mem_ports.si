@@ -1,0 +1,19 @@
+// A helper declares a memory and makes both port calls on it. The response of the read shows in the next cycle.
+// TOP M()
+fn store(a: UInt[2], d: UInt[8], w: Bool) -> UInt[8] {
+    mem m: [UInt[8]; 4];
+    write_port(m, a, d, w);
+    let r = m.read_port(a, true);
+    return r.data;
+}
+module M() {
+    input a: UInt[2];
+    input d: UInt[8];
+    input w: Bool;
+    output o: UInt[8];
+    o := store(a, d, w);
+}
+// STEP in=(clock$0rst false a 1 d 7 w true) out=(o 0)
+// STEP in=(clock$0rst false a 1 d 0 w false) out=(o 0)
+// STEP in=(clock$0rst false a 2 d 0 w false) out=(o 7)
+// STEP in=(clock$0rst false a 1 d 0 w false) out=(o 0)

@@ -1,0 +1,79 @@
+// The resources of a helper take the path of the call frame (front-end spec 7.3). The call `cell(a)` is the first call
+// of `cell`, so its register is `cell$0c$r`. A loop value, a recursion, a child, a memory, and a second declaration of one name in one frame extend the path.
+// TOP M()
+// CHECK: (reg cell$0c$r (bits 8)
+// CHECK: (reg chain$2c$chain$1c$t (bits 8)
+// CHECK: (reg chain$2c$t (bits 8)
+// CHECK: (reg pipe$1c$i$0$s (bits 8)
+// CHECK: (reg pipe$1c$i$1$s (bits 8)
+// CHECK: (reg shadow$5c$k (bits 8)
+// CHECK: (reg shadow$5c$k$1v (bits 8)
+// CHECK: (reg store$4c$m$0rdata (bits 8)
+// CHECK: (reg store$4c$m$0rvalid (bits 1)
+// CHECK: (mem store$4c$m (bits 8) 4
+// CHECK: (inst child$3c$u C
+module C() domains() {
+    input p: UInt[8];
+    output q: UInt[8];
+    q := p;
+}
+fn cell(x: UInt[8]) -> UInt[8] {
+    reg r: UInt[8] = 0;
+    r := x;
+    return r;
+}
+fn pipe(x: UInt[8]) -> UInt[8] {
+    let mut v = x;
+    comptime for i in 0..2 {
+        reg s: UInt[8] = 0;
+        s := v;
+        v = read(s);
+    }
+    return v;
+}
+fn chain(x: UInt[8], n: Nat) -> UInt[8] {
+    reg t: UInt[8] = 0;
+    t := x;
+    return if (n == 0) { read(t) } else { chain(read(t), n - 1) };
+}
+fn child(x: UInt[8]) -> UInt[8] {
+    instance u = C();
+    u.p := x;
+    return u.q;
+}
+fn store(a: UInt[2], d: UInt[8]) -> UInt[8] {
+    mem m: [UInt[8]; 4];
+    write_port(m, a, d, true);
+    let r = m.read_port(a, true);
+    return r.data;
+}
+fn shadow(x: UInt[8]) -> UInt[8] {
+    let mut v = x;
+    comptime if (true) {
+        reg k: UInt[8] = 0;
+        k := v;
+        v = read(k);
+    }
+    comptime if (true) {
+        reg k: UInt[8] = 0;
+        k := v;
+        v = read(k);
+    }
+    return v;
+}
+module M() {
+    input a: UInt[8];
+    input b: UInt[2];
+    output o: UInt[8];
+    output p: UInt[8];
+    output q: UInt[8];
+    output s: UInt[8];
+    output t: UInt[8];
+    output u: UInt[8];
+    o := cell(a);
+    p := pipe(a);
+    q := chain(a, 1);
+    s := child(a);
+    t := store(b, a);
+    u := shadow(a);
+}

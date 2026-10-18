@@ -1,5 +1,4 @@
-// S004: a plain fn has no wire statement. A comptime fn and a module keep it.
-// expected-error S004 @+2
+// A plain fn parses a wire statement, as a comptime fn and a module do. A plain fn rejects only a port (S004).
 fn f() -> Nat {
     wire a: Bool;
     return 1;

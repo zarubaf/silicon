@@ -1,0 +1,11 @@
+// A plain fn parses each declaration of a resource and the `:=` binding. A port in a plain fn is `S004`.
+fn f(x: UInt[8]) -> Nat {
+    reg r: UInt[8] = 0;
+    wire w: UInt[8];
+    mem m: [UInt[8]; 4];
+    instance u = C();
+    r := x;
+    w := x;
+    u.a := x;
+    return 1;
+}
