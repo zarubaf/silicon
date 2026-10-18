@@ -927,29 +927,11 @@ def readUse (pos : Pos) (t : Ty) (v : Val) : M Val := do
   conformVal pos t d
 
 /-!
-The copy of `v` when `copies`, then its typed use at `t` at `pos`. The copy charges the size of
-`v`, and a handle has the size 1 as in slice 1. A typed use then reads a handle. A read of an
-aggregate gives a reference, and its binding expands the reference into its leaves. Thus the
-copy also charges the size of the reference, the zero size of its type, before the typed use.
-A handle type `t` is `S010` after the copy until #278 (`laterHandle`).
+The typed use at `pos` of `v` at the handle type `t` (section 5.4, step 3 of a typed use at a
+handle type). The handle type of `v` equals `t`, else `S010`. The compare has no charge, and
+nothing reads `v`. An own output has no handle type, so its text names the fix: use it as data.
 -/
-def copyUse (pos : Pos) (t : Ty) (copies : Bool) (v : Val) : M Val := do
-  if copies then
-    charge pos v.size
-    laterHandle pos t
-    readUse pos t v
-  else
-    laterHandle pos t
-    conformVal pos t v
-
-/-!
-The typed use at `pos` of `v` at the handle type `t`, in a typed `let` or an assignment to a
-`let mut` local (section 5.4). The copy charges when `copies`, and a handle has the size 1. Then
-the handle type of `v` equals `t`, else `S010`. The compare has no charge, and nothing reads `v`.
-An own output has no handle type, so its text names the fix: use it as data.
--/
-def handleUse (pos : Pos) (t : Ty) (copies : Bool) (v : Val) : M Val := do
-  if copies then charge pos v.size
+def handleUse (pos : Pos) (t : Ty) (v : Val) : M Val := do
   match v with
   | .handle h => if h.ty?.any (·.same t) then return v
   | _ => pure ()
@@ -961,23 +943,80 @@ def handleUse (pos : Pos) (t : Ty) (copies : Bool) (v : Val) : M Val := do
     "a handle of exactly this type, so give such a handle or change the type")
 
 /-!
-The typed use at `pos` of `v` at the declared type `t` of a local: of a `let` or of an
-assignment to a `let mut` local. A handle type keeps the handle (`handleUse`), and another type
-copies and reads it (`copyUse`).
+The position of a typed use (section 5.4). Its index is the form of the result, so each position
+gives the form that its caller stores.
+
+- `binding`: a typed `let` or an assignment to a `let mut` local. A handle type keeps the handle.
+- `value`: an argument, a `return`, or the value of a `:=`.
+- `field q`: a field of a constructor, with its argument at the node `q`, in a data context
+  (section 9.2).
+- `element x`: a `push` element at the node `x`. A list holds only static values.
 -/
-def localUse (pos : Pos) (t : Ty) (copies : Bool) (v : Val) : M Val :=
-  if handleTy? t then handleUse pos t copies v else copyUse pos t copies v
+inductive Site : Type → Type where
+  | binding : Site Val
+  | value : Site Val
+  | field (q : Pos) : Site Agg
+  | element (x : Pos) : Site Value
+
+/-!
+The conversion of `v` at the data type `t` at a `binding` or a `value` position, after its copy.
+A typed use reads a handle. A read of an aggregate gives a reference, and its binding expands the
+reference into its leaves. Thus a copy also charges the size of the reference, the zero size of
+its type, before the typed use (`readUse`).
+-/
+def valueUse (pos : Pos) (t : Ty) (copies : Bool) (v : Val) : M Val := do
+  laterHandle pos t
+  if copies then readUse pos t v else conformVal pos t v
+
+/-!
+The typed use of `v` at the type `t` at a position after its copy (section 5.4). A handle type at
+a `binding` keeps the handle (`handleUse`). At each other position, a handle type is `S010` until
+#278 (`laterHandle`). Then the value converts by the rule of its position.
+-/
+def siteUse (pos : Pos) (t : Ty) (copies : Bool) (v : Val) : Site α → M α
+  | .binding => if handleTy? t then handleUse pos t v else valueUse pos t copies v
+  | .value => valueUse pos t copies v
+  | .field q => do
+    laterHandle pos t
+    conformAgg pos t (← item q (← data q (← settle pos t v)))
+  | .element x => do
+    laterHandle pos t
+    match ← data x (← settle pos t v) with
+    | .static w => conform pos t w
+    | w =>
+      if w.hasHw then fail .S011 x "a list holds no hardware value"
+      else fail .S010 x s!"{w.text} is not an element of a list"
+
+/-!
+The typed use of `v` at the type `t` at the position `site` (section 5.4). The copy charges first
+when `copies`, and a handle has the size 1. A `push` element and a field of a constructor paid
+their copies before. Then the value gets its typed use at its position (`siteUse`).
+-/
+def typedUse (pos : Pos) (t : Ty) (copies : Bool) (v : Val) (site : Site α) : M α := do
+  if copies then charge pos v.size
+  siteUse pos t copies v site
+
+/-!
+A record constructor of the struct type `t` with the field types `fs` at `pos`. The arguments
+`vs` at the positions `ps` paid their copies. Each field is a typed use in declaration order, in
+a data context (section 9.2): a register or a wire is read. A literal with `[]` takes the type
+of its field. A field can hold a hardware value or a hardware aggregate. Then the record checks
+its depth and charges its size.
+-/
+def recordOf (pos : Pos) (t : Ty) (fs : List Ty) (ps : List Pos) (vs : List Val) : M Agg := do
+  let xs ← (fs.zip (ps.zip vs)).mapM fun (ft, q, v) => typedUse pos ft false v (.field q)
+  made pos (.mkRecord t xs.toArray)
 
 /-!
 The assignment at `pos` of the result `o` to a local without a type that holds `held` (section
 5.4). The local has the type of its value. A handle with a handle type thus gives the typed use
-at that type (`handleUse`). Another value keeps its form after the copy (`sameForm`). A local
+at that type (`typedUse`). Another value keeps its form after the copy (`sameForm`). A local
 that holds an own output takes only an own output of the same data type. Its text names the
 fix: use the output directly.
 -/
 def heldUse (pos : Pos) (held : Val) (o : Out) : M Val := do
   if let .handle h := held then
-    if let some t := h.ty? then return ← handleUse pos t o.ref o.value
+    if let some t := h.ty? then return ← typedUse pos t o.ref o.value .binding
   copy pos o
   if sameForm held o.value then return o.value
   if let .handle (.res .output _ t path) := held then
@@ -1183,7 +1222,7 @@ def store (p q : Pos) (pl : Place) (y : Val) : M Unit := do
     held p pl.id
     bindLocal pl.id { pl.slot with value := ← named p pl.id pl.name y }
   else
-    if pl.inList && (y matches .hw _ | .agg _) then
+    if pl.inList && y.hasHw then
       fail .S011 q "a list holds no value with a hardware leaf"
     let x ← item q y
     -- The root is within the nesting depth, so only the value on the path can raise it.
@@ -1257,7 +1296,8 @@ Binds the actual `a` to the formal `q` of the type `t` in the frame of the calle
 A value charges its copy, then its typed use. It is static in a `comptime fn` and at a `comptime`
 parameter. A place charges the copy of its part, and its type is exactly `t`, else `S010` at the
 call `p`. It is static in a `comptime fn`. Its formal is a mutable local. A handle type is
-`S011` at a static position (`staticHandle`), and `S010` elsewhere until #278 (`laterHandle`).
+`S011` at a static position (`staticHandle`). A `mut` actual gets no typed use, so a handle
+type there is `S010` until #278 (`laterHandle`).
 -/
 def copyIn (p : Pos) (c : Bool) (q : Resolve.Param) (t : Ty) : Actual → M Unit
   | .value v => do
@@ -1266,7 +1306,7 @@ def copyIn (p : Pos) (c : Bool) (q : Resolve.Param) (t : Ty) : Actual → M Unit
         let sp := if c then "an argument of a comptime fn" else "a comptime parameter"
         staticHandle p sp t
         pure (.static (← conform p t (← static p (← settle p t v))))
-      else copyUse p t true v
+      else typedUse p t true v .value
     bindLocal q.name.id ⟨some t, false, ← named p q.name.id q.name.name.name x⟩
   | .place pl => do
     charge p pl.part.size
@@ -1299,11 +1339,7 @@ list and charges the size of the element.
 def pushOnto (p x : Pos) (g : String) (pl : Place) (v : Val) : M (Option Out) := do
   let .static (.list e ys) := pl.part | fail .S010 p s!"`{g}` needs a list, not {pl.part.text}"
   mutation p pl.name
-  laterHandle p e
-  let w ← match ← data x (← settle p e v) with
-    | .static w => conform p e w
-    | .hw _ | .agg _ => fail .S011 x "a list holds no hardware value"
-    | v => fail .S010 x s!"{v.text} is not an element of a list"
+  let w ← typedUse p e false v (.element x)
   -- The root is within the nesting depth, so only the element on the path can raise it.
   bounded p (pl.keys.length + 1 + w.depth)
   if over (ys.size + 1) then fail .S015 p listLimitText
@@ -2636,7 +2672,7 @@ mutual
         let t ← ty.mapM (typeExpr n)
         let o ← need v (← eval n v)
         let x ← match t with
-          | some t => localUse p t o.ref o.value
+          | some t => typedUse p t o.ref o.value .binding
           | none => do
             copy p o
             known o.value
@@ -2649,7 +2685,7 @@ mutual
         let o ← need v (← eval n v)
         shut pl.id
         let y ← match pl.ty with
-          | some t => localUse p t o.ref o.value
+          | some t => typedUse p t o.ref o.value .binding
           | none => heldUse p pl.part o
         store p v.pos pl y
         return none
@@ -2657,7 +2693,7 @@ mutual
         let some rt := (← read).ret | fail .S006 p "only a function has `return`"
         let some v := v | fail .S010 p s!"`return` needs a value of {rt.text}"
         let o ← need v (← eval n v)
-        return some (← copyUse p rt true o.value)
+        return some (← typedUse p rt true o.value .value)
       | .ctIf p c yes no => do
         if ← test p (← need c (← eval n c)).value then block n p yes
         else match no with

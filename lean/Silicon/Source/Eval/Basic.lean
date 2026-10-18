@@ -430,6 +430,14 @@ def Val.agg? : Val → Option Agg
   | .agg a => some a
   | .handle _ | .pending .. => none
 
+/-!
+A value with a hardware leaf: each hardware value and each hardware aggregate. A use that takes
+only static values asks this, so it does not depend on the form of the value.
+-/
+def Val.hasHw : Val → Bool
+  | .hw _ | .agg _ => true
+  | _ => false
+
 def Val.ty? : Val → Option Ty
   | .static v => v.ty?
   | .hw h => some h.ty
