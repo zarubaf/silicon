@@ -1,0 +1,7 @@
+// S012: a memory word has at most 65536 bits. The `mem` statement and `Mem[T, N]` share the text.
+// TOP M()
+module M() {
+    // expected-error S012 @+2
+    // expected-message: a memory word has at most 65536 bits, not 131072; split the word over more than one memory
+    mem m: [[UInt[65536]; 2]; 4];
+}

@@ -1,0 +1,7 @@
+// S007: `SInt` takes 1 argument. The text shares its form with the other type families.
+// TOP M()
+module M() {
+    // expected-error S007 @+2
+    // expected-message: `SInt` takes 1 argument(s), but it has 2; write `SInt[W]`
+    type T = SInt[8, 1];
+}
