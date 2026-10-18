@@ -1,0 +1,22 @@
+// T3 of the work-counter tests of helpers that declare resources (issue #279). N calls of a helper that makes the child
+// `C(8)` and binds its input. The N children have one `InstantiationId`, so the body of `C` runs once.
+// SCALE helper_instance_calls 16 32 64 128 256
+// TOP M()
+module C(comptime K: UInt[8]) domains() {
+    input a: UInt[8];
+    output q: UInt[8];
+    q := a +% K;
+}
+fn spawn(x: UInt[8]) -> UInt[8] {
+    instance u = C(8);
+    u.a := x;
+    return u.q;
+}
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+// REPEAT i {N}
+    let t{i} = spawn(x);
+// END
+    o := t0;
+}
