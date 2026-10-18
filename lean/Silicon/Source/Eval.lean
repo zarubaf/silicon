@@ -2986,12 +2986,12 @@ def symbols (items : Array Resolve.Item) (scans rests : Array Scan) : Syms := Id
 
 /-!
 The context and the state of an elaboration with the budget `budget`, and with the scan `top`
-of its top expression.
+of its top expression. The digest function is `Names.sha16`, and `Elab.observe` sets its own.
 -/
 def start (budget : Budget) (items : Array Resolve.Item) (top : Scan) : Ctx × St :=
   let syms := symbols items ((items.map scanItem).push top) (items.map scanRest)
-  (⟨items, budget.depth, 0, none, 0, syms, ⟨none, 0⟩, [], none, none, "-", []⟩,
-   ⟨budget.fuel, Array.replicate items.size .notStarted, {}, {}, {}, {}, {}, {}, #[]⟩)
+  (⟨items, budget.depth, 0, none, 0, syms, ⟨none, 0⟩, [], none, none, "-", [], Names.sha16⟩,
+   ⟨budget.fuel, Array.replicate items.size .notStarted, {}, {}, {}, {}, {}, {}, {}, #[]⟩)
 
 /-!
 Runs `act` with the budget. The result has the used fuel. The records come with both outcomes:

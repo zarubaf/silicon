@@ -91,22 +91,6 @@ namespace Silicon.Source.Elab
 open Resolve Names Eval
 
 /-!
-The state of an elaboration. `table` maps the serialization of each `InstantiationId` to its
-state, and `names` holds the emitted name of each instantiation that is in progress or done.
-`digest` makes the digest of an emitted name, so a test can replace it.
--/
-structure St where
-  digest : String → String
-  table : Std.HashMap String Status := {}
-  names : Std.HashSet String := {}
-  done : Array Inst := #[]
-  work : Work
-
-abbrev EM := StateT St Eval.M
-
-instance : Runs EM := {}
-
-/-!
 A design: the done instantiations in the order they finish, and the top among them. `fields`
 gives the named parts with a leaf of each struct type and each enum type of the design. It gives
 the number, the name, and the type of each part, in packing order. The lowering thus names the
@@ -140,35 +124,33 @@ def fieldsOf (specs : Specs) (table : Array (Option (Array (Nat × String × Ty)
   | t@(.enum ..) => (specs.parts t).map leafParts
   | _ => none
 
-def modifyBody (f : Body → Body) : EM Unit :=
-  modify fun s => { s with work.body := f s.work.body }
-
-def slot (id : Nat) : EM (Option Slot) := monadLift (do return (← get).frame[id]? : Eval.M _)
+def modifyBody (f : Body → Body) : Eval.M Unit :=
+  modify fun s => { s with inst.work.body := f s.inst.work.body }
 
 /-!
 A port, a register, and a wire have a hardware data type (section 5.1). The metadata gives it,
 so a type with a function type at any depth is `S010` with no walk. The type can be empty. A
 handle type names its data type (`notHandle`).
 -/
-def dataType (p : Pos) (t : Ty) : EM Ty := do
+def dataType (p : Pos) (t : Ty) : Eval.M Ty := do
   notHandle p t
   if t.info.data then pure t
   else fail .S010 p s!"a port, a register, and a wire need a hardware data type, not {t.text}"
 
 /-! A resource that needs one binding. The result is its handle. -/
-def resource (k : Kind) (path : Path) (t : Ty) (p : Pos) (x : String) : EM Val := do
-  let id := (← get).work.needs.size
-  modify fun s => { s with work.needs := s.work.needs.push ⟨x, p, 0⟩ }
+def resource (k : Kind) (path : Path) (t : Ty) (p : Pos) (x : String) : Eval.M Val := do
+  let id := (← get).inst.work.needs.size
+  modify fun s => { s with inst.work.needs := s.inst.work.needs.push ⟨x, p, 0⟩ }
   return .handle (.res k id t path)
 
 /-!
 The port `x`. Its core name is its source name. The root frame counts it with the bindings of
 its name, so a name that is taken is `S019`.
 -/
-def port (p : Pos) (input : Bool) (b : Binder) (t : Ty) : EM Val := do
+def port (p : Pos) (input : Bool) (b : Binder) (t : Ty) : Eval.M Val := do
   let x := b.name.name
   let sym := (← readThe Ctx).binder b.id
-  let taken ← monadLift (do
+  let taken ← (do
     let s ← get
     let key := (0, Tag.sym sym)
     let v := s.naming.versions.getD key 0
@@ -180,7 +162,7 @@ def port (p : Pos) (input : Bool) (b : Binder) (t : Ty) : EM Val := do
   -- empty input stays a reference too, so only a read of it pays its zero (`Eval.name`).
   if !input then resource .output ⟨x, []⟩ t p x
   else if t.info.leaves = 0 then pure (.agg (.ref (.name ⟨x, []⟩) t))
-  else monadLift (normalize p (.ref (.name ⟨x, []⟩) t) : Eval.M Val)
+  else normalize p (.ref (.name ⟨x, []⟩) t)
 
 /-! The target of a `:=` binding: an own resource, or the input `port` of the child `inst`. -/
 inductive Target where
@@ -283,28 +265,29 @@ The target of a `:=` binding: a register, a wire, an own output, or a child inpu
 alias and the steps of `targetPart` can select it. Each other part is `S017` at the start of
 the target. `S018` counts the target by its resource.
 -/
-def target (n : Nat) (e : Resolve.Expr) : EM Target := do
-  match ← monadLift (targetPart n e : Eval.M Val) with
+def target (n : Nat) (e : Resolve.Expr) : Eval.M Target := do
+  match ← targetPart n e with
   | .handle (.res r k t path) => return .own r k t path
   | .handle (.input k path q) => return .child k path q
   | v => fail .S017 e.pos (kindText v.about)
 
 /-! Records the binding of `t` to `h`. The second binding of one target is an `S018`. -/
-def bindTarget (p : Pos) (t : Target) (h : Agg) : EM Unit := do
+def bindTarget (p : Pos) (t : Target) (h : Agg) : Eval.M Unit := do
   let second : Error := ⟨.S018, p, "a second binding of one target"⟩
-  let w := (← get).work
+  let w := (← get).inst.work
   match t with
   | .own r k t path =>
     let c := (w.needs[k]?.map (·.count)).getD 0
-    if c == 1 then modify fun s => { s with work.dup := earlier s.work.dup second }
+    if c == 1 then modify fun s => { s with inst.work.dup := earlier s.inst.work.dup second }
     modify fun s =>
-      { s with work.needs := s.work.needs.modify k fun r => { r with count := c + 1 } }
+      { s with inst.work.needs := s.inst.work.needs.modify k fun r => { r with count := c + 1 } }
     modifyBody fun b => { b with binds := b.binds.push ⟨.own r t path, h, p⟩ }
   | .child k path q =>
     let c := w.inputs.getD (k, q.sym) 0
-    if c == 0 then modify fun s => { s with work.bound := s.work.bound.modify k (· + 1) }
-    if c == 1 then modify fun s => { s with work.dup := earlier s.work.dup second }
-    modify fun s => { s with work.inputs := s.work.inputs.insert (k, q.sym) (c + 1) }
+    if c == 0 then
+      modify fun s => { s with inst.work.bound := s.inst.work.bound.modify k (· + 1) }
+    if c == 1 then modify fun s => { s with inst.work.dup := earlier s.inst.work.dup second }
+    modify fun s => { s with inst.work.inputs := s.inst.work.inputs.insert (k, q.sym) (c + 1) }
     modifyBody fun b =>
       { b with binds := b.binds.push ⟨.child k path (portName q.name) q.ty, h, p⟩ }
 
@@ -313,7 +296,7 @@ The value of a `:=` binding of the type `t` at `p`, after its typed use. A stati
 a hardware constant. A static value of another type is empty or has only static leaves, so it
 stays static. A hardware value and a hardware aggregate stay as they are.
 -/
-def sinkValue (p : Pos) (t : Ty) : Val → EM Agg
+def sinkValue (p : Pos) (t : Ty) : Val → Eval.M Agg
   | .static v =>
     match t with
     | .bool | .uint _ | .sint _ => do return .hw (← lit p v)
@@ -328,9 +311,9 @@ declaration, and one of a child input is at the `instance` statement. The counts
 first child with a free input, so only the interface of that child is searched. The name is
 that of its free input with the first source position.
 -/
-def bindings : EM Unit := do
-  let w := (← get).work
-  let mems ← monadLift (do return (← get).naming.mems : Eval.M (Array Mem))
+def bindings : Eval.M Unit := do
+  let w := (← get).inst.work
+  let mems := (← get).naming.mems
   let mut err := w.dup
   for r in w.needs do
     if r.count == 0 then err := earlier err ⟨.S018, r.pos, s!"`{r.name}` has no binding"⟩
@@ -361,25 +344,18 @@ def iface (name : Name) (b : Body) : Iface :=
 The serialization of an `InstantiationId` at the statement `pos`. It charges the walk that
 measures it, then its length in bytes, before it makes the text (section 5.4).
 -/
-def serialize (pos : Pos) (m : String) (vs : List Value) : EM String := do
+def serialize (pos : Pos) (m : String) (vs : List Value) : Eval.M String := do
   charge pos (vs.map Value.measureCharge).sum
   let parts := vs.map Value.serialize
   charge pos (InstantiationId.renderSize m parts)
   return InstantiationId.render m parts
-
-/-! Runs `act` and gives the fuel that it uses. The result reads only a difference of fuel. -/
-def measure (act : EM α) : EM (α × Nat) := do
-  let fuel : EM Nat := monadLift (do return (← get).fuel : Eval.M Nat)
-  let start ← fuel
-  let a ← act
-  return (a, start - (← fuel))
 
 /-!
 The walk of a module body. `stmt` and `block` are entry functions as in `Eval`. A `let`, an
 assignment, a `return`, and an expression statement run in `Eval.stmt`, which charges them.
 -/
 mutual
-  def stmt (b : Nat) (s : Resolve.Stmt) : EM Unit :=
+  def stmt (b : Nat) (s : Resolve.Stmt) : Eval.M Unit :=
     match s with
     | .local .. | .assign .. | .ret .. | .expr .. | .alias .. => do let _ ← Eval.stmt b s
     | _ =>
@@ -393,7 +369,7 @@ mutual
           let v ← port p (s matches .input ..) x t
           bindLocal x.id ⟨some t, false, v⟩
         | .reg p x ty init => do
-          if (← get).work.body.domain.isNone then
+          if (← get).inst.work.body.domain.isNone then
             fail .S017 p "a combinational module has no register"
           let t ← dataType p (← typeExpr n ty)
           let o ← need init (← eval n init)
@@ -408,14 +384,14 @@ mutual
           modifyBody fun b => { b with wires := b.wires.push ⟨path, t, p⟩ }
           bindLocal x.id ⟨some t, false, ← resource .wire path t p x.name.name⟩
         | .mem p x w d => do
-          if (← get).work.body.domain.isNone then
+          if (← get).inst.work.body.domain.isNone then
             fail .S017 p "a combinational module has no memory"
           let t ← memWord p (← typeExpr n w)
           let k ← memDepth p (← structural do return (← need d (← eval n d)).value)
           let path ← fresh x.id x.name.name
-          let id ← monadLift (do return (← get).naming.mems.size : Eval.M Nat)
+          let id := (← get).naming.mems.size
           let m : Mem := { name := x.name.name, path := path, word := t, depth := k, pos := p }
-          monadLift (modify fun s => { s with naming.mems := s.naming.mems.push m } : Eval.M Unit)
+          modify fun s => { s with naming.mems := s.naming.mems.push m }
           bindLocal x.id ⟨none, false, .handle (.mem id path t k)⟩
         | .connect p tgt v => do
           let t ← target n tgt
@@ -428,13 +404,13 @@ mutual
           let tvs ← arguments (eval n) (typeExpr n) p i xs
           let some (.module _ m _ ds _) := (← read).items[i]?
             | fail .S010 p "an instance needs a module"
-          if (← get).work.body.domain.isNone && !ds.isEmpty then
+          if (← get).inst.work.body.domain.isNone && !ds.isEmpty then
             fail .S017 p s!"a combinational module has no clocked child `{m.name}`"
           let (c, _) ← instantiate n p i tvs
           let path ← fresh u.id u.name.name
-          let k := (← get).work.body.children.size
+          let k := (← get).inst.work.body.children.size
           modifyBody fun b => { b with children := b.children.push ⟨path, c, p, u.name.name⟩ }
-          modify fun s => { s with work.bound := s.work.bound.push 0 }
+          modify fun s => { s with inst.work.bound := s.inst.work.bound.push 0 }
           -- The converted arguments paid for their sizes, so the type adds no charge.
           let t := Ty.inst i m.name (tvs.map (·.2)).toArray
           bindLocal u.id ⟨none, false, .handle (.inst k path c t)⟩
@@ -457,7 +433,7 @@ mutual
   termination_by (b, 1)
 
   /-- A block at `pos`. It charges as a statement. -/
-  def block (b : Nat) (pos : Pos) (ss : List Resolve.Stmt) : EM Unit :=
+  def block (b : Nat) (pos : Pos) (ss : List Resolve.Stmt) : Eval.M Unit :=
     match b with
     | 0 => exhausted pos
     | n + 1 => do
@@ -471,13 +447,13 @@ mutual
   result is its interface and its index among the done instantiations.
   -/
   def instantiate (n : Nat) (pos : Pos) (i : Nat) (tvs : List (Ty × Value)) :
-      EM (Iface × Nat) := do
+      Eval.M (Iface × Nat) := do
     let some (.module mp m ps ds body) := (← read).items[i]?
       | fail .S010 pos "an instance needs a module"
     let vs := tvs.map (·.2)
     let id : InstantiationId := ⟨m.name, vs⟩
     let key ← serialize pos m.name vs
-    let s ← get
+    let s := (← get).inst
     match s.table[key]? with
     | some .inProgress =>
       fail .S019 pos s!"the instantiation of `{m.name}` depends on itself"
@@ -486,16 +462,18 @@ mutual
       | some d => return (d.iface, k)
       | none => fail .S019 pos s!"the instantiation of `{m.name}` is not in the table"
     | none => nested pos do
-      let name := moduleName s.digest id key
+      let name := moduleName (← read).digest id key
       charge pos (byteSize name)
       let text := encode name
       if s.names.contains text then
         fail .S019 pos s!"two instantiations have the emitted name `{text}`"
       let parent := s.work
-      let naming ← monadLift (do return (← get).naming : Eval.M Naming)
-      set { s with table := s.table.insert key .inProgress, names := s.names.insert text,
-                   work := { body := { domain := ds.head?.map fun (d : Binder) => d.name.name } } }
-      monadLift (modify fun t => { t with naming := {} } : Eval.M Unit)
+      let naming := (← get).naming
+      modify fun t => { t with
+        inst.table := t.inst.table.insert key .inProgress,
+        inst.names := t.inst.names.insert text,
+        inst.work := { body := { domain := ds.head?.map fun (d : Binder) => d.name.name } },
+        naming := {} }
       let (made, used) ← measure do
         inFrame none <| withTheReader Ctx (fun c =>
             { c with item := i, frame := ⟨none, 0⟩, inst := text, calls := [] }) do
@@ -505,17 +483,17 @@ mutual
             bindLocal d.id ⟨none, false, .handle (.domain d.name.name)⟩
           block n mp body
         bindings
-        let made ← monadLift (do return (← get).naming : Eval.M Naming)
-        monadLift (modify fun t => { t with naming } : Eval.M Unit)
+        let made := (← get).naming
+        modify fun t => { t with naming }
         return made
-      let w := (← get).work
+      let w := (← get).inst.work
       let body := { w.body with lets := made.lets, mems := made.mems }
       let c := iface name body
-      let k := (← get).done.size
+      let k := (← get).inst.done.size
       modify fun t => { t with
-        table := t.table.insert key (.done k),
-        done := t.done.push ⟨id, c, body, used - w.spent, mp⟩,
-        work := { parent with spent := parent.spent + used } }
+        inst.table := t.inst.table.insert key (.done k),
+        inst.done := t.inst.done.push ⟨id, c, body, used - w.spent, mp⟩,
+        inst.work := { parent with spent := parent.spent + used } }
       return (c, k)
   termination_by (n + 1, 0)
 end
@@ -529,13 +507,11 @@ records and the design with the used fuel, or the records and the first error (s
 def observe (budget : Budget) (items : Array Resolve.Item) (digest : String → String)
     (pos : Pos) (top : Nat) (xs : List Resolve.Expr) :
     Array Record × Except Error (Design × Nat) :=
-  Eval.observeRun budget items fun n => do
-    let go : EM Nat := do
-      let tvs ← arguments (eval n) (typeExpr n) pos top xs
-      return (← instantiate n pos top tvs).2
-    let (k, s) ← go.run { digest, work := { body := { domain := none } } }
-    let specs := (← get).specs
-    return ⟨s.done, k, fieldsOf specs (leafFields specs)⟩
+  Eval.observeRun budget items fun n => withTheReader Ctx (fun c => { c with digest }) do
+    let tvs ← arguments (eval n) (typeExpr n) pos top xs
+    let k := (← instantiate n pos top tvs).2
+    let s ← get
+    return ⟨s.inst.done, k, fieldsOf s.specs (leafFields s.specs)⟩
 
 /-! The elaboration of the top selection, without the records. -/
 def elaborate (budget : Budget) (items : Array Resolve.Item) (digest : String → String)

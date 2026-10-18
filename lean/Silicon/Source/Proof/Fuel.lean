@@ -73,6 +73,14 @@ theorem read_apply (c : Ctx) (s : St) : (read : M Ctx) c s = .ok (c, s) := rfl
 
 theorem pure_apply (a : α) (c : Ctx) (s : St) : (pure a : M α) c s = .ok (a, s) := rfl
 
+/-- The run of `measure`: the value gets the difference of the fuel around the action. -/
+theorem measure_apply (x : M α) (c : Ctx) (s : St) :
+    measure x c s = match x c s with
+      | .ok (a, s') => .ok ((a, s.fuel - s'.fuel), s')
+      | .error e => .error e := by
+  unfold measure
+  simp only [bind_apply, get_apply, pure_apply]
+
 namespace Follows
 
 /-! The combinators of the monad. -/
@@ -203,6 +211,12 @@ theorem forIn {f g : β → γ → M (ForInStep γ)} (h : ∀ b a, Follows cap (
     | done a => exact pure a
     | yield a => exact forIn h xs a
 
+theorem forInArray {f g : β → γ → M (ForInStep γ)} (h : ∀ b a, Follows cap (f b a) (g b a))
+    (xs : Array β) (init : γ) :
+    Follows cap (ForIn.forIn xs init f) (ForIn.forIn xs init g) := by
+  rw [← Array.forIn_toList, ← Array.forIn_toList]
+  exact forIn h _ init
+
 theorem forInRange {f g : Nat → γ → M (ForInStep γ)} (h : ∀ b a, Follows cap (f b a) (g b a))
     (r : Std.Legacy.Range) (init : γ) :
     Follows cap (ForIn.forIn r init f) (ForIn.forIn r init g) := by
@@ -255,6 +269,26 @@ theorem exhausted_left (p : Pos) (y : M α) : Follows cap (exhausted p) y := by
   unfold exhausted at hx
   rw [bind_apply, charge_apply] at hx
   split at hx <;> cases hx
+
+/--
+The only read of the absolute fuel outside `charge`. It gives the difference of the fuel around
+its action, and that difference is the same in each run that succeeds.
+-/
+theorem measure {x y : M α} (h : Follows cap x y) :
+    Follows cap (Eval.measure x) (Eval.measure y) := by
+  intro c s r s'' hx
+  rw [measure_apply] at hx
+  split at hx
+  next a s' hxs =>
+    cases hx
+    obtain ⟨m, k⟩ := h c s _ _ hxs
+    refine ⟨m, fun F hF => ⟨fun hu => ?_, fun hu => ?_⟩⟩
+    · rw [measure_apply, (k F hF).1 hu]
+      simp only [used] at hu ⊢
+      rw [Nat.sub_sub_self hu]
+    · obtain ⟨p, m, rs, he⟩ := (k F hF).2 hu
+      exact ⟨p, m, rs, by rw [measure_apply, he]⟩
+  next => cases hx
 
 end Follows
 
