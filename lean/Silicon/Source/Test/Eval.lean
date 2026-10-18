@@ -3478,11 +3478,14 @@ def handles : String := "module C(comptime W: Nat, comptime E: Bool) {\n}\nmodul
 #guard out "" "Wire[String]" == "S010 1:1"
 #guard msg "" "Wire[String]" ==
   "`Wire` takes a hardware data type, not `String`; use a fixed-width type, for example " ++
-    "`Wire[UInt[8]]`"
+    "`UInt[8]`"
 #guard msg "" "Reg[Int]" ==
   "`Reg` takes a hardware data type, not `Int`; use a fixed-width type, for example " ++
-    "`Reg[UInt[8]]`"
+    "`UInt[8]`"
 #guard out "" "Input[fn () -> Bool]" == "S010 1:1"
+#guard msg "" "Input[List[Bool]]" ==
+  "`Input` takes a hardware data type, not `List[Bool]`; use a fixed-width type, for example " ++
+    "`UInt[8]`"
 
 /-! A handle type is not hardware data: its text names the data type to use (section 6.2). -/
 #guard msg "" "Reg[Reg[Bool]]" ==
