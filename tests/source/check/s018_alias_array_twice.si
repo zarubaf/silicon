@@ -1,0 +1,11 @@
+// S018: `S018` counts the resource of a target through each alias. Two targets select the register `r` through an array
+// and through a name, so `r` has a second binding.
+// TOP M()
+module M() {
+    input x: UInt[8];
+    reg r: UInt[8] = 0;
+    let rs = [r, r];
+    rs[0] := x;
+    // expected-error S018 @+1
+    rs[1] := x;
+}

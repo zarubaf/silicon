@@ -1,0 +1,15 @@
+// S017: a `:=` target is a whole resource. A field step below a register is a projection below a handle, and the error
+// is at the start of the target.
+// TOP M()
+struct P {
+    a: UInt[8],
+    b: UInt[8],
+}
+module M() {
+    input x: UInt[8];
+    reg r: P = P(0, 0);
+    r := P(x, x);
+    // expected-error S017 @+2
+    // expected-message: a `:=` target is a whole resource, not a part of a value; bind the whole resource, for example `r := P(a, b);`
+    r.a := x;
+}

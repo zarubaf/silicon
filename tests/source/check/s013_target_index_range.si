@@ -1,0 +1,13 @@
+// S013: a `:=` target index selects an element of an array of registers, and the index is out of range.
+// TOP M()
+module M() {
+    input x: UInt[8];
+    reg r: UInt[8] = 0;
+    reg s: UInt[8] = 0;
+    r := x;
+    s := x;
+    let rs = [r, s];
+    // expected-error S013 @+2
+    // expected-message: the index 2 is out of range for 2 element(s)
+    rs[2] := x;
+}

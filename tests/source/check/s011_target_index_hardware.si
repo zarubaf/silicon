@@ -1,0 +1,14 @@
+// S011: the index of a `:=` target is static. A hardware index selects no single resource.
+// TOP M()
+module M() {
+    input x: UInt[8];
+    input i: UInt[1];
+    reg r: UInt[8] = 0;
+    reg s: UInt[8] = 0;
+    r := x;
+    let j = i;
+    let rs = [r, s];
+    // expected-error S011 @+2
+    // expected-message: a static position needs a static value, not hardware UInt[1]
+    rs[j] := x;
+}
