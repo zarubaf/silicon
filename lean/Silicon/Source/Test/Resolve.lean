@@ -169,11 +169,56 @@ parameters, so a parameter `clock` is `S002` at the parameter. `domains()` decla
 #guard fails "fn f(x: TypeInfo) -> Bool { return true; }" .S003 1 9
 #guard message "fn f(x: TypeInfo) -> Bool { return true; }" ==
   "`TypeInfo` is not supported yet; it comes in slice 4"
-#guard fails (fnBody "let xs = read(p);\nreturn p;") .S003 2 10
-#guard fails (modBody "reg r: Reg[Bool] = 0;") .S003 2 8
-#guard message (modBody "reg r: Reg[Bool] = 0;") ==
-  "`Reg` is not supported yet; it comes in slice 3"
+#guard ok "const TypeInfo: Nat = 1;\nconst N: Nat = TypeInfo;"
+
+/-!
+The handle types and `read` of slice 3 are prelude names (section 5.6). `Domain` stays `S003`
+at the name, with its text of section 6.2. A user item or a local shadows each prelude name.
+-/
+#guard ok (fnBody "let xs = read(p);\nreturn p.read();")
+#guard ok (modBody ("reg r: Reg[Bool] = 0;\nwire w: Wire[Bool];\ninput i: Input[Bool];\n" ++
+  "let m: Type = Mem[Bool, 2];"))
 #guard ok "const Wire: Nat = 1;\nconst N: Nat = Wire;"
+#guard fails "fn f(x: Domain) -> Bool { return true; }" .S003 1 9
+#guard message "fn f(x: Domain) -> Bool { return true; }" ==
+  "`Domain` is not supported yet; it comes with more domains (#11); a module has one domain " ++
+    "or none, so it needs no `Domain` value"
+#guard fails (modBody "let d = Domain;") .S003 2 9
+#guard ok "const Domain: Nat = 1;\nconst N: Nat = Domain;"
+#guard retRef (fnBody "return read;") == some (.fn .read)
+#guard retRef (fnBody "return read;" ++ "\nfn read(x: Bool) -> Bool { return x; }") ==
+  some (.item 1)
+#guard retRef (fnBody "let read = p;\nreturn read;") == some (.local 1)
+#guard ok ("fn read(x: Bool, y: Bool) -> Bool { return x; }\n" ++ fnBody "return read(p, p);")
+#guard ok "module read() {}\nmodule M() {\ninstance read = read();\nlet x = read.q;\n}"
+
+/-!
+The first argument of `Instance` resolves by the ordinary scoping to a module item, in a type and
+in an expression. Another first argument is `S003` at its start, with the text of section 6.2.
+That error replaces each `S003` in the argument. A module name in another argument is `S003`.
+-/
+def counter : String := "module C(comptime W: Nat) {}\n"
+#guard ok (counter ++ "module M() {\nlet t = Instance[C, 8];\nlet x: Instance[C, 8] = t;\n}")
+#guard ok (counter ++ "fn f(x: Instance[C, 8]) -> Bool { return true; }")
+#guard fails (counter ++ "const N: Nat = 1;\nconst T: Type = Instance[N, 8];") .S003 3 26
+#guard message (counter ++ "const N: Nat = 1;\nconst T: Type = Instance[N, 8];") ==
+  "the first argument of `Instance` is not a module; write the module first, for example " ++
+    "`Instance[Counter, 8]`"
+#guard fails (counter ++ "fn f(x: Instance[Q, 8]) -> Bool { return true; }") .S003 2 18
+#guard message (counter ++ "fn f(x: Instance[Q, 8]) -> Bool { return true; }") ==
+  "the first argument of `Instance` is not a module; write the module first, for example " ++
+    "`Instance[Counter, 8]`"
+#guard fails (counter ++ "module M() {\nlet C = 1;\nlet t = Instance[C, 8];\n}") .S003 4 18
+#guard fails (counter ++ "const T: Type = Instance[1 + 2];") .S003 2 26
+#guard message (counter ++ "const T: Type = Instance[q::A];") ==
+  "the first argument of `Instance` is not a module; write the module first, for example " ++
+    "`Instance[Counter, 8]`"
+#guard fails (counter ++ "const T: Type = (z, Instance[N]);") .S003 2 18
+#guard message (counter ++ "const T: Type = (z, Instance[N]);") == "`z` is not declared"
+#guard fails (counter ++ "const T: Type = Instance[C, C];") .S003 2 29
+#guard message (counter ++ "const T: Type = Instance[C, C];") ==
+  "`C` is not a value; a module is used only in an `instance`"
+#guard fails (counter ++ "const T: Type = Reg[C];") .S003 2 21
 
 /-! The container forms of slice 2 resolve their parts. `Unit` and `len` are prelude names. -/
 #guard ok (fnBody "let t = (p, [p, p], ());\nlet x: (Bool, [Bool; 2], ()) = t;\nreturn t.0;")
@@ -345,8 +390,9 @@ prelude. A local never hides it, and an item hides a prelude function.
 #guard fails (fnBody "return p.Bool();") .S003 2 10
 #guard message (fnBody "return p.Bool();") == "`Bool` is not a function"
 #guard fails (fnBody "return p.Reg();") .S003 2 10
-#guard message (fnBody "return p.Reg();") == "`Reg` is not supported yet; it comes in slice 3"
-#guard message (fnBody "return p.read();") == "`read` is not supported yet; it comes in slice 3"
+#guard message (fnBody "return p.Reg();") == "`Reg` is not a function"
+#guard message (fnBody "return p.PortKey();") ==
+  "`PortKey` is not supported yet; it comes in slice 4"
 
 /-! `S003` in the receiver or an argument of a receiver call. The first error by position wins. -/
 #guard fails (fnBody "return q.len();") .S003 2 8

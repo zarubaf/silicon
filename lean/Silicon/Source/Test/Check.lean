@@ -192,6 +192,65 @@ return 1;
 #guard fails (fnBody "return resize(Nat[1], p);") .S007 2 15
 #guard fails (fnBody "return resize(UInt[8][1], p);") .S007 2 15
 #guard ok (fnBody "let x: Nat = 1;\nreturn resize(Bool, p);")
+#guard message "const A: UInt = 0;" == "`UInt` takes 1 argument(s), but it has 0; write `UInt[W]`"
+#guard message "const A: SInt[1, 2] = 0;" ==
+  "`SInt` takes 1 argument(s), but it has 2; write `SInt[W]`"
+#guard message "const A: List = 0;" == "`List` takes 1 argument(s), but it has 0; write `List[T]`"
+#guard message "const A: Bool[1] = true;" == "`Bool` takes 0 argument(s), but it has 1"
+
+/-!
+`S007`: the handle type families of slice 3 (section 5.6). `Reg`, `Wire`, and `Input` take one
+argument, and `Mem` takes two. `Instance` takes its module and one argument for each parameter
+of the module. A bare family is `S007` at its name, in a type and in an expression. The text ends
+with the signature of the family.
+-/
+def counter : String := "module C(comptime W: Nat, comptime B: Bool) {}\n"
+#guard ok (modBody ("type T = (Reg[UInt[W]], Wire[Bool], Input[UInt[8]]);\n" ++
+  "let m = Mem[UInt[8], 16];"))
+#guard ok (counter ++ "const T: Type = Instance[C, 8, true];\n" ++
+  "fn f(x: Instance[C, 8, true]) -> Bool { return true; }")
+#guard ok "module D() {}\nconst T: Type = Instance[D];"
+#guard fails "const A: Reg = 0;" .S007 1 10
+#guard message "const A: Reg = 0;" == "`Reg` takes 1 argument(s), but it has 0; write `Reg[T]`"
+#guard fails (fnBody "let t = Wire[Bool, Bool];\nreturn p;") .S007 2 9
+#guard message (fnBody "let t = Wire[Bool, Bool];\nreturn p;") ==
+  "`Wire` takes 1 argument(s), but it has 2; write `Wire[T]`"
+#guard message "const A: Input = 0;" ==
+  "`Input` takes 1 argument(s), but it has 0; write `Input[T]`"
+#guard fails "const A: Mem[UInt[8]] = 0;" .S007 1 10
+#guard message "const A: Mem[UInt[8]] = 0;" ==
+  "`Mem` takes 2 argument(s), but it has 1; write `Mem[T, N]`"
+#guard fails "const A: Instance = 0;" .S007 1 10
+#guard message "const A: Instance = 0;" ==
+  "`Instance` takes 1 argument(s), but it has 0; write `Instance[M, args]`"
+#guard fails (fnBody "let t = Instance;\nreturn p;") .S007 2 9
+#guard fails (counter ++ "const T: Type = Instance[C, 8];") .S007 2 17
+#guard message (counter ++ "const T: Type = Instance[C, 8];") ==
+  "`Instance` takes 3 argument(s), but it has 2; write `Instance[M, args]`"
+#guard message (counter ++ "fn f(x: Instance[C, 8, true, 1]) -> Bool { return true; }") ==
+  "`Instance` takes 3 argument(s), but it has 4; write `Instance[M, args]`"
+#guard fails "module D() {}\nconst T: Type = Instance[D, 1];" .S007 2 17
+
+/-!
+`S005`: each argument of a handle type is a static position, in a type and in an expression.
+-/
+#guard fails (modBody "reg r: UInt[W] = 0;\nlet t = Reg[r];") .S005 3 13
+#guard message (modBody "reg r: UInt[W] = 0;\nlet t = Reg[r];") ==
+  "`r` is a register; a static position needs a static value"
+#guard fails (modBody "wire w: Bool;\nlet t = Mem[UInt[8], w];") .S005 3 22
+#guard fails (counter ++ "module M() {\ninput a: UInt[8];\nlet t: Instance[C, a, true] = 0;\n}")
+  .S005 4 20
+#guard ok (modBody "reg r: UInt[W] = 0;\nlet t = Reg[UInt[W]];\nlet x: UInt[W] = r;")
+
+/-!
+`S007`: `read` has one argument (section 5.6), also in the receiver form. A user function `read`
+shadows it.
+-/
+#guard ok (modBody "reg r: UInt[W] = 0;\nlet x = read(r);\nlet y = r.read();")
+#guard fails (fnBody "return read();") .S007 2 8
+#guard message (fnBody "return read(p, p);") == "`read` takes 1 argument(s), but it has 2"
+#guard fails (fnBody "return p.read(p);") .S007 2 8
+#guard ok ("fn read(a: Bool, b: Bool) -> Bool { return a; }\n" ++ fnBody "return read(p, p);")
 
 /-! `S007`: `len` has one argument. The position is the call. -/
 #guard fails (fnBody "return len();") .S007 2 8

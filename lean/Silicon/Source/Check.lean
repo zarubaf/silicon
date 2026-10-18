@@ -48,7 +48,8 @@ at the name. These are the static positions:
 
 - A call to a `fn` item has one argument for each parameter.
 - `resize`, `reinterpret`, `static_assert`, and `push` have two arguments. `error`, `len`,
-  `data_bits`, `list`, `pop`, and `str` have one. `read_port` has three, and `write_port` four.
+  `data_bits`, `list`, `pop`, `str`, and `read` have one. `read_port` has three, and `write_port`
+  four.
 - A receiver call `x.m(args)` binds its receiver to the first parameter of `m` without a written
   `comptime` mark, also in a `comptime fn`. A function without such a parameter is `S007` at the
   call. Then the receiver and the arguments together have one argument for each parameter. The
@@ -59,8 +60,10 @@ at the name. These are the static positions:
 - A struct constructor has one argument for each field. `P()` has none: it is the zero of `P`
   (section 5.6).
 - An `instance` has one argument for each parameter of its module.
-- `UInt`, `SInt`, and `List` have one index argument. `Bool`, `Nat`, `Int`, `Unit`, `Type`, and
-  `String` have none.
+- `UInt`, `SInt`, `List`, `Reg`, `Wire`, and `Input` have one index argument, and `Mem` has two.
+  `Instance` has its module and one argument for each parameter of the module, so a bare
+  `Instance` misses one. The text of these families ends with their signature (section 6.2).
+  `Bool`, `Nat`, `Int`, `Unit`, `Type`, and `String` have none.
   A struct has one index argument for each parameter. The prelude struct `ReadResponse` thus
   has one, and its constructor two arguments. Thus each use of a struct with parameters
   has its arguments, also the callee of a constructor. This also holds for a type name in an
@@ -195,14 +198,23 @@ def setAt [Inhabited α] (a : Array α) (i : Nat) (x : α) : Array α :=
 def declare (b : Binder) (l : Local) : M Unit :=
   modify fun s => { s with locals := setAt s.locals b.id l }
 
-/-! `S007` at `pos` if `what` has `got` arguments, not `want`. -/
-def arity (pos : Pos) (what : String) (want got : Nat) : M Unit :=
+/-! `S007` at `pos` if `what` has `got` arguments, not `want`. `fix` ends the text. -/
+def arity (pos : Pos) (what : String) (want got : Nat) (fix := "") : M Unit :=
   if want == got then pure ()
-  else report .S007 pos s!"{what} takes {want} argument(s), but it has {got}"
+  else report .S007 pos s!"{what} takes {want} argument(s), but it has {got}{fix}"
 
+/-! The number of index arguments of a prelude type. `Instance` adds the module parameters. -/
 def typeArity : PrimType → Nat
-  | .uint | .sint | .list => 1
+  | .uint | .sint | .list | .reg | .wire | .input | .instance => 1
+  | .mem => 2
   | .bool | .nat | .int | .unit | .type | .string => 0
+
+/-! The signature of a prelude type family, for the fix of its `S007` (section 6.2). -/
+def signature : PrimType → Option String
+  | .uint => some "UInt[W]" | .sint => some "SInt[W]" | .list => some "List[T]"
+  | .reg => some "Reg[T]" | .wire => some "Wire[T]" | .input => some "Input[T]"
+  | .mem => some "Mem[T, N]" | .instance => some "Instance[M, args]"
+  | .bool | .nat | .int | .unit | .type | .string => none
 
 /-!
 True for each static argument of a prelude function, by its index. A `comptime` parameter is
@@ -246,27 +258,49 @@ inductive Ctor where
   | record (fields : Nat)
   | unknown
 
-/-! A type head: its text, its number of missing index arguments, and its constructor rule. -/
+/-!
+A type head: its text, its number of missing index arguments, and its constructor rule. `fix`
+ends the text of its `S007`. `inst` is true for `Instance`, which also misses one argument for
+each parameter of its module.
+-/
 structure Head where
   text : String
   missing : Nat
   ctor : Ctor
+  fix : String := ""
+  inst : Bool := false
 
 /-!
 The type head of the type name `n`. A struct item misses its parameters. A `type` item and an
 `enum` item are complete types. A local has no known head.
 -/
 def head (n : String) : Ref → M (Option Head)
-  | .type t => return some ⟨s!"`{n}`", typeArity t, .convert⟩
+  | .type t =>
+    let fix := ((signature t).map (s!"; write `{·}`")).getD ""
+    return some { text := s!"`{n}`", missing := typeArity t, ctor := .convert, fix,
+                  inst := t == .instance }
   | .item i => do
     match (← read)[i]? with
-    | some (.struct k f) => return some ⟨s!"`{n}`", k, .record f⟩
-    | some .alias | some (.enum _) => return some ⟨s!"`{n}`", 0, .unknown⟩
+    | some (.struct k f) => return some { text := s!"`{n}`", missing := k, ctor := .record f }
+    | some .alias | some (.enum _) =>
+      return some { text := s!"`{n}`", missing := 0, ctor := .unknown }
     | _ => return none
   | _ => return none
 
 /-! The head of a type that a type node makes: a complete type. -/
-def complete (h : Head) : Head := { h with text := "a complete type", missing := 0 }
+def complete (h : Head) : Head :=
+  { h with text := "a complete type", missing := 0, fix := "", inst := false }
+
+/-!
+`S007` at `pos` if the head `h` with the index arguments `xs` misses arguments. The module of
+`Instance` is its first argument, a module item after `Resolve`.
+-/
+def indexArity (pos : Pos) (h : Head) (xs : List Resolve.Expr) : M Unit := do
+  let mut want := h.missing
+  if h.inst then
+    if let .name _ _ (.item i) :: _ := xs then
+      if let some (.module k) := (← read)[i]? then want := want + k
+  arity pos h.text want xs.length h.fix
 
 /-! `S007` at `pos` if the variant `x::y` with `want` payload types has `got` payload values. -/
 def payloads (pos : Pos) (x y : Ident) (want got : Nat) : M Unit :=
@@ -391,7 +425,7 @@ mutual
     | .name p n r => do
       match ← head n r with
       | some h =>
-        unless base do arity p h.text h.missing 0
+        unless base do arity p h.text h.missing 0 h.fix
         return some h
       | none => name static p n r; return none
     | .unary _ _ a => do let _ ← visit static false a; return none
@@ -435,7 +469,7 @@ mutual
       return none
     | .index p b xs => do
       let h ← visit static true b
-      if let some h := h then arity p h.text h.missing xs.length
+      if let some h := h then indexArity p h xs
       for x in xs do let _ ← visit true false x
       return h.map complete
     | .field _ b _ | .select _ b .. => do let _ ← visit static false b; return none
@@ -446,11 +480,11 @@ mutual
     | .arrayType _ t n => do
       typeExpr t
       let _ ← visit true false n
-      return some ⟨"a complete type", 0, .convert⟩
+      return some { text := "a complete type", missing := 0, ctor := .convert }
     | .fnType _ ps r => do
       for q in ps do fnParam q
       typeExpr r
-      return some ⟨"a function type", 0, .unknown⟩
+      return some { text := "a function type", missing := 0, ctor := .unknown }
     | .variant p x y i j xs _ => do
       if let some (.enum ns) := (← read)[i]? then payloads p x y (ns.getD j 0) xs.length
       for a in xs do let _ ← visit static false a
@@ -466,9 +500,9 @@ mutual
 
   def typeExpr : Resolve.TypeExpr → M Unit
     | .name p n r => do
-      if let some h ← head n r then arity p h.text h.missing 0
+      if let some h ← head n r then arity p h.text h.missing 0 h.fix
     | .index p (.name _ n r) xs => do
-      if let some h ← head n r then arity p h.text h.missing xs.length
+      if let some h ← head n r then indexArity p h xs
       for x in xs do let _ ← visit true false x
     | .index p b xs => do
       arity p (if b matches .fn .. then "a function type" else "a complete type") 0 xs.length
