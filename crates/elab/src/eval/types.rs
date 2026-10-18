@@ -806,7 +806,7 @@ impl Evaluator<'_> {
     }
 
     /// The arguments of an instantiation of the item `i` at `pos`, from left to right, after
-    /// their typed use (`typed_use`). Each argument is static (`S011`) when it evaluates. The
+    /// their typed use (`typed_arguments`). Each argument is static (`S011`) when it evaluates. The
     /// parent pays this work.
     pub(super) fn arguments(&mut self, pos: Pos, i: usize, xs: &[Expr]) -> Res<Vec<(TyId, Value)>> {
         let base = self.store.parked_len();
@@ -819,7 +819,7 @@ impl Evaluator<'_> {
             self.store.park(o);
         }
         let outs = self.store.resume(base);
-        self.typed_use(pos, i, outs)
+        self.typed_arguments(pos, i, outs)
     }
 
     /// The typed use of the evaluated arguments `outs` of the module item `i` at `pos`. It
@@ -829,7 +829,7 @@ impl Evaluator<'_> {
     /// converted argument charges there, before its copy into the frame and before the next
     /// parameter type. The values then move out of the frame. The result is each parameter type
     /// with its converted argument.
-    pub(super) fn typed_use(
+    pub(super) fn typed_arguments(
         &mut self,
         pos: Pos,
         i: usize,
@@ -846,7 +846,7 @@ impl Evaluator<'_> {
         })
     }
 
-    /// `typed_use` in the frame of the module.
+    /// `typed_arguments` in the frame of the module.
     fn charged_arguments(
         &mut self,
         pos: Pos,

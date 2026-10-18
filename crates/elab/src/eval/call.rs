@@ -4,6 +4,7 @@
 //! new call frame.
 
 use super::place::Place;
+use super::typed::Passed;
 use super::{Evaluator, Names, Opnd, Out, Res, Slot, at, fail, need};
 use crate::Code;
 use crate::hw::{Ref, Seen, Val};
@@ -390,7 +391,7 @@ impl Evaluator<'_> {
                     let v = self.settle(pos, t, v)?;
                     Val::Static(self.conform(pos, t, v)?)
                 } else {
-                    self.copy_use(pos, t, true, v)?
+                    self.typed_use(pos, t, true, v, Passed)?
                 };
                 (x, false)
             }

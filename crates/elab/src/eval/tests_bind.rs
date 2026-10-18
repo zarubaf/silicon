@@ -155,7 +155,7 @@ fn typed_use(
     };
     let v = make(&mut ev, t);
     ev.fuel = Fuel::new(fuel);
-    match error_text(ev.copy_use(AT, t, false, super::Out::Made(v))) {
+    match error_text(ev.typed_use(AT, t, false, super::Out::Made(v), super::typed::Passed)) {
         Ok(x) => format!("{} {}", val_text(&ev, &x), fuel - ev.fuel.left()),
         Err(e) => e,
     }
@@ -288,7 +288,7 @@ fn the_copy_of_an_aggregate_register_read_charges_its_zero_size() {
         };
         let r = register(&mut ev, t);
         ev.fuel = Fuel::new(fuel);
-        match error_text(ev.copy_use(AT, t, true, super::Out::Named(r))) {
+        match error_text(ev.typed_use(AT, t, true, super::Out::Named(r), super::typed::Passed)) {
             Ok(v) => format!("{} {}", val_text(&ev, &v), fuel - ev.fuel.left()),
             Err(e) => e,
         }
