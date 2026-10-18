@@ -256,21 +256,28 @@ impl Evaluator<'_> {
     }
 
     /// The typed use of the handle leaf that `p` is, at the type `t` (Lean `Agg.handleAt` and the
-    /// handle case of `Agg.plan`). A handle type needs a handle of exactly this type. Another
-    /// type with the handle flag is a container of handles, and a data type is a data leaf, each
-    /// with its own text. The compare reads nothing and charges nothing.
+    /// handle case of `Agg.plan`). The compare reads nothing and charges nothing.
     pub(super) fn conform_leaf(&mut self, pos: Pos, t: TyId, p: &Piece<'_>) -> Res<()> {
-        let Seen::Handle(h) = piece_seen(&self.store, p) else {
-            return Ok(());
-        };
-        if self.tys.get(t).is_handle() {
-            if self.handle_is(h, t) {
-                return Ok(());
-            }
-            let a = self.about(piece_seen(&self.store, p));
-            return fail(Code::S010, pos, self.handle_use_text(t, &a));
+        match piece_seen(&self.store, p) {
+            Seen::Handle(h) if self.handle_fits(h, t) => Ok(()),
+            leaf @ Seen::Handle(_) => self.handle_mismatch(pos, t, leaf),
+            _ => Ok(()),
         }
-        let a = self.about(piece_seen(&self.store, p));
+    }
+
+    /// Whether the handle `h` fits the type `t`: a handle type needs a handle of exactly this
+    /// type. It is the one rule of the typed use of a handle leaf, also for the plan of an
+    /// aggregate.
+    pub(super) fn handle_fits(&self, h: &Handle, t: TyId) -> bool {
+        self.tys.get(t).is_handle() && self.handle_is(h, t)
+    }
+
+    /// The `S010` at `pos` for the `leaf` that does not fit the type `t`, when `t` is a handle
+    /// type or the leaf is a handle. A type with the handle flag is a container of handles, and
+    /// a data type is a data leaf, each with its own text. It is the one choice of the text,
+    /// also for the plan of an aggregate.
+    pub(super) fn handle_mismatch<T>(&self, pos: Pos, t: TyId, leaf: Seen<'_>) -> Res<T> {
+        let a = self.about(leaf);
         let text = if t.holds_handles() {
             self.handle_use_text(t, &a)
         } else {
