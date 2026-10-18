@@ -1,0 +1,21 @@
+// Write-back template of the review of issue #278 (W8). Four calls pass a list of N lists of registers at a `mut` formal
+// of the type `List[List[Reg[UInt[8]]]]`. The write-back of a value with the handle flag checks the depth of the root from
+// the depth of the value, which is a read of one number, and then it charges the copy.
+// SCALE handle_write_back 32 64 128 256 512
+// TOP M()
+fn touch(mut xs: List[List[Reg[UInt[8]]]]) -> Nat {
+    return 1;
+}
+module M() {
+    input x: UInt[8];
+    reg r: UInt[8] = 0;
+    r := x;
+    let mut xs = list(List[Reg[UInt[8]]]);
+// REPEAT i {N}
+    xs.push(list(Reg[UInt[8]]));
+// END
+    let n0 = touch(xs);
+    let n1 = touch(xs);
+    let n2 = touch(xs);
+    let n3 = touch(xs);
+}
