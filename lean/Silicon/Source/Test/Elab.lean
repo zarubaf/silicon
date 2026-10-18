@@ -2969,9 +2969,17 @@ def gStatic (g h : String) : String :=
 #guard elabOnly (scope "  let z = ch();\n") "M" == "S011 2:3"
 #guard said (scope "  let x: UInt[ch()] = 0;\n") == gType "ch"
 #guard said (scope "  let z = cg();\n" " domains()") == gStatic "cg" "g"
-#guard said (scope "  let z = g();\n" " domains()") == "a combinational module has no register"
+#guard said (scope "  let z = g();\n" " domains()") ==
+  "a combinational module has no register; remove `domains()` from the module, or move the " ++
+    "register to a clocked module"
 #guard said (scope "  let z = cm();\n" " domains()" ++
-  "fn cm() -> Nat { mem q: [UInt[8]; 4]; return 1; }\n") == "a combinational module has no memory"
+  "fn cm() -> Nat { mem q: [UInt[8]; 4]; return 1; }\n") ==
+  "a combinational module has no memory; remove `domains()` from the module, or move the " ++
+    "memory to a clocked module"
+#guard said (scope "  let z = ci();\n" " domains()" ++
+  "fn ci() -> Nat { instance u = C(8); u.p := 1; return 1; }\n") ==
+  "a combinational module has no clocked child `C`; remove `domains()` from the module, or " ++
+    "move the instance to a clocked module"
 def staticUses : String :=
   scope ("  comptime if (g() == 1) {}\n  static_assert(g() == 1, \"one\");\n" ++
     "  instance u = C(8 * g());\n  u.p := d;\n  comptime for i in 0..g() {}\n")

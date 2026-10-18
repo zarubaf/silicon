@@ -55,7 +55,8 @@ These rules settle the open points of slice 1:
 - A function value never reaches the lowering. It is always static. A register value and a `:=`
   value conform to the hardware data type of their resource first. A function there is thus
   `S010`.
-- A register in a combinational module is `S017` at the statement, before its type.
+- A register in a combinational module is `S017` at the statement, before its type. Its text
+  and the texts of a memory and a clocked child there name the fix (section 6.2).
 - A `mem` statement checks in the order of section 6.2, each error at the statement: a
   combinational module (`S017`), the word type (`memWord`), then the depth (`memDepth`). It
   makes no `[T; N]` type. Its name binds a memory handle, which is never data (`S010`). The
@@ -75,7 +76,8 @@ These rules settle the open points of slice 1:
   statements and charges each one before it makes it.
 - `S018` errors wait for the end of the body. The second binding of a resource gives one.
   A resource without a binding gives one at its declaration. A child input without a binding
-  gives one at the `instance` statement. The error with the lowest position wins.
+  gives one at the `instance` statement. The error with the lowest position wins. On a tie,
+  the first recorded one wins (section 6.2).
 - `S016` comes from the guards of `Eval` (section 9.4). The word type and the depth of a `mem`
   statement are structural contexts. A helper declares and binds in the instantiation of its
   caller (section 9.5), so its handles stay in that owner.
