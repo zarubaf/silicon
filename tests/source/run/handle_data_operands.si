@@ -1,0 +1,36 @@
+// Row "an operand of an operator, a condition, and a data field and index selection" of the frontend spec, section 9.2.
+// The positions are `data`, so a handle there is read. A condition and an index read only the part they select. `len`
+// reads nothing.
+// TOP M()
+struct Pair {
+    a: Reg[UInt[8]],
+    b: Wire[UInt[8]],
+}
+module M() {
+    input x: UInt[8];
+    input c: Bool;
+    output o: UInt[8];
+    output p: UInt[8];
+    output n: UInt[8];
+    reg r0: UInt[8] = 0;
+    reg r1: UInt[8] = 0;
+    reg f0: Bool = false;
+    reg f1: Bool = false;
+    wire w: UInt[8];
+    w := x +% 3;
+    r0 := x;
+    r1 := x ^ 5;
+    f0 := c;
+    f1 := !c;
+    let rs = [r0, r1];
+    let fs = [f0, f1];
+    let q = Pair(r1, w);
+    o := if (fs[1]) { rs[0] +% 1 } else { rs[1] };
+    p := q.a ^ q.b;
+    n := UInt[8](len(rs));
+}
+// STEP in=(clock$0rst true c false x 0) out=(n 2 o 0 p 3)
+// STEP in=(clock$0rst false c true x 4) out=(n 2 o 0 p 7)
+// STEP in=(clock$0rst false c false x 9) out=(n 2 o 1 p 13)
+// STEP in=(clock$0rst false c true x 250) out=(n 2 o 10 p 241)
+// STEP in=(clock$0rst false c false x 1) out=(n 2 o 255 p 251)

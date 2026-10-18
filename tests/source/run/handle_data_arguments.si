@@ -1,0 +1,31 @@
+// Row "a data parameter, a constructor argument at a data field, and the value of `:=`" of the frontend spec, section 9.2.
+// A call with `[r, s]` for the formal `[UInt[8]; 2]` reads both registers. A constructor reads a register at a data
+// field. A `:=` of an array of registers to an output reads each register.
+// TOP M()
+struct D {
+    a: UInt[8],
+    b: UInt[8],
+}
+fn sum2(xs: [UInt[8]; 2]) -> UInt[8] {
+    return xs[0] +% xs[1];
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    output p: UInt[8];
+    output q: [UInt[8]; 2];
+    reg r: UInt[8] = 0;
+    reg s: UInt[8] = 0;
+    r := x;
+    s := x +% 1;
+    let hs = [r, s];
+    o := sum2([r, s]);
+    let d = D(r, hs[1]);
+    p := d.a ^ d.b;
+    q := hs;
+}
+// STEP in=(clock$0rst true x 0) out=(o 0 p 0 q.0 0 q.1 0)
+// STEP in=(clock$0rst false x 4) out=(o 0 p 0 q.0 0 q.1 0)
+// STEP in=(clock$0rst false x 9) out=(o 9 p 1 q.0 4 q.1 5)
+// STEP in=(clock$0rst false x 255) out=(o 19 p 3 q.0 9 q.1 10)
+// STEP in=(clock$0rst false x 7) out=(o 255 p 255 q.0 255 q.1 0)
