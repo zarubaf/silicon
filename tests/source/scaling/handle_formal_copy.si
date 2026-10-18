@@ -1,0 +1,24 @@
+// T3 of the work-counter tests of the handles in containers (issue #278). Four calls pass an array of N registers at a
+// formal of the type `[Reg[UInt[8]]; N]`. Each call copies the argument, and the typed use compares the type by
+// identity, so the work is `O(N)` for each call.
+// SCALE handle_formal_copy 32 64 128 256 512
+// TOP M()
+fn k(p: [Reg[UInt[8]]; {N}]) -> Nat {
+    return 1;
+}
+module M() {
+    input x: UInt[8];
+// REPEAT i {N}
+    reg r{i}: UInt[8] = 0;
+    r{i} := x;
+// END
+    let rs = [
+// REPEAT i {N}
+        r{i},
+// END
+    ];
+    let n0 = k(rs);
+    let n1 = k(rs);
+    let n2 = k(rs);
+    let n3 = k(rs);
+}
