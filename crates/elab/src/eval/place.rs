@@ -814,23 +814,9 @@ impl Evaluator<'_> {
         let mut taken: Vec<usize> = Vec::new();
         let mut cur = self.store.at(r);
         for key in keys {
-            let Seen::Agg(a @ (Agg::Array(..) | Agg::Tuple(..) | Agg::Record(..) | Agg::List(..))) =
-                cur
-            else {
+            let Some((k, next)) = self.node_step(cur, key) else {
                 break;
             };
-            let Some(k) = self.node_key(a, key) else {
-                break;
-            };
-            let next = self.store.step(cur, k);
-            if let Seen::Agg(Agg::Ref(_, t)) = next
-                && (self.tys.meta(*t).leaves.is_zero()
-                    || matches!(self.tys.get(*t), Ty::Bool | Ty::UInt(_) | Ty::SInt(_)))
-            {
-                break;
-            }
-            #[cfg(test)]
-            crate::counters::add(crate::counters::Count::Selected, 1);
             taken.push(k);
             cur = next;
         }
@@ -842,6 +828,33 @@ impl Evaluator<'_> {
             }
             base => (base, 0),
         }
+    }
+
+    /// The step `key` from the container node `cur`, if the step stays inside the nodes of a
+    /// stored root: the number of the part and the part. A step that fails its check, or that
+    /// finds a reference to normalize, is no such step, so `agg_key` gives its error or its
+    /// charge.
+    pub(super) fn node_step<'s>(
+        &'s self,
+        cur: Seen<'s>,
+        key: &Key<'_>,
+    ) -> Option<(usize, Seen<'s>)> {
+        let Seen::Agg(a @ (Agg::Array(..) | Agg::Tuple(..) | Agg::Record(..) | Agg::List(..))) =
+            cur
+        else {
+            return None;
+        };
+        let k = self.node_key(a, key)?;
+        let next = self.store.step(cur, k);
+        if let Seen::Agg(Agg::Ref(_, t)) = next
+            && (self.tys.meta(*t).leaves.is_zero()
+                || matches!(self.tys.get(*t), Ty::Bool | Ty::UInt(_) | Ty::SInt(_)))
+        {
+            return None;
+        }
+        #[cfg(test)]
+        crate::counters::add(crate::counters::Count::Selected, 1);
+        Some((k, next))
     }
 
     /// The number of the part that the step `key` takes from the node `a`, if the step passes
