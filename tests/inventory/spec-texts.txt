@@ -44,7 +44,6 @@ rust | S018 Second `write_port` in a helper | 279
 pin | S018 Second `write_port` in a helper | 279
 rust | S011 Hardware in a `comptime fn` | 279
 pin | S011 Hardware in a `comptime fn` | 279
-lean | S011 Hardware in `eval` | 279
 rust | S011 Hardware in `eval` | 279
 pin | S011 Hardware in `eval` | 279
 fix | S010 `read` of another value | 314
