@@ -61,11 +61,11 @@ These rules settle the open points of slice 1:
   its requests. A memory without a `read_port` or a `write_port` call is `S018` at its
   statement. A second call of one kind is `S018` at that call.
 - A `:=` target is a register, a wire, an own output, or a child input, also through a handle
-  alias. Its steps run from the root outward (section 5.2), and the static type of each base
-  decides. A field of an `Instance` handle selects a child input with no charge. A step on a
-  container of a type with the handle flag charges 1, then its index evaluates and checks. Each
-  other step is a part of a value: `S017` at the start of the target, before its index. So is
-  a selected part of another kind. The target is an identity, so it has no window.
+  alias. As in a place, its indices evaluate first, then one walk from the root selects
+  (section 5.2). The static type of each base decides. A field of an `Instance` handle selects
+  a child input with no charge. A step on a container of a type with the handle flag selects.
+  Each other step is a part of a value: `S017` at the start of the target. So is a selected
+  part of another kind. The target is an identity, so it has no window.
 - The value of `:=` is a typed use. It copies a reference, as a `let` with a type does. A read
   of an aggregate handle charges the handle, then the zero size of its type (`typedUse`).
 - A `:=` binding holds its value as an aggregate part. A static scalar becomes a hardware
@@ -293,14 +293,32 @@ def outputText (f : String) : String :=
     "input of the child"
 
 /-!
-The step `sel` of a `:=` target that starts at `s`, on the base `v` (sections 5.2 and 9.4). The
-static type of the base decides. A field of an `Instance` handle selects the child port with no
-charge, and an output there is `S017`. A container of a type with the handle flag charges 1.
-Then the index evaluates and gets the checks of an index (`S011`, `S010`, and `S013`). Then the
-step selects the part. Each other base, also another handle, is `S017` at `s`, before the
-charge and before the index evaluates.
+The index of each step of `sels` of a `:=` target, in source order (section 5.2). An index step
+charges 1, then its index evaluates and is static (`S011`). Another step has no index here.
 -/
-def targetStep (n : Nat) (s : Pos) (v : Val) (sel : Sel) : Eval.M Val := do
+def targetKeys (n : Nat) (sels : List Sel) : Eval.M (List (Sel × Option Value)) := do
+  let mut keys : Array (Sel × Option Value) := #[]
+  for sel in sels do
+    match sel with
+    | .index q [i] =>
+      charge q 1
+      keys := keys.push (sel, some (← static i.pos (← need i (← eval n i)).value))
+    | .index q _ =>
+      charge q 1
+      fail .S010 q "an index of a value has one argument"
+    | _ => keys := keys.push (sel, none)
+  return keys.toList
+
+/-!
+The step `sel` of a `:=` target that starts at `s`, on the base `v`, with the index `k` of
+`targetKeys` (sections 5.2 and 9.4). The static type of the base decides. A field of an
+`Instance` handle selects the child port with no charge, and an output there is `S017`. On a
+container of a type with the handle flag, a field and a selector charge 1, and an index step
+charged with its index. Then the step selects the part with its checks (`S010` and `S013`).
+Each other base, also another handle, is `S017` at `s`.
+-/
+def targetStep (s : Pos) (v : Val) (step : Sel × Option Value) : Eval.M Val := do
+  let (sel, key) := step
   match v, sel with
   | .handle (.inst k path iface _), .field q f =>
     match (← read).field f.pos >>= (iface.ports[·]?) with
@@ -310,30 +328,44 @@ def targetStep (n : Nat) (s : Pos) (v : Val) (sel : Sel) : Eval.M Val := do
     | none => fail .S010 q s!"the instance has no port `{f.name}`"
   | .agg a, sel =>
     unless a.ty?.any (·.info.handles) do fail .S017 s partText
-    charge sel.pos 1
-    match sel with
-    | .index q [i] => return (← pickKey q i.pos v (← static i.pos (← need i (← eval n i)).value)).2
-    | .index q _ => fail .S010 q "an index of a value has one argument"
-    | .select q r i => return (← selectKey q r i v).2
-    | .field q f => return (← fieldKey q f v).2.1
+    match sel, key with
+    | .index q [i], some k => return (← pickKey q i.pos v k).2
+    | .index q _, _ => fail .S010 q "an index of a value has one argument"
+    | .select q r i, _ =>
+      charge q 1
+      return (← selectKey q r i v).2
+    | .field q f, _ =>
+      charge q 1
+      return (← fieldKey q f v).2.1
   | _, _ => fail .S017 s partText
 
+/-! The value of the root `root` of a `:=` target. A local gives its value with no charge. -/
+def targetRoot (n : Nat) (root : Resolve.Expr) : Eval.M Val := do
+  match root with
+  | .name _ _ (.local id) => do
+    match (← get).frame[id]? with
+    | some sl => pure sl.value
+    | none => pure (← need root (← eval n root)).value
+  | _ => pure (← need root (← eval n root)).value
+
 /-!
-The part that the `:=` target `e` selects. Its steps run from the root outward (`targetStep`). A
-local root gives its value with no charge. Another root has no slot, so it evaluates, and its
-value names it in the text of `S017`. The target is an identity, so it opens no window and
-charges no held root.
+The part that the `:=` target `e` selects. A root that is not a local evaluates first. Then
+the indices evaluate (`targetKeys`), and a local root gives its value after them. One walk then
+runs the steps from the root outward (`targetStep`). Another root has no slot, and its value
+names it in the text of `S017`. The target is an identity, so it opens no window and charges
+no held root.
 -/
 def targetPart (n : Nat) (e : Resolve.Expr) : Eval.M Val := do
   let (root, sels) := (chain e).getD (e, [])
-  let mut v ← match root with
-    | .name _ _ (.local id) => do
-      match (← get).frame[id]? with
-      | some sl => pure sl.value
-      | none => pure (← need root (← eval n root)).value
-    | _ => pure (← need root (← eval n root)).value
-  for sel in sels do
-    v ← targetStep n e.pos v sel
+  let early ← match root with
+    | .name _ _ (.local _) => pure none
+    | _ => do pure (some (← targetRoot n root))
+  let keys ← targetKeys n sels
+  let mut v ← match early with
+    | some v => pure v
+    | none => targetRoot n root
+  for key in keys do
+    v ← targetStep e.pos v key
   return v
 
 /-!

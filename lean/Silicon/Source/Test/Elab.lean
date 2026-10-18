@@ -429,7 +429,7 @@ def doubling (k : Nat) : String :=
 #guard cost "module M() domains() {\n  reg r: Bool = false;\n}\n" "M" == "S017 2:3"
 #guard cost "module M() domains() {\n  wire w: UInt[8];\n  w.0 := 1;\n}\n" "M" == "S017 3:3"
 #guard cost "module M() domains() {\n  wire w: UInt[8];\n  w[1 / 0] := 1;\n}\n" "M" ==
-  "S017 3:3"
+  "S013 3:5"
 #guard cost ("module C() {\n  input a: Bool;\n}\nmodule M() {\n  instance c = C();\n" ++
   "  c.a[0] := true;\n}\n") "M" == "S017 6:3"
 #guard cost ("module C() {\n}\nmodule M() domains() {\n  instance c = C();\n}\n") "M" == "S017 4:3"
@@ -2631,8 +2631,9 @@ def domainArg : String :=
     "declares them"
 
 /-!
-A `:=` target walks its steps from the root outward (section 5.2). An index or a selection on a
-container of handles charges 1, then its index evaluates and checks, and it selects. A field of
+A `:=` target evaluates its indices, then walks its steps from the root outward (section 5.2).
+An index step charges 1 and evaluates its index. In the walk, a field or a selector on a
+container of handles charges 1, and each step on such a container checks and selects. A field of
 an `Instance` handle selects a child input with no charge, also in a container. `S018` counts
 the resource of the target, so a second binding through a container is `S018`.
 -/
@@ -2650,8 +2651,8 @@ the resource of the target, so a second binding through a container is `S018`.
 Each error of a step comes at its step of section 5.2, and one unit less stops before it. The
 index is static (`S011`), the base takes the step (`S010`), the index is an integer (`S010`), and
 it is in range (`S013`). A step on a base without the handle flag, or on another handle, is
-`S017` at the start of the target. It comes before the charge of the step and its index. A
-child output and a selected part of another kind are `S017` there too.
+`S017` at the start of the target. It comes in the walk, after each index step charged and its
+index evaluated. A child output and a selected part of another kind are `S017` there too.
 -/
 #guard cost (targets "  u.x := i;\n  let j = i;\n  let rs = [r, q];\n  rs[j] := i;\n") "M"
   (fuel := 157) == "S011 22:6"
@@ -2673,14 +2674,14 @@ def partAt : String :=
   "a `:=` target is a whole resource, not a part of a value; bind the whole resource, for " ++
     "example `r := P(a, b);`"
 #guard said (targets "  u.x := i;\n  r[5] := i;\n") == partAt
-#guard cost (targets "  u.x := i;\n  r[5] := i;\n") "M" (fuel := 139) == "S017 20:3"
-#guard cost (targets "  u.x := i;\n  r[5] := i;\n") "M" (fuel := 138) == "S015 20:3"
+#guard cost (targets "  u.x := i;\n  r[5] := i;\n") "M" (fuel := 142) == "S017 20:3"
+#guard cost (targets "  u.x := i;\n  r[5] := i;\n") "M" (fuel := 141) == "S015 20:5"
 #guard said (targets "  u.x := i;\n  u[0] := i;\n") == partAt
 #guard said (targets "  u.x := i;\n  let x = [1, 2];\n  x[5] := i;\n") == partAt
-#guard cost (targets "  u.x := i;\n  let x = [1, 2];\n  x[5] := i;\n") "M" (fuel := 148) ==
+#guard cost (targets "  u.x := i;\n  let x = [1, 2];\n  x[5] := i;\n") "M" (fuel := 151) ==
   "S017 21:3"
-#guard cost (targets "  u.x := i;\n  let x = [1, 2];\n  x[5] := i;\n") "M" (fuel := 147) ==
-  "S015 21:3"
+#guard cost (targets "  u.x := i;\n  let x = [1, 2];\n  x[5] := i;\n") "M" (fuel := 150) ==
+  "S015 21:5"
 def childOutput : String :=
   "`y` is an output of the child, not a target; the child drives its outputs, so bind an " ++
     "input of the child"
