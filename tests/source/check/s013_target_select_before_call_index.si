@@ -1,0 +1,16 @@
+// S013: a selector `.2` of a tuple in a `:=` target is out of range before the next index evaluates, so the call in the next index never runs.
+// TOP M()
+fn idx() -> Nat {
+    diagnostic("idx", 0);
+    return 0;
+}
+module M() {
+    input x: UInt[8];
+    output o: Bool;
+    reg r: UInt[8] = 0;
+    let a = ([r], [r]);
+    // expected-error S013 @+2
+    // expected-message: the selector 2 is out of range for ([Reg[UInt[8]]; 1], [Reg[UInt[8]]; 1])
+    a.2[idx()] := x;
+    o := true;
+}
