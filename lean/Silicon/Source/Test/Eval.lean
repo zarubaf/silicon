@@ -3695,9 +3695,9 @@ A static position takes no handle, so a handle type there is `S011` after the co
 The text names the position. A `comptime` parameter and an argument of a `comptime fn` have it at
 the call. A constant has it at its item, and a module or a struct argument at the start of the use.
 -/
-def staticText (s : String) : String :=
-  s!"{s} takes only static values, so its type cannot be the handle type `Reg[Bool]`; use a " ++
-    "data type, for example `UInt[8]`"
+def staticText (s : String) (t : String := "Reg[Bool]") : String :=
+  s!"{s} takes only static values, so its type cannot be `{t}`, a type that holds a handle " ++
+    "type; use a data type, for example `UInt[8]`"
 #guard said "fn g(comptime x: Reg[Bool]) -> Int { return 0; }" "g(true)" 10 ==
   s!"S011 1:1 {staticText "a comptime parameter"}"
 #guard out "fn g(comptime x: Reg[Bool]) -> Int { return 0; }" "g(true)" 9 == "S015 1:1"
@@ -3711,6 +3711,41 @@ def staticText (s : String) : String :=
 #guard out "module C(comptime t: Reg[Bool]) {\n}" "Instance[C, true]" 8 == "S015 1:22"
 #guard msg "struct P(comptime t: Reg[Bool]) { a: Bool }" "P[true]" ==
   staticText "a comptime parameter"
+
+/-!
+The flag decides "Static handle type". Thus a container type that holds a handle type is
+`S011` too (section 6.2). A function type does not take the flag, so a constant can hold a
+function of a handle parameter. The value comes before its typed use. A value of a type with
+the flag is `S011` with the text "Handles at a static position", which names its type.
+The check walks no value, so it adds no charge, and one unit less stops at the copy before it.
+-/
+def arr2 : String := "fn g(comptime x: [Reg[Bool]; 2]) -> Int { return 0; }"
+#guard said arr2 "g([true, true])" 28 ==
+  s!"S011 1:1 {staticText "a comptime parameter" "[Reg[Bool]; 2]"}"
+#guard out arr2 "g([true, true])" 27 == "S015 1:1"
+#guard out "const K: List[Reg[Bool]] = list(Bool);" "K" 16 == "S011 1:1"
+#guard out "const K: List[Reg[Bool]] = list(Bool);" "K" 15 == "S015 1:28"
+#guard msg "const K: List[Reg[Bool]] = list(Bool);" "K" ==
+  staticText "a const" "List[Reg[Bool]]"
+#guard out "fn f(r: Reg[Bool]) -> Int { return 0; }\nconst G: fn (Reg[Bool]) -> Int = f;" "G" ==
+  "(function root f)"
+def noRegs : String := "fn f() -> [Reg[Bool]; 0] { return []; }\n"
+def handlesText (s : String) : String :=
+  s!"{s} takes only static values, but a value of `[Reg[Bool]; 0]` can hold handles; pass the " ++
+    "data through a port, or use the handles in the module that declares them"
+#guard msg (noRegs ++ "fn g(comptime x: Int) -> Int { return 0; }") "g(f())" ==
+  handlesText "a comptime parameter"
+#guard out (noRegs ++ "fn g(comptime x: Int) -> Int { return 0; }") "g(f())" 26 == "S011 1:1"
+#guard out (noRegs ++ "fn g(comptime x: Int) -> Int { return 0; }") "g(f())" 25 == "S015 1:1"
+#guard msg (noRegs ++ "comptime fn g(x: Int) -> Int { return 0; }") "g(f())" ==
+  handlesText "an argument of a comptime fn"
+#guard msg (noRegs ++ "const K: Int = f();") "K" == handlesText "a const"
+#guard out (noRegs ++ "const K: Int = f();") "K" 24 == "S011 2:1"
+#guard out (noRegs ++ "const K: Int = f();") "K" 23 == "S015 1:28"
+#guard msg (noRegs ++ "struct P(comptime t: Int) { a: Bool }") "P[f()]" ==
+  handlesText "a comptime parameter"
+#guard msg (noRegs ++ "module C(comptime t: Int) {\n}") "Instance[C, f()]" ==
+  handlesText "a module argument"
 
 /-!
 `read` takes a register or a wire (section 5.4). A value that is not a handle is `S010` at the

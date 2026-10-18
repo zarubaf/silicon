@@ -2244,8 +2244,8 @@ position takes no handle. The check follows the parameter type, so one unit less
 def staticInst : String :=
   "module C(comptime t: Reg[UInt[8]]) {\n}\n" ++ memBody "  instance u = C(5);\n"
 #guard said staticInst ==
-  "a module argument takes only static values, so its type cannot be the handle type " ++
-    "`Reg[UInt[8]]`; use a data type, for example `UInt[8]`"
+  "a module argument takes only static values, so its type cannot be `Reg[UInt[8]]`, a type " ++
+    "that holds a handle type; use a data type, for example `UInt[8]`"
 #guard cost staticInst "M" (fuel := 41) == "S011 4:3"
 #guard cost staticInst "M" (fuel := 40) == "S015 1:22"
 
@@ -2528,5 +2528,128 @@ def pushes (pre step : String) (n : Nat) : Int :=
 def filler (n : Nat) : String := s!"  comptime for k in 0..{n} \{\n    xs.push(r);\n  }\n"
 #guard [10, 20, 40, 80].map (fun n => pushes (filler n) "    let h = xs.pop();\n" n) ==
   [366, 496, 756, 1276]
+
+/-!
+A static position takes no handle (section 5.1). A handle there is `S011` with the text "Handle
+at a static position", which names its kind and its resource. Another value of a type with the
+handle flag gives "Handles at a static position" with its type. Both come before the typed use,
+and the check walks no value, so one unit less stops at the work before it.
+-/
+def targets (body : String) : String :=
+  "module C(comptime W: Nat) {\n  input x: UInt[8];\n  output y: UInt[8];\n  y := x;\n}\n" ++
+  "module K(comptime t: Int) {\n}\n" ++
+  "struct S { a: Reg[UInt[8]] }\n" ++
+  "comptime fn g(x: Int) -> Int { return 0; }\n" ++
+  "module M() {\n  input i: UInt[8];\n  output o: UInt[8];\n  reg r: UInt[8] = 0;\n" ++
+  "  reg q: UInt[8] = 0;\n  wire w: UInt[8];\n  instance u = C(8);\n  o := i;\n" ++
+  "  w := i;\n" ++ body ++ "}\n"
+def heldStatic (s k r : String) : String :=
+  s!"{s} holds the {k} handle `{r}`, but it takes only static values; pass the data through " ++
+    "a port, or use the handle in the module that declares it"
+#guard said (targets "  u.x := i;\n  let h = r;\n  instance v = K(h);\n") ==
+  heldStatic "a module argument" "register" "r"
+#guard cost (targets "  u.x := i;\n  let h = r;\n  instance v = K(h);\n") "M" (fuel := 143) ==
+  "S011 21:3"
+#guard cost (targets "  u.x := i;\n  let h = r;\n  instance v = K(h);\n") "M" (fuel := 142) ==
+  "S015 21:18"
+#guard said (targets "  u.x := i;\n  let h = w;\n  instance v = K(h);\n") ==
+  heldStatic "a module argument" "wire" "w"
+#guard said (targets "  u.x := i;\n  let h = u;\n  instance v = K(h);\n") ==
+  heldStatic "a module argument" "instance" "u"
+#guard said (targets "  u.x := i;\n  let h = u.x;\n  instance v = K(h);\n") ==
+  heldStatic "a module argument" "input" "u.x"
+#guard said (targets "  u.x := i;\n  let h = r;\n  let t = Instance[K, h];\n") ==
+  heldStatic "a module argument" "register" "r"
+#guard said (targets ("  u.x := i;\n  mem m: [UInt[8]; 4];\n  write_port(m, 0, i, true);\n" ++
+  "  let k = read_port(m, 0, true);\n  let h = m;\n  instance v = K(h);\n")) ==
+  heldStatic "a module argument" "memory" "m"
+#guard said (targets "  u.x := i;\n  let h = r;\n  let z = g(h);\n") ==
+  heldStatic "an argument of a comptime fn" "register" "r"
+#guard cost (targets "  u.x := i;\n  let h = r;\n  let z = g(h);\n") "M" (fuel := 147) ==
+  "S011 21:11"
+#guard cost (targets "  u.x := i;\n  let h = r;\n  let z = g(h);\n") "M" (fuel := 146) ==
+  "S015 21:11"
+#guard said (targets "  u.x := i;\n  let h = [r, q];\n  instance v = K(h);\n") ==
+  "a module argument takes only static values, but a value of `[Reg[UInt[8]]; 2]` can hold " ++
+    "handles; pass the data through a port, or use the handles in the module that declares them"
+#guard cost (targets "  u.x := i;\n  let h = [r, q];\n  instance v = K(h);\n") "M" (fuel := 153) ==
+  "S011 21:3"
+#guard cost (targets "  u.x := i;\n  let h = [r, q];\n  instance v = K(h);\n") "M" (fuel := 152) ==
+  "S015 21:18"
+#guard said (targets "  u.x := i;\n  let h = (r, 1);\n  let z = g(h);\n") ==
+  "an argument of a comptime fn takes only static values, but a value of `(Reg[UInt[8]], Int)` " ++
+    "can hold handles; pass the data through a port, or use the handles in the module that " ++
+    "declares them"
+
+/-!
+A `:=` target walks its steps from the root outward (section 5.2). An index or a selection on a
+container of handles charges 1, then its index evaluates and checks, and it selects. A field of
+an `Instance` handle selects a child input with no charge, also in a container. `S018` counts
+the resource of the target, so a second binding through a container is `S018`.
+-/
+#guard exact (targets "  u.x := i;\n  let rs = [r, q];\n  rs[0] := i;\n  rs[1] := i;\n") "M" 332
+#guard exact (targets "  u.x := i;\n  let t = (r, q);\n  t.1 := i;\n  t[0] := i;\n") "M" 324
+#guard exact (targets "  u.x := i;\n  let s = S(r);\n  s.a := i;\n  q := i;\n") "M" 341
+#guard exact (targets "  let us = [u];\n  us[0].x := i;\n  r := i;\n  q := i;\n") "M" 321
+#guard exact (targets "  u.x := i;\n  let rss = [[r, q]];\n  rss[0][1] := i;\n  r := i;\n") "M" 337
+#guard exact (targets ("  u.x := i;\n  let mut xs = list(Reg[UInt[8]]);\n  xs.push(q);\n" ++
+  "  xs[0] := i;\n  r := i;\n")) "M" 339
+#guard cost (targets "  u.x := i;\n  let rs = [r, q];\n  rs[0] := i;\n  r := i;\n  q := i;\n")
+  "M" == "S018 22:3"
+
+/-!
+Each error of a step comes at its step of section 5.2, and one unit less stops before it. The
+index is static (`S011`), the base takes the step (`S010`), the index is an integer (`S010`), and
+it is in range (`S013`). A step on a base without the handle flag, or on another handle, is
+`S017` at the start of the target. It comes before the charge of the step and its index. A
+child output and a selected part of another kind are `S017` there too.
+-/
+#guard cost (targets "  u.x := i;\n  let j = i;\n  let rs = [r, q];\n  rs[j] := i;\n") "M"
+  (fuel := 157) == "S011 22:6"
+#guard cost (targets "  u.x := i;\n  let j = i;\n  let rs = [r, q];\n  rs[j] := i;\n") "M"
+  (fuel := 156) == "S015 22:6"
+#guard cost (targets "  u.x := i;\n  let rs = [r, q];\n  rs.0 := i;\n") "M" (fuel := 153) ==
+  "S010 21:3"
+#guard cost (targets "  u.x := i;\n  let rs = [r, q];\n  rs.0 := i;\n") "M" (fuel := 152) ==
+  "S015 21:3"
+#guard cost (targets "  u.x := i;\n  let rs = [r, q];\n  rs[true] := i;\n") "M" (fuel := 155) ==
+  "S010 21:6"
+#guard cost (targets "  u.x := i;\n  let rs = [r, q];\n  rs[true] := i;\n") "M" (fuel := 154) ==
+  "S015 21:6"
+#guard cost (targets "  u.x := i;\n  let rs = [r, q];\n  rs[2] := i;\n") "M" (fuel := 155) ==
+  "S013 21:6"
+#guard cost (targets "  u.x := i;\n  let rs = [r, q];\n  rs[2] := i;\n") "M" (fuel := 154) ==
+  "S015 21:6"
+def partAt : String :=
+  "a `:=` target is a whole resource, not a part of a value; bind the whole resource, for " ++
+    "example `r := P(a, b);`"
+#guard said (targets "  u.x := i;\n  r[5] := i;\n") == partAt
+#guard cost (targets "  u.x := i;\n  r[5] := i;\n") "M" (fuel := 139) == "S017 20:3"
+#guard cost (targets "  u.x := i;\n  r[5] := i;\n") "M" (fuel := 138) == "S015 20:3"
+#guard said (targets "  u.x := i;\n  u[0] := i;\n") == partAt
+#guard said (targets "  u.x := i;\n  let x = [1, 2];\n  x[5] := i;\n") == partAt
+#guard cost (targets "  u.x := i;\n  let x = [1, 2];\n  x[5] := i;\n") "M" (fuel := 148) ==
+  "S017 21:3"
+#guard cost (targets "  u.x := i;\n  let x = [1, 2];\n  x[5] := i;\n") "M" (fuel := 147) ==
+  "S015 21:3"
+def childOutput : String :=
+  "`y` is an output of the child, not a target; the child drives its outputs, so bind an " ++
+    "input of the child"
+#guard said (targets "  u.y := i;\n") == childOutput
+#guard said (targets "  let us = [u];\n  us[0].y := i;\n") == childOutput
+#guard cost (targets "  let us = [u];\n  us[0].y := i;\n") "M" (fuel := 144) == "S017 20:3"
+#guard cost (targets "  let us = [u];\n  us[0].y := i;\n") "M" (fuel := 143) == "S015 20:6"
+def kindAt (a : String) : String :=
+  s!"a `:=` target is a wire, a register, an own output, or a child input, not {a}; select one " ++
+    "of these, or assign a local with `=`"
+#guard said (targets "  u.x := i;\n  i := i;\n") == kindAt "a value of `UInt[8]`"
+#guard said (targets "  u.x := i;\n  let a = (r, 1);\n  a.1 := i;\n") == kindAt "a value of `Int`"
+#guard cost (targets "  u.x := i;\n  let a = (r, 1);\n  a.1 := i;\n") "M" (fuel := 148) ==
+  "S017 21:3"
+#guard cost (targets "  u.x := i;\n  let a = (r, 1);\n  a.1 := i;\n") "M" (fuel := 147) ==
+  "S015 21:3"
+#guard said (targets ("  u.x := i;\n  mem m: [UInt[8]; 4];\n  write_port(m, 0, i, true);\n" ++
+  "  let k = read_port(m, 0, true);\n  let ms = [m];\n  ms[0] := i;\n")) ==
+  kindAt "a handle of `Mem[UInt[8], 4]`"
 
 end Silicon.Source.Test.Elab
