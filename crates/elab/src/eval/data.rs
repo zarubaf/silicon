@@ -168,7 +168,7 @@ impl Evaluator<'_> {
                 Read::Visit(Agg::Array(n, mut p) | Agg::Tuple(n, mut p), above)
                     if n.ty.holds_handles() =>
                 {
-                    let ty = self.data_ty(n.ty);
+                    let ty = self.data_ty(pos, n.ty)?;
                     let parts = std::mem::take(&mut p.0);
                     work.push(Read::Build(ty, parts.len()));
                     work.extend(parts.into_iter().rev().map(|x| Read::Visit(x, above + 1)));
@@ -193,7 +193,7 @@ impl Evaluator<'_> {
     /// `Wire[T]` in an array or a tuple becomes `T`. Another type stays. A type without the flag
     /// is data already, and a done type is read from its entry, so a type is made once and the
     /// read of `N` containers of one type makes no type again. The walk keeps its own stack.
-    fn data_ty(&mut self, t: TyId) -> TyId {
+    fn data_ty(&mut self, pos: Pos, t: TyId) -> Res<TyId> {
         let mut work = vec![(t, false)];
         while let Some((u, ready)) = work.pop() {
             if !u.holds_handles() || self.data_tys.contains_key(&u) {
@@ -217,26 +217,32 @@ impl Evaluator<'_> {
             let made = match self.tys.get(u).clone() {
                 Ty::Reg(x) | Ty::Wire(x) => x,
                 Ty::Array(e, n) => {
-                    let e = self.data_of(e);
+                    let e = self.data_of(pos, e)?;
                     self.tys.array(e, n)
                 }
                 Ty::Tuple(ts) => {
-                    let ts = ts.iter().map(|p| self.data_of(*p)).collect();
+                    let ts = ts
+                        .iter()
+                        .map(|p| self.data_of(pos, *p))
+                        .collect::<Res<Vec<_>>>()?;
                     self.tys.tuple(ts)
                 }
                 _ => u,
             };
             self.data_tys.insert(u, made);
         }
-        self.data_of(t)
+        self.data_of(pos, t)
     }
 
-    /// The data type of `t` once `data_ty` made it.
-    fn data_of(&self, t: TyId) -> TyId {
-        if t.holds_handles() {
-            self.data_tys.get(&t).copied().unwrap_or(t)
-        } else {
-            t
+    /// The data type of `t` once `data_ty` made it. A type with the handle flag that has no entry
+    /// breaks the order of the walk, so it is an error at `pos`.
+    fn data_of(&self, pos: Pos, t: TyId) -> Res<TyId> {
+        if !t.holds_handles() {
+            return Ok(t);
+        }
+        match self.data_tys.get(&t) {
+            Some(made) => Ok(*made),
+            None => fail(Code::S010, pos, "the data type was not made".to_owned()),
         }
     }
 }
