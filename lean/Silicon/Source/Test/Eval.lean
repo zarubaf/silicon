@@ -3502,6 +3502,21 @@ def handles : String := "module C(comptime W: Nat, comptime E: Bool) {\n}\nmodul
   "`Instance[D]` is a handle type, not hardware data; an instance has no data type, so read " ++
     "its outputs as `u.q`"
 #guard out "" "data_bits(Bool)" == "(int 1)"
+/-!
+`T(x)` of a handle type has the text of `T()` at the call. The check comes after the callee and
+before the argument, so `T()` and `T(x)` stop at the same fuel, and an argument that fails never
+runs.
+-/
+def asData : String :=
+  "S010 1:1 `Reg[Bool]` is a handle type, not hardware data; use its data type `Bool`"
+#guard said "" "Reg[Bool](true)" 6 == asData
+#guard said "" "Reg[Bool]()" 6 == asData
+#guard out "" "Reg[Bool](true)" 5 == "S015 1:1"
+#guard out "" "Reg[Bool]()" 5 == "S015 1:1"
+#guard said "" "Reg[Bool](1 / 0)" 6 == asData
+#guard msg handles "Instance[D](1)" ==
+  "`Instance[D]` is a handle type, not hardware data; an instance has no data type, so read " ++
+    "its outputs as `u.q`"
 
 /-!
 `Mem[T, N]` has the word and the depth checks of a `mem` statement (section 6.2). The word has

@@ -585,7 +585,7 @@ theorem field_f (p : Pos) (f : Ident) (v : Val) :
   unfold field; follows [fieldKey_f]
 
 theorem zero_f (p : Pos) (t : Ty) : Follows cap (zero p t) (zero p t) := by
-  unfold zero; follows [notHandle_f, bounded_f]
+  unfold zero; follows [bounded_f]
 
 theorem typedAgg_f (p : Pos) (t : Ty) (a : Agg) :
     Follows cap (typedAgg p t a) (typedAgg p t a) := by
@@ -982,7 +982,8 @@ theorem args_f (he : ∀ e, Follows m (eval k e) (eval m e)) (b : Nat)
 theorem ctor_f (he : ∀ e, Follows m (eval k e) (eval m e)) (p : Pos) (o : Out)
     (b : Nat) (xs : List Resolve.Expr) : Follows m (ctor k p o b xs) (ctor m p o b xs) := by
   rw [ctor.eq_def k, ctor.eq_def m]
-  follows [he, args_f he, need_f, static_f, conform_f, zero_f, recordOf_f, hold_f, release_f]
+  follows [he, args_f he, need_f, static_f, conform_f, zero_f, recordOf_f, hold_f, release_f,
+    notHandle_f]
 
 theorem actuals_f (he : ∀ e, Follows m (eval k e) (eval m e)) (xs : List Resolve.Expr)
     (muts : List Bool) : Follows m (actuals k xs muts) (actuals m xs muts) := by

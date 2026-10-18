@@ -2493,7 +2493,8 @@ mutual
 
   /--
   A constructor call at `p`: the callee result `o` gives a type, and `xs` are its arguments. The
-  callee waits while the arguments evaluate.
+  callee waits while the arguments evaluate. A function type, an enum with arguments, and a
+  handle type (`notHandle`) are `S010` at the call, before the arguments evaluate.
   -/
   def ctor (n : Nat) (p : Pos) (o : Out) (b : Nat) (xs : List Resolve.Expr) :
       M (Option Out) := do
@@ -2502,6 +2503,7 @@ mutual
     if t matches .enum .. && !xs.isEmpty then
       fail .S010 p (s!"`{t.text}` is an enum, so `{t.text}(...)` takes no arguments; construct " ++
         s!"a variant such as `{t.text}::V(...)`, or write `{t.text}()` for the zero")
+    notHandle p t
     match t, xs with
     | t, [] => return some ⟨.static (← zero p t), false, none⟩
     | t@(.struct ..), xs =>
