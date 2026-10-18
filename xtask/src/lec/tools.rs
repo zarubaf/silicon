@@ -194,6 +194,26 @@ mod tests {
         assert!(differs(&compare(&mutated, &rust, "top").unwrap()));
     }
 
+    /// firtool deletes a register that nothing reads, and the Lean side keeps
+    /// it, so the comparison needs the canonicalize pass on both sides (#323).
+    #[test]
+    fn an_unread_register_does_not_fail_the_lec() {
+        let mlir = lowered(
+            "(design top
+  (module top
+    (input clk clock)
+    (input a (bits 4))
+    (output q (bits 4))
+    (reg live (bits 4) clk)
+    (reg dead (bits 4) clk)
+    (next live (add live a))
+    (next dead a)
+    (assign q live)))",
+        );
+        let rust = import(&verilog(&mlir).unwrap(), "top").unwrap();
+        assert_eq!(compare(&mlir, &rust, "top").unwrap(), Verdict::Equal);
+    }
+
     #[test]
     fn swapped_address_bits_fail_the_model_lec() {
         let config = MemConfig {
