@@ -1,0 +1,10 @@
+// S003: the first argument of `Instance` is a module, and a struct is none.
+// TOP M()
+struct P {
+    x: Bool,
+}
+module M() {
+    // expected-error S003 @+2
+    // expected-message: the first argument of `Instance` is not a module; write the module first, for example `Instance[Counter, 8]`
+    type H = Instance[P, 1];
+}

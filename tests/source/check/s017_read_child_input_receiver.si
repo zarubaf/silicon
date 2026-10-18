@@ -1,0 +1,15 @@
+// S017: the receiver form `h.read()` binds the child input as `read(h)` does.
+// TOP M()
+module C() {
+    input a: UInt[8];
+    output q: UInt[8];
+    q := a;
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    instance u = C();
+    u.a := x;
+    // expected-error S017 @+1
+    o := u.a.read();
+}

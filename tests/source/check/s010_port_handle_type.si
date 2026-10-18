@@ -1,0 +1,7 @@
+// S010: a port has a hardware data type, and a handle type is none.
+// TOP M()
+module M() {
+    // expected-error S010 @+2
+    // expected-message: `Reg[UInt[8]]` is a handle type, not hardware data; use its data type `UInt[8]`
+    input p: Reg[UInt[8]];
+}

@@ -1,0 +1,9 @@
+// S010: `read` takes a register or a wire. An own input reads as data, so `read` is not needed.
+// TOP M()
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    // expected-error S010 @+2
+    // expected-message: `read` takes a register or a wire, not a value of `UInt[8]`; use the value directly, without `read`
+    o := read(x);
+}

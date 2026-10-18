@@ -1,0 +1,6 @@
+// S010: a handle type takes a handle, and an integer is none.
+// TOP M()
+module M() {
+    // expected-error S010 @+1
+    let a: Reg[UInt[8]] = 3;
+}

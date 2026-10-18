@@ -1,0 +1,9 @@
+// S010: the data type of the handle type must be exact. There is no conversion from `UInt[4]` to `UInt[8]`.
+// TOP M()
+module M() {
+    input x: UInt[4];
+    reg r: UInt[4] = 0;
+    r := x;
+    // expected-error S010 @+1
+    let a: Reg[UInt[8]] = r;
+}

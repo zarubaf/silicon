@@ -1,0 +1,6 @@
+// S010: `data_bits` takes hardware data, and a handle type is none.
+// TOP M()
+module M() {
+    // expected-error S010 @+1
+    let n = data_bits(Mem[UInt[8], 4]);
+}

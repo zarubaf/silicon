@@ -1,0 +1,10 @@
+// S010: an output has no handle type, so a typed `let` at a handle type does not take it. It reads as data.
+// TOP M()
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    o := x;
+    // expected-error S010 @+2
+    // expected-message: `o` is an output, and an output has no handle type; use `o` directly as data
+    let a: Wire[UInt[8]] = o;
+}

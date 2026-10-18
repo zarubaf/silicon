@@ -1,0 +1,7 @@
+// S010: the argument of `Reg` is hardware data, and a list is none.
+// TOP M()
+module M() {
+    // expected-error S010 @+2
+    // expected-message: `Reg` takes a hardware data type, not `List[Nat]`; use a fixed-width type, for example `UInt[8]`
+    type H = Reg[List[Nat]];
+}

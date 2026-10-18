@@ -1,0 +1,9 @@
+// S011: a module argument takes only static values, so its type is no handle type.
+// TOP M()
+module C(comptime p: Reg[UInt[8]]) {
+}
+module M() {
+    // expected-error S011 @+2
+    // expected-message: a module argument takes only static values, so its type cannot be the handle type `Reg[UInt[8]]`; use a data type, for example `UInt[8]`
+    instance u = C(3);
+}

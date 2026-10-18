@@ -1,0 +1,7 @@
+// S010: the argument of `Reg` is a type, and 3 is none.
+// TOP M()
+module M() {
+    // expected-error S010 @+2
+    // expected-message: the first argument of `Reg` is a type, not a value of `Int`; write a type, for example `Reg[UInt[8]]`
+    type H = Reg[3];
+}

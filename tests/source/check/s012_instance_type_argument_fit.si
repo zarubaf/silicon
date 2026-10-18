@@ -1,0 +1,10 @@
+// S012: an argument of `Instance` gets the typed use at the parameter type, and 300 does not fit `UInt[8]`.
+// TOP M()
+module C(comptime W: UInt[8]) {
+    output q: UInt[8];
+    q := W;
+}
+module M() {
+    // expected-error S012 @+1
+    type H = Instance[C, 300];
+}

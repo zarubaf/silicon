@@ -1,0 +1,16 @@
+// S017: `read` takes no child input. The input of a child is a target only.
+// TOP M()
+module C() {
+    input a: UInt[8];
+    output q: UInt[8];
+    q := a;
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    instance u = C();
+    u.a := x;
+    // expected-error S017 @+2
+    // expected-message: the input `a` of `u` is a target only; read the value that you bind to it
+    o := read(u.a);
+}

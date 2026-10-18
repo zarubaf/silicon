@@ -1,0 +1,10 @@
+// S010: `read` takes a register or a wire. A memory reads with `read_port`.
+// TOP M()
+module M() {
+    output o: UInt[8];
+    mem m: [UInt[8]; 4];
+    o := 0;
+    // expected-error S010 @+2
+    // expected-message: `read` takes a register or a wire, not a handle of `Mem[UInt[8], 4]`; read a word with `read_port`
+    let x = read(m);
+}

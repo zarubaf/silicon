@@ -1,0 +1,7 @@
+// S012: a memory depth is at most 16777216. The message prints a huge depth by its bit length.
+// TOP M()
+module M() {
+    // expected-error S012 @+2
+    // expected-message: a memory depth is 1 to 16777216, not an integer of 2001 bits; use a depth in this range
+    type H = Mem[UInt[8], 1 << 2000];
+}

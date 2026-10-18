@@ -1,0 +1,11 @@
+// S007: `read` takes 1 argument.
+// TOP M()
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    reg r: UInt[8] = 0;
+    r := x;
+    // expected-error S007 @+2
+    // expected-message: `read` takes 1 argument(s), but it has 2; write `read(h)` with one register or wire
+    o := read(r, r);
+}

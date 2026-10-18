@@ -1,0 +1,7 @@
+// S010: `T(x)` converts to hardware data, and a handle type is none.
+// TOP M()
+module M() {
+    // expected-error S010 @+2
+    // expected-message: `Reg[Bool]` is a handle type, not hardware data; use its data type `Bool`
+    let z = Reg[Bool](true);
+}

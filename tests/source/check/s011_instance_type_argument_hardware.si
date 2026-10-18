@@ -1,0 +1,12 @@
+// S011: an argument of `Instance` is static, and a hardware value is none.
+// TOP M()
+module C(comptime W: UInt[8]) {
+    output q: UInt[8];
+    q := W;
+}
+module M() {
+    input x: UInt[8];
+    let y = x +% 1;
+    // expected-error S011 @+1
+    type H = Instance[C, y];
+}
