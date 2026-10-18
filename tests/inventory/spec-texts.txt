@@ -33,6 +33,9 @@ pin | S010 List of handles as data | 278
 lean | S010 Handles as data | 278
 rust | S010 Handles as data | 278
 pin | S010 Handles as data | 278
+lean | S010 Handle at a data leaf | 278
+rust | S010 Handle at a data leaf | 278
+pin | S010 Handle at a data leaf | 278
 lean | S010 Memory as data | 278
 rust | S010 Memory as data | 278
 pin | S010 Memory as data | 278
