@@ -1,0 +1,19 @@
+// T1 of the work-counter tests of the handles in containers (issue #278). N registers in an array, and a `data` read of
+// the array by `==`. The read charges the size of the array first, then it reads each register leaf, so the work is
+// `O(N)`.
+// SCALE handle_array_read 32 64 128 256 512
+// TOP M()
+module M() {
+    input x: UInt[8];
+    output o: Bool;
+// REPEAT i {N}
+    reg r{i}: UInt[8] = 0;
+    r{i} := x;
+// END
+    let rs = [
+// REPEAT i {N}
+        r{i},
+// END
+    ];
+    o := rs == rs;
+}
