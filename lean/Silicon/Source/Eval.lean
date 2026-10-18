@@ -910,8 +910,9 @@ def known : Val → M Unit
   | _ => pure ()
 
 /-!
-The error at `pos` of a typed use of `v` at the handle type `t`: `S010` with the text "Typed use
-at a handle type". An own output has no handle type, so its text names the fix: use it as data.
+The error at `pos` of a typed use of `v` at the type `t` with the handle flag: `S010` with the
+text of `handleUseText`. An own output has no handle type, so its text names the fix: use it as
+data.
 -/
 def handleWrong (pos : Pos) (t : Ty) (v : Val) : M α := do
   if let .handle (.res .output _ _ path) := v then
@@ -1346,7 +1347,7 @@ parameter. A place charges the copy of its part, and its type is exactly `t`, el
 call `p`. It is static in a `comptime fn`. Its formal is a mutable local. At a static position,
 a value with the handle flag is `S011` (`staticValue`), and then so is a type with the flag
 (`staticHandle`). A `mut` actual gets no typed use. At a formal of a type with the handle flag,
-another type is `S010` with the text "Typed use at a handle type" (section 5.6). A formal of
+another type is `S010` with the text of `handleUseText` (section 5.6). A formal of
 another type keeps the `mut` text, also for a place of a handle type.
 -/
 def copyIn (p : Pos) (c : Bool) (q : Resolve.Param) (t : Ty) : Actual → M Unit
